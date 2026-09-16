@@ -37,6 +37,18 @@ var ruTailscale = map[string]string{
 	"tailscale.save"                     : "Сохранить",
 	"tailscale.start"                    : "Start",
 	"tailscale.stop"                     : "Stop",
+	// B258 (v1.5.8+, 2026-09-16): Tailscale intentionally
+	// disabled by env config. Operator set
+	// SKYGATE_TS_AUTHKEY_FILE=/dev/null in docker-compose to
+	// prevent the in-container tailscaled from running
+	// (they manage Tailscale at the host level via OS
+	// packages). The web UI mirrors the entrypoint skip so
+	// the operator sees a clear "this is intentional,
+	// here's why" state instead of "file not found" errors.
+	"tailscale.disabled_title"           : "Tailscale отключён в конфигурации",
+	"tailscale.disabled_help"            : "Переменная окружения <code>SKYGATE_TS_AUTHKEY_FILE</code> указывает на путь, который не существует или не является обычным файлом (например, <code>/dev/null</code>). Entrypoint пропустил запуск tailscaled при старте контейнера; UI Start тоже заблокирован. Чтобы включить — измените <code>docker-compose.yml</code> и перезапустите skygate.",
+	"tailscale.disabled_auth_form_help"  : "Сохранение ключа отключено, пока Tailscale заблокирован через env. Измените <code>SKYGATE_TS_AUTHKEY_FILE</code> в <code>docker-compose.yml</code> и перезапустите skygate.",
+	"tailscale.disabled_start_tooltip"   : "Отключено через SKYGATE_TS_AUTHKEY_FILE — см. баннер выше",
 	"tailscale.help_heading"             : "Как это работает",
 	"tailscale.help_body"                : "Tailscale нужен чтобы skygate (в этом контейнере) мог принимать subnet-routes от ваших exit-релеев. Без Tailscale весь трафик skygate идёт через eth0, и api.telegram.org блокируется на RF VPS.<br><br>После <b>Save + Start</b> контейнер получит tailnet IP (например <code>100.64.x.y</code>) и skygate начнёт принимать маршруты релеев. Дальше на <a href=\"/admin/telegram\" target=\"_blank\">/admin/telegram</a> выберите egress-relay — и бот заработает.<br><br>Сохранённый auth key переживает рестарт контейнера — настройка подхватывается автоматически.",
 	"tailscale.help_after_start"         : "После Start подождите ~10-30s и обновите страницу — увидите tailnet IP и routes от релеев.",
@@ -107,6 +119,15 @@ var enTailscale = map[string]string{
 	"tailscale.auth_path_label"          : "Storage",
 	"tailscale.auth_status_set"          : "Auth key is set (fp: %s)",
 	"tailscale.auth_status_unset"        : "Auth key is NOT set",
+	// B258 (v1.5.8+, 2026-09-16): Tailscale intentionally
+	// disabled by env config (operator manages Tailscale at
+	// the host level). The web UI mirrors the entrypoint skip
+	// check so the operator sees a clear "intentional" state
+	// instead of "file not found" errors.
+	"tailscale.disabled_title"           : "Tailscale is disabled by config",
+	"tailscale.disabled_help"            : "The <code>SKYGATE_TS_AUTHKEY_FILE</code> env var points to a path that either does not exist or is not a regular file (e.g. <code>/dev/null</code>). The container entrypoint skipped tailscaled at start-up; the UI Start button is also disabled. To re-enable — edit <code>docker-compose.yml</code> and restart the skygate container.",
+	"tailscale.disabled_auth_form_help"  : "Saving an auth key is disabled while Tailscale is blocked via env. Edit <code>SKYGATE_TS_AUTHKEY_FILE</code> in <code>docker-compose.yml</code> and restart skygate.",
+	"tailscale.disabled_start_tooltip"   : "Disabled via SKYGATE_TS_AUTHKEY_FILE — see banner above",
 	"tailscale.auth_help"                : "Generate a preauth key via <code>headscale preauthkeys create --user %s --reusable --ephemeral</code> (or via <a href=\"/admin/headscale\" target=\"_blank\">/admin/headscale</a>), then paste it here. After Save, click <b>Start</b>.",
 	"tailscale.auth_textarea_label"      : "Auth key (preauth)",
 	"tailscale.auth_textarea_placeholder": "tskey-auth-...",

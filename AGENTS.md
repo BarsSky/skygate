@@ -17848,3 +17848,112 @@ fleet). The operator reported this exact scenario on 2026-09-16
   - Acceptance of nodes whose headscale owner has no matching
     portal_users row (B-mod-first-run-adoption +
     `/admin/users/{id}/adopt` covers that).
+
+## B258 (v1.5.8+, 2026-09-16) — `/admin/tailscale` mirrors entrypoint.sh "Tailscale skipped" state
+
+**Symptom** (operator report 2026-09-16): on `/admin/tailscale`
+the status pill says "tailscaled остановлен" + the Save/Start
+buttons render fine, but clicking **Start** surfaces the error
+**"Не удалось запустить Tailscale: read auth key: open
+/data/ts/authkey: no such file or directory"**. The operator's
+docker-compose.yml sets `SKYGATE_TS_AUTHKEY_FILE=/dev/null` (the
+standard "disable in-container tailscaled" sentinel — they run
+Tailscale at the host level via OS packages), so the entrypoint
+correctly skipped tailscaled at container start ("[init]
+TS_AUTHKEY_FILE not set — Tailscale skipped (non-RF mode)").
+But the web UI didn't agree: it tried to read the file at the
+default path `/data/ts/authkey`, didn't find it, and surfaced a
+confusing error.
+
+**Root cause** (2 problems):
+
+  1. **Env-var name mismatch** — entrypoint.sh reads
+     `TS_AUTHKEY_FILE` (with legacy fallback to
+     `SKYGATE_TS_AUTHKEY_FILE`), but the skygate admin
+     handler was reading `SKYGATE_TS_AUTHKEY_PATH` (with
+     `_PATH` suffix, the legacy v0.33.1.9 name). Two names,
+     same intent, never aligned. The operator set the
+     entrypoint-compatible `_FILE` form; skygate silently
+     ignored it and fell back to the default path.
+
+  2. **UI lacks the entrypoint's "skip" check** — even after
+     fixing #1, if the operator sets the path to `/dev/null`
+     (or any non-regular-file), the `os.ReadFile(path)` call
+     in `startTailscaled()` would still fail with a raw
+     syscall error. The operator's first click on Start
+     surfaces the file-system error instead of a clear
+     "intentionally disabled" hint.
+
+**Fix** (3 files, ~150 lines):
+
+  1. **`cmd/skygate/main.go:1099`** — `tailscaleAuthKeyPath` now
+     reads `SKYGATE_TS_AUTHKEY_FILE` (primary, matches
+     entrypoint.sh), with `SKYGATE_TS_AUTHKEY_PATH` kept as
+     fallback for older deployments. New installs that set the
+     `_FILE` form (as the entrypoint docs say) now take effect
+     on both sides.
+
+  2. **`internal/feature/admin/tailscale.go`** —
+     `tailscaleAuthKeyDisabled()` helper mirrors entrypoint.sh's
+     `[ -f path ]` skip check. Returns true when the path is
+     `/dev/null`, `/dev/null/*`, or any non-regular-file path.
+     `os.Stat` does the platform-agnostic "is this a regular
+     file?" check, so /dev/null (a character device on
+     Linux/macOS) is correctly classified as non-regular.
+
+     New `TailscaleState.AuthKeyDisabled bool` field carries the
+     decision to the template. `handleTailscaleStart` now has an
+     early-out: if disabled, audit + redirect with the friendly
+     "edit docker-compose.yml + restart" message, no
+     `os.ReadFile` call attempted. Operator can't trigger the
+     confusing error path anymore.
+
+  3. **`internal/handlers/templates/admin/tailscale.html`** —
+     When `State.AuthKeyDisabled` is true:
+       - green info banner near the top of the page:
+         "Tailscale is disabled by config — see docker-compose.yml
+         SKYGATE_TS_AUTHKEY_FILE"
+       - the auth-key paste form (which would write to /dev/null)
+         is hidden; in its place: an italic "saving is disabled
+         until you re-enable Tailscale" hint
+       - the **Start** button is hard-disabled with a tooltip
+         explaining why
+
+**Verification** (`bash scripts/check_b258_tailscale_disabled.sh`):
+  - 25 passed, 0 failed
+  - 6 unit tests pin the 6 cases of `tailscaleAuthKeyDisabled`
+  - go build / vet / test all green
+
+**Operator workflow** (their 2026-09-16 scenario):
+
+  1. Open `/admin/tailscale` — the green banner appears
+     "Tailscale отключён в конфигурации" with a clear explanation
+     pointing at `SKYGATE_TS_AUTHKEY_FILE` in docker-compose.
+  2. Start button is hard-disabled; the auth-key paste form is
+     hidden. Operator can't trigger the raw `os.ReadFile` error
+     by clicking.
+  3. To re-enable: edit `docker-compose.yml` (set
+     `SKYGATE_TS_AUTHKEY_FILE=/run/secrets/ts_authkey` or similar),
+     `docker compose restart skygate` — the banner disappears on
+     the next page load and the standard UI returns.
+
+**Files**:
+  - `cmd/skygate/main.go` — env var read with fallback
+  - `internal/feature/admin/tailscale.go` — helper + state field +
+    handler guard
+  - `internal/handlers/templates/admin/tailscale.html` — banner +
+    hidden form + disabled Start
+  - `internal/i18n/catalog_tailscale.go` — 4 RU+EN keys
+  - `internal/feature/admin/tailscale_b258_test.go` (NEW) — 6 tests
+  - `scripts/check_b258_tailscale_disabled.sh` (NEW) — 25-contract
+    B-check
+
+**Not in scope** (out of B258):
+  - Renaming the entrypoint env var to match. `TS_AUTHKEY_FILE`
+    is the legacy v0.33.1.9 name; renaming it now would break
+    every existing docker-compose.yml. The legacy form keeps
+    working — the fix is on the UI side.
+  - Detecting the operator's intent from `*_PATH` vs `*_FILE`
+    automatically (the dual env var fallback is already there;
+    adding intent inference would just be more code for the
+    same outcome).

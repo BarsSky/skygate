@@ -33,6 +33,13 @@ set -e
 # secret; the entrypoint then skips tailscaled and skygate starts
 # with direct internet access.
 #
+# v1.5.8+ (B258): the /admin/tailscale web UI mirrors this skip
+# check (tailscaleAuthKeyDisabled in internal/feature/admin/tailscale.go).
+# When this var is /dev/null, the entrypoint skips tailscaled AND
+# the UI shows a "Tailscale is disabled by config" banner with
+# the Start button hard-disabled. Operator can't trigger the raw
+# os.ReadFile error by clicking.
+#
 # v0.33.1.9: accept BOTH the legacy TS_AUTHKEY_FILE and the newer
 # SKYGATE_TS_AUTHKEY_FILE (set in docker-compose.yml). The two names
 # were a long-standing mismatch — docker-compose sets

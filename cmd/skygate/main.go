@@ -1096,7 +1096,18 @@ func main() {
 		// takes over). The /admin/tailscale handler
 		// (feature/admin/tailscale.go) uses these for the
 		// Save/Start/Stop buttons.
-		TailscaleAuthKeyPath: tailscaleEnvOr("SKYGATE_TS_AUTHKEY_PATH", "/data/ts/authkey"),
+		//
+		// B258: SKYGATE_TS_AUTHKEY_FILE matches the entrypoint.sh
+		// env var name (the legacy _PATH form is honored for
+		// older deployments; new installs should use _FILE
+		// to align with the entrypoint). When set to "/dev/null"
+		// the entrypoint correctly skips tailscaled AND the
+		// UI handler now detects the same sentinel — see
+		// tailscaleAuthKeyDisabled() in feature/admin/tailscale.go.
+		TailscaleAuthKeyPath: tailscaleEnvOr(
+			"SKYGATE_TS_AUTHKEY_FILE",
+			tailscaleEnvOr("SKYGATE_TS_AUTHKEY_PATH", "/data/ts/authkey"),
+		),
 		TailscaleLoginServer:  tailscaleEnvOr("SKYGATE_TS_LOGIN_SERVER", "https://head.example.com"),
 		// B251: hostname `skygate-host` is reserved for the
 		// single VM that runs the skygate container itself

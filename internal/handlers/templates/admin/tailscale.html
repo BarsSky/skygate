@@ -13,6 +13,15 @@
   file names / env-var names / config-file names from
   the public-facing strings. The internal AuthKeyPath
   field is still populated (for the Service), but is
+
+  B258: when SKYGATE_TS_AUTHKEY_FILE=/dev/null (the
+  "Tailscale intentionally disabled" sentinel — entrypoint
+  skips tailscaled on container start), the page shows a
+  green "disabled by config" banner near the top, hides
+  the auth-key paste form (you can't save a key into /dev/null),
+  and hard-disables the Start button. The operator has to
+  edit docker-compose.yml + restart the container to
+  re-enable.
   NOT rendered in the HTML. The operator only needs to
   know "is the key set" — not where it's stored.
 
@@ -38,6 +47,21 @@
 {{end}}
 {{if .FlashError}}
 <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
+{{end}}
+
+{{/* B258: Tailscale intentionally-disabled banner. Rendered when
+     SKYGATE_TS_AUTHKEY_FILE=/dev/null (or any non-regular-file
+     path). Mirrors entrypoint.sh's `[ -f path ]` skip-check so
+     the operator sees the same state on both the entrypoint log
+     AND the web UI. Click Start is hard-disabled because
+     /dev/null is a character device — `os.ReadFile(/dev/null)`
+     returns EOF, so a successful "start" is impossible. */}}
+{{if .State.AuthKeyDisabled}}
+<div class="alert alert-info" style="margin-bottom:12px">
+  <i class="fa-solid fa-circle-info"></i>
+  <strong>{{t "tailscale.disabled_title"}}</strong>
+  {{t "tailscale.disabled_help" | safeHTML}}
+</div>
 {{end}}
 
 <div class="card-grid">
@@ -93,6 +117,12 @@
 
   <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-key"></i> {{t "tailscale.auth_heading"}}</h3>
+    {{/* B258: hide the auth-key paste form when Tailscale is
+         intentionally disabled — saving a key into /dev/null
+         is a no-op and confusing. */}}
+    {{if .State.AuthKeyDisabled}}
+    <p class="sub" style="font-style:italic">{{t "tailscale.disabled_auth_form_help" | safeHTML}}</p>
+    {{else}}
     <p class="sub">
       {{if .State.AuthKeySet}}
         <strong>{{tf "tailscale.auth_status_set" .State.AuthKeyFP}}</strong>
@@ -123,6 +153,7 @@
         <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-bolt"></i> {{t "tailscale.generate_btn"}}</button>
       </form>
     </details>
+    {{end}}{{/* end AuthKeyDisabled else */}}
   </div>
 
   <div class="card" style="grid-column:1 / -1">
@@ -180,7 +211,7 @@
       <form action="/admin/tailscale" method="POST" style="display:inline">
         <input type="hidden" name="csrf" value="{{.CSRF}}">
         <input type="hidden" name="action" value="start">
-        <button type="submit" class="btn btn-primary" {{if not .State.Available}}disabled{{end}}><i class="fa-solid fa-play"></i> {{t "tailscale.start"}}</button>
+        <button type="submit" class="btn btn-primary" {{if or (not .State.Available) .State.AuthKeyDisabled}}disabled{{end}} title="{{if .State.AuthKeyDisabled}}{{t "tailscale.disabled_start_tooltip"}}{{else}}{{t "tailscale.start"}}{{end}}"><i class="fa-solid fa-play"></i> {{t "tailscale.start"}}</button>
       </form>
       <form action="/admin/tailscale" method="POST" style="display:inline">
         <input type="hidden" name="csrf" value="{{.CSRF}}">

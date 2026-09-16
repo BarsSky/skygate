@@ -214,6 +214,15 @@ type TailscaleState struct {
 	// admin can see "a key is set" without exposing the
 	// full secret in the rendered HTML.
 	AuthKeyFP string
+	// AuthKeyDisabled = true when the operator explicitly
+	// disabled the in-container Tailscale via env config
+	// (typically SKYGATE_TS_AUTHKEY_FILE=/dev/null). When
+	// true the page shows a banner "Tailscale is
+	// intentionally disabled by env config" and the Start
+	// button is hard-disabled — the operator cannot start
+	// tailscaled from the UI without first editing
+	// docker-compose.yml + restarting the container. B258.
+	AuthKeyDisabled bool
 	// LoginServer mirrors s.TailscaleLoginServer.
 	LoginServer string
 	// LoginServerSource is "db" when the value came from the
@@ -300,6 +309,7 @@ func (s *Service) readTailscaleState() TailscaleState {
 		StateDir:          s.tailscaleStateDir(),
 	}
 	st.Available = tailscaleAvailable()
+	st.AuthKeyDisabled = s.tailscaleAuthKeyDisabled()
 	st.AuthKeySet, st.AuthKeyFP = s.readTailscaleAuthKey()
 	if !st.Available {
 		return st
@@ -334,6 +344,47 @@ func (s *Service) tailscaleAuthKeyPath() string {
 		return s.TailscaleAuthKeyPath
 	}
 	return "/data/ts/authkey"
+}
+
+// tailscaleAuthKeyDisabled is the B258 mirror of the entrypoint
+// skip check (entrypoint.sh lines 50-55):
+//   - `[ -f "/dev/null" ]` returns false (character device,
+//     not a regular file) so the entrypoint correctly skips
+//     tailscaled when SKYGATE_TS_AUTHKEY_FILE=/dev/null.
+//   - The same sentinel must disable the UI's Start button so
+//     the operator doesn't see a confusing
+//     "read auth key: no such file" error on click.
+//
+// Returns true when the path is:
+//   - "/dev/null" — the standard "disabled" sentinel; reading
+//     returns EOF, so we cannot ever start tailscaled from here
+//   - "/dev/null/*" — defensive, in case the operator typos
+//     "/dev/nul" or similar
+//   - empty string — defensive, treats missing path as disabled
+//     (the entrypoint skips too)
+//
+// We deliberately do NOT treat "file doesn't exist" as
+// disabled — that's a misconfiguration, not an intentional
+// disable. The UI surfaces the "file missing" error in the
+// Start response so the operator can paste a key to recover.
+func (s *Service) tailscaleAuthKeyDisabled() bool {
+	path := strings.TrimSpace(s.tailscaleAuthKeyPath())
+	if path == "" {
+		return true
+	}
+	// /dev/null + variants.
+	if path == "/dev/null" || strings.HasPrefix(path, "/dev/null/") {
+		return true
+	}
+	// /dev/null is a character device, not a regular file.
+	// Stat the path: if it exists but isn't a regular file,
+	// treat as disabled.
+	if info, err := os.Stat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return true
+		}
+	}
+	return false
 }
 
 // SetGlobalSettingForTest is a thin wrapper around
@@ -888,6 +939,20 @@ func (s *Service) handleTailscaleSaveLoginServer(w http.ResponseWriter, r *http.
 // Idempotent: a second click on an already-running tailscaled
 // returns a flash noting "already running" (no error).
 func (s *Service) handleTailscaleStart(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	// B258: refuse when the operator explicitly disabled
+	// Tailscale in the container via SKYGATE_TS_AUTHKEY_FILE
+	// (typically =/dev/null). The entrypoint.sh skip check
+	// already skipped tailscaled on entry; the UI just
+	// surfaces the reason so the operator doesn't try to
+	// click Start and get a confusing "no such file" error.
+	if s.tailscaleAuthKeyDisabled() {
+		s.Backend.Audit(c.UserID, c.Username, "tailscale_start",
+			"refused=auth_key_disabled path="+s.tailscaleAuthKeyPath())
+		tsRedirect(w, r, "",
+			"Tailscale отключён в конфигурации контейнера (SKYGATE_TS_AUTHKEY_FILE=/dev/null). "+
+				"Измените docker-compose.yml и перезапустите skygate.")
+		return
+	}
 	out, err := s.startTailscaled()
 	if err != nil {
 		s.Backend.Audit(c.UserID, c.Username, "tailscale_start",
