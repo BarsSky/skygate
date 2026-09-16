@@ -346,14 +346,18 @@ func RevokeInvite(d *sql.DB, code string) error {
 // the bot /invites command and the admin
 // /admin/invites page.
 func ListByGrantor(d *sql.DB, grantorUserID int64) ([]*Invite, error) {
-	return listInvites(d, "grantor_user_id = ?", grantorUserID)
+	// 2026-09-16 (B253 fix): PG-native $1 placeholder (was SQLite `?`
+	// which the pgx driver doesn't auto-translate and would
+	// error with 42601 syntax error).
+	return listInvites(d, "grantor_user_id = $1", grantorUserID)
 }
 
 // ListByGrantee returns all invites for the
 // given username (the "show me my incoming
 // invites" view).
 func ListByGrantee(d *sql.DB, granteeUsername string) ([]*Invite, error) {
-	return listInvites(d, "grantee_username = ?", granteeUsername)
+	// 2026-09-16 (B253 fix): PG-native $1 placeholder.
+	return listInvites(d, "grantee_username = $1", granteeUsername)
 }
 
 // ListAll returns every invite, newest first.

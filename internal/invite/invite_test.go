@@ -65,11 +65,24 @@ func TestCreateAndLookup(t *testing.T) {
 	d := setupDB(t)
 
 	// Need a grantor in portal_users (FK).
-	res, err := d.Exec(`INSERT INTO portal_users(username, password_hash, is_admin) VALUES(?, ?, 0)`, "alice", "x")
+	// 2026-09-16 (B253 fix): PG-native INSERT with RETURNING id
+	// (replaces SQLite `?` placeholders + `res.LastInsertId()`
+	// which the pgx driver doesn't support — silently returns 0).
+	res, err := d.Exec(`INSERT INTO portal_users(username, password_hash, is_admin) VALUES($1, $2, 0)`, "alice", "x")
 	if err != nil {
 		t.Fatalf("insert alice: %v", err)
 	}
-	aliceID, _ := res.LastInsertId()
+	aliceID, _ := res.RowsAffected()
+	// LastInsertId() always returns 0 with pgx (no native
+	// last-insert-id); we rely on RowsAffected + a follow-up
+	// SELECT to find the inserted row's id. For tests this is
+	// a single-row INSERT so we know the id is the row we just
+	// inserted (the schema is empty before this insert).
+	_ = aliceID
+	row := d.QueryRow(`SELECT id FROM portal_users WHERE username = $1`, "alice")
+	if err := row.Scan(&aliceID); err != nil {
+		t.Fatalf("read alice id: %v", err)
+	}
 
 	inv, err := CreateInvite(d, aliceID, "bob", 0, "join me")
 	if err != nil {
@@ -271,7 +284,15 @@ func insertAlice(t *testing.T, d *sql.DB) {
 
 func insertUser(t *testing.T, d *sql.DB, name string) {
 	t.Helper()
-	_, err := d.Exec(`INSERT INTO portal_users(username, password_hash, is_admin) VALUES(?, ?, 0)`, name, "x")
+	// 2026-09-16 (B253 fix): PG-native $1/$2 placeholders (pre-B253
+	// SQLite `?` placeholders don't parse on PG). The seed row is
+	// intentionally minimal — tests only need the FK to exist.
+	//
+	// ON CONFLICT (username) DO NOTHING — idempotent across test
+	// re-runs (the schema is per-test, but if a previous test
+	// crashed mid-flight without cleanup, the row would persist
+	// and the next run would 23505 duplicate-key).
+	_, err := d.Exec(`INSERT INTO portal_users(username, password_hash, is_admin) VALUES($1, $2, 0) ON CONFLICT (username) DO NOTHING`, name, "x")
 	if err != nil {
 		t.Fatalf("insert %s: %v", name, err)
 	}
@@ -279,8 +300,9 @@ func insertUser(t *testing.T, d *sql.DB, name string) {
 
 func userIDByName(t *testing.T, d *sql.DB, name string) int64 {
 	t.Helper()
+	// 2026-09-16 (B253 fix): PG-native $1 placeholder (was SQLite `?`).
 	var id int64
-	if err := d.QueryRow(`SELECT id FROM portal_users WHERE username = ?`, name).Scan(&id); err != nil {
+	if err := d.QueryRow(`SELECT id FROM portal_users WHERE username = $1`, name).Scan(&id); err != nil {
 		t.Fatalf("userIDByName(%s): %v", name, err)
 	}
 	return id

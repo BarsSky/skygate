@@ -197,7 +197,9 @@ func ApplyBridge(
 // "user hasn't signed up yet" hint).
 func ResolveGranteeID(d *sql.DB, username string) (int64, error) {
 	var id int64
-	err := d.QueryRow(`SELECT id FROM portal_users WHERE username = ?`, username).Scan(&id)
+	// 2026-09-16 (B253 fix): PG-native $1 placeholder (was SQLite `?`
+	// which doesn't parse on PG and would 42601 every call).
+	err := d.QueryRow(`SELECT id FROM portal_users WHERE username = $1`, username).Scan(&id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil

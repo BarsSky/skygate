@@ -64,8 +64,9 @@ func TestApplyBridgeWritesShareRow(t *testing.T) {
 	}
 
 	// Verify the share row was written
+	// 2026-09-16 (B253 fix): PG-native $1 placeholder (was SQLite `?`).
 	var grantor, grantee int64
-	if err := d.QueryRow(`SELECT grantor_user_id, grantee_user_id FROM user_subnet_shares WHERE grantor_user_id = ?`, aliceID).Scan(&grantor, &grantee); err != nil {
+	if err := d.QueryRow(`SELECT grantor_user_id, grantee_user_id FROM user_subnet_shares WHERE grantor_user_id = $1`, aliceID).Scan(&grantor, &grantee); err != nil {
 		t.Fatalf("read share: %v", err)
 	}
 	if grantor != aliceID || grantee != bobID {
@@ -92,8 +93,9 @@ func TestApplyBridgeIdempotent(t *testing.T) {
 		t.Fatalf("second ApplyBridge: %v", err)
 	}
 	// Should still be exactly 1 share row
+	// 2026-09-16 (B253 fix): PG-native $1/$2 placeholders.
 	var n int
-	if err := d.QueryRow(`SELECT COUNT(*) FROM user_subnet_shares WHERE grantor_user_id = ? AND grantee_user_id = ?`, aliceID, bobID).Scan(&n); err != nil {
+	if err := d.QueryRow(`SELECT COUNT(*) FROM user_subnet_shares WHERE grantor_user_id = $1 AND grantee_user_id = $2`, aliceID, bobID).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if n != 1 {
