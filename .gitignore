@@ -173,3 +173,21 @@ secrets/
 postgres:/
 .trash/
 /tmp/
+
+# 2026-09-15: operator debug artifacts dropped to /tmp during live ops.
+# These are intentionally NOT in scripts/ — they're one-off diagnostics
+# the operator runs from a Make target or power-shell paste. Ignored at
+# the repo root so `git status` stays clean between operators.
+# /tmp/ (above) only ignores DIRS, not loose files; the patterns below
+# catch the loose ones when they end up at the repo root.
+/tmp/*.sh
+/tmp/*.html
+/tmp/*.json
+/tmp/*.log
+/tmp/*.go
+/tmp/*.txt
+/tmp/*.py
+# Same patterns at the repo root for the case where /tmp symlinks or
+# bash injection drops the file in cwd.
+*.swp.bak
+=*
