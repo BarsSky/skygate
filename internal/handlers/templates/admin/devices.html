@@ -67,6 +67,61 @@
 {{end}}
 {{end}}
 
+{{/* 2026-09-16 (B257): "Devices awaiting adoption".
+     Shows pre-existing headscale devices (with no node_owner_map
+     row yet) whose headscale UserID matches some portal_users
+     headscale_user_id. The B77 backfill can't claim these
+     automatically because:
+       - No PreAuthKey match (they were registered via OIDC or
+         direct headscale CLI, not via /my/preauth)
+       - No existing tag:dev-* (that's what we're trying to add)
+       - Strategy E (OIDC match) is gated on PreAuthKeyID == ""
+         which doesn't fire here
+     The per-row "Assign to <user>" button POSTs to
+     /admin/devices/adopt which inserts the node_owner_map row,
+     ensures the tagOwners entry, and AddTag's the dev-tag.
+     After the operator clicks these, they MUST run "Re-apply
+     ACL" on /admin/exit-rules to push the new tagOwners into
+     the policy (otherwise the per-tag grants won't activate). */}}
+{{if .AdoptionCandidates}}
+<div class="card" style="margin-bottom:12px">
+  <h3><i class="fa-solid fa-hand-holding-hand"></i> {{t "devices.adoption_card_title"}}</h3>
+  <p class="sub">{{t "devices.adoption_card_help" | safeHTML}}</p>
+  <table class="kv" style="font-size:.92em;line-height:1.5">
+    <thead>
+      <tr>
+        <th style="text-align:left;width:18em">{{t "devices.adoption_col_node"}}</th>
+        <th style="text-align:left;width:14em">{{t "devices.adoption_col_ip"}}</th>
+        <th style="text-align:left;width:8em">{{t "devices.adoption_col_os"}}</th>
+        <th style="text-align:left;width:9em">{{t "devices.adoption_col_role"}}</th>
+        <th style="text-align:left;width:14em">{{t "devices.adoption_col_assign"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .AdoptionCandidates}}
+      <tr>
+        <td><code>{{.Hostname}}</code>
+          {{if .Online}}<span class="badge badge-success">{{t "common.online"}}</span>
+          {{else}}<span class="badge badge-secondary">{{t "common.offline"}}</span>{{end}}
+          <div class="sub" style="font-family:monospace;font-size:.8em;color:#888">id={{.ID}}</div>
+        </td>
+        <td style="font-family:monospace;font-size:.85em">{{range .IPAddresses}}{{.}}<br>{{end}}</td>
+        <td>{{if .OS}}{{.OS}}{{else}}—{{end}}</td>
+        <td>{{if .DeviceType}}{{.DeviceType}}{{else}}—{{end}}</td>
+        <td>
+          <form action="/admin/devices/adopt" method="POST" onsubmit="return confirm('{{t "devices.adoption_confirm" | js}}')">
+            <input type="hidden" name="node_id" value="{{.ID}}">
+            <input type="hidden" name="target_username" value="{{.PortalUsername}}">
+            <button type="submit" class="btn btn-primary"><i class="fa-solid fa-link"></i> {{t "devices.adoption_button"}} <code>{{.PortalUsername}}</code></button>
+          </form>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-server"></i>{{t "devices.title_all"}}</h2>

@@ -297,6 +297,15 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		// empty/0 when the banner is hidden.
 		"FirstRunBanner":         firstRunShow,
 		"FirstRunUnadoptedCount": firstRunUnadopted,
+		// B257 (v1.5.8+, 2026-09-16): "Devices awaiting
+		// adoption" — pre-existing headscale nodes that the
+		// B77 backfill can't claim automatically (no
+		// preauth match, no dev-tag yet) but already belong
+		// to a known portal user (matched by
+		// headscale_user_id). The template renders a card
+		// with per-row "Assign to <user>" buttons that POST
+		// to /admin/devices/adopt. Empty slice = no card.
+		"AdoptionCandidates": s.findAdoptionCandidates(r),
 	})
 }
 

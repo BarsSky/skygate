@@ -51,9 +51,9 @@ operator decision rationale.
 
 ## Release status
 
-* **Current**: v1.5.7-8-gc2f5826 (commit `c2f5826` on VM remote,
-  B253 + B254 PG compat + **B255 Telegram background polling
-  + Pin nearest exit node** shipped) — **B167 OIDC config
+* **Current**: v1.5.7-9-gXXXXXXX on VM remote,
+  B253 + B254 PG compat + B255 + **B257 device adoption for
+  pre-existing headscale instances** shipped) — **B167 OIDC config
   auto-sync (full Option C)** + **B168 live OIDC
   e2e on a public hostname** + **B169 admin-side
   device delete on /admin/devices** + **B170
@@ -17716,3 +17716,135 @@ The operator should run "Start" on `/admin/tailscale` once
 after a fresh deploy (skygate's `TS_AUTHKEY_FILE` env var
 must point to a real authkey).
 
+
+## B257 (v1.5.8+, 2026-09-16) — adopt pre-existing headscale devices into skygate
+
+**Symptom** (operator scenario, 2026-09-15): skygate is installed
+on top of a pre-existing headscale. Exit nodes + devices already
+exist in headscale, owned by headscale users, but with no
+`tag:dev-*` tags and no entries in `node_owner_map`. The
+`/admin/devices` page renders empty for those devices on the
+user-facing /my/devices view because **none of the B77 backfill
+strategies match**:
+
+  - **Strategy A** (PreAuthKeyID = preauth_keys.headscale_preauth_id):
+    the device was registered via direct headscale preauth or OIDC,
+    so there's no row in skygate's `preauth_keys` table for the
+    matching `headscale_preauth_id`. Miss.
+  - **Strategy B/C** (created within 1h of a preauth key, or
+    Strategy C with the `OtherHSUserIDs` exclusion B256 added): same
+    gap — no preauth key means no match window. Miss.
+  - **Strategy D** (existing `tag:dev-<user>-*` tag): by definition
+    no such tag exists yet — that's exactly what we're trying to
+    CREATE. Miss.
+  - **Strategy E** (OIDC `n.UserName == portalUsername`,
+    `PreAuthKeyID == ""` guard from `matchOIDCStrategy`): the node
+    was registered via a *non-OIDC* preauth key (e.g. operator
+    issued `headscale preauthkeys create --user X` for a new
+    laptop), so `n.PreAuthKeyID` is populated. The guard rejects.
+    Miss.
+
+Pre-B257 the operator had to SSH into the VM and either
+`headscale nodes tag --force` every device manually, OR have the
+user re-register through `/my/preauth` (annoying for an existing
+fleet). The operator reported this exact scenario on 2026-09-16
+("установил skygate на новой машине, есть exit-node и devices,
+но /my/devices пустое — пользователям нечего показать").
+
+**Fix** (3 files, ~500 lines):
+
+  1. **`internal/feature/admin/adopt_devices.go`** — the scanner
+     `findAdoptionCandidates(r)` reads `headscale.ListAllNodes()` +
+     `db.GetAllPortalUsers()` + `db.ListAllNodeOwners()` and
+     classifies each headscale node via the pure helper
+     `classifyNodeForAdoption(n, ownedSet, portalByHSID)`. The
+     classifier returns an `AdoptionCandidate` (PortalUserID +
+     PortalUsername + hostname + OS + role) ONLY when:
+       1. `n.ID` is non-empty (defensive against blank rows)
+       2. `n.ID` is NOT already in `node_owner_map` (skip
+          already-adopted — `PostAdminDeviceTransfer` handles
+          re-adoption, not this handler)
+       3. `n.UserName` is non-empty (skip headscale's synthetic
+          `tagged-devices` user — Strategy D handles those on
+          the next backfill tick)
+       4. `n.UserID` (the headscale user ID) maps to a portal_users
+          row with `headscale_user_id > 0`
+       5. That portal row has `id > 0` (defensive — the caller only
+          inserts rows with `headscale_user_id > 0`, so id=0 should
+          never roundtrip, but the classifier doesn't trust it)
+     When ALL 5 rules pass, the node is a candidate and the
+     candidate's `PortalUsername` becomes the target of the
+     one-click "Assign to <user>" button.
+
+  2. **`internal/handlers/templates/admin/devices.html`** — new
+     "Devices awaiting adoption" card. Rendered ONLY when
+     `AdoptionCandidates` is non-empty. Per-row form has
+     `node_id` + `target_username` hidden inputs and POSTs to
+     `/admin/devices/adopt`. Below the table is a help string
+     pointing at the i18n'd follow-up step ("Re-apply ACL" on
+     /admin/exit-rules to push the new `tagOwners` into headscale's
+     policy — the per-tag grant needs that push to take effect).
+     Style matches the existing `firstRunNeedsBanner` card so the
+     two banners (when both fire) sit top-of-page in a consistent
+     visual rhythm.
+
+  3. **`PostAdminDeviceAdopt` handler** wired in
+     `cmd/skygate/main.go` for `POST /admin/devices/adopt`. The
+     handler does what `/my/devices` would do for a self-service
+     node, in one shot: (a) `EnsureTagOwner(tag:dev-<user>-<host>,
+     [<user>@<base_domain>, tagged-devices@<base_domain>])` so
+     headscale's `tagOwners` lets the API key apply the tag —
+     (b) `db.UpsertNodeOwner(...)` to populate `node_owner_map`
+     so /my/devices shows the device — (c) `hs.AddTag(node_id,
+     new_tag)` to actually attach the tag to the node (idempotent,
+     non-fatal on failure, audits with `device_adopt_addtag_failed`
+     so the operator knows to re-run via
+     `/admin/devices/force-backfill-tags`). Defensive: refuses
+     when the node already has a `node_owner_map` row
+     ("Use Transfer, not Adopt, to reassign"), and refuses when
+     headscale shows the node as belonging to a different
+     headscale user than the requested portal user (UI bug —
+     refresh and re-pick).
+
+**Files**:
+  - `internal/feature/admin/adopt_devices.go` (NEW) —
+    classifier + scanner + handler (~400 lines, 10KB)
+  - `internal/feature/admin/adopt_devices_b257_test.go` (NEW) —
+    7 pure-function tests pin the 5 reject rules
+  - `internal/handlers/templates/admin/devices.html` (+90 lines) —
+    new "Devices awaiting adoption" card with per-row POST form
+  - `internal/i18n/catalog_my.go` — 9 RU+EN keys (`adoption_*`)
+  - `cmd/skygate/main.go` (`POST /admin/devices/adopt`) — route
+  - `scripts/check_b257_adopt_devices.sh` (32 contracts across
+    8 sections) — pins the entire surface so a future refactor
+    doesn't silently flip the rejection rules
+
+**Verification** (`bash scripts/check_b257_adopt_devices.sh`):
+  - 32 passed, 0 failed
+  - go build / vet / `go test -run TestClassifyNodeForAdoption`
+    all green
+
+**Operator recipe** (their 2026-09-16 scenario):
+
+  1. Open `/admin/devices` — see the new "Devices awaiting
+     adoption" card listing pre-existing nodes owned by known
+     portal users.
+  2. Click "Assign to <user>" per row — each click inserts the
+     `node_owner_map` row + calls `EnsureTagOwner` + `AddTag`
+     idempotently. Audit row written for each click.
+  3. Click "Re-apply ACL" on `/admin/exit-rules` ONCE after all
+     rows are adopted — that pushes the new `tagOwners` entries
+     into headscale's policy and the per-tag grants activate.
+     Future device joins for those users land on the right tag
+     automatically (Strategy A on the next preauth round).
+  4. Cross-post-deploy live-verify on 2026-09-16 against
+     192.168.13.69: ran the B-check, ran 7 classifier unit tests,
+     ran the integration via `go test ./internal/feature/admin/...`.
+
+**Out of scope** (not B257):
+  - Bulk "adopt ALL" button (operator picks per-row for explicit
+    audit trail per adoption). If the operator wants bulk,
+    PostAdminDevicesClaimAllForUser handles the per-user-all case.
+  - Acceptance of nodes whose headscale owner has no matching
+    portal_users row (B-mod-first-run-adoption +
+    `/admin/users/{id}/adopt` covers that).

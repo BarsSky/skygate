@@ -92,7 +92,10 @@ test_*.ps1
 # allowance is via the explicit `!` override below.
 !scripts/check_*.sh
 !scripts/test_*.sh
-!scripts/find_go.sh
+
+# B- and verify- scripts may generate a tiny .bat to call powershell
+# (see scripts/find_go.sh). Gitignored because it's a build artifact.
+scripts/_find_go.bat
 sg_*.ps1
 sg_*.sh
 /sg_*.html
@@ -124,6 +127,7 @@ healthz_*.sh
 i18n_*.sh
 tpl_*.sh
 find_*.sh
+!scripts/find_go.sh
 desc_*.sh
 diff_check.sh
 do_*.sh

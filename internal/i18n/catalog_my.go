@@ -204,6 +204,26 @@ var ruMy = map[string]string{
 	"devices.expired_hint_while_offline"         : "Устройство было оффлайн, когда истёк TTL — переподключите, чтобы продлить",
 	"devices.first_run_incomplete"               : "Настройка не завершена:",
 	"devices.sync_from_headscale"                : "Sync from headscale",
+	// 2026-09-16 (B257): "Devices awaiting adoption"
+	// card on /admin/devices. Surfaced when skygate
+	// detects headscale nodes that belong to a known
+	// portal_user but aren't yet in node_owner_map
+	// (Strategy A/C/D/E in the B77 backfill all miss —
+	// typically because the device was registered via
+	// direct headscale preauth or OIDC without a skygate
+	// preauth_keys row). The per-row form does INSERT +
+	// EnsureTagOwner + AddTag in one click; the operator
+	// then re-applies the ACL on /admin/exit-rules to push
+	// the new tagOwners into headscale's policy.
+	"devices.adoption_card_title"     : "Devices awaiting adoption",
+	"devices.adoption_card_help"      : "Эти устройства уже в headscale, принадлежат известному portal-user (по <code>headscale_user_id</code>), но не были автоматически привязаны — нажмите <em>Assign</em>, чтобы вставить запись в node_owner_map и добавить dev-тег. После — нажмите <em>Re-apply ACL</em> на /admin/exit-rules.",
+	"devices.adoption_col_node"       : "Устройство",
+	"devices.adoption_col_ip"         : "IP",
+	"devices.adoption_col_os"         : "OS",
+	"devices.adoption_col_role"       : "Роль",
+	"devices.adoption_col_assign"     : "Действие",
+	"devices.adoption_button"         : "Закрепить за",
+	"devices.adoption_confirm"        : "Закрепить это устройство за выбранным пользователем? После нажмите 'Re-apply ACL' на /admin/exit-rules.",
 	// B162 (v1.5.1): per-row device delete UX. The
 	// button is rendered next to the Renew button
 	// for every device with Expiry!="" (we don't
@@ -727,6 +747,26 @@ var enMy = map[string]string{
 	"devices.expired_hint_while_offline"         : "Device was offline when the TTL ran out — reconnect to renew the session",
 	"devices.first_run_incomplete"               : "Setup incomplete:",
 	"devices.sync_from_headscale"                : "Sync from headscale",
+	// 2026-09-16 (B257): "Devices awaiting adoption" card on
+	// /admin/devices. Surfaced when skygate detects
+	// headscale nodes owned by a known portal_user but
+	// missing from node_owner_map (the B77 backfill
+	// can't auto-claim via Strategies A/C/D/E —
+	// typically a node registered via headscale preauth
+	// or OIDC, not via /my/preauth). The per-row form
+	// inserts the node_owner_map row + calls
+	// EnsureTagOwner + AddTag; the operator re-applies
+	// the ACL on /admin/exit-rules to push the new
+	// tagOwners into headscale's policy.
+	"devices.adoption_card_title"     : "Devices awaiting adoption",
+	"devices.adoption_card_help"      : "These devices already exist in headscale and belong to a known portal user (by <code>headscale_user_id</code>), but aren't in <code>node_owner_map</code> yet — so /my/devices can't see them. Click <em>Assign</em> to insert the row and add the dev-tag, then run <em>Re-apply ACL</em> on /admin/exit-rules to push the new <code>tagOwners</code> entries.",
+	"devices.adoption_col_node"       : "Device",
+	"devices.adoption_col_ip"         : "IP",
+	"devices.adoption_col_os"         : "OS",
+	"devices.adoption_col_role"       : "Role",
+	"devices.adoption_col_assign"     : "Action",
+	"devices.adoption_button"         : "Assign to",
+	"devices.adoption_confirm"        : "Assign this device to the selected user? After this click, run 'Re-apply ACL' on /admin/exit-rules to push the new tagOwners.",
 	// B162 (v1.5.1): per-row device delete UX.
 	"devices.delete"                             : "Delete",
 	"devices.delete_title"                       : "Delete device from headscale",

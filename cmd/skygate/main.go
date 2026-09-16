@@ -1659,6 +1659,15 @@ func main() {
 	// is a separate manual step (the handler's redirect
 	// message tells the operator).
 	mux.Handle("POST /admin/devices/transfer", authMW(http.HandlerFunc(adminSvc.PostAdminDeviceTransfer)))
+	// B257 (v1.5.8+, 2026-09-16): per-device adoption for the
+	// "pre-existing headscale, skygate installed later" case.
+	// Different from Transfer: the node has NO node_owner_map
+	// row yet, so the handler INSERTs instead of UPDATEs and
+	// doesn't try to UntagNode (no prior dev-tag to drop).
+	// Backs the "Devices awaiting adoption" card on
+	// /admin/devices (see internal/feature/admin/adopt_devices.go
+	// for the scanner + handler).
+	mux.Handle("POST /admin/devices/adopt", authMW(http.HandlerFunc(adminSvc.PostAdminDeviceAdopt)))
 	// B169 (v1.5.2) — admin-side device deletion. B162
 	// (v1.5.1) is the per-user delete on /my/devices;
 	// this one is the admin-scoped delete on /admin/devices
