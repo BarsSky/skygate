@@ -51,7 +51,7 @@ operator decision rationale.
 
 ## Release status
 
-* **Current**: v1.5.7-9-gXXXXXXX on VM remote,
+* **Current**: v1.5.7-13-gf25acd7 (commit `f25acd7` on VM remote,
   B253 + B254 PG compat + B255 + **B257 device adoption for
   pre-existing headscale instances** shipped) — **B167 OIDC config
   auto-sync (full Option C)** + **B168 live OIDC
