@@ -170,15 +170,18 @@ func ackReply(env BotEnv, arg string) string {
 		return i18n.Tf(lang, "bot.ack.invalid_id", arg)
 	}
 	// 1. Look up the row first so we can echo the body.
+	// 2026-09-16 (B253 fix): PG-native $1 placeholder +
+	// `EXTRACT(EPOCH FROM now())::bigint` (was SQLite
+	// `strftime('%s','now')` which doesn't parse on PG).
 	var body string
-	if err := d.QueryRow(`SELECT body FROM telegram_alerts WHERE id = ?`, id).Scan(&body); err != nil {
+	if err := d.QueryRow(`SELECT body FROM telegram_alerts WHERE id = $1`, id).Scan(&body); err != nil {
 		return i18n.Tf(lang, "bot.ack.not_found", id)
 	}
 	// 2. Idempotent UPDATE — only flips rows that are still open.
 	res, err := d.Exec(`UPDATE telegram_alerts
-	                       SET acked_at = strftime('%s','now'),
+	                       SET acked_at = EXTRACT(EPOCH FROM now())::bigint,
 	                           acked_by = 'telegram'
-	                     WHERE id = ? AND acked_at = 0`, id)
+	                     WHERE id = $1 AND acked_at = 0`, id)
 	if err != nil {
 		return i18n.Tf(lang, "bot.ack.db_error", err)
 	}

@@ -71,7 +71,7 @@ func (s *Service) PostAdminDevicesClaimAllForUser(w http.ResponseWriter, r *http
 	// no nodes to claim — return success (no-op).
 	var headscaleUserID sql.NullInt64
 	if err := conn.QueryRowContext(r.Context(),
-		`SELECT headscale_user_id FROM portal_users WHERE id = ?`,
+		`SELECT headscale_user_id FROM portal_users WHERE id = $1`,
 		portalUserID,
 	).Scan(&headscaleUserID); err != nil {
 		if err == sql.ErrNoRows {
@@ -97,11 +97,12 @@ func (s *Service) PostAdminDevicesClaimAllForUser(w http.ResponseWriter, r *http
 	// that aren't already tagged by this portal user. The
 	// filter (tagged_by_user_id IS NULL OR tagged_by_user_id != ?)
 	// makes the operation idempotent.
+	// 2026-09-16 (B253 fix): PG-native $1/$2/$3 placeholders.
 	res, err := conn.ExecContext(r.Context(),
 		`UPDATE node_owner_map
-		    SET tagged_by_user_id = ?
-		  WHERE headscale_user_id = ?
-		    AND (tagged_by_user_id IS NULL OR tagged_by_user_id != ?)`,
+		    SET tagged_by_user_id = $1
+		  WHERE headscale_user_id = $2
+		    AND (tagged_by_user_id IS NULL OR tagged_by_user_id != $3)`,
 		portalUserID, headscaleUserID.Int64, portalUserID,
 	)
 	if err != nil {

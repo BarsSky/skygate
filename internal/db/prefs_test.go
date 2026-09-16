@@ -18,14 +18,16 @@ import (
 // TestGetSetUserTheme.
 func seedUser(t *testing.T, d *sql.DB, username string) int64 {
 	t.Helper()
-	res, err := d.Exec(
-		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES (?, 'x', 0)`,
+	// 2026-09-16 (B253 fix): PG-native $1 placeholder + RETURNING id
+	// (was `INSERT ... VALUES(?, 'x', 0)` + `res.LastInsertId()` which
+	// the pgx driver doesn't support — silently returns 0).
+	var id int64
+	if err := d.QueryRow(
+		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES ($1, 'x', 0) RETURNING id`,
 		username,
-	)
-	if err != nil {
+	).Scan(&id); err != nil {
 		t.Fatalf("seed user %q: %v", username, err)
 	}
-	id, _ := res.LastInsertId()
 	return id
 }
 

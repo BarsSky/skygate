@@ -591,8 +591,10 @@ func loadAllCertSyncConfigs(ctx context.Context, db *sql.DB) ([]DerpCertSyncConf
 // admin page can show "checked 5 min ago, still up to date"
 // even when the actual cert was unchanged.
 func updateCertSyncChecked(ctx context.Context, db *sql.DB, id int64) error {
+	// 2026-09-16 (B253 fix): PG-native $1/$2/$3 placeholders (was
+	// SQLite `?`).
 	_, err := db.ExecContext(ctx,
-		`UPDATE derp_cert_sync SET last_checked_at = ?, updated_at = ? WHERE id = ?`,
+		`UPDATE derp_cert_sync SET last_checked_at = $1, updated_at = $2 WHERE id = $3`,
 		time.Now().Unix(), time.Now().Unix(), id)
 	return err
 }
@@ -605,11 +607,12 @@ func markCertSyncOK(ctx context.Context, db *sql.DB, id int64, sha string, expir
 	if !expiry.IsZero() {
 		expiryUnix = expiry.Unix()
 	}
+	// 2026-09-16 (B253 fix): PG-native $1..$5 placeholders.
 	_, err := db.ExecContext(ctx, `
 		UPDATE derp_cert_sync
-		   SET last_synced_at = ?, last_cert_sha256 = ?, last_error = '',
-		       expiry_warn_at = ?, updated_at = ?
-		 WHERE id = ?`,
+		   SET last_synced_at = $1, last_cert_sha256 = $2, last_error = '',
+		       expiry_warn_at = $3, updated_at = $4
+		 WHERE id = $5`,
 		time.Now().Unix(), sha, expiryUnix,
 		time.Now().Unix(), id)
 	return err
@@ -620,10 +623,11 @@ func markCertSyncOK(ctx context.Context, db *sql.DB, id int64, sha string, expir
 // short-circuit on a single bad row.
 func recordCertSyncError(ctx context.Context, db *sql.DB, id int64, msg string) {
 	log.Printf("derp_cert_sync: id=%d: %s", id, msg)
+	// 2026-09-16 (B253 fix): PG-native $1..$4 placeholders.
 	if _, err := db.ExecContext(ctx, `
 		UPDATE derp_cert_sync
-		   SET last_error = ?, last_checked_at = ?, updated_at = ?
-		 WHERE id = ?`,
+		   SET last_error = $1, last_checked_at = $2, updated_at = $3
+		 WHERE id = $4`,
 		msg, time.Now().Unix(), time.Now().Unix(), id); err != nil {
 		log.Printf("derp_cert_sync: write last_error for id=%d: %v", id, err)
 	}
@@ -633,7 +637,8 @@ func recordCertSyncError(ctx context.Context, db *sql.DB, id int64, msg string) 
 // table. Returns "" if the key is missing.
 func readGlobalSetting(db *sql.DB, key string) string {
 	var v string
-	if err := db.QueryRow(`SELECT value FROM global_settings WHERE key = ?`,
+	// 2026-09-16 (B253 fix): PG-native $1 placeholder.
+	if err := db.QueryRow(`SELECT value FROM global_settings WHERE key = $1`,
 		key).Scan(&v); err != nil {
 		return ""
 	}

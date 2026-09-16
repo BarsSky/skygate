@@ -18,15 +18,13 @@ import (
 // (strftime('%s','now'))".
 func seedPreauthKey(t *testing.T, d *sql.DB, userID int64, key, headscaleID string, usedI, expiresAt int64) int64 {
 	t.Helper()
-	res, err := d.Exec(
-		`INSERT INTO preauth_keys (user_id, key, headscale_preauth_id, used, expires_at) VALUES (?,?,?,?,?)`,
-		userID, key, headscaleID, usedI, expiresAt)
+	// 2026-09-16 (B253 fix): PG-native $1..$5 placeholders + RETURNING id.
+	var id int64
+	err := d.QueryRow(
+		`INSERT INTO preauth_keys (user_id, key, headscale_preauth_id, used, expires_at) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+		userID, key, headscaleID, usedI, expiresAt).Scan(&id)
 	if err != nil {
 		t.Fatalf("seedPreauthKey(key=%q): %v", key, err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatalf("LastInsertId: %v", err)
 	}
 	return id
 }

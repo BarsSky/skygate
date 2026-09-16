@@ -17,15 +17,13 @@ import (
 // previously-touched token.
 func seedAPIToken(t *testing.T, d *sql.DB, userID int64, tokenHash, label string, lastUsedI int64) int64 {
 	t.Helper()
-	res, err := d.Exec(
-		`INSERT INTO personal_api_tokens (user_id, token_hash, label, last_used_at) VALUES (?,?,?,?)`,
-		userID, tokenHash, label, lastUsedI)
+	// 2026-09-16 (B253 fix): PG-native $1..$4 placeholders + RETURNING id.
+	var id int64
+	err := d.QueryRow(
+		`INSERT INTO personal_api_tokens (user_id, token_hash, label, last_used_at) VALUES ($1,$2,$3,$4) RETURNING id`,
+		userID, tokenHash, label, lastUsedI).Scan(&id)
 	if err != nil {
 		t.Fatalf("seedAPIToken(hash=%q): %v", tokenHash, err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatalf("LastInsertId: %v", err)
 	}
 	return id
 }

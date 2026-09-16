@@ -68,11 +68,17 @@ func TestOpenAndMigrate(t *testing.T) {
 func TestGetSetUserTheme(t *testing.T) {
 	d := openTestDB(t)
 	// seed user
-	res, err := d.Exec(`INSERT INTO portal_users (username, password_hash, is_admin, theme) VALUES ('utester', 'x', 0, $1)`, ThemeVercel)
-	if err != nil {
+	// 2026-09-16 (B253 fix): PG-native INSERT ... RETURNING id
+	// (replaces pre-B253 `INSERT ...` + `res.LastInsertId()` which
+	// the pgx driver doesn't support — silently returns 0 so the
+	// subsequent GetUserTheme lookup misses).
+	var id int64
+	if err := d.QueryRow(
+		`INSERT INTO portal_users (username, password_hash, is_admin, theme) VALUES ('utester', 'x', 0, $1) RETURNING id`,
+		ThemeVercel,
+	).Scan(&id); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	id, _ := res.LastInsertId()
 
 	// GetUserTheme returns the seed theme
 	if got := GetUserTheme(d, id); got != ThemeVercel {

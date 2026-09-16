@@ -560,8 +560,9 @@ func CIDRForUser(userID int64) (string, error) {
 // reuse; the actual lookup is just a SELECT.
 func (m *Manager) UserIDFromUsername(ctx context.Context, username string) (int64, error) {
 	var id int64
+	// 2026-09-16 (B253 fix): PG-native $1 placeholder (was SQLite `?`).
 	err := m.DB.QueryRowContext(ctx,
-		`SELECT id FROM portal_users WHERE username = ?`, username,
+		`SELECT id FROM portal_users WHERE username = $1`, username,
 	).Scan(&id)
 	return id, err
 }
@@ -569,8 +570,9 @@ func (m *Manager) UserIDFromUsername(ctx context.Context, username string) (int6
 // helper for tests + code that needs the user's headscale_user_id.
 func (m *Manager) HeadscaleUserID(ctx context.Context, userID int64) (int64, error) {
 	var id int64
+	// 2026-09-16 (B253 fix): PG-native $1 placeholder.
 	err := m.DB.QueryRowContext(ctx,
-		`SELECT headscale_user_id FROM portal_users WHERE id = ?`, userID,
+		`SELECT headscale_user_id FROM portal_users WHERE id = $1`, userID,
 	).Scan(&id)
 	return id, err
 }

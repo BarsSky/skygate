@@ -581,7 +581,7 @@ func (s *Service) runSubnetSanityCheck(userID int64) []string {
 	}
 	// Denorm check.
 	var dCIDR, dStatus string
-	if err := d.QueryRow(`SELECT subnet_cidr, subnet_status FROM portal_users WHERE id = ?`, userID).Scan(&dCIDR, &dStatus); err != nil {
+	if err := d.QueryRow(`SELECT subnet_cidr, subnet_status FROM portal_users WHERE id = $1`, userID).Scan(&dCIDR, &dStatus); err != nil {
 		out = append(out, fmt.Sprintf("✗ read denorm: %v", err))
 	} else {
 		if dCIDR == sub.CIDR {

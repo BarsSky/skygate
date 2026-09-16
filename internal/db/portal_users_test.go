@@ -33,15 +33,15 @@ func seedPortalUser(t *testing.T, d *sql.DB, username, hash string, isAdmin bool
 	if isAdmin {
 		adminI = 1
 	}
-	res, err := d.Exec(
-		`INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES (?,?,?,?)`,
-		username, hash, adminI, hsID)
+	// 2026-09-16 (B253 fix): PG-native INSERT ... RETURNING id
+	// (was `INSERT ... VALUES(?,?,?,?)` + `res.LastInsertId()` which
+	// the pgx driver doesn't support — silently returns 0).
+	var id int64
+	err := d.QueryRow(
+		`INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES ($1,$2,$3,$4) RETURNING id`,
+		username, hash, adminI, hsID).Scan(&id)
 	if err != nil {
 		t.Fatalf("seedPortalUser(%q): %v", username, err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatalf("LastInsertId: %v", err)
 	}
 	return id
 }
@@ -59,15 +59,13 @@ func seedPortalUserNoHS(t *testing.T, d *sql.DB, username, hash string, isAdmin 
 	if isAdmin {
 		adminI = 1
 	}
-	res, err := d.Exec(
-		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES (?,?,?)`,
-		username, hash, adminI)
+	// 2026-09-16 (B253 fix): PG-native $N placeholders + RETURNING id.
+	var id int64
+	err := d.QueryRow(
+		`INSERT INTO portal_users (username, password_hash, is_admin) VALUES ($1,$2,$3) RETURNING id`,
+		username, hash, adminI).Scan(&id)
 	if err != nil {
 		t.Fatalf("seedPortalUserNoHS(%q): %v", username, err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatalf("LastInsertId: %v", err)
 	}
 	return id
 }

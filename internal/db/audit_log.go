@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -168,11 +169,16 @@ func ListAuditLogForUser(d *sql.DB, userID int64, username string, since int64, 
 	        FROM audit_log
 	       WHERE (user_id = $1 OR (user_id = 0 AND username = $2))`
 	args := []interface{}{userID, username}
+	// 2026-09-16 (B253 fix): PG-native $N placeholders for the
+	// dynamic tail. We can't use `?` because pgx/stdlib doesn't
+	// auto-translate. The numbers are computed from len(args)
+	// (which is the count of placeholders already in the query)
+	// so $N always points at the next free slot.
 	if since > 0 {
-		q += ` AND created_at >= ?`
+		q += fmt.Sprintf(` AND created_at >= $%d`, len(args)+1)
 		args = append(args, since)
 	}
-	q += ` ORDER BY id DESC LIMIT ? OFFSET ?`
+	q += fmt.Sprintf(` ORDER BY id DESC LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
 	args = append(args, limit, offset)
 	rows, err := d.Query(q, args...)
 	if err != nil {
