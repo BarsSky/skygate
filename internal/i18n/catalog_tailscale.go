@@ -49,6 +49,17 @@ var ruTailscale = map[string]string{
 	"tailscale.disabled_help"            : "Переменная окружения <code>SKYGATE_TS_AUTHKEY_FILE</code> указывает на путь, который не существует или не является обычным файлом (например, <code>/dev/null</code>). Entrypoint пропустил запуск tailscaled при старте контейнера; UI Start тоже заблокирован. Чтобы включить — измените <code>docker-compose.yml</code> и перезапустите skygate.",
 	"tailscale.disabled_auth_form_help"  : "Сохранение ключа отключено, пока Tailscale заблокирован через env. Измените <code>SKYGATE_TS_AUTHKEY_FILE</code> в <code>docker-compose.yml</code> и перезапустите skygate.",
 	"tailscale.disabled_start_tooltip"   : "Отключено через SKYGATE_TS_AUTHKEY_FILE — см. баннер выше",
+	// B259 (v1.5.8+, 2026-09-16): flip the DB-overridable
+	// path via the web UI. Operator doesn't have to edit
+	// docker-compose.yml + restart. The button generates
+	// a fresh preauth key, writes it to /data/ts/authkey,
+	// and starts tailscaled.
+	"tailscale.enable_in_container_btn"      : "Включить Tailscale в контейнере",
+	"tailscale.enable_in_container_confirm"  : "Включить Tailscale в контейнере? Путь будет сохранён в БД, будет сгенерирован новый preauth key через headscale, tailscaled запустится.",
+	"tailscale.disable_in_container_heading" : "Отключить Tailscale в контейнере",
+	"tailscale.disable_in_container_help"    : "Останавливает tailscaled в контейнере и сохраняет <code>/dev/null</code> в БД (без правки <code>docker-compose.yml</code>). Используйте это чтобы переключиться обратно на host-level tailscale.",
+	"tailscale.disable_in_container_btn"      : "Отключить Tailscale в контейнере",
+	"tailscale.disable_in_container_confirm"  : "Отключить Tailscale в контейнере? tailscaled будет остановлен, ключ удалён с диска, путь /dev/null будет сохранён в БД (env-переменная SKYGATE_TS_AUTHKEY_FILE не меняется — на следующем рестарте контейнера вступят в силу настройки из docker-compose.yml).",
 	"tailscale.help_heading"             : "Как это работает",
 	"tailscale.help_body"                : "Tailscale нужен чтобы skygate (в этом контейнере) мог принимать subnet-routes от ваших exit-релеев. Без Tailscale весь трафик skygate идёт через eth0, и api.telegram.org блокируется на RF VPS.<br><br>После <b>Save + Start</b> контейнер получит tailnet IP (например <code>100.64.x.y</code>) и skygate начнёт принимать маршруты релеев. Дальше на <a href=\"/admin/telegram\" target=\"_blank\">/admin/telegram</a> выберите egress-relay — и бот заработает.<br><br>Сохранённый auth key переживает рестарт контейнера — настройка подхватывается автоматически.",
 	"tailscale.help_after_start"         : "После Start подождите ~10-30s и обновите страницу — увидите tailnet IP и routes от релеев.",
@@ -128,6 +139,14 @@ var enTailscale = map[string]string{
 	"tailscale.disabled_help"            : "The <code>SKYGATE_TS_AUTHKEY_FILE</code> env var points to a path that either does not exist or is not a regular file (e.g. <code>/dev/null</code>). The container entrypoint skipped tailscaled at start-up; the UI Start button is also disabled. To re-enable — edit <code>docker-compose.yml</code> and restart the skygate container.",
 	"tailscale.disabled_auth_form_help"  : "Saving an auth key is disabled while Tailscale is blocked via env. Edit <code>SKYGATE_TS_AUTHKEY_FILE</code> in <code>docker-compose.yml</code> and restart skygate.",
 	"tailscale.disabled_start_tooltip"   : "Disabled via SKYGATE_TS_AUTHKEY_FILE — see banner above",
+	// B259: flip the DB-overridable path via the web UI.
+	// Operator doesn't have to edit docker-compose.yml + restart.
+	"tailscale.enable_in_container_btn"      : "Enable in-container Tailscale",
+	"tailscale.enable_in_container_confirm"  : "Enable Tailscale in the container? The path will be persisted in DB, a fresh preauth key will be generated via headscale, and tailscaled will start.",
+	"tailscale.disable_in_container_heading" : "Disable in-container Tailscale",
+	"tailscale.disable_in_container_help"    : "Stops tailscaled in the container and persists <code>/dev/null</code> in DB (no docker-compose.yml edit). Use this to switch back to host-level Tailscale.",
+	"tailscale.disable_in_container_btn"      : "Disable in-container Tailscale",
+	"tailscale.disable_in_container_confirm"  : "Disable Tailscale in the container? tailscaled will be stopped, the key file deleted, and the path /dev/null will be persisted in DB (the SKYGATE_TS_AUTHKEY_FILE env var is NOT touched — it'll re-take effect on the next container restart).",
 	"tailscale.auth_help"                : "Generate a preauth key via <code>headscale preauthkeys create --user %s --reusable --ephemeral</code> (or via <a href=\"/admin/headscale\" target=\"_blank\">/admin/headscale</a>), then paste it here. After Save, click <b>Start</b>.",
 	"tailscale.auth_textarea_label"      : "Auth key (preauth)",
 	"tailscale.auth_textarea_placeholder": "tskey-auth-...",

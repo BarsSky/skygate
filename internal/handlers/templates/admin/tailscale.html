@@ -61,6 +61,38 @@
   <i class="fa-solid fa-circle-info"></i>
   <strong>{{t "tailscale.disabled_title"}}</strong>
   {{t "tailscale.disabled_help" | safeHTML}}
+  {{/* B259: "Enable in-container Tailscale" button — flips the
+       DB-overridable path from /dev/null to /data/ts/authkey,
+       generates a fresh preauth key via headscale, writes
+       it to that file, and starts tailscaled. Operator doesn't
+       have to edit docker-compose.yml + restart. The entrypoint
+       sh skip check will RE-EVALUATE on the next container
+       restart (until then the in-memory tailscaled stays
+       down; this button force-starts it). */}}
+  <div style="margin-top:.6rem">
+    <form action="/admin/tailscale" method="POST" style="display:inline"
+          onsubmit="return confirm('{{t "tailscale.enable_in_container_confirm" | js}}')">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="action" value="enable_in_container">
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-power-off"></i> {{t "tailscale.enable_in_container_btn"}}</button>
+    </form>
+  </div>
+</div>
+{{else}}
+{{/* B259: counterpart button when tailscale IS enabled in the
+     container. Lets the operator flip back to disabled without
+     editing docker-compose.yml — useful when they want to
+     stop the in-container tailscaled and switch back to a
+     host-level tailscale (or just turn it off temporarily). */}}
+<div class="card" style="grid-column:1 / -1">
+  <h3><i class="fa-solid fa-power-off"></i> {{t "tailscale.disable_in_container_heading"}}</h3>
+  <p class="sub">{{t "tailscale.disable_in_container_help" | safeHTML}}</p>
+  <form action="/admin/tailscale" method="POST"
+        onsubmit="return confirm('{{t "tailscale.disable_in_container_confirm" | js}}')">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="action" value="disable_in_container">
+    <button type="submit" class="btn btn-warn"><i class="fa-solid fa-stop"></i> {{t "tailscale.disable_in_container_btn"}}</button>
+  </form>
 </div>
 {{end}}
 

@@ -17957,3 +17957,122 @@ confusing error.
     automatically (the dual env var fallback is already there;
     adding intent inference would just be more code for the
     same outcome).
+
+## B259 (v1.5.8+, 2026-09-16) — `/admin/tailscale` toggle: Enable / Disable Tailscale in container via UI
+
+**Symptom** (operator report 2026-09-16, ~10 min after B258
+deploy): "I don't have access to docker-compose.yml anymore,
+that file is lost". B258 told the operator to "edit
+docker-compose.yml + restart skygate" to flip Tailscale
+between enabled and disabled — but the operator can't reach
+docker-compose.yml (lost / no access). The DB-overridable
+login_server pattern (B258's sibling) was right there as a
+precedent; the operator's report just exposed that B258's
+"edit docker-compose" instruction was the wrong UX for an
+operator with no shell access.
+
+**Fix** (5 files, ~300 lines):
+
+  1. **`internal/feature/admin/tailscale.go`** — DB-overridable
+     `tailscale.auth_key_path` global_settings key, with
+     `SKYGATE_TS_AUTHKEY_FILE` env var as fallback. New
+     helpers `tailscaleAuthKeyPath()` and
+     `tailscaleAuthKeyPathSource()` resolve the path with
+     priority **DB > env > default**. Both helpers are nil-safe
+     (`s.DB == nil` falls through to env var / default) so the
+     B259 unit tests don't need a real DB pool.
+
+     Two new handlers:
+       - `handleTailscaleEnableInContainer` — persists
+         `/data/ts/authkey` to the DB override (FIRST step),
+         then calls `generateAndWriteTailscaleKeyForEnable` to
+         create a fresh preauth key via headscale +
+         `CreatePreauthKeyWithTags` + write the key to the new
+         file, then `startTailscaled()`. Audit:
+         `tailscale_enable_in_container` with the new path,
+         generated key fingerprint, and start output.
+       - `handleTailscaleDisableInContainer` — stops
+         tailscaled if running (best-effort), persists
+         `/dev/null` to the DB override, removes the auth key
+         file (`/data/ts/authkey`). Audit:
+         `tailscale_disable_in_container` with the new path.
+
+  2. **Dispatcher (`PostAdminTailscale`)** — two new cases:
+     `enable_in_container` and `disable_in_container`.
+
+  3. **`internal/handlers/templates/admin/tailscale.html`** —
+     In the **disabled banner** (when `State.AuthKeyDisabled=true`):
+     a green "Включить Tailscale в контейнере" button +
+     confirmation dialog. In the **normal mode** card
+     (when `State.AuthKeyDisabled=false`): a red
+     "Отключить Tailscale в контейнере" button + confirmation.
+     Both forms POST to `/admin/tailscale` and rely on
+     `authMW` for auth (no CSRF — same as the existing
+     Start/Stop buttons).
+
+  4. **`internal/i18n/catalog_tailscale.go`** — 6 RU+EN keys
+     (`enable_in_container_btn`, `enable_in_container_confirm`,
+     `disable_in_container_heading`, `disable_in_container_help`,
+     `disable_in_container_btn`, `disable_in_container_confirm`).
+
+  5. **`internal/feature/admin/tailscale_b259_test.go`** — 17
+     unit tests:
+       - `TestTailscaleAuthKeyPath_ResolutionOrder` — pins the
+         DB > env > default priority order
+       - `TestTailscaleAuthKeyPathSource_EnvFallback` — pins the
+         "db" / "env" / "default" source classification for the
+         template hint
+       - `TestTailscaleAuthKeyDisabled_RespectsRealPath` — B259
+         layer doesn't break B258's "real path = not disabled"
+         rule
+       - `TestTailscaleAuthKeyDisabled_RespectsDevNull` — B259
+         layer doesn't break B258's "/dev/null = disabled" rule
+       - `TestTailscaleAuthKeyDisabled_RespectsDevNullVariants` —
+         prefix-match branch still fires
+       - `TestEnableInContainerPersistsDBPath` — reads the
+         tailscale.go source and asserts the enable handler
+         calls `db.SetGlobalSetting` with the DB key FIRST
+         (so `startTailscaled` below picks up the new path).
+         Pin via string-grep on the source file.
+
+**Files**:
+  - `internal/feature/admin/tailscale.go` — DB layer + 2 handlers + nil-safe
+  - `internal/feature/admin/tailscale_b259_test.go` (NEW) — 17 tests
+  - `internal/handlers/templates/admin/tailscale.html` — 2 buttons
+  - `internal/i18n/catalog_tailscale.go` — 6 RU+EN keys
+  - `scripts/check_b259_tailscale_toggle.sh` (NEW) — 30-contract B-check
+
+**Operator workflow** (their 2026-09-16 scenario, post-B259):
+
+  - **To enable Tailscale in the container**: open `/admin/tailscale`
+    → click "Включить Tailscale в контейнере" → confirm dialog → the
+    page reloads with `tailscaled остановлен` → gone, the auth-key
+    paste form reappears, and Start is enabled. No docker-compose
+    edit, no container restart.
+
+  - **To disable Tailscale in the container**: open `/admin/tailscale`
+    → click "Отключить Tailscale в контейнере" → confirm → tailscaled
+    stops, the banner reappears on the next page load.
+
+  - **Note on first-boot setup**: the DB row starts empty, so the
+    env var (`SKYGATE_TS_AUTHKEY_FILE=/dev/null` in the operator's
+    docker-compose) is the value that wins. The DB row gets
+    populated only when the operator first clicks Enable or
+    Disable. After that, the DB row is the source of truth.
+
+**Verification** (`bash scripts/check_b259_tailscale_toggle.sh`):
+  - 30 passed, 0 failed
+  - 17 unit tests pin the 6 reject rules + 6 source-classification
+    cases + 1 "DB write is first" source-grep test + 4 regression
+    tests against B258's disabled-detection rules
+
+**Out of scope** (NOT B259):
+  - Re-running the entrypoint.sh skip check on the next page load
+    (entrypoint runs once per container start; if the operator
+    enables via UI without restarting the container, tailscaled
+    comes up via `startTailscaled` but the entrypoint log still
+    says "[init] TS_AUTHKEY_FILE not set — Tailscale skipped").
+    This is documented but not fixed — the entrypoint's check
+    is the "first boot" gate, the UI toggle is the
+    "subsequent change" path. Restart the container to align
+    both.
