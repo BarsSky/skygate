@@ -29,9 +29,28 @@ func TestInfraHeadscaleUserID_B251_Happy(t *testing.T) {
 	defer conn.Close()
 	ctx := context.Background()
 
+	// 2026-09-16 (B253 fix): pre-B253 INSERT omitted password_hash
+	// (assumed NULL was OK), but portal_users.password_hash is
+	// NOT NULL. The test failed with
+	// `null value in column "password_hash" violates not-null
+	// constraint` on PG. The literal 'x' is a test placeholder
+	// — no authentication is attempted on the seed row.
+	//
+	// 2026-09-16 (B253 fix, second): v0.54's `ensureInfraUser`
+	// migration inserts an `infra` row at id=99 during
+	// MigratePostgres() — BEFORE this test's seed runs. With
+	// `ON CONFLICT (username) DO NOTHING`, the test's INSERT is
+	// a silent no-op (the migration's row wins), leaving
+	// headscale_user_id at its schema default (NULL). The lookup
+	// then sees NULL/0 and reports "infra headscale_user_id not
+	// linked". Switch to `ON CONFLICT (username) DO UPDATE SET
+	// headscale_user_id = EXCLUDED.headscale_user_id` so the
+	// test's value (85 here, 0 for the NullLink test) wins on
+	// conflict.
 	if _, err := conn.ExecContext(ctx,
-		`INSERT INTO portal_users (username, headscale_user_id, is_admin)
-		 VALUES ('infra', 85, 0)`,
+		`INSERT INTO portal_users (username, password_hash, headscale_user_id, is_admin)
+		 VALUES ('infra', 'x', 85, 0)
+		 ON CONFLICT (username) DO UPDATE SET headscale_user_id = EXCLUDED.headscale_user_id`,
 	); err != nil {
 		t.Fatalf("seed portal_users.infra: %v", err)
 	}
@@ -77,9 +96,20 @@ func TestInfraHeadscaleUserID_B251_NullLink(t *testing.T) {
 	defer conn.Close()
 	ctx := context.Background()
 
+	// 2026-09-16 (B253 fix): password_hash is NOT NULL on
+	// portal_users — must supply it (test placeholder 'x').
+	//
+	// ON CONFLICT (username) DO UPDATE SET headscale_user_id =
+	// EXCLUDED.headscale_user_id — the v0.54 ensureInfraUser
+	// migration inserts an `infra` row during MigratePostgres,
+	// so we need to UPSERT (not plain INSERT). The expected
+	// "null link" case requires headscale_user_id to be 0,
+	// so we explicitly set it to 0 here (otherwise the test
+	// would inherit whatever value the migration left behind).
 	if _, err := conn.ExecContext(ctx,
-		`INSERT INTO portal_users (username, headscale_user_id, is_admin)
-		 VALUES ('infra', 0, 0)`,
+		`INSERT INTO portal_users (username, password_hash, headscale_user_id, is_admin)
+		 VALUES ('infra', 'x', 0, 0)
+		 ON CONFLICT (username) DO UPDATE SET headscale_user_id = EXCLUDED.headscale_user_id`,
 	); err != nil {
 		t.Fatalf("seed portal_users.infra (null link): %v", err)
 	}

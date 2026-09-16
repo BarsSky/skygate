@@ -139,8 +139,15 @@ func TestListAuditActionsDistinct(t *testing.T) {
 // unreachable from the user_id=N JOIN.
 func insertRule(t *testing.T, d *sql.DB, userID, deviceID int, exitNode, tt, tv, action, ip, parent string) int64 {
 	t.Helper()
+	// 2026-09-16 (B253 fix): v1.3.0+ removed SQLite. The pre-B253 code
+	// used SQLite's `INSERT OR IGNORE` + `?` placeholders, which
+	// doesn't parse on PostgreSQL. Updated to PG-native syntax
+	// (`ON CONFLICT DO NOTHING` + `$1, $2` placeholders). The
+	// conflict target is `id` (the primary key) so re-runs are
+	// truly idempotent — matching the `ON CONFLICT (username)`
+	// pattern used in `qInsertPortalUserAdopt` (queries.go:262).
 	if _, err := d.Exec(
-		`INSERT OR IGNORE INTO portal_users (id, username, password_hash, is_admin) VALUES (?, ?, 'x', 0)`,
+		`INSERT INTO portal_users (id, username, password_hash, is_admin) VALUES ($1, $2, 'x', 0) ON CONFLICT (id) DO NOTHING`,
 		userID, "user"+string(rune('0'+userID)),
 	); err != nil {
 		t.Fatalf("seed portal_users: %v", err)

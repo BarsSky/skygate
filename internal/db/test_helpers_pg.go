@@ -106,23 +106,33 @@ func OpenTestPG(t testing.TB) *sql.DB {
 	return conn
 }
 
-// injectSearchPath adds `options=-csearch_path=<schema>` to the
-// DSN so every new pgx connection inherits the search_path at
-// connect time (without needing per-connection SET search_path).
-// Existing `options=` in the DSN are preserved.
+// injectSearchPath adds `search_path=<schema>` to the DSN so every
+// new pgx connection inherits the search_path at connect time
+// (without needing per-connection SET search_path). pgx/stdlib
+// passes the `search_path` query parameter through as a startup
+// parameter, which PostgreSQL applies as a session default before
+// any client query runs. Verified on 2026-09-16 against
+// pgx/v5/stdlib with PostgreSQL 15 — `SELECT current_schema()`
+// returns the test schema on every freshly-opened connection.
+//
+// We tried `options=-csearch_path=...` first (the libpq startup-
+// file escape syntax) but pgx/stdlib does NOT propagate that
+// through to the server's command-line — the parameter is parsed
+// and discarded by the driver. The plain `search_path=<schema>`
+// query parameter is honoured by libpq, pgx, and psql uniformly.
+//
+// Existing `search_path=` in the DSN is REPLACED (we assume the
+// caller passed SKYGATE_TEST_PG_DSN without a schema). Other
+// query parameters (sslmode, pool_max_conns, etc.) are preserved.
 func injectSearchPath(dsn, schema string) string {
-	opt := "options=-csearch_path=" + schema
-	// Match `?...` (existing options) — replace or append.
+	opt := "search_path=" + schema
 	if i := strings.Index(dsn, "?"); i >= 0 {
-		// Look for an existing "options=" inside the query string
-		// and merge ours in so we don't lose SSL mode / pool_max_conns
-		// / etc. that the caller already passed.
 		q := dsn[i+1:]
 		opts := strings.Split(q, "&")
 		replaced := false
 		for k, o := range opts {
-			if strings.HasPrefix(o, "options=") {
-				opts[k] = o + " " + opt
+			if strings.HasPrefix(o, "search_path=") {
+				opts[k] = opt
 				replaced = true
 				break
 			}
