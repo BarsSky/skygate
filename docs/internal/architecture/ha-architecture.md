@@ -1,6 +1,6 @@
 # Skygate HA Architecture — Tier 1 (hot standby)
 
-**Status**: Tier 1 (active-passive) **code-side implemented** as of v1.5.0 (B145–B153). Operator-side phases (Phase 0 Tailscale mesh, Phase 7 <polygon-vm-hostname> bootstrap, Phase 9 live DR drill) remain for v1.5.0 release per `docs/internal/ha-v1.5.0-execution.md`. Tier 2+ out of scope.
+**Status**: Tier 1 (active-passive) **code-side implemented** as of v1.5.0 (B145–B153). Operator-side phases (Phase 0 Tailscale mesh, Phase 7 <polygon-vm-hostname> bootstrap, Phase 9 live DR drill) remain for v1.5.0 release per `docs/internal/runbooks/ha-v1.5.0-execution.md`. Tier 2+ out of scope.
 **Last updated**: 2026-09-08
 **See also**: [`docs/v0.27.0-postgres-ha.md`](v0.27.0-postgres-ha.md)
 (the full 18-day plan, including Phase 2 PG HA setup, Phase 3
@@ -172,7 +172,7 @@ This work is tracked as Priority 3 in
   and runs `scripts/dr_drill.sh`; Q9 in `ha-v1.5.0-execution.md` §4)
 
 The full implementation tracker is
-[`docs/internal/ha-v1.5.0-execution.md`](ha-v1.5.0-execution.md).
+[`docs/internal/runbooks/ha-v1.5.0-execution.md`](ha-v1.5.0-execution.md).
 This file is the executive summary; that one is the per-tick
 checklist with the 26 code-side ticks all marked [x] as of
 2026-09-08 (after B145 / B146 / B148 / B149 / B150 / B151 / B152 /

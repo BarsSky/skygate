@@ -17,7 +17,7 @@ BackfillInfra + public-access grants) готова. Для полного фик
 
 # 2. На каждой ноде выполнить:
 PREAUTH_KEY=hskey-auth-... \
-  bash /home/skyadmin/skygate/scripts/fix_tailnet_split.sh
+  bash /home/<OPERATOR_USER>/skygate/scripts/fix_tailnet_split.sh
 # Скопировать вывод, выполнить на ноде.
 
 # 3. После всех 5 re-auth:
@@ -31,10 +31,10 @@ docker exec skygate-skygate-1 bash /app/scripts/tailnet_probe.sh
 
 | # | Node | Current tag | New tag | Location |
 |---|------|-------------|---------|----------|
-| 1 | skygate-host-1 | `tag:dev-skyadmin-skygate-vm` | `tag:dev-infra-skygate-host-1` | skygate-vm docker container |
-| 2 | emilia | `tag:dev-skyadmin-emilia,tag:exit-node,tag:private` | `tag:dev-infra-emilia,tag:exit-node,tag:private` | VPS relay |
-| 3 | karolina | `tag:dev-skyadmin-karolina,tag:exit-node,tag:private` | `tag:dev-infra-karolina,tag:exit-node,tag:private` | VPS relay |
-| 4 | sharlotta | `tag:dev-skyadmin-sharlotta,tag:exit-node,tag:private` | `tag:dev-infra-sharlotta,tag:exit-node,tag:private` | VPS relay |
+| 1 | skygate-host | `tag:dev-<OPERATOR_USER>-skygate-vm` | `tag:dev-infra-skygate-host` | skygate-vm docker container |
+| 2 | <DEVICE_Y> | `tag:dev-<OPERATOR_USER>-<DEVICE_Y>,tag:exit-node,tag:private` | `tag:dev-infra-<DEVICE_Y>,tag:exit-node,tag:private` | VPS relay |
+| 3 | <DEVICE_X> | `tag:dev-<OPERATOR_USER>-<DEVICE_X>,tag:exit-node,tag:private` | `tag:dev-infra-<DEVICE_X>,tag:exit-node,tag:private` | VPS relay |
+| 4 | sharlotta | `tag:dev-<OPERATOR_USER>-sharlotta,tag:exit-node,tag:private` | `tag:dev-infra-sharlotta,tag:exit-node,tag:private` | VPS relay |
 | 5 | <polygon-vm-hostname> | `tag:private` (only) | `tag:dev-infra-<polygon-vm-hostname>,tag:exit-node,tag:private` | VPS relay (= skygate-host-2 for HA) |
 
 **Critical for <polygon-vm-hostname>**: this node's hostname is
@@ -43,10 +43,10 @@ docker exec skygate-skygate-1 bash /app/scripts/tailnet_probe.sh
 added, isInfraNode returns false and BackfillInfra UPDATE
 will not move the node to `infra`. The node would stay in
 the `svyatoslava` portal-user bucket (leftover from earlier
-experiments) and remain invisible to skygate-host-1.
+experiments) and remain invisible to skygate-host.
 
 **Why <polygon-vm-hostname> is in the infra bucket (operator's design)**: this
-is the future **skygate-host-2** (the HA partner of skygate-host-1,
+is the future **skygate-host-2** (the HA partner of skygate-host,
 per the B93/v1.3.11 design). The `svyatoslava` portal user
 (id=11) is a leftover from earlier per-user-egress experiments
 and is NOT needed — after the Phase 3 re-tag + BackfillInfra
@@ -55,19 +55,19 @@ portal user becomes dormant (0 nodes). It can be left in
 `portal_users` for audit history, or deleted in a follow-up
 cleanup.
 
-**Why <polygon-vm-hostname> needs `tag:exit-node`**: skygate-host-1
+**Why <polygon-vm-hostname> needs `tag:exit-node`**: skygate-host
 needs to see this node as a potential egress target for the
 Telegram bot. Without `tag:exit-node`, the
 `* → tag:exit-node` catch-all doesn't include <polygon-vm-hostname>,
-and skygate-host-1 can't route Telegram API traffic through
+and skygate-host can't route Telegram API traffic through
 it. Adding `tag:exit-node` makes the catch-all match AND
 satisfies isInfraNode rule 3 (so BackfillInfra UPDATE fires).
 
-**NOT to re-tag** (остаются под `tag:dev-skyadmin-X` / `tag:dev-michail-X`):
-- skyworker, skybars, skybars-1, a71, cyborg, desktop-cuo0tfb,
-  msi, svyatoslava-legacy, base, basic (skyadmin's user devices
+**NOT to re-tag** (остаются под `tag:dev-<OPERATOR_USER>-X` / `tag:dev-<USER_A>-X`):
+- <DEVICE_Z>, <DEVICE_W>, <DEVICE_W>-1, a71, cyborg, desktop-cuo0tfb,
+  msi, svyatoslava-legacy, base, basic (<OPERATOR_USER>'s user devices
   + offline devices)
-- nothing-phone-2, olesya (michail's user devices)
+- nothing-phone-2, olesya (<USER_A>'s user devices)
 
 ---
 
@@ -102,15 +102,15 @@ sudo tailscale up \
 ### 3. Add the new infra tag to the printed command
 
 **For each of the 5 infra nodes**, the printed command will have
-`--advertise-tags=tag:dev-skyadmin-<hostname>` (or no tags for
+`--advertise-tags=tag:dev-<OPERATOR_USER>-<hostname>` (or no tags for
 <polygon-vm-hostname>). **Replace** with the new infra tag:
 
 | Node | Replace | With |
 |------|---------|------|
-| skygate-host-1 | `--advertise-tags=tag:dev-skyadmin-skygate-vm` | `--advertise-tags=tag:dev-infra-skygate-host-1` |
-| emilia | `--advertise-tags=tag:dev-skyadmin-emilia,tag:exit-node,tag:private` | `--advertise-tags=tag:dev-infra-emilia,tag:exit-node,tag:private` |
-| karolina | `--advertise-tags=tag:dev-skyadmin-karolina,tag:exit-node,tag:private` | `--advertise-tags=tag:dev-infra-karolina,tag:exit-node,tag:private` |
-| sharlotta | `--advertise-tags=tag:dev-skyadmin-sharlotta,tag:exit-node,tag:private` | `--advertise-tags=tag:dev-infra-sharlotta,tag:exit-node,tag:private` |
+| skygate-host | `--advertise-tags=tag:dev-<OPERATOR_USER>-skygate-vm` | `--advertise-tags=tag:dev-infra-skygate-host` |
+| <DEVICE_Y> | `--advertise-tags=tag:dev-<OPERATOR_USER>-<DEVICE_Y>,tag:exit-node,tag:private` | `--advertise-tags=tag:dev-infra-<DEVICE_Y>,tag:exit-node,tag:private` |
+| <DEVICE_X> | `--advertise-tags=tag:dev-<OPERATOR_USER>-<DEVICE_X>,tag:exit-node,tag:private` | `--advertise-tags=tag:dev-infra-<DEVICE_X>,tag:exit-node,tag:private` |
+| sharlotta | `--advertise-tags=tag:dev-<OPERATOR_USER>-sharlotta,tag:exit-node,tag:private` | `--advertise-tags=tag:dev-infra-sharlotta,tag:exit-node,tag:private` |
 | <polygon-vm-hostname> | `--advertise-tags=tag:private` (no exit-node tag yet — and no infra tag) | `--advertise-tags=tag:dev-infra-<polygon-vm-hostname>,tag:exit-node,tag:private` |
 
 **The other `tag:*` tags MUST be preserved** (tag:exit-node,
@@ -133,8 +133,8 @@ tailscale status
 
 ## Order of operations (minimize downtime)
 
-1. **skygate-host-1 first** (1 нода, ~5 мин). Это убирает главный
-   split-symptom (skygate-host-1 в mesh с остальными skyadmin).
+1. **skygate-host first** (1 нода, ~5 мин). Это убирает главный
+   split-symptom (skygate-host в mesh с остальными <OPERATOR_USER>).
 2. **VPS-side next** (4 ноды, можно параллельно через разные
    SSH-сессии). Каждая занимает 3-5 мин.
 
@@ -167,12 +167,12 @@ docker exec skygate-skygate-1 bash /app/scripts/tailnet_probe.sh
 
 | Metric | Before B111 | After B111 (operator re-tag done) |
 |--------|-------------|----------------------------------|
-| skygate-host-1 headscale tag | `tag:dev-skyadmin-skygate-vm` | `tag:dev-infra-skygate-host-1` |
-| emilia headscale tag | `tag:dev-skyadmin-emilia` | `tag:dev-infra-emilia` |
-| karolina headscale tag | `tag:dev-skyadmin-karolina` | `tag:dev-infra-karolina` |
-| sharlotta headscale tag | `tag:dev-skyadmin-sharlotta` | `tag:dev-infra-sharlotta` |
+| skygate-host headscale tag | `tag:dev-<OPERATOR_USER>-skygate-vm` | `tag:dev-infra-skygate-host` |
+| <DEVICE_Y> headscale tag | `tag:dev-<OPERATOR_USER>-<DEVICE_Y>` | `tag:dev-infra-<DEVICE_Y>` |
+| <DEVICE_X> headscale tag | `tag:dev-<OPERATOR_USER>-<DEVICE_X>` | `tag:dev-infra-<DEVICE_X>` |
+| sharlotta headscale tag | `tag:dev-<OPERATOR_USER>-sharlotta` | `tag:dev-infra-sharlotta` |
 | <polygon-vm-hostname> headscale tag | `tag:private` | `tag:dev-infra-<polygon-vm-hostname>` |
-| `node_owner_map` for these 5 | mixed skyadmin/michail/svyatoslava | `username='infra'` (via BackfillInfra UPDATE on next skygate restart) |
+| `node_owner_map` for these 5 | mixed <OPERATOR_USER>/<USER_A>/svyatoslava | `username='infra'` (via BackfillInfra UPDATE on next skygate restart) |
 | Policy grants for `tag:dev-infra-*` | 0 (no matching devices) | mesh (5 nodes × 4 peers) + 4 `* → tag:dev-infra-<exit>` catch-alls |
 
 ---
@@ -198,7 +198,7 @@ Check `node_owner_map` for the affected node — BackfillInfra
 may not have run yet. Restart skygate container to trigger
 auto-discovery:
 ```bash
-cd /home/skyadmin/skygate
+cd /home/<OPERATOR_USER>/skygate
 docker compose restart skygate
 ```
 

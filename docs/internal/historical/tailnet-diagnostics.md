@@ -247,7 +247,7 @@ prefix `skygate-host-`) does NOT match `<polygon-vm-hostname>`. Rule 3
 BackfillInfra UPDATE will not fire and <polygon-vm-hostname> will stay
 in the `svyatoslava` portal-user bucket (a leftover from earlier
 experiments — see the historical context in
-`docs/B111-INFRA-RETAG-RUNBOOK.md`).
+`docs/runbooks/infra-retag.md`).
 
 **Order matters for minimal disruption:**
 

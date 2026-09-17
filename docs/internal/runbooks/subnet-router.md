@@ -669,7 +669,7 @@ sqlite3 /var/lib/docker/volumes/skygate-data/_data/skygate.db \
 
 ## See also
 
-- [`docs/v0.16.0-open-questions.md`](v0.16.0-open-questions.md)
+- [`docs/internal/historical/v0.16.0-open-questions.md`](v0.16.0-open-questions.md)
   — the design decisions behind the per-user subnet feature.
 - [`docs/tailscale-relay.md`](tailscale-relay.md) — same
   pattern but for shared exit-nodes (relay-1, relay-2,

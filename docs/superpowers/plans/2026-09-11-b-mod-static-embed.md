@@ -593,7 +593,7 @@ Run: bash scripts/check_b_mod_static_embed.sh"
 
 **Files:**
 - Modify: `AGENTS.md` (add release note for B-mod-static-embed)
-- Modify: `docs/internal/2026-09-11-skygate-adoption-audit.md` (mark A1 done)
+- Modify: `docs/internal/audits/skygate-adoption.md` (mark A1 done)
 
 - [ ] **Step 1: Add release note to AGENTS.md**
 
@@ -615,13 +615,13 @@ In `AGENTS.md`, find the latest B-mod-* entry (look for the section that ends wi
 
 - [ ] **Step 2: Mark A1 done in audit doc**
 
-In `docs/internal/2026-09-11-skygate-adoption-audit.md`, find Section 6 "План доработки" → "Фаза A — блокеры деплоя" → "A1. B-mod-static-embed" and prepend:
+In `docs/internal/audits/skygate-adoption.md`, find Section 6 "План доработки" → "Фаза A — блокеры деплоя" → "A1. B-mod-static-embed" and prepend:
 - `[x] A1 DONE (commit <hash>)`
 
 - [ ] **Step 3: Commit docs**
 
 ```bash
-git add AGENTS.md docs/internal/2026-09-11-skygate-adoption-audit.md
+git add AGENTS.md docs/internal/audits/skygate-adoption.md
 git commit -m "docs: mark B-mod-static-embed done (v1.5.3)
 
 - AGENTS.md: add B-mod-static-embed release note

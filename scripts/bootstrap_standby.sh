@@ -3,7 +3,7 @@
 # bootstrap_standby.sh — provision a NEW skygate-standby node
 # B152 (v1.5.0) — Phase 7 of the HA v1.5.0 plan.
 #
-# See docs/internal/ha-v1.5.0-execution.md §3 (Phase 7).
+# See docs/internal/runbooks/ha-v1.5.0-execution.md §3 (Phase 7).
 #
 # Background
 # ----------
@@ -28,7 +28,7 @@
 #   5. Patroni + etcd are reachable (same etcd cluster as primary)
 #
 # The script does NOT install Docker or Tailscale (those are
-# pre-requisites, see docs/internal/ha-architecture.md §Prereqs).
+# pre-requisites, see docs/internal/architecture/ha-architecture.md §Prereqs).
 #
 # Usage
 # -----

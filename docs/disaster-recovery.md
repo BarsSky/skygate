@@ -406,7 +406,7 @@ recovery, at 2am, with users waiting. Don't skip.
   Telegram bot in the cron wrapper to send an alert
   on the fail path (the subcommand doesn't have in-
   process Notifier access).
-- `docs/internal/ha-architecture.md` (v0.26.0) — the Tier 1
+- `docs/internal/architecture/ha-architecture.md` (v0.26.0) — the Tier 1
   hot standby design (comprehensive, not a stub). The
   DR doc used to say this was a stub — it isn't; the
   file is 175 lines covering Tier 0/0.5/1, failure

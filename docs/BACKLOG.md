@@ -1,6 +1,6 @@
 # Skygate Backlog — abandoned / blocked / in-progress work
 
-**Last updated**: 2026-09-03 (B215–B225.2 cluster-management B-blocks SHIPPED 2026-09-01..2026-09-03 — Phases 1, 2, 3, 4.1, 4.2, 4.3, 4.4 from `docs/internal/cluster-management.md` are done; only Phase 4.5 Prometheus remains, deferred per the plan; see §9 of cluster-management.md for the B-block trail)
+**Last updated**: 2026-09-03 (B215–B225.2 cluster-management B-blocks SHIPPED 2026-09-01..2026-09-03 — Phases 1, 2, 3, 4.1, 4.2, 4.3, 4.4 from `docs/internal/architecture/cluster-management.md` are done; only Phase 4.5 Prometheus remains, deferred per the plan; see §9 of cluster-management.md for the B-block trail)
 **Maintainer**: Mavis (skygate)
 **Purpose**: Single source of truth for features that exist in the
 codebase as abandoned stubs, plans that live in dead branches,
@@ -297,7 +297,7 @@ node: skygate-host-1). B111 completed B93 with:
      pre-B93 public access to the relay VPSs).
 
 Phase 3 deployment steps (committed by Mavis, operator runbook
-in `docs/B111-INFRA-RETAG-RUNBOOK.md`):
+in `docs/runbooks/infra-retag.md`):
 
   1. Update headscale policy — add 4 `tagOwners` for
      `tag:dev-infra-{emilia,karolina,sharlotta,<polygon-vm-hostname>}`
@@ -742,10 +742,10 @@ etcd cluster in place (`<operator-vm-public-ip>:2379`).
 - ~~etcd cluster~~ — DONE (<operator-vm-public-ip>:2379)
 - ~~S3 bucket~~ — DONE (operator-confirmed)
 - external DNS provider credentials — **NEEDED** (operator to provide)
-- 10 open questions per `docs/internal/ha-v1.5.0-execution.md` §4
-- ~3-4 weeks of work per `docs/internal/ha-v1.5.0-execution.md` §3
+- 10 open questions per `docs/internal/runbooks/ha-v1.5.0-execution.md` §4
+- ~3-4 weeks of work per `docs/internal/runbooks/ha-v1.5.0-execution.md` §3
 
-**Execution tracker**: [`docs/internal/ha-v1.5.0-execution.md`](internal/ha-v1.5.0-execution.md)
+**Execution tracker**: [`docs/internal/runbooks/ha-v1.5.0-execution.md`](internal/ha-v1.5.0-execution.md)
 (10 phases, 10 open questions, locked decisions log, status updates).
 
 **Note**: the existing Tier 0 (single-VM, daily backups) is
@@ -1056,7 +1056,7 @@ lives on the headscale host, not skygate's
 codebase).
 
 **What's in B161.4**:
-- `docs/internal/oidc-headscale.md` (~13 KB) — the
+- `docs/internal/runbooks/oidc-headscale.md` (~13 KB) — the
   operator runbook with the headscale.conf `oidc:`
   block snippet (YAML, with `automatic_authorization:
   true` for one-click UX), the 4 must-match values

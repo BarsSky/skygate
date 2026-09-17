@@ -37,7 +37,7 @@
 #     was a one-time verification artifact; regression coverage
 #     moved to the Go test suite)
 #   - Docs that referenced the deleted e2e_pilot.sh are updated:
-#     docs/internal/subnet-router.md, docs/fa-test-report-v0.26.0.md,
+#     docs/internal/runbooks/subnet-router.md, docs/internal/historical/fa-test-report-v0.26.0.md,
 #     AGENTS.md (the v0.29.2 reference), deploy/skygate-cli.sh
 
 set -e
@@ -176,9 +176,9 @@ fi
 # 13. Docs that referenced the deleted e2e_pilot.sh are updated.
 # (the historical v0.23.0 release-note in AGENTS.md is exempt —
 # it documents what happened at the time, not what to do today)
-if grep -qF 'e2e_pilot.sh' docs/internal/subnet-router.md; then
+if grep -qF 'e2e_pilot.sh' docs/internal/runbooks/subnet-router.md; then
     # The post-v0.34 doc references the Go test suite
-    grep -qF 'go test -count=1 -short ./internal/feature/admin/ -run TestAdminUserSubnet' docs/internal/subnet-router.md || { echo "SKY-FAIL: subnet-router.md still references e2e_pilot.sh without the Go test fallback (B95)" >&2; exit 1; }
+    grep -qF 'go test -count=1 -short ./internal/feature/admin/ -run TestAdminUserSubnet' docs/internal/runbooks/subnet-router.md || { echo "SKY-FAIL: subnet-router.md still references e2e_pilot.sh without the Go test fallback (B95)" >&2; exit 1; }
 fi
 if grep -qF 'e2e_pilot.sh' deploy/skygate-cli.sh; then
     echo "SKY-FAIL: deploy/skygate-cli.sh still references e2e_pilot.sh (B95)" >&2

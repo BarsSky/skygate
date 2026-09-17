@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # B208 (v1.5.0+) — /admin/ha enhancements + fix
 # B203 regression in admin Service. Phase 3.2 of
-# docs/internal/cluster-management.md.
+# docs/internal/architecture/cluster-management.md.
 #
 # Two sub-chunks in one B-chunk:
 #

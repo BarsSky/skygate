@@ -12,7 +12,7 @@
 2. **Анализ и конвертация существующих правил — НЕТ.** `acl.GenerateACL()` регенерирует политику **с нуля** из таблицы `device_rules` и **перезаписывает** существующий headscale ACL через `PUT /api/v1/policy`. `internal/feature/admin/acl_import.go` — это ручная вставка JSON через форму (`/admin/acls/import`), а не «прочитай текущий ACL → разбери по device_rules».
 3. **Существующие ноды — частично.** На каждой загрузке `/my/devices` запускается `nodeownership.Backfill` с 4 стратегиями (A: PreAuthKeyID; C: 1h окно; D: tag-префикс; E: OIDC). Ни одна не ловит ноды, зарегистрированные через `headscale preauthkeys create` + `tailscale up --authkey=...` (без `/my/preauth` и без dev-tag). Админская кнопка `Sync from headscale` (`POST /admin/devices/sync-from-headscale`) загружает **все** ноды headscale → `node_owner_map`, но её надо нажать руками — нет first-run wizard, нет авто-запуска при старте.
 4. **Веб-ассеты — НЕ встроены.** `templates/*.html` собраны через `//go:embed` (бинарь их содержит). А `static/css/*.css`, `static/webfonts/*.woff2`, `static/favicon.svg` отдаются через `http.ServeFile(w, r, "./static/"+clean)` (`internal/handlers/static.go:46`). **Ни `Dockerfile`, ни `Dockerfile.prebuilt` не копируют `static/` в образ.** На `prebuilt` пути (CI-билд, рекомендованный для прода) бинарь стартует, но CSS/шрифты/favicon отдают 404.
-5. **Документация расходится со схемой:** `docs/db-schema.md` упоминает `node_owner_map.user_id`; реальная колонка — `headscale_user_id` + `username` (UNIQUE). `device_rules` дополнительно требует `user_name`, `device_hostname` (NOT NULL) — в API примере не показано. `docs/skygate-as-shell.md:114` явно пишет «ACL import is the missing piece» — то есть это **известная дыра v0.13.0**, не закрытая.
+5. **Документация расходится со схемой:** `docs/db-schema.md` упоминает `node_owner_map.user_id`; реальная колонка — `headscale_user_id` + `username` (UNIQUE). `device_rules` дополнительно требует `user_name`, `device_hostname` (NOT NULL) — в API примере не показано. `docs/internal/historical/skygate-as-shell.md:114` явно пишет «ACL import is the missing piece» — то есть это **известная дыра v0.13.0**, не закрытая.
 
 ---
 
@@ -91,7 +91,7 @@ Health-check: `HEADSCALE_URL/health` пингуется в entrypoint.sh (60s ce
 2. **Вручную** распарсить его в `device_rules` (SQL INSERT) или переписать JSON руками.
 3. Залить через `/admin/acls/import`.
 
-`docs/skygate-as-shell.md:114` явно называет это «missing piece for plug-in without breaking anything»:
+`docs/internal/historical/skygate-as-shell.md:114` явно называет это «missing piece for plug-in without breaking anything»:
 
 > ### v0.13.0 — ACL import / export (B+C in this doc)
 > The big one: when an operator starts using Skygate, they have an existing headscale ACL policy (from Headscale's defaults, Headplane, or hand-written, or whatever). Skygate's `GenerateACL()` currently writes a different policy shape (per-user isolation). Importing the existing policy as-is is the missing piece for "plug in without breaking anything".
@@ -243,7 +243,7 @@ http.ServeFile(w, r, "./static/favicon.svg")
 | Док | Что говорит | Реальность |
 |---|---|---|
 | `docs/db-schema.md` (предположительно) | `node_owner_map.user_id` | Колонки `headscale_user_id`, `username`, `tagged_by_user_id` — `user_id` НЕТ |
-| `docs/skygate-as-shell.md` | «ACL import is the missing piece» (v0.13.0) | Реализована только ручная JSON paste/replace, не conversion |
+| `docs/internal/historical/skygate-as-shell.md` | «ACL import is the missing piece» (v0.13.0) | Реализована только ручная JSON paste/replace, не conversion |
 | `internal/handlers/templates/exit_rules_help.html` | «knownSubdomains map» (rutracker.org → static.rutracker.cc) | Есть `knownSubdomains` в `internal/feature/exit_rules/sync.go:41`, но в help'е не упомянуто, что авто-updater ловит только HTML парсингом |
 | README | «SQLite by default» (упоминается в issue из лога) | v1.3.0+ — Postgres-only, SQLite удалён |
 | `docs/deploy.md` | Возможно, упоминается `SKYGATE_PORT` как host-publish | На prebuilt пути бинарь слушает `SKYGATE_PORT` внутри контейнера, что ломает healthcheck |

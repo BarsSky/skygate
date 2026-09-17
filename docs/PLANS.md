@@ -94,14 +94,14 @@ the squash (estimated, depends on pack efficiency).
 - `AGENTS.md` — AI-assistant instructions (5657 lines)
 - `RELEASE-NOTES.md` — full version history
 - `docs/disaster-recovery.md` — Tier-0 backup recovery
-- `docs/internal/v0.27.0-postgres-ha.md` — PG cutover plan
-- `docs/internal/ha-architecture.md` — Tier-1 HA design
-- `docs/internal/wal-g-notes.md` — PG backup architecture
-- `docs/internal/telegram-relay.md` — bot config
-- `docs/internal/subnet-router.md` — per-user subnet-router
+- `docs/internal/postmortems/v0.27.0-postgres-ha.md` — PG cutover plan
+- `docs/internal/architecture/ha-architecture.md` — Tier-1 HA design
+- `docs/internal/architecture/wal-g-notes.md` — PG backup architecture
+- `docs/internal/runbooks/telegram-relay.md` — bot config
+- `docs/internal/runbooks/subnet-router.md` — per-user subnet-router
   setup (operator-facing)
 - `docs/deploy.md` — fresh install + restore flow
-- `docs/fa-test-report-v0.26.0.md` — historical FA report
+- `docs/internal/historical/fa-test-report-v0.26.0.md` — historical FA report
   (predates the v1.0.0 squash; kept for traceability)
 
 ### Credentials / secrets policy
@@ -128,8 +128,8 @@ the squash (estimated, depends on pack efficiency).
     flip with 5-min TTL
 - **Operator action required:** provision skygate-host-2
   VM + S3 bucket + 3-node etcd cluster
-- **References:** `docs/internal/v0.27.0-postgres-ha.md`,
-  `docs/internal/ha-architecture.md`
+- **References:** `docs/internal/postmortems/v0.27.0-postgres-ha.md`,
+  `docs/internal/architecture/ha-architecture.md`
 
 **[BL-3] Telegram DPI workaround (operator-side)**
 - **Status:** BLOCKED on operator's network
@@ -206,7 +206,7 @@ the squash (estimated, depends on pack efficiency).
 - Auto-failover with manual override (default ON)
 - Auto-reclaim: OFF (avoid flap)
 - Effort: ~3-4 weeks
-- Execution tracker: `docs/internal/ha-v1.5.0-execution.md`
+- Execution tracker: `docs/internal/runbooks/ha-v1.5.0-execution.md`
 - **Open**: 10 questions awaiting operator answers (DNS provider creds, S3 IAM, etc.)
 
 **v1.5.1 — DNS records (TD-5)**

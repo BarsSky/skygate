@@ -30,7 +30,7 @@ bash check_pg_health.sh
 
 Expected output (healthy):
 ```
-Local node: skygate-host-1 (state: running)
+Local node: skygate-host (state: running)
 ...
 Primary count: 1  (expect 1)
 Replica count: 1  (expect >= 1)
@@ -49,7 +49,7 @@ If exit 2, proceed to one of the sections below.
 
 ## 2. Auto-failover (Patroni promotes replica automatically)
 
-**When this happens**: skygate-host-1 (primary) is dead/unreachable,
+**When this happens**: skygate-host (primary) is dead/unreachable,
 skygate-host-2 (replica) is alive, etcd on skygate-host-2 is alive.
 
 **What Patroni does**: detects the leader lock expired after
@@ -57,10 +57,10 @@ skygate-host-2 (replica) is alive, etcd on skygate-host-2 is alive.
 replica as new primary, updates the cluster state in etcd.
 
 **Timeline**:
-- t=0: skygate-host-1 dies
+- t=0: skygate-host dies
 - t=30s: Patroni on skygate-host-2 notices leader lock expired
 - t=30-40s: Patroni on skygate-host-2 promotes self to primary
-- t=30-60s: skygate's HAProxy on skygate-host-1... wait, skygate-host-1
+- t=30-60s: skygate's HAProxy on skygate-host... wait, skygate-host
   is dead, so its HAProxy is also dead. **DNS is the key now.**
 
 **What the operator does**:
@@ -79,12 +79,12 @@ replica as new primary, updates the cluster state in etcd.
    curl -fsS http://localhost:8080/healthz
    # Expected: 200 with "db_backend": "postgres"
    ```
-4. Once skygate-host-1 is back, re-init the old primary as a
+4. Once skygate-host is back, re-init the old primary as a
    new replica:
    ```bash
    ssh admin@192.0.2.1
    cd /home/admin/skygate/deploy/pg-ha
-   # Set SKYGATE_PG_NODE_NAME=skygate-host-1, SKYGATE_PG_NODE_IP=192.0.2.1
+   # Set SKYGATE_PG_NODE_NAME=skygate-host, SKYGATE_PG_NODE_IP=192.0.2.1
    # (in .env)
    bash init-pg-primary.sh  # but with --join-existing-cluster
    # (TODO: implement --join-existing-cluster in init script)
@@ -97,7 +97,7 @@ replica as new primary, updates the cluster state in etcd.
 ## 3. Manual failover (operator-driven)
 
 **When this happens**:
-- Planned maintenance on skygate-host-1 (kernel upgrade, Docker
+- Planned maintenance on skygate-host (kernel upgrade, Docker
   restart, etc).
 - Auto-failover didn't trigger (etcd unreachable).
 - Primary is up but degraded (high lag, broken replication).
@@ -116,7 +116,7 @@ replica as new primary, updates the cluster state in etcd.
    ssh root@skygate-host-2
    curl -fsS -X POST http://localhost:8008/failover \
      -H "Content-Type: application/json" \
-     -d '{"leader":"skygate-host-1","candidate":"skygate-host-2"}'
+     -d '{"leader":"skygate-host","candidate":"skygate-host-2"}'
    # Patroni switches the leader, the new primary is skygate-host-2
    ```
 3. Update DNS A record → skygate-host-2.
@@ -132,21 +132,21 @@ replica as new primary, updates the cluster state in etcd.
 
 ---
 
-## 4. Re-attach skygate-host-1 as a replica (after primary restart)
+## 4. Re-attach skygate-host as a replica (after primary restart)
 
-**When this happens**: skygate-host-1 is back up, but Patroni
+**When this happens**: skygate-host is back up, but Patroni
 on it is stale (the old primary). We need to re-init it as
 a replica of skygate-host-2.
 
 **What the operator does**:
-1. SSH to skygate-host-1.
+1. SSH to skygate-host.
 2. Stop the old Patroni container:
    ```bash
    docker stop skygate-patroni
    docker rm skygate-patroni
    rm -rf /var/lib/docker/volumes/patroni-data/_data/*
    ```
-3. Update `.env` on skygate-host-1 to point at skygate-host-2 as
+3. Update `.env` on skygate-host to point at skygate-host-2 as
    the primary:
    ```bash
    SKYGATE_PRIMARY_IP=198.51.100.1  # skygate-host-2
@@ -161,7 +161,7 @@ a replica of skygate-host-2.
 5. Verify:
    ```bash
    bash check_pg_health.sh
-   # Expected: 2 replicas (skygate-host-1 + skygate-host-2), 1 primary
+   # Expected: 2 replicas (skygate-host + skygate-host-2), 1 primary
    ```
 
 ---
@@ -173,7 +173,7 @@ corrupted (e.g. operator accidentally `DROP DATABASE`).
 WAL archive in MinIO is intact.
 
 **What the operator does**:
-1. Pick a node to restore (usually skygate-host-1).
+1. Pick a node to restore (usually skygate-host).
 2. Stop Patroni:
    ```bash
    docker stop skygate-patroni
@@ -191,7 +191,7 @@ WAL archive in MinIO is intact.
    ```bash
    docker start skygate-patroni
    ```
-5. Re-init skygate-host-2 as a replica of the restored skygate-host-1.
+5. Re-init skygate-host-2 as a replica of the restored skygate-host.
 6. Verify cluster state.
 
 **RPO**: time between last wal-g archive push and the
@@ -205,7 +205,7 @@ RPO is at most 60s.
 ### 6.1 etcd down
 
 If etcd on skygate-host-2 is down, Patroni can't elect a new
-primary. But the existing primary (skygate-host-1) keeps running
+primary. But the existing primary (skygate-host) keeps running
 — reads and writes continue. The cluster is "frozen" at the
 current state.
 
@@ -218,18 +218,18 @@ Manual recovery from wal-g backup. See section 5.
 
 ### 6.3 Network partition (split-brain)
 
-If skygate-host-1 and skygate-host-2 can't reach each other but
+If skygate-host and skygate-host-2 can't reach each other but
 both are alive, the etcd on skygate-host-2 might elect it as
-primary even though skygate-host-1 is still primary.
+primary even though skygate-host is still primary.
 
-**Risk**: writes to the "old" primary (skygate-host-1) are
+**Risk**: writes to the "old" primary (skygate-host) are
 invisible to the "new" primary (skygate-host-2). Data divergence.
 
-**Mitigation**: HAProxy on skygate-host-1 checks Patroni's
+**Mitigation**: HAProxy on skygate-host checks Patroni's
 `/primary` endpoint. If the local Patroni is no longer
 primary, HAProxy stops forwarding writes. Plus: DNS TTL
 means clients only hit one IP at a time, so the writes
-that did go to skygate-host-1 are isolated.
+that did go to skygate-host are isolated.
 
 **Recovery**: resolve the network issue, re-run the
 `init-pg-replica.sh` on the demoted node (Patroni will
@@ -242,5 +242,5 @@ WAL files pile up in the primary's `pg_wal/` directory,
 eventually filling the disk.
 
 **Mitigation**: monitor MinIO availability + disk space on
-skygate-host-1. R31 in `verify_post_deploy.sh` already catches
+skygate-host. R31 in `verify_post_deploy.sh` already catches
 disk > 85% full.

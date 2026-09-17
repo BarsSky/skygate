@@ -3,7 +3,7 @@
 # ha-phase7.sh — Phase 7 of HA v1.5.0: bootstrap the standby node
 # B-new (v1.5.0+) — state-tracked wrapper around scripts/bootstrap_standby.sh.
 #
-# See docs/internal/ha-v1.5.0-execution.md §3 (Phase 7).
+# See docs/internal/runbooks/ha-v1.5.0-execution.md §3 (Phase 7).
 #
 # What this does
 # --------------

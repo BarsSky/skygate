@@ -42,7 +42,7 @@ Per the AGENTS.md v1.3.0 PG-cutover contract (B18 / B26 / B54 / B60), **PostgreS
 ### 🟡 WARNING
 
 **D-5. `README.md:540` — broken docs link.**
-`[docs/internal/internal/https-setup.md](docs/internal/internal/https-setup.md)` has a doubled `internal/` path. The real file is `docs/internal/https-setup.md`.
+`[docs/internal/internal/https-setup.md](docs/internal/internal/https-setup.md)` has a doubled `internal/` path. The real file is `docs/internal/runbooks/https-setup.md`.
 
 **D-6. `README.md:202, 203` — broken deploy-script reference.**
 Two one-liners in the install section reference `deploy/install-docker.sh`. That file does not exist; the actual single-file installer is `deploy/install.sh`. Anyone copy-pasting the line would 404.
@@ -74,7 +74,7 @@ File exists at `scripts/verify_backup.sh` (8066 bytes, v1.3.1, weekly auto-verif
 **S-3. `scripts/verify_migration.sh` — false positive (file exists, audit was wrong).**
 File exists at `scripts/verify_migration.sh` (14830 bytes, v1.3.14, BL-17). It implements the 3-phase chain (`verify_post_deploy.sh --quick` → `/admin/system_tests/run` → ...) referenced from AGENTS.md, RELEASE-NOTES.md, and docs/TODO.md. The audit's "missing" claim was incorrect — verified via direct file check + git tracking.
 
-**S-4. `scripts/check_b86.sh` is missing but documented in `docs/internal/auto-deploy-test-plan.md:274` as a must-pass pre-deploy gate.** B86 is implemented inline in `verify_pre_deploy.sh` (one of the 275 checks), not as a delegatable script. The discrepancy between "inline" and "delegatable" is a contract pin — either create `scripts/check_b86.sh` or update `auto-deploy-test-plan.md` to clarify B86 is inline-only. **Fix applied 2026-09-14**: updated auto-deploy-test-plan.md with an inline-only note.
+**S-4. `scripts/check_b86.sh` is missing but documented in `docs/internal/runbooks/auto-deploy-test-plan.md:274` as a must-pass pre-deploy gate.** B86 is implemented inline in `verify_pre_deploy.sh` (one of the 275 checks), not as a delegatable script. The discrepancy between "inline" and "delegatable" is a contract pin — either create `scripts/check_b86.sh` or update `auto-deploy-test-plan.md` to clarify B86 is inline-only. **Fix applied 2026-09-14**: updated auto-deploy-test-plan.md with an inline-only note.
 
 **S-5. `deploy/validate.sh` — false positive (file exists, audit was wrong).**
 File exists at `deploy/validate.sh` (3200 bytes, comprehensive stack-health-check — checks skygate/headscale/headplane containers, /login endpoint, headscale API, node count, portal_users count, device_rules count, ACL policy, optional DERP). PROJECT.md:55 and docs/deploy.md (lines 16, 23, 134, 167, 239, 409) all reference the working file. The audit's "does not exist" claim was incorrect — verified via direct file check + git tracking.
@@ -283,7 +283,7 @@ If the operator wants to apply fixes in stages (1 PR per stage), the suggested o
 - S-1: `check_pre_deploy.sh` — false positive (no real refs); **no action**
 - S-2: `verify_backup.sh` — false positive (file exists, 8KB); **no action**
 - S-3: `verify_migration.sh` — false positive (file exists, 15KB); **no action**
-- S-4: `check_b86.sh` — **DONE 2026-09-14** (updated `docs/internal/auto-deploy-test-plan.md` to flag B86 as the only intentional inline-only check)
+- S-4: `check_b86.sh` — **DONE 2026-09-14** (updated `docs/internal/runbooks/auto-deploy-test-plan.md` to flag B86 as the only intentional inline-only check)
 - S-5: `deploy/validate.sh` — false positive (file exists, 3KB); **no action**
 
 **Stage 3 — architecture rewrite (higher risk, needs design review)**

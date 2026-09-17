@@ -1,7 +1,7 @@
 # Clean Install Walkthrough — v1.5.4 (avoiding the 2026-09-11 issues)
 
 > **Source:** 2026-09-11 deployment log from aro
-> (`188.253.20.31`) — the 5 GitHub issues filed by Lamblador (Daniil)
+> (`<OTHER_VM_PUBLIC_IP>`) — the 5 GitHub issues filed by Lamblador (Daniil)
 > after the first live deploy against an existing headscale.
 > Each step below notes the issue that motivated the change.
 >
@@ -66,7 +66,7 @@ HEADSCALE_URL=https://hs.your-domain.com
 HEADSCALE_API_KEY=<paste the key from step 4>
 SKYGATE_BASE_DOMAIN=hs.your-domain.com
 SKYGATE_JWT_SECRET=$(head -c 32 /dev/urandom | xxd -p -c 64)
-SKYGATE_TS_HOSTNAME=skygate-host-1
+SKYGATE_TS_HOSTNAME=skygate-host
 
 # DB: pick one. v1.5.4 supports both. The SKYGATE_DB env var is
 # the unified selector — `sqlite:/path` or `postgres://...` —
@@ -122,10 +122,10 @@ bootstrap admin is consistent across skygate + headscale:
 bash scripts/check_b_admin_user_sync.sh
 # Expected output:
 #   PASS  A: exactly one admin in portal_users
-#   PASS  B: portal admin name (skyadmin) == SKYGATE_ADMIN_USER
+#   PASS  B: portal admin name (<OPERATOR_USER>) == SKYGATE_ADMIN_USER
 #   PASS  C: admin has headscale_user_id=86
-#   PASS  D: headscale has user with id=86 (name=skyadmin)
-#   PASS  E: headscale name (skyadmin) == portal name (skyadmin)
+#   PASS  D: headscale has user with id=86 (name=<OPERATOR_USER>)
+#   PASS  E: headscale name (<OPERATOR_USER>) == portal name (<OPERATOR_USER>)
 ```
 
 If any contract FAILs (drift detected), `/admin/users` shows a
@@ -136,7 +136,7 @@ banner with the appropriate remediation:
 - Per-row "Rename" button — when the portal admin's username
   doesn't match SKYGATE_ADMIN_USER (POST /admin/users/{id}/rename).
 
-See `docs/internal/ha-v1.5.0-execution.md` and the
+See `docs/internal/runbooks/ha-v1.5.0-execution.md` and the
 `B-mod-admin-user-sync` row in `AGENTS.md` for the full design
 notes (option c, full rename flow).
 
@@ -185,7 +185,7 @@ docker compose -f docker-compose.sqlite.yml exec skygate \
 
 ## Step 4 — Claim nodes for each portal user
 
-If you have multiple portal users (e.g. `admin`, `daniil`)
+If you have multiple portal users (e.g. `admin`, `<USER_B>`)
 and headscale users that should own their respective nodes,
 the v1.5.4 bulk-claim flow is the cleanest path:
 
@@ -282,9 +282,9 @@ in FK-dep order.
 - `docs/sidecar-mode.md` — the operator-facing narrative
   guide (closes the 2026-09-11 gap with the banner +
   bulk-claim + auto-sync chain)
-- `docs/issues-closeout.md` — the GitHub issue close-out
+- `docs/runbooks/issues-closeout.md` — the GitHub issue close-out
   map (commits that close each of the 5 open issues)
-- `docs/internal/2026-09-11-skygate-adoption-audit.md` —
+- `docs/internal/audits/skygate-adoption.md` —
   the original audit document
 - `docs/superpowers/plans/2026-09-11-b-mod-sqlite-pg-bidi.md`
 - `docs/superpowers/plans/2026-09-11-b-mod-first-run-adoption.md`

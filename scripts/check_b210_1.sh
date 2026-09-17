@@ -3,7 +3,7 @@
 # local copies of the same one-method interface → one
 # canonical copy in skygate/internal/db.
 #
-# Phase 3 of docs/internal/cluster-management.md. Closes
+# Phase 3 of docs/internal/architecture/cluster-management.md. Closes
 # the "5 copies of the same interface" duplication that
 # B208.1 (admin) + B210 (auth/my/exit_rules/cluster) +
 # earlier B204 (elector) + B206 (healthz) each introduced

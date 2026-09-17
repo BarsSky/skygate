@@ -1,9 +1,9 @@
 # GitHub Issues Close-Out — 2026-09-11 deployment log
 
 > **Source:** 5 open issues filed 2026-09-11 by Lamblador (Daniil)
-> after the live deployment on `188.253.20.31` (aro + existing
+> after the live deployment on `<OTHER_VM_PUBLIC_IP>` (aro + existing
 > headscale on `127.0.0.1:8081`). Full audit at
-> `docs/internal/2026-09-11-skygate-adoption-audit.md`.
+> `docs/internal/audits/skygate-adoption.md`.
 >
 > **Scope:** map each issue to the commit(s) that close it. The
 > B-mod-sqlite-pg-bidi v1.5.4 series + the B-mod-first-run-adoption
@@ -29,7 +29,7 @@
 ## Issue 1 — Nodes joined via Headscale CLI never appear
 
 **Filed by:** Lamblador (Daniil), 2026-09-11
-**Reproduces on:** aro (188.253.20.31) with headscale on 127.0.0.1:8081
+**Reproduces on:** aro (<OTHER_VM_PUBLIC_IP>) with headscale on 127.0.0.1:8081
 
 **Root cause (per audit):**
 - `backfillNodeOwnership` (Strategies A/C/D/E) attributes nodes
@@ -252,13 +252,13 @@ issues, run from the repo root:
 
 ```bash
 # Issue 1 — CLOSED
-gh issue close 1 --comment "Closing — see docs/issues-closeout.md for the B-mod-first-run-adoption series (commits 8e6e338e, 3b801de3, 66bc3897, 71afaea8, 1ab1b6fa) that closes this. New operator walkthrough at docs/sidecar-mode.md."
+gh issue close 1 --comment "Closing — see docs/runbooks/issues-closeout.md for the B-mod-first-run-adoption series (commits 8e6e338e, 3b801de3, 66bc3897, 71afaea8, 1ab1b6fa) that closes this. New operator walkthrough at docs/sidecar-mode.md."
 
 # Issue 3 — partial (note the schema-docs follow-up)
-gh issue close 3 --comment "Partial close — the 'no Postgres Compose' gap is closed (cd28030c added docker-compose.sqlite.yml). The schema-docs regeneration is a follow-up for v1.5.5. See docs/issues-closeout.md."
+gh issue close 3 --comment "Partial close — the 'no Postgres Compose' gap is closed (cd28030c added docker-compose.sqlite.yml). The schema-docs regeneration is a follow-up for v1.5.5. See docs/runbooks/issues-closeout.md."
 
 # Issue 5 — CLOSED
-gh issue close 5 --comment "Closing — B-mod-sqlite-pg-bidi v1.5.4 (commit 08cafa35) makes ensureMigrationTrackingTable + RecordMigrationApplied dialect-aware. PG runtime no longer runs SQLite strftime() accidentally. See docs/issues-closeout.md."
+gh issue close 5 --comment "Closing — B-mod-sqlite-pg-bidi v1.5.4 (commit 08cafa35) makes ensureMigrationTrackingTable + RecordMigrationApplied dialect-aware. PG runtime no longer runs SQLite strftime() accidentally. See docs/runbooks/issues-closeout.md."
 
 # Issues 2, 4 — stay open
 ```

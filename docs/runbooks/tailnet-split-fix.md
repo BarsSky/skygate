@@ -1,6 +1,6 @@
 # TAILNET SPLIT FIX — operator runbook (v1.3.10, 2026-08-13)
 
-**Status:** v1.3.10 deployed (commit `7dc975d`). skygate-host-1
+**Status:** v1.3.10 deployed (commit `7dc975d`). skygate-host
 already re-authed with the new preauth key. **14 nodes still
 need re-auth** (4 VPS + 10 home devices).
 
@@ -10,7 +10,7 @@ need re-auth** (4 VPS + 10 home devices).
 
 ```bash
 # 1. Get the preauth key (one-time, valid 24h)
-ssh skyadmin@192.168.13.69 "docker exec headscale headscale preauthkeys create --user 1 --reusable --expiration 24h"
+ssh <OPERATOR_USER>@<VM_HOST_LAN> "docker exec headscale headscale preauthkeys create --user 1 --reusable --expiration 24h"
 # → hskey-auth-XXXX (save this)
 
 # 2. For EACH node (VPS first, then home), run:
@@ -22,7 +22,7 @@ docker exec skygate-skygate-1 bash /app/scripts/tailnet_probe.sh
 # Expected: "16/16 peers reachable" + NO "DIAGNOSIS: TAILNET SPLIT LIKELY"
 
 # 4. Revoke the key (cleanup)
-ssh skyadmin@192.168.13.69 "docker exec headscale headscale preauthkeys list -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(p[\"id\"]) for p in d if p[\"used\"] and p[\"reusable\"]]' | xargs -I{} docker exec headscale headscale preauthkeys expire --user 1 --key {}"
+ssh <OPERATOR_USER>@<VM_HOST_LAN> "docker exec headscale headscale preauthkeys list -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(p[\"id\"]) for p in d if p[\"used\"] and p[\"reusable\"]]' | xargs -I{} docker exec headscale headscale preauthkeys expire --user 1 --key {}"
 ```
 
 ---
@@ -30,30 +30,30 @@ ssh skyadmin@192.168.13.69 "docker exec headscale headscale preauthkeys list -o 
 ## Per-device checklist (17 nodes total)
 
 ### Already done (in this commit, automated)
-- [x] **skygate-host-1** (100.64.0.18) — re-authed via VM SSH
+- [x] **skygate-host** (100.64.0.18) — re-authed via VM SSH
 
 ### VPS nodes (4) — operator SSHs from laptop
-- [ ] **emilia** (100.64.0.3, VPS `<operator-exit-vps-public-ip>`)
-- [ ] **karolina** (100.64.0.2, headscale alias for <polygon-vm-hostname>, VPS 193.233.130.178)
+- [ ] **<DEVICE_Y>** (100.64.0.3, VPS `<operator-exit-vps-public-ip>`)
+- [ ] **<DEVICE_X>** (100.64.0.2, headscale alias for <polygon-vm-hostname>, VPS 193.233.130.178)
 - [ ] **sharlotta** (100.64.0.4, VPS)
-- [ ] **<polygon-vm-hostname>** (100.64.0.15, if separate host from karolina)
+- [ ] **<polygon-vm-hostname>** (100.64.0.15, if separate host from <DEVICE_X>)
 
 ### Home devices (10 online + 3 offline) — operator does manually
-- [ ] **skyworker** (100.64.0.1, online, home desktop)
-- [ ] **skybars** (100.64.0.5, online, home desktop)
+- [ ] **<DEVICE_Z>** (100.64.0.1, online, home desktop)
+- [ ] **<DEVICE_W>** (100.64.0.5, online, home desktop)
 - [ ] **a71** (100.64.0.19, online, home android)
 - [ ] **olesya** (100.64.0.16, online, home android)
 - [ ] **nothing-phone-2** (100.64.0.6, online, mobile)
 - [ ] **base** (100.64.0.7, OFFLINE — turn it on first)
-- [ ] **skybars-1** (100.64.0.8, OFFLINE)
-- [ ] **desktop-cuo0tfb** (100.64.0.9, OFFLINE)
+- [ ] **<DEVICE_W>-1** (100.64.0.8, OFFLINE)
+- [ ] **desktop-cuo0tfb** (<TAILSCALE_IP_SKYGATE>, OFFLINE)
 - [ ] **msi** (100.64.0.11, OFFLINE)
 - [ ] **svyatoslava-legacy** (100.64.0.12, OFFLINE)
 - [ ] **cyborg** (100.64.0.13, OFFLINE)
 - [ ] **basic** (100.64.0.14, OFFLINE)
 - [ ] **cyborg** (100.64.0.13, OFFLINE)
 
-Total to-do: **13 home devices** + **3 VPS** (if karolina≠<polygon-vm-hostname>) = 16 manual actions.
+Total to-do: **13 home devices** + **3 VPS** (if <DEVICE_X>≠<polygon-vm-hostname>) = 16 manual actions.
 
 ---
 
@@ -66,7 +66,7 @@ ssh <user>@<node-ip-or-name>
 
 ### 2. Run the fix script
 ```bash
-# Download the script (or scp it from /home/skyadmin/skygate on skygate-vm)
+# Download the script (or scp it from /home/<OPERATOR_USER>/skygate on skygate-vm)
 curl -sL https://raw.githubusercontent.com/BarsSky/skygate/main/scripts/fix_tailnet_split.sh -o /tmp/fix.sh
 
 # Set the preauth key (paste yours)
@@ -109,8 +109,8 @@ different non-default flags (e.g. `--ssh`, `--shields-up`).
 
 1. **VPS-side first** (4 nodes). These are the "anchors" of the
    new map. Once they re-auth, the new map starts propagating.
-2. **skygate-host-1** next. Already done in this round (commit 7dc975d).
-3. **Home devices** last. The home router at 192.168.13.67 is
+2. **skygate-host** next. Already done in this round (commit 7dc975d).
+3. **Home devices** last. The home router at <NPM_VM_LAN> is
    the source of the old session — re-authing home devices kills
    that session.
 4. **Wait 60 seconds** after the last node before re-checking
@@ -127,11 +127,11 @@ docker exec skygate-skygate-1 bash /app/scripts/tailnet_probe.sh
 
 **Expected output:**
 ```
-emilia               100.64.0.3      tcp=OK XXms
-karolina             100.64.0.2      tcp=OK XXms
+<DEVICE_Y>               100.64.0.3      tcp=OK XXms
+<DEVICE_X>             100.64.0.2      tcp=OK XXms
 sharlotta            100.64.0.4      tcp=OK XXms
-skybars              100.64.0.5      tcp=OK XXms
-skyworker            100.64.0.1      tcp=OK XXms
+<DEVICE_W>              100.64.0.5      tcp=OK XXms
+<DEVICE_Z>            100.64.0.1      tcp=OK XXms
 a71                  100.64.0.19     tcp=OK XXms
 olesya               100.64.0.16     tcp=OK XXms
 <polygon-vm-hostname>        100.64.0.15     tcp=OK XXms

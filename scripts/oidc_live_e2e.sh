@@ -196,7 +196,7 @@ echo "     - Verify the Tailscale client gets a tailnet IP"
 echo "     See docs/runbooks/oidc-tailscale-e2e.md for the step-by-step."
 echo
 echo "  2. Wire headscale to skygate:"
-echo "     - Copy the 'oidc:' block from docs/oidc-headscale-conf.md"
+echo "     - Copy the 'oidc:' block from docs/internal/runbooks/oidc-headscale.md"
 echo "     - Paste into /etc/headscale/config.yaml on the headscale host"
 echo "     - sudo systemctl restart headscale"
 echo

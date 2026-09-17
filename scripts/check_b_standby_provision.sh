@@ -31,7 +31,7 @@
 #     key means restart from primary with a fresh create-standby-preauth)
 # N. verify_pre_deploy.sh registers check_b_standby_provision.sh
 # O. AGENTS.md mentions B-new + cross-references this B-check
-# P. docs/internal/ha-v1.5.0-execution.md §3 Phase 7 mentions the new flow
+# P. docs/internal/runbooks/ha-v1.5.0-execution.md §3 Phase 7 mentions the new flow
 #
 # Exit codes
 # ----------
@@ -160,8 +160,8 @@ grep -qE "standby.*provisioning|create-standby-preauth|tagged-devices.*synthetic
     || nok "AGENTS.md does NOT mention the B-block (operator won't know about the auto-provisioning fix)"
 
 # --- P. ha-v1.5.0-execution.md ---
-hdr "P. docs/internal/ha-v1.5.0-execution.md mentions the new flow"
-grep -qE "create-standby-preauth|SKYGATE_STANDBY_TS_AUTHKEY|netfilter-mode=nodir" docs/internal/ha-v1.5.0-execution.md 2>/dev/null \
+hdr "P. docs/internal/runbooks/ha-v1.5.0-execution.md mentions the new flow"
+grep -qE "create-standby-preauth|SKYGATE_STANDBY_TS_AUTHKEY|netfilter-mode=nodir" docs/internal/runbooks/ha-v1.5.0-execution.md 2>/dev/null \
     && ok "ha-v1.5.0-execution.md mentions the new preauth flow" \
     || nok "ha-v1.5.0-execution.md does NOT mention the new flow (operator will follow the old manual runbook)"
 

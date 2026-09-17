@@ -5,7 +5,7 @@
 # Background
 #
 # The 2026-09-14 doc audit
-# (docs/internal/2026-09-14-doc-audit.md) surfaced
+# (docs/internal/audits/doc-audit.md) surfaced
 # 11 critical drift items that the operator was
 # finding by hand:
 #

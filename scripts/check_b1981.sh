@@ -2,7 +2,7 @@
 # ============================================================================
 # check_b1981.sh — B198.1 (v1.5.0+) DB migration UI completion
 #
-# Phase 1.4 of docs/internal/cluster-management.md. B198 added the
+# Phase 1.4 of docs/internal/architecture/cluster-management.md. B198 added the
 # framework; B198.1 adds the user-facing surface:
 #   - /admin/database page now has a "Migrate to new host" form
 #   - GET /admin/database/migrate shows recent runs list

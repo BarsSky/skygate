@@ -21,15 +21,15 @@ config is currently `psql` or `deploy.sh --add-cert-sync`). Until then:
 ```sql
 -- Mode 'letsencrypt' (no NPM, no extra fields):
 INSERT INTO derp_cert_sync (hostname, mode, cert_dir, enabled)
-VALUES ('derp.skynas.ru', 'letsencrypt', '/var/lib/derper/certs', 1);
+VALUES ('derp.example.com', 'letsencrypt', '/var/lib/derper/certs', 1);
 
 -- Mode 'npm' (requires NPM base_url + cert_id; identity/secret
 -- live in global_settings so /admin/derp/cert-sync/edit can change
 -- them without a restart):
 INSERT INTO derp_cert_sync (hostname, mode, npm_base_url, npm_cert_id,
                             cert_dir, derper_systemd_unit, enabled)
-VALUES ('derp.skynas.ru', 'npm',
-        'http://192.168.13.67:81', 33,
+VALUES ('derp.example.com', 'npm',
+        'http://<NPM_VM_LAN>:81', 33,
         '/var/lib/derper/certs', 'derper.service', 1);
 
 INSERT INTO global_settings (key, value) VALUES
@@ -38,7 +38,7 @@ INSERT INTO global_settings (key, value) VALUES
 
 -- Mode 'manual':
 INSERT INTO derp_cert_sync (hostname, mode, cert_dir, enabled)
-VALUES ('derp.skynas.ru', 'manual', '/var/lib/derper/certs', 1);
+VALUES ('derp.example.com', 'manual', '/var/lib/derper/certs', 1);
 ```
 
 ## NPM credentials (mode='npm' only)
@@ -80,13 +80,13 @@ Two paths depending on your deployment shape:
 Add to the agent VM's `/etc/hosts`:
 
 ```
-192.168.13.69  derp.skynas.ru
+<VM_HOST_LAN>  derp.example.com
 ```
 
-Then Tailscale clients on the LAN dial `192.168.13.69:443` directly
+Then Tailscale clients on the LAN dial `<VM_HOST_LAN>:443` directly
 (1-2ms) instead of going through `95.165.170.190` → NPM → `13.69:443`
 (50-100ms). The hostname-to-LAN-IP mapping is what lets derper's
-TLS cert (CN=`derp.skynas.ru`) verify correctly.
+TLS cert (CN=`derp.example.com`) verify correctly.
 
 Pre-B252 this entry had to be added manually. B252 ships a hint in
 the `/admin/derp` page → Cert auto-renewal section ("If derper and
@@ -103,17 +103,17 @@ services:
   skygate:
     # ...existing config...
     extra_hosts:
-      - "derp.skynas.ru:host-gateway"
+      - "derp.example.com:host-gateway"
 ```
 
 `host-gateway` is Docker's reserved name for the host machine. The
 derper container runs with `network_mode: host` (see `deploy/templates/
 derper-compose.yml.tmpl`), so it listens on the host's `:443`. The
-`extra_hosts` entry makes the skygate container resolve `derp.skynas.ru`
+`extra_hosts` entry makes the skygate container resolve `derp.example.com`
 to the host loopback, then dial `:443` which lands on derper.
 
 Why this matters: without the entry, the skygate container tries
-`https://derp.skynas.ru:443/` via Docker's DNS, gets a "no such host"
+`https://derp.example.com:443/` via Docker's DNS, gets a "no such host"
 error, and the /admin/derp UI shows "DERP socket: closed" even though
 derper is healthy.
 
@@ -131,7 +131,7 @@ once, then redirects back to /admin/derp. Use it:
 
 ## Live verification (2026-09-15)
 
-Agent VM `192.168.13.69` (hermes-debug), bundled derper systemd unit:
+Agent VM `<VM_HOST_LAN>` (<OPERATOR_USER>), bundled derper systemd unit:
 
 ```bash
 $ systemctl is-active derper
@@ -139,18 +139,18 @@ active
 $ systemctl cat derper.service | grep ExecStart
 ExecStart=/usr/local/bin/derper ... --a=:443 --http-port=80 --stun --verify-clients=false
 $ ls -la /var/lib/derper/certs/
--rw-r--r-- derp.skynas.ru.crt    (4853b, fullchain)
--rw------- derp.skynas.ru.key    (306b,  ECDSA P-256)
-$ openssl x509 -in /var/lib/derper/certs/derp.skynas.ru.crt -noout -subject -dates
-subject=CN = derp.skynas.ru
+-rw-r--r-- derp.example.com.crt    (4853b, fullchain)
+-rw------- derp.example.com.key    (306b,  ECDSA P-256)
+$ openssl x509 -in /var/lib/derper/certs/derp.example.com.crt -noout -subject -dates
+subject=CN = derp.example.com
 notBefore=Sep 15 11:23:35 2026 GMT
 notAfter =Nov 27 11:23:34 2026 GMT    ← ~73 days left (LE cert from NPM)
 
-$ curl -sk https://192.168.13.69:443/derp -H 'Host: derp.skynas.ru' -o /dev/null -w '%{http_code}\n'
+$ curl -sk https://<VM_HOST_LAN>:443/derp -H 'Host: derp.example.com' -o /dev/null -w '%{http_code}\n'
 426    ← "DERP requires connection upgrade" = derper answered
 
 $ sudo -n tailscale debug derp 900
-"Successfully established a DERP connection with node derp.skynas.ru"
+"Successfully established a DERP connection with node derp.example.com"
 ```
 
 (The `tailscale netcheck` "mow:" empty-latency is a cosmetic quirk

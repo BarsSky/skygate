@@ -19,10 +19,10 @@ node. It exists to take over the active role if the primary dies.
 |------|-------|------|
 | 1. Provision | Your VM host panel | Ubuntu 22.04+ VM, hostname `<polygon-vm-hostname>` |
 | 2. Tailscale | <polygon-vm-hostname> | `tailscale up --login-server=<headscale> --authkey=<preauth>` |
-| 3. Tag | skygate-host-1 | `headscale nodes tag -i <id> --tags tag:dev-infra-svyatoslava` |
+| 3. Tag | skygate-host | `headscale nodes tag -i <id> --tags tag:dev-infra-svyatoslava` |
 | 4. DB | skygate PG | `INSERT INTO node_owner_map ...` (see §5) |
 | 5. Binary | operator's laptop | `skygate deploy-push --target=<polygon-vm-hostname> ...` |
-| 6. Wire-up | skygate-host-1 | `/admin/ha` → "Add HA member" (hostname, priority=2, role=standby) |
+| 6. Wire-up | skygate-host | `/admin/ha` → "Add HA member" (hostname, priority=2, role=standby) |
 | 7. Verify | both nodes | `/healthz` 200 OK, `/admin/ha` shows 2 members |
 | 8. DO NOT | anywhere | DO NOT add to `exit_servers`, DO NOT advertise Tailscale exit routes |
 
@@ -42,9 +42,9 @@ Before you start, have these ready:
 |------|-----------------|---------------|
 | **VM spec** | Your host panel | 4 vCPU, 8 GB RAM, 50 GB SSD, Ubuntu 22.04 LTS |
 | **Public IP** | Your host panel | `203.0.113.10` (placeholder) |
-| **Headscale URL** | skygate-host-1's `SKYGATE_HEADSCALE_URL` | `https://headscale.example.com` |
-| **Preauth key** | Generate from skygate-host-1: `headscale preauthkeys create --user <operator> --reusable --expiration 24h` | `abcdef123456...` (24h valid) |
-| **S3 deploy bucket** | same as skygate-host-1 | `s3://skygate-backups/deploy/` |
+| **Headscale URL** | skygate-host's `SKYGATE_HEADSCALE_URL` | `https://headscale.example.com` |
+| **Preauth key** | Generate from skygate-host: `headscale preauthkeys create --user <operator> --reusable --expiration 24h` | `abcdef123456...` (24h valid) |
+| **S3 deploy bucket** | same as skygate-host | `s3://skygate-backups/deploy/` |
 | **Operator user** | headscale user that owns the cluster | `<operator-username>` |
 
 **Recommended**: snapshot or back-up the skygate PG and headscale state
@@ -69,7 +69,7 @@ In your host panel (Hetzner / DO / Vultr / etc.):
    skygate will do that once it's running.
 
 If your host panel has a "private network" option, attach <polygon-vm-hostname>
-to the same private net as skygate-host-1. The Tailscale link is the
+to the same private net as skygate-host. The Tailscale link is the
 primary connectivity path, but private-net fallback is useful for
 diagnostics.
 
@@ -106,7 +106,7 @@ want (see §9).
 
 ## 4. Apply the headscale tag
 
-On **skygate-host-1** (the existing primary), once <polygon-vm-hostname> has
+On **skygate-host** (the existing primary), once <polygon-vm-hostname> has
 joined:
 
 ```bash
@@ -135,7 +135,7 @@ malformed.
 
 ## 5. Add to `node_owner_map` (DB)
 
-Connect to the skygate PG (via `psql` from skygate-host-1 or any
+Connect to the skygate PG (via `psql` from skygate-host or any
 admin box that can reach the DB):
 
 ```sql
@@ -162,8 +162,8 @@ WHERE tag = 'tag:dev-infra-svyatoslava';
 ```
 
 **Why `owner_username = 'infra'`**: the existing convention is
-`infra` for technical infrastructure nodes (emilia, karolina,
-sharlotta, skygate-host-1 all use `infra`). `skyadmin` and `michail`
+`infra` for technical infrastructure nodes (<DEVICE_Y>, <DEVICE_X>,
+sharlotta, skygate-host all use `infra`). `<OPERATOR_USER>` and `<USER_A>`
 are for operator/personal devices. Mixing them would cause
 `acl_perdevice_b118` to flag the ACL as malformed.
 
@@ -212,9 +212,9 @@ sudo apt install ./skygate_<version>_<arch>.deb
 sudo curl -L -o /usr/local/bin/skygate https://github.com/.../releases/.../skygate
 sudo chmod +x /usr/local/bin/skygate
 
-# 2. Configure /etc/skygate.env (mirror the file from skygate-host-1,
+# 2. Configure /etc/skygate.env (mirror the file from skygate-host,
 #    change SKYGATE_SELF_HOSTNAME=<polygon-vm-hostname>)
-sudo cp <from-skygate-host-1> /etc/skygate.env
+sudo cp <from-skygate-host> /etc/skygate.env
 sudo sed -i 's/^SKYGATE_SELF_HOSTNAME=.*/SKYGATE_SELF_HOSTNAME=<polygon-vm-hostname>/' /etc/skygate.env
 sudo chmod 600 /etc/skygate.env
 
@@ -224,7 +224,7 @@ sudo systemctl status skygate
 ```
 
 Either way, the binary version on <polygon-vm-hostname> should match the
-version on skygate-host-1. Mismatched versions in an HA pair are
+version on skygate-host. Mismatched versions in an HA pair are
 unsupported (the elector's JSON shape contracts drift).
 
 ---
@@ -233,14 +233,14 @@ unsupported (the elector's JSON shape contracts drift).
 
 This step makes <polygon-vm-hostname> visible to the v1.5.0 HA chain.
 
-On **skygate-host-1**, open the `/admin/ha` page in your browser:
+On **skygate-host**, open the `/admin/ha` page in your browser:
 
-1. Sign in as `skyadmin` (or any user with admin role).
+1. Sign in as `<OPERATOR_USER>` (or any user with admin role).
 2. Go to `/admin/ha` → "Cluster topology" section.
 3. Click **"Add HA member"**.
 4. Fill the form:
    - **Hostname**: `<polygon-vm-hostname>`
-   - **Priority**: `2` (P1 is skygate-host-1)
+   - **Priority**: `2` (P1 is skygate-host)
    - **Tailscale IP**: `100.64.0.20` (from §3)
    - **Public IP**: `203.0.113.10` (from §1)
    - **Role**: `standby` (always start as standby; the elector will
@@ -258,10 +258,10 @@ starts heartbeating <polygon-vm-hostname>.
 **Verify via the chain directly** (read-only):
 
 ```bash
-# On skygate-host-1, query the global_settings row
+# On skygate-host, query the global_settings row
 psql -h <db-host> -U skygate -d skygate \
   -c "SELECT value FROM global_settings WHERE key='ha_chain';"
-# Should return JSON with 2 members: skygate-host-1 (P1) and <polygon-vm-hostname> (P2)
+# Should return JSON with 2 members: skygate-host (P1) and <polygon-vm-hostname> (P2)
 ```
 
 ---
@@ -275,14 +275,14 @@ Run through this checklist before considering the bootstrap done:
 | <polygon-vm-hostname> Tailscale OK | `ssh <polygon-vm-hostname> 'tailscale status'` | shows `<polygon-vm-hostname>` with its 100.64.x.x IP |
 | <polygon-vm-hostname> skygate health | `curl -s http://100.64.0.20:8080/healthz` | `ok` (200) |
 | <polygon-vm-hostname> skygate ready | `curl -s http://100.64.0.20:8080/readyz` | `healthy` (200) |
-| skygate-host-1 sees <polygon-vm-hostname> | `curl -s http://100.64.0.1:8080/admin/ha/chain` (if you exposed a debug endpoint) | 2 members |
-| Both nodes agree on active | `curl -s http://100.64.0.1:8080/admin/ha/active` and same on <polygon-vm-hostname> | both report `skygate-host-1` |
+| skygate-host sees <polygon-vm-hostname> | `curl -s http://100.64.0.1:8080/admin/ha/chain` (if you exposed a debug endpoint) | 2 members |
+| Both nodes agree on active | `curl -s http://100.64.0.1:8080/admin/ha/active` and same on <polygon-vm-hostname> | both report `skygate-host` |
 | DR drill (dry-run only) | `/admin/deploy` → "Test-failover" | shows <polygon-vm-hostname> as the predicted next active |
 
 If all 6 PASS, the bootstrap is complete. If any FAIL, see §10.
 
 **Real DR drill (NOT in this runbook)**: requires killing skygate on
-skygate-host-1 and watching <polygon-vm-hostname> take over. Schedule a
+skygate-host and watching <polygon-vm-hostname> take over. Schedule a
 maintenance window (Goal-91 / Phase 9). Never run this without
 operator approval.
 
@@ -299,12 +299,12 @@ reasons:
 | **DO NOT apply `tag:exit-node`** | Same reason. The `tag:exit-node` ACL entry would cause Tailscale users to see it as a potential exit in their client. |
 | **DO NOT `advertise-exit-node`** on <polygon-vm-hostname>'s Tailscale | Same reason. `tailscale up --advertise-exit-node=false` is the default in §3. |
 | **DO NOT promote <polygon-vm-hostname> to P1** | P1 is reserved for the operator's preferred-primary. Use P2 or higher. |
-| **DO NOT run `skygate ha-promote` on <polygon-vm-hostname>** unless skygate-host-1 is confirmed dead | The `ha-promote` verb is a one-shot override, not a permanent role change. Use `/admin/ha`'s "Force promote" only for DR scenarios. |
+| **DO NOT run `skygate ha-promote` on <polygon-vm-hostname>** unless skygate-host is confirmed dead | The `ha-promote` verb is a one-shot override, not a permanent role change. Use `/admin/ha`'s "Force promote" only for DR scenarios. |
 | **DO NOT add `tag:public`** to <polygon-vm-hostname> in headscale | The `tag:public` ACL is for end-user-facing services. Mixing infra into it would leak the node's existence to every Tailscale user. |
 | **DO NOT skip the B118 regression test** after the bootstrap | Run `scripts/check_b118.sh` to confirm the new tag-owner-from-name logic still passes. |
 
 The summary: <polygon-vm-hostname> is a **passive mirror**. It exists to
-take over the active role when skygate-host-1 dies. It should never
+take over the active role when skygate-host dies. It should never
 be the source of outbound user traffic.
 
 ---
@@ -369,7 +369,7 @@ spammy in the audit log.
 ### 11.3. `/admin/ha` shows <polygon-vm-hostname> as `unreachable`
 
 - The elector heartbeat is failing. Tailscale connectivity check:
-  `tailscale ping <polygon-vm-hostname>` from skygate-host-1.
+  `tailscale ping <polygon-vm-hostname>` from skygate-host.
 - If Tailscale is OK, check that skygate is listening on its
   Tailscale IP: `ss -tlnp | grep :8080` on <polygon-vm-hostname> should
   show the listener bound to `0.0.0.0` or the Tailscale IP.
@@ -422,7 +422,7 @@ the bootstrap:
   runbook. Sections 2 (B145 HA chain), 3 (B147 certsync), 5 (B149
   /admin/ha), 6 (B150 /admin/deploy + skygate CLI) are the
   background for this runbook.
-- **`docs/internal/ha-v1.5.0-execution.md`** — the BL-2 master
+- **`docs/internal/runbooks/ha-v1.5.0-execution.md`** — the BL-2 master
   tracker. §6 has the B145/B147/B148/B149/B150 status log.
 - **`scripts/check_b145.sh`** — the 40-contract B-check that pins
   the HA chain + pluggable DNS provider behavior.

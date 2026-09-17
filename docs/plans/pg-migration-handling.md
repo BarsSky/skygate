@@ -375,7 +375,7 @@ helpers are on `main` and pass `go build -tags postgres`.
 
 What's still needed for the **live cutover** (the actual switch
 from SQLite to PG) is a separate, smaller task — see
-[`docs/v0.33.0-pg-cutover-runbook.md`](../v0.33.0-pg-cutover-runbook.md)
+[`docs/runbooks/pg-cutover.md`](../v0.33.0-pg-cutover-runbook.md)
 (planned, will be written before the operator provisions the
 PG-staging VM).
 

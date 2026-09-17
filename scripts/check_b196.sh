@@ -102,7 +102,7 @@ echo "H) AGENTS.md mentions B196"
 if grep -qE "B196" "$PROJECT_DIR/AGENTS.md" 2>/dev/null; then
   ok "AGENTS.md mentions B196"
 else
-  no "AGENTS.md does not mention B196 (defer to /docs/internal/cluster-management.md)"
+  no "AGENTS.md does not mention B196 (defer to /docs/internal/architecture/cluster-management.md)"
 fi
 
 # ----- I) verify_pre_deploy.sh references check_b196.sh -----------------

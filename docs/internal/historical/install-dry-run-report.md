@@ -1,6 +1,6 @@
 # Install Dry-Run Report — 2026-09-11
 
-> **Method:** walked through `docs/clean-install-walkthrough.md` +
+> **Method:** walked through `docs/runbooks/clean-install.md` +
 > `docs/sidecar-mode.md` + the underlying install scripts
 > (`deploy/install.sh` → `install-{debian,rh,alpine}.sh` → `install-common.sh`)
 > and the 3 docker-compose files (`docker-compose.{sqlite,lite,ghcr}.yml`)
@@ -160,7 +160,7 @@ skygate starts, the operator logs in at :8080, opens /admin/devices
 **Why:** the v1.5.4 work added the auto-sync flag in 3 places:
 - `internal/config/config.go` (resolves the env var)
 - `cmd/skygate/main.go` (calls `runFirstRunAutoSync` when set)
-- `docs/clean-install-walkthrough.md` and `docs/sidecar-mode.md`
+- `docs/runbooks/clean-install.md` and `docs/sidecar-mode.md`
   (operator-facing docs)
 
 But `install-common.sh` (which writes `/etc/skygate/skygate.env`
@@ -249,7 +249,7 @@ a Docker service. This is the all-in-one flow (skygate + headscale
 
 The walkthrough's "sidecar" use case (skygate + existing headscale
 elsewhere) doesn't use `deploy.sh` — it uses `docker-compose.sqlite.yml`
-or `install.sh`. But the `docs/clean-install-walkthrough.md` only
+or `install.sh`. But the `docs/runbooks/clean-install.md` only
 mentions `install.sh` (systemd path) as the systemd option, not
 `deploy.sh`. The walkthrough could be clearer that the all-in-one
 `deploy.sh` is a different path entirely (and not what the sidecar
@@ -295,7 +295,7 @@ For v1.5.5, address in this order:
    the default).
 4. **MEDIUM:** Update `docs/deploy.md` similarly (the stale
    v1.3.0+ claims about SQLite).
-5. **LOW:** Update `docs/clean-install-walkthrough.md` Step 0
+5. **LOW:** Update `docs/runbooks/clean-install.md` Step 0
    to be explicit about Mode B (PG): "you must set
    `SKYGATE_DB=postgres://...` in .env, uncomment the line in
    the heredoc".
@@ -312,7 +312,7 @@ All 5 gaps closed on the same day, by commit:
 | 2 | CRITICAL | `46efab13` + `f5986aea` | 3 install scripts | `SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=` line in heredoc + `--import-existing=true` flag + install.sh export + heredoc `${VAR:-}` expansion so the env var flows into the file end-to-end |
 | 3 | MEDIUM | `f5615c96` | `.env.example` | `SKYGATE_DB` is now the v1.5.4+ unified selector (was LEGACY); `SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=false` default added |
 | 4 | MEDIUM | `6a799445` | `docs/deploy.md` | env var table updated for v1.5.4+; restore warning now says v1.5.4+ binary CAN read SQLite directly |
-| 5 | LOW | `4584fe42` | `docs/clean-install-walkthrough.md` | Step 1 heredoc has explicit `↓↓↓ UNCOMMENT` markers + crash-loop warning; Step 2 Mode B has explicit "UNCOMMENT the SKYGATE_DB=postgres://... line from Step 1" |
+| 5 | LOW | `4584fe42` | `docs/runbooks/clean-install.md` | Step 1 heredoc has explicit `↓↓↓ UNCOMMENT` markers + crash-loop warning; Step 2 Mode B has explicit "UNCOMMENT the SKYGATE_DB=postgres://... line from Step 1" |
 
 ### Verification (bash end-to-end)
 
@@ -340,4 +340,4 @@ that works.)
 are now end-to-end consistent with the operator-facing docs.
 Operator can proceed with the live-verify on svi polygon
 (`45.152.198.217`) per the original closeout plan in
-`docs/issues-closeout.md`.
+`docs/runbooks/issues-closeout.md`.

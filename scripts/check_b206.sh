@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # B206 (v1.5.0+) — GET /db/health endpoint. Phase 1.5
-# / G3 of docs/internal/cluster-management.md.
+# / G3 of docs/internal/architecture/cluster-management.md.
 #
 # The contracts:
 #

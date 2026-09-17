@@ -3,7 +3,7 @@
 # ha-phase9.sh — Phase 9 of HA v1.5.0: live DR drill
 # B-new (v1.5.0+) — state-tracked wrapper around scripts/dr_drill.sh.
 #
-# See docs/internal/ha-v1.5.0-execution.md §3 (Phase 9).
+# See docs/internal/runbooks/ha-v1.5.0-execution.md §3 (Phase 9).
 #
 # What this does
 # --------------

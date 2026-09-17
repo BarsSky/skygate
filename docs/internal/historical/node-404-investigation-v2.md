@@ -124,7 +124,7 @@ This is the most likely source of the 404s:
 
 ### 4. The runbook "home router" was the operator's prior context
 
-`docs/TAILNET-SPLIT-FIX-RUNBOOK.md:113-115` (from 2026-08-13, 12 days ago):
+`docs/runbooks/tailnet-split-fix.md:113-115` (from 2026-08-13, 12 days ago):
 > 3. **Home devices** last. The home router at 192.168.13.67 is
 >    the source of the old session — re-authing home devices kills
 >    that session.

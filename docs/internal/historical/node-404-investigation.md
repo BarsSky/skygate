@@ -9,7 +9,7 @@
 ## TL;DR
 
 **192.168.13.67 IS the operator's home router** (per
-`docs/TAILNET-SPLIT-FIX-RUNBOOK.md:113-115` + `SKYGATE_DERP_PEER_NPM=192.168.13.67`
+`docs/runbooks/tailnet-split-fix.md:113-115` + `SKYGATE_DERP_PEER_NPM=192.168.13.67`
 in `.env`). The router has a **stale Tailscale session** — the old v1.3.10
 "tailnet split" fix didn't re-auth the router itself, only the home devices
 behind it. The 404s are noise from the router's tailscaled polling

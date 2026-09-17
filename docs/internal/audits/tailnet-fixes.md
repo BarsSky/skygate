@@ -278,7 +278,7 @@ embarrassing.)
    misconfiguration source.** Any `tailscale set
    --advertise-routes=X` where X contains a subnet
    the host is itself in is a loop waiting to
-   happen. `docs/internal/tailnet-advertised-routes.md`
+   happen. `docs/internal/runbooks/tailnet-advertised-routes.md`
    documents the hard rule.
 
 2. **DRY-RUN defaults are footguns.** B229 defaulted
@@ -302,5 +302,5 @@ embarrassing.)
    Tailscale client to be enforced-pinned to an
    exit node. Confusing them is what made the
    cyborg+basic YouTube outage invisible for 24h.
-   `docs/internal/exit-rules-reconciler.md`
+   `docs/internal/runbooks/exit-rules-reconciler.md`
    documents the layers.

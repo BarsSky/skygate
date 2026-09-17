@@ -355,7 +355,7 @@ else
         echo "DIAGNOSIS: TAILNET SPLIT LIKELY"
         echo "  Local peer count ($TOTAL) is < 50% of expected ($EXPECTED_PEERS)."
         echo "  Other nodes on this tailnet are not visible from $SELF_IP."
-        echo "  See docs/tailnet-diagnostics.md for root cause + fix."
+        echo "  See docs/internal/historical/tailnet-diagnostics.md for root cause + fix."
     fi
 fi
 

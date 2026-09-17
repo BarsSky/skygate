@@ -708,8 +708,8 @@ your existing infrastructure:
 The rest of this section is the **NPM** runbook. It
 was written against the live verified setup on
 2026-08-24 (operator VM: `95.165.170.190` public IP,
-skygate VM internal: `192.168.13.69:8080`,
-hostnames: `head.skynas.ru` + `skygate.skynas.ru`).
+skygate VM internal: `<VM_HOST_LAN>:8080`,
+hostnames: `head.example.com` + `skygate.example.com`).
 
 ---
 
@@ -727,19 +727,19 @@ that receives the operator's DNS A-records).
 ```
 Public internet
      │
-     ▼ DNS A-record: skygate.skynas.ru → 95.165.170.190
-     ▼ DNS A-record: head.skynas.ru    → 95.165.170.190
+     ▼ DNS A-record: skygate.example.com → 95.165.170.190
+     ▼ DNS A-record: head.example.com    → 95.165.170.190
      │
 ┌────┴─────────────────────────────┐
 │ Fronting VM (NPM)                │  ← 95.165.170.190
 │   openresty (NPM)                │
-│   - skygate.skynas.ru:443 (TLS)  │  ← NPM issues + renews cert
-│   - head.skynas.ru:443    (TLS)  │
+│   - skygate.example.com:443 (TLS)  │  ← NPM issues + renews cert
+│   - head.example.com:443    (TLS)  │
 └────┬─────────────────────────────┘
-     │ 192.168.13.69:8080  (internal network)
+     │ <VM_HOST_LAN>:8080  (internal network)
      ▼
 ┌────┴─────────────────────────────┐
-│ skygate VM (this project)         │  ← 192.168.13.69
+│ skygate VM (this project)         │  ← <VM_HOST_LAN>
 │   - skygate container :8080       │     (skygate-skygate-1)
 │   - headscale container :50444   │
 │   - headplane container :50445   │
@@ -754,9 +754,9 @@ Public internet
 
 | Field | Value |
 |-------|-------|
-| Domain Names | `skygate.skynas.ru` |
+| Domain Names | `skygate.example.com` |
 | Scheme | `http` |
-| Forward Hostname / IP | `192.168.13.69` (the skygate VM's internal IP) |
+| Forward Hostname / IP | `<VM_HOST_LAN>` (the skygate VM's internal IP) |
 | Forward Port | `8080` |
 | Cache Assets | ✅ |
 | Block Common Exploits | ✅ |
@@ -780,7 +780,7 @@ own openresty. Takes 30-60 sec.
 
 ### Step 2: Custom Locations (Advanced tab)
 
-`NPM → Hosts → Proxy Hosts → skygate.skynas.ru → Advanced tab`
+`NPM → Hosts → Proxy Hosts → skygate.example.com → Advanced tab`
 
 Paste the following into the **Custom Nginx Configuration**
 textarea. These 5 location rules override the default
@@ -789,12 +789,12 @@ timeouts, cache headers, and proxy headers:
 
 ```nginx
 # ============================================================
-# OIDC-specific tuning for skygate.skynas.ru (B168)
+# OIDC-specific tuning for skygate.example.com (B168)
 # ============================================================
 
 # --- 1. OIDC Discovery (cached 1h) ---
 location = /.well-known/openid-configuration {
-    proxy_pass http://192.168.13.69:8080;
+    proxy_pass http://<VM_HOST_LAN>:8080;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -809,7 +809,7 @@ location = /.well-known/openid-configuration {
 
 # --- 2. OIDC JWKS (cached 1h) ---
 location = /oidc/jwks.json {
-    proxy_pass http://192.168.13.69:8080;
+    proxy_pass http://<VM_HOST_LAN>:8080;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -824,7 +824,7 @@ location = /oidc/jwks.json {
 
 # --- 3. /oidc/ — authorize, token, userinfo (60s timeout) ---
 location /oidc/ {
-    proxy_pass http://192.168.13.69:8080;
+    proxy_pass http://<VM_HOST_LAN>:8080;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -840,7 +840,7 @@ location /oidc/ {
 
 # --- 4. /admin/oidc (operator-facing page) ---
 location /admin/oidc {
-    proxy_pass http://192.168.13.69:8080;
+    proxy_pass http://<VM_HOST_LAN>:8080;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -853,7 +853,7 @@ location /admin/oidc {
 
 # --- 5. /admin/oidc/sync (B167 Apply button, 130s timeout) ---
 location /admin/oidc/sync {
-    proxy_pass http://192.168.13.69:8080;
+    proxy_pass http://<VM_HOST_LAN>:8080;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -875,25 +875,25 @@ new config in 5-10 sec.
 
 On the skygate VM, the project ships a one-shot
 script that updates `SKYGATE_OIDC_ISSUER` in
-`/home/skyadmin/skygate/.env`, restarts skygate,
+`/home/<OPERATOR_USER>/skygate/.env`, restarts skygate,
 verifies the new issuer, and pushes the new
 `oidc:` block to `headscale.conf`:
 
 ```bash
-cd /home/skyadmin/skygate
-bash deploy/scripts/setup-skygate-public.sh --issuer https://skygate.skynas.ru
+cd /home/<OPERATOR_USER>/skygate
+bash deploy/scripts/setup-skygate-public.sh --issuer https://skygate.example.com
 ```
 
 Expected output (5 steps + summary):
 
 ```
 [setup] === setup-skygate-public.sh (B168) ===
-[setup] issuer:        https://skygate.skynas.ru
-[setup] redirect_uris: https://head.skynas.ru/oidc/callback
-[setup] [1/5] validate https://skygate.skynas.ru is reachable
-[setup]   https://skygate.skynas.ru/.well-known/openid-configuration returns 200
+[setup] issuer:        https://skygate.example.com
+[setup] redirect_uris: https://head.example.com/oidc/callback
+[setup] [1/5] validate https://skygate.example.com is reachable
+[setup]   https://skygate.example.com/.well-known/openid-configuration returns 200
 [setup] [2/5] update .env
-[setup]   wrote SKYGATE_OIDC_ISSUER to /home/skyadmin/skygate/.env
+[setup]   wrote SKYGATE_OIDC_ISSUER to /home/<OPERATOR_USER>/skygate/.env
 [setup] [3/5] restart skygate container
 [setup] [4/5] wait for skygate /healthz + verify new issuer
 [setup] [5/5] push the new OIDC config to headscale (docker mode)
@@ -909,24 +909,24 @@ on the skygate VM (this happens after `git reset --hard`).
 
 ```bash
 # 1. discovery: 200 + correct issuer
-curl -s https://skygate.skynas.ru/.well-known/openid-configuration | grep -o '"issuer":"[^"]*"'
-# → "issuer":"https://skygate.skynas.ru"
+curl -s https://skygate.example.com/.well-known/openid-configuration | grep -o '"issuer":"[^"]*"'
+# → "issuer":"https://skygate.example.com"
 
 # 2. JWKS: 200
-curl -sk -o /dev/null -w '%{http_code}\n' https://skygate.skynas.ru/oidc/jwks.json
+curl -sk -o /dev/null -w '%{http_code}\n' https://skygate.example.com/oidc/jwks.json
 # → 200
 
 # 3. authorize (unauth): 302 → /login
 curl -sk -o /dev/null -w 'code=%{http_code} loc=%{redirect_url}\n' \
-  "https://skygate.skynas.ru/oidc/authorize?client_id=headscale&redirect_uri=https%3A%2F%2Fhead.skynas.ru%2Foidc%2Fcallback&response_type=code&state=test&scope=openid+profile+email&code_challenge=abc&code_challenge_method=S256"
-# → code=302 loc=https://skygate.skynas.ru/login?next=...
+  "https://skygate.example.com/oidc/authorize?client_id=headscale&redirect_uri=https%3A%2F%2Fhead.example.com%2Foidc%2Fcallback&response_type=code&state=test&scope=openid+profile+email&code_challenge=abc&code_challenge_method=S256"
+# → code=302 loc=https://skygate.example.com/login?next=...
 
 # 4. userinfo (no auth): 401 + WWW-Authenticate Bearer
-curl -sk -o /dev/null -w '%{http_code}\n' https://skygate.skynas.ru/oidc/userinfo
+curl -sk -o /dev/null -w '%{http_code}\n' https://skygate.example.com/oidc/userinfo
 # → 401
 
 # 5. cross-check: headscale /oidc/callback reachable
-curl -sk -o /dev/null -w '%{http_code}\n' https://head.skynas.ru/oidc/callback
+curl -sk -o /dev/null -w '%{http_code}\n' https://head.example.com/oidc/callback
 # → 400 (reaches headscale, rejects fake code — correct)
 ```
 
@@ -938,16 +938,16 @@ old `.env` — re-run `setup-skygate-public.sh` (idempotent).
 
 ```bash
 # On a test device (phone, laptop, fresh VM):
-tailscale up --login-server https://head.skynas.ru
+tailscale up --login-server https://head.example.com
 ```
 
 The Tailscale client opens the browser to
-`https://head.skynas.ru/oidc/authorize?client_id=headscale&...`
-→ headscale 302s to `https://skygate.skynas.ru/oidc/authorize?...`
-→ skygate 302s to `https://skygate.skynas.ru/login?next=...`
+`https://head.example.com/oidc/authorize?client_id=headscale&...`
+→ headscale 302s to `https://skygate.example.com/oidc/authorize?...`
+→ skygate 302s to `https://skygate.example.com/login?next=...`
 → user types skygate admin creds → skygate 302s to
-`https://skygate.skynas.ru/oidc/authorize?code=...`
-→ skygate 302s to `https://head.skynas.ru/oidc/callback?code=...&state=...`
+`https://skygate.example.com/oidc/authorize?code=...`
+→ skygate 302s to `https://head.example.com/oidc/callback?code=...&state=...`
 → headscale exchanges the code, creates the user, returns
 to the Tailscale client.
 
@@ -955,7 +955,7 @@ to the Tailscale client.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `502 Bad Gateway` from NPM | skygate VM unreachable on 192.168.13.69:8080 from fronting VM | `curl http://192.168.13.69:8080/healthz` from fronting VM; check firewall / VPC ACL |
+| `502 Bad Gateway` from NPM | skygate VM unreachable on <VM_HOST_LAN>:8080 from fronting VM | `curl http://<VM_HOST_LAN>:8080/healthz` from fronting VM; check firewall / VPC ACL |
 | Cert issuance hangs at "pending" | Port 80 closed from internet on 95.165.170.190 | Open 80/tcp; check ISP / hosting provider firewall |
 | `525 / 526` errors in browser | Cloudflare SSL mismatch (you have a CF proxy in front) | Pause CF proxy (grey cloud) OR set CF SSL = "Full" |
 | `200 OK` but discovery shows `issuer: skygate.example.com` | skygate .env not updated | Run `setup-skygate-public.sh` on skygate VM |
@@ -1000,7 +1000,7 @@ for fresh installs.
 
 ## Files added in v1.5.2 (B168 — NPM path)
 
-* `docs/internal/https-setup.md` — new "Alternative:
+* `docs/internal/runbooks/https-setup.md` — new "Alternative:
   Nginx Proxy Manager (NPM)" section above
 * `deploy/snippets/nginx-skygate-oidc.conf` — the
   canonical raw nginx config equivalent to what

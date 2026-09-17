@@ -3,7 +3,7 @@
 # ha-phase0.sh — Phase 0 of HA v1.5.0: Tailscale mesh + subnet routes
 # B-new (v1.5.0+) — operator-driven pre-flight for the HA chain.
 #
-# See docs/internal/ha-v1.5.0-execution.md §3 (Phase 0).
+# See docs/internal/runbooks/ha-v1.5.0-execution.md §3 (Phase 0).
 #
 # Prerequisites
 # -------------

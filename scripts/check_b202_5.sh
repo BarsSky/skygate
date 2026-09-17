@@ -2,7 +2,7 @@
 # B202.5 (v1.5.0+) — SSHDumpTransport for cross-host DB
 # migrations.
 #
-# Phase 1.4 of docs/internal/cluster-management.md, the
+# Phase 1.4 of docs/internal/architecture/cluster-management.md, the
 # cross-host counterpart to the B202 LocalDumpTransport.
 # Closes the "operator must hand-migrate the DB via
 # scp + pg_restore on the agent" gap that was implicit

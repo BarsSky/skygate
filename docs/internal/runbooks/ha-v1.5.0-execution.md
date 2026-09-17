@@ -99,7 +99,7 @@ SKYGATE_DNS_ROUTE53_ZONE_ID=<your-zone-id>
 
 | Component | Current | Target |
 |---|---|---|
-| Primary VM | `192.168.13.69` (public `<operator-public-ip>`) — runs headscale + skygate + PG-primary | **becomes `skygate-standby`** (P2) |
+| Primary VM | `<VM_HOST_LAN>` (public `<operator-public-ip>`) — runs headscale + skygate + PG-primary | **becomes `skygate-standby`** (P2) |
 | Standby VM | none | **`<polygon-vm-hostname>`** — new skygate-prod (P1) |
 | Patroni | running async replication, etcd at `<operator-vm-public-ip>:2379` | unchanged (per decision #12) |
 | External DNS | unknown (need to confirm reg.ru API access) | reg.ru API client in `internal/dns/regapi/` |
@@ -127,21 +127,21 @@ but the standby can't connect to the primary's data plane.
 1. **agent (<agent-lan-ip>)**:
    ```bash
    sudo systemctl enable --now tailscaled   # systemd unit uses --socket=/run/tailscale/tailscaled.sock
-   sudo tailscale up --login-server=https://head.skynas.ru \
-     --authkey=$SKYGATE_KEY --hostname=skygate-host-1 \
+   sudo tailscale up --login-server=https://head.example.com \
+     --authkey=$SKYGATE_KEY --hostname=skygate-host \
      --accept-routes --accept-dns=false --netfilter-mode=off \
      --advertise-routes=<agent-docker-subnet-1>,<agent-docker-subnet-2>,<agent-lan-subnet>
    ```
    Then on the **headscale** host (admin):
    ```bash
    AGENT_ID=$(docker exec headscale headscale nodes list -o json | python3 -c \
-     "import json,sys;d=json.load(sys.stdin);print([n['id'] for n in d if n.get('given_name','').startswith('skygate-host-1-')][0])")
+     "import json,sys;d=json.load(sys.stdin);print([n['id'] for n in d if n.get('given_name','').startswith('skygate-host-')][0])")
    docker exec headscale headscale nodes approve-routes -i "$AGENT_ID" \
      --routes <agent-docker-subnet-1>,<agent-docker-subnet-2>,<agent-lan-subnet>
    ```
 2. **<polygon-vm-hostname> (operator-public-IP)**:
    ```bash
-   tailscale up --login-server=https://head.skynas.ru \
+   tailscale up --login-server=https://head.example.com \
      --authkey=$SKYGATE_KEY --hostname=<polygon-vm-hostname> \
      --accept-routes --accept-dns=false --netfilter-mode=off
    ```
@@ -149,17 +149,17 @@ but the standby can't connect to the primary's data plane.
    0.29.1 with the grants-based policy does **not** include
    user-owned (un-tagged) nodes in other nodes' netmaps, even when
    grants formally allow the traffic. Pre-tag the new nodes so
-   they appear in karolina/emilia/sharlotta/etc's peer list:
+   they appear in <DEVICE_X>/<DEVICE_Y>/sharlotta/etc's peer list:
    ```bash
    AGENT_ID=...   # from step 1
    SVYAT_ID=...   # from step 2
    docker exec headscale headscale nodes tag -i "$AGENT_ID" \
-     --tags 'tag:dev-skyadmin-skygate-host-1,tag:private' --force
+     --tags 'tag:dev-<OPERATOR_USER>-skygate-host,tag:private' --force
    docker exec headscale headscale nodes tag -i "$SVYAT_ID" \
-     --tags 'tag:dev-skyadmin-skyworker,tag:private' --force
+     --tags 'tag:dev-<OPERATOR_USER>-<DEVICE_Z>,tag:private' --force
    ```
-   The `tag:dev-skyadmin-*` family is already in `tagOwners` (owned
-   by `skyadmin@tsnet.skynas.ru`), so no policy edit is needed.
+   The `tag:dev-<OPERATOR_USER>-*` family is already in `tagOwners` (owned
+   by `<OPERATOR_USER>@tsnet.example.com`), so no policy edit is needed.
 
 4. **Verify both directions**: from svyatoslava, `tailscale ping <agent-tailscale-ip>`;
    from agent, `tailscale ping <svyatoslava-tailscale-ip>`. Both must return
@@ -171,7 +171,7 @@ but the standby can't connect to the primary's data plane.
    mesh.
 
 **Known gotchas** (verified 2026-08-31):
-- `tailscale up --hostname=skygate-host-1` collides with the old
+- `tailscale up --hostname=skygate-host` collides with the old
   Tailscale-SaaS-era node of the same name (id=33, offline) and
   gets a `-1` suffix. Cosmetic, no functional impact.
 - The pre-existing tailscaled process running with the deprecated
@@ -272,7 +272,7 @@ UI sections in `/admin/ha`:
 - [x] Verify standby serves 200 on `/healthz` with role=standby banner
 - [x] Verify standby → primary's subnet reachable (`ping <agent-lan-ip>` from svyatoslava, `curl http://<agent-docker-gateway>:8080/healthz` from svyatoslava)
 - [x] **State-tracked runner (v1.5.2, B-new)**: `scripts/ha-phase7.sh` — wraps `bootstrap_standby.sh` with 6 state-tracked steps (preflight + s3_pull_binary + s3_pull_headscale_config + docker_compose_up + healthz_wait + verify_chain) via `scripts/ha-state/state.sh`. Idempotent, --reset / --status / --skip-s3 flags. Requires `jq`.
-- [x] **Auto-provisioning (v1.5.2, B-new-standby, 2026-09-09)**: `deploy/scripts/create-standby-preauth.sh` (mints a Tailscale preauth key with the correct headscale user mapping — default user 85 = `infra` for standbys running etcd/Patroni, attaches `tag:dev-infra-<hostname>` ACL so the new node gets the per-DEVICE grant on first contact via B175 Strategy E, writes `ha.preauth.create` audit row) + the new step 0 in `scripts/bootstrap_standby.sh` (Tailscale auth block that reads `SKYGATE_STANDBY_TS_AUTHKEY`, runs `tailscale up --login-server=https://head.skynas.ru --netfilter-mode=nodir` with idempotency check, gracefully falls back to legacy path when authkey unset, dies on tailscale up failure). **Closes the gap where new standbys ended up in the synthetic `tagged-devices` headscale user** (which `GetPerUserDeviceTags` JOIN with `portal_users` excludes → no per-DEVICE grants → standby invisible to skygate-host-1-1 over Tailscale). **B179 safety**: `--netfilter-mode=nodir` (NOT `off`) so the new standby never re-creates the iptables ts-input trap. 20 contracts in `scripts/check_b_standby_provision.sh`.
+- [x] **Auto-provisioning (v1.5.2, B-new-standby, 2026-09-09)**: `deploy/scripts/create-standby-preauth.sh` (mints a Tailscale preauth key with the correct headscale user mapping — default user 85 = `infra` for standbys running etcd/Patroni, attaches `tag:dev-infra-<hostname>` ACL so the new node gets the per-DEVICE grant on first contact via B175 Strategy E, writes `ha.preauth.create` audit row) + the new step 0 in `scripts/bootstrap_standby.sh` (Tailscale auth block that reads `SKYGATE_STANDBY_TS_AUTHKEY`, runs `tailscale up --login-server=https://head.example.com --netfilter-mode=nodir` with idempotency check, gracefully falls back to legacy path when authkey unset, dies on tailscale up failure). **Closes the gap where new standbys ended up in the synthetic `<SYNTHETIC_USER>` headscale user** (which `GetPerUserDeviceTags` JOIN with `portal_users` excludes → no per-DEVICE grants → standby invisible to <SKYGATE_HOST_NODE> over Tailscale). **B179 safety**: `--netfilter-mode=nodir` (NOT `off`) so the new standby never re-creates the iptables ts-input trap. 20 contracts in `scripts/check_b_standby_provision.sh`.
 
 **New operator runbook (replaces the old manual Tailscale setup)**:
 ```bash
@@ -392,7 +392,7 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 - Status: S3 unblocked, awaiting reg.ru creds to start Phase 1 + Phase 2
 
 ### 2026-08-18 (reg.ru SSL cert approach + admin-managed UI)
-- **Auth method: SSL cert** (over HTTP Basic Auth) — generated `cert.pem` + `key.pem` (RSA 2048, SHA-512, 365 days) on live VM at `/home/skyadmin/skygate-secrets/regapi/`
+- **Auth method: SSL cert** (over HTTP Basic Auth) — generated `cert.pem` + `key.pem` (RSA 2048, SHA-512, 365 days) on live VM at `/home/<OPERATOR_USER>/skygate-secrets/regapi/`
 - Fingerprint: `91:DA:41:BD:7C:18:45:41:AB:E2:BE:9F:68:B8:BA:30:DB:02:FB:59:EE:BA:87:0E:98:54:F1:95:C5:20:9F:0D`
 - **First cert rejected by reg.ru** — missing Extended Key Usage = `clientAuth`. Regenerated with proper EKU (TLS Web Client Authentication) + Key Usage + SubjectKeyIdentifier + AuthorityKeyIdentifier. New fingerprint: `<old-cert-fingerprint-sha256>`
 - **Operator action pending**: register cert via reg.ru UI "Add SSL certificate" (provided PEM content)
@@ -417,7 +417,7 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 - **Combined cert+key in single --cert arg**: also NO_AUTH
 - **TLS handshake OK, cert IS being presented, server cert `*.reg.ru` is valid**
 - **🔴 CRITICAL FINDING — cert MISMATCH**:
-  - Cert currently on VM (`/home/skyadmin/skygate-secrets/regapi/cert.pem`, 1399 bytes): **SHA-256 = `<current-cert-fingerprint-sha256>`**
+  - Cert currently on VM (`/home/<OPERATOR_USER>/skygate-secrets/regapi/cert.pem`, 1399 bytes): **SHA-256 = `<current-cert-fingerprint-sha256>`**
   - Cert registered in reg.ru UI (per prior conversation): **SHA-256 = `<old-cert-fingerprint-sha256>`**
   - Subject: `C=<country>, ST=<state>, L=<locality>, O=<org>, OU=<unit>, CN=<cert-name>`
   - Validity: 2026-08-18 to 2027-08-18, EKU = TLS Web Client Authentication
@@ -428,7 +428,7 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
   2. **Step B (likely also needed)**: in reg.ru UI "Настройки" → "Безопасность" → add VM public IP `<operator-public-ip>` to the IP whitelist (or confirm it's already there)
 - **Helper diagnostic command for operator** (run on VM):
   ```bash
-  openssl x509 -in /home/skyadmin/skygate-secrets/regapi/cert.pem -noout -fingerprint -sha256
+  openssl x509 -in /home/<OPERATOR_USER>/skygate-secrets/regapi/cert.pem -noout -fingerprint -sha256
   ```
   → output should match the fingerprint in reg.ru UI exactly
 - Status: password reset did not help; cert MISMATCH is the most likely root cause. Awaiting operator to (a) re-upload current cert OR (b) restore the old cert that was registered.
@@ -601,45 +601,45 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 
 - `docs/PLANS.md` §v1.5.0 — public-facing plan
 - `docs/BACKLOG.md` Priority 3 — BL-2 entry, updated UNBLOCKED status
-- `docs/internal/ha-architecture.md` — Tier 1 architecture (now v1.5.0-aligned)
-- `docs/internal/v0.27.0-postgres-ha.md` — Patroni + etcd reference (NOT modified, only consulted)
-- `docs/internal/https-setup.md` — Caddy config patterns (v0.32.11 baseline, extended for reg.ru DNS-01)
+- `docs/internal/architecture/ha-architecture.md` — Tier 1 architecture (now v1.5.0-aligned)
+- `docs/internal/postmortems/v0.27.0-postgres-ha.md` — Patroni + etcd reference (NOT modified, only consulted)
+- `docs/internal/runbooks/https-setup.md` — Caddy config patterns (v0.32.11 baseline, extended for reg.ru DNS-01)
 - `docs/disaster-recovery.md` — Tier 0 fallback when v1.5.0 isn't deployed
 
 ---
 
 ### 2026-08-31 (Phase 0 unblock attempt + new prerequisite added)
 - **Trigger**: operator asked to "сначала всё разблокировать для правильной настройки" — both nodes need to be on the Tailscale mesh + subnet routes approved BEFORE `bootstrap_standby.sh` can work.
-- **Discovered headscale netmap gotcha**: headscale 0.29.1 + grants-based policy does NOT include user-owned (un-tagged) nodes in other nodes' peer list, even when grants formally allow the traffic. Only tagged nodes (with `tag:exit-node` etc) appear. Solution: pre-tag new nodes with `tag:dev-skyadmin-skygate-host-1` (agent) and `tag:dev-skyadmin-skyworker` (svyatoslava) — both tags are already in `tagOwners` policy.
+- **Discovered headscale netmap gotcha**: headscale 0.29.1 + grants-based policy does NOT include user-owned (un-tagged) nodes in other nodes' peer list, even when grants formally allow the traffic. Only tagged nodes (with `tag:exit-node` etc) appear. Solution: pre-tag new nodes with `tag:dev-<OPERATOR_USER>-skygate-host` (agent) and `tag:dev-<OPERATOR_USER>-<DEVICE_Z>` (svyatoslava) — both tags are already in `tagOwners` policy.
 - **Phase 0 added to plan**: 5-step operator runbook (re-auth agent + approve routes + re-auth svyatoslava + tag both + verify mesh).
 - **Actions taken on agent (<agent-lan-ip>)**:
   - Killed legacy tailscaled pid 1441 (was using deprecated `--statedir=` without `--socket`, so no socket was created → `tailscale up` hung).
   - Started systemd tailscaled (uses correct `--socket=/run/tailscale/tailscaled.sock`).
-  - Created fresh preauth key (24h, reusable) for skyadmin (id=1).
-  - Ran `tailscale up --login-server=https://head.skynas.ru --authkey=... --hostname=skygate-host-1 --accept-routes --advertise-routes=<agent-docker-subnets>+<agent-lan-subnet>` — node registered as id=43 (given_name=skygate-host-1-1 because id=33 is the old Tailscale-SaaS node of the same hostname).
+  - Created fresh preauth key (24h, reusable) for <OPERATOR_USER> (id=1).
+  - Ran `tailscale up --login-server=https://head.example.com --authkey=... --hostname=skygate-host --accept-routes --advertise-routes=<agent-docker-subnets>+<agent-lan-subnet>` — node registered as id=43 (given_name=<SKYGATE_HOST_NODE> because id=33 is the old Tailscale-SaaS node of the same hostname).
   - Approved routes on headscale: `headscale nodes approve-routes -i 43 --routes <agent-docker-subnets>+<agent-lan-subnet>`.
-  - Tagged id=43 with `tag:dev-skyadmin-skygate-host-1,tag:private`.
+  - Tagged id=43 with `tag:dev-<OPERATOR_USER>-skygate-host,tag:private`.
 - **Actions taken on <polygon-vm-hostname> (<svyatoslava-public-ip>)**:
   - Deleted expired old node id=36 (`headscale nodes delete -i 36 --force`).
-  - Created fresh preauth key, ran `tailscale up --login-server=https://head.skynas.ru --authkey=... --hostname=<polygon-vm-hostname> --accept-routes --accept-dns=false --netfilter-mode=off` — node registered as id=44, Tailscale IP 100.64.0.23.
-  - Tagged id=44 with `tag:dev-skyadmin-skyworker,tag:private`.
+  - Created fresh preauth key, ran `tailscale up --login-server=https://head.example.com --authkey=... --hostname=<polygon-vm-hostname> --accept-routes --accept-dns=false --netfilter-mode=off` — node registered as id=44, Tailscale IP <TAILSCALE_IP_POLYGON>.
+  - Tagged id=44 with `tag:dev-<OPERATOR_USER>-<DEVICE_Z>,tag:private`.
 - **🚨 BLOCKER (still open)**: <polygon-vm-hostname> server became unreachable mid-unblock (port 22 + 41641 timed out at 12:25 UTC). Headscale still shows it as `online=true` (stale last_seen=12:10:36). Operator must verify the VM is up before Phase 7 can proceed.
-- **🚨 BLOCKER (still open)**: even after tagging, the new nodes (id=43, id=44) are NOT in the existing peers' netmaps (karolina/emilia/sharlotta still only see themselves). Likely cause: headscale 0.29.1 doesn't recompute netmap for tagged-node changes without a headscale restart, OR grants-based policy + Noise protocol have a visibility bug. Workarounds: (a) restart headscale service, (b) inspect the policy for `autogroup:tagged-devices` grant that should include all tagged nodes regardless of user, (c) fall back to classic `acls: [{...}]` instead of grants.
+- **🚨 BLOCKER (still open)**: even after tagging, the new nodes (id=43, id=44) are NOT in the existing peers' netmaps (<DEVICE_X>/<DEVICE_Y>/sharlotta still only see themselves). Likely cause: headscale 0.29.1 doesn't recompute netmap for tagged-node changes without a headscale restart, OR grants-based policy + Noise protocol have a visibility bug. Workarounds: (a) restart headscale service, (b) inspect the policy for `autogroup:<SYNTHETIC_USER>` grant that should include all tagged nodes regardless of user, (c) fall back to classic `acls: [{...}]` instead of grants.
 - **Status**: Phase 0 steps 1-3 done, step 4 (verify bidirectional ping) cannot complete until (a) <polygon-vm-hostname> server is back and (b) headscale netmap visibility is resolved. Phase 7 (bootstrap_standby.sh) is blocked on these two issues.
 
 ### 2026-08-31 (Phase 0 RESOLVED — <polygon-vm-hostname> in mesh, ready for Phase 7)
 - **All Phase 0 blockers RESOLVED**. Tailscale mesh is up bidirectionally:
-  - <polygon-vm-hostname>-1 (id=45, IP 100.64.0.24, tags `tag:dev-skyadmin-skyworker,tag:private`)
-  - skygate-host-1-1 (id=43, IP 100.64.0.22, tags `tag:dev-skyadmin-skygate-host-1,tag:private`)
+  - <polygon-vm-hostname>-1 (id=45, IP <TAILSCALE_IP_POLYGON_2>, tags `tag:dev-<OPERATOR_USER>-<DEVICE_Z>,tag:private`)
+  - <SKYGATE_HOST_NODE> (id=43, IP <TAILSCALE_IP_SKYGATE_HOST>, tags `tag:dev-<OPERATOR_USER>-skygate-host,tag:private`)
 - **Root cause of the outage** (<polygon-vm-hostname> went dark at 12:25 UTC): `--netfilter-mode=off` does NOT clean up iptables rules left by a PREVIOUS `tailscale up` session in default `on` mode. The stale `ts-input` chain with REJECT policy blocked all non-Tailscale traffic (SSH, ICMP). Fix: full state wipe + `--netfilter-mode=nodivert` re-auth (the nodivert mode doesn't add/remove rules at all, so the broken chain from the previous session is the only one in place — and we manually flushed it). Recovery script: `tmp/svyatoslava_iptables_flush.sh`.
 - **The 6-command recovery (operator pasted via VNC)**: `systemctl stop tailscaled; pkill -9 tailscaled; iptables -F/-X ts-*; iptables -P INPUT ACCEPT; systemctl start tailscaled; tailscale up --netfilter-mode=nodivert ...` — got SSH back, but `tailscale up` hung at `weird: regen=true but server says NodeKeyExpired` because the OLD machine key from deleted id=36 was still in the local state. Required an additional `rm /var/lib/tailscale/tailscaled.state` + `rm -rf /var/lib/tailscale/{files,profile-data}` for a clean re-auth.
-- **Netmap visibility gotcha** (second blocker): headscale grants-based policy in 0.29.1 was missing the `tag:dev-skyadmin-skyworker` ↔ `tag:dev-skyadmin-skygate-host-1` cross-grant. Even after tagging both nodes, they didn't appear in each other's netmaps because no grant allowed the traffic. **Fix**: 5 new grants added to headscale policy: (1) skyworker → skygate-host-1, (2) skygate-host-1 → skyworker, (3) skyworker → agent LANs (192.168.13.0/24, 172.17.0.0/16, 172.18.0.0/16), (4) skygate-host-1 → same LANs, (5) skygate-host-1 → autogroup:internet. After `docker restart headscale` + `headscale policy set -f /etc/headscale/policy.json`, both nodes see each other in their netmaps.
-- **Bidirectional ping verified**: `agent → 100.64.0.24 = pong via <polygon-vm-public-ip>:41641 in 6ms`. `svyatoslava → 100.64.0.22 = 0.05ms (direct LAN)`. `svyatoslava → 8.8.8.8 = 285ms via NAT`. `svyatoslava → head.skynas.ru = HTTP 405` (server reachable, just no GET / on openresty). ✅
-- **🚨 NEW BLOCKER (not HA-related, hoster issue)**: <polygon-vm-hostname>'s PUBLIC IP (<polygon-vm-public-ip>) became unreachable from outside (~13:50 UTC, no warning, no hoster maintenance notice). agent can't ping it, operator can't SSH to it, only Tailscale mesh works. iptables-legacy + iptables-nft both clean (`policy ACCEPT`, no ts-input). Likely a hoster network problem (the VM is on a private 10.0.0.x subnet NAT'd to <polygon-vm-public-ip> — host-side NAT lost the route). **Impact on HA**: minor — svyatoslava is reachable from agent via Tailscale (100.64.0.24), which is what the HA standby needs (it's NOT publicly accessible; agent is the only public-facing node). The HA fail-over works as long as agent can reach svyatoslava via Tailscale, which it can.
-- **Phase 7 (bootstrap_standby.sh) — now ready to run**. svyatoslava has: /usr/local/bin/skygate (18.4MB), /home/skyadmin/skygate-pg-ha/{etcd,patroni,patroni-data,patroni.yml.template}, patroni.service enabled, etcd + psql + docker + git installed. Missing: skygate repo clone + .env + skygate-standby docker-compose service. The bootstrap script handles these but needs:
-  1. `git clone <skygate-repo> /home/skyadmin/skygate` on svyatoslava (Tailscale-routed from agent)
-  2. `scp agent:/home/skyadmin/skygate/.env svyatoslava:/home/skyadmin/skygate/.env` (with SKYGATE_HA_ROLE=standby + HEADPLANE_HEADSCALE__API_KEY)
-  3. `bash /home/skyadmin/skygate/scripts/bootstrap_standby.sh`
+- **Netmap visibility gotcha** (second blocker): headscale grants-based policy in 0.29.1 was missing the `tag:dev-<OPERATOR_USER>-<DEVICE_Z>` ↔ `tag:dev-<OPERATOR_USER>-skygate-host` cross-grant. Even after tagging both nodes, they didn't appear in each other's netmaps because no grant allowed the traffic. **Fix**: 5 new grants added to headscale policy: (1) <DEVICE_Z> → skygate-host, (2) skygate-host → <DEVICE_Z>, (3) <DEVICE_Z> → agent LANs (192.168.13.0/24, 172.17.0.0/16, 172.18.0.0/16), (4) skygate-host → same LANs, (5) skygate-host → autogroup:internet. After `docker restart headscale` + `headscale policy set -f /etc/headscale/policy.json`, both nodes see each other in their netmaps.
+- **Bidirectional ping verified**: `agent → <TAILSCALE_IP_POLYGON_2> = pong via <polygon-vm-public-ip>:41641 in 6ms`. `svyatoslava → <TAILSCALE_IP_SKYGATE_HOST> = 0.05ms (direct LAN)`. `svyatoslava → 8.8.8.8 = 285ms via NAT`. `svyatoslava → head.example.com = HTTP 405` (server reachable, just no GET / on openresty). ✅
+- **🚨 NEW BLOCKER (not HA-related, hoster issue)**: <polygon-vm-hostname>'s PUBLIC IP (<polygon-vm-public-ip>) became unreachable from outside (~13:50 UTC, no warning, no hoster maintenance notice). agent can't ping it, operator can't SSH to it, only Tailscale mesh works. iptables-legacy + iptables-nft both clean (`policy ACCEPT`, no ts-input). Likely a hoster network problem (the VM is on a private 10.0.0.x subnet NAT'd to <polygon-vm-public-ip> — host-side NAT lost the route). **Impact on HA**: minor — svyatoslava is reachable from agent via Tailscale (<TAILSCALE_IP_POLYGON_2>), which is what the HA standby needs (it's NOT publicly accessible; agent is the only public-facing node). The HA fail-over works as long as agent can reach svyatoslava via Tailscale, which it can.
+- **Phase 7 (bootstrap_standby.sh) — now ready to run**. svyatoslava has: /usr/local/bin/skygate (18.4MB), /home/<OPERATOR_USER>/skygate-pg-ha/{etcd,patroni,patroni-data,patroni.yml.template}, patroni.service enabled, etcd + psql + docker + git installed. Missing: skygate repo clone + .env + skygate-standby docker-compose service. The bootstrap script handles these but needs:
+  1. `git clone <skygate-repo> /home/<OPERATOR_USER>/skygate` on svyatoslava (Tailscale-routed from agent)
+  2. `scp agent:/home/<OPERATOR_USER>/skygate/.env svyatoslava:/home/<OPERATOR_USER>/skygate/.env` (with SKYGATE_HA_ROLE=standby + HEADPLANE_HEADSCALE__API_KEY)
+  3. `bash /home/<OPERATOR_USER>/skygate/scripts/bootstrap_standby.sh`
 - **Status**: Phase 0 ✅ COMPLETE. Phase 7 ready to run. Phase 8 (init-headplane.sh) needs to run on agent first (creates the API key) before the standby can use it. Phase 9 (dr_drill.sh) and Phase 10 (v1.5.0 release tag) pending Phase 7 + 8.
 
 ### 2026-08-24 (B151 + B152 + B153 — Phase 7 + 8 + 9 runbooks SHIPPED)
@@ -675,7 +675,7 @@ Each Mavis session that touches v1.5.0 should append a `### YYYY-MM-DD HH:MM` bl
 - **What's still needed for Phase 2 to be 100% DONE on the live VM** (operator-side, not code):
   1. The operator pastes cert + login + password + zone into the `/admin/ha` "External DNS" form (or sets the env vars and triggers a `skygate regapi-credentials set` subcommand — see BL-3 follow-up below). The form writes the credentials to `global_settings` (encrypted with SKYGATE_SECRET_KEY).
   2. Operator restarts skygate so the cron + the form's "Test connection" button can read the new creds.
-  3. Operator runs `bash scripts/b146_regapi_live.sh` to verify end-to-end. Expected output: `PASS: skynas.ru/skygate -> <IP>`. If the response is `NO_AUTH` or `ACCESS_DENIED_FROM_IP`, the script's actionable error message tells the operator exactly which prereq is missing.
+  3. Operator runs `bash scripts/b146_regapi_live.sh` to verify end-to-end. Expected output: `PASS: example.com/skygate -> <IP>`. If the response is `NO_AUTH` or `ACCESS_DENIED_FROM_IP`, the script's actionable error message tells the operator exactly which prereq is missing.
 - **BL-3 follow-up noted**: there's no `skygate regapi-credentials set` CLI subcommand. The /admin/ha form is the only path to write the creds. For the operator's "one-shot bootstrap" flow (which prefers CLI over the browser), this is a future B-block. The B146 fix doesn't add it — it's outside the Phase 2 scope.
 - **Status**: 9/10 phases SHIPPED. Only Phase 10 (release tag) remains. Phase 10 is a single `git tag` + GitHub release, not blocked on anything but the operator's blessing.
 

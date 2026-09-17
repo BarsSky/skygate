@@ -108,7 +108,7 @@ driver). `pgx/v5/stdlib` for `*sql.DB` compatibility (already in use).
 | `scripts/_lib/db_exec.sh` | Create | Helper that picks `psql` or `sqlite3` based on DSN |
 | `scripts/check_b_mod_sqlite_pg.sh` | Create | 14-contract B-check |
 | `AGENTS.md` | Modify | Add B-mod-sqlite-pg-bidi release note |
-| `docs/internal/2026-09-11-skygate-adoption-audit.md` | Modify | Mark F1-F5 DONE |
+| `docs/internal/audits/skygate-adoption.md` | Modify | Mark F1-F5 DONE |
 | `docs/sidecar-mode.md` | Modify | Add "Choosing SQLite vs PostgreSQL" section |
 | `docs/deploy.md` | Modify | Add SQLite variant to the install flow |
 

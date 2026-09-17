@@ -4,7 +4,7 @@
 #
 # B161.1+2+3 shipped the OIDC provider on the
 # skygate side. B161.4 closes the loop with:
-#  1. docs/internal/oidc-headscale.md — the
+#  1. docs/internal/runbooks/oidc-headscale.md — the
 #     headscale.conf snippet + a 3-step smoke
 #     test + a "common e2e failures" table
 #  2. This B-check — verifies the live OIDC
@@ -36,16 +36,16 @@ bad() { echo "  FAIL  $1"; exit 1; }
 echo "=== contract A: source files exist + have the right structure ==="
 
 # A.1 — the doc itself.
-if [ -f docs/internal/oidc-headscale.md ]; then
-    ok "docs/internal/oidc-headscale.md exists"
+if [ -f docs/internal/runbooks/oidc-headscale.md ]; then
+    ok "docs/internal/runbooks/oidc-headscale.md exists"
 else
-    bad "docs/internal/oidc-headscale.md MISSING (the runbook is the operator's only guide to wiring headscale)"
+    bad "docs/internal/runbooks/oidc-headscale.md MISSING (the runbook is the operator's only guide to wiring headscale)"
 fi
 
 # A.2 — the doc must include the 4 must-match
 # values table (the operator's only checklist).
 for key in "SKYGATE_OIDC_ISSUER" "SKYGATE_OIDC_CLIENT_ID" "SKYGATE_OIDC_CLIENT_SECRET" "SKYGATE_OIDC_REDIRECT_URIS"; do
-    if grep -qF "$key" docs/internal/oidc-headscale.md; then
+    if grep -qF "$key" docs/internal/runbooks/oidc-headscale.md; then
         ok "oidc-headscale.md references '$key'"
     else
         bad "oidc-headscale.md: '$key' MISSING (operator has no way to know the env var name to match)"
@@ -57,7 +57,7 @@ done
 # can't run automatically without a real Tailscale
 # client).
 for step in "discovery" "jwks" "authorize"; do
-    if grep -qiE "curl.*${step}|/\\.well-known/|/oidc/jwks\\.json|/oidc/authorize" docs/internal/oidc-headscale.md; then
+    if grep -qiE "curl.*${step}|/\\.well-known/|/oidc/jwks\\.json|/oidc/authorize" docs/internal/runbooks/oidc-headscale.md; then
         ok "oidc-headscale.md has the '$step' smoke test"
     else
         bad "oidc-headscale.md: '$step' smoke test MISSING (operator can't verify the OIDC flow before attaching a Tailscale client)"
@@ -68,7 +68,7 @@ done
 # failures" table (so the operator doesn't have
 # to ask Mavis when the first Tailscale client
 # shows "authentication failed").
-if grep -qE "Common e2e failures|common e2e failures" docs/internal/oidc-headscale.md; then
+if grep -qE "Common e2e failures|common e2e failures" docs/internal/runbooks/oidc-headscale.md; then
     ok "oidc-headscale.md has the 'common e2e failures' table"
 else
     bad "oidc-headscale.md: 'common e2e failures' table MISSING"
@@ -79,7 +79,7 @@ fi
 # (the "one-click UX" the operator wants — without
 # it, every new OIDC user needs a manual
 # `headscale users create` call).
-if grep -qE "automatic_authorization: true" docs/internal/oidc-headscale.md; then
+if grep -qE "automatic_authorization: true" docs/internal/runbooks/oidc-headscale.md; then
     ok "oidc-headscale.md: automatic_authorization: true is in the snippet"
 else
     bad "oidc-headscale.md: automatic_authorization: true MISSING (without it, every new OIDC user needs a manual 'headscale users create')"

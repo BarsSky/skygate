@@ -36,7 +36,7 @@ For each test, capture:
 - side effects (DB rows, headscale state, alert messages)
 - verdict: PASS / PARTIAL / FAIL + notes
 
-Final report: `docs/fa-test-report-v0.26.0.md`.
+Final report: `docs/internal/historical/fa-test-report-v0.26.0.md`.
 
 ## Test order
 

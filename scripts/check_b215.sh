@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check_b215.sh — B215 (v1.5.0+) bootstrap state machine
 # audit events. Phase 2.6 of
-# docs/internal/cluster-management.md.
+# docs/internal/architecture/cluster-management.md.
 #
 # Closes the "bootstrap events (init/join/drain/leave)
 # are silent in cluster_audit" gap. Pre-B215, only the

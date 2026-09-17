@@ -2,7 +2,7 @@
 # check_b151.sh — init-headplane.sh (Phase 8 of v1.5.0 HA plan)
 #
 # B151 (v1.5.0) — auto-apply headplane API key on a fresh
-# deploy. See docs/internal/ha-v1.5.0-execution.md §3 (Phase 8).
+# deploy. See docs/internal/runbooks/ha-v1.5.0-execution.md §3 (Phase 8).
 #
 # The B-check is split into:
 #  A. Source-contract checks (the script exists, is executable,

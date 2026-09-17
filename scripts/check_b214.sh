@@ -2,7 +2,7 @@
 # check_b214.sh — B214 (v1.5.0+) /admin/database migration
 # workflow: async Run + cancel + rollback endpoints +
 # UI buttons + i18n. Phase 1.4.4 (cancellation) and
-# 1.4.5 (rollback UI) of docs/internal/cluster-management.md.
+# 1.4.5 (rollback UI) of docs/internal/architecture/cluster-management.md.
 #
 # Each `check` is one row; pass = exit 0, fail = exit 1.
 # Run from the repo root:

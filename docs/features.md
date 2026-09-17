@@ -516,9 +516,9 @@ RTO < 1 минута, RPO = 0 (Patroni async replication).
 ## 9. Что **не** описано здесь
 
 - API.md — отдельный документ для HTTP API (для интеграций).
-- Telegram-формат сообщений — `docs/bot-message-style-v0.15.2.md`.
+- Telegram-формат сообщений — `docs/internal/historical/bot-message-style.md`.
 - DB schema — `docs/db-schema.md`.
-- HA execution plan — `docs/internal/ha-v1.5.0-execution.md`.
+- HA execution plan — `docs/internal/runbooks/ha-v1.5.0-execution.md`.
 - Disкавери recovery — `docs/disaster-recovery.md`.
 - Команды CLI (`skygate deploy`, `skygate ha promote`) — `docs/deploy.md`.
 - Staticcheck / linting / verify-pre — `AGENTS.md`.

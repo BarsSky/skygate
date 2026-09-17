@@ -2,7 +2,7 @@
 # B210 (v1.5.0+) — DBSource pattern for non-admin services
 # (auth, my, exit_rules, feature/cluster).
 #
-# Phase 3 of docs/internal/cluster-management.md. Closes
+# Phase 3 of docs/internal/architecture/cluster-management.md. Closes
 # the B203 hot-reload regression for ALL services that
 # previously captured `*sql.DB` at boot. The B208.1 fix
 # only covered the admin package; the auth/my/exit_rules

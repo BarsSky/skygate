@@ -305,10 +305,10 @@ skygate sqlite3 /data/skygate.db \
 in the skygate container without SSH. Flow:
 
 1. **Generate a preauth key** — easiest is from the
-   `skygate-host-1` user in headscale:
+   `skygate-host` user in headscale:
    ```bash
    docker exec headscale headscale preauthkeys create \
-     --user skygate-host-1 --reusable --ephemeral
+     --user skygate-host --reusable --ephemeral
    ```
    Returns a `tskey-auth-...` token (single use unless
    `--reusable`, single-node unless `--ephemeral` is dropped).
@@ -328,7 +328,7 @@ in the skygate container without SSH. Flow:
    - waits up to 15s for the unix socket to come up
    - runs `tailscale up --accept-routes --accept-dns=false
      --login-server=https://head.example.com --hostname=
-     skygate-host-1 --authkey=<key>`
+     skygate-host --authkey=<key>`
 
 4. **Refresh the page** after ~10-30s. The "Tailnet IP" line
    goes from "not assigned" to a `100.64.x.y` address, and
@@ -353,7 +353,7 @@ skygate in a different jurisdiction to dodge the
 Telegram block) is exactly what this page was built for.
 
 **Persistence**: the auth key file is bind-mounted to
-`/home/skyadmin/skygate/data/ts/authkey` on the host (the
+`/home/<OPERATOR_USER>/skygate/data/ts/authkey` on the host (the
 `/data` mount in `docker-compose.yml`). A skygate
 container restart re-reads it from `entrypoint.sh`'s
 3rd-priority fallback (after the explicit env vars).

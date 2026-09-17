@@ -3,7 +3,7 @@
 **Date**: 2026-07-22
 **Operator**: admin@192.0.2.1
 **Build**: v0.25.1-15-ge992c76+e992c76 (commit e992c76)
-**Plan**: [`docs/fa-test-plan.md`](fa-test-plan.md)
+**Plan**: [`docs/internal/historical/fa-test-plan.md`](fa-test-plan.md)
 
 ## Summary
 
@@ -299,7 +299,7 @@ PASS (= test 2).
 
 ## Artifacts
 
-- Test plan: [`docs/fa-test-plan.md`](fa-test-plan.md)
+- Test plan: [`docs/internal/historical/fa-test-plan.md`](fa-test-plan.md)
 - Test scripts: `/tmp/test{1..12}*.sh` on the VM
 - Live backup archive: 4.5MB tar.gz (cleaned up post-test)
 - Build: `v0.25.1-15-ge992c76+e992c76` (commit e992c76)

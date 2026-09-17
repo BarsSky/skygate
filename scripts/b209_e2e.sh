@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # B209 (v1.5.0+) — end-to-end HA failover test orchestrator.
 #
-# Phase 3 of docs/internal/cluster-management.md. Exercises
+# Phase 3 of docs/internal/architecture/cluster-management.md. Exercises
 # the full failure-detection + auto-recommendation path
 # against the live agent DB (the one the B204 elector
 # ticks against every 5s) without requiring a 2nd skygate

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # B204 (v1.5.0+) — HA elector: auto-detect failed nodes +
 # auto-failover recommendation. Phase 3.2-3.3 of
-# docs/internal/cluster-management.md.
+# docs/internal/architecture/cluster-management.md.
 #
 # The contracts:
 #

@@ -13,7 +13,7 @@
 #      for all 3 new tests.
 #   3. scripts/tailnet_probe.sh exists + is bash-syntax-valid +
 #      has the 4 documented flags (--to, --iperf3, --ping, --json).
-#   4. docs/tailnet-diagnostics.md exists + has the 4 mandatory
+#   4. docs/internal/historical/tailnet-diagnostics.md exists + has the 4 mandatory
 #      sections (TL;DR, Symptom, Root cause analysis, Fix procedure).
 #   5. TestRegistry in system_tests_tailnet.go registers exactly 3 new
 #      tests in the init() (verified by the test count in the
@@ -87,7 +87,7 @@ export PATH="$GO_DIR:$PATH"
 GO_FILE="internal/feature/admin/system_tests_tailnet.go"
 GO_TEST="internal/feature/admin/system_tests_tailnet_test.go"
 SH_FILE="scripts/tailnet_probe.sh"
-DOC_FILE="docs/tailnet-diagnostics.md"
+DOC_FILE="docs/internal/historical/tailnet-diagnostics.md"
 
 fail=0
 pass() { echo "  ✓ $1"; }

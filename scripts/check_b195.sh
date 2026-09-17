@@ -2,7 +2,7 @@
 # ============================================================================
 # check_b195.sh — B195 (v1.5.0+) cluster management tables
 #
-# Verifies the Phase 0 schema from docs/internal/cluster-management.md:
+# Verifies the Phase 0 schema from docs/internal/architecture/cluster-management.md:
 #   A) internal/db/migrations_v0_64_b195.go exists
 #   B) The migration creates all 6 cluster_* tables (cluster, cluster_node,
 #      cluster_database, cluster_migration, cluster_invite, cluster_audit)
@@ -10,7 +10,7 @@
 #   D) The migration is registered in driver_postgres.go migrateV0... list
 #   E) AGENTS.md mentions B195 (or B195 work area)
 #   F) verify_pre_deploy.sh references check_b195.sh
-#   G) docs/internal/cluster-management.md exists with D1-D8 confirmed
+#   G) docs/internal/architecture/cluster-management.md exists with D1-D8 confirmed
 #   H) Phase 1.1 (/admin/database) implementation note in CHANGELOG
 # ============================================================================
 set -euo pipefail
@@ -24,7 +24,7 @@ ok() { echo "  ✓ $*"; PASS=$((PASS+1)); }
 no() { echo "  ✗ $*"; FAIL=$((FAIL+1)); }
 
 MIGRATION="$PROJECT_DIR/internal/db/migrations_v0_64_b195.go"
-DOC="$PROJECT_DIR/docs/internal/cluster-management.md"
+DOC="$PROJECT_DIR/docs/internal/architecture/cluster-management.md"
 
 # ----- A) migration file exists ----------------------------------------
 echo "A) internal/db/migrations_v0_64_b195.go"
@@ -71,7 +71,7 @@ echo "E) AGENTS.md mentions B195"
 if grep -qE "B195" "$PROJECT_DIR/AGENTS.md" 2>/dev/null; then
   ok "AGENTS.md mentions B195"
 else
-  no "AGENTS.md does not mention B195 (deferred to /docs/internal/cluster-management.md)"
+  no "AGENTS.md does not mention B195 (deferred to /docs/internal/architecture/cluster-management.md)"
 fi
 
 # ----- F) verify_pre_deploy.sh references check_b195.sh -----------------
@@ -84,7 +84,7 @@ else
 fi
 
 # ----- G) plan doc exists with D1-D8 confirmed ------------------------
-echo "G) docs/internal/cluster-management.md"
+echo "G) docs/internal/architecture/cluster-management.md"
 if [ -f "$DOC" ]; then
   ok "plan doc exists"
   if grep -qE "D1.*✅|D1.*confirmed" "$DOC" 2>/dev/null; then

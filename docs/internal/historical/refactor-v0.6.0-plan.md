@@ -55,7 +55,7 @@
 **Действия:**
 1. `data/` и `backup/` — удалить (пустые)
 2. `scripts/test.sh` → `scripts/smoke.sh`
-3. `docs/SYNC.md` → `docs/agent-knaga-workflow.md`
+3. `docs/internal/historical/sync.md` → `docs/agent-knaga-workflow.md`
 4. Commit: `chore: organize scripts/deploy/docs layout`
 
 ---

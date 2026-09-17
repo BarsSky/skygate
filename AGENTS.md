@@ -5,7 +5,7 @@ or with Skygate. Read this **first** before suggesting changes or running tasks.
 
 **Before proposing work, also read [`docs/BACKLOG.md`](docs/BACKLOG.md)** —
 it tracks abandoned / blocked / in-progress features (HA skygate-host-2
-**UNBLOCKED 2026-08-18** — see `docs/internal/ha-v1.5.0-execution.md` for
+**UNBLOCKED 2026-08-18** — see `docs/internal/runbooks/ha-v1.5.0-execution.md` for
 the v1.5.0 plan and 10 open questions awaiting operator input,
 PG cutover (now done in v1.3.x), backup polish, perf regression tests,
 **UI refactoring (DONE in v1.1.0 — 22 admin pages grouped into 6
@@ -17,7 +17,7 @@ decisions or propose work that's already in flight.
 
 **v1.5.0 HA tracker rule**: when working on anything that touches
 the HA chain, certsync, DNS failover, or deploy subcommands,
-update `docs/internal/ha-v1.5.0-execution.md` §6 status log
+update `docs/internal/runbooks/ha-v1.5.0-execution.md` §6 status log
 in the same commit. Don't let the tracker drift.
 
 ---
@@ -121,7 +121,7 @@ operator decision rationale.
     the 5 custom locations in NPM's "Advanced" tab
     route the OIDC paths to the skygate VM. Full
     NPM runbook documented in
-    `docs/internal/https-setup.md` (the new
+    `docs/internal/runbooks/https-setup.md` (the new
     "Alternative: Nginx Proxy Manager (NPM) on a
     separate VM" section). 5/5 OIDC endpoints
     verified end-to-end on the live public URL.
@@ -1033,7 +1033,7 @@ operator decision rationale.
     back to flat HTML on older clients.
 
 * **Current follow-up**: v1.5.2 HA v1.5.0 runbooks batch
-  (commits pending; see `docs/internal/ha-v1.5.0-execution.md`
+  (commits pending; see `docs/internal/runbooks/ha-v1.5.0-execution.md`
   §6 status log 2026-08-24) — **B151 + B152 + B153** close the
   operator-driven parts of the HA v1.5.0 plan (Phases 7, 8, 9).
   8/10 phases now SHIPPED; only B146 (reg.ru DNS live client,
@@ -1421,7 +1421,7 @@ operator decision rationale.
     wires automatic SSH execution (B195).
 
   - **B195 (v1.5.0+) — cluster management tables
-    (Phase 0 of docs/internal/cluster-management.md, D1)**:
+    (Phase 0 of docs/internal/architecture/cluster-management.md, D1)**:
     Operator 2026-09-01 defined 8 design decisions (D1-D8)
     for full cluster automation ("users shouldn't have to
     manually configure the system, just build the cluster
@@ -1956,7 +1956,7 @@ operator decision rationale.
     is the next major chunk after 2.2.
   - **B202.5 (v1.5.0+) — SSHDumpTransport for
     cross-host DB migrations (Phase 1.4 of
-    `docs/internal/cluster-management.md`)**: the
+    `docs/internal/architecture/cluster-management.md`)**: the
     cross-host counterpart to the B202
     `LocalDumpTransport`. Closes the "operator
     must hand-migrate the DB via scp + pg_restore
@@ -2173,7 +2173,7 @@ operator decision rationale.
       machine which has Docker installed, this is
       later").
   - **B204 (v1.5.0+) — HA elector (Phase 3.2-3.3 of
-    `docs/internal/cluster-management.md`)**: the
+    `docs/internal/architecture/cluster-management.md`)**: the
     skygate-watchdog (B203) handles the *DB DSN* side
     of cluster health (cluster_database → pgxpool
     hot-reload). The elector handles the *node
@@ -2410,7 +2410,7 @@ operator decision rationale.
     mention Phase 3.4.
   - **B211 (v1.5.0+, 2026-09-02) — `skygate init`
     CLI subcommand (Phase 2.3 of
-    docs/internal/cluster-management.md).** Closes the
+    docs/internal/architecture/cluster-management.md).** Closes the
     "operator must hand-INSERT 3 cluster_* rows +
     run `skygate cluster invite` separately on a
     fresh install" gap. Pre-B211 the bootstrap path
@@ -2505,7 +2505,7 @@ operator decision rationale.
     PATH).
   - **B212 (v1.5.0+, 2026-09-02) — `skygate join`
     CLI subcommand (Phase 2.4 of
-    docs/internal/cluster-management.md).** Closes
+    docs/internal/architecture/cluster-management.md).** Closes
     the "standby's join handshake doesn't bootstrap
     the standby's own DSN + doesn't print clear
     next-steps" gap. Pre-B212, `skygate cluster join
@@ -2588,7 +2588,7 @@ operator decision rationale.
     2=cluster_id, line 3=dsn, line 4=primary_host.
   - **B213 (v1.5.0+, 2026-09-02) — `skygate migrate`
     CLI subcommand (Phase 1.7 of
-    docs/internal/cluster-management.md).** Closes
+    docs/internal/architecture/cluster-management.md).** Closes
     the "operator has no way to see which
     migrations have been applied" gap. Pre-B213:
     the `applied_migrations` table (B198
@@ -2672,7 +2672,7 @@ operator decision rationale.
   - **B214 (v1.5.0+, 2026-09-02) — /admin/database
     migration workflow: async + cancel + rollback
     UI (Phase 1.4.4 + 1.4.5 of
-    docs/internal/cluster-management.md).** Closes
+    docs/internal/architecture/cluster-management.md).** Closes
     the "operator has no way to cancel an
     in-flight migration or rollback a failed one"
     gap. Pre-B214, `PostAdminDatabaseMigrate` was
@@ -2771,7 +2771,7 @@ operator decision rationale.
     framework's bookkeeping gets updated).
   - **B215 (v1.5.0+, 2026-09-02) — bootstrap state
     machine audit events (Phase 2.6 of
-    docs/internal/cluster-management.md).** Closes
+    docs/internal/architecture/cluster-management.md).** Closes
     the "bootstrap events (init/join/drain/leave)
     are silent in cluster_audit" gap. Pre-B215,
     only the failover path wrote to cluster_audit
@@ -3283,7 +3283,7 @@ operator decision rationale.
     state.
   - **B221 (v1.5.0+, 2026-09-03) — generic audit
     log target_type + target_id (Phase 4.1 of
-    docs/internal/cluster-management.md).** Closes
+    docs/internal/architecture/cluster-management.md).** Closes
     the "audit_log rows have no structured target
     column — operator must read the freeform
     `detail` text to find out which entity was
@@ -5463,7 +5463,7 @@ operator decision rationale.
     live test productionized**. Closes the
     Phase 2 (BL-2) work that was blocked on
     Q1 (reg.ru creds) + Q2 (IP whitelist) per
-    §4 of `docs/internal/ha-v1.5.0-execution.md`.
+    §4 of `docs/internal/runbooks/ha-v1.5.0-execution.md`.
     The operator provided both on 2026-09-07
     (login + alternative password; the IP
     whitelist was already filled). B146
@@ -5501,7 +5501,7 @@ operator decision rationale.
       env, which aren't true on a CI runner).
     - `scripts/verify_pre_deploy.sh` —
       `B146` row added to the catalog.
-    - `docs/internal/ha-v1.5.0-execution.md`
+    - `docs/internal/runbooks/ha-v1.5.0-execution.md`
       §6 status log + §4 open questions
       updated (Q1 + Q2 marked ✅ DONE 2026-09-07).
     **Verified** (local):
@@ -6381,7 +6381,7 @@ operator decision rationale.
   - **B210 (v1.5.0+) — DBSource pattern for
     non-admin services (auth, my, exit_rules,
     feature/cluster). Phase 3 of
-    `docs/internal/cluster-management.md`**: closes
+    `docs/internal/architecture/cluster-management.md`**: closes
     the B203 hot-reload regression for ALL services
     that previously captured `*sql.DB` at boot. B208.1
     only fixed the admin package; the auth/my/
@@ -7330,7 +7330,7 @@ operator decision rationale.
       `docker restart skygate-skygate-1`. Until then,
       skygate cannot reach Telegram directly.
     * **D — No relay nodes in tailnet** — relay-1/relay-2/relay-3
-      from `docs/internal/telegram-relay.md` (100.64.100.X)
+      from `docs/internal/runbooks/telegram-relay.md` (100.64.100.X)
       were NEVER set up; live tailnet is `tsnet.skynas.ru`
       / 100.64.0.X with only exit-nodes. Even after A + C,
       Telegram via Tailscale is impossible until a relay
@@ -7649,7 +7649,7 @@ operator decision rationale.
     follow-up turn after the operator reviews the diff.
   - **B161.4**: closes the OIDC block with the
     operator-side deliverables:
-    - `docs/internal/oidc-headscale.md` (~13 KB) —
+    - `docs/internal/runbooks/oidc-headscale.md` (~13 KB) —
       the operator runbook for wiring headscale's
       `oidc:` block to skygate's OIDC provider: the
       YAML snippet + the 4 must-match values table
@@ -7660,10 +7660,10 @@ operator decision rationale.
       can self-diagnose when the first Tailscale
       client shows "authentication failed") + a
       `curl`-based drive-the-flow-yourself section
-    - `docs/oidc-headscale.md` (public runbook,
+    - `docs/internal/runbooks/oidc-headscale.md` (public runbook,
       step-by-step procedure with the same snippet
       — different structure, same content) +
-      `docs/oidc-headscale-conf.md` (headscale.conf
+      `docs/internal/runbooks/oidc-headscale.md` (headscale.conf
       YAML reference)
     - new `/admin/oidc` operator-facing page
       (`internal/feature/admin/oidc_settings.go` +
@@ -7821,7 +7821,7 @@ operator decision rationale.
   `v1.5.0-alpha1-23-gd7c8ca6`) — **B161.4 headscale.conf
   snippet + e2e verification** + the v1.5.1-alpha1 6-B
   batch (B162-B166). What's added: B161.4 OIDC runbook
-  (docs/internal/oidc-headscale.md + /admin/oidc page +
+  (docs/internal/runbooks/oidc-headscale.md + /admin/oidc page +
   e2e test) + B162 per-row device delete from /my/devices
   + B163 collapsible FAIL output on /admin/system_tests +
   B164 DERP server init on a new host via SSH +
@@ -8677,10 +8677,10 @@ operator decision rationale.
     B111 catch-alls `* → tag:dev-infra-X` verified active in
     live policy (4 grants). skygate-host-1 (Telegram bot) now
     reachable to all 4 exit nodes via the `infra` bucket.
-  - **`docs/B111-INFRA-RETAG-RUNBOOK.md`** (NEW, ~150 lines):
+  - **`docs/runbooks/infra-retag.md`** (NEW, ~150 lines):
     operator step-by-step re-tag procedure for the 5 infra
     nodes (5 нод × 3-5 мин, can be parallel).
-  - **`docs/tailnet-diagnostics.md`** UPDATED with real root
+  - **`docs/internal/historical/tailnet-diagnostics.md`** UPDATED with real root
     cause (B93 incomplete, NOT tailnet split as initially
     diagnosed in B110). The "split" was actually policy
     isolation between the `tagged-devices` user (where
@@ -11762,7 +11762,7 @@ explaining why.
     (4 new tests: clear/idempotent + set/unknown-node +
     set/disabled-row + loadUIState/Egress);
     `scripts/verify_pre_deploy.sh` (B53);
-    `docs/internal/telegram-relay.md` (new "Admin UI egress selector"
+    `docs/internal/runbooks/telegram-relay.md` (new "Admin UI egress selector"
     section + 3 new troubleshooting rows).
 
 * **Previous**: v0.33.1.7 — 4 user-reported bugfixes. Same catalog
@@ -12017,7 +12017,7 @@ explaining why.
      recent audit, exits 0/1/2 with [OK]/[WARN]/[FAIL]).
      Companion `scripts/_check_subnet_nodes.py` is the
      Python helper that `check_subnet_router.sh` shells
-     out to. Plus docs/internal/subnet-router.md rewritten with
+     out to. Plus docs/internal/runbooks/subnet-router.md rewritten with
      6 concrete use cases (home NAS, smart home, SOHO
      server room, family sharing, lab/dev, cross-site
      backup) and the e2e verification output.
@@ -12026,7 +12026,7 @@ explaining why.
   headscale/healthz.go, scripts/check_subnet_router.sh,
   scripts/_check_subnet_nodes.py), 10 files modified
   (backfill, tags, sidecar, handlers.go, main.go,
-  bundle scripts, Makefile, docs/internal/subnet-router.md),
+  bundle scripts, Makefile, docs/internal/runbooks/subnet-router.md),
   1 test renamed/updated. 17/17 packages green.
   check-bundles / check-nodes / check-https green.
   Smoke 79+79 pass, 4 fail in step 13 (multi-user
@@ -12145,7 +12145,7 @@ explaining why.
   `make check-bundles` targets keep the embed copies
   of setup.sh / README.md in
   `internal/handlers/bundles/` in sync with the
-  canonical `deploy/subnet-router/`. `docs/internal/subnet-router.md`
+  canonical `deploy/subnet-router/`. `docs/internal/runbooks/subnet-router.md`
   got three new top-level sections: TL;DR (concrete
   examples of what works after setup), Quick start
   (3-command path for users who already have
@@ -12186,7 +12186,7 @@ explaining why.
   `deploy/subnet-router/setup.sh` (runs on the user's
   RPi/NAS/mini-PC, takes a preauth from the admin,
   executes `tailscale up` with the correct flags + prints
-  next-steps), `docs/internal/subnet-router.md` (full user guide:
+  next-steps), `docs/internal/runbooks/subnet-router.md` (full user guide:
   5-step setup, troubleshooting, security notes), and
   `deploy/subnet-router/allocate-existing-users.sh` (one-off
   for backfilling users that were created before the
@@ -12977,7 +12977,7 @@ explaining why.
   ([tag v0.16.6](https://github.com/BarsSky/skygate/releases/tag/v0.16.6)). The
   first concrete step of the 6-release per-user
   subnets roadmap (v0.16.6 → v0.19.0) documented in
-  `docs/v0.16.0-open-questions.md` (8 operator
+  `docs/internal/historical/v0.16.0-open-questions.md` (8 operator
   decisions confirmed 2026-07-17). v0.16.6 ships the
   data model + CRUD + admin form + bot `/mysubnet`;
   the actual sidecar container management is the
@@ -13141,7 +13141,7 @@ explaining why.
      Background rotation job is v0.16.0+ follow-up
      (column is in v0.15.5 so the UI can store + read).
   6. **Documentation**: per-user subnets roadmap
-     entry in AGENTS.md + `docs/v0.16.0-open-questions.md`
+     entry in AGENTS.md + `docs/internal/historical/v0.16.0-open-questions.md`
      parking the 8 design decisions for the next
      major work.
   * All five backlog items done in one release —
@@ -13219,7 +13219,7 @@ explaining why.
   inside a single 30-line Caddyfile. No nginx Proxy
   Manager, no PHP, no DB. DERP relay already did TLS
   itself (certmode=letsencrypt).
-  * `docs/internal/https-setup.md` — 17KB operator guide with
+  * `docs/internal/runbooks/https-setup.md` — 17KB operator guide with
     per-module checklist, full rendered Caddyfile,
     verification commands, alternatives for tailnet-only
     / headscale-only / Tailscale TLS deployments.
@@ -13764,7 +13764,7 @@ as a `pending` status pill with a `Issue preauth key`
 button) but the LAN behind the subnet-router isn't reachable
 from the tailnet.
 
-**End-to-end flow** (the user reads `docs/internal/subnet-router.md`,
+**End-to-end flow** (the user reads `docs/internal/runbooks/subnet-router.md`,
 the admin reads this section):
 
 1. **User has a subnet row** in `user_subnets` with status
@@ -13822,7 +13822,7 @@ the admin reads this section):
    `ping skygate-subnet-<username>` works via MagicDNS;
    `ping 10.0.<uid>.1` works to the gateway IP on the
    user's LAN (assuming the subnet-router has IP forwarding
-   enabled — see `docs/internal/subnet-router.md` § Optional).
+   enabled — see `docs/internal/runbooks/subnet-router.md` § Optional).
 
 **Verification** (on the skygate host):
 
@@ -14197,7 +14197,7 @@ relay still says "tailnet policy does not permit you to SSH".
 * `static/css/themes.css` — probe-state CSS
 * `deploy/tailscale-relay/setup.sh` — one-time relay setup
 * `deploy/tailscale-relay/update-routes.sh` — IP refresh
-* `docs/internal/telegram-relay.md` — full procedure + troubleshooting
+* `docs/internal/runbooks/telegram-relay.md` — full procedure + troubleshooting
 * `docs/headplane.md` — Headplane (optional sidecar UI) integration
   contract, version pin policy, compatibility matrix, optional/required
   status, upgrade procedure, **existing-Headplane mode
@@ -14207,7 +14207,7 @@ relay still says "tailnet policy does not permit you to SSH".
 * `docs/derp.md` — DERP relay (bundled + existing) integration
   contract. `DERP_ENABLED` and `DERP_EXTERNAL_URLS` cover both
   modes; admin-side web-UI config is the v0.11.0 follow-up.
-* `docs/skygate-as-shell.md` — the v0.11.0+ roadmap for
+* `docs/internal/historical/skygate-as-shell.md` — the v0.11.0+ roadmap for
   pluggable Headscale / multi-control-plane / ACL import.
   Architectural doc, no code; tracks B and C from the
   user's "shelled module" idea.
@@ -14745,7 +14745,7 @@ and re-run.
 > **Refactor-v0.30 is complete** (Phases A, B-steps-1-to-6, C, D-steps-1-to-4
 > landed 2026-07-28 to 2026-07-30). The full per-step history,
 > metrics, what-worked/what-didn't, and lessons-for-next-refactor
-> are in [`docs/refactor-v0.30-postmortem.md`](docs/refactor-v0.30-postmortem.md).
+> are in [`docs/internal/postmortems/v0.30-refactor.md`](docs/internal/postmortems/v0.30-refactor.md).
 > This section keeps the **actionable guidance** for future work.
 
 ### Per-feature package pattern (mandatory for new handlers)
@@ -14970,7 +14970,7 @@ bash scripts/bootstrap_standby.sh
 - `scripts/verify_pre_deploy.sh` (registers
   `check_b_standby_provision.sh` in the catalog as the
   `B-new-standby` row)
-- `docs/internal/ha-v1.5.0-execution.md` §3 Phase 7 (the
+- `docs/internal/runbooks/ha-v1.5.0-execution.md` §3 Phase 7 (the
   operator runbook)
 - `internal/acl/acl_perdevice.go` (the per-DEVICE grant block
   that needed the per-DEVICE tag to fire — unchanged, this is
@@ -15060,10 +15060,10 @@ Tailscale #1 and leaves room for clean additions.
    10 fields, loadState+saveState exist, atomic write pattern used
    (`.tmp` + `os.Rename`), Manager struct + 14 methods exist, sentinel
    errors defined (5 of 5), 13+ test functions, `go test ./internal/module/...`
-   passes, `docs/internal/architecture-modules.md` exists with Plugin API
+   passes, `docs/internal/architecture/modules.md` exists with Plugin API
    + Module interface sections.
 
-6. **`docs/internal/architecture-modules.md`** — full design doc
+6. **`docs/internal/architecture/modules.md`** — full design doc
    (12 sections, ~180 lines): plugin API principles + Module interface
    + Manager lifecycle + State persistence + SubFeatures pattern +
    admin panel + detection (3 install modes) + Tailscale-as-Module-#1
@@ -15181,7 +15181,7 @@ the process's start time).
 - `internal/module/{module,state,manager,module_test}.go` — the
   Plugin API (12/12 contracts PASS, 14/14 unit tests PASS).
 - `scripts/check_b_module_core.sh` — registered in `verify_pre_deploy.sh`.
-- `docs/internal/architecture-modules.md` — full design doc.
+- `docs/internal/architecture/modules.md` — full design doc.
 - `AGENTS.md` B-mod-core row.
 
 **Re-merge plan** (after operator fixes the DB DSN):
@@ -16564,7 +16564,7 @@ svi doesn't have (expected).
 ### B-mod-static-embed (2026-09-11) — embed static/ into the binary via embed.FS
 
 **Проблема** (найдена 2026-09-11 при аудите sidecar-сценария, см.
-`docs/internal/2026-09-11-skygate-adoption-audit.md`):
+`docs/internal/audits/skygate-adoption.md`):
 
 Оператор развернул skygate как sidecar к существующему headscale на
 VM `188.253.20.31`. Использовал `ghcr.io/barssky/skygate:latest`
@@ -17390,7 +17390,7 @@ without dropping.
   registration, package exports, main.go cron, POST route,
   template UI, i18n keys, AGENTS.md entry.
 - `scripts/verify_pre_deploy.sh` — registers `run_check "B252"`.
-- `docs/internal/derp-cert-sync.md` (new) — operator runbook
+- `docs/internal/runbooks/derp-cert-sync.md` (new) — operator runbook
   with the 3 modes, psql config snippets, NPM credential
   storage (`global_settings`), reload strategy (systemctl
   reload vs kill -HUP), systemd vs docker-compose extra_hosts
@@ -18234,7 +18234,7 @@ discoverable + adds a CI-time regression guard.
 
   - `bash scripts/check_b259_tailscale_toggle.sh` → **36 passed,
     0 failed** (was 35/35 pre-B259.2, +1 from new section K).
-    Verified on local + on prod (192.168.13.69,
+    Verified on local + on prod (`<VM_HOST>`,
     build `v1.5.7-20-g859429a`).
   - Manual anti-test: a temporary `u.Name == hostname` in a
     throwaway `internal/feature/admin/foo.go` makes section K

@@ -41,7 +41,7 @@
 | `docs/sidecar-mode.md` | Create | Operator-facing guide for sidecar deployment |
 | `scripts/check_b_mod_first_run.sh` | Create | B-check (12 contracts) |
 | `AGENTS.md` | Modify | Release note |
-| `docs/internal/2026-09-11-skygate-adoption-audit.md` | Modify | Mark B1-B5 done |
+| `docs/internal/audits/skygate-adoption.md` | Modify | Mark B1-B5 done |
 
 ---
 
@@ -708,7 +708,7 @@ ACL apply — you can recover from `acl_snapshots` table via psql.
 
 ## See also
 
-- [docs/skygate-as-shell.md](skygate-as-shell.md) — full-stack (headscale
+- [docs/internal/historical/skygate-as-shell.md](skygate-as-shell.md) — full-stack (headscale
   + portal + Postgres + DERP) deploy guide.
 - [docs/deploy.md](deploy.md) — install scripts and OS packages.
 - [AGENTS.md](../AGENTS.md) — release notes + B-mod-* fix history.

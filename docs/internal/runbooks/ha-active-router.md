@@ -21,8 +21,8 @@ SQLite + Litestream (headscale 0.29.x has no PG support).
 
 #### Infra requirements
 
-- **skygate-host-2** (2nd VM, same OS + Docker as skygate-host-1).
-  Must be reachable from skygate-host-1 on the internal Docker
+- **skygate-host-2** (2nd VM, same OS + Docker as skygate-host).
+  Must be reachable from skygate-host on the internal Docker
   network OR over a Tailscale subnet route.
 - **etcd cluster** (3rd node ideal, single-node minimum).
   Patroni uses etcd for consensus; without quorum, failover
@@ -52,7 +52,7 @@ SQLite + Litestream (headscale 0.29.x has no PG support).
 - Testcontainers-go in CI for the 4 PG verification tests
   — **~0.5 day**
 - 2-week "PG cutover" project (see
-  `docs/v0.33.0-pg-cutover-runbook.md`): 15-min maintenance
+  `docs/runbooks/pg-cutover.md`): 15-min maintenance
   window for the live switch
 
 #### What breaks during the cutover
@@ -393,7 +393,7 @@ srv := &http.Server{Handler: gated}
 dbs:
   - path: /home/admin/skygate/data/skygate.db
     replicas:
-      - url: s3://skygate-litestream-bucket/skygate-host-1/skygate.db
+      - url: s3://skygate-litestream-bucket/skygate-host/skygate.db
         retention: 168h  # 7 days
 ```
 
@@ -411,7 +411,7 @@ VM only pulls from S3, never writes).
 
 ### Phase 7 — Manual failover drill (0.2 day)
 
-1. SSH to skygate-host-1, `sudo systemctl stop docker` (or
+1. SSH to skygate-host, `sudo systemctl stop docker` (or
    `docker stop skygate`)
 2. Wait 30s, verify passive skygate's healthz still works
 3. SSH to skygate-host-2, edit .env, change
@@ -513,7 +513,7 @@ operator-configured role with auto-promotion.
                        │                                      │
               ┌────────▼────────┐                  ┌────────▼────────┐
               │  PRIMARY VM     │  PG streaming    │  STANDBY VM     │
-              │  (skygate-host-1)   │  replication     │  (skygate-host-2)  │
+              │  (skygate-host)   │  replication     │  (skygate-host-2)  │
               │                 │ ◄──────────────► │                 │
               │  skygate + hs   │  (synchronous)   │  skygate (RO)   │
               │  PG primary     │                  │  PG replica     │
@@ -568,7 +568,7 @@ operator-configured role with auto-promotion.
                           │   (points to ACTIVE IP)      │
                           └─────┬──────────────────┬─────┘
                                 │                  │
-                       skygate-host-1 (ACTIVE)    skygate-host-2 (PASSIVE)
+                       skygate-host (ACTIVE)    skygate-host-2 (PASSIVE)
                        SKYGATE_HA_ROLE=active SKYGATE_HA_ROLE=passive
                        - read+write          - read-only
                        - serves HTTP         - serves HTTP (read-only
@@ -747,12 +747,12 @@ if app.Cluster.Role == RolePassive {
 
 **Litestream config** (already in deploy/, just enable for the
 second VM):
-- `skygate-host-1` (active): Litestream replicates `skygate.db` → S3 every 5s
+- `skygate-host` (active): Litestream replicates `skygate.db` → S3 every 5s
 - `skygate-host-2` (passive): Litestream reads from S3 → local `skygate.db` every 5s
 - Both VMs run Litestream as a sidecar; the only differentiator is `SKYGATE_HA_ROLE`
 
 **Failover drill** (manual, ~10 min):
-1. SSH to `skygate-host-1`, `sudo docker stop skygate`
+1. SSH to `skygate-host`, `sudo docker stop skygate`
 2. Wait 30s (passive skygate detects 3 failed healthz polls)
 3. SSH to `skygate-host-2`, `sudo -e /home/admin/skygate/.env` → change `SKYGATE_HA_ROLE=active`
 4. `docker compose up -d --force-recreate skygate`
