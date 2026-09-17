@@ -201,6 +201,59 @@ rm -f /tmp/b259_body.txt
 if grep -qF 'B259.1' "$REPO_ROOT/AGENTS.md"; then ok "AGENTS.md mentions B259.1"
 else bad "AGENTS.md must mention B259.1 (the findUserForHostname delegation fix)"; fi
 
+# --- K. regression guard: NO other inline hostname→user lookups ---
+# B259.1 closed the inline u.Name == hostname lookup in
+# generateAndWriteTailscaleKeyForEnable, but a future PR could
+# re-introduce the same anti-pattern in a new endpoint
+# (e.g. /admin/headscale, /admin/devices, /my/exit-rules). The
+# pattern is: "for each u in headscale_users { if u.Name ==
+# <some_var_holding_hostname> ... }". This section source-greps
+# the entire admin + my feature packages for that shape and
+# fails the deploy if any caller outside findUserForHostname
+# re-introduces it.
+#
+# Allowed: the `findUserForHostname` body itself (which is
+#   gated by `hostname == "skygate-host"` reserved-name shortcut,
+#   NOT a ListUsers + u.Name loop).
+# Allowed: u.Name == "infra" / u.Name == <expected_admin> exact-name
+#   comparisons (these check for SPECIFIC known names, not for
+#   "lookup by hostname" — see infra_owner_sanity.go:107 and
+#   users_sync_banner.go:229).
+# Disallowed: `u.Name == hostname` or `u.Name == <var>` where the
+#   variable holds a tailnet hostname (the lookup-by-name-of-
+#   skynet-node anti-pattern).
+echo
+echo "=== K. regression guard: no inline hostname→user lookups outside findUserForHostname ==="
+# Search every .go file under the admin + my feature packages
+# for the two patterns the B259 inline lookup relied on. We use
+# a targeted pattern that's tight enough to skip legitimate
+# `u.Name == "infra"` / `u.Name == expectedAdmin` checks but
+# catches `u.Name == hostname` and `u.Name == <varname>` where
+# the variable obviously holds a tailnet hostname (skygate-host
+# / TailscaleHostname() / SKYGATE_TS_HOSTNAME).
+HIT=0
+for f in $(find "$REPO_ROOT/internal/feature/admin" "$REPO_ROOT/internal/feature/my" -name '*.go' -not -name '*_test.go'); do
+  rel="${f#$REPO_ROOT/}"
+  # 1. u.Name == hostname (or vice versa). Skip comment lines
+  #    (start with //) — the findUserForHostname doc-comment +
+  #    the B259.1 inline doc explicitly contain this pattern as
+  #    a "DO NOT do this" warning, not as live code. We only
+  #    want to flag actual executable lookups.
+  if grep -nE '\.Name\s*==\s*hostname\b|hostname\b\s*==\s*\.Name' "$f" | grep -v '://' | grep -vE '^[0-9]+:\s*//' >/dev/null 2>&1; then
+    bad "$rel: inline '.Name == hostname' lookup detected — call findUserForHostname instead (B251/B259.1)"
+    HIT=1
+  fi
+  # 2. u.Name == <var> where var is clearly a hostname (skygate-host,
+  #    TailscaleHostname, SKYGATE_TS_HOSTNAME). Same comment-skip rule.
+  if grep -nE '\.Name\s*==\s*(skygate-host|TailscaleHostname|SKYGATE_TS_HOSTNAME)' "$f" | grep -vE '^[0-9]+:\s*//' >/dev/null 2>&1; then
+    bad "$rel: inline '.Name == <hostname-var>' lookup detected — call findUserForHostname instead (B251/B259.1)"
+    HIT=1
+  fi
+done
+if [ "$HIT" = "0" ]; then
+  ok "no inline hostname→user lookups found in admin/ + my/ packages"
+fi
+
 echo
 echo "============================================="
 printf '  %d passed, %d failed\n' "$PASS" "$FAIL"

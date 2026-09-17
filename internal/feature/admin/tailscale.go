@@ -54,6 +54,24 @@ import (
 // own a preauth key for the configured Tailscale hostname
 // (default "skygate-host").
 //
+// ────────────────────────────────────────────────────────────────────
+// ⚠️  THIS IS THE CANONICAL HELPER for hostname → headscale user
+// mapping. DO NOT inline a "find user by hostname" lookup anywhere
+// else. B259 (2026-09-16) shipped with `generateAndWriteTailscaleKeyForEnable`
+// duplicating weaker logic (u.Name == hostname || u.Name ==
+// strings.TrimSuffix(hostname, "-1")), which forced the operator
+// to manually create a phantom `skygate-host` headscale user.
+// That violated B251's invariant. B259.1 (2026-09-17) collapsed
+// the duplicate logic to a single call here.
+//
+// If you need hostname → headscale user anywhere in skygate —
+// /admin/headscale, /admin/devices, exit-rule per-host lookups,
+// anything — CALL THIS FUNCTION. The B-check
+// `scripts/check_b259_tailscale_toggle.sh` (section J)
+// source-greps for inline `u.Name == hostname` patterns
+// outside this function and fails the deploy if it finds any.
+// ────────────────────────────────────────────────────────────────────
+//
 // Two paths, depending on hostname:
 //
 //  1. Reserved hostname "skygate-host" (B251):
