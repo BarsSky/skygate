@@ -1197,40 +1197,41 @@ func (s *Service) handleTailscaleEnableInContainer(w http.ResponseWriter, r *htt
 		"")
 }
 
-// generateAndWriteTailscaleKeyForEnable is a thin wrapper that
-// runs the same headscale-lookup + preauth-create + file-write
-// flow as handleTailscaleGenerateKey but returns the key
-// fingerprint to the caller (so the enable handler can audit
-// it). Implemented separately so the existing public-key
-// handler keeps its current return semantics (flash message
-// with the user-friendly hostname + userName).
+// generateAndWriteTailscaleKeyForEnable is the shared
+// headscale-lookup + preauth-create + file-write helper used by
+// both handleTailscaleGenerateKey (legacy "Generate automatically"
+// button on /admin/tailscale) and handleTailscaleEnableInContainer
+// (B259 "Включить Tailscale в контейнере" button). The latter
+// needs the key fingerprint back to audit it, so it can't just
+// re-use handleTailscaleGenerateKey's flash-message return
+// semantics — hence this wrapper that returns the FP.
+//
+// User lookup is delegated to findUserForHostname (B251). For
+// the reserved hostname "skygate-host", that helper pins to
+// headscale user `infra` (uid=85) unconditionally per the
+// operator's 2026-08-13 directive — no phantom `skygate-host`
+// headscale user is ever created.
 func (s *Service) generateAndWriteTailscaleKeyForEnable(actingUserID int64, actingUsername string) (string, error) {
-	// The existing handleTailscaleGenerateKey does the work;
-	// instead of duplicating 100 lines we re-invoke it
-	// through an HTTP-style sub-call by extracting the key
-	// fingerprint post-write. Implementation: invoke the
-	// headscale-lookup logic inline.
+	// B259.1 (2026-09-17): delegate the headscale-user lookup
+	// to findUserForHostname (the canonical B251 helper) instead
+	// of duplicating u.Name == hostname logic inline. Pre-B259.1
+	// required headscale user `skygate-host` to exist — but that
+	// user never existed in prod (and shouldn't: skygate-host is
+	// the tailnet hostname, the headscale user is `infra` per
+	// operator 2026-08-13 directive). The inline lookup forced
+	// the operator to manually create a phantom user, which is
+	// the wrong shape. Now: hostname `skygate-host` →
+	// findUserForHostname → infraHeadscaleUserID → SELECT
+	// headscale_user_id FROM portal_users WHERE username='infra'
+	// → uid=85 → CreatePreauthKey(85, ...). No phantom user.
 	hs := s.HSGlobalFn()
 	if hs == nil {
 		return "", fmt.Errorf("headscale client not configured")
 	}
 	hostname := s.tailscaleHostname()
-	users, err := hs.ListUsers()
+	userID, userName, err := s.findUserForHostname(context.Background(), hs, hostname)
 	if err != nil {
-		return "", fmt.Errorf("list headscale users: %w", err)
-	}
-	var userName string
-	var userID int64
-	for _, u := range users {
-		if u.Name == hostname || u.Name == strings.TrimSuffix(hostname, "-1") {
-			userName = u.Name
-			uid, _ := strconv.ParseInt(u.ID, 10, 64)
-			userID = uid
-			break
-		}
-	}
-	if userName == "" {
-		return "", fmt.Errorf("no headscale user matching hostname %q (create the user via /admin/headscale first)", hostname)
+		return "", fmt.Errorf("find user for hostname %q: %w", hostname, err)
 	}
 	preauth, err := hs.CreatePreauthKeyWithTags(userID, "1h", true, nil)
 	if err != nil {

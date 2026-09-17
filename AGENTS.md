@@ -53,7 +53,10 @@ operator decision rationale.
 
 * **Current**: v1.5.7-17-g8c01770 (commit `8c01770` on VM remote,
   B253 + B254 PG compat + B255 + B257 + B258 + **B259 /admin/tailscale
-  toggle (enable/disable via UI)** shipped) — **B167 OIDC config
+  toggle (enable/disable via UI)** + **B259.1 /admin/tailscale
+  enable flow delegates to B251 `findUserForHostname` (no phantom
+  `skygate-host` headscale user — owned by `infra`)** shipped) —
+  **B167 OIDC config
   auto-sync (full Option C)** + **B168 live OIDC
   e2e on a public hostname** + **B169 admin-side
   device delete on /admin/devices** + **B170
@@ -18076,3 +18079,88 @@ operator with no shell access.
     is the "first boot" gate, the UI toggle is the
     "subsequent change" path. Restart the container to align
     both.
+
+## B259.1 (v1.5.8+, 2026-09-17) — B259 enable flow uses canonical `findUserForHostname` (no phantom `skygate-host` headscale user)
+
+**Symptom** (operator 2026-09-17, immediately after B259 deploy):
+"а почему не назначить тогда на технического пользователя? зачем
+плодить сущности? раз skygate-host принадлежит infra то от лица
+пользователя infra все и делать — для этого он и существует."
+
+The operator reviewed the B259 flow end-to-end and noticed two
+things wrong with the preauth-key generation:
+
+  1. The B259 helper `generateAndWriteTailscaleKeyForEnable`
+     resolved the headscale user via inline
+     `u.Name == hostname || u.Name == strings.TrimSuffix(hostname, "-1")`
+     logic — which required headscale user `skygate-host` to
+     exist (one user per tailnet hostname).
+  2. That user did NOT exist on prod — and SHOULDN'T. `skygate-host`
+     is the tailnet **hostname** (B251 reserved), the headscale
+     **user** is `infra` (id=85) per operator 2026-08-13 directive
+     ("infra user будет владеть skygate + exit nodes"). The legacy
+     v0.33.1.9 inline lookup predated that policy.
+
+Net effect: after B259 shipped, the operator had to manually
+`headscale users create skygate-host` for the Enable button to
+work — the WRONG shape. The whole point of B251 was to pin
+`skygate-host` → `infra` so no extra user row exists.
+
+**Diagnosis**: the inline lookup in B259 violated the B251
+canonical invariant. B251 already provides `findUserForHostname`
+which has a `skygate-host` reserved-name shortcut that pins
+unconditionally to `infraHeadscaleUserID` → SELECT
+`headscale_user_id` FROM `portal_users` WHERE username='infra'
+→ uid=85. B259 should have used this helper instead of
+duplicating weaker logic.
+
+**Fix** (2 files):
+
+  1. **`internal/feature/admin/tailscale.go`** — `generateAndWriteTailscaleKeyForEnable`
+     now delegates to `findUserForHostname(context.Background(), hs, hostname)`
+     instead of the inline `hs.ListUsers()` + `u.Name == hostname`
+     loop. Reuses the B251 helper that's already wired to
+     `infraHeadscaleUserID`. The function's docstring now
+     explicitly notes "no phantom `skygate-host` headscale user is
+     ever created" so a future reader can't accidentally
+     re-introduce the inline lookup.
+
+  2. **`internal/feature/admin/tailscale_b259_test.go`** — new
+     `TestGenerateAndWriteTailscaleKeyForEnable_B259_DelegatesToFindUserForHostname`
+     pins three contract markers via source-grep (same pattern as
+     `TestEnableInContainerPersistsDBPath`):
+       - the function body calls
+         `s.findUserForHostname(context.Background(), hs, hostname)`
+       - the function body does NOT call `hs.ListUsers()`
+       - the function body does NOT contain
+         `strings.TrimSuffix(hostname, "-1")` (the legacy
+         sentinel the deleted lookup relied on)
+
+**Operational cleanup** (the operator who fixed the prod drift
+on 2026-09-17 already did these as part of the same turn):
+
+  - **`/home/skyadmin/skygate/docker-compose.yml:126`** — sed
+    `SKYGATE_TS_HOSTNAME=skygate-host-1` →
+    `SKYGATE_TS_HOSTNAME=skygate-host` (legacy v0.33.1.9 env
+    override drifted from B251's canonical hostname). Container
+    recreated with `--no-deps` so headscale/pg/headplane stayed
+    up.
+  - **headscale** — the phantom user `skygate-host` (id=89)
+    that had been created mid-debug was destroyed (`headscale
+    users destroy --force --name skygate-host`). Final user
+    list: skyadmin (1), michail (8), guest (11), daniil (12),
+    infra (85). No `skygate-host` row.
+  - **portal_users** — verified `id=99 infra → headscale_user_id=85`
+    via direct PG query against the running `skygate_staging`
+    database (the prod DB name; PG role `admin`).
+
+**Verification**:
+
+  - `bash scripts/check_b259_tailscale_toggle.sh` → 35 passed,
+    0 failed (added 4 new J-section contracts pinning the
+    delegation contract + AGENTS.md mention).
+  - `go test -run 'TestGenerateAndWriteTailscaleKeyForEnable_B259_DelegatesToFindUserForHostname' ./internal/feature/admin/...` → `ok`.
+  - Live preauth-key smoke test on prod:
+    `headscale preauthkeys create --user 85 --reusable --expiration 24h`
+    → `hskey-auth-wLISryzw3Thz-...` (returns 200 with valid key,
+    matching the pre-B259 behaviour against the right user).

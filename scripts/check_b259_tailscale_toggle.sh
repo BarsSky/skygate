@@ -128,7 +128,8 @@ for t in TestTailscaleAuthKeyPath_ResolutionOrder \
          TestTailscaleAuthKeyDisabled_RespectsRealPath \
          TestTailscaleAuthKeyDisabled_RespectsDevNull \
          TestTailscaleAuthKeyDisabled_RespectsDevNullVariants \
-         TestEnableInContainerPersistsDBPath; do
+         TestEnableInContainerPersistsDBPath \
+         TestGenerateAndWriteTailscaleKeyForEnable_B259_DelegatesToFindUserForHostname; do
   if grep -qF "func $t" "$TEST"; then ok "$t exists"
   else bad "$t must exist in $TEST"; fi
 done
@@ -153,7 +154,7 @@ else
   else bad "go build ./internal/feature/admin/... failed"; fi
   if GO_RUN vet ./internal/feature/admin/...; then ok "go vet ./internal/feature/admin/..."
   else bad "go vet ./internal/feature/admin/... failed"; fi
-  if GO_RUN test ./internal/feature/admin/ -run "TestTailscaleAuthKey|TestEnableInContainer"; then
+  if GO_RUN test ./internal/feature/admin/ -run "TestTailscaleAuthKey|TestEnableInContainer|TestGenerateAndWriteTailscaleKeyForEnable"; then
     ok "go test ./internal/feature/admin/ -run B259 tests"
   else
     bad "go test B259 failed"
@@ -165,6 +166,40 @@ echo
 echo "=== I. AGENTS.md B259 catalog entry ==="
 if grep -qF 'B259' "$REPO_ROOT/AGENTS.md"; then ok "AGENTS.md mentions B259"
 else bad "AGENTS.md must mention B259 + the UI-toggle rationale"; fi
+
+# --- J. B259.1 fix: delegate to findUserForHostname ---
+# Operator 2026-09-17: "раз skygate-host принадлежит infra то
+# от лица пользователя infra все и делать — зачем плодить сущности".
+# The pre-B259.1 helper looked up the headscale user via inline
+# `u.Name == hostname` logic, which forced the operator to
+# manually create a phantom `skygate-host` headscale user.
+# B259.1 replaces that with findUserForHostname (the canonical
+# B251 helper that pins hostname `skygate-host` → user `infra`
+# per operator 2026-08-13 directive — uid=85). After B259.1,
+# B259's "Включить Tailscale в контейнере" button works against
+# the existing infra user with no manual provisioning.
+echo
+echo "=== J. B259.1 fix: delegates to findUserForHostname ==="
+if grep -qF 's.findUserForHostname(context.Background(), hs, hostname)' "$SRC"; then
+  ok "generateAndWriteTailscaleKeyForEnable calls findUserForHostname (no phantom user)"
+else bad "generateAndWriteTailscaleKeyForEnable must call findUserForHostname (B259.1)"; fi
+# Scope the negative checks to the function body — there are
+# OTHER hs.ListUsers() calls elsewhere in tailscale.go we don't
+# want to break (e.g. the audit-row builders).
+awk '/^func \(s \*Service\) generateAndWriteTailscaleKeyForEnable\(/{flag=1} flag{print} /^func \(s \*Service\) handleTailscaleDisableInContainer\(/{flag=0; exit}' "$SRC" > /tmp/b259_body.txt
+if grep -qF 'hs.ListUsers()' /tmp/b259_body.txt; then
+  bad "generateAndWriteTailscaleKeyForEnable body must NOT call hs.ListUsers() (findUserForHostname is the sole source of truth)"
+else
+  ok "generateAndWriteTailscaleKeyForEnable body has no hs.ListUsers() (delegated)"
+fi
+if grep -qF 'strings.TrimSuffix(hostname, "-1")' /tmp/b259_body.txt; then
+  bad "generateAndWriteTailscaleKeyForEnable body must NOT contain the legacy u.Name==hostname-or-strip-1 sentinel"
+else
+  ok "generateAndWriteTailscaleKeyForEnable body has no TrimSuffix(hostname, -1) sentinel (B259.1)"
+fi
+rm -f /tmp/b259_body.txt
+if grep -qF 'B259.1' "$REPO_ROOT/AGENTS.md"; then ok "AGENTS.md mentions B259.1"
+else bad "AGENTS.md must mention B259.1 (the findUserForHostname delegation fix)"; fi
 
 echo
 echo "============================================="

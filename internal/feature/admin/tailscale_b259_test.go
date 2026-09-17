@@ -161,3 +161,75 @@ func TestEnableInContainerPersistsDBPath(t *testing.T) {
 		t.Errorf("tailscale.go must call %q in handleTailscaleEnableInContainer (FIRST step — so subsequent startTailscaled picks up the new path)", marker)
 	}
 }
+
+// TestGenerateAndWriteTailscaleKeyForEnable_B259_DelegatesToFindUserForHostname
+// pins the B259.1 contract: generateAndWriteTailscaleKeyForEnable
+// MUST resolve the headscale user via findUserForHostname (the
+// canonical B251 helper that pins the reserved hostname
+// "skygate-host" → user "infra" per operator 2026-08-13
+// directive). Pre-B259.1 the function duplicated a weaker lookup
+// (`u.Name == hostname || u.Name == strings.TrimSuffix(hostname, "-1")`)
+// that required a phantom headscale user "skygate-host" to exist
+// in the headscale database. Operator 2026-09-17: "раз skygate-host
+// принадлежит infra то от лица пользователя infra все и делать —
+// зачем плодить сущности". After this fix, B259's "Включить
+// Tailscale в контейнере" button generates the preauth key
+// against the existing user `infra` (uid=85) without any
+// provisioning step on the operator's side.
+//
+// The test asserts three contract markers in tailscale.go:
+//
+//  1. generateAndWriteTailscaleKeyForEnable calls
+//     findUserForHostname (not the duplicate u.Name==hostname
+//     logic that we just deleted).
+//  2. The function does NOT call hs.ListUsers() — the B251
+//     helper is the sole source of truth for the user lookup.
+//  3. The function does NOT contain the literal
+//     `strings.TrimSuffix(hostname, "-1")` substring (the
+//     pre-B259.1 sentinel that the old logic relied on).
+func TestGenerateAndWriteTailscaleKeyForEnable_B259_DelegatesToFindUserForHostname(t *testing.T) {
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	var src []byte
+	for i := 0; i < 8; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			src, err = os.ReadFile(filepath.Join(dir, "internal/feature/admin/tailscale.go"))
+			if err != nil {
+				t.Skipf("read tailscale.go: %v", err)
+			}
+			break
+		}
+		parent, err := filepath.Abs(filepath.Join(dir, ".."))
+		if err != nil {
+			break
+		}
+		dir = parent
+	}
+	if src == nil {
+		t.Skip("could not find skygate repo root (no go.mod in cwd ancestors)")
+	}
+	body := string(src)
+	if !strings.Contains(body, "s.findUserForHostname(context.Background(), hs, hostname)") {
+		t.Errorf("generateAndWriteTailscaleKeyForEnable must call findUserForHostname (B259.1) — the inline u.Name==hostname lookup is gone")
+	}
+	// Scope the negative checks to the function body so unrelated
+	// hs.ListUsers() calls elsewhere in tailscale.go don't fail
+	// the test. We split the file at the function start + use the
+	// next closing brace as the boundary.
+	const fnStart = "func (s *Service) generateAndWriteTailscaleKeyForEnable("
+	const fnEnd = "func (s *Service) handleTailscaleDisableInContainer("
+	startIdx := strings.Index(body, fnStart)
+	endIdx := strings.Index(body, fnEnd)
+	if startIdx < 0 || endIdx < 0 || endIdx <= startIdx {
+		t.Skipf("could not locate generateAndWriteTailscaleKeyForEnable boundaries (start=%d end=%d)", startIdx, endIdx)
+	}
+	fnBody := body[startIdx:endIdx]
+	if strings.Contains(fnBody, "hs.ListUsers()") {
+		t.Errorf("generateAndWriteTailscaleKeyForEnable must NOT call hs.ListUsers() — findUserForHostname is the sole source of truth for user lookup")
+	}
+	if strings.Contains(fnBody, `strings.TrimSuffix(hostname, "-1")`) {
+		t.Errorf("generateAndWriteTailscaleKeyForEnable must NOT contain the legacy u.Name==hostname-or-strip-1 sentinel (deleted in B259.1)")
+	}
+}
