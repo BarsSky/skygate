@@ -152,6 +152,21 @@ else
   fail "G: derper-compose hardcodes --http-port — operator can't override HTTP→HTTPS redirect port"
 fi
 
+# --- G2 (B260.2.1): --verify-clients= has a non-empty default ---
+# B260.2.1 follow-up: the live migration crash-looped on
+#   "invalid boolean value \"\" for -verify-clients: parse error"
+# because the template rendered `--verify-clients=${DERP_VERIFY_CLIENTS_URL}`
+# with the default being empty, and Go's flag library rejects an empty
+# string for a bool flag. The fix: default the var to `false` so the
+# rendered command is `--verify-clients=false` (a valid bool value that
+# disables verification, matching the systemd unit's behavior).
+if grep -E '\$\{DERP_VERIFY_CLIENTS_URL:-false\}' "$COMPOSE_TMPL" >/dev/null 2>&1 \
+   || grep -E '\$\{DERP_VERIFY_CLIENTS_URL:-.*\}' "$COMPOSE_TMPL" >/dev/null 2>&1; then
+  ok "G2: --verify-clients uses \${DERP_VERIFY_CLIENTS_URL:-default} (no empty-value crash)"
+else
+  fail "G2: --verify-clients=\${DERP_VERIFY_CLIENTS_URL} has no default — derper crashes on empty string"
+fi
+
 # --- H: env.sh defines the new vars ---
 # Each var must have a sane default (no `set -u` failures).
 missing_defaults=()

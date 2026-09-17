@@ -63,7 +63,7 @@ services:
         --a=:${DERP_DERP_PORT}
         --http-port=${DERP_HTTP_PORT}
         --stun
-        --verify-clients=${DERP_VERIFY_CLIENTS_URL}
+        --verify-clients=${DERP_VERIFY_CLIENTS_URL:-false}
 
   derpmap:
     image: python:3-alpine
