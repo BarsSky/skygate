@@ -78,6 +78,7 @@ ROOT="$(pwd)"
 DOCKERFILE="deploy/docker/derper/Dockerfile"
 README="deploy/docker/derper/README.md"
 COMPOSE_TMPL="deploy/templates/derper-compose.yml.tmpl"
+DERP_RESOLVE="internal/feature/admin/derp_status_resolve.go"
 ENV_SH="deploy/lib/env.sh"
 MIGRATE_SH="scripts/migrate_derper_to_docker.sh"
 
@@ -150,6 +151,24 @@ if grep -E '\$\{DERP_HTTP_PORT\}' "$COMPOSE_TMPL" >/dev/null 2>&1; then
   ok "G: derper-compose uses \${DERP_HTTP_PORT} for --http-port"
 else
   fail "G: derper-compose hardcodes --http-port — operator can't override HTTP→HTTPS redirect port"
+fi
+
+# --- G3 (B260.2.3): resolveDERPPort prefers DB over env var ---
+# Live VM 2026-09-17: operator's `.env` had stale `DERP_HTTP_PORT=8443`
+# from the pre-B-derper-cert systemd era. Pre-B260.2.3 the env var
+# took priority over the DB query → page rendered :8443 forever,
+# even after B260's ORDER BY id ASC LIMIT 1 (which correctly
+# returned :443 from the DB but was overridden by the env). B260.2.3
+# swap: DB first, env fallback (matching resolveDERPHostname).
+if grep -A 10 'func resolveDERPPort' "$DERP_RESOLVE" \
+   | grep -q 'bundledDERPPortFromDB(d); p != ""' \
+   && grep -A 10 'func resolveDERPPort' "$DERP_RESOLVE" \
+   | grep -q 'os.Getenv("DERP_HTTP_PORT")' \
+   && ! grep -B 1 -A 1 'os.Getenv("DERP_HTTP_PORT")' "$DERP_RESOLVE" \
+   | grep -q 'bundledDERPPortFromDB(d)'; then
+  ok "G3: resolveDERPPort prefers DB over DERP_HTTP_PORT env (stale-env class won't shadow DB)"
+else
+  fail "G3: resolveDERPPort still has env-before-DB priority — stale DERP_HTTP_PORT shadows the correct bundled port"
 fi
 
 # --- G2 (B260.2.1): --verify-clients= has a non-empty default ---
@@ -225,8 +244,11 @@ fi
 # --- M: migrate script verifies ---
 # We need at least an HTTPS GET check + a port-bind check. The STUN
 # check is a nice-to-have but not required (UDP probes from bash are
-# awkward).
-if grep -F 'https://127.0.0.1' "$MIGRATE_SH" >/dev/null 2>&1 \
+# awkward). B260.2.2 changed the HTTPS GET to use --resolve with the
+# cert hostname (so SNI matches the cert CN; without this curl against
+# 127.0.0.1 always fails with "cert mismatch" because the cert is for
+# derp.skynas.ru).
+if grep -F 'https://' "$MIGRATE_SH" >/dev/null 2>&1 \
    && grep -F 'sport = :' "$MIGRATE_SH" >/dev/null 2>&1; then
   ok "M: migrate script verifies (HTTPS GET + port-bind check)"
 else
