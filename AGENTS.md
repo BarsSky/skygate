@@ -55,8 +55,12 @@ operator decision rationale.
   B253 + B254 PG compat + B255 + B257 + B258 + **B259 /admin/tailscale
   toggle (enable/disable via UI)** + **B259.1 /admin/tailscale
   enable flow delegates to B251 `findUserForHostname` (no phantom
-  `skygate-host` headscale user — owned by `infra`)** shipped) —
-  **B167 OIDC config
+  `skygate-host` headscale user — owned by `infra`)** + **B259.2
+  regression guard: `findUserForHostname` doc-comment has explicit
+  DO-NOT-INLINE banner + B-check section K source-greps
+  `internal/feature/admin/` + `internal/feature/my/` for any
+  inline `.Name == hostname` / `.Name == <hostname-var>` lookup
+  outside the canonical helper** shipped) — **B167 OIDC config
   auto-sync (full Option C)** + **B168 live OIDC
   e2e on a public hostname** + **B169 admin-side
   device delete on /admin/devices** + **B170
@@ -18164,3 +18168,83 @@ on 2026-09-17 already did these as part of the same turn):
     `headscale preauthkeys create --user 85 --reusable --expiration 24h`
     → `hskey-auth-wLISryzw3Thz-...` (returns 200 with valid key,
     matching the pre-B259 behaviour against the right user).
+
+## B259.2 (v1.5.8+, 2026-09-17) — `findUserForHostname` DO-NOT-INLINE banner + B-check section K regression guard
+
+**Operator follow-up** (2026-09-17, immediately after B259.1
+deploy): "учтено ли это на будущее в коде? Чтобы избежать
+путаницы при авторазвертывании?". B259.1 fixed the inline
+lookup in `generateAndWriteTailscaleKeyForEnable` by routing
+the call through `findUserForHostname` — but the same
+anti-pattern could be re-introduced in any future endpoint
+(`/admin/headscale`, `/admin/devices`, `/my/exit-rules`,
+per-host lookup anywhere). B259.2 makes the canonical helper
+discoverable + adds a CI-time regression guard.
+
+**Fix** (2 files):
+
+  1. **`internal/feature/admin/tailscale.go`** — `findUserForHostname`
+     doc-comment now opens with an explicit `DO-NOT-INLINE`
+     banner (boxed with `───` rules so it stands out from the
+     regular doc-block):
+
+     ```
+     ────────────────────────────────────────────────────────────────────
+     ⚠️  THIS IS THE CANONICAL HELPER for hostname → headscale user
+     mapping. DO NOT inline a "find user by hostname" lookup anywhere
+     else. B259 (2026-09-16) shipped with `generateAndWriteTailscaleKeyForEnable`
+     duplicating weaker logic (u.Name == hostname || u.Name ==
+     strings.TrimSuffix(hostname, "-1")), which forced the operator
+     to manually create a phantom `skygate-host` headscale user.
+     That violated B251's invariant. B259.1 (2026-09-17) collapsed
+     the duplicate logic to a single call here.
+
+     If you need hostname → headscale user anywhere in skygate —
+     /admin/headscale, /admin/devices, exit-rule per-host lookups,
+     anything — CALL THIS FUNCTION. The B-check
+     `scripts/check_b259_tailscale_toggle.sh` (section J)
+     source-greps for inline `u.Name == hostname` patterns
+     outside this function and fails the deploy if it finds any.
+     ────────────────────────────────────────────────────────────────────
+     ```
+
+  2. **`scripts/check_b259_tailscale_toggle.sh`** — new section
+     K (regression guard). Source-greps every `.go` file in
+     `internal/feature/admin/` + `internal/feature/my/`
+     (excluding `*_test.go`) for two patterns:
+       - `\.Name\s*==\s*hostname\b` (or vice versa)
+       - `\.Name\s*==\s*(skygate-host|TailscaleHostname|SKYGATE_TS_HOSTNAME)`
+     Any non-comment occurrence fails the deploy with a
+     "inline '.Name == hostname' lookup detected — call
+     findUserForHostname instead (B251/B259.1)" error. Comment
+     lines (start with `//`) are skipped — the findUserForHostname
+     doc-comment itself + the B259.1 inline doc both contain
+     the pattern as a "DO NOT DO THIS" warning, not as live code.
+
+     Allowed:
+       - `u.Name == "infra"` (sanity check, see `infra_owner_sanity.go:107`)
+       - `u.Name == <expected_admin>` (sync banner, see `users_sync_banner.go:229`)
+       - Both check for SPECIFIC known names, NOT for "lookup by hostname"
+
+     Disallowed:
+       - `u.Name == hostname` (the lookup-by-name-of-skynet-node anti-pattern)
+       - `u.Name == TailscaleHostname()` / `u.Name == SKYGATE_TS_HOSTNAME`
+
+**Verification**:
+
+  - `bash scripts/check_b259_tailscale_toggle.sh` → **36 passed,
+    0 failed** (was 35/35 pre-B259.2, +1 from new section K).
+    Verified on local + on prod (192.168.13.69,
+    build `v1.5.7-20-g859429a`).
+  - Manual anti-test: a temporary `u.Name == hostname` in a
+    throwaway `internal/feature/admin/foo.go` makes section K
+    fail with the expected error message. Removed after test.
+
+**Reusable**:
+
+  Any time a B-fix introduces a "call THIS helper, don't inline
+  the logic" invariant, add a B-check section that source-greps
+  for the inlined shape across the affected packages. The
+  pattern is cheap (a `for f in $(find ...); do grep ...` loop,
+  ~10 lines), catches regressions at CI time, and makes the
+  canonical helper discoverable from the failing deploy log.
