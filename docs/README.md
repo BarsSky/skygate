@@ -83,3 +83,18 @@ docs/
    code is organised
 3. `BACKLOG.md` + `PLANS.md` — what direction we're heading
 4. `features.md` — what to preserve when refactoring
+
+## Internationalisation
+
+Documentation is primarily **English** (in this directory). Russian
+translations live in `docs/ru/` and follow the same path structure:
+
+| English (primary) | Russian translation |
+|---|---|
+| `README.md` | `docs/ru/README.md` |
+| `<topic>.md` (when translated) | `docs/ru/<topic>.md` |
+
+If a topic only exists in `docs/<topic>.md` (no `docs/ru/<topic>.md`),
+the English version is the only one — Russian is best-effort, English
+is authoritative. The README at the repo root keeps its
+`README.md` + `docs/ru/README.md` convention for GitHub's language switcher.

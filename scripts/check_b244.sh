@@ -11,7 +11,7 @@
 #
 #   D-1. PROJECT.md says Go 1.23 + SQLite, real is
 #        go 1.25 + PG-only (post-v1.3.0 cutover).
-#   D-2/D-3/D-7. README.md / README.ru.md status
+#   D-2/D-3/D-7. README.md / docs/ru/README.md status
 #        block claims "66/66 verify-pre checks",
 #        "27 packages", "v0.33.1.17" — all stale
 #        (real: 223 checks, 40+ packages, v1.5.2-alpha1).
@@ -35,11 +35,11 @@
 #   1. README.md:6 Go version matches go.mod
 #      (allow "1.25+" / "1.25.0" / "1.25.x" / etc.)
 #   2. PROJECT.md no longer says "Go 1.23" or "(SQLite)"
-#   3. README.md / README.ru.md / AGENTS.md have no
+#   3. README.md / docs/ru/README.md / AGENTS.md have no
 #      "66/66 verify-pre" literal
-#   4. README.md / README.ru.md have no "27 packages"
+#   4. README.md / docs/ru/README.md have no "27 packages"
 #      literal (the count is no longer accurate)
-#   5. README.md / README.ru.md have no "v0.33.1.17"
+#   5. README.md / docs/ru/README.md have no "v0.33.1.17"
 #      literal (status block, except in `CHANGELOG.md`
 #      release history)
 #   6. README.md has no "install-docker.sh" reference
@@ -108,15 +108,15 @@ else
 fi
 
 # 3. No "66/66 verify-pre" literal in README files
-STALE_66=$(grep -nE '66/66[^0-9]' README.md README.ru.md AGENTS.md 2>/dev/null || true)
+STALE_66=$(grep -nE '66/66[^0-9]' README.md docs/ru/README.md AGENTS.md 2>/dev/null || true)
 if [ -z "$STALE_66" ]; then
-  check "C3 No '66/66' literal in README.md / README.ru.md / AGENTS.md" 1
+  check "C3 No '66/66' literal in README.md / docs/ru/README.md / AGENTS.md" 1
 else
   check "C3 No '66/66' literal in README files" 0 "hits: $(echo "$STALE_66" | head -3 | tr '\n' '|')"
 fi
 
 # 4. No "27 packages" literal in README files
-STALE_27=$(grep -nE '\b27 packages\b' README.md README.ru.md AGENTS.md 2>/dev/null || true)
+STALE_27=$(grep -nE '\b27 packages\b' README.md docs/ru/README.md AGENTS.md 2>/dev/null || true)
 if [ -z "$STALE_27" ]; then
   check "C4 No '27 packages' literal in README files" 1
 else
@@ -126,7 +126,7 @@ fi
 # 5. No "Status (v0.33.1.17)" literal in README files
 #    (Historical feature mentions like "v0.33.1.17+" are
 #    legitimate — this check pins only the status block.)
-STALE_VER=$(grep -nE 'Status \(v0\.33\.1\.17\)' README.md README.ru.md 2>/dev/null || true)
+STALE_VER=$(grep -nE 'Status \(v0\.33\.1\.17\)' README.md docs/ru/README.md 2>/dev/null || true)
 if [ -z "$STALE_VER" ]; then
   check "C5 No 'Status (v0.33.1.17)' literal in README files" 1
 else
@@ -134,7 +134,7 @@ else
 fi
 
 # 6. README.md has no "install-docker.sh" reference
-STALE_INSTALL=$(grep -nE 'install-docker\.sh' README.md README.ru.md 2>/dev/null || true)
+STALE_INSTALL=$(grep -nE 'install-docker\.sh' README.md docs/ru/README.md 2>/dev/null || true)
 if [ -z "$STALE_INSTALL" ]; then
   check "C6 No 'install-docker.sh' reference in README files" 1
 else
@@ -142,7 +142,7 @@ else
 fi
 
 # 7. README.md has no doubled "docs/internal/internal/" path
-DOUBLED=$(grep -nE 'docs/internal/internal/' README.md README.ru.md AGENTS.md 2>/dev/null || true)
+DOUBLED=$(grep -nE 'docs/internal/internal/' README.md docs/ru/README.md AGENTS.md 2>/dev/null || true)
 if [ -z "$DOUBLED" ]; then
   check "C7 No doubled 'docs/internal/internal/' path in README files" 1
 else

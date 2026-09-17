@@ -1,6 +1,6 @@
 # Skygate Documentation Audit — 2026-09-14
 
-**Scope:** README.md / README.ru.md / AGENTS.md / PROJECT.md / docs/*.md / deploy/ ↔ scripts/ ↔ internal/i18n/ ↔ internal/handlers/templates/.
+**Scope:** README.md / docs/ru/README.md / AGENTS.md / PROJECT.md / docs/*.md / deploy/ ↔ scripts/ ↔ internal/i18n/ ↔ internal/handlers/templates/.
 **Methodology:** Read-only cross-check via 3 parallel audit streams (documentation, scripts, localization).
 **Mode:** report_only — no fixes applied. Operator reviews and applies fixes per the suggested-fix table at the end.
 
@@ -19,7 +19,7 @@
 
 ---
 
-## 1. Documentation findings (README.md / README.ru.md / AGENTS.md / PROJECT.md)
+## 1. Documentation findings (README.md / docs/ru/README.md / AGENTS.md / PROJECT.md)
 
 ### 🔴 CRITICAL
 
@@ -27,14 +27,14 @@
 Says `Skygate (Go 1.23, SQLite)`. `go.mod:3` declares `go 1.25.0` with toolchain `go1.25.4`. README.md:6 (`Go 1.25+`) is correct; PROJECT.md is stale by a major version. The "SQLite" claim in the same line is also stale (see D-4).
 **Fix:** change `Skygate (Go 1.23, SQLite)` → `Skygate (Go 1.25, PostgreSQL 14+)` (or whatever is current).
 
-**D-2. `README.md:20` and `README.ru.md:20` — verify-pre count is wildly out of date.**
+**D-2. `README.md:20` and `docs/ru/README.md:20` — verify-pre count is wildly out of date.**
 Claim: `66/66 verify-pre checks pass`. Actual: `scripts/verify_pre_deploy.sh` contains **223 distinct `run_check "B…"` invocations** (plus duplicates). README was last updated for the v0.28.5 era; current file is ~3.4× larger. The `verify_pre_deploy.sh` invocation count is one `Select-String` away — easy to pin going forward.
 **Fix:** replace `66/66` with the actual current count. Consider adding a `scripts/check_doc_counts.sh` that greps the literal `66/66` and `27 packages` and `v0.33.1.17` from README.md and fails CI on any match — see "Suggested follow-up" at the end.
 
-**D-3. `README.md:20` and `README.ru.md:20` — package count is stale.**
+**D-3. `README.md:20` and `docs/ru/README.md:20` — package count is stale.**
 Claim: `All 27 packages green`. Reality: glob of `internal/**/*_test.go` finds **40+ distinct package directories with tests** (watchdog, update, tokenrotate, metrics, dns, oidc, monitoring, devicemeta, mesh, telegram, notifications, keynotify, module, nodeownership, invite, release, derphealth, sidecar, config, i18n, auth, httputil, cluster, acl, headscale_version, certsync, controlplane, headscale, elector, dbmigrate, handlers, db, subnet, ha, dnsexternal, expirewatch, feature/auth, feature/my, feature/admin, feature/exit_rules, feature/healthz, module/tailscale). Same drift is also present in `AGENTS.md:185-189`.
 
-**D-4. `README.md:88-92` and `README.ru.md:93-97` — architecture block describes the pre-v1.3.0 world.**
+**D-4. `README.md:88-92` and `docs/ru/README.md:93-97` — architecture block describes the pre-v1.3.0 world.**
 Reads: `SQLite by default; PostgreSQL 14+ optional via -tags postgres build flag (SKYGATE_DB_DSN=postgres://…). Same schema, same migrations, same db.BackendOf dispatch — no code changes needed to switch.`
 Per the AGENTS.md v1.3.0 PG-cutover contract (B18 / B26 / B54 / B60), **PostgreSQL is the only production DB now**. The `-tags postgres` build flag is gone; the SQLite default is gone; `mattn/go-sqlite3` is no longer in the production binary. Both READMEs describe the v0.29.x architecture.
 **Fix:** rewrite the "Storage" subsection to say PostgreSQL 14+ default, with the legacy `lite` mode (`docker-compose.lite.yml`) being the SQLite escape hatch for development.
@@ -47,7 +47,7 @@ Per the AGENTS.md v1.3.0 PG-cutover contract (B18 / B26 / B54 / B60), **PostgreS
 **D-6. `README.md:202, 203` — broken deploy-script reference.**
 Two one-liners in the install section reference `deploy/install-docker.sh`. That file does not exist; the actual single-file installer is `deploy/install.sh`. Anyone copy-pasting the line would 404.
 
-**D-7. `README.md:17` and `README.ru.md:18` — version label is far behind.**
+**D-7. `README.md:17` and `docs/ru/README.md:18` — version label is far behind.**
 Both declare `Status (v0.33.1.17)`. The B-number chain and AGENTS.md current-version header show this repo is at `v1.5.2-alpha1` (B184 in flight). Not operator-breaking, but a public-facing version label that is 4 minor versions behind will mislead anyone arriving from a search engine.
 
 **D-8. AGENTS.md has the same stale "27 packages / 66/66 / v0.33.1.17" claims (lines 185-189).**
@@ -55,7 +55,7 @@ Same fix as D-2/D-3/D-7 — AGENTS.md needs the same update.
 
 ### 🟢 INFO
 
-**D-9. README.ru.md is not independently maintained.** Same drift in §D-2/D-3/D-7 appears in both files. RU version is updated in lock-step with README.md but neither file is re-checked against actual code state.
+**D-9. docs/ru/README.md is not independently maintained.** Same drift in §D-2/D-3/D-7 appears in both files. RU version is updated in lock-step with README.md but neither file is re-checked against actual code state.
 
 **D-10. PROJECT.md's "Quick Start" section (lines 23-56) references `./deploy/validate.sh` (line 55).** Worker B found the file is missing — see S-5.
 
@@ -240,8 +240,8 @@ If you want this audit to be auto-prevented going forward, the cheapest fix is a
 #   (a) Go version in README.md matches go.mod
 #   (b) package count claim matches `find internal -name '*_test.go' | xargs -I{} dirname {} | sort -u | wc -l`
 #   (c) verify-pre count claim matches `grep -c 'run_check' scripts/verify_pre_deploy.sh`
-#   (d) no `66/66` literal in README.md / README.ru.md / AGENTS.md (allowed: comment, docstring)
-#   (e) no `v0.33.1.17` literal in README.md / README.ru.md (status block is the only place)
+#   (d) no `66/66` literal in README.md / docs/ru/README.md / AGENTS.md (allowed: comment, docstring)
+#   (e) no `v0.33.1.17` literal in README.md / docs/ru/README.md (status block is the only place)
 #   (f) `[^/]\(install-docker\.sh\|docs/internal/internal/\)` returns empty in README.md
 #   (g) catalog_bot.go has no `&gt;>.` literals (L-1 fix)
 #   (h) catalog_bot.go has no `<ключ>` outside `&lt;...&gt;` form (L-2 fix)
@@ -276,7 +276,7 @@ If the operator wants to apply fixes in stages (1 PR per stage), the suggested o
 
 **Stage 1 — operator-facing documentation drift (low risk, high visibility)**
 - D-1: PROJECT.md Go version — **DONE 2026-09-14** (`Skygate (Go 1.25, PostgreSQL 14+)`)
-- D-2/D-3/D-7/D-8: README.md / README.ru.md / AGENTS.md status block + version — **DONE 2026-09-14** (v1.5.2-alpha1, 275/275, 46 pkgs, 17 system tests; AGENTS.md updated to match)
+- D-2/D-3/D-7/D-8: README.md / docs/ru/README.md / AGENTS.md status block + version — **DONE 2026-09-14** (v1.5.2-alpha1, 275/275, 46 pkgs, 17 system tests; AGENTS.md updated to match)
 - D-5/D-6: README.md broken links — **DONE 2026-09-14** (install-docker.sh → install.sh, docs/internal/internal/ → docs/internal/ ×9 sites in AGENTS.md + 2 in README files)
 
 **Stage 2 — phantom scripts (low risk, removes broken refs)**
@@ -287,7 +287,7 @@ If the operator wants to apply fixes in stages (1 PR per stage), the suggested o
 - S-5: `deploy/validate.sh` — false positive (file exists, 3KB); **no action**
 
 **Stage 3 — architecture rewrite (higher risk, needs design review)**
-- D-4: README.md storage section (SQLite/PG → PG-only) — **DONE 2026-09-14** (rewrote README.md:88-92 + README.ru.md:93-97 to reflect post-v1.3.0 cutover)
+- D-4: README.md storage section (SQLite/PG → PG-only) — **DONE 2026-09-14** (rewrote README.md:88-92 + docs/ru/README.md:93-97 to reflect post-v1.3.0 cutover)
 
 **Stage 4 — RU typo fixes (auto-preventable)**
 - L-1: 7× `&gt;>.` → `&gt;.` — **DONE 2026-09-14** (audit said 6, actual was 7 — caught by B244 C8)

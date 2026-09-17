@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/BarsSky/skygate/actions/workflows/ci.yml/badge.svg)](https://github.com/BarsSky/skygate/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/BarsSky/skygate?label=Latest)](https://github.com/BarsSky/skygate/releases/latest)
-[![RU](https://img.shields.io/badge/README-Русский-blue)](README.ru.md)
+[![RU](https://img.shields.io/badge/README-Русский-blue)](docs/ru/README.md)
 ![Headscale](https://img.shields.io/badge/headscale-0.29.x-green)
 ![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -635,7 +635,7 @@ R1–R27 runtime), and the VM-vs-Windows working rules.
 | Per-version change history | [CHANGELOG.md](CHANGELOG.md), [RELEASE-NOTES.md](RELEASE-NOTES.md) |
 | File map, gotchas, AI hints, guarantee catalog | [AGENTS.md](AGENTS.md) |
 | First-time client setup scripts | [docs/scripts/skygate_exit_node_setup.sh](docs/scripts/skygate_exit_node_setup.sh) |
-| Russian-language version | [README.ru.md](README.ru.md) |
+| Russian-language version | [docs/ru/README.md](docs/ru/README.md) |
 | Known back-burner items | [docs/BACKLOG.md](docs/BACKLOG.md) |
 
 ## Status (live)

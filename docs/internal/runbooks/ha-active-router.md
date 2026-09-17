@@ -52,7 +52,7 @@ SQLite + Litestream (headscale 0.29.x has no PG support).
 - Testcontainers-go in CI for the 4 PG verification tests
   — **~0.5 day**
 - 2-week "PG cutover" project (see
-  `docs/runbooks/pg-cutover.md`): 15-min maintenance
+  `docs/internal/historical/pg-cutover-runbook.md`): 15-min maintenance
   window for the live switch
 
 #### What breaks during the cutover
