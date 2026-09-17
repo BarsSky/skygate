@@ -1,8 +1,10 @@
 # Makefile — skygate build / run / test / deploy helpers
 #
 # Usage:
-#   make build       — compile ./skygate binary (CGO sqlite, ~3-5 min first time)
-#   make run         — build + run ./skygate locally (uses ./skygate.db, ./data/)
+#   make build       — compile tmp/build/skygate binary (CGO sqlite, ~3-5 min first time)
+#   make run         — build + run tmp/build/skygate locally (uses ./skygate.db, ./data/)
+#                       (the binary lives in tmp/build/ to keep the working tree clean;
+#                        tmp/ is gitignored, the build output never lands in commit)
 #   make smoke       — run scripts/smoke.sh against running skygate
 #   make check-nodes — run scripts/check_exit_nodes.py
 #   make audit-routes — run scripts/audit_routes.py (static: main.go vs handlers)
@@ -39,7 +41,7 @@
 
 GO       ?= go
 GIT      ?= git
-BINARY   ?= ./skygate
+BINARY   ?= tmp/build/skygate
 PKG      ?= ./cmd/skygate
 # 2026-07-25: v0.28.5 — force bash as the recipe shell so that
 # `[ -x ... ]` and `[[ ... ]]` work on Windows. Without this, make
@@ -65,7 +67,8 @@ help:
 	@echo "  reconcile-snapshots - scripts/reconcile_snapshots.sh (one-off R9 fix after direct headscale edit)"
 	@echo "  restart      - docker compose restart skygate"
 	@echo "  logs         - tail skygate container logs"
-	@echo "  clean        - remove built binary"
+	@echo "  clean        - remove built binary ($(BINARY))"
+	@echo "  clean-tmp    - remove build artifacts + debug logs older than 7 days from tmp/"
 
 build:
 	GOTOOLCHAIN=local $(GO) build -o $(BINARY) $(PKG)
@@ -256,6 +259,17 @@ check-bundles:
 
 clean:
 	rm -f $(BINARY)
+
+# clean-tmp — remove build artifacts + debug logs older than 7 days
+# from the in-repo tmp/ directory. The directory structure is
+# preserved (tmp/build/, tmp/logs/) via .gitkeep. Use this target
+# when the working tree starts to accumulate dead artifacts from
+# previous builds / failed tests / debug sessions.
+#
+# Override the age threshold via the TMP_MAX_AGE_DAYS env var:
+#   make clean-tmp TMP_MAX_AGE_DAYS=30
+clean-tmp:
+	@bash scripts/clean-tmp.sh $(TMP_MAX_AGE_DAYS)
 
 restart:
 	docker compose restart skygate

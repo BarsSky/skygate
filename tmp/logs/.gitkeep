@@ -1,0 +1,6 @@
+# Keep this file tracked so the directory exists after a fresh git clone.
+# B-check scripts + debug sessions write log files here (e.g. tmp/logs/
+# b147_tests.log when certsync tests fail). The dir is in .gitignore so
+# log files never get committed.
+#
+# Cleanup: `make clean-tmp` removes log files older than 7 days.

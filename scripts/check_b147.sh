@@ -140,15 +140,18 @@ done
 # The tests must pass under the standard `go test` invocation.
 #
 # 2026-09-14: B147 pre-existing FAIL fix — write the test log
-# to /tmp/b147_tests.log inside the skygate workspace instead
-# of /tmp so users without world-writable /tmp (e.g. the skygate
+# to tmp/logs/b147_tests.log inside the skygate workspace (instead
+# of /tmp) so users without world-writable /tmp (e.g. the skygate
 # service user running checks as a low-privilege account) can
 # still drop the fail output where the operator can read it.
 # /tmp was 755 + non-sticky before; permission denied on `tee`
 # surfaced as `cert unit tests FAIL` even though the tests passed.
-if go test -count=1 -short -run "TestNoVersionIsNoOp|TestVersionBumpTriggersPull|TestSHAMismatchTriggersPull|TestInvalidCertFails" ./internal/certsync/ 2>&1 | tee ./b147_tests.log >/dev/null; then
+# 2026-09-17: also moved out of the workspace root into tmp/logs/
+# so the working tree stays clean. tmp/ is .gitignored; clean up
+# with `make clean-tmp`.
+if go test -count=1 -short -run "TestNoVersionIsNoOp|TestVersionBumpTriggersPull|TestSHAMismatchTriggersPull|TestInvalidCertFails" ./internal/certsync/ 2>&1 | tee tmp/logs/b147_tests.log >/dev/null; then
     ok "certsync unit tests PASS"
-    rm -f ./b147_tests.log  # keep the workspace tidy on success
+    rm -f tmp/logs/b147_tests.log  # keep the workspace tidy on success
 else
     bad "certsync unit tests FAIL — see ./b147_tests.log"
     head -20 ./b147_tests.log

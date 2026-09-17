@@ -1,0 +1,5 @@
+# Keep this file tracked so the directory exists after a fresh git clone.
+# go build / make build writes its output here. The dir is in .gitignore
+# (via `/tmp/` pattern) so the .exe / .out binaries never get committed.
+#
+# Cleanup: `make clean-tmp` removes artifacts older than 7 days.
