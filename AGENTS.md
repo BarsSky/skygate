@@ -519,6 +519,42 @@ operator decision rationale.
   in container` writes `/dev/null` to DB override,
   `AuthKeyDisabled=true`, UI renders Enable-in-container
   banner — state becomes consistent.
+- **B260 (v1.5.8+, 2026-09-17)**: `/admin/derp` status
+  collection URL fix (operator confusion close-out). Live
+  operator report 2026-09-17 10:53 MSK: page showed
+  `DERPER-SERVICE: stopped`, `:8443`, `:3478 closed`,
+  `0 active connections` even though derper was running on
+  :443 (LE-cert valid, 101 Switching Protocols via curl,
+  STUN UDP :3478 listening). Three compounding bugs in
+  `derp.go:collectDerpStatus`: (1) `derpURL` hardcoded to
+  `http://192.0.2.1:8443` — `192.0.2.1` is RFC 5737 TEST-NET-1
+  (not routable) so all 6 derper debug probes silently
+  failed; (2) `httpGet` used plain HTTP, but post-B-derper-cert
+  derper on :443 requires TLS — derper rejects the probe
+  with `Client sent an HTTP request to an HTTPS server`;
+  (3) `bundledDERPPortFromDB` did `LIMIT 1` without `ORDER BY`,
+  non-deterministic when multiple `is_bundled=1` rows exist
+  (live VM had id=2 and id=3 both `is_bundled=1` from a
+  direct-SQL insert that bypassed the `AddDerpRelay` guard —
+  UI flipped between `:443` and `:8443` on every refresh).
+  **B260 fix**: `bundledDERPPortFromDB` gains
+  `ORDER BY id ASC LIMIT 1` (deterministic); new
+  `bundledDERPHostnameFromDB` + `resolveDERPHostname`
+  helpers mirror `resolveDERPPort`'s DB → env → `""`
+  shape; `collectDerpStatus` builds `derpURL = "https://" +
+  bundledHost + ":" + bundledPort` (with `DerpBaseURL`
+  override for tests); `httpGet` detects `https://` scheme
+  and uses `tls.Config` with `ServerName` from URL hostname
+  + `InsecureSkipVerify` ONLY when URL host is a literal IP
+  (cert CN mismatch is unavoidable in that case).
+  11 grep-contracts in
+  `scripts/check_b260_derp_status_collection.sh`. 3 unit
+  tests in `derp_status_resolve_b260_test.go`
+  (`NilDBEnvFallback` / `NilDBEmptyWhenNoEnv` /
+  `EnvWhitespacesTrimming`). Live verify on agent VM after
+  deploy: `DERPER-SERVICE: running`, `:443`,
+  `:3478 listening`, nonzero active-connections if any
+  Tailscale client is using the DERP relay.
 - **B176 + B175.1 (v1.5.2)**: dev-tag
     lowercase (headscale 0.29 rejects
     uppercase tags) + i18n tooltip

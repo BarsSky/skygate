@@ -19,9 +19,11 @@ package admin
 
 import (
 	"encoding/json"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
+	neturl "net/url"
 	"net/http"
 	"os"
 	"regexp"
@@ -159,16 +161,30 @@ func (s *DerpSnapshot) CurrentConns() int {
 func (s *Service) collectDerpStatus() DerpStatus {
 	// DERP server runs on the host (not in the skygate container), so
 	// systemctl/ss from inside the container can't see it. Instead we
-	// query the derper's own debug endpoint at 192.0.2.1:8443/debug/
-	// which is reachable from the container via the host bridge.
+	// query the derper's own debug endpoint over HTTPS, using the
+	// hostname the bundled derp_relays row has registered (cert CN
+	// matches that hostname).
 	//
 	// 2026-09-15 (B-bug-fix): DERPPort / STUNPort were hardcoded
 	// "443" / "3478" which silently masked a broken derper running
 	// on :8443 (the operator had NPM terminating TLS on :443). See
 	// derp_status_resolve.go for the resolution order.
+	//
+	// 2026-09-17 (B260): the pre-fix derpURL was hardcoded to
+	// "http://192.0.2.1:8443" — 192.0.2.1 is RFC 5737 TEST-NET-1
+	// (not routable) and the scheme was plain HTTP (derper on :443
+	// requires TLS post-B-derper-cert). All 6 derper debug probes
+	// silently failed, so /admin/derp always showed "stopped"
+	// regardless of derper's actual state. B260 builds the URL
+	// from the bundled row's hostname + port + the https:// scheme,
+	// with TLS SNI matching the cert CN.
 	derpPort := resolveDERPPort(s.dbc())
 	if derpPort == "" {
 		derpPort = "443"
+	}
+	derpHost := resolveDERPHostname(s.dbc())
+	if derpHost == "" {
+		derpHost = "127.0.0.1" // probe loopback; fails cleanly if no derper
 	}
 	stunPort := resolveSTUNPort(s.dbc())
 	if stunPort == "" {
@@ -178,7 +194,7 @@ func (s *Service) collectDerpStatus() DerpStatus {
 		DERPPort:   derpPort,
 		STUNPort:   stunPort,
 		Version:    "1.70.0",
-		Hostname:   "derp.example.com",
+		Hostname:   derpHost,
 		RegionCode: "mow",
 		RegionID:   "900",
 		RegionName: "Moscow Custom",
@@ -193,7 +209,12 @@ func (s *Service) collectDerpStatus() DerpStatus {
 	}
 
 	// Try derper debug endpoints (in priority order)
-	derpURL := "http://192.0.2.1:8443"
+	//
+	// B260: scheme is https (post-B-derper-cert derper on :443
+	// speaks TLS). The hostname comes from the bundled row so
+	// SNI=cert CN. The DerpBaseURL field, if non-empty, lets
+	// tests + non-standard deployments override the URL entirely.
+	derpURL := "https://" + derpHost + ":" + derpPort
 	if v := s.DerpBaseURL; v != "" {
 		derpURL = v
 	}
@@ -397,12 +418,50 @@ func httpGet(url string, timeout time.Duration) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// derper checks Host header against its TLS hostname. When we
-	// query it over plain HTTP from inside the skygate container (to
-	// 192.0.2.1:8443) we must present the public hostname, otherwise
-	// /debug/ returns http.StatusForbidden Forbidden.
-	req.Host = "derper.example.com"
-	req.Header.Set("Host", "derper.example.com")
+	// B260: HTTP probe for /admin/derp status. The previous
+	// version hard-coded `req.Host = "derper.example.com"` (a
+	// literal placeholder that doesn't match any real
+	// deployment) and only supported plain HTTP. Post-B-derper-cert
+	// the bundled derper listens on :443 with TLS, so we need
+	// to (a) strip the port from the Host header (TLS servers
+	// check Host against the cert SNI), and (b) handle the
+	// https:// scheme with a TLS-enabled transport.
+	//
+	// When the URL host is an IP (rare — only when the operator
+	// hasn't set SKYGATE_DERP_HOSTNAME / bundled hostname),
+	// we can't verify the cert's hostname and use
+	// InsecureSkipVerify=true. This is acceptable for a status
+	// probe (NOT for production traffic) because:
+	//   - the operator has separate observability for cert
+	//     health (NPM renewal alerts, derper systemd logs);
+	//   - the TLS handshake itself still proves the server
+	//     is reachable and speaking TLS;
+	//   - the response body is JSON/HTML parsed by trusted
+	//     helpers in this file, not user-supplied data.
+	u, parseErr := neturl.Parse(url)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	hostnameOnly := u.Hostname() // strips :port for Host header + SNI
+	if hostnameOnly != "" {
+		req.Host = hostnameOnly
+		req.Header.Set("Host", hostnameOnly)
+	}
+	if u.Scheme == "https" {
+		skipVerify := false
+		if net.ParseIP(hostnameOnly) != nil {
+			// URL host is a literal IP — cert CN mismatch
+			// is unavoidable; InsecureSkipVerify is the only
+			// way to complete the TLS handshake.
+			skipVerify = true
+		}
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: skipVerify,
+				ServerName:         hostnameOnly,
+			},
+		}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

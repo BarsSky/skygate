@@ -85,11 +85,24 @@ func resolveSTUNPort(d *sql.DB) string {
 // Pure read — no DB writes. Safe to call on every /admin/derp page
 // load. The query is O(1) (the unique partial index
 // derp_relays_is_bundled_idx guarantees at most one row matches).
+//
+// B260 — added `ORDER BY id ASC LIMIT 1`. Pre-B260 the query was
+// `LIMIT 1` without `ORDER BY` which is non-deterministic when
+// multiple `is_bundled=1` rows exist. The live agent VM
+// 192.168.13.69 had a data-hygiene issue (id=2 and id=3 both
+// `is_bundled=1` from a direct-SQL insert during the B-derper-cert
+// migration) and the page flipped between "443" and "8443"
+// depending on which row PG picked. The `ORDER BY id ASC LIMIT 1`
+// makes the resolution deterministic — always picks the oldest
+// bundled row (id=2, port 443 on the live VM). The dual-bundled
+// data is operator-cleanup separate (TODO B260.1 migration to
+// dedupe + the AddDerpRelay guard already prevents new duplicates).
 func bundledDERPPortFromDB(d *sql.DB) string {
 	var urlStr string
 	err := d.QueryRow(`
 		SELECT url FROM derp_relays
 		 WHERE is_bundled = 1 AND enabled = 1
+		 ORDER BY id ASC
 		 LIMIT 1
 	`).Scan(&urlStr)
 	if err != nil || urlStr == "" {
@@ -110,6 +123,53 @@ func bundledDERPPortFromDB(d *sql.DB) string {
 		return "443"
 	case "http":
 		return "80"
+	}
+	return ""
+}
+
+// B260 — bundledDERPHostnameFromDB returns the hostname of the
+// bundled derper (e.g. "derp.skynas.ru"). Used by the
+// /admin/derp status collection to build a TLS-aware probe URL.
+// Same deterministic ordering as bundledDERPPortFromDB —
+// `ORDER BY id ASC LIMIT 1` to handle the dual-bundled-row
+// edge case consistently.
+func bundledDERPHostnameFromDB(d *sql.DB) string {
+	var hostname string
+	err := d.QueryRow(`
+		SELECT hostname FROM derp_relays
+		 WHERE is_bundled = 1 AND enabled = 1
+		 ORDER BY id ASC
+		 LIMIT 1
+	`).Scan(&hostname)
+	if err != nil || hostname == "" {
+		return ""
+	}
+	return hostname
+}
+
+// B260 — resolveDERPHostname returns the derper's public hostname
+// (the one Tailscale clients dial and the cert CN matches). Same
+// resolution shape as resolveDERPPort: DB override first (the
+// bundled row's hostname is the canonical answer), then the
+// SKYGATE_DERP_HOSTNAME env var as bootstrap, then "" (caller
+// falls back to localhost probe which fails cleanly).
+//
+// The result is what we pass as the SNI hostname in the TLS
+// handshake when probing derper from inside the skygate container.
+// Without a real hostname here, the TLS cert validation fails
+// (cert is for "derp.skynas.ru", not for the IP we'd otherwise
+// dial) and the status probe errors with "x509: certificate is
+// valid for derp.skynas.ru, not 192.168.13.69" — the symptom
+// that pre-B260 caused "DERPER-SERVICE: stopped" on /admin/derp
+// despite derper being up and answering.
+func resolveDERPHostname(d *sql.DB) string {
+	if d != nil {
+		if h := bundledDERPHostnameFromDB(d); h != "" {
+			return h
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("SKYGATE_DERP_HOSTNAME")); v != "" {
+		return v
 	}
 	return ""
 }
