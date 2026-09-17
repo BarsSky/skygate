@@ -195,3 +195,22 @@ postgres:/
 # bash injection drops the file in cwd.
 *.swp.bak
 =*
+
+# ---- Operator's one-off debug / investigation artifacts (2026-09-17) ----
+# `check_*.sh`, `debug_*.sh`, `test_*.sh`, `find_*.sh`, `fix_*.sh`
+# at the repo root are one-off live-ops investigation scripts.
+# Production versions live in scripts/ (scripts/check_b*.sh, scripts/
+# verify_*.sh). The allow-list below keeps the production ones
+# tracked via the existing `!scripts/check_*.sh` override.
+check_*.sh
+debug_*.sh
+test_*.sh
+test_*.go.txt
+diag_*.sh
+tmp_force*.sh
+tmp_rollback.sh
+scratch/
+scratch_archive/
+.scratch_archive/
+# /tmp/ is already in .gitignore above; this catches the *files*
+# dropped at the repo root by accident (e.g. from a bash paste).
