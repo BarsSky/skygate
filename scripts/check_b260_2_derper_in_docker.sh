@@ -188,21 +188,21 @@ else
   fail "G4: collectDerpStatus still uses s.DerpBaseURL as probe URL — derpmap fetcher URL shadows the derper probe URL"
 fi
 
-# --- G5 (B260.2.4): resolvePublicDERPIP uses custom DNS resolver (bypasses Docker extra_hosts) ---
-# Live VM 2026-09-17 15:03 MSK: page rendered 192.168.13.69 (LAN IP)
-# as the "public IP" because net.LookupHost goes through Docker's
-# DNS chain, which respects the `extra_hosts: derp.skynas.ru:192.168.13.69`
-# block. The probe correctly uses the LAN IP (the derper actually
-# listens there on host network), but the public-IP display should
-# show the public DNS answer. B260.2.4: use a custom net.Resolver
-# that dials 1.1.1.1:53 directly to bypass Docker's extra_hosts.
-if grep -A 6 'net\.Resolver{' "$DERP_GO" 2>/dev/null \
-   | grep -q 'PreferGo: true' \
-   && grep -A 6 'net\.Resolver{' "$DERP_GO" 2>/dev/null \
-   | grep -q '1.1.1.1:53'; then
-  ok "G5: resolvePublicDERPIP uses custom net.Resolver (1.1.1.1) — bypasses Docker extra_hosts for public-IP display"
+# --- G5 (B260.2.5): resolvePublicDERPIP uses raw UDP DNS query against 1.1.1.1 ---
+# Live VM 2026-09-17 16:21 MSK: B260.2.4's `net.Resolver + custom Dial`
+# approach silently fell back to the OS resolver chain (Go's
+# LookupHost on Linux honours /etc/nsswitch.conf + systemd-resolved
+# + the Docker `extra_hosts` block even with PreferGo: true +
+# custom Dial). The page still rendered "192.168.13.69 (dns:env)"
+# instead of "95.165.170.190". B260.2.5 fix: bypass Go's resolver
+# entirely with a raw UDP DNS query against 1.1.1.1:53 (parsed
+# inline). This sidesteps the entire OS resolution chain.
+if grep -q 'func dnsLookupVia1111' "$DERP_GO" \
+   && grep -F '1.1.1.1:53' "$DERP_GO" >/dev/null 2>&1 \
+   && ! grep -B 1 -A 3 'resolver.LookupHost' "$DERP_GO" >/dev/null 2>&1; then
+  ok "G5: resolvePublicDERPIP uses raw UDP DNS query against 1.1.1.1 (sidesteps Go's OS-resolver fallback)"
 else
-  fail "G5: resolvePublicDERPIP still uses net.LookupHost (OS resolver) — page shows LAN IP from Docker extra_hosts instead of public DNS answer"
+  fail "G5: resolvePublicDERPIP still uses Go resolver machinery — page shows LAN IP from Docker extra_hosts instead of public DNS answer"
 fi
 
 # --- G2 (B260.2.1): --verify-clients= has a non-empty default ---

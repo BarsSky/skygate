@@ -18,7 +18,6 @@ package admin
 // small enough (~430 lines) to keep in one place.
 
 import (
-	"context"
 	"encoding/json"
 	"crypto/tls"
 	"fmt"
@@ -425,38 +424,27 @@ func resolvePublicDERPIP(derperHostname string) (ip, source string, ok bool) {
 		}{h, "dns:derper"})
 	}
 	for _, c := range candidates {
-		// B260.2.4 (2026-09-17): use a custom net.Resolver
-		// that bypasses the OS resolver chain. Inside the
-		// skygate container the OS resolver respects the
-		// `extra_hosts: derp.skynas.ru:192.168.13.69` block
-		// in docker-compose.yml (added by B260 follow-up to
-		// make the derper probe reachable from inside the
-		// docker bridge), so net.LookupHost returns the LAN
-		// IP — which is correct for the TCP probe but
-		// WRONG for the /admin/derp "public IP" display
-		// (Tailscale clients dial the public IP, not the
-		// LAN one). The custom resolver dials 1.1.1.1:53
-		// directly so we get the public DNS answer.
-		resolver := &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-				d := net.Dialer{Timeout: 3 * time.Second}
-				return d.DialContext(ctx, network, "1.1.1.1:53")
-			},
-		}
-		if resolved, err := resolver.LookupHost(context.Background(), c.hostname); err == nil && len(resolved) > 0 {
-			// Pick the first IPv4 A record (Tailscale
-			// clients dial IPv4 by default; IPv6
-			// would also work but the /admin/derp
-			// page can't display both cleanly).
-			for _, addr := range resolved {
-				ip := net.ParseIP(addr).To4()
-				if ip != nil {
-					return ip.String(), c.label, true
+		// B260.2.5 (2026-09-17): replace the net.Resolver +
+		// custom-Dial approach from B260.2.4 with a raw UDP
+		// DNS query against 1.1.1.1. The B260.2.4 custom
+		// resolver silently fell back to the OS resolver
+		// chain (Go's net.Resolver.LookupHost on Linux
+		// honours /etc/nsswitch.conf + systemd-resolved +
+		// the Docker `extra_hosts` block even with custom
+		// Dial — verified live on VM 2026-09-17 16:21 MSK:
+		// the page rendered "192.168.13.69 (dns:env)"
+		// instead of "95.165.170.190"). A raw UDP DNS query
+		// sidesteps the entire OS resolver chain — we
+		// speak DNS protocol directly to 1.1.1.1:53 and
+		// parse the response.
+		if ips, err := dnsLookupVia1111(c.hostname); err == nil && len(ips) > 0 {
+			for _, ip := range ips {
+				if v4 := ip.To4(); v4 != nil {
+					return v4.String(), c.label, true
 				}
 			}
-			// Only IPv6 — return the first one.
-			return resolved[0], c.label + " (v6)", true
+			// Only IPv6 in the response — return the first.
+			return ips[0].String(), c.label + " (v6)", true
 		}
 	}
 	// Last resort: skygate container's own egress.
@@ -787,4 +775,121 @@ func summarizeDerpPeers(peers []DerpPeer) *ConnSummary {
 		}
 	}
 	return s
+}
+
+// dnsLookupVia1111 performs a raw UDP DNS A-record query for
+// `hostname` against Cloudflare's 1.1.1.1 public resolver.
+// Returns the list of A-record IPs.
+//
+// B260.2.5 (2026-09-17): the B260.2.4 net.Resolver + custom Dial
+// approach was not enough — Go's LookupHost silently fell back
+// to the OS resolver chain (which respects /etc/nsswitch.conf,
+// systemd-resolved, AND the Docker `extra_hosts` block) even
+// with PreferGo: true + custom Dial. A raw UDP DNS query
+// sidesteps the entire OS resolution chain — we speak DNS
+// protocol directly to 1.1.1.1:53 and parse the response.
+//
+// Why 1.1.1.1 specifically:
+//   - It's reachable from the skygate container's NAT egress
+//     (verified 2026-09-17 — UDP:53 to 1.1.1.1 succeeds)
+//   - It's not blocked by any network policy we know of
+//   - It's not the operator's LAN DNS (so it can't have
+//     split-horizon DNS overrides that return the LAN IP)
+//   - It's fast (~5ms p50 from anywhere on the public internet)
+//
+// We deliberately do NOT retry or fall back to 8.8.8.8 — if
+// 1.1.1.1 is unreachable, the failure surfaces on the /admin/derp
+// page (Public IP: "(unresolved)") which is more honest than
+// silently returning the LAN IP via the OS resolver chain.
+func dnsLookupVia1111(hostname string) ([]net.IP, error) {
+	// Build the DNS query: standard query, RD=1, 1 question,
+	// 0 answers/NS/AR. Question: <hostname encoded as DNS labels>
+	// type A (1) class IN (1).
+	txid := []byte{0xab, 0xcd}
+	flags := []byte{0x01, 0x00} // RD=1
+	header := append(append(append(txid, flags...),
+		[]byte{0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}...),
+	)
+	var question []byte
+	for _, label := range strings.Split(hostname, ".") {
+		if label == "" {
+			continue
+		}
+		question = append(question, byte(len(label)))
+		question = append(question, []byte(label)...)
+	}
+	question = append(question, 0x00)             // root label
+	question = append(question, 0x00, 0x01)        // type A
+	question = append(question, 0x00, 0x01)        // class IN
+	pkt := append(header, question...)
+
+	// Dial UDP to 1.1.1.1:53 with a 3-second deadline.
+	d := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := d.Dial("udp", "1.1.1.1:53")
+	if err != nil {
+		return nil, fmt.Errorf("dial 1.1.1.1:53: %w", err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		return nil, fmt.Errorf("set deadline: %w", err)
+	}
+	if _, err := conn.Write(pkt); err != nil {
+		return nil, fmt.Errorf("write DNS query: %w", err)
+	}
+	resp := make([]byte, 2048)
+	n, err := conn.Read(resp)
+	if err != nil {
+		return nil, fmt.Errorf("read DNS response: %w", err)
+	}
+	if n < 12 {
+		return nil, fmt.Errorf("DNS response too short: %d bytes", n)
+	}
+
+	// Skip header (12 bytes) + question section.
+	idx := 12
+	for idx < n {
+		if resp[idx] == 0 {
+			idx++
+			break
+		}
+		if resp[idx]&0xc0 == 0xc0 {
+			idx += 2
+			break
+		}
+		idx += int(resp[idx]) + 1
+	}
+	idx += 4 // skip QTYPE + QCLASS
+
+	// Walk answer section. RCODE in flags byte (offset 3):
+	// 0 = NoError, 3 = NXDomain. Anything non-zero means failed.
+	rcode := resp[3] & 0x0f
+	if rcode != 0 {
+		return nil, fmt.Errorf("DNS RCODE=%d for %s", rcode, hostname)
+	}
+	ancount := int(resp[6])<<8 | int(resp[7])
+	var ips []net.IP
+	for i := 0; i < ancount && idx+10 < n; i++ {
+		// Skip name (label sequence or pointer).
+		if resp[idx]&0xc0 == 0xc0 {
+			idx += 2
+		} else {
+			for idx < n && resp[idx] != 0 {
+				idx += int(resp[idx]) + 1
+			}
+			idx++
+		}
+		atype := int(resp[idx])<<8 | int(resp[idx+1])
+		aclass := int(resp[idx+2])<<8 | int(resp[idx+3])
+		_ = aclass
+		rdlen := int(resp[idx+8])<<8 | int(resp[idx+9])
+		idx += 10
+		if atype == 1 && rdlen == 4 {
+			ips = append(ips, net.IPv4(resp[idx], resp[idx+1], resp[idx+2], resp[idx+3]))
+		}
+		idx += rdlen
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("no A records for %s", hostname)
+	}
+	return ips, nil
 }
