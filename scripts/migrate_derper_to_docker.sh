@@ -168,12 +168,13 @@ else
     warn "STUN :${DERP_STUN_PORT}/udp not detected; check 'sudo ss -ulnp | grep derper'"
 fi
 
-if sudo curl -sS --max-time 5 -k -o /dev/null -w "HTTP %{http_code} %{time_total}s\n" \
-        "https://127.0.0.1:${DERP_DERP_PORT}/" 2>/dev/null \
+if sudo curl -sS --max-time 5 -k --resolve "${DERPER_HOSTNAME}:${DERP_DERP_PORT}:127.0.0.1" \
+        -o /dev/null -w "HTTP %{http_code} %{time_total}s\n" \
+        "https://${DERPER_HOSTNAME}:${DERP_DERP_PORT}/" 2>/dev/null \
         | grep -q "HTTP 200"; then
-    log "  HTTPS GET / -> 200 OK"
+    log "  HTTPS GET / -> 200 OK (SNI=${DERPER_HOSTNAME})"
 else
-    warn "HTTPS GET https://127.0.0.1:${DERP_DERP_PORT}/ did NOT return 200; check 'sudo docker logs derper'"
+    warn "HTTPS GET https://${DERPER_HOSTNAME}:${DERP_DERP_PORT}/ did NOT return 200; check 'sudo docker logs derper'"
 fi
 
 log ""
