@@ -18,6 +18,7 @@ package admin
 // small enough (~430 lines) to keep in one place.
 
 import (
+	"context"
 	"encoding/json"
 	"crypto/tls"
 	"fmt"
@@ -212,12 +213,21 @@ func (s *Service) collectDerpStatus() DerpStatus {
 	//
 	// B260: scheme is https (post-B-derper-cert derper on :443
 	// speaks TLS). The hostname comes from the bundled row so
-	// SNI=cert CN. The DerpBaseURL field, if non-empty, lets
-	// tests + non-standard deployments override the URL entirely.
+	// SNI=cert CN.
+	//
+	// B260.2.4 (2026-09-17): removed the `s.DerpBaseURL` probe
+	// override. The `SKYGATE_DERP_BASE_URL` env var is the
+	// derpmap-fetcher URL (the URL the auto-sync in
+	// /admin/derp/sync polls, pointing at the docker derpmap
+	// container's HTTP server, default port 8766) — NOT the
+	// derper URL. The pre-B260.2.4 code conflated them and the
+	// probe ended up hitting the derpmap container's JSON
+	// endpoint (8766) instead of the derper's TLS endpoint
+	// (443), so /admin/derp always rendered "DERPER-SERVICE:
+	// stopped" despite derper being up. Tests + non-standard
+	// deployments now override the probe by seeding a custom
+	// bundled row in the test fixture, not by env var.
 	derpURL := "https://" + derpHost + ":" + derpPort
-	if v := s.DerpBaseURL; v != "" {
-		derpURL = v
-	}
 
 	// 1. /debug/  -> HTML, contains Uptime, Version, etc.
 	if html, err := httpGet(derpURL+"/debug/", 3*time.Second); err == nil {
@@ -415,7 +425,26 @@ func resolvePublicDERPIP(derperHostname string) (ip, source string, ok bool) {
 		}{h, "dns:derper"})
 	}
 	for _, c := range candidates {
-		if resolved, err := net.LookupHost(c.hostname); err == nil && len(resolved) > 0 {
+		// B260.2.4 (2026-09-17): use a custom net.Resolver
+		// that bypasses the OS resolver chain. Inside the
+		// skygate container the OS resolver respects the
+		// `extra_hosts: derp.skynas.ru:192.168.13.69` block
+		// in docker-compose.yml (added by B260 follow-up to
+		// make the derper probe reachable from inside the
+		// docker bridge), so net.LookupHost returns the LAN
+		// IP — which is correct for the TCP probe but
+		// WRONG for the /admin/derp "public IP" display
+		// (Tailscale clients dial the public IP, not the
+		// LAN one). The custom resolver dials 1.1.1.1:53
+		// directly so we get the public DNS answer.
+		resolver := &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				d := net.Dialer{Timeout: 3 * time.Second}
+				return d.DialContext(ctx, network, "1.1.1.1:53")
+			},
+		}
+		if resolved, err := resolver.LookupHost(context.Background(), c.hostname); err == nil && len(resolved) > 0 {
 			// Pick the first IPv4 A record (Tailscale
 			// clients dial IPv4 by default; IPv6
 			// would also work but the /admin/derp

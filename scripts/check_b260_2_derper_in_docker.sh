@@ -171,6 +171,40 @@ else
   fail "G3: resolveDERPPort still has env-before-DB priority — stale DERP_HTTP_PORT shadows the correct bundled port"
 fi
 
+# --- G4 (B260.2.4): collectDerpStatus does NOT use s.DerpBaseURL for probe URL ---
+# Live VM 2026-09-17 14:43 MSK: /admin/derp still rendered
+# "DERPER-SERVICE: stopped" after B260.2.3 because `s.DerpBaseURL`
+# (which holds the derpmap fetcher URL `http://192.168.13.69:8766`,
+# set by SKYGATE_DERP_BASE_URL in .env) was being used as a probe
+# URL override in collectDerpStatus. The probe then hit the derpmap
+# container's Python http.server (JSON, port 8766) instead of the
+# derper's TLS endpoint (HTML, port 443), so all 7 probes failed.
+# B260.2.4 fix: drop the override; the probe URL is always
+# `https://<bundled_hostname>:<bundled_port>` (the DB-bundled row).
+DERP_GO="internal/feature/admin/derp.go"
+if ! grep -B 2 -A 2 's\.DerpBaseURL; v != ""' "$DERP_GO" >/dev/null 2>&1; then
+  ok "G4: collectDerpStatus does not use s.DerpBaseURL as probe override (probe hits derper, not derpmap)"
+else
+  fail "G4: collectDerpStatus still uses s.DerpBaseURL as probe URL — derpmap fetcher URL shadows the derper probe URL"
+fi
+
+# --- G5 (B260.2.4): resolvePublicDERPIP uses custom DNS resolver (bypasses Docker extra_hosts) ---
+# Live VM 2026-09-17 15:03 MSK: page rendered 192.168.13.69 (LAN IP)
+# as the "public IP" because net.LookupHost goes through Docker's
+# DNS chain, which respects the `extra_hosts: derp.skynas.ru:192.168.13.69`
+# block. The probe correctly uses the LAN IP (the derper actually
+# listens there on host network), but the public-IP display should
+# show the public DNS answer. B260.2.4: use a custom net.Resolver
+# that dials 1.1.1.1:53 directly to bypass Docker's extra_hosts.
+if grep -A 6 'net\.Resolver{' "$DERP_GO" 2>/dev/null \
+   | grep -q 'PreferGo: true' \
+   && grep -A 6 'net\.Resolver{' "$DERP_GO" 2>/dev/null \
+   | grep -q '1.1.1.1:53'; then
+  ok "G5: resolvePublicDERPIP uses custom net.Resolver (1.1.1.1) — bypasses Docker extra_hosts for public-IP display"
+else
+  fail "G5: resolvePublicDERPIP still uses net.LookupHost (OS resolver) — page shows LAN IP from Docker extra_hosts instead of public DNS answer"
+fi
+
 # --- G2 (B260.2.1): --verify-clients= has a non-empty default ---
 # B260.2.1 follow-up: the live migration crash-looped on
 #   "invalid boolean value \"\" for -verify-clients: parse error"
