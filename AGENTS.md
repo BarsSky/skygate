@@ -152,19 +152,22 @@ prod bug right now", `--no-verify` is acceptable.
 
 ## Release status
 
-* **Current**: v1.5.7-34-gd6cf390 (commit `d6cf390` on VM remote,
-  B256 + B257 + B258.1 + B260 + B260.1 + the docker-compose
-  extra_hosts follow-up shipped). **B260.2 derper-in-docker
-  migration** (commit pending, see AGENTS.md B260.2 entry)
-  ships the local `skygate-derper` Dockerfile + updated
+* **Current**: v1.5.7-36-g50d4c2d (commit `50d4c2d5` on VM remote,
+  release `v1.5.8` cutting the B260.x chain). **B260.2
+  derper-in-docker migration** (commit `ed5a6211`,
+  `deploy/docker/derper/Dockerfile` + updated
   `derper-compose.yml.tmpl` + `migrate_derper_to_docker.sh`
-  helper — operator runs the script to replace the legacy
-  systemd derper with the docker container. **B259 /admin/tailscale
-  toggle (enable/disable via UI)** + **B259.1 /admin/tailscale
-  enable flow delegates to B251 `findUserForHostname` (no phantom
-  `skygate-host` headscale user — owned by `infra`)** + **B259.2
-  regression guard: `findUserForHostname` doc-comment has explicit
-  DO-NOT-INLINE banner + B-check section K source-greps
+  helper) — operator runs the script to replace the legacy
+  systemd derper with the docker container. **B260.2.1
+  `--verify-clients=` empty-value crash fix** (commit
+  `62f33b05`). **B260.2.2 verify check uses SNI matching cert**
+  (commit `8abf3ca4`). **B260.2.3 resolveDERPPort prefers DB
+  over env** (commit `f95472a6`) — closes the stale
+  `DERP_HTTP_PORT=8443` env-var shadow class. **B260.2.4
+  probe URL no longer conflated with derpmap URL + public IP
+  via 1.1.1.1** (commit `50d4c2d5`) — drops the
+  `s.DerpBaseURL` probe override and bypasses Docker
+  extra_hosts for the public-IP display. **B259 /admin/tailscale
   `internal/feature/admin/` + `internal/feature/my/` for any
   inline `.Name == hostname` / `.Name == <hostname-var>` lookup
   outside the canonical helper** shipped) — **B167 OIDC config
