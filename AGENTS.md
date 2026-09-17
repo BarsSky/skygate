@@ -152,9 +152,14 @@ prod bug right now", `--no-verify` is acceptable.
 
 ## Release status
 
-* **Current**: v1.5.7-30-gd0647de (commit `d0647de` on VM remote,
-  B256 + B257 + B258.1 + B260 + the docker-compose extra_hosts
-  follow-up shipped). **B259 /admin/tailscale
+* **Current**: v1.5.7-34-gd6cf390 (commit `d6cf390` on VM remote,
+  B256 + B257 + B258.1 + B260 + B260.1 + the docker-compose
+  extra_hosts follow-up shipped). **B260.2 derper-in-docker
+  migration** (commit pending, see AGENTS.md B260.2 entry)
+  ships the local `skygate-derper` Dockerfile + updated
+  `derper-compose.yml.tmpl` + `migrate_derper_to_docker.sh`
+  helper — operator runs the script to replace the legacy
+  systemd derper with the docker container. **B259 /admin/tailscale
   toggle (enable/disable via UI)** + **B259.1 /admin/tailscale
   enable flow delegates to B251 `findUserForHostname` (no phantom
   `skygate-host` headscale user — owned by `infra`)** + **B259.2
@@ -731,6 +736,116 @@ prod bug right now", `--no-verify` is acceptable.
        (deployment-time gate — catches the bug class on
        any future VM that forgets the config).
      - Renamed contract L (was K): live-state prompt.
+- **B260.2 (v1.5.8+, 2026-09-17)**: derper-in-docker migration.
+  Operator 2026-09-17 follow-up after B260/B260.1 shipped:
+  "учти что derp на VM должен крутиться в docker а не в
+  процесе systemd у VM" — derper should run in docker, not
+  as a systemd process on the VM. **Discovery**: the VM's
+  `docker ps` shows no derper container. The pre-B260.2
+  systemd unit (`/etc/systemd/system/derper.service`) is
+  still the only derper, bound to host ports :443 (TCP),
+  :80 (TCP), :3478 (UDP). The repo's existing
+  `deploy/templates/derper-compose.yml.tmpl` was designed
+  for the docker path (referenced by `deploy.sh` step 6
+  when `DERP_ENABLED=true`) but the operator never ran that
+  flow — they deployed derper manually as a systemd service
+  instead. **B260.2 ships the actual docker migration**:
+  1. **`deploy/docker/derper/Dockerfile`** — new image
+     `skygate-derper:latest` built LOCALLY from the host's
+     `/usr/local/bin/derper` binary. Why local build: the
+     pre-B260.2 template referenced
+     `ghcr.io/tailscale/derper:latest`, but the agent VM
+     blocks `ghcr.io` outbound (`docker pull` returns
+     "denied"). Local build avoids the dependency entirely
+     and uses the SAME binary the systemd unit was running
+     (no version drift). Base image is `debian:bookworm-slim`
+     because the host derper is glibc-linked (`file` reports
+     "dynamically linked, interpreter
+     /lib64/ld-linux-x86-64.so.2"); Alpine's musl can't run
+     glibc binaries without `libc6-compat` shims that miss
+     some symbol versions. Operators with ghcr.io access can
+     override via `DERP_IMAGE=ghcr.io/tailscale/derper:latest`
+     in .env — the upstream image's `/derper` binary is
+     the same as the locally-built one. Build context
+     includes the derper binary at the root
+     (`deploy/docker/derper/derper`); the migration script
+     copies it from `/usr/local/bin/derper` before `docker
+     build` and removes it after (don't commit the binary —
+     the 12MB file is gitignored).
+  2. **`deploy/templates/derper-compose.yml.tmpl`** —
+     updated to:
+     - Use `${DERP_IMAGE:-skygate-derper:latest}` instead
+       of the hardcoded ghcr.io URL.
+     - Render `--certmode=${DERP_CERTMODE}` (operator-
+       configurable; default `manual` to match the systemd
+       unit's --certmode=manual).
+     - Render `--a=:${DERP_DERP_PORT}` (default :443 —
+       manual cert mode REQUIRES :443 per `derper --help`:
+       "Serves HTTPS if the port is 443 and/or -certmode
+       is manual, otherwise HTTP").
+     - Render `--http-port=${DERP_HTTP_PORT}` (default 80,
+       was hardcoded as --stun-only — explicit is better).
+     - Render `--verify-clients=${DERP_VERIFY_CLIENTS_URL}`
+       with default empty (= disabled, matches systemd
+       unit's `--verify-clients=false`).
+     - Mount `${DERP_CERT_DIR}:/var/lib/derper/certs:ro`
+       + `${DERP_CONFIG_DIR}/derper.conf:.../derper.conf:ro`
+       so the cert files + config from the systemd-era
+       paths are reused without copying.
+  3. **`deploy/lib/env.sh`** — new variables with
+     defaults: `DERP_DERP_PORT=443`, `DERP_HOSTNAME`
+     (falls back to `CADDY_HOSTS_DERP`), `DERP_CERTMODE=manual`,
+     `DERP_CERT_DIR=/var/lib/derper/certs`,
+     `DERP_CONFIG_DIR=/var/lib/derper`,
+     `DERP_VERIFY_CLIENTS_URL=""`,
+     `DERP_IMAGE=skygate-derper:latest`. The pre-B260.2
+     `DERP_HTTP_PORT=8443` default was wrong (leftover from
+     the LE-cert-era template that hardcoded `--a=:443`;
+     manual-cert path needs :80 because derper serves the
+     HTTP→HTTPS redirect there). Also changed
+     `DERP_HTTP_PORT` default to 80.
+  4. **`scripts/migrate_derper_to_docker.sh`** — new
+     operator helper. Idempotent (safe to re-run). 5 steps:
+     pre-flight (verifies systemd derper is active, cert
+     files exist at canonical path, docker daemon up) →
+     build image (copies /usr/local/bin/derper into the
+     Dockerfile context, builds, removes the copy) → stop
+     systemd derper + render compose template → start
+     docker derper → verify (port :443 listening, STUN
+     :3478 listening, HTTPS GET / returns 200). **Brief
+     downtime**: ~3-10s while the systemd process releases
+     :443 and docker derper binds it. **Rollback**: the
+     systemd unit is left in place (only `stop`ped +
+     `disable`d); `sudo systemctl enable --now derper`
+     restores the legacy path. The systemd unit file is
+     only removed (via `sudo rm`) AFTER the operator
+     confirms docker derper is stable — premature
+     deletion would lock them out of the rollback path.
+  5. **`deploy/docker/derper/README.md`** — operator notes
+     on the local build rationale, base image choice,
+     smoke-test procedure (run with `--a=:1443
+     --http-port=18080` to avoid port conflicts with the
+     live systemd derper), and image-size breakdown
+     (~85MB on disk; multi-stage not worth the 10MB
+     delta).
+  - **Out of scope** (future work, NOT in B260.2):
+    - Cert renewal automation. The systemd-era cert files
+      at `/var/lib/derper/certs/` are still operator-
+      managed (certsync writes to `/var/lib/skygate/certs/`,
+      NOT `/var/lib/derper/certs/` — see B147). The
+      migration script doesn't touch certs; the operator
+      copies them once and the docker derper picks them
+      up via the bind mount.
+    - Switching from `network_mode: host` to bridge
+      networking. derper binds :443 (privileged) + :80 +
+      STUN :3478; bridge networking would need explicit
+      port mappings and lose the systemd unit's listen-
+      address parity. Keep host networking.
+    - `/admin/derp` UI change. The probe code already
+      handles the post-migration topology correctly
+      (extra_hosts pins skygate → host:443, regardless of
+      whether derper runs on host or in docker with
+      host network). No code change needed.
 - **B176 + B175.1 (v1.5.2)**: dev-tag
     lowercase (headscale 0.29 rejects
     uppercase tags) + i18n tooltip

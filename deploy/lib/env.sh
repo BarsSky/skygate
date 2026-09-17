@@ -95,8 +95,48 @@ DOCKER_NETWORK="${DOCKER_NETWORK:-headscale_default}"
 DOCKER_SUBNET="${DOCKER_SUBNET:-172.18.0.0/16}"
 DERP_ENABLED="${DERP_ENABLED:-false}"
 DERP_STUN_PORT="${DERP_STUN_PORT:-3478}"
-DERP_HTTP_PORT="${DERP_HTTP_PORT:-8443}"
+# DERP_HTTP_PORT is the --http-port value (HTTP→HTTPS redirect),
+# default 80. The pre-B260.2 default of 8443 was a leftover from
+# the LE-cert-era template that hardcoded --a=:443; the manual-cert
+# flow (B-derper-cert, B260.2) wants :80 because derper serves the
+# ACME HTTP-01 challenge on this port when certmode=manual.
+DERP_HTTP_PORT="${DERP_HTTP_PORT:-80}"
 DERP_MAP_PORT="${DERP_MAP_PORT:-8765}"
+# B260.2 (2026-09-17): new variables for the manual-cert docker path.
+# DERP_DERP_PORT: the main --a= listen port. Default :443 because derper's
+# manual cert mode requires :443 (per `derper --help`: "Serves HTTPS if
+# the port is 443 and/or -certmode is manual, otherwise HTTP" — combining
+# --certmode=manual with a non-443 --a= silently produces a broken
+# plain-HTTP derper).
+DERP_DERP_PORT="${DERP_DERP_PORT:-443}"
+# DERP_HOSTNAME: the hostname clients use to reach the relay. Must match
+# the cert CN/SAN. Default falls back to CADDY_HOSTS_DERP (the vhost
+# skygate would publish if CADDY_ENABLED=true), then to the headscale
+# base domain.
+DERP_HOSTNAME="${DERP_HOSTNAME:-${CADDY_HOSTS_DERP:-derp.example.com}}"
+# DERP_CERTMODE: manual | letsencrypt. Default `manual` because the
+# pre-B260.2 systemd unit uses --certmode=manual and the operator's
+# certsync flow (B147) writes cert files to /var/lib/derper/certs/.
+# Operators wanting LE should set this explicitly + make :80 reachable.
+DERP_CERTMODE="${DERP_CERTMODE:-manual}"
+# DERP_CERT_DIR: the host directory derper reads cert files from. The
+# `command:` mounts this into the container at the same path so the
+# cert lookup (which uses `hostname` to find the .crt/.key pair) works
+# identically to the systemd path.
+DERP_CERT_DIR="${DERP_CERT_DIR:-/var/lib/derper/certs}"
+# DERP_CONFIG_DIR: separate from CERT_DIR because derper's `--c` (config)
+# and `--certdir` (cert files) are independent on disk.
+DERP_CONFIG_DIR="${DERP_CONFIG_DIR:-/var/lib/derper}"
+# DERP_VERIFY_CLIENTS_URL: empty = no client verification (--verify-clients=
+# with empty string). The systemd unit used --verify-clients=false; for
+# docker derper, an empty URL is the equivalent (derper treats "" as
+# "disabled" — no HTTP fetch, all clients accepted).
+DERP_VERIFY_CLIENTS_URL="${DERP_VERIFY_CLIENTS_URL:-}"
+# DERP_IMAGE: docker image tag. Default skygate-derper:latest (locally
+# built by scripts/migrate_derper_to_docker.sh). Operators with ghcr.io
+# access can set this to ghcr.io/tailscale/derper:latest — the upstream
+# image's `/derper` binary is the same as the locally-built one.
+DERP_IMAGE="${DERP_IMAGE:-skygate-derper:latest}"
 
 # 2026-07-15: v0.15.0 — Caddy TLS terminator. Default
 # true (the v0.15.0 release ships Caddy as the
@@ -141,6 +181,7 @@ export HEADSCALE_BASE_DOMAIN HEADSCALE_AUTO_APPROVE_ROUTES HEADSCALE_DERP_URLS
 export DOCKER_NETWORK DOCKER_SUBNET
 export DEPLOY_HEADSCALE_DIR DEPLOY_SKYGATE_DIR DEPLOY_BACKUP_DIR
 export DERP_ENABLED DERP_STUN_PORT DERP_HTTP_PORT DERP_MAP_PORT
+export DERP_DERP_PORT DERP_HOSTNAME DERP_CERTMODE DERP_CERT_DIR DERP_CONFIG_DIR DERP_VERIFY_CLIENTS_URL DERP_IMAGE
 export CADDY_ENABLED CADDY_DNS_PROVIDER CADDY_DNS_API_TOKEN_FILE
 export CADDY_HOSTS_HEAD CADDY_HOSTS_HEADPLANE CADDY_HOSTS_DERP CADDY_HSTS
 export SSH_DIR
