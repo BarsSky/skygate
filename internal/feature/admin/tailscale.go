@@ -245,6 +245,18 @@ type TailscaleState struct {
 	// tailscaled from the UI without first editing
 	// docker-compose.yml + restarting the container. B258.
 	AuthKeyDisabled bool
+	// AuthKeyMissing = true when the configured auth-key
+	// path is a regular file path (NOT /dev/null or another
+	// disabled sentinel) AND the file at that path either
+	// doesn't exist or is empty. This is a third visual
+	// state that B258 did not model — pre-B258.1 the UI
+	// rendered the "Enabled" branch (with Start clickable)
+	// which then errored out with "read auth key: no such
+	// file" when clicked. B258.1 closes that gap with a
+	// dedicated "key missing" banner, a hard-disabled Start
+	// button, and a paste-form for the operator to drop a
+	// key into the existing path.
+	AuthKeyMissing bool
 	// LoginServer mirrors s.TailscaleLoginServer.
 	LoginServer string
 	// LoginServerSource is "db" when the value came from the
@@ -334,6 +346,13 @@ func (s *Service) readTailscaleState() TailscaleState {
 	st.Available = tailscaleAvailable()
 	st.AuthKeyDisabled = s.tailscaleAuthKeyDisabled()
 	st.AuthKeySet, st.AuthKeyFP = s.readTailscaleAuthKey()
+	// B258.1: "missing" state. Computed AFTER AuthKeyDisabled
+	// and AuthKeySet so the three states are mutually
+	// exclusive and cover all reachable configurations:
+	//   - AuthKeyDisabled=true  → "intentionally off" (B258)
+	//   - AuthKeyMissing=true   → "configured but no key" (B258.1)
+	//   - else                  → "configured + key set"
+	st.AuthKeyMissing = !st.AuthKeyDisabled && !st.AuthKeySet
 	if !st.Available {
 		return st
 	}
@@ -443,6 +462,32 @@ func (s *Service) tailscaleAuthKeyDisabled() bool {
 		}
 	}
 	return false
+}
+
+// tailscaleAuthKeyMissingForStart is the B258.1 mirror of the
+// "missing" UI state. Returns true when:
+//   - the path is NOT disabled (i.e. tailscaleAuthKeyDisabled
+//     returned false), AND
+//   - the auth-key file does not exist OR is empty.
+//
+// In this state the operator has previously enabled in-container
+// Tailscale (DB or env points at a regular file like /data/ts/authkey)
+// but the file is gone — typically because the container was
+// recreated without a volume-bind of /data/ts/, or the operator
+// deleted it by hand after a save.
+//
+// The handler calls this in handleTailscaleStart to give a clear
+// actionable error if the operator bypasses the (now hard-disabled)
+// Start button. Pre-B258.1 the same call surfaced as
+// "read auth key: open /data/ts/authkey: no such file or directory"
+// which was a confusing ENOENT for a non-engineer operator to
+// translate into "paste a key here".
+func (s *Service) tailscaleAuthKeyMissingForStart() bool {
+	if s.tailscaleAuthKeyDisabled() {
+		return false
+	}
+	set, _ := s.readTailscaleAuthKey()
+	return !set
 }
 
 // SetGlobalSettingForTest is a thin wrapper around
@@ -1043,6 +1088,23 @@ func (s *Service) handleTailscaleStart(w http.ResponseWriter, r *http.Request, c
 		tsRedirect(w, r, "",
 			"Tailscale отключён в конфигурации контейнера (SKYGATE_TS_AUTHKEY_FILE=/dev/null). "+
 				"Измените docker-compose.yml и перезапустите skygate.")
+		return
+	}
+	// B258.1: refuse early when the path is a regular file
+	// path but the file is missing or empty. This is the
+	// third state the B258 design didn't model — the UI's
+	// Start button is now hard-disabled when this state is
+	// active (template tailscale.html:246), so an operator
+	// reaching this branch has bypassed the disabled-button
+	// guard (e.g. via direct POST). Give a clear actionable
+	// error instead of the raw "read auth key: no such file"
+	// ENOENT.
+	if s.tailscaleAuthKeyMissingForStart() {
+		s.Backend.Audit(c.UserID, c.Username, "tailscale_start",
+			"refused=auth_key_missing path="+s.tailscaleAuthKeyPath())
+		tsRedirect(w, r, "",
+			"Файл ключа Tailscale не найден: "+s.tailscaleAuthKeyPath()+
+				". Вставьте preauth key на этой странице или сгенерируйте его через кнопку «Сгенерировать ключ».")
 		return
 	}
 	out, err := s.startTailscaled()

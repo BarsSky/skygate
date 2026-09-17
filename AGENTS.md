@@ -484,6 +484,41 @@ operator decision rationale.
   `.gitignore` `/tmp/*.{sh,html,json,log,go,txt,py}` patterns
   (audit-only infrastructure for the operator's "what weighs
   how much in the working tree + build cache + VM" question).
+- **B258.1 (v1.5.8+, 2026-09-17)**: `/admin/tailscale` third
+  visual state — **auth-key file missing** (operator
+  confusion close-out). The B258 design modelled only two
+  states (disabled-by-config vs enabled) and collapsed
+  "configured regular file path but file missing" into the
+  "enabled" branch. Live operator report 2026-09-17 10:25 MSK:
+  page showed `tailscaled: stopped` but the green
+  `Disable Tailscale in container` button was active, AND
+  clicking Start produced `read auth key: open
+  /data/ts/authkey: no such file or directory` — confusing
+  because the page implied tailscaled was running but
+  couldn't be stopped. **B258.1 fix**:
+  `TailscaleState.AuthKeyMissing = !AuthKeyDisabled &&
+  !AuthKeySet`, computed in `readTailscaleState` via the
+  new `tailscaleAuthKeyMissingForStart` helper (returns
+  true when path is regular + file missing or empty).
+  `tailscale.html` 3-way `if/else if/else`: `Disabled` →
+  Enable-in-container banner (B258), `Missing` → warn banner
+  + paste form (so operator can recover without touching
+  docker-compose.yml) + Start hard-disabled, else →
+  existing Disable-in-container card (B259).
+  `handleTailscaleStart` refuses early with an actionable
+  Russian message when bypassed (e.g. direct POST). 4 new
+  i18n keys (`missing_title`, `missing_help`,
+  `missing_status_unset`, `missing_start_tooltip`) in
+  `catalog_tailscale.go` (RU + EN). 5 unit tests in
+  `tailscale_b258_1_test.go` pin the state-exclusivity
+  invariants (`PathButNoFile` / `DevNullIsNotMissing` /
+  `FileExistsEmpty` / `FileExistsWithContent` /
+  `MutuallyExclusiveWithDisabled`). 13 grep-contracts in
+  `scripts/check_b258_1_auth_key_missing.sh`. **Live fix
+  on agent VM 192.168.13.69**: clicking `Disable Tailscale
+  in container` writes `/dev/null` to DB override,
+  `AuthKeyDisabled=true`, UI renders Enable-in-container
+  banner — state becomes consistent.
 - **B176 + B175.1 (v1.5.2)**: dev-tag
     lowercase (headscale 0.29 rejects
     uppercase tags) + i18n tooltip
@@ -13352,7 +13387,7 @@ per-user headscale, compliance tier). The next big things:
   release notes).
 
 - **`refactor-v0.30` — feature module decomposition**
-  ([plan](docs/plans/refactor-v0.30.md), 2026-07-25, ~8 days
+  ([plan](docs/internal/historical/refactor-v0.30-plan.md), 2026-07-25, ~8 days
   work, **Phase B + C + D complete as of 2026-07-29**, B15 +
   B16 follow-up ports complete 2026-07-30). The
   `internal/handlers/` package went from 76 .go files

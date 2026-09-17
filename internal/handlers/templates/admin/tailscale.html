@@ -55,7 +55,18 @@
      the operator sees the same state on both the entrypoint log
      AND the web UI. Click Start is hard-disabled because
      /dev/null is a character device — `os.ReadFile(/dev/null)`
-     returns EOF, so a successful "start" is impossible. */}}
+     returns EOF, so a successful "start" is impossible.
+
+     B258.1: split the "Enabled" else-branch into two:
+       - AuthKeyMissing=true  → show a dedicated "key missing"
+         banner + the same paste form (so the operator can drop
+         a key into the existing path) + a hard-disabled Start
+         button. The Disable-in-container card is HIDDEN in
+         this state — there's nothing running to disable, and
+         the misleading green button is what caused the original
+         2026-09-17 operator report.
+       - else (real enabled) → existing Disable-in-container
+         card (unchanged from B259). */}}
 {{if .State.AuthKeyDisabled}}
 <div class="alert alert-info" style="margin-bottom:12px">
   <i class="fa-solid fa-circle-info"></i>
@@ -77,6 +88,20 @@
       <button type="submit" class="btn btn-primary"><i class="fa-solid fa-power-off"></i> {{t "tailscale.enable_in_container_btn"}}</button>
     </form>
   </div>
+</div>
+{{else if .State.AuthKeyMissing}}
+{{/* B258.1: third visual state. The path is a regular file path
+     (e.g. /data/ts/authkey from a prior DB override) but the
+     file doesn't exist. Most common cause: the operator clicked
+     "Enable Tailscale in container" once (B259 wrote /data/ts/authkey
+     to the DB override), then the container was recreated without
+     a volume-bind of /data/ts, OR the operator deleted the file
+     by hand. We show a warning banner + the paste form so the
+     operator can recover without touching docker-compose.yml. */}}
+<div class="alert alert-warn" style="margin-bottom:12px">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <strong>{{t "tailscale.missing_title"}}</strong>
+  {{t "tailscale.missing_help" | safeHTML}}
 </div>
 {{else}}
 {{/* B259: counterpart button when tailscale IS enabled in the
@@ -158,6 +183,10 @@
     <p class="sub">
       {{if .State.AuthKeySet}}
         <strong>{{tf "tailscale.auth_status_set" .State.AuthKeyFP}}</strong>
+      {{else if .State.AuthKeyMissing}}
+        {{/* B258.1: distinct status line so the operator sees
+             "this is a missing state, not a fresh install". */}}
+        <strong style="color:var(--warn)">{{t "tailscale.missing_status_unset"}}</strong>
       {{else}}
         <strong>{{t "tailscale.auth_status_unset"}}</strong>
       {{end}}
@@ -243,7 +272,7 @@
       <form action="/admin/tailscale" method="POST" style="display:inline">
         <input type="hidden" name="csrf" value="{{.CSRF}}">
         <input type="hidden" name="action" value="start">
-        <button type="submit" class="btn btn-primary" {{if or (not .State.Available) .State.AuthKeyDisabled}}disabled{{end}} title="{{if .State.AuthKeyDisabled}}{{t "tailscale.disabled_start_tooltip"}}{{else}}{{t "tailscale.start"}}{{end}}"><i class="fa-solid fa-play"></i> {{t "tailscale.start"}}</button>
+        <button type="submit" class="btn btn-primary" {{if or (not .State.Available) .State.AuthKeyDisabled .State.AuthKeyMissing}}disabled{{end}} title="{{if .State.AuthKeyDisabled}}{{t "tailscale.disabled_start_tooltip"}}{{else if .State.AuthKeyMissing}}{{t "tailscale.missing_start_tooltip"}}{{else}}{{t "tailscale.start"}}{{end}}"><i class="fa-solid fa-play"></i> {{t "tailscale.start"}}</button>
       </form>
       <form action="/admin/tailscale" method="POST" style="display:inline">
         <input type="hidden" name="csrf" value="{{.CSRF}}">

@@ -49,6 +49,24 @@ var ruTailscale = map[string]string{
 	"tailscale.disabled_help"            : "Переменная окружения <code>SKYGATE_TS_AUTHKEY_FILE</code> указывает на путь, который не существует или не является обычным файлом (например, <code>/dev/null</code>). Entrypoint пропустил запуск tailscaled при старте контейнера; UI Start тоже заблокирован. Чтобы включить — измените <code>docker-compose.yml</code> и перезапустите skygate.",
 	"tailscale.disabled_auth_form_help"  : "Сохранение ключа отключено, пока Tailscale заблокирован через env. Измените <code>SKYGATE_TS_AUTHKEY_FILE</code> в <code>docker-compose.yml</code> и перезапустите skygate.",
 	"tailscale.disabled_start_tooltip"   : "Отключено через SKYGATE_TS_AUTHKEY_FILE — см. баннер выше",
+	// B258.1 (v1.5.8+, 2026-09-17): third visual state — the
+	// auth-key path is configured (DB or env points at a
+	// regular file like /data/ts/authkey) but the file
+	// itself doesn't exist or is empty. Most common cause:
+	// the operator clicked "Enable in container" once (B259
+	// persisted /data/ts/authkey to DB), then the container
+	// was recreated without the /data/ts volume-bind, OR
+	// the operator deleted the file by hand. We show a
+	// warning banner + the same paste form (so the operator
+	// can drop a key into the existing path) + a
+	// hard-disabled Start button. The Disable-in-container
+	// card is HIDDEN in this state — there's nothing
+	// running to disable and that button is what caused
+	// the original 2026-09-17 operator confusion.
+	"tailscale.missing_title"            : "Файл ключа Tailscale не найден",
+	"tailscale.missing_help"             : "Путь к файлу ключа настроен (например, <code>/data/ts/authkey</code>), но сам файл отсутствует или пуст. Tailscale не запустится без валидного ключа. Вставьте preauth key в форму ниже или сгенерируйте его через кнопку «Сгенерировать ключ» — файл будет записан и кнопка Start станет активной.",
+	"tailscale.missing_status_unset"     : "Ключ не установлен (файл отсутствует)",
+	"tailscale.missing_start_tooltip"    : "Сначала вставьте или сгенерируйте preauth key — см. предупреждение выше",
 	// B259 (v1.5.8+, 2026-09-16): flip the DB-overridable
 	// path via the web UI. Operator doesn't have to edit
 	// docker-compose.yml + restart. The button generates
@@ -139,6 +157,15 @@ var enTailscale = map[string]string{
 	"tailscale.disabled_help"            : "The <code>SKYGATE_TS_AUTHKEY_FILE</code> env var points to a path that either does not exist or is not a regular file (e.g. <code>/dev/null</code>). The container entrypoint skipped tailscaled at start-up; the UI Start button is also disabled. To re-enable — edit <code>docker-compose.yml</code> and restart the skygate container.",
 	"tailscale.disabled_auth_form_help"  : "Saving an auth key is disabled while Tailscale is blocked via env. Edit <code>SKYGATE_TS_AUTHKEY_FILE</code> in <code>docker-compose.yml</code> and restart skygate.",
 	"tailscale.disabled_start_tooltip"   : "Disabled via SKYGATE_TS_AUTHKEY_FILE — see banner above",
+	// B258.1 (v1.5.8+, 2026-09-17): third visual state —
+	// configured-but-missing. Mirrors the B258 "intentionally
+	// disabled" branch but with a warn banner (not info)
+	// and a working paste form so the operator can recover
+	// without touching docker-compose.yml.
+	"tailscale.missing_title"            : "Tailscale auth-key file is missing",
+	"tailscale.missing_help"             : "The auth-key path is configured (e.g. <code>/data/ts/authkey</code>) but the file at that path does not exist or is empty. Tailscale cannot start without a valid key. Paste a preauth key in the form below or click the “Generate key” button — either action will write the file and unlock Start.",
+	"tailscale.missing_status_unset"     : "Key not set (file missing)",
+	"tailscale.missing_start_tooltip"    : "Paste or generate a preauth key first — see warning above",
 	// B259: flip the DB-overridable path via the web UI.
 	// Operator doesn't have to edit docker-compose.yml + restart.
 	"tailscale.enable_in_container_btn"      : "Enable in-container Tailscale",
