@@ -286,6 +286,31 @@ func (s *Service) collectDerpStatus() DerpStatus {
 		}
 	}
 
+	// 7. WebSocket upgrade fallback for the "Running" boolean. Steps
+	//    1, 2, 4, 5, 6 all gate on /debug/* endpoints which are
+	//    per-design disabled when derper is launched without the
+	//    `--debug` flag (the operator's choice for prod hardening —
+	//    /active-conn and /all-recent leak client connection info).
+	//    For those deployments we can't tell from /debug/vars whether
+	//    derper is running. The WebSocket upgrade probe is the
+	//    canonical derper liveness check that BOTH:
+	//    - works regardless of derper's --debug config (the
+	//      `/derp` WebSocket endpoint is always-on for any
+	//      functional derper — it's what Tailscale clients dial),
+	//    - proves derper is actively serving (a derper that hasn't
+	//      finished initialization won't return 101).
+	//    We do this AFTER the richer /debug/* probes so the rich
+	//    metrics win when available; this is just a safety net
+	//    for the no-derper-debug deployment case.
+	if !st.Running {
+		if isRunning, err := derperLivenessWebSocketProbe(derpURL, 3*time.Second); err == nil && isRunning {
+			st.Running = true
+			// The / probe already set SocketListening; with debug
+			// disabled we don't have STUN/Connections/Bytes — those
+			// stay at zero, which is honest.
+		}
+	}
+
 	// Hostname (white IP) — the public IP Tailscale clients dial.
 	// B237.2: prefer DNS lookup of the derper's hostname (the
 	// source of truth for "where clients reach us"). The
@@ -468,6 +493,72 @@ func httpGet(url string, timeout time.Duration) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	return io.ReadAll(resp.Body)
+}
+
+// derperLivenessWebSocketProbe does a minimal WebSocket upgrade
+// request against derper's `/derp` endpoint and returns true iff
+// derper responds with HTTP 101 Switching Protocols (the canonical
+// "I'm ready to speak the DERP protocol" signal).
+//
+// This is the fallback used by collectDerpStatus when /debug/*
+// endpoints are disabled (the operator's deliberate choice for
+// prod hardening — /active-conn + /all-recent leak client
+// connection info). The WebSocket upgrade endpoint is always on
+// for any functional derper (it's what Tailscale clients dial),
+// so this probe is the most robust liveness check we can do
+// without touching derper's debug config.
+//
+// B260.1 (2026-09-17): added because the operator runs derper
+// without --debug, and parseDerperVars (which gates `Running`)
+// returns early on the 403 JSON-parse failure from /debug/vars.
+// Pre-B260.1 the /admin/derp page always showed "DERPER-SERVICE:
+// stopped" even when derper was up.
+func derperLivenessWebSocketProbe(rawURL string, timeout time.Duration) (bool, error) {
+	u, err := neturl.Parse(rawURL)
+	if err != nil {
+		return false, err
+	}
+	client := &http.Client{Timeout: timeout}
+	req, err := http.NewRequest("GET", u.String()+"/derp", nil)
+	if err != nil {
+		return false, err
+	}
+	// Strip :port for Host header + SNI matching the cert CN.
+	hostnameOnly := u.Hostname()
+	if hostnameOnly != "" {
+		req.Host = hostnameOnly
+		req.Header.Set("Host", hostnameOnly)
+	}
+	// Minimal WebSocket upgrade headers — these are different from
+	// `Sec-WebSocket-Key` + `Sec-WebSocket-Version` required by RFC
+	// 6455, but derper doesn't actually complete a handshake — it
+	// just checks `Upgrade: websocket` and returns 101 Switching
+	// Protocols to signal "ready". We don't send frames so we
+	// never need the Sec-WebSocket-* headers.
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "Upgrade")
+	if u.Scheme == "https" {
+		skipVerify := false
+		if net.ParseIP(hostnameOnly) != nil {
+			skipVerify = true
+		}
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: skipVerify,
+				ServerName:         hostnameOnly,
+			},
+		}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	// B260.1: 101 Switching Protocols is the canonical "derper is
+	// alive and ready for DERP frames" response. We don't drain
+	// the body because derper starts streaming immediately and
+	// the deadline is the http.Client.Timeout.
+	return resp.StatusCode == http.StatusSwitchingProtocols, nil
 }
 
 // parseDerperDebugHTML extracts Uptime, Version, TLS hostname, machine from the

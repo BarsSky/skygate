@@ -111,6 +111,23 @@ else
   ok "A: derpURL no longer hardcodes 192.0.2.1 (the comment + STUN-probe references are fine)"
 fi
 
+# --- A2 (B260.1): WebSocket liveness probe fallback exists ---
+# Live operator report 2026-09-17 12:50 MSK: /admin/derp still
+# showed "DERPER-SERVICE: stopped" because derper's systemd unit
+# doesn't pass --debug, so /debug/vars returns 403 + plain text,
+# parseDerperVars returns early on JSON parse failure, and
+# `Running` stays false. B260.1 added a WebSocket upgrade
+# fallback (always-on for any functional derper, regardless of
+# --debug config) so the page reflects reality when the operator
+# runs derper hardened for prod.
+if grep -q 'func derperLivenessWebSocketProbe' "$DERP_GO" \
+   && grep -q 'StatusSwitchingProtocols' "$DERP_GO" \
+   && grep -q 'derperLivenessWebSocketProbe' "$DERP_GO"; then
+  ok "A2: derperLivenessWebSocketProbe helper exists (B260.1 fallback for --debug-disabled derper)"
+else
+  fail "A2: derperLivenessWebSocketProbe missing — /admin/derp shows 'stopped' when derper runs without --debug"
+fi
+
 # --- B: derpURL uses https:// scheme ---
 if grep -q 'derpURL\s*:=\s*"https://' "$DERP_GO"; then
   ok "B: derpURL is built with https:// scheme (post-B-derper-cert derper requires TLS)"

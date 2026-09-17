@@ -657,6 +657,30 @@ prod bug right now", `--no-verify` is acceptable.
   deploy: `DERPER-SERVICE: running`, `:443`,
   `:3478 listening`, nonzero active-connections if any
   Tailscale client is using the DERP relay.
+- **B260.1 (v1.5.8+, 2026-09-17)**: `derperLivenessWebSocketProbe`
+  fallback in `/admin/derp` status collection. After B260
+  shipped and the extra_hosts + SKYGATE_DERP_PROBE_HOST fix
+  got derper-probe connectivity working, `/admin/derp` STILL
+  showed "DERPER-SERVICE: stopped" because the operator runs
+  derper without `--debug` (deliberate prod hardening —
+  `/active-conn` and `/all-recent` leak client connection
+  info). With debug disabled, `/debug/vars` returns 403 +
+  plain text, `parseDerperVars` returns early on JSON parse
+  failure, and `Running` stays false. B260.1 added a
+  WebSocket upgrade probe against derper's `/derp` endpoint
+  (always-on for any functional derper, regardless of
+  `--debug`) that sets `Running = true` when derper responds
+  with `101 Switching Protocols`. TLS-aware transport
+  mirrored from B260's `httpGet` (cert SNI = `derp.skynas.ru`,
+  `InsecureSkipVerify=true` only when URL host is a literal
+  IP). New helper `derperLivenessWebSocketProbe(rawURL,
+  timeout) (bool, error)` in `derp.go`. The probe runs LAST
+  in `collectDerpStatus`, after the rich /debug/* metrics —
+  so deployments WITH `--debug` enabled still get the
+  full STUN/Connections/Bytes panels; this is just a
+  safety net for the no-derper-debug deployment case.
+  `scripts/check_b260_derp_status_collection.sh` got a new
+  contract A2 that pins the helper's existence.
 - **B260 deployment-time follow-up (2026-09-17, in-session)**:
   Two operator-side fixes that the B260 code-only commit did
   NOT ship (they're outside skygate's repo — operator-managed
