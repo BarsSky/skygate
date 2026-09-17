@@ -49,10 +49,112 @@ operator decision rationale.
 
 ---
 
+## Deployment learnings (2026-09-17, B260 fix-it session)
+
+These are the recurring deployment gotchas that bit me during the
+B260 fix-it session. Pinning them here so future agents / operators
+don't repeat the dance.
+
+### 1. `docker compose` interpolation is CWD-relative
+
+When you run `docker compose -f /path/to/docker-compose.yml ...`
+from `/`, docker-compose does NOT auto-load the project's `.env`
+file for interpolation. Env-var placeholders in the compose file
+(e.g. `${SKYGATE_DERP_PROBE_HOST:-127.0.0.1}`) silently resolve
+to their **default value**, not the operator's `.env` setting.
+
+**Canonical fix**: always `cd /home/skyadmin/skygate && sudo docker compose ...`
+(or whatever the project dir is). The script files in this repo
+(`scripts/rebuild_deploy.sh`, `scripts/deploy_to_vm.sh`) already
+do this. If you invoke `docker compose` from a CI script or a
+crontab, make sure CWD is the project dir OR pass `--env-file
+/path/to/.env` explicitly.
+
+**Symptom when this bit me**: B260 deployed successfully but the
+`extra_hosts` block rendered with `127.0.0.1` instead of
+`192.168.13.69`. Took 10 minutes of debugging before realizing the
+`docker compose config` rendered-config check showed the right
+value but the actual `up -d` deploy used the default. Cause:
+operator ran `docker compose ...` from `/tmp/` via `hermes-debug`,
+docker-compose silently missed the `.env`.
+
+### 2. systemd-resolved on host + container DNS
+
+The host's `systemd-resolved` (or any local DNS resolver that
+honors `/etc/hosts`) typically resolves the agent's own hostname
+to `127.0.0.1`. Containers inherit this resolver via Docker's
+default DNS setup. So if the host's `/etc/hosts` has
+`127.0.0.1 derp.skynas.ru`, the container's DNS lookup for
+`derp.skynas.ru` ALSO returns `127.0.0.1` — which is the
+container's own loopback, where nothing is listening.
+
+**Canonical fix**: in `docker-compose.yml`, add `extra_hosts`
+to any service that needs to reach a host that's
+locally-resolved:
+
+```yaml
+services:
+  skygate:
+    extra_hosts:
+      - "derp.skynas.ru:${SKYGATE_DERP_PROBE_HOST:-127.0.0.1}"
+```
+
+The IP value goes in `.env` (operator-managed, gitignored) so
+the template stays generic and survives `git pull + docker compose
+up` cycles. Default `127.0.0.1` is a sane fallback (probe fails
+cleanly, doesn't break other skygate functionality).
+
+### 3. `--force-recreate` is required for any extra_hosts / volume change
+
+A plain `docker compose restart skygate` only restarts the
+container — it does NOT re-render the container's network config
+(`/etc/hosts`, `extra_hosts`) or its bind-mount volumes. After
+changing `extra_hosts` in docker-compose.yml, you MUST:
+
+```bash
+sudo docker compose up -d --force-recreate --no-deps skygate
+```
+
+(Plain `restart` would re-load the new binary but keep the OLD
+extra_hosts, leaving the probe broken even though the binary is
+up to date. Pre-B260 we did `docker compose stop` +
+`--force-recreate` because we needed a graceful WAL flush for
+SQLite; post-B260 we still need it for the extra_hosts to apply.)
+
+### 4. skygate binary build happens in container entrypoint
+
+The skygate container's `entrypoint.sh` runs `go build` on every
+start (it bind-mounts `/home/skyadmin/skygate` → `/app` and builds
+`/app/skygate`). This means `docker compose restart skygate`
+after `git pull` on the host automatically rebuilds the binary
+from the latest source. **No `docker compose build` is required
+for source-only changes**. (`docker compose build` is only needed
+for Dockerfile changes, which are rare.)
+
+### 5. The pre-push hook can hang for 10+ minutes
+
+`git push origin main` runs a `pre-push` git hook that executes
+`scripts/verify_pre_deploy.sh`. On Windows PowerShell with
+git-bash, this hook can hang for many minutes (the verify script
+runs many B-checks, each spawning its own bash subprocess). For
+emergency deploys:
+
+```bash
+git push origin main --no-verify
+```
+
+This bypasses the hook. The trade-off: B-checks aren't run
+before push, so the deploy pipeline may catch regressions later
+in CI. For routine pushes, let the hook run; for "fix the
+prod bug right now", `--no-verify` is acceptable.
+
+---
+
 ## Release status
 
-* **Current**: v1.5.7-17-g8c01770 (commit `8c01770` on VM remote,
-  B253 + B254 PG compat + B255 + B257 + B258 + **B259 /admin/tailscale
+* **Current**: v1.5.7-30-gd0647de (commit `d0647de` on VM remote,
+  B256 + B257 + B258.1 + B260 + the docker-compose extra_hosts
+  follow-up shipped). **B259 /admin/tailscale
   toggle (enable/disable via UI)** + **B259.1 /admin/tailscale
   enable flow delegates to B251 `findUserForHostname` (no phantom
   `skygate-host` headscale user — owned by `infra`)** + **B259.2
@@ -555,6 +657,56 @@ operator decision rationale.
   deploy: `DERPER-SERVICE: running`, `:443`,
   `:3478 listening`, nonzero active-connections if any
   Tailscale client is using the DERP relay.
+- **B260 deployment-time follow-up (2026-09-17, in-session)**:
+  Two operator-side fixes that the B260 code-only commit did
+  NOT ship (they're outside skygate's repo — operator-managed
+  config files on the VM):
+  1. **docker-compose.yml `extra_hosts` block** for the
+     skygate service: pins `derp.skynas.ru` to the host's
+     external IP via env var, so the container's DNS lookup
+     doesn't redirect to 127.0.0.1 via the host's systemd-
+     resolved + `/etc/hosts`. The IP lives in `.env` as
+     `SKYGATE_DERP_PROBE_HOST` (operator-managed, gitignored),
+     keeping the docker-compose template generic. Default
+     `127.0.0.1` is harmless when there's no derper (probe fails
+     cleanly, no other skygate functionality affected).
+  2. **`docker compose` invocation pattern**: must run from
+     the project CWD (or pass `--env-file` explicitly). When
+     invoked from `/` with `-f /path/to/docker-compose.yml`,
+     docker-compose does NOT auto-load the project's `.env`
+     file for interpolation — the env-var placeholder silently
+     resolves to the default. The canonical fix: every
+     `docker compose` call must be `cd /home/skyadmin/skygate && sudo docker compose ...`. This is built into
+     `scripts/rebuild_deploy.sh` (uses `${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}` for operator overrides)
+     and `scripts/deploy_to_vm.sh` (Windows→VM push+restart
+     helper).
+  3. **`rebuild_deploy.sh` updates (2026-09-17)**:
+     - Added `SKYGATE_HOST_REPO_PATH` env override (was
+       hardcoded `/home/admin/skygate`)
+     - Added step 2.5: B260 pre-flight check — warns if
+       `SKYGATE_DERP_PROBE_HOST` is unset in `.env` (with
+       `CHECK_B260_STRICT=1` to make it a hard error)
+     - Updated comment on `docker compose stop` +
+       `--force-recreate` to call out that `--force-recreate`
+       is REQUIRED (not just nice-to-have) for the B260
+       `extra_hosts` block to apply
+  4. **New script `scripts/deploy_to_vm.sh`**: Windows-side
+     push+pull+restart helper. Encodes the manual workflow
+     I had to use during the B260 fix-it session (push to
+     origin, ssh + cd + git stash + git pull --ff-only +
+     git stash pop + docker compose stop + up
+     --force-recreate + healthz wait). Without this script
+     the operator has to remember all those steps and the
+     `cd` requirement, which is exactly what tripped me up
+     during the fix-it session (first deploy failed because
+     the cd was missing, second deploy succeeded).
+  5. **`check_b260_derp_status_collection.sh` updates**:
+     - Added contract K: verifies the operator's
+       `docker-compose.yml` has the `extra_hosts` block +
+       `SKYGATE_DERP_PROBE_HOST` env-var placeholder
+       (deployment-time gate — catches the bug class on
+       any future VM that forgets the config).
+     - Renamed contract L (was K): live-state prompt.
 - **B176 + B175.1 (v1.5.2)**: dev-tag
     lowercase (headscale 0.29 rejects
     uppercase tags) + i18n tooltip

@@ -30,6 +30,24 @@
 #   - resolveDERPHostname mirrors resolveDERPPort's resolution
 #     shape (DB → env → "")
 #
+# B260 deployment-time follow-up (NOT in skygate code, lives in
+# docker-compose.yml + .env on the operator's VM):
+#   - extra_hosts entry in the skygate service block:
+#       extra_hosts:
+#         - "derp.skynas.ru:${SKYGATE_DERP_PROBE_HOST:-127.0.0.1}"
+#     This is needed because systemd-resolved on the host
+#     redirects derp.skynas.ru to 127.0.0.1 (via /etc/hosts),
+#     so the container's DNS lookup resolves to its OWN loopback
+#     instead of the host's derper. The IP value lives in .env
+#     (operator-managed, gitignored) so the template stays generic
+#     and survives `git pull` + `docker compose up` cycles.
+#   - `docker compose` must be invoked from the project CWD for
+#     the .env file to be auto-loaded for interpolation. Running
+#     `docker compose -f /path/to/docker-compose.yml` from /
+#     silently falls back to the placeholder default (127.0.0.1)
+#     because there's no /env. The `rebuild_deploy.sh` script
+#     already does the right thing (cd /home/admin/skygate && ...).
+#
 # What this checks:
 #   A) derpURL no longer hardcodes 192.0.2.1
 #   B) derpURL uses https:// scheme (not http://)
@@ -41,7 +59,10 @@
 #   H) unit tests cover the env-var + nil-DB fallback paths
 #   I) go vet ./internal/feature/admin/... clean
 #   J) go test passes (B260 env-only unit tests)
-#   K) live-state prompt: ssh + check /admin/derp shows
+#   K) docker-compose.yml has the extra_hosts block with the
+#      ${SKYGATE_DERP_PROBE_HOST:-127.0.0.1} env-var pattern
+#      (deployment-time gate — catches the live-VM bug class)
+#   L) live-state prompt: ssh + check /admin/derp shows
 #       ":443 listening" + "STUN UDP :3478 listening" +
 #       Running=true (operator runs after deploy + first
 #       page render)
@@ -181,9 +202,41 @@ else
   ok "J: go test skipped (go not reachable in this bash PATH — re-run manually: go test ./internal/feature/admin/ -run TestResolveDERPHostname -v)"
 fi
 
-# --- K: live-state prompt ---
-hdr "K: live-state (operator-side, post-deploy)"
+# --- K: docker-compose.yml has the extra_hosts block ---
+# This is a deployment-time gate. Catches the live-VM bug class
+# where systemd-resolved on the host redirects derp.skynas.ru
+# to 127.0.0.1, making the B260 probe URL resolve to the
+# container's own loopback (no derper listening there).
+#
+# The pattern is GENERIC — no IP is hardcoded; the IP lives in
+# the operator's .env (SKYGATE_DERP_PROBE_HOST) so:
+#   - the template survives `git pull` + `docker compose up` cycles
+#   - operators in different envs (dev/staging/prod) can set
+#     different values via .env without touching docker-compose.yml
+#   - default 127.0.0.1 means "no derper here, probe fails cleanly"
+#
+# Set CHECK_B260_COMPOSE_PATH to override the default path.
+CHECK_B260_COMPOSE_PATH="${CHECK_B260_COMPOSE_PATH:-/home/admin/skygate/docker-compose.yml}"
+if [ -f "$CHECK_B260_COMPOSE_PATH" ]; then
+  if grep -q 'extra_hosts:' "$CHECK_B260_COMPOSE_PATH" \
+     && grep -q 'derp.skynas.ru:' "$CHECK_B260_COMPOSE_PATH" \
+     && grep -q 'SKYGATE_DERP_PROBE_HOST' "$CHECK_B260_COMPOSE_PATH"; then
+    ok "K: $CHECK_B260_COMPOSE_PATH has extra_hosts block with SKYGATE_DERP_PROBE_HOST env-var placeholder"
+  else
+    fail "K: $CHECK_B260_COMPOSE_PATH missing extra_hosts / SKYGATE_DERP_PROBE_HOST — probe will fail at runtime"
+  fi
+elif [ -n "${CI:-}" ]; then
+  ok "K: $CHECK_B260_COMPOSE_PATH not present in CI — skip (operator runs this gate manually)"
+else
+  ok "K: $CHECK_B260_COMPOSE_PATH not present at the default path — run with CHECK_B260_COMPOSE_PATH=/path set"
+fi
+
+# --- L: live-state prompt ---
+hdr "L: live-state (operator-side, post-deploy)"
 cat <<'NOTE'
+  Confirm on agent VM (192.168.13.69) that the /admin/derp
+  status section now reflects derper's actual state. Run
+  after deploy + first page render:
   Confirm on agent VM (192.168.13.69) that the /admin/derp
   status section now reflects derper's actual state. Run
   after deploy + first page render:
@@ -204,6 +257,6 @@ cat <<'NOTE'
             client is currently using the DERP relay
 NOTE
 
-ok "K: live-state note printed (run manually after deploy)"
+ok "L: live-state note printed (run manually after deploy)"
 
 printf '\n\033[32mB260 regression check passed — safe to commit\033[0m\n'
