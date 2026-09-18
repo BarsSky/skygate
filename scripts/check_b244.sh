@@ -141,8 +141,11 @@ else
   check "C6 No 'install-docker.sh' reference in README files" 0 "hits: $(echo "$STALE_INSTALL" | head -3 | tr '\n' '|')"
 fi
 
-# 7. README.md has no doubled "docs/" path
-DOUBLED=$(grep -nE 'docs/' README.md docs/ru/README.md AGENTS.md 2>/dev/null || true)
+# 7. README.md has no doubled "docs/" path (i.e. no
+#    docs/docs/ or docs/internal/internal/ segment). A plain
+#    `grep 'docs/'` would match every legitimate documentation
+#    link, so pin the DOUBLED forms only.
+DOUBLED=$(grep -nE 'docs/docs/|docs/internal/internal/|/docs/docs/' README.md docs/ru/README.md AGENTS.md 2>/dev/null || true)
 if [ -z "$DOUBLED" ]; then
   check "C7 No doubled 'docs/' path in README files" 1
 else
