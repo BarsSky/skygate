@@ -37,15 +37,23 @@
 #     RUNTIME_PID (digits, bare mode only, and only after checking
 #     /proc/<pid>/comm is skygate).
 #   * The download URL is built from $OWNER/$REPO/$TARGET only, and the
-#     tarball's SHA256 is verified against the release's SHA256SUMS
-#     before anything is executed.
+#     tarball's SHA256 is verified before anything is executed —
+#     against the release's SHA256SUMS asset when it exists, otherwise
+#     against GitHub's per-asset `digest` from the Releases API for the
+#     SAME owner/repo/tag (both are the same trust root as the
+#     download itself). Nothing is installed unverified.
 #
 # WHAT IT DOES (in order, aborting safely at every step)
 #
 #   1. parse + validate the request
 #   2. back up the CURRENT binary to <update_dir>/skygate.prev
-#   3. download skygate-$TARGET-$ASSET_ARCH.tar.gz + SHA256SUMS,
-#      verify the SHA256
+#   3. download skygate-$TARGET-$ASSET_ARCH.tar.gz, then verify its
+#      SHA256 against (a) the release's SHA256SUMS asset when the
+#      release publishes one, or (b) GitHub's own per-asset
+#      `digest: sha256:<hex>` from the Releases API — the reference
+#      repo's published releases carry NO SHA256SUMS asset at all
+#      (v1.5.6 … v1.5.8), so a SHA256SUMS-only gate made the whole
+#      feature unusable while still looking "secure"
 #   4. extract, run `<new binary> --migrate-only` as $RUN_USER (BEFORE
 #      the swap: a failed migration leaves the old binary in place and
 #      needs no rollback at all)
@@ -448,22 +456,69 @@ if ! curl -fsSL --retry 3 --retry-delay 2 --max-time 300 -o "$WORK/$ASSET" "$BAS
     log "ERROR: download failed ($BASE_URL/$ASSET)"
     finish failed "download of $ASSET failed"
 fi
-log "downloading SHA256SUMS"
-if ! curl -fsSL --retry 3 --retry-delay 2 --max-time 60 -o "$WORK/SHA256SUMS" "$BASE_URL/SHA256SUMS"; then
-    log "ERROR: SHA256SUMS download failed — refusing to install an unverified binary"
-    finish failed "SHA256SUMS download failed"
-fi
-EXPECTED="$(awk -v n="$ASSET" '$2 == n { print $1; exit }' "$WORK/SHA256SUMS")"
-if [ -z "$EXPECTED" ]; then
-    log "ERROR: $ASSET is not listed in SHA256SUMS"
-    finish failed "asset not listed in SHA256SUMS"
-fi
 ACTUAL="$(sha256sum "$WORK/$ASSET" | awk '{print $1}')"
-if [ "$EXPECTED" != "$ACTUAL" ]; then
-    log "ERROR: SHA256 mismatch (expected $EXPECTED, got $ACTUAL)"
-    finish failed "SHA256 mismatch"
+VERIFIED_BY=""
+
+# (a) SHA256SUMS asset — the release pipeline's checksum file.
+#     NOTE: the reference repo's published releases (v1.5.6 … v1.5.8)
+#     do NOT have this asset, so this branch is the fast path, not the
+#     only path. The pre-fix helper required it and therefore could not
+#     update anything while still reporting a "secure" failure.
+if curl -fsSL --retry 2 --retry-delay 2 --max-time 60 -o "$WORK/SHA256SUMS" "$BASE_URL/SHA256SUMS" 2>/dev/null; then
+    EXPECTED="$(awk -v n="$ASSET" '$2 == n { print $1; exit }' "$WORK/SHA256SUMS")"
+    if [ -n "$EXPECTED" ]; then
+        if [ "$EXPECTED" != "$ACTUAL" ]; then
+            log "ERROR: SHA256 mismatch vs SHA256SUMS (expected $EXPECTED, got $ACTUAL)"
+            finish failed "SHA256 mismatch (SHA256SUMS)"
+        fi
+        VERIFIED_BY="SHA256SUMS asset"
+    else
+        log "WARN: SHA256SUMS exists but does not list $ASSET — trying the GitHub asset digest"
+    fi
+else
+    log "SHA256SUMS asset is not published for $TARGET (404) — verifying against the GitHub asset digest instead"
 fi
-log "SHA256 OK ($ACTUAL)"
+
+# (b) GitHub Releases API per-asset digest. `digest` is computed by
+#     GitHub from the uploaded bytes ("sha256:<hex>"), for the SAME
+#     owner/repo/tag we downloaded from — the same trust root as the
+#     tarball. Extracted with awk (no jq dependency): find the asset's
+#     "name" field, then the first sha256: that follows it.
+if [ -z "$VERIFIED_BY" ]; then
+    API_URL="https://api.github.com/repos/${OWNER}/${REPO}/releases/tags/${TARGET}"
+    if [ -n "${SKYGATE_UPDATE_GITHUB_TOKEN:-}" ]; then
+        curl -fsSL --retry 2 --retry-delay 2 --max-time 60 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${SKYGATE_UPDATE_GITHUB_TOKEN}" \
+            -o "$WORK/release.json" "$API_URL" 2>/dev/null || true
+    else
+        curl -fsSL --retry 2 --retry-delay 2 --max-time 60 \
+            -H "Accept: application/vnd.github+json" \
+            -o "$WORK/release.json" "$API_URL" 2>/dev/null || true
+    fi
+    DIGEST="$(awk -v asset="$ASSET" '
+        { buf = buf $0 }
+        END {
+            i = index(buf, "\"name\": \"" asset "\"")
+            if (i == 0) exit 1
+            rest = substr(buf, i)
+            if (match(rest, /sha256:[0-9a-f]+/)) {
+                print substr(rest, RSTART + 7, RLENGTH - 7)
+                exit 0
+            }
+            exit 1
+        }' "$WORK/release.json" 2>/dev/null || true)"
+    if [ -z "$DIGEST" ]; then
+        log "ERROR: no trustworthy checksum for $ASSET — neither a SHA256SUMS asset nor a GitHub asset digest is available"
+        finish failed "could not verify $ASSET (no SHA256SUMS asset and no GitHub asset digest)"
+    fi
+    if [ "$DIGEST" != "$ACTUAL" ]; then
+        log "ERROR: SHA256 mismatch vs GitHub asset digest (expected $DIGEST, got $ACTUAL)"
+        finish failed "SHA256 mismatch (GitHub asset digest)"
+    fi
+    VERIFIED_BY="GitHub asset digest"
+fi
+log "SHA256 OK ($ACTUAL, verified against $VERIFIED_BY)"
 
 if ! tar -xzf "$WORK/$ASSET" -C "$WORK"; then
     log "ERROR: cannot extract $ASSET"

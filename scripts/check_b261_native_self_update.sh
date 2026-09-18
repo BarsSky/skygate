@@ -105,8 +105,17 @@ else
 fi
 
 # --- C: the privileged sequence --------------------------------------
-grep -q 'SHA256SUMS' "$HELPER" || fail "C: helper does not verify SHA256SUMS — an unverified binary must never be installed"
+grep -q 'SHA256SUMS' "$HELPER" || fail "C: helper does not verify against SHA256SUMS — an unverified binary must never be installed"
 grep -q 'sha256sum' "$HELPER" || fail "C: helper does not compute sha256sum"
+# C4 (live canary finding, 2026-09-18): the reference repo's published
+# releases (v1.5.6 … v1.5.8) carry NO SHA256SUMS asset, so a
+# SHA256SUMS-only gate made the feature dead on arrival while looking
+# secure. The helper must fall back to GitHub's per-asset
+# `digest: sha256:<hex>` (same trust root: same owner/repo/tag) and
+# still refuse when neither is available.
+grep -q 'releases/tags/' "$HELPER" || fail "C4: helper has no Releases API fallback for the asset digest"
+grep -q 'sha256:\[0-9a-f\]' "$HELPER" || fail "C4: helper does not extract the GitHub asset digest"
+grep -q 'no SHA256SUMS asset and no GitHub asset digest' "$HELPER" || fail "C4: helper does not fail closed when no checksum source exists"
 grep -q -- '--migrate-only' "$HELPER" || fail "C: helper does not run --migrate-only before the swap"
 grep -q 'atomic_install()' "$HELPER" || fail "C: helper has no atomic_install helper"
 if grep -qE 'install -m 0755 -o root -g root "\$NEW_BIN" "\$BINARY_PATH"' "$HELPER"; then
@@ -117,7 +126,7 @@ grep -q 'systemctl restart "\$SERVICE"' "$HELPER" || fail "C: helper does not re
 grep -q 'build_matches()' "$HELPER" || fail "C: helper has no build_matches — a bare HTTP 200 must not count as success"
 grep -q 'PREV_BINARY' "$HELPER" || fail "C: helper keeps no previous-binary backup for rollback"
 grep -q 'finish rolled_back' "$HELPER" || fail "C: helper never reports rolled_back"
-ok "C: applier does backup → SHA256 verify → migrate → atomic swap → restart → build-string healthz → rollback"
+ok "C: applier does backup → SHA256 verify (SHA256SUMS or GitHub asset digest) → migrate → atomic swap → restart → build-string healthz → rollback"
 
 # --- C2: bare mode restarts as the service user ----------------------
 if grep -q 'setsid runuser -u "\$RUN_USER"' "$HELPER"; then
