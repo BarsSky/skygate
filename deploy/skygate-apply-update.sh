@@ -447,7 +447,32 @@ chmod 0755 "$WORK"
 trap "rm -rf '$WORK'" EXIT
 
 ASSET="skygate-${TARGET}-${ASSET_ARCH}.tar.gz"
-BASE_URL="https://github.com/${OWNER}/${REPO}/releases/download/${TARGET}"
+
+# Artifact source. Default: the official GitHub release download URL for
+# $OWNER/$REPO/$TARGET. An operator running an internal mirror (or an
+# air-gapped network) can point SKYGATE_UPDATE_BASE_URL at
+# <base>/<TAG>/<asset> + <base>/<TAG>/SHA256SUMS — root-owned config, so
+# a compromised skygate still cannot choose where code comes from. A
+# custom base is accepted over HTTPS, or over plain HTTP for loopback
+# only (a local mirror on the same host); and it MUST provide
+# SHA256SUMS, because GitHub's per-asset digest only describes the
+# official asset.
+MIRROR_MODE=0
+if [ -n "${SKYGATE_UPDATE_BASE_URL:-}" ]; then
+    case "$SKYGATE_UPDATE_BASE_URL" in
+        https://*) ;;
+        http://127.0.0.1*|http://localhost*|http://\[::1\]*) ;;
+        *)
+            log "ERROR: SKYGATE_UPDATE_BASE_URL must be https:// (plain http:// is allowed for loopback mirrors only)"
+            exit 2
+            ;;
+    esac
+    MIRROR_MODE=1
+    BASE_URL="${SKYGATE_UPDATE_BASE_URL%/}/${TARGET}"
+    log "artifact source: mirror ${BASE_URL} (SKYGATE_UPDATE_BASE_URL)"
+else
+    BASE_URL="https://github.com/${OWNER}/${REPO}/releases/download/${TARGET}"
+fi
 
 # --- 1. back up the running binary -----------------------------------
 if [ ! -f "$BINARY_PATH" ]; then
@@ -482,9 +507,15 @@ if curl -fsSL --retry 2 --retry-delay 2 --max-time 60 -o "$WORK/SHA256SUMS" "$BA
             finish failed "SHA256 mismatch (SHA256SUMS)"
         fi
         VERIFIED_BY="SHA256SUMS asset"
+    elif [ "$MIRROR_MODE" = "1" ]; then
+        log "ERROR: the mirror's SHA256SUMS does not list $ASSET"
+        finish failed "mirror SHA256SUMS does not list $ASSET"
     else
         log "WARN: SHA256SUMS exists but does not list $ASSET — trying the GitHub asset digest"
     fi
+elif [ "$MIRROR_MODE" = "1" ]; then
+    log "ERROR: SKYGATE_UPDATE_BASE_URL is set, so the mirror MUST publish SHA256SUMS — there is no GitHub digest to fall back to for a custom artifact source"
+    finish failed "mirror has no SHA256SUMS (cannot verify $ASSET)"
 else
     log "SHA256SUMS asset is not published for $TARGET (404) — verifying against the GitHub asset digest instead"
 fi

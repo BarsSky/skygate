@@ -142,6 +142,17 @@ grep -q '+ " migrate-only"' internal/update/manual.go || fail "C5: bare manual s
 grep -q '/app/skygate migrate-only' internal/update/manual.go || fail "C5: docker manual steps still use --migrate-only"
 ok "C5: migrate step (applier + manual steps) uses the migrate-only subcommand"
 
+# --- C6: mirror base for air-gapped installs --------------------------
+# SKYGATE_UPDATE_BASE_URL is root-owned config (a compromised skygate
+# still cannot choose where code comes from). A custom base must be
+# https:// (loopback http allowed for a same-host mirror) and MUST ship
+# SHA256SUMS, since GitHub's digest only describes the official asset.
+grep -q 'SKYGATE_UPDATE_BASE_URL' "$HELPER" || fail "C6: applier has no mirror base override"
+grep -q 'MIRROR_MODE=1' "$HELPER" || fail "C6: applier does not track mirror mode"
+grep -q 'so the mirror MUST publish SHA256SUMS' "$HELPER" || fail "C6: mirror mode must fail closed without SHA256SUMS"
+grep -q 'plain http:// is allowed for loopback mirrors only' "$HELPER" || fail "C6: mirror base must be https:// (loopback http only)"
+ok "C6: mirror base is root-owned, https-only (loopback exempt) and always checksum-verified"
+
 # --- C2: bare mode restarts as the service user ----------------------
 if grep -q 'setsid runuser -u "\$RUN_USER"' "$HELPER"; then
   ok "C2: bare mode restarts the process as \$RUN_USER (never as root)"
