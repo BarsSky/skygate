@@ -134,7 +134,10 @@ Evidence collected on the host:
   `tag:dev-skyadmin-emilia`. One ACL regeneration from the DB should clear all three
   contracts at once.
 * **Telegram relay (B185).** `[O] expected=ok_relay got=probe_unreachable_B185_not_live`
-  — the probe cannot reach the relay from the check environment.
+  — the probe cannot reach the relay. After the 2026-09-18 credential fix the contract logs in
+  with the credentials from `.env` and reaches its real assertion, which confirms the relay
+  path itself is down from the skygate container: the same condition as **BL-3**
+  (`api.telegram.org` behind a DPI-blocked network). `[P]` now passes (60 discord CDN rows).
 * **`device_rules` "duplicates" (B183 `[J]`, informational).** `exit_node=emilia` has
   106 rows, 46 distinct 5-tuples and **106 distinct 6-tuples**: the extra rows differ by
   `parent_domain` (`cdn:cloudflare:discordapp.com` vs `…discord.gg` vs … all resolving to
