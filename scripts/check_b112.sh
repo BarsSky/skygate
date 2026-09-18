@@ -97,7 +97,14 @@ fi
 #    block itself should not reference migrations_v0.50.go; comments above
 #    can mention it for context. So we narrow the range to just the
 #    `run_check "B38"` line and the following bash block.)
-if sed -n '941,950p' scripts/verify_pre_deploy.sh | grep -qF 'migrations_v0.50.go'; then
+#
+# 2026-09-18: the range used to be hardcoded (`sed -n '941,950p'`), which
+# broke the moment any edit ABOVE B38 changed the file length: the window
+# drifted onto the explanatory comments (which legitimately mention the
+# deleted file) and reported a false failure. Same class as B205's
+# `grep -A20`. Locate the block by its own marker instead.
+b38_line=$(grep -n '^run_check "B38"' scripts/verify_pre_deploy.sh | head -1 | cut -d: -f1)
+if [ -n "$b38_line" ] && sed -n "${b38_line},$((b38_line + 9))p" scripts/verify_pre_deploy.sh | grep -qF 'migrations_v0.50.go'; then
     echo "SKY-FAIL: B38 run_check still references migrations_v0.50.go" >&2
     fail=1
 else

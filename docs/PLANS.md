@@ -267,6 +267,10 @@ the squash (estimated, depends on pack efficiency).
   с тем же именем, что и файл, и flatten вкладывал файл внутрь каталога →
   релизы v1.5.6–v1.5.8 выходили без контрольных сумм (исправлено одной
   строкой, с симуляцией flatten в контракте).
+- **TD-10 — реконсиляция `portal_users.headscale_user_id` (B237.18)** — DONE.
+  Часовой in-app крон сверяет локальные `headscale_user_id` с живым списком
+  пользователей headscale; исходы `ok` / `linked` / `relinked` / `orphan`,
+  orphan никогда не удаляется автоматически (только audit-строка).
 - **TD-11 — CDN-группировка в /my/exit-rules и /admin/exit-rules
   (Approach G, B237.22)** — DONE. UI-only группировка: per-CIDR строки
   остаются отдельными и редактируемыми, но сворачиваются под заголовок
