@@ -90,6 +90,12 @@ func (s *Service) GetLogin(w http.ResponseWriter, r *http.Request) {
 		"Lang":       lang,
 		"Version":    s.Version,
 	}
+	// 2026-09-18 (R6): the login rate limiter is middleware, so it cannot
+	// localise or render anything — it redirects here with a stable code.
+	// Translate it into the .Error slot the template already renders.
+	if r.URL.Query().Get("err") == "rate_limited" {
+		data["Error"] = s.I18n.T(lang, "login.rate_limited")
+	}
 	// 2026-07-17: v0.16.8 — pre-fill username from "last_username" cookie.
 	if c, err := r.Cookie("last_username"); err == nil && c.Value != "" {
 		data["LastUsername"] = c.Value

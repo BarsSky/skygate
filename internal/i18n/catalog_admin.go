@@ -17,6 +17,11 @@ var ruAdmin = map[string]string{
 	"users.add":                               "Добавить пользователя",
 	"users.add_btn":                           "Новый",
 	"users.create":                            "Создать",
+	// 2026-09-18 (R6): раньше эти ошибки отдавались сырой text/plain
+	// страницей, хотя на самой странице уже есть блок FlashError.
+	"users.err_username_password_required":    "Укажите логин и пароль.",
+	"users.err_password_too_short":            "Пароль слишком короткий (минимум 6 символов).",
+	"users.err_username_charset":              "Логин: только строчные буквы, цифры, _ и -.",
 	"users.username":                          "Username",
 	"users.password":                          "Password",
 	"users.make_admin":                        "Сделать администратором",
@@ -900,6 +905,11 @@ var enAdmin = map[string]string{
 	"users.add":                               "Add user",
 	"users.add_btn":                           "New",
 	"users.create":                            "Create",
+	// 2026-09-18 (R6): these used to be answered with a raw text/plain page
+	// even though the page itself already renders a FlashError block.
+	"users.err_username_password_required":    "Username and password are required.",
+	"users.err_password_too_short":            "Password is too short (6 characters minimum).",
+	"users.err_username_charset":              "Username: lowercase letters, digits, _ and - only.",
 	"users.username":                          "Username",
 	"users.password":                          "Password",
 	"users.make_admin":                        "Make administrator",

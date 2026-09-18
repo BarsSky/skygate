@@ -869,7 +869,15 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 	for _, ip := range ipsToInsert {
 		ok, _ := s.insertRuleUnique(int64(uid), devID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent)
 		if !ok {
-			http.Error(w, "db error", http.StatusInternalServerError)
+			// 2026-09-18 (R6): was `http.Error(w, "db error", 500)`. The
+			// validation branches in this same handler already redirect
+			// through buildAdminExitRuleRedirectURL (which restores the
+			// form), so the DB-error branch uses it too instead of
+			// replacing the page with a bare text/plain body.
+			http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+				s.I18n.T(s.I18n.LangFromRequest(r), "error.db"),
+				fmt.Sprint(uid), devID, exitNode, typeToInsert, targetValue, action),
+				http.StatusSeeOther)
 			return
 		}
 		// insertRuleUnique returns (true, existingID) when

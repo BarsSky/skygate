@@ -127,12 +127,18 @@ var ruCommon = map[string]string{
 	"login.submitting"               : "Вход…",
 	"login.remember_label"           : "Запомнить меня (30 дней)",
 	"login.invalid_credentials"      : "Неверный логин или пароль",
+	// 2026-09-18 (R6): показывается после редиректа от ограничителя частоты
+	// на POST /login (раньше отдавалась сырая text/plain страница 429).
+	"login.rate_limited"             : "Слишком много попыток входа. Подождите около минуты и попробуйте снова.",
 	"login.no_account"               : "Нет аккаунта? Попросите администратора создать его.",
 	"error.not_found"                : "Страница не найдена",
 	"error.internal"                 : "Внутренняя ошибка",
 	"error.unauthorized"             : "Не авторизован",
 	"error.forbidden"                : "Доступ запрещён",
 	"error.try_again"                : "Попробуйте позже или обратитесь к администратору.",
+	// 2026-09-18 (R6): единый ключ «ошибка БД» для страниц, которые раньше
+	// отдавали сырую text/plain страницу с текстом SQL-ошибки.
+	"error.db"                       : "Ошибка базы данных. Попробуйте позже или обратитесь к администратору.",
 	"title.admin_headscale"          : "Обновления headscale",
 	"title.admin_headscale_acl"      : "Сетевой доступ (headscale ACL)",
 	"title.admin_system_tests"       : "Тесты системы",
@@ -326,12 +332,17 @@ var enCommon = map[string]string{
 	"login.submitting"               : "Signing in…",
 	"login.remember_label"           : "Remember me (30 days)",
 	"login.invalid_credentials"      : "Invalid username or password",
-	"login.no_account"               : "No account? Ask an administrator to create one.",
+	// 2026-09-18 (R6): shown after the login rate limiter redirects to
+	// /login?err=rate_limited (pre-fix it answered with a raw 429 text page).
+	"login.rate_limited"             : "Too many login attempts. Wait about a minute and try again.",	"login.no_account"               : "No account? Ask an administrator to create one.",
 	"error.not_found"                : "Page not found",
 	"error.internal"                 : "Internal error",
 	"error.unauthorized"             : "Unauthorized",
 	"error.forbidden"                : "Forbidden",
 	"error.try_again"                : "Try again later or contact the administrator.",
+	// 2026-09-18 (R6): the shared "database error" key for pages that used
+	// to answer with a raw text/plain body containing the SQL error.
+	"error.db"                       : "Database error. Please try again later or contact an administrator.",
 	"title.admin_headscale"          : "Headscale updates",
 	"title.admin_headscale_acl"      : "Network access (headscale ACL)",
 	"title.admin_system_tests"       : "System tests",

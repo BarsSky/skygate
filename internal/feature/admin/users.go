@@ -133,41 +133,56 @@ func (s *Service) PostAdminUser(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
 	isAdmin := r.FormValue("is_admin") == "on"
+	// 2026-09-18 (R6): validation and DB failures on this form used to be
+	// answered with http.Error → a raw text/plain page, even though the
+	// SAME page (admin/users.html) already renders {{.FlashError}}. The
+	// form is a plain POST from that page, so redirect back with ?err= and
+	// let the existing flash block show it.
+	//
+	// The 403 above deliberately stays an http.Error: redirecting an
+	// unauthorised caller back to /admin/users would just loop.
+	adminUsersErr := func(msg string) {
+		http.Redirect(w, r, "/admin/users?err="+url.QueryEscape(msg), http.StatusSeeOther)
+	}
 	if username == "" || password == "" {
-		http.Error(w, "username and password required", http.StatusBadRequest)
+		adminUsersErr(s.I18n.T(s.I18n.LangFromRequest(r), "admin_users.err_username_password_required"))
 		return
 	}
 	if len(password) < 6 {
-		http.Error(w, "password too short (min 6)", http.StatusBadRequest)
+		adminUsersErr(s.I18n.T(s.I18n.LangFromRequest(r), "admin_users.err_password_too_short"))
 		return
 	}
 	if !regexp.MustCompile(`^[a-z0-9_-]+$`).MatchString(username) {
-		http.Error(w, "username: lowercase letters, digits, _ and - only", http.StatusBadRequest)
+		adminUsersErr(s.I18n.T(s.I18n.LangFromRequest(r), "admin_users.err_username_charset"))
 		return
 	}
 	_, err := db.GetUserIDByName(s.dbc(), username)
 	if err == nil {
-		http.Error(w, fmt.Sprintf("user %q already exists in skygate", username), http.StatusConflict)
+		adminUsersErr(fmt.Sprintf("user %q already exists in skygate", username))
 		return
 	}
 	if !errors.Is(err, db.ErrUserNotFound) {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("web.admin.users: GetUserIDByName %q err=%v", username, err)
+		adminUsersErr(s.I18n.T(s.I18n.LangFromRequest(r), "error.db"))
 		return
 	}
 	hsUser, err := s.HSGlobalFn().CreateUser(username)
 	if err != nil {
-		http.Error(w, "headscale create user: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("web.admin.users: CreateUser %q err=%v", username, err)
+		adminUsersErr("headscale create user: " + err.Error())
 		return
 	}
 	hsID, _ := strconv.ParseInt(hsUser.ID, 10, 64)
 	hash, err := auth.HashPassword(password)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("web.admin.users: HashPassword err=%v", err)
+		adminUsersErr("password hashing failed")
 		return
 	}
 	newUserID, err := db.InsertPortalUser(s.dbc(), username, hash, isAdmin, hsID)
 	if err != nil {
-		http.Error(w, "portal insert: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("web.admin.users: InsertPortalUser %q err=%v", username, err)
+		adminUsersErr("portal insert: " + err.Error())
 		return
 	}
 	// 2026-07-20: v0.20.0 — auto-allocate subnet on user

@@ -856,7 +856,15 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	for _, ip := range ipsToInsert {
 		ok, existingID := s.insertRuleUnique(c.UserID, devID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent)
 		if !ok {
-			http.Error(w, "db error", http.StatusInternalServerError)
+			// 2026-09-18 (R6): was `http.Error(w, "db error", 500)` — a raw
+			// text/plain page that ALSO threw away every field the user had
+			// filled in. The validation branches in this same function
+			// already redirect through buildFormErrorRedirectURL (which
+			// restores the form values), so use it here too.
+			http.Redirect(w, r, buildFormErrorRedirectURL(
+				s.I18n.T(s.I18n.LangFromRequest(r), "error.db"),
+				devID, exitNode, typeToInsert, targetValue, action),
+				http.StatusSeeOther)
 			return
 		}
 		if existingID > 0 {

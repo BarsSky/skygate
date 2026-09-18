@@ -143,9 +143,17 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[exit-nodes] db.ListExitServers TIMEOUT after 2s, rendering empty")
 		listErr = fmt.Errorf("timeout")
 	}
+	// 2026-09-18 (R6): pre-fix this was
+	//     http.Error(w, listErr.Error(), http.StatusInternalServerError)
+	// which REPLACED the entire /admin/exit-nodes page with a text/plain
+	// body containing the raw SQL error — the operator's "the DB error is
+	// shown as a separate page" report. The template already renders
+	// .FlashError, so surface the failure there and render the (empty)
+	// table around it. The detailed error still goes to the log.
+	var listErrMsg string
 	if listErr != nil {
-		http.Error(w, listErr.Error(), http.StatusInternalServerError)
-		return
+		log.Printf("[exit-nodes] db.ListExitServers failed: %v", listErr)
+		listErrMsg = s.I18n.T(s.I18n.LangFromRequest(r), "error.db")
 	}
 
 	var nodes []ExitNodeInfo
@@ -298,8 +306,7 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		"TotalCount":      len(nodes),
 		"MonitorRunning":  s.ExitNodeMonitor != nil,
 		"FlashSuccess":    r.URL.Query().Get("ok"),
-		"FlashError":      r.URL.Query().Get("err"),
-		// 2026-07-20: v0.20.0 — headscale-update-monitor
+		"FlashError":      firstNonEmptyStr(r.URL.Query().Get("err"), listErrMsg),		// 2026-07-20: v0.20.0 — headscale-update-monitor
 		// banner. The template renders a coloured
 		// "newer headscale available" hint above the
 		// exit-node table when a release newer than the
@@ -1115,4 +1122,15 @@ func (s *Service) ensureExitServers() {
 			}
 		}
 	}
+}
+
+// firstNonEmptyStr returns a unless it is empty, in which case it returns
+// b. Added 2026-09-18 (R6) so a handler can prefer an operator-supplied
+// ?err= flash over its own internally-generated one without an if-block
+// at every call site.
+func firstNonEmptyStr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
