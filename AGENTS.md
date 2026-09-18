@@ -898,9 +898,12 @@ prod bug right now", `--no-verify` is acceptable.
   because the container default `/data/skygate-update-status.json`
   does not exist on a native host — every state write was a silent
   no-op). 8 Go unit tests in `internal/update/native_test.go`,
-  contracts A–I in `scripts/check_b261_native_self_update.sh`
+  contracts A–J in `scripts/check_b261_native_self_update.sh`
   (incl. a root-free smoke run proving a hostile `TARGET` is refused
-  as data), live canary verification in the plan §12.16.
+  as data) and live canary verification — happy path `verdict: done`
+  (healthz matched the build string in 2s) + real rollback
+  (`verdict: rolled_back`, previous binary restored, service healthy)
+  — recorded in the plan §12.16.
 - **B261.1 (v1.5.9, 2026-09-18)**: **`SKYGATE_DB=sqlite:/path` never
   opened — native SQLite installs could not start at all.** Found by
   bringing up the B261 canary on the reference VM: the process printed
@@ -935,6 +938,42 @@ prod bug right now", `--no-verify` is acceptable.
   found in the same run: `cmd/skygate/main.go` logs
   `DB backend: postgres` unconditionally, even on a SQLite DSN — the
   printed DSN is right, the label is hardcoded.)*
+- **B261.2–B261.5 (v1.5.9, 2026-09-18)**: the rest of what the live
+  canary found (every item below was hit in sequence while verifying
+  the native applier end-to-end; full detail in the plan §12.16):
+  1. **B261.2** — the published releases (v1.5.6 … v1.5.8) carry **no
+     `SHA256SUMS` asset**, so the applier's hard SHA256SUMS gate made
+     native self-update impossible on every real release while looking
+     like the "secure" branch. It now falls back to GitHub's per-asset
+     `digest: sha256:<hex>` from the Releases API for the same
+     owner/repo/tag (extracted with `awk`, optional
+     `SKYGATE_UPDATE_GITHUB_TOKEN`) and still refuses when neither
+     source exists. *(The release pipeline's SHA256SUMS job does not
+     attach the file — worth fixing separately.)*
+  2. **B261.3** — `mktemp -d` creates the work dir 0700 root-owned and
+     the migration step runs the new binary as the service user →
+     `env: .../apply.XXXXXX/skygate: Permission denied`. Now
+     `chmod 0755 "$WORK"` (contents are already SHA256-verified).
+  3. **B261.4** — `--migrate-only` does not exist: it is the
+     SUBCOMMAND `migrate-only` (`cmd/skygate/main.go`). The flag form
+     was in the applier AND in both manual-step lists in
+     `internal/update/manual.go`, so the documented fallback was
+     broken too. Also fixed the hardcoded `DB backend: postgres` /
+     `migrate-only: opening postgres` log lines (now
+     `db.DetectDSN(dsn).Kind`).
+  4. **B261.5** — `SKYGATE_UPDATE_BASE_URL` (root-owned, https:// or
+     loopback http, SHA256SUMS mandatory) for internal mirrors /
+     air-gapped hosts; it is what made the post-swap half verifiable
+     live.
+  Live verification results (canary on :18080, prod untouched):
+  happy path `verdict: done` with healthz matching `v1.5.9+good1234`
+  in 2s; a wrong-build artifact that BOOTS but reports another build →
+  `verdict: rolled_back`, previous binary restored byte-for-byte,
+  service healthy. **Known gap**: release **v1.5.8 cannot run on
+  SQLite at all** (`v44 add user_name: duplicate column name`, fresh or
+  existing DB) because it predates the §12.13 idempotency fixes — a
+  native SQLite host needs **v1.5.9+**, and the applier's pre-swap
+  migrate step is what keeps the attempt from bricking it.
 - **B176 + B175.1 (v1.5.2)**: dev-tag
     lowercase (headscale 0.29 rejects
     uppercase tags) + i18n tooltip

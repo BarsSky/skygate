@@ -1715,3 +1715,136 @@ internal/feature/admin/update.go:708       case update.InstallDocker (трети
 4. Явный выбор на стадии установки: `deploy/install-*.sh` уже принимает
    `--db-type`; добавить `--install-kind` (или писать `SKYGATE_INSTALL_KIND`
    в env при установке), чтобы детект не угадывал на air-gapped хостах.
+
+### 12.16 Нативное самообновление: реализация и живая проверка (выполнено 2026-09-18)
+
+Все четыре пункта §12.15 реализованы (B261), плюс четыре дефекта, которые
+нашлись только на живом стенде (B261.1–B261.5). Коммиты `5af182db`
+(B261), `f3aaa3fb` (B261.1), `a0893b1f` (B261.2), `11978945` (B261.3),
+`e61e5433` (B261.4), `c3dce90f` (B261.5).
+
+#### 12.16.1 Главное, чего не было в §12.15: привилегии
+
+Диагноз §12.15 («ветки systemd/bare — заглушки») верен, но причина не в
+заглушках, а в том, что **процесс физически не может себя обновить**:
+
+```
+install-common.sh:write_systemd_unit   User=skygate, ProtectSystem=strict,
+                                       ReadWritePaths=<data> <etc>
+проверено на VM: sudo -n -u skygate sudo -n true
+                 → sudo: a password is required
+```
+
+то есть ни записи в `/usr/local/bin/skygate`, ни `systemctl restart skygate`.
+Вторая, независимая проблема: перезапуск юнита **изнутри** юнита убивает
+любой `setsid`-ребёнок — systemd убивает cgroup, а не группу процессов
+(именно поэтому в docker-пути понадобился helper-*контейнер*).
+
+Решение сохраняет модель безопасности (не «запустим skygate под root»):
+
+```
+непривилегированный skygate → пишет <data>/update/request.props
+                              (только данные: job id, tag, from-version, pid;
+                               пути НЕ передаются, файл НИКОГДА не source-ится)
+skygate-update.path (root)  → PathExists на этот файл
+skygate-update.service(root)→ oneshot, /usr/local/lib/skygate/skygate-apply-update.sh
+applier (root)              → backup → download → SHA256 → migrate → swap →
+                              restart → healthz(строка сборки) → rollback
+skygate (новый процесс)     → складывает result.* в state на старте и на
+                              рендере /admin/update (ConfirmNativeSwap)
+```
+
+Все пути (бинарь, юнит, run-user, env-файл, health-URL, каталог, owner/repo,
+arch) берутся из root-owned `/etc/skygate/update-helper.conf`, а не из
+запроса — скомпрометированный skygate может попросить только «поставь
+официальный тег X». `/etc/skygate/skygate.env` принадлежит **сервисному**
+пользователю, поэтому он тоже парсится как данные и передаётся через `env(1)`
+(иначе это локальный root-escalation).
+
+Файлы: `internal/update/native.go`, `platform.go`, `native_test.go` (8 тестов),
+`deploy/skygate-apply-update.sh`, `write_update_helper()` в
+`deploy/install-common.sh` + вызовы в `install-{debian,rh,bare}.sh`
+(пункт 4: `--install-kind=`, `SKYGATE_INSTALL_KIND`,
+`SKYGATE_UPDATE_STATE_PATH`, `SKYGATE_UPDATE_DIR` в юните — контейнерный
+дефолт `/data/skygate-update-status.json` на нативной машине не существует,
+поэтому запись состояния была молчаливым no-op).
+Пункт 3: страница показывает `GOOS/GOARCH`, маркер контейнера, наличие
+`systemctl`/`docker` и статус helper-а.
+
+#### 12.16.2 Живая проверка (канареечный юнит на :18080)
+
+Отдельный `skygate-canary.service` (User=skygate, `ProtectSystem=strict`, своя
+SQLite, порт 18080) + отдельные `skygate-update-canary.{path,service}` с
+`SKYGATE_HELPER_CONF=/etc/skygate/update-helper-canary.conf`. Продовый
+docker-стек не трогали (он всё время оставался healthy), нативный
+`skygate.service` — inactive/disabled, как и был.
+
+| # | Сценарий | Результат |
+|---|---|---|
+| T2 | `TARGET=v1.5.9`, зеркало с бинарём из текущего исходника | `verdict: done`, `result.build=v1.5.9+good1234`, healthz подтвердил сборку за 2 с, бинарь подменён |
+| T3 | `TARGET=v9.9.9` (нет такого релиза) | `failed` на скачивании, **до** подмены: бинарь и сервис не тронуты, `request.props` снят, path-unit взведён снова |
+| T4 | зеркало с бинарём, который поднимается, но отдаёт **чужую** сборку (`v1.5.8-wrong`) | 90 с healthz не видел `v1.5.9` → `ROLLBACK OK: serving again (build 'v1.5.9+good1234')`, `verdict: rolled_back`, sha бинаря совпал с исходным, юнит active |
+| — | миграция на релизе v1.5.8 | `failed` **до** подмены: «migrations failed (the old binary is still installed)» — ровно то поведение, ради которого migrate идёт перед swap |
+| — | установщик (реальные пути) | `write_update_helper` → `/etc/skygate/update-helper.conf` + `skygate-update.{service,path}`, path-unit **active** |
+| — | Go-половина на VM | `go test ./internal/update/... ./internal/db/ -run 'Native\|Confirm\|OpenSQLite'` — ok |
+
+T4 — самый ценный: без проверки строки сборки этот апдейт был бы отчитан как
+успешный, а на порту остался бы чужой бинарь. Это ровно тот класс, за который
+§12.15 критиковал docker-путь (там достаточно было любого 200 OK).
+
+Стенд после проверки погашен (`skygate-canary.service` и
+`skygate-update-canary.path` — disabled/inactive); повторный запуск:
+`systemctl enable --now skygate-canary.service skygate-update-canary.path`,
+конфиг `/etc/skygate/update-helper-canary.conf`, зеркало-заглушка —
+`python3 -m http.server 18099 --bind 127.0.0.1 --directory <mirror>`.
+
+#### 12.16.3 Четыре дефекта, найденных живым прогоном
+
+1. **B261.1 — `SKYGATE_DB=sqlite:/path` не открывался вообще.**
+   `openSQLite` переводил в `file:`-форму только «голые» пути и явно
+   пропускал DSN с префиксом `sqlite:`, а modernc.org/sqlite такого схемного
+   префикса не знает: SQLite пытался создать относительный файл с именем
+   `sqlite:/var/...`, получал `SQLITE_CANTOPEN` (14) и драйвер показывал это
+   как «unable to open database file: out of memory (14)». Ретрай-петля
+   превращала это в ~40 с зависания и `log.Fatalf`. Это ровно та форма,
+   которую пишет `install-common.sh:resolve_db_type`, то есть **каждая
+   нативная установка на SQLite была нерабочей с рождения** (на VM это
+   маскировалось более ранним падением на `HEADSCALE_API_KEY`). Тесты не
+   ловили, потому что все SQLite-тесты шли на `:memory:`, а два теста с
+   `sqlite:/...` проверяли только классификацию диалекта. Фикс: срезаем
+   префикс в `openSQLite` (покрывает и веб, и CLI, и `db-migrate`) +
+   `internal/db/open_sqlite_b261_test.go` с реальным открытием всех трёх форм.
+2. **B261.2 — у релизов нет ассета `SHA256SUMS`.** v1.5.6/v1.5.7/v1.5.8
+   публикуют только тарболлы. Жёсткое требование SHA256SUMS делало
+   самообновление неработоспособным «безопасным» путём. Фикс: fallback на
+   `digest: sha256:<hex>` из GitHub Releases API для того же owner/repo/tag
+   (та же точка доверия), извлечение через `awk` (без jq), опциональный
+   `SKYGATE_UPDATE_GITHUB_TOKEN`; если нет ни того, ни другого — отказ.
+3. **B261.3 — `mktemp -d` = 0700**, а migrate выполняется как сервисный
+   пользователь → `Permission denied`. Фикс: `chmod 0755 "$WORK"`.
+4. **B261.4 — `--migrate-only` не существует.** Правильная форма —
+   подкоманда `migrate-only` (`cmd/skygate/main.go: case "migrate-only"`).
+   Ошибочная форма была и в applier-е, и **в обоих списках ручных шагов**
+   (`internal/update/manual.go`), то есть документированный fallback тоже не
+   работал. Заодно поправлены врущие логи `DB backend: postgres` (были
+   захардкожены при SQLite-DSN).
+5. **B261.5 — зеркало-база артефактов** `SKYGATE_UPDATE_BASE_URL`
+   (root-owned, https или loopback-http, SHA256SUMS обязателен) — нужна была,
+   чтобы вообще проверить post-swap половину, и полезна для air-gapped
+   установок.
+
+#### 12.16.4 Что осталось / известно
+
+* **Релиз v1.5.8 не работает на SQLite вообще** (падает на
+  `v44 add user_name: duplicate column name` и на свежей, и на готовой базе):
+  он старше правок §12.13 про идемпотентность. Значит нативному SQLite-хосту
+  нужен релиз **v1.5.9+**; applier в этом случае корректно отказывается до
+  подмены. Стоит проверить, что в v1.5.9 войдут и §12.13, и B261.1.
+* **Пайплайн релиза не публикует `SHA256SUMS`** (`release.yml` Job 3 его
+  генерирует, но в релиз он не попадает — вероятно из-за шага flatten
+  артефактов). Fallback на digest закрывает это, но сам ассет стоит починить.
+* Пункт 2 §12.15 (`InstallBare`) реализован тем же applier-ом и проверен
+  юнит-тестами + контрактом (запуск через `setsid sudo -n` + sudoers drop-in
+  от `install-bare.sh`); живого bare-хоста в этом сеансе не было.
+* Остальные ~25 «глотающих ошибку» `ADD COLUMN` в `migrations_sqlite.go`
+  (§12.13) по-прежнему не переведены на `addColumnIfMissingSQLite`.
