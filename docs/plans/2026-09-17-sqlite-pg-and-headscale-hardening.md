@@ -1559,3 +1559,54 @@ journalctl --disk-usage                   493.3M (212742 строки от зо�
 docker-compose.yml:206,260,270,280        монтирования (SSH/данные)
 deploy/install.sh:152 + install-debian.sh:39-50    -f молча игнорируется
 ```
+
+### 12.13 SQLite-цепочка миграций (выполнено 2026-09-18)
+
+Commit `1f55e44f`, задеплоено (`build: v1.5.8-12-g1f55e44`). Третий и последний
+пункт SQLite-аудита; все три дефекта найдены **запуском** на реальной `:memory:`,
+а не чтением кода.
+
+**1. Не было V071.** `V071` (`derp_cert_sync`) был зарегистрирован только в
+`pgMigrations`, поэтому SQLite-цепочка обрывалась на V070 и таблицы
+авто-продления сертификата DERP там не существовало. Добавлен
+`migrateV071SQLite` + запись в `sqliteMigrations`; заодно исправлен неверный
+`SourceFile` у V070 (`migrations_v0_70_b236.go` не существует —
+`migrateV070SQLite` живёт в `migrations_v0_70_b238.go`).
+
+**2. Колонки молча не создавались.** `migrations_sqlite.go` — сгенерированный
+реверс-порт PG-цепочки, и четыре выражения были скопированы дословно:
+
+```
+ALTER TABLE exit_servers ADD COLUMN IF NOT EXISTS ssh_target ...
+```
+
+В SQLite нет `IF NOT EXISTS` для `ADD COLUMN`, а порт обернул их в циклы,
+глотающие ошибки («ignore errors (column may exist)»). Синтаксическая ошибка
+читалась как «колонка уже есть». В свежей SQLite-базе **не было**
+`exit_servers.{ssh_target, ssh_key_path, accept_routes}` и
+`device_rules.device_ip` — ровно то, что ломало exit-node sync и per-device
+правила. Новый `sqlite_ddl.go`: `sqliteColumnExists` (через `PRAGMA table_info`)
++ `addColumnIfMissingSQLite`, который делает идемпотентность явной и
+**возвращает** ошибки. Все четыре места переведены.
+
+**3. Цепочка обрывалась на КАЖДОМ старте после первого.** В том же
+сгенерированном файле нашлось ещё ~10 незащищённых `ADD COLUMN`, у которых
+ошибка «duplicate column name» **возвращалась**: V44 (`user_name`,
+`device_hostname`), V48 (`os`, `device_type`), V53 (`ssh_port`), V57 (display
+prefs), V58 (`notified_at`), V67 (`audit_log.target_type/target_id`) и
+`derp_health.name`. Поскольку `MigrateSQLite` вызывается при каждом открытии, а
+его ошибка проходит наверх через `openDSNPing`, **SQLite-развёртывание не могло
+запуститься второй раз**. Нашлось проверкой идемпотентности (прогнать цепочку
+дважды) в новом тесте — дефекты выявлялись по одному. Все переведены на
+`addColumnIfMissingSQLite`.
+
+**Тесты** (`internal/db/migrations_sqlite_schema_test.go`): цепочка доходит до
+V071 как в PG; `derp_cert_sync` существует; все ранее потерянные колонки на
+месте; повторный прогон идемпотентен и не дублирует колонки;
+`TestAddColumnIfMissingSQLite` пинит helper напрямую, включая то, что
+некорректный DDL **пробрасывается** (проверять через несуществующий тип нельзя —
+SQLite динамически типизирован и принимает любой тип).
+
+**Сознательно не сделано:** остальные ~25 `ADD COLUMN` в циклах, которые
+**игнорируют** ошибку. Сейчас на свежей базе они безвредны, но всё ещё прячут
+реальные сбои; перевод — механическая доработка в том же файле.
