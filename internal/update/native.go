@@ -229,12 +229,13 @@ func NewNativeUpgrader(kind InstallKind, dataDir, updateDir, serviceName, health
 	}
 }
 
-// Paths inside the update dir.
+// Paths inside the update dir. requestPath and applyLogPath are used
+// for log lines; the result files are read through ReadNativeResult /
+// ConfirmNativeSwap (filepath.Join on the same constants), so there is
+// no accessor for them — an unused one trips staticcheck's U1000,
+// which the B237.20 contract pins at zero.
 func (u *NativeUpgrader) requestPath() string {
 	return filepath.Join(u.UpdateDir, NativeRequestFile)
-}
-func (u *NativeUpgrader) resultStatusPath() string {
-	return filepath.Join(u.UpdateDir, NativeResultStatusFile)
 }
 func (u *NativeUpgrader) applyLogPath() string {
 	return filepath.Join(u.UpdateDir, NativeApplyLogFile)
