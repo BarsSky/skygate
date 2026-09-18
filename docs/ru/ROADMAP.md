@@ -128,14 +128,28 @@ headscale или сеть, а их скрипты **побайтово иден�
   переполнения int, чистый остаток.
   → `UPDATE node_owner_map SET headscale_user_id=8 WHERE headscale_user_id=6;` и
   `DELETE FROM node_owner_map WHERE headscale_user_id=2147455555;`
-  (часовой реконсилятор B237.18 обязан перелинковывать по username — стоит проверить
-  `SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED` и его audit-строки).
-* **Дрейф ACL (B188.2/B188.3/B-mod-tag-owners-coverage).** В БД всё верно:
-  `device_exit_node_prefs` содержит `(6, basic, tag:dev-infra-emilia, via_enabled=1)`, а
-  `device_rules` — правило (`id 189985`, `youtube.com`, device 29, exit `emilia`), но в
-  живой политике headscale нет ни пина `via=[emilia]` на этом `/32`, ни строки
-  `node_owner_map`/`device_rules` для её `tagOwners`-записи `tag:dev-skyadmin-emilia`.
-  Одно перегенерирование ACL из БД должно закрыть все три контракта сразу.
+  **Почему это не самоизлечивается:** часовой реконсилятор (B237.18) здоров — в его
+  audit-строке `ok:5, linked:0, relinked:0, orphans:0`, а `portal_users.headscale_user_id`
+  верен (`michail=8`) — но он сверяет **только** `portal_users`, поэтому у
+  `node_owner_map.headscale_user_id` реконсиляции нет и старые ID остаются.
+  → шаг 5A скрипта починки либо (как будущая фича) расширение реконсилятора на
+  `node_owner_map`, чтобы класс закрывался сам.
+* **Дрейф ACL (B188.2/B188.3/B-mod-tag-owners-coverage).** Две разные причины, обе понятны:
+  * **B188.2/B188.3 — дефект чека, исправлен в коде (2026-09-18).** Контракт T требовал
+    один «замороженный» CIDR (`h-rule-64-233-164-91-32`, youtube `/32` на момент написания
+    B188.2) с `via=[emilia]`. Доменные правила периодически перерезолвятся, поэтому после
+    смены DNS алиас исчез, а поведение всегда было корректным: на эталонном хосте 30
+    per-CIDR грантов с пином `tag:dev-infra-emilia` и правильно НЕ пинённый catch-all.
+    Теперь T проверяет поведение (≥1 пинённый per-CIDR `h-rule-*`), а S и W по-прежнему
+    следят за непинёным catch-all. Оба контракта проходят (B188.2 19/0, B188.3 12/0).
+  * **B-mod-tag-owners-coverage — устаревшая политика.** В живой политике `tagOwners` всё
+    ещё содержит `tag:dev-skyadmin-emilia`, `tag:dev-skyadmin-skygate-host-1` и
+    `tag:dev-skyadmin-svyatoslava-1` (легаси-нейминг до B188), и **ни одна** строка БД на
+    них не ссылается (`node_owner_map`, `device_exit_node_prefs`, `user_exit_node_prefs`,
+    `device_rules` — 0), поэтому перегенерация из БД их убирает. Сама БД для B188.2
+    корректна (`device_exit_node_prefs (6, basic, tag:dev-infra-emilia, via_enabled=1)` +
+    правило `youtube.com`, id 189985).
+    → шаг 5B скрипта починки (`skygate acl-apply`).
 * **Telegram-relay (B185).** `[O] expected=ok_relay got=probe_unreachable_B185_not_live`
   — проба не достаёт relay. После исправления секретов 2026-09-18 контракт логинится
   учётными данными из `.env` и доходит до своего реального утверждения, которое

@@ -122,17 +122,29 @@ Evidence collected on the host:
   `node_id 6/29/31 → headscale_user_id=6 (michail)` — `michail` now lives at **8**, so
   these are relinkable; and `node_id 45 → 2147455555 (tagged-devices)`, the
   int-overflow sentinel, which is pure residue.
-  → `UPDATE node_owner_map SET headscale_user_id=8 WHERE headscale_user_id=6;` and
-  `DELETE FROM node_owner_map WHERE headscale_user_id=2147455555;`
-  (the hourly reconciler, B237.18, is supposed to relink by username — worth checking
-  `SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED` and its audit rows).
-* **ACL drift (B188.2/B188.3/B-mod-tag-owners-coverage).** The DB is correct:
-  `device_exit_node_prefs` has `(6, basic, tag:dev-infra-emilia, via_enabled=1)` and
-  `device_rules` has the rule (`id 189985`, `youtube.com`, device 29, exit `emilia`),
-  but the live headscale policy has neither the `via=[emilia]` pin on that `/32` nor a
-  matching `node_owner_map`/`device_rules` row for its `tagOwners` entry
-  `tag:dev-skyadmin-emilia`. One ACL regeneration from the DB should clear all three
-  contracts at once.
+  **Why nothing self-heals it:** the hourly reconciler (B237.18) is healthy — its audit
+  row shows `ok:5, linked:0, relinked:0, orphans:0` and `portal_users.headscale_user_id`
+  is correct (`michail=8`) — but it reconciles `portal_users` **only**, so
+  `node_owner_map.headscale_user_id` has no reconciliation and keeps stale IDs.
+  → step 5A of the repair helper, or (as a follow-up feature) extend the reconciler to
+  `node_owner_map` so this class self-heals.
+* **ACL drift (B188.2/B188.3/B-mod-tag-owners-coverage).** Two different causes, both now
+  understood:
+  * **B188.2/B188.3 — check bug, fixed in code (2026-09-18).** Contract T asserted one
+    frozen resolved CIDR (`h-rule-64-233-164-91-32`, youtube's `/32` when B188.2 was
+    written) carried `via=[emilia]`. Domain rules are re-resolved periodically, so after
+    DNS moved the alias vanished while the behaviour was always correct: the reference host
+    had 30 per-CIDR grants pinned to `tag:dev-infra-emilia` and a correctly UN-pinned
+    catch-all. T now asserts the behaviour (≥1 pinned per-CIDR `h-rule-*` grant); S and W
+    still pin the un-pinned catch-all. Both contracts pass (B188.2 19/0, B188.3 12/0).
+  * **B-mod-tag-owners-coverage — stale policy.** The live policy's `tagOwners` still lists
+    `tag:dev-skyadmin-emilia`, `tag:dev-skyadmin-skygate-host-1` and
+    `tag:dev-skyadmin-svyatoslava-1` (legacy pre-B188 naming), and **no** DB row references
+    them (`node_owner_map`, `device_exit_node_prefs`, `user_exit_node_prefs`,
+    `device_rules` all return 0), so a regeneration from the DB drops them. The DB itself is
+    correct for B188.2 (`device_exit_node_prefs (6, basic, tag:dev-infra-emilia,
+    via_enabled=1)` + the `youtube.com` rule, id 189985).
+    → step 5B of the repair helper (`skygate acl-apply`).
 * **Telegram relay (B185).** `[O] expected=ok_relay got=probe_unreachable_B185_not_live`
   — the probe cannot reach the relay. After the 2026-09-18 credential fix the contract logs in
   with the credentials from `.env` and reaches its real assertion, which confirms the relay
