@@ -90,10 +90,19 @@ echo "=== F. build + the B236 unit tests ==="
 if ! command -v go >/dev/null 2>&1; then
   echo "SKIP: go is not on PATH in this shell — run this on the VM/CI for contracts F"
 else
-  if ( cd "$REPO_ROOT" && go build ./... ) >/dev/null 2>&1; then
-    ok "go build ./..."
+  # Build the code packages explicitly rather than `./...`.
+  #
+  # `go build ./...` walks the whole repository, and on the operator's VM the
+  # repo root contains a root-owned, mode-0700 directory (data/oidc-keys-test),
+  # so the walk dies with "open data/oidc-keys-test: permission denied" when
+  # run as skyadmin — a false FAIL that has nothing to do with B236. CI uses
+  # `./...` on a fresh checkout where that directory does not exist; here we
+  # only care about the packages.
+  BUILD_PKGS="./cmd/... ./internal/..."
+  if ( cd "$REPO_ROOT" && go build $BUILD_PKGS ) >/dev/null 2>&1; then
+    ok "go build $BUILD_PKGS"
   else
-    fail "go build ./... failed"
+    fail "go build $BUILD_PKGS failed"
   fi
   if ( cd "$REPO_ROOT" && go test ./internal/feature/admin/ -count=1 ) >/dev/null 2>&1; then
     ok "go test ./internal/feature/admin/ passes"
