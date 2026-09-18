@@ -153,6 +153,14 @@ Evidence collected on the host:
   Go-dependent contract fails again on a loaded host, that cap is the first thing to
   check (RR-11 tracks the general SKIP/retry hardening).
 
+**Repair helper.** The two data drifts above are packaged as one reviewed command:
+`bash scripts/operator_repair_live_drift.sh` (dry run by default) discovers the live
+headscale ID for `michail`, prints the exact relink/delete plan, backs up the live policy
+(`headscale policy get`) and the `node_owner_map` rows, prints the rollback recipe, and only
+mutates anything with `--apply` — after which it re-applies the ACL from the DB and re-runs
+the four contracts. The dry run was verified on the reference host on 2026-09-18 (13 rows
+read, relink targets `29,31,6`, sentinel `45`, 52 KB policy backup, nothing changed).
+
 ---
 
 ## 6. Feature roadmap (rough order)
