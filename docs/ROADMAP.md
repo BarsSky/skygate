@@ -111,10 +111,10 @@ contracts are in the corresponding `scripts/check_b*.sh`.
 
 ### 5.1 Live-state contract failures on the reference host (2026-09-18)
 
-The full gate run on the reference host ends with **PASS=333 / 10 FAIL lines = 4 live checks /
-3 SKIP** (`scripts/verify_pre_deploy.sh` with the `GOFLAGS=-p=2` cap added 2026-09-18).
-None of the four reads a documentation file — every one queries the live DB, the headscale
-policy or the network, and their scripts are **byte-identical** to the pre-restructure commit.
+The full gate run on the reference host now ends with **PASS=307 / 6 FAIL lines = 3 live
+checks / 1 SKIP** (`scripts/verify_pre_deploy.sh`, verification run 2026-09-18 after the
+B188.2 contract fix). None of the three reads a documentation file — each one queries the
+live DB, the headscale policy or the network.
 Evidence collected on the host:
 
 * **`node_owner_map` (B243).** Live headscale users are `1 skyadmin`, `8 michail`,
