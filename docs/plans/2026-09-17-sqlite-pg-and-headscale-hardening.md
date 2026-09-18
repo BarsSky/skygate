@@ -1898,3 +1898,40 @@ rc-service calls: rc-service skygate restart
 зеркало им воспользоваться не может.
 
 Контракты K/K2/L/L2 (всего 26) в `scripts/check_b261_native_self_update.sh`.
+
+### 12.18 Приёмочный прогон «установка → обновление» на чистом хосте (2026-09-18)
+
+Перед тегом v1.5.9 оператор попросил прогнать полный сценарий на чистом
+хосте. Сделано в одноразовом контейнере `jrei/systemd-debian:12`
+(`--privileged --cgroupns=host`, systemd 252 как PID 1) на `<VM_HOST>`; ничего
+на самой VM не тронуто (её прод-стек в docker всё время оставался healthy).
+
+```
+install-debian.sh --db-type=sqlite --install-kind=systemd   (SKYGATE_VERSION=v1.5.8)
+  → юнит: Environment=SKYGATE_INSTALL_KIND / _UPDATE_STATE_PATH / _UPDATE_DIR
+  → skygate-update.{path,service} установлены, path-unit ACTIVE
+  → helper-скрипт + /etc/skygate/update-helper.conf
+  → /etc/skygate/skygate.env: SKYGATE_DB=sqlite:/var/lib/skygate/skygate.db
+# сам v1.5.8 эту базу открыть не может (цепочка до §12.13) — ожидаемо
+printf 'TARGET=v1.5.9…' > /var/lib/skygate/update/request.props   # от имени skygate
+  → root-owned path-unit сам поднял applier, 6 секунд:
+      SHA256 OK (verified against SHA256SUMS asset)
+      migrate-only: opening sqlite (DSN=sqlite:/…) → OK
+      restarting (systemd) → healthz reports 'v1.5.9+good1234' after 2s
+      verdict: done
+```
+
+**Прогон нашёл реальный баг установщика.** На минимальном Debian 12
+`write_env_file` умирал на `xxd: command not found`: `xxd` лежит в пакете
+xxd/vim-common, которого нет **ни в одном** списке зависимостей установщика
+(apt: ca-certificates curl tar passwd openssh-client systemd; dnf и apk — та же
+картина), а из-за `set -euo pipefail` установка **обрывалась между
+«installed: /usr/local/bin/skygate» и записью env-файла, юнита и helper-а** —
+то есть хост оставался с бинарём и без сервиса, а оператор видел строку успеха
+и тишину. Исправлено (`739a314f`): `openssl rand -hex 32` → `od -An -tx1`
+(coreutils есть везде) → xxd как последний вариант → внятная ошибка, если нет
+ничего. Контракты N/N2 пинят наличие fallback-ов и их порядок.
+
+Это единственный из четырёх найденных за сеанс классов дефектов, который
+касался **самого установщика**, а не апдейтера: до этого `install-debian.sh`
+на чистом минимальном хосте не доводил установку до конца.

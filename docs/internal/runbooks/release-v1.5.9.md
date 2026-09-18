@@ -70,6 +70,32 @@ gate cleanup). Facts below are from that session; each claim names its evidence.
 * `go test ./internal/update/... ./internal/db/ ./internal/feature/admin/...
   ./internal/i18n/...` — green.
 * **Live on <VM_HOST>**:
+  * **clean-host acceptance (install → update)**, run before the tag at the
+    operator's request in a throwaway `jrei/systemd-debian:12` container
+    (`--privileged --cgroupns=host`, systemd 252 as PID 1), nothing on the VM
+    touched:
+
+    ```
+    install-debian.sh --db-type=sqlite --install-kind=systemd   # v1.5.8 + SKIP_VERIFY=1
+      → unit has Environment=SKYGATE_INSTALL_KIND / _UPDATE_STATE_PATH / _UPDATE_DIR
+      → skygate-update.{path,service} installed, path unit ACTIVE
+      → helper script + /etc/skygate/update-helper.conf, env SKYGATE_DB=sqlite:/…
+    # v1.5.8 itself cannot open that DB (pre-§12.13 chain) — expected
+    printf 'TARGET=v1.5.9…' > /var/lib/skygate/update/request.props   # as skygate
+      → the root-owned path unit fired the applier by itself, 6s total:
+          SHA256 OK (verified against SHA256SUMS asset)
+          migrate-only: opening sqlite (DSN=sqlite:/…) → OK
+          restarting (systemd) → healthz reports build 'v1.5.9+good1234' after 2s
+          verdict: done            (unit active, /healthz serves v1.5.9)
+    ```
+
+    **It paid for itself: it found a real installer bug.** On minimal Debian 12
+    `write_env_file` died at `xxd: command not found` — `xxd` ships in the
+    xxd/vim-common package, which is in NONE of the installer dependency
+    lists — and under `set -euo pipefail` the install **aborted between
+    "installed: /usr/local/bin/skygate" and the env file / unit / helper**.
+    Fixed in `739a314f` (openssl → od (coreutils) → xxd, clear error if none);
+    contracts N/N2 pin the fallbacks and their order.
   * happy-path native update: `verdict: done`, `/healthz` matched
     `v1.5.9+good1234` in 2s;
   * real rollback: an artifact that boots but reports another build →
