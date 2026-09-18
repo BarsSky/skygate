@@ -1,4 +1,4 @@
-﻿{{define "body-admin-telegram"}}
+{{define "body-admin-telegram"}}
 {{/* 2026-07-15: v0.15.1 - final round of /admin/telegram
      localization. Every visible string now goes through
      the t function. The v0.15.0 release translated the
@@ -55,6 +55,16 @@
 <div id="telegram-probe-slot" class="alert alert-probe probe-{{.State.Probe.State}}">
   <i class="fa-solid {{if eq .State.Probe.State.String "ok_direct"}}fa-globe{{else if eq .State.Probe.State.String "ok_relay"}}fa-route{{else}}fa-triangle-exclamation{{end}}"></i>
   <div>
+    {{/* B253: the probe result may come from the cache while a background
+         refresh runs (stale-while-revalidate). Say so explicitly, with the
+         measurement time, so a green badge is never mistaken for "measured
+         just now". */}}
+    {{if .State.Probe.Stale}}
+    <div class="sub" style="margin-bottom:.35rem" title="{{t "telegram.probe_stale_until"}}">
+      <span class="badge badge-warning">{{t "telegram.probe_stale"}}</span>
+      <code>{{.State.Probe.StaleAt}}</code>
+    </div>
+    {{end}}
     <strong>
       {{if eq .State.Probe.State.String "ok_direct"}}{{t "telegram.probe_ok_direct_label"}}{{end}}
       {{if eq .State.Probe.State.String "ok_relay"}}{{t "telegram.probe_ok_relay_label"}}{{end}}
@@ -69,6 +79,12 @@
       {{t "telegram.probe_resolved_prefix"}}{{range .State.Probe.ResolvedIPs}}<code>{{.}}</code> {{end}}
     </div>
     {{end}}
+    {{/* B253: bypass the cache. The operator clicks this right after fixing
+         the network path / rotating the token, when waiting up to 5 minutes
+         for the background refresh would be useless. */}}
+    <form method="post" action="/admin/telegram/probe/now" style="margin-top:.5rem">
+      <button type="submit" class="btn btn-sm">{{t "telegram.probe_now"}}</button>
+    </form>
     {{if eq .State.Probe.State.String "unreachable"}}
     <div class="sub" style="margin-top:.5rem">
       <strong>{{t "telegram.probe_troubleshooting"}}</strong>

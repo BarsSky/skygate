@@ -1717,16 +1717,12 @@ func main() {
 	// derp_cert_sync rows; the "Sync now" button POSTs here so
 	// the operator doesn't have to wait for the daily cron tick.
 	//
-	// 2026-09-15: TEMPORARILY DISABLED (route still registered as
-	// 501 Not Implemented). The PostAdminDerpCertSyncRun handler
-	// lives in the in-progress internal/feature/admin/derp_cert_sync.go
-	// (B252.1 follow-up — not yet merged). Until that lands, the
-	// "Sync now" button on /admin/derp returns 501 so the page
-	// still renders cleanly. Re-enable the line above once
-	// scripts/check_b252_derp_cert_sync.sh is wired.
-	mux.Handle("POST /admin/derp/cert-sync/run", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "derp cert sync handler not yet implemented (B252.1 follow-up)", http.StatusNotImplemented)
-	})))
+	// 2026-09-18 (B252.1): the handler now exists — the "Sync now" button
+	// used to answer 501 because the UI half of B252 was never merged (the
+	// stub below was deliberate). It syncs one hostname or every enabled
+	// row and redirects with ?ok=/?err= (a plain form POST must never get a
+	// JSON body back — the B180 raw-JSON regression).
+	mux.Handle("POST /admin/derp/cert-sync/run", authMW(http.HandlerFunc(adminSvc.PostAdminDerpCertSyncRun)))
 	// 2026-07-15: Этап 14 v14 (v0.11.0) — runtime-editable
 	// integration config. The /admin/integrations landing page
 	// shows the current state of every pluggable component;
@@ -2063,15 +2059,12 @@ func main() {
 	// waiting for the next async-refresh tick (5 min on failure,
 	// 30s on success).
 	//
-	// 2026-09-15: TEMPORARILY DISABLED (route still registered as
-	// 501 Not Implemented). The PostAdminTelegramProbeNow handler
-	// is part of the B253 follow-up (not yet merged). Until then
-	// the "Probe now" button returns 501 so the page still loads.
-	// Re-enable the line above once scripts/check_b253_telegram_async.sh
-	// is wired.
-	mux.Handle("POST /admin/telegram/probe/now", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "telegram probe handler not yet implemented (B253 follow-up)", http.StatusNotImplemented)
-	})))
+	// 2026-09-18 (B253): the handler now exists — the "Probe now" button
+	// used to answer 501 because the B253 UI half was never merged. It
+	// bypasses the cache (and so the stale-while-revalidate path) and
+	// redirects back with ?ok=/?err=; the refreshed probe badge is the
+	// operator-visible result.
+	mux.Handle("POST /admin/telegram/probe/now", authMW(http.HandlerFunc(adminSvc.PostAdminTelegramProbeNow)))
 	// v1.5.2+ / B-mod-admin (2026-09-10): /admin/modules
 	// list + /admin/modules/{name} detail + POST handlers
 	// for install/start/stop/enable/disable/sub/{name}.

@@ -18,13 +18,14 @@ package admin
 // small enough (~430 lines) to keep in one place.
 
 import (
-	"encoding/json"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
-	neturl "net/url"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -41,8 +42,26 @@ func (s *Service) GetAdminDERP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+	// B252.1: the cert auto-renewal section needs the derp_cert_sync rows.
+	// A DB error here must NOT take the whole /admin/derp page down (the
+	// page's primary job is the derp status snapshot), so it degrades to an
+	// empty list plus a log line.
+	var certSync []DerpCertSyncConfig
+	if db := s.dbc(); db != nil {
+		if rows, err := loadAllCertSyncConfigs(r.Context(), db); err != nil {
+			log.Printf("admin.derp: load cert-sync configs: %v", err)
+		} else {
+			certSync = rows
+		}
+	}
+	// Flash from the "Sync now" POST (redirect + ?ok=/?err=; never a JSON
+	// body — see the B180 raw-JSON regression).
+	flash, flashErr := r.URL.Query().Get("ok"), r.URL.Query().Get("err")
 	s.Backend.RenderWithLayout(w, r, "admin/derp.html", c, map[string]any{
 		"DerpStatus": s.collectDerpStatus(),
+		"CertSync":   certSync,
+		"FlashOk":    flash,
+		"FlashErr":   flashErr,
 	})
 }
 
@@ -77,22 +96,22 @@ type DerpStatus struct {
 	// when querying from the skygate container). Used by
 	// the /admin/derp template to show a small annotation
 	// so the operator knows which IP they're looking at.
-	WhiteIPSource   string
-	UpTime          string
-	StartedAt       string
-	PID             string
-	Memory          string
-	GoVersion       string
-	Machine         string
-	Connections     int
-	Accepts         int
-	BytesIn         int64
-	BytesOut        int64
-	PacketsIn       int
-	PacketsOut      int
-	Clients         int
-	STUNRequests    int
-	RecentLog       string
+	WhiteIPSource string
+	UpTime        string
+	StartedAt     string
+	PID           string
+	Memory        string
+	GoVersion     string
+	Machine       string
+	Connections   int
+	Accepts       int
+	BytesIn       int64
+	BytesOut      int64
+	PacketsIn     int
+	PacketsOut    int
+	Clients       int
+	STUNRequests  int
+	RecentLog     string
 
 	// Active connections to derper (src IP, reverse DNS).
 	ActiveTCP []DerpPeer
@@ -715,11 +734,12 @@ func InitDerpClassifier(npm, lanNet string) error {
 }
 
 // classifyDerpPeer labels a connection source.
-//   ws_relay - Tailscale client (100.64.100.0/10)
-//   ws_admin - Nginx Proxy Manager WebSocket pool (SKYGATE_DERP_PEER_NPM)
-//   lan      - other LAN client (SKYGATE_DERP_LAN_NET)
-//   local    - loopback (already filtered by the snapshot script)
-//   unknown  - anything else
+//
+//	ws_relay - Tailscale client (100.64.100.0/10)
+//	ws_admin - Nginx Proxy Manager WebSocket pool (SKYGATE_DERP_PEER_NPM)
+//	lan      - other LAN client (SKYGATE_DERP_LAN_NET)
+//	local    - loopback (already filtered by the snapshot script)
+//	unknown  - anything else
 func classifyDerpPeer(ip string) string {
 	if ip == derpPeerNPM {
 		return "ws_admin"
@@ -826,9 +846,9 @@ func dnsLookupVia1111(hostname string) ([]net.IP, error) {
 		question = append(question, byte(len(label)))
 		question = append(question, []byte(label)...)
 	}
-	question = append(question, 0x00)             // root label
-	question = append(question, 0x00, 0x01)        // type A
-	question = append(question, 0x00, 0x01)        // class IN
+	question = append(question, 0x00)       // root label
+	question = append(question, 0x00, 0x01) // type A
+	question = append(question, 0x00, 0x01) // class IN
 	pkt := append(header, question...)
 
 	// Dial UDP to 1.1.1.1:53 with a 3-second deadline.

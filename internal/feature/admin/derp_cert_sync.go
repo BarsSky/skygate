@@ -75,6 +75,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -99,22 +100,22 @@ var startCertSyncOnce sync.Once
 // Maps 1:1 to the DB columns; the cron and the manual handler
 // both work with this struct.
 type DerpCertSyncConfig struct {
-	ID                 int64
-	Hostname           string
-	Mode               string // 'letsencrypt' | 'npm' | 'manual'
-	NPMBaseURL         string
-	NPMCertID          int
-	CertDir            string
-	DerperPidFile      string
-	DerperSystemdUnit  string
-	CheckIntervalMin   int
-	Enabled            bool
-	LastCheckedAt      time.Time
-	LastSyncedAt       time.Time
-	LastCertSHA256     string
-	LastError          string
-	ExpiryWarnAt       time.Time
-	Notes              string
+	ID                int64
+	Hostname          string
+	Mode              string // 'letsencrypt' | 'npm' | 'manual'
+	NPMBaseURL        string
+	NPMCertID         int
+	CertDir           string
+	DerperPidFile     string
+	DerperSystemdUnit string
+	CheckIntervalMin  int
+	Enabled           bool
+	LastCheckedAt     time.Time
+	LastSyncedAt      time.Time
+	LastCertSHA256    string
+	LastError         string
+	ExpiryWarnAt      time.Time
+	Notes             string
 }
 
 // StartCertSyncCron launches the periodic cert-sync loop. It's
@@ -192,6 +193,85 @@ const (
 	SyncSkip
 	SyncError
 )
+
+// PostAdminDerpCertSyncRun is the manual trigger behind the "Sync now"
+// button on /admin/derp (B252.1).
+//
+// WHAT WAS MISSING: the B252 backend (V071 table, the cron, SyncOne) shipped
+// without its UI half — main.go carried a deliberate stub that answered 501
+// "derp cert sync handler not yet implemented (B252.1 follow-up)", derp.html
+// rendered no cert section, and 12 `derp.cert_sync_*` keys were absent from
+// the catalog. scripts/check_b252_derp_cert_sync.sh has been red ever since
+// because it pins the intended surface.
+//
+// Behaviour: an empty `hostname` field syncs every ENABLED row (a fleet
+// sweep), a filled one syncs just that host even if the row is disabled (the
+// operator explicitly asked for it — that is the point of a manual button).
+// Always redirects with a flash: a plain <form method="post"> that answers
+// JSON renders raw text in the browser (the B180 bug class).
+func (s *Service) PostAdminDerpCertSyncRun(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	hostname := strings.TrimSpace(r.FormValue("hostname"))
+	db := s.dbc()
+	if db == nil {
+		http.Redirect(w, r, "/admin/derp?err="+url.QueryEscape("db unavailable"), http.StatusSeeOther)
+		return
+	}
+	cfgs, err := loadAllCertSyncConfigs(r.Context(), db)
+	if err != nil {
+		log.Printf("derp_cert_sync: manual run: load configs: %v", err)
+		http.Redirect(w, r, "/admin/derp?err="+url.QueryEscape("could not load cert-sync configs"), http.StatusSeeOther)
+		return
+	}
+
+	var ran, okCount, errCount, skipped int
+	lastErr := ""
+	for i := range cfgs {
+		cfg := cfgs[i]
+		if hostname != "" {
+			if !strings.EqualFold(cfg.Hostname, hostname) {
+				continue
+			}
+		} else if !cfg.Enabled {
+			continue
+		}
+		switch res := SyncOne(r.Context(), db, &cfg); res {
+		case SyncOK:
+			ran++
+			okCount++
+		case SyncSkip:
+			ran++
+			skipped++
+		default:
+			ran++
+			errCount++
+			if cfg.LastError != "" {
+				lastErr = cfg.LastError
+			}
+		}
+	}
+
+	scope := hostname
+	if scope == "" {
+		scope = "all enabled"
+	}
+	s.Backend.Audit(c.UserID, c.Username, "derp_cert_sync_run",
+		fmt.Sprintf("scope=%s ran=%d ok=%d err=%d skipped=%d", scope, ran, okCount, errCount, skipped))
+
+	msg := fmt.Sprintf("cert sync (%s): %d ok, %d error, %d skipped", scope, okCount, errCount, skipped)
+	if errCount > 0 {
+		if lastErr != "" {
+			msg += ": " + lastErr
+		}
+		http.Redirect(w, r, "/admin/derp?err="+url.QueryEscape(msg), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/admin/derp?ok="+url.QueryEscape(msg), http.StatusSeeOther)
+}
 
 // SyncOne runs the renewal flow for one derp_cert_sync row.
 // Public so the /admin/derp/cert-sync/run POST handler can

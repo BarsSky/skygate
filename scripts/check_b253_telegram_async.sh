@@ -41,7 +41,7 @@ if grep -qF 'refreshProbeAsync' "$TG" 2>/dev/null; then
 else bad "cachedTelegramProbe must call refreshProbeAsync on cache miss/stale"; fi
 if grep -qE 'go s\.refreshProbeAsync\(' "$TG" 2>/dev/null; then
   ok "refreshProbeAsync spawned as a goroutine (non-blocking)"
-else bad "refreshProbeAsync must be spawned via `go func()` to avoid blocking the page"; fi
+else bad "refreshProbeAsync must be spawned via 'go s.refreshProbeAsync(...)' to avoid blocking the page"; fi
 
 # --- B. separate TTLs (success vs error) ---
 echo

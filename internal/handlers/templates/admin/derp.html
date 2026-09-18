@@ -283,3 +283,76 @@
 </div>
 {{end}}
 {{end}}
+
+{{/* B252.1: DERP cert auto-renewal. The backend (derp_cert_sync table +
+     daily cron + SyncOne) shipped with B252, but the UI half was never
+     merged, so this section — and the /admin/derp/cert-sync/run handler it
+     posts to — were missing until now. Rendered at top level so it also
+     shows on the "status fetch failed" branch (the cert config is DB-only
+     and does not depend on the derper probe). */}}
+<div class="card" style="margin-top:16px">
+  <h4 style="margin:0 0 8px 0"><i class="fa-solid fa-certificate"></i> {{t "derp.cert_sync_title"}}</h4>
+  <p style="color:var(--text-muted);font-size:13px;margin:0 0 12px 0">
+    {{t "derp.cert_sync_hosts_hint"}}
+  </p>
+
+  {{if .FlashOk}}
+  <div class="alert alert-success" style="margin-bottom:12px">{{.FlashOk}}</div>
+  {{end}}
+  {{if .FlashErr}}
+  <div class="alert alert-danger" style="margin-bottom:12px">{{.FlashErr}}</div>
+  {{end}}
+
+  {{if .CertSync}}
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="text-align:left;color:var(--text-muted)">
+          <th style="padding:6px 8px">{{t "derp.cert_sync_hostname"}}</th>
+          <th style="padding:6px 8px">{{t "derp.cert_sync_mode"}}</th>
+          <th style="padding:6px 8px">{{t "derp.cert_sync_last_synced"}}</th>
+          <th style="padding:6px 8px">{{t "derp.cert_sync_expiry"}}</th>
+          <th style="padding:6px 8px">{{t "derp.cert_sync_status"}}</th>
+          <th style="padding:6px 8px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .CertSync}}
+        <tr style="border-top:1px solid var(--border)">
+          <td style="padding:6px 8px"><code>{{.Hostname}}</code></td>
+          <td style="padding:6px 8px">{{.Mode}}</td>
+          <td style="padding:6px 8px">
+            {{if not .LastSyncedAt.IsZero}}{{.LastSyncedAt.Format "2006-01-02 15:04"}}{{else}}{{t "derp.cert_sync_pending"}}{{end}}
+          </td>
+          <td style="padding:6px 8px">
+            {{if not .ExpiryWarnAt.IsZero}}{{.ExpiryWarnAt.Format "2006-01-02"}}{{else}}—{{end}}
+          </td>
+          <td style="padding:6px 8px">
+            {{if .LastError}}
+            <span style="color:var(--danger, #dc3545)">{{t "derp.cert_sync_err"}}: {{.LastError}}</span>
+            {{else}}
+            <span style="color:var(--success, #198754)">{{t "derp.cert_sync_ok"}}</span>
+            {{end}}
+          </td>
+          <td style="padding:6px 8px;text-align:right">
+            <form method="post" action="/admin/derp/cert-sync/run" style="display:inline">
+              <input type="hidden" name="hostname" value="{{.Hostname}}">
+              <button type="submit" class="btn btn-sm" title="{{t "derp.cert_sync_run_help"}}">
+                <i class="fa-solid fa-rotate"></i> {{t "derp.cert_sync_run_now"}}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  <form method="post" action="/admin/derp/cert-sync/run" style="margin-top:12px">
+    <button type="submit" class="btn btn-sm btn-primary" title="{{t "derp.cert_sync_run_help"}}">
+      <i class="fa-solid fa-rotate"></i> {{t "derp.cert_sync_run_now"}} ({{t "derp.cert_sync_all"}})
+    </button>
+  </form>
+  {{else}}
+  <p style="color:var(--text-muted);font-size:13px;margin:0">{{t "derp.cert_sync_none"}}</p>
+  {{end}}
+</div>

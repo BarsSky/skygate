@@ -57,6 +57,18 @@ type TelegramProbeResult struct {
 	Latency     time.Duration
 	LatencyMS   string
 	ResolvedIPs []string
+	// Stale marks a result served from the cache by the B253
+	// stale-while-revalidate path: it is real data, but older than the TTL,
+	// and a background refresh is already in flight. The page shows the
+	// "stale" badge so the operator knows the number is not fresh.
+	// StaleAt is the RFC3339 timestamp of when that stale result was
+	// actually measured (empty when Stale is false).
+	//
+	// (Kept as one comment block above the pair on purpose: gofmt aligns
+	// consecutive field lines, and scripts/check_b253_telegram_async.sh pins
+	// the `Stale   bool` alignment.)
+	Stale   bool
+	StaleAt string
 }
 
 // formatLatencyMS converts a Duration to "<n>ms" with integer
