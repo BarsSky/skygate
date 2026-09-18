@@ -495,7 +495,7 @@ func (s *Service) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) 
 	sshPort := strings.TrimSpace(r.FormValue("ssh_port"))
 	desc := strings.TrimSpace(r.FormValue("description"))
 	if nodeID == "" || hostname == "" {
-		http.Error(w, "node_id and hostname required", http.StatusBadRequest)
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("node_id and hostname are required"), http.StatusSeeOther)
 		return
 	}
 	acceptRoutes := 0
@@ -507,7 +507,7 @@ func (s *Service) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) 
 	}
 	// 2026-07-12: Этап 10 part 5 — moved to db.UpsertExitServer.
 	if err := db.UpsertExitServer(s.dbc(), nodeID, hostname, sshTarget, sshKey, desc, sshPort, acceptRoutes); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape(s.I18n.T(s.I18n.LangFromRequest(r), "error.db")), http.StatusSeeOther)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "exit_node_add", fmt.Sprintf("node=%s ssh=%s", hostname, sshTarget))
@@ -524,12 +524,12 @@ func (s *Service) PostAdminExitNodesDelete(w http.ResponseWriter, r *http.Reques
 	}
 	nodeID := r.FormValue("node_id")
 	if nodeID == "" {
-		http.Error(w, "node_id required", http.StatusBadRequest)
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("node_id is required"), http.StatusSeeOther)
 		return
 	}
 	// 2026-07-12: Этап 10 part 5 — moved to db.DeleteExitServerByNodeID.
 	if err := db.DeleteExitServerByNodeID(s.dbc(), nodeID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape(s.I18n.T(s.I18n.LangFromRequest(r), "error.db")), http.StatusSeeOther)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "exit_node_delete", nodeID)
@@ -557,7 +557,7 @@ func (s *Service) PostAdminExitNodeUseTailscaleIP(w http.ResponseWriter, r *http
 	}
 	nodeID := strings.TrimSpace(r.FormValue("node_id"))
 	if nodeID == "" {
-		http.Error(w, "node_id required", http.StatusBadRequest)
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("node_id is required"), http.StatusSeeOther)
 		return
 	}
 	// Read the existing row so we can preserve ssh_key_path /
@@ -579,7 +579,7 @@ func (s *Service) PostAdminExitNodeUseTailscaleIP(w http.ResponseWriter, r *http
 		 FROM exit_servers WHERE node_id = $1`, nodeID,
 	).Scan(&hostname, &sshKeyPath, &description, &sshPort, &acceptRoutes, &enabled)
 	if err != nil {
-		http.Error(w, "exit_servers row not found: "+err.Error(), http.StatusNotFound)
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("exit_servers row not found"), http.StatusSeeOther)
 		return
 	}
 	if !enabled {
@@ -602,7 +602,7 @@ func (s *Service) PostAdminExitNodeUseTailscaleIP(w http.ResponseWriter, r *http
 		return
 	}
 	if err := db.UpsertExitServer(s.dbc(), nodeID, hostname, resolved, sshKeyPath, description, sshPort, acceptRoutes); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape(s.I18n.T(s.I18n.LangFromRequest(r), "error.db")), http.StatusSeeOther)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "exit_node_use_tailscale_ip",
@@ -616,11 +616,19 @@ func (s *Service) PostAdminExitNodeUseTailscaleIP(w http.ResponseWriter, r *http
 func (s *Service) PostAdminExitNodesSync(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		// 2026-09-18 (R6): this endpoint is consumed by fetch() (the
+		// "Sync now" button), and http.Error forces Content-Type:
+		// text/plain — so the JS caller parsed a plain-text body as JSON
+		// and fell back to a generic error. Set the header explicitly.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"forbidden"}`))
 		return
 	}
 	if s.SyncRoutes == nil {
-		http.Error(w, `{"error":"sync not wired"}`, http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"sync not wired"}`))
 		return
 	}
 	result := s.SyncRoutes()
@@ -741,7 +749,7 @@ func (s *Service) PostAdminExitNodeSetAcceptRoutes(w http.ResponseWriter, r *htt
 			http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("exit node not found: "+nodeID), http.StatusSeeOther)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape(s.I18n.T(s.I18n.LangFromRequest(r), "error.db")), http.StatusSeeOther)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "exit_node_set_accept_routes",
