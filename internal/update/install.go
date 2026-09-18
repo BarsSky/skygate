@@ -64,15 +64,33 @@ func DetectInstallKind() InstallKind {
 			return InstallBare
 		}
 	}
-	// Linux-specific detection
-	if _, err := os.Stat("/run/systemd/system"); err == nil {
-		return InstallSystemd
-	}
+	// 2026-09-18: container markers are checked BEFORE /run/systemd/system.
+	// The pre-fix order was the reverse, which is wrong for the deployment
+	// that actually exists: skygate runs in a container ON a systemd host,
+	// so anything that makes /run/systemd/system visible inside the
+	// container (a bind-mount of /run, a permissive image) flips the
+	// detection to InstallSystemd. The /admin/update page would then print
+	// `systemctl restart skygate` steps, and the auto-updater would take the
+	// (unimplemented) systemd branch, on a container that has no such unit.
+	// Container-first is the safe default: a container is always inside
+	// something else.
+	return detectInstallKindFilesystem()
+}
+
+// detectInstallKindFilesystem is the filesystem half of DetectInstallKind,
+// split out on 2026-09-18 so it can be referenced by tests (the override
+// branch is exercised through the env var; this half is the fallback the
+// override is compared against).
+func detectInstallKindFilesystem() InstallKind {
 	if _, err := os.Stat("/.dockerenv"); err == nil {
 		return InstallDocker
 	}
 	if _, err := os.Stat("/run/.containerenv"); err == nil {
 		return InstallDocker
+	}
+	// A real systemd host (not a container).
+	if _, err := os.Stat("/run/systemd/system"); err == nil {
+		return InstallSystemd
 	}
 	// macOS, Windows, BSD — no systemd, no docker
 	// (the operator is running skygate natively for dev)

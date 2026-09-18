@@ -1660,3 +1660,58 @@ SQLite динамически типизирован и принимает лю�
 Go-кода **нельзя** делать построчными заменами через PowerShell по индексам
 (`$lines[618] = ...`) — за сессию это дважды затёрло `return` и закрывающую
 скобку, файл не собирался. Только точная замена по тексту (edit-инструмент).
+### 12.15 Самообновление: почему под Docker работает, а нативно нет
+
+Разобрано 2026-09-18 по запросу оператора. **Определение типа установки не
+было сломано** — оператор прав в симптоме, но причина не в детекте.
+
+**Что уже есть (и работало):**
+
+* `internal/update/install.go` — `DetectInstallKind()` с тремя видами
+  (`InstallDocker` / `InstallSystemd` / `InstallBare`) и override
+  `SKYGATE_INSTALL_KIND=docker|systemd|bare`; детект по файловой системе
+  (`/.dockerenv`, `/run/.containerenv`, `/run/systemd/system`);
+* страница `/admin/update` уже показывает вид установки и печатает разные
+  ручные шаги на каждый вид (`update.go:361-365` → «Docker compose» и т.д.);
+* автоматический апдейтер реализован **только для Docker**.
+
+**Настоящая причина:** ветки systemd/bare в автоматическом апдейтере — заглушки:
+
+```
+internal/feature/admin/update.go:537-542   auto-updater ... not yet implemented
+internal/feature/admin/update.go:650-661   (то же, второй путь)
+internal/feature/admin/update.go:708       case update.InstallDocker (третий)
+```
+
+То есть при нативной установке кнопка авто-обновления упирается в
+«not yet implemented (v0.29.0 Phase 2 covers Docker only)», а корректный путь —
+только ручные шаги, которые страница и так печатает.
+
+**Что исправлено сейчас:** порядок проверок в `DetectInstallKind()` —
+маркеры контейнера (`/.dockerenv`, `/run/.containerenv`) теперь проверяются
+**до** `/run/systemd/system`. Обратный порядок был латентным дефектом именно
+для вашей топологии: skygate крутится в контейнере **на** systemd-хосте, и если
+`/run/systemd/system` виден внутри контейнера (bind-mount `/run`, permissive
+образ), детект возвращал `InstallSystemd` → страница печатала
+`systemctl restart skygate` для контейнера, где такого юнита нет, а апдейтер
+уходил в нереализованную ветку. Контейнер всегда находится внутри чего-то
+другого, поэтому его маркеры должны иметь приоритет.
+Плюс `detectInstallKindFilesystem()` вынесен отдельно, чтобы контракт
+детекта был тестируем (`internal/update/install_detect_test.go`).
+
+**Что осталось (реализация, не детект):**
+
+1. Апдейтер для `InstallSystemd`: `git pull` (или скачивание релизного
+   tarball) → сборка/подмена бинаря → `systemctl restart skygate` → опрос
+   `/healthz` с проверкой строки сборки (не только 200 OK); откат — вернуть
+   предыдущий бинарь и перезапустить юнит. Образец уже есть в репозитории:
+   `internal/feature/admin/derp_cert_sync.go:486-513` (systemd → pid-file
+   HUP) и `tailscale.go:1437-1488` (container vs native).
+2. `InstallBare`: то же, но без systemd — `setsid` + перезапуск процесса
+   (хук уже есть: `setsid_linux.go` / `setsid_other.go`).
+3. Определение ОС/архитектуры для страницы: `runtime.GOOS`/`GOARCH` +
+   проверка наличия `systemctl`/`docker`, чтобы UI показывал не только вид
+   установки, но и платформу, и чтобы подсказки не расходились с реальностью.
+4. Явный выбор на стадии установки: `deploy/install-*.sh` уже принимает
+   `--db-type`; добавить `--install-kind` (или писать `SKYGATE_INSTALL_KIND`
+   в env при установке), чтобы детект не угадывал на air-gapped хостах.
