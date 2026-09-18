@@ -333,4 +333,32 @@ else
   ok "L2: skipped flatten simulation (no find/mktemp)"
 fi
 
+# --- M: the SQLite DDL loops no longer swallow errors (§12.13 follow-up) ---
+# migrations_sqlite.go is a script-generated reverse-port of the PostgreSQL
+# chain, and nine of its ~18 DDL loops ran statements through
+#   if _, err := d.Exec(q); err != nil { continue }
+#   _, _ = d.Exec(q)
+# so an `ADD COLUMN IF NOT EXISTS` (a SYNTAX ERROR in SQLite, copied verbatim
+# from PG) was read as "the column already exists" — exit_servers.{ssh_target,
+# ssh_key_path,accept_routes} and device_rules.device_ip silently never
+# appeared on a fresh database. Every migration now runs its statements
+# through execSQLiteDDL, which is idempotent for ADD COLUMN (PRAGMA
+# table_info first) and RETURNS errors for everything else.
+if grep -q 'func execSQLiteDDL' internal/db/sqlite_ddl.go \
+   && [ -f internal/db/sqlite_ddl_exec_test.go ]; then
+  ok "M: execSQLiteDDL helper + its idempotency tests exist"
+else
+  fail "M: execSQLiteDDL (or internal/db/sqlite_ddl_exec_test.go) missing — the SQLite chain can swallow errors again"
+fi
+if grep -qE 'for _, [a-z]+ := range (stmts|queries|query)' internal/db/migrations_sqlite.go; then
+  fail "M2: migrations_sqlite.go still has ad-hoc DDL loops — route them through execSQLiteDDL"
+else
+  ok "M2: no ad-hoc DDL loops left in migrations_sqlite.go"
+fi
+if grep -nE '^[[:space:]]*_, _ = d\.Exec\(' internal/db/migrations_sqlite.go >/dev/null 2>&1; then
+  fail "M3: migrations_sqlite.go still has an unconditional error-ignoring Exec"
+else
+  ok "M3: no unconditional error-ignoring Exec left in migrations_sqlite.go"
+fi
+
 hdr "B261: all contracts pass"
