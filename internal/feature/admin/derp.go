@@ -807,9 +807,17 @@ func dnsLookupVia1111(hostname string) ([]net.IP, error) {
 	// type A (1) class IN (1).
 	txid := []byte{0xab, 0xcd}
 	flags := []byte{0x01, 0x00} // RD=1
-	header := append(append(append(txid, flags...),
-		[]byte{0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}...),
-	)
+	// 2026-09-18: pre-fix this was
+	//   header := append(append(append(txid, flags...), []byte{...}...),)
+	// — the outermost append had no values, which `go vet` rejects
+	// ("append with no values") and which kept the CI job red at
+	// .github/workflows/ci.yml:39. Build the header explicitly instead:
+	// same 12 bytes (ID 2 + flags 2 + QDCOUNT/ANCOUNT/NSCOUNT/ARCOUNT 8),
+	// no aliasing of the txid literal, and vet-clean.
+	header := make([]byte, 0, 12)
+	header = append(header, txid...)
+	header = append(header, flags...)
+	header = append(header, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
 	var question []byte
 	for _, label := range strings.Split(hostname, ".") {
 		if label == "" {
