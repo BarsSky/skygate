@@ -178,8 +178,13 @@ func ackReply(env BotEnv, arg string) string {
 		return i18n.Tf(lang, "bot.ack.not_found", id)
 	}
 	// 2. Idempotent UPDATE — only flips rows that are still open.
+	// 2026-09-18: the timestamp fragment goes through db.NowUnixSQL()
+	// (PG: EXTRACT(EPOCH ...), SQLite: strftime('%s','now')). The B253
+	// fix hardcoded the PG form to get PG working; routing it through
+	// the dialect helper keeps PG working AND stops the statement from
+	// being a syntax error on a SQLite deployment.
 	res, err := d.Exec(`UPDATE telegram_alerts
-	                       SET acked_at = EXTRACT(EPOCH FROM now())::bigint,
+	                       SET acked_at = `+db.NowUnixSQL()+`,
 	                           acked_by = 'telegram'
 	                     WHERE id = $1 AND acked_at = 0`, id)
 	if err != nil {

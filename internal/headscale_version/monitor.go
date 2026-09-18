@@ -275,11 +275,17 @@ func saveHeadscaleRelease(d *sql.DB, rec HeadscaleReleaseRecord) error {
 // headscale_releases rows, newest first (by
 // published_at).
 func listHeadscaleReleases(d *sql.DB, limit int) ([]HeadscaleReleaseRecord, error) {
+	// 2026-09-18: `LIMIT ?` was a SQLite-era placeholder. pgx does not
+	// translate `?`, so on PostgreSQL this was a syntax error
+	// (SQLSTATE 42601) that the caller swallowed
+	// (monitor.go:211 — `if hist, err := ...; err == nil`), leaving the
+	// release history permanently empty with no visible symptom.
+	// db.PlaceholdersList emits the $N form that both drivers accept.
 	rows, err := d.Query(`
 		SELECT version, published_at, first_seen_at, html_url, name, body, is_breaking, notified
 		FROM headscale_releases
 		ORDER BY published_at DESC, first_seen_at DESC
-		LIMIT ?
+		LIMIT `+db.PlaceholdersList(1)+`
 	`, limit)
 	if err != nil {
 		return nil, err

@@ -263,7 +263,7 @@ func UpsertNodeOwner(d dbExec, nodeID string, headscaleUserID int64, username, t
 	// of this query tried to back-fill it; production
 	// doesn't have the column, so the simpler query is
 	// what actually runs on real installs.
-	_, err := d.Exec(qInsertOrReplaceNodeOwner, nodeID, headscaleUserID, username, tag, taggedByUserID)
+	_, err := d.Exec(qInsertOrReplaceNodeOwner(), nodeID, headscaleUserID, username, tag, taggedByUserID)
 	return err
 }
 
@@ -802,9 +802,21 @@ func SyncNodesFromHeadscale(d *sql.DB, nodes []SyncNodeInfo) (inserted, updated 
 // stores less — the operator can edit ssh_target etc. via the
 // /admin/exit-nodes page after the auto-detect.
 func upsertExitServerFromSyncNode(d *sql.DB, n SyncNodeInfo) error {
+	// 2026-09-18: this used SQLite-era placeholders and a strftime()
+	// literal: `VALUES (?, ?, '', 1, strftime('%s','now'))`.
+	//
+	//   - pgx does NOT translate `?` (it is a plain syntax error,
+	//     SQLSTATE 42601), so on PostgreSQL the statement ALWAYS failed;
+	//   - strftime() only worked on PG by accident, via the compat
+	//     function installed by migrations_pg.go:965.
+	//
+	// The caller (SyncNodesFromHeadscale) logs and continues on error
+	// (node_owner_map.go:783-785), so exit-server auto-detection was
+	// silently dead on PG — no visible symptom anywhere. Use the
+	// dialect helpers, which resolve at call time.
 	_, err := d.Exec(
 		`INSERT INTO exit_servers (node_id, hostname, tailscale_ip, enabled, created_at)
-		 VALUES (?, ?, '', 1, strftime('%s', 'now'))
+		 VALUES (`+PlaceholdersList(2)+`, '', 1, `+NowUnixSQL()+`)
 		 ON CONFLICT(node_id) DO UPDATE SET
 		   hostname = excluded.hostname`,
 		n.ID, n.Hostname,

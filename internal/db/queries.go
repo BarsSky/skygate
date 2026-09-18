@@ -567,9 +567,32 @@ const (
 	// 2026-09-14.
 	qDeleteNodeOwnerByNodeIDOnly = `DELETE FROM node_owner_map WHERE node_id = $1`
 	qCountNodeOwnerByNodeUser   = `SELECT COUNT(*) FROM node_owner_map WHERE node_id = $1 AND username = $2`
-	qInsertOrReplaceNodeOwner   = `INSERT INTO node_owner_map (node_id, headscale_user_id, username, tag, tagged_by_user_id, tagged_at) VALUES ($1, $2, $3, $4, $5, ` + nowUnix + `) ON CONFLICT(node_id) DO UPDATE SET headscale_user_id = excluded.headscale_user_id, username = excluded.username, tag = excluded.tag, tagged_by_user_id = excluded.tagged_by_user_id, tagged_at = excluded.tagged_at`
-	qUpdateNodeOwnerTag         = `UPDATE node_owner_map SET tag = $1, tagged_by_user_id = $2, tagged_at = ` + nowUnix + ` WHERE node_id = $3 AND username = $4`
+	// 2026-09-18: qInsertOrReplaceNodeOwner / qUpdateNodeOwnerTag moved
+	// OUT of this const block — they embed the "current UNIX timestamp"
+	// fragment, which is now dialect-dependent (see now_unix.go) and
+	// therefore cannot be evaluated at package init. They are functions
+	// directly below.
 )
+
+// qInsertOrReplaceNodeOwner upserts a node_owner_map row, stamping
+// tagged_at with the backend-appropriate "now" expression.
+//
+// Converted from a const to a func on 2026-09-18: as a const it was
+// evaluated at package init, i.e. BEFORE any connection was opened, so
+// it always embedded the PostgreSQL EXTRACT(EPOCH ...) form and failed
+// on SQLite with `near "FROM": syntax error`. This is the write path the
+// node-ownership backfill uses, so the failure silently broke the
+// device↔user attribution that pre-auth keys rely on.
+func qInsertOrReplaceNodeOwner() string {
+	return `INSERT INTO node_owner_map (node_id, headscale_user_id, username, tag, tagged_by_user_id, tagged_at) VALUES ($1, $2, $3, $4, $5, ` + nowUnixSQL() + `) ON CONFLICT(node_id) DO UPDATE SET headscale_user_id = excluded.headscale_user_id, username = excluded.username, tag = excluded.tag, tagged_by_user_id = excluded.tagged_by_user_id, tagged_at = excluded.tagged_at`
+}
+
+// qUpdateNodeOwnerTag re-stamps a node_owner_map row when a device is
+// renamed. Same const→func conversion and same rationale as
+// qInsertOrReplaceNodeOwner above.
+func qUpdateNodeOwnerTag() string {
+	return `UPDATE node_owner_map SET tag = $1, tagged_by_user_id = $2, tagged_at = ` + nowUnixSQL() + ` WHERE node_id = $3 AND username = $4`
+}
 
 // ---------------------------------------------------------------
 // personal_api_tokens  —  v0.23 migration

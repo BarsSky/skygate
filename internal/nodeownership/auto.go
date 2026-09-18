@@ -338,7 +338,7 @@ func BackfillInfra(dbConn db.DBSource, nodes []headscale.NodeView) {
 			        tag = $2,
 			        hostname = $3,
 			        tagged_by_user_id = $4,
-			        tagged_at = EXTRACT(epoch FROM now())::bigint
+			        tagged_at = `+db.NowUnixSQL()+`
 			  WHERE node_id = $5
 			    AND username IN (
 			        SELECT username FROM portal_users

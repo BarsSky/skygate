@@ -105,13 +105,20 @@ var (
 // *sql.DB is treated as a programmer error and panics.
 func registerBackend(d *sql.DB, b Backend) {
 	registryMu.Lock()
-	defer registryMu.Unlock()
 	if existing, ok := registry[d]; ok && existing != b {
+		registryMu.Unlock()
 		panic("db.registerBackend: double-open with different backend for " +
 			"same *sql.DB pointer (existing=" + string(existing) +
 			", new=" + string(b) + ")")
 	}
 	registry[d] = b
+	registryMu.Unlock()
+	// 2026-09-18: also record the process-wide active dialect so the
+	// SQL-fragment shims (nowUnixSQL et al) can branch. Both open paths
+	// funnel through here — openDSNPing for the dual-dialect runtime
+	// path and openSQLite for direct SQLite opens — so this is the one
+	// place the wiring needs to live. See active_dialect.go.
+	SetActiveDialect(backendToDialectKind(b))
 }
 
 // BackendOf returns the Backend that d was opened with. Returns

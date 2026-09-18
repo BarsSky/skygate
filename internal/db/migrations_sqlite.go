@@ -886,15 +886,34 @@ func migrateV047SQLite(d *sql.DB) error {
 			// existed" via information_schema instead of error
 			// matching.
 			colExists := func(table, col string) bool {
-				var n int
-				row := d.QueryRow(`
-					SELECT COUNT(*) FROM information_schema.columns
-					WHERE table_name = ? AND column_name = ?`,
-					table, col)
-				if err := row.Scan(&n); err != nil {
+				// 2026-09-18: this used to query
+				// `information_schema.columns` — a POSTGRESQL catalog
+				// — from inside the SQLITE migration chain. The scan
+				// error was swallowed (`return false`), so colExists
+				// always reported "does not exist" and the
+				// freshlyAdded heuristic was permanently true.
+				//
+				// This file only ever runs against SQLite, so the
+				// correct probe is PRAGMA table_info. The table name is
+				// a hardcoded literal at every call site (no user
+				// input), so the interpolation is safe.
+				rows, err := d.Query(`PRAGMA table_info(` + table + `)`)
+				if err != nil {
 					return false
 				}
-				return n > 0
+				defer rows.Close()
+				for rows.Next() {
+					var cid, notnull, pk int
+					var name, ctype string
+					var dflt any
+					if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+						return false
+					}
+					if name == col {
+						return true
+					}
+				}
+				return false
 			}
 			freshlyAdded := !colExists("user_exit_node_prefs", "via_enabled")
 			if _, err := d.Exec(`ALTER TABLE user_exit_node_prefs ADD COLUMN via_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
