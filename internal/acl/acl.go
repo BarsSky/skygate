@@ -805,7 +805,13 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	sb.WriteString("  \"ssh\": [\n")
 	sb.WriteString("    {\n")
 	sb.WriteString("      \"action\": \"accept\",\n")
-	sb.WriteString("      \"src\": [\"tag:private\", \"" + envAdminIdentity() + "@" + baseDomain + "\"],\n")
+	// 2026-09-18: src also carries the skygate host's own infra tag
+	// (tag:dev-infra-skygate-*). Pre-fix only tag:private + the admin
+	// identity were allowed, so skygate — which SSHes to the exit nodes
+	// from the host it runs on — was refused with "tailnet policy does
+	// not permit you to SSH to this node".
+	// See getSkygateHostInfraTags in acl_perdevice.go.
+	sb.WriteString("      \"src\": [" + strings.Join(quoteAll(sshRuleSrc(tagsByUser, envAdminIdentity(), baseDomain)), ", ") + "],\n")
 	sb.WriteString("      \"dst\": [\"tag:exit-node\"],\n")
 	sb.WriteString("      \"users\": [\"root\"]\n")
 	sb.WriteString("    },\n")
@@ -1693,7 +1699,8 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	sb.WriteString("  \"ssh\": [\n")
 	sb.WriteString("    {\n")
 	sb.WriteString("      \"action\": \"accept\",\n")
-	sb.WriteString("      \"src\": [\"tag:private\", \"" + envAdminIdentity() + "@" + baseDomain + "\"],\n")
+	// 2026-09-18: same skygate-host src fix as GenerateACLForPlane.
+	sb.WriteString("      \"src\": [" + strings.Join(quoteAll(sshRuleSrc(tagsByUser, envAdminIdentity(), baseDomain)), ", ") + "],\n")
 	sb.WriteString("      \"dst\": [\"tag:exit-node\"],\n")
 	sb.WriteString("      \"users\": [\"root\"]\n")
 	sb.WriteString("    },\n")

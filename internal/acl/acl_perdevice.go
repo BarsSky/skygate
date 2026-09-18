@@ -158,3 +158,74 @@ func getInfraExitNodeTags(tagsByUser map[string][]string) []string {
 	sort.Strings(out) // deterministic policy output
 	return out
 }
+
+// getSkygateHostInfraTags — 2026-09-18 — returns the
+// `tag:dev-infra-skygate*` tags of the very host skygate runs on.
+//
+// This is the exact complement of the skip-filter inside
+// getInfraExitNodeTags above: that helper drops the skygate host from
+// the public exit-node catch-all; this one surfaces it so it can be
+// used as a `src` in the `ssh` rules.
+//
+// WHY THIS EXISTS (the bug it fixes)
+// ----------------------------------
+// The generated policy's ssh rule used to be:
+//
+//	"src": ["tag:private", "<admin>@<baseDomain>"]
+//
+// skygate talks to the exit nodes by shelling out to `ssh` FROM THE
+// HOST IT RUNS ON, so the connection reaches the relay with the
+// skygate host's own tailnet identity — whose tag is
+// `tag:dev-infra-skygate-host`, NOT `tag:private`. Tailscale SSH then
+// refuses every attempt with:
+//
+//	tailscale: tailnet policy does not permit you to SSH to this node
+//
+// Net effect: skygate could never Tailscale-SSH into its own exit
+// nodes; only nodes with a public sshd (emilia) or a non-intercepting
+// port (karolina on 18022) worked. Adding the host's tag to `src`
+// makes the tailnet path work for every exit node, including ones
+// whose only reachable port is 22 (sharlotta).
+//
+// The tag is taken from tagsByUser (the node-ownership data) rather
+// than hardcoded, so a host rename or a re-tag (the B111 / infra-retag
+// flow) is picked up automatically on the next policy regeneration.
+//
+// Returns nil when the host has no infra tag yet (fresh install before
+// the first node-ownership backfill) — callers then emit the legacy
+// two-entry src unchanged, so the policy stays valid.
+func getSkygateHostInfraTags(tagsByUser map[string][]string) []string {
+	infraTags := tagsByUser["infra"]
+	if len(infraTags) == 0 {
+		return nil
+	}
+	out := make([]string, 0, 2)
+	seen := make(map[string]bool, len(infraTags))
+	for _, t := range infraTags {
+		if t == "" || seen[t] {
+			continue
+		}
+		if !strings.HasPrefix(t, "tag:dev-infra-skygate") {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	if len(out) == 0 {
+		// Nothing to add — return nil so callers append nothing and the
+		// legacy two-entry src is emitted byte-identically.
+		return nil
+	}
+	sort.Strings(out) // deterministic policy output
+	return out
+}
+
+// sshRuleSrc builds the `src` list for the "accept SSH into exit
+// nodes" rule: the legacy pair (tag:private + the admin identity)
+// plus every infra tag of the skygate host itself. Deterministic
+// ordering keeps policy diffs stable across regenerations.
+func sshRuleSrc(tagsByUser map[string][]string, adminIdentity, baseDomain string) []string {
+	src := []string{"tag:private", adminIdentity + "@" + baseDomain}
+	src = append(src, getSkygateHostInfraTags(tagsByUser)...)
+	return src
+}
