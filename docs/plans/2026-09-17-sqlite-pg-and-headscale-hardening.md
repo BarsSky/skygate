@@ -1610,3 +1610,53 @@ SQLite динамически типизирован и принимает лю�
 **Сознательно не сделано:** остальные ~25 `ADD COLUMN` в циклах, которые
 **игнорируют** ошибку. Сейчас на свежей базе они безвредны, но всё ещё прячут
 реальные сбои; перевод — механическая доработка в том же файле.
+### 12.14 R6: как добить оставшиеся сайты (инструкция + инвентарь)
+
+Страж `internal/handlers/error_leak_guard_test.go` фиксирует baseline **101**
+сайт в 37 файлах (это сайты, подставляющие значение ошибки — то есть
+утекающие внутренности и заменяющие страницу). Число может только уменьшаться.
+
+**Разбивка (сверху вниз — начинать отсюда):**
+
+```
+14  internal/feature/admin/users.go
+12  internal/feature/admin/devices.go
+ 8  internal/feature/my/keys.go
+ 5  internal/feature/admin/acl_import.go
+ 5  internal/feature/auth/service.go
+ 4  internal/feature/admin/admin_pages.go
+ 4  internal/feature/admin/backup.go
+ 4  internal/feature/my/device_exit_pref.go
+ 3  internal/feature/admin/adopt_devices.go
+ 3  internal/feature/admin/integrations.go
+ 3  internal/feature/admin/update_settings.go
+ 3  internal/feature/my/devices.go
+ 3  internal/feature/my/notifications.go
+```
+
+**Процедура на каждый сайт (порядок важен):**
+
+1. **Определить тип хендлера.** GET или POST из обычной формы → редирект+flash.
+   JSON-эндпоинт (его дёргает `fetch()`) → `Content-Type: application/json`
+   **до** записи тела, `json.NewEncoder`.
+2. **Убедиться, что страница умеет показывать flash.** Если в шаблоне нет
+   `{{if .FlashError}}` — добавить блок и заполнить поле в data-map
+   хендлера из `r.URL.Query().Get("err")`. **Этот шаг обязателен**: редирект
+   без блока ошибки делает сбой невидимым, то есть это регрессия, а не фикс.
+   Образцы: `user/keys.html` + `GetMyKeys`, `admin/exit_nodes.html` +
+   `AdminExitNodes`.
+3. **Заменить** `http.Error(w, err.Error(), 500)` на
+   `http.Redirect(w, r, "<page>?err="+url.QueryEscape(<i18n-ключ>), http.StatusSeeOther)`.
+   Детали ошибки — в `log.Printf`, а не в тело ответа. Для ошибок БД есть общий
+   ключ `error.db` (RU+EN).
+4. **`403 forbidden` не трогать** — редирект неавторизованного обратно на
+   админскую страницу даёт цикл.
+5. **Понизить `rawErrorHTTPErrorBaseline`** в те же правки — иначе страж
+   перестанет ловить рост.
+
+**Проверка:** `go build ./... && go vet ./... && go test ./internal/handlers/ -count=1`.
+
+**Технический урок этой сессии (важно для того, кто продолжит):** правки
+Go-кода **нельзя** делать построчными заменами через PowerShell по индексам
+(`$lines[618] = ...`) — за сессию это дважды затёрло `return` и закрывающую
+скобку, файл не собирался. Только точная замена по тексту (edit-инструмент).
