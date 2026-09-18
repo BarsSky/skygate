@@ -16,6 +16,22 @@ tls:
 grpc_listen_addr: 0.0.0.0:50443
 grpc_allow_insecure: true
 
+# 2026-09-18: unix_socket is REQUIRED for the in-container CLI to work.
+# Pre-fix this template only set grpc_listen_addr, so headscale did not
+# create the unix socket while `headscale <cmd>` inside the container
+# still dialled the default path — every `docker exec headscale headscale
+# …` call failed with:
+#   connecting to /var/run/headscale/headscale.sock: context deadline exceeded
+# That silently broke approve-routes, tags, ACL file-mode fallback,
+# preauth CLI fallback and user delete (routes.go:86, tags.go:48/92,
+# acl.go:107/157, preauth.go:130/203, users.go:152/210, nodes.go:358).
+# The CLI has no --socket flag (only -c/--config), so the socket MUST be
+# declared here. See headscale v0.29.3 config-example.yaml:
+#   unix_socket: /var/run/headscale/headscale.sock
+#   unix_socket_permission: "0770"
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
+
 noise:
   private_key_path: /etc/headscale/noise_private.key
 

@@ -125,6 +125,11 @@ tls:
   key_path: ""
 grpc_listen_addr: 0.0.0.0:$GRPC_PORT
 grpc_allow_insecure: true
+# 2026-09-18: required for `docker exec <ctr> headscale …` to work.
+# Without an explicit unix_socket the server does not create the socket
+# while the CLI still dials the default path → "context deadline exceeded".
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
 noise:
   private_key_path: /etc/headscale/noise_private.key
 prefixes:
