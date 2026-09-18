@@ -7,7 +7,7 @@ runbooks that were removed in the **2026-09-18 documentation restructure**
 internal `auto-deploy-baseline.md`, `auto-deploy-test-plan.md`,
 `release-v1.5.9.md`, `telegram-relay.md`, `architecture/wal-g-notes.md`); every
 procedure below is carried over from those files, and the full original text
-stays in git history. Install paths live in [INSTALL.md](../INSTALL.md), the
+stays in git history. Install paths live in [INSTALL.md](INSTALL.md), the
 update paths in [UPDATE.md](UPDATE.md), and the environment-variable reference
 in [deploy.md](deploy.md) — this file does not repeat them.
 
@@ -268,7 +268,7 @@ The auto-deploy/auto-config surface, by name:
 
 | Script | Role |
 |---|---|
-| `deploy/install*.sh` (`install`, `-debian`, `-rh`, `-alpine`, `-bare`, `-common`) | OS install: Docker, binary, unit, update helper — see [INSTALL.md](../INSTALL.md) |
+| `deploy/install*.sh` (`install`, `-debian`, `-rh`, `-alpine`, `-bare`, `-common`) | OS install: Docker, binary, unit, update helper — see [INSTALL.md](INSTALL.md) |
 | `deploy/deploy.sh`, `deploy/validate.sh`, `deploy/backup.sh` | Orchestrator; stack health check; S3/local backup of the skygate PG + headscale/headplane state |
 | `deploy/oidc-sync.sh`, `deploy/scripts/setup-skygate-public.sh` | OIDC config auto-sync (5 modes + download); public-hostname OIDC wiring |
 | `deploy/scripts/create-standby-preauth.sh`, `bootstrap_standby.sh`, `install-tailscale.sh` | Mint a standby preauth key (`--user` name→id, tagOwners, audit row); bootstrap a standby; install Tailscale |
@@ -1200,7 +1200,7 @@ they are recorded so a future reader does not trust the wrong copy.
    host using the standby/HA path.
 5. **The bootstrap runbook names a stale config path** (`/etc/skygate.env`); the
    installers write `/etc/skygate/skygate.env`. Trust the installers and
-   [INSTALL.md](../INSTALL.md).
+   [INSTALL.md](INSTALL.md).
 6. **The restore script does not replay a PG dump.** `scripts/restore.sh` was
    written for the SQLite era; for PostgreSQL the operator runs
    `psql -f skygate-pg.sql` manually — documented, not fixed, in

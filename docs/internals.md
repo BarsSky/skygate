@@ -629,8 +629,9 @@ Measured 2026-09-18; ordered roughly by how likely it is to bite.
     `check_*.sh`, `__*.sh`, …) plus a late "re-assert the production allow-list" section
     explaining that the unanchored patterns had silently overridden `!scripts/check_*.sh`,
     leaving 15 files under `scripts/` untracked while `verify_pre_deploy.sh` referenced
-    them. Two scratch artefacts are nonetheless **tracked**: `tmp_rename.sh` and
-    `test_sql_dryrun_test.go.txt`. Delete them; do not ignore them.
+    them. Two scratch artefacts were also tracked (`tmp_rename.sh` and
+    `test_sql_dryrun_test.go.txt`); they were deleted in the 2026-09-18
+    restructure.
 
 11. **`internal/feature/admin/tailscale.go` mixes four concerns** at 73.7 KB (state reader,
     process-control handlers, subnet-route management, preferred-exit helpers) plus a local

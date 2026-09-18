@@ -9,10 +9,10 @@
 **Обновлено:** 2026-09-18 (цикл v1.5.9 — нативное самообновление, OpenRC,
 реструктуризация документации)
 
-См. также: [`AGENTS.md`](../AGENTS.md) (соглашения + компактный индекс блоков),
-[`docs/LESSONS.md`](LESSONS.md) (что пошло не так и почему),
-[`docs/internals.md`](internals.md) (карта кода),
-[`docs/operations.md`](operations.md) (релиз и деплой).
+См. также: [`AGENTS.md`](../../AGENTS.md) (соглашения + компактный индекс блоков),
+[`docs/LESSONS.md`](../LESSONS.md) (что пошло не так и почему),
+[`docs/internals.md`](../internals.md) (карта кода),
+[`docs/operations.md`](../operations.md) (релиз и деплой).
 
 English version: [`docs/ROADMAP.md`](../ROADMAP.md).
 
@@ -102,7 +102,7 @@ English version: [`docs/ROADMAP.md`](../ROADMAP.md).
 
 | Ref | Элемент | Заблокировано на |
 |---|---|---|
-| **BL-2** | HA уровня Tier 1 (active/passive с цепочкой приоритетов, failover Patroni + etcd, DNS-переключение, certsync через S3) | Учётных данных внешнего DNS-провайдера и ответов на **список открытых вопросов по HA**. Топология, второй хост, etcd и бакет S3 уже есть; см. [`docs/ha.md`](ha.md) |
+| **BL-2** | HA уровня Tier 1 (active/passive с цепочкой приоритетов, failover Patroni + etcd, DNS-переключение, certsync через S3) | Учётных данных внешнего DNS-провайдера и ответов на **список открытых вопросов по HA**. Топология, второй хост, etcd и бакет S3 уже есть; см. [`docs/ha.md`](../ha.md) |
 | **BL-3** | Telegram-бот в сети с DPI (`api.telegram.org` отваливается по таймауту) | Решение оператора: направить бота через exit-node без DPI или туннелировать |
 | **TD-5 / RR-5** | DNS-записи `exitnode.<user>.<domain>` на пользователя | headscale 0.30+ (`dns.extra_records`); 0.29.x отклоняет политику |
 | **RR-6** | Миграция пользователя на отдельный headscale-плоскость (compliance-уровень) | Реальная потребность оператора; инфраструктура есть, миграции данных нет |
@@ -189,10 +189,10 @@ English version: [`docs/ROADMAP.md`](../ROADMAP.md).
 
 | Что нужно | Файл |
 |---|---|
-| Однострочное описание каждого B-блока (полный индекс) | [`AGENTS.md`](../AGENTS.md) |
-| Что сломалось, почему и какая защита появилась | [`docs/LESSONS.md`](LESSONS.md) |
-| Карта пакетов, инварианты, система контрактов | [`docs/internals.md`](internals.md) |
-| Релиз, деплой, переезд PG, bootstrap хоста | [`docs/operations.md`](operations.md) |
-| Топология HA, failover, открытые вопросы | [`docs/ha.md`](ha.md) |
+| Однострочное описание каждого B-блока (полный индекс) | [`AGENTS.md`](../../AGENTS.md) |
+| Что сломалось, почему и какая защита появилась | [`docs/LESSONS.md`](../LESSONS.md) |
+| Карта пакетов, инварианты, система контрактов | [`docs/internals.md`](../internals.md) |
+| Релиз, деплой, переезд PG, bootstrap хоста | [`docs/operations.md`](../operations.md) |
+| Топология HA, failover, открытые вопросы | [`docs/ha.md`](../ha.md) |
 | Установка / обновление (для оператора) | [`docs/ru/INSTALL.md`](INSTALL.md), [`docs/ru/UPDATE.md`](UPDATE.md) |
 | Удалённые архивы планирования целиком | история git — `git log --diff-filter=D --name-only -- docs/plans docs/runbooks docs/internal docs/BACKLOG.md docs/PLANS.md` находит коммит реструктуризации |

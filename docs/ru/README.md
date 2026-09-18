@@ -364,7 +364,7 @@ go test -tags postgres -count=1 -v -run "TestPG" ./internal/db/
 встраиваются через `//go:embed`. Поменяли — пересобрали —
 перезапустили.
 
-Для AI-ассистентов: сначала прочитайте [AGENTS.md](AGENTS.md) —
+Для AI-ассистентов: сначала прочитайте [AGENTS.md](../../AGENTS.md) —
 там полная карта файлов, schema-gotchas, каталог гарантий
 (B1–B66 build, R1–R27 runtime) и правила работы на VM vs Windows.
 
@@ -400,7 +400,7 @@ go test -tags postgres -count=1 -v -run "TestPG" ./internal/db/
   `ubuntu-24.04`)
 - **Verify-pre:** 275/275 PASS (`bash scripts/verify_pre_deploy.sh`)
 - **Latest release:** см. [Releases](https://github.com/BarsSky/skygate/releases)
-- **Карта исходников:** см. [AGENTS.md](AGENTS.md) — поддерживается
+- **Карта исходников:** см. [AGENTS.md](../../AGENTS.md) — поддерживается
   в актуальном состоянии по декомпозиции `internal/feature/*`
 - **In-process тесты:** `/admin/system_tests` запускает 22+ тестов;
   `exit_rules.preferred_mismatch` (добавлен в v0.33.1.17) — это
