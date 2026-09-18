@@ -1358,6 +1358,68 @@ SSH-ошибок на синхронизации: **0**. `approve-routes`: **0 �
 тесты `internal/acl` и `internal/feature/admin` проходят. Ранее job `ci`
 (`.github/workflows/ci.yml:39`) был красным на HEAD.
 
+### 12.10 Деплой и этап 1 (выполнено 2026-09-18)
+
+**Деплой 1 — исправления headscale/ACL/derp (commit `c31f6055` → origin/main).**
+
+* VM: `git fetch` + `git merge --ff-only origin/main` + `git checkout -B main`.
+  Репозиторий на VM был в состоянии **detached HEAD** и с локальными правками,
+  которые нельзя терять:
+  `docker-compose.yml` (`extra_hosts: derp.skynas.ru:${SKYGATE_DERP_PROBE_HOST}` и
+  `SKYGATE_TS_HOSTNAME=skygate-host`), `go.mod`, `go.sum`.
+  Fast-forward выбран сознательно вместо `stash`/`reset`: мои коммиты не
+  касаются этих файлов, поэтому merge прошёл, не тронув их. Бэкап сделан
+  (`/home/skyadmin/deploy-backup-20260918-133040/`).
+* Вторая особенность: каталог репозитория принадлежит **root**, а вход под
+  `skyadmin` — поэтому merge/checkout пришлось выполнять через `sudo`
+  (иначе `fatal: cannot create directory at '.dsh': Permission denied`).
+* Пересборка: `docker compose stop` + `up -d --force-recreate --no-deps skygate`
+  (entrypoint собирает бинарь из `/app`). `build: v1.5.8-5-gc31f605`, healthz ok.
+* **Проверка фикса ACL кодом, а не ручной правкой:** `skygate acl-apply` внутри
+  контейнера перегенерировал политику, и `ssh[0].src` стал
+  `["tag:private","skyadmin@tsnet.example.com","tag:dev-infra-skygate-host"]` —
+  тег добавил именно исправленный генератор (порядок отличается от моей ручной
+  правки, что и доказывает регенерацию).
+* Сохранены: `extra_hosts: derp.skynas.ru:<VM_HOST>`, hostname
+  `skygate-host`, все три `exit_servers`.
+
+**Деплой 2 — этап 1 плана, единый диалект БД (commit `5b5afd91`).**
+
+* `internal/db/active_dialect.go` — процессный активный диалект,
+  выставляется в `registerBackend` (через него проходят оба пути открытия).
+  Дефолт — PostgreSQL, т.е. прежнее поведение, поэтому изменение инертно,
+  пока не открыта БД.
+* `nowUnixSQL()`/`NowUnixSQL()` реально ветвятся; две init-time константы
+  (`qInsertOrReplaceNodeOwner`, `qUpdateNodeOwnerTag`) переведены в функции —
+  как константы они вычислялись **до** открытия БД и всегда несли PG-форму.
+* Убраны оставшиеся однобокие запросы: `LIMIT ?`
+  (`headscale_version/monitor.go`), сырой `EXTRACT(...)`
+  (`nodeownership/auto.go`, `telegram/commands_phase3.go`),
+  `information_schema.columns` внутри SQLite-цепочки
+  (`migrations_sqlite.go` → `PRAGMA table_info`).
+* Шапки `placeholders.go` приведены в соответствие: `$N` — **универсальная**
+  форма (SQLite её принимает, modernc связывает `$NNN` по ordinal), а `?`
+  фатальна для pgx (SQLSTATE 42601). Эта асимметрия и порождала класс дефектов.
+* Тесты: `dialect_runtime_test.go` **исполняет** реальные запросы на настоящей
+  SQLite `:memory:` (upsert + update `node_owner_map`, вставка авто-обнаружения
+  exit-сервера) и проверяет ответ драйвера, а не строку;
+  `TestPGFormFailsOnSQLite` фиксирует обратное.
+  `dialect_leak_guard_test.go` — статический страж по 359 файлам: запрещает
+  сырой PG-таймстамп в общем коде (опасное направление) и **пинит наличие**
+  PG-шим-функции `strftime`, потому что общие файлы на неё опираются.
+* Деплой на VM тем же безопасным путём. `build: v1.5.8-6-g5b5afd9`, healthz ok,
+  0 ошибок сборки, БД — postgres.
+* Живая проверка после деплоя: `auto-detect exit-node` ошибок **0**,
+  `strftime/EXTRACT/42601` ошибок **0**, SSH err **0**, approve err **0**,
+  паник **0**; `emilia`/`karolina` `advertised`, строки `exit_servers` целы.
+
+**Замечание по безопасности (побочно).** В логи контейнера попадает токен
+Telegram-бота открытым текстом: сетевые ошибки логируются как
+`telegram: getUpdates error: Get "https://api.telegram.org/bot<TOKEN>/getUpdates": …`,
+и Go подставляет полный URL. Стоит вырезать токен из сообщений об ошибках
+(и/или из `%v` от `*url.Error`). Найдено при разборе 11 «ERROR» строк, которые
+оказались таймаутами `api.telegram.org`, а не дефектами БД.
+
 ---
 
 ## Приложение: быстрые ссылки на доказательства
