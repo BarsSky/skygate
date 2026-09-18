@@ -103,6 +103,46 @@ contracts are in the corresponding `scripts/check_b*.sh`.
 | **TD-5 / RR-5** | Per-user `exitnode.<user>.<domain>` DNS records | headscale 0.30+ (`dns.extra_records`); 0.29.x rejects the policy |
 | **RR-6** | Compliance-tier per-user headscale plane migration (move a user's nodes + ACL off the global plane, flip the DB override) | A real operator need; infrastructure exists, no data migration yet |
 | **RR-7** | Public release of v1.5.9 | Operator decision — run the clean-host install → update acceptance first, then tag |
+| **RR-8** | `node_owner_map`: 4 stale rows (B243) | Operator decision on relink-vs-delete (see below) |
+| **RR-9** | ACL drifted from the DB: orphan `tagOwners` entry + a missing per-CIDR `via` pin (B188.2/B188.3/B-mod-tag-owners-coverage) | One ACL reapply from the DB (`/admin/acls`) |
+| **RR-10** | Telegram relay probe unreachable from the check environment (B185 `[O]`) | An active relay/exit-node route, or accept as environmental |
+| **RR-11** | Flaky live/whole-package contracts (B183 `[I]`, B237.2) | Gate hardening: SKIP when the live probe is unavailable (RR-4) |
+
+### 5.1 Live-state contract failures on the reference host (2026-09-18)
+
+The full gate run on the reference host ends with **PASS=352 / 5 live checks failing / 3 SKIP**.
+None of the five reads a documentation file — every one of them queries the live DB,
+the headscale policy or the network, and their scripts are **byte-identical** to the
+pre-restructure commit. Evidence collected on the host:
+
+* **`node_owner_map` (B243).** Live headscale users are `1 skyadmin`, `8 michail`,
+  `11 guest`, `12 daniil`, `85 infra`. Four rows point elsewhere:
+  `node_id 6/29/31 → headscale_user_id=6 (michail)` — `michail` now lives at **8**, so
+  these are relinkable; and `node_id 45 → 2147455555 (tagged-devices)`, the
+  int-overflow sentinel, which is pure residue.
+  → `UPDATE node_owner_map SET headscale_user_id=8 WHERE headscale_user_id=6;` and
+  `DELETE FROM node_owner_map WHERE headscale_user_id=2147455555;`
+  (the hourly reconciler, B237.18, is supposed to relink by username — worth checking
+  `SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED` and its audit rows).
+* **ACL drift (B188.2/B188.3/B-mod-tag-owners-coverage).** The DB is correct:
+  `device_exit_node_prefs` has `(6, basic, tag:dev-infra-emilia, via_enabled=1)` and
+  `device_rules` has the rule (`id 189985`, `youtube.com`, device 29, exit `emilia`),
+  but the live headscale policy has neither the `via=[emilia]` pin on that `/32` nor a
+  matching `node_owner_map`/`device_rules` row for its `tagOwners` entry
+  `tag:dev-skyadmin-emilia`. One ACL regeneration from the DB should clear all three
+  contracts at once.
+* **Telegram relay (B185).** `[O] expected=ok_relay got=probe_unreachable_B185_not_live`
+  — the probe cannot reach the relay from the check environment.
+* **`device_rules` "duplicates" (B183 `[J]`, informational).** `exit_node=emilia` has
+  106 rows, 46 distinct 5-tuples and **106 distinct 6-tuples**: the extra rows differ by
+  `parent_domain` (`cdn:cloudflare:discordapp.com` vs `…discord.gg` vs … all resolving to
+  `188.114.96.0/20`). That is the *current* 6-column design (B232 + B237.23), so a
+  5-tuple-uniqueness expectation is unreachable on this host; `[J]` already SKIPs and the
+  check reports the numbers.
+* **Flakiness.** `check_b183.sh` (11/11) and `check_b237_2.sh` (21/21) both pass when run
+  standalone seconds after failing inside the full gate; B237.2's live probe needs UDP to
+  `1.1.1.1:53`, which timed out during the run. These belong to the RR-4 hardening item
+  (SKIP-not-FAIL for unavailable live state).
 
 ---
 

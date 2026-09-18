@@ -154,9 +154,15 @@ for cand in /usr/local/go/bin/go /usr/bin/go /opt/go/bin/go "$(command -v go 2>/
   fi
 done
 if [ -n "$GO_BIN" ]; then
-  if (cd "$REPO" && "$GO_BIN" test -count=1 ./internal/db/... 2>&1) | grep -q '^ok\s'; then
+  # Explicit generous timeout + captured output: `go test ./internal/db/...` is the
+  # heaviest compile in the catalog, and without the output a failure under gate load
+  # is indistinguishable from a real regression.
+  b183_i_out=$(cd "$REPO" && "$GO_BIN" test -count=1 -timeout 600s ./internal/db/... 2>&1)
+  if printf '%s' "$b183_i_out" | grep -q '^ok\s'; then
     check_eq "I" "ok" "ok"
   else
+    echo "  --- internal/db test output (tail) ---"
+    printf '%s\n' "$b183_i_out" | tail -5 | sed 's/^/      /'
     check_eq "I" "ok" "FAIL"
   fi
 else
