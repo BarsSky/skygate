@@ -200,6 +200,32 @@ func GenerateSystemdSteps(current, target, owner, repo string) ManualSteps {
 	return s
 }
 
+// GenerateOpenRCSteps returns the manual update sequence for an OpenRC
+// (Alpine and friends) install. Same shape as the systemd list, but the
+// service is managed by `rc-service` and the env file is /etc/skygate/
+// skygate.env, which /etc/conf.d/skygate sources before start.
+//
+// Added 2026-09-18 (B262): OpenRC was missing from InstallKind entirely, so
+// an Alpine host got the Docker/default procedure.
+func GenerateOpenRCSteps(current, target, owner, repo string) ManualSteps {
+	s := GenerateBareSteps(current, target, owner, repo)
+	s.Kind = InstallOpenRC
+	// GenerateBareSteps' step list is positional; replace the stop/start
+	// lines with the OpenRC equivalents (same trick GenerateSystemdSteps
+	// uses, which is why the two lists share their layout).
+	for i, line := range s.Steps {
+		switch line {
+		case "kill -TERM $(pidof skygate) || sudo systemctl stop skygate":
+			s.Steps[i] = "sudo rc-service skygate stop"
+		case "sudo systemctl start skygate":
+			s.Steps[i] = "sudo rc-service skygate start"
+		case "#   or: nohup ./skygate &":
+			s.Steps[i] = "#   or: rc-service skygate start"
+		}
+	}
+	return s
+}
+
 // GenerateManualSteps picks the right generator for the
 // install kind. The /admin/update page calls this with the
 // detected kind + the current + target version + the GitHub
@@ -219,10 +245,12 @@ func GenerateManualSteps(kind InstallKind, current, target, owner, repo string) 
 		return GenerateBareSteps(current, target, owner, repo)
 	case InstallSystemd:
 		return GenerateSystemdSteps(current, target, owner, repo)
+	case InstallOpenRC:
+		return GenerateOpenRCSteps(current, target, owner, repo)
 	default:
 		// Unknown: return Docker as a sane default. The
 		// operator can scroll past it if their setup is
-		// bare / systemd.
+		// bare / systemd / openrc.
 		return GenerateDockerSteps(current, target, owner, repo)
 	}
 }

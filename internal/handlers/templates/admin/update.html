@@ -228,6 +228,7 @@
       <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
         {{t "update.platform"}}: <code>{{.Platform.OS}}/{{.Platform.Arch}}</code>{{if .Platform.InContainer}} · {{t "update.platform_container"}}{{end}}
         · systemctl: {{if .Platform.HasSystemctl}}✓{{else}}—{{end}}
+        · rc-service: {{if .Platform.HasOpenRC}}✓{{else}}—{{end}}
         · docker: {{if .Platform.HasDocker}}✓{{else}}—{{end}}
       </div>
       {{if .NativeKind}}

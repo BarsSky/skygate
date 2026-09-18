@@ -1,6 +1,6 @@
 package update
 
-// native.go — v1.5.9 native (systemd / bare-binary) self-update.
+// native.go — v1.5.9 native (systemd / OpenRC / bare-binary) self-update.
 //
 // WHY THIS EXISTS
 //
@@ -153,7 +153,7 @@ func NativeReleaseTagFor(buildLabel string) string {
 	return s
 }
 
-// NativeUpgrader runs the systemd / bare install-kind update by
+// NativeUpgrader runs the systemd / OpenRC / bare install-kind update by
 // staging a request for the privileged helper and letting the helper
 // own the stop → swap → restart → verify → rollback sequence.
 //
@@ -332,7 +332,11 @@ func (u *NativeUpgrader) Run(ctx context.Context, target string) {
 	}
 	u.State.Log(LogInfo, "request staged: "+u.requestPath())
 
-	if u.Kind == InstallBare {
+	// The trigger differs by kind: systemd has the root-owned path unit,
+	// everything else (bare, OpenRC) goes through the narrowly-scoped
+	// sudoers drop-in the installer writes, launched detached because the
+	// helper is about to replace the process that spawned it.
+	if u.Kind != InstallSystemd {
 		u.State.SetPhase(PhaseSwap, "launching the privileged helper (setsid + sudo -n)")
 		if err := u.launchBareHelper(ctx); err != nil {
 			u.State.Fail(err)
@@ -382,11 +386,12 @@ func (u *NativeUpgrader) renderRequest(target string) (string, error) {
 	return b.String(), nil
 }
 
-// launchBareHelper runs the helper detached for the no-systemd case.
-// `sudo -n` is required (the binary swap + process restart need root)
-// and install-bare.sh installs the matching sudoers drop-in; if sudo
-// refuses, the error is surfaced on the page with the exact command
-// to run by hand.
+// launchBareHelper runs the helper detached for the install kinds without
+// a systemd path unit — bare (nohup/supervisord) and OpenRC (Alpine,
+// restarted via `rc-service`). `sudo -n` is required (the binary swap + the
+// process/service restart need root) and install-bare.sh / install-alpine.sh
+// install the matching sudoers drop-in; if sudo refuses, the error is
+// surfaced on the page with the exact command to run by hand.
 func (u *NativeUpgrader) launchBareHelper(ctx context.Context) error {
 	spawn := u.Spawn
 	if spawn == nil {
@@ -483,7 +488,9 @@ func ConfirmNativeSwap(store *StateStore, updateDir string) bool {
 	}
 	// Only native jobs are finalized from these files; the Docker
 	// path has its own detached-subprocess protocol.
-	if st.InstallKind != InstallSystemd.String() && st.InstallKind != InstallBare.String() {
+	if st.InstallKind != InstallSystemd.String() &&
+		st.InstallKind != InstallOpenRC.String() &&
+		st.InstallKind != InstallBare.String() {
 		return false
 	}
 	if st.Phase == PhaseDone || st.Phase == PhaseFailed || st.Phase == PhaseRolledBack {

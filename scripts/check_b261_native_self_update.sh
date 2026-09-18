@@ -174,12 +174,12 @@ grep -q 'skygate-update.path' "$COMMON" || fail "D: install-common.sh does not w
 grep -q 'systemctl enable --now skygate-update.path' "$COMMON" || fail "D: install-common.sh does not enable the path unit"
 grep -q 'update-helper.conf' "$COMMON" || fail "D: install-common.sh does not write the root-owned helper config"
 grep -q 'SKYGATE_UPDATE_BINARY=' "$COMMON" || fail "D: helper config does not pin the binary path"
-for inst in deploy/install-debian.sh deploy/install-rh.sh deploy/install-bare.sh; do
+for inst in deploy/install-debian.sh deploy/install-rh.sh deploy/install-bare.sh deploy/install-alpine.sh; do
   grep -q 'write_update_helper' "$inst" || fail "D: $inst does not call write_update_helper"
   grep -q 'resolve_install_kind' "$inst" || fail "D: $inst does not call resolve_install_kind"
 done
 grep -q 'NOPASSWD: /bin/sh \${helper}' "$COMMON" || fail "D: bare mode needs a narrowly-scoped sudoers drop-in for the applier"
-ok "D: installers install the applier + path unit (systemd) / sudoers drop-in (bare)"
+ok "D: installers install the applier + path unit (systemd) / sudoers drop-in (bare, openrc)"
 
 # --- E: unit env (items 3+4 of §12.15) -------------------------------
 grep -q 'Environment=SKYGATE_INSTALL_KIND=' "$COMMON" || fail "E: unit does not pin SKYGATE_INSTALL_KIND (item 4)"
@@ -192,9 +192,9 @@ grep -q 'runNativeUpdater' "$ADMIN_GO" || fail "F: admin/update.go never calls r
 if grep -q 'not yet implemented' "$ADMIN_GO"; then
   fail "F: admin/update.go still contains a 'not yet implemented' stub for native installs"
 fi
-COUNT=$(grep -c 'case update.InstallSystemd, update.InstallBare:' "$ADMIN_GO" || true)
+COUNT=$(grep -c 'case update.InstallSystemd, update.InstallOpenRC, update.InstallBare:' "$ADMIN_GO" || true)
 if [ "$COUNT" -ge 3 ]; then
-  ok "F: all native entry points wired (apply/push/rollback: $COUNT switches)"
+  ok "F: all native entry points wired (apply/push/rollback: $COUNT switches, incl. openrc)"
 else
   fail "F: expected the native case in apply + push + rollback switches, found $COUNT"
 fi
@@ -284,6 +284,53 @@ if [ -f internal/db/open_sqlite_b261_test.go ] \
   ok "J2: a real-open regression test covers the installer DSN forms"
 else
   fail "J2: internal/db/open_sqlite_b261_test.go is missing the installer-DSN open test"
+fi
+
+# --- K: OpenRC / Alpine (B262) ----------------------------------------
+# Pre-B262 InstallKind had no OpenRC at all: an Alpine host (a first-class
+# installer, deploy/install-alpine.sh) detected as InstallUnknown, so
+# /admin/update refused the update with "could not detect install kind", and
+# the applier had no way to restart an OpenRC service.
+if grep -q 'InstallOpenRC' internal/update/install.go \
+   && grep -q '"/run/openrc"' internal/update/install.go \
+   && grep -q 'case "openrc", "rc-service", "alpine":' internal/update/install.go; then
+  ok "K: InstallOpenRC kind exists with the /run/openrc marker + env override"
+else
+  fail "K: InstallKind has no OpenRC support (Alpine hosts detect as unknown and cannot update)"
+fi
+grep -q 'func GenerateOpenRCSteps' internal/update/manual.go || fail "K2: no OpenRC manual steps"
+grep -q 'case InstallOpenRC:' internal/update/manual.go || fail "K2: OpenRC steps are not dispatched from GenerateManualSteps"
+grep -q 'rc-service "\$SERVICE" restart' "$HELPER" || fail "K2: applier cannot restart an OpenRC service (MODE=openrc)"
+grep -q 'systemd|openrc|bare)' "$HELPER" || fail "K2: applier does not accept MODE=openrc"
+grep -q 'SKYGATE_INSTALL_KIND="openrc"' deploy/install-alpine.sh || fail "K2: install-alpine.sh does not pin SKYGATE_INSTALL_KIND=openrc"
+grep -q 'SKYGATE_UPDATE_MODE' "$COMMON" || fail "K2: helper config does not carry the restart mode"
+ok "K2: OpenRC wired end-to-end (kind → steps → rc-service restart → alpine installer)"
+
+# --- L: the release actually publishes SHA256SUMS (B262) --------------
+# v1.5.6 … v1.5.8 shipped NO SHA256SUMS asset: release.yml downloaded the
+# SHA256SUMS artifact into dist/SHA256SUMS (a DIRECTORY named like the file
+# inside it) and the Flatten step then moved the file into that directory —
+# `mv file dir/` is a no-op — so the release attached a directory. The
+# applier's digest fallback masked it, but a mirror cannot use it.
+if grep -q 'path: dist/checksums' .github/workflows/release.yml; then
+  ok "L: release.yml downloads SHA256SUMS into dist/checksums (so flatten yields a FILE)"
+else
+  fail "L: release.yml still downloads SHA256SUMS into dist/SHA256SUMS — the next release will attach a directory again"
+fi
+if command -v find >/dev/null 2>&1 && command -v mktemp >/dev/null 2>&1; then
+  SIM="$(mktemp -d)"
+  mkdir -p "$SIM/dist/skygate-linux-amd64" "$SIM/dist/checksums"
+  : > "$SIM/dist/skygate-linux-amd64/skygate-vX-linux-amd64.tar.gz"
+  : > "$SIM/dist/checksums/SHA256SUMS"
+  ( cd "$SIM/dist" && find . -mindepth 2 -type f -exec mv '{}' . \; >/dev/null 2>&1; find . -mindepth 1 -type d -empty -delete >/dev/null 2>&1 )
+  if [ -f "$SIM/dist/SHA256SUMS" ]; then
+    ok "L2: the workflow's own flatten step produces dist/SHA256SUMS as a file"
+  else
+    fail "L2: flatten step does not produce a dist/SHA256SUMS file (simulation in $SIM)"
+  fi
+  rm -rf "$SIM"
+else
+  ok "L2: skipped flatten simulation (no find/mktemp)"
 fi
 
 hdr "B261: all contracts pass"

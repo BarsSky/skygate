@@ -417,7 +417,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: SHA256SUMS
-          path: dist/SHA256SUMS
+          # 2026-09-18 (B262): this MUST NOT be dist/SHA256SUMS. The
+          # artifact's only file is also named SHA256SUMS, so downloading
+          # into a directory of that name produced
+          # dist/SHA256SUMS/SHA256SUMS; the Flatten step below then moved
+          # the file *into* the existing directory of the same name
+          # (mv file dir/ is a no-op) and the release attached a directory
+          # — which is why v1.5.6, v1.5.7 and v1.5.8 shipped NO SHA256SUMS
+          # asset at all, and why the native self-updater had to fall back
+          # to the GitHub per-asset digest. With a differently-named
+          # directory the flatten step leaves a real dist/SHA256SUMS file.
+          path: dist/checksums
 
       - name: Flatten artifact subdirectories
         # Each download step above put files in its own subdir

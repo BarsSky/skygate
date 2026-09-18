@@ -63,6 +63,7 @@
 #   5. swap the binary ATOMICALLY via a rename (writing directly over a
 #      running executable fails with ETXTBSY)
 #   6. restart ($MODE=systemd: systemctl restart $SERVICE;
+#      $MODE=openrc: rc-service $SERVICE restart;
 #      $MODE=bare: TERM the recorded pid + start $BARE_START as $RUN_USER)
 #   7. poll $HEALTH_URL until /healthz reports 200 + status:ok AND a
 #      build string belonging to $TARGET — not just "something is
@@ -77,6 +78,7 @@
 # ENV (all optional; the installed config file sets them)
 #
 #   SKYGATE_HELPER_CONF          config path (default /etc/skygate/update-helper.conf)
+#   SKYGATE_UPDATE_MODE          systemd | openrc | bare (set in the conf)
 #   SKYGATE_UPDATE_DRY_RUN=1     stop after the migration step, before
 #                                the swap (used by the B261 check)
 #   SKYGATE_UPDATE_HEALTH_TIMEOUT seconds to wait for /healthz (default 90)
@@ -306,6 +308,23 @@ restart_service() {
         systemctl restart "$SERVICE" >> "$LOG" 2>&1
         return $?
     fi
+    # OpenRC (Alpine et al). B262: the kind was missing entirely, so an
+    # Alpine install could not be updated at all; the service is managed by
+    # rc-service and its env comes from /etc/conf.d/skygate, which sources
+    # /etc/skygate/skygate.env. `restart` on a stopped service can return
+    # non-zero, so fall back to `start` before declaring failure.
+    if [ "$MODE" = "openrc" ]; then
+        if ! command -v rc-service > /dev/null 2>&1; then
+            log "ERROR: rc-service not found (MODE=openrc)"
+            return 1
+        fi
+        if ! rc-service "$SERVICE" restart >> "$LOG" 2>&1; then
+            log "rc-service $SERVICE restart returned non-zero; trying start"
+            rc-service "$SERVICE" start >> "$LOG" 2>&1
+            return $?
+        fi
+        return 0
+    fi
     # bare: TERM the recorded pid, then start the baked command as the
     # service user (never as root — the whole point of RUN_USER).
     if valid_pid "${RUNTIME_PID:-}" && is_our_process "$RUNTIME_PID"; then
@@ -414,8 +433,8 @@ if [ ! -r "$REQ" ]; then
 fi
 
 case "$MODE" in
-    systemd|bare) ;;
-    *) log "ERROR: unknown SKYGATE_UPDATE_MODE='$MODE'" ; exit 2 ;;
+    systemd|openrc|bare) ;;
+    *) log "ERROR: unknown SKYGATE_UPDATE_MODE='$MODE' (systemd|openrc|bare)" ; exit 2 ;;
 esac
 
 TARGET="$(read_prop TARGET)"

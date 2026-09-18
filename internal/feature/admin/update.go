@@ -296,7 +296,7 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		// marker, systemctl/docker presence, and for native installs
 		// whether the privileged helper is installed).
 		"Platform":   update.DetectPlatform(s.Cfg.UpdateDir),
-		"NativeKind": installKind == update.InstallSystemd || installKind == update.InstallBare,
+		"NativeKind":      installKind.IsNative(),
 		"ManualSteps":    manualSteps.Steps,
 		// 2026-07-30: v0.32.3 — auto-update mode (gated by
 		// SKYGATE_AUTO_UPDATE_ENABLED). When false, the
@@ -373,6 +373,8 @@ func installLabel(k update.InstallKind) string {
 		return "Docker compose"
 	case update.InstallSystemd:
 		return "systemd (bare binary)"
+	case update.InstallOpenRC:
+		return "OpenRC (bare binary)"
 	case update.InstallBare:
 		return "Bare binary"
 	default:
@@ -544,7 +546,7 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 			// above stays untouched (page + audit + log
 			// show the human-readable form).
 			u.Run(ctx, update.GitRefForBuildLabel(target))
-		case update.InstallSystemd, update.InstallBare:
+		case update.InstallSystemd, update.InstallOpenRC, update.InstallBare:
 			// v1.5.9 (§12.15 item 1+2): native installs stage the
 			// request for the privileged helper and let it own the
 			// stop → swap → restart → verify → rollback sequence.
@@ -706,7 +708,7 @@ func (s *Service) PostAdminUpdatePush(w http.ResponseWriter, r *http.Request) {
 			// target to a valid git ref while leaving the
 			// display / audit / log strings untouched.
 			u.Run(ctx, update.GitRefForBuildLabel(target))
-		case update.InstallSystemd, update.InstallBare:
+		case update.InstallSystemd, update.InstallOpenRC, update.InstallBare:
 			// v1.5.9 (§12.15 item 1+2): native installs stage the
 			// request for the privileged helper and let it own the
 			// stop → swap → restart → verify → rollback sequence.
@@ -781,7 +783,7 @@ func (s *Service) PostAdminUpdateRollback(w http.ResponseWriter, r *http.Request
 			// result in /admin/update.
 			u.State.Log(update.LogWarn, "operator-triggered rollback (in-flight job cancelled)")
 			u.State.Log(update.LogInfo, "for a full rollback, run the manual steps on /admin/update (or click 'Apply' to retry the same target)")
-		case update.InstallSystemd, update.InstallBare:
+		case update.InstallSystemd, update.InstallOpenRC, update.InstallBare:
 			// v1.5.9 (§12.15): the helper already rolls back
 			// automatically when the new binary fails /healthz. An
 			// operator-triggered rollback therefore means "put the

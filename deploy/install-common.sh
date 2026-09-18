@@ -536,7 +536,15 @@ EOF
 # deploy/skygate-apply-update.sh for the security model.
 #
 # Args:
-#   $1 = service user, $2 = data dir, $3 = etc dir, $4 = kind (systemd|bare)
+#   $1 = service user, $2 = data dir, $3 = etc dir, $4 = kind
+#        (systemd | openrc | bare)
+#
+# Trigger by kind (B262 added openrc):
+#   systemd → root-owned skygate-update.path watching request.props
+#   openrc  → sudoers drop-in + `setsid sudo -n <applier>`, and the applier
+#             restarts the service with `rc-service` (no systemd path unit
+#             exists on Alpine)
+#   bare    → same sudoers drop-in; the applier restarts the process itself
 write_update_helper() {
     local user="$1"
     local data_dir="$2"

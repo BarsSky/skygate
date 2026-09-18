@@ -21,6 +21,22 @@
 
 set -euo pipefail
 
+# §12.15 item 4 / B262: --install-kind=openrc|systemd|bare. Alpine is OpenRC
+# by definition, so the default is openrc; the flag exists for completeness
+# (and for a scripted fleet where the dispatcher passes it uniformly).
+INSTALL_KIND=""
+for arg in "$@"; do
+    case "$arg" in
+        --install-kind=*)
+            INSTALL_KIND="${arg#--install-kind=}"
+            shift
+            ;;
+    esac
+done
+if [ -n "$INSTALL_KIND" ]; then
+    export SKYGATE_INSTALL_KIND="$INSTALL_KIND"
+fi
+
 . "$(dirname "$0")/install-common.sh"
 
 . /etc/os-release
@@ -144,8 +160,24 @@ cat > /etc/conf.d/skygate <<EOF
 # so the operator has ONE place to edit the config (matches the
 # systemd EnvironmentFile= behavior in install-{debian,rh}.sh).
 . ${SKYGATE_ETC_DIR}/skygate.env
+# 2026-09-18 (B262): pin the install kind + the native self-update paths,
+# mirroring the Environment= lines install-{debian,rh}.sh write into the
+# systemd unit. Without these the process would have to guess the install
+# kind on an OpenRC host (and the container default for the update state
+# file, /data/skygate-update-status.json, does not exist here, so every
+# state write was a silent no-op).
+export SKYGATE_INSTALL_KIND="openrc"
+export SKYGATE_UPDATE_STATE_PATH="${SKYGATE_DATA_DIR}/skygate-update-status.json"
+export SKYGATE_UPDATE_DIR="${SKYGATE_DATA_DIR}/update"
 EOF
 echo "[install-alpine] wrote /etc/init.d/skygate + /etc/conf.d/skygate"
+
+# -------- 4b. §12.15 / B262: privileged self-update helper --------
+# Alpine has no systemd path unit, so the applier is triggered through a
+# narrowly-scoped sudoers drop-in and restarts the service with
+# `rc-service` (SKYGATE_UPDATE_MODE=openrc in the helper config).
+resolve_install_kind "openrc"
+write_update_helper "$SKYGATE_USER" "$SKYGATE_DATA_DIR" "$SKYGATE_ETC_DIR" "$SKYGATE_INSTALL_KIND"
 
 # -------- 5. enable + start --------
 # OpenRC: `rc-update add` for boot-time, `rc-service start` for now.

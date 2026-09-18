@@ -33,6 +33,9 @@ func TestDetectInstallKindOverride(t *testing.T) {
 		{"compose", InstallDocker},
 		{"systemd", InstallSystemd},
 		{"SYSTEMCTL", InstallSystemd},
+		{"openrc", InstallOpenRC},
+		{"rc-service", InstallOpenRC},
+		{"Alpine", InstallOpenRC},
 		{"bare", InstallBare},
 		{"binary", InstallBare},
 	}
@@ -59,6 +62,54 @@ func TestDetectInstallKindUnknownOverrideValueFallsThrough(t *testing.T) {
 	}
 }
 
+// The filesystem half used to be untestable (it stats absolute paths).
+// 2026-09-18 (B262): statExisting is now injectable, so the ordering
+// contract — container markers first, then systemd, then OpenRC — is pinned
+// instead of assumed. Getting this wrong on Alpine meant /admin/update said
+// "could not detect install kind" and refused to update at all.
+func TestDetectInstallKindFilesystemOrder(t *testing.T) {
+	cases := []struct {
+		name  string
+		paths []string
+		want  InstallKind
+	}{
+		{"docker marker wins over everything", []string{"/.dockerenv", "/run/systemd/system", "/run/openrc"}, InstallDocker},
+		{"podman marker wins over openrc", []string{"/run/.containerenv", "/run/openrc"}, InstallDocker},
+		{"systemd host", []string{"/run/systemd/system"}, InstallSystemd},
+		{"openrc host (alpine)", []string{"/run/openrc"}, InstallOpenRC},
+		{"systemd beats a stray openrc marker", []string{"/run/systemd/system", "/run/openrc"}, InstallSystemd},
+		{"nothing → unknown", nil, InstallUnknown},
+	}
+	orig := statExisting
+	t.Cleanup(func() { statExisting = orig })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			have := map[string]bool{}
+			for _, p := range tc.paths {
+				have[p] = true
+			}
+			statExisting = func(p string) bool { return have[p] }
+			defer func() { statExisting = orig }()
+			if got := detectInstallKindFilesystem(); got != tc.want {
+				t.Errorf("detectInstallKindFilesystem() with %v = %v, want %v", tc.paths, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInstallKindIsNative(t *testing.T) {
+	for _, kind := range []InstallKind{InstallSystemd, InstallOpenRC, InstallBare} {
+		if !kind.IsNative() {
+			t.Errorf("%v.IsNative() = false, want true (native.go handles it)", kind)
+		}
+	}
+	for _, kind := range []InstallKind{InstallDocker, InstallUnknown} {
+		if kind.IsNative() {
+			t.Errorf("%v.IsNative() = true, want false", kind)
+		}
+	}
+}
+
 func TestInstallKindStringStable(t *testing.T) {
 	// These strings are shown on /admin/update and written to audit rows,
 	// so they are part of the operator-facing contract.
@@ -68,6 +119,7 @@ func TestInstallKindStringStable(t *testing.T) {
 	}{
 		{InstallDocker, "docker"},
 		{InstallSystemd, "systemd"},
+		{InstallOpenRC, "openrc"},
 		{InstallBare, "bare"},
 		{InstallUnknown, "unknown"},
 	} {

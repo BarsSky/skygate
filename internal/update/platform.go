@@ -33,9 +33,14 @@ type PlatformInfo struct {
 	// InContainer is true when one of the container markers is
 	// present (same markers DetectInstallKind uses).
 	InContainer bool
-	// HasSystemctl / HasDocker report whether the tool is on PATH.
+	// HasSystemctl / HasDocker / HasOpenRC report whether the tool is on
+	// PATH. HasOpenRC is what an Alpine operator needs to see: the page
+	// prints `rc-service` steps for that kind, and "which service manager
+	// does this host actually have" was exactly the class of question that
+	// made the pre-B261 page misleading.
 	HasSystemctl bool
 	HasDocker    bool
+	HasOpenRC    bool
 	// HelperPath is the privileged helper the native updater needs;
 	// HelperInstalled reports whether it is present + executable.
 	HelperPath      string
@@ -61,6 +66,7 @@ func DetectPlatform(updateDir string) PlatformInfo {
 	info.InContainer = inContainerFilesystem()
 	info.HasSystemctl = lookPathOK("systemctl")
 	info.HasDocker = lookPathOK("docker")
+	info.HasOpenRC = lookPathOK("rc-service")
 	if st, err := os.Stat(info.HelperPath); err == nil {
 		info.HelperInstalled = hasExecBit(st)
 	}
