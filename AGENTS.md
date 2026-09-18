@@ -974,6 +974,37 @@ prod bug right now", `--no-verify` is acceptable.
   existing DB) because it predates the §12.13 idempotency fixes — a
   native SQLite host needs **v1.5.9+**, and the applier's pre-swap
   migrate step is what keeps the attempt from bricking it.
+- **B262 (v1.5.9, 2026-09-18)**: OpenRC/Alpine install kind + the missing
+  `SHA256SUMS` release asset (see the plan §12.17). Two gaps found when
+  mapping what B261 still did not cover:
+  1. **OpenRC was absent from `InstallKind`.** `deploy/install-alpine.sh` is
+     a first-class installer (OpenRC service + `/etc/conf.d/skygate`), yet
+     an Alpine host detected as `InstallUnknown`, so `/admin/update`
+     refused to update at all and printed the Docker procedure. Added
+     `InstallOpenRC` (appended at the END of the enum — state/audit carry
+     the string, but ordinals must not move), the `/run/openrc` marker
+     (systemd is probed first: one live init per host), the
+     `openrc|rc-service|alpine` override, `IsNative()`,
+     `GenerateOpenRCSteps`, a `MODE=openrc` branch in the applier
+     (`rc-service restart` + `start` fallback), `write_update_helper` in
+     `install-alpine.sh` (sudoers trigger — Alpine has no systemd path
+     unit), `SKYGATE_INSTALL_KIND`/`_UPDATE_STATE_PATH`/`_UPDATE_DIR`
+     exported from `/etc/conf.d/skygate`, and an `rc-service` column on the
+     platform panel. `statExisting` is injectable now, so the detection
+     ORDER is pinned by tests. **Live-verified** in an Alpine 3.20
+     container on the reference VM with the shipped applier (only `curl`
+     and `rc-service` stubbed): `restarting (openrc)` →
+     `rc-service skygate restart` → `verdict: done`.
+  2. **Releases v1.5.6 … v1.5.8 shipped NO `SHA256SUMS` asset — cause
+     found.** `release.yml` downloaded the artifact into `dist/SHA256SUMS`
+     while its only file is also named `SHA256SUMS`, so the file landed at
+     `dist/SHA256SUMS/SHA256SUMS`; the Flatten step then ran `mv <file> .`
+     with a DIRECTORY of that name already present, which moves the file
+     *inside* it — the release attached a directory, so `gh` uploaded
+     nothing. One-line fix (`path: dist/checksums`) + a simulation of the
+     workflow's own flatten commands in the contract (OLD → DIRECTORY, NEW
+     → FILE). B261.2's GitHub-digest fallback masked this; a mirror cannot
+     use it. Contracts K/K2/L/L2 (26 total).
 - **B176 + B175.1 (v1.5.2)**: dev-tag
     lowercase (headscale 0.29 rejects
     uppercase tags) + i18n tooltip

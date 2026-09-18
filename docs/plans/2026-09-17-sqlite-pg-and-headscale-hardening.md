@@ -1848,3 +1848,53 @@ T4 — самый ценный: без проверки строки сборк�
   от `install-bare.sh`); живого bare-хоста в этом сеансе не было.
 * Остальные ~25 «глотающих ошибку» `ADD COLUMN` в `migrations_sqlite.go`
   (§12.13) по-прежнему не переведены на `addColumnIfMissingSQLite`.
+
+### 12.17 OpenRC/Alpine + ассет SHA256SUMS в релизах (B262, 2026-09-18)
+
+Два пробела, найденные при разборе «что ещё не покрыто» после B261.
+Коммит `ac048d1a`.
+
+**1. OpenRC отсутствовал в `InstallKind` вообще.** `deploy/install-alpine.sh` —
+полноценный установщик (OpenRC-сервис `/etc/init.d/skygate`, env через
+`/etc/conf.d/skygate` → `/etc/skygate/skygate.env`), но на Alpine
+`detectInstallKindFilesystem()` возвращал `InstallUnknown`, поэтому
+`/admin/update` отказывал в обновлении («could not detect install kind»), а
+список ручных шагов подставлял docker-процедуру. Добавлено: `InstallOpenRC`
+(в конец enum — состояние и аудит хранят строку, но ординалы сдвигать нельзя),
+маркер `/run/openrc` (systemd проверяется раньше — живой init на хосте один),
+override `openrc|rc-service|alpine`, `IsNative()`, `GenerateOpenRCSteps`
+(`rc-service stop/start`), ветка `MODE=openrc` в applier-е
+(`rc-service restart` + fallback на `start`), вызов `write_update_helper` в
+`install-alpine.sh` (триггер — sudoers drop-in, systemd path-юнита там нет) и
+экспорт `SKYGATE_INSTALL_KIND`/`_UPDATE_STATE_PATH`/`_UPDATE_DIR` из
+`/etc/conf.d/skygate`. `statExisting` стал инъектируемым, поэтому **порядок**
+детекта (маркеры контейнера → systemd → openrc → unknown) закреплён тестами.
+На странице появилась колонка `rc-service`.
+
+**Живая проверка (Alpine 3.20 в docker на VM, настоящий applier, подменены
+только внешние зависимости — `curl` на локальное зеркало, `rc-service` на
+рекордер):**
+
+```
+=== job deadbeef target=v1.5.9 from=v1.5.8 mode=openrc dry_run=0 ===
+SHA256 OK (…, verified against SHA256SUMS asset)
+running migrations with the new binary (as root)
+installed the new binary over /t/fake-skygate
+restarting (openrc)
+healthz reports build 'v1.5.9+openrc' after 1s
+verdict: done
+rc-service calls: rc-service skygate restart
+```
+
+**2. Релизы v1.5.6–v1.5.8 не содержали ассета `SHA256SUMS` — найдена причина.**
+`release.yml` качал артефакт в `dist/SHA256SUMS`, при том что единственный файл
+внутри тоже называется `SHA256SUMS`, то есть файл ложился в
+`dist/SHA256SUMS/SHA256SUMS`; шаг Flatten выполнял `mv <file> .` при уже
+существующем **каталоге** с тем же именем — а это перемещает файл внутрь
+каталога, не переименовывает. На релиз уезжал каталог, `gh` не прикладывал
+ничего. Фикс — одна строка (`path: dist/checksums`); в контракт добавлена
+симуляция собственных команд workflow: со старым путём `dist/SHA256SUMS` —
+каталог, с новым — файл. Fallback на digest из B261.2 это маскировал, но
+зеркало им воспользоваться не может.
+
+Контракты K/K2/L/L2 (всего 26) в `scripts/check_b261_native_self_update.sh`.
