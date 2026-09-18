@@ -1,14 +1,18 @@
+# 2026-09-18: the live admin password + the default DB password were hardcoded in this
+# file (the v0.34.0.1 leak class). They now come from the environment: export
+# SKYGATE_ADMIN_USER / SKYGATE_ADMIN_PASS (or source the VM's .env) before running.
 #!/bin/bash
 set +e
 COOKIE_FILE=/tmp/skygate_cookie.txt
-PGPASSWORD=skygate_admin_pass
+PGPASSWORD=<db-password>
 BASE="http://127.0.0.1:8080"
 PSQL="psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging"
 
 # Login and save cookie
 rm -f $COOKIE_FILE
 curl -s -c $COOKIE_FILE -i -X POST \
-  -d "username=skyadmin&password=t%25gVCuboZSMT07SM97kV5%40hb" \
+  -d "username=${SKYGATE_ADMIN_USER:-skyadmin}" \
+  --data-urlencode "password=${SKYGATE_ADMIN_PASS:-}" \
   "$BASE/login?theme=linear" > /tmp/login_resp.txt
 COOKIE=$(grep skygate_session $COOKIE_FILE | awk '{print $7}')
 echo "cookie: $COOKIE"

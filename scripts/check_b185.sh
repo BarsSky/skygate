@@ -177,22 +177,37 @@ fi
 # O. (VM-only) live: probe shows ok_relay (not unreachable).
 # The /admin/telegram page renders a `.probe-ok_relay` div
 # when the container can reach api.telegram.org via Tailscale.
+#
+# 2026-09-18: credentials/host are NO LONGER hardcoded here (a live admin
+# password was committed in this file — that is exactly the v0.34.0.1 leak
+# class). Read them from the environment, else from the VM's .env, else SKIP.
+B185_URL="${SKYGATE_LIVE_URL:-http://127.0.0.1:8080}"
+B185_USER="${SKYGATE_ADMIN_USER:-}"
+B185_PASS="${SKYGATE_ADMIN_PASS:-}"
+if { [ -z "$B185_USER" ] || [ -z "$B185_PASS" ]; } && [ -r /home/skyadmin/skygate/.env ]; then
+  [ -z "$B185_USER" ] && B185_USER=$(sed -n 's/^SKYGATE_ADMIN_USER=//p' /home/skyadmin/skygate/.env | tail -1)
+  [ -z "$B185_PASS" ] && B185_PASS=$(sed -n 's/^SKYGATE_ADMIN_PASS=//p' /home/skyadmin/skygate/.env | tail -1)
+fi
 if [ -d /home/skyadmin/skygate ]; then
-  PROBE=$(curl -s -c /tmp/b185_cookies.txt -b /tmp/b185_cookies.txt \
-    -X POST http://192.168.13.69:8080/login \
-    -d 'username=skyadmin&password=t%25gVCuboZSMT07SM97kV5%40hb' \
-    -o /dev/null -w '%{http_code}' 2>/dev/null)
-  if [ "$PROBE" = "302" ] || [ "$PROBE" = "200" ]; then
-    PAGE=$(curl -s -b /tmp/b185_cookies.txt http://192.168.13.69:8080/admin/telegram 2>/dev/null)
-    if echo "$PAGE" | grep -q 'probe-ok_relay'; then
-      check_eq "O" "ok_relay" "ok_relay"
-    elif echo "$PAGE" | grep -q 'probe-ok_direct'; then
-      check_eq "O" "ok_relay" "ok_direct_probe"
-    else
-      check_eq "O" "ok_relay" "probe_unreachable_B185_not_live"
-    fi
+  if [ -z "$B185_PASS" ]; then
+    echo "  SKIP [O] no SKYGATE_ADMIN_PASS (export it or run on the VM where .env lives)"
   else
-    echo "  SKIP [O] login failed: HTTP code is $PROBE"
+    PROBE=$(curl -s -c /tmp/b185_cookies.txt -b /tmp/b185_cookies.txt \
+      -X POST "$B185_URL/login" \
+      --data-urlencode "username=$B185_USER" --data-urlencode "password=$B185_PASS" \
+      -o /dev/null -w '%{http_code}' 2>/dev/null)
+    if [ "$PROBE" = "302" ] || [ "$PROBE" = "200" ]; then
+      PAGE=$(curl -s -b /tmp/b185_cookies.txt "$B185_URL/admin/telegram" 2>/dev/null)
+      if echo "$PAGE" | grep -q 'probe-ok_relay'; then
+        check_eq "O" "ok_relay" "ok_relay"
+      elif echo "$PAGE" | grep -q 'probe-ok_direct'; then
+        check_eq "O" "ok_relay" "ok_direct_probe"
+      else
+        check_eq "O" "ok_relay" "probe_unreachable_B185_not_live"
+      fi
+    else
+      echo "  SKIP [O] login failed: HTTP code is $PROBE"
+    fi
   fi
 else
   echo "  SKIP [O] not on VM"
@@ -202,18 +217,10 @@ fi
 # in the three-state badge (the B185 LookupResolvedForDomain
 # cdn-alias propagation working).
 if [ -d /home/skyadmin/skygate ]; then
-  if command -v psql >/dev/null 2>&1; then
-    # The autoupdater stores CDN-detected ranges under
-    # `cdn:<provider>:<domain>` for any discord* domain
-    # (live data has 15 ranges for
-    # cdn:cloudflare:discordapp.com — discord.com itself
-    # didn't trigger the CDN detector on the live run
-    # because the B184 base domain match path was used
-    # instead). The B185 fix wires up LookupResolvedForDomain
-    # to merge BOTH formats. We check that at least one
-    # discord* domain has cdn: rows to prove the cdn: path
-    # is in use.
-    PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tA -c "
+  if command -v docker >/dev/null 2>&1; then
+    # 2026-09-18: query through `docker exec` against the local PG container
+    # instead of a TCP connection with a hardcoded PGPASSWORD.
+    docker exec skygate-pg-local psql -U admin -d skygate_staging -tA -c "
       SELECT COUNT(*) FROM device_rules
        WHERE parent_domain LIKE 'cdn:%:%discord%'
          AND target_type IN ('subnet', 'ip')
@@ -226,7 +233,7 @@ if [ -d /home/skyadmin/skygate ]; then
       echo "  SKIP [P] could not query cdn discord rows"
     fi
   else
-    echo "  SKIP [P] psql not available"
+    echo "  SKIP [P] docker not available"
   fi
 else
   echo "  SKIP [P] not on VM"

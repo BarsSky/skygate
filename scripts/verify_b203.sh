@@ -10,13 +10,14 @@
 # ResettableDB is now pointing at the new pool.
 set +e
 COOKIE_FILE=/tmp/skygate_cookie.txt
-PGPASSWORD=skygate_admin_pass
+PGPASSWORD=<db-password>
 BASE="http://127.0.0.1:8080"
 
 # Login
 rm -f $COOKIE_FILE
 curl -s -c $COOKIE_FILE -i -X POST \
-  -d "username=skyadmin&password=t%25gVCuboZSMT07SM97kV5%40hb" \
+  -d "username=${SKYGATE_ADMIN_USER:-skyadmin}" \
+  --data-urlencode "password=${SKYGATE_ADMIN_PASS:-}" \
   "$BASE/login?theme=linear" > /tmp/login_resp.txt
 COOKIE=$(grep skygate_session $COOKIE_FILE | awk '{print $7}')
 
@@ -42,7 +43,7 @@ PGPASSWORD=$PGPASSWORD psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c 
    VALUES ('skygate-staging', 'skygate-staging', 'self', '{}',
            'postgres://admin:%s@172.17.0.1:5433/skygate_staging?sslmode=disable',
            'skygate_staging', 'admin', 'disable',
-           'postgres://admin:skygate_admin_pass@172.17.0.1:5433/skygate_staging?sslmode=disable',
+           'postgres://admin:<db-password>@172.17.0.1:5433/skygate_staging?sslmode=disable',
            'verify_b203')
    ON CONFLICT (id) DO UPDATE SET
      current_dsn = EXCLUDED.current_dsn,

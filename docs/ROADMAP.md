@@ -107,6 +107,7 @@ contracts are in the corresponding `scripts/check_b*.sh`.
 | **RR-9** | ACL drifted from the DB: orphan `tagOwners` entry + a missing per-CIDR `via` pin (B188.2/B188.3/B-mod-tag-owners-coverage) | One ACL reapply from the DB (`/admin/acls`) |
 | **RR-10** | Telegram relay probe unreachable from the check environment (B185 `[O]`) | An active relay/exit-node route, or accept as environmental |
 | **RR-11** | Flaky Go-load contracts (B183 `[I]`, B213, B235, B237.2) | **Mitigated** — `GOFLAGS=-p=2` in the gate run; the general SKIP/retry hardening stays open under RR-4 |
+| **RR-12** | **Credential hygiene:** the default DB-password literal `skygate_admin_pass` is still hardcoded in **146 lines across 48 scripts** (mostly one-off `verify_b*/liveverify_*` helpers and the live contracts inside `check_b118/b127/b183/b184/b188_2/b188_3`). The live admin password that was committed in `check_b185.sh` + 5 `verify_b202/b203*` scripts was **removed on 2026-09-18** | Operator call: rotate the admin password (it remains in git history), then let the sweep replace the DB-password literal with an environment/`.env` lookup |
 
 ### 5.1 Live-state contract failures on the reference host (2026-09-18)
 
