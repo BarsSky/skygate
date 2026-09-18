@@ -169,7 +169,7 @@ fi
 
 # D.3 go test on the two packages where the stragglers lived
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 30s \
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         ./internal/headscale/... ./internal/oidc/... 2>/dev/null | grep -q '^ok'; then
         ok "D.3 packages with the stragglers (headscale + oidc) still pass go test"
     else

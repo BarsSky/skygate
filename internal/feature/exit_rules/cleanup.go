@@ -152,7 +152,7 @@ func (s *Service) CleanupRulesAnalyze() (*CleanupPlan, error) {
 			if len(rs) > 0 {
 				uid = rs[0].userID
 			}
-			if userToHosts[uid] != nil && len(userToHosts[uid]) == 1 {
+			if len(userToHosts[uid]) == 1 {
 				for k := range userToHosts[uid] {
 					rebucketed[k] = append(rebucketed[k], rs...)
 				}

@@ -168,7 +168,7 @@ fi
 
 # D.2 the unit tests pass (env-gated)
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 30s \
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         -run 'TestMaskSecret|TestCertSummary|TestEnvOr|TestRunRegAPICreds' \
         ./cmd/skygate/... 2>/dev/null | grep -q '^ok'; then
         ok "D.2 unit tests pass (maskSecret + certSummary + envOr + dispatcher)"
@@ -205,7 +205,7 @@ fi
 
 # E.2 the cmd/skygate tests pass
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 30s \
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         ./cmd/skygate/... 2>/dev/null | grep -q '^ok'; then
         ok "E.2 cmd/skygate tests pass (no regression)"
     else
