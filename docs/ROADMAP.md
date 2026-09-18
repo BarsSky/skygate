@@ -106,7 +106,7 @@ contracts are in the corresponding `scripts/check_b*.sh`.
 | **RR-8** | `node_owner_map`: 4 stale rows (B243) | Operator decision on relink-vs-delete (see below) |
 | **RR-9** | ACL drifted from the DB: orphan `tagOwners` entry + a missing per-CIDR `via` pin (B188.2/B188.3/B-mod-tag-owners-coverage) | One ACL reapply from the DB (`/admin/acls`) |
 | **RR-10** | Telegram relay probe unreachable from the check environment (B185 `[O]`) | An active relay/exit-node route, or accept as environmental |
-| **RR-11** | Flaky live/whole-package contracts (B183 `[I]`, B237.2) | Gate hardening: SKIP when the live probe is unavailable (RR-4) |
+| **RR-11** | Flaky Go-load contracts (B183 `[I]`, B213, B235, B237.2) | **Mitigated** — `GOFLAGS=-p=2` in the gate run; the general SKIP/retry hardening stays open under RR-4 |
 
 ### 5.1 Live-state contract failures on the reference host (2026-09-18)
 
