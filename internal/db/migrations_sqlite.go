@@ -101,9 +101,18 @@ func migrateV022SQLite(d *sql.DB) error {
 			// 2026-07-11: Этап 9 part 2 — the original 2026-07-09 statement had
 			// `DEFAULT ` with no value, which is a syntax error. The function
 			// ignored the error so the migration silently no-op'd, leaving
-			// device_rules without device_ip on fresh DBs. Fixed.
-			_, err := d.Exec("ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS device_ip TEXT NOT NULL DEFAULT ''")
-			if err != nil { return nil } // column exists
+			// device_rules without device_ip on fresh DBs.
+			//
+			// 2026-09-18: the "fix" replaced it with ADD COLUMN IF NOT
+			// EXISTS, which is itself invalid on SQLite, and then treated
+			// the resulting syntax error as "column exists" — so device_ip
+			// was STILL missing (proven by probing a fresh :memory: DB).
+			// addColumnIfMissingSQLite asks PRAGMA table_info instead and
+			// returns real errors.
+			if err := addColumnIfMissingSQLite(d, "device_rules", "device_ip",
+				"device_ip TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
 			return nil
 }
 
@@ -137,12 +146,17 @@ func migrateV023SQLite(d *sql.DB) error {
 func migrateV024SQLite(d *sql.DB) error {
 
 
-			queries := []string{
-				"ALTER TABLE exit_servers ADD COLUMN IF NOT EXISTS ssh_target TEXT NOT NULL DEFAULT ''",
-				"ALTER TABLE exit_servers ADD COLUMN IF NOT EXISTS ssh_key_path TEXT NOT NULL DEFAULT ''",
-			}
-			for _, q := range queries {
-				d.Exec(q) // ignore errors (column may exist)
+			// 2026-09-18: was `ADD COLUMN IF NOT EXISTS` (invalid on
+			// SQLite) in an error-swallowing loop, so neither column was
+			// ever created — which is what broke exit-node SSH sync on a
+			// SQLite deployment. See sqlite_ddl.go.
+			for _, c := range []struct{ col, ddl string }{
+				{"ssh_target", "ssh_target TEXT NOT NULL DEFAULT ''"},
+				{"ssh_key_path", "ssh_key_path TEXT NOT NULL DEFAULT ''"},
+			} {
+				if err := addColumnIfMissingSQLite(d, "exit_servers", c.col, c.ddl); err != nil {
+					return err
+				}
 			}
 			return nil
 }
@@ -218,14 +232,13 @@ func migrateV025SQLite(d *sql.DB) error {
 func migrateV026SQLite(d *sql.DB) error {
 
 
-			stmts := []string{
-				"ALTER TABLE exit_servers ADD COLUMN IF NOT EXISTS accept_routes INTEGER NOT NULL DEFAULT 0",
-			}
-			for _, q := range stmts {
-				if _, err := d.Exec(q); err != nil {
-					// ignore: column may already exist on a re-run
-					continue
-				}
+			// 2026-09-18: same invalid-on-SQLite ADD COLUMN IF NOT EXISTS
+			// pattern with a swallowed error — accept_routes was never
+			// created, so the per-node accept-routes tri-state could not be
+			// stored. See sqlite_ddl.go.
+			if err := addColumnIfMissingSQLite(d, "exit_servers", "accept_routes",
+				"accept_routes INTEGER NOT NULL DEFAULT 0"); err != nil {
+				return err
 			}
 			return nil
 }
@@ -775,10 +788,17 @@ func migrateV044SQLite(d *sql.DB) error {
 			// pre-v0.32.24 code used a PRAGMA table_info-based
 			// `hasColumn` check (a SQLite idiom that didn't work on
 			// PG); v0.32.24 replaces it with IF NOT EXISTS.
-			if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN user_name TEXT NOT NULL DEFAULT ''`); err != nil {
+			// 2026-09-18: unguarded ADD COLUMN. On a re-run (every boot!)
+			// SQLite answers "duplicate column name", which this code
+			// RETURNED — so the chain aborted at V44 and everything after it
+			// never applied. Found by asserting idempotency on a fresh
+			// :memory: DB. addColumnIfMissingSQLite asks PRAGMA instead.
+			if err := addColumnIfMissingSQLite(d, "device_rules", "user_name",
+				"user_name TEXT NOT NULL DEFAULT ''"); err != nil {
 				return fmt.Errorf("v0.44 add user_name: %w", err)
 			}
-			if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN device_hostname TEXT NOT NULL DEFAULT ''`); err != nil {
+			if err := addColumnIfMissingSQLite(d, "device_rules", "device_hostname",
+				"device_hostname TEXT NOT NULL DEFAULT ''"); err != nil {
 				return fmt.Errorf("v0.44 add device_hostname: %w", err)
 			}
 			// Backfill user_name from portal_users. Every
@@ -916,13 +936,18 @@ func migrateV047SQLite(d *sql.DB) error {
 				return false
 			}
 			freshlyAdded := !colExists("user_exit_node_prefs", "via_enabled")
-			if _, err := d.Exec(`ALTER TABLE user_exit_node_prefs ADD COLUMN via_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
+			// 2026-09-18: same unguarded-ADD-COLUMN defect as V44 — the
+			// duplicate-column error was returned, aborting the chain on
+			// every boot after the first.
+			if err := addColumnIfMissingSQLite(d, "user_exit_node_prefs", "via_enabled",
+				"via_enabled INTEGER NOT NULL DEFAULT 0"); err != nil {
 				return err
 			}
 			if !colExists("device_exit_node_prefs", "via_enabled") && freshlyAdded {
 				freshlyAdded = true
 			}
-			if _, err := d.Exec(`ALTER TABLE device_exit_node_prefs ADD COLUMN via_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
+			if err := addColumnIfMissingSQLite(d, "device_exit_node_prefs", "via_enabled",
+				"via_enabled INTEGER NOT NULL DEFAULT 0"); err != nil {
 				return err
 			}
 			// Backfill ONLY on the first-time migration. On
@@ -951,12 +976,15 @@ func migrateV047SQLite(d *sql.DB) error {
 // Generated by port_migrations_sqlite.py from migrateV048PG.
 func migrateV048SQLite(d *sql.DB) error {
 
-		stmts := []string{
-			`ALTER TABLE node_owner_map ADD COLUMN os TEXT NOT NULL DEFAULT 'unknown'`,
-			`ALTER TABLE node_owner_map ADD COLUMN device_type TEXT NOT NULL DEFAULT 'unknown'`,
-		}
-		for _, s := range stmts {
-			if _, err := d.Exec(s); err != nil {
+		// 2026-09-18: unguarded ADD COLUMN. SQLite answers "duplicate
+		// column name: os" on every boot after the first, and the error
+		// was returned — so MigrateSQLite failed, which makes OpenDSN fail,
+		// which means a SQLite deployment could not START a second time.
+		for _, c := range []struct{ col, ddl string }{
+			{"os", "os TEXT NOT NULL DEFAULT 'unknown'"},
+			{"device_type", "device_type TEXT NOT NULL DEFAULT 'unknown'"},
+		} {
+			if err := addColumnIfMissingSQLite(d, "node_owner_map", c.col, c.ddl); err != nil {
 				return fmt.Errorf("v0.48: %w", err)
 			}
 		}
@@ -1042,13 +1070,11 @@ func migrateV051SQLite(d *sql.DB) error {
 // Generated by port_migrations_sqlite.py from migrateV053PG.
 func migrateV053SQLite(d *sql.DB) error {
 
-		stmts := []string{
-			`ALTER TABLE exit_servers ADD COLUMN ssh_port TEXT NOT NULL DEFAULT ''`,
-		}
-		for _, s := range stmts {
-			if _, err := d.Exec(s); err != nil {
-				return fmt.Errorf("v0.53: %w", err)
-			}
+		// 2026-09-18: unguarded ADD COLUMN (same defect family as
+		// V44/V48/derp_health) — broke the chain on every re-run.
+		if err := addColumnIfMissingSQLite(d, "exit_servers", "ssh_port",
+			"ssh_port TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("v0.53: %w", err)
 		}
 		return nil
 }
@@ -1136,13 +1162,15 @@ func migrateV056SQLite(d *sql.DB) error {
 // Generated by port_migrations_sqlite.py from migrateV057PG.
 func migrateV057SQLite(d *sql.DB) error {
 
-		stmts := []string{
-			`ALTER TABLE portal_users ADD COLUMN font_family TEXT NOT NULL DEFAULT 'manrope'`,
-			`ALTER TABLE portal_users ADD COLUMN font_scale INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE portal_users ADD COLUMN selection_bg TEXT NOT NULL DEFAULT ''`,
-		}
-		for _, s := range stmts {
-			if _, err := d.Exec(s); err != nil {
+		// 2026-09-18: unguarded ADD COLUMNs (V57 display prefs) — same
+		// defect family; duplicate-column errors aborted the chain on
+		// every boot after the first.
+		for _, c := range []struct{ col, ddl string }{
+			{"font_family", "font_family TEXT NOT NULL DEFAULT 'manrope'"},
+			{"font_scale", "font_scale INTEGER NOT NULL DEFAULT 0"},
+			{"selection_bg", "selection_bg TEXT NOT NULL DEFAULT ''"},
+		} {
+			if err := addColumnIfMissingSQLite(d, "portal_users", c.col, c.ddl); err != nil {
 				return fmt.Errorf("v0.57 portal_users display prefs: %w", err)
 			}
 		}
@@ -1153,13 +1181,10 @@ func migrateV057SQLite(d *sql.DB) error {
 // Generated by port_migrations_sqlite.py from migrateV058PG.
 func migrateV058SQLite(d *sql.DB) error {
 
-		stmts := []string{
-			`ALTER TABLE preauth_keys ADD COLUMN notified_at INTEGER NOT NULL DEFAULT 0`,
-		}
-		for _, s := range stmts {
-			if _, err := d.Exec(s); err != nil {
-				return fmt.Errorf("v0.58 preauth_keys notified_at: %w", err)
-			}
+		// 2026-09-18: unguarded ADD COLUMN — same defect family.
+		if err := addColumnIfMissingSQLite(d, "preauth_keys", "notified_at",
+			"notified_at INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("v0.58 preauth_keys notified_at: %w", err)
 		}
 		return nil
 }
@@ -1536,23 +1561,12 @@ func migrateV066SQLite(d *sql.DB) error {
 // Generated by port_migrations_sqlite.py from migrateV067PG.
 func migrateV067SQLite(d *sql.DB) error {
 
-		stmts := []string{
-			// target_type: discriminator (e.g.
-			// "cluster_node", "cluster_invite",
-			// "cluster_database", "device",
-			// "acl", "user"). Empty for the
-			// pre-B221 rows.
-			`ALTER TABLE audit_log ADD COLUMN target_type TEXT DEFAULT ''`,
-			// target_id: the entity id (hostname for
-			// cluster_node, invite_id for
-			// cluster_invite, cluster_id for
-			// cluster_database, user_id for
-			// portal_users, etc.). Empty for
-			// pre-B221 rows.
-			`ALTER TABLE audit_log ADD COLUMN target_id TEXT DEFAULT ''`,
-		}
-		for _, s := range stmts {
-			if _, err := d.Exec(s); err != nil {
+		// 2026-09-18: unguarded ADD COLUMNs — same defect family.
+		for _, c := range []struct{ col, ddl string }{
+			{"target_type", "target_type TEXT DEFAULT ''"},
+			{"target_id", "target_id TEXT DEFAULT ''"},
+		} {
+			if err := addColumnIfMissingSQLite(d, "audit_log", c.col, c.ddl); err != nil {
 				return err
 			}
 		}
@@ -1613,9 +1627,10 @@ func migrateV069SQLite(d *sql.DB) error {
 		// DEFAULT '' so existing rows are valid without
 		// backfill — the next ProbeAll tick will populate
 		// it from FetchPublicDERPs.
-		if _, err := d.Exec(`
-			ALTER TABLE derp_health ADD COLUMN name TEXT NOT NULL DEFAULT ''
-		`); err != nil {
+		// 2026-09-18: unguarded ADD COLUMN (duplicate-column error on every
+		// re-run) — same defect family as V44/V48.
+		if err := addColumnIfMissingSQLite(d, "derp_health", "name",
+			"name TEXT NOT NULL DEFAULT ''"); err != nil {
 			return err
 		}
 		return nil

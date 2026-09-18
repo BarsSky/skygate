@@ -93,7 +93,13 @@ var sqliteMigrations = []MigrationEntry{
 	{67, "v0.67 (B221): audit_log.target_type + target_id (Phase 4.1 generic audit log)", "migrations_v0_67_b221.go", migrateV067SQLite},
 	{68, "v0.68 (B232): repair device_rules_natural_key_uniq shape drift (B188.2 ON CONFLICT 6-col)", "migrations_v0_68_b232.go", migrateV068SQLite},
 	{69, "v0.69 (B235.3): derp_health.name column for the B235 .Name short-label pill", "migrations_v0_69_b235_3.go", migrateV069SQLite},
-	{70, "v0.70 (B236): portal_users AFTER UPDATE audit trigger (catches out-of-band password_hash rotations)", "migrations_v0_70_b236.go", migrateV070SQLite},
+	{70, "v0.70 (B236): portal_users AFTER UPDATE audit trigger (catches out-of-band password_hash rotations)", "migrations_v0_70_b238.go", migrateV070SQLite},
+	// 2026-09-18: V071 was missing entirely, so the SQLite chain stopped at
+	// V070 and derp_cert_sync was never created. Two bugs fixed here: the
+	// entry is added, and its SourceFile now names the file that actually
+	// defines migrateV070SQLite (migrations_v0_70_b238.go — the old
+	// "migrations_v0_70_b236.go" does not exist in the tree).
+	{71, "v0.71 (B252): derp_cert_sync table (cert auto-renewal state for bundled derper)", "migrations_v0_71_derp_cert_sync.go", migrateV071SQLite},
 }
 
 // SQLiteMigrations returns the list of migrations the current

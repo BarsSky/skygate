@@ -103,3 +103,55 @@ func migrateV071PG(d *sql.DB) error {
 	}
 	return nil
 }
+
+// migrateV071SQLite is the SQLite counterpart of migrateV071PG. Same table
+// shape, SQLite types.
+//
+// 2026-09-18: this function DID NOT EXIST. V071 was registered only in
+// pgMigrations, so the SQLite chain stopped at V070 — derp_cert_sync was
+// never created on a SQLite deployment and the DERP certificate
+// auto-renewal state (internal/feature/admin/derp_cert_sync.go) had
+// nowhere to write. Found by probing the applied migration version of a
+// fresh :memory: database (70) against PostgreSQL (71).
+//
+// Type mapping follows the rest of the SQLite chain:
+//   - BIGSERIAL PRIMARY KEY     -> INTEGER PRIMARY KEY AUTOINCREMENT
+//   - BIGINT                    -> INTEGER
+//   - EXTRACT(EPOCH FROM now()) -> strftime('%s','now')
+//
+// The partial index (WHERE enabled = 1) is supported by SQLite 3.8+ and is
+// kept so the two schemas stay semantically identical.
+func migrateV071SQLite(d *sql.DB) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS derp_cert_sync (
+			id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+			hostname            TEXT NOT NULL UNIQUE,
+			mode                TEXT NOT NULL DEFAULT 'letsencrypt',
+			npm_base_url        TEXT NOT NULL DEFAULT '',
+			npm_cert_id         INTEGER NOT NULL DEFAULT 0,
+			cert_dir            TEXT NOT NULL DEFAULT '/var/lib/derper/certs',
+			derper_pid_file     TEXT NOT NULL DEFAULT '/var/run/derper.pid',
+			derper_systemd_unit TEXT NOT NULL DEFAULT 'derper.service',
+			check_interval_min  INTEGER NOT NULL DEFAULT 1440,
+			enabled             INTEGER NOT NULL DEFAULT 1,
+			last_checked_at     INTEGER NOT NULL DEFAULT 0,
+			last_synced_at      INTEGER NOT NULL DEFAULT 0,
+			last_cert_sha256    TEXT NOT NULL DEFAULT '',
+			last_error          TEXT NOT NULL DEFAULT '',
+			expiry_warn_at      INTEGER NOT NULL DEFAULT 0,
+			notes               TEXT NOT NULL DEFAULT '',
+			created_at          INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+			updated_at          INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS derp_cert_sync_enabled_idx
+			ON derp_cert_sync(enabled) WHERE enabled = 1`,
+		`CREATE INDEX IF NOT EXISTS derp_cert_sync_hostname_idx
+			ON derp_cert_sync(hostname)`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return err
+		}
+	}
+	return nil
+}
