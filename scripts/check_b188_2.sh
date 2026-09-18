@@ -63,8 +63,11 @@
 #  S. (VM-only) live: per-device autogroup:internet
 #     (tag:dev-michail-basic → autogroup:internet) does
 #     NOT have via=[emilia]
-#  T. (VM-only) live: h-rule-64-233-164-91-32 (youtube
-#     /32) for tag:dev-michail-basic HAS via=[emilia]
+#  T. (VM-only) live: tag:dev-michail-basic has ≥1 per-CIDR
+#     (h-rule-*) grant pinned with via=[emilia]. (Before
+#     2026-09-18 this pinned one frozen CIDR — the youtube
+#     /32 as resolved at the time — which broke whenever
+#     DNS changed the resolved set.)
 #  U. (VM-only) live: skyworker h-rules have via=[karolina]
 #     (not via=[emilia] — correct per-device pref)
 #  V. (VM-only) live: a71 (per-device pref=emilia but no
@@ -207,7 +210,17 @@ print(n)
 ' 2>/dev/null)
     check_eq "S-no-per-device-autogroup-with-via" "0" "${S:-<err>}"
 
-    # T. Live: h-rule-64-233-164-91-32 for tag:dev-michail-basic HAS via=[emilia]
+    # T. Live: tag:dev-michail-basic has per-CIDR h-rule grants pinned to emilia.
+    #
+    # 2026-09-18: this contract used to pin ONE resolved CIDR
+    # (h-rule-64-233-164-91-32, the youtube /32 as resolved when B188.2 was
+    # written). Domain rules are periodically re-resolved, so a frozen CIDR
+    # makes the contract fail while the behaviour is intact — on the reference
+    # host basic had 30 per-CIDR grants pinned to tag:dev-infra-emilia and a
+    # correctly UN-pinned catch-all, yet T failed because 64.233.164.91 is no
+    # longer in youtube.com's resolved set. Assert the behaviour instead: at
+    # least one per-CIDR (h-rule-*) grant for the device carries via=[emilia].
+    # S and W still pin the other half (the catch-all must NOT be pinned).
     T=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
 import json, sys
 try:
@@ -216,11 +229,14 @@ except Exception:
     print(0); sys.exit(0)
 n = 0
 for g in pol.get("grants", []):
-    if "tag:dev-michail-basic" in g.get("src", []) and "h-rule-64-233-164-91-32" in g.get("dst", []) and "tag:dev-infra-emilia" in (g.get("via") or []):
+    if "tag:dev-michail-basic" not in g.get("src", []):
+        continue
+    dst = g.get("dst") or []
+    if any(str(d).startswith("h-rule-") for d in dst) and "tag:dev-infra-emilia" in (g.get("via") or []):
         n += 1
-print(n)
+print(1 if n >= 1 else 0)
 ' 2>/dev/null)
-    check_eq "T-h-rule-youtube-via-emilia" "1" "${T:-<err>}"
+    check_eq "T-per-cidr-rules-pinned-via-emilia" "1" "${T:-<err>}"
 
     # U. Live: skyworker h-rules have via=[karolina] (NOT [emilia])
     U_EMILIA=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
