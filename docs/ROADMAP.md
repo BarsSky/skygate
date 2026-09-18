@@ -110,10 +110,11 @@ contracts are in the corresponding `scripts/check_b*.sh`.
 
 ### 5.1 Live-state contract failures on the reference host (2026-09-18)
 
-The full gate run on the reference host ends with **PASS=352 / 5 live checks failing / 3 SKIP**.
-None of the five reads a documentation file — every one of them queries the live DB,
-the headscale policy or the network, and their scripts are **byte-identical** to the
-pre-restructure commit. Evidence collected on the host:
+The full gate run on the reference host ends with **PASS=333 / 10 FAIL lines = 4 live checks /
+3 SKIP** (`scripts/verify_pre_deploy.sh` with the `GOFLAGS=-p=2` cap added 2026-09-18).
+None of the four reads a documentation file — every one queries the live DB, the headscale
+policy or the network, and their scripts are **byte-identical** to the pre-restructure commit.
+Evidence collected on the host:
 
 * **`node_owner_map` (B243).** Live headscale users are `1 skyadmin`, `8 michail`,
   `11 guest`, `12 daniil`, `85 infra`. Four rows point elsewhere:
@@ -139,14 +140,14 @@ pre-restructure commit. Evidence collected on the host:
   `188.114.96.0/20`). That is the *current* 6-column design (B232 + B237.23), so a
   5-tuple-uniqueness expectation is unreachable on this host; `[J]` already SKIPs and the
   check reports the numbers.
-* **Flakiness.** Four contracts pass when run standalone seconds after failing inside the
-  full gate: `check_b183.sh` (11/11), `check_b213.sh` (19/19), `check_b235.sh` (22/22) and
-  `check_b237_2.sh` (21/21). All four include a heavy Go step (`go build ./...` or a
-  whole-package `go test`), so the gate's sequential compile load — not the assertions —
-  is the variable; B237.2 additionally needs UDP to `1.1.1.1:53`, which timed out during the
-  run. This belongs to RR-4/RR-11: make the Go-dependent contracts SKIP (or retry) when
-  their build step cannot complete, and consider capping compile parallelism
-  (`GOFLAGS=-p=2`) for the gate run so a loaded host does not produce spurious failures.
+* **Flakiness — resolved for this host.** Four contracts used to fail inside a full gate run
+  and pass standalone seconds later (`check_b183` 11/11, `check_b213` 19/19,
+  `check_b235` 22/22, `check_b237_2` 21/21) — all of them include a heavy Go step
+  (`go build ./...` or a whole-package `go test`). Capping compile parallelism
+  (`export GOFLAGS=-p=2` in `verify_pre_deploy.sh`, overridable via
+  `SKYGATE_GATE_GOFLAGS`) removed the whole flaky set in the verification run. If a
+  Go-dependent contract fails again on a loaded host, that cap is the first thing to
+  check (RR-11 tracks the general SKIP/retry hardening).
 
 ---
 
