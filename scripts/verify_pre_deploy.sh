@@ -71,6 +71,14 @@ fi
 QUICK=0
 [ "${1:-}" = "--quick" ] && QUICK=1
 
+# 2026-09-18: cap Go compile parallelism for the catalog run. The gate executes
+# hundreds of checks back to back, many of which compile a whole package
+# (`go build ./...`, `go test ./internal/...`); on a loaded host those steps
+# intermittently failed and produced spurious FAILs (check_b183/b213/b235/b237_2
+# all pass standalone seconds later). Limiting package parallelism trades a little
+# wall-clock time for a stable verdict. Override with SKYGATE_GATE_GOFLAGS.
+export GOFLAGS="${SKYGATE_GATE_GOFLAGS:--p=2}"
+
 # Run a check by name, capture its output, record pass/fail.
 # Args: $1=name, $2=description, rest=command (passed to bash -c as a single string)
 #

@@ -139,10 +139,14 @@ pre-restructure commit. Evidence collected on the host:
   `188.114.96.0/20`). That is the *current* 6-column design (B232 + B237.23), so a
   5-tuple-uniqueness expectation is unreachable on this host; `[J]` already SKIPs and the
   check reports the numbers.
-* **Flakiness.** `check_b183.sh` (11/11) and `check_b237_2.sh` (21/21) both pass when run
-  standalone seconds after failing inside the full gate; B237.2's live probe needs UDP to
-  `1.1.1.1:53`, which timed out during the run. These belong to the RR-4 hardening item
-  (SKIP-not-FAIL for unavailable live state).
+* **Flakiness.** Four contracts pass when run standalone seconds after failing inside the
+  full gate: `check_b183.sh` (11/11), `check_b213.sh` (19/19), `check_b235.sh` (22/22) and
+  `check_b237_2.sh` (21/21). All four include a heavy Go step (`go build ./...` or a
+  whole-package `go test`), so the gate's sequential compile load — not the assertions —
+  is the variable; B237.2 additionally needs UDP to `1.1.1.1:53`, which timed out during the
+  run. This belongs to RR-4/RR-11: make the Go-dependent contracts SKIP (or retry) when
+  their build step cannot complete, and consider capping compile parallelism
+  (`GOFLAGS=-p=2`) for the gate run so a loaded host does not produce spurious failures.
 
 ---
 
