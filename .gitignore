@@ -214,3 +214,19 @@ scratch_archive/
 .scratch_archive/
 # /tmp/ is already in .gitignore above; this catches the *files*
 # dropped at the repo root by accident (e.g. from a bash paste).
+
+# ---- 2026-09-18: re-assert the production script allow-list ----
+# The root-level scratch patterns above (check_*.sh, verify_*.sh, debug_*.sh,
+# test_*.sh, ...) are NOT anchored, so they match at any depth and silently
+# overrode the `!scripts/check_*.sh` negation earlier in this file —
+# gitignore honours the LAST matching rule. The practical effect was that a
+# new scripts/check_*.sh could not be committed without `git add -f`, and 15
+# files under scripts/ (including verify_b199.sh .. verify_b202.sh) were
+# already sitting untracked on the operator's machine while
+# verify_pre_deploy.sh referenced them.
+#
+# These negations come last on purpose. The root-level scratch patterns keep
+# working because nothing under scripts/ should be scratch: the convention is
+# that production checks live in scripts/ and one-off probes do not.
+!scripts/check_*.sh
+!scripts/verify_*.sh

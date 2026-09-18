@@ -83,3 +83,87 @@ jobs:
 
       - name: Run audit_routes.py
         run: python3 scripts/audit_routes.py
+
+  # ────────────────────────────────────────────────────────────────────────
+  # 2026-09-18: backend matrix + shell contracts.
+  #
+  # Rationale: every defect the 2026-09-18 audit found was invisible to the
+  # single existing job. A PostgreSQL-only timestamp expression sitting in
+  # shared code, `?` placeholders that pgx rejects, a SQLite migration chain
+  # that stopped one version short (V071 missing) and re-added columns on
+  # every boot (so a SQLite deployment could not start twice) — none of that
+  # failed CI, because CI exercised one backend and no contracts.
+  #
+  # These three jobs make the split explicit. See
+  # docs/plans/2026-09-17-sqlite-pg-and-headscale-hardening.md.
+  # ────────────────────────────────────────────────────────────────────────
+
+  test-pg:
+    name: go test against a real PostgreSQL
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: skygate
+          POSTGRES_PASSWORD: skygate
+          POSTGRES_DB: skygate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Go 1.25
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+      - name: go mod download
+        run: go mod download
+      - name: go test with SKYGATE_TEST_PG_DSN
+        # With the DSN set, db.OpenForTest stops skipping and the db helpers
+        # are exercised against a real server instead of being skipped.
+        env:
+          SKYGATE_TEST_PG_DSN: postgres://skygate:skygate@127.0.0.1:5432/skygate_test?sslmode=disable
+        run: go test ./internal/db/... -count=1
+
+  test-sqlite:
+    name: dialect + migration-chain contracts on SQLite
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Go 1.25
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+      - name: go mod download
+        run: go mod download
+      - name: dialect branching + leak guard
+        # Pins: nowUnixSQL branches, qInsertOrReplaceNodeOwner really runs on
+        # SQLite, no raw PostgreSQL timestamp expression in shared code.
+        run: go test ./internal/db/ -count=1 -run 'NowUnixSQL|ActiveDialect|SQLiteTimestampWrites|PGFormFailsOnSQLite|NoDialectLeaks|NoSQLitePlaceholders|PGStrftimeCompat'
+      - name: SQLite migration chain is complete and idempotent
+        # Pins: chain reaches V071 like PG, derp_cert_sync exists, the columns
+        # the old `ADD COLUMN IF NOT EXISTS` pattern dropped are present, and
+        # running the chain twice neither errors nor duplicates a column.
+        run: go test ./internal/db/ -count=1 -run 'SQLiteSchemaComplete|AddColumnIfMissingSQLite'
+
+  contracts:
+    name: shell contracts
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Go 1.25
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+      - name: B236 (tailscale advertise-routes guards)
+        run: bash scripts/check_b236.sh
+      - name: headscale unix_socket (regression guard)
+        run: bash scripts/headscale_unix_socket_check.sh
