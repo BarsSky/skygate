@@ -433,6 +433,13 @@ if [ -n "$JOB_ID" ] && ! valid_hex_id "$JOB_ID"; then
 fi
 
 WORK="$(mktemp -d "${UPDATE_DIR}/apply.XXXXXX")" || finish failed "mktemp failed in $UPDATE_DIR"
+# mktemp creates 0700 root-owned. The migration step runs the extracted
+# binary as $RUN_USER (so a failed migration cannot touch root-only
+# state), and a 0700 parent makes that impossible:
+#   env: '.../apply.XXXXXX/skygate': Permission denied
+# The contents are already SHA256-verified, so opening the directory up
+# is safe — and it lives inside the service user's own update dir.
+chmod 0755 "$WORK"
 # shellcheck disable=SC2064
 trap "rm -rf '$WORK'" EXIT
 
