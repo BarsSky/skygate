@@ -901,6 +901,40 @@ prod bug right now", `--no-verify` is acceptable.
   contracts A–I in `scripts/check_b261_native_self_update.sh`
   (incl. a root-free smoke run proving a hostile `TARGET` is refused
   as data), live canary verification in the plan §12.16.
+- **B261.1 (v1.5.9, 2026-09-18)**: **`SKYGATE_DB=sqlite:/path` never
+  opened — native SQLite installs could not start at all.** Found by
+  bringing up the B261 canary on the reference VM: the process printed
+  its banner, produced no listener and no further log lines, and
+  systemd showed it restarting. Foreground run gave the real error
+  after ~40s (5 retries × 2s + connect):
+  ```
+  db: unreachable after retries: 5 attempts: dialect open
+  "sqlite:/var/lib/skygate/skygate.db": sqlite ping ...:
+  unable to open database file: out of memory (14)
+  ```
+  Root cause: `openSQLite` (`internal/db/open_sqlite.go`) converted
+  only *bare* paths to the modernc.org `file:` URI form and explicitly
+  skipped DSNs starting with `sqlite:` — but modernc.org/sqlite does
+  not know that scheme, so SQLite tried to create a **relative file
+  literally named `sqlite:/var/...`**, failed with `SQLITE_CANTOPEN`
+  (14), and the driver reported it as "out of memory". That form is
+  exactly what `deploy/install-common.sh:resolve_db_type` writes into
+  `/etc/skygate/skygate.env` and what `config.resolveDBDSN()` returns,
+  so **every native install on SQLite was dead on arrival** (the
+  reference VM's broken `skygate.service` had been failing on
+  `HEADSCALE_API_KEY` first, which masked this second wall). The test
+  suite missed it because every SQLite test used `:memory:` and the two
+  tests mentioning `sqlite:/...` only asserted the dialect/backend
+  classification, never a real open. **Fix**: strip the `sqlite:`
+  prefix at the top of `openSQLite` (covers the web server, the CLI
+  subcommands and the `db-migrate` converter, since they all open
+  through it) + `internal/db/open_sqlite_b261_test.go` does real file
+  opens for all three accepted shapes (`sqlite:`, bare, `file:`) and
+  asserts no stray `sqlite:`-named file appears. Contracts J/J2 in
+  `scripts/check_b261_native_self_update.sh`. *(Related cosmetic bug
+  found in the same run: `cmd/skygate/main.go` logs
+  `DB backend: postgres` unconditionally, even on a SQLite DSN — the
+  printed DSN is right, the label is hardcoded.)*
 - **B176 + B175.1 (v1.5.2)**: dev-tag
     lowercase (headscale 0.29 rejects
     uppercase tags) + i18n tooltip

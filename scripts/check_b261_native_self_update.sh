@@ -219,7 +219,9 @@ fi
 # --- H: Go tests ------------------------------------------------------
 if command -v go >/dev/null 2>&1; then
   go test ./internal/update/... -count=1 >/dev/null 2>&1 || fail "H: go test ./internal/update/... failed"
-  ok "H: go test ./internal/update/... passes"
+  go test ./internal/db/ -run 'TestOpenSQLite|TestConfigDSNFormsOpen' -count=1 >/dev/null 2>&1 \
+    || fail "H2: the SQLite DSN open regression tests failed"
+  ok "H: go test ./internal/update/... + the SQLite DSN open tests pass"
 else
   ok "H: skipped (no go on PATH)"
 fi
@@ -228,5 +230,26 @@ fi
 grep -q 'B261' AGENTS.md || fail "I: AGENTS.md does not mention B261"
 grep -q 'check_b261' scripts/verify_pre_deploy.sh || fail "I: verify_pre_deploy.sh does not run check_b261"
 ok "I: AGENTS.md + verify_pre_deploy.sh track B261"
+
+# --- J: the installer's SQLite DSN form actually opens (B261.1) --------
+# Live canary finding: deploy/install-*.sh write
+# SKYGATE_DB=sqlite:/path/to/skygate.db, and openSQLite passed the
+# "sqlite:" scheme straight to modernc.org/sqlite, which does not know
+# it — SQLite tried a relative filename containing a colon, failed with
+# SQLITE_CANTOPEN, and the driver reported "unable to open database
+# file: out of memory (14)". A native install could therefore never
+# start (5 retries over ~40s, then log.Fatalf). Every SQLite test used
+# ":memory:", so the suite stayed green.
+if grep -q 'HasPrefix(strings.ToLower(dsn), "sqlite:")' internal/db/open_sqlite.go; then
+  ok "J: openSQLite strips the 'sqlite:' scheme prefix (the installer DSN form opens)"
+else
+  fail "J: openSQLite no longer strips 'sqlite:' — native SQLite installs will fail with a misleading CANTOPEN/OOM error"
+fi
+if [ -f internal/db/open_sqlite_b261_test.go ] \
+   && grep -q 'TestOpenSQLiteInstallerDSNForms' internal/db/open_sqlite_b261_test.go; then
+  ok "J2: a real-open regression test covers the installer DSN forms"
+else
+  fail "J2: internal/db/open_sqlite_b261_test.go is missing the installer-DSN open test"
+fi
 
 hdr "B261: all contracts pass"

@@ -44,6 +44,33 @@ import (
 // an error if the parent directory is missing). The first open creates
 // an empty SQLite DB; MigrateSQLite (Task 2) then applies the schema.
 func openSQLite(dsn string) (*sql.DB, error) {
+	// 2026-09-18 (B261.1): strip an explicit "sqlite:" scheme prefix.
+	//
+	// "sqlite:/var/lib/skygate/skygate.db" is exactly what
+	// deploy/install-{debian,rh,bare}.sh write into
+	// /etc/skygate/skygate.env (resolve_db_type) and what
+	// config.resolveDBDSN() hands back, and DetectDSN classifies it as
+	// DialectSQLite. But the driver (modernc.org/sqlite) does NOT know
+	// the "sqlite:" scheme: it treats the whole string as a filename,
+	// so SQLite tries to create a *relative* file whose name contains a
+	// colon, fails with SQLITE_CANTOPEN, and the driver reports it as
+	// the thoroughly misleading
+	// "unable to open database file: out of memory (14)".
+	//
+	// Net effect pre-fix: a native SQLite install could never start —
+	// db.OpenDSNWithRetry burned its 5 attempts over ~40s and then
+	// log.Fatalf'd. Only ":memory:" (every test) and bare paths worked,
+	// which is why the whole test suite stayed green while the shipped
+	// installer config was broken.
+	//
+	// Normalising here (rather than at each call site) covers the web
+	// server, the CLI subcommands and the db-migrate converter, since
+	// they all reach SQLite through this function.
+	dsn = strings.TrimSpace(dsn)
+	if strings.HasPrefix(strings.ToLower(dsn), "sqlite:") {
+		dsn = dsn[len("sqlite:"):]
+	}
+
 	var db *sql.DB
 	if dsn == "" || dsn == ":memory:" {
 		// In-memory DSN — modernc.org accepts ":memory:" directly
@@ -62,9 +89,10 @@ func openSQLite(dsn string) (*sql.DB, error) {
 		// File DSN — normalise to modernc.org "file:" URI form and
 		// append the three required PRAGMAs. If the DSN already has
 		// a "?" we use "&" as the separator; otherwise we use "?".
+		// (The "sqlite:" prefix was already stripped above, so the
+		// only remaining forms are "file:..." and bare paths.)
 		finalDSN := dsn
-		if !strings.HasPrefix(strings.ToLower(finalDSN), "file:") &&
-			!strings.HasPrefix(strings.ToLower(finalDSN), "sqlite:") {
+		if !strings.HasPrefix(strings.ToLower(finalDSN), "file:") {
 			// Bare path — convert to file: URI.
 			finalDSN = "file:" + finalDSN
 		}
