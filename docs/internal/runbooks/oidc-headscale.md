@@ -96,6 +96,30 @@ oidc:
   # metadata it needs to provision the headscale user.
   scope: ["openid", "profile", "email"]
 
+  # Extra query parameters appended to the authorization request.
+  # headscale does not require any; the usual reason to set this is an
+  # upstream IdP hint (forcing a tenant / realm). Empty is fine.
+  extra_params: {}
+
+  # Optional allow-list of email domains. When set, a login whose email
+  # claim is outside the list is rejected by headscale before skygate's
+  # own checks run. Leave unset to accept every domain the IdP
+  # authenticates (skygate still gates on its own user table).
+  allowed_domains: []
+
+  # When true, headscale refreshes its ACL + node list on EVERY OIDC
+  # login. Recommended true for development (always the latest config)
+  # and false for production (avoids a re-apply storm on every user
+  # login). /admin/oidc writes this field into the generated snippet.
+  auto_update: false
+
+  # REMOVED in headscale 0.23+: the old switch that stripped the email
+  # domain from the username. The modern replacement is
+  # `email_to_username_claim_separator` (see the field table below).
+  # Kept here only so an operator upgrading from an older headscale
+  # understands why the key is rejected.
+  strip_email_domain: false
+
   # headscale auto-provisions a user on first login (creates
   # the headscale user named after the OIDC sub claim). Set to
   # true for the "click-to-add" UX the operator wants.

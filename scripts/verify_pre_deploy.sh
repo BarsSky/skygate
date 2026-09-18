@@ -490,7 +490,8 @@ run_check "B23" "CI Go version matches go.mod (v0.32.9)" \
     grep -q \"^go 1.25\" go.mod &&
     grep -q \"^toolchain go1\" go.mod &&
     grep -qF \"go-version: '\\''1.25'\\''\" .github/workflows/ci.yml &&
-    [ \"\$(grep -cF \"go-version: '\\''1.25'\\''\" .github/workflows/ci.yml)\" = 2 ]
+    [ \"\$(grep -c ''go-version:'' .github/workflows/ci.yml)\" -ge 1 ] &&
+    [ \"\$(grep -cF \"go-version: '\\''1.25'\\''\" .github/workflows/ci.yml)\" = \"\$(grep -c ''go-version:'' .github/workflows/ci.yml)\" ]
   '"
 
 # --- B24: no dead per-version wrapper files at root (v0.32.9) ---

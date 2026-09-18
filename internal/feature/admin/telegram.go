@@ -58,10 +58,6 @@ const (
 	// pre-B253 code re-ran it on every page load: an unreachable Telegram
 	// API made /admin/telegram take ~5s on every refresh.
 	telegramProbeTTLError = 5 * time.Minute
-
-	// telegramProbeTTL is the pre-B253 single-TTL name, kept so older
-	// call sites/tests keep compiling; new code uses the two above.
-	telegramProbeTTL = telegramProbeTTLSuccess
 )
 
 // telegramProbeTTLFor returns the TTL that applies to a cached result:

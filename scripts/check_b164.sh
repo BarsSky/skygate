@@ -114,7 +114,9 @@ echo "=== contract E: handler inserts into derp_relays + audit log ==="
 # insert a derp_relays row (so the new relay is
 # registered in the live policy on the next
 # /admin/exit-rules/reapply).
-if grep -qE 'db\.AddDerpRelay\(s\.DB, row\)' internal/feature/admin/derp_init.go; then
+# B208/B210 replaced the captured `s.DB *sql.DB` with the DBSource accessor
+# `s.dbc()`; the insert is still there (derp_init.go), so accept both forms.
+if grep -qE 'db\.AddDerpRelay\(s\.(DB|dbc\(\)), row\)' internal/feature/admin/derp_init.go; then
     ok "PostAdminDerpRelaysInit inserts into derp_relays"
 else
     bad "PostAdminDerpRelaysInit: derp_relays insert MISSING (relay would be installed but not registered)"
