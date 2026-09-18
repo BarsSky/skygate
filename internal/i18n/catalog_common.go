@@ -98,6 +98,11 @@ var ruCommon = map[string]string{
 	"common.back"                    : "Назад",
 	"common.yes"                     : "Да",
 	"common.no"                      : "Нет",
+	// TD-18: user/devices.html renders these two badges; the keys were
+	// referenced but missing from the catalog, so the page showed the raw
+	// "common.online" / "common.offline" text.
+	"common.online"                  : "Онлайн",
+	"common.offline"                 : "Офлайн",
 	"common.add"                     : "Добавить",
 	"common.edit"                    : "Редактировать",
 	"common.enable"                  : "Включить",
@@ -303,6 +308,9 @@ var enCommon = map[string]string{
 	"common.back"                    : "Back",
 	"common.yes"                     : "Yes",
 	"common.no"                      : "No",
+	// TD-18: see the RU block — user/devices.html online/offline badges.
+	"common.online"                  : "Online",
+	"common.offline"                 : "Offline",
 	"common.add"                     : "Add",
 	"common.edit"                    : "Edit",
 	"common.enable"                  : "Enable",

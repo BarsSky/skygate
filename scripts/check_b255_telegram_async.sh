@@ -148,7 +148,7 @@ else bad "template must reference egress_nearest_apply i18n key"; fi
 
 # --- G. tailscalePeerLatencies helper ---
 echo
-echo "=== G. tailscalePeerLatencies helper (PeerLatency from `tailscale status --json`) ==="
+echo "=== G. tailscalePeerLatencies helper (PeerLatency from 'tailscale status --json') ==="
 if grep -qF 'func tailscalePeerLatencies' "$TG" 2>/dev/null; then
   ok "tailscalePeerLatencies defined"
 else bad "tailscalePeerLatencies must be defined"; fi

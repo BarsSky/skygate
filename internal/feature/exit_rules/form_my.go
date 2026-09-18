@@ -856,7 +856,8 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	for _, ip := range ipsToInsert {
 		ok, existingID := s.insertRuleUnique(c.UserID, devID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent)
 		if !ok {
-			// 2026-09-18 (R6): was `http.Error(w, "db error", 500)` — a raw
+			// 2026-09-18 (R6): this branch used to answer with a raw
+			// http.Error carrying a literal 500 status — a raw
 			// text/plain page that ALSO threw away every field the user had
 			// filled in. The validation branches in this same function
 			// already redirect through buildFormErrorRedirectURL (which

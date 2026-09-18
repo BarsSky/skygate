@@ -244,7 +244,54 @@ the squash (estimated, depends on pack efficiency).
 
 ---
 
-## How to use this file
+## v1.5.9 — native self-update + entry-point fixes (2026-09-18)
+
+**Shipped in this cycle:**
+
+- **B261 — нативное самообновление (systemd / bare)** — plan §12.15/§12.16.
+  Раньше автообновление было только для Docker. Теперь: непривилегированный
+  сервис пишет `request.props` (только данные), root-owned
+  `skygate-update.path` → `skygate-update.service` →
+  `/usr/local/lib/skygate/skygate-apply-update.sh`, который делает
+  backup → download → SHA256 → `migrate-only` **до** подмены → атомарную
+  подмену бинаря → restart → опрос `/healthz` со **строкой сборки** →
+  откат при провале. Вердикт складывается в state (`ConfirmNativeSwap`).
+  Живая проверка: happy path `done`, реальный откат `rolled_back`.
+- **B261.1 — `SKYGATE_DB=sqlite:/path` не открывался** (форма, которую пишет
+  сам установщик): нативные SQLite-установки не стартовали вообще. Схема
+  `sqlite:` теперь срезается в `openSQLite` + регрессионный тест с реальным
+  открытием.
+- **B262 — OpenRC/Alpine** как полноценный `InstallKind` (маркер
+  `/run/openrc`, `rc-service restart`, `install-alpine.sh` ставит helper) +
+  **ассет `SHA256SUMS` в релизах**: `release.yml` качал артефакт в каталог
+  с тем же именем, что и файл, и flatten вкладывал файл внутрь каталога →
+  релизы v1.5.6–v1.5.8 выходили без контрольных сумм (исправлено одной
+  строкой, с симуляцией flatten в контракте).
+- **TD-11 — CDN-группировка в /my/exit-rules и /admin/exit-rules
+  (Approach G, B237.22)** — DONE. UI-only группировка: per-CIDR строки
+  остаются отдельными и редактируемыми, но сворачиваются под заголовок
+  CDN-домена (`cdn:` marker + `exit_rules.cdn_group_count`). Схема БД,
+  миграции и автопdater не тронуты (проверено контрактом «storage
+  unchanged»). Дизайн — `docs/plans/td-11-cloudflare-grouping.md`.
+- **B237.23 — дрейф `ON CONFLICT` в автопдейтере устройств** — DONE.
+  B232 пересоздал `device_rules_natural_key_uniq` 6-колоночным, не обновив
+  `sync.go` (5 колонок), из-за чего каждый INSERT автопдейтера молча падал
+  (`no unique or exclusion constraint matching`) и новые `/32` не попадали
+  в БД. `sync.go` снова использует 6-колоночный `ON CONFLICT`, как
+  `qInsertDeviceRule`.
+
+**Гейт (`verify_pre_deploy.sh`) — озеленение 2026-09-18:** B237.20
+(staticcheck 0), B237.16 (числовые статусы), TD-15 (бэктики в описаниях
+`run_check` исполнялись bash-ом), TD-16/TD-18 (4 отсутствовавших i18n-ключа:
+`common.online`, `common.offline`, `cluster.col_actions`,
+`cluster.node_upgrade_help`), B237.2 (контракт A.3 закреплял
+`net.LookupHost`, который B260.2.5 намеренно убрал — теперь пинится
+`dnsLookupVia1111` + отсутствие регресса), B191 и B-mod-admin-user-sync
+корректно печатают SKIP вместо FAIL, когда docker-демон недоступен.
+
+---
+
+
 
 - **After every release:** update the "Last updated"
   date + add a one-line entry to the "What's done"

@@ -783,6 +783,7 @@ var ruAdmin = map[string]string{
 	"cluster.col_state":                 "Состояние",
 	"cluster.col_skygate_version":       "Skygate",
 	"cluster.col_joined":                "Присоединился",
+	"cluster.col_actions":               "Действия",
 	"cluster.col_last_seen":             "Последний раз видели",
 	"cluster.col_target":                "Цель",
 	"cluster.col_role":                  "Роль",
@@ -862,6 +863,7 @@ var ruAdmin = map[string]string{
 	// B150); the orchestrator detects "done" by
 	// polling /healthz. Self-upgrade is refused.
 	"cluster.node_upgrade_btn":            "Обновить",
+	"cluster.node_upgrade_help":           "Запустить rolling upgrade этой ноды: оркестратор переведёт её в state=draining и будет опрашивать /healthz до 5 минут. Новый бинарник на ноду заливаете вы сами (B150 deploy-push/pull) — кнопка только оркестрирует переключение.",
 	"cluster.node_upgrade_confirm":        "Запустить rolling upgrade для %s? Orchestrator переведёт ноду в state=draining и будет опрашивать /healthz (до 5 мин) — не забудьте залить новый бинарник на ноду!",
 	"cluster.node_upgraded":               "Нода %s обновлена (state=draining → state=ready).",
 	"cluster.upgrade_all_btn":             "Обновить все (rolling)",
@@ -1657,6 +1659,7 @@ var enAdmin = map[string]string{
 	"cluster.col_state":                 "State",
 	"cluster.col_skygate_version":       "Skygate",
 	"cluster.col_joined":                "Joined",
+	"cluster.col_actions":               "Actions",
 	"cluster.col_last_seen":             "Last seen",
 	"cluster.col_target":                "Target",
 	"cluster.col_role":                  "Role",
@@ -1728,6 +1731,7 @@ var enAdmin = map[string]string{
 	// See the RU block above for the design. The EN
 	// keys mirror the RU ones in the same order.
 	"cluster.node_upgrade_btn":            "Upgrade",
+	"cluster.node_upgrade_help":           "Start a rolling upgrade for this node: the orchestrator marks it state=draining and polls /healthz for up to 5 minutes. You push the new binary to the node yourself (B150 deploy-push/pull) — the button only orchestrates the switch.",
 	"cluster.node_upgrade_confirm":        "Start a rolling upgrade for %s? The orchestrator will mark the node state=draining and poll /healthz (up to 5 min) — don't forget to push the new binary to the node!",
 	"cluster.node_upgraded":               "Node %s upgraded (state=draining → state=ready).",
 	"cluster.upgrade_all_btn":             "Upgrade all (rolling)",

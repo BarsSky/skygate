@@ -173,9 +173,11 @@ func (s *ImagePullStrategy) Run(ctx context.Context) error {
 		return fmt.Errorf("pre-flight: %w", err)
 	}
 	if !s.imageIsFromRegistry(runningImage) {
+		// NB: no trailing period — staticcheck ST1005 ("error strings
+		// should not end with punctuation"), pinned at zero by B237.20.
 		return fmt.Errorf("pre-flight: running container image %q is not from a registry "+
 			"(locally-built). Switch to docker-compose.ghcr.yml and set SKYGATE_IMAGE in .env first. "+
-			"See internal/update/image.go header comment for the migration path.", runningImage)
+			"See internal/update/image.go header comment for the migration path", runningImage)
 	}
 	previousTag := imageTag(runningImage)
 	if previousTag == s.Tag {

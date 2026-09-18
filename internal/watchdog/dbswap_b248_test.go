@@ -1,4 +1,4 @@
-﻿// internal/watchdog/dbswap_b248_test.go — B248 ErrClusterDatabaseNotFound exemption tests.
+// internal/watchdog/dbswap_b248_test.go — B248 ErrClusterDatabaseNotFound exemption tests.
 //
 // B248 (2026-09-15): the watchdog's tick() used to lump
 // db.ErrClusterDatabaseNotFound in with true I/O errors, so every
@@ -36,6 +36,8 @@ func errReaderFunc(err error) DSNReader {
 }
 
 // okReader is a DSNReader that returns a successful row.
+//
+//lint:ignore U1000 kept as a ready-made fixture for future tick() tests
 func okReaderFunc(row *ClusterDatabaseRow) DSNReader {
 	return func(ctx context.Context) (*ClusterDatabaseRow, error) {
 		return row, nil

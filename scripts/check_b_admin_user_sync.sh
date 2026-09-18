@@ -53,6 +53,18 @@ ok()  { echo "  PASS  $1"; }
 warn(){ echo "  WARN  $1"; }
 bad() { echo "  FAIL  $1"; exit 1; }
 
+# ── pre-flight (2026-09-18, P1) ──
+# Contract A drives the LIVE docker stack, so on a workstation without a
+# reachable daemon this used to FAIL with "skygate-skygate-1 container not
+# running" — an environment answer to a live-state question, which painted the
+# whole gate red and buried real findings. Skip only when docker itself is
+# unreachable; if docker works but the container is missing, that IS a real
+# finding and the check fails below as before.
+if ! sudo docker info >/dev/null 2>&1; then
+    echo "SKIP: docker daemon not reachable (B-mod-admin-user-sync inspects the live stack) — run it on the skygate VM"
+    exit 0
+fi
+
 # ── container reachable ──
 if ! sudo docker inspect "$CONTAINER" >/dev/null 2>&1; then
     bad "$CONTAINER container not running"

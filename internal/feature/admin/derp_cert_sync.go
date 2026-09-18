@@ -66,7 +66,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
 	"encoding/hex"
@@ -655,8 +654,6 @@ func unixToTime(sec int64) time.Time {
 	return time.Unix(sec, 0)
 }
 
-// TlsVersion returns the minimum TLS version that derper
-// supports. Used by the admin page's "DERP is reachable
-// via TLS 1.3" badge. Hardcoded for now — derper 1.70+
-// supports TLS 1.3 only on the DERP path.
-func derpMinTLSVersion() uint16 { return tls.VersionTLS13 }
+// NOTE (2026-09-18, B237.20): derpMinTLSVersion() used to live here — a
+// hardcoded `tls.VersionTLS13` helper for an admin-page badge that was
+// never wired up. Removed as dead code (staticcheck U1000 contract).

@@ -47,12 +47,28 @@ else
     bad "A.2 resolvePublicDERPIP function missing"
 fi
 
-# A.3 resolvePublicDERPIP uses net.LookupHost
-# The function is ~50 lines; use awk range instead of grep -A.
-if awk '/^func resolvePublicDERPIP/,/^}/' internal/feature/admin/derp.go 2>/dev/null | grep -qE 'net\.LookupHost'; then
-    ok "A.3 resolvePublicDERPIP uses net.LookupHost (the DNS source of truth)"
+# A.3 resolvePublicDERPIP resolves via DNS, without the OS resolver chain.
+#
+# B237.2 originally pinned `net.LookupHost` here. B260.2.5 (2026-09-17)
+# deliberately REPLACED it: Go's net.Resolver on Linux honours
+# /etc/nsswitch.conf + systemd-resolved + Docker's extra_hosts, so on the
+# reference VM the page rendered "192.168.13.69 (dns:env)" (the host's LAN
+# address, taken from /etc/hosts) instead of the public 95.165.170.190.
+# The fix was a raw UDP DNS query straight to 1.1.1.1
+# (dnsLookupVia1111), which sidesteps the whole OS resolver chain.
+#
+# So the contract now pins the INTENT — DNS is the source of truth, the
+# stack does not consult /etc/hosts, and the egress guess stays a last
+# resort — plus the absence of the regressed call.
+if awk '/^func resolvePublicDERPIP/,/^}/' internal/feature/admin/derp.go 2>/dev/null | grep -qE 'dnsLookupVia1111'; then
+    ok "A.3 resolvePublicDERPIP resolves DNS directly (dnsLookupVia1111, B260.2.5)"
 else
-    bad "A.3 resolvePublicDERPIP must use net.LookupHost (the only source that returns the real public IP)"
+    bad "A.3 resolvePublicDERPIP does not use dnsLookupVia1111 — the OS-resolver chain (and therefore /etc/hosts + extra_hosts) is back in the path"
+fi
+if awk '/^func resolvePublicDERPIP/,/^}/' internal/feature/admin/derp.go 2>/dev/null | grep -qE 'net\.LookupHost'; then
+    bad "A.3b resolvePublicDERPIP calls net.LookupHost again — that is the B260.2.5 regression (it honours /etc/hosts, so the page shows the LAN IP)"
+else
+    ok "A.3b resolvePublicDERPIP does not call net.LookupHost (B260.2.5 kept)"
 fi
 
 # A.4 SKYGATE_DERP_HOSTNAME env var honored

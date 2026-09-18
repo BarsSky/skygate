@@ -59,6 +59,8 @@ func TestMain(m *testing.M) {
 // don't depend on the package-level state in i18n_test.go.
 // Unused in most tests (renderProbeHTML takes a lang string
 // directly) but kept for future tests that need the catalog.
+//
+//lint:ignore U1000 intentional test fixture (see comment above)
 func newTestCatalog() *i18n.Catalog { return i18n.New() }
 
 // TestRenderProbeHTML_OkDirect pins the structural shape the

@@ -538,12 +538,12 @@ var categoryOrder = []string{
 // route through), so 130 rules become "30 rules via emilia,
 // 30 rules via karolina, ..." rows. Empty via gets its own
 // "no-route" bucket so the operator can spot malformed rules.
-func cidrSubGroupKey(g ACLGrant) string {
-	if len(g.Via) == 0 {
-		return "(no via — bug?)"
-	}
-	return g.Via[0]
-}
+// NOTE (2026-09-18, B237.20): per-via sub-grouping of the
+// cidr_outbound category was considered (the comment above described
+// regrouping 130 rules into "30 via emilia / 30 via karolina / …"), but it
+// was never wired up: B252 renders cidr_outbound as one flat category.
+// The helper that would have produced the sub-group key was dead code and
+// was removed — staticcheck's U1000 contract (B237.20) pins zero findings.
 
 // parseACLPolicy takes the pretty-printed policy string from
 // headscale, decodes it, classifies every grant into a
