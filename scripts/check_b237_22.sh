@@ -44,7 +44,7 @@
 #   E. Unit tests cover the helpers
 #   F. i18n keys for the per-group "X диапазонов" badge
 #      (RU + EN)
-#   G. AGENTS.md + PLANS.md mention B237.22
+#   G. AGENTS.md + ROADMAP.md mention B237.22
 #   H. verify_pre_deploy.sh includes this check
 #   I. The dev-tag contract is preserved (no other rules
 #      are affected by the grouping)
@@ -267,7 +267,7 @@ else
     bad "F.4 cdn_group_count EN translation must have 'ranges'"
 fi
 
-# --- G. AGENTS.md + PLANS.md mention B237.22 ---
+# --- G. AGENTS.md + ROADMAP.md mention B237.22 ---
 
 # G.1 AGENTS.md mentions B237.22
 if grep -q 'B237\.22' AGENTS.md 2>/dev/null; then
@@ -276,11 +276,11 @@ else
     bad "G.1 AGENTS.md must mention B237.22"
 fi
 
-# G.2 docs/PLANS.md mentions TD-11
-if grep -q 'TD-11' docs/PLANS.md 2>/dev/null; then
-    ok "G.2 docs/PLANS.md mentions TD-11 (the parent task)"
+# G.2 docs/ROADMAP.md mentions TD-11
+if grep -q 'TD-11' docs/ROADMAP.md 2>/dev/null; then
+    ok "G.2 docs/ROADMAP.md mentions TD-11 (the parent task)"
 else
-    bad "G.2 docs/PLANS.md must mention TD-11"
+    bad "G.2 docs/ROADMAP.md must mention TD-11"
 fi
 
 # --- H. verify_pre_deploy.sh includes this check ---

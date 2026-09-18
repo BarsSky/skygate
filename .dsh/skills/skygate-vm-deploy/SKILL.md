@@ -80,4 +80,4 @@ sudo docker compose logs skygate | grep -i 'migrate'
 
 Если правка касается HA-цепочки, certsync, DNS-failover или подкоманд
 `deploy` — обновить статус-лог в
-`docs/internal/runbooks/ha-v1.5.0-execution.md` §6 **в том же коммите**.
+`docs/ha.md` §6 **в том же коммите**.

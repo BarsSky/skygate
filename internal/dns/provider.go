@@ -18,7 +18,7 @@
 //
 // Adding a new provider = implementing the Provider
 // interface and registering the case in BuildProvider.
-// See docs/internal/ha-v1.5.0-execution.md §"Pluggable DNS
+// See docs/ha.md §"Pluggable DNS
 // provider design" for the full rationale.
 
 package dns

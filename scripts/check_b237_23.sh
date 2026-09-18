@@ -199,7 +199,7 @@ else
   fi
 fi
 
-# --- G. Registration in AGENTS.md + PLANS.md ---
+# --- G. Registration in AGENTS.md + ROADMAP.md ---
 
 G1=$(grep -cE 'B237\.23' "$REPO/AGENTS.md")
 if [ "$G1" -ge 1 ]; then
@@ -208,11 +208,11 @@ else
   bad "G.1 AGENTS.md must mention B237.23"
 fi
 
-G2=$(grep -cE 'B237\.23' "$REPO/docs/PLANS.md")
+G2=$(grep -cE 'B237\.23' "$REPO/docs/ROADMAP.md")
 if [ "$G2" -ge 1 ]; then
-  ok "G.2 docs/PLANS.md mentions B237.23 ($G2 hits)"
+  ok "G.2 docs/ROADMAP.md mentions B237.23 ($G2 hits)"
 else
-  bad "G.2 docs/PLANS.md must mention B237.23"
+  bad "G.2 docs/ROADMAP.md must mention B237.23"
 fi
 
 G3=$(grep -cE 'check_b237_23' "$REPO/scripts/verify_pre_deploy.sh")

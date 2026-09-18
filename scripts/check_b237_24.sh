@@ -108,13 +108,13 @@ else
   bad "B.1 AGENTS.md must mention B237.24"
 fi
 
-# --- C. docs/PLANS.md mentions B237.24 ---
+# --- C. docs/ROADMAP.md mentions B237.24 ---
 
-C1=$(grep -E 'B237\.24' docs/PLANS.md 2>/dev/null | wc -l)
+C1=$(grep -E 'B237\.24' docs/ROADMAP.md 2>/dev/null | wc -l)
 if [ "$C1" -ge 1 ]; then
-  ok "C.1 docs/PLANS.md mentions B237.24 ($C1 hits)"
+  ok "C.1 docs/ROADMAP.md mentions B237.24 ($C1 hits)"
 else
-  bad "C.1 docs/PLANS.md must mention B237.24"
+  bad "C.1 docs/ROADMAP.md must mention B237.24"
 fi
 
 # --- D. Live: the v1.5.2 release was successfully published (operator's

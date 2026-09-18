@@ -1,6 +1,6 @@
 // skygate migrate ... — B213 (v1.5.0+) in-DB schema
 // migration CLI. Phase 1.7 of
-// docs/internal/cluster-management.md.
+// docs/ha.md.
 //
 // The pre-B213 landscape:
 //

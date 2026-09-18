@@ -5,7 +5,7 @@
 # .gitignore:205 has a bare `check_*.sh` pattern that re-ignores
 # scripts/check_*.sh even though .gitignore:93 negates it (last match wins
 # in gitignore), so a new scripts/check_*.sh cannot be committed without
-# `git add -f`. See docs/plans/2026-09-17-sqlite-pg-and-headscale-hardening.md
+# `git add -f`. See docs/ROADMAP.md
 # section 12.7.
 #
 # BACKGROUND

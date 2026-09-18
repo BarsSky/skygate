@@ -52,7 +52,7 @@ var ruTelegram = map[string]string{
 	"telegram.probe_tip_advertise":     "Проверьте, что <code>tailscale up --advertise-routes</code> на relay покрывает указанные IP (выполните <code>tailscale status</code> в контейнере relay).",
 	"telegram.probe_tip_approve":       "Проверьте, что headscale подтвердил subnet-маршруты relay: <code>docker exec headscale headscale nodes list</code> → сравните <code>advertised-routes</code> vs <code>enabled-routes</code>.",
 	"telegram.probe_tip_update":        "Запустите <code>make tailscale-update-telegram-routes</code> на relay, если Telegram добавил новые IP-диапазоны.",
-	"telegram.probe_tip_docs":          "См. <a href=\"/docs/internal/internal/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/internal/internal/telegram-relay.md</a> для полной инструкции.",
+	"telegram.probe_tip_docs":          "См. <a href=\"/docs/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/telegram-relay.md</a> для полной инструкции.",
 	// 2026-09-15 (B-bug-fix): conditional hints that fire when
 	// the live container's tailscaled is down / has accept-routes
 	// off — the most common reason "Telegram API: недоступен" on
@@ -82,7 +82,7 @@ var ruTelegram = map[string]string{
 	"telegram.where_env_vars":                "Переменные <code>TELEGRAM_BOT_TOKEN</code> / <code>TELEGRAM_CHAT_ID</code> из <code>.env</code> применяются только если не заданы в БД (см. <code>cmd/skygate/main.go</code>).",
 	"telegram.where_docs":                    "Полная процедура получения токена: <a href=\"/docs/TELEGRAM.md\" target=\"_blank\" rel=\"noopener\">docs/TELEGRAM.md</a>.",
 	"telegram.egress_title":                  "Egress relay",
-	"telegram.egress_subtitle":               "Какой relay прогоняет Telegram-CIDR через себя (skygate использует <code>--accept-routes</code>, не <code>--exit-node</code>; см. <a href=\"/docs/internal/internal/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/internal/internal/telegram-relay.md</a>).",
+	"telegram.egress_subtitle":               "Какой relay прогоняет Telegram-CIDR через себя (skygate использует <code>--accept-routes</code>, не <code>--exit-node</code>; см. <a href=\"/docs/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/telegram-relay.md</a>).",
 	"telegram.egress_help":                   "Если api.telegram.org недоступен напрямую, выберите relay, на котором работает <code>tailscale set --advertise-routes</code> с каноничным Telegram-CIDR. Skymate сам подключится по SSH и применит маршруты. Снимите выбор — Tailscale сам выберет лучший relay по метрике.",
 	"telegram.egress_current_label":          "Сейчас выбран",
 	"telegram.egress_current_none":           "не выбран (Tailscale auto-pick по метрике)",
@@ -167,7 +167,7 @@ var enTelegram = map[string]string{
 	"telegram.probe_tip_advertise":     "Check that the relay's <code>tailscale up --advertise-routes</code> covers the IPs above (run <code>tailscale status</code> in the relay container).",
 	"telegram.probe_tip_approve":       "Check that headscale has approved the relay's subnet routes: <code>docker exec headscale headscale nodes list</code> → look for the relay's <code>advertised-routes</code> vs <code>enabled-routes</code>.",
 	"telegram.probe_tip_update":        "Run <code>make tailscale-update-telegram-routes</code> on the relay if Telegram added new IP ranges.",
-	"telegram.probe_tip_docs":          "See <a href=\"/docs/internal/internal/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/internal/internal/telegram-relay.md</a> for the full setup procedure.",
+	"telegram.probe_tip_docs":          "See <a href=\"/docs/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/telegram-relay.md</a> for the full setup procedure.",
 	// 2026-09-15 (B-bug-fix): see RU counterpart above.
 	"telegram.probe_tip_container_off":       "In the skygate container <strong>tailscaled is not running</strong> — <code>SKYGATE_TS_AUTHKEY_FILE=/dev/null</code> or an empty authkey. Fix: open <code>/admin/tailscale</code> (Start) OR set a real <code>TS_AUTHKEY_FILE</code> in <code>docker-compose.yml</code> and restart skygate.",
 	"telegram.probe_tip_container_no_accept": "In the skygate container <strong>tailscale set --accept-routes=false</strong> — the relay's subnet routes are ignored. Click the \"Re-apply accept-routes\" button in the <em>Container tailscale state</em> card below.",
@@ -190,7 +190,7 @@ var enTelegram = map[string]string{
 	"telegram.where_env_vars":                "Variables <code>TELEGRAM_BOT_TOKEN</code> / <code>TELEGRAM_CHAT_ID</code> from <code>.env</code> apply only if not set in DB (see <code>cmd/skygate/main.go</code>).",
 	"telegram.where_docs":                    "Full token procedure: <a href=\"/docs/TELEGRAM.md\" target=\"_blank\" rel=\"noopener\">docs/TELEGRAM.md</a>.",
 	"telegram.egress_title":                  "Egress relay",
-	"telegram.egress_subtitle":               "Which relay terminates Telegram-CIDR traffic (skygate uses <code>--accept-routes</code>, not <code>--exit-node</code>; see <a href=\"/docs/internal/internal/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/internal/internal/telegram-relay.md</a>).",
+	"telegram.egress_subtitle":               "Which relay terminates Telegram-CIDR traffic (skygate uses <code>--accept-routes</code>, not <code>--exit-node</code>; see <a href=\"/docs/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/telegram-relay.md</a>).",
 	"telegram.egress_help":                   "If api.telegram.org is unreachable directly, pick the relay that runs <code>tailscale set --advertise-routes</code> with the canonical Telegram-CIDR. Skygate SSHes in and applies the routes itself. Clear the selection to fall back to Tailscale's metric-based auto-pick.",
 	"telegram.egress_current_label":          "Currently selected",
 	"telegram.egress_current_none":           "none (Tailscale auto-pick by metric)",

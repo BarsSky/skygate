@@ -3,7 +3,7 @@
 //
 // v1.5.0 / B148.
 //
-// Page surface (per docs/internal/ha-v1.5.0-execution.md
+// Page surface (per docs/ha.md
 // §5.1 / Phase 4):
 //
 //  1. Current cert info   — Subject + NotAfter + days_left

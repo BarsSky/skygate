@@ -94,7 +94,7 @@ For **ops** (Telegram bot, optional but recommended):
   across both backends. SQLite is still available as a development
   / single-host escape hatch via `docker-compose.sqlite.yml`
   (skygate-only with a bind-mounted SQLite file — no PG container
-  required); see `docs/BACKLOG.md` for the rollback policy if you
+  required); see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the rollback policy if you
   need to revert from PG back to the legacy SQLite default.
 - **Templates:** `html/template`, `embed.FS` — no Node, no JS bundler.
   Per-feature templates under `internal/handlers/templates/`.
@@ -119,7 +119,9 @@ For **ops** (Telegram bot, optional but recommended):
 See [docs/architecture.md](docs/architecture.md) for the full component
 map, [docs/db-schema.md](docs/db-schema.md) for the data model,
 [docs/api.md](docs/api.md) for the HTTP surface, and
-[docs/deploy.md](docs/deploy.md) for the install/backup/restore flow.
+[docs/INSTALL.md](docs/INSTALL.md) / [docs/UPDATE.md](docs/UPDATE.md) for
+every install and update path (the env-var reference is in
+[docs/deploy.md](docs/deploy.md)).
 
 ## Feature highlights (v0.16 → v0.33)
 
@@ -543,7 +545,7 @@ Skygate is HTTP only. Always put it behind a TLS terminator.
 
 Cookies are HttpOnly + SameSite=Lax — works behind any standard
 reverse proxy. Make sure the proxy does NOT strip the `Set-Cookie`
-header. See [docs/internal/runbooks/https-setup.md](docs/internal/runbooks/https-setup.md) for a Caddy
+header. See [docs/https.md](docs/https.md) for the Caddy / nginx / NPM
 + Let's Encrypt walkthrough.
 
 ## Security
@@ -627,16 +629,27 @@ R1–R27 runtime), and the VM-vs-Windows working rules.
 
 | You want… | Go to |
 |---|---|
+| **Install** (docker / systemd / OpenRC / bare / Windows / tarball) | [docs/INSTALL.md](docs/INSTALL.md) |
+| **Update** (in-app, scheduled, native self-update, mirrors, manual) | [docs/UPDATE.md](docs/UPDATE.md) |
+| **Roadmap, tech debt, blocked work** | [docs/ROADMAP.md](docs/ROADMAP.md) |
+| **What broke and why** (incidents, traps) | [docs/LESSONS.md](docs/LESSONS.md) |
 | Component map, data flow | [docs/architecture.md](docs/architecture.md) |
 | All DB tables + columns | [docs/db-schema.md](docs/db-schema.md) |
 | Every HTTP endpoint + curl | [docs/api.md](docs/api.md) |
-| Deploy / backup / restore / DERP / HTTPS | [docs/deploy.md](docs/deploy.md), [docs/disaster-recovery.md](docs/disaster-recovery.md) |
+| Release / deploy / PG cutover / bootstrap | [docs/operations.md](docs/operations.md) |
+| HA topology + failover | [docs/ha.md](docs/ha.md) |
+| HTTPS / reverse proxy / certificates | [docs/https.md](docs/https.md) |
+| OIDC (skygate ⇄ headscale) | [docs/oidc.md](docs/oidc.md) |
+| Networking: subnets, exit nodes, DERP | [docs/networking.md](docs/networking.md), [docs/derp.md](docs/derp.md) |
+| Symptom-driven diagnosis | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| Env vars / backup / restore | [docs/deploy.md](docs/deploy.md), [docs/disaster-recovery.md](docs/disaster-recovery.md) |
 | Telegram bot config + commands | [docs/TELEGRAM.md](docs/TELEGRAM.md) |
 | Per-version change history | [CHANGELOG.md](CHANGELOG.md), [RELEASE-NOTES.md](RELEASE-NOTES.md) |
-| File map, gotchas, AI hints, guarantee catalog | [AGENTS.md](AGENTS.md) |
+| Conventions, invariants, block index | [AGENTS.md](AGENTS.md) |
+| Package map + the B-check system | [docs/internals.md](docs/internals.md) |
 | First-time client setup scripts | [docs/scripts/skygate_exit_node_setup.sh](docs/scripts/skygate_exit_node_setup.sh) |
 | Russian-language version | [docs/ru/README.md](docs/ru/README.md) |
-| Known back-burner items | [docs/BACKLOG.md](docs/BACKLOG.md) |
+| Full documentation catalogue | [docs/README.md](docs/README.md) |
 
 ## Status (live)
 

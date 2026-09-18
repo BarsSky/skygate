@@ -8,5 +8,5 @@
 // and import internal/subnet/ for data access.
 //
 // Refactor status: Phase A (2026-07-29) — feature-module scaffolding only.
-// See docs/plans/refactor-v0.30.md.
+// See docs/ROADMAP.md.
 package subnet

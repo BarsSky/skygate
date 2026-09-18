@@ -1,5 +1,5 @@
 // Package cluster — node.go owns the cluster_node CRUD
-// helpers. Phase 2.2 of docs/internal/cluster-management.md.
+// helpers. Phase 2.2 of docs/ha.md.
 //
 // The cluster_node table (B195 schema) tracks every node
 // in the cluster: hostname, tailscale IP, roles, state,

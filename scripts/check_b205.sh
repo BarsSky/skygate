@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # B205 (v1.5.0+) — `skygate cluster ...` CLI subcommands.
 #
-# Phase 4 of docs/internal/architecture/cluster-management.md. The
+# Phase 4 of docs/ha.md. The
 # admin UI (/admin/cluster) and the HTTP API
 # (/api/cluster/join + /api/cluster/heartbeat from B201)
 # are the user-facing surfaces; these CLI subcommands are

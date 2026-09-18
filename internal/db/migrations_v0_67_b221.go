@@ -1,6 +1,6 @@
 // v1.5.0+ (B221) — structured target on audit_log.
 //
-// Phase 4.1 of docs/internal/cluster-management.md
+// Phase 4.1 of docs/ha.md
 // ("Generic audit log for all admin actions").
 //
 // Background

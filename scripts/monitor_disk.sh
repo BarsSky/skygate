@@ -25,7 +25,7 @@
 # the alerts are written to the log only.
 #
 # 2026-07-30: v0.32.5 — added after the disk-full → DB corruption
-# incident. See docs/BACKLOG.md Priority 8.
+# incident. See docs/ROADMAP.md Priority 8.
 
 set -e
 

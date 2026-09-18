@@ -224,8 +224,7 @@ cat /root/.ssh/id_ed25519.pub   # скопировать в authorized_keys
   Дополнительно: `SKYGATE_OIDC_AUTOSYNC=true` — boot-time
   auto-sync (скрипт запускается при старте skygate-контейнера
   до того, как HTTP-сервер начнёт принимать трафик). Полное
-  описание — в `AGENTS.md` (commit `0c6875a`) и `BACKLOG.md`
-  (Priority 10).
+  описание — в `AGENTS.md` (commit `0c6875a`) и `docs/ROADMAP.md`.
 
 ### 4.8. DERP (B164 init flow)
 
@@ -296,7 +295,7 @@ SKYGATE_OIDC_ISSUER=https://skygate.example.com
 SKYGATE_OIDC_CLIENT_ID=headscale
 SKYGATE_OIDC_CLIENT_SECRET=<random-32-bytes>
 SKYGATE_OIDC_KEY_DIR=/data/oidc-keys
-SKYGATE_OIDC_REDIRECT_URIS=https://head.skynas.ru/oidc/callback
+SKYGATE_OIDC_REDIRECT_URIS=https://head.example.com/oidc/callback
 ```
 
 ### 5.5. Бэкапы (S3 / SMB / NFS / SFTP)
@@ -516,9 +515,9 @@ RTO < 1 минута, RPO = 0 (Patroni async replication).
 ## 9. Что **не** описано здесь
 
 - API.md — отдельный документ для HTTP API (для интеграций).
-- Telegram-формат сообщений — `docs/internal/historical/bot-message-style.md`.
+- Telegram-формат сообщений — `docs/LESSONS.md`.
 - DB schema — `docs/db-schema.md`.
-- HA execution plan — `docs/internal/runbooks/ha-v1.5.0-execution.md`.
+- HA execution plan — `docs/ha.md`.
 - Disкавери recovery — `docs/disaster-recovery.md`.
 - Команды CLI (`skygate deploy`, `skygate ha promote`) — `docs/deploy.md`.
 - Staticcheck / linting / verify-pre — `AGENTS.md`.

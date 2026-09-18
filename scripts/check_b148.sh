@@ -4,7 +4,7 @@
 # This is the B-check that pins the /admin/certificates page
 # (TLS cert management: show current cert, upload new PEM
 # pair, LE DNS-01 toggle). It verifies the B148 surface
-# per docs/internal/runbooks/ha-v1.5.0-execution.md §5.1 / Phase 4:
+# per docs/ha.md §5.1 / Phase 4:
 #
 #   A. internal/feature/admin/certificates.go exists with
 #      the 3 documented handlers (GetAdminCertificates,

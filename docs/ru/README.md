@@ -85,7 +85,7 @@ DNS-автообновлением, переключать preferred exit-node p
 - Триггеры: применён ACL, сброс пароля, добавление/удаление правила,
   откат ACL, ошибка применения ACL — всё с префиксом `[#<id>]`,
   чтобы `/ack <id>` закрыл алерт
-- Подробности: [docs/TELEGRAM.md](docs/TELEGRAM.md)
+- Подробности: [docs/TELEGRAM.md](../TELEGRAM.md)
 
 ## Архитектура
 
@@ -98,7 +98,7 @@ DNS-автообновлением, переключать preferred exit-node p
   для обоих бэкендов. SQLite остался как escape hatch для
   разработки / single-host через `docker-compose.sqlite.yml`
   (только skygate + bind-mounted SQLite файл — без PG-контейнера);
-  политика отката описана в `docs/BACKLOG.md` если потребуется
+  политика отката описана в [`docs/ru/ROADMAP.md`](ROADMAP.md) если потребуется
   вернуться с PG на legacy SQLite default.
 - **Шаблоны:** `html/template`, `embed.FS` — без Node, без JS-бандлера.
   Per-feature шаблоны в `internal/handlers/templates/`.
@@ -111,7 +111,7 @@ DNS-автообновлением, переключать preferred exit-node p
 - **Headplane (опциональный sidecar):** визуальный ACL-редактор
   + админ-кабина. Версия пинится через `HEADPLANE_IMAGE` в `.env`,
   по умолчанию `ghcr.io/tale/headplane:0.6.3`. См.
-  [docs/headplane.md](docs/headplane.md) для интеграционного
+  [docs/headplane.md](../headplane.md) для интеграционного
   контракта. `HEADPLANE_ENABLED=false` — отключить sidecar.
 - **i18n:** 1 000+ ключей каталога EN + RU, per-request locale
   через `atomic.Value` + funcmap `Tr / Trf`. Per-feature каталоги
@@ -121,10 +121,10 @@ DNS-автообновлением, переключать preferred exit-node p
 - **Deploy:** Docker (Linux/WSL2) или нативный Go-бинарник (любая
   ОС с Go 1.25+)
 
-Полная карта компонентов: [docs/architecture.md](docs/architecture.md),
-модель данных: [docs/db-schema.md](docs/db-schema.md), HTTP API:
-[docs/api.md](docs/api.md), установка/бэкап/восстановление:
-[docs/deploy.md](docs/deploy.md).
+Полная карта компонентов: [docs/architecture.md](../architecture.md),
+модель данных: [docs/db-schema.md](../db-schema.md), HTTP API:
+[docs/api.md](../api.md), установка/бэкап/восстановление:
+[docs/deploy.md](../deploy.md).
 
 ## Ключевые фичи (v0.16 → v0.33)
 
@@ -200,7 +200,7 @@ curl -I http://localhost:8080/login         # должен вернуть 200
 
 Полная кросс-платформенная установка (Windows, восстановление
 из бэкапа, DERP, headplane sidecar, PostgreSQL backend): см.
-[docs/deploy.md](docs/deploy.md).
+[docs/deploy.md](../deploy.md).
 
 ## Tailscale: OFF по умолчанию (v0.32.15+)
 
@@ -287,8 +287,7 @@ Skygate — только HTTP. Всегда ставьте его за TLS-те�
 
 Куки HttpOnly + SameSite=Lax — работают за любым стандартным
 reverse-proxy. Убедитесь, что прокси не срезает `Set-Cookie`.
-См. [docs/internal/https-setup.md](docs/internal/https-setup.md) для Caddy +
-Let's Encrypt walkthrough.
+См. [docs/https.md](../https.md) для Caddy + Let's Encrypt walkthrough.
 
 ## Безопасность
 
@@ -373,15 +372,26 @@ go test -tags postgres -count=1 -v -run "TestPG" ./internal/db/
 
 | Хочется… | Идти в |
 |---|---|
-| Карту компонентов, поток данных | [docs/architecture.md](docs/architecture.md) |
-| Все таблицы и колонки БД | [docs/db-schema.md](docs/db-schema.md) |
-| Каждый HTTP-эндпоинт + curl | [docs/api.md](docs/api.md) |
-| Deploy / backup / restore / DERP / HTTPS | [docs/deploy.md](docs/deploy.md), [docs/disaster-recovery.md](docs/disaster-recovery.md) |
-| Настройка Telegram-бота + команды | [docs/TELEGRAM.md](docs/TELEGRAM.md) |
-| История изменений по версиям | [CHANGELOG.md](CHANGELOG.md), [RELEASE-NOTES.md](RELEASE-NOTES.md) |
-| Карта файлов, gotchas, AI-хинты, каталог гарантий | [AGENTS.md](AGENTS.md) |
-| Скрипты первоначальной настройки клиента | [docs/scripts/skygate_exit_node_setup.sh](docs/scripts/skygate_exit_node_setup.sh) |
-| Backlog (back-burner items) | [docs/BACKLOG.md](docs/BACKLOG.md) |
+| **Установить Skygate (все способы)** | [`docs/ru/INSTALL.md`](INSTALL.md) |
+| **Обновить Skygate (все способы)** | [`docs/ru/UPDATE.md`](UPDATE.md) |
+| **Планы, техдолг, что дальше** | [`docs/ru/ROADMAP.md`](ROADMAP.md) |
+| Эксплуатация: релиз, деплой, переезд PG, bootstrap | [`docs/operations.md`](../operations.md) |
+| HA: топология, failover, открытые вопросы | [`docs/ha.md`](../ha.md) |
+| HTTPS / reverse proxy | [`docs/https.md`](../https.md) |
+| OIDC (skygate ⇄ headscale) | [`docs/oidc.md`](../oidc.md) |
+| Сеть: подсети, exit-nodes, DERP | [`docs/networking.md`](../networking.md), [`docs/derp.md`](../derp.md) |
+| Диагностика по симптомам | [`docs/troubleshooting.md`](../troubleshooting.md) |
+| Что ломалось и почему (уроки) | [`docs/LESSONS.md`](../LESSONS.md) |
+| Карту компонентов, поток данных | [`docs/architecture.md`](../architecture.md) |
+| Все таблицы и колонки БД | [`docs/db-schema.md`](../db-schema.md) |
+| Каждый HTTP-эндпоинт + curl | [`docs/api.md`](../api.md) |
+| Deploy / backup / restore | [`docs/deploy.md`](../deploy.md), [`docs/disaster-recovery.md`](../disaster-recovery.md) |
+| Настройка Telegram-бота + команды | [`docs/TELEGRAM.md`](../TELEGRAM.md) |
+| История изменений по версиям | [CHANGELOG.md](../../CHANGELOG.md), [RELEASE-NOTES.md](../../RELEASE-NOTES.md) |
+| Соглашения, инварианты, индекс B-блоков | [AGENTS.md](../../AGENTS.md) |
+| Карта кода и система контрактов | [`docs/internals.md`](../internals.md) |
+| Скрипты первоначальной настройки клиента | [docs/scripts/skygate_exit_node_setup.sh](../scripts/skygate_exit_node_setup.sh) |
+| Полный каталог документации | [`docs/README.md`](../README.md) |
 
 ## Статус (live)
 

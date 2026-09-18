@@ -2,7 +2,7 @@
 # Phase 3.6 (v1.5.0+) — skygate cluster failover-drill CLI
 # subcommand (safe-test counterpart of runClusterFailover).
 #
-# Phase 3.6 of docs/internal/architecture/cluster-management.md. Closes
+# Phase 3.6 of docs/ha.md. Closes
 # the "operator wants to verify the failover workflow
 # without committing to a real swap" gap. Pre-Phase 3.6
 # the only way to test the B204 elector + Phase 3.4

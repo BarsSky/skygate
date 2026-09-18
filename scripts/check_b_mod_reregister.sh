@@ -28,7 +28,7 @@
 #   E. IsTaggedGhost field exists on myNodeRow
 #   F. The handler refuses nodes that already belong to a real user
 #   G. i18n keys for RU + EN exist
-#   H. AGENTS.md / PLANS.md mention B-mod-reregister
+#   H. AGENTS.md / ROADMAP.md mention B-mod-reregister
 #
 # Exit codes:
 #   0 = all contracts hold
@@ -130,9 +130,9 @@ else
     bad "i18n keys missing (RU=${RU_KEYS}, EN=${EN_KEYS}, expected >= 10 each)"
 fi
 
-# --- H: AGENTS.md / PLANS.md mention ---
+# --- H: AGENTS.md / ROADMAP.md mention ---
 echo
-echo "=== H. AGENTS.md / PLANS.md mention ==="
+echo "=== H. AGENTS.md / ROADMAP.md mention ==="
 if [ -f AGENTS.md ]; then
     AGENTS_HITS=$(grep -c "B-mod-reregister" AGENTS.md 2>/dev/null) || AGENTS_HITS=0
     AGENTS_HITS=${AGENTS_HITS:-0}
@@ -142,13 +142,13 @@ if [ -f AGENTS.md ]; then
         warn "AGENTS.md does not mention B-mod-reregister (operator may add later)"
     fi
 fi
-if [ -f docs/PLANS.md ]; then
-    PLANS_HITS=$(grep -c "B-mod-reregister" docs/PLANS.md 2>/dev/null) || PLANS_HITS=0
+if [ -f docs/ROADMAP.md ]; then
+    PLANS_HITS=$(grep -c "B-mod-reregister" docs/ROADMAP.md 2>/dev/null) || PLANS_HITS=0
     PLANS_HITS=${PLANS_HITS:-0}
     if [ "${PLANS_HITS}" -ge 1 ]; then
-        ok "docs/PLANS.md mentions B-mod-reregister (${PLANS_HITS} hits)"
+        ok "docs/ROADMAP.md mentions B-mod-reregister (${PLANS_HITS} hits)"
     else
-        warn "docs/PLANS.md does not mention B-mod-reregister (operator may add later)"
+        warn "docs/ROADMAP.md does not mention B-mod-reregister (operator may add later)"
     fi
 fi
 

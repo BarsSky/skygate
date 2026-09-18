@@ -1,6 +1,6 @@
 // v1.5.0+ (B195) — cluster management tables.
 //
-// Phase 0 of docs/internal/cluster-management.md (D1):
+// Phase 0 of docs/ha.md (D1):
 // state lives in headscale metadata. We add a "cluster_*" table
 // family to skygate's main DB (or to headscale's DB — TBD by where
 // the deploy chooses to install these). For now we use skygate's

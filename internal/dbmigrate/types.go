@@ -1,5 +1,5 @@
 // Package dbmigrate — DB migration workflow (Phase 1.4 of
-// docs/internal/cluster-management.md).
+// docs/ha.md).
 //
 // v1.5.0+ / B198.
 //

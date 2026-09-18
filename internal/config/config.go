@@ -25,7 +25,7 @@ type Config struct {
 	// For the full deployment walkthrough (sqlite vs postgres,
 	// --db-type flag on install-debian.sh, switch DBs without data
 	// loss), see docs/deploy.md and the B-mod-sqlite-pg-bidi plan
-	// at docs/superpowers/plans/2026-09-11-b-mod-sqlite-pg-bidi.md.
+	// at docs/ROADMAP.md.
 	DBDSN              string
 	HeadscaleURL       string
 	HeadscaleKey       string
@@ -928,7 +928,7 @@ func getDuration(key string, def time.Duration) time.Duration {
 // 2026-08-18: v1.5.0 (B145) — HA chain + elector + DNS
 // provider config. These are the env-var-tunable knobs for
 // the active-passive chain documented in
-// docs/internal/ha-v1.5.0-execution.md. The defaults match
+// docs/ha.md. The defaults match
 // the plan ("5s tick, 3 missed = 15s failover threshold").
 // Operators on a flaky link can raise HeartbeatInterval
 // (e.g. to 10s) and MissedThreshold (to 5) for a 50s

@@ -1,6 +1,6 @@
 #!/bin/bash
 # scripts/check_b237_18.sh — B237.18 (v1.5.2+) headscale_user_id
-# reconciliation cron contract (TD-10 from docs/PLANS.md).
+# reconciliation cron contract (TD-10 from docs/ROADMAP.md).
 #
 # Pins the daily in-app cron that reconciles
 # portal_users.headscale_user_id against the live headscale
@@ -251,11 +251,11 @@ else
     bad "E.2 AGENTS.md must document B237.18"
 fi
 
-# E.3 PLANS.md marks TD-10 as DONE
-if grep -B1 -A2 'TD-10' docs/PLANS.md 2>/dev/null | grep -qE 'DONE\b'; then
-    ok "E.3 docs/PLANS.md marks TD-10 as DONE (B237.18 closed it)"
+# E.3 ROADMAP.md marks TD-10 as DONE
+if grep -B1 -A2 'TD-10' docs/ROADMAP.md 2>/dev/null | grep -qE 'DONE\b'; then
+    ok "E.3 docs/ROADMAP.md marks TD-10 as DONE (B237.18 closed it)"
 else
-    bad "E.3 docs/PLANS.md should mark TD-10 as DONE (B237.18 closed it)"
+    bad "E.3 docs/ROADMAP.md should mark TD-10 as DONE (B237.18 closed it)"
 fi
 
 # --- F. Build ---

@@ -176,7 +176,7 @@ Apply button: `POST /admin/derp/relays/apply-headscale`
 on the `/admin/derp/relays` page. The button is
 admin-only + CSRF-protected + onsubmit=confirm().
 
-See `docs/internal/audits/tailnet-fixes.md` for
+See `docs/troubleshooting.md` for
 the B237 root cause (pre-B237 the operator had to
 SSH into the headscale host and edit config.yaml by
 hand — a `rwxr-x---` anti-pattern).
@@ -222,7 +222,7 @@ DNS A record of the operator's `SKYGATE_DERP_HOSTNAME`.
 
 - `docs/headplane.md` — the same "use existing / bundled" pattern,
   for the operator UI sidecar.
-- `docs/internal/historical/skygate-as-shell.md` — the wider roadmap for moving
+- `docs/LESSONS.md` — the wider roadmap for moving
   deploy-time config into a web UI.
-- `docs/internal/internal/telegram-relay.md` — the use case: Tailscale clients
+- `docs/telegram-relay.md` — the use case: Tailscale clients
   reaching `api.telegram.org` through a custom DERP.

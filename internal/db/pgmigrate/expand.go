@@ -21,7 +21,7 @@
 //     `pgmigrate.Run(...)` (for PG-specific transaction + lock_timeout).
 //     The driver dispatches based on the connection's driver name.
 //
-// See docs/plans/pg-migration-handling.md for the full design.
+// See docs/ROADMAP.md for the full design.
 package pgmigrate
 
 import (
@@ -37,7 +37,7 @@ import (
 // DefaultLockTimeout is the upper bound on how long a migration will
 // wait for a lock before aborting. The skygate updater retries the
 // migration up to 3 times with a 5s backoff; after 3 failures, the
-// update is rolled back (see docs/plans/self-update-v0.29.md).
+// update is rolled back (see docs/ROADMAP.md).
 //
 // 10s is short enough that a stuck migration doesn't hold up a
 // rolling update, and long enough that brief contention (another
@@ -53,7 +53,7 @@ const DefaultLockTimeout = 10 * time.Second
 // Set this ONLY when the operator has confirmed that ALL skygate
 // instances are on the new code and the old schema is no longer
 // referenced anywhere. The standard `expand-contract` pattern
-// (see docs/plans/pg-migration-handling.md) requires Phase 2
+// (see docs/ROADMAP.md) requires Phase 2
 // (DROP / RENAME) to be a separate, operator-approved release.
 const AllowDestructiveEnv = "SKYGATE_ALLOW_DESTRUCTIVE_MIGRATION"
 

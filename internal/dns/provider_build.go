@@ -75,7 +75,7 @@ func BuildProvider(name string, deps BuildDeps) (Provider, error) {
 		// Reserved for future B-checks. The
 		// error message is intentionally specific so
 		// the operator knows which B-check to read.
-		return nil, fmt.Errorf("dns: provider %q is not implemented yet (see docs/internal/ha-v1.5.0-execution.md — only 'external' is shipped in v1.5.0 B145)", name)
+		return nil, fmt.Errorf("dns: provider %q is not implemented yet (see docs/ha.md — only 'external' is shipped in v1.5.0 B145)", name)
 	default:
 		return nil, ErrUnknownProvider{Name: name}
 	}

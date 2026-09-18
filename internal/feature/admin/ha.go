@@ -4,7 +4,7 @@
 //
 // v1.5.0 / B149.
 //
-// Page surface (6 sections per docs/internal/ha-v1.5.0-execution.md
+// Page surface (6 sections per docs/ha.md
 // §5.1):
 //
 //  1. Cluster topology        — read-only chain table
@@ -560,7 +560,7 @@ func (s *Service) PostAdminHAReclaim(w http.ResponseWriter, r *http.Request) {
 // operator (who's on call) is then expected to either (a)
 // fix the failed primary, or (b) trigger this manual failover
 // to promote a known-ready skygate-standby. Phase 3.4 of
-// docs/internal/cluster-management.md adds the button +
+// docs/ha.md adds the button +
 // handler so the operator can do (b) without SSHing into the
 // agent.
 //

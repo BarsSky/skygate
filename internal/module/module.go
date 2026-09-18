@@ -18,7 +18,7 @@
 //	EnableSubFeature / DisableSubFeature
 //	Stop(ctx)             // idempotent — bring it down
 //
-// See docs/internal/architecture-modules.md §3-§4 for the full design.
+// See docs/internals.md §3-§4 for the full design.
 package module
 
 import (

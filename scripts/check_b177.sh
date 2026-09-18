@@ -23,7 +23,7 @@
 #  F. The warn log includes "keeping existing tags as fallback"
 #  G. AGENTS.md mentions B177
 #  H. scripts/verify_pre_deploy.sh includes "check_b177"
-#  I. docs/internal/historical/node-404-investigation-v2.md mentions B177
+#  I. docs/troubleshooting.md mentions B177
 #  J. internal/nodeownership/strategy_e_b175_test.go still exists (B177
 #     is additive; no behavior change for the Strategy E helper)
 
@@ -104,8 +104,8 @@ else
 fi
 
 # I. investigation doc mentions the dev-tag failure mode
-if [ -f "$REPO/docs/internal/historical/node-404-investigation-v2.md" ]; then
-  check_ge "I" 1 "$(count "$REPO/docs/internal/historical/node-404-investigation-v2.md" 'B177')"
+if [ -f "$REPO/docs/troubleshooting.md" ]; then
+  check_ge "I" 1 "$(count "$REPO/docs/troubleshooting.md" 'B177')"
 else
   check_eq "I" ">=1" "0"
 fi

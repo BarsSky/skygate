@@ -1,6 +1,6 @@
 // Package db — cluster_patroni.go owns the Patroni
 // /switchover /failover helpers. Phase 3.3 of
-// docs/internal/cluster-management.md.
+// docs/ha.md.
 //
 // Background
 // ----------

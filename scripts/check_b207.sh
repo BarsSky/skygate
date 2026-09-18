@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # B207 (v1.5.0+) — /admin/audit unified view. Phase 4.1
-# / G8 of docs/internal/architecture/cluster-management.md.
+# / G8 of docs/ha.md.
 #
 # Pre-B207: /admin/audit only read from the legacy
 # audit_log table — operator had no way to see the

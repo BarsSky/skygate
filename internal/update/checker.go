@@ -16,7 +16,7 @@
 //   - PG-specific migration protocol (covered by the v0.27.0 driver
 //     abstraction that's still on feat/postgres-migration)
 //
-// See docs/plans/self-update-v0.29.md for the full design.
+// See docs/ROADMAP.md for the full design.
 package update
 
 import (

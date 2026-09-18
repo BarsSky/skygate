@@ -3,7 +3,7 @@
 // locally.
 //
 // v1.5.0+ / B202.5 — Phase 1.4 of
-// docs/internal/cluster-management.md.
+// docs/ha.md.
 //
 // Why this exists
 //

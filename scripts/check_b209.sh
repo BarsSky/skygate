@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # B209 (v1.5.0+) — end-to-end HA failover test orchestrator.
 #
-# Phase 3 of docs/internal/architecture/cluster-management.md. The
+# Phase 3 of docs/ha.md. The
 # B204 elector has been ticking every 5s since v1.5.0
 # shipped, but no automated test exercised the full
 # failure-detection + auto-recommendation + recovery +

@@ -3,7 +3,7 @@
 # init-headplane.sh — auto-apply headplane API key on fresh deploy
 # B151 (v1.5.0) — Phase 8 of the HA v1.5.0 plan.
 #
-# See docs/internal/runbooks/ha-v1.5.0-execution.md §3 (Phase 8).
+# See docs/ha.md §3 (Phase 8).
 #
 # Background
 # ----------

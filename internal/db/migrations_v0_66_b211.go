@@ -1,6 +1,6 @@
 // v1.5.0+ (B211) — UNIQUE constraint on cluster_node.
 //
-// Phase 2.3 of docs/internal/cluster-management.md
+// Phase 2.3 of docs/ha.md
 // (`skygate init` idempotent bootstrap). The new
 // `skygate init` CLI subcommand needs an ON CONFLICT
 // (cluster_id, hostname) target so it can refresh

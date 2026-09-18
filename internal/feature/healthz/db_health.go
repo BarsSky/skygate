@@ -1,7 +1,7 @@
 // Package healthz — db_health.go is the /db/health handler
 // + background sampler (B206, v1.5.0+).
 //
-// Phase 1.5 / G3 of docs/internal/cluster-management.md:
+// Phase 1.5 / G3 of docs/ha.md:
 // "DB health monitoring — connection pool, replication
 // lag (if replica), slow query count, DB size, xlog
 // position".

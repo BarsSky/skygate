@@ -1,7 +1,7 @@
 // Package elector — HA elector for the skygate cluster.
 //
 // v1.5.0+ / B204 — Phase 3.2 of
-// docs/internal/cluster-management.md.
+// docs/ha.md.
 //
 // Background
 //

@@ -199,6 +199,6 @@ documenting the integration contract here.
 ## See also
 
 - `docs/deploy.md` — full deploy story
-- `docs/internal/internal/telegram-relay.md` — Headplane UI for route approval
+- `docs/telegram-relay.md` — Headplane UI for route approval
 - [Headplane repo](https://github.com/tale/headplane) — upstream
 - [Headplane changelog](https://headplane.net/CHANGELOG) — releases

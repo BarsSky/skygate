@@ -50,7 +50,7 @@ set -e
 # actual deployment). Moving to env-var-only is the
 # immediate mitigation; the full history-rewrite /
 # global-squash to v1.0.0 is
-# tracked in docs/PLANS.md.
+# tracked in docs/ROADMAP.md.
 if [ -z "${SKYGATE_ADMIN_USER:-}" ]; then
   echo "verify_login: SKYGATE_ADMIN_USER env var is required (no default; do not hardcode operator credentials in tracked files)" >&2
   exit 2

@@ -4,7 +4,7 @@
 // to keep its cluster_node row fresh.
 //
 // v1.5.0+ / B201 — Phase 2.3 of
-// docs/internal/cluster-management.md.
+// docs/ha.md.
 //
 // Two functions:
 //

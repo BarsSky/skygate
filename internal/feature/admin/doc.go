@@ -4,5 +4,5 @@
 // /admin/exit-rules, /admin/headscale, /admin/update, etc.
 //
 // Refactor status: Phase A (2026-07-29) — feature-module scaffolding only.
-// See docs/plans/refactor-v0.30.md.
+// See docs/ROADMAP.md.
 package admin

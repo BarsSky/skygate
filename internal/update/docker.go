@@ -3,7 +3,7 @@ package update
 // docker.go — v0.29.0 self-update orchestrator for the Docker
 // install kind. This is the path the operator's VM uses.
 //
-// State machine (mirrors docs/plans/self-update-v0.29.md):
+// State machine (mirrors docs/ROADMAP.md):
 //
 //   pending → backup → pull_build → migrate → swap → verify → done
 //                ↓         ↓           ↓       ↓       ↓

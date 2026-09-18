@@ -3,7 +3,7 @@
 # dr_drill.sh — live disaster-recovery drill for the HA chain
 # B153 (v1.5.0) — Phase 9 of the HA v1.5.0 plan.
 #
-# See docs/internal/runbooks/ha-v1.5.0-execution.md §3 (Phase 9).
+# See docs/ha.md §3 (Phase 9).
 #
 # What this does
 # --------------

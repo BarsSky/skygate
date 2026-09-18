@@ -1,5 +1,5 @@
 // Package admin — database.go owns the /admin/database page
-// (DB management: see D3 in docs/internal/cluster-management.md).
+// (DB management: see D3 in docs/ha.md).
 //
 // v1.5.0+ / B195 + B197 — Phase 1.1 (read-only) + Phase 1.2 (test+edit).
 //
@@ -470,7 +470,7 @@ func (s *Service) PostAdminDatabaseEdit(w http.ResponseWriter, r *http.Request) 
 // "leader" hint (or empty for Patroni to pick), and
 // the reason text becomes the cluster_audit detail.
 //
-// Phase 3.3 of docs/internal/cluster-management.md
+// Phase 3.3 of docs/ha.md
 // (B219). The plan says "Patroni is already in place,
 // just plumb to UI" — that's exactly what this handler
 // does. The auto-failover case (unhealthy current

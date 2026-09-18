@@ -1,6 +1,6 @@
 // Package db — cluster_audit.go owns the cluster_audit
 // INSERT helper. Phase 2.6 of
-// docs/internal/cluster-management.md (B215):
+// docs/ha.md (B215):
 // "Bootstrap state machine: init / join / drain / leave
 // events".
 //

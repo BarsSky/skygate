@@ -1,100 +1,127 @@
 # Skygate documentation
 
-This directory holds the user-facing skygate documentation.
-Operator-specific docs (with real LAN IPs, real secrets paths)
-live in `docs/internal/`.
+Catalogue of every document in this directory. Start here, then follow the link
+for your role.
 
-## Conventions
+Russian translations live in [`docs/ru/`](ru/) — `README`, `INSTALL`, `UPDATE` and
+`ROADMAP` are maintained in both languages; for everything else the English file is
+authoritative.
 
-- All example values use RFC 5737 IPs (`192.0.2.1`,
-  `198.51.100.1`, `203.0.113.1`) and the `example.com`
-  placeholder domain.
-- Code blocks show realistic commands, but every host/IP/secret
-  in them is a placeholder. Replace before applying.
-- If a doc has both a public + an internal version, the
-  internal version is the source of truth — the public version
-  is a redacted excerpt.
+---
 
-## Layout
+## 1. I want to…
+
+| I want to… | Read |
+|---|---|
+| **Install Skygate** (docker, systemd, OpenRC, bare binary, Windows, tarball) | [`INSTALL.md`](INSTALL.md) · [`ru/INSTALL.md`](ru/INSTALL.md) |
+| **Update an existing install** (in-app, scheduled, native self-update with rollback, mirrors, manual) | [`UPDATE.md`](UPDATE.md) · [`ru/UPDATE.md`](ru/UPDATE.md) |
+| See **what is planned / blocked / owed** | [`ROADMAP.md`](ROADMAP.md) · [`ru/ROADMAP.md`](ru/ROADMAP.md) |
+| Understand **why something is the way it is** (incidents, root causes, traps) | [`LESSONS.md`](LESSONS.md) |
+| **Run a release**, deploy, migrate PostgreSQL, bootstrap a host | [`operations.md`](operations.md) |
+| Set up **high availability** (active/passive, failover, clustering) | [`ha.md`](ha.md) |
+| Put Skygate behind **HTTPS / a reverse proxy** | [`https.md`](https.md) |
+| Wire **OIDC** between headscale and Skygate | [`oidc.md`](oidc.md) |
+| Work on **subnet routers, exit nodes, DERP** | [`networking.md`](networking.md), [`derp.md`](derp.md) |
+| **Diagnose a live problem** (devices offline, 404s, stuck tags, slow exit node) | [`troubleshooting.md`](troubleshooting.md) |
+| Change **the code** (package map, invariants, B-check contracts) | [`internals.md`](internals.md), [`architecture.md`](architecture.md) |
+| Look up **every environment variable** | [`deploy.md`](deploy.md) |
+| Look up a **DB table / column** | [`db-schema.md`](db-schema.md) |
+| Call the **REST API** | [`api.md`](api.md) |
+| Understand **ACL rules** | [`acl-rules-reference.md`](acl-rules-reference.md) |
+| **Back up / restore / move** a database | [`backup-restore-and-migration.md`](backup-restore-and-migration.md), [`disaster-recovery.md`](disaster-recovery.md) |
+| Configure the **Telegram bot** | [`TELEGRAM.md`](TELEGRAM.md) |
+| Set up the **Windows client** | [`windows-client.md`](windows-client.md) |
+| Run **headplane** or **sidecar mode** | [`headplane.md`](headplane.md), [`sidecar-mode.md`](sidecar-mode.md) |
+| See **what the project does**, feature by feature | [`features.md`](features.md) |
+| Get **AI-agent instructions / conventions** | [`../AGENTS.md`](../AGENTS.md) |
+
+---
+
+## 2. Layout
+
+Flat on purpose: one file per topic, no nested plan/runbook trees. Planning lives
+in a single roadmap, operational procedures live in a single handbook, and history
+lives in git.
 
 ```
 docs/
-├── README.md                       ← you are here
-├── api.md                          REST API reference
-├── architecture.md                 public architecture overview
-├── backup-restore-and-migration.md backup + restore + cross-version migration
-├── db-schema.md                    public DB schema (PG tables, columns, FKs)
-├── deploy.md                       deploy guide (fresh install + updates)
-├── derp.md                         DERP relay setup + operations
-├── disaster-recovery.md            DR scenarios + procedures
-├── features.md                     implemented feature catalogue
-├── headplane.md                    headplane UI integration
-├── sidecar-mode.md                 sidecar mode (skygate as a sidecar process)
-├── TELEGRAM.md                     Telegram bot commands + integration
-├── windows-client.md               Windows Tailscale client setup
-├── BACKLOG.md                      abandoned / blocked / in-progress features
-├── PLANS.md                        in-flight design plans
+├── README.md                        ← you are here (EN catalogue)
+├── ru/                              Russian translations
+│   ├── README.md                    RU front page
+│   ├── INSTALL.md                   RU install guide
+│   ├── UPDATE.md                    RU update guide
+│   └── ROADMAP.md                   RU roadmap
 │
-├── acl-rules-reference.md          end-user ACL rules reference (current logic)
-│
-├── runbooks/                       operator-facing runbooks (RFC 5737 IPs)
-│   ├── README.md
-│   ├── clean-install.md
-│   ├── infra-retag.md
-│   ├── issues-closeout.md
-│   ├── pg-cutover.md
-│   ├── pg-failover.md
-│   ├── svyatoslava-bootstrap.md
-│   ├── tailnet-split-fix.md
-│   └── v1.5.0-ha-and-deploy.md
-│
-├── plans/                          current design plans
-│   ├── pg-migration-handling.md
-│   ├── td-11-cloudflare-grouping.md
-│   ├── self-update-v0.29.md
-│   └── refactor-v0.30.md
-│
-├── superpowers/plans/              superpowers B-mod plans
-│   ├── 2026-09-11-b-mod-first-run-adoption.md
-│   ├── 2026-09-11-b-mod-sqlite-pg-bidi.md
-│   └── 2026-09-11-b-mod-static-embed.md
-│
-└── internal/                       operator-specific docs (real IPs)
-    ├── README.md
-    ├── audits/                     read-only audit reports
-    ├── runbooks/                   internal runbooks
-    ├── architecture/               internal architecture docs
-    ├── postmortems/                incident postmortems
-    └── historical/                 superseded historical docs
+├── INSTALL.md                       every install method (10 paths)
+├── UPDATE.md                        every update path (in-app → manual → mirror)
+├── ROADMAP.md                       current work / next / blocked / tech debt
+├── LESSONS.md                       incidents, root causes, recurring traps
+├── operations.md                    release + deploy + PG cutover + bootstrap
+├── internals.md                     package map, invariants, B-check system
+├── ha.md                            HA topology, failover, open questions
+├── https.md                         TLS, reverse proxies, certificates
+├── oidc.md                          OIDC: skygate ⇄ headscale
+├── networking.md                    subnet routers, exit nodes, DERP
+├── troubleshooting.md               symptom-driven diagnostics
+├── deploy.md                        env-var + deployment reference
+├── architecture.md                  component/data-flow overview
+├── api.md                           REST API reference
+├── features.md                      implemented feature catalogue
+├── db-schema.md                     database schema
+├── acl-rules-reference.md           ACL generation rules
+├── backup-restore-and-migration.md  backup, restore, cross-backend moves
+├── disaster-recovery.md             DR tiers and procedures
+├── derp.md                          DERP relay setup + operations
+├── headplane.md                     headplane integration
+├── sidecar-mode.md                  Skygate as a sidecar process
+├── TELEGRAM.md                      Telegram bot
+├── windows-client.md                Windows Tailscale client
+└── scripts/                         first-time client setup scripts
 ```
 
-## Reading order for new operators
+**Removed in the 2026-09-18 restructure:** the `plans/`, `runbooks/`, `internal/`
+and `superpowers/` trees plus `BACKLOG.md` and `PLANS.md`. Their durable content is
+folded into `ROADMAP.md`, `LESSONS.md`, `operations.md`, `ha.md`, `https.md`,
+`oidc.md`, `networking.md`, `troubleshooting.md` and `internals.md`; the original
+text is one `git log --diff-filter=D` away.
 
-1. `features.md` — what the project does
-2. `architecture.md` — how the pieces fit together
-3. `deploy.md` — how to install
-4. `runbooks/` — how to recover when things go wrong
-5. `BACKLOG.md` — what's intentionally NOT done
+---
 
-## Reading order for new contributors
+## 3. Reading order
 
-1. `AGENTS.md` (project root) — the AI-agent instructions
-2. `architecture.md` + `docs/internal/architecture/` — how the
-   code is organised
-3. `BACKLOG.md` + `PLANS.md` — what direction we're heading
-4. `features.md` — what to preserve when refactoring
+**New operator**
 
-## Internationalisation
+1. [`INSTALL.md`](INSTALL.md) — get it running with the method that fits your host.
+2. [`deploy.md`](deploy.md) — the environment variables you will actually tune.
+3. [`UPDATE.md`](UPDATE.md) — how updates work *before* you need one.
+4. [`troubleshooting.md`](troubleshooting.md) — keep it bookmarked.
+5. [`operations.md`](operations.md) + [`backup-restore-and-migration.md`](backup-restore-and-migration.md)
+   + [`disaster-recovery.md`](disaster-recovery.md) — day-2 duties.
+6. [`ROADMAP.md`](ROADMAP.md) — what is intentionally not done yet.
 
-Documentation is primarily **English** (in this directory). Russian
-translations live in `docs/ru/` and follow the same path structure:
+**New contributor**
 
-| English (primary) | Russian translation |
-|---|---|
-| `README.md` | `docs/ru/README.md` |
-| `<topic>.md` (when translated) | `docs/ru/<topic>.md` |
+1. [`../AGENTS.md`](../AGENTS.md) — conventions, invariants, the block index.
+2. [`internals.md`](internals.md) — where the code lives and what it guarantees.
+3. [`architecture.md`](architecture.md) + [`features.md`](features.md) — the shape
+   and the behaviour to preserve.
+4. [`LESSONS.md`](LESSONS.md) — the traps that already cost time.
+5. [`ROADMAP.md`](ROADMAP.md) — where the project is heading.
 
-If a topic only exists in `docs/<topic>.md` (no `docs/ru/<topic>.md`),
-the English version is the only one — Russian is best-effort, English
-is authoritative. The README at the repo root keeps its
-`README.md` + `docs/ru/README.md` convention for GitHub's language switcher.
+---
+
+## 4. Conventions
+
+* Every example uses placeholder values: `<VM_HOST>` for the operator's own server,
+  `<PUBLIC_HOST>` / `example.com` for hostnames, RFC 5737 addresses
+  (`192.0.2.1`, `198.51.100.1`, `203.0.113.1`) for IPs, and obviously-fake secrets.
+  **Never commit a real private IP, hostname or credential** — a pre-commit hook
+  rejects the known leak patterns.
+* Commands are written for a bash-compatible shell on Linux unless a section says
+  otherwise (PowerShell for Windows).
+* If a document and the code disagree, the code wins — please fix the document in
+  the same change.
+* Operational procedures state their verification step and their rollback; a
+  procedure without a rollback is incomplete.
+* Version-specific behaviour is called out inline (for example "v1.5.9 and newer"),
+  so a reader on an older release knows what does not apply to them.

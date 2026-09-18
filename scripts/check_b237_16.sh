@@ -7,7 +7,7 @@
 #   - internal/headscale/tags_test.go:66 (404 → http.StatusNotFound)
 #   - internal/oidc/e2e_test.go:399       (302 → http.StatusFound)
 #
-# The 5 SA1012 false-positives PLANS.md mentioned (TD-14) were
+# The 5 SA1012 false-positives ROADMAP.md mentioned (TD-14) were
 # never seen by `staticcheck` on the current tree — the false
 # positives were either fixed, moved, or never landed. This
 # check pins their continued absence.
@@ -90,7 +90,7 @@ else
 fi
 
 # --- B. SA1012 contract: no false-positive nil context warnings ---
-# PLANS.md's TD-14 mentioned 5 false-positives in test files
+# ROADMAP.md's TD-14 mentioned 5 false-positives in test files
 # where nil context was intentional. staticcheck no longer
 # reports them on the current tree (either they were fixed,
 # moved, or the test patterns changed). The check pins the

@@ -48,7 +48,7 @@ Get-ChildItem scripts -Filter 'check_*.sh' |
 
 Если чек использует `psql`, а развёртывание на SQLite — он **не проверяет
 ничего** и/или падает ложно. Универсальный хелпер (`scripts/lib/db_exec.sh`)
-уже запланирован в плане (`docs/plans/2026-09-17-sqlite-pg-and-headscale-hardening.md`, §D.5).
+уже запланирован в плане (`docs/ROADMAP.md`, §D.5).
 
 ## Запуск
 

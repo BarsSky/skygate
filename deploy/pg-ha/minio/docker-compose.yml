@@ -11,7 +11,7 @@
 # Single-node MinIO = single point of failure for the WAL
 # archive. Mitigation: nightly pg_dump + rsync to skygate-host-2
 # as the off-site backup. Recovery procedure is in
-# docs/runbooks/pg-failover.md (TODO in v0.34.0).
+# docs/ha.md (TODO in v0.34.0).
 
 version: "3.8"
 

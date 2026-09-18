@@ -1,6 +1,6 @@
 // Package admin — cluster.go owns the /admin/cluster page
 // (cluster topology view: see §2 in
-// docs/internal/cluster-management.md).
+// docs/ha.md).
 //
 // v1.5.0+ / B199 — Phase 2.1 (read-only cluster overview).
 //

@@ -1788,7 +1788,7 @@ func main() {
 	// The page renders the live DSN (from env), the desired DSN
 	// (from cluster_database), and a quick reachability probe.
 	// See internal/feature/admin/database.go for the handler
-	// + doc comments and docs/internal/cluster-management.md for
+	// + doc comments and docs/ha.md for
 	// the full design (D3, D8).
 	mux.Handle("GET /admin/database", authMW(http.HandlerFunc(adminSvc.GetAdminDatabase)))
 	// v1.5.0+ / B197 — Phase 1.2: Test Connection + Edit DSN.
@@ -1881,7 +1881,7 @@ func main() {
 	// cluster_audit state. Phase 2.2 (B200) adds the action
 	// surface (add/remove nodes, generate/revoke invites).
 	// See internal/feature/admin/cluster.go for the handlers
-	// and docs/internal/cluster-management.md §2 for the plan.
+	// and docs/ha.md §2 for the plan.
 	mux.Handle("GET /admin/cluster", authMW(http.HandlerFunc(adminSvc.GetAdminCluster)))
 	// v1.5.0+ / B200 — Phase 2.2 action surface.
 	// 4 POST handlers behind authMW:

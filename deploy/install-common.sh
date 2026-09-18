@@ -416,7 +416,7 @@ SKYGATE_JWT_SECRET=${jwt_secret}
 # SKYGATE_DB takes precedence over the legacy SKYGATE_DB_DSN
 # (which is still honored for v1.3.0-v1.5.3 backward compat).
 # See docs/deploy.md §10 + the B-mod-sqlite-pg-bidi plan at
-# docs/superpowers/plans/2026-09-11-b-mod-sqlite-pg-bidi.md.
+# docs/ROADMAP.md.
 SKYGATE_DB=sqlite:${SKYGATE_DATA_DIR}/skygate.db
 # Legacy env var (v1.3.0-v1.5.3, PG-only). Leave empty unless
 # you specifically need to fall back to the old naming.

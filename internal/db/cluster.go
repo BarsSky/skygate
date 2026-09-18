@@ -1,6 +1,6 @@
 // Package db — cluster.go owns the cluster_database CRUD helpers
 // for the cluster-management feature (B195, see
-// docs/internal/cluster-management.md).
+// docs/ha.md).
 //
 // Phase 1.1 only needs GetClusterDatabase (read). Phase 1.2
 // (edit form) will add SetClusterDatabase. Phase 1.4 (migration

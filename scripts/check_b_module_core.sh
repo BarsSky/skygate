@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
 # check_b_module_core.sh — B-check for the module Plugin API (B-mod-core, 2026-09-09)
-# See AGENTS.md (B-mod-core entry) and docs/internal/architecture/modules.md
+# See AGENTS.md (B-mod-core entry) and docs/internals.md
 # for the B-block context.
 #
 # What this verifies
@@ -37,7 +37,7 @@
 #    ErrAlreadyStopped, ErrSubFeatureNotFound, ErrSubFeatureRequires
 # J. internal/module/module_test.go exists + has 8+ Test functions
 # K. `go test ./internal/module/...` passes
-# L. docs/internal/architecture/modules.md exists
+# L. docs/internals.md exists
 #
 # Exit codes
 # ----------
@@ -237,15 +237,15 @@ else
 fi
 
 # L. architecture-modules.md exists
-if [ -f "docs/internal/architecture/modules.md" ]; then
-    if grep -qE "Plugin API" "docs/internal/architecture/modules.md" && \
-       grep -qE "Module interface" "docs/internal/architecture/modules.md"; then
-        ok "L: docs/internal/architecture/modules.md exists with Plugin API + Module interface sections"
+if [ -f "docs/internals.md" ]; then
+    if grep -qE "Plugin API" "docs/internals.md" && \
+       grep -qE "Module interface" "docs/internals.md"; then
+        ok "L: docs/internals.md exists with Plugin API + Module interface sections"
     else
         fail "L" "architecture-modules.md exists but missing required sections"
     fi
 else
-    fail "L" "docs/internal/architecture/modules.md not found"
+    fail "L" "docs/internals.md not found"
 fi
 
 # Summary

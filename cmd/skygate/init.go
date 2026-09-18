@@ -9,7 +9,7 @@
 // install, and is safe to re-run after a partial failure
 // (idempotent).
 //
-// Phase 2.3 of docs/internal/cluster-management.md. The
+// Phase 2.3 of docs/ha.md. The
 // full Phase 2.3 spec also covers OS check + binary
 // install + OIDC key generation + headscale preauth +
 // systemd bring-up — those are out of scope for B211

@@ -4,5 +4,5 @@
 // tests. Cross-feature dependencies go through other features' service
 // layers (not handlers or templates).
 //
-// See docs/plans/refactor-v0.30.md for the full plan.
+// See docs/ROADMAP.md for the full plan.
 package feature

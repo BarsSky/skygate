@@ -33,7 +33,7 @@
 #             --from=sqlite:/var/lib/skygate/skygate.db \
 #             --to=postgres://user:pass@host:5432/skygate
 #     # Then update SKYGATE_DB in .env and restart.
-# See docs/superpowers/plans/2026-09-11-b-mod-sqlite-pg-bidi.md.
+# See docs/ROADMAP.md.
 
 services:
   skygate:

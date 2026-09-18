@@ -3,7 +3,7 @@
 # on /admin/ha. Operator-driven counterpart to the B204
 # HA elector's automatic failover_recommend.
 #
-# Phase 3.4 of docs/internal/architecture/cluster-management.md. Closes
+# Phase 3.4 of docs/ha.md. Closes
 # the "the elector recommends, the operator has no in-UI
 # way to act on the recommendation" gap. Pre-Phase 3.4 the
 # only path to swap the skygate primary was SSH into the

@@ -1,6 +1,6 @@
 // Package cluster — upgrade.go implements the B222
 // rolling-upgrade orchestrator (Phase 4.2 of
-// docs/internal/cluster-management.md).
+// docs/ha.md).
 //
 // "Rolling upgrade" means: upgrade one node at a time
 // across the cluster, draining the node first

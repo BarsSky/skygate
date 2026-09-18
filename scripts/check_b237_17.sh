@@ -1,6 +1,6 @@
 #!/bin/bash
 # scripts/check_b237_17.sh — B237.17 (v1.5.2+) smoke-artifact
-# cleanup contract (TD-9 from docs/PLANS.md).
+# cleanup contract (TD-9 from docs/ROADMAP.md).
 #
 # Pins the script + systemd unit + crontab pattern that
 # keeps the live skygate DB from accumulating smoke.sh
@@ -178,19 +178,19 @@ else
     bad "C.2 AGENTS.md must document B237.17 (B-check convention)"
 fi
 
-# --- D. PLANS.md update ---
+# --- D. ROADMAP.md update ---
 
-# D.1 TD-9 marked DONE in PLANS.md
+# D.1 TD-9 marked DONE in ROADMAP.md
 # The DONE marker can be in different forms:
 #   - "Status:** DONE in ..."
 #   - "Status:** DONE-ONCE; ..." (with a follow-up note)
 #   - "v1.5.3 — Subnet-router auto-cleanup cron (TD-9) — DONE in v1.4.3"
 # Any of these count. We just need to confirm the section
 # isn't still in the "DEFERRED" state.
-if grep -B1 -A2 'TD-9' docs/PLANS.md 2>/dev/null | grep -qE 'DONE\b'; then
-    ok "D.1 docs/PLANS.md marks TD-9 as DONE"
+if grep -B1 -A2 'TD-9' docs/ROADMAP.md 2>/dev/null | grep -qE 'DONE\b'; then
+    ok "D.1 docs/ROADMAP.md marks TD-9 as DONE"
 else
-    bad "D.1 docs/PLANS.md should mark TD-9 as DONE (B237.17 closed it)"
+    bad "D.1 docs/ROADMAP.md should mark TD-9 as DONE (B237.17 closed it)"
 fi
 
 # --- Summary ---

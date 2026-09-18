@@ -141,7 +141,7 @@ func TestNoNewRawErrorPages(t *testing.T) {
 			"Use the existing pattern instead: redirect back with ?err=<i18n key> and let the "+
 			"template's {{.FlashError}} block render it (see internal/feature/admin/exit_nodes.go "+
 			"AdminExitNodes for a GET, or the POST handlers in the same file).\n"+
-			"See docs/plans/2026-09-17-sqlite-pg-and-headscale-hardening.md R6.",
+			"See docs/ROADMAP.md R6.",
 			total, rawErrorHTTPErrorBaseline)
 	}
 }

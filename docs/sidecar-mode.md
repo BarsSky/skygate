@@ -68,7 +68,7 @@ skygate supports two DB backends. The default install
 
 You can switch between the two at any time via
 `skygate db-migrate --from=<dsn> --to=<dsn>`. See
-`docs/superpowers/plans/2026-09-11-b-mod-sqlite-pg-bidi.md` for
+`docs/ROADMAP.md` for
 the full conversion plan.
 
 ## Step-by-step deploy
@@ -236,13 +236,13 @@ Two flows:
 
 - `docs/deploy.md` — full deployment guide (covers the
   all-in-one path too)
-- `docs/BACKLOG.md` — closed-out issues (including the 5
+- `docs/ROADMAP.md` — closed-out issues (including the 5
   B-mod-* blocks + the 19+ B-mod-tailscale features that
   shipped in v1.5.3)
-- `docs/superpowers/plans/2026-09-11-b-mod-first-run-adoption.md`
+- `docs/ROADMAP.md`
   — full implementation plan (T1-T11) for the first-run
   adoption features
-- `docs/superpowers/plans/2026-09-11-b-mod-sqlite-pg-bidi.md`
+- `docs/ROADMAP.md`
   — full implementation plan (T1-T7) for the SQLite+PG
   bidirectional support + conversion tool
 - `AGENTS.md` — AI assistant hints (read this if you're

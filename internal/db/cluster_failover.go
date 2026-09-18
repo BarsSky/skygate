@@ -1,6 +1,6 @@
 // Package db — cluster_failover.go owns the DB-side
 // helpers for the skygate-cluster node failover (Phase 3.4
-// of docs/internal/cluster-management.md).
+// of docs/ha.md).
 //
 // What's here
 //

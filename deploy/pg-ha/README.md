@@ -4,11 +4,11 @@
 **Target version**: v0.33.0 (PG cutover) + v0.34.0 (HA active)
 **Last updated**: 2026-08-03
 **See also**:
-[`docs/internal/internal/ha-active-router.md`](../../docs/internal/internal/ha-active-router.md) (the
+[`docs/ha.md`](../../docs/ha.md) (the
 design proposal that picks Architecture A);
 [`docs/v0.33.0-pg-cutover-runbook.md`](../../docs/v0.33.0-pg-cutover-runbook.md)
 (the cutover sequence);
-[`docs/internal/internal/v0.27.0-postgres-ha.md`](../../docs/internal/internal/v0.27.0-postgres-ha.md) (the
+[`docs/operations.md`](../../docs/operations.md) (the
 detailed PG HA plan, 18 days).
 
 ---
@@ -49,7 +49,7 @@ because clients cache the A record for skygate.example.com.
 - `init-pg-replica.sh` — bootstrap replica VM (run ONCE on skygate-host-2)
 - `check_pg_health.sh` — health check script (run on both VMs, cron-friendly)
 - `wal-g.env.example` — environment template for wal-g
-- `docs/runbooks/pg-failover.md` — manual + auto failover procedure
+- `docs/ha.md` — manual + auto failover procedure
   (in the docs/ tree, not here)
 
 ## Quick start (operator)
@@ -112,7 +112,7 @@ bash check_pg_health.sh
 
 ## Failover procedure (operator)
 
-See `docs/runbooks/pg-failover.md` (in the repo root's docs
+See `docs/ha.md` (in the repo root's docs
 tree). Both auto-failover (Patroni) and manual-failover
 (force-promote the replica) are documented.
 

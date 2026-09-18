@@ -5,5 +5,5 @@
 //
 // Refactor status: Phase A (2026-07-29) — feature-module scaffolding only.
 // Will be the FIRST feature moved in Phase B step 1 (smallest, no deps).
-// See docs/plans/refactor-v0.30.md.
+// See docs/ROADMAP.md.
 package healthz

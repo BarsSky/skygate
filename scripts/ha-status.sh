@@ -3,7 +3,7 @@
 # ha-status.sh — print the current HA state for all phases
 # B-new (v1.5.0+) — operator convenience wrapper around ha_state_summary.
 #
-# See docs/internal/runbooks/ha-v1.5.0-execution.md.
+# See docs/ha.md.
 #
 # What this does
 # --------------

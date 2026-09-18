@@ -1,6 +1,6 @@
 // Package watchdog — dbswap.go is the skygate-watchdog
 // for the cluster_database hot-reload (Phase 3.1 of
-// docs/internal/cluster-management.md).
+// docs/ha.md).
 //
 // v1.5.0+ / B203.
 //
@@ -36,7 +36,7 @@
 // the live env. If cluster_database is empty (no
 // admin edit yet), the watchdog does nothing — the
 // original SKYGATE_DB_DSN stays in effect. This matches
-// the rule from docs/internal/cluster-management.md §0.2.
+// the rule from docs/ha.md §0.2.
 //
 // Concurrency
 //

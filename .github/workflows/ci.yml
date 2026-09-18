@@ -95,7 +95,7 @@ jobs:
   # failed CI, because CI exercised one backend and no contracts.
   #
   # These three jobs make the split explicit. See
-  # docs/plans/2026-09-17-sqlite-pg-and-headscale-hardening.md.
+  # docs/ROADMAP.md.
   # ────────────────────────────────────────────────────────────────────────
 
   test-pg:

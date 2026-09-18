@@ -44,7 +44,7 @@
 #
 # The root-only parts (real binary swap, real unit restart) cannot be
 # tested unprivileged — they are covered by the live canary run recorded
-# in docs/plans/2026-09-17-sqlite-pg-and-headscale-hardening.md §12.16.
+# in docs/ROADMAP.md §12.16.
 
 set -euo pipefail
 # Disable pathname expansion (grep patterns contain shell globs).

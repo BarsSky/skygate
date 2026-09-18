@@ -70,5 +70,5 @@ Files:
 - scripts/check_b_standby_provision.sh (new, 220 lines, 20 B-checks)
 - scripts/verify_pre_deploy.sh (registers new B-check)
 - AGENTS.md (B-new-standby section + reusable lesson)
-- docs/internal/ha-v1.5.0-execution.md (Phase 7 updated with
+- docs/ha.md (Phase 7 updated with
   new operator runbook)

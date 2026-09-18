@@ -1,7 +1,7 @@
 // Package cluster — invite.go owns the cluster_invite signed
 // token format and the helpers that issue + verify them.
 //
-// v1.5.0+ / B200 — Phase 2.2 of docs/internal/cluster-management.md.
+// v1.5.0+ / B200 — Phase 2.2 of docs/ha.md.
 //
 // Token format (version "sgn1"):
 //

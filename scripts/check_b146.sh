@@ -8,7 +8,7 @@
 # operator's credentials + mTLS cert. Pre-B146 the
 # auth pattern was discovered via 5+ curl invocations
 # on 2026-08-18 (status log §6 of
-# docs/internal/runbooks/ha-v1.5.0-execution.md) but the
+# docs/ha.md) but the
 # discovered-working pattern was never productionized
 # into a script that the operator can re-run.
 #
@@ -22,7 +22,7 @@
 #      DONE (per the v1.5.0 HA tracker rule: "when
 #      working on anything that touches the HA chain,
 #      certsync, DNS failover, or deploy subcommands,
-#      update docs/internal/runbooks/ha-v1.5.0-execution.md §6
+#      update docs/ha.md §6
 #      status log in the same commit")
 #   4. AGENTS.md documents the B146 contract (so
 #      future agents know the live test exists + how
@@ -125,18 +125,18 @@ fi
 # B.1 the HA execution doc §1 (Phase 2) still
 # references the reg.ru DNS live test (the work
 # that B146 closes)
-if grep -q 'Phase 2' docs/internal/runbooks/ha-v1.5.0-execution.md 2>/dev/null && \
-   grep -q 'reg.ru DNS' docs/internal/runbooks/ha-v1.5.0-execution.md 2>/dev/null; then
-    ok "B.1 docs/internal/runbooks/ha-v1.5.0-execution.md §1 still references the reg.ru DNS live test"
+if grep -q 'Phase 2' docs/ha.md 2>/dev/null && \
+   grep -q 'reg.ru DNS' docs/ha.md 2>/dev/null; then
+    ok "B.1 docs/ha.md §1 still references the reg.ru DNS live test"
 else
-    bad "B.1 docs/internal/runbooks/ha-v1.5.0-execution.md must reference the reg.ru DNS live test (Phase 2 / B146)"
+    bad "B.1 docs/ha.md must reference the reg.ru DNS live test (Phase 2 / B146)"
 fi
 
 # B.2 the status log (§6) has a 2026-09-07 entry
 # for the B146 productionization (per the v1.5.0 HA
 # tracker rule: update §6 in the same commit)
-if grep -q '2026-09-07' docs/internal/runbooks/ha-v1.5.0-execution.md 2>/dev/null && \
-   grep -q -B0 -A1 '2026-09-07' docs/internal/runbooks/ha-v1.5.0-execution.md 2>/dev/null | grep -q -i 'b146\|phase 2.*done\|reg.ru.*live\|reg.ru.*skipped\|reg.ru.*test' 2>/dev/null; then
+if grep -q '2026-09-07' docs/ha.md 2>/dev/null && \
+   grep -q -B0 -A1 '2026-09-07' docs/ha.md 2>/dev/null | grep -q -i 'b146\|phase 2.*done\|reg.ru.*live\|reg.ru.*skipped\|reg.ru.*test' 2>/dev/null; then
     ok "B.2 HA execution doc §6 has the 2026-09-07 status log entry"
 else
     # The B-check is "did we update the log" — soft

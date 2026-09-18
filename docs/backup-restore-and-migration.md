@@ -1,11 +1,11 @@
 # Skygate backup / restore / cross-host migration
 
 > **Status (v1.3.8, 2026-08-12):** backup end-to-end verified on the
-> live VM (192.168.13.69) with both `local` and `s3` protocols.
+> live VM (`<VM_HOST>`) with both `local` and `s3` protocols.
 > Restore (replay pg_dump into a fresh DB) verified end-to-end with
 > a 15 MiB S3 backup. Cross-host migration path is documented below
 > and was executed successfully when the operator migrated from
-> `<operator-vm-public-ip>` (v0.32.25 era) → `192.168.13.69` (v1.0.0 era);
+> `<operator-vm-public-ip>` (v0.32.25 era) → `<VM_HOST>` (v1.0.0 era);
 > the same flow applies to a future move to any other host.
 
 This document is the operator's runbook for the three related flows.

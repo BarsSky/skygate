@@ -3,5 +3,5 @@
 // /my/exit-rules, /my/account, /my/tokens, /my/telegram, etc.
 //
 // Refactor status: Phase A (2026-07-29) — feature-module scaffolding only.
-// See docs/plans/refactor-v0.30.md.
+// See docs/ROADMAP.md.
 package my

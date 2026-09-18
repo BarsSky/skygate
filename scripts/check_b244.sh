@@ -5,7 +5,7 @@
 # Background
 #
 # The 2026-09-14 doc audit
-# (docs/internal/audits/doc-audit.md) surfaced
+# (docs/LESSONS.md) surfaced
 # 11 critical drift items that the operator was
 # finding by hand:
 #
@@ -15,7 +15,7 @@
 #        block claims "66/66 verify-pre checks",
 #        "27 packages", "v0.33.1.17" — all stale
 #        (real: 223 checks, 40+ packages, v1.5.2-alpha1).
-#   D-5. README.md has a doubled "docs/internal/internal/"
+#   D-5. README.md has a doubled "docs/"
 #        link target.
 #   D-6. README.md references deploy/install-docker.sh
 #        that doesn't exist (real: deploy/install.sh).
@@ -44,7 +44,7 @@
 #      release history)
 #   6. README.md has no "install-docker.sh" reference
 #      (real file is deploy/install.sh)
-#   7. README.md has no doubled "docs/internal/internal/"
+#   7. README.md has no doubled "docs/"
 #      path
 #   8. internal/i18n/catalog_bot.go has no "&gt;>."
 #      literal in any RU key
@@ -141,12 +141,12 @@ else
   check "C6 No 'install-docker.sh' reference in README files" 0 "hits: $(echo "$STALE_INSTALL" | head -3 | tr '\n' '|')"
 fi
 
-# 7. README.md has no doubled "docs/internal/internal/" path
-DOUBLED=$(grep -nE 'docs/internal/internal/' README.md docs/ru/README.md AGENTS.md 2>/dev/null || true)
+# 7. README.md has no doubled "docs/" path
+DOUBLED=$(grep -nE 'docs/' README.md docs/ru/README.md AGENTS.md 2>/dev/null || true)
 if [ -z "$DOUBLED" ]; then
-  check "C7 No doubled 'docs/internal/internal/' path in README files" 1
+  check "C7 No doubled 'docs/' path in README files" 1
 else
-  check "C7 No doubled 'docs/internal/internal/' path" 0 "hits: $(echo "$DOUBLED" | head -3 | tr '\n' '|')"
+  check "C7 No doubled 'docs/' path" 0 "hits: $(echo "$DOUBLED" | head -3 | tr '\n' '|')"
 fi
 
 # 8. catalog_bot.go has no "&gt;>." literal (the L-1 typo)

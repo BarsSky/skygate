@@ -30,7 +30,7 @@
 # requires a real session cookie, which is covered by the
 # Go integration test (internal/oidc/e2e_test.go) and by
 # the operator's manual test against a real Tailscale
-# client (docs/runbooks/oidc-tailscale-e2e.md).
+# client (docs/oidc.md).
 #
 # Exit code: 0 = all 6 steps PASS, non-zero = first
 # failing step is printed in red.
@@ -193,10 +193,10 @@ echo "     - Install Tailscale on a test device"
 echo "     - Configure custom coord server = $ISSUER"
 echo "     - Log in; watch the OIDC redirect chain"
 echo "     - Verify the Tailscale client gets a tailnet IP"
-echo "     See docs/runbooks/oidc-tailscale-e2e.md for the step-by-step."
+echo "     See docs/oidc.md for the step-by-step."
 echo
 echo "  2. Wire headscale to skygate:"
-echo "     - Copy the 'oidc:' block from docs/internal/runbooks/oidc-headscale.md"
+echo "     - Copy the 'oidc:' block from docs/oidc.md"
 echo "     - Paste into /etc/headscale/config.yaml on the headscale host"
 echo "     - sudo systemctl restart headscale"
 echo

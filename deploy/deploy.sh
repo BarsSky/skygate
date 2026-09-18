@@ -390,7 +390,7 @@ fi
 # entry. The monitor detects disk-full BEFORE it causes DB
 # corruption (SQLite's WAL writes fail silently at the syscall
 # level when /var has no free space, leaving btree pages in an
-# inconsistent state — see docs/BACKLOG.md Priority 8). The
+# inconsistent state — see docs/ROADMAP.md Priority 8). The
 # monitor runs every 6h and dispatches a Telegram alert at
 # 85% / 95% thresholds (matches R31 in verify-post).
 if [ -f "${SCRIPT_DIR}/../scripts/monitor_disk.sh" ]; then

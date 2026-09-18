@@ -3,7 +3,7 @@
 # state.sh — state machine primitives for skygate HA phases
 # B-new (v1.5.0+) — Phase 0/7/9 runner state tracking.
 #
-# See docs/internal/ha-v1.5.0-execution.md for context.
+# See docs/ha.md for context.
 #
 # This file is sourced (not executed) by ha-phase*.sh scripts.
 # It provides:

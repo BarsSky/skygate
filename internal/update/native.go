@@ -9,8 +9,8 @@ package update
 // "Update now" / "Push update" buttons hit a `default:` branch that
 // failed the job with "auto-updater for systemd not yet implemented",
 // so the operator was left with the manual steps printed on
-// /admin/update (plan docs/plans/2026-09-17-sqlite-pg-and-headscale-
-// hardening.md §12.15).
+// /admin/update (designed in the pre-v1.6 hardening plan; the durable
+// design is summarised in docs/UPDATE.md §5 and docs/ROADMAP.md).
 //
 // WHY THERE IS A PRIVILEGED HELPER (and not a pure-Go swap)
 //

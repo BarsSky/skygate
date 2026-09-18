@@ -1,6 +1,6 @@
 // Package db — cluster_drill.go owns the drill-mode
 // counterpart of cluster_failover.go. Phase 3.6 of
-// docs/internal/cluster-management.md.
+// docs/ha.md.
 //
 // Background
 //

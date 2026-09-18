@@ -8,7 +8,7 @@ the headscale DB.
 **Scope:** covers RTO ≤ 30 min, RPO ≤ 1 hour on the
 single-VM deployment. Tier 1 (hot standby with PostgreSQL
 streaming replication) is **NOT** covered here — that's a
-separate architecture (see `docs/internal/internal/ha-architecture.md` in
+separate architecture (see `docs/ha-architecture.md` in
 v0.26.0). This runbook is the "low-budget" recovery that
 4 users can rely on.
 
@@ -406,7 +406,7 @@ recovery, at 2am, with users waiting. Don't skip.
   Telegram bot in the cron wrapper to send an alert
   on the fail path (the subcommand doesn't have in-
   process Notifier access).
-- `docs/internal/architecture/ha-architecture.md` (v0.26.0) — the Tier 1
+- `docs/ha.md` (v0.26.0) — the Tier 1
   hot standby design (comprehensive, not a stub). The
   DR doc used to say this was a stub — it isn't; the
   file is 175 lines covering Tier 0/0.5/1, failure

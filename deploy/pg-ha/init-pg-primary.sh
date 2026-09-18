@@ -16,7 +16,7 @@
 # Idempotency: re-running this script after a successful first
 # run is a no-op (Patroni takes the leader lock, no initdb
 # re-run). Re-running on a corrupted primary requires manual
-# intervention (see docs/runbooks/pg-failover.md).
+# intervention (see docs/ha.md).
 #
 # Reference: https://patroni.readthedocs.io/en/latest/
 

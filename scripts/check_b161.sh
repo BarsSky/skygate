@@ -549,7 +549,7 @@ echo "=== contract I: B161.4 — headscale.conf snippet + /admin/oidc + e2e test
 #     internal/feature/admin/oidc_settings.go
 #  4. New i18n keys in catalog_admin.go (RU + EN)
 #  5. The nav.oidc entry in the Integrations sidebar
-#  6. The operator runbook in docs/internal/runbooks/oidc-headscale.md
+#  6. The operator runbook in docs/oidc.md
 
 # I.1 — /admin/oidc page is reachable.
 if grep -qE 'mux\.Handle\("GET /admin/oidc",' cmd/skygate/main.go; then
@@ -672,19 +672,19 @@ else
 fi
 
 # I.7 — the operator runbook.
-if [ -f docs/internal/runbooks/oidc-headscale.md ]; then
-    if bash -c "wc -l < docs/internal/runbooks/oidc-headscale.md" | grep -qE '^[1-9][0-9][0-9]'; then
-        ok "docs/internal/runbooks/oidc-headscale.md exists and is substantial (>200 lines)"
+if [ -f docs/oidc.md ]; then
+    if bash -c "wc -l < docs/oidc.md" | grep -qE '^[1-9][0-9][0-9]'; then
+        ok "docs/oidc.md exists and is substantial (>200 lines)"
     else
-        bad "docs/internal/runbooks/oidc-headscale.md exists but is too short (operator needs the full runbook)"
+        bad "docs/oidc.md exists but is too short (operator needs the full runbook)"
     fi
 else
-    bad "docs/internal/runbooks/oidc-headscale.md MISSING (operator has no runbook for the headscale.conf edit)"
+    bad "docs/oidc.md MISSING (operator has no runbook for the headscale.conf edit)"
 fi
 # The runbook must contain the actual field names
 # (not just a stub).
 for field in 'issuer' 'client_id' 'client_secret' 'allowed_domains' 'auto_update' 'strip_email_domain'; do
-    if grep -qE "$field" docs/internal/runbooks/oidc-headscale.md; then
+    if grep -qE "$field" docs/oidc.md; then
         ok "operator runbook documents the '$field' field"
     else
         bad "operator runbook: '$field' field undocumented"

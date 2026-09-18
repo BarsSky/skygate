@@ -290,7 +290,7 @@ action: accept
 ### "headscale accepts the ACL but tailnet clients can't see each other"
 
 This is the "headscale netmap gotcha" (documented in
-`docs/internal/runbooks/ha-v1.5.0-execution.md`). Grants-based
+`docs/ha.md`). Grants-based
 policy does NOT include user-owned (un-tagged) nodes in other nodes'
 peer list, even when grants formally allow the traffic. Only tagged
 nodes appear in the netmap.

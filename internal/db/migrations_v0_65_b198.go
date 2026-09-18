@@ -1,6 +1,6 @@
 // v1.5.0+ (B198) — DB migration workflow tables.
 //
-// Phase 1.4 of docs/internal/cluster-management.md. The
+// Phase 1.4 of docs/ha.md. The
 // migration framework lives in internal/dbmigrate/. This
 // migration adds the persistence layer (dbmigrate_run +
 // dbmigrate_step).

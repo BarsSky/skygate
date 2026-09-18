@@ -2,7 +2,7 @@
 // for the cluster join / heartbeat flow.
 //
 // v1.5.0+ / B201 — Phase 2.3 of
-// docs/internal/cluster-management.md.
+// docs/ha.md.
 //
 // Two machine-to-machine POST endpoints (no admin /
 // user session — the sgn1 token IS the auth):

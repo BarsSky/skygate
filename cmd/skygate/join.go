@@ -10,7 +10,7 @@
 // counterpart of `skygate init` (B211, which is the
 // primary-side counterpart).
 //
-// Phase 2.4 of docs/internal/cluster-management.md. The
+// Phase 2.4 of docs/ha.md. The
 // full Phase 2.4 spec also covers OS prereqs install +
 // headscale preauth registration + systemd bring-up —
 // those are out of scope for B212 (the spec's sub-tasks
