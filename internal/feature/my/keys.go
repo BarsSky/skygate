@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -248,6 +249,13 @@ func (s *Service) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 		"Now":               nowUnix,
 		"ExpiringCount":     expiringCount,
 		"ExpiredUnusedCount": expiredUnused,
+		// 2026-09-18 (R7/R6): the flash surface for this page. Pre-fix
+		// keys.html had no error block at all, so POST failures
+		// (reissue / expire / cleanup) could only be shown as a raw
+		// text/plain page via http.Error. Handlers now redirect here with
+		// ?err=<message>.
+		"FlashError": r.URL.Query().Get("err"),
+		"FlashOk":    r.URL.Query().Get("ok"),
 	}
 
 	// B155: dedicated reissue form. If ?reissue=ID is
@@ -350,6 +358,7 @@ func (s *Service) PostMyKeyReissue(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	lang := s.I18n.LangFromRequest(r)
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || id <= 0 {
@@ -442,9 +451,17 @@ func (s *Service) PostMyKeyReissue(w http.ResponseWriter, r *http.Request) {
 	// notified_at=0 (the V058PG column). The B156 scheduler
 	// dedup-via-notified_at would otherwise skip the new
 	// key on its first tick.
-	newID, err := db.InsertPreauthKey(s.dbc(), c.UserID, newKey.Key, now+ttlSeconds, newKey.ID)
+	//
+	// R7 (2026-09-18): this used to log the failure and continue, so the
+	// user got a key that /my/keys would never list and that could never be
+	// attributed to a device. persistIssuedKey makes it a hard failure and
+	// revokes the just-issued headscale key as compensation.
+	newID, err := s.persistIssuedKey(c.UserID, hsUserID.Int64, newKey,
+		now+ttlSeconds, "web.my.reissue")
 	if err != nil {
-		log.Printf("web.my.reissue: InsertPreauthKey err=%v", err)
+		http.Redirect(w, r, "/my/keys?err="+url.QueryEscape(
+			s.I18n.T(lang, "preauth.persist_failed")), http.StatusSeeOther)
+		return
 	}
 
 	// B157 (v1.5.0): mark the OLD key's
@@ -479,6 +496,7 @@ func (s *Service) PostMyKeyReissue(w http.ResponseWriter, r *http.Request) {
 		"Key":         newKey.Key,
 		"Expires":     durationFromSeconds(ttlSeconds),
 		"OS":          r.FormValue("os"),
+		"OSLabel":     osLabel(r.FormValue("os")),
 		"ReissueFrom": id,
 		"ReissueTo":   newID,
 	})

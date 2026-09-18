@@ -1,4 +1,4 @@
-﻿{{define "body-user-keys"}}
+{{define "body-user-keys"}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-key"></i>{{t "keys.title"}}</h2>
@@ -26,6 +26,24 @@
 <div class="alert alert-info">
   <i class="fa-solid fa-info-circle"></i>
   {{t "keys.cleanup_none"}}
+</div>
+{{end}}
+
+{{/* 2026-09-18 (R7 / R6): generic flash block. Pre-fix this page had NO
+     error surface at all, so a DB failure — on load OR on a POST such as
+     reissue/expire/cleanup — could only ever be rendered as a raw
+     text/plain page by http.Error(). The handler now redirects with
+     ?err=<message> and this block shows it inline. */}}
+{{if .FlashError}}
+<div class="alert alert-danger">
+  <i class="fa-solid fa-circle-exclamation"></i>
+  {{.FlashError}}
+</div>
+{{end}}
+{{if .FlashOk}}
+<div class="alert alert-success">
+  <i class="fa-solid fa-circle-check"></i>
+  {{.FlashOk}}
 </div>
 {{end}}
 

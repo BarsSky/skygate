@@ -515,6 +515,13 @@ var ruMy = map[string]string{
 	"preauth.copy_key"                           : "Скопировать ключ",
 	"preauth.os_hint"                            : "Выберите ОС — команда обновится автоматически.",
 	"preauth.got_it"                             : "Готово",
+	// 2026-09-18 (R7): показывается, когда ключ создан в headscale, но не
+	// сохранился в preauth_keys. Раньше ошибка только писалась в лог, а
+	// пользователь видел страницу с ключом — устройство при этом никогда
+	// не привязывалось к пользователю (вечное «⏳ ожидает»). Теперь ключ
+	// отзывается в headscale, а это сообщение объясняет, что делать.
+	"preauth.persist_failed"                     : "Не удалось сохранить ключ в базе данных, поэтому он отозван. Выдайте новый ключ — если ошибка повторяется, сообщите администратору.",
+	"preauth.db_error"                           : "Ошибка базы данных. Попробуйте ещё раз — если повторяется, сообщите администратору.",
 	"my_devices.subnet_card_title"               : "Твой personal subnet",
 	"my_devices.subnet_card_help"                : "Логический namespace для твоих устройств. <code>10.0.&lt;uid&gt;.0/24</code> выделяется автоматически при создании аккаунта и становится активным когда ты подключаешь первое устройство.",
 	"my_devices.subnet_use_cases_title"          : "Что это даёт?",
@@ -1015,6 +1022,13 @@ var enMy = map[string]string{
 	"preauth.copy_key"                           : "Copy key",
 	"preauth.os_hint"                            : "Pick an OS — the command updates automatically.",
 	"preauth.got_it"                             : "Done",
+	// 2026-09-18 (R7): shown when the key was created in headscale but the
+	// local preauth_keys row could not be written. Pre-fix the error was
+	// only logged and the user still got the key page — but the device was
+	// never attributed to them (stuck on "pending" forever). The key is now
+	// revoked in headscale and this message says what to do next.
+	"preauth.persist_failed"                     : "The key could not be saved to the database, so it has been revoked. Please issue a new key — if this keeps happening, tell an administrator.",
+	"preauth.db_error"                           : "Database error. Please try again — if it keeps happening, tell an administrator.",
 	"my_devices.subnet_card_title"               : "Your personal subnet",
 	"my_devices.subnet_card_help"                : "Logical namespace for your devices. <code>10.0.&lt;uid&gt;.0/24</code> is auto-allocated on account creation and becomes active when you connect your first device.",
 	"my_devices.subnet_use_cases_title"          : "What does this give me?",

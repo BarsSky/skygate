@@ -1,4 +1,4 @@
-﻿{{define "body-user-preauth_result"}}
+{{define "body-user-preauth_result"}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-key"></i>{{t "preauth.title"}}</h2>
@@ -31,7 +31,10 @@
 <div class="alert alert-warning" style="margin-bottom:8px">
   <i class="fa-solid fa-arrows-rotate"></i>
   {{tf "devices.reregister_result_banner" .ReregisteredFor}}
-  <div style="margin-top:6px;font-family:monospace;font-size:13px;background:#f5f5f5;padding:6px 10px;border-radius:4px">tailscale up --authkey={{.PreauthKey}}</div>
+  {{/* 2026-09-18: was {{.PreauthKey}} — no handler ever set that name
+       (they all pass "Key"), so the banner printed
+       `tailscale up --authkey=<no value>`. */}}
+  <div style="margin-top:6px;font-family:monospace;font-size:13px;background:#f5f5f5;padding:6px 10px;border-radius:4px">tailscale up --authkey={{.Key}}</div>
 </div>
 {{end}}
 

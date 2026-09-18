@@ -1484,8 +1484,14 @@ func (s *Service) PostMyDeviceReregister(w http.ResponseWriter, r *http.Request)
 
 	now := time.Now()
 	expiresAt := now.Add(time.Duration(ttlSeconds) * time.Second).Unix()
-	if _, perr := db.InsertPreauthKey(s.dbc(), c.UserID, key.Key, expiresAt, key.ID); perr != nil {
-		log.Printf("web.my.reregister: InsertPreauthKey err=%v", perr)
+	// R7 (2026-09-18): used to log-and-continue, which handed the user a
+	// key with no local row — the re-registered device then never got
+	// attributed back to its owner. persistIssuedKey fails hard and revokes
+	// the headscale key as compensation.
+	if _, perr := s.persistIssuedKey(c.UserID, hsUserID.Int64, key, expiresAt, "web.my.reregister"); perr != nil {
+		http.Redirect(w, r, "/my/devices?err="+url.QueryEscape(
+			s.I18n.T(lang, "preauth.persist_failed")), http.StatusSeeOther)
+		return
 	}
 	detail := fmt.Sprintf("old_node_id=%s hostname=%s new_preauth_id=%s ttl=%s", idStr, host, key.ID, expirationStr)
 	if aerr := db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "device_reregister", detail); aerr != nil {
@@ -1496,6 +1502,7 @@ func (s *Service) PostMyDeviceReregister(w http.ResponseWriter, r *http.Request)
 		"Key":             key.Key,
 		"Expires":         humanizeTTL(int64(ttlSeconds)),
 		"OS":              r.FormValue("os"),
+		"OSLabel":         osLabel(r.FormValue("os")),
 		"ReissueFrom":     0,
 		"ReissueTo":       0,
 		"ReregisteredFor": host,

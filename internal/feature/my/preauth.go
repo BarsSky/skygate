@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -64,6 +65,7 @@ func (s *Service) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+	lang := s.I18n.LangFromRequest(r)
 	// 2026-07-11: Этап 10 part 1 — moved to db.GetUserHSByID
 	hsUserID, _, err := db.GetUserHSByID(s.dbc(), c.UserID)
 	if err != nil {
@@ -127,8 +129,18 @@ func (s *Service) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 	// that's "already notified"). A fresh insert with
 	// notified_at=0 is the right default.
 	now := time.Now()
-	if _, err := db.InsertPreauthKey(s.dbc(), c.UserID, key.Key, now.Add(time.Duration(ttlSeconds)*time.Second).Unix(), key.ID); err != nil {
-		log.Printf("web.my.preauth: InsertPreauthKey userID=%d err=%v", c.UserID, err)
+	// R7 (2026-09-18): this used to log the INSERT error and carry on,
+	// handing the user a working key that skygate had no record of. The
+	// device was then never attributed to its owner (the node-ownership
+	// backfill matches on headscale_preauth_id) and sat on "pending"
+	// forever. persistIssuedKey makes the failure hard and revokes the
+	// headscale key as compensation, so we never hand out an untracked key.
+	if _, perr := s.persistIssuedKey(c.UserID, hsUserID.Int64, key,
+		now.Add(time.Duration(ttlSeconds)*time.Second).Unix(), "web.my.preauth"); perr != nil {
+		// The issuance form lives on /my/devices, which renders ?err=.
+		http.Redirect(w, r, "/my/devices?err="+url.QueryEscape(
+			s.I18n.T(lang, "preauth.persist_failed")), http.StatusSeeOther)
+		return
 	}
 	detail := fmt.Sprintf("ttl=%s reusable=%v resolved=%s", ttlUsed, reusable, expirationStr)
 	if err := db.AppendAuditLog(s.dbc(), c.UserID, c.Username, "preauth_issued", detail); err != nil {
@@ -156,6 +168,10 @@ func (s *Service) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 		"Key":         key.Key,
 		"Expires":     humanizeTTL(ttlSeconds),
 		"OS":          r.FormValue("os"),
+		// 2026-09-18: the template prints {{.OSLabel}} in three places but
+		// no handler ever set it, so the page said "instructions for
+		// <no value>". See osLabel() in keys_issue.go.
+		"OSLabel":     osLabel(r.FormValue("os")),
 		"ReissueFrom": reissueFrom,
 		"ReissueTo":   reissueTo,
 	})
