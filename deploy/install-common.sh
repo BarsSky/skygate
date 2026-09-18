@@ -353,8 +353,29 @@ write_env_file() {
     # Generate a starter JWT secret. 32 bytes hex = 64 chars
     # (matches SKYGATE_JWT_SECRET length expected by the Go
     # code: any length is fine, but 32+ bytes is recommended).
+    #
+    # 2026-09-18: this used `xxd -p`, which is NOT guaranteed to be present —
+    # it ships in the `xxd`/`vim-common` package, which is in NONE of our
+    # installer dependency lists. On a minimal Debian 12 the install ABORTED
+    # right here (set -euo pipefail), i.e. AFTER "installed:
+    # /usr/local/bin/skygate" and BEFORE the env file, the systemd unit and
+    # the self-update helper were written — the host was left with a binary
+    # and no service. Found by running install-debian.sh on a clean
+    # debian:12 container (the pre-release acceptance run).
+    #
+    # `openssl` is the nicest source when present; `od` is in coreutils, which
+    # every supported distro ships, so it is the dependable fallback.
     local jwt_secret
-    jwt_secret="$(head -c 32 /dev/urandom | xxd -p -c 64)"
+    if command -v openssl >/dev/null 2>&1; then
+        jwt_secret="$(openssl rand -hex 32)"
+    elif command -v od >/dev/null 2>&1; then
+        jwt_secret="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    elif command -v xxd >/dev/null 2>&1; then
+        jwt_secret="$(head -c 32 /dev/urandom | xxd -p -c 64)"
+    else
+        echo "ERROR: cannot generate SKYGATE_JWT_SECRET — install one of: openssl, coreutils (od), xxd" >&2
+        return 1
+    fi
 
     # Resolve the DB type (sqlite default / postgres / explicit
     # override) — sets SKYGATE_DB for the heredoc below.

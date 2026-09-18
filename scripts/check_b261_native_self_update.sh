@@ -361,4 +361,25 @@ else
   ok "M3: no unconditional error-ignoring Exec left in migrations_sqlite.go"
 fi
 
+# --- N: the installer survives a MINIMAL host (pre-release acceptance) ---
+# `xxd` ships in the xxd/vim-common package, which is in NONE of the
+# installer dependency lists (apt/dnf/apk). On a clean debian:12 container
+# write_env_file died at the secret-generation line, and because the
+# installers run under `set -euo pipefail` the install ABORTED after
+# "installed: /usr/local/bin/skygate" — leaving a binary, no env file, no
+# systemd unit and no update helper. The secret must come from a tool the
+# distro actually guarantees (openssl if present, `od` from coreutils
+# otherwise).
+if grep -q 'command -v od' deploy/install-common.sh \
+   && grep -q 'command -v openssl' deploy/install-common.sh; then
+  ok "N: secret generation has od/openssl fallbacks (xxd is not guaranteed on minimal hosts)"
+else
+  fail "N: install-common.sh still relies on xxd alone — a minimal Debian/RHEL install aborts after the binary is installed"
+fi
+if grep -nE '^[^#]*\| *xxd ' deploy/install-common.sh | grep -v 'command -v xxd' >/dev/null 2>&1; then
+  fail "N2: a bare '| xxd' pipeline is back in install-common.sh"
+else
+  ok "N2: no unconditional xxd pipeline in install-common.sh"
+fi
+
 hdr "B261: all contracts pass"
