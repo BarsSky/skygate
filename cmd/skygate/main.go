@@ -423,11 +423,15 @@ func main() {
 	log.Printf("🌐 Skygate starting on :%s", cfg.Port)
 	log.Printf("   Headscale URL: %s", cfg.HeadscaleURL)
 
-	// v1.3.0: PostgreSQL is mandatory. SQLite is no longer
-	// supported. cfg.DBDSN is required (validated in
-	// config.Load). cfg.DBPath is kept for log diagnostics
-	// only — no longer used at runtime.
-	log.Printf("   DB backend:    postgres (DSN=%s...)", redactPGPassword(cfg.DBDSN))
+	// v1.3.0 said "PostgreSQL is mandatory"; v1.5.4 restored SQLite
+	// (B-mod-sqlite-pg-bidi) with the DSN as the source of truth. The
+	// label below was hardcoded to "postgres" long after that, so a
+	// native SQLite install logged
+	//   DB backend: postgres (DSN=sqlite:/var/lib/skygate/skygate.db...)
+	// while failing to open that very database — actively misleading
+	// during the B261 canary debugging. Report the detected dialect.
+	dialectKind := db.DetectDSN(cfg.DBDSN).Kind
+	log.Printf("   DB backend:    %s (DSN=%s...)", dialectKind, redactPGPassword(cfg.DBDSN))
 	var d *db.ResettableDB
 	pool, err := db.OpenDSNWithRetry(cfg.DBDSN, 5, 2*time.Second)
 	if err != nil {
@@ -3074,9 +3078,9 @@ func runMigrateOnly() error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	// v1.3.0: PG-only. cfg.DBDSN is required (validated by
-	// config.Load), no SQLite fallback.
-	log.Printf("migrate-only: opening postgres (DSN=%s...)", redactPGPassword(cfg.DBDSN))
+	// v1.5.4 restored SQLite; the DSN decides the dialect (same
+	// hardcoded-label bug as the startup banner above).
+	log.Printf("migrate-only: opening %s (DSN=%s...)", db.DetectDSN(cfg.DBDSN).Kind, redactPGPassword(cfg.DBDSN))
 	d, err := db.OpenDSNWithRetry(cfg.DBDSN, 5, 2*time.Second)
 	if err != nil {
 		return err

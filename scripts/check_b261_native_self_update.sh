@@ -128,6 +128,20 @@ grep -q 'PREV_BINARY' "$HELPER" || fail "C: helper keeps no previous-binary back
 grep -q 'finish rolled_back' "$HELPER" || fail "C: helper never reports rolled_back"
 ok "C: applier does backup → SHA256 verify (SHA256SUMS or GitHub asset digest) → migrate → atomic swap → restart → build-string healthz → rollback"
 
+# --- C5: the migrate step uses the SUBCOMMAND -------------------------
+# Live canary finding 3: cmd/skygate dispatches `migrate-only` as a
+# subcommand (`case "migrate-only":`), NOT as a --migrate-only flag —
+# that prints `unknown command "--migrate-only"`. The applier and the
+# operator-facing manual steps (internal/update/manual.go) both used the
+# flag form, so the migration step failed on every attempt.
+grep -q '"\$NEW_BIN" migrate-only' "$HELPER" || fail "C5: applier does not call the migrate-only subcommand"
+if grep -qE '"\$NEW_BIN" --migrate-only|skygate --migrate-only|skygate-skygate:latest \\' "$HELPER" >/dev/null 2>&1; then
+  fail "C5: applier still uses the nonexistent --migrate-only flag"
+fi
+grep -q '+ " migrate-only"' internal/update/manual.go || fail "C5: bare manual steps still use --migrate-only"
+grep -q '/app/skygate migrate-only' internal/update/manual.go || fail "C5: docker manual steps still use --migrate-only"
+ok "C5: migrate step (applier + manual steps) uses the migrate-only subcommand"
+
 # --- C2: bare mode restarts as the service user ----------------------
 if grep -q 'setsid runuser -u "\$RUN_USER"' "$HELPER"; then
   ok "C2: bare mode restarts the process as \$RUN_USER (never as root)"

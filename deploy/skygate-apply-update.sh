@@ -54,9 +54,12 @@
 #      repo's published releases carry NO SHA256SUMS asset at all
 #      (v1.5.6 … v1.5.8), so a SHA256SUMS-only gate made the whole
 #      feature unusable while still looking "secure"
-#   4. extract, run `<new binary> --migrate-only` as $RUN_USER (BEFORE
+#   4. extract, run `<new binary> migrate-only` as $RUN_USER (BEFORE
 #      the swap: a failed migration leaves the old binary in place and
-#      needs no rollback at all)
+#      needs no rollback at all). The SUBCOMMAND form is the real one —
+#      `--migrate-only` is not a flag (it prints
+#      'unknown command "--migrate-only"'), even though the manual
+#      steps used to suggest it; see internal/update/manual.go.
 #   5. swap the binary ATOMICALLY via a rename (writing directly over a
 #      running executable fails with ETXTBSY)
 #   6. restart ($MODE=systemd: systemctl restart $SERVICE;
@@ -354,10 +357,10 @@ run_migrations() {
         done < "$ENV_FILE"
     fi
     if command -v runuser > /dev/null 2>&1; then
-        runuser -u "$RUN_USER" -- env "$@" "$NEW_BIN" --migrate-only >> "$LOG" 2>&1
+        runuser -u "$RUN_USER" -- env "$@" "$NEW_BIN" migrate-only >> "$LOG" 2>&1
         return $?
     fi
-    env "$@" "$NEW_BIN" --migrate-only >> "$LOG" 2>&1
+    env "$@" "$NEW_BIN" migrate-only >> "$LOG" 2>&1
     return $?
 }
 
