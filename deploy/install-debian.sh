@@ -36,6 +36,10 @@ DB_TYPE=""
 # the systemd env file (closes the dry-run gap from
 # docs/install-dry-run-report.md).
 IMPORT_EXISTING=""
+# §12.15 item 4: parse --install-kind=systemd|bare|docker. The value is
+# written into the unit as SKYGATE_INSTALL_KIND so DetectInstallKind()
+# never has to guess.
+INSTALL_KIND=""
 for arg in "$@"; do
     case "$arg" in
         --db-type=*)
@@ -46,6 +50,10 @@ for arg in "$@"; do
             IMPORT_EXISTING="${arg#--import-existing=}"
             shift
             ;;
+        --install-kind=*)
+            INSTALL_KIND="${arg#--install-kind=}"
+            shift
+            ;;
     esac
 done
 if [ -n "$DB_TYPE" ]; then
@@ -53,6 +61,9 @@ if [ -n "$DB_TYPE" ]; then
 fi
 if [ -n "$IMPORT_EXISTING" ]; then
     export SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN="$IMPORT_EXISTING"
+fi
+if [ -n "$INSTALL_KIND" ]; then
+    export SKYGATE_INSTALL_KIND="$INSTALL_KIND"
 fi
 
 # SCRIPT_DIR / REPO_ROOT are used by step 7 (B-mod-install
@@ -137,9 +148,14 @@ tarball_url="${urls[0]}"
 sums_url="${urls[1]}"
 download_and_verify "$tarball_url" "$sums_url" "$(dirname "$SKYGATE_BIN")" "$SKIP_VERIFY"
 
-# -------- 4. env file + systemd unit --------
+# -------- 4. env file + systemd unit + update helper --------
 write_env_file "$SKYGATE_ETC_DIR" "$SKYGATE_DATA_DIR" "$SKYGATE_PORT" "$SKYGATE_USER"
+resolve_install_kind "systemd"
 write_systemd_unit "$SKYGATE_USER" "$SKYGATE_DATA_DIR" "$SKYGATE_ETC_DIR"
+# §12.15: the privileged half of the native self-update (root-owned
+# applier + path unit). Without it /admin/update's native button can
+# only print the manual steps.
+write_update_helper "$SKYGATE_USER" "$SKYGATE_DATA_DIR" "$SKYGATE_ETC_DIR" "$SKYGATE_INSTALL_KIND"
 
 # -------- 5. enable + start --------
 enable_and_start_service "skygate"

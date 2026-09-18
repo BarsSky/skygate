@@ -635,6 +635,16 @@ func main() {
 		// will overwrite the file with a fresh state.
 		_ = err
 	}
+	// 2026-09-18 (B261 / plan §12.15): reconcile a native (systemd /
+	// bare) self-update that finished while we were down. The
+	// privileged helper writes its verdict to <update_dir>/result.*
+	// and then restarts this service, so the NEW process is the first
+	// one able to report it. Doing it here (in addition to the
+	// /admin/update render path) means the verdict lands even if
+	// nobody logs in — the operator's `cat` of the state file, the
+	// Telegram alert path, and the page all see the same thing.
+	// No-op for Docker jobs and when there is nothing to fold.
+	update.ConfirmNativeSwap(updateStore, cfg.UpdateDir)
 	// 2026-07-31: v0.32.13 — gate the DNS auto-updater goroutine
 	// on AutoUpdateEnabled. Pre-fix the goroutine launched
 	// unconditionally if cfg.DNSAutoCheck > 0, which fired

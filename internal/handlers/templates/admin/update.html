@@ -219,6 +219,28 @@
       <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
         {{t "update.channel"}}: <code>{{.Channel}}</code>
       </div>
+      {{/* v1.5.9 (§12.15 item 3): the platform the updater would
+           touch. Pre-fix the page showed only the install-kind
+           label, so a container that sees its host's
+           /run/systemd/system was indistinguishable from a real
+           systemd host without ssh. */}}
+      {{if .Platform}}
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
+        {{t "update.platform"}}: <code>{{.Platform.OS}}/{{.Platform.Arch}}</code>{{if .Platform.InContainer}} · {{t "update.platform_container"}}{{end}}
+        · systemctl: {{if .Platform.HasSystemctl}}✓{{else}}—{{end}}
+        · docker: {{if .Platform.HasDocker}}✓{{else}}—{{end}}
+      </div>
+      {{if .NativeKind}}
+      <div style="font-size:11px;margin-top:2px">
+        <span style="color:var(--text-muted)">{{t "update.helper_label"}}:</span>
+        {{if .Platform.HelperInstalled}}
+        <span style="color:var(--success)">{{t "update.helper_ok"}}</span>
+        {{else}}
+        <span style="color:var(--warning)">{{t "update.helper_missing"}}</span>
+        {{end}}
+      </div>
+      {{end}}
+      {{end}}
     </div>
   </div>
 </div>

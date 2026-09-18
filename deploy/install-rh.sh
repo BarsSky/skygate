@@ -22,6 +22,21 @@
 
 set -euo pipefail
 
+# §12.15 item 4: --install-kind=systemd|bare|docker (written into the
+# unit as SKYGATE_INSTALL_KIND so DetectInstallKind() never guesses).
+INSTALL_KIND=""
+for arg in "$@"; do
+    case "$arg" in
+        --install-kind=*)
+            INSTALL_KIND="${arg#--install-kind=}"
+            shift
+            ;;
+    esac
+done
+if [ -n "$INSTALL_KIND" ]; then
+    export SKYGATE_INSTALL_KIND="$INSTALL_KIND"
+fi
+
 . "$(dirname "$0")/install-common.sh"
 
 . /etc/os-release
@@ -72,9 +87,12 @@ tarball_url="${urls[0]}"
 sums_url="${urls[1]}"
 download_and_verify "$tarball_url" "$sums_url" "$(dirname "$SKYGATE_BIN")" "$SKIP_VERIFY"
 
-# -------- 4. env file + systemd unit --------
+# -------- 4. env file + systemd unit + update helper --------
 write_env_file "$SKYGATE_ETC_DIR" "$SKYGATE_DATA_DIR" "$SKYGATE_PORT" "$SKYGATE_USER"
+resolve_install_kind "systemd"
 write_systemd_unit "$SKYGATE_USER" "$SKYGATE_DATA_DIR" "$SKYGATE_ETC_DIR"
+# §12.15: privileged half of the native self-update.
+write_update_helper "$SKYGATE_USER" "$SKYGATE_DATA_DIR" "$SKYGATE_ETC_DIR" "$SKYGATE_INSTALL_KIND"
 
 # -------- 5. enable + start --------
 enable_and_start_service "skygate"

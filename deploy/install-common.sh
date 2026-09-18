@@ -44,11 +44,17 @@
 : "${SKIP_VERIFY:=${SKYGATE_SKIP_VERIFY:-0}}"
 : "${SKYGATE_DB_TYPE:=}"
 : "${SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN:=}"
+# §12.15 item 4: the install kind is written into the unit as
+# SKYGATE_INSTALL_KIND so DetectInstallKind() does not have to guess on
+# air-gapped hosts (or inside a container that can see the host's
+# /run/systemd/system). The per-OS installer sets it; the default is
+# the kind every one of them creates.
+: "${SKYGATE_INSTALL_KIND:=}"
 # Note: SKIP_VERIFY is intentionally NOT exported — it's a
 # per-invocation flag, not a runtime value. The download function
 # reads it from the env via "$SKIP_VERIFY" in the calling script's
 # scope, not via export.
-export GITHUB_OWNER GITHUB_REPO SKYGATE_VERSION SKYGATE_CHANNEL SKYGATE_PORT SKYGATE_USER SKYGATE_DATA_DIR SKYGATE_ETC_DIR SKYGATE_BIN SKYGATE_DB_TYPE SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN
+export GITHUB_OWNER GITHUB_REPO SKYGATE_VERSION SKYGATE_CHANNEL SKYGATE_PORT SKYGATE_USER SKYGATE_DATA_DIR SKYGATE_ETC_DIR SKYGATE_BIN SKYGATE_DB_TYPE SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN SKYGATE_INSTALL_KIND
 
 # -------- B-mod-sqlite-pg-bidi v1.5.4: --db-type flag handling --------
 # The operator can choose the DB backend at install time via:
@@ -125,6 +131,31 @@ resolve_db_type() {
             return 1
             ;;
     esac
+}
+
+# resolve_install_kind: normalise the --install-kind flag (§12.15
+# item 4). The value is written into the unit as SKYGATE_INSTALL_KIND,
+# which DetectInstallKind() prefers over filesystem probing — the
+# override exists for air-gapped hosts and for containers that can see
+# their host's /run/systemd/system.
+#
+# Args:
+#   $1 = default kind for this installer (systemd / bare / docker)
+resolve_install_kind() {
+    local default_kind="$1"
+    local kind="${SKYGATE_INSTALL_KIND:-}"
+    if [ -z "$kind" ]; then
+        kind="$default_kind"
+    fi
+    case "$kind" in
+        systemd|bare|docker) ;;
+        *)
+            echo "ERROR: unknown --install-kind='$kind' (use systemd, bare or docker)" >&2
+            return 1
+            ;;
+    esac
+    export SKYGATE_INSTALL_KIND="$kind"
+    echo "[install] install kind: $kind"
 }
 
 # -------- shared helpers (sourced) --------
@@ -443,6 +474,16 @@ Type=simple
 User=${user}
 Group=${user}
 EnvironmentFile=-${etc_dir}/skygate.env
+# §12.15 item 4: pin the install kind + the update state/staging paths.
+# These come AFTER EnvironmentFile= on purpose (systemd applies the
+# directives in order, so an operator's explicit override in
+# skygate.env still wins). Pre-fix the state path defaulted to
+# /data/skygate-update-status.json, which does not exist on a native
+# host — every state write was a silent no-op and /admin/update could
+# not show a job at all.
+Environment=SKYGATE_INSTALL_KIND=${SKYGATE_INSTALL_KIND:-systemd}
+Environment=SKYGATE_UPDATE_STATE_PATH=${data_dir}/skygate-update-status.json
+Environment=SKYGATE_UPDATE_DIR=${data_dir}/update
 ExecStart=${SKYGATE_BIN:-/usr/local/bin/skygate}
 WorkingDirectory=${data_dir}
 Restart=on-failure
@@ -474,6 +515,182 @@ EOF
 
     systemctl daemon-reload
     echo "[install] wrote $unit_file"
+}
+
+# -------- §12.15: native self-update helper --------
+#
+# A native skygate runs as an unprivileged user under
+# ProtectSystem=strict, so it cannot replace /usr/local/bin/skygate or
+# restart its own unit. write_update_helper() installs the privileged
+# half:
+#
+#   /usr/local/lib/skygate/skygate-apply-update.sh  root-owned applier
+#   <etc_dir>/update-helper.conf                    root-owned config
+#   /etc/systemd/system/skygate-update.service      root oneshot unit
+#   /etc/systemd/system/skygate-update.path         watches request.props
+#
+# The unprivileged service only drops <data_dir>/update/request.props;
+# the path unit (root) fires the applier, which downloads + verifies
+# the release, migrates, swaps the binary, restarts the unit, polls
+# /healthz for the new build string and rolls back on failure. See
+# deploy/skygate-apply-update.sh for the security model.
+#
+# Args:
+#   $1 = service user, $2 = data dir, $3 = etc dir, $4 = kind (systemd|bare)
+write_update_helper() {
+    local user="$1"
+    local data_dir="$2"
+    local etc_dir="$3"
+    local kind="${4:-systemd}"
+    local lib_dir="/usr/local/lib/skygate"
+    local helper="${lib_dir}/skygate-apply-update.sh"
+    local conf="${etc_dir}/update-helper.conf"
+    local update_dir="${data_dir}/update"
+    local src="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/skygate-apply-update.sh"
+
+    if [ ! -f "$src" ]; then
+        echo "[install] WARN: $src not found — native self-update stays unavailable (manual steps only)" >&2
+        return 0
+    fi
+
+    install -d -m 0755 "$lib_dir"
+    install -m 0755 -o root -g root "$src" "$helper"
+    echo "[install] wrote $helper"
+
+    local arch
+    arch="$(detect_arch)"
+    cat > "$conf" <<EOF
+# $conf — configuration for the PRIVILEGED skygate update applier.
+# Written by install-{debian,rh,bare}.sh (project-owned: re-running the
+# installer overwrites it). The applier is the only root-side component
+# of the native self-update; every path it touches comes from here, so a
+# compromised skygate process can only ask for an official release tag
+# (see deploy/skygate-apply-update.sh, "SECURITY MODEL").
+SKYGATE_UPDATE_DIR="${update_dir}"
+SKYGATE_UPDATE_MODE="${kind}"
+SKYGATE_UPDATE_SERVICE="skygate"
+SKYGATE_UPDATE_BINARY="${SKYGATE_BIN:-/usr/local/bin/skygate}"
+SKYGATE_UPDATE_RUN_USER="${user}"
+SKYGATE_UPDATE_ENV_FILE="${etc_dir}/skygate.env"
+SKYGATE_UPDATE_HEALTH_URL="http://127.0.0.1:${SKYGATE_PORT:-8080}/healthz"
+SKYGATE_UPDATE_OWNER="${GITHUB_OWNER:-BarsSky}"
+SKYGATE_UPDATE_REPO="${GITHUB_REPO:-skygate}"
+SKYGATE_UPDATE_ASSET_ARCH="linux-${arch}"
+EOF
+    chmod 0644 "$conf"
+    chown root:root "$conf"
+    echo "[install] wrote $conf"
+
+    if [ "$kind" = "bare" ]; then
+        # Bare has no unit to restart, so the applier needs an explicit
+        # start command. It runs as the service user (the applier wraps
+        # it in `runuser -u $user -- sh -c`), sources the service's own
+        # env file and logs next to the DB.
+        local bare_start="${SKYGATE_UPDATE_BARE_START:-set -a; . ${etc_dir}/skygate.env; set +a; exec ${SKYGATE_BIN:-/usr/local/bin/skygate} >> ${data_dir}/skygate.log 2>&1}"
+        printf "SKYGATE_UPDATE_BARE_START='%s'\n" "$bare_start" >> "$conf"
+        echo "[install] bare start command: $bare_start"
+    fi
+
+    install -d -m 0750 -o "$user" -g "$user" "$update_dir"
+
+    if [ "$kind" = "systemd" ]; then
+        write_update_units "$update_dir"
+    else
+        write_bare_sudoers "$helper" "$user"
+    fi
+}
+
+# write_update_units: the path+wservice pair that lets an UNPRIVILEGED
+# service trigger a root-run applier (the path unit is the privilege
+# boundary — the service never calls sudo or talks to systemd).
+write_update_units() {
+    local update_dir="$1"
+    local service_file="/etc/systemd/system/skygate-update.service"
+    local path_file="/etc/systemd/system/skygate-update.path"
+
+    cat > "$service_file" <<EOF
+# /etc/systemd/system/skygate-update.service
+# 2026-09-18 (§12.15): PRIVILEGED half of the native self-update.
+# Written by install-{debian,rh}.sh — re-running the installer
+# overwrites it (project-owned file).
+#
+# Triggered by skygate-update.path, never started at boot: it applies
+# exactly one staged update per request.props and exits. Running as
+# root in its OWN cgroup is what makes the restart safe — a helper
+# spawned by skygate.service itself would be killed by the
+# systemctl restart it is performing.
+[Unit]
+Description=Skygate privileged self-update applier
+Documentation=https://github.com/${GITHUB_OWNER:-BarsSky}/${GITHUB_REPO:-skygate}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/lib/skygate/skygate-apply-update.sh
+# A release download + SHA256 + migration + restart + healthz poll.
+# The applier bounds itself to ~90s of healthz polling after the
+# restart; 900s leaves room for a slow link and a big migration.
+TimeoutStartSec=900
+Nice=5
+EOF
+
+    cat > "$path_file" <<EOF
+# /etc/systemd/system/skygate-update.path
+# 2026-09-18 (§12.15): watches for a staged update request.
+# The unprivileged service writes this file (it is the service user's
+# own directory); the path unit turns its appearance into a root-run
+# applier. No sudo, no polkit, no privileged systemd call from the
+# service.
+[Unit]
+Description=Watch for a staged skygate update request
+
+[Path]
+PathExists=${update_dir}/request.props
+Unit=skygate-update.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now skygate-update.path >/dev/null 2>&1 || true
+    echo "[install] wrote $service_file + $path_file (skygate-update.path enabled)"
+}
+
+# write_bare_sudoers: the no-systemd case. There is no path unit to
+# trigger a root applier, so the service is allowed to run exactly one
+# command as root: the applier. The rule pins the interpreter + the
+# absolute path (no wildcards), and the applier's own validation keeps
+# the request data-only.
+write_bare_sudoers() {
+    local helper="$1"
+    local user="$2"
+    local sudoers="/etc/sudoers.d/skygate-update"
+
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo "[install] WARN: sudo not installed — bare self-update stays unavailable (manual steps only)" >&2
+        return 0
+    fi
+    cat > "$sudoers" <<EOF
+# /etc/sudoers.d/skygate-update — written by install-bare.sh (§12.15).
+# Lets the unprivileged skygate service run ONLY the update applier as
+# root. The applier parses the service's request file as data and only
+# ever downloads official releases (see deploy/skygate-apply-update.sh).
+${user} ALL=(root) NOPASSWD: /bin/sh ${helper}
+${user} ALL=(root) NOPASSWD: ${helper}
+EOF
+    chmod 0440 "$sudoers"
+    chown root:root "$sudoers"
+    if command -v visudo >/dev/null 2>&1; then
+        if ! visudo -c -f "$sudoers" >/dev/null 2>&1; then
+            echo "[install] ERROR: generated sudoers file is invalid — removing it" >&2
+            rm -f "$sudoers"
+            return 1
+        fi
+    fi
+    echo "[install] wrote $sudoers (bare-mode self-update trigger)"
 }
 
 # create_user_and_dirs: create the skygate system user (no

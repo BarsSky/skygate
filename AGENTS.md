@@ -849,6 +849,58 @@ prod bug right now", `--no-verify` is acceptable.
       (extra_hosts pins skygate → host:443, regardless of
       whether derper runs on host or in docker with
       host network). No code change needed.
+- **B261 (v1.5.9, 2026-09-18)**: native (systemd / bare-binary)
+  self-update — plan §12.15. Pre-fix only the Docker install kind had
+  an auto-updater: on a native install the /admin/update "Обновить" /
+  "Протолкнуть обновление" buttons hit a `default:` branch and failed
+  with "auto-updater for systemd not yet implemented (v0.29.0 Phase 2
+  covers Docker only)". **The blocker was privilege, not code**: the
+  native unit runs skygate as an unprivileged user under
+  `ProtectSystem=strict` (`install-common.sh:write_systemd_unit`), so
+  the process cannot write `/usr/local/bin/skygate` and cannot
+  `systemctl restart skygate` — verified on the reference VM,
+  `sudo -n true` as the `skygate` user answers "a password is
+  required". Restarting the unit from *inside* the unit is a second
+  problem: systemd kills the whole **cgroup**, so a `setsid` child
+  spawned by skygate dies with it (which is why the Docker path needs
+  a helper *container* and this path needs a separate unit).
+  **Design kept the security model intact** rather than running
+  skygate as root:
+  1. unprivileged skygate writes `<data_dir>/update/request.props` —
+     **data only** (job id, target tag, previous build, pid); no paths,
+     and the applier never `source`s it (that would hand any
+     skygate-level compromise a root shell);
+  2. root-owned `skygate-update.path` watches that file and fires
+     root-owned `skygate-update.service` (path unit = the privilege
+     boundary; the service never calls sudo/polkit);
+  3. `deploy/skygate-apply-update.sh` (installed to
+     `/usr/local/lib/skygate/`) is the only thing that touches the
+     binary: backup → download official release tarball → verify
+     `SHA256SUMS` → `./skygate --migrate-only` as the service user
+     **before** the swap → **atomic rename** swap (a direct `install`
+     onto a running binary fails with ETXTBSY) → restart → poll
+     `/healthz` for the **build string** of the target tag, not just
+     HTTP 200 → on failure restore `skygate.prev`, restart, verify,
+     report `rolled_back`;
+  4. verdict lands in `result.status` / `result.build` /
+     `result.error` + `apply.log`, folded into the update state by
+     `update.ConfirmNativeSwap` on the next /admin/update render — in
+     the old process when the helper bailed before the restart, in the
+     new one after a successful swap.
+  Every path the applier uses comes from the root-owned
+  `/etc/skygate/update-helper.conf`, and `/etc/skygate/skygate.env`
+  (owned by the *service user*) is parsed as data + passed via
+  `env(1)`, never sourced — same escalation reasoning. Also §12.15
+  item 3 (page shows `runtime.GOOS/GOARCH` + container marker +
+  systemctl/docker/helper presence) and item 4 (`--install-kind=`
+  in install-{debian,rh,bare}.sh → `SKYGATE_INSTALL_KIND` +
+  `SKYGATE_UPDATE_STATE_PATH` + `SKYGATE_UPDATE_DIR` in the unit,
+  because the container default `/data/skygate-update-status.json`
+  does not exist on a native host — every state write was a silent
+  no-op). 8 Go unit tests in `internal/update/native_test.go`,
+  contracts A–I in `scripts/check_b261_native_self_update.sh`
+  (incl. a root-free smoke run proving a hostile `TARGET` is refused
+  as data), live canary verification in the plan §12.16.
 - **B176 + B175.1 (v1.5.2)**: dev-tag
     lowercase (headscale 0.29 rejects
     uppercase tags) + i18n tooltip

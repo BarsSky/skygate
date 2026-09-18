@@ -213,6 +213,11 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 			// have promoted it to phase=done.
 		}
 	}
+	// v1.5.9 (§12.15): native (systemd / bare) jobs are finalized from
+	// the privileged helper's result files instead. Safe to call on
+	// every render — it is a no-op unless a native job is mid-flight
+	// AND the helper has written its verdict.
+	update.ConfirmNativeSwap(store, s.Cfg.UpdateDir)
 
 	// Build the checker. Owner / Repo come from Cfg
 	// (defaults: "BarsSky" / "skygate" — the operator's
@@ -286,6 +291,12 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		"SourceURL":      result.SourceURL,
 		"InstallKind":    installKind.String(),
 		"InstallLabel":   installLabel(installKind),
+		// v1.5.9 (§12.15 item 3): the platform the updater would
+		// actually touch (OS/arch of the running binary, container
+		// marker, systemctl/docker presence, and for native installs
+		// whether the privileged helper is installed).
+		"Platform":   update.DetectPlatform(s.Cfg.UpdateDir),
+		"NativeKind": installKind == update.InstallSystemd || installKind == update.InstallBare,
 		"ManualSteps":    manualSteps.Steps,
 		// 2026-07-30: v0.32.3 — auto-update mode (gated by
 		// SKYGATE_AUTO_UPDATE_ENABLED). When false, the
@@ -533,13 +544,19 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 			// above stays untouched (page + audit + log
 			// show the human-readable form).
 			u.Run(ctx, update.GitRefForBuildLabel(target))
+		case update.InstallSystemd, update.InstallBare:
+			// v1.5.9 (§12.15 item 1+2): native installs stage the
+			// request for the privileged helper and let it own the
+			// stop → swap → restart → verify → rollback sequence.
+			s.runNativeUpdater(ctx, installKind, store, current, target)
 		default:
-			// Systemd / bare: not yet implemented. The
-			// failure path is "PhaseFailed with manual
-			// fallback" so the operator can run the
-			// generated steps by hand.
-			store.Log(update.LogError, "auto-updater for "+installKind.String()+" not yet implemented; see manual steps below")
-			store.Fail(fmt.Errorf("auto-updater for %s not yet implemented (v0.29.0 Phase 2 covers Docker only)", installKind))
+			// v1.5.9 (§12.15): systemd / bare native installs are
+			// handled above (runNativeUpdater). This branch is now
+			// only reachable for InstallUnknown, which the caller
+			// already rejected — kept as a belt-and-braces failure
+			// with the manual steps as the fallback.
+			store.Log(update.LogError, "auto-updater is not supported for install kind "+installKind.String()+"; see manual steps below")
+			store.Fail(fmt.Errorf("no auto-updater for install kind %s — run the manual steps below", installKind))
 		}
 
 		// Send a Telegram alert on success/failure so the
@@ -559,6 +576,39 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	http.Redirect(w, r, "/admin/update", http.StatusSeeOther)
+}
+
+// runNativeUpdater stages a native (systemd / bare-binary) self-update
+// job.
+//
+// Unlike the Docker path this returns almost immediately: the
+// privileged helper (skygate-update.path → skygate-update.service)
+// stops the service, downloads + verifies the release, swaps the
+// binary, restarts the unit and verifies /healthz, then writes its
+// verdict into the update dir. The verdict is folded into the state by
+// update.ConfirmNativeSwap on a later page load — in the OLD process
+// when the helper bailed out before the restart, in the NEW one after
+// a successful swap.
+//
+// v1.5.9 (§12.15 items 1+2).
+func (s *Service) runNativeUpdater(ctx context.Context, installKind update.InstallKind, store *update.StateStore, current, target string) {
+	// The native path downloads a GitHub release asset, so a
+	// git-describe build label ("v1.5.8-36-g50d4c2d", which the
+	// "Push update" button happily produces from BuildVersion) has
+	// nothing to download. Refuse it here with an actionable message
+	// instead of letting the helper 404 after it has stopped the
+	// service.
+	tag := update.NativeReleaseTagFor(target)
+	if tag == "" {
+		store.Log(update.LogError, fmt.Sprintf("target %q has no release-tag form — GitHub publishes release assets only for tags like v1.5.9, not for git-describe labels or raw commits", target))
+		store.Fail(fmt.Errorf("target %q is not a release tag; the native updater downloads the release tarball (use the manual steps to build from a commit)", target))
+		return
+	}
+	if current == "v"+tag {
+		store.Log(update.LogWarn, "target equals the running version ("+tag+") — the helper will reinstall it (useful to repair a broken binary)")
+	}
+	u := update.NewNativeUpgrader(installKind, "", s.Cfg.UpdateDir, "", "", store, current)
+	u.Run(ctx, tag)
 }
 
 // 2026-07-30: v0.32.3 — PostAdminUpdatePush is the MANUAL
@@ -656,9 +706,14 @@ func (s *Service) PostAdminUpdatePush(w http.ResponseWriter, r *http.Request) {
 			// target to a valid git ref while leaving the
 			// display / audit / log strings untouched.
 			u.Run(ctx, update.GitRefForBuildLabel(target))
+		case update.InstallSystemd, update.InstallBare:
+			// v1.5.9 (§12.15 item 1+2): native installs stage the
+			// request for the privileged helper and let it own the
+			// stop → swap → restart → verify → rollback sequence.
+			s.runNativeUpdater(ctx, installKind, store, current, target)
 		default:
-			store.Log(update.LogError, "auto-updater for "+installKind.String()+" not yet implemented; see manual steps below")
-			store.Fail(fmt.Errorf("auto-updater for %s not yet implemented (v0.29.0 Phase 2 covers Docker only)", installKind))
+			store.Log(update.LogError, "auto-updater is not supported for install kind "+installKind.String()+"; see manual steps below")
+			store.Fail(fmt.Errorf("no auto-updater for install kind %s — run the manual steps below", installKind))
 		}
 
 		finalState := store.Get()
@@ -726,6 +781,22 @@ func (s *Service) PostAdminUpdateRollback(w http.ResponseWriter, r *http.Request
 			// result in /admin/update.
 			u.State.Log(update.LogWarn, "operator-triggered rollback (in-flight job cancelled)")
 			u.State.Log(update.LogInfo, "for a full rollback, run the manual steps on /admin/update (or click 'Apply' to retry the same target)")
+		case update.InstallSystemd, update.InstallBare:
+			// v1.5.9 (§12.15): the helper already rolls back
+			// automatically when the new binary fails /healthz. An
+			// operator-triggered rollback therefore means "put the
+			// previous release back", which is just another helper
+			// run with the previous tag.
+			prev := ""
+			if st := store.Get(); st != nil {
+				prev = update.NativeReleaseTagFor(st.FromVersion)
+			}
+			if prev == "" {
+				store.Log(update.LogWarn, "no previous release tag in the job state — run the manual rollback steps on this page")
+				break
+			}
+			store.Log(update.LogInfo, "operator rollback: reinstalling "+prev+" via the privileged helper")
+			s.runNativeUpdater(context.Background(), installKind, store, current, prev)
 		}
 	}()
 	s.Backend.Audit(c.UserID, c.Username, "update_rollback", "operator-initiated rollback")

@@ -37,6 +37,22 @@
 
 set -euo pipefail
 
+# §12.15 item 4: --install-kind=bare|systemd|docker. Bare defaults to
+# "bare"; the value lands in the update-helper config + the sudoers
+# drop-in path below.
+INSTALL_KIND=""
+for arg in "$@"; do
+    case "$arg" in
+        --install-kind=*)
+            INSTALL_KIND="${arg#--install-kind=}"
+            shift
+            ;;
+    esac
+done
+if [ -n "$INSTALL_KIND" ]; then
+    export SKYGATE_INSTALL_KIND="$INSTALL_KIND"
+fi
+
 . "$(dirname "$0")/install-common.sh"
 
 # Sanity: must run as root
@@ -60,6 +76,13 @@ download_and_verify "$tarball_url" "$sums_url" "$(dirname "$SKYGATE_BIN")" "$SKI
 
 # -------- 3. env file --------
 write_env_file "$SKYGATE_ETC_DIR" "$SKYGATE_DATA_DIR" "$SKYGATE_PORT" "$SKYGATE_USER"
+
+# -------- 3b. §12.15: privileged self-update helper --------
+# Bare installs have no unit to restart, so the applier is triggered
+# through a narrowly-scoped sudoers drop-in and restarts the process
+# itself (see deploy/skygate-apply-update.sh).
+resolve_install_kind "bare"
+write_update_helper "$SKYGATE_USER" "$SKYGATE_DATA_DIR" "$SKYGATE_ETC_DIR" "$SKYGATE_INSTALL_KIND"
 
 # -------- 4. done — operator runs it --------
 cat <<EOF

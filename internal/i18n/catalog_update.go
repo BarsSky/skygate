@@ -23,6 +23,18 @@ var ruUpdate = map[string]string{
 	"update.install_label"         : "Установка",
 	"update.channel"               : "Канал",
 	"update.checked_at"            : "Проверено",
+	// v1.5.9 (§12.15 item 3): the /admin/update page now shows the
+	// platform it is running ON (OS/arch, container marker, whether
+	// systemctl/docker exist) and, for native installs, whether the
+	// privileged update helper is installed. Pre-fix the page showed
+	// only the install kind label, so "the page says systemd but we
+	// are in a container" was indistinguishable from a real systemd
+	// host without ssh.
+	"update.platform"              : "Платформа",
+	"update.platform_container"    : "в контейнере",
+	"update.helper_label"          : "Помощник обновления",
+	"update.helper_ok"             : "установлен",
+	"update.helper_missing"        : "не установлен — кнопка обновления нативной установки не сработает, переустановите deploy/install-*.sh",
 	"update.error_prefix"          : "GitHub недоступен",
 	"update.release_notes"         : "Описание релиза",
 	"update.view_on_github"        : "Полное описание на GitHub",
@@ -108,6 +120,13 @@ var enUpdate = map[string]string{
 	"update.install_label"         : "Install",
 	"update.channel"               : "channel",
 	"update.checked_at"            : "Checked",
+	// v1.5.9 (§12.15 item 3): platform + privileged-helper status,
+	// see the RU map for the rationale.
+	"update.platform"              : "Platform",
+	"update.platform_container"    : "in container",
+	"update.helper_label"          : "Update helper",
+	"update.helper_ok"             : "installed",
+	"update.helper_missing"        : "not installed — the native update button cannot work; re-run deploy/install-*.sh",
 	"update.error_prefix"          : "GitHub unreachable",
 	"update.release_notes"         : "Release notes",
 	"update.view_on_github"        : "Full release notes on GitHub",

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -486,7 +487,19 @@ type Config struct {
 	// (bind-mounted into the container, so the file
 	// survives a container recreate). Override via
 	// SKYGATE_UPDATE_STATE_PATH.
+	//
+	// A native install (install-{debian,rh,bare}.sh) writes
+	// SKYGATE_UPDATE_STATE_PATH=<data_dir>/skygate-update-status.json
+	// into /etc/skygate/skygate.env — on a native host /data does
+	// not exist, so the container default would make every state
+	// write a silent no-op.
 	UpdateStatePath string
+	// UpdateDir is the staging directory for native self-update
+	// (the unprivileged service drops request.env there and the
+	// root-owned skygate-update.path unit picks it up). Defaults to
+	// "<dir of UpdateStatePath>/update"; override via
+	// SKYGATE_UPDATE_DIR. Unused on Docker installs.
+	UpdateDir string
 }
 
 func Load() (*Config, error) {
@@ -759,6 +772,15 @@ func Load() (*Config, error) {
 		// container recreate).
 		RepoPath:        getenv("SKYGATE_REPO_PATH", defaultRepoPath()),
 		UpdateStatePath: getenv("SKYGATE_UPDATE_STATE_PATH", "/data/skygate-update-status.json"),
+	}
+
+	// UpdateDir: staging dir for the native self-update request
+	// files. Derived from the state file so a native install that
+	// only overrides SKYGATE_UPDATE_STATE_PATH still gets a sane
+	// staging dir next to it.
+	c.UpdateDir = getenv("SKYGATE_UPDATE_DIR", "")
+	if c.UpdateDir == "" {
+		c.UpdateDir = filepath.Join(filepath.Dir(c.UpdateStatePath), "update")
 	}
 
 	// v1.5.4: SQLite support restored (B-mod-sqlite-pg-bidi).
