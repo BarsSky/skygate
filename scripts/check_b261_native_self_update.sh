@@ -376,10 +376,18 @@ if grep -q 'command -v od' deploy/install-common.sh \
 else
   fail "N: install-common.sh still relies on xxd alone — a minimal Debian/RHEL install aborts after the binary is installed"
 fi
-if grep -nE '^[^#]*\| *xxd ' deploy/install-common.sh | grep -v 'command -v xxd' >/dev/null 2>&1; then
-  fail "N2: a bare '| xxd' pipeline is back in install-common.sh"
+# N2 pins the ORDER: openssl first (best), then od (coreutils, guaranteed),
+# and only then xxd as a last resort. A bare/unguarded xxd pipeline would sit
+# before the od fallback, so the ordering check catches it without trying to
+# parse shell control flow.
+n_openssl=$(grep -n 'command -v openssl' deploy/install-common.sh | head -1 | cut -d: -f1)
+n_od=$(grep -n 'command -v od' deploy/install-common.sh | head -1 | cut -d: -f1)
+n_xxd=$(grep -n 'xxd -p' deploy/install-common.sh | grep -vE '^[0-9]+:[[:space:]]*#' | head -1 | cut -d: -f1)
+if [ -n "$n_openssl" ] && [ -n "$n_od" ] && [ -n "$n_xxd" ] \
+   && [ "$n_openssl" -lt "$n_od" ] && [ "$n_od" -lt "$n_xxd" ]; then
+  ok "N2: secret fallback order is openssl → od (coreutils) → xxd"
 else
-  ok "N2: no unconditional xxd pipeline in install-common.sh"
+  fail "N2: secret generation must try openssl, then od (coreutils), and only then xxd"
 fi
 
 hdr "B261: all contracts pass"
