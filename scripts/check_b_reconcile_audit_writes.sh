@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+# Live-state check: skip (do not fail) when the docker daemon is unreachable.
+. "$(dirname "$0")/lib/skip_if_no_docker.sh"
 # check_b_reconcile_audit_writes.sh — verify the reconcile cron writes
 # audit_log rows that survive a subsequent SELECT (regression test for
 # the B243 SQLSTATE 42601 bug).

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+# Live-state check: skip (do not fail) when the docker daemon is unreachable.
+. "$(dirname "$0")/lib/skip_if_no_docker.sh"
 # check_b_node_owner_map_orphans.sh — verify node_owner_map integrity:
 # every (node_id) row points at a real headscale user (or is
 # deliberately orphaned with a valid reason).

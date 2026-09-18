@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+# Live-state check: skip (do not fail) when the docker daemon is unreachable.
+. "$(dirname "$0")/lib/skip_if_no_docker.sh"
 # check_b_tag_owners.sh — verify ACL policy tagOwners coverage
 #
 # Phase 7 of [auto-deploy-test-plan.md](../auto-deploy-test-plan.md)

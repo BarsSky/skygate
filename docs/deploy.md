@@ -186,6 +186,101 @@ make test                          # bilingual smoke + check_exit_nodes
 The first compile after a major dependency bump takes ~5 min. Subsequent
 restarts are fast (incremental Go build).
 
+### 4.1 Self-update (`/admin/update`)
+
+Skygate can update itself from the admin UI. What happens depends on the
+**install kind**, which `/admin/update` shows in the platform panel
+(`runtime.GOOS/GOARCH`, container marker, and whether `systemctl` /
+`rc-service` / `docker` / the privileged helper are present):
+
+| Kind | Trigger | Restart |
+|---|---|---|
+| `docker` | the orchestration runs inside the container; a detached helper container recreates the service | `docker compose up -d --force-recreate --no-deps skygate` |
+| `systemd` | root-owned `skygate-update.path` watches a staged request | `systemctl restart skygate` |
+| `openrc` (Alpine) | sudoers drop-in + `setsid sudo -n <applier>` | `rc-service skygate restart` |
+| `bare` | same sudoers drop-in | TERM the recorded pid + the configured start command |
+
+**Why a privileged helper is needed.** A native install runs skygate as an
+unprivileged user under `ProtectSystem=strict`, so the process cannot write
+`/usr/local/bin/skygate` and cannot restart its own unit (a container has the
+same problem from the other side: `systemctl restart` inside it would hit a
+unit that does not exist). The split is deliberate:
+
+1. the unprivileged service writes `<data_dir>/update/request.props` —
+   **data only** (job id, target tag, previous build, pid). The applier parses
+   it as data and never `source`s it: sourcing a file written by an
+   unprivileged process as root would be a local root escalation;
+2. a root-owned trigger runs the applier
+   (`/usr/local/lib/skygate/skygate-apply-update.sh`);
+3. the applier does backup → download (official release, or a mirror — see
+   below) → SHA256 verification → `skygate migrate-only` as the service user
+   **before** touching the binary → atomic rename swap (writing directly over
+   a running executable fails with `ETXTBSY`) → restart → poll `/healthz`
+   until it reports the **build string of the target tag** (not merely HTTP
+   200, which is how a stale process used to pass as success) → on failure
+   restore `skygate.prev`, restart, verify, and report `rolled_back`;
+4. the verdict (`result.status`, `result.build`, `result.error`, `apply.log`)
+   is folded into the update state on the next `/admin/update` render or the
+   next boot.
+
+**All paths come from root-owned config** (`/etc/skygate/update-helper.conf`),
+never from the request — a compromised skygate can ask for "install official
+tag X" and nothing else. `/etc/skygate/skygate.env` is likewise parsed as
+data (it belongs to the service user) and passed through `env(1)`.
+
+**Files to know about**
+
+```
+/usr/local/lib/skygate/skygate-apply-update.sh   the applier (root-owned)
+/etc/skygate/update-helper.conf                  its config (root-owned)
+/etc/systemd/system/skygate-update.{path,service} systemd trigger (root-owned)
+/etc/sudoers.d/skygate-update                    bare/openrc trigger
+<data_dir>/update/                               request.props, result.*, apply.log
+<data_dir>/skygate-update-status.json            the job state the page renders
+<data_dir>/update/skygate.prev                   the rollback binary
+```
+
+**Air-gapped / internal mirror.** Set `SKYGATE_UPDATE_BASE_URL=<base>` in
+`update-helper.conf`; the applier then fetches `<base>/<TAG>/<asset>` and
+`<base>/<TAG>/SHA256SUMS` (https:// required, loopback http allowed for a
+same-host mirror) and **demands** SHA256SUMS, because GitHub's per-asset
+digest only describes the official artifact. Layout mirrors a GitHub release:
+
+```
+<base>/v1.5.9/skygate-v1.5.9-linux-amd64.tar.gz
+<base>/v1.5.9/SHA256SUMS
+```
+
+**Verification sources.** Normally the applier verifies the tarball against
+the release's `SHA256SUMS` asset; if the release does not publish one (the
+case for v1.5.6–v1.5.8 — the workflow attached a directory instead of the
+file, fixed 2026-09-18) it falls back to GitHub's per-asset
+`digest: sha256:<hex>` from the Releases API for the same owner/repo/tag, and
+refuses to install anything when neither source is available. Set
+`SKYGATE_UPDATE_GITHUB_TOKEN` in the helper config for a private fork or to
+avoid API rate limits.
+
+**Troubleshooting**
+
+```bash
+sudo journalctl -u skygate-update.service -n 50   # the applier run itself
+sudo tail -50 <data_dir>/update/apply.log         # its own log (also surfaced in the UI)
+cat <data_dir>/result.status                      # done | rolled_back | failed
+systemctl is-active skygate-update.path           # the trigger must be armed
+```
+
+- *"privileged update helper ... is not installed"* — re-run the installer
+  (`sudo bash deploy/install-debian.sh` / `install-rh.sh` / `install-alpine.sh`
+  / `install-bare.sh`); it is idempotent and preserves `skygate.env`.
+- *"update trigger is not armed"* — `sudo systemctl enable --now skygate-update.path`.
+- *A failed update left the service down* — the applier restores
+  `skygate.prev` and restarts; if it reports `failed` instead of
+  `rolled_back`, restore by hand:
+  `sudo install -m 0755 <data_dir>/update/skygate.prev /usr/local/bin/skygate && sudo systemctl restart skygate`.
+- *Downgrades*: pass an explicit older tag. The applier runs the new binary's
+  `migrate-only` first, so a release whose migration chain cannot handle your
+  current database (e.g. v1.5.8 on SQLite) is refused **before** the swap.
+
 ## 5. Backup
 
 ```bash

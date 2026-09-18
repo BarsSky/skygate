@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+# Live-state check: skip (do not fail) when the docker daemon is unreachable.
+. "$(dirname "$0")/lib/skip_if_no_docker.sh"
 # check_b_duplicate_users.sh — verify headscale has exactly one user per name.
 #
 # 2026-09-12 (B243 follow-up): direct regression test for the live

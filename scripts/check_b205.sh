@@ -89,7 +89,10 @@ grep -A20 '^func runClusterSubcommand' "cmd/skygate/cluster.go" | grep -q "case 
 grep -A20 '^func runClusterSubcommand' "cmd/skygate/cluster.go" | grep -q "case \"failover\"" \
     && check "dispatcher handles 'failover' verb" ok \
     || check "dispatcher handles 'failover' verb" fail
-grep -A20 '^func runClusterSubcommand' "cmd/skygate/cluster.go" | grep -q "case \"heartbeat-daemon\"" \
+# The `-A20` window used to miss this case once the dispatcher grew past 20
+# lines (later B-blocks added more verbs), which read as "the verb is not
+# handled" while it was. Scope the grep to the WHOLE function body instead.
+awk '/^func runClusterSubcommand/,/^}/' "cmd/skygate/cluster.go" | grep -q 'case "heartbeat-daemon"' \
     && check "dispatcher handles 'heartbeat-daemon' verb" ok \
     || check "dispatcher handles 'heartbeat-daemon' verb" fail
 

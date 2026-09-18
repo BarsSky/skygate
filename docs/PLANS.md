@@ -273,6 +273,7 @@ the squash (estimated, depends on pack efficiency).
   CDN-домена (`cdn:` marker + `exit_rules.cdn_group_count`). Схема БД,
   миграции и автопdater не тронуты (проверено контрактом «storage
   unchanged»). Дизайн — `docs/plans/td-11-cloudflare-grouping.md`.
+- **B237.24 — lowercase ghcr.io tag path (BarsSky → barssky)** — DONE: GitHub Actions parses ormat() args as literals, so | lower inside ormat() did not apply; the workflow now pre-computes lower_owner in the meta step and uses it in all four tag lines (v1.5.0/v1.5.2 never pushed an image because of the mixed-case owner, and the release failed). Only sync.go + the test helper were missing here; the tag path guard lives in scripts/check_b237_24.sh.
 - **B237.23 — дрейф `ON CONFLICT` в автопдейтере устройств** — DONE.
   B232 пересоздал `device_rules_natural_key_uniq` 6-колоночным, не обновив
   `sync.go` (5 колонок), из-за чего каждый INSERT автопдейтера молча падал

@@ -92,12 +92,19 @@ grep -A10 'func DefaultDBHealthConfig' "internal/feature/healthz/db_health.go" |
     || check "DefaultDBHealthConfig QueryTimeout=3s" fail
 
 # 5. DBSource interface
-grep_q '^type DBSource interface' "internal/feature/healthz/db_health.go" \
-    && check "DBSource interface defined" ok \
-    || check "DBSource interface defined" fail
-grep -A2 'type DBSource interface' "internal/feature/healthz/db_health.go" | grep -q 'Current() \*sql\.DB' \
-    && check "DBSource has Current() *sql.DB" ok \
-    || check "DBSource has Current() *sql.DB" fail
+#
+# B210.1 (2026-09-02) consolidated the five per-package copies of this
+# one-method interface into internal/db, so the healthz package now
+# RE-EXPORTS it as an alias (`type DBSource = skygatedb.DBSource`) instead of
+# declaring its own. This contract is about the shape being available to the
+# package (and still being Current() *sql.DB), not about where the `type`
+# keyword sits — so accept both forms and check the canonical definition.
+grep_q '^type DBSource' "internal/feature/healthz/db_health.go" \
+    && check "DBSource available in healthz (interface or B210.1 alias)" ok \
+    || check "DBSource available in healthz (interface or B210.1 alias)" fail
+grep -q 'Current() \*sql\.DB' internal/db/dbsource.go 2>/dev/null \
+    && check "DBSource has Current() *sql.DB (canonical internal/db definition)" ok \
+    || check "DBSource has Current() *sql.DB (canonical internal/db definition)" fail
 
 # 6. NewFixedDBSource
 grep_q '^func NewFixedDBSource' "internal/feature/healthz/db_health.go" \

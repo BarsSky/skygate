@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+# Live-state check: skip (do not fail) when the docker daemon is unreachable.
+. "$(dirname "$0")/lib/skip_if_no_docker.sh"
 # check_b_node_attribution.sh — verify every headscale node is attributed
 # to a REAL portal user (not the sentinel "tagged-devices" fallback).
 #

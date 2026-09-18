@@ -111,10 +111,16 @@ fi
 
 # 6. No remaining s.DB.method patterns in admin (only s.dbc().method).
 # Exclude dbsource.go (which legitimately contains s.DB.Current() in
-# the helper itself) + exclude comment lines.
+# the helper itself) + exclude comment lines + exclude `s.DB.Current()`:
+# Current() IS the DBSource interface method (B210.1 consolidated the
+# per-package DBSource into internal/db), so calling it directly is correct —
+# what this contract is about is the pre-B208 pattern of capturing a
+# *sql.DB and calling arbitrary methods on it (s.DB.Query, s.DB.Exec, ...),
+# which breaks when the B203 watchdog swaps the pool.
 remaining=$(grep -rE 's\.DB\.' internal/feature/admin/ --include='*.go' 2>/dev/null \
     | grep -v 'dbsource\.go' \
     | grep -vE '//.*s\.DB\.' \
+    | grep -v 's\.DB\.Current()' \
     | wc -l)
 if [ "$remaining" -eq 0 ]; then
     check "no remaining s.DB.method patterns in admin (dbsource.go excluded)" ok
