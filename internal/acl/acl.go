@@ -1066,6 +1066,44 @@ func ApplyACLPipelineForPlane(d *sql.DB, hs *headscale.Client, planeURL string, 
 	return ApplyResult{Version: ver, Applied: true, Err: nil}
 }
 
+// GenerateACLForPlaneWithMode generates the policy for ONE plane using
+// the SAME format dispatch the apply pipeline uses: grants[] with `via`
+// when the operator enabled SKYGATE_ACL_VIA_ENABLED (or the caller asks
+// for it explicitly), otherwise the legacy acls[] policy.
+//
+// B265 (2026-09-19) — this exists because /admin/acls/export and the
+// import dry-run called GenerateACL (the acls[] generator) directly while
+// the APPLY pipeline pushed the grants[] policy. On a deployment with
+// SKYGATE_ACL_VIA_ENABLED=true the operator therefore saw (and could
+// round-trip) a policy that is NOT the one in force, and an
+// import-apply of that export would have been rejected by headscale
+// 0.29 (the acls[] entries carry `ip`/`via`, which its ACL struct does
+// not define and its parser rejects with RejectUnknownMembers).
+//
+// Keep this the single place that answers "which format is live?" for
+// read-only callers; ApplyACLPipelineForPlane has the same decision
+// inline because it also has to log which branch it took.
+func GenerateACLForPlaneWithMode(d *sql.DB, planeURL string, useVia bool) (string, error) {
+	if useVia {
+		return GenerateACLWithViaForPlane(d, planeURL)
+	}
+	return GenerateACLForPlane(d, planeURL)
+}
+
+// ACLViaEnabled reports whether the grants[] + via policy is the one in
+// force for this process (the same env read ApplyACLPipelineForPlane
+// does at call time).
+func ACLViaEnabled() bool {
+	return os.Getenv("SKYGATE_ACL_VIA_ENABLED") == "true"
+}
+
+// GenerateACLLiveFormat generates the policy that ApplyACLPipeline would
+// push RIGHT NOW for the global plane — the format the operator should
+// review before applying, and the one an export should show.
+func GenerateACLLiveFormat(d *sql.DB) (string, error) {
+	return GenerateACLForPlaneWithMode(d, "", ACLViaEnabled())
+}
+
 // ApplyACLForAllPlanes iterates every distinct control plane
 // (one entry per distinct headscale_url, plus the global
 // default) and runs ApplyACLPipelineForPlane on each, using

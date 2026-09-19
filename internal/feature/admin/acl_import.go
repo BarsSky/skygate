@@ -23,15 +23,25 @@ import (
 	"skygate/internal/headscale"
 )
 
-// GetAdminACLsExport returns the current acl.GenerateACL output as
-// a downloadable JSON file. Admin-only.
+// GetAdminACLsExport returns the policy that the apply pipeline would
+// push RIGHT NOW as a downloadable JSON file. Admin-only.
+//
+// B265 (2026-09-19): this used to call acl.GenerateACL — the legacy
+// acls[] generator — while the apply pipeline pushes the grants[]
+// policy on any deployment with SKYGATE_ACL_VIA_ENABLED=true. The
+// operator therefore downloaded (and could re-import) a policy that was
+// NOT the one in force, and an import-apply of it would have been
+// rejected by headscale 0.29 (acls[] entries carry `ip`/`via`, which its
+// ACL struct does not define). Now both the export and the import
+// dry-run use acl.GenerateACLLiveFormat, which follows the same
+// dispatch as the apply pipeline.
 func (s *Service) GetAdminACLsExport(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	policy, err := acl.GenerateACL(s.dbc())
+	policy, err := acl.GenerateACLLiveFormat(s.dbc())
 	if err != nil {
 		http.Error(w, "generate acl: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -52,7 +62,7 @@ func (s *Service) GetAdminACLsImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	currentPolicy, _ := acl.GenerateACL(s.dbc())
+	currentPolicy, _ := acl.GenerateACLLiveFormat(s.dbc())
 	s.Backend.RenderWithLayout(w, r, "admin/acls_import.html", c, map[string]any{
 		"CurrentPolicy": currentPolicy,
 	})
@@ -87,7 +97,7 @@ func (s *Service) PostAdminACLsImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "policy: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	currentPolicy, _ := acl.GenerateACL(s.dbc())
+	currentPolicy, _ := acl.GenerateACLLiveFormat(s.dbc())
 	hCur := sha256.Sum256([]byte(currentPolicy))
 	hImp := sha256.Sum256([]byte(policy))
 	s.Backend.RenderWithLayout(w, r, "admin/acls_import.html", c, map[string]any{
