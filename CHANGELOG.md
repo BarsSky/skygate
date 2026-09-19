@@ -19,6 +19,21 @@ stability promises yet — pin to a tag if you depend on a specific shape).
 ## [Unreleased]
 
 ### Fixed
+- **`/admin/tailscale` Start now works** (operator report 2026-09-19:
+  "Не удалось запустить Tailscale: tailscale up: exit status 1 — output: failed to
+  connect to local tailscaled; it doesn't appear to be running"). Two defects in
+  `startTailscaled`: (1) the daemon was spawned as
+  `setsid nohup tailscaled --statedir=… ">/var/log/tailscaled.log" "2>&1" "&"` —
+  with no shell involved those redirection tokens were passed to tailscaled as
+  **argv**, so it exited immediately with an argument error that nobody read (the
+  output buffer was discarded); (2) the readiness wait trusted the socket **file**,
+  so a stale socket left in the bind-mounted run dir (`data/ts/run`) counted as
+  "running" and `tailscale up` ran against nothing. Now: a stale socket is removed
+  when the daemon does not answer, tailscaled is started with a real `*os.File` log
+  and detached into its own session (`detachProcess`, build-tagged), and the wait
+  polls a daemon that **dials**; a failed start reports the tailscaled log tail.
+  `tailscaledRunning` (the page's "running" flag) uses the same live probe.
+  Contracts N1-N5 in `scripts/check_b259_tailscale_toggle.sh`.
 - **`/admin/tailscale`: the «Сгенерировать ключ» control is now a visible button.**
   The B258.1 warning told the operator to click «Сгенерировать ключ», but the
   control lived in a collapsed `<details>` whose summary read «Сгенерировать

@@ -254,6 +254,43 @@ if [ "$HIT" = "0" ]; then
   ok "no inline hostname→user lookups found in admin/ + my/ packages"
 fi
 
+# --- N. Start must actually work (operator report 2026-09-19) ---
+# Clicking Start produced:
+#   tailscale up: exit status 1 — output: failed to connect to local tailscaled;
+#   it doesn't appear to be running
+# Two defects: (1) tailscaled was spawned as
+#   setsid nohup tailscaled --statedir=… ">/var/log/tailscaled.log" "2>&1" "&"
+# with no shell, so those tokens were ARGV and tailscaled exited at once;
+# (2) the readiness wait trusted a stale socket FILE (the run dir is a bind
+# mount), so `tailscale up` ran against nothing.
+if grep -v '^[[:space:]]*//' "$SRC" | grep -q '">/var/log/tailscaled.log"'; then
+  bad "N1: $SRC still passes shell redirection tokens to exec (tailscaled exits immediately)"
+else
+  ok "N1: no shell redirection tokens in the tailscaled exec (real *os.File instead)"
+fi
+if grep -q 'net.DialTimeout("unix", tailscaledSocketPath' "$SRC"; then
+  ok "N2: daemon readiness dials the control socket (a stale socket file is not 'running')"
+else
+  bad "N2: readiness does not dial the socket — a stale socket file will be read as 'running'"
+fi
+if grep -q 'os.Remove(tailscaledSocketPath)' "$SRC"; then
+  ok "N3: a stale control socket is removed before the start attempt"
+else
+  bad "N3: no stale-socket cleanup before starting tailscaled"
+fi
+if grep -q 'detachProcess(tsCmd)' "$SRC" \
+   && grep -q 'func detachProcess' internal/feature/admin/proc_unix.go \
+   && grep -q 'func detachProcess' internal/feature/admin/proc_windows.go; then
+  ok "N4: tailscaled is detached into its own session (build-tagged helper for Windows)"
+else
+  bad "N4: detachProcess helper missing (the UI-started daemon must survive the handler)"
+fi
+if grep -q 'tailLogTail(tsLog' "$SRC"; then
+  ok "N5: a failed start reports the tailscaled log tail instead of a bare timeout"
+else
+  bad "N5: the 'not ready' error does not include tailscaled's own log"
+fi
+
 echo
 echo "============================================="
 printf '  %d passed, %d failed\n' "$PASS" "$FAIL"

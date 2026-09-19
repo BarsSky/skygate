@@ -26,7 +26,6 @@
 package admin
 
 import (
-	"bytes"
 	"context"
 	"crypto/subtle"
 	"database/sql"
@@ -619,12 +618,42 @@ func tailscaledRunning() bool { return tailscaledRunningFn() }
 // to stub the "is tailscaled up?" check without touching the
 // host's actual unix socket. Production code calls
 // tailscaledRunning; tests override this var.
-var tailscaledRunningFn = func() bool {
-	socket := "/var/run/tailscale/tailscaled.sock"
-	if _, err := os.Stat(socket); err != nil {
+// tailscaledRunning reports whether the daemon is actually ANSWERING on its
+// unix socket. Pre-2026-09-19 this only stat()ed the socket file, so a stale
+// file left behind by a previous container (the run dir is a bind mount:
+// data/ts/run → /var/run/tailscale) made the page claim "running" and made the
+// Start flow skip its wait and run `tailscale up` against nothing:
+//   tailscale up: exit status 1 — output: failed to connect to local tailscaled;
+//   it doesn't appear to be running
+// (operator report 2026-09-19). Dialling the socket is the honest check.
+var tailscaledRunningFn = tailscaleDaemonAnswers
+
+// tailscaleDaemonAnswers dials the control socket. A live daemon accepts the
+// connection; a stale socket file fails with ECONNREFUSED/ENOENT.
+func tailscaleDaemonAnswers() bool {
+	c, err := net.DialTimeout("unix", tailscaledSocketPath, 2*time.Second)
+	if err != nil {
 		return false
 	}
+	_ = c.Close()
 	return true
+}
+
+// tailscaledSocketPath is the control socket tailscaled writes.
+const tailscaledSocketPath = "/var/run/tailscale/tailscaled.sock"
+
+// tailLogTail returns the last n lines of the tailscaled log (best-effort) so a
+// failed start reports WHY instead of a bare timeout.
+func tailLogTail(path string, n int) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "(unreadable: " + err.Error() + ")"
+	}
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, " | ")
 }
 
 // tailscaleStatus returns (running, ip, acceptedRoutes, backendState, err).
@@ -795,41 +824,53 @@ func (s *Service) startTailscaled() (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("auth key file is empty; paste one first")
 	}
-	// Start tailscaled in the background (no -F so it detaches
-	// from the calling shell; logs go to /var/log/tailscaled.log).
+	// Start tailscaled in the background. Two pre-2026-09-19 bugs fixed here:
+	//   (1) the command was spawned as
+	//         setsid nohup tailscaled --statedir=… ">/var/log/tailscaled.log" "2>&1" "&"
+	//       — with no shell involved those redirection tokens were passed to
+	//       tailscaled as ARGV, so it exited immediately with an argument error
+	//       that nobody read (the output buffer was discarded);
+	//   (2) the readiness loop trusted a SOCKET FILE, so a stale socket from a
+	//       previous container satisfied it instantly and `tailscale up` then
+	//       failed with "failed to connect to local tailscaled".
+	// Now: a stale socket is removed, tailscaled is started with a real log file
+	// and detached into its own session (detachProcess), and the wait polls for
+	// a daemon that ANSWERS.
 	if err := os.MkdirAll(s.tailscaleStateDir(), 0700); err != nil {
 		return "", fmt.Errorf("mkdir statedir: %w", err)
 	}
 	if err := os.MkdirAll("/var/run/tailscale", 0700); err != nil {
 		return "", fmt.Errorf("mkdir rundir: %w", err)
 	}
-	// Use `setsid nohup` to detach tailscaled from the
-	// calling shell + make it survive skygate's process
-	// group. Without this, when skygate restarts (compose
-	// up -d) the new container won't see the old tailscaled
-	// anyway (PID namespaces differ), but the design is
-	// forward-compatible: a future "reload skygate in place"
-	// path (e.g. /admin/update's in-place orchestrator) would
-	// inherit the running tailscaled.
-	cmd := exec.Command("setsid", "nohup",
-		"tailscaled",
-		"--statedir="+s.tailscaleStateDir(),
-		">/var/log/tailscaled.log", "2>&1", "&")
-	var dummy bytes.Buffer
-	cmd.Stdout = &dummy
-	cmd.Stderr = &dummy
-	_ = cmd.Run() // best-effort; the & in the args detaches anyway
-	// Wait up to 15s for the control socket to come up.
+	if !tailscaleDaemonAnswers() {
+		_ = os.Remove(tailscaledSocketPath) // stale file from a previous container
+	}
+	const tsLog = "/var/log/tailscaled.log"
+	logFile, err := os.OpenFile(tsLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return "", fmt.Errorf("open %s: %w", tsLog, err)
+	}
+	defer logFile.Close()
+	tsCmd := exec.Command("tailscaled", "--statedir="+s.tailscaleStateDir())
+	tsCmd.Stdout = logFile
+	tsCmd.Stderr = logFile
+	detachProcess(tsCmd)
+	if err := tsCmd.Start(); err != nil {
+		return "", fmt.Errorf("start tailscaled: %w", err)
+	}
+	// Wait up to 15s for a daemon that actually answers on the socket.
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		if tailscaledRunning() {
+		if tailscaleDaemonAnswers() {
 			break
 		}
-		time.Sleep(http.StatusInternalServerError * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
-	if !tailscaledRunning() {
-		return "", fmt.Errorf("tailscaled did not start within 15s; check /var/log/tailscaled.log")
+	if !tailscaleDaemonAnswers() {
+		return "", fmt.Errorf("tailscaled did not become ready within 15s (last lines of %s: %s)",
+			tsLog, tailLogTail(tsLog, 5))
 	}
+	_ = tsCmd // tailscaled keeps running after this handler returns
 	// Now run `tailscale up` to authenticate.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
