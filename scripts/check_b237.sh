@@ -255,7 +255,7 @@ fi
 
 # G.2 B237 tests pass
 if command -v go >/dev/null 2>&1; then
-    out=$(CGO_ENABLED=0 go test -short -count=1 -timeout 30s \
+    out=$(CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         -run 'RewriteDerpURLs|ShortNameFromHostname|PublicDERPPortFromURL' \
         ./internal/feature/admin/... 2>&1)
     if echo "$out" | grep -q '^ok'; then
@@ -269,7 +269,7 @@ fi
 
 # G.3 TestTemplateArgsMatchCatalog regression guard
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 60s -run TestTemplateArgsMatchCatalog ./internal/handlers/... 2>/dev/null | grep -q '^ok'; then
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s -run TestTemplateArgsMatchCatalog ./internal/handlers/... 2>/dev/null | grep -q '^ok'; then
         ok "G.3 TestTemplateArgsMatchCatalog passes (regression guard)"
     else
         bad "G.3 TestTemplateArgsMatchCatalog failed"

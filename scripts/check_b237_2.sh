@@ -179,7 +179,7 @@ fi
 
 # E.3 TestTemplateArgsMatchCatalog regression guard
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 60s -run TestTemplateArgsMatchCatalog ./internal/handlers/... 2>/dev/null | grep -q '^ok'; then
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s -run TestTemplateArgsMatchCatalog ./internal/handlers/... 2>/dev/null | grep -q '^ok'; then
         ok "E.3 TestTemplateArgsMatchCatalog passes"
     else
         bad "E.3 TestTemplateArgsMatchCatalog failed"

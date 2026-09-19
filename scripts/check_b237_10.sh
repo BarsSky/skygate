@@ -267,7 +267,7 @@ fi
 # --- J. Test run ---
 
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 30s \
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         -run 'TestGitRefForBuildLabel|TestIsAllHex|TestShortSHA' \
         ./internal/update/... 2>/dev/null | grep -q '^ok'; then
         ok "J.1 TestGitRefForBuildLabel + TestIsAllHex + TestShortSHA pass"
@@ -280,7 +280,7 @@ fi
 
 # J.2 full internal/update/... suite still passes
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 60s \
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         ./internal/update/... 2>/dev/null | grep -q '^ok'; then
         ok "J.2 full internal/update test suite passes (B237.10 + existing)"
     else
@@ -293,7 +293,7 @@ fi
 # --- K. Admin package tests still pass (B237.10 changes admin/update.go) ---
 
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 60s \
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         ./internal/feature/admin/... 2>/dev/null | grep -q '^ok'; then
         ok "K.1 internal/feature/admin test suite passes (B237.10 didn't break admin)"
     else

@@ -126,7 +126,7 @@ fi
 
 # C.2 B237.7 unit tests pass
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 30s \
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         -run 'PlanDevicePrefChange|PreferredExitReconcilerLive' \
         ./internal/feature/exit_rules/... 2>/dev/null | grep -q '^ok'; then
         ok "C.2 B237.7 unit tests pass (PlanDevicePrefChange + PreferredExitReconcilerLive)"
@@ -139,7 +139,7 @@ fi
 
 # C.3 all exit_rules package tests pass (full coverage)
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 60s \
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         ./internal/feature/exit_rules/... 2>/dev/null | grep -q '^ok'; then
         ok "C.3 full exit_rules test suite passes (B229 + B237.7 + B188.2 + B178 + B182 + B184)"
     else

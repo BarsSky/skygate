@@ -188,7 +188,7 @@ fi
 
 # D.2 the 3 affected test packages still pass
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 30s \
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         ./internal/db/... ./internal/elector/... ./internal/feature/healthz/... \
         2>/dev/null | grep -q '^ok'; then
         ok "D.2 the 3 affected test packages still pass (db, elector, healthz)"

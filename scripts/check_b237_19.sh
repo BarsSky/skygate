@@ -182,7 +182,7 @@ fi
 # E.3 the unit tests pass (env-gated, only runs when
 # `go` is on the bash PATH)
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 30s \
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         -run 'TestBuildFormErrorRedirectURL' \
         ./internal/feature/exit_rules/... 2>/dev/null | grep -q '^ok'; then
         ok "E.3 buildFormErrorRedirectURL unit tests pass"

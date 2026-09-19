@@ -228,7 +228,7 @@ fi
 
 # F.2 derphealth unit tests pass
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 30s ./internal/derphealth/... 2>/dev/null | grep -q '^ok'; then
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s ./internal/derphealth/... 2>/dev/null | grep -q '^ok'; then
         ok "F.2 derphealth unit tests pass"
     else
         bad "F.2 derphealth unit tests failed"

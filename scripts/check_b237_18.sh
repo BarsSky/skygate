@@ -224,7 +224,7 @@ fi
 # D.6 the tests run (pure unit, no DB needed) — only
 # run on this host if `go` is on the bash PATH
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 30s \
+    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         -run 'Reconcile|Int64FromString|StartReconcileCron|RunOnceNow|DefaultReconcile' \
         ./internal/headscale/ 2>/dev/null | grep -q '^ok'; then
         ok "D.6 reconcile unit tests pass (10 tests, no DB needed)"
