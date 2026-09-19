@@ -12,7 +12,7 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
-## v1.5.12 — the self-updater explains a failed swap (B268) + the socket is bound before anything else (B269)
+## v1.5.12 — the self-updater explains a failed swap (B268) + the socket is bound before anything else (B269) + optional features can no longer kill the boot (B270)
 
 **Date:** 2026-09-19 · **Base:** `v1.5.11` → this tag · **Compatibility:** no schema,
 config or API change.
@@ -88,6 +88,55 @@ The old verdict was true for at least four different causes and named none of th
   it is stuck in, so "socket first" cannot make the updater blind to a boot that
   never finishes.
 
+### B270 — two more reasons that same host never listened
+
+The operator's own diagnostics (`systemctl show skygate -p ExecStart` + the journal)
+showed the fatal exit was **not** the database:
+
+```
+2026/09/19 17:17:14  Skygate starting on :8082
+2026/09/19 17:17:15  oidc: SKYGATE_OIDC_ISSUER not set — OIDC routes will return 503 until configured
+2026/09/19 17:17:15  oidc: init failed: oidc: mkdir ./data/oidc-keys: mkdir ./data: permission denied
+```
+
+1. **A broken OIDC key store was fatal.** `NewService`'s error went to `log.Fatalf`,
+   so an **unconfigured optional feature** (OIDC was disabled — the issuer was
+   unset) killed the process *before* it bound its HTTP port. Now the key store
+   degrades: the journal carries `oidc: KEY STORE UNAVAILABLE (…) — the process
+   keeps running and the OIDC routes answer 503; fix SKYGATE_OIDC_KEY_DIR …`, the
+   service keeps serving, and every OIDC route answers `503` with the reason
+   (`KeyStore.Ready()` is nil-safe; the signing paths return an error instead of
+   panicking).
+2. **The key directory defaulted to the CWD-relative `./data/oidc-keys`.** Any unit
+   whose `WorkingDirectory` is not the data dir (or an older unit without the
+   directive) resolves that against `/` → permission denied. The default is now
+   **absolute and data-dir anchored**: `<dir of skygate.db>/oidc-keys`, or
+   `/var/lib/skygate/oidc-keys` for PostgreSQL. `install-common.sh` and
+   `install-alpine.sh` create it (`0700`, owned by the service user). An explicit
+   `SKYGATE_OIDC_KEY_DIR` still wins.
+3. **The reason every update rolled back was a port mismatch nobody could see.**
+   The applier verifies `SKYGATE_UPDATE_HEALTH_URL` (default `…:8080/healthz`)
+   while this host runs `SKYGATE_PORT=8082`; the two numbers were never compared,
+   so the service was healthy and every self-update still failed verification. The
+   applier now says it out loud **before** the swap:
+
+   ```
+   WARN: PORT MISMATCH — health verification polls http://127.0.0.1:8080/healthz (port 8080)
+         but the service is configured with SKYGATE_PORT=8082 in /etc/skygate/skygate.env
+   WARN: the post-restart build check can NEVER succeed while they disagree; every update
+         will roll back even though the service is healthy
+   ```
+
+Also fixed in this release: the B269 handler swap stored an `http.HandlerFunc` and
+then an `*http.ServeMux` in the same `atomic.Value`, which panics with
+`sync/atomic: store of inconsistently typed value` **inside** the handover
+goroutine — i.e. the process died exactly when it had finished booting. Invisible
+to grep; found by running the binary, and pinned by
+`cmd/skygate/startup_handover_b269_test.go`.
+
+Operator procedure for both: `docs/troubleshooting.md` §8.0.1 (B269) and §8.0.2
+(B270).
+
 ### Contracts
 
 * **B269** — `scripts/check_b269_startup_truth.sh` (18 contracts: source order,
@@ -95,11 +144,16 @@ The old verdict was true for at least four different causes and named none of th
   binary, points it at an unopenable DB and asserts `/healthz` still answers `200`
   + build + `phase:"db-open+migrate"` + `ready:false` while the process stays alive)
   and `internal/startup/startup_test.go`.
+* **B270** — `scripts/check_b270_startup_blockers.sh` (21 contracts, incl. a live
+  probe that runs the real binary with an uncreatable key dir and asserts
+  `/healthz` still answers while the process stays alive) +
+  `internal/oidc/oidc_b270_test.go`.
 * **B268** — `scripts/check_b268_applier_failure_diagnostics.sh` (11 contracts, incl.
   a behavioural run against a local mirror with stubbed `systemctl`/`ss`/`journalctl`
   /`curl`) and `internal/update/applier_b268_test.go` (7 order-pinning contracts).
 
-Operator procedure: `docs/troubleshooting.md` §8.0 (B268) and §8.0.1 (B269).
+Operator procedure: `docs/troubleshooting.md` §8.0 (B268), §8.0.1 (B269) and
+§8.0.2 (B270).
 
 ## v1.5.11 — route approval must not require docker (native installs)
 

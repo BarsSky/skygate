@@ -823,6 +823,12 @@ create_user_and_dirs() {
     install -d -m 0750 -o "$user" -g "$user" "$data_dir"
     install -d -m 0750 -o "$user" -g "$user" "$etc_dir"
     install -d -m 0750 -o "$user" -g "$user" "$data_dir/ts"  # tailscale state
+    # B270: the OIDC RSA keypair lives here (SKYGATE_OIDC_KEY_DIR default is
+    # <data_dir>/oidc-keys). Pre-B270 the default was the CWD-relative
+    # ./data/oidc-keys, which a systemd unit without WorkingDirectory=<data_dir>
+    # resolved against / — MkdirAll failed, NewService's error was fatal and the
+    # service died before it could bind its HTTP port.
+    install -d -m 0700 -o "$user" -g "$user" "$data_dir/oidc-keys"
     echo "[install] created dirs: $data_dir $etc_dir"
 }
 

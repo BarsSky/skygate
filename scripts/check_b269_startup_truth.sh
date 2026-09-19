@@ -89,11 +89,19 @@ else
 fi
 
 # --- B: handover to the real mux on the SAME listener -----------------------
-if grep -q 'handler.Store(http.Handler(mux))' "$MAIN" \
+if grep -q 'handler.Store(handlerBox{mux})' "$MAIN" \
    && grep -q 'startup.MarkReady()' "$MAIN"; then
   ok "B: the real mux takes over the bound listener and the process is marked ready"
 else
   bad "B: no handover of the bound listener to the real mux (would re-bind and race the provisional server)"
+fi
+# B270 live finding: both stores must use the SAME concrete type, or
+# atomic.Value panics inside the handover goroutine.
+if grep -q 'handler.Store(handlerBox{startup.StageHandler()})' "$MAIN" \
+   && grep -q 'type handlerBox struct{ h http.Handler }' "$MAIN"; then
+  ok "B4: the swap uses one concrete wrapper type (atomic.Value panics on mixed types)"
+else
+  bad "B4: the boot handler swap can panic with 'store of inconsistently typed value'"
 fi
 if grep -q 'srv.Serve(ln)' "$MAIN"; then
   ok "B2: the real server serves the pre-bound listener"

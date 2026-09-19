@@ -48,8 +48,16 @@ type Service struct {
 	RedirectURIs string
 	// Keys is the RSA keypair for signing id_tokens
 	// (B161.3) + exposing the public key in JWKS
-	// (B161.1, this commit).
+	// (B161.1, this commit). B270: it is nil when the
+	// key store could not be created — KeyStore.Ready()
+	// is nil-safe and every signing path degrades to a
+	// 503, so the process still serves the portal.
 	Keys *KeyStore
+	// KeyStoreErr is the reason the key store is
+	// unavailable (empty when Keys is usable). Rendered
+	// by the OIDC routes so an operator sees WHY instead
+	// of a generic 503. B270.
+	KeyStoreErr string
 	// Codes is the in-memory store of pending
 	// auth codes. B161.2.
 	Codes *AuthCodeStore
@@ -89,16 +97,25 @@ type Service struct {
 }
 
 // NewService loads the RSA keypair (or generates
-// one if missing) and returns a ready Service. If
-// the key directory can't be created or the
-// keypair can't be loaded, returns an error — main.go
-// should abort startup (we don't want a partially-
-// configured OIDC provider).
+// one if missing) and returns a ready Service.
 //
-// B161.1 only mounts the discovery + JWKS handlers
-// (in main.go). B161.2 / B161.3 will extend this
-// constructor with the auth code store + token
-// store.
+// B270 (2026-09-19): a key-store failure is NO LONGER
+// fatal to the process. Live case: a native install
+// whose working directory was not writable ran with
+// SKYGATE_OIDC_KEY_DIR at its relative default
+// (./data/oidc-keys); NewKeyStore's MkdirAll failed
+// with "mkdir ./data: permission denied", main.go
+// called log.Fatalf — and skygate died BEFORE it
+// bound its HTTP port. The unit was 'active' with
+// nothing listening, the self-updater could never
+// verify the new build, and the reason was a side
+// feature nobody was even using (SKYGATE_OIDC_ISSUER
+// was unset). A broken OIDC provider must not take
+// the control plane down with it: the key store is
+// left nil, the failure is logged loudly, and every
+// OIDC route answers 503 with the reason. OIDC is
+// optional — /healthz, /login, the API and the UI are
+// not.
 func NewService(issuerURL, clientID, clientSecret, keyDir, redirectURIs, jwtSecret string) (*Service, error) {
 	if issuerURL == "" {
 		// Provider disabled — main.go can still
@@ -113,7 +130,21 @@ func NewService(issuerURL, clientID, clientSecret, keyDir, redirectURIs, jwtSecr
 	}
 	keys, err := NewKeyStore(keyDir)
 	if err != nil {
-		return nil, err
+		// Degrade, do not die. The Error return stays in
+		// the signature for callers that want to surface
+		// it, but the Service is still usable: Keys == nil
+		// makes Ready() false and every signing path return
+		// "oidc: no signing key" instead of panicking.
+		log.Printf("oidc: KEY STORE UNAVAILABLE (%v) — the process keeps running and the OIDC routes answer 503; fix SKYGATE_OIDC_KEY_DIR (needs a directory writable by the service user, e.g. /var/lib/skygate/oidc-keys) and restart", err)
+		return &Service{
+			IssuerURL:    issuerURL,
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			RedirectURIs: redirectURIs,
+			Codes:        NewAuthCodeStore(),
+			JWTSecret:    jwtSecret,
+			KeyStoreErr:  err.Error(),
+		}, nil
 	}
 	return &Service{
 		IssuerURL:    issuerURL,

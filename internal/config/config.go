@@ -523,7 +523,7 @@ func Load() (*Config, error) {
 		OIDCIssuerURL:      os.Getenv("SKYGATE_OIDC_ISSUER"),
 		OIDCClientID:       getenv("SKYGATE_OIDC_CLIENT_ID", "headscale"),
 		OIDCClientSecret:   os.Getenv("SKYGATE_OIDC_CLIENT_SECRET"),
-		OIDCKeyDir:         getenv("SKYGATE_OIDC_KEY_DIR", "./data/oidc-keys"),
+		OIDCKeyDir:         os.Getenv("SKYGATE_OIDC_KEY_DIR"),
 		// B161.2: default to headscale's canonical
 		// callback URL (matches the operator's
 		// headscale.conf `oidc.redirect_uri`). The
@@ -800,6 +800,24 @@ func Load() (*Config, error) {
 	if c.DBDSN == "" {
 		return nil, fmt.Errorf("SKYGATE_DB is empty (set SKYGATE_DB=sqlite:/path or SKYGATE_DB=postgres://... — or SKYGATE_DB_PATH for the default SQLite location)")
 	}
+	// B270 (2026-09-19): the OIDC key directory must default to an
+	// ABSOLUTE path inside the service's data directory, never to the
+	// volume-relative "./data/oidc-keys".
+	//
+	// Live case: a native install started by systemd (whose WorkingDirectory
+	// was not the data dir) resolved "./data/oidc-keys" against its CWD, the
+	// key-store MkdirAll failed with "mkdir ./data: permission denied", and
+	// NewService's error was fatal — so the process exited BEFORE binding its
+	// HTTP port. The unit stayed 'active' with nothing listening and a feature
+	// the operator had not configured (SKYGATE_OIDC_ISSUER was unset) took the
+	// whole control plane down.
+	//
+	// Deriving the default from the (already resolved and writable) database
+	// location keeps one writable root for all of skygate's state, and an
+	// explicit SKYGATE_OIDC_KEY_DIR still wins verbatim.
+	if os.Getenv("SKYGATE_OIDC_KEY_DIR") == "" {
+		c.OIDCKeyDir = defaultOIDCKeyDir(c.DBDSN)
+	}
 	if c.JWTSecret == "" {
 		c.JWTSecret = "dev-only-insecure-jwt-secret-do-not-use-in-prod"
 		log.Printf("⚠️  SKYGATE_JWT_SECRET not set, using insecure default (dev only)")
@@ -876,6 +894,59 @@ func resolveDBDSN() string {
 		return v
 	}
 	return ""
+}
+
+// defaultOIDCKeyDir returns the absolute directory for the OIDC RSA keypair
+// when the operator has not set SKYGATE_OIDC_KEY_DIR (B270).
+//
+// It is anchored to the Skygate data directory, which is the one place the
+// installers create, chown to the service user and whitelist in the unit's
+// ReadWritePaths. For a SQLite install the data dir is simply the directory
+// holding skygate.db (this is also exactly where the correct answer is
+// derivable without guessing); for PostgreSQL there is no local database file,
+// so the native default /var/lib/skygate is used.
+func defaultOIDCKeyDir(dsn string) string {
+	if p, ok := sqlitePathFromDSN(dsn); ok && p != "" {
+		if dir := filepath.Dir(p); dir != "" && dir != "." && dir != "/" {
+			return filepath.Join(dir, "oidc-keys")
+		}
+	}
+	return "/var/lib/skygate/oidc-keys"
+}
+
+// sqlitePathFromDSN extracts the on-disk path from the DSN shapes skygate
+// accepts (sqlite:/path, sqlite:///path, file:/path?_pragma=…, a bare path).
+// ok is false for a PostgreSQL DSN or an in-memory database, where there is no
+// writable file whose directory could anchor the key store.
+func sqlitePathFromDSN(dsn string) (string, bool) {
+	d := strings.TrimSpace(dsn)
+	if d == "" {
+		return "", false
+	}
+	if strings.HasPrefix(d, "postgres://") || strings.HasPrefix(d, "postgresql://") {
+		return "", false
+	}
+	for _, prefix := range []string{"sqlite://", "sqlite:", "file://", "file:"} {
+		if strings.HasPrefix(d, prefix) {
+			d = strings.TrimPrefix(d, prefix)
+			break
+		}
+	}
+	// file: URI query (?_pragma=…) — keep only the path part.
+	if i := strings.IndexAny(d, "?#"); i >= 0 {
+		d = d[:i]
+	}
+	d = strings.TrimPrefix(d, "//")
+	if d == "" || d == ":memory:" || strings.Contains(d, ":memory:") {
+		return "", false
+	}
+	// Windows DSNs may be host-relative (C:\…); filepath.Dir handles them.
+	if !strings.HasPrefix(d, "/") && !strings.Contains(d, string(filepath.Separator)) && !strings.Contains(d, "/") {
+		// A bare filename — anchor to the CWD, which is not stable enough to
+		// be a default; report "no anchor" so the caller uses the data dir.
+		return "", false
+	}
+	return d, true
 }
 
 // deriveControlURL returns the URL clients (Tailscale) should be pointed at.

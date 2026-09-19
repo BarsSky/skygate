@@ -134,6 +134,12 @@ func listenAddr(port string) (string, error) {
 	return ":" + p, nil
 }
 
+// handlerBox gives the boot-time handler swap a single CONCRETE type for
+// atomic.Value. Storing an http.HandlerFunc first and an *http.ServeMux later
+// panics with "sync/atomic: store of inconsistently typed value into Value",
+// which killed the process exactly at handover (found live by the B270 probe).
+type handlerBox struct{ h http.Handler }
+
 func main() {
 	// 2026-07-14: Этап 14 v6 — subcommand routing.
 	// The default (no args) starts the web server.
@@ -471,10 +477,16 @@ func main() {
 	}
 	// The handler starts as the provisional startup handler and is
 	// replaced by the real mux once the route table is complete.
+	//
+	// Both stores go through handlerBox: atomic.Value panics with
+	// "store of inconsistently typed value" when the concrete types differ
+	// (a bare http.HandlerFunc here, *http.ServeMux there), so the boot
+	// would die exactly at handover — a live-tested regression caught by the
+	// B270 probe, not by the source contracts.
 	var handler atomic.Value
-	handler.Store(http.Handler(startup.StageHandler()))
+	handler.Store(handlerBox{startup.StageHandler()})
 	bootSrv := &http.Server{
-		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler.Load().(http.Handler).ServeHTTP(w, r) }),
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler.Load().(handlerBox).h.ServeHTTP(w, r) }),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	releaseProvisional := sync.OnceFunc(func() { _ = bootSrv.Close() })
@@ -860,9 +872,17 @@ func main() {
 	// and mounts the discovery + JWKS routes.
 	// The /authorize + /token + /userinfo handlers
 	// (B161.2 + B161.3) will add to oidcSvc.Handler()
-	// without changing this wiring. If NewKeyStore
-	// fails (disk full, bad perms), startup aborts
-	// — see the comment in NewKeyStore.
+	// without changing this wiring.
+	//
+	// B270 (2026-09-19): this is NOT fatal any more. A live native install
+	// failed here with "oidc: mkdir ./data: permission denied" (relative
+	// SKYGATE_OIDC_KEY_DIR + a systemd CWD that was not the data dir) and the
+	// process exited BEFORE binding its HTTP port — the unit stayed 'active'
+	// with nothing listening, the self-updater could never verify a build, and
+	// OIDC was not even configured (SKYGATE_OIDC_ISSUER was unset). NewService
+	// now returns a Service with a nil key store, every OIDC route answers 503
+	// with the reason, and the portal keeps serving. The listener is already up
+	// at this point regardless (B269).
 	oidcSvc, oidcErr := oidcsvc.NewService(
 		app.OIDCIssuerURL,
 		app.OIDCClientID,
@@ -872,7 +892,7 @@ func main() {
 		app.JWTSecret,
 	)
 	if oidcErr != nil {
-		log.Fatalf("oidc: init failed: %v", oidcErr)
+		log.Printf("oidc: init failed: %v (continuing — OIDC routes will answer 503; the portal and /healthz are unaffected)", oidcErr)
 	}
 	// B174 (v1.5.2): wire the user-lookup callback
 	// so the OIDC service can populate the email
@@ -2693,7 +2713,7 @@ func main() {
 		// bind, no window in which the port is unowned, and therefore no
 		// way for the updater's build check or the applier's baseline to
 		// observe a running unit with nothing listening.
-		handler.Store(http.Handler(mux))
+		handler.Store(handlerBox{mux})
 		startup.MarkReady()
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			startup.SetFatal(fmt.Sprintf("http serve: %v", err))

@@ -342,6 +342,29 @@ health_port() {
     esac
 }
 
+# configured_port — the port the service is actually told to listen on,
+# read from the operator's env file (SKYGATE_PORT=, falling back to the
+# historical default 8080). Empty when the file is unreadable.
+configured_port() {
+    [ -n "$ENV_FILE" ] && [ -r "$ENV_FILE" ] || return 0
+    sed -n 's/^[[:space:]]*SKYGATE_PORT[[:space:]]*=[[:space:]]*"\{0,1\}\([0-9]\{1,5\}\)"\{0,1\}.*/\1/p' "$ENV_FILE" 2>/dev/null | tail -1
+}
+
+# port_mismatch_warning — B270. Live case: the self-updater polled
+# http://127.0.0.1:8080/healthz while SKYGATE_PORT=8082, so EVERY update
+# ended in "healthz did not report build X" and rolled back, on a service
+# that was up and healthy the whole time. Neither the applier nor the page
+# could see the two numbers together, so say it plainly before the swap.
+port_mismatch_warning() {
+    _hp="$(health_port)"
+    _cp="$(configured_port)"
+    [ -n "$_cp" ] || return 0
+    [ "$_hp" = "$_cp" ] && return 0
+    log "WARN: PORT MISMATCH — health verification polls ${HEALTH_URL} (port ${_hp}) but the service is configured with SKYGATE_PORT=${_cp} in ${ENV_FILE}"
+    log "WARN: the post-restart build check can NEVER succeed while they disagree; every update will roll back even though the service is healthy"
+    log "WARN: fix one of them — set SKYGATE_PORT=${_hp} in ${ENV_FILE}, or point SKYGATE_UPDATE_HEALTH_URL at port ${_cp} in the root-owned helper conf"
+}
+
 # service_state — one line describing what systemd/OpenRC thinks of the
 # unit, or "unknown". Never fails.
 service_state() {
@@ -746,6 +769,7 @@ fi
 # body whose build is unrelated to $FROM_VERSION is a strong hint that a
 # second instance owns the port.
 _pre_body="$(health_body || true)"
+port_mismatch_warning
 if [ -n "$_pre_body" ]; then
     if build_matches "$_pre_body" ""; then
         log "pre-swap health baseline: $HEALTH_URL reports build '${LAST_BUILD:-unknown}' (unit state: $(service_state))"

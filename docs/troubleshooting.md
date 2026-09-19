@@ -37,6 +37,7 @@ syntax lives in [`acl-rules-reference.md`](acl-rules-reference.md).
 8. [Install / upgrade-time failures](#8-install--upgrade-time-failures)
    * [8.0 Self-update rolled back: "healthz did not report build …" (B268)](#80-self-update-rolled-back-healthz-did-not-report-build--b268)
    * [8.0.1 The unit is `active` but nothing listens on the port (B269)](#801-the-unit-is-active-but-nothing-listens-on-the-port-b269)
+   * [8.0.2 The update rolls back every time even though the service is healthy (B270)](#802-the-update-rolls-back-every-time-even-though-the-service-is-healthy-b270)
 9. [Telegram relay silently not delivering](#9-telegram-relay-silently-not-delivering)
 10. [General diagnostics kit](#10-general-diagnostics-kit)
 
@@ -828,6 +829,77 @@ A `panic` during boot is now reported with its stack and phase and exits `3`:
 startup: PANIC in phase=services+telegram: runtime error: invalid memory address …
 goroutine 1 [running]:
 …
+```
+
+### 8.0.2 The update rolls back every time even though the service is healthy (B270)
+
+**Symptom.** `/admin/update` always ends in a rollback with
+`healthz did not report build X … (last build: none)`, while the service is up,
+serving, and reachable on its real port. Two independent traps produce exactly
+this; both were found on one host in the same incident.
+
+**Trap 1 — the port in the health URL is not the port the service listens on.**
+The privileged applier verifies `SKYGATE_UPDATE_HEALTH_URL` (default
+`http://127.0.0.1:8080/healthz`), but the search for *why should be* your first
+question, not the build string. Check both numbers:
+
+```bash
+sudo grep -E 'SKYGATE_PORT' /etc/skygate/skygate.env          # what the service listens on
+sudo grep -E 'HEALTH_URL'    /etc/skygate/update-helper.conf  # what the applier polls
+sudo ss -ltnp | grep -E '8080|8082'                           # what is actually bound
+```
+
+If they disagree (live case: the service ran `SKYGATE_PORT=8082` while the
+applier polled `:8080`), **no build verification can ever succeed** and every
+update rolls back on a perfectly healthy instance. Since B270 the applier says so
+itself, in the pre-swap log:
+
+```
+WARN: PORT MISMATCH — health verification polls http://127.0.0.1:8080/healthz (port 8080)
+      but the service is configured with SKYGATE_PORT=8082 in /etc/skygate/skygate.env
+WARN: the post-restart build check can NEVER succeed while they disagree; every update
+      will roll back even though the service is healthy
+```
+
+Fix one side: set `SKYGATE_PORT=<the same port>` in `/etc/skygate/skygate.env`, or
+point `SKYGATE_UPDATE_HEALTH_URL` at the port the service really uses in the
+root-owned `/etc/skygate/update-helper.conf` (the applier verifies that URL, not
+the listening socket). Restart the unit after editing the env file.
+
+**Trap 2 — an optional feature kills the whole process (B270).** A native install
+whose working directory was not the data dir resolved the OIDC key directory
+(`SKYGATE_OIDC_KEY_DIR`, default was the relative `./data/oidc-keys`) against `/`,
+so `NewService` failed with
+
+```
+oidc: SKYGATE_OIDC_ISSUER not set — OIDC routes will return 503 until configured
+oidc: init failed: oidc: mkdir ./data/oidc-keys: mkdir ./data: permission denied
+```
+
+and that error was **fatal** — the process exited before it ever bound its HTTP
+port. The unit stayed `active` with nothing listening, and OIDC was not even
+configured. Since B270:
+
+* the key-store failure is **not fatal**: the process boots, the journal carries
+  `oidc: KEY STORE UNAVAILABLE (…) — the process keeps running and the OIDC
+  routes answer 503; fix SKYGATE_OIDC_KEY_DIR (needs a directory writable by the
+  service user, e.g. /var/lib/skygate/oidc-keys) and restart`, and every OIDC
+  route answers `503` with the reason;
+* the default key dir is **absolute and data-dir anchored**
+  (`<dir of skygate.db>/oidc-keys`, or `/var/lib/skygate/oidc-keys` for
+  PostgreSQL), so a relative path cannot come back through the default;
+* the installers create `<data_dir>/oidc-keys` (`0700`, owned by the service
+  user), so a fresh native install has a usable private key directory.
+
+If you hit a leftover relative path, fix it explicitly and restart:
+
+```bash
+sudo install -d -m 0700 -o skygate -g skygate /var/lib/skygate/oidc-keys
+# only needed if your env file pins the old relative value:
+sudo sed -i 's|^SKYGATE_OIDC_KEY_DIR=.*|SKYGATE_OIDC_KEY_DIR=/var/lib/skygate/oidc-keys|' /etc/skygate/skygate.env
+sudo systemctl restart skygate
+sudo journalctl -u skygate -n 20 --no-pager | grep -E 'startup:|oidc:'
+curl -sS http://127.0.0.1:<your port>/healthz
 ```
 
 ### 8.1 Container cannot reach a hostname that resolves to `127.0.0.1`

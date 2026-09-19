@@ -164,7 +164,15 @@ func NewKeyStore(dir string) (*KeyStore, error) {
 // Ready returns true once a keypair is loaded.
 // While the keypair is generating (cold start on
 // a new volume), the OIDC routes return 503.
+//
+// B270: nil-safe on purpose — a Service whose key
+// store could not be created keeps Keys == nil so
+// that the HTTP surface answers 503 instead of
+// panicking (pre-B270 the process died at boot).
 func (ks *KeyStore) Ready() bool {
+	if ks == nil {
+		return false
+	}
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
 	return ks.ready

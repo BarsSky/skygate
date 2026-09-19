@@ -101,6 +101,8 @@ fi
 install -d -m 0750 -o "$SKYGATE_USER" -g "$SKYGATE_USER" "$SKYGATE_DATA_DIR"
 install -d -m 0750 -o "$SKYGATE_USER" -g "$SKYGATE_USER" "$SKYGATE_ETC_DIR"
 install -d -m 0750 -o "$SKYGATE_USER" -g "$SKYGATE_USER" "$SKYGATE_DATA_DIR/ts"
+# B270: OIDC RSA keypair dir (SKYGATE_OIDC_KEY_DIR defaults to this path).
+install -d -m 0700 -o "$SKYGATE_USER" -g "$SKYGATE_USER" "$SKYGATE_DATA_DIR/oidc-keys"
 echo "[install-alpine] created dirs: $SKYGATE_DATA_DIR $SKYGATE_ETC_DIR"
 
 # -------- 3. download + verify + install binary --------
