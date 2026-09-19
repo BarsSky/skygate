@@ -51,7 +51,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -213,7 +215,7 @@ func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertSin
 	if rows, err := db.ListNodeOwnersAll(dbConn.Current()); err != nil {
 		log.Printf("tag-reconcile: list node_owner_map: %v (skipping pass)", err)
 	} else {
-		ReconcileTags(dbConn, hs, nodes, rows, alertSink)
+		ReconcileTags(dbConn, hs, nodes, rows, os.Getenv("SKYGATE_BASE_DOMAIN"), alertSink)
 	}
 	log.Printf("node-discovery: tick complete (users=%d nodes=%d)", processed, len(nodes))
 }
@@ -429,7 +431,15 @@ type TagReconcileResult struct {
 //
 // `owners` is passed in (rather than read here) so the matching logic is
 // unit-testable without a database; the caller loads it with db.ListNodeOwnersAll.
-func ReconcileTags(dbConn db.DBSource, hs nodeLister, nodes []headscale.NodeView, rows []db.NodeOwner, alertSink *TagAlertSink) TagReconcileResult {
+//
+// B272.1 (same live host, one tick later): AddTag alone is not enough. headscale
+// answers `400 requested tags [...] are invalid or not permitted` for a tag that
+// is not listed in the policy's tagOwners — the B245 chicken-and-egg. So before
+// applying a tag this pass ensures the tag HAS an owner, taken from the row's
+// own username (`<user>@<baseDomain>` + `tagged-devices@<baseDomain>`, exactly
+// what the per-user backfill uses). Without this the reconciler reported the
+// right node and the right tag forever and could never fix it.
+func ReconcileTags(dbConn db.DBSource, hs nodeLister, nodes []headscale.NodeView, rows []db.NodeOwner, baseDomain string, alertSink *TagAlertSink) TagReconcileResult {
 	var res TagReconcileResult
 	if hs == nil {
 		return res
@@ -443,6 +453,9 @@ func ReconcileTags(dbConn db.DBSource, hs nodeLister, nodes []headscale.NodeView
 	for _, n := range nodes {
 		byID[n.ID] = n
 	}
+	// Tags whose ownership was already ensured in this pass (the owner list is
+	// per tag, and several nodes can share one).
+	ensured := map[string]bool{}
 
 	for _, r := range rows {
 		if r.Tag == "" {
@@ -459,6 +472,16 @@ func ReconcileTags(dbConn db.DBSource, hs nodeLister, nodes []headscale.NodeView
 		}
 		id, err := strconv.ParseInt(r.NodeID, 10, 64)
 		if err != nil || id <= 0 {
+			continue
+		}
+		// B272.1: make sure the policy knows this tag before asking headscale
+		// to apply it.
+		if err := ensureTagIsPermitted(hs, r, baseDomain, ensured); err != nil {
+			res.Failed++
+			log.Printf("tag-reconcile: cannot make %q permitted for node %s (%s): %v", r.Tag, r.NodeID, n.Hostname, err)
+			if alertSink != nil {
+				alertSink.ReportFailure(r.NodeID, n.Hostname, r.Tag, err)
+			}
 			continue
 		}
 		if err := hs.AddTag(id, r.Tag); err != nil {
@@ -500,6 +523,43 @@ func hasTag(tags []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// ensureTagIsPermitted makes sure headscale's policy lists `tag` before it is
+// applied to a node (B272.1). Without an owner entry headscale refuses with
+// `400 requested tags [...] are invalid or not permitted` — the B245 deadlock,
+// seen live on the reconciler's first tick.
+//
+// The owner comes from the database row (`<username>@<baseDomain>` plus
+// `tagged-devices@<baseDomain>`, the same pair the per-user backfill uses), so
+// the reconciler repairs the policy from the same source of truth it repairs
+// the node tags from. `ensured` caches successful calls per tag within a pass.
+//
+// A missing baseDomain is reported as an error rather than silently skipping:
+// without it the tag can never become permitted, and silence is what made this
+// class of failure invisible in the first place.
+func ensureTagIsPermitted(hs nodeLister, row db.NodeOwner, baseDomain string, ensured map[string]bool) error {
+	if ensured[row.Tag] {
+		return nil
+	}
+	if baseDomain == "" {
+		return fmt.Errorf("SKYGATE_BASE_DOMAIN is not set, so the owner of %q cannot be expressed in the policy — set it to the headscale base domain (e.g. tail.example.com)", row.Tag)
+	}
+	user := row.Username
+	if user == "" || user == "tagged-devices" {
+		// A synthetic owner: the tag belongs to the sentinel pool, which is
+		// exactly how an unadopted device is reachable.
+		user = "tagged-devices"
+	}
+	owners := []string{user + "@" + baseDomain}
+	if user != "tagged-devices" {
+		owners = append(owners, "tagged-devices@"+baseDomain)
+	}
+	if err := hs.EnsureTagOwner(row.Tag, owners); err != nil {
+		return fmt.Errorf("ensure tag owner %q for %v: %w", row.Tag, owners, err)
+	}
+	ensured[row.Tag] = true
+	return nil
 }
 
 // ownerByNodeID reports whether node_owner_map has a row for the node.

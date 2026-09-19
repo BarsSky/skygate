@@ -131,7 +131,7 @@ if grep -q 'func ReconcileTags(' "$AUTO" && grep -q 'TagReconcileResult' "$AUTO"
 else
   bad "C: no reconciler — a tag that never landed stays missing forever"
 fi
-if grep -q 'ReconcileTags(dbConn, hs, nodes, rows, alertSink)' "$AUTO"; then
+if grep -q 'ReconcileTags(dbConn, hs, nodes, rows, os.Getenv("SKYGATE_BASE_DOMAIN"), alertSink)' "$AUTO"; then
   ok "C2: it runs on every autoupdater tick"
 else
   bad "C2: the reconciler is not wired into the tick"
@@ -145,6 +145,16 @@ if grep -q 'ReasonTagMissing FailureReason = "tag_missing"' "$ALERT" && grep -q 
   ok "C4: the reasons are part of the B227 alert vocabulary"
 else
   bad "C4: the new reasons are missing from the alert vocabulary"
+fi
+if grep -q 'ensureTagIsPermitted(hs, r, baseDomain, ensured)' "$AUTO"; then
+  ok "C6: the reconciler ensures tagOwners BEFORE applying a tag (the live 400 'not permitted')"
+else
+  bad "C6: the reconciler applies tags without ensuring their owner — headscale answers 400 for an unknown tag"
+fi
+if grep -q 'ReconcileTags(dbConn, hs, nodes, rows, os.Getenv("SKYGATE_BASE_DOMAIN"), alertSink)' "$AUTO"; then
+  ok "C7: the policy owner expression uses the configured base domain"
+else
+  bad "C7: the base domain does not reach the reconciler, so owners cannot be expressed"
 fi
 if grep -q 'func ListNodeOwnersAll(' internal/db/node_owner_map.go; then
   ok "C5: the database side of the comparison is queryable"

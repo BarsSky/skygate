@@ -12,6 +12,53 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.14 — the reconciler must make the tag PERMITTED, not just apply it (B272.1)
+
+**Date:** 2026-09-19 · **Base:** `v1.5.13` → this tag · **Compatibility:** no schema,
+config or API change.
+
+### The report (one tick after v1.5.13 on the same host)
+
+`v1.5.13` made the drift visible, and the very first reconciliation tick named the
+real blocker:
+
+```
+tag-reconcile: node 2 (workpc) is missing "tag:dev-daniil-workpc" in headscale:
+  tag: api: headscale POST /api/v1/node/2/tags: 400 {"code":3,
+       "message":"requested tags [tag:dev-daniil-workpc] are invalid or not permitted"}
+  cli: docker not in PATH and "headscale" failed: exit status 1
+       (unable to read/write to headscale socket "/var/run/headscale/headscale.sock":
+        permission denied)
+tag-reconcile: checked=2 applied=0 failed=1 missing=0 unattributed=2
+```
+
+The reconciler had found the right node and the right tag — but headscale refuses a
+tag that is **not listed in the policy's `tagOwners`**. v1.5.13 applied tags
+without first making them permitted, so the repair could never succeed (the classic
+B245 chicken-and-egg). The CLI fallback also cannot help on a native install: the
+local `headscale` binary talks to `/var/run/headscale/headscale.sock`, which the
+`skygate` service user may not write.
+
+### What changed
+
+* New `ensureTagIsPermitted`: before applying each drifted tag, the reconciler
+  creates its `tagOwners` entry from the **database row** —
+  `<username>@<baseDomain>` plus `tagged-devices@<baseDomain>`, the same pair the
+  per-user backfill uses — so the policy is repaired from the same source of truth
+  as the node tags.
+* The base domain comes from `SKYGATE_BASE_DOMAIN`, which `main.go` already holds.
+  If it is unset, the failure is **reported** (`SKYGATE_BASE_DOMAIN is not set, so
+  the owner of "…" cannot be expressed in the policy`) rather than retried blindly
+  every 5 minutes.
+* A failed policy update aborts the tag apply for that node (headscale would
+  refuse it anyway) and reports the reason through the B227 sink, so the operator
+  gets one classified failure instead of two.
+
+Contracts: `scripts/check_b272_tag_drift.sh` (24, incl. `C6`/`C7` for the
+ordering and the base domain) and three new cases in
+`internal/nodeownership/auto_b272_test.go`: owner created before `AddTag`, owner
+failure reported without a pointless apply, and the missing-base-domain case.
+
 ## v1.5.13 — tags actually reach headscale (B272)
 
 **Date:** 2026-09-19 · **Base:** `v1.5.12` → this tag · **Compatibility:** no schema,
