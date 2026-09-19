@@ -111,7 +111,7 @@ echo "=== Step 4: wait for the run to settle, check status ==="
 # Wait up to 60s for the run to finish (either cancelled
 # or fully done — either way the status is set).
 for i in $(seq 1 60); do
-  STATUS=$(docker exec skygate-skygate-1 bash -c "PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -tA -c \"SELECT status FROM dbmigrate_run WHERE id = $RUN_ID\"" 2>/dev/null | tr -d ' ')
+  STATUS=$(docker exec skygate-skygate-1 bash -c "PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -tA -c \"SELECT status FROM dbmigrate_run WHERE id = $RUN_ID\"" 2>/dev/null | tr -d ' ')
   if [[ -n "$STATUS" && "$STATUS" != "pending" && "$STATUS" != "running" ]]; then
     break
   fi
@@ -143,7 +143,7 @@ echo ""
 echo ""
 
 echo "=== Step 6: verify the run is now status=rolled_back ==="
-RB_STATUS=$(docker exec skygate-skygate-1 bash -c "PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -tA -c \"SELECT status FROM dbmigrate_run WHERE id = $RUN_ID\"" 2>/dev/null | tr -d ' ')
+RB_STATUS=$(docker exec skygate-skygate-1 bash -c "PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -tA -c \"SELECT status FROM dbmigrate_run WHERE id = $RUN_ID\"" 2>/dev/null | tr -d ' ')
 echo "run $RUN_ID post-rollback status: $RB_STATUS"
 echo ""
 
@@ -157,7 +157,7 @@ fi
 echo ""
 
 echo "=== Step 7: verify the steps table ==="
-docker exec skygate-skygate-1 bash -c "PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -c \"SELECT step_name, status FROM dbmigrate_step WHERE run_id = $RUN_ID ORDER BY ordinal\"" 2>&1 | head -20
+docker exec skygate-skygate-1 bash -c "PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -c \"SELECT step_name, status FROM dbmigrate_step WHERE run_id = $RUN_ID ORDER BY ordinal\"" 2>&1 | head -20
 echo ""
 
 echo "=== B214 live-verify DONE ==="

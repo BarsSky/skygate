@@ -92,7 +92,7 @@ fi
 DB_DSN="${SKYGATE_DB_DSN:-}"
 if [ -z "${DB_DSN}" ]; then
     # Try the standard VM-local DSN as a fallback
-    DB_DSN="postgres://admin:skygate_admin_pass@172.18.0.3:5432/skygate_staging?sslmode=disable"
+    DB_DSN="postgres://admin:${SKYGATE_DB_PASSWORD}@172.18.0.3:5432/skygate_staging?sslmode=disable"
 fi
 
 # Where headscale is reachable

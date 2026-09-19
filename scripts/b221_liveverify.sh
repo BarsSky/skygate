@@ -35,7 +35,7 @@ DB="skygate_staging"
 # PGPASSWORD env var prefix needs `env` (not just
 # `PGPASSWORD=... cmd` as a variable assignment —
 # bash tries to execute PGPASSWORD=... as a command).
-DSN_RUN="env PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5433 -U admin -d $DB -tA"
+DSN_RUN="env PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5433 -U admin -d $DB -tA"
 
 # Build the B221 binary.
 SKYGATE_BIN="/tmp/skygate_b221"

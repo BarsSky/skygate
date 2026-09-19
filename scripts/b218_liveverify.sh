@@ -31,7 +31,7 @@ export GOMODCACHE="/tmp/go-modcache"
 mkdir -p "$GOCACHE" "$GOMODCACHE"
 
 DB="skygate_staging"
-DSN_RUN="env PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5433 -U admin -d $DB -tA"
+DSN_RUN="env PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5433 -U admin -d $DB -tA"
 
 # Build the B218 binary (or use the existing one if
 # the operator already deployed it).

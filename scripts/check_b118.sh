@@ -127,7 +127,7 @@ if [ -f /home/skyadmin/skygate/.env ] && command -v psql >/dev/null 2>&1; then
         # JSON). ORDER BY version DESC LIMIT 1 in a subquery
         # forces PostgreSQL to materialize the cast on every row
         # before the LIMIT, which fails on the malformed ones.
-        out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -F'|' -c \
+        out=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -F'|' -c \
             "SELECT tag, owners FROM (SELECT key as tag, value::text as owners FROM jsonb_each_text((SELECT config::jsonb->'tagOwners' FROM acl_snapshots WHERE version=(SELECT max(version) FROM acl_snapshots)))) t WHERE tag LIKE 'tag:dev-infra-%';" 2>/dev/null)
         if [ -z "${out}" ]; then
             warn "could not query latest acl_snapshots — is the DB up?"
@@ -166,7 +166,7 @@ if [ -n "${DSN:-}" ]; then
     # JSON). ORDER BY version DESC LIMIT 1 in a subquery
     # forces PostgreSQL to materialize the cast on every row
     # before the LIMIT, which fails on the malformed ones.
-    out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -F'|' -c \
+    out=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -F'|' -c \
         "SELECT value FROM jsonb_each_text((SELECT config::jsonb->'tagOwners' FROM acl_snapshots WHERE version=(SELECT max(version) FROM acl_snapshots))) WHERE key = 'tag:exit-node';" 2>/dev/null)
     if [ -z "${out}" ]; then
         warn "tag:exit-node not in live policy tagOwners — is the policy applied?"
@@ -184,7 +184,7 @@ fi
 echo
 echo "=== E. node_owner_map: tag:dev-infra-* owned by 'infra' (live DB) ==="
 if [ -n "${DSN:-}" ]; then
-    out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -F'|' -c \
+    out=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -F'|' -c \
         "SELECT tag, username FROM node_owner_map WHERE tag LIKE 'tag:dev-infra-%' ORDER BY tag;" 2>/dev/null)
     if [ -z "${out}" ]; then
         warn "no tag:dev-infra-* rows in node_owner_map"
@@ -219,7 +219,7 @@ if [ -n "${DSN:-}" ]; then
     # fails on those, even with ORDER BY ... LIMIT 1. The text
     # search is safe — we only care whether the substring
     # "svyatoslava-legacy" appears in the LATEST policy.
-    out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -F'|' -c \
+    out=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -F'|' -c \
         "SELECT count(*) FROM acl_snapshots WHERE version=(SELECT max(version) FROM acl_snapshots) AND config LIKE '%svyatoslava-legacy%';" 2>/dev/null)
     cnt=$(echo "${out}" | tr -d '[:space:]')
     if [ "${cnt}" = "0" ]; then
@@ -240,7 +240,7 @@ echo
 echo "=== G. v1.3.19.1: <polygon-vm-hostname> is REMOVED (HA mirror retired) ==="
 if [ -n "${DSN:-}" ]; then
     # 1. Policy: 0 references to <polygon-vm-hostname>
-    out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
+    out=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
         "SELECT count(*) FROM acl_snapshots WHERE version=(SELECT max(version) FROM acl_snapshots) AND config::text ILIKE '%<polygon-vm-hostname>%';" 2>/dev/null)
     cnt=$(echo "${out}" | tr -d '[:space:]')
     if [ "${cnt}" = "0" ]; then
@@ -249,7 +249,7 @@ if [ -n "${DSN:-}" ]; then
         bad "live policy: ${cnt} references to <polygon-vm-hostname> (re-apply or check sync.go auto-add)"
     fi
     # 2. node_owner_map: 0 rows for <polygon-vm-hostname>
-    out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
+    out=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
         "SELECT count(*) FROM node_owner_map WHERE tag = 'tag:dev-infra-<polygon-vm-hostname>';" 2>/dev/null)
     cnt=$(echo "${out}" | tr -d '[:space:]')
     if [ "${cnt}" = "0" ]; then
@@ -258,7 +258,7 @@ if [ -n "${DSN:-}" ]; then
         bad "nom: ${cnt} rows for tag:dev-infra-<polygon-vm-hostname> (BackfillInfra re-added — check sync.go)"
     fi
     # 3. tagOwners: 0 entries for tag:dev-infra-<polygon-vm-hostname>
-    out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
+    out=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
         "SELECT count(*) FROM jsonb_each_text((SELECT config::jsonb->'tagOwners' FROM acl_snapshots WHERE version=(SELECT max(version) FROM acl_snapshots))) WHERE key = 'tag:dev-infra-<polygon-vm-hostname>';" 2>/dev/null)
     cnt=$(echo "${out}" | tr -d '[:space:]')
     if [ "${cnt}" = "0" ]; then
@@ -267,7 +267,7 @@ if [ -n "${DSN:-}" ]; then
         bad "tagOwners: ${cnt} entries for tag:dev-infra-<polygon-vm-hostname>"
     fi
     # 4. tag:dev-infra-* count: should be exactly 4 (was 5 pre-cleanup)
-    out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
+    out=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
         "SELECT count(*) FROM jsonb_each_text((SELECT config::jsonb->'tagOwners' FROM acl_snapshots WHERE version=(SELECT max(version) FROM acl_snapshots))) WHERE key LIKE 'tag:dev-infra-%';" 2>/dev/null)
     cnt=$(echo "${out}" | tr -d '[:space:]')
     if [ "${cnt}" = "4" ]; then
@@ -276,7 +276,7 @@ if [ -n "${DSN:-}" ]; then
         bad "tagOwners: ${cnt} tag:dev-infra-* entries (expected 4 after <polygon-vm-hostname> removal)"
     fi
     # 5. node_owner_map count: should be exactly 4
-    out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
+    out=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
         "SELECT count(*) FROM node_owner_map WHERE tag LIKE 'tag:dev-infra-%';" 2>/dev/null)
     cnt=$(echo "${out}" | tr -d '[:space:]')
     if [ "${cnt}" = "4" ]; then

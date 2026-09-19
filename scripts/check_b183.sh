@@ -177,7 +177,7 @@ fi
 # and verify that count = number of rows.
 if [ -d /home/skyadmin/skygate ]; then
   if command -v psql >/dev/null 2>&1; then
-    PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tA -c "
+    PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tA -c "
       SELECT
         (SELECT COUNT(*) FROM device_rules WHERE enabled=1 AND exit_node_id='emilia' AND target_type='subnet') AS total_rows,
         (SELECT COUNT(DISTINCT (user_id, device_id, exit_node_id, target_type, target_value)) FROM device_rules WHERE enabled=1 AND exit_node_id='emilia' AND target_type='subnet') AS distinct_rows;

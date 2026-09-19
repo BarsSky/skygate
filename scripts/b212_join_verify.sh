@@ -98,8 +98,8 @@ echo ""
 echo "=== Step 9: set dsn_template on primary, re-join, verify DSN is substituted ==="
 # This exercises the WITH-DSN path. Set dsn_template on the
 # primary's cluster_database row, then re-issue + re-join.
-DSN_TPL='postgres://admin:skygate_admin_pass@%s:5433/skygate_staging?sslmode=disable'
-docker exec skygate-skygate-1 sh -c "PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -c \"UPDATE cluster_database SET dsn_template='$DSN_TPL' WHERE id='skygate-staging'\" 2>&1" | head -5
+DSN_TPL="postgres://admin:${SKYGATE_DB_PASSWORD}@%s:5433/skygate_staging?sslmode=disable"
+docker exec skygate-skygate-1 sh -c "PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -c \"UPDATE cluster_database SET dsn_template='$DSN_TPL' WHERE id='skygate-staging'\" 2>&1" | head -5
 # Re-build the binary so the next run uses the latest code
 $GO_BIN build -o /tmp/skygate_b212 ./cmd/skygate
 TOKEN2="$(/tmp/skygate_b212 init standby-invite --ttl-hours=1 | head -1)"
@@ -125,4 +125,4 @@ if [[ "$DSN2" == *"%s"* ]]; then
 fi
 echo "OK: DSN2 is fully substituted: $DSN2"
 # Cleanup: reset dsn_template to empty so we don't leave test state
-docker exec skygate-skygate-1 sh -c "PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -c \"UPDATE cluster_database SET dsn_template='' WHERE id='skygate-staging'\" 2>&1" | head -2
+docker exec skygate-skygate-1 sh -c "PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -c \"UPDATE cluster_database SET dsn_template='' WHERE id='skygate-staging'\" 2>&1" | head -2

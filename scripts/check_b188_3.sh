@@ -160,7 +160,7 @@ fi
 # M. B188.3 integration tests (TestGenerateACLForPlane_B1883_*) pass.
 # Skips on no PG DSN.
 if [ -n "$GO_BIN" ]; then
-  if SKYGATE_TEST_PG_DSN="${SKYGATE_TEST_PG_DSN:-postgres://admin:skygate_admin_pass@172.17.0.1:5000/skygate_staging?sslmode=disable}" \
+  if SKYGATE_TEST_PG_DSN="${SKYGATE_TEST_PG_DSN:-postgres://admin:${SKYGATE_DB_PASSWORD}@172.17.0.1:5000/skygate_staging?sslmode=disable}" \
      "$GO_BIN" test -count=1 -run "TestGenerateACLForPlane_B1883" "$REPO/internal/acl/..." >/dev/null 2>&1; then
     echo "  PASS [M-B188.3-integration-tests] ok"
     PASS=$((PASS+1))

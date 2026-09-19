@@ -309,7 +309,7 @@ print(n)
     # "within an order of magnitude" — not "exact match" — to
     # allow for the natural data drift between the two sources.
     if command -v psql >/dev/null 2>&1; then
-      X_RULE_COUNT=$(PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tAc \
+      X_RULE_COUNT=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tAc \
         "SELECT COUNT(*) FROM device_rules WHERE user_id=6 AND device_id=29 AND exit_node_id='emilia' AND enabled=1 AND target_type IN ('subnet', 'ip')" 2>/dev/null)
       X_VIA_COUNT=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
 import json, sys

@@ -59,9 +59,9 @@ DB="skygate_staging"
 # Use `env` so the PGPASSWORD env var prefix survives being
 # assigned to a variable + invoked. The naive form
 # `DSN_RUN="PGPASSWORD=... psql ..."` followed by `$DSN_RUN -c "..."`
-# fails because bash tries to execute "PGPASSWORD=skygate_admin_pass"
+# fails because bash tries to execute "PGPASSWORD=${SKYGATE_DB_PASSWORD}"
 # as a command.
-DSN_RUN="env PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5433 -U admin -d $DB -tA"
+DSN_RUN="env PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5433 -U admin -d $DB -tA"
 
 HELPER_SRC="/home/skyadmin/skygate/scripts/b215_liveverify.go"
 HELPER_BIN="/tmp/skygate_b215_helper"

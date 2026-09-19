@@ -6,10 +6,10 @@
 #
 # During B207 verify (B207-verify phase of the cluster-management
 # plan), the test set cluster_database.current_dsn to a deliberately
-# wrong DSN ('postgres://admin:skygate_admin_pass@...') so the
+# wrong DSN ('<db-password>' in the DSN) so the
 # /admin/audit UNION query could exercise the
 # "audit_log + cluster_audit joined by a common DSN" path. The
-# literal "skygate_admin_pass" password is the test artifact —
+# literal "${SKYGATE_DB_PASSWORD}" password is the test artifact —
 # not a real DSN.
 #
 # The B203 skygate-watchdog reads cluster_database.current_dsn

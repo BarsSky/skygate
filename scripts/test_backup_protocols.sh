@@ -170,7 +170,7 @@ test_s3() {
     port=$(echo "${db_dsn}" | sed -E 's|.*@[^:/]+:([0-9]+).*|\1|')
 
     # Write the S3 config (idempotent via ON CONFLICT)
-    docker run --rm --network host -e PGPASSWORD=skygate_admin_pass \
+    docker run --rm --network host -e PGPASSWORD=${SKYGATE_DB_PASSWORD} \
       postgres:18-alpine \
       psql -h "${host}" -p "${port}" -U admin -d skygate_staging -c "
         INSERT INTO global_settings (key, value) VALUES
@@ -219,7 +219,7 @@ test_s3() {
     while [[ "${status}" == "running" && ${attempts} -lt 30 ]] ; do
         sleep 1
         attempts=$((attempts+1))
-        status=$(docker run --rm --network host -e PGPASSWORD=skygate_admin_pass \
+        status=$(docker run --rm --network host -e PGPASSWORD=${SKYGATE_DB_PASSWORD} \
           postgres:18-alpine \
           psql -h "${host}" -p "${port}" -U admin -d skygate_staging -tA -c \
           "SELECT value FROM global_settings WHERE key='backup.last_status';" 2>/dev/null | tr -d '[:space:]')

@@ -8,7 +8,7 @@
 #
 # B207-verify set cluster_database.current_dsn to a
 # deliberately wrong DSN so the /admin/audit UNION could
-# exercise the cross-table join. The literal "skygate_admin_pass"
+# exercise the cross-table join. The literal "${SKYGATE_DB_PASSWORD}"
 # password is the test artifact. B203 reads current_dsn on
 # every tick; if it differs from the env DSN (which it
 # does, because the password is wrong), the watchdog

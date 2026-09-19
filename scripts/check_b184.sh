@@ -167,7 +167,7 @@ fi
 # B184 will show t.me as ✅ (not ⏳). Pre-B184 it was ⏳.
 if [ -d /home/skyadmin/skygate ]; then
   if command -v psql >/dev/null 2>&1; then
-    PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tA -c "
+    PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tA -c "
       SELECT COUNT(*) FROM device_rules
        WHERE user_id=6 AND device_id=29 AND exit_node_id='emilia'
          AND parent_domain='t.me' AND target_type IN ('subnet','ip')
@@ -190,7 +190,7 @@ fi
 # If 0, B184 correctly shows discord.com as ⏳ (no resolution).
 if [ -d /home/skyadmin/skygate ]; then
   if command -v psql >/dev/null 2>&1; then
-    PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tA -c "
+    PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tA -c "
       SELECT COUNT(*) FROM device_rules
        WHERE user_id=6 AND device_id=29 AND exit_node_id='emilia'
          AND parent_domain='discord.com' AND target_type IN ('subnet','ip')
@@ -214,7 +214,7 @@ fi
 # of the 4 64.233.164.x/32 IPs is in headscale's ApprovedRoutes).
 if [ -d /home/skyadmin/skygate ]; then
   if command -v psql >/dev/null 2>&1; then
-    PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tA -c "
+    PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tA -c "
       SELECT COUNT(*) FROM device_rules
        WHERE user_id=6 AND device_id=29 AND exit_node_id='emilia'
          AND parent_domain='youtube.com' AND target_type IN ('subnet','ip')

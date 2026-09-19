@@ -126,7 +126,7 @@ fi
 
 # E.1 Live index is 6-col (B232 / V068)
 if [ -d /home/skyadmin/skygate ] && [ -f /home/skyadmin/skygate/scripts/verify_pre_deploy.sh ]; then
-  E1=$(PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -A -t -F'|' -c "SELECT indexdef FROM pg_indexes WHERE indexname='device_rules_natural_key_uniq'" 2>/dev/null)
+  E1=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -A -t -F'|' -c "SELECT indexdef FROM pg_indexes WHERE indexname='device_rules_natural_key_uniq'" 2>/dev/null)
   if echo "$E1" | grep -qE '\(user_id, device_id, exit_node_id, target_type, target_value, parent_domain\)'; then
     ok "E.1 live index is 6-col (matches sync.go's 6-col ON CONFLICT)"
   else

@@ -1448,7 +1448,7 @@ if [ "$QUICK" = 0 ]; then
   echo "[R29] HAProxy backends: :5000 primary, :5001 replica"
   # 2026-08-11: v0.34.0.1 — read the live DB admin password from the
   # operator's .env (via SSH) instead of hardcoding the fresh-install
-  # default. The previous version had the literal `skygate_admin_pass`
+  # default. The previous version had the literal `${SKYGATE_DB_PASSWORD}`
   # as a tracked default, which (a) leaked the fresh-install password
   # to anyone with read access to the public repo and (b) would have
   # silently used the default on a deployment where the operator had

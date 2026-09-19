@@ -15,13 +15,13 @@ COOKIE="${SKYGATE_COOKIE:?set SKYGATE_COOKIE}"
 BASE="http://127.0.0.1:8080"
 
 # Test DSN (the test PG that skygate-pg-test runs on host port 5433)
-TEST_DSN="postgres://admin:skygate_admin_pass@127.0.0.1:5433/skygate_staging?sslmode=disable"
+TEST_DSN="postgres://admin:${SKYGATE_DB_PASSWORD}@127.0.0.1:5433/skygate_staging?sslmode=disable"
 # The actual skygate runs against 172.17.0.1:5433 (Docker bridge
 # to the host's PG 16). For the migration, source=target
 # = the actual skygate DB.
 
 echo "=== 0. Setup: create a fixture table + insert test rows ==="
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c "
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c "
 DROP TABLE IF EXISTS b202_fixture;
 CREATE TABLE b202_fixture (id SERIAL PRIMARY KEY, name TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
 INSERT INTO b202_fixture (name) VALUES ('alpha'), ('beta'), ('gamma'), ('delta');
@@ -45,12 +45,12 @@ echo "=== 2. Wait for run to finish (poll /admin/database/migrate/{id}) ==="
 RUN_ID=$(echo "$LOCATION" | grep -oE 'migrate/[0-9]+' | grep -oE '[0-9]+' | head -1)
 if [ -z "$RUN_ID" ]; then
   # Try a recent run from the DB
-  RUN_ID=$(PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -A -c \
+  RUN_ID=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -A -c \
     "SELECT id FROM dbmigrate_run ORDER BY id DESC LIMIT 1;")
 fi
 echo "  run id: $RUN_ID"
 for i in 1 2 3 4 5 6 7 8 9 10; do
-  STATUS=$(PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -A -c \
+  STATUS=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -A -c \
     "SELECT status FROM dbmigrate_run WHERE id=$RUN_ID;")
   echo "  [$i] run status: $STATUS"
   if [ "$STATUS" = "success" ] || [ "$STATUS" = "failed" ] || [ "$STATUS" = "rolled_back" ]; then
@@ -61,12 +61,12 @@ done
 
 echo ""
 echo "=== 3. Per-step status from dbmigrate_step ==="
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
   "SELECT step_name, status, duration_ms, error FROM dbmigrate_step WHERE run_id=$RUN_ID ORDER BY ordinal;"
 
 echo ""
 echo "=== 4. Dump file exists? ==="
-DUMP_FILE=$(PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -A -c \
+DUMP_FILE=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -A -c \
   "SELECT id || '.dump' FROM dbmigrate_run WHERE id=$RUN_ID;" | xargs -I {} echo "/var/lib/skygate/migrations/{}")
 echo "  expected: $DUMP_FILE"
 if ssh skyadmin@${VM_HOST:?set VM_HOST} -- "ls -la $DUMP_FILE 2>&1" 2>&1; then
@@ -78,7 +78,7 @@ fi
 
 echo ""
 echo "=== 5. Source row count (skygate_staging.portal_users etc) ==="
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
   "SELECT
     (SELECT count(*) FROM portal_users) AS portal_users,
     (SELECT count(*) FROM device_rules) AS device_rules,
@@ -87,14 +87,14 @@ PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_stag
 
 echo ""
 echo "=== 6. Verify the fixture table is intact (b202_fixture should have 4 rows) ==="
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
   "SELECT count(*) AS rows_in_fixture FROM b202_fixture;"
 
 echo ""
 echo "=== 7. Audit log: cluster.db.* + dbmigrate events ==="
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
   "SELECT username, action, substring(detail, 1, 80) AS detail_short FROM audit_log WHERE action LIKE 'cluster.%' OR action LIKE 'dbmigrate%' ORDER BY id DESC LIMIT 5;"
 
 echo ""
 echo "=== 8. Clean up: drop the fixture table ==="
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c "DROP TABLE b202_fixture;"
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c "DROP TABLE b202_fixture;"

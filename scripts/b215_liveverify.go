@@ -6,7 +6,7 @@
 // fires a row in cluster_audit. Run on the agent after a
 // `go build ./...` is clean:
 //
-//   SKYGATE_TEST_PG_DSN="postgres://skygate:skygate_admin_pass@172.17.0.1:5433/skygate_staging?sslmode=disable" \
+//   SKYGATE_TEST_PG_DSN="postgres://skygate:<db-password>@172.17.0.1:5433/skygate_staging?sslmode=disable" \
 //   SKYGATE_SECRET_KEY="<hex from .env>" \
 //   go run scripts/b215_liveverify.go init
 //   go run scripts/b215_liveverify.go join

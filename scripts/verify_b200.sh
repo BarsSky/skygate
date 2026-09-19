@@ -23,7 +23,7 @@ echo "  Location header:"; grep -i '^Location:' /tmp/invite_resp.txt | head -1
 echo "  Cookie set?"; grep -i 'Set-Cookie' /tmp/invite_resp.txt | head -1
 
 echo "=== verify invite in DB ==="
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -c \
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -c \
   "SELECT id, role, target_hostname, status FROM cluster_invite ORDER BY issued_at DESC LIMIT 3;"
 
 echo "=== POST /admin/cluster/node/add ==="
@@ -34,7 +34,7 @@ curl -s -b "skygate_session=$COOKIE" -X POST \
 echo "  Location header:"; grep -i '^Location:' /tmp/node_resp.txt | head -1
 
 echo "=== verify node in DB ==="
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -c \
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -c \
   "SELECT id, hostname, tailscale_ip, roles, state FROM cluster_node ORDER BY hostname;"
 
 echo "=== verify GET /admin/cluster now shows the new row ==="
@@ -44,7 +44,7 @@ echo "  skygate-standby role badge:"; grep -c 'skygate-standby' /tmp/cluster_aft
 echo "  pending invite visible:"; grep -c 'cluster_invite\|Invite' /tmp/cluster_after.html
 
 echo "=== POST /admin/cluster/invite/revoke (the one we just made) ==="
-INV_ID=$(PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -A -c \
+INV_ID=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -A -c \
   "SELECT id FROM cluster_invite WHERE status='pending' ORDER BY issued_at DESC LIMIT 1;")
 echo "  Revoking invite id=$INV_ID"
 if [ -n "$INV_ID" ]; then
@@ -53,7 +53,7 @@ if [ -n "$INV_ID" ]; then
     -o /tmp/revoke_resp.txt -w "  POST invite/revoke = %{http_code}\n" \
     $BASE/admin/cluster/invite/revoke
   echo "  Post-revoke status in DB:"
-  PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -c \
+  PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -c \
     "SELECT id, status FROM cluster_invite WHERE id='$INV_ID';"
 fi
 
@@ -63,9 +63,9 @@ curl -s -b "skygate_session=$COOKIE" -X POST \
   -o /tmp/remove_resp.txt -w "  POST node/remove = %{http_code}\n" \
   $BASE/admin/cluster/node/remove
 echo "  Post-remove rows in DB:"
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -c \
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -c \
   "SELECT count(*) AS remaining_nodes FROM cluster_node;"
 
 echo "=== audit log (last 5 cluster.* actions) ==="
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
   "SELECT username, action, detail, created_at FROM audit_log WHERE action LIKE 'cluster.%' ORDER BY id DESC LIMIT 5;"

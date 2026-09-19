@@ -89,7 +89,7 @@ if [ "$TARGET_BACKEND" = "pg" ]; then
         if ! sudo docker inspect "$PG_CONTAINER_NAME" >/dev/null 2>&1; then
             echo "ERROR: target=pg but $PG_CONTAINER_NAME container is not running." >&2
             echo "  hint: docker run -d --name $PG_CONTAINER_NAME --network headscale_default \\" >&2
-            echo "         -e POSTGRES_USER=admin -e POSTGRES_PASSWORD=skygate_admin_pass \\" >&2
+            echo "         -e POSTGRES_USER=admin -e POSTGRES_PASSWORD=${SKYGATE_DB_PASSWORD} \\" >&2
             echo "         -e POSTGRES_DB=skygate_staging postgres:18-alpine" >&2
             exit 1
         fi
@@ -106,7 +106,7 @@ trap "rm -f $PATCHED_ENV" EXIT
 cp "$ENV_FILE" "$PATCHED_ENV"
 case "$TARGET_BACKEND" in
     pg)
-        DSN="postgres://admin:skygate_admin_pass@${PG_HOST}:5432/skygate_staging?sslmode=disable"
+        DSN="postgres://admin:${SKYGATE_DB_PASSWORD}@${PG_HOST}:5432/skygate_staging?sslmode=disable"
         sed -i "s|^SKYGATE_DB=.*|SKYGATE_DB=${DSN}|" "$PATCHED_ENV"
         sed -i "s|^SKYGATE_DB_DSN=.*|SKYGATE_DB_DSN=${DSN}|" "$PATCHED_ENV"
         ;;

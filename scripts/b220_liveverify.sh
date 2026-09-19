@@ -37,7 +37,7 @@ DB="skygate_staging"
 # `PGPASSWORD=... cmd` as a variable assignment —
 # that fails because bash tries to execute
 # PGPASSWORD=... as a command).
-DSN_RUN="env PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5433 -U admin -d $DB -tA"
+DSN_RUN="env PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5433 -U admin -d $DB -tA"
 
 # Build the B220 binary.
 SKYGATE_BIN="/tmp/skygate_b220"

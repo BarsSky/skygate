@@ -170,7 +170,7 @@ if [ -f /home/skyadmin/skygate/.env ] && command -v psql >/dev/null 2>&1; then
         # Count rows that have a non-empty exit_node_tag but DON'T match
         # any of the 4 supported formats:
         #   tag:dev-infra-X, tag:exit-X, tag:X, bare X (no tag prefix).
-        out=$(PGPASSWORD=skygate_admin_pass psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
+        out=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
             "SELECT count(*) FROM (
                 SELECT exit_node_tag FROM user_exit_node_prefs WHERE exit_node_tag != ''
                 UNION ALL

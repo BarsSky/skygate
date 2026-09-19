@@ -31,7 +31,7 @@
 //
 // Verified during the B-mod-core live-verify attempt: the live
 // skygate-skygate-1 was in a restart loop because
-// SKYGATE_DB_DSN=postgres://admin:skygate_admin_pass@172.17.0.1:5433/skygate_staging
+// SKYGATE_DB_DSN=postgres://admin:<db-password>@172.17.0.1:5433/skygate_staging
 // pointed at a database that no longer exists (only
 // skygate-pg-test on :5432 is up). The fix is two-part:
 //   1. Operator must update SKYGATE_DB_DSN to a reachable DB

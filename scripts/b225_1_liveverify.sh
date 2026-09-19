@@ -103,7 +103,7 @@ echo "=== Step 6: confirm the B225.1 audit_log actions would fire ==="
 # no new audit_log rows for the health actions (which
 # is correct — no transitions happened on a healthy
 # DB).
-HEALTH_ACTIONS_COUNT=$(env PGPASSWORD=skygate_admin_pass psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -tA -c "SELECT count(*) FROM audit_log WHERE action IN ('db.health.degraded', 'db.health.recovered')")
+HEALTH_ACTIONS_COUNT=$(env PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -tA -c "SELECT count(*) FROM audit_log WHERE action IN ('db.health.degraded', 'db.health.recovered')")
 echo "  db.health.* audit_log rows: $HEALTH_ACTIONS_COUNT (expect 0 — DB is healthy, no transition)"
 if [ "$HEALTH_ACTIONS_COUNT" = "0" ]; then
   echo "  [ok]   no false transitions (B225.1 first-sample baseline + no-op on stable states)"

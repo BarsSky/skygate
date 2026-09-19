@@ -49,7 +49,7 @@ echo "  node_id: $NODE_ID"
 
 echo ""
 echo "=== 3. Verify cluster_node row in DB ==="
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
   "SELECT id, hostname, tailscale_ip, roles, state FROM cluster_node WHERE hostname='b201-test-node';"
 
 echo ""
@@ -63,7 +63,7 @@ sed -n '/^{/,/^}$/p' /tmp/hb1.txt | head -5
 
 echo ""
 echo "=== 5. Verify state is now ready ==="
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
   "SELECT hostname, state, last_seen_at FROM cluster_node WHERE hostname='b201-test-node';"
 
 echo ""
@@ -108,7 +108,7 @@ cat /tmp/err_dup.txt
 
 echo ""
 echo "=== 11. Audit log: cluster.* + join events ==="
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
   "SELECT username, action, detail FROM audit_log WHERE action LIKE 'cluster.%' ORDER BY id DESC LIMIT 5;"
 
 echo ""
@@ -116,12 +116,12 @@ echo "=== 12. Cleanup: remove the test node + revoke both invites ==="
 curl -s -b "skygate_session=$COOKIE" -X POST -d "hostname=b201-test-node" \
   -o /dev/null -w "  node/remove = %{http_code}\n" \
   $BASE/admin/cluster/node/remove
-for INV_ID in $(PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -A -c \
+for INV_ID in $(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -t -A -c \
   "SELECT id FROM cluster_invite WHERE target_hostname='b201-test-node' AND status='pending';"); do
   curl -s -b "skygate_session=$COOKIE" -X POST -d "invite_id=$INV_ID" \
     -o /dev/null -w "  invite/revoke $INV_ID = %{http_code}\n" \
     $BASE/admin/cluster/invite/revoke
 done
 echo "  Final state:"
-PGPASSWORD=skygate_admin_pass psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
+PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 127.0.0.1 -p 5433 -U admin -d skygate_staging -c \
   "SELECT 'nodes' AS t, count(*) FROM cluster_node WHERE hostname='b201-test-node' UNION ALL SELECT 'invites_pending', count(*) FROM cluster_invite WHERE target_hostname='b201-test-node' AND status='pending';"
