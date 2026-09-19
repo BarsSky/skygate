@@ -845,6 +845,11 @@ func (s *Service) startTailscaled() (string, error) {
 	if !tailscaleDaemonAnswers() {
 		_ = os.Remove(tailscaledSocketPath) // stale file from a previous container
 	}
+	if tailscaleDaemonAnswers() {
+		// Already up (started by the entrypoint, or by a previous click) — just
+		// authenticate; spawning a second daemon would only log "address in use".
+		return s.tailscaleUp(key)
+	}
 	const tsLog = "/var/log/tailscaled.log"
 	logFile, err := os.OpenFile(tsLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -872,6 +877,13 @@ func (s *Service) startTailscaled() (string, error) {
 	}
 	_ = tsCmd // tailscaled keeps running after this handler returns
 	// Now run `tailscale up` to authenticate.
+	return s.tailscaleUp(key)
+}
+
+// tailscaleUp authenticates the (already running) daemon with the key from the
+// auth-key file. Split out of startTailscaled so the "daemon already answers"
+// path can reuse it without spawning a second tailscaled.
+func (s *Service) tailscaleUp(key string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	up := exec.CommandContext(ctx, "tailscale", "up",

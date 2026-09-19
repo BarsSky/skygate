@@ -12,6 +12,82 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.10 — the two `/admin/tailscale` UI defects from the v1.5.9 enablement
+
+**Date:** 2026-09-19
+**Base:** `v1.5.9` → this tag
+**Compatibility:** no schema, config or API change — two UI/handler fixes.
+
+Both were found by the operator while enabling the in-container Tailscale client
+for the Telegram egress relay (RR-13).
+
+### 1. `Start` really starts tailscaled now
+
+Clicking **Start** answered:
+
+```
+Не удалось запустить Tailscale: tailscale up: exit status 1 — output:
+failed to connect to local tailscaled; it doesn't appear to be running
+```
+
+Two defects in `startTailscaled`:
+
+1. **The daemon was never started.** It was spawned as
+   `setsid nohup tailscaled --statedir=… ">/var/log/tailscaled.log" "2>&1" "&"` —
+   `exec.Command` runs no shell, so those redirection tokens were passed to
+   tailscaled as **argv**: it exited immediately with an argument error, and the
+   error was discarded (the output buffer was a dropped `bytes.Buffer`).
+2. **A stale socket file counted as "running".** The readiness wait used
+   `tailscaledRunning()`, which only `stat()`ed
+   `/var/run/tailscale/tailscaled.sock`. That directory is a bind mount
+   (`data/ts/run` → `/var/run/tailscale`), so the socket left behind by an earlier
+   container satisfied the check instantly and `tailscale up` was run against a
+   dead socket. Live proof from the reference host before the fix:
+   `socket file present` + `daemon does not answer`.
+
+Fixed: a stale socket is removed when the daemon does not answer; tailscaled is
+started with a real `*os.File` log and detached into its own session
+(`detachProcess`, build-tagged — `Setsid` on unix, no-op on Windows); the wait
+polls a daemon that **dials**, `tailscaledRunning` (the page's "running" flag) uses
+the same live probe; an already-answering daemon is not started twice (it goes
+straight to `tailscale up`); and a failed start reports the tail of
+`/var/log/tailscaled.log` instead of a bare timeout.
+
+**Live verification (reference host, 2026-09-19):** with the stale socket present
+and no daemon, the patched sequence removed the stale file, started tailscaled and
+had `tailscale status` answering within a second (`Logged out.` — the daemon is up;
+`tailscale up` is the operator's click).
+
+### 2. The «Сгенерировать ключ» button is visible
+
+The B258.1 warning said "…сгенерируйте его через кнопку «Сгенерировать ключ»", but
+the control existed only as a **collapsed `<details>`** whose summary read
+«Сгенерировать автоматически» in 13px muted text — reported as "кнопки нет". The
+generate form is now a plain secondary button in the **Auth key** card (label
+unified with the warning, RU + EN), with help text stating that it writes the key
+file and unlocks Start.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `scripts/check_b259_tailscale_toggle.sh` (contracts A…N1–N5) | 41 passed / 0 failed, on the VM |
+| `scripts/check_b258_1_auth_key_missing.sh` (K/L) | passed, on the VM |
+| `go build ./...`, `go vet ./internal/feature/admin/...`, focused tests | clean |
+| Deployed container | `/healthz` build `v1.5.9-11-g1cdc2058` (contains both fixes) |
+
+### Operator action items
+
+1. Hard-refresh `/admin/tailscale` (Ctrl+F5) — the **Auth key** card now shows the
+   paste form **and** the «Сгенерировать ключ» button; **Start** now works.
+2. The in-container client is now running on the reference host (started during the
+   verification). Pressing **Start** in the UI will run `tailscale up
+   --accept-routes … --hostname=skygate-host`; mind that `skygate-host` is already
+   taken in headscale by node 57 (`tagged-devices`) — see `docs/TELEGRAM.md` §8.
+3. After a container recreate, the compose env still hardcodes
+   `SKYGATE_TS_AUTHKEY_FILE=/dev/null`, so the entrypoint skips tailscaled again
+   (RR-13 step 3).
+
 ## v1.5.9 — native self-update (B261), OpenRC + the return of `SHA256SUMS` (B262), SQLite/PostgreSQL hardening, documentation overhaul
 
 **Date:** 2026-09-19

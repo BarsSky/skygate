@@ -16,7 +16,11 @@ stability promises yet — pin to a tag if you depend on a specific shape).
 > canonical notes for every shipped tag live in the linked
 > `RELEASE-NOTES.md` above.
 
-## [Unreleased]
+## [v1.5.10] — 2026-09-19
+
+Two `/admin/tailscale` defects found while enabling the in-container Tailscale
+client for the Telegram egress relay (RR-13). No schema/config/API change; full
+detail in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
 ### Fixed
 - **`/admin/tailscale` Start now works** (operator report 2026-09-19:
