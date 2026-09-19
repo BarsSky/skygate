@@ -12,6 +12,82 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.16 — the policy is applied through a root helper, and a leftover file can no longer block updates (B272.3 + B272.4)
+
+**Date:** 2026-09-19 · **Base:** `v1.5.15` → this tag · **Compatibility:** no schema,
+config or API change.
+
+Two blockers from the same live host, both found after v1.5.15 made the earlier
+ones self-reporting.
+
+### B272.3 — skygate could never write `/etc/headscale` (by design)
+
+```
+tag-reconcile: cannot make "tag:dev-daniil-workpc" permitted …:
+  write policy file /etc/headscale/policy.hujson:
+  open /etc/headscale/policy.hujson.skygate.tmp: read-only file system
+```
+
+The policy file was group-writable and headscale could read it — and the write
+still failed, because the skygate unit runs with
+
+```
+ProtectSystem=strict
+ReadWritePaths=/var/lib/skygate /etc/skygate
+```
+
+so `/etc/headscale` is **read-only for skygate by design**. Widening the service's
+mount namespace (granting the portal write access to another service's
+configuration) was rejected; instead this release reuses the project's existing
+privilege split (B261, the self-update helper):
+
+* `internal/headscale/policy_helper.go` — `RequestPolicyApply` writes a
+  **data-only** request (`<update_dir>/policy.request.props`: absolute policy
+  path + the policy text between markers) and `PolicyHelperArmed` reports whether
+  the helper exists. A missing helper returns `ErrPolicyHelperUnavailable`, so the
+  caller produces the "apply it by hand" message — never a silent success.
+* `deploy/skygate-apply-policy.sh` — the root-owned applier. It **validates**
+  before writing: `POLICY_PATH` must be absolute, the file must already exist, and
+  the path must match the `policy.path` headscale's own `config.yaml` declares.
+  The write is atomic, keeps owner/group/mode, saves the previous policy to
+  `policy.prev`, restores it if headscale does not come back healthy, and finally
+  verifies that the headscale service user can read the file. It is invoked by
+  `skygate-policy.service` (oneshot, root) fired by `skygate-policy.path` —
+  installed and enabled by `install-common.sh`, like the updater pair.
+* `setPolicyViaFileNative` now tries the direct write first and falls back to the
+  helper; the failure message names the sandbox, the helper to install and the
+  policy to apply by hand.
+
+### B272.4 — an untracked leftover blocked every image update
+
+```
+[debug] $ git checkout v1.5.14
+error: The following untracked working tree files would be overwritten by checkout:
+        scripts/skygate-move-to-infra.sh
+[error] FAILED: git checkout: exit status 1
+```
+
+The target revision *tracks* that file — the working-tree copy was skygate's own
+leftover from an earlier transfer — yet git refused, the update rolled back, and
+the operator was locked out of every future image update until they deleted it by
+hand.
+
+`DockerUpgrader.checkoutRef` now handles exactly this case: it computes the
+conflict set (untracked files ∩ paths the target revision writes, via
+`git ls-files --others --exclude-standard` and `git ls-tree -r --name-only <ref>`
+— no `--dry-run`, which `git checkout` does not support), **backs each file up to
+`<update_dir>/checkout-stash/<timestamp>/` with its permission bits**, removes it,
+retries the checkout, and logs where the copy went. Everything else stays fatal: a
+**modified tracked** file (the operator's `docker-compose.yml`, `go.mod`, `go.sum`
+or any edited source) still aborts the update untouched, because that content is
+real data rather than a leftover of a file the revision already tracks.
+
+Contracts: `scripts/check_b272_tag_drift.sh` sections I and J (I–I6, J–J4, 42
+contracts total), `internal/headscale/policy_helper_b272_test.go`,
+`internal/update/docker_checkout_b272_test.go` (drives the real git binary:
+preserved-and-proceeded, and modified-tracked-still-fails). Procedures:
+`docs/troubleshooting.md` §8.0.4 (policy handoff) and §8.0.5 (checkout).
+
 ## v1.5.15 — the policy-permission problem reports itself (B272.2)
 
 **Date:** 2026-09-19 · **Base:** `v1.5.14` → this tag · **Compatibility:** no schema,

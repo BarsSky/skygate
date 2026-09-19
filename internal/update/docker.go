@@ -43,6 +43,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -132,11 +133,11 @@ func NewDockerUpgrader(repoPath string, state *StateStore, currentVersion string
 		project = "skygate"
 	}
 	return &DockerUpgrader{
-		RepoPath:        repoPath,
-		ComposeCmd:      "docker compose",
-		ComposeProject:  project,
-		State:           state,
-		CurrentVersion:  currentVersion,
+		RepoPath:       repoPath,
+		ComposeCmd:     "docker compose",
+		ComposeProject: project,
+		State:          state,
+		CurrentVersion: currentVersion,
 	}
 }
 
@@ -224,7 +225,7 @@ func (u *DockerUpgrader) Run(ctx context.Context, target string) {
 	// invalid pathspec is the LAST thing we want to
 	// debug from a state file.
 	gitRef := GitRefForBuildLabel(target)
-	if err := u.runGit(ctx, "checkout", gitRef); err != nil {
+	if err := u.checkoutRef(ctx, gitRef); err != nil {
 		u.failWithRollback(ctx, fmt.Errorf("git checkout: %w", err), backupTag)
 		return
 	}
@@ -539,6 +540,134 @@ func (u *DockerUpgrader) runGit(ctx context.Context, args ...string) error {
 	return u.runShell(ctx, "git", args...)
 }
 
+// checkoutRef switches the working tree to gitRef, protecting any UNTRACKED
+// local files that the target revision would overwrite (B272.4).
+//
+// Live case (host `aro`, 2026-09-19): the update to v1.5.14 aborted with
+//
+//	git checkout v1.5.14 → error: The following untracked working tree files
+//	would be overwritten by checkout: scripts/skygate-move-to-infra.sh
+//	Please move or remove them before you switch branches.
+//
+// and rolled back. The operator was locked out of EVERY future image update
+// until they hand-deleted a file skygate itself had left behind — while the
+// checkout the updater wanted was exactly the thing that would have delivered
+// the tracked, reviewed version of that same file.
+//
+// A file existing in the working tree but not in the index is, by definition,
+// not part of any revision: the repository is the source of truth for the code
+// it tracks. So the safe move is to PRESERVE the local copy (a timestamped
+// backup next to the update state, plus its sha256, plus a line in the job log)
+// and then let the checkout proceed. Operator-managed files that ARE tracked
+// (docker-compose.yml, go.mod, go.sum) are untouched by this path — git keeps
+// them, and a modified tracked file is a different error that must stay fatal.
+func (u *DockerUpgrader) checkoutRef(ctx context.Context, gitRef string) error {
+	err := u.runGit(ctx, "checkout", gitRef)
+	if err == nil {
+		return nil
+	}
+	// Only the untracked-overwrite refusal is recoverable; everything else
+	// (bad pathspec, dirty tracked file, network) stays fatal with git's own
+	// message.
+	conflicts := u.untrackedCheckoutConflicts(ctx, gitRef)
+	if len(conflicts) == 0 {
+		return err
+	}
+	stashDir := u.checkoutStashDir()
+	if mkErr := os.MkdirAll(stashDir, 0o750); mkErr != nil {
+		return fmt.Errorf("%w (and the untracked files %v could not be backed up: %v)", err, conflicts, mkErr)
+	}
+	for _, rel := range conflicts {
+		src := filepath.Join(u.RepoPath, rel)
+		dst := filepath.Join(stashDir, rel)
+		if mkErr := os.MkdirAll(filepath.Dir(dst), 0o750); mkErr != nil {
+			return fmt.Errorf("%w (backup of %s failed: %v)", err, rel, mkErr)
+		}
+		if cpErr := copyFilePreservingMode(src, dst); cpErr != nil {
+			return fmt.Errorf("%w (backup of %s failed: %v)", err, rel, cpErr)
+		}
+		// Remove the working-tree file so git can materialise the tracked
+		// version from the target revision.
+		if rmErr := os.Remove(src); rmErr != nil {
+			return fmt.Errorf("%w (could not move %s aside: %v)", err, rel, rmErr)
+		}
+		u.State.Log(LogWarn, fmt.Sprintf("untracked file %s would block the checkout of %s — backed up to %s and replaced with the tracked version", rel, gitRef, dst))
+	}
+	if err := u.runGit(ctx, "checkout", gitRef); err != nil {
+		return fmt.Errorf("%w (after moving %v aside to %s)", err, conflicts, stashDir)
+	}
+	u.State.Log(LogInfo, fmt.Sprintf("checkout %s succeeded after preserving %d untracked file(s) in %s", gitRef, len(conflicts), stashDir))
+	return nil
+}
+
+// untrackedCheckoutConflicts lists the untracked files that would block a
+// checkout of gitRef.
+//
+// git refuses to overwrite an UNTRACKED path that the target revision
+// introduces; this reproduces that rule with two plumbing-free commands (no
+// `--dry-run`, which `git checkout` does not support):
+//
+//	git ls-files --others --exclude-standard   → the untracked set
+//	git ls-tree -r --name-only <ref>           → the paths the target writes
+//
+// The intersection is exactly what git will refuse. Returns nil when either
+// command fails: an unknown answer must never be treated as "safe to delete".
+func (u *DockerUpgrader) untrackedCheckoutConflicts(ctx context.Context, gitRef string) []string {
+	untrackedOut, err := u.runShellCapture(ctx, "git", "ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return nil
+	}
+	targetOut, err := u.runShellCapture(ctx, "git", "ls-tree", "-r", "--name-only", gitRef)
+	if err != nil {
+		return nil
+	}
+	target := map[string]bool{}
+	for _, l := range strings.Split(targetOut, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			target[l] = true
+		}
+	}
+	var out []string
+	for _, l := range strings.Split(untrackedOut, "\n") {
+		if l = strings.TrimSpace(l); l != "" && target[l] {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// checkoutStashDir is where preserved untracked files go: next to the update
+// state (so they live on the same volume the operator already backs up).
+func (u *DockerUpgrader) checkoutStashDir() string {
+	base := filepath.Dir(u.SwapLogPath)
+	if base == "." || base == "" {
+		base = os.TempDir()
+	}
+	return filepath.Join(base, "checkout-stash", time.Now().UTC().Format("20060102T150405Z"))
+}
+
+// copyFilePreservingMode copies src to dst keeping the source's permission bits.
+func copyFilePreservingMode(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	fi, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fi.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
 // runCompose runs `<ComposeCmd> -p <project> <args>`. The
 // compose command reads docker-compose.yml from RepoPath
 // (the cmd.Dir set by runShellCapture). The explicit
@@ -615,16 +744,16 @@ func (u *DockerUpgrader) runShellCapture(ctx context.Context, name string, args 
 //     5s auto-refresh.
 //
 // What the subprocess does:
-//   1. Sleep 2s (let the orchestrator's "build_done" state
-//      write flush).
-//   2. `cd /app && docker compose -p skygate up -d
-//      --force-recreate --no-deps skygate` — kills the old
-//      skygate, starts the new one. This is where the
-//      orchestrator's process dies; the subprocess survives.
-//   3. Poll http://localhost:8080/healthz for up to 60s.
-//   4. Use sed to update /data/skygate-update-status.json:
-//      "phase": "build_done" → "phase": "done" on success,
-//      "phase": "failed" with a final log line on failure.
+//  1. Sleep 2s (let the orchestrator's "build_done" state
+//     write flush).
+//  2. `cd /app && docker compose -p skygate up -d
+//     --force-recreate --no-deps skygate` — kills the old
+//     skygate, starts the new one. This is where the
+//     orchestrator's process dies; the subprocess survives.
+//  3. Poll http://localhost:8080/healthz for up to 60s.
+//  4. Use sed to update /data/skygate-update-status.json:
+//     "phase": "build_done" → "phase": "done" on success,
+//     "phase": "failed" with a final log line on failure.
 //
 // The subprocess's stdout/stderr are redirected to a log
 // file under /data so the operator can `tail` it later if
@@ -758,14 +887,14 @@ func (u *DockerUpgrader) pollHealthz(ctx context.Context, timeout time.Duration)
 //     → "v1.5.0"          (valid tag, no transformation)
 //
 //  2. Describe-style:    "v1.5.0-3-gabc1234"  (git describe
-//                        on a commit N ahead of v1.5.0)
+//     on a commit N ahead of v1.5.0)
 //     → "v1.5.0-3-gabc1234"  (valid pseudo-tag, no transform)
 //
 //  3. Describe + dup:    "v1.5.0-3-gabc1234+abc1234"
 //     → "v1.5.0-3-gabc1234"  (strip the "+<commit>" suffix
-//                             added by main.go's BuildVersion
-//                             concatenation when `version`
-//                             already contains "-g<hex>")
+//     added by main.go's BuildVersion
+//     concatenation when `version`
+//     already contains "-g<hex>")
 //
 //  4. Plain tag + commit: "v1.5.0+abc1234"
 //     → "v1.5.0"            (strip the "+<commit>")
@@ -779,9 +908,9 @@ func (u *DockerUpgrader) pollHealthz(ctx context.Context, timeout time.Duration)
 //     +e2d0b9e` errors with "pathspec did not match any
 //     file(s) known to git".
 //     → "e2d0b9e"           (strip the "+<commit>" and the
-//                             stale "v" prefix that
-//                             normalizeUpdateTarget may have
-//                             added — see below)
+//     stale "v" prefix that
+//     normalizeUpdateTarget may have
+//     added — see below)
 //
 //  6. After normalizeUpdateTarget prepends "v":
 //     "ve2d0b9e+e2d0b9e"   — the normalizeUpdateTarget helper
@@ -792,8 +921,8 @@ func (u *DockerUpgrader) pollHealthz(ctx context.Context, timeout time.Duration)
 //     can never be a valid git ref (the "v" is just a display
 //     convention).
 //     → "e2d0b9e"           (the leading "v" is stripped only
-//                             when the remainder is a pure hex
-//                             SHA, NOT a semver like "1.5.0")
+//     when the remainder is a pure hex
+//     SHA, NOT a semver like "1.5.0")
 //
 // The "+<commit>" strip is the critical part — `+` is the
 // one character that always makes a git pathspec invalid,
@@ -960,18 +1089,18 @@ func truncateOutput(s string, max int) string {
 // (which survives the OLD skygate container's removal).
 //
 // The helper does:
-//   1. sleep 3s (orchestrator's state-file flush)
-//   2. pick an alpine image (alpine:3.20 → alpine:latest)
-//   3. `docker compose -p skygate -f $HOST_REPO/docker-compose.yml
-//      up -d --force-recreate --no-deps skygate`
-//   4. poll up to 60s for the new container; if it's
-//      stuck in Created (rare compose race), call
-//      `docker start <id>`
-//   5. do a final healthz check via
-//      `docker exec $NEW_ID wget -qO- http://localhost:8080/healthz`
-//      (helper has --net=host so localhost:8080 IS the
-//      new container's healthz)
-//   6. exit
+//  1. sleep 3s (orchestrator's state-file flush)
+//  2. pick an alpine image (alpine:3.20 → alpine:latest)
+//  3. `docker compose -p skygate -f $HOST_REPO/docker-compose.yml
+//     up -d --force-recreate --no-deps skygate`
+//  4. poll up to 60s for the new container; if it's
+//     stuck in Created (rare compose race), call
+//     `docker start <id>`
+//  5. do a final healthz check via
+//     `docker exec $NEW_ID wget -qO- http://localhost:8080/healthz`
+//     (helper has --net=host so localhost:8080 IS the
+//     new container's healthz)
+//  6. exit
 //
 // The helper does NOT touch the state file. Promotion
 // from "build_done" / "rolled_back" to "done" is the
@@ -1202,4 +1331,3 @@ func (u *DockerUpgrader) spawnSwapSubprocess() error {
 // previous update job is still running. The page surfaces
 // this with a "wait for the in-flight job to finish" hint.
 var ErrAlreadyInProgress = errors.New("update: another job is already in progress")
-

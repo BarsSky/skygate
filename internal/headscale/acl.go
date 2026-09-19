@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -237,6 +238,23 @@ func (c *Client) setPolicyViaFileDocker(policy, path string, apiErr error) error
 
 // setPolicyViaFileNative writes the policy file on the local filesystem and
 // restarts the headscale unit.
+//
+// B272.3 — order of attempts, cheapest and least privileged first:
+//
+//  1. direct write (works when skygate is allowed to write the file);
+//  2. the root-owned helper (`/usr/local/lib/skygate/skygate-apply-policy.sh`,
+//     driven by `skygate-policy.path`). This is the supported path on a native
+//     install: the skygate unit runs with ProtectSystem=strict and
+//     ReadWritePaths=${data_dir} ${etc_dir}, so /etc/headscale is read-only for
+//     it BY DESIGN — a live host answered "read-only file system" for
+//     /etc/headscale/policy.hujson.skygate.tmp even after the file itself was
+//     made group-writable. Widening the unit's mount namespace was rejected in
+//     favour of the existing helper pattern (B261): the unprivileged service
+//     drops a DATA-ONLY request and root does the privileged step.
+//
+// The error text names the exact refusal and the alternative (apply the policy
+// by hand), because this is the last link of a chain that otherwise looks like
+// "tags silently do not apply".
 func (c *Client) setPolicyViaFileNative(policy, path string, apiErr error) error {
 	prev, readErr := os.ReadFile(path)
 	mode := os.FileMode(0o644)
@@ -244,23 +262,35 @@ func (c *Client) setPolicyViaFileNative(policy, path string, apiErr error) error
 		mode = fi.Mode().Perm()
 	}
 	tmp := path + ".skygate.tmp"
+	var directErr error
 	if err := os.WriteFile(tmp, []byte(policy), mode); err != nil {
-		return fmt.Errorf("api: %w; write policy file %s: %v (the skygate service user cannot write it — either run skygate with write access to headscale's config dir, or apply this policy manually: %s)", apiErr, path, err, oneLinePolicy(policy))
-	}
-	if err := os.Rename(tmp, path); err != nil {
+		directErr = err
+	} else if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("api: %w; replace policy file %s: %v", apiErr, path, err)
-	}
-	if err := c.restartHeadscaleUnit(); err != nil {
+		directErr = err
+	} else if err := c.restartHeadscaleUnit(); err != nil {
 		// Roll back: a half-applied policy is worse than none, and the
 		// operator needs the previous rules back.
 		if readErr == nil {
 			_ = os.WriteFile(path, prev, mode)
 		}
-		return fmt.Errorf("api: %w; wrote %s but restarting %s failed: %v", apiErr, path, c.headscaleUnit, err)
+		directErr = fmt.Errorf("wrote %s but restarting %s failed: %v", path, c.headscaleUnit, err)
 	}
-	c.clearACLCache()
-	return nil
+	if directErr == nil {
+		c.clearACLCache()
+		return nil
+	}
+
+	// Direct write refused — ask the privileged helper to do it.
+	if helperErr := RequestPolicyApply(path, policy); helperErr == nil {
+		log.Printf("policy: %s is not writable by the skygate service user (%v) — the policy was handed to the privileged helper; headscale will re-read it within ~30s", path, directErr)
+		c.clearACLCache()
+		return nil
+	} else if !errors.Is(helperErr, ErrPolicyHelperUnavailable) {
+		return fmt.Errorf("api: %w; direct write of %s failed (%v); privileged helper failed too: %v — apply this policy by hand: %s", apiErr, path, directErr, helperErr, oneLinePolicy(policy))
+	}
+
+	return fmt.Errorf("api: %w; write policy file %s: %v (the skygate service user cannot write it — the unit runs with ProtectSystem=strict + ReadWritePaths=${data_dir} ${etc_dir}, so /etc/headscale is read-only for it; install the privileged policy helper (deploy/skygate-apply-policy.sh + the skygate-policy.path/.service units, see docs/troubleshooting.md 8.0.4) or apply this policy by hand: %s)", apiErr, path, directErr, oneLinePolicy(policy))
 }
 
 // restartHeadscaleUnit restarts the local headscale service (native install).
@@ -461,6 +491,14 @@ func policyPermissionFixes(path, hsUser, hsGroup, curUser, curGroup string, writ
 		fmt.Sprintf("sudo chmod 0660 %s && sudo chgrp %s %s", path, orDefault(curGroup, "skygate"), path),
 		fmt.Sprintf("# or, if the group differs: sudo setfacl -m u:%s:rw %s", orDefault(curUser, "skygate"), path),
 		fmt.Sprintf("# verify: sudo -u %s test -w %s", orDefault(curUser, "skygate"), path),
+		"# NOTE: on a native install the skygate unit runs with ProtectSystem=strict and",
+		"#       ReadWritePaths=${data_dir} ${etc_dir}, so /etc/headscale is read-only for it",
+		"#       BY DESIGN (live error: \"open …policy.hujson.skygate.tmp: read-only file system\").",
+		"#       Either install the privileged policy helper (deploy/skygate-apply-policy.sh +",
+		"#       skygate-policy.path/.service) or apply the policy by hand:",
+		fmt.Sprintf("sudo headscale policy get | head -30   # what headscale currently reads from %s", path),
+		"# then add the missing tagOwners entries (skygate logs the ready policy on failure)",
+		fmt.Sprintf("sudo systemctl restart %s", orDefault(hsUser, "headscale")),
 	}
 }
 

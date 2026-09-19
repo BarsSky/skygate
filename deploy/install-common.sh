@@ -764,6 +764,74 @@ EOF
     systemctl daemon-reload
     systemctl enable --now skygate-update.path >/dev/null 2>&1 || true
     echo "[install] wrote $service_file + $path_file (skygate-update.path enabled)"
+
+    write_policy_units "$update_dir"
+}
+
+# write_policy_units: the same privilege split for the headscale POLICY file
+# (B272.3). With `policy.mode: file` the skygate unit cannot write
+# /etc/headscale (ProtectSystem=strict + ReadWritePaths=${data_dir} ${etc_dir}):
+# the live error was "open /etc/headscale/policy.hujson.skygate.tmp: read-only
+# file system". The unprivileged service drops a data-only
+# <update_dir>/policy.request.props and this root-owned pair applies it.
+write_policy_units() {
+    local update_dir="$1"
+    local service_file="/etc/systemd/system/skygate-policy.service"
+    local path_file="/etc/systemd/system/skygate-policy.path"
+    local applier="/usr/local/lib/skygate/skygate-apply-policy.sh"
+    local src="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/skygate-apply-policy.sh"
+
+    if [ -f "$src" ]; then
+        install -m 0755 -o root -g root "$src" "$applier"
+    elif [ ! -f "$applier" ]; then
+        echo "[install] WARN: $src not found — the policy applier was not installed;"
+        echo "[install]       skygate will report a file-mode policy it cannot write (see docs/troubleshooting.md 8.0.4)"
+        return 0
+    fi
+
+    cat > "$service_file" <<EOF
+# /etc/systemd/system/skygate-policy.service
+# 2026-09-19 (B272.3): PRIVILEGED half of the headscale policy apply.
+# Written by install-{debian,rh}.sh — re-running the installer overwrites
+# it (project-owned file).
+#
+# Triggered by skygate-policy.path, never started at boot: it applies
+# exactly one staged policy request and exits. Kept separate from
+# skygate-update.service so a policy apply can never be confused with a
+# binary swap.
+[Unit]
+Description=Skygate privileged headscale policy applier
+Documentation=https://github.com/${GITHUB_OWNER:-BarsSky}/${GITHUB_REPO:-skygate}
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=${applier}
+# A file write + one headscale restart: 60s is generous.
+TimeoutStartSec=60
+Nice=5
+EOF
+
+    cat > "$path_file" <<EOF
+# /etc/systemd/system/skygate-policy.path
+# 2026-09-19 (B272.3): watches for a staged policy request.
+# The unprivileged service writes this file inside its own data dir; the
+# path unit turns its appearance into a root-run applier. No sudo, no
+# polkit, no privileged systemd call from the service.
+[Unit]
+Description=Watch for a staged skygate headscale-policy request
+
+[Path]
+PathExists=${update_dir}/policy.request.props
+Unit=skygate-policy.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now skygate-policy.path >/dev/null 2>&1 || true
+    echo "[install] wrote $service_file + $path_file (skygate-policy.path enabled)"
 }
 
 # write_bare_sudoers: the no-systemd case. There is no path unit to

@@ -40,6 +40,7 @@ syntax lives in [`acl-rules-reference.md`](acl-rules-reference.md).
    * [8.0.2 The update rolls back every time even though the service is healthy (B270)](#802-the-update-rolls-back-every-time-even-though-the-service-is-healthy-b270)
    * [8.0.3 The journal repeats `SQL logic error: no such function: pg_…` every 30 s (B271)](#803-the-journal-repeats-sql-logic-error-no-such-function-pg-every-30-s-b271)
    * [8.0.4 Devices show a tag that headscale does not have (B272)](#804-devices-show-a-tag-that-headscale-does-not-have-b272)
+   * [8.0.5 `git checkout` blocks the image update on an untracked file (B272.4)](#805-git-checkout-blocks-the-image-update-on-an-untracked-file-b2724)
 9. [Telegram relay silently not delivering](#9-telegram-relay-silently-not-delivering)
 10. [General diagnostics kit](#10-general-diagnostics-kit)
 
@@ -1103,6 +1104,103 @@ Statuses the audit can report:
 | `unreadable_by_skygate` | skygate cannot compute the new `tagOwners` |
 | `missing` | `policy.path` is configured but the file does not exist |
 | `api_error` | skygate could read it, but the policy API itself failed |
+
+#### Even with correct permissions skygate cannot write into `/etc/headscale`
+
+**Symptom (v1.5.15 and earlier):**
+
+```
+tag-reconcile: cannot make "tag:dev-…" permitted …:
+  write policy file /etc/headscale/policy.hujson:
+  open /etc/headscale/policy.hujson.skygate.tmp: read-only file system
+```
+
+The skygate unit runs with
+
+```
+ProtectSystem=strict
+ReadWritePaths=/var/lib/skygate /etc/skygate
+```
+
+so `/etc/headscale` is **read-only for skygate by design** — that is the sandbox
+doing its job, not a permission slip. Making the file `0660` cannot help.
+
+**Two supported ways out (v1.5.16+ automates the handoff):**
+
+```bash
+# 1. install the privileged policy applier (root-owned, same model as the
+#    self-update applier) — skygate then applies tagOwners itself
+sudo install -m 0755 -o root -g root deploy/skygate-apply-policy.sh /usr/local/lib/skygate/
+#    plus the skygate-policy.path / skygate-policy.service pair
+#    (deploy/install-common.sh writes both; a re-run of the installer is enough)
+sudo systemctl daemon-reload
+sudo systemctl enable --now skygate-policy.path
+```
+
+With the helper installed, skygate writes a **data-only** request
+(`<data_dir>/update/policy.request.props`) and the root path unit applies it:
+absolute path, cross-checked against headscale's own `policy.path`, atomic write,
+previous policy kept in `policy.prev` and restored if headscale does not come
+back. Nothing is ever sourced or evaluated.
+
+```bash
+# 2. apply the policy by hand (works without the helper)
+#    skygate logs the exact policy it wanted — copy the JSON from the
+#    "apply this policy by hand: { … }" part of the error, then:
+sudo headscale policy get > /tmp/policy.current.json     # keep a copy
+sudo $EDITOR /etc/headscale/policy.hujson                # add the tagOwners entry
+sudo systemctl restart headscale
+sudo headscale policy get | head -20                     # verify
+```
+
+### 8.0.5 `git checkout` blocks the image update on an untracked file (B272.4)
+
+**Symptom.** `/admin/update` fails at the checkout phase:
+
+```
+[debug] $ git checkout v1.5.14
+error: The following untracked working tree files would be overwritten by checkout:
+        scripts/skygate-move-to-infra.sh
+Please move or remove them before you switch branches.
+[error] phase failed: git checkout: exit status 1
+[error] FAILED: git checkout: exit status 1
+```
+
+and the updater rolls back. **Every** future image update fails the same way until
+the file is removed.
+
+**Why it happens.** The file exists in the working tree but not in the index (a
+leftover from an earlier manual `git bundle` transfer, a cherry-pick or a
+copy-paste), while the target revision *does* track a file with that name. Git
+refuses to overwrite untracked data — correctly, in general.
+
+**What v1.5.16+ does.** Before giving up, the updater computes the conflict set
+(untracked files ∩ paths the target revision writes) and, if it is non-empty:
+
+1. copies each file to `<update_dir>/checkout-stash/<timestamp>/…` **with its
+   permission bits**,
+2. removes the working-tree copy,
+3. retries the checkout and logs
+
+   ```
+   untracked file scripts/skygate-move-to-infra.sh would block the checkout of
+   v1.5.14 — backed up to /data/update/checkout-stash/20260919T211500Z/… and
+   replaced with the tracked version
+   ```
+
+A **modified tracked** file (your `docker-compose.yml`, `go.mod`, `go.sum`, any
+edited source file) is a different class: its content is real data, so the
+checkout still refuses and the update still rolls back, untouched.
+
+**If you are on v1.5.15 or earlier**, unblock it manually:
+
+```bash
+cd /path/to/skygate                       # the repo the updater checks out
+git status --short | grep '^??'           # what is untracked
+git diff --no-index scripts/skygate-move-to-infra.sh <(git show v1.5.15:scripts/skygate-move-to-infra.sh) && echo "identical — safe to delete"
+sudo mv scripts/skygate-move-to-infra.sh /root/skygate-move-to-infra.sh.bak
+# then retry the update; the tracked version arrives with the checkout
+```
 
 To let skygate do it automatically on a native host, either grant the service user
 write access to that directory or run headscale with `policy.mode: database`:

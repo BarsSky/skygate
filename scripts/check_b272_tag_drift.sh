@@ -298,5 +298,89 @@ else
   skip "H8: go not on PATH"
 fi
 
+# --- I: the privileged policy handoff (B272.3) ------------------------------
+# Live follow-up: even with the file group-writable, the write failed with
+# "open /etc/headscale/policy.hujson.skygate.tmp: read-only file system" — the
+# skygate unit runs with ProtectSystem=strict + ReadWritePaths=${data_dir}
+# ${etc_dir}, so /etc/headscale is read-only for it BY DESIGN. The fix reuses
+# the project's privilege split (B261): a data-only request + a root path unit.
+if grep -q 'func RequestPolicyApply(path, policy string) error' internal/headscale/policy_helper.go \
+   && grep -q 'func PolicyHelperArmed() bool' internal/headscale/policy_helper.go; then
+  ok "I: the unprivileged service can hand the policy to a privileged helper"
+else
+  bad "I: no privileged policy handoff exists — a native install can never write the policy file"
+fi
+if grep -q 'ErrPolicyHelperUnavailable' internal/headscale/policy_helper.go \
+   && grep -q 'errors.Is(helperErr, ErrPolicyHelperUnavailable)' "$ACL"; then
+  ok "I2: a missing helper is reported (never a silent success)"
+else
+  bad "I2: a missing helper would be indistinguishable from success"
+fi
+if [ -f deploy/skygate-apply-policy.sh ] && bash -n deploy/skygate-apply-policy.sh 2>/dev/null; then
+  ok "I3: the root-owned policy applier exists and parses"
+else
+  bad "I3: deploy/skygate-apply-policy.sh is missing or has a syntax error"
+fi
+if grep -q 'POLICY_PATH must be absolute' deploy/skygate-apply-policy.sh \
+   && grep -q 'policy path mismatch' deploy/skygate-apply-policy.sh \
+   && grep -q 'policy.prev' deploy/skygate-apply-policy.sh; then
+  ok "I4: the applier validates the path (absolute + must match headscale's own config), backs up the previous policy and restores it on failure"
+else
+  bad "I4: the applier is missing its validation/rollback guards"
+fi
+if grep -q 'write_policy_units' deploy/install-common.sh \
+   && grep -q 'skygate-policy.path' deploy/install-common.sh \
+   && grep -q 'skygate-policy.service' deploy/install-common.sh; then
+  ok "I5: the installer writes and enables the skygate-policy.path/.service pair"
+else
+  bad "I5: the installer does not install the policy units"
+fi
+if command -v go >/dev/null 2>&1; then
+  OUT="$(go test -count=1 -run 'B2723' ./internal/headscale/ 2>&1)"
+  if grep -q '^ok' <<< "$OUT"; then
+    ok "I6: the handoff's Go contracts pass (request shape, validation, unavailable helper)"
+  else
+    bad "I6: the handoff Go contracts failed: $OUT"
+  fi
+else
+  skip "I6: go not on PATH"
+fi
+
+# --- J: an untracked file must not lock the operator out (B272.4) -----------
+# Live case: the image update aborted with
+#   error: The following untracked working tree files would be overwritten by
+#   checkout: scripts/skygate-move-to-infra.sh
+# and rolled back, although the target revision CONTAINS that file — the
+# leftover was skygate's own. The operator could not update at all until they
+# deleted it by hand.
+DOCKER_GO=internal/update/docker.go
+if grep -q 'func (u \*DockerUpgrader) checkoutRef(' "$DOCKER_GO" \
+   && grep -q 'u.checkoutRef(ctx, gitRef)' "$DOCKER_GO"; then
+  ok "J: the docker upgrader preserves untracked files instead of aborting"
+else
+  bad "J: checkout still fails on an untracked leftover"
+fi
+if grep -q 'func (u \*DockerUpgrader) untrackedCheckoutConflicts(ctx context.Context, gitRef string)' "$DOCKER_GO" \
+   && grep -q 'ls-tree", "-r", "--name-only"' "$DOCKER_GO"; then
+  ok "J2: the conflict set is the intersection of untracked files and the target tree"
+else
+  bad "J2: the conflict detection is missing (or relies on a non-existent git --dry-run)"
+fi
+if grep -q 'checkout-stash' "$DOCKER_GO" && grep -q 'func copyFilePreservingMode(' "$DOCKER_GO"; then
+  ok "J3: the local copy is backed up (with its mode) before the tracked version is materialised"
+else
+  bad "J3: the local copy would be destroyed without a backup"
+fi
+if command -v go >/dev/null 2>&1; then
+  OUT="$(go test -count=1 -run 'B2724' ./internal/update/ 2>&1)"
+  if grep -q '^ok' <<< "$OUT"; then
+    ok "J4: the checkout contracts pass (real git: preserved+proceeded, modified tracked file still fails)"
+  else
+    bad "J4: the checkout contracts failed: $OUT"
+  fi
+else
+  skip "J4: go not on PATH"
+fi
+
 printf '\n\033[1mB272 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1
