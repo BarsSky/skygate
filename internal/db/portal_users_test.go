@@ -34,7 +34,7 @@ func seedPortalUser(t *testing.T, d *sql.DB, username, hash string, isAdmin bool
 		adminI = 1
 	}
 	// 2026-09-16 (B253 fix): PG-native INSERT ... RETURNING id
-	// (was `INSERT ... VALUES(?,?,?,?)` + `res.LastInsertId()` which
+	// (was `INSERT ... VALUES($1,$2,$3,$4)` + `res.LastInsertId()` which
 	// the pgx driver doesn't support — silently returns 0).
 	var id int64
 	err := d.QueryRow(
@@ -351,7 +351,7 @@ func TestGetAllPortalUsers_PopulatesSubnetDenorm(t *testing.T) {
 	d := openTestDB(t)
 	id := seedPortalUser(t, d, "alice", "h", false, 0)
 	// Simulate manager denorm sync (what subnet.Create does).
-	_, err := d.Exec(`UPDATE portal_users SET subnet_cidr=?, subnet_status=?, subnet_router_node_id=? WHERE id=?`,
+	_, err := d.Exec(`UPDATE portal_users SET subnet_cidr=$1, subnet_status=$2, subnet_router_node_id=$3 WHERE id=$4`,
 		"10.0.42.0/24", "active", "11", id)
 	if err != nil {
 		t.Fatalf("update: %v", err)
@@ -548,7 +548,7 @@ func TestInsertPortalUserAdopt(t *testing.T) {
 
 	// Read back: is_admin must be 0 (the pre-T5 behaviour).
 	var adminI int
-	if err := d.QueryRow(`SELECT is_admin FROM portal_users WHERE id = ?`, id).Scan(&adminI); err != nil {
+	if err := d.QueryRow(`SELECT is_admin FROM portal_users WHERE id = $1`, id).Scan(&adminI); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
 	if adminI != 0 {
@@ -583,7 +583,7 @@ func TestInsertPortalUserAdoptAdmin(t *testing.T) {
 		t.Errorf("isAdmin=true: id = 0, want > 0")
 	}
 	var adminI int
-	if err := d.QueryRow(`SELECT is_admin FROM portal_users WHERE id = ?`, id).Scan(&adminI); err != nil {
+	if err := d.QueryRow(`SELECT is_admin FROM portal_users WHERE id = $1`, id).Scan(&adminI); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
 	if adminI != 1 {
@@ -601,7 +601,7 @@ func TestInsertPortalUserAdoptAdmin(t *testing.T) {
 	if id2 == 0 {
 		t.Errorf("isAdmin=false: id = 0, want > 0")
 	}
-	if err := d.QueryRow(`SELECT is_admin FROM portal_users WHERE id = ?`, id2).Scan(&adminI); err != nil {
+	if err := d.QueryRow(`SELECT is_admin FROM portal_users WHERE id = $1`, id2).Scan(&adminI); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
 	if adminI != 0 {
@@ -641,7 +641,7 @@ func TestInsertPortalUser(t *testing.T) {
 	// Read back to verify
 	var username, hash string
 	var adminI, hsID int64
-	if err := d.QueryRow(`SELECT username, password_hash, is_admin, headscale_user_id FROM portal_users WHERE id = ?`, id).
+	if err := d.QueryRow(`SELECT username, password_hash, is_admin, headscale_user_id FROM portal_users WHERE id = $1`, id).
 		Scan(&username, &hash, &adminI, &hsID); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
@@ -655,7 +655,7 @@ func TestInsertPortalUser(t *testing.T) {
 		t.Fatalf("InsertPortalUser non-admin: %v", err)
 	}
 	var nonAdminI int
-	if err := d.QueryRow(`SELECT is_admin FROM portal_users WHERE id = ?`, id2).Scan(&nonAdminI); err != nil {
+	if err := d.QueryRow(`SELECT is_admin FROM portal_users WHERE id = $1`, id2).Scan(&nonAdminI); err != nil {
 		t.Fatalf("read admin flag: %v", err)
 	}
 	if nonAdminI != 0 {

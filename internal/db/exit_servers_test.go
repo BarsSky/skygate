@@ -28,7 +28,7 @@ func seedExitServer(t *testing.T, d *sql.DB, nodeID, hostname, tailscaleIP, sshT
 	if _, err := d.Exec(
 		`INSERT INTO exit_servers
 			(node_id, hostname, tailscale_ip, ssh_target, ssh_key_path, description, enabled, accept_routes)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
 		nodeID, hostname, tailscaleIP, sshTarget, sshKeyPath, description, enabled, acceptRoutes,
 	); err != nil {
 		t.Fatalf("seedExitServer(%q): %v", nodeID, err)
@@ -390,7 +390,7 @@ func TestLookupExitServerSSHTarget_B85SSHPortSuffix(t *testing.T) {
 	if _, err := d.Exec(
 		`INSERT INTO exit_servers
 			(node_id, hostname, tailscale_ip, ssh_target, ssh_key_path, description, enabled, accept_routes, ssh_port)
-			VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?)`,
+			VALUES ($1,$2,$3,$4,$5,$6,1,0,$7)`,
 		"n-b85", "karolina", "100.64.0.2", "", "", "B85 non-default port test", "18022",
 	); err != nil {
 		t.Fatalf("seed with ssh_port: %v", err)
@@ -445,7 +445,7 @@ func TestLookupExitServerSSHTarget_B85OperatorOverrideIgnoresPort(t *testing.T) 
 	if _, err := d.Exec(
 		`INSERT INTO exit_servers
 			(node_id, hostname, tailscale_ip, ssh_target, ssh_key_path, description, enabled, accept_routes, ssh_port)
-			VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?)`,
+			VALUES ($1,$2,$3,$4,$5,$6,1,0,$7)`,
 		"n-b85c", "emilia", "100.64.0.3", "root@emilia.example.com:18022", "", "B85 operator override + ssh_port", "9999",
 	); err != nil {
 		t.Fatalf("seed: %v", err)

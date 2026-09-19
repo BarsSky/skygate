@@ -152,7 +152,7 @@ func TestGetPreauthKeyByID(t *testing.T) {
 
 	// Cross-user attempt: bob's id with alice's user_id
 	var bobID int64
-	d.QueryRow(`SELECT id FROM preauth_keys WHERE user_id=?`, u2).Scan(&bobID)
+	d.QueryRow(`SELECT id FROM preauth_keys WHERE user_id=$1`, u2).Scan(&bobID)
 	_, err = GetPreauthKeyByID(d, bobID, u1)
 	if !errors.Is(err, ErrPreauthKeyNotFound) {
 		t.Errorf("cross-user err = %v, want ErrPreauthKeyNotFound (user_id filter must hold)", err)
@@ -322,8 +322,8 @@ func TestDeletePreauthKeysByUserID(t *testing.T) {
 
 	// alice has 0, bob has 1
 	var aliceCount, bobCount int
-	d.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id=?`, u1).Scan(&aliceCount)
-	d.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id=?`, u2).Scan(&bobCount)
+	d.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id=$1`, u1).Scan(&aliceCount)
+	d.QueryRow(`SELECT COUNT(*) FROM preauth_keys WHERE user_id=$1`, u2).Scan(&bobCount)
 	if aliceCount != 0 {
 		t.Errorf("alice keys left = %d, want 0", aliceCount)
 	}

@@ -60,7 +60,7 @@ func TestSetUserExitNodePref_RoundTrip(t *testing.T) {
 	// reserves id=99 for the infra user, so AUTOINCREMENT
 	// no longer starts at 1).
 	if _, err := d.Exec(
-		`INSERT INTO portal_users (id, username, password_hash, is_admin, theme) VALUES (1, 'skyadmin', 'x', 1, ?)`,
+		`INSERT INTO portal_users (id, username, password_hash, is_admin, theme) VALUES (1, 'skyadmin', 'x', 1, $1)`,
 		ThemeVercel,
 	); err != nil {
 		t.Fatalf("seed portal_user: %v", err)
@@ -128,7 +128,7 @@ func TestSetDeviceExitNodePref_RoundTrip(t *testing.T) {
 	d := openTestDB(t)
 	// 2026-08-10 v0.33.1.41 #2: pin id=1 explicitly.
 	if _, err := d.Exec(
-		`INSERT INTO portal_users (id, username, password_hash, is_admin, theme) VALUES (1, 'skyadmin', 'x', 1, ?)`,
+		`INSERT INTO portal_users (id, username, password_hash, is_admin, theme) VALUES (1, 'skyadmin', 'x', 1, $1)`,
 		ThemeVercel,
 	); err != nil {
 		t.Fatalf("seed portal_user: %v", err)
@@ -194,7 +194,7 @@ func TestSetUserExitNodePref_RecentTimestamp(t *testing.T) {
 	d := openTestDB(t)
 	// 2026-08-10 v0.33.1.41 #2: pin id=1 explicitly.
 	if _, err := d.Exec(
-		`INSERT INTO portal_users (id, username, password_hash, is_admin, theme) VALUES (1, 'skyadmin', 'x', 1, ?)`,
+		`INSERT INTO portal_users (id, username, password_hash, is_admin, theme) VALUES (1, 'skyadmin', 'x', 1, $1)`,
 		ThemeVercel,
 	); err != nil {
 		t.Fatalf("seed portal_user: %v", err)

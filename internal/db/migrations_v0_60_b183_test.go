@@ -48,8 +48,11 @@ func b183Setup(t *testing.T, d *sql.DB, username string, userID, deviceID int, e
 	// Insert user (ON CONFLICT to ignore if already there
 	// from a prior test that shared the username — username
 	// is unique in portal_users).
+	// 2026-09-19: is_admin is INTEGER on PostgreSQL — the Go literal `false`
+	// fails with SQLSTATE 42804 (boolean vs integer). Use 0, like the other
+	// PG-native seeds.
 	if _, err := d.Exec(
-		`INSERT INTO portal_users (id, username, password_hash, is_admin, created_at) VALUES ($1, $2, 'test-hash', false, 1) ON CONFLICT (id) DO NOTHING`,
+		`INSERT INTO portal_users (id, username, password_hash, is_admin, created_at) VALUES ($1, $2, 'test-hash', 0, 1) ON CONFLICT (id) DO NOTHING`,
 		userID, username,
 	); err != nil {
 		t.Fatalf("insert user: %v", err)
