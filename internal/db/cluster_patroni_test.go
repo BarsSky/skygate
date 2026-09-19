@@ -32,10 +32,8 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -201,21 +199,16 @@ func TestSetLastFailover_RoundTrip(t *testing.T) {
 	// require a real PG connection (skip if not
 	// available) so we can verify the round-trip
 	// against the actual schema.
-	dsn := os.Getenv("SKYGATE_TEST_PG_DSN")
-	if dsn == "" {
-		dsn = os.Getenv("SKYGATE_DB_DSN")
-	}
-	if dsn == "" {
-		t.Skip("SKYGATE_TEST_PG_DSN not set — skipping DB round-trip test")
-	}
-	d, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	//
+	// 2026-09-19: go through OpenTestPG (like the other ~100 db tests)
+	// instead of sql.Open on the raw DSN. The raw open skipped the
+	// per-test schema + MigratePostgres, so on a FRESH database — exactly
+	// what the CI job `go test with SKYGATE_TEST_PG_DSN` provides — this
+	// test died with `relation "global_settings" does not exist
+	// (SQLSTATE 42P01)`. It only ever passed where someone had migrated
+	// the public schema by hand first.
+	d := OpenTestPG(t)
 	defer d.Close()
-	if err := d.Ping(); err != nil {
-		t.Skipf("db not reachable: %v", err)
-	}
 	// Use a unique key (key = "db.last_failover" in
 	// production, but for the test we use the same
 	// key to exercise the production code path).
@@ -259,21 +252,8 @@ func TestSetLastFailover_RoundTrip(t *testing.T) {
 
 func TestSetLastFailover_Validation(t *testing.T) {
 	// Pure tests — no DB needed.
-	dsn := os.Getenv("SKYGATE_TEST_PG_DSN")
-	if dsn == "" {
-		dsn = os.Getenv("SKYGATE_DB_DSN")
-	}
-	if dsn == "" {
-		t.Skip("no DB DSN — skip")
-	}
-	d, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
+	d := OpenTestPG(t)
 	defer d.Close()
-	if err := d.Ping(); err != nil {
-		t.Skipf("db not reachable: %v", err)
-	}
 	cases := []struct {
 		name string
 		st   *LastFailoverState
@@ -297,21 +277,10 @@ func TestGetLastFailover_Empty(t *testing.T) {
 	// should return (nil, nil) — not an error. This
 	// is the "no rollback available" case the page
 	// uses to hide the Rollback card.
-	dsn := os.Getenv("SKYGATE_TEST_PG_DSN")
-	if dsn == "" {
-		dsn = os.Getenv("SKYGATE_DB_DSN")
-	}
-	if dsn == "" {
-		t.Skip("no DB DSN — skip")
-	}
-	d, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
+	// 2026-09-19: OpenTestPG (isolated schema + migrations) instead of a raw
+	// sql.Open on the DSN — see TestSetLastFailover_RoundTrip for why.
+	d := OpenTestPG(t)
 	defer d.Close()
-	if err := d.Ping(); err != nil {
-		t.Skipf("db not reachable: %v", err)
-	}
 	// Clear first to guarantee the "empty" state.
 	_, _ = d.Exec(`DELETE FROM global_settings WHERE key = 'db.last_failover'`)
 	got, err := GetLastFailover(d)
