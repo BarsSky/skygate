@@ -2307,6 +2307,12 @@ func main() {
 	// Tailscale clients pick up the new tag on their next
 	// ACL poll (usually <60s).
 	mux.Handle("POST /admin/exit-nodes/tag-as-exit", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeTagAsExitNode)))
+	// B266 (2026-09-19): mint a `tag:exit-node` pre-auth key owned by the
+	// technical `infra` user and render the ready-to-run command for the
+	// new host. This is the missing first step of onboarding a relay from
+	// the panel (previously no page issued a key carrying tag:exit-node,
+	// whose tagOwners owner is infra@<baseDomain>).
+	mux.Handle("POST /admin/exit-nodes/register", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeRegister)))
 	mux.Handle("POST /admin/exit-nodes/untag", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeUntagAsExitNode)))
 	// 2026-08-09 v0.33.1.29 B81: "Use Tailscale IP" inline button
 	// on each /admin/exit-nodes table row. Sets exit_servers.ssh_target

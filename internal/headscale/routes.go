@@ -19,10 +19,66 @@ package headscale
 
 import (
 	"fmt"
+	"net"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+// sshTargetRe is the ONLY shape we accept for exit_servers.ssh_target:
+// an optional `user@`, then a hostname / IPv4 literal / bracketed IPv6
+// literal, then an optional `:port`. Anchored, no whitespace, no leading
+// dash, no shell metacharacters.
+//
+// B266 (2026-09-19) — see the security note in SetAdvertisedRoutes: the
+// value used to be appended positionally to the ssh argv, so a target
+// like `-oProxyCommand=…` became an ssh OPTION and executed inside a
+// container that holds the docker socket.
+var sshTargetRe = regexp.MustCompile(`^(?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?$`)
+
+// IsSafeSSHTarget reports whether `target` is an acceptable
+// exit_servers.ssh_target value. Exported so the /admin/exit-nodes form
+// can reject a bad value at write time with a clear message instead of
+// failing minutes later inside a background sync.
+//
+// Pure function (unit-tested).
+func IsSafeSSHTarget(target string) bool {
+	t := strings.TrimSpace(target)
+	if t == "" || len(t) > 255 {
+		return false
+	}
+	if strings.HasPrefix(t, "-") || strings.ContainsAny(t, " \t\n\r;|&$`'\"\\<>(){}*?!") {
+		return false
+	}
+	if !sshTargetRe.MatchString(t) {
+		return false
+	}
+	// A `:port` suffix must be a legal TCP port.
+	if i := strings.LastIndex(t, ":"); i >= 0 && !strings.HasSuffix(t, "]") {
+		if p, err := strconv.Atoi(t[i+1:]); err != nil || p < 1 || p > 65535 {
+			return false
+		}
+	}
+	// A bare IP literal is fine; a hostname must contain at least one
+	// letter or dot (rejects things like "123").
+	host := t
+	if at := strings.LastIndex(host, "@"); at >= 0 {
+		host = host[at+1:]
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if host == "" {
+		return false
+	}
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	return strings.ContainsAny(host, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.")
+}
 
 // ApproveAllRoutes enables all pending routes for a node via headscale
 // CLI (docker exec). 2026-07-07: previously used /api/v1/routes but
@@ -196,9 +252,32 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, accep
 	// (`/home/admin/.ssh/config`) silently failed in the dockerised
 	// skygate, and a missing-key error is more honest than a
 	// "config file not found" coming out of `ssh` two minutes later.
+	// B266 (2026-09-19) — SECURITY: `ssh_target` comes from the
+	// operator-writable exit_servers table and used to be appended
+	// POSITIONALLY to the ssh argv, so a value beginning with `-`
+	// (e.g. `-oProxyCommand=<cmd>`) was parsed by ssh as an OPTION and
+	// executed inside the skygate container — which mounts
+	// /var/run/docker.sock and carries NET_ADMIN+SYS_ADMIN. That is a
+	// container-root escalation reachable by any admin session.
+	//
+	// Two independent guards now:
+	//   1. a strict shape check on the target (user@host[:port] only);
+	//   2. `--` before the host plus explicit hardening options, so
+	//      even a future validation regression cannot turn the value
+	//      into an option.
+	if !IsSafeSSHTarget(target) {
+		return "", fmt.Errorf("SetAdvertisedRoutes(%s): refusing unsafe ssh_target %q (expected [user@]host[:port])", nodeHostname, target)
+	}
 	keyPath := strings.TrimSpace(sshKeyPath)
 	if keyPath == "" {
 		return "", fmt.Errorf("SetAdvertisedRoutes(%s): no ssh_key_path provided; set exit_servers.ssh_key_path or SKYGATE_EXIT_SSH_KEY", nodeHostname)
+	}
+	// B266: a relative key path would be resolved against the
+	// container's CWD and is almost always an operator typo; require
+	// absolute so the failure mode is a clear message instead of
+	// "Permission denied (publickey)".
+	if !filepath.IsAbs(keyPath) {
+		return "", fmt.Errorf("SetAdvertisedRoutes(%s): ssh_key_path must be absolute (got %q)", nodeHostname, keyPath)
 	}
 	// Always keep 0.0.0.0/0 and ::/0 advertised so the node stays a usable
 	// exit node. `tailscale set --advertise-routes=` replaces the list, so
@@ -233,12 +312,18 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, accep
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ConnectTimeout=10",
+		// B266 hardening: never let the operator's ssh_config inject a
+		// command, and never fall back to a different identity.
+		"-o", "ProxyCommand=none",
+		"-o", "IdentitiesOnly=yes",
 	}
 	host, port := splitSSHTarget(target)
 	if port != "" {
 		sshArgs = append(sshArgs, "-p", port)
 	}
-	sshArgs = append(sshArgs, host, cmd)
+	// B266: `--` terminates option parsing, so the host is always the
+	// first non-option argument even if validation above regresses.
+	sshArgs = append(sshArgs, "--", host, cmd)
 	sshCmd := exec.Command("ssh", sshArgs...)
 	out, err := sshCmd.CombinedOutput()
 	if err == nil {

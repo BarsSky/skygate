@@ -1,4 +1,4 @@
-﻿{{define "body-admin-exit_nodes"}}
+{{define "body-admin-exit_nodes"}}
 {{/* 2026-07-15: v0.13.0 — health monitor banner. The
      banner fires when 0 of N configured exit-nodes are
      healthy (state=online). The 0/0 case (no exit-nodes
@@ -308,6 +308,15 @@ sudo mkdir -p /etc/iptables && sudo iptables-save | sudo tee /etc/iptables/rules
     <p style="color:var(--text-muted);margin-top:4px;font-size:12px">
       {{t "exit_nodes.tutorial_step2_ssh_help" | safeHTML}}
     </p>
+    {{/* B266: рекомендуемый путь — ключ из панели (см. блок ниже). Тогда
+         тег tag:exit-node приезжает вместе с ключом, и headscale не
+         отклоняет его: владелец тега в ACL — infra@<домен>. */}}
+    <p style="color:var(--text-muted);margin-top:6px;font-size:12px">
+      <b>{{t "exit_nodes.tutorial_step2_keyhint"}}</b>
+    </p>
+    <p style="color:var(--text-muted);margin-top:2px;font-size:12px">
+      {{t "exit_nodes.tutorial_step2_keyhint_alt" | safeHTML}}
+    </p>
   </div>
 
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
@@ -370,6 +379,50 @@ ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
     </div>
     <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{t "common.add"}}</button>
   </form>
+</div>
+
+{{/* B266 (2026-09-19): первый шаг онбординга relay из панели.
+     Панель выдаёт preauth-ключ с тегом tag:exit-node под техническим
+     пользователем infra (владелец тега — infra@<baseDomain>) и показывает
+     готовую команду для новой машины. Приватный SSH-ключ панель НЕ
+     принимает и НЕ хранит — это отдельный блок (V073). */}}
+<div class="card" style="margin-top:12px">
+  <h3><i class="fa-solid fa-key"></i> {{t "exit_nodes.register_title"}}</h3>
+  <p class="sub">{{t "exit_nodes.register_subtitle" | safeHTML}}</p>
+
+  {{if .RegisterKey}}
+  <div class="alert alert-success" style="margin-bottom:10px">
+    <i class="fa-solid fa-circle-check"></i>
+    {{tf "exit_nodes.register_ok" .RegisterKey.Hostname}}
+  </div>
+  {{if .RegisterKey.Warnings}}
+  <div class="alert alert-warn" style="margin-bottom:10px">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <b>{{t "exit_nodes.register_warnings"}}</b>
+    <ul style="margin:6px 0 0 18px">
+      {{range .RegisterKey.Warnings}}<li>{{.}}</li>{{end}}
+    </ul>
+  </div>
+  {{end}}
+  <p style="font-size:12px;color:var(--text-muted);margin-bottom:4px">
+    {{t "exit_nodes.register_key_once"}}
+  </p>
+  <pre style="white-space:pre-wrap;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px">{{.RegisterKey.Command}}</pre>
+  {{else}}
+  <form method="post" action="/admin/exit-nodes/register" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+    <div>
+      <label style="font-size:12px;color:var(--text-muted)">{{t "exit_nodes.register_hostname"}}</label>
+      <input name="hostname" placeholder="relay-4" style="width:160px" required>
+      <div class="form-hint" style="font-size:11px;color:var(--text-muted);max-width:260px">{{t "exit_nodes.register_hostname_help"}}</div>
+    </div>
+    <div>
+      <label style="font-size:12px;color:var(--text-muted)">{{t "exit_nodes.register_ttl"}}</label>
+      <input name="ttl" value="1h" style="width:80px">
+    </div>
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-key"></i> {{t "exit_nodes.register_btn"}}</button>
+    <span class="muted" style="font-size:11px">{{t "exit_nodes.register_ttl_help"}}</span>
+  </form>
+  {{end}}
 </div>
 
 <script>

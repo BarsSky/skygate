@@ -306,7 +306,13 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		"TotalCount":      len(nodes),
 		"MonitorRunning":  s.ExitNodeMonitor != nil,
 		"FlashSuccess":    r.URL.Query().Get("ok"),
-		"FlashError":      firstNonEmptyStr(r.URL.Query().Get("err"), listErrMsg),		// 2026-07-20: v0.20.0 — headscale-update-monitor
+		"FlashError":      firstNonEmptyStr(r.URL.Query().Get("err"), listErrMsg), // 2026-07-20: v0.20.0 — headscale-update-monitor
+		// B266 (2026-09-19): the one-time pre-auth key + ready-to-run
+		// command from "Зарегистрировать новый exit node". The key is
+		// parked in global_settings under an opaque token (never in the
+		// URL) and consumed here, so it renders exactly once.
+		"RegisterKey": s.consumeExitNodeRegisterKey(r.URL.Query().Get("registered")),
+		"ControlURL":  s.controlURL(),
 		// banner. The template renders a coloured
 		// "newer headscale available" hint above the
 		// exit-node table when a release newer than the
@@ -496,6 +502,25 @@ func (s *Service) PostAdminExitNodesAdd(w http.ResponseWriter, r *http.Request) 
 	desc := strings.TrimSpace(r.FormValue("description"))
 	if nodeID == "" || hostname == "" {
 		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("node_id and hostname are required"), http.StatusSeeOther)
+		return
+	}
+	// B266 (2026-09-19): validate the SSH target and key path AT WRITE
+	// TIME. Pre-B266 the form accepted anything and the value was
+	// appended positionally to the ssh argv in
+	// internal/headscale/routes.go — a target like
+	// `-oProxyCommand=<cmd>` became an ssh OPTION and ran inside the
+	// skygate container (which holds /var/run/docker.sock). The
+	// headscale side now refuses unsafe targets too; this check exists
+	// so the operator gets an immediate, specific message instead of a
+	// row that silently fails on every sync.
+	if sshTarget != "" && !headscale.IsSafeSSHTarget(sshTarget) {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape(
+			"ssh_target: ожидается [user@]host[:port] — без пробелов и без ведущего дефиса (получено "+sshTarget+")"), http.StatusSeeOther)
+		return
+	}
+	if sshKey != "" && !strings.HasPrefix(sshKey, "/") {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape(
+			"ssh_key_path должен быть абсолютным путём внутри контейнера (например /ssh-sync/skygate_sync)"), http.StatusSeeOther)
 		return
 	}
 	acceptRoutes := 0

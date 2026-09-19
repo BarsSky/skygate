@@ -78,17 +78,38 @@ canonical template is `.env.example`. Required variables are marked
 
 ### Exit-node SSH sync (per exit-node)
 
-Each exit-node has a separate env var:
+> **Corrected 2026-09-19 (B266).** The `SKYGATE_EXIT_SSH_<UPPERNAME>` family
+> described here until B266 was **never read by any code**: the panel never
+> looked at the environment for `ssh_target`, so setting those variables had no
+> effect at all. The only environment variable that matters is the key **path**:
 
-```
-SKYGATE_EXIT_SSH=user1@exit1.example.com
-SKYGATE_EXIT_SSH_EXIT_NODE_A=root@relay-1.example.com
-SKYGATE_EXIT_SSH_EXIT_NODE_B=root@relay-2.example.com
-```
+| Var | Default | What it does |
+|---|---|---|
+| `SKYGATE_EXIT_SSH_KEY` | `/ssh-sync/id_ed25519` | Absolute path (inside the container) of the SSH private key skygate uses for every exit node. Overridden per row by `exit_servers.ssh_key_path`. |
 
-The variable name pattern is `SKYGATE_EXIT_SSH_<UPPERNAME>`. The
-admin UI at `/admin/exit-nodes` reads them and stores in
-`exit_servers.ssh_target`.
+The SSH **target** and **port** live in the database, per row, and are set on
+`/admin/exit-nodes`:
+
+* the **«Добавить exit node»** form takes `ssh_target` (`[user@]host[:port]`) and
+  `ssh_key_path` (absolute path inside the container; the bind-mounted default is
+  `/ssh-sync/skygate_sync`);
+* the per-row **«Use Tailscale IP»** button fills `ssh_target` with
+  `root@<tailscale_ip>[:ssh_port]`;
+* both fields are validated at write time (B266): `ssh_target` must match
+  `[user@]host[:port]` — no leading dash, no shell metacharacters — because the
+  value used to be appended positionally to the `ssh` argv, where a value like
+  `-oProxyCommand=…` was an option, not a host.
+
+The key file itself must be mounted read-only into the container (the reference
+deployment mounts `${SKYGATE_SSH_DIR:-…/data/ssh-sync}` at `/ssh-sync:ro`). There
+is **no** key upload in the panel yet.
+
+**Registering a brand-new relay** (B266): open `/admin/exit-nodes` → block
+«Зарегистрировать новый exit node» → enter the node name → the panel mints a
+`tag:exit-node` pre-auth key **as the technical `infra` user** (the tag's owner
+in the generated ACL is `infra@<baseDomain>`, so a key issued for anyone else is
+rejected by headscale) and shows a copy-paste command for the new machine. The
+key is displayed once and never stored.
 
 ### DERP relay (optional)
 
