@@ -16,6 +16,23 @@ stability promises yet — pin to a tag if you depend on a specific shape).
 > canonical notes for every shipped tag live in the linked
 > `RELEASE-NOTES.md` above.
 
+## [v1.5.11] — 2026-09-19
+
+### Fixed
+- **Route approval no longer requires docker** (native/systemd installs).
+  `internal/headscale/routes.go:approveRoutesForNodeID` hardcoded
+  `docker exec headscale /ko-app/headscale nodes approve-routes …`, so on a host
+  where headscale runs under systemd (no docker at all) every approve-routes
+  caller failed with `approve-routes: exec: "docker": executable file not found in
+  $PATH` — the "Tag as exit-node" button, `ApproveAllRoutes` and the relay flow.
+  Now: the REST API `POST /api/v1/node/{id}/approve_routes` is tried **first**
+  (works on every install kind; the deprecated endpoint was `/api/v1/routes`, not
+  this one), and the CLI fallback goes through `runHeadscaleCLI`, which probes
+  `exec.LookPath("docker")` — `docker exec` when docker exists, the local
+  `headscale` binary otherwise, with `SKYGATE_HEADSCALE_CLI` overriding the
+  in-container binary path and an error message that names both attempts.
+  8 contracts in `scripts/check_b267_headscale_cli_mode.sh` (registered as B267).
+
 ## [v1.5.10] — 2026-09-19
 
 Two `/admin/tailscale` defects found while enabling the in-container Tailscale

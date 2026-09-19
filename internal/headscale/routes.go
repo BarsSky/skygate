@@ -20,6 +20,7 @@ package headscale
 import (
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -138,17 +139,79 @@ func (c *Client) approveRoutesForNodeID(nodeID int, routes []string) (int, error
 		return 0, nil
 	}
 
+	var apiErr error
+	// 1. REST API first — it is the only path that works on EVERY install kind
+	//    (docker, systemd, binary). headscale has exposed
+	//    POST /api/v1/node/{id}/approve_routes since 0.23; the old
+	//    /api/v1/routes endpoint is the one that was deprecated, which is why
+	//    the CLI fallback was added in 2026-07-07.
+	if err := c.do("POST", fmt.Sprintf("/api/v1/node/%d/approve_routes", nodeID),
+		map[string]any{"routes": routes}, nil); err == nil {
+		return len(routes), nil
+	} else {
+		apiErr = err
+	}
+
+	// 2. CLI fallback, install-kind aware: `docker exec` on a containerised
+	//    headscale, the `headscale` binary directly on a NATIVE install.
+	//    Pre-2026-09-19 this branch hardcoded docker, so every native install
+	//    failed the "Tag as exit-node" / approve-routes flow with
+	//    `exec: "docker": executable file not found in $PATH`
+	//    (operator report, native Debian host).
 	routeStr := strings.Join(routes, ",")
-	cmd := exec.Command("docker", "exec", "headscale",
-		"/ko-app/headscale", "nodes", "approve-routes",
-		"-i", strconv.Itoa(nodeID),
-		"-r", routeStr,
-		"--force")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return 0, fmt.Errorf("approve-routes: %w: %s", err, strings.TrimSpace(string(out)))
+	args := []string{"nodes", "approve-routes", "-i", strconv.Itoa(nodeID), "-r", routeStr, "--force"}
+	out, cliErr := c.runHeadscaleCLI(args...)
+	if cliErr != nil {
+		return 0, fmt.Errorf("approve-routes: API failed (%v) and CLI failed (%w: %s)", apiErr, cliErr, strings.TrimSpace(string(out)))
 	}
 	return len(routes), nil
+}
+
+// runHeadscaleCLI runs a headscale CLI verb on whichever install kind this
+// deployment is: `docker exec <container> <binary> …` when docker and a
+// container name are available, the local `headscale` binary otherwise
+// (systemd/binary installs, where docker is not installed at all).
+func (c *Client) runHeadscaleCLI(args ...string) ([]byte, error) {
+	container := c.ExecContainer
+	if container == "" {
+		container = "headscale"
+	}
+	bin := c.headscaleCLIPath()
+	// A native install: no docker in PATH at all — try the local binary first
+	// so we do not even attempt a docker lookup that cannot succeed.
+	if _, err := exec.LookPath("docker"); err == nil && c.dockerRunner != nil {
+		full := append([]string{"exec", container, bin}, args...)
+		return c.dockerRunner(full...)
+	}
+	if _, err := exec.LookPath("docker"); err == nil {
+		full := append([]string{"exec", container, bin}, args...)
+		out, err := exec.Command("docker", full...).CombinedOutput()
+		if err == nil {
+			return out, nil
+		}
+		// docker exists but the container/binary layout differs — fall through
+		// to the local binary and keep the docker error for the caller.
+		local, localErr := exec.Command("headscale", args...).CombinedOutput()
+		if localErr == nil {
+			return local, nil
+		}
+		return out, fmt.Errorf("docker exec failed (%v); local headscale failed (%v)", err, localErr)
+	}
+	out, err := exec.Command("headscale", args...).CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("docker not in PATH and %q failed: %w (set SKYGATE_HEADSCALE_CONTAINER for a containerised headscale, or install the headscale CLI on this host)", "headscale", err)
+	}
+	return out, nil
+}
+
+// headscaleCLIPath is the in-container path of the headscale binary (the
+// official image ships /ko-app/headscale; SKYGATE_HEADSCALE_CLI overrides it
+// for images with the binary on $PATH).
+func (c *Client) headscaleCLIPath() string {
+	if p := os.Getenv("SKYGATE_HEADSCALE_CLI"); p != "" {
+		return p
+	}
+	return "/ko-app/headscale"
 }
 
 // splitSSHTarget parses an `user@host:port` SSH target into the

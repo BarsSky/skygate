@@ -12,6 +12,53 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.11 — route approval must not require docker (native installs)
+
+**Date:** 2026-09-19 · **Base:** `v1.5.10` → this tag · **Compatibility:** no schema,
+config or API change.
+
+### The bug
+
+On a **native (non-docker)** install, assigning an exit node failed with:
+
+```
+approve-routes: approve-routes: exec: "docker": executable file not found in $PATH:
+```
+
+`internal/headscale/routes.go:approveRoutesForNodeID` hardcoded
+
+```go
+exec.Command("docker", "exec", "headscale", "/ko-app/headscale",
+    "nodes", "approve-routes", "-i", <id>, "-r", <routes>, "--force")
+```
+
+so on a host where headscale runs under **systemd** — and docker is not installed
+at all — every approve-routes caller broke: the **Tag as exit-node** button,
+`ApproveAllRoutes`, and the relay route flow. The node stayed with 2 unapproved
+routes, which is why the monitor reported "нет рабочих exit-узлов".
+
+### The fix (B267)
+
+1. **REST API first**: `POST /api/v1/node/{id}/approve_routes` — this endpoint
+   works on *every* install kind (docker, systemd, binary). The endpoint that was
+   deprecated in headscale 0.29 is `/api/v1/routes` (which is why the CLI fallback
+   existed at all), not this one.
+2. **Install-kind-aware CLI fallback** — `runHeadscaleCLI` probes
+   `exec.LookPath("docker")`: `docker exec <container> <binary> …` when docker is
+   present, the local `headscale` binary otherwise. `SKYGATE_HEADSCALE_CLI`
+   overrides the in-container binary path (`/ko-app/headscale` by default), and the
+   error now names both attempts and tells you which knob to set instead of a bare
+   `exec: "docker": executable file not found`.
+
+Contracts: `scripts/check_b267_headscale_cli_mode.sh` (8 contracts: the API call,
+the helper, the `LookPath` probe, the local-binary fallback, the error text, the
+`SKYGATE_HEADSCALE_CLI` override, no hardcoded `docker exec`, focused tests),
+registered in the gate as **B267**.
+
+> If your headscale is native and you want route approval to keep working through
+> the CLI path as well, make sure `headscale` is on the skygate service's `PATH`
+> (the API path above means it normally is not needed).
+
 ## v1.5.10 — the two `/admin/tailscale` UI defects from the v1.5.9 enablement
 
 **Date:** 2026-09-19
