@@ -105,7 +105,8 @@ contracts are in the corresponding `scripts/check_b*.sh`.
 | **RR-7** | Public release of v1.5.9 | Operator decision — run the clean-host install → update acceptance first, then tag |
 | **RR-8** | `node_owner_map`: 4 stale rows (B243) | Operator decision on relink-vs-delete (see below) |
 | **RR-9** | ACL drifted from the DB: orphan `tagOwners` entry + a missing per-CIDR `via` pin (B188.2/B188.3/B-mod-tag-owners-coverage) | One ACL reapply from the DB (`/admin/acls`) |
-| **RR-10** | Telegram relay probe unreachable from the check environment (B185 `[O]`) | **Handled** — `O` reports SKIP + WARN while `N` proves the container's routing is healthy; the network decision stays **BL-3** |
+| **RR-10** | Telegram relay probe: the in-container Tailscale client is disabled and the canonical Telegram CIDRs are not advertised/approved on any relay | **Enablement plan (operator)** — see RR-13 |
+| **RR-13** | Turn the Telegram egress relay path on: (1) create a preauth key in headscale for the `infra` user, (2) put it in `data/ts/authkey` and set `SKYGATE_TS_AUTHKEY_FILE` (or use `/admin/tailscale`'s enable flow), (3) recreate the container so the entrypoint starts `tailscaled`, (4) `/admin/telegram` → *Egress relay* → select the relay → **Apply** (SSH `tailscale set --advertise-routes=<TelegramCIDRs>`), (5) approve those routes for that node in headscale, (6) verify `ip route get 149.154.167.220` → `dev tailscale0` and the probe → `ok_relay` | Operator go-ahead (needs a preauth key + a container recreate + relay route changes) |
 | **RR-11** | Flaky Go-load contracts (B183 `[I]`, B213, B235, B237.2) | **Mitigated** — `GOFLAGS=-p=2` in the gate run; the general SKIP/retry hardening stays open under RR-4 |
 | **RR-12** | **Credential hygiene — swept 2026-09-19.** The default PostgreSQL password literal (the string `.githooks/pre-commit` blocks) no longer appears in any tracked script: 34 scripts now resolve it at runtime through `scripts/lib/db_credentials.sh` — `$SKYGATE_DB_PASSWORD` → the password inside `$SKYGATE_DB`/`$SKYGATE_DB_DSN` → the DSN in `.env` → empty (psql then fails loudly). `check_ha_state.sh` keeps the literal **on purpose**: it is the guard that greps for a regression, and the hook keeps blocking the string. The live **admin** password removed earlier is still in git history | Operator call: rotate the admin password |
 
@@ -147,11 +148,25 @@ safe. History of the live-state work:
     correct for B188.2 (`device_exit_node_prefs (6, basic, tag:dev-infra-emilia,
     via_enabled=1)` + the `youtube.com` rule, id 189985).
     → step 5B of the repair helper (`skygate acl-apply`).
-* **Telegram relay (B185).** `[O] expected=ok_relay got=probe_unreachable_B185_not_live`
-  — the probe cannot reach the relay. After the 2026-09-18 credential fix the contract logs in
-  with the credentials from `.env` and reaches its real assertion, which confirms the relay
-  path itself is down from the skygate container: the same condition as **BL-3**
-  (`api.telegram.org` behind a DPI-blocked network). `[P]` now passes (60 discord CDN rows).
+* **Telegram relay (B185) — misdiagnosed on 2026-09-19, now measured correctly.** The design
+  (operator clarification) is: a **Tailscale client runs alongside skygate** and routes
+  `api.telegram.org` through an exit node **where the API is reachable** — the
+  `/admin/telegram` *Egress relay* selector advertises the canonical Telegram CIDRs
+  (`149.154.160.0/20`, `91.108.*`, `185.76.151.0/24`) on the chosen relay and the container's
+  client accepts those routes. Verified live on 2026-09-19:
+  * the relays **can** reach Telegram — `emilia` (213.176.92.205) and `karolina` both answer
+    `https://api.telegram.org/` with **HTTP 302**, so this is *not* an upstream/DPI dead end;
+  * **the container's `tailscaled` is not running** — `SKYGATE_TS_AUTHKEY_FILE=/dev/null`
+    (the documented "Tailscale off by default" opt-in state; log line
+    `[init] TS_AUTHKEY_FILE not set — Tailscale skipped (non-RF mode)`), so no route can be
+    used at all;
+  * **no node advertises the canonical Telegram CIDRs**: `emilia` advertises a single
+    `149.154.167.99/32` (approved), while the probe resolves `149.154.167.220`, so the
+    request leaves via `eth0` (Docker NAT) and dies in the operator's DPI-blocked path.
+  * `check_b185.sh` contract **N** used to pass in this state because `ping 8.8.8.8` succeeds
+    through the Docker bridge regardless of Tailscale; N now requires `tailscale status` inside
+    the container first, and **O** distinguishes "client disabled" (SKIP + the enablement path)
+    from "client up but probe unreachable" (FAIL + the route checklist).
 * **`device_rules` "duplicates" (B183 `[J]`, informational).** `exit_node=emilia` has
   106 rows, 46 distinct 5-tuples and **106 distinct 6-tuples**: the extra rows differ by
   `parent_domain` (`cdn:cloudflare:discordapp.com` vs `…discord.gg` vs … all resolving to
