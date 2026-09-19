@@ -109,6 +109,13 @@ run.
 2. `bash scripts/verify_pre_deploy.sh` on the VM **and** locally: every line
    `PASS` or an explicit `SKIP`; no `FAIL`. The script is fail-tolerant (a FAIL
    *count* does not set a non-zero exit) — read the output, not `$?`.
+   **Run it as the operator user (e.g. `skyadmin`), not as root:** `staticcheck`
+   lives in `~/go/bin` and docker access comes from the `docker` group, so as root
+   `B95` reports "staticcheck not found" — a spurious FAIL. With the operator
+   user's `PATH=$HOME/go/bin:$PATH`, the same command is green.
+   A live contract that cannot reach its dependency (network, docker, DB) must
+   print `SKIP`; if one prints `FAIL` for an unreachable dependency, that is a
+   contract bug — fix the check, do not re-run until it passes.
 3. `staticcheck ./...` → 0 issues; `go build ./...` and `go vet ./...` clean; the
    focused test set (`./internal/update/... ./internal/db/
    ./internal/feature/admin/... ./internal/i18n/...`) green.

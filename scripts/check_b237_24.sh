@@ -121,9 +121,21 @@ fi
 # "delete tag if CI failed" rule was followed; the tag is back because
 # the B237.24 + B237.24.1 + B237.24.2 + B237.24.3 + B237.24.4 + B237.24.4.1
 # release workflow re-runs all passed) ---
+#
+# 2026-09-19: this is a LIVE contract and it is the only one in this script
+# that touches the network. `git ls-remote` returning nothing because the
+# remote is unreachable (or the sandbox has no egress) reported a hard FAIL
+# for a healthy release, which is exactly the "a check that needs live state
+# must SKIP, never FAIL" rule from AGENTS.md §1. So: a non-zero `git ls-remote`
+# is now SKIP (state unavailable), and only a *successful* ls-remote with no
+# matching ref is a FAIL (the tag really is gone).
 
 if command -v git >/dev/null 2>&1; then
-  if git ls-remote origin 'refs/tags/v1.5.2' 2>/dev/null | grep -q '.'; then
+  D_OUT="$(git ls-remote origin 'refs/tags/v1.5.2' 2>/dev/null)"
+  D_RC=$?
+  if [ "$D_RC" -ne 0 ]; then
+    skip "D.1 git ls-remote failed (rc=$D_RC; no network / no origin) — live v1.5.2 tag state unavailable"
+  elif printf '%s\n' "$D_OUT" | grep -q .; then
     ok "D.1 remote v1.5.2 tag EXISTS (release workflow passed, tag is the release pointer)"
   else
     bad "D.1 remote v1.5.2 tag is absent — was the release workflow re-run? per operator's rule: no v1.5.2 tag if CI failed"
