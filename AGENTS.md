@@ -337,7 +337,7 @@ authoritative description is the block's `run_check` entry plus its
 - **B256** — fix (single-line SQL change, no migration needed):
 - **B257** — (v1.5.8+, 2026-09-15) scripts/check_hygiene.sh +
 - **B258** — B258 (v1.5.8+, 2026-09-16) — /admin/tailscale mirrors entrypoint.sh "Tailscale skipped" state
-- **B258.1** — (v1.5.8+, 2026-09-17) /admin/tailscale third
+- **B258.1** — (v1.5.8+, 2026-09-17) /admin/tailscale third visual state (auth-key path configured but file missing) + **2026-09-19: the «Сгенерировать ключ» control is a visible button** in the auth-key card (it used to be a collapsed `<details>` labelled «Сгенерировать автоматически», so the warning named a button the page did not show); contracts K/L in `scripts/check_b258_1_auth_key_missing.sh`
 - **B259** — B259 (v1.5.8+, 2026-09-16) — /admin/tailscale toggle: Enable / Disable Tailscale in container via UI
 - **B259.1** — B259.1 (v1.5.8+, 2026-09-17) — B259 enable flow uses canonical findUserForHostname (no phantom skygate-host headscale user)
 - **B259.2** — B259.2 (v1.5.8+, 2026-09-17) — findUserForHostname DO-NOT-INLINE banner + B-check section K regression guard

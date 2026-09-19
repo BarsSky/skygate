@@ -169,9 +169,14 @@ IPv4 `91.108.4.0/22`, `91.108.8.0/22`, `91.108.12.0/22`, `91.108.16.0/22`,
    (`tailscaleAuthKeyPath()`): `global_settings.tailscale.auth_key_path` (DB) →
    `SKYGATE_TS_AUTHKEY_FILE` (env) → `/data/ts/authkey`. Проще всего — открыть
    `/admin/tailscale`: страница сама покажет состояние «файл ключа отсутствует»
-   и даст форму, куда ключ можно вставить (B258.1); по кнопке **Start** skygate
-   запишет файл и запустит `tailscaled` + `tailscale up --accept-routes` **внутри
-   уже работающего контейнера**, без пересоздания.
+   и даст в карточке **Auth key** две возможности — видимую кнопку
+   **«Сгенерировать ключ»** (skygate сам запросит preauth key у headscale для
+   нужного пользователя: 1 час, reusable, запись в файл с правами 0600, событие
+   `tailscale_generate_key` в `audit_log`) и форму вставки, если ключ уже есть на
+   руках. Затем **Start** поднимает `tailscaled` + `tailscale up --accept-routes`
+   **внутри уже работающего контейнера**, без пересоздания. Генерация требует
+   доступного headscale API и headscale-пользователя для хоста
+   (`findUserForHostname`; для `skygate-host` это `infra`).
 3. **Сделать это состояние переживающим пересоздание контейнера.** Entrypoint
    решает, поднимать ли `tailscaled`, по env-переменной, а в
    `docker-compose.yml` она сейчас захардкожена как

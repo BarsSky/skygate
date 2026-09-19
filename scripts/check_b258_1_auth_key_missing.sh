@@ -172,4 +172,42 @@ else
   ok "J: go test skipped (go not reachable in this bash PATH — re-run manually: go test ./internal/feature/admin/ -run TestTailscaleAuthKeyMissingForStart -v)"
 fi
 
+# --- K: the "Generate key" control is VISIBLE (operator report 2026-09-19) ---
+# The B258.1 warning says "…or click «Сгенерировать ключ»", but the control was
+# wrapped in a collapsed <details> whose summary read "Сгенерировать
+# автоматически" (13px, muted) — the operator reported "кнопки нет". It is now a
+# plain visible button in the auth-key card.
+if grep -q 'action" value="generate_key"' "$TAILSCALE_HTML"; then
+  ok "K: /admin/tailscale renders the generate_key form"
+else
+  fail "K: $TAILSCALE_HTML has no action=generate_key form"
+fi
+if grep -B6 'action" value="generate_key"' "$TAILSCALE_HTML" | grep -q '<details'; then
+  fail "K: the generate_key form is still hidden inside a collapsed <details> (the operator cannot see the button)"
+else
+  ok "K: the generate_key form is not wrapped in <details> (visible button)"
+fi
+# and it must live in the non-disabled branch (the missing/unset states) of the
+# auth-key card: the LAST `{{if .State.AuthKeyDisabled}}` before it, then that
+# block's `{{else}}`, must both precede the generate form.
+GEN_LINE=$(grep -n 'action" value="generate_key"' "$TAILSCALE_HTML" | head -1 | cut -d: -f1)
+DIS_LINE=$(awk -v g="${GEN_LINE:-0}" 'NR<g && /\{\{if \.State\.AuthKeyDisabled\}\}/{l=NR} END{print l+0}' "$TAILSCALE_HTML")
+ELSE_LINE=$(awk -v s="${DIS_LINE:-0}" 'NR>s && /^[[:space:]]*\{\{else\}\}/{print NR; exit}' "$TAILSCALE_HTML")
+if [ -n "$GEN_LINE" ] && [ -n "$ELSE_LINE" ] && [ "$GEN_LINE" -gt "$ELSE_LINE" ]; then
+  ok "K: generate_key renders in the {{else}} branch (i.e. for both unset and missing)"
+else
+  fail "K: generate_key is not in the non-disabled template branch (gen=$GEN_LINE if=$DIS_LINE else=$ELSE_LINE)"
+fi
+
+# --- L: the banner and the button use the SAME wording (RU + EN) ---
+for pair in "Сгенерировать ключ:Сгенерировать ключ" "Generate key:Generate key"; do
+  phrase="${pair%%:*}"
+  ru_hits=$(grep -c "$phrase" "$CATALOG")
+  if [ "$ru_hits" -ge 2 ]; then
+    ok "L: '$phrase' appears in the banner and on the button ($ru_hits occurrences in the catalog)"
+  else
+    fail "L: '$phrase' occurs $ru_hits time(s) in $CATALOG — the banner still names a control the page does not label that way"
+  fi
+done
+
 printf '\n\033[32mB258.1 regression check passed — safe to commit\033[0m\n'

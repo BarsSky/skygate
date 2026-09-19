@@ -16,6 +16,18 @@ stability promises yet — pin to a tag if you depend on a specific shape).
 > canonical notes for every shipped tag live in the linked
 > `RELEASE-NOTES.md` above.
 
+## [Unreleased]
+
+### Fixed
+- **`/admin/tailscale`: the «Сгенерировать ключ» control is now a visible button.**
+  The B258.1 warning told the operator to click «Сгенерировать ключ», but the
+  control lived in a collapsed `<details>` whose summary read «Сгенерировать
+  автоматически» in 13px muted text — reported as "кнопки нет". The generate form
+  moved into the auth-key card as a plain secondary button, and the label now
+  matches the wording in the warning (`tailscale.generate_btn` RU/EN); the help
+  line states that it writes the key file and unlocks Start. Contracts K/L in
+  `scripts/check_b258_1_auth_key_missing.sh`.
+
 ## [v1.5.9] — 2026-09-19
 
 **Native self-update (B261) + OpenRC and the `SHA256SUMS` asset (B262) +
