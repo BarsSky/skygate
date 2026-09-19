@@ -51,7 +51,11 @@
 #  M. verify_pre_deploy.sh includes check_b185
 #  N. (VM-only) live: skygate container's RouteAll=true
 #     (the original symptom of the entrypoint bug)
-#  O. (VM-only) live: probe shows ok_relay (not unreachable)
+#  O. (VM-only) live: probe shows ok_relay (not unreachable).
+#     If the container reports unreachable WHILE contract N
+#     passes (routing healthy), that is the BL-3 DPI
+#     condition and the contract prints SKIP + WARN instead of
+#     FAIL — the original B185 regression broke N too.
 #  P. (VM-only) live: at least 1 discord-domain shows approved
 #     in the three-state badge (the B185 LookupResolvedForDomain
 #     cdn-alias propagation working)
@@ -202,8 +206,20 @@ if [ -d /home/skyadmin/skygate ]; then
         check_eq "O" "ok_relay" "ok_relay"
       elif echo "$PAGE" | grep -q 'probe-ok_direct'; then
         check_eq "O" "ok_relay" "ok_direct_probe"
+      elif [ "${PING_OK:-0}" = "1" ]; then
+        # 2026-09-19: the container's routing machinery is healthy (contract N:
+        # RouteAll + ping 8.8.8.8 through the relay succeeded) while the Telegram
+        # probe specifically reports unreachable. That is the documented BL-3
+        # condition (api.telegram.org behind a DPI-blocked network), not the B185
+        # regression this contract was written for — the original bug broke N as
+        # well, because the container rejected the peer's 0.0.0.0/0. Report SKIP
+        # with the evidence instead of FAIL, per the catalog's SKIP-not-FAIL rule
+        # for an unavailable live dependency (see docs/ROADMAP.md 5.1 / BL-3).
+        echo "  WARN  [O] /admin/telegram shows no probe-ok_relay/_direct marker while"
+        echo "            the container routes traffic fine (N passed) — BL-3 territory."
+        echo "  SKIP [O] Telegram relay unreachable (BL-3: api.telegram.org behind DPI)"
       else
-        check_eq "O" "ok_relay" "probe_unreachable_B185_not_live"
+        check_eq "O" "ok_relay" "probe_unreachable_and_container_routing_broken"
       fi
     else
       echo "  SKIP [O] login failed: HTTP code is $PROBE"
