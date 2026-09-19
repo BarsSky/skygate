@@ -292,6 +292,34 @@ hardcoded literals — never user input.
   captured `*sql.DB` field fails forever with `sql: database is closed` after the
   watchdog's first swap.
 
+### Testing the data layer (and why CI caught what local runs did not)
+
+- **`internal/db` tests must go through `OpenTestPG(t)`** (`internal/db/db_test.go` →
+  `openTestDB(t)`). It skips when `SKYGATE_TEST_PG_DSN` is unset, creates the isolated
+  schema `skygate_pgtest_<test name>` (lower-cased, `/` → `_`), injects
+  `search_path`, and runs `MigratePostgres` inside it. A raw `sql.Open("pgx", dsn)`
+  silently skips all of that and only works on a database somebody migrated by hand —
+  on a fresh one it fails with `relation "global_settings" does not exist (42P01)`.
+- **`$N` placeholders and `current_schema()` scoping are mandatory in these tests too.**
+  `?` is `42601` on PostgreSQL (see above), and the catalog views (`information_schema`,
+  `pg_class`, `pg_index`) span **every** schema the role can see, so each sibling test's
+  `skygate_pgtest_*` schema shows up in an unfiltered query (9 `exit_servers` tables, 53
+  index columns in the CI incident).
+- **Never assume a pristine schema.** `OpenTestPG` already applied the whole chain, so
+  `applied_migrations` has one row per migration and later migrations may already have
+  redefined an index a test wants to observe. Reset the specific bookkeeping row or
+  `DROP` the object inside the test.
+- **Concurrent migrators are serialised by an advisory lock.** `MigratePostgres` holds a
+  session-level `pg_advisory_lock` on a dedicated connection for the whole chain (see
+  `pgMigrateAdvisoryLockKey`): `SET lock_timeout` only makes a blocked migrator abort and
+  does not cover advisory locks, so before this two processes booting together raced on
+  the DDL/bookkeeping and the loser died with `tuple concurrently updated (XX00)`.
+- **Run the PG path before touching `internal/db`.** `go test ./internal/db/ -count=1`
+  without a DSN skips every PostgreSQL assertion; the CI job
+  `go test with SKYGATE_TEST_PG_DSN` (empty `postgres:15`) is the real gate, and locally
+  the equivalent is a throwaway database:
+  `SKYGATE_TEST_PG_DSN=postgres://user:pw@host:5432/throwaway?sslmode=disable go test ./internal/db/... -count=1`.
+
 ---
 
 ## 4. HTTP layer
