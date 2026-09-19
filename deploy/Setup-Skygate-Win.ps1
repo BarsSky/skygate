@@ -177,26 +177,73 @@ try {
     }
     Write-Host "[install] downloaded $([math]::Round((Get-Item $zipPath).Length / 1MB, 1)) MB"
 
-    Write-Host "[install] downloading SHA256SUMS"
-    Invoke-WebRequest -Uri $sumsUrl -OutFile $sumsPath -UseBasicParsing -TimeoutSec 30
-
+    # -------- checksum source: SHA256SUMS, else the GitHub asset digest --------
+    # 2026-09-19 (B263): releases v1.5.3 and v1.5.6-v1.5.8 publish a zip but NO
+    # SHA256SUMS asset, and the old code aborted with "failed to download
+    # SHA256SUMS" and told the operator to pass -SkipVerify. The GitHub Releases
+    # API exposes a per-asset `digest: sha256:<hex>` for exactly that case (the
+    # bash installers and the native applier use the same fallback), so try
+    # SHA256SUMS first, then the digest, and only fail closed when neither exists.
+    $expectedSha = $null
+    $verifiedBy = $null
     if (-not $SkipVerify) {
-        Write-Host "[install] verifying SHA256"
-        # SHA256SUMS format: "<hex>  <filename>". Match the zipName.
-        $expectedLine = Get-Content $sumsPath | Where-Object { $_ -match [regex]::Escape($zipName) }
-        if (-not $expectedLine) {
-            Write-Host "ERROR: $zipName not found in SHA256SUMS" -ForegroundColor Red
+        Write-Host "[install] downloading SHA256SUMS"
+        $gotSums = $false
+        try {
+            Invoke-WebRequest -Uri $sumsUrl -OutFile $sumsPath -UseBasicParsing -TimeoutSec 30
+            $gotSums = $true
+        } catch {
+            Write-Host "[install] this release publishes no SHA256SUMS asset — verifying against the GitHub asset digest instead" -ForegroundColor Yellow
+        }
+
+        if ($gotSums) {
+            Write-Host "[install] verifying SHA256"
+            # SHA256SUMS format: "<hex>  <filename>" — tolerate sha256sum's
+            # binary-mode "*" prefix and CRLF, either of which would otherwise
+            # turn a verifiable release into "not found in SHA256SUMS".
+            $expectedLine = Get-Content $sumsPath | Where-Object {
+                $f = ($_ -split '\s+')[1]
+                if ($f) { $f = $f.TrimStart('*').TrimEnd("`r") }
+                $f -eq $zipName
+            }
+            if ($expectedLine) {
+                $expectedSha = ($expectedLine -split '\s+')[0]
+                $verifiedBy = "SHA256SUMS"
+            } else {
+                Write-Host "WARN: SHA256SUMS exists but does not list $zipName — trying the GitHub asset digest" -ForegroundColor Yellow
+            }
+        }
+
+        if (-not $expectedSha) {
+            try {
+                $apiUrl = "https://api.github.com/repos/${GitHubOwner}/${GitHubRepo}/releases/tags/${tag}"
+                $release = Invoke-RestMethod -Uri $apiUrl -TimeoutSec 60 `
+                    -Headers @{ 'User-Agent' = 'skygate-installer'; 'Accept' = 'application/vnd.github+json' }
+                $asset = $release.assets | Where-Object { $_.name -eq $zipName } | Select-Object -First 1
+                if ($asset -and $asset.digest -match '^sha256:([0-9a-f]{64})$') {
+                    $expectedSha = $Matches[1]
+                    $verifiedBy = "GitHub asset digest"
+                }
+            } catch {
+                Write-Host "WARN: could not read the GitHub asset digest: $_" -ForegroundColor Yellow
+            }
+        }
+
+        if (-not $expectedSha) {
+            Write-Host "ERROR: no trustworthy checksum for $zipName — the release publishes" -ForegroundColor Red
+            Write-Host "       neither a SHA256SUMS asset nor a GitHub asset digest." -ForegroundColor Red
+            Write-Host "       Re-run with -SkipVerify ONLY if you verified the file out-of-band." -ForegroundColor Red
             exit 1
         }
-        $expectedSha = ($expectedLine -split '\s+')[0]
+
         $actualSha = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
         if ($expectedSha -ne $actualSha) {
-            Write-Host "ERROR: SHA256 mismatch" -ForegroundColor Red
+            Write-Host "ERROR: SHA256 mismatch (source: $verifiedBy)" -ForegroundColor Red
             Write-Host "  expected: $expectedSha" -ForegroundColor Red
             Write-Host "  actual:   $actualSha" -ForegroundColor Red
             exit 1
         }
-        Write-Host "[install] SHA256 OK" -ForegroundColor Green
+        Write-Host "[install] SHA256 OK (verified against $verifiedBy)" -ForegroundColor Green
     } else {
         Write-Host "[install] WARNING: -SkipVerify set, skipping hash check" -ForegroundColor Yellow
     }

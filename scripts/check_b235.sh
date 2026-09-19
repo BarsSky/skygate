@@ -188,10 +188,17 @@ else
 fi
 
 # E.2 derphealth unit tests pass
+# NOTE (2026-09-19): capture first, then match. `go test ... | grep -q '^ok'`
+# under `set -o pipefail` is a FALSE-FAIL generator: `grep -q` exits at the
+# first match and closes the pipe, so the still-writing `go test` dies with
+# SIGPIPE (141) and pipefail turns that into a failed pipeline even though the
+# test passed. Same class as the documented note in b_mod_reregister_live.sh.
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s ./internal/derphealth/... 2>/dev/null | grep -q '^ok'; then
+    E2_OUT="$(CGO_ENABLED=0 go test -short -count=1 -timeout 180s ./internal/derphealth/... 2>&1)"
+    if grep -q '^ok' <<< "$E2_OUT"; then
         ok "E.2 derphealth unit tests pass"
     else
+        printf '%s\n' "$E2_OUT" | tail -5 | sed 's/^/        /'
         bad "E.2 derphealth unit tests failed"
     fi
 else
@@ -200,9 +207,11 @@ fi
 
 # E.3 handlers templates test passes (regression guard for the {{t}} vs {{tf}} fix)
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s -run TestTemplateArgsMatchCatalog ./internal/handlers/... 2>/dev/null | grep -q '^ok'; then
+    E3_OUT="$(CGO_ENABLED=0 go test -short -count=1 -timeout 180s -run TestTemplateArgsMatchCatalog ./internal/handlers/... 2>&1)"
+    if grep -q '^ok' <<< "$E3_OUT"; then
         ok "E.3 TestTemplateArgsMatchCatalog passes"
     else
+        printf '%s\n' "$E3_OUT" | tail -5 | sed 's/^/        /'
         bad "E.3 TestTemplateArgsMatchCatalog failed"
     fi
 else

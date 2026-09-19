@@ -119,13 +119,17 @@ run.
    A live contract that cannot reach its dependency (network, docker, DB) must
    print `SKIP`; if one prints `FAIL` for an unreachable dependency, that is a
    contract bug — fix the check, do not re-run until it passes.
-   **Resource pressure also produces one rotating FAIL per run on this host**
-   (2 vCPU / 1.8 GB RAM): the `skygate <verb> --help` contracts (`B211`–`B214`)
-   link the whole binary, and under a full gate the linker occasionally dies
-   while the packages themselves compile fine. They now retry the link once and
-   print the real error (`scripts/lib/go_build.sh`); if a *different* single
-   check fails, re-run it standalone before believing it — a check that passes
-   20/20 on its own is a resource artifact, not a regression.
+   **Beware the `cmd | grep -q` false FAIL.** A check that sets `pipefail` and
+   ends a pipeline with `grep -q` can FAIL spuriously: `grep -q` exits at the
+   first match, the still-writing producer (`go test`, `staticcheck`, …) dies
+   with SIGPIPE (141), and `pipefail` reports the *pipeline* as failed even though
+   the command succeeded. On 2026-09-19 this produced exactly one rotating FAIL
+   per gate run (a different check each time, each passing standalone 20/20).
+   Capture first, then match: `OUT="$(cmd 2>&1)"; if grep -q '^ok' <<< "$OUT"`.
+   Fixed so far: `B235` (E.2/E.3), `B237.20` (D.2), `B211`–`B214` (the binary link
+   now retries once via `scripts/lib/go_build.sh`); the remaining sites are
+   tracked as **TD-19** in `docs/ROADMAP.md`. For any single FAIL, re-run that
+   check standalone before believing it.
 3. `staticcheck ./...` → 0 issues; `go build ./...` and `go vet ./...` clean; the
    focused test set (`./internal/update/... ./internal/db/
    ./internal/feature/admin/... ./internal/i18n/...`) green.

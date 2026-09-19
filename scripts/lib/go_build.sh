@@ -19,17 +19,26 @@ go_build_bin() {
     shift
     local go_bin="${GO:-go}"
     local err
+    local log="${SKYGATE_GO_BUILD_LOG:-/tmp/skygate-go-build.log}"
     if err="$("$go_bin" build -o "$out" "$@" 2>&1)"; then
         return 0
     fi
+    {
+        printf '[%s] go build -o %s %s FAILED (attempt 1)\n' "$(date -u +%FT%TZ)" "$out" "$*"
+        printf '%s\n' "$err"
+    } >> "$log" 2>/dev/null || true
     echo "[warn] go build -o $out $* failed; retrying once (small host / resource pressure?)" >&2
     printf '%s\n' "$err" | tail -5 >&2
     sleep 1
     if err="$("$go_bin" build -o "$out" "$@" 2>&1)"; then
-        echo "[warn] the retry succeeded" >&2
+        echo "[warn] the retry succeeded (details in $log)" >&2
         return 0
     fi
-    echo "[error] go build -o $out $* failed twice:" >&2
+    {
+        printf '[%s] go build -o %s %s FAILED (attempt 2 — giving up)\n' "$(date -u +%FT%TZ)" "$out" "$*"
+        printf '%s\n' "$err"
+    } >> "$log" 2>/dev/null || true
+    echo "[error] go build -o $out $* failed twice (details in $log):" >&2
     printf '%s\n' "$err" | tail -10 >&2
     return 1
 }

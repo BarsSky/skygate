@@ -187,12 +187,16 @@ else
 fi
 
 # D.2 the 3 affected test packages still pass
+# NOTE (2026-09-19): capture first, then match — `go test ... | grep -q '^ok'`
+# under `set -o pipefail` FAILs spuriously when `grep -q` exits early and the
+# still-writing `go test` gets SIGPIPE (141).
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
-        ./internal/db/... ./internal/elector/... ./internal/feature/healthz/... \
-        2>/dev/null | grep -q '^ok'; then
+    D2_OUT="$(CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
+        ./internal/db/... ./internal/elector/... ./internal/feature/healthz/... 2>&1)"
+    if grep -q '^ok' <<< "$D2_OUT"; then
         ok "D.2 the 3 affected test packages still pass (db, elector, healthz)"
     else
+        printf '%s\n' "$D2_OUT" | tail -5 | sed 's/^/        /'
         bad "D.2 the 3 affected test packages failed (B237.20 deleted code that WAS tested — investigate)"
     fi
 else

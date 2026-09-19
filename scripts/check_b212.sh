@@ -138,10 +138,11 @@ check "Q: cmd/skygate/join_b212_test.go exists" "0" "$?"
 
 # R: go test passes (no DB required for B212 tests)
 if command -v "$GO" >/dev/null 2>&1 || [[ -x "$GO" ]]; then
-  if $GO test ./internal/cluster/... ./cmd/skygate/ -run "TestSubstituteDSNTemplate|TestJoinResponse|TestParseTokenAge|TestParseJoinArgs|TestJoinState" -count=1 >/dev/null 2>&1; then
-    check "R: go test (B212 unit tests) passes" "pass" "pass"
-  else
+  if ! R_ERR="$($GO test ./internal/cluster/... ./cmd/skygate/ -run "TestSubstituteDSNTemplate|TestJoinResponse|TestParseTokenAge|TestParseJoinArgs|TestJoinState" -count=1 2>&1)"; then
+    printf '[%s] B212 R: go test FAILED\n%s\n' "$(date -u +%FT%TZ)" "$R_ERR" >> "${SKYGATE_GO_BUILD_LOG:-/tmp/skygate-go-build.log}" 2>/dev/null || true
     check "R: go test (B212 unit tests) passes" "pass" "fail"
+  else
+    check "R: go test (B212 unit tests) passes" "pass" "pass"
   fi
 else
   echo "[skip] R: go not on PATH — run on a host with go installed (e.g. the agent)"
@@ -149,10 +150,12 @@ fi
 
 # S: go build works
 if command -v "$GO" >/dev/null 2>&1 || [[ -x "$GO" ]]; then
-  if $GO build ./... >/dev/null 2>&1; then
-    check "S: go build ./... succeeds" "pass" "pass"
-  else
+  if ! S_ERR="$($GO build ./... 2>&1)"; then
+    printf '[%s] B212 S: go build ./... FAILED\n%s\n' "$(date -u +%FT%TZ)" "$S_ERR" >> "${SKYGATE_GO_BUILD_LOG:-/tmp/skygate-go-build.log}" 2>/dev/null || true
     check "S: go build ./... succeeds" "pass" "fail"
+  else
+    check "S: go build ./... succeeds" "pass" "pass"
+  fi
   fi
 else
   echo "[skip] S: go not on PATH — run on a host with go installed"
@@ -163,14 +166,19 @@ if command -v "$GO" >/dev/null 2>&1 || [[ -x "$GO" ]]; then
   SKYGATE_TMP="$(mktemp -d)"
   trap 'rm -rf "$SKYGATE_TMP"' EXIT
   if GO="$GO" go_build_bin "$SKYGATE_TMP/skygate" ./cmd/skygate; then
-    JOIN_HELP="$("$SKYGATE_TMP/skygate" join --help 2>&1 | head -1)"
+    if ! JOIN_HELP="$("$SKYGATE_TMP/skygate" join --help 2>&1 | head -1)"; then
+      printf '[%s] B212 T: the built binary failed to run: %q\n' "$(date -u +%FT%TZ)" "$JOIN_HELP" \
+        >> "${SKYGATE_GO_BUILD_LOG:-/tmp/skygate-go-build.log}" 2>/dev/null || true
+    fi
     if [[ "$JOIN_HELP" == "skygate join <verb> [args]" ]]; then
       check "T: skygate join --help prints usage" "match" "match"
     else
-      check "T: skygate join --help prints usage" "match" "mismatch: $JOIN_HELP"
+      printf '[%s] B212 T: unexpected help output: %q\n' "$(date -u +%FT%TZ)" "$JOIN_HELP" \
+        >> "${SKYGATE_GO_BUILD_LOG:-/tmp/skygate-go-build.log}" 2>/dev/null || true
+      check "T: skygate join --help prints usage" "match" "mismatch: $JOIN_HELP (see ${SKYGATE_GO_BUILD_LOG:-/tmp/skygate-go-build.log})"
     fi
   else
-    check "T: skygate join --help prints usage" "match" "could not build"
+    check "T: skygate join --help prints usage" "match" "could not build (see ${SKYGATE_GO_BUILD_LOG:-/tmp/skygate-go-build.log})"
   fi
 else
   echo "[skip] T: go not on PATH — run on a host with go installed"

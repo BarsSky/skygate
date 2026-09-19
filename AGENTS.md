@@ -91,12 +91,17 @@ silently — it was folded into the files above.
    dies on `data/oidc-keys-test` and ~90 checks report `permission denied`. The
    reference-VM invocation is `sudo env PATH="$HOME/go/bin:$PATH" GOFLAGS=-p=2 bash
    scripts/verify_pre_deploy.sh`.
-9. **The reference VM is small (2 vCPU / 1.8 GB RAM), so a full gate can produce
-   one rotating FAIL per run.** The `--help` contracts `B211`–`B214` link the whole
-   binary and the linker occasionally dies under that pressure (each check passes
-   20/20 standalone). They now retry the link once and print the real error
-   (`scripts/lib/go_build.sh`); for any other single FAIL, re-run that check
-   standalone before treating it as a regression.
+9. **Never pipe a long-running producer into `grep -q` in a check that sets
+   `pipefail`.** `cmd | grep -q '^ok'` FAILS SPURIOUSLY: `grep -q` exits at the
+   first match and closes the pipe, so a still-writing `go test`/`staticcheck`
+   dies with SIGPIPE (141) and `pipefail` turns that into a failed pipeline even
+   though the command succeeded. This is what produced one rotating FAIL per gate
+   run on 2026-09-19 (a different check each time, each passing standalone
+   20/20): B235 E.2/E.3, B237.20 D.2, B212 T, B213 S. Capture first, then match —
+   `OUT="$(cmd 2>&1)"; if grep -q '^ok' <<< "$OUT"; then …` (`scripts/check_b235.sh`
+   and `check_b237_20.sh` are the fixed reference). The remaining sites are listed
+   in `docs/ROADMAP.md` (TD-19). For any single FAIL, re-run that check standalone
+   before treating it as a regression.
 
 ---
 
