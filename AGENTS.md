@@ -84,11 +84,13 @@ silently — it was folded into the files above.
 7. **`systemctl restart` from inside the unit kills its own cgroup** — that is why
    the native updater needs a separate root-owned path/service pair; a `setsid`
    child dies with the cgroup.
-8. **Run the gate as the operator user, not as root.** `staticcheck` lives in
-   `~/go/bin` and docker access comes from the `docker` group, so `sudo bash
-   scripts/verify_pre_deploy.sh` reports two spurious FAILs (`B95`
-   "staticcheck not found", and any live check whose `git ls-remote`/network call
-   root cannot make). Use `PATH=$HOME/go/bin:$PATH bash scripts/verify_pre_deploy.sh`.
+8. **Run the gate with the Go bin dir that holds `staticcheck` on `PATH`** (usually
+   `$HOME/go/bin`). Two spurious-FAIL traps, both hit on 2026-09-19: a plain root
+   shell finds no `staticcheck` (`B95` FAILs with "staticcheck not found"), and the
+   unprivileged operator user cannot read a root-owned checkout, so `go test ./...`
+   dies on `data/oidc-keys-test` and ~90 checks report `permission denied`. The
+   reference-VM invocation is `sudo env PATH="$HOME/go/bin:$PATH" GOFLAGS=-p=2 bash
+   scripts/verify_pre_deploy.sh`.
 
 ---
 

@@ -163,8 +163,14 @@ func (t LocalDumpTransport) Dump(ctx context.Context, sourceDSN, destPath string
 		return 0, fmt.Errorf("dbmigrate: start pg_dump: %w", err)
 	}
 
-	runErr := cmd.Wait()
+	// Drain BOTH pipes to EOF BEFORE cmd.Wait() (Go docs: "it is incorrect to
+	// call Wait before all reads from the pipe have completed" — Wait closes
+	// the pipes as soon as the child exits, so a reader still working through
+	// the buffered tail loses it; the same race that made the ssh transport's
+	// fake-ssh test flaky on 2026-09-19).
 	wg.wait()
+
+	runErr := cmd.Wait()
 
 	if runErr != nil {
 		// Best-effort: remove the partial file so the

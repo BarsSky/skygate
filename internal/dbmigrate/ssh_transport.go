@@ -272,8 +272,18 @@ func (t SSHDumpTransport) Dump(ctx context.Context, sourceDSN, destPath string, 
 		return 0, fmt.Errorf("dbmigrate: ssh: start: %w", err)
 	}
 
-	runErr := cmd.Wait()
+	// Drain BOTH pipes to EOF BEFORE cmd.Wait(). The Go docs are explicit:
+	// "it is incorrect to call Wait before all reads from the pipe have
+	// completed", because Wait closes the pipe as soon as it sees the child
+	// exit — a reader still working through the buffered tail loses it. That
+	// is exactly what made TestSSHDumpTransport_Dump_FakeSsh fail ~1 run in 3
+	// on 2026-09-19 ("got 0 log lines, want 2"): the fake ssh's NOTICE lines
+	// were written but the scanner was cut off by Wait. Reading to EOF first
+	// is safe here because EOF arrives when the child (and any grandchild
+	// holding the descriptor) closes it; the context still bounds the wait.
 	wg.Wait()
+
+	runErr := cmd.Wait()
 	// Close after the io.Copy goroutine has finished
 	// writing; surface any deferred fsync error here.
 	outCloseErr := out.Close()
