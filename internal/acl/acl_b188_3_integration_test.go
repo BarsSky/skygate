@@ -151,6 +151,13 @@ func b188_3SeedRule(t *testing.T, d *sql.DB, userID int64, deviceID int, usernam
 // a clean slate (the unique constraints make re-insertion
 // tricky if the test was previously interrupted by a
 // panic or compile error).
+//
+// B265.1 (2026-09-19): this helper is now ONLY the pre-test
+// reset. The post-test teardown is b188_3RegisterTeardown —
+// see the doc comment there for why the pre-existing
+// behaviour (never deleting portal_users / node_owner_map)
+// leaked test fixtures into the ACL policy of the real
+// deployment.
 func b188_3CleanupUser(t *testing.T, d *sql.DB, userID int64) {
 	t.Helper()
 	b188_3Exec(t, d,
@@ -162,6 +169,38 @@ func b188_3CleanupUser(t *testing.T, d *sql.DB, userID int64) {
 	// DO NOTHING so re-inserting is safe.
 }
 
+// b188_3RegisterTeardown removes EVERY row these tests create, after
+// the test finishes.
+//
+// B265.1 (2026-09-19) — why this exists. b188_3OpenTestDB deliberately
+// uses the PRODUCTION schema (it is the "does the generator see what
+// production sees" test), and SKYGATE_TEST_PG_DSN points at the live
+// skygate database on the reference VM. The pre-B265.1 tests deleted
+// only device_rules + device_exit_node_prefs, never portal_users or
+// node_owner_map, so every run left rows behind. Those leftovers are
+// not inert: the ACL generator reads ALL of them, and the live policy
+// on 2026-09-19 contained
+//
+//	tag:dev-b188_3_nopref-b188_3_phone
+//	tag:dev-b188_3_legacy-b188_3_desktop  (+ their tagOwners and
+//	h-rule-1-2-3-4 / h-rule-5-6-7-8 host aliases)
+//
+// i.e. two test devices with test routes were part of the tailnet
+// policy. This helper deletes the fixture rows in FK-safe order and is
+// registered with t.Cleanup so it runs even when the test fails.
+func b188_3RegisterTeardown(t *testing.T, d *sql.DB, userID int64, nodeIDs ...string) {
+	t.Helper()
+	t.Cleanup(func() {
+		// Order matters: rules → prefs → owner rows → user.
+		b188_3Exec(t, d, `DELETE FROM device_rules WHERE user_id = $1`, userID)
+		b188_3Exec(t, d, `DELETE FROM device_exit_node_prefs WHERE user_id = $1`, userID)
+		for _, nid := range nodeIDs {
+			b188_3Exec(t, d, `DELETE FROM node_owner_map WHERE node_id = $1`, nid)
+		}
+		b188_3Exec(t, d, `DELETE FROM portal_users WHERE id = $1`, userID)
+	})
+}
+
 
 // TestGenerateACLForPlane_B1883_NoDevicePref_NoPin —
 // regression guard: when the device has NO per-device
@@ -169,6 +208,7 @@ func b188_3CleanupUser(t *testing.T, d *sql.DB, userID int64) {
 func TestGenerateACLForPlane_B1883_NoDevicePref_NoPin(t *testing.T) {
 	d := b188_3OpenTestDB(t)
 	b188_3CleanupUser(t, d, 6002)
+	b188_3RegisterTeardown(t, d, 6002, "60020")
 	b188_3SeedPortalUser(t, d, 6002, "b188_3_nopref")
 	b188_3SeedNodeOwner(t, d, "60020", "b188_3_nopref", "b188_3_phone", "tag:dev-b188_3_nopref-b188_3_phone")
 	// NO SetDeviceExitNodePref call — the device has no
@@ -215,6 +255,7 @@ func TestGenerateACLForPlane_B1883_NoDevicePref_NoPin(t *testing.T) {
 func TestGenerateACLForPlane_B1883_LegacyRuleNoExitNodeID(t *testing.T) {
 	d := b188_3OpenTestDB(t)
 	b188_3CleanupUser(t, d, 6003)
+	b188_3RegisterTeardown(t, d, 6003, "60030")
 	b188_3SeedPortalUser(t, d, 6003, "b188_3_legacy")
 	b188_3SeedNodeOwner(t, d, "60030", "b188_3_legacy", "b188_3_desktop", "tag:dev-b188_3_legacy-b188_3_desktop")
 	if err := db.SetDeviceExitNodePref(d, 6003, "b188_3_desktop", "tag:dev-infra-emilia", 6003, true); err != nil {
