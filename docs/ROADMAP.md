@@ -111,11 +111,11 @@ contracts are in the corresponding `scripts/check_b*.sh`.
 
 ### 5.1 Live-state contract failures on the reference host (2026-09-18)
 
-The full gate run on the reference host now ends with **PASS=307 / 6 FAIL lines = 3 live
-checks / 1 SKIP** (`scripts/verify_pre_deploy.sh`, verification run 2026-09-18 after the
-B188.2 contract fix). None of the three reads a documentation file — each one queries the
-live DB, the headscale policy or the network.
-Evidence collected on the host:
+The gate now ends with **PASS=305 / 2 FAIL lines = 1 live check / 1 SKIP**
+(`scripts/verify_pre_deploy.sh`, verification run 2026-09-19 after the data repair and the
+RR-12 sweep). The only remaining failure is **B185 `[O]`** — the Telegram relay probe is
+unreachable from the skygate container, which is the **BL-3** DPI condition, not a product
+defect. History of this section (what was fixed and how it was diagnosed):
 
 * **`node_owner_map` (B243).** Live headscale users are `1 skyadmin`, `8 michail`,
   `11 guest`, `12 daniil`, `85 infra`. Four rows point elsewhere:
