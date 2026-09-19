@@ -27,6 +27,9 @@
 #   A  source contracts (smoke test before swap, diagnostics, verdicts)
 #   B  behavioural: healthy body → done, stale body → rolled_back +
 #      diagnostics, dead service → distinct verdict + diagnostics
+#      B6/B7 (B269): a body with "ready":false (correct build, still
+#      booting) must NOT be accepted as a successful update, and the
+#      applier must name the boot phase while it waits
 #   C  go test ./internal/update/ -run B268
 #
 # Section B needs a Linux userland (systemctl/ss stubs + /tmp). It SKIPs
@@ -213,6 +216,27 @@ EOF
   else
     bad "B5: the dead-service run is still ambiguous (no 'did not come up' verdict or no DIAG lines)"
   fi
+
+  # B269: since the socket is bound at the top of main(), /healthz answers
+  # with the NEW build string while the DB and the services are still being
+  # constructed. That body carries "ready":false and MUST NOT be enough to
+  # declare the swap successful (otherwise B269 would have made the updater
+  # blind to exactly the class of failure B268 was written for).
+  printf '  .. B269 contract: a booting body (\"ready\":false, correct build) must not count as healthy\n'
+  sed -i 's/^SKYGATE_UPDATE_HEALTH_TIMEOUT=.*/SKYGATE_UPDATE_HEALTH_TIMEOUT="9"/' "$ROOT/etc/update.conf"
+  boot_verdict="$(run_case booting '{"status":"ok","build":"v1.5.99+test","ready":false,"phase":"db-open+migrate","stage":"boot"}' active)"
+  case "$boot_verdict" in
+    rolled_back|failed) ok "B6: healthz reporting the target build but still booting → $boot_verdict (not done)" ;;
+    done) bad "B6: a still-booting body was accepted as a successful update (regression of the B269 readiness guard)" ;;
+    *) bad "B6: booting-body case produced verdict '$boot_verdict'" ;;
+  esac
+  if grep -q "still starting" "$ROOT/update/apply.log" 2>/dev/null; then
+    ok "B7: the applier names the boot phase while it waits (phase=db-open+migrate)"
+  else
+    bad "B7: the applier did not log the boot phase — the operator cannot see WHERE the new binary is stuck"
+  fi
+  sed -i 's/^SKYGATE_UPDATE_HEALTH_TIMEOUT=.*/SKYGATE_UPDATE_HEALTH_TIMEOUT="4"/' "$ROOT/etc/update.conf"
+
   kill "$(cat "$ROOT/mirror.pid")" 2>/dev/null || true
 else
   skip "B: behavioural applier test needs Linux + python3 (run this check on the VM/CI)"

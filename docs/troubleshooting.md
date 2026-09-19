@@ -35,6 +35,8 @@ syntax lives in [`acl-rules-reference.md`](acl-rules-reference.md).
 6. [Duplicate node names in headscale](#6-duplicate-node-names-in-headscale)
 7. [The UI shows stale or contradictory state after a change](#7-the-ui-shows-stale-or-contradictory-state-after-a-change)
 8. [Install / upgrade-time failures](#8-install--upgrade-time-failures)
+   * [8.0 Self-update rolled back: "healthz did not report build …" (B268)](#80-self-update-rolled-back-healthz-did-not-report-build--b268)
+   * [8.0.1 The unit is `active` but nothing listens on the port (B269)](#801-the-unit-is-active-but-nothing-listens-on-the-port-b269)
 9. [Telegram relay silently not delivering](#9-telegram-relay-silently-not-delivering)
 10. [General diagnostics kit](#10-general-diagnostics-kit)
 
@@ -757,6 +759,76 @@ above, then press “Update now” again. If the verdict was `failed` with
 `MANUAL INTERVENTION REQUIRED`, the rollback restarted a binary that cannot bind
 either (case 2): free the port, then `systemctl restart skygate` and confirm
 `curl -fsS http://127.0.0.1:8080/healthz`.
+
+### 8.0.1 The unit is `active` but nothing listens on the port (B269)
+
+**Symptom.** `systemctl is-active skygate` prints `active`, the journal shows
+skygate's background work (the `dbmigrate-watchdog` ticks, `db_health` samples,
+DERP probes), but
+
+```bash
+sudo ss -ltnp | grep ':8080'
+# (nothing)
+curl -sS http://127.0.0.1:8080/healthz
+# curl: (7) Failed to connect
+```
+
+and every consumer of `/healthz` — the update applier, a reverse proxy, the
+operator's browser — reports a timeout. On a **pre-B269** binary this is the
+signature of a `main()` that never reached `http.ListenAndServe`: the listener was
+created **last**, so config parsing, the DB open (5 attempts with backoff ≈ 42 s),
+migrations, the headscale client, the ACL/Telegram/exit-rules wiring or the route
+table could stall or fail first and leave a mute, portless process that systemd
+still calls healthy. The self-updater said only
+`healthz did not report build '…' within 90s (last build: none)`.
+
+**What B269 changed.** From v1.5.12+:
+
+* the socket is bound at the **top** of `main()`, right after the config loads —
+  before the DB, before migrations, before any service. A **port conflict** is now
+  the first thing reported (`listen: bind :8080: address already in use`) and the
+  process exits non-zero instead of looking healthy for minutes;
+* the bound listener immediately serves a **provisional** `/healthz` and is handed
+  to the real router when routes are complete (one bind, no gap);
+* every boot phase is written to the journal as
+  `startup: phase=<name> +Nms (total=Nms)`.
+
+**Diagnose it in one command** — the last phase line is where it stopped:
+
+```bash
+sudo journalctl -u skygate --since "10 min ago" --no-pager | grep 'startup:'
+```
+
+| Last `startup:` line | Meaning / next step |
+|---|---|
+| `phase=config` | The config was not accepted — read the `config:`/`HEADSCALE_API_KEY is required`/`SKYGATE_JWT_SECRET is required` line right after it. |
+| `phase=db-open+migrate` | The DB is unreachable or a migration is running. Check `SKYGATE_DB` / `SKYGATE_DB_PATH` in `/etc/skygate/skygate.env` and that the DB file/dir is writable by the service user. |
+| `phase=headscale-client` | headscale is down or `HEADSCALE_URL` is wrong; boot continues, so pair it with the next phase line. |
+| `phase=services+telegram`, `phase=routes` | A service constructor or the route table is stuck — the line after it names the culprit. |
+| `phase=handover` | The router was swapped in; if `/healthz` still fails, the port is being answered by something else (`sudo ss -ltnp | grep ':8080'`). |
+| `startup: ready` | Boot finished. If `/healthz` fails anyway, you are probing the wrong port/host. |
+
+While the process is still booting, `/healthz` answers `200` with
+`"status":"ok"`, the build string, and diagnostics (`phase`, `stage`, `ready`,
+`timeline`):
+
+```bash
+curl -sS http://127.0.0.1:8080/healthz
+# {"status":"ok","build":"v1.5.12","phase":"db-open+migrate","stage":"boot",
+#  "ready":false,"uptime_ms":3036,...,"timeline":[{"name":"config","ms":43}]}
+```
+
+`"ready":false` means **the process is up but not finished starting**. The update
+applier refuses such a body as proof of a successful swap, so a boot that never
+completes still rolls back honestly instead of being declared deployed.
+
+A `panic` during boot is now reported with its stack and phase and exits `3`:
+
+```
+startup: PANIC in phase=services+telegram: runtime error: invalid memory address …
+goroutine 1 [running]:
+…
+```
 
 ### 8.1 Container cannot reach a hostname that resolves to `127.0.0.1`
 

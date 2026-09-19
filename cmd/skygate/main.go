@@ -8,55 +8,60 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
-	"runtime"
 	"os/exec"
 	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"skygate/internal/auth"
 	"skygate/internal/backup"
 	"skygate/internal/certsync"
+	"skygate/internal/cluster"
 	"skygate/internal/config"
+	"skygate/internal/db"
 	"skygate/internal/deploy"
+	"skygate/internal/deployrun"
+	"skygate/internal/derphealth"
 	"skygate/internal/dns"
+	"skygate/internal/elector"
 	"skygate/internal/expirewatch"
-	"skygate/internal/ha"
-	extcreds "skygate/internal/ha/dnsexternal"
 	adminsvc "skygate/internal/feature/admin"
 	authsvc "skygate/internal/feature/auth"
 	clusterapi "skygate/internal/feature/cluster"
 	exitrules "skygate/internal/feature/exit_rules"
-	mysvc "skygate/internal/feature/my"
 	"skygate/internal/feature/healthz"
-	"skygate/internal/headscale_version"
-	"skygate/internal/metrics"
-	"skygate/internal/release"
-	"skygate/internal/db"
-	"skygate/internal/watchdog"
-	"skygate/internal/elector"
-	"skygate/internal/cluster"
-	"skygate/internal/deployrun"
-	"skygate/internal/derphealth"
+	mysvc "skygate/internal/feature/my"
+	"skygate/internal/ha"
+	extcreds "skygate/internal/ha/dnsexternal"
 	"skygate/internal/handlers"
 	"skygate/internal/headscale"
-	"skygate/internal/middleware"
-	oidcsvc "skygate/internal/oidc"
+	"skygate/internal/headscale_version"
+	"skygate/internal/keynotify"
 	"skygate/internal/mesh"
+	"skygate/internal/metrics"
+	"skygate/internal/middleware"
 	"skygate/internal/module"
 	tailscalemod "skygate/internal/module/tailscale"
-	"skygate/internal/keynotify"
-	"skygate/internal/tokenrotate"
-	"skygate/internal/nodeownership"
 	"skygate/internal/monitoring"
-	"skygate/internal/sidecar"
+	"skygate/internal/nodeownership"
+	oidcsvc "skygate/internal/oidc"
 	"skygate/internal/ratelimit"
+	"skygate/internal/release"
+	"skygate/internal/sidecar"
+	"skygate/internal/startup"
 	"skygate/internal/telegram"
+	"skygate/internal/tokenrotate"
 	"skygate/internal/update"
+	"skygate/internal/watchdog"
 
 	// B194: import the steps/ package for its init() side
 	// effects (each step registers itself in the
@@ -112,6 +117,21 @@ func redactPGPassword(dsn string) string {
 		return dsn // no password (e.g. trust auth)
 	}
 	return scheme + creds[:colonIdx+1] + "***@" + host
+}
+
+// listenAddr turns the configured port into a listen address. B269: the
+// provisional listener binds BEFORE the database, migrations and service
+// construction, so a bind failure is the FIRST thing the process reports
+// (instead of a `listen: ...` line hours later, buried between goroutine
+// logs) and the operator's port is provably held from the second line of
+// the journal onward.
+func listenAddr(port string) (string, error) {
+	p := strings.TrimSpace(port)
+	n, err := strconv.Atoi(p)
+	if err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("invalid SKYGATE_PORT %q (want 1-65535)", port)
+	}
+	return ":" + p, nil
 }
 
 func main() {
@@ -412,6 +432,73 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
+	// B269: phase tracking for the whole startup sequence. A native install
+	// runs config → DB → migrations → services → routes → handover; any
+	// block in that window produced a process that systemd calls "active"
+	// while nothing listens on the HTTP port, and neither the journal tail
+	// nor /admin/update said where it stuck (live case: `healthz did not
+	// report build 'v1.5.11' within 90s (last build: none)` while the unit
+	// was `active` and the DB watchdogs were ticking). From here on the
+	// journal carries `startup: phase=...` lines, so the last one logged IS
+	// the blocker.
+	startup.SetBuild(version)
+	startup.Enter("config")
+
+	// B269 — the socket is bound HERE, before the DB, before migrations and
+	// before every service is constructed, so that:
+	//
+	//   * a port conflict is the first thing reported (pre-B269 the fatal
+	//     `listen:` line came last, after minutes of successful-looking
+	//     background work — the B268 applier's baseline instead saw only
+	//     "service 'skygate' is 'active'" and "nothing is listening");
+	//   * the self-updater's `healthz must report build X` check can pass
+	//     as soon as the process is up, because the provisional handler
+	//     already answers with the build string;
+	//   * requests are routed to the REAL mux as soon as routes are wired
+	//     (same listener, no gap, no second bind, no port takeover window).
+	//
+	// If binding fails we exit non-zero for the same fatal path, so a
+	// supervisor restarts us and the updater sees a non-active unit.
+	addr, err := listenAddr(cfg.Port)
+	if err != nil {
+		startup.SetFatal(err.Error())
+		log.Fatalf("listen: %v", err)
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		startup.SetFatal(fmt.Sprintf("bind %s: %v", addr, err))
+		log.Fatalf("listen: %v", err)
+	}
+	// The handler starts as the provisional startup handler and is
+	// replaced by the real mux once the route table is complete.
+	var handler atomic.Value
+	handler.Store(http.Handler(startup.StageHandler()))
+	bootSrv := &http.Server{
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler.Load().(http.Handler).ServeHTTP(w, r) }),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	releaseProvisional := sync.OnceFunc(func() { _ = bootSrv.Close() })
+	go func() {
+		if err := bootSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("startup: provisional listener stopped: %v", err)
+		}
+	}()
+	log.Printf("🌐 Skygate %s startup: listening on %s (provisional /healthz until routes are wired)", version, addr)
+
+	// B269 — a panic after this point is reported WITH its stack and the
+	// phase it happened in, and the listener is released so a supervisor
+	// sees a genuinely free port instead of a half-dead process holding it.
+	// os.Exit(3) marks a startup crash (systemd Restart=on-failure, and the
+	// updater sees a non-active unit) rather than the silent
+	// `active`-but-mute state B269 exists to eliminate.
+	defer func() {
+		if r := recover(); r != nil {
+			startup.SetFatal(fmt.Sprintf("panic in phase %q: %v", startup.Phase(), r))
+			log.Printf("startup: PANIC in phase=%s: %v\n%s", startup.Phase(), r, debug.Stack())
+			releaseProvisional()
+			os.Exit(3)
+		}
+	}()
 
 	// 2026-08-03: v0.32.29 — DERP classifier now reads
 	// NPM address + LAN CIDR from config (was hardcoded
@@ -432,9 +519,11 @@ func main() {
 	// during the B261 canary debugging. Report the detected dialect.
 	dialectKind := db.DetectDSN(cfg.DBDSN).Kind
 	log.Printf("   DB backend:    %s (DSN=%s...)", dialectKind, redactPGPassword(cfg.DBDSN))
+	startup.Enter("db-open+migrate")
 	var d *db.ResettableDB
 	pool, err := db.OpenDSNWithRetry(cfg.DBDSN, 5, 2*time.Second)
 	if err != nil {
+		startup.SetFatal(fmt.Sprintf("db open/migrate: %v", err))
 		log.Fatalf("db: %v", err)
 	}
 
@@ -450,6 +539,7 @@ func main() {
 	// (it has the DBMigrator interface that calls Reset).
 	d = db.NewResettableDB(pool)
 	defer d.Close()
+	startup.Enter("background-crons")
 
 	// B189 (v1.5.2) — DERP health probe cron. 5-min interval.
 	// One initial probe on start, then steady-state ticks.
@@ -515,6 +605,7 @@ func main() {
 	}
 
 	// Ensure headscale user for admin
+	startup.Enter("headscale-client")
 	hs := headscale.New(cfg.HeadscaleURL, cfg.HeadscaleKey)
 	if err := ensureHeadscaleUser(d.DB, hs, cfg.BootstrapAdminUser); err != nil {
 		log.Printf("warn: ensure headscale user: %v", err)
@@ -639,6 +730,7 @@ func main() {
 	}
 
 	app := handlers.New(d, hs, cfg.HeadscaleKey, cfg.JWTSecret, cfg.ControlURL, cfg.SSHKeyPath, cfg.SessionHours, cfg)
+	startup.Enter("services+telegram")
 	// 2026-07-27: v0.29.0 — initialize the auto-update
 	// state store. Loads any persisted state from the
 	// status file so a restart renders the most recent
@@ -696,18 +788,19 @@ func main() {
 	// existing Headplane instead of the local sidecar.
 	app.HeadplaneExternalURL = cfg.HeadplaneExternalURL
 
-		// 2026-07-10: rate limiting for /login (per-user + per-IP) and /api endpoints
-		// (per-IP). In-memory token bucket; auto-cleans stale entries.
-		app.RateLimiter = ratelimit.New()
-		go func() {
-			t := time.NewTicker(5 * time.Minute)
-			defer t.Stop()
-			for range t.C { app.RateLimiter.Sweep() }
-		}()
-		loginMW := middleware.RequireLoginLimit(app.RateLimiter)
-		apiMW := middleware.RequireAPILimit(app.RateLimiter)
-		_ = apiMW  // exposed for explicit endpoint wrapping (currently routes attach via authMW only)
-
+	// 2026-07-10: rate limiting for /login (per-user + per-IP) and /api endpoints
+	// (per-IP). In-memory token bucket; auto-cleans stale entries.
+	app.RateLimiter = ratelimit.New()
+	go func() {
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for range t.C {
+			app.RateLimiter.Sweep()
+		}
+	}()
+	loginMW := middleware.RequireLoginLimit(app.RateLimiter)
+	apiMW := middleware.RequireAPILimit(app.RateLimiter)
+	_ = apiMW // exposed for explicit endpoint wrapping (currently routes attach via authMW only)
 
 	app.Version = version
 	// v0.26.0 — set the BuildVersion once at boot, so
@@ -732,6 +825,7 @@ func main() {
 	}
 	log.Printf("🌐 Skygate %s (commit %s, built %s)", version, commit, buildTime)
 
+	startup.Enter("routes")
 	mux := http.NewServeMux()
 
 	// Public
@@ -743,7 +837,7 @@ func main() {
 	// + a Backend interface that *App satisfies via the capital-letter
 	// wrappers in internal/handlers/handlers_export.go.
 	authSvc := &authsvc.Service{
-		Backend:      app,
+		Backend: app,
 		// v1.5.0+ / B210 — pass the ResettableDB (not the
 		// captured *sql.DB) so the auth Service's s.dbc()
 		// helper transparently follows the B203 watchdog's
@@ -1069,7 +1163,7 @@ func main() {
 	// backup, headplane, derp, settings, update) are still in
 	// internal/handlers/ and will be moved in Phase B step 3b.
 	adminSvc := &adminsvc.Service{
-		Backend:                app,
+		Backend: app,
 		// v1.5.0+ / B208 — pass the ResettableDB (not the
 		// captured *sql.DB) so the admin Service's s.dbc()
 		// helper transparently follows the B203 watchdog's
@@ -1095,8 +1189,8 @@ func main() {
 		// per-user control plane admin (set/clear/provision/
 		// decommission) encrypts the API key with this
 		// secret + invalidates the per-URL HSForUser cache.
-		SecretKeyHex:           app.SecretKeyHex,
-		InvalidateHSCacheFn:    app.InvalidateHSCache,
+		SecretKeyHex:        app.SecretKeyHex,
+		InvalidateHSCacheFn: app.InvalidateHSCache,
 		// refactor-v0.30 Phase B step 3b.3 (2026-07-29):
 		// /admin/exit-nodes needs the default SSH key path
 		// (shown as the "ssh_key_path" form default) + a
@@ -1141,7 +1235,7 @@ func main() {
 			"SKYGATE_TS_AUTHKEY_FILE",
 			tailscaleEnvOr("SKYGATE_TS_AUTHKEY_PATH", "/data/ts/authkey"),
 		),
-		TailscaleLoginServer:  tailscaleEnvOr("SKYGATE_TS_LOGIN_SERVER", "https://head.example.com"),
+		TailscaleLoginServer: tailscaleEnvOr("SKYGATE_TS_LOGIN_SERVER", "https://head.example.com"),
 		// B251: hostname `skygate-host` is reserved for the
 		// single VM that runs the skygate container itself
 		// (registered via /admin/tailscale). The previous
@@ -1149,7 +1243,7 @@ func main() {
 		// the v0.33.1.9 era; v1.5.2 collapses it to the
 		// reserved name so BackfillInfra can attribute the
 		// node to `infra` strictly on hostname equality.
-		TailscaleHostname:     tailscaleEnvOr("SKYGATE_TS_HOSTNAME", "skygate-host"),
+		TailscaleHostname: tailscaleEnvOr("SKYGATE_TS_HOSTNAME", "skygate-host"),
 
 		// v1.5.0 / B149 — /admin/ha page.
 		//
@@ -1313,8 +1407,8 @@ func main() {
 	// svi polygon has PG 18.6 on 13.66 (B-mod-pg-bypass +
 	// skygate_test user + DSN), so we can re-enable.
 	moduleMgr := module.NewManager(
-		"/var/lib/skygate/modules",  // dataDir: per-module state
-		"/var/run/skygate/modules",  // socketDir: per-module sockets (unused in B-mod-core)
+		"/var/lib/skygate/modules", // dataDir: per-module state
+		"/var/run/skygate/modules", // socketDir: per-module sockets (unused in B-mod-core)
 		func(action, detail string) {
 			// Best-effort audit write. We don't fail
 			// the boot if the audit log is unavailable
@@ -1358,7 +1452,7 @@ func main() {
 	// wrappers route through it via exitRulesRunner (see
 	// handlers.go SetExitRulesService).
 	exitRulesSvc := &exitrules.Service{
-		Backend:  app,
+		Backend: app,
 		// v1.5.0+ / B210 — pass the ResettableDB (not the
 		// captured *sql.DB) so the exit-rules Service's
 		// s.dbc() helper transparently follows the B203
@@ -1437,10 +1531,10 @@ func main() {
 		// hot-reload. Pre-B210 every /my/* handler 500'd
 		// after the watchdog's first swap (devices page
 		// empty, audit export broken, etc.).
-		DB:      d,
-		HS:      app.HS,
-		Cfg:     app.Config(),
-		I18n:    app.I18n,
+		DB:   d,
+		HS:   app.HS,
+		Cfg:  app.Config(),
+		I18n: app.I18n,
 		// refactor-v0.30 Phase B step 5 — Notifier not
 		// used by the 3 handlers in 5a (none of them
 		// sends an operator alert). Wired for the
@@ -2327,14 +2421,18 @@ func main() {
 	// accept_routes column without touching the other fields.
 	mux.Handle("POST /admin/exit-nodes/{node_id}/accept-routes", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeSetAcceptRoutes)))
 
+	// B269: the real server takes over the listener bound at the top of
+	// main(); Addr/ListenAndServe are deliberately unused so nothing can
+	// re-bind (and re-fail) on a port we already own.
+	startup.Enter("handover")
 	srv := &http.Server{
-		Addr:              ":" + cfg.Port,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      30 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	startup.Enter("background-services")
 
 	// 2026-07-17: v0.16.7 — per-user subnet sidecar
 	// auto-approver. Hoisted before the RealNotifier block
@@ -2484,112 +2582,121 @@ func main() {
 		log.Printf("expirewatch: SKYGATE_EXPIREWATCH_ENABLED=false, skipping startup goroutine")
 	}
 
-		// 2026-07-11: Telegram bot — always arm the RealNotifier so a
-		// hot-swap (admin saving a token at runtime) takes effect without
-		// restart. RealNotifier.SendTelegram no-ops when Configured()==false,
-		// and Run() sleeps-and-rechecks every 5s when the DB has no token.
-		// No more "boot-time gate" on app.Notifier — it's always non-nil.
-		//
-		// The block was anonymous ({}) in v0.16.x and earlier — it
-		// served no scoping purpose. v0.20.0 makes it a top-level
-		// var so the headscale-update-monitor wiring (later in this
-		// function) can call rn.SetHeadscaleUpdateMonitor(hsMon).
-		rn := telegram.NewRealNotifier(d.DB)
-			// 2026-07-11: Phase 3 (/quota) needs per-user rule limits
-			// to render "user X used N of M" rather than just N. Set
-			// once at boot; the BotEnv snapshot is per-message so a
-			// future reload still works without restart.
-			rn.SetLimits(cfg.UserMaxRules, cfg.MaxRulesPerDevice)
-			// 2026-07-11: Phase 4 (/version) needs the build label
-			// (the same one app.Version holds for the dashboard).
-			rn.SetVersion(app.Version)
-			// 2026-07-13: Этап 11 part 1 — wire the headscale
-			// client so /add_device can issue real preauth keys
-			// from the bot. Reuse the same *headscale.Client that
-			// the web handlers use (hs was constructed at line 77)
-			// so both surfaces share one source of truth.
-			rn.SetHS(hs)
-			// 2026-07-17: v0.16.7 — wire the sidecar
-			// manager (created above) so /mysubnet provision
-			// can issue per-user preauth keys in chat. The
-			// manager's own Run() goroutine is the auto-
-			// approver for tag:subnet-router nodes; this
-			// just hands the manager to the bot's env.
-			rn.SetSidecar(sidecarMgr)
-			// 2026-07-20: v0.20.0 — headscale-update-monitor.
-			// Wired below (after the monitor's struct is
-			// created) so the variable is in scope; the
-			// SetHeadscaleUpdateMonitor call lives outside
-			// this block where `hsMon` is reachable.
-			// 2026-07-16: v0.12.1 — per-user headscale-client
-			// routing. The closure binds app so the bot calls
-			// the same App.HSForUser the web handlers use
-			// (which reads portal_users.headscale_url +
-			// headscale_api_key_enc and falls through to the
-			// global default when no override is set). Single-
-			// plane deploys still work — App.HSForUser returns
-			// app.HS when there's no per-user row.
-			rn.SetHSForUser(app.HSForUserFn)
-			// 2026-07-16: v0.13.0 — per-user plane-URL routing
-			// (parallel to SetHSForUser). Returns the
-			// headscale_url the user is on so the bot can
-			// scope acl.GenerateACLForPlane to the right
-			// identities. Returns "" for users on the global
-			// default plane, which preserves v0.12.0
-			// behaviour.
-			rn.SetPlaneURLForUser(app.PlaneURLForUser)
-			// 2026-07-13: Этап 11 part 2b — per-device and total
-			// rule caps for /add_rule. Mirrors the web form's
-			// PostMyExitRule checks. Zero = no cap (same convention
-			// as SetLimits above).
-			rn.SetRuleCaps(cfg.MaxRulesPerDevice, cfg.MaxTotalRules)
-			app.Notifier = rn
-			// 2026-08-10: v0.33.1.38 — Notifier order bug fix.
-			// adminSvc was constructed at line 413 (way before
-			// rn was even created), so adminSvc.Notifier captured
-			// the initial app.Notifier value (NoopNotifier{}
-			// from handlers.New). After this app.Notifier = rn
-			// the admin handlers (including the /admin/telegram
-			// "Send test" handler) still saw the stale
-			// NoopNotifier and returned "Бот не сконфигурирован —
-			// Notifier в no-op режиме" even though the bot WAS
-			// configured. Re-bind here so the admin handlers
-			// pick up the RealNotifier. Other services
-			// (releaseMon, exitMon, hsMon) are constructed
-			// below this point, so they pick up the new value
-			// automatically.
-			adminSvc.Notifier = app.Notifier
-			// 2026-07-13: split the startup message by what's
-			// actually configured. The polling gate in Run()
-			// uses Configured() which is now token-only, so the
-			// bot can start receiving /login as soon as the
-			// admin saves the token (chat_id is needed only
-			// for outgoing notifications, not for receiving
-			// commands).
-			if _, _, ok, _ := db.LoadTelegramSendTarget(d.DB); ok {
-				log.Printf("🤖 Telegram bot fully configured (token + chat_id); starting getUpdates loop")
-			} else if _, _, ok, _ := db.LoadTelegramToken(d.DB); ok {
-				log.Printf("🤖 Telegram bot token set (no chat_id yet — receive-only); starting getUpdates loop. Use the 'Send test' button on /admin/telegram to populate chat_id.")
-			} else {
-				log.Printf("🤖 Telegram bot not configured; hot-swap armed (will re-check DB on every send/poll)")
-			}
-			go rn.Run(ctx)
-			// 2026-07-15: Этап 14 v13 — register the per-language
-			// command menu. Best-effort: a Telegram-side failure
-			// is logged inside SetMyCommandsAll and the bot
-			// keeps running without a menu. The user can still
-			// type commands from memory; the menu is a
-			// convenience, not a gate.
-			go func() {
-				if err := rn.SetMyCommandsAll(context.Background(), telegram.DefaultMyCommandsSpec); err != nil {
-					log.Printf("🤖 setMyCommandsAll: %v", err)
-				}
-			}()
+	// 2026-07-11: Telegram bot — always arm the RealNotifier so a
+	// hot-swap (admin saving a token at runtime) takes effect without
+	// restart. RealNotifier.SendTelegram no-ops when Configured()==false,
+	// and Run() sleeps-and-rechecks every 5s when the DB has no token.
+	// No more "boot-time gate" on app.Notifier — it's always non-nil.
+	//
+	// The block was anonymous ({}) in v0.16.x and earlier — it
+	// served no scoping purpose. v0.20.0 makes it a top-level
+	// var so the headscale-update-monitor wiring (later in this
+	// function) can call rn.SetHeadscaleUpdateMonitor(hsMon).
+	rn := telegram.NewRealNotifier(d.DB)
+	// 2026-07-11: Phase 3 (/quota) needs per-user rule limits
+	// to render "user X used N of M" rather than just N. Set
+	// once at boot; the BotEnv snapshot is per-message so a
+	// future reload still works without restart.
+	rn.SetLimits(cfg.UserMaxRules, cfg.MaxRulesPerDevice)
+	// 2026-07-11: Phase 4 (/version) needs the build label
+	// (the same one app.Version holds for the dashboard).
+	rn.SetVersion(app.Version)
+	// 2026-07-13: Этап 11 part 1 — wire the headscale
+	// client so /add_device can issue real preauth keys
+	// from the bot. Reuse the same *headscale.Client that
+	// the web handlers use (hs was constructed at line 77)
+	// so both surfaces share one source of truth.
+	rn.SetHS(hs)
+	// 2026-07-17: v0.16.7 — wire the sidecar
+	// manager (created above) so /mysubnet provision
+	// can issue per-user preauth keys in chat. The
+	// manager's own Run() goroutine is the auto-
+	// approver for tag:subnet-router nodes; this
+	// just hands the manager to the bot's env.
+	rn.SetSidecar(sidecarMgr)
+	// 2026-07-20: v0.20.0 — headscale-update-monitor.
+	// Wired below (after the monitor's struct is
+	// created) so the variable is in scope; the
+	// SetHeadscaleUpdateMonitor call lives outside
+	// this block where `hsMon` is reachable.
+	// 2026-07-16: v0.12.1 — per-user headscale-client
+	// routing. The closure binds app so the bot calls
+	// the same App.HSForUser the web handlers use
+	// (which reads portal_users.headscale_url +
+	// headscale_api_key_enc and falls through to the
+	// global default when no override is set). Single-
+	// plane deploys still work — App.HSForUser returns
+	// app.HS when there's no per-user row.
+	rn.SetHSForUser(app.HSForUserFn)
+	// 2026-07-16: v0.13.0 — per-user plane-URL routing
+	// (parallel to SetHSForUser). Returns the
+	// headscale_url the user is on so the bot can
+	// scope acl.GenerateACLForPlane to the right
+	// identities. Returns "" for users on the global
+	// default plane, which preserves v0.12.0
+	// behaviour.
+	rn.SetPlaneURLForUser(app.PlaneURLForUser)
+	// 2026-07-13: Этап 11 part 2b — per-device and total
+	// rule caps for /add_rule. Mirrors the web form's
+	// PostMyExitRule checks. Zero = no cap (same convention
+	// as SetLimits above).
+	rn.SetRuleCaps(cfg.MaxRulesPerDevice, cfg.MaxTotalRules)
+	app.Notifier = rn
+	// 2026-08-10: v0.33.1.38 — Notifier order bug fix.
+	// adminSvc was constructed at line 413 (way before
+	// rn was even created), so adminSvc.Notifier captured
+	// the initial app.Notifier value (NoopNotifier{}
+	// from handlers.New). After this app.Notifier = rn
+	// the admin handlers (including the /admin/telegram
+	// "Send test" handler) still saw the stale
+	// NoopNotifier and returned "Бот не сконфигурирован —
+	// Notifier в no-op режиме" even though the bot WAS
+	// configured. Re-bind here so the admin handlers
+	// pick up the RealNotifier. Other services
+	// (releaseMon, exitMon, hsMon) are constructed
+	// below this point, so they pick up the new value
+	// automatically.
+	adminSvc.Notifier = app.Notifier
+	// 2026-07-13: split the startup message by what's
+	// actually configured. The polling gate in Run()
+	// uses Configured() which is now token-only, so the
+	// bot can start receiving /login as soon as the
+	// admin saves the token (chat_id is needed only
+	// for outgoing notifications, not for receiving
+	// commands).
+	if _, _, ok, _ := db.LoadTelegramSendTarget(d.DB); ok {
+		log.Printf("🤖 Telegram bot fully configured (token + chat_id); starting getUpdates loop")
+	} else if _, _, ok, _ := db.LoadTelegramToken(d.DB); ok {
+		log.Printf("🤖 Telegram bot token set (no chat_id yet — receive-only); starting getUpdates loop. Use the 'Send test' button on /admin/telegram to populate chat_id.")
+	} else {
+		log.Printf("🤖 Telegram bot not configured; hot-swap armed (will re-check DB on every send/poll)")
+	}
+	go rn.Run(ctx)
+	// 2026-07-15: Этап 14 v13 — register the per-language
+	// command menu. Best-effort: a Telegram-side failure
+	// is logged inside SetMyCommandsAll and the bot
+	// keeps running without a menu. The user can still
+	// type commands from memory; the menu is a
+	// convenience, not a gate.
+	go func() {
+		if err := rn.SetMyCommandsAll(context.Background(), telegram.DefaultMyCommandsSpec); err != nil {
+			log.Printf("🤖 setMyCommandsAll: %v", err)
+		}
+	}()
 	defer stop()
 
 	go func() {
 		log.Printf("🌐 ready at http://localhost:%s", cfg.Port)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		// B269 — the socket has been held since the top of main() (the
+		// provisional startup handler answered /healthz while routes were
+		// being wired). Swapping the handler is the handover: no second
+		// bind, no window in which the port is unowned, and therefore no
+		// way for the updater's build check or the applier's baseline to
+		// observe a running unit with nothing listening.
+		handler.Store(http.Handler(mux))
+		startup.MarkReady()
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			startup.SetFatal(fmt.Sprintf("http serve: %v", err))
 			log.Fatalf("listen: %v", err)
 		}
 	}()
@@ -2700,13 +2807,13 @@ func main() {
 	// operator's actual GitHub repo; the previous
 	// "skygate-operator/skygate" hardcode http.StatusNotFound'd).
 	releaseMon := &release.Monitor{
-		HTTP:      &http.Client{Timeout: 10 * time.Second},
-		Current:   version,
-		Notified:  make(map[string]bool),
-		Notifier:  app.Notifier,
+		HTTP:       &http.Client{Timeout: 10 * time.Second},
+		Current:    version,
+		Notified:   make(map[string]bool),
+		Notifier:   app.Notifier,
 		CheckEvery: 1 * time.Hour,
-		Owner:     cfg.GitHubOwner,
-		Repo:      cfg.GitHubRepo,
+		Owner:      cfg.GitHubOwner,
+		Repo:       cfg.GitHubRepo,
 	}
 	releaseMon.Start(ctx)
 	// 2026-07-15: v0.14.0 — expose the monitor on App so
@@ -2740,7 +2847,7 @@ func main() {
 		// Off by default; the explicit
 		// /admin/devices "Sync from headscale" button is
 		// still the recommended path.
-		AutoSync:     cfg.ExitNodeAutoSync,
+		AutoSync: cfg.ExitNodeAutoSync,
 	}
 	// 2026-07-31: v0.32.13 — gate exitMon.Start on
 	// cfg.ExitNodeCheckInterval > 0. Pre-fix the monitor
@@ -3171,11 +3278,12 @@ func runBackupSubcommand() error {
 // truth (the `global_settings` table).
 //
 // Output format (one per line):
-//   destination=<path-or-URL>
-//   protocol=<local|smb|nfs|sftp>
-//   enabled=<true|false>
-//   last_status=<ok|fail|running|"">
-//   last_archive=<basename|"">
+//
+//	destination=<path-or-URL>
+//	protocol=<local|smb|nfs|sftp>
+//	enabled=<true|false>
+//	last_status=<ok|fail|running|"">
+//	last_archive=<basename|"">
 //
 // Missing keys print with empty value (the calling script
 // treats empty destination as "backup not configured" → no-op).
@@ -3216,7 +3324,8 @@ func runBackupShowConfig() error {
 // <archive> on <date>".
 //
 // Args (from os.Args[2:]):
-//   [0] = archive basename (e.g. "skygate-full-20260818_030000.tar.gz")
+//
+//	[0] = archive basename (e.g. "skygate-full-20260818_030000.tar.gz")
 func runBackupVerifyOK(args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -3280,8 +3389,9 @@ func runBackupVerifyOK(args []string) error {
 // for operators who want alerts.
 //
 // Args (from os.Args[2:]):
-//   [0] = archive basename (for the log detail)
-//   [1] = error message (from sqlite3 output)
+//
+//	[0] = archive basename (for the log detail)
+//	[1] = error message (from sqlite3 output)
 func runBackupVerifyFail(args []string) error {
 	cfg, err := config.Load()
 	if err != nil {

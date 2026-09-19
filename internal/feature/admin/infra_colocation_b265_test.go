@@ -99,7 +99,7 @@ func TestHostIdentities_DedupAndLowercase(t *testing.T) {
 	ids := hostIdentities("skygate-host", "192.0.2.69", "MyHost", nil)
 	seen := map[string]string{}
 	for _, id := range ids {
-		if id.Value != "" && id.Value == id.Value { // values are already lower-cased by the helper
+		if id.Value != "" { // empty values are dropped by the helper
 			if _, dup := seen[id.Value]; dup {
 				t.Errorf("hostIdentities returned the duplicate value %q", id.Value)
 			}

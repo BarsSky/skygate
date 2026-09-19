@@ -12,6 +12,95 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.12 — the self-updater explains a failed swap (B268) + the socket is bound before anything else (B269)
+
+**Date:** 2026-09-19 · **Base:** `v1.5.11` → this tag · **Compatibility:** no schema,
+config or API change.
+
+This release is the answer to one operator report: a **native (systemd)** install on a
+remote VM reported
+
+```
+systemctl is-active skygate   →  active
+ss -ltnp | grep :8080         →  (nothing)
+/admin/update                 →  ROLLBACK … verdict: rolled_back
+                                 (healthz did not report build 'v1.5.11' within 90s
+                                  (last build: none))
+```
+
+The process was demonstrably alive (its `dbmigrate-watchdog` and `db_health` samplers
+kept logging) but nothing was listening, and no message anywhere said why. Both halves
+of that are now closed.
+
+### B269 — the socket is bound first, and every boot phase is announced
+
+`main()` used to be a long chain — config → DB open (5 retries with backoff ≈ 42 s) →
+migrations → headscale client → ACL/Telegram/exit-rules services → the whole route
+table → **then** `http.ListenAndServe`. Any slow or fatal step in that chain left an
+`active` unit with **no port at all**, which is exactly what the report shows: a
+portless process that systemd calls healthy, with the failure textually invisible.
+
+1. **The listener is created at the top of `main()`**, immediately after the config
+   loads and *before* the DB. A port conflict (`address already in use`, a
+   `docker-proxy` from a second instance, a stale unit) is now the **first** thing
+   reported, exits non-zero, and is attributed — instead of appearing minutes later
+   after a pile of healthy-looking background work.
+2. **The bound listener serves a provisional `/healthz`** (`status:ok` + `build` +
+   `phase` + `stage` + `ready` + `timeline`) and is handed to the real router through
+   an `atomic.Value` swap once the routes are complete. One bind, no second
+   `ListenAndServe`, no window in which the port is unowned — so the self-updater's
+   build check can pass the moment the process is up, and no other process can slip in.
+3. **Every phase is logged** as `startup: phase=<name> +Nms (total=Nms)` — `config`,
+   `db-open+migrate`, `headscale-client`, `background-crons`, `services+telegram`,
+   `routes`, `handover`, then `startup: ready`. The **last** `startup:` line in the
+   journal is where the process is (or died):
+
+   ```bash
+   sudo journalctl -u skygate --since "10 min ago" --no-pager | grep 'startup:'
+   ```
+
+4. **A panic is no longer silent**: the phase, the panic value and a full
+   `debug.Stack()` are logged, the provisional `/healthz` answers `503` + `error`
+   (never a `200` for a dead boot), and the process exits `3` so systemd and the
+   updater both see a failed start.
+
+Read the failing `/healthz` as a status line: `"ready":false` means *up but still
+starting* — and that marker is what the applier refuses to accept as proof of a
+deployed build (B268 below).
+
+### B268 — the applier says WHY a swap failed
+
+The old verdict was true for at least four different causes and named none of them.
+`deploy/skygate-apply-update.sh` now:
+
+* **smoke-tests the extracted binary** (`--version`, bounded by `timeout`) *before*
+  the swap and refuses to install an artifact that cannot execute;
+* logs a **pre-swap health baseline** — which build answers on the health URL, with
+  the listener owning that port — and **warns** when it disagrees with `FROM_VERSION`
+  (the two-instances / `docker-proxy`-owns-8080 class, where post-restart
+  verification can never succeed);
+* logs a **`DIAG:` block** (unit state, listener via `ss`/`netstat`, binary on disk,
+  15-line `journalctl -u` tail) before **every** rollback;
+* splits the verdict into `the service did not come up: … never returned a healthy
+  body within Ns` vs `healthz did not report build X … (last build: Y)`, both
+  carrying the unit state;
+* with B269, also **refuses a body carrying `"ready":false`** and logs the boot phase
+  it is stuck in, so "socket first" cannot make the updater blind to a boot that
+  never finishes.
+
+### Contracts
+
+* **B269** — `scripts/check_b269_startup_truth.sh` (18 contracts: source order,
+  phase coverage, panic/fatal handling, plus a behavioural half that builds the real
+  binary, points it at an unopenable DB and asserts `/healthz` still answers `200`
+  + build + `phase:"db-open+migrate"` + `ready:false` while the process stays alive)
+  and `internal/startup/startup_test.go`.
+* **B268** — `scripts/check_b268_applier_failure_diagnostics.sh` (11 contracts, incl.
+  a behavioural run against a local mirror with stubbed `systemctl`/`ss`/`journalctl`
+  /`curl`) and `internal/update/applier_b268_test.go` (7 order-pinning contracts).
+
+Operator procedure: `docs/troubleshooting.md` §8.0 (B268) and §8.0.1 (B269).
+
 ## v1.5.11 — route approval must not require docker (native installs)
 
 **Date:** 2026-09-19 · **Base:** `v1.5.10` → this tag · **Compatibility:** no schema,

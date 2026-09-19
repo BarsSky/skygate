@@ -246,12 +246,23 @@ health_body() {
 # Requires a healthy body AND a build string that belongs to the
 # expected release (exact tag, or "<tag>+<commit>" as the release
 # pipeline's ldflags produce). A bare HTTP 200 is NOT enough.
+#
+# B269: since the socket is now bound at the very top of main() (so a
+# port conflict fails immediately and the process always has an HTTP
+# face), /healthz starts answering with the NEW build string while the
+# DB and the services are still being constructed. The body therefore
+# carries an explicit boot marker — `"ready":false` — until the real mux
+# takes over. A body carrying it is a live process that has NOT finished
+# starting: useful to log, never enough to call a swap successful.
 build_matches() {
     _body="$1"
     _want="$2"
     case "$_body" in
         *'"status":"ok"'*) ;;
         *) return 1 ;;
+    esac
+    case "$_body" in
+        *'"ready":false'*) return 1 ;;
     esac
     _build="$(printf '%s' "$_body" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')"
     [ -n "$_build" ] || return 1
@@ -263,10 +274,18 @@ build_matches() {
     return 1
 }
 
+# boot_phase <body> — the startup phase reported by the provisional
+# /healthz, or "" once the real handler owns the port. Logged so a
+# stalled boot names its blocker in the applier's own log.
+boot_phase() {
+    printf '%s' "$1" | sed -n 's/.*"phase":"\([^"]*\)".*/\1/p'
+}
+
 # wait_for_build <expected tag>
 wait_for_build() {
     _want="$1"
     _i=0
+    _started=0
     while [ "$_i" -lt "$HEALTH_TIMEOUT" ]; do
         _i=$((_i + 1))
         _body="$(health_body || true)"
@@ -275,8 +294,21 @@ wait_for_build() {
             log "healthz reports build '$LAST_BUILD' after ${_i}s"
             return 0
         fi
-        if [ -n "$_body" ] && [ "$_i" -eq 1 ]; then
-            log "healthz is up but reports build '${LAST_BUILD:-none}', waiting for '$_want'"
+        # B269: a body with "ready":false means the new binary holds the
+        # port and is still building its services — say so (naming the
+        # phase) instead of the misleading "reports build ... waiting".
+        if [ -n "$_body" ]; then
+            _phase="$(boot_phase "$_body")"
+            if [ -n "$_phase" ]; then
+                if [ "$_started" -eq 0 ]; then
+                    log "healthz is answering (build '${LAST_BUILD:-none}') but the service is still starting: phase='$_phase' (deploy/skygate-apply-update.sh waits for 'ready' to become true)"
+                    _started=1
+                elif [ $((_i % 10)) -eq 0 ]; then
+                    log "still starting after ${_i}s: phase='$_phase'"
+                fi
+            elif [ "$_i" -eq 1 ]; then
+                log "healthz is up but reports build '${LAST_BUILD:-none}', waiting for '$_want'"
+            fi
         fi
         sleep "$HEALTH_POLL_INTERVAL"
     done
@@ -721,6 +753,11 @@ if [ -n "$_pre_body" ]; then
             log "WARN: the health endpoint reports '${LAST_BUILD:-}' but this install believes it runs '$FROM_VERSION' — a SECOND skygate instance (container/other unit) may own that port, in which case value verification after the restart cannot succeed"
             log "WARN: listener on port $(health_port): $(port_owner | head -2 | tr '\n' ' ')"
         fi
+    else
+        # B269: answering with "ready":false is not a healthy baseline —
+        # it is an instance that is itself mid-boot. Say so explicitly:
+        # this is the exact signature of the busy-port class B268 hunts.
+        log "WARN: pre-swap health baseline: $HEALTH_URL is answering but not ready (build '${LAST_BUILD:-unknown}', phase='$(boot_phase "$_pre_body")') — this instance is still starting up; the post-restart verification may race it"
     fi
 else
     log "pre-swap health baseline: $HEALTH_URL is not answering while unit '$SERVICE' is '$(service_state)' — the update will fail its verification unless the restart brings this URL up"
