@@ -156,7 +156,6 @@ if command -v "$GO" >/dev/null 2>&1 || [[ -x "$GO" ]]; then
   else
     check "S: go build ./... succeeds" "pass" "pass"
   fi
-  fi
 else
   echo "[skip] S: go not on PATH — run on a host with go installed"
 fi
