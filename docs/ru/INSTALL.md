@@ -147,9 +147,10 @@ sudo bash deploy/install-debian.sh --db-type=sqlite
 
 Переменные установщика: `SKYGATE_VERSION` (`latest` или тег), `SKYGATE_PORT`,
 `SKYGATE_USER`, `SKYGATE_DATA_DIR`, `SKYGATE_ETC_DIR`, `SKYGATE_BIN`,
-`SKYGATE_SKIP_VERIFY=1` (не скачивать контрольные суммы — нужно для релизов
-без ассета `SHA256SUMS`, т.е. ≤ v1.5.8), `SKYGATE_TS_*` (модуль Tailscale,
-опционально).
+`SKYGATE_SKIP_VERIFY=1` (полностью пропустить проверку контрольных сумм — нужно
+только для изолированных хостов: релиз без ассета `SHA256SUMS`, т.е. ≤ v1.5.8,
+установщик проверяет по digest из GitHub API автоматически), `SKYGATE_TS_*`
+(модуль Tailscale, опционально).
 
 Далее: заполнить `/etc/skygate/skygate.env` и
 
@@ -222,8 +223,14 @@ sudo install -m 0755 skygate /usr/local/bin/skygate
 
 Запустите под своим супервизором либо укажите на бинарь существующий
 systemd/OpenRC-юнит, затем выполните §10. **Проверяйте контрольную сумму до
-установки** — если у релиза нет `SHA256SUMS` (≤ v1.5.8), возьмите digest из
-GitHub Releases API вместо отказа от проверки.
+установки** — начиная с v1.5.9 релиз всегда прикладывает `SHA256SUMS`
+(`path: dist/checksums` в `release.yml`, это фикс B262). Установщики также
+самостоятельно обрабатывают релиз **без** этого ассета (v1.5.3, v1.5.6 – v1.5.8):
+они переключаются на per-asset `digest: sha256:<hex>` из GitHub Releases API и
+падают с явной ошибкой только если нет ни одного источника. Поэтому
+`SKYGATE_SKIP_VERIFY=1` — крайняя мера для по-настоящему изолированного хоста, а
+не требование для старых релизов. Обе ветки закреплены контрактом
+`scripts/check_b261_native_self_update.sh`, секция P.
 
 ## J. Windows
 
@@ -296,7 +303,7 @@ runtime-каталоги; `/var/lib/skygate` сохраняется, если н
 | `docker compose` игнорирует значения `.env` | запуск из другого каталога (или с путём); сначала `cd` в каталог проекта либо укажите `--env-file` |
 | Установка обрывается сразу после «installed: /usr/local/bin/skygate» | до v1.5.9: отсутствие `xxd` на минимальном хосте ломало `write_env_file`; обновите установщик или поставьте `xxd`/`openssl` |
 | `/admin/tailscale`: `read auth key: … no such file` | контейнерный режим Tailscale без файла ключа; вставьте ключ на странице или задайте `SKYGATE_TS_AUTHKEY_FILE=/dev/null`, чтобы отключить осознанно |
-| Проверка суммы падает / `SHA256SUMS` 404 | релизы ≤ v1.5.8 не публикуют `SHA256SUMS`; используйте digest из GitHub API либо осознанно `SKYGATE_SKIP_VERIFY=1` |
+| Проверка суммы падает / `SHA256SUMS` 404 | начиная с v1.5.9 установщик сам переключается на digest из GitHub API; релизы ≤ v1.5.8 вообще не публикуют `SHA256SUMS`, и именно этот digest их и проверяет (`SKYGATE_SKIP_VERIFY=1` — только осознанно) |
 | `no matching manifest for linux/amd64` | скачан ARM-тег; образ только amd64 |
 | `docker pull` отвергает тег | теги GHCR регистрозависимы и обязаны быть в нижнем регистре (`ghcr.io/barssky/…`) |
 | Страница открывается, но все устройства offline | правило firewall/DOCKER-USER блокирует путь прокси → headscale (см. `docs/LESSONS.md`) |

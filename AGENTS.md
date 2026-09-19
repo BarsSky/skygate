@@ -345,7 +345,7 @@ authoritative description is the block's `run_check` entry plus its
 - **B261.4** — --migrate-only does not exist: it is the
 - **B261.5** — SKYGATE_UPDATE_BASE_URL (root-owned, https:// or
 - **B262** — (v1.5.9, 2026-09-18) OpenRC/Alpine install kind + the missing
-- **B263** — (v1.5.9, 2026-09-19) single-file release notes: the `release` job (which had **no checkout step at all** — the real reason v1.5.8's body was empty) now checks `RELEASE-NOTES.md` out sparsely, extracts its `## vX.Y.Z` section into the GitHub Release body, always sets `notes_path`, and falls back to a generated commit list. Contracts in `scripts/check_b261_native_self_update.sh` section O (O–O8)
+- **B263** — (v1.5.9, 2026-09-19) single-file release notes + the integrity chain for a checksum-less release: the `release` job (which had **no checkout step at all** — the real reason v1.5.8's body was empty) now checks `RELEASE-NOTES.md` out sparsely, extracts its `## vX.Y.Z` section into the GitHub Release body, always sets `notes_path`, and falls back to a generated commit list; the **installers** fall back to the GitHub per-asset `digest: sha256:<hex>` when a release publishes no `SHA256SUMS` (v1.5.3, v1.5.6–v1.5.8) instead of aborting. Contracts in `scripts/check_b261_native_self_update.sh` sections O (O–O8) and P (P, P2a–d, P3)
 - **B3** — docs docs/disaster-recovery.md "See also"
 - **B31** — B17/B18/B19/B24/B31/B36-B40/B42/B54/B82-B85/B88/B93/B95 from
 - **B32** — verify-pre check (updated in the same PR) —

@@ -19,7 +19,7 @@
 **Compatibility:** no schema break, no config-format break, no API break. A docker
 deployment updates exactly as before (`git pull` + `docker compose up -d
 --force-recreate`, or the in-app image-pull button). The native self-update path is
-new — read §3 before using it.
+new — read §4 before using it.
 
 ### Why this release exists
 
@@ -37,7 +37,7 @@ Three statements were true before it and are false after it:
 |---|---|---|---|
 | **Native self-update** | **B261** | Root-owned applier + `skygate-update.path`/`.service` pair, written by every native installer | `/admin/update` → *Update now* works on systemd, OpenRC and bare hosts |
 | | **B261.1** | Strip the `sqlite:` scheme in the SQLite open path (+ a test that performs a real file open) | native SQLite installs boot at all |
-| | **B261.2** | Verify the artifact against `SHA256SUMS`; if the release has none, against the GitHub Releases API per-asset `digest: sha256:<hex>`; with neither, **fail closed** | the checksum-less v1.5.6–v1.5.8 releases stay installable |
+| | **B261.2** | Verify the artifact against `SHA256SUMS`; if the release has none, against the GitHub Releases API per-asset `digest: sha256:<hex>`; with neither, **fail closed** — the applier since v1.5.9's cycle, and now the **installers** too (they used to abort an install of a checksum-less release and demand `SKYGATE_SKIP_VERIFY=1`) | the checksum-less v1.5.3 / v1.5.6–v1.5.8 releases install and verify without an operator override |
 | | **B261.3** | Work dir `0755` (was `mktemp`'s `0700`, which `migrate-only` could not traverse as the service user) | the pre-swap migration actually runs |
 | | **B261.4** | `migrate-only` is a **subcommand**, not `--migrate-only`; same fix in the in-app manual steps | no more "unknown flag" abort before the swap |
 | | **B261.5** | `SKYGATE_UPDATE_BASE_URL` mirror support in the root-owned helper config (`https://`, or plain `http://` for loopback only; `SHA256SUMS` mandatory) | air-gapped / mirrored hosts can self-update |
@@ -95,7 +95,42 @@ in `/etc/skygate/update-helper.conf`; artifacts are read from
 `SHA256SUMS` (there is no GitHub digest to fall back to for a custom source).
 Procedure: [`docs/UPDATE.md`](docs/UPDATE.md) §7 (`docs/ru/UPDATE.md`).
 
-### 2. What is verified, and how
+### 2. `SHA256SUMS`: the pipeline fix, the consumer fallback, and how both are proven
+
+The release pipeline attaches the checksum file again (B262), and this cycle also
+closes the **consumer** side, which used to abort an install:
+
+| Layer | Behaviour after v1.5.9 |
+|---|---|
+| `release.yml` `sums` job | `cd dist && sha256sum skygate-* > SHA256SUMS` — one line per archive, GNU `sha256sum -c` format |
+| `release.yml` `release` job | downloads the `SHA256SUMS` artifact into `dist/checksums` (never into `dist/SHA256SUMS`, which is how v1.5.6–v1.5.8 attached a *directory*), flattens, uploads `dist/SHA256SUMS` | 
+| `install-*.sh` | downloads `…/releases/download/<TAG>/SHA256SUMS` and compares the hash of the **asset basename** (the tarball is saved locally as `skygate.tar.gz`, so a `sha256sum -c` would not match); tolerates GNU binary-mode `*`-prefixed names and CRLF |
+| `install-*.sh`, no asset | **new in v1.5.9** — falls back to the GitHub Releases API per-asset `digest: sha256:<hex>` instead of aborting and telling the operator to re-run with `SKYGATE_SKIP_VERIFY=1`. Verified live against **v1.5.8**: it publishes no `SHA256SUMS`, and the API returns `digest[skygate-v1.5.8-linux-amd64.tar.gz] = 624cfdb2f55f2599…` |
+| `install-*.sh`, neither source | fails **closed** with an explicit message; `SKYGATE_SKIP_VERIFY=1` remains the documented escape hatch for genuinely air-gapped hosts |
+| native applier (`deploy/skygate-apply-update.sh`) | unchanged (B261.2): `SHA256SUMS` first, then the API digest; a mirror must publish `SHA256SUMS` because there is no API digest for a custom source. The digest extraction in **both** consumers is now whitespace-tolerant (GitHub's `"name": "…"` spacing is not contractual) |
+
+**How it is proven.** The workflow's own steps were rehearsed on the VM with the
+real command sequences: the five archives are named as `release.yml` names them,
+`sha256sum skygate-* > SHA256SUMS` lists all five, and after the flatten step
+`dist/SHA256SUMS` is a **file** (501 B) next to them — the exact `files:` glob the
+release uploads. The installer's `download_and_verify` was then run against those
+files over a loopback HTTP server, and against the same fixture with `curl` stubbed
+offline:
+
+```
+[install] SHA256 OK (verified against SHA256SUMS)          # SHA256SUMS present
+[install] SHA256 OK (verified against GitHub asset digest) # no SHA256SUMS asset
+ERROR: SHA256 mismatch (source: SHA256SUMS)                # corrupted tarball -> refused
+ERROR: no trustworthy checksum for …                       # neither source -> refused
+```
+
+Both reversals are pinned by `scripts/check_b261_native_self_update.sh` **section P**
+(plus P3 for the pipeline invariant "SHA256SUMS is a file listing every archive"),
+so a future pipeline edit cannot silently bring back the v1.5.8 behaviour. The one
+thing that can only be checked **after** the tag is that GitHub actually attached
+the asset: §1.5 of [`docs/operations.md`](docs/operations.md).
+
+### 3. What is verified, and how
 
 | Verification | Where | Result |
 |---|---|---|
@@ -152,7 +187,7 @@ substitute for the not-yet-published release; the artifact was built exactly as
 `release.yml` builds it (`CGO_ENABLED=0`, `-trimpath`, `-s -w`,
 `-X main.version=v1.5.9 -X main.commit=…`).
 
-### 3. Upgrade notes
+### 4. Upgrade notes
 
 * **Docker / compose** — nothing to do beyond the normal update. The entrypoint
   still rebuilds the binary on start.
@@ -169,7 +204,7 @@ substitute for the not-yet-published release; the artifact was built exactly as
   second instance starting during a migration waits (up to 120 s) instead of
   racing. No configuration change.
 
-### 4. Known gaps (unchanged by this release, tracked in `docs/ROADMAP.md`)
+### 5. Known gaps (unchanged by this release, tracked in `docs/ROADMAP.md`)
 
 * **Telegram egress relay is not enabled (RR-10 / RR-13).** The code path is
   complete and reachable from `/admin/telegram` → *Egress relay*, and the UI admin
@@ -195,7 +230,7 @@ substitute for the not-yet-published release; the artifact was built exactly as
 * **Rotate the admin password** — an earlier revision of the repository contained
   it. The literal is out of the working tree (RR-12) but it remains in git history.
 
-### 5. Rollback plan
+### 6. Rollback plan
 
 * **Not yet updated** — delete the GitHub release + the tag, fix, re-tag. The tag
   is the only trigger.

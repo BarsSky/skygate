@@ -557,9 +557,17 @@ if [ -z "$VERIFIED_BY" ]; then
             -o "$WORK/release.json" "$API_URL" 2>/dev/null || true
     fi
     DIGEST="$(awk -v asset="$ASSET" '
-        { buf = buf $0 }
+        # GitHub pretty-prints as `"name": "x"` (space after the colon), but the
+        # spacing is NOT contractual — normalise `": "` to `":"` so a compact or
+        # reformatted API response cannot silently turn into "no digest".
+        BEGIN { want = "\"name\":\"" asset "\"" }
+        {
+            line = $0
+            gsub(/: /, ":", line)
+            buf = buf line
+        }
         END {
-            i = index(buf, "\"name\": \"" asset "\"")
+            i = index(buf, want)
             if (i == 0) exit 1
             rest = substr(buf, i)
             if (match(rest, /sha256:[0-9a-f]+/)) {

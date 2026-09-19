@@ -219,9 +219,14 @@ sudo install -m 0755 skygate /usr/local/bin/skygate
 ```
 
 Run it under your supervisor, or point an existing systemd/OpenRC unit at it,
-then do §10. **Verify the checksum before installing** — if a release has no
-`SHA256SUMS` (≤ v1.5.8), fetch the digest from the GitHub Releases API
-instead of skipping verification.
+then do §10. **Verify the checksum before installing** — from v1.5.9 on the
+release always attaches `SHA256SUMS` (`path: dist/checksums` in `release.yml`,
+the B262 fix). The installers also handle a release **without** that asset
+(v1.5.3, v1.5.6 – v1.5.8) automatically: they fall back to the per-asset
+`digest: sha256:<hex>` from the GitHub Releases API, and only fail closed when
+neither source exists. `SKYGATE_SKIP_VERIFY=1` is therefore a last resort for a
+genuinely air-gapped host, not a requirement for older releases. Both branches
+are pinned by `scripts/check_b261_native_self_update.sh` section P.
 
 ## J. Windows
 
@@ -293,7 +298,7 @@ volumes gone).
 | `docker compose` ignores `.env` values | you ran it from another directory (or with a path); `cd` into the project first, or pass `--env-file` |
 | Installer stops right after "installed: /usr/local/bin/skygate" | pre-v1.5.9: missing `xxd` on a minimal host aborted `write_env_file`; upgrade the installer or install `xxd`/`openssl` |
 | `read auth key: … no such file` from `/admin/tailscale` | container Tailscale mode with no key file; paste the key on the page or set `SKYGATE_TS_AUTHKEY_FILE=/dev/null` to disable it deliberately |
-| Checksum verification fails / `SHA256SUMS` 404 | releases ≤ v1.5.8 do not publish `SHA256SUMS`; use the GitHub asset digest or `SKYGATE_SKIP_VERIFY=1` knowingly |
+| Checksum verification fails / `SHA256SUMS` 404 | since v1.5.9 the installer falls back to the GitHub asset digest automatically; releases ≤ v1.5.8 publish no `SHA256SUMS` at all, so on those the fallback is what verifies the tarball (use `SKYGATE_SKIP_VERIFY=1` only knowingly) |
 | `no matching manifest for linux/amd64` | you pulled an ARM tag; the image is amd64-only |
 | `docker pull` refuses the tag | GHCR tags are case-sensitive and must be lowercase (`ghcr.io/barssky/…`) |
 | Page loads but every device shows offline | a host firewall/DOCKER-USER rule is blocking the proxy → headscale path (see `docs/LESSONS.md`) |

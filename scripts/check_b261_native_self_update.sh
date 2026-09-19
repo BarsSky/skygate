@@ -490,4 +490,143 @@ grep -q 'sparse-checkout' "$REL" \
   || fail "O8: the release job's checkout is not sparse (it would fetch the whole tree for one file)"
 ok "O8: the release job checks RELEASE-NOTES.md out sparsely"
 
+# --- P: the installer's checksum chain, rehearsed offline (B263) ----------
+# B262 fixed the pipeline that attaches SHA256SUMS. This section proves the
+# three consumer behaviours end-to-end with a stubbed `curl` (so it runs in the
+# gate, offline):
+#   P2a  a release WITH a SHA256SUMS asset   -> "verified against SHA256SUMS"
+#   P2b  a release WITHOUT one (v1.5.3, v1.5.6 … v1.5.8) -> "verified against
+#        GitHub asset digest" (this is the case that used to abort the install
+#        and push the operator to SKYGATE_SKIP_VERIFY=1)
+#   P2c  a corrupted tarball                 -> refused, nothing installed
+#   P2d  neither checksum source available   -> refused (fail closed)
+# P3 additionally pins the pipeline invariant the installer depends on: after
+# the workflow's own `sums` + flatten steps, SHA256SUMS is a FILE that lists
+# every archive under the exact asset names.
+grep -q '^release_tag_from_url()' "$COMMON" \
+  || fail "P: install-common.sh has no release_tag_from_url helper"
+grep -q '^github_asset_digest()' "$COMMON" \
+  || fail "P: install-common.sh has no github_asset_digest helper (the installer would abort on a checksum-less release)"
+grep -q 'verified against \$verified_by' "$COMMON" \
+  || fail "P: the installer does not report which source verified the tarball"
+grep -q 'no trustworthy checksum' "$COMMON" \
+  || fail "P: the installer has no fail-closed message when neither source exists"
+grep -qF 'sub(/^\*/, "", name)' "$COMMON" \
+  || fail "P: the SHA256SUMS lookup is not tolerant of sha256sum's binary-mode '*' prefix"
+ok "P: installer checksum chain (SHA256SUMS -> GitHub digest -> fail closed) is present"
+
+if command -v tar >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1 \
+   && command -v install >/dev/null 2>&1 && command -v mktemp >/dev/null 2>&1; then
+  P_LOG="$(mktemp)"
+  if ! (
+    # errexit OFF: this block deliberately runs commands that return non-zero
+    # (the negative cases) and asserts on their output instead. Globbing ON so
+    # `sha256sum skygate-*` expands like it does in the workflow.
+    set +ef
+    PD="$(mktemp -d)"
+    mkdir -p "$PD/dist" "$PD/inst-sum" "$PD/inst-digest"
+    cd "$PD/dist" || exit 1
+    echo "fake skygate binary" > skygate
+    sha256sum skygate > skygate.sha256
+    tar -czf skygate-v1.5.9-linux-amd64.tar.gz skygate skygate.sha256
+    sha256sum skygate-*.tar.gz > SHA256SUMS
+    PHASH="$(sha256sum skygate-v1.5.9-linux-amd64.tar.gz | awk '{print $1}')"
+    printf '{"tag_name":"v1.5.9","assets":[{"name":"skygate-v1.5.9-linux-amd64.tar.gz","digest":"sha256:%s"}]}\n' \
+      "$PHASH" > api.json
+    cd "$ROOT" || exit 1
+    # shellcheck disable=SC1090
+    . deploy/install-common.sh
+    curl() {
+      p_dest=""; p_url=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          -o) p_dest="$2"; shift 2 ;;
+          -*) shift ;;
+          *) p_url="$1"; shift ;;
+        esac
+      done
+      case "$p_url" in
+        *api.github.com*)
+          if [ -n "$p_dest" ]; then cp "$PD/dist/api.json" "$p_dest"; else cat "$PD/dist/api.json"; fi
+          return 0 ;;
+      esac
+      p_src="$PD/dist/$(basename "$p_url")"
+      [ -f "$p_src" ] || return 22
+      if [ -n "$p_dest" ]; then cp "$p_src" "$p_dest"; else cat "$p_src"; fi
+    }
+    PT="https://github.com/BarsSky/skygate/releases/download/v1.5.9/skygate-v1.5.9-linux-amd64.tar.gz"
+    PS="https://github.com/BarsSky/skygate/releases/download/v1.5.9/SHA256SUMS"
+    download_and_verify "$PT" "$PS" "$PD/inst-sum" 0 && echo "P2a=ok" || echo "P2a=fail"
+    rm -f "$PD/dist/SHA256SUMS"
+    download_and_verify "$PT" "$PS" "$PD/inst-digest" 0 && echo "P2b=ok" || echo "P2b=fail"
+    ( cd "$PD/dist" && sha256sum skygate-*.tar.gz > SHA256SUMS )
+    printf 'CORRUPTION' >> "$PD/dist/skygate-v1.5.9-linux-amd64.tar.gz"
+    download_and_verify "$PT" "$PS" "$PD/inst-sum" 0 && echo "P2c=UNEXPECTED-PASS" || echo "P2c=refused"
+    rm -f "$PD/dist/SHA256SUMS" "$PD/dist/api.json"
+    download_and_verify "$PT" "$PS" "$PD/inst-sum" 0 && echo "P2d=UNEXPECTED-PASS" || echo "P2d=refused"
+    grep -q 'verified against SHA256SUMS' "$PD/../"* 2>/dev/null || true
+    rm -rf "$PD"
+  ) > "$P_LOG" 2>&1; then
+    cat "$P_LOG" >&2
+    fail "P: the installer rehearsal crashed (output above)"
+  fi
+  for _case in "P2a=ok:with a SHA256SUMS asset" "P2b=ok:with no SHA256SUMS asset (digest fallback)" \
+               "P2c=refused:on a corrupted tarball" "P2d=refused:with neither checksum source"; do
+    _want="${_case%%:*}"
+    _desc="${_case#*:}"
+    grep -q "$_want" "$P_LOG" \
+      || fail "P: the installer rehearsal did not behave correctly $_desc (log: $P_LOG)"
+  done
+  grep -q 'verified against SHA256SUMS' "$P_LOG" \
+    || fail "P: the SHA256SUMS source was never reported (binary-mode '*'-prefix tolerance missing?) (log: $P_LOG)"
+  grep -q 'verified against GitHub asset digest' "$P_LOG" \
+    || fail "P: the GitHub asset-digest fallback was never used (log: $P_LOG)"
+  grep -q 'SHA256 mismatch' "$P_LOG" \
+    || fail "P: a corrupted tarball was not reported as a mismatch (log: $P_LOG)"
+  ok "P2: installer rehearsal green (SUMS / digest fallback / corrupt refused / fail-closed refused)"
+  rm -f "$P_LOG"
+else
+  skip "P2: installer rehearsal needs tar + sha256sum + install + mktemp"
+fi
+
+# P3: the pipeline invariant the installer's basename lookup depends on.
+if command -v tar >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1; then
+  P3_DIR="$(mktemp -d)"
+  mkdir -p "$P3_DIR/build" "$P3_DIR/release/skygate-linux-amd64" "$P3_DIR/release/checksums"
+  (
+    set +f
+    cd "$P3_DIR/build" || exit 1
+    for t in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+      echo "fake $t" > skygate
+      tar -czf "skygate-v1.5.9-$t.tar.gz" skygate
+    done
+    printf 'fake zip\n' > skygate-v1.5.9-windows-amd64.zip
+    sha256sum skygate-* > SHA256SUMS
+    cp SHA256SUMS "$P3_DIR/release/checksums/"
+    cp skygate-v1.5.9-linux-amd64.tar.gz "$P3_DIR/release/skygate-linux-amd64/"
+    cd "$P3_DIR/release" || exit 1
+    find . -mindepth 2 -type f -exec mv '{}' . \; >/dev/null 2>&1
+    find . -mindepth 1 -type d -empty -delete >/dev/null 2>&1
+  ) >/dev/null 2>&1
+  if [ -f "$P3_DIR/release/SHA256SUMS" ] && [ ! -d "$P3_DIR/release/SHA256SUMS" ]; then
+    _missing=""
+    for _a in skygate-v1.5.9-linux-amd64.tar.gz skygate-v1.5.9-linux-arm64.tar.gz \
+              skygate-v1.5.9-darwin-amd64.tar.gz skygate-v1.5.9-darwin-arm64.tar.gz \
+              skygate-v1.5.9-windows-amd64.zip; do
+      awk -v n="$_a" '{ name=$2; sub(/^\*/, "", name) } name == n { found=1 } END { exit(found ? 0 : 1) }' \
+        "$P3_DIR/release/SHA256SUMS" || _missing="$_missing $_a"
+    done
+    if [ -z "$_missing" ]; then
+      ok "P3: the workflow's sums + flatten steps yield a FILE listing every archive (installer lookup by basename works)"
+    else
+      fail "P3: SHA256SUMS does not list:$_missing"
+    fi
+  else
+    fail "P3: the flatten step did not produce a SHA256SUMS FILE (see $P3_DIR)"
+  fi
+  rm -rf "$P3_DIR"
+else
+  skip "P3: pipeline rehearsal needs tar + sha256sum"
+fi
+
 hdr "B261: all contracts pass"

@@ -47,7 +47,10 @@ list, live evidence, acceptance record): [`RELEASE-NOTES.md`](RELEASE-NOTES.md).
   silently no-op'd, so the chain broke on the second start; all SQLite DDL now
   goes through `execSQLiteDDL` (§12.13).
 - **`release.yml` attached no `SHA256SUMS`** for v1.5.6–v1.5.8 (the artifact was
-  downloaded into a directory named like its only file) (`B262`).
+  downloaded into a directory named like its only file) (`B262`). The installers
+  now also verify a checksum-less release against the GitHub per-asset
+  `digest: sha256:<hex>` instead of aborting and asking for
+  `SKYGATE_SKIP_VERIFY=1`; with neither source they fail closed.
 - **Device autoupdater `ON CONFLICT` drift** — the 5-column form no longer
   matches the 6-column natural-key index, so `/32` rules stopped landing
   silently (`B237.23`).

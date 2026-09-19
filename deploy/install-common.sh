@@ -203,6 +203,60 @@ resolve_release_url() {
     echo "https://github.com/${owner}/${repo}/releases/download/${tag}/SHA256SUMS"
 }
 
+# release_tag_from_url: "https://github.com/O/R/releases/download/v1.5.9/asset"
+# → "v1.5.9". Returns non-zero for anything else (e.g. an internal mirror), so
+# the caller can fall back to the plain "no checksum available" error.
+release_tag_from_url() {
+    local url="$1"
+    case "$url" in
+        */releases/download/*/*)
+            printf '%s\n' "${url#*/releases/download/}" | sed -E 's#/.*$##'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# github_asset_digest <tag> <asset>: echoes the per-asset
+# `digest: sha256:<hex>` from the GitHub Releases API, or nothing when the
+# release or that asset's digest is absent. No jq dependency: awk extracts it
+# from the JSON, the same shape deploy/skygate-apply-update.sh uses (B261.2).
+#
+# 2026-09-19 (B263): this is what makes a release without a SHA256SUMS asset
+# (v1.5.3, v1.5.6 … v1.5.8 — see B262) installable WITHOUT
+# SKYGATE_SKIP_VERIFY=1. Verified live against v1.5.8, which publishes no
+# SHA256SUMS but does expose
+#   digest[skygate-v1.5.8-linux-amd64.tar.gz] = 624cfdb2f55f2599…
+github_asset_digest() {
+    local tag="$1" asset="$2"
+    local owner="${GITHUB_OWNER:-BarsSky}"
+    local repo="${GITHUB_REPO:-skygate}"
+    local json
+    json="$(curl -fsSL --retry 2 --retry-delay 2 --max-time 60 \
+        "https://api.github.com/repos/${owner}/${repo}/releases/tags/${tag}" 2>/dev/null)" || return 1
+    printf '%s' "$json" | awk -v a="$asset" '
+        # GitHub pretty-prints as `"name": "x"` (space after the colon), but the
+        # spacing is NOT contractual — normalise `": "` to `":"` so a compact or
+        # reformatted API response cannot silently turn into "no digest".
+        BEGIN { want = "\"name\":\"" a "\"" }
+        {
+            line = $0
+            gsub(/: /, ":", line)
+            buf = buf line
+        }
+        END {
+            i = index(buf, want)
+            if (i == 0) exit 1
+            rest = substr(buf, i)
+            if (match(rest, /sha256:[0-9a-f]+/)) {
+                print substr(rest, RSTART + 7, RLENGTH - 7)
+                exit 0
+            }
+            exit 1
+        }'
+}
+
 # download_and_verify: curl the tarball + SHA256SUMS, verify the
 # tarball's hash against SHA256SUMS, extract to a temp dir, then
 # copy the binary to the install path. Sets the global BINARY_PATH
@@ -231,13 +285,14 @@ download_and_verify() {
         echo "SKYGATE_SKIP_VERIFY=1 and pre-stage the tarball." >&2
         return 1
     fi
-    echo "[install] downloading $sums_url"
-    # 2026-09-12: SKIP_VERIFY=1 also skips the SHA256SUMS download.
-    # Some releases (notably v1.5.3) publish a tarball but not the
-    # SHA256SUMS file (a release pipeline hiccup). Without this
-    # fallback, an operator who sets SKIP_VERIFY=1 still fails the
-    # install because the SHA256SUMS URL 404s. With this fallback,
-    # SKIP_VERIFY=1 means "trust whatever you can download".
+    # Which checksum are we going to trust? Two sources, tried in order:
+    #   1. the release's SHA256SUMS asset (the pipeline's own file);
+    #   2. GitHub's per-asset `digest: sha256:<hex>` from the Releases API —
+    #      the fallback for releases that publish a tarball but no SHA256SUMS
+    #      (v1.5.3, v1.5.6 … v1.5.8; see B262), which used to ABORT the
+    #      install and push the operator to SKYGATE_SKIP_VERIFY=1. The native
+    #      update applier has had this fallback since B261.2; this is the
+    #      installer's parity fix (B263).
     #
     # Important: SKYGATE_SKIP_VERIFY=1 must reach this script
     # even under sudo. The default Ubuntu sudoers ships with
@@ -246,44 +301,67 @@ download_and_verify() {
     # to preserve the env var. install.sh handles this for the
     # default dispatch path; standalone calls (sudo bash
     # install-debian.sh) need `sudo -E`.
+    local asset_name
+    asset_name="$(basename "$tarball_url")"
+    local expected_sha=""
+    local verified_by=""
+
     if [ "$skip_verify" = "1" ]; then
         echo "[install] SKYGATE_SKIP_VERIFY=1, skipping SHA256SUMS download"
-        SKIP_SUMS_DOWNLOAD=1
     else
-        SKIP_SUMS_DOWNLOAD=0
-    fi
-    if [ "$SKIP_SUMS_DOWNLOAD" != "1" ]; then
-        if ! curl -fsSL --retry 3 --retry-delay 2 -o "$work/SHA256SUMS" "$sums_url"; then
-            echo "ERROR: failed to download SHA256SUMS from $sums_url" >&2
-            echo "If the release doesn't ship a SHA256SUMS file (some" >&2
-            echo "releases do — e.g. v1.5.3), re-run with" >&2
-            echo "  SKYGATE_SKIP_VERIFY=1 sudo -E bash install-debian.sh" >&2
-            echo "(the 'sudo -E' preserves the env across sudo's env_reset)." >&2
-            return 1
+        echo "[install] downloading $sums_url"
+        if curl -fsSL --retry 3 --retry-delay 2 -o "$work/SHA256SUMS" "$sums_url"; then
+            # Tolerate the two shapes a checksum file can arrive in: GNU
+            # sha256sum's binary mode prefixes the name with `*`, and a file
+            # generated on Windows carries CRLF. Both would silently fail the
+            # `$2 == name` comparison and turn a verifiable release into
+            # "asset not found".
+            expected_sha="$(awk -v n="$asset_name" '
+                {
+                    name = $2
+                    sub(/^\*/, "", name)
+                    sub(/\r$/, "", name)
+                }
+                name == n { print $1; exit }
+            ' "$work/SHA256SUMS")"
+            if [ -n "$expected_sha" ]; then
+                verified_by="SHA256SUMS"
+            else
+                echo "WARN: SHA256SUMS exists but does not list '$asset_name' — trying the GitHub asset digest" >&2
+            fi
+        else
+            echo "[install] this release publishes no SHA256SUMS asset — verifying against the GitHub asset digest instead"
+        fi
+        if [ -z "$expected_sha" ]; then
+            local tag
+            if tag="$(release_tag_from_url "$tarball_url")"; then
+                expected_sha="$(github_asset_digest "$tag" "$asset_name" || true)"
+                if [ -n "$expected_sha" ]; then
+                    verified_by="GitHub asset digest"
+                fi
+            fi
         fi
     fi
 
     if [ "$skip_verify" != "1" ]; then
-        echo "[install] verifying SHA256"
-        # SHA256SUMS contains lines like:
-        #   <hex>  skygate-v1.5.0-linux-amd64.tar.gz
-        # The tarball was saved as "$work/skygate.tar.gz" (a
-        # different name), so we need to:
-        #   (a) compute the sha256 of the downloaded file
-        #   (b) look up the EXPECTED sha256 in SHA256SUMS by the
-        #       asset basename (derived from the URL)
-        local asset_name
-        asset_name="$(basename "$tarball_url")"
-        local expected_sha
-        expected_sha="$(awk -v n="$asset_name" '$2 == n { print $1; exit }' "$work/SHA256SUMS")"
         if [ -z "$expected_sha" ]; then
-            echo "ERROR: asset '$asset_name' not found in SHA256SUMS" >&2
+            echo "ERROR: no trustworthy checksum for $asset_name — the release" >&2
+            echo "publishes neither a SHA256SUMS asset nor a GitHub asset digest." >&2
+            echo "Re-download, or set SKYGATE_SKIP_VERIFY=1 ONLY if you have" >&2
+            echo "verified the file out-of-band:" >&2
+            echo "  SKYGATE_SKIP_VERIFY=1 sudo -E bash install-debian.sh" >&2
+            echo "(the 'sudo -E' preserves the env across sudo's env_reset)." >&2
             return 1
         fi
+        # SHA256SUMS lines look like:
+        #   <hex>  skygate-v1.5.0-linux-amd64.tar.gz
+        # The tarball was saved as "$work/skygate.tar.gz" (a different name),
+        # so the expected hash is looked up by the ASSET BASENAME derived from
+        # the URL, then compared with the downloaded file's own hash.
         local actual_sha
         actual_sha="$(sha256sum "$work/skygate.tar.gz" | awk '{ print $1 }')"
         if [ "$expected_sha" != "$actual_sha" ]; then
-            echo "ERROR: SHA256 mismatch" >&2
+            echo "ERROR: SHA256 mismatch (source: $verified_by)" >&2
             echo "  expected: $expected_sha" >&2
             echo "  actual:   $actual_sha" >&2
             echo "Refusing to install — the tarball may be corrupted or" >&2
@@ -291,7 +369,7 @@ download_and_verify() {
             echo "ONLY if you've verified the file out-of-band." >&2
             return 1
         fi
-        echo "[install] SHA256 OK"
+        echo "[install] SHA256 OK (verified against $verified_by)"
     else
         echo "[install] WARNING: SKYGATE_SKIP_VERIFY=1, skipping hash check"
     fi
