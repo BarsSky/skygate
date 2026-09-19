@@ -104,7 +104,7 @@ contracts are in the corresponding `scripts/check_b*.sh`.
 | **BL-3** | Telegram bot behind a DPI-blocked network (`api.telegram.org` times out) | Operator decision: route the bot through an exit node without DPI, or tunnel it |
 | **TD-5 / RR-5** | Per-user `exitnode.<user>.<domain>` DNS records | headscale 0.30+ (`dns.extra_records`); 0.29.x rejects the policy |
 | **RR-6** | Compliance-tier per-user headscale plane migration (move a user's nodes + ACL off the global plane, flip the DB override) | A real operator need; infrastructure exists, no data migration yet |
-| **RR-7** | Public release of v1.5.9 | **Ready — the clean-host acceptance passed 2026-09-19 (§3).** Only the operator's decision to tag remains |
+| **RR-7** | Public release of v1.5.9 | **DONE 2026-09-19** — tag `v1.5.9` → `1299b7a4`, release workflow `35440687679` green (8/8 jobs), assets verified: `SHA256SUMS` is a file listing every archive, the installer verifies against it without any override, the release body is the `## v1.5.9` section, `ghcr.io/barssky/skygate:v1.5.9` pulls |
 | **RR-8** | `node_owner_map`: 4 stale rows (B243) | Operator decision on relink-vs-delete (see below) |
 | **RR-9** | ACL drifted from the DB: orphan `tagOwners` entry + a missing per-CIDR `via` pin (B188.2/B188.3/B-mod-tag-owners-coverage) | One ACL reapply from the DB (`/admin/acls`) |
 | **RR-10** | Telegram relay probe: the in-container Tailscale client is disabled, and the **selected** relay (`telegram.egress_node_id = 3` → emilia) has only `149.154.167.99/32` approved — which does not cover the current `api.telegram.org` addresses | **Enablement plan (operator)** — see RR-13. Live check 2026-09-19: **karolina** (exit_servers id 118, headscale node 11) already advertises **and has approved** `91.108.12/16/20/56.0/22`, `149.154.160.0/20` and `185.76.151.0/24`, so a working egress path already exists on the tailnet — switching the selector is the cheapest fix |
@@ -273,7 +273,7 @@ These are tracked so they are not lost, **not** planned:
 | v1.5.0–v1.5.2 | HA groundwork (cluster tables, deploy subcommands, certsync), OIDC end-to-end on a public hostname, OIDC auto-sync, login/UX fixes (B167–B178) |
 | v1.5.4 | Docker image pinned to linux/amd64 (Issue #4); image-pull update button |
 | v1.5.6–v1.5.8 | DERP status/probe fixes, derper-in-docker migration, Tailscale auth-key UX, device-delete with ACL regen |
-| v1.5.9 | **Native self-update (B261)**, OpenRC (B262), `SHA256SUMS` fix, SQLite `sqlite:` DSN fix, autoupdater `ON CONFLICT` fix, green gate, clean-host acceptance passed 2026-09-19 |
+| v1.5.9 | **Native self-update (B261)**, OpenRC (B262), `SHA256SUMS` fix, SQLite `sqlite:` DSN fix, autoupdater `ON CONFLICT` fix, green gate, clean-host acceptance **published 2026-09-19** (tag `v1.5.9` → `1299b7a4`; assets verified: checksum file attached, release body present, lowercase ghcr tag) |
 
 ---
 

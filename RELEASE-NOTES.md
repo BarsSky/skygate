@@ -15,7 +15,8 @@
 ## v1.5.9 — native self-update (B261), OpenRC + the return of `SHA256SUMS` (B262), SQLite/PostgreSQL hardening, documentation overhaul
 
 **Date:** 2026-09-19
-**Base:** `v1.5.8` → this tag — 75 commits
+**Base:** `v1.5.8` → this tag — 85 commits
+**Tag:** `v1.5.9` → commit `1299b7a4`; GitHub release published (not a draft), release workflow run `35440687679` — all 8 jobs success (docker image, 5 binary archives, `SHA256SUMS`, github release)
 **Compatibility:** no schema break, no config-format break, no API break. A docker
 deployment updates exactly as before (`git pull` + `docker compose up -d
 --force-recreate`, or the in-app image-pull button). The native self-update path is
@@ -131,6 +132,19 @@ thing that can only be checked **after** the tag is that GitHub actually attache
 the asset: §1.5 of [`docs/operations.md`](docs/operations.md).
 
 ### 3. What is verified, and how
+
+**Post-tag verification (2026-09-19, against the published `v1.5.9` assets).** Run
+from the VM with the real release URLs — the procedure of `docs/operations.md` §1.5:
+
+| Check | Result |
+|---|---|
+| `SHA256SUMS` attached as a **file** | 501 B, `application/octet-stream`, lists all five archives — the first release with a checksum file since v1.5.5 (the **B262** proof) |
+| `…/releases/download/v1.5.9/SHA256SUMS` | HTTP **302** (v1.5.8 answered **404** — the error this release fixes) |
+| `sha256sum -c --ignore-missing SHA256SUMS` | `skygate-v1.5.9-linux-amd64.tar.gz: OK` |
+| **The real installer, real URLs, no `SKIP_VERIFY` and no mirror** | `[install] SHA256 OK (verified against SHA256SUMS)` → installed → `skygate v1.5.9 (commit 1299b7a, built 2026-09-19T11:39:14Z)` |
+| Release body | 21 645 bytes starting with `## v1.5.9 — native self-update (B261), …` (v1.5.8's body was **empty** — the **B263** proof) |
+| ghcr image | `docker pull ghcr.io/barssky/skygate:v1.5.9` OK; the mixed-case path is rejected (the **B237.24** proof) |
+| Gate on the tagged commit `1299b7a4` | `289 PASS / 0 FAIL / 1 SKIP` (`B8`, VM-only by design) |
 
 | Verification | Where | Result |
 |---|---|---|
