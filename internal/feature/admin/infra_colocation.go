@@ -121,11 +121,17 @@ func hostIdentities(cfgHostname, probeHost, osHostname string, extraIPs []string
 
 // isColocatedExitNode reports whether `n` is this host, and by which
 // identity. Compares case-insensitively on:
-//   - any of the node's IP addresses (v4 and v6) against the identities,
-//   - the node's hostname / given name against the identities,
-//   - the special-case equality of the node hostname with the skygate
-//     host's own hostname prefix (`skygate-host`), which is the reserved
-//     name skygate gives its own tailnet client (B251).
+//   - any of the node's IP addresses against the identities,
+//   - the node's hostname / given name against the identities.
+//
+// B265.1 (2026-09-19) — the pre-fix version ALSO returned true when
+// either side was the reserved name `skygate-host`, which made every
+// exit node match (the identity list always contains the skygate
+// host's own name) and produced a wall of false
+// "skygate runs on the same host as <every relay>" warnings on the
+// reference VM. Exact equality already covers the intended case:
+// a node literally named `skygate-host` matches the identity
+// `skygate-host`.
 //
 // Pure function.
 func isColocatedExitNode(n headscale.NodeView, ids []ColocationIdentity) (ColocationIdentity, bool) {
@@ -141,12 +147,6 @@ func isColocatedExitNode(n headscale.NodeView, ids []ColocationIdentity) (Coloca
 				continue
 			}
 			if nm == id.Value {
-				return id, true
-			}
-			// `skygate-host` is the reserved hostname of the skygate
-			// tailnet client (B251). A node named exactly that, or the
-			// identity being that reserved name, means "this host".
-			if nm == "skygate-host" || id.Value == "skygate-host" {
 				return id, true
 			}
 		}
