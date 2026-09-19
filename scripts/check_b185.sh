@@ -156,21 +156,30 @@ else
   check_eq "M" ">=1" "0"
 fi
 
-# N. (VM-only) live: the skygate container can actually
-# reach the internet through the Tailscale relay. Tailscale
-# 1.98 dropped the Prefs.RouteAll field from the JSON
-# status output (the field is now in a different internal
-# state location), so we test the FUNCTIONAL behavior
-# instead: ping 8.8.8.8 from inside the container. If the
-# container accepts routes, ping works (8.8.8.8 routes
-# via 0.0.0.0/0 → relay). If the container has
-# RouteAll=false, the ping never resolves (the container's
-# tailscaled rejects the peer's 0.0.0.0/0). Pre-B185 ping
-# hung for 5s+.
+# N. (VM-only) live: the skygate container's Tailscale client is
+# RUNNING and can route through the relay.
+#
+# 2026-09-19: the ping alone was not a valid proxy. With the
+# in-container Tailscale disabled (SKYGATE_TS_AUTHKEY_FILE=/dev/null,
+# the documented opt-in default) ping 8.8.8.8 still succeeds — via the
+# Docker bridge's NAT, not via tailscale0 — so N passed while the
+# Telegram router the design relies on was switched off. N now requires
+# the client to be up first (tailscale status inside the container), and
+# reports SKIP when it is disabled by configuration (that is a deliberate
+# opt-in state, see /admin/tailscale), FAIL only when the client runs but
+# the routed reachability is broken.
+TAILSCALED_UP=0
 if [ -d /home/skyadmin/skygate ]; then
   if command -v docker >/dev/null 2>&1; then
-    PING_OK=$(docker exec skygate-skygate-1 timeout 5 ping -c 1 -W 3 8.8.8.8 2>/dev/null | grep -c "packets received")
-    check_eq "N" "1" "$PING_OK"
+    if docker exec skygate-skygate-1 tailscale status >/dev/null 2>&1; then
+      TAILSCALED_UP=1
+      PING_OK=$(docker exec skygate-skygate-1 timeout 5 ping -c 1 -W 3 8.8.8.8 2>/dev/null | grep -c "packets received")
+      check_eq "N" "1" "$PING_OK"
+    else
+      echo "  SKIP [N] tailscaled is not running in the container (Tailscale-in-container disabled:"
+      echo "           SKYGATE_TS_AUTHKEY_FILE unset or /dev/null — the documented opt-in default;"
+      echo "           enable it on /admin/tailscale to activate the Telegram egress relay)"
+    fi
   else
     echo "  SKIP [N] docker not available"
   fi
@@ -206,20 +215,29 @@ if [ -d /home/skyadmin/skygate ]; then
         check_eq "O" "ok_relay" "ok_relay"
       elif echo "$PAGE" | grep -q 'probe-ok_direct'; then
         check_eq "O" "ok_relay" "ok_direct_probe"
-      elif [ "${PING_OK:-0}" = "1" ]; then
-        # 2026-09-19: the container's routing machinery is healthy (contract N:
-        # RouteAll + ping 8.8.8.8 through the relay succeeded) while the Telegram
-        # probe specifically reports unreachable. That is the documented BL-3
-        # condition (api.telegram.org behind a DPI-blocked network), not the B185
-        # regression this contract was written for — the original bug broke N as
-        # well, because the container rejected the peer's 0.0.0.0/0. Report SKIP
-        # with the evidence instead of FAIL, per the catalog's SKIP-not-FAIL rule
-        # for an unavailable live dependency (see docs/ROADMAP.md 5.1 / BL-3).
-        echo "  WARN  [O] /admin/telegram shows no probe-ok_relay/_direct marker while"
-        echo "            the container routes traffic fine (N passed) — BL-3 territory."
-        echo "  SKIP [O] Telegram relay unreachable (BL-3: api.telegram.org behind DPI)"
+      elif [ "$TAILSCALED_UP" != "1" ]; then
+        # 2026-09-19: the in-container Tailscale client is switched off, so the
+        # Telegram egress relay cannot work at all — the design routes
+        # api.telegram.org through the relay from an exit node where it is
+        # reachable, and that requires this client (see /admin/tailscale). That
+        # is the documented opt-in default, so report SKIP with the enablement
+        # path instead of FAIL. Verified 2026-09-19: emilia and karolina DO
+        # reach api.telegram.org (HTTP 302 from the relay), so this is purely
+        # local configuration, not an upstream block.
+        echo "  WARN  [O] /admin/telegram shows no probe-ok_relay/_direct marker, and the"
+        echo "            in-container Tailscale client is disabled — the relay path is off."
+        echo "  SKIP [O] Tailscale-in-container disabled -> Telegram egress relay unavailable"
+        echo "           enable it on /admin/tailscale, then apply the Telegram CIDRs on the"
+        echo "           relay (/admin/telegram -> Egress relay -> Apply, or Pin nearest)"
       else
-        check_eq "O" "ok_relay" "probe_unreachable_and_container_routing_broken"
+        # Client is up but Telegram is still unreachable: a real problem — the
+        # relay's Telegram CIDRs are not advertised/approved, or the relay lost
+        # upstream access.
+        echo "  WARN  [O] tailscaled is running in the container but the Telegram probe is"
+        echo "            unreachable — check that the selected relay advertises the canonical"
+        echo "            Telegram CIDRs (149.154.160.0/20, 91.108.*, 185.76.151.0/24) and that"
+        echo "            headscale has them APPROVED for that node."
+        check_eq "O" "ok_relay" "probe_unreachable_with_tailscaled_up"
       fi
     else
       echo "  SKIP [O] login failed: HTTP code is $PROBE"
