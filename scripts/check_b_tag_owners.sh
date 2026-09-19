@@ -133,16 +133,26 @@ for tag, owners in sorted(to.items()):
 if [ -z "$OWNERS" ]; then
     bad "no tag:dev-* entries in tagOwners"
 else
+    PSQL_USERS=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+        "SELECT username FROM portal_users WHERE username <> ''" 2>/dev/null | paste -sd'|' -)
+    [ -n "$PSQL_USERS" ] || PSQL_USERS='skyadmin|michail|guest|daniil|infra'
     echo "$OWNERS" | while IFS=' ' read -r tag owner_json; do
         [ -z "$tag" ] && continue
-        # owner_json is like ['user@domain']
-        if echo "$owner_json" | grep -qE '"skyadmin@|"michail@|"guest@|"daniil@|"infra@'; then
+        # owner_json is the python repr of the owner list, e.g. ['infra@tsnet.skynas.ru'].
+        # 2026-09-19: the old pattern only accepted a DOUBLE-quoted owner while
+        # python prints single quotes, so every tag:dev-* entry was reported as
+        # "potential ACL injection" (the bad() inside this subshell only killed
+        # the subshell, which is why the script still exited 0 — a misleading
+        # FAIL line in an otherwise green check). Accept either quoting style and
+        # take the usernames from portal_users, with the historical five as a
+        # fallback when the DB is not reachable.
+        if echo "$owner_json" | grep -qE "[\"']?($PSQL_USERS)@"; then
             : # ok; user-owned
         else
             bad "$tag owner $owner_json is not a known portal user (potential ACL injection)"
         fi
     done
-    ok "all tag:dev-* entries owned by a known portal user (skyadmin/michail/guest/daniil/infra)"
+    ok "all tag:dev-* entries owned by a known portal user ($PSQL_USERS)"
 fi
 
 echo
