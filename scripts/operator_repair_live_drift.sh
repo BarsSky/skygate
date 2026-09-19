@@ -172,6 +172,27 @@ if [ "$APPLY" = 1 ]; then
     || die "orphan-pref DELETE failed (backup: $BK)"
   say "remaining per-device rows:"
   psql_ro 'SELECT user_id, device_hostname, exit_node_tag FROM device_exit_node_prefs ORDER BY user_id, device_hostname'
+
+  # 5D. A tag mismatch that SURVIVES the UPDATE means headscale still carries the
+  # old tag on that node: skygate's node-ownership autoupdater rewrites
+  # node_owner_map.tag from headscale's node tags, so a node holding BOTH the old
+  # and the hostname-derived tag keeps re-introducing the stale one (which in turn
+  # regenerates an orphan tagOwners entry). Fix the node in headscale first:
+  #     docker exec headscale headscale nodes tag -i <NODE_ID> -t tag:dev-<user>-<hostname> --force
+  # then re-run this script. The check below flags the rows that still disagree.
+  STILL=$(psql_ro "SELECT node_id, username, hostname, tag FROM node_owner_map
+                    WHERE hostname <> '' AND tag <> 'tag:dev-' || username || '-' || hostname")
+  if [ -n "$STILL" ]; then
+    say ""
+    say "WARNING: these node_owner_map rows still disagree with the tag:dev-<user>-<hostname> convention:"
+    printf '%s\n' "$STILL"
+    say "         their headscale node probably still carries the OLD tag as well; align it with:"
+    printf '%s\n' "$STILL" | while IFS='|' read -r nid uname hname oldtag; do
+      [ -z "$nid" ] && continue
+      say "           docker exec $HS headscale nodes tag -i $nid -t tag:dev-$uname-$hname --force"
+    done
+    say "         then re-run this script (steps 5B/5C normalise the DB row and the ACL)."
+  fi
 fi
 
 hdr "5C. re-apply the ACL from the DB"
