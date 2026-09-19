@@ -268,10 +268,15 @@ else
 fi
 
 # G.3 TestTemplateArgsMatchCatalog regression guard
+# NOTE (2026-09-19, TD-19): capture first, then match — `go test ... | grep -q`
+# under `set -o pipefail` fails spuriously when `grep -q` exits early and the
+# still-writing `go test` gets SIGPIPE (141).
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s -run TestTemplateArgsMatchCatalog ./internal/handlers/... 2>/dev/null | grep -q '^ok'; then
+    G3_OUT="$(CGO_ENABLED=0 go test -short -count=1 -timeout 180s -run TestTemplateArgsMatchCatalog ./internal/handlers/... 2>&1)"
+    if grep -q '^ok' <<< "$G3_OUT"; then
         ok "G.3 TestTemplateArgsMatchCatalog passes (regression guard)"
     else
+        printf '%s\n' "$G3_OUT" | tail -5 | sed 's/^/        /'
         bad "G.3 TestTemplateArgsMatchCatalog failed"
     fi
 else
