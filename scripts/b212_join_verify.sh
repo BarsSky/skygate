@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # B212 live-verify on the agent.
 # Simulates a "new node" join by using the agent's own
 # skygate binary + api-url. The B201 handler will see

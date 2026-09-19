@@ -1,4 +1,6 @@
 #!/bin/bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # B188.3 — port per-CIDR via= to legacy GenerateACLForPlane.
 #
 # B188.2 added per-CIDR via= to the useVia=true path

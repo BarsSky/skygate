@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # v1.5.0+ / post-B207 — clear the B207-verify test artifact
 # from cluster_database.current_dsn.
 #

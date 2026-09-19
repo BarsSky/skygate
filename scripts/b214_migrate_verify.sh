@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # B214 live-verify on the agent.
 #  1. Login as admin to get a session cookie.
 #  2. POST /admin/database/migrate to start a migration

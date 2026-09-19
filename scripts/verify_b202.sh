@@ -1,4 +1,6 @@
 # 2026-09-18: operator infrastructure values redacted to env vars before
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # this script was committed. Set them in your shell, e.g.
 #   VM_HOST=<the skygate host> EMILIA_PUBLIC_IP=... bash scripts\verify_b202.sh
 # The ${VAR:?} form makes a missing value a hard error instead of an

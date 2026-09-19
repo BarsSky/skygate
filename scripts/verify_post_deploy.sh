@@ -1,4 +1,6 @@
 #!/bin/bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # scripts/verify_post_deploy.sh — runtime guarantees for skygate.
 #
 # Runs AFTER `docker compose up -d skygate` on the VM. Checks the

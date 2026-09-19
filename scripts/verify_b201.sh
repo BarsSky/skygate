@@ -1,4 +1,6 @@
 #!/bin/bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # verify_b201.sh — end-to-end B200 → B201 test.
 COOKIE="${SKYGATE_COOKIE:?set SKYGATE_COOKIE}"
 BASE="http://127.0.0.1:8080"

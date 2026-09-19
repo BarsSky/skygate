@@ -1,4 +1,6 @@
 #!/bin/bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # B184 — DOMAIN rule status propagates from its resolved subnets
 # (closes the "domain row shows ⏳ while its child subnets show
 # ✅" visual-lie gap in /admin/exit-rules + /my/exit-rules)

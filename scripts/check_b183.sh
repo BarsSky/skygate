@@ -1,4 +1,6 @@
 #!/bin/bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # B183 — drop parent_domain from device_rules natural-key
 # UNIQUE INDEX (autoupdater duplicate-row fix)
 #

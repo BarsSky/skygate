@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # b_mod_reregister_live.sh — LIVE end-to-end test for the
 # B-mod-reregister per-row Re-register feature on /my/devices.
 #

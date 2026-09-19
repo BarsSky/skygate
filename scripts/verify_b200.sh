@@ -1,4 +1,6 @@
 #!/bin/sh
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # verify_b200.sh — live post-deploy verification.
 # Run from the agent with a valid admin session cookie.
 COOKIE="${SKYGATE_COOKIE:?set SKYGATE_COOKIE}"

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # B218 live-verify on the agent.
 #
 # Verifies the new `skygate init --role=standby` path:

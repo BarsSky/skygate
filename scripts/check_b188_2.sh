@@ -1,4 +1,6 @@
 #!/bin/bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # B188.2 — per-CIDR exit-node pin (instead of catch-all pin).
 #
 # B188 fixed the ghost tag (tag:exit-X → tag:dev-infra-X) and

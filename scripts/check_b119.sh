@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 #===============================================================================
 # Skygate v1.3.19.1 follow-up (B119) — preferred_check TagToHostname
 # enforcement

@@ -1,4 +1,6 @@
 #!/bin/bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # scripts/check_b237_23.sh — B237.23 (v1.5.2+)
 # Fix autoupdate ON CONFLICT code/index drift (B183 vs B232
 # regression). Restores 6-col ON CONFLICT in sync.go to match

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # B207_fix (v1.5.0+, 2026-09-02) — clear the B207 verify
 # test artifact from cluster_database.current_dsn so the
 # B203 skygate-watchdog doesn't keep swapping on every 5s

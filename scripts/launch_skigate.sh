@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/lib/db_credentials.sh"
+SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # launch_skigate.sh — start skygate-skygate-1 with the correct backend.
 #
 # 2026-09-11 (Issue follow-up): the recovery session (v1.5.4 incident)
