@@ -60,6 +60,11 @@ list, live evidence, acceptance record): [`RELEASE-NOTES.md`](RELEASE-NOTES.md).
 - **Credential hygiene (RR-12)** — the default PostgreSQL password literal is
   gone from 34 scripts (runtime resolver `scripts/lib/db_credentials.sh`), and
   the live admin password is gone from six more.
+- **Flaky gate contracts** — `TestSSHDumpTransport_Dump_FakeSsh` asserted log
+  lines the reader could still be holding when `cmd.Wait()` closed the pipes
+  (both dump transports now drain to EOF first), and `check_b237_24`'s live
+  `git ls-remote` probe reported an unreachable remote as a FAIL instead of a
+  SKIP. The gate no longer reports one rotating FAIL per run.
 
 ### Changed
 - `AGENTS.md` 919 KB → 32 KB (index only; every block entry kept); `docs/plans/**`,

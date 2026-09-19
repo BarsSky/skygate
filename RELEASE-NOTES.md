@@ -54,7 +54,7 @@ Three statements were true before it and are false after it:
 | | **B252.1 / B253** | `/admin/derp` certificate auto-renewal card + *Run cert sync now*; `/admin/telegram` probe is cached (30 s success / 5 min failure, stale-while-revalidate) with a *Probe now* button | two routes that answered `501` now work; a DPI-blocked Telegram no longer blocks the page |
 | **Credential hygiene** | **RR-12** | The default PostgreSQL password literal is gone from 35 tracked files (34 scripts + the new resolver); they resolve it at runtime through `scripts/lib/db_credentials.sh` — `$SKYGATE_DB_PASSWORD` → the DSN in `$SKYGATE_DB`/`$SKYGATE_DB_DSN` → the DSN in `.env`/`/etc/skygate/skygate.env` → empty (psql then fails loudly). The live **admin** password was removed from six more scripts. | no credential literal in the working tree; `check_ha_state.sh` keeps the literal **on purpose** (it is the regression guard) and `.githooks/pre-commit` keeps blocking the string |
 | **Documentation** | — | Flat `docs/*.md` + `docs/ru/`; new bilingual `INSTALL` / `UPDATE` / `ROADMAP`; one canonical `RELEASE-NOTES.md`; `AGENTS.md` 919 KB → 32 KB (index only — every block entry kept, plus the new B263); `docs/LESSONS.md` holds the incident knowledge; `docs/plans/**`, `docs/runbooks/**`, `docs/internal/**`, `docs/BACKLOG.md`, `docs/PLANS.md` removed | one place per question; the agent-facing file finally fits in a context window |
-| **Gate / CI** | — | `verify_pre_deploy.sh` ends `PASS=289 / FAIL=0 / SKIP=1`; `staticcheck ./...` 0 findings; load-sensitive contracts got a 180 s budget and the gate run caps Go parallelism (`GOFLAGS=-p=2`); `B244` C7, `B188.2` contract T, `B191`, `b_tag_owners` contract D, `B112`/`B237.18` were made honest | the gate can be trusted as a merge contract again |
+| **Gate / CI** | — | `verify_pre_deploy.sh` ends `PASS=289 / FAIL=0 / SKIP=1`; `staticcheck ./...` 0 findings; load-sensitive contracts got a 180 s budget and the gate run caps Go parallelism (`GOFLAGS=-p=2`); the flakes that made the gate report one rotating FAIL per run are fixed (`TestSSHDumpTransport_Dump_FakeSsh` called `cmd.Wait()` before its readers had drained the pipes; `check_b237_24`'s live `git ls-remote` probe turned "remote unreachable" into a FAIL instead of a SKIP); `B244` C7, `B188.2` contract T, `B191`, `b_tag_owners` contract D, `B112`/`B237.18` were made honest | the gate can be trusted as a merge contract again |
 
 ### 1. Native self-update (B261) — the chain
 
@@ -99,12 +99,19 @@ Procedure: [`docs/UPDATE.md`](docs/UPDATE.md) §7 (`docs/ru/UPDATE.md`).
 
 | Verification | Where | Result |
 |---|---|---|
-| Full gate `scripts/verify_pre_deploy.sh` | VM (`<VM_HOST>`), this commit | `PASS=289 / FAIL=0 / SKIP=1` — the SKIP is `B8` (RU/EN smoke test, VM-only by design) |
+| Full gate `scripts/verify_pre_deploy.sh` | VM (`<VM_HOST>`), commit `a695f6cd` | **`289 PASS / 0 FAIL / 1 SKIP`** — the SKIP is `B8` (RU/EN smoke test, VM-only by design). Run as root **with the Go bin dir on `PATH`** (`sudo env PATH="$HOME/go/bin:$PATH" GOFLAGS=-p=2 bash scripts/verify_pre_deploy.sh`); without that, `B95` reports "staticcheck not found", and as the unprivileged operator user a root-owned checkout produces ~90 `permission denied` FAILs. Both traps are documented in `AGENTS.md` §2 trap 8 and `docs/operations.md` §1.3 |
 | `go build ./...`, `go vet ./...`, `staticcheck ./...` | local + VM | clean, 0 findings |
 | Focused tests `./internal/update/... ./internal/db/ ./internal/feature/admin/... ./internal/i18n/...` | local + VM | all `ok` |
-| CI (GitHub Actions) | commit `419e9a99`…this commit | all 6 jobs `success`, including **go test against a real PostgreSQL** — the job that was red with 40 failures at the start of this cycle |
+| Flake reproducer `go test -count=10 ./internal/dbmigrate/...` | VM (Linux — the platform where the fake-ssh branch runs) | 10/10 `ok` after the `cmd.Wait()`-ordering fix |
+| CI (GitHub Actions) | `419e9a99`, `dc92515d`, `774ef18a` | all 6 jobs `success` every time, including **go test against a real PostgreSQL** — the job that was red with 40 failures at the start of this cycle |
 | **Clean-host acceptance** (install → self-update) | throwaway `jrei/systemd-debian:12` container on the VM, 2026-09-19 | `verdict: done`, `/healthz` build matched (record below) |
 | Live credential sweep + data-drift repair (`RR-12`) | VM, production checkout | applied and re-verified with the four live contracts; backups in `/tmp/live-drift-*` |
+
+> `release.yml` itself only runs on a tag, so it cannot be exercised by CI before
+> the release. Both branches of its notes step were rehearsed locally against this
+> repository (the extraction produced the 187-line v1.5.9 body, and a synthetic
+> tag with no section produced the commit-list fallback), and the workflow file is
+> parsed by GitHub on every push (`ci` green on `dc92515d`).
 
 **Clean-host acceptance record (2026-09-19).** A fresh privileged
 `jrei/systemd-debian:12` container (systemd as PID 1) installed skygate with the
