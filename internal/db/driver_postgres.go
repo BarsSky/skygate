@@ -11,12 +11,31 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+// pgMigrateAdvisoryLockKey is the session-level advisory lock that serialises
+// concurrent migration runs against the same PostgreSQL database.
+//
+// Why it exists (2026-09-19): `MigratePostgres` used to rely on
+// `SET lock_timeout = '5s'` alone, which makes a *blocked* migrator abort
+// instead of waiting. Two processes booting at the same moment (HA pair, or the
+// CI test-pg job's TestPGLockTimeout) therefore raced on the DDL and on the
+// applied_migrations bookkeeping, and the loser died with
+// `ERROR: tuple concurrently updated (SQLSTATE XX00)`. lock_timeout does not
+// apply to advisory locks, so a second migrator now waits for the first to
+// finish and then finds everything already applied.
+const pgMigrateAdvisoryLockKey int64 = 0x5053474d4947 // "PSGMIG"
+
+// migrateAdvisoryLockWait bounds how long a migrator waits for the lock before
+// giving up (a stuck peer must not hang our boot forever).
+const migrateAdvisoryLockWait = 120 * time.Second
 
 // OpenPostgres opens a PostgreSQL connection. The dsn is the
 // standard libpq URL form:
@@ -188,9 +207,31 @@ func PGMigrations() []MigrationEntry {
 // V025 runs first because V020+ have FOREIGN KEY →
 // portal_users (which V025 creates).
 func MigratePostgres(d *sql.DB) error {
-	// Set lock_timeout so concurrent migrators fail fast instead of
-	// deadlocking. 5s is generous; live migrations finish in
-	// well under a second on a fresh DB.
+	// Serialise concurrent migrators (see pgMigrateAdvisoryLockKey). The lock is
+	// session-scoped, so it lives on a dedicated connection that we hold for the
+	// whole chain: the DDL below may use other pooled connections, but no other
+	// migrator can proceed past pg_advisory_lock until we release it.
+	lockCtx, cancelLock := context.WithTimeout(context.Background(), migrateAdvisoryLockWait)
+	defer cancelLock()
+	lockConn, err := d.Conn(lockCtx)
+	if err != nil {
+		return fmt.Errorf("migrate: advisory-lock connection: %w", err)
+	}
+	defer lockConn.Close()
+	if _, err := lockConn.ExecContext(lockCtx, `SELECT pg_advisory_lock($1)`, pgMigrateAdvisoryLockKey); err != nil {
+		return fmt.Errorf("migrate: pg_advisory_lock: %w", err)
+	}
+	// Release explicitly before returning the connection to the pool — the
+	// session survives Conn.Close(), so a session-level lock would be leaked.
+	defer func() {
+		if _, err := lockConn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, pgMigrateAdvisoryLockKey); err != nil {
+			log.Printf("migrate: WARNING: pg_advisory_unlock failed: %v", err)
+		}
+	}()
+
+	// Set lock_timeout so a migrator that still ends up contending for a table
+	// lock fails fast instead of deadlocking. 5s is generous; live migrations
+	// finish in well under a second on a fresh DB.
 	if _, err := d.Exec(`SET lock_timeout = '5s'`); err != nil {
 		return fmt.Errorf("SET lock_timeout: %w", err)
 	}

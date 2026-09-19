@@ -221,6 +221,15 @@ func TestMigrateV060PG_NewIndexHas5Columns(t *testing.T) {
 	d := openTestDB(t)
 	b183CleanupAll(t, d)
 
+	// 2026-09-19: drop whatever instance of the index exists first. The test
+	// schema already carries the FULL chain (OpenTestPG → MigratePostgres), and
+	// V068 later repairs this index to 6 columns (parent_domain, see B232 /
+	// B237.23). Without the DROP, V060's `CREATE UNIQUE INDEX IF NOT EXISTS`
+	// is a no-op and this assertion measures V068's index instead of V060's.
+	if _, err := d.Exec(`DROP INDEX IF EXISTS device_rules_natural_key_uniq`); err != nil {
+		t.Fatalf("drop index: %v", err)
+	}
+
 	if err := migrateV060PG(d); err != nil {
 		t.Fatalf("migrateV060PG: %v", err)
 	}
@@ -228,12 +237,17 @@ func TestMigrateV060PG_NewIndexHas5Columns(t *testing.T) {
 	// Query PG's pg_index system catalog for the column
 	// list of the index. ORDER BY indkey position so we
 	// get columns in their natural-key order.
+	//
+	// The relnamespace filter keeps the lookup inside this test's schema —
+	// pg_class is shared across the sibling skygate_pgtest_* schemas, and
+	// without it the join returned 53 columns from ~10 index instances.
 	rows, err := d.Query(`
 		SELECT a.attname
 		FROM pg_index i
 		JOIN pg_class c ON c.oid = i.indexrelid
 		JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
 		WHERE c.relname = 'device_rules_natural_key_uniq'
+		  AND c.relnamespace = current_schema()::regnamespace
 		ORDER BY array_position(i.indkey, a.attnum)
 	`)
 	if err != nil {

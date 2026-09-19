@@ -487,11 +487,17 @@ func TestMigrateV053_AddsSSHPortColumn(t *testing.T) {
 	// does not exist (SQLSTATE 42883)` — the CI test-pg job runs this suite
 	// against a real postgres:15. Use information_schema instead; PG reports
 	// the DEFAULT '' as `''::text`, so assert on that shape.
+	//
+	// The table_schema = current_schema() filter is REQUIRED: information_schema
+	// spans every schema the role can see, and each sibling test in this package
+	// has its own skygate_pgtest_* schema with an exit_servers table (the first
+	// version of this query counted 9 of them).
 	var colDefault string
 	var colCount int
 	if err := d.QueryRow(
 		`SELECT COUNT(*) FROM information_schema.columns
-		  WHERE table_name = 'exit_servers' AND column_name = 'ssh_port'`,
+		  WHERE table_schema = current_schema()
+		    AND table_name = 'exit_servers' AND column_name = 'ssh_port'`,
 	).Scan(&colCount); err != nil {
 		t.Fatalf("read column info: %v", err)
 	}
@@ -500,7 +506,8 @@ func TestMigrateV053_AddsSSHPortColumn(t *testing.T) {
 	}
 	if err := d.QueryRow(
 		`SELECT COALESCE(column_default, '') FROM information_schema.columns
-		  WHERE table_name = 'exit_servers' AND column_name = 'ssh_port'`,
+		  WHERE table_schema = current_schema()
+		    AND table_name = 'exit_servers' AND column_name = 'ssh_port'`,
 	).Scan(&colDefault); err != nil {
 		t.Fatalf("read column default: %v", err)
 	}
