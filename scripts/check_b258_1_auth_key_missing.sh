@@ -187,6 +187,11 @@ if grep -B6 'action" value="generate_key"' "$TAILSCALE_HTML" | grep -q '<details
 else
   ok "K: the generate_key form is not wrapped in <details> (visible button)"
 fi
+if grep -q '<details' "$TAILSCALE_HTML"; then
+  fail "K: $TAILSCALE_HTML still contains a <details> disclosure — controls on this page must be visible (operator report 2026-09-19)"
+else
+  ok "K: /admin/tailscale has no collapsible controls left"
+fi
 # and it must live in the non-disabled branch (the missing/unset states) of the
 # auth-key card: the LAST `{{if .State.AuthKeyDisabled}}` before it, then that
 # block's `{{else}}`, must both precede the generate form.
