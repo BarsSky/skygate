@@ -230,3 +230,6 @@ scratch_archive/
 # that production checks live in scripts/ and one-off probes do not.
 !scripts/check_*.sh
 !scripts/verify_*.sh
+# 2026-09-19 RR-12: scripts/lib/db_credentials.sh is the runtime DB-credential
+# resolver; the broad 'db_*.sh' pattern above must not swallow it.
+!scripts/lib/db_credentials.sh
