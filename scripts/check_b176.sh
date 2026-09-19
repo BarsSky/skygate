@@ -121,6 +121,16 @@ fi
 
 if grep -qE '"tag:dev-"\s*\+\s*e\.UserName\s*\+\s*"-"\s*\+\s*strings.ToLower\(e\.DeviceHostname\)' internal/acl/acl.go; then
     ok "acl.go (DeviceRule loop) lowercases e.DeviceHostname in tag:dev-<user>-<device> construction (B176: ACL policy matches the lowercase node tag)"
+# B265 (2026-09-19): the DeviceRule loop no longer inlines the tag
+# construction — the lowercase + node_owner_map fallback live in the
+# single helper `deviceTagForRule`. Accept the helper form as long as
+# it is (a) present, (b) lowercases BOTH halves, and (c) the loop
+# actually calls it instead of building the tag by hand.
+elif grep -qE 'func deviceTagForRule' internal/acl/acl.go \
+     && grep -q 'B265: prefer the per-device TAG' internal/acl/acl.go \
+     && grep -q 'devTag := deviceTagForRule(e, ownerByNodeID)' internal/acl/acl.go \
+     && grep -cE 'strings\.ToLower\(strings\.TrimSpace\(e\.(UserName|DeviceHostname)\)\)' internal/acl/acl.go | grep -qE '^[2-9]'; then
+    ok "acl.go (DeviceRule loop) lowercases both halves via deviceTagForRule (B176 + B265: policy tag matches the lowercase node tag)"
 else
     bad "acl.go (DeviceRule loop) does NOT lowercase e.DeviceHostname (B176: headscale policy has uppercase src, node has lowercase tag → rule never matches)"
 fi

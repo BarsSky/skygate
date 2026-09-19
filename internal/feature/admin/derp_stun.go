@@ -224,10 +224,10 @@ func decodeSTUNAddr(b []byte, xor bool, txID []byte) string {
 // derper's (really tsweb's) access-denied page rather than JSON.
 //
 // Upstream `tsweb.Protected` answers every rejected /debug/*
-// request with `http.Error(w, "debug access denied", 403)`, so the
-// body is the plain string. httpGet discards the status code (it
-// returns the body regardless), which is why the status has to be
-// recognised from the body here.
+// request with a plain-text "debug access denied" body and status
+// 403, so the body is the literal string. httpGet discards the
+// status code (it returns the body regardless), which is why the
+// status has to be recognised from the body here.
 func isDebugAccessDenied(body []byte) bool {
 	return strings.Contains(string(body), "debug access denied")
 }
