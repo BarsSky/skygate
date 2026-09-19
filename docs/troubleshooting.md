@@ -691,6 +691,73 @@ call — it reads headscale directly and refreshes on its next page load.
 
 ## 8. Install / upgrade-time failures
 
+### 8.0 Self-update rolled back: "healthz did not report build …" (B268)
+
+**Symptom.** `/admin/update` shows `СТАТУС ОБНОВЛЕНИЯ: FAILED` and the job log ends
+with
+
+```
+installed the new binary over /usr/local/bin/skygate
+restarting (systemd)
+ROLLBACK: restoring the previous binary from /var/lib/skygate/update/skygate.prev
+verdict: rolled_back (healthz did not report build 'v1.5.11' within 90s (last build: none))
+```
+
+**What that sentence actually covers.** It is emitted whenever the verify step
+(`SKYGATE_UPDATE_HEALTH_URL`, default `http://127.0.0.1:8080/healthz`) never returns
+a body whose `build` starts with the target tag. That is true for at least four very
+different causes, and before B268 the applier told you none of them:
+
+1. **the unit never started** (masked/disabled, a crashing binary, a missing env
+   value in `/etc/skygate/skygate.env`);
+2. **another instance owns the port** — very common on a host that also runs the
+   Docker deployment: `docker-proxy` holds `:8080`, so the native unit cannot bind,
+   and the health URL happily keeps serving the *container's* build (which is not
+   your target, and on a different release train it can also be the wrong version);
+3. **the service listens on another port** than `SKYGATE_UPDATE_HEALTH_URL`;
+4. **the artifact cannot execute on this host** (wrong arch, truncated download,
+   missing loader).
+
+**What B268 changed** (`deploy/skygate-apply-update.sh`) — read `apply.log` again
+after upgrading to v1.5.12+; it now contains:
+
+* `pre-swap health baseline: … reports build 'X' (unit state: …)` and a `WARN` when
+  that build is not `FROM_VERSION`, followed by the listener on the port
+  (`DIAG`-style `listener on port 8080: …`) — this is case 2, and it is reported
+  **before** anything is swapped;
+* `smoke test OK: the new binary runs and reports '…'` — or a hard stop with
+  `refusing to swap in a binary that does not run` (case 4). The installed binary is
+  left untouched in that case;
+* on failure, a `DIAG:` block: `unit state`, `listener on port`, `binary on disk`
+  and the last 15 `journalctl -u <service>` lines;
+* a verdict that distinguishes `the service did not come up: … never returned a
+  healthy body within Ns` from `healthz did not report build X … (last build: Y)`,
+  both carrying the unit state.
+
+**Operator commands for the four cases** (native install):
+
+```bash
+systemctl status skygate --no-pager          # 1: active/failed/masked?
+journalctl -u skygate -n 50 --no-pager       # 1: the real startup error
+sudo ss -ltnp | grep ':8080'                 # 2/3: who actually owns the port
+docker ps --format '{{.Names}} {{.Ports}}'   # 2: a container on the same port?
+sudo grep -E 'HEALTH_URL|BINARY|SERVICE' /etc/skygate/update-helper.conf
+```
+
+Fix for case 2 on a host that runs both: keep exactly one serving instance. Either
+remove/disable the unused native unit (`systemctl disable --now skygate`) or point the
+native install at another port (`SKYGATE_PORT=8081` in `/etc/skygate/skygate.env`,
+default `8080`) **and** update `SKYGATE_UPDATE_HEALTH_URL` in the root-owned helper
+conf (`/etc/skygate/update-helper.conf`) to match — the applier verifies that URL, not
+the listening socket.
+
+**Recovery if the applier already rolled back:** nothing is broken — the previous
+binary was restored and restarted; the update simply did not apply. Fix the cause
+above, then press “Update now” again. If the verdict was `failed` with
+`MANUAL INTERVENTION REQUIRED`, the rollback restarted a binary that cannot bind
+either (case 2): free the port, then `systemctl restart skygate` and confirm
+`curl -fsS http://127.0.0.1:8080/healthz`.
+
 ### 8.1 Container cannot reach a hostname that resolves to `127.0.0.1`
 
 **Symptom.** Containerised skygate cannot reach a host that is up and reachable from

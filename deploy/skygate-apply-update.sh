@@ -299,6 +299,99 @@ wait_for_any_health() {
     return 1
 }
 
+# health_port — the TCP port behind $HEALTH_URL, for the diagnostics
+# below. Pure string work so it needs no tools.
+health_port() {
+    _hp="${HEALTH_URL#*://}"
+    _hp="${_hp%%/*}"
+    case "$_hp" in
+        *:*) printf '%s' "${_hp##*:}" ;;
+        *)   printf '80' ;;
+    esac
+}
+
+# service_state — one line describing what systemd/OpenRC thinks of the
+# unit, or "unknown". Never fails.
+service_state() {
+    if [ "$MODE" = "systemd" ] && command -v systemctl > /dev/null 2>&1; then
+        systemctl is-active "$SERVICE" 2>/dev/null || true
+        return 0
+    fi
+    if [ "$MODE" = "openrc" ] && command -v rc-service > /dev/null 2>&1; then
+        rc-service "$SERVICE" status 2>/dev/null | head -1 || true
+        return 0
+    fi
+    if [ "$MODE" = "bare" ] && valid_pid "${RUNTIME_PID:-}" && is_our_process "$RUNTIME_PID"; then
+        printf 'pid %s alive\n' "$RUNTIME_PID"
+        return 0
+    fi
+    printf 'unknown'
+}
+
+# port_owner — who is listening on the health port right now.
+port_owner() {
+    _port="$(health_port)"
+    if command -v ss > /dev/null 2>&1; then
+        ss -ltnp 2>/dev/null | grep -F ":${_port} " | head -3
+        return 0
+    fi
+    if command -v netstat > /dev/null 2>&1; then
+        netstat -ltnp 2>/dev/null | grep -F ":${_port} " | head -3
+        return 0
+    fi
+    printf 'ss/netstat unavailable'
+}
+
+# service_diagnostics — the reason the pre-B268 applier was useless when
+# a swap went wrong: on failure it only said "healthz did not report
+# build X", which is equally true for "the unit is masked", "the new
+# binary panics on startup", "something else already owns the port" and
+# "the service is up but on another port". Everything below is
+# best-effort and must never abort the applier.
+#
+# B268 (2026-09-19) — added after a real native/systemd failure where the
+# operator could see nothing but the timeout.
+service_diagnostics() {
+    log "DIAG: unit state: $(service_state)"
+    _owner="$(port_owner)"
+    log "DIAG: listener on port $(health_port): ${_owner:-nothing is listening}"
+    log "DIAG: binary on disk: $(ls -l "$BINARY_PATH" 2>&1 | head -1)"
+    if [ "$MODE" = "systemd" ] && command -v journalctl > /dev/null 2>&1; then
+        _j="$(journalctl -u "$SERVICE" -n 15 --no-pager 2>/dev/null | tail -15)"
+        if [ -n "$_j" ]; then
+            log "DIAG: last journal lines for $SERVICE:"
+            printf '%s\n' "$_j" | while IFS= read -r _l; do log "DIAG:   $_l"; done
+        else
+            log "DIAG: journalctl returned nothing for $SERVICE (unit may never have started)"
+        fi
+    fi
+    if [ -r "$LOG" ]; then
+        log "DIAG: service log tail ($LOG):"
+        tail -10 "$LOG" 2>/dev/null | while IFS= read -r _l; do log "DIAG:   $_l"; done
+    fi
+}
+
+# binary_smoke_test <path> — run the freshly extracted binary in a mode
+# that cannot touch the network, the DB or the port, and require it to
+# exit 0. This catches the "release asset is not runnable on this host"
+# class (wrong arch, missing loader, truncated download) BEFORE the swap,
+# so the running service is never replaced by a binary that cannot start.
+binary_smoke_test() {
+    _bin="$1"
+    if command -v runuser > /dev/null 2>&1; then
+        _out="$(runuser -u "$RUN_USER" -- timeout 20 "$_bin" --version 2>&1)"
+    else
+        _out="$(timeout 20 "$_bin" --version 2>&1)"
+    fi
+    _rc=$?
+    if [ "$_rc" -eq 0 ]; then
+        log "smoke test OK: the new binary runs and reports '$(printf '%s' "$_out" | head -1)'"
+        return 0
+    fi
+    log "ERROR: the new binary failed the pre-swap smoke test (rc=$_rc): $(printf '%s' "$_out" | head -3 | tr '\n' ' ')"
+    return 1
+}
+
 restart_service() {
     if [ "$MODE" = "systemd" ]; then
         if ! command -v systemctl > /dev/null 2>&1; then
@@ -599,6 +692,40 @@ fi
 NEW_BIN="$WORK/skygate"
 chmod 0755 "$NEW_BIN"
 
+# --- 2b. pre-swap smoke test (B268) ---------------------------------
+# Everything up to here proves the ARTIFACT is authentic; this proves it
+# is RUNNABLE on this host. The pre-B268 applier went straight to the
+# swap and then reported "healthz did not report build X" — a message
+# that cannot be told apart from "the new binary cannot execute here".
+if [ "$DRY_RUN" != "1" ]; then
+    if ! binary_smoke_test "$NEW_BIN"; then
+        log "ERROR: refusing to swap in a binary that does not run; the old binary stays in place"
+        finish failed "the downloaded binary failed the pre-swap smoke test (see apply.log)"
+    fi
+fi
+
+# --- 2c. pre-swap health baseline (B268) ----------------------------
+# The verify step after the restart compares the build reported by
+# $HEALTH_URL with $TARGET. If something OTHER than this unit already
+# answers on that URL, the comparison can never succeed and the operator
+# only learns it after a pointless swap + rollback. We cannot tell
+# reliably who is serving (a docker-proxied container and a native unit
+# look alike from the outside), but we CAN log the baseline: a healthy
+# body whose build is unrelated to $FROM_VERSION is a strong hint that a
+# second instance owns the port.
+_pre_body="$(health_body || true)"
+if [ -n "$_pre_body" ]; then
+    if build_matches "$_pre_body" ""; then
+        log "pre-swap health baseline: $HEALTH_URL reports build '${LAST_BUILD:-unknown}' (unit state: $(service_state))"
+        if [ -n "$FROM_VERSION" ] && [ "${LAST_BUILD:-}" != "$FROM_VERSION" ]; then
+            log "WARN: the health endpoint reports '${LAST_BUILD:-}' but this install believes it runs '$FROM_VERSION' — a SECOND skygate instance (container/other unit) may own that port, in which case value verification after the restart cannot succeed"
+            log "WARN: listener on port $(health_port): $(port_owner | head -2 | tr '\n' ' ')"
+        fi
+    fi
+else
+    log "pre-swap health baseline: $HEALTH_URL is not answering while unit '$SERVICE' is '$(service_state)' — the update will fail its verification unless the restart brings this URL up"
+fi
+
 # --- 3. migrations (before the swap) --------------------------------
 log "running migrations with the new binary (as $RUN_USER)"
 if ! run_migrations; then
@@ -623,6 +750,7 @@ log "installed the new binary over $BINARY_PATH"
 # --- 5. restart + verify --------------------------------------------
 log "restarting ($MODE)"
 if ! restart_service; then
+    service_diagnostics
     rollback "restart failed"
 fi
 
@@ -631,4 +759,14 @@ if wait_for_build "$TARGET"; then
     finish done ""
 fi
 
-rollback "healthz did not report build '$TARGET' within ${HEALTH_TIMEOUT}s (last build: ${LAST_BUILD:-none})"
+# B268: say WHICH failure this is before rolling back. "did not report
+# build X" covers four very different situations, and the operator could
+# not tell them apart from the verdict alone. Both branches dump the same
+# diagnostics — "the service is up but serving the old build" is just as
+# often a port/second-instance problem as a bad artifact.
+if [ -z "${LAST_BUILD:-}" ]; then
+    service_diagnostics
+    rollback "the service did not come up: $HEALTH_URL never returned a healthy body within ${HEALTH_TIMEOUT}s (unit state: $(service_state))"
+fi
+service_diagnostics
+rollback "healthz did not report build '$TARGET' within ${HEALTH_TIMEOUT}s (last build: ${LAST_BUILD:-none}, unit state: $(service_state))"

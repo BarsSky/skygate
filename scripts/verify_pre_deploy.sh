@@ -4349,3 +4349,28 @@ run_check "B264" "admin role delegation with an immutable primary admin (v0.72 /
 # scripts/check_b266_exit_node_register.sh.
 run_check "B266" "exit-node registration from the admin panel + ssh_target option-injection fix (2026-09-19). (A) New POST /admin/exit-nodes/register (internal/feature/admin/exit_node_register.go, admin-only) mints a pre-auth key with hs.CreatePreauthKeyWithTags(infraHeadscaleUserID, ttl, false, ['tag:exit-node']) and renders a ready-to-run command block (install, ip_forward/NAT, hostnamectl, tailscale up --login-server/--authkey/--hostname/--advertise-exit-node/--accept-routes) for the new machine. TTL is capped at 24h. (B) The key is parked in global_settings under an opaque one-time token (never in a redirect URL, so it cannot leak via access logs, history or Referer) and is cleared either on the single render or by a 15-minute sweep. (C) The node name is validated by isSafeNodeName before it is rendered into the copy-paste shell command AND used as the tailnet hostname. (D) Non-fatal hazards are surfaced next to the key: a hostname already taken in the tailnet (headscale would create a SECOND node with the same name) and an existing exit_servers row. (E) internal/headscale/routes.go now refuses any ssh_target that is not [user@]host[:port] (IsSafeSSHTarget + anchored regex, rejects leading dash and every shell metacharacter), appends '--' before the host, and pins -o ProxyCommand=none -o IdentitiesOnly=yes — closing the confirmed container-root escalation where a stored ssh_target like -oProxyCommand=... was parsed by ssh as an option. The key path must now be absolute. The /admin/exit-nodes/add form validates both fields at write time with a specific error message instead of a row that silently fails on every sync. 26 contracts in scripts/check_b266_exit_node_register.sh + 4 pure-function test groups (IsSafeSSHTarget accept/reject/length in internal/headscale/routes_b266_test.go; isSafeNodeName + exitNodeRegisterCommand in internal/feature/admin/exit_node_register_b266_test.go)." \
   'test -f scripts/check_b266_exit_node_register.sh && bash scripts/check_b266_exit_node_register.sh'
+
+# --- B268 (2026-09-19): applier failure diagnostics ------------------
+# Live case: a native/systemd self-update on a remote VM rolled back with
+# "healthz did not report build 'v1.5.11' within 90s (last build: none)"
+# and nothing else. That sentence is equally true for "the unit is
+# masked", "the new binary crashes on startup", "the port is already
+# owned by another instance" and "the service listens elsewhere", so the
+# operator could not act on it. B268 makes the privileged applier
+# self-explaining: a PRE-SWAP `binary_smoke_test` (`--version`, bounded by
+# timeout) refuses to install an artifact that cannot execute on the host;
+# a pre-swap health baseline logs which build answers on the health URL
+# and WARNS when it disagrees with FROM_VERSION (the second-instance /
+# port-conflict class, which can never verify successfully); every failure
+# path logs `service_diagnostics` (unit state, listener on the health
+# port, binary on disk, journal tail) before rolling back; and the
+# verdicts now distinguish "the service did not come up" from "the
+# service came up but reports the wrong build", both carrying the unit
+# state. 9 contracts in scripts/check_b268_applier_failure_diagnostics.sh
+# (source + behavioural: it drives the real applier against a local
+# mirror with stubbed systemctl/ss/journalctl and asserts done /
+# rolled_back / honest-failed verdicts plus the DIAG lines; the
+# behavioural half SKIPs on a non-Linux host) + 7 Go source contracts in
+# internal/update/applier_b268_test.go.
+run_check "B268" "privileged update applier must explain a failed swap (2026-09-19). A live native/systemd self-update rolled back with only 'healthz did not report build v1.5.11 within 90s (last build: none)' — a message equally true for a masked unit, an unrunnable artifact, a port already owned by another instance and a service listening elsewhere. B268: (1) binary_smoke_test runs the freshly extracted binary with --version under `timeout` BEFORE the swap and fails the update without touching the installed binary when it cannot execute; (2) a pre-swap health baseline logs the build currently answering on SKYGATE_UPDATE_HEALTH_URL and warns when it is not FROM_VERSION, naming the listener on the port — the docker-container-owns-8080 / two-instances case where verification can never succeed; (3) service_diagnostics (unit state via service_state, listener via port_owner using ss or netstat, binary listing, 15-line journal tail via journalctl -u) is logged before every rollback; (4) verdicts distinguish 'the service did not come up: ... never returned a healthy body within Ns' from 'healthz did not report build X ... (last build: Y)', both now including the unit state. 9 contracts in scripts/check_b268_applier_failure_diagnostics.sh (A source, B behavioural against a local HTTP mirror with stubbed systemctl/ss/journalctl/curl, C go test) + 7 contracts in internal/update/applier_b268_test.go pinning the ORDER (smoke test and baseline before the swap, diagnostics before the rollback)." \
+  'test -f scripts/check_b268_applier_failure_diagnostics.sh && bash scripts/check_b268_applier_failure_diagnostics.sh'
