@@ -289,6 +289,313 @@ func (c *Client) restartHeadscaleUnit() error {
 	return fmt.Errorf("neither systemctl nor rc-service is available to restart %q (start headscale manually so it re-reads the policy file)", unit)
 }
 
+// PolicyAuditStatus is the admin-facing verdict of the file-mode policy check
+// (B272.2).
+type PolicyAuditStatus string
+
+const (
+	// PolicyAuditNotApplicable — the API works (policy.mode: database), or no
+	// policy file is involved at all.
+	PolicyAuditNotApplicable PolicyAuditStatus = "not_applicable"
+	// PolicyAuditOK — the file exists and both sides can do their job.
+	PolicyAuditOK PolicyAuditStatus = "ok"
+	// PolicyAuditUnreadableByHeadscale — skygate can reach the file, but the
+	// headscale service user cannot: its API answers 500 for every policy
+	// call, so no tag can ever become permitted. The live case (host `aro`).
+	PolicyAuditUnreadableByHeadscale PolicyAuditStatus = "unreadable_by_headscale"
+	// PolicyAuditUnreadableBySkygate — the file is not readable by the skygate
+	// service user, so it cannot compute the new tagOwners.
+	PolicyAuditUnreadableBySkygate PolicyAuditStatus = "unreadable_by_skygate"
+	// PolicyAuditMissing — the path is configured but no such file exists.
+	PolicyAuditMissing PolicyAuditStatus = "missing"
+	// PolicyAuditAPIError — the policy API itself failed while skygate could
+	// read the file (e.g. headscale is down, or its own error is unrelated to
+	// permissions).
+	PolicyAuditAPIError PolicyAuditStatus = "api_error"
+)
+
+// PolicyAudit is the operator-facing result of auditing the headscale policy
+// file (B272.2). It exists because the failure is otherwise a nested one:
+//
+//	PUT /api/v1/policy → 500 update is disabled for modes other than database
+//	GET /api/v1/policy → 500 reading policy from path "/etc/headscale/policy.hujson":
+//	                          open …: permission denied
+//
+// i.e. headscale cannot read its OWN policy file, so nothing (its API, skygate's
+// tagOwners repair, any node tag) can work — and the only clue was a 500 body.
+type PolicyAudit struct {
+	Status PolicyAuditStatus `json:"status"`
+	// Path is the resolved policy file ("" when the mode is database).
+	Path string `json:"path,omitempty"`
+	// Detail is the one-line explanation shown to the operator.
+	Detail string `json:"detail"`
+	// CurrentUserReadable / CurrentUserWritable describe skygate's own access.
+	CurrentUserReadable bool `json:"current_user_readable"`
+	CurrentUserWritable bool `json:"current_user_writable"`
+	// HeadscaleUser / HeadscaleGroup are the unit's service identity (empty
+	// when it could not be determined).
+	HeadscaleUser  string `json:"headscale_user,omitempty"`
+	HeadscaleGroup string `json:"headscale_group,omitempty"`
+	// HeadscaleCanRead is the verdict for the headscale service user: a real
+	// probe when sudo is available, otherwise a conservative model based on
+	// the file's owner/group/mode.
+	HeadscaleCanRead bool `json:"headscale_can_read"`
+	// ProbeMethod is "sudo" (an actual `sudo -u <user> test -r`) or "mode"
+	// (derived from owner/group/other bits).
+	ProbeMethod string `json:"probe_method,omitempty"`
+	// Fixes are ready-to-paste shell commands that resolve the problem, in
+	// preference order. Empty when Status is ok / not_applicable.
+	Fixes []string `json:"fixes,omitempty"`
+}
+
+// PolicyAuditOK reports whether the policy is usable end to end.
+func (a PolicyAudit) OK() bool {
+	return a.Status == PolicyAuditOK || a.Status == PolicyAuditNotApplicable
+}
+
+// AuditHeadscalePolicy audits the file-mode policy's accessibility for both
+// parties: the skygate service user (which must write tagOwners) and the
+// headscale service user (which must read the file at every API call).
+//
+// It is deliberately read-only: no chown, no chmod. The operator gets the exact
+// commands instead (Fixes), because guessing the headscale service account and
+// changing ownership of another service's config from inside skygate is a
+// privilege decision, not a bug fix.
+func AuditHeadscalePolicy() PolicyAudit {
+	a := PolicyAudit{Status: PolicyAuditNotApplicable, HeadscaleCanRead: true}
+
+	// Is this a file-mode policy at all?
+	path := os.Getenv("SKYGATE_HEADSCALE_POLICY_PATH")
+	if path == "" {
+		if p, err := DiscoverPolicyPath(); err == nil {
+			path = p
+		} else {
+			// no file-mode policy discovered — the API path is in charge
+			a.Detail = "headscale policy is served through the API (policy.mode is not 'file'), so file permissions do not apply"
+			return a
+		}
+	}
+	a.Path = path
+
+	user, group := currentServiceIdentity()
+	a.HeadscaleUser, a.HeadscaleGroup = headscaleServiceIdentity()
+
+	// Ask the OS directly whether we can write: the kernel is the authority
+	// here (it already accounts for the real uid/gid), unlike a mode-bit model
+	// built from environment variables.
+	if unixAccess(path, 0x2) { // W_OK
+		a.CurrentUserWritable = true
+	}
+
+	// skygate's own view.
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			a.Status = PolicyAuditMissing
+			a.Detail = fmt.Sprintf("policy file %s does not exist (headscale's policy.path points at it)", path)
+			a.Fixes = []string{
+				fmt.Sprintf("sudo install -m 0640 -o %s -g %s /dev/null %s", orDefault(a.HeadscaleUser, "headscale"), user, path),
+				"# then write the policy (headscale policy get > file, or let skygate apply it once readable)",
+			}
+			return a
+		}
+		a.Status = PolicyAuditUnreadableBySkygate
+		a.Detail = fmt.Sprintf("cannot stat %s: %v", path, err)
+		return a
+	}
+	if f, err := os.Open(path); err == nil {
+		a.CurrentUserReadable = true
+		_ = f.Close()
+	} else {
+		a.Detail = fmt.Sprintf("skygate cannot read %s: %v", path, err)
+	}
+	if !a.CurrentUserWritable {
+		a.CurrentUserWritable = unixWritable(path)
+	}
+
+	// headscale's view: prefer a real probe, fall back to a mode model.
+	if a.HeadscaleUser != "" && canSudoRead(path, a.HeadscaleUser) {
+		a.HeadscaleCanRead = true
+		a.ProbeMethod = "sudo"
+	} else {
+		a.HeadscaleCanRead = modeModelAllows(path, a.HeadscaleUser, a.HeadscaleGroup, user, group)
+		a.ProbeMethod = "mode"
+	}
+
+	switch {
+	case !a.HeadscaleCanRead:
+		a.Status = PolicyAuditUnreadableByHeadscale
+		a.Detail = fmt.Sprintf("the headscale service user (%s) cannot read %s — its policy API answers 500 and NO node tag can ever be permitted",
+			orDefault(a.HeadscaleUser, "headscale"), path)
+		a.Fixes = policyPermissionFixes(path, a.HeadscaleUser, a.HeadscaleGroup, user, group, false)
+	case !a.CurrentUserWritable:
+		a.Status = PolicyAuditOK
+		a.Detail = fmt.Sprintf("headscale can read %s, but the skygate service user cannot write it — skygate will report the exact policy to apply by hand", path)
+		a.Fixes = policyPermissionFixes(path, a.HeadscaleUser, a.HeadscaleGroup, user, group, true)
+	default:
+		a.Status = PolicyAuditOK
+		a.Detail = fmt.Sprintf("%s is readable by headscale and writable by the skygate service user", path)
+	}
+	return a
+}
+
+// policyPermissionFixes builds the copy-paste commands for a permission problem.
+// With writableByCurrent=false the goal is headscale readability; with true it
+// is preserving that readability while granting skygate write access.
+func policyPermissionFixes(path, hsUser, hsGroup, curUser, curGroup string, writableByCurrent bool) []string {
+	owner := orDefault(hsUser, "headscale")
+	group := orDefault(hsGroup, owner)
+	if curGroup == "" {
+		curGroup = group
+	}
+	if !writableByCurrent {
+		return []string{
+			"# owner = headscale (it must READ the policy), group = skygate (it must WRITE it)",
+			fmt.Sprintf("sudo chown %s:%s %s", owner, curGroup, path),
+			fmt.Sprintf("sudo chmod 0640 %s", path),
+			"sudo systemctl restart headscale",
+			fmt.Sprintf("# verify: sudo -u %s test -r %s && sudo -u %s test -w %s", owner, path, orDefault(curUser, "skygate"), path),
+		}
+	}
+	return []string{
+		"# keep headscale able to read it, let skygate write it too",
+		fmt.Sprintf("sudo chmod 0660 %s && sudo chgrp %s %s", path, orDefault(curGroup, "skygate"), path),
+		fmt.Sprintf("# or, if the group differs: sudo setfacl -m u:%s:rw %s", orDefault(curUser, "skygate"), path),
+		fmt.Sprintf("# verify: sudo -u %s test -w %s", orDefault(curUser, "skygate"), path),
+	}
+}
+
+// headscaleServiceIdentity returns the user/group the headscale unit runs as.
+// Empty strings when it cannot be determined (no systemd, a container, …).
+func headscaleServiceIdentity() (user, group string) {
+	unit := getenvDefault("SKYGATE_HEADSCALE_UNIT", "headscale")
+	for _, prop := range []string{"User", "Group"} {
+		out, err := exec.Command("systemctl", "show", unit, "-p", prop, "--value").Output()
+		v := strings.TrimSpace(string(out))
+		if err == nil && v != "" {
+			if prop == "User" {
+				user = v
+			} else {
+				group = v
+			}
+		}
+	}
+	if user == "" {
+		user = os.Getenv("SKYGATE_HEADSCALE_USER")
+	}
+	if group == "" {
+		group = os.Getenv("SKYGATE_HEADSCALE_GROUP")
+	}
+	return user, group
+}
+
+// currentServiceIdentity is who skygate runs as (usually "skygate").
+func currentServiceIdentity() (user, group string) {
+	user = os.Getenv("SKYGATE_SERVICE_USER")
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+	if user == "" {
+		user = "skygate"
+	}
+	group = os.Getenv("SKYGATE_SERVICE_GROUP")
+	return user, group
+}
+
+// canSudoRead reports whether `sudo -n -u <user> test -r <path>` succeeds. It
+// returns false when sudo is unavailable or needs a password — the caller then
+// uses the mode-based model, which is conservative (it never claims readability
+// it cannot prove).
+func canSudoRead(path, user string) bool {
+	if _, err := exec.LookPath("sudo"); err != nil {
+		return false
+	}
+	return exec.Command("sudo", "-n", "-u", user, "test", "-r", path).Run() == nil
+}
+
+// unixWritable reports whether the current process can write the path, using
+// the same owner/group/other bit logic as the kernel (no ACLs — those are
+// reported by the operator's own `getfacl`, and a false negative here only
+// downgrades a status line, never blocks anything).
+func unixWritable(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	perm := fi.Mode().Perm()
+	if perm&0o200 != 0 { // owner write
+		return true
+	}
+	if perm&0o020 != 0 && sameGroup(path) {
+		return true
+	}
+	return false
+}
+
+// modeModelAllows decides whether user/group can read the file from the mode
+// bits alone (used when sudo is unavailable).
+func modeModelAllows(path, hsUser, hsGroup, curUser, curGroup string) bool {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	perm := fi.Mode().Perm()
+	owner, group := fileOwnerGroup(path)
+	if owner == "" {
+		// Unknown ownership: assume the world-readable bit is what matters.
+		return perm&0o004 != 0
+	}
+	if hsUser != "" && owner == hsUser {
+		return perm&0o400 != 0
+	}
+	if group != "" {
+		if hsGroup != "" && group == hsGroup {
+			return perm&0o040 != 0
+		}
+		if curGroup != "" && group == curGroup {
+			return perm&0o040 != 0
+		}
+	}
+	return perm&0o004 != 0
+}
+
+// fileOwnerGroup resolves a path's numeric owner/group to names. Best-effort:
+// uses `stat` when present and falls back to the numeric ids.
+func fileOwnerGroup(path string) (owner, group string) {
+	if out, err := exec.Command("stat", "-c", "%U %G", path).Output(); err == nil {
+		parts := strings.Fields(strings.TrimSpace(string(out)))
+		if len(parts) == 2 {
+			return parts[0], parts[1]
+		}
+	}
+	if out, err := exec.Command("stat", "-f", "%Su %Sg", path).Output(); err == nil { // BSD/macOS
+		parts := strings.Fields(strings.TrimSpace(string(out)))
+		if len(parts) == 2 {
+			return parts[0], parts[1]
+		}
+	}
+	return "", ""
+}
+
+// sameGroup reports whether the current process's primary group owns the file.
+func sameGroup(path string) bool {
+	_, fileGroup := fileOwnerGroup(path)
+	if fileGroup == "" {
+		return false
+	}
+	out, err := exec.Command("id", "-gn").Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == fileGroup
+}
+
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
 // DiscoverPolicyPath reads the local headscale configuration and returns the
 // `policy.path` value (B272). It searches the documented locations and
 // understands the flat YAML shapes headscale ships, including the

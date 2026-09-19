@@ -34,6 +34,35 @@
 <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.Error}}</div>
 {{end}}
 
+{{/* B272.2: headscale policy-file permissions. While the headscale service
+     user cannot read policy.path, its policy API answers 500 (reading policy
+     from path …: permission denied), so no `tag:dev-*` can ever be permitted
+     and every per-device ACL rule silently stops matching. */}}
+{{with .PolicyAudit}}
+{{if not .OK}}
+<div class="alert alert-danger">
+  <i class="fa-solid fa-key"></i>
+  <strong>{{t "derp_dashboard.policy_audit_title"}}</strong><br>
+  {{.Detail}}
+  {{if .Path}}
+  <div style="margin-top:.35rem">
+    <code>{{.Path}}</code> —
+    headscale: <code>{{if .HeadscaleUser}}{{.HeadscaleUser}}{{else}}?{{end}}</code>,
+    skygate: <code>{{if .CurrentUserWritable}}rw{{else if .CurrentUserReadable}}r{{else}}&mdash;{{end}}</code>
+    (probe: {{.ProbeMethod}})
+  </div>
+  {{end}}
+  {{if .Fixes}}
+  <div style="margin-top:.5rem">
+    <strong>{{t "derp_dashboard.policy_audit_fixes"}}</strong>
+    <pre style="white-space:pre-wrap;margin:.35rem 0 0">{{range .Fixes}}{{.}}
+{{end}}</pre>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+
 {{if .Recommended}}
 <div class="alert alert-success">
   <i class="fa-solid fa-bolt"></i>

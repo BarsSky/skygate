@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"skygate/internal/derphealth"
+	"skygate/internal/headscale"
 )
 
 // GetAdminDerpDashboard renders the dashboard. Reads from
@@ -190,12 +191,16 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 
 	s.Backend.RenderWithLayout(w, r, "admin/derp_dashboard.html", c,
 		map[string]any{
-			"DERPs":            visible,
-			"TotalCount":       totalCount,
-			"VisibleCount":     len(visible),
-			"ShowUnavailable":  showUnavailable,
-			"Recommended":      recommendedID,
-			"Refreshed":        time.Now().UTC(),
+			"DERPs":           visible,
+			"TotalCount":      totalCount,
+			"VisibleCount":    len(visible),
+			"ShowUnavailable": showUnavailable,
+			"Recommended":     recommendedID,
+			"Refreshed":       time.Now().UTC(),
+			// B272.2: policy-file permissions. Tag application (and therefore
+			// every per-device ACL rule) is impossible while headscale cannot
+			// read its own policy file, so the page states it with the fixes.
+			"PolicyAudit": headscale.AuditHeadscalePolicy(),
 		})
 }
 
@@ -246,9 +251,9 @@ type derpMapNode struct {
 }
 
 type derpMapRegion struct {
-	RegionID   int          `json:"RegionID"`
-	RegionCode string       `json:"RegionCode"`
-	RegionName string       `json:"RegionName"`
+	RegionID   int           `json:"RegionID"`
+	RegionCode string        `json:"RegionCode"`
+	RegionName string        `json:"RegionName"`
 	Nodes      []derpMapNode `json:"Nodes"`
 }
 

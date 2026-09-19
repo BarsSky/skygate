@@ -622,6 +622,18 @@ func main() {
 	if err := ensureHeadscaleUser(d.DB, hs, cfg.BootstrapAdminUser); err != nil {
 		log.Printf("warn: ensure headscale user: %v", err)
 	}
+	// B272.2: with `policy.mode: file` everything tag-related depends on the
+	// policy file being readable by headscale and writable by skygate. When it
+	// is not, headscale's policy API answers 500 and NO tag can ever be
+	// permitted — a state that used to surface only as a nested 500 body in the
+	// autoupdater log. Report it at boot with the exact fix commands; the same
+	// audit is rendered on /admin/derp at request time.
+	if audit := headscale.AuditHeadscalePolicy(); !audit.OK() {
+		log.Printf("⚠️  headscale policy: %s (%s)", audit.Detail, audit.Status)
+		for _, fix := range audit.Fixes {
+			log.Printf("    fix: %s", fix)
+		}
+	}
 
 	// B237.18 (closes TD-10) — headscale_user_id
 	// reconciliation cron. 1h interval (configurable

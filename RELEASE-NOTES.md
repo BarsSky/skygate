@@ -12,6 +12,56 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.15 — the policy-permission problem reports itself (B272.2)
+
+**Date:** 2026-09-19 · **Base:** `v1.5.14` → this tag · **Compatibility:** no schema,
+config or API change.
+
+### The last link in the chain
+
+`v1.5.14` got the tag all the way to headscale, which then refused it with an error
+that pointed at something else entirely:
+
+```
+GET /api/v1/policy → 500  reading policy from path "/etc/headscale/policy.hujson":
+                          open /etc/headscale/policy.hujson: permission denied
+```
+
+The host ran headscale as `headscale:headscale` and the policy file was
+`root:skygate 0660` — **headscale could not read its own policy**. Every policy API
+call failed, so no `tag:*` could ever be permitted, and the only clue was a nested
+500 body inside the autoupdater's log. Nothing on any page said it.
+
+### What this release adds
+
+`headscale.AuditHeadscalePolicy()` — a read-only audit of the policy file's
+accessibility for **both** parties, surfaced in three places:
+
+1. **the boot journal** — a warning naming the status and printing the fixes;
+2. **`/admin/derp`** — a red banner with the resolved path, the headscale account,
+   skygate's own access (`rw` / `r` / `—`), the probe method and the same
+   copy-paste command block;
+3. the reconciliation failure it explains (unchanged: `failed=N` every tick until
+   the files are right).
+
+The verdict for the headscale account is a **real probe** —
+`sudo -n -u <headscale-user> test -r <path>` — when sudo is available; otherwise a
+conservative model built from the file's owner/group/mode bits. skygate's own
+access is asked from the kernel (`unix.Access`, which resolves the real uid/gid and
+supplementary groups), so the page never claims access it does not have.
+
+Statuses: `ok`, `not_applicable` (database-mode policy), `unreadable_by_headscale`,
+`unreadable_by_skygate`, `missing`, `api_error`. For every non-`ok` status the
+audit returns ready-to-paste `Fixes` — the ownership layouts are documented in
+`docs/troubleshooting.md` §8.0.4.
+
+The audit is deliberately **read-only**: it never chowns or chmods. Changing
+ownership of headscale's own configuration is a privilege decision, so skygate
+reports the exact commands instead of doing it behind the operator's back.
+
+Contracts: `scripts/check_b272_tag_drift.sh` section H (H–H8, 32 contracts total)
+and `internal/headscale/acl_b2722_test.go`.
+
 ## v1.5.14 — the reconciler must make the tag PERMITTED, not just apply it (B272.1)
 
 **Date:** 2026-09-19 · **Base:** `v1.5.13` → this tag · **Compatibility:** no schema,

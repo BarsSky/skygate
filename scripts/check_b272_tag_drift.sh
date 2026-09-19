@@ -245,5 +245,58 @@ for n in ns:
   fi
 fi
 
+# --- H: the policy-permission audit is surfaced to the admin (B272.2) -------
+# Live follow-up: headscale ran as headscale:headscale while policy.hujson was
+# root:skygate 0660 — headscale could not read its OWN policy, every policy API
+# call answered 500 ("reading policy from path …: permission denied"), and the
+# only clue was a nested 500 body in the autoupdater log.
+if grep -q 'func AuditHeadscalePolicy() PolicyAudit' "$ACL"; then
+  ok "H: the headscale package audits the policy file's accessibility"
+else
+  bad "H: no policy-permission audit exists"
+fi
+if grep -q 'PolicyAuditUnreadableByHeadscale' "$ACL" && grep -q 'PolicyAuditUnreadableBySkygate' "$ACL"; then
+  ok "H2: both halves are distinguished (headscale cannot read vs skygate cannot write)"
+else
+  bad "H2: the audit cannot tell the two permission problems apart"
+fi
+if grep -q 'func policyPermissionFixes(' "$ACL" && grep -q 'chown %s:%s %s' "$ACL"; then
+  ok "H3: the audit returns ready-to-paste fix commands"
+else
+  bad "H3: the audit reports a problem without the commands to fix it"
+fi
+if grep -q 'func canSudoRead(path, user string) bool' "$ACL" && grep -q 'func modeModelAllows(' "$ACL"; then
+  ok "H4: the headscale-user verdict is probed for real (sudo -n -u … test -r) with a documented fallback"
+else
+  bad "H4: no real probe (a name-based guess would be wrong on any other account)"
+fi
+if grep -q 'headscale.AuditHeadscalePolicy()' cmd/skygate/main.go; then
+  ok "H5: the boot sequence reports a permission problem with its fixes in the journal"
+else
+  bad "H5: the problem is still invisible until an operator reads a nested 500"
+fi
+if grep -q 'headscale.AuditHeadscalePolicy()' internal/feature/admin/derp_dashboard.go; then
+  ok "H6: /admin/derp renders the audit"
+else
+  bad "H6: the admin page does not show the policy state"
+fi
+if grep -q 'policy_audit_title' internal/handlers/templates/admin/derp_dashboard.html \
+   && grep -q 'derp_dashboard.policy_audit_title' internal/i18n/catalog_admin.go \
+   && grep -q 'derp_dashboard.policy_audit_fixes' internal/i18n/catalog_admin.go; then
+  ok "H7: the banner is rendered and both i18n keys exist (RU + EN)"
+else
+  bad "H7: the banner or its i18n keys are missing"
+fi
+if command -v go >/dev/null 2>&1; then
+  OUT="$(go test -count=1 -run 'B2722' ./internal/headscale/ 2>&1)"
+  if grep -q '^ok' <<< "$OUT"; then
+    ok "H8: the audit's Go contracts pass (mode model, probe, fixes, not-applicable, missing file)"
+  else
+    bad "H8: the audit Go contracts failed: $OUT"
+  fi
+else
+  skip "H8: go not on PATH"
+fi
+
 printf '\n\033[1mB272 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1

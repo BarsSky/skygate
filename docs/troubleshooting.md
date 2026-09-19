@@ -1065,6 +1065,45 @@ sudo journalctl -u skygate -f | grep tag-reconcile # the next tick repairs the t
 After this, skygate writes `tagOwners` itself (B272.1), applies the missing tags,
 and `tag-reconcile` reports `applied=N failed=0`.
 
+#### skygate reports this for you (v1.5.15+)
+
+You do not have to work it out from a 500 body any more — the same audit runs in
+three places:
+
+* **at boot** — the journal gets a warning with the fix commands:
+
+  ```
+  ⚠️  headscale policy: the headscale service user (headscale) cannot read
+      /etc/headscale/policy.hujson — its policy API answers 500 and NO node tag
+      can ever be permitted (unreadable_by_headscale)
+      fix: # owner = headscale (it must READ the policy), group = skygate (it must WRITE it)
+      fix: sudo chown headscale:skygate /etc/headscale/policy.hujson
+      fix: sudo chmod 0640 /etc/headscale/policy.hujson
+      fix: sudo systemctl restart headscale
+      fix: # verify: sudo -u headscale test -r /etc/headscale/policy.hujson && sudo -u skygate test -w …
+  ```
+
+* **on `/admin/derp`** — a red banner with the status, the resolved path, who can
+  do what (`headscale: headscale`, `skygate: rw`) and the same command block.
+  The verdict for the headscale account is a **real probe**
+  (`sudo -n -u headscale test -r …`) when sudo is available, otherwise a
+  conservative model built from the file's owner/group/mode — so the page never
+  claims readability it cannot prove.
+
+* **through the metric-visible failure path** — the reconciliation tick keeps
+  reporting `failed=N` with the nested reason until the permissions are fixed.
+
+Statuses the audit can report:
+
+| `status` | Meaning |
+|---|---|
+| `ok` | readable by headscale, writable by skygate |
+| `not_applicable` | headscale uses `policy.mode: database` — no file involved |
+| `unreadable_by_headscale` | the live case: the API answers 500, no tag can be permitted |
+| `unreadable_by_skygate` | skygate cannot compute the new `tagOwners` |
+| `missing` | `policy.path` is configured but the file does not exist |
+| `api_error` | skygate could read it, but the policy API itself failed |
+
 To let skygate do it automatically on a native host, either grant the service user
 write access to that directory or run headscale with `policy.mode: database`:
 
