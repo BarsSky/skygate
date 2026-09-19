@@ -134,6 +134,83 @@ Skygate автоматически шлёт в Telegram, когда:
 `/admin/telegram` → карточка **Disable Telegram** → подтвердить чекбокс.
 Уведомления прекратятся, токен удалится. Снова включить — повторить шаги 3.1–3.4.
 
+## 8. Egress relay: обход DPI-блокировки `api.telegram.org`
+
+Если провайдер режет `api.telegram.org` (таймаут на TCP/443 из сети, где стоит
+skygate), бот можно завернуть через exit-node, у которого доступ есть. Механика:
+skygate **не** проксирует трафик сам — он просит relay объявить маршруты
+Telegram (`tailscale set --advertise-routes=…`), а клиент Tailscale на самом
+skygate принимает их (`--accept-routes`) и уходит за Telegram через relay.
+
+### 8.1 Как это выглядит в UI
+
+`/admin/telegram` → карточка **Egress relay**:
+
+| Элемент | Что делает |
+|---|---|
+| Список exit-node | `exit_servers` (те же строки, что на `/admin/exit-nodes`): hostname, `node_id`, SSH-target, `accept_routes` |
+| Выбор relay + **Apply** | POST → `handleTelegramSetEgress` → SSH на relay → `tailscale set --advertise-routes=0.0.0.0/0,::/0,<TelegramCIDRs>`; выбор сохраняется в `global_settings.telegram.egress_node_id` |
+| Probe | `resolveTelegramAPI()` (DNS для `api.telegram.org`) + `ip route get <ip>` → `ok_relay` если интерфейс `dev tailscale0`, `ok_direct` если уходит напрямую, `unreachable` если API не отвечает |
+| **Probe now** | принудительный пересчёт (обычно кэш 30 с на успех / 5 мин на ошибку, B253) |
+
+`TelegramCIDRs` (канонический список, `internal/feature/admin/telegram.go:905`):
+IPv4 `91.108.4.0/22`, `91.108.8.0/22`, `91.108.12.0/22`, `91.108.16.0/22`,
+`91.108.20.0/22`, `91.108.56.0/22`, `149.154.160.0/20`, `185.76.151.0/24`
++ IPv6 `2001:67c:4e8::/48`, `2001:b28:f23c::/48`, `2001:b28:f23f::/48`,
+`2001:7a0:1::/48`. IPv6 объявляется «на будущее»: клиент Tailscale не
+адвертайзит IPv6-маршруты без отдельного флага, и на практике Telegram
+достаётся по IPv4.
+
+### 8.2 Порядок включения (RR-13)
+
+1. **Preauth-ключ для пользователя `infra`** в headscale
+   (`headscale preauthkeys create --user <infra-id> --expiration 90d`).
+2. **Положить ключ туда, откуда его читает клиент в контейнере.** Приоритет
+   (`tailscaleAuthKeyPath()`): `global_settings.tailscale.auth_key_path` (DB) →
+   `SKYGATE_TS_AUTHKEY_FILE` (env) → `/data/ts/authkey`. Проще всего — открыть
+   `/admin/tailscale`: страница сама покажет состояние «файл ключа отсутствует»
+   и даст форму, куда ключ можно вставить (B258.1); по кнопке **Start** skygate
+   запишет файл и запустит `tailscaled` + `tailscale up --accept-routes` **внутри
+   уже работающего контейнера**, без пересоздания.
+3. **Сделать это состояние переживающим пересоздание контейнера.** Entrypoint
+   решает, поднимать ли `tailscaled`, по env-переменной, а в
+   `docker-compose.yml` она сейчас захардкожена как
+   `SKYGATE_TS_AUTHKEY_FILE=/dev/null` — при `--force-recreate` клиент снова
+   будет пропущен. Варианты: убрать эту строку (тогда сработает фолбэк
+   entrypoint'а на `/data/ts/authkey`, который уже будет существовать) или
+   указать реальный путь (`/run/secrets/ts_authkey` — секрет смонтирован).
+   Заодно проверьте `SKYGATE_TS_HOSTNAME`: имя `skygate-host` уже занято в
+   headscale другим узлом (id 57, пользователь `tagged-devices`), поэтому либо
+   удалите/переименуйте старый узел, либо задайте другое имя.
+4. **Объявить маршруты на relay**: `/admin/telegram` → **Egress relay** → выбрать
+   реле → **Apply**. Требуется рабочий SSH-target и `ssh_key_path` из
+   `exit_servers` (у `karolina` это `root@100.64.0.2:18022`).
+5. **Approve маршрутов в headscale.** У каждого CIDR согласие отдельное:
+   уже одобренные остаются, новые (`91.108.4.0/22`, `91.108.8.0/22`, если их
+   добавляет Apply) надо одобрить —
+   `headscale nodes approve-routes -i <id> -r <cidr>` — потому что в политике
+   **нет** `autoApprovers` (разделы политики: `hosts`, `grants`, `tagOwners`,
+   `groups`, `ssh`), а in-app помощник одобрения умеет только `0.0.0.0/0` + `::/0`
+   (`internal/feature/admin/exit_nodes.go`). Альтернатива — добавить
+   `autoApprovers.routes` в политику.
+6. **Проверить**: в контейнере `ip route get 149.154.167.220` → `dev tailscale0`,
+   `/admin/telegram` → probe `ok_relay`, затем «Send test» бота.
+
+### 8.3 Что уже сделано на референсном хосте (2026-09-19)
+
+| Факт | Значение |
+|---|---|
+| Выбранный relay | `telegram.egress_node_id = 3` → **emilia** (exit_servers id 116, `root@<public-ip>`) |
+| Одобренные Telegram-маршруты emilia | только `149.154.167.99/32` — **не покрывает** текущие адреса `api.telegram.org` |
+| **karolina** (exit_servers id 118, headscale node 11) | объявлены и одобрены `91.108.12.0/22`, `91.108.16.0/22`, `91.108.20.0/22`, `91.108.56.0/22`, `149.154.160.0/20`, `185.76.151.0/24`, `91.105.192.0/23`, плюс `0.0.0.0/0` + `::/0` → **это уже рабочий путь для Telegram** |
+| Клиент Tailscale в контейнере | не запущен (`tailscale status` → «failed to connect to local tailscaled»; `tailscaled.state` отсутствует) |
+| Причина | env `SKYGATE_TS_AUTHKEY_FILE=/dev/null` + отсутствующий `/data/ts/authkey` (при этом `global_settings.tailscale.auth_key_path` указывает именно туда, а `/run/secrets/ts_authkey` существует — 88 байт) |
+
+**Вывод:** быстрее всего — переключить селектор на `karolina` (шаг 4 по сути
+no-op, маршруты уже одобрены) и включить клиента в контейнере (шаг 2–3). Полный
+список `TelegramCIDRs` на релее не обязателен: для `api.telegram.org` достаточно
+`149.154.160.0/20`.
+
 ## Troubleshooting
 
 - **«not configured»** в шапке `/admin/telegram` — токен в БД пуст; сохраните.
@@ -153,11 +230,20 @@ Skygate автоматически шлёт в Telegram, когда:
 - **`/version` показывает `dev`** — бинарь собран без `-ldflags`. В
   Docker-контейнере этого не бывает (entrypoint.sh инжектит), а вот при
   локальном `go run` — да.
+- **`api.telegram.org` недоступен (таймаут), бот молчит** — DPI-блокировка;
+  включите egress relay по §8. Признаки половинчатого состояния: probe
+  `unreachable`, `ip route get 149.154.167.220` показывает не `tailscale0`,
+  `tailscale status` в контейнере не отвечает (клиент не запущен), либо на релее
+  одобрен только отдельный `/32` вместо `149.154.160.0/20`.
 
 ## Где смотреть в коде
 
 - `internal/telegram/notify.go` — `Notifier` interface + `RealNotifier`
   (hot-swap, `getUpdates` loop, Go-native HTTP — без curl)
+- `internal/feature/admin/telegram.go` — `handleTelegramSetEgress` (SSH +
+  `tailscale set --advertise-routes`), `TelegramCIDRs`, `handleTailscaleStart`
+- `internal/feature/admin/telegram_probe.go` — DNS + `ip route get` →
+  `ok_relay` / `ok_direct` / `unreachable`
 - `internal/telegram/commands.go` — `BotEnv` + `HandleCommand` dispatch
 - `internal/telegram/commands_phase2.go` — `/nodes /rules /audit` (166 строк)
 - `internal/telegram/commands_phase3.go` — `/exit_nodes /quota /ack` (222)

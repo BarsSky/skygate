@@ -208,13 +208,19 @@ substitute for the not-yet-published release; the artifact was built exactly as
 
 * **Telegram egress relay is not enabled (RR-10 / RR-13).** The code path is
   complete and reachable from `/admin/telegram` → *Egress relay*, and the UI admin
-  flow is what an operator should use — but on the reference deployment the
-  in-container Tailscale client is disabled by the compose file, the canonical
-  Telegram CIDRs are advertised on no node, and route approval needs either a
-  headscale `auto_approvers` entry or a manual `headscale nodes approve-routes`.
-  This is a **configuration** gap, not a code regression: relays do reach
-  `api.telegram.org` (`emilia`/`karolina` → HTTP 302). One deliberate limit: the
-  in-app route-approval helper only handles `0.0.0.0/0` + `::/0`.
+  flow is what an operator should use. Live state on the reference host
+  (2026-09-19): the in-container Tailscale client is disabled by the compose env
+  (`SKYGATE_TS_AUTHKEY_FILE=/dev/null`, while the DB points at a `/data/ts/authkey`
+  that does not exist), and the **selected** relay (`telegram.egress_node_id = 3`
+  → emilia) has only `149.154.167.99/32` approved, which does not cover the
+  current `api.telegram.org` addresses. This is a **configuration** gap, not a
+  code regression — relays do reach `api.telegram.org`, and **karolina** (exit
+  server id 118) already advertises *and* has approved `149.154.160.0/20` plus
+  four `91.108.*` blocks, so switching the selector is enough on the relay side.
+  headscale's policy carries **no** `autoApprovers`, and the in-app
+  route-approval helper only handles `0.0.0.0/0` + `::/0`, so any newly
+  advertised CIDR needs a manual `headscale nodes approve-routes`. Step-by-step
+  procedure and the state table: [`docs/TELEGRAM.md`](docs/TELEGRAM.md) §8.
 * **Bare (no service manager) mode** is covered by unit tests and the contract but
   has not been exercised on a live bare host; systemd and OpenRC are.
 * **~25 silent `ADD COLUMN` loops** remain in the SQLite migration file —

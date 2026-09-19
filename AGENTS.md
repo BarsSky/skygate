@@ -91,6 +91,12 @@ silently — it was folded into the files above.
    dies on `data/oidc-keys-test` and ~90 checks report `permission denied`. The
    reference-VM invocation is `sudo env PATH="$HOME/go/bin:$PATH" GOFLAGS=-p=2 bash
    scripts/verify_pre_deploy.sh`.
+9. **The reference VM is small (2 vCPU / 1.8 GB RAM), so a full gate can produce
+   one rotating FAIL per run.** The `--help` contracts `B211`–`B214` link the whole
+   binary and the linker occasionally dies under that pressure (each check passes
+   20/20 standalone). They now retry the link once and print the real error
+   (`scripts/lib/go_build.sh`); for any other single FAIL, re-run that check
+   standalone before treating it as a regression.
 
 ---
 

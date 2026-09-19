@@ -64,6 +64,11 @@ else
   GO="go"  # will fail Q/R/S, that's OK
 fi
 
+# Shared retry helper for the binary link: the reference VM is small (1.8 GB) and
+# the linker occasionally dies under full-gate pressure. See scripts/lib/go_build.sh.
+# shellcheck source=lib/go_build.sh
+. "$(dirname "$0")/lib/go_build.sh"
+
 PASS=0
 FAIL=0
 
@@ -181,7 +186,7 @@ if command -v "$GO" >/dev/null 2>&1 || [[ -x "$GO" ]]; then
   # gives us a stable binary to call repeatedly.
   SKYGATE_TMP="$(mktemp -d)"
   trap 'rm -rf "$SKYGATE_TMP"' EXIT
-  if $GO build -o "$SKYGATE_TMP/skygate" ./cmd/skygate 2>/dev/null; then
+  if GO="$GO" go_build_bin "$SKYGATE_TMP/skygate" ./cmd/skygate; then
     INIT_HELP="$("$SKYGATE_TMP/skygate" init --help 2>&1 | head -1)"
     if [[ "$INIT_HELP" == "skygate init <verb> [flags]" ]]; then
       check "S: skygate init --help prints usage" "match" "match"
