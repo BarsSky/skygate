@@ -1,9 +1,223 @@
 # Skygate release notes
 
-> **Single canonical file.** All release detail (root cause + fix +
-> files + live-verify) lives here for every shipped tag, regardless
-> of when the entry was written. The per-version `RELEASE-NOTES-vX.Y.Z.md`
-> pattern is **deprecated** — if you find any in the tree, delete them.
+> **Single canonical file.** All release detail (root cause + fix + files +
+> live-verify) lives here for every shipped tag, regardless of when the entry was
+> written. The per-version `RELEASE-NOTES-vX.Y.Z.md` pattern is **deprecated** — if
+> you find one in the tree, delete it: `.github/workflows/release.yml` checks this
+> file out and extracts its `## vX.Y.Z` section for the GitHub Release body (and
+> falls back to a generated commit list when the section is missing, so the body is
+> never empty).
+>
+> **Order:** newest first. v1.5.4–v1.5.8 are backfilled compactly in the section
+> after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
+> appended after the historical sections). Nothing older was rewritten.
+
+## v1.5.9 — native self-update (B261), OpenRC + the return of `SHA256SUMS` (B262), SQLite/PostgreSQL hardening, documentation overhaul
+
+**Date:** 2026-09-19
+**Base:** `v1.5.8` → this tag — 75 commits
+**Compatibility:** no schema break, no config-format break, no API break. A docker
+deployment updates exactly as before (`git pull` + `docker compose up -d
+--force-recreate`, or the in-app image-pull button). The native self-update path is
+new — read §3 before using it.
+
+### Why this release exists
+
+Three statements were true before it and are false after it:
+
+| Before | After |
+|---|---|
+| **A native host could not update itself.** On a systemd / OpenRC / bare install, `/admin/update` could only print manual steps: the swap needs root, and skygate deliberately does not run as root. | A **root-owned applier** does backup → verified download → pre-swap `migrate-only` → atomic rename swap → restart → `/healthz` build check → automatic rollback. The unprivileged service triggers it by writing one data-only file. `/admin/update` now works on all three native kinds. |
+| **A native SQLite install could not start.** `install-debian.sh` writes `SKYGATE_DB=sqlite:/var/lib/skygate/skygate.db`, and the SQLite driver does not know the `sqlite:` scheme — the DSN was mis-detected as PostgreSQL (`DB backend: postgres (DSN=sqlite:/…`) and the service never served `/healthz`. Every native SQLite host was dead on arrival. | The scheme is stripped before the driver sees it (B261.1) and the SQLite migration chain is complete and idempotent again (V071 was missing; `execSQLiteDDL` is now the single chokepoint). |
+| **Releases v1.5.6–v1.5.8 attached no checksums.** `release.yml` downloaded the `SHA256SUMS` artifact into `dist/SHA256SUMS` — a *directory* whose only file is also called `SHA256SUMS`; the flatten step then moved the file inside it and the release published a directory. | The artifact is downloaded into `dist/checksums`, so `SHA256SUMS` is attached as a **file** that lists every archive (B262). The native self-updater had been masking the gap with the GitHub per-asset digest fallback. |
+
+### Summary table
+
+| Area | Block | Change | Operator impact |
+|---|---|---|---|
+| **Native self-update** | **B261** | Root-owned applier + `skygate-update.path`/`.service` pair, written by every native installer | `/admin/update` → *Update now* works on systemd, OpenRC and bare hosts |
+| | **B261.1** | Strip the `sqlite:` scheme in the SQLite open path (+ a test that performs a real file open) | native SQLite installs boot at all |
+| | **B261.2** | Verify the artifact against `SHA256SUMS`; if the release has none, against the GitHub Releases API per-asset `digest: sha256:<hex>`; with neither, **fail closed** | the checksum-less v1.5.6–v1.5.8 releases stay installable |
+| | **B261.3** | Work dir `0755` (was `mktemp`'s `0700`, which `migrate-only` could not traverse as the service user) | the pre-swap migration actually runs |
+| | **B261.4** | `migrate-only` is a **subcommand**, not `--migrate-only`; same fix in the in-app manual steps | no more "unknown flag" abort before the swap |
+| | **B261.5** | `SKYGATE_UPDATE_BASE_URL` mirror support in the root-owned helper config (`https://`, or plain `http://` for loopback only; `SHA256SUMS` mandatory) | air-gapped / mirrored hosts can self-update |
+| | `1ee1366b` | Install-kind detection checks container markers before systemd | a skygate running *in* Docker is no longer told to run `systemctl` |
+| **Release pipeline** | **B262** | `path: dist/checksums`, plus OpenRC/Alpine as a first-class install kind (`/run/openrc` marker, `rc-service` restart, sudoers trigger) | `SHA256SUMS` is attached again; Alpine hosts get a native install **and** update path |
+| | **B237.24** | The workflow pre-computes the lowercase owner in the meta step (GitHub parses `format()` arguments as literals, so the `\| lower` filter never applied) | `ghcr.io/barssky/skygate:vX.Y.Z` pushes on the first attempt |
+| | **B263** | Release notes are one file (`RELEASE-NOTES.md`, newest section first); the `release` job — which had **no checkout step at all** — now checks the file out sparsely, extracts the `## vX.Y.Z` section, and falls back to a generated commit list | the GitHub Release body can no longer be empty (v1.5.8 published nothing) |
+| **Data layer** | **§12.13** | SQLite chain repaired (V071 missing; `ADD COLUMN IF NOT EXISTS` silently no-op'd; the chain broke on the second start) and all SQLite DDL routed through `execSQLiteDDL` | SQLite databases survive restarts and upgrades |
+| | `9f39c6f1` | Dialect shims branch at runtime; the shared layer no longer holds one-backend-only SQL | both backends are first-class again |
+| | `780b6ce9` | `MigratePostgres` takes a session-level `pg_advisory_lock` (120 s wait, dedicated connection) | two skygate replicas can no longer race a migration |
+| | `e75ad3ab` … `419e9a99` | Six commits of PostgreSQL test-suite repairs (OpenTestPG instead of a raw DSN, `$N` placeholders, boolean literals, schema-scoped assertions, the advisory-lock test, 180 s budgets) | the CI job *go test against a real PostgreSQL* is green instead of 40 failures |
+| **Error UX / security** | **R6** | DB errors render inside the page (flash + safe error block) instead of replacing the page with `text/plain`; a guard test freezes the remaining 101 call sites so the class cannot grow | failed forms keep their context and the operator's input |
+| | **R7** | Never hand out a preauth key skygate cannot account for | no orphan keys in headscale |
+| | **B252.1 / B253** | `/admin/derp` certificate auto-renewal card + *Run cert sync now*; `/admin/telegram` probe is cached (30 s success / 5 min failure, stale-while-revalidate) with a *Probe now* button | two routes that answered `501` now work; a DPI-blocked Telegram no longer blocks the page |
+| **Credential hygiene** | **RR-12** | The default PostgreSQL password literal is gone from 35 tracked files (34 scripts + the new resolver); they resolve it at runtime through `scripts/lib/db_credentials.sh` — `$SKYGATE_DB_PASSWORD` → the DSN in `$SKYGATE_DB`/`$SKYGATE_DB_DSN` → the DSN in `.env`/`/etc/skygate/skygate.env` → empty (psql then fails loudly). The live **admin** password was removed from six more scripts. | no credential literal in the working tree; `check_ha_state.sh` keeps the literal **on purpose** (it is the regression guard) and `.githooks/pre-commit` keeps blocking the string |
+| **Documentation** | — | Flat `docs/*.md` + `docs/ru/`; new bilingual `INSTALL` / `UPDATE` / `ROADMAP`; one canonical `RELEASE-NOTES.md`; `AGENTS.md` 919 KB → 32 KB (index only — all 281 block entries kept); `docs/LESSONS.md` holds the incident knowledge; `docs/plans/**`, `docs/runbooks/**`, `docs/internal/**`, `docs/BACKLOG.md`, `docs/PLANS.md` removed | one place per question; the agent-facing file finally fits in a context window |
+| **Gate / CI** | — | `verify_pre_deploy.sh` ends `PASS=289 / FAIL=0 / SKIP=1`; `staticcheck ./...` 0 findings; load-sensitive contracts got a 180 s budget and the gate run caps Go parallelism (`GOFLAGS=-p=2`); `B244` C7, `B188.2` contract T, `B191`, `b_tag_owners` contract D, `B112`/`B237.18` were made honest | the gate can be trusted as a merge contract again |
+
+### 1. Native self-update (B261) — the chain
+
+1. The **service** (unprivileged) writes `<data_dir>/update/request.props`. The file
+   is data only: `TARGET=<tag>`, `JOB_ID`, `FROM_VERSION`, `RUNTIME_PID`,
+   `INSTALL_KIND`, `REQUESTED_AT`. The tag is validated as
+   `[A-Za-z0-9][A-Za-z0-9._+-]{0,63}` with `-g<hex>` git-describe suffixes rejected
+   (it ends up in a URL).
+2. **`skygate-update.path`** (`PathExists=…/request.props`) fires
+   **`skygate-update.service`** — a root-owned `Type=oneshot` unit with
+   `TimeoutStartSec=900`, in its own cgroup. This is the privilege boundary: the
+   service never calls `sudo` and never talks to systemd.
+3. **`/usr/local/lib/skygate/skygate-apply-update.sh`** reads the root-owned
+   `/etc/skygate/update-helper.conf`, then:
+   * backs the current binary up to `<update_dir>/skygate.prev`;
+   * downloads `skygate-<TARGET>-<arch>.tar.gz` and verifies its SHA256;
+   * runs `<new binary> migrate-only` **as the service user** — a release whose
+     chain cannot handle this database is refused **before** anything is replaced;
+   * atomically installs the new binary over `/usr/local/bin/skygate`;
+   * restarts the unit and polls `/healthz` until it reports `status:ok` **and** a
+     `build` string equal to `<TARGET>` or `<TARGET>+<commit>` — a bare HTTP 200 is
+     not accepted (a stale process used to look like success);
+   * on any failure restores `skygate.prev`, restarts, and waits for health again.
+4. The verdict is written to `<update_dir>/result.status` (`done` / `failed` /
+   `rolled_back`) with `result.build` + `result.error`, which `/admin/update` reads
+   and clears.
+
+**Trust model.** skygate stays unprivileged. Every path the applier touches comes
+from the root-owned config, and the only thing the service can ask for is an
+official *release tag* — never a URL, a path or a command. The `bare` kind (no
+service manager) gets a `sudoers.d` rule that permits exactly one command instead
+of a path unit.
+
+**Mirror / air-gapped.** `SKYGATE_UPDATE_BASE_URL="https://mirror.example.com/skygate"`
+in `/etc/skygate/update-helper.conf`; artifacts are read from
+`<base>/<TAG>/skygate-<TAG>-<arch>.tar.gz` + `<base>/<TAG>/SHA256SUMS`. Plain
+`http://` is accepted for loopback addresses only, and a mirror **must** publish
+`SHA256SUMS` (there is no GitHub digest to fall back to for a custom source).
+Procedure: [`docs/UPDATE.md`](docs/UPDATE.md) §7 (`docs/ru/UPDATE.md`).
+
+### 2. What is verified, and how
+
+| Verification | Where | Result |
+|---|---|---|
+| Full gate `scripts/verify_pre_deploy.sh` | VM (`<VM_HOST>`), this commit | `PASS=289 / FAIL=0 / SKIP=1` — the SKIP is `B8` (RU/EN smoke test, VM-only by design) |
+| `go build ./...`, `go vet ./...`, `staticcheck ./...` | local + VM | clean, 0 findings |
+| Focused tests `./internal/update/... ./internal/db/ ./internal/feature/admin/... ./internal/i18n/...` | local + VM | all `ok` |
+| CI (GitHub Actions) | commit `419e9a99`…this commit | all 6 jobs `success`, including **go test against a real PostgreSQL** — the job that was red with 40 failures at the start of this cycle |
+| **Clean-host acceptance** (install → self-update) | throwaway `jrei/systemd-debian:12` container on the VM, 2026-09-19 | `verdict: done`, `/healthz` build matched (record below) |
+| Live credential sweep + data-drift repair (`RR-12`) | VM, production checkout | applied and re-verified with the four live contracts; backups in `/tmp/live-drift-*` |
+
+**Clean-host acceptance record (2026-09-19).** A fresh privileged
+`jrei/systemd-debian:12` container (systemd as PID 1) installed skygate with the
+*installer from this commit*:
+
+```
+SKYGATE_SKIP_VERIFY=1 bash deploy/install-debian.sh --db-type=sqlite --install-kind=systemd
+→ exit 0; skygate.service + skygate-update.path (active) + skygate-update.service
+  + /usr/local/lib/skygate/skygate-apply-update.sh + /etc/skygate/update-helper.conf
+  + SKYGATE_DB=sqlite:/var/lib/skygate/skygate.db
+  + a JWT secret generated via the od fallback (the image ships no xxd and no openssl)
+```
+
+The install downloaded the published `v1.5.8` asset, which is exactly the state
+this release fixes: v1.5.8 mis-detects the `sqlite:` DSN as PostgreSQL and never
+serves `/healthz`. The applier was then pointed at a local loopback mirror
+(`SKYGATE_UPDATE_BASE_URL="http://127.0.0.1:8099"`) carrying a `v1.5.9` tarball
+built from this commit, and a `request.props` was staged **as the `skygate`
+user**:
+
+```
+[08:18:45Z] downloading http://127.0.0.1:8099/v1.5.9/skygate-v1.5.9-linux-amd64.tar.gz
+[08:18:45Z] SHA256 OK (bc93c4db…, verified against SHA256SUMS asset)
+[08:18:46Z] running migrations with the new binary (as skygate)
+2026/09/19 08:18:46 migrate-only: opening sqlite (DSN=sqlite:/var/lib/skygate/skygate.db...)
+2026/09/19 08:18:46 migrate-only: migrations applied OK
+[08:18:46Z] installed the new binary over /usr/local/bin/skygate
+[08:18:47Z] healthz reports build 'v1.5.9+acc0001' after 2s
+[08:18:47Z] verdict: done
+```
+
+`/var/lib/skygate/update/result.status` = `done`, `result.build` =
+`v1.5.9+acc0001`, `/healthz` = `{"build":"v1.5.9+acc0001","status":"ok",…}`, the
+SQLite database was created by the migration step (516 KB), and `skygate.prev`
+retained the previous binary. **The update rescued a host whose installed binary
+could not run at all** — the strongest form of this test. The mirror was a harness
+substitute for the not-yet-published release; the artifact was built exactly as
+`release.yml` builds it (`CGO_ENABLED=0`, `-trimpath`, `-s -w`,
+`-X main.version=v1.5.9 -X main.commit=…`).
+
+### 3. Upgrade notes
+
+* **Docker / compose** — nothing to do beyond the normal update. The entrypoint
+  still rebuilds the binary on start.
+* **Native systemd/OpenRC/bare, SQLite** — **v1.5.8 and earlier cannot open their
+  own database.** If you are on v1.5.8, do not wait for `/admin/update` to fix
+  itself: install v1.5.9 from the tarball (`bash deploy/install-debian.sh`, or
+  extract the release archive over `/usr/local/bin/skygate` and restart). The
+  applier refuses an unsafe target before the swap, so a self-update *attempt* is
+  safe but will report `failed`.
+* **First native install** — the installer now also writes the applier and the path
+  unit; nothing else is needed for `/admin/update` to work.
+* **`SKYGATE_DB=sqlite:<path>`** keeps working, with or without the scheme.
+* **HA / PostgreSQL** — `MigratePostgres` now serialises concurrent migrators: a
+  second instance starting during a migration waits (up to 120 s) instead of
+  racing. No configuration change.
+
+### 4. Known gaps (unchanged by this release, tracked in `docs/ROADMAP.md`)
+
+* **Telegram egress relay is not enabled (RR-10 / RR-13).** The code path is
+  complete and reachable from `/admin/telegram` → *Egress relay*, and the UI admin
+  flow is what an operator should use — but on the reference deployment the
+  in-container Tailscale client is disabled by the compose file, the canonical
+  Telegram CIDRs are advertised on no node, and route approval needs either a
+  headscale `auto_approvers` entry or a manual `headscale nodes approve-routes`.
+  This is a **configuration** gap, not a code regression: relays do reach
+  `api.telegram.org` (`emilia`/`karolina` → HTTP 302). One deliberate limit: the
+  in-app route-approval helper only handles `0.0.0.0/0` + `::/0`.
+* **Bare (no service manager) mode** is covered by unit tests and the contract but
+  has not been exercised on a live bare host; systemd and OpenRC are.
+* **~25 silent `ADD COLUMN` loops** remain in the SQLite migration file —
+  harmless on a fresh DB, still able to hide a real failure. `execSQLiteDDL` is
+  the chokepoint that will absorb them.
+* **R6** still has 101 raw-error sites; the guard freezes the number.
+* **In-app manual steps (`RR-2`)** still print the historical asset names
+  `skygate-linux-amd64` / `.sha256`, which the pipeline does not publish; a
+  contract currently pins the stale string.
+* **`skygate-host` hostname collision** — the reserved-name guard (B251) is in
+  place; the pre-existing node named `skygate-host` is still registered in
+  headscale.
+* **Rotate the admin password** — an earlier revision of the repository contained
+  it. The literal is out of the working tree (RR-12) but it remains in git history.
+
+### 5. Rollback plan
+
+* **Not yet updated** — delete the GitHub release + the tag, fix, re-tag. The tag
+  is the only trigger.
+* **Already updated to v1.5.9** — the applier keeps
+  `<data_dir>/update/skygate.prev`, and `/admin/update` offers an explicit rollback
+  to the previous tag. Manual fallback:
+  `sudo install -m 0755 /var/lib/skygate/update/skygate.prev /usr/local/bin/skygate && sudo systemctl restart skygate`.
+* **Docker** — pin the previous image tag
+  (`ghcr.io/barssky/skygate:v1.5.8`) and `docker compose up -d --force-recreate`.
+
+## v1.5.4 – v1.5.8 — backfill (one line each; full detail in `git log <prev>..<tag>`)
+
+These releases shipped before this file became the single canonical one, so no
+per-version note was ever written for them. One line each, with the commit range
+that holds the detail:
+
+| Release | Date | Headline |
+|---|---|---|
+| **v1.5.4** (75 commits) | 2026-09-15 | SQLite restored alongside PostgreSQL (`SKYGATE_DB`, `--db-type`, the `db-migrate` convert subcommand, dialect `DetectDSN`); sidecar first-run adoption (bulk claim + auto-detected exit nodes); admin/user sync (rename, promote, drift banner); admin exit-rules for another user; `embed.FS` static assets; docker image pinned to **linux/amd64** (Issue #4) + the in-app image-pull update button |
+| **v1.5.5** (1 commit) | 2026-09-15 | `B249` — the image-pull update path (fast ~5–30 s alternative to a rebuild) |
+| **v1.5.6** (1 commit) | 2026-09-15 | `B250` — ACL page UI: JSON pretty-print + dark-card text contrast |
+| **v1.5.6.1** (1 commit) | 2026-09-15 | `B250` follow-up — `prettyPrintACL` handles a stringified headscale policy |
+| **v1.5.7** (1 commit) | 2026-09-15 | `B252` — grouped ACL view (collapsible categories) |
+| **v1.5.8** (37 commits) | 2026-09-17 | `B260.x` DERP status/probe chain (3 compounding URL bugs, WebSocket liveness fallback, derper-in-docker migration, `--verify-clients=` empty-value crash, SNI-matching cert check, `resolveDERPPort` DB-first, probe URL vs. derpmap URL); `B255` Telegram background polling + pin-nearest-exit-node; `B257` adoption of pre-existing headscale devices + repo hygiene; `B258`/`B258.1`/`B259.x` `/admin/tailscale` UI (skip state, missing auth-key state, enable toggle, `findUserForHostname`); `B256` SQL fix for `headscale_user_id != ''`; PostgreSQL-compat test fixes |
+
+> **No checksums on those tags:** v1.5.6, v1.5.6.1, v1.5.7 and v1.5.8 shipped **no
+> `SHA256SUMS` asset** (see the `B262` row above). To verify an artifact from one of
+> them, use the GitHub Releases API per-asset `digest: sha256:<hex>` — that is
+> exactly the fallback the native applier uses.
 
 ## v1.5.2 — post-v1.5.0 hotfixes + HA Tier 1 reg.ru live (B146) + CDN UI grouping (B237.22) + ON CONFLICT drift fix (B237.23)
 

@@ -16,6 +16,7 @@ authoritative.
 | **Install Skygate** (docker, systemd, OpenRC, bare binary, Windows, tarball) | [`INSTALL.md`](INSTALL.md) · [`ru/INSTALL.md`](ru/INSTALL.md) |
 | **Update an existing install** (in-app, scheduled, native self-update with rollback, mirrors, manual) | [`UPDATE.md`](UPDATE.md) · [`ru/UPDATE.md`](ru/UPDATE.md) |
 | See **what is planned / blocked / owed** | [`ROADMAP.md`](ROADMAP.md) · [`ru/ROADMAP.md`](ru/ROADMAP.md) |
+| See **what shipped in a release** (one canonical file, newest first) | [`../RELEASE-NOTES.md`](../RELEASE-NOTES.md) |
 | Understand **why something is the way it is** (incidents, root causes, traps) | [`LESSONS.md`](LESSONS.md) |
 | **Run a release**, deploy, migrate PostgreSQL, bootstrap a host | [`operations.md`](operations.md) |
 | Set up **high availability** (active/passive, failover, clustering) | [`ha.md`](ha.md) |

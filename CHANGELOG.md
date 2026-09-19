@@ -16,6 +16,85 @@ stability promises yet — pin to a tag if you depend on a specific shape).
 > canonical notes for every shipped tag live in the linked
 > `RELEASE-NOTES.md` above.
 
+## [v1.5.9] — 2026-09-19
+
+**Native self-update (B261) + OpenRC and the `SHA256SUMS` asset (B262) +
+SQLite/PostgreSQL hardening + documentation overhaul.** 75 commits on top of
+`v1.5.8`; no schema, config-format or API break. Full detail (root causes, file
+list, live evidence, acceptance record): [`RELEASE-NOTES.md`](RELEASE-NOTES.md).
+
+### Added
+- **Native self-update** — `/admin/update` now works on systemd, OpenRC and bare
+  installs: the unprivileged service writes a data-only `request.props`, a
+  root-owned `skygate-update.path`/`.service` pair fires a root-owned applier
+  that backs up, downloads, verifies SHA256, runs `migrate-only` **before** the
+  swap, swaps atomically, restarts, polls `/healthz` for the target **build
+  string**, and rolls back on failure (`B261`).
+- **Mirror / air-gapped updates** — `SKYGATE_UPDATE_BASE_URL` in the root-owned
+  helper config (`https://`, or `http://` for loopback only; `SHA256SUMS`
+  mandatory) (`B261.5`).
+- **OpenRC / Alpine** as a first-class install kind (`rc-service` restart,
+  `install-alpine.sh` installs the helper) (`B262`).
+- `/admin/derp` certificate auto-renewal card + *Run cert sync now* (`B252.1`);
+  `/admin/telegram` cached probe with *Probe now* (`B253`).
+- Bilingual `docs/INSTALL.md` / `docs/UPDATE.md` / `docs/ROADMAP.md` (RU + EN),
+  `docs/LESSONS.md`; one canonical `RELEASE-NOTES.md`.
+
+### Fixed
+- **`SKYGATE_DB=sqlite:/path` never opened** — the installer's own DSN form made
+  every native SQLite install dead on arrival (`B261.1`).
+- **SQLite migration chain** — V071 was missing and `ADD COLUMN IF NOT EXISTS`
+  silently no-op'd, so the chain broke on the second start; all SQLite DDL now
+  goes through `execSQLiteDDL` (§12.13).
+- **`release.yml` attached no `SHA256SUMS`** for v1.5.6–v1.5.8 (the artifact was
+  downloaded into a directory named like its only file) (`B262`).
+- **Device autoupdater `ON CONFLICT` drift** — the 5-column form no longer
+  matches the 6-column natural-key index, so `/32` rules stopped landing
+  silently (`B237.23`).
+- PostgreSQL: `MigratePostgres` serialises concurrent migrators with a
+  session-level `pg_advisory_lock`; six commits of test-suite repairs take the
+  CI *go test against a real PostgreSQL* job from 40 failures to green.
+- R6 — DB errors render in the page (flash) instead of replacing it with
+  `text/plain`; a guard freezes the remaining 101 sites. R7 — preauth keys are
+  never handed out when skygate cannot account for them.
+- **Credential hygiene (RR-12)** — the default PostgreSQL password literal is
+  gone from 34 scripts (runtime resolver `scripts/lib/db_credentials.sh`), and
+  the live admin password is gone from six more.
+
+### Changed
+- `AGENTS.md` 919 KB → 32 KB (index only; every block entry kept); `docs/plans/**`,
+  `docs/runbooks/**`, `docs/internal/**`, `docs/BACKLOG.md`, `docs/PLANS.md`
+  removed in favour of the flat catalogue + `docs/ROADMAP.md`.
+- Gate: `verify_pre_deploy.sh` ends `PASS=289 / FAIL=0 / SKIP=1`; load-sensitive
+  contracts get a 180 s budget and `GOFLAGS=-p=2`.
+- Release notes are extracted from `RELEASE-NOTES.md` by the release workflow,
+  with a generated commit list as fallback (`B263`).
+
+## [v1.5.4 – v1.5.8] — 2026-09-15 … 2026-09-17
+
+Backfilled summary of the releases that shipped between the last detailed
+CHANGELOG entry and v1.5.9; per-release detail in
+[`RELEASE-NOTES.md`](RELEASE-NOTES.md).
+
+- **v1.5.4** (75 commits) — SQLite restored alongside PostgreSQL (`SKYGATE_DB`,
+  `--db-type`, the `db-migrate` convert subcommand); sidecar first-run adoption;
+  admin/user sync (rename, promote, drift banner); admin exit-rules for another
+  user; `embed.FS` assets; docker image pinned to **linux/amd64** (Issue #4) +
+  the in-app image-pull update button.
+- **v1.5.5** — `B249` image-pull update path (fast ~5–30 s alternative to a
+  rebuild).
+- **v1.5.6 / v1.5.6.1** — `B250` ACL page UI (JSON pretty-print, dark-card
+  contrast, stringified policy).
+- **v1.5.7** — `B252` grouped ACL view (collapsible categories).
+- **v1.5.8** (37 commits) — `B260.x` DERP status/probe chain + derper-in-docker
+  migration; `B255` Telegram background polling + pin-nearest-exit-node; `B257`
+  adoption of pre-existing headscale devices; `B258`/`B259.x` `/admin/tailscale`
+  UI; `B256` SQL fix for `headscale_user_id != ''`.
+
+> v1.5.6 – v1.5.8 published **no `SHA256SUMS` asset** (fixed by `B262` in
+> v1.5.9) — verify those artifacts with the GitHub Releases API per-asset
+> `digest: sha256:<hex>`.
+
 ## [v1.5.3] — 2026-09-11
 
 **Tag:** TBD (B-mod-* series — 25 commits on top of v1.5.2;

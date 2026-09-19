@@ -378,6 +378,20 @@ jobs:
     needs: [docker, sums]
     timeout-minutes: 10
     steps:
+      - name: Checkout (release notes + history for the fallback)
+        # 2026-09-19 (B263): this job had NO checkout step at all, so
+        # RELEASE-NOTES.md was never present in the workspace. The old
+        # notes step then set body_path to the empty string and the tag
+        # was published with an EMPTY release body (v1.5.8). A sparse
+        # checkout keeps it cheap — the artifacts arrive as downloads,
+        # the source tree is not needed here.
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            RELEASE-NOTES.md
+          sparse-checkout-cone-mode: false
+
       - name: Download release artifacts
         # B237.24.4 (v1.5.2+, 2026-09-08): the pre-B237.24.4 release
         # job used `actions/download-artifact@v4` with
@@ -463,22 +477,55 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Read release notes
-        # Reads RELEASE-NOTES-vX.Y.Z.md if it exists (the operator
-        # typically writes one for each release per the v1.5.0
-        # convention). Falls back to auto-generated notes if missing.
+        # 2026-09-19: release notes live in ONE canonical file,
+        # RELEASE-NOTES.md (newest section first). Extract this tag's
+        # "## vX.Y.Z" section into a temp file for the release body.
+        #
+        # The old per-version RELEASE-NOTES-vX.Y.Z.md convention is
+        # retired. The v1.5.8 body was empty because this job had no
+        # checkout at all (so no notes file could be found), the old
+        # code then set body_path to the empty string, and
+        # generate_release_notes was never set. Hence the checked-out
+        # file above plus the git-log fallback below: never empty.
         id: notes
         shell: bash
         run: |
           set -euo pipefail
           VERSION="${{ steps.meta.outputs.version }}"
-          NOTES_FILE="RELEASE-NOTES-v${VERSION}.md"
+          NOTES_FILE="RELEASE-NOTES.md"
+          OUT="${RUNNER_TEMP}/release-notes.md"
+          : > "$OUT"
           if [ -f "$NOTES_FILE" ]; then
-            echo "notes_path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
-            echo "[notes] using $NOTES_FILE"
+            # From "## vX.Y.Z" up to (but not including) the next "## "
+            # heading. The ([^0-9.]|$) guard keeps v1.5.9 from also
+            # matching a v1.5.90 heading.
+            awk -v ver="v${VERSION}" '
+              !inside && $0 ~ ("^## " ver "([^0-9.]|$)") { inside = 1 }
+              inside && $0 ~ "^## " && $0 !~ ("^## " ver "([^0-9.]|$)") { exit }
+              inside { print }
+            ' "$NOTES_FILE" > "$OUT"
+            echo "[notes] extracted $(wc -l < "$OUT") lines from $NOTES_FILE"
           else
-            echo "notes_path=" >> "$GITHUB_OUTPUT"
-            echo "[notes] no $NOTES_FILE; falling back to auto-generated notes"
+            echo "::warning::$NOTES_FILE is missing from the tagged commit"
           fi
+          if ! grep -q '[^[:space:]]' "$OUT"; then
+            echo "[notes] no '## v${VERSION}' section — falling back to the commit list"
+            PREV_TAG="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+            {
+              echo "## ${GITHUB_REF_NAME}"
+              echo
+              echo "_No hand-written section for this tag in \`RELEASE-NOTES.md\`; generated from the commit list._"
+              echo
+              if [ -n "$PREV_TAG" ]; then
+                git log --no-merges --pretty='- %s (`%h`)' "${PREV_TAG}..${GITHUB_REF_NAME}" 2>/dev/null || true
+              else
+                git log --no-merges -30 --pretty='- %s (`%h`)' 2>/dev/null || true
+              fi
+            } > "$OUT"
+            echo "[notes] generated $(wc -l < "$OUT") lines (previous tag: ${PREV_TAG:-none})"
+          fi
+          echo "notes_path=$OUT" >> "$GITHUB_OUTPUT"
+          head -5 "$OUT"
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -487,8 +534,8 @@ jobs:
           name: ${{ github.ref_name }}
           draft: false
           prerelease: ${{ steps.meta.outputs.prerelease }}
-          # If we have a hand-written RELEASE-NOTES-vX.Y.Z.md, use it.
-          # Otherwise let GitHub auto-generate from commits.
+          # Always a real file: the extracted RELEASE-NOTES.md section
+          # or, if that section is missing, a generated commit list.
           body_path: ${{ steps.notes.outputs.notes_path }}
           fail_on_unmatched_files: false
           files: |

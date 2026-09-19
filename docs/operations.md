@@ -68,7 +68,7 @@ A push of a tag matching `v[0-9]+.[0-9]+.[0-9]+*` (e.g. `v1.5.9`,
 | `docker` | `ghcr.io/<owner-lowercase>/skygate:<tag>` — **linux/amd64 only** — plus, for non-prerelease tags only, `:latest`, `:vX.Y` and `:vX`. Provenance and SBOM attestations are disabled so the GitHub install widget shows one image, not three. |
 | `binaries` | Go tarballs/zips, `CGO_ENABLED=0`, matrix = linux/darwin × amd64/arm64 + windows-amd64. Each archive is flat (`./skygate` + `./skygate.sha256`) so install scripts can `tar -xzf … && ./skygate`. |
 | `sums` | `SHA256SUMS` — one line per archive, in `sha256sum -c` format. |
-| `release` | The GitHub Release, with `RELEASE-NOTES-vX.Y.Z.md` as the body when that file exists (otherwise auto-generated notes). |
+| `release` | The GitHub Release. Its body is the `## vX.Y.Z` section extracted from **`RELEASE-NOTES.md`** (checked out sparsely by that job); if the section is missing the workflow generates a commit list instead, so the body is never empty. v1.5.8's empty body came from this job having **no checkout at all**. |
 
 Why amd64-only for Docker: the pre-v1.5.4 matrix pushed the same tag from an
 amd64 and an arm64 job, and the second push overwrote the first — `:v1.5.2`
@@ -80,7 +80,8 @@ B-block, not a quick edit.
 ### 1.2 Cutting a release
 
 ```bash
-# 1. Land the release-notes draft as RELEASE-NOTES-vX.Y.Z.md in the tagged commit.
+# 1. Write the "## vX.Y.Z" section at the TOP of RELEASE-NOTES.md and land it
+#    in the tagged commit (the workflow extracts exactly that section).
 git status --porcelain            # must be empty (locally AND on the VM)
 git log --oneline -5
 
@@ -114,7 +115,8 @@ run.
 4. The tagged commit contains the fixed `path: dist/checksums` line (§1.5).
 5. **Clean-host acceptance passed** (§1.4) — not optional; it is the step that
    catches installer bugs.
-6. Release notes text decided (`RELEASE-NOTES-vX.Y.Z.md`).
+6. Release notes text decided — the `## vX.Y.Z` section exists in
+   `RELEASE-NOTES.md` (one canonical file; no per-version files).
 
 ### 1.4 Clean-host acceptance (required before tagging)
 
@@ -167,6 +169,31 @@ stale process answering 200 used to look like success), and the pre-swap
 > back `openssl` → `od` → `xxd`; on an older installer, install `xxd`/`openssl`
 > and re-run. Also expected: **v1.5.8 and earlier cannot open a `sqlite:` DSN at
 > all** (fixed in v1.5.9), so an older binary refuses its own database.
+
+#### Acceptance record — 2026-09-19 (v1.5.9, commit `419e9a99` + docs)
+
+Run on the VM in a throwaway `jrei/systemd-debian:12` container (`--privileged
+--cgroupns=host`, systemd as PID 1) with the VM checkout mounted read-only at
+`/src`, so the *installer under test is the commit above*:
+
+| Step | Result |
+|---|---|
+| `SKYGATE_SKIP_VERIFY=1 bash /src/deploy/install-debian.sh --db-type=sqlite --install-kind=systemd` | exit 0; `skygate.service` + `skygate-update.path` **active** + `skygate-update.service` + `/usr/local/lib/skygate/skygate-apply-update.sh` + `/etc/skygate/update-helper.conf` + `SKYGATE_DB=sqlite:/var/lib/skygate/skygate.db`; the JWT secret was generated through the **`od` fallback** (that image ships neither `xxd` nor `openssl`) |
+| installed version | `skygate v1.5.8 (commit 32e781a)` — the published `latest`; it mis-detects `sqlite:` as PostgreSQL (`DB backend: postgres (DSN=sqlite:/…`) and never serves `/healthz` |
+| request staged as the service user (`runuser -u skygate`) | the path unit fired; applier logged `backed up … → skygate.prev`, `SHA256 OK (…, verified against SHA256SUMS asset)`, `migrate-only: opening sqlite … migrations applied OK`, `installed the new binary over /usr/local/bin/skygate`, `healthz reports build 'v1.5.9+acc0001' after 2s`, **`verdict: done`** |
+| verdict files | `result.status=done`, `result.build=v1.5.9+acc0001`, no `result.error` |
+| `/healthz` | `{"build":"v1.5.9+acc0001","status":"ok",…}` — the applier matches the **target tag**, not merely HTTP 200 |
+| leftovers | SQLite DB created by the migration step (516 KB); `skygate.prev` = the previous (v1.5.8) binary |
+
+The update therefore **rescued a host whose installed binary could not run at
+all**. Because the not-yet-published v1.5.9 cannot come from GitHub, the run used
+a **loopback mirror** — `SKYGATE_UPDATE_BASE_URL="http://127.0.0.1:8099"` in the
+root-owned helper config, served by a throwaway static file server (a ~25-line Go
+binary built from a temp module: the container has no `python3`, `busybox`, `nc`
+or `python`) — with `<mirror>/v1.5.9/skygate-v1.5.9-linux-amd64.tar.gz` +
+`SHA256SUMS` built exactly the way `release.yml` builds them. That also exercises
+B261.5 end-to-end. **After the tag is published, re-run the same flow with the
+mirror line removed** to cover the GitHub path (and the `SHA256SUMS` asset, §1.5).
 
 ### 1.5 Post-tag checklist — verify the published assets
 
@@ -1156,7 +1183,7 @@ Then run the application-level verification from
 - [ ] `bash scripts/verify_pre_deploy.sh` — all PASS or explicit SKIP, no FAIL.
 - [ ] `staticcheck ./...` clean; `go build ./...`, `go vet ./...` clean.
 - [ ] **Clean-host acceptance (§1.4) passed**: install → native self-update → `verdict: done` with a matching `/healthz` build string.
-- [ ] Release notes written (`RELEASE-NOTES-vX.Y.Z.md`) and inside the tagged commit; the workflow contains the fixed `path: dist/checksums` line.
+- [ ] Release notes written as the `## vX.Y.Z` section of `RELEASE-NOTES.md` and inside the tagged commit; the workflow contains the fixed `path: dist/checksums` line and the section-extraction step.
 - [ ] After the tag: `SHA256SUMS` is a real **file** listing every archive; the ghcr tag is **lowercase**; the linux-amd64 tarball reports the expected build string; the §1.5 live-state checks pass.
 - [ ] Rollback path confirmed: `<data_dir>/update/skygate.prev` exists (or the previous tag is still pullable).
 

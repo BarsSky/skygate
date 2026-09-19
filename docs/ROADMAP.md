@@ -64,6 +64,8 @@ contracts are in the corresponding `scripts/check_b*.sh`.
 | **TD-10** | `portal_users.headscale_user_id` reconciliation cron (B237.18): hourly, outcomes `ok` / `linked` / `relinked` / `orphan`, orphans are never auto-deleted. |
 | **TD-11** | UI-only CDN grouping on `/my/exit-rules` + `/admin/exit-rules` (B237.22): per-CIDR rows stay individually editable; storage, migrations and the autoupdater are untouched (pinned by a "storage unchanged" contract). |
 | **Gate green** | B237.20 staticcheck-clean, B237.16 numeric HTTP statuses, TD-15 backticks-in-descriptions, TD-16/TD-18 four missing i18n keys, B237.2 DNS-probe contract, B191 / B-mod-admin-user-sync now `SKIP` instead of `FAIL` when the docker daemon is absent. |
+| **Clean-host acceptance** | Passed **2026-09-19** on this commit (throwaway `jrei/systemd-debian:12`: install → path unit → applier → `verdict: done`, `/healthz` build `v1.5.9+acc0001`) — record in [`operations.md`](operations.md) §1.4. This was the last gate before the tag. |
+| **Release notes** | One canonical `RELEASE-NOTES.md` (newest first, v1.5.4–v1.5.8 backfilled); `release.yml` extracts the `## vX.Y.Z` section for the GitHub Release body and falls back to a generated commit list, so the empty-body bug of v1.5.8 cannot repeat. |
 | **Docs** | This file + `INSTALL`/`UPDATE` (RU+EN) + the flat catalogue; `docs/plans/**`, `docs/runbooks/**`, `docs/internal/**`, `docs/BACKLOG.md`, `docs/PLANS.md` removed. |
 
 ---
@@ -102,7 +104,7 @@ contracts are in the corresponding `scripts/check_b*.sh`.
 | **BL-3** | Telegram bot behind a DPI-blocked network (`api.telegram.org` times out) | Operator decision: route the bot through an exit node without DPI, or tunnel it |
 | **TD-5 / RR-5** | Per-user `exitnode.<user>.<domain>` DNS records | headscale 0.30+ (`dns.extra_records`); 0.29.x rejects the policy |
 | **RR-6** | Compliance-tier per-user headscale plane migration (move a user's nodes + ACL off the global plane, flip the DB override) | A real operator need; infrastructure exists, no data migration yet |
-| **RR-7** | Public release of v1.5.9 | Operator decision — run the clean-host install → update acceptance first, then tag |
+| **RR-7** | Public release of v1.5.9 | **Ready — the clean-host acceptance passed 2026-09-19 (§3).** Only the operator's decision to tag remains |
 | **RR-8** | `node_owner_map`: 4 stale rows (B243) | Operator decision on relink-vs-delete (see below) |
 | **RR-9** | ACL drifted from the DB: orphan `tagOwners` entry + a missing per-CIDR `via` pin (B188.2/B188.3/B-mod-tag-owners-coverage) | One ACL reapply from the DB (`/admin/acls`) |
 | **RR-10** | Telegram relay probe: the in-container Tailscale client is disabled and the canonical Telegram CIDRs are not advertised/approved on any relay | **Enablement plan (operator)** — see RR-13 |
@@ -270,7 +272,7 @@ These are tracked so they are not lost, **not** planned:
 | v1.5.0–v1.5.2 | HA groundwork (cluster tables, deploy subcommands, certsync), OIDC end-to-end on a public hostname, OIDC auto-sync, login/UX fixes (B167–B178) |
 | v1.5.4 | Docker image pinned to linux/amd64 (Issue #4); image-pull update button |
 | v1.5.6–v1.5.8 | DERP status/probe fixes, derper-in-docker migration, Tailscale auth-key UX, device-delete with ACL regen |
-| v1.5.9 | **Native self-update (B261)**, OpenRC (B262), `SHA256SUMS` fix, SQLite `sqlite:` DSN fix, autoupdater `ON CONFLICT` fix, green gate |
+| v1.5.9 | **Native self-update (B261)**, OpenRC (B262), `SHA256SUMS` fix, SQLite `sqlite:` DSN fix, autoupdater `ON CONFLICT` fix, green gate, clean-host acceptance passed 2026-09-19 |
 
 ---
 

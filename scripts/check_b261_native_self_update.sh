@@ -41,6 +41,12 @@
 #      actually rejects a hostile request (smoke run, no root needed)
 #   H) go test ./internal/update/... passes
 #   I) AGENTS.md + verify_pre_deploy.sh mention B261
+#   J..N) the later B261.x / B262 follow-ups (the installer's `sqlite:` DSN
+#      must really open, OpenRC wiring, the published SHA256SUMS asset, the
+#      SQLite DDL chokepoint, the minimal-host secret fallback)
+#   O) B263 — the single-file release-notes pipeline: release.yml extracts the
+#      "## vX.Y.Z" section of RELEASE-NOTES.md, always sets notes_path, and
+#      falls back to a commit list (v1.5.8 shipped an EMPTY release body)
 #
 # The root-only parts (real binary swap, real unit restart) cannot be
 # tested unprivileged — they are covered by the live canary run recorded
@@ -389,5 +395,99 @@ if [ -n "$n_openssl" ] && [ -n "$n_od" ] && [ -n "$n_xxd" ] \
 else
   fail "N2: secret generation must try openssl, then od (coreutils), and only then xxd"
 fi
+
+# --- O: ONE canonical release-notes file (B263) ------------------------
+# v1.5.8 was published with an EMPTY GitHub release body: release.yml read
+# RELEASE-NOTES-v${VERSION}.md (a per-version file that no longer existed) and
+# assigned an empty body_path, while generate_release_notes was never set — so
+# the release carried no notes at all. The notes now live in ONE file
+# (RELEASE-NOTES.md, newest section first); the workflow extracts the
+# "## vX.Y.Z" section and falls back to a generated commit list, so the body
+# can never be empty again.
+REL=.github/workflows/release.yml
+grep -q 'NOTES_FILE="RELEASE-NOTES.md"' "$REL" \
+  || fail "O: release.yml does not read the single RELEASE-NOTES.md"
+ok "O: release.yml reads RELEASE-NOTES.md (one canonical file)"
+if grep -q 'RELEASE-NOTES-v\${VERSION}\.md' "$REL"; then
+  fail "O2: release.yml still looks for the deprecated per-version note file"
+fi
+ok "O2: no per-version RELEASE-NOTES-vX.Y.Z.md lookup left in release.yml"
+grep -q 'notes_path=\$OUT' "$REL" \
+  || fail "O3: release.yml does not always set notes_path (an empty body_path publishes no notes)"
+grep -q 'falling back to the commit list' "$REL" \
+  || fail "O3: release.yml has no non-empty fallback for a missing section"
+ok "O3: notes_path always points at a file; a missing section falls back to the commit list"
+
+# O4: run the workflow's OWN awk extraction against the real file. This is the
+# contract that would have caught the v1.5.8 empty body.
+NEWEST="$(grep -m1 -E '^## v[0-9]' RELEASE-NOTES.md | sed -E 's/^## (v[0-9][^ ]*).*/\1/')"
+[ -n "$NEWEST" ] || fail "O4: RELEASE-NOTES.md has no '## vX.Y.Z' section heading"
+EXTRACT="$(mktemp)"
+awk -v ver="$NEWEST" '
+  !inside && $0 ~ ("^## " ver "([^0-9.]|$)") { inside = 1 }
+  inside && $0 ~ "^## " && $0 !~ ("^## " ver "([^0-9.]|$)") { exit }
+  inside { print }
+' RELEASE-NOTES.md > "$EXTRACT"
+if [ -s "$EXTRACT" ] && head -1 "$EXTRACT" | grep -q "^## ${NEWEST}"; then
+  ok "O4: the workflow's extraction yields $(wc -l < "$EXTRACT") non-empty lines for the newest section (${NEWEST})"
+else
+  fail "O4: the workflow's awk extraction produced no section for ${NEWEST} — that release body would be empty"
+fi
+HEADINGS=$(grep -c '^## ' "$EXTRACT" || true)
+if [ "${HEADINGS:-0}" = "1" ]; then
+  ok "O4b: extraction stops at the next '## ' heading (exactly 1 heading in the block)"
+else
+  fail "O4b: the extracted block contains ${HEADINGS} '## ' headings — it did not stop at the next section"
+fi
+rm -f "$EXTRACT"
+
+# O5: version-exact matching. A naive '^## v1.5.9' pattern also matches a
+# '## v1.5.90' heading, and an UNKNOWN version must yield nothing at all — that
+# empty result is exactly what routes the workflow into its fallback branch.
+BOUND="$(mktemp)"
+printf '## v1.5.90 — synthetic boundary probe\n\nmust not be extracted for v1.5.9\n' > "$BOUND"
+if awk -v ver="v1.5.9" '
+  !inside && $0 ~ ("^## " ver "([^0-9.]|$)") { inside = 1 }
+  inside && $0 ~ "^## " && $0 !~ ("^## " ver "([^0-9.]|$)") { exit }
+  inside { print }
+' "$BOUND" | grep -q 'must not be extracted'; then
+  fail "O5: '## v1.5.9' also matches '## v1.5.90' — the version-boundary guard is broken"
+fi
+MISSING="$(awk -v ver="v9.9.999" '
+  !inside && $0 ~ ("^## " ver "([^0-9.]|$)") { inside = 1 }
+  inside && $0 ~ "^## " && $0 !~ ("^## " ver "([^0-9.]|$)") { exit }
+  inside { print }
+' RELEASE-NOTES.md)"
+[ -z "$MISSING" ] || fail "O5: an unknown version extracted content instead of nothing"
+rm -f "$BOUND"
+ok "O5: version-exact matching; an unknown version extracts nothing (→ workflow fallback)"
+
+# O6: the release cycle being prepared has its own section in the file.
+grep -qE '^## v1\.5\.9 ' RELEASE-NOTES.md \
+  || fail "O6: RELEASE-NOTES.md has no '## v1.5.9' section for this release cycle"
+ok "O6: the current release cycle (v1.5.9) has a section in RELEASE-NOTES.md"
+
+# O7: the operator-facing procedure and the repo root follow the single-file
+# rule. `git ls-files` (not a shell glob) because this script runs under `set -f`.
+if grep -q 'RELEASE-NOTES-vX\.Y\.Z\.md' docs/operations.md; then
+  fail "O7: docs/operations.md still instructs operators to write RELEASE-NOTES-vX.Y.Z.md"
+fi
+if [ -n "$(git ls-files 'RELEASE-NOTES-v*.md' 2>/dev/null)" ]; then
+  fail "O7: per-version RELEASE-NOTES-v*.md files are tracked at the repo root"
+fi
+ok "O7: docs/operations.md + the repo root follow the single-file rule"
+
+# O8: the release job must actually HAVE the file. The real reason v1.5.8's body
+# was empty is that the `release` job had no `actions/checkout` step at all — the
+# file could not be found no matter how it was named.
+CHECKS=$(grep -c 'uses: actions/checkout@' "$REL" || true)
+if [ "${CHECKS:-0}" -ge 3 ]; then
+  ok "O8: every release job that needs the tree checks it out (CHECKS=$CHECKS)"
+else
+  fail "O8: only ${CHECKS:-0} checkout step(s) in release.yml — the release job needs its own, or RELEASE-NOTES.md is absent and the body comes out empty"
+fi
+grep -q 'sparse-checkout' "$REL" \
+  || fail "O8: the release job's checkout is not sparse (it would fetch the whole tree for one file)"
+ok "O8: the release job checks RELEASE-NOTES.md out sparsely"
 
 hdr "B261: all contracts pass"
