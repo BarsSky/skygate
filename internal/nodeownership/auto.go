@@ -330,7 +330,17 @@ func BackfillInfra(dbConn db.DBSource, nodes []headscale.NodeView) {
 		// that match no device (emilia still has
 		// `tag:dev-skyadmin-emilia`). The grants become
 		// live the moment the operator re-tags the node.
-		newTag := "tag:dev-infra-" + n.Hostname
+		//
+		// B265 (2026-09-19): lowercase the hostname, matching the
+		// convention every other tag mint uses (nodeownership.go's
+		// `tag:dev-<user>-<lower(host)>` and db.GetPerUserDeviceTags'
+		// LOWER(hostname)). Without it, a node with an uppercase
+		// hostname got a `tag:dev-infra-MyRelay` row while
+		// isInfraNode / the ACL's `src=* → dst:tag:dev-infra-<host>`
+		// catch-all and the infra tagOwners entry used the lowercase
+		// form — so the public-access grant for that exit node
+		// matched nothing.
+		newTag := "tag:dev-infra-" + strings.ToLower(n.Hostname)
 		res, err := dbConn.Current().Exec(
 			`UPDATE node_owner_map
 			    SET username = 'infra',

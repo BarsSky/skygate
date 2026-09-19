@@ -591,6 +591,25 @@ func main() {
 		log.Printf("warn: infra-sanity: %v (continuing — drift will show on /admin/devices)", err)
 	}
 
+	// 2026-09-19 (B265): detect the "skygate runs ON an exit node"
+	// topology. Two consequences the operator must know before
+	// configuring egress:
+	//   1. never select a co-located exit node as this machine's own
+	//      exit node (or as telegram.egress_node_id) — a broken relay
+	//      then takes the management plane down with it;
+	//   2. the Telegram Bot API probe on /admin/telegram originates on
+	//      THIS host (the skygate container uses the host's network
+	//      stack), so an egress/split-routing policy this host cannot
+	//      traverse makes the probe fail even though every other
+	//      device on the tailnet reaches api.telegram.org. That path
+	//      has to be configured from a client, not from here.
+	// Read-only; logs a WARN line per overlap.
+	selfTSHostname := os.Getenv("SKYGATE_TS_HOSTNAME")
+	if selfTSHostname == "" {
+		selfTSHostname = "skygate-host"
+	}
+	adminsvc.SanityCheckExitNodeColocation(hs, selfTSHostname, nil)
+
 	// Bootstrap Telegram credentials: copy from .env to DB once on
 	// startup if no DB record exists. After that, the admin page at
 	// /admin/telegram is the source of truth.
@@ -1584,6 +1603,13 @@ func main() {
 	// already-admin row short-circuits with already_admin=<username>
 	// flash (no DB change, no audit row).
 	mux.Handle("POST /admin/users/{id}/promote", authMW(http.HandlerFunc(adminSvc.PostAdminUserPromote)))
+	// 2026-09-19: v0.72 (B264) — Demote button next to Promote in the
+	// per-row action menu on /admin/users. Same admin-only + authMW
+	// chain as the sibling writes. Revokes is_admin for another portal
+	// user; refuses the primary (bootstrap/root) row, self-demotion and
+	// the last remaining admin (see PostAdminUserDemote). Audit action
+	// 'admin_demote'.
+	mux.Handle("POST /admin/users/{id}/demote", authMW(http.HandlerFunc(adminSvc.PostAdminUserDemote)))
 	// 2026-07-15: v0.12.0 — per-user headscale control plane
 	// (multi-tailnet). /admin/control-planes is the landing;
 	// /admin/users/{id}/plane is the per-user edit form.
@@ -3393,25 +3419,51 @@ func truncateForDB(s string, max int) string {
 }
 
 // bootstrapAdmin creates the admin user in Skygate DB on first start.
+//
+// 2026-09-19: v0.72 (B264) — the bootstrap admin is also the IMMUTABLE
+// PRIMARY admin (portal_users.is_primary=1), the single row the
+// /admin/users handlers refuse to demote, delete or rename.
+//
+// Both branches now maintain that marker:
+//
+//   - first start (no row): the INSERT sets is_admin=1 AND is_primary=1;
+//   - already-exists: the row is re-asserted to is_admin=1 + is_primary=1
+//     so the marker self-heals after an out-of-band demotion, or after
+//     the V072 backfill could not match SKYGATE_ADMIN_USER (the
+//     migration's documented fallback then marks the lowest-id admin —
+//     this branch moves the marker to the configured name).
+//
+// The partial UNIQUE index portal_users_one_primary_uniq allows only one
+// is_primary=1 row, so the already-exists branch clears any other
+// primary FIRST. Both UPDATEs are idempotent, and the caller
+// (main) only invokes this function when SKYGATE_ADMIN_PASS is set.
 func bootstrapAdmin(d *sql.DB, username, password string) error {
 	var n int
 	if err := d.QueryRow("SELECT COUNT(*) FROM portal_users WHERE username=$1", username).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
-		log.Printf("   bootstrap: user %q already exists, skipping", username)
+		// Clear a stale primary on another row before claiming the
+		// marker for the configured bootstrap admin.
+		if _, err := d.Exec(`UPDATE portal_users SET is_primary = 0 WHERE is_primary = 1 AND username <> $1`, username); err != nil {
+			return err
+		}
+		if _, err := d.Exec(`UPDATE portal_users SET is_admin = 1, is_primary = 1 WHERE username = $1`, username); err != nil {
+			return err
+		}
+		log.Printf("   bootstrap: user %q already exists, re-asserted is_admin=1 is_primary=1", username)
 		return nil
 	}
 	hash, err := auth.HashPassword(password)
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`INSERT INTO portal_users(username, password_hash, is_admin) VALUES($1,$2,$3)`,
-		username, hash, 1)
+	_, err = d.Exec(`INSERT INTO portal_users(username, password_hash, is_admin, is_primary) VALUES($1,$2,$3,$4)`,
+		username, hash, 1, 1)
 	if err != nil {
 		return err
 	}
-	log.Printf("✅ bootstrap admin created: %q", username)
+	log.Printf("✅ bootstrap admin created: %q (primary, immutable)", username)
 	return nil
 }
 

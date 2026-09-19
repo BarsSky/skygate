@@ -4272,3 +4272,50 @@ run_check "B-bug-fix" "DERP + infra-user drift cluster on agent VM 192.168.13.69
 run_check "B-derper-cert" "derper systemd unit certmode/port trap. derper --help: 'Serves HTTPS if the port is 443 and/or -certmode is manual, otherwise HTTP.' The pre-fix deploy/systemd/derper.service had --a=:8443 --certmode=letsencrypt (the worst combination: port != 443, certmode != manual) — derper refused to acquire a cert, fell back to plain HTTP, and clients saw a valid LE cert at :443 (from NPM doing TLS termination) but the underlying derper connection was HTTP. DERP-over-HTTP/2 silently failed. B-derper-cert: corrected ExecStart has --certmode=manual --certdir=/var/lib/derper/certs --a=:8443. Operator prerequisites (manual, NOT in this block): copy the LE cert from NPM's /data/nginx/proxy_host/ to /var/lib/derper/certs/{cert.pem,key.pem} + flip NPM to SSL pass-through for /derp. Without the cert files in certdir, derper will still serve HTTP (the trap is layer 1; the missing certs are layer 2). 9 contracts in scripts/check_b_derper_cert.sh." \
   'test -f scripts/check_b_derper_cert.sh && bash scripts/check_b_derper_cert.sh'
 
+# --- B265 (2026-09-19): /admin/derp status truth ---------------------
+# Two false statements the page used to make, both confirmed live on the
+# reference VM 2026-09-19:
+#   (1) "STUN UDP :3478 closed" on a healthy relay. STUNListening was
+#       derived ONLY from derper's GET /debug/vars counter
+#       (stun.counter_requests.success). Upstream derper gates every
+#       /debug/* handler behind tsweb.AllowDebugAccess (loopback /
+#       Tailscale source IP / TS_ALLOW_DEBUG_IP / TS_DEBUG_KEY_PATH).
+#       The skygate container is never such a source, so /debug/vars
+#       answered "403 debug access denied" and the tile stayed red while
+#       UDP 3478 was bound, stun.counter_requests.success was 33709, a
+#       remote VPS measured the relay via netcheck, and clients showed
+#       relay "mow". The old code comment called those zeros "honest";
+#       they were a false negative.
+#   (2) "Recommended DERP: region 901 (controlplane.tailscale.com)".
+#       internal/derphealth/map.go mapped ownership inverted
+#       (d.IsOwn = isBundled == 0), so the operator's OWN bundled derper
+#       (region 900, is_bundled=1) was stored is_own=0 and the row
+#       AutoMigrateDerpRelays created from the legacy derp.external_urls
+#       DERPMAP url became is_own=1. Live derp_health before the fix:
+#       901 is_own=1 108ms, 900 is_own=0 12ms. The derpmap endpoint also
+#       published that map url as a relay node (phantom region 901) and a
+#       dead :8443 node, both named mow-1.
+# B265: new internal/feature/admin/derp_stun.go performs a real RFC 5389
+# STUN Binding Request round trip over UDP (transaction-id + magic-cookie
+# validated, XOR-MAPPED-ADDRESS decoded) with a hostname-first candidate
+# order and a named failure reason; DebugAccessDenied surfaces the 403
+# instead of drawing zeros; derpRelayIsOwn(isBundled) fixes the ownership
+# mapping; the derpmap endpoint skips derpmap-document rows, probes each
+# node's DERP port before advertising it, and de-duplicates node names
+# inside a region. 20 contracts in scripts/check_b265_derp_status_truth.sh
+# + 12 Go regression tests." \
+  'test -f scripts/check_b265_derp_status_truth.sh && bash scripts/check_b265_derp_status_truth.sh'
+
+
+# --- B264 (2026-09-19): admin role delegation + immutable primary admin (v0.72) ---
+# --- B264 (2026-09-19): admin role delegation + immutable primary admin (v0.72) ---
+# Closes the class where admin delegation was impossible: pre-B264 the only
+# role column was portal_users.is_admin and the admin-user-sync contract
+# asserted exactly ONE is_admin=1 row, so a second admin could not exist and
+# there was no way to tell the canonical bootstrap account from a delegated
+# one. B264 adds the is_primary marker (V072, both chains), the per-row UI
+# and the refusal guards. scripts/check_b_admin_user_sync.sh contracts A/A2/B
+# were renegotiated in the same change; the live-DB sections still SKIP when
+# docker or PostgreSQL is unreachable.
+run_check "B264" "admin role delegation with an immutable primary admin (v0.72 / B264). /admin/users gains per-row Promote and Demote buttons so an admin can grant AND revoke the admin role for other portal users, while the bootstrap/root admin stays immutable. Pre-B264 the only role column was portal_users.is_admin and the admin-user-sync contract asserted exactly ONE is_admin=1 row, which made delegation impossible and left no way to tell the canonical account from a delegated one. B264 adds V072 in BOTH migration chains: portal_users.is_primary INTEGER NOT NULL DEFAULT 0, an idempotent backfill that marks the row named by SKYGATE_ADMIN_USER (default admin, with a lowest-id-admin fallback when the configured name matches nothing), and a partial UNIQUE index portal_users_one_primary_uniq WHERE is_primary = 1 so at most one primary can exist. New DB helpers SetPortalUserPrimary / IsPortalPrimaryAdmin / GetPortalIsAdminByID / CountPortalAdmins, with is_primary threaded through db.User and GetAllPortalUsers. PostAdminUserDemote mirrors Promote (admin-only 403 gate, 404 on a missing row, idempotent no-op flash) and adds three refusals: the primary row, self-demotion, and the last remaining admin; Delete and Rename refuse the primary too. bootstrapAdmin re-asserts is_admin=1 + is_primary=1 on its already-exists branch so the marker self-heals, and clears a stale primary first so the UNIQUE index cannot trip. Route POST /admin/users/{id}/demote behind authMW. Template: per-row Promote/Demote forms with confirm() and a visible lock badge that hides the destructive actions for the primary row; 10 paired RU+EN i18n keys. check_b_admin_user_sync.sh contracts A/A2/B were renegotiated: they now assert EXACTLY ONE is_primary=1 row which must be is_admin=1 and named SKYGATE_ADMIN_USER (multiple delegated admins are expected), plus a contract P that the is_primary column exists, and the live-DB sections SKIP when docker/PG is unreachable. 60 contracts in scripts/check_b264_admin_delegation.sh (migration in both chains + both registrations, column + partial unique index, the four helpers, the demote handler + route, the three guards, per-row template forms, paired i18n keys, go build and go test for the touched packages)." \
+  'test -f scripts/check_b264_admin_delegation.sh && bash scripts/check_b264_admin_delegation.sh'

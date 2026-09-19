@@ -63,8 +63,10 @@ SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 #  Q. verify_pre_deploy.sh includes check_b188_2
 #  R. go build + go vet pass
 #  S. (VM-only) live: per-device autogroup:internet
-#     (tag:dev-michail-basic → autogroup:internet) does
-#     NOT have via=[emilia]
+#     (tag:dev-michail-basic → autogroup:internet) carries
+#     via=[emilia] exactly once — the conditional B265 pin.
+#     (Pre-B265 this asserted the pin was ABSENT; B265 makes it
+#     conditional on the device's own pref instead — see B above.)
 #  T. (VM-only) live: tag:dev-michail-basic has ≥1 per-CIDR
 #     (h-rule-*) grant pinned with via=[emilia]. (Before
 #     2026-09-18 this pinned one frozen CIDR — the youtube
@@ -72,12 +74,17 @@ SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 #     DNS changed the resolved set.)
 #  U. (VM-only) live: skyworker h-rules have via=[karolina]
 #     (not via=[emilia] — correct per-device pref)
-#  V. (VM-only) live: a71 (per-device pref=emilia but no
-#     matching per-CIDR rules) has 0 h-rules with via=
-#     (the loose default + per-user grant cover its routing)
-#  W. (VM-only) live: NONE of the per-device autogroup:internet
-#     grants have via= (0 total across all devices) — the
-#     B188 catch-all pin is GONE
+#  S. (VM-only) live: tag:dev-michail-basic has exactly ONE
+#     per-device autogroup:internet grant carrying via= (its own
+#     pref, emilia) — the conditional B265 pin
+#  V. (VM-only) live: a71 (per-device pref=emilia, no matching
+#     per-CIDR rules) has exactly ONE via-bearing grant, the
+#     conditional catch-all pin
+#  W. (VM-only) live: the number of per-device autogroup:internet
+#     grants with via= equals the number of device_exit_node_prefs
+#     rows with via_enabled=1 — i.e. ONLY devices that asked for a
+#     pin have one. (B265 2026-09-19 rewrote this from "= 0": the
+#     pin is now conditional instead of absent, see contract B.)
 #  X. (VM-only) live: total h-rule grants with via=[emilia]
 #     for tag:dev-michail-basic is 77 (the same as the
 #     number of device_rules for basic with exit_node_id='emilia')
@@ -123,15 +130,33 @@ count() {
 A=$(count "$REPO/internal/db/exit_node_prefs.go" 'func NormalizeExitNodeTag')
 check_ge "A-NormalizeExitNodeTag" 1 "$A"
 
-# B. The per-device autogroup:internet grant with via= is GONE.
-# This is the source-level check. The grant pattern in the
-# pre-B188.2 code was:
-#   sb.WriteString("    { \"src\": [\"" + devTag + "\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"], \"via\": [\"" + via + "\"] }")
-# We assert that this exact pattern (the via=emilia per-device
-# autogroup:internet) is no longer in the source code. Excludes
-# comments (lines starting with //).
+# B. The per-device autogroup:internet grant with via= is
+#    CONDITIONAL, never unconditional.
+# Pre-B188.2 the per-device catch-all was emitted with an
+# UNCONDITIONAL via= (so every device was pinned to its pref, which
+# defeated /my/exit-rules' selective routing). B188.2 removed the
+# pin entirely; B265 (2026-09-19) re-introduced it as a CONDITIONAL
+# pin: emitted only when the device actually has a resolved
+# preference (device_exit_node_prefs.via_enabled=1). Without the
+# pin, nothing in the generated policy constrained which exit node
+# a TAGGED device may use (headscale honours `via` for exit-node
+# selection only when the grant's dst is autogroup:internet, and the
+# per-USER grant that carried it never matches tagged nodes).
+#
+# The contract therefore checks: the via-bearing per-device grant
+# may only appear guarded by the `viaByDevice[devTag]` lookup — an
+# unconditional emit with a `via` variable is still a regression.
 B=$(grep -E '^\s*sb\.WriteString.*autogroup:internet.*via' "$REPO/internal/acl/acl.go" 2>/dev/null | grep -v '//' | wc -l)
-check_eq "B-no-per-device-autogroup-with-via" "0" "$B"
+B_COND=$(grep -cE '^\s*if via := viaByDevice\[devTag\]; via != ""' "$REPO/internal/acl/acl.go" 2>/dev/null || echo 0)
+if [ "$B" -eq 0 ] && [ "$B_COND" -eq 0 ]; then
+  # B188.2 shape: no per-device pin at all.
+  check_eq "B-per-device-autogroup-pin" "0" "0"
+elif [ "$B" -eq 1 ] && [ "$B_COND" -ge 1 ]; then
+  # B265 shape: exactly one emit, guarded by the per-device lookup.
+  check_eq "B-per-device-autogroup-pin-conditional" "1" "1"
+else
+  check_eq "B-per-device-autogroup-pin-conditional" "unconditional-pin" "B=$B guard=$B_COND"
+fi
 
 # C. The loose per-device autogroup:internet grant EXISTS (no via).
 # Post-B188.2: the catch-all is emitted by the loose per-device
@@ -210,7 +235,15 @@ for g in pol.get("grants", []):
         n += 1
 print(n)
 ' 2>/dev/null)
-    check_eq "S-no-per-device-autogroup-with-via" "0" "${S:-<err>}"
+    # B265 (2026-09-19): basic (michail) HAS a per-device preference with
+    # via_enabled=1, so exactly ONE pinned catch-all is now expected — and it
+    # must be pinned to basic's own preference, never to somebody else's exit
+    # node. Pre-B265 this asserted 0 (B188.2 removed the pin because it was
+    # UNCONDITIONAL, which defeated selective routing); post-B265 the pin is
+    # conditional on the device's pref, and headscale honours `via` for
+    # exit-node selection ONLY when dst contains autogroup:internet — so
+    # without this grant a tagged device had no enforced preferred exit node.
+    check_eq "S-per-device-autogroup-pinned-once" "1" "${S:-<err>}"
 
     # T. Live: tag:dev-michail-basic has per-CIDR h-rule grants pinned to emilia.
     #
@@ -268,8 +301,9 @@ print(n)
 ' 2>/dev/null)
     check_ge "U-skyworker-has-karolina-via" 1 "${U_KAROLINA:-0}"
 
-    # V. Live: a71 (per-device pref=emilia but no matching per-CIDR
-    # rules) has 0 h-rules with via=
+    # V. Live: a71 (per-device pref=emilia, no matching per-CIDR
+    # rules) has exactly one via-bearing grant — the conditional
+    # B265 catch-all pin.
     V=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
 import json, sys
 try:
@@ -278,14 +312,23 @@ except Exception:
     print(0); sys.exit(0)
 n = 0
 for g in pol.get("grants", []):
-    if "tag:dev-skyadmin-a71" in g.get("src", []) and g.get("via"):
+    if "tag:dev-skyadmin-a71" in g.get("src", []) and "autogroup:internet" in g.get("dst", []) and g.get("via"):
         n += 1
 print(n)
 ' 2>/dev/null)
-    check_eq "V-a71-no-via-grants" "0" "${V:-<err>}"
+    # B265: a71 has a per-device pref (emilia, via_enabled=1) but NO
+    # matching per-CIDR rules, so the ONLY via-bearing grant is the
+    # conditional per-device autogroup:internet pin. Exactly one.
+    check_eq "V-a71-single-pinned-catchall" "1" "${V:-<err>}"
 
     # W. Live: total per-device autogroup:internet grants with via
-    # across ALL devices = 0 (B188 catch-all pin is GONE)
+    # across ALL devices == number of devices with via_enabled=1.
+    #
+    # B188.2 asserted this total was 0 (the pin was unconditional and
+    # therefore harmful). B265 makes it conditional, so the correct
+    # invariant is now "exactly the devices that asked for a pin have
+    # one" — that is what enforces the preferred exit node on tagged
+    # devices while leaving everybody else free.
     W=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
 import json, sys
 try:
@@ -299,7 +342,13 @@ for g in pol.get("grants", []):
         n += 1
 print(n)
 ' 2>/dev/null)
-    check_eq "W-no-tagged-device-autogroup-with-via" "0" "${W:-<err>}"
+    W_EXPECT=$(docker exec skygate-pg-local psql -U admin -d skygate_staging -tAc \
+      "SELECT COUNT(*) FROM device_exit_node_prefs WHERE via_enabled=1 AND exit_node_tag <> ''" 2>/dev/null)
+    if [ -n "$W_EXPECT" ]; then
+      check_eq "W-tagged-device-pins-equal-enabled-prefs" "$W_EXPECT" "${W:-<err>}"
+    else
+      echo "  SKIP [W-tagged-device-pins-equal-enabled-prefs] device_exit_node_prefs not readable (no PG)"
+    fi
 
     # X. Live: total h-rule grants with via=[emilia] for
     # tag:dev-michail-basic ≈ number of subnet/ip device_rules

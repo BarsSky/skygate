@@ -72,6 +72,19 @@ type ACLEntry struct {
 	// per-CIDR `via=[exit_node_tag]` constraint when the
 	// device has a per-device exit_node_pref that matches.
 	ExitNodeID string
+	// DeviceID is device_rules.device_id (the headscale
+	// node id). B265 (2026-09-19): the ACL builder uses it
+	// to resolve the owning portal user + hostname from
+	// node_owner_map when the denormalised user_name /
+	// device_hostname columns are empty. On the reference
+	// VM 173 of 328 live rules had an empty user_name, so
+	// they emitted `src: ["100.64.0.x"]` (the device IP)
+	// instead of the device tag — and a non-tag `src` does
+	// not match the per-device grants, which cancelled the
+	// `via` exit-node pin (headscale's ViaRoutesForPeer
+	// deletes the exclusion for a prefix when a non-via
+	// grant from the same viewer overlaps it).
+	DeviceID int
 }
 
 // DomainRule is used by the autoupdater to walk enabled domain rules
@@ -379,12 +392,33 @@ func GetACLEntries(d *sql.DB) ([]ACLEntry, error) {
 	var out []ACLEntry
 	for rows.Next() {
 		var e ACLEntry
-		if err := rows.Scan(&e.TargetType, &e.TargetValue, &e.Action, &e.DeviceIP, &e.UserName, &e.DeviceHostname, &e.ExitNodeID); err != nil {
+		if err := rows.Scan(&e.TargetType, &e.TargetValue, &e.Action, &e.DeviceIP, &e.UserName, &e.DeviceHostname, &e.ExitNodeID, &e.DeviceID); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// CountEnabledDenyRules returns the number of enabled device_rules
+// with action='deny'.
+//
+// B265 (2026-09-19) — why this exists: the grants[] policy format that
+// headscale 0.29 requires has NO `action` field (a grant is an accept
+// by definition), so GenerateACLWithViaForPlane skips every
+// non-"accept" rule. Pre-B265 that skip was silent: the operator could
+// add a deny rule in /admin/exit-rules (the UI offers it, the bot
+// /add_rule accepts it, the legacy acls[] generator even emits it) and
+// the applied grants policy would simply not contain it — no warning,
+// no audit row, no UI hint. This counter lets the apply pipeline tell
+// the operator that N deny rules were dropped.
+func CountEnabledDenyRules(d *sql.DB) (int, error) {
+	var n int
+	err := d.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE enabled = 1 AND action = 'deny'`).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // GetEnabledDomainRules returns every enabled rule with

@@ -117,7 +117,13 @@ else
 fi
 
 # B.3 migrateV062PG registered in driver_postgres chain
-if grep -qE 'migrateV062PG,' internal/db/driver_postgres.go 2>/dev/null; then
+# B265 (2026-09-19): the pattern used to require a trailing comma
+# (`migrateV062PG,`) but the driver registers migrations as
+# `{62, "v0.62 (B194):", "migrations_v0_62_b194.go", migrateV062PG},`
+# — the entry ends with `}`. The contract therefore FAILed on every
+# run (found while running the gate for B265; pre-existing, not a
+# B265 regression).
+if grep -qE 'migrateV062PG[,}]' internal/db/driver_postgres.go 2>/dev/null; then
     ok "B.3 migrateV062PG registered in driver_postgres chain"
 else
     bad "B.3 migrateV062PG NOT in driver_postgres chain"

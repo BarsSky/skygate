@@ -9,9 +9,13 @@ import (
 )
 
 type User struct {
-	ID                 int64
-	Username           string
-	IsAdmin            bool
+	ID       int64
+	Username string
+	IsAdmin  bool
+	// IsPrimary marks the immutable bootstrap/root admin (V072, B264):
+	// at most one row carries it (partial UNIQUE index), and the UI
+	// refuses to demote, delete or rename that row.
+	IsPrimary          bool
 	Theme              string
 	PasswordHash       string
 	HeadscaleUserID    int64

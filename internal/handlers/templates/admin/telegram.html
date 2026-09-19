@@ -282,6 +282,16 @@
     <h3><i class="fa-solid fa-route"></i> {{t "telegram.egress_title"}}</h3>
     <p class="sub">{{t "telegram.egress_subtitle" | safeHTML}}</p>
     <p class="sub">{{t "telegram.egress_help"}}</p>
+    {{/* B265: skygate runs ON one of these relays. Warn before the
+         operator pins egress to it — a broken relay would then take
+         the management plane down with it, and this page's Telegram
+         probe (which originates on this host) becomes untrustworthy. */}}
+    {{if .State.Egress.ColocationWarning}}
+    <div class="alert alert-warn" style="margin:.5rem 0">
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      {{tf "telegram.egress_colocation_warn" .State.Egress.ColocationHostnamesText}}
+    </div>
+    {{end}}
     <p class="sub">
       <strong>{{t "telegram.egress_current_label"}}:</strong>
       {{if .State.Egress.SelectedHostname}}<code>{{.State.Egress.SelectedHostname}}</code> <span class="muted">({{.State.Egress.SelectedNodeID}})</span>{{else}}<em>{{t "telegram.egress_current_none"}}</em>{{end}}

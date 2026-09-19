@@ -1,4 +1,4 @@
-﻿{{define "body-admin-users"}}
+{{define "body-admin-users"}}
 {{/* 2026-08-18 (v1.4.0 B141): flash banner. The pre-B141
      /admin/users page had no banner — the ?ok= / ?err= query
      params that the sibling handlers emit were silently dropped.
@@ -67,6 +67,19 @@
   </p>
 </div>
 {{end}}
+{{/*
+  2026-09-19: v0.72 (B264) — idempotency flashes for the per-row role
+  buttons. PostAdminUserPromote emits ?already_admin= when the target is
+  already an admin (pre-existing flash, never rendered until B264) and
+  PostAdminUserDemote emits ?already_user= when the target is already a
+  regular user. Both are no-ops: no DB change, no audit row.
+*/}}
+{{if .FlashAlreadyAdmin}}
+<div class="alert alert-warning"><i class="fa-solid fa-circle-info"></i> {{tf "users.already_admin_flash" .FlashAlreadyAdmin}}</div>
+{{end}}
+{{if .FlashAlreadyUser}}
+<div class="alert alert-warning"><i class="fa-solid fa-circle-info"></i> {{tf "users.already_user_flash" .FlashAlreadyUser}}</div>
+{{end}}
 {{if .FlashSuccess}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
 {{end}}
@@ -104,7 +117,7 @@
         <td>{{.ID}}</td>
         <td><code>{{.Username}}</code></td>
         <td class="mono">{{if .HeadscaleUserID}}{{.HeadscaleUserID}}{{else}}<span style="color:var(--text-subtle)">—</span>{{end}}</td>
-        <td>{{if .IsAdmin}}<span class="tag tag-admin"><i class="fa-solid fa-shield-halved"></i>{{t "users.admin_tag"}}</span>{{else}}<span style="color:var(--text-muted);font-size:12px"><i class="fa-solid fa-user"></i> {{t "users.user_tag"}}</span>{{end}}</td>
+        <td>{{if .IsAdmin}}<span class="tag tag-admin"><i class="fa-solid fa-shield-halved"></i>{{t "users.admin_tag"}}</span>{{else}}<span style="color:var(--text-muted);font-size:12px"><i class="fa-solid fa-user"></i> {{t "users.user_tag"}}</span>{{end}}{{if .IsPrimary}} <span class="tag tag-primary" title="{{t "users.primary_help"}}"><i class="fa-solid fa-lock"></i>{{t "users.primary_tag"}}</span>{{end}}</td>
         <td>
           <a href="/admin/users/{{.ID}}/subnet" style="font-family:ui-monospace,monospace;font-size:12px">
             {{if .SubnetCIDR}}<code>{{.SubnetCIDR}}</code> · {{if eq .SubnetStatus "router_active"}}<span class="tag tag-success" style="font-size:10px" title="{{t "user_subnet.status_pill_router_active_title"}}"><i class="fa-solid fa-tower-broadcast"></i> {{t "user_subnet.cell_router_active"}}</span>{{else if eq .SubnetStatus "active"}}<span class="tag tag-success" style="font-size:10px" title="{{t "user_subnet.status_pill_active_title"}}"><i class="fa-solid fa-circle-check"></i> {{t "user_subnet.cell_active"}}</span>{{else if eq .SubnetStatus "pending"}}<span class="tag tag-warning" style="font-size:10px" title="{{t "user_subnet.status_pill_pending_title"}}"><i class="fa-solid fa-circle-pause"></i> {{t "user_subnet.cell_pending"}}</span>{{else if eq .SubnetStatus "disabled"}}<span class="tag" style="font-size:10px;opacity:0.6" title="{{t "user_subnet.status_pill_disabled_title"}}"><i class="fa-solid fa-circle-xmark"></i> {{t "user_subnet.cell_disabled"}}</span>{{else}}<span style="color:var(--text-subtle)">{{t "user_subnet.cell_none"}}</span>{{end}}{{else}}<span style="color:var(--text-subtle)">{{t "user_subnet.cell_none"}}</span>{{end}}
@@ -116,6 +129,30 @@
             <summary class="btn btn-sm"><i class="fa-solid fa-ellipsis-vertical"></i></summary>
             <div class="user-actions-menu">
               <a href="/admin/users/{{.ID}}/subnet" class="btn btn-sm" style="display:inline-flex;align-items:center;gap:4px"><i class="fa-solid fa-network-wired"></i> {{t "user_subnet.open_button"}}</a>
+              {{/*
+                2026-09-19: v0.72 (B264) — per-row role delegation.
+
+                Promote (shown only for non-admins) and Demote (shown only
+                for admins) POST to /admin/users/{id}/promote|demote, the
+                same handlers the drift banner uses. Both are confirm()-
+                guarded. The PRIMARY (bootstrap/root) row is immutable:
+                it renders a lock badge instead of the destructive
+                actions (promote/demote/rename/delete), and the handlers
+                enforce the same refusal server-side.
+              */}}
+              {{if .IsPrimary}}
+              <span class="user-actions-note" style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:4px;padding:4px 6px" title="{{t "users.primary_help"}}"><i class="fa-solid fa-lock"></i> {{t "users.primary_help"}}</span>
+              {{else}}
+              {{if not .IsAdmin}}
+              <form method="post" action="/admin/users/{{.ID}}/promote" onsubmit="return confirm('{{tf "users.promote_confirm" .Username}}')">
+                <button type="submit" class="btn btn-sm" title="{{t "users.promote_btn"}}"><i class="fa-solid fa-user-shield"></i> {{t "users.promote_btn"}}</button>
+              </form>
+              {{end}}
+              {{if .IsAdmin}}
+              <form method="post" action="/admin/users/{{.ID}}/demote" onsubmit="return confirm('{{tf "users.demote_confirm" .Username}}')">
+                <button type="submit" class="btn btn-sm btn-danger" title="{{t "users.demote_btn"}}"><i class="fa-solid fa-user-minus"></i> {{t "users.demote_btn"}}</button>
+              </form>
+              {{end}}
               {{/*
                 2026-09-12 (v1.5.2 admin-user-sync T4): per-row
                 "Rename" form. Pre-T4 the operator had to SSH into
@@ -131,18 +168,24 @@
                 (?err= flash with explicit message), and the
                 headscale-not-linked case (skip HS, do portal
                 UPDATE only — useful for cleaning up orphan rows).
+                B264: hidden for the primary row (the handler refuses
+                it too — renaming would break contract B of
+                check_b_admin_user_sync.sh).
               */}}
               <form method="post" action="/admin/users/{{.ID}}/rename" class="user-rename-form" onsubmit="var n=this.new_username.value.trim(); if(!n||n==='{{.Username}}'){return true} return confirm('{{tf "users.rename_confirm" .Username "%NEW%" .ID "%NEW%" "%NEW%"}}'.replace(/%NEW%/g, n))">
                 <input type="text" name="new_username" required pattern="[a-z0-9_-]+" minlength="1" placeholder="{{t "users.rename_form_ph"}}" class="ufg-input-sm" style="width:140px" title="{{t "users.rename_form_label"}}">
                 <button type="submit" class="btn btn-sm" title="{{t "users.rename_form_label"}}"><i class="fa-solid fa-i-cursor"></i> {{t "users.rename_btn"}}</button>
               </form>
+              {{end}}
               <form method="post" action="/admin/users/{{.ID}}/reset-password" class="user-reset-form" onsubmit="return confirm('{{tf "users.reset_confirm" .Username}}')">
                 <input type="password" name="new_password" required minlength="6" placeholder="{{t "users.reset_password_placeholder"}}" class="ufg-input-sm">
                 <button type="submit" class="btn btn-sm" title="{{t "users.reset_password"}}"><i class="fa-solid fa-key"></i> {{t "users.reset_password"}}</button>
               </form>
+              {{if not .IsPrimary}}
               <form method="post" action="/admin/users/{{.ID}}/delete" onsubmit="return confirm('{{tf "users.delete_confirm" .Username}}')">
                 <button type="submit" class="btn btn-danger btn-sm" title="{{t "common.delete"}}"><i class="fa-solid fa-trash"></i> {{t "common.delete"}}</button>
               </form>
+              {{end}}
             </div>
           </details>
         </td>

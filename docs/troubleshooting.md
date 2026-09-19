@@ -491,13 +491,76 @@ tailscale netcheck
 - **Re-apply the relay list to headscale** —
   `POST /admin/derp/relays/apply-headscale` (idempotent, audited).
 
+### Confirmed live case (B265, 2026-09-19) — `:3478 closed` on a healthy relay
+
+The reference VM showed a red `STUN UDP :3478 closed` tile while STUN was
+provably fine (`*:3478` bound, `stun.counter_requests.success = 33709`, a remote
+VPS measuring the relay via `netcheck`, clients showing `relay "mow"`).
+
+Root cause: pre-B265 `STUNListening` had exactly one source — the
+`stun.counter_requests.success` counter from `GET /debug/vars` — and upstream
+derper answers every `/debug/*` request from a non-loopback, non-Tailscale
+source with `403 debug access denied` (`tsweb.AllowDebugAccess`). The skygate
+container is always such a source. The old comment claimed the zeros were
+"honest"; they were a false negative.
+
+```bash
+# what the page used (from the skygate container):
+docker exec skygate sh -c 'wget -qO- https://derp.example.com/debug/vars' \
+  # → 403 debug access denied
+# a real STUN round trip (B265 does this in-process, UDP):
+#   STUN Binding Request (RFC 5389) → Binding Success Response with the
+#   matching transaction id. It works regardless of derper's --debug flag.
+```
+
+B265 replaced the counter read with that UDP round trip, so the tile now
+reflects reachability from the skygate path, prints the RTT and reflexive
+address, and names the failure reason when it is red. The same 403 also means
+the traffic/client/byte panels are unavailable on a hardened (no `--debug`)
+derper — the page now says so instead of drawing zeros.
+
+### Confirmed live case (B265) — dashboard "Recommended DERP" points at the wrong region
+
+`/admin/derp/dashboard` printed `Recommended DERP: region 901
+(controlplane.tailscale.com)` and the main-page hero showed 108 ms while
+`derp_health` measured the operator's own relay (region 900, `derp.example.com`)
+at 12 ms. Two defects:
+
+1. `internal/derphealth/map.go` had the ownership mapping **inverted**
+   (`d.IsOwn = isBundled == 0`). `is_bundled = 1` is the operator's own local
+   derper (`EnsureBundledDerpRelay`); `is_bundled = 0` is an external row —
+   including the region-901 row that `AutoMigrateDerpRelays` created from the
+   legacy `derp.external_urls` value, which is a **derpmap document**
+   (`https://controlplane.tailscale.com/derpmap/default`), not a relay. The
+   dashboard's `is_own DESC` ordering and `bestHealthyDERP()` therefore picked 901.
+2. `GET /admin/derp/relays/derpmap.json` published every enabled row as a relay
+   node, so every client's map contained a phantom region 901 pointing at
+   `controlplane.tailscale.com:443` (the control-plane API host) — plus a dead
+   `derp.example.com:8443` node (nothing listening on 8443) with the same node
+   name as the live one.
+
+B265 fixes the mapping, skips derpmap-document rows, probes each node's DERP
+port before advertising it, and de-duplicates node names inside a region.
+
+Operator cleanup for that data:
+
+```sql
+SELECT id, region_id, hostname, url, is_bundled, enabled FROM derp_relays ORDER BY id;
+-- a region-901 row whose URL ends in /derpmap/... is a MAP, not a relay: disable
+-- or delete it (headscale already merges the public map via derp.urls);
+-- and keep exactly ONE bundled row per relay (the ORDER BY id ASC LIMIT 1
+-- resolution hides duplicates but the derpmap used to publish both).
+```
+
 ### Permanent guard
 
 Keep `extra_hosts` + `SKYGATE_DERP_PROBE_HOST` and remember the recreate requirement
 and CWD-relative compose interpolation. Keep the DB the single source of truth for
 hostname + port. Treat `/admin/derp` as a *probe*: `stopped` plus a working WebSocket
-upgrade means the probe path is broken, not the relay. Do not "fix" latency with
-policy changes.
+upgrade means the probe path is broken, not the relay. A red STUN tile must name its
+reason — a bare "closed" on a relay clients are actively using is a bug in the page,
+not in the relay. Do not "fix" latency with policy changes, and never add a derpmap
+URL as a `derp_relays` row.
 
 ---
 

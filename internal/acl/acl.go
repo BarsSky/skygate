@@ -18,9 +18,10 @@ package acl
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 
 	"skygate/internal/db"
@@ -169,6 +170,77 @@ func resolvePerCIDRVia(devTag, ruleExitNodeID string, viaByDevice map[string]str
 		return ""
 	}
 	return prefTag
+}
+
+// deviceOwner is the node_owner_map projection the ACL builder needs
+// to mint a device tag for a rule whose denormalised device_rules
+// columns are empty. See resolveNodeOwners.
+type deviceOwner struct {
+	Username string
+	Hostname string // already lowercased
+}
+
+// resolveNodeOwners reads node_owner_map and returns
+// node_id (as int) → owner. B265 (2026-09-19).
+//
+// Failures are deliberately non-fatal: the caller falls back to the
+// pre-B265 device_ip src path rather than failing the whole policy
+// generation, because a partly-pinned policy is still better than no
+// policy on a busy tailnet. The fallback is visible in the generated
+// JSON (a `100.64.x.y` src), which is exactly what the /admin/acls
+// export/inspect surface is for.
+func resolveNodeOwners(d *sql.DB) map[int]deviceOwner {
+	rows, err := db.ListAllNodeOwners(d)
+	if err != nil {
+		return nil
+	}
+	out := make(map[int]deviceOwner, len(rows))
+	for _, n := range rows {
+		id, convErr := strconv.Atoi(strings.TrimSpace(n.NodeID))
+		if convErr != nil {
+			continue
+		}
+		host := strings.ToLower(strings.TrimSpace(n.Hostname))
+		if n.Username == "" || host == "" {
+			continue
+		}
+		out[id] = deviceOwner{Username: n.Username, Hostname: host}
+	}
+	return out
+}
+
+// deviceTagForRule returns the per-device tag a rule's src should use,
+// preferring the denormalised device_rules columns and falling back to
+// node_owner_map via the rule's device_id. Returns "" when neither
+// source yields a usable (username, hostname) pair — the caller then
+// emits the legacy device_ip src.
+//
+// Why this exists (B265): a raw device-IP src is a DIFFERENT selector
+// than the device's tag, so it never matches the per-device grants and
+// it defeats the `via` exit-node pin (headscale's ViaRoutesForPeer
+// drops the exit-route exclusion for a prefix as soon as any non-via
+// grant from that viewer overlaps it). On the reference VM 173/328
+// enabled rules had an empty user_name and emitted exactly such a src.
+//
+// Pure function (given the pre-resolved owner map) so it is
+// unit-testable without a DB.
+func deviceTagForRule(e db.ACLEntry, owners map[int]deviceOwner) string {
+	user := strings.ToLower(strings.TrimSpace(e.UserName))
+	host := strings.ToLower(strings.TrimSpace(e.DeviceHostname))
+	if user == "" || host == "" {
+		if o, ok := owners[e.DeviceID]; ok {
+			if user == "" {
+				user = strings.ToLower(o.Username)
+			}
+			if host == "" {
+				host = strings.ToLower(o.Hostname)
+			}
+		}
+	}
+	if user == "" || host == "" {
+		return ""
+	}
+	return "tag:dev-" + user + "-" + host
 }
 
 // GenerateACL builds the per-user headscale 0.29 HuJSON policy
@@ -979,6 +1051,17 @@ func ApplyACLPipelineForPlane(d *sql.DB, hs *headscale.Client, planeURL string, 
 		return ApplyResult{Version: ver, Applied: false, Err: setErr}
 	}
 	db.MarkACLApplied(d, ver)
+	// B265 (2026-09-19): surface deny rules that the grants[] format
+	// cannot express. Pre-B265 the skip in the generator was silent —
+	// an operator could add a deny rule in /admin/exit-rules and never
+	// learn that the applied policy does not contain it. We write an
+	// audit row instead of failing the apply (the rest of the policy is
+	// valid and must still be pushed).
+	if n, denyErr := db.CountEnabledDenyRules(d); denyErr == nil && n > 0 {
+		log.Printf("acl: WARNING %d enabled deny rule(s) are NOT expressible in headscale's grants[] policy — they were skipped; use the acls[] format or /admin/headscale/acl raw editor for deny rules", n)
+		db.AppendExitRuleLog(d, ver, db.ExitRuleActionApply,
+			fmt.Sprintf("%s; WARNING: %d enabled deny rule(s) skipped (grants[] has no deny action)", detailForLog, n))
+	}
 	db.AppendExitRuleLog(d, ver, db.ExitRuleActionApply, detailForLog)
 	return ApplyResult{Version: ver, Applied: true, Err: nil}
 }
@@ -1132,6 +1215,32 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	for _, dt := range devTags {
 		tagsByUser[dt.Username] = append(tagsByUser[dt.Username], dt.Tag)
 	}
+
+	// B265 (2026-09-19) — device_rules → device tag fallback.
+	//
+	// device_rules carries denormalised user_name / device_hostname
+	// columns, but on the reference VM 173 of 328 enabled rows had an
+	// EMPTY user_name and 52 an empty device_hostname (legacy rows
+	// from before v0.44, plus rows written by the autoupdater). Those
+	// rows fell through to the `device_ip` branch of the rule loop,
+	// which is harmful for two reasons:
+	//
+	//   1. A non-tag `src` (a raw 100.64.x.y) is a different selector
+	//      than the device's tag, so it can never match the
+	//      per-device grants — headscale's ViaRoutesForPeer drops the
+	//      exit-route EXCLUDE for a prefix as soon as ANY non-via
+	//      grant from that viewer overlaps it. The matching tag-src
+	//      grant (which carries via=[preferred]) was therefore
+	//      neutralised, i.e. the "preferred exit node" was not
+	//      enforced for exactly the devices with the most rules.
+	//   2. A raw device IP src dies the moment the node's tailnet IP
+	//      changes (re-registration), silently breaking the rule.
+	//
+	// node_owner_map is the authoritative node → owner mapping
+	// (populated by nodeownership.Backfill from the live headscale
+	// node list), and its hostnames are matched case-insensitively
+	// because the tag minted on the node is lowercased.
+	ownerByNodeID := resolveNodeOwners(d)
 
 	var identities []string
 	for _, uname := range usernames {
@@ -1419,13 +1528,14 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 			continue
 		}
 		src := "\"*\""
-		var devTag string // tag:dev-<user>-<device> for via lookup; empty for src=* or src=device_ip
+		devTag := deviceTagForRule(e, ownerByNodeID) // tag:dev-<user>-<device>; "" when unresolvable
 		switch {
-		case e.UserName != "" && e.DeviceHostname != "":
-			// B176: see the comment in the ruleEntry
-			// loop above — headscale 0.29 + v0.28.0
-			// convention both require lowercase tags.
-			devTag = "tag:dev-" + e.UserName + "-" + strings.ToLower(e.DeviceHostname)
+		case devTag != "":
+			// B265: prefer the per-device TAG as src, resolving the
+			// owner from node_owner_map when device_rules' denormalised
+			// user_name/device_hostname are empty (173/328 live rows).
+			// A raw device-IP src is a different selector and cancels
+			// the `via` exit-node pin — see deviceTagForRule.
 			src = "\"" + devTag + "\""
 		case e.DeviceIP != "":
 			src = fmt.Sprintf("\"%s\"", e.DeviceIP)
@@ -1499,11 +1609,62 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	//   4. This loose per-device grant is the fallback for
 	//      tagged devices WITHOUT a per-device pref.
 	//   5. Catch-alls last.
+	//
+	// B265 (2026-09-19) — REAL exit-node pinning for tagged devices.
+	//
+	// Pre-B265 this loop emitted ONE grant per device:
+	//
+	//	{ "src": ["tag:dev-u-d"], "dst": ["autogroup:internet"], "ip": ["*"] }
+	//
+	// with no `via`. The only `via` that reached `autogroup:internet`
+	// sat on the per-USER grant (`src: user@…`), and headscale skips
+	// tagged nodes when resolving a user selector — every skygate
+	// device carries `tag:dev-<user>-<device>`, so that pin matched
+	// nothing. The per-CIDR pins emitted above (the aclRows loop) DO
+	// carry `via`, but headscale only uses `via` for exit-node
+	// selection when the grant's dst is `autogroup:internet`
+	// (policy/v2 compileViaForNode + ViaRoutesForPeer treat a `via`
+	// on any other dst as subnet-route steering only).
+	//
+	// Net effect before B265: NOTHING in the generated policy
+	// constrained which exit node a tagged device may use — the
+	// device's "preferred exit node" in /my/exit-rules was advisory,
+	// and any device could relay through any `tag:exit-node` peer.
+	// Tailscale grants are also ADDITIVE (no first-match, no deny),
+	// so adding a pinned grant without removing the loose one would
+	// leave both matching and the pin would still be defeated.
+	//
+	// Post-B265:
+	//   - device WITH a preference (device_exit_node_prefs.via_enabled
+	//     and a resolved tag) → exactly ONE grant, carrying
+	//     `via: [<preferred tag>]`. That is the
+	//     `grantHasAutoGroupInternet` shape headscale honours, so the
+	//     pin is enforced.
+	//   - device WITHOUT a preference → the previous loose grant, so
+	//     the global rule keeps working exactly as before. This
+	//     preserves the operator's "the device itself chose to send
+	//     everything through an exit node" case: the client's own
+	//     exit-node selection (RouteAll) is not overridden.
+	//
+	// The `via` tag comes from the same `viaByDevice` map the per-CIDR
+	// pins use, so it can only be a tag the reconciler resolved for
+	// THIS device.
 	for _, uname := range usernames {
 		if uname == "" {
 			continue
 		}
 		for _, devTag := range tagsByUser[uname] {
+			// B265: pinned ONLY when this device has a resolved
+			// preference (viaByDevice is populated from
+			// device_exit_node_prefs WHERE via_enabled=1). The
+			// lookup is literal so the source contract
+			// scripts/check_b188_2.sh can distinguish the
+			// conditional pin from the pre-B188.2 unconditional
+			// one; an empty value is falsy in Go anyway.
+			if via := viaByDevice[devTag]; via != "" {
+				sb.WriteString(",\n    { \"src\": [\"" + devTag + "\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"], \"via\": [\"" + via + "\"] }")
+				continue
+			}
 			sb.WriteString(",\n    { \"src\": [\"" + devTag + "\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"] }")
 		}
 	}

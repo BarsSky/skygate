@@ -152,6 +152,44 @@ func bundledDERPHostnameFromDB(d *sql.DB) string {
 	return hostname
 }
 
+// bundledDERPHostnamesFromDB returns the DISTINCT hostnames of every
+// enabled bundled derp_relays row. B265: the STUN probe
+// (derp_stun.go) walks this list so a deployment with two bundled
+// rows (the live VM has :443 and a stale :8443 row) still finds the
+// hostname that resolves from the skygate container.
+//
+// Same deterministic ordering as bundledDERPPortFromDB —
+// `ORDER BY id ASC` so the canonical row comes first.
+func bundledDERPHostnamesFromDB(d *sql.DB) []string {
+	if d == nil {
+		return nil
+	}
+	rows, err := d.Query(`
+		SELECT hostname FROM derp_relays
+		 WHERE is_bundled = 1 AND enabled = 1 AND hostname != ''
+		 ORDER BY id ASC
+	`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	seen := map[string]bool{}
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			continue
+		}
+		h = strings.TrimSpace(h)
+		if h == "" || seen[h] {
+			continue
+		}
+		seen[h] = true
+		out = append(out, h)
+	}
+	return out
+}
+
 // B260 — resolveDERPHostname returns the derper's public hostname
 // (the one Tailscale clients dial and the cert CN matches). Same
 // resolution shape as resolveDERPPort: DB override first (the

@@ -30,6 +30,7 @@
 package admin
 
 import (
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"log"
@@ -38,6 +39,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"skygate/internal/derphealth"
@@ -301,6 +303,89 @@ func publicDERPPortFromURL(rawURL string) int {
 	return 443
 }
 
+// isDerpMapURL reports whether a derp_relays URL points at a DERP
+// MAP DOCUMENT rather than at a single relay node.
+//
+// B265 (2026-09-19). The legacy global_settings key
+// `derp.external_urls` held comma-separated derpmap URLs
+// (`https://controlplane.tailscale.com/derpmap/default`), and
+// AutoMigrateDerpRelays copied that value into derp_relays as a
+// REGION ROW (region_id 901). GetAdminDerpRelaysDerpmap then
+// published it to every client as a relay node, producing a
+// phantom region in headscale's map:
+//
+//	"901": { "RegionCode": "", "RegionName": "",
+//	         "Nodes": [{ "HostName": "controlplane.tailscale.com",
+//	                     "DERPPort": 443 }] }
+//
+// The public Tailscale derpmap has no region 901, and
+// controlplane.tailscale.com is the control-plane API host, not a
+// relay — `tailscale netcheck` listed it as a trailing nameless
+// region it could never measure, and the dashboard's
+// "Recommended DERP" banner (pre-B265 IsOwn fix) pointed at it.
+//
+// headscale already merges the public map itself via
+// `derp.urls: [https://controlplane.tailscale.com/derpmap/default]`
+// (see the operator's config.yaml), so a derpmap URL must NEVER be
+// emitted as a node.
+func isDerpMapURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return true // unparseable → not a usable relay node
+	}
+	if strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/derpmap") ||
+		strings.Contains(u.Path, "/derpmap/") {
+		return true
+	}
+	// A relay URL that names a path other than "" / "derp" is not a
+	// DERP endpoint either (the protocol lives on /derp and /).
+	switch strings.TrimRight(u.Path, "/") {
+	case "", "/derp", "/derp/probe", "/derp/latency-check":
+		return false
+	}
+	return true
+}
+
+// derpNodeStatus is the per-node reachability probe result used by
+// the derpmap endpoint to decide whether a node is worth
+// publishing. B265: the live VM had TWO enabled bundled rows for
+// region 900 (id=2 → `https://derp.skynas.ru:443`, id=3 →
+// `https://derp.skynas.ru:8443`) and nothing listened on 8443, so
+// every client received a region with one working and one dead
+// node — and both named `mow-1`.
+type derpNodeStatus struct {
+	Reachable bool
+	Err       string
+}
+
+func derpNodeKey(host string, port int) string {
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
+// probeDERPNodeReachable does a TCP+TLS dial to the node's DERP
+// port and reports whether the handshake completed. Short timeout
+// (2s) because /admin/derp/relays/derpmap.json is fetched by
+// headscale every derp.update_frequency and must not stall.
+//
+// InsecureSkipVerify is scoped to this reachability probe only (we
+// assert "something speaks TLS here", and the operator's own derper
+// uses a manual cert whose CN we don't have to trust for a liveness
+// check). No data is read from the connection.
+func probeDERPNodeReachable(host string, port int, timeout time.Duration) derpNodeStatus {
+	addr := derpNodeKey(host, port)
+	d := &net.Dialer{Timeout: timeout}
+	conn, err := tls.DialWithDialer(d, "tcp", addr, &tls.Config{
+		InsecureSkipVerify: true, // liveness only — no data exchanged
+		ServerName:         host,
+		MinVersion:         tls.VersionTLS12,
+	})
+	if err != nil {
+		return derpNodeStatus{Reachable: false, Err: err.Error()}
+	}
+	_ = conn.Close()
+	return derpNodeStatus{Reachable: true}
+}
+
 // GetAdminDerpRelaysDerpmap serves the combined DERP map
 // (own + bundled 901) as a Tailscale-shaped JSON. headscale
 // is configured to fetch this URL via its `derp.urls`
@@ -320,6 +405,12 @@ func publicDERPPortFromURL(rawURL string) int {
 //
 // B237 — 2026-09-04.
 func (s *Service) GetAdminDerpRelaysDerpmap(w http.ResponseWriter, r *http.Request) {
+	// B265: ?probe=0 disables the per-node reachability probe and
+	// publishes every row as-is. Used by tests and by an operator
+	// debugging why a node disappeared from the map. The default
+	// (probe ON) is the safe one: a relay map with a dead node
+	// costs every client a wasted dial.
+	probeNodes := r.URL.Query().Get("probe") != "0"
 	rows, err := s.dbc().QueryContext(r.Context(), `
 		SELECT region_id, region_code, region_name, hostname, url
 		  FROM derp_relays
@@ -342,14 +433,37 @@ func (s *Service) GetAdminDerpRelaysDerpmap(w http.ResponseWriter, r *http.Reque
 			log.Printf("derpmap: scan: %v", err)
 			continue
 		}
-		// STUNPort 3478 + STUNOnly=false + InsecureForTests=false
-		// are the headscale defaults — omitted in the response
-		// would also be valid, but explicit > implicit.
+		// B265: never publish a derpmap DOCUMENT as a relay node.
+		// The legacy `derp.external_urls` migration turned
+		// `https://controlplane.tailscale.com/derpmap/default`
+		// into region 901, which clients then dialled as if it were
+		// a DERP server (it is the control-plane API host). The
+		// public map is merged by headscale itself via derp.urls.
+		if isDerpMapURL(urlStr) {
+			log.Printf("derpmap: skipping region=%d host=%s — url %q is a derpmap document, not a relay node", rid, host, urlStr)
+			continue
+		}
+		if strings.TrimSpace(host) == "" && strings.TrimSpace(urlStr) == "" {
+			continue
+		}
+		port := publicDERPPortFromURL(urlStr)
+		// B265: probe the node before publishing it. A relay map
+		// with a dead node costs every client a wasted dial and can
+		// make netcheck score the region lower. The live VM had a
+		// second bundled row for region 900 on :8443 with nothing
+		// listening.
+		if probeNodes {
+			reach := probeDERPNodeReachable(host, port, 2*time.Second)
+			if !reach.Reachable {
+				log.Printf("derpmap: skipping region=%d host=%s port=%d — node unreachable: %s", rid, host, port, reach.Err)
+				continue
+			}
+		}
 		node := derpMapNode{
 			Name:             shortNameFromHostname(host, rc),
 			RegionID:         rid,
 			HostName:         host,
-			DERPPort:         publicDERPPortFromURL(urlStr),
+			DERPPort:         port,
 			STUNPort:         3478,
 			STUNOnly:         false,
 			InsecureForTests: false,
@@ -365,6 +479,17 @@ func (s *Service) GetAdminDerpRelaysDerpmap(w http.ResponseWriter, r *http.Reque
 				RegionID:   rid,
 				RegionCode: rc,
 				RegionName: rn,
+			}
+		}
+		// B265: keep node names unique inside a region. Two bundled
+		// rows with the same hostname and region_code produced two
+		// nodes both named `mow-1` (verified in the client's netmap),
+		// which makes per-node latency bookkeeping impossible to
+		// read. Suffix the 2nd..Nth node with its port.
+		for _, existing := range reg.Nodes {
+			if existing.Name == node.Name {
+				node.Name = node.Name + "-" + strconv.Itoa(port)
+				break
 			}
 		}
 		reg.Nodes = append(reg.Nodes, node)

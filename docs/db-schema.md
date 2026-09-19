@@ -53,8 +53,11 @@ user has a 1:1 headscale user (linked by `headscale_user_id`).
 | `theme` | TEXT NOT NULL DEFAULT 'linear' | one of: linear / classic / solar / mono |
 | `default_device_node_id` | TEXT NOT NULL DEFAULT '' | (v0.30) headscale node_id the user picked as default for `/add_rule` |
 | `default_exit_node_id` | TEXT NOT NULL DEFAULT '' | (v0.30) headscale node_id the user picked as default exit-node |
+| `is_primary` | INTEGER NOT NULL DEFAULT 0 | (v0.72, B264) 1 = the immutable bootstrap/root admin (`SKYGATE_ADMIN_USER`); at most one row may carry it — the partial UNIQUE index `portal_users_one_primary_uniq` enforces that on both PG and SQLite |
 
-Indexes: implicit on `id` (PK) and `username` (UNIQUE).
+Indexes: implicit on `id` (PK) and `username` (UNIQUE), plus the partial UNIQUE
+index `portal_users_one_primary_uniq` on `(is_primary) WHERE is_primary = 1`
+(v0.72, B264 — "at most one primary admin").
 
 ### `preauth_keys`
 

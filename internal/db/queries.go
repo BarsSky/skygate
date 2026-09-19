@@ -129,7 +129,7 @@ const (
 const (
 	qSelectUserByName      = `SELECT id, password_hash, is_admin FROM portal_users WHERE username = $1`
 	qSelectUserIDByName    = `SELECT id FROM portal_users WHERE username = $1`
-	qSelectAllPortalUsers  = `SELECT id, username, is_admin, headscale_user_id, created_at, theme, subnet_cidr, subnet_status, subnet_router_node_id FROM portal_users ORDER BY id`
+	qSelectAllPortalUsers  = `SELECT id, username, is_admin, headscale_user_id, created_at, theme, subnet_cidr, subnet_status, subnet_router_node_id, is_primary FROM portal_users ORDER BY id`
 	qSelectPortalUsernames = `SELECT username FROM portal_users ORDER BY id`
 	// 2026-07-16: v0.13.0 — per-plane ACL. qSelectPortalUsernamesForPlane
 	// returns usernames of every portal user on a given control plane
@@ -274,6 +274,29 @@ const (
 	qDeletePortalUserByID  = `DELETE FROM portal_users WHERE id = $1`
 )
 
+// 2026-09-19: v0.72 (B264) — the immutable primary admin.
+//
+// is_primary marks the bootstrap/root admin (SKYGATE_ADMIN_USER). At most
+// one row carries it (partial UNIQUE index portal_users_one_primary_uniq,
+// V072); that row can never be demoted, deleted or renamed from
+// /admin/users.
+//
+// Kept in their own const block (rather than appended to the portal_users
+// block above) so adding them does not re-align that pre-existing block.
+//
+// qSelectPortalIsAdminByID / qSelectPortalIsPrimaryByID return one column
+// scanned into an int + compared to 1, replacing the pre-B264 inline
+// `SELECT is_admin FROM portal_users WHERE id = $1` in
+// PostAdminUserPromote. `$N` is the universal placeholder form (pgx and
+// modernc.org/sqlite both bind it), and the "no row" case is mapped to
+// ErrUserNotFound by the helpers in portal_users.go.
+const (
+	qSelectPortalIsAdminByID   = `SELECT is_admin FROM portal_users WHERE id = $1`
+	qSelectPortalIsPrimaryByID = `SELECT is_primary FROM portal_users WHERE id = $1`
+	qCountPortalAdmins         = `SELECT COUNT(*) FROM portal_users WHERE is_admin = 1`
+	qUpdatePortalUserIsPrimary = `UPDATE portal_users SET is_primary = $1 WHERE id = $2`
+)
+
 // qSelectOtherHSUserIDs returns the headscale_user_id values of every
 // portal user EXCEPT the one whose id matches `$1`. Used by
 // nodeownership.Backfill's Strategy A to short-circuit a node already
@@ -354,7 +377,7 @@ const (
 // pinning mechanism, not a "all internet via X" toggle. The new
 // per-CIDR via= gives the user selective routing — youtube.com
 // via emilia, banking.com direct, etc.
-const qSelectEnabledACLEntries = `SELECT target_type, target_value, action, COALESCE(device_ip, '') AS device_ip, COALESCE(user_name, '') AS user_name, COALESCE(device_hostname, '') AS device_hostname, COALESCE(exit_node_id, '') AS exit_node_id FROM device_rules WHERE enabled = 1`
+const qSelectEnabledACLEntries = `SELECT target_type, target_value, action, COALESCE(device_ip, '') AS device_ip, COALESCE(user_name, '') AS user_name, COALESCE(device_hostname, '') AS device_hostname, COALESCE(exit_node_id, '') AS exit_node_id, COALESCE(device_id, 0) AS device_id FROM device_rules WHERE enabled = 1`
 
 // qSelectEnabledDomainRules is used by the autoupdater (resolves DNS → /32
 // and inserts derived rules).
@@ -785,9 +808,22 @@ const (
 // Argument list: 4 × planeURL (one for the per-user subquery,
 // one for shared/mesh — kept for parity with the other
 // per-plane helpers; not used yet).
-const qSelectPerUserDeviceTags = `SELECT pu.username, nom.hostname, 'tag:dev-' || pu.username || '-' || nom.hostname AS tag
+//
+// B265 (2026-09-19) — LOWER(nom.hostname). The tag that is actually
+// APPLIED to a node is minted lowercased
+// (nodeownership.go: `fmt.Sprintf("tag:dev-%s-%s", portalUsername,
+// strings.ToLower(n.Hostname))`, B176/B177). node_owner_map.hostname
+// keeps the node's original case, so on any deployment with an
+// uppercase hostname this query produced a GHOST tag
+// (`tag:dev-user-MyLaptop`) that the node does not carry — and the
+// per-device grants, the loose autogroup:internet grants and the
+// tagOwners entry were all emitted for that ghost tag, i.e. the device
+// matched no grant at all and was silently BLOCKED. The live reference
+// VM happens to have all-lowercase hostnames, so this was latent.
+const qSelectPerUserDeviceTags = `SELECT pu.username, LOWER(nom.hostname),
+         'tag:dev-' || pu.username || '-' || LOWER(nom.hostname) AS tag
   FROM node_owner_map nom
   JOIN portal_users pu ON nom.username = pu.username
  WHERE nom.hostname != ''
    AND nom.username != ''
- ORDER BY pu.username, nom.hostname`
+ ORDER BY pu.username, LOWER(nom.hostname)`

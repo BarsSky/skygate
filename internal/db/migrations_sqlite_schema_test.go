@@ -59,17 +59,39 @@ func TestSQLiteSchemaComplete(t *testing.T) {
 		t.Fatalf("ApplyMigrations(SQLite): %v", err)
 	}
 
-	t.Run("chain reaches V071 like PostgreSQL", func(t *testing.T) {
+	t.Run("chain reaches V072 like PostgreSQL", func(t *testing.T) {
 		var maxV int
 		if err := sqlDB.QueryRow(
 			`SELECT COALESCE(MAX(version), 0) FROM applied_migrations`).Scan(&maxV); err != nil {
 			t.Fatalf("read max(version): %v", err)
 		}
-		// PostgreSQL's chain ends at 71. If SQLite lags behind, every
-		// table added by the missing tail is absent.
-		if maxV != 71 {
-			t.Errorf("SQLite migration chain ends at V%d, want V71 — the PG and SQLite "+
+		// PostgreSQL's chain ends at 72. If SQLite lags behind, every
+		// table/column added by the missing tail is absent.
+		if maxV != 72 {
+			t.Errorf("SQLite migration chain ends at V%d, want V72 — the PG and SQLite "+
 				"chains have diverged again (see driver_sqlite.go sqliteMigrations)", maxV)
+		}
+	})
+
+	t.Run("portal_users.is_primary exists (V072, B264)", func(t *testing.T) {
+		// V072 is the B264 immutable-primary-admin marker. It is added
+		// through execSQLiteDDL/addColumnIfMissingSQLite, so a regression
+		// in the chokepoint shows up here.
+		if !sqliteColumnExists(sqlDB, "portal_users", "is_primary") {
+			t.Error("portal_users.is_primary is MISSING in the SQLite schema — V072 " +
+				"(B264 primary admin) did not run on SQLite")
+		}
+		// The partial UNIQUE index is the DB-level "at most one primary"
+		// guarantee. Assert it exists in sqlite_master, not just that the
+		// CREATE statement was present in the source.
+		var n int
+		if err := sqlDB.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='portal_users_one_primary_uniq'`).Scan(&n); err != nil {
+			t.Fatalf("query sqlite_master for the primary index: %v", err)
+		}
+		if n != 1 {
+			t.Error("portal_users_one_primary_uniq is missing — nothing enforces " +
+				"'at most one is_primary=1 row' on SQLite")
 		}
 	})
 

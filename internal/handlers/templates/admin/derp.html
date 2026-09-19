@@ -46,7 +46,13 @@
     <div class="body">
       <div class="label">{{t "derp.label_stun"}}</div>
       <div class="value">:{{.DerpStatus.STUNPort}}</div>
-      <div class="sub">{{if .DerpStatus.STUNListening}}{{t "derp.value_listening"}}{{else}}{{t "derp.value_closed"}}{{end}}</div>
+      <div class="sub">{{if .DerpStatus.STUNListening}}{{t "derp.value_listening"}}{{if .DerpStatus.STUNRTT}} · {{.DerpStatus.STUNRTT}}{{end}}{{else}}{{t "derp.value_closed"}}{{end}}</div>
+      {{/* B265: the tile is now backed by a real UDP STUN round
+           trip, not by derper's /debug/vars counter (which the
+           container cannot read — 403 debug access denied). Show
+           WHY it is red instead of a bare "closed". */}}
+      {{if and .DerpStatus.STUNBlocked .DerpStatus.STUNErr}}<div class="sub" style="color:var(--danger,#dc3545);font-size:11px" title="{{.DerpStatus.STUNErr}}">{{t "derp.stun_unreachable"}}</div>{{end}}
+      {{if .DerpStatus.STUNReflex}}<div class="sub" style="font-size:11px" title="{{t "derp.stun_reflex_help"}}">{{t "derp.stun_reflex"}}: <code>{{.DerpStatus.STUNReflex}}</code></div>{{end}}
     </div>
   </div>
   <div class="metric">
@@ -58,6 +64,17 @@
     </div>
   </div>
 </div>
+
+{{/* B265: derper answers 403 "debug access denied" to every
+     non-loopback / non-Tailscale source, so the rich metrics
+     below are unavailable in the hardened (no --debug) deployment.
+     Say so explicitly instead of rendering zeros that look like
+     measurements. */}}
+{{if .DerpStatus.DebugAccessDenied}}
+<div class="alert alert-warning" style="margin:8px 0;font-size:13px">
+  <i class="fa-solid fa-circle-info"></i> {{t "derp.debug_access_denied" | safeHTML}}
+</div>
+{{end}}
 
 <div class="section-title"><i class="fa-solid fa-chart-line"></i>{{t "derp.section_traffic"}}</div>
 <div class="metric-grid">

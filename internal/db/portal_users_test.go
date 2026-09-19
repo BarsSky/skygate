@@ -779,3 +779,156 @@ func TestDeletePortalUserByID(t *testing.T) {
 		t.Errorf("after delete err = %v, want ErrUserNotFound", err)
 	}
 }
+
+// --- B264 (v0.72): the immutable primary admin -------------------------
+//
+// These exercise the four helpers backing admin role delegation
+// (SetPortalUserPrimary / IsPortalPrimaryAdmin / GetPortalIsAdminByID /
+// CountPortalAdmins) against the real schema — including the partial
+// UNIQUE index portal_users_one_primary_uniq that makes "at most one
+// primary" a DB-level invariant rather than a convention.
+//
+// openTestDB(t) is PG-backed and SKIPs when SKYGATE_TEST_PG_DSN is unset
+// (the local Windows default); the SQLite side of the same helpers is
+// covered end-to-end by the handler tests in internal/feature/admin.
+
+func TestSetPortalUserPrimary(t *testing.T) {
+	d := openTestDB(t)
+	id := seedPortalUser(t, d, "primary-candidate", "h", true, 0)
+
+	// Default is is_primary=0.
+	got, err := IsPortalPrimaryAdmin(d, id)
+	if err != nil {
+		t.Fatalf("IsPortalPrimaryAdmin (default): %v", err)
+	}
+	if got {
+		t.Error("a freshly seeded row must not be primary (V072 DEFAULT 0)")
+	}
+
+	affected, err := SetPortalUserPrimary(d, id, true)
+	if err != nil {
+		t.Fatalf("SetPortalUserPrimary(true): %v", err)
+	}
+	if affected != 1 {
+		t.Errorf("affected = %d, want 1", affected)
+	}
+	if got, err = IsPortalPrimaryAdmin(d, id); err != nil || !got {
+		t.Errorf("IsPortalPrimaryAdmin after set = %v (err=%v), want true", got, err)
+	}
+
+	// Clear it again.
+	if affected, err = SetPortalUserPrimary(d, id, false); err != nil {
+		t.Fatalf("SetPortalUserPrimary(false): %v", err)
+	}
+	if affected != 1 {
+		t.Errorf("affected = %d, want 1", affected)
+	}
+	if got, err = IsPortalPrimaryAdmin(d, id); err != nil || got {
+		t.Errorf("IsPortalPrimaryAdmin after clear = %v (err=%v), want false", got, err)
+	}
+
+	// Missing row → 0 rows affected, no error.
+	if affected, err = SetPortalUserPrimary(d, 99999, true); err != nil {
+		t.Errorf("SetPortalUserPrimary(missing id): %v", err)
+	} else if affected != 0 {
+		t.Errorf("SetPortalUserPrimary(missing id) affected = %d, want 0", affected)
+	}
+}
+
+func TestIsPortalPrimaryAdmin_MissingRow(t *testing.T) {
+	d := openTestDB(t)
+	got, err := IsPortalPrimaryAdmin(d, 99999)
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("err = %v, want ErrUserNotFound (handlers map it to 404)", err)
+	}
+	if got {
+		t.Error("a missing row must not report primary")
+	}
+}
+
+// TestPortalUsersOnePrimaryIndex pins the DB-level invariant: a second
+// is_primary=1 row is rejected by the partial UNIQUE index that V072
+// creates in BOTH chains. Without it two rows could claim the immutable
+// marker and the UI guards would be ambiguous.
+func TestPortalUsersOnePrimaryIndex(t *testing.T) {
+	d := openTestDB(t)
+	first := seedPortalUser(t, d, "primary-one", "h", true, 0)
+	second := seedPortalUser(t, d, "primary-two", "h", true, 0)
+
+	if _, err := SetPortalUserPrimary(d, first, true); err != nil {
+		t.Fatalf("mark first primary: %v", err)
+	}
+	if _, err := SetPortalUserPrimary(d, second, true); err == nil {
+		t.Error("marking a SECOND primary succeeded — the partial UNIQUE index " +
+			"portal_users_one_primary_uniq is missing or not enforced")
+	}
+	// Cleanup so the shared PG test database is left usable.
+	if _, err := SetPortalUserPrimary(d, first, false); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+}
+
+func TestGetPortalIsAdminByID(t *testing.T) {
+	d := openTestDB(t)
+	adminID := seedPortalUser(t, d, "is-admin-yes", "h", true, 0)
+	userID := seedPortalUser(t, d, "is-admin-no", "h", false, 0)
+
+	got, err := GetPortalIsAdminByID(d, adminID)
+	if err != nil {
+		t.Fatalf("GetPortalIsAdminByID(admin): %v", err)
+	}
+	if !got {
+		t.Error("GetPortalIsAdminByID(admin) = false, want true")
+	}
+
+	got, err = GetPortalIsAdminByID(d, userID)
+	if err != nil {
+		t.Fatalf("GetPortalIsAdminByID(user): %v", err)
+	}
+	if got {
+		t.Error("GetPortalIsAdminByID(user) = true, want false")
+	}
+
+	if _, err = GetPortalIsAdminByID(d, 99999); !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("GetPortalIsAdminByID(missing) err = %v, want ErrUserNotFound", err)
+	}
+}
+
+func TestCountPortalAdmins(t *testing.T) {
+	d := openTestDB(t)
+	before, err := CountPortalAdmins(d)
+	if err != nil {
+		t.Fatalf("CountPortalAdmins baseline: %v", err)
+	}
+
+	a := seedPortalUser(t, d, "count-admin-a", "h", true, 0)
+	b := seedPortalUser(t, d, "count-admin-b", "h", true, 0)
+	_ = seedPortalUser(t, d, "count-user-c", "h", false, 0)
+
+	after, err := CountPortalAdmins(d)
+	if err != nil {
+		t.Fatalf("CountPortalAdmins after seed: %v", err)
+	}
+	if after != before+2 {
+		t.Errorf("CountPortalAdmins = %d, want %d (only is_admin=1 rows count)", after, before+2)
+	}
+
+	// Demoting one lowers the count by one — this is what the
+	// last-admin guard in PostAdminUserDemote reads.
+	if _, err := SetPortalUserIsAdmin(d, a, false); err != nil {
+		t.Fatalf("SetPortalUserIsAdmin(false): %v", err)
+	}
+	afterDemote, err := CountPortalAdmins(d)
+	if err != nil {
+		t.Fatalf("CountPortalAdmins after demote: %v", err)
+	}
+	if afterDemote != before+1 {
+		t.Errorf("CountPortalAdmins after demote = %d, want %d", afterDemote, before+1)
+	}
+
+	// Cleanup the admin row we added so later tests in the shared PG
+	// database are not affected by a stray admin.
+	if _, err := DeletePortalUserByID(d, b); err != nil {
+		t.Fatalf("cleanup admin b: %v", err)
+	}
+}

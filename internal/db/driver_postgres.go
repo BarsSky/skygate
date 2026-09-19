@@ -173,6 +173,7 @@ var pgMigrations = []MigrationEntry{
 	{69, "v0.69 (B235.3): derp_health.name column for the B235 .Name short-label pill", "migrations_v0_69_b235_3.go", migrateV069PG},
 	{70, "v0.70 (B238): portal_users AFTER UPDATE audit trigger (catches out-of-band password_hash rotations)", "migrations_v0_70_b238.go", migrateV070PG},
 	{71, "v0.71 (B252): derp_cert_sync table (cert auto-renewal state for bundled derper)", "migrations_v0_71_derp_cert_sync.go", migrateV071PG},
+	{72, "v0.72 (B264): portal_users.is_primary — the immutable primary admin (partial UNIQUE index + backfill)", "migrations_v0_72_admin_primary.go", migrateV072PG},
 }
 
 // PGMigrations returns the list of migrations the current

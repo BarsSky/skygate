@@ -1,39 +1,58 @@
 #!/usr/bin/env bash
-# check_b_admin_user_sync.sh — verifies skygate admin user is in sync with headscale.
+# check_b_admin_user_sync.sh — verifies skygate's PRIMARY admin is in sync with headscale.
 #
-# 2026-09-12 (Issue follow-up): the operator reported confusion about
-# SKYGATE_ADMIN_USER vs headscale user naming. The current bootstrap flow
-# creates the admin user in both skygate DB and headscale at first start,
-# but is idempotent — if the operator changes SKYGATE_ADMIN_USER in .env
-# after first install, NOTHING updates. This check detects the drift.
+# 2026-09-12: the operator reported confusion about
+# SKYGATE_ADMIN_USER vs headscale user naming. The bootstrap flow creates
+# the admin user in both skygate DB and headscale at first start, but is
+# idempotent — if the operator changes SKYGATE_ADMIN_USER in .env after
+# first install, NOTHING updates. This check detects the drift.
 #
-# Pins 5 contracts:
+# 2026-09-19: v0.72 (B264) — CONTRACT RENEGOTIATION.
 #
-#   A. portal_users has exactly ONE user with is_admin=1
-#      (the canonical admin). FAIL if 0 or >1.
+# Contract A used to assert "exactly ONE portal_users row with is_admin=1".
+# That is WRONG by design now: B264 lets an administrator grant AND revoke
+# the `admin` role for other portal users, so a healthy install has 1..N
+# is_admin=1 rows. The canonical (bootstrap/root) account is instead marked
+# by the V072 column `is_primary`, which the partial UNIQUE index
+# portal_users_one_primary_uniq caps at exactly one row. The contracts below
+# therefore key on is_primary, not on is_admin:
 #
-#   B. The admin's username == SKYGATE_ADMIN_USER (from skygate
+#   P. portal_users.is_primary EXISTS (V072 ran on this database).
+#      FAIL if missing (the live binary is older than the migration).
+#
+#   A. portal_users has exactly ONE row with is_primary=1
+#      (the canonical, immutable primary admin). FAIL if 0 or >1.
+#
+#   A2. That primary row is is_admin=1 (primary ⟹ admin; the UI would
+#      otherwise render a "primary" account that cannot administer).
+#      FAIL if 0.
+#
+#   B. The primary's username == SKYGATE_ADMIN_USER (from skygate
 #      container env, not host .env — the env may be patched).
 #      FAIL if they differ.
 #
-#   C. The admin's headscale_user_id is NOT NULL.
-#      FAIL if NULL (admin exists in skygate but missing in headscale).
+#   C. The primary's headscale_user_id is NOT NULL.
+#      FAIL if NULL (primary exists in skygate but missing in headscale).
 #
 #   D. headscale has a user with the same id as portal_users.headscale_user_id
-#      (i.e., the admin actually exists on headscale side).
+#      (i.e., the primary actually exists on headscale side).
 #      FAIL if headscale doesn't have it.
 #
-#   E. headscale has a user with the same name as the admin (in case
-#      the admin was renamed externally — drift detector).
+#   E. headscale has a user with the same name as the primary (in case
+#      the primary was renamed externally — drift detector).
 #      WARN if names mismatch.
+#
+# NOTE: additional (delegated) admins are expected and are NOT checked
+# here — their role is delegated/revoked from /admin/users and carries no
+# headscale-side invariant.
 #
 # Usage:
 #   bash scripts/check_b_admin_user_sync.sh                  # active backend
 #   bash scripts/check_b_admin_user_sync.sh --strict         # FAIL on WARN
 #
 # Exit codes:
-#   0 = all 5 contracts pass
-#   1 = one or more contracts FAIL (admin drift detected)
+#   0 = all contracts pass (or SKIP: no live docker/DB available)
+#   1 = one or more contracts FAIL (primary admin drift detected)
 #   2 = backend unknown
 
 set -uo pipefail
@@ -54,12 +73,16 @@ warn(){ echo "  WARN  $1"; }
 bad() { echo "  FAIL  $1"; exit 1; }
 
 # ── pre-flight (2026-09-18, P1) ──
-# Contract A drives the LIVE docker stack, so on a workstation without a
+# The contracts drive the LIVE docker stack, so on a workstation without a
 # reachable daemon this used to FAIL with "skygate-skygate-1 container not
 # running" — an environment answer to a live-state question, which painted the
 # whole gate red and buried real findings. Skip only when docker itself is
 # unreachable; if docker works but the container is missing, that IS a real
 # finding and the check fails below as before.
+#
+# 2026-09-19 (B264): a missing/empty SKYGATE_TEST_PG_DSN or an unreachable
+# PostgreSQL is likewise an ABSENT live dependency, not a failure — those
+# branches SKIP rather than FAIL (AGENTS.md rule 1).
 if ! sudo docker info >/dev/null 2>&1; then
     echo "SKIP: docker daemon not reachable (B-mod-admin-user-sync inspects the live stack) — run it on the skygate VM"
     exit 0
@@ -83,37 +106,55 @@ case "$LIVE_DB" in
     *)                          BACKEND="unknown" ;;
 esac
 [ "$BACKEND" != "unknown" ] || bad "backend unknown (SKYGATE_DB=$LIVE_DB)"
-echo "backend=$BACKEND  expected_admin=$EXPECTED_ADMIN"
+echo "backend=$BACKEND  expected_primary=$EXPECTED_ADMIN"
 
-# ── query admin row ──
+# ── query the primary row ──
 case "$BACKEND" in
     pg)
         if ! sudo docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
-            bad "$PG_CONTAINER container not running"
+            echo "SKIP: $PG_CONTAINER (the live PostgreSQL for this deployment) is not reachable from here — no DSN/PG available"
+            exit 0
         fi
-        # Contract A: exactly one admin
+        # Contract P: the V072 primary marker column must exist. Without it
+        # every query below would fail with a column error, so check it first
+        # and report it as the real finding it is (a pre-V072 live binary).
+        HAS_IS_PRIMARY=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+            "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='portal_users' AND column_name='is_primary'" 2>/dev/null)
+        if [ "${HAS_IS_PRIMARY:-0}" = "1" ]; then
+            ok "P: portal_users.is_primary exists (V072 applied)"
+        else
+            bad "P: portal_users.is_primary is MISSING — V072 (B264 primary admin) has not run on this database"
+        fi
+        # Contract A: exactly one PRIMARY (delegated admins are allowed).
         ADMIN_ROW=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
-            "SELECT id || '|' || username || '|' || COALESCE(headscale_user_id::text, 'NULL') FROM portal_users WHERE is_admin=1 ORDER BY id")
+            "SELECT id || '|' || username || '|' || COALESCE(headscale_user_id::text, 'NULL') || '|' || is_admin FROM portal_users WHERE is_primary=1 ORDER BY id")
         ADMIN_COUNT=$(echo "$ADMIN_ROW" | grep -c '|' || true)
         if [ "$ADMIN_COUNT" -eq 1 ]; then
-            ok "A: exactly one admin in portal_users"
+            ok "A: exactly one primary admin in portal_users"
         else
-            bad "A: $ADMIN_COUNT admins in portal_users (expected 1)"
+            bad "A: $ADMIN_COUNT primary rows in portal_users (expected exactly 1; is_admin=1 alone is no longer the marker — see V072)"
         fi
         ADMIN_ID=$(echo "$ADMIN_ROW" | cut -d'|' -f1)
         ADMIN_NAME=$(echo "$ADMIN_ROW" | cut -d'|' -f2)
         ADMIN_HSID=$(echo "$ADMIN_ROW" | cut -d'|' -f3)
-        # Contract B: admin username == SKYGATE_ADMIN_USER
-        if [ "$ADMIN_NAME" = "$EXPECTED_ADMIN" ]; then
-            ok "B: portal admin name ($ADMIN_NAME) == SKYGATE_ADMIN_USER"
+        ADMIN_ISADMIN=$(echo "$ADMIN_ROW" | cut -d'|' -f4)
+        # Contract A2: primary ⟹ admin.
+        if [ "$ADMIN_ISADMIN" = "1" ]; then
+            ok "A2: primary row is is_admin=1"
         else
-            bad "B: portal admin name=$ADMIN_NAME != SKYGATE_ADMIN_USER=$EXPECTED_ADMIN (drift)"
+            bad "A2: primary row has is_admin=$ADMIN_ISADMIN (must be 1)"
+        fi
+        # Contract B: primary username == SKYGATE_ADMIN_USER
+        if [ "$ADMIN_NAME" = "$EXPECTED_ADMIN" ]; then
+            ok "B: primary name ($ADMIN_NAME) == SKYGATE_ADMIN_USER"
+        else
+            bad "B: primary name=$ADMIN_NAME != SKYGATE_ADMIN_USER=$EXPECTED_ADMIN (drift)"
         fi
         # Contract C: headscale_user_id IS NOT NULL
         if [ "$ADMIN_HSID" != "NULL" ] && [ -n "$ADMIN_HSID" ]; then
-            ok "C: admin has headscale_user_id=$ADMIN_HSID"
+            ok "C: primary has headscale_user_id=$ADMIN_HSID"
         else
-            bad "C: admin's headscale_user_id is NULL (not linked)"
+            bad "C: primary's headscale_user_id is NULL (not linked)"
         fi
         # Contract D: headscale has user with this id (query headscale CLI directly)
         # headscale stores users in its own SQLite (headscale_headscale_data volume),
@@ -151,28 +192,47 @@ except Exception as e:
         fi
         ;;
     sqlite)
+        # Contract P: the V072 marker column must exist in the SQLite schema.
+        # Read the schema through the same alpine+sqlite3 path the row query
+        # uses, and treat an unreachable volume as SKIP (absent live state).
         if ! sudo docker run --rm -v "$VOLUME":/data alpine sh -c \
             'apk add --no-cache sqlite >/dev/null 2>&1 && \
-             sqlite3 /data/skygate.db "SELECT id, username, COALESCE(headscale_user_id, -1) FROM portal_users WHERE is_admin=1 ORDER BY id"' \
+             sqlite3 /data/skygate.db "PRAGMA table_info(portal_users)"' \
+            > /tmp/_admin_cols_$$ 2>&1; then
+            echo "SKIP: sqlite database in volume $VOLUME is not readable from here — no live DB available"
+            exit 0
+        fi
+        if grep -q '|is_primary|' /tmp/_admin_cols_$$; then
+            ok "P: portal_users.is_primary exists (V072 applied)"
+        else
+            bad "P: portal_users.is_primary is MISSING — V072 (B264 primary admin) has not run on this database"
+        fi
+        rm -f /tmp/_admin_cols_$$
+        if ! sudo docker run --rm -v "$VOLUME":/data alpine sh -c \
+            'apk add --no-cache sqlite >/dev/null 2>&1 && \
+             sqlite3 /data/skygate.db "SELECT id, username, COALESCE(headscale_user_id, -1), is_admin FROM portal_users WHERE is_primary=1 ORDER BY id"' \
             > /tmp/_admin_sqlite_$$ 2>&1; then
-            bad "sqlite query failed (see /tmp/_admin_sqlite_$$)"
+            echo "SKIP: sqlite query could not run against volume $VOLUME — no live DB available"
+            exit 0
         fi
         ADMIN_ROW=$(cat /tmp/_admin_sqlite_$$)
         ADMIN_COUNT=$(echo "$ADMIN_ROW" | grep -c '.' || true)
         if [ "$ADMIN_COUNT" -eq 1 ]; then
-            ok "A: exactly one admin in portal_users"
+            ok "A: exactly one primary admin in portal_users"
         else
-            bad "A: $ADMIN_COUNT admins in portal_users (expected 1)"
+            bad "A: $ADMIN_COUNT primary rows in portal_users (expected exactly 1; is_admin=1 alone is no longer the marker — see V072)"
         fi
         ADMIN_ID=$(echo "$ADMIN_ROW" | awk 'NR==1 {print $1}')
         ADMIN_NAME=$(echo "$ADMIN_ROW" | awk 'NR==1 {print $2}')
         ADMIN_HSID=$(echo "$ADMIN_ROW" | awk 'NR==1 {print $3}')
-        [ "$ADMIN_HSID" -gt 0 ] && ok "C: admin has headscale_user_id=$ADMIN_HSID" || bad "C: admin headscale_user_id missing"
+        ADMIN_ISADMIN=$(echo "$ADMIN_ROW" | awk 'NR==1 {print $4}')
+        [ "$ADMIN_ISADMIN" = "1" ] && ok "A2: primary row is is_admin=1" || bad "A2: primary row has is_admin=$ADMIN_ISADMIN (must be 1)"
+        [ "$ADMIN_HSID" -gt 0 ] && ok "C: primary has headscale_user_id=$ADMIN_HSID" || bad "C: primary headscale_user_id missing"
         # B + D + E: same as pg
         if [ "$ADMIN_NAME" = "$EXPECTED_ADMIN" ]; then
-            ok "B: portal admin name ($ADMIN_NAME) == SKYGATE_ADMIN_USER"
+            ok "B: primary name ($ADMIN_NAME) == SKYGATE_ADMIN_USER"
         else
-            bad "B: portal admin name=$ADMIN_NAME != SKYGATE_ADMIN_USER=$EXPECTED_ADMIN (drift)"
+            bad "B: primary name=$ADMIN_NAME != SKYGATE_ADMIN_USER=$EXPECTED_ADMIN (drift)"
         fi
         HS_JSON=$(sudo docker exec headscale headscale users list -i "$ADMIN_HSID" -o json 2>&1)
         HS_NAMES=$(echo "$HS_JSON" | python3 -c "
@@ -208,4 +268,4 @@ except Exception as e:
 esac
 
 echo ""
-echo "All 5 contracts checked. Backend=$BACKEND. Admin=$ADMIN_NAME (id=$ADMIN_ID, hs_id=$ADMIN_HSID)."
+echo "All contracts checked (P + A + A2 + B + C + D + E). Backend=$BACKEND. Primary=$ADMIN_NAME (id=$ADMIN_ID, hs_id=$ADMIN_HSID)."

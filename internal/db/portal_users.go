@@ -160,15 +160,17 @@ func GetAllPortalUsers(d *sql.DB) ([]User, error) {
 	for rows.Next() {
 		var u User
 		var adminI int
+		var primaryI int
 		var hsID sql.NullInt64
 		var createdI int64
 		var theme sql.NullString
 		var subnetStatus sql.NullString
 		var subnetNodeIDStr sql.NullString // TEXT in SQLite, parse to int64 below
-		if err := rows.Scan(&u.ID, &u.Username, &adminI, &hsID, &createdI, &theme, &u.SubnetCIDR, &subnetStatus, &subnetNodeIDStr); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &adminI, &hsID, &createdI, &theme, &u.SubnetCIDR, &subnetStatus, &subnetNodeIDStr, &primaryI); err != nil {
 			return nil, err
 		}
 		u.IsAdmin = adminI == 1
+		u.IsPrimary = primaryI == 1
 		u.HeadscaleUserID = hsID.Int64
 		u.CreatedAt = time.Unix(createdI, 0)
 		if theme.Valid {
@@ -628,6 +630,88 @@ func SetPortalUserIsAdmin(d *sql.DB, id int64, isAdmin bool) (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// SetPortalUserPrimary flips is_primary to `isPrimary` for the row with
+// the given id.
+//
+// 2026-09-19: v0.72 (B264). The primary admin is the immutable
+// bootstrap/root account (SKYGATE_ADMIN_USER, default "admin"). V072
+// backfills the marker, bootstrapAdmin re-asserts it, and the
+// /admin/users handlers refuse to demote/delete/rename it. This helper
+// is the programmatic escape hatch (tests, recovery scripts).
+//
+// The partial UNIQUE index portal_users_one_primary_uniq makes
+// "is_primary=1 on two rows" a DB error, so callers that move the
+// marker MUST clear the old row first (see bootstrapAdmin, which does
+// the clear + set in one transaction-free pair of UPDATEs).
+//
+// Returns RowsAffected so a caller can distinguish "flipped" from
+// "id didn't exist".
+func SetPortalUserPrimary(d *sql.DB, id int64, isPrimary bool) (int64, error) {
+	v := 0
+	if isPrimary {
+		v = 1
+	}
+	res, err := d.Exec(qUpdatePortalUserIsPrimary, v, id)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// IsPortalPrimaryAdmin reports whether the row `id` is the immutable
+// primary (bootstrap/root) admin. Returns ErrUserNotFound when no such
+// row exists so the handler can map it to 404 without a second query.
+//
+// 2026-09-19: v0.72 (B264). Used by PostAdminUserDemote / Delete /
+// Rename to refuse to touch the primary row.
+func IsPortalPrimaryAdmin(d *sql.DB, id int64) (bool, error) {
+	var primaryI int
+	err := d.QueryRow(qSelectPortalIsPrimaryByID, id).Scan(&primaryI)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrUserNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	return primaryI == 1, nil
+}
+
+// GetPortalIsAdminByID returns the is_admin flag for the row `id`.
+// Returns ErrUserNotFound when the row is gone.
+//
+// 2026-09-19: v0.72 (B264). Replaces the inline
+// `SELECT is_admin FROM portal_users WHERE id = $1` that
+// PostAdminUserPromote used pre-B264, so the promote/demote pair share
+// one dual-dialect query and one "no row" contract.
+func GetPortalIsAdminByID(d *sql.DB, id int64) (bool, error) {
+	var adminI int
+	err := d.QueryRow(qSelectPortalIsAdminByID, id).Scan(&adminI)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrUserNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	return adminI == 1, nil
+}
+
+// CountPortalAdmins returns the number of portal_users rows with
+// is_admin=1. Used by PostAdminUserDemote to refuse to demote the LAST
+// admin (which would lock the operator out of /admin/*).
+//
+// Note it counts ADMINS, not primaries: with B264 there can be several
+// admins, but the primary row is separately protected by
+// IsPortalPrimaryAdmin, so this only guards the "no admins left" case.
+//
+// 2026-09-19: v0.72 (B264).
+func CountPortalAdmins(d *sql.DB) (int, error) {
+	var n int
+	if err := d.QueryRow(qCountPortalAdmins).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // DeletePortalUserByID removes the row for `id`. The PostAdminDeleteUser

@@ -10,6 +10,14 @@
 # banner itself (mirrors T5's "Adopt as Admin" form inside the
 # adopt banner).
 #
+# 2026-09-19 (v0.72 B264): the SAME handler now also serves the per-row
+# "Promote" button in the /admin/users action menu, so the admin-only gate
+# below is a real security boundary (not only a belt-and-braces check) and
+# is_admin is read through the shared db.GetPortalIsAdminByID helper that
+# Demote uses too. The drift-banner behaviour (contract C) and the
+# route/wiring (contract B) are unchanged. Contract A's idempotency grep
+# tracks the new `if isAdmin {` spelling.
+#
 # Pins 9 source-level contracts (file content, runs anywhere):
 #
 #   A. Handler PostAdminUserPromote exists in
@@ -66,8 +74,14 @@ if grep -qE 'func \(s \*Service\) PostAdminUserPromote\(' "$USERS_GO"; then
   pass "PostAdminUserPromote handler exists"
   # Idempotency: handler must read is_admin before UPDATE so a
   # re-click on an already-admin row short-circuits.
-  if grep -qE 'if isAdmin == 1' "$USERS_GO"; then
-    pass "  └ idempotent re-click short-circuits (isAdmin==1 branch)"
+  #
+  # 2026-09-19 (v0.72 B264): the pre-B264 inline
+  # `if isAdmin == 1` int comparison was replaced by the shared
+  # db.GetPortalIsAdminByID helper (bool) — the same helper Demote uses,
+  # so promote and demote agree on the "no such row" contract. The
+  # short-circuit itself is unchanged.
+  if grep -qE 'if isAdmin \{' "$USERS_GO" && grep -qE 'db\.GetPortalIsAdminByID\(' "$USERS_GO"; then
+    pass "  └ idempotent re-click short-circuits (isAdmin bool via GetPortalIsAdminByID)"
   else
     fail "  └ idempotent re-click short-circuit missing"
   fi

@@ -34,6 +34,7 @@ func extractIDFromPath(path string) string {
 	//   /admin/users/123/delete -> "123"
 	//   /admin/nodes/123/untag  -> "123"
 	//   /admin/nodes/123/tag    -> "123"
+	//   /admin/users/123/demote -> "123"
 	parts := strings.Split(path, "/")
 	if len(parts) >= 4 && parts[1] == "admin" {
 		switch parts[2] {
@@ -42,6 +43,20 @@ func extractIDFromPath(path string) string {
 		}
 	}
 	return ""
+}
+
+// usersI18n resolves an i18n key for the current request, tolerating a
+// nil catalog. Unit tests construct Service with only DB + Backend set
+// (see users_adopt_promote_test.go), so a raw s.I18n.T() would panic
+// there; production always wires the catalog.
+//
+// 2026-09-19: v0.72 (B264) — needed by PostAdminUserDemote, whose
+// refusal flashes (primary / last admin / self) are localized.
+func (s *Service) usersI18n(r *http.Request, key string) string {
+	if s.I18n == nil {
+		return key
+	}
+	return s.I18n.T(s.I18n.LangFromRequest(r), key)
 }
 
 // GetAdminUsers renders the /admin/users page (list of portal
@@ -111,13 +126,20 @@ func (s *Service) GetAdminUsers(w http.ResponseWriter, r *http.Request) {
 		// AdminSyncMode + AdminSyncFacts so the template can
 		// render the appropriate "Adopt as Admin" / "Promote"
 		// banner when SKYGATE_ADMIN_USER drift is detected.
-		"FlashSuccess":       r.URL.Query().Get("ok"),
-		"FlashError":         r.URL.Query().Get("err"),
-		"FlashHSOrphanAdopt": r.URL.Query().Get("adopted"),
+		"FlashSuccess":        r.URL.Query().Get("ok"),
+		"FlashError":          r.URL.Query().Get("err"),
+		"FlashHSOrphanAdopt":  r.URL.Query().Get("adopted"),
 		"FlashHSOrphanExists": r.URL.Query().Get("already_adopted"),
-		"FlashRenamed":       r.URL.Query().Get("renamed"),
-		"AdminSyncMode":      syncMode.String(),
-		"AdminSyncFacts":     syncFacts,
+		"FlashRenamed":        r.URL.Query().Get("renamed"),
+		// 2026-09-19: v0.72 (B264) — distinct idempotency flashes for
+		// the per-row role buttons. ?already_admin= is emitted by
+		// PostAdminUserPromote (pre-existing, but never rendered until
+		// now); ?already_user= is the demote twin emitted by
+		// PostAdminUserDemote when the target is already non-admin.
+		"FlashAlreadyAdmin": r.URL.Query().Get("already_admin"),
+		"FlashAlreadyUser":  r.URL.Query().Get("already_user"),
+		"AdminSyncMode":     syncMode.String(),
+		"AdminSyncFacts":    syncFacts,
 	})
 }
 
@@ -200,29 +222,40 @@ func (s *Service) PostAdminUser(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/users", http.StatusFound)
 }
 
-// PostAdminUserPromote is the v1.5.2 admin-user-sync T6.1
-// "Promote" button INSIDE the AdminSyncPromoteToAdmin banner on
-// /admin/users (rendered when a portal row exists with the right
-// username + linked HS but is_admin somehow flipped to 0).
+// PostAdminUserPromote grants the `admin` role to a portal user.
 //
-// Pre-T6.1 the banner just explained the drift — the operator had
-// to open the per-row edit form and click "Promote to admin"
-// there. T6.1 collapses this into a single click on the drift
-// banner itself, mirroring T5's "Adopt as Admin" form inside the
-// adopt banner.
+// Two callers, one handler:
+//
+//  1. The v1.5.2 admin-user-sync T6.1 "Promote" button INSIDE the
+//     AdminSyncPromoteToAdmin drift banner (rendered when a portal row
+//     exists with the right username + linked HS but is_admin somehow
+//     flipped to 0).
+//  2. The v0.72 (B264) per-row "Promote" button in the /admin/users
+//     action menu, which lets an admin delegate the role to ANY user.
+//
+// The drift-banner behaviour is unchanged: the initial drift case is
+// still a single click that flips is_admin 0 → 1 + writes the
+// 'admin_promote' audit row, and a re-click on an already-admin row is
+// an idempotent no-op with the distinct already_admin=<username> flash.
+//
+// B264 changes:
+//   - the admin-only gate is explicit and shared with Demote (it always
+//     was on this handler, but the per-row menu makes it a security
+//     boundary rather than a belt-and-braces check);
+//   - is_admin is read through db.GetPortalIsAdminByID (one shared
+//     dual-dialect query, ErrUserNotFound instead of a raw error) rather
+//     than an inline SELECT.
 //
 // Flow:
-//   1. Parse {id} from path (the portal_users row to promote).
-//   2. Admin-only check. Non-admin → 403.
-//   3. Fetch the row's current is_admin + username via
-//      GetUserNameAndHSByID. Missing row → 400 (shouldn't happen
-//      in practice — the banner only renders for known users).
-//   4. Idempotency: if is_admin is already 1, redirect with
-//      already_admin=<username> flash (no DB change, no audit row).
-//   5. SetPortalUserIsAdmin(1) — single UPDATE.
-//   6. Audit row: action='admin_promote', detail includes the
-//      username + the operator's claims.Username so the log shows
-//      "who clicked Promote" for the post-mortem.
+//  1. Parse {id} from path.
+//  2. Admin-only check. Non-admin → 403.
+//  3. Fetch the row's username via GetUserNameAndHSByID.
+//     Missing row → 404.
+//  4. Idempotency: already is_admin=1 → already_admin=<username> flash
+//     (no DB change, no audit row).
+//  5. SetPortalUserIsAdmin(true) — single UPDATE.
+//  6. Audit row: action='admin_promote', detail names the target + the
+//     operator so the log shows "who granted the role".
 //
 // Wire-up: POST /admin/users/{id}/promote in cmd/skygate/main.go.
 func (s *Service) PostAdminUserPromote(w http.ResponseWriter, r *http.Request) {
@@ -243,14 +276,19 @@ func (s *Service) PostAdminUserPromote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Read current is_admin to detect the no-op case.
-	var isAdmin int
-	if err := s.dbc().QueryRow(`SELECT is_admin FROM portal_users WHERE id = $1`, id).Scan(&isAdmin); err != nil {
+	isAdmin, err := db.GetPortalIsAdminByID(s.dbc(), id)
+	if errors.Is(err, db.ErrUserNotFound) {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
 		http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if isAdmin == 1 {
-		// Already admin — idempotent UX (the banner doesn't show
-		// in this case, but a stale reload + click race could).
+	if isAdmin {
+		// Already admin — idempotent UX (the drift banner doesn't show
+		// in this case, but a stale reload + click race could, and the
+		// per-row button can be double-clicked).
 		http.Redirect(w, r, "/admin/users?already_admin="+url.QueryEscape(username), http.StatusSeeOther)
 		return
 	}
@@ -259,8 +297,116 @@ func (s *Service) PostAdminUserPromote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "admin_promote",
-		fmt.Sprintf("user=%q promoted to admin (drift fix)", username))
+		fmt.Sprintf("id=%d user=%q promoted to admin by %q", id, username, c.Username))
 	http.Redirect(w, r, "/admin/users?ok="+url.QueryEscape("promoted "+username+" to admin"), http.StatusSeeOther)
+}
+
+// PostAdminUserDemote revokes the `admin` role from a portal user.
+//
+// 2026-09-19: v0.72 (B264). Mirrors PostAdminUserPromote — same
+// admin-only 403 gate, same {id} extraction, same 404-on-missing-row,
+// same idempotent no-op with a distinct flash — but the destructive
+// direction carries three extra refusals:
+//
+//   - PRIMARY is immutable. The bootstrap/root admin (the single
+//     is_primary=1 row, see internal/db/migrations_v0_72_admin_primary.go)
+//     can never be demoted. Otherwise a delegated admin could lock the
+//     operator out of their own install.
+//   - SELF-demotion is refused. An admin clicking Demote on their own
+//     row would lose access to /admin/* the moment they submitted.
+//     (They can still demote themselves by having another admin do it.)
+//   - LAST-ADMIN is refused. CountPortalAdmins()==1 means this is the
+//     only admin left; demoting would leave the install with no
+//     administrator at all.
+//
+// Flow:
+//  1. Admin-only check. Non-admin → 403.
+//  2. Parse {id} from path (extractIDFromPath); bad → 400.
+//  3. Fetch username via GetUserNameAndHSByID. Missing → 404.
+//  4. Already non-admin → ?already_user=<username> no-op flash
+//     (no DB change, no audit row).
+//  5. Primary → ?err=<users.err_primary_immutable>.
+//  6. Self → ?err=<users.err_cannot_demote_self>.
+//  7. Last admin → ?err=<users.err_last_admin>.
+//  8. SetPortalUserIsAdmin(false) — single UPDATE.
+//  9. Audit 'admin_demote'.
+//
+// 10. 303 redirect to /admin/users?ok=<demoted ...>.
+//
+// Wire-up: POST /admin/users/{id}/demote in cmd/skygate/main.go.
+func (s *Service) PostAdminUserDemote(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	idStr := extractIDFromPath(r.URL.Path)
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "bad request: bad user id", http.StatusBadRequest)
+		return
+	}
+	username, _, err := db.GetUserNameAndHSByID(s.dbc(), id)
+	if errors.Is(err, db.ErrUserNotFound) {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	// Refusal flashes all travel as ?err= and are rendered by the
+	// existing FlashError banner on /admin/users.
+	refuse := func(key string) {
+		http.Redirect(w, r, "/admin/users?err="+url.QueryEscape(s.usersI18n(r, key)), http.StatusSeeOther)
+	}
+	isAdmin, err := db.GetPortalIsAdminByID(s.dbc(), id)
+	if errors.Is(err, db.ErrUserNotFound) {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		// R6 error-surface rule: DB failures go back as a flash, not as
+		// a raw text/plain page with the driver message.
+		refuse("error.db")
+		return
+	}
+	if !isAdmin {
+		// Idempotent no-op: the row is already a regular user. Distinct
+		// flash so the operator can tell "I clicked twice / the page was
+		// stale" from a real error.
+		http.Redirect(w, r, "/admin/users?already_user="+url.QueryEscape(username), http.StatusSeeOther)
+		return
+	}
+	isPrimary, err := db.IsPortalPrimaryAdmin(s.dbc(), id)
+	if err != nil {
+		refuse("error.db")
+		return
+	}
+	if isPrimary {
+		refuse("users.err_primary_immutable")
+		return
+	}
+	if id == c.UserID {
+		refuse("users.err_cannot_demote_self")
+		return
+	}
+	admins, err := db.CountPortalAdmins(s.dbc())
+	if err != nil {
+		refuse("error.db")
+		return
+	}
+	if admins <= 1 {
+		refuse("users.err_last_admin")
+		return
+	}
+	if _, err := db.SetPortalUserIsAdmin(s.dbc(), id, false); err != nil {
+		refuse("error.db")
+		return
+	}
+	s.Backend.Audit(c.UserID, c.Username, "admin_demote",
+		fmt.Sprintf("id=%d user=%q demoted from admin by %q", id, username, c.Username))
+	http.Redirect(w, r, "/admin/users?ok="+url.QueryEscape("demoted "+username+" from admin"), http.StatusSeeOther)
 }
 
 // PostAdminDeleteUser deletes a portal user + cascades to headscale,
@@ -285,6 +431,21 @@ func (s *Service) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// 2026-09-19: v0.72 (B264) — the primary (bootstrap/root) admin is
+	// immutable. The per-row menu hides Delete for that row, but this
+	// guard is the real boundary (a stale page or a hand-crafted POST
+	// must not be able to remove the only account that can always
+	// administer the install). Fail CLOSED: a lookup error refuses the
+	// delete instead of falling through.
+	isPrimary, perr := db.IsPortalPrimaryAdmin(s.dbc(), id)
+	if perr != nil {
+		http.Redirect(w, r, "/admin/users?err="+url.QueryEscape(s.usersI18n(r, "error.db")), http.StatusSeeOther)
+		return
+	}
+	if isPrimary {
+		http.Redirect(w, r, "/admin/users?err="+url.QueryEscape(s.usersI18n(r, "users.err_primary_immutable")), http.StatusSeeOther)
 		return
 	}
 	hsDeleteMsg := ""
@@ -562,6 +723,23 @@ func (s *Service) PostAdminUserRename(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		http.Error(w, "lookup: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 2026-09-19: v0.72 (B264) — the primary (bootstrap/root) admin is
+	// immutable. Renaming it would also silently break the
+	// SKYGATE_ADMIN_USER ↔ portal row match that the drift banner and
+	// the renegotiated check_b_admin_user_sync.sh contract B assert.
+	// The per-row menu hides Rename for that row; this is the real gate.
+	// Fail CLOSED: a lookup error refuses the rename instead of falling
+	// through to the headscale + portal UPDATEs.
+	isPrimary, perr := db.IsPortalPrimaryAdmin(s.dbc(), id)
+	if perr != nil {
+		http.Redirect(w, r, "/admin/users?err="+url.QueryEscape(s.usersI18n(r, "error.db")), http.StatusSeeOther)
+		return
+	}
+	if isPrimary {
+		http.Redirect(w, r, "/admin/users?err="+url.QueryEscape(s.usersI18n(r, "users.err_primary_immutable")), http.StatusSeeOther)
 		return
 	}
 

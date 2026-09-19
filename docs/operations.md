@@ -13,7 +13,8 @@ in [deploy.md](deploy.md) — this file does not repeat them.
 
 **Reading order for a specific job:** §1 release, §2 deploy pipeline, §3 DB
 cutover, §4 new host, §5 retag, §6 tailnet split, §7 issue close-out, §8
-Telegram relay, §9 backup/WAL-G, §10 the recurring checklist.
+Telegram relay, §9 backup/WAL-G, §10 the recurring checklist, §11 admin role
+delegation.
 
 ## Table of contents
 
@@ -27,7 +28,8 @@ Telegram relay, §9 backup/WAL-G, §10 the recurring checklist.
 8. [Telegram relay operations](#8-telegram-relay-operations) — deploy, verify, maintain, fail over, roll back.
 9. [Backup, WAL-G and the restore drill](#9-backup-wal-g-and-the-restore-drill) — install, archiving, base backups, drill, v3.0.8 quirks.
 10. [Day-2 checklist](#10-day-2-checklist) — weekly / before every release / after every incident.
-11. [Caveats — stale or contradictory sources](#11-caveats--stale-or-contradictory-sources)
+11. [Admin role delegation and the primary admin](#11-admin-role-delegation-and-the-primary-admin) — promote/demote from `/admin/users`, who is immutable, and how to recover the primary marker.
+12. [Caveats — stale or contradictory sources](#12-caveats--stale-or-contradictory-sources)
 
 ---
 
@@ -384,7 +386,7 @@ migration-specific assertions) and is the post-deploy acceptance runner.
 | HA state phases fail immediately | `jq` missing, or `/var/lib/skygate/ha-state/` missing with the wrong owner. |
 | Phase marked `failed` after an interrupted `tailscale up` | Crash detection keeps `running`; re-run with `--reset`. |
 | New node invisible to grants | It joined the synthetic headscale user (preauth key without `--user`) — re-provision. |
-| `.env` points at a decommissioned DB | Confirm `SKYGATE_DB` and the legacy `SKYGATE_DB_DSN` agree (see §11). |
+| `.env` points at a decommissioned DB | Confirm `SKYGATE_DB` and the legacy `SKYGATE_DB_DSN` agree (see §12). |
 
 Recurring narrow places: `--user` on the preauth key expects a **numeric** id;
 tags must be attached **at auth time** (`--advertise-tags=`); the per-device
@@ -896,7 +898,7 @@ tailnet, ~3–5 minutes per device, parallelisable.
 
 > **Caveat:** the source runbook is internally inconsistent about fleet size
 > (14 vs 17 nodes, one duplicated row) and carried a live preauth key inline —
-> see §11.
+> see §12.
 
 ---
 
@@ -1221,7 +1223,70 @@ Then run the application-level verification from
 
 ---
 
-## 11. Caveats — stale or contradictory sources
+## 11. Admin role delegation and the primary admin
+
+Since **v0.72 / B264** the `/admin/users` page has per-row **Promote** and
+**Demote** buttons, so an administrator can grant *and* revoke the `admin` role
+for other portal users without touching SQL. Both buttons confirm before
+submitting and both write an audit row (`admin_promote` / `admin_demote`) named
+with the target user and the operator.
+
+**How to delegate.**
+
+1. Sign in as an existing admin and open `/admin/users`.
+2. Find the target row and open its action menu (`⋯`).
+3. Click **Promote to admin** to grant, **Demote** to revoke.
+4. Verify: the row's Role pill flips between `admin` and `user`, and
+   `/admin/audit` shows the matching `admin_promote` / `admin_demote` row.
+
+**The primary admin is immutable.** Exactly one portal row carries
+`portal_users.is_primary = 1` — the bootstrap/root account named by
+`SKYGATE_ADMIN_USER` (default `admin`). That row renders a lock badge instead of
+the destructive actions, and the server refuses to demote, delete or rename it.
+Two extra refusals protect the install from locking itself out:
+
+* **you cannot demote yourself** — otherwise the admin who clicked would lose
+  `/admin/*` on submit (have another admin do it, if that is really the goal);
+* **you cannot demote the last remaining admin** — the install would be left
+  with no administrator at all.
+
+All three refusals come back as a flash on `/admin/users`, not as an error page.
+
+**Why the marker exists.** Before B264 the only role column was `is_admin`, and
+the sync contract asserted *exactly one* admin row — so a second admin could not
+exist and "the canonical account" was indistinguishable from "an admin a
+colleague granted". V072 adds `is_primary` plus the partial unique index
+`portal_users_one_primary_uniq` (`WHERE is_primary = 1`), which makes *at most
+one primary* a database-level invariant on both PostgreSQL and SQLite. Multiple
+`is_admin = 1` rows are expected and fine.
+
+**If the primary marker is wrong or missing.** The marker self-heals on boot:
+`bootstrapAdmin` re-asserts `is_admin = 1` and `is_primary = 1` for the
+`SKYGATE_ADMIN_USER` row (and clears a stale marker on another row first) — but
+only when `SKYGATE_ADMIN_PASS` is set. The V072 migration backfills the marker
+for the configured name and, when that name matches no row, falls back to the
+lowest-id admin so the invariant "exactly one primary whenever any admin exists"
+still holds. The live check is:
+
+```bash
+bash scripts/check_b_admin_user_sync.sh
+```
+
+It asserts exactly one `is_primary = 1` row, that the row is `is_admin = 1`, and
+that its username equals `SKYGATE_ADMIN_USER` (contracts P/A/A2/B), plus the
+headscale-side link (C/D/E). It prints `SKIP` — never `FAIL` — when docker or
+PostgreSQL is unreachable. To repair by hand, promote the intended account and
+then move the marker in one transaction-free pair of statements (the unique
+index forbids two primaries, so clear first):
+
+```sql
+UPDATE portal_users SET is_primary = 0 WHERE is_primary = 1 AND username <> 'admin';
+UPDATE portal_users SET is_admin = 1, is_primary = 1 WHERE username = 'admin';
+```
+
+---
+
+## 12. Caveats — stale or contradictory sources
 
 Consolidating five public runbooks and five internal documents surfaced these
 contradictions and staleness issues. None of them changes a procedure above;

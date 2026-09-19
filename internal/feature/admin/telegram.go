@@ -19,6 +19,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -263,6 +264,21 @@ type EgressState struct {
 	SelectedNodeID   string
 	SelectedHostname string
 	Available        []db.ExitServer
+	// B265 (2026-09-19): skygate runs ON one (or more) of these relay
+	// hosts. Two consequences the operator must be told about:
+	//   * selecting that relay as `telegram.egress_node_id` routes
+	//     skygate's OWN management traffic through a node it manages —
+	//     a broken relay then takes the panel down with it;
+	//   * the api.telegram.org probe on this page originates from THIS
+	//     host (the container uses the host's network stack), so an
+	//     egress/split-routing policy this host cannot traverse makes
+	//     the probe fail while every other tailnet device works. That
+	//     path must be configured from a client, not from here.
+	ColocationHostnames []string
+	// ColocationHostnamesText is the ", "-joined form for the template
+	// (text/template has no join builtin in this project's funcmap).
+	ColocationHostnamesText string
+	ColocationWarning       bool
 }
 
 func (s *Service) loadTelegramUIState() telegramUIState {
@@ -302,6 +318,25 @@ func (s *Service) loadTelegramUIState() telegramUIState {
 				state.Egress.SelectedHostname = h
 			}
 		}
+	}
+
+	// B265: flag egress relays that live on THIS host (see the
+	// EgressState.Colocation* fields). We derive this host's identities
+	// from skygate's own exit_servers rows + the env/config hostname and
+	// compare them with the available relays' hostnames. Best-effort —
+	// an empty result simply means "no overlap detected".
+	if selfIPs := SelfExitNodeIdentities(s.dbc(), os.Getenv("SKYGATE_TS_HOSTNAME")); len(selfIPs) > 0 {
+		selfSet := map[string]bool{}
+		for _, ip := range selfIPs {
+			selfSet[strings.ToLower(strings.TrimSpace(ip))] = true
+		}
+		for _, e := range state.Egress.Available {
+			if selfHostMatches(e, selfSet) {
+				state.Egress.ColocationHostnames = append(state.Egress.ColocationHostnames, e.Hostname)
+			}
+		}
+		state.Egress.ColocationWarning = len(state.Egress.ColocationHostnames) > 0
+		state.Egress.ColocationHostnamesText = strings.Join(state.Egress.ColocationHostnames, ", ")
 	}
 
 	if err != nil || !ok {

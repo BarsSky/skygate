@@ -33,6 +33,16 @@ var ruDerp = map[string]string{
 	"derp.value_tcp_listening":                     "TCP listening",
 	"derp.value_closed":                            "closed",
 	"derp.value_listening":                         "listening",
+	// B265: the STUN tile is backed by a real UDP STUN Binding
+	// Request round trip (internal/feature/admin/derp_stun.go), not
+	// by derper's /debug/vars counter — the skygate container gets
+	// HTTP 403 "debug access denied" from every /debug/* endpoint,
+	// which used to render this tile red on healthy relays.
+	"derp.stun_unreachable":          "UDP-проба не прошла",
+	"derp.stun_reflex":               "видим как",
+	"derp.stun_reflex_help":          "Адрес, под которым STUN-сервер увидел skygate (XOR-MAPPED-ADDRESS) — то же значение использует Tailscale-клиент для NAT-discovery",
+	"derp.debug_access_denied":       "derper не отдаёт /debug/* контейнеру skygate (HTTP 403 «debug access denied»), поэтому метрики трафика, клиентов и STUN-счётчиков недоступны. Зелёная плитка STUN выше получена реальной UDP-пробой. Чтобы вернуть метрики, добавьте derper флаг <code>--debug</code> или разрешите IP контейнера через <code>TS_ALLOW_DEBUG_IP</code>.",
+	"derp.stun_measured_from":        "UDP-проба отправлена в",
 	"derp.total_since_start":                       "всего с момента старта: %d",
 	"derp.packets_suffix":                          "пакетов",
 	"derp.with_this_derp_as_home":                  "у которых этот DERP — домашний",
@@ -275,6 +285,12 @@ var enDerp = map[string]string{
 	"derp.value_tcp_listening":                     "TCP listening",
 	"derp.value_closed":                            "closed",
 	"derp.value_listening":                         "listening",
+	// B265 — see the RU block for the rationale.
+	"derp.stun_unreachable":          "UDP probe failed",
+	"derp.stun_reflex":               "seen as",
+	"derp.stun_reflex_help":          "The address the STUN server saw skygate as (XOR-MAPPED-ADDRESS) — the same value a Tailscale client uses for NAT discovery",
+	"derp.debug_access_denied":       "derper refuses /debug/* to the skygate container (HTTP 403 \"debug access denied\"), so traffic, client and STUN counter metrics are unavailable. The green STUN tile above comes from a real UDP probe. To restore the metrics, start derper with <code>--debug</code> or allow the container IP via <code>TS_ALLOW_DEBUG_IP</code>.",
+	"derp.stun_measured_from":        "UDP probe sent to",
 	"derp.total_since_start":                       "total since start: %d",
 	"derp.packets_suffix":                          "packets",
 	"derp.with_this_derp_as_home":                  "with this DERP as home",

@@ -79,6 +79,24 @@ type DerpStatus struct {
 	STUNListening   bool
 	DERPPort        string
 	STUNPort        string
+	// B265 — real UDP/STUN reachability. STUNListening is now set
+	// by an actual STUN Binding Request round trip (derp_stun.go)
+	// instead of by reading derper's /debug/vars counter, which is
+	// HTTP 403 for any non-loopback/non-Tailscale source (i.e. the
+	// skygate container in every deployment). STUNBlocked is true
+	// when the round trip failed, so the page can distinguish
+	// "probed and dead" from "not probed".
+	STUNBlocked  bool
+	STUNRTT      string
+	STUNReflex   string
+	STUNErr      string
+	// DebugAccessDenied records that derper answered /debug/* with
+	// 403 "debug access denied" (upstream tsweb.AllowDebugAccess
+	// rejects the container's source IP). The rich metrics
+	// (connections, bytes, clients, STUN counters) are unavailable
+	// in that case and the page says so instead of rendering zeros
+	// as if they were measurements.
+	DebugAccessDenied bool
 	Version         string
 	Hostname        string
 	RegionCode      string
@@ -254,7 +272,11 @@ func (s *Service) collectDerpStatus() DerpStatus {
 
 	// 2. /debug/vars -> JSON, real metrics
 	if body, err := httpGet(derpURL+"/debug/vars", 3*time.Second); err == nil {
-		parseDerperVars(&st, body)
+		if isDebugAccessDenied(body) {
+			st.DebugAccessDenied = true
+		} else {
+			parseDerperVars(&st, body)
+		}
 	}
 
 	// 3. Plain / -> quick liveness check
@@ -262,19 +284,19 @@ func (s *Service) collectDerpStatus() DerpStatus {
 		st.SocketListening = true
 	}
 
-	// 4. STUN UDP check (skygate is in container; check via long TCP probe is misleading).
-	//    We trust the derper stats: if stun.counter_requests > 0, STUN is alive.
-	if body, err := httpGet(derpURL+"/debug/vars", 3*time.Second); err == nil {
-		var j struct {
-			STUN struct {
-				CounterRequests struct {
-					Success int `json:"success"`
-				} `json:"counter_requests"`
-			} `json:"stun"`
-		}
-		if json.Unmarshal(body, &j) == nil && j.STUN.CounterRequests.Success > 0 {
-			st.STUNListening = true
-		}
+	// 4. STUN UDP check (B265).
+	//    Pre-B265 this step read `stun.counter_requests.success`
+	//    from /debug/vars — the same URL step 2 already failed on
+	//    (403 "debug access denied" for the container's source
+	//    IP). The tile therefore rendered "closed" (red) on every
+	//    deployment where the operator hardened derper by leaving
+	//    --debug off, even though STUN was healthy. B265 replaces
+	//    the counter-read with a real RFC 5389 Binding Request
+	//    round trip over UDP — the same packet Tailscale clients
+	//    use to score a relay for home-DERP selection, so the tile
+	//    now means "clients on this path can reach STUN".
+	if !st.STUNListening {
+		probeSTUNForStatus(&st, s.dbc(), derpHost, stunPort)
 	}
 
 	// 5. Active connections (current TCP/UDP peers with reverse DNS)

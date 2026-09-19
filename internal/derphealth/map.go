@@ -155,15 +155,30 @@ func FetchPublicDERPs(ctx context.Context, httpClient *http.Client) ([]DERPInfo,
 }
 
 // FetchOwnDERPs reads the operator's own derp_relays table
-// and returns one DERPInfo per enabled row. region_id 901
-// is the bundled Tailscale default (always returned if
-// enabled) — we keep it marked IsOwn=false because it
-// doesn't actually live on the operator's infrastructure
-// (it's the Tailscale control plane's default relay).
+// and returns one DERPInfo per enabled row.
 //
-// Caller is responsible for passing an open *sql.DB. We
-// don't open the connection here so the function can be
-// unit-tested with a tx.
+// B265 (2026-09-19) — IsOwn semantics fixed. Pre-B265 this was
+//
+//	d.IsOwn = isBundled == 0
+//
+// which is INVERTED: `is_bundled = 1` marks the operator's OWN
+// locally-hosted derper (see internal/feature/admin/derp_relays_auto.go
+// — EnsureBundledDerpRelay inserts the local derper with
+// is_bundled=1, region 900), while is_bundled=0 marks an EXTERNAL
+// relay an operator typed in (typically the Tailscale public derpmap
+// URL migrated by AutoMigrateDerpRelays into region 901).
+//
+// Live symptom of the inversion (reference VM 2026-09-19):
+//
+//	derp_health: region 901 (controlplane.tailscale.com) is_own=1
+//	             region 900 (derp.skynas.ru, the local derper) is_own=0
+//
+// so `derp_dashboard.go`'s "Recommended DERP" banner and
+// `my/dashboard.go`'s bestHealthyDERP both selected region 901
+// (108 ms, a relay that does not exist at that hostname) while the
+// operator's own relay measured 12 ms. The owner badge on the
+// dashboard also read "public" for the local relay and "own" for
+// the public one.
 func FetchOwnDERPs(ctx context.Context, db *sql.DB) ([]DERPInfo, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT region_id, COALESCE(region_code, ''),
@@ -185,15 +200,39 @@ func FetchOwnDERPs(ctx context.Context, db *sql.DB) ([]DERPInfo, error) {
 			&d.Host, &d.URL, &isBundled); err != nil {
 			return nil, fmt.Errorf("own derp_relays scan: %w", err)
 		}
-		// Bundled Tailscale DERP is "is_own" in derp_relays
-		// but it doesn't actually live on the operator's
-		// infra. Mark it IsOwn=false so the dashboard
-		// shows it as a public-like entry (with a small
-		// "bundled" badge in the UI).
-		d.IsOwn = isBundled == 0
+		// B265: a bundled row IS the operator's own infrastructure
+		// (the local derper). An external row (is_bundled=0) is NOT
+		// — it points at somebody else's relay.
+		d.IsOwn = derpRelayIsOwn(isBundled)
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// derpRelayIsOwn maps the derp_relays.is_bundled flag to the
+// "is this the operator's own relay?" answer used by the dashboard
+// and the main-page hero.
+//
+// B265 (2026-09-19) — extracted as a pure function because the
+// inline expression was INVERTED (`isBundled == 0`) and nothing
+// tested it:
+//
+//	is_bundled = 1 → the operator's own locally-hosted derper
+//	                 (internal/feature/admin/derp_relays_auto.go
+//	                 EnsureBundledDerpRelay inserts it for region
+//	                 900; the operator's /admin/derp/relays rows
+//	                 for their own relays are bundled too)
+//	is_bundled = 0 → an EXTERNAL relay row (e.g. the region-901
+//	                 row AutoMigrateDerpRelays created from the
+//	                 legacy derp.external_urls)
+//
+// Consequence of the old inversion on the reference VM: the
+// dashboard recommended region 901 (controlplane.tailscale.com,
+// a derpmap URL, not a relay) over the operator's own derper, and
+// the main-page "Active DERP" hero showed 108 ms instead of the
+// local 12 ms.
+func derpRelayIsOwn(isBundled int) bool {
+	return isBundled == 1
 }
 
 // FetchAllDERPs returns the union of FetchPublicDERPs +
