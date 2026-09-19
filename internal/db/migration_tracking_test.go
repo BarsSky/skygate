@@ -52,6 +52,12 @@ func TestEnsureMigrationTrackingTable_Idempotent(t *testing.T) {
 			t.Fatalf("ensure #%d: %v", i, err)
 		}
 	}
+	// 2026-09-19: the test schema already has the full migration chain applied
+	// (OpenTestPG → MigratePostgres), so clear the bookkeeping rows: this test
+	// is about the insert + count below, not about the chain.
+	if _, err := d.Exec(`DELETE FROM applied_migrations`); err != nil {
+		t.Fatalf("reset applied_migrations: %v", err)
+	}
 	// Verify the table exists by inserting + querying.
 	_, err := d.Exec(`INSERT INTO applied_migrations (version, sha256, first_seen) VALUES (1, 'abc', 'v0.32.19')`)
 	if err != nil {
@@ -70,6 +76,11 @@ func TestRecordAndGetMigration(t *testing.T) {
 	d := openTestDB(t)
 	if err := ensureMigrationTrackingTable(d); err != nil {
 		t.Fatal(err)
+	}
+	// 2026-09-19: OpenTestPG applies the full chain in this schema, so the
+	// "not recorded yet" assertion below needs a clean bookkeeping table.
+	if _, err := d.Exec(`DELETE FROM applied_migrations`); err != nil {
+		t.Fatalf("reset applied_migrations: %v", err)
 	}
 	// First record: not found, returns empty.
 	sha, first, err := GetRecordedMigrationChecksum(d, 42)
@@ -198,6 +209,12 @@ func TestAllMigrationsForAudit_OrderedByVersion(t *testing.T) {
 	d := openTestDB(t)
 	if err := ensureMigrationTrackingTable(d); err != nil {
 		t.Fatal(err)
+	}
+	// 2026-09-19: OpenTestPG runs the real migration chain in this test's
+	// schema, so applied_migrations already carries one row per migration.
+	// The assertions below are about the rows this test inserts — start clean.
+	if _, err := d.Exec(`DELETE FROM applied_migrations`); err != nil {
+		t.Fatalf("reset applied_migrations: %v", err)
 	}
 	// Insert out of order.
 	for _, v := range []int{3, 1, 4, 1, 5, 9, 2, 6} {

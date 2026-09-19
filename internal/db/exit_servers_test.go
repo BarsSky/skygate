@@ -16,6 +16,7 @@ package db
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 )
 
@@ -479,17 +480,32 @@ func TestLookupExitServerSSHTarget_B85OperatorOverrideIgnoresPort(t *testing.T) 
 func TestMigrateV053_AddsSSHPortColumn(t *testing.T) {
 	d := openTestDB(t)
 
-	// Verify the column exists + has the empty-string default.
-	var defaultValue string
+	// Verify the column exists + carries an empty-string default.
+	//
+	// 2026-09-19: this used SQLite's `pragma_table_info('exit_servers')`,
+	// which PostgreSQL rejects with `function pragma_table_info(unknown)
+	// does not exist (SQLSTATE 42883)` — the CI test-pg job runs this suite
+	// against a real postgres:15. Use information_schema instead; PG reports
+	// the DEFAULT '' as `''::text`, so assert on that shape.
+	var colDefault string
+	var colCount int
 	if err := d.QueryRow(
-		`SELECT COALESCE(dflt_value, '') FROM pragma_table_info('exit_servers') WHERE name='ssh_port'`,
-	).Scan(&defaultValue); err != nil {
+		`SELECT COUNT(*) FROM information_schema.columns
+		  WHERE table_name = 'exit_servers' AND column_name = 'ssh_port'`,
+	).Scan(&colCount); err != nil {
 		t.Fatalf("read column info: %v", err)
 	}
-	// SQLite returns the default as "''" (with the single
-	// quotes from the DDL), or as "" for the empty default.
-	if defaultValue != "''" && defaultValue != "" {
-		t.Errorf("ssh_port default should be '' (empty), got %q", defaultValue)
+	if colCount != 1 {
+		t.Fatalf("exit_servers.ssh_port does not exist (columns=%d)", colCount)
+	}
+	if err := d.QueryRow(
+		`SELECT COALESCE(column_default, '') FROM information_schema.columns
+		  WHERE table_name = 'exit_servers' AND column_name = 'ssh_port'`,
+	).Scan(&colDefault); err != nil {
+		t.Fatalf("read column default: %v", err)
+	}
+	if !strings.Contains(colDefault, "''") && colDefault != "" {
+		t.Errorf("ssh_port default should be '' (empty), got %q", colDefault)
 	}
 
 	// Insert + read back: empty default preserved.

@@ -151,14 +151,23 @@ func TestListAPITokenHashesForLookup(t *testing.T) {
 	}
 
 	// Empty system: no rows
-	d2 := openTestDB(t)
-	got, err = ListAPITokenHashesForLookup(d2)
-	if err != nil {
-		t.Fatalf("empty lookup: %v", err)
-	}
-	if got == nil || len(got) != 0 {
-		t.Errorf("empty got = %+v, want empty non-nil slice", got)
-	}
+	// Empty system: no rows.
+	//
+	// 2026-09-19: this used to open a second handle in the SAME test and expect
+	// it to be empty. OpenTestPG keys the isolated schema by t.Name(), so the
+	// second handle reused the already-populated schema and the list came back
+	// with the rows seeded above (the CI test-pg job caught it). A subtest gets
+	// its own schema (skygate_pgtest_<test>_empty), which is genuinely empty.
+	t.Run("empty", func(t *testing.T) {
+		d2 := openTestDB(t)
+		got, err := ListAPITokenHashesForLookup(d2)
+		if err != nil {
+			t.Fatalf("empty lookup: %v", err)
+		}
+		if got == nil || len(got) != 0 {
+			t.Errorf("empty got = %+v, want empty non-nil slice", got)
+		}
+	})
 }
 
 // --- InsertAPIToken ---

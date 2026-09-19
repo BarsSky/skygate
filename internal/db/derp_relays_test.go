@@ -173,14 +173,17 @@ func TestDerpRelays_ListEnabledDerpRelayURLs(t *testing.T) {
 	_, _ = AddDerpRelay(d, DerpRelay{
 		URL: "https://bundled.example.com", IsBundled: true, Enabled: true, SortOrder: 10,
 	})
-	id2, _ := AddDerpRelay(d, DerpRelay{
+	_, _ = AddDerpRelay(d, DerpRelay{
 		URL: "https://ext-on.example.com", Enabled: true, SortOrder: 100,
 	})
 	_, _ = AddDerpRelay(d, DerpRelay{
 		URL: "https://ext-off.example.com", Enabled: false, SortOrder: 110,
 	})
-	_, _ = ToggleDerpRelayEnabled(d, id2) // should be no-op since already enabled
-	_ = id2
+	// 2026-09-19: no ToggleDerpRelayEnabled call here. The helper FLIPS the
+	// flag (`SET enabled = 1 - enabled`), so toggling the already-enabled row
+	// disabled it and the list came back with just the bundled relay — the
+	// old comment claimed the call was a no-op. The flip itself is covered by
+	// TestDerpRelays_ToggleFlipsEnabled.
 
 	urls, err := ListEnabledDerpRelayURLs(d)
 	if err != nil {

@@ -34,6 +34,7 @@ package db
 
 import (
 	"database/sql"
+	"strconv"
 	"testing"
 )
 
@@ -59,9 +60,12 @@ func b183Setup(t *testing.T, d *sql.DB, username string, userID, deviceID int, e
 	}
 	// Insert device (node_owner_map has no FK from
 	// device_rules, so the node_id can be any int).
+	// 2026-09-19: node_owner_map.node_id is TEXT on PostgreSQL — passing the
+	// Go int fails with "unable to encode 104 into text format for text
+	// (OID 25)". Send the string form.
 	if _, err := d.Exec(
 		`INSERT INTO node_owner_map (node_id, headscale_user_id, username, tag, tagged_by_user_id, tagged_at, hostname, os, device_type) VALUES ($1, $2, $3, '', 1, 1, $4, 'linux', 'client') ON CONFLICT (node_id) DO NOTHING`,
-		deviceID, userID, username, "device-"+username,
+		strconv.Itoa(deviceID), userID, username, "device-"+username,
 	); err != nil {
 		t.Fatalf("insert device: %v", err)
 	}
