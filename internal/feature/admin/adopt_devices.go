@@ -73,7 +73,37 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/devicemeta"
 	"skygate/internal/headscale"
+	"skygate/internal/nodeownership"
 )
+
+// adminTagAlertSink builds the B227 alert sink for tag failures that happen
+// on the ADMIN action path (adopt / transfer / tag buttons) — B272.
+//
+// Before B272 these paths wrote their own audit rows and nothing else: no
+// Prometheus counter, no Telegram alert, so the 2026-09-19 live failure
+// ("headscale PUT /api/v1/policy: 500 update is disabled for modes other than
+// database" → every dev-tag unapplied) never showed up in
+// skygate_tag_autoupdate_failures_total. Now one failure → one metric
+// increment, one audit row, one rate-limited alert, regardless of whether the
+// autoupdater or an operator click triggered it.
+func adminTagAlertSink(s *Service) *nodeownership.TagAlertSink {
+	var notifier nodeownership.AlertSink = nodeownership.NoopAlertSink
+	if s != nil && s.Notifier != nil {
+		notifier = adminNotifierSink{s.Notifier}
+	}
+	// The sink resolves the live pool per call (B224 ResettableDB pattern),
+	// so the B203 watchdog's hot swap is followed transparently.
+	return nodeownership.NewTagAlertSink(notifier, s.DB)
+}
+
+// adminNotifierSink adapts telegram.Notifier to the nodeownership AlertSink
+// interface (the same adapter pattern main.go uses for the autoupdater, kept
+// local here to avoid widening the admin package's imports).
+type adminNotifierSink struct {
+	n interface{ SendAlert(string) int64 }
+}
+
+func (a adminNotifierSink) SendAlert(text string) int64 { return a.n.SendAlert(text) }
 
 // AdoptionCandidate is the per-device row the /admin/devices
 // "Devices awaiting adoption" card renders. Each row corresponds
@@ -352,10 +382,13 @@ func (s *Service) PostAdminDeviceAdopt(w http.ResponseWriter, r *http.Request) {
 			"tagged-devices@" + baseDomain,
 		}
 		if err := hs.EnsureTagOwner(newDevTag, owners); err != nil {
-			// Non-fatal — the AddTag below may also fail,
-			// surfacing the real error to the operator. We
-			// log here so the operator has both signals in
-			// the audit log + the follow-up B227 alert.
+			// B272: surface through the same sink the B77 autoupdater uses,
+			// so this failure reaches /metrics + the Telegram alert path too
+			// instead of only an audit row that nobody reads. The adopt path
+			// used to have its OWN action names and no metric at all — the
+			// live 2026-09-19 case ("update is disabled for modes other than
+			// database") was invisible in skygate_tag_autoupdate_failures_total.
+			adminTagAlertSink(s).ReportFailure(nodeIDStr, liveHostname, newDevTag, err)
 			s.Backend.Audit(c.UserID, c.Username, "device_adopt_ensure_tag_owner_failed",
 				"node="+nodeIDStr+" tag="+newDevTag+" err="+err.Error())
 		}
@@ -376,6 +409,7 @@ func (s *Service) PostAdminDeviceAdopt(w http.ResponseWriter, r *http.Request) {
 	// non-fatal — the operator can re-run via
 	// /admin/devices/force-backfill-tags.
 	if err := hs.AddTag(nodeID, newDevTag); err != nil {
+		adminTagAlertSink(s).ReportFailure(nodeIDStr, liveHostname, newDevTag, err)
 		s.Backend.Audit(c.UserID, c.Username, "device_adopt_addtag_failed",
 			"node="+nodeIDStr+" tag="+newDevTag+" err="+err.Error())
 	}

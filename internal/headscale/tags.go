@@ -1,17 +1,20 @@
 // Headscale tag operations + tag predicate helpers.
 //
-// headscale 0.29's admin API doesn't expose PUT /api/v1/node/{id}/tag —
-// the admin API key lacks the scope. So all tag mutations go through
-// `docker exec <container> headscale nodes tag`. The two predicates
-// (IsPublicView / IsPrivateView) are used everywhere in handlers
-// to decide ACL visibility.
+// B272: tag mutations try the REST API first (`POST /api/v1/node/{id}/tags`)
+// because the CLI path (`docker exec … headscale nodes tag`) cannot work on a
+// native/systemd install — live case: every dev-tag silently unapplied with
+// `exec: "docker": executable file not found in $PATH`. The CLI remains as a
+// fallback through runHeadscaleCLI (docker when present, local binary
+// otherwise). The two predicates (IsPublicView / IsPrivateView) are used
+// everywhere in handlers to decide ACL visibility.
 package headscale
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os/exec"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -26,51 +29,81 @@ const TagPublicTag = "tag:public"
 // headscale tag-owner rules let a tagged node carry this label.
 const TagPrivateTag = "tag:private"
 
-// TagNode sets tags on a headscale node via the CLI (the admin API key lacks
-// the permission needed for /api/v1/node/{id}/tag).
+// TagNode sets the full tag set on a headscale node.
 //
-// IMPORTANT: headscale 0.29's `nodes tag` REPLACES the entire tag
-// set on a node (no add/remove — see UntagNode for the read-modify-write
-// dance we use to remove a single tag). Callers that want to ADD a
-// tag without clobbering others must use AddTag (which reads
-// the current tag set first and writes the union), or pass
-// the full desired tag set to TagNode.
+// B272: the REST API is tried FIRST (`POST /api/v1/node/{id}/tags`), because
+// the CLI path shells out to `docker exec` and therefore cannot work at all
+// on a NATIVE install (verified live: `tag: exec: "docker": executable file
+// not found in $PATH` on a systemd host, which left every dev-tag
+// unapplied). The CLI remains as a fallback for headscale builds whose admin
+// API rejects the endpoint, and now goes through runHeadscaleCLI — docker
+// when docker exists, the local binary otherwise, with SKYGATE_HEADSCALE_CLI
+// overriding the in-container path (same pattern as B267 for approve-routes).
+//
+// IMPORTANT: headscale's `nodes tag` REPLACES the entire tag set on a node
+// (no add/remove — see UntagNode for the read-modify-write dance we use to
+// remove a single tag). Callers that want to ADD a tag without clobbering
+// others must use AddTag (which reads the current tag set first and writes
+// the union), or pass the full desired tag set to TagNode.
 //
 // 2026-08-10: switched to c.dockerRunner when non-nil (the same
 // injection point ExtendNodeExpiry uses) so unit tests can
 // stub the docker exec without touching the system daemon.
-// The production path (nil dockerRunner) still uses
-// exec.Command("docker", ...).
 func (c *Client) TagNode(nodeID int64, tags ...string) error {
-	if c.ExecContainer == "" {
-		return fmt.Errorf("no ExecContainer configured")
+	if len(tags) == 0 {
+		return fmt.Errorf("tag: empty tag list for node %d", nodeID)
 	}
-	args := []string{"exec", c.ExecContainer, "headscale", "nodes", "tag",
-		"-i", strconv.FormatInt(nodeID, 10), "-t", strings.Join(tags, ","), "--force"}
-	var out []byte
-	var err error
-	if c.dockerRunner != nil {
-		out, err = c.dockerRunner(args...)
+	// 1. REST first. The admin API key can set node tags in headscale 0.29.
+	if err := c.setNodeTagsAPI(nodeID, tags); err == nil {
+		return nil
 	} else {
-		out, err = exec.Command("docker", args...).CombinedOutput()
+		apiErr := err
+		// 2. CLI fallback via runHeadscaleCLI (install-kind aware).
+		if cliOut, cliErr := c.runHeadscaleCLI("nodes", "tag",
+			"-i", strconv.FormatInt(nodeID, 10), "-t", strings.Join(tags, ","), "--force"); cliErr != nil {
+			return fmt.Errorf("tag: api: %v; cli: %v (%s)", apiErr, cliErr, strings.TrimSpace(string(cliOut)))
+		}
+		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("tag: %v (%s)", err, strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
-// UntagNode removes a tag from a headscale node via the CLI.
-//
-// headscale 0.29 has no "nodes untag" subcommand. The "nodes tag" command
-// REPLACES the tag set on a node, so to remove a single tag we rewrite
-// the full tag list, leaving every other tag in place. If the result
-// would be empty (e.g. the node carried only this single tag) we fall
-// back to TagPrivateTag so headscale keeps at least one tag.
-func (c *Client) UntagNode(nodeID int64, tag string) error {
-	if c.ExecContainer == "" {
-		return fmt.Errorf("no ExecContainer configured")
+// setNodeTagsAPI replaces a node's tag set through the headscale REST API
+// (B272). Tries the documented endpoint and, if that build exposes a
+// different one, the legacy spelling — reporting both attempts on failure.
+func (c *Client) setNodeTagsAPI(nodeID int64, tags []string) error {
+	payload := map[string]any{"tags": tags}
+	attempts := []struct {
+		method string
+		path   string
+	}{
+		{"POST", fmt.Sprintf("/api/v1/node/%d/tags", nodeID)},
+		{"PUT", fmt.Sprintf("/api/v1/node/%d/tags", nodeID)},
 	}
+	var lastErr error
+	for _, a := range attempts {
+		if err := c.do(a.method, a.path, payload, nil); err != nil {
+			lastErr = err
+			var apiErr *APIError
+			if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+				continue // try the next spelling
+			}
+			return err
+		}
+		return nil
+	}
+	return lastErr
+}
+
+// UntagNode removes a tag from a headscale node.
+//
+// headscale 0.29 has no "nodes untag" subcommand. The tag write REPLACES the
+// tag set on a node, so to remove a single tag we rewrite the full tag list,
+// leaving every other tag in place. If the result would be empty (e.g. the
+// node carried only this single tag) we fall back to TagPrivateTag so
+// headscale keeps at least one tag.
+//
+// B272: routes through TagNode, so the REST API is tried before any CLI.
+func (c *Client) UntagNode(nodeID int64, tag string) error {
 	current := []string{}
 	if nodes, err := c.ListAllNodes(); err == nil {
 		for _, n := range nodes {
@@ -89,12 +122,8 @@ func (c *Client) UntagNode(nodeID int64, tag string) error {
 	if len(filtered) == 0 {
 		filtered = []string{TagPrivateTag}
 	}
-	args := []string{"exec", c.ExecContainer, "headscale", "nodes", "tag",
-		"-i", strconv.FormatInt(nodeID, 10), "-t", strings.Join(filtered, ","), "--force"}
-	cmd := exec.Command("docker", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("untag: %v (%s)", err, strings.TrimSpace(string(out)))
+	if err := c.TagNode(nodeID, filtered...); err != nil {
+		return fmt.Errorf("untag: %w", err)
 	}
 	return nil
 }
@@ -272,7 +301,9 @@ func (c *Client) EnsureTagOwner(tag string, owners []string) error {
 //
 // B251: pre-B251 EnsureTagOwner passed stringified bytes straight
 // to json.Unmarshal into a map, which crashed with:
-//   `cannot unmarshal string into Go value of type map[string]interface {}`
+//
+//	`cannot unmarshal string into Go value of type map[string]interface {}`
+//
 // on the live skygate VM (skygate-host-1-1 incident, 2026-09-15).
 func unquotePolicyIfStringified(raw []byte) ([]byte, error) {
 	trimmed := bytes.TrimSpace(raw)

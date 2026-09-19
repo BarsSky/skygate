@@ -140,6 +140,38 @@ func ListNodeOwnerNodeIDsByUsername(d *sql.DB, username string) ([]string, error
 	return out, rows.Err()
 }
 
+// ListNodeOwnersAll returns every node_owner_map row (B272).
+//
+// Used by the tag reconciler: it walks the DATABASE (the source of truth for
+// "which tag should this node carry") and compares it against headscale, so a
+// row whose tag never made it onto the node is repaired instead of ignored.
+// Pre-B272 the autoupdater walked headscale and only considered nodes that
+// ALREADY carried a dev-tag, which made that drift permanent and invisible.
+//
+// Empty slice (not nil) when the table is empty.
+func ListNodeOwnersAll(d *sql.DB) ([]NodeOwner, error) {
+	rows, err := d.Query(
+		`SELECT node_id, COALESCE(headscale_user_id, 0), COALESCE(username, ''),
+		        COALESCE(tag, ''), COALESCE(tagged_by_user_id, 0), COALESCE(tagged_at, 0),
+		        COALESCE(hostname, ''), COALESCE(os, 'unknown'), COALESCE(device_type, 'unknown')
+		   FROM node_owner_map
+		  ORDER BY node_id`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []NodeOwner{}
+	for rows.Next() {
+		var n NodeOwner
+		if err := rows.Scan(&n.NodeID, &n.HeadscaleUserID, &n.Username, &n.Tag, &n.TaggedByUserID, &n.TaggedAt, &n.Hostname, &n.OS, &n.DeviceType); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // ListNodeOwnersByUsername returns the full rows for the user
 // (node_id + tag). /my/devices needs the tag to render the device
 // list with the right pill, so this is the helper that powers the
@@ -426,13 +458,13 @@ func UpdateNodeOwnerTag(d *sql.DB, nodeID, tag string, taggedByUserID int64) err
 // (preserving stale rows forever) and only AddTag'd the new
 // tag in headscale. That left two problems for the
 // "user renames their Tailscale hostname" path:
-//   1) node_owner_map.hostname kept the old name (so the
-//      /admin/devices table showed "desktop-cj8t9me" forever
-//      after the rename to "cyborg");
-//   2) node_owner_map.tag kept the old dev-tag (so the per-device
-//      ACL grant src was `tag:dev-<user>-desktop-cj8t9me`
-//      after the rename — headscale kept BOTH the old AND the
-//      new tag because AddTag never removes anything).
+//  1. node_owner_map.hostname kept the old name (so the
+//     /admin/devices table showed "desktop-cj8t9me" forever
+//     after the rename to "cyborg");
+//  2. node_owner_map.tag kept the old dev-tag (so the per-device
+//     ACL grant src was `tag:dev-<user>-desktop-cj8t9me`
+//     after the rename — headscale kept BOTH the old AND the
+//     new tag because AddTag never removes anything).
 //
 // This helper is the v0.33.1.20 fix: the backfill calls it
 // when it detects existing.hostname != n.Hostname, then also
@@ -925,4 +957,3 @@ func UpdateDeviceMetaAutoDetect(d *sql.DB, nodeID, os, deviceType string) error 
 	)
 	return err
 }
-

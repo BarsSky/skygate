@@ -4444,3 +4444,37 @@ run_check "B269" "startup truth: the socket is bound first, every boot phase is 
 # passes the value it already computes with db.DetectDSN.
 run_check "B270" "a broken OIDC key store must not kill the process, and the key dir must never be a relative path (2026-09-19). Live case: a native/systemd host reported an 'active' unit with nothing listening and a self-updater that could only say 'healthz did not report build v1.5.11 within 90s (last build: none)'. The journal showed the real cause: 'oidc: init failed: oidc: mkdir ./data/oidc-keys: mkdir ./data: permission denied' followed by an exit — NewService's error was log.Fatalf, so an UNCONFIGURED optional feature (SKYGATE_OIDC_ISSUER was unset) took the whole control plane down before the HTTP port was ever bound. (1) NewService now degrades: it logs 'oidc: KEY STORE UNAVAILABLE (…) — the process keeps running and the OIDC routes answer 503; fix SKYGATE_OIDC_KEY_DIR …', returns the Service with a nil key store and a KeyStoreErr reason, and main.go logs it as a warning instead of exiting; KeyStore.Ready() is nil-safe and the signing paths return an error instead of panicking, so /oidc/jwks.json answers 503 rather than crashing the request. (2) The default key directory is now data-dir anchored and therefore absolute: defaultOIDCKeyDir + sqlitePathFromDSN derive <dir of skygate.db>/oidc-keys for SQLite installs and /var/lib/skygate/oidc-keys for PostgreSQL, and an explicit SKYGATE_OIDC_KEY_DIR still wins verbatim (the package-level '' fallback is preserved for direct callers). (3) install-common.sh and install-alpine.sh create <data_dir>/oidc-keys with mode 0700 owned by the service user, so a fresh native install has a usable, private key dir. (4) The privileged applier now compares the port in SKYGATE_UPDATE_HEALTH_URL with SKYGATE_PORT from the env file and, on a mismatch, warns explicitly that the post-restart build check can never succeed (live: the URL polled :8080 while the service ran SKYGATE_PORT=8082, so every update rolled back on a perfectly healthy service) and names both ways to fix it. (5) B271 (same journal): the /db/health sampler ran PostgreSQL catalog SQL (pg_is_in_recovery, pg_database_size, pg_stat_user_tables, pg_current_wal_lsn) against SQLite every 30s and logged five 'SQL logic error: no such function' entries per tick, leaving a permanently degraded DB-health badge on a healthy install; the sampler now takes a Dialect ('postgres' default keeps every existing caller unchanged, 'sqlite' collects PRAGMA page_count/page_size + sqlite_version() + quick_check and leaves the PostgreSQL-only panels empty) and main.go passes the value it already computed with db.DetectDSN. 26 contracts in scripts/check_b270_startup_blockers.sh — including a live probe that builds the real binary, points SKYGATE_OIDC_KEY_DIR at an uncreatable path and asserts /healthz still answers, the reason is logged, and the process is still alive afterwards — plus internal/oidc/oidc_b270_test.go and internal/feature/healthz/db_health_b271_test.go." \
   'test -f scripts/check_b270_startup_blockers.sh && bash scripts/check_b270_startup_blockers.sh'
+
+# --- B272 (2026-09-19): tags must actually reach headscale -----------------
+# The operator's tag audit on the native host `aro` (v1.5.12) showed
+# node_owner_map claiming `tag:dev-daniil-workpc` while `headscale nodes list`
+# had NO tags on that node — every per-device ACL rule matched nothing — and
+# nothing in the product said so. Root causes, all silent:
+#   (1) headscale ran with `policy.mode: file`, so PUT /api/v1/policy answered
+#       500 {"code":2,"message":"update is disabled for modes other than
+#       database"}. SetPolicy fell back to the file path only on 404/405, so the
+#       fallback never ran; and it wrote through a hardcoded docker volume
+#       (/home/admin/headscale/config) that cannot exist on a native install.
+#   (2) TagNode/UntagNode went straight to `docker exec … headscale nodes tag`,
+#       which on a native host fails with `exec: "docker": executable file not
+#       found in $PATH` — so EVERY tag write failed.
+#   (3) the B77 autoupdater walked headscale and only considered nodes that
+#       ALREADY carried a dev-tag, so a node whose tag never landed was skipped
+#       forever and the database/headscale divergence produced no audit row, no
+#       metric and no alert.
+# B272: isFileModePolicyError recognises the 500 body; the file fallback writes
+# the resolved policy.path atomically (native: direct write + systemctl/
+# rc-service restart with rollback on failure; container: the volume, now
+# configurable) and reports exactly what to set when the path is unknown;
+# TagNode/UntagNode try POST /api/v1/node/{id}/tags FIRST and only then the
+# install-kind-aware CLI (runHeadscaleCLI, B267); ReconcileTags walks the
+# DATABASE each tick and re-applies any tag headscale is missing (reason
+# tag_missing) and reports nodes attributed to no portal user (reason
+# no_strategy, with its own skygate_tag_unmatched_total series); the admin
+# adopt/transfer paths report through the same B227 alert sink, so a failure
+# reaches /metrics and Telegram instead of only an audit row. 22 contracts in
+# scripts/check_b272_tag_drift.sh + behaviour tests in
+# internal/headscale/tags_b272_test.go (incl. a real policy-file write with
+# rollback) and internal/nodeownership/auto_b272_test.go.
+run_check "B272" "tags must actually reach headscale: file-mode policy writes, REST tag writes, drift reconciliation (2026-09-19). Live case: node_owner_map said tag:dev-daniil-workpc while headscale had no tags on that node, so no per-device ACL rule matched — and neither the audit log, the metric nor the UI mentioned it. (1) headscale ran with policy.mode: file, so PUT /api/v1/policy returned 500 'update is disabled for modes other than database'; SetPolicy only fell back to the file path on 404/405 (so the fallback never ran) and wrote through a hardcoded docker volume. isFileModePolicyError now recognises the 500 body, setPolicyViaFile writes the policy.path resolved by DiscoverPolicyPath/parseHeadscalePolicyConfig (atomic temp+rename, native direct write with a systemctl/rc-service restart and rollback of the previous policy when the reload fails; container path through SKYGATE_HEADSCALE_CONFIG_VOLUME), and an unknown path produces an error naming SKYGATE_HEADSCALE_POLICY_PATH instead of failing obscurely. (2) TagNode/UntagNode now try the REST API POST /api/v1/node/{id}/tags first and fall back to runHeadscaleCLI (docker when present, the local binary otherwise — the B267 pattern), because the old CLI-only path cannot work on a native install at all. (3) New ReconcileTags walks node_owner_map every autoupdater tick and re-applies any tag headscale does not carry (reason 'tag_missing', reported through the B227 sink), so a tag that never landed is repaired instead of skipped forever; nodes attributed to no portal user are reported as 'no_strategy' with their own skygate_tag_unmatched_total counter, so a device no per-device rule can match is visible. (4) The admin adopt/transfer tag paths report through the same alert sink (metric + audit + rate-limited Telegram) instead of a bare audit row — the live failure never appeared in /metrics. 22 contracts in scripts/check_b272_tag_drift.sh (source + Go behaviour tests, plus live checks that SKIP off-host) + internal/headscale/tags_b272_test.go and internal/nodeownership/auto_b272_test.go." \
+  'test -f scripts/check_b272_tag_drift.sh && bash scripts/check_b272_tag_drift.sh'

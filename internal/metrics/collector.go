@@ -296,6 +296,22 @@ var TagAutoupdateFailuresCounter = NewCounterVec(
 	[]string{"node_id", "hostname", "reason"},
 )
 
+// TagUnmatchedCounter counts headscale nodes that skygate could not attribute
+// to ANY portal user (B272). Such a node carries no
+// `tag:dev-<user>-<device>`, so no per-device ACL rule can ever match it — it
+// is reachable only through the shared / user-wide grants.
+//
+// Why a separate series from skygate_tag_autoupdate_failures_total: this is
+// NOT a failure (nothing errored) and the fix is different — register the
+// device through skygate, or adopt it on /admin/devices. Pre-B272 the case
+// produced no signal at all: a device could sit in the tailnet for months with
+// no per-device rule and nothing anywhere said so (live report 2026-09-19).
+var TagUnmatchedCounter = NewCounterVec(
+	"skygate_tag_unmatched_total",
+	"Headscale nodes attributed to no portal user (no per-device ACL rule can match them).",
+	[]string{"node_id", "hostname"},
+)
+
 // ----- Production SourceProvider -----
 
 // DBPoolSource is a SourceProvider backed by a

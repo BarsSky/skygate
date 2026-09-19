@@ -39,6 +39,7 @@ syntax lives in [`acl-rules-reference.md`](acl-rules-reference.md).
    * [8.0.1 The unit is `active` but nothing listens on the port (B269)](#801-the-unit-is-active-but-nothing-listens-on-the-port-b269)
    * [8.0.2 The update rolls back every time even though the service is healthy (B270)](#802-the-update-rolls-back-every-time-even-though-the-service-is-healthy-b270)
    * [8.0.3 The journal repeats `SQL logic error: no such function: pg_…` every 30 s (B271)](#803-the-journal-repeats-sql-logic-error-no-such-function-pg-every-30-s-b271)
+   * [8.0.4 Devices show a tag that headscale does not have (B272)](#804-devices-show-a-tag-that-headscale-does-not-have-b272)
 9. [Telegram relay silently not delivering](#9-telegram-relay-silently-not-delivering)
 10. [General diagnostics kit](#10-general-diagnostics-kit)
 
@@ -945,6 +946,94 @@ The startup line now states which dialect the sampler uses:
 
 ```
 db-health: started (interval=30s, query-timeout=3s, dialect=sqlite)
+```
+
+### 8.0.4 Devices show a tag that headscale does not have (B272)
+
+**Symptom.** `/my/devices` (or `/admin/devices`) shows a per-device tag such as
+`tag:dev-daniil-workpc`, but the device has **no** per-device ACL rule and
+`/my/exit-rules` rules never match. Checking headscale directly shows the tag is
+not there:
+
+```bash
+sudo headscale nodes list | grep -A2 "^2"
+# node 2  user=daniil  dev=-  all=-      ← no tags, while skygate shows one
+```
+
+Nothing in skygate reports an error: `audit_log` has no
+`tag.autoupdate_failed` row and `skygate_tag_autoupdate_failures_total` is 0.
+
+**Two independent causes, both fixed in v1.5.13 (B272).**
+
+**Cause 1 — headscale keeps its policy in a file.** If `config.yaml` has
+
+```yaml
+policy:
+  mode: file
+  path: /etc/headscale/policy.hujson
+```
+
+then `PUT /api/v1/policy` answers `500 {"code":2,"message":"update is disabled for
+modes other than database"}` — skygate cannot add the tag to `tagOwners`, and
+without that entry headscale refuses the tag itself. Before v1.5.13 skygate only
+fell back to the file path on 404/405, so it never wrote it, and the fallback it
+did have used a hardcoded docker volume that a native install does not have.
+
+**Cause 2 — tag writes went through `docker exec`.** On a native (systemd)
+install there is no docker, so every tag write failed with
+`tag: exec: "docker": executable file not found in $PATH` — visible only in the
+audit row of a manual Adopt or in stderr (`warn: auto-apply dev tag …`).
+
+**Verify after upgrading to v1.5.13+:**
+
+```bash
+# the autoupdater reconciles every 5 min; force one tick by restarting skygate
+sudo systemctl restart skygate
+sudo journalctl -u skygate -f | grep -E 'tag-reconcile|node-discovery|auto-apply'
+
+# a repair looks like this:
+#   tag-reconcile: applied "tag:dev-daniil-workpc" to node 2 (workpc) — database
+#     said it was owned by "daniil", headscale had []
+#   tag-reconcile: checked=2 applied=1 failed=0 missing=0 unattributed=1
+
+# confirm in headscale
+sudo headscale nodes list | grep -A2 "^2"
+```
+
+If the reconciliation **fails**, the reason is now in three places at once — the
+journal, `/admin/audit` (`tag.autoupdate_failed`, with `reason=` and the raw
+headscale error) and, when a bot is configured, Telegram:
+
+| `reason` | Meaning | Fix |
+|---|---|---|
+| `acl_reject` | headscale refused the tag (not permitted / policy did not accept it) | add the tag to `tagOwners` (see below) |
+| `tag_missing` | the database says the tag exists, headscale disagrees — this pass tried to repair it and failed | read the error text in the audit row |
+| `no_strategy` | the node belongs to no portal user at all (never registered through skygate and never adopted) | `/admin/devices` → **Adopt**, or register the device through skygate |
+| `rpc_error` | transient (network / 5xx) | nothing; the next tick retries |
+
+**If skygate cannot write the policy file itself** (the service user has no write
+access to `/etc/headscale/`), it says so and prints the policy to apply by hand:
+
+```bash
+sudo grep -A3 '^policy:' /etc/headscale/config.yaml     # find policy.path
+# add the missing entries to tagOwners, then:
+sudo systemctl restart headscale
+sudo headscale policy get | head -20
+```
+
+To let skygate do it automatically on a native host, either grant the service user
+write access to that directory or run headscale with `policy.mode: database`:
+
+```bash
+# /etc/skygate/skygate.env
+SKYGATE_HEADSCALE_POLICY_PATH=/etc/headscale/policy.hujson
+SKYGATE_HEADSCALE_UNIT=headscale
+```
+
+Unattributed devices are also counted, so a Prometheus alert is possible:
+
+```
+skygate_tag_unmatched_total{node_id="3",hostname="laptop"} 1
 ```
 
 ### 8.1 Container cannot reach a hostname that resolves to `127.0.0.1`

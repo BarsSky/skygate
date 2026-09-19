@@ -50,7 +50,9 @@ package nodeownership
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -153,14 +155,14 @@ func AutoBackfill(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertS
 // up a real ticker.
 //
 // Behavior:
-//   1. List every portal user from the DB
-//   2. List every headscale node (one API call, reused)
-//   3. For each user, call Backfill(db, hs, nodes, u.ID, u.Username, alertSink)
-//   4. Run BackfillInfra to attribute skygate-host-* nodes to the
-//      'infra' user (v0.33.1.41, Issue 4 — separate from per-portal-
-//      user backfill because 'infra' is a system user, not a real
-//      portal account).
-//   5. Log a single line with totals at the end
+//  1. List every portal user from the DB
+//  2. List every headscale node (one API call, reused)
+//  3. For each user, call Backfill(db, hs, nodes, u.ID, u.Username, alertSink)
+//  4. Run BackfillInfra to attribute skygate-host-* nodes to the
+//     'infra' user (v0.33.1.41, Issue 4 — separate from per-portal-
+//     user backfill because 'infra' is a system user, not a real
+//     portal account).
+//  5. Log a single line with totals at the end
 //
 // `runOneTick` never returns an error — failures are
 // logged and the loop continues. The intent is
@@ -205,6 +207,14 @@ func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertSin
 	// pass so the per-user backfill doesn't accidentally
 	// steal an infra node first.
 	BackfillInfra(dbConn, nodes)
+	// B272: then reconcile DATABASE → headscale, so a tag that never made it
+	// onto the node (a failed apply, a file-mode policy reject, a native
+	// install without docker) is repaired instead of skipped forever.
+	if rows, err := db.ListNodeOwnersAll(dbConn.Current()); err != nil {
+		log.Printf("tag-reconcile: list node_owner_map: %v (skipping pass)", err)
+	} else {
+		ReconcileTags(dbConn, hs, nodes, rows, alertSink)
+	}
 	log.Printf("node-discovery: tick complete (users=%d nodes=%d)", processed, len(nodes))
 }
 
@@ -218,22 +228,22 @@ func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertSin
 // twice is a no-op.
 //
 // Selection rules (first match wins):
-//   1. Node has any `tag:dev-infra-*` tag — explicit
-//      infra ownership marker (the B77 autoupdater
-//      sets this when the B77 Strategy D matches an
-//      infra node; future migrations may set it
-//      programmatically).
-//   2. Node hostname equals "skygate-host" (B251: the
-//      pre-B251 `skygate-host-` prefix was too wide —
-//      it matched `skygate-host-1`, `skygate-host-1-1`,
-//      and any other suffix the admin tenant might add
-//      during migration, letting two physical VMs claim
-//      the reserved role). The INSERT OR IGNORE handles
-//      the "no row yet" check. Captures the single skygate
-//      VM (whose Tailscale hostname is set by
-//      SKYGATE_TS_HOSTNAME; defaults to `skygate-host`)
-//      even when its existing node_owner_map row is owned
-//      by a different portal user from the previous era.
+//  1. Node has any `tag:dev-infra-*` tag — explicit
+//     infra ownership marker (the B77 autoupdater
+//     sets this when the B77 Strategy D matches an
+//     infra node; future migrations may set it
+//     programmatically).
+//  2. Node hostname equals "skygate-host" (B251: the
+//     pre-B251 `skygate-host-` prefix was too wide —
+//     it matched `skygate-host-1`, `skygate-host-1-1`,
+//     and any other suffix the admin tenant might add
+//     during migration, letting two physical VMs claim
+//     the reserved role). The INSERT OR IGNORE handles
+//     the "no row yet" check. Captures the single skygate
+//     VM (whose Tailscale hostname is set by
+//     SKYGATE_TS_HOSTNAME; defaults to `skygate-host`)
+//     even when its existing node_owner_map row is owned
+//     by a different portal user from the previous era.
 //
 // Why both rules:
 //   - Rule 1 covers FUTURE nodes the operator marks
@@ -382,33 +392,153 @@ func BackfillInfra(dbConn db.DBSource, nodes []headscale.NodeView) {
 	}
 }
 
+// ErrNoStrategyMatch is reported when a headscale node could not be
+// attributed to ANY portal user (B272). It is not a failure of skygate: the
+// node is either brand new (registered outside the skygate flow and not yet
+// adopted by an operator) or owned by a headscale user that has no portal
+// account. Pre-B272 this produced NO signal at all — the device had no
+// per-device ACL rule and nothing anywhere said so.
+var ErrNoStrategyMatch = errors.New("node matched no ownership strategy (register it through skygate, or adopt it on /admin/devices)")
+
+// TagReconcileResult summarises one reconcile pass (B272).
+type TagReconcileResult struct {
+	Checked  int // database rows inspected
+	Applied  int // tags actually (re-)applied to headscale
+	Failed   int // applies that headscale refused
+	Missing  int // rows whose node is gone from headscale
+	Unattrib int // live nodes attributed to no portal user
+}
+
+// ReconcileTags makes headscale match the DATABASE (B272).
+//
+// Why this exists: B77's Backfill walks headscale and only considers nodes
+// that ALREADY carry a `tag:dev-…` tag. When the tag apply fails once — an
+// ACL/policy reject, docker missing on a native host, a 5xx from the policy
+// API — the node has no dev-tag, so every subsequent tick skips it and
+// `node_owner_map` keeps claiming a tag the node does not have. Live case
+// (2026-09-19): /my/devices showed `tag:dev-daniil-workpc` while
+// `headscale nodes list` showed no tags on that node, `tag.autoupdate_failed`
+// was empty and the metric had never been incremented.
+//
+// This pass closes the loop in the other direction: for every database row,
+// if headscale does not carry the row's tag, apply it (AddTag preserves the
+// node's other tags) and report failures through the B227 sink with the
+// reason "tag_missing". Nodes with no dev-tag AND no database row are
+// reported once per rate-limit window as "no_strategy" so the operator sees
+// devices that no per-device rule can ever match.
+//
+// `owners` is passed in (rather than read here) so the matching logic is
+// unit-testable without a database; the caller loads it with db.ListNodeOwnersAll.
+func ReconcileTags(dbConn db.DBSource, hs nodeLister, nodes []headscale.NodeView, rows []db.NodeOwner, alertSink *TagAlertSink) TagReconcileResult {
+	var res TagReconcileResult
+	if hs == nil {
+		return res
+	}
+	if dbConn == nil {
+		log.Printf("tag-reconcile: no DB source (skipping pass)")
+		return res
+	}
+
+	byID := make(map[string]headscale.NodeView, len(nodes))
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
+
+	for _, r := range rows {
+		if r.Tag == "" {
+			continue
+		}
+		res.Checked++
+		n, live := byID[r.NodeID]
+		if !live {
+			res.Missing++
+			continue // deleted in headscale; the per-user pass GCs the row
+		}
+		if hasTag(n.Tags, r.Tag) {
+			continue // already in sync
+		}
+		id, err := strconv.ParseInt(r.NodeID, 10, 64)
+		if err != nil || id <= 0 {
+			continue
+		}
+		if err := hs.AddTag(id, r.Tag); err != nil {
+			res.Failed++
+			log.Printf("tag-reconcile: node %s (%s) is missing %q in headscale: %v", r.NodeID, n.Hostname, r.Tag, err)
+			if alertSink != nil {
+				alertSink.ReportFailure(r.NodeID, n.Hostname, r.Tag, err)
+			}
+			continue
+		}
+		res.Applied++
+		log.Printf("tag-reconcile: applied %q to node %s (%s) — database said it was owned by %q, headscale had %v", r.Tag, r.NodeID, n.Hostname, r.Username, n.Tags)
+	}
+
+	// B272.4 — nodes that no per-device rule can ever match.
+	for _, n := range nodes {
+		if len(n.Tags) > 0 {
+			continue
+		}
+		if _, owned := ownerByNodeID(rows, n.ID); owned {
+			continue
+		}
+		res.Unattrib++
+		if alertSink != nil {
+			alertSink.ReportFailure(n.ID, n.Hostname, "(none)", ErrNoStrategyMatch)
+		}
+	}
+	if res.Applied > 0 || res.Failed > 0 || res.Unattrib > 0 {
+		log.Printf("tag-reconcile: checked=%d applied=%d failed=%d missing=%d unattributed=%d", res.Checked, res.Applied, res.Failed, res.Missing, res.Unattrib)
+	}
+	return res
+}
+
+// hasTag reports whether the tag list already contains want (exact match).
+func hasTag(tags []string, want string) bool {
+	for _, t := range tags {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}
+
+// ownerByNodeID reports whether node_owner_map has a row for the node.
+func ownerByNodeID(rows []db.NodeOwner, nodeID string) (db.NodeOwner, bool) {
+	for _, r := range rows {
+		if r.NodeID == nodeID {
+			return r, true
+		}
+	}
+	return db.NodeOwner{}, false
+}
+
 // isInfraNode — v0.33.1.41 — returns true if the node
 // should belong to the 'infra' portal user.
 //
 // Rules (first match wins):
-//   1. Any tag matches `tag:dev-infra-*` — explicit
-//      infra ownership.
-//   2. Hostname equals "skygate-host" — the skygate VM
-//      itself (B251: strict equality; the pre-B251
-//      `strings.HasPrefix("skygate-host-")` rule also
-//      matched suffixed forms like `skygate-host-1` /
-//      `skygate-host-1-1`, which let the operator
-//      accidentally create multiple "skygate" VMs and
-//      conflated infra-attribution with the cluster's
-//      internal naming). The reserved name `skygate-host`
-//      is now produced by /admin/tailscale's default
-//      (cmd/skygate/main.go SKYGATE_TS_HOSTNAME) and
-//      rejected as a duplicate by findUserForHostname
-//      when issued for a non-infra headscale user.
-//   3. Any tag equals `tag:exit-node` — an exit node
-//      (relay VPS that advertises 0.0.0.0/0 + ::/0).
-//      Added in v1.3.11 (B111) per operator request:
-//      "infra user будет владеть skygate + exit nodes
-//      (karolina sharlotta emilia svyatoslava) и давать
-//      публичный доступ к exit nodes остальным".
-//      Without rule 3, exit nodes stay owned by
-//      skyadmin/michail/svyatoslava and the per-infra
-//      public-access grants miss them.
+//  1. Any tag matches `tag:dev-infra-*` — explicit
+//     infra ownership.
+//  2. Hostname equals "skygate-host" — the skygate VM
+//     itself (B251: strict equality; the pre-B251
+//     `strings.HasPrefix("skygate-host-")` rule also
+//     matched suffixed forms like `skygate-host-1` /
+//     `skygate-host-1-1`, which let the operator
+//     accidentally create multiple "skygate" VMs and
+//     conflated infra-attribution with the cluster's
+//     internal naming). The reserved name `skygate-host`
+//     is now produced by /admin/tailscale's default
+//     (cmd/skygate/main.go SKYGATE_TS_HOSTNAME) and
+//     rejected as a duplicate by findUserForHostname
+//     when issued for a non-infra headscale user.
+//  3. Any tag equals `tag:exit-node` — an exit node
+//     (relay VPS that advertises 0.0.0.0/0 + ::/0).
+//     Added in v1.3.11 (B111) per operator request:
+//     "infra user будет владеть skygate + exit nodes
+//     (karolina sharlotta emilia svyatoslava) и давать
+//     публичный доступ к exit nodes остальным".
+//     Without rule 3, exit nodes stay owned by
+//     skyadmin/michail/svyatoslava and the per-infra
+//     public-access grants miss them.
 func isInfraNode(n headscale.NodeView) bool {
 	for _, t := range n.Tags {
 		if strings.HasPrefix(t, "tag:dev-infra-") {

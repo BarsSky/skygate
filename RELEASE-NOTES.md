@@ -12,6 +12,101 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.13 — tags actually reach headscale (B272)
+
+**Date:** 2026-09-19 · **Base:** `v1.5.12` → this tag · **Compatibility:** no schema,
+config or API change for PostgreSQL / container installs. Two new OPTIONAL env vars
+(`SKYGATE_HEADSCALE_POLICY_PATH`, `SKYGATE_HEADSCALE_CONFIG_VOLUME`) and two more
+(`SKYGATE_HEADSCALE_UNIT`, `SKYGATE_HEADSCALE_CONFIG`) exist for native installs;
+nothing changes if they stay unset.
+
+### The report
+
+An operator audit of the device tags on a **native** host showed:
+
+```
+node_owner_map (skygate):  2 | | user=daniil | tag=tag:dev-daniil-workpc
+headscale nodes list:      node 2  user=daniil  dev=-  all=-        ← no tags at all
+```
+
+So `/my/devices` displayed a tag the node did not carry, and every per-device ACL
+rule (`src=tag:dev-daniil-workpc`) matched **nothing**. Worse: nothing in the
+product said so — `tag.autoupdate_failed` was empty, the metric had never been
+incremented, and Telegram was not configured.
+
+Two errors were in the audit log, both from an earlier manual Adopt:
+
+```
+device_adopt_addtag_failed            err=tag: exec: "docker": executable file not found in $PATH
+device_adopt_ensure_tag_owner_failed  err=ensure-tag-owner: PUT /api/v1/policy: 500
+                                      {"code":2,"message":"update is disabled for modes ot…"}
+```
+
+### Root causes (B272)
+
+1. **headscale kept its policy in a FILE.** `config.yaml` had
+   `policy: { mode: file, path: /etc/headscale/policy.hujson }`, which makes
+   `PUT /api/v1/policy` answer `500 update is disabled for modes other than
+   database`. `SetPolicy` only fell back to the file path on `404`/`405`, so the
+   fallback never ran — and even if it had, it wrote through a hardcoded docker
+   volume (`/home/admin/headscale/config`) that cannot exist on a native install.
+2. **Every tag write required docker.** `TagNode`/`UntagNode` went straight to
+   `docker exec … headscale nodes tag`, which on a native host fails with
+   `exec: "docker": executable file not found in $PATH`.
+3. **The autoupdater could not see the problem.** B77 walks headscale and only
+   considers nodes that ALREADY carry a `tag:dev-…` tag. A node whose tag never
+   landed was therefore skipped on every 5-minute tick — the drift between the
+   database and headscale was permanent and silent.
+
+### What changed
+
+* `isFileModePolicyError` recognises the 500 body (and 404/405), so the file
+  fallback actually runs.
+* `setPolicyViaFile` writes the policy resolved by
+  `DiscoverPolicyPath`/`parseHeadscalePolicyConfig` (reads headscale's own
+  config), **atomically**, and then:
+  * native: writes the file directly and restarts the unit via
+    `systemctl`/`rc-service`, **rolling the previous policy back** if the restart
+    fails;
+  * container: writes through `SKYGATE_HEADSCALE_CONFIG_VOLUME` (default
+    preserved) and restarts the container.
+  * unknown path → an error naming `SKYGATE_HEADSCALE_POLICY_PATH` and carrying
+    the policy text, so the operator can apply it by hand.
+* `TagNode`/`UntagNode` try `POST /api/v1/node/{id}/tags` **first**, then fall back
+  to `runHeadscaleCLI` (docker when present, the local binary otherwise — the B267
+  pattern). `AddTag` therefore works without docker.
+* **New `ReconcileTags`**: every autoupdater tick walks `node_owner_map` and
+  re-applies any tag headscale is missing (`reason=tag_missing` through the B227
+  sink: metric + audit + rate-limited Telegram). A tag that never landed is now
+  repaired automatically.
+* **New `skygate_tag_unmatched_total`**: headscale nodes attributed to no portal
+  user (`reason=no_strategy`) are counted and reported, so a device no per-device
+  rule can match is finally visible.
+* The admin **Adopt/Transfer** tag paths report through the same `TagAlertSink`
+  instead of a bare audit row — the live failure never appeared in `/metrics`.
+
+### What to do on a native host after upgrading
+
+```bash
+# 1. point skygate at headscale's policy file (only needed if it is not found
+#    automatically in /etc/headscale/config.yaml)
+sudo grep -A3 '^policy:' /etc/headscale/config.yaml
+# SKYGATE_HEADSCALE_POLICY_PATH=/etc/headscale/policy.hujson   → /etc/skygate/skygate.env
+# SKYGATE_HEADSCALE_UNIT=headscale                             (default)
+
+# 2. restart skygate, then watch the autoupdater tick (≤5 min)
+sudo systemctl restart skygate
+sudo journalctl -u skygate -f | grep -E 'tag-reconcile|node-discovery'
+
+# 3. confirm the tag landed
+sudo headscale nodes list | grep -A2 '^2'
+```
+
+Contracts: `scripts/check_b272_tag_drift.sh` (22),
+`internal/headscale/tags_b272_test.go` (incl. a real policy-file write with
+rollback) and `internal/nodeownership/auto_b272_test.go`. Procedure:
+`docs/troubleshooting.md` §8.0.4.
+
 ## v1.5.12 — the self-updater explains a failed swap (B268) + the socket is bound before anything else (B269) + optional features can no longer kill the boot (B270)
 
 **Date:** 2026-09-19 · **Base:** `v1.5.11` → this tag · **Compatibility:** no schema,

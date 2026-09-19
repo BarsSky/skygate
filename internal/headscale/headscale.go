@@ -34,6 +34,27 @@ type Client struct {
 	http          *http.Client
 	ExecContainer string
 
+	// PolicyPath is the on-disk policy file for a headscale running with
+	// `policy.mode: file` (B272). Empty means "not configured" — the
+	// file-mode fallback in SetPolicy then reports what to set instead of
+	// guessing. SKYGATE_HEADSCALE_POLICY_PATH overrides; DiscoverPolicyPath
+	// can fill it from the headscale config.
+	PolicyPath string
+
+	// policyVolume is the "<host-dir>:<container-dir>" prefix used to write
+	// the policy file when headscale runs in a container (B272).
+	policyVolume string
+
+	// headscaleUnit is the systemd unit name used to reload/restart a NATIVE
+	// headscale after the policy file changed (B272).
+	headscaleUnit string
+
+	// forceNativePolicyWrite makes the B272 policy-file fallback use the
+	// direct-write (native) branch even when a docker CLI is present. Tests
+	// set it; production leaves it false so the install kind is detected from
+	// PATH.
+	forceNativePolicyWrite bool
+
 	// dockerRunner is the function used to shell out `docker`
 	// commands (ExtendNodeExpiry, fallback paths in
 	// CreatePreauthKeyWithTags, etc.). nil = use the
@@ -94,6 +115,21 @@ func New(baseURL, k string) *Client {
 		Transport: transport,
 	}
 	c.ExecContainer = getenvDefault("HEADSCALE_CONTAINER", "headscale")
+	// B272: where the policy file lives when headscale runs with
+	// `policy.mode: file` (it then refuses API writes with
+	// "update is disabled for modes other than database").
+	// SKYGATE_HEADSCALE_POLICY_PATH wins; otherwise the caller can discover
+	// it from the headscale config with DiscoverPolicyPath, and this field
+	// stays empty (the file-mode fallback reports exactly what to set).
+	c.PolicyPath = os.Getenv("SKYGATE_HEADSCALE_POLICY_PATH")
+	// B272: the docker volume:path prefix used to write the policy file on a
+	// CONTAINERISED headscale (the native path is written directly). The old
+	// hardcoded value was a specific operator's layout; it is now
+	// configurable, with the historical default preserved.
+	c.policyVolume = getenvDefault("SKYGATE_HEADSCALE_CONFIG_VOLUME", "/home/admin/headscale/config:/config")
+	// B272: which unit to reload/restart after writing the policy file on a
+	// native install ("docker restart" is used for a container).
+	c.headscaleUnit = getenvDefault("SKYGATE_HEADSCALE_UNIT", "headscale")
 	c.cacheTTL = 5 * time.Second
 	return c
 }

@@ -1,9 +1,10 @@
 // Headscale ACL policy operations: get + set.
 //
-// The API path works in `policy.mode: database` deployments. For
-// `file`-mode headscale (no DB-backed ACL) the API rejects the call
-// and we fall back to writing acl_policy.hujson to the config volume
-// and restarting the container.
+// The API path works in `policy.mode: database` deployments. For a
+// `file`-mode headscale the API answers "update is disabled for modes other
+// than database" (500) and we write the policy file + reload headscale
+// instead — on a containerised install through the config volume, on a
+// native/systemd install straight to disk (B272).
 package headscale
 
 import (
@@ -12,7 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -136,31 +139,261 @@ func (c *Client) SetPolicy(policy string) error {
 		return nil
 	}
 
-	// Only fall back to file-mode on http.StatusNotFound/http.StatusMethodNotAllowed. Any other error is real.
-	var apiErr *APIError
-	if !errors.As(err, &apiErr) || (apiErr.StatusCode != http.StatusNotFound && apiErr.StatusCode != http.StatusMethodNotAllowed) {
+	if !isFileModePolicyError(err) {
 		return err
 	}
 
-	// File-mode fallback: headscale rejects API in non-database mode.
-	// Write ACL file to headscale config volume via alpine helper.
-	// Use acl_policy.hujson (the path already referenced in config.yaml policy section).
+	return c.setPolicyViaFile(policy, err)
+}
+
+// isFileModePolicyError reports whether a failed PUT /api/v1/policy means
+// "this headscale keeps its policy in a FILE and refuses API writes" rather
+// than a transient failure (B272).
+//
+// headscale versions disagree on how they say it:
+//
+//   - 404 / 405 — the endpoint does not exist in this mode (the only codes
+//     the pre-B272 code accepted);
+//   - 500 with `update is disabled for modes other than database`
+//     (code 2 = gRPC ErrInternal) — headscale 0.29.2, verified live on a
+//     native install whose config.yaml says `policy.mode: file`. The old
+//     check treated this as a real failure, so the file fallback never ran
+//     and every EnsureTagOwner died with the 500 while the operator saw
+//     only "are invalid or not permitted" from AddTag.
+func isFileModePolicyError(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.StatusCode {
+	case http.StatusNotFound, http.StatusMethodNotAllowed:
+		return true
+	}
+	body := strings.ToLower(apiErr.Body)
+	// Only a 5xx whose body names the policy mode counts — a 500 from a
+	// broken policy (parse error) must stay a real failure.
+	if apiErr.StatusCode < 500 {
+		return false
+	}
+	return strings.Contains(body, "update is disabled") ||
+		strings.Contains(body, "policy mode") ||
+		strings.Contains(body, "modes other than database")
+}
+
+// setPolicyViaFile writes the policy to headscale's policy FILE and reloads
+// headscale (B272). Two install kinds:
+//
+//   - CONTAINERISED: `docker run -i --rm -v <policyVolume> alpine sh -c 'cat >
+//     /config/<file>'` then `docker restart <container>` (the historical path,
+//     with the volume now configurable instead of hardcoded);
+//   - NATIVE (systemd / bare binary): write the resolved PolicyPath directly,
+//     then restart the unit (SIGHUP is not enough — headscale re-reads the
+//     policy file only at startup in 0.29).
+//
+// When the path is unknown the error says exactly what to set, instead of
+// silently doing nothing.
+func (c *Client) setPolicyViaFile(policy string, apiErr error) error {
+	path := c.PolicyPath
+	if path == "" {
+		if p, err := DiscoverPolicyPath(); err == nil && p != "" {
+			path = p
+			c.PolicyPath = p
+		}
+	}
+	if path == "" {
+		return fmt.Errorf("api: %w; headscale keeps its policy in a FILE (policy.mode: file) and the policy path is unknown — set SKYGATE_HEADSCALE_POLICY_PATH to the file named by `policy.path` in headscale's config.yaml (e.g. /etc/headscale/policy.hujson) and restart skygate", apiErr)
+	}
+
+	if !c.forceNativePolicyWrite {
+		if _, err := exec.LookPath("docker"); err == nil {
+			return c.setPolicyViaFileDocker(policy, path, apiErr)
+		}
+	}
+	return c.setPolicyViaFileNative(policy, path, apiErr)
+}
+
+// setPolicyViaFileDocker writes through the headscale config volume.
+func (c *Client) setPolicyViaFileDocker(policy, path string, apiErr error) error {
+	// Inside the helper container the policy file is addressed by its
+	// container-side path; the volume prefix maps host dir → container dir.
+	containerPath := filepath.Base(path)
+	mount := c.policyVolume
+	if mount == "" {
+		mount = "/home/admin/headscale/config:/config"
+	}
 	writeCmd := exec.Command("docker", "run", "-i", "--rm",
-		"-v", "/home/admin/headscale/config:/config",
-		"alpine", "sh", "-c", "cat > /config/acl_policy.hujson")
+		"-v", mount,
+		"alpine", "sh", "-c", "cat > /config/"+containerPath)
 	writeCmd.Stdin = strings.NewReader(policy)
-	if cerr := writeCmd.Run(); cerr != nil {
-		return fmt.Errorf("api: %w; write acl file: %v", err, cerr)
+	if out, cerr := writeCmd.CombinedOutput(); cerr != nil {
+		return fmt.Errorf("api: %w; write policy file %s via docker volume %s: %v (%s)", apiErr, path, mount, cerr, strings.TrimSpace(string(out)))
 	}
-
-	// Restart headscale to pick up new policy
-	restartCmd := exec.Command("docker", "restart", c.ExecContainer)
-	if o, e := restartCmd.CombinedOutput(); e != nil {
-		return fmt.Errorf("api: %w; restart: %v (%s)", err, e, strings.TrimSpace(string(o)))
+	if out, e := exec.Command("docker", "restart", c.containerOr("headscale")).CombinedOutput(); e != nil {
+		return fmt.Errorf("api: %w; wrote %s but restarting headscale failed: %v (%s)", apiErr, path, e, strings.TrimSpace(string(out)))
 	}
-
 	c.clearACLCache()
 	return nil
+}
+
+// setPolicyViaFileNative writes the policy file on the local filesystem and
+// restarts the headscale unit.
+func (c *Client) setPolicyViaFileNative(policy, path string, apiErr error) error {
+	prev, readErr := os.ReadFile(path)
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	tmp := path + ".skygate.tmp"
+	if err := os.WriteFile(tmp, []byte(policy), mode); err != nil {
+		return fmt.Errorf("api: %w; write policy file %s: %v (the skygate service user cannot write it — either run skygate with write access to headscale's config dir, or apply this policy manually: %s)", apiErr, path, err, oneLinePolicy(policy))
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("api: %w; replace policy file %s: %v", apiErr, path, err)
+	}
+	if err := c.restartHeadscaleUnit(); err != nil {
+		// Roll back: a half-applied policy is worse than none, and the
+		// operator needs the previous rules back.
+		if readErr == nil {
+			_ = os.WriteFile(path, prev, mode)
+		}
+		return fmt.Errorf("api: %w; wrote %s but restarting %s failed: %v", apiErr, path, c.headscaleUnit, err)
+	}
+	c.clearACLCache()
+	return nil
+}
+
+// restartHeadscaleUnit restarts the local headscale service (native install).
+func (c *Client) restartHeadscaleUnit() error {
+	unit := c.headscaleUnit
+	if unit == "" {
+		unit = "headscale"
+	}
+	// Look up the binaries (not just systemctl) so the same code works on a
+	// host with systemd, on OpenRC, and under a test shim on PATH.
+	if _, err := exec.LookPath("systemctl"); err == nil {
+		out, err := exec.Command("systemctl", "restart", unit).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("systemctl restart %s: %v (%s)", unit, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	// OpenRC / bare binary host: rc-service is the Alpine equivalent.
+	if _, err := exec.LookPath("rc-service"); err == nil {
+		out, rcErr := exec.Command("rc-service", unit, "restart").CombinedOutput()
+		if rcErr != nil {
+			return fmt.Errorf("rc-service %s restart: %v (%s)", unit, rcErr, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	return fmt.Errorf("neither systemctl nor rc-service is available to restart %q (start headscale manually so it re-reads the policy file)", unit)
+}
+
+// DiscoverPolicyPath reads the local headscale configuration and returns the
+// `policy.path` value (B272). It searches the documented locations and
+// understands the flat YAML shapes headscale ships, including the
+// `policy:\n  mode: file\n  path: /etc/headscale/policy.hujson` block.
+//
+// Deliberately dependency-free (no YAML library): the value is a single
+// scalar and headscale's own config template always writes it as
+// `path: <value>` under `policy:`.
+func DiscoverPolicyPath() (string, error) {
+	candidates := []string{
+		os.Getenv("SKYGATE_HEADSCALE_CONFIG"),
+		"/etc/headscale/config.yaml",
+		"/etc/headscale/config.yml",
+		"/var/lib/headscale/config.yaml",
+		"/opt/headscale/config.yaml",
+	}
+	var lastErr error
+	for _, p := range candidates {
+		if p == "" {
+			continue
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if path, mode := parseHeadscalePolicyConfig(string(b)); path != "" {
+			// Only a file-mode policy has a path worth writing; in database
+			// mode `path` may still be set as a seed and must NOT be treated
+			// as authoritative.
+			if mode == "" || mode == "file" {
+				return path, nil
+			}
+			lastErr = fmt.Errorf("%s declares policy.mode=%s — the API path should have worked", p, mode)
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no headscale config.yaml found in the standard locations")
+	}
+	return "", lastErr
+}
+
+// parseHeadscalePolicyConfig extracts (policy.path, policy.mode) from a
+// headscale config.yaml. Only the `policy:` block is considered, so a `path:`
+// belonging to another section (database, derp, …) can never be mistaken for
+// the policy file.
+func parseHeadscalePolicyConfig(cfg string) (path, mode string) {
+	inPolicy := false
+	policyIndent := -1
+	for _, raw := range strings.Split(cfg, "\n") {
+		line := strings.TrimRight(raw, " \t\r")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		if !inPolicy {
+			if strings.HasPrefix(trimmed, "policy:") {
+				inPolicy = true
+				policyIndent = indent
+			}
+			continue
+		}
+		// A non-indented key ends the policy block.
+		if indent <= policyIndent && !strings.HasPrefix(trimmed, "policy:") {
+			inPolicy = false
+			continue
+		}
+		switch {
+		case strings.HasPrefix(trimmed, "path:"):
+			path = yamlScalar(strings.TrimSpace(strings.TrimPrefix(trimmed, "path:")))
+		case strings.HasPrefix(trimmed, "mode:"):
+			mode = yamlScalar(strings.TrimSpace(strings.TrimPrefix(trimmed, "mode:")))
+		}
+	}
+	return path, mode
+}
+
+// yamlScalar strips surrounding quotes and any trailing comment from a
+// single-line YAML scalar.
+func yamlScalar(v string) string {
+	if i := strings.Index(v, " #"); i >= 0 {
+		v = strings.TrimSpace(v[:i])
+	}
+	v = strings.Trim(v, `"'`)
+	return v
+}
+
+// oneLinePolicy renders a policy for an error message so the operator can
+// apply it by hand when skygate cannot write the file.
+func oneLinePolicy(policy string) string {
+	flat := strings.Join(strings.Fields(policy), " ")
+	const max = 400
+	if len(flat) > max {
+		flat = flat[:max] + "…"
+	}
+	return flat
+}
+
+// containerOr returns the configured container name or the given default.
+func (c *Client) containerOr(def string) string {
+	if c.ExecContainer != "" {
+		return c.ExecContainer
+	}
+	return def
 }
 
 // clearACLCache drops the cached ACL string. Called by SetPolicy on

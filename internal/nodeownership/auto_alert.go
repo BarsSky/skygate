@@ -1,5 +1,7 @@
 package nodeownership
 
+import "errors"
+
 // auto_alert.go — v1.5.2 / B227 — observability hook for
 // the B77 tag-autoupdater's AddTag failure path.
 //
@@ -113,7 +115,24 @@ const (
 	ReasonACLReject FailureReason = "acl_reject"
 	ReasonRPCError  FailureReason = "rpc_error"
 	ReasonUnknown   FailureReason = "unknown"
+	// ReasonNoStrategy (B272) — the node is not attributed to ANY portal
+	// user: no preauth-key match, no temporal match, no existing dev-tag and
+	// no OIDC match. Nothing is broken, so pre-B272 this case produced
+	// NO signal at all: the device simply had no per-device ACL rule and no
+	// tag, forever, while the UI showed nothing and the log said nothing.
+	ReasonNoStrategy FailureReason = "no_strategy"
+	// ReasonTagMissing (B272) — skygate's database says the node carries
+	// `tag:dev-…`, but headscale does not have it (the tag apply failed
+	// earlier and nothing reconciled it). The B77 loop only walked nodes that
+	// ALREADY had a dev-tag in headscale, so this divergence was invisible
+	// and permanent.
+	ReasonTagMissing FailureReason = "tag_missing"
 )
+
+// ErrTagNotInHeadscale is the synthetic error used when reporting a
+// ReasonTagMissing drift to the alert sink, so the audit row and the alert
+// text carry a readable reason instead of an empty error string.
+var ErrTagNotInHeadscale = errors.New("tag is present in skygate's node_owner_map but missing in headscale (reconciled by B272)")
 
 // ClassifyFailure parses the headscale error string
 // and returns the matching FailureReason. The
@@ -122,18 +141,29 @@ const (
 // understand whether the failure was "permanent
 // (config)" or "transient (retry later)".
 //
+// B272 adds two no-error classifications (they arrive as sentinel errors
+// rather than headscale text):
+//   - tag_missing  — ErrTagNotInHeadscale: database/headscale drift.
+//   - no_strategy  — ErrNoStrategyMatch: node attributed to no portal user.
+//
 // Patterns matched (in priority order):
-//   1. gRPC ACL codes (InvalidArgument — most common
-//      headscale ACL reject: "requested tags ... are
-//      invalid or not permitted"; PermissionDenied;
-//      FailedPrecondition — covers the "tag already
-//      exists" duplicate-add case).
-//   2. gRPC transient codes (Unavailable — network
-//      down; Internal — 5xx; DeadlineExceeded — timeout).
-//   3. Anything else → unknown.
+//  1. gRPC ACL codes (InvalidArgument — most common
+//     headscale ACL reject: "requested tags ... are
+//     invalid or not permitted"; PermissionDenied;
+//     FailedPrecondition — covers the "tag already
+//     exists" duplicate-add case).
+//  2. gRPC transient codes (Unavailable — network
+//     down; Internal — 5xx; DeadlineExceeded — timeout).
+//  3. Anything else → unknown.
 func ClassifyFailure(err error) FailureReason {
 	if err == nil {
 		return ReasonUnknown
+	}
+	if errors.Is(err, ErrTagNotInHeadscale) {
+		return ReasonTagMissing
+	}
+	if errors.Is(err, ErrNoStrategyMatch) {
+		return ReasonNoStrategy
 	}
 	s := err.Error()
 	// ACL-reject codes first — these are the ones
@@ -251,7 +281,7 @@ func (s *TagAlertSink) ReportFailure(nodeID, hostname, devTag string, addErr err
 	// 1. Metric (always, no rate limit).
 	//    Cardinality is bounded: node_id ~ tens of
 	//    nodes per cluster, hostname ~ tens, reason
-	//    ∈ {acl_reject, rpc_error, unknown}. Prom
+	//    ∈ {acl_reject, rpc_error, tag_missing, no_strategy, unknown}. Prom
 	//    queries: `sum by (hostname) (rate(
 	//    skygate_tag_autoupdate_failures_total[5m]))`
 	//    surfaces "which node has been broken for
@@ -259,6 +289,14 @@ func (s *TagAlertSink) ReportFailure(nodeID, hostname, devTag string, addErr err
 	metrics.TagAutoupdateFailuresCounter.
 		WithLabelValues(nodeID, hostname, string(reason)).
 		Inc()
+	// 1b. B272: an unattributed node also gets its own series. It is not a
+	//     failure (nothing errored) and the operator's action differs, so a
+	//     Prom alert on skygate_tag_unmatched_total > 0 is the right signal.
+	if reason == ReasonNoStrategy {
+		metrics.TagUnmatchedCounter.
+			WithLabelValues(nodeID, hostname).
+			Inc()
+	}
 	// 2. Audit row (always, no rate limit). Use
 	//    B221's AppendAuditLogWithTarget so /admin/audit
 	//    can route by target_type="headscale_node".
