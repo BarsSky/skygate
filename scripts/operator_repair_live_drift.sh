@@ -11,13 +11,19 @@
 #      int-overflow sentinel 2147455555 (the synthetic `tagged-devices` owner).
 #      -> relink the three michail rows to 8, delete the sentinel row.
 #
-#   B. ACL drifted from the DB (B188.2 + B188.3 + B-mod-tag-owners-coverage) —
-#      the DB is correct (`device_exit_node_prefs` has
-#      (6, basic, tag:dev-infra-emilia, via_enabled=1) and device_rules has the
-#      youtube.com rule for device 29), but the live headscale policy has no
-#      `via=[emilia]` pin on that /32 and still carries a tagOwners entry
-#      (`tag:dev-skyadmin-emilia`) with no matching node_owner_map/device_rules
-#      row. -> regenerate + re-apply the ACL from the DB.
+#   B. ACL drifted from the DB (B188.2 + B188.3 + B-mod-tag-owners-coverage).
+#      B188.2/B188.3 were a stale contract (fixed in code 2026-09-18). The
+#      remaining part is THREE orphan tagOwners entries, produced by stale
+#      per-device rows rather than by the policy:
+#        tag:dev-skyadmin-svyatoslava-1  <- node_owner_map row whose tag does not
+#                                           follow tag:dev-<user>-<hostname>
+#                                           (it collided with skyworker's node)
+#        tag:dev-skyadmin-emilia         <- device_exit_node_prefs rows for
+#        tag:dev-skyadmin-skygate-host-1    devices that belong to infra / no
+#                                           longer exist (the app's own
+#                                           reconciler logs them as ORPHAN)
+#      -> normalise the tags, drop the orphan prefs, then regenerate + re-apply
+#         the ACL from the DB.
 #
 # Usage:
 #   bash scripts/operator_repair_live_drift.sh            # dry run (default)
@@ -94,12 +100,16 @@ docker exec "$HS" headscale policy get > "$BK/policy.before.json" 2>/dev/null \
   || die "could not back up the live policy"
 psql_ro 'SELECT node_id, headscale_user_id, username, tag FROM node_owner_map ORDER BY node_id' \
   > "$BK/node_owner_map.before.csv" || die "could not back up node_owner_map"
+psql_ro 'SELECT user_id, device_hostname, exit_node_tag, via_enabled FROM device_exit_node_prefs ORDER BY user_id, device_hostname' \
+  > "$BK/device_exit_node_prefs.before.csv" || die "could not back up device_exit_node_prefs"
 cp -p "$REPO/go.mod" "$BK/go.mod" 2>/dev/null || true
-say "policy.before.json        $(wc -c < "$BK/policy.before.json") bytes"
-say "node_owner_map.before.csv $(wc -l < "$BK/node_owner_map.before.csv") rows"
+say "policy.before.json               $(wc -c < "$BK/policy.before.json") bytes"
+say "node_owner_map.before.csv        $(wc -l < "$BK/node_owner_map.before.csv") rows"
+say "device_exit_node_prefs.before.csv $(wc -l < "$BK/device_exit_node_prefs.before.csv") rows"
 say "rollback:"
 say "  docker exec -i $HS headscale policy set -f - < $BK/policy.before.json"
 say "  psql: UPDATE node_owner_map SET headscale_user_id=<old> WHERE node_id=<id>;  (see the CSV)"
+say "  psql: re-INSERT the deleted device_exit_node_prefs rows from the CSV if needed"
 
 if [ "$APPLY" != 1 ]; then
   hdr "DRY RUN — nothing changed"
@@ -107,8 +117,10 @@ if [ "$APPLY" != 1 ]; then
   exit 0
 fi
 
-[ -n "$MICHAIL_ID" ] || die "headscale user 'michail' not found — resolve the relink target manually"
-[ -n "$STALE_RELINK$STALE_SENTINEL" ] || die "no stale rows found — nothing to repair (already clean?)"
+[ -n "$MICHAIL_ID" ] || echo "note: headscale user 'michail' not found — skipping the relink step"
+if [ -z "$STALE_RELINK$STALE_SENTINEL" ]; then
+  say "note: no stale node_owner_map rows — step 5A is already clean"
+fi
 
 hdr "5A. apply node_owner_map repair"
 if [ -n "$STALE_RELINK" ]; then
@@ -119,9 +131,50 @@ if [ -n "$STALE_SENTINEL" ]; then
   psql_ro "DELETE FROM node_owner_map WHERE headscale_user_id=2147455555" \
     || die "DELETE failed (backup: $BK)"
 fi
-psql_ro 'SELECT node_id, headscale_user_id, username, tag FROM node_owner_map ORDER BY node_id'
+psql_ro 'SELECT node_id, headscale_user_id, username, hostname, tag FROM node_owner_map ORDER BY node_id::int'
 
-hdr "5B. re-apply the ACL from the DB"
+# 5B. The orphan tagOwners entries come from stale PER-DEVICE rows, not from the
+# policy itself:
+#   tag:dev-skyadmin-svyatoslava-1   <- node_owner_map row whose tag does not
+#                                       follow the tag:dev-<user>-<hostname>
+#                                       convention (its tag collided with
+#                                       skyworker's node)
+#   tag:dev-skyadmin-emilia          <- device_exit_node_prefs row for a device
+#   tag:dev-skyadmin-skygate-host-1     that belongs to another user (infra) or
+#                                       no longer exists — the app's own
+#                                       preferred-exit reconciler logs exactly
+#                                       these as ORPHAN candidates
+hdr "5B. clean the stale per-device rows behind the orphan tagOwners entries"
+psql_ro "SELECT node_id, username, hostname AS device, tag AS old_tag,
+                'tag:dev-' || username || '-' || hostname AS correct_tag
+           FROM node_owner_map
+          WHERE hostname <> '' AND tag <> 'tag:dev-' || username || '-' || hostname
+            AND NOT EXISTS (SELECT 1 FROM node_owner_map o
+                             WHERE o.tag = 'tag:dev-' || node_owner_map.username || '-' || node_owner_map.hostname
+                               AND o.node_id <> node_owner_map.node_id)"
+psql_ro "SELECT p.user_id, u.username, p.device_hostname, p.exit_node_tag
+           FROM device_exit_node_prefs p JOIN portal_users u ON u.id = p.user_id
+          WHERE NOT EXISTS (SELECT 1 FROM node_owner_map n
+                             WHERE n.username = u.username AND n.hostname = p.device_hostname)"
+if [ "$APPLY" = 1 ]; then
+  psql_ro "UPDATE node_owner_map n
+              SET tag = 'tag:dev-' || n.username || '-' || n.hostname
+            WHERE n.hostname <> '' AND n.tag <> 'tag:dev-' || n.username || '-' || n.hostname
+              AND NOT EXISTS (SELECT 1 FROM node_owner_map o
+                               WHERE o.tag = 'tag:dev-' || n.username || '-' || n.hostname
+                                 AND o.node_id <> n.node_id)" \
+    || die "tag-normalisation UPDATE failed (backup: $BK)"
+  psql_ro "DELETE FROM device_exit_node_prefs p
+             USING portal_users u
+            WHERE u.id = p.user_id
+              AND NOT EXISTS (SELECT 1 FROM node_owner_map n
+                               WHERE n.username = u.username AND n.hostname = p.device_hostname)" \
+    || die "orphan-pref DELETE failed (backup: $BK)"
+  say "remaining per-device rows:"
+  psql_ro 'SELECT user_id, device_hostname, exit_node_tag FROM device_exit_node_prefs ORDER BY user_id, device_hostname'
+fi
+
+hdr "5C. re-apply the ACL from the DB"
 docker exec "$APP" /app/skygate acl-apply || die "acl-apply failed (policy backup: $BK/policy.before.json)"
 docker exec "$HS" headscale policy get > "$BK/policy.after.json" 2>/dev/null || true
 if [ -s "$BK/policy.after.json" ]; then
