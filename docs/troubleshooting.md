@@ -38,6 +38,7 @@ syntax lives in [`acl-rules-reference.md`](acl-rules-reference.md).
    * [8.0 Self-update rolled back: "healthz did not report build …" (B268)](#80-self-update-rolled-back-healthz-did-not-report-build--b268)
    * [8.0.1 The unit is `active` but nothing listens on the port (B269)](#801-the-unit-is-active-but-nothing-listens-on-the-port-b269)
    * [8.0.2 The update rolls back every time even though the service is healthy (B270)](#802-the-update-rolls-back-every-time-even-though-the-service-is-healthy-b270)
+   * [8.0.3 The journal repeats `SQL logic error: no such function: pg_…` every 30 s (B271)](#803-the-journal-repeats-sql-logic-error-no-such-function-pg-every-30-s-b271)
 9. [Telegram relay silently not delivering](#9-telegram-relay-silently-not-delivering)
 10. [General diagnostics kit](#10-general-diagnostics-kit)
 
@@ -900,6 +901,50 @@ sudo sed -i 's|^SKYGATE_OIDC_KEY_DIR=.*|SKYGATE_OIDC_KEY_DIR=/var/lib/skygate/oi
 sudo systemctl restart skygate
 sudo journalctl -u skygate -n 20 --no-pager | grep -E 'startup:|oidc:'
 curl -sS http://127.0.0.1:<your port>/healthz
+```
+
+### 8.0.3 The journal repeats `SQL logic error: no such function: pg_…` every 30 s (B271)
+
+**Symptom.** On a **SQLite** install the journal fills with the same four or five
+errors every 30 seconds, and `/db/health` (and the availability badge) looks
+degraded even though the database is fine:
+
+```
+db_health: tick: db_health: 4 query error(s): [
+  server: SQL logic error: no such function: pg_is_in_recovery (1)
+  database.size: SQL logic error: no such function: current_database (1)
+  maintenance: SQL logic error: no such table: pg_stat_user_tables (1)
+  xlog.current: SQL logic error: no such function: pg_current_wal_lsn (1)]
+```
+
+**Cause.** The `/db/health` background sampler was written for PostgreSQL and ran
+its catalog queries against whatever backend was configured — including SQLite,
+where none of those functions exist. Each failed statement still touched the
+database, and the operator saw a permanently "degraded" DB on a healthy install.
+
+**Fix (B271).** The sampler is dialect-aware:
+
+* `dialect=sqlite` — the collector uses `PRAGMA page_count` × `PRAGMA page_size`
+  for the size, `SELECT sqlite_version()` for the version, `PRAGMA quick_check`
+  for integrity (a non-`ok` answer is surfaced as the sample error) and
+  `PRAGMA journal_mode` (logged). The PostgreSQL-only panels (replication, WAL
+  position) stay empty instead of reporting invented values.
+* `dialect=postgres` (the default, so nothing changes by omission) — the previous
+  behaviour, bit for bit.
+
+Verify after upgrading:
+
+```bash
+sudo journalctl -u skygate --since "5 min ago" --no-pager | grep -c 'no such function'
+# 0
+curl -sS http://127.0.0.1:<your port>/healthz   # still 200
+curl -sS http://127.0.0.1:<your port>/db/health | head -c 400
+```
+
+The startup line now states which dialect the sampler uses:
+
+```
+db-health: started (interval=30s, query-timeout=3s, dialect=sqlite)
 ```
 
 ### 8.1 Container cannot reach a hostname that resolves to `127.0.0.1`

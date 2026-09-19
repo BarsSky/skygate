@@ -260,5 +260,43 @@ else
   rm -rf "$TMPD" 2>/dev/null || true
 fi
 
+# --- F: the DB-health sampler must speak the DB's dialect (B271) ------------
+# The operator's journal showed, every 30 s: "db_health: tick: db_health: 4 query
+# error(s): [server: SQL logic error: no such function: pg_is_in_recovery …]"
+# — PostgreSQL catalog SQL running against SQLite.
+HEALTHZ_GO=internal/feature/healthz/db_health.go
+if grep -q 'Dialect string' "$HEALTHZ_GO" \
+   && grep -q 'func (c DBHealthConfig) isSQLite() bool' "$HEALTHZ_GO" \
+   && grep -q 'func (s \*Sampler) collectSQLite(' "$HEALTHZ_GO"; then
+  ok "F: the sampler has a dialect switch and a SQLite collector"
+else
+  bad "F: the sampler is still PostgreSQL-only (SQLite installs log 5 query errors per tick)"
+fi
+if grep -q 'Dialect:      "postgres"' "$HEALTHZ_GO"; then
+  ok "F2: the default dialect stays postgres (no caller changes behaviour by omission)"
+else
+  bad "F2: the zero/default dialect is not pinned to postgres"
+fi
+if grep -q 'PRAGMA page_count' "$HEALTHZ_GO" && grep -q 'PRAGMA quick_check' "$HEALTHZ_GO"; then
+  ok "F3: the SQLite branch collects the DB size and runs an integrity check"
+else
+  bad "F3: the SQLite branch does not collect size/integrity"
+fi
+if grep -q 'dbHealthCfg.Dialect = dialectKind.String()' "$MAIN"; then
+  ok "F4: main.go passes the detected dialect into the sampler"
+else
+  bad "F4: the detected dialect never reaches the sampler (the switch is dead code)"
+fi
+if command -v go >/dev/null 2>&1; then
+  OUT="$(go test -count=1 -run 'B271' ./internal/feature/healthz/ 2>&1)"
+  if grep -q '^ok' <<< "$OUT"; then
+    ok "F5: the dialect Go contracts pass (SQLite branch succeeds, PG branch is provably not what runs)"
+  else
+    bad "F5: the B271 Go contracts failed: $OUT"
+  fi
+else
+  skip "F5: go not on PATH"
+fi
+
 printf '\n\033[1mB270 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1

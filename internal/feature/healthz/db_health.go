@@ -143,6 +143,25 @@ type DBHealthConfig struct {
 	// "skygate-staging" (the B195 cluster that
 	// the B215 + B216 admin pages use).
 	ClusterID string
+
+	// Dialect (B271, 2026-09-19) selects which SQL the
+	// collector runs: "postgres" or "sqlite". Empty means
+	// "postgres" — the historical behaviour, so every
+	// existing caller that does not set it keeps the PG
+	// queries.
+	//
+	// WHY: every query in collect() is PostgreSQL-specific
+	// (pg_is_in_recovery, pg_database_size,
+	// pg_stat_user_tables, pg_current_wal_lsn). On a
+	// SQLite install the sampler still ran them every 30 s
+	// and logged five "SQL logic error: no such function:
+	// pg_is_in_recovery" errors per tick — hard-coded PG
+	// SQL leaking into the SQLite path (L-16), and every
+	// failing statement touches the database for nothing.
+	// A plain string keeps internal/feature/healthz free of
+	// a dialect enum import while main.go passes the value
+	// it already computed with db.DetectDSN.
+	Dialect string
 }
 
 // DefaultDBHealthConfig returns the recommended settings.
@@ -153,7 +172,13 @@ func DefaultDBHealthConfig() DBHealthConfig {
 		Logger:       log.Printf,
 		Notifier:     NoopAlertSink{},
 		ClusterID:    "skygate-staging",
+		Dialect:      "postgres",
 	}
+}
+
+// isSQLite reports whether the sampler must run the SQLite dialect queries.
+func (c DBHealthConfig) isSQLite() bool {
+	return c.Dialect == "sqlite"
 }
 
 // DBHealthSample is the cached snapshot. The handler
@@ -182,10 +207,10 @@ type DBHealthSample struct {
 	// is the wall-clock delta from the last replayed
 	// transaction to now.
 	Replication struct {
-		IsReplica       bool    `json:"is_replica"`
-		LagBytes        *int64  `json:"lag_bytes,omitempty"`
-		LagSeconds      *float64 `json:"lag_seconds,omitempty"`
-		ReplayLSN       string  `json:"replay_lsn,omitempty"`
+		IsReplica       bool       `json:"is_replica"`
+		LagBytes        *int64     `json:"lag_bytes,omitempty"`
+		LagSeconds      *float64   `json:"lag_seconds,omitempty"`
+		ReplayLSN       string     `json:"replay_lsn,omitempty"`
 		ReplayTimestamp *time.Time `json:"replay_timestamp,omitempty"`
 	} `json:"replication"`
 
@@ -200,7 +225,7 @@ type DBHealthSample struct {
 		LastAutovacuumAt  *time.Time `json:"last_autovacuum_at,omitempty"`
 		LastAnalyzeAt     *time.Time `json:"last_analyze_at,omitempty"`
 		LastAutoanalyzeAt *time.Time `json:"last_autoanalyze_at,omitempty"`
-		DeadTuples         int64      `json:"dead_tuples"`
+		DeadTuples        int64      `json:"dead_tuples"`
 	} `json:"maintenance"`
 
 	// XLog is the current WAL position. On a primary
@@ -232,7 +257,7 @@ type DBHealthSample struct {
 // new field requires updating both DBHealthSample and
 // DBHealthResponse — the test pins this.
 type DBHealthResponse struct {
-	Pool                  sql.DBStats  `json:"pool"`
+	Pool sql.DBStats `json:"pool"`
 
 	// Server
 	IsReplica bool      `json:"is_replica"`
@@ -285,9 +310,9 @@ type Sampler struct {
 	// staleness expectation.
 	intervalSeconds int
 
-	mu     sync.Mutex
-	stopCh chan struct{}
-	doneCh chan struct{}
+	mu      sync.Mutex
+	stopCh  chan struct{}
+	doneCh  chan struct{}
 	started bool
 
 	// lastHealthy (B225.1) tracks the last-known
@@ -506,7 +531,18 @@ func (s *Sampler) detectTransition(sample *DBHealthSample) {
 // so a single failure (e.g. a non-replica calling
 // pg_last_wal_replay_lsn) doesn't blow up the whole
 // sample. The errors are joined and returned at the end.
+//
+// B271: the SQL is dialect-specific. On SQLite the PG
+// catalog queries do not exist at all, so running them
+// produced five errors per tick and nothing else — the
+// SQLite branch below answers the same three operator
+// questions (how big is the DB, is it healthy, how much
+// bloat) with SQLite-native SQL and leaves the
+// PostgreSQL-only panels (replication, xlog) empty.
 func (s *Sampler) collect(ctx context.Context, db *sql.DB, out *DBHealthSample) error {
+	if s.cfg.isSQLite() {
+		return s.collectSQLite(ctx, db, out)
+	}
 	var errs []string
 
 	// 1. Server identity: is_replica + version + started_at.
@@ -534,9 +570,9 @@ func (s *Sampler) collect(ctx context.Context, db *sql.DB, out *DBHealthSample) 
 	out.Replication.IsReplica = out.Server.IsReplica
 	if out.Server.IsReplica {
 		var (
-			replayLSN   string
-			receiveLSN  string
-			replayTime  sql.NullTime
+			replayLSN  string
+			receiveLSN string
+			replayTime sql.NullTime
 		)
 		if err := db.QueryRowContext(ctx,
 			`SELECT pg_last_wal_replay_lsn(), pg_last_wal_receive_lsn(), pg_last_xact_replay_timestamp()`,
@@ -616,6 +652,67 @@ func (s *Sampler) collect(ctx context.Context, db *sql.DB, out *DBHealthSample) 
 		).Scan(&out.XLog.Location); err != nil {
 			errs = append(errs, fmt.Sprintf("xlog.current: %v", err))
 		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("db_health: %d query error(s): %v", len(errs), errs)
+	}
+	return nil
+}
+
+// collectSQLite is the SQLite counterpart of collect (B271).
+//
+// It answers the questions the /db/health page can honestly answer on a
+// file-backed database, and deliberately leaves the PostgreSQL-only fields
+// zero (they are `omitempty` in the JSON): SQLite has no server identity, no
+// WAL/replication state and no autovacuum catalog. The previous behaviour —
+// running the PG queries anyway — logged five errors per 30 s tick and gave an
+// operator a permanently "degraded" DB health badge on a perfectly healthy
+// install (live case: the aro host, 2026-09-19).
+func (s *Sampler) collectSQLite(ctx context.Context, db *sql.DB, out *DBHealthSample) error {
+	var errs []string
+
+	// 1. Size: page_count * page_size is the canonical SQLite file size.
+	// page_size must be read AFTER page_count on the same connection; both
+	// are cheap pragmas.
+	var pageCount, pageSize int64
+	if err := db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err != nil {
+		errs = append(errs, fmt.Sprintf("database.page_count: %v", err))
+	} else if err := db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
+		errs = append(errs, fmt.Sprintf("database.page_size: %v", err))
+	} else {
+		out.Database.SizeBytes = pageCount * pageSize
+		out.Database.SizeHuman = humanBytes(out.Database.SizeBytes)
+	}
+
+	// 2. Version is what `SELECT sqlite_version()` reports; SQLite has no
+	// "postmaster start time", so StartedAt stays zero.
+	if err := db.QueryRowContext(ctx, `SELECT sqlite_version()`).Scan(&out.Server.Version); err != nil {
+		errs = append(errs, fmt.Sprintf("server: %v", err))
+	}
+	// A file-backed SQLite database is never a replica.
+	out.Server.IsReplica = false
+	out.Replication.IsReplica = false
+
+	// 3. Integrity: the same check the R30 guard uses. A non-"ok" answer is
+	// the single most important DB signal on a SQLite install, so surfacing
+	// it here (as a query error → SampleError) is intentional.
+	var integrity string
+	if err := db.QueryRowContext(ctx, `PRAGMA quick_check`).Scan(&integrity); err != nil {
+		errs = append(errs, fmt.Sprintf("db.integrity_check: %v", err))
+	} else if integrity != "ok" {
+		errs = append(errs, fmt.Sprintf("db.integrity_check: %s", integrity))
+	}
+
+	// 4. Journal mode (wal vs delete) — the operator-visible answer to
+	// "am I in WAL mode", and cheap. Reported through the log only: the
+	// response shape has no field for it, and inventing one here would
+	// change the /db/health contract.
+	var journalMode string
+	if err := db.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+		errs = append(errs, fmt.Sprintf("db.journal_mode: %v", err))
+	} else if s.cfg.Logger != nil {
+		s.cfg.Logger("db_health: sqlite journal_mode=%s size=%s", journalMode, out.Database.SizeHuman)
 	}
 
 	if len(errs) > 0 {

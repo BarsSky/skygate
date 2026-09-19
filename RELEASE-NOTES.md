@@ -134,8 +134,36 @@ goroutine — i.e. the process died exactly when it had finished booting. Invisi
 to grep; found by running the binary, and pinned by
 `cmd/skygate/startup_handover_b269_test.go`.
 
-Operator procedure for both: `docs/troubleshooting.md` §8.0.1 (B269) and §8.0.2
-(B270).
+### B271 — the DB-health sampler now speaks the database's dialect
+
+The same journal carried, every 30 seconds, on a **SQLite** install:
+
+```
+db_health: tick: db_health: 4 query error(s): [
+  server: SQL logic error: no such function: pg_is_in_recovery (1)
+  database.size: SQL logic error: no such function: current_database (1)
+  maintenance: SQL logic error: no such table: pg_stat_user_tables (1)
+  xlog.current: SQL logic error: no such function: pg_current_wal_lsn (1)]
+```
+
+The `/db/health` collector is PostgreSQL-shaped and ran its catalog queries
+against whatever backend was configured, so a healthy native install showed a
+permanently degraded DB-health badge and five useless errors per tick (each one
+still touching the database). `DBHealthConfig` now takes a `Dialect`:
+
+* `postgres` (**default** — every existing caller and deployment is unchanged);
+* `sqlite` — the collector answers the same operator questions natively:
+  `PRAGMA page_count` × `PRAGMA page_size` for the size, `SELECT sqlite_version()`
+  for the version, `PRAGMA quick_check` for integrity (a non-`ok` answer becomes
+  the sample error) and `PRAGMA journal_mode` (logged). The PostgreSQL-only
+  panels (replication, WAL position) stay **empty** instead of reporting invented
+  values.
+
+`main.go` passes the value it already computes with `db.DetectDSN`, and the boot
+log states it: `db-health: started (interval=30s, query-timeout=3s, dialect=sqlite)`.
+
+Operator procedure for all three: `docs/troubleshooting.md` §8.0.1 (B269), §8.0.2
+(B270) and §8.0.3 (B271).
 
 ### Contracts
 
@@ -144,10 +172,10 @@ Operator procedure for both: `docs/troubleshooting.md` §8.0.1 (B269) and §8.0.
   binary, points it at an unopenable DB and asserts `/healthz` still answers `200`
   + build + `phase:"db-open+migrate"` + `ready:false` while the process stays alive)
   and `internal/startup/startup_test.go`.
-* **B270** — `scripts/check_b270_startup_blockers.sh` (21 contracts, incl. a live
+* **B270** — `scripts/check_b270_startup_blockers.sh` (26 contracts, incl. a live
   probe that runs the real binary with an uncreatable key dir and asserts
   `/healthz` still answers while the process stays alive) +
-  `internal/oidc/oidc_b270_test.go`.
+  `internal/oidc/oidc_b270_test.go` + `internal/feature/healthz/db_health_b271_test.go`.
 * **B268** — `scripts/check_b268_applier_failure_diagnostics.sh` (11 contracts, incl.
   a behavioural run against a local mirror with stubbed `systemctl`/`ss`/`journalctl`
   /`curl`) and `internal/update/applier_b268_test.go` (7 order-pinning contracts).

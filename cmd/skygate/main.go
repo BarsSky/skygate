@@ -1086,14 +1086,22 @@ func main() {
 	// stops responding to pings.
 	dbHealthCfg := healthz.DefaultDBHealthConfig()
 	dbHealthCfg.Notifier = schedulerNotifierSink(app.Notifier)
+	// B271: the collector's queries are dialect-specific. Without this the
+	// PostgreSQL catalog queries (pg_is_in_recovery, pg_database_size,
+	// pg_stat_user_tables, pg_current_wal_lsn) ran against SQLite every 30 s
+	// and produced five "SQL logic error: no such function" entries per tick
+	// (live: the aro host, 2026-09-19) — a permanently degraded DB-health
+	// badge on a healthy install.
+	dbHealthCfg.Dialect = dialectKind.String()
 	dbHealthSampler := healthz.NewDBHealthSampler(dbHealthCfg, d)
 	dbHealthSampler.Start()
 	defer dbHealthSampler.Stop()
 	healthzSvc.DBHealthSampler = dbHealthSampler
 	healthzSvc.DBHealthSrc = d
-	log.Printf("db-health: started (interval=%s, query-timeout=%s)",
-		healthz.DefaultDBHealthConfig().Interval,
-		healthz.DefaultDBHealthConfig().QueryTimeout)
+	log.Printf("db-health: started (interval=%s, query-timeout=%s, dialect=%s)",
+		dbHealthCfg.Interval,
+		dbHealthCfg.QueryTimeout,
+		dbHealthCfg.Dialect)
 
 	// 2026-09-03 / B226 (Phase 4.5) — Prometheus
 	// exporter. The collector samples skygate
