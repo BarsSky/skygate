@@ -187,7 +187,13 @@ if command -v "$GO" >/dev/null 2>&1 || [[ -x "$GO" ]]; then
   SKYGATE_TMP="$(mktemp -d)"
   trap 'rm -rf "$SKYGATE_TMP"' EXIT
   if GO="$GO" go_build_bin "$SKYGATE_TMP/skygate" ./cmd/skygate; then
-    INIT_HELP="$("$SKYGATE_TMP/skygate" init --help 2>&1 | head -1)"
+    # NOTE: capture the WHOLE output and take the first line in bash — never
+    # `| head -1`. Under `set -euo pipefail` the pipe form aborts the check
+    # silently: head exits after the first line, the still-writing binary dies
+    # with SIGPIPE (141), and pipefail turns that into a failed assignment
+    # (same class as AGENTS trap 9).
+    INIT_RAW="$("$SKYGATE_TMP/skygate" init --help 2>&1)"
+    INIT_HELP="${INIT_RAW%%$'\n'*}"
     if [[ "$INIT_HELP" == "skygate init <verb> [flags]" ]]; then
       check "S: skygate init --help prints usage" "match" "match"
     else

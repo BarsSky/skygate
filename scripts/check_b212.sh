@@ -165,10 +165,11 @@ if command -v "$GO" >/dev/null 2>&1 || [[ -x "$GO" ]]; then
   SKYGATE_TMP="$(mktemp -d)"
   trap 'rm -rf "$SKYGATE_TMP"' EXIT
   if GO="$GO" go_build_bin "$SKYGATE_TMP/skygate" ./cmd/skygate; then
-    if ! JOIN_HELP="$("$SKYGATE_TMP/skygate" join --help 2>&1 | head -1)"; then
-      printf '[%s] B212 T: the built binary failed to run: %q\n' "$(date -u +%FT%TZ)" "$JOIN_HELP" \
-        >> "${SKYGATE_GO_BUILD_LOG:-/tmp/skygate-go-build.log}" 2>/dev/null || true
-    fi
+    # NOTE: capture the WHOLE output and take the first line in bash — never
+    # `| head -1` (SIGPIPE 141 + pipefail makes the assignment "fail" and, with
+    # `set -e`, aborts the check; see AGENTS trap 9).
+    JOIN_RAW="$("$SKYGATE_TMP/skygate" join --help 2>&1)"
+    JOIN_HELP="${JOIN_RAW%%$'\n'*}"
     if [[ "$JOIN_HELP" == "skygate join <verb> [args]" ]]; then
       check "T: skygate join --help prints usage" "match" "match"
     else

@@ -159,7 +159,13 @@ if command -v "$GO" >/dev/null 2>&1 || [[ -x "$GO" ]]; then
   SKYGATE_TMP="$(mktemp -d)"
   trap 'rm -rf "$SKYGATE_TMP"' EXIT
   if GO="$GO" go_build_bin "$SKYGATE_TMP/skygate" ./cmd/skygate; then
-    MIGRATE_HELP="$("$SKYGATE_TMP/skygate" migrate --help 2>&1 | head -1)"
+    # NOTE: capture the WHOLE output and take the first line in bash — never
+    # `| head -1`. Under `set -euo pipefail` head closes the pipe early, the
+    # still-writing binary gets SIGPIPE (141), and the failed assignment aborts
+    # this check silently (the gate then reports B213 FAIL with A-R green —
+    # seen 2026-09-19). Same class as AGENTS trap 9.
+    MIGRATE_RAW="$("$SKYGATE_TMP/skygate" migrate --help 2>&1)"
+    MIGRATE_HELP="${MIGRATE_RAW%%$'\n'*}"
     if [[ "$MIGRATE_HELP" == "skygate migrate <verb> [args]" ]]; then
       check "S: skygate migrate --help prints usage" "match" "match"
     else
