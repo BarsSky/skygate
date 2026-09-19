@@ -1021,6 +1021,50 @@ sudo systemctl restart headscale
 sudo headscale policy get | head -20
 ```
 
+#### The file must be readable by headscale
+
+With `policy.mode: file` the API answers **500** until headscale itself can read
+the file — and then nothing else can work either:
+
+```
+{"code":2, "message":"reading policy from path \"/etc/headscale/policy.hujson\":
+                       open /etc/headscale/policy.hujson: permission denied"}
+```
+
+Check both sides (they are different users — `headscale` serves, `skygate`
+writes):
+
+```bash
+systemctl show headscale -p User -p Group          # usually headscale:headscale
+sudo -u headscale test -r /etc/headscale/policy.hujson && echo "headscale CAN read"
+sudo -u skygate   test -w /etc/headscale/policy.hujson && echo "skygate CAN write"
+```
+
+A file owned `root:skygate 0660` satisfies **only** skygate. Give it to
+headscale and keep skygate in the group (either command set works):
+
+```bash
+# owner = headscale (it only needs to read), group = skygate (it must write)
+sudo chown headscale:skygate /etc/headscale/policy.hujson
+sudo chmod 0640 /etc/headscale/policy.hujson
+
+# or the other way round
+sudo chown root:headscale /etc/headscale/policy.hujson && sudo chmod 0640 /etc/headscale/policy.hujson
+sudo usermod -aG headscale skygate && sudo systemctl restart skygate
+```
+
+`/etc/headscale` itself must be traversable by both (`drwxr-xr-x root root` is
+enough). Verify and continue:
+
+```bash
+sudo systemctl restart headscale && sleep 3
+sudo headscale policy get | head -5                # must return JSON, not an error
+sudo journalctl -u skygate -f | grep tag-reconcile # the next tick repairs the tags
+```
+
+After this, skygate writes `tagOwners` itself (B272.1), applies the missing tags,
+and `tag-reconcile` reports `applied=N failed=0`.
+
 To let skygate do it automatically on a native host, either grant the service user
 write access to that directory or run headscale with `policy.mode: database`:
 
