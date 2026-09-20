@@ -475,11 +475,19 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 	// (the cdn:-prefixed one), drop the rest. Pure data hygiene — the
 	// ACL is unaffected because the generator collapses CIDRs into one
 	// host alias anyway.
-	if n, derr := s.CollapseDuplicateDerivedRules(); derr != nil {
-		log.Printf("auto-updater: dedup: %v", derr)
-	} else if n > 0 {
-		log.Printf("auto-updater: dedup removed %d redundant derived rule row(s)", n)
-	}
+	//
+	// It runs DEFERRED, after the resolve loop below: the loop inserts
+	// one row per (domain, CIDR) pair — that is what creates the
+	// duplicates — so deduplicating before it would be undone by the
+	// very same pass (observed live: 47 groups right after a tick that
+	// started with 0).
+	defer func() {
+		if n, derr := s.CollapseDuplicateDerivedRules(); derr != nil {
+			log.Printf("auto-updater: dedup: %v", derr)
+		} else if n > 0 {
+			log.Printf("auto-updater: dedup removed %d redundant derived rule row(s)", n)
+		}
+	}()
 	rows, qerr := s.dbc().Query("SELECT id, user_id, device_id, exit_node_id, target_value, action, COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND target_type = 'domain'")
 	if qerr != nil {
 		return 0, 0, qerr
