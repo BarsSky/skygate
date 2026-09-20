@@ -12,6 +12,92 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.19 — one advertising relay per prefix (B274)
+
+**Date:** 2026-09-20 · **Base:** `v1.5.18` → this tag · **Compatibility:** no schema,
+config or API change. The dedup and the fixture cleanup are ordinary `DELETE`s; the
+route-sync change only narrows which prefixes a relay advertises.
+
+### Symptom (live, host `SKYWORKER` — the operator's own Windows box)
+
+Cloudflare/Google/Akamai sites intermittently failed **only on `skyworker`** while
+every other device was fine. The device accepts routes and has **no exit node
+selected**, so it reaches those destinations through the tailnet's subnet routes.
+
+### Root cause
+
+`StaggeredSync` / `SyncAdvertisedRoutes` built each relay's `--advertise-routes`
+from **that relay's own rules**, so two relays advertised the same prefixes
+whenever two devices of different users pointed their rules at different relays —
+which the CDN expansion makes routine:
+
+| CIDR | device | exit | where it came from |
+|---|---|---|---|
+| 28 Cloudflare/Google ranges | `basic` (michail) | **emilia** | `cdn:cloudflare:discord.*`, `rutracker.org` |
+| the same 28 | `skyworker` (skyadmin) | **karolina** | `cdn:cloudflare:auth.docker.io`, `registry.npmjs.org`, `rutracker.org` |
+
+headscale assigns **one primary per prefix** (`node.SubnetRoutes()` is what the
+netmap carries), and *which* of the two relays won was not stable: it changed
+between two `nodes list` dumps on the same day (emilia served the contested ranges
+first, karolina later, after a `staggeredSync` pass had rewritten both route sets).
+`skyworker`'s per-CIDR ACL grant names karolina, so whenever emilia held the
+primary those destinations were dropped for it — while a device **without** a
+per-CIDR pin kept working, because its unpinned `autogroup:internet` grant follows
+whatever primary exists.
+
+### Fix
+
+1. **`internal/feature/exit_rules/prefix_owner.go`** owns the question "which relay
+   may advertise this prefix?":
+   * `PrefixOwnership` → every prefix has exactly **one** advertising relay (the
+     relay the most enabled rules name for it; hostname as a deterministic
+     tie-break, so the choice cannot oscillate between passes);
+   * `PrefixLosers` → the relays that must drop a prefix they claim;
+   * `OwnedPrefixes` → filters a relay's candidate list, always keeping the
+     exit-node bases (`0.0.0.0/0`, `::/0`).
+2. **All three sync paths** (`SyncAdvertisedRoutes`, `SyncAdvertisedRoutesForNode`,
+   `StaggeredSync`) now advertise only the owned set, so a prefix can no longer be
+   announced by two relays and the primary stops flapping.
+3. **The losers are named** — `prefix-ownership(...): <relay> does NOT advertise N
+   prefix(es) it claims …` in the log plus a `prefix_conflicts` entry in the sync
+   result, so a device whose rule names a non-serving relay is visible instead of
+   silently half-working. The device's own rule list is **never rewritten**:
+   `device_rules.exit_node_id` stays exactly as the operator set it.
+4. **Dedup.** `CollapseDuplicateDerivedRules` removes the rows the CDN expansion
+   duplicates (it partitions on the natural key — `user_id, device_id,
+   exit_node_id, target_type, target_value` — and keeps the `cdn:`-prefixed
+   `parent_domain`, B183's own preference). Live: `basic` carried **five** rows for
+   `104.16.0.0/12` (one per discord.* / rutracker.org parent).
+5. **Fixture cleanup.** `scripts/cleanup_b188_3_fixtures.sh` deletes the rows the
+   B188.3 integration fixtures leaked into the production database
+   (`5.5.5.5/32`, `6.7.8.9/32`, `1.2.3.0/24`, `1.2.99.0/24`, `example.com`,
+   `cascade-verify-*`, `limit-test-*`) from a **closed allow-list**, and is
+   dry-run unless `--apply` is passed.
+
+### Operator note
+
+If a relay drops a prefix (the log line above), the device whose rule named that
+relay cannot reach it through the tailnet any more. The operator decides which
+relay keeps a contested prefix — re-point the rule at the owner (or drop the
+duplicate rule on the other device) — because headscale can serve a prefix from
+only one relay at a time. `skyworker`'s case: 183 rules → karolina (it owns most
+of them), 28 ranges also claimed by `basic` → emilia.
+
+### Files
+
+`internal/feature/exit_rules/prefix_owner.go` (new),
+`internal/feature/exit_rules/sync.go`, `internal/feature/exit_rules/prefix_owner_b274_test.go`
+(new), `scripts/check_b274_prefix_ownership.sh` (new),
+`scripts/cleanup_b188_3_fixtures.sh` (new).
+
+### Verification
+
+`scripts/check_b274_prefix_ownership.sh` — 21 contracts: the ownership helper and
+its determinism, both sync paths, the loser report, the dedup, the cleanup script
+(dry-run default + closed allow-list), the Go behaviour tests, and a **live
+served-overlap check** (`no prefix is served by more than one relay`, SKIPs when
+headscale is unreachable).
+
 ## v1.5.18 — exit-node health stops calling a working relay "не работает" (B273)
 
 **Date:** 2026-09-19 · **Base:** `v1.5.17` → this tag · **Compatibility:** no schema,

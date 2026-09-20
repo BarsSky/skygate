@@ -27,6 +27,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -84,13 +85,20 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 	}
 	defer rows.Close()
 	exitRoutes := map[string][]string{}
+	var claims []PrefixClaim
 	for rows.Next() {
 		var node, target string
 		if err := rows.Scan(&node, &target); err != nil {
 			continue
 		}
 		exitRoutes[node] = append(exitRoutes[node], target)
+		claims = append(claims, PrefixClaim{Node: node, Prefix: target})
 	}
+	// B274: a prefix is advertised by exactly ONE relay. Without this,
+	// two relays claim the same CIDR and headscale's primary for it
+	// flaps between passes (see prefix_owner.go for the live case).
+	owners := PrefixOwnership(claims)
+	reportPrefixLosers("SyncAdvertisedRoutes", claims, owners, result)
 	// Default SSH key path comes from Config (set from
 	// SKYGATE_EXIT_SSH_KEY, default /home/operator/.ssh/skygate_sync).
 	// The operator can override per-exit-node via
@@ -100,7 +108,7 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 		defaultKeyPath = s.Cfg.SSHKeyPath
 	}
 	for node, routes := range exitRoutes {
-		syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, routes, result)
+		syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, OwnedPrefixes(node, routes, owners), result)
 	}
 	if len(exitRoutes) == 0 {
 		result["info"] = "no IP/subnet rules configured"
@@ -149,8 +157,49 @@ func (s *Service) SyncAdvertisedRoutesForNode(node string) map[string]string {
 	if s.Cfg != nil {
 		defaultKeyPath = s.Cfg.SSHKeyPath
 	}
-	syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, routes, result)
+	// B274: this node advertises only the prefixes it OWNS — a prefix
+	// another relay claims more strongly is left to that relay so
+	// headscale's primary cannot flap. The single-node path uses the
+	// same global ownership map as the all-nodes path.
+	nodeClaims, _ := s.dbc().Query("SELECT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND (target_type = 'ip' OR target_type = 'subnet')")
+	var allClaims []PrefixClaim
+	if nodeClaims != nil {
+		for nodeClaims.Next() {
+			var n2, p2 string
+			if nodeClaims.Scan(&n2, &p2) == nil {
+				allClaims = append(allClaims, PrefixClaim{Node: n2, Prefix: p2})
+			}
+		}
+		nodeClaims.Close()
+	}
+	owners := PrefixOwnership(allClaims)
+	syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, OwnedPrefixes(node, routes, owners), result)
 	return result
+}
+
+// reportPrefixLosers logs (and counts into the result map) every relay
+// that claims a prefix it does not own. These are the rules the
+// operator has to look at: the device keeps its own rule list, but the
+// relay named by that rule will not serve the prefix until either the
+// rule is re-pointed at the owner or the ownership changes. B274.
+func reportPrefixLosers(where string, claims []PrefixClaim, owners map[string]string, result map[string]string) {
+	losers := PrefixLosers(claims)
+	if len(losers) == 0 {
+		return
+	}
+	total := 0
+	nodes := make([]string, 0, len(losers))
+	for node := range losers {
+		nodes = append(nodes, node)
+	}
+	sort.Strings(nodes)
+	for _, node := range nodes {
+		dropped := losers[node]
+		total += len(dropped)
+		log.Printf("prefix-ownership(%s): %s does NOT advertise %d prefix(es) it claims — owner is another relay (%v)",
+			where, node, len(dropped), dropped)
+	}
+	result["prefix_conflicts"] = fmt.Sprintf("%d prefix(es) claimed by more than one relay; see log", total)
 }
 
 // syncOneExitNode is the per-node sync body extracted from
@@ -279,6 +328,23 @@ func (s *Service) StaggeredSync() {
 	log.Printf("staggeredSync(aggregated): %d rules across %d nodes, interval=%s",
 		totalRules, len(nodes), interval)
 	go func() {
+		// B274: compute prefix ownership ONCE per pass, from the same
+		// enabled ip/subnet rules the per-node lists are built from, so
+		// two relays can never advertise the same prefix (the live
+		// cause of the flapping primary that broke `skyworker`'s
+		// Cloudflare/Google destinations).
+		claimRows, cerr := s.dbc().Query("SELECT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND exit_node_id != '' AND target_type IN ('subnet', 'ip')")
+		var claims []PrefixClaim
+		if cerr == nil && claimRows != nil {
+			for claimRows.Next() {
+				var cn, cp string
+				if claimRows.Scan(&cn, &cp) == nil {
+					claims = append(claims, PrefixClaim{Node: cn, Prefix: cp})
+				}
+			}
+			claimRows.Close()
+		}
+		owners := PrefixOwnership(claims)
 		for _, n := range nodes {
 			rules, _ := s.dbc().Query("SELECT target_value FROM device_rules WHERE enabled=1 AND exit_node_id=$1 AND target_type IN ('subnet', 'ip')", n.name)
 			if rules == nil {
@@ -292,6 +358,13 @@ func (s *Service) StaggeredSync() {
 				}
 			}
 			rules.Close()
+			// B274: drop the prefixes this relay does not own.
+			owned := OwnedPrefixes(n.name, routeList, owners)
+			droppedCount := len(routeList) - (len(owned))
+			if droppedCount > 0 {
+				log.Printf("prefix-ownership(staggeredSync): %s drops %d claimed prefix(es) owned by another relay", n.name, droppedCount)
+			}
+			routeList = owned
 			// Always include base exit-node routes.
 			batch := []string{"0.0.0.0/0", "::/0"}
 			seen := map[string]bool{"0.0.0.0/0": true, "::/0": true}
@@ -391,6 +464,22 @@ func (s *Service) PostSyncAdvertisedRoutes(w http.ResponseWriter, r *http.Reques
 // Background job: resolves all domain rules every interval, reconciles with /32 IP rules.
 // Returns count of changes (added + removed) and writes log entries.
 func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
+	// B274: collapse the redundant rows the CDN expansion produces.
+	// One domain rule for a Cloudflare-fronted site yields the CDN's
+	// whole published range set, so N domains of the same CDN create N
+	// identical rows per CIDR (live: `basic` carried 5 rows for
+	// `104.16.0.0/12`, one per discord.*/rutracker.org parent). The rows
+	// are not wrong (parent_domain is part of the natural key by B183),
+	// but they inflate rule counts, the admin "expected routes" counter
+	// and the prefix-ownership weight. Keep the most informative parent
+	// (the cdn:-prefixed one), drop the rest. Pure data hygiene — the
+	// ACL is unaffected because the generator collapses CIDRs into one
+	// host alias anyway.
+	if n, derr := s.CollapseDuplicateDerivedRules(); derr != nil {
+		log.Printf("auto-updater: dedup: %v", derr)
+	} else if n > 0 {
+		log.Printf("auto-updater: dedup removed %d redundant derived rule row(s)", n)
+	}
 	rows, qerr := s.dbc().Query("SELECT id, user_id, device_id, exit_node_id, target_value, action, COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND target_type = 'domain'")
 	if qerr != nil {
 		return 0, 0, qerr
@@ -709,9 +798,10 @@ func (s *Service) logAutoUpdate(ruleID int, domain string, added, removed int, e
 
 // lookupAcceptRoutes returns the per-exit-node Tailscale AcceptRoutes
 // preference stored in exit_servers.accept_routes:
-//   -1 -> --accept-routes=false (nodes that co-host another VPN, e.g. Amnezia-AWG)
-//    0 -> unset, do not change AcceptRoutes on the node
-//    1 -> --accept-routes=true
+//
+//	-1 -> --accept-routes=false (nodes that co-host another VPN, e.g. Amnezia-AWG)
+//	 0 -> unset, do not change AcceptRoutes on the node
+//	 1 -> --accept-routes=true
 //
 // Lookup is keyed on the node's hostname. Falls back to 0 (do not change)
 // if the node is not in exit_servers or the column is missing.
@@ -725,4 +815,3 @@ func (s *Service) lookupAcceptRoutes(nodeHostname string) int {
 	accept, _ := db.LookupExitServerAcceptRoutes(s.dbc(), nodeHostname)
 	return accept
 }
-

@@ -4515,3 +4515,47 @@ run_check "B272" "tags must actually reach headscale: file-mode policy writes, R
 # shape, pruning, and the alert boundary).
 run_check "B273" "exit-node health tells the truth: one predicate for 'is this an exit node', a ladder ordered by what blocks client egress, and a named reason instead of a false 'не работает' (2026-09-19). Live case: on the native host aro the /admin/exit-nodes page showed the red banner 'Нет рабочих exit-узлов!' plus 0/1 healthy and state=offline for the tailnet's only relay (exit-node-vps, online, advertising 0.0.0.0/0 + ::/0), while /my/exit-nodes showed the same node as online — both pages read headscale.NodeView, so the bug was inside skygate. internal/headscale.hasExitNodeTag (used by ListExitNodes -> /my/exit-nodes) counts tag:exit-node OR an exit-/exitnode name prefix OR an advertised 0.0.0.0/0|::/0, but the monitor's computeSnapshot required the literal tag and ran 'case !online || !hasTag: state = offline', so a working untagged relay was filed as offline with Healthy=false. (1) computeSnapshot now gates on NodeView.IsExitNode (the shared predicate) and returns (snapshot, ok); a node that is not an exit node gets no snapshot row and its stale row is pruned, so the N/M healthy denominator counts exit nodes rather than every device in the tailnet (a 14-node tailnet carried 11 permanent offline rows). (2) New ladder: offline (headscale says not online) -> degraded (the 0.0.0.0/0 route is not APPROVED; the pre-B273 test read AvailableRoutes, so advertised-but-unapproved counted as healthy) -> untagged (approved + online, only tag:exit-node missing: it works, stays healthy, is flagged with the tag hint) -> online. (3) exitNodeUsable() (online|untagged) is the one source of truth for Healthy and for isCalmModeAlert, which now alerts on every usable-boundary crossing — losing route approval alerts (previously silent) while tagging/untagging a working relay stays quiet. (4) /admin/exit-nodes fills ApprovedV4Default/ApprovedRoutesOK from the live node's ApprovedRoutes, flags 'не одобрено' beside the advertised count, renders two named warning banners (N without tag:exit-node / N with unapproved routes) instead of answering both with the red zero-healthy banner, and uses a case-insensitive tag test. (5) /exit_nodes_health gained the untagged bucket and counts untagged relays as healthy. 36 contracts in scripts/check_b273_exit_node_truth.sh plus internal/monitoring/exit_node_monitor_test.go (TestComputeSnapshot_UntaggedIsHealthy_B273, TestComputeSnapshot_NotAnExitNode_IsSkipped_B273, TestTick_PrunesNonExitNodeRows_B273)." \
   'test -f scripts/check_b273_exit_node_truth.sh && bash scripts/check_b273_exit_node_truth.sh'
+
+# --- B274 (2026-09-20): one advertising relay per prefix ----------------------
+#
+# B274: live case on the operator's own Windows box (host SKYWORKER, which
+# accepts routes and has NO exit node selected): 183 of its device_rules point at
+# karolina, while 28 of the SAME CIDRs are pointed at emilia by michail's `basic`
+# — the CDN expansion makes that routine, because one domain rule for a
+# Cloudflare-fronted site yields the CDN's whole published range set (discord.*
+# on basic, auth.docker.io / registry.npmjs.org on skyworker), so two devices on
+# two relays collide on 28 ranges. headscale assigns ONE primary per prefix
+# (node.SubnetRoutes() is the netmap source) and BOTH relays advertised them, so
+# the primary moved between two `nodes list` dumps on the same day; skyworker's
+# per-CIDR grant names karolina, so the Cloudflare/Google/Akamai destinations
+# broke for it while every device WITHOUT a pin kept working (an unpinned
+# autogroup:internet grant follows whatever primary exists). (1) New
+# internal/feature/exit_rules/prefix_owner.go owns the question: PrefixOwnership
+# gives every prefix exactly ONE advertising relay (the relay the most enabled
+# rules name for it, hostname as a deterministic tie-break so the choice cannot
+# oscillate), PrefixLosers names the relays that must drop a prefix they claim,
+# OwnedPrefixes keeps the exit-node bases (0.0.0.0/0, ::/0) for every relay; (2)
+# BOTH sync paths — SyncAdvertisedRoutes (all nodes), SyncAdvertisedRoutesForNode
+# (the per-row Re-sync button) and StaggeredSync — advertise only the owned set,
+# so a prefix can no longer be announced by two relays; (3) the losers are logged
+# (prefix-ownership(...): <relay> does NOT advertise N prefix(es) …) and counted
+# into the sync result as prefix_conflicts, so a device whose rule names a
+# non-serving relay is visible instead of silently half-working; (4) the domain
+# autoupdater now collapses the duplicate derived rows the CDN expansion creates
+# (CollapseDuplicateDerivedRules partitions on the natural key — user_id,
+# device_id, exit_node_id, target_type, target_value — and keeps the
+# cdn:-prefixed parent_domain, B183's own preference; live: `basic` carried 5
+# rows for 104.16.0.0/12), which also stops those duplicates from inflating the
+# ownership weight; (5) scripts/cleanup_b188_3_fixtures.sh removes the device_rules
+# rows the B188.3 test fixtures leaked into the live database (5.5.5.5/32,
+# 6.7.8.9/32, 1.2.3.0/24, 1.2.99.0/24, example.com, cascade-verify-*, limit-test-*)
+# from a closed allow-list and is dry-run unless --apply is passed. 21 contracts
+# in scripts/check_b274_prefix_ownership.sh (source pins, Go behaviour tests, a
+# live served-overlap check that SKIPs off-host) plus
+# internal/feature/exit_rules/prefix_owner_b274_test.go (ownership weight,
+# deterministic tie-break over 20 iterations, losers, the bases always kept).
+# NOTE: this fixes the FLAPPING (a prefix served by whoever advertised last); the
+# per-CIDR pin for a device whose rules name the losing relay is reported, not
+# rewritten — the operator decides which relay keeps a contested prefix.
+run_check "B274" "one advertising relay per prefix: prefix ownership is explicit and deterministic, both route-sync paths advertise only the owned set, the losers are named, and the CDN-expansion duplicates plus the leaked B188.3 fixtures are cleaned (2026-09-20). Live case on the operator's own Windows box (host SKYWORKER, accept-routes, NO exit node selected): 183 device_rules point at karolina while 28 of the same CIDRs are pointed at emilia by michail's basic — routine rather than exotic, because the CDN resolver expands one domain rule into the CDN's whole published range set (discord.* on basic, auth.docker.io / registry.npmjs.org on skyworker), so two devices on two relays collide on 28 Cloudflare/Google/Akamai ranges. headscale assigns ONE primary per prefix and both relays advertised them, so the primary moved between two nodes-list dumps on the same day; skyworker's per-CIDR grant names karolina, so those destinations broke for it while every device WITHOUT a pin kept working. (1) New internal/feature/exit_rules/prefix_owner.go: PrefixOwnership gives every prefix exactly ONE advertising relay (most claims wins, hostname tie-break so it cannot oscillate), PrefixLosers names the relays that must drop a claimed prefix, OwnedPrefixes keeps 0.0.0.0/0 and ::/0 for every relay; (2) SyncAdvertisedRoutes, SyncAdvertisedRoutesForNode and StaggeredSync all advertise only the owned set, so no prefix is announced twice; (3) losers are logged and counted as prefix_conflicts in the sync result, so a device whose rule names a non-serving relay is visible instead of silently half-working; (4) CollapseDuplicateDerivedRules collapses the duplicate rows the CDN expansion creates (partition on the natural key, keep the cdn:-prefixed parent_domain per B183) — live: basic carried 5 rows for 104.16.0.0/12; (5) scripts/cleanup_b188_3_fixtures.sh removes the B188.3 fixture rows (5.5.5.5/32, 6.7.8.9/32, 1.2.3.0/24, 1.2.99.0/24, example.com, cascade-verify-*, limit-test-*) from a closed allow-list, dry-run unless --apply. 21 contracts in scripts/check_b274_prefix_ownership.sh plus internal/feature/exit_rules/prefix_owner_b274_test.go. The flapping is fixed here; a device whose rules name the losing relay is REPORTED, not rewritten — the operator picks which relay keeps a contested prefix." \
+  'test -f scripts/check_b274_prefix_ownership.sh && bash scripts/check_b274_prefix_ownership.sh'
