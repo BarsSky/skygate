@@ -360,6 +360,21 @@ func (s *Service) StaggeredSync() {
 			claimRows.Close()
 		}
 		owners := PrefixOwnership(claims)
+		// B275: the staggered path is the one that actually runs on a
+		// normal install (staggered sync defaults ON), so the assignment
+		// table must be reconciled HERE too — wiring it into
+		// SyncAdvertisedRoutes alone left the table empty and the ACL
+		// falling back to each rule's own exit node (live: prefix_owner
+		// had 0 rows after the v1.5.22 deploy while staggeredSync kept
+		// advertising).
+		if ins, chg, rerr := prefixowner.Reconcile(s.dbc(), nil); rerr != nil {
+			log.Printf("prefix-owner: reconcile: %v", rerr)
+		} else if ins > 0 || chg > 0 {
+			log.Printf("prefix-owner: assignment table updated (inserted=%d changed=%d)", ins, chg)
+		}
+		if tbl := prefixowner.OwnerByPrefix(s.dbc()); len(tbl) > 0 {
+			owners = tbl
+		}
 		for _, n := range nodes {
 			rules, _ := s.dbc().Query("SELECT target_value FROM device_rules WHERE enabled=1 AND exit_node_id=$1 AND target_type IN ('subnet', 'ip')", n.name)
 			if rules == nil {
