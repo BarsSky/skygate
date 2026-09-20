@@ -5,11 +5,53 @@
      configured at all) is intentionally NOT flagged here —
      the operator has to deliberately add nodes, and the
      empty table is a sufficient signal. */}}
-{{if and .TotalCount (eq .HealthyCount 0)}}
+{{/* 2026-07-15: v0.13.0 — health monitor banner. The
+     banner fires when 0 of N configured exit-nodes are
+     healthy (state=online). The 0/0 case (no exit-nodes
+     configured at all) is intentionally NOT flagged here —
+     the operator has to deliberately add nodes, and the
+     empty table is a sufficient signal.
+
+     B273 (v1.5.18): gated on .ScoredCount rather than
+     .TotalCount. A row whose node headscale did not return has
+     NO verdict ("unknown"), and rendering "Нет рабочих
+     exit-узлов!" for "we could not ask" is exactly the false
+     alarm this block removes. */}}
+{{if and .ScoredCount (eq .HealthyCount 0)}}
 <div class="alert alert-danger" style="margin-bottom:16px">
   <i class="fa-solid fa-triangle-exclamation"></i>
   <strong>{{t "exit_nodes.health.banner_zero_healthy"}}</strong>
   <p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px">{{t "exit_nodes.health.banner_zero_healthy_help"}}</p>
+</div>
+{{end}}
+
+{{/* B273 (v1.5.18): "работает, но без tag:exit-node". An
+     untagged relay is a WORKING relay — headscale routes clients
+     through it as soon as its 0.0.0.0/0 route is approved, and
+     /my/exit-nodes has always listed it as online. Pre-B273 the
+     admin page folded the missing tag into the red "Нет рабочих
+     exit-узлов!" banner, so on a tailnet whose only relay was
+     untagged the operator was told egress was down while users
+     were browsing through it (live: the `aro` host). The tag is
+     still worth adding — tag-anchored ACL `via` pins and
+     tag:exit-node pre-auth keys need it — hence a warning, not
+     silence and not a false alarm. */}}
+{{if .UntaggedCount}}
+<div class="alert alert-warning" style="margin-bottom:16px">
+  <i class="fa-solid fa-tag"></i>
+  <strong>{{tf "exit_nodes.health.untagged_banner" .UntaggedCount}}</strong>
+  <p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px">{{t "exit_nodes.health.untagged_banner_help" | safeHTML}}</p>
+</div>
+{{end}}
+
+{{/* B273: advertised but never approved — the node is online,
+     yet headscale hands no client the 0.0.0.0/0 exit route, so
+     nothing routes through it. */}}
+{{if .UnapprovedCount}}
+<div class="alert alert-danger" style="margin-bottom:16px">
+  <i class="fa-solid fa-circle-exclamation"></i>
+  <strong>{{tf "exit_nodes.health.unapproved_banner" .UnapprovedCount}}</strong>
+  <p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px">{{t "exit_nodes.health.unapproved_banner_help" | safeHTML}}</p>
 </div>
 {{end}}
 
@@ -124,14 +166,24 @@
         {{else}}<span style="color:var(--text-subtle)">{{t "exit_nodes.form_accept_routes_default"}}</span>{{end}}
       </td>
       <td>
+        {{/* B273 (v1.5.18): show the APPROVED state next to the
+             advertised count. Advertised-but-unapproved is the
+             single most common "relay looks fine, nothing routes"
+             state, and pre-B273 no page showed it: the count came
+             from AvailableRoutes, and the health monitor called the
+             node healthy. */}}
         {{if .RouteCount}}
         <span class="tag tag-info">{{.RouteCount}} {{t "exit_nodes.routes_count_many"}}</span>
+        {{if not .ApprovedRoutesOK}}
+        <span class="tag tag-danger" title="{{t "exit_nodes.health.not_approved_tip"}}">{{t "exit_nodes.health.not_approved"}}</span>
+        {{end}}
         {{else}}<span style="color:var(--text-muted)">0</span>{{end}}
       </td>
       <td>
         {{if .State}}
-          {{if .Healthy}}<span class="tag tag-success">{{t "exit_nodes.health.state_online"}}</span>
-          {{else if eq .State "degraded"}}<span class="tag tag-warning">{{t "exit_nodes.health.state_degraded"}}</span>
+          {{if eq .State "untagged"}}<span class="tag tag-warning" title="{{t "exit_nodes.health.untagged_tip"}}">{{t "exit_nodes.health.state_untagged"}}</span>
+          {{else if .Healthy}}<span class="tag tag-success">{{t "exit_nodes.health.state_online"}}</span>
+          {{else if eq .State "degraded"}}<span class="tag tag-warning" title="{{t "exit_nodes.health.degraded_tip"}}">{{t "exit_nodes.health.state_degraded"}}</span>
           {{else}}<span class="tag tag-danger">{{t "exit_nodes.health.state_offline"}}</span>
           {{end}}
         {{else}}<span style="color:var(--text-muted)" title="{{t "exit_nodes.health.no_snapshot_tip"}}">—</span>{{end}}

@@ -30,17 +30,16 @@ import (
 	"skygate/internal/headscale"
 )
 
-
 // ExitNodeInfo is the row shape for /admin/exit-nodes. Most
 // fields are populated from the DB (db.ListExitServers) and
 // enriched from headscale (ListAllNodes) + the health-monitor
 // snapshot (db.ListExitNodeHealth). The template renders every
 // field — see internal/handlers/templates/admin/exit_nodes.html.
 type ExitNodeInfo struct {
-	NodeID       string   `json:"node_id"`
-	Hostname     string   `json:"hostname"`
-	TailscaleIP  string   `json:"tailscale_ip"`
-	SSHTarget    string   `json:"ssh_target"`
+	NodeID      string `json:"node_id"`
+	Hostname    string `json:"hostname"`
+	TailscaleIP string `json:"tailscale_ip"`
+	SSHTarget   string `json:"ssh_target"`
 	// 2026-08-09 v0.33.1.29 B81: the SSH target that the next
 	// SyncAdvertisedRoutes call will actually use, after applying
 	// the operator-override → root@<tailscale_ip> → "" fallback
@@ -54,9 +53,9 @@ type ExitNodeInfo struct {
 	// uses it to render a subtle "auto" badge so the operator
 	// knows the row is using the B81 fallback and the stored
 	// ssh_target column is empty.
-	SSHTargetAuto bool     `json:"ssh_target_auto"`
+	SSHTargetAuto     bool   `json:"ssh_target_auto"`
 	ResolvedSSHTarget string `json:"resolved_ssh_target"`
-	SSHKeyPath   string   `json:"ssh_key_path"`
+	SSHKeyPath        string `json:"ssh_key_path"`
 	// 2026-08-10 v0.33.1.33 B85: the per-row non-default SSH
 	// port. The B81 auto-fallback in LookupExitServerSSHTarget
 	// appends ":<port>" to "root@<tailscale_ip>" when this is
@@ -94,6 +93,20 @@ type ExitNodeInfo struct {
 	Tags                []string `json:"tags"`
 	AdvertisesV4Default bool     `json:"advertises_v4_default"`
 	AdvertisesV6Default bool     `json:"advertises_v6_default"`
+	// B273 (v1.5.18) — the APPROVED half of the same question,
+	// read from the live headscale node (NodeView.ApprovedRoutes)
+	// rather than from the health snapshot. Advertised-but-
+	// unapproved is the single most common "the relay is up but
+	// nothing routes" state, and pre-B273 no page showed it:
+	// /admin/exit-nodes counted AvailableRoutes (advertised) and
+	// the monitor called it healthy. ApprovedV4Default is the one
+	// that decides whether clients actually receive the
+	// 0.0.0.0/0 exit route.
+	ApprovedV4Default bool `json:"approved_v4_default"`
+	ApprovedV6Default bool `json:"approved_v6_default"`
+	// ApprovedRoutesOK is the single-boolean form used by the
+	// template's "маршруты не одобрены" warning tag.
+	ApprovedRoutesOK bool `json:"approved_routes_ok"`
 }
 
 // AdminExitNodes renders the /admin/exit-nodes page. Admin-only.
@@ -159,11 +172,11 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	var nodes []ExitNodeInfo
 	for _, e := range dbRows {
 		n := ExitNodeInfo{
-			NodeID:       e.NodeID,
-			Hostname:     e.Hostname,
-			TailscaleIP:  e.TailscaleIP,
-			SSHTarget:    e.SSHTarget,
-			SSHKeyPath:   e.SSHKeyPath,
+			NodeID:      e.NodeID,
+			Hostname:    e.Hostname,
+			TailscaleIP: e.TailscaleIP,
+			SSHTarget:   e.SSHTarget,
+			SSHKeyPath:  e.SSHKeyPath,
 			// v0.33.1.33 B85: the per-row non-default SSH port.
 			// Empty = port 22 (the v0.33.1.29 default; the B81
 			// auto-fallback then produces "root@<tailscale_ip>"
@@ -211,7 +224,8 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[exit-nodes] ListAllNodes (enrich) TIMEOUT after 2s, rendering without headscale enrichment")
 		hsErr = fmt.Errorf("timeout")
 	}
-	if hsErr == nil && hsNodes != nil {
+	hsEnriched := hsErr == nil && hsNodes != nil
+	if hsEnriched {
 		for i := range nodes {
 			for _, hn := range hsNodes {
 				nid, _ := strconv.Atoi(nodes[i].NodeID)
@@ -236,6 +250,16 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 							nodes[i].AdvertisesV6Default = true
 						}
 					}
+					// B273 (v1.5.18) — the approved half.
+					for _, r := range hn.ApprovedRoutes {
+						if r == "0.0.0.0/0" {
+							nodes[i].ApprovedV4Default = true
+						}
+						if r == "::/0" {
+							nodes[i].ApprovedV6Default = true
+						}
+					}
+					nodes[i].ApprovedRoutesOK = nodes[i].ApprovedV4Default
 					if nodes[i].Hostname == "" {
 						nodes[i].Hostname = hn.GivenName
 					}
@@ -277,33 +301,79 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		healthByID[h.NodeID] = h
 	}
 	healthyCount := 0
+	// B273 (v1.5.18): the two "works, but…" buckets the page now
+	// names explicitly instead of folding them into the red
+	// "Нет рабочих exit-узлов!" banner.
+	untaggedCount := 0
+	unapprovedCount := 0
+	// scoredCount is how many rows actually carry a verdict (a
+	// health snapshot, or a live-derived state). The red
+	// zero-healthy banner is gated on it: a row in exit_servers
+	// whose node headscale did not return (deleted node, headscale
+	// unreachable) has no verdict, and "we do not know" must not be
+	// rendered as "everything is down" — that class of false alarm
+	// is what B273 is about.
+	scoredCount := 0
 	for i := range nodes {
 		h, ok := healthByID[nodes[i].NodeID]
-		if !ok {
-			continue
+		if ok {
+			nodes[i].Online = h.Online
+			nodes[i].LastSeen = h.LastSeen
+			nodes[i].State = h.State
+			nodes[i].Healthy = h.Healthy
+			nodes[i].LastCheckAt = h.LastCheckAt
+			nodes[i].HasExitTag = h.HasExitTag
+			nodes[i].AdvertisedRoutesOK = h.AdvertisedRoutesOK
+			if !h.LastSeenParsed.IsZero() {
+				nodes[i].LastSeenAgo = humanizeDuration(now.Sub(h.LastSeenParsed))
+			}
 		}
-		nodes[i].Online = h.Online
-		nodes[i].LastSeen = h.LastSeen
-		nodes[i].State = h.State
-		nodes[i].Healthy = h.Healthy
-		nodes[i].LastCheckAt = h.LastCheckAt
-		nodes[i].HasExitTag = h.HasExitTag
-		nodes[i].AdvertisedRoutesOK = h.AdvertisedRoutesOK
-		if !h.LastSeenParsed.IsZero() {
-			nodes[i].LastSeenAgo = humanizeDuration(now.Sub(h.LastSeenParsed))
+		// The counts are derived from the LIVE headscale view where
+		// it is available, because the snapshot can be up to
+		// CheckEvery (5 min) old and the operator is looking at this
+		// page precisely to find out what is wrong right now. The
+		// snapshot remains the fallback for a row this page could not
+		// enrich (headscale timeout above) — in that case Tags and
+		// ApprovedRoutesOK are both zero, so the switch is skipped
+		// rather than inventing an "untagged" verdict from missing
+		// data.
+		if hsEnriched {
+			switch {
+			case nodes[i].ApprovedRoutesOK && !hasExitNodeTagFor(nodes[i].Tags):
+				untaggedCount++
+				nodes[i].State = "untagged"
+				nodes[i].Healthy = true
+			case nodes[i].AdvertisesV4Default && !nodes[i].ApprovedRoutesOK:
+				unapprovedCount++
+				if nodes[i].State == "" || nodes[i].State == "online" || nodes[i].State == "untagged" {
+					nodes[i].State = "degraded"
+					nodes[i].Healthy = false
+				}
+			}
 		}
-		if h.Healthy {
+		if nodes[i].Healthy {
 			healthyCount++
+		}
+		if nodes[i].State != "" {
+			scoredCount++
 		}
 	}
 
 	s.Backend.RenderWithLayout(w, r, "admin/exit_nodes.html", c, map[string]any{
-		"Page":            "exit-nodes",
-		"Title":           "Exit Nodes",
-		"Nodes":           nodes,
-		"SSHKeyPath":      s.SSHKeyPath,
-		"HealthyCount":    healthyCount,
-		"TotalCount":      len(nodes),
+		"Page":         "exit-nodes",
+		"Title":        "Exit Nodes",
+		"Nodes":        nodes,
+		"SSHKeyPath":   s.SSHKeyPath,
+		"HealthyCount": healthyCount,
+		"TotalCount":   len(nodes),
+		// B273 (v1.5.18): "works, but the exit-node tag is missing"
+		// and "up, but the route was never approved" are two
+		// DIFFERENT operator problems with two different fixes. The
+		// page names each one instead of answering both with the red
+		// "Нет рабочих exit-узлов!" banner.
+		"UntaggedCount":   untaggedCount,
+		"UnapprovedCount": unapprovedCount,
+		"ScoredCount":     scoredCount,
 		"MonitorRunning":  s.ExitNodeMonitor != nil,
 		"FlashSuccess":    r.URL.Query().Get("ok"),
 		"FlashError":      firstNonEmptyStr(r.URL.Query().Get("err"), listErrMsg), // 2026-07-20: v0.20.0 — headscale-update-monitor
@@ -326,6 +396,22 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// hasExitNodeTagFor reports whether the headscale tag list carries
+// tag:exit-node. B273 (v1.5.18) — the comparison is
+// case-insensitive so it agrees with headscale's own
+// hasExitNodeTag (which uses strings.EqualFold) and with the health
+// monitor; the pre-B273 exact `== "tag:exit-node"` test meant a node
+// tagged `Tag:Exit-Node` was "tagged" for routing and "untagged" for
+// the health banner.
+func hasExitNodeTagFor(tags []string) bool {
+	for _, t := range tags {
+		if strings.EqualFold(t, "tag:exit-node") {
+			return true
+		}
+	}
+	return false
+}
+
 // computeSyncStatus is the pure helper that decides
 // whether an exit node's advertised-routes count from
 // headscale matches the count of device_rules in skygate
@@ -339,9 +425,10 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 // is covered by the live verify-post checks.
 //
 // Returns one of:
-//   ""                            — no rules target this node, no status
-//   "synced"                      — skygate rules count == headscale routes
-//   "mismatch: have N, want M"    — drift detected
+//
+//	""                            — no rules target this node, no status
+//	"synced"                      — skygate rules count == headscale routes
+//	"mismatch: have N, want M"    — drift detected
 //
 // "have N" is the headscale-side count (len(AvailableRoutes))
 // and "want M" is the skygate-side count (device_rules
@@ -787,9 +874,9 @@ func (s *Service) PostAdminExitNodeSetAcceptRoutes(w http.ResponseWriter, r *htt
 // expect. Returns a friendly error for unknown values so the
 // handler can render a "bad value" flash without 500ing.
 //
-//  "1"   →  1  (true)
-//  "0"   →  0  (default / unset)
-//  "-1"  → -1  (false)
+//	"1"   →  1  (true)
+//	"0"   →  0  (default / unset)
+//	"-1"  → -1  (false)
 //
 // Whitespace trimmed. Anything else → error.
 func parseAcceptRoutesFormValue(s string) (int, error) {

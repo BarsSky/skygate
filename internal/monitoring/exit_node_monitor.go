@@ -43,6 +43,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -267,21 +268,44 @@ func (m *ExitNodeMonitor) tick(ctx context.Context) error {
 	}
 
 	// 2 + 3. Update snapshots and detect transitions.
+	//
+	// B273 (v1.5.18): only nodes that ARE exit nodes by the shared
+	// predicate (headscale.NodeView.IsExitNode — tag:exit-node OR an
+	// `exit-*`/`exitnode*` name OR an advertised 0.0.0.0/0|::/0 base)
+	// get a snapshot row. Pre-B273 the monitor wrote a row for EVERY
+	// node in the tailnet, so a 14-node tailnet produced 11 permanent
+	// `state=offline` rows describing plain laptops — noise that made
+	// the snapshot table useless for triage and made the bot's
+	// /exit_nodes_health list every device in the tailnet. A node that
+	// stops being an exit node (untagged AND no longer advertising the
+	// base routes) has its row removed here, which also removes it from
+	// the 0-healthy banner's denominator.
 	liveIDs := make(map[string]struct{}, len(nodes))
 	for _, n := range nodes {
 		liveIDs[n.ID] = struct{}{}
-		snapshot := m.computeSnapshot(n, now)
+		if !n.IsExitNode {
+			if _, err := db.GetExitNodeHealth(m.DB.Current(), n.ID); err == nil {
+				if derr := db.DeleteExitNodeHealth(m.DB.Current(), n.ID); derr != nil {
+					log.Printf("exit-node-monitor: prune non-exit node %s: %v", n.ID, derr)
+				}
+			}
+			continue
+		}
+		snapshot, isExit := m.computeSnapshot(n, now)
+		if !isExit {
+			continue
+		}
 		prev, _ := db.GetExitNodeHealth(m.DB.Current(), n.ID)
 		if err := db.UpsertExitNodeHealth(m.DB.Current(), snapshot); err != nil {
 			log.Printf("exit-node-monitor: upsert %s: %v", n.ID, err)
 			continue
 		}
 		// Transition: any change to a stored state other than
-		// (last_state, last_state_change_at) counts.
-		// online↔offline are the calm-mode alerts; anything
-		// else (degraded on/off, unknown→online) is logged
-		// here but the dispatch loop only fires for
-		// online↔offline.
+		// (last_state, last_state_change_at) counts. The alert
+		// dispatch fires for every crossing of the "usable"
+		// boundary (see isCalmModeAlert); tag-only changes
+		// (online ↔ untagged) are recorded in the log but stay
+		// quiet.
 		if prev.State != "" && prev.State != snapshot.State {
 			_, lastTo, _ := db.LatestExitNodeState(m.DB.Current(), n.ID)
 			// Dedup: if the latest recorded transition has
@@ -337,44 +361,80 @@ func (m *ExitNodeMonitor) tick(ctx context.Context) error {
 // computeSnapshot turns one headscale node into an
 // ExitNodeHealth row. The rules:
 //
-//   online: headscale.Online is true AND (last_seen is empty
-//           OR last_seen is within OfflineAfter).
+//	online: headscale.Online is true AND (last_seen is empty
+//	        OR last_seen is within OfflineAfter).
 //
-//   advertised_routes_ok: the node's AvailableRoutes include
-//           both 0.0.0.0/0 and ::/0 (the two CIDRs a relay
-//           must advertise to be a useful internet exit). The
-//           check is the same one scripts/check_exit_nodes.py
-//           uses for the deploy-time test, so a node that's
-//           "online" but missing either CIDR lands in the
-//           degraded bucket.
+//	advertised_routes_ok: the node's AvailableRoutes include
+//	        both 0.0.0.0/0 and ::/0 (the two CIDRs a relay
+//	        must advertise to be a useful internet exit). The
+//	        check is the same one scripts/check_exit_nodes.py
+//	        uses for the deploy-time test, so a node that's
+//	        "online" but missing either CIDR lands in the
+//	        degraded bucket. Informational only — see the
+//	        state ladder below for what drives health.
 //
-//   has_exit_tag: tag:exit-node is present in n.Tags.
+//	has_exit_tag: tag:exit-node is present in n.Tags.
 //
-//   state: the discrete outcome.
+//	state: the discrete outcome.
 //
-//     unknown  — first observation (no previous state to
-//                compare against).
-//     online   — online AND routes_ok AND has_tag.
-//     degraded — online AND has_tag, but routes are not
-//                fully approved (e.g. admin ran
-//                --advertise-routes but forgot to approve
-//                on headscale, or a recent config push
-//                reset the approval).
-//     offline  — everything else (not online, or missing
-//                the exit-node tag).
+//	  online    — online AND the 0.0.0.0/0 base route is
+//	              APPROVED AND the node carries tag:exit-node.
+//	              Nothing for the operator to do.
+//	  untagged  — online AND the base route is approved, but
+//	              the node has no tag:exit-node. The relay
+//	              WORKS (headscale routes client traffic
+//	              through it; it is the state every
+//	              `--advertise-exit-node` relay starts in), so
+//	              it stays healthy — but the missing tag
+//	              breaks every tag-anchored feature (ACL
+//	              `via` pins, pre-auth keys minted with
+//	              tag:exit-node, the /admin/exit-nodes "Tag as
+//	              exit-node" affordance), so it is surfaced as
+//	              its own state instead of silently passing.
+//	  degraded  — online, but the node is not a usable exit:
+//	              the 0.0.0.0/0 base route is not approved (or
+//	              not advertised) yet. This is the "admin ran
+//	              --advertise-routes but forgot to approve it"
+//	              case, and ALSO the case that used to be
+//	              reported as `online` (healthy) because the
+//	              pre-B273 check looked at AvailableRoutes
+//	              (advertised) instead of ApprovedRoutes.
+//	  offline   — headscale says the node is not online.
+//	  (not_exit_node) — returned as ok=false; the caller
+//	              skips the node entirely and prunes any stale
+//	              row. Pre-B273 this state was spelled
+//	              "offline", which is what produced the
+//	              "Нет рабочих exit-узлов!" banner on a
+//	              tailnet whose only relay was an untagged but
+//	              perfectly working exit node (live: the
+//	              native host `aro`, node `exit-node-vps`).
 //
-//   healthy: a coarse boolean the /admin/exit-nodes page
-//           renders as a green/red dot. True iff state is
-//           "online".
-func (m *ExitNodeMonitor) computeSnapshot(n headscale.NodeView, now time.Time) db.ExitNodeHealth {
+//	healthy: a coarse boolean the /admin/exit-nodes page
+//	        renders as a green/red dot and counts into
+//	        "N/M здоровых". True iff state is "online" or
+//	        "untagged" — i.e. "can a device actually route
+//	        internet through this node right now?".
+//
+// B273 (v1.5.18): the "is this an exit node?" question is
+// answered by headscale.NodeView.IsExitNode — the SAME
+// predicate ListExitNodes uses to build /my/exit-nodes — so the
+// admin page and the user page can no longer disagree about
+// whether a node is an exit node at all.
+func (m *ExitNodeMonitor) computeSnapshot(n headscale.NodeView, now time.Time) (db.ExitNodeHealth, bool) {
+	if !n.IsExitNode {
+		return db.ExitNodeHealth{}, false
+	}
 	hasTag := false
 	for _, t := range n.Tags {
-		if t == "tag:exit-node" {
+		// EqualFold: headscale stores the operator's spelling,
+		// and a `Tag:Exit-Node` typo must not read as "untagged"
+		// while the same string matches everywhere else
+		// (headscale.hasExitNodeTag uses EqualFold too).
+		if strings.EqualFold(t, "tag:exit-node") {
 			hasTag = true
 			break
 		}
 	}
-	routesOK := false
 	hasV4, hasV6 := false, false
 	for _, r := range n.AvailableRoutes {
 		if r == "0.0.0.0/0" {
@@ -384,7 +444,18 @@ func (m *ExitNodeMonitor) computeSnapshot(n headscale.NodeView, now time.Time) d
 			hasV6 = true
 		}
 	}
-	routesOK = hasV4 && hasV6
+	routesOK := hasV4 && hasV6
+	// approvedV4 is the operational signal: headscale only hands a
+	// client the 0.0.0.0/0 exit route when the route row is approved.
+	// Advertised-but-unapproved is exactly the state the old code
+	// called healthy.
+	approvedV4 := false
+	for _, r := range n.ApprovedRoutes {
+		if r == "0.0.0.0/0" {
+			approvedV4 = true
+			break
+		}
+	}
 
 	// Online detection (v0.32.16 — fixed): trust headscale's
 	// `n.Online` field as the primary signal. The previous
@@ -419,31 +490,72 @@ func (m *ExitNodeMonitor) computeSnapshot(n headscale.NodeView, now time.Time) d
 		}
 	}
 
-	// State machine.
+	// State machine (B273). The ladder is ordered by
+	// "what stops a client from routing through this node?":
+	//
+	//   1. the node is not reachable at all        → offline
+	//   2. it cannot serve the default route       → degraded
+	//   3. it serves it but has no exit-node tag   → untagged (works)
+	//   4. everything is in place                  → online
+	//
+	// The pre-B273 ladder put `!hasTag` into the offline bucket
+	// (case !online || !hasTag → "offline"), which reported a
+	// working untagged relay as "не работает".
 	var state string
 	switch {
-	case !online || !hasTag:
+	case !online:
 		state = "offline"
-	case !routesOK:
+	case !approvedV4:
 		state = "degraded"
+	case !hasTag:
+		state = "untagged"
 	default:
 		state = "online"
 	}
-	healthy := state == "online"
+	healthy := exitNodeUsable(state)
 
 	return db.ExitNodeHealth{
-		NodeID:             n.ID,
-		Hostname:           n.Hostname,
-		Online:             online,
-		LastSeen:           n.LastSeen,
-		AdvertisedRoutesOK: routesOK,
-		HasExitTag:         hasTag,
-		State:              state,
-		Healthy:            healthy,
-		LastCheckAt:        now,
-		LastStateChangeAt:  now, // updated only on actual transitions below
+		NodeID:              n.ID,
+		Hostname:            n.Hostname,
+		Online:              online,
+		LastSeen:            n.LastSeen,
+		AdvertisedRoutesOK:  routesOK,
+		HasExitTag:          hasTag,
+		State:               state,
+		Healthy:             healthy,
+		LastCheckAt:         now,
+		LastStateChangeAt:   now, // updated only on actual transitions below
 		ConsecutiveFailures: 0,   // reserved for a future "headscale unreachable" counter
+	}, true
+}
+
+// exitNodeUsable answers the only question the health columns
+// and the "N/M здоровых" counter actually ask: can a device
+// route internet through this node right now?
+//
+//	online   — yes, fully configured.
+//	untagged — yes: headscale routes through it (the 0.0.0.0/0
+//	           route is approved), the only gap is the
+//	           tag:exit-node bookkeeping, which does not affect
+//	           data-plane routing. Reported as healthy but
+//	           flagged, so the operator sees the gap without
+//	           being told the relay is broken (live case: the
+//	           `aro` host, where the only relay is untagged and
+//	           the admin page claimed "Нет рабочих exit-узлов!"
+//	           while /my/exit-nodes correctly showed "online").
+//	degraded — no: the default route is not approved, so
+//	           clients get no exit route even though the node
+//	           is up.
+//	offline  — no.
+//
+// Kept as a helper because both the snapshot's Healthy flag and
+// the alert dedup (see isCalmModeAlert) must agree on it.
+func exitNodeUsable(state string) bool {
+	switch state {
+	case "online", "untagged":
+		return true
 	}
+	return false
 }
 
 // transitionNote returns a human-readable annotation for the
@@ -510,19 +622,27 @@ func (m *ExitNodeMonitor) dispatchPending(ctx context.Context) error {
 	return nil
 }
 
-// isCalmModeAlert returns true iff the transition is one of
-// the two operators care about: an exit-node going offline or
-// coming back. degraded transitions are recorded in the log
-// (so the operator can see them in the audit) but not alerted
-// (calm mode).
+// isCalmModeAlert returns true iff the transition crosses the
+// usable boundary in either direction: a relay that could serve
+// clients stopped being able to (or started again). That is the
+// only question worth a Telegram alert — it is the operator's
+// "did internet egress just break / come back?" signal.
+//
+// B273 (v1.5.18): the test is exitNodeUsable on both sides, not
+// the literal pair ("online", "offline"). Pre-B273:
+//   - offline → untagged  (a working-but-untagged relay coming
+//     back up) was NOT alerted, because the target state was
+//     spelled "offline" back then; now that untagged is its own
+//     usable state, the "came back" alert fires as it should;
+//   - online → degraded  (the default route lost its approval)
+//     was NOT alerted at all — the exact silent breakage this
+//     monitor exists to catch.
+//
+// `untagged` ↔ `online` (a tag being added or removed on a
+// relay that keeps working) does not cross the boundary and
+// stays quiet, so tagging a working relay does not page anyone.
 func isCalmModeAlert(from, to string) bool {
-	if from == "online" && to == "offline" {
-		return true
-	}
-	if from == "offline" && to == "online" {
-		return true
-	}
-	return false
+	return exitNodeUsable(from) != exitNodeUsable(to)
 }
 
 // formatAlert renders one transition as the Telegram message

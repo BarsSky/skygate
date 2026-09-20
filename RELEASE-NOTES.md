@@ -12,6 +12,117 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.18 — exit-node health stops calling a working relay "не работает" (B273)
+
+**Date:** 2026-09-19 · **Base:** `v1.5.17` → this tag · **Compatibility:** no schema,
+config or API change. Existing installs need no migration: the snapshot table
+(`exit_node_health`) keeps its columns and simply stops carrying rows for plain
+devices on the next monitor tick.
+
+### Symptom (live, native host `aro`)
+
+`/admin/exit-nodes` showed the red banner **«Нет рабочих exit-узлов!»**, `0/1
+здоровых`, and `состояние = offline` for the tailnet's **only** relay —
+`exit-node-vps` (`100.64.0.1`), which was online, advertising 2 routes
+(`0.0.0.0/0` + `::/0`), last seen 47 m earlier, and whose row even offered the
+«Tag as exit-node» button. `/my/exit-nodes` showed the **same** node as *online*.
+
+Both pages read the same `headscale.NodeView` list, so the contradiction was
+inside skygate — and it was in the health monitor's definition of "exit node".
+
+### Root cause
+
+`internal/headscale.hasExitNodeTag` (used by `ListExitNodes` → `/my/exit-nodes`)
+counts a node as an exit node when **any** of these holds:
+
+1. it carries `tag:exit-node`,
+2. its name starts with `exit-` / `exitnode`,
+3. it advertises `0.0.0.0/0` or `::/0`.
+
+`internal/monitoring.exitNodeMonitor.computeSnapshot` implemented a **different**
+rule — the literal tag only — and its state ladder was
+
+```go
+case !online || !hasTag:
+    state = "offline"
+```
+
+so a relay that works (rule 2/3) but has no tag was filed as `offline` with
+`healthy = false`. Hence the banner. The node was fine; the *test* was wrong.
+
+Two more defects were found while proving the above:
+
+* `degraded` was computed from **`AvailableRoutes`** (what the relay *advertises*),
+  never from **`ApprovedRoutes`**. A relay that advertises `0.0.0.0/0` but was
+  never approved in headscale hands no client an exit route — and the monitor
+  called it **healthy**. The false negative above was hiding a false positive.
+* the monitor wrote a snapshot row for **every** node in the tailnet, so a 14-node
+  tailnet carried 11 permanent `state=offline` rows describing laptops, and the
+  bot's `/exit_nodes_health` listed every device as an "offline exit node".
+
+### Fix
+
+1. **One predicate.** `computeSnapshot` now gates on `NodeView.IsExitNode` — the
+   same field `ListExitNodes` filters on — and returns `(snapshot, ok)`. A node
+   that is not an exit node gets **no row**, and a stale row is pruned, so the
+   `N/M здоровых` denominator counts exit nodes rather than devices.
+2. **A ladder ordered by what blocks client egress.**
+
+   | state | meaning | healthy |
+   |---|---|---|
+   | `offline` | headscale reports the node as not online | no |
+   | `degraded` | online, but `0.0.0.0/0` is **not approved** — no client gets an exit route | no |
+   | `untagged` | online + `0.0.0.0/0` approved, only `tag:exit-node` missing: **it works** | **yes** |
+   | `online` | everything in place | yes |
+
+   `exitNodeUsable()` (`online` | `untagged`) is the single source of truth for the
+   `healthy` flag **and** for the Telegram alert boundary: `isCalmModeAlert` now
+   fires on every crossing of it — so losing/gaining route approval **alerts**
+   (previously silent: a relay could lose its approval unnoticed) while tagging or
+   untagging a working relay stays quiet.
+3. **The page names the problem.** `/admin/exit-nodes` fills
+   `ApprovedV4Default` / `ApprovedRoutesOK` from the live node's `ApprovedRoutes`,
+   renders a red «не одобрено» pill next to the advertised route count, and shows
+   two **named** warning banners — «Exit-узлов без tag:exit-node: N» (yellow, with
+   the tag hint) and «Exit-узлов с неодобренными маршрутами: N» (red) — instead of
+   answering both problems with the red zero-healthy banner. The admin's tag test
+   is case-insensitive (`EqualFold`), matching headscale.
+4. **The bot agrees.** `/exit_nodes_health` gained the `untagged` bucket and counts
+   untagged relays as healthy, so the phone no longer reports `0 of 1 healthy` for
+   a serving relay.
+
+### Operator action
+
+Nothing is required to make the banner disappear — the next monitor tick
+(`SKYGATE_EXIT_NODE_CHECK_INTERVAL`, 5 min by default; or the «Run health check
+now» button) rewrites the snapshot. A relay that shows `untagged` genuinely works,
+but adding `tag:exit-node` (the «Tag as exit-node» button on its row, or
+`headscale nodes tag`) is still recommended: ACL rules that pin an exit node with
+`via=[tag:…]`, the pre-auth keys `/admin/exit-nodes/register` mints, and the
+tag-anchored UI affordances all key off tags.
+
+### Files
+
+`internal/monitoring/exit_node_monitor.go` (predicate, ladder, `exitNodeUsable`,
+pruning, alert boundary), `internal/feature/admin/exit_nodes.go`
+(`ApprovedV4Default`/`ApprovedRoutesOK`/`UntaggedCount`/`UnapprovedCount`,
+`hasExitNodeTagFor`), `internal/handlers/templates/admin/exit_nodes.html`,
+`internal/i18n/catalog_exit_nodes.go` + `catalog_bot.go` (RU+EN),
+`internal/telegram/commands_exit_node_health.go`,
+`internal/monitoring/exit_node_monitor_test.go`.
+
+### Verification
+
+`scripts/check_b273_exit_node_truth.sh` (36 contracts: the shared predicate, the
+ladder, pruning, the alert boundary, the handler, the template, RU/EN parity, the
+bot, Go behaviour tests, and live snapshot checks that SKIP off-host) +
+`TestComputeSnapshot_UntaggedIsHealthy_B273`,
+`TestComputeSnapshot_NotAnExitNode_IsSkipped_B273`,
+`TestTick_PrunesNonExitNodeRows_B273`. The first of these reconstructs the `aro`
+node exactly: online, `exit-node-vps`, `tag:public` only, `0.0.0.0/0` + `::/0`
+advertised **and approved**, `last_seen` 47 minutes ago — and asserts
+`state=untagged`, `healthy=true`.
+
 ## v1.5.17 — an offline host can self-update from a mirror (B272.5)
 
 **Date:** 2026-09-19 · **Base:** `v1.5.16` → this tag · **Compatibility:** no schema,

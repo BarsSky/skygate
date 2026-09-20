@@ -50,16 +50,24 @@ func exitNodesHealthReply(env BotEnv) string {
 
 	// Group by state. The "buckets" map preserves insertion
 	// order via a parallel slice — Go map iteration is
-	// randomised and we want a stable display (offline first).
+	// randomised and we want a stable display (worst first).
+	//
+	// B273 (v1.5.18): `untagged` is its own bucket. It is a
+	// WORKING state (the relay routes traffic, it just lacks
+	// tag:exit-node), so it counts toward the healthy total the
+	// header prints — otherwise the operator's phone said
+	// "0 of N healthy" while the relay was serving (live: the
+	// `aro` host's only relay).
 	type bucket struct {
 		state string
 		rows  []db.ExitNodeHealth
 	}
 	buckets := []bucket{
-		{state: "offline"}, {state: "degraded"}, {state: "online"},
+		{state: "offline"}, {state: "degraded"},
+		{state: "untagged"}, {state: "online"},
 	}
 	byState := map[string][]db.ExitNodeHealth{
-		"offline": nil, "degraded": nil, "online": nil,
+		"offline": nil, "degraded": nil, "untagged": nil, "online": nil,
 	}
 	for _, h := range rows {
 		byState[h.State] = append(byState[h.State], h)
@@ -68,8 +76,7 @@ func exitNodesHealthReply(env BotEnv) string {
 		buckets[i].rows = byState[buckets[i].state]
 	}
 
-	healthy := byState["online"]
-	healthyCount := len(healthy)
+	healthyCount := len(byState["online"]) + len(byState["untagged"])
 	totalCount := len(rows)
 
 	now := time.Now().UTC()

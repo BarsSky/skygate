@@ -398,13 +398,8 @@ run_check "B19" "ACL perf + route correctness (v0.32.2 — B139 simplified from 
 # branches). B20 pins the contract: the orchestrator's git
 # fetch must use --force, so a future refactor can't silently
 # regress to the broken shape.
-run_check "B20" "autoupdate git fetch uses --force (v0.32.6 stale-tag fix)" \
-  "bash -c '
-    grep -A1 '\''PhasePullBuild'\'' internal/update/docker.go | grep -q '\''runGit(ctx, \"fetch\", \"--tags\", \"--prune\", \"--force\")'\'' &&
-    grep -q \"git fetch --tags --prune --force\" internal/update/manual.go &&
-    grep -q \"would clobber existing tag\" internal/update/docker.go &&
-    '\''$GO'\'' build ./internal/update/ 2>&1
-  '"
+run_check "B20" "autoupdate git fetch uses --force (v0.32.6 stale-tag fix; 2026-09-19 CONTRACT RENEGOTIATED for B272.5: the inline fetch that used to sit on the line right after SetPhase(PhasePullBuild, ...) moved into DockerUpgrader.fetchTarget so the offline-host fallback (SKYGATE_UPDATE_GIT_URL / SKYGATE_UPDATE_GIT_MIRROR / the DB key update.git_url) can reuse the same path with an explicit refspec and the old grep -A1 adjacency assertion necessarily broke on that correct refactor; the contract now asserts the real invariant instead — EVERY fetch invocation in the upgrader passes --force, the mirror argv slice includes --force, fetchTarget exists, and the stale-tag failure mode stays documented. Raised when the gate run on the B272.5 commit reported FAIL B20)" \
+  'test -f scripts/check_b20.sh && bash scripts/check_b20.sh'
 
 # --- B21: /admin/exit-nodes excludes subnet-routers (v0.32.7) ---
 # 2026-07-31: pre-fix `ensureExitServers` matched any node that
@@ -4478,3 +4473,45 @@ run_check "B270" "a broken OIDC key store must not kill the process, and the key
 # rollback) and internal/nodeownership/auto_b272_test.go.
 run_check "B272" "tags must actually reach headscale: file-mode policy writes, REST tag writes, drift reconciliation (2026-09-19). Live case: node_owner_map said tag:dev-daniil-workpc while headscale had no tags on that node, so no per-device ACL rule matched — and neither the audit log, the metric nor the UI mentioned it. (1) headscale ran with policy.mode: file, so PUT /api/v1/policy returned 500 'update is disabled for modes other than database'; SetPolicy only fell back to the file path on 404/405 (so the fallback never ran) and wrote through a hardcoded docker volume. isFileModePolicyError now recognises the 500 body, setPolicyViaFile writes the policy.path resolved by DiscoverPolicyPath/parseHeadscalePolicyConfig (atomic temp+rename, native direct write with a systemctl/rc-service restart and rollback of the previous policy when the reload fails; container path through SKYGATE_HEADSCALE_CONFIG_VOLUME), and an unknown path produces an error naming SKYGATE_HEADSCALE_POLICY_PATH instead of failing obscurely. (2) TagNode/UntagNode now try the REST API POST /api/v1/node/{id}/tags first and fall back to runHeadscaleCLI (docker when present, the local binary otherwise — the B267 pattern), because the old CLI-only path cannot work on a native install at all. (3) New ReconcileTags walks node_owner_map every autoupdater tick and re-applies any tag headscale does not carry (reason 'tag_missing', reported through the B227 sink), so a tag that never landed is repaired instead of skipped forever; nodes attributed to no portal user are reported as 'no_strategy' with their own skygate_tag_unmatched_total counter, so a device no per-device rule can match is visible. (4) The admin adopt/transfer tag paths report through the same alert sink (metric + audit + rate-limited Telegram) instead of a bare audit row — the live failure never appeared in /metrics. 22 contracts in scripts/check_b272_tag_drift.sh (source + Go behaviour tests, plus live checks that SKIP off-host) + internal/headscale/tags_b272_test.go and internal/nodeownership/auto_b272_test.go." \
   'test -f scripts/check_b272_tag_drift.sh && bash scripts/check_b272_tag_drift.sh'
+
+# --- B273 (2026-09-19): the exit-node health monitor must agree with the rest of
+# skygate about what an exit node is, and must name the reason when one is not
+# usable ------------------------------------------------------------------------
+#
+# B273: live case (native host `aro`, its only relay is `exit-node-vps`) — the
+# admin page rendered the red banner "Нет рабочих exit-узлов!" with "0/1
+# здоровых" and state=offline while /my/exit-nodes showed the SAME node as
+# online. Both pages read headscale.NodeView, so the disagreement was inside
+# skygate: hasExitNodeTag (internal/headscale, used by ListExitNodes) treats a
+# node as an exit node when it carries tag:exit-node OR its name starts with
+# exit-/exitnode OR it advertises 0.0.0.0/0|::/0, while the monitor's
+# computeSnapshot required the literal tag and its ladder was
+# `case !online || !hasTag: state = "offline"` — filing a working,
+# route-approved, online relay as "offline", healthy=false, so the operator was
+# told egress was down while users were routing through the node. (1) The monitor
+# now gates on NodeView.IsExitNode (the same predicate) and returns
+# (snapshot, ok), and a node that is not an exit node at all gets NO snapshot row
+# — its stale row is pruned — so the "N/M здоровых" denominator counts exit nodes
+# instead of every device in the tailnet (pre-B273 a 14-node tailnet carried 11
+# permanent offline rows and the bot listed every laptop). (2) New state ladder
+# ordered by what stops a client from egressing: offline (not online) → degraded
+# (0.0.0.0/0 not APPROVED — pre-B273 this was computed from AvailableRoutes, i.e.
+# from what is merely advertised, so an unapproved relay counted as healthy: the
+# exact false positive the monitor exists to prevent) → untagged (approved and
+# online, only tag:exit-node missing: it WORKS, so it stays healthy and is
+# surfaced as its own state with the tag hint) → online. (3) exitNodeUsable()
+# (online|untagged) is the single source of truth for the Healthy flag AND for
+# the Telegram alert boundary: isCalmModeAlert now fires on every crossing of it,
+# so losing/gaining route approval alerts (silent before) while tagging or
+# untagging a working relay stays quiet. (4) /admin/exit-nodes fills
+# ApprovedV4Default/ApprovedRoutesOK from the live node's ApprovedRoutes, flags
+# "не одобрено" next to the advertised route count, and renders two named warning
+# banners ("N без tag:exit-node" / "N с неодобренными маршрутами") instead of
+# answering both problems with the red zero-healthy banner; the admin's tag test
+# is case-insensitive (EqualFold), matching headscale. (5) The bot's
+# /exit_nodes_health gained the untagged bucket and counts untagged relays as
+# healthy. 36 contracts in scripts/check_b273_exit_node_truth.sh + three B273
+# regression tests in internal/monitoring/exit_node_monitor_test.go (the aro node
+# shape, pruning, and the alert boundary).
+run_check "B273" "exit-node health tells the truth: one predicate for 'is this an exit node', a ladder ordered by what blocks client egress, and a named reason instead of a false 'не работает' (2026-09-19). Live case: on the native host aro the /admin/exit-nodes page showed the red banner 'Нет рабочих exit-узлов!' plus 0/1 healthy and state=offline for the tailnet's only relay (exit-node-vps, online, advertising 0.0.0.0/0 + ::/0), while /my/exit-nodes showed the same node as online — both pages read headscale.NodeView, so the bug was inside skygate. internal/headscale.hasExitNodeTag (used by ListExitNodes -> /my/exit-nodes) counts tag:exit-node OR an exit-/exitnode name prefix OR an advertised 0.0.0.0/0|::/0, but the monitor's computeSnapshot required the literal tag and ran 'case !online || !hasTag: state = offline', so a working untagged relay was filed as offline with Healthy=false. (1) computeSnapshot now gates on NodeView.IsExitNode (the shared predicate) and returns (snapshot, ok); a node that is not an exit node gets no snapshot row and its stale row is pruned, so the N/M healthy denominator counts exit nodes rather than every device in the tailnet (a 14-node tailnet carried 11 permanent offline rows). (2) New ladder: offline (headscale says not online) -> degraded (the 0.0.0.0/0 route is not APPROVED; the pre-B273 test read AvailableRoutes, so advertised-but-unapproved counted as healthy) -> untagged (approved + online, only tag:exit-node missing: it works, stays healthy, is flagged with the tag hint) -> online. (3) exitNodeUsable() (online|untagged) is the one source of truth for Healthy and for isCalmModeAlert, which now alerts on every usable-boundary crossing — losing route approval alerts (previously silent) while tagging/untagging a working relay stays quiet. (4) /admin/exit-nodes fills ApprovedV4Default/ApprovedRoutesOK from the live node's ApprovedRoutes, flags 'не одобрено' beside the advertised count, renders two named warning banners (N without tag:exit-node / N with unapproved routes) instead of answering both with the red zero-healthy banner, and uses a case-insensitive tag test. (5) /exit_nodes_health gained the untagged bucket and counts untagged relays as healthy. 36 contracts in scripts/check_b273_exit_node_truth.sh plus internal/monitoring/exit_node_monitor_test.go (TestComputeSnapshot_UntaggedIsHealthy_B273, TestComputeSnapshot_NotAnExitNode_IsSkipped_B273, TestTick_PrunesNonExitNodeRows_B273)." \
+  'test -f scripts/check_b273_exit_node_truth.sh && bash scripts/check_b273_exit_node_truth.sh'

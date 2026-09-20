@@ -111,12 +111,15 @@ func TestComputeSnapshot_OnlineAllOK(t *testing.T) {
 	now := time.Now().UTC()
 	n := headscale.NodeView{
 		ID: "3", Hostname: "relay-1",
-		Online:      true,
-		LastSeen:    now.Format(time.RFC3339),
-		Tags:        []string{"tag:exit-node", "tag:public"},
+		Online:          true,
+		LastSeen:        now.Format(time.RFC3339),
+		Tags:            []string{"tag:exit-node", "tag:public"},
 		AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
 	}
-	got := m.computeSnapshot(n, now)
+	got, ok := m.computeSnapshot(n, now)
+	if !ok {
+		t.Fatal("computeSnapshot: ok = false, want true")
+	}
 	if got.State != "online" {
 		t.Errorf("State = %q, want 'online'", got.State)
 	}
@@ -134,12 +137,18 @@ func TestComputeSnapshot_DegradedWhenRoutesMissing(t *testing.T) {
 	now := time.Now().UTC()
 	n := headscale.NodeView{
 		ID: "3", Hostname: "relay-1",
-		Online:      true,
-		LastSeen:    now.Format(time.RFC3339),
-		Tags:        []string{"tag:exit-node"},
-		AvailableRoutes: []string{"0.0.0.0/0"}, // missing ::/0
+		Online:          true,
+		LastSeen:        now.Format(time.RFC3339),
+		IsExitNode:      true,
+		Tags:            []string{"tag:exit-node"},
+		AvailableRoutes: []string{"0.0.0.0/0"}, // advertised…
+		// …but ApprovedRoutes is empty: headscale hands no client the
+		// 0.0.0.0/0 exit route, so the relay cannot serve.
 	}
-	got := m.computeSnapshot(n, now)
+	got, ok := m.computeSnapshot(n, now)
+	if !ok {
+		t.Fatal("computeSnapshot: ok = false, want true")
+	}
 	if got.State != "degraded" {
 		t.Errorf("State = %q, want 'degraded'", got.State)
 	}
@@ -148,20 +157,103 @@ func TestComputeSnapshot_DegradedWhenRoutesMissing(t *testing.T) {
 	}
 }
 
-func TestComputeSnapshot_OfflineWhenTagMissing(t *testing.T) {
+// TestComputeSnapshot_UntaggedIsHealthy_B273 is the live `aro` host
+// contract: a relay that is online and whose 0.0.0.0/0 route IS
+// approved, but which carries no tag:exit-node, is a WORKING exit
+// node and must count as healthy. Pre-B273 the state ladder was
+// `!online || !hasTag → offline`, so this node produced the red
+// "Нет рабочих exit-узлов!" banner on /admin/exit-nodes while
+// /my/exit-nodes (which reads headscale.NodeView.Online directly)
+// showed the same node as online — the operator's exact report.
+func TestComputeSnapshot_UntaggedIsHealthy_B273(t *testing.T) {
 	hs := &fakeHeadscaleClient{}
 	m, _ := newMonitor(t, hs, nil)
 	now := time.Now().UTC()
 	n := headscale.NodeView{
-		ID: "3", Hostname: "relay-1",
-		Online:      true,
-		LastSeen:    now.Format(time.RFC3339),
-		Tags:        []string{"tag:public"}, // missing tag:exit-node
+		ID: "1", Hostname: "exit-node-vps",
+		Online:          true,
+		LastSeen:        now.Add(-47 * time.Minute).Format(time.RFC3339), // idle, still online
+		IsExitNode:      true,                                            // name starts with "exit-" AND advertises the bases
+		Tags:            []string{"tag:public"},                          // no tag:exit-node
 		AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+		ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"},
 	}
-	got := m.computeSnapshot(n, now)
-	if got.State != "offline" {
-		t.Errorf("State = %q, want 'offline' (no tag:exit-node)", got.State)
+	got, ok := m.computeSnapshot(n, now)
+	if !ok {
+		t.Fatal("computeSnapshot: ok = false, want true (advertises the exit bases)")
+	}
+	if got.State != "untagged" {
+		t.Errorf("State = %q, want 'untagged'", got.State)
+	}
+	if !got.Healthy {
+		t.Error("Healthy = false, want true — an approved, online relay with no tag still routes traffic")
+	}
+	if got.HasExitTag {
+		t.Error("HasExitTag = true, want false (the tag really is missing)")
+	}
+	if !got.AdvertisedRoutesOK {
+		t.Error("AdvertisedRoutesOK = false, want true")
+	}
+}
+
+// TestComputeSnapshot_NotAnExitNode_IsSkipped_B273 pins the other
+// half: the monitor must not invent rows for plain devices. The
+// predicate is the same NodeView.IsExitNode that ListExitNodes uses
+// to build /my/exit-nodes, so the admin snapshot and the user page
+// can never disagree about WHICH nodes are exit nodes. Pre-B273 every
+// node in the tailnet got a permanent `state=offline` row.
+func TestComputeSnapshot_NotAnExitNode_IsSkipped_B273(t *testing.T) {
+	hs := &fakeHeadscaleClient{}
+	m, _ := newMonitor(t, hs, nil)
+	now := time.Now().UTC()
+	n := headscale.NodeView{
+		ID: "24", Hostname: "a71",
+		Online:     true,
+		LastSeen:   now.Format(time.RFC3339),
+		IsExitNode: false,
+		Tags:       []string{"tag:dev-skyadmin-a71", "tag:private"},
+	}
+	if _, ok := m.computeSnapshot(n, now); ok {
+		t.Error("computeSnapshot: ok = true for a plain device, want false (no snapshot row)")
+	}
+}
+
+// TestTick_PrunesNonExitNodeRows_B273 pins the pruning: a tailnet of
+// one relay plus one laptop leaves exactly ONE snapshot row, so the
+// "N/M здоровых" denominator counts exit nodes rather than devices.
+func TestTick_PrunesNonExitNodeRows_B273(t *testing.T) {
+	d := db.OpenForTest(t)
+	sink := &recordingSink{}
+	now := time.Now().UTC()
+	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
+		{ID: "1", Hostname: "exit-node-vps", Online: true,
+			LastSeen:        now.Format(time.RFC3339),
+			IsExitNode:      true,
+			Tags:            []string{}, // untagged on purpose
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
+		{ID: "24", Hostname: "a71", Online: true,
+			LastSeen:   now.Format(time.RFC3339),
+			IsExitNode: false,
+			Tags:       []string{"tag:dev-skyadmin-a71"}},
+	}}
+	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
+	if err := m.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	got, _ := db.ListExitNodeHealth(d)
+	if len(got) != 1 {
+		t.Fatalf("snapshots = %d, want 1 (only the exit node)", len(got))
+	}
+	if got[0].NodeID != "1" || got[0].State != "untagged" || !got[0].Healthy {
+		t.Errorf("snapshot = {%s state=%s healthy=%v}, want {1 untagged true}",
+			got[0].NodeID, got[0].State, got[0].Healthy)
+	}
+	if n, _ := db.CountHealthyExitNodes(d); n != 1 {
+		t.Errorf("healthy = %d, want 1", n)
+	}
+	if c := sink.callsCopy(); len(c) != 0 {
+		t.Errorf("alerts = %d, want 0 (first observation)", len(c))
 	}
 }
 
@@ -184,12 +276,17 @@ func TestComputeSnapshot_HeadscaleOnlineTrustsLastSeenOld(t *testing.T) {
 	old := now.Add(-10 * time.Minute)
 	n := headscale.NodeView{
 		ID: "3", Hostname: "relay-1",
-		Online:      true, // headscale says online (authoritative)
-		LastSeen:    old.Format(time.RFC3339),
-		Tags:        []string{"tag:exit-node"},
+		Online:          true, // headscale says online (authoritative)
+		LastSeen:        old.Format(time.RFC3339),
+		IsExitNode:      true,
+		Tags:            []string{"tag:exit-node"},
 		AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+		ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"},
 	}
-	got := m.computeSnapshot(n, now)
+	got, ok := m.computeSnapshot(n, now)
+	if !ok {
+		t.Fatal("computeSnapshot: ok = false, want true")
+	}
 	if !got.Online {
 		t.Errorf("Online = false, want true (headscale n.Online=true is authoritative; last_seen age is a hint, not a fallback)")
 	}
@@ -213,12 +310,17 @@ func TestComputeSnapshot_ForgivingFallback(t *testing.T) {
 	recent := now.Add(-30 * time.Second)
 	n := headscale.NodeView{
 		ID: "3", Hostname: "relay-1",
-		Online:      false, // headscale says offline but…
-		LastSeen:    recent.Format(time.RFC3339),
-		Tags:        []string{"tag:exit-node"},
+		Online:          false, // headscale says offline but…
+		LastSeen:        recent.Format(time.RFC3339),
+		IsExitNode:      true,
+		Tags:            []string{"tag:exit-node"},
 		AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+		ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"},
 	}
-	got := m.computeSnapshot(n, now)
+	got, ok := m.computeSnapshot(n, now)
+	if !ok {
+		t.Fatal("computeSnapshot: ok = false, want true")
+	}
 	if !got.Online {
 		t.Errorf("Online = false, want true (forgiving fallback: last_seen within OfflineAfter overrides offline)")
 	}
@@ -240,12 +342,17 @@ func TestComputeSnapshot_OfflineWhenHeadscaleAndLastSeenBothOld(t *testing.T) {
 	now := time.Now().UTC()
 	n := headscale.NodeView{
 		ID: "3", Hostname: "relay-1",
-		Online:      false,
-		LastSeen:    now.Add(-10 * time.Minute).Format(time.RFC3339), // past OfflineAfter (2 min)
-		Tags:        []string{"tag:exit-node"},
+		Online:          false,
+		LastSeen:        now.Add(-10 * time.Minute).Format(time.RFC3339), // past OfflineAfter (2 min)
+		IsExitNode:      true,
+		Tags:            []string{"tag:exit-node"},
 		AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+		ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"},
 	}
-	got := m.computeSnapshot(n, now)
+	got, ok := m.computeSnapshot(n, now)
+	if !ok {
+		t.Fatal("computeSnapshot: ok = false, want true")
+	}
 	if got.Online {
 		t.Errorf("Online = true, want false (headscale offline + last_seen past OfflineAfter)")
 	}
@@ -262,13 +369,17 @@ func TestTick_AllOnline_NoTransitions(t *testing.T) {
 	now := time.Now().UTC()
 	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", Online: true,
-			LastSeen: now.Format(time.RFC3339),
-			Tags: []string{"tag:exit-node"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			LastSeen:        now.Format(time.RFC3339),
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 		{ID: "4", Hostname: "relay-2", Online: true,
-			LastSeen: now.Format(time.RFC3339),
-			Tags: []string{"tag:exit-node"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			LastSeen:        now.Format(time.RFC3339),
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 	}}
 	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
 
@@ -296,9 +407,11 @@ func TestTick_TransitionOnlineToOffline_FiresAlert(t *testing.T) {
 	now := time.Now().UTC()
 	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", Online: true,
-			LastSeen: now.Format(time.RFC3339),
-			Tags: []string{"tag:exit-node"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			LastSeen:        now.Format(time.RFC3339),
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 	}}
 	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
 
@@ -310,9 +423,11 @@ func TestTick_TransitionOnlineToOffline_FiresAlert(t *testing.T) {
 	// Second tick: relay-1 is now offline.
 	hs.setNodes([]headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", Online: false,
-			LastSeen: now.Add(-5 * time.Minute).Format(time.RFC3339),
-			Tags: []string{"tag:exit-node"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			LastSeen:        now.Add(-5 * time.Minute).Format(time.RFC3339),
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 	})
 	if err := m.tick(context.Background()); err != nil {
 		t.Fatalf("offline tick: %v", err)
@@ -341,9 +456,11 @@ func TestTick_RecoveryOfflineToOnline_FiresAlert(t *testing.T) {
 	now := time.Now().UTC()
 	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", Online: false,
-			LastSeen: now.Add(-5 * time.Minute).Format(time.RFC3339),
-			Tags: []string{"tag:exit-node"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			LastSeen:        now.Add(-5 * time.Minute).Format(time.RFC3339),
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 	}}
 	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
 
@@ -361,9 +478,11 @@ func TestTick_RecoveryOfflineToOnline_FiresAlert(t *testing.T) {
 	// Second tick: relay-1 is back.
 	hs.setNodes([]headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", Online: true,
-			LastSeen: now.Format(time.RFC3339),
-			Tags: []string{"tag:exit-node"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			LastSeen:        now.Format(time.RFC3339),
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 	})
 	if err := m.tick(context.Background()); err != nil {
 		t.Fatalf("recovery tick: %v", err)
@@ -387,9 +506,11 @@ func TestTick_DegradedTransition_RecordedButNotAlerted(t *testing.T) {
 	now := time.Now().UTC()
 	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", Online: true,
-			LastSeen: now.Format(time.RFC3339),
-			Tags: []string{"tag:exit-node"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			LastSeen:        now.Format(time.RFC3339),
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 	}}
 	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
 	if err := m.tick(context.Background()); err != nil {
@@ -399,26 +520,22 @@ func TestTick_DegradedTransition_RecordedButNotAlerted(t *testing.T) {
 	// Routes unapproved.
 	hs.setNodes([]headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", Online: true,
-			LastSeen: now.Format(time.RFC3339),
-			Tags: []string{"tag:exit-node"},
-			AvailableRoutes: []string{}}, // empty
+			LastSeen:        now.Format(time.RFC3339),
+			Tags:            []string{"tag:exit-node"},
+			AvailableRoutes: []string{}}, // nothing approved any more
 	})
 	if err := m.tick(context.Background()); err != nil {
 		t.Fatalf("degrade tick: %v", err)
 	}
 
-	if c := sink.callsCopy(); len(c) != 0 {
-		t.Errorf("degrade: alerts = %d, want 0 (calm-mode)", len(c))
-	}
-	// But the transition was recorded (operator can see it
-	// in audit).
-	pending, _ := db.ListPendingExitNodeStateChanges(d, 10)
-	if len(pending) != 0 {
-		// Mark-alerted was called, so the pending list is
-		// already drained. The audit log row is the
-		// permanent record; ListPending is intentionally
-		// for not-yet-alerted only. We verify the row
-		// exists by re-reading via LatestExitNodeState.
+	// B273: online → degraded now DOES alert. Losing the
+	// 0.0.0.0/0 approval is not a bookkeeping change — clients
+	// stop receiving an exit route through this relay, which is
+	// precisely the breakage the monitor exists to report. The
+	// pre-B273 behaviour (record it, stay silent) is why an
+	// unapproved route could sit unnoticed.
+	if c := sink.callsCopy(); len(c) != 1 {
+		t.Errorf("degrade: alerts = %d, want 1 (egress through relay-1 stopped)", len(c))
 	}
 	from, to, _ := db.LatestExitNodeState(d, "3")
 	if from != "online" || to != "degraded" {
@@ -436,9 +553,11 @@ func TestTick_Dedup_DoesNotReAlertSameState(t *testing.T) {
 	now := time.Now().UTC()
 	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", Online: true,
-			LastSeen: now.Format(time.RFC3339),
-			Tags: []string{"tag:exit-node"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			LastSeen:        now.Format(time.RFC3339),
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 	}}
 	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
 
@@ -449,9 +568,11 @@ func TestTick_Dedup_DoesNotReAlertSameState(t *testing.T) {
 	// Tick 2: offline (transition; alert fires).
 	hs.setNodes([]headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", Online: false,
-			LastSeen: now.Add(-5 * time.Minute).Format(time.RFC3339),
-			Tags: []string{"tag:exit-node"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			LastSeen:        now.Add(-5 * time.Minute).Format(time.RFC3339),
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 	})
 	if err := m.tick(context.Background()); err != nil {
 		t.Fatalf("offline: %v", err)
@@ -475,9 +596,11 @@ func TestTick_GarbageCollectsStaleNodes(t *testing.T) {
 	now := time.Now().UTC()
 	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", Online: true,
-			LastSeen: now.Format(time.RFC3339),
-			Tags: []string{"tag:exit-node"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			LastSeen:        now.Format(time.RFC3339),
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 	}}
 	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink, OfflineAfter: 2 * time.Minute}
 
@@ -511,6 +634,13 @@ func TestTick_GarbageCollectsStaleNodes(t *testing.T) {
 
 // --- formatAlert / isCalmModeAlert (pure helpers) ---
 
+// TestIsCalmModeAlert pins the B273 contract: an alert fires on
+// every crossing of the "usable" boundary — a relay that could serve
+// clients stopped being able to, or started again. Pre-B273 the test
+// was the literal pair ("online", "offline"), which (a) alerted on
+// nothing when a working relay lost its tag (it was misfiled as
+// offline) and (b) stayed silent when a relay lost its route
+// approval — the silent-breakage case this monitor exists for.
 func TestIsCalmModeAlert(t *testing.T) {
 	cases := []struct {
 		from, to string
@@ -518,9 +648,21 @@ func TestIsCalmModeAlert(t *testing.T) {
 	}{
 		{"online", "offline", true},
 		{"offline", "online", true},
-		{"online", "degraded", false},
-		{"degraded", "online", false},
-		{"unknown", "online", false},
+		// B273: losing/gaining the route approval crosses the
+		// boundary — clients can no longer / can again exit.
+		{"online", "degraded", true},
+		{"degraded", "online", true},
+		{"offline", "untagged", true}, // came back up (untagged still routes)
+		{"untagged", "offline", true},
+		// Tag bookkeeping on a working relay is NOT a page.
+		{"online", "untagged", false},
+		{"untagged", "online", false},
+		// "unknown" is a legacy/pre-B273 stored state; it is not
+		// usable, so a relay coming from it to a usable state is
+		// reported. (A first observation never reaches this
+		// helper: tick only records a transition when prev.State
+		// is non-empty.)
+		{"unknown", "online", true},
 		{"online", "online", false},
 	}
 	for _, c := range cases {
@@ -582,13 +724,17 @@ func TestTick_AutoSyncEnabled_InsertsAndUpdates(t *testing.T) {
 	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", UserName: "admin", UserID: "1",
 			Online: true, LastSeen: now.Format(time.RFC3339),
-			Tags: []string{"tag:exit-node", "tag:public"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node", "tag:public"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 		// relay-2 (id=4) is brand-new — should be inserted.
 		{ID: "4", Hostname: "relay-2", UserName: "admin", UserID: "1",
 			Online: true, LastSeen: now.Format(time.RFC3339),
-			Tags: []string{"tag:exit-node", "tag:public"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node", "tag:public"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 	}}
 	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink,
 		OfflineAfter: 2 * time.Minute, AutoSync: true}
@@ -637,12 +783,16 @@ func TestTick_AutoSyncDisabled_DoesNotWriteNodeOwnerMap(t *testing.T) {
 	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", UserName: "admin", UserID: "1",
 			Online: true, LastSeen: now.Format(time.RFC3339),
-			Tags: []string{"tag:exit-node", "tag:public"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node", "tag:public"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 		{ID: "4", Hostname: "relay-2", UserName: "admin", UserID: "1",
 			Online: true, LastSeen: now.Format(time.RFC3339),
-			Tags: []string{"tag:exit-node", "tag:public"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node", "tag:public"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 	}}
 	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink,
 		OfflineAfter: 2 * time.Minute, AutoSync: false} // explicit off
@@ -686,8 +836,10 @@ func TestTick_AutoSyncError_DoesNotAbortHealthCheck(t *testing.T) {
 	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", UserName: "admin", UserID: "1",
 			Online: true, LastSeen: now.Format(time.RFC3339),
-			Tags: []string{"tag:exit-node", "tag:public"},
-			AvailableRoutes: []string{"0.0.0.0/0", "::/0"}},
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node", "tag:public"},
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 	}}
 	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink,
 		OfflineAfter: 2 * time.Minute, AutoSync: true}
