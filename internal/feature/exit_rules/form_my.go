@@ -8,13 +8,13 @@
 // insertRuleUnique helpers live in store.go (also part
 // of step 4f).
 //
-// - GetMyExitRules       (GET  /my/exit-rules, also
-//                         handles ?script= download via
-//                         GenerateRouteSetupScript)
-// - PostMyExitRule      (POST /my/exit-rules, add a single
-//                         rule with DNS resolve)
-// - PostDeleteExitRule  (POST /my/exit-rules/delete, single
-//                         or multi-delete with cascade)
+//   - GetMyExitRules       (GET  /my/exit-rules, also
+//     handles ?script= download via
+//     GenerateRouteSetupScript)
+//   - PostMyExitRule      (POST /my/exit-rules, add a single
+//     rule with DNS resolve)
+//   - PostDeleteExitRule  (POST /my/exit-rules/delete, single
+//     or multi-delete with cascade)
 //
 // Test file removed: exit_rules_form_parent_domain_test.go
 // (~550 lines, 11 tests covering insertRuleUnique +
@@ -166,7 +166,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 
 	// Build per-device route info — match by hostname (resolved from IP)
 	deviceRoutes := map[string][]db.DeviceRule{} // hostname -> rules
-	hasRoutes := map[string]bool{}              // hostname -> has IP/subnet rules
+	hasRoutes := map[string]bool{}               // hostname -> has IP/subnet rules
 	for _, rl := range rules {
 		name := rl.DeviceName
 		if name == "" {
@@ -364,7 +364,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		loadPct = totalRules * 100 / maxTotal
 	}
 
-		// 2026-07-07: issue #5 — query params for dedup notification
+	// 2026-07-07: issue #5 — query params for dedup notification
 	duplicate := r.URL.Query().Get("duplicate") == "1"
 	// 2026-09-07 (B237.19): form-error flash from
 	// the POST handler. The handler used to call
@@ -583,18 +583,18 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// 2026-08-25 (B182): per-rule headscale-state status
 		// for the three-state ✅/⏳/⚠️ badge. See the
 		// for-loop above for the four possible values.
-		"StatusByRuleID":    statusByRuleID,
-		"TotalRules":        totalRules,
-		"MaxTotalRules":     maxTotal,
-		"LoadPct":           loadPct,
-		"UserFacingCount":   userFacingCount,
-		"MaxPerUser":        maxPerUser,
-		"MaxPerDevice":      maxPerDeviceLimit,
+		"StatusByRuleID":  statusByRuleID,
+		"TotalRules":      totalRules,
+		"MaxTotalRules":   maxTotal,
+		"LoadPct":         loadPct,
+		"UserFacingCount": userFacingCount,
+		"MaxPerUser":      maxPerUser,
+		"MaxPerDevice":    maxPerDeviceLimit,
 		// 2026-08-06: preferred-exit-node cross-check. The
 		// template renders a warning banner when MismatchCount > 0
 		// and offers UserPreferred as a "use this" button.
-		"MismatchCount":     mismatchCount,
-		"UserPreferred":     userPreferredHost,
+		"MismatchCount": mismatchCount,
+		"UserPreferred": userPreferredHost,
 		"FormValues": map[string]string{
 			"device_id":    formDeviceID,
 			"exit_node":    formExitNode,
@@ -614,6 +614,35 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// userDeviceIDs returns every headscale node id attributed to the given portal
+// username in node_owner_map (the "all my devices" fan-out of B275.3).
+//
+// node_owner_map is the same projection the ACL generator uses to mint device
+// tags, so the ids here are exactly the devices whose rules the policy can
+// match. Failures degrade to an empty slice — the caller then keeps the rule on
+// the explicitly selected device instead of failing the save.
+func (s *Service) userDeviceIDs(username string) []int {
+	rows, err := db.ListAllNodeOwners(s.dbc())
+	if err != nil {
+		return nil
+	}
+	want := strings.ToLower(strings.TrimSpace(username))
+	seen := map[int]bool{}
+	var out []int
+	for _, n := range rows {
+		if strings.ToLower(strings.TrimSpace(n.Username)) != want {
+			continue
+		}
+		id, cerr := strconv.Atoi(strings.TrimSpace(n.NodeID))
+		if cerr != nil || id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
 func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {
@@ -624,7 +653,21 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	devID, _ := strconv.Atoi(r.FormValue("device_id"))
+	devRaw := strings.TrimSpace(r.FormValue("device_id"))
+	// B275.3: "all my devices" — the form offers a per-USER rule, because a
+	// user with several Windows/Linux boxes otherwise has to repeat the same
+	// rule per device. It cannot be expressed as `src=user@` in the ACL:
+	// skygate devices are TAGGED and headscale does not match a tagged node
+	// with a user selector (B265), so the rule is materialised for every
+	// device the user owns — the fan-out happens at save time and the caller
+	// reports how many devices got it.
+	allDevices := devRaw == "all"
+	devID, _ := strconv.Atoi(devRaw)
+	if allDevices {
+		if ids := s.userDeviceIDs(c.Username); len(ids) > 0 {
+			devID = ids[0]
+		}
+	}
 	exitNode := r.FormValue("exit_node")
 	targetType := r.FormValue("target_type")
 	targetValue := strings.TrimSpace(r.FormValue("target_value"))
@@ -747,13 +790,13 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 			if len(n.IPAddresses) > 0 {
 				deviceIP = n.IPAddresses[0]
 			}
-		// 2026-07-12: Этап 10 part 4 — moved to
-		// db.CountNodeOwnerByNodeUser. devID is an int here
-		// (it came from a strconv.Atoi above); the helper
-		// expects the string form that node_owner_map stores.
-		c2, _ := db.CountNodeOwnerByNodeUser(s.dbc(), strconv.Itoa(devID), c.Username)
-		owned = c2 > 0
-		break
+			// 2026-07-12: Этап 10 part 4 — moved to
+			// db.CountNodeOwnerByNodeUser. devID is an int here
+			// (it came from a strconv.Atoi above); the helper
+			// expects the string form that node_owner_map stores.
+			c2, _ := db.CountNodeOwnerByNodeUser(s.dbc(), strconv.Itoa(devID), c.Username)
+			owned = c2 > 0
+			break
 		}
 	}
 	if !owned {
@@ -815,14 +858,14 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		existingDomainID, _ := db.FindDomainRuleID(s.dbc(), c.UserID, devID, exitNode, targetValue)
 		if existingDomainID == 0 {
 			// v0.28.0: pass userName (from c.UserID via portal_users)
-		// lookup) and deviceHostname. The form path doesn't
-		// have the user's name in scope at this callsite,
-		// so we pass "" and let the migration backfill +
-		// /my/devices load fill it. The ACL builder falls
-		// back to src=device_ip for rules with empty
-		// userName/deviceHostname, so the rule is live
-		// immediately after this insert.
-		_, _ = db.AppendDeviceRule(s.dbc(), c.UserID, devID, exitNode, "domain", targetValue, action, deviceIP, targetValue, "", "")
+			// lookup) and deviceHostname. The form path doesn't
+			// have the user's name in scope at this callsite,
+			// so we pass "" and let the migration backfill +
+			// /my/devices load fill it. The ACL builder falls
+			// back to src=device_ip for rules with empty
+			// userName/deviceHostname, so the rule is live
+			// immediately after this insert.
+			_, _ = db.AppendDeviceRule(s.dbc(), c.UserID, devID, exitNode, "domain", targetValue, action, deviceIP, targetValue, "", "")
 		}
 	}
 
@@ -954,6 +997,30 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 				go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL apply failed (rule by %s)\n  target: %s %s\n  err: %v",
 					c.Username, typeToInsert, targetValue, err))
 			}
+		}
+	}
+	// B275.3: fan the just-saved rule out to the user's other devices when the
+	// form asked for "all my devices". The primary device is skipped (it was
+	// written above by the normal path, duplicates are a no-op via
+	// insertRuleUnique). Failures are logged, not fatal: the operator's rule is
+	// already saved for at least one device, and the ACL re-apply below sees
+	// whatever landed.
+	fannedOut := 1
+	if allDevices {
+		for _, otherID := range s.userDeviceIDs(c.Username) {
+			if otherID == devID {
+				continue
+			}
+			for _, ip := range ipsToInsert {
+				ok, _ := s.insertRuleUnique(c.UserID, otherID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent)
+				if ok {
+					fannedOut++
+				}
+			}
+		}
+		if fannedOut > 1 {
+			log.Printf("exit-rules: rule %s %s fanned out to %d devices of user %s",
+				typeToInsert, targetValue, fannedOut, c.Username)
 		}
 	}
 	http.Redirect(w, r, fmt.Sprintf("/my/exit-rules?applied=1&form_device_id=%s&form_exit_node=%s&form_target_type=%s&form_target_value=%s&form_action=%s%s",
