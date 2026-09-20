@@ -12,6 +12,25 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.20 — the fixture-cleanup script actually ships (B274.1)
+
+**Date:** 2026-09-20 · **Base:** `v1.5.19` → this tag · **Compatibility:** script
+rename only, no code or schema change.
+
+v1.5.19 documented `scripts/cleanup_b188_3_fixtures.sh` and every local check
+passed — but the file never reached the repository: `.gitignore` line 78 is
+`cleanup_*.sh`, so `git add -A` silently skipped it and the operator's `--apply`
+run on the freshly pulled host failed with
+`bash: scripts/cleanup_b188_3_fixtures.sh: No such file or directory`.
+
+* the script is renamed to **`scripts/b188_3_fixture_cleanup.sh`** (outside the
+  ignore pattern);
+* `scripts/check_b274_prefix_ownership.sh` gains contract **E.1b**, which asks
+  `git ls-files --error-unmatch` instead of `test -f` — an ignored file can no
+  longer pass the gate while being absent from every clone;
+* `AGENTS.md` trap #11 records the class: a check that only proves the file
+  exists on THIS disk proves nothing about what was committed.
+
 ## v1.5.19 — one advertising relay per prefix (B274)
 
 **Date:** 2026-09-20 · **Base:** `v1.5.18` → this tag · **Compatibility:** no schema,
@@ -68,7 +87,7 @@ whatever primary exists.
    exit_node_id, target_type, target_value` — and keeps the `cdn:`-prefixed
    `parent_domain`, B183's own preference). Live: `basic` carried **five** rows for
    `104.16.0.0/12` (one per discord.* / rutracker.org parent).
-5. **Fixture cleanup.** `scripts/cleanup_b188_3_fixtures.sh` deletes the rows the
+5. **Fixture cleanup.** `scripts/b188_3_fixture_cleanup.sh` deletes the rows the
    B188.3 integration fixtures leaked into the production database
    (`5.5.5.5/32`, `6.7.8.9/32`, `1.2.3.0/24`, `1.2.99.0/24`, `example.com`,
    `cascade-verify-*`, `limit-test-*`) from a **closed allow-list**, and is
@@ -88,7 +107,7 @@ of them), 28 ranges also claimed by `basic` → emilia.
 `internal/feature/exit_rules/prefix_owner.go` (new),
 `internal/feature/exit_rules/sync.go`, `internal/feature/exit_rules/prefix_owner_b274_test.go`
 (new), `scripts/check_b274_prefix_ownership.sh` (new),
-`scripts/cleanup_b188_3_fixtures.sh` (new).
+`scripts/b188_3_fixture_cleanup.sh` (new).
 
 ### Verification
 

@@ -61,7 +61,7 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 OWNER=internal/feature/exit_rules/prefix_owner.go
 TEST=internal/feature/exit_rules/prefix_owner_b274_test.go
 SYNC=internal/feature/exit_rules/sync.go
-CLEAN=scripts/cleanup_b188_3_fixtures.sh
+CLEAN=scripts/b188_3_fixture_cleanup.sh
 
 hdr "B274 — one advertising relay per prefix, and the losers named"
 
@@ -151,9 +151,19 @@ fi
 
 # --- E: fixture cleanup -----------------------------------------------------
 if [ -f "$CLEAN" ]; then
-  ok "E.1 scripts/cleanup_b188_3_fixtures.sh exists"
+  ok "E.1 $CLEAN exists"
 else
   bad "E.1 $CLEAN missing"
+fi
+# E.1b: an IGNORED file passes every local check and then never reaches the VM.
+# v1.5.19 shipped exactly that way — `.gitignore` line 78 is `cleanup_*.sh`, so
+# `git add -A` silently skipped the script and the operator's `--apply` run on a
+# freshly pulled host failed with "No such file or directory". The contract
+# therefore asserts git TRACKS the file, not merely that it exists on this disk.
+if git ls-files --error-unmatch "$CLEAN" >/dev/null 2>&1; then
+  ok "E.1b git tracks $CLEAN (not silently ignored)"
+else
+  bad "E.1b $CLEAN is not tracked by git — check .gitignore (cleanup_*.sh was the trap)"
 fi
 if bash -n "$CLEAN" 2>/dev/null; then
   ok "E.2 the cleanup script parses"
