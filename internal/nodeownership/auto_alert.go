@@ -127,6 +127,18 @@ const (
 	// ALREADY had a dev-tag in headscale, so this divergence was invisible
 	// and permanent.
 	ReasonTagMissing FailureReason = "tag_missing"
+
+	// ReasonPolicyWriteRefused (B272.3.1, 2026-09-20) — the tag cannot be
+	// made PERMITTED because the headscale policy could not be written: in
+	// `policy.mode: file` the REST API answers 500 "update is disabled for
+	// modes other than database" AND a ProtectSystem=strict unit cannot write
+	// /etc/headscale (read-only file system). Live on the native host `aro`:
+	// every 5-minute tick logged the full explanation while the METRIC said
+	// reason="unknown" 157 times per host, so the alert never named the fix.
+	// The fix is an install step, not a retry: install the privileged helper
+	// (deploy/install-policy-helper.sh, docs/troubleshooting.md 8.0.4) or
+	// apply the printed policy by hand.
+	ReasonPolicyWriteRefused FailureReason = "policy_write_refused"
 )
 
 // ErrTagNotInHeadscale is the synthetic error used when reporting a
@@ -166,6 +178,20 @@ func ClassifyFailure(err error) FailureReason {
 		return ReasonNoStrategy
 	}
 	s := err.Error()
+	// B272.3.1: the policy could not be written, so the tag can never be
+	// made permitted and AddTag will keep failing. This is the ONE class the
+	// operator has to fix by hand (install the privileged helper), and it was
+	// classified as `unknown` — live on aro: 157 failures per host with
+	// reason="unknown" while the journal carried the whole explanation
+	// (PUT /api/v1/policy: 500 update is disabled for modes other than
+	// database + open ...tmp: read-only file system). Checked BEFORE the gRPC
+	// codes because the wrapped error contains both the 500 body and the
+	// write failure.
+	if strings.Contains(s, "set policy") ||
+		strings.Contains(s, "write policy file") ||
+		strings.Contains(s, "update is disabled for modes other than") {
+		return ReasonPolicyWriteRefused
+	}
 	// ACL-reject codes first — these are the ones
 	// that need operator attention (the headscale
 	// policy is misconfigured, or the node has a

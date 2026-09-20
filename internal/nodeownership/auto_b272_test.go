@@ -178,12 +178,16 @@ func TestB272_ReconcileReportsOwnerFailure(t *testing.T) {
 	if len(hs.tagged) != 0 {
 		t.Error("AddTag must not be attempted when the policy update failed — headscale would reject it anyway")
 	}
-	// The 500 body is neither an ACL reject nor one of the transient gRPC code
-	// names, so it lands in `unknown` — deliberately: the raw text (which names
-	// the headscale policy mode) is the actionable part, and pretending it is a
-	// retryable rpc_error would hide that from the operator.
-	if got := ClassifyFailure(hs.ownerErr); got != ReasonUnknown {
-		t.Errorf("ClassifyFailure = %q, want unknown (the raw 500 text is what the operator needs)", got)
+	// B272.3.1 CONTRACT RENEGOTIATION (2026-09-20): this used to expect
+	// ReasonUnknown, on the theory that the raw 500 text is the actionable
+	// part. The live native host `aro` showed why that was wrong: the metric
+	// read `skygate_tag_autoupdate_failures_total{reason="unknown"} 157` per
+	// host while the explanation lived only in the journal, so neither the
+	// alert nor the dashboard named the fix (install the privileged policy
+	// helper). The policy-write refusal now has its own reason; the raw text
+	// still travels with the audit row and the alert body.
+	if got := ClassifyFailure(hs.ownerErr); got != ReasonPolicyWriteRefused {
+		t.Errorf("ClassifyFailure = %q, want policy_write_refused (the tag can never be permitted until the policy is writable)", got)
 	}
 }
 

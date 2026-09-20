@@ -4598,3 +4598,25 @@ run_check "B275" "prefix assignment: every prefix has exactly one owner chosen b
 # scripts/check_b275_1_prefix_ui.sh.
 run_check "B275.1" "the prefix-assignment operator surface: an admin section listing prefix -> owner -> source -> claims -> advertised with a per-row pin (SetManual) plus hand-back-to-auto, audited, and the in-page + docs help explaining that a prefix is served by exactly one relay (2026-09-20). Live context: B275 made the owner explicit, but nothing in the UI let the operator see or change it — and the most common real question ('Telegram must go through karolina, not wherever the engine balanced it') had no answer outside SQL. /admin/exit-nodes now renders PrefixRows (prefix, exit_node_id, source, claims, devices, advertised) with a relay select whose empty option hands the prefix back to the engine; PostAdminExitPrefixOwner calls prefixowner.SetManual and audits prefix_owner_pin / prefix_owner_auto; Advertised compares the table with the owning relay's live available routes so drift is visible; the page carries RU+EN help text and docs/troubleshooting.md documents the model, the checks and the caveat that two relays can never serve one prefix. 29 contracts in scripts/check_b275_1_prefix_ui.sh." \
   'test -f scripts/check_b275_1_prefix_ui.sh && bash scripts/check_b275_1_prefix_ui.sh'
+
+# --- B272.3.1 (2026-09-20): the policy helper must be installable on an EXISTING
+# host, and a refused policy write must be classified -------------------------
+#
+# B272.3.1: `write_policy_units()` runs only during a fresh install, so a host
+# installed before v1.5.16 never gets skygate-policy.path/.service. With
+# ProtectSystem=strict the policy file is read-only for skygate, so
+# ensureTagIsPermitted can never add the tagOwners entry and headscale keeps
+# refusing every tag write. Live on the native host aro: skygate-policy.path
+# inactive/missing, tag:dev-* entries: 0 in the policy, tag-reconcile
+# checked=4 applied=0 failed=3 every five minutes for 13 h — and the metric said
+# reason="unknown" 157 times per host while the journal held the whole
+# explanation. (1) deploy/install-policy-helper.sh re-installs the applier + the
+# two units on an existing install (it calls the project's own
+# write_policy_units so the units cannot drift), resolves SKYGATE_UPDATE_DIR from
+# the running service (a mismatch would silently stage a file nobody watches),
+# reloads systemd and re-arms the path unit; (2) nodeownership gains
+# ReasonPolicyWriteRefused, checked BEFORE the gRPC-code checks because the
+# wrapped error carries both the file-mode 500 body and the read-only write
+# failure. 15 contracts in scripts/check_b272_3_policy_helper.sh.
+run_check "B272.3.1" "the privileged policy helper must be installable on an EXISTING native install, and a refused policy write must be a NAMED failure reason (2026-09-20). Live case: the aro host had skygate-policy.path inactive/missing since before v1.5.16, tag:dev-* entries: 0 in /etc/headscale/policy.hujson, and tag-reconcile: checked=4 applied=0 failed=3 every five minutes — while skygate_tag_autoupdate_failures_total said reason=unknown 157 times per host, so no alert or dashboard named the fix. (1) New deploy/install-policy-helper.sh: idempotent re-install of skygate-apply-policy.sh + skygate-policy.path/.service on an existing install, reusing deploy/install-common.sh write_policy_units (single source of truth for the units), resolving SKYGATE_UPDATE_DIR from /etc/skygate/skygate.env or systemctl show skygate (a mismatch is silent: the request file is staged and nothing ever fires), then daemon-reload + enable --now skygate-policy.path and a report of any queued policy.request.props. (2) internal/nodeownership gains ReasonPolicyWriteRefused (policy_write_refused), matched on set policy / write policy file / update is disabled for modes other than, BEFORE the gRPC ACL-code checks; TestB272_ReconcileReportsOwnerFailure was renegotiated from unknown to the new reason (the raw 500 text still travels in the audit row and the alert body). 15 contracts in scripts/check_b272_3_policy_helper.sh." \
+  'test -f scripts/check_b272_3_policy_helper.sh && bash scripts/check_b272_3_policy_helper.sh'
