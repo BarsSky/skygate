@@ -12,6 +12,105 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.31 — the policy applier must not lose a tagOwner it was not told about (B272.4)
+
+**Date:** 2026-09-20 · **Base:** `v1.5.30` → this tag · **Compatibility:** an
+existing `skygate-policy.path`/`.service` pair keeps working — re-run
+`bash deploy/install-policy-helper.sh` to pick up the merge.
+
+**Symptom** (native host `aro`, right after the policy helper was finally
+installed): the first tick permitted exactly ONE device tag and left the other
+two failing every five minutes with
+`400 requested tags [tag:dev-daniil-laptop] are invalid or not permitted` —
+`applied=1 failed=2` while `grep -c 'tag:dev-'` showed **1** for three devices.
+
+**Root cause:** `EnsureTagOwner` is a read-modify-write of the WHOLE policy, and
+the reconciler calls it once per device; the privileged applier runs
+asynchronously (a `.path` unit), so the next call reads the policy *before* the
+previous write landed and sends a document that omits the tag it just added.
+Last writer wins.
+
+**Fix:** the applier is the only writer of that file, so it now **unions the
+incoming `tagOwners` with the ones on disk** before writing (an added owner is
+never dropped; grants and the rest of the document still come from the requester
+verbatim) and logs `tagOwners unioned with the on-disk policy (B272.4)`. Without
+`python3` it warns and writes unchanged (previous behaviour as a fallback).
+
+**Verification:** `scripts/check_b272_3_policy_helper.sh` contract **E** — the
+applier reads the on-disk policy, logs the union, and, where `python3` exists, a
+behavioural test writes a one-tag document over a two-tag file and asserts no
+existing tag is lost.
+
+**Still open:** the skygate-side batch (collect every missing `tagOwners` for the
+tick and send ONE policy write) and treating `connection refused` during the
+applier's headscale restart as transient instead of failing the tick.
+
+## v1.5.30 — the policy helper on an existing install, and a named refusal (B272.3.1)
+
+**Date:** 2026-09-20 · **Compatibility:** none (adds a script + a failure reason).
+
+Live diagnostic on `aro` showed the whole deadlock in one place:
+`skygate-policy.path: inactive/missing`, `tag:dev-* entries: 0` in
+`/etc/headscale/policy.hujson`, `open …policy.hujson.skygate.tmp: read-only file
+system`, and `tag-reconcile: checked=4 applied=0 failed=3` every five minutes for
+13 hours — while the metric read
+`skygate_tag_autoupdate_failures_total{reason="unknown"} 157`.
+
+* **`deploy/install-policy-helper.sh`** — idempotent (re)install of the applier
+  and the two units on an **existing** install (`write_policy_units()` only ever
+  ran during a fresh install, so a host installed before v1.5.16 could never get
+  them). It resolves `SKYGATE_UPDATE_DIR` from the running service — a mismatch
+  stages a file nobody watches — reloads systemd, arms `skygate-policy.path` and
+  reports any queued request.
+* **`ReasonPolicyWriteRefused`** (`policy_write_refused`) — the failure now has a
+  name, matched before the gRPC ACL codes; `TestB272_ReconcileReportsOwnerFailure`
+  was renegotiated from `unknown` to it.
+
+15 → 18 contracts in `scripts/check_b272_3_policy_helper.sh`.
+
+## v1.5.29 — the native-tagging diagnostic
+
+`scripts/native_tagging_diag.sh`: read-only, one run answers the four questions
+that decide whether a dev-tag can reach headscale on a native install — is the
+reconciler running (active unit + `SKYGATE_BASE_DOMAIN`), can the policy be
+written at all (is the root helper armed; is a request queued that nobody
+consumed), does the policy carry `tag:dev-*`, and what does headscale report
+versus `node_owner_map` — plus the service's own refusal reasons and the
+`skygate_tag_*` counters. (Originally named `diag_*.sh`; `.gitignore` eats that
+pattern — the same trap as the v1.5.20 fixture-cleanup script, which is exactly
+why the B274.1 contract asserts git tracks the file.)
+
+## v1.5.28 — no-op tag
+
+A marker only: the CRLF churn reported for `internal/i18n/catalog_exit_rules.go`
+turned out to be confined to the v1.5.27 commit's whitespace and the working tree
+was already clean, so there was nothing to normalise. No code change.
+
+## v1.5.27 — the rule forms follow the new model (B275.3)
+
+* The exit-node select in `/my/exit-rules` (and the admin form) gains
+  **«авто — skygate выберет»** as the default; the hint now states the truth: an
+  empty value lets skygate assign the owner by load and show it on
+  `/admin/exit-nodes`, where it can be pinned, and a chosen node is a *preference*
+  — if another relay serves the network the ACL pin follows the owner, otherwise
+  the site simply would not open on that device.
+* **«все мои устройства»** — a per-user rule. It cannot be `src=user@` in the ACL
+  (devices are tagged and headscale does not match a tagged node with a user
+  selector, B265), so it is materialised for every device the user owns:
+  `userDeviceIDs()` reads `node_owner_map` and `PostMyExitRule` fans the insert
+  out through `insertRuleUnique` (duplicates are a no-op), logging the count.
+
+## v1.5.26 — the assignment engine gets the healthy-relay list (B275.2)
+
+Both `prefixowner.Reconcile` call sites passed `nil` as the healthy set, so no
+prefix could ever be `explicit` (everything degraded to `auto`) and sticky re-use
+was disabled — the owners flipped between passes and the ACL pins moved under the
+clients. Live evidence after the v1.5.25 deploy: the whole table showed
+`source=auto` and `104.16.0.0/12` / `142.250.0.0/15` swapped owners between two
+consecutive checks. `healthyExitRelays()` now feeds the exit-node health snapshot
+into the engine; after the fix the table shows `explicit=432` with Telegram back
+on the relay its rules name.
+
 ## v1.5.25 — the operator surface for prefix assignment (B275.1)
 
 **Date:** 2026-09-20 · **Base:** `v1.5.24` → this tag · **Compatibility:** UI + docs

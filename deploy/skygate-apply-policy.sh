@@ -105,6 +105,50 @@ owner="$(stat -c '%U:%G' "$POLICY_PATH" 2>/dev/null || echo '')"
 mode="$(stat -c '%a' "$POLICY_PATH" 2>/dev/null || echo '0640')"
 cp -a "$POLICY_PATH" "$UPDATE_DIR/policy.prev" 2>/dev/null || log "WARN: could not save $UPDATE_DIR/policy.prev"
 
+# 2026-09-20 (B272.4): UNION the incoming tagOwners into the file instead of
+# replacing the document wholesale.
+#
+# WHY: skygate's reconciler calls EnsureTagOwner once per device, and each call
+# is a read-modify-write of the WHOLE policy; because this applier runs
+# asynchronously (a .path unit), the next call reads the policy BEFORE this
+# write lands and its document therefore omits the previous tag. Live on the
+# native host aro: three devices needed a tag, the policy kept exactly ONE
+# (bytes=271), and the other two failed every tick with
+# `400 requested tags [...] are invalid or not permitted`.
+#
+# The applier is the ONLY writer of this file, so it is the layer that must not
+# lose a key it was not told about. tagOwners are unioned (an added owner is
+# never dropped here — the reconciler only ever ADDS; everything else in the
+# document, grants included, comes from the requester verbatim).
+if command -v python3 > /dev/null 2>&1; then
+    if merged="$(POLICY_NEW="$POLICY_BODY" POLICY_OLD_FILE="$POLICY_PATH" python3 - <<'PY'
+import json, os, sys
+new = json.loads(os.environ.get("POLICY_NEW", ""))
+try:
+    with open(os.environ["POLICY_OLD_FILE"]) as fh:
+        old = json.load(fh)
+except Exception:
+    old = {}
+if isinstance(old.get("tagOwners"), dict) and isinstance(new.get("tagOwners"), dict):
+    merged = dict(old["tagOwners"])
+    for tag, owners in new["tagOwners"].items():
+        have = merged.get(tag) or []
+        merged[tag] = sorted(set(have) | set(owners or []))
+    added = sorted(set(merged) - set(old["tagOwners"]))
+    new["tagOwners"] = merged
+    if added:
+        sys.stderr.write("merged tagOwners: kept %d existing, added %s\n" % (len(old["tagOwners"]), ", ".join(added)))
+print(json.dumps(new, indent=2))
+PY
+)"; then
+        [ -n "$merged" ] && POLICY_BODY="$merged" && log "tagOwners unioned with the on-disk policy (B272.4)"
+    else
+        log "WARN: tagOwners merge failed — writing the requested document unchanged"
+    fi
+else
+    log "WARN: python3 not found — tagOwners cannot be unioned (a concurrent tag request may overwrite this one)"
+fi
+
 tmp="$POLICY_PATH.skygate-helper.$$"
 printf '%s\n' "$POLICY_BODY" > "$tmp" || fail "write $tmp failed"
 [ -n "$owner" ] && chown "$owner" "$tmp" 2>/dev/null || true

@@ -69,6 +69,44 @@ else
 fi
 grep -q 'ReasonPolicyWriteRefused' "$TEST" && ok "D.1 the renegotiated Go contract is present" || bad "D.1 update TestB272_ReconcileReportsOwnerFailure"
 
+# --- E: B272.4 — the applier must UNION tagOwners, not replace the document ---
+APPLIER=deploy/skygate-apply-policy.sh
+grep -q 'POLICY_OLD_FILE' "$APPLIER" && ok "E.1 the applier reads the on-disk policy before writing" || bad "E.1 the applier must read the current policy to merge tagOwners"
+grep -q 'tagOwners unioned with the on-disk policy' "$APPLIER" && ok "E.2 it logs the union" || bad "E.2 log the union"
+PY_OK=0
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' >/dev/null 2>&1; then PY_OK=1; fi
+if [ "$PY_OK" = 1 ]; then
+  tmpd="$(mktemp -d)"
+  printf '%s' '{"autoApprovers":{"exitNode":["tag:exit"]},"tagOwners":{"tag:exit":["daniil@"],"tag:dev-a":["a@x"]}}' > "$tmpd/policy.json"
+  merged="$(POLICY_NEW='{"autoApprovers":{"exitNode":["tag:exit"]},"tagOwners":{"tag:dev-b":["b@x"]}}' POLICY_OLD_FILE="$tmpd/policy.json" python3 - <<'PY'
+import json, os, sys
+new = json.loads(os.environ.get("POLICY_NEW", ""))
+try:
+    with open(os.environ["POLICY_OLD_FILE"]) as fh:
+        old = json.load(fh)
+except Exception:
+    old = {}
+if isinstance(old.get("tagOwners"), dict) and isinstance(new.get("tagOwners"), dict):
+    merged = dict(old["tagOwners"])
+    for tag, owners in new["tagOwners"].items():
+        have = merged.get(tag) or []
+        merged[tag] = sorted(set(have) | set(owners or []))
+    new["tagOwners"] = merged
+print(json.dumps(sorted(new["tagOwners"])))
+PY
+)"
+  rm -rf "$tmpd"
+  # The old document's tags must survive the new one — that is exactly the
+  # "one tag per tick" defect: three devices, one tag left in the file.
+  if printf '%s' "$merged" | grep -q '"tag:dev-a"' && printf '%s' "$merged" | grep -q '"tag:dev-b"' && printf '%s' "$merged" | grep -q '"tag:exit"'; then
+    ok "E.3 behavioural: writing B keeps A and tag:exit (no lost tagOwners)"
+  else
+    bad "E.3 behavioural: the union lost a tag — got $merged"
+  fi
+else
+  skip "E.3 python3 not available — behavioural union test skipped"
+fi
+
 if command -v go >/dev/null 2>&1; then
   out="$(go test ./internal/nodeownership/ 2>&1)"
   if grep -q '^ok' <<< "$out"; then ok "D.2 nodeownership tests pass"; else bad "D.2 go test failed: $(printf '%s' "$out" | tail -n 4)"; fi
