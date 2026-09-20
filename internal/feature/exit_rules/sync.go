@@ -105,7 +105,7 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 	// operator (prefixowner.SetManual) without touching the rules.
 	// B274's in-memory computation remains the fallback for the very
 	// first pass, before any row exists.
-	if ins, chg, rerr := prefixowner.Reconcile(s.dbc(), nil); rerr != nil {
+	if ins, chg, rerr := prefixowner.Reconcile(s.dbc(), healthyExitRelays(s.dbc())); rerr != nil {
 		log.Printf("prefix-owner: reconcile: %v", rerr)
 	} else if ins > 0 || chg > 0 {
 		log.Printf("prefix-owner: assignment table updated (inserted=%d changed=%d)", ins, chg)
@@ -190,6 +190,27 @@ func (s *Service) SyncAdvertisedRoutesForNode(node string) map[string]string {
 	owners := PrefixOwnership(allClaims)
 	syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, OwnedPrefixes(node, routes, owners), result)
 	return result
+}
+
+// healthyExitRelays returns the relay hostnames the exit-node monitor last
+// marked healthy. B275.2: prefixowner.Assign needs this list — with an empty
+// one no rule is ever 'explicit' (every assignment degrades to 'auto') and
+// sticky re-use is disabled, so the owners flip between passes and the ACL pins
+// move under the clients. Live: after the v1.5.25 deploy the table showed
+// everything as 'auto' and 104.16.0.0/12 / 142.250.0.0/15 swapped owners
+// between two consecutive checks.
+func healthyExitRelays(d *sql.DB) []string {
+	rows, err := db.ListExitNodeHealth(d)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, h := range rows {
+		if h.Healthy && h.Hostname != "" {
+			out = append(out, h.Hostname)
+		}
+	}
+	return out
 }
 
 // reportPrefixLosers logs (and counts into the result map) every relay
@@ -367,7 +388,7 @@ func (s *Service) StaggeredSync() {
 		// falling back to each rule's own exit node (live: prefix_owner
 		// had 0 rows after the v1.5.22 deploy while staggeredSync kept
 		// advertising).
-		if ins, chg, rerr := prefixowner.Reconcile(s.dbc(), nil); rerr != nil {
+		if ins, chg, rerr := prefixowner.Reconcile(s.dbc(), healthyExitRelays(s.dbc())); rerr != nil {
 			log.Printf("prefix-owner: reconcile: %v", rerr)
 		} else if ins > 0 || chg > 0 {
 			log.Printf("prefix-owner: assignment table updated (inserted=%d changed=%d)", ins, chg)
