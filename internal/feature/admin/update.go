@@ -89,8 +89,10 @@ func normalizeUpdateTarget(target string) string {
 
 // displayVersionForUpdate is the v1.1.0 fix for the duplicate-
 // commit bug. entrypoint.sh passes both
-//   -X main.version=$(git describe --tags --always)
-//   -X main.commit=$(git rev-parse --short HEAD)
+//
+//	-X main.version=$(git describe --tags --always)
+//	-X main.commit=$(git rev-parse --short HEAD)
+//
 // and BuildVersion = version + "+" + commit produced
 // "v1.0.0-15-gd6f7b6b+d6f7b6b" (commit hash twice). The
 // "+..." suffix is also stripped by compareSemver before
@@ -101,11 +103,12 @@ func normalizeUpdateTarget(target string) string {
 //
 // Returns the "Current" label + optional "build" subtitle.
 // Examples (BuildVersion input → Current, BuildSubtitle):
-//   "v1.0.0-15-gd6f7b6b+d6f7b6b" → ("v1.0.0-15-gd6f7b6b", "15-gd6f7b6b")
-//   "v1.1.0"                      → ("v1.1.0", "")
-//   "v1.1.0+78d4559"              → ("v1.1.0", "")        (no "-g" in tag → no subtitle)
-//   "dev"                         → ("vdev", "")          (gets "v" prefix)
-//   ""                            → ("v", "")
+//
+//	"v1.0.0-15-gd6f7b6b+d6f7b6b" → ("v1.0.0-15-gd6f7b6b", "15-gd6f7b6b")
+//	"v1.1.0"                      → ("v1.1.0", "")
+//	"v1.1.0+78d4559"              → ("v1.1.0", "")        (no "-g" in tag → no subtitle)
+//	"dev"                         → ("vdev", "")          (gets "v" prefix)
+//	""                            → ("v", "")
 func displayVersionForUpdate(buildVersion string) (current string, buildSubtitle string) {
 	current = buildVersion
 	// Ensure leading "v" — the GitHub tag always has it, the
@@ -276,28 +279,28 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 	// "v0.28.6" everywhere anyway; the BuildVersion is the
 	// canonical "vX.Y.Z+commit" form).
 	s.Backend.RenderWithLayout(w, r, "admin/update.html", c, map[string]any{
-		"Page":           "admin/update",
-		"Title":          "title.admin_update",
-		"Current":        currentDisplay,
-		"CurrentBuild":   buildSubtitle,
-		"BuildVersion":   s.BuildVersion,
-		"Latest":         result.Latest,
-		"LatestVer":      result.LatestVersion,
-		"IsNewer":        result.IsNewer,
-		"ReleaseURL":     result.ReleaseURL,
-		"Body":           result.Body,
-		"CheckedAt":      result.CheckedAt,
-		"Error":          result.Error,
-		"SourceURL":      result.SourceURL,
-		"InstallKind":    installKind.String(),
-		"InstallLabel":   installLabel(installKind),
+		"Page":         "admin/update",
+		"Title":        "title.admin_update",
+		"Current":      currentDisplay,
+		"CurrentBuild": buildSubtitle,
+		"BuildVersion": s.BuildVersion,
+		"Latest":       result.Latest,
+		"LatestVer":    result.LatestVersion,
+		"IsNewer":      result.IsNewer,
+		"ReleaseURL":   result.ReleaseURL,
+		"Body":         result.Body,
+		"CheckedAt":    result.CheckedAt,
+		"Error":        result.Error,
+		"SourceURL":    result.SourceURL,
+		"InstallKind":  installKind.String(),
+		"InstallLabel": installLabel(installKind),
 		// v1.5.9 (§12.15 item 3): the platform the updater would
 		// actually touch (OS/arch of the running binary, container
 		// marker, systemctl/docker presence, and for native installs
 		// whether the privileged helper is installed).
-		"Platform":   update.DetectPlatform(s.Cfg.UpdateDir),
-		"NativeKind":      installKind.IsNative(),
-		"ManualSteps":    manualSteps.Steps,
+		"Platform":    update.DetectPlatform(s.Cfg.UpdateDir),
+		"NativeKind":  installKind.IsNative(),
+		"ManualSteps": manualSteps.Steps,
 		// 2026-07-30: v0.32.3 — auto-update mode (gated by
 		// SKYGATE_AUTO_UPDATE_ENABLED). When false, the
 		// template hides the one-click "Apply" button and
@@ -530,6 +533,7 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 		switch installKind {
 		case update.InstallDocker:
 			u := update.NewDockerUpgrader(s.Cfg.RepoPath, store, current)
+			u.SettingsFn = s.globalSettingFn()
 			// 2026-09-04 (B237.10): the `target` arg may
 			// carry the BuildVersion's "+<commit>" suffix
 			// (e.g. "ve2d0b9e+e2d0b9e" for an untagged-
@@ -701,6 +705,7 @@ func (s *Service) PostAdminUpdatePush(w http.ResponseWriter, r *http.Request) {
 		switch installKind {
 		case update.InstallDocker:
 			u := update.NewDockerUpgrader(s.Cfg.RepoPath, store, current)
+			u.SettingsFn = s.globalSettingFn()
 			// 2026-09-04 (B237.10): see PostAdminUpdateApply
 			// for the rationale — `target` may carry a
 			// "+<commit>" suffix that breaks `git checkout`.
@@ -764,6 +769,7 @@ func (s *Service) PostAdminUpdateRollback(w http.ResponseWriter, r *http.Request
 		switch installKind {
 		case update.InstallDocker:
 			u := update.NewDockerUpgrader(s.Cfg.RepoPath, store, current)
+			u.SettingsFn = s.globalSettingFn()
 			// Use the State's backup tag if available; otherwise
 			// fall back to "skygate-pre-update-<short>".
 			st := store.Get()

@@ -48,3 +48,27 @@ func (s *Service) dbc() *sql.DB {
 	}
 	return s.DB.Current()
 }
+
+// globalSettingFn returns a lookup for global_settings values, for callers that
+// need a plain func(key) string — the update orchestrator reads the git mirror
+// URL (B272.5) that way. Returns nil when there is no DB handle, so callers must
+// treat nil as "not configured" rather than panicking.
+//
+// The lookup resolves the live pool per call (B224 ResettableDB pattern), so a
+// B203 watchdog swap is followed transparently.
+func (s *Service) globalSettingFn() func(key string) string {
+	if s.DB == nil {
+		return nil
+	}
+	return func(key string) string {
+		conn := s.dbc()
+		if conn == nil {
+			return ""
+		}
+		v, err := db.GetGlobalSetting(conn, key, "")
+		if err != nil {
+			return ""
+		}
+		return v
+	}
+}

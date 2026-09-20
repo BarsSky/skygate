@@ -382,5 +382,49 @@ else
   skip "J4: go not on PATH"
 fi
 
+# --- K: a host without github.com access can still self-update (B272.5) -----
+# Live case: the image update aborted with
+#   fatal: unable to access 'https://github.com/BarsSky/skygate.git/':
+#     Failed to connect to github.com:443 after 132571 ms
+# and rolled back — nothing in the product said the fetch source is configurable.
+if grep -q 'func (u \*DockerUpgrader) fetchTarget(' "$DOCKER_GO" \
+   && grep -q 'func (u \*DockerUpgrader) gitMirrorURL()' "$DOCKER_GO"; then
+  ok "K: the updater can fetch from a configured mirror when origin is unreachable"
+else
+  bad "K: the git source is hardcoded to origin — an offline host can never self-update"
+fi
+if grep -q 'SKYGATE_UPDATE_GIT_URL' "$DOCKER_GO" && grep -q 'SKYGATE_UPDATE_GIT_MIRROR' "$DOCKER_GO" \
+   && grep -q '"update.git_url"' "$DOCKER_GO"; then
+  ok "K2: the mirror comes from SKYGATE_UPDATE_GIT_URL (env) with the DB key update.git_url as fallback"
+else
+  bad "K2: the mirror cannot be configured (env or DB)"
+fi
+if grep -q 'u.SettingsFn = s.globalSettingFn()' internal/feature/admin/update.go \
+   && grep -q 'func (s \*Service) globalSettingFn() func(key string) string' internal/feature/admin/dbsource.go; then
+  ok "K3: the admin path wires the DB lookup, so the mirror is editable from the panel"
+else
+  bad "K3: the DB-configured mirror never reaches the upgrader"
+fi
+if grep -q 'refs/heads/\*:refs/remotes/origin/\*' "$DOCKER_GO" && grep -q 'refs/tags/\*:refs/tags/\*' "$DOCKER_GO"; then
+  ok "K4: the mirror fetch uses an explicit refspec (tag + branch targets both resolve)"
+else
+  bad "K4: the mirror fetch would not populate the refs the checkout phase needs"
+fi
+if grep -q 'origin unreachable' "$DOCKER_GO" && grep -q 'SKYGATE_UPDATE_GIT_URL' "$DOCKER_GO"; then
+  ok "K5: an unreachable origin with no mirror names the knob to set instead of a bare git error"
+else
+  bad "K5: an offline host still gets an opaque fetch failure"
+fi
+if command -v go >/dev/null 2>&1; then
+  OUT="$(go test -count=1 -run 'B2725' ./internal/update/ 2>&1)"
+  if grep -q '^ok' <<< "$OUT"; then
+    ok "K6: the mirror contracts pass (real git: fallback fetch brings the tag + branches, no-mirror case names the knob)"
+  else
+    bad "K6: the mirror contracts failed: $OUT"
+  fi
+else
+  skip "K6: go not on PATH"
+fi
+
 printf '\n\033[1mB272 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -12,6 +12,64 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.17 — an offline host can self-update from a mirror (B272.5)
+
+**Date:** 2026-09-19 · **Base:** `v1.5.16` → this tag · **Compatibility:** no schema,
+config or API change. New OPTIONAL setting `SKYGATE_UPDATE_GIT_URL` (env) /
+`update.git_url` (DB).
+
+### The report
+
+```
+[debug] $ git fetch --tags --prune --force →
+fatal: unable to access 'https://github.com/BarsSky/skygate.git/':
+       Failed to connect to github.com:443 after 132571 ms: Could not connect to server
+[error] phase failed: git fetch: exit status 128
+```
+
+The host has no outbound access to `github.com:443` (multi-minute connect
+timeout — not a 404, not auth), so the image-update path could never work there.
+Nothing in the product said the fetch source is configurable, and every attempt
+burned ~2 minutes of connect timeout before rolling back. (The owner name's case
+in the URL is a red herring: git passes the URL through verbatim and GitHub
+accepts whatever case the repository uses.)
+
+### What changed
+
+* `DockerUpgrader.fetchTarget` keeps `origin` as the default and, when it is
+  unreachable, retries against a configured mirror with an explicit refspec so
+  both **tag** and **branch** targets resolve:
+
+  ```
+  +refs/heads/*:refs/remotes/origin/*
+  +refs/tags/*:refs/tags/*
+  ```
+
+* The mirror URL comes from `SKYGATE_UPDATE_GIT_URL` (alias
+  `SKYGATE_UPDATE_GIT_MIRROR`), or from `global_settings.update.git_url` —
+  resolved per job through the new `Service.globalSettingFn()`, so it can be
+  changed without restarting skygate. `origin` stays the documented default and
+  is always tried first.
+* With no mirror configured the log now names the knob instead of leaving only
+  git's error, and the failure message carries both attempts.
+
+**Giving an air-gapped host a mirror** (a local path is a valid git URL):
+
+```bash
+# on a machine with GitHub access
+git clone --bare https://github.com/BarsSky/skygate.git skygate.git
+scp -r skygate.git user@host:/srv/git/skygate.git
+# on the host — /etc/skygate/skygate.env
+SKYGATE_UPDATE_GIT_URL=/srv/git/skygate.git
+sudo systemctl restart skygate
+```
+
+Contracts: section K in `scripts/check_b272_tag_drift.sh` (K–K6, 48 contracts
+total) and `internal/update/docker_fetch_b272_test.go` (drives the real git
+binary against local repositories: fallback fetch brings the tag *and* the
+remote-tracking branches; the no-mirror case names the variable). Procedure:
+`docs/troubleshooting.md` §8.0.6.
+
 ## v1.5.16 — the policy is applied through a root helper, and a leftover file can no longer block updates (B272.3 + B272.4)
 
 **Date:** 2026-09-19 · **Base:** `v1.5.15` → this tag · **Compatibility:** no schema,

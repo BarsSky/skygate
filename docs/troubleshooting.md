@@ -41,6 +41,7 @@ syntax lives in [`acl-rules-reference.md`](acl-rules-reference.md).
    * [8.0.3 The journal repeats `SQL logic error: no such function: pg_…` every 30 s (B271)](#803-the-journal-repeats-sql-logic-error-no-such-function-pg-every-30-s-b271)
    * [8.0.4 Devices show a tag that headscale does not have (B272)](#804-devices-show-a-tag-that-headscale-does-not-have-b272)
    * [8.0.5 `git checkout` blocks the image update on an untracked file (B272.4)](#805-git-checkout-blocks-the-image-update-on-an-untracked-file-b2724)
+   * [8.0.6 `git fetch` cannot reach github.com — point the updater at a mirror (B272.5)](#806-git-fetch-cannot-reach-githubcom--point-the-updater-at-a-mirror-b2725)
 9. [Telegram relay silently not delivering](#9-telegram-relay-silently-not-delivering)
 10. [General diagnostics kit](#10-general-diagnostics-kit)
 
@@ -1201,6 +1202,61 @@ git diff --no-index scripts/skygate-move-to-infra.sh <(git show v1.5.15:scripts/
 sudo mv scripts/skygate-move-to-infra.sh /root/skygate-move-to-infra.sh.bak
 # then retry the update; the tracked version arrives with the checkout
 ```
+
+### 8.0.6 `git fetch` cannot reach github.com — point the updater at a mirror (B272.5)
+
+**Symptom.** The image update fails in the fetch phase and rolls back:
+
+```
+[debug] $ git fetch --tags --prune --force →
+fatal: unable to access 'https://github.com/BarsSky/skygate.git/':
+       Failed to connect to github.com:443 after 132571 ms: Could not connect to server
+[error] phase failed: git fetch: exit status 128
+```
+
+**This is network reachability, not the remote URL.** A 404 (wrong owner/repo) or
+an auth error looks completely different; a multi-minute timeout followed by
+`Could not connect to server` means the host cannot open a TCP connection to
+`github.com:443` at all (egress firewall, no DNS, air-gapped network). The case of
+the owner name in the URL is irrelevant — git reads the URL verbatim and GitHub
+accepts whatever case the repository actually uses.
+
+**Fix (v1.5.17+).** The updater keeps `origin` as its default and falls back to a
+configured mirror when `origin` is unreachable, with an explicit refspec so both
+tag and branch targets resolve:
+
+```bash
+# on the host, in /etc/skygate/skygate.env (survives updates), then restart skygate
+SKYGATE_UPDATE_GIT_URL=ssh://git@mirror.example.com/skygate.git
+# or an internal HTTP(S) mirror:
+# SKYGATE_UPDATE_GIT_URL=http://git.example.com/skygate.git
+sudo systemctl restart skygate
+```
+
+`SKYGATE_UPDATE_GIT_MIRROR` is accepted as an alias, and the value can also be
+stored in `global_settings` under `update.git_url` (no restart needed) — the
+admin path reads it per job. With no mirror configured the job log now says
+exactly that, instead of only git's error:
+
+```
+origin is unreachable and no git mirror is configured — set SKYGATE_UPDATE_GIT_URL
+(env) or save update.git_url to a reachable clone … ; rollback follows
+```
+
+**How to give the host a mirror without internet access:**
+
+```bash
+# on a machine that CAN reach GitHub (e.g. your laptop), create a bare clone and
+# copy it to the host — then point SKYGATE_UPDATE_GIT_URL at it
+git clone --bare https://github.com/BarsSky/skygate.git skygate.git
+scp -r skygate.git user@host:/srv/git/skygate.git
+# on the host:
+#   SKYGATE_UPDATE_GIT_URL=/srv/git/skygate.git        (a local path works too)
+```
+
+A local path is a valid git URL, so a `scp` of a bare clone is enough — the
+updater fetches from it exactly as it would from `origin`, and the mirror can be
+refreshed by re-copying.
 
 To let skygate do it automatically on a native host, either grant the service user
 write access to that directory or run headscale with `policy.mode: database`:

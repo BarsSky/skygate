@@ -72,6 +72,11 @@ type DockerUpgrader struct {
 	// skygate's system service), RepoPath is the host
 	// path — typically /home/admin/skygate.
 	RepoPath string
+	// SettingsFn reads a global_settings value by key, so the git mirror URL
+	// can be configured from the DB (the admin saves `update.git_url` through
+	// /admin/update) instead of requiring an env change + restart. Optional;
+	// nil means "env only" (SKYGATE_UPDATE_GIT_URL).
+	SettingsFn func(key string) string
 	// ComposeCmd is the docker compose invocation. Defaults
 	// to "docker compose". Operators with podman-compose
 	// or docker-compose v1 can override.
@@ -205,7 +210,7 @@ func (u *DockerUpgrader) Run(ctx context.Context, target string) {
 	// local commits are still in the object database (until
 	// GC); only the tag POINTER gets corrected.
 	u.State.SetPhase(PhasePullBuild, "fetching target and rebuilding image")
-	if err := u.runGit(ctx, "fetch", "--tags", "--prune", "--force"); err != nil {
+	if err := u.fetchTarget(ctx); err != nil {
 		u.failWithRollback(ctx, fmt.Errorf("git fetch: %w", err), backupTag)
 		return
 	}
@@ -538,6 +543,66 @@ exit 0
 // and stored in the state log on success or failure.
 func (u *DockerUpgrader) runGit(ctx context.Context, args ...string) error {
 	return u.runShell(ctx, "git", args...)
+}
+
+// fetchTarget fetches tags + branches, falling back to a configured MIRROR when
+// `origin` is unreachable (B272.5).
+//
+// Live case (host `aro`, 2026-09-19): the image update aborted with
+//
+//	git fetch --tags --prune --force →
+//	fatal: unable to access 'https://github.com/BarsSky/skygate.git/':
+//	  Failed to connect to github.com:443 after 132571 ms: Could not connect to server
+//
+// — a host without outbound access to github.com can never self-update through
+// this path, and the operator was told nothing about where to point it instead.
+// The failure also cost two minutes per attempt (git's default connect timeout)
+// before rolling back.
+//
+// So: `origin` stays the default, and when it fails we try
+// `SKYGATE_UPDATE_GIT_URL` (also `SKYGATE_UPDATE_GIT_MIRROR`), reporting both
+// attempts. Both fetch the same refspec explicitly, so the result does not depend
+// on how the remote is named:
+//
+//	+refs/heads/*:refs/remotes/origin/*   → target resolution by branch name
+//	+refs/tags/*:refs/tags/*              → target resolution by tag
+func (u *DockerUpgrader) fetchTarget(ctx context.Context) error {
+	originErr := u.runGit(ctx, "fetch", "--tags", "--prune", "--force")
+	if originErr == nil {
+		return nil
+	}
+	mirror := u.gitMirrorURL()
+	if mirror == "" {
+		hint := "no git mirror is configured — set SKYGATE_UPDATE_GIT_URL (env) or save update.git_url to a reachable clone (internal mirror, or an ssh:// remote) if this host has no internet access"
+		u.State.Log(LogWarn, "origin is unreachable and "+hint+"; rollback follows")
+		return fmt.Errorf("origin unreachable: %w (%s)", originErr, hint)
+	}
+	u.State.Log(LogInfo, fmt.Sprintf("origin unreachable (%v) — trying the configured mirror %s", originErr, mirror))
+	refspecs := []string{
+		"+refs/heads/*:refs/remotes/origin/*",
+		"+refs/tags/*:refs/tags/*",
+	}
+	args := append([]string{"fetch", "--prune", "--force", mirror}, refspecs...)
+	if err := u.runGit(ctx, args...); err != nil {
+		return fmt.Errorf("origin: %v; mirror %s: %w", originErr, mirror, err)
+	}
+	u.State.Log(LogInfo, "mirror fetch OK")
+	return nil
+}
+
+// gitMirrorURL returns the configured fallback git URL, or "" when none is set.
+func (u *DockerUpgrader) gitMirrorURL() string {
+	for _, key := range []string{"SKYGATE_UPDATE_GIT_URL", "SKYGATE_UPDATE_GIT_MIRROR"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	if u.SettingsFn != nil {
+		if v := strings.TrimSpace(u.SettingsFn("update.git_url")); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // checkoutRef switches the working tree to gitRef, protecting any UNTRACKED
