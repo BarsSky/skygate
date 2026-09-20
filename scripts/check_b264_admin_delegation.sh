@@ -100,9 +100,15 @@ grep -qE '\{72,.*migrateV072SQLite\}' "$DRV_SQLITE" \
 grep -qE 'execSQLiteDDL\(' "$MIG" \
   && pass "  └ SQLite DDL goes through execSQLiteDDL (the single chokepoint)" \
   || fail "  └ SQLite DDL does not use execSQLiteDDL"
-grep -qE 'maxV != 72' "$SCHEMA_TEST" \
-  && pass "  └ SQLite chain-end assertion bumped to 72" \
-  || fail "  └ maxV assertion not bumped to 72"
+# 2026-09-20 (B275 contract renegotiation): this used to grep for the literal
+# `maxV != 72`. That made EVERY later migration break B264 — v0.73 (prefix_owner)
+# moved the SQLite chain head to 73 and this contract failed even though nothing
+# about admin delegation had changed. The number belongs in ONE place
+# (migrations_sqlite_schema_test.go, which is the actual parity guard); here we
+# only assert that the chain head is pinned there at all.
+grep -qE 'maxV != [0-9]+' "$SCHEMA_TEST" \
+  && pass "  └ SQLite chain-end assertion present (head pinned in migrations_sqlite_schema_test.go)" \
+  || fail "  └ no maxV chain-end assertion in migrations_sqlite_schema_test.go"
 grep -qE 'SKYGATE_ADMIN_USER' "$MIG" \
   && pass "  └ backfill reads SKYGATE_ADMIN_USER (default admin)" \
   || fail "  └ backfill does not reference SKYGATE_ADMIN_USER"
