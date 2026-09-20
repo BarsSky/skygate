@@ -12,6 +12,79 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.22 — skygate decides which relay serves which prefix (B275)
+
+**Date:** 2026-09-20 · **Base:** `v1.5.21` → this tag · **Compatibility:** adds the
+`prefix_owner` table (v0.73, both migration chains); existing behaviour is
+unchanged until the first route-sync pass fills it.
+
+### Why
+
+headscale serves a subnet prefix from **exactly one** relay. B274 made that choice
+deterministic and reported the losers — and the moment it did, `skyworker`'s
+`rutracker.org` stopped working: its per-CIDR ACL grant said `via=[karolina]` while
+`emilia` held the primary, so the packet had no permitted path at all. The rule
+list said "karolina", reality said "emilia", and the ACL believed the rule list.
+
+### What
+
+1. **v0.73 `prefix_owner`** — `prefix PK, exit_node_id, source, claims, devices,
+   updated_at`, created in **both** migration chains.
+2. **`internal/prefixowner`** — the engine:
+   * `Assign` — explicit rules win by **majority** (hostname as the deterministic
+     tie-break); a `source='manual'` **operator pin is never overwritten** while its
+     relay is healthy; everything else is spread over the healthy relays and is
+     **sticky** (the previous owner keeps the prefix while its load stays within one
+     prefix of the least loaded relay, so nothing migrates without a reason); an
+     unhealthy owner loses the prefix (a relay that is down cannot carry traffic);
+     an empty healthy set falls back to the relays the rules named, so the table is
+     never emptied by a headscale outage.
+   * `SetManual(d, prefix, relay)` — pin one prefix by hand; an empty relay hands it
+     back to the engine.
+   * `Reconcile` — the single call the sync path makes.
+   * `OwnerByPrefix` / `TagByPrefix` / `ViaForPrefix` — the shapes the sync and the
+     ACL generator consume.
+3. **`SyncAdvertisedRoutes`** reconciles the table and the relays advertise exactly
+   their owned prefixes (B274's in-memory computation stays as the first-pass
+   fallback before any row exists).
+4. **The per-CIDR ACL grant now carries `via=[OWNER]`** instead of
+   `via=[the rule's exit node]`. That is the actual fix: a device whose rule named a
+   relay that cannot serve the prefix now reaches the destination through the relay
+   that can, and the substitution is visible in the table (`source`, `claims`,
+   `devices`) instead of silently breaking.
+
+### Operator view
+
+`/admin/exit-nodes` and the sync result still show the relay-level picture; the new
+authority is the `prefix_owner` table:
+
+```
+select prefix, exit_node_id, source, claims, devices from prefix_owner order by prefix;
+```
+
+Re-assign one prefix (never overwritten while that relay is healthy):
+
+```
+select set_manual …            -- via prefixowner.SetManual in code today
+```
+
+### Still open (B275.1)
+
+An admin page/action for per-prefix re-assignment (today the table is engine-owned
+plus `SetManual`), Telegram notification when an owner goes down and a prefix is
+reassigned, and per-relay load weights.
+
+## v1.5.21 — dedup must run AFTER the autoupdater pass (B274.2)
+
+**Date:** 2026-09-20 · **Base:** `v1.5.20` → this tag · **Compatibility:** none.
+
+Live evidence from the v1.5.20 deployment: `DomainAutoUpdater` started its tick
+with 0 duplicate rule groups and ended it with 47, because the resolve loop inserts
+one row per `(domain, CIDR)` pair — that insertion **is** the duplication. The
+v1.5.19 collapse therefore ran before the very pass that recreates the duplicates.
+It now runs **deferred**, after the loop: `auto-updater: dedup removed 110 redundant
+derived rule row(s)`, and the live table went 47 → **0**.
+
 ## v1.5.20 — the fixture-cleanup script actually ships (B274.1)
 
 **Date:** 2026-09-20 · **Base:** `v1.5.19` → this tag · **Compatibility:** script

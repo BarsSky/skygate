@@ -26,6 +26,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/prefixowner"
 )
 
 // 2026-08-03: v0.32.29 — moved the headscale tailnet
@@ -79,13 +80,14 @@ func (NoopAlerter) SendAlert(string) int64 { return 0 }
 // from an exit-node tag and returns the bare hostname.
 //
 // Examples (v1.5.2 B188.2 conventions):
-//   "tag:dev-infra-emilia"  -> "emilia"
-//   "tag:dev-infra-karolina"-> "karolina"
-//   "tag:dev-infra-skygate-host-1" -> "skygate-host-1"
-//   "tag:exit-emilia"       -> "emilia" (legacy, pre-B118)
-//   "tag:exit-node"         -> "node" (catch-all sentinel — caller treats as non-match
-//                                    because no real device_rule has exit_node_id="node")
-//   "tag:invalid-foo"       -> "" (unrecognized shape — caller treats as non-match)
+//
+//	"tag:dev-infra-emilia"  -> "emilia"
+//	"tag:dev-infra-karolina"-> "karolina"
+//	"tag:dev-infra-skygate-host-1" -> "skygate-host-1"
+//	"tag:exit-emilia"       -> "emilia" (legacy, pre-B118)
+//	"tag:exit-node"         -> "node" (catch-all sentinel — caller treats as non-match
+//	                                 because no real device_rule has exit_node_id="node")
+//	"tag:invalid-foo"       -> "" (unrecognized shape — caller treats as non-match)
 //
 // The function tries the known buckets ("dev-infra", "dev",
 // "exit") as a prefix and returns whatever follows. This is
@@ -291,7 +293,7 @@ func GenerateACLWithVia(d *sql.DB) (string, error) {
 // GenerateACLForPlane builds the per-user headscale 0.29
 // HuJSON policy for ONE control plane. planeURL == "" means
 // "the global default plane" (every portal user with
-// headscale_url = ''). The policy lists only the identities
+// headscale_url = ”). The policy lists only the identities
 // that live on the given plane — headscale rejects unknown
 // identities in tagOwners, so we can't mix plane A and
 // plane B identities in one policy file.
@@ -948,11 +950,11 @@ type ApplyResult struct {
 // ApplyACLPipeline runs the standard "rules changed, sync to
 // headscale" pipeline for the global default plane:
 //
-//   1. GenerateACL          — build the policy JSON from device_rules
-//   2. SaveACLSnapshot      — persist the snapshot (always, so the
-//                             operator can roll back even on failure)
-//   3. HS.SetPolicy         — push to headscale
-//   4. MarkACLApplied/Fail  + AppendExitRuleLog
+//  1. GenerateACL          — build the policy JSON from device_rules
+//  2. SaveACLSnapshot      — persist the snapshot (always, so the
+//     operator can roll back even on failure)
+//  3. HS.SetPolicy         — push to headscale
+//  4. MarkACLApplied/Fail  + AppendExitRuleLog
 //
 // detailForLog is written to exit_rule_logs on both the success
 // and failure path so an operator scanning the audit trail sees
@@ -1244,6 +1246,10 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		devTag := "tag:dev-" + dp.Username + "-" + strings.ToLower(dp.DeviceHostname)
 		viaByDevice[devTag] = dp.ExitNodeTag
 	}
+	// B275: prefix → owning relay tag, from the assignment table. Used
+	// below to pin a per-CIDR grant to the relay that can actually serve
+	// the prefix (see prefixowner.ViaForPrefix).
+	ownerTagByPrefix := prefixowner.TagByPrefix(d)
 
 	devTags, err := db.GetPerUserDeviceTags(d, planeURL)
 	if err != nil {
@@ -1598,6 +1604,13 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		// added in B188.3). The catch-all autogroup:internet
 		// stays UNPINNED in both paths.
 		viaForGrant := resolvePerCIDRVia(devTag, e.ExitNodeID, viaByDevice)
+		// B275: the assignment table wins. A rule that names a relay
+		// which does not own the prefix would otherwise be pinned to a
+		// relay headscale never routes the prefix through, which blocks
+		// the device outright (live: skyworker's rutracker/Cloudflare).
+		if owner := prefixowner.ViaForPrefix(e.TargetValue, ownerTagByPrefix); owner != "" {
+			viaForGrant = owner
+		}
 		if viaForGrant != "" {
 			sb.WriteString(",\n    { \"src\": [" + src + "], \"dst\": [\"" + ruleAlias + "\"], \"ip\": [\"*\"], \"via\": [\"" + viaForGrant + "\"] }")
 		} else {
@@ -1951,4 +1964,3 @@ func SetACLForAllPlanes(d *sql.DB, hsForPlane func(planeURL string) *headscale.C
 	}
 	return out
 }
-

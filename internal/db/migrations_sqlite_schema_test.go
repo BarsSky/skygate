@@ -59,16 +59,17 @@ func TestSQLiteSchemaComplete(t *testing.T) {
 		t.Fatalf("ApplyMigrations(SQLite): %v", err)
 	}
 
-	t.Run("chain reaches V072 like PostgreSQL", func(t *testing.T) {
+	t.Run("chain reaches V073 like PostgreSQL", func(t *testing.T) {
 		var maxV int
 		if err := sqlDB.QueryRow(
 			`SELECT COALESCE(MAX(version), 0) FROM applied_migrations`).Scan(&maxV); err != nil {
 			t.Fatalf("read max(version): %v", err)
 		}
-		// PostgreSQL's chain ends at 72. If SQLite lags behind, every
-		// table/column added by the missing tail is absent.
-		if maxV != 72 {
-			t.Errorf("SQLite migration chain ends at V%d, want V72 — the PG and SQLite "+
+		// PostgreSQL's chain ends at 73 (v0.73 = prefix_owner, B275).
+		// If SQLite lags behind, every table/column added by the missing
+		// tail is absent.
+		if maxV != 73 {
+			t.Errorf("SQLite migration chain ends at V%d, want V73 — the PG and SQLite "+
 				"chains have diverged again (see driver_sqlite.go sqliteMigrations)", maxV)
 		}
 	})

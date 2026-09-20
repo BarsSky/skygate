@@ -101,6 +101,7 @@ var sqliteMigrations = []MigrationEntry{
 	// "migrations_v0_70_b236.go" does not exist in the tree).
 	{71, "v0.71 (B252): derp_cert_sync table (cert auto-renewal state for bundled derper)", "migrations_v0_71_derp_cert_sync.go", migrateV071SQLite},
 	{72, "v0.72 (B264): portal_users.is_primary — the immutable primary admin (partial UNIQUE index + backfill)", "migrations_v0_72_admin_primary.go", migrateV072SQLite},
+	{73, "v0.73 (B275): prefix_owner — the prefix-to-relay assignment table (one advertising relay per prefix)", "migrations_v0_73_prefix_owner.go", migrateV073SQLite},
 }
 
 // SQLiteMigrations returns the list of migrations the current

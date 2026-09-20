@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"skygate/internal/headscale"
+	"skygate/internal/prefixowner"
 
 	"skygate/internal/db"
 )
@@ -98,6 +99,20 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 	// two relays claim the same CIDR and headscale's primary for it
 	// flaps between passes (see prefix_owner.go for the live case).
 	owners := PrefixOwnership(claims)
+	// B275: the persisted assignment table is the authority — it is
+	// seeded here (explicit rules win, the rest is spread over the
+	// relays and stays sticky), and it can be pinned per prefix by an
+	// operator (prefixowner.SetManual) without touching the rules.
+	// B274's in-memory computation remains the fallback for the very
+	// first pass, before any row exists.
+	if ins, chg, rerr := prefixowner.Reconcile(s.dbc(), nil); rerr != nil {
+		log.Printf("prefix-owner: reconcile: %v", rerr)
+	} else if ins > 0 || chg > 0 {
+		log.Printf("prefix-owner: assignment table updated (inserted=%d changed=%d)", ins, chg)
+	}
+	if tbl := prefixowner.OwnerByPrefix(s.dbc()); len(tbl) > 0 {
+		owners = tbl
+	}
 	reportPrefixLosers("SyncAdvertisedRoutes", claims, owners, result)
 	// Default SSH key path comes from Config (set from
 	// SKYGATE_EXIT_SSH_KEY, default /home/operator/.ssh/skygate_sync).
