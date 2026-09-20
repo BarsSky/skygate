@@ -22,12 +22,14 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/prefixowner"
 )
 
 // ExitNodeInfo is the row shape for /admin/exit-nodes. Most
@@ -374,9 +376,15 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		"UntaggedCount":   untaggedCount,
 		"UnapprovedCount": unapprovedCount,
 		"ScoredCount":     scoredCount,
-		"MonitorRunning":  s.ExitNodeMonitor != nil,
-		"FlashSuccess":    r.URL.Query().Get("ok"),
-		"FlashError":      firstNonEmptyStr(r.URL.Query().Get("err"), listErrMsg), // 2026-07-20: v0.20.0 — headscale-update-monitor
+		// B275.1: the prefix assignment table. headscale serves a subnet
+		// prefix from exactly one relay, so "which relay advertises this
+		// prefix" is a first-class, operator-editable decision — not a
+		// side effect of which device's rule happened to sync last.
+		"PrefixRows":     s.loadPrefixOwnerRows(),
+		"RelayChoices":   relayChoicesFor(nodes),
+		"MonitorRunning": s.ExitNodeMonitor != nil,
+		"FlashSuccess":   r.URL.Query().Get("ok"),
+		"FlashError":     firstNonEmptyStr(r.URL.Query().Get("err"), listErrMsg), // 2026-07-20: v0.20.0 — headscale-update-monitor
 		// B266 (2026-09-19): the one-time pre-auth key + ready-to-run
 		// command from "Зарегистрировать новый exit node". The key is
 		// parked in global_settings under an opaque token (never in the
@@ -867,6 +875,111 @@ func (s *Service) PostAdminExitNodeSetAcceptRoutes(w http.ResponseWriter, r *htt
 	s.Backend.Audit(c.UserID, c.Username, "exit_node_set_accept_routes",
 		fmt.Sprintf("node=%s hostname=%s state=%d", nodeID, hostname, state))
 	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape("accept_routes updated for "+nodeID), http.StatusSeeOther)
+}
+
+// relayChoicesFor returns the distinct relay hostnames shown in the
+// prefix-assignment select (the exit_servers rows the page already rendered,
+// de-duplicated and sorted). B275.1.
+func relayChoicesFor(nodes []ExitNodeInfo) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range nodes {
+		h := strings.TrimSpace(n.Hostname)
+		if h == "" || seen[h] {
+			continue
+		}
+		seen[h] = true
+		out = append(out, h)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// PrefixOwnerRow is one row of the /admin/exit-nodes
+// "prefix assignment" table (B275.1).
+//
+// The table is the authority for WHICH relay advertises a prefix: headscale
+// serves a subnet prefix from exactly one relay, so the per-rule exit node can
+// be honoured for only one of two devices that want the same CIDR. The engine
+// (internal/prefixowner) picks the owner — explicit rules win, the rest is spread
+// over the healthy relays and is sticky — and the operator can pin a prefix by
+// hand here (source='manual', which the engine never overwrites while that relay
+// is healthy).
+type PrefixOwnerRow struct {
+	Prefix   string
+	ExitNode string
+	// Source is explicit | manual | auto — why this relay owns the prefix.
+	Source  string
+	Claims  int
+	Devices int
+	// Advertised is true when the owning relay currently reports the prefix in
+	// its available routes; Assigned-but-not-advertised is the state the
+	// operator has to look at (the relay's route sync has not caught up yet, or
+	// the SSH sync failed).
+	Advertised bool
+}
+
+// loadPrefixOwnerRows reads the assignment table plus each owning relay's
+// advertised route set, so the page can flag drift instead of hiding it.
+func (s *Service) loadPrefixOwnerRows() []PrefixOwnerRow {
+	rows, err := s.dbc().Query(`SELECT prefix, exit_node_id, COALESCE(source,'auto'),
+	                                   COALESCE(claims,0), COALESCE(devices,0)
+	                            FROM prefix_owner ORDER BY prefix`)
+	if err != nil {
+		log.Printf("[exit-nodes] prefix_owner read failed: %v", err)
+		return nil
+	}
+	defer rows.Close()
+	// advertised[relay] = set of prefixes the relay currently advertises.
+	advertised := map[string]map[string]bool{}
+	if hsNodes, herr := s.HSGlobalFn().ListAllNodes(); herr == nil {
+		for _, n := range hsNodes {
+			set := map[string]bool{}
+			for _, p := range n.AvailableRoutes {
+				set[p] = true
+			}
+			advertised[strings.ToLower(n.Hostname)] = set
+		}
+	}
+	var out []PrefixOwnerRow
+	for rows.Next() {
+		var r PrefixOwnerRow
+		if err := rows.Scan(&r.Prefix, &r.ExitNode, &r.Source, &r.Claims, &r.Devices); err != nil {
+			continue
+		}
+		if set := advertised[strings.ToLower(r.ExitNode)]; set != nil {
+			r.Advertised = set[r.Prefix]
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// PostAdminExitPrefixOwner pins one prefix to one relay (B275.1), or hands it
+// back to the engine when the relay field is empty. Admin-only, audited.
+func (s *Service) PostAdminExitPrefixOwner(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	prefix := strings.TrimSpace(r.FormValue("prefix"))
+	relay := strings.TrimSpace(r.FormValue("relay"))
+	if prefix == "" {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("prefix is empty"), http.StatusSeeOther)
+		return
+	}
+	if err := prefixowner.SetManual(s.dbc(), prefix, relay); err != nil {
+		log.Printf("[exit-nodes] SetManual(%s, %s): %v", prefix, relay, err)
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape(s.I18n.T(s.I18n.LangFromRequest(r), "error.db")), http.StatusSeeOther)
+		return
+	}
+	action := "prefix_owner_pin"
+	if relay == "" {
+		action = "prefix_owner_auto"
+	}
+	s.Backend.Audit(c.UserID, c.Username, action, fmt.Sprintf("prefix=%s relay=%s", prefix, relay))
+	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape("prefix assignment saved: "+prefix+" -> "+relay), http.StatusSeeOther)
 }
 
 // parseAcceptRoutesFormValue converts the form "state" string

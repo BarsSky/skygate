@@ -12,6 +12,37 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.25 — the operator surface for prefix assignment (B275.1)
+
+**Date:** 2026-09-20 · **Base:** `v1.5.24` → this tag · **Compatibility:** UI + docs
+only, no schema or API change.
+
+B275 moved the "which relay serves this network" decision into skygate, but the
+decision was only reachable through SQL. This release is the surface:
+
+* **`/admin/exit-nodes` → «Распределение префиксов»** — a table of
+  `сеть → владелец → источник (explicit/manual/auto) → правил/устройств → анонс`,
+  with a per-row relay select and **Сохранить**:
+  * choosing a relay calls `prefixowner.SetManual` (audit `prefix_owner_pin`) — the
+    engine will not reassign that prefix while the relay is healthy;
+  * choosing **авто** hands it back to the engine (audit `prefix_owner_auto`);
+  * the **Анонс** column compares the table with the owning relay's live advertised
+    routes, so "assigned but not announced" (route sync not run, or SSH to the relay
+    failed) is visible instead of silent.
+* **In-page help** (RU + EN): why a prefix has exactly one owner, what
+  `explicit`/`manual`/`auto` mean, that device rules are never rewritten, and what
+  each client platform does (`accept-routes` on Windows/Linux, the in-app exit-node
+  choice on Android/iOS).
+* **`docs/troubleshooting.md`** gains the operator section: symptom ("one device
+  works, another does not"), the real cause (one primary per prefix; the CDN
+  expansion makes two devices collide on the same ranges), how the table is
+  computed, the checks, and the caveat that two relays can never serve one prefix —
+  so a network that MUST go through a specific relay is pinned by hand.
+
+Note: this is the answer to «у устройства правило — значит оно пойдёт к этому
+exit-узлу» — it goes to the owner of the prefix, and the page now shows when those
+two differ.
+
 ## v1.5.22 — skygate decides which relay serves which prefix (B275)
 
 **Date:** 2026-09-20 · **Base:** `v1.5.21` → this tag · **Compatibility:** adds the

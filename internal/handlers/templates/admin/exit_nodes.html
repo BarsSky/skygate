@@ -333,6 +333,56 @@
   <pre id="sync-all-result" style="display:none;margin-top:8px;padding:8px;background:var(--bg);border-radius:4px;max-height:200px;overflow:auto;font-size:12px"></pre>
 </div>
 
+<div class="card" style="margin-bottom:24px">
+  <h3><i class="fa-solid fa-diagram-project"></i> {{t "exit_nodes.prefix_owner.title"}}</h3>
+  <p style="color:var(--text-muted);margin:8px 0 0 0;font-size:13px">{{t "exit_nodes.prefix_owner.help" | safeHTML}}</p>
+  {{if .PrefixRows}}
+  <div class="table-wrap" style="margin-top:12px">
+  <table>
+    <tr>
+      <th>{{t "exit_nodes.prefix_owner.col_prefix"}}</th>
+      <th>{{t "exit_nodes.prefix_owner.col_owner"}}</th>
+      <th>{{t "exit_nodes.prefix_owner.col_source"}}</th>
+      <th>{{t "exit_nodes.prefix_owner.col_claims"}}</th>
+      <th>{{t "exit_nodes.prefix_owner.col_advertised"}}</th>
+      <th>{{t "exit_nodes.prefix_owner.col_action"}}</th>
+    </tr>
+    {{range .PrefixRows}}
+    <tr>
+      <td><code>{{.Prefix}}</code></td>
+      <td><b>{{.ExitNode}}</b></td>
+      <td>
+        {{if eq .Source "manual"}}<span class="tag tag-success" title="{{t "exit_nodes.prefix_owner.source_manual_tip"}}">{{t "exit_nodes.prefix_owner.source_manual"}}</span>
+        {{else if eq .Source "explicit"}}<span class="tag tag-info" title="{{t "exit_nodes.prefix_owner.source_explicit_tip"}}">{{t "exit_nodes.prefix_owner.source_explicit"}}</span>
+        {{else}}<span class="tag" style="background:var(--bg-hover)" title="{{t "exit_nodes.prefix_owner.source_auto_tip"}}">{{t "exit_nodes.prefix_owner.source_auto"}}</span>{{end}}
+      </td>
+      <td style="font-size:12px;color:var(--text-muted)">{{.Claims}} / {{.Devices}}</td>
+      <td>
+        {{if .Advertised}}<span class="tag tag-success">{{t "exit_nodes.prefix_owner.advertised_yes"}}</span>
+        {{else}}<span class="tag tag-danger" title="{{t "exit_nodes.prefix_owner.advertised_no_tip"}}">{{t "exit_nodes.prefix_owner.advertised_no"}}</span>{{end}}
+      </td>
+      <td>
+        <form method="post" action="/admin/exit-nodes/prefix-owner" style="display:flex;gap:6px;align-items:center">
+          <input type="hidden" name="prefix" value="{{.Prefix}}">
+          <select name="relay" style="font-size:11px;padding:2px 4px;height:24px">
+            {{$cur := .ExitNode}}
+            {{range $.RelayChoices}}
+            <option value="{{.}}" {{if eq . $cur}}selected{{end}}>{{.}}</option>
+            {{end}}
+            <option value="">{{t "exit_nodes.prefix_owner.option_auto"}}</option>
+          </select>
+          <button type="submit" class="btn btn-sm">{{t "exit_nodes.prefix_owner.save"}}</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </table>
+  </div>
+  {{else}}
+  <p style="color:var(--text-muted);margin-top:10px">{{t "exit_nodes.prefix_owner.empty"}}</p>
+  {{end}}
+</div>
+
 <div class="card">
   <h3><i class="fa-solid fa-plus"></i> {{t "exit_nodes.add"}}</h3>
 

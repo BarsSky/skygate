@@ -2460,6 +2460,8 @@ func main() {
 	// (PostAdminExitNodeSetAcceptRoutes) updates just the
 	// accept_routes column without touching the other fields.
 	mux.Handle("POST /admin/exit-nodes/{node_id}/accept-routes", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeSetAcceptRoutes)))
+	// B275.1: pin one prefix to one relay (or hand it back to the engine).
+	mux.Handle("POST /admin/exit-nodes/prefix-owner", authMW(http.HandlerFunc(adminSvc.PostAdminExitPrefixOwner)))
 
 	// B269: the real server takes over the listener bound at the top of
 	// main(); Addr/ListenAndServe are deliberately unused so nothing can

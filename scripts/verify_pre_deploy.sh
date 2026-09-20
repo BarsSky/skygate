@@ -4582,3 +4582,19 @@ run_check "B274" "one advertising relay per prefix: prefix ownership is explicit
 # internal/prefixowner/prefixowner_b275_test.go.
 run_check "B275" "prefix assignment: every prefix has exactly one owner chosen by skygate (explicit rules win, the rest is load-balanced and sticky), the assignment is persisted and operator-pinnable, and the ACL pin follows the OWNER so a device whose rule named another relay still reaches the destination (2026-09-20). Live case: headscale serves a subnet prefix from exactly one relay, so basic(michail)->emilia and skyworker(skyadmin)->karolina could not both be honoured for the same 28 Cloudflare/Google ranges; after B274 made the ownership deterministic and reported the losers, skyworker's rutracker timed out because its per-CIDR grant named karolina while emilia held the primary. (1) v0.73 prefix_owner table in both migration chains; (2) internal/prefixowner: Assign (explicit majority + hostname tie-break, manual pin never overwritten while healthy, auto spread over the healthy relays and sticky, an unhealthy owner loses the prefix, empty healthy set falls back to the relays the rules named so the table is never emptied), SetManual, Reconcile, OwnerByPrefix, TagByPrefix, ViaForPrefix; (3) SyncAdvertisedRoutes reconciles the table and advertises from it; (4) the per-CIDR ACL grant carries via=[owner]. 13 contracts in scripts/check_b275_prefix_assignment.sh + internal/prefixowner/prefixowner_b275_test.go." \
   'test -f scripts/check_b275_prefix_assignment.sh && bash scripts/check_b275_prefix_assignment.sh'
+
+# --- B275.1 (2026-09-20): the operator surface for prefix assignment ----------
+#
+# B275.1: the engine owned the decision but there was no page for it. /admin/exit-nodes
+# gains a "prefix assignment" section (prefix -> owner -> source explicit/manual/auto
+# -> rules/devices -> advertised) with a per-row relay select and Save, which pins the
+# prefix through prefixowner.SetManual (empty relay = hand it back to the engine) and
+# writes an audit row (prefix_owner_pin / prefix_owner_auto); the row also carries an
+# Advertised flag computed from the owning relay's live available routes, so
+# "assigned but not announced" (the route sync has not run, or SSH to the relay
+# failed) is visible instead of silent. The in-page help explains why a prefix has
+# exactly one owner and what the sources mean, and docs/troubleshooting.md gains the
+# operator-facing section (symptom, cause, table, where to fix). 29 contracts in
+# scripts/check_b275_1_prefix_ui.sh.
+run_check "B275.1" "the prefix-assignment operator surface: an admin section listing prefix -> owner -> source -> claims -> advertised with a per-row pin (SetManual) plus hand-back-to-auto, audited, and the in-page + docs help explaining that a prefix is served by exactly one relay (2026-09-20). Live context: B275 made the owner explicit, but nothing in the UI let the operator see or change it — and the most common real question ('Telegram must go through karolina, not wherever the engine balanced it') had no answer outside SQL. /admin/exit-nodes now renders PrefixRows (prefix, exit_node_id, source, claims, devices, advertised) with a relay select whose empty option hands the prefix back to the engine; PostAdminExitPrefixOwner calls prefixowner.SetManual and audits prefix_owner_pin / prefix_owner_auto; Advertised compares the table with the owning relay's live available routes so drift is visible; the page carries RU+EN help text and docs/troubleshooting.md documents the model, the checks and the caveat that two relays can never serve one prefix. 29 contracts in scripts/check_b275_1_prefix_ui.sh." \
+  'test -f scripts/check_b275_1_prefix_ui.sh && bash scripts/check_b275_1_prefix_ui.sh'
