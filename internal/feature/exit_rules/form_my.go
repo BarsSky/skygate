@@ -316,7 +316,11 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 			// projection cdn_group.go operates on). All
 			// fields the my-template reads (ID,
 			// TargetType, TargetValue, ParentDomain,
-			// Action) are in RuleRow.
+			// Action, AllDevices) are in RuleRow —
+			// AllDevices is the B276.1 «все мои
+			// устройства» badge marker; dropping it here
+			// crashes /my/exit-rules with "can't evaluate
+			// field AllDevices in type exit_rules.RuleRow".
 			rows := make([]RuleRow, len(rulesForTuple))
 			for i, r := range rulesForTuple {
 				rows[i] = RuleRow{
@@ -328,6 +332,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 					TargetValue:  r.TargetValue,
 					ParentDomain: r.ParentDomain,
 					Action:       r.Action,
+					AllDevices:   r.AllDevices,
 				}
 			}
 			groups, ungrouped := GroupRulesByCDN(rows)

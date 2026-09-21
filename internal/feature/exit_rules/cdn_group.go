@@ -205,6 +205,16 @@ type CDNGroup struct {
 //   - Let the unit tests in cdn_group_test.go work with
 //     a minimal test fixture (just the fields the helper
 //     actually reads + the fields the template needs).
+//
+// AllDevices (B276.1, 2026-09-21) is the «все мои устройства»
+// marker — true when the rule was saved for every device the
+// user owns now AND every device they will register later
+// (the fan-out pass in all_devices.go keeps the copies in
+// sync). The /my/exit-rules template renders a badge when
+// this is true. Adding the field here closes the regression
+// where form_my.go's db.DeviceRule → RuleRow conversion
+// dropped the marker and crashed the render with
+// "can't evaluate field AllDevices in type exit_rules.RuleRow".
 type RuleRow struct {
 	ID           int64
 	UserID       int64
@@ -214,6 +224,12 @@ type RuleRow struct {
 	TargetValue  string
 	ParentDomain string
 	Action       string
+
+	// AllDevices is the B276.1 intent marker (db.DeviceRule.AllDevices).
+	// form_my.go copies it from db.DeviceRule during the RuleRow
+	// projection; the admin path (CDNDisplayItemAdmin / AdminRule)
+	// is a separate type and does not need this field.
+	AllDevices bool
 }
 
 // GroupRulesByCDN takes a slice of RuleRow and returns:

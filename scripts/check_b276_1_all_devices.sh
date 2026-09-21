@@ -154,6 +154,23 @@ if [ "$KEYS" -ge 2 ]; then
 else
   bad "D4: only $KEYS/2 keys are present in both catalogues"
 fi
+# D5 (regression guard, 2026-09-21): the B276.1 commit added the
+# template badge AND AllDevices on db.DeviceRule, but the
+# db.DeviceRule → RuleRow projection in form_my.go stripped the
+# field, so /my/exit-rules crashed with "can't evaluate field
+# AllDevices in type exit_rules.RuleRow". The badge is reached
+# through CDNDisplayItem.Rules → []RuleRow, so the marker MUST be
+# on RuleRow AND the projection MUST copy it.
+if grep -qE '^\s*AllDevices\s+bool\s*$' internal/feature/exit_rules/cdn_group.go; then
+  ok "D5a: RuleRow carries the AllDevices field (template reads it via CDNDisplayItem.Rules)"
+else
+  bad "D5a: RuleRow has no AllDevices field — the template badge path crashes the render"
+fi
+if grep -q 'AllDevices:\s*r\.AllDevices' "$FORM"; then
+  ok "D5b: form_my.go copies r.AllDevices during db.DeviceRule → RuleRow"
+else
+  bad "D5b: the projection drops r.AllDevices — the badge never reaches the template"
+fi
 
 # --- E: behaviour -------------------------------------------------------------
 if [ -f internal/feature/exit_rules/all_devices_b276_1_test.go ] \
