@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"skygate/internal/acl"
 	"skygate/internal/db"
 	"skygate/internal/headscale"
 	"skygate/internal/prefixowner"
@@ -137,6 +138,10 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	case <-time.After(2 * time.Second):
 		log.Printf("[exit-nodes] ensureExitServers TIMEOUT after 2s, continuing without discovery")
 	}
+	// B276: the assignment table + the live-policy comparison. Loaded once here so
+	// the page, the drift counters and the ACL staleness banner all describe the
+	// same snapshot.
+	prefixRows, prefixStats := s.loadPrefixOwnerView()
 
 	// 2026-07-12: Этап 10 part 5 — moved to db.ListExitServers.
 	// 2026-07-31: v0.32.13 — wrap in 2s timeout. Even
@@ -380,7 +385,12 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		// prefix from exactly one relay, so "which relay advertises this
 		// prefix" is a first-class, operator-editable decision — not a
 		// side effect of which device's rule happened to sync last.
-		"PrefixRows":     s.loadPrefixOwnerRows(),
+		//
+		// B276: the view returns the drifted/pinned rows (not all ~1500) plus the
+		// summary the page needs to say whether the LIVE policy still pins the old
+		// relay — the failure that used to be invisible.
+		"PrefixRows":     prefixRows,
+		"PrefixStats":    prefixStats,
 		"RelayChoices":   relayChoicesFor(nodes),
 		"MonitorRunning": s.ExitNodeMonitor != nil,
 		"FlashSuccess":   r.URL.Query().Get("ok"),
@@ -917,31 +927,75 @@ type PrefixOwnerRow struct {
 	// operator has to look at (the relay's route sync has not caught up yet, or
 	// the SSH sync failed).
 	Advertised bool
+	// B276: AlsoBy lists the OTHER relays that advertise the same prefix. Two
+	// advertisers is the B274 state — headscale picks one primary and can move it
+	// between passes, so the pin matches only half the time.
+	AlsoBy []string
+	// B276: Unserved is true when NO relay advertises the prefix: the rule is
+	// dead weight (the ACL may grant it, but no route exists to carry it).
+	Unserved bool
 }
 
-// loadPrefixOwnerRows reads the assignment table plus each owning relay's
-// advertised route set, so the page can flag drift instead of hiding it.
-func (s *Service) loadPrefixOwnerRows() []PrefixOwnerRow {
+// PrefixDriftStats is the B276 "why is this prefix not working" summary the exit
+// nodes page renders. It answers the three questions that were previously only
+// answerable by diffing SQL against headscale by hand:
+//
+//  1. does the owning relay actually advertise its prefixes (NotAdvertised /
+//     Unserved / Duplicated);
+//  2. is the policy headscale serves the one skygate would generate right now
+//     (PolicyInSync) — the stale-ACL class that silently killed every pin for a
+//     prefix when the assignment moved to another relay;
+//  3. which rows the page is showing out of the whole table (Shown/Total).
+type PrefixDriftStats struct {
+	Total          int
+	Shown          int
+	NotAdvertised  int
+	Unserved       int
+	Duplicated     int
+	PinnedDrifted  int
+	PolicyChecked  bool
+	PolicyInSync   bool
+	PolicyErr      string
+	PolicyBytes    int
+	PolicyLiveByte int
+}
+
+// prefixDriftRowLimit caps how many rows the page renders. The assignment table
+// holds every prefix the rules ever produced (live: ~1500 rows), and rendering all
+// of them with a relay <select> per row made the page megabytes of HTML for no
+// benefit — the operator needs the drifted rows, not the healthy ones.
+const prefixDriftRowLimit = 200
+
+// loadPrefixOwnerView is the real implementation behind loadPrefixOwnerRows: it
+// reads the assignment table, resolves what each relay advertises and what
+// headscale actually serves, and returns the rows worth looking at plus the
+// summary.
+func (s *Service) loadPrefixOwnerView() ([]PrefixOwnerRow, PrefixDriftStats) {
+	var stats PrefixDriftStats
 	rows, err := s.dbc().Query(`SELECT prefix, exit_node_id, COALESCE(source,'auto'),
 	                                   COALESCE(claims,0), COALESCE(devices,0)
 	                            FROM prefix_owner ORDER BY prefix`)
 	if err != nil {
 		log.Printf("[exit-nodes] prefix_owner read failed: %v", err)
-		return nil
+		return nil, stats
 	}
 	defer rows.Close()
-	// advertised[relay] = set of prefixes the relay currently advertises.
+	// advertised[relay] = set of prefixes the relay currently advertises, and
+	// advertisers[prefix] = the relays advertising it, so both "my owner is silent"
+	// and "two relays claim it" are visible from one headscale read.
 	advertised := map[string]map[string]bool{}
+	advertisers := map[string][]string{}
 	if hsNodes, herr := s.HSGlobalFn().ListAllNodes(); herr == nil {
 		for _, n := range hsNodes {
 			set := map[string]bool{}
 			for _, p := range n.AvailableRoutes {
 				set[p] = true
+				advertisers[p] = append(advertisers[p], strings.ToLower(n.Hostname))
 			}
 			advertised[strings.ToLower(n.Hostname)] = set
 		}
 	}
-	var out []PrefixOwnerRow
+	var all []PrefixOwnerRow
 	for rows.Next() {
 		var r PrefixOwnerRow
 		if err := rows.Scan(&r.Prefix, &r.ExitNode, &r.Source, &r.Claims, &r.Devices); err != nil {
@@ -950,9 +1004,80 @@ func (s *Service) loadPrefixOwnerRows() []PrefixOwnerRow {
 		if set := advertised[strings.ToLower(r.ExitNode)]; set != nil {
 			r.Advertised = set[r.Prefix]
 		}
-		out = append(out, r)
+		owner := strings.ToLower(r.ExitNode)
+		for _, a := range advertisers[r.Prefix] {
+			if a != owner {
+				r.AlsoBy = append(r.AlsoBy, a)
+			}
+		}
+		r.Unserved = len(advertisers[r.Prefix]) == 0
+		all = append(all, r)
 	}
-	return out
+	stats.Total = len(all)
+	out := make([]PrefixOwnerRow, 0, 32)
+	for _, r := range all {
+		drifted := !r.Advertised || r.Unserved || len(r.AlsoBy) > 0
+		switch {
+		case r.Unserved:
+			stats.Unserved++
+		case !r.Advertised:
+			stats.NotAdvertised++
+		}
+		if len(r.AlsoBy) > 0 {
+			stats.Duplicated++
+		}
+		if r.Source == "manual" && drifted {
+			stats.PinnedDrifted++
+		}
+		// Show the drifted rows and every operator pin (a manual pin is a decision
+		// the operator made and must stay visible, even while it is healthy).
+		if drifted || r.Source == "manual" {
+			stats.Shown++
+			if len(out) < prefixDriftRowLimit {
+				out = append(out, r)
+			}
+		}
+	}
+	s.fillPolicyDrift(&stats)
+	return out, stats
+}
+
+// fillPolicyDrift compares the policy headscale is serving with the one skygate
+// would generate right now (B276). A mismatch means the per-CIDR `via` pins were
+// produced from an older assignment table — the exact silent failure this block
+// closes.
+func (s *Service) fillPolicyDrift(stats *PrefixDriftStats) {
+	gen, err := acl.GenerateACLLiveFormat(s.dbc())
+	if err != nil {
+		stats.PolicyErr = "generate: " + err.Error()
+		return
+	}
+	stats.PolicyBytes = len(gen)
+	hs := s.HSGlobalFn()
+	if hs == nil {
+		stats.PolicyErr = "no headscale client"
+		return
+	}
+	live, err := hs.GetACL()
+	if err != nil {
+		stats.PolicyErr = "read live policy: " + err.Error()
+		return
+	}
+	stats.PolicyLiveByte = len(live)
+	same, cmpErr := headscale.PolicyEquivalent(gen, live)
+	if cmpErr != nil {
+		stats.PolicyErr = "compare: " + cmpErr.Error()
+		return
+	}
+	stats.PolicyChecked = true
+	stats.PolicyInSync = same
+}
+
+// loadPrefixOwnerRows keeps the B275.1 signature for the page (and its contract):
+// the rows worth rendering. Use loadPrefixOwnerView when the summary is needed too.
+func (s *Service) loadPrefixOwnerRows() []PrefixOwnerRow {
+	rows, _ := s.loadPrefixOwnerView()
+	return rows
 }
 
 // PostAdminExitPrefixOwner pins one prefix to one relay (B275.1), or hands it
@@ -980,6 +1105,50 @@ func (s *Service) PostAdminExitPrefixOwner(w http.ResponseWriter, r *http.Reques
 	}
 	s.Backend.Audit(c.UserID, c.Username, action, fmt.Sprintf("prefix=%s relay=%s", prefix, relay))
 	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape("prefix assignment saved: "+prefix+" -> "+relay), http.StatusSeeOther)
+}
+
+// PostAdminExitNodeACLResync regenerates the headscale policy from the current
+// database state and pushes it (B276).
+//
+// This is the operator's escape hatch for the class this block closes: the
+// assignment table and the advertised routes are recomputed every few minutes,
+// but the ACL is only regenerated when a rule/user/device changes — so after an
+// ownership flip the live policy keeps pinning prefixes to the relay that no
+// longer serves them, and the clients silently lose those routes. The sync paths
+// now re-apply automatically; the button exists because the operator may have just
+// moved a prefix by hand (or a sync failed) and should not have to wait for a tick.
+//
+// Admin-only, audited like every other ACL apply.
+func (s *Service) PostAdminExitNodeACLResync(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var alerter acl.Alerter
+	if s.Notifier != nil {
+		alerter = s.Notifier
+	}
+	viaFlag := false
+	if s.Cfg != nil {
+		viaFlag = s.Cfg.ACLWithViaEnabled
+	}
+	results := acl.ApplyACLForAllPlanes(s.dbc(),
+		func(string) *headscale.Client { return s.HSGlobalFn() },
+		alerter,
+		c.Username,
+		fmt.Sprintf("acl resync from /admin/exit-nodes by %s (prefix ownership pins)", c.Username),
+		viaFlag,
+	)
+	for _, res := range results {
+		if res.Err != nil {
+			log.Printf("[exit-nodes] ACL resync by %s failed: %v", c.Username, res.Err)
+			http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("ACL re-apply failed: "+res.Err.Error()), http.StatusSeeOther)
+			return
+		}
+	}
+	log.Printf("[exit-nodes] ACL resync by %s: %d plane(s) updated", c.Username, len(results))
+	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape(fmt.Sprintf("ACL regenerated from the current assignment table (%d plane(s))", len(results))), http.StatusSeeOther)
 }
 
 // parseAcceptRoutesFormValue converts the form "state" string

@@ -30,13 +30,116 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"skygate/internal/acl"
 	"skygate/internal/headscale"
 	"skygate/internal/prefixowner"
 
 	"skygate/internal/db"
 )
+
+// B276 — the ACL must follow the assignment table.
+//
+// The ownership table and the advertised routes are recomputed every few minutes
+// (SyncAdvertisedRoutes / StaggeredSync), while the ACL — whose per-CIDR grants
+// carry `via=[owner]` since B275 — was regenerated ONLY when a rule, user or
+// device changed. So a prefix that changed relay kept an ACL pin naming the OLD
+// relay: headscale's `via` is a permission filter, the client then never receives
+// that route, and the traffic silently falls back to the direct path. Live on the
+// reference host: the ACL was applied at 18:19, the table moved 28 Cloudflare/
+// Google prefixes to the other relay after 19:26, and the operator's device lost
+// its whole Cloudflare set while every log line stayed quiet.
+//
+// These fields live on the package (not on Service) because the apply is triggered
+// from two goroutines — the admin/API path and the staggered background sync — and
+// they must share one throttle: a churning table must not turn into an apply storm
+// (each apply writes an acl_snapshots row and restarts nothing, but it does hit the
+// policy API, and on a file-mode host a policy write restarts headscale).
+var (
+	ownershipACLMu      sync.Mutex
+	ownershipACLLastRun time.Time
+)
+
+// ownershipACLThrottle bounds how often an ownership-driven ACL re-apply may run.
+// Ownership flips are rare once B276's per-device claim counting is in place, so
+// this only absorbs a genuinely churning table (the domain auto-updater rewrites
+// derived rows every few minutes).
+const ownershipACLThrottle = 60 * time.Second
+
+// reconcilePrefixOwnership brings the assignment table up to date with the rules
+// and, when that actually MOVED a prefix to another relay, regenerates the ACL so
+// every per-CIDR `via` pin follows the new owner.
+//
+// Returns the (inserted, changed) counts the caller logs, so both sync paths report
+// the same numbers they used to.
+func (s *Service) reconcilePrefixOwnership() (int, int, error) {
+	ins, chg, err := prefixowner.Reconcile(s.dbc(), healthyExitRelays(s.dbc()))
+	if err != nil {
+		return ins, chg, err
+	}
+	if chg > 0 {
+		s.applyACLAfterOwnershipChange(ins, chg)
+	}
+	return ins, chg, nil
+}
+
+// applyACLAfterOwnershipChange regenerates the policy and pushes it when (and only
+// when) headscale is actually serving a different policy than the one the current
+// ownership table implies.
+//
+// The comparison is why this is safe to call on every flip: an unchanged table, an
+// unchanged rule set or a policy skygate already applied all end in "nothing to
+// do" without a write. Failures are logged with the reason and never propagate —
+// the routes sync must still finish (the alternative would be a half-synced pass
+// where the routes moved and the ACL did not, which is exactly the bug).
+func (s *Service) applyACLAfterOwnershipChange(ins, chg int) {
+	ownershipACLMu.Lock()
+	if !ownershipACLLastRun.IsZero() && time.Since(ownershipACLLastRun) < ownershipACLThrottle {
+		ownershipACLMu.Unlock()
+		log.Printf("prefix-owner: %d prefix(es) changed owner but an ACL re-apply ran %s ago — deferring to the next pass (throttle %s)",
+			chg, time.Since(ownershipACLLastRun).Round(time.Second), ownershipACLThrottle)
+		return
+	}
+	ownershipACLLastRun = time.Now()
+	ownershipACLMu.Unlock()
+
+	if s.HS == nil {
+		log.Printf("prefix-owner: %d prefix(es) changed owner but no headscale client is wired — the ACL still pins the OLD relay(s); re-apply it manually on /admin/exit-rules", chg)
+		return
+	}
+	detail := fmt.Sprintf("prefix ownership changed (inserted=%d changed=%d) — ACL regenerated so every per-CIDR via= pin follows the new owner", ins, chg)
+
+	gen, err := acl.GenerateACLLiveFormat(s.dbc())
+	if err != nil {
+		log.Printf("prefix-owner: cannot regenerate the ACL after an ownership change (%v) — the live policy still pins the old relay(s)", err)
+		return
+	}
+	// Compare against what headscale is serving. The cached policy may predate the
+	// last apply, so force a fresh read: a stale "in sync" verdict here would skip
+	// exactly the re-apply this function exists for.
+	s.HS.InvalidateCache()
+	live, err := s.HS.GetACL()
+	if err != nil {
+		log.Printf("prefix-owner: cannot read the live policy to decide whether a re-apply is needed (%v) — applying unconditionally", err)
+	} else if same, cmpErr := headscale.PolicyEquivalent(gen, live); cmpErr == nil && same {
+		log.Printf("prefix-owner: %d prefix(es) changed owner but the live policy already matches the generated one — no re-apply needed", chg)
+		return
+	} else if cmpErr != nil {
+		log.Printf("prefix-owner: cannot compare the live policy with the generated one (%v) — applying unconditionally", cmpErr)
+	}
+
+	res := acl.ApplyGeneratedPolicy(s.dbc(), s.HS, gen, "skygate-prefix-owner", detail, nil)
+	if res.Err != nil {
+		log.Printf("prefix-owner: ACL re-apply after an ownership change FAILED (%v) — the live policy still pins the old relay(s); the next pass retries", res.Err)
+		if s.Notifier != nil {
+			go s.Notifier.SendAlert(fmt.Sprintf("❌ prefix ownership changed but the ACL re-apply failed\n  %s\n  err: %v", detail, res.Err))
+		}
+		return
+	}
+	log.Printf("prefix-owner: ACL re-applied after the ownership change (snapshot v%d) — every per-CIDR pin now follows the table", res.Version)
+}
 
 // knownSubdomains maps a main domain to its known subdomain hosts for static assets.
 // 2026-07-07: issue #9 — Cloudflare-routed sites have static on different subdomains.
@@ -105,7 +208,11 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 	// operator (prefixowner.SetManual) without touching the rules.
 	// B274's in-memory computation remains the fallback for the very
 	// first pass, before any row exists.
-	if ins, chg, rerr := prefixowner.Reconcile(s.dbc(), healthyExitRelays(s.dbc())); rerr != nil {
+	//
+	// B276: the same helper also re-applies the ACL when the table moved a prefix
+	// to another relay, because the per-CIDR pin lives in the ACL and nothing else
+	// regenerates it.
+	if ins, chg, rerr := s.reconcilePrefixOwnership(); rerr != nil {
 		log.Printf("prefix-owner: reconcile: %v", rerr)
 	} else if ins > 0 || chg > 0 {
 		log.Printf("prefix-owner: assignment table updated (inserted=%d changed=%d)", ins, chg)
@@ -369,7 +476,12 @@ func (s *Service) StaggeredSync() {
 		// two relays can never advertise the same prefix (the live
 		// cause of the flapping primary that broke `skyworker`'s
 		// Cloudflare/Google destinations).
-		claimRows, cerr := s.dbc().Query("SELECT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND exit_node_id != '' AND target_type IN ('subnet', 'ip')")
+		// B276: one claim per (relay, prefix) here as well. This query feeds the
+		// B274 in-memory fallback (`PrefixOwnership`), whose counts are compared
+		// against the table — counting duplicate derived rows would let the
+		// auto-updater's churn decide the fallback owner, and (before the table
+		// exists) the first applied pins.
+		claimRows, cerr := s.dbc().Query("SELECT DISTINCT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND exit_node_id != '' AND target_type IN ('subnet', 'ip')")
 		var claims []PrefixClaim
 		if cerr == nil && claimRows != nil {
 			for claimRows.Next() {
@@ -388,7 +500,11 @@ func (s *Service) StaggeredSync() {
 		// falling back to each rule's own exit node (live: prefix_owner
 		// had 0 rows after the v1.5.22 deploy while staggeredSync kept
 		// advertising).
-		if ins, chg, rerr := prefixowner.Reconcile(s.dbc(), healthyExitRelays(s.dbc())); rerr != nil {
+		//
+		// B276: and when the table moves a prefix, the ACL must be re-applied in
+		// the SAME pass — otherwise this path keeps advertising the new owner
+		// while the pin still names the old one.
+		if ins, chg, rerr := s.reconcilePrefixOwnership(); rerr != nil {
 			log.Printf("prefix-owner: reconcile: %v", rerr)
 		} else if ins > 0 || chg > 0 {
 			log.Printf("prefix-owner: assignment table updated (inserted=%d changed=%d)", ins, chg)

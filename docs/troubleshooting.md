@@ -40,8 +40,9 @@ syntax lives in [`acl-rules-reference.md`](acl-rules-reference.md).
    * [8.0.2 The update rolls back every time even though the service is healthy (B270)](#802-the-update-rolls-back-every-time-even-though-the-service-is-healthy-b270)
    * [8.0.3 The journal repeats `SQL logic error: no such function: pg_…` every 30 s (B271)](#803-the-journal-repeats-sql-logic-error-no-such-function-pg-every-30-s-b271)
    * [8.0.4 Devices show a tag that headscale does not have (B272)](#804-devices-show-a-tag-that-headscale-does-not-have-b272)
-   * [8.0.5 `git checkout` blocks the image update on an untracked file (B272.4)](#805-git-checkout-blocks-the-image-update-on-an-untracked-file-b2724)
-   * [8.0.6 `git fetch` cannot reach github.com — point the updater at a mirror (B272.5)](#806-git-fetch-cannot-reach-githubcom--point-the-updater-at-a-mirror-b2725)
+   * [8.0.5 One user's device lost Cloudflare/Google while another's still works (B276)](#805-one-users-device-lost-cloudflaregoogle-while-anothers-still-works-b276)
+   * [8.0.6 `git checkout` blocks the image update on an untracked file (B272.4)](#806-git-checkout-blocks-the-image-update-on-an-untracked-file-b2724)
+   * [8.0.7 `git fetch` cannot reach github.com — point the updater at a mirror (B272.5)](#807-git-fetch-cannot-reach-githubcom--point-the-updater-at-a-mirror-b2725)
 9. [Telegram relay silently not delivering](#9-telegram-relay-silently-not-delivering)
 10. [General diagnostics kit](#10-general-diagnostics-kit)
 
@@ -1168,7 +1169,53 @@ sudo systemctl restart headscale
 sudo headscale policy get | head -20                     # verify
 ```
 
-### 8.0.5 `git checkout` blocks the image update on an untracked file (B272.4)
+### 8.0.5 One user's device lost Cloudflare/Google while another's still works (B276)
+
+**Symptom.** A device has rules for sites behind Cloudflare (`discord.com`,
+`rutracker.org`, `registry.npmjs.org`) and they stopped opening for **one** device,
+while another user's device on the same tailnet is fine. Nothing in the journal, the
+audit log or `/admin/audit` mentions it. `/admin/exit-nodes` shows the prefixes with an
+owner, and the owner's relay is up.
+
+**What is happening.** headscale serves a subnet prefix from exactly **one** relay, and
+skygate's per-CIDR ACL grant pins the prefix to a named relay with `via`. That `via` is
+a **permission filter**, not steering: if the named relay is not the one serving the
+prefix, the client does not use the other relay — it receives **no route for that
+prefix at all**, and its traffic leaves directly (which works on a network that reaches
+the site, and fails on one where the ISP blocks it). So the device that "has nothing"
+is the one whose direct path is blocked.
+
+The pin is written when the ACL is generated, and the owner is recomputed by the route
+sync every few minutes. Before B276 nothing regenerated the ACL when the owner changed
+— so after a reassignment every pin for the moved prefixes named the previous relay.
+
+**Check it in one command** (B276 makes this unnecessary, but it is the fastest way to
+confirm on an older build):
+
+```bash
+# the pin in the live policy, for one prefix
+sudo headscale policy get | grep -A0 'h-rule-104-16-0-0-12' | head -3
+# vs who actually serves it
+sudo headscale nodes list --output json | python3 -c 'import json,sys
+for n in json.load(sys.stdin):
+    if "104.16.0.0/12" in (n.get("subnet_routes") or []): print("primary:", n["given_name"])'
+```
+
+**Fix.** On v1.5.36+ open `/admin/exit-nodes`: the prefix section states whether the
+live policy matches the current assignment table, and
+**«Пересобрать и применить ACL»** regenerates and pushes it. On older builds use
+`/admin/exit-rules` → Re-apply, or `skygate acl-apply`. The sync paths now do this
+automatically whenever an owner changes, so a manual apply is only needed once (for a
+mismatch created before the upgrade) or after a failed sync.
+
+**Prevention (what v1.5.36 changed).** Both sync paths regenerate and apply the policy
+in the same pass as the reassignment (throttled to once a minute, skipped when the live
+policy already matches); the ownership vote counts one claim per **device** instead of
+one per derived rule row, so the domain auto-updater's churn can no longer decide who
+owns a prefix; and the page lists the drifted rows (owner silent / nobody announces /
+several announce) instead of printing the whole ~1500-row table.
+
+### 8.0.6 `git checkout` blocks the image update on an untracked file (B272.4)
 
 **Symptom.** `/admin/update` fails at the checkout phase:
 
@@ -1217,7 +1264,7 @@ sudo mv scripts/skygate-move-to-infra.sh /root/skygate-move-to-infra.sh.bak
 # then retry the update; the tracked version arrives with the checkout
 ```
 
-### 8.0.6 `git fetch` cannot reach github.com — point the updater at a mirror (B272.5)
+### 8.0.7 `git fetch` cannot reach github.com — point the updater at a mirror (B272.5)
 
 **Symptom.** The image update fails in the fetch phase and rolls back:
 

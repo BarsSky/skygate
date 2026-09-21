@@ -12,6 +12,74 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.36 — the ACL must follow the assignment table (B276)
+
+**Date:** 2026-09-21 · **Base:** `v1.5.35` → this tag · **Compatibility:** none.
+
+**Symptom** (analysis of the live tailnet): one user's device (`michail`/`basic`) lost
+essentially every destination it has a rule for — Cloudflare, Google, discord,
+rutracker — while another user's device (`skyadmin`/`skyworker`) kept working. Both
+devices' per-CIDR grants were pinned to `karolina` while `emilia` was the relay that
+actually served those prefixes.
+
+**Root cause:** skygate owns two halves of one decision and wrote them at different
+times.
+
+* the **data plane** — which relay advertises which prefix. headscale serves a subnet
+  prefix from exactly **one** relay (the primary); the assignment table and the
+  advertised routes are recomputed on every sync pass (minutes);
+* the **control plane** — the ACL, whose per-CIDR grant carries `via=[owner]` since
+  B275. It was regenerated **only** when a rule, user or device changed.
+
+Live sequence: the ACL was generated and applied **2026-09-20 18:19**; the assignment
+table moved 28 Cloudflare/Google prefixes to `emilia` after **19:26** (the routes
+followed within five minutes); nothing regenerated the ACL, so every pin for those
+prefixes kept naming `karolina`. `via` on a per-CIDR grant is a **permission filter**,
+not steering — the client never receives a route whose primary is not in the `via`
+list, silently falls back to the direct path, and on a network where that path is
+blocked the destination simply disappears. Measured on one client: **70 of 177**
+per-CIDR grants named a relay that was not the primary, and **35 more** named a prefix
+no relay advertised. Nothing anywhere — log, audit, metric, page — said so.
+
+A second, quieter defect fed the first: the ownership vote counted **rows**.
+`LoadClaims` read every enabled ip/subnet row, and one domain rule expands into one
+derived row per parent domain (live: five `104.16.0.0/12` rows for one device), while
+the domain auto-updater rewrote ~145 rows and re-deduplicated ~110 **every five
+minutes** — so the "explicit majority wins" rule could be decided by that churn, and
+each flip invalidated the pins for the prefix.
+
+**Fix**
+* `reconcilePrefixOwnership()` is now the single entry point of **both** sync paths.
+  When `prefixowner.Reconcile` reports a changed owner it regenerates the policy and
+  pushes it through the shared `acl.ApplyGeneratedPolicy` tail (snapshot + mark +
+  audit; `ApplyACLPipelineForPlane` is now generate-then-this, so the two can never
+  drift), behind a 60-second shared throttle and after a fresh live read compared with
+  the new `headscale.PolicyEquivalent` — an already-applied policy costs nothing. A
+  failed apply is logged with its reason, alerted, and never fatal.
+* `prefixowner.LoadClaims` GROUPs BY `(prefix, relay, device)` — one vote per device,
+  so the updater's churn cannot decide who owns a prefix. The staggered fallback path
+  counts distinct `(relay, prefix)` pairs for the same reason.
+* The drift is **visible**: `/admin/exit-nodes` now reports whether the live policy
+  equals the one skygate would generate, flags rows whose owner stays silent, that
+  nobody announces, or that several relays announce (B274's flap risk), renders only
+  the drifted and manually pinned rows (the table holds ~1500 entries and used to be
+  printed in full, with a relay `<select>` per row), and offers
+  **«Пересобрать и применить ACL»** (`POST /admin/exit-nodes/acl-resync`) for a manual
+  pin or a failed sync, with RU+EN help.
+
+**Operator action after upgrading:** apply the ACL once — the sync paths would do it
+by themselves on the next ownership change, but the current mismatch was created
+before the upgrade, so press «Пересобрать и применить ACL» on `/admin/exit-nodes` (or
+`/admin/exit-rules` → Re-apply). The page reports «политика headscale совпадает с
+текущей таблицей владельцев» when it is in sync.
+
+**Contracts:** 28 in `scripts/check_b276_acl_ownership_sync.sh`;
+`internal/feature/exit_rules/sync_b276_test.go` reproduces the live sequence on a
+migrated database plus a headscale policy stub (the move pushes exactly one policy
+with the NEW pin; a no-op pass writes nothing; the throttle absorbs churn);
+`internal/headscale/policy_equivalent_b276_test.go`;
+`internal/prefixowner/prefixowner_b276_test.go` (five duplicate rows → one vote).
+
 ## v1.5.35 — one tagOwners policy write per reconcile pass (B272.7)
 
 **Date:** 2026-09-20 · **Base:** `v1.5.34` → this tag · **Compatibility:** none.

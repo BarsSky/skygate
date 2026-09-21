@@ -4651,3 +4651,41 @@ run_check "B272.3.1" "the privileged policy helper must be installable on an EXI
 # (three missing tags → one PUT against a policy stub).
 run_check "B272.7" "one tagOwners policy write per reconcile pass: N pending device tags must cost exactly ONE read-modify-write, because the file-mode applier runs asynchronously and per-device writes raced it (2026-09-20). Live case on the native host aro right after v1.5.31 installed the policy helper: tag-reconcile: checked=4 applied=1 failed=2, 400 requested tags [tag:dev-daniil-laptop] are invalid or not permitted, and grep -c tag:dev- in /etc/headscale/policy.hujson = 1 for three devices — call N read the policy before the applier had written call N-1's result, so every write after the first started from the same stale snapshot and dropped its predecessor's tag (the writes succeeded, so no retry could help). (1) Client.EnsureTagOwners(map[string][]string) writes every missing tagOwners entry in a single policy update, built on the new shared loadPolicyMap/policyTagOwners helpers (B251 HuJSON + stringified-policy handling included) and validating the whole request before the write, so a malformed entry cannot half-apply a batch; EnsureTagOwner now delegates to it, so the adopt/transfer paths share one writer — the contract pins exactly one c.SetPolicy call in tags.go. (2) nodeLister requires EnsureTagOwners and ReconcileTags computes the pending set with the same predicates the apply loop uses (row has a tag, node is live, headscale lacks the tag, id parses) BEFORE the loop, then permits them all at once and records them in ensured so the per-row path becomes a no-op; the apply call gets the same bounded transient retry (addTagRetry: 1s/2s/4s on connection refused, never on a 400 are invalid or not permitted) because the batch deliberately puts the headscale restart in the same tick as the applies; a failed batch logs and falls back to per-tag writes so each device is still reported through the B227 sink, tagOwnersFor is shared by both paths, and the transient-only permit retry is preserved; an empty pending set issues no write. 21 contracts in scripts/check_b272_7_tag_owner_batch.sh + internal/nodeownership/auto_b272_7_batch_test.go (three devices → one write, in-sync → none, batch failure → per-device reporting, transient apply retried once, 400 not retried) and internal/headscale/tags_b272_7_batch_test.go (one PUT for three tags, existing entries preserved, empty request → no write, validation before write)." \
   'test -f scripts/check_b272_7_tag_owner_batch.sh && bash scripts/check_b272_7_tag_owner_batch.sh'
+
+# --- B276 (2026-09-21): the per-CIDR ACL pin must follow the assignment table --
+#
+# B276: skygate owns two halves of one decision and wrote them at different times.
+# The DATA plane (which relay advertises which prefix; headscale serves a subnet
+# prefix from exactly ONE relay) is recomputed on every sync pass, while the CONTROL
+# plane (the ACL, whose per-CIDR grant carries via=[owner] since B275) was
+# regenerated only when a rule, user or device changed. Live on the reference host:
+# the ACL was applied 2026-09-20 18:19, the assignment table moved 28
+# Cloudflare/Google prefixes to the other relay after 19:26 (the routes followed
+# within five minutes) and the ACL kept pinning them to the OLD relay — headscale's
+# `via` is a permission filter, so every client silently stopped receiving those
+# routes and fell back to the direct path. The operator's device lost its whole
+# Cloudflare set with no log line, no audit row and no metric naming it (measured on
+# one client: 70 of 177 per-CIDR grants named a relay that was not the primary, 35
+# more named a prefix nobody advertised). (1) Both sync paths now go through
+# reconcilePrefixOwnership(), which reconciles the table and — when an owner actually
+# CHANGED — regenerates the policy and pushes it via the shared
+# acl.ApplyGeneratedPolicy tail (snapshot + mark + audit), guarded by a 60s shared
+# throttle and a fresh live read with headscale.PolicyEquivalent so an already-applied
+# policy costs nothing; a failed apply is logged with its reason, alerted, and never
+# fatal. (2) The ownership vote is per (device, prefix): LoadClaims GROUPs BY, because
+# a domain rule expands into one derived row per parent domain and the auto-updater
+# rewrote ~145 rows and re-deduplicated ~110 every five minutes — counting rows let
+# that churn decide the owner, and (since B275) each flip silently invalidates the pins
+# for the prefix. (3) The drift is visible instead of silent: /admin/exit-nodes shows
+# whether the live policy equals the generated one (PolicyEquivalent), flags rows whose
+# owner stays silent, that nobody announces, or that several relays announce (B274's
+# flap risk), renders only the drifted/pinned rows (the table holds ~1500 entries and
+# used to be printed in full, with a <select> per row), and offers a resync button
+# (POST /admin/exit-nodes/acl-resync). 28 contracts in
+# scripts/check_b276_acl_ownership_sync.sh + internal/feature/exit_rules/sync_b276_test.go
+# (the live sequence on a migrated DB + a policy stub: the move pushes exactly one
+# policy with the NEW pin, a no-op pass writes nothing, the throttle absorbs churn),
+# internal/headscale/policy_equivalent_b276_test.go and
+# internal/prefixowner/prefixowner_b276_test.go (five duplicate rows → one vote).
+run_check "B276" "the per-CIDR ACL pin follows the assignment table: an ownership change must re-apply the policy in the same pass, the ownership vote counts DEVICES rather than derived rows, and drift between the table, the advertised routes and the live policy is visible instead of silent (2026-09-21). Live case: the ACL was generated 2026-09-20 18:19 and pinned 28 Cloudflare/Google prefixes to karolina, the assignment table moved those prefixes to emilia after 19:26 and the routes followed within five minutes — but nothing regenerated the ACL, so every client kept a via= pin to a relay that no longer served the prefix. headscale treats via on a per-CIDR grant as a permission filter, so the client never received the route and fell back to the direct path: the operator's device lost its whole Cloudflare set (discord, rutracker, registry.npmjs) with no log line, no audit row and no metric; measured on one client, 70 of 177 per-CIDR grants named a relay that was not the primary and 35 more named a prefix nobody advertised. (1) reconcilePrefixOwnership() is now the single entry point used by BOTH sync paths; when prefixowner.Reconcile reports a changed owner it regenerates the policy and pushes it through the shared acl.ApplyGeneratedPolicy tail (so snapshot/mark/audit cannot drift from ApplyACLPipelineForPlane, which is now generate-then-this), behind a 60s shared throttle (the domain auto-updater rewrites the table every few minutes) and a fresh live read compared with headscale.PolicyEquivalent (an already-applied policy costs nothing); a failed apply is logged with its reason and alerted, never fatal. (2) LoadClaims GROUPs BY (prefix, relay, device): a domain rule expands into one derived row per parent domain (live: five 104.16.0.0/12 rows for one device) and the updater rewrote ~145 rows and re-deduplicated ~110 every five minutes, so counting rows let churn decide the owner — and since B275 each flip silently invalidates that prefix's pins. (3) The pages now show the drift: PrefixDriftStats + fillPolicyDrift compare the live policy with the generated one, PrefixOwnerRow gains AlsoBy (several advertisers = B274 flap risk) and Unserved (nobody advertises), the table renders only the drifted and manually pinned rows (out of ~1500; it used to print every row with a relay select), and POST /admin/exit-nodes/acl-resync regenerates and applies on demand, with RU+EN help. 28 contracts in scripts/check_b276_acl_ownership_sync.sh + sync_b276_test.go (the live sequence on a migrated database and a headscale policy stub), policy_equivalent_b276_test.go and prefixowner_b276_test.go." \
+  'test -f scripts/check_b276_acl_ownership_sync.sh && bash scripts/check_b276_acl_ownership_sync.sh'

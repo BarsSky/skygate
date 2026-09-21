@@ -336,6 +336,38 @@
 <div class="card" style="margin-bottom:24px">
   <h3><i class="fa-solid fa-diagram-project"></i> {{t "exit_nodes.prefix_owner.title"}}</h3>
   <p style="color:var(--text-muted);margin:8px 0 0 0;font-size:13px">{{t "exit_nodes.prefix_owner.help" | safeHTML}}</p>
+
+  {{/* B276: is the LIVE policy the one skygate would generate right now? The
+       per-CIDR pin lives in the ACL and is regenerated only on a rule/user/device
+       change, while the assignment table is recomputed every few minutes — a
+       mismatch silently kills the route for every device that needs the prefix. */}}
+  {{with .PrefixStats}}
+  {{if .PolicyChecked}}
+    {{if .PolicyInSync}}
+    <p style="margin:10px 0 0 0"><span class="tag tag-success" title="{{t "exit_nodes.prefix_owner.policy_in_sync_tip"}}">{{t "exit_nodes.prefix_owner.policy_in_sync"}}</span></p>
+    {{else}}
+    <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.4)">
+      <b>{{t "exit_nodes.prefix_owner.policy_stale"}}</b>
+      <div style="font-size:13px;margin-top:4px">{{t "exit_nodes.prefix_owner.policy_stale_help"}}</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.prefix_owner.policy_sizes"}} {{.PolicyBytes}} / {{.PolicyLiveByte}}</div>
+      <form method="post" action="/admin/exit-nodes/acl-resync" style="margin-top:8px">
+        <button type="submit" class="btn btn-sm">{{t "exit_nodes.prefix_owner.policy_resync"}}</button>
+      </form>
+    </div>
+    {{end}}
+  {{else if .PolicyErr}}
+  <p style="margin:10px 0 0 0"><span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.policy_unknown_tip"}}">{{t "exit_nodes.prefix_owner.policy_unknown"}}: {{.PolicyErr}}</span></p>
+  {{end}}
+  {{if or .NotAdvertised .Unserved .Duplicated}}
+  <p style="margin:8px 0 0 0;font-size:13px">
+    <span class="tag tag-danger">{{t "exit_nodes.prefix_owner.drift_count"}}: {{.NotAdvertised}}</span>
+    <span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.unserved_tip"}}">{{t "exit_nodes.prefix_owner.unserved"}}: {{.Unserved}}</span>
+    <span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.duplicated_tip"}}">{{t "exit_nodes.prefix_owner.duplicated"}}: {{.Duplicated}}</span>
+    <span style="color:var(--text-muted)">{{t "exit_nodes.prefix_owner.shown_of"}} {{.Shown}} / {{.Total}}</span>
+  </p>
+  {{end}}
+  {{end}}
+
   {{if .PrefixRows}}
   <div class="table-wrap" style="margin-top:12px">
   <table>
@@ -360,6 +392,10 @@
       <td>
         {{if .Advertised}}<span class="tag tag-success">{{t "exit_nodes.prefix_owner.advertised_yes"}}</span>
         {{else}}<span class="tag tag-danger" title="{{t "exit_nodes.prefix_owner.advertised_no_tip"}}">{{t "exit_nodes.prefix_owner.advertised_no"}}</span>{{end}}
+        {{/* B276: who else announces it (B274's flapping-primary state) and
+             whether NOBODY does (the rule cannot work until a relay syncs). */}}
+        {{if .Unserved}}<span class="tag tag-danger" title="{{t "exit_nodes.prefix_owner.unserved_tip"}}">{{t "exit_nodes.prefix_owner.unserved_tag"}}</span>{{end}}
+        {{range .AlsoBy}}<span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.duplicated_tip"}}">+{{.}}</span>{{end}}
       </td>
       <td>
         <form method="post" action="/admin/exit-nodes/prefix-owner" style="display:flex;gap:6px;align-items:center">

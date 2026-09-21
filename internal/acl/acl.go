@@ -1046,6 +1046,23 @@ func ApplyACLPipelineForPlane(d *sql.DB, hs *headscale.Client, planeURL string, 
 	if err != nil {
 		return ApplyResult{Version: 0, Applied: false, Err: fmt.Errorf("generate ACL: %w", err)}
 	}
+	return ApplyGeneratedPolicy(d, hs, acl, username, detailForLog, alerter)
+}
+
+// ApplyGeneratedPolicy pushes an ALREADY GENERATED policy through the same
+// snapshot → SetPolicy → mark/log tail as ApplyACLPipelineForPlane (B276).
+//
+// It exists so a caller that must inspect the policy before pushing it — the
+// prefix-ownership sync compares it with what headscale is serving to decide
+// whether a re-apply is needed at all — does not have to re-implement (or pay for
+// a second GenerateACL of) the bookkeeping half. The two halves stay in lockstep:
+// ApplyACLPipelineForPlane is now generate-then-this.
+//
+// `username` is recorded as the snapshot author; use a stable system name (not an
+// operator) when the apply is automatic, so the audit trail says who decided.
+// `alerter` may be nil (the automatic path stays quiet — the audit row and the log
+// line are the signal; a Telegram message per ownership flip would be noise).
+func ApplyGeneratedPolicy(d *sql.DB, hs *headscale.Client, acl, username, detailForLog string, alerter Alerter) ApplyResult {
 	ver := SaveACLSnapshot(d, acl, username, alerter)
 	if setErr := hs.SetPolicy(acl); setErr != nil {
 		db.MarkACLFail(d, ver, setErr.Error())

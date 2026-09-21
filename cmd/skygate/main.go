@@ -2462,6 +2462,10 @@ func main() {
 	mux.Handle("POST /admin/exit-nodes/{node_id}/accept-routes", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeSetAcceptRoutes)))
 	// B275.1: pin one prefix to one relay (or hand it back to the engine).
 	mux.Handle("POST /admin/exit-nodes/prefix-owner", authMW(http.HandlerFunc(adminSvc.PostAdminExitPrefixOwner)))
+	// B276: regenerate + push the ACL so every per-CIDR via= pin follows the
+	// current assignment table (the sync paths do this automatically on an
+	// ownership change; the button covers a manual pin or a failed sync).
+	mux.Handle("POST /admin/exit-nodes/acl-resync", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeACLResync)))
 
 	// B269: the real server takes over the listener bound at the top of
 	// main(); Addr/ListenAndServe are deliberately unused so nothing can

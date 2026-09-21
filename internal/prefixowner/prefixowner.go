@@ -204,10 +204,24 @@ func Assign(claims []Claim, healthy []string, existing []Existing) []Assignment 
 	return out
 }
 
-// LoadClaims reads every enabled ip/subnet rule as a claim.
+// LoadClaims reads every enabled ip/subnet rule as a claim — ONE claim per
+// (prefix, relay, device) triple (B276).
+//
+// The GROUP BY is load-bearing, not cosmetic. A single domain rule is expanded
+// by the CDN resolver into many derived rows that can share one CIDR (one row per
+// parent domain) — live on the reference host the auto-updater wrote ~145 rows and
+// re-deduplicated ~110 every five minutes, and `basic` carried five
+// `104.16.0.0/12` rows for one device. Assign() casts the claim COUNTS as the
+// operator's vote ("explicit majority wins"), so counting rows let the updater's
+// churn decide which relay owns a prefix: the same two devices could produce a
+// 5:1 majority for one relay and a 1:1 tie (broken by hostname) for the other
+// depending on where in its tick the dedup happened. Since B275 turns the owner
+// into the per-CIDR ACL pin, a churn-driven flip silently invalidates every pin
+// for that prefix, so the vote must be per DEVICE.
 func LoadClaims(d *sql.DB) ([]Claim, error) {
 	rows, err := d.Query(`SELECT target_value, COALESCE(exit_node_id,''), COALESCE(device_id,0)
-	                     FROM device_rules WHERE enabled = 1 AND target_type IN ('ip','subnet')`)
+	                     FROM device_rules WHERE enabled = 1 AND target_type IN ('ip','subnet')
+	                     GROUP BY target_value, COALESCE(exit_node_id,''), COALESCE(device_id,0)`)
 	if err != nil {
 		return nil, err
 	}
