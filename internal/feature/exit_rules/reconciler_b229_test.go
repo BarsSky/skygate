@@ -268,12 +268,17 @@ func TestPlanDevicePrefChange_Update_StaleTag(t *testing.T) {
 }
 
 // TestPlanDevicePrefChange_Update_ViaDisabledButCanonical
-// pins the re-enable path. The pref is canonical but
-// via_enabled=0 (e.g. an older row that the V061
-// migration left at 0 because the tag wasn't
-// resolvable at migration time, but a later
-// node_owner_map update made it resolvable). B229
-// re-enables via_enabled=1 to restore the pin.
+// pins the v1.5.42 (B-pending-write) change. Pre-fix this path
+// returned Action="update" + silently re-enabled via_enabled=1.
+// The user feedback: an explicit via_enabled=false (Android
+// compatibility: `via=` policies fail on older Tailscale
+// clients) was being silently overwritten by the reconciler.
+//
+// The new behaviour returns Action="skip" + Reason
+// "via-disabled-but-canonical" + logs the would-have-updated
+// event for the audit trail without actually flipping the bit.
+// Operators who want the old re-enable behaviour can call the
+// helper directly or set via_enabled=1 via SQL.
 func TestPlanDevicePrefChange_Update_ViaDisabledButCanonical(t *testing.T) {
 	state := DevicePrefState{
 		UserID:              1,
@@ -288,10 +293,10 @@ func TestPlanDevicePrefChange_Update_ViaDisabledButCanonical(t *testing.T) {
 	}
 	ch, ok := PlanDevicePrefChange(state)
 	if !ok {
-		t.Fatal("expected a via-disabled update; got none")
+		t.Fatal("expected a via-disabled skip; got none")
 	}
-	if ch.Action != "update" {
-		t.Errorf("Action = %q, want update", ch.Action)
+	if ch.Action != "skip" {
+		t.Errorf("Action = %q, want skip (B-pending-write flipped this from update)", ch.Action)
 	}
 	if ch.Reason != "via-disabled-but-canonical" {
 		t.Errorf("Reason = %q, want via-disabled-but-canonical", ch.Reason)

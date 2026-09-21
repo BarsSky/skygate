@@ -152,24 +152,30 @@ func TestPlanDevicePrefChange_UpdatesStaleTag(t *testing.T) {
 }
 
 func TestPlanDevicePrefChange_ReEnablesViaFlag(t *testing.T) {
-	// Existing pref has the correct tag, but via=0
-	// (V061 migration's intentional skip for rows it
-	// couldn't resolve). B229 is the catch-up: re-enable.
+	// Existing pref has the correct tag, but via=0.
+	//
+	// v1.5.42 (B-pending-write, 2026-09-21) changed this path
+	// from a re-enabling UPDATE to a skip. The operator's
+	// explicit via_enabled=false (Android compatibility:
+	// `via=` policies fail on older Tailscale clients) must be
+	// preserved. The pre-fix code re-enabled via=1 silently;
+	// the v1.5.42 path returns Action="skip" + logs the
+	// would-have-updated event for the audit trail.
 	ch, ok := PlanDevicePrefChange(DevicePrefState{
 		UserID:              1,
 		DeviceHostname:      "cyborg",
 		ExistingPrefTag:     "tag:dev-infra-emilia",
-		ExistingPrefVia:     false, // via disabled
+		ExistingPrefVia:     false, // via disabled (operator choice)
 		DistinctExitNodes:   1,
 		DominantExitHostname: "emilia",
 		TotalRules:          10,
 		CanonicalTag:        "tag:dev-infra-emilia",
 	})
 	if !ok {
-		t.Fatal("PlanDevicePrefChange: expected update change (re-enable via)")
+		t.Fatal("PlanDevicePrefChange: expected skip change (audit-only)")
 	}
-	if ch.Action != "update" {
-		t.Errorf("Action = %q, want %q", ch.Action, "update")
+	if ch.Action != "skip" {
+		t.Errorf("Action = %q, want %q (B-pending-write flipped this from update to skip)", ch.Action, "skip")
 	}
 	if ch.Reason != "via-disabled-but-canonical" {
 		t.Errorf("Reason = %q, want %q", ch.Reason, "via-disabled-but-canonical")
