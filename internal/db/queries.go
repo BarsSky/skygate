@@ -462,11 +462,33 @@ const qInsertDeviceRule = `INSERT INTO device_rules (user_id, device_id, exit_no
 
 // qSelectUserRulesForView is used by /my/exit-rules: every enabled rule
 // for a user, ordered for stable display.
-const qSelectUserRulesForView = `SELECT d.id, d.user_id, d.device_id, d.exit_node_id, d.target_type, d.target_value, COALESCE(d.action, 'accept') AS action, COALESCE(d.device_ip, '') AS device_ip, d.enabled, COALESCE(d.parent_domain, '') AS parent_domain FROM device_rules d WHERE d.user_id = $1 ORDER BY d.id`
+// qSelectUserRulesForView is used by /my/exit-rules: every enabled rule
+// owned by the requesting user, plus the B276.1 "all_devices" marker
+// so the view can split per-device rules from fan-out copies without a
+// second query. The marker is consulted by form_my.go's
+// `allDeviceRuleKeys` fallback only if this column is missing, but
+// shipping it here makes the rendering single-pass and keeps the
+// `DeviceRule.AllDevices` field consistent for any caller that does
+// not go through form_my.go.
+//
+// 2026-09-21 (B277.4): the v1.5.37 form_my.go shipped a post-process
+// workaround that filled `DeviceRule.AllDevices` from a separate
+// `db.ListAllDeviceRuleGroups` query after loading rows. The two-pass
+// pattern was a v1.5.37-era hack while the schema side caught up.
+// The column has existed since v0.74 (the v0.74 migration added
+// `all_devices INTEGER NOT NULL DEFAULT 0`); the SELECT was simply
+// missing it. This is the schema-correct path.
+const qSelectUserRulesForView = `SELECT d.id, d.user_id, d.device_id, d.exit_node_id, d.target_type, d.target_value, COALESCE(d.action, 'accept') AS action, COALESCE(d.device_ip, '') AS device_ip, d.enabled, COALESCE(d.parent_domain, '') AS parent_domain, COALESCE(d.all_devices, 0) AS all_devices FROM device_rules d WHERE d.user_id = $1 ORDER BY d.id`
 
 // qSelectAllRulesForAdmin is the cross-user admin view; LEFT JOIN onto
 // portal_users so the row carries username even if the user was deleted.
-const qSelectAllRulesForAdmin = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.id`
+// qSelectAllRulesForAdmin is the cross-user admin view. The
+// `all_devices` column is part of the SELECT (B277.4) so the admin
+// template can render the "все мои устройства" badge on
+// /admin/exit-rules — before B277.4 the admin view had no way to
+// tell a per-device rule apart from a fan-out copy. The
+// LEFT JOIN onto portal_users is preserved.
+const qSelectAllRulesForAdmin = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.id`
 
 // qSelectAllRulesForAdminByDevice is the cross-user admin view
 // filtered to a single device hostname. The LEFT JOIN onto

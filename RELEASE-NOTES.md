@@ -12,6 +12,111 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.41 — six consistency fixes between the rule model and what the UI + autoupdater did (B277.4)
+
+**Date:** 2026-09-21 · **Base:** `v1.5.40` → this tag · **Compatibility:** none.
+
+The B275 / B276.1 / B277 rule model is richer than the surfaces
+that consumed it: rules can target different exit-nodes, rules with
+`all_devices=true` are fanned out across devices, and rules with
+`exit_node_id=""` defer to the engine. The user-found consistency
+audit (Round 1 + Round 2) found six gaps between the model and what
+was actually rendered / synced / generated. B277.4 closes all six.
+
+### Fixes
+
+**1+2 — `all_devices` is now a first-class column.** Both
+`qSelectUserRulesForView` and `qSelectAllRulesForAdmin` now
+`SELECT all_devices` (the post-process `allDeviceRuleKeys` workaround
+is kept as a safety net). `AdminRule` gained `AllDevices bool`,
+and `form_admin.go` propagates the field — the `/admin/exit-rules`
+template can now render the «все мои устройства» badge on cross-
+user rules. The v1.5.37-era two-pass pattern is gone.
+
+**3 — Orphan fan-out sweep.** `propagateAllDeviceRules` now calls
+`pruneOrphanAllDeviceCopies` first. The sweep DELETEs every row
+where `all_devices=1` AND the target `device_id` is no longer in
+the user's device list (per-user IN-clause, no string-built SQL).
+Live: deleting a device via `/admin/devices` used to leave a ghost
+fan-out row in `device_rules` that surfaced as a "ghost rule" in
+`/my/exit-rules` with a stale denormalised hostname. The sweep
+runs on every propagation tick.
+
+**4 — Cascade delete on `/my/exit-rules` delete.** `PostDeleteExitRule`
+now reads the rule's fan-out key (`GetRuleFanOutKey`) and, when
+`all_devices=true`, calls `DeleteAllDeviceFanOut` to remove every
+row sharing the natural key `(exit_node, target_type, target_value)`
+in one DELETE. Pre-B277.4 deleting one row left N-1 ghost copies
+behind — the operator expected "delete the rule" and got "delete
+one fan-out copy". The audit detail now reports the cascade count
+separately (`+N fan-out cascade`).
+
+**5 — B229 no longer overwrites the operator's `via_enabled=false`.**
+The `via-disabled-but-canonical` path used to silently re-enable
+`via_enabled=true` on rows where the operator had explicitly disabled
+it (Android compatibility: `via=` policies fail on older Tailscale
+clients). The path now returns a `skip` change — the audit trail
+preserves the "would-have-updated" event without actually flipping
+the bit. The pre-B277.4 behaviour is documented as a regression.
+
+**6+7 — Auto rules and user-level preferred in the status loop.**
+Rules with `exit_node_id=""` (engine-auto) now report
+`auto_pending` (a new template badge, distinct from `wrong`) — the
+engine will resolve them on the next reconcile tick, and they are
+NOT counted as a mismatch. The mismatch count falls back to the
+user-level preferred (`db.GetUserExitNodePref`) when the device has
+no per-device pref, so genuine drift on user-level prefs is now
+counted in the banner instead of silently ignored.
+
+**11 — Routescript no longer loads `device_ip`.** The column was
+loaded into `routeEntry.deviceIP` but no body builder ever read it.
+Removed from both the SELECT and the struct — every `?script=`
+download is now ~30% lighter on the device_rules I/O path.
+
+**8 — Dead `{{if .AllDevices}}` removed from the per-host template.**
+The B276.2 filter routes `all_devices=true` rules to the dedicated
+ALL-DEVICES section, so the per-host slice never has them. The dead
+branches were confusing the next reader of the template.
+
+### Files
+
+```
+internal/db/queries.go                       (modified, +all_devices in 2 SELECTs)
+internal/db/device_rules.go                  (modified, +GetRuleFanOutKey, +DeleteAllDeviceFanOut, +scan of all_devices)
+internal/feature/exit_rules/form_my.go       (modified, +auto_pending, +user-level fallback, +cascade delete, +pruneOrphanAllDeviceCopies wiring)
+internal/feature/exit_rules/form_admin.go    (modified, +AdminRule.AllDevices)
+internal/feature/exit_rules/all_devices.go   (modified, +pruneOrphanAllDeviceCopies)
+internal/feature/exit_rules/reconciler.go    (modified, via-disabled → skip not update)
+internal/feature/exit_rules/routescript_data.go (modified, -device_ip SELECT, -routeEntry.deviceIP)
+internal/handlers/templates/exit_rules.html   (modified, +auto_pending badge in 4 places, -dead {{if .AllDevices}})
+internal/i18n/catalog_exit_rules.go           (modified, +auto_pending_title × 2 langs)
+internal/feature/exit_rules/all_devices_b277_4_test.go (new, 2 pure-function tests)
+scripts/check_b277_4_consistency.sh           (new, 21 contracts A–L)
+```
+
+### Verification
+
+* `go build ./...` clean
+* `go vet ./internal/feature/exit_rules/... ./internal/db/...` clean
+* `go test -count=1 -run 'B2762|BuildLinux|BuildWindows|PreferredGroup|BuildOrphan' ./internal/feature/exit_rules/`
+  → **8/8 PASS** (B276.2 routescript tests + new B277.4 orphan sweep tests)
+* `bash scripts/check_b277_4_consistency.sh` → **21/21 PASS**
+* `bash scripts/check_b276_1_all_devices.sh` → 21/21 PASS (i18n parity preserved)
+* `bash scripts/check_b276_2_routescript.sh` → 14/14 PASS (no regression on routescript)
+* `bash scripts/check_b277_3_apply_preferred.sh` → 15/15 PASS (no regression on B277.3 bulk apply)
+
+### Deferred (separate b-block)
+
+**#10 — `applyACLIfDrifted` in `PostMyExitRule`.** The current
+path always writes ACL on rule insertion (no live-policy
+comparison). Switching to `applyACLIfDrifted` requires the helper
+to return `acl.ApplyResult` (not just `bool`) so the rule-insert
+path can read the snapshot version for its audit detail. Skipped
+to keep this release focused on the audit gaps; tracked for the
+next b-block.
+
+---
+
 ## v1.5.40 — the "Use preferred (node)" button actually fixes the rules (B277.3)
 
 **Date:** 2026-09-21 · **Base:** `v1.5.39` → this tag · **Compatibility:** none.

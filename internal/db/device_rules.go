@@ -388,6 +388,11 @@ func GetAllRulesForAdminByDevice(d *sql.DB, hostname string) ([]DeviceRule, erro
 // getAllRulesForAdminQuery is the shared scan loop for both
 // GetAllRulesForAdmin and GetAllRulesForAdminByDevice — same
 // row shape, same column set, just different WHERE.
+//
+// 2026-09-21 (B277.4): the SELECT now also includes r.all_devices
+// (the 12th column). The scan reads it as a `var ad int` and sets
+// r.AllDevices = ad == 1. The admin template reads r.AllDevices to
+// render the "все мои устройства" badge on /admin/exit-rules.
 func getAllRulesForAdminQuery(d *sql.DB, q string, args ...interface{}) ([]DeviceRule, error) {
 	rows, err := d.Query(q, args...)
 	if err != nil {
@@ -398,13 +403,14 @@ func getAllRulesForAdminQuery(d *sql.DB, q string, args ...interface{}) ([]Devic
 	var out []DeviceRule
 	for rows.Next() {
 		var r DeviceRule
-		var en int
+		var en, ad int
 		if err := rows.Scan(&r.ID, &r.UserID, &r.DeviceID, &r.ExitNodeID, &r.TargetType,
 			&r.TargetValue, &r.Action, &r.ParentDomain, &r.CreatedAt, &en,
-			&r.DeviceIP, &r.UserName); err != nil {
+			&r.DeviceIP, &r.UserName, &ad); err != nil {
 			return nil, err
 		}
 		r.Enabled = en == 1
+		r.AllDevices = ad == 1
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -546,6 +552,53 @@ func GetRuleTargetTypeAndParent(d *sql.DB, id int, userID int64) (targetType, pa
 		err = ErrNotFound
 	}
 	return
+}
+
+// GetRuleFanOutKey (B277.4, 2026-09-21) returns the (exit_node_id,
+// target_type, target_value, all_devices) tuple for one rule.
+// Used by PostDeleteExitRule to decide whether to delete one row
+// (per-device rule) or cascade-delete the whole fan-out group
+// (all_devices=true rule). All four columns are the natural key
+// for "is this the same logical rule?" — the id is irrelevant
+// because B276.1 stores one row per (user, device, fan-out-rule).
+func GetRuleFanOutKey(d *sql.DB, id int, userID int64) (exitNode, targetType, targetValue string, allDevices bool, err error) {
+	var en, tt, tv string
+	var ad int
+	row := d.QueryRow(
+		`SELECT COALESCE(exit_node_id,''), target_type, target_value, COALESCE(all_devices, 0)
+		   FROM device_rules WHERE id = $1 AND user_id = $2`, id, userID)
+	if err = row.Scan(&en, &tt, &tv, &ad); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = ErrNotFound
+		}
+		return
+	}
+	return en, tt, tv, ad == 1, nil
+}
+
+// DeleteAllDeviceFanOut (B277.4, 2026-09-21) removes every row
+// in device_rules that belongs to one fan-out logical rule for
+// the requesting user: matching (exit_node_id, target_type,
+// target_value, all_devices=1). The id parameter is informational
+// only — it's the rule id the operator clicked on (used in the
+// audit log line, not in the WHERE clause).
+//
+// Returns the number of rows actually deleted. A return of 0 is
+// not an error — it just means the fan-out group was already
+// empty (e.g. another concurrent delete won the race).
+func DeleteAllDeviceFanOut(d *sql.DB, userID int64, exitNode, targetType, targetValue string) (int, error) {
+	res, err := d.Exec(`
+		DELETE FROM device_rules
+		 WHERE user_id = $1
+		   AND COALESCE(all_devices, 0) = 1
+		   AND COALESCE(exit_node_id,'') = $2
+		   AND target_type = $3
+		   AND target_value = $4`, userID, exitNode, targetType, targetValue)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 // GetParentDomain reads just the parent_domain column of one rule.
@@ -726,17 +779,25 @@ func BulkReassignDeviceID(d *sql.DB, newID int, oldIDs []int) error {
 
 // scanDeviceRules reads a *sql.Rows from one of the user-scoped
 // rule queries and returns []DeviceRule. Column order must match
-// qSelectUserRulesForView.
+// qSelectUserRulesForView (11 columns).
+//
+// 2026-09-21 (B277.4): the 11th column (all_devices) was added
+// so DeviceRule.AllDevices is filled by the SELECT rather than
+// by a post-process pass in form_my.go. The post-process
+// (form_my.go's allDeviceRuleKeys helper) is kept as a fallback
+// for any caller that goes through a different code path —
+// it's a no-op when the column IS in the scan result.
 func scanDeviceRules(rows *sql.Rows) ([]DeviceRule, error) {
 	var out []DeviceRule
 	for rows.Next() {
 		var r DeviceRule
-		var en int
+		var en, ad int
 		if err := rows.Scan(&r.ID, &r.UserID, &r.DeviceID, &r.ExitNodeID,
-			&r.TargetType, &r.TargetValue, &r.Action, &r.DeviceIP, &en, &r.ParentDomain); err != nil {
+			&r.TargetType, &r.TargetValue, &r.Action, &r.DeviceIP, &en, &r.ParentDomain, &ad); err != nil {
 			return nil, err
 		}
 		r.Enabled = en == 1
+		r.AllDevices = ad == 1
 		out = append(out, r)
 	}
 	return out, rows.Err()

@@ -50,6 +50,14 @@ type AdminRule struct {
 	Action        string
 	ParentDomain  string
 	CreatedAt     string
+	// 2026-09-21 (B277.4): the v0.74 "all my devices" fan-out
+	// marker. Set by the conversion at form_admin.go:284 from
+	// db.DeviceRule.AllDevices (now SELECTed in
+	// qSelectAllRulesForAdmin). The admin template renders a
+	// "все мои устройства" badge when true — before B277.4 the
+	// admin view had no way to tell a per-device rule apart
+	// from a fan-out copy of an all_devices rule.
+	AllDevices    bool
 	// 2026-08-25 (B178): preferred exit-node hostname for
 	// this (user, device) pair. Empty when no per-device /
 	// per-user pref is set. The admin template renders a
@@ -294,6 +302,7 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 			Action:       r.Action,
 			ParentDomain: r.ParentDomain,
 			CreatedAt:    time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"),
+			AllDevices:   r.AllDevices,
 		})
 	}
 

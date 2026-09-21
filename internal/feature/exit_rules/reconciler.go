@@ -180,8 +180,19 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 			Reason:         "missing-pref-unanimous",
 		}, true
 	}
-	// Case 2: existing pref. We may need to UPDATE
-	// (stale tag) or re-enable (via=0) or no-op.
+	// Case 2: existing pref. We may need to UPDATE (stale tag)
+	// or no-op. B277.4 (2026-09-21): the previous branch also
+	// re-enabled `via_enabled=true` when the operator had
+	// explicitly disabled it — the justification was "the V061
+	// migration skipped via=1 re-enable for unresolved rows,
+	// this is the catch-up". But the operator's explicit
+	// via_enabled=false is now (post-v1.5.0) a deliberate
+	// choice (Android compatibility: `via=` policies fail on
+	// older Tailscale clients). Re-enabling it silently
+	// contradicts the operator's intent. The pre-B277.4
+	// behaviour is preserved as a separate audit-event-only
+	// skip so the operator can still see the catch-up case in
+	// logs, but no UPDATE is issued.
 	if s.CanonicalTag == "" {
 		// Hostname was deleted from node_owner_map
 		// (device unregistered). Don't clobber the
@@ -189,18 +200,15 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 		return nil, false
 	}
 	if s.CanonicalTag == s.ExistingPrefTag {
-		// Tag is canonical. Check via_enabled.
+		// Tag is canonical. NO-OP regardless of via_enabled.
+		// (The pre-B277.4 code re-enabled via here; that
+		// path is gone — see the doc comment above.)
+		// We still log the via=0 case as a "skip" change
+		// so the operator can see the audit trail without
+		// us actually flipping the bit.
 		if !s.ExistingPrefVia {
-			// Re-enable (the v0.28.5 default was
-			// via=1 for pre-existing rows; the
-			// V061 migration intentionally
-			// skipped via=1 re-enable for rows
-			// whose tag it couldn't resolve.
-			// B229 is the catch-up: the row is
-			// here, the tag is canonical, so the
-			// operator's pin intent stands.
 			return &ReconcilerChange{
-				Action:         "update",
+				Action:         "skip",
 				UserID:         s.UserID,
 				Username:       s.Username,
 				DeviceHostname: s.DeviceHostname,
@@ -209,7 +217,6 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 				Reason:         "via-disabled-but-canonical",
 			}, true
 		}
-		// No-op.
 		return nil, false
 	}
 	// Tag mismatch → UPDATE.

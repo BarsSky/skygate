@@ -27,14 +27,21 @@ import (
 	"skygate/internal/db"
 )
 
-// routeEntry is one (target_type, target_value, device_ip) row pulled
-// from device_rules, restricted to ip/subnet targets (DNS domains and
+// routeEntry is one (target_type, target_value) row pulled from
+// device_rules, restricted to ip/subnet targets (DNS domains and
 // telegram entries are filtered out — the script only deals with
 // static IP routes).
+//
+// B277.4 (2026-09-21): the old struct had a `deviceIP` field that
+// was never read by any body builder. The field was loaded from
+// DB but not used anywhere in the rendered script — it was
+// purely a "for diagnostics" comment that never materialised.
+// Removed so the SELECT only pulls the columns the body actually
+// needs (target_type + target_value + exit_node_id), saving a
+// small amount of DB I/O on every /my/exit-rules?script= click.
 type routeEntry struct {
 	targetType string // "ip" or "subnet"
 	targetVal  string // e.g. "8.8.8.8" or "10.0.0.0/24"
-	deviceIP   string // optional originating device, for diagnostics
 }
 
 // ScriptRouteGroup is one (exit-node, routes) bundle that the
@@ -80,7 +87,7 @@ type ScriptRouteGroup struct {
 // the operator's "for all my devices" intent is honoured on
 // every device the script runs on.
 func (s *Service) loadRoutesForScriptGroups(userID int, deviceID int) ([]ScriptRouteGroup, error) {
-	query := "SELECT target_type, target_value, COALESCE(exit_node_id,''), COALESCE(device_ip,'') FROM device_rules WHERE enabled = 1 AND user_id = " + db.PlaceholdersList(1)
+	query := "SELECT target_type, target_value, COALESCE(exit_node_id,'') FROM device_rules WHERE enabled = 1 AND user_id = " + db.PlaceholdersList(1)
 	args := []any{userID}
 	if deviceID > 0 {
 		query += " AND (device_id = " + db.PlaceholdersList(1) + " OR all_devices = 1)"
@@ -99,8 +106,8 @@ func (s *Service) loadRoutesForScriptGroups(userID int, deviceID int) ([]ScriptR
 	}
 	buckets := map[rowKey][]routeEntry{}
 	for rows.Next() {
-		var tt, tv, exitNode, dip string
-		if err := rows.Scan(&tt, &tv, &exitNode, &dip); err != nil {
+		var tt, tv, exitNode string
+		if err := rows.Scan(&tt, &tv, &exitNode); err != nil {
 			continue
 		}
 		if tt != "ip" && tt != "subnet" {
@@ -110,7 +117,6 @@ func (s *Service) loadRoutesForScriptGroups(userID int, deviceID int) ([]ScriptR
 		buckets[k] = append(buckets[k], routeEntry{
 			targetType: tt,
 			targetVal:  tv,
-			deviceIP:   dip,
 		})
 	}
 	if err := rows.Err(); err != nil {

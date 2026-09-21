@@ -66,6 +66,11 @@ var ruExitRules = map[string]string{
 	"exit_rules.preferred_match_title":     "Rule's exit-node matches the device's preferred exit-node (%s) — rule will take effect.",
 	"exit_rules.preferred_mismatch_title":  "Rule's exit-node differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",
 	"exit_rules.preferred_none_title":      "No preferred exit-node set for this device — Tailscale picks by metrics, rule may or may not apply.",
+	// B277.4: auto-mode status — the rule's exit_node_id is
+	// empty, the engine picks a healthy relay on the next tick.
+	// NOT a mismatch; the badge is informational ("the engine
+	// will handle this").
+	"exit_rules.auto_pending_title":       "Правило в режиме auto — движок подберёт здоровый relay на следующем тике. Это не mismatch.",
 	// 2026-08-25 (B182): user-scope mirror of the admin
 	// B182 keys. ⏳ means the rule's target CIDR is NOT in
 	// headscale ApprovedRoutes yet — the autoupdater will
@@ -339,6 +344,11 @@ var enExitRules = map[string]string{
 	"exit_rules.preferred_match_title":     "Rule's exit-node matches the device's preferred exit-node (%s) — rule will take effect.",
 	"exit_rules.preferred_mismatch_title":  "Rule's exit-node differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",
 	"exit_rules.preferred_none_title":      "No preferred exit-node set for this device — Tailscale picks by metrics, rule may or may not apply.",
+	// B277.4: auto-mode status — the rule's exit_node_id is
+	// empty, the engine picks a healthy relay on the next tick.
+	// NOT a mismatch; the badge is informational ("the engine
+	// will handle this").
+	"exit_rules.auto_pending_title":       "Rule is in auto mode — the engine will pick a healthy relay on the next reconcile tick. Not a mismatch.",
 	// 2026-08-25 (B182): user-scope mirror of the admin
 	// B182 keys. ⏳ means the rule's target CIDR is NOT in
 	// headscale ApprovedRoutes yet — the autoupdater will

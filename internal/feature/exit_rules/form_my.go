@@ -572,6 +572,15 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	for _, di := range deviceInfos {
 		prefByHostname[di.Hostname] = di.PreferredExitNode
 	}
+	// B277.4: user-level preferred is the fallback when the device
+	// has no per-device pref. Read once here (used by the status
+	// loop below AND by the page-level banner / button) instead
+	// of two separate reads. The earlier code only read it for
+	// the banner; the status loop's "no per-device pref" path
+	// silently fell back to "" even when a user-level preferred
+	// existed, masking genuine drift in the banner count.
+	userPreferred, _ := db.GetUserExitNodePref(s.dbc(), c.UserID)
+	userPreferredHost := TagToHostname(userPreferred.ExitNodeTag)
 	// 2026-08-25 (B182): fetch headscale's ApprovedRoutes per
 	// exit-node so the template can distinguish a rule that
 	// "matches the preferred exit-node" (B178's green ✅) from
@@ -615,19 +624,42 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		resolvedByDomain = rbd
 	}
 	// statusByRuleID maps rule.ID → "approved" | "pending"
-	// | "wrong" | "no_preferred". The template reads this to
-	// render the three-state ✅/⏳/⚠️ badge. DOMAIN rules
-	// (B184) are "approved" iff at least one of their
-	// resolved subnets is in headscale ApprovedRoutes for
-	// the rule's ExitNode. Otherwise "pending" (autoupdater
-	// hasn't resolved, or resolved but headscale hasn't
-	// approved any of the resolved CIDRs).
+	// | "wrong" | "auto_pending" | "no_preferred". The template reads this to
+	// render the ✅/⏳/⚠️ badge. DOMAIN rules (B184) are "approved"
+	// iff at least one of their resolved subnets is in headscale
+	// ApprovedRoutes for the rule's ExitNode. Otherwise "pending"
+	// (autoupdater hasn't resolved, or resolved but headscale
+	// hasn't approved any of the resolved CIDRs).
+	//
+	// B277.4 (2026-09-21):
+	//   - new "auto_pending" status for rules with exit_node_id=""
+	//     (engine-auto): the engine will pick a healthy relay on the
+	//     next tick, so we DO NOT count them as a mismatch.
+	//   - "effective preferred" falls back to user-level
+	//     userPreferredHost when the device has no per-device
+	//     pref. Pre-B277.4 the device's "no per-device pref" path
+	//     silently counted the rule as "no_preferred" even when
+	//     a user-level preferred existed — the banner would miss
+	//     genuine drift between the rule's empty exit_node and
+	//     the user's preferred.
 	statusByRuleID := map[int]string{}
 	for _, r := range rules {
 		hn := deviceNames[r.DeviceID]
+		// Effective preferred: per-device overrides user-level,
+		// empty stays empty.
 		pref := prefByHostname[hn]
 		if pref == "" {
+			pref = userPreferredHost
+		}
+		if pref == "" {
 			statusByRuleID[r.ID] = "no_preferred"
+			continue
+		}
+		// Auto rules (exit_node_id="") defer to the engine; the
+		// engine is preferred-aware (B275) so it'll route through
+		// `pref` if it's healthy. NOT counted as a mismatch.
+		if r.ExitNodeID == "" {
+			statusByRuleID[r.ID] = "auto_pending"
 			continue
 		}
 		if !IsRuleApplicable(r.ExitNodeID, pref) {
@@ -679,9 +711,6 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	// User-level preferred exit-node (fallback when no per-device
 	// pref is set). Used by the "Use device's preferred exit-node"
 	// button in the form.
-	userPreferred, _ := db.GetUserExitNodePref(s.dbc(), c.UserID)
-	userPreferredHost := TagToHostname(userPreferred.ExitNodeTag)
-
 	s.Backend.RenderWithLayout(w, r, "exit_rules.html", c, map[string]any{
 		"Page":              "exit-rules",
 		"Title":             "Exit Rules",
@@ -1196,34 +1225,78 @@ func (s *Service) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Сначала собираем target_type/parent_domain для каждого id,
-	// чтобы потом каскадно удалить /32 для доменов.
+	// Сначала собираем target_type/parent_domain + fan-out key для
+	// каждого id, чтобы потом каскадно удалить /32 для доменов и
+	// всю fan-out группу для all_devices правил.
 	type ruleInfo struct {
 		id           int
 		targetType   string
 		parentDomain string
+		// B277.4 (2026-09-21): fan-out natural key + marker.
+		// When allDevices is true, the delete cascades to every
+		// row in the fan-out group (pre-B277.4 only the clicked
+		// row was deleted, leaving N-1 ghost copies behind).
+		exitNode    string
+		targetValue string
+		allDevices  bool
 	}
 	var infos []ruleInfo
 	totalCascade := 0
+	totalFanOutCascade := 0
 	for _, rawID := range rawIDs {
 		id, _ := strconv.Atoi(rawID)
 		if id == 0 {
 			continue
 		}
-		// 2026-07-11: Этап 9 part 2 — moved to db.GetRuleTargetTypeAndParent
-		targetType, parentDomain, _ := db.GetRuleTargetTypeAndParent(s.dbc(), id, c.UserID)
-		infos = append(infos, ruleInfo{id: id, targetType: targetType, parentDomain: parentDomain})
+		// B277.4: read the fan-out key in one round-trip
+		// (GetRuleFanOutKey returns all four columns). The
+		// legacy helper GetRuleTargetTypeAndParent stays for
+		// any other callers; this delete path uses the richer
+		// helper to avoid a second SELECT.
+		exitNode, targetType, targetValue, allDevices, gerr := db.GetRuleFanOutKey(s.dbc(), id, c.UserID)
+		if gerr != nil {
+			// Rule not found / not owned by user — skip silently.
+			// This matches the previous behaviour where
+			// GetRuleTargetTypeAndParent's empty-string
+			// defaults produced the same outcome.
+			continue
+		}
+		// Still need parent_domain for the domain /32 cascade.
+		_, parentDomain, _ := db.GetRuleTargetTypeAndParent(s.dbc(), id, c.UserID)
+		infos = append(infos, ruleInfo{
+			id:           id,
+			targetType:   targetType,
+			parentDomain: parentDomain,
+			exitNode:     exitNode,
+			targetValue:  targetValue,
+			allDevices:   allDevices,
+		})
 	}
 
 	// Удаление: для каждого правила удаляем его + если это домен — все /32
-	// с тем же parent_domain.  Идемпотентно.
+	// с тем же parent_domain. Если all_devices=1 — каскадно удаляем всю
+	// fan-out группу. Идемпотентно.
+	processedFanOutKeys := map[string]bool{}
 	for _, info := range infos {
-		if info.targetType == "domain" && info.parentDomain != "" {
+		switch {
+		case info.allDevices:
+			// B277.4: cascade-delete the whole fan-out group.
+			// De-dup by natural key so the operator checking two
+			// fan-out rows of the same logical rule deletes once.
+			fanKey := info.exitNode + "|" + info.targetType + "|" + info.targetValue
+			if processedFanOutKeys[fanKey] {
+				continue
+			}
+			processedFanOutKeys[fanKey] = true
+			if n, err := db.DeleteAllDeviceFanOut(s.dbc(), c.UserID, info.exitNode, info.targetType, info.targetValue); err == nil {
+				totalFanOutCascade += n - 1
+			}
+		case info.targetType == "domain" && info.parentDomain != "":
 			// 2026-07-11: Этап 9 part 2 — moved to db.DeleteRuleOrCascadeByParentDomain
 			if n, err := db.DeleteRuleOrCascadeByParentDomain(s.dbc(), c.UserID, info.id, info.parentDomain); err == nil {
 				totalCascade += int(n) - 1
 			}
-		} else {
+		default:
 			// 2026-07-11: Этап 9 part 2 — moved to db.DeleteRuleForUser
 			_ = db.DeleteRuleForUser(s.dbc(), info.id, c.UserID)
 		}
@@ -1237,6 +1310,9 @@ func (s *Service) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 			if totalCascade > 0 {
 				detail += fmt.Sprintf(" (cascade: %d /32)", totalCascade)
 			}
+			if totalFanOutCascade > 0 {
+				detail += fmt.Sprintf(" (fan-out cascade: %d)", totalFanOutCascade)
+			}
 			db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionDelete, detail)
 			// 2026-07-11: mirror the create-path notification so deletes are
 			// equally visible in the audit channel.
@@ -1244,6 +1320,9 @@ func (s *Service) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 				msg := fmt.Sprintf("🗑 Deleted %d rule(s) by %s", len(infos), c.Username)
 				if totalCascade > 0 {
 					msg += fmt.Sprintf(" (+%d /32 cascade)", totalCascade)
+				}
+				if totalFanOutCascade > 0 {
+					msg += fmt.Sprintf(" (+%d fan-out cascade)", totalFanOutCascade)
 				}
 				go s.Notifier.SendAlert(msg)
 			}

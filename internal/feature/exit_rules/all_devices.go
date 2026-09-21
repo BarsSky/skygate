@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 
 	"skygate/internal/db"
 )
@@ -25,15 +26,39 @@ import (
 // owner currently has. Rows are matched on the natural key (FindDeviceRuleID), so
 // re-running the pass is free and can never produce a duplicate rule.
 //
+// B277.4 (2026-09-21): before the propagation loop, sweep for
+// orphan fan-out copies — rows where all_devices=1 but the
+// underlying device_id no longer belongs to the user (device
+// was deleted via /admin/devices or never adopted). Pre-B277.4
+// those rows lived forever in device_rules, surfaced as
+// "ghost rules" in /my/exit-rules with a stale denormalised
+// device_hostname, and counted toward MaxTotalRules. The sweep
+// reads every fan-out copy once, joins against
+// DeviceIDsForPortalUser, and DELETEs the rows whose device_id
+// is not in the user's current set.
+//
 // Returns the number of rows it had to create. A rule whose owner has no attributed
 // device is reported once per pass: silently skipping it is how the original gap
 // stayed invisible.
 func (s *Service) propagateAllDeviceRules() (int, error) {
+	// Phase 1: orphan cleanup. Sweep fan-out rows whose target
+	// device no longer belongs to the row's user. The sweep
+	// scopes by user_id (so users with thousands of fan-out
+	// rows don't all share one DELETE pass) and trusts the
+	// DB-level cascade for any per-row side-effects.
+	pruned, perr := s.pruneOrphanAllDeviceCopies()
+	if perr != nil {
+		log.Printf("all-devices: orphan sweep: %v", perr)
+	}
+
 	groups, err := db.ListAllDeviceRuleGroups(s.dbc())
 	if err != nil {
 		return 0, fmt.Errorf("list all-device rules: %w", err)
 	}
 	if len(groups) == 0 {
+		if pruned > 0 {
+			log.Printf("all-devices: pruned %d orphan fan-out copy(ies) (B277.4)", pruned)
+		}
 		return 0, nil
 	}
 	created := 0
@@ -73,6 +98,9 @@ func (s *Service) propagateAllDeviceRules() (int, error) {
 	if created > 0 {
 		log.Printf("all-devices: propagated %d rule row(s) to the users' current devices (B276.1)", created)
 	}
+	if pruned > 0 {
+		log.Printf("all-devices: pruned %d orphan fan-out copy(ies) (B277.4)", pruned)
+	}
 	return created, nil
 }
 
@@ -95,6 +123,90 @@ func (s *Service) allDeviceRuleKeys(userID int64) map[string]bool {
 		}
 	}
 	return out
+}
+
+// pruneOrphanAllDeviceCopies (B277.4, 2026-09-21) sweeps fan-out
+// rows whose target device no longer belongs to the row's user.
+//
+// Background: the B276.1 fan-out creates N device_rules rows
+// per all_devices=true rule (one per device the user owns at
+// propagation time). When /admin/devices deletes a device, the
+// row's device_id becomes orphaned: the rule still exists but
+// the device doesn't, and the row surfaces as a "ghost rule" in
+// /my/exit-rules (the denormalised device_hostname column keeps
+// the stale hostname). Pre-B277.4 nothing swept those rows.
+//
+// The sweep is per-user (one DELETE per affected user) and only
+// touches rows where all_devices=1 AND the device_id is NOT in
+// the user's current device list. Per-device rules
+// (all_devices=0) are NOT touched — they survive device
+// deletion by design (the rule was tied to that device, not
+// to the user's fan-out intent).
+//
+// We log every prune in the application log so the operator can
+// audit which rows were dropped (the audit_log table is system-
+// scoped and doesn't carry per-row fan-out history).
+func (s *Service) pruneOrphanAllDeviceCopies() (int, error) {
+	pruned := 0
+	// Phase 1: find every user that has at least one all_devices=1 row.
+	// One small SELECT, then a targeted DELETE per user. Avoids a
+	// single-massive DELETE that would lock device_rules for the
+	// duration of the sweep on large tails.
+	rows, err := s.dbc().Query(
+		`SELECT DISTINCT user_id FROM device_rules WHERE all_devices = 1`)
+	if err != nil {
+		return 0, fmt.Errorf("list users with fan-out rows: %w", err)
+	}
+	var users []int64
+	for rows.Next() {
+		var uid int64
+		if rows.Scan(&uid) == nil {
+			users = append(users, uid)
+		}
+	}
+	rows.Close()
+
+	for _, uid := range users {
+		devices, err := db.DeviceIDsForPortalUser(s.dbc(), uid)
+		if err != nil {
+			return pruned, fmt.Errorf("user %d devices: %w", uid, err)
+		}
+		// Build the IN-clause parameter list.
+		if len(devices) == 0 {
+			// User has NO attributed devices. Every all_devices=1
+			// row for this user is an orphan — sweep the lot.
+			res, err := s.dbc().Exec(
+				`DELETE FROM device_rules WHERE user_id = $1 AND all_devices = 1`, uid)
+			if err != nil {
+				return pruned, fmt.Errorf("user %d orphan sweep: %w", uid, err)
+			}
+			n, _ := res.RowsAffected()
+			pruned += int(n)
+			continue
+		}
+		// Build a parameterized IN clause. DeviceIDsForPortalUser
+		// returns a slice of int — we still bind them positionally.
+		args := make([]any, 0, len(devices)+1)
+		args = append(args, uid)
+		placeholders := ""
+		for i, d := range devices {
+			if i > 0 {
+				placeholders += ","
+			}
+			placeholders += "$" + strconv.Itoa(i+2)
+			args = append(args, d)
+		}
+		res, err := s.dbc().Exec(
+			`DELETE FROM device_rules
+			    WHERE user_id = $1 AND all_devices = 1
+			      AND device_id NOT IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return pruned, fmt.Errorf("user %d orphan sweep: %w", uid, err)
+		}
+		n, _ := res.RowsAffected()
+		pruned += int(n)
+	}
+	return pruned, nil
 }
 
 // allDeviceRuleKey builds the same key the query above produces, so the view and
