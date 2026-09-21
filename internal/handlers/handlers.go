@@ -72,6 +72,12 @@ type App struct {
 	OIDCKeyDir       string
 	// B161.2: comma-separated allowlist of redirect URIs.
 	OIDCRedirectURIs string
+	// B-oidc-setup (v0.75, 2026-09-21): explicit on/off
+	// override. "false" / "0" / "no" forces the OIDC routes
+	// to 503 regardless of the DB row's enabled flag (an
+	// emergency off-switch). Empty string = DB row governs
+	// (or the legacy "issuer non-empty" default if no row).
+	OIDCEnabledEnv   string
 	// ControlURL is the public-facing URL of the headscale control plane,
 	// shown to users in preauth instructions so they can configure
 	// Tailscale with a custom coordination server. Typically
@@ -621,6 +627,7 @@ func New(d *db.ResettableDB, hs *headscale.Client, headscaleKey, secret, control
 		// to set env vars immediately.
 		OIDCIssuerURL:    cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCIssuerURL }),
 		OIDCClientID:     cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCClientID }),
+		OIDCEnabledEnv:   cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCEnabledEnv }),
 		OIDCClientSecret: cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCClientSecret }),
 		OIDCKeyDir:       cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCKeyDir }),
 		OIDCRedirectURIs: cfgOrEmptyStr(cfg, func(c *config.Config) string { return c.OIDCRedirectURIs }),

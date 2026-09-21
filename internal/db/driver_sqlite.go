@@ -103,6 +103,7 @@ var sqliteMigrations = []MigrationEntry{
 	{72, "v0.72 (B264): portal_users.is_primary — the immutable primary admin (partial UNIQUE index + backfill)", "migrations_v0_72_admin_primary.go", migrateV072SQLite},
 	{73, "v0.73 (B275): prefix_owner — the prefix-to-relay assignment table (one advertising relay per prefix)", "migrations_v0_73_prefix_owner.go", migrateV073SQLite},
 	{74, "v0.74 (B276.1): device_rules.all_devices — 'all my devices' as a live intent the propagation pass re-materialises", "migrations_v0_74_all_devices.go", migrateV074SQLite},
+	{75, "v0.75 (B-oidc-setup): oidc_settings — DB-backed OIDC config so the admin web UI can enable / configure OIDC without env-var edits", "migrations_v0_75_oidc_settings.go", migrateV075SQLite},
 }
 
 // SQLiteMigrations returns the list of migrations the current

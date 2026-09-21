@@ -108,6 +108,16 @@ type Config struct {
 	// default is https://<headscale-host>/oidc/callback
 	// — operators add this to the list.
 	OIDCRedirectURIs   string
+	// B-oidc-setup (v0.75 / 2026-09-21): explicit on/off toggle
+	// for the boot sequence. Empty = legacy behaviour (OIDC
+	// is enabled iff SKYGATE_OIDC_ISSUER is non-empty).
+	// "true" / "1" / "yes" → boot proceeds even if issuer is
+	// empty (the OIDC routes answer 503 with a "configure me
+	// in /admin/oidc" hint until the operator fills the form).
+	// "false" / "0" / "no" → OIDC routes are explicitly
+	// disabled (the boot service is nil; /admin/oidc reads the
+	// DB-only config but never goes live until the env flips back).
+	OIDCEnabledEnv     string
 	BootstrapAdminUser string
 	BootstrapAdminPass string
 	SSHKeyPath         string // path to SSH key for exit node sync
@@ -529,6 +539,9 @@ func Load() (*Config, error) {
 		// headscale.conf `oidc.redirect_uri`). The
 		// operator can override via env.
 		OIDCRedirectURIs:   getenv("SKYGATE_OIDC_REDIRECT_URIS", "https://head.skynas.ru/oidc/callback"),
+		// B-oidc-setup: explicit enable flag (empty = legacy
+		// "enabled iff issuer is non-empty" semantics).
+		OIDCEnabledEnv:     os.Getenv("SKYGATE_OIDC_ENABLED"),
 		BootstrapAdminUser: getenv("SKYGATE_ADMIN_USER", "admin"),
 		BootstrapAdminPass: os.Getenv("SKYGATE_ADMIN_PASS"),
 		// 2026-08-04 v0.33.1: default path points at the

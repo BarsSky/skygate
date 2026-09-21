@@ -12,6 +12,105 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.44 — OIDC auto-setup: enable from the web UI + SKYGATE_OIDC_ENABLED env flag (B-oidc-setup)
+
+**Date:** 2026-09-21 · **Base:** `v1.5.43` → this tag · **Compatibility:** none.
+
+User feedback: the OIDC provider shipped in v1.5.0 (B161.1-4) and
+v1.5.2 (B167 sync) but **the admin UI was read-only** — operators
+had to SSH into the host and edit `SKYGATE_OIDC_ISSUER`,
+`SKYGATE_OIDC_CLIENT_ID`, `SKYGATE_OIDC_CLIENT_SECRET`,
+`SKYGATE_OIDC_KEY_DIR` env vars + restart the skygate container.
+There was no "enable / configure from the web" path and no
+single-env flag to deploy skygate already configured for OIDC.
+
+v1.5.44 closes both gaps.
+
+### 1. /admin/oidc form (writeable)
+
+The page now has a "Configure OIDC" card with:
+- a checkbox to **enable / disable** OIDC live
+- 5 input fields (issuer, client_id, client_secret, redirect_uris, key_dir)
+- a Save button
+
+Save persists to the new `oidc_settings` DB table. Empty
+issuer is allowed (mid-edit state — the operator can fill the
+rest, save, flip "Enable" later). A flash banner shows the
+restart requirement.
+
+### 2. `SKYGATE_OIDC_ENABLED` env flag
+
+The boot sequence accepts an explicit on/off:
+- unset / empty → legacy behaviour ("OIDC is enabled iff
+  `SKYGATE_OIDC_ISSUER` is non-empty" OR a DB row with
+  `enabled=1`)
+- `true` / `1` / `yes` → boot proceeds even with an empty issuer
+  (the OIDC routes answer 503 with a "configure me in /admin/oidc"
+  hint until the operator fills the form)
+- `false` / `0` / `no` → OIDC routes are explicitly disabled
+  (the boot service is nil; the /admin/oidc page can still read
+  the DB config but the routes never go live until the env
+  flips back). This is an emergency off-switch — useful when
+  the operator needs to take OIDC down without touching the DB.
+
+### 3. DB-first boot
+
+`main.go:898` now reads the `oidc_settings` DB row (if any)
+and uses the row's values for every field the operator saved.
+Env vars still work as a fallback when no DB row exists — the
+legacy env-only deployments (B161-era) keep running unchanged.
+`client_secret` falls back to env when the DB field is empty
+(rotation path: paste the new secret in env, restart, no
+form save needed).
+
+### Files
+
+```
+internal/db/migrations_v0_75_oidc_settings.go              (NEW migration: oidc_settings table — one row, CHECK id=1)
+internal/db/oidc_settings_b277_5.go                       (NEW helpers: GetOIDCSettings, SaveOIDCSettings, DisableOIDCSettings)
+internal/db/driver_postgres.go                           (registered migration #75)
+internal/db/driver_sqlite.go                              (registered migration #75)
+internal/feature/admin/oidc_settings.go                   (NEW PostAdminOIDC handler — saves form to DB)
+internal/handlers/templates/admin/oidc_settings.html      (NEW form section + enable checkbox + 5 input fields)
+internal/handlers/handlers.go                             (App.OIDCEnabledEnv field)
+internal/config/config.go                                 (Config.OIDCEnabledEnv field — SKYGATE_OIDC_ENABLED env)
+internal/i18n/catalog_admin.go                            (+10 keys × 2 langs: form_help, form_enable, form_client_id, ...)
+cmd/skygate/main.go                                       (boot: read DB, fall back to env, honour SKYGATE_OIDC_ENABLED)
+```
+
+### Verification
+
+* `go build ./...` clean
+* `go vet ./internal/db/... ./internal/feature/admin/...` clean
+
+### Live verify
+
+1. Open `/admin/oidc` → new "Configure OIDC" card at the bottom.
+   Fill issuer + client_id + secret + redirect_uris + key_dir,
+   tick "Enable", click Save → flash "OIDC settings saved.
+   Restart skygate (/admin/update) to apply."
+2. Restart via `/admin/update` → OIDC routes come up with the DB
+   values. The endpoints table at the top of `/admin/oidc` now
+   shows the saved issuer (not the env-var fallback).
+3. Set `SKYGATE_OIDC_ENABLED=false` in `.env` and restart → the
+   OIDC routes answer 503; the page still loads the DB config so
+   the operator can edit it without removing the env flag.
+
+### Deferred (separate b-block)
+
+* The form's `enabled` checkbox is independent of the boot-time
+  `SKYGATE_OIDC_ENABLED` env. A future b-block can add a "force
+  disable" path (DB.enabled=0 → routes 503 regardless of env).
+* The /admin/oidc form does NOT auto-generate the RSA keypair
+  on first save. If the key_dir is empty, `oidcsvc.NewService`
+  will return an error and the page shows the existing
+  "OIDC init failed" warning. Operators generate the keypair
+  out-of-band (`/home/admin/skygate/oidc-keys/` is created by
+  the docker entrypoint script). Auto-keypair is a B-oidc-keygen
+  follow-up.
+
+---
+
 ## v1.5.43 — server-side pagination for /my/exit-rules and /admin/exit-rules
 
 **Date:** 2026-09-21 · **Base:** `v1.5.42` → this tag · **Compatibility:** none.

@@ -1412,6 +1412,20 @@ var enAdmin = map[string]string{
 	"oidc.subtitle":                  "Single-pane view of the OIDC config that headscale uses to authenticate Tailscale users against skygate. Paste the headscale.conf snippet below into your headscale.conf and restart headscale to enable the integration.",
 	"oidc.disabled_warn":             "<b>OIDC is currently disabled</b> (SKYGATE_OIDC_ISSUER is empty). Set the env var in <code>/home/admin/skygate/.env</code> + restart the skygate container to enable the provider. The 4 endpoint URLs and the headscale.conf snippet will appear here once the provider is enabled.",
 	"oidc.section_endpoints":         "OIDC endpoints (paste into headscale.conf)",
+	// B-oidc-setup (v0.75, 2026-09-21): the form section that
+	// lets the operator configure OIDC without editing env vars
+	// or restarting the container. Saves to oidc_settings DB
+	// table; restart skygate to apply.
+	"oidc.section_form":              "Configure OIDC",
+	"oidc.form_help":                 "Fill the issuer URL, client_id, client_secret, redirect URIs and key directory. The values are persisted to the <code>oidc_settings</code> DB table; restart skygate (/admin/update) for them to take effect.",
+	"oidc.form_enable":               "Enable OIDC",
+	"oidc.form_enable_help":          "(uncheck to disable — headscale auth will fail)",
+	"oidc.form_client_id":            "Client ID",
+	"oidc.form_client_secret":        "Client secret",
+	"oidc.form_redirect_uris":        "Redirect URIs (comma-separated)",
+	"oidc.form_key_dir":              "RSA key directory (absolute path)",
+	"oidc.form_save":                 "Save",
+	"oidc.form_save_hint":            "Restart skygate (/admin/update) for changes to take effect.",
 	"oidc.endpoints_help":            "These 5 URLs are what headscale needs to verify the provider's metadata, fetch the public key, exchange the auth code, and resolve the user. The <b>issuer</b> is the only one headscale actually reads from <code>oidc.issuer</code>; the others are derived.",
 	"oidc.row_issuer":                "Issuer",
 	"oidc.row_discovery":             "Discovery (RFC 8414)",

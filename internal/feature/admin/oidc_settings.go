@@ -32,9 +32,11 @@ package admin
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"skygate/internal/db"
 	"skygate/internal/i18n"
 )
 
@@ -142,6 +144,49 @@ func buildHeadscaleOIDCConfigSnippet(issuer, clientID, redirectURIs string) stri
 	b.WriteString("#   " + primary + "\n")
 	b.WriteString("# (set SKYGATE_OIDC_REDIRECT_URIS to override the allowlist on the skygate side).\n")
 	return b.String()
+}
+
+// PostAdminOIDC (B-oidc-setup, 2026-09-21) — the form
+// action for /admin/oidc. Reads the four form fields, upserts
+// the oidc_settings row, and redirects back with a flash.
+//
+// Empty issuer → the row is saved with enabled=false (the
+// operator is mid-edit; they can fill it later). enabled is a
+// separate checkbox on the form so the operator can SAVE the
+// config first and FLIP IT LIVE in a second step (safer than
+// "save and go live" in one click — especially on a freshly
+// deployed headscale where the new OIDC client_id hasn't been
+// pasted into headscale.conf yet).
+//
+// The DB write does NOT restart the OIDC service — the
+// running process keeps its in-memory config. A restart
+// (or /admin/update) re-reads the DB. The handler surfaces a
+// flash that says "saved, restart required to take effect".
+func (s *Service) PostAdminOIDC(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form parse: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	enabled := r.FormValue("enabled") == "1"
+	settings := db.OIDCSettings{
+		Enabled:      enabled,
+		Issuer:       strings.TrimSpace(r.FormValue("issuer")),
+		ClientID:     strings.TrimSpace(r.FormValue("client_id")),
+		ClientSecret: r.FormValue("client_secret"),
+		RedirectURIs: strings.TrimSpace(r.FormValue("redirect_uris")),
+		KeyDir:       strings.TrimSpace(r.FormValue("key_dir")),
+	}
+	if err := db.SaveOIDCSettings(s.dbc(), settings); err != nil {
+		http.Redirect(w, r, "/admin/oidc?err="+url.QueryEscape("save failed: "+err.Error()), http.StatusSeeOther)
+		return
+	}
+	okMsg := "OIDC settings saved. Restart skygate (/admin/update) to apply."
+	http.Redirect(w, r, "/admin/oidc?ok="+url.QueryEscape(okMsg), http.StatusSeeOther)
 }
 
 // PostAdminOIDCTest runs a lightweight discovery+userinfo

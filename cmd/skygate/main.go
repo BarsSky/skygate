@@ -892,17 +892,71 @@ func main() {
 	// process exited BEFORE binding its HTTP port — the unit stayed 'active'
 	// with nothing listening, the self-updater could never verify a build, and
 	// OIDC was not even configured (SKYGATE_OIDC_ISSUER was unset). NewService
-	// now returns a Service with a nil key store, every OIDC route answers 503
-	// with the reason, and the portal keeps serving. The listener is already up
-	// at this point regardless (B269).
+	// B-oidc-setup (v0.75, 2026-09-21): DB-first OIDC config.
+	// The boot sequence reads the oidc_settings DB row (if any)
+	// and falls back to env vars. Pre-fix there was no DB row,
+	// and the only way to change OIDC config was to edit env
+	// vars + restart. Now the operator can fill the form on
+	// /admin/oidc and the values persist.
+	//
+	// Honour SKYGATE_OIDC_ENABLED: "false" / "0" / "no" forces
+	// OIDC off even if the DB row has enabled=true (the operator
+	// used the toggle to disable, then realised env wins for
+	// an emergency off-switch). Empty string falls back to the
+	// DB row's enabled flag, which itself defaults to the legacy
+	// "issuer non-empty" rule.
+	effectiveIssuer := app.OIDCIssuerURL
+	effectiveClientID := app.OIDCClientID
+	effectiveClientSecret := app.OIDCClientSecret
+	effectiveKeyDir := app.OIDCKeyDir
+	effectiveRedirectURIs := app.OIDCRedirectURIs
+	dbRow, dbErr := db.GetOIDCSettings(app.DB.Current())
+	envEnabled := strings.ToLower(strings.TrimSpace(app.OIDCEnabledEnv))
+	envOff := envEnabled == "false" || envEnabled == "0" || envEnabled == "no"
+	if dbErr == nil {
+		// DB row exists — it wins for every field the operator
+		// saved (the form fields are pre-filled from DB on render).
+		if dbRow.Issuer != "" {
+			effectiveIssuer = dbRow.Issuer
+		}
+		if dbRow.ClientID != "" {
+			effectiveClientID = dbRow.ClientID
+		}
+		// ClientSecret may be empty after a form save that
+		// left the password field blank (we don't echo the live
+		// secret). When empty, fall back to env — the operator
+		// can keep using SKYGATE_OIDC_CLIENT_SECRET for rotation
+		// without re-saving the form.
+		if dbRow.ClientSecret != "" {
+			effectiveClientSecret = dbRow.ClientSecret
+		}
+		if dbRow.RedirectURIs != "" {
+			effectiveRedirectURIs = dbRow.RedirectURIs
+		}
+		if dbRow.KeyDir != "" {
+			effectiveKeyDir = dbRow.KeyDir
+		}
+		log.Printf("oidc: loaded config from DB (issuer=%s, client_id=%s, enabled=%v)", effectiveIssuer, effectiveClientID, dbRow.Enabled)
+	} else if dbErr != db.ErrOIDCSettingsNotFound {
+		log.Printf("oidc: oidc_settings read failed: %v (continuing with env-only config)", dbErr)
+	}
 	oidcSvc, oidcErr := oidcsvc.NewService(
-		app.OIDCIssuerURL,
-		app.OIDCClientID,
-		app.OIDCClientSecret,
-		app.OIDCKeyDir,
-		app.OIDCRedirectURIs,
+		effectiveIssuer,
+		effectiveClientID,
+		effectiveClientSecret,
+		effectiveKeyDir,
+		effectiveRedirectURIs,
 		app.JWTSecret,
 	)
+	// SKYGATE_OIDC_ENABLED=false short-circuits the routes by
+	// pointing the mux at a 503 responder. The /admin/oidc page
+	// still reads the DB row + shows the operator's config (so
+	// they can edit it without re-enabling), but the OIDC routes
+	// themselves are inert.
+	if envOff {
+		log.Printf("oidc: SKYGATE_OIDC_ENABLED=false — routes will answer 503 until the env flips back")
+		oidcSvc = nil
+	}
 	if oidcErr != nil {
 		log.Printf("oidc: init failed: %v (continuing — OIDC routes will answer 503; the portal and /healthz are unaffected)", oidcErr)
 	}
@@ -2156,6 +2210,13 @@ func main() {
 	// the 4 env vars (read at boot). See
 	// docs/oidc-headscale.md for the operator runbook.
 	mux.Handle("GET /admin/oidc", authMW(http.HandlerFunc(adminSvc.GetAdminOIDC)))
+	// B-oidc-setup (v0.75, 2026-09-21): the form action that
+	// saves the oidc_settings DB row. Pre-fix the page was
+	// read-only — operators had to SSH into the host and edit
+	// /home/admin/skygate/.env (or restart the docker container)
+	// to change any value. The form writes the four config
+	// fields + an enabled toggle; restart skygate to apply.
+	mux.Handle("POST /admin/oidc", authMW(http.HandlerFunc(adminSvc.PostAdminOIDC)))
 	mux.Handle("POST /admin/oidc/test", authMW(http.HandlerFunc(adminSvc.PostAdminOIDCTest)))
 	// B167 (v1.5.2) — /admin/oidc/sync operator-
 	// facing page. The Apply button posts to

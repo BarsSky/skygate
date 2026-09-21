@@ -113,5 +113,39 @@
   </table>
 </div>
 
+{{/* B-oidc-setup (v0.75, 2026-09-21): the form to actually
+     configure OIDC from the web UI. The previous read-only
+     view showed the env-var values but offered no way to
+     save them — operators had to SSH into the host and edit
+     .env (or restart the docker container). Now: fill the
+     fields, tick the "Enable" checkbox, click Save. The
+     values go into the oidc_settings DB table; a restart
+     (or /admin/update) re-reads the DB and goes live. */}}
+<form method="post" action="/admin/oidc">
+  <div class="card">
+    <h3><i class="fa-solid fa-pen-to-square"></i> {{t "oidc.section_form"}}</h3>
+    <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
+      {{t "oidc.form_help" | safeHTML}}
+    </p>
+    <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:12px">
+      <input type="checkbox" name="enabled" value="1" {{if .OIDCEnabled}}checked{{end}}>
+      <b>{{t "oidc.form_enable"}}</b>
+      <span style="color:var(--text-muted);font-size:12px">{{t "oidc.form_enable_help"}}</span>
+    </label>
+    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.row_issuer"}}</label>
+    <input type="text" name="issuer" value="{{.Issuer}}" placeholder="https://head.skynas.ru" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
+    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.form_client_id"}}</label>
+    <input type="text" name="client_id" value="{{.ClientID}}" placeholder="headscale" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
+    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.form_client_secret"}}</label>
+    <input type="password" name="client_secret" placeholder="(leave empty to keep current)" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
+    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.form_redirect_uris"}}</label>
+    <input type="text" name="redirect_uris" value="{{.RedirectURIs}}" placeholder="https://head.skynas.ru/oidc/callback" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
+    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.form_key_dir"}}</label>
+    <input type="text" name="key_dir" value="{{.KeyDir}}" placeholder="/var/lib/skygate/oidc-keys" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> {{t "oidc.form_save"}}</button>
+    <span style="margin-left:12px;color:var(--text-muted);font-size:12px">{{t "oidc.form_save_hint"}}</span>
+  </div>
+</form>
+
 {{end}}
 {{end}}
