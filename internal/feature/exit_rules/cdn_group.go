@@ -124,6 +124,15 @@ type CDNDisplayItem struct {
 	// ungrouped items.
 	Count int
 
+	// FanOutCount (B276.2, 2026-09-21): the number of
+	// devices an all_devices=true rule was fanned out
+	// to. 0 for per-device rules (the regular per-host
+	// section). Populated only in the ALL-DEVICES section
+	// built by form_my.go, where a single logical rule
+	// covers N devices and a "применено к N устройств(ам)"
+	// badge replaces the duplicated row display.
+	FanOutCount int
+
 	// Rules is the slice of per-CIDR rows. For
 	// IsCDNGroup=true this is the per-group rows
 	// (sorted by TargetValue). For IsCDNGroup=false
@@ -146,9 +155,15 @@ type CDNDisplayItem struct {
 // would have seen pre-B237.22 (a flat list of N rows per
 // (host, exitNode) tuple), even though the actual rows
 // are now visually grouped under collapsible headers.
+//
+// FanOutTotal (B276.2) is the sum of FanOutCount across
+// items — the number of devices an all_devices rule was
+// fanned out to. 0 in the per-host view; populated only
+// in the dedicated ALL-DEVICES section.
 type CDNDisplayView struct {
-	Items      []CDNDisplayItem
-	TotalCount int
+	Items        []CDNDisplayItem
+	TotalCount   int
+	FanOutTotal  int
 }
 
 // CDNGroup is a set of device_rules that share the same

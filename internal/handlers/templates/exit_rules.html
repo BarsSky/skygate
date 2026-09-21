@@ -314,6 +314,105 @@
       </details>
       {{end}}
 
+      {{/* B276.2 (2026-09-21): the ALL-DEVICES section. Rules with
+           all_devices=true are fanned out across the user's devices; the
+           fan-out copies are de-duplicated by natural key in the view and
+           rendered here ONCE per logical rule with a "применено к N
+           устройств(ам)" badge. The per-host loop above is filtered to
+           exclude them so the user does not see N copies per device. */}}
+      {{if .AllDevicesByExitNodeCDN}}
+      <details open style="margin-top:18px">
+        <summary style="cursor:pointer;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-weight:600;display:flex;align-items:center;gap:8px">
+          <i class="fa-solid fa-users"></i>
+          <span>{{t "exit_rules.all_devices_section_title"}}</span>
+          <span style="color:var(--text-muted);font-size:12px;font-weight:400">{{t "exit_rules.all_devices_section_help"}}</span>
+        </summary>
+        <div style="margin:6px 0 6px 24px">
+        {{range $exitNode, $cdnView := .AllDevicesByExitNodeCDN}}
+          <details open style="margin:6px 0;border:1px solid var(--border);border-radius:6px;background:var(--bg-card)">
+            <summary style="cursor:pointer;padding:6px 10px;display:flex;align-items:center;gap:6px;font-size:13px">
+              <i class="fa-solid fa-route"></i>
+              <span class="tag tag-info">{{$exitNode}}</span>
+              <span style="color:var(--text-muted)">{{$cdnView.TotalCount}}{{t "exit_rules.rules_count_suffix"}}</span>
+              {{if gt $cdnView.FanOutTotal 0}}<span class="tag tag-success" title="{{t "exit_rules.all_devices_fanout_tip"}}"><i class="fa-solid fa-users"></i> {{tf "exit_rules.all_devices_fanout_badge" $cdnView.FanOutTotal}}</span>{{end}}
+            </summary>
+            <div class="table-wrap" style="margin-top:6px">
+            {{range $item := $cdnView.Items}}
+              {{if $item.IsCDNGroup}}
+                <details open style="margin:8px 0;border:1px solid var(--border);border-radius:6px;background:var(--bg-elev)">
+                  <summary style="cursor:pointer;padding:6px 10px;display:flex;align-items:center;gap:6px;font-size:12px">
+                    <i class="fa-solid fa-cloud"></i>
+                    <span><b>{{$item.Source}}</b></span>
+                    <span class="tag tag-info">{{$item.CDN}}</span>
+                    <span style="color:var(--text-muted)">{{tf "exit_rules.cdn_group_count" $item.Count}}</span>
+                    {{if gt $item.FanOutCount 0}}<span class="tag tag-success" title="{{t "exit_rules.all_devices_fanout_tip"}}"><i class="fa-solid fa-users"></i> {{tf "exit_rules.all_devices_fanout_badge" $item.FanOutCount}}</span>{{end}}
+                    <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▼</span>
+                  </summary>
+                  <table style="margin:0">
+                    <tr><th class="col-check"></th><th>{{t "exit_rules.col_action"}}</th><th>{{t "exit_rules.col_target"}}</th><th>{{t "exit_rules.preferred_col"}}</th><th></th></tr>
+                    {{range $item.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
+                      <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
+                      <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+                      <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span> <span class="tag tag-success" title="{{t "exit_rules.all_devices_fanout_tip"}}"><i class="fa-solid fa-users"></i> {{tf "exit_rules.all_devices_fanout_badge" $item.FanOutCount}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
+                      <td class="col-preferred">
+                        {{$status := index $.StatusByRuleID .ID}}
+                        {{if eq $status "approved"}}
+                          <span class="tag tag-success" title="{{tf "exit_rules.approved_in_headscale_title" $exitNode}}"><i class="fa-solid fa-check"></i></span>
+                        {{else if eq $status "pending"}}
+                          <span class="tag tag-warning" title="{{tf "exit_rules.pending_in_headscale_title" $exitNode .TargetValue}}"><i class="fa-solid fa-clock"></i></span>
+                        {{else if eq $status "wrong"}}
+                          <span class="tag tag-danger" title="{{t "exit_rules.preferred_mismatch_title"}}"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                        {{else}}
+                          <span class="tag" title="{{t "exit_rules.preferred_none_title"}}"><i class="fa-solid fa-question"></i></span>
+                        {{end}}
+                      </td>
+                      <td class="col-delete">
+                        <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="{{t "common.delete"}}" onclick="return confirm('{{t "exit_rules.confirm_single_delete"}}')"><i class="fa-solid fa-trash"></i></button>
+                      </td>
+                    </tr>
+                    <form id="single-delete-{{.ID}}" method="post" action="/my/exit-rules/delete" style="display:none">
+                      <input type="hidden" name="id" value="{{.ID}}">
+                    </form>
+                    {{end}}
+                  </table>
+                </details>
+              {{else}}
+                <table>
+                  <tr><th class="col-check"></th><th>{{t "exit_rules.col_action"}}</th><th>{{t "exit_rules.col_target"}}</th><th>{{t "exit_rules.preferred_col"}}</th><th></th></tr>
+                  {{range $item.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
+                    <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
+                    <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+                    <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span> <span class="tag tag-success" title="{{t "exit_rules.all_devices_fanout_tip"}}"><i class="fa-solid fa-users"></i> {{tf "exit_rules.all_devices_fanout_badge" $item.FanOutCount}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
+                    <td class="col-preferred">
+                      {{$status := index $.StatusByRuleID .ID}}
+                      {{if eq $status "approved"}}
+                        <span class="tag tag-success" title="{{tf "exit_rules.approved_in_headscale_title" $exitNode}}"><i class="fa-solid fa-check"></i></span>
+                      {{else if eq $status "pending"}}
+                        <span class="tag tag-warning" title="{{tf "exit_rules.pending_in_headscale_title" $exitNode .TargetValue}}"><i class="fa-solid fa-clock"></i></span>
+                      {{else if eq $status "wrong"}}
+                        <span class="tag tag-danger" title="{{t "exit_rules.preferred_mismatch_title"}}"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                      {{else}}
+                        <span class="tag" title="{{t "exit_rules.preferred_none_title"}}"><i class="fa-solid fa-question"></i></span>
+                      {{end}}
+                    </td>
+                    <td class="col-delete">
+                      <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="{{t "common.delete"}}" onclick="return confirm('{{t "exit_rules.confirm_single_delete"}}')"><i class="fa-solid fa-trash"></i></button>
+                    </td>
+                  </tr>
+                  <form id="single-delete-{{.ID}}" method="post" action="/my/exit-rules/delete" style="display:none">
+                    <input type="hidden" name="id" value="{{.ID}}">
+                  </form>
+                  {{end}}
+                </table>
+              {{end}}
+            {{end}}
+            </div>
+          </details>
+        {{end}}
+        </div>
+      </details>
+      {{end}}
+
         <div class="multi-bar sticky">
           <label style="display:flex;align-items:center;gap:6px;font-size:12px">
             <input type="checkbox" id="select-all-bottom" onclick="toggleAll(this.checked); document.getElementById('select-all-top').checked=this.checked">

@@ -77,6 +77,11 @@ var ruExitRules = map[string]string{
 	"exit_rules.device_all":                  "все мои устройства",
 	"exit_rules.all_devices_badge":            "все мои устройства",
 	"exit_rules.all_devices_badge_tip":        "Правило сохранено для всех ваших устройств: skygate пересоздаёт его для каждого устройства, которое появляется у вас позже (и снимает вместе с правилом). Иначе правило действовало бы только на те устройства, что были у вас в момент сохранения.",
+	// B276.2: dedicated ALL-DEVICES section on /my/exit-rules.
+	"exit_rules.all_devices_section_title":    "Правила для всех устройств",
+	"exit_rules.all_devices_section_help":     "применяются ко всем вашим устройствам, включая те, что появятся позже",
+	"exit_rules.all_devices_fanout_badge":     "применено к %d устройств(ам)",
+	"exit_rules.all_devices_fanout_tip":       "Это правило развёрнуто на каждое ваше устройство (сейчас и в будущем) — копии хранятся в device_rules с разными device_id, но логически это одно правило.",
 	"exit_rules.exit_node_hint":              "Необязательно. Не выбрано — skygate сам назначит exit-узел (по нагрузке) и покажет владельца префикса в /admin/exit-nodes, где его можно закрепить. Выбранный узел — пожелание: если сеть обслуживает другой узел, пин в ACL следует за владельцем, иначе сайт у устройства просто не откроется.",
 	"exit_rules.action":                      "Действие",
 	"exit_rules.action_accept":               "✅ Allow — разрешить доступ",
@@ -341,6 +346,11 @@ var enExitRules = map[string]string{
 	"exit_rules.device_all":                  "all my devices",
 	"exit_rules.all_devices_badge":            "all my devices",
 	"exit_rules.all_devices_badge_tip":        "Saved for all of your devices: skygate re-creates it on every device you register later (and removes it with the rule). Without this the rule would only cover the devices you owned when it was saved.",
+	// B276.2: dedicated ALL-DEVICES section on /my/exit-rules.
+	"exit_rules.all_devices_section_title":    "Rules for all my devices",
+	"exit_rules.all_devices_section_help":     "applied to every device you own now and to every device you register later",
+	"exit_rules.all_devices_fanout_badge":     "applied to %d device(s)",
+	"exit_rules.all_devices_fanout_tip":       "This rule is fanned out to every device you own (now and in the future) — the copies live in device_rules with different device_ids, but logically it is one rule.",
 	"exit_rules.exit_node_hint":              "Optional. Left empty, skygate assigns the exit node itself (by load) and shows the prefix owner on /admin/exit-nodes, where it can be pinned. A selected node is a preference: if another node serves the network, the ACL pin follows the owner — otherwise the site simply would not open on that device.",
 	"exit_rules.action":                      "Action",
 	"exit_rules.action_accept":               "✅ Allow — permit access",

@@ -12,6 +12,126 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.39 — Exit Rules display rework + routescript per-exit-node (B276.2)
+
+**Date:** 2026-09-21 · **Base:** `v1.5.38` → this tag · **Compatibility:** none.
+
+The Exit Rules model is now richer than the user-facing pages and the
+client-side routescript can express: rules can target different exit
+nodes (B275), and rules with `all_devices=true` are fanned out across
+the user's devices (B276.1). The pre-B276.2 surfaces flattened both
+into a single per-device view (duplicated N times for fan-outs, routed
+through a single exit-node for the script). B276.2 brings both in
+line with the underlying model.
+
+### 1. `/my/exit-rules` — dedicated ALL-DEVICES section (B276.2 display)
+
+**Symptom:** every `all_devices=true` rule was duplicated in the
+per-host section — once per device the user owned. A user with 3
+devices and one «all devices for Cloudflare» rule saw 3 identical rows
+under each device, with no visual cue that they were fan-out copies
+of one logical rule.
+
+**Fix:**
+
+* `internal/feature/exit_rules/form_my.go` — split the rule loop into
+  per-device (`allDevices=false`) and all-devices (`all_devices=true`)
+  halves. The per-host section no longer renders the fan-out copies;
+  the new `AllDevicesByExitNodeCDN` view collapses the fan-out by
+  natural key `(exit_node, target_type, target_value, parent_domain)`
+  and carries a `FanOutTotal` count so the section can render one
+  logical rule per target with a «применено к N устройств(ам)» badge.
+* `internal/feature/exit_rules/cdn_group.go` — `CDNDisplayItem` gained
+  `FanOutCount`; `CDNDisplayView` gained `FanOutTotal`. Both default
+  to 0 in the per-host view (no fan-out there).
+* `internal/handlers/templates/exit_rules.html` — new
+  `ALL-DEVICES RULES` section under the per-host card, with the same
+  CDN grouping + collapsible `<details>` structure as the per-host
+  view. Each row's badge shows the fan-out device count.
+* i18n: 4 new keys × 2 languages (`all_devices_section_title`,
+  `all_devices_section_help`, `all_devices_fanout_badge`,
+  `all_devices_fanout_tip`).
+
+### 2. Routescript — per-exit-node blocks (B276.2 routescript)
+
+**Symptom:** `GenerateRouteSetupScript` took the FIRST exit node from
+`ListExitNodes()` and emitted every `ip route add` (Linux) or
+`route add` (Windows) through that one IP. A user with rules on
+karolina AND emilia ended up with all traffic routed through whichever
+relay headscale returned first — the rule's actual `exit_node` field
+was completely ignored in the generated script. The `tailscale up`
+step on the operator's client pinned everything to the wrong relay,
+and the per-rule preferences in the UI didn't survive into the
+client.
+
+**Fix:**
+
+* `internal/feature/exit_rules/routescript_data.go` — new
+  `ScriptRouteGroup {ExitNode, ExitNodeIP, Source, Routes}` and
+  `loadRoutesForScriptGroups(userID, deviceID)`. Rules are bucketed
+  by `exit_node` (one bucket per relay); empty `exit_node` rules
+  fold into the user's preferred exit node
+  (`db.GetUserExitNodePref`), with a `first_healthy` fallback when
+  no preference is set. `all_devices=true` rules still apply when
+  `deviceID > 0` (B276.1 fan-out intent is honoured on every device
+  the script runs on).
+* `internal/feature/exit_rules/routescript_linux_body.go` +
+  `routescript_windows_body.go` — both take `[]ScriptRouteGroup`,
+  emit one `=== exit-node: NAME (source) ===` block per group, with
+  the matching `ip route add` / `route add` commands per group. The
+  DNS route (MagicDNS `100.100.100.100`) and the restore's
+  default-route re-add use the `preferredGroup()` helper so they
+  always land on the user's preferred relay, regardless of script
+  order. Missing-IP groups emit a `NO TAILSCALE IP — set manually`
+  marker instead of `via  dev tailscale0` (which would silently
+  install a link route to nowhere).
+* `internal/feature/exit_rules/routescript.go` — orchestrator
+  switched from `[]routeEntry + single exitNodeIP` to the new
+  groups. The dead `resolveExitNodeIPForScript` helper is removed.
+
+### Tests
+
+* `internal/feature/exit_rules/routescript_b276_2_test.go` — 6 pure-function
+  unit tests (no DB / no headscale):
+  * `TestBuildLinux_PerExitNodeBlocks` — two groups, two IPs,
+    every route in the matching block.
+  * `TestBuildLinux_AutoRulesFoldIntoPreferred` — empty
+    `exit_node` rule lands in the preferred group, NOT in the
+    alphabetical-first explicit group.
+  * `TestBuildLinux_MissingIPPlaceholder` — a group with no
+    resolved Tailscale IP emits the `NO TAILSCALE IP` marker
+    instead of an empty gateway.
+  * `TestBuildLinux_RestoreClearsAllGroups` — the restore path
+    removes routes for EVERY group, not just the preferred one.
+  * `TestBuildWindows_PerExitNodeBlocks` — Windows mirror of the
+    per-group guarantee.
+  * `TestPreferredGroup` — the helper selects the preferred
+    group deterministically (used for DNS + restore-default).
+
+### B-check
+
+* `scripts/check_b276_2_routescript.sh` — 14 contracts (A–H) covering
+  the data shape, body-builder signatures, per-group markers,
+  preferred-group selection, missing-IP placeholder, restore
+  cleanup, unit tests, and git tracking (trap #11). Local: 14/14 PASS
+  (F2 — `go test` — SKIPs when the bash shell doesn't have `go` on
+  PATH; CI / VM run will exercise it).
+
+### Verification
+
+* `go build ./...` clean
+* `go vet ./internal/feature/exit_rules/...` clean
+* `go test -count=1 -run 'B2762|BuildLinux|BuildWindows|PreferredGroup'`
+  6/6 PASS
+* `bash scripts/check_b276_2_routescript.sh` 14/14 PASS (1 SKIP — go on PATH)
+* Live: after `/admin/update` to v1.5.39, open `/my/exit-rules`,
+  confirm all_devices rules appear in the new dedicated section.
+  Download the route-setup script (`?script=` on the same page) and
+  inspect that rules on different relays end up in different
+  `=== exit-node: NAME ===` blocks, not one block.
+
+---
+
 ## v1.5.38 — the v1.5.37 /admin/exit-nodes page-crash fix
 
 **Date:** 2026-09-21 · **Base:** `v1.5.37` → this tag · **Compatibility:** none.

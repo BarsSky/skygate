@@ -29,6 +29,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -257,10 +258,18 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	anyRoutes := len(hasRoutes) > 0
 
 	// 2026-07-07: issue #12 — hierarchical view
-	// Group rules by device_id -> exit_node
+	// Group rules by device_id -> exit_node. B276.2 (2026-09-21):
+	// all_devices=true rules go into a SEPARATE map (allDevicesByExitNode)
+	// — the per-host section no longer renders the fan-out copies, the
+	// ALL-DEVICES section owns them.
 	deviceNames := map[int]string{}
 	grouped := map[int]map[string][]db.DeviceRule{}
+	allDevicesByExitNode := map[string][]db.DeviceRule{}
 	for _, r := range rules {
+		if r.AllDevices {
+			allDevicesByExitNode[r.ExitNodeID] = append(allDevicesByExitNode[r.ExitNodeID], r)
+			continue
+		}
 		dn := deviceNames[r.DeviceID]
 		if dn == "" {
 			dn = fmt.Sprint(r.DeviceName)
@@ -284,8 +293,13 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	// identical sections ("workstation-1" twice). GroupedByHostname reroutes
 	// the template over (hostname -> exitNode -> []rules), so device_id=1
 	// and device_id=9 (both workstation-1) collapse into one section.
+	// B276.2: all_devices rules are skipped here too — they live in
+	// allDevicesByExitNodeCDN (rendered as the ALL-DEVICES section).
 	groupedByHostname := map[string]map[string][]db.DeviceRule{}
 	for _, r := range rules {
+		if r.AllDevices {
+			continue
+		}
 		hn := deviceNames[r.DeviceID]
 		if groupedByHostname[hn] == nil {
 			groupedByHostname[hn] = map[string][]db.DeviceRule{}
@@ -360,6 +374,99 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 				Items:      items,
 				TotalCount: totalCount,
 			}
+		}
+	}
+
+	// B276.2 (2026-09-21): the ALL-DEVICES section. all_devices=true
+	// rules are fanned out across the user's devices in device_rules —
+	// each row carries a different device_id but identical
+	// (exit_node, target_type, target_value, parent_domain). For the
+	// display we de-duplicate by that natural key and remember how
+	// many devices each fan-out covered, so the section can render one
+	// logical rule with a "применено к N устройств(ам)" badge instead of
+	// N identical rows.
+	allDevicesByExitNodeCDN := map[string]CDNDisplayView{}
+	for exitNode, rulesForTuple := range allDevicesByExitNode {
+		// Collapse to one entry per (target_type, target_value, parent_domain).
+		type fanKey struct {
+			tt, tv, pd string
+		}
+		fanGroups := map[fanKey]*struct {
+			row         RuleRow
+			deviceCount int
+		}{}
+		for _, r := range rulesForTuple {
+			k := fanKey{r.TargetType, r.TargetValue, r.ParentDomain}
+			e := fanGroups[k]
+			if e == nil {
+				e = &struct {
+					row         RuleRow
+					deviceCount int
+				}{
+					row: RuleRow{
+						ID:           int64(r.ID),
+						UserID:       int64(r.UserID),
+						DeviceID:     r.DeviceID,
+						ExitNode:     r.ExitNodeID,
+						TargetType:   r.TargetType,
+						TargetValue:  r.TargetValue,
+						ParentDomain: r.ParentDomain,
+						Action:       r.Action,
+						AllDevices:   true,
+					},
+				}
+				fanGroups[k] = e
+			}
+			e.deviceCount++
+		}
+		// Build CDNDisplayItems in a stable order: sort by TargetValue.
+		keys := make([]fanKey, 0, len(fanGroups))
+		for k := range fanGroups {
+			keys = append(keys, k)
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			if keys[i].tv != keys[j].tv {
+				return keys[i].tv < keys[j].tv
+			}
+			return keys[i].pd < keys[j].pd
+		})
+		rows := make([]RuleRow, 0, len(keys))
+		fanOutTotal := 0
+		for _, k := range keys {
+			e := fanGroups[k]
+			rows = append(rows, e.row)
+			fanOutTotal += e.deviceCount
+		}
+		// CDN-group via the existing helper (so cloudflare/fastly/etc.
+		// bundles render as their own collapsible headers inside the
+		// ALL-DEVICES section, identical to the per-host layout).
+		groups, ungrouped := GroupRulesByCDN(rows)
+		items := make([]CDNDisplayItem, 0, len(groups)+1)
+		totalCount := 0
+		for _, g := range groups {
+			items = append(items, CDNDisplayItem{
+				IsCDNGroup:   true,
+				Source:       g.Source,
+				CDN:          g.CDN,
+				Count:        g.Count,
+				Rules:        g.Rules,
+				FanOutCount:  fanOutTotal / len(g.Rules), // average per row (each row covers fanOutTotal devices)
+			})
+			totalCount += g.Count
+		}
+		if len(ungrouped) > 0 {
+			items = append(items, CDNDisplayItem{
+				IsCDNGroup:  false,
+				Count:       len(ungrouped),
+				Rules:       ungrouped,
+				FanOutCount: fanOutTotal / len(ungrouped),
+			})
+			totalCount += len(ungrouped)
+		}
+		allDevicesByExitNodeCDN[exitNode] = CDNDisplayView{
+			Items:       items,
+			TotalCount:  totalCount,
+			FanOutTotal: fanOutTotal,
 		}
 	}
 
@@ -594,6 +701,12 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// headers + the per-CIDR rows underneath. Storage
 		// is unchanged; only the view layer is affected.
 		"GroupedByHostnameCDN": groupedByHostnameCDN,
+		// B276.2 (2026-09-21): the dedicated ALL-DEVICES section.
+		// Rules with all_devices=true are de-duplicated by natural
+		// key here so the section renders one logical rule with a
+		// "применено к N устройств(ам)" badge instead of N rows
+		// duplicated across the per-host view.
+		"AllDevicesByExitNodeCDN": allDevicesByExitNodeCDN,
 		// 2026-08-25 (B182): per-rule headscale-state status
 		// for the three-state ✅/⏳/⚠️ badge. See the
 		// for-loop above for the four possible values.

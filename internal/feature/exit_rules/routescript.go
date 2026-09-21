@@ -2,41 +2,41 @@
 // route-setup script generator's public entry point.
 //
 // refactor-v0.30 Phase B step 4c (2026-07-29): moved from
-// internal/handlers/exit_rules_routescript.go. The
-// orchestrator (load data → resolve exit-node IP → dispatch
-// to the per-OS body builder) used to be a method on *App;
-// it now lives on *Service. The per-OS body builders
-// (buildWindowsRouteScript, buildLinuxRouteScript) and
-// the per-OS setup/restore helpers (write{Linux,Windows}
-// {Setup,Restore}Script) are pure functions in sibling
-// files in the same package.
+// internal/handlers/exit_rules_routescript.go.
 //
-// The DB and headscale lookups live in routescript_data.go.
-// Filename uses routescript.go (not routescript_orchestrator.go)
-// so the public method name in main.go / form_my.go stays
-// stable: (*exitrules.Service).GenerateRouteSetupScript.
-
+// B276.2 (2026-09-21): the generator used to emit a single
+// per-relay block built from a flat route list + one
+// exitNodeIP (the FIRST exit node). That was wrong once a
+// user could have rules targeting different relays (B275):
+// every rule ended up routed through the same relay, not
+// through ITS declared one. The new shape is per-exit-node
+// groups (loadRoutesForScriptGroups), and the body builders
+// emit one block per group.
 package exit_rules
 
 // GenerateRouteSetupScript creates a shell script that sets up
-// static routes so that ONLY the specified IPs/subnets go through
-// the exit node via Tailscale. If restore is true, generates a
-// rollback script that removes specific routes and re-adds the
-// default route through the exit node. If deviceID > 0, filters
-// rules for that specific device only.
+// static routes so that ONLY the specified IPs/subnets go
+// through their declared exit-node via Tailscale. The rules
+// are split into per-exit-node groups (B276.2): rules whose
+// exit_node is empty fall into the user's preferred exit
+// node (fallback: first healthy). If deviceID > 0, the rules
+// are filtered to that single device; all_devices=true rules
+// still apply (B276.1 fan-out).
+//
+// If restore is true, generates a rollback script that removes
+// the per-route entries added by the setup and re-adds the
+// default route through the preferred exit node.
 func (s *Service) GenerateRouteSetupScript(userID int, deviceID int, os string, restore bool) (string, error) {
-	routes, err := s.loadRoutesForScript(userID, deviceID)
+	groups, err := s.loadRoutesForScriptGroups(userID, deviceID)
 	if err != nil {
 		return "", err
 	}
-	if len(routes) == 0 {
+	if len(groups) == 0 {
 		return "# No IP/subnet exit rules configured.\n# Add rules first at /my/exit-rules\n", nil
 	}
 
-	exitNodeIP := s.resolveExitNodeIPForScript()
-
 	if os == "windows" {
-		return buildWindowsRouteScript(routes, exitNodeIP, restore), nil
+		return buildWindowsRouteScript(groups, restore), nil
 	}
-	return buildLinuxRouteScript(routes, exitNodeIP, restore), nil
+	return buildLinuxRouteScript(groups, restore), nil
 }
