@@ -38,7 +38,21 @@ grep -q 'load\[e.ExitNode\] <= m+1' "$PKG" && ok "B.3 auto assignments are stick
 
 grep -q 'prefixowner.ViaForPrefix(e.TargetValue, ownerTagByPrefix)' "$ACL" && ok "C.1 the per-CIDR pin follows the OWNER" || bad "C.1 the ACL must pin a prefix to its owner"
 grep -q 'ownerTagByPrefix := prefixowner.TagByPrefix(d)' "$ACL" && ok "C.2 the owner tags come from the table + node_owner_map" || bad "C.2 load the owner tags in the generator"
-grep -q 'prefixowner.Reconcile(s.dbc(), nil)' "$SYNC" && ok "C.3 the sync path reconciles the table" || bad "C.3 SyncAdvertisedRoutes must call prefixowner.Reconcile"
+# CONTRACT RENEGOTIATION (2026-09-20): C.3 asserted the exact call
+# `prefixowner.Reconcile(s.dbc(), nil)`, which B275.2 deliberately replaced with
+# `prefixowner.Reconcile(s.dbc(), healthyExitRelays(s.dbc()))`. Passing nil means
+# "no relay is healthy", so the engine falls back and every owner it had assigned
+# flickers (live: the table went all-`auto` and the operators' prefixes moved);
+# the nil form is therefore the regression this contract must catch, not the
+# shape it should require. The check now requires the healthy-list form and still
+# fails if the reconcile call disappears entirely.
+if grep -q 'prefixowner.Reconcile(s.dbc(), healthyExitRelays(s.dbc()))' "$SYNC"; then
+  ok "C.3 the sync path reconciles the table with the healthy-relay list (B275.2)"
+elif grep -q 'prefixowner.Reconcile(s.dbc(), nil)' "$SYNC"; then
+  bad "C.3 the sync path passes a nil healthy-relay list — that is the B275.2 regression (owners flicker)"
+else
+  bad "C.3 SyncAdvertisedRoutes must call prefixowner.Reconcile"
+fi
 grep -q 'prefixowner.OwnerByPrefix(s.dbc())' "$SYNC" && ok "C.4 advertising uses the persisted table" || bad "C.4 advertising must read the table"
 
 if command -v go >/dev/null 2>&1; then

@@ -12,6 +12,80 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.35 — one tagOwners policy write per reconcile pass (B272.7)
+
+**Date:** 2026-09-20 · **Base:** `v1.5.34` → this tag · **Compatibility:** none.
+
+This closes the item v1.5.32 left open ("the skygate-side batch: collect every
+missing `tagOwners` for the tick and send ONE policy write instead of one per
+device"). It turns out the batch is not only restart economy — the per-device
+write was still losing tags.
+
+**Symptom** (native host `aro`, immediately after v1.5.31 installed the policy
+helper): three portal-owned devices needed three dev-tags and the first tick
+permitted exactly ONE of them —
+
+```
+tag-reconcile: checked=4 applied=1 failed=2
+tag-reconcile: cannot make "tag:dev-daniil-laptop" permitted for node 3 (laptop):
+  400 requested tags [tag:dev-daniil-laptop] are invalid or not permitted
+$ grep -c 'tag:dev-' /etc/headscale/policy.hujson
+1
+```
+
+**Root cause:** `EnsureTagOwner` is a read-modify-write of the WHOLE policy, and
+`ReconcileTags` called it once per device. With `policy.mode: file` the write is
+performed **asynchronously** by the privileged `skygate-policy.path` unit (write
+the file + restart headscale), so call N read the policy *before* the applier had
+written call N-1's result: every write after the first was computed from the same
+stale snapshot and dropped its predecessor's entry. The losing writes reported
+success — the 400 above blamed the tag, which is why this reads like a permission
+or validation bug and why the v1.5.31 union and the v1.5.32 retry, both correct,
+could not fix it.
+
+**Fix**
+* `Client.EnsureTagOwners(map[string][]string)` (**`internal/headscale/tags.go`**) —
+  one read-modify-write for every pending tag. The policy read/parse half moved
+  into the shared `loadPolicyMap` + `policyTagOwners` helpers (the B251 HuJSON and
+  stringified-policy handling travels with it), the whole request is validated
+  **before** the write (a malformed entry cannot half-apply a batch) and the tags
+  are processed in sorted order so the error text and the log line are stable.
+  `EnsureTagOwner` now delegates to it, so the adopt/transfer admin paths and the
+  reconciler share one writer — the contract asserts exactly one `c.SetPolicy`
+  call in the file.
+* **`internal/nodeownership/auto.go`** — `nodeLister` requires the batch method;
+  `ReconcileTags` computes the pending set (with the **same predicates** the apply
+  loop uses: the row has a tag, the node is live, headscale does not carry the tag,
+  the id parses) **before** the loop, permits all of them at once, records them in
+  `ensured` so the per-row path becomes a no-op, and logs
+  `tag-reconcile: permitted N tag(s) in one policy write: …`. An empty pending set
+  issues **no** write (a needless file-mode write restarts headscale). A failed
+  batch is logged and falls back to the per-tag path, so each device is still
+  reported through the B227 sink with its own reason. `tagOwnersFor` is shared by
+  both paths.
+* The **apply** call gets the same bounded transient retry (`addTagRetry`,
+  1s/2s/4s on connection refused / reset / timeout, never on a `400 … are invalid
+  or not permitted`). The batch deliberately puts the headscale restart in the
+  same tick as the applies, so without this the tick that just permitted every tag
+  could lose every `AddTag` to a daemon that was still coming up — and the operator
+  would wait another five minutes for tags that were already allowed.
+
+**Contracts:** 21 in `scripts/check_b272_7_tag_owner_batch.sh` (source shape, the
+single-write invariant, ordering of the pre-pass, the retry/fallback semantics, the
+git-tracked-script guard from trap #11, and the Go contracts);
+`internal/nodeownership/auto_b272_7_batch_test.go` reproduces the `aro` case
+(three devices → one write, in-sync → none, batch failure → per-device reporting)
+and pins the apply retry (a transient refusal is retried once and succeeds; a
+`400` returns after a single attempt);
+`internal/headscale/tags_b272_7_batch_test.go` drives a policy stub (three missing
+tags → one PUT, existing entries preserved, empty request → no write, validation
+before write).
+
+**Live verification:** after deploying v1.5.35 the journal must show
+`permitted N tag(s) in one policy write: …` on the tick that repairs drift, and
+`grep -c 'tag:dev-'` in the policy must equal the number of tagged devices in
+`node_owner_map`. Contract F in the check reads both when it runs on the host.
+
 ## v1.5.32 — a headscale restart must not cost a whole tag tick (B272.4)
 
 **Date:** 2026-09-20 · **Base:** `v1.5.31` → this tag · **Compatibility:** none.

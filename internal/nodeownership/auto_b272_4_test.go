@@ -11,6 +11,7 @@ package nodeownership
 
 import (
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -34,6 +35,22 @@ func (f *flakyTagOwner) EnsureTagOwner(string, []string) error {
 	f.calls++
 	if f.calls <= f.failN {
 		return f.fail
+	}
+	return nil
+}
+
+// EnsureTagOwners delegates to the per-tag recorder so the counters above keep
+// describing policy writes exactly (B272.4 added the batch form to nodeLister).
+func (f *flakyTagOwner) EnsureTagOwners(wants map[string][]string) error {
+	tags := make([]string, 0, len(wants))
+	for tag := range wants {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+	for _, tag := range tags {
+		if err := f.EnsureTagOwner(tag, wants[tag]); err != nil {
+			return err
+		}
 	}
 	return nil
 }

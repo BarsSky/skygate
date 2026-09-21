@@ -146,8 +146,17 @@ if grep -q 'ReasonTagMissing FailureReason = "tag_missing"' "$ALERT" && grep -q 
 else
   bad "C4: the new reasons are missing from the alert vocabulary"
 fi
-if grep -q 'ensureTagIsPermitted(hs, r, baseDomain, ensured)' "$AUTO"; then
-  ok "C6: the reconciler ensures tagOwners BEFORE applying a tag (the live 400 'not permitted')"
+# CONTRACT RENEGOTIATION (2026-09-20, B272.7): the call site moved behind the
+# retry wrapper in v1.5.32 and behind the batch pre-pass in v1.5.35, but the
+# property this contract protects is unchanged — the reconciler must make a tag
+# PERMITTED before it asks headscale to apply it (the live
+# `400 requested tags [...] are invalid or not permitted`). Asserting one exact
+# call spelling made the check report a FAIL for a correct refactor; it now
+# accepts the direct call, the retry wrapper and the batch pre-pass, and requires
+# at least one of them to be present.
+if grep -qE 'ensureTagIsPermitted(Retry)?\(hs, r, baseDomain, ensured\)' "$AUTO" \
+   || grep -q 'ensureTagOwnersBatch(hs, rows, byID, baseDomain, ensured)' "$AUTO"; then
+  ok "C6: the reconciler ensures tagOwners BEFORE applying a tag (direct call, retry wrapper or the B272.7 batch)"
 else
   bad "C6: the reconciler applies tags without ensuring their owner — headscale answers 400 for an unknown tag"
 fi

@@ -54,6 +54,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -87,12 +88,20 @@ import (
 //     listed). Closes the cyborg/2026-09-15 gap where
 //     the autoupdater was stuck because the dev-tag
 //     didn't exist in tagOwners yet.
+//   - EnsureTagOwners(wants) — B272.7 (v1.5.35): the same
+//     operation for SEVERAL tags in ONE policy write. The
+//     reconciler calls it once per pass, because a
+//     per-device write is a read-modify-write of the whole
+//     policy and the privileged applier runs asynchronously:
+//     live on `aro` three devices needed three dev-tags and
+//     only the first survived (`applied=1 failed=2`).
 type nodeLister interface {
 	InvalidateCache()
 	ListAllNodes() ([]headscale.NodeView, error)
 	AddTag(nodeID int64, tag string) error
 	UntagNode(nodeID int64, tag string) error
 	EnsureTagOwner(tag string, owners []string) error
+	EnsureTagOwners(wants map[string][]string) error
 }
 
 // AutoBackfill runs `Backfill` against every portal user
@@ -457,6 +466,17 @@ func ReconcileTags(dbConn db.DBSource, hs nodeLister, nodes []headscale.NodeView
 	// per tag, and several nodes can share one).
 	ensured := map[string]bool{}
 
+	// B272.7 (v1.5.35): make EVERY tag this pass is about to apply permitted in
+	// ONE policy write, before the first AddTag. A per-device write is a
+	// read-modify-write of the whole policy handed to an asynchronous applier,
+	// so N devices used to mean N writes from N stale snapshots — live on `aro`
+	// three devices needed three tags and only the first landed. A batch failure
+	// is not fatal: the per-row path below retries each tag on its own and
+	// reports the specific refusal through the B227 sink.
+	if err := ensureTagOwnersBatch(hs, rows, byID, baseDomain, ensured); err != nil {
+		log.Printf("tag-reconcile: batch tagOwners pass failed (%v) — falling back to one policy write per tag", err)
+	}
+
 	for _, r := range rows {
 		if r.Tag == "" {
 			continue
@@ -492,7 +512,7 @@ func ReconcileTags(dbConn db.DBSource, hs nodeLister, nodes []headscale.NodeView
 			continue
 		}
 		// B272.1: make sure the policy knows this tag before asking headscale
-		// to apply it. B272.4: with a short retry — see
+		// to apply it. B272.7: with a short retry — see
 		// ensureTagIsPermittedRetry for why `connection refused` here is
 		// transient by construction.
 		if err := ensureTagIsPermittedRetry(hs, r, baseDomain, ensured); err != nil {
@@ -503,7 +523,13 @@ func ReconcileTags(dbConn db.DBSource, hs nodeLister, nodes []headscale.NodeView
 			}
 			continue
 		}
-		if err := hs.AddTag(id, r.Tag); err != nil {
+		// B272.7: the SAME transient window applies to the apply itself. The
+		// policy write above restarts headscale on a file-mode host, and the
+		// batch made that restart happen once for the whole pass — so without a
+		// retry here the tick that just permitted N tags can lose all N
+		// AddTag calls to a daemon that is still coming up, and the operator
+		// waits another five minutes for tags that were already allowed.
+		if err := addTagRetry(hs, id, r.Tag); err != nil {
 			res.Failed++
 			log.Printf("tag-reconcile: node %s (%s) is missing %q in headscale: %v", r.NodeID, n.Hostname, r.Tag, err)
 			if alertSink != nil {
@@ -561,8 +587,29 @@ func ensureTagIsPermitted(hs nodeLister, row db.NodeOwner, baseDomain string, en
 	if ensured[row.Tag] {
 		return nil
 	}
+	owners, err := tagOwnersFor(row, baseDomain)
+	if err != nil {
+		return err
+	}
+	if err := hs.EnsureTagOwner(row.Tag, owners); err != nil {
+		return fmt.Errorf("ensure tag owner %q for %v: %w", row.Tag, owners, err)
+	}
+	ensured[row.Tag] = true
+	return nil
+}
+
+// tagOwnersFor derives the headscale owners of a row's tag from the database
+// row itself: `<username>@<baseDomain>` plus `tagged-devices@<baseDomain>` (the
+// sentinel pool, which is how a device no portal user has adopted stays
+// reachable). Shared by the per-tag and the batch paths so both can never
+// disagree about who owns a tag.
+//
+// A missing baseDomain is an error rather than a silent skip: without it the
+// tag can never become permitted, and silence is what made this class of
+// failure invisible in the first place.
+func tagOwnersFor(row db.NodeOwner, baseDomain string) ([]string, error) {
 	if baseDomain == "" {
-		return fmt.Errorf("SKYGATE_BASE_DOMAIN is not set, so the owner of %q cannot be expressed in the policy — set it to the headscale base domain (e.g. tail.example.com)", row.Tag)
+		return nil, fmt.Errorf("SKYGATE_BASE_DOMAIN is not set, so the owner of %q cannot be expressed in the policy — set it to the headscale base domain (e.g. tail.example.com)", row.Tag)
 	}
 	user := row.Username
 	if user == "" || user == "tagged-devices" {
@@ -574,11 +621,101 @@ func ensureTagIsPermitted(hs nodeLister, row db.NodeOwner, baseDomain string, en
 	if user != "tagged-devices" {
 		owners = append(owners, "tagged-devices@"+baseDomain)
 	}
-	if err := hs.EnsureTagOwner(row.Tag, owners); err != nil {
-		return fmt.Errorf("ensure tag owner %q for %v: %w", row.Tag, owners, err)
+	return owners, nil
+}
+
+// ensureTagOwnersBatch computes the set of tags this reconcile pass is going to
+// apply and permits them all in a single policy write (B272.7, v1.5.35).
+//
+// The set is deliberately computed with the SAME predicates the main loop uses
+// (row has a tag, node is live, headscale does not carry the tag yet, node id
+// parses) so the batch can never permit a tag the loop will not apply, and
+// never miss one it will. Tags already in `ensured` are skipped, and every tag
+// the batch successfully permits is recorded there, which turns the per-row
+// `ensureTagIsPermitted` into a no-op for the rest of the pass.
+//
+// A row whose owners cannot be derived (no base domain) is skipped here instead
+// of aborting the batch: one inexpressible tag must not cost every other device
+// its tag. The main loop then reports it per row, with the same error text.
+func ensureTagOwnersBatch(hs nodeLister, rows []db.NodeOwner, byID map[string]headscale.NodeView, baseDomain string, ensured map[string]bool) error {
+	wants := map[string][]string{}
+	for _, r := range rows {
+		if r.Tag == "" || ensured[r.Tag] {
+			continue
+		}
+		n, live := byID[r.NodeID]
+		if !live || hasTag(n.Tags, r.Tag) {
+			continue
+		}
+		if id, err := strconv.ParseInt(r.NodeID, 10, 64); err != nil || id <= 0 {
+			continue
+		}
+		if _, dup := wants[r.Tag]; dup {
+			continue
+		}
+		owners, err := tagOwnersFor(r, baseDomain)
+		if err != nil {
+			continue
+		}
+		wants[r.Tag] = owners
 	}
-	ensured[row.Tag] = true
+	if len(wants) == 0 {
+		return nil
+	}
+	if err := ensureTagOwnersRetry(hs, wants); err != nil {
+		return err
+	}
+	tags := make([]string, 0, len(wants))
+	for tag := range wants {
+		ensured[tag] = true
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+	log.Printf("tag-reconcile: permitted %d tag(s) in one policy write: %s", len(tags), strings.Join(tags, ", "))
 	return nil
+}
+
+// ensureTagOwnersRetry is ensureTagOwnersBatch's transport half: it repeats the
+// batch only for the transient class this code path causes itself (the
+// privileged applier restarts headscale, so the next API call can hit
+// `connection refused` for a few seconds). Same policy as
+// ensureTagIsPermittedRetry: bounded (1s, 2s, 4s), never on a permission
+// refusal, never unbounded.
+func ensureTagOwnersRetry(hs nodeLister, wants map[string][]string) error {
+	err := hs.EnsureTagOwners(wants)
+	for attempt, wait := 0, time.Second; err != nil && attempt < 3; attempt, wait = attempt+1, wait*2 {
+		if !isTransientHeadscaleDown(err) {
+			return err
+		}
+		log.Printf("tag-reconcile: headscale is not answering (%v) — retrying the tagOwners batch in %s", err, wait)
+		time.Sleep(wait)
+		err = hs.EnsureTagOwners(wants)
+	}
+	return err
+}
+
+// addTagRetry applies one tag, retrying the SAME transient class as the two
+// helpers above — for the same reason: on a file-mode host the policy write
+// restarts headscale, so the API call immediately after it can meet a daemon
+// that is still starting. Live evidence for the window is the v1.5.32 fix
+// (`ensure-tag-owner: get ACL: … connect: connection refused` twice, ten seconds
+// before the daemon was healthy again); the apply call is exposed to exactly the
+// same moment, and since v1.5.35 the batch deliberately concentrates the restart
+// into the same tick as the applies.
+//
+// A permission refusal (`are invalid or not permitted`) is NOT retried: that is
+// an operator problem and the caller reports it with its reason.
+func addTagRetry(hs nodeLister, nodeID int64, tag string) error {
+	err := hs.AddTag(nodeID, tag)
+	for attempt, wait := 0, time.Second; err != nil && attempt < 3; attempt, wait = attempt+1, wait*2 {
+		if !isTransientHeadscaleDown(err) {
+			return err
+		}
+		log.Printf("tag-reconcile: headscale is not answering (%v) — retrying %q on node %d in %s", err, tag, nodeID, wait)
+		time.Sleep(wait)
+		err = hs.AddTag(nodeID, tag)
+	}
+	return err
 }
 
 // ensureTagIsPermittedRetry wraps ensureTagIsPermitted with a short, bounded

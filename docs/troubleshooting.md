@@ -998,9 +998,23 @@ sudo journalctl -u skygate -f | grep -E 'tag-reconcile|node-discovery|auto-apply
 #     said it was owned by "daniil", headscale had []
 #   tag-reconcile: checked=2 applied=1 failed=0 missing=0 unattributed=1
 
+# since v1.5.35 (B272.7) the tagOwners entries are permitted in ONE policy write
+# per tick — on a file-mode host every write restarts headscale, so N devices must
+# not mean N restarts, and a per-device write could race the asynchronous applier
+# and silently lose the previous device's entry:
+#   tag-reconcile: permitted 3 tag(s) in one policy write: tag:dev-a, tag:dev-b, tag:dev-c
+
 # confirm in headscale
 sudo headscale nodes list | grep -A2 "^2"
 ```
+
+**Symptom of the pre-v1.5.35 race** (worth recognising, because it looks like a
+tag-validation bug): `checked=4 applied=1 failed=2` with
+`400 requested tags [tag:dev-…] are invalid or not permitted`, while
+`grep -c 'tag:dev-' /etc/headscale/policy.hujson` reports fewer entries than there
+are tagged devices. The writes were not lost — they were interleaved with the
+privileged applier, which restarts headscale after each one. Upgrade to v1.5.35
+(or newer) rather than retrying; the fix is one combined write per pass.
 
 If the reconciliation **fails**, the reason is now in three places at once — the
 journal, `/admin/audit` (`tag.autoupdate_failed`, with `reason=` and the raw

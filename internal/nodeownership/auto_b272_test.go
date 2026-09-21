@@ -22,10 +22,18 @@ type fakeLister struct {
 	addErr    error
 	listErr   error
 	untagCall int
+	// addFailN limits how many AddTag calls fail with addErr (0 = every call).
+	addFailN int
+	addCalls int
 	// tagOwners records EnsureTagOwner calls (tag → owners); ownerErr forces
 	// the policy update to fail (B272.1).
 	tagOwners map[string][]string
 	ownerErr  error
+	// ownerBatches counts EnsureTagOwners calls — the B272.4 batch path, where
+	// N tags must cost exactly ONE policy write. ownerCalls counts the per-tag
+	// path, which the batch must render unnecessary.
+	ownerBatches int
+	ownerCalls   int
 }
 
 func newFakeLister(nodes ...headscale.NodeView) *fakeLister {
@@ -36,14 +44,30 @@ func (f *fakeLister) InvalidateCache()                            {}
 func (f *fakeLister) ListAllNodes() ([]headscale.NodeView, error) { return f.nodes, f.listErr }
 func (f *fakeLister) UntagNode(int64, string) error               { f.untagCall++; return nil }
 func (f *fakeLister) EnsureTagOwner(tag string, owners []string) error {
+	f.ownerCalls++
 	if f.ownerErr != nil {
 		return f.ownerErr
 	}
 	f.tagOwners[tag] = owners
 	return nil
 }
+
+// EnsureTagOwners is the B272.4 batch form. It is recorded as ONE policy write
+// (ownerBatches) and fills tagOwners for every tag, so the assertions written
+// against the per-tag path keep their meaning.
+func (f *fakeLister) EnsureTagOwners(wants map[string][]string) error {
+	f.ownerBatches++
+	if f.ownerErr != nil {
+		return f.ownerErr
+	}
+	for tag, owners := range wants {
+		f.tagOwners[tag] = owners
+	}
+	return nil
+}
 func (f *fakeLister) AddTag(nodeID int64, tag string) error {
-	if f.addErr != nil {
+	f.addCalls++
+	if f.addErr != nil && (f.addFailN == 0 || f.addCalls <= f.addFailN) {
 		return f.addErr
 	}
 	f.tagged[nodeID] = tag

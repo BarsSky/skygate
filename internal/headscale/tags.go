@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -218,50 +219,136 @@ func (c *Client) AddTag(nodeID int64, want string) error {
 // fall through to AddTag which will likely also fail, surface via
 // the B227 alert sink).
 func (c *Client) EnsureTagOwner(tag string, owners []string) error {
+	return c.EnsureTagOwners(map[string][]string{tag: owners})
+}
+
+// EnsureTagOwners is the B272.7 (v1.5.35) batch form of EnsureTagOwner: it makes
+// EVERY tag in `wants` present in TAGOWNERS with ONE read-modify-write of the
+// policy.
+//
+// Why one write matters. EnsureTagOwner is a read-modify-write of the WHOLE
+// policy, and the reconciler used to call it once per device. On a `policy.mode:
+// file` host the write is handed to the privileged applier — a `.path` unit that
+// writes the file and RESTARTS headscale — so the applier runs asynchronously.
+// Live on `aro` (2026-09-20, right after the helper was finally installed) three
+// devices needed three dev-tags and the first tick permitted exactly ONE:
+// `applied=1 failed=2` with `400 requested tags [tag:dev-daniil-laptop] are
+// invalid or not permitted`, and `grep -c 'tag:dev-'` in the policy showed 1 for
+// three devices. Call N read the policy file BEFORE the applier had written call
+// N-1's result, so every write after the first started from the same stale
+// snapshot and silently dropped its predecessor's tag. One combined write makes
+// the race impossible: there is nothing left to interleave.
+//
+// Semantics:
+//   - Idempotent per tag: a tag that already has any owners is preserved as-is
+//     (the operator's entry is never widened or rewritten).
+//   - Returns nil (and issues NO write) when every tag is already present.
+//   - Validates the whole request BEFORE writing: an empty tag or an empty owner
+//     list is an error, and because the write is atomic, one malformed entry
+//     cannot take the others down with it.
+//   - An empty/nil map is a no-op (nil error) so callers can call it
+//     unconditionally.
+func (c *Client) EnsureTagOwners(wants map[string][]string) error {
+	const op = "ensure-tag-owners"
 	if c == nil {
-		return fmt.Errorf("ensure-tag-owner: nil client")
+		return fmt.Errorf("%s: nil client", op)
 	}
-	if tag == "" {
-		return fmt.Errorf("ensure-tag-owner: empty tag")
+	if len(wants) == 0 {
+		return nil
 	}
-	if len(owners) == 0 {
-		return fmt.Errorf("ensure-tag-owner: empty owners list for tag %q", tag)
+	// Validate in a deterministic order so the reported error is stable.
+	tags := make([]string, 0, len(wants))
+	for tag := range wants {
+		tags = append(tags, tag)
 	}
+	sort.Strings(tags)
+	for _, tag := range tags {
+		if tag == "" {
+			return fmt.Errorf("%s: empty tag", op)
+		}
+		if len(wants[tag]) == 0 {
+			return fmt.Errorf("%s: empty owners list for tag %q", op, tag)
+		}
+	}
+
+	p, err := c.loadPolicyMap(op)
+	if err != nil {
+		return err
+	}
+	tagOwners, err := policyTagOwners(p, op)
+	if err != nil {
+		return err
+	}
+
+	missing := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		// Idempotent: an already-present tag with owners is preserved as-is.
+		if existing, ok := tagOwners[tag]; ok && existing != nil {
+			continue
+		}
+		tagOwners[tag] = wants[tag]
+		missing = append(missing, tag)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	// Marshal back. Use 2-space indent for readability (headscale
+	// accepts both compact and indented HuJSON).
+	out, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return fmt.Errorf("%s: marshal: %w", op, err)
+	}
+	if err := c.SetPolicy(string(out)); err != nil {
+		return fmt.Errorf("%s: set policy (adding %d tag(s): %s): %w", op, len(missing), strings.Join(missing, ", "), err)
+	}
+	// SetPolicy clears the ACL cache; we don't need a second call.
+	return nil
+}
+
+// loadPolicyMap fetches the current ACL and decodes it into a generic JSON
+// object. `op` only names the caller in the error text.
+//
+// headscale 0.29 returns the policy in one of two shapes:
+//
+//	(a) JSON object directly: `{"acls":[...], "tagOwners":{...}, ...}`
+//	    — what `headscale policy get` prints and what newer
+//	    headscale versions emit on the /api/v1/policy endpoint.
+//
+//	(b) Stringified JSON: `{"policy": "{...stringified JSON...}"}`
+//	    — what the legacy headscale < 0.23 wire format used,
+//	    AND what `c.GetACL` falls back to when the API
+//	    returns a quoted `Policy` field. The pre-B251 code
+//	    passed this stringified blob straight to
+//	    `json.Unmarshal(p, &p)` and died with:
+//	      `json: cannot unmarshal string into Go value of type map[string]interface {}`
+//
+// B251 unifies both: we unquote the stringified form (a), then
+// hujson.Standardize() tolerates comments + trailing commas in the unwrapped
+// policy bytes (b), and only then do we json.Unmarshal into the generic map.
+func (c *Client) loadPolicyMap(op string) (map[string]interface{}, error) {
 	policy, err := c.GetACL()
 	if err != nil {
-		return fmt.Errorf("ensure-tag-owner: get ACL: %w", err)
+		return nil, fmt.Errorf("%s: get ACL: %w", op, err)
 	}
-	// Parse the policy. headscale 0.29 returns the policy in
-	// one of two shapes:
-	//
-	//   (a) JSON object directly: `{"acls":[...], "tagOwners":{...}, ...}`
-	//       — what `headscale policy get` prints and what newer
-	//       headscale versions emit on the /api/v1/policy endpoint.
-	//
-	//   (b) Stringified JSON: `{"policy": "{...stringified JSON...}"}`
-	//       — what the legacy headscale < 0.23 wire format used,
-	//       AND what `c.GetACL` falls back to when the API
-	//       returns a quoted `Policy` field. The pre-B251 code
-	//       passed this stringified blob straight to
-	//       `json.Unmarshal(p, &p)` and died with:
-	//         `json: cannot unmarshal string into Go value of type map[string]interface {}`
-	//
-	// B251 unifies both: we unquote the stringified form (a),
-	// then hujson.Standardize() tolerates comments + trailing
-	// commas in the unwrapped policy bytes (b), and only then
-	// do we json.Unmarshal into the generic map.
 	policyBytes, unquoteErr := unquotePolicyIfStringified([]byte(policy))
 	if unquoteErr != nil {
-		return fmt.Errorf("ensure-tag-owner: unquote stringified policy (got %d bytes): %w", len(policy), unquoteErr)
+		return nil, fmt.Errorf("%s: unquote stringified policy (got %d bytes): %w", op, len(policy), unquoteErr)
 	}
 	policyBytes, hujErr := hujson.Standardize(policyBytes)
 	if hujErr != nil {
-		return fmt.Errorf("ensure-tag-owner: standardize HuJSON (got %d bytes): %w", len(policy), hujErr)
+		return nil, fmt.Errorf("%s: standardize HuJSON (got %d bytes): %w", op, len(policy), hujErr)
 	}
 	var p map[string]interface{}
 	if err := json.Unmarshal(policyBytes, &p); err != nil {
-		return fmt.Errorf("ensure-tag-owner: parse ACL (got %d bytes): %w", len(policy), err)
+		return nil, fmt.Errorf("%s: parse ACL (got %d bytes): %w", op, len(policy), err)
 	}
+	return p, nil
+}
+
+// policyTagOwners returns the policy's `tagOwners` object, creating an empty one
+// in place when the policy has none (a valid policy state — live on `aro` the
+// policy carried only tagOwners + autoApprovers and no grants at all).
+func policyTagOwners(p map[string]interface{}, op string) (map[string]interface{}, error) {
 	tagOwnersRaw, ok := p["tagOwners"]
 	if !ok || tagOwnersRaw == nil {
 		tagOwnersRaw = map[string]interface{}{}
@@ -269,27 +356,9 @@ func (c *Client) EnsureTagOwner(tag string, owners []string) error {
 	}
 	tagOwners, ok := tagOwnersRaw.(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("ensure-tag-owner: tagOwners is %T, not object", tagOwnersRaw)
+		return nil, fmt.Errorf("%s: tagOwners is %T, not object", op, tagOwnersRaw)
 	}
-	// Idempotent: already-present tag is no-op.
-	if existing, ok := tagOwners[tag]; ok {
-		if existing != nil {
-			// The tag exists with some owners; preserve as-is.
-			return nil
-		}
-	}
-	tagOwners[tag] = owners
-	// Marshal back. Use 2-space indent for readability (headscale
-	// accepts both compact and indented HuJSON).
-	out, err := json.MarshalIndent(p, "", "  ")
-	if err != nil {
-		return fmt.Errorf("ensure-tag-owner: marshal: %w", err)
-	}
-	if err := c.SetPolicy(string(out)); err != nil {
-		return fmt.Errorf("ensure-tag-owner: set policy (added %q with %d owners): %w", tag, len(owners), err)
-	}
-	// SetPolicy clears the ACL cache; we don't need a second call.
-	return nil
+	return tagOwners, nil
 }
 
 // unquotePolicyIfStringified inspects the policy bytes returned
