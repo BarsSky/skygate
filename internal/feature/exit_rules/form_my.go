@@ -66,6 +66,17 @@ func isValidIPOrCIDR(s string) bool {
 // GetMyExitRules serves the user-facing /my/exit-rules
 // page. Also handles the ?script= download (delegates to
 // GenerateRouteSetupScript for the per-OS bash/.cmd body).
+//
+// v1.5.43: pagination. The previous version called
+// s.getDeviceRules(c.UserID) which loaded EVERY enabled rule
+// for the user in one round-trip. For users with 1500+ rules
+// (active admins managing many domains across many devices), the
+// per-host + CDN-grouped render is O(N²) on row count — 3-5s page
+// load, >500KB HTML. The page now reads `?page=N&page_size=M`
+// (defaults: page=1, page_size=50, max 500) and renders one
+// slice per request. The /my/exit-rules?script= download path
+// is unchanged — it needs the FULL rule set for the per-device
+// routescript generation, so it bypasses pagination.
 func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {
@@ -73,7 +84,9 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Route setup script download
+	// Route setup script download (unpaged — the script needs
+	// every rule for the device to emit the right ip route add
+	// commands). Pagination is a display-side concern.
 	if r.URL.Query().Get("script") != "" {
 		devStr := r.URL.Query().Get("device_id")
 		devID, _ := strconv.Atoi(devStr)
@@ -116,7 +129,20 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rules, _ := s.getDeviceRules(c.UserID)
+	// v1.5.43: pagination. Read ?page=&page_size= (defaults: page=1,
+	// page_size=50, clamped to [1, 500]). The total unpaged row count
+	// goes into RulePage.Total so the template can render "Showing
+	// X–Y of Z" + the prev/next controls.
+	page := 1
+	pageSize := 50
+	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > 0 {
+		page = p
+	}
+	if ps, err := strconv.Atoi(r.URL.Query().Get("page_size")); err == nil && ps > 0 {
+		pageSize = ps
+	}
+	rulePage, _ := db.GetDeviceRulesForUserPaged(s.dbc(), c.UserID, page, pageSize)
+	rules := rulePage.Rules
 
 	// B276.1: label the rows that were saved for "все мои устройства". The copies
 	// the fan-out created are individual rows, so without this the user cannot tell
@@ -734,6 +760,12 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// "применено к N устройств(ам)" badge instead of N rows
 		// duplicated across the per-host view.
 		"AllDevicesByExitNodeCDN": allDevicesByExitNodeCDN,
+		// v1.5.43: pagination. The template uses these to render
+		// "Showing X–Y of Z" + the prev/next controls. Rules
+		// above is the page slice only — TotalRules below is
+		// the unpaged count (kept for the system-load badge).
+		"RulePage":         rulePage,
+		"PageRules":        len(rules),
 		// 2026-08-25 (B182): per-rule headscale-state status
 		// for the three-state ✅/⏳/⚠️ badge. See the
 		// for-loop above for the four possible values.

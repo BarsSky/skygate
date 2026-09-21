@@ -270,6 +270,7 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	// 2026-07-11: Этап 9 part 2 — SQL moved to db.GetAllRulesForAdmin
 	var dbRules []db.DeviceRule
 	var err error
+	var adminRulePage db.AdminRulePage
 	if deviceFilter != "" {
 		// 2026-08-06: per-device drill-down. The
 		// `LEFT JOIN node_owner_map` in
@@ -278,9 +279,26 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		// case (the rule is returned with a NULL
 		// hostname, which won't match the LOWER() filter,
 		// so it's correctly excluded from the result).
+		// v1.5.43: device-filtered path stays UNPAGED — these
+		// queries are scoped to one device and the row count
+		// is small (~50–200 rules typical). Pagination only
+		// matters for the unfiltered cross-user view.
 		dbRules, err = db.GetAllRulesForAdminByDevice(s.dbc(), deviceFilter)
 	} else {
-		dbRules, err = db.GetAllRulesForAdmin(s.dbc())
+		// v1.5.43: pagination for the unfiltered cross-user view.
+		// Default page=1, page_size=50, clamp [1, 500].
+		page := 1
+		pageSize := 50
+		if p, perr := strconv.Atoi(r.URL.Query().Get("page")); perr == nil && p > 0 {
+			page = p
+		}
+		if ps, perr := strconv.Atoi(r.URL.Query().Get("page_size")); perr == nil && ps > 0 {
+			pageSize = ps
+		}
+		adminRulePage, err = db.GetAllRulesForAdminPaged(s.dbc(), page, pageSize)
+		if err == nil {
+			dbRules = adminRulePage.Rules
+		}
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -548,6 +566,11 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		"TotalRules":     totalRules,
 		"MaxTotalRules":  maxTotal,
 		"LoadPct":        totalPct,
+		// v1.5.43: pagination (only meaningful for the
+		// unfiltered cross-user view; the device-filtered
+		// drill-down sets RulePage=zero-value so the template
+		// renders no controls).
+		"RulePage":       adminRulePage,
 		// 2026-08-06: cross-check counter — admin sees the total
 		// dead-rule count at the top of the page. Click to
 		// filter the table to only-applicable vs only-mismatch

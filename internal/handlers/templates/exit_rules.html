@@ -430,6 +430,65 @@
       </details>
       {{end}}
 
+      {{/* v1.5.43: pagination controls. Render only when the
+           page is smaller than the total — single-page results
+           don't need a "next" link. The href preserves the
+           current filter/search state via a small JS snippet
+           below — the prev/next links copy the live form
+           values into the URL. */}}
+      {{if gt .RulePage.Total .RulePage.PageSize}}
+      <nav class="pagination" style="margin:18px 0 8px 0;display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap">
+        {{if gt .RulePage.Page 1}}
+          <a class="btn btn-sm" id="page-prev" href="#"><i class="fa-solid fa-chevron-left"></i> {{t "exit_rules.prev_page"}}</a>
+        {{end}}
+        <span style="font-size:13px;color:var(--text-muted)">{{tf "exit_rules.pagination_page_of" .RulePage.Page (divceil .RulePage.Total .RulePage.PageSize)}}</span>
+        <span style="font-size:12px;color:var(--text-muted)">({{tf "exit_rules.pagination_total" .RulePage.Total}})</span>
+        {{if lt .RulePage.Page (divceil .RulePage.Total .RulePage.PageSize)}}
+          <a class="btn btn-sm" id="page-next" href="#"><i class="fa-solid fa-chevron-right"></i> {{t "exit_rules.next_page"}}</a>
+        {{end}}
+        <span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);margin-left:8px">
+          {{t "exit_rules.page_size"}}
+          <select id="page-size-select" style="font-size:12px;padding:2px 6px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+          </select>
+        </span>
+      </nav>
+      <script>
+      // Preserve the operator's live filter+search state when
+      // they paginate. The href="#" placeholder above gets
+      // replaced at click time with the current URL + the new
+      // page (and page_size).
+      (function(){
+        var params = new URLSearchParams(window.location.search);
+        function buildUrl(newPage){
+          params.set('page', newPage);
+          var sz = document.getElementById('page-size-select');
+          if (sz) params.set('page_size', sz.value);
+          return '?' + params.toString();
+        }
+        var prev = document.getElementById('page-prev');
+        var next = document.getElementById('page-next');
+        if (prev) prev.href = buildUrl(String({{.RulePage.Page}} - 1));
+        if (next) next.href = buildUrl(String({{.RulePage.Page}} + 1));
+        var sel = document.getElementById('page-size-select');
+        if (sel) {
+          // Reflect the URL's page_size in the select.
+          var cur = params.get('page_size');
+          if (cur) sel.value = cur;
+          sel.addEventListener('change', function(){
+            params.set('page', '1');
+            params.set('page_size', sel.value);
+            window.location.search = params.toString();
+          });
+        }
+      })();
+      </script>
+      {{end}}
+
         <div class="multi-bar sticky">
           <label style="display:flex;align-items:center;gap:6px;font-size:12px">
             <input type="checkbox" id="select-all-bottom" onclick="toggleAll(this.checked); document.getElementById('select-all-top').checked=this.checked">

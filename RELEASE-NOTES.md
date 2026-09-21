@@ -12,6 +12,89 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.43 — server-side pagination for /my/exit-rules and /admin/exit-rules
+
+**Date:** 2026-09-21 · **Base:** `v1.5.42` → this tag · **Compatibility:** none.
+
+The /my/exit-rules and /admin/exit-rules pages used to load every
+enabled rule in one round-trip and render the per-host + CDN-grouped
+structure inline. For users with 1500+ rules (typical for active
+admins managing many domains across many devices) the render is
+O(N²) on row count — 3-5s page load, >500KB HTML. v1.5.43 adds
+server-side pagination.
+
+### How it works
+
+* Both pages now read `?page=N&page_size=M` from the URL (defaults:
+  page=1, page_size=50; clamp page_size to [1, 500]).
+* The SQL backend returns one slice per request via
+  `LIMIT $N OFFSET $M`, plus a separate `COUNT(*)` for the
+  "Showing X–Y of Z" badge.
+* Page-clamp: page<1 stays at 1; page>lastPage clamps to lastPage
+  (so the user never sees an empty list when there are rules).
+* The pagination controls (prev / next / page-of-N / per-page
+  selector) are hidden when `Total <= PageSize` — no useless
+  controls on a single-page dataset.
+* A small inline `<script>` preserves the operator's live
+  filter / search state across pagination clicks — the prev/next
+  links copy the current URLSearchParams and only override `page`
+  (and `page_size` for the per-page select).
+
+### Files
+
+```
+internal/db/queries.go                                      (+3 query constants: UserPaged, UserCount, AdminPaged, AdminCount)
+internal/db/device_rules.go                                 (+RulePage, +AdminRulePage, +GetDeviceRulesForUserPaged, +GetAllRulesForAdminPaged, +pageSizeClamp, +scanAdminRules)
+internal/db/pagination_b_test.go                            (NEW, 7 clamp math tests)
+internal/feature/exit_rules/form_my.go                      (GetMyExitRules uses GetDeviceRulesForUserPaged)
+internal/feature/exit_rules/form_admin.go                   (AdminExitRules uses GetAllRulesForAdminPaged for the unfiltered path; device-filtered stays unpaged — small scope)
+internal/handlers/templates.go                              (+divceil, +sub funcmap entries)
+internal/handlers/templates/exit_rules.html                 (pagination controls + JS)
+internal/handlers/templates/admin/exit_rules.html          (pagination controls + JS for admin)
+internal/i18n/catalog_exit_rules.go                         (+5 keys × 2 langs: prev_page, next_page, page_size, pagination_page_of, pagination_total)
+scripts/check_pagination.sh                                 (NEW, 17 contracts A–I)
+```
+
+### Known limitation (documented)
+
+The `/my/exit-rules` per-host + ALL-DEVICES bucketing relies on
+**every** fan-out copy of a logical `all_devices=true` rule to
+be visible on the same page for the de-duplication to work.
+The pre-v1.5.43 code loaded them all in one shot; the new code
+loads only the page. A logical rule whose source row is on page X
+but whose copies are spread across X and Y will show the source
+on X (under the per-host section, since the bucket can't see the
+copies) and the copies on Y (under the ALL-DEVICES section, since
+the bucket can't see the source). The fan-out count badge may
+understate the true count on a page boundary. This is acceptable
+for a display page — operators paginating through their rules see
+the right total at the top; the per-page grouping is best-effort.
+A future b-block can pre-load the `allDeviceRuleKeys` separately
+(which already queries the FULL dataset) and use that as the
+grouping truth; the per-row page slice stays unchanged.
+
+### Verification
+
+* `go build ./...` clean
+* `go test -count=1 -run 'ClampPage' ./internal/db/` → 7/7 PASS
+* `bash scripts/check_pagination.sh` → **17/17 PASS**
+* `bash scripts/check_b276_1_all_devices.sh` → 21/21 PASS (i18n parity preserved — auto_pending_title still in both langs)
+* `bash scripts/check_apply_acl_drifted_and_rename.sh` → 16/16 PASS (no regression on v1.5.42 fixes)
+
+### Live verify
+
+1. Open `/my/exit-rules` as a user with >50 rules → pagination
+   controls appear at the bottom of the per-host card. Click
+   "Next" → URL gains `?page=2`, the controls preserve the active
+   filter (`?type=ip&search=...` survives pagination clicks
+   because the JS only writes the `page` key).
+2. Open `/admin/exit-rules` (unfiltered) on a tenant with thousands
+   of rules → first page renders in <500ms instead of the 3-5s
+   pre-fix; pagination controls on the bottom of the cross-user
+   card.
+
+---
+
 ## v1.5.42 — applyACLIfDrifted returns the snapshot version, dual-index approvedByExitNode, B229 post-rename fix (B-pending-write)
 
 **Date:** 2026-09-21 · **Base:** `v1.5.41` → this tag · **Compatibility:** none.

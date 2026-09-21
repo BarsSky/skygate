@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -357,12 +358,142 @@ func GetDeviceRulesForUser(d *sql.DB, userID int64) ([]DeviceRule, error) {
 	return scanDeviceRules(rows)
 }
 
+// RulePage is the v1.5.43 pagination shape returned by
+// GetDeviceRulesForUserPaged. Total is the unpaged row count
+// (used to render "Showing X-Y of Z"); Rules is the page slice;
+// Page and PageSize are echoed back to the template so the
+// pagination controls can preserve the active page.
+type RulePage struct {
+	Rules    []DeviceRule
+	Total    int
+	Page     int
+	PageSize int
+}
+
+// pageSizeClamp is the per-request cap on the requested page
+// size. Operators can ask for any size, but the SQL backend
+// always limits at 500 to bound the memory / bandwidth cost of
+// a single request.
+const pageSizeClamp = 500
+
+// GetDeviceRulesForUserPaged (v1.5.43) returns one page of the
+// user's enabled rules, plus the total unpaged count. The COUNT
+// is a separate query (cheaper than windowing when the WHERE
+// clause matches many rows). pageSize is clamped to
+// [1, pageSizeClamp]; page is clamped to [1, ceil(Total/pageSize)].
+// Callers that want a single page render should pass
+// pageSize = 50 (the template's default).
+func GetDeviceRulesForUserPaged(d *sql.DB, userID int64, page, pageSize int) (RulePage, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 50
+	}
+	if pageSize > pageSizeClamp {
+		pageSize = pageSizeClamp
+	}
+
+	var total int
+	if err := d.QueryRow(qSelectUserRulesForViewCount, userID).Scan(&total); err != nil {
+		return RulePage{}, fmt.Errorf("count device_rules: %w", err)
+	}
+	// Clamp page to the last available page so the user can
+	// never see an empty list when there are rules.
+	lastPage := (total + pageSize - 1) / pageSize
+	if lastPage < 1 {
+		lastPage = 1
+	}
+	if page > lastPage {
+		page = lastPage
+	}
+	offset := (page - 1) * pageSize
+
+	rows, err := d.Query(qSelectUserRulesForViewPaged, userID, pageSize, offset)
+	if err != nil {
+		return RulePage{}, fmt.Errorf("page device_rules: %w", err)
+	}
+	defer rows.Close()
+	rules, err := scanDeviceRules(rows)
+	if err != nil {
+		return RulePage{}, err
+	}
+	return RulePage{
+		Rules:    rules,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
+}
+
 // GetAllRulesForAdmin returns every rule across all users, with a
 // LEFT JOIN to portal_users so the user_name is filled in even if
 // the user was deleted (the COALESCE in SQL returns "?" for
 // orphaned rows). Used by /admin/exit-rules.
 func GetAllRulesForAdmin(d *sql.DB) ([]DeviceRule, error) {
 	return getAllRulesForAdminQuery(d, qSelectAllRulesForAdmin)
+}
+
+// AdminRulePage (v1.5.43) — pagination shape for the admin
+// cross-user view. Same contract as RulePage (Total + Rules +
+// Page + PageSize).
+type AdminRulePage struct {
+	Rules    []DeviceRule
+	Total    int
+	Page     int
+	PageSize int
+}
+
+// GetAllRulesForAdminPaged (v1.5.43) returns one page of admin
+// rules + the unpaged count. pageSize clamped to [1, 500];
+// page clamped to [1, ceil(Total/pageSize)].
+func GetAllRulesForAdminPaged(d *sql.DB, page, pageSize int) (AdminRulePage, error) {
+	if page < 1 { page = 1 }
+	if pageSize < 1 { pageSize = 50 }
+	if pageSize > pageSizeClamp { pageSize = pageSizeClamp }
+
+	var total int
+	if err := d.QueryRow(qSelectAllRulesForAdminCount).Scan(&total); err != nil {
+		return AdminRulePage{}, fmt.Errorf("count device_rules: %w", err)
+	}
+	lastPage := (total + pageSize - 1) / pageSize
+	if lastPage < 1 { lastPage = 1 }
+	if page > lastPage { page = lastPage }
+	offset := (page - 1) * pageSize
+
+	rows, err := d.Query(qSelectAllRulesForAdminPaged, pageSize, offset)
+	if err != nil {
+		return AdminRulePage{}, fmt.Errorf("page admin device_rules: %w", err)
+	}
+	defer rows.Close()
+	rules, err := scanAdminRules(rows)
+	if err != nil {
+		return AdminRulePage{}, err
+	}
+	return AdminRulePage{
+		Rules: rules, Total: total, Page: page, PageSize: pageSize,
+	}, nil
+}
+
+// scanAdminRules reads the admin SELECT result (12 columns incl.
+// all_devices per B277.4). Kept separate from scanDeviceRules
+// because the column order is different (user_name is in the
+// middle, all_devices is at the end).
+func scanAdminRules(rows *sql.Rows) ([]DeviceRule, error) {
+	var out []DeviceRule
+	for rows.Next() {
+		var r DeviceRule
+		var en, ad int
+		if err := rows.Scan(&r.ID, &r.UserID, &r.DeviceID, &r.ExitNodeID,
+			&r.TargetType, &r.TargetValue, &r.Action, &r.ParentDomain,
+			&r.CreatedAt, &en, &r.DeviceIP, &r.UserName, &ad); err != nil {
+			return nil, err
+		}
+		r.Enabled = en == 1
+		r.AllDevices = ad == 1
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // GetAllRulesForAdminByDevice returns every rule across all users

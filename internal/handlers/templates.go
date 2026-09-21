@@ -61,6 +61,15 @@ func LoadTemplates() *Templates {
 			return strings.ToLower(s)
 		},
 		"add": func(a, b int) int { return a + b },
+		// v1.5.43: pagination helpers. divceil = ceil(a/b)
+		// for the page-of-N counter; sub is the page-1 for
+		// the prev-button href (already implied by add(.,-1)
+		// but exposed as a named helper for readability).
+		"divceil": func(a, b int) int {
+			if b <= 0 { return 0 }
+			return (a + b - 1) / b
+		},
+		"sub": func(a, b int) int { return a - b },
 		"usageLevel": func(count, max int) string {
 			// Returns tag class for usage display: "danger" >75%, "warn" >50%, else "success".
 			if max <= 0 {

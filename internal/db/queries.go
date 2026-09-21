@@ -480,6 +480,29 @@ const qInsertDeviceRule = `INSERT INTO device_rules (user_id, device_id, exit_no
 // missing it. This is the schema-correct path.
 const qSelectUserRulesForView = `SELECT d.id, d.user_id, d.device_id, d.exit_node_id, d.target_type, d.target_value, COALESCE(d.action, 'accept') AS action, COALESCE(d.device_ip, '') AS device_ip, d.enabled, COALESCE(d.parent_domain, '') AS parent_domain, COALESCE(d.all_devices, 0) AS all_devices FROM device_rules d WHERE d.user_id = $1 ORDER BY d.id`
 
+// qSelectUserRulesForViewPaged is the v1.5.43 paginated version
+// of qSelectUserRulesForView. The /my/exit-rules page renders
+// the full per-host + CDN-grouped structure, which is O(N²) on
+// the per-(host, exitNode) row count — a user with 1500 rules
+// (typical for active admin-accounts that manage many domains
+// across many devices) saw 3-5s render times and >500KB HTML
+// before this fix.
+//
+// Pagination contract:
+//   $1 = user_id
+//   $2 = LIMIT (page_size)
+//   $3 = OFFSET (page * page_size)
+//
+// Same column shape as qSelectUserRulesForView so the existing
+// scanDeviceRules path consumes the rows without changes.
+const qSelectUserRulesForViewPaged = `SELECT d.id, d.user_id, d.device_id, d.exit_node_id, d.target_type, d.target_value, COALESCE(d.action, 'accept') AS action, COALESCE(d.device_ip, '') AS device_ip, d.enabled, COALESCE(d.parent_domain, '') AS parent_domain, COALESCE(d.all_devices, 0) AS all_devices FROM device_rules d WHERE d.user_id = $1 ORDER BY d.id LIMIT $2 OFFSET $3`
+
+// qSelectUserRulesForViewCount is the COUNT(*) companion to
+// qSelectUserRulesForViewPaged. Same WHERE clause (user_id +
+// enabled filter). The page template renders "Showing X–Y of Z"
+// using Total = COUNT(*) and the slice bounds from the paged query.
+const qSelectUserRulesForViewCount = `SELECT COUNT(*) FROM device_rules d WHERE d.user_id = $1`
+
 // qSelectAllRulesForAdmin is the cross-user admin view; LEFT JOIN onto
 // portal_users so the row carries username even if the user was deleted.
 // qSelectAllRulesForAdmin is the cross-user admin view. The
@@ -489,6 +512,22 @@ const qSelectUserRulesForView = `SELECT d.id, d.user_id, d.device_id, d.exit_nod
 // tell a per-device rule apart from a fan-out copy. The
 // LEFT JOIN onto portal_users is preserved.
 const qSelectAllRulesForAdmin = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.id`
+
+// qSelectAllRulesForAdminPaged (v1.5.43) — LIMIT/OFFSET
+// version of qSelectAllRulesForAdmin. Same column shape. The
+// /admin/exit-rules view can have tens of thousands of rows
+// across all users (one user with 1500 rules + another 800 +
+// another 500 = 2800+ rows, all rendered as one flat table
+// pre-pagination). Page size is the same clamp as the user
+// page (1–500).
+//
+//   $1 = LIMIT (page_size)
+//   $2 = OFFSET (page * page_size)
+const qSelectAllRulesForAdminPaged = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.id LIMIT $1 OFFSET $2`
+
+// qSelectAllRulesForAdminCount — COUNT(*) companion for the
+// admin page (no JOIN needed; just rules).
+const qSelectAllRulesForAdminCount = `SELECT COUNT(*) FROM device_rules`
 
 // qSelectAllRulesForAdminByDevice is the cross-user admin view
 // filtered to a single device hostname. The LEFT JOIN onto

@@ -112,6 +112,32 @@
 
 <div class="card">
   <h3><i class="fa-solid fa-list"></i> {{tf "exit_rules_admin.all_rules" .TotalRules}}</h3>
+  {{/* v1.5.43: pagination controls (admin). Same shape as the
+       /my/exit-rules version; the JS preserves the live filter
+       state via URLSearchParams. RulePage.Total=0 when the
+       device-filter path is active (drill-down), so the
+       controls are hidden in that case. */}}
+  {{if and .RulePage (gt .RulePage.Total .RulePage.PageSize)}}
+  <nav class="pagination" style="margin:8px 0;display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap">
+    <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pagination_page_of" .RulePage.Page (divceil .RulePage.Total .RulePage.PageSize)}}</span>
+    <span style="font-size:12px;color:var(--text-muted)">({{tf "exit_rules.pagination_total" .RulePage.Total}})</span>
+    {{if gt .RulePage.Page 1}}<a class="btn btn-sm" id="admin-page-prev" href="#"><i class="fa-solid fa-chevron-left"></i> {{t "exit_rules.prev_page"}}</a>{{end}}
+    {{if lt .RulePage.Page (divceil .RulePage.Total .RulePage.PageSize)}}<a class="btn btn-sm" id="admin-page-next" href="#"><i class="fa-solid fa-chevron-right"></i> {{t "exit_rules.next_page"}}</a>{{end}}
+  </nav>
+  <script>
+  (function(){
+    var params = new URLSearchParams(window.location.search);
+    function buildUrl(newPage){
+      params.set('page', newPage);
+      return '?' + params.toString();
+    }
+    var prev = document.getElementById('admin-page-prev');
+    var next = document.getElementById('admin-page-next');
+    if (prev) prev.href = buildUrl(String({{.RulePage.Page}}) - 1);
+    if (next) next.href = buildUrl(String({{.RulePage.Page}}) + 1);
+  })();
+  </script>
+  {{end}}
   {{if .Rules}}
     {{range $user, $userData := .GroupedByUser}}
     <details open style="margin-bottom:8px">

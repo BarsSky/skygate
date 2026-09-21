@@ -71,6 +71,12 @@ var ruExitRules = map[string]string{
 	// NOT a mismatch; the badge is informational ("the engine
 	// will handle this").
 	"exit_rules.auto_pending_title":       "Правило в режиме auto — движок подберёт здоровый relay на следующем тике. Это не mismatch.",
+	// v1.5.43: pagination.
+	"exit_rules.prev_page":               "Предыдущая",
+	"exit_rules.next_page":               "Следующая",
+	"exit_rules.page_size":               "На странице:",
+	"exit_rules.pagination_page_of":       "Страница %d из %d",
+	"exit_rules.pagination_total":         "всего %d правил",
 	// 2026-08-25 (B182): user-scope mirror of the admin
 	// B182 keys. ⏳ means the rule's target CIDR is NOT in
 	// headscale ApprovedRoutes yet — the autoupdater will
@@ -349,6 +355,12 @@ var enExitRules = map[string]string{
 	// NOT a mismatch; the badge is informational ("the engine
 	// will handle this").
 	"exit_rules.auto_pending_title":       "Rule is in auto mode — the engine will pick a healthy relay on the next reconcile tick. Not a mismatch.",
+	// v1.5.43: pagination.
+	"exit_rules.prev_page":               "Previous",
+	"exit_rules.next_page":               "Next",
+	"exit_rules.page_size":               "Per page:",
+	"exit_rules.pagination_page_of":       "Page %d of %d",
+	"exit_rules.pagination_total":         "total %d rules",
 	// 2026-08-25 (B182): user-scope mirror of the admin
 	// B182 keys. ⏳ means the rule's target CIDR is NOT in
 	// headscale ApprovedRoutes yet — the autoupdater will
