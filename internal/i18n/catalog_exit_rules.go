@@ -58,6 +58,10 @@ var ruExitRules = map[string]string{
 	// are silently ignored by Tailscale.
 	"exit_rules.preferred_mismatch_banner": "%d правил ссылаются на exit-node, который устройство не использует. Правила сохранены, но Tailscale их игнорирует.",
 	"exit_rules.use_preferred_btn":         "Use preferred (%s)",
+	// B277.3: bulk-apply the user's preferred exit-node to every
+	// mismatched rule in one click. %d = mismatch count, %s = preferred.
+	"exit_rules.apply_preferred_btn":      "Применить preferred (%s) к %d правил(ам)",
+	"exit_rules.apply_preferred_confirm":  "Будет обновлено %d правил(а): их exit_node_id изменится на «%s». Продолжить?",
 	"exit_rules.preferred_col":             "Preferred",
 	"exit_rules.preferred_match_title":     "Rule's exit-node matches the device's preferred exit-node (%s) — rule will take effect.",
 	"exit_rules.preferred_mismatch_title":  "Rule's exit-node differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",
@@ -327,6 +331,10 @@ var enExitRules = map[string]string{
 	// RU keys above).
 	"exit_rules.preferred_mismatch_banner": "%d rules reference an exit-node that the device does not use. The rules are saved, but Tailscale ignores them.",
 	"exit_rules.use_preferred_btn":         "Use preferred (%s)",
+	// B277.3: bulk-apply the user's preferred exit-node to every
+	// mismatched rule in one click. %d = mismatch count, %s = preferred.
+	"exit_rules.apply_preferred_btn":      "Apply preferred (%s) to %d rule(s)",
+	"exit_rules.apply_preferred_confirm":  "About to update %d rule(s): their exit_node_id will change to '%s'. Continue?",
 	"exit_rules.preferred_col":             "Preferred",
 	"exit_rules.preferred_match_title":     "Rule's exit-node matches the device's preferred exit-node (%s) — rule will take effect.",
 	"exit_rules.preferred_mismatch_title":  "Rule's exit-node differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",

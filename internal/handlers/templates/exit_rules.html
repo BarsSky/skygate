@@ -96,9 +96,18 @@
     <i class="fa-solid fa-triangle-exclamation"></i>
     <span>{{tf "exit_rules.preferred_mismatch_banner" .MismatchCount}}</span>
     {{if .UserPreferred}}
-      <button type="button" class="btn btn-sm" id="use-preferred-btn" data-preferred="{{.UserPreferred}}">
-        <i class="fa-solid fa-wand-magic-sparkles"></i> {{tf "exit_rules.use_preferred_btn" .UserPreferred}}
-      </button>
+      {{/* B277.3 (2026-09-21): the previous JS-only "Use preferred"
+           button pre-filled the NEW-RULE form but did not touch the
+           existing N rules the banner was warning about. Now it's a
+           plain <form> with confirm() — one POST rewrites every
+           mismatched rule to the user's preferred exit-node and re-applies
+           the ACL once for the user. */}}
+      <form method="post" action="/my/exit-rules/apply-preferred" style="display:inline-block;margin-left:8px"
+            onsubmit="return confirm('{{tf "exit_rules.apply_preferred_confirm" .MismatchCount .UserPreferred}}');">
+        <button type="submit" class="btn btn-sm">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> {{tf "exit_rules.apply_preferred_btn" .MismatchCount .UserPreferred}}
+        </button>
+      </form>
     {{end}}
   </div>
 {{end}}
@@ -481,34 +490,14 @@
         updateDeviceUsageHint();
       }
 
-      // 2026-08-06: "Use device's preferred exit-node" button
-      // (renders only when the preferred-mismatch banner is up).
-      // On click: pre-fill the exit_node <select> with the user's
-      // preferred exit-node. The user can still tweak the rule
-      // before submitting.
-      var prefBtn = document.getElementById('use-preferred-btn');
-      if (prefBtn) {
-        prefBtn.addEventListener('click', function(){
-          var pref = prefBtn.getAttribute('data-preferred') || '';
-          if (!pref) return;
-          var sel = document.querySelector('select[name="exit_node"]');
-          if (!sel) return;
-          for (var i = 0; i < sel.options.length; i++) {
-            if (sel.options[i].value === pref) {
-              sel.value = pref;
-              // highlight the field briefly so the user sees what changed
-              sel.style.transition = 'box-shadow 0.3s';
-              sel.style.boxShadow = '0 0 0 3px var(--accent)';
-              setTimeout(function(){ sel.style.boxShadow = ''; }, 1500);
-              sel.scrollIntoView({behavior: 'smooth', block: 'center'});
-              return;
-            }
-          }
-          // preferred value isn't in the dropdown — show a hint and let
-          // the user pick manually (exit-node list might be filtered).
-          prefBtn.title = 'preferred=' + pref + ' is not in the dropdown — pick manually';
-        });
-      }
+      // 2026-08-06 / B277.3 (2026-09-21): the "Use device's
+      // preferred exit-node" button used to be a JS pre-fill
+      // for the new-rule form. It did NOT touch the existing
+      // N rules the mismatch banner was warning about. The
+      // button is now a plain <form action="/my/exit-rules/
+      // apply-preferred"> with a confirm() — the handler
+      // bulk-updates every mismatched rule in one POST and
+      // re-applies the ACL once. No JS handler needed here.
     })();
     </script>
     {{end}}

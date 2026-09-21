@@ -1296,6 +1296,117 @@ func buildDuplicateRedirectURL(target string, existingID int, blockingIP, parent
 	)
 }
 
+// PostMyExitRulesApplyPreferred (B277.3, 2026-09-21) bulk-updates
+// every rule whose exit_node_id does not match the device's
+// preferred exit_node. The mismatch banner ("N правил ссылаются
+// на exit-node, который устройство не использует") was a passive
+// warning before — the only fix was to delete each rule and
+// recreate it with the preferred relay (or to re-tag the device
+// on /my/devices). This handler does the per-row rewrite in one
+// click.
+//
+// Behaviour:
+//   - reads the user's preferred exit_node from the same source
+//     the banner uses (db.GetUserExitNodePref), via the same
+//     helper that drives the "Use preferred" button (TagToHostname)
+//   - skips rules whose preferred-host is the empty string (no
+//     preference set) — operator must set a preferred first
+//   - skips per-device rules where the rule's exit_node matches
+//     the device's preferred (no change needed)
+//   - per-rule: rule.ExitNodeID = preferred (explicit), audit
+//     "my_exit_rules_apply_preferred" with the affected IDs
+//   - re-applies ACL once at the end (not per-rule — the per-plane
+//     pipeline is already expensive enough without an N×cost)
+//
+// Empty selection (the banner never showed up, so the user is
+// clicking the button on a clean state) is not an error — it just
+// produces a "0 правил обновлено" flash. Same shape as the bulk
+// pin handlers on /admin/exit-nodes (B277).
+func (s *Service) PostMyExitRulesApplyPreferred(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userPreferred, _ := db.GetUserExitNodePref(s.dbc(), c.UserID)
+	userPreferredHost := TagToHostname(userPreferred.ExitNodeTag)
+	if userPreferredHost == "" {
+		http.Redirect(w, r, "/my/exit-rules?err="+url.QueryEscape(
+			"preferred exit-node is not set — choose one on /my/devices first",
+		), http.StatusSeeOther)
+		return
+	}
+
+	rules, err := s.getDeviceRules(c.UserID)
+	if err != nil {
+		http.Redirect(w, r, "/my/exit-rules?err="+url.QueryEscape(
+			s.I18n.T(s.I18n.LangFromRequest(r), "error.db"),
+		), http.StatusSeeOther)
+		return
+	}
+
+	// Build the per-device preferred map. We call
+	// PreferredExitNodeForRule (already used by the banner in
+	// form_my.go's GET handler) once per hostname that appears
+	// in the user's rules, not once per rule — the helper does
+	// a DB read per call.
+	hostnamesSeen := map[string]bool{}
+	prefByHostname := map[string]string{}
+	for _, rule := range rules {
+		hn := rule.DeviceName
+		if hn == "" {
+			hn = fmt.Sprint(rule.DeviceID)
+		}
+		if hostnamesSeen[hn] {
+			continue
+		}
+		hostnamesSeen[hn] = true
+		if pref, perr := PreferredExitNodeForRule(s.dbc(), c.UserID, hn); perr == nil && pref != "" {
+			prefByHostname[hn] = pref
+		}
+	}
+
+	updated := 0
+	affectedIDs := []int64{}
+	for _, rule := range rules {
+		hn := rule.DeviceName
+		if hn == "" {
+			hn = fmt.Sprint(rule.DeviceID)
+		}
+		preferred := prefByHostname[hn]
+		if preferred == "" {
+			preferred = userPreferredHost
+		}
+		if preferred == "" || rule.ExitNodeID == preferred {
+			continue
+		}
+		if err := db.UpdateDeviceRuleExitNode(s.dbc(), rule.ID, preferred); err != nil {
+			log.Printf("[exit-rules] apply-preferred SetExitNode(%d, %s): %v", rule.ID, preferred, err)
+			http.Redirect(w, r, "/my/exit-rules?err="+url.QueryEscape(
+				s.I18n.T(s.I18n.LangFromRequest(r), "error.db"),
+			), http.StatusSeeOther)
+			return
+		}
+		updated++
+		affectedIDs = append(affectedIDs, int64(rule.ID))
+	}
+
+	s.Backend.Audit(c.UserID, c.Username,
+		"my_exit_rules_apply_preferred",
+		fmt.Sprintf("preferred=%s updated=%d ids=%v", userPreferredHost, updated, affectedIDs))
+
+	msg := fmt.Sprintf("%d правил обновлено → %s", updated, userPreferredHost)
+	if updated == 0 {
+		msg = "правил для обновления не найдено — все уже на preferred exit-node"
+	}
+	http.Redirect(w, r, "/my/exit-rules?ok="+url.QueryEscape(msg), http.StatusSeeOther)
+}
+
 // buildFormErrorRedirectURL is the B237.19 contract for the
 // "form validation failed" redirect. The pre-B237.19 code
 // called http.Error(w, ..., 400) which rendered a giant

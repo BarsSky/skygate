@@ -12,6 +12,72 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.40 — the "Use preferred (node)" button actually fixes the rules (B277.3)
+
+**Date:** 2026-09-21 · **Base:** `v1.5.39` → this tag · **Compatibility:** none.
+
+Hotfix on top of v1.5.39. The pre-existing JS-only "Use preferred
+(node)" button next to the mismatch banner on `/my/exit-rules` did
+nothing useful: it pre-filled the new-rule form's `exit_node` select
+with the user's preferred host, but the operator still had to click
+"Add" and the existing N rules the banner was warning about were
+never touched. The next page render re-read the same N rules,
+the same mismatch count, and the same banner — visually the
+button looked broken.
+
+**Fix:** the button is now a plain `<form action="/my/exit-rules/
+apply-preferred">` with a confirm() dialog. One POST rewrites
+every rule whose `exit_node_id` doesn't match the device's
+preferred exit-node (or the user-level preferred, when no
+per-device pref is set), audits the action, and re-applies the
+ACL once for the user.
+
+**Files:**
+
+* `internal/db/device_rules.go` — new `UpdateDeviceRuleExitNode(d,
+  id, exitNode)` (one-row UPDATE on `exit_node_id`).
+* `internal/feature/exit_rules/form_my.go` — new
+  `PostMyExitRulesApplyPreferred` handler. Reads
+  `db.GetUserExitNodePref`, walks every rule via
+  `PreferredExitNodeForRule`, calls `db.UpdateDeviceRuleExitNode`
+  for every mismatch, audits `my_exit_rules_apply_preferred`.
+  Refuses with a clear `?err=` redirect when no preferred is set
+  (pointing to `/my/devices`).
+* `cmd/skygate/main.go` — registers
+  `POST /my/exit-rules/apply-preferred`.
+* `internal/handlers/templates/exit_rules.html` — banner button
+  becomes a `<form>` with `onsubmit="return confirm(...)"`. The
+  dead JS pre-fill handler is removed.
+* `internal/i18n/catalog_exit_rules.go` — 2 new keys × 2 langs
+  (`apply_preferred_btn`, `apply_preferred_confirm`).
+* `scripts/check_b277_3_apply_preferred.sh` — 15 contracts (A–H):
+  handler shape, route registration, `<form>` (not JS-only
+  pre-fill), confirm dialog, dead JS gone, DB helper exports,
+  i18n parity, package tests stay green.
+
+**Verification:**
+
+* `go build ./...` clean
+* `go vet ./internal/feature/exit_rules/... ./internal/db/...` clean
+* `bash scripts/check_b277_3_apply_preferred.sh` 15/15 PASS
+* `bash scripts/check_b276_1_all_devices.sh` 21/21 PASS (no
+  i18n parity regression)
+* Live: after `/admin/update` to v1.5.40, open `/my/exit-rules`,
+  click the «Применить preferred (node) к N правил(ам)» button
+  next to the yellow mismatch banner, confirm. The N rules
+  flip to `node`, the banner disappears, and the next page
+  render shows `0` in the ⚠️ count.
+
+**Note on ACL re-apply:** the bulk handler records the new
+`exit_node_id` on every rule and emits an audit entry; the
+user-level preferred `via=` is recomputed on the next sync tick
+(≤5 min). For an immediate re-apply, `/admin/exit-nodes →
+«Пересобрать ACL»` covers the gap — wiring a per-user ACL
+rebuild through the Service is a follow-up b-block that
+doesn't ship in v1.5.40.
+
+---
+
 ## v1.5.39 — Exit Rules display rework + routescript per-exit-node (B276.2)
 
 **Date:** 2026-09-21 · **Base:** `v1.5.38` → this tag · **Compatibility:** none.

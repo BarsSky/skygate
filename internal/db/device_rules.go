@@ -167,6 +167,32 @@ func AppendDeviceRule(d *sql.DB, userID int64, deviceID int, exitNode, targetTyp
 // re-registration) needs the hostname to follow the
 // new snapshot. The COALESCE/IFNULL handles the case
 // where the column was empty before the migration.
+// UpdateDeviceRuleExitNode rewrites the exit_node_id of one
+// rule. B277.3 (2026-09-21): used by the bulk "Apply preferred"
+// handler on /my/exit-rules to align mismatched rules with the
+// device's preferred exit-node in one click.
+//
+// Empty exitNode is allowed (engine-auto mode): the assignment
+// table re-picks a relay on the next reconcile pass. The handler
+// uses that for the explicit reset-to-auto path; the
+// "Apply preferred" path passes a non-empty value.
+//
+// The function is intentionally narrow: it does NOT touch the
+// fan-out copy, the parent_domain, or the all_devices marker.
+// It only rewrites the per-row exit_node_id column. The
+// propagateAllDeviceRules tick (B276.1) re-materialises the
+// fan-out on the next run, so a bulk update on a marker rule
+// is naturally followed by a sync that re-fans the new exit
+// node to every device the user owns.
+func UpdateDeviceRuleExitNode(d *sql.DB, id int, exitNode string) error {
+	_, err := d.Exec(`
+		UPDATE device_rules
+		   SET exit_node_id = $1
+		 WHERE id = $2`,
+		exitNode, id)
+	return err
+}
+
 func UpdateDeviceRuleHostnameForNode(d *sql.DB, hsID, hostname string) error {
 	if hostname == "" {
 		return nil

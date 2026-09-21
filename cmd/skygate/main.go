@@ -2290,6 +2290,11 @@ func main() {
 	mux.Handle("GET /my/telegram/qr", authMW(http.HandlerFunc(mySvc.GetMyTelegramQR)))
 	mux.Handle("GET /my/exit-rules", authMW(http.HandlerFunc(exitRulesSvc.GetMyExitRules)))
 	mux.Handle("POST /my/exit-rules", authMW(apiMW(http.HandlerFunc(exitRulesSvc.PostMyExitRule))))
+	// B277.3: bulk-apply the user's preferred exit-node to every
+	// mismatched rule in one click. The button replaces the
+	// pre-B277.3 silent JS pre-fill that did not actually fix
+	// the N rules the mismatch banner was complaining about.
+	mux.Handle("POST /my/exit-rules/apply-preferred", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRulesApplyPreferred)))
 	mux.Handle("POST /my/exit-rules/delete", authMW(http.HandlerFunc(exitRulesSvc.PostDeleteExitRule)))
 	mux.Handle("GET /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(exitRulesSvc.GetExitRulesAPI))))
 	mux.Handle("POST /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(exitRulesSvc.PostExitRulesAPI))))
