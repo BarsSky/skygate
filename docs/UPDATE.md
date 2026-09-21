@@ -11,6 +11,13 @@ Operations (backup, restore, disaster recovery, HA): [`docs/operations.md`](oper
 
 ## 1. Which update path applies to you?
 
+> **Routine workflow (2026-09-21, AGENTS.md §13):** the maintainer pushes a tag and
+> publishes the GitHub release — that is the end of the maintainer's job. The operator
+> triggers the update from `/admin/update` in the running instance. **SSH + `git pull`
+> + `restart` is the emergency / break-glass path, not the routine.** Every install
+> kind listed below supports `/admin/update`; the operator never has to log into the
+> host for a routine release.
+
 | Install kind (see `INSTALL.md`) | In-app `/admin/update` | Automated / scheduled | Manual fallback |
 |---|---|---|---|
 | Docker compose, built from source (A) | **Update**, **Push update** (git pull + rebuild + recreate) | ✅ scheduler (see [§4.4](#44-scheduled-auto-update-docker-only)) | [§6.1](#61-docker-compose-source-checkout) |

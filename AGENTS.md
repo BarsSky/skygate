@@ -58,6 +58,15 @@ silently — it was folded into the files above.
     from the project directory (or with `--env-file`).
 12. **Documentation is flat**: `docs/*.md` plus `docs/ru/`. No `plans/`,
     `runbooks/`, `internal/` trees; planning goes to `docs/ROADMAP.md`.
+13. **Deployments go through the operator's `/admin/update` tab, not through
+    SSH + `git pull` + `restart`.** The agent's job ends at "push the tag and
+    publish the GitHub release"; the operator (or the cluster's in-app updater)
+    applies it from the UI. SSH to the VM is the emergency / break-glass path,
+    not the routine. This applies to every install kind — docker, native
+    (systemd), k8s. Native install trap #12 below is unchanged: the new binary
+    still has to come from somewhere the unit can read, but the "somewhere" is
+    now the GitHub release the operator triggers through the UI, not a manual
+    `git pull` on the host.
 
 ---
 

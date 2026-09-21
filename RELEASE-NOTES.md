@@ -12,6 +12,137 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.37 — fix the v1.5.36 /my/exit-rules crash, and make prefix assignment actually usable (B276.1 + B277 + docs)
+
+**Date:** 2026-09-21 · **Base:** `v1.5.36` → this tag · **Compatibility:** none.
+
+This release fixes a v1.5.36 regression that crashed every `/my/exit-rules` render,
+ships the operator surface for prefix assignment that v1.5.25 promised, and locks in
+the new deploy workflow: a GitHub release is all that's needed to ship — every
+install kind applies it through `/admin/update`.
+
+### B276.1 — the «все мои устройства» badge crashed `/my/exit-rules` on every render
+
+**Symptom** (live, immediately after the v1.5.36 deploy): every `/my/exit-rules`
+render — for every user — failed with
+
+```
+render: template: exit_rules.html:253:120: executing "body-exit_rules"
+at <.AllDevices>: can't evaluate field AllDevices in type exit_rules.RuleRow
+```
+
+The page was unreadable. The B275 CDN-grouping template iterates
+`CDNDisplayItem.Rules` (a `[]RuleRow`); the v1.5.36 commit added a `{{if .AllDevices}}`
+badge to that template, but the `db.DeviceRule → RuleRow` projection in
+`form_my.go` did not copy the new `AllDevices` field, so every row lost the marker
+and the template crashed trying to read it.
+
+**Root cause:** the B276.1 commit added two halves of one feature (the badge in the
+template + the `AllDevices bool` on `db.DeviceRule`) without the third half (the
+field on `RuleRow` + the copy in the projection). The contract D2 checked the
+endpoints but not the middle.
+
+**Fix:**
+
+* `internal/feature/exit_rules/cdn_group.go` — `RuleRow` now carries `AllDevices`
+  with a doc comment explaining which template path reads it.
+* `internal/feature/exit_rules/form_my.go:320-336` — the `db.DeviceRule → RuleRow`
+  conversion copies `r.AllDevices` (and the comment above it now lists AllDevices
+  alongside ID / TargetType / TargetValue / ParentDomain / Action).
+* `scripts/check_b276_1_all_devices.sh` — new contracts **D5a** (RuleRow carries
+  the field) and **D5b** (the projection copies it). The B276.1 contract now
+  guards the full render path, not just the endpoints.
+
+The `/admin/exit-rules` template uses a separate projection (`AdminRule`) and was
+not affected.
+
+### B277 — prefix assignment is usable: prune, group, bulk pin, global override
+
+**Symptom** (live, the page that shipped in v1.5.25): one row per prefix, 1655 rows
+in production of which 1497 were dead (no rule claimed them); the operator's real
+question was "which relay serves Cloudflare / this device / everything", and
+answering it meant hundreds of individual clicks per session.
+
+**Fix** — five pieces:
+
+1. **`internal/prefixowner/prefixowner.go` — `Prune`.** The dead rows are dropped
+   inside the same reconcile pass that reads the claims (one source of truth). A
+   manual pin survives the prune (the operator's intent may predate the rule that
+   now uses it).
+2. **Precedence fix inside `Reconcile`.** The manual pass now runs **before** the
+   explicit pass, so a per-prefix manual pin can no longer be silently reverted by
+   the rule-derived row on the next tick. The reason it must stay first is written
+   down where the next reader will look (B-contract B2).
+3. **`internal/feature/admin/prefix_admin_b277.go` — `PrefixGroup`, `PrefixAdminView`,
+   `loadPrefixAdminView`.** Grouping by `owner | domain | device` (the same
+   per-(host, exitNode) shape exit_rules uses for CDN groups). Counts in the header:
+   prefixes, problems, manually pinned, distinct devices.
+4. **Three new bulk surfaces on `/admin/exit-nodes`:**
+   * `POST /admin/exit-nodes/prefix-owner-bulk` — pin a whole group (or hand it
+     back to the engine by submitting an empty relay).
+   * `POST /admin/exit-nodes/prefix-owner-multi` — multi-checkbox selection across
+     groups, one submit, audit action `prefix_owner_pin_multi` (separate from bulk
+     so the audit log distinguishes "group" from "hand-picked selection"). The
+     handler intersects the submitted prefixes with the current rows so a stale
+     form cannot resurrect a dead row.
+   * `POST /admin/exit-nodes/prefix-owner-force` — the **global override**:
+     every prefix that is not manually pinned is served by the selected relay,
+     including prefixes that appear later. A typo in the relay name is refused
+     loudly (otherwise the whole tailnet's egress would go to a dead host). An
+     unhealthy pin is ignored (otherwise all egress would be lost).
+5. **The page itself:** groups render as `<details>/<summary>` (collapsible, open
+   by default — like the exit_rules CDN groups), each row carries a
+   `.prefix-check` checkbox, every group has a "select all" header checkbox and a
+   one-click "вернуть авто" button, the sticky bottom form (`#multi-pin-form`)
+   shows a live count of selected prefixes and submits to the multi-pin handler.
+   JS is small and inline (`selectAllInGroup`, `toggleAllVisible`,
+   `updateMultiCount`).
+6. **`scripts/check_b277_prefix_admin.sh`** — 27 contracts (was 21 in the
+   initial WIP): A (schema / prune), B (precedence), C (override is a setting, not
+   a mass write), D1-D16 (UI: grouping, bulk, force, multi-checkbox, collapsible,
+   per-group auto, 20 i18n pairs), E (behaviour), F (live state), G (tracked by
+   git).
+
+**Files:**
+
+```
+internal/prefixowner/prefixowner.go                       (modified, +Prune + precedence)
+internal/prefixowner/prefixowner_b277_test.go             (new)
+internal/feature/admin/prefix_admin_b277.go               (new, ~440 LoC)
+internal/feature/admin/exit_nodes.go                      (modified, +PrefixAdmin wiring)
+internal/handlers/templates/admin/exit_nodes.html         (modified, collapsible + checkboxes)
+internal/i18n/catalog_exit_nodes.go                       (modified, +20 keys × 2 langs)
+cmd/skygate/main.go                                       (modified, 3 new routes)
+scripts/check_b277_prefix_admin.sh                        (new)
+```
+
+### Deploy workflow — `/admin/update` is the routine path, GitHub releases are the source of truth
+
+**Process change** (AGENTS.md §13, `docs/UPDATE.md` §1 banner):
+
+* **Routine path:** maintainer pushes the tag and publishes the GitHub release
+  (this file is what the release body is built from). The operator triggers
+  the update from `/admin/update` in the running instance. **Every install kind**
+  (docker, native systemd, native OpenRC, bare binary) supports `/admin/update`.
+* **Emergency / break-glass path:** SSH to the host, `git pull`, restart the unit
+  or the container. This is what the operator uses when the UI itself is broken,
+  not for a routine release.
+
+The pre-existing trap #12 ("a native `git pull && systemctl restart skygate` does
+not update the Go code") is unchanged in mechanism — the new binary has to come
+from somewhere the unit can read — but the "somewhere" is now the GitHub release
+the operator triggers through the UI, not a manual `git pull` on the host.
+
+### Verification
+
+* Local gate (Windows, no `staticcheck` on PATH, no docker PG): `bash
+  scripts/check_b276_1_all_devices.sh` 21/21, `bash scripts/check_b277_prefix_admin.sh`
+  27/27, `bash scripts/verify_pre_deploy.sh` (the relevant subset) PASS.
+* Live VM verification (per AGENTS.md rule 4) is the operator's job — the
+  `/admin/update` UI shows the version it is about to apply before it applies it.
+
+---
+
 ## v1.5.36 — the ACL must follow the assignment table (B276)
 
 **Date:** 2026-09-21 · **Base:** `v1.5.35` → this tag · **Compatibility:** none.
