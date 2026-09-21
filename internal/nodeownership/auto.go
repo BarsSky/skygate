@@ -475,8 +475,10 @@ func ReconcileTags(dbConn db.DBSource, hs nodeLister, nodes []headscale.NodeView
 			continue
 		}
 		// B272.1: make sure the policy knows this tag before asking headscale
-		// to apply it.
-		if err := ensureTagIsPermitted(hs, r, baseDomain, ensured); err != nil {
+		// to apply it. B272.4: with a short retry — see
+		// ensureTagIsPermittedRetry for why `connection refused` here is
+		// transient by construction.
+		if err := ensureTagIsPermittedRetry(hs, r, baseDomain, ensured); err != nil {
 			res.Failed++
 			log.Printf("tag-reconcile: cannot make %q permitted for node %s (%s): %v", r.Tag, r.NodeID, n.Hostname, err)
 			if alertSink != nil {
@@ -560,6 +562,49 @@ func ensureTagIsPermitted(hs nodeLister, row db.NodeOwner, baseDomain string, en
 	}
 	ensured[row.Tag] = true
 	return nil
+}
+
+// ensureTagIsPermittedRetry wraps ensureTagIsPermitted with a short, bounded
+// retry for the ONE transient class this code path causes itself: the privileged
+// policy applier RESTARTS headscale after writing the policy, so the very next
+// API call can hit `connection refused` for a few seconds.
+//
+// Live on the native host aro the reconciler lost a whole 5-minute tick twice
+// with `ensure-tag-owner: get ACL: api: Get http://127.0.0.1:8081/api/v1/policy:
+// dial tcp 127.0.0.1:8081: connect: connection refused` (20:46:03 and 20:51:51),
+// while the daemon was healthy again ten seconds later — and each lost tick is
+// five minutes of a device without its tag. A refused connection here is
+// transient BY CONSTRUCTION, so retry briefly (1s, 2s, 4s) and only then report
+// a failure.
+//
+// The retry is deliberately NOT applied to a policy/permission refusal (that is
+// an operator problem, not a timing problem) and never loops forever: the worst
+// case adds ~7s to a tick that had already decided to write a policy.
+func ensureTagIsPermittedRetry(hs nodeLister, row db.NodeOwner, baseDomain string, ensured map[string]bool) error {
+	err := ensureTagIsPermitted(hs, row, baseDomain, ensured)
+	for attempt, wait := 0, time.Second; err != nil && attempt < 3; attempt, wait = attempt+1, wait*2 {
+		if !isTransientHeadscaleDown(err) {
+			return err
+		}
+		log.Printf("tag-reconcile: %s: headscale is not answering (%v) — retrying in %s", row.Tag, err, wait)
+		time.Sleep(wait)
+		err = ensureTagIsPermitted(hs, row, baseDomain, ensured)
+	}
+	return err
+}
+
+// isTransientHeadscaleDown reports whether the failure is "headscale is not
+// answering right now" rather than "headscale refused this". Used to decide
+// between a short retry and reporting the failure to the operator.
+func isTransientHeadscaleDown(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "connection refused") ||
+		strings.Contains(s, "connection reset") ||
+		strings.Contains(s, "i/o timeout") ||
+		strings.Contains(s, "context deadline exceeded")
 }
 
 // ownerByNodeID reports whether node_owner_map has a row for the node.

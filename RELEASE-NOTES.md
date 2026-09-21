@@ -12,6 +12,34 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.32 — a headscale restart must not cost a whole tag tick (B272.4)
+
+**Date:** 2026-09-20 · **Base:** `v1.5.31` → this tag · **Compatibility:** none.
+
+The privileged policy applier restarts headscale after it writes the policy, so
+the reconciler's very next API call can hit a daemon that is still coming up. Live
+on the native host `aro` that cost two whole ticks — 20:46:03 and 20:51:51 — with
+`ensure-tag-owner: get ACL: api: Get http://127.0.0.1:8081/api/v1/policy: dial
+tcp 127.0.0.1:8081: connect: connection refused`, while headscale was healthy ten
+seconds later; every lost tick is five minutes of a device without its tag.
+
+`ensureTagIsPermittedRetry` now retries a **transient** failure (connection
+refused / reset / i/o timeout / deadline exceeded) up to three times with a 1s, 2s,
+4s backoff, and does **not** retry a policy or permission refusal — that is an
+operator problem, not a timing problem. `isTransientHeadscaleDown` is the pure
+classifier behind that decision.
+
+Contracts: section F in `scripts/check_b272_3_policy_helper.sh` plus
+`internal/nodeownership/auto_b272_4_test.go` — the behavioural half proves the
+first retry happens after ~a second and succeeds, and that
+`400 requested tags [...] are invalid or not permitted` returns immediately with a
+single attempt.
+
+**Still open:** the skygate-side batch (collect every missing `tagOwners` for the
+tick and send ONE policy write instead of one per device) — the applier's
+tagOwners union (v1.5.31) already makes the lost-update impossible, so this is now
+about restart economy rather than correctness.
+
 ## v1.5.31 — the policy applier must not lose a tagOwner it was not told about (B272.4)
 
 **Date:** 2026-09-20 · **Base:** `v1.5.30` → this tag · **Compatibility:** an
@@ -11711,9 +11739,11 @@ confirms the live-verify on svi polygon passes)
 | **B-mod-cleanup** | deploy/scripts/cleanup-skygate.sh — operator-facing uninstaller (inverse of install-debian.sh). 6 cleanup sections (systemd + binary + user + data + config + runtime) + optional 7th (Tailscale via install-tailscale.sh --mode=uninstall) + --keep-{user,data,config,binary} flags + --yes / --dry-run safety | sudo bash deploy/scripts/cleanup-skygate.sh is the matching uninstall for install-debian.sh |
 | **B-mod-pg-alive-polygon** | check_b_pg_alive.sh polygon mode (SKYGATE_PG_ALIVE_MODE=polygon) + DSN parsing for user + password + 2 helper functions (pg_query_pg_isready + pg_query_psql) + auto-skip H contract (Patroni) on polygon clients | Polygon clients (svi pointing at remote PG 13.66 via NPM) can now run the B-check successfully |
 | **B-mod-install follow-up** | deploy/scripts/bootstrap_standby.sh (220 lines, V1) — consumer of skygate init <standby-hostname> on the primary. 5 steps: optional Tailscale attach (delegates to install-tailscale.sh --mode=attach, falls back to --mode=os_level) + ssh to primary + parse 4-line stdout + write preauth to /var/lib/skygate/standby/<node_id>.preauth.json + reminder. 32 B-check contracts | New standby VMs can be bootstrapped via ash bootstrap_standby.sh --primary=skyadmin@primary-host |
-| **B-mod-cluster** | cluster sub-feature: state.Info['cluster_filter'] = active/inactive (was eturn nil no-op before) | /admin/modules/tailscale detail page now shows "Cluster filter: active" without ssh'ing into the VM |
+| **B-mod-cluster** | cluster sub-feature: state.Info['cluster_filter'] = active/inactive (was 
+eturn nil no-op before) | /admin/modules/tailscale detail page now shows "Cluster filter: active" without ssh'ing into the VM |
 | **B-mod-telegram** | telegram sub-feature: state.Info['telegram_route'] + state.Info['telegram_cidr'] = 91.108.56.0/22 | Operator can see whether the Telegram API route is currently advertised without ssh vm 'tailscale status' |
-| **B-mod-derp** | derp sub-feature: state.Info['derp_relay'] + state.Info['derp_relay_prereq'] = 	elegram+exit (was eturn nil no-op before) | The DERP relay is now operator-visible: "active (requires telegram + exit enabled)" |
+| **B-mod-derp** | derp sub-feature: state.Info['derp_relay'] + state.Info['derp_relay_prereq'] = 	elegram+exit (was 
+eturn nil no-op before) | The DERP relay is now operator-visible: "active (requires telegram + exit enabled)" |
 | **B-mod-exit** | exit sub-feature: state.Info['exit_node'] + state.Info['exit_node_advertised_at'] (RFC3339 UTC timestamp; DELETED on disable to avoid stale data) | Operator sees "Exit node: advertised (since 2026-09-10T11:34:46Z — pending headscale admin approval)" without ssh |
 
 ### Cross-cutting changes

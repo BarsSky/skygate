@@ -75,6 +75,17 @@ grep -q 'POLICY_OLD_FILE' "$APPLIER" && ok "E.1 the applier reads the on-disk po
 grep -q 'tagOwners unioned with the on-disk policy' "$APPLIER" && ok "E.2 it logs the union" || bad "E.2 log the union"
 PY_OK=0
 if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' >/dev/null 2>&1; then PY_OK=1; fi
+
+# --- F: B272.4 — a headscale restart must not cost a whole tick ---------------
+AUTO=internal/nodeownership/auto.go
+RETRYTEST=internal/nodeownership/auto_b272_4_test.go
+grep -q 'func ensureTagIsPermittedRetry(' "$AUTO" && ok "F.1 the bounded retry wrapper exists" || bad "F.1 ensureTagIsPermittedRetry missing"
+grep -q 'ensureTagIsPermittedRetry(hs, r, baseDomain, ensured)' "$AUTO" && ok "F.2 the reconciler uses it" || bad "F.2 the reconciler must call the retry variant"
+grep -q 'func isTransientHeadscaleDown(err error) bool' "$AUTO" && ok "F.3 the transient classifier exists" || bad "F.3 isTransientHeadscaleDown missing"
+grep -q 'connection refused' "$AUTO" && ok "F.4 it matches the refused connection the applier's restart causes" || bad "F.4 match connection refused"
+grep -q 'attempt < 3' "$AUTO" && ok "F.5 the retry is bounded (no endless loop)" || bad "F.5 bound the retry"
+grep -q 'TestB2724_TransientHeadscaleDownIsRetried' "$RETRYTEST" && ok "F.6 the behavioural retry contract is present" || bad "F.6 add the retry test"
+grep -q 'TestB2724_PermissionRefusalIsNotRetried' "$RETRYTEST" && ok "F.7 an operator problem must NOT be retried — pinned" || bad "F.7 pin the no-retry-on-refusal contract"
 if [ "$PY_OK" = 1 ]; then
   tmpd="$(mktemp -d)"
   printf '%s' '{"autoApprovers":{"exitNode":["tag:exit"]},"tagOwners":{"tag:exit":["daniil@"],"tag:dev-a":["a@x"]}}' > "$tmpd/policy.json"
