@@ -210,6 +210,28 @@ if grep -q 'name="relay" value=""' "$TMPL" && grep -q 'exit_nodes.prefix_owner.g
 else
   bad "D16: no per-group auto control — the operator must type \"\" in the select"
 fi
+# D17 (v1.5.38, 2026-09-21): regression guard for the template typo that
+# crashed /admin/exit-nodes on first render after the B277 deploy. Inside the
+# {{with .PrefixAdmin}} block the context is PrefixAdminView, which carries
+# .Relays (not .RelayChoices — that lives on the top-level view). Bare
+# .RelayChoices inside the with-block fails with "can't evaluate field
+# RelayChoices in type admin.PrefixAdminView" the moment the template engine
+# reaches that range. Assert: every .RelayChoices reference inside the
+# with-block has the $ prefix (i.e. $.RelayChoices, breaking out of the
+# sub-context).
+WITH_LINE="$(grep -n '{{with .PrefixAdmin}}' "$TMPL" | head -1 | cut -d: -f1)"
+ENDWITH_LINE="$(awk -v start="$WITH_LINE" 'NR>=start && /\{\{end\}\}/ {print NR; exit}' "$TMPL")"
+if [ -n "$WITH_LINE" ] && [ -n "$ENDWITH_LINE" ]; then
+  BAD="$(awk -v s="$WITH_LINE" -v e="$ENDWITH_LINE" \
+         'NR>=s && NR<=e && /[^$]\.RelayChoices/ && !/\$.*RelayChoices/' "$TMPL")"
+  if [ -z "$BAD" ]; then
+    ok "D17: every .RelayChoices inside {{with .PrefixAdmin}} uses the $ prefix (top-level view, not PrefixAdminView)"
+  else
+    bad "D17: bare .RelayChoices inside {{with .PrefixAdmin}} (lines $WITH_LINE..$ENDWITH_LINE) — the template crashes on render: $(echo "$BAD" | head -3)"
+  fi
+else
+  bad "D17: could not locate {{with .PrefixAdmin}} ... {{end}} block in the template"
+fi
 
 # --- E: behaviour --------------------------------------------------------------
 if [ -f internal/prefixowner/prefixowner_b277_test.go ] && grep -q 'func TestB277_ManualPinBeatsTheRulesOwnRelay' internal/prefixowner/prefixowner_b277_test.go; then

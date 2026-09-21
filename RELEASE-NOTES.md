@@ -12,6 +12,45 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.38 — the v1.5.37 /admin/exit-nodes page-crash fix
+
+**Date:** 2026-09-21 · **Base:** `v1.5.37` → this tag · **Compatibility:** none.
+
+Tiny hotfix. v1.5.37 shipped the B277 prefix-admin surface (grouping + multi-checkbox
++ global override). The template has a `<details>` block wrapped in
+`{{with .PrefixAdmin}}` — the `PrefixAdminView` sub-struct carries `Relays`, not
+`RelayChoices` (the latter is on the top-level view, which is what `$.RelayChoices`
+reads). One `range` inside the `with` block referenced `.RelayChoices` directly, so
+every `/admin/exit-nodes` render failed with:
+
+```
+render: template: layout.html:290:2: executing "layout" at <.RenderBody>:
+error calling renderBody: template: exit_nodes.html:509:14:
+executing "body-admin-exit_nodes" at <.RelayChoices>:
+can't evaluate field RelayChoices in type admin.PrefixAdminView
+```
+
+**Fix:** change the one bad reference to `$.RelayChoices`. The other two
+`{{range $.RelayChoices}}` sites in the same template (the per-group bulk-pin
+form and the per-row pin form, both inside `{{range .Rows}}` of a `PrefixGroup`)
+were already correct — only the multi-pin form at the bottom of the page was wrong.
+
+**Regression guard:** new contract **D17** in `scripts/check_b277_prefix_admin.sh`
+asserts that every `.RelayChoices` reference inside the `{{with .PrefixAdmin}} …
+{{end}}` block uses the `$` prefix. The check parses the template, locates the
+`with`/`end` boundaries, and fails loudly with the offending line(s) if the bare
+form ever returns — same pattern as the D5a/D5b guards for the v1.5.36 B276.1
+regression, same trap #2 lesson.
+
+**Verification:**
+
+* `go build ./...` clean
+* `bash scripts/check_b277_prefix_admin.sh` 28/28 PASS (was 27 before D17 was added)
+* Live: open `/admin/exit-nodes`, the page renders, the multi-pin form at the
+  bottom of the groups has a populated relay dropdown.
+
+---
+
 ## v1.5.37 — fix the v1.5.36 /my/exit-rules crash, and make prefix assignment actually usable (B276.1 + B277 + docs)
 
 **Date:** 2026-09-21 · **Base:** `v1.5.36` → this tag · **Compatibility:** none.

@@ -506,7 +506,7 @@
     <span style="font-size:13px"><b id="multi-pin-count">0</b> {{t "exit_nodes.prefix_owner.selected_count"}}</span>
     <select name="relay" style="font-size:12px;padding:3px 6px">
       <option value="">{{t "exit_nodes.prefix_owner.option_auto"}}</option>
-      {{range .RelayChoices}}<option value="{{.}}">{{.}}</option>{{end}}
+      {{range $.RelayChoices}}<option value="{{.}}">{{.}}</option>{{end}}
     </select>
     <button type="submit" class="btn btn-sm">{{t "exit_nodes.prefix_owner.pin_selected"}}</button>
   </form>
