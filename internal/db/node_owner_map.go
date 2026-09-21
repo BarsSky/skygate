@@ -282,6 +282,36 @@ func CountNodeOwnerByNodeUser(d *sql.DB, nodeID, username string) (int, error) {
 // We use INSERT OR REPLACE here (not INSERT OR IGNORE) because
 // the admin is explicitly telling us "this node now belongs to X
 // with tag Y" — silently keeping the old row would be wrong.
+// SetNodeOwnerHostnameIfEmpty (B272.5) fills node_owner_map.hostname for a row
+// that has none, and does nothing when it is already set.
+//
+// WHY: UpsertNodeOwner — the helper every adopt/tag path uses — has no hostname
+// argument at all, so a row created through it keeps an empty hostname even
+// though headscale knows the name. Live on the native host aro:
+//
+//	2||daniil|tag:dev-daniil-workpc
+//
+// Everything that resolves a node's identity through the map (the ACL's
+// deviceTagForRule fallback, the device labels in the portal) then works with an
+// empty host and degrades silently. The tag reconciler holds both halves — the
+// row and the live node — and calls this to repair it.
+//
+// Returns the number of rows changed (0 when the hostname was already set), so
+// the caller can log a repair only when it actually happened.
+func SetNodeOwnerHostnameIfEmpty(d dbExec, nodeID, hostname string) (int64, error) {
+	if nodeID == "" || hostname == "" {
+		return 0, nil
+	}
+	res, err := d.Exec(
+		`UPDATE node_owner_map SET hostname = $2 WHERE node_id = $1 AND COALESCE(hostname, '') = ''`,
+		nodeID, hostname)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 func UpsertNodeOwner(d dbExec, nodeID string, headscaleUserID int64, username, tag string, taggedByUserID int64) error {
 	// Production schema for node_owner_map (live DBs):
 	//   node_id INTEGER PRIMARY KEY,

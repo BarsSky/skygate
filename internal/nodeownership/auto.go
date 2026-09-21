@@ -467,6 +467,23 @@ func ReconcileTags(dbConn db.DBSource, hs nodeLister, nodes []headscale.NodeView
 			res.Missing++
 			continue // deleted in headscale; the per-user pass GCs the row
 		}
+		// B272.5: heal an empty hostname in node_owner_map.
+		//
+		// Live on aro: `2||daniil|tag:dev-daniil-workpc` — the row carried the
+		// tag but no hostname, because the adopt path writes through
+		// UpsertNodeOwner, which has no hostname argument at all. Everything
+		// that resolves a node's identity from the map (the ACL's
+		// deviceTagForRule fallback, /my/devices labels) then works with an
+		// empty host and silently degrades. The reconciler already holds both
+		// halves — the row and the live node — so repair it here, before the
+		// "already in sync" early return below would skip the row forever.
+		if strings.TrimSpace(r.Hostname) == "" && n.Hostname != "" && dbConn != nil && dbConn.Current() != nil {
+			if _, herr := db.SetNodeOwnerHostnameIfEmpty(dbConn.Current(), r.NodeID, n.Hostname); herr != nil {
+				log.Printf("tag-reconcile: could not backfill hostname for node %s: %v", r.NodeID, herr)
+			} else {
+				log.Printf("tag-reconcile: backfilled hostname %q for node %s (node_owner_map had none)", n.Hostname, r.NodeID)
+			}
+		}
 		if hasTag(n.Tags, r.Tag) {
 			continue // already in sync
 		}

@@ -63,6 +63,21 @@ else
   echo "  cannot read $DB"
 fi
 
+hdr "5b. B272.4: does the policy carry a tagOwner for EVERY device?"
+if [ -r "$DB" ] && command -v sqlite3 >/dev/null 2>&1 && [ -r "$POLICY" ]; then
+  want="$(sqlite3 "$DB" "select COUNT(DISTINCT tag) from node_owner_map where COALESCE(tag,'') <> '' and tag like 'tag:dev-%';" 2>/dev/null | tr -d '[:space:]')"
+  have="$(grep -c '"tag:dev-' "$POLICY" 2>/dev/null | tr -d '[:space:]')"
+  echo "  devices needing a dev-tag: ${want:-?}   tagOwners entries in the policy: ${have:-?}"
+  if [ -n "${want:-}" ] && [ "${want:-0}" = "${have:-0}" ]; then
+    echo "  OK: every device tag is permitted in the policy"
+  else
+    echo "  MISMATCH: the reconciler cannot apply the missing tags — it will keep"
+    echo "            reporting 400 requested-tags-invalid. Between v1.5.19 and v1.5.31"
+    echo "            this was the policy-applier lost update (one tag landed per write);"
+    echo "            re-run deploy/install-policy-helper.sh to pick up the tagOwners union."
+  fi
+fi
+
 hdr "6. what the service logged about tags"
 journalctl -u skygate --no-pager -n 4000 2>/dev/null \
   | grep -iE 'tag-reconcile|tag_missing|not permitted|ensure_tag|tag.*owner|policy|autoupdate' \
