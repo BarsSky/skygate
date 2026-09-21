@@ -281,3 +281,48 @@ func TestB276_ThrottleAbsorbsAChurningTable(t *testing.T) {
 		t.Errorf("policy PUTs = %d, want 0 — the throttle must absorb the churn and defer to the next pass", got)
 	}
 }
+
+// TestB276_RuleChurnAlsoRepairsThePolicy: the ownership flip is only ONE way the
+// live policy goes stale. The domain auto-updater adds and removes resolved CIDRs on
+// every tick, and the ACL only had aliases for the rules that existed when it was
+// last generated (measured live: 8 of the 15 newest rules were absent from the
+// policy). The same drift check therefore runs on the updater path, with no ownership
+// change involved at all.
+func TestB276_RuleChurnAlsoRepairsThePolicy(t *testing.T) {
+	t.Setenv("SKYGATE_ACL_VIA_ENABLED", "true")
+	ownershipACLMu.Lock()
+	ownershipACLLastRun = time.Time{}
+	ownershipACLMu.Unlock()
+	t.Cleanup(func() {
+		ownershipACLMu.Lock()
+		ownershipACLLastRun = time.Time{}
+		ownershipACLMu.Unlock()
+	})
+
+	d := newB276DB(t)
+	seedB276(t, d)
+	stub := &b276Stub{served: `{"grants":[],"hosts":{},"tagOwners":{}}`} // a policy with none of the current rules
+	srv := stub.server(t)
+	s := &Service{DB: skygatedb.FixedDBSource{DB: d}, HS: headscale.New(srv.URL, "test-token")}
+
+	if !s.applyACLIfDrifted("skygate-auto-updater", "auto-updater tick changed 1 rule(s) (added=1 removed=0)") {
+		t.Fatal("applyACLIfDrifted returned false: a policy without the current rules must be re-applied")
+	}
+	if got := stub.putCount(); got != 1 {
+		t.Fatalf("policy PUTs = %d, want 1", got)
+	}
+	if !strings.Contains(stub.lastPut(), `"h-rule-104-16-0-0-12"`) {
+		t.Errorf("the repaired policy does not contain the rule alias:\n%s", stub.lastPut())
+	}
+
+	// The second call is a no-op: the stub now serves what skygate pushed.
+	ownershipACLMu.Lock()
+	ownershipACLLastRun = time.Time{}
+	ownershipACLMu.Unlock()
+	if s.applyACLIfDrifted("skygate-auto-updater", "second tick") {
+		t.Error("applyACLIfDrifted re-applied an already-matching policy")
+	}
+	if got := stub.putCount(); got != 1 {
+		t.Errorf("policy PUTs = %d after the no-op check, want 1", got)
+	}
+}

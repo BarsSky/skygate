@@ -97,21 +97,32 @@ if grep -q 'headscale.PolicyEquivalent(gen, live)' "$SYNC" && grep -q 's.HS.Inva
 else
   bad "A7: the re-apply cannot tell 'already applied' from 'stale' (or reads a cached policy)"
 fi
-if grep -q 'acl.ApplyGeneratedPolicy(s.dbc(), s.HS, gen, "skygate-prefix-owner"' "$SYNC"; then
-  ok "A8: the automatic apply goes through the shared pipeline tail (snapshot + mark + audit)"
+if grep -q 'func (s \*Service) applyACLIfDrifted(actor, detail string) bool' "$SYNC"; then
+  ok "A8: one trigger-agnostic drift check (ownership flip, rule churn, pre-existing mismatch)"
 else
-  bad "A8: the automatic apply bypasses the snapshot/audit path"
+  bad "A8: the drift logic is duplicated per trigger"
+fi
+if grep -q 'acl.ApplyGeneratedPolicy(s.dbc(), s.HS, gen, actor, detail, nil)' "$SYNC"; then
+  ok "A9: the automatic apply goes through the shared pipeline tail (snapshot + mark + audit)"
+else
+  bad "A9: the automatic apply bypasses the snapshot/audit path"
+fi
+if grep -A4 'func (s \*Service) DomainAutoUpdater' "$SYNC" | grep -q 'applyACLIfDrifted' \
+   || grep -q 's.applyACLIfDrifted("skygate-auto-updater"' "$SYNC"; then
+  ok "A10: the periodic auto-updater tick also checks the policy (the rules ARE the ACL; live: 8 of the 15 newest rules had no alias)"
+else
+  bad "A10: rule changes still never re-apply the ACL — the policy outruns the rules"
 fi
 if grep -q 'func ApplyGeneratedPolicy(d \*sql.DB, hs \*headscale.Client, acl, username, detailForLog string, alerter Alerter) ApplyResult' "$ACL" \
    && grep -q 'return ApplyGeneratedPolicy(d, hs, acl, username, detailForLog, alerter)' "$ACL"; then
-  ok "A9: ApplyACLPipelineForPlane is generate-then-ApplyGeneratedPolicy (one tail, no drift)"
+  ok "A11: ApplyACLPipelineForPlane is generate-then-ApplyGeneratedPolicy (one tail, no drift)"
 else
-  bad "A9: the apply tail is duplicated — the two paths can diverge"
+  bad "A11: the apply tail is duplicated — the two paths can diverge"
 fi
-if grep -q 'ACL re-apply after an ownership change FAILED' "$SYNC" && grep -q 'SendAlert' "$SYNC"; then
-  ok "A10: a failed automatic apply is logged with its reason and alerted, never fatal"
+if grep -q 're-apply FAILED' "$SYNC" && grep -q 'SendAlert' "$SYNC"; then
+  ok "A12: a failed automatic apply is logged with its reason and alerted, never fatal"
 else
-  bad "A10: a failed automatic apply is silent"
+  bad "A12: a failed automatic apply is silent"
 fi
 
 # --- B: one vote per device --------------------------------------------------

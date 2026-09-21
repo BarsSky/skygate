@@ -95,26 +95,43 @@ func (s *Service) reconcilePrefixOwnership() (int, int, error) {
 // the routes sync must still finish (the alternative would be a half-synced pass
 // where the routes moved and the ACL did not, which is exactly the bug).
 func (s *Service) applyACLAfterOwnershipChange(ins, chg int) {
+	s.applyACLIfDrifted("skygate-prefix-owner",
+		fmt.Sprintf("prefix ownership changed (inserted=%d changed=%d) — ACL regenerated so every per-CIDR via= pin follows the new owner", ins, chg))
+}
+
+// applyACLIfDrifted regenerates the policy and pushes it when headscale is serving
+// something else (B276).
+//
+// This is the single "make the control plane match the database" step, and it is
+// deliberately trigger-agnostic: the three ways the live policy goes stale are an
+// ownership flip (the per-CIDR pin), a rule change (the domain auto-updater adds and
+// removes resolved CIDRs on every tick — measured live: 8 of the 15 newest rules had
+// no alias in the policy at all), and a pre-existing mismatch created before this
+// release. All three are the same question — "is the live policy the one I would
+// generate right now?" — so they share one implementation, one throttle and one
+// audit trail.
+//
+// `actor` is recorded as the acl_snapshots author (a stable system name for the
+// automatic paths, so the audit trail says what decided).
+func (s *Service) applyACLIfDrifted(actor, detail string) bool {
 	ownershipACLMu.Lock()
 	if !ownershipACLLastRun.IsZero() && time.Since(ownershipACLLastRun) < ownershipACLThrottle {
 		ownershipACLMu.Unlock()
-		log.Printf("prefix-owner: %d prefix(es) changed owner but an ACL re-apply ran %s ago — deferring to the next pass (throttle %s)",
-			chg, time.Since(ownershipACLLastRun).Round(time.Second), ownershipACLThrottle)
-		return
+		log.Printf("acl-drift: %s needs a re-apply but one ran %s ago — deferring to the next pass (throttle %s)",
+			detail, time.Since(ownershipACLLastRun).Round(time.Second), ownershipACLThrottle)
+		return false
 	}
 	ownershipACLLastRun = time.Now()
 	ownershipACLMu.Unlock()
 
 	if s.HS == nil {
-		log.Printf("prefix-owner: %d prefix(es) changed owner but no headscale client is wired — the ACL still pins the OLD relay(s); re-apply it manually on /admin/exit-rules", chg)
-		return
+		log.Printf("acl-drift: %s but no headscale client is wired — the live policy is STALE; re-apply it manually on /admin/exit-rules", detail)
+		return false
 	}
-	detail := fmt.Sprintf("prefix ownership changed (inserted=%d changed=%d) — ACL regenerated so every per-CIDR via= pin follows the new owner", ins, chg)
-
 	gen, err := acl.GenerateACLLiveFormat(s.dbc())
 	if err != nil {
-		log.Printf("prefix-owner: cannot regenerate the ACL after an ownership change (%v) — the live policy still pins the old relay(s)", err)
-		return
+		log.Printf("acl-drift: cannot regenerate the ACL (%s): %v — the live policy stays stale", detail, err)
+		return false
 	}
 	// Compare against what headscale is serving. The cached policy may predate the
 	// last apply, so force a fresh read: a stale "in sync" verdict here would skip
@@ -122,23 +139,24 @@ func (s *Service) applyACLAfterOwnershipChange(ins, chg int) {
 	s.HS.InvalidateCache()
 	live, err := s.HS.GetACL()
 	if err != nil {
-		log.Printf("prefix-owner: cannot read the live policy to decide whether a re-apply is needed (%v) — applying unconditionally", err)
+		log.Printf("acl-drift: cannot read the live policy to decide whether a re-apply is needed (%v) — applying unconditionally", err)
 	} else if same, cmpErr := headscale.PolicyEquivalent(gen, live); cmpErr == nil && same {
-		log.Printf("prefix-owner: %d prefix(es) changed owner but the live policy already matches the generated one — no re-apply needed", chg)
-		return
+		log.Printf("acl-drift: live policy already matches the generated one (generated=%d live=%d bytes) — %s", len(gen), len(live), detail)
+		return false
 	} else if cmpErr != nil {
-		log.Printf("prefix-owner: cannot compare the live policy with the generated one (%v) — applying unconditionally", cmpErr)
+		log.Printf("acl-drift: cannot compare the live policy with the generated one (%v) — applying unconditionally", cmpErr)
 	}
 
-	res := acl.ApplyGeneratedPolicy(s.dbc(), s.HS, gen, "skygate-prefix-owner", detail, nil)
+	res := acl.ApplyGeneratedPolicy(s.dbc(), s.HS, gen, actor, detail, nil)
 	if res.Err != nil {
-		log.Printf("prefix-owner: ACL re-apply after an ownership change FAILED (%v) — the live policy still pins the old relay(s); the next pass retries", res.Err)
+		log.Printf("acl-drift: re-apply FAILED (%v) — the live policy stays stale; the next pass retries", res.Err)
 		if s.Notifier != nil {
-			go s.Notifier.SendAlert(fmt.Sprintf("❌ prefix ownership changed but the ACL re-apply failed\n  %s\n  err: %v", detail, res.Err))
+			go s.Notifier.SendAlert(fmt.Sprintf("❌ the headscale policy is stale but the re-apply failed\n  %s\n  err: %v", detail, res.Err))
 		}
-		return
+		return false
 	}
-	log.Printf("prefix-owner: ACL re-applied after the ownership change (snapshot v%d) — every per-CIDR pin now follows the table", res.Version)
+	log.Printf("acl-drift: ACL re-applied (snapshot v%d, generated=%d bytes) — %s", res.Version, len(gen), detail)
+	return true
 }
 
 // knownSubdomains maps a main domain to its known subdomain hosts for static assets.
@@ -895,6 +913,19 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			s.logAutoUpdate(d.id, d.domain, added, removed, "")
 		}
 	}
+
+	// B276: the rule set just changed (or did not — the derived rows are rewritten
+	// on every tick), so ask the only question that matters for the control plane:
+	// is headscale serving the policy skygate would generate right now? Live, 8 of
+	// the 15 newest rules had NO alias in the policy at all — the ACL was only ever
+	// regenerated by an explicit rule/user/device change, so resolved domains and
+	// reassigned prefixes silently outran it. Running the comparison here makes the
+	// policy converge on its own, without the operator pressing anything, and the
+	// equivalence guard means a quiet tick costs one GenerateACL and nothing else.
+	defer func() {
+		s.applyACLIfDrifted("skygate-auto-updater",
+			fmt.Sprintf("auto-updater tick changed %d rule(s) (added=%d removed=%d)", added+removed, added, removed))
+	}()
 
 	return added, removed, nil
 }
