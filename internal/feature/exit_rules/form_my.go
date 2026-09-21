@@ -590,25 +590,23 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	// but the actual CIDRs were never pushed to headscale —
 	// B178's logical check passed because the exit-node
 	// matched, but headscale had no record of the CIDR.
+	// B-pending-write (v1.5.42, 2026-09-21): the rule's exit_node_id is
+	// ALWAYS `n.Hostname` (the value the operator picked from the
+	// /my/exit-rules dropdown — see form_my.go:170). Pre-fix this
+	// loop keyed the map by `GivenName` first with a `Hostname`
+	// fallback, which broke the look-up whenever headscale returned
+	// a node with `GivenName != Hostname` (the typical case for
+	// nodes with a MagicDNS suffix — e.g. GivenName="node.tail-scale.ts.net",
+	// Hostname="node"). The map was indexed under the wrong key,
+	// `approvedByExitNode[r.ExitNodeID]` looked up an empty entry,
+	// and every rule appeared stuck in `pending` even after
+	// SyncAdvertisedRoutes had successfully pushed the routes to
+	// headscale. Fix: index the SAME set under BOTH `GivenName` and
+	// `Hostname` so a rule written against either key resolves
+	// correctly. Same shape used in form_admin.go (see B182 fix).
 	approvedByExitNode := map[string]map[string]bool{}
 	if nodes, e := s.HS.ListAllNodes(); e == nil {
-		for _, n := range nodes {
-			if len(n.ApprovedRoutes) == 0 {
-				continue
-			}
-			host := n.GivenName
-			if host == "" {
-				host = n.Hostname
-			}
-			if host == "" {
-				continue
-			}
-			set := map[string]bool{}
-			for _, r := range n.ApprovedRoutes {
-				set[r] = true
-			}
-			approvedByExitNode[host] = set
-		}
+		approvedByExitNode = indexNodesApprovedRoutes(nodes)
 	}
 	// 2026-08-25 (B184): also load the resolved-subnets map
 	// so DOMAIN rules can propagate their headscale-state
@@ -1117,43 +1115,57 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply ACL
-	acl, err := s.generateACL()
-	if err == nil {
-		ver := s.saveACLSnapshot(acl, c.Username)
-		if err := s.HS.SetPolicy(acl); err == nil {
-			db.MarkACLApplied(s.dbc(), ver)
-			db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionApply,
-				fmt.Sprintf("user %s added rule %s (type=%s) for %s->%s", c.Username, targetType, typeToInsert, targetValue, exitNode))
-			// 2026-07-11: notify the operator that a new exit-rule landed
-			// (security audit trail). Sent async so the redirect isn't blocked.
-			if s.Notifier != nil {
-				go s.Notifier.SendAlert(fmt.Sprintf("📥 New rule #%d by %s\n  %s %s → %s\n  exit-node: %s",
-					ver, c.Username, typeToInsert, targetValue, action, exitNode))
-			}
-			// 2026-07-06: issue #2 — sync advertised routes на exit-nodes.
-			// SetPolicy() обновляет ACL в Headscale, но advertised-routes
-			// (через которые фактически идёт трафик клиентов) не обновлялись.
-			if s.SyncRoutes != nil {
-				if sync := s.SyncRoutes(); sync != nil {
-					for node, status := range sync {
-						db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionSync,
-							fmt.Sprintf("sync %s: %s", node, status))
-					}
+	// Apply ACL — only if drift (v1.5.42, B-pending-write).
+	//
+	// Pre-v1.5.42 the handler unconditionally wrote a snapshot
+	// and called SetPolicy on every rule insert. Most rule
+	// inserts don't actually move the live policy (the new
+	// rule's effect was already covered by headscale), so the
+	// old path was writing audit rows + acl_snapshots + SetPolicy
+	// calls that accomplished nothing. applyACLIfDrifted
+	// compares the generated policy with the live one first
+	// and skips the write when they match.
+	res := s.applyACLIfDrifted("user-rule-create",
+		fmt.Sprintf("user %s added rule %s (type=%s) for %s->%s", c.Username, targetType, typeToInsert, targetValue, exitNode))
+	switch {
+	case res.Err != nil:
+		db.MarkACLFail(s.dbc(), res.Version, res.Err.Error())
+		db.AppendExitRuleLog(s.dbc(), res.Version, db.ExitRuleActionApplyFail,
+			fmt.Sprintf("user %s: %v", c.Username, res.Err))
+		// ACL apply failure is exactly the kind of thing
+		// the operator wants to wake up to. Telegram goes
+		// first, the log row is the audit trail.
+		if s.Notifier != nil {
+			go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL apply failed (rule by %s)\n  target: %s %s\n  err: %v",
+				c.Username, typeToInsert, targetValue, res.Err))
+		}
+	case res.Applied:
+		db.MarkACLApplied(s.dbc(), res.Version)
+		db.AppendExitRuleLog(s.dbc(), res.Version, db.ExitRuleActionApply,
+			fmt.Sprintf("user %s added rule %s (type=%s) for %s->%s", c.Username, targetType, typeToInsert, targetValue, exitNode))
+		// notify the operator that a new exit-rule landed
+		// (security audit trail). Sent async so the redirect isn't blocked.
+		if s.Notifier != nil {
+			go s.Notifier.SendAlert(fmt.Sprintf("📥 New rule #%d by %s\n  %s %s → %s\n  exit-node: %s",
+				res.Version, c.Username, typeToInsert, targetValue, action, exitNode))
+		}
+		// Sync advertised routes на exit-nodes. SetPolicy()
+		// обновляет ACL в Headscale, но advertised-routes
+		// (через которые фактически идёт трафик клиентов)
+		// не обновлялись.
+		if s.SyncRoutes != nil {
+			if sync := s.SyncRoutes(); sync != nil {
+				for node, status := range sync {
+					db.AppendExitRuleLog(s.dbc(), res.Version, db.ExitRuleActionSync,
+						fmt.Sprintf("sync %s: %s", node, status))
 				}
 			}
-		} else {
-			db.MarkACLFail(s.dbc(), ver, err.Error())
-			db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionApplyFail,
-				fmt.Sprintf("user %s: %v", c.Username, err))
-			// 2026-07-11: ACL apply failure is exactly the kind of thing
-			// the operator wants to wake up to. Telegram goes first, the
-			// log row is the audit trail.
-			if s.Notifier != nil {
-				go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL apply failed (rule by %s)\n  target: %s %s\n  err: %v",
-					c.Username, typeToInsert, targetValue, err))
-			}
 		}
+	default:
+		// No drift — the live policy already covers this
+		// rule. No snapshot, no audit row, no SetPolicy call.
+		log.Printf("acl-drift: rule by %s (%s %s -> %s) did not require an ACL re-apply (live policy already covers it)",
+			c.Username, typeToInsert, targetValue, exitNode)
 	}
 	// B275.3: fan the just-saved rule out to the user's other devices when the
 	// form asked for "all my devices". The primary device is skipped (it was
@@ -1302,48 +1314,56 @@ func (s *Service) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if acl, err := s.generateACL(); err == nil {
-		ver := s.saveACLSnapshot(acl, c.Username)
-		if err := s.HS.SetPolicy(acl); err == nil {
-			db.MarkACLApplied(s.dbc(), ver)
-			detail := fmt.Sprintf("user %s deleted %d rule(s)", c.Username, len(infos))
+	// Apply ACL — only if drift (v1.5.42, B-pending-write).
+	// Same drift-skip semantics as PostMyExitRule above: most
+	// deletes don't actually move the live policy (the deleted
+	// rule's effect was either already covered or wasn't there
+	// at all), so the old path was writing audit rows + SetPolicy
+	// calls that accomplished nothing.
+	detail := fmt.Sprintf("user %s deleted %d rule(s)", c.Username, len(infos))
+	if totalCascade > 0 {
+		detail += fmt.Sprintf(" (cascade: %d /32)", totalCascade)
+	}
+	if totalFanOutCascade > 0 {
+		detail += fmt.Sprintf(" (fan-out cascade: %d)", totalFanOutCascade)
+	}
+	res := s.applyACLIfDrifted("user-rule-delete", detail)
+	switch {
+	case res.Err != nil:
+		db.MarkACLFail(s.dbc(), res.Version, res.Err.Error())
+		db.AppendExitRuleLog(s.dbc(), res.Version, db.ExitRuleActionDeleteFail,
+			fmt.Sprintf("user %s: %v", c.Username, res.Err))
+		if s.Notifier != nil {
+			go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL delete failed (by %s, %d rules)\n  err: %v",
+				c.Username, len(infos), res.Err))
+		}
+	case res.Applied:
+		db.MarkACLApplied(s.dbc(), res.Version)
+		db.AppendExitRuleLog(s.dbc(), res.Version, db.ExitRuleActionDelete, detail)
+		// mirror the create-path notification so deletes are
+		// equally visible in the audit channel.
+		if s.Notifier != nil {
+			msg := fmt.Sprintf("🗑 Deleted %d rule(s) by %s", len(infos), c.Username)
 			if totalCascade > 0 {
-				detail += fmt.Sprintf(" (cascade: %d /32)", totalCascade)
+				msg += fmt.Sprintf(" (+%d /32 cascade)", totalCascade)
 			}
 			if totalFanOutCascade > 0 {
-				detail += fmt.Sprintf(" (fan-out cascade: %d)", totalFanOutCascade)
+				msg += fmt.Sprintf(" (+%d fan-out cascade)", totalFanOutCascade)
 			}
-			db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionDelete, detail)
-			// 2026-07-11: mirror the create-path notification so deletes are
-			// equally visible in the audit channel.
-			if s.Notifier != nil {
-				msg := fmt.Sprintf("🗑 Deleted %d rule(s) by %s", len(infos), c.Username)
-				if totalCascade > 0 {
-					msg += fmt.Sprintf(" (+%d /32 cascade)", totalCascade)
+			go s.Notifier.SendAlert(msg)
+		}
+		// re-sync advertised routes after delete
+		if s.SyncRoutes != nil {
+			if sync := s.SyncRoutes(); sync != nil {
+				for node, status := range sync {
+					db.AppendExitRuleLog(s.dbc(), res.Version, db.ExitRuleActionSync,
+						fmt.Sprintf("sync %s: %s", node, status))
 				}
-				if totalFanOutCascade > 0 {
-					msg += fmt.Sprintf(" (+%d fan-out cascade)", totalFanOutCascade)
-				}
-				go s.Notifier.SendAlert(msg)
-			}
-			// 2026-07-06: re-sync advertised routes after delete
-			if s.SyncRoutes != nil {
-				if sync := s.SyncRoutes(); sync != nil {
-					for node, status := range sync {
-						db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionSync,
-							fmt.Sprintf("sync %s: %s", node, status))
-					}
-				}
-			}
-		} else {
-			db.MarkACLFail(s.dbc(), ver, err.Error())
-			db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionDeleteFail, fmt.Sprintf("user %s: %v", c.Username, err))
-			// 2026-07-11: ACL delete-failure is also worth waking up for.
-			if s.Notifier != nil {
-				go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL delete failed (by %s, %d rules)\n  err: %v",
-					c.Username, len(infos), err))
 			}
 		}
+	default:
+		// No drift — the live policy already matches.
+		log.Printf("acl-drift: delete by %s (%d rules) did not require an ACL re-apply (live policy already matches)", c.Username, len(infos))
 	}
 	http.Redirect(w, r, "/my/exit-rules?deleted=1", http.StatusFound)
 }

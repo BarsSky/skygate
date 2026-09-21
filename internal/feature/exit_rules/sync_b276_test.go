@@ -305,8 +305,8 @@ func TestB276_RuleChurnAlsoRepairsThePolicy(t *testing.T) {
 	srv := stub.server(t)
 	s := &Service{DB: skygatedb.FixedDBSource{DB: d}, HS: headscale.New(srv.URL, "test-token")}
 
-	if !s.applyACLIfDrifted("skygate-auto-updater", "auto-updater tick changed 1 rule(s) (added=1 removed=0)") {
-		t.Fatal("applyACLIfDrifted returned false: a policy without the current rules must be re-applied")
+	if res := s.applyACLIfDrifted("skygate-auto-updater", "auto-updater tick changed 1 rule(s) (added=1 removed=0)"); !res.Applied {
+		t.Fatal("applyACLIfDrifted returned !Applied: a policy without the current rules must be re-applied")
 	}
 	if got := stub.putCount(); got != 1 {
 		t.Fatalf("policy PUTs = %d, want 1", got)
@@ -319,7 +319,7 @@ func TestB276_RuleChurnAlsoRepairsThePolicy(t *testing.T) {
 	ownershipACLMu.Lock()
 	ownershipACLLastRun = time.Time{}
 	ownershipACLMu.Unlock()
-	if s.applyACLIfDrifted("skygate-auto-updater", "second tick") {
+	if res := s.applyACLIfDrifted("skygate-auto-updater", "second tick"); res.Applied {
 		t.Error("applyACLIfDrifted re-applied an already-matching policy")
 	}
 	if got := stub.putCount(); got != 1 {

@@ -449,24 +449,7 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	// ruleApprovedInHeadscale below for the precise
 	// semantics. Reusing the existing `nodes` slice means
 	// no second ListAllNodes call.
-	approvedByExitNode := map[string]map[string]bool{}
-	for _, n := range nodes {
-		if len(n.ApprovedRoutes) == 0 {
-			continue
-		}
-		host := n.GivenName
-		if host == "" {
-			host = n.Hostname
-		}
-		if host == "" {
-			continue
-		}
-		set := map[string]bool{}
-		for _, r := range n.ApprovedRoutes {
-			set[r] = true
-		}
-		approvedByExitNode[host] = set
-	}
+	approvedByExitNode := indexNodesApprovedRoutes(nodes)
 	// 2026-08-25 (B184): also pass `resolvedByDomain` so
 	// DOMAIN rules can propagate their status from the
 	// autoupdater-derived subnets. One SQL query covers

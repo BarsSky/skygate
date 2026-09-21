@@ -12,6 +12,142 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.42 — applyACLIfDrifted returns the snapshot version, dual-index approvedByExitNode, B229 post-rename fix (B-pending-write)
+
+**Date:** 2026-09-21 · **Base:** `v1.5.41` → this tag · **Compatibility:** none.
+
+Hotfix on top of v1.5.41 — three independent fixes that share a
+theme: "primitive helpers that other code consumes must return
+enough information, and look-ups must tolerate name-shape drift."
+
+### Fix 1 — `applyACLIfDrifted` now returns `acl.ApplyResult`
+
+**Symptom:** the `PostMyExitRule` and `PostDeleteExitRule` handlers
+called `generateACL()` + `saveACLSnapshot()` + `SetPolicy()` directly.
+Every rule insert or delete wrote a fresh `acl_snapshots` row
++ an `acl_snapshots_by_*` audit entry — even when headscale was
+already serving the right policy. For users with hundreds of
+rules, this was dozens of wasted snapshots per session.
+
+**Root cause:** `applyACLIfDrifted` (the drift-aware primitive
+in `sync.go:116`) returned `bool` only — callers couldn't read
+the snapshot Version. PostMyExitRule worked around this by
+calling `generateACL + SetPolicy` directly (always writes),
+bypassing the drift check.
+
+**Fix:**
+
+* `internal/feature/exit_rules/sync.go:116` — `applyACLIfDrifted`
+  now returns `acl.ApplyResult`:
+  - `{Version: 0, Applied: false, Err: nil}` — throttle / no client / already-in-sync (no write).
+  - `{Version: N>0, Applied: true, Err: nil}` — fresh snapshot written.
+  - `{Version: 0, Applied: false, Err: <non-nil>}` — generation or live-apply failed.
+* `PostMyExitRule` and `PostDeleteExitRule` switched to the
+  helper. Each branch (`res.Applied`, `res.Err != nil`, default
+  no-drift) writes the right audit detail.
+* `sync_b276_test.go` updated to use `res.Applied`.
+
+### Fix 2 — `approvedByExitNode` indexed under BOTH GivenName AND Hostname
+
+**Symptom (live, `aro` deployment):** every exit-rule on the user
+`daniil` showed `PREFERRED = ⏳ pending` after `SyncAdvertisedRoutes`
+had successfully pushed the routes to headscale. 21 rules on
+`workpc`, all stuck, none transitioned to `✅ approved`. The
+banner said "правила сохранены, но Tailscale их игнорирует",
+which was misleading — the rules were actually covered in headscale
+ApprovedRoutes; the **display** was reading them as missing.
+
+**Root cause:** `form_my.go:599` (and `form_admin.go:457`) built
+the `approvedByExitNode` map with `host := n.GivenName` (with a
+Hostname fallback). For nodes that headscale reports with a
+MagicDNS suffix — `GivenName="node.tail-scale.ts.net"`,
+`Hostname="node"` — the map was indexed under the wrong key.
+The rule's `exit_node_id` is always the bare `Hostname` (the value
+the operator picks from the dropdown at rule-creation time —
+see `form_my.go:170`), so the look-up missed and every rule
+appeared `pending`. The live bug was on `aro` because that
+deployment had at least one node with a MagicDNS suffix.
+
+**Fix:**
+
+* `internal/feature/exit_rules/approved_routes_index.go` —
+  new helper `indexNodesApprovedRoutes(nodes)` indexes the
+  SAME `set` under BOTH `n.GivenName` AND `n.Hostname` (when
+  non-empty). A rule written against either key resolves correctly.
+* `form_my.go` and `form_admin.go` both call the helper (no
+  inline loops left).
+* `internal/feature/exit_rules/approved_routes_index_b_test.go` —
+  6 pure-function tests pin the BOTH-name behaviour, the
+  single-name case (only GivenName or only Hostname), the
+  empty-set case (skip node), the multi-node case, and the
+  shared-set invariant (mutating via one alias propagates to
+  the other).
+
+### Fix 3 — `collectDevicePrefState` SQL has a post-rename OR-branch
+
+**Symptom (potential):** B229's preferred-exit-node reconciler
+filters on `device_hostname = $2` — the **denormalised** column.
+Between the moment headscale sees a new hostname (rename) and
+the moment B231 syncs the denormalised column, B229 would look
+for rules under the new hostname and find NONE. The reconciler
+then decided "0 rules → no dominant → no pref created", and the
+user's preferred exit-node did not match the device's actual
+exit-node until B231 ran (potentially minutes later).
+
+**Root cause:** the WHERE clause only matched the denormalised
+column.
+
+**Fix:**
+
+* `internal/feature/exit_rules/reconciler.go:452` — the query
+  now reads `device_rules` rows where `device_hostname = $2`
+  **OR** `device_id IN (SELECT node_id FROM node_owner_map WHERE
+  user_id = $1 AND hostname = $2)`. Either branch alone covers
+  one half of the rename window; both together are idempotent.
+* Sub-select uses the existing `(user_id, hostname)` index on
+  `node_owner_map` (contract C3 verified), so it's not a seq
+  scan at scale.
+
+### Files
+
+```
+internal/feature/exit_rules/sync.go                                  (applyACLIfDrifted → ApplyResult)
+internal/feature/exit_rules/sync_b276_test.go                         (updated tests)
+internal/feature/exit_rules/form_my.go                                (PostMyExitRule + PostDeleteExitRule use applyACLIfDrifted)
+internal/feature/exit_rules/approved_routes_index.go                  (NEW helper)
+internal/feature/exit_rules/approved_routes_index_b_test.go           (NEW, 6 tests)
+internal/feature/exit_rules/form_admin.go                             (uses indexNodesApprovedRoutes)
+internal/feature/exit_rules/reconciler.go                             (B229 SQL OR-branch)
+scripts/check_apply_acl_drifted_and_rename.sh                         (NEW, 16 contracts)
+```
+
+### Verification
+
+* `go build ./...` clean
+* `go vet ./internal/feature/exit_rules/...` clean
+* `go test -count=1 -run 'IndexNodesApprovedRoutes|B276|BuildOrphan' ./internal/feature/exit_rules/`
+  → **PASS** (6 new dual-index tests + 6 pre-existing routescript + 1 B276 test)
+* `bash scripts/check_apply_acl_drifted_and_rename.sh` → **16/16 PASS**
+* `bash scripts/check_b277_4_consistency.sh` → 21/21 PASS (no regression on the v1.5.41 fixes)
+* `bash scripts/check_b276_1_all_devices.sh` → 21/21 PASS (i18n parity)
+
+### Live verify on `aro` after `/admin/update`
+
+1. Open `/my/exit-rules` for `daniil` → the 21 rules on `workpc`
+   should transition from `⏳ pending` to `✅ approved` (or `⚠ wrong`
+   if `exit_node` ≠ preferred) on the next page render. The
+   dual-index fix is server-side; no DB migration needed.
+2. POST a new rule via the form → the audit row's `acl_snapshots`
+   counter on `/admin/exit-rules → recent logs` should NOT
+   increment for rules that don't change the live policy (no-drift
+   branch skips the snapshot). Watch the `acl-drift:` log line in
+   the skygate stderr for `live policy already matches`.
+3. The B229 fix is observable in headscale only — no UI change.
+   Look for the `preferred-reconciler` log line in stderr; the
+   next B229 tick after a rename will no longer act on stale data.
+
+---
+
 ## v1.5.41 — six consistency fixes between the rule model and what the UI + autoupdater did (B277.4)
 
 **Date:** 2026-09-21 · **Base:** `v1.5.40` → this tag · **Compatibility:** none.

@@ -438,6 +438,23 @@ func (s *Service) ReconcileDeviceExitNodePrefs(ctx context.Context, n Reconciler
 // PlanDevicePrefChange (testable without a DB).
 //
 // 2026-09-03: v1.5.2 (B229).
+//
+// B-pending-write (v1.5.42, 2026-09-21): the previous WHERE
+// `user_id = $1 AND device_hostname = $2` filter only matched
+// the denormalised `device_hostname` column. Between the moment
+// headscale saw the new hostname and the moment B231 syncs the
+// denormalised column (via reconciler_rename.go), B229 would
+// look for rules under the new hostname and find NONE — the
+// rules still carried the OLD hostname. The reconciler would
+// then decide "0 rules for this device" → "no dominant →
+// create pref" or "do nothing" depending on the path, and the
+// user's preferred exit-node would not match the device's
+// actual exit-node. Fix: match EITHER the denormalised hostname
+// OR the current hostname via node_owner_map. Either branch
+// alone covers the pre-rename or post-rename case; both together
+// are idempotent (the OR is symmetric). The sub-select on
+// node_owner_map is parameterised on (hostname, user_id) so it
+// uses the same indexes as the existing reconciler lookups.
 func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, username, hostname string) (DevicePrefState, error) {
 	state := DevicePrefState{
 		UserID:         userID,
@@ -449,10 +466,23 @@ func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, user
 	state.ExistingPrefTag = existing.ExitNodeTag
 	state.ExistingPrefVia = existing.ViaEnabled
 	// Dominant exit_node + distinct count + total.
+	//
+	// Two-branch OR: pre-rename (denormalised hostname still old)
+	// OR post-rename (node_owner_map reflects the new hostname).
+	// The sub-select uses (user_id, hostname) which has a UNIQUE
+	// index in node_owner_map.
 	ruleRows, err := s.dbc().QueryContext(ctx, `
 		SELECT exit_node_id, COUNT(*)
 		  FROM device_rules
-		 WHERE user_id = $1 AND device_hostname = $2 AND enabled = 1
+		 WHERE user_id = $1
+		   AND enabled = 1
+		   AND (
+		     device_hostname = $2
+		     OR device_id IN (
+		       SELECT node_id FROM node_owner_map
+		        WHERE user_id = $1 AND hostname = $2
+		     )
+		   )
 		 GROUP BY exit_node_id
 		 ORDER BY COUNT(*) DESC, exit_node_id ASC
 	`, userID, hostname)

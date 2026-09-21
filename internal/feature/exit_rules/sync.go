@@ -113,25 +113,44 @@ func (s *Service) applyACLAfterOwnershipChange(ins, chg int) {
 //
 // `actor` is recorded as the acl_snapshots author (a stable system name for the
 // automatic paths, so the audit trail says what decided).
-func (s *Service) applyACLIfDrifted(actor, detail string) bool {
+//
+// v1.5.42 (B-pending-write, 2026-09-21): the helper now returns
+// acl.ApplyResult instead of bool so callers (PostMyExitRule,
+// PostDeleteExitRule) can read the snapshot Version for their
+// audit-detail line. Pre-v1.5.42 the handler wrote the snapshot
+// silently via acl.ApplyGeneratedPolicy and the calling site had
+// no way to know it happened. Callers that only care about the
+// boolean "did a write happen?" can check `res.Applied`.
+//
+// Result semantics:
+//   - {Version: 0, Applied: false, Err: nil} — throttle / no
+//     headscale client / live-policy already matches. No write.
+//   - {Version: 0, Applied: false, Err: <non-nil>} — DB or
+//     regeneration failure. The live policy stays stale; the
+//     next pass retries.
+//   - {Version: N>0, Applied: true, Err: nil} — fresh snapshot
+//     written, headscale SetPolicy succeeded. `Version` is the
+//     acl_snapshots row id; the calling site should reference
+//     it in audit_log and the user-facing success line.
+func (s *Service) applyACLIfDrifted(actor, detail string) acl.ApplyResult {
 	ownershipACLMu.Lock()
 	if !ownershipACLLastRun.IsZero() && time.Since(ownershipACLLastRun) < ownershipACLThrottle {
 		ownershipACLMu.Unlock()
 		log.Printf("acl-drift: %s needs a re-apply but one ran %s ago — deferring to the next pass (throttle %s)",
 			detail, time.Since(ownershipACLLastRun).Round(time.Second), ownershipACLThrottle)
-		return false
+		return acl.ApplyResult{Version: 0, Applied: false, Err: nil}
 	}
 	ownershipACLLastRun = time.Now()
 	ownershipACLMu.Unlock()
 
 	if s.HS == nil {
 		log.Printf("acl-drift: %s but no headscale client is wired — the live policy is STALE; re-apply it manually on /admin/exit-rules", detail)
-		return false
+		return acl.ApplyResult{Version: 0, Applied: false, Err: nil}
 	}
 	gen, err := acl.GenerateACLLiveFormat(s.dbc())
 	if err != nil {
 		log.Printf("acl-drift: cannot regenerate the ACL (%s): %v — the live policy stays stale", detail, err)
-		return false
+		return acl.ApplyResult{Version: 0, Applied: false, Err: err}
 	}
 	// Compare against what headscale is serving. The cached policy may predate the
 	// last apply, so force a fresh read: a stale "in sync" verdict here would skip
@@ -142,7 +161,7 @@ func (s *Service) applyACLIfDrifted(actor, detail string) bool {
 		log.Printf("acl-drift: cannot read the live policy to decide whether a re-apply is needed (%v) — applying unconditionally", err)
 	} else if same, cmpErr := headscale.PolicyEquivalent(gen, live); cmpErr == nil && same {
 		log.Printf("acl-drift: live policy already matches the generated one (generated=%d live=%d bytes) — %s", len(gen), len(live), detail)
-		return false
+		return acl.ApplyResult{Version: 0, Applied: false, Err: nil}
 	} else if cmpErr != nil {
 		log.Printf("acl-drift: cannot compare the live policy with the generated one (%v) — applying unconditionally", cmpErr)
 	}
@@ -153,10 +172,10 @@ func (s *Service) applyACLIfDrifted(actor, detail string) bool {
 		if s.Notifier != nil {
 			go s.Notifier.SendAlert(fmt.Sprintf("❌ the headscale policy is stale but the re-apply failed\n  %s\n  err: %v", detail, res.Err))
 		}
-		return false
+		return res
 	}
 	log.Printf("acl-drift: ACL re-applied (snapshot v%d, generated=%d bytes) — %s", res.Version, len(gen), detail)
-	return true
+	return res
 }
 
 // knownSubdomains maps a main domain to its known subdomain hosts for static assets.
