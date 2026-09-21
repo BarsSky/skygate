@@ -922,7 +922,16 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 	// reassigned prefixes silently outran it. Running the comparison here makes the
 	// policy converge on its own, without the operator pressing anything, and the
 	// equivalence guard means a quiet tick costs one GenerateACL and nothing else.
+	//
+	// B276.1 runs FIRST so the ACL generated below already covers the devices a
+	// user's "all my devices" rules were just extended to; otherwise those rows
+	// would wait a whole tick for their grants.
 	defer func() {
+		if n, perr := s.propagateAllDeviceRules(); perr != nil {
+			log.Printf("all-devices: propagation failed: %v", perr)
+		} else if n > 0 {
+			log.Printf("all-devices: %d rule row(s) added for newly registered devices", n)
+		}
 		s.applyACLIfDrifted("skygate-auto-updater",
 			fmt.Sprintf("auto-updater tick changed %d rule(s) (added=%d removed=%d)", added+removed, added, removed))
 	}()

@@ -48,6 +48,11 @@ type DeviceRule struct {
 	Enabled      bool
 	ParentDomain string
 	CreatedAt    int64 // only set by GetAllRulesForAdmin (the JOINed row)
+	// AllDevices is the B276.1 intent marker: true when the rule was saved for
+	// "all my devices" of its owner (v0.74 device_rules.all_devices), in which case
+	// the periodic propagation pass keeps it on every device the user owns. Set by
+	// the service after loading rows (the column is not part of the shared scans).
+	AllDevices bool
 }
 
 // ACLEntry is a slimmed-down view of DeviceRule used by

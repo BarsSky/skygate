@@ -184,10 +184,10 @@ if [ "$KEYS" -ge 8 ]; then
 else
   bad "C7: only $KEYS/8 keys are present in both catalogues (i18n parity would fail)"
 fi
-if grep -q 'func (s \*Service) loadPrefixOwnerRows() \[\]PrefixOwnerRow' "$ADMIN"; then
-  ok "C8: the B275.1 entry point keeps its signature (its contract still holds)"
+if grep -q 'func (s \*Service) loadPrefixOwnerRows() (\[\]PrefixOwnerRow, PrefixDriftStats)' "$ADMIN"; then
+  ok "C8: the B275.1 loader is the same entry point (extended to also return the drift summary — its contract was renegotiated)"
 else
-  bad "C8: the B275.1 loadPrefixOwnerRows signature was dropped"
+  bad "C8: the assignment-table loader was replaced by a second copy"
 fi
 
 # --- D: behaviour ------------------------------------------------------------

@@ -250,7 +250,7 @@
                     {{range $item.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                       <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
                       <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
-                      <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
+                      <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if .AllDevices}} <span class="tag tag-success" title="{{t "exit_rules.all_devices_badge_tip"}}"><i class="fa-solid fa-users"></i> {{t "exit_rules.all_devices_badge"}}</span>{{end}}{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
                       <td class="col-preferred">
                         {{$pref := index $.DeviceInfos 0}}
                         {{range $di := $.DeviceInfos}}{{if eq $di.Hostname $host}}{{$pref = $di}}{{end}}{{end}}
@@ -282,7 +282,7 @@
                   {{range $item.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                     <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
                     <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
-                    <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
+                    <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if .AllDevices}} <span class="tag tag-success" title="{{t "exit_rules.all_devices_badge_tip"}}"><i class="fa-solid fa-users"></i> {{t "exit_rules.all_devices_badge"}}</span>{{end}}{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
                     <td class="col-preferred">
                       {{$pref := index $.DeviceInfos 0}}
                       {{range $di := $.DeviceInfos}}{{if eq $di.Hostname $host}}{{$pref = $di}}{{end}}{{end}}

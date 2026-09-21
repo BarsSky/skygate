@@ -27,7 +27,11 @@ DOC=docs/troubleshooting.md
 hdr "B275.1 — operator surface for prefix assignment"
 
 grep -q 'type PrefixOwnerRow struct' "$ADMIN" && ok "A.1 PrefixOwnerRow exists" || bad "A.1 PrefixOwnerRow missing"
-grep -q 'func (s \*Service) loadPrefixOwnerRows() \[\]PrefixOwnerRow' "$ADMIN" && ok "A.2 loadPrefixOwnerRows() reads the table" || bad "A.2 loadPrefixOwnerRows() missing"
+# CONTRACT RENEGOTIATION (2026-09-21, B276): the loader now returns the rows AND the
+# drift summary (the page needs both from ONE headscale read), so it asserts the
+# two-value form instead of the original one-value signature. The property — the page
+# reads the assignment table and hands rows to the template — is unchanged.
+grep -q 'func (s \*Service) loadPrefixOwnerRows() (\[\]PrefixOwnerRow, PrefixDriftStats)' "$ADMIN" && ok "A.2 loadPrefixOwnerRows() reads the table (rows + drift summary, B276)" || bad "A.2 loadPrefixOwnerRows() missing"
 grep -q 'func (s \*Service) PostAdminExitPrefixOwner(w http.ResponseWriter, r \*http.Request)' "$ADMIN" && ok "A.3 the pin handler exists" || bad "A.3 PostAdminExitPrefixOwner missing"
 grep -q 'prefixowner.SetManual(s.dbc(), prefix, relay)' "$ADMIN" && ok "A.4 the handler calls SetManual (manual pin / hand back to auto)" || bad "A.4 the handler must call prefixowner.SetManual"
 grep -q 's.Backend.Audit(c.UserID, c.Username, action' "$ADMIN" && ok "A.5 pinning is audited" || bad "A.5 the pin must write an audit row"

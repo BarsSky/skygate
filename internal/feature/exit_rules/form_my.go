@@ -117,6 +117,15 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 
 	rules, _ := s.getDeviceRules(c.UserID)
 
+	// B276.1: label the rows that were saved for "все мои устройства". The copies
+	// the fan-out created are individual rows, so without this the user cannot tell
+	// a rule that follows their new laptop from one that does not.
+	if keys := s.allDeviceRuleKeys(c.UserID); len(keys) > 0 {
+		for i := range rules {
+			rules[i].AllDevices = keys[allDeviceRuleKey(rules[i].ExitNodeID, rules[i].TargetType, rules[i].TargetValue)]
+		}
+	}
+
 	var devices []map[string]any
 	if nodes, e := s.HS.ListAllNodes(); e == nil {
 		// 2026-07-11: bug fix — even admin sees only their own devices in the
@@ -1018,8 +1027,17 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		// B276.1: record WHY the copies exist. Without the marker the fan-out was
+		// a one-off: a device registered later had no rule while the UI still said
+		// "all my devices". The marker lets the periodic pass re-materialise the
+		// intent for the user's current device set (propagateAllDeviceRules).
+		for _, ip := range ipsToInsert {
+			if _, merr := db.MarkDeviceRulesAllDevices(s.dbc(), c.UserID, exitNode, typeToInsert, ip); merr != nil {
+				log.Printf("exit-rules: could not mark %s %s as all-devices: %v", typeToInsert, ip, merr)
+			}
+		}
 		if fannedOut > 1 {
-			log.Printf("exit-rules: rule %s %s fanned out to %d devices of user %s",
+			log.Printf("exit-rules: rule %s %s fanned out to %d devices of user %s (marked all-devices: new devices inherit it automatically)",
 				typeToInsert, targetValue, fannedOut, c.Username)
 		}
 	}

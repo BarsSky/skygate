@@ -141,7 +141,7 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	// B276: the assignment table + the live-policy comparison. Loaded once here so
 	// the page, the drift counters and the ACL staleness banner all describe the
 	// same snapshot.
-	prefixRows, prefixStats := s.loadPrefixOwnerView()
+	prefixRows, prefixStats := s.loadPrefixOwnerRows()
 
 	// 2026-07-12: Этап 10 part 5 — moved to db.ListExitServers.
 	// 2026-07-31: v0.32.13 — wrap in 2s timeout. Even
@@ -966,11 +966,18 @@ type PrefixDriftStats struct {
 // benefit — the operator needs the drifted rows, not the healthy ones.
 const prefixDriftRowLimit = 200
 
-// loadPrefixOwnerView is the real implementation behind loadPrefixOwnerRows: it
-// reads the assignment table, resolves what each relay advertises and what
-// headscale actually serves, and returns the rows worth looking at plus the
-// summary.
-func (s *Service) loadPrefixOwnerView() ([]PrefixOwnerRow, PrefixDriftStats) {
+// loadPrefixOwnerRows reads the assignment table, resolves what each relay
+// advertises and what headscale serves, and returns the rows worth looking at plus
+// the summary the page renders (B276: the rows are the drifted and manually pinned
+// ones, not all ~1500 table entries, and the summary says whether the LIVE policy
+// still matches the table).
+//
+// Signature note (B276): this used to return just the rows (B275.1). The page needs
+// both halves from ONE headscale read, so the contract in
+// scripts/check_b275_1_prefix_ui.sh was renegotiated to the two-value form — the
+// property it protects (the page reads the assignment table and hands rows to the
+// template) is unchanged.
+func (s *Service) loadPrefixOwnerRows() ([]PrefixOwnerRow, PrefixDriftStats) {
 	var stats PrefixDriftStats
 	rows, err := s.dbc().Query(`SELECT prefix, exit_node_id, COALESCE(source,'auto'),
 	                                   COALESCE(claims,0), COALESCE(devices,0)
@@ -1071,13 +1078,6 @@ func (s *Service) fillPolicyDrift(stats *PrefixDriftStats) {
 	}
 	stats.PolicyChecked = true
 	stats.PolicyInSync = same
-}
-
-// loadPrefixOwnerRows keeps the B275.1 signature for the page (and its contract):
-// the rows worth rendering. Use loadPrefixOwnerView when the summary is needed too.
-func (s *Service) loadPrefixOwnerRows() []PrefixOwnerRow {
-	rows, _ := s.loadPrefixOwnerView()
-	return rows
 }
 
 // PostAdminExitPrefixOwner pins one prefix to one relay (B275.1), or hands it

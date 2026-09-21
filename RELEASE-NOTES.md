@@ -67,6 +67,32 @@ each flip invalidated the pins for the prefix.
   **«Пересобрать и применить ACL»** (`POST /admin/exit-nodes/acl-resync`) for a manual
   pin or a failed sync, with RU+EN help.
 
+### v1.5.36 also closes two gaps found while verifying the above
+
+**The rule churn was a second, larger source of the same staleness.** The ownership
+flip was not the only thing the ACL missed: the domain auto-updater resolves each
+domain rule into CIDRs and rewrites ~145 rows (de-duplicating ~110) **every five
+minutes**, and nothing re-applied the policy for those changes either. Measured on the
+live host: **8 of the 15 newest rules had no alias in the policy at all** — their
+destinations were unserved for everyone, including the device that asked for them. So
+the drift check is now trigger-agnostic (`applyACLIfDrifted`): the sync paths call it
+when an owner changes, the rule-maintenance tick calls it after every domain pass, and
+the same equivalence guard means a quiet tick writes nothing. A policy that is stale
+for *any* reason now converges within one tick, without the operator pressing anything.
+
+**B276.1 — «все мои устройства» must cover a device registered later.** The option
+exists since B275.3, but `PostMyExitRule` only materialised the rule for the devices
+that existed at that moment and forgot why: a laptop registered a week later had no
+rule while the page still promised the rule covered all of the user's devices. V074
+adds `device_rules.all_devices` (both migration chains, additive with default 0 — the
+pre-V074 fan-out copies are indistinguishable from hand-made single-device rules, and
+guessing would silently start copying rules nobody asked to copy), the save path marks
+the whole group, and `propagateAllDeviceRules()` re-materialises the intent for the
+user's current devices in the same tick and **before** the drift check, so the ACL
+generated in that pass already contains the new device. Copies keep the marker, a rule
+whose owner has no attributed device is reported instead of skipped, and `/my/exit-rules`
+shows a **«все мои устройства»** badge (RU+EN) so the user can tell a rule that follows
+their new laptop from one that does not.
 **Operator action after upgrading:** apply the ACL once — the sync paths would do it
 by themselves on the next ownership change, but the current mismatch was created
 before the upgrade, so press «Пересобрать и применить ACL» on `/admin/exit-nodes` (or
