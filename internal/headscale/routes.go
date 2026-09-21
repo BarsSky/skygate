@@ -199,7 +199,15 @@ func (c *Client) runHeadscaleCLI(args ...string) ([]byte, error) {
 	}
 	out, err := exec.Command("headscale", args...).CombinedOutput()
 	if err != nil {
-		return out, fmt.Errorf("docker not in PATH and %q failed: %w (set SKYGATE_HEADSCALE_CONTAINER for a containerised headscale, or install the headscale CLI on this host)", "headscale", err)
+		// B272.6: name the ACTUAL install kind in the hint. The old wording
+		// offered docker and "install the headscale CLI" side by side, so a
+		// native (systemd) host — where docker is absent by design and the CLI
+		// IS installed — got a sentence that fit none of its facts. Live on
+		// aro: `docker not in PATH and "headscale" failed: exit status 1 …`
+		// while the real cause was the socket permission
+		// (`/var/run/headscale/headscale.sock: permission denied`), and the
+		// REST path had already succeeded anyway.
+		return out, fmt.Errorf("local headscale CLI %q failed: %w — on a native install the CLI needs access to the headscale socket (add the skygate user to the headscale group) and its own config (e.g. -c /etc/headscale/config.yaml); for a containerised headscale set SKYGATE_HEADSCALE_CONTAINER, and for a different CLI path set SKYGATE_HEADSCALE_CLI", "headscale", err)
 	}
 	return out, nil
 }

@@ -57,8 +57,15 @@ if grep -q 'exec.Command("headscale", args...)' "$SRC"; then
 else
   bad "C: no local-headscale fallback — a systemd install stays broken"
 fi
-if grep -q 'docker not in PATH' "$SRC"; then
-  ok "D: the failure message explains the missing docker and the native alternative"
+# B272.6 renegotiation (2026-09-21): this used to grep for `docker not in PATH`.
+# The message now names the ACTUAL install kind instead of offering docker and
+# "install the CLI" side by side — on the native host aro that wording fitted none
+# of the facts (docker absent by design, the CLI installed, the real cause a
+# socket permission error). The contract now asserts what the message must teach:
+# the native socket/group requirement and the SKYGATE_HEADSCALE_CLI override.
+if grep -q 'native install the CLI needs access to the headscale socket' "$SRC" && \
+   grep -q 'SKYGATE_HEADSCALE_CLI' "$SRC"; then
+  ok "D: the failure explains the native alternative (socket/group) and the CLI override"
 else
   bad "D: the error does not explain how to run without docker"
 fi

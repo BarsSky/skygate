@@ -118,6 +118,18 @@ silently — it was folded into the files above.
     operator is told to run, assert git **tracks** it —
     `git ls-files --error-unmatch <path>` — not that it exists on this disk
     (`scripts/check_b274_prefix_ownership.sh` contract E.1b is the reference).
+12. **On a NATIVE (systemd) install `git pull && systemctl restart skygate` does
+    NOT update the Go code.** The unit runs an installed binary and nothing
+    rebuilds it — unlike the docker entrypoint (trap #4 above), which builds on
+    every start. Scripts and templates in the checkout DO change, so the symptom
+    is maddening: a new diagnostic *script* behaves like the new version while the
+    fix itself silently is not running. Live on the `aro` host:
+    `native_tagging_diag.sh` printed its new section 5b while `ReconcileTags` was
+    still the old binary and logged nothing, and two verification rounds were
+    spent on an empty journal. Upgrade a native host through the privileged
+    applier (`/admin/update`, or whatever path installed the previous version) and
+    confirm the deployed build in `/healthz` (`"build":"vX.Y.Z+&lt;sha&gt;"`) before
+    believing any behavioural result.
 
 ---
 
