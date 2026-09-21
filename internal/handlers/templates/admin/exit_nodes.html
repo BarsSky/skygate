@@ -364,58 +364,198 @@
     <span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.unserved_tip"}}">{{t "exit_nodes.prefix_owner.unserved"}}: {{.Unserved}}</span>
     <span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.duplicated_tip"}}">{{t "exit_nodes.prefix_owner.duplicated"}}: {{.Duplicated}}</span>
     <span style="color:var(--text-muted)">{{t "exit_nodes.prefix_owner.shown_of"}} {{.Shown}} / {{.Total}}</span>
+    {{if .PinnedDrifted}}<span class="tag tag-warning">{{t "exit_nodes.prefix_owner.group_manual"}}: {{.PinnedDrifted}}</span>{{end}}
   </p>
   {{end}}
   {{end}}
 
-  {{if .PrefixRows}}
-  <div class="table-wrap" style="margin-top:12px">
-  <table>
-    <tr>
-      <th>{{t "exit_nodes.prefix_owner.col_prefix"}}</th>
-      <th>{{t "exit_nodes.prefix_owner.col_owner"}}</th>
-      <th>{{t "exit_nodes.prefix_owner.col_source"}}</th>
-      <th>{{t "exit_nodes.prefix_owner.col_claims"}}</th>
-      <th>{{t "exit_nodes.prefix_owner.col_advertised"}}</th>
-      <th>{{t "exit_nodes.prefix_owner.col_action"}}</th>
-    </tr>
-    {{range .PrefixRows}}
-    <tr>
-      <td><code>{{.Prefix}}</code></td>
-      <td><b>{{.ExitNode}}</b></td>
-      <td>
-        {{if eq .Source "manual"}}<span class="tag tag-success" title="{{t "exit_nodes.prefix_owner.source_manual_tip"}}">{{t "exit_nodes.prefix_owner.source_manual"}}</span>
-        {{else if eq .Source "explicit"}}<span class="tag tag-info" title="{{t "exit_nodes.prefix_owner.source_explicit_tip"}}">{{t "exit_nodes.prefix_owner.source_explicit"}}</span>
-        {{else}}<span class="tag" style="background:var(--bg-hover)" title="{{t "exit_nodes.prefix_owner.source_auto_tip"}}">{{t "exit_nodes.prefix_owner.source_auto"}}</span>{{end}}
-      </td>
-      <td style="font-size:12px;color:var(--text-muted)">{{.Claims}} / {{.Devices}}</td>
-      <td>
-        {{if .Advertised}}<span class="tag tag-success">{{t "exit_nodes.prefix_owner.advertised_yes"}}</span>
-        {{else}}<span class="tag tag-danger" title="{{t "exit_nodes.prefix_owner.advertised_no_tip"}}">{{t "exit_nodes.prefix_owner.advertised_no"}}</span>{{end}}
-        {{/* B276: who else announces it (B274's flapping-primary state) and
-             whether NOBODY does (the rule cannot work until a relay syncs). */}}
-        {{if .Unserved}}<span class="tag tag-danger" title="{{t "exit_nodes.prefix_owner.unserved_tip"}}">{{t "exit_nodes.prefix_owner.unserved_tag"}}</span>{{end}}
-        {{range .AlsoBy}}<span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.duplicated_tip"}}">+{{.}}</span>{{end}}
-      </td>
-      <td>
-        <form method="post" action="/admin/exit-nodes/prefix-owner" style="display:flex;gap:6px;align-items:center">
-          <input type="hidden" name="prefix" value="{{.Prefix}}">
-          <select name="relay" style="font-size:11px;padding:2px 4px;height:24px">
-            {{$cur := .ExitNode}}
-            {{range $.RelayChoices}}
-            <option value="{{.}}" {{if eq . $cur}}selected{{end}}>{{.}}</option>
-            {{end}}
-            <option value="">{{t "exit_nodes.prefix_owner.option_auto"}}</option>
-          </select>
-          <button type="submit" class="btn btn-sm">{{t "exit_nodes.prefix_owner.save"}}</button>
-        </form>
-      </td>
-    </tr>
-    {{end}}
-  </table>
+  {{/* B277: the group-by switcher + the "problems only" filter. Links, not JS: the
+       page is server-rendered and the state belongs in the URL. */}}
+  {{with .PrefixAdmin}}
+  <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:14px">
+    <div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "exit_nodes.prefix_owner.group_by"}}</div>
+      <div style="display:flex;gap:6px">
+        <a class="btn btn-sm{{if eq .GroupBy "owner"}} btn-primary{{end}}" href="/admin/exit-nodes?group=owner{{if .OnlyDrift}}&only=drift{{end}}">{{t "exit_nodes.prefix_owner.group_owner"}}</a>
+        <a class="btn btn-sm{{if eq .GroupBy "domain"}} btn-primary{{end}}" href="/admin/exit-nodes?group=domain{{if .OnlyDrift}}&only=drift{{end}}">{{t "exit_nodes.prefix_owner.group_domain"}}</a>
+        <a class="btn btn-sm{{if eq .GroupBy "device"}} btn-primary{{end}}" href="/admin/exit-nodes?group=device{{if .OnlyDrift}}&only=drift{{end}}">{{t "exit_nodes.prefix_owner.group_device"}}</a>
+      </div>
+    </div>
+    <div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "exit_nodes.prefix_owner.filter"}}</div>
+      {{if .OnlyDrift}}
+      <a class="btn btn-sm" href="/admin/exit-nodes?group={{.GroupBy}}">{{t "exit_nodes.prefix_owner.filter_all"}} ({{.ActivePrefixes}})</a>
+      {{else}}
+      <a class="btn btn-sm" href="/admin/exit-nodes?group={{.GroupBy}}&only=drift">{{t "exit_nodes.prefix_owner.filter_drift"}}</a>
+      {{end}}
+    </div>
   </div>
+
+  {{/* B277: the global override — one control for the whole tailnet, stored as a
+       setting (so it also covers prefixes that appear later) and always overridden by
+       a manual per-prefix pin. */}}
+  <div style="margin-top:14px;padding:12px;border-radius:6px;background:var(--bg-elev);border:1px solid var(--border)">
+    <b>{{t "exit_nodes.prefix_owner.force_title"}}</b>
+    <div style="font-size:13px;color:var(--text-muted);margin:4px 0 8px 0">{{t "exit_nodes.prefix_owner.force_help" | safeHTML}}</div>
+    {{if .Force}}<p style="margin:0 0 8px 0"><span class="tag tag-warning">{{t "exit_nodes.prefix_owner.force_active"}}: {{.Force}}</span></p>{{end}}
+    <form method="post" action="/admin/exit-nodes/prefix-owner-force" style="display:flex;gap:8px;align-items:center">
+      <select name="relay" style="font-size:12px;padding:3px 6px">
+        <option value="">{{t "exit_nodes.prefix_owner.option_auto"}}</option>
+        {{$force := .Force}}
+        {{range .Relays}}<option value="{{.}}" {{if eq . $force}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+      <button type="submit" class="btn btn-sm">{{t "exit_nodes.prefix_owner.force_save"}}</button>
+    </form>
+  </div>
+
+  {{if .Groups}}
+  {{range .Groups}}
+  {{/* B277 follow-up: each group is a <details>/<summary> block (collapsible, open by
+       default so the first render is no surprise). The summary carries the per-group
+       bulk-pin form + a "вернуть авто" button + a "select all in group" checkbox —
+       the multi-pin surface below the groups reads the per-row .prefix-check
+       inputs. */}}
+  <details open class="prefix-group" data-group-key="{{.Key}}" style="margin-top:16px;border:1px solid var(--border);border-radius:6px">
+    <summary style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:10px 12px;background:var(--bg-elev);border-bottom:1px solid var(--border);cursor:pointer;list-style:none">
+      <span style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted)" onclick="event.stopPropagation()">
+        <input type="checkbox" class="group-select-all" title="{{t "exit_nodes.prefix_owner.select_all_in_group"}}">
+      </span>
+      <b>{{.Label}}</b>
+      <span class="tag" style="background:var(--bg-hover)">{{.Total}} {{t "exit_nodes.prefix_owner.group_prefixes"}}</span>
+      {{if .Problem}}<span class="tag tag-danger">{{.Problem}} {{t "exit_nodes.prefix_owner.group_problem"}}</span>{{end}}
+      {{if .Manual}}<span class="tag tag-success">{{.Manual}} {{t "exit_nodes.prefix_owner.group_manual"}}</span>{{end}}
+      {{if .Detail}}<span style="color:var(--text-muted);font-size:12px">{{.Detail}}</span>{{end}}
+      <span style="display:flex;gap:6px;align-items:center;margin-left:auto" onclick="event.stopPropagation()">
+        <form method="post" action="/admin/exit-nodes/prefix-owner-bulk" style="display:flex;gap:6px;align-items:center">
+          <input type="hidden" name="group_by" value="{{$.PrefixAdmin.GroupBy}}">
+          <input type="hidden" name="group_key" value="{{.Key}}">
+          <select name="relay" style="font-size:11px;padding:2px 4px;height:24px">
+            <option value="">{{t "exit_nodes.prefix_owner.option_auto"}}</option>
+            {{range $.RelayChoices}}<option value="{{.}}">{{.}}</option>{{end}}
+          </select>
+          <button type="submit" class="btn btn-sm">{{t "exit_nodes.prefix_owner.group_apply"}}</button>
+        </form>
+        <form method="post" action="/admin/exit-nodes/prefix-owner-bulk" style="display:inline-block">
+          <input type="hidden" name="group_by" value="{{$.PrefixAdmin.GroupBy}}">
+          <input type="hidden" name="group_key" value="{{.Key}}">
+          <input type="hidden" name="relay" value="">
+          <button type="submit" class="btn btn-sm" title="{{t "exit_nodes.prefix_owner.group_auto_tip"}}">{{t "exit_nodes.prefix_owner.group_auto"}}</button>
+        </form>
+      </span>
+    </summary>
+    <div class="table-wrap">
+    <table>
+      <tr>
+        <th class="col-check"></th>
+        <th>{{t "exit_nodes.prefix_owner.col_prefix"}}</th>
+        <th>{{t "exit_nodes.prefix_owner.col_owner"}}</th>
+        <th>{{t "exit_nodes.prefix_owner.col_source"}}</th>
+        <th>{{t "exit_nodes.prefix_owner.col_claims"}}</th>
+        <th>{{t "exit_nodes.prefix_owner.col_advertised"}}</th>
+        <th>{{t "exit_nodes.prefix_owner.col_action"}}</th>
+      </tr>
+      {{range .Rows}}
+      <tr>
+        <td class="col-check"><input type="checkbox" class="prefix-check" name="ids" value="{{.Prefix}}" form="multi-pin-form" onclick="updateMultiCount()"></td>
+        <td><code>{{.Prefix}}</code></td>
+        <td><b>{{.ExitNode}}</b></td>
+        <td>
+          {{if eq .Source "manual"}}<span class="tag tag-success" title="{{t "exit_nodes.prefix_owner.source_manual_tip"}}">{{t "exit_nodes.prefix_owner.source_manual"}}</span>
+          {{else if eq .Source "global"}}<span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.source_global_tip"}}">{{t "exit_nodes.prefix_owner.source_global"}}</span>
+          {{else if eq .Source "explicit"}}<span class="tag tag-info" title="{{t "exit_nodes.prefix_owner.source_explicit_tip"}}">{{t "exit_nodes.prefix_owner.source_explicit"}}</span>
+          {{else}}<span class="tag" style="background:var(--bg-hover)" title="{{t "exit_nodes.prefix_owner.source_auto_tip"}}">{{t "exit_nodes.prefix_owner.source_auto"}}</span>{{end}}
+        </td>
+        <td style="font-size:12px;color:var(--text-muted)">{{.Claims}} / {{.Devices}}</td>
+        <td>
+          {{if .Advertised}}<span class="tag tag-success">{{t "exit_nodes.prefix_owner.advertised_yes"}}</span>
+          {{else}}<span class="tag tag-danger" title="{{t "exit_nodes.prefix_owner.advertised_no_tip"}}">{{t "exit_nodes.prefix_owner.advertised_no"}}</span>{{end}}
+          {{/* B276: who else announces it (B274's flapping-primary state) and
+               whether NOBODY does (the rule cannot work until a relay syncs). */}}
+          {{if .Unserved}}<span class="tag tag-danger" title="{{t "exit_nodes.prefix_owner.unserved_tip"}}">{{t "exit_nodes.prefix_owner.unserved_tag"}}</span>{{end}}
+          {{range .AlsoBy}}<span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.duplicated_tip"}}">+{{.}}</span>{{end}}
+        </td>
+        <td>
+          <form method="post" action="/admin/exit-nodes/prefix-owner" style="display:flex;gap:6px;align-items:center">
+            <input type="hidden" name="prefix" value="{{.Prefix}}">
+            <select name="relay" style="font-size:11px;padding:2px 4px;height:24px">
+              {{$cur := .ExitNode}}
+              {{range $.RelayChoices}}
+              <option value="{{.}}" {{if eq . $cur}}selected{{end}}>{{.}}</option>
+              {{end}}
+              <option value="">{{t "exit_nodes.prefix_owner.option_auto"}}</option>
+            </select>
+            <button type="submit" class="btn btn-sm">{{t "exit_nodes.prefix_owner.save"}}</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </table>
+    </div>
+  </details>
+  {{end}}
+
+  {{/* B277 follow-up: the multi-checkbox surface — a sticky bottom form that
+       reads every checked .prefix-check across all groups and pins them with one
+       submit. Empty submit is refused by the handler; relay="" hands the selection
+       back to the engine. */}}
+  <form id="multi-pin-form" method="post" action="/admin/exit-nodes/prefix-owner-multi" style="margin-top:18px;padding:12px;border-radius:6px;background:var(--bg-elev);border:1px solid var(--border);display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <label style="font-size:12px;display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" id="select-all-visible" onclick="toggleAllVisible(this)">
+      <span>{{t "exit_nodes.prefix_owner.select_all_visible"}}</span>
+    </label>
+    <span style="font-size:13px"><b id="multi-pin-count">0</b> {{t "exit_nodes.prefix_owner.selected_count"}}</span>
+    <select name="relay" style="font-size:12px;padding:3px 6px">
+      <option value="">{{t "exit_nodes.prefix_owner.option_auto"}}</option>
+      {{range .RelayChoices}}<option value="{{.}}">{{.}}</option>{{end}}
+    </select>
+    <button type="submit" class="btn btn-sm">{{t "exit_nodes.prefix_owner.pin_selected"}}</button>
+  </form>
+  <script>
+  /* B277 follow-up: keep the multi-checkbox state coherent. A "select all in group"
+     toggles only the rows inside the same <details>; a "select all visible" toggles
+     every row on the page; the count next to the multi-pin submit reflects whatever
+     is currently checked. The handler refuses an empty submit, so a stale count
+     cannot pin nothing. */
+  function selectAllInGroup(groupCheckbox) {
+    var details = groupCheckbox.closest('details.prefix-group');
+    if (!details) return;
+    var rows = details.querySelectorAll('input.prefix-check');
+    rows.forEach(function(cb){ cb.checked = groupCheckbox.checked; });
+    updateMultiCount();
+  }
+  function toggleAllVisible(topCheckbox) {
+    var rows = document.querySelectorAll('input.prefix-check');
+    rows.forEach(function(cb){ cb.checked = topCheckbox.checked; });
+    document.querySelectorAll('input.group-select-all').forEach(function(cb){ cb.checked = topCheckbox.checked; });
+    updateMultiCount();
+  }
+  function updateMultiCount() {
+    var n = document.querySelectorAll('input.prefix-check:checked').length;
+    var counter = document.getElementById('multi-pin-count');
+    if (counter) counter.textContent = n;
+    /* Keep each group's "select all" in sync with its own rows. */
+    document.querySelectorAll('details.prefix-group').forEach(function(d){
+      var rows = d.querySelectorAll('input.prefix-check');
+      if (rows.length === 0) return;
+      var checked = d.querySelectorAll('input.prefix-check:checked').length;
+      var head = d.querySelector('input.group-select-all');
+      if (head) head.checked = (checked === rows.length);
+    });
+    var allRows = document.querySelectorAll('input.prefix-check');
+    var allChecked = document.querySelectorAll('input.prefix-check:checked').length;
+    var top = document.getElementById('select-all-visible');
+    if (top && allRows.length > 0) top.checked = (allChecked === allRows.length);
+  }
+  document.addEventListener('DOMContentLoaded', updateMultiCount);
+  /* Wire the per-group headers to the helper. The inline onclick= attribute on the
+     rows already calls updateMultiCount; the headers need the bulk version. */
+  document.querySelectorAll('input.group-select-all').forEach(function(cb){
+    cb.addEventListener('change', function(){ selectAllInGroup(cb); });
+  });
+  </script>
   {{else}}
   <p style="color:var(--text-muted);margin-top:10px">{{t "exit_nodes.prefix_owner.empty"}}</p>
+  {{end}}
   {{end}}
 </div>
 

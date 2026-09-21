@@ -141,7 +141,11 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	// B276: the assignment table + the live-policy comparison. Loaded once here so
 	// the page, the drift counters and the ACL staleness banner all describe the
 	// same snapshot.
+	//
+	// B277: and grouped (by owner / domain / device) with bulk actions and a global
+	// override, which is what makes the table usable once the dead rows are pruned.
 	prefixRows, prefixStats := s.loadPrefixOwnerRows()
+	prefixAdmin := s.loadPrefixAdminView(r.URL.Query().Get("group"), r.URL.Query().Get("only") == "drift")
 
 	// 2026-07-12: Этап 10 part 5 — moved to db.ListExitServers.
 	// 2026-07-31: v0.32.13 — wrap in 2s timeout. Even
@@ -391,6 +395,7 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		// relay — the failure that used to be invisible.
 		"PrefixRows":     prefixRows,
 		"PrefixStats":    prefixStats,
+		"PrefixAdmin":    prefixAdmin,
 		"RelayChoices":   relayChoicesFor(nodes),
 		"MonitorRunning": s.ExitNodeMonitor != nil,
 		"FlashSuccess":   r.URL.Query().Get("ok"),
@@ -1021,7 +1026,15 @@ func (s *Service) loadPrefixOwnerRows() ([]PrefixOwnerRow, PrefixDriftStats) {
 		all = append(all, r)
 	}
 	stats.Total = len(all)
-	out := make([]PrefixOwnerRow, 0, 32)
+	// B277 RENEGOTIATION of the B276 row filter: the loader used to hand the template
+	// only the drifted and manually pinned rows, because the table held every prefix it
+	// had ever seen (live: 1655 rows, 1497 dead) and printing them all produced
+	// megabytes of HTML. The engine now prunes the dead rows (prefixowner.Prune), so
+	// the table describes the network (~150 rows) and the operator needs ALL active
+	// prefixes on screen — a group is pinned as a group, and a healthy Cloudflare row
+	// that is hidden cannot be pinned. The drift filter moved to the page
+	// (`?only=drift`, loadPrefixAdminView).
+	out := make([]PrefixOwnerRow, 0, len(all))
 	for _, r := range all {
 		drifted := !r.Advertised || r.Unserved || len(r.AlsoBy) > 0
 		switch {
@@ -1036,15 +1049,11 @@ func (s *Service) loadPrefixOwnerRows() ([]PrefixOwnerRow, PrefixDriftStats) {
 		if r.Source == "manual" && drifted {
 			stats.PinnedDrifted++
 		}
-		// Show the drifted rows and every operator pin (a manual pin is a decision
-		// the operator made and must stay visible, even while it is healthy).
-		if drifted || r.Source == "manual" {
-			stats.Shown++
-			if len(out) < prefixDriftRowLimit {
-				out = append(out, r)
-			}
+		if len(out) < prefixDriftRowLimit {
+			out = append(out, r)
 		}
 	}
+	stats.Shown = len(out)
 	s.fillPolicyDrift(&stats)
 	return out, stats
 }
@@ -1104,7 +1113,11 @@ func (s *Service) PostAdminExitPrefixOwner(w http.ResponseWriter, r *http.Reques
 		action = "prefix_owner_auto"
 	}
 	s.Backend.Audit(c.UserID, c.Username, action, fmt.Sprintf("prefix=%s relay=%s", prefix, relay))
-	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape("prefix assignment saved: "+prefix+" -> "+relay), http.StatusSeeOther)
+	// B277: re-apply the ACL right away. prefixowner.Assign keeps a manual row it
+	// finds, so the next sync pass reports no CHANGE for a manual pin — without this
+	// the pin would sit in the database while headscale kept serving the old relay.
+	s.finishPrefixChange(w, r, c.Username, action+" prefix="+prefix+" relay="+relay,
+		"назначение сохранено: "+prefix+" → "+relay)
 }
 
 // PostAdminExitNodeACLResync regenerates the headscale policy from the current

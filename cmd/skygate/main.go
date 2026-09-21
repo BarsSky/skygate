@@ -2462,6 +2462,15 @@ func main() {
 	mux.Handle("POST /admin/exit-nodes/{node_id}/accept-routes", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeSetAcceptRoutes)))
 	// B275.1: pin one prefix to one relay (or hand it back to the engine).
 	mux.Handle("POST /admin/exit-nodes/prefix-owner", authMW(http.HandlerFunc(adminSvc.PostAdminExitPrefixOwner)))
+	// B277: the same decision at group scale (every prefix of a relay / a domain-CDN
+	// group / a device) and globally (one setting for the whole tailnet).
+	mux.Handle("POST /admin/exit-nodes/prefix-owner-bulk", authMW(http.HandlerFunc(adminSvc.PostAdminExitPrefixOwnerBulk)))
+	mux.Handle("POST /admin/exit-nodes/prefix-owner-force", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodePrefixForce)))
+	// B277 follow-up: the multi-checkbox surface — the operator picks arbitrary
+	// prefixes across groups and pins them with one submit (instead of repeating the
+	// group form per group). The route is separate from prefix-owner-bulk so the
+	// audit log can name "multi" distinctly from "group".
+	mux.Handle("POST /admin/exit-nodes/prefix-owner-multi", authMW(http.HandlerFunc(adminSvc.PostAdminExitPrefixOwnerMulti)))
 	// B276: regenerate + push the ACL so every per-CIDR via= pin follows the
 	// current assignment table (the sync paths do this automatically on an
 	// ownership change; the button covers a manual pin or a failed sync).

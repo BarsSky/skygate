@@ -31,8 +31,11 @@ package prefixowner
 
 import (
 	"database/sql"
+	"log"
 	"sort"
 	"strings"
+
+	"skygate/internal/db"
 )
 
 // Claim is one "this device's rule asks for this prefix" statement.
@@ -109,8 +112,8 @@ func Assign(claims []Claim, healthy []string, existing []Existing) []Assignment 
 	}
 	sort.Strings(prefixes)
 
-	// Pass 1 — explicit (majority of the rules that named a relay).
-	// Pass 2 — manual (operator's pin, kept while healthy).
+	// Pass 1 — manual (the operator's pin, kept while its relay is healthy).
+	// Pass 2 — explicit (majority of the rules that named a relay).
 	// Pass 3 — auto (least loaded healthy relay, sticky to the previous
 	//          owner while it is not overloaded).
 	decided := map[string]bool{}
@@ -126,22 +129,34 @@ func Assign(claims []Claim, healthy []string, existing []Existing) []Assignment 
 		}
 		return best
 	}
+	// Pass 1 — manual (the operator's pin, kept while its relay is healthy).
+	//
+	// B277 FIX: this pass used to run AFTER the explicit one, and the explicit pass
+	// marks its prefixes "decided" — so a manual pin was ignored whenever the rules
+	// named a relay, which is every prefix that exists (a prefix is in this table
+	// because a rule claimed it). The advertised contract — "a source='manual'
+	// operator pin is never overwritten while its relay is healthy" — was therefore
+	// false in the normal case, and the UI's «Закрепить за» silently reverted on the
+	// next pass. Manual is the operator speaking about ONE prefix, so it is decided
+	// first: manual > explicit > auto (`Reconcile` inserts the global switch between
+	// manual and explicit).
 	for _, p := range prefixes {
-		g := groups[p]
-		if node := chooseExplicit(p, g); node != "" {
-			out = append(out, Assignment{Prefix: p, ExitNode: node, Source: "explicit", Claims: g.total, Devices: len(g.devices)})
-			load[node]++
-			decided[p] = true
-		}
-	}
-	for _, p := range prefixes {
-		if decided[p] {
-			continue
-		}
 		if e, ok := prev[p]; ok && e.Source == "manual" && healthySet[e.ExitNode] {
 			g := groups[p]
 			out = append(out, Assignment{Prefix: p, ExitNode: e.ExitNode, Source: "manual", Claims: g.total, Devices: len(g.devices)})
 			load[e.ExitNode]++
+			decided[p] = true
+		}
+	}
+	// Pass 2 — explicit (majority of the rules that named a relay).
+	for _, p := range prefixes {
+		if decided[p] {
+			continue
+		}
+		g := groups[p]
+		if node := chooseExplicit(p, g); node != "" {
+			out = append(out, Assignment{Prefix: p, ExitNode: node, Source: "explicit", Claims: g.total, Devices: len(g.devices)})
+			load[node]++
 			decided[p] = true
 		}
 	}
@@ -393,5 +408,114 @@ func Reconcile(d *sql.DB, healthyRelays []string) (inserted, changed int, err er
 		return 0, 0, err
 	}
 	as := Assign(claims, healthyRelays, existing)
+
+	// B277: the global "everything through one relay" switch, and the manual pins
+	// that deliberately survive it. Order of authority: manual (the operator picked
+	// THIS prefix) > global (the operator picked a relay for everything) > explicit
+	// (the rules' majority) > auto.
+	if force := ForceRelay(d); force != "" {
+		if relayIsHealthy(force, healthyRelays) {
+			for i := range as {
+				if as[i].Source == "manual" {
+					continue
+				}
+				as[i].ExitNode = force
+				as[i].Source = "global"
+			}
+		} else {
+			log.Printf("prefix-owner: global override relay %q is not healthy — ignoring it (the whole tailnet would lose egress)", force)
+		}
+	}
+
+	// B277: drop rows whose prefix no rule claims any more. The table used to keep
+	// every prefix it had ever seen (live: 1655 rows, 1497 of them dead — the page
+	// was unreadable and the "nobody announces" counter described history, not the
+	// network). Manual pins are deliberately kept: an operator pin is an intent that
+	// may well predate the rule that will use it.
+	if n, perr := Prune(d, claimedPrefixes(claims)); perr != nil {
+		log.Printf("prefix-owner: prune: %v", perr)
+	} else if n > 0 {
+		log.Printf("prefix-owner: pruned %d assignment row(s) whose prefix no enabled rule claims any more", n)
+	}
+
 	return Save(d, as)
+}
+
+// forceRelaySettingKey is the global_settings row the override lives in.
+const forceRelaySettingKey = "prefix_owner_force_relay"
+
+// ForceRelay reads the operator's global override (B277): when set, every prefix
+// that is not manually pinned is served by this relay. Empty means "no override".
+//
+// It is a global SETTING rather than a mass write of manual rows on purpose: the
+// operator flips the whole tailnet's egress with one control and reverts it with one
+// control, it also covers prefixes that appear later, and a manual per-prefix pin
+// still wins (that prefix was chosen deliberately, after the global switch).
+func ForceRelay(d *sql.DB) string {
+	v, err := db.GetGlobalSetting(d, forceRelaySettingKey, "")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(v)
+}
+
+// SetForceRelay stores (or clears, with an empty relay) the global override.
+func SetForceRelay(d *sql.DB, relay string) error {
+	return db.SetGlobalSetting(d, forceRelaySettingKey, strings.TrimSpace(relay))
+}
+
+// relayIsHealthy reports whether the relay may carry traffic right now.
+func relayIsHealthy(relay string, healthy []string) bool {
+	for _, h := range healthy {
+		if strings.EqualFold(h, relay) {
+			return true
+		}
+	}
+	return false
+}
+
+// claimedPrefixes builds the set of prefixes some enabled rule claims.
+func claimedPrefixes(claims []Claim) map[string]bool {
+	out := make(map[string]bool, len(claims))
+	for _, c := range claims {
+		if c.Prefix != "" {
+			out[c.Prefix] = true
+		}
+	}
+	return out
+}
+
+// Prune deletes assignment rows whose prefix is no longer claimed by an enabled
+// rule, keeping every manual pin. Returns how many rows it removed (B277).
+func Prune(d *sql.DB, claimed map[string]bool) (int, error) {
+	rows, err := d.Query(`SELECT prefix, COALESCE(source,'auto') FROM prefix_owner`)
+	if err != nil {
+		return 0, err
+	}
+	var stale []string
+	for rows.Next() {
+		var prefix, source string
+		if err := rows.Scan(&prefix, &source); err != nil {
+			continue
+		}
+		if source == "manual" || claimed[prefix] {
+			continue
+		}
+		stale = append(stale, prefix)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	deleted := 0
+	for _, prefix := range stale {
+		res, derr := d.Exec(`DELETE FROM prefix_owner WHERE prefix = $1 AND COALESCE(source,'auto') <> 'manual'`, prefix)
+		if derr != nil {
+			return deleted, derr
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			deleted += int(n)
+		}
+	}
+	return deleted, nil
 }
