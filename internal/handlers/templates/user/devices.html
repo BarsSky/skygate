@@ -191,7 +191,7 @@
       <tr>
         <td><code>{{.Hostname}}</code></td>
         <td>{{.UserName}}</td>
-        <td class="mono">{{index .IPAddresses 0}}</td>
+        <td class="mono">{{with .IPAddresses}}{{index . 0}}{{end}}</td>
         <td>
           {{if .Online}}
             <span style="color:var(--success);display:inline-flex;align-items:center;gap:4px"><span class="status-dot status-online"></span>{{t "devices.online"}}</span>

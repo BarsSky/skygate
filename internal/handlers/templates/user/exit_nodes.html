@@ -50,7 +50,7 @@
       {{range .ExitNodes}}
       <tr>
         <td><code>{{.Hostname}}</code></td>
-        <td class="mono">{{index .IPAddresses 0}}</td>
+        <td class="mono">{{with .IPAddresses}}{{index . 0}}{{end}}</td>
         <td>{{.UserName}}</td>
         <td>
           {{if .Online}}

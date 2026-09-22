@@ -12,6 +12,76 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.50 — the ACL must apply, and a page must survive an empty list (B285 + B286)
+
+**Date:** 2026-09-22 · **Base:** `v1.5.49` → this tag · **Compatibility:** none — no
+schema change, no migration.
+
+Two follow-ups found live on `aro` within minutes of installing v1.5.49. Both are
+consequences of the earlier fixes working: they removed the outage, and what was
+left were the two things the outage had been hiding.
+
+### B285 — the generated policy must declare every tag its grants reference
+
+One sync pass after v1.5.49:
+
+```
+acl-drift: re-apply FAILED (refusing to set a policy that references 1 tag(s)
+missing from tagOwners: tag:dev-daniil-workpc — headscale rejects such a
+document and will not start on it) — the live policy stays stale; the next pass
+retries
+```
+
+The refusal came from v1.5.48's guard, and it was **correct** — headscale rejects
+such a document as a whole, and on a `policy.mode: file` host the daemon will not
+start on it. But it also meant the ACL could never apply. Why the two disagreed:
+the grants take their device tag from `node_owner_map.tag` (v1.5.49), while the
+`tagOwners` block derives its entries from `GetPerUserDeviceTags`, which needs a
+**portal-user** row. On this host both `node_owner_map` rows are owned by
+headscale's synthetic `tagged-devices`, so the per-user block emitted nothing
+while the grants named `tag:dev-daniil-workpc` (the client) and
+`tag:dev-infra-exit-node-vps` (the relay).
+
+The generator now records every tag its grants name and sweeps the missing ones
+into `tagOwners` (owner parsed from `tag:dev-<user>-<host>`, sorted for a stable
+document), so the invariant `SetPolicy` enforces is satisfied by construction
+instead of merely reported.
+
+### B286 — an empty slice must not take a page down
+
+`/my/exit-rules` answered a Go template error instead of the user's rules:
+
+```
+render: template: layout.html:290:2: executing "layout" at : error calling
+renderBody: template: exit_rules.html:264:35: executing "body-exit_rules" at :
+error calling index: reflect: slice index out of range
+```
+
+The template initialised its per-device preferred-exit fallback with an unguarded
+`{{$pref := index $.DeviceInfos 0}}` — and the page had rules but **no device
+rows** (the relay had just been moved to the infra owner). The same unguarded
+pattern sat in four more templates: `{{index .IPAddresses 0}}` on the user and
+admin device pages and the exit-nodes page (a node without addresses), and
+`{{if index .DERPs 0}}` on the DERP dashboard (an install with no relays). All
+five now use guarded forms (`{{with .IPAddresses}}{{index . 0}}{{end}}`,
+`{{with .DERPs}}`, and a plain-string `$pref`).
+
+### Contracts
+
+* `scripts/check_b285_acl_tags_declared.sh` (9 contracts) +
+  `internal/acl/acl_b285_test.go` — the test seeds both rows with the synthetic
+  owner and **fails without the sweep**, naming the undeclared tag.
+* `scripts/check_b286_template_index_bounds.sh` (8 contracts) — static: it pins
+  the absence of the construct that caused the panic plus the guarded
+  replacements, and the templates' parse + handlers tests. A full render with an
+  empty device list does not exist in that package yet and the check says so.
+
+### Operator action
+
+Update to `v1.5.50` (binary only; the applier script is unchanged since v1.5.48).
+After the next sync pass the ACL drift banner should clear and
+`/my/exit-rules` should render again.
+
 ## v1.5.49 — a device tag must be the tag the node carries (B284)
 
 **Date:** 2026-09-22 · **Base:** `v1.5.48` → this tag · **Compatibility:** none — no

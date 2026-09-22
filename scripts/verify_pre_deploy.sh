@@ -4937,3 +4937,34 @@ run_check "B283" "a policy write cannot take the control plane down: RequestPoli
 # scripts/check_b284_device_tag_source.sh.
 run_check "B284" "a device tag must be the tag the node carries: deviceTagForRule returns node_owner_map.tag for the rule's device and invents nothing (the pre-fix code preferred device_rules.user_name, which on the live host was headscale's synthetic owner tagged-devices, and minted tag:dev-tagged-devices-exit-node-vps / tag:dev-tagged-devices-workpc — the only undeclared tags in the refused snapshot, and headscale refuses such a document as a whole and will not start on it); both per-device pref loops resolve the tag by hostname via prefixowner.TagsByHost instead of building tag:dev-<username>-<host>; an untagged node yields no tag so the caller falls back to the device-IP selector; and the B265 unit contract that pinned the synthesis is renegotiated with the synthetic-owner case. 11 contracts in scripts/check_b284_device_tag_source.sh." \
   'test -f scripts/check_b284_device_tag_source.sh && bash scripts/check_b284_device_tag_source.sh'
+
+# B285 (2026-09-22) — a policy must declare every tag its grants reference.
+# One pass after B284 landed on `aro`: `acl-drift: re-apply FAILED (refusing to
+# set a policy that references 1 tag(s) missing from tagOwners:
+# tag:dev-daniil-workpc)`. The refusal came from B283's guard and it was CORRECT
+# (headscale rejects such a document as a whole and, in file mode, will not start
+# on it) — but it also meant the ACL could never apply. The grants take their
+# device tag from node_owner_map.tag (B284) while the tagOwners block derives its
+# entries from GetPerUserDeviceTags, which needs a PORTAL-user row; on the live
+# host both node_owner_map rows are owned by headscale's synthetic
+# `tagged-devices`, so the per-user block emitted nothing while the grants named
+# tag:dev-daniil-workpc and tag:dev-infra-exit-node-vps. The generator now
+# collects every tag its grants name and sweeps the missing ones into tagOwners
+# (owner parsed from the tag name), so the document is self-consistent by
+# construction. Contracts in scripts/check_b285_acl_tags_declared.sh.
+run_check "B285" "a policy must declare every tag its grants reference: the ACL generator records every device tag its grants name and sweeps the ones the per-user/per-device/via blocks did not declare into tagOwners (owner parsed from tag:dev-<user>-<host>), so the document satisfies the invariant SetPolicy enforces (B283) instead of only being refused by it. Live case: the grants named tag:dev-daniil-workpc from node_owner_map while the per-user tagOwners source (GetPerUserDeviceTags, which needs a portal-user row) could not see it, because both node_owner_map rows are owned by headscale's synthetic tagged-devices — every ACL apply was refused with 'references 1 tag(s) missing from tagOwners' and the policy stayed stale. 9 contracts in scripts/check_b285_acl_tags_declared.sh." \
+  'test -f scripts/check_b285_acl_tags_declared.sh && bash scripts/check_b285_acl_tags_declared.sh'
+
+# B286 (2026-09-22) — an empty slice must not take a page down. Live on `aro`:
+# /my/exit-rules answered a Go template error instead of the user's rules —
+# `template: exit_rules.html:264:35: error calling index: reflect: slice index
+# out of range`, because the template initialised its preferred-exit fallback
+# with an unguarded `index $.DeviceInfos 0` while the page had rules but no
+# device rows. The same unguarded pattern sat in four more templates
+# ({{index .IPAddresses 0}} on the node/device pages and `if index .DERPs 0` on
+# the DERP dashboard), so a node without addresses or a fresh install with no
+# DERP relays would have failed identically. All five now use a guarded form
+# ({{with .IPAddresses}}{{index . 0}}{{end}} / {{with .DERPs}} / a plain string
+# fallback). 8 contracts in scripts/check_b286_template_index_bounds.sh.
+run_check "B286" "an empty slice must not take a page down: no template indexes a slice that can be empty — exit_rules.html initialised its preferred-exit fallback with an unguarded index DeviceInfos 0 and /my/exit-rules answered 'error calling index: reflect: slice index out of range' instead of the user's rules (live on aro: rules present, device rows absent), and the same pattern in the node/device pages (index IPAddresses 0) and the DERP dashboard (if index DERPs 0) would have failed for a node without addresses or an install with no relays; all five sites now use a guarded form and the templates still parse and pass the handlers package. Contracts in scripts/check_b286_template_index_bounds.sh." \
+  'test -f scripts/check_b286_template_index_bounds.sh && bash scripts/check_b286_template_index_bounds.sh'

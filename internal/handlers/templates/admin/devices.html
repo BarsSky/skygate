@@ -1,4 +1,4 @@
-﻿{{define "body-admin-devices"}}
+{{define "body-admin-devices"}}
 {{/* 2026-07-15: v0.14.0 — flash banners + "Sync from headscale"
      button. The button re-populates node_owner_map from
      headscale's authoritative view; the bot's /exit_nodes
@@ -203,7 +203,7 @@
           {{end}}
         </td>
         <td>{{.UserName}}</td>
-        <td class="mono">{{index .IPAddresses 0}}</td>
+        <td class="mono">{{with .IPAddresses}}{{index . 0}}{{end}}</td>
         <td>
           {{if .IsExitNode}}<span class="tag tag-admin"><i class="fa-solid fa-route"></i>exit</span>{{else}}<span class="tag">node</span>{{end}}
         </td>

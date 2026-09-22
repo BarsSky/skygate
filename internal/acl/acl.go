@@ -1634,6 +1634,12 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		sb.WriteString(",\n    { \"src\": [\"*\"], \"dst\": [\"" + exitTag + "\"], \"ip\": [\"*\"] }")
 	}
 
+	// B285 (2026-09-22): every tag a grant names must end up in tagOwners —
+	// headscale rejects the whole document otherwise, and on a
+	// `policy.mode: file` host that means the daemon will not start. Collect
+	// them here; the sweep at the end of this function declares any the other
+	// blocks did not cover.
+	grantTags := map[string]bool{}
 	for _, e := range aclRows {
 		if e.TargetType != "subnet" && e.TargetType != "ip" {
 			continue
@@ -1643,6 +1649,9 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		}
 		src := "\"*\""
 		devTag := deviceTagForRule(e, ownerByNodeID) // tag:dev-<user>-<device>; "" when unresolvable
+		if devTag != "" {
+			grantTags[devTag] = true
+		}
 		switch {
 		case devTag != "":
 			// B265: prefer the per-device TAG as src, resolving the
@@ -1985,6 +1994,38 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	})
 	for _, to := range perDevTagOwners {
 		emitTagOwner2(to.tag, "[\""+to.owner+"\"]")
+	}
+
+	// B285 (2026-09-22) — the last line of defence for the invariant headscale
+	// itself enforces: EVERY tag a grant references must be declared in
+	// tagOwners, because the parser rejects the whole document otherwise
+	// ("tag not found") and a `policy.mode: file` host then will not START on
+	// it (live: crash-loop 248, control plane down, every device gone).
+	//
+	// The grants take their tag from node_owner_map (B284), while the blocks
+	// above derive tagOwners from the per-user/per-device sources — and on
+	// `aro` the two disagreed for `tag:dev-daniil-workpc`: the node's
+	// node_owner_map row is owned by headscale's synthetic `tagged-devices`,
+	// so no per-user block emitted it, and the generated policy referenced a
+	// tag it never declared. The refusal was correct (headscale would have
+	// refused the document anyway) but it also meant the ACL could never
+	// apply, so the sweep closes the gap instead of only reporting it.
+	missingGrantTags := make([]string, 0, len(grantTags))
+	for tag := range grantTags {
+		if !emittedTagOwners2[tag] {
+			missingGrantTags = append(missingGrantTags, tag)
+		}
+	}
+	sort.Strings(missingGrantTags) // stable document for the drift comparison
+	for _, tag := range missingGrantTags {
+		owner := envAdminIdentity() + "@" + baseDomain
+		if strings.HasPrefix(tag, "tag:dev-") {
+			rest := strings.TrimPrefix(tag, "tag:dev-")
+			if idx := strings.Index(rest, "-"); idx > 0 {
+				owner = rest[:idx] + "@" + baseDomain
+			}
+		}
+		emitTagOwner2(tag, "[\""+owner+"\"]")
 	}
 	sb.WriteString("\n  },\n")
 
