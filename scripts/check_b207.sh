@@ -67,16 +67,41 @@ grep_q 'func .s \*Service. GetAdminAudit' "internal/feature/admin/admin_pages.go
     && check "GetAdminAudit handler updated" ok \
     || check "GetAdminAudit handler updated" fail
 
-# 2. GetAdminAudit reads from BOTH audit_log and cluster_audit
-grep -A200 'func .s \*Service. GetAdminAudit' "internal/feature/admin/admin_pages.go" | grep -qE "FROM[[:space:]]+audit_log" \
-    && check "GetAdminAudit reads from audit_log" ok \
-    || check "GetAdminAudit reads from audit_log" fail
-grep -A200 'func .s \*Service. GetAdminAudit' "internal/feature/admin/admin_pages.go" | grep -qE "FROM[[:space:]]+cluster_audit" \
-    && check "GetAdminAudit reads from cluster_audit" ok \
-    || check "GetAdminAudit reads from cluster_audit" fail
-
-# 3. UNION ALL of the two branches
-grep -A300 'func .s \*Service. GetAdminAudit' "internal/feature/admin/admin_pages.go" | grep -q "UNION ALL" \
+# 2. The unified audit query reads from BOTH audit_log and cluster_audit and
+#    UNION ALLs the two branches — asserted on the FUNCTIONS, not on a line
+#    budget.
+#
+#    B281 (2026-09-22): these three contracts used to be
+#    `grep -A200 'func …GetAdminAudit'` / `-A300`. The B282 dialect work moved the
+#    SQL into the `buildUnifiedAuditQuery` builder (the handler now delegates), so
+#    `FROM audit_log` sat at line 297 of a function starting at line 91 — 206
+#    lines, six past the budget — and a CORRECT handler reported two FAILs on CI.
+#    A window of N lines measures how long the file is, not the invariant: take
+#    each function's own body (from its `func ` line to the next one) instead.
+func_body() { # $1 = a substring identifying the func line
+    awk -v pat="$1" '
+        !inside && index($0, "func ") == 1 && index($0, pat) > 0 { inside = 1 }
+        inside && index($0, "func ") == 1 && index($0, pat) == 0 { exit }
+        inside { print }
+    ' internal/feature/admin/admin_pages.go
+}
+AUDIT_HANDLER="$(func_body "GetAdminAudit")"
+AUDIT_BUILDER="$(func_body "buildUnifiedAuditQuery")"
+if [ -n "$AUDIT_HANDLER" ] && [ -n "$AUDIT_BUILDER" ]; then
+    check "GetAdminAudit + its query builder are both present" ok
+else
+    check "GetAdminAudit + its query builder are both present" fail
+fi
+printf '%s\n' "$AUDIT_HANDLER" | grep -q 'buildUnifiedAuditQuery' \
+    && check "GetAdminAudit delegates to the unified query builder" ok \
+    || check "GetAdminAudit delegates to the unified query builder" fail
+printf '%s\n' "$AUDIT_BUILDER" | grep -qE "FROM[[:space:]]+audit_log" \
+    && check "the unified audit query reads from audit_log" ok \
+    || check "the unified audit query reads from audit_log" fail
+printf '%s\n' "$AUDIT_BUILDER" | grep -qE "FROM[[:space:]]+cluster_audit" \
+    && check "the unified audit query reads from cluster_audit" ok \
+    || check "the unified audit query reads from cluster_audit" fail
+printf '%s\n' "$AUDIT_BUILDER" | grep -q "UNION ALL" \
     && check "audit branches are UNION ALL'd" ok \
     || check "audit branches are UNION ALL'd" fail
 
