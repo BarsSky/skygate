@@ -4891,3 +4891,29 @@ run_check "B281" "the CI catalog job terminates and green means 0 FAIL: each che
 # 27 contracts in scripts/check_b282_admin_reads_dialect.sh.
 run_check "B282" "operator pages read the database that is actually running: db.DialectKind.CastText is the one dialect-native text cast (PG ::text, SQLite CAST(x AS TEXT)) because SQLite has no :: token while PG refuses text = integer without it; db.ParseDBTime tolerantly decodes a timestamp column (time.Time on PG, INTEGER unix seconds or the TEXT CURRENT_TIMESTAMP form on SQLite) so a reader no longer scans straight into time.Time; /admin/audit goes through buildUnifiedAuditQuery(db.ActiveDialect()) instead of inline 'audit_log'::text + to_timestamp(created_at) + detail::text, which on SQLite answered 500 SQL logic error: unrecognized token: ':'; the exit_rules.preferred_mismatch system test builds its join through preferredMismatchRulesQuery instead of the hardcoded r.device_id::text that failed as query rules: SQL logic error; and headscale.PolicyJSON is the single policy normaliser (unquote a stringified policy field, hujson.Standardize comments and trailing commas) used by GetACL, /admin/headscale/acl, the exit_rules.all_in_headscale_acl system test and PolicyEquivalent — pre-B282 the stringified reply made the ACL page answer 500 cannot unmarshal string into Go value of type admin.ACLView. Live case: the native aro host with SQLite at /var/lib/skygate/skygate.db. 27 contracts in scripts/check_b282_admin_reads_dialect.sh." \
   'test -f scripts/check_b282_admin_reads_dialect.sh && bash scripts/check_b282_admin_reads_dialect.sh'
+
+# B283 (2026-09-22) — a policy write must not be able to take the control plane
+# down. Live outage on the native host `aro` (headscale policy.mode: file):
+# skygate wrote a policy file headscale could not load and the daemon
+# crash-looped 248 times, so the tailnet lost its control plane and every device
+# disappeared from the portal. Two defects: (1) RequestPolicyApply rewrote the
+# watched request file IN PLACE while the root applier read it line by line, so
+# a second request landing mid-read spliced the head of one document onto the
+# tail of another — the 7869-byte file on disk had the exact size of the saved
+# snapshot (valid JSON in the DB) and was unparseable on disk (hujson line 302,
+# column 23: invalid character ']' after object name); (2) nothing validated the
+# document before writing it AND the applier treated `systemctl restart` as
+# success (it returns 0 as soon as the unit is STARTED), so it logged `done`
+# while headscale was already dying and the policy.prev rollback never fired.
+# Two amplifiers: the generated policy pinned per-CIDR grants to the B275
+# assignment table's owner tag while tagOwners did not declare it (headscale
+# refuses such a document as a whole and will not START on it), and the same
+# policy was rewritten every ~5 minutes, each write restarting headscale. Now:
+# the handoff is validated and atomic (temp + rename), SetPolicy refuses an
+# unparseable policy or one whose grants reference undeclared tags, the
+# generator declares the owner tags it pins, an unchanged policy is not
+# rewritten at all, and the applier validates the body before writing and rolls
+# back unless headscale actually answers. Contracts in
+# scripts/check_b283_policy_write_safety.sh.
+run_check "B283" "a policy write cannot take the control plane down: RequestPolicyApply hands the request over atomically (temp + rename, never an in-place rewrite of the file the root applier reads line by line — that splice produced a 7869-byte policy that was valid in the DB snapshot and unparseable on disk, and headscale crash-looped 248 times), SetPolicy refuses a document that does not parse or whose grants reference tags missing from tagOwners (headscale rejects such a document as a whole and will not START on it), the ACL generator declares the B275 assignment-table owner tags it pins into via, an unchanged policy is not rewritten so headscale is not restarted every five minutes, and the privileged applier validates the body before writing and verifies headscale actually came up (rolling back to policy.prev when it did not, instead of logging done over a dead daemon). Contracts in scripts/check_b283_policy_write_safety.sh." \
+  'test -f scripts/check_b283_policy_write_safety.sh && bash scripts/check_b283_policy_write_safety.sh'

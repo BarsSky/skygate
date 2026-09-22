@@ -12,6 +12,130 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.48 — a policy write must not be able to take the control plane down (B283)
+
+**Date:** 2026-09-22 · **Base:** `v1.5.47` → this tag · **Compatibility:** none — no
+schema change, no migration. **Install this release before starting skygate again
+on a `policy.mode: file` host** (see *Operator action* at the end).
+
+This is the outage that followed v1.5.47 on the native host `aro`: skygate wrote
+a headscale policy file the daemon could not load, and `headscale.service`
+crash-looped **248 times** —
+
+```
+Error: initializing: creating new headscale: init state: initializing policy
+manager: parsing policy: parsing HuJSON: hujson: line 302, column 23:
+invalid character ']' after object name
+```
+
+— so the tailnet lost its control plane and **every device disappeared from the
+portal**. Nothing was deleted: headscale's own database was intact and an older
+policy snapshot brought it straight back. Two independent defects produced the
+bad file, and two further defects made it worse.
+
+### Root cause
+
+1. **The handoff race (why the file was corrupt).** `RequestPolicyApply` rewrote
+   the watched `policy.request.props` **in place** (`os.WriteFile` = truncate +
+   write) while the root applier read that same file line by line. A second
+   request landing mid-read made the reader continue at its file offset into the
+   *new* content, so it stitched the head of one document onto the tail of
+   another. The evidence is exact: the saved snapshot (`acl_snapshots` id 298) is
+   valid JSON and 7869 bytes; the file the applier wrote at 18:26 was also 7869
+   bytes and unparseable, mixing a pretty-printed fragment of the *old* policy
+   (`"via": ["tag:exit-node"]`) with compact grants of the *new* one
+   (`"via": ["tag:dev-infra-exit-node-vps"]`).
+2. **Nothing validated the document, and the crash-loop was invisible.** No
+   check refused an unparseable policy, and the applier treated
+   `systemctl restart` as proof of success — it returns 0 as soon as the unit is
+   *started*, so the script logged `done` while headscale was already dying on
+   the file it had just written, and the `policy.prev` rollback never fired.
+3. **An undeclared `via` tag (why a *valid* document still would not boot).** The
+   generated policy pinned per-CIDR grants to the B275 assignment table's owner
+   tag, but that tag was never merged into the tag set that fills `tagOwners`.
+   headscale refuses such a document **as a whole** ("tag not found") and, in
+   file mode, will not start on it: installing the newer snapshot (valid JSON,
+   6881 bytes) left the API dead, while the older snapshot from before the relay
+   was given its own tag started immediately.
+4. **A rewrite every ~5 minutes.** The applier log shows the same policy written
+   at 16:54, 16:59, 17:14, … 18:50 with 7100/7109/7126/7135-byte variants — the
+   tag path re-marshalled the document, the B276 drift check regenerated it, and
+   every write restarted headscale. Each extra write was another chance to hit
+   (1).
+
+### Fix
+
+* `RequestPolicyApply` (`internal/headscale/policy_helper.go`) hands the request
+  over **atomically**: a temp file in the same directory, `chmod 0640`, then
+  `rename(2)`. A reader now sees either the whole old file or the whole new one —
+  a splice is impossible.
+* `SetPolicy` (`internal/headscale/acl.go`) refuses to hand headscale a document
+  it cannot load: unparseable policies **and** policies whose grants reference
+  tags missing from `tagOwners` are rejected by name, before any API call or file
+  write, with the previous policy left in force. The check is
+  `headscale.UndeclaredTags` (`internal/headscale/policy_validate.go`), which
+  walks `grants[]`/`acls[]` (`src`, `dst`, `via`) against `tagOwners`.
+* The ACL generator (`internal/acl/acl.go`) merges the B275 assignment-table
+  owner tags (`prefixowner.TagByPrefix`, the source of `ViaForPrefix`) into the
+  set that fills `tagOwners`, so every `via` it emits is declared in the same
+  document.
+* A file-mode write is **skipped when the document already says the same thing**
+  (`PolicyEquivalent` on the on-disk document), in the Go client and again in the
+  applier — an unchanged policy no longer costs a headscale restart, which is
+  what kept the 5-minute loop going.
+* `deploy/skygate-apply-policy.sh` now validates the body with `python3` before
+  writing anything (a bad document is refused, the previous file stays, and the
+  log names the reason), and after the restart it **polls headscale's `/health`**
+  (`SKYGATE_HEADSCALE_HEALTH_URL`, default `http://127.0.0.1:8081/health`) and
+  restores `policy.prev` when the daemon does not answer — instead of logging
+  `done` over a dead service.
+
+### Contracts
+
+`scripts/check_b283_policy_write_safety.sh` (18 contracts; registered as
+`run_check "B283"`) plus regression tests:
+`internal/acl/acl_b283_test.go` (the generator test reproduces the live shape —
+the relay's `node_owner_map` row owned by `tagged-devices`, so no other tagOwners
+path can declare the tag — and **fails without the generator fix** with
+`generated policy references 1 tag(s) missing from tagOwners:
+tag:dev-infra-exit-node-vps`),
+`internal/headscale/policy_validate_b283_test.go` (the invariant + `SetPolicy`
+refusing a bad document without issuing the request) and
+`internal/headscale/policy_helper_b283_test.go` (the handoff refuses an
+unparseable policy, leaves no partial request behind, and stays a single complete
+document across two handovers).
+
+### Operator action
+
+The outage was recovered by hand: skygate was stopped and headscale was started
+on `acl_snapshots` id 297 (the policy from 18:16, before the relay was given its
+own tag). **Keep skygate stopped until this release is installed** — the running
+build rewrites the policy within ~5 minutes (or immediately at startup) and would
+knock headscale over again.
+
+Native (systemd) hosts, with skygate stopped, update without the in-app updater:
+
+```bash
+TAG=v1.5.48; ARCH=linux-amd64
+BASE="https://github.com/BarsSky/skygate/releases/download/$TAG"
+curl -fsSLO "$BASE/skygate-$TAG-$ARCH.tar.gz"
+curl -fsSLO "$BASE/SHA256SUMS"
+sha256sum -c --ignore-missing SHA256SUMS
+tar -xzf "skygate-$TAG-$ARCH.tar.gz"
+sudo install -m 0755 skygate /usr/local/bin/skygate   # path used by your unit
+sudo systemctl daemon-reload && sudo systemctl restart skygate
+curl -fsS http://127.0.0.1:8080/healthz   # expect "build":"v1.5.48+<sha>"
+```
+
+Also update the privileged applier, which now validates and health-checks:
+
+```bash
+sudo install -m 0755 deploy/skygate-apply-policy.sh /usr/local/lib/skygate/skygate-apply-policy.sh
+```
+
+Then start `skygate`; the policy it writes is either identical to the one already
+in force (no restart at all) or a document headscale is guaranteed to accept.
+
 ## v1.5.47 — an operator page must read the database the operator actually runs (B282), plus B281 follow-ups and registry hygiene
 
 **Date:** 2026-09-22 · **Base:** `v1.5.46` → this tag · **Compatibility:** none — no

@@ -94,14 +94,47 @@ func RequestPolicyApply(path, policy string) error {
 	if !PolicyHelperArmed() {
 		return ErrPolicyHelperUnavailable
 	}
+	// B283 (2026-09-22): validate BEFORE handing anything over, and hand it
+	// over ATOMICALLY.
+	//
+	// The root applier reads this request file line by line, and the old code
+	// rewrote it in place with os.WriteFile (truncate + write). When a second
+	// policy request landed while the applier was mid-read, the reader kept its
+	// file offset into the NEW content and stitched the head of one document to
+	// the tail of another: the live host wrote a 7869-byte policy at 18:26 that
+	// was byte-for-byte the size of the saved snapshot, valid in the database,
+	// and unparseable on disk (`hujson: line 302, column 23: invalid character
+	// ']' after object name`) — headscale then crash-looped 248 times and every
+	// device disappeared from the portal. A rename(2) cannot splice: a reader
+	// sees either the whole old file or the whole new one.
+	if _, perr := PolicyJSON(policy); perr != nil {
+		return fmt.Errorf("policy helper: refusing to hand over a policy that does not parse: %w", perr)
+	}
 	req := PolicyRequestPath()
-	if err := os.MkdirAll(filepath.Dir(req), 0o750); err != nil {
-		return fmt.Errorf("policy helper: create %s: %w", filepath.Dir(req), err)
+	dir := filepath.Dir(req)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("policy helper: create %s: %w", dir, err)
 	}
 	body := fmt.Sprintf("# skygate privileged policy request (B272.3)\n# data only — never sourced by the applier\nPOLICY_PATH=%q\nREQUESTED_AT=%q\nPOLICY_BEGIN\n%s\nPOLICY_END\n",
 		path, time.Now().UTC().Format(time.RFC3339), policy)
-	if err := os.WriteFile(req, []byte(body), 0o640); err != nil {
-		return fmt.Errorf("policy helper: write %s: %w", req, err)
+	tmp, err := os.CreateTemp(dir, "policy.request.*.tmp")
+	if err != nil {
+		return fmt.Errorf("policy helper: create temp request in %s: %w", dir, err)
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename succeeded
+	if _, err := tmp.WriteString(body); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("policy helper: write %s: %w", tmpName, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("policy helper: close %s: %w", tmpName, err)
+	}
+	if err := os.Chmod(tmpName, 0o640); err != nil {
+		return fmt.Errorf("policy helper: chmod %s: %w", tmpName, err)
+	}
+	if err := os.Rename(tmpName, req); err != nil {
+		return fmt.Errorf("policy helper: rename %s -> %s: %w", tmpName, req, err)
 	}
 	return nil
 }

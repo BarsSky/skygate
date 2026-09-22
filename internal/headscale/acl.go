@@ -150,6 +150,28 @@ func (c *Client) GetACL() (string, error) {
 // documented headscale signals for "policy endpoint not available in
 // this mode" and the only codes the fallback should react to.
 func (c *Client) SetPolicy(policy string) error {
+	// B283 (2026-09-22): never hand headscale (or its policy FILE) a document
+	// it cannot parse. On a `policy.mode: file` host a malformed write is not
+	// a rejected API call — it is a file that headscale reads at startup, so
+	// the daemon crash-loops and the whole tailnet loses its control plane
+	// (live: `hujson: line 302, column 23: invalid character ']' after object
+	// name`, restart counter 248, all devices gone from the portal).
+	// Parse first: a bad document is OUR bug and must be reported as one,
+	// while the previous policy stays in force.
+	if _, perr := PolicyJSON(policy); perr != nil {
+		return fmt.Errorf("refusing to set a policy that does not parse: %w", perr)
+	}
+	// B283: and never a policy headscale will REFUSE TO START ON. A grant that
+	// names a tag missing from tagOwners makes the whole document invalid for
+	// headscale's parser ("tag not found"), which on a file-mode host means a
+	// crash-looping daemon, not a rejected request — see policy_validate.go for
+	// the live incident.
+	if undeclared, uerr := UndeclaredTags(policy); uerr != nil {
+		return fmt.Errorf("refusing to set a policy that does not parse: %w", uerr)
+	} else if len(undeclared) > 0 {
+		return fmt.Errorf("refusing to set a policy that references %d tag(s) missing from tagOwners: %s — headscale rejects such a document and will not start on it",
+			len(undeclared), strings.Join(undeclared, ", "))
+	}
 	var out PolicyBody
 	err := c.do("PUT", "/api/v1/policy", PolicyBody{Policy: policy}, &out)
 	if err == nil {
@@ -277,6 +299,22 @@ func (c *Client) setPolicyViaFileNative(policy, path string, apiErr error) error
 	mode := os.FileMode(0o644)
 	if fi, err := os.Stat(path); err == nil {
 		mode = fi.Mode().Perm()
+	}
+	// B283 (2026-09-22): a file-mode write is not just a write — the applier
+	// restarts headscale to make it re-read the file, so a redundant write
+	// costs a control-plane restart. Live on `aro` the policy was rewritten
+	// every ~5 minutes with 7100/7109/7126/7135-byte variants of the SAME
+	// policy (the tag path re-marshals the document, the B276 drift check then
+	// regenerates it, and so on), restarting headscale each time — and every
+	// extra write is another chance to catch the applier mid-request.
+	// Compare semantically (comments/indentation/order do not matter) and do
+	// nothing when the document already says the same thing.
+	if readErr == nil && len(bytes.TrimSpace(prev)) > 0 {
+		if same, cmpErr := PolicyEquivalent(string(prev), policy); cmpErr == nil && same {
+			log.Printf("policy: %s already describes this policy (semantically equal) — not rewriting, headscale is not restarted", path)
+			c.clearACLCache()
+			return nil
+		}
 	}
 	tmp := path + ".skygate.tmp"
 	var directErr error

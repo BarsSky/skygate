@@ -1835,6 +1835,27 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	for _, via := range viaByDevice {
 		distinctVias[via] = true
 	}
+	// B283 (2026-09-22): the per-CIDR pin can ALSO come from the B275
+	// assignment table (`prefix_owner.exit_node_id` → that relay's tag in
+	// node_owner_map), see `prefixowner.ViaForPrefix` in the grants loop
+	// above. Those tags were never added here, and headscale's policy parser
+	// rejects the WHOLE document when a `grants[].via` names a tag that
+	// `tagOwners` does not declare ("tag not found") — it does not fall back
+	// to the default exit node, and it does not start at all on a
+	// `policy.mode: file` host.
+	//
+	// Live on `aro` (2026-09-22): after the relay was given its own
+	// `tag:dev-infra-exit-node-vps`, the generated policy carried
+	// `via: ["tag:dev-infra-exit-node-vps"]` on 19 per-CIDR grants while
+	// `tagOwners` listed only the viaByUser/viaByDevice tags. The document was
+	// valid JSON (python's json.tool accepted it) and headscale still refused
+	// to start on it — crash-loop, control plane down, every device gone from
+	// the portal until an older snapshot was restored by hand.
+	for _, tag := range ownerTagByPrefix {
+		if strings.TrimSpace(tag) != "" {
+			distinctVias[tag] = true
+		}
+	}
 	var exitNodeTags []string
 	for tag := range distinctVias {
 		exitNodeTags = append(exitNodeTags, tag)
