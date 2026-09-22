@@ -967,6 +967,12 @@ type PrefixDriftStats struct {
 	// the banner cannot blame the `via` pins for a difference that is, say, two
 	// extra tag declarations. Empty when the policies are equivalent.
 	PolicyDetail string
+	// PolicyApply is what the privileged applier recorded the last time it ran
+	// (B288.1: "ok @ 21:47, 5082 bytes" or "failed — headscale did not answer on
+	// …"). It is the missing half of the drift story: a stale policy whose
+	// applier says OK means the write happened but headscale serves something
+	// else; an applier that says failed names its reason outright.
+	PolicyApply string
 }
 
 // prefixDriftRowLimit caps how many rows the page renders. The assignment table
@@ -1091,6 +1097,11 @@ func (s *Service) fillPolicyDrift(stats *PrefixDriftStats) {
 	}
 	stats.PolicyChecked = true
 	stats.PolicyInSync = same
+	// B288.1: report what the privileged applier said the last time it ran. A
+	// missing file means the applier has never run (or is older than B288.1).
+	if st, ok := headscale.ReadPolicyApplyStatus(); ok {
+		stats.PolicyApply = st.Summary()
+	}
 	if !same {
 		// B288: say WHAT differs. The banner used to explain every drift with
 		// the `via`-pin story; live on `aro` the only differences were 16

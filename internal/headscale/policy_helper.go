@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -58,6 +59,100 @@ func PolicyRequestPath() string {
 		dir = "/var/lib/skygate/update"
 	}
 	return filepath.Join(dir, "policy.request.props")
+}
+
+// PolicyApplyStatusPath returns the file the privileged applier records its last
+// OUTCOME in (B288.1), next to the request it consumed.
+//
+// WHY this exists: skygate hands a policy to the applier asynchronously and used
+// to have no way to learn what happened next — the handoff (a rename into the
+// watched directory) succeeded, so the acl_snapshots row said OK, while the
+// document headscale served could stay unchanged for days. Live on `aro`
+// (2026-09-22) the ACL was "applied" every five minutes with status OK for days
+// on end while the live policy stayed the pre-B274 document, and
+// /admin/exit-nodes reported «политика УСТАРЕЛА» with no cause named anywhere.
+func PolicyApplyStatusPath() string {
+	if p := os.Getenv("SKYGATE_POLICY_STATUS_PATH"); p != "" {
+		return p
+	}
+	return filepath.Join(filepath.Dir(PolicyRequestPath()), "policy-apply.status")
+}
+
+// PolicyApplyStatus is the applier's last recorded outcome.
+type PolicyApplyStatus struct {
+	Result  string // "ok" | "unchanged" | "failed"
+	TS      string // when the applier finished (RFC3339, UTC)
+	Path    string // the policy file it wrote
+	Bytes   string // its size after the write
+	Reason  string // human-readable cause (the failure text, or the warnings)
+	ModTime time.Time
+}
+
+// ReadPolicyApplyStatus returns the applier's last outcome. ok=false when the
+// file does not exist (an installation that has never applied a policy, or an
+// applier older than B288.1).
+func ReadPolicyApplyStatus() (PolicyApplyStatus, bool) {
+	p := PolicyApplyStatusPath()
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return PolicyApplyStatus{}, false
+	}
+	st := PolicyApplyStatus{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		k, v, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+		switch strings.TrimSpace(k) {
+		case "RESULT":
+			st.Result = strings.TrimSpace(v)
+		case "TS":
+			st.TS = strings.TrimSpace(v)
+		case "PATH":
+			st.Path = strings.TrimSpace(v)
+		case "BYTES":
+			st.Bytes = strings.TrimSpace(v)
+		case "REASON":
+			st.Reason = strings.TrimSpace(v)
+		}
+	}
+	if fi, err := os.Stat(p); err == nil {
+		st.ModTime = fi.ModTime()
+	}
+	if st.Result == "" && st.TS == "" {
+		return PolicyApplyStatus{}, false
+	}
+	return st, true
+}
+
+// Summary renders one operator-facing line for the admin pages and the journal.
+func (st PolicyApplyStatus) Summary() string {
+	res := st.Result
+	if res == "" {
+		res = "unknown"
+	}
+	when := st.TS
+	if when == "" && !st.ModTime.IsZero() {
+		when = st.ModTime.UTC().Format(time.RFC3339)
+	}
+	line := res
+	if when != "" {
+		line += " @ " + when
+	}
+	if st.Bytes != "" && st.Bytes != "0" {
+		line += ", " + st.Bytes + " bytes"
+	}
+	if st.Path != "" {
+		line += ", " + st.Path
+	}
+	if st.Reason != "" {
+		line += " — " + st.Reason
+	}
+	return line
 }
 
 // PolicyHelperArmed reports whether the privileged helper is installed: the

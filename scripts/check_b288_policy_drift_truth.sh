@@ -44,8 +44,10 @@
 #   C. a stable assignment table still heals a stale live policy (throttled)
 #   D. the admin page names WHICH section differs
 #   E. the legacy generator's malformed tag:public JSON entry is fixed
-#   F. the regression tests exist and pass
-#   G. this script is tracked by git (trap #11)
+#   F. the privileged applier records its verdict and skygate reports it (B288.1),
+#      and the tagOwners union that made convergence impossible is gone
+#   G. the regression tests exist and pass
+#   H. this script is tracked by git (trap #11)
 
 set -uo pipefail
 if [ -f "$(dirname "$0")/../cmd/skygate/main.go" ]; then
@@ -180,34 +182,67 @@ else
   bad "E1: the legacy tag:public entry is missing its closing quote again (invalid JSON on a host without SKYGATE_ACL_VIA_ENABLED)"
 fi
 
-# --- F: the regression tests -------------------------------------------------
+# --- F: the applier's verdict is readable (B288.1) ---------------------------
+# skygate hands the policy over asynchronously, so "the request was accepted" is
+# not "the policy was written". Live on aro the ACL was applied every five
+# minutes with status OK for days while the served file never changed.
+APPLIER=deploy/skygate-apply-policy.sh
+HELPER=internal/headscale/policy_helper.go
+if grep -q 'policy-apply.status' "$APPLIER" && grep -q 'status_write ok' "$APPLIER" && grep -q 'status_write failed' "$APPLIER"; then
+  ok "F1: the applier records its outcome in policy-apply.status (ok / unchanged / failed)"
+else
+  bad "F1: the applier does not record its outcome — a silent failure stays silent"
+fi
+if grep -q 'merged = dict(old\["tagOwners"\])' "$APPLIER"; then
+  bad "F2: the tagOwners UNION is back — a stale declaration can never be removed, so the file can never converge"
+else
+  ok "F2: the tagOwners union is gone (both writers emit complete documents)"
+fi
+if grep -q '^func ReadPolicyApplyStatus(' "$HELPER" && grep -q '^func PolicyApplyStatusPath(' "$HELPER"; then
+  ok "F3: skygate can read the applier's verdict"
+else
+  bad "F3: ReadPolicyApplyStatus / PolicyApplyStatusPath are missing"
+fi
+if grep -q 'headscale.ReadPolicyApplyStatus()' "$SYNC" && grep -q 'the write is NOT landing' "$SYNC"; then
+  ok "F4: the drift check names a failing applier in the journal"
+else
+  bad "F4: the journal still reports a successful apply while the policy never changes"
+fi
+if grep -q 'headscale.ReadPolicyApplyStatus()' "$PAGE" && grep -q '{{if .PolicyApply}}' "$TMPL"; then
+  ok "F5: /admin/exit-nodes renders the applier's verdict next to the drift"
+else
+  bad "F5: the operator cannot see what the applier said"
+fi
+
+# --- G: the regression tests -------------------------------------------------
 for t in internal/headscale/policy_compare_b288_test.go \
+         internal/headscale/policy_helper_b288_test.go \
          internal/db/device_tag_b288_test.go \
          internal/acl/acl_b288_test.go \
          internal/feature/exit_rules/sync_b288_test.go; do
   if [ -f "$t" ]; then
-    ok "F1: $t exists"
+    ok "G1: $t exists"
   else
-    bad "F1: $t is missing"
+    bad "G1: $t is missing"
   fi
 done
 if command -v go >/dev/null 2>&1; then
   OUT="$(go test ./internal/headscale/ ./internal/db/ ./internal/acl/ ./internal/feature/exit_rules/ -run 'B288' -count=1 2>&1)"
   if grep -q '^ok' <<< "$OUT" && ! grep -q 'FAIL' <<< "$OUT"; then
-    ok "F2: the B288 tests pass in all four packages"
+    ok "G2: the B288 tests pass in all four packages"
   else
-    bad "F2: the B288 tests failed:"
+    bad "G2: the B288 tests failed:"
     printf '%s\n' "$OUT" | tail -20 | sed 's/^/       /' >&2
   fi
 else
-  skip "F2: go not on PATH — run the B288 tests on the VM"
+  skip "G2: go not on PATH — run the B288 tests on the VM"
 fi
 
-# --- G: tracked by git (trap #11) -------------------------------------------
+# --- H: tracked by git (trap #11) -------------------------------------------
 if git ls-files --error-unmatch scripts/check_b288_policy_drift_truth.sh >/dev/null 2>&1; then
-  ok "G1: scripts/check_b288_policy_drift_truth.sh is tracked by git"
+  ok "H1: scripts/check_b288_policy_drift_truth.sh is tracked by git"
 else
-  bad "G1: scripts/check_b288_policy_drift_truth.sh is NOT tracked"
+  bad "H1: scripts/check_b288_policy_drift_truth.sh is NOT tracked"
 fi
 
 printf '\n\033[1mB288 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"

@@ -219,6 +219,16 @@ func (s *Service) applyACLIfDriftedMode(actor, detail string, logNoop bool) acl.
 	} else if cmpErr != nil {
 		log.Printf("acl-drift: cannot compare the live policy with the generated one (%v) — applying unconditionally", cmpErr)
 	}
+	// B288.1: if the privileged applier reported a failure the last time it ran,
+	// say so HERE. The handoff (a rename into the watched directory) succeeds
+	// even when the write later fails or is rolled back, so without this line the
+	// journal shows a successful apply every tick while the live policy never
+	// changes — which is exactly how the live host stayed stale for days with a
+	// green acl_snapshots row every five minutes.
+	if st, ok := headscale.ReadPolicyApplyStatus(); ok && st.Result != "ok" && st.Result != "unchanged" {
+		log.Printf("acl-drift: the privileged policy applier last reported %s — the write is NOT landing; check %s and %s",
+			st.Summary(), headscale.PolicyApplyStatusPath(), "the applier's log next to it")
+	}
 
 	res := acl.ApplyGeneratedPolicy(s.dbc(), s.HS, gen, actor, detail, nil)
 	if res.Err != nil {

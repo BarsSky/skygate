@@ -95,6 +95,38 @@ sync pass behind its own five-minute throttle (`periodicDriftCheck`): a converge
 host pays one policy read and writes nothing, a drifted host heals itself without
 the operator pressing anything. The `via`-pin path (B276) is unchanged.
 
+### 5. B288.1 — and nobody checked whether the write happened at all
+
+Investigating the report on the **running** instance turned up the other half. Its
+ACL history showed a fresh apply **every five minutes** — `#329 … #335`,
+`skygate-auto-updater`, status `OK` — while the document headscale served stayed
+the **pre-B274** one (11341 bytes, 42 grants of which 16 are duplicates) for days.
+So skygate was not idle: it asked for the write every tick and recorded success
+every tick, and nothing anywhere said the policy had not changed.
+
+Two defects made that possible:
+
+* **an accepted request is not a written policy.** The handoff to the privileged
+  applier is a `rename(2)` into the directory watched by
+  `skygate-policy.path`; it succeeds, the snapshot is marked `OK`, and whatever
+  the root-owned script decides afterwards was invisible. The applier now records
+  its verdict in `<update_dir>/policy-apply.status` (`ok` / `unchanged` /
+  `failed` + timestamp, bytes, path and the reason), skygate reads it, the journal
+  says `the write is NOT landing` when it reports a failure, and
+  `/admin/exit-nodes` prints the verdict next to the drift:
+  *applier: failed @ … — headscale did not answer on … the previous policy was
+  restored* names the cause outright.
+* **the applier's `tagOwners` union made convergence impossible.** B272.4 taught
+  the applier to union the incoming `tagOwners` with the file on disk, to survive
+  the lost-update race of the per-device `EnsureTagOwner` loop. That race is gone
+  (B272.7 batches it into one read-modify-write, and B288 makes both writers emit
+  a complete document), but the union stayed: a key the incoming document does not
+  mention could never be **removed**, so a stale declaration such as
+  `tag:dev-daniil-homepc` kept the live policy permanently different from the
+  generated one — an apply and a headscale restart every five minutes, forever.
+  The union is removed; the parse validation, the semantics-only no-op check and
+  the rollback on an unhealthy headscale all stay.
+
 ### Also fixed
 
 The **legacy** generator emitted `"tag:public": ["admin@<base>]` — the closing
@@ -105,14 +137,18 @@ unmarshals **both** generators' output.
 
 ### Contracts
 
-* `scripts/check_b288_policy_drift_truth.sh` (24 contracts) — set semantics and
+* `scripts/check_b288_policy_drift_truth.sh` (30 contracts) — set semantics and
   the untouched legacy order, the shared owner derivation, the complete
-  declaration set, the periodic self-heal + throttle, the page's drift detail,
-  the i18n keys in RU+EN, the legacy JSON fix, and the git-tracked contract.
+  declaration set, the periodic self-heal + throttle, the page's drift detail and
+  applier verdict, the i18n keys in RU+EN, the legacy JSON fix, the applier's
+  status file and the removal of the `tagOwners` union, the tests, and the
+  git-tracked contract.
 * `internal/headscale/policy_compare_b288_test.go` — duplicate grants and
   reordered owners are equivalent; an added/removed owner, declaration or grant is
   **not**; the legacy first-match list stays order-sensitive; "cannot parse" stays
   an error.
+* `internal/headscale/policy_helper_b288_test.go` — the applier's verdict file
+  path and reader (missing file, `failed` with its reason, `ok`, garbage).
 * `internal/db/device_tag_b288_test.go` — the tag parser and the owner derivation
   (including the sentinel and the empty-base-domain error) and
   `ListDevTagsFromOwnerMap` on the live shape (every row owned by the synthetic
@@ -127,12 +163,21 @@ unmarshals **both** generators' output.
 
 1. Install v1.5.52 through **/admin/update** and confirm `/healthz` reports
    `"build":"v1.5.52+<sha>"`.
-2. Open `/admin/exit-nodes`. The banner may still be shown **once**, naming what
-   differs; the automatic sync clears it within one tick (≤5 minutes, i.e. by the
-   time the domain auto-updater runs), or immediately via
-   «Пересобрать и применить ACL». After that it stays clear — the generated
-   document is a fixed point now.
-3. No migration, no re-registration, no manual headscale edit is required.
+2. Open `/admin/exit-nodes`. The banner now has two lines under the byte sizes:
+   *what differs* (e.g. `tagOwners: only in the live policy: …`) and the
+   **applier's verdict**.
+   * If the verdict is `failed`, it names the cause (usually `headscale did not
+     answer on <url> … the previous policy was restored`) — that is the reason the
+     policy never changed, and the applier's log next to it
+     (`<update_dir>/policy-apply.log`) has the full text.
+   * If it is `ok` and the banner persists, the file was written while headscale
+     kept serving the old document — the verdict's `PATH`/`TS` say what was
+     written and when.
+3. Once the write lands (the union removal in this release is what lets the file
+   converge), the automatic sync clears the banner within one tick and it stays
+   clear — the generated document is a fixed point now.
+4. No migration and no manual headscale edit is required. If the applier reports a
+   failure, send us its line plus `/var/lib/skygate/update/policy-apply.log`.
 
 ## v1.5.51 — the per-device tag is an ownership record (B287)
 
