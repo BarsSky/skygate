@@ -402,13 +402,20 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			myNodesList = append(myNodesList, myNodeRow{
 				ID: n.ID, Hostname: n.Hostname, IP: ip,
 				Online: n.Online, LastSeen: n.LastSeen,
-				UserName:             n.UserName,
-				IsPublic:             n.IsPublicView(),
-				Source:               "live",
-				Tags:                 n.Tags,
-				AvailableRoutes:      n.AvailableRoutes,
-				ApprovedRoutes:       n.ApprovedRoutes,
-				IsTaggedGhost:        n.UserName == "tagged-devices",
+				UserName:        n.UserName,
+				IsPublic:        n.IsPublicView(),
+				Source:          "live",
+				Tags:            n.Tags,
+				AvailableRoutes: n.AvailableRoutes,
+				ApprovedRoutes:  n.ApprovedRoutes,
+				// B287: a node in headscale's synthetic `tagged-devices` user is
+				// only a "ghost" (needing the B-mod-reregister flow) when NO
+				// skygate per-device tag attributes it to this portal user. The
+				// sentinel owner means either "registered with a key that had no
+				// --user" (a real ghost) OR "wears a tag" (correctly attributed);
+				// the tag is the ownership record, so a tagged device must not be
+				// invited to re-register.
+				IsTaggedGhost:        n.UserName == "tagged-devices" && !devTagApplied,
 				IsSubnetRouter:       hasTag(n.Tags, "tag:subnet-router"),
 				IsExitNode:           n.IsExitNode,
 				MeshSubnet:           subnetCIDR,
@@ -470,13 +477,15 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 			myNodesList = append(myNodesList, myNodeRow{
 				ID: n.ID, Hostname: n.Hostname, IP: ip,
 				Online: n.Online, LastSeen: n.LastSeen,
-				UserName:             n.UserName,
-				IsPublic:             n.IsPublicView(),
-				Source:               "snapshot",
-				Tags:                 n.Tags,
-				AvailableRoutes:      n.AvailableRoutes,
-				ApprovedRoutes:       n.ApprovedRoutes,
-				IsTaggedGhost:        n.UserName == "tagged-devices",
+				UserName:        n.UserName,
+				IsPublic:        n.IsPublicView(),
+				Source:          "snapshot",
+				Tags:            n.Tags,
+				AvailableRoutes: n.AvailableRoutes,
+				ApprovedRoutes:  n.ApprovedRoutes,
+				// B287: same rule as the live loop above — the sentinel owner
+				// alone is not a ghost when a per-device tag names this user.
+				IsTaggedGhost:        n.UserName == "tagged-devices" && !devTagApplied,
 				IsSubnetRouter:       hasTag(n.Tags, "tag:subnet-router"),
 				IsExitNode:           n.IsExitNode,
 				MeshSubnet:           subnetCIDR,

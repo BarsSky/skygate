@@ -30,7 +30,8 @@
 #
 # CONTRACTS
 #   A. the shared helpers exist and are the only tag-minting/parsing site used
-#   B. /my/devices uses them in BOTH ownership paths (live + snapshot)
+#   B. /my/devices uses them in BOTH ownership paths (live + snapshot), and the
+#      synthetic `tagged-devices` owner is not by itself a "ghost" (B3/B4)
 #   C. the regression tests exist and pass
 #   D. this script is tracked by git (trap #11)
 
@@ -86,6 +87,22 @@ if grep -q 'db.ListNodeOwnerNodeIDsByUserTag(s.dbc(), username)' "$MYDEV"; then
   ok "B2: the snapshot path unions the by-tag lookup with the by-username one"
 else
   bad "B2: the snapshot path still misses rows whose username is the synthetic owner"
+fi
+# B3: the synthetic owner is not by itself a "ghost". headscale puts a node in
+# `tagged-devices` both when it was registered with a key that carried no --user
+# (a real ghost, needing the B-mod-reregister flow) and when it merely wears a
+# tag (correctly attributed — the tag IS the ownership record). Inviting the
+# second kind to re-register would delete and re-key a device that is fine.
+GHOST_SITES=$(grep -c 'IsTaggedGhost:.*tagged-devices.*&& !devTagApplied' "$MYDEV" || true)
+if [ "${GHOST_SITES:-0}" -ge 2 ]; then
+  ok "B3: both IsTaggedGhost sites also require that no per-device tag names the user (${GHOST_SITES} sites)"
+else
+  bad "B3: IsTaggedGhost is still true for a correctly tagged device (${GHOST_SITES:-0} guarded site(s), want >= 2)"
+fi
+if grep -q 'IsTaggedGhost:.*n.UserName == "tagged-devices"' "$MYDEV"; then
+  ok "B4: the B-mod-reregister contract still sees the sentinel-owner test on both sites"
+else
+  bad "B4: the sentinel-owner test disappeared — check_b_mod_reregister.sh contract E expects it"
 fi
 
 # --- C: the regression tests -------------------------------------------------

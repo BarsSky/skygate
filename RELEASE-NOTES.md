@@ -71,6 +71,24 @@ the owner even when the `username` column does not. New
 whose tag names the user, and the snapshot branch unions the by-tag lookup with
 the by-username one.
 
+### The synthetic owner is not by itself a "ghost"
+
+Showing the devices is only half of it: the same sentinel owner also drove
+`IsTaggedGhost`, which renders the page-top «N устройств в синтетическом
+пользователе `tagged-devices` — перерегистрируйте их» banner and a per-row
+**Re-register** button. `tagged-devices` means one of two very different things:
+
+* the device registered with a pre-auth key that carried no `--user`, so headscale
+  had nowhere to put it — the **real ghost**, and re-registration is the fix;
+* the device merely **wears a tag** — headscale moves every tagged node to that
+  synthetic user, and the tag names the owner, so nothing is wrong.
+
+`IsTaggedGhost` is now `n.UserName == "tagged-devices" && !devTagApplied` in both
+loops, so a device that the per-device tag attributes to the viewing user is not
+invited to delete and re-key itself. A genuine ghost (sentinel owner, no tag
+naming the user) keeps the banner and the button exactly as before — the
+B-mod-reregister contracts are unchanged and still pass.
+
 ### What is *not* in this release
 
 `/admin/devices` still renders the raw `node_owner_map.username`, so an admin
@@ -81,10 +99,12 @@ on the list (the same helpers make the fix a one-liner).
 
 ### Contracts
 
-* `scripts/check_b287_tag_ownership.sh` (13 contracts) — the four helpers exist
+* `scripts/check_b287_tag_ownership.sh` (15 contracts) — the four helpers exist
   and are the only tag-minting/parsing site used; infra/class tags are excluded;
   the LIKE lookup escapes its metacharacters; `/my/devices` uses both in the live
-  and the snapshot path; the git-tracked contract (trap #11) is asserted with
+  and the snapshot path; both `IsTaggedGhost` sites are guarded by the tag test
+  while the sentinel-owner test the B-mod-reregister contract greps for survives;
+  the git-tracked contract (trap #11) is asserted with
   `git ls-files --error-unmatch`.
 * `internal/db/device_tag_b287_test.go` — seeds the **live shape** (rows whose
   `username` is the synthetic owner while their tag names the real user) and pins
@@ -97,7 +117,9 @@ on the list (the same helpers make the fix a one-liner).
    `git pull` — deployment trap #12) and confirm `/healthz` reports
    `"build":"v1.5.51+<sha>"`.
 2. Open `/my/devices` as the affected user: the tagged devices (`workpc`,
-   `laptop`) must now be listed. `/admin/devices` is unchanged by design.
+   `laptop`) must now be listed, **without** the «перерегистрируйте их» banner and
+   without a per-row Re-register button (the tag attributes them to that user).
+   `/admin/devices` is unchanged by design.
 3. No migration, no ACL re-apply, no restart of headscale is required.
 
 ## v1.5.50 — the ACL must apply, and a page must survive an empty list (B285 + B286)
