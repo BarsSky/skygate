@@ -67,8 +67,17 @@ if grep -q 'execSQLiteDDL' "$MIG"; then
 else
   bad "A3: raw DDL on SQLite — addColumnIfMissing would not run"
 fi
-if grep -q 'device_rules.all_devices exists (V074' "$SCHEMA_TEST" && grep -q 'maxV != 74' "$SCHEMA_TEST"; then
-  ok "A4: the SQLite schema test asserts the column and that the chain reaches V74"
+# B280-era CONTRACT RENEGOTIATION (2026-09-22). The property is "the SQLite
+# schema test asserts the column exists AND that the migration chain actually
+# reaches the version that adds it". The old form pinned the literal strings
+# "(V074" and "maxV != 74", so it broke twice for reasons that had nothing to
+# do with B276.1: the test names the column "(V074, B276.1)" (a comma), and
+# v1.5.44's V075 (oidc_settings) moved the chain head to 75. Both greps are now
+# version-agnostic — the column assertion by name, the chain-length assertion
+# by shape — while the test itself still fails on a chain that stops short of
+# V074 (it compares maxV against the head the driver registers).
+if grep -q 'all_devices exists (V074' "$SCHEMA_TEST" && grep -q 'maxV != ' "$SCHEMA_TEST"; then
+  ok "A4: the SQLite schema test asserts the column and that the chain reaches the head"
 else
   bad "A4: the schema test would not notice a missing V074 on SQLite"
 fi
@@ -139,7 +148,13 @@ if grep -q 'AllDevices bool' internal/db/device_rules.go && grep -q '\.AllDevice
 else
   bad "D2: the marker never reaches the template"
 fi
-if grep -q 'all_devices_badge' "$TMPL"; then
+# B280-era CONTRACT RENEGOTIATION (2026-09-22). The badge IS rendered — three
+# times (the section header's fan-out total, the CDN group header and the row
+# itself) — but under the i18n key `exit_rules.all_devices_fanout_badge`, while
+# this contract pinned the substring `all_devices_badge`. The catalog carries
+# that key too (D4 below checks it), and the grep matched it as a PREFIX of the
+# fan-out key, so the template looked unbadged while the feature was there.
+if grep -qE 'all_devices_(fanout_)?badge' "$TMPL"; then
   ok "D3: the rule row renders the badge"
 else
   bad "D3: no badge in the template"

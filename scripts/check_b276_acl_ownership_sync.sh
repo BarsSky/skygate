@@ -97,7 +97,17 @@ if grep -q 'headscale.PolicyEquivalent(gen, live)' "$SYNC" && grep -q 's.HS.Inva
 else
   bad "A7: the re-apply cannot tell 'already applied' from 'stale' (or reads a cached policy)"
 fi
-if grep -q 'func (s \*Service) applyACLIfDrifted(actor, detail string) bool' "$SYNC"; then
+# B280-era CONTRACT RENEGOTIATION (2026-09-22). v1.5.42 (B-pending-write)
+# changed this signature from `bool` to `acl.ApplyResult` so the callers can
+# read the snapshot Version, mark a real apply failure and skip the audit row
+# when there was no drift at all — see
+# scripts/check_apply_acl_drifted_and_rename.sh contract A1, which pins the new
+# shape. The property THIS contract protects is unchanged and is what the
+# message says: ONE trigger-agnostic drift check, reused by the ownership flip,
+# the rule churn and the pre-existing-mismatch path. Asserting the old return
+# type made the check report a regression for a deliberate refactor (it has
+# been FAILing on main since v1.5.42 while the behaviour was intact).
+if grep -qE 'func \(s \*Service\) applyACLIfDrifted\(actor, detail string\) (bool|acl\.ApplyResult)' "$SYNC"; then
   ok "A8: one trigger-agnostic drift check (ownership flip, rule churn, pre-existing mismatch)"
 else
   bad "A8: the drift logic is duplicated per trigger"

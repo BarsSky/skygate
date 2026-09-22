@@ -200,6 +200,22 @@ three templates, i.e. it pinned the ghost fallback itself; it now pins the
 intent (every template reads `DevTag`) plus a new `J2` that the synthesised
 fallback is gone from the user-facing exit-node row (27 contracts, 0 fail).
 
+**Three more contracts were stale on `main` and are renegotiated here** (they
+were reporting FAIL for deliberate refactors, so the catalog had stopped being
+the "0 FAIL" contract of AGENTS §1.1):
+
+* `check_b276_acl_ownership_sync.sh` A8 pinned `applyACLIfDrifted(...) bool`;
+  v1.5.42 changed it to `acl.ApplyResult` (so callers can read the snapshot
+  Version and tell "applied" from "no drift" — `check_apply_acl_drifted_and_rename.sh`
+  A1 pins the new shape). The property is unchanged: ONE trigger-agnostic drift
+  check.
+* `check_b276_1_all_devices.sh` A4 pinned `maxV != 74`, which v1.5.44's V075
+  (`oidc_settings`) moved to 75; both greps are now version-agnostic (the column
+  by name, the chain-length assertion by shape).
+* `check_b276_1_all_devices.sh` D3 pinned the substring `all_devices_badge`
+  while the template renders `all_devices_fanout_badge` — the badge was there
+  all along, three times.
+
 ### Live remediation for a host already in this state
 
 ```sql
