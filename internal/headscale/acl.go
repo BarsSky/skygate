@@ -74,6 +74,23 @@ func (c *Client) GetACL() (string, error) {
 				c.cacheACLAt = time.Now()
 				return c.cacheACL, nil
 			}
+			// B282 (2026-09-22): the `policy` field can ALSO be a
+			// JSON STRING literal — `{"policy":"{…escaped…}"}` —
+			// which is what the live native `aro` host answers.
+			// Pre-B282 this branch stored the QUOTED text in the
+			// cache, so every consumer that json.Unmarshal'd it
+			// failed: /admin/headscale/acl answered
+			// `unmarshal policy: json: cannot unmarshal string into
+			// Go value of type admin.ACLView`, and the
+			// exit_rules.all_in_headscale_acl system test died the
+			// same way. Unquote here (the same helper the legacy
+			// `data` field below and the B251 tag path use) so the
+			// cache always holds the policy DOCUMENT.
+			if unquoted, uerr := unquotePolicyIfStringified(raw); uerr == nil {
+				c.cacheACL = string(unquoted)
+				c.cacheACLAt = time.Now()
+				return c.cacheACL, nil
+			}
 			s := strings.TrimSpace(string(raw))
 			c.cacheACL = s
 			c.cacheACLAt = time.Now()

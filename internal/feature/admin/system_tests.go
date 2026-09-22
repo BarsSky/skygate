@@ -977,7 +977,7 @@ var TestRegistry = []SystemTestDef{
 			// "no such column: d.id" and the test returned
 			// SystemTestFail on every run.
 			//
-			// 2026-08-13: added `::text` cast. The
+			// 2026-08-13: added the text cast. The
 			// node_owner_map.node_id column is `text` (it
 			// holds headscale's machine key, stored as a
 			// string), but device_rules.device_id is
@@ -990,12 +990,18 @@ var TestRegistry = []SystemTestDef{
 			// numeric machine id) — text on the
 			// node_owner_map side, integer on the
 			// device_rules side.
-			rows, err := s.dbc().QueryContext(ctx, `
-				SELECT r.user_id, COALESCE(d.hostname, ''), r.exit_node_id
-				  FROM device_rules r
-				  LEFT JOIN node_owner_map d ON d.node_id = r.device_id::text
-				 WHERE r.enabled = 1 AND r.exit_node_id != ''
-			`)
+			//
+			// B282 (2026-09-22): the cast was the PG
+			// shorthand `r.device_id::text`, typed inline.
+			// SQLite has no `::` token, so on a SQLite
+			// install (the native `aro` host,
+			// /var/lib/skygate/skygate.db) this very test
+			// failed as `query rules: SQL logic error:
+			// unrecognized token: ":"` — reporting a
+			// dialect error as a rule-mismatch finding.
+			// preferredMismatchRulesQuery asks the dialect
+			// for its own cast form.
+			rows, err := s.dbc().QueryContext(ctx, preferredMismatchRulesQuery(db.ActiveDialect()))
 			if err != nil {
 				return SystemTestFail, "query rules: " + err.Error()
 			}
@@ -1210,7 +1216,16 @@ var TestRegistry = []SystemTestDef{
 					Dst []string `json:"dst"`
 				} `json:"grants"`
 			}
-			if err := json.Unmarshal([]byte(policyJSON), &policy); err != nil {
+			// B282 (2026-09-22): the API may hand the policy back
+			// stringified or as HuJSON (comments/trailing commas) —
+			// headscale.PolicyJSON is the one normaliser, so this test
+			// reports a real ACL mismatch instead of
+			// "cannot unmarshal string into …".
+			policyStd, err := headscale.PolicyJSON(policyJSON)
+			if err != nil {
+				return SystemTestFail, "parse policy: " + err.Error()
+			}
+			if err := json.Unmarshal(policyStd, &policy); err != nil {
 				return SystemTestFail, "parse policy: " + err.Error()
 			}
 			// Build a set of (src, dst) tuples for O(1) lookup.
@@ -1527,3 +1542,27 @@ func (s *Service) ListLastRunWithResults(ctx context.Context) (*LastRunWithResul
 // test additions (e.g. "headscale.exit_node_health").
 var _ = (*headscale.Client)(nil)
 var _ sql.IsolationLevel = 0
+
+// preferredMismatchRulesQuery builds the `exit_rules.preferred_mismatch`
+// rule query for the given dialect.
+//
+// B282 (2026-09-22). The join needs a text cast because
+// node_owner_map.node_id is TEXT (headscale's machine key as a string)
+// while device_rules.device_id is the INTEGER autoincrement:
+//
+//   - PostgreSQL needs it — without the cast the comparison is a hard
+//     error ("operator does not exist: text = integer", SQLSTATE 42883);
+//   - SQLite must NOT see the PG `::` shorthand — it has no such token
+//     and the whole statement fails to parse, which is what the live
+//     native `aro` host reported as
+//     `query rules: SQL logic error: unrecognized token: ":"`.
+//
+// Pure so both forms can be pinned without a database.
+func preferredMismatchRulesQuery(kind db.DialectKind) string {
+	return fmt.Sprintf(`
+				SELECT r.user_id, COALESCE(d.hostname, ''), r.exit_node_id
+				  FROM device_rules r
+				  LEFT JOIN node_owner_map d ON d.node_id = %s
+				 WHERE r.enabled = 1 AND r.exit_node_id != ''`,
+		kind.CastText("r.device_id"))
+}

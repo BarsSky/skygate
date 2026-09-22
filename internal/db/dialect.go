@@ -156,6 +156,39 @@ func (k DialectKind) UnixEpoch(expr string) string {
 	}
 }
 
+// CastText returns the SQL expression that casts <expr> to TEXT.
+//
+// Caller passes any expression — "r.device_id", "detail", a column
+// reference — and the dialect emits its native form:
+//
+//   - PG: "<expr>::text" — the shorthand cast. PostgreSQL REFUSES to
+//     compare a text column with an integer one without it
+//     ("operator does not exist: text = integer", SQLSTATE 42883).
+//   - SQLite: "CAST(<expr> AS TEXT)" — SQLite has no "::" token at all:
+//     the PG shorthand is a hard parse error
+//     ("SQL logic error: unrecognized token: \":\"").
+//
+// WHY THIS EXISTS (B282, 2026-09-22). The join
+// `node_owner_map.node_id = device_rules.device_id` needs the cast on PG
+// (node_id is TEXT — headscale's machine key as a string — while
+// device_id is the INTEGER autoincrement), and the code grew the PG
+// shorthand inline. On a SQLite install (the native `aro` host,
+// /var/lib/skygate/skygate.db) that single `::` broke two operator
+// surfaces at once: the `exit_rules.preferred_mismatch` system test and
+// — in the same class — the /admin/audit page. Both reported only
+// "unrecognized token: \":\"" with no hint that the dialect was the
+// problem. Use this helper instead of typing "::" into a shared query.
+func (k DialectKind) CastText(expr string) string {
+	switch k {
+	case DialectPostgres:
+		return fmt.Sprintf("%s::text", expr)
+	case DialectSQLite:
+		return fmt.Sprintf("CAST(%s AS TEXT)", expr)
+	default:
+		return expr
+	}
+}
+
 // InsertIgnore rewrites the given SQL statement into the
 // dialect-native idempotent-INSERT form:
 //

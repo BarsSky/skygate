@@ -242,6 +242,20 @@ defects sat behind that one row, and three of them made a *green* row worthless:
 33 contracts in `scripts/check_b281_ci_catalog_truth.sh` (the `ci.yml` half is
 scoped to the `verify-pre` job block, so another job's budget cannot satisfy it).
 
+**Also fixed here: the PASS rows that made a green run look broken.** GitHub turns
+any log line shaped `<path>.go: <message>` into a *failure-level* annotation even
+when the step succeeded. The catalog's descriptions are essays and 21 of them
+begin with exactly that shape (`headscale_acl.go: ListACL + …`,
+`system_tests.go: TestRegistry …`), so a green `verify-pre` run reported
+"12 errors" in the Actions UI whose bodies were the tails of PASS rows (measured
+on run `35747083447`: 21 `##[error]  PASS` lines in the log, and the annotated set
+is exactly the rows whose first `path.ext: ` token is a `.go: ` — no un-annotated
+PASS row has one). A PASS row now prints a short label (a leading `path.ext: ` is
+stripped, the rest truncated to 110 chars) while FAIL and TIMEOUT keep the full
+description plus the check's output, which is where the narrative is actually
+read. `SKYGATE_CATALOG_VERBOSE=1` restores the old rows locally. Contracts
+B281 `O1`–`O5`.
+
 ### B280 follow-up — the sanctioned tag path could not run at all
 
 `tag-release.yml` had never been executed. Its first live run (cutting THIS

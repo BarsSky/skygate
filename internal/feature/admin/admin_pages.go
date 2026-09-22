@@ -106,102 +106,25 @@ func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 	// isn't a standard duration so we substitute 168h).
 	since := parseSinceFilter(sinceFilter)
 
-	// Build the unified query. The two SELECTs are UNIONed
-	// via UNION ALL + a wrapping SELECT that sorts + limits.
-	// The branch SELECTs are parameterised independently
-	// (audit_log: ? placeholders; cluster_audit: $N
-	// placeholders) — we use $N throughout for consistency
-	// since pgx v5 supports them.
+	// Build the unified query. The two SELECTs are UNIONed via UNION
+	// ALL + a wrapping SELECT that sorts + limits.
 	//
-	// Each branch casts/normalises its columns to the same
-	// shape: source (text), ts (timestamptz), actor (text),
-	// action (text), target (text), detail (text), result
-	// (text), error_message (text).
-	//
-	// audit_log's created_at is INTEGER (unix seconds);
-	// cluster_audit's created_at is TIMESTAMPTZ. We cast
-	// the integer to timestamptz so the UNION's ts column
-	// has a single type.
-	var (
-		condsLog     []string // WHERE for audit_log
-		condsCluster []string // WHERE for cluster_audit
-		args         []any
-	)
-	if actionFilter != "" {
-		condsLog = append(condsLog, fmt.Sprintf("action = $%d", len(args)+1))
-		args = append(args, actionFilter)
-		condsCluster = append(condsCluster, fmt.Sprintf("action = $%d", len(args)+1))
-		args = append(args, actionFilter)
-	}
-	if userFilter != "" {
-		// audit_log: match on username. cluster_audit: match on
-		// actor. Same parameter, used in both branches.
-		condsLog = append(condsLog, fmt.Sprintf("username LIKE $%d", len(args)+1))
-		args = append(args, "%"+userFilter+"%")
-		condsCluster = append(condsCluster, fmt.Sprintf("actor LIKE $%d", len(args)+1))
-		args = append(args, "%"+userFilter+"%")
-	}
-	if since > 0 {
-		cutoff := time.Now().UTC().Add(-since)
-		condsLog = append(condsLog, fmt.Sprintf("to_timestamp(created_at) >= $%d", len(args)+1))
-		args = append(args, cutoff)
-		condsCluster = append(condsCluster, fmt.Sprintf("created_at >= $%d", len(args)+1))
-		args = append(args, cutoff)
-	}
-	whereLog := ""
-	if len(condsLog) > 0 {
-		whereLog = "WHERE " + strings.Join(condsLog, " AND ")
-	}
-	whereCluster := ""
-	if len(condsCluster) > 0 {
-		whereCluster = "WHERE " + strings.Join(condsCluster, " AND ")
-	}
-
-	// Decide which branches to UNION. If sourceFilter is
-	// set to one specific value, only run that branch.
-	branches := []string{}
-	if sourceFilter == "" || sourceFilter == AuditSourceAuditLog {
-		branches = append(branches, fmt.Sprintf(`
-			SELECT 'audit_log'::text AS source,
-			       to_timestamp(created_at) AS ts,
-			       username AS actor,
-			       action,
-			       target_type || ':' || target_id AS target,
-			       target_type,
-			       target_id,
-			       detail,
-			       ''::text AS result,
-			       ''::text AS error_message
-			  FROM audit_log
-			  %s`, whereLog))
-	}
-	if sourceFilter == "" || sourceFilter == AuditSourceCluster {
-		branches = append(branches, fmt.Sprintf(`
-			SELECT 'cluster_audit'::text AS source,
-			       created_at AS ts,
-			       actor,
-			       action,
-			       'cluster_node:' || target_node_id AS target,
-			       'cluster_node'::text AS target_type,
-			       target_node_id AS target_id,
-			       detail::text AS detail,
-			       result,
-			       error_message
-			  FROM cluster_audit
-			  %s`, whereCluster))
-	}
-	if len(branches) == 0 {
+	// B282 (2026-09-22): the statement is assembled by
+	// buildUnifiedAuditQuery, which asks the dialect for its own
+	// timestamp expression and literal casts. The pre-B282 code typed
+	// the PostgreSQL forms inline ('audit_log'::text,
+	// to_timestamp(created_at), detail::text, ''::text) and this page
+	// answered 500 with `SQL logic error: unrecognized token: ":"` on
+	// every SQLite install — the native `aro` host, whose only audit
+	// surface is this page, could not read its own audit log.
+	query, args := buildUnifiedAuditQuery(db.ActiveDialect(), actionFilter, userFilter, sourceFilter, since, limit)
+	if query == "" {
+		// normalizeSourceFilter only ever returns the three known
+		// values, so this is a belt-and-braces guard against a future
+		// filter being added in one place only.
 		http.Error(w, "invalid source filter", http.StatusBadRequest)
 		return
 	}
-	query := fmt.Sprintf(`
-		SELECT source, ts, actor, action, target, target_type, target_id, detail, result, error_message
-		  FROM (
-		    %s
-		  ) AS u
-		 ORDER BY ts DESC
-		 LIMIT $%d`, strings.Join(branches, " UNION ALL "), len(args)+1)
-	args = append(args, limit)
 
 	rows, err := s.dbc().Query(query, args...)
 	if err != nil {
@@ -212,14 +135,21 @@ func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 	var entries []AuditEntry
 	for rows.Next() {
 		var e AuditEntry
-		var ts time.Time
-		if err := rows.Scan(&e.Source, &ts, &e.Actor, &e.Action,
+		// The ts column is TIMESTAMPTZ on PG but the raw
+		// audit_log/cluster_audit column on SQLite, where it can be an
+		// INTEGER (Unix seconds) or the TEXT CURRENT_TIMESTAMP form.
+		// Decode whatever the driver hands back instead of assuming
+		// time.Time (B282).
+		var tsRaw any
+		if err := rows.Scan(&e.Source, &tsRaw, &e.Actor, &e.Action,
 			&e.Target, &e.TargetType, &e.TargetID,
 			&e.Detail, &e.Result, &e.ErrorMessage); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		e.Time = ts.UTC().Format("2006-01-02 15:04:05")
+		if ts, ok := db.ParseDBTime(tsRaw); ok {
+			e.Time = ts.UTC().Format("2006-01-02 15:04:05")
+		}
 		entries = append(entries, e)
 	}
 	if err := rows.Err(); err != nil {
@@ -256,6 +186,147 @@ func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 // import. This line keeps the compiler happy without
 // adding a new import we don't otherwise need.
 var _ = sql.ErrNoRows
+
+// buildUnifiedAuditQuery assembles the /admin/audit SELECT for the given
+// dialect and returns it with its bind arguments, in placeholder order.
+//
+// B282 (2026-09-22). Two backends, two shapes, and the pre-B282 code
+// hardcoded the PostgreSQL one:
+//
+//	                     PostgreSQL                    SQLite
+//	ts of audit_log      to_timestamp(created_at)      created_at
+//	                     (INTEGER unix seconds)        (INTEGER unix seconds)
+//	ts of cluster_audit  created_at (TIMESTAMPTZ)      created_at (TEXT/INTEGER)
+//	literal casts        'audit_log'::text, ''::text   plain literals
+//	cluster_audit.detail detail::text (JSONB)          detail (TEXT)
+//
+// On a SQLite install every one of those `::` forms is a parse error
+// (`SQL logic error: unrecognized token: ":"`), so /admin/audit answered
+// 500 instead of showing the operator's own audit log — the page that
+// records `my_exit_rules_apply_preferred preferred=node` and every other
+// silent-rewrite incident.
+//
+// Placeholders stay `$N` on BOTH backends: modernc.org/sqlite binds
+// `$NNN` by argument ordinal while pgx rejects `?` outright (see
+// internal/db/active_dialect.go — Placeholders deliberately does not
+// branch).
+//
+// Pure (no DB, no clock beyond `since`) so both forms can be pinned by a
+// unit test without a live server.
+func buildUnifiedAuditQuery(kind db.DialectKind, actionFilter, userFilter, sourceFilter string, since time.Duration, limit int) (string, []any) {
+	var (
+		condsLog     []string // WHERE for audit_log
+		condsCluster []string // WHERE for cluster_audit
+		args         []any
+	)
+	nextPh := func() string { return fmt.Sprintf("$%d", len(args)+1) }
+
+	if actionFilter != "" {
+		condsLog = append(condsLog, fmt.Sprintf("action = %s", nextPh()))
+		args = append(args, actionFilter)
+		condsCluster = append(condsCluster, fmt.Sprintf("action = %s", nextPh()))
+		args = append(args, actionFilter)
+	}
+	if userFilter != "" {
+		// audit_log: match on username. cluster_audit: match on actor.
+		// Same parameter, used in both branches.
+		condsLog = append(condsLog, fmt.Sprintf("username LIKE %s", nextPh()))
+		args = append(args, "%"+userFilter+"%")
+		condsCluster = append(condsCluster, fmt.Sprintf("actor LIKE %s", nextPh()))
+		args = append(args, "%"+userFilter+"%")
+	}
+	if since > 0 {
+		cutoff := time.Now().UTC().Add(-since)
+		switch kind {
+		case db.DialectSQLite:
+			// audit_log.created_at is INTEGER unix seconds, so compare
+			// against unix seconds — binding a time.Time would reach
+			// SQLite as a TEXT timestamp and a TEXT/INTEGER comparison
+			// in SQLite is always false.
+			condsLog = append(condsLog, fmt.Sprintf("created_at >= %s", nextPh()))
+			args = append(args, cutoff.Unix())
+			condsCluster = append(condsCluster, fmt.Sprintf("created_at >= %s", nextPh()))
+			args = append(args, cutoff.Unix())
+		default:
+			condsLog = append(condsLog, fmt.Sprintf("to_timestamp(created_at) >= %s", nextPh()))
+			args = append(args, cutoff)
+			condsCluster = append(condsCluster, fmt.Sprintf("created_at >= %s", nextPh()))
+			args = append(args, cutoff)
+		}
+	}
+	whereLog := ""
+	if len(condsLog) > 0 {
+		whereLog = "WHERE " + strings.Join(condsLog, " AND ")
+	}
+	whereCluster := ""
+	if len(condsCluster) > 0 {
+		whereCluster = "WHERE " + strings.Join(condsCluster, " AND ")
+	}
+
+	// Literal casts: PG needs the explicit ::text (its UNION type
+	// resolution for bare literals differs and the pre-B282 code pinned
+	// the cast), SQLite must not see "::" at all.
+	textLit := func(lit string) string {
+		if kind == db.DialectPostgres {
+			return lit + "::text"
+		}
+		return lit
+	}
+	logTS := "created_at"
+	clusterDetail := "detail"
+	if kind == db.DialectPostgres {
+		logTS = "to_timestamp(created_at)"
+		clusterDetail = "detail::text"
+	}
+
+	// Decide which branches to UNION. If sourceFilter is set to one
+	// specific value, only run that branch.
+	branches := []string{}
+	if sourceFilter == "" || sourceFilter == AuditSourceAuditLog {
+		branches = append(branches, fmt.Sprintf(`
+			SELECT %s AS source,
+			       %s AS ts,
+			       username AS actor,
+			       action,
+			       target_type || ':' || target_id AS target,
+			       target_type,
+			       target_id,
+			       detail,
+			       %s AS result,
+			       %s AS error_message
+			  FROM audit_log
+			  %s`, textLit("'audit_log'"), logTS, textLit("''"), textLit("''"), whereLog))
+	}
+	if sourceFilter == "" || sourceFilter == AuditSourceCluster {
+		branches = append(branches, fmt.Sprintf(`
+			SELECT %s AS source,
+			       created_at AS ts,
+			       actor,
+			       action,
+			       'cluster_node:' || target_node_id AS target,
+			       %s AS target_type,
+			       target_node_id AS target_id,
+			       %s AS detail,
+			       result,
+			       error_message
+			  FROM cluster_audit
+			  %s`, textLit("'cluster_audit'"), textLit("'cluster_node'"), clusterDetail, whereCluster))
+	}
+	if len(branches) == 0 {
+		// The caller rejects this before we get here, but keep the
+		// builder total: an empty UNION ALL would be a syntax error.
+		return "", nil
+	}
+	query := fmt.Sprintf(`
+		SELECT source, ts, actor, action, target, target_type, target_id, detail, result, error_message
+		  FROM (
+		    %s
+		  ) AS u
+		 ORDER BY ts DESC
+		 LIMIT $%d`, strings.Join(branches, " UNION ALL "), len(args)+1)
+	args = append(args, limit)
+	return query, args
+}
 
 // parseLimit converts a query-string "limit" value to
 // a positive integer clamped to [1, 5000]. Invalid /

@@ -73,6 +73,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/headscale"
 	"skygate/internal/i18n"
 )
 
@@ -137,7 +138,21 @@ func (s *Service) ListACL(ctx context.Context) (*ACLView, error) {
 	}
 
 	view := &ACLView{PolicyRaw: rawPolicy}
-	if err := json.Unmarshal([]byte(rawPolicy), view); err != nil {
+	// B282 (2026-09-22): the live policy arrives as an OBJECT, as a
+	// STRINGIFIED object or as HuJSON with comments/trailing commas
+	// depending on the headscale version and on how the operator's
+	// policy.hujson is written. json.Unmarshal only accepts the first
+	// shape — on the native `aro` host this page answered
+	//   `500 list acl: unmarshal policy: json: cannot unmarshal string
+	//    into Go value of type admin.ACLView`
+	// so the operator could not see the policy the pin checker refers
+	// to. headscale.PolicyJSON unquotes + standardises; the page renders
+	// PolicyRaw (the operator's own bytes) as before.
+	policyJSON, err := headscale.PolicyJSON(rawPolicy)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal policy: %w", err)
+	}
+	if err := json.Unmarshal(policyJSON, view); err != nil {
 		return nil, fmt.Errorf("unmarshal policy: %w", err)
 	}
 

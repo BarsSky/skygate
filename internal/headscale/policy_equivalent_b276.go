@@ -31,8 +31,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-
-	"github.com/tailscale/hujson"
 )
 
 // PolicyEquivalent reports whether two policy documents describe the same policy.
@@ -56,14 +54,14 @@ func PolicyEquivalent(a, b string) (bool, error) {
 
 // decodePolicyValue normalises one policy document (stringified or HuJSON, with
 // or without comments/trailing commas) into a generic decoded value.
+//
+// B282: the normalisation itself lives in PolicyJSON so the tag path, the
+// /admin/headscale/acl page, the ACL system test and this comparison cannot
+// drift apart.
 func decodePolicyValue(policy string) (interface{}, error) {
-	raw, err := unquotePolicyIfStringified([]byte(policy))
+	raw, err := PolicyJSON(policy)
 	if err != nil {
-		return nil, fmt.Errorf("unquote stringified policy (got %d bytes): %w", len(policy), err)
-	}
-	raw, err = hujson.Standardize(raw)
-	if err != nil {
-		return nil, fmt.Errorf("standardize HuJSON (got %d bytes): %w", len(policy), err)
+		return nil, err
 	}
 	var v interface{}
 	if err := json.Unmarshal(raw, &v); err != nil {

@@ -97,7 +97,34 @@ run_check() {
   local desc="$1"; shift
   local cmd="$1"; shift
   local out rc
-  # B281 (2026-09-22): every check gets a wall-clock budget. Live evidence: the
+  # B281 (2026-09-22): a PASS row is SHORT on purpose.
+  #
+  # WHY. GitHub Actions turns any log line that looks like a Go compiler
+  # diagnostic — `something.go: <message>` — into a FAILURE-level annotation even
+  # when the step and the job succeeded. The catalog's descriptions are essays and
+  # 21 of them begin with exactly that shape (`headscale_acl.go: ListACL + …`,
+  # `system_tests.go: TestRegistry …`), so a green `verify-pre` run rendered the
+  # Actions UI as "12 errors" with annotation bodies that were the tails of PASS
+  # rows (measured on run 35747083447: 21 `##[error]  PASS` lines in the log, and
+  # the annotated set is exactly the rows whose first `path.ext: ` token is a
+  # `.go: ` — no un-annotated PASS row has one).
+  #
+  # The full description is documentation for a FAILURE, not for a pass, so it is
+  # printed on FAIL/TIMEOUT (with the check's own output) and replaced here by a
+  # short label: a leading `path.ext: ` token is stripped, then the remainder is
+  # truncated. `--verbose` (SKYGATE_CATALOG_VERBOSE=1) restores the old rows.
+  local label="$desc"
+  if [ "${SKYGATE_CATALOG_VERBOSE:-0}" != "1" ]; then
+    # `headscale_acl.go: ListACL + …` → `ListACL + …`; `i18n: ru and en …` is
+    # left alone (the token before the colon is not a file name).
+    if [[ "$label" =~ ^[A-Za-z0-9_./-]+\.[A-Za-z0-9]+:[[:space:]](.*)$ ]]; then
+      label="${BASH_REMATCH[1]}"
+    fi
+    if [ "${#label}" -gt 110 ]; then
+      label="${label:0:109}…"
+    fi
+  fi
+  # every check gets a wall-clock budget. Live evidence: the
   # CI catalog job was cancelled by its own 30-minute timeout with the last
   # printed check being B260 — 22 minutes of silence, then the runner killed the
   # step, and nothing in the log named the check that was stuck. With a budget a
@@ -126,7 +153,7 @@ run_check() {
     return
   fi
   if [ "$rc" -eq 0 ]; then
-    echo "  ${GRN}PASS${NC}  $name  $desc"
+    echo "  ${GRN}PASS${NC}  $name  $label"
     RESULTS_PASS=$((RESULTS_PASS + 1))
   else
     echo "  ${RED}FAIL${NC}  $name  $desc"
@@ -4840,3 +4867,27 @@ run_check "B280" "a tag and a release are CI-gated: scripts/ci_gate.sh is the si
 # Contract in scripts/check_b281_ci_catalog_truth.sh.
 run_check "B281" "the CI catalog job terminates and green means 0 FAIL: each check runs under a wall-clock budget in scripts/verify_pre_deploy.sh (named TIMEOUT row instead of a silently cancelled job), ci.yml gives the job 60 minutes, installs staticcheck and enforces that no FAIL/TIMEOUT row appears in the (ANSI-stripped) catalog output — which is what makes B280's ci_gate.sh mean something; 36 check scripts no longer probe a hardcoded /usr/local/go/bin/go before command -v go, and 8 live-state contracts SKIP instead of FAIL when docker/headscale/tailscale are absent. Contracts in scripts/check_b281_ci_catalog_truth.sh." \
   'test -f scripts/check_b281_ci_catalog_truth.sh && bash scripts/check_b281_ci_catalog_truth.sh'
+
+# B282 (2026-09-22) — operator pages must read the database the operator
+# actually runs. Live on the native host `aro` (SQLite at
+# /var/lib/skygate/skygate.db) three surfaces were dead because the SQL was
+# written for PostgreSQL and never branched: /admin/audit answered 500
+# "SQL logic error: unrecognized token: \":\"" (the UNION over audit_log +
+# cluster_audit used 'audit_log'::text, to_timestamp(created_at), ''::text and
+# detail::text inline), the exit_rules.preferred_mismatch system test failed
+# with the same message (the join node_owner_map.node_id = r.device_id::text
+# needs the cast on PG — text = integer is SQLSTATE 42883 without it — and must
+# not use it on SQLite, where "::" is not a token at all), and
+# /admin/headscale/acl answered "unmarshal policy: json: cannot unmarshal string
+# into Go value of type admin.ACLView" because headscale returns the policy as a
+# STRINGIFIED object ({"policy":"{…}"}) while GetACL cached the quoted literal.
+# Now: db.DialectKind.CastText is the one dialect-native text cast,
+# db.ParseDBTime decodes whatever the driver hands back for a timestamp
+# (time.Time on PG, INTEGER unix seconds or the TEXT CURRENT_TIMESTAMP form on
+# SQLite), /admin/audit builds its statement through buildUnifiedAuditQuery on
+# the live dialect, the system test asks for preferredMismatchRulesQuery, and
+# headscale.PolicyJSON is the single normaliser (unquote + hujson.Standardize)
+# used by GetACL, the ACL page, the ACL system test and PolicyEquivalent.
+# 27 contracts in scripts/check_b282_admin_reads_dialect.sh.
+run_check "B282" "operator pages read the database that is actually running: db.DialectKind.CastText is the one dialect-native text cast (PG ::text, SQLite CAST(x AS TEXT)) because SQLite has no :: token while PG refuses text = integer without it; db.ParseDBTime tolerantly decodes a timestamp column (time.Time on PG, INTEGER unix seconds or the TEXT CURRENT_TIMESTAMP form on SQLite) so a reader no longer scans straight into time.Time; /admin/audit goes through buildUnifiedAuditQuery(db.ActiveDialect()) instead of inline 'audit_log'::text + to_timestamp(created_at) + detail::text, which on SQLite answered 500 SQL logic error: unrecognized token: ':'; the exit_rules.preferred_mismatch system test builds its join through preferredMismatchRulesQuery instead of the hardcoded r.device_id::text that failed as query rules: SQL logic error; and headscale.PolicyJSON is the single policy normaliser (unquote a stringified policy field, hujson.Standardize comments and trailing commas) used by GetACL, /admin/headscale/acl, the exit_rules.all_in_headscale_acl system test and PolicyEquivalent — pre-B282 the stringified reply made the ACL page answer 500 cannot unmarshal string into Go value of type admin.ACLView. Live case: the native aro host with SQLite at /var/lib/skygate/skygate.db. 27 contracts in scripts/check_b282_admin_reads_dialect.sh." \
+  'test -f scripts/check_b282_admin_reads_dialect.sh && bash scripts/check_b282_admin_reads_dialect.sh'

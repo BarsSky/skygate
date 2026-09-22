@@ -329,6 +329,28 @@ else
   bad "[N] $PRUNE not found"
 fi
 
+# --- O. a PASS row must not look like a compiler diagnostic ------------------
+# GitHub turns any log line shaped `<path>.go: <message>` into a FAILURE-level
+# annotation even for a successful step. Measured on a green run (35747083447):
+# the log carried 21 `##[error]  PASS` lines and they were EXACTLY the PASS rows
+# whose first `path.ext: ` token is a `.go: ` (headscale_acl.go:, system_tests.go:,
+# …), so the Actions UI reported "12 errors" for a green catalog. The full
+# description is documentation for a failure, not for a pass.
+if [ -f "$VPD" ]; then
+  # O1. PASS prints the short label, FAIL/TIMEOUT the full description
+  check_ge "O1-pass-uses-label" 1 "$(count "$VPD" 'PASS[$][{]NC[}]  \$name  \$label')"
+  check_ge "O2-fail-keeps-desc" 1 "$(count "$VPD" 'FAIL[$][{]NC[}]  \$name  \$desc')"
+  check_ge "O2b-timeout-keeps-desc" 1 "$(count "$VPD" 'TIMEOUT[$][{]NC[}]  \$name  \$desc')"
+  # O3. the leading `path.ext: ` token is stripped
+  check_ge "O3-strip-regex" 1 "$(count "$VPD" 'A-Za-z0-9_\./-\]\+\\\.\[A-Za-z0-9\]\+:')"
+  # O4. and the rest is truncated (a long row is what the annotation parser chokes on)
+  check_ge "O4-truncate" 1 "$(count "$VPD" 'label="\$\{label:0:109\}')"
+  # O5. escape hatch for someone who needs the essays back locally
+  check_ge "O5-verbose-switch" 1 "$(count "$VPD" 'SKYGATE_CATALOG_VERBOSE')"
+else
+  bad "[O] $VPD not found"
+fi
+
 echo
 echo "=== B281 summary: $PASS PASS, $FAIL FAIL ==="
 if [ "$FAIL" -gt 0 ]; then
