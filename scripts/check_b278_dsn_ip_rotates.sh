@@ -67,12 +67,23 @@ fi
 
 # --- B: auto-detect path assigns PG_HOST to the CONTAINER NAME, not an IP ---
 # Use perl with a depth-counting state machine to extract the auto-detect block
-# (the `if [ -z "$FORCE_PG_HOST" ]; then ... fi ... else ... fi` span). We
-# match only the OUTER if/then block: a nested if/fi inside the block keeps
-# us "in", a top-level fi at depth 1 closes it.
+# (the `if [ -z "$FORCE_PG_HOST" ]; then ... fi ... else ... fi` span). The
+# outer if opens depth=1; a nested if/fi inside does NOT close us (we keep
+# tracking until depth returns to 0). This avoids the trap where perl's
+# non-greedy `.*?` would latch onto the first nested fi and stop early.
 AUTODETECT_BLOCK=$(perl -0777 -ne '
-  if (/^\s*if \[ -z "\$FORCE_PG_HOST" \]; then\n(.*?^\s*fi\b)/sm) {
-    print $1;
+  my $in = 0; my $depth = 0;
+  for my $line (split /\n/, $_) {
+    if (!$in && $line =~ /^\s*if \[ -z "\$FORCE_PG_HOST" \]; then\b/) {
+      $in = 1; $depth = 1; next;
+    }
+    if ($in) {
+      my $opens  = () = $line =~ /\bif\b/g;
+      my $closes = () = $line =~ /\bfi\b/g;
+      $depth += $opens - $closes;
+      print $line, "\n";
+      last if $depth <= 0;
+    }
   }
 ' scripts/launch_skigate.sh)
 if printf '%s\n' "$AUTODETECT_BLOCK" | grep -qF 'PG_HOST="$PG_CONTAINER_NAME"'; then
