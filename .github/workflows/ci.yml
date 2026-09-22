@@ -91,9 +91,22 @@ jobs:
         # (B95) and B237.16 fails the same way, so two contracts could never be
         # green on the runner. setup-go does not put $(go env GOPATH)/bin on
         # PATH by itself.
+        #
+        # The version is PINNED, and that is the whole point of this comment.
+        # `@latest` resolved to honnef.co/go/tools v0.8.1, which declares
+        # `go >= 1.26.0`, while this job runs Go 1.25.14 with GOTOOLCHAIN=local
+        # (setup-go sets it deliberately) — so the install died with
+        #   go: honnef.co/go/tools@v0.8.1 requires go >= 1.26.0
+        #       (running go 1.25.14; GOTOOLCHAIN=local)
+        # and took the whole catalog job down BEFORE a single check ran (the job
+        # failed 16 seconds after it started). v0.7.0 is the newest release whose
+        # go directive is <= the Go this job installs (it declares go 1.25.0);
+        # bump it together with the `go-version` above, never to `@latest`.
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
+          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          # Fail loudly here rather than 40 minutes later inside the catalog.
+          "$(go env GOPATH)/bin/staticcheck" -version
 
       - name: Run verify_pre_deploy.sh (and refuse any FAIL)
         # The script auto-skips B8 on hosts without /home/admin

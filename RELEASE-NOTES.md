@@ -216,7 +216,14 @@ defects sat behind that one row, and three of them made a *green* row worthless:
      the one remaining FAIL — and now also captures its `go test` output before
      matching it, per `AGENTS.md` trap #9).
    * `B95` and `B237.16` need `staticcheck`, which the runner never had; `ci.yml`
-     installs it and appends `$(go env GOPATH)/bin` to `$GITHUB_PATH`.
+     installs it and appends `$(go env GOPATH)/bin` to `$GITHUB_PATH`. The
+     version is **pinned** (`@v0.7.0`) because `@latest` resolved to
+     `honnef.co/go/tools v0.8.1`, which declares `go >= 1.26.0` while the job
+     runs Go 1.25.14 with `GOTOOLCHAIN=local` (setup-go sets it) — the install
+     failed with `requires go >= 1.26.0 (running go 1.25.14; GOTOOLCHAIN=local)`
+     and killed the job 16 seconds in, before a single contract ran. The step now
+     also runs `staticcheck -version` so it fails loudly there instead of 40
+     minutes later inside the catalog.
    * 8 checks drove live state (docker daemon, headscale/tailscale CLI, login
      server) and FAILed when it was absent instead of SKIPping — `AGENTS.md` §1.1.
      `bad()` in `check_b_tag_owners.sh` even exited 1, aborting the catalog entry

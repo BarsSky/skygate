@@ -118,7 +118,13 @@ fi
 
 # --- B. staticcheck present on the runner ------------------------------------
 if [ -n "$VJOB" ]; then
-  check_ge "B-install" 1 "$(job_count 'go install honnef\.co/go/tools/cmd/staticcheck@latest')"
+  check_ge "B-install" 1 "$(job_count 'go install honnef\.co/go/tools/cmd/staticcheck@v0\.7\.0')"
+  # B2. the pin is load-bearing: `@latest` resolved to a release requiring
+  #     Go >= 1.26 while this job runs 1.25.14 with GOTOOLCHAIN=local, and the
+  #     install step killed the job before a single check ran (16 s).
+  check_eq "B2-no-latest" "0" "$(job_count 'staticcheck@latest')"
+  # B3. prove the binary works here instead of failing inside the catalog
+  check_ge "B3-version-probe" 1 "$(job_count 'staticcheck" -version')"
 else
   bad "[B] verify-pre job block not found in $CI"
 fi
