@@ -231,8 +231,12 @@ echo "=== K. regression guard: no inline hostname→user lookups outside findUse
 # catches `u.Name == hostname` and `u.Name == <varname>` where
 # the variable obviously holds a tailnet hostname (skygate-host
 # / TailscaleHostname() / SKYGATE_TS_HOSTNAME).
+# B281 (2026-09-22): this is a FILE list (`find` output). A
+# `"$(command -v go 2>/dev/null)"` entry had been prepended by a blanket go-probe
+# rewrite, so the loop also grepped the go BINARY — a binary match prints
+# "Binary file matches" and exits 0, i.e. a false `bad` waiting to happen.
 HIT=0
-for f in "$(command -v go 2>/dev/null)" $(find "$REPO_ROOT/internal/feature/admin" "$REPO_ROOT/internal/feature/my" -name '*.go' -not -name '*_test.go'); do
+for f in $(find "$REPO_ROOT/internal/feature/admin" "$REPO_ROOT/internal/feature/my" -name '*.go' -not -name '*_test.go'); do
   rel="${f#$REPO_ROOT/}"
   # 1. u.Name == hostname (or vice versa). Skip comment lines
   #    (start with //) — the findUserForHostname doc-comment +

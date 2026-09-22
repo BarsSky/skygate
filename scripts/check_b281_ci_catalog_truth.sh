@@ -189,6 +189,27 @@ for f in "$REPO"/scripts/check_*.sh; do
 done
 check_ge "G-scanned" 1 "$G_SCANNED"
 check_eq "G-order" "" "$G_BAD"
+# G2. in-line order: on a single-line candidate list, `command -v go` must come
+#     BEFORE the hardcoded path. check_b182/183/184/186 had
+#     `for cand in /usr/local/go/bin/go … "$(command -v go)"`, i.e. the correct
+#     probe existed but was consulted LAST — the file-level G check above cannot
+#     see that (both are on one line), and on the runner it resolved to the
+#     image's Go 1.24.13.
+G_INLINE_BAD=""
+for f in "$REPO"/scripts/check_*.sh; do
+  [ -f "$f" ] || continue
+  while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    ln="${hit%%:*}"
+    text="${hit#*:}"
+    pre="${text%%/usr/local/go/bin/go*}"
+    case "$pre" in
+      *'command -v go'*) ;;
+      *) G_INLINE_BAD="$G_INLINE_BAD $(basename "$f"):$ln" ;;
+    esac
+  done < <(grep -nE '^[[:space:]]*for[[:space:]].*in[[:space:]].*/usr/local/go/bin/go' "$f" 2>/dev/null)
+done
+check_eq "G2-inline-order" "" "$G_INLINE_BAD"
 
 # --- H. check_b182.sh: no unbalanced grep -E group ---------------------------
 B182="$REPO/scripts/check_b182.sh"

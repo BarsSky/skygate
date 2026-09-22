@@ -58,8 +58,12 @@ fi
 pass "go on PATH ($("$GO_BIN" version 2>&1))"
 
 # --- 1. files exist ---
+# B281 (2026-09-22): this list must contain FILES only. A
+# `"$(command -v go 2>/dev/null)"` entry had been prepended here by a blanket
+# go-probe rewrite, and `[ -f "$REPO_ROOT/<abs path>/bin/go" ]` is false on
+# every host — a permanent FAIL that had nothing to do with /admin/modules.
 section "File presence"
-for f in "$(command -v go 2>/dev/null)" \
+for f in \
     "internal/feature/admin/modules.go" \
     "internal/feature/admin/modules_test.go" \
     "internal/i18n/catalog_modules.go" \

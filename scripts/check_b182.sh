@@ -149,9 +149,13 @@ else
 fi
 
 # L. go test passes (skipped if go not in PATH — VM-only)
+# B281 (2026-09-22): `command -v go` MUST be the first candidate. On the CI
+# runner /usr/local/go/bin/go is the image's Go 1.24.13 with GOTOOLCHAIN=local
+# while go.mod requires >= 1.25, so probing it first made this contract fail on a
+# toolchain error that says nothing about the code.
 GO_BIN=""
-for cand in /usr/local/go/bin/go /usr/bin/go /opt/go/bin/go "$(command -v go 2>/dev/null)"; do
-  if [ -x "$cand" ]; then
+for cand in "$(command -v go 2>/dev/null)" /usr/local/go/bin/go /usr/bin/go /opt/go/bin/go; do
+  if [ -n "$cand" ] && [ -x "$cand" ]; then
     GO_BIN="$cand"
     break
   fi

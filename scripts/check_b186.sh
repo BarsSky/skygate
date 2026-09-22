@@ -154,9 +154,11 @@ check_ge "P-my-status-blocks" 1 "$(count "$REPO/internal/telegram/commands_user.
 check_ge "Q-b1863-test" 1 "$(count "$REPO/internal/telegram/my_status_blocks_test.go" 'TestMyStatusBlocks_DeviceCountNotZero')"
 
 # J. Build + tests pass
+# B281 (2026-09-22): `command -v go` first — the runner's /usr/local/go is the
+# image's Go 1.24.13 with GOTOOLCHAIN=local, and go.mod requires >= 1.25.
 GO_BIN=""
-for cand in /usr/local/go/bin/go /usr/bin/go /opt/go/bin/go "$(command -v go 2>/dev/null)"; do
-  if [ -x "$cand" ]; then
+for cand in "$(command -v go 2>/dev/null)" /usr/local/go/bin/go /usr/bin/go /opt/go/bin/go; do
+  if [ -n "$cand" ] && [ -x "$cand" ]; then
     GO_BIN="$cand"
     break
   fi

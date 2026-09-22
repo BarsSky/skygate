@@ -137,8 +137,13 @@ ALLOWED='internal/db/tag_kind.go internal/feature/exit_rules/preferred_check.go 
 # Comment lines are ignored: this change documents what it replaced, and a
 # contract that a comment can satisfy is not a contract (B279.1 renegotiated
 # check_b119.sh contract H for exactly that reason).
+# B281 (2026-09-22): the list is the `grep -rl` output (source files). A
+# `"$(command -v go 2>/dev/null)"` entry had been prepended by a blanket go-probe
+# rewrite, so the go BINARY was treated as a stray tag→hostname derivation and
+# E1 reported `new tag→hostname copy: /path/to/go` — the exact false positive the
+# allow-list exists to avoid, in the contract that guards B279.
 STRAY=""
-for f in "$(command -v go 2>/dev/null)" $(grep -rl 'TrimPrefix([a-zA-Z_]*, "tag:' --include='*.go' internal cmd 2>/dev/null); do
+for f in $(grep -rl 'TrimPrefix([a-zA-Z_]*, "tag:' --include='*.go' internal cmd 2>/dev/null); do
   case "$f" in
     *_test.go) continue ;;
   esac
