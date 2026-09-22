@@ -86,7 +86,26 @@ echo "target backend: $TARGET_BACKEND"
 
 # ── 2. ensure PG container is running (if target=pg) ──
 if [ "$TARGET_BACKEND" = "pg" ]; then
-    # Determine PG host: explicit override, or detect from skygate-pg-local container IP
+    # Determine PG host: explicit override, or use the container NAME (NOT its IP).
+    #
+    # 2026-09-22 (B-fix-dsn-ip-rotates): the previous code captured
+    # `docker inspect ... .IPAddress` and baked it into SKYGATE_DB / SKYGATE_DB_DSN.
+    # Postgres container IPs on the headscale_default bridge are NOT stable — every
+    # recreate (image upgrade, `docker run` after a VM reboot, even a healthy
+    # stop+start cycle on some Docker versions) hands out a fresh IP from
+    # 172.18.0.0/16. The stale DSN then crashed the skygate container on every
+    # restart with "DB pre-flight: <old-ip>:5432 UNREACHABLE", the
+    # `--restart=on-failure:5` policy below exhausted its 5 retries after a few
+    # minutes, and skygate stopped permanently. Downstream headscale then
+    # crash-looped on "creating OIDC provider from issuer config: 502 Bad Gateway"
+    # because its OIDC discovery target (skygate) was down.
+    #
+    # Using the container NAME instead of the IP lets docker's embedded DNS
+    # (127.0.0.11:53) resolve `skygate-pg-local` to whatever IP the container
+    # currently has. The DSN is then stable across postgres recreates.
+    # Explicit `--pg-host=<ip>` still wins as an escape hatch for operators
+    # who deliberately run postgres on a non-default host (e.g. an external
+    # Patroni cluster at deploy/pg-ha/).
     if [ -z "$FORCE_PG_HOST" ]; then
         if ! sudo docker inspect "$PG_CONTAINER_NAME" >/dev/null 2>&1; then
             echo "ERROR: target=pg but $PG_CONTAINER_NAME container is not running." >&2
@@ -95,7 +114,7 @@ if [ "$TARGET_BACKEND" = "pg" ]; then
             echo "         -e POSTGRES_DB=skygate_staging postgres:18-alpine" >&2
             exit 1
         fi
-        PG_HOST=$(sudo docker inspect "$PG_CONTAINER_NAME" --format '{{.NetworkSettings.Networks.headscale_default.IPAddress}}')
+        PG_HOST="$PG_CONTAINER_NAME"
     else
         PG_HOST="$FORCE_PG_HOST"
     fi
@@ -138,7 +157,7 @@ sudo docker run -d \
     --hostname skygate \
     --network headscale_default \
     -p 8080:8080 \
-    --restart=on-failure:5 \
+    --restart=unless-stopped \
     --cap-add=NET_ADMIN \
     --cap-add=SYS_ADMIN \
     --env-file "$PATCHED_ENV" \

@@ -4709,3 +4709,24 @@ run_check "B276" "the per-CIDR ACL pin follows the assignment table: an ownershi
 # internal/feature/exit_rules/all_devices_b276_1_test.go.
 run_check "B276.1" "«все мои устройства» must cover a device registered later: the intent is stored on the rows (V074 device_rules.all_devices, both chains), a periodic pass re-materialises it for the user's current devices before the ACL drift check, single-device rules are never copied, and the UI labels the rows (2026-09-21). Live gap: the form's 'all my devices' option (B275.3) only materialised the rule for the devices that existed at that moment — PostMyExitRule inserted one row per device and forgot why — so a laptop registered a week later had no rule while the page still promised that the rule covered all of the user's devices, and nothing said otherwise. (1) V074 adds device_rules.all_devices INTEGER NOT NULL DEFAULT 0 in BOTH chains (SQLite through execSQLiteDDL) with a partial index; additive with a default, so pre-V074 rows stay single-device rules — the fan-out copies are indistinguishable from hand-made ones, and guessing would silently start copying rules the user never asked to copy. MarkDeviceRulesAllDevices marks the whole group (all fan-out copies, by natural key) when the form asks for all devices. (2) propagateAllDeviceRules() reads the marked groups plus the user's CURRENT devices from node_owner_map, matches rows on the natural key before inserting (idempotent — it runs every tick), keeps the marker on the copies so the next pass still covers devices added later, and reports a group whose owner has no attributed device instead of skipping it silently. It runs in the rule-maintenance tick BEFORE the B276 policy-drift check, so the ACL generated in that same pass already contains the new device's grants. (3) /my/exit-rules shows a «все мои устройства» badge on those rows (RU+EN tooltip explaining the propagation). 21 contracts in scripts/check_b276_1_all_devices.sh + internal/feature/exit_rules/all_devices_b276_1_test.go (covers a new device, never copies a single-device rule, idempotent, labels the rows, marks the group) and the V074 assertion in internal/db/migrations_sqlite_schema_test.go." \
   'test -f scripts/check_b276_1_all_devices.sh && bash scripts/check_b276_1_all_devices.sh'
+# --- B278: launch_skigate.sh must not bake a docker bridge IP into SKYGATE_DB/_DSN ---
+# Operator incident on 192.168.13.69 (2026-09-22): the pre-B278 script captured the
+# postgres container's current IPv4 (`docker inspect ... .IPAddress`) and wrote it into
+# the .env DSN. Every recreate of skygate-pg-local rotated that IP, the stale DSN then
+# made skygate crash with "DB pre-flight: <old-ip>:5432 UNREACHABLE", and the
+# `--restart=on-failure:5` policy killed the container permanently after 5 retries.
+# Downstream headscale then crash-looped on "creating OIDC provider from issuer config:
+# 502 Bad Gateway" because its OIDC discovery target (skygate) was down. Result: 8h of
+# operator-visible OIDC outage that had nothing to do with the OIDC code itself.
+#
+# Fix:
+#  - PG_HOST="$PG_CONTAINER_NAME" (docker DNS name `skygate-pg-local`) instead of the IP.
+#    docker's embedded DNS (127.0.0.11:53) resolves the name to whatever IP the
+#    container has after every recreate.
+#  - `--restart=unless-stopped` instead of `on-failure:5`, so a transient cold-boot
+#    DB outage cannot kill the container permanently.
+#  - Explicit `--pg-host=<ip>` still honoured as an escape hatch for external PG
+#    (deploy/pg-ha/Patroni).
+# 6 contracts in scripts/check_b278_dsn_ip_rotates.sh.
+run_check "B278" "launch_skigate.sh must not bake a docker bridge IP into the DSN, and the launch policy must not kill the container permanently after N transient failures. Replaces the pre-B278 'docker inspect IPAddress + --restart=on-failure:5' combination that caused an 8h OIDC-outage on 192.168.13.69 when the postgres container's bridge IP rotated and skygate failed to come back up (which in turn made headscale crash-loop on OIDC discovery 502). PG_HOST now uses the docker DNS name (PG_CONTAINER_NAME=skygate-pg-local); --restart=unless-stopped replaces --restart=on-failure:5; --pg-host=<ip> stays as an escape hatch for external-PG setups. 6 contracts in scripts/check_b278_dsn_ip_rotates.sh." \
+  'test -f scripts/check_b278_dsn_ip_rotates.sh && bash scripts/check_b278_dsn_ip_rotates.sh'
