@@ -104,19 +104,31 @@ fi
 # deleted file) and reported a false failure. Same class as B205's
 # `grep -A20`. Locate the block by its own marker instead.
 b38_line=$(grep -n '^run_check "B38"' scripts/verify_pre_deploy.sh | head -1 | cut -d: -f1)
-if [ -n "$b38_line" ] && sed -n "${b38_line},$((b38_line + 9))p" scripts/verify_pre_deploy.sh | grep -qF 'migrations_v0.50.go'; then
+# B281 (2026-09-22): ALL THREE checks below use the marker window now. The
+# 2026-09-18 note above converted only the first one — the other two kept
+# `sed -n '941,950p'`, so they reported false SKY-FAILs the moment any edit
+# ABOVE B38 changed the file length (the B281 timeout wrapper in run_check moved
+# it to 965). The marker window is the whole fix; the hardcoded range is gone.
+b38_block=""
+if [ -n "$b38_line" ]; then
+  b38_block=$(sed -n "${b38_line},$((b38_line + 9))p" scripts/verify_pre_deploy.sh)
+fi
+if [ -z "$b38_line" ]; then
+    echo "SKY-FAIL: run_check \"B38\" not found in scripts/verify_pre_deploy.sh" >&2
+    fail=1
+elif printf '%s\n' "$b38_block" | grep -qF 'migrations_v0.50.go'; then
     echo "SKY-FAIL: B38 run_check still references migrations_v0.50.go" >&2
     fail=1
 else
     echo "  PASS: B38 run_check uses migrations_pg.go"
 fi
-if sed -n '941,950p' scripts/verify_pre_deploy.sh | grep -qF 'migrations_pg.go'; then
+if printf '%s\n' "$b38_block" | grep -qF 'migrations_pg.go'; then
     echo "  PASS: B38 run_check references migrations_pg.go"
 else
     echo "SKY-FAIL: B38 run_check should reference migrations_pg.go" >&2
     fail=1
 fi
-if sed -n '941,950p' scripts/verify_pre_deploy.sh | grep -qF 't.Skip'; then
+if printf '%s\n' "$b38_block" | grep -qF 't.Skip'; then
     echo "  PASS: B38 run_check accepts t.Skip stub"
 else
     echo "SKY-FAIL: B38 run_check should accept t.Skip stub" >&2
