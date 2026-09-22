@@ -1,0 +1,125 @@
+name: ghcr-prune
+
+# B281 (2026-09-22) — keep the container registry small.
+#
+# WHY THIS EXISTS
+# Every release push leaves a package version behind, plus the untagged versions
+# a re-push creates, so `ghcr.io/barssky/skygate` had grown to ~20 releases'
+# worth of images (~10 MB each) while only the newest one is ever pulled. This is
+# the repeatable, reviewable way to drop them: it keeps every version that
+# carries one of the KEEP tags (the newest release and its moving aliases) and
+# deletes the rest, untagged versions included.
+#
+# HOW TO USE
+#   Actions → ghcr-prune → Run workflow
+#     keep_tags: v1.5.46 latest v1.5 v1   (default: v1.5.46 + its aliases)
+#     dry_run:   true  (default) → print the plan only, delete nothing
+#                false          → actually delete
+#
+# WHY AN ACTIONS WORKFLOW AND NOT A LOCAL `gh` CALL
+# Deleting a package version needs the `delete:packages` OAuth scope. A
+# fine-grained PAT cannot manage a package owned by a USER account (the error is
+# `Resource not accessible by personal access token`), and the operator's local
+# token has no package scopes at all. Inside Actions the repository token with
+# `packages: write` is the one credential that is always available for the
+# repository's own images — and the run log becomes the audit trail of what was
+# deleted.
+#
+# SAFETY
+# * dry-run by default;
+# * the keep set is an explicit input, never "whatever is newest";
+# * a version is kept if it carries ANY keep tag, so the alias tags
+#   (latest / v1.5 / v1) pin the release they point at;
+# * deletion is per-version and its failures are printed, not swallowed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep_tags:
+        description: 'Space-separated tags to keep (the newest release + aliases)'
+        required: false
+        default: 'v1.5.46 latest v1.5 v1'
+        type: string
+      dry_run:
+        description: 'true = print the plan, delete nothing'
+        required: false
+        default: 'true'
+        type: string
+
+concurrency:
+  group: ghcr-prune
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  prune:
+    name: prune old container versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: List and prune
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PKG: skygate
+          KEEP_TAGS: ${{ inputs.keep_tags }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -uo pipefail
+          echo "owner=$OWNER package=$PKG keep='$KEEP_TAGS' dry_run=$DRY_RUN"
+
+          keep_matches() { # $1 = comma-joined tags
+            local tags=",$1,"
+            for k in $KEEP_TAGS; do
+              case "$tags" in *",$k,"*) return 0 ;; esac
+            done
+            return 1
+          }
+
+          page=1
+          total=0; kept=0; deleted=0; failed=0
+          while :; do
+            body="$(gh api "/users/$OWNER/packages/container/$PKG/versions?per_page=100&page=$page" \
+              --jq '.[] | "\(.id)\t\((.metadata.container.tags // []) | join(","))\t\(.created_at)"')" || {
+              echo "::error::cannot list package versions (does the repository token have packages: write?)"
+              exit 1
+            }
+            [ -z "$body" ] && break
+            while IFS=$'\t' read -r id tags created; do
+              [ -n "$id" ] || continue
+              total=$((total+1))
+              if keep_matches "$tags"; then
+                kept=$((kept+1))
+                echo "KEEP    $id  $tags  $created"
+                continue
+              fi
+              if [ "$DRY_RUN" != "false" ]; then
+                echo "WOULD DELETE $id  ${tags:-<untagged>}  $created"
+                continue
+              fi
+              if gh api -X DELETE "/users/$OWNER/packages/container/$PKG/versions/$id" >/dev/null 2>&1; then
+                deleted=$((deleted+1))
+                echo "DELETED $id  ${tags:-<untagged>}  $created"
+              else
+                failed=$((failed+1))
+                echo "FAILED  $id  ${tags:-<untagged>}  (delete refused)"
+              fi
+            done <<< "$body"
+            n=$(printf '%s\n' "$body" | grep -c .)
+            [ "$n" -lt 100 ] && break
+            page=$((page+1))
+          done
+
+          {
+            echo "### ghcr-prune"
+            echo ""
+            echo "- package: \`$OWNER/$PKG\`"
+            echo "- keep tags: \`$KEEP_TAGS\`"
+            echo "- dry run: \`$DRY_RUN\`"
+            echo "- total versions: $total, kept: $kept, deleted: $deleted, failed: $failed"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "summary: total=$total kept=$kept deleted=$deleted failed=$failed"
+          [ "$failed" -eq 0 ] || exit 1
