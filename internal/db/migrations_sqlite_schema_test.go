@@ -59,18 +59,34 @@ func TestSQLiteSchemaComplete(t *testing.T) {
 		t.Fatalf("ApplyMigrations(SQLite): %v", err)
 	}
 
-	t.Run("chain reaches V074 like PostgreSQL", func(t *testing.T) {
+	t.Run("chain reaches V075 like PostgreSQL", func(t *testing.T) {
 		var maxV int
 		if err := sqlDB.QueryRow(
 			`SELECT COALESCE(MAX(version), 0) FROM applied_migrations`).Scan(&maxV); err != nil {
 			t.Fatalf("read max(version): %v", err)
 		}
-		// PostgreSQL's chain ends at 74 (v0.74 = device_rules.all_devices, B276.1).
-		// If SQLite lags behind, every table/column added by the missing
-		// tail is absent.
-		if maxV != 74 {
-			t.Errorf("SQLite migration chain ends at V%d, want V74 — the PG and SQLite "+
+		// PostgreSQL's chain ends at 75 (v0.75 = oidc_settings,
+		// B-oidc-setup). If SQLite lags behind, every
+		// table/column added by the missing tail is absent.
+		if maxV != 75 {
+			t.Errorf("SQLite migration chain ends at V%d, want V75 — the PG and SQLite "+
 				"chains have diverged again (see driver_sqlite.go sqliteMigrations)", maxV)
+		}
+	})
+
+	t.Run("oidc_settings table exists (V075, B-oidc-setup)", func(t *testing.T) {
+		// V075 is the B-oidc-setup DB-backed OIDC config
+		// table: the admin web UI writes here on save, the boot
+		// sequence reads from here.
+		var present int
+		if err := sqlDB.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='oidc_settings'`,
+		).Scan(&present); err != nil {
+			t.Fatalf("read oidc_settings presence: %v", err)
+		}
+		if present != 1 {
+			t.Errorf("oidc_settings is MISSING in the SQLite schema — V075 "+
+				"didn't run end-to-end (see migrations_v0_75_oidc_settings.go)")
 		}
 	})
 

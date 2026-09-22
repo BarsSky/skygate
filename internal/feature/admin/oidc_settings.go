@@ -169,7 +169,14 @@ func (s *Service) PostAdminOIDC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form parse: "+err.Error(), http.StatusBadRequest)
+		// 2026-09-22 (B-oidc-setup fix): raw http.Error
+		// replaced with the redirect-with-flash pattern every
+		// other POST handler in this package uses. The form
+		// parse error is reported via ?err=<text> on the GET
+		// round-trip; the template's {{.FlashError}} block
+		// renders it. See the B182 / TestNoNewRawErrorPages
+		// regression guard.
+		http.Redirect(w, r, "/admin/oidc?err="+url.QueryEscape("form parse: "+err.Error()), http.StatusSeeOther)
 		return
 	}
 	enabled := r.FormValue("enabled") == "1"

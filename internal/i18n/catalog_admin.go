@@ -557,6 +557,20 @@ var ruAdmin = map[string]string{
 	"oidc.env_secret_set":            "(set, not echoed)",
 	"oidc.env_secret_help":           "skygate stores the secret in <code>SKYGATE_OIDC_CLIENT_SECRET</code> but never echoes it back in the admin UI. View the value in <code>/home/admin/skygate/.env</code> on the host.",
 
+	// B-oidc-setup (v0.75, 2026-09-22): RU counterpart for the form keys
+	// (EN block has them at catalog_admin.go line 1420+). Closes the
+	// RU/EN parity that TestCatalogsParity pins.
+	"oidc.section_form":              "Настройка OIDC",
+	"oidc.form_help":                 "Заполните issuer, client_id, client_secret, redirect URIs и каталог ключей. Значения сохраняются в таблицу БД oidc_settings; для применения перезапустите skygate (/admin/update).",
+	"oidc.form_enable":               "Включить OIDC",
+	"oidc.form_enable_help":          "(снимите галочку чтобы выключить — авторизация headscale сломается)",
+	"oidc.form_client_id":            "Client ID",
+	"oidc.form_client_secret":        "Client secret",
+	"oidc.form_redirect_uris":        "Redirect URIs (через запятую)",
+	"oidc.form_key_dir":              "Каталог RSA ключей (абсолютный путь)",
+	"oidc.form_save":                 "Сохранить",
+	"oidc.form_save_hint":            "Перезапустите skygate (/admin/update) чтобы изменения вступили в силу.",
+
 	// B167 (v1.5.2) — /admin/oidc/sync page.
 	// See the RU block above for the same keys.
 	"oidc_sync.title":                    "OIDC config: sync to headscale",
