@@ -37,6 +37,34 @@ the script uses. If `go` can't be found, the hook skips the
 catalog and lets the push proceed (with a warning) — this
 avoids breaking `git push` on a fresh clone without Go installed.
 
+### `pre-tag`
+
+Refuses to create a version tag (matching `vX.Y.Z` or
+`vX.Y.Z-rcN`) unless the CI workflow run for that exact commit
+is **green**. Without this gate, the v1.5.41 → v1.5.45 release
+cycle bypassed the local pre-push gate via `git push --no-verify`
+multiple times. CI caught real regressions (the v1.5.44 release
+introduced an RU i18n parity break AND a raw-http.Error leak)
+but they were masked because nobody waited for CI before tagging.
+
+The hook queries GitHub via the `gh` CLI:
+
+```bash
+gh run list --workflow=ci.yml --commit "$sha1" --json status,conclusion,databaseId
+```
+
+ALL CI runs for that commit must be `status=completed,
+conclusion=success`. Anything else (in_progress, failed,
+cancelled, missing) aborts the tag with a clear reason.
+
+Non-version tags (random branches, scratch) bypass the gate
+entirely.
+
+Escape hatch: `SKIP_PRE_TAG_CHECK=1 git tag -a vX.Y.Z ...`. The
+release notes MUST explain the bypass. (Same anti-pattern as
+`--no-verify` — only use in true emergencies with operator
+justification.)
+
 #### Auto-detection: SKYGATE_BASH_MOUNT_ROOT
 
 The Windows test in `internal/headscale` (`TestProvisionUser_*`)
