@@ -239,8 +239,28 @@ defects sat behind that one row, and three of them made a *green* row worthless:
      `approvedByExitNode := map[string]map[string]bool` with the shared
      `indexNodesApprovedRoutes(nodes)`, so the contract accepts either spelling.
 
-23 contracts in `scripts/check_b281_ci_catalog_truth.sh` (the `ci.yml` half is
+33 contracts in `scripts/check_b281_ci_catalog_truth.sh` (the `ci.yml` half is
 scoped to the `verify-pre` job block, so another job's budget cannot satisfy it).
+
+### B280 follow-up — the sanctioned tag path could not run at all
+
+`tag-release.yml` had never been executed. Its first live run (cutting THIS
+release) died 14 seconds in, in the second step:
+
+```
+/home/runner/work/_temp/….sh: line 2: VERSION: unbound variable
+```
+
+The first step exported the input into `$GITHUB_ENV` as `version=…` (lower case)
+while every later step reads `$VERSION`, so the CI gate never even ran — the one
+sanctioned way to create a CI-gated tag was dead on arrival, and the B280
+contracts could not see it because the workflow is syntactically valid. The
+export is `VERSION=$VERSION` now and B280 pins the class rather than the
+incident: `I1` the upper-case export exists, `I2` no lower-case `version=` export
+comes back, `I3` the later steps still read `$VERSION` (so the export and its
+readers cannot drift apart again). B280: 46 contracts. The tag for this release
+was then created by that workflow itself — `gh workflow run tag-release.yml -f
+version=v1.5.46` — which is the first time the gate ran end-to-end for real.
 
 ### Verification
 
@@ -273,9 +293,18 @@ the "0 FAIL" contract of AGENTS §1.1):
   while the template renders `all_devices_fanout_badge` — the badge was there
   all along, three times.
 
-B281 adds `scripts/check_b281_ci_catalog_truth.sh` (23 contracts, registered as
+B281 adds `scripts/check_b281_ci_catalog_truth.sh` (33 contracts, registered as
 B281 and indexed in `AGENTS.md`), which is what makes "the catalog is green"
-a claim CI can no longer make without meaning it.
+a claim CI can no longer make without meaning it. Also renegotiated in the same
+pass: `check_b112.sh`'s three B38 assertions (only the first had been converted
+to a marker window, so the other two pinned `verify_pre_deploy.sh` line numbers
+and reported a false `FAIL B112` as soon as `run_check` grew), `check_b268.sh`'s
+behavioural half (the applier chowns to root:root, so it now stubs `install` and
+asserts the root:root request instead of failing on the runner's privileges),
+`check_b237_16.sh` D.3 (`go test | grep -q` under `pipefail` — AGENTS trap #9 —
+now captures first and prints the failure) and `check_b237_24.sh` E.1 (a live
+`gh release view` in a token-less job now SKIPs instead of reporting a healthy
+release as missing).
 
 ### Live remediation for a host already in this state
 
