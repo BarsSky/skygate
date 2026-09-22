@@ -361,7 +361,15 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		return false
 	}
 	for _, n := range all {
-		if hsUserID.Valid && username != "" && n.UserName == username {
+		// B287 (2026-09-22): a node wearing its per-device tag belongs to that
+		// user NO MATTER what headscale calls the owner — headscale reassigns
+		// every tagged node to the synthetic `tagged-devices` user, so the
+		// `n.UserName == username` test alone rendered /my/devices EMPTY while
+		// /admin/devices listed the user's own devices (as `tagged-devices`).
+		// The tag `tag:dev-<user>-<host>` is the ownership record: it is minted
+		// per user and headscale only accepts it once that user owns the node.
+		if hsUserID.Valid && username != "" &&
+			(n.UserName == username || db.HasPerDeviceTag(n.Tags, username, n.Hostname)) {
 			mySet[n.ID] = true
 			ip := ""
 			if len(n.IPAddresses) > 0 {
@@ -420,6 +428,13 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		// 2026-07-12: Этап 10 part 4 — moved to
 		// db.ListNodeOwnerNodeIDsByUsername.
 		snapIDList, _ := db.ListNodeOwnerNodeIDsByUsername(s.dbc(), username)
+		// B287: the snapshot row's `username` can be headscale's synthetic
+		// `tagged-devices` (it reassigns tagged nodes), while its TAG still
+		// names the real owner — so a username lookup alone misses exactly the
+		// devices this page exists to show. Union both views.
+		if byTag, tagErr := db.ListNodeOwnerNodeIDsByUserTag(s.dbc(), username); tagErr == nil {
+			snapIDList = append(snapIDList, byTag...)
+		}
 		// Build a set for O(1) membership test. The list is small
 		// (a user's owned devices) but a map keeps the lookups in the
 		// inner loop tidy.

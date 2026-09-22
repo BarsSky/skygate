@@ -4968,3 +4968,21 @@ run_check "B285" "a policy must declare every tag its grants reference: the ACL 
 # fallback). 8 contracts in scripts/check_b286_template_index_bounds.sh.
 run_check "B286" "an empty slice must not take a page down: no template indexes a slice that can be empty — exit_rules.html initialised its preferred-exit fallback with an unguarded index DeviceInfos 0 and /my/exit-rules answered 'error calling index: reflect: slice index out of range' instead of the user's rules (live on aro: rules present, device rows absent), and the same pattern in the node/device pages (index IPAddresses 0) and the DERP dashboard (if index DERPs 0) would have failed for a node without addresses or an install with no relays; all five sites now use a guarded form and the templates still parse and pass the handlers package. Contracts in scripts/check_b286_template_index_bounds.sh." \
   'test -f scripts/check_b286_template_index_bounds.sh && bash scripts/check_b286_template_index_bounds.sh'
+
+# B287 (2026-09-22) — the per-device tag is an ownership record. Operator report
+# on `aro`: "устройства что с тегами пользователя не отображаются в его
+# устройствах на странице мои устройства а только во все устройства". The
+# screenshot showed EVERY row owned by `tagged-devices` — headscale reassigns a
+# node to that synthetic user as soon as it wears any tag, and the DB snapshot
+# copied the name verbatim — while the tags still named the real owners
+# (tag:dev-daniil-workpc, tag:dev-daniil-laptop). Both ownership tests on
+# /my/devices keyed on that column (the live `n.UserName == username` and
+# ListNodeOwnerNodeIDsByUsername), so a user's own tagged devices were invisible
+# on their page. internal/db/device_tag.go now owns the question:
+# PerDeviceTag/TagNamesUser/HasPerDeviceTag/ListNodeOwnerNodeIDsByUserTag (infra
+# and class tags deliberately do not name a portal user; the LIKE lookup escapes
+# %/_/\), and /my/devices uses them in BOTH paths (live tag match + a by-tag
+# snapshot lookup unioned with the by-username one). Contracts in
+# scripts/check_b287_tag_ownership.sh.
+run_check "B287" "the per-device tag is an ownership record: internal/db/device_tag.go provides PerDeviceTag (lowercased tag minting), TagNamesUser (\"does this tag name this portal user\" — matching the segment including its separator dash so a shorter name cannot claim another's device, and deliberately refusing infra and class tags), HasPerDeviceTag (live tag-list check) and ListNodeOwnerNodeIDsByUserTag (the snapshot twin, with LIKE metacharacters escaped); /my/devices uses them in both ownership paths, so a node that wears tag:dev-<user>-<host> belongs to that user even though headscale reassigns every tagged node to the synthetic tagged-devices owner — live on aro that made the user's own devices invisible on /my/devices while /admin/devices listed them as tagged-devices. Contracts in scripts/check_b287_tag_ownership.sh." \
+  'test -f scripts/check_b287_tag_ownership.sh && bash scripts/check_b287_tag_ownership.sh'

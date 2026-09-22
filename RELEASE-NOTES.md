@@ -12,6 +12,94 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.51 — the per-device tag is an ownership record (B287)
+
+**Date:** 2026-09-22 · **Base:** `v1.5.50` → this tag · **Compatibility:** none —
+no schema change, no migration.
+
+Operator report on the native host `aro`:
+
+> «устройства что с тегами пользователя не отображаются в его устройствах на
+> странице мои устройства а только во все устройства»
+
+A user's own devices — the ones *carrying that user's tags* — did not appear on
+`/my/devices` at all, while `/admin/devices` listed them. The admin page showed
+why, and the answer was unexpected: **every** row's owner read `tagged-devices`:
+
+```
+id  hostname        owner            tag
+1   exit-node-vps   tagged-devices   tag:dev-infra-exit-node-vps
+2   workpc          tagged-devices   tag:dev-daniil-workpc
+3   laptop          tagged-devices   tag:dev-daniil-laptop
+```
+
+None of the three devices had lost anything. headscale reassigns a node to the
+synthetic `tagged-devices` user as soon as it wears **any** tag, and
+`node_owner_map` had copied that name verbatim. Both ownership tests on
+`/my/devices` keyed on that column:
+
+* the live branch matched `n.UserName == username`;
+* the snapshot branch asked `db.ListNodeOwnerNodeIDsByUsername`.
+
+So the tag worked exactly as designed and the port of the page that asks "is this
+device mine?" read the wrong column — the user's own devices were invisible on
+their own page, and only an admin could see them, under a meaningless owner.
+
+### The tag *is* the ownership record
+
+`tag:dev-<user>-<host>` is minted per user, and headscale only accepts it once
+that user (or the synthetic `tagged-devices`) owns the node — so the tag names
+the owner even when the `username` column does not. New
+`internal/db/device_tag.go` is the single place that answers the question:
+
+* `PerDeviceTag(username, hostname)` — `PerDeviceTag("Daniil", "WorkPC")` →
+  `tag:dev-daniil-workpc`; both halves lowercased (headscale 0.29 rejects
+  uppercase tags, B176), `""` when either half is empty;
+* `TagNamesUser(tag, username)` — matches the segment **including its separator
+  dash** (`tag:dev-daniil-`), so a shorter username (`dan`) cannot claim a longer
+  one's devices, and hostnames may contain dashes freely. Infra tags
+  (`tag:dev-infra-<host>`) and the legacy `tag:exit-<host>` form name a role or
+  nothing at all, and every class tag is refused outright — the same taxonomy the
+  ACL generator uses (B285);
+* `HasPerDeviceTag(tags, username, hostname)` — case-insensitive check against a
+  live headscale tag list;
+* `ListNodeOwnerNodeIDsByUserTag(d, username)` — the snapshot twin, with the
+  LIKE metacharacters escaped (`%`, `_`, `\`), so a username containing a
+  wildcard cannot match another user's tags.
+
+`/my/devices` now uses them in **both** paths: the live branch accepts a node
+whose tag names the user, and the snapshot branch unions the by-tag lookup with
+the by-username one.
+
+### What is *not* in this release
+
+`/admin/devices` still renders the raw `node_owner_map.username`, so an admin
+sees `tagged-devices` in the owner column for a tagged node. That is a display
+issue, not an ownership one — the admin page's purpose is to show what headscale
+says — but it is the surface that produced the confusing screenshot, and it stays
+on the list (the same helpers make the fix a one-liner).
+
+### Contracts
+
+* `scripts/check_b287_tag_ownership.sh` (13 contracts) — the four helpers exist
+  and are the only tag-minting/parsing site used; infra/class tags are excluded;
+  the LIKE lookup escapes its metacharacters; `/my/devices` uses both in the live
+  and the snapshot path; the git-tracked contract (trap #11) is asserted with
+  `git ls-files --error-unmatch`.
+* `internal/db/device_tag_b287_test.go` — seeds the **live shape** (rows whose
+  `username` is the synthetic owner while their tag names the real user) and pins
+  the pre-B287 blind spot: the by-username lookup returns nothing on it, the
+  by-tag lookup returns exactly the user's devices.
+
+### Operator action
+
+1. Install v1.5.51 through **/admin/update** (native installs do not rebuild on
+   `git pull` — deployment trap #12) and confirm `/healthz` reports
+   `"build":"v1.5.51+<sha>"`.
+2. Open `/my/devices` as the affected user: the tagged devices (`workpc`,
+   `laptop`) must now be listed. `/admin/devices` is unchanged by design.
+3. No migration, no ACL re-apply, no restart of headscale is required.
+
 ## v1.5.50 — the ACL must apply, and a page must survive an empty list (B285 + B286)
 
 **Date:** 2026-09-22 · **Base:** `v1.5.49` → this tag · **Compatibility:** none — no
