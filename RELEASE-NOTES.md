@@ -163,7 +163,15 @@ unmarshals **both** generators' output.
 
 1. Install v1.5.52 through **/admin/update** and confirm `/healthz` reports
    `"build":"v1.5.52+<sha>"`.
-2. Open `/admin/exit-nodes`. The banner now has two lines under the byte sizes:
+2. **Also refresh the privileged policy applier.** It is not part of the binary
+   tarball (the release ships `skygate` only), so the copy in
+   `/usr/local/lib/skygate/` stays the old one until you re-install it — and the
+   old one has both defects above. From the checkout on the host:
+   `git pull --ff-only` and then `sudo bash deploy/install-policy-helper.sh`
+   (idempotent: re-installs `deploy/skygate-apply-policy.sh` plus the
+   `skygate-policy.path`/`.service` units, reloads systemd and reports a queued
+   request).
+3. Open `/admin/exit-nodes`. The banner now has two lines under the byte sizes:
    *what differs* (e.g. `tagOwners: only in the live policy: …`) and the
    **applier's verdict**.
    * If the verdict is `failed`, it names the cause (usually `headscale did not
@@ -173,10 +181,10 @@ unmarshals **both** generators' output.
    * If it is `ok` and the banner persists, the file was written while headscale
      kept serving the old document — the verdict's `PATH`/`TS` say what was
      written and when.
-3. Once the write lands (the union removal in this release is what lets the file
+4. Once the write lands (the union removal in this release is what lets the file
    converge), the automatic sync clears the banner within one tick and it stays
    clear — the generated document is a fixed point now.
-4. No migration and no manual headscale edit is required. If the applier reports a
+5. No migration and no manual headscale edit is required. If the applier reports a
    failure, send us its line plus `/var/lib/skygate/update/policy-apply.log`.
 
 ## v1.5.51 — the per-device tag is an ownership record (B287)
