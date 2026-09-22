@@ -62,8 +62,9 @@ if grep -q 'grantTags\[devTag\] = true' "$ACL"; then
 else
   bad "A1: the grants loop does not collect its tags — the tagOwners sweep has nothing to work from"
 fi
-if grep -q 'missingGrantTags' "$ACL" && grep -qF 'emitTagOwner2(tag, "[\""+owner+"\"]")' "$ACL"; then
-  ok "A2: the generator declares the missing grant tags (owner parsed from the tag name)"
+if grep -q 'missingGrantTags' "$ACL" && \
+   { grep -qF 'emitTagOwner2(tag, ownerJSON)' "$ACL" || grep -qF 'emitTagOwner2(tag, "[\""+owner+"\"]")' "$ACL"; }; then
+  ok "A2: the generator declares the missing grant tags (owner derived from the tag)"
 else
   bad "A2: no sweep — a grant tag missing from tagOwners keeps the whole ACL unappliable"
 fi

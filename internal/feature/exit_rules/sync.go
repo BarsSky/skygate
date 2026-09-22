@@ -68,9 +68,22 @@ var (
 // derived rows every few minutes).
 const ownershipACLThrottle = 60 * time.Second
 
+// periodicDriftCheckInterval bounds how often the ownership-stable path compares
+// the live policy with the one the database implies (B288). The comparison costs
+// one `GenerateACLLiveFormat` + one headscale policy read and writes nothing when
+// the two describe the same policy, so it is cheap — but it does not need to run
+// on every staggered-sync pass either.
+const periodicDriftCheckInterval = 5 * time.Minute
+
+var (
+	periodicDriftMu      sync.Mutex
+	periodicDriftLastRun time.Time
+)
+
 // reconcilePrefixOwnership brings the assignment table up to date with the rules
-// and, when that actually MOVED a prefix to another relay, regenerates the ACL so
-// every per-CIDR `via` pin follows the new owner.
+// and regenerates the ACL when the two disagree — either because this pass MOVED
+// a prefix to another relay (B276) or because the live policy was already stale
+// for some other reason (B288).
 //
 // Returns the (inserted, changed) counts the caller logs, so both sync paths report
 // the same numbers they used to.
@@ -81,8 +94,40 @@ func (s *Service) reconcilePrefixOwnership() (int, int, error) {
 	}
 	if chg > 0 {
 		s.applyACLAfterOwnershipChange(ins, chg)
+		return ins, chg, nil
 	}
+	s.periodicDriftCheck()
 	return ins, chg, nil
+}
+
+// periodicDriftCheck re-applies the ACL when headscale is serving a policy the
+// current database state no longer implies, even though the assignment table did
+// not move.
+//
+// B288 (2026-09-22) — this is the case the B276 commentary already claimed to
+// cover ("a pre-existing mismatch created before this release"), but the call
+// site gated the whole check on `chg > 0`: the table is stable on a healthy
+// install, so a document written by an older generator — or one whose apply
+// failed once — stayed stale FOREVER. Live on `aro`: «политика headscale
+// УСТАРЕЛА» on /admin/exit-nodes while every exit rule was green and the tailnet
+// has a single relay, and nothing in the system was ever going to change it.
+//
+// Safety: `applyACLIfDrifted` reads the live policy fresh, compares it with
+// `headscale.PolicyEquivalent` (set semantics, B288) and returns WITHOUT a write
+// when the two describe the same policy — so a converged host does one policy
+// read per interval and no write at all. The write itself stays behind
+// `ownershipACLThrottle`, and the no-op line is suppressed (the periodic path
+// runs unattended; the ownership-triggered path keeps its log).
+func (s *Service) periodicDriftCheck() {
+	periodicDriftMu.Lock()
+	if !periodicDriftLastRun.IsZero() && time.Since(periodicDriftLastRun) < periodicDriftCheckInterval {
+		periodicDriftMu.Unlock()
+		return
+	}
+	periodicDriftLastRun = time.Now()
+	periodicDriftMu.Unlock()
+	s.applyACLIfDriftedMode("skygate-periodic-drift",
+		"periodic drift check (the assignment table did not move)", false)
 }
 
 // applyACLAfterOwnershipChange regenerates the policy and pushes it when (and only
@@ -133,6 +178,13 @@ func (s *Service) applyACLAfterOwnershipChange(ins, chg int) {
 //     acl_snapshots row id; the calling site should reference
 //     it in audit_log and the user-facing success line.
 func (s *Service) applyACLIfDrifted(actor, detail string) acl.ApplyResult {
+	return s.applyACLIfDriftedMode(actor, detail, true)
+}
+
+// applyACLIfDriftedMode is applyACLIfDrifted with control over the "already
+// matches" log line: the unattended periodic path (B288) suppresses it so a
+// converged host does not write one line per interval forever.
+func (s *Service) applyACLIfDriftedMode(actor, detail string, logNoop bool) acl.ApplyResult {
 	ownershipACLMu.Lock()
 	if !ownershipACLLastRun.IsZero() && time.Since(ownershipACLLastRun) < ownershipACLThrottle {
 		ownershipACLMu.Unlock()
@@ -160,7 +212,9 @@ func (s *Service) applyACLIfDrifted(actor, detail string) acl.ApplyResult {
 	if err != nil {
 		log.Printf("acl-drift: cannot read the live policy to decide whether a re-apply is needed (%v) — applying unconditionally", err)
 	} else if same, cmpErr := headscale.PolicyEquivalent(gen, live); cmpErr == nil && same {
-		log.Printf("acl-drift: live policy already matches the generated one (generated=%d live=%d bytes) — %s", len(gen), len(live), detail)
+		if logNoop {
+			log.Printf("acl-drift: live policy already matches the generated one (generated=%d live=%d bytes) — %s", len(gen), len(live), detail)
+		}
 		return acl.ApplyResult{Version: 0, Applied: false, Err: nil}
 	} else if cmpErr != nil {
 		log.Printf("acl-drift: cannot compare the live policy with the generated one (%v) — applying unconditionally", cmpErr)

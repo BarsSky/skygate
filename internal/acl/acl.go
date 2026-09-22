@@ -829,7 +829,7 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		emittedTagOwners[tag] = true
 		sb.WriteString(",\n    \"" + tag + "\": " + ownerListJSON + "\n")
 	}
-	sb.WriteString("    \"tag:public\": [\"" + envAdminIdentity() + "@" + baseDomain + "]\"")
+	sb.WriteString("    \"tag:public\": [\"" + envAdminIdentity() + "@" + baseDomain + "\"]")
 	emittedTagOwners["tag:public"] = true
 	// 2026-08-17: v1.3.19 (B118) — tag:exit-node is owned by
 	// `infra` per the DESIGN (AGENTS.md "Tag ownership
@@ -890,23 +890,27 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// rules above. The output is sorted by (username,
 	// tag) for stable diffs across deploys (important
 	// for the operator's policy audit).
-	type tagOwner struct {
-		tag, owner string
+	//
+	// B288 (2026-09-22): the declarations come from devTagsToDeclare (the
+	// portal-user JOIN UNION every per-device tag node_owner_map records) and
+	// the owners from devTagOwnerJSON — the same pair the grants generator and
+	// the tag-writing paths emit. Two generators that render different
+	// `tagOwners` for the same database is how the live policy ended up
+	// permanently "stale" on `aro`.
+	legacyKnown := make([]string, 0, len(tagsByUser))
+	for _, tags := range tagsByUser {
+		legacyKnown = append(legacyKnown, tags...)
 	}
-	var tagOwners []tagOwner
-	for uname, tags := range tagsByUser {
-		for _, tag := range tags {
-			tagOwners = append(tagOwners, tagOwner{tag: tag, owner: uname + "@" + baseDomain})
-		}
+	legacyDevTags, legacyErr := devTagsToDeclare(d, legacyKnown)
+	if legacyErr != nil {
+		return "", legacyErr
 	}
-	sort.Slice(tagOwners, func(i, j int) bool {
-		if tagOwners[i].tag != tagOwners[j].tag {
-			return tagOwners[i].tag < tagOwners[j].tag
+	for _, tag := range legacyDevTags {
+		ownerJSON, oErr := devTagOwnerJSON(tag, baseDomain)
+		if oErr != nil {
+			return "", oErr
 		}
-		return tagOwners[i].owner < tagOwners[j].owner
-	})
-	for _, to := range tagOwners {
-		emitTagOwner(to.tag, "[\""+to.owner+"\"]")
+		emitTagOwner(tag, ownerJSON)
 	}
 	sb.WriteString("  },\n")
 
@@ -960,6 +964,67 @@ func quoteAll(ss []string) []string {
 		res[i] = strconv.Quote(s)
 	}
 	return res
+}
+
+// ownerListJSON renders a headscale owner list for one `tagOwners` entry.
+//
+// B288 (2026-09-22): every writer of `tagOwners` now renders its owner list
+// through this function and derives the owners from db.TagOwnersForUser, so the
+// ACL generator, the ownership backfill and the tag reconciler cannot disagree
+// (they used to, and each rewrite of the policy undid the other's entry).
+func ownerListJSON(owners []string) string {
+	return "[" + strings.Join(quoteAll(owners), ",") + "]"
+}
+
+// devTagOwnerJSON returns the `tagOwners` value for one tag:
+//
+//   - a per-device tag (`tag:dev-<user>-<host>`) is owned by the user its NAME
+//     names plus the `tagged-devices` sentinel (db.TagOwnersForUser);
+//   - anything else (a class tag, a legacy `tag:exit-<host>`) keeps the admin
+//     identity, which is the pre-B288 behaviour.
+func devTagOwnerJSON(tag, baseDomain string) (string, error) {
+	if user, ok := db.PerDeviceTagUser(tag); ok {
+		owners, err := db.TagOwnersForUser(user, baseDomain)
+		if err != nil {
+			return "", err
+		}
+		return ownerListJSON(owners), nil
+	}
+	return "[\"" + envAdminIdentity() + "@" + baseDomain + "\"]", nil
+}
+
+// devTagsToDeclare returns every per-device tag the policy must declare: the
+// tags the caller already knows from its own sources (the portal-user JOIN, the
+// per-device exit preferences) UNION every `tag:dev-<user>-<host>` recorded in
+// `node_owner_map` — the ownership record B287 established.
+//
+// Why the union matters (B288, live on `aro`): the JOIN cannot see a row whose
+// `username` is headscale's synthetic `tagged-devices` (every tagged node), and
+// the grant-referenced sweep (B285) only covers tags a grant names — so a device
+// whose dev tag nothing references (no exit rule, no preference) was declared in
+// the live policy and MISSING from the generated one. Pressing "re-apply" would
+// then strip the declaration the node actually wears. De-duplicated and sorted,
+// so the document is stable for the byte-vs-byte drift comparison.
+func devTagsToDeclare(d *sql.DB, known []string) ([]string, error) {
+	set := make(map[string]bool, len(known)+4)
+	for _, tag := range known {
+		if t := strings.TrimSpace(tag); t != "" {
+			set[t] = true
+		}
+	}
+	recorded, err := db.ListDevTagsFromOwnerMap(d)
+	if err != nil {
+		return nil, err
+	}
+	for _, rec := range recorded {
+		set[rec.Tag] = true
+	}
+	out := make([]string, 0, len(set))
+	for tag := range set {
+		out = append(out, tag)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // SaveACLSnapshot inserts one row into acl_snapshots and returns
@@ -1924,20 +1989,26 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// owner from the tag name. Falls back to admin
 	// identity for non-`tag:dev-*` via tags (none in
 	// production today, but defensive).
+	//
+	// B288 (2026-09-22): a per-device tag is owned by the user its NAME names
+	// PLUS the `tagged-devices` sentinel — the same pair the tag-writing paths
+	// emit (`db.TagOwnersForUser`). Emitting `<user>@` alone meant every ACL
+	// apply stripped the sentinel owner that the tag reconciler needs to
+	// (re)apply a tag to an already-tagged node (headscale moves such a node
+	// into the sentinel user), so the two writers traded the entry back and
+	// forth and the drift banner never cleared.
 	for _, tag := range exitNodeTags {
-		owner := envAdminIdentity() + "@" + baseDomain
-		if strings.HasPrefix(tag, "tag:dev-") {
-			rest := tag[len("tag:dev-"):]
-			if idx := strings.Index(rest, "-"); idx > 0 {
-				owner = rest[:idx] + "@" + baseDomain
+		if user, ok := db.PerDeviceTagUser(tag); ok {
+			owners, oErr := db.TagOwnersForUser(user, baseDomain)
+			if oErr != nil {
+				return "", oErr
 			}
+			emitTagOwner2(tag, ownerListJSON(owners))
+			continue
 		}
-		emitTagOwner2(tag, "[\""+owner+"\"]")
+		emitTagOwner2(tag, "[\""+envAdminIdentity()+"@"+baseDomain+"\"]")
 	}
 
-	type perDevTagOwner struct {
-		tag, owner string
-	}
 	// 2026-08-05 v0.33.1.15 — the per-device-pref device
 	// tags (from viaByDevice) need to be in tagOwners too.
 	// Pre-v0.33.1.15 the perDevTagOwners block was built
@@ -1952,48 +2023,43 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// /api/v1/policy: http.StatusInternalServerError src=tag not found:
 	// tag:dev-skyadmin-skygate-host-1". The fix: also
 	// include every per-device-pref's tag in tagOwners.
-	augmentedTagsByUser := make(map[string][]string, len(tagsByUser))
-	for k, v := range tagsByUser {
-		augmentedTagsByUser[k] = append([]string(nil), v...)
+	//
+	// B288 (2026-09-22) — the declarations are now the UNION of three sources,
+	// all emitted through the one owner derivation:
+	//
+	//	1. `tagsByUser`  — GetPerUserDeviceTags, a JOIN on portal_users, which
+	//	                   cannot see a row whose `username` is headscale's
+	//	                   synthetic `tagged-devices` (i.e. every tagged node,
+	//	                   B287);
+	//	2. `viaByDevice` — tags a per-device exit preference references;
+	//	3. node_owner_map — the OWNERSHIP RECORD: every `tag:dev-<user>-<host>`
+	//	                   the table holds, whatever its `username` column says.
+	//
+	// Source 3 is why an apply can no longer REMOVE a declaration a node needs.
+	// Live on `aro`: the live policy declared `tag:dev-daniil-homepc` and
+	// `tag:dev-daniil-laptop` while the generated one declared neither, so the
+	// "stale" banner described a document that was in one respect MORE correct
+	// than its replacement. And because the tag reconciler (nodeownership)
+	// derives the owners from the row while this generator derived them from the
+	// portal-user JOIN, the two writers disagreed about the sentinel owner and
+	// rewrote each other's entry forever.
+	knownDevTags := make([]string, 0, len(tagsByUser)+len(viaByDevice))
+	for _, tags := range tagsByUser {
+		knownDevTags = append(knownDevTags, tags...)
 	}
 	for devTag := range viaByDevice {
-		// parse username from "tag:dev-<user>-<device>"
-		const prefix = "tag:dev-"
-		if !strings.HasPrefix(devTag, prefix) {
-			continue
-		}
-		rest := strings.TrimPrefix(devTag, prefix)
-		idx := strings.Index(rest, "-")
-		if idx < 0 {
-			continue
-		}
-		uname := rest[:idx]
-		// dedupe
-		already := false
-		for _, t := range augmentedTagsByUser[uname] {
-			if t == devTag {
-				already = true
-				break
-			}
-		}
-		if !already {
-			augmentedTagsByUser[uname] = append(augmentedTagsByUser[uname], devTag)
-		}
+		knownDevTags = append(knownDevTags, devTag)
 	}
-	var perDevTagOwners []perDevTagOwner
-	for uname, tags := range augmentedTagsByUser {
-		for _, tag := range tags {
-			perDevTagOwners = append(perDevTagOwners, perDevTagOwner{tag: tag, owner: uname + "@" + baseDomain})
-		}
+	sortedDevTags, devTagErr := devTagsToDeclare(d, knownDevTags)
+	if devTagErr != nil {
+		return "", devTagErr
 	}
-	sort.Slice(perDevTagOwners, func(i, j int) bool {
-		if perDevTagOwners[i].tag != perDevTagOwners[j].tag {
-			return perDevTagOwners[i].tag < perDevTagOwners[j].tag
+	for _, tag := range sortedDevTags {
+		ownerJSON, oErr := devTagOwnerJSON(tag, baseDomain)
+		if oErr != nil {
+			return "", oErr
 		}
-		return perDevTagOwners[i].owner < perDevTagOwners[j].owner
-	})
-	for _, to := range perDevTagOwners {
-		emitTagOwner2(to.tag, "[\""+to.owner+"\"]")
+		emitTagOwner2(tag, ownerJSON)
 	}
 
 	// B285 (2026-09-22) — the last line of defence for the invariant headscale
@@ -2018,14 +2084,18 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	}
 	sort.Strings(missingGrantTags) // stable document for the drift comparison
 	for _, tag := range missingGrantTags {
-		owner := envAdminIdentity() + "@" + baseDomain
-		if strings.HasPrefix(tag, "tag:dev-") {
-			rest := strings.TrimPrefix(tag, "tag:dev-")
-			if idx := strings.Index(rest, "-"); idx > 0 {
-				owner = rest[:idx] + "@" + baseDomain
+		// B288: the same owner derivation as every other writer — a per-device
+		// tag is owned by the user its name names plus the sentinel; anything
+		// else keeps the admin identity.
+		if user, ok := db.PerDeviceTagUser(tag); ok {
+			owners, oErr := db.TagOwnersForUser(user, baseDomain)
+			if oErr != nil {
+				return "", oErr
 			}
+			emitTagOwner2(tag, ownerListJSON(owners))
+			continue
 		}
-		emitTagOwner2(tag, "[\""+owner+"\"]")
+		emitTagOwner2(tag, "[\""+envAdminIdentity()+"@"+baseDomain+"\"]")
 	}
 	sb.WriteString("\n  },\n")
 

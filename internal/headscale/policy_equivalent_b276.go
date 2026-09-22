@@ -35,6 +35,14 @@ import (
 
 // PolicyEquivalent reports whether two policy documents describe the same policy.
 //
+// The comparison is by SET, not by byte: `normalizePolicy` (B288) sorts and
+// de-duplicates every set-like array (grants, owner/member lists), so a policy
+// that lists the same grant twice — or lists the owners of a tag in another
+// order — is equivalent, while the order-sensitive legacy `acls`/`rules` list is
+// left alone. Before B288 the live `aro` document carried 16 duplicated grants
+// from the pre-B274 generator and the page reported «политика УСТАРЕЛА» forever,
+// with no pin actually wrong.
+//
 // A nil error with equivalent=false means both sides parsed and differ. An error
 // means at least one side could not be parsed — the caller should treat that as
 // "cannot tell" and report it rather than claiming drift (a policy skygate cannot
@@ -49,7 +57,7 @@ func PolicyEquivalent(a, b string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("policy B: %w", err)
 	}
-	return reflect.DeepEqual(am, bm), nil
+	return reflect.DeepEqual(normalizePolicy(am), normalizePolicy(bm)), nil
 }
 
 // decodePolicyValue normalises one policy document (stringified or HuJSON, with

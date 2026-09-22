@@ -598,18 +598,29 @@ func ensureTagIsPermitted(hs nodeLister, row db.NodeOwner, baseDomain string, en
 	return nil
 }
 
-// tagOwnersFor derives the headscale owners of a row's tag from the database
-// row itself: `<username>@<baseDomain>` plus `tagged-devices@<baseDomain>` (the
-// sentinel pool, which is how a device no portal user has adopted stays
-// reachable). Shared by the per-tag and the batch paths so both can never
-// disagree about who owns a tag.
+// tagOwnersFor derives the headscale owners of a row's tag: for a per-device tag
+// (`tag:dev-<user>-<host>`) the user the TAG names plus the
+// `tagged-devices@<baseDomain>` sentinel pool, and for any other tag form the
+// row's own username with the same sentinel fallback.
+//
+// B288 (2026-09-22): the per-device case now goes through the shared
+// db.TagOwnersForUser derivation, so this reconciler, the ownership backfill
+// (nodeownership.go) and the ACL generator all emit the SAME owner set. They
+// used to differ (this function used the row's `username`, which headscale sets
+// to the synthetic `tagged-devices` for every tagged node — B287), so an ACL
+// apply stripped `<user>@` and the next tag apply was refused with `not
+// permitted`.
 //
 // A missing baseDomain is an error rather than a silent skip: without it the
 // tag can never become permitted, and silence is what made this class of
-// failure invisible in the first place.
+// failure invisible in the first place. A tag whose NAME names no user (a class
+// tag such as `tag:private`) keeps the row-derived owner.
 func tagOwnersFor(row db.NodeOwner, baseDomain string) ([]string, error) {
 	if baseDomain == "" {
 		return nil, fmt.Errorf("SKYGATE_BASE_DOMAIN is not set, so the owner of %q cannot be expressed in the policy — set it to the headscale base domain (e.g. tail.example.com)", row.Tag)
+	}
+	if user, ok := db.PerDeviceTagUser(row.Tag); ok {
+		return db.TagOwnersForUser(user, baseDomain)
 	}
 	user := row.Username
 	if user == "" || user == "tagged-devices" {

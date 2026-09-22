@@ -24,11 +24,17 @@
 // headscale only accepts it once that user (or `tagged-devices`) owns it. These
 // helpers make that the single place the question is answered.
 //
+// 2026-09-22: B287, extended by B288 with the OWNERSHIP side of the same idea:
+// `PerDeviceTagUser` (parse the user out of the tag), `TagOwnersForUser` (the
+// owner pair every writer must emit) and `ListDevTagsFromOwnerMap` (every
+// per-device tag `node_owner_map` records, for the ACL's tagOwners block).
+//
 // 2026-09-22: B287.
 package db
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 )
 
@@ -87,6 +93,133 @@ func HasPerDeviceTag(tags []string, username, hostname string) bool {
 		}
 	}
 	return false
+}
+
+// PerDeviceTagUser parses the portal user a per-device tag names:
+//
+//	PerDeviceTagUser("tag:dev-daniil-workpc")            -> "daniil", true
+//	PerDeviceTagUser("tag:dev-infra-exit-node-vps")      -> "infra",  true
+//	PerDeviceTagUser("tag:private")                      -> "",       false
+//	PerDeviceTagUser("tag:dev-workpc")                   -> "",       false
+//
+// The user is the FIRST dash segment after `tag:dev-`, which is the same rule
+// the tag-minting sites use, and hostnames may contain dashes freely. A tag
+// with no `<user>-<host>` split names nobody and is refused, so callers can
+// fall back explicitly instead of inventing an owner.
+//
+// B288 (2026-09-22): this is the single parser behind the tag-ownership
+// derivation, so the ACL generator, the ownership backfill and the tag
+// reconciler can never disagree about who owns `tag:dev-<user>-<host>`.
+func PerDeviceTagUser(tag string) (string, bool) {
+	t := strings.ToLower(strings.TrimSpace(tag))
+	const prefix = "tag:dev-"
+	if !strings.HasPrefix(t, prefix) {
+		return "", false
+	}
+	rest := t[len(prefix):]
+	idx := strings.Index(rest, "-")
+	if idx <= 0 || idx == len(rest)-1 {
+		return "", false
+	}
+	return rest[:idx], true
+}
+
+// TagOwnersForUser returns the headscale identities that must own a per-device
+// tag minted for this user:
+//
+//	TagOwnersForUser("daniil", "ts.example.com")
+//	  -> ["daniil@ts.example.com", "tagged-devices@ts.example.com"]
+//	TagOwnersForUser("tagged-devices", "ts.example.com")
+//	  -> ["tagged-devices@ts.example.com"]
+//
+// Why the sentinel is always a co-owner: headscale reassigns a node to its
+// synthetic `tagged-devices` user as soon as it wears ANY tag (B287), and a tag
+// can only be (re)applied by a user that owns the node — so without
+// `tagged-devices@<baseDomain>` in the owner list, re-applying the tag to an
+// already-tagged device fails with `400 requested tags [...] are invalid or
+// not permitted` (the B272.7/v1.5.14 incident).
+//
+// B288 (2026-09-22): before this helper there were THREE derivations — the ACL
+// generator emitted `<user>@` alone, the ownership backfill emitted
+// `<portal-user>@ + tagged-devices@`, and the tag reconciler emitted
+// `<row-username>@ + tagged-devices@` (where the row username is the synthetic
+// owner for every tagged node). They disagreed, so every ACL apply stripped the
+// sentinel owner and the next tag apply failed; and since the drift banner
+// compares the two documents, the operator saw a permanent "политика
+// УСТАРЕЛА". One derivation, one owner set.
+//
+// An empty base domain is an error, never a silent skip: without it the tag can
+// never become permitted, and silence is what made this class invisible.
+func TagOwnersForUser(username, baseDomain string) ([]string, error) {
+	base := strings.TrimSpace(baseDomain)
+	if base == "" {
+		return nil, fmt.Errorf("base domain is empty, so the owner of a per-device tag cannot be expressed in the policy (set SKYGATE_BASE_DOMAIN)")
+	}
+	u := strings.ToLower(strings.TrimSpace(username))
+	if u == "" {
+		u = "tagged-devices"
+	}
+	owners := []string{u + "@" + base}
+	if u != "tagged-devices" {
+		owners = append(owners, "tagged-devices@"+base)
+	}
+	return owners, nil
+}
+
+// DevTagOwner is one per-device tag recorded in `node_owner_map`, with the
+// portal user its NAME attributes it to (never the row's `username` column,
+// which headscale sets to the synthetic `tagged-devices` for a tagged node —
+// B287).
+type DevTagOwner struct {
+	Tag      string
+	Username string
+}
+
+// ListDevTagsFromOwnerMap returns every per-device tag in `node_owner_map`
+// (`tag:dev-<user>-<host>`), de-duplicated and sorted.
+//
+// Why the generator needs it: `node_owner_map.tag` is the ownership record — it
+// holds the tag the node ACTUALLY wears, and its `username` column may be
+// headscale's synthetic owner, so the portal-user JOIN (`GetPerUserDeviceTags`)
+// cannot see those rows at all. Without this list the generated policy simply
+// did not declare such a tag, and every apply REMOVED the declaration a node
+// needs (live on `aro`: `tag:dev-daniil-homepc`/`tag:dev-daniil-laptop` were
+// declared in the live policy and would have been dropped).
+func ListDevTagsFromOwnerMap(d *sql.DB) ([]DevTagOwner, error) {
+	if d == nil {
+		return nil, nil
+	}
+	rows, err := d.Query(
+		`SELECT DISTINCT LOWER(COALESCE(tag, '')) FROM node_owner_map
+		  WHERE LOWER(COALESCE(tag, '')) LIKE 'tag:dev-%'
+		  ORDER BY 1`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DevTagOwner
+	seen := map[string]bool{}
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, err
+		}
+		tag = strings.TrimSpace(tag)
+		if tag == "" || seen[tag] {
+			continue
+		}
+		user, ok := PerDeviceTagUser(tag)
+		if !ok {
+			// A `tag:dev-*` value the parser refuses names nobody; declaring it
+			// with an invented owner would be worse than leaving it to the
+			// grant-referenced sweep.
+			continue
+		}
+		seen[tag] = true
+		out = append(out, DevTagOwner{Tag: tag, Username: user})
+	}
+	return out, rows.Err()
 }
 
 // ListNodeOwnerNodeIDsByUserTag returns the `node_owner_map.node_id` values

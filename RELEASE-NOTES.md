@@ -12,6 +12,128 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.52 — policy drift must mean drift, and it must heal itself (B288)
+
+**Date:** 2026-09-22 · **Base:** `v1.5.51` → this tag · **Compatibility:** none —
+no schema change, no migration.
+
+Operator report on the native host `aro`:
+
+> На странице /admin/exit-nodes продолжает идти жалоба на «политика headscale
+> УСТАРЕЛА», при этом в exit rules отмечено что все идет правильно и нод выбран
+> верно (он в принципе один).
+
+The tailnet has exactly one relay, so there was nothing to choose and nothing to
+pin differently — yet the red banner came back on every page load. Both documents
+were downloaded from the running instance and compared:
+
+```
+generated 5082 bytes / live 11341 bytes
+grants     26               42        (16 of the live ones are DUPLICATES)
+tagOwners   6                8        (live declares tag:dev-daniil-homepc,
+                                       tag:dev-daniil-laptop, and owns
+                                       tag:dev-infra-exit-node-vps together with
+                                       tagged-devices@)
+```
+
+A headscale policy is a **set of statements** — grants are additive, so listing
+the same grant twice changes nothing — therefore the byte difference described no
+behavioural difference at all. The banner was true and useless, and the button it
+offered would have rewritten the document for no gain. Four separate defects
+produced that state:
+
+### 1. The comparison was byte-shaped, not meaning-shaped
+
+`PolicyEquivalent` decoded both documents and compared them with
+`reflect.DeepEqual`, so the 16 duplicated grants (the pre-B274 generator emitted
+one grant per rule row, and the CDN expansion had duplicated the rows — B274's
+`CollapseDuplicateDerivedRules` fixed the generator, the live document kept the
+duplicates) read as drift **forever**.
+
+`internal/headscale/policy_compare_b288.go` now canonicalises both documents
+first: set-like arrays (`grants`, `ssh`, and every `src`/`dst`/`via`/`ip`/
+owner/member list) are sorted and de-duplicated, while the order-sensitive legacy
+`acls`/`rules` array is deliberately left alone — there the **first** matching rule
+wins, so its order and even its duplicates are meaningful. `PolicyDriftDetail`
+additionally names which section differs, so the next banner says
+`tagOwners: only in the live policy: tag:dev-daniil-homepc` instead of blaming the
+`via` pins by default. Both are rendered on `/admin/exit-nodes`.
+
+### 2. Three writers, three different owner sets for one tag
+
+`tag:dev-<user>-<host>` was declared with `<user>@…` by the ACL generator, with
+`<portal-user>@… + tagged-devices@…` by the ownership backfill, and with
+`<row-username>@… + tagged-devices@…` by the tag reconciler — and the row's
+`username` is headscale's synthetic `tagged-devices` for **every** tagged node
+(B287), so the three genuinely disagreed. An ACL apply stripped the sentinel
+owner, and the next tag apply was refused with `400 requested tags […] are
+invalid or not permitted`.
+
+One derivation now serves all three: `db.PerDeviceTagUser` (parse the user out of
+the tag) and `db.TagOwnersForUser` (that user plus `tagged-devices@<baseDomain>`,
+which is what lets an already-tagged node be re-tagged).
+
+### 3. An apply could DELETE a declaration a node wears
+
+The generator's `tagOwners` block came from `GetPerUserDeviceTags` — a JOIN on
+`portal_users` that cannot see a row owned by the synthetic user — plus the B285
+sweep over tags that **grants** name. `tag:dev-daniil-homepc` and
+`tag:dev-daniil-laptop` are referenced by no grant, so the generated policy
+declared neither while the live one declared both: in that one respect the
+"stale" document was **more** correct than its replacement.
+`db.ListDevTagsFromOwnerMap` now feeds every per-device tag recorded in
+`node_owner_map` — the ownership record — into both generators.
+
+### 4. Nothing was ever going to fix it
+
+`applyACLIfDrifted` was documented as the single "make the control plane match the
+database" step, but its only trigger was a **change** in the assignment table
+(`chg > 0`) — and on a healthy install the table does not move. A mismatch that
+pre-dates the pass (an older generator, one failed apply) was therefore permanent
+by construction. `reconcilePrefixOwnership` now consults the drift check on every
+sync pass behind its own five-minute throttle (`periodicDriftCheck`): a converged
+host pays one policy read and writes nothing, a drifted host heals itself without
+the operator pressing anything. The `via`-pin path (B276) is unchanged.
+
+### Also fixed
+
+The **legacy** generator emitted `"tag:public": ["admin@<base>]` — the closing
+quote was missing before the `]`, so the JSON was unparseable. On any host without
+`SKYGATE_ACL_VIA_ENABLED=true` that is the generator the apply paths use, i.e.
+every ACL apply would have failed with a parse error. Pinned by a test that
+unmarshals **both** generators' output.
+
+### Contracts
+
+* `scripts/check_b288_policy_drift_truth.sh` (24 contracts) — set semantics and
+  the untouched legacy order, the shared owner derivation, the complete
+  declaration set, the periodic self-heal + throttle, the page's drift detail,
+  the i18n keys in RU+EN, the legacy JSON fix, and the git-tracked contract.
+* `internal/headscale/policy_compare_b288_test.go` — duplicate grants and
+  reordered owners are equivalent; an added/removed owner, declaration or grant is
+  **not**; the legacy first-match list stays order-sensitive; "cannot parse" stays
+  an error.
+* `internal/db/device_tag_b288_test.go` — the tag parser and the owner derivation
+  (including the sentinel and the empty-base-domain error) and
+  `ListDevTagsFromOwnerMap` on the live shape (every row owned by the synthetic
+  user).
+* `internal/acl/acl_b288_test.go` — every tag the ownership record holds is
+  declared with the shared owner pair, and the two generators agree.
+* `internal/feature/exit_rules/sync_b288_test.go` — a **stable** assignment table
+  plus a stale live policy is re-applied (the regression), while a converged host
+  writes nothing and does not even re-read the policy inside the interval.
+
+### Operator action
+
+1. Install v1.5.52 through **/admin/update** and confirm `/healthz` reports
+   `"build":"v1.5.52+<sha>"`.
+2. Open `/admin/exit-nodes`. The banner may still be shown **once**, naming what
+   differs; the automatic sync clears it within one tick (≤5 minutes, i.e. by the
+   time the domain auto-updater runs), or immediately via
+   «Пересобрать и применить ACL». After that it stays clear — the generated
+   document is a fixed point now.
+3. No migration, no re-registration, no manual headscale edit is required.
+
 ## v1.5.51 — the per-device tag is an ownership record (B287)
 
 **Date:** 2026-09-22 · **Base:** `v1.5.50` → this tag · **Compatibility:** none —

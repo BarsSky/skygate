@@ -79,11 +79,19 @@ echo "=== A. via loop owner-from-name (source) ==="
 # Pre-fix code only had the fallback.
 awk '/for _, tag := range exitNodeTags/,/^	}/' "${ACL_GO}" > /tmp/viablock.txt
 has_fallback=$(grep -c 'envAdminIdentity()' /tmp/viablock.txt || true)
-has_parse=$(grep -cE 'rest\[:idx\]' /tmp/viablock.txt || true)
+# RENEGOTIATED for B288 (2026-09-22): the owner-from-name parsing moved out of
+# this loop into the shared helpers `db.PerDeviceTagUser` + `db.TagOwnersForUser`
+# (internal/db/device_tag.go), because THREE writers of the same tagOwners entry
+# derived three different owner sets — which made the headscale policy drift
+# permanent on the live host (the «политика УСТАРЕЛА» banner). The B118 property
+# is unchanged: a `tag:dev-*` via tag must NOT be owned by the hardcoded admin
+# identity, the owner comes from the tag NAME. Only the parsing location moved,
+# so either form satisfies the contract.
+has_parse=$(grep -cE 'rest\[:idx\]|db\.PerDeviceTagUser\(tag\)' /tmp/viablock.txt || true)
 if [ "${has_fallback}" -ge 1 ] && [ "${has_parse}" -ge 1 ]; then
-    ok "via loop has fallback (envAdminIdentity) AND owner-from-name (rest[:idx]) — B118 applied"
+    ok "via loop has fallback (envAdminIdentity) AND owner-from-name (rest[:idx] or db.PerDeviceTagUser) — B118 applied"
 else
-    bad "via loop missing either fallback (envAdminIdentity=${has_fallback}) or owner-from-name (rest[:idx]=${has_parse})"
+    bad "via loop missing either fallback (envAdminIdentity=${has_fallback}) or owner-from-name (rest[:idx]|PerDeviceTagUser=${has_parse})"
 fi
 
 # ------------------------------------------------------------------------------

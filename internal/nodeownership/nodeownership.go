@@ -647,12 +647,16 @@ func Backfill(
 					// log line below is the operator-side
 					// signal that pre-population failed
 					// (separate from the AddTag error).
+					// B288 (2026-09-22): the owner pair now comes from the
+					// shared derivation the ACL generator and the tag
+					// reconciler use, so the three writers of `tagOwners`
+					// cannot disagree (they used to, and every ACL apply
+					// silently stripped the sentinel owner).
 					if baseDomain := os.Getenv("SKYGATE_BASE_DOMAIN"); baseDomain != "" && portalUsername != "" {
-						owners := []string{
-							portalUsername + "@" + baseDomain,
-							"tagged-devices@" + baseDomain,
-						}
-						if err := hs.EnsureTagOwner(devTag, owners); err != nil {
+						owners, oErr := dbpkg.TagOwnersForUser(portalUsername, baseDomain)
+						if oErr != nil {
+							log.Printf("warn: cannot derive the owner of %q: %v — falling through to AddTag", devTag, oErr)
+						} else if err := hs.EnsureTagOwner(devTag, owners); err != nil {
 							log.Printf("warn: ensure tag-owner %q for owners=%v: %v — falling through to AddTag (the next step will likely also fail with InvalidArgument if the policy update didn't take)", devTag, owners, err)
 						}
 					}

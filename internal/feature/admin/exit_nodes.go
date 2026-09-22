@@ -963,6 +963,10 @@ type PrefixDriftStats struct {
 	PolicyErr      string
 	PolicyBytes    int
 	PolicyLiveByte int
+	// PolicyDetail names which sections of the two documents differ (B288), so
+	// the banner cannot blame the `via` pins for a difference that is, say, two
+	// extra tag declarations. Empty when the policies are equivalent.
+	PolicyDetail string
 }
 
 // prefixDriftRowLimit caps how many rows the page renders. The assignment table
@@ -1087,6 +1091,15 @@ func (s *Service) fillPolicyDrift(stats *PrefixDriftStats) {
 	}
 	stats.PolicyChecked = true
 	stats.PolicyInSync = same
+	if !same {
+		// B288: say WHAT differs. The banner used to explain every drift with
+		// the `via`-pin story; live on `aro` the only differences were 16
+		// duplicated grants (semantically no-ops) and two tag declarations, so
+		// the explanation pointed at the one thing that was not wrong.
+		if detail, dErr := headscale.PolicyDriftDetail(gen, live); dErr == nil {
+			stats.PolicyDetail = detail
+		}
+	}
 }
 
 // PostAdminExitPrefixOwner pins one prefix to one relay (B275.1), or hands it

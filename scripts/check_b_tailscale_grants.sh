@@ -134,14 +134,25 @@ else
     bad "emitTagOwner dedup helper missing"
 fi
 
-# --- A.6: tagOwner struct + sort + emit loop ---
+# --- A.6: per-device tagOwners emission is deterministic (sorted) ---
+# RENEGOTIATED for B288 (2026-09-22). The property this contract protects is
+# "per-device tagOwners entries are emitted in a stable, sorted order so the
+# document diffs cleanly across rebuilds, and duplicate object keys are
+# impossible". Pre-B288 it pinned the legacy generator's `type tagOwner struct`
+# + `sort.Slice(tagOwners, …)` in GenerateACLForPlane; B288 replaced that block
+# (and the grants generator's `perDevTagOwners` twin) with ONE shared helper —
+# `devTagsToDeclare` (which returns the union de-duplicated AND sorted) plus
+# `devTagOwnerJSON` — because three different writers of the same tagOwners
+# entry is what produced the permanent «политика УСТАРЕЛА» on the live host.
+# The de-duplication helper is still pinned by A.5.
 echo
-echo "--- A.6 tagOwner struct + sort + emit loop ---"
-if grep -q "type tagOwner struct" "${ACL_FILE}" 2>/dev/null && \
-   grep -q "sort.Slice(tagOwners" "${ACL_FILE}" 2>/dev/null; then
-    ok "tagOwner struct + sort.Slice stable-diff loop"
+echo "--- A.6 deterministic (sorted) per-device tagOwners emission ---"
+if grep -q "func devTagsToDeclare" "${ACL_FILE}" 2>/dev/null && \
+   grep -q "sort.Strings(out)" "${ACL_FILE}" 2>/dev/null && \
+   grep -q "devTagsToDeclare(d" "${ACL_FILE}" 2>/dev/null; then
+    ok "devTagsToDeclare + sort.Strings: stable-diff, de-duplicated emission (B288)"
 else
-    bad "tagOwner struct / sort missing"
+    bad "per-device tagOwners emission is not the shared, sorted helper (devTagsToDeclare)"
 fi
 
 # --- A.7: GetPerUserDeviceTags helper exists in db ---
@@ -163,13 +174,24 @@ else
     bad "device_exit_node_prefs missing via_enabled"
 fi
 
-# --- A.9: per-device-pref tags go through tagOwners (B227/B188 hotfix) ---
+# --- A.9: per-device-pref tags go through tagOwners (B227/B188 hotfix, B288) ---
+# RENEGOTIATED for B288 (2026-09-22). The v1.3.18 hotfix guaranteed that a
+# per-device-pref tag (`viaByDevice`) is declared in tagOwners — otherwise the
+# parser answers "src=tag not found" and the whole document is refused. B288
+# widened the source of that set: the union of the portal-user JOIN
+# (GetPerUserDeviceTags), the per-device prefs (viaByDevice) AND every per-device
+# tag `node_owner_map` records (the ownership record, which the JOIN cannot see
+# because headscale owns every tagged node as the synthetic `tagged-devices`).
+# The old `augmentedTagsByUser` loop was replaced by `devTagsToDeclare`; the
+# property is unchanged and strictly stronger.
 echo
-echo "--- A.9 per-device-pref tags are emitted via augmentedTagsByUser ---"
-if grep -q "augmentedTagsByUser" "${ACL_FILE}" 2>/dev/null; then
-    ok "augmentedTagsByUser loop present (v1.3.18 hotfix for 'src=tag not found')"
+echo "--- A.9 per-device tags are declared from the union incl. the ownership record ---"
+if grep -q "augmentedTagsByUser" "${ACL_FILE}" 2>/dev/null || \
+   { grep -q "func devTagsToDeclare" "${ACL_FILE}" 2>/dev/null && \
+     grep -q "ListDevTagsFromOwnerMap" "${ACL_FILE}" 2>/dev/null; }; then
+    ok "per-device tags declared from the union incl. node_owner_map (B288)"
 else
-    bad "augmentedTagsByUser loop missing"
+    bad "per-device tagOwners emission missing (the 'src=tag not found' class)"
 fi
 
 # --- A.10: preauth step has --user flag (root cause: install-time ghost nodes) ---
