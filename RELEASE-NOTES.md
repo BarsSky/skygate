@@ -12,6 +12,109 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.45 — B231 cascade: the hostname-rename migration now updates device_rules too (B-rename-rules)
+
+**Date:** 2026-09-22 · **Base:** `v1.5.44` → this tag · **Compatibility:** none.
+
+Live bug (user-reported on `aro` deployment):
+
+```
+HOSTNAME             IP            OWNER           STATUS    PREFERRED
+exit-node-vps   100.64.0.1   tagged-devices   online   ✓ preferred
+```
+
+But every rule for that device still had `exit_node_id="node"`. The
+ACL builder emitted `via: tag:dev-infra-node` — which doesn't match
+the new node's tag (`tag:dev-infra-exit-node-vps`). Tailscale silently
+ignored the via= pin and traffic went through DERP / default.
+
+### Root cause
+
+B231 (the rename migrator) only updated `device_exit_node_prefs`
+when a headscale host was renamed — it did NOT touch the rule rows.
+The rule's `exit_node_id` and `device_hostname` are denormalised
+columns set at INSERT time; nothing kept them in sync with the
+canonical headscale hostname after a rename.
+
+### Fix
+
+`applyRenameMigration` now also UPDATE-s `device_rules` in the
+same transaction as the pref migration:
+
+```sql
+UPDATE device_rules
+   SET exit_node_id   = $1,
+       device_hostname = COALESCE(NULLIF($2, ''), device_hostname)
+ WHERE user_id = $3
+   AND enabled = 1
+   AND (exit_node_id = $4 OR device_hostname = $4)
+```
+
+* `enabled = 1` scope: disabled rules are NOT touched. The
+  per-rule status loop in `form_my.go` skips disabled rows, so
+  renaming them does not affect anything the operator sees.
+  Re-enabling a previously-renamed disabled rule still hits the
+  same stale `node` exit_node_id — the operator has to fix
+  that themselves (the rename is only for live rules).
+* `user_id = $3` scope: other users' rules are untouched.
+* Same transaction as the pref UPSERT/DELETE: atomic rename
+  of all denormalised columns (no half-state).
+
+### Audit
+
+The existing audit-log entry now carries `rules_cascaded=N`:
+
+```
+MIGRATE pref user=skyadmin old_hostname=node new_hostname=exit-node-vps tag=tag:dev-infra-exit-node-vps rules_cascaded=23 reason=hostname-rename
+```
+
+The Telegram alert also includes the count so the operator can
+verify how many rules moved.
+
+### Signature change
+
+`applyRenameMigration` now returns `(int64, error)` instead of
+just `error`. The first return value is the count of migrated
+rule rows — used by the caller to write the audit detail.
+
+### Files
+
+```
+internal/feature/exit_rules/reconciler_rename.go                       (applyRenameMigration: 2-value return + UPDATE device_rules)
+internal/feature/exit_rules/reconciler_rename_rules_b277_5_test.go      (NEW — sqlite-backed test: 3 enabled rules migrated, 1 disabled + 1 other-user rule preserved)
+scripts/check_rename_rules_b277_5.sh                                   (NEW — 9 contracts A–E)
+```
+
+### Verification
+
+* `go build ./...` clean
+* `go test -count=1 -run 'ApplyRenameMigration' ./internal/feature/exit_rules/` → **PASS**
+* `bash scripts/check_rename_rules_b277_5.sh` → **9/9 PASS** (D2 SKIPs — go not on PATH for bash)
+
+### Live verify on `aro`
+
+After `/admin/update` to v1.5.45, the next preferred-reconciler tick
+will:
+
+1. See `device_exit_node_prefs` with the OLD hostname "node"
+2. Detect the rename candidate via `node_owner_map.tag` equality
+3. UPSERT the NEW pref row
+4. UPDATE every `device_rules` row for that user that pointed at
+   "node" — 23 rules flipped to "exit-node-vps"
+5. Write the audit entry + send the Telegram alert with
+   `rules_cascaded=23`
+
+The rules page will now show `exit-node-vps` as the exit node
+(matching the per-device preferred), and the ACL builder will
+emit `via: tag:dev-infra-exit-node-vps` — the headscale
+pin will take effect.
+
+For operators who had a STALE state before v1.5.45 (the user's
+case): the next tick fixes everything automatically. Operators who
+NEVER had a rename can ignore this release.
+
+---
+
 ## v1.5.44 — OIDC auto-setup: enable from the web UI + SKYGATE_OIDC_ENABLED env flag (B-oidc-setup)
 
 **Date:** 2026-09-21 · **Base:** `v1.5.43` → this tag · **Compatibility:** none.

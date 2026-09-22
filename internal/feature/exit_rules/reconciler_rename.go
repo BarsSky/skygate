@@ -242,7 +242,8 @@ func (s *Service) MigrateRenamedDevicePrefs(ctx context.Context, n ReconcilerNot
 					username, p.hostname, newHost, p.exitNodeTag)
 				m.Applied = false
 			} else {
-				if err := s.applyRenameMigration(ctx, p.userID, p.hostname, newHost, p.exitNodeTag); err != nil {
+				rulesAffected, err := s.applyRenameMigration(ctx, p.userID, p.hostname, newHost, p.exitNodeTag)
+				if err != nil {
 					log.Printf("preferred-reconciler: MIGRATE pref user=%s old=%s new=%s FAILED: %v",
 						username, p.hostname, newHost, err)
 					continue
@@ -250,14 +251,14 @@ func (s *Service) MigrateRenamedDevicePrefs(ctx context.Context, n ReconcilerNot
 				m.Applied = true
 				_ = db.AppendAuditLogWithTarget(s.dbc(), 0, "system",
 					"preferred_reconcile_migrated",
-					fmt.Sprintf("MIGRATE pref user=%s old_hostname=%s new_hostname=%s tag=%s reason=hostname-rename",
-						username, p.hostname, newHost, p.exitNodeTag),
+					fmt.Sprintf("MIGRATE pref user=%s old_hostname=%s new_hostname=%s tag=%s rules_cascaded=%d reason=hostname-rename",
+						username, p.hostname, newHost, p.exitNodeTag, rulesAffected),
 					"headscale_node", p.hostname)
-				log.Printf("preferred-reconciler: MIGRATE pref user=%s old=%s new=%s tag=%s",
-					username, p.hostname, newHost, p.exitNodeTag)
+				log.Printf("preferred-reconciler: MIGRATE pref user=%s old=%s new=%s tag=%s rules_cascaded=%d",
+					username, p.hostname, newHost, p.exitNodeTag, rulesAffected)
 				if shouldAlert(p.hostname, "rename", now) {
-					n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B231)\nMIGRATE user=%s old_hostname=%s new_hostname=%s tag=%s\nreason: hostname-rename detected (the operator renamed the device in headscale; B231 moved the pref to the new hostname)\nrollback via SQL: re-INSERT the old (user, hostname) row manually if you need to undo",
-						username, p.hostname, newHost, p.exitNodeTag))
+					n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B231 + B-rename-rules)\nMIGRATE user=%s old_hostname=%s new_hostname=%s tag=%s\nrules_cascaded=%d (device_rules.exit_node_id + device_hostname updated in the same tx)\nreason: hostname-rename detected\nrollback via SQL: re-INSERT the old (user, hostname) row manually if you need to undo",
+						username, p.hostname, newHost, p.exitNodeTag, rulesAffected))
 				}
 			}
 			changes = append(changes, m)
@@ -396,8 +397,16 @@ func (s *Service) classifyRenamePref(ctx context.Context, userID int64, username
 // We also re-enable via_enabled=1 (the B229 catch-up
 // behavior — the operator's pin intent is preserved).
 //
+// v1.5.45 (B-rename-rules): the same transaction also
+// UPDATE-s every device_rules row for the user where
+// exit_node_id = oldHost OR device_hostname = oldHost —
+// without this, the rule's denormalised columns stay
+// stale and the ACL `via:` clause keeps pointing at the
+// old host. Returns the count of migrated rules so the
+// caller can audit-log the cascade.
+//
 // 2026-09-03: v1.5.2 (B231).
-func (s *Service) applyRenameMigration(ctx context.Context, userID int64, oldHost, newHost, exitNodeTag string) error {
+func (s *Service) applyRenameMigration(ctx context.Context, userID int64, oldHost, newHost, exitNodeTag string) (int64, error) {
 	conn := s.dbc()
 	// Resolve the canonical tag for the NEW
 	// hostname (might differ from exitNodeTag if
@@ -412,7 +421,7 @@ func (s *Service) applyRenameMigration(ctx context.Context, userID int64, oldHos
 	}
 	tx, err := conn.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("rename-migrator: begin tx: %w", err)
+		return 0, fmt.Errorf("rename-migrator: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	// UPSERT new (user, new_hostname). ON CONFLICT
@@ -431,7 +440,7 @@ func (s *Service) applyRenameMigration(ctx context.Context, userID int64, oldHos
 			    via_enabled    = EXCLUDED.via_enabled,
 			    updated_at     = EXCLUDED.updated_at
 	`, userID, newHost, canonical, time.Now().Unix()); err != nil {
-		return fmt.Errorf("rename-migrator: upsert new: %w", err)
+		return 0, fmt.Errorf("rename-migrator: upsert new: %w", err)
 	}
 	// DELETE old (user, old_hostname). If the old
 	// row doesn't exist (race with the operator
@@ -441,10 +450,44 @@ func (s *Service) applyRenameMigration(ctx context.Context, userID int64, oldHos
 		DELETE FROM device_exit_node_prefs
 		 WHERE user_id = $1 AND device_hostname = $2
 	`, userID, oldHost); err != nil {
-		return fmt.Errorf("rename-migrator: delete old: %w", err)
+		return 0, fmt.Errorf("rename-migrator: delete old: %w", err)
 	}
+
+	// B-rename-rules (v1.5.45, 2026-09-22): the SAME rename
+	// must propagate to the denormalised exit_node_id +
+	// device_hostname columns in device_rules. Pre-fix B231
+	// only updated device_exit_node_prefs — the rule rows
+	// kept their old `exit_node_id="node"` and the ACL
+	// builder continued to emit `via: tag:dev-infra-node`,
+	// which didn't match the new node's tag
+	// (`tag:dev-infra-exit-node-vps`). Tailscale silently
+	// ignored the via= pin and traffic went through DERP /
+	// default. The fix: same transaction that moves the pref
+	// also UPDATEs every rule for the user that pointed at
+	// oldHost (via exit_node_id OR via device_hostname).
+	//
+	// The UPDATE skips enabled=0 rows: a disabled rule is
+	// not part of the live ACL (the per-rule status loop in
+	// form_my.go skips it), so renaming it does not affect
+	// anything the operator sees. Re-enabling it later will
+	// still hit the same stale `node` exit_node_id — the
+	// operator has to fix that themselves, the migration is
+	// only for live rules.
+	res, err := tx.ExecContext(ctx, `
+		UPDATE device_rules
+		   SET exit_node_id   = $1,
+		       device_hostname = COALESCE(NULLIF($2, ''), device_hostname)
+		 WHERE user_id = $3
+		   AND enabled = 1
+		   AND (exit_node_id = $4 OR device_hostname = $4)
+	`, newHost, newHost, userID, oldHost)
+	if err != nil {
+		return 0, fmt.Errorf("rename-migrator: update device_rules: %w", err)
+	}
+	rulesAffected, _ := res.RowsAffected()
+
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("rename-migrator: commit: %w", err)
+		return 0, fmt.Errorf("rename-migrator: commit: %w", err)
 	}
-	return nil
+	return rulesAffected, nil
 }
