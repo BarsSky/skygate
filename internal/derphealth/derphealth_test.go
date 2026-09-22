@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -46,21 +47,43 @@ func TestProbeOne_HandshakeOK(t *testing.T) {
 	ProbeOneTLSConfig = &tls.Config{RootCAs: pool}
 	defer func() { ProbeOneTLSConfig = prev }()
 
+	// ProbeOne measures the TCP+TLS handshake and reports WHOLE milliseconds, and
+	// an in-process handshake can legitimately finish inside one: the old
+	// `lat <= 0` assertion failed on a fast runner ("want positive latency, got
+	// 0", CI run 35789549346 / B1) with nothing wrong. Clock granularity is not
+	// the property worth pinning — "the probe really opened and measured a
+	// connection" is, so this test counts the connections the server accepted
+	// and bounds the reported value by the wall time of the call.
+	// (2026-09-22, B288.1 CI follow-up.)
+	var conns int64
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "ok")
 	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			atomic.AddInt64(&conns, 1)
+		}
+	}
 	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
 	srv.StartTLS()
 	defer srv.Close()
 
 	host := srv.Listener.Addr().String()
 	d := DERPInfo{RegionID: 1, RegionCode: "tst", Host: host}
+	start := time.Now()
 	lat, err := ProbeOne(context.Background(), d, srv.Client())
+	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("probe: %v", err)
 	}
-	if lat <= 0 {
-		t.Fatalf("want positive latency, got %d", lat)
+	if atomic.LoadInt64(&conns) == 0 {
+		t.Fatal("the probe reported success without ever connecting to the DERP host")
+	}
+	if lat < 0 {
+		t.Fatalf("probe reported a negative latency (%dms)", lat)
+	}
+	if lat > int(elapsed.Milliseconds())+1 {
+		t.Fatalf("probe reported %dms for a call that took %s — the value was not measured", lat, elapsed)
 	}
 	if lat > 1000 {
 		t.Logf("warning: local TLS handshake took %dms", lat)
