@@ -105,10 +105,18 @@ run_check() {
   # catalog still runs. Override with SKYGATE_CHECK_TIMEOUT (seconds).
   local budget="${SKYGATE_CHECK_TIMEOUT:-900}"
   if command -v timeout >/dev/null 2>&1; then
-    out=$(timeout "$budget" bash -c "$cmd" "$@" 2>&1)
+    # `< /dev/null` is not decoration: a check has no business reading the
+    # catalog's stdin. On a GitHub runner the step's stdin is an open pipe that
+    # is never closed, so any bare `grep PATTERN` (no file operand — a typo, an
+    # empty glob, a `read`) blocks forever with no output at all. Live evidence:
+    # the job printed PASS B260 and then sat silent for 22 minutes until GitHub
+    # cancelled it, with an orphaned `grep` in the process list. With stdin at
+    # EOF such a command returns immediately, and the per-check timeout below
+    # bounds everything else.
+    out=$(timeout "$budget" bash -c "$cmd" "$@" < /dev/null 2>&1)
     rc=$?
   else
-    out=$(bash -c "$cmd" "$@" 2>&1)
+    out=$(bash -c "$cmd" "$@" < /dev/null 2>&1)
     rc=$?
   fi
   if [ "$rc" -eq 124 ]; then

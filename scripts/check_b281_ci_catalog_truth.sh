@@ -148,6 +148,11 @@ if [ -f "$VPD" ]; then
   check_ge "E-timeout-wrap" 1 "$(count "$VPD" 'timeout "\$budget" bash -c "\$cmd"')"
   check_ge "F-rc124" 1 "$(count "$VPD" '\[ "\$rc" -eq 124 \]')"
   check_ge "F-timeout-row" 1 "$(count "$VPD" 'TIMEOUT[$][{]NC[}]')"
+  # E4/F2. the check's stdin is closed. On a runner the step's stdin is an open
+  #        pipe that is never closed, so a bare `grep PATTERN` (no file operand)
+  #        blocks forever and prints nothing — the 22-minute silence that got
+  #        the job cancelled. `< /dev/null` turns that into an immediate EOF.
+  check_ge "F2-stdin-closed" 2 "$(count "$VPD" '< /dev/null')"
 else
   bad "[E/F] $VPD not found"
 fi
@@ -236,6 +241,20 @@ if [ -f "$AGENTS" ]; then
   check_ge "K2-indexed" 1 "$(count "$AGENTS" '\*\*B281\*\*')"
 else
   bad "[K2] $AGENTS not found"
+fi
+
+# --- L. the B261 silence: never glob a temp directory into a reader ----------
+# `grep -q PATTERN "$PD/../"*` reads every entry of the temp PARENT (on a runner
+# $TMPDIR is /home/runner/work/_temp) and discarded the result. A non-regular
+# file in that directory blocks a reader forever — the exact 22-minute silence
+# before the cancellation. The check's real assertion (`grep -q ... "$P_LOG"`)
+# is right below it.
+B261="$REPO/scripts/check_b261_native_self_update.sh"
+if [ -f "$B261" ]; then
+  check_eq "L1-no-tempdir-glob" "0" "$(count "$B261" '"\$PD/\.\./"\*')"
+  check_ge "L2-real-assertion" 1 "$(count "$B261" "grep -q 'verified against SHA256SUMS' \"\\\$P_LOG\"")"
+else
+  bad "[L] $B261 not found"
 fi
 
 echo

@@ -564,7 +564,15 @@ if command -v tar >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1 \
     download_and_verify "$PT" "$PS" "$PD/inst-sum" 0 && echo "P2c=UNEXPECTED-PASS" || echo "P2c=refused"
     rm -f "$PD/dist/SHA256SUMS" "$PD/dist/api.json"
     download_and_verify "$PT" "$PS" "$PD/inst-sum" 0 && echo "P2d=UNEXPECTED-PASS" || echo "P2d=refused"
-    grep -q 'verified against SHA256SUMS' "$PD/../"* 2>/dev/null || true
+    # B281 (2026-09-22): this line used to be a `grep -q 'verified against
+    # SHA256SUMS'` whose only operand was a GLOB over the temp PARENT directory
+    # (on a GitHub runner $TMPDIR is /home/runner/work/_temp), with the result
+    # piped to /dev/null and `|| true` behind it — an assertion that asserted
+    # nothing, and a glob operand is exactly the shape that makes grep block on a
+    # non-regular file (a FIFO in that directory blocks a reader forever). The
+    # catalog job sat silent for 22 minutes at this point and was cancelled by
+    # its own timeout. The real assertion is below: grep the rehearsal log. Never
+    # glob a whole temp directory into a reader.
     rm -rf "$PD"
   ) > "$P_LOG" 2>&1; then
     cat "$P_LOG" >&2
