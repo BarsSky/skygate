@@ -302,6 +302,33 @@ else
   bad "[M] $B268 not found"
 fi
 
+# --- N. image hygiene is repeatable, reviewable and safe by default ----------
+# The registry had grown to 77 versions (~20 releases' worth, ~10 MB per image)
+# while only the newest one is ever pulled. Deleting a version needs
+# delete:packages, which the operator's fine-grained PAT cannot get for a
+# USER-owned package, so the credential that works is the Actions token with
+# `packages: write` — hence a workflow rather than a local gh call.
+PRUNE="$REPO/.github/workflows/ghcr-prune.yml"
+if [ -f "$PRUNE" ]; then
+  # N1. trap #11: a maintenance workflow the operator is told to run must be
+  #     TRACKED, not merely present on this disk.
+  if ( cd "$REPO" && git ls-files --error-unmatch .github/workflows/ghcr-prune.yml >/dev/null 2>&1 ); then
+    ok "[N1-tracked] ghcr-prune.yml is tracked by git"
+  else
+    bad "[N1-tracked] ghcr-prune.yml is NOT tracked by git"
+  fi
+  check_ge "N2-dry-run-default" 1 "$(count "$PRUNE" "default: 'true'")"
+  check_ge "N3-packages-write" 1 "$(count "$PRUNE" 'packages: write')"
+  check_ge "N4-explicit-keep-set" 1 "$(count "$PRUNE" 'keep_tags')"
+  # N5. the keep decision must be an explicit tag set, never "keep whatever is
+  #     newest": a newest-wins heuristic would delete the release the aliases
+  #     point at as soon as the next push lands.
+  check_ge "N5-keep-matcher" 1 "$(count "$PRUNE" 'keep_matches\(\)')"
+  check_eq "N6-no-newest-heuristic" "0" "$(count "$PRUNE" 'sort_by\(\.created_at\)')"
+else
+  bad "[N] $PRUNE not found"
+fi
+
 echo
 echo "=== B281 summary: $PASS PASS, $FAIL FAIL ==="
 if [ "$FAIL" -gt 0 ]; then
