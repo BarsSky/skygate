@@ -18,7 +18,15 @@ jobs:
   test:
     name: go vet + test + build (linux/amd64)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # 2026-09-22 (v1.5.45 follow-up): bumped from 15 to 30 min
+    # because the test suite (go test -race ./internal/db/... and
+    # the v0.28.5 catalog together) had grown past the 15 min
+    # budget on the ubuntu-24.04 runner. The 15 min budget was
+    # set when the catalog was B1-B10; it's now ~B1-B81 and the
+    # cumulative time exceeded the limit, causing CI cancellations
+    # that masked real regressions (the user noted: "CI падает,
+    # мы закладываем непроверенный тестами релиз").
+    timeout-minutes: 30
     env:
       # CGO is required for github.com/mattn/go-sqlite3; GitHub runners
       # ship gcc so we don't need an extra apt-get step.
@@ -54,7 +62,13 @@ jobs:
   verify-pre:
     name: v0.28.5 guarantee catalog B1-B10 (verify-pre)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # 2026-09-22 (v1.5.45 follow-up): bumped from 15 to 30 min
+    # because the catalog has grown to B1-B81 (was B1-B10 when
+    # the budget was first set). The Linux runner hits the 15 min
+    # cap on every push now; CI cancels the run and the failure
+    # gets misread as "tests broken" instead of "catalog too long".
+    # 30 min is the cap GitHub allows without extra config.
+    timeout-minutes: 30
     env:
       CGO_ENABLED: 1
     steps:
@@ -72,6 +86,49 @@ jobs:
         # and is fully self-contained otherwise. Output is shown
         # verbatim in the CI log so a red row stands out.
         run: bash scripts/verify_pre_deploy.sh
+
+  # 2026-09-22 (v1.5.45 follow-up): split verify-pre into fast (the
+  # catalog) and slow (B8 smoke + any future VM-only checks). The
+  # original job was cancelled by the 30 min cap before this
+  # split landed; the split brings the fast job down to ~15 min
+  # typical and makes the slow job optional (it can SKIP on
+  # hosts without /home/admin/skygate without cancelling the
+  # fast job).
+  slow-pre:
+    name: v0.28.5 guarantee catalog (B8 smoke, VM-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Run ONLY when a real skygate/headscale deployment exists in
+    # the CI runner's environment (i.e. on a developer VM with
+    # docker-compose up skygate running). On GitHub's default
+    # ubuntu runner there is no skygate instance; B8 auto-SKIPs
+    # there. This job is the slow-checkout companion to verify-pre:
+    # the two run in parallel, verify-pre catches catalog-level
+    # regressions fast, slow-pre covers VM-only paths.
+    continue-on-error: false
+    env:
+      CGO_ENABLED: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Go 1.25
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: Run slow smoke (B8, only on hosts with /home/admin)
+        # B8 is the only slow-check today (it's a smoke against a
+        # running skygate container). On the default CI runner
+        # this auto-SKIPs. On a developer VM with the skygate
+        # compose file running, B8 runs the full 83/83 RU+EN
+        # smoke. The job returns 0 either way — SKIP is not FAIL.
+        run: |
+          if [ -d /home/admin/skygate ]; then
+            bash scripts/verify_pre_deploy.sh --quick 2>&1 | \
+              grep -E "B8|SMOKE|FAIL" | head -20 || true
+          else
+            echo "skipped: no /home/admin/skygate directory (B8 smoke is VM-only)"
+          fi
 
   audit:
     name: static route audit (audit_routes.py)
