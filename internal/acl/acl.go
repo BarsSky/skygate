@@ -192,11 +192,26 @@ func resolvePerCIDRVia(devTag, ruleExitNodeID string, viaByDevice map[string]str
 }
 
 // deviceOwner is the node_owner_map projection the ACL builder needs
-// to mint a device tag for a rule whose denormalised device_rules
-// columns are empty. See resolveNodeOwners.
+// to tag a rule's device. See resolveNodeOwners.
 type deviceOwner struct {
 	Username string
 	Hostname string // already lowercased
+	// Tag is the tag headscale actually carries on this node
+	// (node_owner_map.tag). It is the authoritative selector: the
+	// generator declares exactly this tag in tagOwners, so a grant that
+	// uses it can never reference an undeclared tag.
+	//
+	// B284 (2026-09-22): the pre-fix code instead SYNTHESISED
+	// `tag:dev-<username>-<hostname>` from the denormalised
+	// device_rules.user_name, which on the live host was headscale's
+	// synthetic owner `tagged-devices` — producing
+	// `tag:dev-tagged-devices-exit-node-vps` and
+	// `tag:dev-tagged-devices-workpc`. Neither exists on any node or in
+	// tagOwners, and headscale rejects the WHOLE policy that references
+	// them ("tag not found"): on a `policy.mode: file` host the daemon then
+	// refuses to START (crash-loop, control plane down, every device gone
+	// from the portal).
+	Tag string
 }
 
 // resolveNodeOwners reads node_owner_map and returns
@@ -223,7 +238,11 @@ func resolveNodeOwners(d *sql.DB) map[int]deviceOwner {
 		if n.Username == "" || host == "" {
 			continue
 		}
-		out[id] = deviceOwner{Username: n.Username, Hostname: host}
+		out[id] = deviceOwner{
+			Username: n.Username,
+			Hostname: host,
+			Tag:      strings.TrimSpace(n.Tag),
+		}
 	}
 	return out
 }
@@ -243,23 +262,25 @@ func resolveNodeOwners(d *sql.DB) map[int]deviceOwner {
 //
 // Pure function (given the pre-resolved owner map) so it is
 // unit-testable without a DB.
+//
+// B284 (2026-09-22): the tag now comes from node_owner_map (the tag the node
+// actually carries, and the one this generator declares in tagOwners). The old
+// code preferred the denormalised device_rules.user_name and built
+// `tag:dev-<that user>-<host>` from it — live on `aro` that field held
+// headscale's synthetic owner `tagged-devices`, so the policy referenced
+// `tag:dev-tagged-devices-exit-node-vps` and `tag:dev-tagged-devices-workpc`:
+// tags that exist on no node and in no tagOwners. headscale rejects such a
+// document as a whole, and in file mode it will not start on it at all.
+// When node_owner_map has no tag for the device we return "" and the caller
+// falls back to the device_ip src — a weaker selector, but one that always
+// matches, instead of a policy the daemon refuses to load.
 func deviceTagForRule(e db.ACLEntry, owners map[int]deviceOwner) string {
-	user := strings.ToLower(strings.TrimSpace(e.UserName))
-	host := strings.ToLower(strings.TrimSpace(e.DeviceHostname))
-	if user == "" || host == "" {
-		if o, ok := owners[e.DeviceID]; ok {
-			if user == "" {
-				user = strings.ToLower(o.Username)
-			}
-			if host == "" {
-				host = strings.ToLower(o.Hostname)
-			}
+	if o, ok := owners[e.DeviceID]; ok {
+		if tag := strings.TrimSpace(o.Tag); tag != "" {
+			return tag
 		}
 	}
-	if user == "" || host == "" {
-		return ""
-	}
-	return "tag:dev-" + user + "-" + host
+	return ""
 }
 
 // GenerateACL builds the per-user headscale 0.29 HuJSON policy
@@ -374,11 +395,18 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		return "", err
 	}
 	viaByDeviceOld := make(map[string]string, len(devicePrefsOld))
+	// B284: the device tag must be the tag the node carries (node_owner_map),
+	// never one synthesised from a user name — headscale refuses the whole
+	// policy that references an undeclared tag and will not start on it.
+	tagsByHostOld := prefixowner.TagsByHost(d)
 	for _, dp := range devicePrefsOld {
 		if dp.Username == "" || dp.DeviceHostname == "" || dp.ExitNodeTag == "" || !dp.ViaEnabled {
 			continue
 		}
-		devTag := "tag:dev-" + dp.Username + "-" + strings.ToLower(dp.DeviceHostname)
+		devTag := strings.TrimSpace(tagsByHostOld[strings.ToLower(strings.TrimSpace(dp.DeviceHostname))])
+		if devTag == "" {
+			continue
+		}
 		viaByDeviceOld[devTag] = dp.ExitNodeTag
 	}
 
@@ -1262,6 +1290,13 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// "tag:dev-admin-workstation-3") so the per-device grant
 	// builder can look up the via in O(1).
 	viaByDevice := make(map[string]string, len(devicePrefs))
+	// B284: resolve the device tag from node_owner_map (the tag the node
+	// actually carries and the one this generator declares in tagOwners).
+	// Synthesising `tag:dev-<username>-<host>` from the pref row minted
+	// `tag:dev-tagged-devices-<host>` on the live host — headscale's synthetic
+	// owner — and headscale refuses the WHOLE policy that references it
+	// ("tag not found"): in file mode the daemon then will not start at all.
+	tagsByHost := prefixowner.TagsByHost(d)
 	for _, dp := range devicePrefs {
 		// 2026-07-25: v0.28.5 — only emit per-device
 		// grants for devices that have via_enabled=1.
@@ -1273,11 +1308,12 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		if dp.Username == "" || dp.DeviceHostname == "" || dp.ExitNodeTag == "" || !dp.ViaEnabled {
 			continue
 		}
-		// The tag is "tag:dev-<user>-<device-lowercased>".
-		// v0.28.0 backfill lowercases the hostname when
-		// emitting the tag — we do the same here so the
-		// lookup matches the per-device ACL src exactly.
-		devTag := "tag:dev-" + dp.Username + "-" + strings.ToLower(dp.DeviceHostname)
+		// B284: node_owner_map.tag for this device; skip the pref when the node
+		// has no tag, because an invented tag cannot be declared anywhere.
+		devTag := strings.TrimSpace(tagsByHost[strings.ToLower(strings.TrimSpace(dp.DeviceHostname))])
+		if devTag == "" {
+			continue
+		}
 		viaByDevice[devTag] = dp.ExitNodeTag
 	}
 	// B275: prefix → owning relay tag, from the assignment table. Used

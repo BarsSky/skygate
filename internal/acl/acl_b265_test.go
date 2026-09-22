@@ -192,23 +192,37 @@ func TestB265_RuleSrcPrefersTagOverDeviceIP(t *testing.T) {
 	}
 }
 
-// TestDeviceTagForRule_Pure exercises the resolver directly (no DB):
-// denormalised columns win, node_owner_map fills the gaps, and an
-// unresolvable rule yields "" (the caller then falls back to device_ip).
+// TestDeviceTagForRule_Pure exercises the resolver directly (no DB).
+//
+// B284 (2026-09-22) — CONTRACT RENEGOTIATED. B265 made this helper synthesise
+// `tag:dev-<username>-<hostname>` from node_owner_map's username/hostname pair.
+// Live on `aro` that pair was headscale's synthetic owner `tagged-devices`, so
+// the synthesised tag (`tag:dev-tagged-devices-workpc`) exists on no node and in
+// no tagOwners — headscale refuses the WHOLE policy that references it and, with
+// `policy.mode: file`, will not start on it (crash-loop, control plane down).
+// The tag now comes from node_owner_map.tag: the selector headscale actually
+// carries and the one this generator declares. A row without a tag yields ""
+// and the caller falls back to the device-IP selector — weaker, but it always
+// matches.
 func TestDeviceTagForRule_Pure(t *testing.T) {
 	owners := map[int]deviceOwner{
-		101: {Username: "tester", Hostname: "workstation"},
-		102: {Username: "Infra", Hostname: "Relay-1"},
+		101: {Username: "tester", Hostname: "workstation", Tag: "tag:dev-tester-workstation"},
+		102: {Username: "Infra", Hostname: "Relay-1", Tag: "tag:dev-infra-relay-1"},
+		// The live failure shape: headscale's synthetic owner, no tag.
+		103: {Username: "tagged-devices", Hostname: "workpc"},
+		// A node the operator never tagged.
+		104: {Username: "daniil", Hostname: "laptop"},
 	}
 	cases := []struct {
 		name string
 		in   db.ACLEntry
 		want string
 	}{
-		{"denormalised columns win", db.ACLEntry{UserName: "tester", DeviceHostname: "Workstation", DeviceID: 101}, "tag:dev-tester-workstation"},
-		{"resolved from owner map", db.ACLEntry{DeviceID: 101}, "tag:dev-tester-workstation"},
-		{"hostname only is filled from map", db.ACLEntry{UserName: "tester", DeviceID: 101}, "tag:dev-tester-workstation"},
-		{"username and hostname are lowercased from the map", db.ACLEntry{DeviceID: 102}, "tag:dev-infra-relay-1"},
+		{"the node's tag wins over the denormalised columns", db.ACLEntry{UserName: "tester", DeviceHostname: "Workstation", DeviceID: 101}, "tag:dev-tester-workstation"},
+		{"resolved from the owner map", db.ACLEntry{DeviceID: 101}, "tag:dev-tester-workstation"},
+		{"relay tag is used verbatim", db.ACLEntry{DeviceID: 102}, "tag:dev-infra-relay-1"},
+		{"a synthetic headscale owner yields no tag", db.ACLEntry{UserName: "tagged-devices", DeviceHostname: "workpc", DeviceID: 103}, ""},
+		{"an untagged node yields no tag", db.ACLEntry{DeviceID: 104}, ""},
 		{"unresolvable yields empty", db.ACLEntry{DeviceID: 999}, ""},
 		{"no id and no columns yields empty", db.ACLEntry{}, ""},
 	}

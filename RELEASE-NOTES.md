@@ -12,6 +12,74 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.49 — a device tag must be the tag the node carries (B284)
+
+**Date:** 2026-09-22 · **Base:** `v1.5.48` → this tag · **Compatibility:** none — no
+schema change, no migration.
+
+The second, independent cause of the same `aro` outage that v1.5.48 hardened.
+v1.5.48 made a bad policy write impossible (atomic handoff, validation, health
+check, no-op skip); this release fixes the document that was being written.
+
+### Root cause
+
+The ACL generator **synthesised** the per-device selector
+`tag:dev-<user>-<hostname>` instead of reading the tag off the node, and the user
+name it used was `device_rules.user_name` / `device_exit_node_prefs.username` —
+on the live host **headscale's synthetic owner for tagged nodes,
+`tagged-devices`**. The refused snapshot therefore referenced
+
+```
+tag:dev-tagged-devices-exit-node-vps
+tag:dev-tagged-devices-workpc
+```
+
+headscale rejects a policy that references a tag missing from `tagOwners` **as a
+whole** ("tag not found") and, with `policy.mode: file`, will not START on it:
+crash-loop counter 248, control plane down, every device gone from the portal.
+
+The evidence is exact — `python3` over the saved snapshots on the host:
+
+```
+/tmp/policy.297.json undeclared: []                                  # the working policy
+/tmp/snap.304.json   undeclared: ['tag:dev-tagged-devices-exit-node-vps',
+                                  'tag:dev-tagged-devices-workpc']   # the refused one
+```
+
+`tagOwners` is built from `node_owner_map.tag` (and from portal-user rows), so a
+tag minted from the synthetic owner can never be declared: the document was
+invalid **by construction**.
+
+### Fix
+
+* `deviceTagForRule` (`internal/acl/acl.go`) returns `node_owner_map.tag` for the
+  rule's device — the selector headscale carries and the one this generator
+  declares — and otherwise **nothing**; the caller falls back to the device-IP
+  selector, which is weaker than a tag but always matches, instead of a policy the
+  daemon refuses to load. `deviceOwner` now carries that tag.
+* Both per-device pref loops (`GenerateACLForPlane` and
+  `GenerateACLWithViaForPlane`) resolve the device tag by hostname through
+  `prefixowner.TagsByHost` and skip a pref whose node has no tag, instead of
+  building `tag:dev-<username>-<host>` themselves.
+* **Contract renegotiated:** `TestDeviceTagForRule_Pure` (B265) pinned the
+  synthesis; it now pins the node's tag, including the live synthetic-owner case
+  (which yields no tag at all).
+
+### Contracts
+
+11 contracts in `scripts/check_b284_device_tag_source.sh` (registered as
+`run_check "B284"`) plus `internal/acl/acl_b284_test.go`, which reproduces the
+live shape (a `device_rules` row whose denormalised owner is `tagged-devices`)
+and **fails without the fix**, naming the invented tag:
+`generated policy references undeclared tag(s): tag:dev-tagged-devices-workpc`.
+
+### Operator action
+
+`v1.5.48` must already be installed (it is what keeps a bad document from ever
+reaching headscale). Then update the binary to `v1.5.49` the same way and start
+skygate; the ACL it generates now names only tags that exist on the nodes and are
+declared in `tagOwners`, so the policy applies instead of being refused.
+
 ## v1.5.48 — a policy write must not be able to take the control plane down (B283)
 
 **Date:** 2026-09-22 · **Base:** `v1.5.47` → this tag · **Compatibility:** none — no

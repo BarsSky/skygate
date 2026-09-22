@@ -4917,3 +4917,23 @@ run_check "B282" "operator pages read the database that is actually running: db.
 # scripts/check_b283_policy_write_safety.sh.
 run_check "B283" "a policy write cannot take the control plane down: RequestPolicyApply hands the request over atomically (temp + rename, never an in-place rewrite of the file the root applier reads line by line — that splice produced a 7869-byte policy that was valid in the DB snapshot and unparseable on disk, and headscale crash-looped 248 times), SetPolicy refuses a document that does not parse or whose grants reference tags missing from tagOwners (headscale rejects such a document as a whole and will not START on it), the ACL generator declares the B275 assignment-table owner tags it pins into via, an unchanged policy is not rewritten so headscale is not restarted every five minutes, and the privileged applier validates the body before writing and verifies headscale actually came up (rolling back to policy.prev when it did not, instead of logging done over a dead daemon). Contracts in scripts/check_b283_policy_write_safety.sh." \
   'test -f scripts/check_b283_policy_write_safety.sh && bash scripts/check_b283_policy_write_safety.sh'
+
+# B284 (2026-09-22) — a device tag must be the tag the node carries. The same
+# live outage had a second, independent cause: the ACL generator SYNTHESISED
+# `tag:dev-<user>-<host>` from a user name instead of reading the tag off the
+# node, and the name it used was headscale's synthetic owner for tagged nodes,
+# `tagged-devices`. The refused snapshot named exactly those two tags
+# (`tag:dev-tagged-devices-exit-node-vps`, `tag:dev-tagged-devices-workpc`) and
+# python3 over the saved snapshots confirmed them as the ONLY undeclared tags —
+# while the policy that had been working named none. headscale refuses such a
+# document as a whole and, in file mode, will not START on it (crash-loop 248,
+# control plane down, every device gone from the portal). The rule→tag resolver
+# now returns node_owner_map.tag (the tag headscale carries and the one this
+# generator declares) and otherwise NOTHING — the caller falls back to the
+# device-IP selector, which is weaker than a tag but always matches; both
+# per-device pref loops resolve the tag by hostname through
+# prefixowner.TagsByHost instead of minting one. The B265 contract that pinned
+# the synthesis is explicitly renegotiated. Contracts in
+# scripts/check_b284_device_tag_source.sh.
+run_check "B284" "a device tag must be the tag the node carries: deviceTagForRule returns node_owner_map.tag for the rule's device and invents nothing (the pre-fix code preferred device_rules.user_name, which on the live host was headscale's synthetic owner tagged-devices, and minted tag:dev-tagged-devices-exit-node-vps / tag:dev-tagged-devices-workpc — the only undeclared tags in the refused snapshot, and headscale refuses such a document as a whole and will not start on it); both per-device pref loops resolve the tag by hostname via prefixowner.TagsByHost instead of building tag:dev-<username>-<host>; an untagged node yields no tag so the caller falls back to the device-IP selector; and the B265 unit contract that pinned the synthesis is renegotiated with the synthetic-owner case. 11 contracts in scripts/check_b284_device_tag_source.sh." \
+  'test -f scripts/check_b284_device_tag_source.sh && bash scripts/check_b284_device_tag_source.sh'
