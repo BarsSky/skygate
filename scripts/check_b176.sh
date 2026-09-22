@@ -126,13 +126,25 @@ if grep -qE '"tag:dev-"\s*\+\s*e\.UserName\s*\+\s*"-"\s*\+\s*strings.ToLower\(e\
 # single helper `deviceTagForRule`. Accept the helper form as long as
 # it is (a) present, (b) lowercases BOTH halves, and (c) the loop
 # actually calls it instead of building the tag by hand.
+#
+# B284 (2026-09-22) — CONTRACT RENEGOTIATED. The helper no longer
+# SYNTHESISES `tag:dev-<user>-<host>` at all: it returns
+# `node_owner_map.tag` for the rule's device, i.e. the tag headscale
+# actually carries (minted lowercase, which is what B176 is about) and the
+# one the generator declares in tagOwners. Synthesising the tag is what took
+# the control plane down: the denormalised owner was headscale's synthetic
+# `tagged-devices`, so the policy referenced `tag:dev-tagged-devices-<host>`
+# — a tag no node carries and no tagOwners block declares, which headscale
+# refuses as a whole (crash-loop, every device gone from the portal). So the
+# contract now pins the SOURCE of the tag (node_owner_map) instead of a
+# ToLower call that no longer exists, and the A.4 straggler sweep above still
+# forbids any new hand-built `tag:dev-…Hostname` site.
 elif grep -qE 'func deviceTagForRule' internal/acl/acl.go \
-     && grep -q 'B265: prefer the per-device TAG' internal/acl/acl.go \
      && grep -q 'devTag := deviceTagForRule(e, ownerByNodeID)' internal/acl/acl.go \
-     && grep -cE 'strings\.ToLower\(strings\.TrimSpace\(e\.(UserName|DeviceHostname)\)\)' internal/acl/acl.go | grep -qE '^[2-9]'; then
-    ok "acl.go (DeviceRule loop) lowercases both halves via deviceTagForRule (B176 + B265: policy tag matches the lowercase node tag)"
+     && awk '/^func deviceTagForRule\(/,/^}/' internal/acl/acl.go | grep -q 'o\.Tag'; then
+    ok "acl.go (DeviceRule loop) uses node_owner_map.tag via deviceTagForRule (B176 + B265 + B284: the policy tag is the lowercase tag the node carries, and it is never synthesised)"
 else
-    bad "acl.go (DeviceRule loop) does NOT lowercase e.DeviceHostname (B176: headscale policy has uppercase src, node has lowercase tag → rule never matches)"
+    bad "acl.go (DeviceRule loop) does NOT take the device tag from node_owner_map (B176/B284: a synthesised or uppercase src never matches the node's tag, and an undeclared one makes headscale refuse the whole policy)"
 fi
 
 # ---------------------------------------------------------------------------

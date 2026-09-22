@@ -63,7 +63,11 @@ invalid **by construction**.
   building `tag:dev-<username>-<host>` themselves.
 * **Contract renegotiated:** `TestDeviceTagForRule_Pure` (B265) pinned the
   synthesis; it now pins the node's tag, including the live synthetic-owner case
-  (which yields no tag at all).
+  (which yields no tag at all). `scripts/check_b176.sh` contract A.5 also pinned
+  the `ToLower` call inside the helper — with the synthesis gone there is no
+  string to lowercase, so it now asserts the tag's SOURCE (`node_owner_map.tag`,
+  lowercase by construction) and its A.4 straggler sweep still forbids any new
+  hand-built `tag:dev-…Hostname` site.
 
 ### Contracts
 
