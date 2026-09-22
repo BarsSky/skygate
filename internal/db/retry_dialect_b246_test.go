@@ -7,11 +7,11 @@
 // dialect.DetectDSN → Dialect.OpenDialect, then calls the per-dialect
 // Migrate function. These tests pin the four critical behaviours:
 //
-//   1. SQLite :memory: DSN opens a usable *sql.DB with BackendSQLite.
-//   2. SQLite file DSN opens a usable *sql.DB with BackendSQLite.
-//   3. PostgreSQL DSN opens a usable *sql.DB with BackendPostgres.
-//   4. Unrecognised DSN scheme returns a clean "unknown DSN scheme"
-//      error instead of the cryptic pgx parse error.
+//  1. SQLite :memory: DSN opens a usable *sql.DB with BackendSQLite.
+//  2. SQLite file DSN opens a usable *sql.DB with BackendSQLite.
+//  3. PostgreSQL DSN opens a usable *sql.DB with BackendPostgres.
+//  4. Unrecognised DSN scheme returns a clean "unknown DSN scheme"
+//     error instead of the cryptic pgx parse error.
 //
 // #5-#7 are integration tests that require a live PG (skip if no
 // SKYGATE_TEST_PG_DSN env). They're skipped by default in
@@ -30,8 +30,17 @@ import (
 // This is the form the B-mod-sqlite-pg-bidi integration test uses
 // (C:\skygate-test\ was the B245 e2e, the B246 e2e re-uses the
 // :memory: DSN in a test process to exercise the new path).
+//
+// B281 (2026-09-22): the context budget is 60s, not 5s. openDSNPing runs the
+// WHOLE migration chain, and this package is executed under heavy parallel load
+// (the pre-deploy catalog runs `go test ./internal/db/...` while other checks
+// compile and test simultaneously) — on a loaded machine the chain needs more
+// than 5s, `openDSNPing` returned a deadline error and the contract reported
+// `FAIL F3: go test ./internal/db/... FAILED` while the same command passed
+// standalone in 4.5s. The assertion is about the DSN form, not about latency;
+// the 5s budget made a slow machine look like a broken one.
 func TestOpenDSNPing_SQLiteMemory(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	conn, err := openDSNPing(":memory:", ctx)
@@ -54,8 +63,12 @@ func TestOpenDSNPing_SQLiteMemory(t *testing.T) {
 
 // TestOpenDSNPing_SQLiteFile pins the file:/path form. Uses t.TempDir()
 // so the test is hermetic (no leftover file on disk).
+//
+// B281: 60s for the same reason as TestOpenDSNPing_SQLiteMemory above — this is
+// a file-backed DB, so the migration chain is strictly slower than :memory: and
+// the old 5s budget was the flakiest thing in the package.
 func TestOpenDSNPing_SQLiteFile(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	dir := t.TempDir()
