@@ -57,7 +57,7 @@ type IDTokenClaims struct {
 // The same RSA key is used for both id_token and
 // access_token.
 func (s *Service) signIDToken(claims IDTokenClaims) (string, error) {
-	if s.IssuerURL == "" {
+	if s.Issuer() == "" {
 		return "", errors.New("oidc: issuer not configured")
 	}
 	ks := s.Keys.ActiveKey()
@@ -108,7 +108,7 @@ func (s *Service) signIDToken(claims IDTokenClaims) (string, error) {
 //   3. A future B-check can switch to a DB
 //      re-fetch if the operator asks for it
 func (s *Service) signAccessToken(issuer, subject, audience, scope, email, name, preferredUsername string, exp, iat int64) (string, error) {
-	if s.IssuerURL == "" {
+	if s.Issuer() == "" {
 		return "", errors.New("oidc: issuer not configured")
 	}
 	ks := s.Keys.ActiveKey()

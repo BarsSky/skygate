@@ -115,6 +115,16 @@ type Service struct {
 	// /admin/users/{id}/plane (post/clear/provision/decommission).
 	SecretKeyHex string
 
+	// OIDCApplier applies an OIDC configuration to the RUNNING provider (B290).
+	// Wired by main.go to the live oidc.Service, so saving /admin/oidc takes
+	// effect immediately instead of "restart skygate to apply". nil = the page
+	// says the change needs a restart (no OIDC service wired in this build).
+	OIDCApplier func(issuer, clientID, clientSecret, redirectURIs string, enabled bool)
+
+	// OIDCStatusFn reports what the RUNNING provider currently holds, so the page
+	// can show the difference between "saved" and "live" (B290).
+	OIDCStatusFn func() (issuer, clientID, clientSecret, redirectURIs string)
+
 	// InvalidateHSCacheFn drops the per-URL cached headscale
 	// client (used after the per-user override changes so
 	// the next HSForUser call returns a fresh client with

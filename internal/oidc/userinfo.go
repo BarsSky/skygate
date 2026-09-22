@@ -53,7 +53,7 @@ type UserinfoResponse struct {
 // `sub` is trustworthy (a malicious client
 // can't forge it — they'd need our private key).
 func (s *Service) ServeUserinfo(w http.ResponseWriter, r *http.Request) {
-	if s.IssuerURL == "" {
+	if s.Issuer() == "" {
 		http.Error(w, "OIDC provider disabled", http.StatusServiceUnavailable)
 		return
 	}

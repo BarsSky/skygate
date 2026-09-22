@@ -5035,3 +5035,23 @@ run_check "B288" "policy drift must mean drift and must heal itself: headscale g
 # Contracts in scripts/check_b289_derp_map_truth.sh.
 run_check "B289" "the local DERP relay must reach the map, and a skip must name its cause: the reachability guard probed the relay HOSTNAME from inside the skygate container, where the host's /etc/hosts maps derp.skynas.ru to 127.0.0.1 (AGENTS deployment trap #2) — so every bundled region-900 node was dropped, /admin/derp/relays/derpmap.json served {\"Regions\":[]} and headscale's merged map had no local region, while the derper was healthy and reachable at 192.168.13.69:443. derpReachabilityCandidates + hostResolvesToLoopback now try every address the row is known by and put SKYGATE_DERP_PROBE_HOST first when the name is leaked; probeDERPNodeReachableAny publishes the node when any candidate answers (the public HostName stays in the map); the journal names the address that answered and lists every probed address on a skip; an enabled is_bundled region that publishes NO node is logged as an ERROR with its causes; and /admin/derp/relays renders a cached per-row «в карте / пропущен + причина» block. Contracts in scripts/check_b289_derp_map_truth.sh." \
   'test -f scripts/check_b289_derp_map_truth.sh && bash scripts/check_b289_derp_map_truth.sh'
+
+# B290 (2026-09-22) — OIDC must be enableable from the UI, without hand-editing
+# .env. Operator report: «нет удобного выставления включения OIDC — пока нет в env
+# строчки нельзя никак настроить, но из описания непонятно что и как добавлять».
+# The form had existed since v0.75 and the row was read at boot, but (1) saving
+# answered "restart skygate (/admin/update) to apply", so nothing observable
+# changed; (2) the page rendered the ENV values, not the effective ones, so a
+# saved row was invisible — and a DB row with enabled=0 was ignored at boot
+# (only the env off-switch counted); (3) the client_secret was stored in the
+# clear. Now: effectiveOIDCSettings resolves UI-over-env with a per-field source
+# badge, the page shows what the RUNNING provider holds next to the form, POST
+# applies the configuration through the new oidc.Service.ApplyConfig (lock-guarded
+# runtime reconfiguration — no restart), the secret is encrypted at rest with
+# SKYGATE_SECRET_KEY behind an enc:v1: marker (legacy plaintext rows still read),
+# "disabled" is expressed as an empty issuer so the routes stay mounted and can be
+# switched back on live, and every field carries RU+EN help that says exactly what
+# to put there and what to paste into headscale. 26 contracts in
+# scripts/check_b290_oidc_ui_enablement.sh.
+run_check "B290" "OIDC must be enableable from the UI: /admin/oidc now shows and edits the EFFECTIVE configuration (a saved value wins over the env var, each field carries a ui/env/default source badge), saving applies it to the running provider through oidc.Service.ApplyConfig (lock-guarded, no restart — the old flash said restart skygate to apply), the page reports what the LIVE provider currently holds, the client_secret is encrypted at rest (SKYGATE_SECRET_KEY, enc:v1: marker, legacy plaintext rows still readable and a wrong key is a named error rather than a silently empty secret), a DB row with enabled=0 disables the provider at boot as well as live, disabled is expressed as an empty issuer so the routes stay mounted and can be re-enabled from the UI, the form validates the issuer/redirect URIs and refuses to enable OIDC without an issuer or a secret (keeping the stored secret when the field is left empty), the env emergency off-switch SKYGATE_OIDC_ENABLED is detected and explained, and every field carries RU+EN help naming what to put there and which headscale config key it must match. Contracts in scripts/check_b290_oidc_ui_enablement.sh." \
+  'test -f scripts/check_b290_oidc_ui_enablement.sh && bash scripts/check_b290_oidc_ui_enablement.sh'

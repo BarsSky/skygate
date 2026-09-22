@@ -3,6 +3,8 @@ package oidc
 import (
 	"log"
 	"net/http"
+	"strings"
+	"sync"
 )
 
 // Service holds the OIDC provider state: the
@@ -94,6 +96,84 @@ type Service struct {
 	// (B174 introduces that helper). Optional —
 	// if nil, the email claim is left empty.
 	UserLookup func(userID int64) (username, email string, err error)
+
+	// cfgMu guards the four configurable fields above (B290).
+	//
+	// WHY: the operator could only change OIDC by editing the env file and
+	// restarting, and the admin page did not even say WHICH variables to set —
+	// live operator report: «нет удобного выставления включения OIDC, пока нет в
+	// env строчки нельзя никак настроить». /admin/oidc now persists the settings
+	// (via internal/feature/admin) and calls ApplyConfig, so the handlers must
+	// never read a half-updated configuration.
+	cfgMu sync.RWMutex
+}
+
+// ApplyConfig swaps the runtime OIDC configuration (B290). Safe to call at any
+// time: every handler reads through the accessors below, which take the read
+// lock. An empty issuer disables the provider (the routes answer 503).
+func (s *Service) ApplyConfig(issuer, clientID, clientSecret, redirectURIs string) {
+	if s == nil {
+		return
+	}
+	s.cfgMu.Lock()
+	s.IssuerURL = strings.TrimRight(strings.TrimSpace(issuer), "/")
+	s.ClientID = strings.TrimSpace(clientID)
+	s.ClientSecret = clientSecret
+	s.RedirectURIs = strings.TrimSpace(redirectURIs)
+	s.cfgMu.Unlock()
+}
+
+// ConfigSnapshot returns the current runtime configuration (issuer, client id,
+// client secret, redirect URIs) — used by the admin page to show what is
+// EFFECTIVE right now, not what the env said at boot.
+func (s *Service) ConfigSnapshot() (issuer, clientID, clientSecret, redirectURIs string) {
+	if s == nil {
+		return "", "", "", ""
+	}
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.IssuerURL, s.ClientID, s.ClientSecret, s.RedirectURIs
+}
+
+// Issuer returns the effective issuer URL ("" = provider disabled).
+func (s *Service) Issuer() string {
+	if s == nil {
+		return ""
+	}
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.IssuerURL
+}
+
+// ClientIDValue returns the effective client_id.
+func (s *Service) ClientIDValue() string {
+	if s == nil {
+		return ""
+	}
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.ClientID
+}
+
+// ClientSecretValue returns the effective client_secret.
+func (s *Service) ClientSecretValue() string {
+	if s == nil {
+		return ""
+	}
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.ClientSecret
+}
+
+// RedirectURIsValue returns the effective redirect-URI allowlist (comma
+// separated).
+func (s *Service) RedirectURIsValue() string {
+	if s == nil {
+		return ""
+	}
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.RedirectURIs
 }
 
 // NewService loads the RSA keypair (or generates

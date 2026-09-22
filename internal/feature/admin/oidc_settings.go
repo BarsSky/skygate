@@ -31,6 +31,8 @@
 package admin
 
 import (
+	"errors"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -45,6 +47,14 @@ import (
 // Admin-only. Shows the current OIDC config + the
 // headscale.conf snippet the operator needs to paste into
 // their headscale.conf + the live endpoint URLs.
+//
+// B290 (2026-09-22): the page now renders the EFFECTIVE configuration — a value
+// saved from this form wins, the env var is the fallback — with a per-field
+// source badge, and it says whether the provider is live right now. Before this
+// the page showed the env values even when the DB row said something else, so an
+// operator who had saved the form saw a form that disagreed with the running
+// provider (live report: «нет удобного выставления включения OIDC, пока нет в env
+// строчки нельзя никак настроить, но из описания непонятно что и как добавлять»).
 func (s *Service) GetAdminOIDC(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
@@ -52,13 +62,14 @@ func (s *Service) GetAdminOIDC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := s.I18n.LangFromRequest(r)
-	cfg := s.Cfg
+
+	eff := s.effectiveOIDCSettings()
 
 	// Strip the trailing slash on the issuer for the
 	// headscale.conf snippet (headscale rejects the
 	// trailing slash in some versions).
-	issuer := strings.TrimRight(cfg.OIDCIssuerURL, "/")
-	oidcEnabled := issuer != ""
+	issuer := strings.TrimRight(eff.Issuer, "/")
+	oidcEnabled := eff.Enabled && issuer != ""
 
 	// Build the headscale.conf snippet dynamically from
 	// the operator's actual config (so they can copy-
@@ -69,7 +80,7 @@ func (s *Service) GetAdminOIDC(w http.ResponseWriter, r *http.Request) {
 	// back in the admin UI (defense in depth: a stolen
 	// admin session shouldn't leak the OIDC secret
 	// through the audit-log-accessible admin pages).
-	snippet := buildHeadscaleOIDCConfigSnippet(issuer, cfg.OIDCClientID, cfg.OIDCRedirectURIs)
+	snippet := buildHeadscaleOIDCConfigSnippet(issuer, eff.ClientID, eff.RedirectURIs)
 
 	// The 5 endpoint URLs (the discovery doc + the JWKS
 	// URL is the only one with a different path).
@@ -82,20 +93,147 @@ func (s *Service) GetAdminOIDC(w http.ResponseWriter, r *http.Request) {
 		"discovery":      issuer + "/.well-known/openid-configuration",
 	}
 	_ = i18n.T(lang, "oidc.title") // keep the import used
+	// B290: what the RUNNING provider actually holds (which can differ from both
+	// the form and the env until the next save).
+	liveIssuer, liveClientID, liveSecret, liveRedirects := "", "", "", ""
+	if s.OIDCStatusFn != nil {
+		liveIssuer, liveClientID, liveSecret, liveRedirects = s.OIDCStatusFn()
+	}
 	s.Backend.RenderWithLayout(w, r, "admin/oidc_settings.html", c, map[string]any{
-		"Page":             "admin/oidc",
-		"Title":            i18n.T(lang, "oidc.title"),
-		"OIDCEnabled":      oidcEnabled,
-		"Issuer":           issuer,
-		"ClientID":         cfg.OIDCClientID,
-		"KeyDir":           cfg.OIDCKeyDir,
-		"RedirectURIs":     cfg.OIDCRedirectURIs,
-		"Snippet":          snippet,
-		"Endpoints":        endpoints,
-		"FlashSuccess":     r.URL.Query().Get("ok"),
-		"FlashError":       r.URL.Query().Get("err"),
-		"FlashTestResult":  r.URL.Query().Get("test"),
+		"Page":               "admin/oidc",
+		"Title":              i18n.T(lang, "oidc.title"),
+		"OIDCEnabled":        oidcEnabled,
+		"EnabledSaved":       eff.Enabled,
+		"EnvDisabled":        eff.EnvDisabled,
+		"EnvHasConfig":       eff.EnvHasConfig,
+		"Issuer":             strings.TrimRight(eff.Issuer, "/"),
+		"ClientID":           eff.ClientID,
+		"KeyDir":             eff.KeyDir,
+		"RedirectURIs":       eff.RedirectURIs,
+		"SecretSet":          eff.ClientSecret != "",
+		"SecretSource":       eff.SecretSource,
+		"Source":             eff.Source,
+		"Snippet":            snippet,
+		"Endpoints":          endpoints,
+		"LiveIssuer":         liveIssuer,
+		"LiveClientID":       liveClientID,
+		"LiveSecretSet":      liveSecret != "",
+		"LiveRedirectURIs":   liveRedirects,
+		"AutoApplyAvailable": s.OIDCApplier != nil,
+		"FlashSuccess":       r.URL.Query().Get("ok"),
+		"FlashError":         r.URL.Query().Get("err"),
+		"FlashTestResult":    r.URL.Query().Get("test"),
 	})
+}
+
+// EffectiveOIDCSettings is the resolved OIDC configuration plus where each field
+// came from, so the page can be honest about it (B290).
+type EffectiveOIDCSettings struct {
+	Enabled       bool
+	Issuer        string
+	ClientID      string
+	ClientSecret  string
+	RedirectURIs  string
+	KeyDir        string
+	// Source maps a field name ("issuer", "client_id", "client_secret",
+	// "redirect_uris", "key_dir", "enabled") to "ui", "env" or "default".
+	Source map[string]string
+	// SecretSource is "ui", "env" or "" (nothing configured).
+	SecretSource string
+	// EnvDisabled is true when SKYGATE_OIDC_ENABLED explicitly turns OIDC off
+	// (the emergency off-switch that beats every other setting).
+	EnvDisabled bool
+	// EnvHasConfig reports whether any OIDC env var is set (the page uses it to
+	// explain the fallback).
+	EnvHasConfig bool
+}
+
+// effectiveOIDCSettings resolves the OIDC configuration: a value saved from
+// /admin/oidc wins over the env var, which wins over the built-in default.
+func (s *Service) effectiveOIDCSettings() EffectiveOIDCSettings {
+	out := EffectiveOIDCSettings{Source: map[string]string{}}
+	set := func(field, value, source string) string {
+		out.Source[field] = source
+		return value
+	}
+	cfg := s.Cfg
+	env := func(get func() string) string {
+		if cfg == nil {
+			return ""
+		}
+		return strings.TrimSpace(get())
+	}
+	envIssuer := env(func() string { return cfg.OIDCIssuerURL })
+	envClientID := env(func() string { return cfg.OIDCClientID })
+	envSecret := env(func() string { return cfg.OIDCClientSecret })
+	envRedirects := env(func() string { return cfg.OIDCRedirectURIs })
+	envKeyDir := env(func() string { return cfg.OIDCKeyDir })
+	if envIssuer != "" || envClientID != "" || envSecret != "" || envRedirects != "" {
+		out.EnvHasConfig = true
+	}
+	out.EnvDisabled = false
+	if cfg != nil {
+		switch strings.ToLower(strings.TrimSpace(cfg.OIDCEnabledEnv)) {
+		case "false", "0", "no":
+			out.EnvDisabled = true
+		}
+	}
+
+	row, err := db.GetOIDCSettingsDecrypted(s.dbc(), s.SecretKeyHex)
+	haveRow := err == nil
+	if err != nil && !errors.Is(err, db.ErrOIDCSettingsNotFound) {
+		log.Printf("oidc: read oidc_settings: %v (falling back to env)", err)
+	}
+
+	// issuer / client_id / redirect_uris / key_dir: row value (when non-empty)
+	// beats env.
+	pick := func(field, rowVal, envVal, def string) string {
+		if strings.TrimSpace(rowVal) != "" {
+			return set(field, strings.TrimSpace(rowVal), "ui")
+		}
+		if envVal != "" {
+			return set(field, envVal, "env")
+		}
+		return set(field, def, "default")
+	}
+	out.Issuer = pick("issuer", row.Issuer, envIssuer, "")
+	out.ClientID = pick("client_id", row.ClientID, envClientID, "headscale")
+	out.RedirectURIs = pick("redirect_uris", row.RedirectURIs, envRedirects, "")
+	out.KeyDir = pick("key_dir", row.KeyDir, envKeyDir, "")
+
+	// The secret is special: a save with an EMPTY field keeps the stored value
+	// (the form never echoes it back), so an empty row secret means "not set
+	// here" and the env value still applies.
+	switch {
+	case strings.TrimSpace(row.ClientSecret) != "":
+		out.ClientSecret = row.ClientSecret
+		out.SecretSource = "ui"
+	case envSecret != "":
+		out.ClientSecret = envSecret
+		out.SecretSource = "env"
+	default:
+		out.SecretSource = ""
+	}
+	out.Source["client_secret"] = out.SecretSource
+
+	// enabled: an explicit DB row wins, then the emergency env off-switch, then
+	// the legacy "issuer non-empty" rule.
+	if haveRow {
+		out.Enabled = row.Enabled
+		out.Source["enabled"] = "ui"
+	} else if out.Issuer != "" {
+		out.Enabled = true
+		out.Source["enabled"] = "default"
+	}
+	if out.EnvDisabled {
+		out.Enabled = false
+		out.Source["enabled"] = "env"
+	}
+	if out.Issuer == "" {
+		out.Enabled = false
+		out.Source["enabled"] = "default"
+	}
+	return out
 }
 
 // buildHeadscaleOIDCConfigSnippet returns a copy-paste-
@@ -146,22 +284,22 @@ func buildHeadscaleOIDCConfigSnippet(issuer, clientID, redirectURIs string) stri
 	return b.String()
 }
 
-// PostAdminOIDC (B-oidc-setup, 2026-09-21) — the form
-// action for /admin/oidc. Reads the four form fields, upserts
-// the oidc_settings row, and redirects back with a flash.
+// PostAdminOIDC (B-oidc-setup, 2026-09-21; B290, 2026-09-22) — the form action
+// for /admin/oidc. Reads the form fields, upserts the oidc_settings row and
+// APPLIES the configuration to the running provider.
 //
-// Empty issuer → the row is saved with enabled=false (the
-// operator is mid-edit; they can fill it later). enabled is a
-// separate checkbox on the form so the operator can SAVE the
-// config first and FLIP IT LIVE in a second step (safer than
-// "save and go live" in one click — especially on a freshly
-// deployed headscale where the new OIDC client_id hasn't been
-// pasted into headscale.conf yet).
-//
-// The DB write does NOT restart the OIDC service — the
-// running process keeps its in-memory config. A restart
-// (or /admin/update) re-reads the DB. The handler surfaces a
-// flash that says "saved, restart required to take effect".
+// B290 changes:
+//   - the client_secret is encrypted at rest (SKYGATE_SECRET_KEY), so a database
+//     dump no longer exposes it;
+//   - the new configuration takes effect IMMEDIATELY (s.OIDCApplier), instead of
+//     the old "saved — restart skygate (/admin/update) to apply". That restart
+//     requirement was the visible half of the operator's complaint that OIDC
+//     "cannot be configured without editing the env file": the form existed, but
+//     pressing Save changed nothing they could observe;
+//   - empty issuer = cannot be enabled (saved as enabled=0, fields preserved);
+//   - an empty client_secret keeps the stored one (the form never echoes it);
+//   - the redirect-URI allowlist is validated to be absolute http(s) URLs, and
+//     the flash says exactly what was applied.
 func (s *Service) PostAdminOIDC(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
@@ -180,20 +318,98 @@ func (s *Service) PostAdminOIDC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	enabled := r.FormValue("enabled") == "1"
-	settings := db.OIDCSettings{
-		Enabled:      enabled,
-		Issuer:       strings.TrimSpace(r.FormValue("issuer")),
-		ClientID:     strings.TrimSpace(r.FormValue("client_id")),
-		ClientSecret: r.FormValue("client_secret"),
-		RedirectURIs: strings.TrimSpace(r.FormValue("redirect_uris")),
-		KeyDir:       strings.TrimSpace(r.FormValue("key_dir")),
+	issuer := strings.TrimRight(strings.TrimSpace(r.FormValue("issuer")), "/")
+	clientID := strings.TrimSpace(r.FormValue("client_id"))
+	secret := r.FormValue("client_secret")
+	redirects := strings.TrimSpace(r.FormValue("redirect_uris"))
+	keyDir := strings.TrimSpace(r.FormValue("key_dir"))
+
+	// Validation with actionable messages (the page renders them).
+	if issuer != "" {
+		u, perr := url.Parse(issuer)
+		if perr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			s.redirectOIDCErr(w, r, "issuer must be an absolute http(s) URL, e.g. https://gate.example.com — got "+issuer)
+			return
+		}
 	}
-	if err := db.SaveOIDCSettings(s.dbc(), settings); err != nil {
-		http.Redirect(w, r, "/admin/oidc?err="+url.QueryEscape("save failed: "+err.Error()), http.StatusSeeOther)
+	if enabled && issuer == "" {
+		s.redirectOIDCErr(w, r, "cannot enable OIDC without an issuer URL — that is the address headscale uses to reach skygate")
 		return
 	}
-	okMsg := "OIDC settings saved. Restart skygate (/admin/update) to apply."
-	http.Redirect(w, r, "/admin/oidc?ok="+url.QueryEscape(okMsg), http.StatusSeeOther)
+	for _, ru := range strings.Split(redirects, ",") {
+		ru = strings.TrimSpace(ru)
+		if ru == "" {
+			continue
+		}
+		u, perr := url.Parse(ru)
+		if perr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			s.redirectOIDCErr(w, r, "every redirect URI must be an absolute http(s) URL — got "+ru)
+			return
+		}
+	}
+
+	// An empty secret field keeps the stored one; anything else is new.
+	if secret == "" {
+		if prev, gerr := db.GetOIDCSettingsDecrypted(s.dbc(), s.SecretKeyHex); gerr == nil {
+			secret = prev.ClientSecret
+		}
+	}
+	if enabled && secret == "" {
+		s.redirectOIDCErr(w, r, "cannot enable OIDC without a client secret — set one here and paste the same value into headscale's oidc.client_secret")
+		return
+	}
+
+	settings := db.OIDCSettings{
+		Enabled:      enabled && issuer != "",
+		Issuer:       issuer,
+		ClientID:     clientID,
+		ClientSecret: secret,
+		RedirectURIs: redirects,
+		KeyDir:       keyDir,
+	}
+	if err := db.SaveOIDCSettingsEncrypted(s.dbc(), settings, s.SecretKeyHex); err != nil {
+		s.redirectOIDCErr(w, r, "save failed: "+err.Error())
+		return
+	}
+
+	// Apply to the RUNNING provider so the operator sees the effect now.
+	applied := false
+	if s.OIDCApplier != nil {
+		effIssuer, effClientID, effSecret, effRedirects := issuer, clientID, secret, redirects
+		if !settings.Enabled {
+			// Disabled: keep the stored values but inert the routes.
+			effIssuer = ""
+		}
+		s.OIDCApplier(effIssuer, effClientID, effSecret, effRedirects, settings.Enabled)
+		applied = true
+	}
+	if s.Backend != nil {
+		s.Backend.Audit(c.UserID, c.Username, "oidc_settings_saved",
+			"enabled="+boolWord(settings.Enabled)+" issuer="+issuer+" client_id="+clientID+
+				" secret_set="+boolWord(secret != "")+" redirect_uris="+redirects+" applied_live="+boolWord(applied))
+	}
+
+	msg := "Настройки OIDC сохранены и применены (без перезапуска)."
+	if !applied {
+		msg = "Настройки OIDC сохранены. Чтобы они вступили в силу, перезапустите skygate (/admin/update)."
+	}
+	if !settings.Enabled {
+		msg = "Настройки OIDC сохранены; провайдер ВЫКЛЮЧЕН (маршруты /oidc/* отвечают 503)."
+	}
+	http.Redirect(w, r, "/admin/oidc?ok="+url.QueryEscape(msg), http.StatusSeeOther)
+}
+
+// redirectOIDCErr sends the operator back to the page with a named reason.
+func (s *Service) redirectOIDCErr(w http.ResponseWriter, r *http.Request, msg string) {
+	http.Redirect(w, r, "/admin/oidc?err="+url.QueryEscape(msg), http.StatusSeeOther)
+}
+
+// boolWord renders a boolean for audit details.
+func boolWord(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // PostAdminOIDCTest runs a lightweight discovery+userinfo

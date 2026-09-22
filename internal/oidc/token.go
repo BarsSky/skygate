@@ -62,7 +62,7 @@ const (
 // token endpoint is server-to-server, not
 // browser-to-server).
 func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
-	if s.IssuerURL == "" {
+	if s.Issuer() == "" {
 		s.tokenError(w, "server_error", "OIDC provider disabled")
 		return
 	}
@@ -93,7 +93,7 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 		s.tokenError(w, "invalid_client", "missing client_id")
 		return
 	}
-	if clientID != s.ClientID {
+	if clientID != s.ClientIDValue() {
 		log.Printf("oidc.token: unknown client_id %q", clientID)
 		s.tokenError(w, "invalid_client", "unknown client_id")
 		return
@@ -102,7 +102,7 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 	// timing attacks on the secret. (Even though
 	// headscale's network is the only client,
 	// defense in depth.)
-	if !secureEqual(clientSecret, s.ClientSecret) {
+	if !secureEqual(clientSecret, s.ClientSecretValue()) {
 		log.Printf("oidc.token: bad client_secret for %q", clientID)
 		s.tokenError(w, "invalid_client", "bad client_secret")
 		return
@@ -170,7 +170,7 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().Unix()
 	exp := now + idTokenTTLSeconds
 	idTok, err := s.signIDToken(IDTokenClaims{
-		Issuer:    s.IssuerURL,
+		Issuer:    s.Issuer(),
 		Subject:   entry.Username, // RFC 7519 sec 4.1.2: sub is the user identifier
 		Audience:  clientID,
 		Expiry:    exp,
@@ -186,7 +186,7 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accessTok, err := s.signAccessToken(
-		s.IssuerURL,
+		s.Issuer(),
 		entry.Username,
 		clientID,
 		entry.Scope,

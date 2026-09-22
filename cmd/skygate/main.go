@@ -910,7 +910,7 @@ func main() {
 	effectiveClientSecret := app.OIDCClientSecret
 	effectiveKeyDir := app.OIDCKeyDir
 	effectiveRedirectURIs := app.OIDCRedirectURIs
-	dbRow, dbErr := db.GetOIDCSettings(app.DB.Current())
+	dbRow, dbErr := db.GetOIDCSettingsDecrypted(app.DB.Current(), app.SecretKeyHex)
 	envEnabled := strings.ToLower(strings.TrimSpace(app.OIDCEnabledEnv))
 	envOff := envEnabled == "false" || envEnabled == "0" || envEnabled == "no"
 	if dbErr == nil {
@@ -948,14 +948,22 @@ func main() {
 		effectiveRedirectURIs,
 		app.JWTSecret,
 	)
-	// SKYGATE_OIDC_ENABLED=false short-circuits the routes by
-	// pointing the mux at a 503 responder. The /admin/oidc page
-	// still reads the DB row + shows the operator's config (so
-	// they can edit it without re-enabling), but the OIDC routes
-	// themselves are inert.
+	// SKYGATE_OIDC_ENABLED=false, or a DB row with enabled=0 (the /admin/oidc
+	// switch), disables the provider by emptying the issuer — the service's own
+	// handlers answer 503 in that state ("OIDC provider disabled"), so the routes
+	// stay mounted and the operator can flip the feature back on from the UI
+	// WITHOUT a restart (B290).
+	//
+	// B290 (2026-09-22): this used to set oidcSvc = nil, which both panicked on
+	// the very next line (oidcSvc.UserLookup = …) whenever the env switch was
+	// used and made the UI switch unrepresentable: a form that could save a row
+	// nothing read. The issuer is now the single source of truth for "enabled".
 	if envOff {
 		log.Printf("oidc: SKYGATE_OIDC_ENABLED=false — routes will answer 503 until the env flips back")
-		oidcSvc = nil
+		effectiveIssuer = ""
+	} else if dbErr == nil && !dbRow.Enabled {
+		log.Printf("oidc: oidc_settings.enabled=0 (switched off on /admin/oidc) — routes will answer 503 until it is enabled there")
+		effectiveIssuer = ""
 	}
 	if oidcErr != nil {
 		log.Printf("oidc: init failed: %v (continuing — OIDC routes will answer 503; the portal and /healthz are unaffected)", oidcErr)
@@ -1285,6 +1293,29 @@ func main() {
 		// secret + invalidates the per-URL HSForUser cache.
 		SecretKeyHex:        app.SecretKeyHex,
 		InvalidateHSCacheFn: app.InvalidateHSCache,
+		// B290 (2026-09-22): let /admin/oidc drive the RUNNING provider, so
+		// enabling OIDC from the web UI needs no env edit and no restart — the
+		// point of the operator's report («нет удобного выставления включения
+		// OIDC, пока нет в env строчки нельзя никак настроить»). ApplyConfig is
+		// safe to call at any time (it takes the service's config lock) and an
+		// empty issuer simply disables the routes again.
+		OIDCApplier: func(issuer, clientID, clientSecret, redirectURIs string, enabled bool) {
+			if oidcSvc == nil {
+				return
+			}
+			if !enabled {
+				issuer = ""
+			}
+			oidcSvc.ApplyConfig(issuer, clientID, clientSecret, redirectURIs)
+			log.Printf("oidc: configuration applied from /admin/oidc (enabled=%v issuer=%s client_id=%s secret_set=%v)",
+				enabled && issuer != "", issuer, clientID, clientSecret != "")
+		},
+		OIDCStatusFn: func() (string, string, string, string) {
+			if oidcSvc == nil {
+				return "", "", "", ""
+			}
+			return oidcSvc.ConfigSnapshot()
+		},
 		// refactor-v0.30 Phase B step 3b.3 (2026-07-29):
 		// /admin/exit-nodes needs the default SSH key path
 		// (shown as the "ssh_key_path" form default) + a

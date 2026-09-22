@@ -12,6 +12,90 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.54 — OIDC is configured from the UI, and it applies at once (B290)
+
+**Date:** 2026-09-22 · **Base:** `v1.5.53` → this tag · **Compatibility:** none —
+no schema change, no migration (the existing `oidc_settings` table is reused).
+
+Operator report:
+
+> нет опять же удобного выставления включения OIDC — пока нет в env строчки
+> нельзя никак настроить, но из описания непонятно что и как добавлять, и удобнее
+> было бы иметь автономный механизм включения без правки в ручную env
+
+The form on `/admin/oidc` has existed since v0.75 and the boot path already read
+the row — so the feature *looked* present and still could not be used. Three
+defects were behind that:
+
+1. **Saving changed nothing observable.** The handler answered
+   «OIDC settings saved. Restart skygate (/admin/update) to apply» — an operator
+   filling the form saw the same page, the same "OIDC выключен" banner, and
+   concluded (correctly) that the switch did not work.
+2. **The page rendered the env values, not the effective ones.** A saved row was
+   invisible on the page that had just saved it, so the form and the running
+   provider could disagree with no way to tell which was real. A row with
+   `enabled=0` was also ignored at boot: only the *env* off-switch was honoured.
+3. **The `client_secret` was stored in the clear.**
+
+### What it does now
+
+* **Effective configuration, UI over env.** `effectiveOIDCSettings` resolves each
+  field (a saved value wins, the env var is the fallback, the built-in default is
+  last) and every field on the page carries a source badge — *из UI* / *из env* /
+  *по умолчанию* — so there is never any doubt about what is in force. The env
+  emergency switch `SKYGATE_OIDC_ENABLED=false` is detected and explained
+  (`SKYGATE_OIDC_ENABLED выключен в окружении — он сильнее формы`).
+* **Save applies immediately.** `internal/oidc.Service` gained a lock-guarded
+  `ApplyConfig`/`ConfigSnapshot` (every handler reads through
+  `Issuer()`/`ClientIDValue()`/`ClientSecretValue()`/`RedirectURIsValue()`), and
+  `main.go` wires `adminSvc.OIDCApplier`/`OIDCStatusFn` to the live service — so
+  Save takes effect in the running process, with no `.env` edit and no restart.
+  The page shows what the **running** provider holds next to the form.
+* **`enabled=0` now means something.** A row saved with the box unticked disables
+  the provider at boot *and* live. "Disabled" is expressed as an empty issuer, so
+  the `/oidc/*` routes stay mounted (they answer 503 with the reason) and can be
+  switched back on from the UI — pre-B290 the boot path set the whole service to
+  `nil`, which made the UI switch unrepresentable and would have panicked on the
+  very next line had the env switch ever been used.
+* **The secret is encrypted at rest** with `SKYGATE_SECRET_KEY` behind an
+  `enc:v1:` marker; rows written before this release (plaintext, no marker) still
+  read, and a wrong key is a **named** error instead of a silently empty secret.
+  The form never echoes the secret back; leaving the field empty keeps the stored
+  one.
+* **The fields explain themselves** (RU + EN): what the issuer is (skygate's own
+  public URL), that `client_id`/`client_secret` must be pasted into headscale's
+  `oidc.*` unchanged, what the redirect URI must be
+  (`<base_domain>/oidc/callback`, exact match), and what `key_dir` is for.
+* **Validation with reasons**: an enable without an issuer or a secret, a
+  non-`http(s)` issuer and a malformed redirect URI are all refused with a message
+  naming the field, and nothing is applied to the running provider in that case.
+
+### Contracts
+
+* `scripts/check_b290_oidc_ui_enablement.sh` (26 contracts) — the resolution
+  order and the source badges, the applier wiring, the live-state block, the
+  encryption marker + legacy rows, the boot switch, the RU/EN help keys, the tests
+  and the git-tracked contract.
+* `internal/feature/admin/oidc_settings_b290_test.go` — UI-over-env resolution
+  (including the env off-switch), the encryption round trip + legacy plaintext +
+  wrong-key error, an end-to-end save that applies exactly once with the values
+  submitted (trailing slash trimmed), the four refusal cases, and the
+  empty-secret-field-keeps-the-stored-secret rule.
+
+### Operator action
+
+1. Install v1.5.54 through **/admin/update**.
+2. Open **/admin/oidc**. The page now shows the live provider state, each field's
+   source, and the help block. Fill `issuer` (the address headscale reaches
+   skygate on), `client_id` + `client_secret`, `redirect_uris`
+   (`https://<headscale>/oidc/callback`), tick **Включить OIDC** and press Save —
+   it is live immediately; the same `client_id`/`client_secret` must be present in
+   headscale's own `oidc:` block.
+3. If `SKYGATE_OIDC_ENABLED=false` is set in the environment, remove it (or flip
+   it) — the page says so explicitly, and that variable beats the form.
+4. No migration and no restart are required; the values live in `oidc_settings`,
+   and `.env` remains the fallback for a fresh install.
+
 ## v1.5.53 — the local DERP relay must reach the map (B289)
 
 **Date:** 2026-09-22 · **Base:** `v1.5.52` → this tag · **Compatibility:** none —

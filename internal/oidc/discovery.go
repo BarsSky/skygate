@@ -43,11 +43,11 @@ type DiscoveryDoc struct {
 // (B161.2 may add an ETag if operators request
 // in-place rotation.)
 func (s *Service) ServeDiscoveryDoc(w http.ResponseWriter, r *http.Request) {
-	if s.IssuerURL == "" {
+	if s.Issuer() == "" {
 		http.Error(w, "OIDC provider disabled (set SKYGATE_OIDC_ISSUER)", http.StatusServiceUnavailable)
 		return
 	}
-	issuer := strings.TrimRight(s.IssuerURL, "/")
+	issuer := strings.TrimRight(s.Issuer(), "/")
 	doc := DiscoveryDoc{
 		Issuer:                            issuer,
 		AuthorizationEndpoint:             issuer + "/oidc/authorize",

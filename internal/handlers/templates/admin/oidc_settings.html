@@ -117,33 +117,67 @@
      configure OIDC from the web UI. The previous read-only
      view showed the env-var values but offered no way to
      save them — operators had to SSH into the host and edit
-     .env (or restart the docker container). Now: fill the
-     fields, tick the "Enable" checkbox, click Save. The
-     values go into the oidc_settings DB table; a restart
-     (or /admin/update) re-reads the DB and goes live. */}}
+     .env (or restart the docker container).
+
+     B290 (2026-09-22): the fields now show the EFFECTIVE
+     configuration (a value saved here wins over the env var),
+     each field carries a source badge, the client_secret is
+     encrypted at rest and never echoed back, and Save APPLIES
+     the configuration to the running provider — no restart. */}}
+<div class="card">
+  <h3><i class="fa-solid fa-circle-dot"></i> {{t "oidc.live_title"}}</h3>
+  <p style="font-size:13px;margin-bottom:8px">
+    {{if .LiveIssuer}}
+      <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "oidc.live_on"}}</span>
+      <code>{{.LiveIssuer}}</code>
+      <span style="color:var(--text-muted);font-size:12px">client_id=<code>{{.LiveClientID}}</code>{{if .LiveSecretSet}} · {{t "oidc.form_secret_set"}}{{else}} · <b style="color:var(--danger)">{{t "oidc.form_secret_missing"}}</b>{{end}}</span>
+    {{else}}
+      <span class="tag tag-danger"><i class="fa-solid fa-circle-xmark"></i> {{t "oidc.live_off"}}</span>
+      <span style="color:var(--text-muted);font-size:12px">{{t "oidc.live_off_help"}}</span>
+    {{end}}
+  </p>
+  {{if .EnvDisabled}}<div class="alert alert-warning" style="margin-bottom:8px"><i class="fa-solid fa-triangle-exclamation"></i> {{t "oidc.env_off_warn" | safeHTML}}</div>{{end}}
+</div>
+
 <form method="post" action="/admin/oidc">
   <div class="card">
     <h3><i class="fa-solid fa-pen-to-square"></i> {{t "oidc.section_form"}}</h3>
     <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
       {{t "oidc.form_help" | safeHTML}}
     </p>
+    <details style="margin-bottom:12px">
+      <summary style="cursor:pointer;font-size:13px"><i class="fa-solid fa-circle-question"></i> {{t "oidc.form_what_to_fill"}}</summary>
+      <div style="font-size:13px;color:var(--text-muted);margin-top:8px;line-height:1.5">
+        <p><b>issuer</b> — {{t "oidc.form_help_issuer" | safeHTML}}</p>
+        <p><b>client_id</b> / <b>client_secret</b> — {{t "oidc.form_help_client" | safeHTML}}</p>
+        <p><b>redirect_uris</b> — {{t "oidc.form_help_redirect" | safeHTML}}</p>
+        <p><b>key_dir</b> — {{t "oidc.form_help_keydir" | safeHTML}}</p>
+      </div>
+    </details>
     <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:12px">
-      <input type="checkbox" name="enabled" value="1" {{if .OIDCEnabled}}checked{{end}}>
+      <input type="checkbox" name="enabled" value="1" {{if .EnabledSaved}}checked{{end}}>
       <b>{{t "oidc.form_enable"}}</b>
       <span style="color:var(--text-muted);font-size:12px">{{t "oidc.form_enable_help"}}</span>
+      <span class="tag" style="font-size:11px">{{t "oidc.form_source"}} {{t (printf "oidc.form_source_%s" (index .Source "enabled"))}}</span>
     </label>
-    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.row_issuer"}}</label>
-    <input type="text" name="issuer" value="{{.Issuer}}" placeholder="https://head.skynas.ru" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
-    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.form_client_id"}}</label>
+    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.row_issuer"}} <span class="tag" style="font-size:10px">{{t "oidc.form_source"}} {{t (printf "oidc.form_source_%s" (index .Source "issuer"))}}</span></label>
+    <input type="text" name="issuer" value="{{.Issuer}}" placeholder="https://gate.example.com" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
+    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.form_client_id"}} <span class="tag" style="font-size:10px">{{t "oidc.form_source"}} {{t (printf "oidc.form_source_%s" (index .Source "client_id"))}}</span></label>
     <input type="text" name="client_id" value="{{.ClientID}}" placeholder="headscale" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
-    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.form_client_secret"}}</label>
-    <input type="password" name="client_secret" placeholder="(leave empty to keep current)" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
-    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.form_redirect_uris"}}</label>
-    <input type="text" name="redirect_uris" value="{{.RedirectURIs}}" placeholder="https://head.skynas.ru/oidc/callback" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
-    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.form_key_dir"}}</label>
+    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">
+      {{t "oidc.form_client_secret"}}
+      {{if .SecretSet}}<span class="tag tag-success" style="font-size:10px">{{t "oidc.form_secret_set"}}</span>{{else}}<span class="tag tag-danger" style="font-size:10px">{{t "oidc.form_secret_missing"}}</span>{{end}}
+      {{if .SecretSource}}<span class="tag" style="font-size:10px">{{t "oidc.form_source"}} {{t (printf "oidc.form_source_%s" .SecretSource)}}</span>{{end}}
+    </label>
+    <input type="password" name="client_secret" autocomplete="new-password" placeholder="{{t "oidc.form_secret_placeholder"}}" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
+    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.form_redirect_uris"}} <span class="tag" style="font-size:10px">{{t "oidc.form_source"}} {{t (printf "oidc.form_source_%s" (index .Source "redirect_uris"))}}</span></label>
+    <input type="text" name="redirect_uris" value="{{.RedirectURIs}}" placeholder="https://head.example.com/oidc/callback" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
+    <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.form_key_dir"}} <span class="tag" style="font-size:10px">{{t "oidc.form_source"}} {{t (printf "oidc.form_source_%s" (index .Source "key_dir"))}}</span></label>
     <input type="text" name="key_dir" value="{{.KeyDir}}" placeholder="/var/lib/skygate/oidc-keys" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
-    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> {{t "oidc.form_save"}}</button>
-    <span style="margin-left:12px;color:var(--text-muted);font-size:12px">{{t "oidc.form_save_hint"}}</span>
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{t "oidc.form_save"}}</button>
+    <span style="margin-left:12px;color:var(--text-muted);font-size:12px">
+      {{if .AutoApplyAvailable}}{{t "oidc.form_applied_live"}}{{else}}{{t "oidc.form_restart_needed"}}{{end}}
+    </span>
   </div>
 </form>
 

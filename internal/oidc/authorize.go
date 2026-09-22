@@ -69,7 +69,7 @@ const skygateSessionCookie = "skygate_session"
 // future B-check (B161.5 or later) may add a
 // proper consent screen for transparency.
 func (s *Service) ServeAuthorize(w http.ResponseWriter, r *http.Request) {
-	if s.IssuerURL == "" {
+	if s.Issuer() == "" {
 		http.Error(w, "OIDC provider disabled (set SKYGATE_OIDC_ISSUER)", http.StatusServiceUnavailable)
 		return
 	}
@@ -92,8 +92,8 @@ func (s *Service) ServeAuthorize(w http.ResponseWriter, r *http.Request) {
 	// We only support one client (headscale).
 	// A future B-check may add dynamic-client
 	// registration per RFC 7591.
-	if clientID != s.ClientID {
-		log.Printf("oidc.authorize: unknown client_id %q (expected %q)", clientID, s.ClientID)
+	if clientID != s.ClientIDValue() {
+		log.Printf("oidc.authorize: unknown client_id %q (expected %q)", clientID, s.ClientIDValue())
 		http.Error(w, "unknown client_id", http.StatusBadRequest)
 		return
 	}
@@ -215,7 +215,7 @@ func (s *Service) redirectError(w http.ResponseWriter, r *http.Request, redirect
 // redirect" via the redirect_uri parameter).
 // Exact match is the only safe default.
 func (s *Service) allowedRedirect(uri string) bool {
-	for _, allowed := range strings.Split(s.RedirectURIs, ",") {
+	for _, allowed := range strings.Split(s.RedirectURIsValue(), ",") {
 		allowed = strings.TrimSpace(allowed)
 		if allowed == "" {
 			continue
