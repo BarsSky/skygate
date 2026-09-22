@@ -33,10 +33,12 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -391,6 +393,99 @@ func probeDERPNodeReachable(host string, port int, timeout time.Duration) derpNo
 	return derpNodeStatus{Reachable: true}
 }
 
+// derpReachabilityCandidates is the ordered list of addresses the
+// reachability guard tries for one relay row (B289).
+//
+// WHY THIS EXISTS — the live `skygate-host` VM, 2026-09-22: the bundled
+// derper (region 900, `derp.skynas.ru:443`) was healthy and answered TLS
+// with the right certificate, STUN was bound, and `192.168.13.69:443`
+// was reachable from inside the skygate container. The guard still
+// skipped EVERY region-900 node, because it dialled the hostname and the
+// container inherits the host's `/etc/hosts`, where
+// `derp.skynas.ru -> 127.0.0.1` (AGENTS deployment trap #2). Inside the
+// container that is its own loopback, so the dial failed with
+// `connect: connection refused`. The consequence was silent and total:
+// `/admin/derp/relays/derpmap.json` answered `{"Regions":[]}`,
+// headscale merged nothing but the public Tailscale map, and no client
+// ever learned that a local relay exists — while the journal (the only
+// place that said so) logged three "skipping region=900 … unreachable"
+// lines per fetch.
+//
+// A name that resolves to loopback/unspecified inside the container is a
+// CONFIGURATION artifact, not proof that the relay is down, so the
+// operator's explicit probe host (`SKYGATE_DERP_PROBE_HOST`, the same
+// hint the STUN probe already uses) is tried FIRST in that case. The
+// node still advertises its public `HostName` — clients resolve that
+// themselves from outside.
+func derpReachabilityCandidates(db *sql.DB, host string, probeHost string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(h string) {
+		h = strings.TrimSpace(h)
+		if h == "" || seen[h] {
+			return
+		}
+		seen[h] = true
+		out = append(out, h)
+	}
+	leaked := hostResolvesToLoopback(host)
+	if leaked {
+		// The container cannot reach the relay by name; try the
+		// operator's hint before wasting the timeout on loopback.
+		add(probeHost)
+		add(host)
+	} else {
+		add(host)
+		add(probeHost)
+	}
+	// The other bundled hostnames may carry the one name that resolves
+	// (a stale :8443 row is a different URL, same host).
+	for _, h := range bundledDERPHostnamesFromDB(db) {
+		add(h)
+	}
+	return out
+}
+
+// hostResolvesToLoopback reports whether `host` resolves, from THIS
+// process, to a loopback or unspecified address — the signature of a
+// host-resolver leak into a container.
+func hostResolvesToLoopback(host string) bool {
+	h := strings.TrimSpace(host)
+	if h == "" {
+		return true
+	}
+	if ip := net.ParseIP(strings.Trim(h, "[]")); ip != nil {
+		return ip.IsLoopback() || ip.IsUnspecified()
+	}
+	ips, err := net.LookupIP(h)
+	if err != nil || len(ips) == 0 {
+		return false // unresolvable is a real failure, not a leak
+	}
+	for _, ip := range ips {
+		if !ip.IsLoopback() && !ip.IsUnspecified() {
+			return false
+		}
+	}
+	return true
+}
+
+// probeDERPNodeReachableAny tries every candidate address and returns the
+// status plus the address that answered (empty when none did).
+func probeDERPNodeReachableAny(candidates []string, port int, timeout time.Duration) (derpNodeStatus, string) {
+	var last derpNodeStatus
+	for _, h := range candidates {
+		st := probeDERPNodeReachable(h, port, timeout)
+		if st.Reachable {
+			return st, net.JoinHostPort(h, strconv.Itoa(port))
+		}
+		last = st
+	}
+	if last.Err == "" && len(candidates) == 0 {
+		last.Err = "no candidate address to probe"
+	}
+	return last, ""
+}
+
 // GetAdminDerpRelaysDerpmap serves the combined DERP map
 // (own + bundled 901) as a Tailscale-shaped JSON. headscale
 // is configured to fetch this URL via its `derp.urls`
@@ -431,6 +526,15 @@ func (s *Service) GetAdminDerpRelaysDerpmap(w http.ResponseWriter, r *http.Reque
 	defer rows.Close()
 
 	out := derpMapResponse{Regions: map[string]derpMapRegion{}}
+	// B289: what the guard decided, per row, so "the local region is
+	// missing from the map" stops being a journal-only fact.
+	type mapSkip struct {
+		RegionID int
+		Host     string
+		Reason   string
+	}
+	var skipped []mapSkip
+	probeHost := strings.TrimSpace(os.Getenv("SKYGATE_DERP_PROBE_HOST"))
 	for rows.Next() {
 		var rid int
 		var rc, rn, host, urlStr string
@@ -446,6 +550,7 @@ func (s *Service) GetAdminDerpRelaysDerpmap(w http.ResponseWriter, r *http.Reque
 		// public map is merged by headscale itself via derp.urls.
 		if isDerpMapURL(urlStr) {
 			log.Printf("derpmap: skipping region=%d host=%s — url %q is a derpmap document, not a relay node", rid, host, urlStr)
+			skipped = append(skipped, mapSkip{rid, host, "url is a derpmap document"})
 			continue
 		}
 		if strings.TrimSpace(host) == "" && strings.TrimSpace(urlStr) == "" {
@@ -457,11 +562,21 @@ func (s *Service) GetAdminDerpRelaysDerpmap(w http.ResponseWriter, r *http.Reque
 		// make netcheck score the region lower. The live VM had a
 		// second bundled row for region 900 on :8443 with nothing
 		// listening.
+		//
+		// B289: try every address the row is known by, because the
+		// hostname alone can be a container-local artifact — see
+		// derpReachabilityCandidates for the live failure it caused.
 		if probeNodes {
-			reach := probeDERPNodeReachable(host, port, 2*time.Second)
+			candidates := derpReachabilityCandidates(s.dbc(), host, probeHost)
+			reach, via := probeDERPNodeReachableAny(candidates, port, 2*time.Second)
 			if !reach.Reachable {
-				log.Printf("derpmap: skipping region=%d host=%s port=%d — node unreachable: %s", rid, host, port, reach.Err)
+				log.Printf("derpmap: skipping region=%d host=%s port=%d — node unreachable (tried %v): %s",
+					rid, host, port, candidates, reach.Err)
+				skipped = append(skipped, mapSkip{rid, host, fmt.Sprintf("unreachable (tried %s): %s", strings.Join(candidates, ", "), reach.Err)})
 				continue
+			}
+			if via != "" && !strings.HasPrefix(via, host+":") {
+				log.Printf("derpmap: region=%d host=%s port=%d answered via %s (the hostname did not resolve to the relay from inside this container — check extra_hosts / SKYGATE_DERP_PROBE_HOST)", rid, host, port, via)
 			}
 		}
 		node := derpMapNode{
@@ -503,6 +618,25 @@ func (s *Service) GetAdminDerpRelaysDerpmap(w http.ResponseWriter, r *http.Reque
 	if err := rows.Err(); err != nil {
 		log.Printf("derpmap: rows err: %v", err)
 	}
+	// B289: a BUNDLED region that ends up with no published node means the
+	// operator's own relay is invisible to every client — the live
+	// `skygate-host` state that produced "локальный DERP никак не
+	// заработает" with a healthy derper and an empty map. That is an ERROR
+	// with a named cause, not a debug line.
+	for _, rid := range bundledRegionIDs(s.dbc()) {
+		if reg, ok := out.Regions[itoa(rid)]; !ok || len(reg.Nodes) == 0 {
+			var why []string
+			for _, sk := range skipped {
+				if sk.RegionID == rid {
+					why = append(why, fmt.Sprintf("%s: %s", sk.Host, sk.Reason))
+				}
+			}
+			if len(why) == 0 {
+				continue
+			}
+			log.Printf("derpmap: ERROR region=%d is BUNDLED but publishes NO node — every client will fall back to the public DERP map. Causes: %s", rid, strings.Join(why, " | "))
+		}
+	}
 	// CORS so headscale on a different host can fetch.
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -510,6 +644,27 @@ func (s *Service) GetAdminDerpRelaysDerpmap(w http.ResponseWriter, r *http.Reque
 	if err := json.NewEncoder(w).Encode(out); err != nil {
 		log.Printf("derpmap: encode: %v", err)
 	}
+}
+
+// bundledRegionIDs returns the region_ids of the enabled is_bundled=1 rows
+// (the operator's own relays). B289.
+func bundledRegionIDs(d *sql.DB) []int {
+	if d == nil {
+		return nil
+	}
+	rows, err := d.Query(`SELECT DISTINCT region_id FROM derp_relays WHERE enabled = 1 AND is_bundled = 1`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []int
+	for rows.Next() {
+		var rid int
+		if rows.Scan(&rid) == nil {
+			out = append(out, rid)
+		}
+	}
+	return out
 }
 
 // ---------- /B237 ----------

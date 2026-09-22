@@ -5012,3 +5012,26 @@ run_check "B287" "the per-device tag is an ownership record: internal/db/device_
 # scripts/check_b288_policy_drift_truth.sh.
 run_check "B288" "policy drift must mean drift and must heal itself: headscale grants are a SET, so PolicyEquivalent normalises the documents before comparing them (grants/ssh sorted and de-duplicated, owner and member lists treated as sets, the order-sensitive legacy acls/rules list deliberately left alone) and PolicyDriftDetail names the differing section instead of always blaming the via pins — live on aro the red «политика headscale УСТАРЕЛА» banner (generated 5082 / live 11341 bytes) described 16 duplicated grants and two tag declarations, with no pin actually wrong. One owner derivation (db.TagOwnersForUser: the user the tag names plus tagged-devices@baseDomain, with db.PerDeviceTagUser parsing the tag) now feeds the ACL generator, the ownership backfill and the tag reconciler, so the three writers of tagOwners cannot overwrite each other; the generator declares every per-device tag node_owner_map records (db.ListDevTagsFromOwnerMap), so an apply cannot delete a declaration a node wears; and reconcilePrefixOwnership runs the drift check on every sync pass behind a 5-minute throttle, so a mismatch that pre-dates the pass heals itself instead of being permanent (B276 only checked when the assignment table moved). B288.1 (same release, found by investigating the running instance): its ACL history showed an apply every five minutes with status OK while the served document stayed the pre-B274 one for days — an accepted handoff is not a written policy, so the privileged applier now records its verdict in <update_dir>/policy-apply.status (ok/unchanged/failed + timestamp, bytes, path, reason), headscale.ReadPolicyApplyStatus exposes it, the journal logs 'the write is NOT landing' and /admin/exit-nodes prints the verdict next to the drift; and the applier's tagOwners UNION with the file on disk (B272.4) — which made a stale declaration impossible to remove, so the generated and live documents could never converge — is removed now that both writers emit complete documents (the parse validation, the semantics-only no-op check and the rollback on an unhealthy headscale stay). Contracts in scripts/check_b288_policy_drift_truth.sh." \
   'test -f scripts/check_b288_policy_drift_truth.sh && bash scripts/check_b288_policy_drift_truth.sh'
+
+# B289 (2026-09-22) — the co-located DERP relay must reach the map (or the page
+# must say why it did not). Operator report on the VM `skygate-host`: «локальный
+# DERP сервер никак не заработает» while the relay (region 900,
+# derp.skynas.ru:443) was demonstrably healthy — TCP 443 + UDP 3478 bound, the
+# right Let's Encrypt cert served, reachable at 192.168.13.69:443 — and
+# /admin/derp/relays/derpmap.json (the map headscale merges with the public
+# Tailscale map) answered {"Regions":[]}. The journal had the reason, three
+# lines per fetch: "skipping region=900 host=derp.skynas.ru port=443 — node
+# unreachable: dial tcp 127.0.0.1:443: connect: connection refused". Cause: the
+# skygate CONTAINER inherits the host's /etc/hosts, where the relay's own public
+# name maps to 127.0.0.1 (AGENTS deployment trap #2), so the B265 reachability
+# guard refused every bundled node and the local region vanished from the map —
+# clients silently used the public relays. Fixes: the guard now probes every
+# address a row is known by (derpReachabilityCandidates, with
+# SKYGATE_DERP_PROBE_HOST tried FIRST when the name resolves to loopback) and
+# publishes the node when any of them answers, keeping the public HostName in the
+# map; a bundled region that ends up with no published node is logged as an ERROR
+# with the probed addresses; and /admin/derp/relays renders a per-row «в карте /
+# пропущен + причина» block so this can never again be a journal-only fact.
+# Contracts in scripts/check_b289_derp_map_truth.sh.
+run_check "B289" "the local DERP relay must reach the map, and a skip must name its cause: the reachability guard probed the relay HOSTNAME from inside the skygate container, where the host's /etc/hosts maps derp.skynas.ru to 127.0.0.1 (AGENTS deployment trap #2) — so every bundled region-900 node was dropped, /admin/derp/relays/derpmap.json served {\"Regions\":[]} and headscale's merged map had no local region, while the derper was healthy and reachable at 192.168.13.69:443. derpReachabilityCandidates + hostResolvesToLoopback now try every address the row is known by and put SKYGATE_DERP_PROBE_HOST first when the name is leaked; probeDERPNodeReachableAny publishes the node when any candidate answers (the public HostName stays in the map); the journal names the address that answered and lists every probed address on a skip; an enabled is_bundled region that publishes NO node is logged as an ERROR with its causes; and /admin/derp/relays renders a cached per-row «в карте / пропущен + причина» block. Contracts in scripts/check_b289_derp_map_truth.sh." \
+  'test -f scripts/check_b289_derp_map_truth.sh && bash scripts/check_b289_derp_map_truth.sh'

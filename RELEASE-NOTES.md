@@ -12,6 +12,94 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.53 — the local DERP relay must reach the map (B289)
+
+**Date:** 2026-09-22 · **Base:** `v1.5.52` → this tag · **Compatibility:** none —
+no schema change, no migration.
+
+Operator report on the containerised VM (`skygate-host`): «локальный DERP сервер
+никак не заработает» — the relay that runs on the same host as skygate never got
+used. Measured on the host:
+
+```
+derper            healthy: TCP 443 + UDP 3478 bound, the right Let's Encrypt
+                  cert (CN=derp.skynas.ru), reachable at 192.168.13.69:443
+derpmap endpoint  GET /admin/derp/relays/derpmap.json  ->  {"Regions":[]}
+journal           derpmap: skipping region=900 host=derp.skynas.ru port=443
+                  — node unreachable: dial tcp 127.0.0.1:443: connect: refused
+```
+
+`/admin/derp/relays/derpmap.json` is the map headscale fetches and merges with the
+public Tailscale map. An empty response means **no client is ever told the local
+region exists** — every device silently uses the public relays, which is exactly
+what "не заработает" looks like from the outside.
+
+### Why the guard refused a healthy relay
+
+B265 added a reachability probe so the map would not advertise a dead node (the
+live VM also had a stale `:8443` row). The probe dialled the relay **hostname**
+from inside the skygate container — and the container inherits the host's
+`/etc/hosts`, where the relay's own public name maps to `127.0.0.1`
+(deployment trap #2). Inside the container that is its *own* loopback, so the dial
+was refused, every bundled node was dropped, and the map came back empty. The
+relay was reachable the whole time at `192.168.13.69:443`.
+
+### The fix
+
+* `derpReachabilityCandidates` + `hostResolvesToLoopback` (B289): the guard now
+  probes **every address a row is known by**, and when the relay's name resolves
+  to loopback/unspecified it tries the operator's explicit
+  `SKYGATE_DERP_PROBE_HOST` **first** instead of wasting the timeout on its own
+  loopback.
+* `probeDERPNodeReachableAny`: a node that answers on **any** candidate is
+  published — with its public `HostName` intact, because the clients resolve that
+  name themselves from outside the container.
+* The journal now names the address that answered (`region=900 … answered via
+  192.168.13.69:443 (the hostname did not resolve to the relay from inside this
+  container — check extra_hosts / SKYGATE_DERP_PROBE_HOST)`) and, on a skip, lists
+  every probed address.
+* An enabled `is_bundled` region that publishes **no** node is logged as an
+  **ERROR** with the per-row causes — that state means the operator's own relay is
+  invisible to every client.
+* `/admin/derp/relays` gained a «Карта DERP, которую получает headscale» block:
+  per row, *published / skipped*, the address that answered, or the probed
+  addresses and the failure (cached for 30 s so opening the page cannot cost a
+  dial timeout per dead row). This can never again be a journal-only fact.
+
+### Contracts
+
+* `scripts/check_b289_derp_map_truth.sh` (15 contracts) — the candidate builder
+  and the loopback detector, the fallback probe, the ERROR on an empty bundled
+  region, the page block + its RU/EN keys, the cache, the tests, the git-tracked
+  contract.
+* `internal/feature/admin/derp_reach_b289_test.go` — the ordering rule
+  (probe host first when the name is leaked), the first-answering-candidate probe,
+  and an end-to-end derpmap render on a real SQLite schema that reproduces the
+  live failure and now publishes the region.
+
+### Operator action
+
+1. Install v1.5.53 through **/admin/update** (image builds inside the container
+   entrypoint, so the restart is the whole update).
+2. Open **/admin/derp/relays**: the new block shows region 900 as
+   *публикуется* with the address that answered. `headscale` re-fetches its derp
+   map on its own schedule (`derp.update_frequency`, 10 min by default);
+   `systemctl restart headscale`/`docker restart headscale` makes it immediate.
+3. **Optional, and the cleaner long-term fix:** add the relay's real address to
+   the skygate service in `docker-compose.yml` (the operator-managed file) so the
+   container stops inheriting the loopback mapping:
+   ```yaml
+   services:
+     skygate:
+       extra_hosts:
+         - "derp.skynas.ru:192.168.13.69"
+   ```
+   then `docker compose up -d --force-recreate skygate`. Without it the probe host
+   is what keeps the map correct.
+4. The stale bundled `:8443` row (nothing listens there) will keep showing as
+   *пропущен* — that is correct; delete it in the same table if you no longer
+   want it.
+
 ## v1.5.52 — policy drift must mean drift, and it must heal itself (B288)
 
 **Date:** 2026-09-22 · **Base:** `v1.5.51` → this tag · **Compatibility:** none —

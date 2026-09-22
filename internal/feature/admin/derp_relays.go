@@ -30,8 +30,11 @@ package admin
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"skygate/internal/db"
 )
@@ -69,9 +72,90 @@ func (s *Service) GetAdminDerpRelays(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Backend.RenderWithLayout(w, r, "admin/derp_relays.html", c, map[string]any{
 		"Relays":       relays,
+		"MapStatus":    s.derpRelayMapStatuses(),
 		"FlashSuccess": r.URL.Query().Get("ok"),
 		"FlashError":   r.URL.Query().Get("err"),
 	})
+}
+
+// RelayMapStatus is one relay row's outcome in the map headscale fetches
+// (B289) — the operator-visible half of the fix.
+type RelayMapStatus struct {
+	RegionID  int
+	Host      string
+	URL       string
+	Bundled   bool
+	Enabled   bool
+	Published bool
+	Via       string // address that answered the reachability probe
+	Reason    string // why it is NOT published
+}
+
+var (
+	mapStatusMu      sync.Mutex
+	mapStatusCached  []RelayMapStatus
+	mapStatusAt      time.Time
+	mapStatusTTL     = 30 * time.Second
+	mapStatusTimeout = 1500 * time.Millisecond
+)
+
+// derpRelayMapStatuses reports, per enabled row, whether
+// `/admin/derp/relays/derpmap.json` will publish it and — when it will not — the
+// reason and the addresses that were probed.
+//
+// WHY (live `skygate-host`, 2026-09-22): the operator's own derper was healthy
+// and the map endpoint answered `{"Regions":[]}`, so no client ever used the
+// local relay — and the ONLY place that said why was the journal, at debug-ish
+// log level, three lines per headscale fetch. "Локальный DERP не работает" must
+// be readable on the page that configures it. The list is probed with the SAME
+// candidate/fallback logic the map endpoint uses, behind a 30s cache so opening
+// the page cannot cost one dial timeout per dead row.
+func (s *Service) derpRelayMapStatuses() []RelayMapStatus {
+	mapStatusMu.Lock()
+	if time.Since(mapStatusAt) < mapStatusTTL && mapStatusCached != nil {
+		out := mapStatusCached
+		mapStatusMu.Unlock()
+		return out
+	}
+	mapStatusMu.Unlock()
+
+	rows, err := s.dbc().Query(`SELECT region_id, hostname, COALESCE(url,''), COALESCE(is_bundled,0), COALESCE(enabled,0)
+	                              FROM derp_relays ORDER BY is_bundled DESC, sort_order ASC, region_id ASC`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	probeHost := strings.TrimSpace(os.Getenv("SKYGATE_DERP_PROBE_HOST"))
+	var out []RelayMapStatus
+	for rows.Next() {
+		var st RelayMapStatus
+		var bundled, enabled int
+		if err := rows.Scan(&st.RegionID, &st.Host, &st.URL, &bundled, &enabled); err != nil {
+			continue
+		}
+		st.Bundled, st.Enabled = bundled == 1, enabled == 1
+		switch {
+		case !st.Enabled:
+			st.Reason = "row is disabled"
+		case isDerpMapURL(st.URL):
+			st.Reason = "url is a derpmap document, not a relay node (headscale merges the public map itself)"
+		default:
+			port := publicDERPPortFromURL(st.URL)
+			candidates := derpReachabilityCandidates(s.dbc(), st.Host, probeHost)
+			reach, via := probeDERPNodeReachableAny(candidates, port, mapStatusTimeout)
+			if reach.Reachable {
+				st.Published = true
+				st.Via = via
+			} else {
+				st.Reason = fmt.Sprintf("unreachable (probed %s): %s", strings.Join(candidates, ", "), reach.Err)
+			}
+		}
+		out = append(out, st)
+	}
+	mapStatusMu.Lock()
+	mapStatusCached, mapStatusAt = out, time.Now()
+	mapStatusMu.Unlock()
+	return out
 }
 
 // ---------- POST /admin/derp/relays/add ----------

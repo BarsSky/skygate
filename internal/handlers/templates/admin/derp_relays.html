@@ -22,6 +22,49 @@
 {{if .FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>{{end}}
 {{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{t (printf "derp.relays_err_%s" .FlashError)}}</div>{{end}}
 
+{{/* B289: what headscale actually receives from
+     /admin/derp/relays/derpmap.json. The live host served {"Regions":[]}
+     (the reachability guard probed the relay name from inside the container,
+     where it resolved to 127.0.0.1) while every page said the relay was fine —
+     so the local DERP was never advertised and clients silently used the
+     public ones. This block is that fact, on the page that configures it. */}}
+{{with .MapStatus}}
+<div class="card">
+  <h3><i class="fa-solid fa-map-location-dot"></i> {{t "derp.relays_map_title"}}</h3>
+  <div style="color:var(--text-muted);font-size:13px;margin-bottom:8px">{{t "derp.relays_map_help"}}</div>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr style="text-align:left">
+        <th style="padding:6px">{{t "derp.relays_col_region"}}</th>
+        <th style="padding:6px">{{t "derp.relays_col_hostname"}}</th>
+        <th style="padding:6px">{{t "derp.relays_map_col_state"}}</th>
+        <th style="padding:6px">{{t "derp.relays_map_col_detail"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .}}
+      <tr>
+        <td style="padding:6px" class="mono">{{.RegionID}}</td>
+        <td style="padding:6px" class="mono">{{.Host}}</td>
+        <td style="padding:6px">
+          {{if .Published}}
+            <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "derp.relays_map_published"}}</span>
+          {{else}}
+            <span class="tag tag-danger"><i class="fa-solid fa-circle-xmark"></i> {{t "derp.relays_map_skipped"}}</span>
+          {{end}}
+        </td>
+        <td style="padding:6px;font-size:12px;color:var(--text-muted)">
+          {{if .Published}}{{tf "derp.relays_map_via" .Via}}{{else}}{{.Reason}}{{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  </div>
+</div>
+{{end}}
+
 <div class="card">
   <h3><i class="fa-solid fa-circle-nodes"></i> {{t "derp.relays_section_list"}}</h3>
   <div style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
