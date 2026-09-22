@@ -27,6 +27,9 @@
 #   B  it resolves SKYGATE_UPDATE_DIR from the service (a mismatch is silent)
 #   C  the classification exists and is wired before the gRPC codes
 #   D  the renegotiated Go contract + the package tests
+#   E  the applier writes the request VERBATIM and records its verdict (B288.1,
+#      renegotiated from B272.4's tagOwners union)
+#   F  a headscale restart must not cost a whole tick (bounded retry)
 
 set -uo pipefail
 if [ -f "$(dirname "$0")/../cmd/skygate/main.go" ]; then
@@ -69,10 +72,34 @@ else
 fi
 grep -q 'ReasonPolicyWriteRefused' "$TEST" && ok "D.1 the renegotiated Go contract is present" || bad "D.1 update TestB272_ReconcileReportsOwnerFailure"
 
-# --- E: B272.4 — the applier must UNION tagOwners, not replace the document ---
+# --- E: B288.1 — the applier writes the requested document VERBATIM ----------
+# RENEGOTIATED for B288.1 (2026-09-22). B272.4 taught the applier to UNION the
+# incoming tagOwners with the file on disk, to survive the lost-update race of
+# the per-device EnsureTagOwner loop (section F pins the retry that now absorbs
+# the restart window). That union made a key the incoming document does NOT
+# mention impossible to REMOVE — so a stale declaration (live on `aro`:
+# `tag:dev-daniil-homepc`, a tag no node wears) kept the served policy
+# permanently different from the generated one: an apply plus a headscale
+# restart every five minutes for days, and a drift banner that could never
+# clear. Both writers emit COMPLETE documents now (B272.7 batches the tag path
+# into one read-modify-write; B288 makes the generator declare every per-device
+# tag `node_owner_map` records), so the applier is no longer a second author of
+# the policy. E.1/E.2 pin the removal plus the safeguards that stay; E.3 is the
+# behavioural half.
 APPLIER=deploy/skygate-apply-policy.sh
-grep -q 'POLICY_OLD_FILE' "$APPLIER" && ok "E.1 the applier reads the on-disk policy before writing" || bad "E.1 the applier must read the current policy to merge tagOwners"
-grep -q 'tagOwners unioned with the on-disk policy' "$APPLIER" && ok "E.2 it logs the union" || bad "E.2 log the union"
+if grep -q 'POLICY_OLD_FILE' "$APPLIER"; then
+  bad "E.1 the tagOwners union is back — a stale declaration can never be removed, so the generated and live policies can never converge"
+else
+  ok "E.1 the applier writes the requested document verbatim (no tagOwners union)"
+fi
+if grep -q 'THE UNION IS REMOVED' "$APPLIER" \
+   && grep -q 'refusing to write a policy that does not parse' "$APPLIER" \
+   && grep -q 'policy unchanged (semantically equal)' "$APPLIER" \
+   && grep -q 'policy.prev' "$APPLIER"; then
+  ok "E.2 the removal is documented and the safeguards stay (parse check, no-op skip, rollback)"
+else
+  bad "E.2 the union removal is undocumented, or a safeguard disappeared with it"
+fi
 PY_OK=0
 if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' >/dev/null 2>&1; then PY_OK=1; fi
 
@@ -87,35 +114,34 @@ grep -q 'attempt < 3' "$AUTO" && ok "F.5 the retry is bounded (no endless loop)"
 grep -q 'TestB2724_TransientHeadscaleDownIsRetried' "$RETRYTEST" && ok "F.6 the behavioural retry contract is present" || bad "F.6 add the retry test"
 grep -q 'TestB2724_PermissionRefusalIsNotRetried' "$RETRYTEST" && ok "F.7 an operator problem must NOT be retried — pinned" || bad "F.7 pin the no-retry-on-refusal contract"
 if [ "$PY_OK" = 1 ]; then
-  tmpd="$(mktemp -d)"
-  printf '%s' '{"autoApprovers":{"exitNode":["tag:exit"]},"tagOwners":{"tag:exit":["daniil@"],"tag:dev-a":["a@x"]}}' > "$tmpd/policy.json"
-  merged="$(POLICY_NEW='{"autoApprovers":{"exitNode":["tag:exit"]},"tagOwners":{"tag:dev-b":["b@x"]}}' POLICY_OLD_FILE="$tmpd/policy.json" python3 - <<'PY'
-import json, os, sys
-new = json.loads(os.environ.get("POLICY_NEW", ""))
-try:
-    with open(os.environ["POLICY_OLD_FILE"]) as fh:
-        old = json.load(fh)
-except Exception:
-    old = {}
-if isinstance(old.get("tagOwners"), dict) and isinstance(new.get("tagOwners"), dict):
-    merged = dict(old["tagOwners"])
-    for tag, owners in new["tagOwners"].items():
-        have = merged.get(tag) or []
-        merged[tag] = sorted(set(have) | set(owners or []))
-    new["tagOwners"] = merged
-print(json.dumps(sorted(new["tagOwners"])))
+  # The behavioural half: the applier must write EXACTLY the body it was handed,
+  # and must contain no merge step (that is what lets a stale tagOwners key
+  # disappear and the two documents converge).
+  if python3 - "$APPLIER" <<'PY'
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+verbatim = '''printf '%s\\n' "$POLICY_BODY" > "$tmp"'''
+if verbatim not in src:
+    print("the applier does not write the incoming body verbatim")
+    sys.exit(1)
+for banned in ("merged = dict", "POLICY_OLD_FILE", 'new["tagOwners"] = merged'):
+    if banned in src:
+        print("merge step still present: " + banned)
+        sys.exit(1)
+# ... and it must still record its verdict (B288.1), otherwise a write that
+# never lands is invisible again.
+if "status_write failed" not in src or "policy-apply.status" not in src:
+    print("the applier stopped recording its verdict")
+    sys.exit(1)
+print("ok")
 PY
-)"
-  rm -rf "$tmpd"
-  # The old document's tags must survive the new one — that is exactly the
-  # "one tag per tick" defect: three devices, one tag left in the file.
-  if printf '%s' "$merged" | grep -q '"tag:dev-a"' && printf '%s' "$merged" | grep -q '"tag:dev-b"' && printf '%s' "$merged" | grep -q '"tag:exit"'; then
-    ok "E.3 behavioural: writing B keeps A and tag:exit (no lost tagOwners)"
+  then
+    ok "E.3 behavioural: the write is the incoming document, no merge step, verdict recorded"
   else
-    bad "E.3 behavioural: the union lost a tag — got $merged"
+    bad "E.3 the applier still merges the on-disk policy into the request"
   fi
 else
-  skip "E.3 python3 not available — behavioural union test skipped"
+  skip "E.3 python3 not available — behavioural applier test skipped"
 fi
 
 if command -v go >/dev/null 2>&1; then
