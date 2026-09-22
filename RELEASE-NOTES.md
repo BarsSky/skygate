@@ -12,6 +12,146 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.47 — an operator page must read the database the operator actually runs (B282), plus B281 follow-ups and registry hygiene
+
+**Date:** 2026-09-22 · **Base:** `v1.5.46` → this tag · **Compatibility:** none — no
+schema change, no migration, nothing the operator has to run by hand.
+
+Live bug (user-reported, native `aro` host, SQLite at
+`/var/lib/skygate/skygate.db`). Three operator surfaces were dead, and each one
+blamed something else:
+
+```
+GET  /admin/audit            → 500  SQL logic error: unrecognized token: ":" (1)
+exit_rules.preferred_mismatch → fail query rules: SQL logic error: unrecognized token: ":" (1)
+GET  /admin/headscale/acl    → 500  list acl: unmarshal policy: json: cannot unmarshal
+                                    string into Go value of type admin.ACLView
+```
+
+The first two are the *same* defect: SQL written for PostgreSQL, executed on
+SQLite. The third is a second one, hidden behind the same page-load path. The
+audit page matters most here — it is where the B279 incident was diagnosed from
+(`my_exit_rules_apply_preferred preferred=node updated=21`), and on a SQLite
+install it could not be read at all.
+
+### Root cause
+
+1. **`::` is not a token in SQLite — the whole statement fails to parse.**
+   `/admin/audit` built its `audit_log ∪ cluster_audit` UNION with the
+   PostgreSQL forms inline (`'audit_log'::text`, `to_timestamp(created_at)`,
+   `''::text`, `detail::text`), and the `exit_rules.preferred_mismatch` system
+   test hardcoded `node_owner_map.node_id = r.device_id::text`. The cast is
+   *required* on PostgreSQL (`text = integer` is SQLSTATE 42883 without it) and
+   *fatal* on SQLite, where the parser stops at the colon and reports a bare
+   `unrecognized token: ":"` — a message that names neither the dialect nor the
+   column.
+
+2. **A timestamp column is not always a `time.Time`.** The audit reader scanned
+   the `ts` column straight into `time.Time`. On PostgreSQL that column is
+   `TIMESTAMPTZ` and pgx hands back a `time.Time`; on SQLite it is the raw
+   column — `audit_log.created_at` is INTEGER Unix seconds, while
+   `cluster_audit`'s DDL declares INTEGER but defaults to `CURRENT_TIMESTAMP`,
+   which SQLite evaluates to the TEXT form `2006-01-02 15:04:05`. The
+   `?since=` filter had the mirror-image bug: binding a `time.Time` reaches
+   SQLite as TEXT, and a TEXT/INTEGER comparison in SQLite is always false.
+
+3. **The policy API can answer with a *stringified* document.** headscale
+   returned `{"policy":"{…escaped…}"}`. `GetACL` unquoted that shape for the
+   legacy `data` field only, so the `policy` field was cached **with its
+   quotes** — every consumer that fed it to `json.Unmarshal` died on
+   `cannot unmarshal string into …`. `/admin/headscale/acl` and the
+   `exit_rules.all_in_headscale_acl` system test were both affected, and the
+   B276 staleness comparison had its own private copy of the normalisation.
+
+### Fix
+
+* `db.DialectKind.CastText` (`internal/db/dialect.go`) — the one dialect-native
+  text cast: `::text` on PostgreSQL, `CAST(x AS TEXT)` on SQLite. No shared
+  query types `::` any more.
+* `db.ParseDBTime` (`internal/db/db_time.go`) — decodes whatever the driver
+  returns for a timestamp (`time.Time`, INTEGER/`float64` Unix seconds, or the
+  textual forms above); unknown input is reported as "not a time" instead of
+  being rendered as 1970.
+* `buildUnifiedAuditQuery(kind, …)` (`internal/feature/admin/admin_pages.go`) —
+  the audit UNION is assembled for the live dialect
+  (`db.ActiveDialect()`): `to_timestamp(created_at)` + `::text` literals on
+  PostgreSQL, the raw column and plain literals on SQLite. Placeholders stay
+  `$N` on both backends (modernc.org/sqlite binds `$NNN` by ordinal; pgx
+  rejects `?`). `?since=` binds Unix seconds on SQLite.
+* `preferredMismatchRulesQuery(kind)` (`internal/feature/admin/system_tests.go`) —
+  the join cast comes from the dialect, not from a literal typed into the SQL.
+* `headscale.PolicyJSON` (`internal/headscale/policy_json.go`) — the single
+  normaliser (unquote a stringified policy → `hujson.Standardize`), shared by
+  `GetACL`, `ListACL`, the ACL system test and `PolicyEquivalent`; `GetACL` now
+  unquotes the `policy` field too, so the cache always holds the document.
+
+### Also in this tag
+
+* **B281 follow-up — a PASS row must not look like a compiler diagnostic.**
+  GitHub annotates any log line shaped `<path>.go: <message>` at *failure* level
+  even for a successful step, and 21 catalog descriptions began with exactly
+  that shape, so a **green** `verify-pre` run rendered the Actions UI as
+  "12 errors" with PASS-row tails as the bodies (run 35747083447). PASS now
+  prints a short label (leading `path.ext: ` stripped, remainder truncated);
+  FAIL/TIMEOUT keep the full description *and* the check's output, which is
+  where the narrative is read. `SKYGATE_CATALOG_VERBOSE=1` restores the old
+  rows. Contracts B281 O1–O5.
+* **Registry hygiene — `ghcr-prune.yml`.** Every release push left a package
+  version behind and only the newest image is ever pulled, so
+  `ghcr.io/barssky/skygate` had grown to 77 versions (≈20 releases of layers).
+  The new workflow is manual and **dry-run by default**, needs
+  `packages: write`, keeps an explicit tag matcher (`v1.5.46` → `v1.5.46`,
+  `v1.5`, `v1`, `latest`) and refuses to guess "keep whatever is newest".
+  First live run: 1 kept, 76 deleted, 0 failed. Contracts B281 N1–N6, including
+  a `git ls-files` assertion so the workflow cannot be silently untracked
+  (trap #11).
+* **B207 contract renegotiated.** Its three union assertions grepped
+  `-A200 'func … GetAdminAudit'`; moving the SQL into
+  `buildUnifiedAuditQuery` put `FROM audit_log` 206 lines below the handler —
+  six past the budget — so a *correct* handler reported two FAILs. The check now
+  asserts on the builder functions themselves instead of on a window.
+
+### Contracts
+
+32 contracts in `scripts/check_b282_admin_reads_dialect.sh` (registered as
+`run_check "B282"` in `scripts/verify_pre_deploy.sh`), plus real-SQLite
+regression tests that run the actual statements against
+`db.ApplyMigrations`-built `:memory:` databases:
+`internal/db/dialect_b282_test.go`, `internal/headscale/policy_b282_test.go`,
+`internal/feature/admin/b282_sqlite_reads_test.go` (the audit UNION with both
+timestamp shapes, the preferred-mismatch join, and a stringified policy through
+`ListACL`).
+
+### Verification
+
+* `bash scripts/verify_pre_deploy.sh` — **311 PASS, 0 FAIL, 1 SKIP** (`B8` is
+  VM-only), 0 TIMEOUT.
+* `go vet ./...` clean; `staticcheck` on the touched packages clean;
+  `go test ./...` green.
+* Live verification on `aro` is the operator's `Update` from `/admin/update`,
+  followed by `/healthz` showing `"build":"v1.5.47+<sha>"`.
+
+### Operator action after the update
+
+The code fix restores the three pages and the system test. It does **not**
+restore split-tunnel routing by itself — that needs the two host-side items
+diagnosed at the same time on `aro`:
+
+* give the relay its own tag (`tag:dev-infra-exit-node-vps`) so a preferred
+  exit-node can be stored at all — until then `/my/exit-nodes` keeps showing
+  «нет тега узла» and no `via=` pin can name the relay;
+* register the relay's SSH target and key in `exit_servers` (the default
+  `SKYGATE_EXIT_SSH_KEY=/ssh-sync/id_ed25519` is a *container* path and does not
+  exist on a native install, and an empty `ssh_target` falls back to the bare
+  hostname, which does not resolve from the skygate host):
+  `Пере-синхронизировать` currently answers
+  `ssh=err=… Identity file /ssh-sync/id_ed25519 not accessible … Could not resolve hostname exit-node-vps`.
+
+Same class of PostgreSQL-only SQL still lives on `/admin/cluster`
+(`cluster.go:362,365`) and `/admin/ha` (`ha.go:214,217,220,277`) — those queries
+swallow their errors, so on SQLite those two pages are silently empty rather than
+broken. Tracked as a follow-up, not part of this tag.
+
 ## v1.5.46 — a class tag is not a node identity (B279 + B279.1), and green CI finally means 0 FAIL (B280 + B281)
 
 **Date:** 2026-09-22 · **Base:** `v1.5.45` → this tag · **Compatibility:** none.
