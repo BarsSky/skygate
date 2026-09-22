@@ -168,13 +168,24 @@ find_gh() {
 
 GH_BIN="$(find_gh || true)"
 if [ -n "$GH_BIN" ]; then
-  EOUT=$("$GH_BIN" release view v1.5.2 --json isDraft,databaseId,tagName 2>/dev/null || true)
-  if echo "$EOUT" | grep -q '"isDraft":true'; then
+  # B281 (2026-09-22): a LIVE query must SKIP when it cannot be performed. The
+  # `gh` CLI exists on a CI runner but has no token in the catalog job, so
+  # `gh release view` fails, EOUT is empty and this reported a hard
+  # `FAIL E.1 v1.5.2 release is missing entirely` for a healthy repository —
+  # the same class the D.1 git ls-remote branch right above already handles
+  # (AGENTS.md §1.1: a check that needs live state SKIPs, never FAILs). Only a
+  # SUCCESSFUL query that shows a draft or an unexpected state is a FAIL.
+  EOUT_RAW="$("$GH_BIN" release view v1.5.2 --json isDraft,databaseId,tagName 2>&1)"
+  E_RC=$?
+  EOUT="$EOUT_RAW"
+  if [ "$E_RC" -ne 0 ]; then
+    skip "E.1 gh release view failed (rc=$E_RC; no token / no network) — live v1.5.2 release state unavailable"
+  elif echo "$EOUT" | grep -q '"isDraft":true'; then
     bad "E.1 v1.5.2 release exists as DRAFT (CI failed; clean it up)"
   elif echo "$EOUT" | grep -q '"tagName":"v1.5.2"'; then
     ok "E.1 v1.5.2 release is PUBLISHED (clean state, release workflow passed)"
   else
-    bad "E.1 v1.5.2 release is missing entirely — release workflow may have failed"
+    bad "E.1 v1.5.2 release is missing entirely — release workflow may have failed: $(printf '%s' "$EOUT" | head -c 200)"
   fi
 else
   skip "E.1 gh CLI not available in PATH"

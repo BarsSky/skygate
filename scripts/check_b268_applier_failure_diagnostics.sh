@@ -108,9 +108,34 @@ fi
 # --- B: behavioural (needs a Linux userland) --------------------------------
 if [ "$(uname -s)" = "Linux" ] && command -v python3 >/dev/null 2>&1; then
   ROOT="$(mktemp -d /tmp/b268check.XXXXXX)"
-  trap 'rm -rf "$ROOT"' EXIT
+  MIRROR_PID=""
+  # B281 (2026-09-22): the mirror server is killed by the trap, using the REAL
+  # python pid. Pre-fix the pid came from `( cd … && python3 … & echo $! )`, i.e.
+  # the subshell's pid, so the kill at the end of the block missed python and
+  # every run leaked a server holding the port. This check ran with hardcoded
+  # 18098/18099: a leaked (or otherwise occupied) port made the applier talk to
+  # a server whose document root no longer existed, so the download 404'd and
+  # the four download-dependent contracts failed with no visible reason
+  # (`curl: (22) … 404` was swallowed by run_case's redirect).
+  cleanup_b268() {
+    [ -n "$MIRROR_PID" ] && kill "$MIRROR_PID" 2>/dev/null
+    rm -rf "$ROOT"
+  }
+  trap cleanup_b268 EXIT
   mkdir -p "$ROOT"/{bin,stubs,update,mirror,state,etc}
   mkdir -p "$ROOT/mirror/v1.5.99"
+
+  # Two FREE ports, chosen by the kernel: no stale listener and no collision with
+  # a concurrent check can turn this into a false failure.
+  free_port() {
+    python3 -c 'import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()'
+  }
+  MIRROR_PORT="$(free_port)"
+  HEALTH_PORT="$(free_port)"
 
   # stubs: the applier must not be able to see the real service manager
   cat > "$ROOT/stubs/systemctl" <<'EOF'
@@ -133,6 +158,31 @@ for a in "$@"; do
 done
 exec /usr/bin/curl "$@"
 EOF
+  # B281 (2026-09-22): `install` is stubbed for the same reason as systemctl —
+  # the real one chowns to root:root (deploy/skygate-apply-update.sh
+  # atomic_install: `install -m 0755 -o root -g root …`), which only root may do.
+  # The applier is DESIGNED to run as root (systemd path unit), so on an
+  # unprivileged host (the CI runner, this workstation) every install failed with
+  # `changing ownership of …: Operation not permitted` and the four
+  # download-dependent contracts reported FAIL — a privilege fact about the
+  # runner, not a defect in the diagnostics B268 pins. The stub copies + chmods
+  # and RECORDS the argv, so the root:root request is still asserted (B8) and a
+  # regression that stops asking for root ownership cannot hide behind the stub.
+  cat > "$ROOT/stubs/install" <<'EOF'
+#!/usr/bin/env bash
+[ -n "${B268_INSTALL_LOG:-}" ] && echo "install $*" >> "$B268_INSTALL_LOG"
+mode=0755; src=""; dst=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -m) mode="$2"; shift 2 ;;
+    -o|-g) shift 2 ;;
+    -*) shift ;;
+    *) if [ -z "$src" ]; then src="$1"; else dst="$1"; fi; shift ;;
+  esac
+done
+[ -n "$src" ] && [ -n "$dst" ] || { echo "install stub: missing operand" >&2; exit 1; }
+cp -f "$src" "$dst" && chmod "$mode" "$dst"
+EOF
   chmod +x "$ROOT/stubs"/*
   cat > "$ROOT/etc/update.conf" <<EOF
 SKYGATE_UPDATE_DIR="$ROOT/update"
@@ -141,8 +191,8 @@ SKYGATE_UPDATE_SERVICE="skygate"
 SKYGATE_UPDATE_BINARY="$ROOT/bin/skygate"
 SKYGATE_UPDATE_RUN_USER="$(id -un)"
 SKYGATE_UPDATE_ENV_FILE="$ROOT/etc/skygate.env"
-SKYGATE_UPDATE_HEALTH_URL="http://127.0.0.1:18099/healthz"
-SKYGATE_UPDATE_BASE_URL="http://127.0.0.1:18098"
+SKYGATE_UPDATE_HEALTH_URL="http://127.0.0.1:$HEALTH_PORT/healthz"
+SKYGATE_UPDATE_BASE_URL="http://127.0.0.1:$MIRROR_PORT"
 SKYGATE_UPDATE_HEALTH_TIMEOUT="4"
 SKYGATE_UPDATE_HEALTH_POLL="1"
 EOF
@@ -165,14 +215,37 @@ EOF
   mkdir -p "$ROOT/build"; cp "$ROOT/build.sh" "$ROOT/build/skygate"
   tar -C "$ROOT/build" -czf "$ROOT/mirror/v1.5.99/skygate-v1.5.99-linux-amd64.tar.gz" skygate
   ( cd "$ROOT/mirror/v1.5.99" && sha256sum skygate-v1.5.99-linux-amd64.tar.gz > SHA256SUMS )
-  ( cd "$ROOT/mirror" && python3 -m http.server 18098 --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > "$ROOT/mirror.pid" )
-  sleep 1
+  # `--directory` makes the served root explicit (no `cd`-in-a-background-list
+  # subtlety) and `$!` is python's own pid, so the trap can actually kill it.
+  python3 -m http.server "$MIRROR_PORT" --bind 127.0.0.1 \
+    --directory "$ROOT/mirror" >"$ROOT/mirror.out" 2>&1 &
+  MIRROR_PID=$!
+  # Wait for READINESS instead of `sleep 1`: the download-dependent contracts
+  # (B, B2, B3, B5) failed on a loaded runner because the server was not
+  # answering yet, and the only symptom was a 404 swallowed by run_case.
+  MIRROR_READY=0
+  for _ in $(seq 1 50); do
+    if /usr/bin/curl -fsS -o /dev/null "http://127.0.0.1:$MIRROR_PORT/v1.5.99/SHA256SUMS" 2>/dev/null; then
+      MIRROR_READY=1
+      break
+    fi
+    sleep 0.2
+  done
+  if [ "$MIRROR_READY" != "1" ]; then
+    skip "B: the local artifact mirror never became ready on 127.0.0.1:$MIRROR_PORT (see $ROOT/mirror.out) — behavioural half needs it"
+    kill "$MIRROR_PID" 2>/dev/null || true
+    MIRROR_PID=""
+    printf '\n\033[1mB268 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
+    exit 0
+  fi
 
   run_case() { # name health_body unit_state
     rm -rf "$ROOT/update"; mkdir -p "$ROOT/update"
+    rm -f "$ROOT/install.argv"
     cp "$ROOT/build.sh" "$ROOT/bin/skygate"; chmod 0755 "$ROOT/bin/skygate"
     printf 'TARGET=v1.5.99\nFROM_VERSION=v1.4.0\nJOB_ID=deadbeefcafe\nRUNTIME_PID=\nREQUESTED_AT=2026-09-19T15:01:42Z\n' > "$ROOT/update/request.props"
-    B268_HEALTH_BODY="$2" B268_SERVICE_STATE="$3" PATH="$ROOT/stubs:$PATH" \
+    B268_HEALTH_BODY="$2" B268_SERVICE_STATE="$3" B268_INSTALL_LOG="$ROOT/install.argv" \
+      PATH="$ROOT/stubs:$PATH" \
       SKYGATE_HELPER_CONF="$ROOT/etc/update.conf" \
       bash "$APPLIER" >/dev/null 2>&1
     cat "$ROOT/update/result.status" 2>/dev/null
@@ -190,6 +263,14 @@ EOF
     ok "B2: service up but reporting the old build → rolled_back"
   else
     bad "B2: stale-build path did not roll back"
+  fi
+  # B281: the `install` stub must not be able to hide the root:root request —
+  # a stubbed privileged step is only honest if we still assert WHAT was asked
+  # for (deploy/skygate-apply-update.sh atomic_install).
+  if [ -f "$ROOT/install.argv" ] && grep -q -- '-o root -g root' "$ROOT/install.argv"; then
+    ok "B8: the applier still installs the binary with -o root -g root (stub recorded the argv)"
+  else
+    bad "B8: no 'install … -o root -g root' invocation recorded (got: $(head -c 200 "$ROOT/install.argv" 2>/dev/null))"
   fi
   # run_case rewrites apply.log for every case, so the diagnostics of this
   # case are inspected immediately after it.
@@ -237,7 +318,8 @@ EOF
   fi
   sed -i 's/^SKYGATE_UPDATE_HEALTH_TIMEOUT=.*/SKYGATE_UPDATE_HEALTH_TIMEOUT="4"/' "$ROOT/etc/update.conf"
 
-  kill "$(cat "$ROOT/mirror.pid")" 2>/dev/null || true
+  kill "$MIRROR_PID" 2>/dev/null || true
+  MIRROR_PID=""
 else
   skip "B: behavioural applier test needs Linux + python3 (run this check on the VM/CI)"
 fi

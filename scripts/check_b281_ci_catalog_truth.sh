@@ -284,6 +284,24 @@ else
   bad "[L] $B261 not found"
 fi
 
+# --- M. behavioural checks must not fail on an environment fact --------------
+# check_b268 drives the REAL applier. The applier chowns the binary to root:root,
+# which only root can do, so on the CI runner (unprivileged) all four
+# download-dependent contracts reported FAIL — a privilege fact, not a defect.
+# The harness now stubs `install` (recording the argv, so the root:root request
+# is still asserted) and picks its ports from the kernel instead of hardcoding
+# 18098/18099 (a leaked or occupied port made the applier talk to a dead server
+# and the only symptom was a 404 swallowed by the case runner).
+B268="$REPO/scripts/check_b268_applier_failure_diagnostics.sh"
+if [ -f "$B268" ]; then
+  check_ge "M1-install-stub" 1 "$(count "$B268" 'stubs/install')"
+  check_ge "M2-root-argv-asserted" 1 "$(count "$B268" '\-o root \-g root')"
+  check_eq "M3-no-hardcoded-port" "0" "$(count "$B268" '127\.0\.0\.1:1809[89]')"
+  check_ge "M4-readiness-probe" 1 "$(count "$B268" 'never became ready')"
+else
+  bad "[M] $B268 not found"
+fi
+
 echo
 echo "=== B281 summary: $PASS PASS, $FAIL FAIL ==="
 if [ "$FAIL" -gt 0 ]; then

@@ -169,11 +169,21 @@ fi
 
 # D.3 go test on the two packages where the stragglers lived
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
-        ./internal/headscale/... ./internal/oidc/... 2>/dev/null | grep -q '^ok'; then
+    # B281 (2026-09-22): capture FIRST, then match (AGENTS.md trap #9) and keep
+    # the output. `go test … | grep -q '^ok'` lets grep close the pipe at the
+    # first match, go test dies with SIGPIPE and `pipefail`/the pipeline status
+    # turns a green run into FAIL; `2>/dev/null` then hid the reason. The CI
+    # catalog reported `FAIL D.3 headscale or oidc tests failed` with no evidence
+    # at all. Now the failing output is printed (last 25 lines) — a check that
+    # says "something failed" without showing it cannot be acted upon.
+    D3_OUT="$(CGO_ENABLED=0 go test -short -count=1 -timeout 300s \
+        ./internal/headscale/... ./internal/oidc/... 2>&1)"
+    D3_RC=$?
+    if [ "$D3_RC" -eq 0 ] && printf '%s\n' "$D3_OUT" | grep -q '^ok'; then
         ok "D.3 packages with the stragglers (headscale + oidc) still pass go test"
     else
-        bad "D.3 headscale or oidc tests failed (straggler fix introduced a regression)"
+        bad "D.3 headscale or oidc tests failed (rc=$D3_RC; straggler fix introduced a regression)"
+        printf '%s\n' "$D3_OUT" | tail -25 | sed 's/^/        /'
     fi
 else
     echo "  SKIP  D.3 go test (no go in PATH)"
