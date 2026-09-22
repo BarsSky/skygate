@@ -238,6 +238,65 @@ func TestPreferredMismatchQueryRunsOnSQLiteB282(t *testing.T) {
 	}
 }
 
+// TestAuditQueryClusterBranchOnSQLiteB282 covers the second half of the
+// UNION: cluster_audit. Its SQLite DDL is self-inconsistent — the column is
+// declared INTEGER but defaults to CURRENT_TIMESTAMP, which SQLite evaluates
+// to the TEXT form "2006-01-02 15:04:05" — so the same column can hold unix
+// seconds or text. Both must render, and neither shape may make the statement
+// fail to parse (the pre-B282 form used to_timestamp + detail::text here).
+func TestAuditQueryClusterBranchOnSQLiteB282(t *testing.T) {
+	dbc := b282SQLiteDB(t)
+
+	// A TEXT row (what the SQLite DDL default produces) …
+	if _, err := dbc.db.Exec(
+		`INSERT INTO cluster_audit (cluster_id, actor, action, target_node_id, detail, result, error_message, created_at)
+		 VALUES ('skygate-staging', 'system', 'node_health', 'n1', '{"reason":"ha.tick"}', 'ok', '', '2026-09-22 15:00:00')`); err != nil {
+		t.Fatalf("seed cluster_audit (TEXT timestamp): %v", err)
+	}
+	// … and a unix-seconds row.
+	if _, err := dbc.db.Exec(
+		`INSERT INTO cluster_audit (cluster_id, actor, action, target_node_id, detail, result, error_message, created_at)
+		 VALUES ('skygate-staging', 'daniil', 'node_drain', 'n2', '{"reason":"manual"}', 'ok', '', 1790100000)`); err != nil {
+		t.Fatalf("seed cluster_audit (INTEGER timestamp): %v", err)
+	}
+
+	query, args := buildUnifiedAuditQuery(db.DialectSQLite, "", "", "cluster_audit", 0, 200)
+	rows, err := dbc.db.Query(query, args...)
+	if err != nil {
+		t.Fatalf("cluster_audit branch failed on SQLite: %v\nquery:\n%s", err, query)
+	}
+	defer rows.Close()
+
+	seen := map[string]bool{}
+	for rows.Next() {
+		var (
+			source, actor, action, target, targetType, targetID, detail, result, errMsg string
+			tsRaw                                                                        any
+		)
+		if err := rows.Scan(&source, &tsRaw, &actor, &action, &target, &targetType, &targetID,
+			&detail, &result, &errMsg); err != nil {
+			t.Fatalf("scan cluster_audit row: %v", err)
+		}
+		if source != "cluster_audit" {
+			t.Errorf("source = %q, want cluster_audit", source)
+		}
+		if targetType != "cluster_node" {
+			t.Errorf("target_type = %q, want cluster_node", targetType)
+		}
+		if _, ok := db.ParseDBTime(tsRaw); !ok {
+			t.Errorf("cluster_audit timestamp %#v (%s) did not decode — both the TEXT "+
+				"CURRENT_TIMESTAMP form and unix seconds must be readable", tsRaw, action)
+		}
+		seen[action] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows.Err: %v", err)
+	}
+	if !seen["node_health"] || !seen["node_drain"] {
+		t.Errorf("cluster_audit rows seen = %v, want both node_health (TEXT ts) and node_drain (INTEGER ts)", seen)
+	}
+}
+
 // TestListACLRendersStringifiedPolicyB282 is the /admin/headscale/acl
 // regression: a stringified policy must render, not 500.
 func TestListACLRendersStringifiedPolicyB282(t *testing.T) {

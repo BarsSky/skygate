@@ -243,6 +243,14 @@ func buildUnifiedAuditQuery(kind db.DialectKind, actionFilter, userFilter, sourc
 			// against unix seconds — binding a time.Time would reach
 			// SQLite as a TEXT timestamp and a TEXT/INTEGER comparison
 			// in SQLite is always false.
+			//
+			// cluster_audit is compared the same way. Its SQLite DDL
+			// defaults created_at to CURRENT_TIMESTAMP (TEXT), but the
+			// table has no SQLite writer at all (every INSERT in
+			// cluster_audit.go / cluster_failover.go / cluster_drill.go
+			// is PostgreSQL-shaped: $N::jsonb, RETURNING id), so the
+			// branch exists for schema parity and for the display path,
+			// which decodes both shapes through db.ParseDBTime.
 			condsLog = append(condsLog, fmt.Sprintf("created_at >= %s", nextPh()))
 			args = append(args, cutoff.Unix())
 			condsCluster = append(condsCluster, fmt.Sprintf("created_at >= %s", nextPh()))
