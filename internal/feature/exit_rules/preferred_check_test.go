@@ -78,12 +78,22 @@ func TestIsRuleApplicable_RuleEmpty(t *testing.T) {
 // conversion. The DB stores tags as "tag:exit-emilia" but
 // device_rules.exit_node_id stores bare hostnames ("emilia"),
 // so the comparison needs this helper.
+//
+// B279 (v1.5.46) — CONTRACT CHANGE, deliberate. This case used to pin
+// `"tag:public" → "public"` ("non-exit-node tag — defensive"). A CLASS
+// tag names a role, never a node, so "the hostname of a class tag" is
+// not a defensive answer — it is a phantom: on the live `aro` host the
+// class tag `tag:exit-node` became the hostname "node", the "Use
+// preferred" button wrote it into 23 device_rules rows, and the route
+// sync, the route approval and the ACL `via` pin all worked on a relay
+// that does not exist. Every class tag now returns "" (= "any
+// exit-node"), which the callers already understand.
+// TestTagToHostname_ClassTagIsNotAHostname_B279 covers the class set.
 func TestTagToHostname_StandardForms(t *testing.T) {
 	cases := map[string]string{
 		"tag:exit-emilia":    "emilia",
 		"tag:exit-karolina":  "karolina",
 		"tag:exit-sharlotta": "sharlotta",
-		"tag:public":         "public", // non-exit-node tag — defensive
 		"emilia":             "emilia", // already bare — no-op
 		"":                   "",       // empty — no-op
 		"  tag:exit-emilia ": "emilia", // whitespace trim

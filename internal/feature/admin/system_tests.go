@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/feature/exit_rules"
 	"skygate/internal/headscale"
 )
 
@@ -1061,31 +1062,22 @@ var TestRegistry = []SystemTestDef{
 			// Cross-check: for each rule, does its exit_node_id
 			// match the device's preferred host?
 			prefByUserHost := map[string]string{}
-			// 2026-08-17: v1.3.18 hotfix — tagToHost was
-			// stripping only "tag:exit-" (the pre-B93
-			// tag format). After the post-B111 migration
-			// to "tag:dev-infra-emilia" (and the analogous
-			// infra tags for karolina / sharlotta /
-			// <polygon-vm-hostname>), the helper returned
-			// "dev-infra-emilia" instead of "emilia", so
-			// every rule whose exit_node_id is "emilia"
-			// showed up as a mismatch against
-			// pref "tag:dev-infra-emilia" (the operator's
-			// "fixed" form). Strip both formats so the
-			// comparison is hostname-vs-hostname.
-			tagToHost := func(t string) string {
-				t = strings.TrimSpace(t)
-				switch {
-				case strings.HasPrefix(t, "tag:dev-infra-"):
-					return strings.TrimPrefix(t, "tag:dev-infra-")
-				case strings.HasPrefix(t, "tag:exit-"):
-					return strings.TrimPrefix(t, "tag:exit-")
-				case strings.HasPrefix(t, "tag:"):
-					return strings.TrimPrefix(t, "tag:")
-				default:
-					return t
-				}
-			}
+			// 2026-08-17: v1.3.18 hotfix — the local helper used
+			// to strip only "tag:exit-" (the pre-B93 format), so
+			// after the post-B111 migration to
+			// "tag:dev-infra-emilia" it returned
+			// "dev-infra-emilia" instead of "emilia" and every
+			// rule whose exit_node_id is "emilia" showed up as a
+			// mismatch (the operator's "fixed" form).
+			//
+			// B279.1 (v1.5.46): the inline closure that fixed it
+			// is gone. It was the third copy of "strip tag: to get
+			// a hostname", and the class tag `tag:exit-node` went
+			// through copies like it to become the phantom relay
+			// "node" on the live `aro` host. This page now calls
+			// the shared helper, which refuses class tags and is
+			// pinned by its own tests.
+			tagToHost := exit_rules.TagToHostname
 			mismatch := 0
 			samples := []string{}
 			for _, r := range rules {

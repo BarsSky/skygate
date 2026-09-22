@@ -81,20 +81,58 @@ B-block, not a quick edit.
 
 ### 1.2 Cutting a release
 
+**B280 (v1.5.46): a tag and a release are CI-gated.** `scripts/ci_gate.sh` is the
+single implementation of "is `ci.yml` green for this exact commit?" (exit `0`
+green / `1` not green / `2` cannot verify; `--wait` for a run in progress). It is
+called from three places, so they cannot disagree:
+
+| Caller | What it refuses |
+|---|---|
+| `.githooks/pre-tag` (local) | `git tag -a vX.Y.Z` while CI is red / running / absent, or the commit is not on `main` |
+| `.github/workflows/tag-release.yml` | creating the tag at all — this is the sanctioned path, it gates **before** `git tag` and then dispatches `release.yml` |
+| `.github/workflows/release.yml` → `preflight` job | the whole release (images, binaries, Release) — **every** publishing job `needs: preflight`, so a tag pushed with `--no-verify` still publishes nothing |
+
+Preferred procedure:
+
 ```bash
 # 1. Write the "## vX.Y.Z" section at the TOP of RELEASE-NOTES.md and land it
-#    in the tagged commit (the workflow extracts exactly that section).
+#    in the commit you are about to tag (the workflow extracts that section).
 git status --porcelain            # must be empty (locally AND on the VM)
 git log --oneline -5
 
-# 2. Tag and push. The tag alone defines the build label — the binary's
-#    version comes from `git describe`, so there is no version file to bump.
-git tag vX.Y.Z
-git push origin vX.Y.Z
+# 2. Push main and WAIT for ci.yml to finish (the gate insists on a
+#    completed, successful run for that exact sha).
+git push origin main
+gh run watch
 
-# 3. Watch the workflow (all four jobs).
+# 3. Create the tag on the server, CI-gated:
+gh workflow run tag-release.yml -f version=vX.Y.Z
+#    or: Actions → tag-release → Run workflow → version: vX.Y.Z
+#    It verifies the gate, creates the annotated tag, pushes it and starts
+#    release.yml at the tag. (The dispatch is required: a tag pushed with the
+#    repository GITHUB_TOKEN does not fire `push` events.)
+
+# 4. Watch the release (all five jobs, preflight first).
 gh run watch
 ```
+
+The direct path still works when the hooks are installed — `git tag vX.Y.Z &&
+git push origin vX.Y.Z` — and ends in the same place: the local hook checks
+first, and `release.yml`'s `preflight` checks again on the server. What the
+direct path cannot do is bypass the rule: if `ci.yml` is not green for the
+tagged commit, `preflight` fails and `docker`, `binaries`, `sums` and `release`
+are all skipped, so nothing is published and no image tag moves.
+
+Escape hatches (both are deliberate, narrow, and visible where they are taken):
+
+* `SKIP_PRE_TAG_CHECK=1 git tag -a vX.Y.Z …` — skips the **local** hook only;
+  `preflight` still refuses to publish. Use only in a true emergency and say so
+  in the release notes.
+* Repository variable `SKYGATE_ALLOW_TAG_OFF_MAIN=1` — allows a tag whose commit
+  is not an ancestor of `main` (a genuine hotfix branch). The CI check itself is
+  never skippable.
+* Repository variable `SKYGATE_PREFLIGHT_WAIT_SECONDS` (default `900`) — how
+  long `preflight` waits for a run that is still in progress before refusing.
 
 Pre-release tags (anything with a `-` before the first digit sequence, e.g.
 `-rc.1`, `-alpha1`) skip `:latest`, `:vX.Y` and `:vX`, and are marked
@@ -104,6 +142,16 @@ pre-release on the GitHub Release. That is deliberate: production pins
 The workflow has `concurrency: release-${{ github.ref }}` with
 `cancel-in-progress: true`, so re-pushing a corrected tag cancels the previous
 run.
+
+**Why this exists.** The v1.5.41 → v1.5.45 cycle pushed tags after
+`git push --no-verify`. CI caught two real regressions in that window — v1.5.44
+introduced an RU i18n parity break and a raw-`http.Error` leak — and both
+releases shipped them anyway, because the tag already existed and `release.yml`
+builds whatever the tag points at. A tag is a promise that the commit was
+tested; `preflight` is what makes the promise checkable. Note the flip side of
+`concurrency`: a ci.yml run that was **cancelled** because a newer commit landed
+counts as "not green" for the cancelled commit — re-run it (`gh run rerun <id>`)
+or tag a commit whose run completed.
 
 ### 1.3 Pre-tag checklist
 

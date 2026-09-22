@@ -3760,13 +3760,12 @@ func runFirstRunAutoSync(ctx context.Context, d *sql.DB, hs *headscale.Client) e
 	// create each exit-server after this auto-sync.)
 	syncInfos := make([]db.SyncNodeInfo, 0, len(nodes))
 	for _, n := range nodes {
-		tag := ""
-		for _, t := range n.Tags {
-			if len(t) > 4 && t[:4] == "tag:" {
-				tag = t
-				break
-			}
-		}
+		// B279 (v1.5.46): the node's own tag, never "the first tag
+		// that starts with tag:". On a relay whose only tag is the
+		// class tag `tag:exit-node` the old loop seeded
+		// node_owner_map with a role, not an identity — the starting
+		// point of the live `aro` phantom-relay incident.
+		tag := db.PickPerNodeTag(n.Tags)
 		hsUID := int64(0)
 		if n.UserID != "" {
 			if v, perr := strconv.ParseInt(n.UserID, 10, 64); perr == nil {

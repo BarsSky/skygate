@@ -46,13 +46,21 @@ func TestExitNodeTagToHostname(t *testing.T) {
 		// after B188 migration, but the helper still has to
 		// handle it for safety)
 		{"tag:exit-emilia", "emilia"},
-		// Catch-all sentinel — "exit-node" is the headscale
-		// special tag (not a real exit_node hostname). The
-		// function extracts "node", which won't match any
-		// real device_rule's exit_node_id, so the B188.2
-		// caller skips the via= for it. That's the correct
-		// "fail open" behavior.
-		{"tag:exit-node", "node"},
+		// B279.1 (v1.5.46) — CONTRACT CHANGE for the class tags. The
+		// sentinel used to extract "node" and rely on the CALLER to
+		// notice that no rule is called "node". That reliance was the
+		// live `aro` incident: the exit_rules copy of the same
+		// "strip tag:exit-" rule had no such guard, produced the
+		// hostname "node", and wrote it into 23 device_rules rows —
+		// routes were then advertised and approved for a relay that
+		// does not exist. A class tag names a role shared by many
+		// nodes, so "" ("no via= pin") is produced here, from
+		// db.IsClassTag — the same predicate every other package calls.
+		{"tag:exit-node", ""},
+		{"tag:public", ""},
+		{"tag:private", ""},
+		{"tag:subnet-router", ""},
+		{"TAG:Exit-Node", ""},
 		// Empty / malformed inputs return "" (no known bucket
 		// matched). The B188.2 caller treats this as "no via=
 		// pin" — safe default.

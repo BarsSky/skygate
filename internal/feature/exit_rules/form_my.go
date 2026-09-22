@@ -143,6 +143,12 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 	rulePage, _ := db.GetDeviceRulesForUserPaged(s.dbc(), c.UserID, page, pageSize)
 	rules := rulePage.Rules
+	// B279 (v1.5.46): the paged helper deliberately does not touch
+	// DeviceName (it needs a headscale round-trip — see
+	// db.GetDeviceRulesForUserPaged's doc), and this handler switched to
+	// it in v1.5.43 without adding the enrichment back. Every rule then
+	// grouped under the raw device_id ("2" instead of "workpc").
+	s.enrichDeviceNames(rules)
 
 	// B276.1: label the rows that were saved for "все мои устройства". The copies
 	// the fan-out created are individual rows, so without this the user cannot tell
@@ -1471,6 +1477,37 @@ func (s *Service) PostMyExitRulesApplyPreferred(w http.ResponseWriter, r *http.R
 			"preferred exit-node is not set — choose one on /my/devices first",
 		), http.StatusSeeOther)
 		return
+	}
+	// B279 (v1.5.46): the preferred hostname MUST name a live exit node.
+	//
+	// This handler is how the live `aro` host lost the feature: the
+	// stored preference was the CLASS tag `tag:exit-node`, TagToHostname
+	// turned it into the hostname "node", and this loop wrote that
+	// phantom into 21 rules (`my_exit_rules_apply_preferred
+	// preferred=node updated=21`) and 3 more minutes later. Every rule
+	// afterwards pointed at a relay that does not exist — nothing was
+	// advertised, nothing was approved, the ACL pin matched no node —
+	// and no surface explained why. A write this destructive must verify
+	// its target against headscale first.
+	if s.HS != nil {
+		live := map[string]bool{}
+		if nodes, lerr := s.HS.ListExitNodes(); lerr == nil {
+			for _, n := range nodes {
+				for _, name := range []string{n.Hostname, n.GivenName} {
+					if name != "" {
+						live[strings.ToLower(name)] = true
+					}
+				}
+			}
+		}
+		if len(live) > 0 && !live[strings.ToLower(userPreferredHost)] {
+			log.Printf("[exit-rules] apply-preferred refused: preferred=%q (from tag %q) is not a live exit-node; no rule was touched",
+				userPreferredHost, userPreferred.ExitNodeTag)
+			http.Redirect(w, r, "/my/exit-rules?err="+url.QueryEscape(
+				"preferred exit-node "+userPreferredHost+" does not exist in headscale — nothing was changed. Re-select it on /my/exit-nodes; if the relay has no tag of its own (only tag:exit-node), give it one first (/admin/exit-nodes).",
+			), http.StatusSeeOther)
+			return
+		}
 	}
 
 	rules, err := s.getDeviceRules(c.UserID)

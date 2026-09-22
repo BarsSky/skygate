@@ -269,10 +269,54 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 	for node, routes := range exitRoutes {
 		syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, OwnedPrefixes(node, routes, owners), result)
 	}
+	// B279 (v1.5.46): sync the relays the ASSIGNMENT TABLE names even
+	// when no rule mentions them.
+	//
+	// The loop above iterates `exitRoutes`, which is keyed by
+	// device_rules.exit_node_id — but B275 made `prefix_owner` the
+	// authority on who serves a prefix, and the two disagree whenever
+	// the engine moves a prefix (its rule's relay went unhealthy, or an
+	// operator pinned it). Before this, such a prefix was advertised by
+	// NOBODY: the only relay that had it in its candidate list was
+	// filtered down to "prefixes I own" (none) while its true owner was
+	// never visited at all. The log said it plainly — "node drops 19
+	// claimed prefix(es) owned by another relay" — while `prefix_owner`
+	// pointed all 19 at `exit-node-vps`.
+	for _, node := range relaysFromAssignment(owners, exitRoutes) {
+		owned := OwnedPrefixesForRelay(node, owners)
+		if len(owned) == 0 {
+			continue
+		}
+		log.Printf("prefix-ownership: syncing %s from the assignment table (%d prefix(es) owned, no rule names this relay)",
+			node, len(owned))
+		syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, owned, result)
+	}
 	if len(exitRoutes) == 0 {
 		result["info"] = "no IP/subnet rules configured"
 	}
 	return result
+}
+
+// relaysFromAssignment returns the relay hostnames the assignment table
+// hands at least one prefix to and that the caller's per-rule map does
+// not already cover, sorted for a stable log/order.
+//
+// 2026-09-22: B279 (v1.5.46).
+func relaysFromAssignment(owners map[string]string, already map[string][]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, owner := range owners {
+		if owner == "" || seen[owner] {
+			continue
+		}
+		if _, covered := already[owner]; covered {
+			continue
+		}
+		seen[owner] = true
+		out = append(out, owner)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // 2026-08-18 (B132): SyncAdvertisedRoutesForNode syncs just ONE
@@ -362,8 +406,34 @@ func healthyExitRelays(d *sql.DB) []string {
 // operator has to look at: the device keeps its own rule list, but the
 // relay named by that rule will not serve the prefix until either the
 // rule is re-pointed at the owner or the ownership changes. B274.
+//
+// B279 (v1.5.46): the comparison is now against the ASSIGNMENT TABLE
+// (`owners`, the same map the sync loop filters with) instead of the
+// in-memory `PrefixOwnership` vote. The old body took `owners` and
+// ignored it, so the report described a different decision than the one
+// that was actually applied — the log could stay silent while the loop
+// skipped every prefix of a relay the table had replaced, and it could
+// blame a relay for a prefix the table had long since given it. The
+// in-memory vote remains the fallback for the very first pass, before
+// any `prefix_owner` row exists.
 func reportPrefixLosers(where string, claims []PrefixClaim, owners map[string]string, result map[string]string) {
-	losers := PrefixLosers(claims)
+	var losers map[string][]string
+	if len(owners) > 0 {
+		losers = map[string][]string{}
+		for _, c := range claims {
+			if c.Node == "" || c.Prefix == "" {
+				continue
+			}
+			if owner, ok := owners[c.Prefix]; ok && owner != c.Node {
+				losers[c.Node] = append(losers[c.Node], c.Prefix)
+			}
+		}
+		for node := range losers {
+			sort.Strings(losers[node])
+		}
+	} else {
+		losers = PrefixLosers(claims)
+	}
 	if len(losers) == 0 {
 		return
 	}
@@ -376,10 +446,10 @@ func reportPrefixLosers(where string, claims []PrefixClaim, owners map[string]st
 	for _, node := range nodes {
 		dropped := losers[node]
 		total += len(dropped)
-		log.Printf("prefix-ownership(%s): %s does NOT advertise %d prefix(es) it claims — owner is another relay (%v)",
+		log.Printf("prefix-ownership(%s): %s does NOT advertise %d prefix(es) it claims — the assignment table gives them to another relay (%v)",
 			where, node, len(dropped), dropped)
 	}
-	result["prefix_conflicts"] = fmt.Sprintf("%d prefix(es) claimed by more than one relay; see log", total)
+	result["prefix_conflicts"] = fmt.Sprintf("%d prefix(es) claimed by a rule but assigned to another relay; see log", total)
 }
 
 // syncOneExitNode is the per-node sync body extracted from

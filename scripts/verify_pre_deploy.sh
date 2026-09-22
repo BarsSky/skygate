@@ -4730,3 +4730,69 @@ run_check "B276.1" "«все мои устройства» must cover a device r
 # 6 contracts in scripts/check_b278_dsn_ip_rotates.sh.
 run_check "B278" "launch_skigate.sh must not bake a docker bridge IP into the DSN, and the launch policy must not kill the container permanently after N transient failures. Replaces the pre-B278 'docker inspect IPAddress + --restart=on-failure:5' combination that caused an 8h OIDC-outage on 192.168.13.69 when the postgres container's bridge IP rotated and skygate failed to come back up (which in turn made headscale crash-loop on OIDC discovery 502). PG_HOST now uses the docker DNS name (PG_CONTAINER_NAME=skygate-pg-local); --restart=unless-stopped replaces --restart=on-failure:5; --pg-host=<ip> stays as an escape hatch for external-PG setups. 6 contracts in scripts/check_b278_dsn_ip_rotates.sh." \
   'test -f scripts/check_b278_dsn_ip_rotates.sh && bash scripts/check_b278_dsn_ip_rotates.sh'
+
+# B279 (v1.5.46) — a tailnet-wide CLASS tag (tag:exit-node / tag:public /
+# tag:private / tag:subnet-router) is a ROLE, never one node's identity.
+# Live case (native host `aro`): the only relay carried tag:exit-node and
+# nothing else; exit_rules.TagToHostname stripped "tag:exit-" and returned
+# the hostname "node" (a relay that does not exist), the operator's
+# "Use preferred" button wrote it into 21 + 3 device_rules rows
+# (`my_exit_rules_apply_preferred preferred=node updated=21` in
+# audit_log), route advertisement/approval and the ACL `via` pin then
+# resolved to nothing, and exit-node-monitor's per-tick auto-sync put the
+# class tag back into node_owner_map every five minutes so no intended
+# per-node tag could survive. One predicate (internal/db/tag_kind.go:
+# IsClassTag / IsPerNodeTag / PickPerNodeTag) now decides, and every
+# consumer calls it: NormalizeExitNodeTag refuses the class tag
+# (ErrClassTagNotPerNode), TagToHostname returns "" (= any exit-node),
+# the reconciler clears a stored class-tag preference and never derives
+# one, the headscale→DB syncs cannot overwrite a per-node tag with a
+# class tag, bulk-apply validates its target against the live exit nodes,
+# the sync loop also visits the relays the assignment table names, and
+# /my/exit-nodes explains "give the relay its own tag" instead of offering
+# a button that stored the class tag. 40 contracts in
+# scripts/check_b279_class_tag_identity.sh.
+run_check "B279" "a class tag is not a node identity: one shared predicate + sentinel guard in TagToHostname/NormalizeExitNodeTag, class-tag prefs cleared, class tags never clobber a per-node tag in node_owner_map, bulk-apply validates its target against live exit nodes, assignment-table relays are synced, /my/exit-rules names the device. Live aro case: 23 rules rewritten to the phantom relay named node. 40 contracts in scripts/check_b279_class_tag_identity.sh." \
+  'test -f scripts/check_b279_class_tag_identity.sh && bash scripts/check_b279_class_tag_identity.sh'
+
+# B279.1 (v1.5.46) — finish the deduplication B279 started. Four
+# implementations derived a hostname from a tag, and the live incident
+# happened in the copy with no class-tag guard (exit_rules.TagToHostname:
+# tag:exit-node -> "node"); the ACL copy was "safe" only because its callers
+# were documented to treat "node" as a non-match, which is not a mechanism.
+# B279.1 puts the class-tag knowledge in exactly one function (db.IsClassTag,
+# next to the new db.IsExitNodeTagForm) and deletes the rest: the acl helper
+# guards on it before its bucket loop, db.isExitNodeTagForm delegates, the
+# admin system-test page drops its v1.3.18.1 inline switch for
+# exit_rules.TagToHostname, and user_subnet.go stops re-writing the sentinel
+# literal by hand. New acl_b279_1_test.go pins the sentinel and carries an
+# anti-drift guard against db.IsClassTag. check_b119.sh contract H was
+# renegotiated (it asserted the string tag:dev-infra- anywhere in
+# system_tests.go, which a comment satisfies). 16 contracts in
+# scripts/check_b279_1_tag_to_hostname_one_copy.sh.
+run_check "B279.1" "one tag-to-hostname implementation and one class-tag predicate: the acl helper guards on db.IsClassTag before its bucket loop, db.IsExitNodeTagForm is the shared form check, the admin system-test page drops its inline switch for exit_rules.TagToHostname, user_subnet.go stops hand-writing the tag:exit-node sentinel, and acl_b279_1_test.go pins the sentinel plus an anti-drift guard. 16 contracts in scripts/check_b279_1_tag_to_hostname_one_copy.sh." \
+  'test -f scripts/check_b279_1_tag_to_hostname_one_copy.sh && bash scripts/check_b279_1_tag_to_hostname_one_copy.sh'
+
+# B280 (v1.5.46) — a tag and a release are CI-gated: no tag and no release
+# from a commit whose CI is not green. The v1.5.41 → v1.5.45 cycle pushed
+# tags after `git push --no-verify`; CI caught two real regressions in that
+# window (v1.5.44 introduced an RU i18n parity break and a raw-http.Error
+# leak) and the releases shipped them anyway, because the tag already
+# existed and release.yml builds whatever the tag points at. Hooks are
+# per-clone and --no-verify skips them, so the rule now exists server-side
+# too. ONE implementation — scripts/ci_gate.sh (exit 0 green / 1 not green /
+# 2 cannot verify; `2` blocks as well; --wait for a run in progress; refuses
+# a commit that is not an ancestor of the release branch) — called by three
+# consumers: .githooks/pre-tag (local), the new `preflight` job in
+# release.yml (every publishing job `needs: preflight`, so images, binaries
+# and the GitHub Release are all skipped for an untested tag) and the new
+# tag-release.yml (manual workflow_dispatch: gate first, then create the
+# annotated tag, then dispatch release.yml — a tag pushed with the
+# repository GITHUB_TOKEN does not fire `push`, so the dispatch is
+# required). Escape hatches are narrow and visible: SKIP_PRE_TAG_CHECK=1
+# for the local hook and the SKYGATE_ALLOW_TAG_OFF_MAIN repository variable
+# for a hotfix branch; the CI check itself is never skippable. Procedure in
+# docs/operations.md §1.2; rule 14 in AGENTS.md §1. 43 contracts in
+# scripts/check_b280_ci_gates_release.sh.
+run_check "B280" "a tag and a release are CI-gated: scripts/ci_gate.sh is the single 'is ci.yml green for this sha' implementation (0 green / 1 not green / 2 cannot verify — 2 blocks too), called by .githooks/pre-tag, by release.yml's preflight job (all publishing jobs need it) and by the new tag-release.yml (manual, gates before git tag, then dispatches release.yml). Beats the --no-verify tag path that shipped v1.5.44's i18n parity break and raw-http.Error leak. 43 contracts in scripts/check_b280_ci_gates_release.sh." \
+  'test -f scripts/check_b280_ci_gates_release.sh && bash scripts/check_b280_ci_gates_release.sh'

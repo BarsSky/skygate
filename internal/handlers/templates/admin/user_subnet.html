@@ -108,7 +108,7 @@
       <select name="tag" class="ufg-input">
         <option value="" {{if eq .PreferredExitNodeTag ""}}selected{{end}}>— {{t "user_subnet.preferred_exit_none"}} —</option>
         {{range .AvailableExitNodes}}
-        <option value="{{.Tag}}" {{if eq $.PreferredExitNodeTag .Tag}}selected{{end}}>{{.Hostname}} ({{.IP}}) — {{.Tag}}</option>
+        <option value="{{.Tag}}" {{if .Disabled}}disabled{{end}} {{if eq $.PreferredExitNodeTag .Tag}}selected{{end}}>{{.Hostname}} ({{.IP}}) — {{if .Tag}}{{.Tag}}{{else}}{{t "user_subnet.preferred_exit_no_per_node_tag"}}{{end}}</option>
         {{end}}
       </select>
     </label>

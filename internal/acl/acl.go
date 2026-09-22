@@ -85,8 +85,8 @@ func (NoopAlerter) SendAlert(string) int64 { return 0 }
 //	"tag:dev-infra-karolina"-> "karolina"
 //	"tag:dev-infra-skygate-host-1" -> "skygate-host-1"
 //	"tag:exit-emilia"       -> "emilia" (legacy, pre-B118)
-//	"tag:exit-node"         -> "node" (catch-all sentinel — caller treats as non-match
-//	                                 because no real device_rule has exit_node_id="node")
+//	"tag:exit-node"         -> "" (B279.1 — see below)
+//	"tag:public"            -> "" (B279.1)
 //	"tag:invalid-foo"       -> "" (unrecognized shape — caller treats as non-match)
 //
 // The function tries the known buckets ("dev-infra", "dev",
@@ -105,9 +105,27 @@ func (NoopAlerter) SendAlert(string) int64 { return 0 }
 // is the "fail open" behavior we want for /my/exit-rules
 // selective routing).
 //
-// 2026-08-26: v1.5.2 (B188.2).
+// B279.1 (v1.5.46) — CONTRACT CHANGE for the class sentinel. This
+// function used to return "node" for `tag:exit-node` and rely on the
+// caller noticing that no rule can be called "node". That reliance was
+// the whole live `aro` incident: the exit_rules package had the same
+// "strip tag:exit-" rule WITHOUT the caller-side guard, produced the
+// hostname "node", and wrote it into 23 device_rules rows (routes then
+// advertised/approved for a relay that does not exist). The class-tag
+// knowledge now comes from db.IsClassTag — the same predicate the rest
+// of the tree calls — so this copy cannot drift from it again, and the
+// "no via= pin" outcome is produced here rather than by a caller's
+// comment.
+//
+// 2026-08-26: v1.5.2 (B188.2).  2026-09-22: B279.1.
 func exitNodeTagToHostname(tag string) string {
 	if tag == "" {
+		return ""
+	}
+	// A class tag names a role shared by many nodes, never one node:
+	// no hostname can be derived from it. Returning "" is the caller's
+	// "no via= pin" signal.
+	if db.IsClassTag(tag) {
 		return ""
 	}
 	body := strings.TrimPrefix(tag, "tag:")
@@ -153,10 +171,9 @@ func exitNodeTagToHostname(tag string) string {
 //     exit-node)
 //
 // `tag:exit-node` (the headscale catch-all sentinel) is
-// correctly NOT matched — exitNodeTagToHostname returns
-// "node" for it, which never equals a real device_rule's
-// exit_node_id. So devices that pin to "node" (which no
-// rule does) get no via=.
+// correctly NOT matched — exitNodeTagToHostname returns ""
+// for it (B279.1), which never equals a real device_rule's
+// exit_node_id. So devices that pin to a class tag get no via=.
 //
 // 2026-08-26: v1.5.2 (B188.3).
 func resolvePerCIDRVia(devTag, ruleExitNodeID string, viaByDevice map[string]string) string {

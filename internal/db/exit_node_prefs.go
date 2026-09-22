@@ -333,6 +333,21 @@ func NormalizeExitNodeTag(d *sql.DB, hostname string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// B279 (v1.5.46): a CLASS tag is not this node's identity. Live on
+	// `aro`: the only relay carried `tag:exit-node` and nothing else,
+	// node_owner_map stored exactly that, and this function returned it
+	// as the node's "canonical tag" — which the exit_rules side then
+	// turned into the hostname "node" (stripping "tag:exit-"), wrote
+	// into 23 device_rules rows and into the ACL. Every surface
+	// afterwards disagreed about which relay the rules meant.
+	//
+	// The class tag means "any relay", which is expressed by NOT having
+	// a preference at all — never by storing the class tag as a
+	// per-node value. Refuse it here, where all three pref handlers
+	// funnel through.
+	if IsClassTag(tag) {
+		return "", fmt.Errorf("%w: hostname %q resolves to the tailnet-wide class tag %q, which does not identify one node; give the node its own tag (tag:dev-infra-%s) or leave the preference empty (\"any exit-node\")", ErrClassTagNotPerNode, hostname, tag, strings.ToLower(strings.TrimSpace(hostname)))
+	}
 	// TD-17.1: reject user-device dev tags. node_owner_map stores
 	// the dev tag for every node, but only "tag:dev-infra-X" or
 	// legacy "tag:exit-X" forms are valid exit-node tags. The
@@ -352,24 +367,20 @@ func NormalizeExitNodeTag(d *sql.DB, hostname string) (string, error) {
 	return tag, nil
 }
 
-// isExitNodeTagForm reports whether `tag` matches one of the
-// canonical exit-node tag forms:
-//   - "tag:dev-infra-<host>"  (B111+ infra form — emilia, karolina, sharlotta)
-//   - "tag:exit-<host>"        (legacy pre-B93 form, still accepted)
-// Anything else (in particular "tag:dev-<user>-<host>" — the
-// user-device dev tag written by B175) returns false.
+// isExitNodeTagForm reports whether `tag` is the PER-NODE identity of
+// one exit node ("tag:dev-infra-<host>" or the legacy "tag:exit-<host>").
 //
-// 2026-08-27: TD-17.1.
+// B279.1 (v1.5.46): the decision moved to db.IsExitNodeTagForm
+// (tag_kind.go) so the admin dropdown can call the same function
+// instead of re-deriving it inline. This wrapper remains for the TD-17.1
+// test's call sites and so the package's own readers keep a local name.
+//
+// Anything else returns false: a user-device dev tag (TD-17.1), a CLASS
+// tag such as "tag:exit-node" (B279 — it names a role, and treating it
+// as an identity produced the hostname "node" and a phantom relay on the
+// live `aro` host), "tag:untagged", or a bare "tag:dev-infra-".
 func isExitNodeTagForm(tag string) bool {
-	t := strings.TrimSpace(tag)
-	switch {
-	case strings.HasPrefix(t, "tag:dev-infra-"):
-		return true
-	case strings.HasPrefix(t, "tag:exit-"):
-		return true
-	default:
-		return false
-	}
+	return IsExitNodeTagForm(tag)
 }
 
 // ResolveExitNodeTag normalises the form's tag value against
@@ -426,3 +437,16 @@ var ErrNoSuchExitNodeDevice = fmt.Errorf("device not found in node_owner_map; ca
 // path as ErrNoSuchExitNodeDevice.
 // 2026-08-27: TD-17.1.
 var ErrUserDeviceDevTagNotExitNode = fmt.Errorf("hostname found in node_owner_map but its tag is a user-device dev tag, not an exit-node infra tag")
+
+// ErrClassTagNotPerNode is returned by NormalizeExitNodeTag when the
+// node_owner_map row's tag is a tailnet-wide CLASS tag
+// ("tag:exit-node", "tag:public", "tag:private", "tag:subnet-router")
+// — a role shared by many nodes, not the identity of this one.
+//
+// Storing such a tag as a preferred exit-node is what produced the
+// live `aro` incident: the class tag was read back through
+// TagToHostname as the hostname "node", written into 23 rules and
+// pinned in the ACL, while the only real relay was `exit-node-vps`.
+//
+// 2026-09-22: B279 (v1.5.46).
+var ErrClassTagNotPerNode = fmt.Errorf("hostname found in node_owner_map but its tag is a tailnet-wide class tag (tag:exit-node / tag:public / tag:private / tag:subnet-router), which does not identify one node")

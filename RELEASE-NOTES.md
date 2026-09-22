@@ -12,6 +12,208 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.46 — a class tag is not a node identity (B279)
+
+**Date:** 2026-09-22 · **Base:** `v1.5.45` → this tag · **Compatibility:** none.
+
+Live bug (user-reported on the native `aro` host): `/my/exit-rules` grouped all
+23 rules under an exit-node named **`node`**, `/admin/exit-nodes` listed only
+**`exit-node-vps`**, and every rule stayed in ⏳ no matter what the operator
+did. `headscale nodes list` had exactly four nodes — `exit-node-vps`, `workpc`,
+`laptop`, `homepc` — and **no node named `node` had ever existed**. The audit
+log told the whole story:
+
+```
+13:14:58  my_preferred_exit_set        tag=tag:exit-node via=false
+16:42:22  my_exit_rules_apply_preferred preferred=node updated=21
+20:49:19  my_preferred_exit_set        tag=tag:exit-node via=false
+20:49:28  my_exit_rules_apply_preferred preferred=node updated=3
+```
+
+### Root cause
+
+`tag:exit-node` is a **class tag** — a role shared by every relay. Four
+independent copies of "strip `tag:` to get a hostname" disagreed about it:
+
+| place | result for `tag:exit-node` |
+|---|---|
+| `internal/acl/acl.go` | `"node"`, caller documented to treat it as a non-match ✔ |
+| `internal/feature/exit_rules/preferred_check.go` | `"node"`, **used as a hostname** ✘ |
+| `internal/db/exit_node_prefs.go` (`isExitNodeTagForm`) | accepted it as a per-node tag ✘ |
+| `internal/feature/admin/user_subnet.go:442` | had its own inline guard ✔ |
+
+The `aro` relay carried only `tag:exit-node` (no `tag:dev-infra-<host>`), so
+"★ Set preferred" posted that class tag; `TagToHostname` read it back as
+`node`; the mismatch banner then offered the B277.3 "Use preferred" button,
+which wrote the phantom into 21 + 3 rules. From then on nothing could work:
+`SyncAdvertisedRoutes` keyed on `exit_node_id="node"` (nobody advertised the
+prefixes), route approval targeted a node that does not exist, `prefix_owner`
+kept the real relay while the loop never visited it
+(`prefix-ownership: node drops 19 claimed prefix(es) owned by another relay`),
+and the per-CIDR ACL `via` pin resolved to no node.
+
+Two things kept the state stuck: the B229 reconciler derived a *preference*
+from the same class tag (`NormalizeExitNodeTag` accepted it), and
+`exit-node-monitor`'s per-tick auto-sync fed headscale's `Tags[0]` — the class
+tag — back into `node_owner_map`, so an operator-supplied per-node tag was
+reverted every five minutes and the B272 reconciler then reported "already in
+sync" (silence).
+
+**Correction to v1.5.45's write-up:** that entry attributed the same symptom to
+a headscale rename (`node` → `exit-node-vps`) plus a missing `device_rules`
+cascade. The live data shows no rename ever happened — `node` was manufactured
+by the sentinel. B231's cascade is still a real fix, but it was not this bug.
+
+### Fix
+
+One predicate decides the question and every consumer calls it —
+`internal/db/tag_kind.go`:
+
+* `IsClassTag` — `tag:exit-node`, `tag:public`, `tag:private`,
+  `tag:subnet-router` (case-insensitive) name roles, never one node;
+* `IsPerNodeTag` — `tag:dev-infra-<host>` / `tag:dev-<user>-<host>` / legacy
+  `tag:exit-<host>`;
+* `PickPerNodeTag` — the node's own tag out of headscale's array, or `""`.
+
+Applied at every layer:
+
+1. `db.NormalizeExitNodeTag` refuses a class tag (`ErrClassTagNotPerNode`,
+   naming the fix) and `isExitNodeTagForm` delegates to `IsPerNodeTag`.
+2. `exit_rules.TagToHostname` returns `""` for a class tag — the "any
+   exit-node" signal the callers already understand (no mismatch banner, no
+   bulk rewrite, route script falls back to the first healthy relay).
+3. `PlanDevicePrefChange` never *derives* a preference from a class tag and
+   emits a `clear` change for a stored one; `applyReconcilerChange` implements
+   it (dry-run + live, audited). The new `ClearClassTagPrefs` sweep in the same
+   tick covers user-level rows and devices with no rules.
+4. `SyncNodesFromHeadscale` keeps a non-empty row tag when headscale sends a
+   class tag (it may only *fill* an empty/untagged row) and
+   `SyncTagsFromHeadscale` does the same; every producer (monitor, `/nodes`,
+   `/my_nodes`, `/sync_nodes`, `/admin/devices`, first-run auto-sync,
+   node-ownership backfill) now uses `PickPerNodeTag` instead of `Tags[0]`.
+5. `PostMyExitRulesApplyPreferred` validates the target against the live exit
+   nodes before writing — the destructive 21-rule rewrite is now a flash
+   error.
+6. `SyncAdvertisedRoutes` also syncs the relays the assignment table names
+   (`OwnedPrefixesForRelay` / `relaysFromAssignment`), and the losers report
+   compares against the table instead of ignoring its `owners` argument.
+7. `/my/exit-rules` enriches `DeviceName` after pagination again (v1.5.43
+   dropped it, so rules grouped under a bare `"2"` instead of `workpc`).
+8. UI: `/my/exit-nodes` shows "no node tag" with the fix instead of a button
+   that stored the class tag; the synthesised `tag:exit-<host>` ghost tag is
+   gone from both the user page and the admin dropdown (there it is a disabled
+   option with a hint).
+
+### B279.1 — the remaining copies of "tag → hostname"
+
+B279 closed the bug but left the duplication that produced it. Four
+implementations derived a hostname from a tag: `db.isExitNodeTagForm`,
+`exit_rules.TagToHostname`, `acl.exitNodeTagToHostname`, and an inline
+`tagToHost` closure in `internal/feature/admin/system_tests.go` (the
+v1.3.18.1 hotfix) — plus a hand-written `!HasPrefix(tag, "tag:exit-node")`
+guard in `user_subnet.go`. The ACL copy was the "safe" one: it returned
+`node` for the sentinel and its *callers* were documented to treat that as
+a non-match. "Safe because the caller read a comment" is not a mechanism,
+and it is exactly the shape that broke in the copy without one.
+
+Now the class-tag knowledge exists once — `internal/db/tag_kind.go` owns
+`IsClassTag`, `IsPerNodeTag` and the new `IsExitNodeTagForm`:
+
+* `acl.exitNodeTagToHostname` guards on `db.IsClassTag` **before** its
+  bucket loop (so `tag:exit-node` yields `""` = "no via pin" instead of
+  `node`), and its `resolvePerCIDRVia` note was corrected;
+* `db.isExitNodeTagForm` is a one-line delegation;
+* the admin system-test page calls `exit_rules.TagToHostname` — its inline
+  switch is deleted;
+* `user_subnet.go` asks `db.IsClassTag` instead of re-writing the sentinel.
+
+New `internal/acl/acl_b279_1_test.go` pins the sentinel and carries an
+anti-drift guard (`db.IsClassTag(tag) == true` must imply
+`exitNodeTagToHostname(tag) == ""`). Two contracts were renegotiated:
+`check_b188_2.sh`'s sentinel row now expects `""`, and `check_b119.sh`
+contract H asserted the *string* `tag:dev-infra-` anywhere in
+`system_tests.go` — a comment satisfies that, so it now asserts the
+delegation plus the test that pins the infra-format stripping. 16 contracts
+in `scripts/check_b279_1_tag_to_hostname_one_copy.sh`.
+
+### B280 — a tag and a release are CI-gated
+
+The v1.5.41 → v1.5.45 cycle pushed tags after `git push --no-verify`. CI caught
+two real regressions in that window — v1.5.44 introduced an RU i18n parity
+break **and** a raw-`http.Error` leak — and both releases shipped them anyway,
+because the tag already existed and `release.yml` builds whatever the tag points
+at. Hooks are per-clone and `--no-verify` skips them, so the rule now exists
+server-side too.
+
+One implementation, `scripts/ci_gate.sh`, answers "is `ci.yml` green for this
+exact commit?":
+
+* exit `0` green, exit `1` not green (failed / cancelled / timed out / still
+  running / **no run at all** / not on the release branch), exit `2` cannot
+  verify — and `2` blocks as well, because an unverifiable commit is not a
+  tested one;
+* `--wait N` tolerates a run that is still in progress instead of failing on a
+  tag pushed seconds after a push;
+* it filters the runs by `head_sha`, so a later push to `main` can never vouch
+  for an earlier commit, and it refuses a commit that is not an ancestor of the
+  release branch (a tag on a side branch never went through that pipeline).
+
+Three consumers, so they cannot disagree:
+
+1. `.githooks/pre-tag` — the local half, now a thin caller (it used to carry its
+   own copy of the `gh run list` query);
+2. `release.yml` → new `preflight` job — `docker`, `binaries`, `sums` and
+   `release` all `needs: preflight`, so an untested tag publishes neither images
+   nor a GitHub Release and no `:latest`/`:vX.Y` tag moves;
+3. new `.github/workflows/tag-release.yml` — the sanctioned way to *create* the
+   tag: manual `workflow_dispatch`, gate first, annotated tag second, then it
+   dispatches `release.yml` at the tag. The dispatch is not decoration: a tag
+   pushed with the repository `GITHUB_TOKEN` does **not** fire `push` events, so
+   without it the sanctioned path would create a tag and no release (`release.yml`
+   therefore also accepts `workflow_dispatch`).
+
+Escape hatches are narrow and visible where they are taken: `SKIP_PRE_TAG_CHECK=1`
+for the local hook, the `SKYGATE_ALLOW_TAG_OFF_MAIN` repository variable for a
+genuine hotfix branch, `SKYGATE_PREFLIGHT_WAIT_SECONDS` (default 900) for the wait
+budget. There is deliberately **no** switch that skips the CI check itself, and a
+contract (`B280` A2) fails if a fourth copy of the CI-status query appears.
+Procedure: `docs/operations.md` §1.2; rule 14 in `AGENTS.md` §1.
+
+43 contracts in `scripts/check_b280_ci_gates_release.sh`, including a behavioural
+half that drives the gate against a stubbed `gh`: green → 0, failed → 1,
+cancelled (the `concurrency.cancel-in-progress` case) → 1, timed out → 1, still
+running with no wait budget → 1, one success + one failure → 1, no run → 1, API
+error → 2, no `gh` → 2, off-branch commit → 1, and `origin/main` not fetched → 2.
+
+### Verification
+
+`scripts/check_b279_class_tag_identity.sh` (registered as B279) +
+`internal/db/tag_kind_b279_test.go` (predicates, the SQL-level no-clobber
+guarantee against a real database, `ErrClassTagNotPerNode`) +
+`internal/feature/exit_rules/preferred_check_b279_test.go` (sentinel, the clear
+change, "never derive from a class tag", and that the two copies cannot drift).
+One pre-existing contract was **renegotiated**: `TestTagToHostname_StandardForms`
+pinned `"tag:public" → "public"`; a class tag now returns `""` (the test's
+comment records why). `scripts/check_b188.sh` contract J was renegotiated too —
+it asserted the literal `or .DevTag (printf "tag:exit-%s" …)` expression in all
+three templates, i.e. it pinned the ghost fallback itself; it now pins the
+intent (every template reads `DevTag`) plus a new `J2` that the synthesised
+fallback is gone from the user-facing exit-node row (27 contracts, 0 fail).
+
+### Live remediation for a host already in this state
+
+```sql
+UPDATE device_rules SET exit_node_id='exit-node-vps' WHERE exit_node_id='node';
+DELETE FROM prefix_owner WHERE exit_node_id='node';
+DELETE FROM user_exit_node_prefs   WHERE exit_node_tag LIKE 'tag:%exit-node';  -- or let B279 do it
+DELETE FROM device_exit_node_prefs WHERE exit_node_tag LIKE 'tag:%exit-node';
+```
+
+and fill `exit_servers.ssh_target` for the relay (an empty value falls back to
+`root@<tailscale-ip>`, which needs a tailscaled inside the skygate host).
+
+---
+
 ## v1.5.45 — B231 cascade: the hostname-rename migration now updates device_rules too (B-rename-rules)
 
 **Date:** 2026-09-22 · **Base:** `v1.5.44` → this tag · **Compatibility:** none.

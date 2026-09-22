@@ -1,4 +1,4 @@
-﻿{{define "body-user-exit_nodes"}}
+{{define "body-user-exit_nodes"}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-route"></i>{{t "exit_nodes.title"}}</h2>
@@ -66,9 +66,21 @@
                tag:exit-<host> form is not a real headscale
                tag, so the via=[...] grant it produced
                referenced a non-existent tag and headscale
-               silently no-op'd the packet-filter pin. */}}
-          {{$derivedTag := or .DevTag (printf "tag:exit-%s" (tolower .Hostname))}}
-          {{if eq $.PreferredExitNodeTag $derivedTag}}
+               silently no-op'd the packet-filter pin.
+
+               B279 (v1.5.46): a node whose only tag is the
+               CLASS tag tag:exit-node has no identity of its
+               own, so `.DevTag` is empty here (the handler
+               blanks it) and NoPerNodeTag is set. Storing the
+               class tag as the preference is what produced the
+               live phantom relay "node" — the row now explains
+               the fix instead of offering the trap. */}}
+          {{$derivedTag := .DevTag}}
+          {{if index $.NoPerNodeTag .Hostname}}
+            <span class="tag tag-warning" title="{{t "exit_nodes.no_per_node_tag_help"}}">
+              <i class="fa-solid fa-triangle-exclamation"></i> {{t "exit_nodes.no_per_node_tag"}}
+            </span>
+          {{else if eq $.PreferredExitNodeTag $derivedTag}}
             <span class="tag tag-success" title="{{t "exit_nodes.preferred_currently_help"}}">
               <i class="fa-solid fa-star"></i> {{t "exit_nodes.preferred_currently"}}
             </span>

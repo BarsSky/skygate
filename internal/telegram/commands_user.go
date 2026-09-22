@@ -204,11 +204,13 @@ func myNodesReply(env BotEnv) string {
 				if hn != "" {
 					hnMap[n.ID] = hn
 				}
-				// Use the first non-empty forcedTag as the live
-				// tag (headscale returns them as forcedTags; we
-				// treat the first match as authoritative).
-				if len(n.Tags) > 0 {
-					tagMap[n.ID] = n.Tags[0]
+				// B279 (v1.5.46): use the node's own tag, never
+				// Tags[0] — a CLASS tag there (tag:exit-node /
+				// tag:public / tag:private) would overwrite a real
+				// per-node tag in node_owner_map on every read of
+				// /my_nodes (the live `aro` revert).
+				if tag := db.PickPerNodeTag(n.Tags); tag != "" {
+					tagMap[n.ID] = tag
 				}
 			}
 			// 2026-07-15: hostname backfill.

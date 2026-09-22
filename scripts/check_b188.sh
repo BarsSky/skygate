@@ -172,12 +172,31 @@ check_ge "H-my-devices-publicnodes-DevTag" 1 "$H"
 I=$(count "$REPO/internal/feature/my/exit_nodes.go" 'exits\[i\].DevTag')
 check_ge "I-my-exit-nodes-populates-DevTag" 1 "$I"
 
-# J. All four exit-node templates now read .DevTag (or fall
-# back to the legacy form when DevTag is empty).
-J=$(grep -lE 'or \.DevTag' "$REPO/internal/handlers/templates/user/devices.html" \
-                        "$REPO/internal/handlers/templates/admin/devices.html" \
-                        "$REPO/internal/handlers/templates/user/exit_nodes.html" 2>/dev/null | wc -l)
+# J. All three exit-node templates now read .DevTag (the canonical
+# headscale tag from node_owner_map).
+#
+# B279 (v1.5.46) — CONTRACT RENEGOTIATED. The pre-B279 form asserted the
+# literal expression `or .DevTag (printf "tag:exit-%s" ...)` in all three
+# templates, i.e. it also pinned the GHOST FALLBACK: for a node with no
+# per-node tag the template synthesised `tag:exit-<host>`, which exists in
+# no policy's tagOwners — and for a node whose only tag is the class tag
+# `tag:exit-node` the whole chain produced the hostname "node" (the live
+# `aro` incident). Contracts K/L/M below still pin `.DevTag` in each
+# template; J now pins the intent (every template takes its tag from
+# `DevTag`) and adds J2, which pins that the synthesised fallback is gone
+# from the user-facing exit-node row (B279's own J2 contract guards it too).
+J=0
+for b188_tpl in user/devices.html admin/devices.html user/exit_nodes.html; do
+  if grep -q '\.DevTag' "$REPO/internal/handlers/templates/$b188_tpl" 2>/dev/null; then
+    J=$((J+1))
+  fi
+done
 check_eq "J-three-templates-read-DevTag" "3" "$J"
+if grep -q 'printf "tag:exit-%s"' "$REPO/internal/handlers/templates/user/exit_nodes.html" 2>/dev/null; then
+  check_eq "J2-exit-nodes-has-no-ghost-tag-fallback" "0" "1"
+else
+  check_eq "J2-exit-nodes-has-no-ghost-tag-fallback" "0" "0"
+fi
 
 # K. Template user/devices.html reads .DevTag (post-B188).
 # The old broken form was `printf "tag:exit-%s" .Hostname` —

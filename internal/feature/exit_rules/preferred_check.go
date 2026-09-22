@@ -137,16 +137,35 @@ func IsRuleApplicable(ruleExitNode, preferredHost string) bool {
 // TagToHostname strips the "tag:dev-infra-" / "tag:exit-" /
 // "tag:" prefix from a headscale tag and returns the bare hostname.
 //
-// 4 formats supported (must mirror the LOCAL `tagToHost`
-// closure in internal/feature/admin/system_tests.go that
-// was fixed in v1.3.18.1 for the post-B111 tag format):
+// Per-node formats supported:
 //
-//   "tag:dev-infra-emilia"    → "emilia"      (B111+ format)
-//   "tag:dev-infra-karolina"  → "karolina"    (B111+ format)
-//   "tag:exit-emilia"         → "emilia"      (legacy pre-B93 format)
-//   "tag:exit-karolina"       → "karolina"    (legacy pre-B93 format)
-//   "emilia"                  → "emilia"      (no-op for already-bare)
-//   "tag:public"              → "public"      (non-exit-node tag, defensive)
+//	"tag:dev-infra-emilia"    → "emilia"      (B111+ format)
+//	"tag:dev-infra-karolina"  → "karolina"    (B111+ format)
+//	"tag:exit-emilia"         → "emilia"      (legacy pre-B93 format)
+//	"emilia"                  → "emilia"      (no-op for already-bare)
+//
+// B279 (v1.5.46) — CLASS tags return "" (meaning "any exit-node"),
+// they do NOT name a node:
+//
+//	"tag:exit-node"           → ""   (was "node" — the phantom relay)
+//	"tag:public"              → ""
+//	"tag:private"             → ""
+//	"tag:subnet-router"       → ""
+//
+// The live `aro` incident: the only relay carried `tag:exit-node`, the
+// operator's preference stored exactly that, and this function stripped
+// "tag:exit-" off it and returned "node". The caller then wrote that
+// hostname into 23 device_rules rows and the UI offered a "Use
+// preferred" button that re-broke every rule it touched — while the
+// real relay was `exit-node-vps`. `internal/acl/acl.go` had known about
+// the hazard all along (`tag:exit-node` → "node", "caller treats as
+// non-match") and `internal/feature/admin/user_subnet.go:442` had its
+// own inline guard; this is the same knowledge, centralised in
+// db.IsClassTag so the copies cannot disagree again.
+//
+// The empty string is the "any exit-node" signal the callers already
+// understand: IsRuleApplicable(true), no mismatch banner, no bulk
+// rewrite, and the route script falls back to the first healthy relay.
 //
 // The DB stores tags as "tag:dev-infra-emilia" but
 // device_rules.exit_node_id stores bare hostnames ("emilia"),
@@ -161,6 +180,11 @@ func IsRuleApplicable(ruleExitNode, preferredHost string) bool {
 // This is the v1.3.19.1 follow-up.
 func TagToHostname(tag string) string {
 	t := strings.TrimSpace(tag)
+	// B279: a class tag is a role, not an identity. Deriving a
+	// hostname from it is the bug this guard exists for.
+	if db.IsClassTag(t) {
+		return ""
+	}
 	switch {
 	case strings.HasPrefix(t, "tag:dev-infra-"):
 		return strings.TrimPrefix(t, "tag:dev-infra-")

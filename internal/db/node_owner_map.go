@@ -658,6 +658,32 @@ func SyncTagsFromHeadscale(d *sql.DB, headscaleTagByNodeID map[string]string) (i
 			// state alone. See AnyTagStale for the reasoning.
 			continue
 		}
+		// B279 (v1.5.46): a CLASS tag is not this node's identity.
+		//
+		// This pull runs on every read of the bot's /nodes and
+		// /my_nodes, and it used to overwrite whatever the DB held
+		// with headscale's first tag. On a relay whose only tag is
+		// `tag:exit-node` that made every intended per-node tag
+		// impossible to keep: the operator's row was reverted within
+		// one tick, the B272 reconciler then saw "already in sync" and
+		// went silent, and the tag never reached headscale. A class
+		// tag may therefore only FILL an empty/untagged row — never
+		// replace a real per-node tag.
+		if IsClassTag(want) {
+			res, err := d.Exec(
+				`UPDATE node_owner_map
+				    SET tag = $1
+				  WHERE node_id = $2 AND (tag = '' OR tag = 'tag:untagged')`,
+				want, nodeID,
+			)
+			if err != nil {
+				return updated, err
+			}
+			if n, aerr := res.RowsAffected(); aerr == nil {
+				updated += int(n)
+			}
+			continue
+		}
 		res, err := d.Exec(
 			`UPDATE node_owner_map
 			    SET tag = $1
@@ -804,15 +830,45 @@ func SyncNodesFromHeadscale(d *sql.DB, nodes []SyncNodeInfo) (inserted, updated 
 		if host == "" {
 			host = n.ID
 		}
-		_, err := d.Exec(
-			`INSERT INTO node_owner_map
+		// B279 (v1.5.46): a CLASS tag never replaces a per-node tag.
+		//
+		// The monitor's per-tick auto-sync (the live `aro` reverter)
+		// builds its input from headscale and used to upsert
+		// `tag = excluded.tag` unconditionally, so a relay carrying
+		// only `tag:exit-node` had the operator's intended
+		// `tag:dev-infra-<host>` overwritten every five minutes —
+		// after which the B272 reconciler compared the row against
+		// headscale, saw the class tag it had just been given, and
+		// reported nothing. Two statements, one decision, made here:
+		// a per-node tag may overwrite anything; a class tag may only
+		// fill a row that has no tag yet. The hostname is healed in
+		// both paths.
+		upsertSQL := `INSERT INTO node_owner_map
 				(node_id, hostname, headscale_user_id, username, tag, tagged_by_user_id, tagged_at)
 			VALUES ($1, $2, $3, $4, $5, $6, strftime('%s','now'))
 			ON CONFLICT(node_id) DO UPDATE SET
 				tag = excluded.tag,
 				hostname = excluded.hostname,
 				tagged_at = strftime('%s','now')
-			WHERE node_owner_map.tag != excluded.tag`,
+			WHERE node_owner_map.tag != excluded.tag`
+		if IsClassTag(n.Tag) {
+			upsertSQL = `INSERT INTO node_owner_map
+				(node_id, hostname, headscale_user_id, username, tag, tagged_by_user_id, tagged_at)
+			VALUES ($1, $2, $3, $4, $5, $6, strftime('%s','now'))
+			ON CONFLICT(node_id) DO UPDATE SET
+				tag = CASE
+					WHEN node_owner_map.tag = '' OR node_owner_map.tag = 'tag:untagged'
+					THEN excluded.tag
+					ELSE node_owner_map.tag
+				END,
+				hostname = CASE
+					WHEN excluded.hostname != '' THEN excluded.hostname
+					ELSE node_owner_map.hostname
+				END,
+				tagged_at = strftime('%s','now')`
+		}
+		_, err := d.Exec(
+			upsertSQL,
 			n.ID, host, n.HSUserID, n.Username, n.Tag, n.TaggedBy,
 		)
 		if err != nil {

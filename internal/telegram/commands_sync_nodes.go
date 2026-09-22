@@ -41,13 +41,11 @@ func syncNodesReply(env BotEnv) string {
 	}
 	var syncInfos []db.SyncNodeInfo
 	for _, n := range nodes {
-		tag := ""
-		for _, t := range n.Tags {
-			if t != "" {
-				tag = t
-				break
-			}
-		}
+		// B279 (v1.5.46): the node's own tag, not the first tag in
+		// headscale's array — a class tag there must not become the
+		// row's tag (SyncNodesFromHeadscale also refuses to let a
+		// class tag overwrite a real one).
+		tag := db.PickPerNodeTag(n.Tags)
 		var hsUID int64
 		if n.UserID != "" {
 			if v, perr := strconv.ParseInt(n.UserID, 10, 64); perr == nil {

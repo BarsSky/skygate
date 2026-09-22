@@ -136,6 +136,31 @@ func OwnedPrefixes(node string, candidates []string, owners map[string]string) [
 	return out
 }
 
+// OwnedPrefixesForRelay returns every prefix the assignment table gives
+// to `node`, sorted. Unlike OwnedPrefixes it needs no candidate list:
+// the table IS the list.
+//
+// B279 (v1.5.46): the sync loop used to iterate only the relays named
+// by `device_rules.exit_node_id`, while the assignment table (B275) is
+// what decides who actually serves a prefix. When the table moved a
+// prefix to a relay that no rule names — which is exactly what it does
+// when the rule's relay is unhealthy, or after an operator pin — that
+// relay was never even visited, so nobody advertised the prefix. Live on
+// `aro`: `prefix-ownership(staggeredSync): node drops 19 claimed
+// prefix(es) owned by another relay`, with every row of `prefix_owner`
+// pointing at `exit-node-vps` and no rule naming it.
+func OwnedPrefixesForRelay(node string, owners map[string]string) []string {
+	out := make([]string, 0, len(owners))
+	for prefix, owner := range owners {
+		if prefix == "" || owner != node {
+			continue
+		}
+		out = append(out, prefix)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // CollapseDuplicateDerivedRules (B274) deletes rows that repeat the
 // same natural key — (user_id, device_id, exit_node_id, target_type,
 // target_value) — keeping one. The redundant rows are what the CDN

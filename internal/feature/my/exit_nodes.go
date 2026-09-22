@@ -56,8 +56,26 @@ func (s *Service) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 			enTagByHost[strings.ToLower(dn.Hostname)] = dn.Tag
 		}
 	}
+	// B279 (v1.5.46): a node whose only tag is a tailnet-wide CLASS tag
+	// (tag:exit-node / tag:public / ...) has no per-node identity, so it
+	// cannot be anybody's "preferred exit-node": the preference must
+	// name one node, and every value that is not a per-node tag is read
+	// back elsewhere as a hostname. The live `aro` case stored
+	// `tag:exit-node`, TagToHostname turned it into "node", and the
+	// "Use preferred" button wrote that phantom into 23 rules.
+	//
+	// The template used to fall back to a synthesised `tag:exit-<host>`
+	// (a tag that exists in no tagOwners); that fallback is gone too.
+	// Such rows now show the fix ("give the relay its own tag") instead
+	// of a button that cannot do the right thing.
+	noPerNodeTag := map[string]bool{}
 	for i := range exits {
-		exits[i].DevTag = enTagByHost[strings.ToLower(exits[i].Hostname)]
+		tag := enTagByHost[strings.ToLower(exits[i].Hostname)]
+		if tag == "" || db.IsClassTag(tag) {
+			noPerNodeTag[exits[i].Hostname] = true
+			tag = ""
+		}
+		exits[i].DevTag = tag
 	}
 	var prefTag string
 	var viaEnabled bool
@@ -65,10 +83,19 @@ func (s *Service) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 		prefTag = pref.ExitNodeTag
 		viaEnabled = pref.ViaEnabled
 	}
+	// B279: never echo a class tag as if it were a node. If the stored
+	// preference is one (pre-ClearClassTagPrefs data, or a row written
+	// before this deploy), show nothing rather than a value that names
+	// no node.
+	if db.IsClassTag(prefTag) {
+		prefTag = ""
+		viaEnabled = false
+	}
 	s.Backend.RenderWithLayout(w, r, "user/exit_nodes.html", c, map[string]any{
 		"ExitNodes":            exits,
 		"PreferredExitNodeTag": prefTag,
 		"ViaEnabled":           viaEnabled,
+		"NoPerNodeTag":         noPerNodeTag,
 		"FlashSuccess":         r.URL.Query().Get("ok"),
 		"FlashError":           r.URL.Query().Get("err"),
 	})

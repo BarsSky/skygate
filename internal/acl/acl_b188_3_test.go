@@ -96,7 +96,7 @@ func TestResolvePerCIDRVia(t *testing.T) {
 			viaByDevice: map[string]string{
 				"tag:dev-michail-basic": "tag:exit-node", // headscale catch-all sentinel
 			},
-			want: "", // exitNodeTagToHostname("tag:exit-node") = "node", not "emilia"
+			want: "", // B279.1: exitNodeTagToHostname("tag:exit-node") is "" now (class tag, no hostname)
 		},
 		{
 			name:       "match: legacy tag:exit-emilia pref (post-B188 migration rewrote to tag:dev-infra-emilia, but old data may still exist briefly)",

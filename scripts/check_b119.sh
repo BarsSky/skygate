@@ -195,17 +195,29 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# Contract H: source — system_tests.go has the v1.3.18.1 tagToHost
-# closure (defensive: even though it's a local copy, ensure the
-# fix is in place — this is the system test that surfaced the
-# v1.3.19.1 bug to the operator)
+# Contract H: source — system_tests.go DELEGATES to the shared
+# tag→hostname helper instead of carrying its own copy.
+#
+# B279.1 (v1.5.46) — CONTRACT RENEGOTIATED. The v1.3.18.1 fix was an inline
+# `tagToHost` closure in this file, and this contract asserted the string
+# `tag:dev-infra-` somewhere in it — a COMMENT satisfies that (after B279.1
+# one does), so the contract could report PASS while the behaviour it meant
+# to protect was gone. The behaviour is "the infra format is stripped to a
+# bare hostname", which now lives in exactly ONE place:
+# exit_rules.TagToHostname, pinned by TestTagToHostname_PostB111_DevInfraFormat.
+# H asserts the delegation; H2 asserts the pinning test still exists.
 # ------------------------------------------------------------------------------
 echo
-echo "=== H. source: system_tests.go has the v1.3.18.1 tagToHost fix ==="
-if grep -q 'tag:dev-infra-' "${SYSTEM_TESTS}"; then
-    ok "system_tests.go has tag:dev-infra-X case in tagToHost closure"
+echo "=== H. source: system_tests.go delegates tagToHost to the shared helper ==="
+if grep -q 'tagToHost := exit_rules.TagToHostname' "${SYSTEM_TESTS}"; then
+    ok "system_tests.go calls exit_rules.TagToHostname (one tag→host implementation)"
 else
-    bad "system_tests.go missing tag:dev-infra-X case — v1.3.18.1 fix regressed?"
+    bad "system_tests.go no longer delegates to exit_rules.TagToHostname — a local tag→host copy is back (that is how the class tag became the hostname node)"
+fi
+if grep -q 'func TestTagToHostname_PostB111_DevInfraFormat' internal/feature/exit_rules/preferred_check_test.go 2>/dev/null; then
+    ok "the infra-format stripping is pinned by TestTagToHostname_PostB111_DevInfraFormat"
+else
+    bad "TestTagToHostname_PostB111_DevInfraFormat is gone — the v1.3.18.1 behaviour is unpinned"
 fi
 
 echo

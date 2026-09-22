@@ -56,8 +56,14 @@ func nodesReply(env BotEnv) string {
 				if hn != "" {
 					hnMap[n.ID] = hn
 				}
-				if len(n.Tags) > 0 {
-					tagMap[n.ID] = n.Tags[0]
+				// B279 (v1.5.46): a CLASS tag is not this node's
+				// identity — taking Tags[0] let `tag:exit-node`
+				// overwrite a real per-node tag in node_owner_map
+				// (the live `aro` revert). PickPerNodeTag returns ""
+				// for a node with no per-node tag, and
+				// SyncTagsFromHeadscale then leaves the row alone.
+				if tag := db.PickPerNodeTag(n.Tags); tag != "" {
+					tagMap[n.ID] = tag
 				}
 			}
 			if db.AnyHostnameEmpty(owners) {

@@ -325,22 +325,16 @@ func (s *Service) PostAdminDevicesSyncFromHeadscale(w http.ResponseWriter, r *ht
 	}
 	var syncInfos []db.SyncNodeInfo
 	for _, n := range nodes {
-		tag := ""
-		for _, t := range n.Tags {
-			if t == headscale.TagPublicTag || t == headscale.TagPrivateTag {
-				continue
-			}
-			tag = t
-			break
-		}
-		if tag == "" {
-			for _, t := range n.Tags {
-				if t != "" {
-					tag = t
-					break
-				}
-			}
-		}
+		// B279 (v1.5.46): replaced the ad-hoc "skip tag:public /
+		// tag:private, else take the first tag" loop with the shared
+		// predicate. The old loop still accepted `tag:exit-node` (a
+		// CLASS tag, shared by every relay) and then fell back to the
+		// first tag of any kind, so this admin button could seed
+		// node_owner_map with a role instead of a node's identity.
+		// PickPerNodeTag returns "" when the node has no per-node tag,
+		// and SyncNodesFromHeadscale's class-tag branch then preserves
+		// whatever the row already holds.
+		tag := db.PickPerNodeTag(n.Tags)
 		var hsUID int64
 		if n.UserID != "" {
 			if v, perr := strconv.ParseInt(n.UserID, 10, 64); perr == nil {

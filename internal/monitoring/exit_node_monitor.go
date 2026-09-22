@@ -240,15 +240,22 @@ func (m *ExitNodeMonitor) tick(ctx context.Context) error {
 	if m.AutoSync {
 		infos := make([]db.SyncNodeInfo, 0, len(nodes))
 		for _, n := range nodes {
-			tag := ""
-			if len(n.Tags) > 0 {
-				tag = n.Tags[0]
-			}
+			// B279 (v1.5.46): never `n.Tags[0]`.
+			//
+			// This loop is the live `aro` reverter: a relay carrying
+			// only the class tag `tag:exit-node` handed that value to
+			// SyncNodesFromHeadscale on every tick, which overwrote the
+			// operator's per-node tag in node_owner_map — after which
+			// the B272 reconciler compared the row against headscale,
+			// found the class tag it had just been given, and reported
+			// nothing at all. PickPerNodeTag returns "" when the node
+			// has no per-node tag, which makes the sync leave the row
+			// alone (see SyncNodesFromHeadscale's class-tag branch).
 			hsUID, _ := strconv.ParseInt(n.UserID, 10, 64)
 			infos = append(infos, db.SyncNodeInfo{
 				ID:       n.ID,
 				Hostname: n.Hostname,
-				Tag:      tag,
+				Tag:      db.PickPerNodeTag(n.Tags),
 				Username: n.UserName,
 				HSUserID: hsUID,
 				TaggedBy: 0, // system sync (the admin /sync_nodes path also uses 0)

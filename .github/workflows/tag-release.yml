@@ -1,0 +1,158 @@
+name: tag-release
+
+# B280 (2026-09-22) — the sanctioned way to CREATE a release tag.
+#
+# WHY THIS EXISTS
+# ---------------
+# `git tag vX.Y.Z && git push origin vX.Y.Z` is one keystroke away from
+# releasing a commit CI never accepted. The local hooks (.githooks/pre-push,
+# .githooks/pre-tag) refuse it, but hooks are per-clone, `--no-verify` skips
+# them, and the v1.5.41 → v1.5.45 cycle proved that is enough to ship a red
+# commit (v1.5.44 carried an RU i18n parity break and a raw-http.Error leak).
+#
+# This workflow moves the tag creation to the server: the tag is created
+# ONLY after scripts/ci_gate.sh confirms that ci.yml is green for the exact
+# commit being tagged. Nothing else changed — the human still decides WHEN
+# (this is a manual workflow_dispatch, it never auto-tags a passing main),
+# and the tag it creates is an ordinary annotated tag.
+#
+# HOW TO USE
+#   Actions → tag-release → Run workflow → version: v1.5.46 (ref: main)
+# or
+#   gh workflow run tag-release.yml -f version=v1.5.46
+#
+# WHAT IT DOES NOT DO
+#   * it does not write release notes — the `## vX.Y.Z` section must already
+#     be in RELEASE-NOTES.md inside the tagged commit (release.yml extracts
+#     it; `docs/operations.md` §release is the checklist);
+#   * it does not go around the gate: the release workflow runs the SAME
+#     check again as its `preflight` job, so a tag created outside this
+#     workflow (or pushed with --no-verify) still cannot publish.
+#
+# GITHUB_TOKEN CAVEAT (why the last step exists)
+#   A tag pushed by a workflow using the repository GITHUB_TOKEN does NOT
+#   fire `push` events — "events triggered by the GITHUB_TOKEN will not
+#   create a new workflow run". Without the explicit dispatch below this
+#   workflow would create the tag and no release would ever build.
+#   `workflow_dispatch` is the documented exception, so release.yml accepts
+#   it (see its `on:` block) and we start it at the new tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version to tag, e.g. v1.5.46 (or v1.5.46-rc1)'
+        required: true
+        type: string
+      ref:
+        description: 'Commit or branch to tag (default: main)'
+        required: false
+        default: 'main'
+        type: string
+      wait_seconds:
+        description: 'How long to wait for a running ci.yml run (seconds)'
+        required: false
+        default: '900'
+        type: string
+
+concurrency:
+  # One tag attempt at a time; never cancel a half-finished one.
+  group: tag-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # create + push the tag
+  actions: write    # read ci.yml runs for the gate AND dispatch release.yml
+
+jobs:
+  tag:
+    name: create the tag (CI-gated)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Validate the version input
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          case "$VERSION" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::version must look like vX.Y.Z (got '$VERSION')"; exit 1 ;;
+          esac
+          # The release workflow's own trigger pattern is stricter; keep the
+          # two in sync so a tag we create always fires it.
+          if ! printf '%s' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::version '$VERSION' does not match release.yml's tag pattern v[0-9]+.[0-9]+.[0-9]+*"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_ENV"
+          echo "OK: $VERSION"
+
+      - name: Checkout the target ref (full history)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Refuse an existing tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if git rev-parse --verify --quiet "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::tag $VERSION already exists locally — delete it or pick another version"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "::error::tag $VERSION already exists on origin — releases are immutable; pick another version"
+            exit 1
+          fi
+          echo "OK: $VERSION is free"
+
+      - name: Fetch the release branch (ancestry check)
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+
+      - name: CI gate for the exact commit being tagged
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "tagging $VERSION at $sha (${{ inputs.ref }})"
+          bash scripts/ci_gate.sh \
+            --repo "$GITHUB_REPOSITORY" \
+            --sha "$sha" \
+            --workflow ci.yml \
+            --wait "${{ inputs.wait_seconds }}"
+
+      - name: Create and push the annotated tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "skygate $VERSION — CI-gated (scripts/ci_gate.sh)"
+          git push origin "refs/tags/$VERSION"
+          echo "pushed $(git rev-parse "$VERSION^{commit}") as $VERSION"
+
+      - name: Start the release workflow at the new tag
+        # Required: a tag pushed with the repository GITHUB_TOKEN does not
+        # fire release.yml's `push: tags` trigger (see the header).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml --ref "$VERSION"
+          echo "release workflow dispatched for $VERSION"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Tag created"
+            echo ""
+            echo "- version: \`$VERSION\`"
+            echo "- commit: \`$(git rev-parse HEAD)\`"
+            echo "- CI gate: green (scripts/ci_gate.sh)"
+            echo "- release workflow: dispatched at \`$VERSION\`"
+          } >> "$GITHUB_STEP_SUMMARY"

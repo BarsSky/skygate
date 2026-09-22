@@ -110,10 +110,18 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 	// Build the list of available exit-nodes. We use
 	// the headscale client's ListAllNodes and filter to
 	// nodes that carry tag:exit-node (the canonical
-	// exit-node signature). Each entry gets a derived
-	// tag:exit-<hostname> so the dropdown's <option>
-	// value is the headscale-friendly tag. The HS
-	// check is defensive — the test harness (and a
+	// exit-node signature).
+	//
+	// B279 (v1.5.46): the <option> value is the node's PER-NODE tag
+	// from node_owner_map — the only kind of value the preference may
+	// store. The old fallback `tag:exit-<hostname>` was a ghost (it
+	// exists in no policy's tagOwners) and, worse, a node whose only
+	// tag is the CLASS tag `tag:exit-node` resolved to values that the
+	// rest of the code read back as a hostname ("node"). Such a node is
+	// now listed but NOT selectable, with a hint naming the fix (give
+	// the relay its own tag; B272's reconciler applies it).
+	//
+	// The HS check is defensive — the test harness (and a
 	// possible single-tenant deploy without headscale)
 	// can render the page with an empty list.
 	if hs := s.HSGlobalFn(); hs != nil {
@@ -122,6 +130,10 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 			Hostname string
 			Tag      string
 			IP       string
+			// Disabled marks a node with no per-node tag: it can be
+			// an exit node, but it cannot be anybody's "preferred"
+			// exit-node until it has an identity tag.
+			Disabled bool
 		}
 		var exitOpts []exitNodeOpt
 		for _, n := range allNodes {
@@ -133,26 +145,21 @@ func (s *Service) renderUserSubnetPage(w http.ResponseWriter, r *http.Request, c
 				ip = n.IPAddresses[0]
 			}
 			// 2026-08-26: v1.5.2 (B188) — resolve the
-			// canonical headscale tag from node_owner_map
-			// instead of synthesising the legacy
-			// `tag:exit-<host>` form. The legacy form is
-			// not a real headscale tag (it's not in
-			// policy tagOwners), so the via=[...] grant
-			// would reference a non-existent tag. The
-			// fallback to the legacy form is kept so the
-			// page still renders for nodes that haven't
-			// been backfilled into node_owner_map yet
-			// (the migration runs at startup; until then
-			// the page is best-effort).
+			// canonical per-node headscale tag from
+			// node_owner_map.
+			//
+			// B279 (v1.5.46): Empty means "this node has no identity
+			// tag" (it is not in node_owner_map yet, or its tag is the
+			// class tag tag:exit-node). The option stays visible but
+			// disabled — storing a class tag here is what produced the
+			// live `aro` phantom relay, and the pre-B279 ghost fallback
+			// ("tag:exit-<host>") was not a real tag either.
 			canonicalTag, _ := db.NormalizeExitNodeTag(s.dbc(), n.Hostname)
-			tag := canonicalTag
-			if tag == "" {
-				tag = "tag:exit-" + n.Hostname
-			}
 			exitOpts = append(exitOpts, exitNodeOpt{
 				Hostname: n.Hostname,
-				Tag:      tag,
+				Tag:      canonicalTag,
 				IP:       ip,
+				Disabled: canonicalTag == "",
 			})
 		}
 		data["AvailableExitNodes"] = exitOpts
@@ -439,12 +446,28 @@ func (s *Service) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *htt
 	// POST (or a pre-B188 cached form) may still send
 	// the legacy `tag:exit-<host>` form. If so, extract
 	// the hostname and re-resolve via node_owner_map.
-	if strings.HasPrefix(tag, "tag:exit-") && !strings.HasPrefix(tag, "tag:exit-node") {
+	// B279.1 (v1.5.46): the class-tag exclusion comes from db.IsClassTag
+	// (it was an inline `!HasPrefix(tag, "tag:exit-node")` — a second copy
+	// of the sentinel knowledge, one character away from the phantom relay
+	// that broke the live `aro` host). The block below is now solely about
+	// the LEGACY per-node form "tag:exit-<host>": re-resolve it through
+	// node_owner_map to the canonical tag.
+	if strings.HasPrefix(tag, "tag:exit-") && !db.IsClassTag(tag) {
 		hostname := strings.TrimPrefix(tag, "tag:exit-")
 		canonicalTag, err := db.NormalizeExitNodeTag(s.dbc(), hostname)
 		if err == nil && canonicalTag != "" {
 			tag = canonicalTag
 		}
+	}
+	// B279 (v1.5.46): the admin path writes the pref DIRECTLY (it does not
+	// go through db.ResolveExitNodeTag), so a cached or hand-crafted form
+	// could still post the class tag and re-arm the phantom relay. Refuse
+	// it here, with the fix in the message.
+	if db.IsClassTag(tag) {
+		s.renderUserSubnetPage(w, r, c, id, map[string]any{
+			"FlashError": s.I18n.T(s.I18n.LangFromRequest(r), "user_subnet.preferred_exit_class_tag_refused"),
+		})
+		return
 	}
 	// 2026-07-25: v0.28.5 — strict pinning is opt-in.
 	// Default OFF for Android compatibility. Admin can

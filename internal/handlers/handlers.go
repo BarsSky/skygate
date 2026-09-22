@@ -232,6 +232,11 @@ type exitRulesRunner interface {
 	// ReconcileDeviceExitNodePrefs (returns a list of
 	// changes for the caller's log + alerter).
 	MigrateRenamedDevicePrefs(ctx context.Context, n exit_rules.ReconcilerNotifier) ([]exit_rules.RenameMigration, error)
+	// 2026-09-22: v1.5.46 (B279) — drops preferences that store a
+	// tailnet-wide CLASS tag (tag:exit-node / tag:public / ...). A
+	// class tag names a role, not a node, and the live `aro` host
+	// turned one into the phantom hostname "node" in 23 rules.
+	ClearClassTagPrefs(ctx context.Context) (int, error)
 }
 
 // SetAdminService wires the admin feature service into the
@@ -476,6 +481,19 @@ func (a *App) RunPreferredExitReconciler(ctx context.Context, notifier interface
 			log.Printf("preferred-reconciler: %s rename-migrate: %v", stage, migErr)
 		} else {
 			logMigrateSummary(stage+":rename", migChanges, live)
+		}
+		// Step 3 (B279, v1.5.46): drop preferences that store a
+		// tailnet-wide CLASS tag (tag:exit-node / tag:public / ...).
+		// Such a value names a role, not a node: every per-node
+		// derivation from it invents data — on the live `aro` host the
+		// class tag became the hostname "node", was written into 23
+		// rules and pinned in the ACL, while the only real relay was
+		// `exit-node-vps`. "Any exit-node" is expressed by having no
+		// preference at all.
+		if cleared, cErr := a.exitRulesSvc.ClearClassTagPrefs(ctx); cErr != nil {
+			log.Printf("preferred-reconciler: %s class-tag-prefs: %v", stage, cErr)
+		} else if cleared > 0 {
+			log.Printf("preferred-reconciler: %s class-tag-prefs: %d preference(s) %s", stage, cleared, map[bool]string{true: "removed", false: "would be removed (dry-run)"}[live])
 		}
 	}
 	runOnce("initial")

@@ -155,6 +155,20 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 			// node was just added). Skip silently.
 			return nil, false
 		}
+		// B279 (v1.5.46): never derive a preference FROM a class tag.
+		//
+		// On the live `aro` host the relay's only tag was
+		// `tag:exit-node`; that class value was resolved here and
+		// written as the device's preference, after which
+		// TagToHostname read it back as the hostname "node" and the
+		// "Use preferred" button rewrote 23 rules to a relay that
+		// does not exist. "Any exit-node" is expressed by having NO
+		// preference, not by storing a role. NormalizeExitNodeTag
+		// already refuses to return a class tag, so this is the
+		// belt-and-braces half of the same decision.
+		if db.IsClassTag(s.CanonicalTag) {
+			return nil, false
+		}
 		if s.DistinctExitNodes > 1 {
 			// Split rules. The operator needs to
 			// pick — log a skip change for
@@ -194,6 +208,24 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 	// skip so the operator can still see the catch-up case in
 	// logs, but no UPDATE is issued.
 	if s.CanonicalTag == "" {
+		// B279 (v1.5.46): if the row itself holds a CLASS tag, repair
+		// it — that value can never identify a node, and leaving it
+		// in place keeps the phantom-hostname bug armed: the UI shows
+		// a mismatch it cannot explain and offers a button that writes
+		// the phantom into every rule.
+		//
+		// This is the automatic half of the live `aro` repair (the
+		// operator's two prefs rows both held `tag:exit-node`).
+		if db.IsClassTag(s.ExistingPrefTag) {
+			return &ReconcilerChange{
+				Action:         "clear",
+				UserID:         s.UserID,
+				Username:       s.Username,
+				DeviceHostname: s.DeviceHostname,
+				OldTag:         s.ExistingPrefTag,
+				Reason:         "class-tag-pref-cleared",
+			}, true
+		}
 		// Hostname was deleted from node_owner_map
 		// (device unregistered). Don't clobber the
 		// existing pref.
@@ -545,6 +577,9 @@ func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChang
 		case "update":
 			log.Printf("preferred-reconciler: DRY-RUN would UPDATE %s/%s: %s → %s (%s)",
 				ch.Username, ch.DeviceHostname, ch.OldTag, ch.NewTag, ch.Reason)
+		case "clear":
+			log.Printf("preferred-reconciler: DRY-RUN would CLEAR %s/%s: drops the class-tag preference %s (%s)",
+				ch.Username, ch.DeviceHostname, ch.OldTag, ch.Reason)
 		}
 		return
 	}
@@ -586,6 +621,28 @@ func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChang
 		if shouldAlert(ch.DeviceHostname, reasonKey, time.Now()) {
 			n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B229)\nUPDATE hostname=%s user=%s\ntag: %s → %s\nreason: %s\nrollback via SQL: DELETE FROM device_exit_node_prefs WHERE user_id=%d AND device_hostname=%s",
 				ch.DeviceHostname, ch.Username, ch.OldTag, ch.NewTag, ch.Reason, ch.UserID, ch.DeviceHostname))
+		}
+	case "clear":
+		// B279 (v1.5.46): the stored preference is a CLASS tag
+		// ("tag:exit-node" / "tag:public" / ...), which names a role,
+		// not a node. Drop the row: "any exit-node" is the state you
+		// get by having no preference, and keeping the value armed the
+		// phantom-hostname bug (TagToHostname → "node").
+		if err := db.DeleteDeviceExitNodePref(s.dbc(), ch.UserID, ch.DeviceHostname); err != nil {
+			log.Printf("preferred-reconciler: CLEAR %s/%s (%s) FAILED: %v",
+				ch.Username, ch.DeviceHostname, ch.OldTag, err)
+			return
+		}
+		_ = db.AppendAuditLogWithTarget(s.dbc(), 0, "system",
+			"preferred_exit_reconciled",
+			fmt.Sprintf("CLEAR pref hostname=%s user=%s was=%s reason=%s",
+				ch.DeviceHostname, ch.Username, ch.OldTag, ch.Reason),
+			"headscale_node", ch.DeviceHostname)
+		log.Printf("preferred-reconciler: CLEAR %s/%s — dropped the class-tag preference %s (%s)",
+			ch.Username, ch.DeviceHostname, ch.OldTag, ch.Reason)
+		if shouldAlert(ch.DeviceHostname, "clear", time.Now()) {
+			n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B229)\nCLEAR hostname=%s user=%s\nremoved preference: %s\nreason: %s — a class tag names a role, not a node, and any hostname derived from it never matched a real relay. The device now uses any healthy exit-node (or set a per-node tag:dev-infra-<host> on the relay and pick it again).",
+				ch.DeviceHostname, ch.Username, ch.OldTag, ch.Reason))
 		}
 	}
 }

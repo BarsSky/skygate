@@ -1,41 +1,35 @@
 #!/usr/bin/env bash
-# .githooks/pre-tag — refuses to create a tag unless CI is green
-# for that exact commit.
+# .githooks/pre-tag — refuses to create a tag unless CI is green for that
+# exact commit.
 #
-# Why (2026-09-22): the user correctly pointed out that the
-# v1.5.41 → v1.5.45 release cycle bypassed the pre-push gate
-# multiple times via `git push --no-verify`. The gate exists
-# because CI catches real regressions (the v1.5.44 release
-# introduced an RU i18n parity break AND a raw-http.Error leak
-# — both caught by CI but masked by --no-verify). Tags carry
-# the same risk: once a tag is pushed, the release workflow
-# builds binaries from it. If the tag points at a commit where
-# CI was cancelled/failed/skipped, the release ships broken
-# binaries.
+# Why (2026-09-22): the v1.5.41 → v1.5.45 release cycle bypassed the
+# pre-push gate with `git push --no-verify`. CI caught two real regressions
+# in that window (v1.5.44 introduced an RU i18n parity break AND a
+# raw-http.Error leak) — but the tags already existed, so the release
+# workflow built and published binaries from a commit CI never accepted.
+#
+# B280 (v1.5.46): this hook is now a thin caller of scripts/ci_gate.sh, the
+# single implementation of "is CI green for this sha?". The same script runs
+# as the `preflight` job in .github/workflows/release.yml (server side) and
+# in .github/workflows/tag-release.yml (the sanctioned way to create a tag).
+# Three callers, one answer — a hook is per-clone and `--no-verify` skips
+# it, so the server-side half is what actually guarantees the rule.
 #
 # Behaviour:
-#   - Non-version tags (random branches, scratch tags): bypass.
-#     Only vX.Y.Z patterns trigger the gate.
-#   - Version tag + CI status != success: refuse. Exit 1 → git
-#     tag -a vX.Y.Z ... aborts. The operator sees the reason
-#     (CI conclusion / status) and either fixes the build or
-#     tags a known-good commit explicitly via SKIP_PRE_TAG_CHECK=1.
-#   - Version tag + CI status == success: proceed.
-#   - No CI run for the commit (skipped CI, --no-verify, etc.):
-#     refuse with reason "no CI run found".
+#   - Non-version tags (branches, scratch tags): bypass.
+#   - Version tag (vX.Y.Z / vX.Y.Z-rcN) + CI not green, still running, no run
+#     at all, or the commit is not on main: refuse (exit 1).
+#   - Same, but the check cannot be performed (no gh, not authenticated,
+#     API error): refuse (exit 2 from the gate → exit 1 here). An
+#     unverifiable commit is not a tested one.
+#   - Version tag + CI green on main: proceed.
 #
 # Escape hatch: SKIP_PRE_TAG_CHECK=1 git tag -a vX.Y.Z ...
-# (Use only when you know the commit is clean. The user noted
-# `--no-verify` was an anti-pattern; this escape hatch is the
-# same anti-pattern and should only be used in true emergencies
-# with explicit operator justification in the release notes.)
+# (Only in a true emergency, with the justification written into the release
+# notes. It bypasses THIS hook only — release.yml still refuses to publish.)
 #
 # Enable:
 #   git config core.hooksPath .githooks
-#
-# Cross-platform: pure bash + `gh` (already required for the
-# release workflow). Works on Windows Git Bash + WSL2 + Linux +
-# macOS.
 
 set -u
 
@@ -49,61 +43,43 @@ fi
 
 # Escape hatch.
 if [ "${SKIP_PRE_TAG_CHECK:-0}" = "1" ]; then
-    echo "pre-tag: SKIP_PRE_TAG_CHECK=1 — bypassing CI gate for $refname ($sha1)" >&2
-    echo "        (only use this with explicit operator justification in the release notes)" >&2
+    echo "pre-tag: SKIP_PRE_TAG_CHECK=1 — bypassing the CI gate for $refname ($sha1)" >&2
+    echo "        release.yml will STILL refuse to publish if CI is not green." >&2
     exit 0
 fi
 
-# Need the gh CLI for the CI status query. Bail out with a clear
-# error if it's missing.
-if ! command -v gh >/dev/null 2>&1; then
-    echo "pre-tag: refusing to tag $refname — 'gh' CLI not on PATH" >&2
-    echo "        (install gh and authenticate, or set SKIP_PRE_TAG_CHECK=1 if you know the commit is clean)" >&2
+# Find the shared gate. A missing script is a refusal, not a pass: the gate
+# is the contract (AGENTS.md §1.1), and silently tagging when it is absent
+# is exactly the failure this hook exists for.
+root="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+gate="$root/scripts/ci_gate.sh"
+if [ ! -f "$gate" ]; then
+    echo "pre-tag: refusing to tag $refname — $gate not found" >&2
+    echo "        (the CI gate is scripts/ci_gate.sh; without it 'CI is green' cannot be checked)" >&2
     exit 1
 fi
 
-# Find the GitHub repo (owner/name) for this commit. The local
-# .git/config has remote.origin.url but it's friendlier to use
-# `gh repo view` than to parse the URL ourselves.
-repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)
-if [ -z "$repo" ]; then
-    echo "pre-tag: refusing to tag $refname — couldn't determine GitHub repo (is 'gh auth status' OK?)" >&2
-    exit 1
+# Refresh origin/main so the ancestry check is not fooled by a stale
+# remote-tracking ref (tagging right after a push is the common case).
+git fetch --no-tags --quiet origin main:refs/remotes/origin/main 2>/dev/null || true
+
+set +e
+bash "$gate" --sha "$sha1" --branch main
+rc=$?
+set -e 2>/dev/null || true
+
+if [ "$rc" -eq 0 ]; then
+    exit 0
 fi
 
-# Query the CI workflow runs for this exact commit. The shape of
-# the gh output has changed across versions; we ask for both
-# status AND conclusion so we can tell apart "in progress" from
-# "completed but failed".
-runs_json=$(gh api "repos/$repo/commits/$sha1/check-runs" --jq '.check_runs[] | select(.name | test("go vet \\+ test"; "i")) | {status: .status, conclusion: .conclusion}' 2>/dev/null || true)
-
-# The above is too fragile — fall back to `gh run list` which is
-# the documented surface.
-runs=$(gh run list --workflow=ci.yml --commit "$sha1" --json status,conclusion,databaseId 2>/dev/null || echo "[]")
-
-# No CI run at all for this commit? That's the v1.5.41→v1.5.45
-# failure pattern (--no-verify bypassed everything). Refuse.
-if [ "$runs" = "[]" ] || [ -z "$runs" ]; then
-    echo "pre-tag: refusing to tag $refname — no CI run found for $sha1" >&2
-    echo "        (this is exactly the failure pattern that produced v1.5.44 / v1.5.45)" >&2
-    exit 1
+echo "" >&2
+if [ "$rc" -eq 2 ]; then
+    echo "        The CI status could not be verified, so the tag is refused." >&2
+    echo "        Fix the environment (gh installed + authenticated) and retry." >&2
+else
+    echo "        Fix the failing/absent CI runs for $sha1, or wait for a run" >&2
+    echo "        in progress to finish, then retry." >&2
 fi
-
-# Walk every CI run for this commit. ALL must be "completed +
-# success" — anything else is a release-blocker.
-failing=$(echo "$runs" | jq -r '.[] | select(.status != "completed" or .conclusion != "success") | "\(.databaseId): status=\(.status) conclusion=\(.conclusion)"')
-
-if [ -n "$failing" ]; then
-    echo "pre-tag: refusing to tag $refname — failing CI runs:" >&2
-    echo "$failing" | sed 's/^/    /' >&2
-    echo "" >&2
-    echo "        Fix the failing CI runs (or tag a known-good commit" >&2
-    echo "        explicitly with SKIP_PRE_TAG_CHECK=1 + a release-note" >&2
-    echo "        justification)." >&2
-    exit 1
-fi
-
-# All green.
-count=$(echo "$runs" | jq 'length')
-echo "pre-tag: OK — $count CI run(s) for $sha1 all green; tagging $refname" >&2
-exit 0
+echo "        Emergency bypass: SKIP_PRE_TAG_CHECK=1 git tag -a $refname ..." >&2
+echo "        (release.yml still refuses to publish an ungated tag.)" >&2
+exit 1

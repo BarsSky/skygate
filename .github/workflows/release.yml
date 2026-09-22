@@ -65,6 +65,13 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+*'   # v1.5.0, v1.5.0-rc.1, v1.5.0-alpha1, v1.5.2.1
+  # B280 (2026-09-22): tag-release.yml creates the tag and then starts
+  # this workflow explicitly. A tag pushed by another workflow with the
+  # repository GITHUB_TOKEN does NOT fire `push` events ("events triggered
+  # by the GITHUB_TOKEN will not create a new workflow run"), so without
+  # this trigger the sanctioned tag path would create a tag and no
+  # release. `workflow_dispatch` is the documented exception to that rule.
+  workflow_dispatch:
 
 # Cancel in-progress run when a new tag is pushed
 concurrency:
@@ -74,8 +81,64 @@ concurrency:
 permissions:
   contents: write   # for gh release create
   packages: write   # for ghcr.io push
+  actions: read     # B280: the preflight job reads the ci.yml runs for this sha
 
 jobs:
+  # ============================================================
+  # Job 0: CI gate (B280, 2026-09-22)
+  # ============================================================
+  # A tag is a promise that the commit was tested. This job is what makes
+  # the promise checkable on the server: `git push --no-verify` skips both
+  # local hooks (.githooks/pre-push and .githooks/pre-tag), so without this
+  # job a tag pointing at a commit CI never accepted would still push
+  # images to ghcr.io and publish a GitHub Release. That is not
+  # hypothetical: the v1.5.41 → v1.5.45 cycle shipped that way, and CI
+  # caught two real regressions in the window (an RU i18n parity break and
+  # a raw-http.Error leak in v1.5.44) that the releases shipped anyway.
+  #
+  # The decision lives in ONE script — scripts/ci_gate.sh — shared with
+  # .githooks/pre-tag and .github/workflows/tag-release.yml, so the three
+  # cannot disagree about what "green" means. Exit 1 (not green: failed /
+  # cancelled / timed out / still running / no run at all / not on main)
+  # and exit 2 (cannot verify: no gh, no token, API error) BOTH block:
+  # an unverifiable commit is not a tested one.
+  #
+  # Loopback: a CI run that is cancelled by `concurrency.cancel-in-progress`
+  # in ci.yml (a newer push to main) counts as "not green" for THIS commit,
+  # exactly like the local hook. Re-run it (gh run rerun <id>) or tag a
+  # commit whose run completed.
+  #
+  # Escape hatch: the repository variable SKYGATE_ALLOW_TAG_OFF_MAIN=1
+  # allows a commit that is not an ancestor of main (genuine hotfix).
+  # There is deliberately NO variable that skips the CI check itself.
+  preflight:
+    name: CI gate (refuse a red or untested commit)
+    runs-on: ubuntu-24.04
+    # Must exceed SKYGATE_PREFLIGHT_WAIT_SECONDS (default 900) + checkout.
+    timeout-minutes: 25
+    steps:
+      - name: Checkout (full history — the ancestry check needs it)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the release branch for the ancestry check
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+
+      - name: Gate on CI for this exact commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WAIT: ${{ vars.SKYGATE_PREFLIGHT_WAIT_SECONDS || '900' }}
+          ALLOW_OFF_MAIN: ${{ vars.SKYGATE_ALLOW_TAG_OFF_MAIN }}
+        run: |
+          set -euo pipefail
+          args=(--repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --workflow ci.yml --wait "$WAIT")
+          if [ "${ALLOW_OFF_MAIN:-}" = "1" ]; then
+            echo "::warning::SKYGATE_ALLOW_TAG_OFF_MAIN=1 — skipping the 'commit is an ancestor of main' check"
+            args+=(--allow-off-main)
+          fi
+          bash scripts/ci_gate.sh "${args[@]}"
+
   # ============================================================
   # Job 1: Docker image → ghcr.io/barssky/skygate
   # ============================================================
@@ -102,6 +165,7 @@ jobs:
   docker:
     name: docker image (linux/amd64 only)
     runs-on: ubuntu-24.04
+    needs: preflight   # B280: never build an image from an untested commit
     timeout-minutes: 25
     steps:
       - name: Checkout
@@ -239,6 +303,7 @@ jobs:
   binaries:
     name: go binary tarballs (linux/darwin/windows × amd64/arm64)
     runs-on: ubuntu-24.04
+    needs: preflight   # B280: never build release binaries from an untested commit
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -339,7 +404,7 @@ jobs:
   sums:
     name: SHA256SUMS
     runs-on: ubuntu-24.04
-    needs: binaries
+    needs: [preflight, binaries]
     timeout-minutes: 5
     steps:
       - name: Download all tarballs
@@ -375,7 +440,7 @@ jobs:
   release:
     name: github release
     runs-on: ubuntu-24.04
-    needs: [docker, sums]
+    needs: [preflight, docker, sums]
     timeout-minutes: 10
     steps:
       - name: Checkout (release notes + history for the fallback)

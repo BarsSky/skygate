@@ -842,14 +842,34 @@ func Backfill(
 	}
 }
 
-// firstTagOrFallback returns the node's first tag, or "tag:untagged"
-// if the node has no tags. Used to populate node_owner_map.tag for
-// rows that come from strategies that don't otherwise carry a tag
-// (specifically the temporal fallback in C, which fires for both
-// tagged and untagged nodes).
+// firstTagOrFallback returns the tag to record for a node in
+// node_owner_map: its own per-node tag when it has one, otherwise the
+// node's first tag (the pre-B279 behaviour), otherwise "tag:untagged".
+//
+// B279 (v1.5.46) — two things were wrong with the old "return
+// n.Tags[0]":
+//
+//  1. Array order decided the DB tag. `emilia` carries
+//     [tag:dev-infra-emilia, tag:exit-node, tag:private], so a reordered
+//     response recorded a CLASS tag as the node's identity. A per-node
+//     tag now wins regardless of position.
+//  2. Nothing distinguished a role from an identity here.
+//
+// The fallback deliberately still returns a class tag when that is ALL
+// the node has (a subnet router carrying just `tag:subnet-router` is a
+// meaningful record, and the existing B175 contract pins it). That is
+// safe because every consumer that derives a NODE from the row refuses
+// class tags on its own: db.NormalizeExitNodeTag returns
+// ErrClassTagNotPerNode, exit_rules.TagToHostname returns "", and
+// db.PickPerNodeTag never selects one.
 func firstTagOrFallback(n headscale.NodeView) string {
-	if len(n.Tags) > 0 {
-		return n.Tags[0]
+	if tag := dbpkg.PickPerNodeTag(n.Tags); tag != "" {
+		return tag
+	}
+	for _, t := range n.Tags {
+		if t != "" {
+			return t
+		}
 	}
 	return "tag:untagged"
 }

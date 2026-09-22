@@ -80,6 +80,24 @@ func (s *Service) getDeviceRules(userID int64) ([]db.DeviceRule, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.enrichDeviceNames(rr)
+	return rr, nil
+}
+
+// enrichDeviceNames fills DeviceName from headscale, matching on the
+// rule's Tailscale IP.
+//
+// B279 (v1.5.46): extracted from getDeviceRules because the v1.5.43
+// pagination path (/my/exit-rules → db.GetDeviceRulesForUserPaged)
+// never called it. DeviceName stayed empty for every row, so the
+// template's `deviceNames[r.DeviceID]` fell back to fmt.Sprint(deviceID)
+// and the page grouped 23 rules under a bare "2" instead of "workpc" —
+// the operator cannot tell which device a rule belongs to, and the
+// support conversation starts with the wrong question.
+func (s *Service) enrichDeviceNames(rr []db.DeviceRule) {
+	if len(rr) == 0 || s.HS == nil {
+		return
+	}
 	// Resolve device hostnames from headscale API — match by Tailscale IP.
 	if nodes, e := s.HS.ListAllNodes(); e == nil {
 		for i := range rr {
@@ -105,7 +123,6 @@ func (s *Service) getDeviceRules(userID int64) ([]db.DeviceRule, error) {
 			}
 		}
 	}
-	return rr, nil
 }
 
 // generateACL is a thin wrapper around the acl policy
