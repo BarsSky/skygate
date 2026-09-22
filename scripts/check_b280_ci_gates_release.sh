@@ -285,5 +285,32 @@ for f in "$GATE" "$TAGWF" scripts/check_b280_ci_gates_release.sh; do
   fi
 done
 
+# --- I: the workflow's own plumbing actually agrees with itself --------------
+# B281 (2026-09-22): the sanitised tag path was never exercised until v1.5.46,
+# and the FIRST live run died in step 2:
+#   /home/runner/work/_temp/….sh: line 2: VERSION: unbound variable
+# because step 1 exported `version=…` (lower case) into $GITHUB_ENV while every
+# later step reads `$VERSION`/`${{ inputs.version }}`. A grep sees that mismatch
+# even though the workflow as a whole is syntactically valid, so it is pinned
+# here: the exported name must be upper case and must match the readers.
+if grep -qE '^[[:space:]]*echo "VERSION=\$VERSION" >> "\$GITHUB_ENV"' "$TAGWF"; then
+  ok "I1: tag-release.yml exports VERSION (upper case) into \$GITHUB_ENV"
+else
+  bad "I1: tag-release.yml does not export VERSION into \$GITHUB_ENV — later steps read an unset variable and the sanctioned tag path dies"
+fi
+if grep -qE '^[[:space:]]*echo "version=' "$TAGWF"; then
+  bad "I2: tag-release.yml exports the lower-case 'version=' — every later step reads \$VERSION and fails with 'unbound variable'"
+else
+  ok "I2: no lower-case version= export"
+fi
+# Every step after the validation one must read $VERSION (env or GitHub env),
+# i.e. the variable the first step exports.
+I_READERS=$(grep -c '\$VERSION' "$TAGWF" || true)
+if [ "${I_READERS:-0}" -ge 8 ]; then
+  ok "I3: the later steps read \$VERSION ($I_READERS references)"
+else
+  bad "I3: only $I_READERS references to \$VERSION — the steps and the export have drifted apart"
+fi
+
 printf '\n\033[1mB280 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1

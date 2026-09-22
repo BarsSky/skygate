@@ -85,7 +85,14 @@ jobs:
             echo "::error::version '$VERSION' does not match release.yml's tag pattern v[0-9]+.[0-9]+.[0-9]+*"
             exit 1
           fi
-          echo "version=$VERSION" >> "$GITHUB_ENV"
+          # B281 (2026-09-22): the name MUST be uppercase. Every later step reads
+          # `$VERSION`; writing `version=…` here (the pre-fix spelling) exported a
+          # lower-case variable, so the second step died with
+          #   line 2: VERSION: unbound variable
+          # and the sanctioned release path could never create a tag. Found on the
+          # first live run of this workflow (v1.5.46); a static grep over the file
+          # cannot see the mismatch between `$GITHUB_ENV` and the readers.
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "OK: $VERSION"
 
       - name: Checkout the target ref (full history)
