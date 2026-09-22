@@ -104,13 +104,15 @@ fi
 # scripts/check_apply_acl_drifted_and_rename.sh contract A1, which pins the new
 # shape. The property THIS contract protects is unchanged and is what the
 # message says: ONE trigger-agnostic drift check, reused by the ownership flip,
-# the rule churn and the pre-existing-mismatch path. Asserting the old return
-# type made the check report a regression for a deliberate refactor (it has
-# been FAILing on main since v1.5.42 while the behaviour was intact).
-if grep -qE 'func \(s \*Service\) applyACLIfDrifted\(actor, detail string\) (bool|acl\.ApplyResult)' "$SYNC"; then
-  ok "A8: one trigger-agnostic drift check (ownership flip, rule churn, pre-existing mismatch)"
+# the rule churn and the pre-existing-mismatch path. The old grep pinned a
+# return type that no longer exists, so it reported a regression for a
+# deliberate refactor (FAIL on main since v1.5.42 while the behaviour was
+# intact). Note the assertion is the CURRENT signature, not an alternation
+# (`bool|acl.ApplyResult`) — a contract that accepts both cannot fail.
+if grep -q 'func (s \*Service) applyACLIfDrifted(actor, detail string) acl.ApplyResult' "$SYNC"; then
+  ok "A8: one trigger-agnostic drift check returning acl.ApplyResult (ownership flip, rule churn, pre-existing mismatch)"
 else
-  bad "A8: the drift logic is duplicated per trigger"
+  bad "A8: the drift logic is duplicated per trigger, or the drift check no longer reports what it did (want acl.ApplyResult)"
 fi
 if grep -q 'acl.ApplyGeneratedPolicy(s.dbc(), s.HS, gen, actor, detail, nil)' "$SYNC"; then
   ok "A9: the automatic apply goes through the shared pipeline tail (snapshot + mark + audit)"

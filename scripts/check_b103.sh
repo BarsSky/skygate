@@ -132,7 +132,7 @@ fi
 # 12. Build check (the new code compiles cleanly)
 GO_BIN="${GO_BIN:-$(command -v go 2>/dev/null || true)}"
 if [[ -z "${GO_BIN}" ]] ; then
-  for try in '/c/Program Files/Go/bin/go' '/c/Go/bin/go' '/usr/local/go/bin/go' ; do
+  for try in "$(command -v go 2>/dev/null)" '/c/Program Files/Go/bin/go' '/c/Go/bin/go' '/usr/local/go/bin/go' ; do
     [[ -x "${try}" ]] && GO_BIN="${try}" && break
   done
 fi

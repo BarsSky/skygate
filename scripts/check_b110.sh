@@ -40,7 +40,7 @@ find_go() {
     return 0
   fi
   # Try WSL-style paths first (most common on this machine).
-  for cand in \
+  for cand in "$(command -v go 2>/dev/null)" \
     "/mnt/c/Program Files/Go/bin/go.exe" \
     "/mnt/c/Program Files (x86)/Go/bin/go.exe" \
     "/mnt/c/ProgramFiles/Go/bin/go.exe" \
@@ -51,7 +51,7 @@ find_go() {
     fi
   done
   # Git-Bash-style paths as fallback.
-  for cand in \
+  for cand in "$(command -v go 2>/dev/null)" \
     "/c/Program Files/Go/bin/go.exe" \
     "/c/Program Files (x86)/Go/bin/go.exe" \
     "/c/ProgramFiles/Go/bin/go.exe" \
@@ -62,7 +62,7 @@ find_go() {
     fi
   done
   # Linux-native paths (for VM / CI).
-  for cand in \
+  for cand in "$(command -v go 2>/dev/null)" \
     "/usr/local/go/bin/go" \
     "/opt/go/bin/go" \
     "/root/go/bin/go" \

@@ -81,6 +81,23 @@ B-block, not a quick edit.
 
 ### 1.2 Cutting a release
 
+**B281 (v1.5.46): "green" now means 0 FAIL.** The gate is only as good as the
+status it reads, and that status used to be empty of information: the
+`verify-pre` job ran the *whole* catalog — which is deliberately fail-tolerant
+(it always exits 0; see §1.3) — and never inspected its output, so a SUCCESS job
+could contain a dozen FAIL rows. It also had no per-check budget, which is why
+it came back as `cancelled` on every push (it exceeded its own
+`timeout-minutes`, and the log just stopped mid-catalog). Now each check runs
+under `timeout "${SKYGATE_CHECK_TIMEOUT:-900}"` (a blown budget is a **named**
+`TIMEOUT` row), the job budget is 60 minutes, and the run step fails the job on
+any `FAIL`/`TIMEOUT` row in the ANSI-stripped log. So:
+
+* a green `verify-pre` means the catalog really reported `0 FAIL`;
+* if `verify-pre` is red, read the FAIL rows in the log — they name the check,
+  and a standalone `bash scripts/check_bNNN*.sh` reproduces it;
+* the `test` job and the catalog can now disagree only about real code, not about
+  which `go` binary either of them found.
+
 **B280 (v1.5.46): a tag and a release are CI-gated.** `scripts/ci_gate.sh` is the
 single implementation of "is `ci.yml` green for this exact commit?" (exit `0`
 green / `1` not green / `2` cannot verify; `--wait` for a run in progress). It is

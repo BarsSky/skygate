@@ -245,7 +245,7 @@ fi
 # from any shell the operator uses.
 GO_BIN="${GO_BIN:-$(command -v go 2>/dev/null || true)}"
 if [[ -z "${GO_BIN}" ]] ; then
-  for try in '/c/Program Files/Go/bin/go' '/c/Go/bin/go' '/usr/local/go/bin/go' '/c/Users/knaga/go/bin/go' ; do
+  for try in "$(command -v go 2>/dev/null)" '/c/Program Files/Go/bin/go' '/c/Go/bin/go' '/usr/local/go/bin/go' '/c/Users/knaga/go/bin/go' ; do
     if [[ -x "${try}" ]] ; then GO_BIN="${try}"; break; fi
   done
 fi

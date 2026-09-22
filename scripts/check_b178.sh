@@ -186,15 +186,23 @@ fi
 #    VM (linux, /usr/local/go/bin/go) and the dev workstation
 #    (Windows under Git Bash, /c/Program Files/Go/bin/go or
 #    /c/Users/<user>/go/bin/go).
+#    B281 (2026-09-22): `command -v go` MUST come first. On the CI runner
+#    /usr/local/go/bin/go is the image's Go 1.24.13 while GOTOOLCHAIN=local and
+#    go.mod requires >= 1.25 — probing the hardcoded path first made this
+#    contract fail with a toolchain error that says nothing about the code.
 GO_BIN=""
-for cand in /usr/local/go/bin/go /usr/bin/go /opt/go/bin/go "$(command -v go 2>/dev/null)"; do
-  if [ -x "$cand" ]; then
+for cand in "$(command -v go 2>/dev/null)" /usr/local/go/bin/go /usr/bin/go /opt/go/bin/go; do
+  if [ -n "$cand" ] && [ -x "$cand" ]; then
     GO_BIN="$cand"
     break
   fi
 done
 if [ -n "$GO_BIN" ]; then
-  if (cd "$REPO" && "$GO_BIN" test -count=1 ./internal/feature/exit_rules/... 2>&1) | grep -q '^ok\s'; then
+  # B281: capture the output BEFORE matching (AGENTS.md trap #9) — `go test | grep -q`
+  # lets grep close the pipe at the first match, go test dies with SIGPIPE and
+  # `pipefail` turns a green run into a rotating, unexplainable FAIL.
+  B178_TEST_OUT=$(cd "$REPO" && "$GO_BIN" test -count=1 ./internal/feature/exit_rules/... 2>&1)
+  if grep -q '^ok' <<< "$B178_TEST_OUT"; then
     check_eq "N" "ok" "ok"
   else
     check_eq "N" "ok" "FAIL"

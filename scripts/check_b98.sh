@@ -29,7 +29,7 @@ find_go() {
     command -v go
     return 0
   fi
-  for cand in \
+  for cand in "$(command -v go 2>/dev/null)" \
     "/mnt/c/Program Files/Go/bin/go.exe" \
     "/mnt/c/Program Files (x86)/Go/bin/go.exe" \
     "/mnt/c/ProgramFiles/Go/bin/go.exe" \

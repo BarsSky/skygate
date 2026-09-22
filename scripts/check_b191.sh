@@ -133,8 +133,14 @@ HS_VERSION_OUT=$(hs version 2>&1)
 if echo "$HS_VERSION_OUT" | head -1 | grep -qE "headscale v"; then
   ok "headscale CLI: $(echo "$HS_VERSION_OUT" | head -1)"
 else
-  bad "headscale CLI not reachable: $(echo "$HS_VERSION_OUT" | head -3)"
-  exit 1
+  # B281 (2026-09-22): an ABSENT live dependency is a SKIP, not a FAIL
+  # (AGENTS.md §1.1). On a CI runner there is no headscale container at all, so
+  # this reported `FAIL headscale CLI not reachable: No such container:
+  # headscale` — a red row that says nothing about the code under test.
+  # Print SKIP *only*: a `FAIL` line here (even one that exits 0) reads as a
+  # regression in a standalone run, and the CI 0-FAIL enforcement greps for it.
+  echo "  SKIP  live check: needs a reachable headscale CLI (run it on a host with the stack up): $(echo "$HS_VERSION_OUT" | head -3)"
+  exit 0
 fi
 
 # --- B. create preauth key for user 'infra' ---
@@ -206,8 +212,9 @@ TS_VERSION=$(ts version 2>&1 | head -1)
 if [[ -n "$TS_VERSION" ]] && [[ "$TS_VERSION" == *"tailscale"* ]] || [[ "$TS_VERSION" == *"1."* ]]; then
   ok "tailscale CLI present: $TS_VERSION"
 else
-  bad "tailscale CLI not reachable: $TS_VERSION"
-  exit 1
+  # B281: absent live dependency -> SKIP (AGENTS.md §1.1), same as contract A.
+  echo "  SKIP  live check: needs a reachable tailscale CLI on this host: $TS_VERSION"
+  exit 0
 fi
 
 # --- D. login-server reachable from test client (BEFORE login) ---
@@ -220,8 +227,10 @@ HTTP_CODE=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$LOGIN_SERVER/key" 2>&
 if [ "$HTTP_CODE" != "000" ] && [ -n "$HTTP_CODE" ]; then
   ok "$LOGIN_SERVER/key: HTTP $HTTP_CODE (network reachable)"
 else
-  bad "$LOGIN_SERVER not reachable (HTTP $HTTP_CODE)"
-  exit 1
+  # B281: the login server is live infrastructure; unreachable = SKIP
+  # (AGENTS.md §1.1), not a code failure.
+  echo "  SKIP  live check: $LOGIN_SERVER/key is not reachable from this network (HTTP $HTTP_CODE)"
+  exit 0
 fi
 
 # --- E. register test device ---

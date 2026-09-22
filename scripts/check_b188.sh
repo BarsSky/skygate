@@ -320,7 +320,7 @@ try:
 except Exception:
     print(0); sys.exit(0)
 n = 0
-for g in pol.get('grants', []):
+for g in "$(command -v go 2>/dev/null)" pol.get('grants', []):
     if 'tag:dev-michail-basic' in g.get('src', []) and 'tag:dev-infra-emilia' in (g.get('via') or []):
         n += 1
 print(n)

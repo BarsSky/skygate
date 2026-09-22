@@ -156,23 +156,42 @@ fi
 # --- E: no producer uses headscale's Tags[0] --------------------------------
 # The live reverter: the monitor fed Tags[0] (the class tag) back into
 # node_owner_map on every tick. PickPerNodeTag is the replacement.
-# Comment lines are excluded (the fix documents what it replaced), and the
-# producer is captured before matching — `awk | grep -q` under `pipefail`
-# fails spuriously when grep -q exits at the first match (AGENTS trap #9).
+#
+# This pair is deliberately TWO contracts, because each alone is passable on a
+# technicality: E1 alone would pass if a producer simply stopped reading tags
+# (behaviour lost), and a count-based E2 alone would pass if five files called
+# the helper while a sixth kept the old code. So E1 scans CODE lines only
+# (comment-first lines are skipped — the fix documents what it replaced — while
+# a trailing `// n.Tags[0]` on a live line is still caught, and tag_kind.go is
+# NOT excluded: it uses HasPrefix, not Tags[0], so it must survive the same
+# scan), and E2 names every producer file individually instead of counting.
 STRAY=$(grep -rn 'Tags\[0\]' --include='*.go' internal cmd 2>/dev/null \
-  | grep -v '_test.go' | grep -v 'tag_kind.go' | grep -vE ':[0-9]+:[[:space:]]*//' | wc -l | tr -d '[:space:]')
+  | grep -v '_test.go' | grep -vE ':[0-9]+:[[:space:]]*//' | wc -l | tr -d '[:space:]')
 if [ "${STRAY:-1}" = "0" ]; then
   ok "E1: no production code takes headscale's Tags[0] (order decided the DB tag before B279)"
 else
   bad "E1: $STRAY production site(s) still take Tags[0]:"
   grep -rn 'Tags\[0\]' --include='*.go' internal cmd 2>/dev/null \
-    | grep -v '_test.go' | grep -v 'tag_kind.go' | grep -vE ':[0-9]+:[[:space:]]*//' | sed 's/^/       /' >&2
+    | grep -v '_test.go' | grep -vE ':[0-9]+:[[:space:]]*//' | sed 's/^/       /' >&2
 fi
-PICKERS=$(grep -rl 'PickPerNodeTag' --include='*.go' internal cmd 2>/dev/null | grep -v '_test.go' | wc -l | tr -d '[:space:]')
-if [ "${PICKERS:-0}" -ge 5 ]; then
-  ok "E2: PickPerNodeTag is used by $PICKERS production file(s) (monitor, telegram, admin, first-run sync, nodeownership)"
-else
-  bad "E2: PickPerNodeTag is used by only ${PICKERS:-0} production file(s), want >= 5"
+PICKERS_OK=0
+for picker in \
+  internal/monitoring/exit_node_monitor.go \
+  internal/telegram/commands_phase2.go \
+  internal/telegram/commands_user.go \
+  internal/telegram/commands_sync_nodes.go \
+  internal/feature/admin/devices.go \
+  internal/nodeownership/nodeownership.go \
+  cmd/skygate/main.go
+do
+  if grep -q 'PickPerNodeTag' "$picker" 2>/dev/null; then
+    PICKERS_OK=$((PICKERS_OK+1))
+  else
+    bad "E2: $picker no longer uses PickPerNodeTag — it can feed headscale's first tag back into the DB (the live aro revert)"
+  fi
+done
+if [ "$PICKERS_OK" -eq 7 ]; then
+  ok "E2: all 7 tag producers take the node's own tag via PickPerNodeTag"
 fi
 
 # --- F: the headscale→DB syncs cannot clobber a real tag --------------------

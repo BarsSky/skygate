@@ -137,7 +137,7 @@ fi
 # K. Build + vet pass.
 GO_BIN="${GO:-$(command -v go 2>/dev/null || true)}"
 if [ -z "$GO_BIN" ]; then
-  for cand in /c/Program\ Files/Go/bin/go.exe "/c/Program Files/Go/bin/go.exe" /usr/local/go/bin/go /c/Users/*/go/bin/go "$HOME/go/bin/go"; do
+  for cand in "$(command -v go 2>/dev/null)" /c/Program\ Files/Go/bin/go.exe "/c/Program Files/Go/bin/go.exe" /usr/local/go/bin/go /c/Users/*/go/bin/go "$HOME/go/bin/go"; do
     if [ -x "$cand" ]; then GO_BIN="$cand"; break; fi
   done
 fi

@@ -89,11 +89,20 @@ if ! sudo docker info >/dev/null 2>&1; then
 fi
 
 # ── container reachable ──
+# B281 (2026-09-22): the docker daemon can be reachable while the skygate
+# container is not running (a CI runner with no stack, or a stopped service).
+# That is an ABSENT live dependency → SKIP, never FAIL (AGENTS.md §1.1); the
+# old form reported `FAIL skygate-skygate-1 container not running` on every CI
+# run, which is a red row that says nothing about the code.
 if ! sudo docker inspect "$CONTAINER" >/dev/null 2>&1; then
-    bad "$CONTAINER container not running"
+    echo "  SKIP  $CONTAINER container not running (live check — run it on the skygate host)"
+    exit 0
 fi
 state=$(sudo docker inspect "$CONTAINER" --format '{{.State.Status}}')
-[ "$state" = "running" ] || bad "$CONTAINER state=$state"
+if [ "$state" != "running" ]; then
+    echo "  SKIP  $CONTAINER state=$state (live check — run it on the skygate host)"
+    exit 0
+fi
 
 # ── detect backend ──
 LIVE_DB=$(sudo docker exec "$CONTAINER" sh -c 'env | grep "^SKYGATE_DB=" | head -1 | cut -d= -f2-')

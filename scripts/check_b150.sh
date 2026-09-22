@@ -41,7 +41,7 @@ cd "$REPO_ROOT"
 # not be on the bash PATH inherited from PowerShell. Add
 # common locations.
 if ! command -v go >/dev/null 2>&1; then
-    for cand in \
+    for cand in "$(command -v go 2>/dev/null)" \
         "/c/Program Files/Go/bin/go.exe" \
         "/c/Program Files (x86)/Go/bin/go.exe" \
         "/c/Go/bin/go.exe" \

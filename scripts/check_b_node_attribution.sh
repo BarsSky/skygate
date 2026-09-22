@@ -60,7 +60,13 @@ bad() { echo "  FAIL  $*"; }
 warn(){ echo "  WARN  $*"; }
 
 for c in "$HEADSCALE_CONTAINER" "$PG_CONTAINER"; do
-    sudo docker inspect "$c" >/dev/null 2>&1 || { bad "$c container not running"; exit 1; }
+    # B281 (2026-09-22): absent live dependency = SKIP, never FAIL
+    # (AGENTS.md §1.1) — on CI there is no headscale container, and the old
+    # `bad ...; exit 1` produced a red row that described the runner, not the code.
+    sudo docker inspect "$c" >/dev/null 2>&1 || {
+        echo "  SKIP  $c container not running (live check — run it on the skygate host)"
+        exit 0
+    }
 done
 
 # ── fetch live headscale state ──

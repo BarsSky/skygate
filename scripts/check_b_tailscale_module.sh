@@ -69,7 +69,7 @@ GO_BIN=""
 if command -v go >/dev/null 2>&1; then
     GO_BIN="$(command -v go)"
 else
-    for cand in \
+    for cand in "$(command -v go 2>/dev/null)" \
         "/mnt/c/Program Files/Go/bin/go.exe" \
         "/c/Program Files/Go/bin/go.exe" \
         "/usr/local/go/bin/go" \

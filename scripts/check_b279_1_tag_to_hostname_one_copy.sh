@@ -138,7 +138,7 @@ ALLOWED='internal/db/tag_kind.go internal/feature/exit_rules/preferred_check.go 
 # contract that a comment can satisfy is not a contract (B279.1 renegotiated
 # check_b119.sh contract H for exactly that reason).
 STRAY=""
-for f in $(grep -rl 'TrimPrefix([a-zA-Z_]*, "tag:' --include='*.go' internal cmd 2>/dev/null); do
+for f in "$(command -v go 2>/dev/null)" $(grep -rl 'TrimPrefix([a-zA-Z_]*, "tag:' --include='*.go' internal cmd 2>/dev/null); do
   case "$f" in
     *_test.go) continue ;;
   esac
@@ -152,6 +152,20 @@ if [ -z "$STRAY" ]; then
 else
   bad "E1: new tag→hostname copy/copies:$STRAY"
 fi
+# An allow-list is only as good as its entries: every allowed derivation file
+# must CONSULT the shared predicate. Without this, "add your file to ALLOWED"
+# would be the bypass, and the copy that broke the live host was exactly such a
+# file. internal/db/tag_kind.go is exempt because it IS the predicate.
+for allowed in $ALLOWED; do
+  case "$allowed" in
+    internal/db/tag_kind.go) continue ;;
+  esac
+  if grep -q 'IsClassTag' "$allowed" 2>/dev/null; then
+    ok "E1b: $allowed consults db.IsClassTag"
+  else
+    bad "E1b: $allowed derives a hostname from a tag WITHOUT checking db.IsClassTag"
+  fi
+done
 for forbidden in internal/feature/admin/system_tests.go internal/db/exit_node_prefs.go; do
   if grep -qE '^[^/]*TrimPrefix\([a-zA-Z_]*, "tag:(exit|dev)' "$forbidden" 2>/dev/null; then
     bad "E2: $forbidden strips a tag prefix on a code line again"

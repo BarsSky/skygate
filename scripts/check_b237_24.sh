@@ -187,7 +187,7 @@ find_go() {
     command -v go
     return 0
   fi
-  for cand in "/mnt/c/Program Files/Go/bin/go.exe" \
+  for cand in "$(command -v go 2>/dev/null)" "/mnt/c/Program Files/Go/bin/go.exe" \
               "/c/Program Files/Go/bin/go.exe" \
               "/usr/local/go/bin/go" "/usr/bin/go"; do
     if [ -x "$cand" ]; then

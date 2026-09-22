@@ -45,8 +45,11 @@ HEADSCALE_CONTAINER="${HEADSCALE_CONTAINER:-headscale}"
 
 for c in "$CONTAINER" "$PG_CONTAINER" "$HEADSCALE_CONTAINER"; do
     if ! sudo docker inspect "$c" >/dev/null 2>&1; then
-        echo "  FAIL  $c container not running"
-        exit 2
+        # B281 (2026-09-22): absent live dependency = SKIP, never FAIL
+        # (AGENTS.md §1.1). The old `exit 2` was read by the catalog as a
+        # failure on every CI run, where no stack exists at all.
+        echo "  SKIP  $c container not running (live check — run it on the skygate host)"
+        exit 0
     fi
 done
 

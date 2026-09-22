@@ -47,13 +47,16 @@ set -uo pipefail
 CONTAINER="${SKYGATE_CONTAINER:-skygate-skygate-1}"
 PG_CONTAINER="${SKYGATE_PG_CONTAINER:-skygate-pg-local}"
 
+# B281 (2026-09-22): no container = absent live dependency = SKIP, never FAIL
+# (AGENTS.md §1.1). This check RESTARTS skygate to fire the reconcile cron, so
+# it can only ever run on the operator's own host — on CI it must SKIP.
 if ! sudo docker inspect "$CONTAINER" >/dev/null 2>&1; then
-    echo "  FAIL  $CONTAINER container not running"
-    exit 1
+    echo "  SKIP  $CONTAINER container not running (live check — restart-based, run it on the skygate host)"
+    exit 0
 fi
 if ! sudo docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
-    echo "  FAIL  $PG_CONTAINER container not running"
-    exit 1
+    echo "  SKIP  $PG_CONTAINER container not running (live check — run it on the skygate host)"
+    exit 0
 fi
 
 # ── detect backend ──

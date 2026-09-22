@@ -37,7 +37,7 @@ if [ -z "$GO" ]; then
     GO=$(command -v go 2>/dev/null || true)
 fi
 if [ -z "$GO" ]; then
-    for CAND in \
+    for CAND in "$(command -v go 2>/dev/null)" \
         "/c/Program Files/Go/bin/go.exe" \
         "/c/Program Files (x86)/Go/bin/go.exe" \
         "/mnt/c/Program Files/Go/bin/go.exe" \

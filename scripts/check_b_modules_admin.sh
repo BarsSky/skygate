@@ -40,7 +40,7 @@ GO_BIN=""
 if command -v go >/dev/null 2>&1; then
     GO_BIN="$(command -v go)"
 else
-    for cand in \
+    for cand in "$(command -v go 2>/dev/null)" \
         "/mnt/c/Program Files/Go/bin/go.exe" \
         "/c/Program Files/Go/bin/go.exe" \
         "/usr/local/go/bin/go" \
@@ -59,7 +59,7 @@ pass "go on PATH ($("$GO_BIN" version 2>&1))"
 
 # --- 1. files exist ---
 section "File presence"
-for f in \
+for f in "$(command -v go 2>/dev/null)" \
     "internal/feature/admin/modules.go" \
     "internal/feature/admin/modules_test.go" \
     "internal/i18n/catalog_modules.go" \

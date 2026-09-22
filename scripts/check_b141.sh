@@ -208,7 +208,7 @@ GO=""
 if command -v go >/dev/null 2>&1; then
     GO="go"
 else
-    for cand in "/c/Program Files/Go/bin/go.exe" "/usr/local/go/bin/go" "/snap/bin/go"; do
+    for cand in "$(command -v go 2>/dev/null)" "/c/Program Files/Go/bin/go.exe" "/usr/local/go/bin/go" "/snap/bin/go"; do
         if [ -x "${cand}" ]; then GO="${cand}"; break; fi
     done
 fi

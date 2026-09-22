@@ -43,7 +43,13 @@ bad() { echo "  FAIL  $*"; exit 1; }
 
 # ── containers reachable ──
 for c in "$CONTAINER" "$HEADSCALE_CONTAINER" "$PG_CONTAINER"; do
-    sudo docker inspect "$c" >/dev/null 2>&1 || bad "$c container not running"
+    # B281 (2026-09-22): absent live dependency = SKIP, never FAIL
+    # (AGENTS.md §1.1). Note `bad()` in this script exits 1, so the old form
+    # aborted the whole catalog entry with a failure on every CI run.
+    sudo docker inspect "$c" >/dev/null 2>&1 || {
+        echo "  SKIP  $c container not running (live check — run it on the skygate host)"
+        exit 0
+    }
 done
 
 # ── A. Standard tags present in live policy tagOwners ──

@@ -100,7 +100,7 @@ GO=""
 if command -v go >/dev/null 2>&1; then
   GO="go"
 else
-  for cand in \
+  for cand in "$(command -v go 2>/dev/null)" \
     "C:/Program Files/Go/bin/go.exe" \
     "/c/Program Files/Go/bin/go.exe" \
     "/c/Program Files/Go/bin/go" \

@@ -22,7 +22,7 @@ if [ -z "$GO" ]; then
 fi
 if [ -z "$GO" ]; then
     # Search well-known locations. Quoted to handle "Program Files" etc.
-    for CAND in \
+    for CAND in "$(command -v go 2>/dev/null)" \
         "/c/Program Files/Go/bin/go.exe" \
         "/c/Program Files (x86)/Go/bin/go.exe" \
         "/mnt/c/Program Files/Go/bin/go.exe" \

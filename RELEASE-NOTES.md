@@ -12,7 +12,7 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
-## v1.5.46 — a class tag is not a node identity (B279)
+## v1.5.46 — a class tag is not a node identity (B279 + B279.1), and green CI finally means 0 FAIL (B280 + B281)
 
 **Date:** 2026-09-22 · **Base:** `v1.5.45` → this tag · **Compatibility:** none.
 
@@ -185,6 +185,56 @@ cancelled (the `concurrency.cancel-in-progress` case) → 1, timed out → 1, st
 running with no wait budget → 1, one success + one failure → 1, no run → 1, API
 error → 2, no `gh` → 2, off-branch commit → 1, and `origin/main` not fetched → 2.
 
+### B281 — the catalog job must terminate, and "green" must mean 0 FAIL
+
+B280 checks a CI status; this release could not be cut because that status was
+lying in the other direction. `verify-pre` reported **`cancelled`** on every push
+and the log simply stopped mid-catalog — the last printed check was `B260`,
+followed by 22 minutes of silence until the runner killed the step. It was never
+a `concurrency` cancellation: the job hit its own `timeout-minutes: 30`. Four
+defects sat behind that one row, and three of them made a *green* row worthless:
+
+1. **No per-check budget.** `run_check` ran every check unbounded, so one slow
+   check ate the whole job budget and hid every contract after it — including the
+   newest B27x/B28x blocks, which therefore never ran in CI at all. Each check now
+   runs under `timeout "${SKYGATE_CHECK_TIMEOUT:-900}"`, and a blown budget is a
+   **named** row (`TIMEOUT <name> <desc>`) while the rest of the catalog continues.
+2. **The job budget.** `timeout-minutes` 30 → 60.
+3. **The catalog is fail-tolerant by design** (it always exits 0 — read the
+   output, not `$?`; `docs/operations.md` §1.3), so CI reported SUCCESS with ~15
+   FAIL rows inside it. Since `scripts/ci_gate.sh` (B280) reads that status as
+   "this commit is tested", the two together made the release gate decorative.
+   The run step now tees the log, strips ANSI and **fails the job on any
+   `^  (FAIL|TIMEOUT)  ` row**, printing PASS/SKIP counts otherwise.
+4. **The FAILs themselves.**
+   * 36 check scripts probed `/usr/local/go/bin/go` **before** `command -v go`, so
+     on the runner they picked up the image's Go 1.24.13 with `GOTOOLCHAIN=local`
+     and died on `go.mod requires go >= 1.25.0`. The `test` job was green
+     throughout because it uses the PATH Go — only the catalog disagreed. All
+     candidate lists now consult `command -v go` first, and the B281 contract
+     guards the order repo-wide (`check_b178.sh` contract N kept the old order —
+     the one remaining FAIL — and now also captures its `go test` output before
+     matching it, per `AGENTS.md` trap #9).
+   * `B95` and `B237.16` need `staticcheck`, which the runner never had; `ci.yml`
+     installs it and appends `$(go env GOPATH)/bin` to `$GITHUB_PATH`.
+   * 8 checks drove live state (docker daemon, headscale/tailscale CLI, login
+     server) and FAILed when it was absent instead of SKIPping — `AGENTS.md` §1.1.
+     `bad()` in `check_b_tag_owners.sh` even exited 1, aborting the catalog entry
+     on every run.
+   * `check_b191.sh` printed `FAIL …` and *then* SKIPped with exit 0 — a red row
+     that means nothing in a standalone run and a row the new 0-FAIL enforcement
+     sees. It now prints SKIP only.
+   * `check_b182.sh` `[D-annotator-call]` spelled `annotateRulesWithPrefs(rr, func`
+     with an unescaped `(` inside `grep -cE` — an unbalanced group, so grep exited
+     2, the count was 0 and the contract could never pass. The property is already
+     asserted by `E2` and `I`; the duplicate is gone rather than re-escaped.
+   * `check_b182.sh` `[D]` was renegotiated: v1.5.42 replaced the inline
+     `approvedByExitNode := map[string]map[string]bool` with the shared
+     `indexNodesApprovedRoutes(nodes)`, so the contract accepts either spelling.
+
+23 contracts in `scripts/check_b281_ci_catalog_truth.sh` (the `ci.yml` half is
+scoped to the `verify-pre` job block, so another job's budget cannot satisfy it).
+
 ### Verification
 
 `scripts/check_b279_class_tag_identity.sh` (registered as B279) +
@@ -215,6 +265,10 @@ the "0 FAIL" contract of AGENTS §1.1):
 * `check_b276_1_all_devices.sh` D3 pinned the substring `all_devices_badge`
   while the template renders `all_devices_fanout_badge` — the badge was there
   all along, three times.
+
+B281 adds `scripts/check_b281_ci_catalog_truth.sh` (23 contracts, registered as
+B281 and indexed in `AGENTS.md`), which is what makes "the catalog is green"
+a claim CI can no longer make without meaning it.
 
 ### Live remediation for a host already in this state
 

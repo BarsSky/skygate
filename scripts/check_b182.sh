@@ -77,9 +77,30 @@ check_ge "B" 1 "$(count "$REPO/internal/feature/exit_rules/form_admin.go" '^func
 # C. ruleApprovedInHeadscale is called in annotateRulesWithPrefs body
 check_ge "C" 1 "$(count "$REPO/internal/feature/exit_rules/form_admin.go" 'rr\[i\]\.ApprovedInHeadscale = ruleApprovedInHeadscale')"
 
-# D. Handler builds approvedByExitNode from headscale nodes
-check_ge "D" 1 "$(count "$REPO/internal/feature/exit_rules/form_admin.go" 'approvedByExitNode := map\[string\]map\[string\]bool')"
+# D. Handler builds approvedByExitNode from headscale nodes.
+#
+# B281-era CONTRACT RENEGOTIATION (2026-09-22). The old form pinned the literal
+# `approvedByExitNode := map[string]map[string]bool` in form_admin.go. v1.5.42
+# (B-pending-write) replaced that inline construction with the shared
+# `indexNodesApprovedRoutes(nodes)` helper (dual GivenName/Hostname indexing —
+# see approved_routes_index.go and check_apply_acl_drifted_and_rename.sh
+# contract B), so the map is still derived from the live headscale node list and
+# still handed to the annotator; only the spelling changed. (D) asserts the
+# property (derived from the node list, either spelling), (D-nodes-iter) that the
+# node list is still walked here, and E2 + I that the map reaches
+# annotateRulesWithPrefs.
+if grep -q 'approvedByExitNode := indexNodesApprovedRoutes(nodes)' "$REPO/internal/feature/exit_rules/form_admin.go" \
+   || count "$REPO/internal/feature/exit_rules/form_admin.go" 'approvedByExitNode := map\[string\]map\[string\]bool' | grep -qv '^0$'; then
+  check_ge "D" 1 1
+else
+  check_ge "D" 1 0
+fi
 check_ge "D-nodes-iter" 1 "$(count "$REPO/internal/feature/exit_rules/form_admin.go" 'for _, n := range nodes')"
+# The "map is handed to the annotator" half is asserted by E2 (the call site,
+# paren escaped for grep -E) and by I (`}, approvedByExitNode,`). A third copy
+# here spelled the paren unescaped inside `count` (grep -E), which is an
+# unbalanced group -> grep exits 2 -> count 0 -> a permanent false FAIL. Do not
+# re-add it: one property, one contract.
 
 # E. Handler calls annotateRulesWithPrefs with 3 args (the 3rd is the map)
 # E1. annotator signature has 3 args

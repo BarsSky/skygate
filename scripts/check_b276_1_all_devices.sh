@@ -70,16 +70,16 @@ fi
 # B280-era CONTRACT RENEGOTIATION (2026-09-22). The property is "the SQLite
 # schema test asserts the column exists AND that the migration chain actually
 # reaches the version that adds it". The old form pinned the literal strings
-# "(V074" and "maxV != 74", so it broke twice for reasons that had nothing to
-# do with B276.1: the test names the column "(V074, B276.1)" (a comma), and
-# v1.5.44's V075 (oidc_settings) moved the chain head to 75. Both greps are now
-# version-agnostic — the column assertion by name, the chain-length assertion
-# by shape — while the test itself still fails on a chain that stops short of
-# V074 (it compares maxV against the head the driver registers).
-if grep -q 'all_devices exists (V074' "$SCHEMA_TEST" && grep -q 'maxV != ' "$SCHEMA_TEST"; then
-  ok "A4: the SQLite schema test asserts the column and that the chain reaches the head"
+# "(V074" and "maxV != 74", so it broke twice for reasons unrelated to B276.1:
+# the test names the column "(V074, B276.1)" (a comma), and v1.5.44's V075
+# (oidc_settings) moved the chain head to 75. The column assertion is now by
+# name and the chain assertion by MEANING — `maxV != <n>` with n >= 74 — not by
+# a bare `maxV != ` prefix (which any number would satisfy) and not by the
+# literal 74 (which V076 would break again).
+if grep -q 'all_devices exists (V074' "$SCHEMA_TEST" && grep -qE 'maxV != (7[4-9]|[89][0-9])' "$SCHEMA_TEST"; then
+  ok "A4: the SQLite schema test asserts the column and that the chain reaches V074 or later"
 else
-  bad "A4: the schema test would not notice a missing V074 on SQLite"
+  bad "A4: the schema test would not notice a missing V074 on SQLite (or no longer asserts the chain head)"
 fi
 if grep -q 'db.MarkDeviceRulesAllDevices(s.dbc(), c.UserID, exitNode, typeToInsert, ip)' "$FORM"; then
   ok "A5: saving for «все мои устройства» records the intent on the fan-out group"
@@ -151,11 +151,12 @@ fi
 # B280-era CONTRACT RENEGOTIATION (2026-09-22). The badge IS rendered — three
 # times (the section header's fan-out total, the CDN group header and the row
 # itself) — but under the i18n key `exit_rules.all_devices_fanout_badge`, while
-# this contract pinned the substring `all_devices_badge`. The catalog carries
-# that key too (D4 below checks it), and the grep matched it as a PREFIX of the
-# fan-out key, so the template looked unbadged while the feature was there.
-if grep -qE 'all_devices_(fanout_)?badge' "$TMPL"; then
-  ok "D3: the rule row renders the badge"
+# this contract pinned the substring `all_devices_badge` (which only exists in
+# the catalogue, and there as a PREFIX of the fan-out key, so the template
+# looked unbadged while the feature was there). The assertion is the actual
+# render call, not a substring: it must appear as a t/tf lookup of that key.
+if grep -qE '(t|tf) "exit_rules\.all_devices_fanout_badge"' "$TMPL"; then
+  ok "D3: the rule row renders the fan-out badge (exit_rules.all_devices_fanout_badge)"
 else
   bad "D3: no badge in the template"
 fi

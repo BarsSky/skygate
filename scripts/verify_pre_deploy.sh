@@ -41,6 +41,8 @@ GO=""
 if command -v go >/dev/null 2>&1; then
   GO="go"
 else
+  # Reached only when `command -v go` already failed, so the list below is a
+  # last-resort list of conventional install paths.
   for cand in \
     "/c/Program Files/Go/bin/go.exe" \
     "/c/Program Files/Go/bin/go" \
@@ -95,8 +97,26 @@ run_check() {
   local desc="$1"; shift
   local cmd="$1"; shift
   local out rc
-  out=$(bash -c "$cmd" "$@" 2>&1)
-  rc=$?
+  # B281 (2026-09-22): every check gets a wall-clock budget. Live evidence: the
+  # CI catalog job was cancelled by its own 30-minute timeout with the last
+  # printed check being B260 — 22 minutes of silence, then the runner killed the
+  # step, and nothing in the log named the check that was stuck. With a budget a
+  # hung check becomes a NAMED failure ("TIMEOUT B261") and the rest of the
+  # catalog still runs. Override with SKYGATE_CHECK_TIMEOUT (seconds).
+  local budget="${SKYGATE_CHECK_TIMEOUT:-900}"
+  if command -v timeout >/dev/null 2>&1; then
+    out=$(timeout "$budget" bash -c "$cmd" "$@" 2>&1)
+    rc=$?
+  else
+    out=$(bash -c "$cmd" "$@" 2>&1)
+    rc=$?
+  fi
+  if [ "$rc" -eq 124 ]; then
+    echo "  ${RED}TIMEOUT${NC}  $name  $desc  (no result within ${budget}s)"
+    [ -n "$out" ] && echo "$out" | sed 's/^/        /' | head -20
+    RESULTS_FAIL=$((RESULTS_FAIL + 1))
+    return
+  fi
   if [ "$rc" -eq 0 ]; then
     echo "  ${GRN}PASS${NC}  $name  $desc"
     RESULTS_PASS=$((RESULTS_PASS + 1))
@@ -4796,3 +4816,19 @@ run_check "B279.1" "one tag-to-hostname implementation and one class-tag predica
 # scripts/check_b280_ci_gates_release.sh.
 run_check "B280" "a tag and a release are CI-gated: scripts/ci_gate.sh is the single 'is ci.yml green for this sha' implementation (0 green / 1 not green / 2 cannot verify — 2 blocks too), called by .githooks/pre-tag, by release.yml's preflight job (all publishing jobs need it) and by the new tag-release.yml (manual, gates before git tag, then dispatches release.yml). Beats the --no-verify tag path that shipped v1.5.44's i18n parity break and raw-http.Error leak. 43 contracts in scripts/check_b280_ci_gates_release.sh." \
   'test -f scripts/check_b280_ci_gates_release.sh && bash scripts/check_b280_ci_gates_release.sh'
+
+# B281 (v1.5.46) — the CI catalog job must terminate, and "green" must mean
+# 0 FAIL. The tag could not be cut because `verify-pre` came back `cancelled`:
+# the job exceeded its own timeout-minutes (30) with the log stopping mid-catalog
+# (last check B260, then 22 min of silence) because run_check ran every check
+# unbounded. Three more defects made a green row meaningless: the catalog is
+# fail-tolerant (always exit 0), so CI reported SUCCESS with ~15 FAIL rows in it
+# — the very thing scripts/ci_gate.sh (B280) reads as "CI is green"; 36 check
+# scripts probed /usr/local/go/bin/go BEFORE `command -v go` (runner Go 1.24.13
+# with GOTOOLCHAIN=local vs a go.mod requiring >= 1.25); and 8 live-state checks
+# FAILed where AGENTS.md §1.1 requires SKIP. Now: per-check timeout (named
+# TIMEOUT row), 60-minute job budget, staticcheck on the runner, an ANSI-safe
+# 0-FAIL enforcement step in ci.yml, and the go-probe order fixed repo-wide.
+# Contract in scripts/check_b281_ci_catalog_truth.sh.
+run_check "B281" "the CI catalog job terminates and green means 0 FAIL: each check runs under a wall-clock budget in scripts/verify_pre_deploy.sh (named TIMEOUT row instead of a silently cancelled job), ci.yml gives the job 60 minutes, installs staticcheck and enforces that no FAIL/TIMEOUT row appears in the (ANSI-stripped) catalog output — which is what makes B280's ci_gate.sh mean something; 36 check scripts no longer probe a hardcoded /usr/local/go/bin/go before command -v go, and 8 live-state contracts SKIP instead of FAIL when docker/headscale/tailscale are absent. Contracts in scripts/check_b281_ci_catalog_truth.sh." \
+  'test -f scripts/check_b281_ci_catalog_truth.sh && bash scripts/check_b281_ci_catalog_truth.sh'

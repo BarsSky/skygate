@@ -49,13 +49,17 @@ CONTAINER="${SKYGATE_CONTAINER:-skygate-skygate-1}"
 HEADSCALE_CONTAINER="${HEADSCALE_CONTAINER:-headscale}"
 
 # ── containers reachable ──
+# B281 (2026-09-22): no container = absent live dependency = SKIP, never FAIL
+# (AGENTS.md §1.1). The header of this file already promised "skip (do not
+# fail) when the docker daemon is unreachable"; the container-level case was
+# still a FAIL, which is what fired on every CI run.
 if ! sudo docker inspect "$CONTAINER" >/dev/null 2>&1; then
-    echo "  FAIL  $CONTAINER container not running"
-    exit 1
+    echo "  SKIP  $CONTAINER container not running (live check — run it on the skygate host)"
+    exit 0
 fi
 if ! sudo docker inspect "$HEADSCALE_CONTAINER" >/dev/null 2>&1; then
-    echo "  FAIL  $HEADSCALE_CONTAINER container not running"
-    exit 1
+    echo "  SKIP  $HEADSCALE_CONTAINER container not running (live check — run it on the skygate host)"
+    exit 0
 fi
 
 # ── fetch + parse headscale users ──

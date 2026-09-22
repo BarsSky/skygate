@@ -232,7 +232,7 @@ echo "=== K. regression guard: no inline hostname→user lookups outside findUse
 # the variable obviously holds a tailnet hostname (skygate-host
 # / TailscaleHostname() / SKYGATE_TS_HOSTNAME).
 HIT=0
-for f in $(find "$REPO_ROOT/internal/feature/admin" "$REPO_ROOT/internal/feature/my" -name '*.go' -not -name '*_test.go'); do
+for f in "$(command -v go 2>/dev/null)" $(find "$REPO_ROOT/internal/feature/admin" "$REPO_ROOT/internal/feature/my" -name '*.go' -not -name '*_test.go'); do
   rel="${f#$REPO_ROOT/}"
   # 1. u.Name == hostname (or vice versa). Skip comment lines
   #    (start with //) — the findUserForHostname doc-comment +
