@@ -513,11 +513,13 @@ func resolvePublicDERPIP(derperHostname string) (ip, source string, ok bool) {
 	return "", "", false
 }
 
-func httpGet(url string, timeout time.Duration) ([]byte, error) {
-	return httpGetVia(url, "", timeout)
-}
-
-// httpGetVia is httpGet with the TCP connection pinned to `dialAddr` while the URL
+// httpGetVia is the only HTTP GET helper in this package: the pre-B289.1 wrapper
+// `httpGet(url, timeout)` — which dialled whatever the URL resolved to and could
+// therefore never be used by a probe that knows the address and the name separately —
+// was deleted once B289.1 moved every /debug probe onto the pinned dial. It had no
+// callers left (staticcheck U1000).
+//
+// It is the HTTP GET with the TCP connection pinned to `dialAddr` while the URL
 // keeps the relay's public hostname — so TLS SNI and the Host header still match
 // the certificate (B289.1).
 //

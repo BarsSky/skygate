@@ -183,6 +183,14 @@ if grep -q 'derpProbeDialAddr(s.dbc(), derpHost' internal/feature/admin/derp.go;
 else
   bad "F2: collectDerpStatus probes the bare hostname"
 fi
+# F3: the old httpGet(url, timeout) wrapper dialled whatever the URL resolved to,
+# i.e. exactly the leaked loopback this block exists for. With every probe moved onto
+# the pinned dial it had no callers left (staticcheck U1000) — it must not come back.
+if grep -rq '^func httpGet(' internal/feature/admin/; then
+  bad "F3: the pre-B289.1 httpGet(url, timeout) wrapper is back — it dials the leaked name"
+else
+  ok "F3: only httpGetVia remains (no bare-URL HTTP helper left in admin/)"
+fi
 
 # --- E: tracked by git (trap #11) -------------------------------------------
 if git ls-files --error-unmatch scripts/check_b289_derp_map_truth.sh >/dev/null 2>&1; then

@@ -17,6 +17,12 @@
 **Date:** 2026-09-23 · **Base:** `v1.5.60` → this tag · **Compatibility:** none —
 no schema change, no migration.
 
+**Carries B295 as well.** There is no `v1.5.60` tag and there will not be one: the
+commit that section names did not compile (a half-applied B289.1 edit left in the
+working tree by the parallel session, restored by `ef232233`), so `scripts/ci_gate.sh`
+correctly refuses to tag it. The B295 fix it documents is in this release; read the
+`## v1.5.60` section below as part of v1.5.61's change set.
+
 Operator report, and the reason the v1.5.57 «local DERP reaches the map» fix did
 not actually fix the live host: the relay still never reached the map.
 
@@ -105,10 +111,10 @@ different things.**
 `internal/feature/admin/derp_reach_b289_test.go`. The regression fixture is
 **SNI-strict on purpose** — it fails the handshake for an unexpected or empty SNI,
 like manual-certmode derper — and one case pins the old behaviour as *unreachable*,
-so the bug cannot come back green. `check_b289_derp_map_truth.sh` grew to 21
+so the bug cannot come back green. `check_b289_derp_map_truth.sh` grew to 22
 contracts (A6/A7 the address/SNI split, D3/D4 the health probe, F1/F2 the status
-probes). Procedure and operator-facing explanation: `docs/derp.md` §«B289.1»,
-`SKYGATE_DERP_PROBE_HOST` in `.env.example`.
+probes, F3 the deleted bare-URL wrapper). Procedure and operator-facing
+explanation: `docs/derp.md` §«B289.1», `SKYGATE_DERP_PROBE_HOST` in `.env.example`.
 
 ## v1.5.60 — a failed policy read must not become a blind write (B295)
 
