@@ -19,6 +19,61 @@ any `.env` declared, while rung 2 (`GET /version`) is the rung that answered
 original report for the record; the measured value is 0.29.2, which is the point
 of the block.
 
+## v1.5.66 — a sudo refusal that can never succeed must fall through (B301)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.65` → this tag · **Compatibility:** none —
+no schema change, no migration.
+
+### What was happening
+
+v1.5.65 fixed the *decision*; the `aro` journal then showed the ladder finally being
+walked — and stopping one rung early:
+
+```
+staggeredSync(aggregated): exit-node-vps applied LOCALLY:
+  local=err=tailscale set (local, sudo): sudo: The "no new privileges" flag is set,
+  which prevents sudo from running as root. … — no SSH involved
+```
+
+`deploy/install-common.sh` writes **`NoNewPrivileges=yes`** into the skygate systemd
+unit, so `sudo` can **never** become root from inside skygate: the kernel flag is
+checked before any sudoers rule, which also means option «c» in the fallback hint (a
+NOPASSWD rule) changes nothing on a systemd install. That phrase was not in
+`isPrivilegeRefusal`, so the refusal was classified as a **real** `tailscale set`
+failure and `ApplyRoutesLocally` returned before rung 3: the root-owned helper sat
+**installed and idle**, `routes-apply.status` was never created, and every prefix
+stayed «нет маршрута».
+
+### The fix
+
+* The systemd refusal (`no new privileges`, `prevents sudo from running as root`) and
+  the other sudo-only refusals (`not allowed to execute`, `no tty present`,
+  `sorry, user`) are now — together with the pre-existing `a password is required`,
+  `is not in the sudoers`, `permission denied`, `operation not permitted`,
+  `no such file or directory`, `connect: permission denied` — classified as
+  **privilege refusals**, so the ladder reaches the helper.
+* A **real** `tailscale set` failure (unknown flag, bad CIDR, daemon down) is still
+  surfaced as-is and is **not** retried on another rung — pinned by a negative test
+  table, so a future needle cannot make the ladder mask a genuine error.
+* `RoutesFallbackHint` now warns that a NOPASSWD rule cannot work on a systemd
+  install, so nobody chases option (c) on a host where the kernel flag refuses sudo
+  first.
+
+10 contracts in `scripts/check_b301_sudo_nnp_rung.sh` +
+`internal/headscale/local_apply_b301_test.go` (the verbatim two-line live refusal
+drives the ladder to the helper).
+
+### What to expect after the update
+
+```bash
+journalctl -u skygate --since '-5 min' | grep -E 'local=|routes applied locally'
+cat /var/lib/skygate/update/routes-apply.status      # now written by the helper
+tail -5 /var/lib/skygate/update/routes-apply.log
+```
+
+Expect `local=ok via helper` and the applier's own `RESULT=ok`, and «нет маршрута»
+should disappear from the prefix table.
+
 ## v1.5.65 — one transport decision for every sync path (B300)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.64` → this tag · **Compatibility:** none —

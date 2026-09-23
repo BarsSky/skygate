@@ -5309,3 +5309,24 @@ run_check "B298" "derived-rule churn must not restart the control plane: Collaps
 # scripts/check_b300_relay_apply_one_path.sh.
 run_check "B300" "one transport decision for every sync path: the aggregated staggered loop (which the periodic tick and the domain auto-updater actually run) carried its own shorter copy of the per-node route body, so it never asked DetectRelayPlacement (B293) and never ran B292's target repair — live on aro that meant every tick handing SetAdvertisedRoutes an EMPTY target, ssh falling back to the bare node name and dying on 'Could not resolve hostname exit-node-vps', while tailscale status on the same host reported Self exit-node-vps ['100.64.0.1','fd7a:115c:a1e0::1'] and headscale listed exactly those addresses for node 1 (the exit_servers row itself is empty in both columns), i.e. the local transport was provably available and never considered; routes-apply.status/.log were never created and every prefix stayed «нет маршрута». Both paths now go through ONE shared tail, applyRoutesToRelay: B293's evidence chain (live daemon → interfaces) decides locality, a local relay refuses to advertise a subnet it sits inside and applies through the privilege ladder (direct → sudo -n → root-owned helper), a remote one resolves the SSH target with B292's chain (operator override → live Tailscale IP, persisted into the empty column → a NAMED warning) and there is exactly ONE SetAdvertisedRoutes and ONE ApproveAllRoutesWithList call site; a readable daemon that answers 'not local' now logs its evidence instead of leaving 'why ssh?' unanswered in the journal. Contracts in scripts/check_b300_relay_apply_one_path.sh." \
   'test -f scripts/check_b300_relay_apply_one_path.sh && bash scripts/check_b300_relay_apply_one_path.sh'
+
+# --- B301: a sudo refusal that can never succeed must fall through -------------
+# Live on `aro`, with B300 already running (so the relay was correctly recognised as
+# LOCAL and the ladder WAS walked):
+#   staggeredSync(aggregated): exit-node-vps applied LOCALLY:
+#     local=err=tailscale set (local, sudo): sudo: The "no new privileges" flag is
+#     set, which prevents sudo from running as root. … — no SSH involved
+# `deploy/install-common.sh` writes `NoNewPrivileges=yes` into the skygate unit, so
+# sudo can NEVER become root from inside skygate — the kernel flag is checked before
+# any sudoers rule, and a NOPASSWD rule therefore changes nothing. That phrase was
+# not in `isPrivilegeRefusal`, so the refusal was read as a REAL `tailscale set`
+# failure and `ApplyRoutesLocally` returned one rung early: the root-owned helper sat
+# installed and idle, `routes-apply.status` was never created, and every prefix
+# stayed «нет маршрута». Fix: the systemd refusal (`no new privileges`, `prevents
+# sudo from running as root`) and the other sudo-only refusals (`not allowed to
+# execute`, `no tty present`, `sorry, user`) are classified as privilege refusals, so
+# the ladder reaches rung 3; a REAL tailscale failure is still surfaced as-is
+# (pinned behaviourally), and `RoutesFallbackHint` now warns that option (c) — a
+# NOPASSWD rule — cannot work on a systemd install, so nobody chases it.
+run_check "B301" "a sudo refusal that can never succeed must fall through to the privileged helper: the systemd unit the installers write ships NoNewPrivileges=yes, so `sudo` can never become root from inside skygate — the kernel flag is checked before any sudoers rule and a NOPASSWD rule changes nothing. That refusal ('sudo: The \"no new privileges\" flag is set, which prevents sudo from running as root.') was not recognised by isPrivilegeRefusal, so it was treated as a REAL tailscale set failure and ApplyRoutesLocally returned one rung early: live on aro the log read 'applied LOCALLY: local=err=tailscale set (local, sudo): sudo: The \"no new privileges\" flag is set … — no SSH involved', the root-owned helper sat installed and idle, routes-apply.status was never created and every prefix stayed «нет маршрута». The systemd refusal and the other sudo-only refusals (not allowed to execute, no tty present, sorry user, plus the pre-existing a-password-is-required / not-in-the-sudoers / permission-denied needles) are now privilege refusals, so rung 3 is reached — pinned behaviourally with the verbatim two-line live refusal — while a genuine tailscale failure (unknown flag, bad CIDR, daemon down) is still surfaced as-is instead of being masked by a retry on another rung; RoutesFallbackHint now warns that a NOPASSWD rule cannot work on a systemd install. Contracts in scripts/check_b301_sudo_nnp_rung.sh." \
+  'test -f scripts/check_b301_sudo_nnp_rung.sh && bash scripts/check_b301_sudo_nnp_rung.sh'

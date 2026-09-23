@@ -211,11 +211,18 @@ func LocalTransports() []LocalTransport {
 }
 
 // RoutesFallbackHint is the operator-facing half of the ladder failure.
+//
+// B301: option (c) carries a warning because the systemd unit the installers
+// write sets `NoNewPrivileges=yes` — on a native/systemd host sudo is refused by
+// the kernel flag before any sudoers rule is consulted, so a NOPASSWD rule there
+// changes nothing and the privileged helper (d) is the only option that works
+// without touching the unit or the daemon's `--operator` grant.
 func RoutesFallbackHint() string {
 	bin := TailscaleCLI()
 	return fmt.Sprintf("apply the routes locally with one of: (a) run skygate as root, "+
 		"(b) allow the service user on the daemon: `sudo %s set --operator=<skygate user>`, "+
-		"(c) add a NOPASSWD sudoers rule for `%s set`, or "+
+		"(c) add a NOPASSWD sudoers rule for `%s set` — on a systemd install this CANNOT work, "+
+		"the unit ships NoNewPrivileges=yes and sudo is refused by the kernel flag first, or "+
 		"(d) install the privileged helper: `sudo bash deploy/install-routes-helper.sh`",
 		bin, bin)
 }
@@ -378,8 +385,28 @@ func isPrivilegeRefusal(err error, output string) bool {
 		"access denied",
 		"must be run as root",
 		"operation not permitted",
-		"a password is required",    // sudo -n without a NOPASSWD rule
-		"is not in the sudoers",     // sudo refusal
+		"a password is required", // sudo -n without a NOPASSWD rule
+		"is not in the sudoers",  // sudo refusal
+		// B301 (2026-09-23): the systemd unit the installers write ships
+		// `NoNewPrivileges=yes` (deploy/install-common.sh), so `sudo` can NEVER
+		// become root from inside skygate — the kernel flag cannot be changed by
+		// the process that is subject to it. Live on `aro` the ladder stopped
+		// exactly here and never reached the root-owned helper:
+		//
+		//	sudo: The "no new privileges" flag is set, which prevents sudo from
+		//	running as root. sudo: If sudo is running in a container, you may need
+		//	to adjust the container configuration to disable the flag.
+		//
+		// The refusal was read as a REAL `tailscale set` failure, so
+		// `ApplyRoutesLocally` returned one rung early: the routes never applied,
+		// `routes-apply.status` was never created, and every prefix stayed «нет
+		// маршрута» while the helper sat installed and idle. This is the strongest
+		// possible "you are not allowed" — fall through to the helper.
+		"no new privileges",
+		"prevents sudo from running as root",
+		"not allowed to execute",    // sudoers denial for this exact command
+		"no tty present",            // requiretty + `sudo -n`
+		"sorry, user",               // sudoers denial
 		"no such file or directory", // a socket the service user cannot open
 		"connect: permission denied",
 	} {
