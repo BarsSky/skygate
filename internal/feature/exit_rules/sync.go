@@ -530,24 +530,39 @@ func reportPrefixLosers(where string, claims []PrefixClaim, owners map[string]st
 // device_rules.exit_node_id stores whichever the operator saw first, and
 // tailscale rewrites the name when a host registers with a different one.
 func liveExitNodeIP(hs *headscale.Client, hostname string) string {
+	return db.FirstTailscaleIP(strings.Join(liveExitNodeIPs(hs, hostname), ","))
+}
+
+// liveExitNodeIPs returns EVERY address headscale reports for the relay named
+// `hostname` (empty when headscale has no such node).
+//
+// B293: the full list matters — the local-transport decision compares it with the
+// addresses this host's own daemon owns, and a node can be listed as IPv4 + IPv6
+// (the operator's `aro` relay is `100.64.0.1, fd7a:115c:a1e0::1`), so looking at
+// only the first entry would miss a match on the other family.
+func liveExitNodeIPs(hs *headscale.Client, hostname string) []string {
 	if hs == nil || strings.TrimSpace(hostname) == "" {
-		return ""
+		return nil
 	}
 	nodes, err := hs.ListAllNodes()
 	if err != nil {
 		log.Printf("exit-node sync(%s): cannot read the node list to resolve the SSH target: %v", hostname, err)
-		return ""
+		return nil
 	}
 	want := strings.TrimSpace(hostname)
 	for _, n := range nodes {
 		if !strings.EqualFold(n.GivenName, want) && !strings.EqualFold(n.Hostname, want) {
 			continue
 		}
-		if ip := db.FirstTailscaleIP(strings.Join(n.IPAddresses, ",")); ip != "" {
-			return ip
+		var out []string
+		for _, ip := range n.IPAddresses {
+			if ip = strings.TrimSpace(ip); ip != "" {
+				out = append(out, ip)
+			}
 		}
+		return out
 	}
-	return ""
+	return nil
 }
 
 // syncOneExitNode is the per-node sync body extracted from
@@ -622,11 +637,58 @@ func syncOneExitNode(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func(st
 	// routes some other way (e.g. directly via the headscale
 	// CLI) and the SSH failure should be visible but not block
 	// the approval side.
+	//
+	// B293 (2026-09-23): unless this relay IS this host. On the operator's `aro`
+	// the local tailscaled is `exit-node-vps` (100.64.0.1) — headscale, skygate
+	// and the exit node live on one machine — so managing it over SSH meant an
+	// SSH session from the host to itself, through the tailnet it configures:
+	// pointless (a key + authorized_keys on the same box) and fragile (it fails
+	// exactly when the local tailscaled is the thing needing repair). The
+	// decision is made from EVIDENCE — the live daemon's own Self.TailscaleIPs
+	// against the relay's headscale addresses — and "I could not ask" keeps the
+	// SSH path.
+	routeLabel := "ssh=ok"
+	transportNote := ""
+	if localSelf, selfErr := headscale.LocalTailscaleSelf(); selfErr == nil {
+		if matchedIP, isLocal := headscale.IsLocalRelay(localSelf, liveExitNodeIPs(hs, node)); isLocal {
+			// Refuse to advertise a subnet this host sits INSIDE (the documented
+			// route loop: the host's own traffic to its LAN peers would enter the
+			// tunnel and come back). The exit-node bases are exempt.
+			kept, skipped := headscale.SelfCoveringRoutes(approveRoutes, localSelf.IPs)
+			if len(skipped) > 0 {
+				log.Printf("exit-node sync(%s): local relay is INSIDE %v — NOT advertising those (a co-located relay advertising its own network loops the host's own traffic; docs/networking.md, L-45)", node, skipped)
+				transportNote = fmt.Sprintf(" self_subnet_skipped=%s", strings.Join(skipped, ","))
+				result[node+"_skipped"] = strings.Join(skipped, ",")
+			}
+			transport, out, applyErr := hs.ApplyRoutesLocally(kept, lookupAcceptRoutes(node))
+			switch {
+			case applyErr != nil:
+				routeLabel = "local=err=" + applyErr.Error()
+			default:
+				routeLabel = "local=ok via " + transport.Name
+				if out != "" {
+					transportNote += " out=" + firstLine(out)
+				}
+				log.Printf("exit-node sync(%s): routes applied locally via %s (relay IS this host, matched %s) — no SSH involved", node, transport.Name, matchedIP)
+			}
+			approveLabel := "approved=0"
+			if approved, approveErr := hs.ApproveAllRoutesWithList(node, approveRoutes); approveErr != nil {
+				approveLabel = "approve=err=" + approveErr.Error()
+			} else if approved > 0 {
+				approveLabel = fmt.Sprintf("approved=%d", approved)
+			}
+			result[node] = routeLabel + " " + approveLabel + transportNote
+			return
+		}
+	} else {
+		log.Printf("exit-node sync(%s): cannot ask the local tailscaled who it is (%v) — using the SSH transport", node, selfErr)
+	}
 	sshLabel := "ok"
 	_, sshErr := hs.SetAdvertisedRoutes(node, approveRoutes, lookupAcceptRoutes(node), sshTarget, sshKeyPath)
 	if sshErr != nil {
 		sshLabel = "err=" + sshErr.Error()
 	}
+	routeLabel = "ssh=" + sshLabel
 	// Approve all routes (including base 0.0.0.0/0, ::/0) for this exit
 	// node via headscale CLI (docker exec).
 	// 2026-07-08: pass full list (base + per-rule) so the node keeps
@@ -637,7 +699,21 @@ func syncOneExitNode(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func(st
 	} else if approved > 0 {
 		approveLabel = fmt.Sprintf("approved=%d", approved)
 	}
-	result[node] = "ssh=" + sshLabel + " " + approveLabel
+	result[node] = routeLabel + " " + approveLabel
+}
+
+// firstLine returns the first non-empty line of a command's output, trimmed —
+// the sync result string is rendered in a flash message, so it must stay short.
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			if len(line) > 120 {
+				line = line[:120] + "…"
+			}
+			return line
+		}
+	}
+	return ""
 }
 
 // 2026-07-09: aggregated sync per node (issue: stale batches overwrote each other).

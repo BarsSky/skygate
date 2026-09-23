@@ -183,6 +183,12 @@
         {{if ne .SSHKeyState "ok"}}
           <span class="tag tag-danger" style="font-size:10px;margin-left:4px" title="{{.SSHKeyNote}}">{{t "exit_nodes.ssh_key.badge"}} <code style="font-size:10px">{{.EffectiveSSHKeyPath}}</code></span>
         {{end}}
+        {{/* B293: this relay IS this host — the sync applies routes with a LOCAL
+             `tailscale set` (no SSH, no key), so the warning above is suppressed
+             and the row says which transport will be used. */}}
+        {{if .LocalRelay}}
+          <span class="tag tag-success" style="font-size:10px;margin-left:4px" title="{{tf "exit_nodes.local_relay_tip" .LocalTransport}}">{{t "exit_nodes.local_relay_badge"}}</span>
+        {{end}}
       </td>
       <td>
         {{if eq .AcceptRoutes 1}}<span class="tag" style="background:var(--info-bg);color:var(--info);border:1px solid var(--info)">true</span>

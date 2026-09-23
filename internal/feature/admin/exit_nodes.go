@@ -125,6 +125,17 @@ type ExitNodeInfo struct {
 	EffectiveSSHKeyPath string `json:"effective_ssh_key_path"`
 	SSHKeyState         string `json:"ssh_key_state"`
 	SSHKeyNote          string `json:"ssh_key_note"`
+	// B293 (2026-09-23) — this relay IS this host.
+	//
+	// LocalRelay is set when the live local tailscaled's own addresses include
+	// one of the relay's headscale addresses (the operator's `aro`: the local
+	// daemon is `exit-node-vps`, 100.64.0.1). Such a relay is configured with a
+	// LOCAL `tailscale set` (see internal/headscale/local_apply_b293.go) — no
+	// SSH, no key — so the SSH-column warning is suppressed and the row says so.
+	// LocalTransport names the rung the next sync will use (direct / sudo /
+	// helper), or why none is available.
+	LocalRelay     bool   `json:"local_relay"`
+	LocalTransport string `json:"local_transport"`
 }
 
 // AdminExitNodes renders the /admin/exit-nodes page. Admin-only.
@@ -240,6 +251,31 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 			n.SSHKeyNote = problem + " — " + headscale.SSHKeyFixHint(effectiveKey)
 		}
 		nodes = append(nodes, n)
+	}
+
+	// B293: ask the LOCAL tailscaled once who it is, then mark the relay(s) it
+	// owns. One exec for the whole page (not per row). The result is evidence,
+	// not a guess: exact address equality with what headscale reports.
+	localSelf, localSelfErr := headscale.LocalTailscaleSelf()
+	if localSelfErr == nil {
+		transportName := "unavailable — " + headscale.RoutesFallbackHint()
+		if trs := headscale.LocalTransports(); len(trs) > 0 {
+			transportName = trs[0].Name + " (" + trs[0].Detail + ")"
+		}
+		for i := range nodes {
+			if ip, ok := headscale.IsLocalRelay(localSelf, splitCommaList(nodes[i].TailscaleIP)); ok {
+				nodes[i].LocalRelay = true
+				nodes[i].LocalTransport = transportName
+				// The SSH key is irrelevant for this row: the sync applies
+				// locally. Suppressing it here is what keeps the B292 warning
+				// honest instead of permanent noise.
+				nodes[i].SSHKeyState = "ok"
+				nodes[i].SSHKeyNote = ""
+				log.Printf("[exit-nodes] %s IS this host (matched %s) — routes are applied locally via %s, SSH is not used", nodes[i].Hostname, ip, transportName)
+			}
+		}
+	} else {
+		log.Printf("[exit-nodes] cannot ask the local tailscaled who it is (%v) — every relay keeps the SSH transport", localSelfErr)
 	}
 
 	// 2026-07-31: v0.32.13 — same 2s timeout on the second
@@ -461,6 +497,19 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		"HeadscalePinned":   headscalePinnedTag(s),
 		"HeadscaleHTMLURL":  headscaleHTMLURL(s),
 	})
+}
+
+// splitCommaList splits the comma-joined tailscale_ip column into its entries.
+// Pure; used by the B293 co-location check (a relay's address list can carry IPv4
+// and IPv6, and the local daemon may own either).
+func splitCommaList(csv string) []string {
+	var out []string
+	for _, p := range strings.Split(csv, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // effectiveExitSSHKeyPath returns the SSH private key the next advertised-routes
@@ -914,15 +963,16 @@ func (s *Service) PostAdminExitNodeSync(w http.ResponseWriter, r *http.Request) 
 
 // exitSyncFailed reports whether a per-node sync result describes a failure.
 //
-// The result grammar is produced by syncOneExitNode ("ssh=<label> <approve
-// label>", see internal/feature/exit_rules/sync.go) and is grepped by operators,
+// The result grammar is produced by syncOneExitNode and is grepped by operators,
 // so it is parsed rather than changed: "ssh=err=" is an SSH failure,
+// "local=err=" (B293 — the relay IS this host) a local apply failure,
 // "approve=err=" a headscale failure, and a bare "error=…" the shape the
-// /admin/exit-rules JSON endpoint uses. "ssh=ok approved=0" (no routes approved
-// yet) is NOT a failure — it is the normal state of a relay whose routes the
-// operator has not approved.
+// /admin/exit-rules JSON endpoint uses. "ssh=ok approved=0" / "local=ok via …
+// approved=0" (no routes approved yet) is NOT a failure — it is the normal state
+// of a relay whose routes the operator has not approved.
 func exitSyncFailed(msg string) bool {
 	return strings.Contains(msg, "ssh=err=") ||
+		strings.Contains(msg, "local=err=") ||
 		strings.Contains(msg, "approve=err=") ||
 		strings.HasPrefix(strings.TrimSpace(msg), "error=")
 }

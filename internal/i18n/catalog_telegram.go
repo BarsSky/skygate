@@ -87,6 +87,7 @@ var ruTelegram = map[string]string{
 	"telegram.egress_current_label":          "Сейчас выбран",
 	// B265: skygate и relay живут на одной машине.
 	"telegram.egress_colocation_warn":        "Внимание: skygate запущен на той же машине, что и relay <b>%s</b>. Не назначайте этот relay как <code>telegram.egress_node_id</code>: тогда служебный трафик skygate пойдёт через узел, которым он же и управляет, и падение relay утащит за собой панель. Кроме того, проба api.telegram.org на этой странице идёт <b>с этой машины</b> — если её маршрут до Telegram не работает, пробу нельзя считать показательной: настройте egress с клиента, у которого api.telegram.org доступен.",
+	"telegram.egress_local_self":             "Relay <b>%s</b> — это <b>сама эта машина</b> (её собственный узел в tailnet, проверено по локальному tailscaled). Как egress он бесполезен: его выход в интернет — тот же самый, что и у skygate, так что выбирать его нечего. Зато проба api.telegram.org ниже <b>показательна</b>: она меряет ровно тот путь, которым пойдёт бот. Если Telegram недоступен — нужен <b>другой</b> relay (на другой машине), а не этот.",
 	"telegram.egress_current_none":           "не выбран (Tailscale auto-pick по метрике)",
 	"telegram.egress_select_label":           "Выберите relay",
 	"telegram.egress_apply":                  "Применить",
@@ -197,6 +198,7 @@ var enTelegram = map[string]string{
 	"telegram.egress_current_label":          "Currently selected",
 	// B265: skygate and the relay share one machine.
 	"telegram.egress_colocation_warn":        "Warning: skygate runs on the same machine as relay <b>%s</b>. Do not set it as <code>telegram.egress_node_id</code>: skygate's own management traffic would then go through a node skygate manages, and a relay outage would take the panel down with it. Also, the api.telegram.org probe on this page originates <b>from this machine</b> — if this host cannot reach Telegram, the probe is not representative: configure egress from a client that can reach api.telegram.org.",
+	"telegram.egress_local_self":             "Relay <b>%s</b> is <b>this very machine</b> (its own tailnet node, verified against the local tailscaled). As an egress it cannot do anything: its way out to the internet is the same one skygate already has, so there is nothing to select. What it does mean is that the api.telegram.org probe below <b>is representative</b> — it measures exactly the path the bot will use. If Telegram is unreachable, you need a <b>different</b> relay on another machine, not this one.",
 	"telegram.egress_current_none":           "none (Tailscale auto-pick by metric)",
 	"telegram.egress_select_label":           "Pick a relay",
 	"telegram.egress_apply":                  "Apply",

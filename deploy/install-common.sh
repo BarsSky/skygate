@@ -766,6 +766,9 @@ EOF
     echo "[install] wrote $service_file + $path_file (skygate-update.path enabled)"
 
     write_policy_units "$update_dir"
+    # B293: the local exit-node routes applier (only used when an exit node IS
+    # this host and the service cannot run `tailscale set` itself).
+    write_routes_units "$update_dir"
 }
 
 # write_policy_units: the same privilege split for the headscale POLICY file
@@ -832,6 +835,73 @@ EOF
     systemctl daemon-reload
     systemctl enable --now skygate-policy.path >/dev/null 2>&1 || true
     echo "[install] wrote $service_file + $path_file (skygate-policy.path enabled)"
+}
+
+# write_routes_units: the same privilege split for the LOCAL exit-node routes
+# (B293). When an exit node IS this machine, skygate applies its advertised routes
+# with `tailscale set` against the local daemon (no SSH). If the service runs as an
+# unprivileged user without a daemon `--operator` grant and without a NOPASSWD
+# sudoers rule, the only remaining rung is this root-owned applier: skygate drops
+# a data-only <update_dir>/routes.request.props and the path unit turns it into a
+# root-run `tailscale set`.
+write_routes_units() {
+    local update_dir="$1"
+    local service_file="/etc/systemd/system/skygate-routes.service"
+    local path_file="/etc/systemd/system/skygate-routes.path"
+    local applier="/usr/local/lib/skygate/skygate-apply-routes.sh"
+    local src="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/skygate-apply-routes.sh"
+
+    if [ -f "$src" ]; then
+        install -m 0755 -o root -g root "$src" "$applier"
+    elif [ ! -f "$applier" ]; then
+        echo "[install] WARN: $src not found — the routes applier was not installed;"
+        echo "[install]       a local exit node then needs root, sudo, or a daemon --operator grant (docs/networking.md §'Exit node on the skygate host')"
+        return 0
+    fi
+
+    cat > "$service_file" <<EOF
+# /etc/systemd/system/skygate-routes.service
+# 2026-09-23 (B293): PRIVILEGED half of the LOCAL exit-node route apply.
+# Written by the installers — re-running the installer overwrites it
+# (project-owned file).
+#
+# Triggered by skygate-routes.path, never started at boot: it applies exactly
+# one staged route request (one `tailscale set`) and exits. Kept separate from
+# skygate-policy.service so a route change can never be confused with a policy
+# write.
+[Unit]
+Description=Skygate privileged local tailscale-routes applier
+Documentation=https://github.com/${GITHUB_OWNER:-BarsSky}/${GITHUB_REPO:-skygate}
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=${applier}
+# One tailscale set: 60s is generous.
+TimeoutStartSec=60
+Nice=5
+EOF
+
+    cat > "$path_file" <<EOF
+# /etc/systemd/system/skygate-routes.path
+# 2026-09-23 (B293): watches for a staged local route request.
+# The unprivileged service writes this file inside its own data dir; the path
+# unit turns its appearance into a root-run applier. No sudo, no polkit, no
+# privileged systemd call from the service.
+[Unit]
+Description=Watch for a staged skygate local-routes request
+
+[Path]
+PathExists=${update_dir}/routes.request.props
+Unit=skygate-routes.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now skygate-routes.path >/dev/null 2>&1 || true
+    echo "[install] wrote $service_file + $path_file (skygate-routes.path enabled)"
 }
 
 # write_bare_sudoers: the no-systemd case. There is no path unit to

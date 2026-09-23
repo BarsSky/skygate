@@ -68,13 +68,30 @@ func AcceptRoutesFlag(acceptRoutes int) string {
 	}
 }
 
+// BuildTailscaleSetArgs is the argv form of the same command, for the LOCAL
+// transport (B293): when the exit node IS this host, skygate runs `tailscale
+// set …` directly instead of over SSH, so it needs arguments rather than a
+// shell string. Single source of truth — BuildTailscaleSetCommand joins this.
+func BuildTailscaleSetArgs(routes []string, acceptRoutes int) []string {
+	args := []string{
+		"set",
+		"--advertise-exit-node",
+		"--advertise-routes=" + BuildTailscaleSetRoutes(routes),
+	}
+	switch acceptRoutes {
+	case -1:
+		args = append(args, "--accept-routes=false")
+	case 1:
+		args = append(args, "--accept-routes=true")
+	}
+	return args
+}
+
 // BuildTailscaleSetCommand is the full command string passed to ssh.
 // It is provided for callers that want to log or audit the exact command
 // without invoking SetAdvertisedRoutes. Args are not shell-quoted; the
 // caller is responsible for not supplying user input that contains
 // shell metacharacters.
 func BuildTailscaleSetCommand(routes []string, acceptRoutes int) string {
-	return "tailscale set --advertise-exit-node --advertise-routes=" +
-		BuildTailscaleSetRoutes(routes) +
-		AcceptRoutesFlag(acceptRoutes)
+	return "tailscale " + strings.Join(BuildTailscaleSetArgs(routes, acceptRoutes), " ")
 }

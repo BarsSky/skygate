@@ -292,6 +292,16 @@
       {{tf "telegram.egress_colocation_warn" .State.Egress.ColocationHostnamesText}}
     </div>
     {{end}}
+    {{/* B293: the co-located relay is THIS machine's own tailscale node, verified
+         against the live daemon. Selecting it as egress cannot route anything
+         (its egress is this host's egress), and the probe below becomes
+         representative rather than untrustworthy. */}}
+    {{if .State.Egress.LocalSelfRelay}}
+    <div class="alert alert-info" style="margin:.5rem 0">
+      <i class="fa-solid fa-circle-info"></i>
+      {{tf "telegram.egress_local_self" .State.Egress.LocalSelfText}}
+    </div>
+    {{end}}
     <p class="sub">
       <strong>{{t "telegram.egress_current_label"}}:</strong>
       {{if .State.Egress.SelectedHostname}}<code>{{.State.Egress.SelectedHostname}}</code> <span class="muted">({{.State.Egress.SelectedNodeID}})</span>{{else}}<em>{{t "telegram.egress_current_none"}}</em>{{end}}

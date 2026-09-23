@@ -12,6 +12,133 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.57 — an exit node that IS the skygate host is managed locally (B293)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.56` → this tag · **Compatibility:** none —
+no schema change, no migration. Remote relays keep the SSH transport unchanged.
+
+Follow-up to B292, from the operator's own answer about the host:
+
+> тот exit-node что существует он расположен на той же машине что и headscale и
+> skygate машине aro и в таком случае доступ как таковой не нужен по ssh … бывает
+> что ставят без [root] и для этого стоит тоже подобрать варианты реализации чтобы
+> не было ситуации что нет возможности настроить по причине доступа
+
+confirmed on the box itself:
+
+```console
+$ tailscale status --json | jq '{Self: {Host: .Self.HostName, IPs: .Self.TailscaleIPs}}'
+{"Self": {"Host": "exit-node-vps", "IPs": ["100.64.0.1","fd7a:115c:a1e0::1"]}}
+```
+
+**The local tailscaled IS the exit node.** headscale, skygate and the relay live on
+one machine — which also means `telegram.egress_node_id` pointing at it can route
+nothing (see below).
+
+### Why SSH was the wrong transport here
+
+B292 taught the sync to name its blocker, but the transport itself was still SSH:
+an SSH session from the host **to itself**, through the very tailnet it configures.
+
+* **Pointless:** a private key plus `authorized_keys` on the same box, host-key
+  pinning, `ConnectTimeout=10` per sync — to run one local command.
+* **Fragile:** it fails exactly when the local tailscaled is the thing needing
+  repair. `--advertise-routes` is part of that configuration, so "fix the relay
+  through the relay" is a self-reference.
+* **Blind:** the page kept demanding a key for a relay that needs none.
+
+### What it does now
+
+* **The decision is evidence, not a guess.** `tailscale status --json` →
+  `Self.TailscaleIPs` is compared with the addresses headscale reports for the
+  relay (`internal/headscale/local_node_b293.go`). A match is proof (tailnet
+  addresses are unique per node); a shared **hostname** is deliberately never
+  enough — that is the B265.1 lesson, where the reserved name `skygate-host`
+  matched every relay. "I could not ask the local daemon" keeps the SSH path, so a
+  container install (whose own tailscaled is a different node) is unaffected.
+* **A local relay is configured with a LOCAL `tailscale set`**, through a
+  **privilege ladder** — because the operator asked for this to work without root:
+  1. `direct` — `tailscale set …` as this process (root, or a daemon configured
+     with `tailscale set --operator=<skygate user>`);
+  2. `sudo -n tailscale set …` (never interactive, so it cannot hang the sync);
+  3. **`helper`** — a data-only `<update_dir>/routes.request.props` consumed by the
+     new root-owned `deploy/skygate-apply-routes.sh` (`skygate-routes.path` /
+     `skygate-routes.service`, written by `install-common.sh`, re-installable with
+     `deploy/install-routes-helper.sh`); this is the rung that works when the
+     service has no root, no sudo and no operator grant;
+  4. a **named** error listing all four ways to grant access.
+  Only a **privilege refusal** falls through to the next rung: a real
+  `tailscale set` error (bad CIDR, daemon down) is surfaced as-is instead of being
+  retried somewhere else. A staged-but-unconsumed request is an **error**, not a
+  fake success (the B288.1 lesson).
+* **The co-location footgun is guarded.** A relay that IS this host must never
+  advertise a subnet the host sits **inside** (the documented "advertise your own
+  LAN" loop: the host's own traffic to its LAN peers enters the tunnel and comes
+  back, 500–1700 ms for a 1 ms hop). Such routes are dropped and reported
+  (`self_subnet_skipped=…` in the sync result + a log line); the exit-node base
+  routes `0.0.0.0/0` / `::/0` are exempt.
+* **The page stops lying about keys.** `/admin/exit-nodes` marks such a relay
+  «локальный узел», shows which rung the next sync will use, and **suppresses**
+  B292's missing-SSH-key warning for it. The sync result reads
+  `local=ok via direct approved=21` / `local=err=…`, and a local failure renders as
+  a red flash like any other failure.
+* **`/admin/telegram` stops conflating two different warnings.** A relay that IS
+  this host cannot be an egress detour — its way out to the internet is skygate's
+  own — so selecting it is a no-op at best. What changes for the better: the
+  `api.telegram.org` probe on that page **is representative** (it measures exactly
+  the path the bot will use), where B265's warning had to call it untrustworthy.
+  If Telegram is unreachable from this host, the answer is a **different** relay on
+  another machine, and the page now says so.
+
+Files: `internal/headscale/local_node_b293.go` (new),
+`internal/headscale/local_apply_b293.go` (new), `internal/headscale/route_args.go`
+(`BuildTailscaleSetArgs` — one argv source shared with the SSH command string),
+`internal/feature/exit_rules/sync.go`, `internal/feature/admin/exit_nodes.go`,
+`internal/feature/admin/telegram.go`,
+`internal/handlers/templates/admin/exit_nodes.html`,
+`internal/handlers/templates/admin/telegram.html`,
+`internal/i18n/catalog_exit_nodes.go`, `internal/i18n/catalog_telegram.go`,
+`deploy/skygate-apply-routes.sh` (new), `deploy/install-routes-helper.sh` (new),
+`deploy/install-common.sh` (`write_routes_units`), `docs/networking.md`,
+`docs/operations.md`.
+
+### Verification
+
+48 contracts in `scripts/check_b293_local_exit_node.sh`, plus
+`internal/headscale/local_node_b293_test.go` (the live `aro` JSON verbatim, the
+address-equality rule including "a shared hostname is not enough", the
+self-covering-route filter) and `internal/headscale/local_apply_b293_test.go`
+(every rung and every fall-through with stubbed runners: direct wins, permission →
+sudo, permission → helper, a real error is not masked, no transport → a named
+error, the data-only request format, the verdict reader) and
+`internal/feature/admin/exit_nodes_b293_test.go` (the `local=err=` classification,
+the badge, the Telegram distinction).
+
+### What to do on `aro`
+
+Nothing to install beyond the update — the host runs skygate as root, so the
+`direct` rung applies. After `/admin/update` to **v1.5.57**:
+
+```bash
+# 1. The relay must be recognised as local (one line per page render):
+journalctl -u skygate --since '-5 min' | grep 'IS this host'
+#    [exit-nodes] exit-node-vps IS this host (matched 100.64.0.1) — routes are applied locally via direct (this process is root), SSH is not used
+
+# 2. /admin/exit-nodes → Re-sync on the relay. The flash must read:
+#    Sync exit-node-vps: local=ok via direct approved=N
+#    and the row must show the «локальный узел» badge instead of a key warning.
+#    ADVERTISED ROUTES must move off 2 маршрутов.
+```
+
+If the service ever runs as an unprivileged user, the page shows which rung will be
+used; the same fallback ladder then needs one of:
+
+```bash
+sudo tailscale set --operator=skygate          # skygate runs tailscale set directly
+echo 'skygate ALL=(root) NOPASSWD: /usr/bin/tailscale set' > /etc/sudoers.d/skygate-tailscale
+sudo bash deploy/install-routes-helper.sh      # the root-owned applier (no sudoers at all)
+```
+
 ## v1.5.56 — the exit-node SSH sync names its blocker (B292)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.55` → this tag · **Compatibility:** none —

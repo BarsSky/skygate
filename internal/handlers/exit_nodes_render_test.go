@@ -59,7 +59,10 @@ type stubExitNodeInfo struct {
 	EffectiveSSHKeyPath string
 	SSHKeyState         string
 	SSHKeyNote          string
-	Enabled             bool
+	// B293: this relay IS this host — routes are applied locally, no SSH/key.
+	LocalRelay     bool
+	LocalTransport string
+	Enabled        bool
 	Healthy             bool
 	State               string
 	LastSeenAgo         string

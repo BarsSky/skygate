@@ -29,6 +29,7 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/db"
+	"skygate/internal/headscale"
 	"skygate/internal/i18n"
 	"skygate/internal/telegram"
 )
@@ -279,6 +280,21 @@ type EgressState struct {
 	// (text/template has no join builtin in this project's funcmap).
 	ColocationHostnamesText string
 	ColocationWarning       bool
+	// B293 (2026-09-23): the co-located relay IS this machine's own tailscaled
+	// node (verified from the live daemon, not from a hostname guess — the
+	// operator's `aro` runs headscale + skygate + the exit node in one place,
+	// `tailscale status` reports Self.HostName=exit-node-vps with 100.64.0.1).
+	//
+	// This is a DIFFERENT warning from B265's. Two facts flip:
+	//   * selecting it as `telegram.egress_node_id` cannot route anything: the
+	//     relay's egress IS this host's egress, so the selection is a no-op at
+	//     best and a loop at worst;
+	//   * the api.telegram.org probe on this page becomes REPRESENTATIVE (it
+	//     measures exactly the path the bot will use), not untrustworthy.
+	// If Telegram is unreachable from here, the answer is a DIFFERENT relay.
+	LocalSelfRelay     bool
+	LocalSelfHostnames []string
+	LocalSelfText      string
 }
 
 func (s *Service) loadTelegramUIState() telegramUIState {
@@ -330,11 +346,24 @@ func (s *Service) loadTelegramUIState() telegramUIState {
 		for _, ip := range selfIPs {
 			selfSet[strings.ToLower(strings.TrimSpace(ip))] = true
 		}
+		// B293: split the co-located relays into "this machine's own tailscale
+		// node" (verified against the live daemon — the warning text is
+		// different and the probe verdict flips) and the rest (B265's warning).
+		localSelf, localErr := headscale.LocalTailscaleSelf()
 		for _, e := range state.Egress.Available {
-			if selfHostMatches(e, selfSet) {
-				state.Egress.ColocationHostnames = append(state.Egress.ColocationHostnames, e.Hostname)
+			if !selfHostMatches(e, selfSet) {
+				continue
 			}
+			if localErr == nil && len(localSelf.IPs) > 0 {
+				if _, isSelf := headscale.IsLocalRelay(localSelf, splitCommaList(e.TailscaleIP)); isSelf {
+					state.Egress.LocalSelfRelay = true
+					state.Egress.LocalSelfHostnames = append(state.Egress.LocalSelfHostnames, e.Hostname)
+					continue
+				}
+			}
+			state.Egress.ColocationHostnames = append(state.Egress.ColocationHostnames, e.Hostname)
 		}
+		state.Egress.LocalSelfText = strings.Join(state.Egress.LocalSelfHostnames, ", ")
 		state.Egress.ColocationWarning = len(state.Egress.ColocationHostnames) > 0
 		state.Egress.ColocationHostnamesText = strings.Join(state.Egress.ColocationHostnames, ", ")
 	}

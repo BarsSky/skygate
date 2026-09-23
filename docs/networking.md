@@ -711,7 +711,58 @@ POST /admin/exit-nodes  → per-row "Re-sync"        # one node only
 | New domain rule has no effect for a few minutes | `/32` rows appear only on the `SKYGATE_DNS_AUTO_CHECK` tick, then route sync | `POST /admin/exit-rules/sync`, or lower `SKYGATE_DNS_AUTO_CHECK` |
 | Brand-new device cannot use an exit node | dev-tag not yet applied → the per-device grant doesn't match | wait one `SKYGATE_NODE_DISCOVERY_INTERVAL` tick (5 min) |
 | Exit-node sync log shows `ssh=err=…` | `ssh_target` unresolvable, missing `ssh_key_path`, or the relay is down | fix `exit_servers.ssh_target` (`user@host` / `user@host:port`), set `ssh_key_path` or `SKYGATE_EXIT_SSH_KEY` |
+| Exit node IS this host (`tailscale status` reports the relay's address as `Self`), yet the sync still wants SSH or reports a missing key | before v1.5.57 the transport was always SSH, and `/admin/exit-nodes` warned about a key the local node does not need | upgrade to v1.5.57+: the relay is marked «локальный узел» and the routes are applied with a local `tailscale set`. If the service user cannot run it, the page shows the rung — see §6.3 |
+| Local exit node: `local=err=… permission denied` / `local=err=… no local way to apply tailscale routes` | the skygate user may not run `tailscale set` (daemon socket is root-only, no `--operator`, no `NOPASSWD` rule) | one of: `sudo tailscale set --operator=<skygate user>`; a sudoers rule `skygate ALL=(root) NOPASSWD: /usr/bin/tailscale set`; or `sudo bash deploy/install-routes-helper.sh` (root-owned applier, no sudoers needed) |
+| Local exit node: the sync reports `self_subnet_skipped=…` | the relay advertises a subnet this host sits INSIDE → the documented route loop (`500–1700 ms` to a LAN peer) | intended: skygate refuses that route and reports it. Remove the rule/subnet, or move the relay to a host outside the advertised network |
 | `/admin/exit-rules` shows "no preferred exit-node set" for every rule | preference computed after the rule structs were grouped | upgrade for the annotate-before-group ordering |
+
+### 6.3 Exit node on the skygate host (the local transport, B293)
+
+When the machine that runs skygate is **also** an exit node — headscale, skygate and
+the relay in one place, which is the reference `aro` host — the local tailscaled IS
+the relay:
+
+```console
+$ tailscale status --json | jq '{Self: {Host: .Self.HostName, IPs: .Self.TailscaleIPs}}'
+{"Self": {"Host": "exit-node-vps", "IPs": ["100.64.0.1","fd7a:115c:a1e0::1"]}}
+```
+
+skygate detects this from **evidence** — the daemon's own addresses against the
+addresses headscale reports for the relay — and then applies
+`tailscale set --advertise-exit-node --advertise-routes=…` **locally**, with no SSH
+and no key. A shared hostname is deliberately not enough (the reserved name
+`skygate-host` once matched every relay); "I could not ask the local daemon" keeps
+the SSH path, so a container install (whose own tailscaled is a different node) is
+unaffected.
+
+**Privileges.** `tailscale set` needs root, the daemon's `--operator` user, or a
+NOPASSWD sudoers rule. skygate walks a ladder and names the rung it used in the sync
+result (`local=ok via direct|sudo|helper approved=N`):
+
+| Rung | Needs | Result string |
+|---|---|---|
+| `direct` | skygate runs as root, **or** `tailscale set --operator=<skygate user>` was applied to the daemon | `local=ok via direct` |
+| `sudo` | a sudoers rule: `<skygate user> ALL=(root) NOPASSWD: /usr/bin/tailscale set` | `local=ok via sudo` |
+| `helper` | nothing: skygate stages a data-only request and the root-owned applier consumes it | `local=ok via helper` |
+
+The helper is `deploy/skygate-apply-routes.sh`, triggered by
+`skygate-routes.path`/`.service` (installed by `install-common.sh`, re-installable
+on an existing host with `sudo bash deploy/install-routes-helper.sh`). It re-validates
+every value and passes the whole CIDR list as one argv element, then records its
+verdict in `<update_dir>/routes-apply.status`. Only a **privilege refusal** falls
+through to the next rung — a real `tailscale set` error is reported as-is, and a
+staged request nobody consumed is an error, not a success.
+
+**Guard: never advertise a network this host sits inside.** A co-located relay that
+advertises its own LAN sends the host's own traffic to LAN peers into the tunnel and
+back (`500–1700 ms` for a 1 ms hop). skygate drops such routes, keeps the exit-node
+bases (`0.0.0.0/0`, `::/0`), and reports `self_subnet_skipped=…` in the sync result.
+
+**Egress is not a thing here.** If the relay IS this host, its way out to the
+internet is skygate's own, so `telegram.egress_node_id` pointing at it cannot route
+anything — and the `api.telegram.org` probe on `/admin/telegram` becomes
+*representative* (it measures exactly the path the bot will use). If Telegram is
+unreachable from this host, the answer is a **different** relay on another machine.
 
 ---
 
