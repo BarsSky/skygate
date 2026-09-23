@@ -115,24 +115,140 @@ func (c *Client) GetACL() (string, error) {
 			return s, nil
 		}
 	}
-	if c.ExecContainer == "" {
-		return "", err
+	// B294: the API is unreachable or unusable. Walk the two privilege-free-ish
+	// rungs before giving up — the policy FILE headscale serves in `file` mode,
+	// then the CLI through the install-kind ladder (docker exec OR the local
+	// `headscale` binary). Pre-B294 the tail here was a docker-only `exec.Command`
+	// that bailed out immediately when no container was configured, and reported
+	// "cli: all variants failed" about a CLI it never ran.
+	fileReason := ""
+	if body, reason := c.readPolicyFileAsACL(); body != "" {
+		return body, nil
+	} else {
+		fileReason = reason
 	}
-	// Try several CLI variants since headscale versions differ
-	variants := [][]string{
-		{"policy", "get"},
-		{"policy", "show"},
-		{"policy"},
+	cliReason := ""
+	if body, reason := c.readPolicyViaCLIAsACL(); body != "" {
+		return body, nil
+	} else {
+		cliReason = reason
 	}
-	for _, args := range variants {
-		fullArgs := append([]string{"exec", c.ExecContainer, "headscale"}, args...)
-		cmd := exec.Command("docker", fullArgs...)
-		out, cerr := cmd.CombinedOutput()
-		if cerr == nil && len(strings.TrimSpace(string(out))) > 0 {
-			return strings.TrimSpace(string(out)), nil
+	hint := aclReadHint(c.BaseURL, err)
+	msg := fmt.Sprintf("api: %v; policy file: %s; %s", err, fileReason, cliReason)
+	if hint != "" {
+		msg += " — " + hint
+	}
+	return "", errors.New(msg)
+}
+
+// readPolicyFileAsACL reads headscale's policy straight from the FILE it serves
+// when `policy.mode: file` (B294).
+//
+// WHY this rung exists: the live-policy READ used to have exactly two paths — the
+// API and a docker-only `headscale policy get`. On a native install whose API is
+// unreachable (live `aro`: `Get "http://127.0.0.1:8081/api/v1/policy": dial tcp
+// 127.0.0.1:8081: connect: connection refused`) the reader answered
+// `api: …; cli: all variants failed` — a sentence blaming a CLI that was never
+// tried, because neither docker nor a container exists there. With no way to read
+// the live policy, `/admin/exit-nodes` reported «состояние политики неизвестно» and
+// the prefix table could never converge: the comparison that drives the resync had
+// nothing to compare against. Returns (policy, reason-it-failed).
+func (c *Client) readPolicyFileAsACL() (string, string) {
+	path := strings.TrimSpace(c.PolicyPath)
+	if path == "" {
+		if p, err := DiscoverPolicyPath(); err == nil && p != "" {
+			path = p
+			c.PolicyPath = p
 		}
 	}
-	return "", fmt.Errorf("api: %v; cli: all variants failed", err)
+	if path == "" {
+		return "", "no policy file path (set SKYGATE_HEADSCALE_POLICY_PATH, or let skygate find headscale's config.yaml)"
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Sprintf("read %s: %v", path, err)
+	}
+	body := strings.TrimSpace(string(raw))
+	if body == "" {
+		return "", fmt.Sprintf("%s is empty", path)
+	}
+	c.cacheACL = body
+	c.cacheACLAt = time.Now()
+	return body, ""
+}
+
+// readPolicyViaCLIAsACL reads the policy through the headscale CLI, using the same
+// install-kind ladder as every other CLI call (B267): `docker exec <container>
+// headscale …` when docker and a container name are available, the local
+// `headscale` binary otherwise — including the variants older releases needed.
+// Returns (policy, reason-it-failed).
+func (c *Client) readPolicyViaCLIAsACL() (string, string) {
+	var attempts []string
+	for _, args := range [][]string{{"policy", "get"}, {"policy", "show"}, {"policy"}} {
+		out, err := c.runHeadscaleCLI(args...)
+		if err != nil {
+			attempts = append(attempts, fmt.Sprintf("%v: %v", args, err))
+			continue
+		}
+		if body := strings.TrimSpace(string(out)); body != "" {
+			c.cacheACL = body
+			c.cacheACLAt = time.Now()
+			return body, ""
+		}
+		attempts = append(attempts, fmt.Sprintf("%v: empty output", args))
+	}
+	return "", "headscale CLI: " + strings.Join(attempts, "; ")
+}
+
+// ACLReadHintFor returns the actionable advice for a failed READ of the headscale
+// API (B294): the page renders it next to the error so the operator knows which
+// knob to check. Returns "" for errors that are not reachability problems.
+func ACLReadHintFor(c *Client, err error) string {
+	base := ""
+	if c != nil {
+		base = c.BaseURL
+	}
+	return aclReadHint(base, err)
+}
+
+// aclReadHint turns an unreachable-API error into the operator's next step.
+//
+// B294: this is a CONFIGURATION class, not a policy class — the address skygate
+// talks to must be reachable from the skygate PROCESS (a container sees its own
+// loopback, not the host's, so `127.0.0.1:<port>` is the classic wrong answer
+// there). Returns "" when the error is not a reachability failure.
+func aclReadHint(baseURL string, err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	unreachable := false
+	// Both platform spellings: POSIX says "connection refused"/"no such host",
+	// Windows says "No connection could be made because the target machine
+	// actively refused it" / "connectex". A hint that only fires on Linux would
+	// silently vanish in a developer's Windows run.
+	for _, needle := range []string{
+		"connection refused",
+		"actively refused",
+		"no connection could be made",
+		"connectex",
+		"no such host",
+		"i/o timeout",
+		"network is unreachable",
+		"connection timed out",
+	} {
+		if strings.Contains(msg, needle) {
+			unreachable = true
+			break
+		}
+	}
+	if !unreachable {
+		return ""
+	}
+	base := strings.TrimRight(baseURL, "/")
+	return fmt.Sprintf("headscale's API at %s is not reachable from the skygate process — check HEADSCALE_URL (inside a container this must be the headscale SERVICE NAME or its address on the shared network, never 127.0.0.1) "+
+		"and the address headscale itself listens on (`listen_addr` in its config.yaml); verify with: curl -sf -H \"Authorization: Bearer $HEADSCALE_API_KEY\" %s/api/v1/node >/dev/null && echo api-ok",
+		base, base)
 }
 
 // SetPolicy sets the ACL policy.

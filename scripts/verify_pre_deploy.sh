@@ -5160,3 +5160,38 @@ run_check "B292" "the exit-node SSH sync must name its blocker instead of echoin
 # internal/feature/admin/exit_nodes_b293_test.go.
 run_check "B293" "an exit node that IS the skygate host must be managed locally, and the transport must be chosen from evidence: the local tailscaled's own addresses (tailscale status --json → Self.TailscaleIPs) are compared with the relay's headscale addresses, so a match is proof and a shared hostname is deliberately not enough (the B265.1 lesson); a match routes the advertised-routes apply through a LOCAL tailscale set with a privilege ladder — direct (root or the daemon --operator user) → sudo -n → the root-owned deploy/skygate-apply-routes.sh consuming a data-only routes.request.props staged by skygate (skygate-routes.path/.service, installed by install-common.sh and re-installable with deploy/install-routes-helper.sh) → a named error listing all four ways to grant access — where only a privilege refusal falls through to the next rung, a real tailscale error is surfaced as-is, and a staged-but-unconsumed request is an error rather than a fake success; a remote relay keeps the unchanged SSH transport and an unknown local daemon keeps SSH too; the sync refuses to advertise a subnet this host sits inside (the 'advertise your own LAN' route loop, exit-node base routes exempt) and reports what it skipped; /admin/exit-nodes marks such a relay with a local-node badge, shows the rung the next sync will use and suppresses the B292 missing-key warning for it; and /admin/telegram distinguishes 'this host's own node' from B265's co-location warning, because such a relay cannot be an egress detour while the api.telegram.org probe is representative. Contracts in scripts/check_b293_local_exit_node.sh." \
   'test -f scripts/check_b293_local_exit_node.sh && bash scripts/check_b293_local_exit_node.sh'
+
+# --- B294: the live-policy read must work without docker ----------------------
+# Live on `aro` (the operator's prefix-assignment card):
+#
+#   состояние политики неизвестно: read live policy: api: Get
+#   "http://127.0.0.1:8081/api/v1/policy": dial tcp 127.0.0.1:8081: connect:
+#   connection refused; cli: all variants failed
+#
+#   владелец не объявляет: 0   никто не объявляет: 19   объявляет несколько: 0
+#
+# with all 19 prefixes rendered «АНОНС: нет · нет маршрута». Three defects: (A) the
+# live-policy READ had only two rungs — the API and a DOCKER-ONLY
+# `headscale policy get` — so on a native install with an unreachable API it gave up
+# at once and reported "cli: all variants failed" about a CLI it never ran, while
+# the policy FILE headscale serves in `policy.mode: file` was never read (the WRITE
+# path has used it since B272); (B) the prefix table's advertisement map comes from
+# ListAllNodes() and the loader DISCARDED the error, so an unreachable headscale
+# rendered every prefix as «нет / нет маршрута» — absence of evidence shown as a
+# negative fact, and no action on that page could change it; (C) the unreachable API
+# is a CONFIGURATION class (the address must be reachable from the skygate PROCESS —
+# inside a container 127.0.0.1 is the container's own loopback, so it can never be
+# the host's headscale) and nothing named HEADSCALE_URL. Fix: GetACL walks
+# API → policy file (c.PolicyPath / DiscoverPolicyPath) → headscale CLI through the
+# B267 install-kind ladder (docker exec when available, else the local binary, with
+# the container-only `policy show`/`policy` variants) → an error that names EVERY
+# rung it tried plus the reachability hint (HEADSCALE_URL, the container-loopback
+# trap, and a ready curl probe), where the hint fires only for a genuine
+# reachability failure (connection refused / no such host / timeout, in both POSIX
+# and Windows spellings) and never for a 401/500 from a reachable daemon; and the
+# prefix card carries `LiveReadErr` + `LiveReadHint` so the table says «could not
+# ask headscale» instead of «nothing is advertised» (RU+EN). 20 contracts in
+# scripts/check_b294_headscale_read_truth.sh +
+# internal/headscale/acl_read_b294_test.go, internal/feature/admin/exit_nodes_b294_test.go.
+run_check "B294" "reading the live headscale policy and node state must work on an install without docker, and a failed read must not render as a fact: GetACL walks API → headscale's policy FILE (PolicyPath or DiscoverPolicyPath — the file a policy.mode=file host actually serves, which the write path has used since B272) → the headscale CLI through the install-kind ladder (docker exec when docker and a container are available, otherwise the local binary, including the legacy policy show/policy variants), and when all three fail the error names every rung it tried plus the reachability hint — HEADSCALE_URL, the container-loopback trap (inside a container 127.0.0.1 is the container's own loopback, never the host's headscale) and a ready curl probe — while that hint fires ONLY for a genuine reachability failure (connection refused / actively refused / no such host / timeout, in both POSIX and Windows spellings) and never for a 401/500 from a reachable daemon; the pre-B294 'cli: all variants failed' wording (which blamed a CLI that was never executed) is gone; and /admin/exit-nodes carries the ListAllNodes failure as LiveReadErr + LiveReadHint so the prefix card declares that the АНОНС column could not be read instead of printing «нет / нет маршрута» for every row and counting them as problems. Contracts in scripts/check_b294_headscale_read_truth.sh." \
+  'test -f scripts/check_b294_headscale_read_truth.sh && bash scripts/check_b294_headscale_read_truth.sh'

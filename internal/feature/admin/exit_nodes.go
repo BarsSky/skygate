@@ -1113,6 +1113,13 @@ type PrefixDriftStats struct {
 	// applier says OK means the write happened but headscale serves something
 	// else; an applier that says failed names its reason outright.
 	PolicyApply string
+	// LiveReadErr is why the AНОНС (advertised-routes) column could not be filled
+	// this render (B294): without it, an unreachable headscale made every prefix
+	// look unadvertised and «никто не объявляет: N» read as a fact.
+	LiveReadErr string
+	// LiveReadHint is the actionable half of LiveReadErr (which env var to check,
+	// how to probe the API) — see headscale.ACLReadHintFor.
+	LiveReadHint string
 }
 
 // prefixDriftRowLimit caps how many rows the page renders. The assignment table
@@ -1147,6 +1154,13 @@ func (s *Service) loadPrefixOwnerRows() ([]PrefixOwnerRow, PrefixDriftStats) {
 	// and "two relays claim it" are visible from one headscale read.
 	advertised := map[string]map[string]bool{}
 	advertisers := map[string][]string{}
+	// B294: an unreachable headscale used to leave `advertised` EMPTY, and the
+	// table then rendered every prefix as «нет / нет маршрута / никто не
+	// объявляет» — absence of EVIDENCE presented as a negative FACT. That is the
+	// live `aro` screenshot: 19 prefixes, 0 advertised, 19 «проблемных», while the
+	// real cause was `dial tcp 127.0.0.1:8081: connect: connection refused`. The
+	// rows stay, but the reason travels to the page so the operator sees "we could
+	// not ask headscale" instead of "nothing is advertised".
 	if hsNodes, herr := s.HSGlobalFn().ListAllNodes(); herr == nil {
 		for _, n := range hsNodes {
 			set := map[string]bool{}
@@ -1156,6 +1170,10 @@ func (s *Service) loadPrefixOwnerRows() ([]PrefixOwnerRow, PrefixDriftStats) {
 			}
 			advertised[strings.ToLower(n.Hostname)] = set
 		}
+	} else {
+		stats.LiveReadErr = herr.Error()
+		stats.LiveReadHint = headscale.ACLReadHintFor(s.HSGlobalFn(), herr)
+		log.Printf("[exit-nodes] cannot read the advertised routes from headscale (%v) — the АНОНС column cannot be trusted this render", herr)
 	}
 	var all []PrefixOwnerRow
 	for rows.Next() {

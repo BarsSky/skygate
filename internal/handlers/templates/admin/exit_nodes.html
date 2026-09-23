@@ -394,6 +394,19 @@
   {{else if .PolicyErr}}
   <p style="margin:10px 0 0 0"><span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.policy_unknown_tip"}}">{{t "exit_nodes.prefix_owner.policy_unknown"}}: {{.PolicyErr}}</span></p>
   {{end}}
+  {{/* B294: the live read failed, so the АНОНС column below cannot be trusted.
+       Pre-B294 the rows silently rendered «нет / нет маршрута» and the counter said
+       «никто не объявляет: N» — absence of evidence shown as a fact, on a host
+       whose headscale API was simply unreachable (live `aro`: dial tcp
+       127.0.0.1:8081: connect: connection refused). */}}
+  {{if .LiveReadErr}}
+  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:rgba(255,193,7,.12);border:1px solid rgba(255,193,7,.45)">
+    <b>{{t "exit_nodes.prefix_owner.live_read_failed"}}</b>
+    <div style="font-size:13px;margin-top:4px"><code>{{.LiveReadErr}}</code></div>
+    {{if .LiveReadHint}}<div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{.LiveReadHint}}</div>{{end}}
+    <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.prefix_owner.live_read_failed_help"}}</div>
+  </div>
+  {{end}}
   {{if or .NotAdvertised .Unserved .Duplicated}}
   <p style="margin:8px 0 0 0;font-size:13px">
     <span class="tag tag-danger">{{t "exit_nodes.prefix_owner.drift_count"}}: {{.NotAdvertised}}</span>

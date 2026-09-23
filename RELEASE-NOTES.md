@@ -12,6 +12,110 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.59 — reading headscale must work without docker, and «нет» must mean «нет» (B294)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.58` → this tag · **Compatibility:** none —
+no schema change, no migration.
+
+Operator report from the prefix-assignment card on `aro` (and the same card «не
+меняется» on the docker VM):
+
+```
+состояние политики неизвестно: read live policy: api: Get
+"http://127.0.0.1:8081/api/v1/policy": dial tcp 127.0.0.1:8081: connect: connection refused;
+cli: all variants failed
+
+владелец не объявляет: 0   никто не объявляет: 19   объявляет несколько: 0
+```
+
+…with all 19 prefixes rendered «АНОНС: нет · нет маршрута» (19 «проблемных»).
+
+### Root cause — three defects behind one screen
+
+1. **The live-policy READ could not work without docker.** It had exactly two
+   rungs: the API, and a **docker-only** `headscale policy get`. When the API was
+   unreachable it gave up immediately and answered `cli: all variants failed` —
+   blaming a CLI it had never executed, because neither docker nor a container
+   exists on that host. The policy **FILE** headscale actually serves in
+   `policy.mode: file` was never read, even though the **write** path has used it
+   since B272.
+2. **«Никто не объявляет: 19» was not a fact.** The prefix table's advertisement map
+   is filled from `ListAllNodes()`, and the loader **discarded the error**. With
+   headscale unreachable the map stayed empty, so every prefix rendered as
+   unadvertised — absence of evidence presented as a negative fact. No click on that
+   page could change it, because the real problem was the API address.
+3. **Nothing named the thing to fix.** `127.0.0.1:8081` is a *configuration*
+   question (the address must be reachable **from the skygate process** — inside a
+   container `127.0.0.1` is the container's own loopback, never the host's
+   headscale), and no page mentioned `HEADSCALE_URL`.
+
+### What it does now
+
+* **`GetACL` walks three rungs:** API → headscale's **policy file**
+  (`c.PolicyPath`, else `DiscoverPolicyPath()`) → the **headscale CLI through the
+  B267 install-kind ladder** (`docker exec` when docker + a container are
+  available, otherwise the local binary, including the legacy `policy show` /
+  `policy` variants). The file rung is what makes a native `policy.mode: file` host
+  readable with no docker and no CLI.
+* **A named failure instead of a lie.** When all three fail, the error lists every
+  rung it tried (`api: …; policy file: …; headscale CLI: …`) and, for a genuine
+  reachability failure, appends the fix: check `HEADSCALE_URL`, remember that a
+  container must not use `127.0.0.1`, and a ready `curl -sf -H "Authorization:
+  Bearer $HEADSCALE_API_KEY" <url>/api/v1/node` probe. The hint fires in both POSIX
+  and Windows spellings and **never** for a 401/500 from a reachable daemon.
+* **The prefix card distinguishes «не удалось спросить» from «нет».** The loader now
+  carries `LiveReadErr` + `LiveReadHint`, and the card renders a warning: the
+  advertised/no-route columns are filled from live headscale, so while it is
+  unreachable «нет» means «could not ask» — and the assignment cannot change until
+  the API is reachable again (RU + EN). The journal logs the same.
+
+Files: `internal/headscale/acl.go` (the read chain + hint),
+`internal/feature/admin/exit_nodes.go` (LiveReadErr/LiveReadHint),
+`internal/handlers/templates/admin/exit_nodes.html`,
+`internal/i18n/catalog_exit_nodes.go`.
+
+### Verification
+
+20 contracts in `scripts/check_b294_headscale_read_truth.sh` +
+`internal/headscale/acl_read_b294_test.go` (the file rung on a host whose API is
+down — the live case; all three rungs named; the reachability hint and its
+non-firing on 401/500; nil-client safety) +
+`internal/feature/admin/exit_nodes_b294_test.go` (the failure reaches the page and
+the template).
+
+### What to check on the hosts (this is a configuration question too)
+
+The code can now read the policy/file/CLI, but **nothing can fix a wrong API
+address for you**. On `aro`:
+
+```bash
+# What does headscale listen on, and is it running?
+sudo ss -ltnp | grep -E ':(8080|8081|9090)'          # headscale's listen_addr
+sudo systemctl is-active headscale 2>/dev/null || sudo docker ps --filter name=headscale
+grep -iE '^(listen_addr|server_url)' /etc/headscale/config.yaml
+
+# What does skygate talk to?
+grep -E 'HEADSCALE_URL|HEADSCALE_API_KEY' /etc/skygate/skygate.env | sed 's/KEY=.*/KEY=<redacted>/'
+
+# Can the skygate process reach it? (this is the check the hint prints)
+curl -sf -H "Authorization: Bearer $HEADSCALE_API_KEY" <HEADSCALE_URL>/api/v1/node >/dev/null && echo api-ok
+```
+
+On the docker VM, the same question looks different: **inside** the skygate
+container `127.0.0.1` is the container itself, so `HEADSCALE_URL` must be the
+headscale **service name** (`http://headscale:8080`) or its address on the shared
+network:
+
+```bash
+cd /home/skyadmin/skygate
+grep -iE 'HEADSCALE_URL' .env docker-compose.yml
+docker exec skygate-skygate-1 sh -c 'wget -qO- --header="Authorization: Bearer $HEADSCALE_API_KEY" "$HEADSCALE_URL/api/v1/node" >/dev/null && echo api-ok'
+```
+
+Whatever those commands show, the fix is one line in the env file (plus a skygate
+restart) — and after v1.5.59 the page will tell you the same thing in words instead
+of showing 19 phantom «проблемных» prefixes.
+
 ## v1.5.58 — the local-relay detection must not need daemon privileges (B293.1)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.57` → this tag · **Compatibility:** none —
