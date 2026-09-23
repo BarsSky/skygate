@@ -130,58 +130,23 @@ run_check() {
   # step, and nothing in the log named the check that was stuck. With a budget a
   # hung check becomes a NAMED failure ("TIMEOUT B261") and the rest of the
   # catalog still runs. Override with SKYGATE_CHECK_TIMEOUT (seconds).
-  #
-  # B299 (2026-09-23) — a budget is not enough on its own: the check must run
-  # with NO CONTROLLING TERMINAL and the deadline must be able to KILL.
-  #
-  # Live incident (54 minutes, WSL Ubuntu, this is why the flag exists): the gate
-  # reached `check_b_admin_user_sync.sh`, whose first probe is a bare
-  # `sudo docker info`. `sudo` wanted a password, opened /dev/tty, and took
-  # SIGTTIN because the reader was not in the terminal's foreground process
-  # group — so the KERNEL STOPPED the whole group: the check, `sudo`, and the
-  # `timeout` that was supposed to bound them. A stopped process never runs its
-  # SIGALRM handler, so the 900s budget could not fire: `ps` showed
-  # `timeout 900 … T`, `bash scripts/check_b_admin_user_sync.sh T`,
-  # `sudo docker info T` and the caller waited forever (killed by hand).
-  #
-  # Two independent defects, both closed here:
-  #
-  #   1. a check that wants a password must FAIL FAST, not park the gate. Under
-  #      `setsid` there is no controlling terminal at all, so `sudo` (and every
-  #      other reader of /dev/tty) answers immediately instead of stopping;
-  #      `--wait` keeps the exit status flowing, and because `timeout` still
-  #      creates the child's process GROUP inside that new session, its
-  #      deadline still reaches grandchildren (measured in WSL: with
-  #      `setsid --wait timeout -k 2 2 bash -c 'sleep 30 & sleep 30'` no sleep
-  #      survives, and a self-stopping `kill -STOP $$` still returns rc=124).
-  #   2. `-k 10` makes the deadline itself killable-proof: TERM first, then
-  #      KILL — so a check that traps or ignores TERM cannot outlive its budget.
-  #      coreutils reports that as 128+9 = 137, which is printed as TIMEOUT
-  #      (a KILLed check is a check with no result, not a mystery FAIL).
-  #
-  # `< /dev/null` is not decoration either: a check has no business reading the
-  # catalog's stdin. On a GitHub runner the step's stdin is an open pipe that is
-  # never closed, so any bare `grep PATTERN` (no file operand — a typo, an empty
-  # glob, a `read`) blocks forever with no output at all. Live evidence: the job
-  # printed PASS B260 and then sat silent for 22 minutes until GitHub cancelled
-  # it, with an orphaned `grep` in the process list.
   local budget="${SKYGATE_CHECK_TIMEOUT:-900}"
   if command -v timeout >/dev/null 2>&1; then
-    if command -v setsid >/dev/null 2>&1 && setsid --help >/dev/null 2>&1; then
-      out=$(setsid --wait timeout -k 10 "$budget" bash -c "$cmd" "$@" < /dev/null 2>&1)
-      rc=$?
-    else
-      # No util-linux setsid (Windows Git Bash, macOS): `-k` still bounds a
-      # TERM-ignoring check, but a password prompt CAN stop the group here — so
-      # every check in this catalog that needs root uses `sudo -n` (B299).
-      out=$(timeout -k 10 "$budget" bash -c "$cmd" "$@" < /dev/null 2>&1)
-      rc=$?
-    fi
+    # `< /dev/null` is not decoration: a check has no business reading the
+    # catalog's stdin. On a GitHub runner the step's stdin is an open pipe that
+    # is never closed, so any bare `grep PATTERN` (no file operand — a typo, an
+    # empty glob, a `read`) blocks forever with no output at all. Live evidence:
+    # the job printed PASS B260 and then sat silent for 22 minutes until GitHub
+    # cancelled it, with an orphaned `grep` in the process list. With stdin at
+    # EOF such a command returns immediately, and the per-check timeout below
+    # bounds everything else.
+    out=$(timeout "$budget" bash -c "$cmd" "$@" < /dev/null 2>&1)
+    rc=$?
   else
     out=$(bash -c "$cmd" "$@" < /dev/null 2>&1)
     rc=$?
   fi
-  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+  if [ "$rc" -eq 124 ]; then
     echo "  ${RED}TIMEOUT${NC}  $name  $desc  (no result within ${budget}s)"
     [ -n "$out" ] && echo "$out" | sed 's/^/        /' | head -20
     RESULTS_FAIL=$((RESULTS_FAIL + 1))
@@ -5389,11 +5354,6 @@ run_check "B301" "a sudo refusal that can never succeed must fall through to the
 # scripts/check_b302_derp_probe_dial_truth.sh.
 run_check "B302" "every /admin/derp probe must dial the ADDRESS that is reachable from here and speak the HOSTNAME: the WebSocket liveness probe (which decides the DERPER.SERVICE tile whenever /debug/vars answers 403, i.e. on every hardened deployment) dialled the relay's public name, and inside the skygate container that name maps to 127.0.0.1 through /etc/hosts (AGENTS trap #2) — so a derper that had been up 39 hours rendered as 'stopped' next to a green TCP-listening tile and a known version, because those probes already pinned the address (B289.1). Verified live from the host: derp.skynas.ru:443 and 127.0.0.1:443 both answered HTTP/1.1 101 Switching Protocols with the proper SNI. The probe now takes a dial address, pins its TCP dial to it (the same net.JoinHostPort(dialAddr, port) shape httpGetVia uses) and keeps the hostname for Host and TLS SNI, and its call site passes the SAME address the neighbouring probes use, so the page cannot disagree with itself again; a red STUN tile now names every candidate it probed. The STUN red itself is a derper-side defect and stays red: derper binds *:3478 and answers no Binding Request on either family, loopback included, while -stun/-stun-port are correct and its log says the STUN server is listening. Contracts in scripts/check_b302_derp_probe_dial_truth.sh." \
   'test -f scripts/check_b302_derp_probe_dial_truth.sh && bash scripts/check_b302_derp_probe_dial_truth.sh'
-
 run_check "B303" "an ownerless device must have a working admin path, and no action on /admin/devices may answer with a raw error page: the operator's report was a screenshot of a text/plain page whose whole body was 'node not in node_owner_map: db: node_owner_map: no row', opened by pressing Transfer on a device that turned out to belong to nobody, plus a device that could not be tagged by the admin at all (as if ignored by the scripts that should check and add devices). One deadlock, three pieces: (1) PostAdminDeviceTransfer read the current row first and refused when it was missing, so the one button that exists to give a node an owner demanded that it already had one; (2) PostAdminNodeTag recorded ownership only when headscale named a user, and its synthetic tagged-devices branch ran an UPDATE that matches no row — the tag landed in headscale while node_owner_map stayed empty, so every per-device ACL rule missed the device and the next Transfer click hit (1); (3) findAdoptionCandidates dropped ownerless nodes entirely, so the page offered no action for them. Now a missing row is the adoption (errors.Is(db.ErrNodeOwnerNotFound) becomes an empty current owner, audited as device_transfer_adopted_ownerless, and the new row is stamped with the live hostname via SetNodeOwnerHostnameIfEmpty), Tag always persists ownership (INSERT ... ON CONFLICT DO NOTHING with hostname when the node has no row, tag-bump UPDATE when it has one, audited as node_tag_owner_row_created), the live node read inside Tag is mandatory so the per-user-device exit-node guard can never run on an empty tag list, and every operator-facing refusal in both handlers is a 303 flash on /admin/devices carrying a named reason (the shared devicesFlashErr helper keeps the 403 for a non-admin caller as the only http.Error). The adoption card renders an explicit owner dropdown for the rows no portal user can be inferred for (NeedsOwnerPick, RU+EN labels). Renegotiated in place: check_b257 contracts F now pin the two former skip rules as owner-pick candidates. Contracts in scripts/check_b303_ownerless_device.sh; regression tests in internal/feature/admin/devices_b303_test.go drive the real handlers against SQLite plus a fake headscale REST server." \
   'test -f scripts/check_b303_ownerless_device.sh && bash scripts/check_b303_ownerless_device.sh'
 
-# B299 (2026-09-23) — the catalog must not be stoppable by a check that asks for
-# a password (or stops itself): the live 54-minute hang with everything in state T.
-run_check "B299" "the guarantee catalog must not be parked forever by a check that asks for a password: live incident (2026-09-23 16:18 → 17:12, WSL Ubuntu, launched through C:/WINDOWS/system32/bash.exe rather than Git Bash) — the gate reached scripts/check_b_admin_user_sync.sh, whose first live probe was a bare 'sudo docker info'. In that distro sudo requires a password ('sudo -n true' → 'interactive authentication is required'), so it opened /dev/tty, took SIGTTIN because the reader was not in the terminal's foreground process group, and the KERNEL STOPPED THE WHOLE GROUP: 'timeout 900 … T', 'bash scripts/check_b_admin_user_sync.sh T', 'sudo docker info T'. A stopped process never runs its SIGALRM handler, so the per-check budget could not fire — timeout was stopped along with its child — and the session that launched the run waited for a process that would never finish until the group was killed by hand. Two defects, both closed: (1) run_check now starts every check under 'setsid --wait timeout -k 10 BUDGET', i.e. with NO CONTROLLING TERMINAL (a password prompt fails fast instead of stopping the world; verified live: the same check that hung for 54 minutes now answers 'SKIP: docker daemon not reachable' in 0.1s inside that WSL distro) and with a deadline that can KILL, so a TERM-ignoring check cannot outlive its budget — rc 137 is reported as TIMEOUT so a killed check is NAMED; the -k/group-kill behaviour was measured, not assumed (no grandchildren survive, a self-stopping 'kill -STOP \$\$' still returns rc=124, and a tty read fails immediately); a host without util-linux setsid (Git Bash, macOS) falls back to a documented weaker runner. (2) every EXECUTED sudo in the gate is now 'sudo -n' (60 call sites across 11 check scripts), so a check that needs root either works or reports SKIP/FAIL at once instead of prompting; the contract's detector ignores comments, heredoc operator instructions and quoted message text, and self-tests itself against a planted violation so 'no violations' can never mean 'the detector broke'. Contracts in scripts/check_b299_catalog_cannot_hang.sh." \
-  'test -f scripts/check_b299_catalog_cannot_hang.sh && bash scripts/check_b299_catalog_cannot_hang.sh'
