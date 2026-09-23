@@ -96,8 +96,15 @@ if grep -q 'hs.ApplyRoutesLocally(kept, lookupAcceptRoutes(node))' "$SYNC"; then
 else
   bad "B2: the sync still SSHes into a co-located relay"
 fi
-if grep -q 'hs.SetAdvertisedRoutes(node, approveRoutes, lookupAcceptRoutes(node), sshTarget, sshKeyPath)' "$SYNC"; then
-  ok "B3: remote relays keep the SSH transport (unchanged)"
+# CONTRACT RENEGOTIATION (2026-09-23, B310): the remote branch used to call
+# hs.SetAdvertisedRoutes directly with the ONE target B81/B292 resolved; it now goes
+# through the probed ladder (relay_transport_tailnet_b310.go), which tries the
+# tailnet address, the operator's ssh_target and the node name in turn. The property
+# this contract protects is unchanged — a REMOTE relay is still configured over SSH,
+# and a co-located one is still not — so either call shape passes.
+if grep -q 'applyRoutesOverSSHLadder(hs, node, approveRoutes' "$SYNC" \
+   || grep -q 'hs.SetAdvertisedRoutes(node, approveRoutes, lookupAcceptRoutes(node), sshTarget, sshKeyPath)' "$SYNC"; then
+  ok "B3: remote relays keep the SSH transport (unchanged; B310 routes it through the probed ladder)"
 else
   bad "B3: the SSH path was dropped — remote relays would break"
 fi
