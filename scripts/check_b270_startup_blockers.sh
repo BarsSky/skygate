@@ -106,7 +106,13 @@ if grep -q 'if os.Getenv("SKYGATE_OIDC_KEY_DIR") == "" {' "$CONFIG"; then
 else
   bad "B2: the derived default would override an operator's explicit setting"
 fi
-if grep -q 'return "/var/lib/skygate/oidc-keys"' "$CONFIG"; then
+# B292 contract renegotiation (2026-09-23): the absolute PostgreSQL fallback now
+# lives in nativeDataDir (shared with the exit-node SSH key default), so
+# defaultOIDCKeyDir joins "oidc-keys" onto it instead of repeating the literal.
+# The property is unchanged: with no SQLite file to anchor to, the answer must
+# still be an ABSOLUTE path — this fails if either half disappears.
+if grep -q 'return "/var/lib/skygate"' "$CONFIG" \
+   && grep -q 'return filepath.Join(nativeDataDir(dsn), "oidc-keys")' "$CONFIG"; then
   ok "B3: a PostgreSQL install (no local DB file to anchor to) still gets an absolute path"
 else
   bad "B3: no absolute fallback for the PostgreSQL case"
