@@ -149,9 +149,21 @@ else
 fi
 
 # --- E/F. per-check budget in the catalog runner -----------------------------
+# CONTRACT RENEGOTIATION (2026-09-23, B299): the wrapper is now
+#     setsid --wait timeout -k 10 "$budget" bash -c "$cmd" ...
+# (B299 gives every check NO controlling terminal — a `sudo` password prompt used
+# to STOP the whole process group, which is why the budget could never fire — and
+# adds `-k 10` so a TERM-ignoring check is KILLed at the deadline). The property
+# this contract protects is unchanged: the check runs under a wall-clock budget.
+# Both shapes are accepted so the older form still passes if the runner is ported.
 if [ -f "$VPD" ]; then
   check_ge "E-budget-var" 1 "$(count "$VPD" 'SKYGATE_CHECK_TIMEOUT:-900')"
-  check_ge "E-timeout-wrap" 1 "$(count "$VPD" 'timeout "\$budget" bash -c "\$cmd"')"
+  budget_wrap=$(count "$VPD" 'timeout -k [0-9]+ "\$budget" bash -c "\$cmd"')
+  if [ "${budget_wrap:-0}" -ge 1 ]; then
+    ok "[E-timeout-wrap] $budget_wrap"
+  else
+    check_ge "E-timeout-wrap" 1 "$(count "$VPD" 'timeout "\$budget" bash -c "\$cmd"')"
+  fi
   check_ge "F-rc124" 1 "$(count "$VPD" '\[ "\$rc" -eq 124 \]')"
   check_ge "F-timeout-row" 1 "$(count "$VPD" 'TIMEOUT[$][{]NC[}]')"
   # E4/F2. the check's stdin is closed. On a runner the step's stdin is an open
