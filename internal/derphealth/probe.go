@@ -8,10 +8,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"skygate/internal/derpcfg"
 )
 
 // ProbeOne measures the TLS-handshake latency to a single
@@ -74,7 +75,14 @@ func dialTargetFor(d DERPInfo) (addr, serverName, port string) {
 	}
 	serverName = host
 	addr = host
-	if hint := strings.TrimSpace(os.Getenv("SKYGATE_DERP_PROBE_HOST")); hint != "" && nameResolvesToLoopback(host) {
+	// B296: the hint travels on the row (resolved by FetchOwnDERPs via
+	// internal/derpcfg: DB override > .env > none). The os.Getenv fallback
+	// keeps callers that build a DERPInfo by hand (CLI, tests) working.
+	hint := strings.TrimSpace(d.ProbeHost)
+	if hint == "" {
+		hint = derpcfg.EnvHost()
+	}
+	if hint != "" && nameResolvesToLoopback(host) {
 		addr = hint
 	}
 	return addr, serverName, port

@@ -60,6 +60,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"skygate/internal/derpcfg"
 )
 
 // STUN protocol constants (RFC 5389).
@@ -335,7 +337,7 @@ func STUNCandidateHosts(db *sql.DB, derpHost string) []string {
 			add(h)
 		}
 	}
-	add(os.Getenv("SKYGATE_DERP_PROBE_HOST"))
+	add(derpcfg.DialHost(db))
 	add(os.Getenv("SKYGATE_DERP_HOSTNAME"))
 	if len(out) == 0 {
 		add("127.0.0.1")

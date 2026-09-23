@@ -30,6 +30,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/deploy"
 	"skygate/internal/deployrun"
+	"skygate/internal/derpcfg"
 	"skygate/internal/derphealth"
 	"skygate/internal/dns"
 	"skygate/internal/elector"
@@ -723,7 +724,7 @@ func main() {
 	if selfTSHostname == "" {
 		selfTSHostname = "skygate-host"
 	}
-	adminsvc.SanityCheckExitNodeColocation(hs, selfTSHostname, nil)
+	adminsvc.SanityCheckExitNodeColocation(hs, selfTSHostname, nil, derpcfg.DialHost(d.DB))
 
 	// Bootstrap Telegram credentials: copy from .env to DB once on
 	// startup if no DB record exists. After that, the admin page at
@@ -1992,6 +1993,11 @@ func main() {
 	mux.Handle("POST /admin/derp/relays/delete", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysDelete)))
 	mux.Handle("POST /admin/derp/relays/toggle", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysToggle)))
 	mux.Handle("POST /admin/derp/relays/test", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysTest)))
+	// B296 — the relay probe address ("where can THIS container reach the
+	// relay"). Stored in global_settings and resolved per probe by
+	// internal/derpcfg (DB > .env SKYGATE_DERP_PROBE_HOST > none), so saving it
+	// applies immediately and the container never has to be recreated.
+	mux.Handle("POST /admin/derp/relays/probe-host", authMW(http.HandlerFunc(adminSvc.PostAdminDerpRelaysProbeHost)))
 	// B164 (v1.5.1) — DERP relay init on a new host.
 	// The page renders the form; the POST handler
 	// shells out to bash deploy/derp-init.sh on

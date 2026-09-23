@@ -28,15 +28,17 @@
 package admin
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/derpcfg"
 )
 
 // ---------- GET /admin/derp/relays ----------
@@ -75,6 +77,12 @@ func (s *Service) GetAdminDerpRelays(w http.ResponseWriter, r *http.Request) {
 		"MapStatus":    s.derpRelayMapStatuses(),
 		"FlashSuccess": r.URL.Query().Get("ok"),
 		"FlashError":   r.URL.Query().Get("err"),
+		// B296 — the probe-host card: current effective value + which layer it
+		// came from (db / env / default), plus the save/refuse flash.
+		"ProbeHost":      derpcfg.Resolve(s.dbc()),
+		"ProbeHostEnv":   derpcfg.EnvHost(),
+		"ProbeHostSaved": r.URL.Query().Get("pok") == "1",
+		"ProbeHostErr":   r.URL.Query().Get("perr"),
 	})
 }
 
@@ -125,7 +133,7 @@ func (s *Service) derpRelayMapStatuses() []RelayMapStatus {
 		return nil
 	}
 	defer rows.Close()
-	probeHost := strings.TrimSpace(os.Getenv("SKYGATE_DERP_PROBE_HOST"))
+	probeHost := derpcfg.DialHost(s.dbc())
 	var out []RelayMapStatus
 	for rows.Next() {
 		var st RelayMapStatus
@@ -377,6 +385,71 @@ func (s *Service) PostAdminDerpRelaysTest(w http.ResponseWriter, r *http.Request
 }
 
 // ---------- helpers ----------
+
+// ---------- POST /admin/derp/relays/probe-host (B296) ----------
+
+// PostAdminDerpRelaysProbeHost saves (or clears) the operator's "where can this
+// container reach the relay" hint.
+//
+// WHY A DB ROW AND NOT JUST .env — the live host, 2026-09-23. B289.1 added
+// SKYGATE_DERP_PROBE_HOST and deploy.sh writes it into .env, but the skygate
+// container is created from `env_file: .env`, and Docker freezes that
+// environment at container CREATION: `docker compose restart` keeps the old
+// value, so applying an edit meant `--force-recreate` (AGENTS trap #3) from an
+// SSH session — for a value the operator can see is missing on this very page
+// («пропущен: unreachable …»). The hint is now resolved per probe from
+// internal/derpcfg (DB override > .env > none), so saving here takes effect on
+// the NEXT probe: the map verdict, the STUN tile and the derp_health cron all
+// re-read it. Nothing is recreated and docker-compose.yml is never touched.
+func (s *Service) PostAdminDerpRelaysProbeHost(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/admin/derp/relays?perr=parse_form", http.StatusFound)
+		return
+	}
+	clear := r.FormValue("action") == "clear"
+	raw := ""
+	if !clear {
+		raw = r.FormValue("probe_host")
+	}
+	if err := derpcfg.Save(s.dbc(), raw); err != nil {
+		code := "invalid"
+		var ve *derpcfg.ValidationError
+		if errors.As(err, &ve) {
+			code = ve.Code
+		}
+		log.Printf("derp_relay.probe_host: refusing %q (admin=%s): %v", raw, c.Username, err)
+		s.Backend.Audit(c.UserID, c.Username, "derp_relay.probe_host",
+			fmt.Sprintf("err=%s value=%q", code, raw))
+		http.Redirect(w, r, "/admin/derp/relays?perr="+code, http.StatusFound)
+		return
+	}
+	// The verdicts on this page are cached for 30s; drop the cache so the
+	// redirect renders the map result for the value just saved.
+	mapStatusInvalidate()
+	res := derpcfg.Resolve(s.dbc())
+	action := "save"
+	if clear {
+		action = "clear"
+	}
+	s.Backend.Audit(c.UserID, c.Username, "derp_relay.probe_host",
+		fmt.Sprintf("action=%s value=%q effective=%q source=%s",
+			action, raw, res.Host, res.Source))
+	http.Redirect(w, r, "/admin/derp/relays?pok=1", http.StatusFound)
+}
+
+// mapStatusInvalidate drops the cached per-row map verdicts (B289's 30s cache)
+// so a change that affects the probe target is visible on the very next render.
+func mapStatusInvalidate() {
+	mapStatusMu.Lock()
+	mapStatusCached = nil
+	mapStatusAt = time.Time{}
+	mapStatusMu.Unlock()
+}
 
 // urlMsg returns a short, URL-safe error code for the
 // ?err= flash parameter. The template looks up the

@@ -41,6 +41,13 @@ type DERPInfo struct {
 	Name string `json:"name,omitempty"`
 	URL   string `json:"url"`
 	IsOwn bool   `json:"is_own"`
+	// ProbeHost is the operator's "where can THIS container reach the relay"
+	// hint (B296), resolved once per list build from internal/derpcfg:
+	// DB override > .env SKYGATE_DERP_PROBE_HOST > none. Only OWN rows get it
+	// (Tailscale's public relays are reachable by name by definition), and
+	// dialTargetFor uses it only when the row's own name resolves to loopback
+	// — i.e. when the name is a container-local artifact, not evidence.
+	ProbeHost string `json:"probe_host,omitempty"`
 }
 
 // HealthRow is the live state of a DERP as cached in

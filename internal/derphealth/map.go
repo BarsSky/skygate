@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"skygate/internal/derpcfg"
 )
 
 // PublicMapURL is the canonical Tailscale default DERP map.
@@ -192,6 +194,10 @@ func FetchOwnDERPs(ctx context.Context, db *sql.DB) ([]DERPInfo, error) {
 		return nil, fmt.Errorf("own derp_relays query: %w", err)
 	}
 	defer rows.Close()
+	// B296: resolve the probe hint ONCE for the whole list — an operator who
+	// typed an address on /admin/derp/relays gets it applied to the next cron
+	// tick with no container recreate (env_file is fixed at creation).
+	probeHost := derpcfg.DialHost(db)
 	var out []DERPInfo
 	for rows.Next() {
 		var d DERPInfo
@@ -204,6 +210,7 @@ func FetchOwnDERPs(ctx context.Context, db *sql.DB) ([]DERPInfo, error) {
 		// (the local derper). An external row (is_bundled=0) is NOT
 		// — it points at somebody else's relay.
 		d.IsOwn = derpRelayIsOwn(isBundled)
+		d.ProbeHost = probeHost
 		out = append(out, d)
 	}
 	return out, rows.Err()

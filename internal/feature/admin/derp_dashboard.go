@@ -38,12 +38,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"skygate/internal/derpcfg"
 	"skygate/internal/derphealth"
 	"skygate/internal/headscale"
 )
@@ -535,7 +535,9 @@ func derpProbeDialAddr(db *sql.DB, host string, port int) string {
 	if port <= 0 {
 		return ""
 	}
-	probeHost := strings.TrimSpace(os.Getenv("SKYGATE_DERP_PROBE_HOST"))
+	// B296: the hint is resolved per probe — DB override (the /admin/derp/relays
+	// form) > .env SKYGATE_DERP_PROBE_HOST > none. See internal/derpcfg.
+	probeHost := derpcfg.DialHost(db)
 	for _, c := range derpReachabilityCandidates(db, host, probeHost) {
 		d := &net.Dialer{Timeout: 1500 * time.Millisecond}
 		conn, err := d.Dial("tcp", derpNodeKey(c, port))
@@ -595,7 +597,10 @@ func (s *Service) GetAdminDerpRelaysDerpmap(w http.ResponseWriter, r *http.Reque
 		Reason   string
 	}
 	var skipped []mapSkip
-	probeHost := strings.TrimSpace(os.Getenv("SKYGATE_DERP_PROBE_HOST"))
+	// B296: DB override > .env (SKYGATE_DERP_PROBE_HOST) > none — resolved on
+	// every fetch, so an address saved on /admin/derp/relays takes effect
+	// without recreating the container.
+	probeHost := derpcfg.DialHost(s.dbc())
 	for rows.Next() {
 		var rid int
 		var rc, rn, host, urlStr string

@@ -44,6 +44,7 @@ import (
 	"strings"
 
 	"skygate/internal/db"
+	"skygate/internal/derpcfg"
 	"skygate/internal/headscale"
 )
 
@@ -108,8 +109,11 @@ func hostIdentities(cfgHostname, probeHost, osHostname string, extraIPs []string
 	}
 	add(cfgHostname, "SKYGATE_TS_HOSTNAME")
 	add(os.Getenv("SKYGATE_TS_HOSTNAME"), "SKYGATE_TS_HOSTNAME")
+	// B296: the probe address comes from the caller, which resolved it through
+	// internal/derpcfg (DB override > .env). Reading the environment here as
+	// well made the .env value count twice and — worse — made a value saved on
+	// /admin/derp/relays invisible to this check.
 	add(probeHost, "SKYGATE_DERP_PROBE_HOST")
-	add(os.Getenv("SKYGATE_DERP_PROBE_HOST"), "SKYGATE_DERP_PROBE_HOST")
 	add(osHostname, "os.Hostname")
 	// A tailnet IP that belongs to this host (native installs where
 	// tailscaled runs on the host and skygate knows its own address).
@@ -161,9 +165,14 @@ func isColocatedExitNode(n headscale.NodeView, ids []ColocationIdentity) (Coloca
 // (SKYGATE_TS_HOSTNAME); `selfIPs` are any tailnet addresses this
 // process knows it owns (may be nil).
 //
+// `probeHost` is the effective DERP probe address (B296 —
+// `derpcfg.DialHost(db)`): it is an address this host answers on, so it
+// counts as one of this host's identities. The caller resolves it because
+// this check runs at boot, before/independently of any request.
+//
 // Logs one WARN line per overlap. Returns them for callers that want to
 // render the warning (e.g. /admin/telegram).
-func SanityCheckExitNodeColocation(hs *headscale.Client, cfgHostname string, selfIPs []string) []ExitNodeColocation {
+func SanityCheckExitNodeColocation(hs *headscale.Client, cfgHostname string, selfIPs []string, probeHost string) []ExitNodeColocation {
 	if hs == nil {
 		return nil
 	}
@@ -174,7 +183,7 @@ func SanityCheckExitNodeColocation(hs *headscale.Client, cfgHostname string, sel
 		return nil
 	}
 	osHost, _ := os.Hostname()
-	ids := hostIdentities(cfgHostname, os.Getenv("SKYGATE_DERP_PROBE_HOST"), osHost, selfIPs)
+	ids := hostIdentities(cfgHostname, probeHost, osHost, selfIPs)
 	var out []ExitNodeColocation
 	for _, n := range nodes {
 		if !n.IsExitNode && !hasExitTag(n.Tags) {
@@ -214,7 +223,10 @@ func SelfExitNodeIdentities(dbConn *sql.DB, cfgHostname string) []string {
 		return nil
 	}
 	osHost, _ := os.Hostname()
-	ids := hostIdentities(cfgHostname, os.Getenv("SKYGATE_DERP_PROBE_HOST"), osHost, nil)
+	// B296: the effective probe address (DB override > .env > none) — the
+	// single resolver, so a value saved on /admin/derp/relays is honoured here
+	// too, not only by the probes.
+	ids := hostIdentities(cfgHostname, derpcfg.DialHost(dbConn), osHost, nil)
 	servers, err := db.ListExitServers(dbConn)
 	if err != nil {
 		return nil

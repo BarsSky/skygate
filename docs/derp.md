@@ -242,6 +242,9 @@ curl -s http://127.0.0.1:8080/admin/derp/relays/derpmap.json   # must contain "9
 docker restart headscale         # make headscale re-fetch the map
 ```
 
+> Since v1.5.62 you can skip all of that: the same address can be saved on
+> `/admin/derp/relays` and applies to the next probe — see §B296 below.
+
 **The rule that makes the fallback work** (B289.1): the probe must *connect* to the
 operator's address while it *speaks* the relay's public hostname. `derper
 --certmode=manual` resolves its certificate **by SNI**, and Go's TLS client sends no SNI
@@ -261,6 +264,47 @@ BUNDLED but publishes NO node`) and per row on `/admin/derp/relays` («в кар
 пропущен + причина»). If you see the ERROR, the cause is in the same line — do not
 restart things hoping it clears: the two known causes are the loopback leak above and a
 dead row (a second bundled row on a port nothing listens on, e.g. a stale `:8443`).
+
+## B296: set the probe address from the panel (2026-09-23)
+
+Since v1.5.62 you do not have to touch `.env` at all. `/admin/derp/relays` has a
+**«Адрес проверки релея»** card:
+
+```text
+Сейчас используется: 192.0.2.10   [источник: сохранено здесь]
+Адрес (IP или имя хоста): [ 192.0.2.10        ]  [Сохранить] [Очистить]
+```
+
+Save it and the very next map fetch, STUN probe and `derp_health` tick use it. Nothing
+is recreated, nothing is restarted, `docker-compose.yml` is never edited.
+
+### Why this is a separate knob and not just `.env`
+
+The container is created from `env_file: .env`, and Docker freezes that environment at
+container **creation**. `docker compose restart` re-runs the entrypoint but keeps the
+old environment, so applying an edited value meant `docker compose up -d --force-recreate`
+(AGENTS trap #3) from an SSH session — for a value the operator can see is wrong right on
+the page. The resolved order is:
+
+| layer | set by | applies |
+|---|---|---|
+| `global_settings.derp.probe_host` | the card above | on the **next probe** (no restart) |
+| `SKYGATE_DERP_PROBE_HOST` in `.env` | `deploy/deploy.sh`, or the operator | at container **creation** |
+| unset | — | B289 behaviour: try the row's own name first |
+
+The DB layer wins over `.env` on purpose (an address you typed must not be silently
+overruled by an older `.env` value); **Очистить** deletes it and `.env` takes over again.
+The card always shows which layer is in effect, so it is never a guess.
+
+The field takes a bare address — `192.0.2.10`, `2001:db8::1` or `derp.example.com`. A
+scheme (`https://…`), a port (`192.0.2.10:443` — the port comes from the relay row's URL),
+a path, a list, a typo'd IPv4 (`999.0.2.10`) and anything that is not a hostname are
+refused, each with its own explanation, and the value is **not** stored. Every change is
+written to the audit log (`derp_relay.probe_host`).
+
+Still prefer `.env` when the value must survive a database reset or be provisioned
+unattended (that is what `deploy.sh` writes); use the card when you are looking at a
+«пропущен» row and want it fixed now.
 
 ## See also
 

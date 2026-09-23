@@ -65,6 +65,40 @@
 </div>
 {{end}}
 
+{{/* B296: the address the probes DIAL while they keep SPEAKING the relay's
+     hostname (TLS SNI, B289.1). Inside the container the relay's own name can
+     resolve to 127.0.0.1 (the host's /etc/hosts leaks in — AGENTS trap #2), and
+     SKYGATE_DERP_PROBE_HOST lives in .env, which Docker freezes at container
+     CREATION — so applying a .env edit meant `--force-recreate` over SSH. Saved
+     here it is resolved per probe, so the next map fetch, the STUN tile and the
+     derp_health cron all use it with nothing recreated. */}}
+<div class="card">
+  <h3><i class="fa-solid fa-network-wired"></i> {{t "derp.relays_probe_host_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">
+    {{t "derp.relays_probe_host_help" | safeHTML}}
+  </p>
+  {{if .ProbeHostSaved}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{t "derp.relays_probe_host_saved"}}</div>{{end}}
+  {{if .ProbeHostErr}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{t (printf "derp.relays_probe_host_err_%s" .ProbeHostErr)}}</div>{{end}}
+  <div style="margin-bottom:8px;font-size:13px">
+    {{t "derp.relays_probe_host_current"}}:
+    {{if .ProbeHost.Host}}<span class="mono">{{.ProbeHost.Host}}</span>{{else}}<span class="mono">{{t "derp.relays_probe_host_none"}}</span>{{end}}
+    <span class="tag">{{t (printf "derp.relays_probe_host_src_%s" .ProbeHost.Source)}}</span>
+  </div>
+  <form method="POST" action="/admin/derp/relays/probe-host">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="form-row">
+      <label for="probe_host">{{t "derp.relays_probe_host_field"}}</label>
+      <input type="text" id="probe_host" name="probe_host" value="{{.ProbeHost.Host}}" placeholder="192.0.2.10" style="font-family:var(--mono)">
+      <div class="form-hint">{{t "derp.relays_probe_host_field_help"}}</div>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button type="submit" name="action" value="save" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{t "derp.relays_probe_host_save"}}</button>
+      <button type="submit" name="action" value="clear" class="btn btn-secondary"><i class="fa-solid fa-eraser"></i> {{t "derp.relays_probe_host_clear"}}</button>
+    </div>
+  </form>
+  {{if .ProbeHostEnv}}<div style="color:var(--text-muted);font-size:12px;margin-top:8px">{{tf "derp.relays_probe_host_env" .ProbeHostEnv}}</div>{{end}}
+</div>
+
 <div class="card">
   <h3><i class="fa-solid fa-circle-nodes"></i> {{t "derp.relays_section_list"}}</h3>
   <div style="color:var(--text-muted);font-size:13px;margin-bottom:12px">

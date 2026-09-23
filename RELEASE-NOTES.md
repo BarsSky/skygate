@@ -12,6 +12,66 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.62 — the relay probe address is set from the panel, and applies immediately (B296)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.61` → this tag · **Compatibility:** none —
+no schema change, no migration.
+
+Follow-up to B289.1, from the same live host. B289.1 fixed *what* the probes say
+(dial the operator's address, speak the relay's public hostname as TLS SNI) and
+`deploy/deploy.sh` now writes `SKYGATE_DERP_PROBE_HOST` for the operator. But the
+knob lived only in `.env`, and the skygate container is created from
+`env_file: .env`:
+
+```console
+$ docker compose restart skygate   # keeps the OLD environment — env_file is read
+                                   # when the container is CREATED, not when it starts
+$ docker compose up -d --force-recreate skygate   # the only thing that applies it
+```
+
+So applying an edited value meant an SSH session and a `--force-recreate` (AGENTS
+trap #3) — for something the operator can see is wrong on `/admin/derp/relays`
+(«пропущен: unreachable (probed …)»).
+
+### Fix
+
+`internal/derpcfg` resolves the hint **per probe** (never once at boot):
+
+| layer | written by | applies |
+|---|---|---|
+| `global_settings.derp.probe_host` | the new card | on the **next probe** |
+| `SKYGATE_DERP_PROBE_HOST` (`.env`) | `deploy.sh` / the operator | at container creation |
+| unset | — | B289 behaviour (try the row's own name first) |
+
+* every probe path reads it through the resolver — the derpmap reachability guard,
+  the `/admin/derp` status probes, the STUN candidate list, and the `derp_health`
+  cron (`DERPInfo.ProbeHost`, filled once by `FetchOwnDERPs`, with the `.env`
+  fallback kept for hand-built rows). **No non-test code reads the environment
+  variable directly any more**, so a saved address cannot be silently ignored on
+  one path.
+* the card on `/admin/derp/relays` shows the effective value **and which layer it
+  came from** (`db` / `env` / `default`), so nothing is a guess; **Очистить**
+  deletes the override and `.env` takes over again.
+* it accepts a bare address (`192.0.2.10`, `2001:db8::1`, `derp.example.com`).
+  A scheme, a port (`192.0.2.10:443` — the port comes from the relay row's URL), a
+  path, a list, a typo'd IPv4 (`999.0.2.10`) and a non-hostname are refused, each
+  with its own translated reason, and nothing is stored; every change is audited
+  as `derp_relay.probe_host`.
+* saving drops the page's 30s map-verdict cache, so the redirect renders the fresh
+  «в карте / пропущен + причина» verdict for the value just saved.
+
+### Verification
+
+`internal/derpcfg/derpcfg_b296_test.go` (precedence db > env, clearing falls back,
+a refused value is never stored, the validation table) and
+`internal/feature/admin/derp_probe_host_b296_test.go`, which saves **through the
+real handler** and re-fetches the **real derpmap endpoint**: with no `.env` value
+and an unresolvable relay name the region is dropped; after the card saves an
+address the very next fetch publishes it — with the relay's public `HostName`
+intact and the port from the row's URL; after **Очистить** it is dropped again.
+25 contracts in `scripts/check_b296_derp_probe_host_ui.sh`. Procedure:
+`docs/derp.md` §B296.
+
 ## v1.5.61 — dial the relay's ADDRESS, speak its HOSTNAME (B289.1)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.60` → this tag · **Compatibility:** none —

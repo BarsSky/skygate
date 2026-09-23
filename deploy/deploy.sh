@@ -395,6 +395,7 @@ DERPEOF
                 } >> "${ENVF}"
             fi
             log "DERP: ${DERP_HOSTNAME} resolves to loopback here — wrote SKYGATE_DERP_PROBE_HOST=${HINT} to .env"
+            log "DERP: (B296) that address is also editable from /admin/derp/relays, where it applies to the next probe with no recreate"
         else
             warn "DERP: ${DERP_HOSTNAME} resolves to loopback and no LAN address was detected — set SKYGATE_DERP_PROBE_HOST in .env by hand"
         fi
@@ -411,6 +412,7 @@ DERPEOF
             warn "DERP: the map does NOT publish region 900 (answer: ${MAP_JSON:-<none>})"
             warn "DERP: clients will silently fall back to the public Tailscale relays."
             warn "DERP: check SKYGATE_DERP_PROBE_HOST in .env (the container must reach the relay by SOME address), then recreate the skygate container."
+            warn "DERP: (B296) or set the same address on /admin/derp/relays — that applies to the next probe without recreating anything."
         fi
     fi
 fi
