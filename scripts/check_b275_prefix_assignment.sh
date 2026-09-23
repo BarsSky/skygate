@@ -46,7 +46,16 @@ grep -q 'ownerTagByPrefix := prefixowner.TagByPrefix(d)' "$ACL" && ok "C.2 the o
 # the nil form is therefore the regression this contract must catch, not the
 # shape it should require. The check now requires the healthy-list form and still
 # fails if the reconcile call disappears entirely.
-if grep -q 'prefixowner.Reconcile(s.dbc(), healthyExitRelays(s.dbc()))' "$SYNC"; then
+#
+# CONTRACT RENEGOTIATION (2026-09-23, B309): the healthy list is now
+# `healthyExitRelaysForAssignment(s.dbc())` — B275.2's headscale-derived health
+# MINUS the relays whose last route application failed (an online relay skygate
+# cannot configure must not keep owning prefixes). The property this contract
+# protects is unchanged (the engine is given a real healthy list, never nil), so
+# both forms pass; only the nil form fails.
+if grep -q 'prefixowner.Reconcile(s.dbc(), healthyExitRelaysForAssignment(s.dbc()))' "$SYNC"; then
+  ok "C.3 the sync path reconciles with the transport-aware healthy list (B275.2 + B309)"
+elif grep -q 'prefixowner.Reconcile(s.dbc(), healthyExitRelays(s.dbc()))' "$SYNC"; then
   ok "C.3 the sync path reconciles the table with the healthy-relay list (B275.2)"
 elif grep -q 'prefixowner.Reconcile(s.dbc(), nil)' "$SYNC"; then
   bad "C.3 the sync path passes a nil healthy-relay list — that is the B275.2 regression (owners flicker)"
