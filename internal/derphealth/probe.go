@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -32,6 +35,72 @@ import (
 // RootCA so the self-signed httptest server verifies.
 var ProbeOneTLSConfig *tls.Config
 
+// dialTargetFor splits "where to connect" from "which name to speak" for one
+// DERP row (B289.1).
+//
+// Two live defects made the health dashboard lie about the operator's own relay
+// on `skygate-host` (2026-09-23):
+//
+//   - the probe dialled the bare hostname, forcing :443 even when the row's URL
+//     named another port (derp_health is the only probe that validates the
+//     certificate against the system trust store, so it must reach the SAME
+//     endpoint clients use);
+//   - inside the skygate container the relay's own public name resolves to
+//     127.0.0.1 (the host's /etc/hosts leaks in — AGENTS trap #2), so the probe
+//     hit the container's own loopback and the row read
+//     `tls dial: dial tcp 127.0.0.1:443: connect: connection refused` for a
+//     perfectly healthy relay.
+//
+// The address may therefore be the operator's explicit hint
+// (SKYGATE_DERP_PROBE_HOST, the same knob the map guard uses); the SNI is ALWAYS
+// the row's hostname, because `derper --certmode=manual` resolves its certificate
+// by SNI and Go sends no SNI at all for an IP literal.
+func dialTargetFor(d DERPInfo) (addr, serverName, port string) {
+	host := strings.TrimSpace(d.Host)
+	port = "443"
+	if u, err := url.Parse(strings.TrimSpace(d.URL)); err == nil && u.Host != "" {
+		if p := u.Port(); p != "" {
+			port = p
+		}
+		if h := u.Hostname(); h != "" && host == "" {
+			host = h
+		}
+	}
+	if h, p, err := net.SplitHostPort(host); err == nil {
+		host = h
+		if p != "" {
+			port = p
+		}
+	}
+	serverName = host
+	addr = host
+	if hint := strings.TrimSpace(os.Getenv("SKYGATE_DERP_PROBE_HOST")); hint != "" && nameResolvesToLoopback(host) {
+		addr = hint
+	}
+	return addr, serverName, port
+}
+
+// nameResolvesToLoopback reports whether `host` resolves, from THIS process, only
+// to loopback/unspecified addresses.
+func nameResolvesToLoopback(host string) bool {
+	if host == "" {
+		return true
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		return ip.IsLoopback() || ip.IsUnspecified()
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		return false
+	}
+	for _, ip := range ips {
+		if !ip.IsLoopback() && !ip.IsUnspecified() {
+			return false
+		}
+	}
+	return true
+}
+
 func ProbeOne(ctx context.Context, d DERPInfo, httpClient *http.Client) (int, error) {
 	if d.Host == "" {
 		return 0, fmt.Errorf("empty host")
@@ -43,22 +112,10 @@ func ProbeOne(ctx context.Context, d DERPInfo, httpClient *http.Client) (int, er
 	// not a full HTTP roundtrip. Build a tls.Dialer that
 	// times out and track the elapsed time around Dial.
 	//
-	// Port: if Host has an explicit port (e.g. "1.2.3.4:443"
-	// or "host.example.com:8443"), use it. Otherwise default
-	// to 443. Most Tailscale DERP relays listen on 443 but
-	// self-hosted DERP commonly runs on a different port
-	// (the deploy/derp-init.sh default is 443 but the
-	// operator can override).
-	host := d.Host
-	addr := host
-	if _, _, err := net.SplitHostPort(host); err != nil {
-		// Host is bare — append the DERP default port.
-		addr = host + ":443"
-	}
-	serverName := host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		serverName = h
-	}
+	// B289.1: the address to dial and the name to present are separate — see
+	// dialTargetFor for the live failure that rule comes from.
+	dialAddr, serverName, port := dialTargetFor(d)
+	addr := net.JoinHostPort(dialAddr, port)
 	dialer := &net.Dialer{Timeout: probeTimeout}
 	tlsCfg := &tls.Config{ServerName: serverName, MinVersion: tls.VersionTLS12}
 	if ProbeOneTLSConfig != nil {

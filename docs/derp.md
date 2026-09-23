@@ -218,6 +218,50 @@ SKYGATE_DERP_HOSTNAME=derp.example.com
 which was misleading — the real public IP is the
 DNS A record of the operator's `SKYGATE_DERP_HOSTNAME`.
 
+## B289.1: dial the ADDRESS, speak the HOSTNAME (2026-09-23)
+
+If your own relay never appears in the map — `/admin/derp` is green, `/admin/derp/relays`
+lists the row, headscale has `http://skygate:8080/admin/derp/relays/derpmap.json` in
+`derp.urls`, and yet `tailscale netcheck` never shows your region — read this first.
+
+The map skygate serves is the ONLY thing that tells clients the relay exists. A node is
+published only when the reachability guard can complete a TCP+TLS handshake to it, and
+that guard used to dial the relay's **hostname**. Inside the skygate container the host's
+`/etc/hosts` is inherited, so a host that maps its own public name to `127.0.0.1`
+(AGENTS deployment trap #2) makes the relay unreachable *by name* from inside the
+container — the guard dropped the node and answered `{"Regions":{}}`.
+
+`SKYGATE_DERP_PROBE_HOST` is the escape hatch: it names an address the container **can**
+reach (typically the host's LAN address). It needs no `docker-compose.yml` change — the
+variable travels in `.env` and the container reads it at start, so after editing:
+
+```bash
+cd /home/<operator>/skygate
+docker compose up -d skygate     # recreate (NOT `restart`) so the env is picked up
+curl -s http://127.0.0.1:8080/admin/derp/relays/derpmap.json   # must contain "900"
+docker restart headscale         # make headscale re-fetch the map
+```
+
+**The rule that makes the fallback work** (B289.1): the probe must *connect* to the
+operator's address while it *speaks* the relay's public hostname. `derper
+--certmode=manual` resolves its certificate **by SNI**, and Go's TLS client sends no SNI
+at all for an IP literal — so dialling an IP with that IP as `ServerName` fails with
+`cert mismatch with hostname: ""` (visible in `docker logs derper`). The same rule now
+applies to every probe skygate makes:
+
+| probe | connects to | speaks |
+|---|---|---|
+| map guard (`/admin/derp/relays/derpmap.json`) | `SKYGATE_DERP_PROBE_HOST`, else the hostname | the relay's hostname |
+| `/admin/derp` status (`/debug/*`, `/active-conn`) | the first candidate that accepts TCP | the relay's hostname |
+| `derp_health` cron (the dashboard's latency/health) | the same rule, honouring the port in the row's URL | the relay's hostname |
+
+A relay row that cannot be published is reported twice: in the journal
+(`derpmap: skipping region=900 … unreachable (tried …)`, and an `ERROR region=900 is
+BUNDLED but publishes NO node`) and per row on `/admin/derp/relays` («в карте /
+пропущен + причина»). If you see the ERROR, the cause is in the same line — do not
+restart things hoping it clears: the two known causes are the loopback leak above and a
+dead row (a second bundled row on a port nothing listens on, e.g. a stale `:8443`).
+
 ## See also
 
 - `docs/headplane.md` — the same "use existing / bundled" pattern,

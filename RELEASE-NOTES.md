@@ -12,6 +12,104 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.61 — dial the relay's ADDRESS, speak its HOSTNAME (B289.1)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.60` → this tag · **Compatibility:** none —
+no schema change, no migration.
+
+Operator report, and the reason the v1.5.57 «local DERP reaches the map» fix did
+not actually fix the live host: the relay still never reached the map.
+
+Measured on `skygate-host` (192.168.13.69), read-only:
+
+```console
+# the relay itself is fine
+$ sudo docker ps --filter name=derper      # Up 34 hours, restarts=0
+$ sudo ss -ltnp | grep -E ':(80|443)\b'    # derper on 443/tcp and 80/tcp
+$ sudo ss -lunp | grep 3478                # derper on 3478/udp
+$ openssl s_client -connect 192.168.13.69:443 -servername derp.skynas.ru
+  subject=CN = derp.skynas.ru · issuer=Let's Encrypt · Verify return code: 0 (ok)
+
+# headscale is configured to fetch skygate's map
+$ awk '/^derp:/{f=1} f{print}' /home/skyadmin/headscale/config/config.yaml
+derp:
+  urls:
+  - https://controlplane.tailscale.com/derpmap/default
+  - http://skygate:8080/admin/derp/relays/derpmap.json
+
+# ... and yet the map is EMPTY:
+$ curl -s http://127.0.0.1:8080/admin/derp/relays/derpmap.json
+{"Regions":{}}
+
+# skygate's own journal said so, three lines per fetch:
+derpmap: skipping region=900 host=derp.skynas.ru port=443 — node unreachable
+         (tried [192.168.13.69 derp.skynas.ru]): dial tcp 127.0.0.1:443: connect: connection refused
+derpmap: ERROR region=900 is BUNDLED but publishes NO node — every client will
+         fall back to the public DERP map
+
+# and derper's log explained why the LAN-address fallback did not save it:
+http: TLS handshake error from 192.168.13.69:56136: cert mismatch with hostname: "192.168.13.69"
+http: TLS handshake error from 192.168.13.69:56152: cert mismatch with hostname: ""
+```
+
+### Root cause
+
+B289 taught the guard to try the operator's address (`SKYGATE_DERP_PROBE_HOST`,
+already set on that host) *in addition to* the hostname — but it passed the
+candidate ADDRESS as the TLS `ServerName` too. `derper --certmode=manual`
+resolves its certificate **by SNI**, and Go's TLS client sends **no SNI at all**
+for an IP literal (`hostnameInSNI` strips addresses). So:
+
+* the hostname candidate → the container's own loopback (`/etc/hosts` leak,
+  AGENTS trap #2) → connection refused;
+* the LAN-IP candidate → correct address, empty SNI → `cert mismatch with
+  hostname: ""` → handshake refused.
+
+Both candidates failed, the node was dropped, the map stayed empty, and headscale
+merged nothing — while the relay was healthy, correctly certified and reachable.
+The `/admin/derp` status probes and the `derp_health` cron had the same defect in
+a different form: they dialled the hostname (loopback inside the container) and
+ignored the port in the row's URL, so the dashboard showed the healthy relay as
+`tls dial: dial tcp 127.0.0.1:443: connect: connection refused`.
+
+The B289 regression tests could not catch it: they used
+`httptest.NewTLSServer`, which ignores SNI entirely.
+
+### Fix
+
+One rule, applied to every probe: **the address to dial and the name to speak are
+different things.**
+
+* `derpProbeTarget{Addr, SNI}` + `derpProbeTargetsFor(candidates, hostname)` —
+  every candidate is dialled with the relay's public hostname as SNI; the map
+  guard (`/admin/derp/relays/derpmap.json`) uses it.
+* `httpGetVia(url, dialAddr, timeout)` — `/admin/derp` keeps its URL (so SNI and
+  the Host header still match the certificate) and pins the TCP connection to the
+  first candidate that answers; `collectDerpStatus` now logs which address it
+  dialled while speaking which name.
+* `derphealth.dialTargetFor` — the health probe takes the port from the row's
+  URL (it used to force `:443`) and, when the relay's name resolves to loopback,
+  dials `SKYGATE_DERP_PROBE_HOST` while still presenting the hostname.
+* No `docker-compose.yml` change is needed for any of this — the probe address
+  travels in `.env`, which the container already loads.
+* `deploy/deploy.sh` now closes the class instead of leaving it to the operator:
+  when `DERP_ENABLED=true` and the relay's own name resolves to loopback on the
+  host, it writes `SKYGATE_DERP_PROBE_HOST=<host LAN address>` into `.env`, and
+  then asserts end to end that
+  `http://127.0.0.1:<port>/admin/derp/relays/derpmap.json` contains region `900`,
+  warning loudly (with the reason) when it does not.
+
+### Verification
+
+`internal/derphealth/probe_b289_1_test.go` + the B289.1 cases in
+`internal/feature/admin/derp_reach_b289_test.go`. The regression fixture is
+**SNI-strict on purpose** — it fails the handshake for an unexpected or empty SNI,
+like manual-certmode derper — and one case pins the old behaviour as *unreachable*,
+so the bug cannot come back green. `check_b289_derp_map_truth.sh` grew to 21
+contracts (A6/A7 the address/SNI split, D3/D4 the health probe, F1/F2 the status
+probes). Procedure and operator-facing explanation: `docs/derp.md` §«B289.1»,
+`SKYGATE_DERP_PROBE_HOST` in `.env.example`.
+
 ## v1.5.60 — a failed policy read must not become a blind write (B295)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.59` → this tag · **Compatibility:** none —

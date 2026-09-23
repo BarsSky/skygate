@@ -66,8 +66,8 @@ else
   bad "A2: probeDERPNodeReachableAny is missing"
 fi
 if grep -q 'derpReachabilityCandidates(s.dbc(), host, probeHost)' "$DASH" && \
-   grep -q 'probeDERPNodeReachableAny(candidates, port' "$DASH"; then
-  ok "A3: the derpmap endpoint probes through the candidate list"
+   grep -q 'probeDERPNodeReachableAny(derpProbeTargetsFor(candidates, host), port' "$DASH"; then
+  ok "A3: the derpmap endpoint probes through the candidate list, pairing each address with the relay's hostname"
 else
   bad "A3: the derpmap endpoint still probes the bare hostname (the live failure)"
 fi
@@ -80,6 +80,22 @@ if grep -q 'answered via %s' "$DASH"; then
   ok "A5: the journal names the address that answered (and points at extra_hosts)"
 else
   bad "A5: a relay reachable only via a fallback address is not reported"
+fi
+# A6/A7 — B289.1 (2026-09-23). The fallback shipped BROKEN: it dialled the
+# operator's IP candidate with that IP as TLS ServerName, and `derper
+# --certmode=manual` resolves the certificate BY SNI (Go sends no SNI at all for
+# an IP literal), so the handshake died with `cert mismatch with hostname: ""` and
+# the map stayed `{"Regions":{}}` on a healthy relay. The address and the name
+# must stay separate.
+if grep -q '^type derpProbeTarget struct' "$DASH" && grep -q '^func derpProbeTargetsFor(' "$DASH"; then
+  ok "A6: an address carries the name to speak separately from the address to dial"
+else
+  bad "A6: the probe has no address/SNI split — an IP candidate can never answer a manual-certmode derper"
+fi
+if grep -q 'ServerName:         t.SNI' "$DASH"; then
+  ok "A7: the TLS probe uses the relay's hostname as SNI, never the dialled address"
+else
+  bad "A7: the TLS probe passes the dialled address as SNI (cert mismatch on an IP candidate)"
 fi
 
 # --- B: a bundled region that publishes nothing is an ERROR ------------------
@@ -137,8 +153,35 @@ if command -v go >/dev/null 2>&1; then
     bad "D2: the B289 tests failed:"
     printf '%s\n' "$OUT" | tail -20 | sed 's/^/       /' >&2
   fi
+  # D3/D4 — the health probe has the same address/name rule (it dialled the
+  # hostname, forced :443 and ignored the row's URL, so derp_health reported a
+  # healthy relay as `dial tcp 127.0.0.1:443: connect: connection refused`).
+  HOUT="$(go test ./internal/derphealth/ -run 'B289' -count=1 2>&1)"
+  if grep -q '^ok' <<< "$HOUT" && ! grep -q 'FAIL' <<< "$HOUT"; then
+    ok "D3: the derphealth address/name tests pass"
+  else
+    bad "D3: the derphealth B289 tests failed:"
+    printf '%s\n' "$HOUT" | tail -20 | sed 's/^/       /' >&2
+  fi
+  if grep -q '^func dialTargetFor(' internal/derphealth/probe.go; then
+    ok "D4: derphealth splits the dial address from the SNI (and honours the row's port)"
+  else
+    bad "D4: derphealth still dials the bare hostname on a forced :443"
+  fi
 else
   skip "D2: go not on PATH — run the B289 tests on the VM"
+fi
+
+# --- F: the status page dials the reachable address, speaks the hostname -----
+if grep -q '^func httpGetVia(' "$DASH" || grep -q '^func httpGetVia(' internal/feature/admin/derp.go; then
+  ok "F1: httpGetVia pins the TCP dial while keeping the URL's hostname (SNI/Host)"
+else
+  bad "F1: the /admin/derp status probe has no dial-address override — it reports a leaked name as 'no answer'"
+fi
+if grep -q 'derpProbeDialAddr(s.dbc(), derpHost' internal/feature/admin/derp.go; then
+  ok "F2: collectDerpStatus resolves the dial address through the shared candidate rule"
+else
+  bad "F2: collectDerpStatus probes the bare hostname"
 fi
 
 # --- E: tracked by git (trap #11) -------------------------------------------

@@ -142,7 +142,9 @@ func (s *Service) derpRelayMapStatuses() []RelayMapStatus {
 		default:
 			port := publicDERPPortFromURL(st.URL)
 			candidates := derpReachabilityCandidates(s.dbc(), st.Host, probeHost)
-			reach, via := probeDERPNodeReachableAny(candidates, port, mapStatusTimeout)
+			// B289.1: dial the candidate ADDRESS, present the relay's public
+			// hostname as SNI (derper's manual certmode resolves the cert by SNI).
+			reach, via := probeDERPNodeReachableAny(derpProbeTargetsFor(candidates, st.Host), port, mapStatusTimeout)
 			if reach.Reachable {
 				st.Published = true
 				st.Via = via

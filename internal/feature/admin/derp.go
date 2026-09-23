@@ -18,6 +18,7 @@ package admin
 // small enough (~430 lines) to keep in one place.
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	neturl "net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -265,13 +267,29 @@ func (s *Service) collectDerpStatus() DerpStatus {
 	// bundled row in the test fixture, not by env var.
 	derpURL := "https://" + derpHost + ":" + derpPort
 
+	// B289.1: the URL above keeps the PUBLIC hostname (SNI + Host header must
+	// match the certificate), while the TCP connection is pinned to the address
+	// that is actually reachable from this container — the same candidate rule the
+	// map guard uses. Without it, a container that resolves the relay's own name to
+	// 127.0.0.1 rendered every probe below as "no answer" for a healthy relay.
+	dialAddr := ""
+	if p, perr := strconv.Atoi(derpPort); perr == nil {
+		dialAddr = derpProbeDialAddr(s.dbc(), derpHost, p)
+		if dialAddr != "" && dialAddr != derpHost {
+			log.Printf("derp: status probes dial %s but speak %s (the hostname does not resolve to the relay from inside this container — see SKYGATE_DERP_PROBE_HOST)", dialAddr, derpHost)
+		}
+	}
+	get := func(path string) ([]byte, error) {
+		return httpGetVia(derpURL+path, dialAddr, 3*time.Second)
+	}
+
 	// 1. /debug/  -> HTML, contains Uptime, Version, etc.
-	if html, err := httpGet(derpURL+"/debug/", 3*time.Second); err == nil {
+	if html, err := get("/debug/"); err == nil {
 		parseDerperDebugHTML(&st, html)
 	}
 
 	// 2. /debug/vars -> JSON, real metrics
-	if body, err := httpGet(derpURL+"/debug/vars", 3*time.Second); err == nil {
+	if body, err := get("/debug/vars"); err == nil {
 		if isDebugAccessDenied(body) {
 			st.DebugAccessDenied = true
 		} else {
@@ -280,7 +298,7 @@ func (s *Service) collectDerpStatus() DerpStatus {
 	}
 
 	// 3. Plain / -> quick liveness check
-	if _, err := httpGet(derpURL+"/", 3*time.Second); err == nil {
+	if _, err := get("/"); err == nil {
 		st.SocketListening = true
 	}
 
@@ -300,7 +318,7 @@ func (s *Service) collectDerpStatus() DerpStatus {
 	}
 
 	// 5. Active connections (current TCP/UDP peers with reverse DNS)
-	if body, err := httpGet(derpURL+"/active-conn", 3*time.Second); err == nil {
+	if body, err := get("/active-conn"); err == nil {
 		var ac struct {
 			TCP     []DerpPeer `json:"tcp"`
 			UDPSTUN []DerpPeer `json:"udp_stun"`
@@ -313,7 +331,7 @@ func (s *Service) collectDerpStatus() DerpStatus {
 	}
 
 	// 6. Snapshot history (last 30 records from /var/log/derper-snapshot.log)
-	if body, err := httpGet(derpURL+"/all-recent", 3*time.Second); err == nil {
+	if body, err := get("/all-recent"); err == nil {
 		lines := strings.Split(string(body), "\n")
 		start := 0
 		if len(lines) > 30 {
@@ -496,6 +514,22 @@ func resolvePublicDERPIP(derperHostname string) (ip, source string, ok bool) {
 }
 
 func httpGet(url string, timeout time.Duration) ([]byte, error) {
+	return httpGetVia(url, "", timeout)
+}
+
+// httpGetVia is httpGet with the TCP connection pinned to `dialAddr` while the URL
+// keeps the relay's public hostname — so TLS SNI and the Host header still match
+// the certificate (B289.1).
+//
+// WHY. The status probes build their URL from the bundled row's hostname. Inside
+// the skygate container that hostname can resolve to 127.0.0.1 (the host's
+// /etc/hosts leaks in — AGENTS trap #2), so every /debug probe hit the container's
+// own loopback and /admin/derp rendered a healthy relay as stopped, with no debug
+// data. The address to DIAL and the name to SPEAK are two different things; see
+// derpProbeTarget for the same rule on the TLS guard.
+//
+// dialAddr == "" keeps the historical behaviour (dial whatever the URL resolves to).
+func httpGetVia(url string, dialAddr string, timeout time.Duration) ([]byte, error) {
 	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -538,12 +572,25 @@ func httpGet(url string, timeout time.Duration) ([]byte, error) {
 			// way to complete the TLS handshake.
 			skipVerify = true
 		}
-		client.Transport = &http.Transport{
+		tr := &http.Transport{
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: skipVerify,
 				ServerName:         hostnameOnly,
 			},
 		}
+		if dialAddr != "" {
+			// B289.1: connect to the address that is reachable from here, keep
+			// the URL's hostname as SNI/Host.
+			port := u.Port()
+			if port == "" {
+				port = "443"
+			}
+			target := net.JoinHostPort(dialAddr, port)
+			tr.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{Timeout: timeout}).DialContext(ctx, network, target)
+			}
+		}
+		client.Transport = tr
 	}
 	resp, err := client.Do(req)
 	if err != nil {

@@ -354,7 +354,66 @@ DERPEOF
     [ "${MODE}" = "restore" ] && [ -f "${FROM_PATH}/derpmap.json" ] && cp "${FROM_PATH}/derpmap.json" "${DEPLOY_HEADSCALE_DIR}/derpmap.json"
     cd "${DEPLOY_HEADSCALE_DIR}"
     ${DOCKER_CMD} compose -f derper-compose.yml up -d 2>/dev/null || warn "DERP start failed"
-    log "DERP relay started"; fi
+    log "DERP relay started"
+
+    # ── B289.1 (2026-09-23): make the local relay REACH the map, or say why ────
+    #
+    # Live `skygate-host`: the derper was healthy (443/tcp + 3478/udp bound, valid
+    # Let's Encrypt cert) and headscale was pointed at skygate's map endpoint, yet
+    # the map answered {"Regions":{}} and no client ever learned about region 900.
+    # Two reasons, both invisible at deploy time:
+    #
+    #   1. the skygate container inherits the host's /etc/hosts, where the relay's
+    #      public name maps to 127.0.0.1 (trap #2) — inside the container that is
+    #      its own loopback, so the reachability guard dropped the node;
+    #   2. the LAN-address fallback then dialled the IP *as its own TLS SNI*, and
+    #      `derper --certmode=manual` resolves the certificate BY SNI (Go sends no
+    #      SNI for an IP literal), so the handshake died with
+    #      `cert mismatch with hostname: ""`.
+    #
+    # The fix needs NO docker-compose edit: the guard takes its dial address from
+    # SKYGATE_DERP_PROBE_HOST, which travels in .env. Write it here when the relay
+    # name resolves to loopback on this host, so a fresh deployment cannot land in
+    # the silent-empty-map state.
+    if [ -n "${DERP_HOSTNAME:-}" ] && getent hosts "${DERP_HOSTNAME}" 2>/dev/null | grep -qE '^127\.|^::1'; then
+        HINT="${DERP_PROBE_HOST:-}"
+        if [ -z "${HINT}" ]; then
+            HINT="$(hostname -I 2>/dev/null | awk '{print $1}')"
+        fi
+        if [ -n "${HINT}" ]; then
+            ENVF="${PROJECT_DIR}/.env"
+            if [ -f "${ENVF}" ] && grep -q '^SKYGATE_DERP_PROBE_HOST=' "${ENVF}"; then
+                sed -i "s|^SKYGATE_DERP_PROBE_HOST=.*|SKYGATE_DERP_PROBE_HOST=${HINT}|" "${ENVF}"
+            elif [ -f "${ENVF}" ]; then
+                {
+                    echo ""
+                    echo "# B289.1: the skygate container cannot resolve ${DERP_HOSTNAME}"
+                    echo "# (this host's /etc/hosts maps it to loopback), so the DERP"
+                    echo "# reachability guard dials this address instead — the relay's"
+                    echo "# hostname still goes into TLS SNI. Recreate the container to apply."
+                    echo "SKYGATE_DERP_PROBE_HOST=${HINT}"
+                } >> "${ENVF}"
+            fi
+            log "DERP: ${DERP_HOSTNAME} resolves to loopback here — wrote SKYGATE_DERP_PROBE_HOST=${HINT} to .env"
+        else
+            warn "DERP: ${DERP_HOSTNAME} resolves to loopback and no LAN address was detected — set SKYGATE_DERP_PROBE_HOST in .env by hand"
+        fi
+    fi
+
+    # End-to-end check: ask the endpoint headscale fetches. This is the only
+    # assertion that proves clients will learn about the local relay, and it is
+    # exactly what nobody ran on the live host for weeks.
+    if command -v curl >/dev/null 2>&1; then
+        MAP_JSON="$(curl -s -m 10 "http://127.0.0.1:${SKYGATE_PORT}/admin/derp/relays/derpmap.json" 2>/dev/null || true)"
+        if printf '%s' "${MAP_JSON}" | grep -q '"900"'; then
+            log "DERP: the map headscale fetches publishes region 900 ✓"
+        else
+            warn "DERP: the map does NOT publish region 900 (answer: ${MAP_JSON:-<none>})"
+            warn "DERP: clients will silently fall back to the public Tailscale relays."
+            warn "DERP: check SKYGATE_DERP_PROBE_HOST in .env (the container must reach the relay by SOME address), then recreate the skygate container."
+        fi
+    fi
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Done

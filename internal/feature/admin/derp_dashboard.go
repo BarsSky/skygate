@@ -405,7 +405,7 @@ func probeDERPNodeReachable(t derpProbeTarget, port int, timeout time.Duration) 
 	addr := derpNodeKey(t.Addr, port)
 	d := &net.Dialer{Timeout: timeout}
 	conn, err := tls.DialWithDialer(d, "tcp", addr, &tls.Config{
-		InsecureSkipVerify: true, // liveness only — no data exchanged
+		InsecureSkipVerify: true,  // liveness only — no data exchanged
 		ServerName:         t.SNI, // the NAME, not the address (B289.1)
 		MinVersion:         tls.VersionTLS12,
 	})
@@ -492,14 +492,28 @@ func hostResolvesToLoopback(host string) bool {
 	return true
 }
 
+// derpProbeTargetsFor pairs every candidate ADDRESS with the relay's public
+// hostname, which is what must go into TLS SNI (B289.1). Every address in the
+// list belongs to the same relay row, so they all speak for the same name.
+func derpProbeTargetsFor(candidates []string, hostname string) []derpProbeTarget {
+	out := make([]derpProbeTarget, 0, len(candidates))
+	for _, c := range candidates {
+		out = append(out, derpProbeTarget{Addr: c, SNI: strings.TrimSpace(hostname)})
+	}
+	return out
+}
+
 // probeDERPNodeReachableAny tries every candidate address and returns the
 // status plus the address that answered (empty when none did).
-func probeDERPNodeReachableAny(candidates []string, port int, timeout time.Duration) (derpNodeStatus, string) {
+//
+// The SNI comes from the target, NOT from the address being dialled — see
+// derpProbeTarget for the live failure that rule comes from.
+func probeDERPNodeReachableAny(candidates []derpProbeTarget, port int, timeout time.Duration) (derpNodeStatus, string) {
 	var last derpNodeStatus
-	for _, h := range candidates {
-		st := probeDERPNodeReachable(h, port, timeout)
+	for _, t := range candidates {
+		st := probeDERPNodeReachable(t, port, timeout)
 		if st.Reachable {
-			return st, net.JoinHostPort(h, strconv.Itoa(port))
+			return st, net.JoinHostPort(t.Addr, strconv.Itoa(port))
 		}
 		last = st
 	}
@@ -507,6 +521,30 @@ func probeDERPNodeReachableAny(candidates []string, port int, timeout time.Durat
 		last.Err = "no candidate address to probe"
 	}
 	return last, ""
+}
+
+// derpProbeDialAddr returns the first candidate address that accepts a TCP
+// connection on the relay's port, or "" when none does.
+//
+// Used by the /admin/derp status probes: they build their URL from the PUBLIC
+// hostname (so SNI and the Host header match the certificate) and need a
+// separate address to connect to, exactly like the map guard above. Without it,
+// a container that resolves the relay's own name to 127.0.0.1 reports a healthy
+// relay as unreachable.
+func derpProbeDialAddr(db *sql.DB, host string, port int) string {
+	if port <= 0 {
+		return ""
+	}
+	probeHost := strings.TrimSpace(os.Getenv("SKYGATE_DERP_PROBE_HOST"))
+	for _, c := range derpReachabilityCandidates(db, host, probeHost) {
+		d := &net.Dialer{Timeout: 1500 * time.Millisecond}
+		conn, err := d.Dial("tcp", derpNodeKey(c, port))
+		if err == nil {
+			_ = conn.Close()
+			return c
+		}
+	}
+	return ""
 }
 
 // GetAdminDerpRelaysDerpmap serves the combined DERP map
@@ -591,7 +629,8 @@ func (s *Service) GetAdminDerpRelaysDerpmap(w http.ResponseWriter, r *http.Reque
 		// derpReachabilityCandidates for the live failure it caused.
 		if probeNodes {
 			candidates := derpReachabilityCandidates(s.dbc(), host, probeHost)
-			reach, via := probeDERPNodeReachableAny(candidates, port, 2*time.Second)
+			// B289.1: the address to dial and the SNI are different things.
+			reach, via := probeDERPNodeReachableAny(derpProbeTargetsFor(candidates, host), port, 2*time.Second)
 			if !reach.Reachable {
 				log.Printf("derpmap: skipping region=%d host=%s port=%d — node unreachable (tried %v): %s",
 					rid, host, port, candidates, reach.Err)

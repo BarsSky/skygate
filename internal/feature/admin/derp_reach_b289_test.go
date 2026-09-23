@@ -18,8 +18,11 @@
 package admin
 
 import (
+	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -96,7 +99,7 @@ func TestB289_ProbeAcceptsTheFirstAnsweringCandidate(t *testing.T) {
 	}
 
 	// First candidate: a port nothing listens on. Second: the live TLS server.
-	dead := []string{"127.0.0.1"}
+	dead := derpProbeTargetsFor([]string{"127.0.0.1"}, "relay.example.com")
 	st, via := probeDERPNodeReachableAny(dead, 1, 500*time.Millisecond)
 	if st.Reachable {
 		t.Fatal("probe reported reachable for 127.0.0.1:1")
@@ -105,7 +108,7 @@ func TestB289_ProbeAcceptsTheFirstAnsweringCandidate(t *testing.T) {
 		t.Errorf("via = %q, want empty when nothing answered", via)
 	}
 
-	live := []string{"127.0.0.1"}
+	live := derpProbeTargetsFor([]string{"127.0.0.1"}, "relay.example.com")
 	st, via = probeDERPNodeReachableAny(live, port, 1500*time.Millisecond)
 	if !st.Reachable {
 		t.Fatalf("probe did not reach the live TLS server on port %d: %s", port, st.Err)
@@ -177,6 +180,134 @@ func TestB289_DerpmapPublishesALeakedRelayViaTheProbeHost(t *testing.T) {
 	}
 	if reg.Nodes[0].DERPPort != port {
 		t.Errorf("published DERPPort = %d, want %d (the relay URL's port)", reg.Nodes[0].DERPPort, port)
+	}
+}
+
+// newSNIStrictTLSServer starts a TLS listener that behaves like
+// `derper --certmode=manual`: it serves a certificate ONLY when the client asks
+// for `expectedName` in SNI, and fails the handshake otherwise.
+//
+// GetCertificate is the ONLY certificate source on purpose, and the TLS listener
+// is built by hand instead of with httptest.StartTLS: StartTLS fills an empty
+// `Certificates` slice with its own certificate, and Go's tls.Config then SKIPS
+// GetCertificate for a client that sent no SNI — which is exactly the blind spot
+// that let the B289 fallback ship broken.
+func newSNIStrictTLSServer(t *testing.T, expectedName string) *httptest.Server {
+	t.Helper()
+	seed := httptest.NewTLSServer(nil)
+	cert := seed.TLS.Certificates[0]
+	seed.Close()
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	cfg := &tls.Config{
+		GetCertificate: func(hi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			if hi.ServerName != expectedName {
+				return nil, fmt.Errorf("cert mismatch with hostname: %q", hi.ServerName)
+			}
+			return &cert, nil
+		},
+	}
+	srv.Listener = tls.NewListener(srv.Listener, cfg)
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestB289_1_ProbeSpeaksTheHostnameWhenDiallingAnAddress is the regression the
+// B289 fallback needed and did not have.
+//
+// Live `skygate-host`, 2026-09-23: `SKYGATE_DERP_PROBE_HOST=192.168.13.69` was set,
+// the guard did try that address — and derper still refused every handshake:
+//
+//	cert mismatch with hostname: ""            (Go sends no SNI for an IP literal)
+//	cert mismatch with hostname: "192.168.13.69"
+//
+// because `derper --certmode=manual` resolves the certificate BY SNI. The old
+// probe passed the candidate address as `ServerName`, so the LAN-IP fallback
+// could never work; the httptest fixtures used elsewhere in this file ignore SNI,
+// which is why the earlier tests stayed green.
+func TestB289_1_ProbeSpeaksTheHostnameWhenDiallingAnAddress(t *testing.T) {
+	const publicName = "relay.example.com"
+	srv := newSNIStrictTLSServer(t, publicName)
+
+	addr, portStr, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener addr: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("parse port %q: %v", portStr, err)
+	}
+
+	// The fixed behaviour: dial the address, speak the name.
+	fixed := derpProbeTargetsFor([]string{addr}, publicName)
+	if st, via := probeDERPNodeReachableAny(fixed, port, 1500*time.Millisecond); !st.Reachable {
+		t.Fatalf("probe with SNI=%s dialling %s failed: %s — this is the live failure (derper answers `cert mismatch with hostname`)", publicName, addr, st.Err)
+	} else if via == "" {
+		t.Error("probe reported reachable but named no address")
+	}
+
+	// The old behaviour, kept as a documented contrast: an IP candidate used as
+	// its own SNI cannot complete a manual-certmode handshake (Go omits the SNI
+	// extension for an IP literal, so derper sees hostname "").
+	broken := derpProbeTargetsFor([]string{addr}, addr)
+	if st, _ := probeDERPNodeReachableAny(broken, port, 1500*time.Millisecond); st.Reachable {
+		t.Error("dialling an address with SNI=address was accepted — the fixture is not SNI-strict, so this test can no longer catch the B289.1 regression")
+	}
+}
+
+// TestB289_1_DerpmapPublishesViaProbeHostWithAnSNIStrictRelay is the end-to-end
+// form: the relay's own name resolves to loopback inside the container (the host
+// /etc/hosts leak), the operator set SKYGATE_DERP_PROBE_HOST to the address the
+// container CAN reach, and the relay requires the correct SNI. The map must
+// publish region 900.
+func TestB289_1_DerpmapPublishesViaProbeHostWithAnSNIStrictRelay(t *testing.T) {
+	// The row's public name is `localhost` (it resolves to loopback here, which is
+	// the leaked-name case), so that is the SNI a correct probe must present.
+	srv := newSNIStrictTLSServer(t, "localhost")
+
+	addr, portStr, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener addr: %v", err)
+	}
+	t.Setenv("SKYGATE_DERP_PROBE_HOST", addr)
+
+	_, d, err := skygatedb.OpenWithDialect("file::memory:?cache=shared")
+	if err != nil {
+		t.Skipf("sqlite dialect unavailable: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if err := skygatedb.ApplyMigrations(d, skygatedb.DialectSQLite); err != nil {
+		t.Fatalf("ApplyMigrations: %v", err)
+	}
+	// 'localhost' resolves to loopback in this process, i.e. the leaked-name case.
+	if _, err := d.Exec(`INSERT INTO derp_relays (hostname, url, region_id, region_code, region_name, is_bundled, enabled, sort_order)
+	                     VALUES ('localhost', 'https://localhost:` + portStr + `', 900, 'mow', 'Moscow Custom', 1, 1, 10)`); err != nil {
+		t.Fatalf("seed derp_relays: %v", err)
+	}
+
+	svc := &Service{DB: skygatedb.FixedDBSource{DB: d}}
+	rec := httptest.NewRecorder()
+	svc.GetAdminDerpRelaysDerpmap(rec, httptest.NewRequest("GET", "/admin/derp/relays/derpmap.json", nil))
+
+	var out struct {
+		Regions map[string]struct {
+			Nodes []struct {
+				HostName string `json:"HostName"`
+			} `json:"Nodes"`
+		} `json:"Regions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("derpmap is not valid JSON: %v\n%s", err, rec.Body.String())
+	}
+	reg, ok := out.Regions["900"]
+	if !ok || len(reg.Nodes) == 0 {
+		t.Fatalf("region 900 not published for an SNI-strict relay reached via the probe host: %s", rec.Body.String())
+	}
+	if reg.Nodes[0].HostName != "localhost" {
+		t.Errorf("published HostName = %q, want the row's hostname", reg.Nodes[0].HostName)
 	}
 }
 
