@@ -589,6 +589,13 @@ var ruAdmin = map[string]string{
 	"oidc.live_on":                 "OIDC включён",
 	"oidc.live_off":                "OIDC выключен",
 	"oidc.live_off_help":           "маршруты /oidc/* и /.well-known/openid-configuration отвечают 503 — headscale не сможет войти через OIDC.",
+		// B308 (v1.5.73) — интервал переразрешения доменов. Причина постоянного
+	// красного баннера «политика УСТАРЕЛА»: каждый домен переразрешался на каждом
+	// тике, поэтому вращающиеся A-записи переписывали ±20 производных строк каждые
+	// пять минут и ACL не переставал меняться.
+	"dns_autoupdater.interval_label":  "Переразрешать домены не чаще, чем раз в (секунд)",
+	"dns_autoupdater.interval_help":   "Сейчас: %s. Производные правила и политика между переразрешениями не меняются — это и убирает постоянный дрейф ACL. 0 = каждый тик (прежнее поведение).",
+	"dns_autoupdater.interval_saved":  "Интервал переразрешения доменов: %s.",
 	"oidc.env_off_warn":            "SKYGATE_OIDC_ENABLED выключен в окружении — он сильнее формы: включить OIDC из UI не получится, пока эта переменная не убрана или не переключена.",
 	"oidc.form_enable":             "Включить OIDC",
 	"oidc.form_enable_help":        "(снимите галочку чтобы выключить — авторизация headscale сломается)",
@@ -1566,6 +1573,13 @@ var enAdmin = map[string]string{
 	"oidc.live_on":                   "OIDC is ON",
 	"oidc.live_off":                  "OIDC is OFF",
 	"oidc.live_off_help":             "/oidc/* and /.well-known/openid-configuration answer 503 — headscale cannot sign in through OIDC.",
+		// B308 (v1.5.73) — интервал переразрешения доменов. Причина постоянного
+	// красного баннера «политика УСТАРЕЛА»: каждый домен переразрешался на каждом
+	// тике, поэтому вращающиеся A-записи переписывали ±20 производных строк каждые
+	// пять минут и ACL не переставал меняться.
+	"dns_autoupdater.interval_label":  "Re-resolve domains no more often than every (seconds)",
+	"dns_autoupdater.interval_help":   "Currently: %s. Derived rules and the policy stay put between resolves — that is what removes the permanent ACL drift. 0 = every tick (the pre-B308 behaviour).",
+	"dns_autoupdater.interval_saved":  "Domain re-resolve interval: %s.",
 	"oidc.env_off_warn":              "SKYGATE_OIDC_ENABLED is switched off in the environment and beats this form: OIDC cannot be enabled from the UI until that variable is removed or flipped.",
 	"oidc.form_enable":               "Enable OIDC",
 	"oidc.form_enable_help":          "(uncheck to disable — headscale auth will fail)",

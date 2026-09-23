@@ -1096,7 +1096,22 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 		}
 	}
 
+	// B308 (v1.5.73): a domain whose A records rotate was re-resolved on EVERY
+	// tick, so the derived /32 rows were deleted and re-inserted forever and the
+	// generated ACL never stopped changing (live: 39 drift/defer lines in two
+	// hours, ±20 rules per tick, the red «политика УСТАРЕЛА» banner effectively
+	// permanent and a headscale restart on every throttled re-apply on a
+	// policy.mode=file host). The resolution is not wrong — an IP that moved must
+	// follow — it just does not need to happen every five minutes, so it is gated
+	// by a per-domain minimum interval (default six hours, operator-editable).
+	resolveInterval := s.DomainResolveInterval()
+	nowUnix := time.Now().Unix()
+	skipped := 0
 	for _, d := range domains {
+		if !s.domainResolveDueFor(d.domain, nowUnix, resolveInterval) {
+			skipped++
+			continue
+		}
 		// 2026-07-28: CDN detection — short-circuit before DNS if
 		// we already have a CDN range rule for THIS SPECIFIC
 		// domain. The marker format is "cdn:<name>:<domain>".
@@ -1217,6 +1232,9 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			}
 			added += cdnAdded
 			s.logAutoUpdate(d.id, d.domain, cdnAdded, 0, "CDN detected: "+cdnName+" — using "+strconv.Itoa(len(cdnCIDRs))+" published ranges")
+			// B308: a successful (CDN) resolution counts — the next ticks skip this
+			// domain until the interval elapses.
+			s.markDomainResolved(d.domain, nowUnix)
 			continue
 		}
 
@@ -1311,6 +1329,15 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 		if len(currentIPs) > 0 || len(all32) > 0 {
 			s.logAutoUpdate(d.id, d.domain, added, removed, "")
 		}
+		// B308: the non-CDN path resolved and reconciled this domain — gate the
+		// next resolve. A failed lookup returned early above and deliberately does
+		// NOT mark the domain, so an unreachable resolver is retried next tick.
+		s.markDomainResolved(d.domain, nowUnix)
+	}
+
+	if skipped > 0 {
+		log.Printf("auto-updater: %d domain(s) skipped (re-resolve interval %s; the derived rows and the ACL stay put until then)",
+			skipped, DomainResolveIntervalLabel(resolveInterval))
 	}
 
 	// B276: the rule set just changed (or did not — the derived rows are rewritten

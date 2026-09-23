@@ -2500,6 +2500,11 @@ func main() {
 	// domain→/32 refresh for operators who disabled self-update
 	// in .env. See internal/feature/admin/settings_dns_autoupdate.go.
 	mux.Handle("POST /admin/system_tests/dns-autoupdate-toggle", authMW(http.HandlerFunc(adminSvc.PostAdminSystemTestsDNSAutoToggle)))
+	// B308 (v1.5.73) — how often a domain rule may be re-resolved. Every domain
+	// used to be re-resolved on every tick, which rewrote ±20 derived rows per
+	// five minutes on the agent VM, kept the generated ACL in permanent motion and
+	// made /admin/exit-nodes show the red stale-policy banner almost always.
+	mux.Handle("POST /admin/system_tests/dns-interval", authMW(http.HandlerFunc(adminSvc.PostAdminSystemTestsDNSInterval)))
 	// 2026-09-03: v1.5.2 (B231) — preferred-exit auto-
 	// reconciler toggle. Mirrors the DNS-autoupdater
 	// pattern: DB-backed with env-var default. The

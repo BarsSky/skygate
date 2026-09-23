@@ -24,6 +24,9 @@
 {{if .FlashSuccess}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
 {{end}}
+{{if .FlashDNSInterval}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{tf "dns_autoupdater.interval_saved" .FlashDNSInterval}}</div>
+{{end}}
 {{if .FlashDNSAutoToggled}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> DNS-autoupdater {{.FlashDNSAutoToggled}}. Takes effect on the next autoupdate tick (≤ {{if .Cfg}}{{.Cfg.DNSAutoCheck}}{{else}}5m{{end}}).</div>
 {{end}}
@@ -242,6 +245,25 @@
           <i class="fa-solid fa-circle-play"></i> Enable DNS autoupdater
         {{end}}
       </button>
+    </form>
+
+    {{/* B308 (v1.5.73) — how often a domain rule may be re-resolved. Live cause
+         of the permanent red «политика УСТАРЕЛА» banner: every domain was
+         re-resolved on EVERY tick, so a domain whose A records rotate produced
+         ±20 derived rule rows per five minutes and the generated ACL never
+         stopped changing. The derived rows (and therefore the policy) now stay
+         put between resolves. */}}
+    <form method="post" action="/admin/system_tests/dns-interval" style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+      <label style="font-size:12px;color:var(--text-muted)">
+        {{t "dns_autoupdater.interval_label"}}
+        <input type="number" name="interval_sec" min="300" max="604800" step="60"
+               value="{{.DNSResolveIntervalSec}}"
+               style="width:9em;font-size:12px;padding:2px 4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:3px">
+      </label>
+      <button type="submit" class="btn btn-sm"><i class="fa-solid fa-floppy-disk"></i> {{t "common.save"}}</button>
+      <span style="font-size:12px;color:var(--text-muted)">
+        {{tf "dns_autoupdater.interval_help" .DNSResolveIntervalHuman}}
+      </span>
     </form>
   </div>
 </div>

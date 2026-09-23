@@ -12,6 +12,95 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.73 — a domain is re-resolved once per interval (the permanent stale-policy banner) (B308)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.72` → this tag · **Compatibility:** none —
+no schema change (the interval and the per-domain timestamps live in
+`global_settings`), no config change.
+
+### The report
+
+`/admin/exit-nodes` kept showing the red **«политика headscale УСТАРЕЛА»** banner on
+both `aro` and the agent VM although nothing had been changed by hand, the policy
+was rewritten over and over, and on the agent VM the prefix table stayed
+“problematic” after pressing re-apply.
+
+### What the journal said (agent VM, 39 drift lines in two hours)
+
+```
+17:41:02 acl-drift: auto-updater tick changed 38 rule(s) (added=19 removed=19) — deferring (throttle 30m0s)
+17:46:02 acl-drift: auto-updater tick changed 34 rule(s) (added=17 removed=17) — deferring
+18:11:16 acl-drift: auto-updater tick changed 50 rule(s) (added=18 removed=32) — deferring
+18:16:00 acl-drift: auto-updater tick changed 50 rule(s) (added=32 removed=18) — deferring
+18:51:04 acl-drift: ACL re-applied (snapshot v1655, generated=50420 bytes)
+```
+
+**The rules were not the operator's.** `DomainAutoUpdater` re-resolved *every*
+domain rule on *every* five-minute tick, and a domain whose A records rotate
+(`ghcr.io` 29 rows, `quay.io` 17, `minimax.io` 33) returns a slightly different IP
+set each time — so the derived `/32` rows were deleted and re-inserted forever. The
+generated ACL therefore never stopped changing, the drift banner was effectively
+permanent, and on a `policy.mode: file` host every throttled re-apply restarted
+headscale. B298's 30-minute churn throttle (which is still right) hid the *apply*,
+not the churn.
+
+### The fix
+
+* **A per-domain minimum re-resolve interval** — `global_settings` key
+  `dns_domain_resolve_interval_sec`, default **6 hours**, floor 5 minutes, ceiling
+  7 days; `0` means “every tick”, i.e. the pre-B308 behaviour, for anyone chasing a
+  moving target.
+* The last successful resolution is recorded per domain
+  (`domain_resolve_at:<domain>`), and the gate is consulted **before** the DNS
+  lookup, so the derived rows — and therefore the policy — stay put between
+  resolves.
+* **A domain that was never resolved is always due** (a freshly created rule is
+  never starved), a **failed lookup is deliberately not marked** (an unreachable
+  resolver is retried on the next tick instead of being skipped for hours), and a
+  clock that moved backwards resolves rather than freezing the domain.
+* Both resolution paths (the CDN branch and the per-IP branch) mark the domain only
+  after a successful resolve, and the skip is logged with the effective interval
+  (`auto-updater: N domain(s) skipped…`), so the gate is visible in the journal.
+* **Editable from the panel**: `/admin/system_tests` → the DNS-autoupdater card now
+  has an interval field (`POST /admin/system_tests/dns-interval`). It writes the
+  **same key the updater reads**, and stores the **clamped** value, so the number on
+  the page is the number the runtime uses (the flash names it).
+
+### Verification
+
+* `scripts/check_b308_domain_resolve_interval.sh` — 21 contracts (the bounds, the
+  “never resolved is due” rule, the backwards clock, the failed-lookup policy, the
+  gate call sites and both mark points, the panel key parity, RU+EN labels).
+* `internal/feature/exit_rules/domain_interval_b308_test.go` — the parse/clamp
+  table, the due-rule table (including never-resolved, disabled gate, elapsed,
+  backwards clock) and the setting-key contract.
+* `internal/feature/admin/settings_dns_interval_b308_test.go` — the handler over a
+  real SQLite DB: the stored value is the clamped one for every input shape
+  (valid / too small / too large / empty / garbage / zero) and a non-admin cannot
+  change it.
+* `go vet`, `staticcheck`, `go test ./...` clean; CI green before the tag.
+
+### What the operator should check after updating
+
+1. `/admin/system_tests` → the DNS-autoupdater card: the new **interval** field
+   (default 21600 s = 6 h). Set it and Save; the green flash names the effective
+   interval.
+2. The journal: the every-five-minute `autoupdater: added=… removed=…` line should
+   become a `auto-updater: N domain(s) skipped (re-resolve interval 6h0m0s…)` line —
+   and the red banner on `/admin/exit-nodes` should stop reappearing on its own.
+3. If a specific domain really moves often, lower the interval (or set 0 to restore
+   the old every-tick behaviour) — that is now a panel setting, not a redeploy.
+
+### Still open from the same report (next blocks)
+
+The `karolina` relay on the agent VM is unreachable over SSH
+(`ssh root@100.64.0.2:18022 … Operation timed out` every tick), so its 29 prefixes
+are never advertised and the table cannot become clean by re-applying — that is a
+transport problem, not an ACL one, and the plan is to make skygate demote an
+unreachable prefix owner to a healthy relay instead of leaving «нет маршрута» rows.
+The OIDC auto-configure buttons and the navigation/«Сервисы» regrouping are the
+other two follow-ups.
+
 ## v1.5.72 — the STUN tile was OUR false negative, not a derper defect (B307)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.71` → this tag · **Compatibility:** none —

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/feature/exit_rules"
 	"skygate/internal/i18n"
 )
 
@@ -64,6 +65,13 @@ func (s *Service) GetAdminSystemTests(w http.ResponseWriter, r *http.Request) {
 	// s.Cfg.DNSAutoUpdateEnabled so the operator sees the
 	// SAME effective state the goroutine would use.
 	dnsAutoEnabled := db.GetGlobalSettingBool(s.dbc(), globalSettingsKeyDNSAutoUpdate, s.Cfg.DNSAutoUpdateEnabled)
+	// B308 (v1.5.73): the effective per-domain re-resolve interval, rendered in the
+	// same card. Parsed with the updater's OWN policy (empty/unparseable → default,
+	// clamped to [5m, 7d]) so the number on the page is the number the goroutine
+	// uses.
+	dnsResolveRaw, _ := db.GetGlobalSetting(s.dbc(), exit_rules.SettingDomainResolveIntervalSec, "")
+	dnsResolveInterval := exit_rules.ParseDomainResolveInterval(dnsResolveRaw)
+	dnsResolveIntervalSec := int64(dnsResolveInterval.Seconds())
 	// 2026-09-03: v1.5.2 (B231) — read the effective
 	// preferred-exit auto-reconciler state. Same
 	// precedence model as the DNS-autoupdater: DB row
@@ -101,6 +109,12 @@ func (s *Service) GetAdminSystemTests(w http.ResponseWriter, r *http.Request) {
 		"RecentRuns":            recent,
 		"FlashError":            r.URL.Query().Get("err"),
 		"DNSAutoUpdateEnabled":  dnsAutoEnabled,
+		// B308 (v1.5.73): the per-domain re-resolve interval, shown in the same
+		// card so the operator can see (and change) how often a domain rule may be
+		// rewritten — the knob that stopped the permanent ACL drift.
+		"DNSResolveIntervalSec":   dnsResolveIntervalSec,
+		"DNSResolveIntervalHuman": exit_rules.DomainResolveIntervalLabel(dnsResolveInterval),
+		"FlashDNSInterval":        r.URL.Query().Get("dns_interval"),
 		"PrefReconcileEnabled": prefReconcileEnabled,
 		"FlashDNSAutoToggled":   r.URL.Query().Get("dns_auto_toggled"),
 		"FlashPrefReconcileToggled": r.URL.Query().Get("pref_reconcile_toggled"),
