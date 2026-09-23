@@ -664,51 +664,79 @@ func syncOneExitNode(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func(st
 	// NOT used here — empty ssh_target with a row in
 	// exit_servers means "use the auto-fallback", not "fall
 	// through to a hostname that doesn't resolve".
-	sshRow, _ := db.LookupExitServerSSH(d, node)
-	sshTarget, _ := db.LookupExitServerSSHTarget(d, node)
-	sshKeyPath := sshRow.KeyPath
-	if sshKeyPath == "" {
-		sshKeyPath = defaultKeyPath
+	// B300 (2026-09-23): the transport decision (local vs SSH), the SSH target and
+	// the approval now live in ONE shared helper — see applyRoutesToRelay. This
+	// path and the aggregated staggered loop used to carry separate copies, and
+	// the aggregated one was shorter, so it bypassed both B293's locality evidence
+	// and B292's target repair.
+	result[node] = applyRoutesToRelay(hs, d, lookupAcceptRoutes, defaultKeyPath, node, approveRoutes).resultLabel()
+}
+
+// relayApplyOutcome is one relay's route application, rendered identically by
+// both sync paths.
+type relayApplyOutcome struct {
+	// Label is the short result: "local=ok via helper", "ssh=ok", "local=err=…".
+	Label string
+	// Note carries the extra facts a flash line can afford (self-covering subnets
+	// that were refused, the applier's first output line).
+	Note string
+	// Local reports which transport ran, for the caller's own log line.
+	Local bool
+	// Evidence names what proved (or ruled out) locality.
+	Evidence string
+	// Approved and ApproveErr come from the headscale approval step, which runs
+	// for BOTH transports: the operator may have approved the routes by other
+	// means, and a transport failure must not hide the approval side.
+	Approved   int
+	ApproveErr error
+}
+
+// resultLabel renders "<label> approved=N|approve=err=…<note>" — the exact shape
+// the per-node path has always put in the result map (and therefore in the flash
+// message), so the pages keep their wording.
+func (o relayApplyOutcome) resultLabel() string {
+	approve := "approved=0"
+	switch {
+	case o.ApproveErr != nil:
+		approve = "approve=err=" + o.ApproveErr.Error()
+	case o.Approved > 0:
+		approve = fmt.Sprintf("approved=%d", o.Approved)
 	}
-	// B292 (2026-09-23): the row has neither ssh_target nor tailscale_ip, so the
-	// B81 chain resolved to "" and SetAdvertisedRoutes fell back to the bare node
-	// name — ssh answered "Could not resolve hostname exit-node-vps" while
-	// /admin/exit-nodes displayed the relay's Tailscale IP (100.64.0.1) read from
-	// headscale. Two sources of truth, one of them invisible.
-	//
-	// The live headscale view is the authority here: if it reports an address for
-	// this relay, use it AND persist it (only when the column is still empty), so
-	// the next pass — and the "Use Tailscale IP" button, which resolves through
-	// the same helper — work without operator action.
-	if strings.TrimSpace(sshTarget) == "" {
-		if ip := liveExitNodeIP(hs, node); ip != "" {
-			log.Printf("exit-node sync(%s): exit_servers has no ssh_target and no tailscale_ip — using the live Tailscale IP %s from headscale (B292)", node, ip)
-			if err := db.SetExitServerTailscaleIPIfEmpty(d, node, ip); err != nil {
-				log.Printf("exit-node sync(%s): could not persist tailscale_ip=%s: %v", node, ip, err)
-			}
-			sshTarget = "root@" + ip
-		} else {
-			log.Printf("exit-node sync(%s): no ssh_target, no tailscale_ip and headscale reports no address — ssh will be given the bare node name and will most likely fail on DNS (B292)", node)
-		}
-	}
-	// SSH first. On error, we STILL try the headscale approve
-	// step below — the operator may have already approved these
-	// routes some other way (e.g. directly via the headscale
-	// CLI) and the SSH failure should be visible but not block
-	// the approval side.
-	//
-	// B293 (2026-09-23): unless this relay IS this host. On the operator's `aro`
-	// the local tailscaled is `exit-node-vps` (100.64.0.1) — headscale, skygate
-	// and the exit node live on one machine — so managing it over SSH meant an
-	// SSH session from the host to itself, through the tailnet it configures:
-	// pointless (a key + authorized_keys on the same box) and fragile (it fails
-	// exactly when the local tailscaled is the thing needing repair). The
-	// decision is made from EVIDENCE — the live daemon's own Self.TailscaleIPs
-	// against the relay's headscale addresses — and "I could not ask" keeps the
-	// SSH path.
-	routeLabel := "ssh=ok"
-	transportNote := ""
+	return o.Label + " " + approve + o.Note
+}
+
+// applyRoutesToRelay decides how ONE relay gets its advertised routes and runs it.
+//
+// B300 (2026-09-23) — WHY THIS IS SHARED. Two paths configure the same relay: the
+// per-node one (`syncOneExitNode`, used by SyncAdvertisedRoutes,
+// SyncAdvertisedRoutesForNode and the per-row Re-sync button) and the aggregated
+// one (`staggeredSync(aggregated)`, which is what the periodic tick and the domain
+// auto-updater actually run). The aggregated path carried its own SHORTER copy of
+// this body: it never asked `DetectRelayPlacement` and never ran B292's target
+// repair. Live on `aro` — where the local daemon IS the relay
+// (`Self.HostName=exit-node-vps`, `100.64.0.1`, byte-identical to the headscale
+// node) and `exit_servers` has neither `ssh_target` nor `tailscale_ip` — every
+// tick therefore handed `SetAdvertisedRoutes` an EMPTY target, ssh fell back to
+// the bare node name and died on `Could not resolve hostname exit-node-vps`,
+// while the local transport the evidence proves would match was never considered
+// (`routes-apply.*` was never even created). Both call sites now ask the same
+// questions in the same order.
+//
+// Order of decisions:
+//  1. is this relay THIS host? (B293 evidence chain: the live daemon's
+//     Self.TailscaleIPs, then this host's interfaces; a NEGATIVE daemon answer is
+//     final, "could not ask" falls back to the interfaces);
+//  2. local → refuse to advertise a subnet this host sits inside, then apply
+//     through the privilege ladder (direct → sudo -n → the root-owned helper);
+//  3. remote → resolve the SSH target (operator override → the live Tailscale IP
+//     from headscale, persisted into the empty column → a NAMED warning) and use
+//     the SSH transport;
+//  4. approve the routes through headscale, whichever transport ran.
+func applyRoutesToRelay(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func(string) int, defaultKeyPath, node string, approveRoutes []string) relayApplyOutcome {
+	out := relayApplyOutcome{Label: "ssh=ok"}
+
 	placement := headscale.DetectRelayPlacement(liveExitNodeIPs(hs, node))
+	out.Evidence = placement.Evidence
 	if placement.Local {
 		// Refuse to advertise a subnet this host sits INSIDE (the documented
 		// route loop: the host's own traffic to its LAN peers would enter the
@@ -716,53 +744,82 @@ func syncOneExitNode(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func(st
 		kept, skipped := headscale.SelfCoveringRoutes(approveRoutes, placement.SelfIPs)
 		if len(skipped) > 0 {
 			log.Printf("exit-node sync(%s): local relay is INSIDE %v — NOT advertising those (a co-located relay advertising its own network loops the host's own traffic; docs/networking.md, L-45)", node, skipped)
-			transportNote = fmt.Sprintf(" self_subnet_skipped=%s", strings.Join(skipped, ","))
-			result[node+"_skipped"] = strings.Join(skipped, ",")
+			out.Note = fmt.Sprintf(" self_subnet_skipped=%s", strings.Join(skipped, ","))
 		}
-		transport, out, applyErr := hs.ApplyRoutesLocally(kept, lookupAcceptRoutes(node))
-		switch {
-		case applyErr != nil:
-			routeLabel = "local=err=" + applyErr.Error()
-		default:
-			routeLabel = "local=ok via " + transport.Name
-			if out != "" {
-				transportNote += " out=" + firstLine(out)
+		transport, cmdOut, applyErr := hs.ApplyRoutesLocally(kept, lookupAcceptRoutes(node))
+		out.Local = true
+		if applyErr != nil {
+			out.Label = "local=err=" + applyErr.Error()
+		} else {
+			out.Label = "local=ok via " + transport.Name
+			if cmdOut != "" {
+				out.Note += " out=" + firstLine(cmdOut)
 			}
 			log.Printf("exit-node sync(%s): routes applied locally via %s (relay IS this host, matched %s by %s) — no SSH involved", node, transport.Name, placement.MatchedIP, placement.Evidence)
 		}
-		approveLabel := "approved=0"
-		if approved, approveErr := hs.ApproveAllRoutesWithList(node, approveRoutes); approveErr != nil {
-			approveLabel = "approve=err=" + approveErr.Error()
-		} else if approved > 0 {
-			approveLabel = fmt.Sprintf("approved=%d", approved)
+	} else {
+		if placement.DaemonErr != nil {
+			// B293.1: the daemon could not be asked AND the interface list did not
+			// match, so this is either a genuinely remote relay or a host whose
+			// local addresses are not visible — either way SSH is the transport,
+			// and the reason is logged so a silent fallback never hides a broken
+			// local path.
+			log.Printf("exit-node sync(%s): not a local relay (local daemon unreadable: %v) — using the SSH transport", node, placement.DaemonErr)
+		} else {
+			// B300: a negative answer from a daemon that DID answer used to be
+			// silent, so "why is this relay managed over ssh?" had no answer in
+			// the journal. Name the evidence instead.
+			log.Printf("exit-node sync(%s): not a local relay (the local daemon answered: matched %q among %v) — using the SSH transport", node, placement.MatchedIP, placement.SelfIPs)
 		}
-		result[node] = routeLabel + " " + approveLabel + transportNote
-		return
+
+		// Resolve per-exit-node SSH config. The empty-row fallback (no row for
+		// this hostname) is fine — SetAdvertisedRoutes uses the node name then.
+		sshRow, _ := db.LookupExitServerSSH(d, node)
+		sshTarget, _ := db.LookupExitServerSSHTarget(d, node)
+		sshKeyPath := sshRow.KeyPath
+		if sshKeyPath == "" {
+			sshKeyPath = defaultKeyPath
+		}
+		// B292 (2026-09-23): the row has neither ssh_target nor tailscale_ip, so
+		// the B81 chain resolved to "" and SetAdvertisedRoutes fell back to the
+		// bare node name — ssh answered "Could not resolve hostname
+		// exit-node-vps" while /admin/exit-nodes displayed the relay's Tailscale
+		// IP (100.64.0.1) read from headscale. Two sources of truth, one of them
+		// invisible.
+		//
+		// The live headscale view is the authority here: if it reports an address
+		// for this relay, use it AND persist it (only when the column is still
+		// empty), so the next pass — and the "Use Tailscale IP" button, which
+		// resolves through the same helper — work without operator action.
+		if strings.TrimSpace(sshTarget) == "" {
+			if ip := liveExitNodeIP(hs, node); ip != "" {
+				log.Printf("exit-node sync(%s): exit_servers has no ssh_target and no tailscale_ip — using the live Tailscale IP %s from headscale (B292)", node, ip)
+				if err := db.SetExitServerTailscaleIPIfEmpty(d, node, ip); err != nil {
+					log.Printf("exit-node sync(%s): could not persist tailscale_ip=%s: %v", node, ip, err)
+				}
+				sshTarget = "root@" + ip
+			} else {
+				log.Printf("exit-node sync(%s): no ssh_target, no tailscale_ip and headscale reports no address — ssh will be given the bare node name and will most likely fail on DNS (B292)", node)
+			}
+		}
+		// SSH first. On error the approval below still runs — the operator may
+		// have approved these routes some other way (e.g. directly via the
+		// headscale CLI) and the SSH failure should be visible without blocking
+		// the approval side.
+		if _, sshErr := hs.SetAdvertisedRoutes(node, approveRoutes, lookupAcceptRoutes(node), sshTarget, sshKeyPath); sshErr != nil {
+			out.Label = "ssh=err=" + sshErr.Error()
+		}
 	}
-	if placement.DaemonErr != nil {
-		// B293.1: the daemon could not be asked AND the interface list did not
-		// match, so this is either a genuinely remote relay or a host whose local
-		// addresses are not visible — either way SSH is the transport, and the
-		// reason is logged so a silent fallback never hides a broken local path.
-		log.Printf("exit-node sync(%s): not a local relay (local daemon unreadable: %v) — using the SSH transport", node, placement.DaemonErr)
-	}
-	sshLabel := "ok"
-	_, sshErr := hs.SetAdvertisedRoutes(node, approveRoutes, lookupAcceptRoutes(node), sshTarget, sshKeyPath)
-	if sshErr != nil {
-		sshLabel = "err=" + sshErr.Error()
-	}
-	routeLabel = "ssh=" + sshLabel
-	// Approve all routes (including base 0.0.0.0/0, ::/0) for this exit
-	// node via headscale CLI (docker exec).
-	// 2026-07-08: pass full list (base + per-rule) so the node keeps
-	// its exit-node capability (default route advertised AND approved).
-	approveLabel := "approved=0"
+
+	// Approve all routes (including base 0.0.0.0/0, ::/0) via the headscale
+	// install-kind ladder. 2026-07-08: pass the full list (base + per-rule) so the
+	// node keeps its exit-node capability (default route advertised AND approved).
 	if approved, approveErr := hs.ApproveAllRoutesWithList(node, approveRoutes); approveErr != nil {
-		approveLabel = "approve=err=" + approveErr.Error()
-	} else if approved > 0 {
-		approveLabel = fmt.Sprintf("approved=%d", approved)
+		out.ApproveErr = approveErr
+	} else {
+		out.Approved = approved
 	}
-	result[node] = routeLabel + " " + approveLabel
+	return out
 }
 
 // firstLine returns the first non-empty line of a command's output, trimmed —
@@ -908,33 +965,28 @@ func (s *Service) StaggeredSync() {
 			}
 			log.Printf("staggeredSync(aggregated): %s advertising %d unique routes (was: per-batch, lost all but last batch)",
 				n.name, len(batch))
-			// 2026-08-04 v0.33.1: per-node SSH config (was hard-coded
-			// /home/admin/.ssh/config + nodeHostname, both of which
-			// broke in the dockerised skygate).
-			// 2026-08-09 v0.33.1.29 B81: sshTarget uses the new
-			// helper with the operator-override → Tailscale IP
-			// fallback chain (see SyncAdvertisedRoutes for the
-			// full rationale). The key path stays on
-			// LookupExitServerSSH + Cfg.SSHKeyPath fallback.
-			sshRow, _ := db.LookupExitServerSSH(s.dbc(), n.name)
-			sshTarget, _ := db.LookupExitServerSSHTarget(s.dbc(), n.name)
-			sshKeyPath := sshRow.KeyPath
-			if sshKeyPath == "" && s.Cfg != nil {
-				sshKeyPath = s.Cfg.SSHKeyPath
+			// B300 (2026-09-23): the SAME transport decision as the per-node path.
+			// This loop used to carry a shorter copy that never asked
+			// `DetectRelayPlacement` and never ran B292's target repair — on `aro`
+			// (local daemon IS the relay, `exit_servers` empty) that meant an empty
+			// ssh target, the bare node name and `Could not resolve hostname
+			// exit-node-vps` on every tick, while the local transport that the
+			// evidence proves would match was never considered.
+			defaultKeyPath := ""
+			if s.Cfg != nil {
+				defaultKeyPath = s.Cfg.SSHKeyPath
 			}
-			msg, sshErr := s.HS.SetAdvertisedRoutes(n.name, batch, s.lookupAcceptRoutes(n.name), sshTarget, sshKeyPath)
-			// 2026-07-11: `tailscale set` on unix exits 0 with empty stdout, so
-			// `msg` is often "". Render an "ok" marker instead of a dangling colon.
-			if strings.TrimSpace(msg) == "" && sshErr == nil {
-				msg = "ok"
+			applied := applyRoutesToRelay(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, n.name, batch)
+			switch {
+			case applied.Local:
+				log.Printf("staggeredSync(aggregated): %s applied LOCALLY: %s — no SSH involved", n.name, applied.Label)
+			case strings.HasPrefix(applied.Label, "ssh=err="):
+				log.Printf("staggeredSync(aggregated): %s SSH err: %s", n.name, strings.TrimPrefix(applied.Label, "ssh=err="))
+			default:
+				log.Printf("staggeredSync(aggregated): %s advertised: %s", n.name, applied.Label)
 			}
-			if sshErr != nil {
-				log.Printf("staggeredSync(aggregated): %s SSH err: %v", n.name, sshErr)
-			} else {
-				log.Printf("staggeredSync(aggregated): %s advertised: %s", n.name, msg)
-			}
-			if _, err := s.HS.ApproveAllRoutesWithList(n.name, batch); err != nil {
-				log.Printf("staggeredSync(aggregated): %s approve err: %v", n.name, err)
+			if applied.ApproveErr != nil {
+				log.Printf("staggeredSync(aggregated): %s approve err: %v", n.name, applied.ApproveErr)
 			}
 			time.Sleep(interval)
 		}

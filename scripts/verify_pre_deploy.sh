@@ -5281,3 +5281,31 @@ run_check "B297" "the RUNNING headscale's version must be read, not assumed: SKY
 # B288/C3 were renegotiated to name the new call form and say why.
 run_check "B298" "derived-rule churn must not restart the control plane: CollapseDuplicateDerivedRules partitioned on five columns while device_rules_natural_key_uniq is a six-column index (B237.23/V068) that deliberately lets two domains of one CDN keep a row per CIDR each, so the collapse deleted exactly the row the CDN short-circuit looks for and B184's status propagation reads — the losing domain re-resolved and re-inserted its whole published range set on every tick and the collapse deleted it again (live aro: added=17 removed=1 plus dedup removed 16, every five minutes, and on a file-mode host every ACL apply IS systemctl restart headscale). The collapse now partitions on the same key as the index, so only EXACT duplicates are removed and a domain's rows survive. Second half: the auto-updater and the periodic drift check no longer share the 60-second ownership throttle — derived-rule churn (normal DNS rotation) spends a separate 30-minute budget, so one rotating /32 cannot restart the control plane, while operator actions (rule create/delete, an explicit resync, an ownership move) keep the 60s budget and still land within a minute. Contracts in scripts/check_b298_cdn_rule_churn.sh." \
   'test -f scripts/check_b298_cdn_rule_churn.sh && bash scripts/check_b298_cdn_rule_churn.sh'
+
+# --- B300: one transport decision for every sync path --------------------------
+# Live on `aro`, whose journal showed the per-node fixes were not on the path that
+# runs:
+#   staggeredSync(aggregated): exit-node-vps SSH err: ssh exit-node-vps (target from
+#     the node name (exit_servers has neither ssh_target nor tailscale_ip …)): ssh:
+#     Could not resolve hostname exit-node-vps
+# while the host itself proved the relay IS local — `tailscale status --json` on
+# `aro` reports Self exit-node-vps ['100.64.0.1', 'fd7a:115c:a1e0::1'], headscale
+# reports node id 1 exit-node-vps with exactly those addresses, and the
+# `exit_servers` row is ('exit-node-vps', '', '') — both columns empty. Two paths
+# configure the same relay: the per-node one (SyncAdvertisedRoutes,
+# SyncAdvertisedRoutesForNode, the per-row Re-sync button) and the aggregated one
+# (`staggeredSync(aggregated)`, which is what the periodic tick and the domain
+# auto-updater actually run). The aggregated path carried its own SHORTER copy of
+# the body: it never called `DetectRelayPlacement` (B293) and never ran B292's
+# target repair, so every tick handed `SetAdvertisedRoutes` an empty target, ssh
+# fell back to the bare node name, and the local transport the evidence proves
+# would match was never considered — `routes-apply.status`/`.log` were never even
+# created and every prefix stayed «нет маршрута». Both call sites now go through
+# ONE shared tail (`applyRoutesToRelay`): locality evidence → (local) refuse
+# self-covering subnets + apply through the privilege ladder, or (remote) resolve
+# the target by B292's chain and persist the address — then approve through the
+# same single call site. A readable daemon that answers "not local" now logs its
+# evidence instead of being silent. Contracts in
+# scripts/check_b300_relay_apply_one_path.sh.
+run_check "B300" "one transport decision for every sync path: the aggregated staggered loop (which the periodic tick and the domain auto-updater actually run) carried its own shorter copy of the per-node route body, so it never asked DetectRelayPlacement (B293) and never ran B292's target repair — live on aro that meant every tick handing SetAdvertisedRoutes an EMPTY target, ssh falling back to the bare node name and dying on 'Could not resolve hostname exit-node-vps', while tailscale status on the same host reported Self exit-node-vps ['100.64.0.1','fd7a:115c:a1e0::1'] and headscale listed exactly those addresses for node 1 (the exit_servers row itself is empty in both columns), i.e. the local transport was provably available and never considered; routes-apply.status/.log were never created and every prefix stayed «нет маршрута». Both paths now go through ONE shared tail, applyRoutesToRelay: B293's evidence chain (live daemon → interfaces) decides locality, a local relay refuses to advertise a subnet it sits inside and applies through the privilege ladder (direct → sudo -n → root-owned helper), a remote one resolves the SSH target with B292's chain (operator override → live Tailscale IP, persisted into the empty column → a NAMED warning) and there is exactly ONE SetAdvertisedRoutes and ONE ApproveAllRoutesWithList call site; a readable daemon that answers 'not local' now logs its evidence instead of leaving 'why ssh?' unanswered in the journal. Contracts in scripts/check_b300_relay_apply_one_path.sh." \
+  'test -f scripts/check_b300_relay_apply_one_path.sh && bash scripts/check_b300_relay_apply_one_path.sh'

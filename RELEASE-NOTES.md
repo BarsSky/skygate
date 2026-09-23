@@ -19,6 +19,84 @@ any `.env` declared, while rung 2 (`GET /version`) is the rung that answered
 original report for the record; the measured value is 0.29.2, which is the point
 of the block.
 
+## v1.5.65 — one transport decision for every sync path (B300)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.64` → this tag · **Compatibility:** none —
+no schema change, no migration.
+
+### What was happening
+
+`aro`'s exit routes never applied, on any tick:
+
+```
+staggeredSync(aggregated): exit-node-vps SSH err: ssh exit-node-vps (target from the node
+  name (exit_servers has neither ssh_target nor tailscale_ip for this relay),
+  key /var/lib/skygate/ssh/id_ed25519): ssh: Could not resolve hostname exit-node-vps
+```
+
+…while the host itself proved the relay **is** local:
+
+```
+SELF exit-node-vps ['100.64.0.1', 'fd7a:115c:a1e0::1']   (tailscale status --json)
+ROW  ('exit-node-vps', '', '')                            (exit_servers: both columns empty)
+ID 1 | exit-node-vps | 100.64.0.1 | online                (headscale nodes list)
+```
+
+Two sync paths configure the same relay — the per-node one (`syncOneExitNode`, used
+by `SyncAdvertisedRoutes`, `SyncAdvertisedRoutesForNode` and the per-row Re-sync
+button) and the aggregated one (`staggeredSync(aggregated)`, which is what the
+periodic tick and the domain auto-updater actually run). The aggregated path
+carried its own **shorter copy** of the body: it never called
+`DetectRelayPlacement` (B293) and never ran B292's target repair. Every tick
+therefore handed `SetAdvertisedRoutes` an **empty** target, ssh fell back to the
+bare node name, and the local transport the evidence proves would match was never
+even considered — `routes-apply.status`/`.log` were never created, and every
+prefix stayed «нет маршрута».
+
+### The fix
+
+Both call sites now go through **one shared tail**, `applyRoutesToRelay`
+(`internal/feature/exit_rules/sync.go`):
+
+1. **B293's evidence chain** decides locality (the live daemon's
+   `Self.TailscaleIPs`, then this host's interfaces; a *negative* daemon answer is
+   final, "could not ask" falls back to the interfaces);
+2. **local** → refuse to advertise a subnet this host sits inside
+   (`SelfCoveringRoutes`) and apply through the privilege ladder (direct →
+   `sudo -n` → the root-owned helper);
+3. **remote** → resolve the SSH target by B292's chain (operator override → the
+   live Tailscale IP, **persisted** into the still-empty column → a NAMED warning)
+   and run SSH;
+4. approve through the same single call site, whichever transport ran.
+
+There is now **exactly one** `SetAdvertisedRoutes` and **one**
+`ApproveAllRoutesWithList` call in the sync package (pinned by contract), and a
+readable daemon that answers "not local" **logs its evidence** instead of leaving
+«why ssh?» unanswered in the journal.
+
+### What to expect after the update
+
+On `aro` both facts above hold, so the same Re-sync (or the next tick) should
+report **`local=ok via …`** and log `routes applied locally via … (relay IS this
+host, matched 100.64.0.1 by local tailscaled) — no SSH involved`, with
+`/var/lib/skygate/update/routes-apply.{status,log}` appearing if the privileged
+helper is the rung that ran. Check:
+
+```bash
+journalctl -u skygate --since '-10 min' | grep -E 'exit-node sync|staggeredSync|local='
+cat   /var/lib/skygate/update/routes-apply.status 2>/dev/null || echo "direct/sudo rung was used"
+```
+
+If it still says `ssh=…`, the log line now names **which** evidence ruled the
+relay out (`the local daemon answered: matched "" among [...]` or
+`local daemon unreadable: …`), so the next report answers itself.
+
+17 contracts in `scripts/check_b300_relay_apply_one_path.sh`. No contract needed
+renegotiating: B132's `syncOneExitNode` + call sites, B274's
+`syncOneExitNode(… OwnedPrefixes …)` call text and B293's
+`DetectRelayPlacement`/`ApplyRoutesLocally` greps all still hold — the new script
+asserts exactly that as its D1.
+
 ## v1.5.64 — derived-rule churn must not restart the control plane (B298)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.63` → this tag · **Compatibility:** none —
