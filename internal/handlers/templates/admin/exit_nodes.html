@@ -411,6 +411,22 @@
     <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.prefix_owner.live_read_failed_help"}}</div>
   </div>
   {{end}}
+  {{/* B309: a relay whose LAST route application failed is excluded from the
+       healthy set, so its prefixes are handed to a relay that answers. Without
+       this banner that move is invisible and the remaining «нет маршрута» rows
+       look like an ACL problem — they are not: no ACL write can configure a
+       relay skygate cannot reach, and the re-sync button cannot either. */}}
+  {{if .TransportFailed}}
+  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.4)">
+    <b>{{t "exit_nodes.prefix_owner.transport_failed"}}</b>
+    <ul style="margin:6px 0 0 0;padding-left:18px;font-size:13px">
+      {{range .TransportFailed}}
+      <li><code>{{.Relay}}</code> — {{t "exit_nodes.prefix_owner.transport_failed_ago"}} {{.Age}}, {{t "exit_nodes.prefix_owner.transport_failed_prefixes"}} {{.Prefixes}}: <code>{{.Reason}}</code></li>
+      {{end}}
+    </ul>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.prefix_owner.transport_failed_help" | safeHTML}}</div>
+  </div>
+  {{end}}
   {{if or .NotAdvertised .Unserved .Duplicated}}
   <p style="margin:8px 0 0 0;font-size:13px">
     <span class="tag tag-danger">{{t "exit_nodes.prefix_owner.drift_count"}}: {{.NotAdvertised}}</span>

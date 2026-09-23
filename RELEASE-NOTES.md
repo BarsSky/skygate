@@ -12,6 +12,89 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.74 — a relay skygate cannot configure stops owning prefixes (B309)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.73` → this tag · **Compatibility:** none —
+no schema change (the per-relay transport record lives in `global_settings`), no
+config change, no operator action.
+
+### The report
+
+`/admin/exit-nodes` carried **«владелец не объявляет: 29»** and a prefix table full
+of **«нет маршрута»**, and pressing «Пересобрать и применить ACL» changed nothing:
+the rows came back with the same problems, on both `aro` and the agent VM.
+
+### What the journal said (agent VM)
+
+```
+staggeredSync(aggregated): karolina advertising 114 unique routes
+exit-node sync(karolina): not a local relay (local daemon unreadable) — using the SSH transport
+staggeredSync(aggregated): karolina SSH err: ssh root@100.64.0.2:18022 … Operation timed out
+staggeredSync(aggregated): emilia advertised: ssh=ok approved=1 …
+```
+
+The relay that **owned** the prefixes could not be configured at all. It was
+perfectly visible to headscale, so the exit-node health table called it healthy and
+the prefix assignment kept giving it 75 prefixes — which it could never advertise.
+Neither the ACL nor its re-apply button can fix that: writing a policy does not
+configure an unreachable host.
+
+### Root cause
+
+`healthyExitRelays()` — the healthy set `prefixowner.Assign` receives — was derived
+from `exit_node_health`, which is computed from **headscale** node state. Nothing in
+the chain asked the only question that matters for a prefix owner: *can skygate
+actually apply routes to this relay?* A node can be online in the tailnet and
+unreachable over SSH (firewall, wrong port, key, a stopped sshd), and it then keeps
+its prefixes forever while every tick logs a timeout that nothing acts on.
+
+### The fix (B309)
+
+* Every route application records its outcome **per relay** in `global_settings`
+  under `relay_apply_state:<relay>` — `<unix>|ok` or `<unix>|err|<reason>`. No
+  migration, both database dialects, and an unreadable record is read as
+  *never recorded* (a storage hiccup must never look like a relay failure).
+* **Both** transports count (`ssh=err=…`, `local=err=…`), and so does an approval
+  failure: routes headscale refuses to approve are not served either.
+* `healthyExitRelaysForAssignment` = B275 headscale health **minus** every relay
+  whose last application failed within `RelayApplyFailureWindow` (**15 minutes**,
+  three sync ticks). `prefixowner.Assign` already implements “an unhealthy owner
+  loses the prefix”, so those prefixes move to a relay that answers, and B276's
+  per-CIDR ACL pin follows in the same pass.
+* The exclusion is **logged** once per pass with the reason and the age, so the
+  journal explains the move instead of the operator seeing an unexplained
+  reassignment.
+* One **successful** application clears the record immediately: a recovered relay
+  returns to the healthy set on its own, with nothing to un-block by hand.
+* The exit-node **health** table is deliberately untouched — a relay can be a
+  healthy tailnet node and still be unconfigurable, and writing the health table
+  would make `/admin/exit-nodes` lie in the other direction (the B273 failure mode).
+
+### What the operator sees now
+
+A banner on `/admin/exit-nodes` under the prefix card (RU + EN) names every excluded
+relay, its error, how long ago the attempt ran and how many prefixes it held, and
+says outright that an ACL re-apply cannot fix it. Fix the access to the node
+(usually SSH: address, port, key) and the relay returns by itself on the next tick.
+
+### Files
+
+`internal/feature/exit_rules/relay_transport_b309.go` (new),
+`internal/feature/exit_rules/relay_transport_b309_test.go` (new),
+`internal/feature/exit_rules/sync.go` (records at both call sites; assignment uses
+the transport-aware healthy set), `internal/feature/admin/exit_nodes.go`
+(`TransportFailed`), `internal/handlers/templates/admin/exit_nodes.html`,
+`internal/i18n/catalog_exit_nodes.go`, `scripts/check_b309_relay_transport_demotion.sh`.
+
+### Verification
+
+21 contracts in `scripts/check_b309_relay_transport_demotion.sh` (including “the
+health table is not written by this feature”), plus
+`internal/feature/exit_rules/relay_transport_b309_test.go` driving the live sequence
+against a migrated SQLite: the unreachable relay loses the prefix to the reachable
+one **while the health table stays green**, one success brings it back, an expired
+failure does not demote.
+
 ## v1.5.73 — a domain is re-resolved once per interval (the permanent stale-policy banner) (B308)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.72` → this tag · **Compatibility:** none —

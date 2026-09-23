@@ -107,7 +107,7 @@ var (
 // Returns the (inserted, changed) counts the caller logs, so both sync paths report
 // the same numbers they used to.
 func (s *Service) reconcilePrefixOwnership() (int, int, error) {
-	ins, chg, err := prefixowner.Reconcile(s.dbc(), healthyExitRelays(s.dbc()))
+	ins, chg, err := prefixowner.Reconcile(s.dbc(), healthyExitRelaysForAssignment(s.dbc()))
 	if err != nil {
 		return ins, chg, err
 	}
@@ -669,7 +669,13 @@ func syncOneExitNode(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func(st
 	// path and the aggregated staggered loop used to carry separate copies, and
 	// the aggregated one was shorter, so it bypassed both B293's locality evidence
 	// and B292's target repair.
-	result[node] = applyRoutesToRelay(hs, d, lookupAcceptRoutes, defaultKeyPath, node, approveRoutes).resultLabel()
+	// B309: remember whether THIS relay could actually be configured. The prefix
+	// assignment reads this record (healthyExitRelaysForAssignment), so a relay
+	// that answers headscale but not skygate stops being an owner instead of
+	// holding prefixes it will never advertise.
+	outcome := applyRoutesToRelay(hs, d, lookupAcceptRoutes, defaultKeyPath, node, approveRoutes)
+	recordRelayApply(d, node, outcome)
+	result[node] = outcome.resultLabel()
 }
 
 // relayApplyOutcome is one relay's route application, rendered identically by
@@ -977,6 +983,11 @@ func (s *Service) StaggeredSync() {
 				defaultKeyPath = s.Cfg.SSHKeyPath
 			}
 			applied := applyRoutesToRelay(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, n.name, batch)
+			// B309: this loop is the one that actually runs on a normal install
+			// (staggered sync defaults ON), so the per-relay transport record has
+			// to be written HERE too — otherwise an unreachable relay keeps
+			// owning prefixes forever while every tick logs its ssh timeout.
+			recordRelayApply(s.dbc(), n.name, applied)
 			switch {
 			case applied.Local:
 				log.Printf("staggeredSync(aggregated): %s applied LOCALLY: %s — no SSH involved", n.name, applied.Label)

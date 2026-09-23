@@ -29,6 +29,7 @@ import (
 
 	"skygate/internal/acl"
 	"skygate/internal/db"
+	"skygate/internal/feature/exit_rules"
 	"skygate/internal/headscale"
 	"skygate/internal/prefixowner"
 )
@@ -1124,6 +1125,27 @@ type PrefixDriftStats struct {
 	// a live read (B295): "compared with the last APPLIED snapshot vN (headscale did
 	// not answer)". Empty means the verdict came from headscale itself.
 	PolicyVia string
+	// TransportFailed lists the relays whose LAST route application failed inside
+	// the B309 window. They are excluded from the healthy set the prefix
+	// assignment uses, so their prefixes have been handed to a relay that answers
+	// — and this list is the explanation the operator needs, because re-applying
+	// the ACL can never fix "нет маршрута" on a relay skygate cannot reach.
+	TransportFailed []RelayTransportNote
+}
+
+// RelayTransportNote is one unreachable relay on the /admin/exit-nodes prefix
+// card (B309).
+type RelayTransportNote struct {
+	// Relay is the relay name as recorded (lower-cased).
+	Relay string
+	// Reason is the transport/approval error the last application produced.
+	Reason string
+	// Age is how long ago that application ran ("3m12s").
+	Age string
+	// Prefixes is how many rows of the assignment table still point at this relay
+	// as their owner (0 when it owned nothing — the transport is still broken and
+	// worth naming, it just did not move anything).
+	Prefixes int
 }
 
 // prefixDriftRowLimit caps how many rows the page renders. The assignment table
@@ -1227,7 +1249,46 @@ func (s *Service) loadPrefixOwnerRows() ([]PrefixOwnerRow, PrefixDriftStats) {
 	}
 	stats.Shown = len(out)
 	s.fillPolicyDrift(&stats)
+	s.fillTransportFailures(&stats, all)
 	return out, stats
+}
+
+// fillTransportFailures names the relays that were excluded from prefix
+// assignment because their last route application failed (B309).
+//
+// WHY the page needs this: the exclusion MOVES prefixes, and a move that the
+// operator did not ask for is exactly what made the old behaviour so confusing —
+// the table showed «нет маршрута» on rows that no ACL re-apply could repair,
+// because the owner relay was unreachable, while every page and every log line
+// called that relay healthy. The banner names the relay, the reason and the age,
+// and says that the move is automatic and temporary.
+func (s *Service) fillTransportFailures(stats *PrefixDriftStats, rows []PrefixOwnerRow) {
+	states := exit_rules.ListRelayApplyStates(s.dbc())
+	if len(states) == 0 {
+		return
+	}
+	owned := map[string]int{}
+	for _, r := range rows {
+		owned[strings.ToLower(r.ExitNode)]++
+	}
+	now := time.Now().Unix()
+	for relay, st := range states {
+		if !st.Failed(now, exit_rules.RelayApplyFailureWindow) {
+			continue
+		}
+		stats.TransportFailed = append(stats.TransportFailed, RelayTransportNote{
+			Relay:    relay,
+			Reason:   st.Detail,
+			Age:      time.Since(time.Unix(st.At, 0)).Truncate(time.Second).String(),
+			Prefixes: owned[relay],
+		})
+	}
+	sort.Slice(stats.TransportFailed, func(i, j int) bool {
+		if stats.TransportFailed[i].Prefixes != stats.TransportFailed[j].Prefixes {
+			return stats.TransportFailed[i].Prefixes > stats.TransportFailed[j].Prefixes
+		}
+		return stats.TransportFailed[i].Relay < stats.TransportFailed[j].Relay
+	})
 }
 
 // fillPolicyDrift compares the policy headscale is serving with the one skygate
