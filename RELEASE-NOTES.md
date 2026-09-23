@@ -12,6 +12,74 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.71 — the project's modules are first-class system tests (B306)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.70` → this tag · **Compatibility:** none —
+no schema change, no migration, no config change.
+
+### The second half of the operator's request
+
+«Отдельно следует пройтись по тестам системы и расширить их давая возможность
+полностью контролировать модули проекта и получать уведомления по неисправности
+или некорректном поведении.»
+
+The monitoring inbox (B305) is the sink for those notifications; this block makes
+the modules a measured part of the test battery.
+
+### What was wrong
+
+The catalogue was a static list of in-process checks (network / db / headscale /
+disk / wal-g / …) while the modules lived on their own page with their own state
+machine. Nothing in the battery asked **“is this module actually working?”**, and a
+module that entered `StateError` was visible only as a badge on another page.
+
+### What ships
+
+* **One generated test per registered module**, built from the live Manager
+  (`module.<name>`, category `modules`): a module added later is covered without
+  touching the catalogue. The shared catalogue (`AllTests`) is the static registry
+  **plus** those tests, and the page, “Run all” and the per-module button all use
+  it — so the three views can never disagree.
+* **An explicit outcome ladder:** not installed → **SKIP** (a fresh install must not
+  show a wall of red for features that were never switched on); `StateError` →
+  **FAIL** naming the state; running but unhealthy → **FAIL**; stopped → **SKIP**;
+  an unregistered/nil module → **SKIP** instead of a panic. The output always
+  carries the state, the start time, the sorted health checks, the module's `Info`
+  fields and its `LastError`, so a failure is actionable rather than “something is
+  wrong”.
+* **Per-module control:** the `test` action of the existing `/admin/modules`
+  dispatcher (so the admin gate, the CSRF cookie check and the flash pattern are
+  reused), offered as a button in **every** module state and mirrored by a new
+  module section on `/admin/system_tests`. It runs exactly that module, **persists**
+  the run (it shows up in the history strip) and answers with a flash naming the
+  outcome.
+* **Notifications per module:** a module fault reports into the B305 inbox under
+  the module's **own** source (`module:<name>`, fingerprint `module:<name>:health`,
+  link `/admin/modules/<name>`), and a healthy run **resolves** that event — the
+  operator is notified once per module fault, not once per test run. In-process
+  checks keep their `system_test` source, so the two are still distinguishable.
+
+### Verification
+
+* `scripts/check_b306_module_tests.sh` — 23 contracts (generation, the ladder, the
+  per-module action and dispatcher case, the page section, RU+EN labels, the inbox
+  source/fingerprint/resolve, the tests).
+* `internal/feature/admin/system_tests_modules_b306_test.go` — the ladder as a
+  table (five states + the nil module), generated tests against a real Manager,
+  the per-module run and the unknown-module refusal, the inbox source/fingerprint/
+  resolve cycle, and the test-name parser.
+* `go vet`, `staticcheck`, `go test ./...` clean; CI green before the tag.
+
+### What the operator should check after updating
+
+1. `/admin/system_tests` — the new **«Модули проекта»** section lists each module
+   with its state, enabled flag and last error, and links to its page.
+2. `/admin/modules` — every module row now has a **«Проверить»** button: it runs
+   that module's check, stores the run and flashes the outcome.
+3. Break something (stop a module while it should run, or look at one in `error`
+   state) and press «Проверить»: the failure appears on `/admin/monitor` under
+   `module:<name>`; fix it, press again, and the event turns **resolved**.
+
 ## v1.5.70 — one monitoring inbox for every skygate signal (B305)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.69` → this tag · **Compatibility:** additive —

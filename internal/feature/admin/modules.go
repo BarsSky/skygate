@@ -258,6 +258,13 @@ func (s *Service) AdminModulePost(w http.ResponseWriter, r *http.Request) {
 		}
 		s.auditModule(c, name, "disable", "")
 		http.Redirect(w, r, fmt.Sprintf("/admin/modules?ok=%s", urlEscape("module "+name+" disabled")), http.StatusSeeOther)
+	case "test":
+		// B306 (v1.5.71): the per-module control the operator asked for — run
+		// exactly this module's generated test (status + health), persist the run,
+		// report a failure into the monitoring inbox and answer with a flash.
+		s.auditModule(c, name, "test", "")
+		s.RunModuleTestAction(w, r, c, name)
+		return
 	default:
 		// Unknown action — treat as sub-feature toggle.
 		// The action string is the sub-feature name
@@ -383,7 +390,13 @@ func (s *Service) actionsForState(c *auth.Claims, moduleName, state string) []Mo
 	}
 	switch state {
 	case module.StateNotInstalled:
-		return []ModuleAction{build("install", "modules.install", "modules.confirm_install")}
+		// B306: the test is offered even for a module that is not installed —
+		// its result is SKIP ("nothing to verify"), which is exactly the answer
+		// the operator wants to see instead of an empty page.
+		return []ModuleAction{
+			build("install", "modules.install", "modules.confirm_install"),
+			build("test", "modules.test", ""),
+		}
 	case module.StateInstalled, module.StateRunning, module.StateStopped:
 		actions := []ModuleAction{}
 		if state == module.StateRunning || state == module.StateStopped {
@@ -392,10 +405,12 @@ func (s *Service) actionsForState(c *auth.Claims, moduleName, state string) []Mo
 		if state == module.StateInstalled || state == module.StateStopped {
 			actions = append(actions, build("start", "modules.start", ""))
 		}
+		actions = append(actions, build("test", "modules.test", ""))
 		return actions
 	case module.StateError:
 		return []ModuleAction{
 			build("start", "modules.start", ""),
+			build("test", "modules.test", ""),
 		}
 	}
 	return nil

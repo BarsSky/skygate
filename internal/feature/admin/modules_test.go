@@ -161,11 +161,15 @@ func TestActionsForState_StateMatrix(t *testing.T) {
 		state     string
 		wantVerbs []string
 	}{
-		{module.StateNotInstalled, []string{"install"}},
-		{module.StateInstalled, []string{"start"}},
-		{module.StateRunning, []string{"stop"}},
-		{module.StateStopped, []string{"stop", "start"}}, // stop first (recovery), then start
-		{module.StateError, []string{"start"}},
+		// B306 (v1.5.71) renegotiated this matrix: the per-module "test" action is
+		// offered in EVERY state, because the check itself answers "nothing to
+		// verify" (SKIP) for a module that is not installed — the honest answer the
+		// operator asked for, and better than a button that disappears.
+		{module.StateNotInstalled, []string{"install", "test"}},
+		{module.StateInstalled, []string{"start", "test"}},
+		{module.StateRunning, []string{"stop", "test"}},
+		{module.StateStopped, []string{"stop", "start", "test"}}, // stop first (recovery), then start
+		{module.StateError, []string{"start", "test"}},
 	}
 	for _, tc := range tests {
 		actions := s.actionsForState(c, "test", tc.state)

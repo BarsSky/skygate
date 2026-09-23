@@ -347,6 +347,38 @@
       </tr>
     </thead>
     <tbody>
+      {{/* B306 (v1.5.71): the catalogue now contains one generated test per
+           registered module (name "module.<name>", category "modules"), so the
+           modules the project ships are verified by the same battery as the
+           in-process checks instead of living on their own page. The per-module
+           button below runs exactly one module (and records the outcome). */}}
+      {{if .ModuleRows}}
+      <tr class="row-section">
+        <td colspan="6" style="background:var(--bg-elev);font-weight:600">
+          <i class="fa-solid fa-puzzle-piece"></i> {{t "modules.test_section"}}
+        </td>
+      </tr>
+      {{range .ModuleRows}}
+      <tr>
+        <td>{{if eq .State "running"}}{{if .Healthy}}<i class="fa-solid fa-circle-check" style="color:#198754"></i>{{else}}<i class="fa-solid fa-circle-xmark" style="color:#dc3545"></i>{{end}}
+            {{else if eq .State "not_installed"}}<i class="fa-solid fa-circle-pause" style="color:#6c757d"></i>
+            {{else}}<i class="fa-solid fa-circle" style="color:#6c757d"></i>{{end}}
+        </td>
+        <td><code>{{.TestName}}</code></td>
+        <td><span class="badge badge-category">modules</span></td>
+        <td>
+          <a href="{{.Link}}"><code>{{.Name}}</code></a>
+          · state <b>{{.State}}</b>{{if .Enabled}} · enabled{{else}} · disabled{{end}}
+          {{if .LastError}}<div style="color:#dc3545;font-size:12px">{{.LastError}}</div>{{end}}
+        </td>
+        <td colspan="2">
+          {{/* The POST lives on the module's detail page, which already carries
+               the CSRF token; this link is the one-click path to it. */}}
+          <a class="btn btn-sm" href="{{.Link}}">{{t "modules.test"}}</a>
+        </td>
+      </tr>
+      {{end}}
+      {{end}}
       {{range .Tests}}
       {{$testName := .Name}}
       {{/* Pick the right slice: prefer LiveResults (POST) over LastResults (GET). */}}

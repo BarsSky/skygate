@@ -93,7 +93,11 @@ func (s *Service) GetAdminSystemTests(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Page":                  "admin/system_tests",
 		"Title":                 i18n.T(lang, "title.admin_system_tests"),
-		"Tests":                 TestRegistry,
+		// B306 (v1.5.71): the catalogue is the static registry plus one generated
+		// test per registered module (status + health), so the page, "Run all" and
+		// the per-module button all describe the same set.
+		"Tests":                 s.AllTests(),
+		"ModuleRows":            s.ModuleTestRows(),
 		"RecentRuns":            recent,
 		"FlashError":            r.URL.Query().Get("err"),
 		"DNSAutoUpdateEnabled":  dnsAutoEnabled,
@@ -149,7 +153,8 @@ func (s *Service) PostAdminSystemTestsRun(w http.ResponseWriter, r *http.Request
 	s.Backend.RenderWithLayout(w, r, "admin/system_tests.html", c, map[string]any{
 		"Page":         "admin/system_tests",
 		"Title":        i18n.T(lang, "title.admin_system_tests"),
-		"Tests":        TestRegistry,
+		"Tests":        s.AllTests(),
+		"ModuleRows":   s.ModuleTestRows(),
 		"RecentRuns":   recent,
 		"LiveResults":  results,
 		"LiveSummary":  summary,

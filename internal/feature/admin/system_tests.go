@@ -1341,7 +1341,10 @@ func (s *Service) RunAllTests(ctx context.Context) ([]SystemTestResult, *SystemR
 	}
 	results := make([]SystemTestResult, 0, len(TestRegistry))
 	summary := &SystemRunSummary{StartedAt: time.Now().UTC()}
-	for _, t := range TestRegistry {
+	// B306 (v1.5.71): the catalogue is the static registry PLUS one generated test
+	// per registered module (status + health), so "Run all" covers the project's
+	// modules too instead of leaving them to their own page.
+	for _, t := range s.AllTests() {
 		testCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		start := time.Now()
 		status, output := t.Run(testCtx)
@@ -1418,16 +1421,34 @@ func (s *Service) ReportRunToMonitor(results []SystemTestResult) {
 		return
 	}
 	for _, res := range results {
+		// B306 (v1.5.71): a generated module test reports under the MODULE's own
+		// source, so the monitoring inbox can say "the tailscale module is broken"
+		// instead of burying it among the in-process checks — and so the event's
+		// fingerprint is per module (one row per module fault, resolved by the next
+		// healthy run).
+		source, fingerprint, subject := "system_test", "system_test:"+res.Name, res.Name
+		if modName := ModuleNameFromTest(res.Name); modName != "" {
+			source = "module:" + modName
+			fingerprint = "module:" + modName + ":health"
+			subject = modName
+		}
 		ev := monitorinbox.Event{
-			Source:      "system_test",
-			Subject:     res.Name,
-			Fingerprint: "system_test:" + res.Name,
+			Source:      source,
+			Subject:     subject,
+			Fingerprint: fingerprint,
 			Link:        "/admin/system_tests",
+		}
+		if modName := ModuleNameFromTest(res.Name); modName != "" {
+			ev.Link = "/admin/modules/" + modName
 		}
 		switch res.Status {
 		case SystemTestFail:
 			ev.Severity = monitorinbox.SeverityError
-			ev.Title = "Системный тест не прошёл: " + res.Name
+			if ModuleNameFromTest(res.Name) != "" {
+				ev.Title = "Модуль неисправен: " + subject
+			} else {
+				ev.Title = "Системный тест не прошёл: " + res.Name
+			}
 			ev.Body = strings.TrimSpace(res.Category + " · " + truncateForEvent(res.Output, 400))
 			s.MonitorReport(ev)
 		case SystemTestPass:
@@ -1437,7 +1458,8 @@ func (s *Service) ReportRunToMonitor(results []SystemTestResult) {
 			}
 		default:
 			// SKIP says nothing about health — a skipped test must neither open
-			// nor close anything (a fresh install skips half the catalogue).
+			// nor close anything (a fresh install skips half the catalogue, and a
+			// module that was never installed must not look like a fault).
 		}
 	}
 }
