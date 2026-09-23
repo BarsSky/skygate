@@ -60,7 +60,7 @@ func (s *Service) signIDToken(claims IDTokenClaims) (string, error) {
 	if s.Issuer() == "" {
 		return "", errors.New("oidc: issuer not configured")
 	}
-	ks := s.Keys.ActiveKey()
+	ks := s.KeysRef().ActiveKey()
 	if ks == nil {
 		return "", errors.New("oidc: no signing key")
 	}
@@ -111,7 +111,7 @@ func (s *Service) signAccessToken(issuer, subject, audience, scope, email, name,
 	if s.Issuer() == "" {
 		return "", errors.New("oidc: issuer not configured")
 	}
-	ks := s.Keys.ActiveKey()
+	ks := s.KeysRef().ActiveKey()
 	if ks == nil {
 		return "", errors.New("oidc: no signing key")
 	}
@@ -154,7 +154,7 @@ func (s *Service) signAccessToken(issuer, subject, audience, scope, email, name,
 //   3. The access_token has a short TTL (1h) so
 //      the window for a leaked token is small
 func (s *Service) parseAccessToken(tokenString string) (jwt.MapClaims, error) {
-	ks := s.Keys.ActiveKey()
+	ks := s.KeysRef().ActiveKey()
 	if ks == nil {
 		return nil, errors.New("oidc: no signing key")
 	}

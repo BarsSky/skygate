@@ -392,6 +392,17 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "oidc-export":
+			// B304 (v1.5.69) — print the OIDC configuration headscale must be
+			// given (the same precedence /admin/oidc uses: the saved row wins,
+			// the env is the fallback). Run on the host, so the stored
+			// client_secret can reach headscale's config without ever travelling
+			// over HTTP or into the admin UI's HTML.
+			if err := runOIDCExportSubcommand(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "oidc-export: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "migrate":
 			// v1.5.0+ / B213 — in-DB schema migration CLI.
 			// Phase 1.7 of cluster-management.md. The
@@ -422,6 +433,7 @@ func main() {
 			fmt.Println("  cleanup-smoke-meshes    delete smoke-mesh cruft (B143) — one-shot manual trigger")
 			fmt.Println("  cluster <verb>          cluster CLI: invite / join / nodes / dbs / audit / failover / heartbeat-daemon (B205)")
 			fmt.Println("  regapi-credentials     External DNS provider creds: set / show / test / delete (B237.21)")
+			fmt.Println("  oidc-export            Print the OIDC config headscale needs (env block or headscale block) (B304)")
 			fmt.Println("  init [verb]             cluster bootstrap CLI: bootstrap / status / standby-invite (B211)")
 			fmt.Println("  join [verb]             cluster join CLI: <token> / status (B212 — DSN bootstrap + next-steps)")
 			fmt.Println("  migrate [verb]          in-DB schema migration CLI: up / status (B213); 'down' is a stub")
@@ -1317,6 +1329,38 @@ func main() {
 			}
 			return oidcSvc.ConfigSnapshot()
 		},
+		// B304 (v1.5.69): key_dir stops being a form field with no effect. The
+		// store is moved live (Reload loads or generates the pair at the new path
+		// and swaps it under the write lock, so a bad path leaves the running
+		// /oidc/jwks.json untouched), and the panel can also REPAIR a store whose
+		// boot-time directory could not be created (B270 leaves Keys == nil and the
+		// routes answering 503) without an env edit or a restart.
+		OIDCKeyDirApplier: func(dir string) error {
+			if oidcSvc == nil {
+				return fmt.Errorf("the OIDC provider is not initialised in this process")
+			}
+			if ks := oidcSvc.KeysRef(); ks != nil {
+				return ks.Reload(dir)
+			}
+			ks, err := oidcsvc.NewKeyStore(dir)
+			if err != nil {
+				return err
+			}
+			oidcSvc.SetKeys(ks)
+			log.Printf("oidc: key store created at %s from /admin/oidc (kid=%s) — the routes stop answering 503 now", dir, ks.KID())
+			return nil
+		},
+		OIDCKeyDirFn: func() (string, string, bool) {
+			if oidcSvc == nil {
+				return "", "", false
+			}
+			ks := oidcSvc.KeysRef()
+			if ks == nil {
+				return "", "", false
+			}
+			return ks.Dir(), ks.KID(), ks.Ready()
+		},
+		OIDCDefaultKeyDir: app.OIDCKeyDir,
 		// refactor-v0.30 Phase B step 3b.3 (2026-07-29):
 		// /admin/exit-nodes needs the default SSH key path
 		// (shown as the "ssh_key_path" form default) + a

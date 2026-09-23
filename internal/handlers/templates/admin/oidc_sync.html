@@ -48,26 +48,43 @@
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
     {{t "oidc_sync.section_current_help" | safeHTML}}
   </p>
+  {{/* B304 (v1.5.69): this page used to read the RAW env and refuse to run with
+       "SKYGATE_OIDC_ISSUER is not set on the skygate container" even when the
+       operator had saved everything on /admin/oidc — which is why the panel felt
+       unable to configure OIDC at all. The values below are now the EFFECTIVE
+       configuration (the saved row wins) and the source of each one is shown. */}}
+  <p style="font-size:13px;margin-bottom:8px">
+    {{if .SavedOnPanel}}
+      <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "oidc_sync.saved_on_panel_tag"}}</span>
+      <span style="color:var(--text-muted)">{{t "oidc_sync.saved_on_panel_help" | safeHTML}}</span>
+    {{else if .EnvHasConfig}}
+      <span class="tag tag-warning"><i class="fa-solid fa-keyboard"></i> {{t "oidc_sync.from_env_tag"}}</span>
+      <span style="color:var(--text-muted)">{{t "oidc_sync.from_env_help" | safeHTML}}</span>
+    {{else}}
+      <span class="tag tag-danger"><i class="fa-solid fa-circle-xmark"></i> {{t "oidc_sync.nothing_configured_tag"}}</span>
+      <span style="color:var(--text-muted)">{{t "oidc_sync.nothing_configured_help" | safeHTML}}</span>
+    {{end}}
+  </p>
   <table>
     <tr>
       <th style="width:240px"><code>SKYGATE_OIDC_ISSUER</code></th>
-      <td><code>{{.Issuer}}</code></td>
+      <td><code>{{.Issuer}}</code> <span class="tag" style="font-size:10px">{{index .Source "issuer"}}</span></td>
     </tr>
     <tr>
       <th><code>SKYGATE_OIDC_CLIENT_ID</code></th>
-      <td><code>{{.ClientID}}</code></td>
+      <td><code>{{.ClientID}}</code> <span class="tag" style="font-size:10px">{{index .Source "client_id"}}</span></td>
     </tr>
     <tr>
       <th><code>SKYGATE_OIDC_CLIENT_SECRET</code></th>
-      <td><code>{{t "oidc.env_secret_set"}}</code></td>
+      <td>{{if .SecretSet}}<code>{{t "oidc.env_secret_set"}}</code>{{else}}<span class="tag tag-danger">{{t "oidc.form_secret_missing"}}</span>{{end}} <span class="tag" style="font-size:10px">{{.SecretSource}}</span></td>
     </tr>
     <tr>
       <th><code>SKYGATE_OIDC_KEY_DIR</code></th>
-      <td><code>{{.KeyDir}}</code></td>
+      <td><code>{{if .KeyDirLive}}{{.KeyDirLive}}{{else}}{{.KeyDir}}{{end}}</code> <span class="tag" style="font-size:10px">{{index .Source "key_dir"}}</span></td>
     </tr>
     <tr>
       <th><code>SKYGATE_OIDC_REDIRECT_URIS</code></th>
-      <td><code>{{.RedirectURIs}}</code></td>
+      <td><code>{{.RedirectURIs}}</code> <span class="tag" style="font-size:10px">{{index .Source "redirect_uris"}}</span></td>
     </tr>
     <tr>
       <th><code>SKYGATE_OIDC_AUTOSYNC</code></th>
@@ -82,6 +99,23 @@
       </td>
     </tr>
   </table>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-terminal"></i>{{t "oidc_sync.script_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">
+    {{t "oidc_sync.script_help" | safeHTML}}
+  </p>
+  {{/* B304 (v1.5.69): the script carries the SAME configuration the panel shows to
+       headscale (it calls `skygate oidc-export --headscale --secret` on the host,
+       so the secret never crosses HTTP), writes the config under managed markers,
+       restarts headscale and rolls back if the restart fails. Start with
+       --dry-run: it prints the diff and touches nothing. */}}
+  <div style="display:flex;gap:8px;align-items:flex-start">
+    <textarea readonly rows="2" onclick="this.select()" style="flex:1;font-family:monospace;font-size:12px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:8px">{{.ApplyScriptCmd}}</textarea>
+    <button type="button" class="btn btn-sm" onclick="var t=this.previousElementSibling;t.select();document.execCommand('copy');this.textContent='✓';">{{t "oidc_sync.script_copy"}}</button>
+  </div>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{t "oidc_sync.script_flags" | safeHTML}}</p>
 </div>
 
 <div class="card">

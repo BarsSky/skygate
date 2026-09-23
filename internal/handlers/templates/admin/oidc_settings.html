@@ -111,6 +111,57 @@
       <td><code>{{.RedirectURIs}}</code></td>
     </tr>
   </table>
+  {{/* B304 (v1.5.69): the env is an OPTION, not a requirement.
+       Pre-B304 the page showed these values with a badge saying they came from
+       env, and the sync page refused to run at all without them — the operator
+       read that as "OIDC can only be configured by editing .env", which is the
+       live complaint this card answers: the panel wins, and the env block below
+       is generated for the operators who prefer managing a host that way. */}}
+  <p style="font-size:13px;margin-top:12px">
+    {{if gt .EnvOnlyCount 0}}
+      <span class="tag tag-warning"><i class="fa-solid fa-triangle-exclamation"></i> {{t "oidc.env_only_tag"}}</span>
+      <span style="color:var(--text-muted)">{{t "oidc.env_only_help" | safeHTML}}</span>
+    {{else}}
+      <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "oidc.env_optional_tag"}}</span>
+      <span style="color:var(--text-muted)">{{t "oidc.env_optional_help" | safeHTML}}</span>
+    {{end}}
+  </p>
+  <details style="margin-top:10px">
+    <summary style="cursor:pointer;font-size:13px"><i class="fa-solid fa-file-lines"></i> {{t "oidc.envblock_title"}}</summary>
+    <p style="color:var(--text-muted);font-size:12px;margin:8px 0">{{t "oidc.envblock_help" | safeHTML}}</p>
+    <textarea readonly rows="8" onclick="this.select()" style="width:100%;font-family:monospace;font-size:12px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:8px">{{.EnvBlock}}</textarea>
+    <p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{t "oidc.envblock_secret_help" | safeHTML}}</p>
+  </details>
+</div>
+
+{{/* B304: the key store card. key_dir used to be a field that saved a value and
+     applied nothing (the live applier only pushed the four protocol fields), so a
+     new directory took effect — if ever — on the next restart. Now the save moves
+     the running store and this card reports what it actually did: the resolved
+     path, owner, mode, whether skygate can write there, which keypair is served,
+     and a copy-paste fix when something is wrong. */}}
+<div class="card">
+  <h3><i class="fa-solid fa-key"></i> {{t "oidc.keydir_title"}}</h3>
+  {{if .KeyDirState.Problem}}
+    <div class="alert alert-warning" style="margin-bottom:8px">
+      <i class="fa-solid fa-triangle-exclamation"></i> {{.KeyDirState.Problem}}
+      {{if .KeyDirState.Fix}}<div style="margin-top:6px"><code>{{.KeyDirState.Fix}}</code></div>{{end}}
+    </div>
+  {{else}}
+    <p style="font-size:13px"><span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "oidc.keydir_ok"}}</span></p>
+  {{end}}
+  <table>
+    <tr><th style="width:280px">{{t "oidc.keydir_resolved"}}</th><td><code>{{.KeyDirState.Path}}</code></td></tr>
+    {{if .KeyDirState.Exists}}
+    <tr><th>{{t "oidc.keydir_owner"}}</th><td><code>{{.KeyDirState.Owner}}</code>{{if .KeyDirState.Mode}} · mode <code>{{.KeyDirState.Mode}}</code>{{end}}</td></tr>
+    {{end}}
+    <tr><th>{{t "oidc.keydir_writable"}}</th><td>{{if .KeyDirState.Writable}}<span class="tag tag-success">{{t "common.yes"}}</span>{{else}}<span class="tag tag-danger">{{t "common.no"}}</span>{{end}}</td></tr>
+    <tr><th>{{t "oidc.keydir_private"}}</th><td><code>{{.KeyDirState.PrivateKey}}</code>{{if .KeyDirState.PrivateMode}} · mode <code>{{.KeyDirState.PrivateMode}}</code>{{end}}</td></tr>
+    <tr><th>{{t "oidc.keydir_serving"}}</th>
+        <td>{{if .KeyDirState.KID}}<span class="tag tag-success">kid <code>{{.KeyDirState.KID}}</code></span>{{else}}<span class="tag tag-danger">{{t "oidc.keydir_no_key"}}</span>{{end}}</td></tr>
+    {{if .KeyDirLive}}<tr><th>{{t "oidc.keydir_live"}}</th><td><code>{{.KeyDirLive}}</code></td></tr>{{end}}
+  </table>
+  {{if not .KeyDirAppliable}}<p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{t "oidc.keydir_not_wired"}}</p>{{end}}
 </div>
 
 {{/* B-oidc-setup (v0.75, 2026-09-21): the form to actually
@@ -173,7 +224,10 @@
     <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.form_redirect_uris"}} <span class="tag" style="font-size:10px">{{t "oidc.form_source"}} {{t (printf "oidc.form_source_%s" (index .Source "redirect_uris"))}}</span></label>
     <input type="text" name="redirect_uris" value="{{.RedirectURIs}}" placeholder="https://head.example.com/oidc/callback" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
     <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "oidc.form_key_dir"}} <span class="tag" style="font-size:10px">{{t "oidc.form_source"}} {{t (printf "oidc.form_source_%s" (index .Source "key_dir"))}}</span></label>
-    <input type="text" name="key_dir" value="{{.KeyDir}}" placeholder="/var/lib/skygate/oidc-keys" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:12px">
+    <input type="text" name="key_dir" value="{{.KeyDir}}" placeholder="{{if .DefaultKeyDir}}{{.DefaultKeyDir}}{{else}}/var/lib/skygate/oidc-keys{{end}}" style="width:100%;padding:6px 8px;font-family:monospace;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:4px">
+    {{/* B304: say what a change here DOES (it moves the running key store), and
+         offer the absolute default — an empty field means "use the default". */}}
+    <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px">{{t "oidc.form_key_dir_live" | safeHTML}}{{if .DefaultKeyDir}} <code>{{.DefaultKeyDir}}</code>{{end}}</p>
     <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{t "oidc.form_save"}}</button>
     <span style="margin-left:12px;color:var(--text-muted);font-size:12px">
       {{if .AutoApplyAvailable}}{{t "oidc.form_applied_live"}}{{else}}{{t "oidc.form_restart_needed"}}{{end}}

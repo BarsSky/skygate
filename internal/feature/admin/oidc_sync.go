@@ -56,6 +56,8 @@ package admin
 import (
 	"log"
 	"net/http"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -85,9 +87,14 @@ func (s *Service) GetAdminOIDCSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := s.I18n.LangFromRequest(r)
-	cfg := s.Cfg
-	issuer := strings.TrimRight(cfg.OIDCIssuerURL, "/")
-	oidcEnabled := issuer != ""
+	// B304: the page used to read the RAW env (s.Cfg.OIDC*) — so an operator who
+	// had saved everything in the panel still saw «issuer not set» here and
+	// concluded that OIDC could only be configured by editing .env. The effective
+	// configuration (DB row wins, env is the fallback) is the only answer that
+	// matches what /admin/oidc shows and what the provider actually runs.
+	eff := s.effectiveOIDCSettings()
+	issuer := strings.TrimRight(eff.Issuer, "/")
+	oidcEnabled := eff.Enabled && issuer != ""
 
 	// The form's default values. The operator can
 	// override on each submit. These defaults are
@@ -95,12 +102,12 @@ func (s *Service) GetAdminOIDCSync(w http.ResponseWriter, r *http.Request) {
 	// headscale on the same VM, /home/skyadmin
 	// layout).
 	formDefaults := map[string]string{
-		"HeadscaleConfigPath":  "/home/skyadmin/headscale/config/config.yaml",
-		"HeadscaleContainer":   "headscale",
-		"SkygateEnvPath":       "/home/skyadmin/skygate/.env",
-		"ModeOverride":         "auto",
-		"RedirectURIs":         cfg.OIDCRedirectURIs,
-		"ClientID":             cfg.OIDCClientID,
+		"HeadscaleConfigPath": s.OIDCSyncDefaultHeadscaleConfig(),
+		"HeadscaleContainer":  "headscale",
+		"SkygateEnvPath":      "/home/skyadmin/skygate/.env",
+		"ModeOverride":        "auto",
+		"RedirectURIs":        eff.RedirectURIs,
+		"ClientID":            eff.ClientID,
 	}
 
 	_ = i18n.T(lang, "oidc_sync.title") // keep the import used
@@ -109,9 +116,9 @@ func (s *Service) GetAdminOIDCSync(w http.ResponseWriter, r *http.Request) {
 		"Title":        i18n.T(lang, "oidc_sync.title"),
 		"OIDCEnabled":  oidcEnabled,
 		"Issuer":       issuer,
-		"ClientID":     cfg.OIDCClientID,
-		"KeyDir":       cfg.OIDCKeyDir,
-		"RedirectURIs": cfg.OIDCRedirectURIs,
+		"ClientID":     eff.ClientID,
+		"KeyDir":       eff.KeyDir,
+		"RedirectURIs": eff.RedirectURIs,
 		"FlashOK":      r.URL.Query().Get("ok"),
 		"FlashErr":     r.URL.Query().Get("err"),
 		"FlashDetail":  r.URL.Query().Get("detail"),
@@ -119,7 +126,70 @@ func (s *Service) GetAdminOIDCSync(w http.ResponseWriter, r *http.Request) {
 		"FlashResult":  r.URL.Query().Get("result"),
 		"FormDefaults": formDefaults,
 		"AutoSync":     oidcpkg.ShouldAutoSync(),
+		// B304: the page must say where each value came from and whether the env
+		// is involved at all, so "configure it in env" stops being the only story.
+		"Source":       eff.Source,
+		"SecretSet":    eff.ClientSecret != "",
+		"SecretSource": eff.SecretSource,
+		"EnvHasConfig": eff.EnvHasConfig,
+		"EnvDisabled":  eff.EnvDisabled,
+		"SavedOnPanel": eff.Source["issuer"] == "ui" || eff.Source["client_secret"] == "ui",
+		"KeyDirLive":   liveOIDCKeyDir(s),
+		// B304: the one command that carries this configuration to headscale.
+		// It fetches the script pinned to THIS build's tag, so what the operator
+		// runs matches the panel they are looking at, and it reads the secret
+		// from skygate on the host (never through the browser).
+		"ApplyScriptCmd": oidcApplyScriptCommand(s.BuildVersion),
 	})
+}
+
+// oidcApplyScriptCommand (B304) renders the copy-paste command for the headscale
+// side. The ref is the running build's tag when it has one (a release build), and
+// main otherwise (a source build), so the script always matches the panel.
+func oidcApplyScriptCommand(buildVersion string) string {
+	ref, _ := displayVersionForUpdate(buildVersion)
+	if !oidcReleaseTagRe.MatchString(ref) {
+		// A source build ("dev", "vdev", a bare SHA) has no release to pin.
+		ref = "main"
+	}
+	url := "https://raw.githubusercontent.com/BarsSky/skygate/" + ref + "/deploy/skygate-apply-oidc.sh"
+	return "curl -fsSL " + url + " -o /tmp/skygate-apply-oidc.sh && sudo bash /tmp/skygate-apply-oidc.sh --dry-run" +
+		"   # затем без --dry-run, когда diff вас устроит"
+}
+
+// oidcReleaseTagRe matches a released tag ("v1.5.69"); anything else (dev, main, a
+// bare SHA) falls back to the main branch so the command always has a real URL.
+var oidcReleaseTagRe = regexp.MustCompile(`^v[0-9]+\.[0-9]+`)
+
+// OIDCSyncDefaultHeadscaleConfig (B304) returns a headscale configuration path to
+// pre-fill the sync form with. It prefers a file that actually exists on this host
+// (the historical hardcoded /home/skyadmin/headscale/config/config.yaml is only
+// right for one of the operator's installs, and a wrong default is a failed sync
+// the operator has to debug), and falls back to that historical path.
+func (s *Service) OIDCSyncDefaultHeadscaleConfig() string {
+	candidates := []string{
+		"/etc/headscale/config.yaml",
+		"/etc/headscale/config.yml",
+		"/etc/headscale/config.hujson",
+		"/var/lib/headscale/config.yaml",
+		"/home/skyadmin/headscale/config/config.yaml",
+	}
+	for _, c := range candidates {
+		if st, err := os.Stat(c); err == nil && !st.IsDir() {
+			return c
+		}
+	}
+	return candidates[len(candidates)-1]
+}
+
+// liveOIDCKeyDir reports the directory the RUNNING key store uses ("" when the
+// applier is not wired), so the sync page can show the same path /admin/oidc does.
+func liveOIDCKeyDir(s *Service) string {
+	if s == nil || s.OIDCKeyDirFn == nil {
+		return ""
+	}
+	dir, _, _ := s.OIDCKeyDirFn()
+	return dir
 }
 
 // PostAdminOIDCSync handles the "Apply" form
@@ -150,13 +220,18 @@ func (s *Service) PostAdminOIDCSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pull the form values (with defaults from
-	// the env-var config so the operator doesn't
-	// have to type them every time).
-	issuer := strings.TrimRight(s.Cfg.OIDCIssuerURL, "/")
-	clientID := s.Cfg.OIDCClientID
-	clientSecret := s.Cfg.OIDCClientSecret
-	redirectURIs := s.Cfg.OIDCRedirectURIs
+	// Pull the form values from the EFFECTIVE configuration (B304): the DB row
+	// saved on /admin/oidc wins, the env is only a fallback. Pre-B304 this read
+	// s.Cfg.OIDC* directly, so the sync refused to run for an operator who had
+	// configured everything in the panel — with a message telling them to set env
+	// vars they did not need ("SKYGATE_OIDC_ISSUER is not set on the skygate
+	// container"), which is precisely the «из вебинтерфейса это никак не
+	// изменить» complaint from the native host.
+	eff := s.effectiveOIDCSettings()
+	issuer := strings.TrimRight(eff.Issuer, "/")
+	clientID := eff.ClientID
+	clientSecret := eff.ClientSecret
+	redirectURIs := eff.RedirectURIs
 
 	// Allow the form to override redirect_uris
 	// (some operators want to use a different
@@ -165,19 +240,21 @@ func (s *Service) PostAdminOIDCSync(w http.ResponseWriter, r *http.Request) {
 		redirectURIs = v
 	}
 
-	// Required: issuer + client_secret.
+	// Required: issuer + client_secret. The message names the PANEL field to fix
+	// (the env var name stays as a parenthetical, because an operator who really
+	// does configure this by env needs it).
 	if issuer == "" {
-		http.Redirect(w, r, "/admin/oidc/sync?err=issuer_empty&detail="+urlQueryEscape("SKYGATE_OIDC_ISSUER is not set on the skygate container"),
+		http.Redirect(w, r, "/admin/oidc/sync?err=issuer_empty&detail="+urlQueryEscape("заполните Issuer на /admin/oidc и сохраните — env-переменная SKYGATE_OIDC_ISSUER больше не обязательна"),
 			http.StatusFound)
 		return
 	}
 	if clientSecret == "" {
-		http.Redirect(w, r, "/admin/oidc/sync?err=secret_empty&detail="+urlQueryEscape("SKYGATE_OIDC_CLIENT_SECRET is not set on the skygate container"),
+		http.Redirect(w, r, "/admin/oidc/sync?err=secret_empty&detail="+urlQueryEscape("заполните Client secret на /admin/oidc и сохраните — env-переменная SKYGATE_OIDC_CLIENT_SECRET больше не обязательна"),
 			http.StatusFound)
 		return
 	}
 	if redirectURIs == "" {
-		http.Redirect(w, r, "/admin/oidc/sync?err=redirect_empty&detail="+urlQueryEscape("SKYGATE_OIDC_REDIRECT_URIS is not set on the skygate container"),
+		http.Redirect(w, r, "/admin/oidc/sync?err=redirect_empty&detail="+urlQueryEscape("заполните Redirect URIs на /admin/oidc и сохраните (обычно https://<headscale-host>/oidc/callback)"),
 			http.StatusFound)
 		return
 	}

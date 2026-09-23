@@ -99,6 +99,24 @@ func (s *Service) GetAdminOIDC(w http.ResponseWriter, r *http.Request) {
 	if s.OIDCStatusFn != nil {
 		liveIssuer, liveClientID, liveSecret, liveRedirects = s.OIDCStatusFn()
 	}
+	// B304: the key-dir card. LiveDir comes from the RUNNING store (which can
+	// differ from both the form and the env until the next save), and the state
+	// probe names any problem with a copy-paste fix.
+	liveDir, liveKID, liveReady := "", "", false
+	if s.OIDCKeyDirFn != nil {
+		liveDir, liveKID, liveReady = s.OIDCKeyDirFn()
+	}
+	keyDirState := oidcKeyDirStateOf(eff.KeyDir, liveDir, liveReady, liveKID, "")
+	// B304: the env block. The panel wins over the env (B290), so this is an
+	// OPTION for operators who manage their host through .env files, not a
+	// requirement — which is exactly the dead-end the page used to imply.
+	envBlock := buildOIDCEnvBlock(eff)
+	envOnly := []string{}
+	for _, f := range []string{"issuer", "client_id", "client_secret", "redirect_uris", "key_dir"} {
+		if eff.Source[f] == "env" {
+			envOnly = append(envOnly, f)
+		}
+	}
 	s.Backend.RenderWithLayout(w, r, "admin/oidc_settings.html", c, map[string]any{
 		"Page":               "admin/oidc",
 		"Title":              i18n.T(lang, "oidc.title"),
@@ -120,10 +138,43 @@ func (s *Service) GetAdminOIDC(w http.ResponseWriter, r *http.Request) {
 		"LiveSecretSet":      liveSecret != "",
 		"LiveRedirectURIs":   liveRedirects,
 		"AutoApplyAvailable": s.OIDCApplier != nil,
-		"FlashSuccess":       r.URL.Query().Get("ok"),
-		"FlashError":         r.URL.Query().Get("err"),
-		"FlashTestResult":    r.URL.Query().Get("test"),
+		// B304 additions.
+		"KeyDirState":     keyDirState,
+		"KeyDirLive":      liveDir,
+		"KeyDirAppliable": s.OIDCKeyDirApplier != nil,
+		"DefaultKeyDir":   s.OIDCDefaultKeyDir,
+		"EnvBlock":        envBlock,
+		"EnvOnlyFields":   envOnly,
+		"EnvOnlyCount":    len(envOnly),
+		"FlashSuccess":    r.URL.Query().Get("ok"),
+		"FlashError":      r.URL.Query().Get("err"),
+		"FlashTestResult": r.URL.Query().Get("test"),
 	})
+}
+
+// buildOIDCEnvBlock renders the .env lines that reproduce the EFFECTIVE OIDC
+// configuration on the host (B304). The secret is never included: it is written
+// as a reference to `skygate oidc-export --secret`, which prints the stored value
+// on the host for the operator to paste into headscale — so the secret never
+// travels over HTTP, into the audit log, or into a downloaded file.
+func buildOIDCEnvBlock(eff EffectiveOIDCSettings) string {
+	issuer := strings.TrimRight(eff.Issuer, "/")
+	redirects := eff.RedirectURIs
+	keyDir := eff.KeyDir
+	secretLine := "SKYGATE_OIDC_CLIENT_SECRET=$(skygate oidc-export --secret)   # or paste the value headscale also has"
+	if eff.ClientSecret == "" {
+		secretLine = "SKYGATE_OIDC_CLIENT_SECRET=<not set yet — fill it on /admin/oidc first>"
+	}
+	var b strings.Builder
+	b.WriteString("# skygate .env — OIDC (B304). Optional: values saved on /admin/oidc WIN over these.\n")
+	b.WriteString("# Fill them only if you manage this host through an env file.\n")
+	b.WriteString("SKYGATE_OIDC_ISSUER=" + issuer + "\n")
+	b.WriteString("SKYGATE_OIDC_CLIENT_ID=" + eff.ClientID + "\n")
+	b.WriteString(secretLine + "\n")
+	b.WriteString("SKYGATE_OIDC_REDIRECT_URIS=" + redirects + "\n")
+	b.WriteString("SKYGATE_OIDC_KEY_DIR=" + keyDir + "\n")
+	b.WriteString("# SKYGATE_OIDC_ENABLED=false   # emergency off-switch: beats every other setting\n")
+	return b.String()
 }
 
 // EffectiveOIDCSettings is the resolved OIDC configuration plus where each field
@@ -358,6 +409,30 @@ func (s *Service) PostAdminOIDC(w http.ResponseWriter, r *http.Request) {
 		s.redirectOIDCErr(w, r, "cannot enable OIDC without a client secret — set one here and paste the same value into headscale's oidc.client_secret")
 		return
 	}
+	// B304: the key directory must be absolute (B270's live failure was a relative
+	// dir resolved against a systemd working directory, which killed the boot of an
+	// unconfigured feature), and the change must be APPLIED to the running store
+	// before it is saved — a form that claims a directory the provider is not using
+	// is the dead-end this block removes.
+	if keyDir != "" && !oidcKeyDirIsAbsolute(keyDir) {
+		s.redirectOIDCErr(w, r, "key_dir must be an absolute path (got "+keyDir+") — a relative path is resolved against the service working directory and can make the key store unusable")
+		return
+	}
+	if keyDir == "" && s.OIDCDefaultKeyDir != "" {
+		// An empty field means "use the built-in default": make that explicit in
+		// the stored row so the page and the host agree on one path.
+		keyDir = s.OIDCDefaultKeyDir
+	}
+	prevKeyDir := s.effectiveOIDCSettings().KeyDir
+	keyDirApplied := false
+	if s.OIDCKeyDirApplier != nil && strings.TrimSpace(keyDir) != strings.TrimSpace(prevKeyDir) {
+		if aerr := s.OIDCKeyDirApplier(keyDir); aerr != nil {
+			log.Printf("oidc: key dir apply to %q failed: %v", keyDir, aerr)
+			s.redirectOIDCErr(w, r, "key_dir was NOT changed — "+aerr.Error()+" (the running keypair and /oidc/jwks.json are untouched)")
+			return
+		}
+		keyDirApplied = true
+	}
 
 	settings := db.OIDCSettings{
 		Enabled:      enabled && issuer != "",
@@ -386,12 +461,17 @@ func (s *Service) PostAdminOIDC(w http.ResponseWriter, r *http.Request) {
 	if s.Backend != nil {
 		s.Backend.Audit(c.UserID, c.Username, "oidc_settings_saved",
 			"enabled="+boolWord(settings.Enabled)+" issuer="+issuer+" client_id="+clientID+
-				" secret_set="+boolWord(secret != "")+" redirect_uris="+redirects+" applied_live="+boolWord(applied))
+				" secret_set="+boolWord(secret != "")+" redirect_uris="+redirects+
+				" key_dir="+keyDir+" key_dir_applied="+boolWord(keyDirApplied)+
+				" applied_live="+boolWord(applied))
 	}
 
 	msg := "Настройки OIDC сохранены и применены (без перезапуска)."
 	if !applied {
 		msg = "Настройки OIDC сохранены. Чтобы они вступили в силу, перезапустите skygate (/admin/update)."
+	}
+	if keyDirApplied {
+		msg += " Каталог ключей переключён на " + keyDir + " — сервис ключей уже работает оттуда."
 	}
 	if !settings.Enabled {
 		msg = "Настройки OIDC сохранены; провайдер ВЫКЛЮЧЕН (маршруты /oidc/* отвечают 503)."

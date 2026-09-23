@@ -125,6 +125,24 @@ type Service struct {
 	// can show the difference between "saved" and "live" (B290).
 	OIDCStatusFn func() (issuer, clientID, clientSecret, redirectURIs string)
 
+	// OIDCKeyDirApplier moves the RUNNING key store to another directory (B304).
+	// Wired by main.go to oidc.Service/KeyStore.Reload, so a key_dir change from
+	// the panel takes effect immediately — before B304 the field was saved and
+	// silently did nothing until the next restart, which is the half of the
+	// operator's "это из вебинтерфейса никак не изменить" complaint that was real.
+	// An error here refuses the save (the config never claims a directory the
+	// provider is not actually using).
+	OIDCKeyDirApplier func(dir string) error
+
+	// OIDCKeyDirFn reports the RUNNING key store: resolved directory, active kid
+	// and readiness (B304). nil = the page renders only the configured value.
+	OIDCKeyDirFn func() (dir, kid string, ready bool)
+
+	// OIDCDefaultKeyDir is the absolute default the panel shows as a hint (B304):
+	// <data dir>/oidc-keys, the same value config.defaultOIDCKeyDir already picks
+	// at boot when SKYGATE_OIDC_KEY_DIR is unset.
+	OIDCDefaultKeyDir string
+
 	// InvalidateHSCacheFn drops the per-URL cached headscale
 	// client (used after the per-user override changes so
 	// the next HSForUser call returns a fresh client with

@@ -36,11 +36,11 @@ type JWKS struct {
 // verify fast. (Rotation would invalidate this
 // cache by writing a different etag.)
 func (s *Service) ServeJWKS(w http.ResponseWriter, r *http.Request) {
-	if !s.Keys.Ready() {
+	if !s.KeysRef().Ready() {
 		http.Error(w, "OIDC keypair not ready (still generating)", http.StatusServiceUnavailable)
 		return
 	}
-	ks := s.Keys.ActiveKey()
+	ks := s.KeysRef().ActiveKey()
 	if ks == nil {
 		http.Error(w, "OIDC keypair not loaded", http.StatusServiceUnavailable)
 		return

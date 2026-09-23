@@ -60,6 +60,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -140,7 +141,21 @@ func NewKeyStore(dir string) (*KeyStore, error) {
 	if dir == "" {
 		dir = "./data/oidc-keys"
 	}
-	ks := &KeyStore{dir: dir}
+	key, err := loadOrGenerateKey(dir)
+	if err != nil {
+		return nil, err
+	}
+	ks := &KeyStore{dir: dir, key: key, ready: true}
+	return ks, nil
+}
+
+// loadOrGenerateKey prepares dir and returns the signing key held there: the
+// existing pair when present, a freshly generated RSA-2048 pair otherwise.
+//
+// B304: extracted from NewKeyStore so a RELOAD (the panel changing key_dir) and
+// a boot agree on every step — mkdir, generate-if-missing, load, and the
+// weak-key refusal are the same code path for both.
+func loadOrGenerateKey(dir string) (*SigningKey, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("oidc: mkdir %s: %w", dir, err)
 	}
@@ -148,18 +163,86 @@ func NewKeyStore(dir string) (*KeyStore, error) {
 	pubPath := filepath.Join(dir, "oidc-signing.pub")
 	if _, err := os.Stat(privPath); os.IsNotExist(err) {
 		log.Printf("oidc: no keypair at %s — generating new RSA-2048", privPath)
-		if err := ks.generateAndPersist(privPath, pubPath); err != nil {
+		priv, err := generateAndPersist(privPath, pubPath)
+		if err != nil {
 			return nil, fmt.Errorf("oidc: generate: %w", err)
 		}
+		return buildSigningKey(priv), nil
 	} else if err != nil {
 		return nil, fmt.Errorf("oidc: stat %s: %w", privPath, err)
 	}
-	if err := ks.loadFromDisk(privPath); err != nil {
+	priv, err := loadPrivateKeyFromDisk(privPath)
+	if err != nil {
 		return nil, fmt.Errorf("oidc: load: %w", err)
 	}
-	ks.ready = true
-	return ks, nil
+	return buildSigningKey(priv), nil
 }
+
+// Reload (B304) points the store at another key directory and activates the
+// keypair found (or created) there, WITHOUT a restart.
+//
+// Why: /admin/oidc lets the operator set key_dir, but the pre-B304 applier only
+// pushed issuer/client_id/secret/redirect_uris into the running provider — so a
+// key_dir change looked accepted and changed nothing until the next restart,
+// which is the "this still needs an env/restart step" complaint that made the
+// page feel read-only.
+//
+// Safety: the new key is loaded FIRST and swapped in under the write lock, so a
+// wrong path (uncreatable, unreadable, weak key) leaves the running key — and
+// therefore /oidc/jwks.json — exactly as it was. The error says which path
+// failed and why; the caller renders it.
+func (ks *KeyStore) Reload(dir string) error {
+	if ks == nil {
+		return fmt.Errorf("oidc: key store is not initialised (the boot-time key dir could not be created) — fix the path and save again")
+	}
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return fmt.Errorf("oidc: key dir is empty — set an absolute path such as /var/lib/skygate/oidc-keys")
+	}
+	if !filepath.IsAbs(dir) {
+		// B270's live failure was a relative key dir resolved against a systemd
+		// CWD; refusing it here keeps that class of bug from coming back through
+		// the panel.
+		return fmt.Errorf("oidc: key dir must be an absolute path (got %q) — a relative path is resolved against the service working directory", dir)
+	}
+	key, err := loadOrGenerateKey(dir)
+	if err != nil {
+		return err
+	}
+	ks.mu.Lock()
+	ks.key = key
+	ks.dir = dir
+	ks.ready = true
+	ks.mu.Unlock()
+	log.Printf("oidc: key store moved to %s (kid=%s) — live, no restart", dir, key.KID)
+	return nil
+}
+
+// Dir (B304) reports the directory the store is currently using, so the panel
+// can show the RESOLVED path instead of only the value someone typed.
+func (ks *KeyStore) Dir() string {
+	if ks == nil {
+		return ""
+	}
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	return ks.dir
+}
+
+// KID (B304) reports the active key id ("" when no key is loaded), so the panel
+// can show which keypair the JWKS endpoint is actually serving.
+func (ks *KeyStore) KID() string {
+	if ks == nil {
+		return ""
+	}
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	if ks.key == nil {
+		return ""
+	}
+	return string(ks.key.KID)
+}
+
 
 // Ready returns true once a keypair is loaded.
 // While the keypair is generating (cold start on
@@ -190,57 +273,58 @@ func (ks *KeyStore) ActiveKey() *SigningKey {
 // keypair and writes the private key (PKCS#1 PEM)
 // + public key (PKCS#8 PEM) to disk. RSA-2048 is
 // the minimum for RS256 (per RFC 7518 sec 3.3).
-func (ks *KeyStore) generateAndPersist(privPath, pubPath string) error {
+//
+// B304: returns the private key instead of mutating the store, so both the
+// boot path and Reload share it (see loadOrGenerateKey).
+func generateAndPersist(privPath, pubPath string) (*rsa.PrivateKey, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return fmt.Errorf("rsa.GenerateKey: %w", err)
+		return nil, fmt.Errorf("rsa.GenerateKey: %w", err)
 	}
 	privPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(priv),
 	})
 	if err := os.WriteFile(privPath, privPEM, 0600); err != nil {
-		return fmt.Errorf("write private: %w", err)
+		return nil, fmt.Errorf("write private: %w", err)
 	}
 	pubBytes, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
 	if err != nil {
-		return fmt.Errorf("marshal public: %w", err)
+		return nil, fmt.Errorf("marshal public: %w", err)
 	}
 	pubPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",
 		Bytes: pubBytes,
 	})
 	if err := os.WriteFile(pubPath, pubPEM, 0644); err != nil {
-		return fmt.Errorf("write public: %w", err)
+		return nil, fmt.Errorf("write public: %w", err)
 	}
-	ks.mu.Lock()
-	ks.key = buildSigningKey(priv)
-	ks.mu.Unlock()
-	return nil
+	return priv, nil
 }
 
-// loadFromDisk reads the PKCS#1 private key from
-// disk and rebuilds the SigningKey (kid + JWK).
-func (ks *KeyStore) loadFromDisk(privPath string) error {
+// loadPrivateKeyFromDisk reads the PKCS#1 private key from disk and returns it,
+// refusing anything weaker than 2048 bits (RFC 7518 sec 3.3).
+//
+// B304: the B161.1 version assigned ks.key itself; the parse is now a pure
+// function so Reload can validate a NEW directory without touching the running
+// key when the file there is unusable.
+func loadPrivateKeyFromDisk(privPath string) (*rsa.PrivateKey, error) {
 	raw, err := os.ReadFile(privPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	block, _ := pem.Decode(raw)
 	if block == nil || block.Type != "RSA PRIVATE KEY" {
-		return fmt.Errorf("invalid PEM (want 'RSA PRIVATE KEY', got %q)", blockType(block))
+		return nil, fmt.Errorf("invalid PEM (want 'RSA PRIVATE KEY', got %q)", blockType(block))
 	}
 	priv, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	if err != nil {
-		return fmt.Errorf("parse PKCS#1: %w", err)
+		return nil, fmt.Errorf("parse PKCS#1: %w", err)
 	}
 	if priv.N.BitLen() < 2048 {
-		return fmt.Errorf("refusing weak key: %d bits (RFC 7518 requires >= 2048)", priv.N.BitLen())
+		return nil, fmt.Errorf("refusing weak key: %d bits (RFC 7518 requires >= 2048)", priv.N.BitLen())
 	}
-	ks.mu.Lock()
-	ks.key = buildSigningKey(priv)
-	ks.mu.Unlock()
-	return nil
+	return priv, nil
 }
 
 // buildSigningKey derives the kid + JWK from the

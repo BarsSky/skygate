@@ -12,6 +12,87 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.69 — OIDC fully controllable from the panel (B304)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.68` → this tag · **Compatibility:** none —
+no schema change, no migration. An existing install keeps working untouched; the
+panel simply stops depending on `.env`.
+
+### The report
+
+On the native host `aro` the OIDC page still carried a warning that the
+configuration «требуется изменение в env и из вебинтерфейса это никак не
+изменить», and the operator asked for the rest of the OIDC surface: env
+autofill, absolute key-directory paths with owner/mode checks, and a script that
+deploys the headscale side automatically.
+
+### Two real causes, both closed
+
+1. **`key_dir` was a form field that applied to nothing.** The live applier added
+   in B290 pushed only `issuer` / `client_id` / `client_secret` /
+   `redirect_uris`, so a new directory took effect — if ever — on the next
+   restart. The signing store can now be **moved or created at runtime**
+   (`oidc.KeyStore.Reload`): one shared load-or-generate path with boot, the new
+   key loaded *before* the swap (so a bad path leaves the running key and
+   `/oidc/jwks.json` untouched), a relative path refused at the store level
+   (B270's live failure was a relative key dir resolved against a systemd working
+   directory), and every reader goes through a guarded accessor so a runtime
+   repair cannot race the request path. The page now reports the **resolved**
+   path, owner, mode, whether skygate can write there, the active `kid`, and a
+   copy-paste fix for each failure mode (`relative_path`, `missing`,
+   `unwritable`, `world_readable`, `unavailable`).
+2. **`/admin/oidc/sync` read the raw env.** It refused to run with
+   «SKYGATE_OIDC_ISSUER is not set on the skygate container» even for an operator
+   who had saved everything on `/admin/oidc`. It now resolves the **effective**
+   configuration (the saved row wins, exactly like the rest of the page), its
+   refusals name the panel field, and the env is presented as the fallback it is.
+
+### What was asked for, added
+
+* **Env autofill** — the page renders the exact `.env` block for the running
+  configuration. The secret is never rendered in the browser: the block points at
+  `skygate oidc-export --secret`, and a new CLI subcommand
+  (`skygate oidc-export [--env|--headscale|--json] [--secret]`) prints what
+  headscale needs, on the host, reading the same precedence the panel uses.
+* **A script that deploys the headscale side** — `deploy/skygate-apply-oidc.sh`
+  (rendered as one copy-paste command pinned to this build): it reads the values
+  from skygate itself, backs headscale's config up under a **unique** name, writes
+  the `oidc:` block between managed markers, restarts headscale (systemd /
+  docker / none), rolls back if the restart fails, refuses to clobber an `oidc:`
+  section it did not write, and never edits HuJSON by string surgery. Start with
+  `--dry-run`. Two real defects were found and fixed while pinning its behaviour:
+  same-second runs overwrote the only clean backup (making `--rollback` a silent
+  no-op), and `--rollback` restored the newest backup — which may already contain
+  the managed block — instead of the last pre-apply state.
+
+### Verification
+
+* `scripts/check_b304_oidc_panel.sh` — 34 contracts, including a **real run** of
+  the apply script against a temporary config with a stub `skygate` binary
+  (dry-run writes nothing, apply writes the managed block + backup, a re-run
+  replaces instead of appending, an unmanaged `oidc:` section is refused,
+  HuJSON is refused, `--rollback` restores the pre-apply content).
+* `internal/oidc/keys_b304_test.go` (reload moves the store, adopts an existing
+  pair, refuses relative/empty paths, keeps the live key on failure, nil-safe) and
+  `internal/feature/admin/oidc_b304_test.go` (the failure modes and their fixes,
+  secret-free env block, tag-pinned command, live key-dir apply + refusal, the
+  built-in default, and a source-level guard that the sync page never reads the
+  raw env again).
+* `go vet`, `staticcheck`, `go test ./...` clean; CI green before the tag.
+
+### What the operator should check after updating
+
+1. `/admin/oidc` — the key-store card shows the resolved directory, owner, mode
+   and the active `kid`; if anything is wrong it names the problem and prints the
+   fix (e.g. `chown skygate:skygate /var/lib/skygate/oidc-keys`).
+2. Change `key_dir` and save: the message says the key store moved, and
+   `/oidc/jwks.json` keeps answering — no restart.
+3. `/admin/oidc/sync` — the values are the ones saved in the panel (badged
+   `ui`), and the sync no longer asks for env variables. The one-command script is
+   offered for hosts where headscale's config is outside the container.
+4. On `aro` specifically: the env warning disappears once the panel holds the
+   values; nothing in `.env` has to change.
+
 ## v1.5.68 — an ownerless device must have a working admin path (B303)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.67` → this tag · **Compatibility:** none —
