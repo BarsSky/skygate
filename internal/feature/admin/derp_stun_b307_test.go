@@ -22,20 +22,26 @@ import (
 	"hash/crc32"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 // tailscaleStyleSTUNServer answers only requests that end in a valid
 // FINGERPRINT attribute — the rule derper's stunserver enforces.
-func tailscaleStyleSTUNServer(t *testing.T) (addr string, sawSoftware *bool, sawFingerprint *bool) {
+//
+// The two flags are ATOMIC because the server goroutine writes them while the
+// test reads them: CI runs `go test -race`, and plain bools here are a real data
+// race (CI caught exactly that on this block's first push; the local run without
+// -race did not).
+func tailscaleStyleSTUNServer(t *testing.T) (addr string, sawSoftware *atomic.Bool, sawFingerprint *atomic.Bool) {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	t.Cleanup(func() { _ = pc.Close() })
-	soft, fp := false, false
+	soft, fp := &atomic.Bool{}, &atomic.Bool{}
 	go func() {
 		buf := make([]byte, 2048)
 		for {
@@ -75,12 +81,12 @@ func tailscaleStyleSTUNServer(t *testing.T) (addr string, sawSoftware *bool, saw
 				}
 			}
 			if hasSoftware {
-				soft = true
+				soft.Store(true)
 			}
 			if !fingerprintOK {
 				continue // derper's rule: no valid fingerprint → no answer
 			}
-			fp = true
+			fp.Store(true)
 			txID := pkt[8:20]
 			resp := appendU16(nil, stunBindingSuccess)
 			resp = appendU16(resp, 12)
@@ -95,7 +101,7 @@ func tailscaleStyleSTUNServer(t *testing.T) (addr string, sawSoftware *bool, saw
 		}
 	}()
 	time.Sleep(20 * time.Millisecond)
-	return pc.LocalAddr().String(), &soft, &fp
+	return pc.LocalAddr().String(), soft, fp
 }
 
 func TestProbeSTUNSpeaksFingerprint_B307(t *testing.T) {
@@ -108,10 +114,10 @@ func TestProbeSTUNSpeaksFingerprint_B307(t *testing.T) {
 	if res.ReflexiveAddr == "" {
 		t.Errorf("probe succeeded but carried no reflexive address: %+v", res)
 	}
-	if !*sawSoftware {
+	if !sawSoftware.Load() {
 		t.Error("the request carried no SOFTWARE attribute")
 	}
-	if !*sawFingerprint {
+	if !sawFingerprint.Load() {
 		t.Error("the request carried no VALID fingerprint — derper would count it as not_stun")
 	}
 }
