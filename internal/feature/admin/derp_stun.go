@@ -56,6 +56,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"net"
 	"os"
 	"strings"
@@ -87,6 +88,28 @@ const (
 	// real STUN server rather than an echo.
 	stunAttrXorMappedAddress uint16 = 0x0020
 	stunAttrMappedAddress    uint16 = 0x0001
+
+	// B307 (v1.5.72): SOFTWARE (0x8022) and FINGERPRINT (0x8028) are the two
+	// comprehension-optional attributes Tailscale's own STUN client sends
+	// (tailscale.com/net/stun.Request) and the two its server REQUIRES.
+	//
+	// Live evidence from the agent VM, 2026-09-23 — the counters of the relay's
+	// own STUN server (read from /debug/vars over loopback):
+	//
+	//	before: {"not_stun":20,"success":0}
+	//	4 bare RFC 5389 Binding Requests → {"not_stun":24,"success":0}
+	//	1 request with SOFTWARE+FINGERPRINT → {"not_stun":25,"success":1}
+	//
+	// tailscale.com/net/stunserver parses with ParseBindingRequest, which returns
+	// ErrNoFingerprint for a request that does not END in a FINGERPRINT attribute
+	// (and ErrWrongFingerprint when the CRC32 — XOR 0x5354554e — does not match).
+	// A bare request is therefore counted as "not_stun" and never answered: the
+	// tile showed "STUN UDP :3478 closed" on a relay whose STUN answers real
+	// clients (netcheck scores every region through it).
+	stunAttrSoftware         uint16 = 0x8022
+	stunAttrFingerprint      uint16 = 0x8028
+	stunSoftwareValue               = "tailnode" // 8 bytes: no padding
+	stunFingerprintXORMask   uint32 = 0x5354554e
 )
 
 // STUNProbeResult is the outcome of one UDP STUN round trip.
@@ -101,20 +124,78 @@ type STUNProbeResult struct {
 	ReflexiveAddr string
 }
 
-// buildSTUNBindingRequest returns a 20-byte RFC 5389 Binding
-// Request plus its random 12-byte transaction ID. Pure function so
-// it can be unit-tested byte-for-byte.
+// buildSTUNBindingRequest returns an RFC 5389 Binding Request plus
+// its random 12-byte transaction ID.
+//
+// B307 (v1.5.72): the request carries SOFTWARE ("tailnode") and
+// FINGERPRINT, exactly like tailscale.com/net/stun.Request — the shape
+// Tailscale's STUN SERVER requires. A bare request (header only, no
+// attributes) is answered by a generic RFC 5389 server but is rejected by
+// derper's stunserver with ErrNoFingerprint ("STUN request didn't end in
+// fingerprint") and counted as not_stun, which is why the /admin/derp tile read
+// "closed" on a healthy relay. buildSTUNBareBindingRequest below keeps the bare
+// form as a fallback for servers that do not care.
+//
+// Pure function so it can be unit-tested byte-for-byte.
 func buildSTUNBindingRequest() (pkt, txID []byte, err error) {
-	txID = make([]byte, 12)
-	if _, err := rand.Read(txID); err != nil {
-		return nil, nil, fmt.Errorf("stun: transaction id: %w", err)
+	txID, err = newSTUNTxID()
+	if err != nil {
+		return nil, nil, err
 	}
-	pkt = make([]byte, stunHeaderLen)
-	binary.BigEndian.PutUint16(pkt[0:2], stunBindingRequest)
-	binary.BigEndian.PutUint16(pkt[2:4], 0) // no attributes
-	binary.BigEndian.PutUint32(pkt[4:8], stunMagicCookie)
-	copy(pkt[8:20], txID)
+	software := []byte(stunSoftwareValue)
+	attrs := make([]byte, 0, stunAttrHeaderLen+len(software)+8)
+	attrs = appendU16(attrs, stunAttrSoftware)
+	attrs = appendU16(attrs, uint16(len(software)))
+	attrs = append(attrs, software...)
+
+	// The header length counts the attributes AND the fingerprint that is about
+	// to be appended (RFC 5389 §15.5 / net/stun.Request), while the CRC covers
+	// only what precedes the fingerprint attribute.
+	total := stunHeaderLen + len(attrs) + 8
+	pkt = make([]byte, 0, total)
+	pkt = appendU16(pkt, stunBindingRequest)
+	pkt = appendU16(pkt, uint16(total-stunHeaderLen))
+	pkt = appendU32(pkt, stunMagicCookie)
+	pkt = append(pkt, txID...)
+	pkt = append(pkt, attrs...)
+
+	fp := crc32.ChecksumIEEE(pkt) ^ stunFingerprintXORMask
+	pkt = appendU16(pkt, stunAttrFingerprint)
+	pkt = appendU16(pkt, 4)
+	pkt = appendU32(pkt, fp)
 	return pkt, txID, nil
+}
+
+// buildSTUNBareBindingRequest returns the header-only Binding Request
+// (no attributes) that generic RFC 5389 servers answer. It is only used as the
+// fallback probe — see probeSTUNUDP.
+func buildSTUNBareBindingRequest() (pkt, txID []byte, err error) {
+	txID, err = newSTUNTxID()
+	if err != nil {
+		return nil, nil, err
+	}
+	pkt = make([]byte, 0, stunHeaderLen)
+	pkt = appendU16(pkt, stunBindingRequest)
+	pkt = appendU16(pkt, 0) // no attributes
+	pkt = appendU32(pkt, stunMagicCookie)
+	pkt = append(pkt, txID...)
+	return pkt, txID, nil
+}
+
+func newSTUNTxID() ([]byte, error) {
+	txID := make([]byte, 12)
+	if _, err := rand.Read(txID); err != nil {
+		return nil, fmt.Errorf("stun: transaction id: %w", err)
+	}
+	return txID, nil
+}
+
+func appendU16(b []byte, v uint16) []byte {
+	return append(b, byte(v>>8), byte(v))
+}
+
+func appendU32(b []byte, v uint32) []byte {
+	return append(b, byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 }
 
 // parseSTUNBindingResponse validates a STUN response against the
@@ -367,10 +448,44 @@ func probeSTUNUDP(addr string, timeout time.Duration) (STUNProbeResult, error) {
 	if _, _, err := net.SplitHostPort(addr); err != nil {
 		addr = net.JoinHostPort(addr, "3478")
 	}
-	pkt, txID, err := buildSTUNBindingRequest()
-	if err != nil {
-		return res, err
+	// B307: two shapes, in order of what real relays require.
+	//   1. Tailscale-shaped (SOFTWARE + FINGERPRINT) — what netcheck sends and
+	//      what derper's stunserver demands (ErrNoFingerprint otherwise).
+	//   2. Bare RFC 5389 — for a generic STUN server that implements only the
+	//      base spec (it would ignore the optional attributes anyway, but this
+	//      keeps the probe honest if a server rejects unknown ones).
+	// The error names BOTH attempts, so a red tile never hides which packet it
+	// sent.
+	shapes := []struct {
+		name  string
+		build func() ([]byte, []byte, error)
+	}{
+		{"fingerprint", buildSTUNBindingRequest},
+		{"bare", buildSTUNBareBindingRequest},
 	}
+	var firstErr error
+	for i, shape := range shapes {
+		pkt, txID, err := shape.build()
+		if err != nil {
+			return res, err
+		}
+		got, perr := probeSTUNShape(addr, pkt, txID, timeout)
+		if perr == nil {
+			return got, nil
+		}
+		if i == 0 {
+			firstErr = perr
+			continue
+		}
+		return res, fmt.Errorf("stun %s: fingerprint form: %v; bare form: %w", addr, firstErr, perr)
+	}
+	return res, fmt.Errorf("stun %s: no request shape was tried", addr)
+}
+
+// probeSTUNShape sends one already-built request and waits for the matching
+// Binding Success Response.
+func probeSTUNShape(addr string, pkt, txID []byte, timeout time.Duration) (STUNProbeResult, error) {
+	var res STUNProbeResult
 	conn, err := net.DialTimeout("udp", addr, timeout)
 	if err != nil {
 		return res, fmt.Errorf("stun: dial %s: %w", addr, err)

@@ -24,6 +24,7 @@ package admin
 
 import (
 	"encoding/binary"
+	"hash/crc32"
 	"net"
 	"testing"
 	"time"
@@ -82,18 +83,26 @@ func buildSTUNResponse(txID, attrBody []byte, attrType uint16) []byte {
 }
 
 func TestBuildSTUNBindingRequest_WireFormat(t *testing.T) {
+	// B307 (v1.5.72) — RENEGOTIATED. This test used to pin a 20-byte header-only
+	// request ("RFC 5389: no attributes"). That shape is answered by a generic
+	// STUN server but is REJECTED by derper's stunserver with ErrNoFingerprint
+	// ("STUN request didn't end in fingerprint") and counted as not_stun — live
+	// on the agent VM the relay's own counters went {not_stun:20,success:0} →
+	// {not_stun:24,success:0} for four bare probes, and {success:1} for one
+	// request carrying SOFTWARE+FINGERPRINT. The default shape therefore carries
+	// them now; the bare form is pinned separately as the fallback.
 	pkt, txID, err := buildSTUNBindingRequest()
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if len(pkt) != stunHeaderLen {
-		t.Fatalf("packet len = %d, want %d (RFC 5389: no attributes in a Binding Request)", len(pkt), stunHeaderLen)
+	if want := stunHeaderLen + stunAttrHeaderLen + len(stunSoftwareValue) + 8; len(pkt) != want {
+		t.Fatalf("packet len = %d, want %d (header + SOFTWARE + FINGERPRINT)", len(pkt), want)
 	}
 	if mt := binary.BigEndian.Uint16(pkt[0:2]); mt != stunBindingRequest {
 		t.Errorf("message type = 0x%04x, want 0x%04x", mt, stunBindingRequest)
 	}
-	if l := binary.BigEndian.Uint16(pkt[2:4]); l != 0 {
-		t.Errorf("declared attribute length = %d, want 0", l)
+	if l := int(binary.BigEndian.Uint16(pkt[2:4])); l != len(pkt)-stunHeaderLen {
+		t.Errorf("declared attribute length = %d, want %d (must include the fingerprint)", l, len(pkt)-stunHeaderLen)
 	}
 	if mc := binary.BigEndian.Uint32(pkt[4:8]); mc != stunMagicCookie {
 		t.Errorf("magic cookie = 0x%08x, want 0x%08x", mc, stunMagicCookie)
@@ -104,6 +113,31 @@ func TestBuildSTUNBindingRequest_WireFormat(t *testing.T) {
 	if got := pkt[8:20]; string(got) != string(txID) {
 		t.Errorf("packet transaction id %x != returned txID %x", got, txID)
 	}
+
+	// SOFTWARE (type 0x8022, 8 bytes, unpadded).
+	if at := binary.BigEndian.Uint16(pkt[20:22]); at != stunAttrSoftware {
+		t.Errorf("first attribute type = 0x%04x, want SOFTWARE 0x%04x", at, stunAttrSoftware)
+	}
+	if al := binary.BigEndian.Uint16(pkt[22:24]); int(al) != len(stunSoftwareValue) {
+		t.Errorf("SOFTWARE length = %d, want %d", al, len(stunSoftwareValue))
+	}
+	if got := string(pkt[24:32]); got != stunSoftwareValue {
+		t.Errorf("SOFTWARE value = %q, want %q", got, stunSoftwareValue)
+	}
+
+	// FINGERPRINT (type 0x8028, 4 bytes) whose CRC32 XOR 0x5354554e covers
+	// everything BEFORE the attribute — the check ParseBindingRequest performs.
+	if at := binary.BigEndian.Uint16(pkt[32:34]); at != stunAttrFingerprint {
+		t.Fatalf("second attribute type = 0x%04x, want FINGERPRINT 0x%04x", at, stunAttrFingerprint)
+	}
+	if al := binary.BigEndian.Uint16(pkt[34:36]); al != 4 {
+		t.Errorf("FINGERPRINT length = %d, want 4", al)
+	}
+	wantFP := crc32.ChecksumIEEE(pkt[:32]) ^ stunFingerprintXORMask
+	if got := binary.BigEndian.Uint32(pkt[36:40]); got != wantFP {
+		t.Errorf("fingerprint = 0x%08x, want 0x%08x (derper answers only a valid one)", got, wantFP)
+	}
+
 	// A second request must use a fresh transaction ID (otherwise a
 	// late response to a previous probe would be accepted).
 	pkt2, txID2, err := buildSTUNBindingRequest()
@@ -115,6 +149,21 @@ func TestBuildSTUNBindingRequest_WireFormat(t *testing.T) {
 	}
 	if string(pkt2[8:20]) != string(txID2) {
 		t.Errorf("second packet txID mismatch")
+	}
+
+	// The bare fallback shape stays available for generic STUN servers.
+	bare, bareTx, err := buildSTUNBareBindingRequest()
+	if err != nil {
+		t.Fatalf("bare build: %v", err)
+	}
+	if len(bare) != stunHeaderLen {
+		t.Errorf("bare packet len = %d, want %d", len(bare), stunHeaderLen)
+	}
+	if l := binary.BigEndian.Uint16(bare[2:4]); l != 0 {
+		t.Errorf("bare declared attribute length = %d, want 0", l)
+	}
+	if len(bareTx) != 12 || string(bare[8:20]) != string(bareTx) {
+		t.Errorf("bare transaction id mismatch")
 	}
 }
 

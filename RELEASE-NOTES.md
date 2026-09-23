@@ -12,6 +12,72 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.72 — the STUN tile was OUR false negative, not a derper defect (B307)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.71` → this tag · **Compatibility:** none —
+no schema change, no migration, no config change.
+
+### What we got wrong (and how it was settled)
+
+Since v1.5.9's B302 the `/admin/derp` page has shown **`STUN UDP :3478 closed`**, and
+that was written up here and in `AGENTS.md` as a **derper-side defect** ("binds
+`*:3478` and answers no Binding Request at all"). **That conclusion was wrong.**
+
+The relay's own counters settled it. derper serves `/debug/vars`, and
+`tsweb.AllowDebugAccess` admits loopback, so the numbers can be read on the host:
+
+| what was sent to 127.0.0.1:3478 | relay counters afterwards |
+|---|---|
+| — (baseline) | `{"not_stun":20,"success":0}` |
+| 4 bare RFC 5389 Binding Requests | `{"not_stun":24,"success":0}` |
+| **1 request with SOFTWARE + FINGERPRINT** | **`{"not_stun":25,"success":1}`** |
+
+and the same two packets probed live: the FINGERPRINT one answered
+`REPLY 44 bytes (txid match=True)`, the bare one timed out.
+
+The source confirms it: derper's STUN server is
+`tailscale.com/net/stunserver`, which parses with `stun.ParseBindingRequest` — and
+that returns **`ErrNoFingerprint`** ("STUN request didn't end in fingerprint") /
+`ErrWrongFingerprint` and counts both as `not_stun`. A header-only request is
+**never answered**. Tailscale's own client (`net/stun.Request`) always sends
+`SOFTWARE` (`"tailnode"`) plus `FINGERPRINT` (CRC32 of the message so far, XOR
+`0x5354554e`, with the header length already counting the fingerprint attribute) —
+which is exactly why `tailscale netcheck` scored every region through the same
+relay while our probe saw silence.
+
+Two things were also ruled out along the way, which is why the fix is in skygate:
+rebuilding derper from upstream changed nothing (a fresh `v1.70.0` and the current
+`v1.102.4` behave identically), and neither did a non-standard `--stun-port`.
+
+### The fix
+
+* `buildSTUNBindingRequest` now emits the Tailscale-shaped request: `SOFTWARE` +
+  `FINGERPRINT`, header length including the fingerprint, CRC over everything
+  before it.
+* `buildSTUNBareBindingRequest` keeps the old header-only form as a **documented
+  fallback** for a generic RFC 5389 server, and `probeSTUNUDP` tries the
+  fingerprint shape first, then the bare one.
+* A failed probe now names **both** attempts
+  (`stun host:port: fingerprint form: …; bare form: …`), so a red tile can never
+  hide which packet was sent.
+
+### Verification
+
+* `scripts/check_b307_stun_fingerprint.sh` — 14 contracts.
+* `internal/feature/admin/derp_stun_b307_test.go` — a local UDP server that
+  implements derper's exact rule (reject without a valid fingerprint) **must**
+  answer our probe; a pedantic generic server pins the fallback; a closed port
+  pins the both-shapes error.
+* The B265 wire-format test is renegotiated in place, with the bare shape still
+  pinned separately.
+* `go vet`, `staticcheck`, `go test ./...` clean; CI green before the tag.
+
+### What the operator should check after updating
+
+1. `/admin/derp` — the **STUN UDP :3478** tile should now be **green** with an RTT
+   and the reflexive address, next to a relay whose traffic tile already worked.
+2. Nothing else changes: no config, no restart of the relay, no env.
+
 ## v1.5.71 — the project's modules are first-class system tests (B306)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.70` → this tag · **Compatibility:** none —
