@@ -19,6 +19,91 @@ any `.env` declared, while rung 2 (`GET /version`) is the rung that answered
 original report for the record; the measured value is 0.29.2, which is the point
 of the block.
 
+## v1.5.67 — every /admin/derp probe dials the reachable ADDRESS (B302)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.66` → this tag · **Compatibility:** none —
+no schema change, no migration.
+
+### What the page showed, and which half was true
+
+`/admin/derp` on the agent VM rendered, from inside the skygate container:
+
+| tile | value | verdict |
+|---|---|---|
+| `DERPER.SERVICE` | **stopped** | **FALSE** — the relay had been up 39 hours (`docker ps`) |
+| `DERP SOCKET :443` | TCP listening | TRUE |
+| `STUN UDP :3478` | closed | **TRUE** — derper answers no STUN at all |
+| `VERSION` | v1.70.0 go | TRUE |
+
+### (1) Why the service tile lied — fixed here
+
+`/etc/hosts` inside the skygate container maps the relay's own public name to
+`127.0.0.1` (AGENTS deployment trap #2), and `derperLivenessWebSocketProbe` — the
+probe that decides `Running` whenever `/debug/vars` answers **403**, i.e. on every
+hardened deployment — dialled that **name**, so it connected to the container's own
+loopback and failed. Its neighbours succeeded because they already pin the address
+(`httpGetVia`, B289.1) — which is exactly why the same page showed a green socket and
+the version next to a red service. Verified from the host with the page's own shape:
+`derp.skynas.ru:443` **and** `127.0.0.1:443`, both with the proper SNI, answered
+`HTTP/1.1 101 Switching Protocols`.
+
+A liveness probe that dials a different address than its neighbours is not a
+liveness check, it is a second opinion. The probe now takes a `dialAddr`, pins its
+TCP dial with the same `net.JoinHostPort(dialAddr, port)` shape `httpGetVia` uses,
+keeps the hostname for `Host`/TLS SNI, and its call site passes the **same** address
+the other probes use.
+
+### (2) The STUN red is real — and it is not skygate
+
+derper **binds `*:3478` and answers no Binding Request at all**: not from the host,
+not from inside the container, not even on loopback, over IPv4 *or* IPv6 — while
+`derper --help` lists `-stun` / `-stun-port 3478` (both correct in the running
+argv: `--a=:443 --stun`), its log says `STUN server listening on [::]:3478`, and
+`/derp` answers 101. Controls that make this trustworthy: a UDP loopback echo proves
+the probe can receive, and `tailscale netcheck` gets STUN replies from every public
+region from the same host and the same container. The relay image is
+`skygate-derper:latest` (built 2026-09-17, banner `1.70.0-ERR-BuildInfo`).
+
+So the tile stays red — and now it **names every candidate it probed**, so a UDP
+filter can be told apart from a relay that never answers.
+
+### Also verified (no change needed)
+
+headscale's `derp.urls` merges `http://skygate:8080/admin/derp/relays/derpmap.json`,
+and skygate serves region 900 (`derp.skynas.ru`, DERP 443, STUN 3478) — the map
+chain is correct. The dead `:8443` row (`derp_relays` id 3) is still enabled; the
+reachability guard skips it when publishing, and it is worth removing on
+`/admin/derp/relays`.
+
+### What to do after the update
+
+```bash
+# 1) the false alarm should be gone
+journalctl -u skygate --since '-5 min' | grep -i derp | tail -20
+# /admin/derp -> DERPER.SERVICE should read "active"
+
+# 2) the derper-side STUN question, in one line (from the host):
+python3 - <<'PY'
+import socket, os, struct
+txid = os.urandom(12)
+pkt = struct.pack('>HHI12s', 0x0001, 0, 0x2112A442, txid)
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(4)
+s.sendto(pkt, ("127.0.0.1", 3478))
+try:    print("STUN reply:", len(s.recvfrom(512)[0]), "bytes")
+except Exception as e: print("STUN silent:", e)
+PY
+# 3) if it stays silent, restart the relay and re-run step 2:
+docker restart derper
+```
+
+If STUN answers **right after** a restart and dies later, the running process is at
+fault (we would add a periodic check); if it never answers, the custom
+`skygate-derper` image's STUN is broken and the image should be rebuilt from the
+pinned upstream tag.
+
+12 contracts in `scripts/check_b302_derp_probe_dial_truth.sh` +
+`internal/feature/admin/derp_probe_dial_b302_test.go`.
+
 ## v1.5.66 — a sudo refusal that can never succeed must fall through (B301)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.65` → this tag · **Compatibility:** none —

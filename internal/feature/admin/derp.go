@@ -88,10 +88,10 @@ type DerpStatus struct {
 	// skygate container in every deployment). STUNBlocked is true
 	// when the round trip failed, so the page can distinguish
 	// "probed and dead" from "not probed".
-	STUNBlocked  bool
-	STUNRTT      string
-	STUNReflex   string
-	STUNErr      string
+	STUNBlocked bool
+	STUNRTT     string
+	STUNReflex  string
+	STUNErr     string
 	// DebugAccessDenied records that derper answered /debug/* with
 	// 403 "debug access denied" (upstream tsweb.AllowDebugAccess
 	// rejects the container's source IP). The rich metrics
@@ -99,12 +99,12 @@ type DerpStatus struct {
 	// in that case and the page says so instead of rendering zeros
 	// as if they were measurements.
 	DebugAccessDenied bool
-	Version         string
-	Hostname        string
-	RegionCode      string
-	RegionID        string
-	RegionName      string
-	WhiteIP         string
+	Version           string
+	Hostname          string
+	RegionCode        string
+	RegionID          string
+	RegionName        string
+	WhiteIP           string
 	// WhiteIPSource records WHERE the WhiteIP came from:
 	// "dns" (net.LookupHost of the derper's hostname — the
 	// public IP Tailscale clients actually dial), "egress"
@@ -371,7 +371,7 @@ func (s *Service) collectDerpStatus() DerpStatus {
 	//    metrics win when available; this is just a safety net
 	//    for the no-derper-debug deployment case.
 	if !st.Running {
-		if isRunning, err := derperLivenessWebSocketProbe(derpURL, 3*time.Second); err == nil && isRunning {
+		if isRunning, err := derperLivenessWebSocketProbe(derpURL, dialAddr, 3*time.Second); err == nil && isRunning {
 			st.Running = true
 			// The / probe already set SocketListening; with debug
 			// disabled we don't have STUN/Connections/Bytes — those
@@ -620,7 +620,19 @@ func httpGetVia(url string, dialAddr string, timeout time.Duration) ([]byte, err
 // returns early on the 403 JSON-parse failure from /debug/vars.
 // Pre-B260.1 the /admin/derp page always showed "DERPER-SERVICE:
 // stopped" even when derper was up.
-func derperLivenessWebSocketProbe(rawURL string, timeout time.Duration) (bool, error) {
+// B302 (2026-09-23): `dialAddr` is the address that is reachable FROM HERE; the
+// URL's hostname stays in the Host header and in TLS SNI. Same rule httpGetVia
+// learned in B289.1 — and the one this probe was still missing. Live on the agent
+// VM the relay's public name resolves to 127.0.0.1 inside the skygate container
+// (`/etc/hosts`, AGENTS trap #2), so this probe connected to the container's own
+// loopback, failed, and /admin/derp rendered a perfectly healthy derper as
+// "DERPER.SERVICE: stopped" — on a page that simultaneously showed the socket as
+// TCP-listening and the version, because THOSE probes already dialled the pinned
+// address. A probe that dials a different address than its neighbours is not a
+// liveness check, it is a second opinion.
+//
+// dialAddr == "" keeps the historical behaviour (dial whatever the URL resolves to).
+func derperLivenessWebSocketProbe(rawURL, dialAddr string, timeout time.Duration) (bool, error) {
 	u, err := neturl.Parse(rawURL)
 	if err != nil {
 		return false, err
@@ -644,18 +656,33 @@ func derperLivenessWebSocketProbe(rawURL string, timeout time.Duration) (bool, e
 	// never need the Sec-WebSocket-* headers.
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Connection", "Upgrade")
+
+	tr := &http.Transport{}
+	if dialAddr != "" {
+		port := u.Port()
+		if port == "" {
+			if u.Scheme == "https" {
+				port = "443"
+			} else {
+				port = "80"
+			}
+		}
+		target := net.JoinHostPort(dialAddr, port)
+		tr.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: timeout}).DialContext(ctx, network, target)
+		}
+	}
 	if u.Scheme == "https" {
 		skipVerify := false
 		if net.ParseIP(hostnameOnly) != nil {
 			skipVerify = true
 		}
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: skipVerify,
-				ServerName:         hostnameOnly,
-			},
+		tr.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: skipVerify,
+			ServerName:         hostnameOnly,
 		}
 	}
+	client.Transport = tr
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, err

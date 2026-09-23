@@ -279,7 +279,14 @@ func probeSTUNForStatus(st *DerpStatus, db *sql.DB, derpHost, stunPort string) {
 	st.STUNListening = false
 	st.STUNBlocked = true
 	if lastErr != nil {
-		st.STUNErr = trimSTUNErr(lastErr.Error())
+		// B302: name what was probed. The tile used to say only "unreachable",
+		// which cannot distinguish a UDP filter from a relay that answers TCP
+		// :443 and stays silent on every STUN candidate — the exact ambiguity the
+		// agent VM presented (derper bound *:3478 on both families, `/derp`
+		// answered 101, and no candidate ever answered a Binding Request).
+		st.STUNErr = trimSTUNErr(fmt.Sprintf("%s (probed %s)", lastErr.Error(), strings.Join(candidates, ", ")))
+	} else if len(candidates) > 0 {
+		st.STUNErr = trimSTUNErr("no candidate was probed (" + strings.Join(candidates, ", ") + ")")
 	}
 }
 

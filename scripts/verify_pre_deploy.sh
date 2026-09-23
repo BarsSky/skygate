@@ -5330,3 +5330,27 @@ run_check "B300" "one transport decision for every sync path: the aggregated sta
 # NOPASSWD rule — cannot work on a systemd install, so nobody chases it.
 run_check "B301" "a sudo refusal that can never succeed must fall through to the privileged helper: the systemd unit the installers write ships NoNewPrivileges=yes, so sudo can never become root from inside skygate — the kernel flag is checked before any sudoers rule and a NOPASSWD rule changes nothing. That refusal ('sudo: The \"no new privileges\" flag is set, which prevents sudo from running as root.') was not recognised by isPrivilegeRefusal, so it was treated as a REAL tailscale set failure and ApplyRoutesLocally returned one rung early: live on aro the log read 'applied LOCALLY: local=err=tailscale set (local, sudo): sudo: The \"no new privileges\" flag is set … — no SSH involved', the root-owned helper sat installed and idle, routes-apply.status was never created and every prefix stayed «нет маршрута». The systemd refusal and the other sudo-only refusals (not allowed to execute, no tty present, sorry user, plus the pre-existing a-password-is-required / not-in-the-sudoers / permission-denied needles) are now privilege refusals, so rung 3 is reached — pinned behaviourally with the verbatim two-line live refusal — while a genuine tailscale failure (unknown flag, bad CIDR, daemon down) is still surfaced as-is instead of being masked by a retry on another rung; RoutesFallbackHint now warns that a NOPASSWD rule cannot work on a systemd install. Contracts in scripts/check_b301_sudo_nnp_rung.sh." \
   'test -f scripts/check_b301_sudo_nnp_rung.sh && bash scripts/check_b301_sudo_nnp_rung.sh'
+
+# --- B302: every /admin/derp probe dials the reachable ADDRESS -----------------
+# Live on the agent VM, /admin/derp rendered from inside the skygate container:
+#   DERPER.SERVICE  stopped             <- FALSE, derper had been up 39 hours
+#   DERP SOCKET     :443 TCP listening  <- TRUE (this probe already pinned the address)
+#   STUN UDP        :3478 closed        <- TRUE (see below)
+#   VERSION         v1.70.0 go
+# /etc/hosts inside the container maps the relay's own public name to 127.0.0.1
+# (AGENTS trap #2), and derperLivenessWebSocketProbe — the probe that decides
+# `Running` whenever /debug/vars answers 403, i.e. on every hardened deployment —
+# dialled that name, so it hit the container's OWN loopback and failed while the
+# neighbouring probes succeeded because they dial the pinned address (B289.1's
+# httpGetVia). Verified live: host -> derp.skynas.ru:443 and host -> 127.0.0.1:443,
+# both with the proper SNI, answered HTTP/1.1 101 Switching Protocols. A liveness
+# probe that dials a different address than its neighbours is not a liveness check,
+# it is a second opinion. The STUN tile, by contrast, told the truth: derper binds
+# *:3478 and answers NO Binding Request — not from the host, not from the container,
+# not even on loopback, over IPv4 or IPv6 — while its own help lists -stun/-stun-port
+# 3478 and its log says STUN server listening; that is a derper-side defect, so the
+# tile stays red and now NAMES every candidate it probed, so a UDP filter can be told
+# apart from a relay that never answers. Contracts in
+# scripts/check_b302_derp_probe_dial_truth.sh.
+run_check "B302" "every /admin/derp probe must dial the ADDRESS that is reachable from here and speak the HOSTNAME: the WebSocket liveness probe (which decides the DERPER.SERVICE tile whenever /debug/vars answers 403, i.e. on every hardened deployment) dialled the relay's public name, and inside the skygate container that name maps to 127.0.0.1 through /etc/hosts (AGENTS trap #2) — so a derper that had been up 39 hours rendered as 'stopped' next to a green TCP-listening tile and a known version, because those probes already pinned the address (B289.1). Verified live from the host: derp.skynas.ru:443 and 127.0.0.1:443 both answered HTTP/1.1 101 Switching Protocols with the proper SNI. The probe now takes a dial address, pins its TCP dial to it (the same net.JoinHostPort(dialAddr, port) shape httpGetVia uses) and keeps the hostname for Host and TLS SNI, and its call site passes the SAME address the neighbouring probes use, so the page cannot disagree with itself again; a red STUN tile now names every candidate it probed. The STUN red itself is a derper-side defect and stays red: derper binds *:3478 and answers no Binding Request on either family, loopback included, while -stun/-stun-port are correct and its log says the STUN server is listening. Contracts in scripts/check_b302_derp_probe_dial_truth.sh." \
+  'test -f scripts/check_b302_derp_probe_dial_truth.sh && bash scripts/check_b302_derp_probe_dial_truth.sh'
