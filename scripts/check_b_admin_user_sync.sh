@@ -83,7 +83,7 @@ bad() { echo "  FAIL  $1"; exit 1; }
 # 2026-09-19 (B264): a missing/empty SKYGATE_TEST_PG_DSN or an unreachable
 # PostgreSQL is likewise an ABSENT live dependency, not a failure — those
 # branches SKIP rather than FAIL (AGENTS.md rule 1).
-if ! sudo docker info >/dev/null 2>&1; then
+if ! sudo -n docker info >/dev/null 2>&1; then
     echo "SKIP: docker daemon not reachable (B-mod-admin-user-sync inspects the live stack) — run it on the skygate VM"
     exit 0
 fi
@@ -94,19 +94,19 @@ fi
 # That is an ABSENT live dependency → SKIP, never FAIL (AGENTS.md §1.1); the
 # old form reported `FAIL skygate-skygate-1 container not running` on every CI
 # run, which is a red row that says nothing about the code.
-if ! sudo docker inspect "$CONTAINER" >/dev/null 2>&1; then
+if ! sudo -n docker inspect "$CONTAINER" >/dev/null 2>&1; then
     echo "  SKIP  $CONTAINER container not running (live check — run it on the skygate host)"
     exit 0
 fi
-state=$(sudo docker inspect "$CONTAINER" --format '{{.State.Status}}')
+state=$(sudo -n docker inspect "$CONTAINER" --format '{{.State.Status}}')
 if [ "$state" != "running" ]; then
     echo "  SKIP  $CONTAINER state=$state (live check — run it on the skygate host)"
     exit 0
 fi
 
 # ── detect backend ──
-LIVE_DB=$(sudo docker exec "$CONTAINER" sh -c 'env | grep "^SKYGATE_DB=" | head -1 | cut -d= -f2-')
-EXPECTED_ADMIN=$(sudo docker exec "$CONTAINER" sh -c 'env | grep "^SKYGATE_ADMIN_USER=" | head -1 | cut -d= -f2-')
+LIVE_DB=$(sudo -n docker exec "$CONTAINER" sh -c 'env | grep "^SKYGATE_DB=" | head -1 | cut -d= -f2-')
+EXPECTED_ADMIN=$(sudo -n docker exec "$CONTAINER" sh -c 'env | grep "^SKYGATE_ADMIN_USER=" | head -1 | cut -d= -f2-')
 [ -n "$EXPECTED_ADMIN" ] || bad "SKYGATE_ADMIN_USER empty in container env"
 
 case "$LIVE_DB" in
@@ -120,14 +120,14 @@ echo "backend=$BACKEND  expected_primary=$EXPECTED_ADMIN"
 # ── query the primary row ──
 case "$BACKEND" in
     pg)
-        if ! sudo docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
+        if ! sudo -n docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
             echo "SKIP: $PG_CONTAINER (the live PostgreSQL for this deployment) is not reachable from here — no DSN/PG available"
             exit 0
         fi
         # Contract P: the V072 primary marker column must exist. Without it
         # every query below would fail with a column error, so check it first
         # and report it as the real finding it is (a pre-V072 live binary).
-        HAS_IS_PRIMARY=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+        HAS_IS_PRIMARY=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
             "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='portal_users' AND column_name='is_primary'" 2>/dev/null)
         if [ "${HAS_IS_PRIMARY:-0}" = "1" ]; then
             ok "P: portal_users.is_primary exists (V072 applied)"
@@ -135,7 +135,7 @@ case "$BACKEND" in
             bad "P: portal_users.is_primary is MISSING — V072 (B264 primary admin) has not run on this database"
         fi
         # Contract A: exactly one PRIMARY (delegated admins are allowed).
-        ADMIN_ROW=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+        ADMIN_ROW=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
             "SELECT id || '|' || username || '|' || COALESCE(headscale_user_id::text, 'NULL') || '|' || is_admin FROM portal_users WHERE is_primary=1 ORDER BY id")
         ADMIN_COUNT=$(echo "$ADMIN_ROW" | grep -c '|' || true)
         if [ "$ADMIN_COUNT" -eq 1 ]; then
@@ -169,7 +169,7 @@ case "$BACKEND" in
         # headscale stores users in its own SQLite (headscale_headscale_data volume),
         # not in our PG. The headscale container has no shell, so we exec the
         # CLI directly + parse JSON with python3 on the host side.
-        HS_JSON=$(sudo docker exec headscale headscale users list -i "$ADMIN_HSID" -o json 2>&1)
+        HS_JSON=$(sudo -n docker exec headscale headscale users list -i "$ADMIN_HSID" -o json 2>&1)
         HS_NAMES=$(echo "$HS_JSON" | python3 -c "
 import json,sys
 try:
@@ -204,7 +204,7 @@ except Exception as e:
         # Contract P: the V072 marker column must exist in the SQLite schema.
         # Read the schema through the same alpine+sqlite3 path the row query
         # uses, and treat an unreachable volume as SKIP (absent live state).
-        if ! sudo docker run --rm -v "$VOLUME":/data alpine sh -c \
+        if ! sudo -n docker run --rm -v "$VOLUME":/data alpine sh -c \
             'apk add --no-cache sqlite >/dev/null 2>&1 && \
              sqlite3 /data/skygate.db "PRAGMA table_info(portal_users)"' \
             > /tmp/_admin_cols_$$ 2>&1; then
@@ -217,7 +217,7 @@ except Exception as e:
             bad "P: portal_users.is_primary is MISSING — V072 (B264 primary admin) has not run on this database"
         fi
         rm -f /tmp/_admin_cols_$$
-        if ! sudo docker run --rm -v "$VOLUME":/data alpine sh -c \
+        if ! sudo -n docker run --rm -v "$VOLUME":/data alpine sh -c \
             'apk add --no-cache sqlite >/dev/null 2>&1 && \
              sqlite3 /data/skygate.db "SELECT id, username, COALESCE(headscale_user_id, -1), is_admin FROM portal_users WHERE is_primary=1 ORDER BY id"' \
             > /tmp/_admin_sqlite_$$ 2>&1; then
@@ -243,7 +243,7 @@ except Exception as e:
         else
             bad "B: primary name=$ADMIN_NAME != SKYGATE_ADMIN_USER=$EXPECTED_ADMIN (drift)"
         fi
-        HS_JSON=$(sudo docker exec headscale headscale users list -i "$ADMIN_HSID" -o json 2>&1)
+        HS_JSON=$(sudo -n docker exec headscale headscale users list -i "$ADMIN_HSID" -o json 2>&1)
         HS_NAMES=$(echo "$HS_JSON" | python3 -c "
 import json,sys
 try:

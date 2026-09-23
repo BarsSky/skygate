@@ -46,7 +46,7 @@ for c in "$CONTAINER" "$HEADSCALE_CONTAINER" "$PG_CONTAINER"; do
     # B281 (2026-09-22): absent live dependency = SKIP, never FAIL
     # (AGENTS.md §1.1). Note `bad()` in this script exits 1, so the old form
     # aborted the whole catalog entry with a failure on every CI run.
-    sudo docker inspect "$c" >/dev/null 2>&1 || {
+    sudo -n docker inspect "$c" >/dev/null 2>&1 || {
         echo "  SKIP  $c container not running (live check — run it on the skygate host)"
         exit 0
     }
@@ -57,7 +57,7 @@ done
 # These are the standard B111 canonical tags. Missing = broken ACL.
 echo
 echo "=== A. standard tags in live policy tagOwners ==="
-TAGOWNERS=$(sudo docker exec "$HEADSCALE_CONTAINER" headscale policy get -o json 2>/dev/null \
+TAGOWNERS=$(sudo -n docker exec "$HEADSCALE_CONTAINER" headscale policy get -o json 2>/dev/null \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(d.get("tagOwners",{}).keys()))')
 for tag in tag:public tag:exit-node tag:private tag:subnet-router; do
     if echo " $TAGOWNERS " | grep -q " $tag "; then
@@ -79,9 +79,9 @@ done
 #   - AND don't appear in node_owner_map or device_rules
 echo
 echo "=== B. tagOwners keys map to real tags (no orphans) ==="
-NOM_TAGS=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+NOM_TAGS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
   "SELECT DISTINCT tag FROM node_owner_map WHERE tag <> ''" 2>/dev/null)
-DEVICE_TAGS=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+DEVICE_TAGS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
   "SELECT DISTINCT target_tag FROM device_rules WHERE target_tag <> '' AND target_type='subnet'" 2>/dev/null)
 USED_TAGS="$NOM_TAGS
 $DEVICE_TAGS"
@@ -126,7 +126,7 @@ fi
 # B118 enforces this — re-pin here.
 echo
 echo "=== D. tag:dev-* ownership (skyadmin/michail/infra per B118) ==="
-OWNERS=$(sudo docker exec "$HEADSCALE_CONTAINER" headscale policy get -o json 2>/dev/null \
+OWNERS=$(sudo -n docker exec "$HEADSCALE_CONTAINER" headscale policy get -o json 2>/dev/null \
   | python3 -c '
 import json,sys
 d = json.load(sys.stdin)
@@ -139,7 +139,7 @@ for tag, owners in sorted(to.items()):
 if [ -z "$OWNERS" ]; then
     bad "no tag:dev-* entries in tagOwners"
 else
-    PSQL_USERS=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+    PSQL_USERS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
         "SELECT username FROM portal_users WHERE username <> ''" 2>/dev/null | paste -sd'|' -)
     [ -n "$PSQL_USERS" ] || PSQL_USERS='skyadmin|michail|guest|daniil|infra'
     echo "$OWNERS" | while IFS=' ' read -r tag owner_json; do

@@ -278,10 +278,10 @@ fi
 if [ -d /home/skyadmin/skygate ]; then
   if command -v docker >/dev/null 2>&1; then
     PG_CONTAINER="${SKYGATE_PG_CONTAINER:-skygate-pg-local}"
-    GHOST_COUNT=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc \
+    GHOST_COUNT=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc \
       "SELECT COUNT(*) FROM device_exit_node_prefs WHERE exit_node_tag LIKE 'tag:exit-%'" 2>/dev/null | head -1)
     check_eq "V-no-ghost-device-rows" "0" "${GHOST_COUNT:-<err>}"
-    GHOST_USER_COUNT=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc \
+    GHOST_USER_COUNT=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc \
       "SELECT COUNT(*) FROM user_exit_node_prefs WHERE exit_node_tag LIKE 'tag:exit-%'" 2>/dev/null | head -1)
     check_eq "V-no-ghost-user-rows" "0" "${GHOST_USER_COUNT:-<err>}"
   else
@@ -296,7 +296,7 @@ fi
 if [ -d /home/skyadmin/skygate ]; then
   if command -v docker >/dev/null 2>&1; then
     PG_CONTAINER="${SKYGATE_PG_CONTAINER:-skygate-pg-local}"
-    RE_ENABLED=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc \
+    RE_ENABLED=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc \
       "SELECT COUNT(*) FROM device_exit_node_prefs WHERE via_enabled = 1 AND exit_node_tag LIKE 'tag:dev-infra-%'" 2>/dev/null | head -1)
     check_ge "W-via-enabled-reenabled" 1 "${RE_ENABLED:-0}"
   else
@@ -361,7 +361,7 @@ check_ge "Z4-TD17-test-file-exists" 1 "$Z4"
 if [ -d /home/skyadmin/skygate ]; then
   if command -v docker >/dev/null 2>&1; then
     PG_CONTAINER="${SKYGATE_PG_CONTAINER:-skygate-pg-local}"
-    USER_DEV_TAGS=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc \
+    USER_DEV_TAGS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc \
       "SELECT COUNT(*) FROM device_exit_node_prefs WHERE exit_node_tag LIKE 'tag:dev-_%' AND exit_node_tag NOT LIKE 'tag:dev-infra-%'" 2>/dev/null | head -1)
     check_eq "AA-no-user-device-devtag-in-prefs" "0" "${USER_DEV_TAGS:-<err>}"
   else

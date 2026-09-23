@@ -53,17 +53,17 @@ HEADSCALE_CONTAINER="${HEADSCALE_CONTAINER:-headscale}"
 # (AGENTS.md §1.1). The header of this file already promised "skip (do not
 # fail) when the docker daemon is unreachable"; the container-level case was
 # still a FAIL, which is what fired on every CI run.
-if ! sudo docker inspect "$CONTAINER" >/dev/null 2>&1; then
+if ! sudo -n docker inspect "$CONTAINER" >/dev/null 2>&1; then
     echo "  SKIP  $CONTAINER container not running (live check — run it on the skygate host)"
     exit 0
 fi
-if ! sudo docker inspect "$HEADSCALE_CONTAINER" >/dev/null 2>&1; then
+if ! sudo -n docker inspect "$HEADSCALE_CONTAINER" >/dev/null 2>&1; then
     echo "  SKIP  $HEADSCALE_CONTAINER container not running (live check — run it on the skygate host)"
     exit 0
 fi
 
 # ── fetch + parse headscale users ──
-sudo docker exec "$HEADSCALE_CONTAINER" headscale users list -o json > /tmp/check_b_dup_users.json 2>/dev/null
+sudo -n docker exec "$HEADSCALE_CONTAINER" headscale users list -o json > /tmp/check_b_dup_users.json 2>/dev/null
 if [ ! -s /tmp/check_b_dup_users.json ]; then
     echo "  FAIL  headscale users list returned empty (headscale unreachable or CLI errored)"
     exit 2

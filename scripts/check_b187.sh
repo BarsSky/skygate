@@ -105,7 +105,7 @@ if [ -d /home/skyadmin/skygate ]; then
   # the 172.18.0.3 / skygate-pg-local container).
   if command -v docker >/dev/null 2>&1; then
     PG_CONTAINER="${SKYGATE_PG_CONTAINER:-skygate-pg-local}"
-    USERNAME=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc "
+    USERNAME=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -tAc "
       SELECT p.username
         FROM telegram_bindings b
         JOIN portal_users p ON p.id = b.portal_user_id

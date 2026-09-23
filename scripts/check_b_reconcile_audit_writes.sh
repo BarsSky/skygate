@@ -50,17 +50,17 @@ PG_CONTAINER="${SKYGATE_PG_CONTAINER:-skygate-pg-local}"
 # B281 (2026-09-22): no container = absent live dependency = SKIP, never FAIL
 # (AGENTS.md §1.1). This check RESTARTS skygate to fire the reconcile cron, so
 # it can only ever run on the operator's own host — on CI it must SKIP.
-if ! sudo docker inspect "$CONTAINER" >/dev/null 2>&1; then
+if ! sudo -n docker inspect "$CONTAINER" >/dev/null 2>&1; then
     echo "  SKIP  $CONTAINER container not running (live check — restart-based, run it on the skygate host)"
     exit 0
 fi
-if ! sudo docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
+if ! sudo -n docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
     echo "  SKIP  $PG_CONTAINER container not running (live check — run it on the skygate host)"
     exit 0
 fi
 
 # ── detect backend ──
-LIVE_DB=$(sudo docker exec "$CONTAINER" sh -c 'env | grep "^SKYGATE_DB=" | head -1 | cut -d= -f2-' 2>/dev/null)
+LIVE_DB=$(sudo -n docker exec "$CONTAINER" sh -c 'env | grep "^SKYGATE_DB=" | head -1 | cut -d= -f2-' 2>/dev/null)
 case "$LIVE_DB" in
     postgres://*|postgresql://*) BACKEND="pg" ;;
     sqlite:*|file:*|"")         BACKEND="sqlite" ;;
@@ -70,9 +70,9 @@ esac
 echo "backend=$BACKEND"
 
 # ── baseline count + most recent row timestamp ──
-BEFORE_COUNT=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+BEFORE_COUNT=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
   "SELECT COUNT(*) FROM audit_log WHERE action = 'headscale_user_reconcile'" 2>/dev/null)
-BEFORE_TS=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+BEFORE_TS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
   "SELECT COALESCE(EXTRACT(epoch FROM MAX(to_timestamp(created_at))), 0)::int FROM audit_log WHERE action = 'headscale_user_reconcile'" 2>/dev/null)
 echo "baseline: count=$BEFORE_COUNT most_recent_ts=$BEFORE_TS"
 
@@ -80,7 +80,7 @@ echo "baseline: count=$BEFORE_COUNT most_recent_ts=$BEFORE_TS"
 echo
 echo "Triggering reconcile cycle via docker restart (cron runs at startup)..."
 PRE_RESTART_TS=$(date +%s)
-sudo docker restart "$CONTAINER" >/dev/null 2>&1
+sudo -n docker restart "$CONTAINER" >/dev/null 2>&1
 
 # ── wait for healthy (max 60s — the entrypoint's pre-flight wait can
 #    take 30-60s on a cold start) ──
@@ -88,12 +88,12 @@ echo -n "  waiting for healthy"
 HEALTHY=""
 for i in $(seq 1 90); do
     sleep 2
-    STATE=$(sudo docker inspect "$CONTAINER" --format '{{.State.Status}}' 2>/dev/null)
+    STATE=$(sudo -n docker inspect "$CONTAINER" --format '{{.State.Status}}' 2>/dev/null)
     if [ "$STATE" != "running" ]; then
         echo -n "."
         continue
     fi
-    HEALTH=$(sudo docker inspect "$CONTAINER" --format '{{.State.Health.Status}}' 2>/dev/null)
+    HEALTH=$(sudo -n docker inspect "$CONTAINER" --format '{{.State.Health.Status}}' 2>/dev/null)
     if [ "$HEALTH" = "healthy" ]; then
         echo " healthy after ${i}x2s"
         HEALTHY=1
@@ -110,9 +110,9 @@ fi
 sleep 10
 
 # ── count again ──
-AFTER_COUNT=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+AFTER_COUNT=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
   "SELECT COUNT(*) FROM audit_log WHERE action = 'headscale_user_reconcile'" 2>/dev/null)
-AFTER_TS=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+AFTER_TS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
   "SELECT COALESCE(EXTRACT(epoch FROM MAX(to_timestamp(created_at))), 0)::int FROM audit_log WHERE action = 'headscale_user_reconcile'" 2>/dev/null)
 echo "after:    count=$AFTER_COUNT most_recent_ts=$AFTER_TS"
 
@@ -123,7 +123,7 @@ if [ "$NEW" -gt 0 ] && [ "$AFTER_TS" -gt "$BEFORE_TS" ]; then
 
     # Also check the new rows have the expected outcomes (the per-cycle
     # summary JSON should contain either "rows" or "duplicate_names").
-    HAS_VALID_DETAIL=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+    HAS_VALID_DETAIL=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
       "SELECT COUNT(*) FROM audit_log WHERE action = 'headscale_user_reconcile' AND created_at > $BEFORE_TS AND (detail LIKE '%\"rows\"%' OR detail LIKE '%\"outcome\"%' OR detail LIKE '%\"duplicate_names%')" 2>/dev/null)
     if [ "$HAS_VALID_DETAIL" -gt 0 ]; then
         echo "  PASS  B: $HAS_VALID_DETAIL new rows have valid detail JSON (rows/outcome/duplicate_names)"
@@ -132,12 +132,12 @@ if [ "$NEW" -gt 0 ] && [ "$AFTER_TS" -gt "$BEFORE_TS" ]; then
     fi
 
     # Check the logs for SQLSTATE 42601 — should be 0 NEW occurrences.
-    SQLSTATE_COUNT=$(sudo docker logs "$CONTAINER" --since "${PRE_RESTART_TS}s" 2>&1 | grep -c "SQLSTATE 42601" || true)
+    SQLSTATE_COUNT=$(sudo -n docker logs "$CONTAINER" --since "${PRE_RESTART_TS}s" 2>&1 | grep -c "SQLSTATE 42601" || true)
     if [ "$SQLSTATE_COUNT" = "0" ]; then
         echo "  PASS  C: 0 SQLSTATE 42601 errors in this cycle (B243 SQL fix verified)"
     else
         echo "  FAIL  C: $SQLSTATE_COUNT SQLSTATE 42601 errors in skygate logs since restart (B243 regression!)"
-        sudo docker logs "$CONTAINER" --since "${PRE_RESTART_TS}s" 2>&1 | grep "SQLSTATE 42601" | head -3
+        sudo -n docker logs "$CONTAINER" --since "${PRE_RESTART_TS}s" 2>&1 | grep "SQLSTATE 42601" | head -3
         exit 1
     fi
     exit 0
@@ -151,7 +151,7 @@ if [ "$NEW" = "0" ] && [ "$AFTER_TS" = "$BEFORE_TS" ]; then
     echo "          This is the exact B243 bug pattern: cron ran but"
     echo "          audit_log INSERT silently failed (SQLSTATE 42601?)."
     echo "          skygate logs around this restart:"
-    sudo docker logs "$CONTAINER" --since "${PRE_RESTART_TS}s" 2>&1 | grep -iE "reconcile|sqlstate|42601" | head -10
+    sudo -n docker logs "$CONTAINER" --since "${PRE_RESTART_TS}s" 2>&1 | grep -iE "reconcile|sqlstate|42601" | head -10
     exit 1
 fi
 

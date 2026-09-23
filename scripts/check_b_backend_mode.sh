@@ -32,11 +32,11 @@ bad() { echo "  FAIL  $1"; exit 1; }
 # ── 1. container reachable ──
 # B281 (2026-09-22): no container = absent live dependency = SKIP (AGENTS §1.1),
 # not FAIL. This script used to exit 1 on a CI runner that has no stack at all.
-if ! sudo docker inspect "$CONTAINER" >/dev/null 2>&1; then
+if ! sudo -n docker inspect "$CONTAINER" >/dev/null 2>&1; then
     echo "  SKIP  $CONTAINER container not running (live check — run it on the skygate host)"
     exit 0
 fi
-state=$(sudo docker inspect "$CONTAINER" --format '{{.State.Status}}' 2>&1)
+state=$(sudo -n docker inspect "$CONTAINER" --format '{{.State.Status}}' 2>&1)
 if [ "$state" != "running" ]; then
     echo "  SKIP  $CONTAINER state=$state (live check — run it on the skygate host)"
     exit 0
@@ -44,7 +44,7 @@ fi
 ok "$CONTAINER is running"
 
 # ── 2. read live SKYGATE_DB from the container's env ──
-LIVE_DB=$(sudo docker exec "$CONTAINER" sh -c 'env | grep "^SKYGATE_DB=" | head -1 | cut -d= -f2-' 2>&1)
+LIVE_DB=$(sudo -n docker exec "$CONTAINER" sh -c 'env | grep "^SKYGATE_DB=" | head -1 | cut -d= -f2-' 2>&1)
 if [ -z "$LIVE_DB" ]; then
     bad "SKYGATE_DB is empty in container env (v1.3.0+ refuses to start)"
 fi
@@ -72,26 +72,26 @@ ok "backend detected: $BACKEND  (SKYGATE_DB=${LIVE_DB})"
 echo ""
 case "$BACKEND" in
     pg)
-        if ! sudo docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
+        if ! sudo -n docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
             bad "$PG_CONTAINER not running (skygate points at PG but the PG container is down)"
         fi
         ok "$PG_CONTAINER running"
         echo ""
         echo "=== PG row counts ==="
-        sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -c "SELECT 'portal_users', count(*) FROM portal_users UNION ALL SELECT 'device_rules', count(*) FROM device_rules UNION ALL SELECT 'acl_snapshots', count(*) FROM acl_snapshots UNION ALL SELECT 'audit_log', count(*) FROM audit_log" 2>&1 | head -10
+        sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -c "SELECT 'portal_users', count(*) FROM portal_users UNION ALL SELECT 'device_rules', count(*) FROM device_rules UNION ALL SELECT 'acl_snapshots', count(*) FROM acl_snapshots UNION ALL SELECT 'audit_log', count(*) FROM audit_log" 2>&1 | head -10
         echo ""
         echo "=== PG latest audit_log ==="
-        sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -c "SELECT action, to_timestamp(created_at) as t FROM audit_log ORDER BY created_at DESC LIMIT 3" 2>&1 | head -10
+        sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -c "SELECT action, to_timestamp(created_at) as t FROM audit_log ORDER BY created_at DESC LIMIT 3" 2>&1 | head -10
         ;;
     sqlite)
         echo "=== SQLite file via named volume $VOLUME ==="
-        sudo docker run --rm -v "$VOLUME":/data alpine sh -c '
+        sudo -n docker run --rm -v "$VOLUME":/data alpine sh -c '
             apk add --no-cache sqlite >/dev/null 2>&1
             sqlite3 /data/skygate.db "SELECT '"'"'portal_users'"'"', count(*) FROM portal_users UNION ALL SELECT '"'"'device_rules'"'"', count(*) FROM device_rules UNION ALL SELECT '"'"'acl_snapshots'"'"', count(*) FROM acl_snapshots UNION ALL SELECT '"'"'audit_log'"'"', count(*) FROM audit_log"
         ' 2>&1 | head -10
         echo ""
         echo "=== SQLite latest audit_log ==="
-        sudo docker run --rm -v "$VOLUME":/data alpine sh -c '
+        sudo -n docker run --rm -v "$VOLUME":/data alpine sh -c '
             apk add --no-cache sqlite >/dev/null 2>&1
             sqlite3 /data/skygate.db "SELECT action, datetime(created_at, '"'"'unixepoch'"'"') as t FROM audit_log ORDER BY created_at DESC LIMIT 3"
         ' 2>&1 | head -10

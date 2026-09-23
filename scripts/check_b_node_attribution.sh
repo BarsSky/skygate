@@ -63,15 +63,15 @@ for c in "$HEADSCALE_CONTAINER" "$PG_CONTAINER"; do
     # B281 (2026-09-22): absent live dependency = SKIP, never FAIL
     # (AGENTS.md §1.1) — on CI there is no headscale container, and the old
     # `bad ...; exit 1` produced a red row that described the runner, not the code.
-    sudo docker inspect "$c" >/dev/null 2>&1 || {
+    sudo -n docker inspect "$c" >/dev/null 2>&1 || {
         echo "  SKIP  $c container not running (live check — run it on the skygate host)"
         exit 0
     }
 done
 
 # ── fetch live headscale state ──
-sudo docker exec "$HEADSCALE_CONTAINER" headscale users list -o json 2>/dev/null > /tmp/attr_users.json
-sudo docker exec "$HEADSCALE_CONTAINER" headscale nodes list -o json 2>/dev/null > /tmp/attr_nodes.json
+sudo -n docker exec "$HEADSCALE_CONTAINER" headscale users list -o json 2>/dev/null > /tmp/attr_users.json
+sudo -n docker exec "$HEADSCALE_CONTAINER" headscale nodes list -o json 2>/dev/null > /tmp/attr_nodes.json
 
 echo "=== A. no node in sentinel user (id=2147455555) ==="
 SENTINEL_NODES=$(python3 << 'PYEOF'
@@ -121,7 +121,7 @@ import json
 d = json.load(open('/tmp/attr_users.json'))
 print(','.join(str(u['id']) for u in d))
 ")
-NOM_ORPHANS=$(sudo docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -F'|' -c "
+NOM_ORPHANS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -F'|' -c "
 SELECT node_id, headscale_user_id, username FROM node_owner_map
 WHERE headscale_user_id NOT IN ($HS_USER_IDS)
    OR headscale_user_id = 0

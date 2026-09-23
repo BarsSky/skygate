@@ -12,6 +12,84 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.76 — the pre-auth key is issued again (and the gate can no longer park itself) (B304 + B299)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.75` → this tag · **Compatibility:** none —
+no schema change, no migration.
+
+### B304 — «Сгенерировать ключ» failed on the host that runs headscale
+
+Operator report from the native host `aro`:
+
+```console
+api: headscale POST /api/v1/preauthkey: 500 {"code":2,
+     "message":"auth-key must be either tagged or owned by user"}
+cli: docker exec: exec: "docker": executable file not found in $PATH
+```
+
+Both lines are wrong *spellings*, not permissions. Measured against a live
+headscale v0.29.3 (the same 0.29.x surface `aro` runs), using a non-existent id
+so nothing is created:
+
+| request | answer | meaning |
+|---|---|---|
+| `{"user":999999}` | `500 user not found` | the field headscale **reads** |
+| `{"user_id":999999}` | `500 auth-key must be either tagged or owned by user` | the field is **discarded** (that is the operator's error) |
+| `{"user":85,"tags":["tag:exit-node"]}` | key created, **`aclTags: []`** | tags silently dropped |
+| `{"user":85,"acl_tags":["tag:exit-node"]}` | key created, **`aclTags: ["tag:exit-node"]`** | tags applied |
+| `POST /api/v1/preauthkey/expire {"id":"1"}` | `200` | the expire route this version serves |
+| `PUT /api/v1/preauthkey/1/expire` | `404 Not Found` | the route the code tried first |
+| `headscale preauthkeys expire --help` | one flag: `-i/--id` | there is no `-u/--user` to pass |
+
+Four defects in one file (`internal/headscale/preauth.go`), all fixed:
+
+* the create body sends **`user`** (not `user_id`) and **`acl_tags`** (not
+  `tags`) — headscale's protojson gateway discards unknown fields, so the wrong
+  names did not error, they produced an owner-less request (the 500) and, for
+  the exit-node key, a **silently untagged** key whose node would never be
+  treated as an exit node by the ACL;
+* expire walks the rungs **`POST /api/v1/preauthkey/expire {"id":…}`** → the
+  older `PUT /{id}/expire` → the CLI, so key expiry works again on 0.29.x;
+* every CLI rung goes through **`runHeadscaleCLI`** — `docker exec` when docker
+  exists, the local `headscale` binary on a native install — instead of the
+  hardcoded `docker` that cannot exist on `aro` (the B267/B272 defect, in the
+  one path that had not been converted); the expire argv is `--id … --force`;
+* `preauth.go` is the only file that talks to the preauth-key API, so the panel,
+  the exit-node register page (B266), the subnet sidecar and the deployrun step
+  are all fixed at once.
+
+Why CI was green while the feature was dead: the unit test that "covered" this
+asserted `"user_id":7` — **the wrong field was pinned as the contract**, and the
+mock accepts any body. It now asserts the fields headscale reads, the absence of
+the discarded spellings, and a native install (empty-`PATH` fake: no docker →
+the local binary is executed, argv inspected). Contracts:
+`scripts/check_b304_preauth_key_request_truth.sh`.
+
+### B299 — the guarantee catalog can no longer be parked forever
+
+Same session, a second finding: a `verify_pre_deploy.sh` run sat for **54
+minutes** and had to be killed by hand. Nothing was slow — it was *stopped*:
+inside a WSL Ubuntu (launched through `C:\WINDOWS\system32\bash.exe`, not Git
+Bash) the catalog reached `check_b_admin_user_sync.sh`, whose first probe was a
+bare `sudo docker info`; that `sudo` requires a password, opened `/dev/tty`, took
+**SIGTTIN**, and the kernel stopped the whole group — `timeout 900 … T`,
+`bash scripts/check_b_admin_user_sync.sh T`, `sudo docker info T`. A stopped
+process never runs its `SIGALRM` handler, so the 900s budget could not fire.
+
+* every check now runs as `setsid --wait timeout -k 10 <budget>`: **no
+  controlling terminal** (a password prompt fails fast instead of stopping the
+  world) and a deadline that can **KILL** (rc 137 is printed as TIMEOUT, so a
+  killed check is named). Measured in that same distro: the check that hung for
+  54 minutes now answers `SKIP: docker daemon not reachable` in **0.1 s**;
+* every executed `sudo` in the gate is `sudo -n` (60 call sites, 11 scripts), so
+  a check that needs root works or SKIPs at once — and an operator running the
+  gate in a real terminal cannot be left waiting for a password prompt either.
+
+Contracts: `scripts/check_b299_catalog_cannot_hang.sh` (structural + a
+repo-wide detector that ignores comments, heredoc operator instructions and
+quoted messages, and self-tests against a planted violation + behaviour:
+self-stop, tty read, password-hungry `sudo` shim, orphan check).
+
 ## v1.5.75 — exit nodes are managed over the tailnet, and an unreachable path says so (B310)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.74` → this tag · **Compatibility:** none —

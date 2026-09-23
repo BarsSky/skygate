@@ -304,15 +304,20 @@ func TestCreatePreauthKeyAPISuccess(t *testing.T) {
 	if k.ID != "42" {
 		t.Errorf("ID = %q, want 42", k.ID)
 	}
-	// The request body should have the right shape. We assert
-	// user_id and reusable are JSON-marshalled correctly;
-	// expiration is RFC3339-relative to now so we only check
-	// it's non-empty.
+	// The request body must carry the owner in the field headscale 0.29.x
+	// actually READS. B304: that field is `user`; `user_id` is silently
+	// discarded by headscale's protojson gateway, which then answers
+	// 500 "auth-key must be either tagged or owned by user" — the live `aro`
+	// failure this test used to enshrine (it asserted `"user_id":7`, so the
+	// wrong field name was pinned as the contract and CI could never catch it).
 	if cap.method != "POST" || cap.path != "/api/v1/preauthkey" {
 		t.Errorf("request was %s %s, want POST /api/v1/preauthkey", cap.method, cap.path)
 	}
-	if !contains(cap.body, `"user_id":7`) {
-		t.Errorf("request body missing user_id=7: %s", cap.body)
+	if !contains(cap.body, `"user":7`) {
+		t.Errorf("request body missing user=7 (headscale reads `user`): %s", cap.body)
+	}
+	if contains(cap.body, `"user_id"`) {
+		t.Errorf("request body still carries the ignored `user_id` field: %s", cap.body)
 	}
 	if !contains(cap.body, `"reusable":false`) {
 		t.Errorf("request body missing reusable=false: %s", cap.body)

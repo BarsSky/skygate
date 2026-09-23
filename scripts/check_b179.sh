@@ -62,7 +62,7 @@ check_ge() {
 # Source iptables (needs sudo) for live checks A + B
 IPTABLES_OUTPUT=""
 if command -v sudo >/dev/null 2>&1 && sudo -n iptables -L DOCKER-USER -n 2>/dev/null; then
-  IPTABLES_OUTPUT=$(sudo iptables -L DOCKER-USER -n -v 2>/dev/null; echo ---; sudo iptables -L INPUT -n -v 2>/dev/null)
+  IPTABLES_OUTPUT=$(sudo -n iptables -L DOCKER-USER -n -v 2>/dev/null; echo ---; sudo -n iptables -L INPUT -n -v 2>/dev/null)
 fi
 # Fallback: read from /etc/iptables/rules.v4 (no sudo needed)
 RULES_V4=""

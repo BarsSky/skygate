@@ -147,11 +147,11 @@ if [ -n "$PROD_HOST" ] && [ -n "$SSH_KEY" ]; then
     headscale_state=$(ssh -i "$SSH_KEY" -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no \
         "hermes-debug@${PROD_HOST}" \
         '# Check for the OIDC-disabled marker comment OR commented-out issuer line
-         if sudo grep -qE "^[[:space:]]*#[[:space:]]*oidc:.*disabled.*deadlock" /home/skyadmin/headscale/config/config.yaml 2>/dev/null; then
+         if sudo -n grep -qE "^[[:space:]]*#[[:space:]]*oidc:.*disabled.*deadlock" /home/skyadmin/headscale/config/config.yaml 2>/dev/null; then
              echo OIDC_DISABLED;
-         elif sudo grep -qE "^[[:space:]]*#[[:space:]]*issuer:" /home/skyadmin/headscale/config/config.yaml 2>/dev/null; then
+         elif sudo -n grep -qE "^[[:space:]]*#[[:space:]]*issuer:" /home/skyadmin/headscale/config/config.yaml 2>/dev/null; then
              echo OIDC_DISABLED;
-         elif sudo grep -qE "^[[:space:]]*#[[:space:]]*- http://skygate:8080" /home/skyadmin/headscale/config/config.yaml 2>/dev/null; then
+         elif sudo -n grep -qE "^[[:space:]]*#[[:space:]]*- http://skygate:8080" /home/skyadmin/headscale/config/config.yaml 2>/dev/null; then
              echo DERP_DISABLED;
          else
              echo OK;
