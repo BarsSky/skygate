@@ -27,6 +27,110 @@ type PreauthKey struct {
 	Ephemeral  bool   `json:"ephemeral"`
 	Used       bool   `json:"used"`
 	Expiration string `json:"expiration"`
+	// ACLTags is what headscale 0.29.x calls the key's tags (`aclTags` on the
+	// wire, `acl_tags` in the request). Recorded so callers can VERIFY that a
+	// requested tag actually landed — a silently untagged key is the failure
+	// mode B304 found.
+	ACLTags []string `json:"aclTags,omitempty"`
+}
+
+// preauthKeyWire is the shape headscale actually SERIALISES a preauth key in
+// (B304). Two differences from the flat struct above matter:
+//
+//   - the object is wrapped: {"preAuthKey": {…}} — a flat decode therefore
+//     matched nothing and every successful create looked like "no key in the
+//     response", which is why the caller fell through to the CLI rung even when
+//     the API had answered 200 (on the native host `aro` that rung then died
+//     with the docker error, so the operator saw BOTH failures at once);
+//   - `user` is an OBJECT ({"id":"85","name":"infra",…}) and `expiration` is a
+//     protobuf Timestamp ({"seconds":…,"nanos":…}), not the flat string/id the
+//     old struct assumed.
+//
+// Both are decoded tolerantly here so an older flat response keeps working.
+type preauthKeyWire struct {
+	ID         string          `json:"id"`
+	Key        string          `json:"key"`
+	Reusable   bool            `json:"reusable"`
+	Ephemeral  bool            `json:"ephemeral"`
+	Used       bool            `json:"used"`
+	Expiration json.RawMessage `json:"expiration"`
+	User       json.RawMessage `json:"user"`
+	UserID     int64           `json:"user_id"`
+	ACLTags    []string        `json:"aclTags"`
+}
+
+// parsePreauthKey decodes one key from either the 0.29.x envelope
+// ({"preAuthKey": {…}}) or a flat object, normalising the varying `user` and
+// `expiration` shapes.
+func parsePreauthKey(raw []byte) (*PreauthKey, error) {
+	var env struct {
+		PreAuthKey *preauthKeyWire `json:"preAuthKey"`
+	}
+	w := &preauthKeyWire{}
+	if err := json.Unmarshal(raw, &env); err == nil && env.PreAuthKey != nil {
+		w = env.PreAuthKey
+	} else if err := json.Unmarshal(raw, w); err != nil {
+		return nil, err
+	}
+	out := &PreauthKey{
+		ID:        w.ID,
+		Key:       w.Key,
+		UserID:    w.UserID,
+		Reusable:  w.Reusable,
+		Ephemeral: w.Ephemeral,
+		Used:      w.Used,
+		ACLTags:   w.ACLTags,
+	}
+	out.Expiration = wireExpiration(w.Expiration)
+	out.UserID, out.UserName = wireUser(w.User, w.UserID)
+	return out, nil
+}
+
+// wireUser accepts `user` as an object ({"id","name"}), a number or a string,
+// and falls back to the legacy flat `user_id`.
+func wireUser(raw json.RawMessage, legacyID int64) (int64, string) {
+	if len(raw) == 0 {
+		return legacyID, ""
+	}
+	var obj struct {
+		ID   json.Number `json:"id"`
+		Name string      `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil && obj.Name != "" {
+		id, _ := obj.ID.Int64()
+		return id, obj.Name
+	}
+	var asNum json.Number
+	if err := json.Unmarshal(raw, &asNum); err == nil && asNum.String() != "" {
+		id, _ := asNum.Int64()
+		return id, ""
+	}
+	var asStr string
+	if err := json.Unmarshal(raw, &asStr); err == nil {
+		if id, err := strconv.ParseInt(asStr, 10, 64); err == nil {
+			return id, ""
+		}
+		return legacyID, asStr
+	}
+	return legacyID, ""
+}
+
+// wireExpiration accepts an RFC3339 string or a protobuf Timestamp object.
+func wireExpiration(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var ts struct {
+		Seconds int64 `json:"seconds"`
+	}
+	if err := json.Unmarshal(raw, &ts); err == nil && ts.Seconds > 0 {
+		return time.Unix(ts.Seconds, 0).UTC().Format(time.RFC3339)
+	}
+	return ""
 }
 
 // HSPreauthKey is the headscale-side representation of the preauth key
@@ -136,10 +240,17 @@ func (c *Client) CreatePreauthKeyWithTags(userID int64, expiration string, reusa
 		// with `acl_tags` returns `aclTags: ["tag:exit-node"]`.
 		body["acl_tags"] = tags
 	}
-	var p PreauthKey
-	apiErr := c.do("POST", "/api/v1/preauthkey", body, &p)
-	if apiErr == nil && p.Key != "" {
-		return &p, nil
+	var rawKey json.RawMessage
+	apiErr := c.do("POST", "/api/v1/preauthkey", body, &rawKey)
+	if apiErr == nil {
+		// B304: the 0.29.x response is wrapped in {"preAuthKey": {…}} and renders
+		// `user`/`expiration` differently from the flat struct, so a successful
+		// create used to look like an empty answer and the caller fell through to
+		// the CLI rung. Parse both shapes.
+		if parsed, perr := parsePreauthKey(rawKey); perr == nil && parsed.Key != "" {
+			return parsed, nil
+		}
+		apiErr = fmt.Errorf("unparseable preauth key response: %s", truncateForKeyErr(string(rawKey)))
 	}
 	if c.ExecContainer == "" {
 		return nil, fmt.Errorf("api failed (%v) and no ExecContainer configured", apiErr)
@@ -263,4 +374,14 @@ func (c *Client) ExpirePreauthKey(userID int64, keyID string) error {
 func cliAvailable() bool {
 	_, err := exec.LookPath("headscale")
 	return err == nil
+}
+
+// truncateForKeyErr keeps an unparseable API answer readable in an error without
+// dumping a whole body into a log line or a page.
+func truncateForKeyErr(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 200 {
+		return s[:200] + "…"
+	}
+	return s
 }

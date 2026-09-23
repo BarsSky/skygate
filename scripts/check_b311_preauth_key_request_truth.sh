@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# check_b304_preauth_key_request_truth.sh
+# check_b311_preauth_key_request_truth.sh
 #
-# 2026-09-23 (B304) — «ключ не выдаётся на том, где реально запущен headscale».
+# 2026-09-23 (B311) — «ключ не выдаётся на том, где реально запущен headscale».
 #
 # OPERATOR REPORT (native host `aro`, «Сгенерировать ключ»):
 #
@@ -51,7 +51,7 @@ elif [ -n "${SKYGATE_REPO:-}" ] && [ -f "$SKYGATE_REPO/cmd/skygate/main.go" ]; t
   cd "$SKYGATE_REPO" || exit 1
 fi
 [ -f cmd/skygate/main.go ] || {
-  printf 'B304: cannot locate cmd/skygate/main.go from %s\n' "$PWD" >&2
+  printf 'B311: cannot locate cmd/skygate/main.go from %s\n' "$PWD" >&2
   exit 2
 }
 
@@ -62,12 +62,12 @@ skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 PA=internal/headscale/preauth.go
-PAT=internal/headscale/preauth_b304_test.go
+PAT=internal/headscale/preauth_b311_test.go
 
 # Code only — the file's own documentation names the WRONG spellings on purpose
 # (that is how the next reader learns why they must not come back).
 CODE="$(grep -v '^[[:space:]]*//' "$PA")"
-hdr "B304 — the preauth key must be issuable on the host the headscale runs on"
+hdr "B311 — the preauth key must be issuable on the host the headscale runs on"
 
 # --- A: create body ----------------------------------------------------------
 if printf '%s' "$CODE" | grep -q '"user":' && ! printf '%s' "$CODE" | grep -q '"user_id":'; then
@@ -80,6 +80,17 @@ if printf '%s' "$CODE" | grep -q 'body\["acl_tags"\] = tags' \
   ok "A2: tags travel as \`acl_tags\` (the \`tags\` spelling is silently dropped)"
 else
   bad "A2: $PA does not put tags in \`acl_tags\` — a tag:exit-node key would register an untagged node"
+fi
+# A3: the RESPONSE is wrapped in {"preAuthKey": {…}} with `user` as an object and
+# `expiration` as a protobuf Timestamp, so a 200 with a real key used to look like
+# an empty answer and the caller fell through to the CLI rung.
+if printf '%s' "$CODE" | grep -q 'func parsePreauthKey(' \
+   && printf '%s' "$CODE" | grep -q '"preAuthKey"' \
+   && printf '%s' "$CODE" | grep -q 'func wireUser(' \
+   && printf '%s' "$CODE" | grep -q 'func wireExpiration('; then
+  ok "A3: the create response is parsed from the 0.29.x envelope (tolerant user/expiration shapes)"
+else
+  bad "A3: $PA cannot read the wrapped preAuthKey response — a successful create would fall through to the CLI"
 fi
 
 # --- B: the CLI rung ---------------------------------------------------------
@@ -116,21 +127,23 @@ fi
 
 # --- behavioural: the Go tests pin all of the above --------------------------
 if command -v go >/dev/null 2>&1; then
-  OUT="$(go test ./internal/headscale/ -run 'B304|Preauth' -count=1 2>&1)"
+  OUT="$(go test ./internal/headscale/ -run 'B311|Preauth' -count=1 2>&1)"
   if printf '%s' "$OUT" | grep -q '^ok' && ! printf '%s' "$OUT" | grep -q 'FAIL'; then
-    ok "D1: the B304/preauth tests pass (body fields, CLI ladder, local binary, expire rungs)"
+    ok "D1: the B311/preauth tests pass (body fields, CLI ladder, local binary, expire rungs)"
   else
     bad "D1: the preauth tests failed:"
     printf '%s\n' "$OUT" | tail -20 | sed 's/^/       /' >&2
   fi
 else
-  skip "D1: go is not on PATH — run the B304 tests on the VM"
+  skip "D1: go is not on PATH — run the B311 tests on the VM"
 fi
-if [ -f "$PAT" ] && grep -q 'TestB304_NativeInstallRunsTheLocalBinary' "$PAT" \
-   && grep -q 'TestB304_ExpireCLIRungHasNoUserFlag' "$PAT"; then
-  ok "D2: the native-install and expire-flag regressions exist (the two live shapes)"
+if [ -f "$PAT" ] && grep -q 'TestB311_NativeInstallRunsTheLocalBinary' "$PAT" \
+   && grep -q 'TestB311_ExpireCLIRungHasNoUserFlag' "$PAT" \
+   && grep -q 'TestB311_NestedResponseIsTheSuccessfulPath' "$PAT" \
+   && grep -q 'TestB311_FlatLegacyResponseStillParses' "$PAT"; then
+  ok "D2: the native-install, expire-flag and wrapped-response regressions exist"
 else
-  bad "D2: $PAT is missing the native-install / expire-flag regressions"
+  bad "D2: $PAT is missing the native-install / expire-flag / wrapped-response regressions"
 fi
 
 # --- E: docs + notes + wiring ------------------------------------------------
@@ -139,20 +152,20 @@ if grep -q 'acl_tags' docs/LESSONS.md 2>/dev/null && grep -qi 'preauthkey/expire
 else
   bad "E1: the measured truth table is not documented in docs/LESSONS.md"
 fi
-if grep -q 'B304' RELEASE-NOTES.md 2>/dev/null; then
-  ok "E2: RELEASE-NOTES.md carries the B304 entry"
+if grep -q 'B311' RELEASE-NOTES.md 2>/dev/null; then
+  ok "E2: RELEASE-NOTES.md carries the B311 entry"
 else
-  bad "E2: RELEASE-NOTES.md has no B304 entry"
+  bad "E2: RELEASE-NOTES.md has no B311 entry"
 fi
-if grep -q 'run_check "B304"' scripts/verify_pre_deploy.sh; then
+if grep -q 'run_check "B311"' scripts/verify_pre_deploy.sh; then
   ok "E3: registered in the pre-deploy catalogue"
 else
-  bad "E3: B304 is not registered in scripts/verify_pre_deploy.sh"
+  bad "E3: B311 is not registered in scripts/verify_pre_deploy.sh"
 fi
-if git ls-files --error-unmatch scripts/check_b304_preauth_key_request_truth.sh >/dev/null 2>&1; then
+if git ls-files --error-unmatch scripts/check_b311_preauth_key_request_truth.sh >/dev/null 2>&1; then
   ok "E4: this script is tracked by git (trap #11)"
 else
-  bad "E4: scripts/check_b304_preauth_key_request_truth.sh is NOT tracked"
+  bad "E4: scripts/check_b311_preauth_key_request_truth.sh is NOT tracked"
 fi
 
 # --- F: one chokepoint -------------------------------------------------------
@@ -163,5 +176,5 @@ else
   bad "F1: these files bypass the fixed chokepoint: $(echo "$OTHERS" | tr '\n' ' ')"
 fi
 
-printf '\n\033[1mB304 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
+printf '\n\033[1mB311 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1

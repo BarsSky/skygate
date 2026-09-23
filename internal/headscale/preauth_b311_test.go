@@ -1,6 +1,6 @@
 package headscale
 
-// preauth_b304_test.go — B304 (2026-09-23).
+// preauth_b311_test.go — B311 (2026-09-23).
 //
 // The live failure on the native host `aro` when the operator pressed
 // «Сгенерировать ключ»:
@@ -29,8 +29,63 @@ import (
 	"testing"
 )
 
-// TestB304_RequestBodyNamesTheOwnerAsUser pins the field headscale reads.
-func TestB304_RequestBodyNamesTheOwnerAsUser(t *testing.T) {
+// TestB311_NestedResponseIsTheSuccessfulPath covers the fifth defect found in
+// this block, and the reason the operator saw BOTH errors at once: headscale
+// 0.29.x answers a create with {"preAuthKey": {…}}, `user` as an OBJECT and
+// `expiration` as a protobuf Timestamp. The old flat struct matched none of that,
+// so a 200 with a real key looked like "no key in the response" and the caller
+// fell through to the CLI rung — which on `aro` (no docker) then produced the
+// second half of the report.
+func TestB311_NestedResponseIsTheSuccessfulPath(t *testing.T) {
+	body := `{"preAuthKey":{"id":"411","key":"hskey-nested","reusable":false,` +
+		`"ephemeral":false,"used":false,"expiration":{"seconds":1790000000,"nanos":0},` +
+		`"aclTags":["tag:exit-node"],"user":{"id":"85","name":"infra",` +
+		`"createdAt":"2026-08-10T19:45:06.787440691Z"}}}`
+	_, c, _ := fakePreauthHS(t, http.StatusOK, body)
+	c.ExecContainer = "headscale"
+	cliCalled := false
+	c.SetDockerRunner(func(args ...string) ([]byte, error) {
+		cliCalled = true
+		return nil, os.ErrNotExist
+	})
+	pk, err := c.CreatePreauthKeyWithTags(85, "1h", false, []string{"tag:exit-node"})
+	if err != nil {
+		t.Fatalf("a 200 with the real 0.29.x body must be the successful path: %v", err)
+	}
+	if pk.Key != "hskey-nested" {
+		t.Errorf("key = %q, want hskey-nested", pk.Key)
+	}
+	if pk.ID != "411" {
+		t.Errorf("id = %q, want 411", pk.ID)
+	}
+	if pk.UserID != 85 || pk.UserName != "infra" {
+		t.Errorf("user = (%d, %q), want (85, infra) from the nested object", pk.UserID, pk.UserName)
+	}
+	if len(pk.ACLTags) != 1 || pk.ACLTags[0] != "tag:exit-node" {
+		t.Errorf("aclTags = %v, want [tag:exit-node] (so a caller can VERIFY the tag landed)", pk.ACLTags)
+	}
+	if pk.Expiration == "" {
+		t.Error("expiration was not decoded from the protobuf Timestamp object")
+	}
+	if cliCalled {
+		t.Error("the CLI rung was attempted although the API answered 200 with a key")
+	}
+}
+
+// TestB311_FlatLegacyResponseStillParses keeps the older flat shape working.
+func TestB311_FlatLegacyResponseStillParses(t *testing.T) {
+	_, c, _ := fakePreauthHS(t, http.StatusOK, `{"id":"42","key":"hskey-flat","user_id":7,"reusable":true,"expiration":"2030-01-01T00:00:00Z"}`)
+	pk, err := c.CreatePreauthKey(7, "1h", true)
+	if err != nil {
+		t.Fatalf("flat legacy response: %v", err)
+	}
+	if pk.Key != "hskey-flat" || pk.UserID != 7 || !pk.Reusable {
+		t.Errorf("parsed = %+v, want the flat response decoded as before", pk)
+	}
+}
+
+// TestB311_RequestBodyNamesTheOwnerAsUser pins the field headscale reads.
+func TestB311_RequestBodyNamesTheOwnerAsUser(t *testing.T) {
 	_, c, cap := fakePreauthHS(t, http.StatusOK, `{"id":"42","key":"hskey-test"}`)
 	if _, err := c.CreatePreauthKeyWithTags(7, "1h", false, []string{"tag:exit-node"}); err != nil {
 		t.Fatalf("CreatePreauthKeyWithTags: %v", err)
@@ -52,10 +107,10 @@ func TestB304_RequestBodyNamesTheOwnerAsUser(t *testing.T) {
 	}
 }
 
-// TestB304_ExpirePrefersTheRouteThisHeadscaleServes pins the expire rungs:
+// TestB311_ExpirePrefersTheRouteThisHeadscaleServes pins the expire rungs:
 // 0.29.x answers POST /api/v1/preauthkey/expire with {"id":…} and 404s the
 // PUT /{id}/expire spelling the code used to try first.
-func TestB304_ExpirePrefersTheRouteThisHeadscaleServes(t *testing.T) {
+func TestB311_ExpirePrefersTheRouteThisHeadscaleServes(t *testing.T) {
 	var paths, bodies []string
 	srv, c, _ := fakePreauthHS(t, http.StatusOK, `{}`)
 	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -77,10 +132,10 @@ func TestB304_ExpirePrefersTheRouteThisHeadscaleServes(t *testing.T) {
 	}
 }
 
-// TestB304_ExpireCLIRungHasNoUserFlag pins the flag spelling: 0.29.x's
+// TestB311_ExpireCLIRungHasNoUserFlag pins the flag spelling: 0.29.x's
 // `preauthkeys expire` has exactly one flag (`-i/--id`), so the old
 // `-u <user>` argv could only ever fail with "unknown flag: -u".
-func TestB304_ExpireCLIRungHasNoUserFlag(t *testing.T) {
+func TestB311_ExpireCLIRungHasNoUserFlag(t *testing.T) {
 	dir := t.TempDir()
 	shim := filepath.Join(dir, "docker")
 	if runtime.GOOS == "windows" {
@@ -117,13 +172,13 @@ func TestB304_ExpireCLIRungHasNoUserFlag(t *testing.T) {
 	}
 }
 
-// TestB304_CLIRungUsesTheInstallKindLadder is the `aro` half: the CLI fallback
+// TestB311_CLIRungUsesTheInstallKindLadder is the `aro` half: the CLI fallback
 // must go through runHeadscaleCLI (which prepends `docker exec <container> <bin>`
 // only when docker exists) instead of hardcoding docker itself.
 //
 // A fake `docker` on PATH makes the ladder choose the docker rung, which lets
 // the test observe the exact argv the preauth path contributes.
-func TestB304_CLIRungUsesTheInstallKindLadder(t *testing.T) {
+func TestB311_CLIRungUsesTheInstallKindLadder(t *testing.T) {
 	dir := t.TempDir()
 	// The shim only has to be FOUND by exec.LookPath — the ladder then calls the
 	// injected runner instead of executing it, so a .bat stub is enough on
@@ -164,10 +219,10 @@ func TestB304_CLIRungUsesTheInstallKindLadder(t *testing.T) {
 	}
 }
 
-// TestB304_NativeInstallRunsTheLocalBinary is the shape that actually failed:
+// TestB311_NativeInstallRunsTheLocalBinary is the shape that actually failed:
 // no docker in PATH at all. The ladder must fall through to the `headscale`
 // binary instead of dying with `exec: "docker": executable file not found`.
-func TestB304_NativeInstallRunsTheLocalBinary(t *testing.T) {
+func TestB311_NativeInstallRunsTheLocalBinary(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("PATH-shim test is POSIX-only; the ladder itself is covered on Linux CI")
 	}

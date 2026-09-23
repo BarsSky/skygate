@@ -12,12 +12,12 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
-## v1.5.76 — the pre-auth key is issued again (and the gate can no longer park itself) (B304 + B299)
+## v1.5.76 — the pre-auth key is issued again (and the gate can no longer park itself) (B311 + B299)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.75` → this tag · **Compatibility:** none —
 no schema change, no migration.
 
-### B304 — «Сгенерировать ключ» failed on the host that runs headscale
+### B311 — «Сгенерировать ключ» failed on the host that runs headscale
 
 Operator report from the native host `aro`:
 
@@ -41,29 +41,39 @@ so nothing is created:
 | `PUT /api/v1/preauthkey/1/expire` | `404 Not Found` | the route the code tried first |
 | `headscale preauthkeys expire --help` | one flag: `-i/--id` | there is no `-u/--user` to pass |
 
-Four defects in one file (`internal/headscale/preauth.go`), all fixed:
+Four defects in one file (`internal/headscale/preauth.go`) — plus a fifth that
+explains why the operator saw **both** errors at once — all fixed:
 
 * the create body sends **`user`** (not `user_id`) and **`acl_tags`** (not
   `tags`) — headscale's protojson gateway discards unknown fields, so the wrong
   names did not error, they produced an owner-less request (the 500) and, for
   the exit-node key, a **silently untagged** key whose node would never be
   treated as an exit node by the ACL;
+* the create **response** is wrapped in `{"preAuthKey": {…}}` with `user` as an
+  object and `expiration` as a protobuf Timestamp — the flat struct matched none
+  of that, so **a 200 with a real key looked like an empty answer** and the
+  caller fell through to the CLI rung: that is why a *successful* API call still
+  produced the docker error underneath it. Both shapes are now parsed
+  (the legacy flat one too), and `PreauthKey.ACLTags` records what headscale
+  stored so a caller can verify the tag landed;
 * expire walks the rungs **`POST /api/v1/preauthkey/expire {"id":…}`** → the
   older `PUT /{id}/expire` → the CLI, so key expiry works again on 0.29.x;
 * every CLI rung goes through **`runHeadscaleCLI`** — `docker exec` when docker
   exists, the local `headscale` binary on a native install — instead of the
   hardcoded `docker` that cannot exist on `aro` (the B267/B272 defect, in the
-  one path that had not been converted); the expire argv is `--id … --force`;
-* `preauth.go` is the only file that talks to the preauth-key API, so the panel,
-  the exit-node register page (B266), the subnet sidecar and the deployrun step
-  are all fixed at once.
+  one path that had not been converted); the expire argv is `--id … --force`.
+
+**Verified end to end against the live API** with the fixed client (no docker, no
+CLI rung involved): a tagged key was created, read back with
+`aclTags: ["tag:exit-node"]`, expired through the new route, and confirmed
+expired — the throwaway key had a 2-minute TTL and is gone.
 
 Why CI was green while the feature was dead: the unit test that "covered" this
 asserted `"user_id":7` — **the wrong field was pinned as the contract**, and the
 mock accepts any body. It now asserts the fields headscale reads, the absence of
-the discarded spellings, and a native install (empty-`PATH` fake: no docker →
-the local binary is executed, argv inspected). Contracts:
-`scripts/check_b304_preauth_key_request_truth.sh`.
+the discarded spellings, the wrapped response (and the legacy flat one), and a
+native install (empty-`PATH` fake: no docker → the local binary is executed,
+argv inspected). Contracts: `scripts/check_b304_preauth_key_request_truth.sh`.
 
 ### B299 — the guarantee catalog can no longer be parked forever
 
