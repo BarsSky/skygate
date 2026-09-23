@@ -161,18 +161,40 @@ func OwnedPrefixesForRelay(node string, owners map[string]string) []string {
 	return out
 }
 
-// CollapseDuplicateDerivedRules (B274) deletes rows that repeat the
-// same natural key — (user_id, device_id, exit_node_id, target_type,
-// target_value) — keeping one. The redundant rows are what the CDN
-// expansion creates: a rule for a Cloudflare-fronted domain expands to
-// the CDN's published range set, so N domains of the same CDN produce N
-// rows per CIDR, differing only in `parent_domain` (which B183
-// deliberately keeps OUT of the natural key, so the schema allows
-// them).
+// CollapseDuplicateDerivedRules (B274, retuned by B298) deletes rows that repeat
+// the same natural key — (user_id, device_id, exit_node_id, target_type,
+// target_value, parent_domain) — keeping one.
 //
-// Winner: a `cdn:`-prefixed parent first (the most informative — it
-// names the CDN, which is also B183's stated preference), then the
-// lowest id.
+// B298 (2026-09-23) — WHY parent_domain JOINED THE PARTITION.
+//
+// B274 partitioned on the FIVE columns that exclude parent_domain, which made
+// this function delete exactly what the schema allows and the resolver needs:
+// `device_rules_natural_key_uniq` is a SIX-column index (B237.23/V068, including
+// parent_domain) precisely so that two domains resolving to the same CIDR each
+// keep their own row — that per-domain row is what the CDN short-circuit looks
+// for (`parent_domain LIKE 'cdn:%:<domain>'`) and what the B184 DOMAIN-status
+// propagation reads. The five-column collapse deleted the loser of every such
+// pair, so on the next tick that domain found no marker, re-resolved, re-inserted
+// its ~15 published ranges, and the collapse deleted them again.
+//
+// Live on `aro` every five minutes, forever:
+//
+//	acl-drift: ACL re-applied (snapshot v483 …) — auto-updater tick changed 18 rule(s) (added=17 removed=1)
+//	auto-updater: dedup removed 16 redundant derived rule row(s)
+//
+// On a `policy.mode: file` host an ACL re-apply is `systemctl restart headscale`,
+// so that ping-pong restarted the control plane 288 times a day. With the
+// partition matching the index, a domain's rows survive, its short-circuit fires
+// on the next tick and the insert→delete cycle is gone.
+//
+// The function is still worth keeping: on a database that predates V068 (or one
+// where the index was repaired later) exact duplicates can exist, and this is the
+// cheap statement that removes them. Exact duplicates are impossible once the
+// six-column index is in place, so `n == 0` is the normal answer.
+//
+// Winner inside one partition: a `cdn:`-prefixed parent first (the most
+// informative — it names the CDN, which is also B183's stated preference), then
+// the lowest id.
 //
 // ROW_NUMBER() exists in both supported backends (PostgreSQL and SQLite
 // 3.25+), so this stays one dialect-neutral statement. Returns the
@@ -182,7 +204,7 @@ func (s *Service) CollapseDuplicateDerivedRules() (int64, error) {
 		DELETE FROM device_rules WHERE id IN (
 			SELECT id FROM (
 				SELECT id, ROW_NUMBER() OVER (
-					PARTITION BY user_id, device_id, exit_node_id, target_type, target_value
+					PARTITION BY user_id, device_id, exit_node_id, target_type, target_value, parent_domain
 					ORDER BY CASE WHEN COALESCE(parent_domain,'') LIKE 'cdn:%' THEN 0 ELSE 1 END, id
 				) AS rn
 				FROM device_rules

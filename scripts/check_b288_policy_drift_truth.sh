@@ -145,10 +145,21 @@ if grep -q '^func (s \*Service) periodicDriftCheck()' "$SYNC" && grep -q 'period
 else
   bad "C2: periodicDriftCheck / periodicDriftCheckInterval are missing"
 fi
-if grep -q 'applyACLIfDriftedMode("skygate-periodic-drift"' "$SYNC"; then
-  ok "C3: the periodic path has its own stable actor name for the audit trail"
+# C3 RENEGOTIATED by B298 (2026-09-23). The periodic path used to call
+# `applyACLIfDriftedMode(..., false)` — that wrapper is GONE (B298 folded it into
+# `applyACLIfDriftedThrottled`, whose budget became a parameter); the actor name
+# and the suppressed "already matches" line are still the contract, and both are
+# preserved. What changed is the BUDGET: it now spends `churnACLThrottle` (30m),
+# because this path re-checks a rule set the domain auto-updater rewrites from DNS
+# every tick and on a file-mode host every apply is `systemctl restart headscale`
+# (live `aro`: a restart every five minutes). The assertion therefore names the
+# churn variant, so a revert to the 60s budget fails here instead of quietly
+# restarting the control plane again.
+if grep -q 'applyACLIfDriftedChurn("skygate-periodic-drift"' "$SYNC" \
+   && grep -q 'churnACLThrottle' "$SYNC"; then
+  ok "C3: the periodic path has its own actor name AND the churn budget (B298)"
 else
-  bad "C3: the periodic path does not identify itself in the audit trail"
+  bad "C3: the periodic path identifies itself with the wrong budget (want applyACLIfDriftedChurn + churnACLThrottle)"
 fi
 if grep -q 'chg > 0 {' "$SYNC"; then
   ok "C4: the ownership-change path is still there (B276 behaviour preserved)"

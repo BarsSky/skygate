@@ -129,7 +129,12 @@ fi
 
 # --- C: ordering inside the tick ---------------------------------------------
 PROP_LINE="$(grep -n 's.propagateAllDeviceRules()' "$SYNC" | head -1 | cut -d: -f1)"
-DRIFT_LINE="$(grep -n 's.applyACLIfDrifted("skygate-auto-updater"' "$SYNC" | head -1 | cut -d: -f1)"
+# C1 renegotiated by B298 (2026-09-23): the auto-updater's drift check is now
+# `applyACLIfDriftedChurn` (same decision, 30-minute churn budget instead of the
+# 60s ownership one, because on a file-mode host every apply restarts headscale).
+# The ORDER this contract guards is unchanged; the pattern accepts both spellings
+# so a revert of the budget alone does not silently void it.
+DRIFT_LINE="$(grep -nE 's\.applyACLIfDrifted(Churn)?\("skygate-auto-updater"' "$SYNC" | head -1 | cut -d: -f1)"
 if [ -n "$PROP_LINE" ] && [ -n "$DRIFT_LINE" ] && [ "$PROP_LINE" -lt "$DRIFT_LINE" ]; then
   ok "C1: the propagation runs BEFORE the drift check in the same tick (line $PROP_LINE < $DRIFT_LINE), so the ACL covers the new device immediately"
 else

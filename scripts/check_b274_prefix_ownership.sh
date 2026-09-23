@@ -133,10 +133,25 @@ if grep -q 'func (s \*Service) CollapseDuplicateDerivedRules() (int64, error)' "
 else
   bad "D.1 CollapseDuplicateDerivedRules missing"
 fi
-if grep -q 'PARTITION BY user_id, device_id, exit_node_id, target_type, target_value' "$OWNER"; then
-  ok "D.2 the dedup partitions on the natural key (parent_domain is metadata, B183)"
+# D.2 RENEGOTIATED by B298 (2026-09-23). B274 partitioned on the FIVE columns that
+# exclude parent_domain, which made this function delete exactly what the schema
+# allows: `device_rules_natural_key_uniq` is a SIX-column index (B237.23/V068,
+# including parent_domain) so two domains resolving to the same CIDR each keep
+# their own row — the row the CDN short-circuit looks for and B184's status reads.
+# The five-column collapse deleted the loser, so that domain re-resolved and
+# re-inserted its ~15 ranges every tick and the collapse deleted them again (live
+# `aro`: `added=17 removed=1` + `dedup removed 16` every five minutes, i.e. a
+# headscale restart every five minutes on a file-mode host). The partition now
+# matches the index, so only EXACT duplicates are collapsed.
+if grep -q 'PARTITION BY user_id, device_id, exit_node_id, target_type, target_value, parent_domain' "$OWNER"; then
+  ok "D.2 the dedup partitions on the natural key PLUS parent_domain (B298: matches the 6-col UNIQUE index)"
 else
-  bad "D.2 the dedup must partition on (user_id, device_id, exit_node_id, target_type, target_value)"
+  bad "D.2 the dedup must partition on (user_id, device_id, exit_node_id, target_type, target_value, parent_domain)"
+fi
+if grep -qE 'PARTITION BY .*target_value[[:space:]]*$' "$OWNER"; then
+  bad "D.2b the pre-B298 five-column partition is still present — it deletes another domain's derived rows"
+else
+  ok "D.2b the five-column partition is gone"
 fi
 if grep -q "LIKE 'cdn:%' THEN 0 ELSE 1 END, id" "$OWNER"; then
   ok "D.3 the cdn:-prefixed parent wins (B183's stated preference)"

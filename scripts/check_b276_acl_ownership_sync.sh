@@ -119,8 +119,14 @@ if grep -q 'acl.ApplyGeneratedPolicy(s.dbc(), s.HS, gen, actor, detail, nil)' "$
 else
   bad "A9: the automatic apply bypasses the snapshot/audit path"
 fi
+# A10 renegotiated by B298 (2026-09-23): the auto-updater's drift check is now
+# `applyACLIfDriftedChurn` — same decision, but behind the 30-minute churn budget
+# instead of the 60s ownership one, because on a `policy.mode: file` host every
+# apply is `systemctl restart headscale` and this path is driven by DNS rotation.
+# The pattern accepts both spellings so the assertion is about the CALL, not the
+# budget (the budget itself is pinned by scripts/check_b298_cdn_rule_churn.sh).
 if grep -A4 'func (s \*Service) DomainAutoUpdater' "$SYNC" | grep -q 'applyACLIfDrifted' \
-   || grep -q 's.applyACLIfDrifted("skygate-auto-updater"' "$SYNC"; then
+   || grep -qE 's\.applyACLIfDrifted(Churn)?\("skygate-auto-updater"' "$SYNC"; then
   ok "A10: the periodic auto-updater tick also checks the policy (the rules ARE the ACL; live: 8 of the 15 newest rules had no alias)"
 else
   bad "A10: rule changes still never re-apply the ACL — the policy outruns the rules"

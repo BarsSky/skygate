@@ -68,6 +68,25 @@ var (
 // derived rows every few minutes).
 const ownershipACLThrottle = 60 * time.Second
 
+// churnACLThrottle bounds an ACL re-apply driven by DERIVED-rule churn: the
+// domain auto-updater rewriting its resolved /32 rows (normal DNS/CDN rotation,
+// not a configuration change) and the periodic drift check that exists to notice
+// it afterwards.
+//
+// B298 (2026-09-23) — WHY THIS IS NOT THE 60s BUDGET. Live on `aro`, where
+// `policy.mode: file` means every ACL write is a `systemctl restart headscale`:
+// one Telegram/OpenAI /32 rotating was enough to re-apply the policy, and the
+// journal showed a restart every five minutes, forever —
+//
+//	acl-drift: ACL re-applied (snapshot v483 …) — auto-updater tick changed 18 rule(s)
+//	acl-drift: periodic drift check (…) needs a re-apply but one ran 0s ago — deferring (throttle 1m0s)
+//
+// A rotating derived /32 is worth waiting for; a control-plane restart every five
+// minutes is not. Operator actions (rule create/delete, an explicit resync, an
+// ownership move) keep the 60s budget, so an intentional change still lands
+// within a minute.
+const churnACLThrottle = 30 * time.Minute
+
 // periodicDriftCheckInterval bounds how often the ownership-stable path compares
 // the live policy with the one the database implies (B288). The comparison costs
 // one `GenerateACLLiveFormat` + one headscale policy read and writes nothing when
@@ -115,9 +134,11 @@ func (s *Service) reconcilePrefixOwnership() (int, int, error) {
 // Safety: `applyACLIfDrifted` reads the live policy fresh, compares it with
 // `headscale.PolicyEquivalent` (set semantics, B288) and returns WITHOUT a write
 // when the two describe the same policy — so a converged host does one policy
-// read per interval and no write at all. The write itself stays behind
-// `ownershipACLThrottle`, and the no-op line is suppressed (the periodic path
-// runs unattended; the ownership-triggered path keeps its log).
+// read per interval and no write at all. The write itself stays behind the CHURN
+// budget (B298: 30m, not the 60s ownership throttle — on a file-mode host every
+// write restarts headscale, and this path re-checks a rule set the domain
+// auto-updater rewrites from DNS every tick), and the no-op line is suppressed
+// (the periodic path runs unattended; the ownership-triggered path keeps its log).
 func (s *Service) periodicDriftCheck() {
 	periodicDriftMu.Lock()
 	if !periodicDriftLastRun.IsZero() && time.Since(periodicDriftLastRun) < periodicDriftCheckInterval {
@@ -126,7 +147,7 @@ func (s *Service) periodicDriftCheck() {
 	}
 	periodicDriftLastRun = time.Now()
 	periodicDriftMu.Unlock()
-	s.applyACLIfDriftedMode("skygate-periodic-drift",
+	s.applyACLIfDriftedChurn("skygate-periodic-drift",
 		"periodic drift check (the assignment table did not move)", false)
 }
 
@@ -196,18 +217,28 @@ func (s *Service) applyACLAfterOwnershipChange(ins, chg int) {
 //     acl_snapshots row id; the calling site should reference
 //     it in audit_log and the user-facing success line.
 func (s *Service) applyACLIfDrifted(actor, detail string) acl.ApplyResult {
-	return s.applyACLIfDriftedMode(actor, detail, true)
+	return s.applyACLIfDriftedThrottled(actor, detail, true, ownershipACLThrottle)
 }
 
-// applyACLIfDriftedMode is applyACLIfDrifted with control over the "already
-// matches" log line: the unattended periodic path (B288) suppresses it so a
-// converged host does not write one line per interval forever.
-func (s *Service) applyACLIfDriftedMode(actor, detail string, logNoop bool) acl.ApplyResult {
+// applyACLIfDriftedChurn is the DERIVED-rule path — the domain auto-updater and
+// the periodic drift check that follows it — behind the long churn budget (B298).
+// Same decision, same generator, same equivalence guard; only the minimum interval
+// between writes differs, because here the trigger is DNS rotation rather than an
+// operator action.
+func (s *Service) applyACLIfDriftedChurn(actor, detail string, logNoop bool) acl.ApplyResult {
+	return s.applyACLIfDriftedThrottled(actor, detail, logNoop, churnACLThrottle)
+}
+
+// applyACLIfDriftedThrottled decides whether the live policy needs the generated
+// one, writing it only when it truly differs. `throttle` is the minimum interval
+// since the previous write that this caller accepts (B298: 60s for an operator
+// action, 30m for derived-rule churn).
+func (s *Service) applyACLIfDriftedThrottled(actor, detail string, logNoop bool, throttle time.Duration) acl.ApplyResult {
 	ownershipACLMu.Lock()
-	if !ownershipACLLastRun.IsZero() && time.Since(ownershipACLLastRun) < ownershipACLThrottle {
+	if !ownershipACLLastRun.IsZero() && time.Since(ownershipACLLastRun) < throttle {
 		ownershipACLMu.Unlock()
 		log.Printf("acl-drift: %s needs a re-apply but one ran %s ago — deferring to the next pass (throttle %s)",
-			detail, time.Since(ownershipACLLastRun).Round(time.Second), ownershipACLThrottle)
+			detail, time.Since(ownershipACLLastRun).Round(time.Second), throttle)
 		return acl.ApplyResult{Version: 0, Applied: false, Err: nil}
 	}
 	ownershipACLLastRun = time.Now()
@@ -1248,8 +1279,13 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 		} else if n > 0 {
 			log.Printf("all-devices: %d rule row(s) added for newly registered devices", n)
 		}
-		s.applyACLIfDrifted("skygate-auto-updater",
-			fmt.Sprintf("auto-updater tick changed %d rule(s) (added=%d removed=%d)", added+removed, added, removed))
+		// B298: this is the DERIVED-rule path, so it spends the churn budget, not
+		// the 60s ownership one. The rule-set delta it reports is usually a
+		// rotating /32 from DNS, and on a file-mode host every apply restarts
+		// headscale — a rotating address is worth waiting for, a restart every
+		// five minutes is not.
+		s.applyACLIfDriftedChurn("skygate-auto-updater",
+			fmt.Sprintf("auto-updater tick changed %d rule(s) (added=%d removed=%d)", added+removed, added, removed), true)
 	}()
 
 	return added, removed, nil

@@ -5254,3 +5254,30 @@ run_check "B296" "the DERP probe address must be settable from the panel and app
 # banner (RU+EN). Contracts in scripts/check_b297_headscale_version_truth.sh.
 run_check "B297" "the RUNNING headscale's version must be read, not assumed: SKYGATE_HEADSCALE_VERSION_PIN is a declaration a human typed once (config.go: not auto-detected), the two live hosts already run different versions (aro 0.29.0, the agent VM 0.29.3), and 0.29.x differs exactly where skygate cares — approve_routes left the REST API at 0.29.1, the REST expire path broke at 0.29.2, grants[] replaced acls[] at 0.29.0-beta.4, and 0.29.2 rejects wildcards in tagOwners — so a stale pin silently mislabels update availability, mis-flags releases as breaking in headscale_releases, and hides which capability rung this host will take. New internal/headscale/version_b297.go probes a LADDER (authenticated GET /api/v1/version → unauthenticated GET /version → headscale version through the install-kind ladder, bounded so a hung docker exec cannot hold a boot), treats a non-2xx answer as a note rather than a version, validates a named JSON field strictly and free text loosely on short bodies only, prefers the CLI's SERVER line over the client binary's own version, and remembers every failed rung so an undetected version reports what it tried. internal/headscale_version.Monitor gains VersionProbe/DeclaredPin: the detected version wins everywhere a version is compared (tick, is_breaking, alerts, Snapshot for the page and the bot), the declaration is kept for display, a FAILED probe keeps the last real detection and records the error instead of silently reverting to the declaration, alerts no longer REQUIRE the pin, and the probe runs before the GitHub poll so an offline host still detects a newly upgraded headscale. Boot logs the detected version and a MISMATCH line, and /admin/headscale renders detected + declared + source + timestamp with a semver-aware mismatch banner. Contracts in scripts/check_b297_headscale_version_truth.sh." \
   'test -f scripts/check_b297_headscale_version_truth.sh && bash scripts/check_b297_headscale_version_truth.sh'
+
+# --- B298: derived-rule churn must not restart the control plane ---------------
+# Live on the native host `aro`, every five minutes, forever:
+#   acl-drift: ACL re-applied (snapshot v483, generated=7331 bytes) — auto-updater
+#              tick changed 18 rule(s) (added=17 removed=1)
+#   auto-updater: dedup removed 16 redundant derived rule row(s)
+# The database proved the mechanism: 19 subnet rows, 19 distinct CIDRs, and
+# `openai.com` carried under TWO parent_domain values (cdn:cloudflare:openai.com,
+# 15 rows, plus a bare `openai.com`, 2 rows). On a `policy.mode: file` host an ACL
+# re-apply IS `systemctl restart headscale`, so this was 288 control-plane restarts
+# a day, produced by two independent defects: (1) `CollapseDuplicateDerivedRules`
+# partitioned on FIVE columns (excluding parent_domain) while
+# `device_rules_natural_key_uniq` is a SIX-column index (B237.23/V068) that
+# deliberately lets two domains of one CDN keep a row per CIDR each — the collapse
+# deleted the row the CDN short-circuit looks for and B184's status reads, so the
+# losing domain re-resolved and re-inserted its whole published range set every
+# tick and the collapse deleted it again; (2) the auto-updater and the periodic
+# drift check shared the 60-SECOND ownership throttle, so even a single rotating
+# /32 from DNS re-applied the policy and restarted headscale. Fix: the collapse
+# partitions on the SAME key as the UNIQUE index (only EXACT duplicates are
+# removed, so a domain's rows survive and its short-circuit fires on the next tick)
+# and the derived-rule paths spend a separate 30-minute churn budget, while
+# operator actions keep the 60s one. Contracts in
+# scripts/check_b298_cdn_rule_churn.sh; contracts B274/D.2, B276/A10, B276.1/C1 and
+# B288/C3 were renegotiated to name the new call form and say why.
+run_check "B298" "derived-rule churn must not restart the control plane: CollapseDuplicateDerivedRules partitioned on five columns while device_rules_natural_key_uniq is a six-column index (B237.23/V068) that deliberately lets two domains of one CDN keep a row per CIDR each, so the collapse deleted exactly the row the CDN short-circuit looks for and B184's status propagation reads — the losing domain re-resolved and re-inserted its whole published range set on every tick and the collapse deleted it again (live aro: added=17 removed=1 plus dedup removed 16, every five minutes, and on a file-mode host every ACL apply IS systemctl restart headscale). The collapse now partitions on the same key as the index, so only EXACT duplicates are removed and a domain's rows survive. Second half: the auto-updater and the periodic drift check no longer share the 60-second ownership throttle — derived-rule churn (normal DNS rotation) spends a separate 30-minute budget, so one rotating /32 cannot restart the control plane, while operator actions (rule create/delete, an explicit resync, an ownership move) keep the 60s budget and still land within a minute. Contracts in scripts/check_b298_cdn_rule_churn.sh." \
+  'test -f scripts/check_b298_cdn_rule_churn.sh && bash scripts/check_b298_cdn_rule_churn.sh'

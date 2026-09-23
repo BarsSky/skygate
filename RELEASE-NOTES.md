@@ -12,6 +12,85 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+**Post-release correction (B298, 2026-09-23).** The first live run of this probe
+answered `0.29.2` on `aro` — not the 0.29.0 that had been reported, and not what
+any `.env` declared, while rung 2 (`GET /version`) is the rung that answered
+(`/api/v1/version` returns no version on 0.29.2). The paragraphs above keep the
+original report for the record; the measured value is 0.29.2, which is the point
+of the block.
+
+## v1.5.64 — derived-rule churn must not restart the control plane (B298)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.63` → this tag · **Compatibility:** none —
+no schema change, no migration.
+
+### What was happening
+
+After v1.5.63 the version probe worked and the privileged policy applier no longer
+unioned `tagOwners` — and headscale was **still** restarted every five minutes.
+The journal named the culprit, on every tick:
+
+```
+acl-drift: ACL re-applied (snapshot v483, generated=7331 bytes) — auto-updater tick changed 18 rule(s) (added=17 removed=1)
+auto-updater: dedup removed 16 redundant derived rule row(s)
+```
+
+`added=17` with `dedup removed 16` is not DNS jitter — it is a self-sustaining
+ping-pong. The database proves it: 19 subnet rows for 19 distinct CIDRs, with
+`openai.com` carried under **two** `parent_domain` values
+(`cdn:cloudflare:openai.com` — 15 rows — and a bare `openai.com` — 2 rows).
+
+Two independent defects:
+
+1. **The dedup deleted what the schema allows and the resolver needs.**
+   `device_rules_natural_key_uniq` is a **six**-column index (B237.23/V068,
+   including `parent_domain`) so that two domains of one CDN each keep a row per
+   CIDR — that per-domain row is what the CDN short-circuit looks for
+   (`parent_domain LIKE 'cdn:%:<domain>'`) and what B184's DOMAIN-status
+   propagation reads. `CollapseDuplicateDerivedRules` (B274) partitioned on only
+   **five** columns, so it deleted the losing domain's rows; on the next tick that
+   domain found no marker, re-resolved, re-inserted its ~15 published Cloudflare
+   ranges — and the collapse deleted them again. Every tick changed the rule set,
+   so every tick changed the generated policy.
+2. **The churn path spent the 60-second budget.** The domain auto-updater and the
+   periodic drift check both called `applyACLIfDrifted`, throttled by
+   `ownershipACLThrottle` (60s) — so a single rotating `/32` from ordinary DNS
+   rotation was enough to re-apply the policy.
+
+On a `policy.mode: file` host an ACL re-apply **is** `systemctl restart headscale`
+(0.29 re-reads the policy file only at startup), so together these restarted the
+control plane **288 times a day**.
+
+### The fix
+
+* `CollapseDuplicateDerivedRules` now partitions on the **same key as the UNIQUE
+  index** (`… target_value, parent_domain`), so only **exact** duplicates are
+  removed. A domain's rows survive, its short-circuit fires on the next tick, and
+  the insert→delete cycle is gone. (The statement stays for databases that predate
+  V068 or whose index was repaired later; `n == 0` is the normal answer now.)
+* The derived-rule paths spend a separate `churnACLThrottle` (**30 minutes**)
+  through the new `applyACLIfDriftedChurn`; the decision core is shared
+  (`applyACLIfDriftedThrottled`) so there is no second copy of the drift logic.
+  **Operator actions keep the 60s budget** — a rule create/delete, an explicit
+  resync and an ownership move still land within a minute — and the deferral log
+  names the budget it actually spent.
+
+Expected after the update: **one** more write (the convergent one), then silence.
+`acl-drift: ACL re-applied …` every five minutes means the cycle is still there;
+the periodic path deliberately does **not** log "already matches" (B288), so quiet
+is the healthy state. Check with:
+
+```bash
+journalctl -u headscale --since '-30 min' | grep -Ei 'Starting|Stopped'   # expect: empty
+journalctl -u skygate  --since '-30 min' | grep -E 'acl-drift|dedup|auto-updater'
+```
+
+17 contracts in `scripts/check_b298_cdn_rule_churn.sh` +
+`internal/feature/exit_rules/churn_b298_test.go` (real migrated SQLite DB: two
+domains keep two rows for one CIDR; the churn path defers where an operator action
+applies; the periodic check spends the same budget). **Contract renegotiations**,
+each documented in place: B274/D.2 + new D.2b, B276/A10, B276.1/C1, B288/C3.
+
 ## v1.5.63 — the running headscale's version is read, not declared (B297)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.62` → this tag · **Compatibility:** none —
@@ -26,8 +105,8 @@ an env var the operator types once. `internal/config/config.go` says so out loud
 > The pin is an env var (not auto-detected) because skygate doesn't shell into the
 > headscale container. Auto-detect could come in a v0.21.0+ …
 
-The two live hosts already disagree — `aro` runs **0.29.0**, the agent VM runs
-**0.29.3** — and 0.29.x is **not** uniform in the surface skygate depends on:
+The two live hosts were reported to disagree — `aro` running **0.29.0**, the agent
+VM **0.29.3** — and 0.29.x is **not** uniform in the surface skygate depends on:
 
 | Difference | Version | Where it is handled today |
 |---|---|---|

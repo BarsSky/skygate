@@ -64,7 +64,8 @@ func (c *Client) GetACL() (string, error) {
 		// is perfectly healthy one second later. Live on `aro` that turned into
 		// «состояние политики неизвестно» plus «никто не объявляет: 19» on the
 		// prefix page — and, worse, into an UNCONDITIONAL re-apply (see
-		// exit_rules.applyACLIfDriftedMode), i.e. another write and restart: the
+		// exit_rules.applyACLIfDrifted; the unattended paths now go through
+		// applyACLIfDriftedChurn), i.e. another write and restart: the
 		// observation was feeding the outage.
 		//
 		// Two short retries cover the window without making a genuinely dead
