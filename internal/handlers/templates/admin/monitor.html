@@ -1,0 +1,137 @@
+{{define "body-admin-monitor"}}
+{{/* B305 (v1.5.70) — /admin/monitor: the operator's monitoring inbox.
+
+     One list for every monitoring signal skygate produces, with four severities,
+     dedup by fingerprint (a recurring condition bumps repeats/last_seen instead of
+     flooding the list), three states (open / acked / resolved) and the Telegram
+     push threshold. Producers: the system tests, the tag reconciler, the
+     exit-node monitor, the database-health sampler — anything that can observe a
+     fault. */}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-bell"></i> {{t "monitor.title"}}</h2>
+    <div class="sub">{{t "monitor.subtitle"}}</div>
+  </div>
+  <div>
+    <form method="post" action="/admin/monitor/ack-all" style="display:inline"
+          onsubmit="return confirm('{{t "monitor.ack_all_confirm" | js}}')">
+      <button type="submit" class="btn btn-sm"><i class="fa-solid fa-check-double"></i> {{t "monitor.ack_all"}}</button>
+    </form>
+  </div>
+</div>
+
+{{if .FlashOK}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashOK}}</div>{{end}}
+{{if .FlashErr}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashErr}}</div>{{end}}
+{{if .ListErr}}<div class="alert alert-danger"><i class="fa-solid fa-database"></i> {{tf "monitor.list_error" .ListErr}}</div>{{end}}
+
+<div class="card">
+  <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+    <span class="tag tag-danger" title="{{t "monitor.count_open_help"}}"><i class="fa-solid fa-circle-exclamation"></i> {{t "monitor.count_open"}}: <b>{{.OpenCount}}</b></span>
+    <span class="tag tag-warning" title="{{t "monitor.count_acked_help"}}"><i class="fa-solid fa-check"></i> {{t "monitor.count_acked"}}: <b>{{.AckedCount}}</b></span>
+    <span class="tag tag-success" title="{{t "monitor.count_resolved_help"}}"><i class="fa-solid fa-circle-check"></i> {{t "monitor.count_resolved"}}: <b>{{.ResolvedCnt}}</b></span>
+    <span style="color:var(--text-muted);font-size:12px">{{t "monitor.counts_help"}}</span>
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-filter"></i> {{t "monitor.filters"}}</h3>
+  <form method="get" action="/admin/monitor" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+    <label style="font-size:12px;color:var(--text-muted)">{{t "monitor.filter_state"}}
+      <select name="state" style="display:block;font-size:12px;padding:2px 4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:3px">
+        <option value="" {{if eq .StateFilter ""}}selected{{end}}>{{t "monitor.state_open_acked"}}</option>
+        <option value="open" {{if eq .StateFilter "open"}}selected{{end}}>{{t "monitor.state_open"}}</option>
+        <option value="acked" {{if eq .StateFilter "acked"}}selected{{end}}>{{t "monitor.state_acked"}}</option>
+        <option value="resolved" {{if eq .StateFilter "resolved"}}selected{{end}}>{{t "monitor.state_resolved"}}</option>
+        <option value="all" {{if eq .StateFilter "all"}}selected{{end}}>{{t "monitor.state_all"}}</option>
+      </select>
+    </label>
+    <label style="font-size:12px;color:var(--text-muted)">{{t "monitor.filter_min"}}
+      <select name="min" style="display:block;font-size:12px;padding:2px 4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:3px">
+        {{range .Levels}}
+          <option value="{{.}}" {{if eq $.MinSeverity (printf "%s" .)}}selected{{end}}>{{.}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label style="font-size:12px;color:var(--text-muted)">{{t "monitor.filter_source"}}
+      <input type="text" name="source" value="{{.SourceFilter}}" placeholder="system_test, module:*, db_health …"
+             style="display:block;font-size:12px;padding:2px 4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:3px;min-width:16em">
+    </label>
+    <button type="submit" class="btn btn-sm">{{t "monitor.apply"}}</button>
+  </form>
+</div>
+
+<div class="card">
+  {{if not .Events}}
+    <p style="color:var(--text-muted)"><i class="fa-solid fa-circle-check"></i> {{t "monitor.empty"}}</p>
+  {{else}}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>{{t "monitor.col_severity"}}</th>
+        <th>{{t "monitor.col_source"}}</th>
+        <th>{{t "monitor.col_title"}}</th>
+        <th>{{t "monitor.col_seen"}}</th>
+        <th>{{t "monitor.col_state"}}</th>
+        <th>{{t "common.actions"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Events}}
+      <tr>
+        <td>
+          {{if eq (printf "%s" .Severity) "critical"}}<span class="tag tag-danger">🚨 critical</span>
+          {{else if eq (printf "%s" .Severity) "error"}}<span class="tag tag-danger">❌ error</span>
+          {{else if eq (printf "%s" .Severity) "warning"}}<span class="tag tag-warning">⚠️ warning</span>
+          {{else}}<span class="tag">ℹ️ info</span>{{end}}
+        </td>
+        <td><code style="font-size:11px">{{.Event.Source}}</code><div class="sub" style="font-size:11px;color:#888">{{.Event.Subject}}</div></td>
+        <td>
+          <b>{{.Event.Title}}</b>
+          {{if .Event.Body}}<div class="sub" style="font-size:12px;color:var(--text-muted);white-space:pre-wrap">{{.Event.Body}}</div>{{end}}
+          {{if .Event.Link}}<div style="font-size:12px"><a href="{{.Event.Link}}">{{t "monitor.open_page"}}</a></div>{{end}}
+          {{/* The fingerprint is the dedup identity: showing it lets the operator
+               correlate the page with the log lines and the Telegram message. */}}
+          <div class="sub" style="font-size:10px;color:#888;font-family:monospace">{{.Event.Fingerprint}}</div>
+        </td>
+        <td style="font-size:12px;color:var(--text-muted)">
+          {{t "monitor.first_seen"}}: {{datetimeformat .Event.FirstSeen}}<br>
+          {{t "monitor.last_seen"}}: {{datetimeformat .Event.LastSeen}}<br>
+          {{if gt .Event.Repeats 1}}<span class="tag" style="font-size:10px">×{{.Event.Repeats}}</span>{{end}}
+        </td>
+        <td>
+          {{if eq .State "resolved"}}<span class="tag tag-success">{{t "monitor.state_resolved"}}</span>
+          {{else if eq .State "acked"}}<span class="tag tag-warning">{{t "monitor.state_acked"}}</span>{{if .Event.AckedBy}}<div class="sub" style="font-size:11px">{{.Event.AckedBy}}</div>{{end}}
+          {{else}}<span class="tag tag-danger">{{t "monitor.state_open"}}</span>{{end}}
+        </td>
+        <td>
+          {{if ne .State "acked"}}
+          <form method="post" action="/admin/monitor/{{.Event.ID}}/ack" style="display:inline">
+            <button type="submit" class="btn btn-sm" title="{{t "monitor.ack_help"}}"><i class="fa-solid fa-check"></i> {{t "monitor.ack"}}</button>
+          </form>
+          {{else}}<span style="color:var(--text-muted);font-size:11px">—</span>{{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{end}}
+</div>
+
+<div class="card">
+  <h3><i class="fa-brands fa-telegram"></i> {{t "monitor.notify_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "monitor.notify_help" | safeHTML}}</p>
+  <form method="post" action="/admin/monitor/settings" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+    <label style="font-size:12px;color:var(--text-muted)">{{t "monitor.notify_min"}}
+      <select name="min_severity" style="display:block;font-size:12px;padding:2px 4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:3px">
+        {{range .Levels}}
+          <option value="{{.}}" {{if eq $.NotifyRaw (printf "%s" .)}}selected{{end}}>{{.}}</option>
+        {{end}}
+      </select>
+    </label>
+    <button type="submit" class="btn btn-sm btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{t "monitor.save"}}</button>
+    <span style="color:var(--text-muted);font-size:12px">{{tf "monitor.notify_current" .NotifyRaw}}</span>
+  </form>
+</div>
+{{end}}

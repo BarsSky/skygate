@@ -1,4 +1,4 @@
-﻿{{define "layout"}}<!DOCTYPE html>
+{{define "layout"}}<!DOCTYPE html>
 <html lang="{{.Lang}}" data-theme="{{.Theme}}">
 <head>
 <meta charset="utf-8">
@@ -89,9 +89,14 @@
       <a href="/admin/headscale/acl" {{if eq .Page "admin/headscale_acl"}}class="active"{{end}}><i class="fa-solid fa-network-wired"></i><span>{{t "nav.headscale_acl"}}</span></a>
     </details>
 
-    {{/* Section 3: System Health & Logs (3 pages) */}}
+    {{/* Section 3: System Health & Logs (4 pages) */}}
     <details class="sidebar-section" {{if .InSectionHealth}}open{{end}}>
       <summary class="{{if .InSectionHealth}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-heart-pulse"></i><span>{{t "nav.section_health"}}</span></summary>
+      {{/* B305 (v1.5.70) — the monitoring inbox: every monitoring signal with
+           severities, dedup and ack. Placed first in this section because it is
+           the page that says WHAT is wrong before the test list says how it was
+           measured. */}}
+      <a href="/admin/monitor" {{if eq .Page "admin/monitor"}}class="active"{{end}}><i class="fa-solid fa-bell"></i><span>{{t "monitor.nav"}}</span></a>
       <a href="/admin/system_tests" {{if eq .Page "admin/system_tests"}}class="active"{{end}}><i class="fa-solid fa-vial"></i><span>{{t "nav.system_tests"}}</span></a>
       <a href="/admin/services" {{if eq .Page "admin/services"}}class="active"{{end}}><i class="fa-solid fa-heart-pulse"></i><span>{{t "title.admin_services"}}</span></a>
       <a href="/admin/audit" {{if eq .Page "admin/audit"}}class="active"{{end}}><i class="fa-solid fa-clipboard-list"></i><span>{{t "nav.audit"}}</span></a>

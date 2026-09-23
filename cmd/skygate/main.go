@@ -2485,6 +2485,15 @@ func main() {
 	// the result inline. History in system_tests_runs.
 	mux.Handle("GET /admin/system_tests", authMW(http.HandlerFunc(adminSvc.GetAdminSystemTests)))
 	mux.Handle("POST /admin/system_tests/run", authMW(http.HandlerFunc(adminSvc.PostAdminSystemTestsRun)))
+	// B305 (v1.5.70) — the monitoring inbox: one list for every monitoring
+	// signal skygate records (system tests, tag reconciliation, exit-node
+	// health, database health, …) with severities, dedup, ack/resolve and the
+	// Telegram push threshold. The operator asked for «поле с уведомлениями
+	// куда будут приходить все сообщения разной важности с мониторинга».
+	mux.Handle("GET /admin/monitor", authMW(http.HandlerFunc(adminSvc.GetAdminMonitor)))
+	mux.Handle("POST /admin/monitor/{id}/ack", authMW(http.HandlerFunc(adminSvc.PostAdminMonitorAck)))
+	mux.Handle("POST /admin/monitor/ack-all", authMW(http.HandlerFunc(adminSvc.PostAdminMonitorAckAll)))
+	mux.Handle("POST /admin/monitor/settings", authMW(http.HandlerFunc(adminSvc.PostAdminMonitorSettings)))
 	// 2026-08-06 v0.33.1.18 — DNS-autoupdater toggle (DB-backed).
 	// Was previously wired to SKYGATE_AUTO_UPDATE_ENABLED (the
 	// skygate self-update flag), which silently turned off

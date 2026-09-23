@@ -74,6 +74,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/devicemeta"
 	"skygate/internal/headscale"
+	"skygate/internal/monitorinbox"
 	"skygate/internal/nodeownership"
 )
 
@@ -94,7 +95,43 @@ func adminTagAlertSink(s *Service) *nodeownership.TagAlertSink {
 	}
 	// The sink resolves the live pool per call (B224 ResettableDB pattern),
 	// so the B203 watchdog's hot swap is followed transparently.
-	return nodeownership.NewTagAlertSink(notifier, s.DB)
+	//
+	// B305 (v1.5.70): the failure ALSO lands in the monitoring inbox, so the
+	// operator sees "this tag never reached headscale" on /admin/monitor even if
+	// the Telegram message was missed (or never configured) — and so a repeated
+	// failure shows as one row with a counter instead of a stream of pages.
+	return nodeownership.NewTagAlertSink(monitorTagAlertSink{inner: notifier, svc: s}, s.DB)
+}
+
+// monitorTagAlertSink wraps the nodeownership alert sink: Telegram/metric/audit
+// keep working exactly as before, and the monitoring inbox gets the structured
+// event (B305).
+type monitorTagAlertSink struct {
+	inner nodeownership.AlertSink
+	svc   *Service
+}
+
+func (m monitorTagAlertSink) SendAlert(text string) int64 {
+	var id int64
+	if m.inner != nil {
+		id = m.inner.SendAlert(text)
+	}
+	if m.svc != nil {
+		m.svc.MonitorReport(monitorinbox.Event{
+			Source:  "tag_reconcile",
+			Subject: "dev-tag",
+			// One row per failure TEXT is wrong (the text carries the node id and
+			// the error, so it would never dedup); the tag reconciler's own alert
+			// is already rate-limited per node, and this event folds all of them
+			// into one operator-visible condition with a repeat counter.
+			Fingerprint: "tag_reconcile:headscale-tag-apply",
+			Severity:    monitorinbox.SeverityError,
+			Title:       "Тег устройства не применился в headscale",
+			Body:        truncateForEvent(text, 400),
+			Link:        "/admin/devices",
+		})
+	}
+	return id
 }
 
 // adminNotifierSink adapts telegram.Notifier to the nodeownership AlertSink

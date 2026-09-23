@@ -49,6 +49,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/feature/exit_rules"
 	"skygate/internal/headscale"
+	"skygate/internal/monitorinbox"
 )
 
 // SystemTestStatus is the result of one test.
@@ -1400,7 +1401,55 @@ func (s *Service) PersistRun(ctx context.Context, results []SystemTestResult, su
 		return 0, err
 	}
 	id, _ := res.LastInsertId()
+	// B305 (v1.5.70): a run's outcome must outlive the page render. Every FAIL
+	// becomes an event in the monitoring inbox (deduped by test name, so a test
+	// that keeps failing bumps its counter instead of flooding) and every PASS
+	// RESOLVES the matching event, which is what makes the inbox honest: it shows
+	// what is broken NOW, not what was broken once.
+	s.ReportRunToMonitor(results)
 	return id, nil
+}
+
+// ReportRunToMonitor records the outcome of a system-test run in the monitoring
+// inbox (B305). Split out of PersistRun so it can be tested without a run row and
+// so a future scheduled runner can reuse it.
+func (s *Service) ReportRunToMonitor(results []SystemTestResult) {
+	if s == nil {
+		return
+	}
+	for _, res := range results {
+		ev := monitorinbox.Event{
+			Source:      "system_test",
+			Subject:     res.Name,
+			Fingerprint: "system_test:" + res.Name,
+			Link:        "/admin/system_tests",
+		}
+		switch res.Status {
+		case SystemTestFail:
+			ev.Severity = monitorinbox.SeverityError
+			ev.Title = "Системный тест не прошёл: " + res.Name
+			ev.Body = strings.TrimSpace(res.Category + " · " + truncateForEvent(res.Output, 400))
+			s.MonitorReport(ev)
+		case SystemTestPass:
+			// Recovery: close the event if this test had one open.
+			if in := s.MonitorInbox(); in != nil {
+				_ = in.Resolve(ev)
+			}
+		default:
+			// SKIP says nothing about health — a skipped test must neither open
+			// nor close anything (a fresh install skips half the catalogue).
+		}
+	}
+}
+
+// truncateForEvent keeps an event body readable in the list and in a Telegram
+// message; the full output stays on /admin/system_tests where it belongs.
+func truncateForEvent(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }
 
 // ListRecentRuns returns the last N runs (default 20) for

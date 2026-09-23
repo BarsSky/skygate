@@ -12,6 +12,87 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.70 — one monitoring inbox for every skygate signal (B305)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.69` → this tag · **Compatibility:** additive —
+v0.76 adds one table (`monitor_events`) in both migration chains; nothing reads it
+until a producer reports an event.
+
+### What the operator asked for
+
+«Отдельно следует пройтись по тестам системы и расширить их давая возможность
+полностью контролировать модули проекта и получать уведомления по неисправности
+или некорректном поведении. Также необходимо добавить поле с уведомлениями куда
+будут приходить все сообщения разной важности с мониторинга skygate.»
+
+### The gap
+
+Every monitoring signal lived somewhere else, and most were fire-and-forget: an
+exit-node health crossing went to Telegram and vanished, a tag-reconcile failure
+was a Prometheus counter plus an audit row, a failing system test was rendered once
+and forgotten, a degraded database was a badge on a single page. Nothing could
+answer **“what is wrong right now, and is it new?”**, and nothing survived a page
+reload or a Telegram outage.
+
+### What ships
+
+* **`monitor_events` (v0.76)** — one row per *condition*, deduplicated by a UNIQUE
+  `fingerprint`: a recurrence bumps `repeats` and `last_seen` instead of adding a
+  row, so a flapping alert cannot drown the list. `first_seen`, `acked_at/by` and
+  `resolved_at` are kept, so the history is real. Both migration chains (SQLite
+  through `execSQLiteDDL`), both drivers registered.
+* **`internal/monitorinbox`** — the policy: four normalised severities
+  (`info`/`warning`/`error`/`critical`, so a producer spelling `warn` or `fatal`
+  cannot invent a fifth level), a dedup-aware `Report` that returns whether the
+  event is **new or reopened** — the only case worth paging for — `Resolve` for
+  recovery, `FormatAlert` for the Telegram text, and a push threshold stored in
+  `global_settings` (`monitor.notify_min_severity`, default `error`) so the
+  operator can lower it to `warning` or raise it to `critical` **without a restart
+  or an env edit**. Everything is always recorded; the threshold only decides what
+  also reaches Telegram.
+* **`/admin/monitor`** — the “поле с уведомлениями”: state / minimum-severity /
+  source filters, per-state counters (open / acknowledged / resolved), per-row
+  **Acknowledge**, **Acknowledge all open**, the Telegram threshold form, and the
+  event fingerprint rendered so the page can be correlated with the journal and
+  the bot message. In the sidebar's *System Health* section, translated RU+EN,
+  behind the admin gate, and every refusal is a flash on the page (never a raw
+  error page).
+* **Producers wired now:** every **system-test run** (a FAIL opens an event with
+  the category and output; a PASS **resolves** it, so the list shows what is broken
+  *now* rather than everything that ever broke; a SKIP changes nothing, because a
+  fresh install skips half the catalogue) and the **tag reconciler's alert sink**
+  (a dev-tag that never reached headscale is now visible on the page even when the
+  Telegram message was missed).
+
+Per-module control of the test catalogue (the other half of the same request) is
+the next block; the inbox is its sink, which is why it lands first.
+
+### Verification
+
+* `scripts/check_b305_monitor_inbox.sh` — 46 contracts (both migration chains, the
+  dedup/ack/resolve semantics, the notify policy, the routes, the sidebar entry,
+  RU+EN parity, the producers, the tests).
+* `internal/db/monitor_events_b305_test.go` — the store against a real migrated
+  SQLite database: dedup, reopen after resolve, filters, counters, ack, ack-all.
+* `internal/monitorinbox/monitorinbox_b305_test.go` — the policy: a repeat does
+  **not** re-page, a warning below the `error` threshold is recorded but silent,
+  lowering the threshold makes it page, recovery closes the event and a recurrence
+  pages again, and a missing database is reported instead of panicking.
+* `internal/feature/admin/monitor_b305_test.go` — the page and its three POST
+  actions, the system-test open/resolve/reopen cycle, the tag sink into the inbox,
+  and a Service whose database is not wired.
+* `go vet`, `staticcheck`, `go test ./...` clean; CI green before the tag.
+
+### What the operator should check after updating
+
+1. `/admin/monitor` — the new sidebar entry under *System Health*. An install with
+   nothing wrong shows an empty list (“мониторинг молчит”).
+2. Run the system tests (`/admin/system_tests` → Run): a failing test appears in
+   the inbox with its output; fix it, run again, and the event turns **resolved**
+   (the row stays as history).
+3. Set the push threshold (e.g. `warning`) and press Save — new events at that
+   level now also arrive in Telegram, and repeats of a known problem stay silent.
+
 ## v1.5.69 — OIDC fully controllable from the panel (B304)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.68` → this tag · **Compatibility:** none —

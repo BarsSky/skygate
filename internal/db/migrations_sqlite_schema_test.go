@@ -59,18 +59,34 @@ func TestSQLiteSchemaComplete(t *testing.T) {
 		t.Fatalf("ApplyMigrations(SQLite): %v", err)
 	}
 
-	t.Run("chain reaches V075 like PostgreSQL", func(t *testing.T) {
+	t.Run("chain reaches V076 like PostgreSQL", func(t *testing.T) {
 		var maxV int
 		if err := sqlDB.QueryRow(
 			`SELECT COALESCE(MAX(version), 0) FROM applied_migrations`).Scan(&maxV); err != nil {
 			t.Fatalf("read max(version): %v", err)
 		}
-		// PostgreSQL's chain ends at 75 (v0.75 = oidc_settings,
-		// B-oidc-setup). If SQLite lags behind, every
-		// table/column added by the missing tail is absent.
-		if maxV != 75 {
-			t.Errorf("SQLite migration chain ends at V%d, want V75 — the PG and SQLite "+
+		// PostgreSQL's chain ends at 76 (v0.76 = monitor_events, B305). If
+		// SQLite lags behind, every table/column added by the missing tail is
+		// absent.
+		if maxV != 76 {
+			t.Errorf("SQLite migration chain ends at V%d, want V76 — the PG and SQLite "+
 				"chains have diverged again (see driver_sqlite.go sqliteMigrations)", maxV)
+		}
+	})
+
+	t.Run("monitor_events table exists (V076, B305)", func(t *testing.T) {
+		// V076 is the B305 monitoring inbox: the page reads here, the producers
+		// (system tests, tag reconciliation) write here. A missing table on
+		// SQLite would make the inbox silently empty on a native install.
+		var present int
+		if err := sqlDB.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='monitor_events'`,
+		).Scan(&present); err != nil {
+			t.Fatalf("read monitor_events presence: %v", err)
+		}
+		if present != 1 {
+			t.Errorf("monitor_events is MISSING in the SQLite schema — V076 "+
+				"didn't run end-to-end (see migrations_v0_76_monitor_events.go)")
 		}
 	})
 

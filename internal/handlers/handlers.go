@@ -980,6 +980,7 @@ func sectionPageSet(page string) map[string]bool {
 			"admin/acls", "admin/exit-rules", "admin/headscale_acl",
 		},
 		"InSectionHealth": {
+			"admin/monitor", // B305 (v1.5.70) — the monitoring inbox
 			"admin/system_tests", "admin/services", "admin/audit",
 		},
 		"InSectionIntegrations": {
