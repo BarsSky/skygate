@@ -101,7 +101,7 @@ func SetClusterDatabase(d *sql.DB, cd *ClusterDatabase) error {
 			id, cluster_id, primary_node_id, replica_node_ids,
 			dsn_template, dbname, username, sslmode, current_dsn,
 			updated_by, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, `+ActiveDialect().NowExpr()+`, `+ActiveDialect().NowExpr()+`)
 		ON CONFLICT (id) DO UPDATE SET
 			cluster_id = EXCLUDED.cluster_id,
 			primary_node_id = EXCLUDED.primary_node_id,
@@ -112,7 +112,7 @@ func SetClusterDatabase(d *sql.DB, cd *ClusterDatabase) error {
 			sslmode = EXCLUDED.sslmode,
 			current_dsn = EXCLUDED.current_dsn,
 			updated_by = EXCLUDED.updated_by,
-			updated_at = NOW()
+			updated_at = `+ActiveDialect().NowExpr()+`
 	`, cd.ID, cd.ClusterID, cd.PrimaryNodeID, cd.ReplicaNodeIDs,
 		cd.DSNTemplate, cd.DBName, cd.Username, cd.SSLMode, cd.CurrentDSN,
 		cd.UpdatedBy)

@@ -291,8 +291,19 @@ func (e *Elector) evaluate(ctx context.Context) error {
 	var nodes []nodeRow
 	for rows.Next() {
 		var n nodeRow
-		if err := rows.Scan(&n.ID, &n.Hostname, &n.State, &n.Roles, &n.LastSeen, &n.JoinedAt); err != nil {
+		var lastSeenRaw, joinedRaw any
+		if err := rows.Scan(&n.ID, &n.Hostname, &n.State, &n.Roles, &lastSeenRaw, &joinedRaw); err != nil {
 			return fmt.Errorf("scan: %w", err)
+		}
+		// B291: decode through db.ParseDBTime instead of scanning straight into
+		// sql.NullTime — on SQLite a timestamp can be INTEGER unix seconds, an
+		// RFC3339 string, or Go's time.Time String() form (what the pre-B291
+		// writers stored), and NullTime only accepts the first two.
+		if ts, ok := skygatedb.ParseDBTime(lastSeenRaw); ok {
+			n.LastSeen = sql.NullTime{Time: ts, Valid: true}
+		}
+		if ts, ok := skygatedb.ParseDBTime(joinedRaw); ok {
+			n.JoinedAt = sql.NullTime{Time: ts, Valid: true}
 		}
 		nodes = append(nodes, n)
 	}
@@ -419,7 +430,7 @@ func (e *Elector) transitionNode(
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO cluster_audit (
 			cluster_id, action, target_node_id, detail, result
-		) VALUES ($1, 'node_health', $2, $3::jsonb, 'ok')
+		) VALUES ($1, 'node_health', $2, `+skygatedb.ActiveDialect().CastJSON("$3")+`, 'ok')
 	`, e.cfg.ClusterID, nodeID, string(detailJSON)); err != nil {
 		return fmt.Errorf("insert cluster_audit: %w", err)
 	}
@@ -488,20 +499,50 @@ func (e *Elector) recommendFailover(
 	// last 5 minutes. This prevents a flood of audit
 	// rows on every 5s tick while the primary stays
 	// failed.
-	var existing int
-	err := db.QueryRowContext(ctx, `
-		SELECT count(*) FROM cluster_audit
+	// B291: this predicate was PostgreSQL-only — `detail->>'from_node_id'` (JSONB
+	// operator) and `created_at > NOW() - INTERVAL '5 minutes'` do not exist on
+	// SQLite, so the elector's recommendation pass failed there with a syntax
+	// error. Read the recent recommendations and decide in Go: dialect-free, and
+	// it also copes with the three timestamp shapes SQLite can hold. The LIMIT is
+	// generous on purpose — the 5-minute window is applied below, per row, so a
+	// busy cluster cannot push the relevant pair out of the scanned set.
+	dedupRows, dedupErr := db.QueryContext(ctx, `
+		SELECT `+skygatedb.ActiveDialect().CastText("detail")+`, created_at
+		  FROM cluster_audit
 		 WHERE cluster_id = $1
 		   AND action = 'failover_recommend'
-		   AND detail->>'from_node_id' = $2
-		   AND detail->>'to_node_id' = $3
-		   AND created_at > NOW() - INTERVAL '5 minutes'
-	`, e.cfg.ClusterID, failedPrimary.ID, target.ID).Scan(&existing)
-	if err != nil {
-		e.cfg.Logger("elector: dedup query: %v", err)
+		 ORDER BY id DESC
+		 LIMIT 50
+	`, e.cfg.ClusterID)
+	if dedupErr != nil {
+		e.cfg.Logger("elector: dedup query: %v", dedupErr)
 		return
 	}
-	if existing > 0 {
+	alreadyRecommended := false
+	for dedupRows.Next() {
+		var detailText string
+		var createdRaw any
+		if err := dedupRows.Scan(&detailText, &createdRaw); err != nil {
+			continue
+		}
+		ts, ok := skygatedb.ParseDBTime(createdRaw)
+		if !ok || now.Sub(ts) > 5*time.Minute {
+			continue
+		}
+		var prev struct {
+			FromNodeID string `json:"from_node_id"`
+			ToNodeID   string `json:"to_node_id"`
+		}
+		if json.Unmarshal([]byte(detailText), &prev) != nil {
+			continue
+		}
+		if prev.FromNodeID == failedPrimary.ID && prev.ToNodeID == target.ID {
+			alreadyRecommended = true
+			break
+		}
+	}
+	dedupRows.Close()
+	if alreadyRecommended {
 		return
 	}
 
@@ -519,7 +560,7 @@ func (e *Elector) recommendFailover(
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO cluster_audit (
 			cluster_id, action, target_node_id, detail, result
-		) VALUES ($1, 'failover_recommend', $2, $3::jsonb, 'pending')
+		) VALUES ($1, 'failover_recommend', $2, `+skygatedb.ActiveDialect().CastJSON("$3")+`, 'pending')
 	`, e.cfg.ClusterID, target.ID, string(detailJSON)); err != nil {
 		e.cfg.Logger("elector: insert failover_recommend: %v", err)
 		return

@@ -80,19 +80,12 @@ func DrillClusterNode(d *sql.DB, targetID, actor, reason string) (fromID, toID s
 	}()
 
 	var fromIDRow, fromHostRow string
-	err = tx.QueryRow(`
-		SELECT id, hostname
-		FROM cluster_node
-		WHERE state = 'ready'
-		  AND 'skygate' = ANY (roles)
-		ORDER BY id ASC
-		LIMIT 1
-	`).Scan(&fromIDRow, &fromHostRow)
-	if err == sql.ErrNoRows {
-		return "", "", ErrNoPrimary
-	}
+	// B291: `AND 'skygate' = ANY (roles)` is PostgreSQL-only and SQLite has no
+	// array type — FindClusterPrimary reads the `{a,b}` literal and tests the
+	// role in Go (see cluster_sql_b291.go).
+	fromIDRow, fromHostRow, err = FindClusterPrimary(tx)
 	if err != nil {
-		return "", "", fmt.Errorf("find current primary: %w", err)
+		return "", "", err
 	}
 
 	var toIDRow, toHostRow string
@@ -122,21 +115,22 @@ func DrillClusterNode(d *sql.DB, targetID, actor, reason string) (fromID, toID s
 		return "", "", ErrNotEligibleForFailover
 	}
 
-	if _, err = tx.Exec(`
-		UPDATE cluster_node
-		SET roles = ARRAY(
-			SELECT DISTINCT unnest(roles || ARRAY['skygate']::text[])
-		)
-		WHERE id = $1
-	`, targetID); err != nil {
+	// B291: was `SET roles = ARRAY(SELECT DISTINCT unnest(roles ||
+	// ARRAY['skygate']::text[]))` — PostgreSQL-only. The new roles are computed in
+	// Go and written as a dialect-native literal.
+	if err = SetNodeRoles(tx, targetID, RolesAdd([]string(toRolesRow), "skygate")); err != nil {
 		return "", "", fmt.Errorf("promote target: %w", err)
 	}
-	if _, err = tx.Exec(`
-		UPDATE cluster_node
-		SET state = 'draining',
-		    roles = array_remove(roles, 'skygate')
-		WHERE id = $1
-	`, fromIDRow); err != nil {
+	// B291: `roles = array_remove(roles, 'skygate')` was PostgreSQL-only. Read the
+	// current roles, drop the one in Go, and write the literal back.
+	fromRoles, rolesErr := NodeRoles(tx, fromIDRow)
+	if rolesErr != nil {
+		return "", "", fmt.Errorf("read old primary roles: %w", rolesErr)
+	}
+	if err = SetNodeRoles(tx, fromIDRow, RolesRemove(fromRoles, "skygate")); err != nil {
+		return "", "", fmt.Errorf("demote old primary: %w", err)
+	}
+	if _, err = tx.Exec(`UPDATE cluster_node SET state = 'draining' WHERE id = $1`, fromIDRow); err != nil {
 		return "", "", fmt.Errorf("demote old primary: %w", err)
 	}
 	// Drill audit row: same shape as FailoverClusterNode's

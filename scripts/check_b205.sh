@@ -143,7 +143,12 @@ grep -A30 '^func runClusterAudit' "cmd/skygate/cluster.go" | grep -q "cluster_au
 grep_q '^func runClusterFailover' "cmd/skygate/cluster.go" \
     && check "runClusterFailover defined" ok \
     || check "runClusterFailover defined" fail
-grep -A100 '^func runClusterFailover' "cmd/skygate/cluster.go" | grep -q "'node_failover'" \
+# B291 contract renegotiation (2026-09-23): the positional window was `-A100`,
+# which the B291 dialect port (the failed-primary scan + the Go-side role
+# surgery) pushed past — the audit row now sits ~116 lines into the function.
+# The assertion itself is unchanged (the function must still write a
+# node_failover cluster_audit row); only the window grew.
+grep -A140 '^func runClusterFailover' "cmd/skygate/cluster.go" | grep -q "'node_failover'" \
     && check "runClusterFailover writes 'node_failover' audit row" ok \
     || check "runClusterFailover writes 'node_failover' audit row" fail
 grep -A150 '^func runClusterFailover' "cmd/skygate/cluster.go" | grep -q "tx\.Commit" \

@@ -227,11 +227,23 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 		for rows.Next() {
 			var n clusterNodeRow
 			var rolesStr string
-			var joinedAt, lastSeenAt sql.NullTime
+			// B291: decode the timestamps through db.ParseDBTime instead of
+			// scanning straight into sql.NullTime — on SQLite one column can hold
+			// INTEGER unix seconds, an RFC3339 string, or Go's time.Time String()
+			// form, and NullTime refuses the last one, which silently dropped the
+			// row from this page.
+			var joinedRaw, lastSeenRaw any
 			if err := rows.Scan(&n.ID, &n.ClusterID, &n.Hostname, &n.TailscaleIP,
 				&rolesStr, &n.State, &n.SkygateVer,
-				&joinedAt, &lastSeenAt); err != nil {
+				&joinedRaw, &lastSeenRaw); err != nil {
 				continue
+			}
+			var joinedAt, lastSeenAt sql.NullTime
+			if ts, ok := db.ParseDBTime(joinedRaw); ok {
+				joinedAt = sql.NullTime{Time: ts, Valid: true}
+			}
+			if ts, ok := db.ParseDBTime(lastSeenRaw); ok {
+				lastSeenAt = sql.NullTime{Time: ts, Valid: true}
 			}
 			// roles is TEXT[] in PG but pgx scans it as a
 			// "{role1,role2}" literal. Parse the braces.
@@ -308,29 +320,52 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 	// 4. Pending invites — read cluster_invite rows that are
 	// still pending and not expired. Phase 2.2 will add the
 	// "Generate invite" form.
+	//
+	// B291: the expiry filter runs in Go, not in SQL. On
+	// PostgreSQL `expires_at > NOW()` is a plain timestamptz
+	// comparison, but SQLite has no NOW() at all (the query
+	// errored with `no such function: NOW`) and its
+	// cluster_invite.issued_at / expires_at are INTEGER
+	// columns that hold either Unix seconds or a TEXT
+	// timestamp depending on how the row was written — no
+	// single SQL comparison is correct for both shapes.
+	// db.ParseDBTime decodes whatever the driver returned and
+	// the comparison happens on real time.Time values.
 	invRows, err := s.dbc().QueryContext(r.Context(), `
 		SELECT id, cluster_id, role, target_hostname,
 		       issued_at, expires_at, status
 		  FROM cluster_invite
 		 WHERE cluster_id = $1
 		   AND status = 'pending'
-		   AND expires_at > NOW()
 		 ORDER BY issued_at DESC
 	`, clusterID)
 	if err == nil {
 		defer invRows.Close()
-		now := time.Now().Unix()
+		now := time.Now()
 		for invRows.Next() {
 			var inv clusterInviteRow
-			var issuedAt, expiresAt time.Time
+			var issuedRaw, expiresRaw any
 			if err := invRows.Scan(&inv.ID, &inv.ClusterID, &inv.Role,
-				&inv.TargetHostname, &issuedAt, &expiresAt, &inv.Status); err != nil {
+				&inv.TargetHostname, &issuedRaw, &expiresRaw, &inv.Status); err != nil {
 				continue
 			}
-			inv.IssuedAt = issuedAt.UTC().Format("2006-01-02 15:04:05 UTC")
-			inv.ExpiresAt = expiresAt.UTC().Format("2006-01-02 15:04:05 UTC")
-			inv.IssuedAgoSec = now - issuedAt.Unix()
-			inv.ExpiresInSec = expiresAt.Unix() - now
+			issuedAt, iok := db.ParseDBTime(issuedRaw)
+			expiresAt, eok := db.ParseDBTime(expiresRaw)
+			// An unreadable timestamp must not be rendered as
+			// 1970 — but a pending invite whose expiry we cannot
+			// decode is still actionable, so only a decodable,
+			// already-past expiry is filtered out.
+			if eok && !expiresAt.After(now) {
+				continue
+			}
+			if iok {
+				inv.IssuedAt = issuedAt.UTC().Format("2006-01-02 15:04:05 UTC")
+				inv.IssuedAgoSec = int64(now.Sub(issuedAt).Seconds())
+			}
+			if eok {
+				inv.ExpiresAt = expiresAt.UTC().Format("2006-01-02 15:04:05 UTC")
+				inv.ExpiresInSec = int64(expiresAt.Sub(now).Seconds())
+			}
 			data.Invites = append(data.Invites, inv)
 		}
 		data.InviteCount = len(data.Invites)
@@ -359,10 +394,10 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 	// cluster.html section 5.
 	if aRows, err := s.dbc().QueryContext(r.Context(), `
 		SELECT id,
-		       extract(epoch FROM created_at)::bigint AS ts,
+		       created_at,
 		       actor,
 		       action,
-		       detail::text
+		       `+db.ActiveDialect().CastText("detail")+`
 		  FROM cluster_audit
 		 WHERE action IN ('node_health', 'failover_recommend', 'node_failover', 'node_drill',
 		                  'node_init', 'node_join', 'node_drain', 'node_leave',
@@ -373,8 +408,19 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 		defer aRows.Close()
 		for aRows.Next() {
 			var ev clusterAuditEvent
-			if err := aRows.Scan(new(int64), &ev.WhenUnix, &ev.Actor, &ev.Action, &ev.Detail); err != nil {
+			// B291: created_at is TIMESTAMPTZ on PostgreSQL and
+			// INTEGER (DEFAULT CURRENT_TIMESTAMP → the TEXT form
+			// "2006-01-02 15:04:05") on SQLite, so decode it
+			// through db.ParseDBTime instead of extract(epoch …),
+			// which SQLite does not have.
+			var createdRaw any
+			var detail sql.NullString
+			if err := aRows.Scan(new(int64), &createdRaw, &ev.Actor, &ev.Action, &detail); err != nil {
 				continue
+			}
+			ev.Detail = detail.String
+			if ts, ok := db.ParseDBTime(createdRaw); ok {
+				ev.WhenUnix = ts.Unix()
 			}
 			data.RecentEvents = append(data.RecentEvents, ev)
 		}

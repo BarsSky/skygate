@@ -197,7 +197,7 @@ func Join(d *sql.DB, secret string, req *JoinRequest) (*JoinResponse, error) {
 		// from the new node is a no-op.
 		_, _ = d.Exec(`
 			UPDATE cluster_invite
-			   SET used_at = COALESCE(used_at, NOW()),
+			   SET used_at = COALESCE(used_at, `+db.ActiveDialect().NowExpr()+`),
 			       used_by_node_id = COALESCE(NULLIF(used_by_node_id, ''), $2)
 			 WHERE id = $1 AND used_at IS NULL
 		`, payload.Inv, existing.ID)
@@ -244,9 +244,12 @@ func Join(d *sql.DB, secret string, req *JoinRequest) (*JoinResponse, error) {
 		ON CONFLICT (id) DO UPDATE SET
 			tailscale_ip = EXCLUDED.tailscale_ip,
 			skygate_version = EXCLUDED.skygate_version,
-			last_seen_at = NOW()
+			last_seen_at = `+db.ActiveDialect().NowExpr()+`
+	// B291: bind the timestamps through DialectKind.TimeValue — a raw
+	// time.Time lands in a SQLite column as Go's String() form, which the
+	// page readers could not decode before B291 (the row rendered "—").
 	`, nodeID, clusterID, req.Hostname, req.TailscaleIP,
-		pqStringArray(roles), req.SkygateVersion, now)
+		pqStringArray(roles), req.SkygateVersion, db.ActiveDialect().TimeValue(now))
 	if err != nil {
 		return nil, fmt.Errorf("insert node: %w", err)
 	}
@@ -256,7 +259,7 @@ func Join(d *sql.DB, secret string, req *JoinRequest) (*JoinResponse, error) {
 	// future improvement; for now, sequential).
 	_, err = d.Exec(`
 		UPDATE cluster_invite
-		   SET used_at = NOW(),
+		   SET used_at = `+db.ActiveDialect().NowExpr()+`,
 		       used_by_node_id = $2
 		 WHERE id = $1 AND used_at IS NULL
 	`, payload.Inv, nodeID)
@@ -381,7 +384,12 @@ func Heartbeat(d *sql.DB, secret string, req *HeartbeatRequest) (*HeartbeatRespo
 	// heartbeats. Phase 3.)
 	now := time.Now().UTC()
 	var state string
-	var lastSeen time.Time
+	// B291: last_seen_at round-trips through the driver, so read it
+	// as `any` and decode it — SQLite hands back a TEXT/INTEGER value
+	// that cannot scan into *time.Time. Write it through
+	// DialectKind.TimeValue so both backends store a shape both
+	// decoders understand.
+	var lastSeenRaw any
 	err = d.QueryRow(`
 		UPDATE cluster_node
 		   SET last_seen_at = $1,
@@ -391,12 +399,16 @@ func Heartbeat(d *sql.DB, secret string, req *HeartbeatRequest) (*HeartbeatRespo
 		       END
 		 WHERE id = $2
 		RETURNING state, last_seen_at
-	`, now, req.NodeID).Scan(&state, &lastSeen)
+	`, db.ActiveDialect().TimeValue(now), req.NodeID).Scan(&state, &lastSeenRaw)
 	if err == sql.ErrNoRows {
 		return nil, ErrHeartbeatNodeNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("update node: %w", err)
+	}
+	lastSeen, _ := db.ParseDBTime(lastSeenRaw)
+	if lastSeen.IsZero() {
+		lastSeen = now
 	}
 	return &HeartbeatResponse{
 		NodeID:               req.NodeID,

@@ -754,16 +754,35 @@ func runClusterFailover(args []string) error {
 	// state=failed). The target's role is "skygate-standby"
 	// (we just verified ready); we're moving the skygate
 	// role TO the target.
-	row = d.QueryRow(`
-		SELECT id FROM cluster_node
-		 WHERE cluster_id = $1 AND state = 'failed' AND 'skygate' = ANY(roles)
-		 LIMIT 1
+	//
+	// B291: the role test happens in Go. The PostgreSQL-only
+	// `'skygate' = ANY(roles)` does not parse on SQLite (where roles is the
+	// `{a,b}` TEXT literal) and a SQL-side LIKE would also match
+	// "skygate-standby". db.StringArray scans the literal on both backends,
+	// so the exact-match predicate is dialect-neutral.
+	failedRows, err := d.Query(`
+		SELECT id, roles
+		  FROM cluster_node
+		 WHERE cluster_id = $1 AND state = 'failed'
 	`, cluster.DefaultClusterID)
-	if err := row.Scan(&fromID); err != nil {
-		// No failed primary — that's OK, the operator may
-		// be doing a planned role swap. Log it.
-		fromID = ""
+	if err != nil {
+		return fmt.Errorf("cluster failover: find failed primary: %w", err)
 	}
+	for failedRows.Next() {
+		var id string
+		var roles db.StringArray
+		if err := failedRows.Scan(&id, &roles); err != nil {
+			continue
+		}
+		if db.RolesContain([]string(roles), "skygate") {
+			fromID = id
+			break
+		}
+	}
+	failedRows.Close()
+	// No failed primary is fine — the operator may be doing a planned role
+	// swap, in which case fromID stays empty.
+
 	// Update roles + state in a transaction.
 	tx, err := d.Begin()
 	if err != nil {
@@ -771,26 +790,31 @@ func runClusterFailover(args []string) error {
 	}
 	defer tx.Rollback()
 	// 1. Target: add 'skygate' role, ensure 'skygate-standby' is also there.
-	// We use array_append + array_remove to avoid clobbering
-	// other roles the operator may have set.
-	if _, err := tx.Exec(`
-		UPDATE cluster_node
-		   SET roles = ARRAY(
-		           SELECT DISTINCT unnest(
-		               ARRAY['skygate', 'skygate-standby']::text[]
-		           )
-		       )
-		 WHERE id = $1
-	`, targetID); err != nil {
+	// We read-modify-write in Go (B291) so the other roles the operator may
+	// have set survive — the PostgreSQL `ARRAY(SELECT DISTINCT unnest(…))`
+	// form replaced the WHOLE array and does not exist on SQLite.
+	rolesForTarget, err := db.NodeRoles(tx, targetID)
+	if err != nil {
+		return fmt.Errorf("cluster failover: read target roles: %w", err)
+	}
+	rolesForTarget = db.RolesAdd(rolesForTarget, "skygate")
+	rolesForTarget = db.RolesAdd(rolesForTarget, "skygate-standby")
+	if err := db.SetNodeRoles(tx, targetID, rolesForTarget); err != nil {
 		return fmt.Errorf("cluster failover: update target roles: %w", err)
 	}
 	// 2. Failed primary (if any): mark as draining, drop
 	// the skygate role.
 	if fromID != "" {
+		fromRoles, err := db.NodeRoles(tx, fromID)
+		if err != nil {
+			return fmt.Errorf("cluster failover: read primary roles: %w", err)
+		}
+		if err := db.SetNodeRoles(tx, fromID, db.RolesRemove(fromRoles, "skygate")); err != nil {
+			return fmt.Errorf("cluster failover: update primary roles: %w", err)
+		}
 		if _, err := tx.Exec(`
 			UPDATE cluster_node
-			   SET state = 'draining',
-			       roles = array_remove(roles, 'skygate')
+			   SET state = 'draining'
 			 WHERE id = $1
 		`, fromID); err != nil {
 			return fmt.Errorf("cluster failover: update primary: %w", err)
@@ -798,17 +822,17 @@ func runClusterFailover(args []string) error {
 	}
 	// 3. Audit row.
 	detail := map[string]interface{}{
-		"to_node_id":     targetID,
-		"to_hostname":    *target,
-		"from_node_id":   fromID,
-		"reason":         *reason,
-		"actor":          "skygate-cli",
-		"timestamp":      time.Now().UTC().Unix(),
+		"to_node_id":   targetID,
+		"to_hostname":  *target,
+		"from_node_id": fromID,
+		"reason":       *reason,
+		"actor":        "skygate-cli",
+		"timestamp":    time.Now().UTC().Unix(),
 	}
 	detailJSON, _ := json.Marshal(detail)
 	if _, err := tx.Exec(`
 		INSERT INTO cluster_audit (cluster_id, action, target_node_id, detail, result)
-		VALUES ($1, 'node_failover', $2, $3::jsonb, 'ok')
+		VALUES ($1, 'node_failover', $2, `+db.ActiveDialect().CastJSON("$3")+`, 'ok')
 	`, cluster.DefaultClusterID, targetID, string(detailJSON)); err != nil {
 		return fmt.Errorf("cluster failover: insert audit: %w", err)
 	}

@@ -192,8 +192,15 @@ func (s *Service) collectHAPageData(r *http.Request) *haPageData {
 	// TIMESTAMPTZ). Two separate queries + a merged sort +
 	// a top-20 trim is simpler than a CTE.
 	eventsByKey := map[string]haAuditEvent{} // "src:id" → event
+	// B291: the column is `created_at` (INTEGER unix seconds on BOTH backends;
+	// the PG migration writes EXTRACT(EPOCH FROM now())::bigint and the SQLite
+	// one strftime('%s','now')) and the actor column is `username` — audit_log
+	// has NO `unix_timestamp` and NO `actor` column in either schema. The old
+	// statement therefore answered `no such column: unix_timestamp` and the whole
+	// pre-B195 half of the union was silently missing from /admin/ha on BOTH
+	// backends.
 	if rows, err := s.dbc().QueryContext(r.Context(),
-		`SELECT id, unix_timestamp, actor, action, detail
+		`SELECT id, created_at, username, action, detail
 		   FROM audit_log
 		  WHERE action LIKE 'ha.%' OR action LIKE 'ha_chain.%'
 		  ORDER BY id DESC
@@ -210,21 +217,30 @@ func (s *Service) collectHAPageData(r *http.Request) *haPageData {
 		rows.Close()
 	}
 	if rows, err := s.dbc().QueryContext(r.Context(),
+		// B291: was `extract(epoch FROM created_at)::bigint` + `detail::text` +
+		// `detail->>'reason'` — all three PostgreSQL-only, so this query failed on
+		// SQLite and /admin/ha showed no cluster events at all (one of the two
+		// "empty page" symptoms). The timestamp is decoded through ParseDBTime and
+		// the JSON through the dialect helpers.
 		`SELECT id,
-		        extract(epoch FROM created_at)::bigint AS ts,
+		        created_at,
 		        actor,
 		        action,
-		        detail::text
+		        `+db.ActiveDialect().CastText("detail")+`
 		   FROM cluster_audit
 		  WHERE action IN ('node_health', 'failover_recommend', 'node_failover', 'node_drill', 'node_init', 'node_join', 'node_drain', 'node_leave', 'node_approve')
-		     OR detail->>'reason' LIKE 'ha.%'
+		     OR `+db.ActiveDialect().JSONField("detail", "reason")+` LIKE 'ha.%'
 		  ORDER BY id DESC
 		  LIMIT 40`); err == nil {
 		for rows.Next() {
 			var ev haAuditEvent
 			var id int64
-			if err := rows.Scan(&id, &ev.WhenUnix, &ev.Actor, &ev.Action, &ev.Detail); err != nil {
+			var createdRaw any
+			if err := rows.Scan(&id, &createdRaw, &ev.Actor, &ev.Action, &ev.Detail); err != nil {
 				continue
+			}
+			if ts, ok := db.ParseDBTime(createdRaw); ok {
+				ev.WhenUnix = ts.Unix()
 			}
 			ev.Source = "cluster_audit"
 			eventsByKey[fmt.Sprintf("cluster_audit:%d", id)] = ev
@@ -273,8 +289,7 @@ func (s *Service) collectHAPageData(r *http.Request) *haPageData {
 	// (db.FailoverClusterNode) does the same check
 	// server-side as a defense in depth.
 	if rows, err := s.dbc().Query(`
-		SELECT id, hostname, roles, state,
-		       COALESCE(extract(epoch FROM last_seen_at)::bigint, 0) AS last_seen_unix
+		SELECT id, hostname, roles, state, last_seen_at
 		FROM cluster_node
 		ORDER BY id ASC
 	`); err == nil {
@@ -282,9 +297,16 @@ func (s *Service) collectHAPageData(r *http.Request) *haPageData {
 		for rows.Next() {
 			var row haClusterNodeRow
 			var rolesArr db.StringArray
-			var lastSeenUnix int64
-			if err := rows.Scan(&row.ID, &row.Hostname, &rolesArr, &row.State, &lastSeenUnix); err != nil {
+			var lastSeenRaw any
+			if err := rows.Scan(&row.ID, &row.Hostname, &rolesArr, &row.State, &lastSeenRaw); err != nil {
 				continue
+			}
+			// B291: `COALESCE(extract(epoch FROM last_seen_at)::bigint, 0)` is
+			// PostgreSQL-only; ParseDBTime gives the same unix seconds for every
+			// shape SQLite can hold.
+			var lastSeenUnix int64
+			if ts, ok := db.ParseDBTime(lastSeenRaw); ok {
+				lastSeenUnix = ts.Unix()
 			}
 			row.RolesStr = "[" + strings.Join([]string(rolesArr), ", ") + "]" // display in the Roles cell
 			roleSet := map[string]bool{}

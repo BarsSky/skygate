@@ -58,6 +58,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"skygate/internal/db"
 )
 
 // randRead fills b with cryptographically-secure random
@@ -145,7 +147,8 @@ func IssueInvite(d *sql.DB, clusterID, role, targetHostname string, ttlHours int
 			issued_at, expires_at, signature, status
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
 	`, inviteID, clusterID, role, targetHostname,
-		now, expiresAt, base64.RawURLEncoding.EncodeToString(sig))
+		db.ActiveDialect().TimeValue(now), db.ActiveDialect().TimeValue(expiresAt),
+		base64.RawURLEncoding.EncodeToString(sig))
 	if err != nil {
 		return "", "", time.Time{}, fmt.Errorf("insert invite: %w", err)
 	}
@@ -189,10 +192,15 @@ func LookupInvite(d *sql.DB, inviteID string) (*InviteRow, error) {
 	`, inviteID)
 	out := &InviteRow{}
 	var usedByNode sql.NullString
-	var usedAtTime sql.NullTime
+	// B291: issued_at / expires_at / used_at are TIMESTAMPTZ on
+	// PostgreSQL and INTEGER (or a stored TEXT form) on SQLite, so
+	// they cannot be scanned into time.Time / sql.NullTime
+	// directly — decode whatever the driver returned through
+	// db.ParseDBTime.
+	var issuedRaw, expiresRaw, usedAtRaw any
 	if err := row.Scan(
 		&out.ID, &out.ClusterID, &out.Role, &out.TargetHostname,
-		&out.IssuedAt, &out.ExpiresAt, &usedAtTime, &usedByNode,
+		&issuedRaw, &expiresRaw, &usedAtRaw, &usedByNode,
 		&out.Signature, &out.Status,
 	); err != nil {
 		if err == sql.ErrNoRows {
@@ -200,9 +208,15 @@ func LookupInvite(d *sql.DB, inviteID string) (*InviteRow, error) {
 		}
 		return nil, err
 	}
-	if usedAtTime.Valid {
-		t := usedAtTime.Time
-		out.UsedAt = &t
+	if t, ok := db.ParseDBTime(issuedRaw); ok {
+		out.IssuedAt = t
+	}
+	if t, ok := db.ParseDBTime(expiresRaw); ok {
+		out.ExpiresAt = t
+	}
+	if t, ok := db.ParseDBTime(usedAtRaw); ok {
+		used := t
+		out.UsedAt = &used
 	}
 	if usedByNode.Valid {
 		out.UsedByNodeID = usedByNode.String

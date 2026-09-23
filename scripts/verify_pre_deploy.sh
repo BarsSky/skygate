@@ -5055,3 +5055,28 @@ run_check "B289" "the local DERP relay must reach the map, and a skip must name 
 # scripts/check_b290_oidc_ui_enablement.sh.
 run_check "B290" "OIDC must be enableable from the UI: /admin/oidc now shows and edits the EFFECTIVE configuration (a saved value wins over the env var, each field carries a ui/env/default source badge), saving applies it to the running provider through oidc.Service.ApplyConfig (lock-guarded, no restart — the old flash said restart skygate to apply), the page reports what the LIVE provider currently holds, the client_secret is encrypted at rest (SKYGATE_SECRET_KEY, enc:v1: marker, legacy plaintext rows still readable and a wrong key is a named error rather than a silently empty secret), a DB row with enabled=0 disables the provider at boot as well as live, disabled is expressed as an empty issuer so the routes stay mounted and can be re-enabled from the UI, the form validates the issuer/redirect URIs and refuses to enable OIDC without an issuer or a secret (keeping the stored secret when the field is left empty), the env emergency off-switch SKYGATE_OIDC_ENABLED is detected and explained, and every field carries RU+EN help naming what to put there and which headscale config key it must match. Contracts in scripts/check_b290_oidc_ui_enablement.sh." \
   'test -f scripts/check_b290_oidc_ui_enablement.sh && bash scripts/check_b290_oidc_ui_enablement.sh'
+
+# --- B291: the cluster/HA tree must work on SQLite ----------------------------
+# Live on the native `aro` host (SQLite), reported by the operator: the audit log
+# carried `cluster.discovery.error cluster_node:workpc error="insert discovered
+# node: SQL logic error: near \"['skygate-standby']\": syntax error"` every 5
+# minutes, and /admin/cluster + /admin/ha rendered empty. The whole cluster/HA
+# tree was PostgreSQL-shaped — `ARRAY['skygate-standby']::text[]`, `'[]'::jsonb`,
+# `substr(md5(random()::text), 1, 12)`, `NOW()`, `SELECT … FOR UPDATE`,
+# `'skygate' = ANY (roles)`, `roles || ARRAY['skygate']::text[]`,
+# `array_remove(roles, 'skygate')`, `array_to_string(roles, ',')`, `$N::jsonb`,
+# `detail->>'reason'`, `created_at > NOW() - INTERVAL '5 minutes'`,
+# `extract(epoch FROM …)::bigint` and `detail::text` — so cluster_node never
+# received a row, the elector's transitions and failover recommendations all
+# aborted, and the CLI `skygate cluster failover` could not promote anything. The
+# port routes every one of those through dialect helpers (internal/db/
+# cluster_sql_b291.go), moves role membership and role surgery into Go (exact
+# match — a LIKE would let "skygate" match "skygate-standby"), decodes every
+# timestamp shape SQLite can hold through db.ParseDBTime on both the write and
+# the read side (a bound time.Time is stored in Go's String() form, which
+# sql.NullTime refuses, which is why rows silently vanished from the pages), and
+# fixes a bug that was broken on BOTH backends: the /admin/ha event union read
+# `unix_timestamp` and `actor` from audit_log, columns that exist in neither
+# schema. 50 contracts in scripts/check_b291_cluster_sqlite.sh.
+run_check "B291" "the cluster/HA tree must work on SQLite: new dialect helpers (internal/db/cluster_sql_b291.go) own every PostgreSQL spelling the tree needed — NowExpr, NowMinusExpr, CastJSON, JSONField, CastTextArray, RandomHexExpr, ForUpdateExpr (PostgreSQL only; SQLite has no FOR UPDATE, and a write transaction already locks the database), TimeValue (bind RFC3339 on SQLite instead of the undecodable Go String() form), TextArrayLiteral + RolesContain/RolesAdd/RolesRemove and FindClusterPrimary/NodeRoles/SetNodeRoles; no PostgreSQL-only SQL remains outside comments anywhere in the cluster/HA tree (discovery, cluster bootstrap, node CRUD, invites, join, failover, drill, cluster_audit, elector, /admin/cluster, /admin/ha, the skygate cluster failover CLI); every timestamp is decoded through db.ParseDBTime on read and bound through DialectKind.TimeValue on write, so all three shapes SQLite can hold render; the pending-invite expiry filter and the elector's 5-minute failover-recommendation dedup run in Go (SQLite has no NOW()/INTERVAL and no jsonb ->>); the /admin/ha audit_log branch selects the real columns (created_at + username, not the non-existent unix_timestamp/actor); the CLI promotes through the shared role helpers so unrelated roles survive; and the regression tests run the real entry points against a migrated in-memory SQLite database (discovery idempotency, node lifecycle, invites, failover/drill role surgery, elector tick + dedup, both admin page collectors). Contracts in scripts/check_b291_cluster_sqlite.sh." \
+  'test -f scripts/check_b291_cluster_sqlite.sh && bash scripts/check_b291_cluster_sqlite.sh'

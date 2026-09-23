@@ -45,6 +45,14 @@ var dbTimeLayouts = []string{
 	"2006-01-02T15:04:05",
 	"2006-01-02 15:04",
 	"2006-01-02",
+	// Go's time.Time.String() form. B291 (2026-09-22): the modernc.org/sqlite
+	// driver stores a BOUND time.Time as exactly this string
+	// ("2026-09-23 03:29:58.2457633 +0000 UTC"), which none of the layouts above
+	// match — so every timestamp the cluster/HA writers had stored on SQLite was
+	// undecodable ("/admin/cluster shows no timestamps"). New code binds
+	// DialectKind.TimeValue, which stores RFC3339 on SQLite; this layout keeps the
+	// rows already written by the old code readable.
+	"2006-01-02 15:04:05.999999999 -0700 MST",
 }
 
 // ParseDBTime decodes a value returned by database/sql for a timestamp

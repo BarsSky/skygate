@@ -422,14 +422,27 @@ func EnsureDiscoveredNode(d *sql.DB, clusterID, hostname, tailscaleIP, actor str
 	if len(discID) > 32 {
 		discID = discID[:32]
 	}
+	// B291 (2026-09-22): the roles array was written with the PostgreSQL-only
+	// literal `ARRAY['skygate-standby']::text[]`, so on SQLite (the native `aro`
+	// host) every discovery INSERT failed with
+	//
+	//	insert discovered node: SQL logic error: near "['skygate-standby']": syntax error
+	//
+	// every five minutes and cluster_node never received a row — which is why
+	// /admin/cluster and /admin/ha were empty. The literal is now produced by
+	// db.TextArrayLiteral and cast per dialect (PG coerces it, SQLite stores it
+	// in the TEXT-affinity column the migration declares), and the timestamp is
+	// bound through db.DialectKind.TimeValue so it reads back on both.
+	dialect := db.ActiveDialect()
 	_, err := d.Exec(`
 		INSERT INTO cluster_node (
 			id, cluster_id, hostname, tailscale_ip, roles, state,
 			skygate_version, joined_at
-		) VALUES ($1, $2, $3, $4, ARRAY['skygate-standby']::text[], 'pending', $5, $6)
+		) VALUES ($1, $2, $3, $4, `+dialect.CastTextArray("$5")+`, 'pending', $6, $7)
 		ON CONFLICT (id) DO NOTHING
 	`, discID, clusterID, hostname, tailscaleIP,
-		"(discovered via Tailscale)", now)
+		db.TextArrayLiteral([]string{"skygate-standby"}),
+		"(discovered via Tailscale)", dialect.TimeValue(now))
 	if err != nil {
 		return fmt.Errorf("insert discovered node: %w", err)
 	}

@@ -17,18 +17,21 @@
 // What it does (in a single transaction):
 //
 //  1. SELECT the current primary from cluster_node
-//     (state=ready AND roles @> ARRAY['skygate']) — the
-//     only role check, since multiple nodes can have
-//     role=skygate-standby. If no current primary
-//     exists, the helper returns ErrNoPrimary.
+//     (state=ready whose roles contain 'skygate' —
+//     B291: evaluated in Go, since the PostgreSQL
+//     `roles @> ARRAY[...]` predicate does not exist on
+//     SQLite). If no current primary exists, the helper
+//     returns ErrNoPrimary.
 //  2. SELECT the target node by id; if it's not
 //     state=ready OR doesn't have role=skygate-standby,
 //     return ErrNotEligibleForFailover.
 //  3. UPDATE the target: state stays 'ready', but the
 //     'skygate' role is added. So the target's roles
-//     become ['skygate-standby', 'skygate'] (PostgreSQL
-//     array concatenation). The new primary has BOTH
-//     roles until the next manual cleanup.
+//     become ['skygate-standby', 'skygate'] (B291: the
+//     read-modify-write happens in Go, so other roles the
+//     operator set survive and both backends agree). The
+//     new primary has BOTH roles until the next manual
+//     cleanup.
 //  4. UPDATE the current primary: state='draining',
 //     the 'skygate' role is removed. Its roles become
 //     ['skygate-standby'] (or whatever it had before;
@@ -52,14 +55,17 @@ import (
 )
 
 // ErrNoPrimary is returned by FailoverClusterNode when
-// cluster_node has no row in state=ready with the
-// 'skygate' role. The operator can either (a) run a
-// health check to see why the primary is missing, or
-// (b) pick a different failover target (the current
-// scenario assumes the primary is failing — the elector's
-// failover_recommend row will have flagged the missing
-// primary).
-var ErrNoPrimary = errors.New("no current skygate primary in cluster_node (state=ready AND roles @> ARRAY['skygate'])")
+// cluster_node has no row in state=ready whose roles
+// contain the exact role 'skygate'. The operator can
+// either (a) run a health check to see why the primary is
+// missing, or (b) pick a different failover target (the
+// current scenario assumes the primary is failing — the
+// elector's failover_recommend row will have flagged the
+// missing primary).
+//
+// B291: the predicate is evaluated in Go (FindClusterPrimary) over both
+// backends, so the message names the ROLE, not a PostgreSQL predicate.
+var ErrNoPrimary = errors.New("no current skygate primary in cluster_node (state=ready with role=skygate)")
 
 // ErrNotEligibleForFailover is returned when the target
 // node is in the wrong state or doesn't have the
@@ -103,19 +109,12 @@ func FailoverClusterNode(d *sql.DB, targetID, actor, reason string) (fromID, toI
 	//    at once — which shouldn't happen but the LIMIT 1
 	//    makes the query well-defined).
 	var fromIDRow, fromHostRow string
-	err = tx.QueryRow(`
-		SELECT id, hostname
-		FROM cluster_node
-		WHERE state = 'ready'
-		  AND 'skygate' = ANY (roles)
-		ORDER BY id ASC
-		LIMIT 1
-	`).Scan(&fromIDRow, &fromHostRow)
-	if err == sql.ErrNoRows {
-		return "", "", ErrNoPrimary
-	}
+	// B291: `AND 'skygate' = ANY (roles)` is PostgreSQL-only and SQLite has no
+	// array type — FindClusterPrimary reads the `{a,b}` literal and tests the
+	// role in Go (see cluster_sql_b291.go).
+	fromIDRow, fromHostRow, err = FindClusterPrimary(tx)
 	if err != nil {
-		return "", "", fmt.Errorf("find current primary: %w", err)
+		return "", "", err
 	}
 
 	// 2. Verify the target is eligible (state=ready + role=skygate-standby).
@@ -156,14 +155,10 @@ func FailoverClusterNode(d *sql.DB, targetID, actor, reason string) (fromID, toI
 	//    will dedupe via the @> check + unnest logic in the
 	//    next statement. We use array_cat for clarity (the
 	//    Postgres native is `roles || ARRAY['skygate']`).
-	_, err = tx.Exec(`
-		UPDATE cluster_node
-		SET roles = ARRAY(
-			SELECT DISTINCT unnest(roles || ARRAY['skygate']::text[])
-		)
-		WHERE id = $1
-	`, targetID)
-	if err != nil {
+	// B291: was `SET roles = ARRAY(SELECT DISTINCT unnest(roles ||
+	// ARRAY['skygate']::text[]))` — PostgreSQL-only. The new roles are computed in
+	// Go and written as a dialect-native literal.
+	if err := SetNodeRoles(tx, targetID, RolesAdd([]string(toRolesRow), "skygate")); err != nil {
 		return "", "", fmt.Errorf("promote target: %w", err)
 	}
 
@@ -172,13 +167,17 @@ func FailoverClusterNode(d *sql.DB, targetID, actor, reason string) (fromID, toI
 	//    to keep all other roles intact (e.g. a node that
 	//    was both skygate and skygate-standby before
 	//    remains a skygate-standby after demotion).
-	_, err = tx.Exec(`
-		UPDATE cluster_node
-		SET state = 'draining',
-		    roles = array_remove(roles, 'skygate')
-		WHERE id = $1
-	`, fromIDRow)
-	if err != nil {
+	// B291: `roles = array_remove(roles, 'skygate')` was PostgreSQL-only. Read the
+	// current roles, drop the one in Go, and write the literal back — the other
+	// roles (a node that was both skygate and skygate-standby) survive.
+	fromRoles, rolesErr := NodeRoles(tx, fromIDRow)
+	if rolesErr != nil {
+		return "", "", fmt.Errorf("read old primary roles: %w", rolesErr)
+	}
+	if err = SetNodeRoles(tx, fromIDRow, RolesRemove(fromRoles, "skygate")); err != nil {
+		return "", "", fmt.Errorf("demote old primary: %w", err)
+	}
+	if _, err = tx.Exec(`UPDATE cluster_node SET state = 'draining' WHERE id = $1`, fromIDRow); err != nil {
 		return "", "", fmt.Errorf("demote old primary: %w", err)
 	}
 

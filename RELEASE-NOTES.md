@@ -12,6 +12,142 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.55 — the cluster/HA tree speaks SQLite (B291)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.54` → this tag · **Compatibility:** none —
+no schema change, no migration. Only SQL text, Go-side predicates and
+timestamp decoding changed; the PostgreSQL behaviour is unchanged (every
+statement was verified against both dialects before it was rewritten).
+
+Operator report (native host `aro`, SQLite):
+
+> да давай
+
+— i.e. go ahead with the deferred cluster block: the audit log carries a line
+every 5 minutes and `/admin/cluster` + `/admin/ha` render empty.
+
+```
+cluster.discovery.error  cluster_node:workpc  error="insert discovered node:
+                         SQL logic error: near \"['skygate-standby']\": syntax error"
+```
+
+137 of those rows ≈ 11 hours of a 5-minute tick, and the two cluster pages
+rendered with no nodes, no invites and no events.
+
+### Root cause
+
+**The whole cluster/HA feature was written for PostgreSQL and was therefore dead
+on SQLite**, which is what the native install uses
+(`/var/lib/skygate/skygate.db`). Every write path carried a PostgreSQL-only
+spelling, and `cluster_node` never received a single row:
+
+| PostgreSQL-only SQL | where | SQLite answer |
+|---|---|---|
+| `ARRAY['skygate-standby']::text[]` | discovery | `near "[…]": syntax error` (the live line) |
+| `'[]'::jsonb`, `$N::jsonb` | cluster bootstrap, cluster_audit, elector | `near "::": syntax error` |
+| `'node-' \|\| substr(md5(random()::text),1,12)` | node ids | `no such function: md5` |
+| `NOW()` | node CRUD, join, heartbeat | `no such function: NOW` |
+| `SELECT … FOR UPDATE` | node CRUD (×4) | `near "FOR": syntax error` |
+| `'skygate' = ANY (roles)` | failover, drill, CLI | `no such function: ANY` |
+| `roles \|\| ARRAY['skygate']::text[]`, `array_remove(…)`, `array_to_string(…)` | failover, drill, CLI, drain | `no such function` |
+| `detail->>'reason'`, `created_at > NOW() - INTERVAL '5 minutes'` | elector dedup, `/admin/ha` | `unrecognised token: ">"` |
+| `extract(epoch FROM …)::bigint`, `detail::text` | `/admin/ha`, `/admin/cluster` | `unrecognised token: ":"` |
+
+The read side leaked the same way, which is why the pages looked **empty**
+rather than broken: `cluster_invite … AND expires_at > NOW()`,
+`extract(epoch FROM created_at)::bigint`, `detail::text`, and
+`joined_at`/`last_seen_at` scanned straight into `sql.NullTime` — SQLite stores a
+bound `time.Time` in Go's `String()` form, which `sql.NullTime` refuses, so the
+row was silently dropped from the page.
+
+One bug was broken on **both** backends: the `/admin/ha` event union selected
+`unix_timestamp` and `actor` from `audit_log`. Neither column exists (the table
+has `created_at` and `username`), so the whole pre-B195 half of that history was
+silently missing — on PostgreSQL too.
+
+### What it does now
+
+* **`internal/db/cluster_sql_b291.go`** owns every dialect spelling the tree
+  needs: `DialectKind.NowExpr`, `NowMinusExpr`, `CastJSON`, `JSONField`,
+  `CastTextArray`, `RandomHexExpr`, `ForUpdateExpr` (PostgreSQL only — SQLite has
+  no `FOR UPDATE`, and a SQLite write transaction already takes a database-level
+  lock) and `TimeValue` (binds RFC3339 on SQLite instead of the undecodable
+  `String()` form, `time.Time` on PostgreSQL), plus `TextArrayLiteral` and the
+  exact-match role helpers.
+* **Role surgery happens in Go** — `RolesContain` / `RolesAdd` / `RolesRemove` /
+  `FindClusterPrimary` / `NodeRoles` / `SetNodeRoles`. Exact matching matters:
+  a SQL-side `LIKE '%skygate%'` also matches `skygate-standby` and would promote
+  the node that is already the standby. Unrelated roles the operator set are
+  preserved (the old PostgreSQL statement replaced the whole array).
+* **Every timestamp is decoded tolerantly** through `db.ParseDBTime` on read and
+  bound through `DialectKind.TimeValue` on write, so all three shapes a SQLite
+  column can hold (unix seconds, `CURRENT_TIMESTAMP` text, and the legacy Go
+  `String()` form) render — and a new layout in `dbTimeLayouts` keeps the rows
+  already written by the pre-B291 code readable.
+* **The two SQL-side time predicates moved into Go**: the pending-invite expiry
+  filter and the elector's 5-minute `failover_recommend` dedup window (no
+  `NOW()`, no `INTERVAL`, no `jsonb ->>`).
+* **`/admin/ha` reads real columns** (`created_at`, `username`) — the legacy
+  `ha.*` / `ha_chain.*` history is visible again on both backends.
+* **`skygate cluster failover` (CLI) goes through the same helpers**, so a native
+  install can promote a standby from the console.
+
+Files: `internal/db/cluster_sql_b291.go` (new), `internal/db/cluster_failover.go`,
+`internal/db/cluster_drill.go`, `internal/db/cluster_audit.go`,
+`internal/db/cluster.go`, `internal/db/db_time.go`, `internal/cluster/discovery.go`,
+`internal/cluster/cluster.go`, `internal/cluster/node.go`, `internal/cluster/join.go`,
+`internal/cluster/invite.go`, `internal/elector/elector.go`,
+`internal/feature/admin/cluster.go`, `internal/feature/admin/ha.go`,
+`cmd/skygate/cluster.go`.
+
+### Verification
+
+50 contracts in `scripts/check_b291_cluster_sqlite.sh` — including a
+comment-stripped sweep proving **no** PostgreSQL-only SQL is left anywhere in the
+cluster/HA tree (the port's own comments quote the old statements on purpose, so
+a naive grep always "finds" them).
+
+Behavioural regression tests run the **real entry points against a real
+(migrated, in-memory) SQLite database**, because "it compiles" cannot stand in
+for "the statement parses":
+
+* `internal/cluster/cluster_sqlite_b291_test.go` — discovery insert (the live
+  error) + idempotency, the node lifecycle (generated ids, role literals,
+  approve/drain/rejoin/remove), and the promote/demote role surgery plus the
+  drill, asserting the roles and the audit trail.
+* `internal/elector/elector_sqlite_b291_test.go` — a full elector tick: a stale
+  ready primary must be flipped to `failed` with a `node_health` audit row, the
+  next pass must write exactly one `failover_recommend`, and the third must not
+  duplicate it (the dedup reads its own row back through the dialect helpers).
+* `internal/feature/admin/cluster_ha_sqlite_b291_test.go` — both page collectors:
+  every section populated, both timestamp shapes rendered (never the placeholder
+  `—`), the expired invite filtered, and the event union carrying a source from
+  **both** `audit_log` and `cluster_audit`.
+* `internal/db/cluster_sql_b291_test.go` — the dialect fragments, the roles
+  literal round-trip, and the ported statements executed on SQLite.
+
+### How to verify on the host (after `/admin/update` to v1.5.55)
+
+```bash
+# 1. The recurring error must be gone (allow one discovery interval to pass):
+journalctl -u skygate --since '-20 min' | grep -c 'cluster.discovery.error'   # → 0
+
+# 2. cluster_node must actually hold rows now:
+sqlite3 /var/lib/skygate/skygate.db "SELECT hostname, state, roles, last_seen_at FROM cluster_node;"
+
+# 3. The two pages: /admin/cluster shows the nodes + invites + last-20 events,
+#    /admin/ha shows the node table (with the promote button eligibility) and
+#    the events union.
+```
+
+**Known remaining dialect leaks of the same class (B292 candidates, not part of
+this block):** `internal/feature/admin/derp_relays_auto.go` writes the
+auto-migrate marker with `EXTRACT(epoch FROM now())::bigint` (so the marker never
+lands and the migration re-runs every boot), `internal/certsync/certsync.go` and
+`internal/deploy/ha.go` insert audit rows with `now()`, and
+`internal/feature/admin/certificates.go` / `deploy.go` read audit timestamps with
+`EXTRACT(EPOCH FROM created_at)::bigint`.
+
 ## v1.5.54 — OIDC is configured from the UI, and it applies at once (B290)
 
 **Date:** 2026-09-22 · **Base:** `v1.5.53` → this tag · **Compatibility:** none —

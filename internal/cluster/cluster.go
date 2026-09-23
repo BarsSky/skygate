@@ -16,6 +16,8 @@ package cluster
 import (
 	"database/sql"
 	"errors"
+
+	"skygate/internal/db"
 )
 
 // DefaultClusterID is the single cluster skygate ships
@@ -71,9 +73,13 @@ func EnsureCluster(d *sql.DB, id, name string) error {
 	if name == "" {
 		name = id
 	}
+	// B291 (2026-09-22): `'[]'::jsonb` is a PostgreSQL literal — SQLite has no
+	// "::" token, so EnsureCluster failed there and the whole bootstrap path (and
+	// with it every cluster_node INSERT, which FKs to cluster.id) was dead on the
+	// native `aro` host.
 	_, err := d.Exec(`
 		INSERT INTO cluster (id, name, chain)
-		VALUES ($1, $2, '[]'::jsonb)
+		VALUES ($1, $2, `+db.ActiveDialect().CastJSON("'[]'")+`)
 		ON CONFLICT (id) DO NOTHING
 	`, id, name)
 	return err

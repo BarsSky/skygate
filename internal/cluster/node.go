@@ -112,7 +112,7 @@ func AddNode(d *sql.DB, clusterID, hostname, tailscaleIP string, roles []string,
 			id, cluster_id, hostname, tailscale_ip, roles, state,
 			skygate_version, joined_at, last_seen_at
 		) VALUES (
-			'node-' || substr(md5(random()::text), 1, 12),
+			'node-' || `+db.ActiveDialect().RandomHexExpr(12)+`,
 			$1, $2, $3, $4, 'pending',
 			$5, $6, $6
 		)
@@ -163,7 +163,7 @@ func RemoveNode(d *sql.DB, clusterID, hostname string) error {
 	}()
 	var nodeID, lastState, rolesText string
 	if scanErr := tx.QueryRow(`
-		SELECT id, COALESCE(state, ''), COALESCE(array_to_string(roles, ','), '')
+		SELECT id, COALESCE(state, ''), COALESCE(roles, '')
 		  FROM cluster_node
 		 WHERE cluster_id = $1 AND hostname = $2
 	`, clusterID, hostname).Scan(&nodeID, &lastState, &rolesText); scanErr != nil {
@@ -173,6 +173,7 @@ func RemoveNode(d *sql.DB, clusterID, hostname string) error {
 		_ = tx.Rollback()
 		return nil
 	}
+	rolesText = rolesListText(rolesText)
 	// Best-effort audit. If the audit INSERT fails,
 	// we still proceed with the DELETE (the operator
 	// clicked Remove; failing the whole op would be
@@ -240,10 +241,9 @@ func DrainNode(d *sql.DB, clusterID, hostname, actor, reason string) error {
 	}()
 	var nodeID, prevState, rolesText string
 	if scanErr := tx.QueryRow(`
-		SELECT id, COALESCE(state, ''), COALESCE(array_to_string(roles, ','), '')
+		SELECT id, COALESCE(state, ''), COALESCE(roles, '')
 		  FROM cluster_node
-		 WHERE cluster_id = $1 AND hostname = $2
-		 FOR UPDATE
+		 WHERE cluster_id = $1 AND hostname = $2`+db.ActiveDialect().ForUpdateExpr()+`
 	`, clusterID, hostname).Scan(&nodeID, &prevState, &rolesText); scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			_ = tx.Rollback()
@@ -262,6 +262,9 @@ func DrainNode(d *sql.DB, clusterID, hostname, actor, reason string) error {
 	`, NodeStateDraining, nodeID); execErr != nil {
 		return fmt.Errorf("update state: %w", execErr)
 	}
+	// B291: the audit detail wants the comma-joined role list the old
+	// `array_to_string(roles, ',')` produced; build it in Go (see rolesListText).
+	rolesText = rolesListText(rolesText)
 	// Audit. detail.reason is optional — if the
 	// operator didn't type anything, we leave it out
 	// of the JSON rather than serialise an empty
@@ -311,10 +314,9 @@ func DrainAndRemoveNode(d *sql.DB, clusterID, hostname, actor, reason string) er
 	}()
 	var nodeID, prevState, rolesText string
 	if scanErr := tx.QueryRow(`
-		SELECT id, COALESCE(state, ''), COALESCE(array_to_string(roles, ','), '')
+		SELECT id, COALESCE(state, ''), COALESCE(roles, '')
 		  FROM cluster_node
-		 WHERE cluster_id = $1 AND hostname = $2
-		 FOR UPDATE
+		 WHERE cluster_id = $1 AND hostname = $2`+db.ActiveDialect().ForUpdateExpr()+`
 	`, clusterID, hostname).Scan(&nodeID, &prevState, &rolesText); scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			_ = tx.Rollback()
@@ -327,6 +329,9 @@ func DrainAndRemoveNode(d *sql.DB, clusterID, hostname, actor, reason string) er
 	// the button twice), the UPDATE is a no-op and we
 	// still emit the audit row to mark the "leave"
 	// event with a fresh timestamp.
+	// B291: both audits below want the comma-joined role list the old
+	// `array_to_string(roles, ',')` produced; build it in Go once.
+	rolesText = rolesListText(rolesText)
 	if prevState != NodeStateDraining {
 		if _, execErr := tx.Exec(`
 			UPDATE cluster_node SET state = $1
@@ -405,8 +410,7 @@ func ApproveNode(d *sql.DB, clusterID, hostname, actor string) error {
 	if scanErr := tx.QueryRow(`
 		SELECT id, COALESCE(state, '')
 		  FROM cluster_node
-		 WHERE cluster_id = $1 AND hostname = $2
-		 FOR UPDATE
+		 WHERE cluster_id = $1 AND hostname = $2`+db.ActiveDialect().ForUpdateExpr()+`
 	`, clusterID, hostname).Scan(&nodeID, &prevState); scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			_ = tx.Rollback()
@@ -428,9 +432,9 @@ func ApproveNode(d *sql.DB, clusterID, hostname, actor string) error {
 		return fmt.Errorf("cannot approve node in state %q (only state=pending can be approved; for failed/draining, re-run skygate init on the box)", prevState)
 	}
 	if _, execErr := tx.Exec(`
-		UPDATE cluster_node SET state = $1, last_seen_at = NOW()
+		UPDATE cluster_node SET state = $1, last_seen_at = $3
 		 WHERE id = $2
-	`, NodeStateReady, nodeID); execErr != nil {
+	`, NodeStateReady, nodeID, db.ActiveDialect().TimeValue(time.Now().UTC())); execErr != nil {
 		return fmt.Errorf("update state: %w", execErr)
 	}
 	if _, auditErr := db.InsertClusterAudit(tx, clusterID, db.NodeApprove, nodeID, actor,
@@ -496,8 +500,7 @@ func RejoinNode(d *sql.DB, clusterID, hostname, actor string) error {
 	if scanErr := tx.QueryRow(`
 		SELECT id, COALESCE(state, '')
 		  FROM cluster_node
-		 WHERE cluster_id = $1 AND hostname = $2
-		 FOR UPDATE
+		 WHERE cluster_id = $1 AND hostname = $2`+db.ActiveDialect().ForUpdateExpr()+`
 	`, clusterID, hostname).Scan(&nodeID, &prevState); scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			_ = tx.Rollback()
@@ -520,9 +523,9 @@ func RejoinNode(d *sql.DB, clusterID, hostname, actor string) error {
 		return fmt.Errorf("cannot rejoin node in state %q (use ApproveNode for pending nodes; RejoinNode is for draining/failed)", prevState)
 	}
 	if _, execErr := tx.Exec(`
-		UPDATE cluster_node SET state = $1, last_seen_at = NOW()
+		UPDATE cluster_node SET state = $1, last_seen_at = $3
 		 WHERE id = $2
-	`, NodeStateReady, nodeID); execErr != nil {
+	`, NodeStateReady, nodeID, db.ActiveDialect().TimeValue(time.Now().UTC())); execErr != nil {
 		return fmt.Errorf("update state: %w", execErr)
 	}
 	if _, auditErr := db.InsertClusterAudit(tx, clusterID, db.NodeRejoin, nodeID, actor,
@@ -589,7 +592,7 @@ func UpsertNode(d *sql.DB, clusterID, hostname, tailscaleIP string, roles []stri
 			id, cluster_id, hostname, tailscale_ip, roles, state,
 			skygate_version, joined_at, last_seen_at
 		) VALUES (
-			'node-' || substr(md5(random()::text), 1, 12),
+			'node-' || `+db.ActiveDialect().RandomHexExpr(12)+`,
 			$1, $2, $3, $4, 'ready',
 			$5, $6, $6
 		)
@@ -606,6 +609,19 @@ func UpsertNode(d *sql.DB, clusterID, hostname, tailscaleIP string, roles []stri
 	return id, nil
 }
 
+// rolesListText converts the raw `roles` column value into the
+// comma-separated form the audit details carry.
+//
+// B291: the audit details used to get that string straight from
+// PostgreSQL's `array_to_string(roles, ',')`, which does not exist on
+// SQLite. The column is the `{a,b}` literal on both backends (that is
+// how it is written now and what the read side already parses), so the
+// conversion happens here and the audit JSON keeps exactly the same
+// shape on PostgreSQL as before.
+func rolesListText(raw string) string {
+	return strings.Join(parsePGTextArray(raw), ",")
+}
+
 // scanNode is the shared scanner for both LookupNode and
 // any future ListNodes helper. Accepts either *sql.Row or
 // *sql.Rows (via the Scanner interface) so the same code
@@ -618,11 +634,17 @@ func scanNode(r rowScanner) (*Node, error) {
 	var n Node
 	var rolesStr string
 	var tailscaleIP, skygateVer string
-	var joinedAt, lastSeenAt sql.NullTime
+	// B291: joined_at / last_seen_at are TIMESTAMPTZ on
+	// PostgreSQL and INTEGER (or a stored TEXT timestamp)
+	// on SQLite, so read them as `any` and normalise via
+	// db.ParseDBTime — scanning straight into time.Time
+	// fails on SQLite with "unsupported Scan, storing
+	// driver.Value type string into type *time.Time".
+	var joinedRaw, lastSeenRaw any
 	if err := r.Scan(
 		&n.ID, &n.ClusterID, &n.Hostname, &tailscaleIP,
 		&rolesStr, &n.State, &skygateVer,
-		&joinedAt, &lastSeenAt,
+		&joinedRaw, &lastSeenRaw,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNodeNotFound
@@ -631,11 +653,11 @@ func scanNode(r rowScanner) (*Node, error) {
 	}
 	n.TailscaleIP = tailscaleIP
 	n.SkygateVer = skygateVer
-	if joinedAt.Valid {
-		n.JoinedAt = joinedAt.Time
+	if t, ok := db.ParseDBTime(joinedRaw); ok {
+		n.JoinedAt = t
 	}
-	if lastSeenAt.Valid {
-		n.LastSeenAt = lastSeenAt.Time
+	if t, ok := db.ParseDBTime(lastSeenRaw); ok {
+		n.LastSeenAt = t
 	}
 	n.Roles = parsePGTextArray(rolesStr)
 	return &n, nil

@@ -218,11 +218,15 @@ func InsertClusterAudit(exec auditExec, clusterID string, action ClusterAuditAct
 	targetNorm := strings.TrimSpace(targetNodeID)
 	actorNorm := strings.TrimSpace(actor)
 	var id int64
+	// B291: `$5::jsonb` is a PostgreSQL cast; SQLite has no "::" token at all
+	// (`near "::": syntax error` — the whole cluster_audit write path was dead
+	// there). The dialect renders the cast, and RETURNING id works on both
+	// (SQLite >= 3.35).
 	err := exec.QueryRow(`
 		INSERT INTO cluster_audit (
 			cluster_id, action, target_node_id, actor, detail
 		) VALUES (
-			$1, $2, NULLIF($3, ''), $4, $5::jsonb
+			$1, $2, NULLIF($3, ''), $4, `+ActiveDialect().CastJSON("$5")+`
 		)
 		RETURNING id
 	`, clusterID, string(action), targetNorm, actorNorm, detailNorm).Scan(&id)
