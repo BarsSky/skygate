@@ -12,6 +12,105 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.60 — a failed policy read must not become a blind write (B295)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.59` → this tag · **Compatibility:** none —
+no schema change, no migration.
+
+Diagnosis from the host, which the operator supplied:
+
+```console
+$ sudo ss -ltnp | grep -E ':(8080|8081|8082|9090)'
+LISTEN 127.0.0.1:8081  users:(("headscale",pid=117261,fd=12))
+LISTEN 127.0.0.1:9090  users:(("headscale",pid=117261,fd=13))
+LISTEN *:8082          users:(("skygate",pid=117205,fd=5))
+$ sudo systemctl is-active headscale
+active
+$ grep listen_addr /etc/headscale/config.yaml   → 127.0.0.1:8081
+$ grep HEADSCALE_URL /etc/skygate/skygate.env   → http://127.0.0.1:8081
+```
+
+**headscale is up and listening on exactly the address skygate is configured
+with.** So the `connect: connection refused` on the page was **transient** — and
+the old code made it permanent:
+
+```
+acl-drift: cannot read the live policy to decide whether a re-apply is needed
+(…) — applying unconditionally
+```
+
+On a `policy.mode: file` host a policy write means `systemctl restart headscale`
+(0.29 re-reads the policy file only at startup). Answering a failed read with a
+write therefore answers a restart with **another restart**: the observation fed the
+outage, the page could never converge, and every prefix stayed «нет маршрута» while
+the assignment table looked frozen.
+
+(The `api-FAIL` in the same terminal session is not evidence of an outage: an
+interactive root shell does not have `HEADSCALE_API_KEY` exported, so `curl -sf`
+sees a 401. Use the probe below, which reads the env file.)
+
+### What it does now
+
+* **A transient read is retried.** `connection refused` / `actively refused` /
+  `no connection could be made` / `connectex` / i/o timeout / `deadline exceeded` /
+  `timeout` / EOF — in POSIX **and** Windows spellings — is retried twice with a
+  bounded, injectable delay before any fallback. An **HTTP answer** (401/404/500) is
+  deliberately **not** retried: the daemon is demonstrably up, and the policy-file /
+  CLI rungs are the interesting part.
+* **A failed read no longer means a blind write.** The decision comes from the last
+  **applied snapshot** in `acl_snapshots` — the document skygate itself wrote, i.e.
+  what headscale was serving:
+  * generated == snapshot → **no write, no restart** (logged: "nothing to write, so
+    headscale is not restarted");
+  * generated != snapshot → the rules really changed → write;
+  * no snapshot (fresh install) or an unparseable one → the old blind apply
+    survives, but the log now says the decision was blind.
+* **The page stops lying in both directions.** `/admin/exit-nodes` reports
+  «в синхроне» from that snapshot and **names the source**
+  («compared with the last APPLIED snapshot vN (headscale did not answer)») instead
+  of «состояние политики неизвестно»; a read failure with no usable snapshot stays a
+  real error.
+
+Files: `internal/headscale/acl.go` (retry + transient test),
+`internal/headscale/policy_snapshot_b295.go` (new: the verdict),
+`internal/feature/exit_rules/sync.go` (`decideWithoutLivePolicy`),
+`internal/feature/admin/exit_nodes.go` (+`PolicyVia`),
+`internal/handlers/templates/admin/exit_nodes.html`.
+
+### Verification
+
+19 contracts in `scripts/check_b295_no_blind_policy_write.sh` +
+`internal/headscale/policy_snapshot_b295_test.go` (identical / semantically equal /
+differing / absent / unparseable snapshots; the transient-vs-HTTP retry decision;
+the retry delay is injectable so the test is fast) +
+`internal/feature/admin/exit_nodes_b295_test.go`.
+
+### What to do on `aro`
+
+```bash
+# 1. Install v1.5.60 (a native host updates ONLY through /admin/update):
+curl -s http://127.0.0.1:8082/healthz | grep -o '"build":"[^"]*"'   # → v1.5.60+…
+#    …and if this says v1.5.61+ in an hour, so be it — just make sure it is not v1.5.57.
+
+# 2. A correct API probe (the previous one lacked the key, so api-FAIL proved nothing):
+set -a; . /etc/skygate/skygate.env; set +a
+curl -s -o /dev/null -w 'policy API: %{http_code}\n' \
+     -H "Authorization: Bearer $HEADSCALE_API_KEY" "$HEADSCALE_URL/api/v1/nodes"
+#    → 404/200 means the API answers; 401 means the key in the env file is stale;
+#      connection refused means headscale really is down at that instant.
+
+# 3. Was headscale restarted by skygate? (the loop this release removes)
+systemctl show headscale -p NRestarts -p ActiveEnterTimestamp
+journalctl -u headscale --since '-2 hours' | grep -Ei 'Starting|Stopped' | tail -20
+tail -5 /var/lib/skygate/update/policy-apply.log
+
+# 4. Then /admin/exit-nodes: the card must say either «в синхроне» (with the source)
+#    or name the real read failure — and no longer restart headscale every pass.
+```
+
+If `NRestarts` is large and the apply log shows `ok`/`failed` entries every ~5
+minutes, that is exactly the B295 loop — and this release is what stops it.
+
 ## v1.5.59 — reading headscale must work without docker, and «нет» must mean «нет» (B294)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.58` → this tag · **Compatibility:** none —

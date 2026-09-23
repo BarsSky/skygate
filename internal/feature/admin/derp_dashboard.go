@@ -353,6 +353,27 @@ func isDerpMapURL(rawURL string) bool {
 	return true
 }
 
+// derpProbeTarget is one ADDRESS the reachability guard may dial plus the NAME
+// to present in TLS SNI (always the relay row's public hostname).
+//
+// B289.1 (2026-09-23) — why the two are separate. Live `skygate-host`: the map
+// endpoint still answered `{"Regions":{}}` although `SKYGATE_DERP_PROBE_HOST`
+// was set to the host's LAN address. The guard tried the right address and derper
+// still refused the handshake:
+//
+//	http: TLS handshake error from 192.168.13.69:56152: cert mismatch with hostname: ""
+//	http: TLS handshake error from 192.168.13.69:56136: cert mismatch with hostname: "192.168.13.69"
+//
+// `derper --certmode=manual` resolves the certificate BY SNI, and Go's TLS client
+// sends NO SNI for an IP literal (`hostnameInSNI` strips addresses). Passing the
+// candidate address as `ServerName` therefore guarantees a failed handshake for
+// every IP candidate — i.e. the LAN-IP fallback B289 added could never work in
+// the one situation it was written for. Dial the address, speak the hostname.
+type derpProbeTarget struct {
+	Addr string // where the TCP connection goes (name or literal address)
+	SNI  string // the public hostname the certificate is issued for
+}
+
 // derpNodeStatus is the per-node reachability probe result used by
 // the derpmap endpoint to decide whether a node is worth
 // publishing. B265: the live VM had TWO enabled bundled rows for
@@ -378,12 +399,14 @@ func derpNodeKey(host string, port int) string {
 // assert "something speaks TLS here", and the operator's own derper
 // uses a manual cert whose CN we don't have to trust for a liveness
 // check). No data is read from the connection.
-func probeDERPNodeReachable(host string, port int, timeout time.Duration) derpNodeStatus {
-	addr := derpNodeKey(host, port)
+//
+// The address and the SNI are separate; see derpProbeTarget.
+func probeDERPNodeReachable(t derpProbeTarget, port int, timeout time.Duration) derpNodeStatus {
+	addr := derpNodeKey(t.Addr, port)
 	d := &net.Dialer{Timeout: timeout}
 	conn, err := tls.DialWithDialer(d, "tcp", addr, &tls.Config{
 		InsecureSkipVerify: true, // liveness only — no data exchanged
-		ServerName:         host,
+		ServerName:         t.SNI, // the NAME, not the address (B289.1)
 		MinVersion:         tls.VersionTLS12,
 	})
 	if err != nil {

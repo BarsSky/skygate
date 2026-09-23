@@ -55,6 +55,33 @@ func (c *Client) GetACL() (string, error) {
 
 	var p ACLPolicy
 	err := c.do("GET", "/api/v1/policy", nil, &p)
+	if err != nil && isTransientReadError(err) {
+		// B295 (2026-09-23): retry a TRANSIENT failure before falling back.
+		//
+		// WHY: on a `policy.mode: file` host every policy apply RESTARTS headscale
+		// (0.29 re-reads the file only at startup), so a read that lands in the
+		// restart window answers `connect: connection refused` although the daemon
+		// is perfectly healthy one second later. Live on `aro` that turned into
+		// «состояние политики неизвестно» plus «никто не объявляет: 19» on the
+		// prefix page — and, worse, into an UNCONDITIONAL re-apply (see
+		// exit_rules.applyACLIfDriftedMode), i.e. another write and restart: the
+		// observation was feeding the outage.
+		//
+		// Two short retries cover the window without making a genuinely dead
+		// headscale wait long: the file/CLI fallbacks still run afterwards.
+		for attempt := 1; attempt <= aclReadRetries; attempt++ {
+			time.Sleep(aclReadRetryDelay)
+			if rerr := c.do("GET", "/api/v1/policy", nil, &p); rerr == nil {
+				err = nil
+				break
+			} else {
+				err = rerr
+				if !isTransientReadError(rerr) {
+					break
+				}
+			}
+		}
+	}
 	if err == nil {
 		// Resolve which field wins: Policy (current shape,
 		// object or stringified) takes precedence over Data
@@ -209,6 +236,46 @@ func ACLReadHintFor(c *Client, err error) string {
 		base = c.BaseURL
 	}
 	return aclReadHint(base, err)
+}
+
+// aclReadRetries / aclReadRetryDelay bound the retry of a transient read failure
+// (B295). Package-level so tests can shorten them to zero.
+var (
+	aclReadRetries    = 2
+	aclReadRetryDelay = 1200 * time.Millisecond
+)
+
+// isTransientReadError reports whether a failed policy read is worth retrying:
+// the daemon is restarting, not misconfigured. Uses the same spellings as
+// aclReadHint (POSIX + Windows).
+func isTransientReadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// A real HTTP answer (401/500/404) means the daemon is UP — retrying cannot
+	// help, and the caller's file/CLI fallbacks are the interesting part.
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return false
+	}
+	msg := err.Error()
+	for _, needle := range []string{
+		"connection refused",
+		"actively refused",
+		"no connection could be made",
+		"connectex",
+		"i/o timeout",
+		"connection reset by peer",
+		"connection timed out",
+		"deadline exceeded",
+		"timeout", // a hang then success is exactly the restart/GC window class
+		"EOF",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // aclReadHint turns an unreachable-API error into the operator's next step.

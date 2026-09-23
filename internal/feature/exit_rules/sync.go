@@ -130,6 +130,24 @@ func (s *Service) periodicDriftCheck() {
 		"periodic drift check (the assignment table did not move)", false)
 }
 
+// decideWithoutLivePolicy answers "should we write the policy?" from the last
+// APPLIED snapshot in acl_snapshots when headscale cannot be read (B295).
+//
+// The snapshot is what skygate itself last wrote, so comparing the freshly
+// generated document with it is the same question the live read would have
+// answered — and it needs no API, no restart and no guess.
+func (s *Service) decideWithoutLivePolicy(generated string) headscale.SnapshotVerdict {
+	version, verr := db.LastAppliedACLVersion(s.dbc())
+	if verr != nil || version <= 0 {
+		return headscale.CompareWithSnapshot(generated, 0, "")
+	}
+	snapshot, serr := db.GetACLConfig(s.dbc(), version)
+	if serr != nil {
+		return headscale.CompareWithSnapshot(generated, version, "")
+	}
+	return headscale.CompareWithSnapshot(generated, version, snapshot)
+}
+
 // applyACLAfterOwnershipChange regenerates the policy and pushes it when (and only
 // when) headscale is actually serving a different policy than the one the current
 // ownership table implies.
@@ -210,14 +228,24 @@ func (s *Service) applyACLIfDriftedMode(actor, detail string, logNoop bool) acl.
 	s.HS.InvalidateCache()
 	live, err := s.HS.GetACL()
 	if err != nil {
-		log.Printf("acl-drift: cannot read the live policy to decide whether a re-apply is needed (%v) — applying unconditionally", err)
+		// B295: do NOT write blind. A write on a `policy.mode: file` host restarts
+		// headscale (`systemctl restart`), i.e. answering a read failure with a
+		// restart is how the pre-B295 code turned a one-second restart window into a
+		// permanent «состояние политики неизвестно» on the page. The last
+		// successfully applied snapshot is in the database, so the same question can
+		// be answered without touching the API.
+		verdict := s.decideWithoutLivePolicy(gen)
+		log.Printf("acl-drift: cannot read the live policy to decide whether a re-apply is needed (%v) — %s", err, verdict.Reason)
+		if !verdict.Apply {
+			return acl.ApplyResult{Version: 0, Applied: false, Err: nil}
+		}
 	} else if same, cmpErr := headscale.PolicyEquivalent(gen, live); cmpErr == nil && same {
 		if logNoop {
 			log.Printf("acl-drift: live policy already matches the generated one (generated=%d live=%d bytes) — %s", len(gen), len(live), detail)
 		}
 		return acl.ApplyResult{Version: 0, Applied: false, Err: nil}
 	} else if cmpErr != nil {
-		log.Printf("acl-drift: cannot compare the live policy with the generated one (%v) — applying unconditionally", cmpErr)
+		log.Printf("acl-drift: cannot compare the live policy with the generated one (%v) — applying, since the generated document is valid and the comparison cannot decide", cmpErr)
 	}
 	// B288.1: if the privileged applier reported a failure the last time it ran,
 	// say so HERE. The handoff (a rename into the watched directory) succeeds

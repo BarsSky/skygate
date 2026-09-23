@@ -1120,6 +1120,10 @@ type PrefixDriftStats struct {
 	// LiveReadHint is the actionable half of LiveReadErr (which env var to check,
 	// how to probe the API) — see headscale.ACLReadHintFor.
 	LiveReadHint string
+	// PolicyVia names the SOURCE of an "in sync" verdict when it did not come from
+	// a live read (B295): "compared with the last APPLIED snapshot vN (headscale did
+	// not answer)". Empty means the verdict came from headscale itself.
+	PolicyVia string
 }
 
 // prefixDriftRowLimit caps how many rows the page renders. The assignment table
@@ -1244,6 +1248,25 @@ func (s *Service) fillPolicyDrift(stats *PrefixDriftStats) {
 	}
 	live, err := hs.GetACL()
 	if err != nil {
+		// B295: headscale did not answer. Before reporting «неизвестно», answer the
+		// same question from the last APPLIED snapshot in acl_snapshots — skygate
+		// wrote it, so it is what headscale was serving. On a `policy.mode: file`
+		// host this matters a lot: every apply restarts headscale (0.29 re-reads the
+		// file only at startup), so a read that lands in that window used to leave
+		// the page permanently «состояние политики неизвестно» even though nothing
+		// was wrong.
+		if version, verr := db.LastAppliedACLVersion(s.dbc()); verr == nil && version > 0 {
+			if snapshot, serr := db.GetACLConfig(s.dbc(), version); serr == nil && strings.TrimSpace(snapshot) != "" {
+				if same, cmpErr := headscale.PolicyEquivalent(gen, snapshot); cmpErr == nil && same {
+					stats.PolicyChecked = true
+					stats.PolicyInSync = true
+					stats.PolicyLiveByte = len(snapshot)
+					stats.PolicyVia = headscale.SnapshotInSyncHint(version)
+					log.Printf("[exit-nodes] live policy unreadable (%v) but the generated policy equals the last applied snapshot v%d — reporting «в синхроне» from the snapshot", err, version)
+					return
+				}
+			}
+		}
 		stats.PolicyErr = "read live policy: " + err.Error()
 		return
 	}

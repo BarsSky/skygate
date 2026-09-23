@@ -5195,3 +5195,32 @@ run_check "B293" "an exit node that IS the skygate host must be managed locally,
 # internal/headscale/acl_read_b294_test.go, internal/feature/admin/exit_nodes_b294_test.go.
 run_check "B294" "reading the live headscale policy and node state must work on an install without docker, and a failed read must not render as a fact: GetACL walks API → headscale's policy FILE (PolicyPath or DiscoverPolicyPath — the file a policy.mode=file host actually serves, which the write path has used since B272) → the headscale CLI through the install-kind ladder (docker exec when docker and a container are available, otherwise the local binary, including the legacy policy show/policy variants), and when all three fail the error names every rung it tried plus the reachability hint — HEADSCALE_URL, the container-loopback trap (inside a container 127.0.0.1 is the container's own loopback, never the host's headscale) and a ready curl probe — while that hint fires ONLY for a genuine reachability failure (connection refused / actively refused / no such host / timeout, in both POSIX and Windows spellings) and never for a 401/500 from a reachable daemon; the pre-B294 'cli: all variants failed' wording (which blamed a CLI that was never executed) is gone; and /admin/exit-nodes carries the ListAllNodes failure as LiveReadErr + LiveReadHint so the prefix card declares that the АНОНС column could not be read instead of printing «нет / нет маршрута» for every row and counting them as problems. Contracts in scripts/check_b294_headscale_read_truth.sh." \
   'test -f scripts/check_b294_headscale_read_truth.sh && bash scripts/check_b294_headscale_read_truth.sh'
+
+# --- B295: a failed policy READ must not become a blind WRITE ------------------
+# Live on `aro` the prefix card said «состояние политики неизвестно … connect:
+# connection refused» while headscale was listening on exactly that address
+# (visible in `ss -ltnp`, `systemctl is-active` = active) — the refusal was
+# TRANSIENT — and the code made it permanent:
+#
+#   acl-drift: cannot read the live policy to decide whether a re-apply is needed
+#   (…) — applying unconditionally
+#
+# On a `policy.mode: file` host a policy write means `systemctl restart headscale`
+# (0.29 re-reads the file only at startup), so answering a read failure with a write
+# answers a restart with another restart: the observation fed the outage, the page
+# could never converge and every prefix stayed «нет маршрута». Fix: a TRANSIENT read
+# failure (connection refused / actively refused / timeout / EOF, POSIX and Windows
+# spellings) is retried with a bounded delay before any fallback, while an HTTP
+# answer (401/404/500) is not retried at all because the daemon is demonstrably up;
+# when the read still fails the decision comes from the last APPLIED snapshot in
+# `acl_snapshots` (skygate wrote it, so it is what headscale was serving) —
+# generated == snapshot → NO write and therefore NO restart, different → write,
+# unparseable or absent → the pre-B295 blind apply survives but says so in the log;
+# and the prefix card reports «в синхроне» from that snapshot while NAMING the source
+# ("compared with the last APPLIED snapshot vN (headscale did not answer)") instead of
+# «состояние политики неизвестно», while a read failure without a usable snapshot is
+# still an error. 19 contracts in scripts/check_b295_no_blind_policy_write.sh +
+# internal/headscale/policy_snapshot_b295_test.go,
+# internal/feature/admin/exit_nodes_b295_test.go.
+run_check "B295" "a failed live policy read must not become a blind write: a transient read failure (connection refused / actively refused / timeout / EOF, in POSIX and Windows spellings) is retried with a bounded, injectable delay before any fallback, while an HTTP answer (401/404/500) is deliberately NOT retried because the daemon is up and the policy-file / CLI rungs are the interesting part; when the read still fails the write decision comes from the last APPLIED snapshot in acl_snapshots — the document skygate itself wrote — so an identical generated policy means NO write and therefore NO headscale restart, a differing one means the rules really changed (write), and an absent or unparseable snapshot keeps the pre-B295 blind apply but says so in the journal; and /admin/exit-nodes reports an in-sync verdict from that snapshot while naming its source instead of printing «состояние политики неизвестно», leaving a read failure with no usable snapshot as a real error. Contracts in scripts/check_b295_no_blind_policy_write.sh." \
+  'test -f scripts/check_b295_no_blind_policy_write.sh && bash scripts/check_b295_no_blind_policy_write.sh'

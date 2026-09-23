@@ -374,7 +374,11 @@
   {{with .PrefixStats}}
   {{if .PolicyChecked}}
     {{if .PolicyInSync}}
-    <p style="margin:10px 0 0 0"><span class="tag tag-success" title="{{t "exit_nodes.prefix_owner.policy_in_sync_tip"}}">{{t "exit_nodes.prefix_owner.policy_in_sync"}}</span></p>
+    <p style="margin:10px 0 0 0"><span class="tag tag-success" title="{{t "exit_nodes.prefix_owner.policy_in_sync_tip"}}">{{t "exit_nodes.prefix_owner.policy_in_sync"}}</span>
+      {{/* B295: the verdict may come from the last applied snapshot instead of a
+           live read (headscale restarting / unreachable) — say which. */}}
+      {{if .PolicyVia}}<span style="font-size:12px;color:var(--text-muted);margin-left:6px">{{.PolicyVia}}</span>{{end}}
+    </p>
     {{else}}
     <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.4)">
       <b>{{t "exit_nodes.prefix_owner.policy_stale"}}</b>
