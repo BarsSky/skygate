@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/headscale"
 )
 
 // exitNodeKeySettingPrefix is the global_settings key prefix under
@@ -71,6 +72,10 @@ type ExitNodeRegisterView struct {
 	Hostname string
 	Key      string
 	Command  string
+	// MgmtKey is the path skygate's management public key was read from (B310);
+	// empty when it could not be read, in which case the page tells the operator
+	// to copy it by hand — a command with a placeholder would grant nothing.
+	MgmtKey string
 	// Warnings are non-fatal hazards detected before minting the key.
 	Warnings []string
 }
@@ -79,8 +84,14 @@ type ExitNodeRegisterView struct {
 // operator must run ON THE NEW HOST, with the freshly minted key and the
 // canonical exit-node flags already filled in.
 //
-// Pure function (unit-testable): no headscale, no DB.
-func exitNodeRegisterCommand(loginServer, key, hostname string) string {
+// B310 (2026-09-23): `mgmtPubKey` is skygate's OWN ssh public key. It is written
+// into the new relay's authorized_keys in the same paste, so the relay is
+// manageable from the first sync — over the tailnet, which is the path that keeps
+// working when the provider blocks or withdraws the public address. Passing an
+// empty key keeps the pre-B310 command shape (the operator copies the key by hand).
+//
+// Pure function (unit-testable): no headscale, no DB, no filesystem.
+func exitNodeRegisterCommand(loginServer, key, hostname, mgmtPubKey string) string {
 	loginServer = strings.TrimSpace(loginServer)
 	if loginServer == "" {
 		loginServer = "https://head.example.com"
@@ -102,9 +113,57 @@ func exitNodeRegisterCommand(loginServer, key, hostname string) string {
 	b.WriteString("  --authkey=" + key + " \\\n")
 	b.WriteString("  --hostname=" + firstNonEmptyStr(hostname, "<уникальное-имя>") + " \\\n")
 	b.WriteString("  --advertise-exit-node --accept-routes --ssh\n\n")
-	b.WriteString("# 5. вернуться сюда и нажать «Re-sync» в строке узла:\n")
+	if step := exitNodeAuthorizedKeyStep(mgmtPubKey); step != "" {
+		b.WriteString("# 5. разрешить skygate управлять этим узлом по SSH (его публичный ключ)\n")
+		b.WriteString("#    так управление идёт по tailnet и переживает блокировку публичного IP\n")
+		b.WriteString(step)
+		b.WriteString("\n")
+	}
+	next := "5"
+	if strings.TrimSpace(mgmtPubKey) != "" && isSSHPublicKey(strings.TrimSpace(mgmtPubKey)) {
+		next = "6"
+	}
+	b.WriteString("# " + next + ". вернуться сюда и нажать «Re-sync» в строке узла:\n")
 	b.WriteString("#    skygate сам выставит --advertise-routes и одобрит 0.0.0.0/0 + ::/0\n")
 	return b.String()
+}
+
+// isSSHPublicKey reports whether s is an OpenSSH public key line (the only shape
+// that may be written into another host's authorized_keys by this flow).
+func isSSHPublicKey(s string) bool {
+	for _, prefix := range []string{"ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-", "sk-ssh-ed25519@openssh.com ", "sk-ecdsa-sha2-"} {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// exitNodeAuthorizedKeyStep renders the authorized_keys lines for skygate's own key
+// (B310). It refuses anything that is not a plain OpenSSH public key line, and it
+// strips characters that would break out of the shell quoting — the value comes from
+// a file on this host, but it is rendered into a command the operator pastes into a
+// root shell, so the same gate the node name gets applies here.
+func exitNodeAuthorizedKeyStep(pubKey string) string {
+	k := sanitizeSSHPublicKey(pubKey)
+	if k == "" || !isSSHPublicKey(k) {
+		return ""
+	}
+	return "mkdir -p /root/.ssh && chmod 700 /root/.ssh\n" +
+		"grep -qF '" + k + "' /root/.ssh/authorized_keys 2>/dev/null || echo '" + k + "' >> /root/.ssh/authorized_keys\n" +
+		"chmod 600 /root/.ssh/authorized_keys\n"
+}
+
+// sanitizeSSHPublicKey returns the key line when it is safe to render, else "".
+func sanitizeSSHPublicKey(pubKey string) string {
+	k := strings.TrimSpace(pubKey)
+	if k == "" || strings.ContainsAny(k, "\n\r'\"`\\$;&|<>") {
+		return ""
+	}
+	if len(k) > 500 {
+		return ""
+	}
+	return k
 }
 
 // PostAdminExitNodeRegister mints a `tag:exit-node` pre-auth key owned by
@@ -242,8 +301,54 @@ func (s *Service) consumeExitNodeRegisterKey(token string) *ExitNodeRegisterView
 	return &ExitNodeRegisterView{
 		Hostname: parts[0],
 		Key:      parts[1],
-		Command:  exitNodeRegisterCommand(s.controlURL(), parts[1], parts[0]),
+		Command:  exitNodeRegisterCommand(s.controlURL(), parts[1], parts[0], s.managementSSHPublicKey()),
+		MgmtKey:  s.managementSSHPublicKeyPath(),
 	}
+}
+
+// managementSSHPublicKey returns skygate's own ssh public key — the credential a
+// new exit node has to trust for skygate to manage it (B310).
+//
+// The private key file is the one the route sync already uses; its .pub sibling is
+// what belongs in authorized_keys. Both the configured path and the deployed
+// defaults are probed, because a native install and the container keep the key in
+// different places. Empty means "not readable", and the page then says to copy it
+// by hand — better than rendering a command with a placeholder that silently
+// grants nothing.
+func (s *Service) managementSSHPublicKey() string {
+	_, key := s.managementSSHPublicKeyPair()
+	return key
+}
+
+// managementSSHPublicKeyPath names WHERE the key was read from (rendered next to
+// the command so the operator can verify it).
+func (s *Service) managementSSHPublicKeyPath() string {
+	path, _ := s.managementSSHPublicKeyPair()
+	return path
+}
+
+func (s *Service) managementSSHPublicKeyPair() (path, key string) {
+	var cands []string
+	if s.Cfg != nil {
+		if p := strings.TrimSpace(s.Cfg.SSHKeyPath); p != "" {
+			cands = append(cands, p+".pub")
+		}
+	}
+	cands = append(cands,
+		headscale.ContainerDefaultSSHKey+".pub",
+		"/ssh-sync/id_ed25519.pub",
+		"/ssh-sync/skygate_sync.pub", // the deployed sync key on the reference agent VM
+	)
+	for _, p := range cands {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		if k := sanitizeSSHPublicKey(string(b)); k != "" && isSSHPublicKey(k) {
+			return p, k
+		}
+	}
+	return "", ""
 }
 
 // scheduleExitNodeKeySweep clears a parked key after 15 minutes even if

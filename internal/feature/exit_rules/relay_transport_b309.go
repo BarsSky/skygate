@@ -56,6 +56,12 @@ import (
 // relay's last route-application state: "<unix>|ok" or "<unix>|err|<reason>".
 const SettingRelayApplyStatePrefix = "relay_apply_state:"
 
+// SettingRelayApplyViaPrefix holds WHERE that application went (B310):
+// "<kind>|<endpoint>", e.g. "tailnet|tailnet 100.64.0.2:18022". It lives in its own
+// key so the B309 record's third field (the error text) never has to be parsed
+// around a separator that an ssh message may itself contain.
+const SettingRelayApplyViaPrefix = "relay_apply_via:"
+
 // RelayApplyFailureWindow is how long a failed application keeps a relay out of
 // the healthy set used for prefix assignment. Fifteen minutes is three sync
 // ticks: long enough that a transient SSH hiccup does not move 75 prefixes (and
@@ -72,6 +78,11 @@ type RelayApplyState struct {
 	OK bool
 	// Detail names the failure ("" when OK).
 	Detail string
+	// Via is the transport that carried the routes ("local", "tailnet", "public",
+	// "name") — empty for rows written before B310.
+	Via string
+	// Endpoint is the address the application used ("tailnet 100.64.0.2:18022").
+	Endpoint string
 }
 
 // Failed reports whether this record describes a failure that is still inside
@@ -161,9 +172,40 @@ func recordRelayApply(d *sql.DB, relay string, out relayApplyOutcome) {
 			detail = detail[:300]
 		}
 		_ = db.SetGlobalSetting(d, RelayApplyStateKey(relay), formatRelayApplyState(RelayApplyState{At: now, Detail: detail}))
-		return
+	} else {
+		_ = db.SetGlobalSetting(d, RelayApplyStateKey(relay), formatRelayApplyState(RelayApplyState{At: now, OK: true}))
 	}
-	_ = db.SetGlobalSetting(d, RelayApplyStateKey(relay), formatRelayApplyState(RelayApplyState{At: now, OK: true}))
+	// B310: and WHERE it went (or where every attempt failed), so the page can
+	// answer "is management using the tailnet or the public address?" without
+	// reading the journal.
+	via := strings.TrimSpace(out.Via)
+	ep := strings.TrimSpace(out.Endpoint)
+	if via == "" && ep == "" {
+		via = "unknown"
+	}
+	_ = db.SetGlobalSetting(d, RelayApplyViaKey(relay), via+"|"+ep)
+}
+
+// RelayApplyViaKey is the global_settings key holding "kind|endpoint" for one relay.
+func RelayApplyViaKey(relay string) string {
+	return SettingRelayApplyViaPrefix + strings.ToLower(strings.TrimSpace(relay))
+}
+
+// parseRelayApplyVia decodes "<kind>|<endpoint>".
+func parseRelayApplyVia(raw string) (via, endpoint string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(raw, "|", 2)
+	via = strings.TrimSpace(parts[0])
+	if via == "unknown" {
+		via = ""
+	}
+	if len(parts) == 2 {
+		endpoint = strings.TrimSpace(parts[1])
+	}
+	return via, endpoint
 }
 
 // RelayApplyStateOf reads one relay's recorded transport state (free function;
@@ -176,7 +218,11 @@ func RelayApplyStateOf(d *sql.DB, relay string) RelayApplyState {
 	if err != nil {
 		return RelayApplyState{}
 	}
-	return ParseRelayApplyState(raw)
+	st := ParseRelayApplyState(raw)
+	if viaRaw, verr := db.GetGlobalSetting(d, RelayApplyViaKey(relay), ""); verr == nil {
+		st.Via, st.Endpoint = parseRelayApplyVia(viaRaw)
+	}
+	return st
 }
 
 // RelayApplyState reads one relay's recorded transport state.
@@ -232,7 +278,12 @@ func ListRelayApplyStates(d *sql.DB) map[string]RelayApplyState {
 		if err := rows.Scan(&key, &val); err != nil {
 			continue
 		}
-		out[strings.TrimPrefix(key, SettingRelayApplyStatePrefix)] = ParseRelayApplyState(val)
+		name := strings.TrimPrefix(key, SettingRelayApplyStatePrefix)
+		st := ParseRelayApplyState(val)
+		if raw, verr := db.GetGlobalSetting(d, SettingRelayApplyViaPrefix+name, ""); verr == nil {
+			st.Via, st.Endpoint = parseRelayApplyVia(raw)
+		}
+		out[name] = st
 	}
 	return out
 }

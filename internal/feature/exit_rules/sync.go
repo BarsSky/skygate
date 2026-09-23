@@ -695,6 +695,13 @@ type relayApplyOutcome struct {
 	// means, and a transport failure must not hide the approval side.
 	Approved   int
 	ApproveErr error
+	// Via names the transport that actually carried the routes — "tailnet",
+	// "public" or "name" for the SSH ladder (B310), empty for the local transport
+	// (whose Label already says "local=ok via <transport>").
+	Via string
+	// Endpoint is the concrete address that worked ("tailnet 100.64.0.2:18022"),
+	// recorded and rendered so "which path is management using?" has an answer.
+	Endpoint string
 }
 
 // resultLabel renders "<label> approved=N|approve=err=…<note>" — the exact shape
@@ -754,6 +761,8 @@ func applyRoutesToRelay(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func
 		}
 		transport, cmdOut, applyErr := hs.ApplyRoutesLocally(kept, lookupAcceptRoutes(node))
 		out.Local = true
+		out.Via = "local"
+		out.Endpoint = "local (" + transport.Name + ")"
 		if applyErr != nil {
 			out.Label = "local=err=" + applyErr.Error()
 		} else {
@@ -779,10 +788,18 @@ func applyRoutesToRelay(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func
 		}
 
 		// Resolve per-exit-node SSH config. The empty-row fallback (no row for
-		// this hostname) is fine — SetAdvertisedRoutes uses the node name then.
-		sshRow, _ := db.LookupExitServerSSH(d, node)
-		sshTarget, _ := db.LookupExitServerSSHTarget(d, node)
-		sshKeyPath := sshRow.KeyPath
+		// this hostname) is fine — the ladder then only has the tailnet
+		// addresses headscale reports plus the node name.
+		//
+		// B310 (2026-09-23): the transport is a LADDER, not a single target — see
+		// relay_transport_tailnet_b310.go. The live measurement behind it: the
+		// operator's relay row pointed at the TAILNET address 100.64.0.2:18022
+		// (the right idea — a tailnet path survives a blocked public IP) while this
+		// host had no tailscaled at all, so `ip route get 100.64.0.2` answered
+		// "via 192.168.13.1 dev ens18" and every sync ended in an unexplained
+		// "Operation timed out".
+		cfg := lookupRelaySSHConfig(d, node)
+		sshKeyPath := cfg.KeyPath
 		if sshKeyPath == "" {
 			sshKeyPath = defaultKeyPath
 		}
@@ -797,23 +814,36 @@ func applyRoutesToRelay(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func
 		// for this relay, use it AND persist it (only when the column is still
 		// empty), so the next pass — and the "Use Tailscale IP" button, which
 		// resolves through the same helper — work without operator action.
-		if strings.TrimSpace(sshTarget) == "" {
+		//
+		// B310 keeps the persistence (the page renders the column and the ladder
+		// uses it) but no longer FORCES it into the ssh target: an address skygate
+		// cannot route to is not a repair, it is the bug.
+		if cfg.TailscaleIP == "" {
 			if ip := liveExitNodeIP(hs, node); ip != "" {
 				log.Printf("exit-node sync(%s): exit_servers has no ssh_target and no tailscale_ip — using the live Tailscale IP %s from headscale (B292)", node, ip)
 				if err := db.SetExitServerTailscaleIPIfEmpty(d, node, ip); err != nil {
 					log.Printf("exit-node sync(%s): could not persist tailscale_ip=%s: %v", node, ip, err)
 				}
-				sshTarget = "root@" + ip
-			} else {
-				log.Printf("exit-node sync(%s): no ssh_target, no tailscale_ip and headscale reports no address — ssh will be given the bare node name and will most likely fail on DNS (B292)", node)
+				cfg.TailscaleIP = ip
 			}
+		}
+		if cfg.SSHTarget == "" && cfg.TailscaleIP == "" {
+			log.Printf("exit-node sync(%s): no ssh_target, no tailscale_ip and headscale reports no address — ssh will be given the bare node name and will most likely fail on DNS (B292)", node)
 		}
 		// SSH first. On error the approval below still runs — the operator may
 		// have approved these routes some other way (e.g. directly via the
 		// headscale CLI) and the SSH failure should be visible without blocking
 		// the approval side.
-		if _, sshErr := hs.SetAdvertisedRoutes(node, approveRoutes, lookupAcceptRoutes(node), sshTarget, sshKeyPath); sshErr != nil {
-			out.Label = "ssh=err=" + sshErr.Error()
+		cands, notes := relaySSHEndpoints(hs, cfg, node)
+		ladder := applyRoutesOverSSHLadder(hs, node, approveRoutes, lookupAcceptRoutes(node), sshKeyPath, cands, notes)
+		if ladder.OK {
+			out.Label = "ssh=ok via " + ladder.Via
+			out.Via = ladder.Via
+			out.Endpoint = ladder.Endpoint
+		} else {
+			parts := append([]string{}, ladder.Attempts...)
+			parts = append(parts, ladder.Notes...)
+			out.Label = "ssh=err=" + strings.Join(parts, "; ")
 		}
 	}
 

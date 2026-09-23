@@ -65,10 +65,19 @@ else
   bad "A1: applyRoutesToRelay is missing"
 fi
 ssh_calls=$(grep -cE '\.SetAdvertisedRoutes\(' "$SYNC" || true)
-if [ "${ssh_calls:-0}" -eq 1 ]; then
-  ok "A2: exactly ONE SetAdvertisedRoutes call site (the shared tail) — a second copy is how the two paths drifted"
+# CONTRACT RENEGOTIATION (2026-09-23, B310): the single ssh call moved one function
+# down, into relay_transport_tailnet_b310.go's ladder (each candidate is probed and
+# used in turn). The property is unchanged — exactly ONE place in the project calls
+# the SSH transport — so the count now spans the tail plus the ladder file, and a
+# second copy anywhere still fails.
+LADDER=internal/feature/exit_rules/relay_transport_tailnet_b310.go
+ladder_calls=0
+[ -f "$LADDER" ] && ladder_calls=$(grep -cE '\.SetAdvertisedRoutes\(' "$LADDER" || true)
+ssh_total=$(( ${ssh_calls:-0} + ${ladder_calls:-0} ))
+if [ "$ssh_total" -eq 1 ]; then
+  ok "A2: exactly ONE SetAdvertisedRoutes call site (the shared tail + the B310 ladder) — a second copy is how the two paths drifted"
 else
-  bad "A2: SetAdvertisedRoutes is called from $ssh_calls places in sync.go, want 1"
+  bad "A2: SetAdvertisedRoutes is called from $ssh_total place(s) (sync.go=$ssh_calls, ladder=$ladder_calls), want 1"
 fi
 stray=$(grep -cE 's\.HS\.SetAdvertisedRoutes\(' "$SYNC" || true)
 if [ "${stray:-0}" -eq 0 ]; then
@@ -115,9 +124,15 @@ if grep -q 'headscale.SelfCoveringRoutes(approveRoutes, placement.SelfIPs)' "$SY
 else
   bad "B4: the route-loop guard disappeared"
 fi
+# CONTRACT RENEGOTIATION (2026-09-23, B310): the ssh failure label used to be built
+# inline ("ssh=err=" + sshErr.Error()); it is now composed by the ladder from every
+# candidate it tried (each with its own reason), so the exact expression is gone
+# while the SHAPE the operators and the flash messages depend on is not. The
+# contract now pins the shape in both files.
 if grep -q 'out.Label = "local=ok via " + transport.Name' "$SYNC" \
-   && grep -q 'out.Label = "ssh=err=" + sshErr.Error()' "$SYNC"; then
-  ok "B5: both transports report their outcome in the same shape"
+   && grep -q 'out.Label = "ssh=ok via " + ladder.Via' "$SYNC" \
+   && grep -q 'out.Label = "ssh=err=" + strings.Join(parts, "; ")' "$SYNC"; then
+  ok "B5: both transports report their outcome in the same shape (ssh=ok via <transport> / ssh=err=<every candidate>)"
 else
   bad "B5: the outcome labels are missing"
 fi

@@ -126,7 +126,9 @@ else
 fi
 
 # --- D: the page ------------------------------------------------------------------
-if grep -q 's.fillTransportFailures(&stats, all)' "$ADMIN"; then
+# B310 renamed the loader (fillTransportFailures → fillTransportState) because it now
+# fills BOTH halves: the failures and the transport each relay's last apply used.
+if grep -q 's.fillTransportState(&stats, all)' "$ADMIN" || grep -q 's.fillTransportFailures(&stats, all)' "$ADMIN"; then
   ok "D1: the exit-nodes page fills the transport failures"
 else
   bad "D1: the page never renders why the prefixes moved"

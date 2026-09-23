@@ -411,6 +411,28 @@
     <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.prefix_owner.live_read_failed_help"}}</div>
   </div>
   {{end}}
+  {{/* B310: a tailnet path survives a block of the relay's public IP, a public one
+       does not — so say which path management is actually using, and say plainly
+       when skygate itself is not on the tailnet (then every tailnet target can
+       only time out, which is how the live agent VM host looked). */}}
+  {{if .TailnetReady}}
+  <p style="margin:10px 0 0 0;font-size:13px">
+    <span class="tag tag-success" title="{{.TailnetReason}}">{{t "exit_nodes.prefix_owner.tailnet_ok"}}{{if .TailnetIP}} {{.TailnetIP}}{{end}}</span>
+  </p>
+  {{else}}
+  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:rgba(255,193,7,.12);border:1px solid rgba(255,193,7,.45)">
+    <b>{{t "exit_nodes.prefix_owner.tailnet_missing"}}</b>
+    <div style="font-size:13px;margin-top:4px">{{.TailnetReason}}</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.prefix_owner.tailnet_missing_help" | safeHTML}}</div>
+    <a href="/admin/tailscale" class="btn btn-sm" style="margin-top:8px">{{t "exit_nodes.prefix_owner.tailnet_enable"}}</a>
+  </div>
+  {{end}}
+  {{if .TransportPaths}}
+  <p style="margin:8px 0 0 0;font-size:13px;color:var(--text-muted)">
+    {{t "exit_nodes.prefix_owner.transport_paths"}}:
+    {{range $i, $p := .TransportPaths}}{{if $i}} · {{end}}<code>{{$p.Relay}}</code> — {{if $p.Via}}{{$p.Via}}{{else}}?{{end}}{{if $p.Endpoint}} ({{$p.Endpoint}}){{end}}{{end}}
+  </p>
+  {{end}}
   {{/* B309: a relay whose LAST route application failed is excluded from the
        healthy set, so its prefixes are handed to a relay that answers. Without
        this banner that move is invisible and the remaining «нет маршрута» rows
@@ -755,6 +777,17 @@ ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
     {{t "exit_nodes.register_key_once"}}
   </p>
   <pre style="white-space:pre-wrap;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px">{{.RegisterKey.Command}}</pre>
+  {{/* B310: the management key is what makes the new relay manageable over the
+       tailnet from the first sync. Say which key was embedded, or say that none
+       could be read (then the operator copies it by hand — a placeholder in the
+       command would grant nothing). */}}
+  {{if .RegisterKey.MgmtKey}}
+  <p style="font-size:12px;color:var(--text-muted);margin-top:6px">
+    {{tf "exit_nodes.register_mgmt_key" .RegisterKey.MgmtKey}}
+  </p>
+  {{else}}
+  <p style="font-size:12px;color:var(--text-muted);margin-top:6px">{{t "exit_nodes.register_mgmt_key_missing"}}</p>
+  {{end}}
   {{else}}
   <form method="post" action="/admin/exit-nodes/register" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
     <div>

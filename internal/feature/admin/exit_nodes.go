@@ -1131,10 +1131,21 @@ type PrefixDriftStats struct {
 	// — and this list is the explanation the operator needs, because re-applying
 	// the ACL can never fix "нет маршрута" on a relay skygate cannot reach.
 	TransportFailed []RelayTransportNote
+	// TransportPaths lists the relays whose last application SUCCEEDED, with the
+	// transport that carried it (B310): "tailnet" is the path that survives a
+	// blocked/withdrawn public address, "public" is the one that does not.
+	TransportPaths []RelayTransportNote
+	// TailnetReady/IP/Iface/Reason describe skygate's OWN tailnet presence (B310).
+	// When it is false, every tailnet target is unreachable by construction and the
+	// page says so instead of showing an unexplained ssh timeout.
+	TailnetReady  bool
+	TailnetIP     string
+	TailnetIface  string
+	TailnetReason string
 }
 
-// RelayTransportNote is one unreachable relay on the /admin/exit-nodes prefix
-// card (B309).
+// RelayTransportNote is one relay's last route application on the prefix card
+// (B309 for the failures, B310 for the path in use).
 type RelayTransportNote struct {
 	// Relay is the relay name as recorded (lower-cased).
 	Relay string
@@ -1146,6 +1157,13 @@ type RelayTransportNote struct {
 	// as their owner (0 when it owned nothing — the transport is still broken and
 	// worth naming, it just did not move anything).
 	Prefixes int
+	// Via is the transport that carried (or failed to carry) the routes:
+	// "local", "tailnet", "public", "name" (B310).
+	Via string
+	// Endpoint is the address used, e.g. "tailnet 100.64.0.2:18022" (B310).
+	Endpoint string
+	// OK is true when the application succeeded.
+	OK bool
 }
 
 // prefixDriftRowLimit caps how many rows the page renders. The assignment table
@@ -1249,12 +1267,14 @@ func (s *Service) loadPrefixOwnerRows() ([]PrefixOwnerRow, PrefixDriftStats) {
 	}
 	stats.Shown = len(out)
 	s.fillPolicyDrift(&stats)
-	s.fillTransportFailures(&stats, all)
+	s.fillTransportState(&stats, all)
 	return out, stats
 }
 
-// fillTransportFailures names the relays that were excluded from prefix
-// assignment because their last route application failed (B309).
+// fillTransportState answers the two questions the prefix card could not answer
+// before B309/B310: WHICH relays cannot be configured at all (B309, they lose their
+// prefixes), and WHICH PATH is management actually using (B310 — the tailnet, which
+// survives a blocked public IP, or the public address, which does not).
 //
 // WHY the page needs this: the exclusion MOVES prefixes, and a move that the
 // operator did not ask for is exactly what made the old behaviour so confusing —
@@ -1262,7 +1282,16 @@ func (s *Service) loadPrefixOwnerRows() ([]PrefixOwnerRow, PrefixDriftStats) {
 // because the owner relay was unreachable, while every page and every log line
 // called that relay healthy. The banner names the relay, the reason and the age,
 // and says that the move is automatic and temporary.
-func (s *Service) fillTransportFailures(stats *PrefixDriftStats, rows []PrefixOwnerRow) {
+func (s *Service) fillTransportState(stats *PrefixDriftStats, rows []PrefixOwnerRow) {
+	// B310: skygate's own tailnet presence. Without it every tailnet target can
+	// only time out — which is exactly what the live agent VM host did (no
+	// tailscaled at all, so 100.64.0.2 was routed to the LAN gateway).
+	st := exit_rules.SkygateTailnetState()
+	stats.TailnetReady = st.Ready
+	stats.TailnetIP = st.IP
+	stats.TailnetIface = st.Iface
+	stats.TailnetReason = st.Reason
+
 	states := exit_rules.ListRelayApplyStates(s.dbc())
 	if len(states) == 0 {
 		return
@@ -1273,21 +1302,34 @@ func (s *Service) fillTransportFailures(stats *PrefixDriftStats, rows []PrefixOw
 	}
 	now := time.Now().Unix()
 	for relay, st := range states {
-		if !st.Failed(now, exit_rules.RelayApplyFailureWindow) {
-			continue
-		}
-		stats.TransportFailed = append(stats.TransportFailed, RelayTransportNote{
+		failed := st.Failed(now, exit_rules.RelayApplyFailureWindow)
+		note := RelayTransportNote{
 			Relay:    relay,
 			Reason:   st.Detail,
 			Age:      time.Since(time.Unix(st.At, 0)).Truncate(time.Second).String(),
 			Prefixes: owned[relay],
-		})
+			Via:      st.Via,
+			Endpoint: st.Endpoint,
+			OK:       st.OK,
+		}
+		if failed {
+			stats.TransportFailed = append(stats.TransportFailed, note)
+			continue
+		}
+		// Only relays we know something about (a recorded transport), so a fresh
+		// install does not render an empty list of "unknown".
+		if note.Via != "" || note.Endpoint != "" {
+			stats.TransportPaths = append(stats.TransportPaths, note)
+		}
 	}
 	sort.Slice(stats.TransportFailed, func(i, j int) bool {
 		if stats.TransportFailed[i].Prefixes != stats.TransportFailed[j].Prefixes {
 			return stats.TransportFailed[i].Prefixes > stats.TransportFailed[j].Prefixes
 		}
 		return stats.TransportFailed[i].Relay < stats.TransportFailed[j].Relay
+	})
+	sort.Slice(stats.TransportPaths, func(i, j int) bool {
+		return stats.TransportPaths[i].Relay < stats.TransportPaths[j].Relay
 	})
 }
 

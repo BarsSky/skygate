@@ -12,6 +12,103 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.75 — exit nodes are managed over the tailnet, and an unreachable path says so (B310)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.74` → this tag · **Compatibility:** none —
+no schema change (the per-relay transport lives in `global_settings`), no config
+change required. Enabling Tailscale for skygate itself is optional and is done from
+`/admin/tailscale`.
+
+### The report
+
+`karolina` was blocked («не пингуется»). The operator asked whether skygate can reach
+it over tailscale SSH, and whether that can be a **feature** — configured when a new
+exit node is onboarded — so that a geo-blocked or withdrawn public IP never removes
+management access.
+
+### What was measured (agent VM)
+
+The relay row pointed at the **tailnet** address — the right idea, since that path
+survives a provider block — and it could never work, with nothing anywhere saying so:
+
+```
+$ ip route get 100.64.0.2
+100.64.0.2 via 192.168.13.1 dev ens18 src 192.168.13.10        # the LAN gateway!
+$ tailscale status
+failed to connect to local tailscaled; it doesn't appear to be running
+$ docker exec skygate-skygate-1 tailscale status
+failed to connect to local tailscaled; it doesn't appear to be running
+$ docker exec skygate-skygate-1 sh -c 'ssh -i /ssh-sync/skygate_sync -p 18022 root@100.64.0.2 …'
+ssh: connect to host 100.64.0.2 port 18022: Operation timed out
+```
+
+* the skygate **host** is not in the tailnet at all (no `tailscaled`, no `tailscale0`);
+* the skygate **container** has the client and `/dev/net/tun`, but its Tailscale is
+  configured and **disabled** (`SKYGATE_TS_AUTHKEY_FILE=/dev/null`);
+* `headscale nodes list` still showed karolina `online` with **last seen 2026-09-22
+  07:18** — its own tunnel had been stale for over a day.
+
+So the previous "use the live Tailscale IP" fallback *looked* like an automatic
+repair while being structurally impossible: the page showed an IP, the sync showed a
+timeout, and "the relay is down" was indistinguishable from "skygate is not on the
+network it is trying to use".
+
+### The fix (B310)
+
+* **The transport is now data.** Every path to a relay is a `RelayEndpoint` with a
+  kind (`tailnet`, `public`, `name`) and a provenance string.
+* **A ladder, not a single target.** Candidates are ordered tailnet → operator's
+  `ssh_target` → node name when skygate can use the tailnet, and the operator's
+  target first when it cannot. Each candidate is **TCP-probed** (3 s) and then
+  actually used; the first that works wins. The tailnet candidate is always kept,
+  even when it cannot work, so the failure can name it.
+* **The transport that carried the routes is recorded** per relay
+  (`relay_apply_via:<relay>`) and rendered on `/admin/exit-nodes`.
+* **`SkygateTailnetState`** answers whether skygate has a usable **kernel** path — an
+  interface carrying a `100.64.0.0/10` address; a userspace-mode `tailscaled` cannot
+  carry a plain `ssh`, and every "why not" is named (`tailscaled is not running`,
+  `NeedsLogin`, `Stopped`, `NoState`, no client in the image).
+* **The failure now names everything**: each candidate with its own reason, plus the
+  note that the tailnet path is unavailable because skygate is not on the tailnet —
+  with a link to `/admin/tailscale`.
+* **Onboarding hands over the key.** The "register a new exit node" command now
+  embeds skygate's own public key as an idempotent `authorized_keys` step, so a relay
+  registered from the panel is manageable over the tailnet from its first sync. Only
+  a well-formed OpenSSH key is rendered into a root shell, and the page says which
+  file it came from — or that it could not be read.
+
+Unchanged on purpose: the operator's `ssh_target` is still used (as a candidate), a
+co-located relay still uses the local transport, the live `tailscale_ip` is still
+persisted, and which relay advertises which prefix is not touched.
+
+### What the operator should do
+
+1. Install `v1.5.75`.
+2. Open **`/admin/tailscale`** and enable Tailscale for skygate itself (the page
+   generates the auth key). After that, the relay's tailnet address is used
+   automatically and management survives a blocked public IP.
+3. For a **new** relay: register it from `/admin/exit-nodes` — the generated command
+   already contains skygate's public key.
+
+### Files
+
+`internal/feature/exit_rules/relay_transport_tailnet_b310.go` (new),
+`internal/feature/exit_rules/relay_transport_b309.go` (records the transport),
+`internal/feature/exit_rules/sync.go`, `internal/feature/admin/exit_nodes.go`,
+`internal/feature/admin/exit_node_register.go`,
+`internal/handlers/templates/admin/exit_nodes.html`, `internal/i18n/catalog_exit_nodes.go`,
+`scripts/check_b310_tailnet_exit_transport.sh`.
+
+### Verification
+
+38 contracts in `scripts/check_b310_tailnet_exit_transport.sh`, plus
+`internal/feature/exit_rules/relay_transport_tailnet_b310_test.go` (candidate
+ordering with and without a usable tailnet, the probe, the live
+"not-on-the-tailnet" sequence, the recorded transport) and the onboarding key tests
+in `internal/feature/admin/exit_node_register_b266_test.go`. Renegotiated in place:
+B300 A2 (the single `SetAdvertisedRoutes` call site now spans the tail **plus** the
+ladder) and B300 B5 (the new outcome shape).
+
 ## v1.5.74 — a relay skygate cannot configure stops owning prefixes (B309)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.73` → this tag · **Compatibility:** none —
