@@ -37,6 +37,7 @@ import (
 	"database/sql"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -57,14 +58,14 @@ type NotifierSink interface {
 // headscale_version, and headscale_version doesn't need
 // to know the table's full schema).
 type HeadscaleReleaseRecord struct {
-	Version       string
-	PublishedAt   time.Time
-	FirstSeenAt   time.Time
-	HTMLURL       string
-	Name          string
-	Body          string
-	IsBreaking    bool
-	Notified      bool
+	Version     string
+	PublishedAt time.Time
+	FirstSeenAt time.Time
+	HTMLURL     string
+	Name        string
+	Body        string
+	IsBreaking  bool
+	Notified    bool
 }
 
 // Monitor holds the runtime state of the headscale
@@ -77,23 +78,140 @@ type Monitor struct {
 	Notifier   NotifierSink    // alert sink
 	CheckEvery time.Duration   // default 24h
 
+	// --- B297: what version is the RUNNING headscale? ----------------------
+	//
+	// Pinned is a DECLARATION: it is whatever the operator typed into
+	// SKYGATE_HEADSCALE_VERSION_PIN, and config.go says outright that it is not
+	// auto-detected. Live setup: the native host `aro` ran headscale 0.29.0 while
+	// the agent VM ran 0.29.3 — a stale pin makes "a newer headscale is
+	// available" wrong in whichever direction the pin is wrong, and 0.29.x is not
+	// uniform in the API surface skygate depends on (approve_routes left REST at
+	// 0.29.1, the expire REST path broke at 0.29.2).
+	//
+	// VersionProbe, when non-nil, returns the version the DAEMON answered (plus
+	// the rung that answered). A detection beats the declaration everywhere the
+	// comparison or the page needs a version, and the declaration is kept next to
+	// it so a mismatch is visible instead of silent.
+	VersionProbe func(ctx context.Context) (version, via string, err error)
+	// DeclaredPin is the operator's declaration as written, kept for display even
+	// after a detection supersedes it. Empty means "same as Pinned".
+	DeclaredPin string
+
 	mu                sync.Mutex
-	Latest            Release // most recent release seen
-	UpdateAvailable   bool    // Latest > Pinned (semver)
-	BreakingAvailable bool    // UpdateAvailable AND major/minor bump
+	detected          string    // last version the daemon answered
+	detectedVia       string    // which rung answered it
+	detectedAt        time.Time // when the last SUCCESSFUL probe ran
+	detectedErr       string    // last probe failure, "" after a success
+	Latest            Release   // most recent release seen
+	UpdateAvailable   bool      // Latest > Pinned (semver)
+	BreakingAvailable bool      // UpdateAvailable AND major/minor bump
 	CheckedAt         time.Time
 	History           []HeadscaleReleaseRecord // last N seen, newest first
+}
+
+// ServerVersionStatus is what /admin/headscale shows about the running daemon:
+// the version detected, the version declared, which rung answered, when, and the
+// last failure (if any). Every field is populated, so the page never has to
+// guess whether an empty string means "unknown" or "same as the other one".
+type ServerVersionStatus struct {
+	Declared   string    // SKYGATE_HEADSCALE_VERSION_PIN as written
+	Detected   string    // version the daemon answered ("" = never detected)
+	Via        string    // which rung answered
+	DetectedAt time.Time // when detection last succeeded
+	Err        string    // last probe failure
+	Effective  string    // what the comparison uses: Detected, else Declared
+	Mismatch   bool      // both known and they differ (semver-aware)
+}
+
+// VersionStatus returns the version picture for the page. Safe to call before
+// Start (the boot path probes once, so the first render is already truthful).
+func (m *Monitor) VersionStatus() ServerVersionStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	declared := m.DeclaredPin
+	if declared == "" {
+		declared = m.Pinned
+	}
+	st := ServerVersionStatus{
+		Declared:   declared,
+		Detected:   m.detected,
+		Via:        m.detectedVia,
+		DetectedAt: m.detectedAt,
+		Err:        m.detectedErr,
+	}
+	st.Effective = m.detected
+	if st.Effective == "" {
+		st.Effective = declared
+	}
+	if m.detected != "" && declared != "" {
+		// CompareSemver, not string equality: "0.29" and "0.29.0" are the same
+		// version and must not raise a false mismatch banner.
+		st.Mismatch = CompareSemver(m.detected, declared) != 0
+	}
+	return st
+}
+
+// ProbeVersion asks the running headscale for its version and records the
+// outcome. Called once at Start (via the goroutine) and from every tick, so a
+// headscale upgrade is picked up without restarting skygate.
+//
+// A FAILED probe keeps the last version we did read: the declaration is exactly
+// what we are trying not to trust, so a transient API hiccup must not silently
+// put it back in charge. The failure is recorded next to the last success.
+func (m *Monitor) ProbeVersion(ctx context.Context) {
+	if m == nil || m.VersionProbe == nil {
+		return
+	}
+	pctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	version, via, err := m.VersionProbe(pctx)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err != nil {
+		m.detectedErr = err.Error()
+		return
+	}
+	if strings.TrimSpace(version) == "" {
+		m.detectedErr = "the probe answered no version"
+		return
+	}
+	m.detected = strings.TrimSpace(version)
+	m.detectedVia = via
+	m.detectedAt = time.Now()
+	m.detectedErr = ""
+}
+
+// effectivePinned is the version the comparison and the page should use: the
+// DETECTED one when a probe has ever succeeded, the declaration otherwise.
+func (m *Monitor) effectivePinned() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.effectivePinnedLocked()
+}
+
+// effectivePinnedLocked is effectivePinned for callers that already hold mu.
+func (m *Monitor) effectivePinnedLocked() string {
+	if m.detected != "" {
+		return m.detected
+	}
+	return m.Pinned
 }
 
 // Snapshot returns a copy of the monitor's state for
 // the /admin/headscale page render. The History slice
 // is shallow — callers must not mutate it.
+//
+// B297: the returned `pinned` is the EFFECTIVE version — the one the running
+// daemon answered when a probe has succeeded, and the operator's declaration
+// only until then. Callers that need to show the declaration next to it use
+// VersionStatus().
 func (m *Monitor) Snapshot() (latest Release, update, breaking bool, checkedAt time.Time, history []HeadscaleReleaseRecord, pinned string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	hist := make([]HeadscaleReleaseRecord, len(m.History))
 	copy(hist, m.History)
-	return m.Latest, m.UpdateAvailable, m.BreakingAvailable, m.CheckedAt, hist, m.Pinned
+	return m.Latest, m.UpdateAvailable, m.BreakingAvailable, m.CheckedAt, hist, m.effectivePinnedLocked()
 }
 
 // NewMonitor is a convenience constructor that
@@ -130,6 +248,11 @@ func (m *Monitor) Start(ctx context.Context) {
 		m.CheckEvery = 24 * time.Hour
 	}
 	go func() {
+		// B297: ask the running headscale for its version once, immediately, so
+		// the first /admin/headscale render is based on what the daemon says
+		// rather than on what the operator declared months ago. The call is
+		// bounded inside ProbeVersion (8s) and a no-op when no probe is wired.
+		m.ProbeVersion(ctx)
 		t := time.NewTicker(m.CheckEvery)
 		defer t.Stop()
 		for {
@@ -157,6 +280,12 @@ func (m *Monitor) CheckNow(ctx context.Context) error {
 // inject a mock HTTP server and a no-op
 // NotifierSink, then call tick directly).
 func (m *Monitor) tick(ctx context.Context) {
+	// B297: refresh what the RUNNING headscale is before comparing anything.
+	// Deliberately first: a GitHub poll that fails (rate limit, offline host)
+	// must not also skip the version refresh, and every comparison below wants
+	// the detected version rather than the declaration.
+	m.ProbeVersion(ctx)
+
 	c := &Client{HTTP: m.HTTPClient}
 	r, err := c.Latest(ctx)
 	if err != nil {
@@ -173,9 +302,15 @@ func (m *Monitor) tick(ctx context.Context) {
 	// Persist to DB (best-effort). A write failure
 	// doesn't stop the alert path — the operator
 	// still gets the Telegram notification.
+	//
+	// B297: `pinned` is the detected version when a probe has succeeded, so the
+	// is_breaking flag stored for a release describes what this host actually
+	// runs. (Previously a stale declaration could mark a patch release as
+	// breaking, or a breaking one as a patch.)
+	pinned := m.effectivePinned()
 	publishedAt, _ := time.Parse(time.RFC3339, r.PublishedAt)
 	if m.DB != nil {
-		breaking := IsBreaking(m.Pinned, r.TagName)
+		breaking := IsBreaking(pinned, r.TagName)
 		rec := HeadscaleReleaseRecord{
 			Version:     r.TagName,
 			PublishedAt: publishedAt,
@@ -195,8 +330,8 @@ func (m *Monitor) tick(ctx context.Context) {
 	// page wants to know "is there ANY newer release
 	// out there?" so the operator can decide when to
 	// upgrade.
-	breaking := IsBreaking(m.Pinned, r.TagName)
-	updateAvailable := CompareSemver(r.TagName, m.Pinned) > 0
+	breaking := IsBreaking(pinned, r.TagName)
+	updateAvailable := CompareSemver(r.TagName, pinned) > 0
 	m.mu.Lock()
 	m.Latest = *r
 	m.CheckedAt = time.Now()
@@ -227,14 +362,19 @@ func (m *Monitor) tick(ctx context.Context) {
 	if already {
 		return
 	}
-	if m.Notifier == nil || m.Pinned == "" {
+	// B297: an alert needs a version to compare against, and a DETECTED version
+	// is enough — the declaration only ever existed because skygate could not ask
+	// the daemon. A host with a correct detection and no pin used to be stuck in
+	// "observe only" forever.
+	effective := m.effectivePinned()
+	if m.Notifier == nil || effective == "" {
 		return
 	}
-	pinned := &Release{TagName: m.Pinned}
-	alert := FormatAlert(pinned, r, breaking)
+	pinnedRel := &Release{TagName: effective}
+	alert := FormatAlert(pinnedRel, r, breaking)
 	id := m.Notifier.SendAlert(alert)
-	log.Printf("headscale-monitor: alert sent for %s (pinned %s, breaking=%v), alert_id=%d",
-		r.TagName, m.Pinned, breaking, id)
+	log.Printf("headscale-monitor: alert sent for %s (running %s, breaking=%v), alert_id=%d",
+		r.TagName, effective, breaking, id)
 }
 
 // ResetNotified wipes the dedup map. Call after the

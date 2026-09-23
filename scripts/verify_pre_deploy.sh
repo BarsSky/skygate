@@ -5229,3 +5229,28 @@ run_check "B295" "a failed live policy read must not become a blind write: a tra
 # applying it needs no container recreate: the second layer of the B289.1 knob.
 run_check "B296" "the DERP probe address must be settable from the panel and apply immediately: B289.1 taught every probe to dial the operator's address while still speaking the relay's public hostname (TLS SNI) and documented SKYGATE_DERP_PROBE_HOST, but the skygate container reads .env only at CREATION (env_file) — 'docker compose restart' keeps the frozen environment, so applying an edited value meant a --force-recreate (AGENTS trap #3) over SSH, for a value the operator can see is wrong right on /admin/derp/relays. New internal/derpcfg resolves the hint PER PROBE — global_settings derp.probe_host (written by the new card) > .env SKYGATE_DERP_PROBE_HOST > none — and every probe path uses it: the derpmap reachability guard, the /admin/derp status probes, the STUN candidate list and the derp_health cron (DERPInfo.ProbeHost, filled once by FetchOwnDERPs). No probe reads the environment variable directly any more, so a saved address cannot be silently ignored on one path. The card on /admin/derp/relays shows the effective value AND which layer it came from, takes a bare address (a scheme, a port, a path, a list, a typo'd IPv4 and a non-hostname are refused, each with its own translated reason — the port belongs to the relay row's URL), drops the 30s map-verdict cache so the redirect renders the fresh 'в карте / пропущен' verdict, and writes an audit row. 25 contracts in scripts/check_b296_derp_probe_host_ui.sh + the resolver tests in internal/derpcfg/derpcfg_b296_test.go + internal/feature/admin/derp_probe_host_b296_test.go (which saves THROUGH the handler and re-fetches /admin/derp/relays/derpmap.json: without an address the unresolvable relay is dropped, after saving it is published with its public name, after clearing it is dropped again)." \
   'test -f scripts/check_b296_derp_probe_host_ui.sh && bash scripts/check_b296_derp_probe_host_ui.sh'
+
+# --- B297: the running headscale's version must be READ, not declared ----------
+# skygate's only answer to "which headscale is this?" was
+# SKYGATE_HEADSCALE_VERSION_PIN, an env var the operator types once —
+# internal/config/config.go says so out loud ("The pin is an env var (not
+# auto-detected) because skygate doesn't shell into the headscale container").
+# The two live hosts already disagree (`aro` runs 0.29.0, the agent VM runs
+# 0.29.3), and 0.29.x is NOT uniform in the surface skygate depends on:
+# `POST /api/v1/node/{id}/approve_routes` is gone from REST at 0.29.1, the REST
+# expire path broke at 0.29.2, `grants[]` replaced `acls[]` at 0.29.0-beta.4 and
+# 0.29.2 is the version that rejects wildcards in `tagOwners`. A stale pin
+# therefore (a) makes "a newer headscale is available" wrong in whichever
+# direction it is wrong, (b) records patch releases as breaking (or the reverse)
+# in the headscale_releases history, and (c) is entirely silent on the one page
+# whose job is comparing versions. The probe is a LADDER — authenticated
+# /api/v1/version → unauthenticated /version → `headscale version` through the
+# install-kind ladder — and every failed rung is remembered, so "unknown" names
+# what it tried instead of guessing; a detection beats the declaration everywhere
+# the comparison or the page needs a version, a FAILED probe keeps the last real
+# detection (never handing control back to the declaration it exists to distrust)
+# and records the failure, alerts no longer require the pin at all, and
+# /admin/headscale shows detected + declared + source + a semver-aware mismatch
+# banner (RU+EN). Contracts in scripts/check_b297_headscale_version_truth.sh.
+run_check "B297" "the RUNNING headscale's version must be read, not assumed: SKYGATE_HEADSCALE_VERSION_PIN is a declaration a human typed once (config.go: not auto-detected), the two live hosts already run different versions (aro 0.29.0, the agent VM 0.29.3), and 0.29.x differs exactly where skygate cares — approve_routes left the REST API at 0.29.1, the REST expire path broke at 0.29.2, grants[] replaced acls[] at 0.29.0-beta.4, and 0.29.2 rejects wildcards in tagOwners — so a stale pin silently mislabels update availability, mis-flags releases as breaking in headscale_releases, and hides which capability rung this host will take. New internal/headscale/version_b297.go probes a LADDER (authenticated GET /api/v1/version → unauthenticated GET /version → headscale version through the install-kind ladder, bounded so a hung docker exec cannot hold a boot), treats a non-2xx answer as a note rather than a version, validates a named JSON field strictly and free text loosely on short bodies only, prefers the CLI's SERVER line over the client binary's own version, and remembers every failed rung so an undetected version reports what it tried. internal/headscale_version.Monitor gains VersionProbe/DeclaredPin: the detected version wins everywhere a version is compared (tick, is_breaking, alerts, Snapshot for the page and the bot), the declaration is kept for display, a FAILED probe keeps the last real detection and records the error instead of silently reverting to the declaration, alerts no longer REQUIRE the pin, and the probe runs before the GitHub poll so an offline host still detects a newly upgraded headscale. Boot logs the detected version and a MISMATCH line, and /admin/headscale renders detected + declared + source + timestamp with a semver-aware mismatch banner. Contracts in scripts/check_b297_headscale_version_truth.sh." \
+  'test -f scripts/check_b297_headscale_version_truth.sh && bash scripts/check_b297_headscale_version_truth.sh'

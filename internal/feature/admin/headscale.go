@@ -34,9 +34,14 @@ func (s *Service) GetAdminHeadscale(w http.ResponseWriter, r *http.Request) {
 		history     []headscale_version.HeadscaleReleaseRecord
 		pinned      string
 		monitorOK   bool
+		// B297: what the RUNNING headscale answered, next to what the operator
+		// declared. Without both, a stale pin is invisible on the one page that
+		// exists to compare versions.
+		version headscale_version.ServerVersionStatus
 	)
 	if s.HeadscaleUpdateMonitor != nil {
 		latest, update, brk, checkedAt, history, pinned = s.HeadscaleUpdateMonitor.Snapshot()
+		version = s.HeadscaleUpdateMonitor.VersionStatus()
 		monitorOK = true
 	}
 
@@ -62,6 +67,7 @@ func (s *Service) GetAdminHeadscale(w http.ResponseWriter, r *http.Request) {
 		"StateText":    i18n.T(lang, stateKey),
 		"MonitorOK":    monitorOK,
 		"Pinned":       pinned,
+		"Version":      version,
 		"Latest":       latest,
 		"Update":       update,
 		"Breaking":     brk,

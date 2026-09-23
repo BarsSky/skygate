@@ -77,6 +77,50 @@
   </div>
 </div>
 
+{{/* B297: what the RUNNING headscale is, next to what the operator declared.
+     Before B297 the pin was the only answer skygate had, so a stale declaration
+     was invisible on the one page whose job is comparing versions — and the two
+     live hosts already run different versions (aro 0.29.0, the agent VM
+     0.29.3). The probe ladder is API → root endpoint → CLI. */}}
+{{if .MonitorOK}}
+<div class="card" style="margin-bottom:24px">
+  <h4 style="margin:0 0 12px 0"><i class="fa-solid fa-code-branch"></i> {{t "headscale_admin.version_title"}}</h4>
+  {{if .Version.Mismatch}}
+  <div class="alert alert-warning" style="margin-bottom:12px">
+    <i class="fa-solid fa-triangle-exclamation"></i> {{t "headscale_admin.version_mismatch"}}
+  </div>
+  {{end}}
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px">
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "headscale_admin.version_detected_label"}}</div>
+      <div style="font-size:18px;font-weight:600">
+        {{if .Version.Detected}}<code>{{.Version.Detected}}</code>{{else}}<span style="color:var(--text-muted)">{{t "headscale_admin.version_unknown"}}</span>{{end}}
+      </div>
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
+        {{if .Version.Detected}}
+          {{t "headscale_admin.version_via"}}: <code>{{.Version.Via}}</code><br>
+          {{.Version.DetectedAt.Format "2006-01-02 15:04:05 MST"}}
+        {{else}}
+          {{t "headscale_admin.version_unknown_help"}}
+        {{end}}
+      </div>
+    </div>
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "headscale_admin.version_declared_label"}}</div>
+      <div style="font-size:18px;font-weight:600">
+        {{if .Version.Declared}}<code>{{.Version.Declared}}</code>{{else}}<span style="color:var(--text-muted)">{{t "headscale_admin.pinned_unset"}}</span>{{end}}
+      </div>
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">{{t "headscale_admin.version_declared_help"}}</div>
+    </div>
+  </div>
+  {{if .Version.Err}}
+  <div style="margin-top:12px;color:var(--danger);font-size:12px">
+    <i class="fa-solid fa-circle-exclamation"></i> {{t "headscale_admin.version_probe_failed"}}: {{.Version.Err}}
+  </div>
+  {{end}}
+</div>
+{{end}}
+
 <div class="card">
   <h4 style="margin:0 0 12px 0"><i class="fa-solid fa-clock-rotate-left"></i> {{t "headscale_admin.history_title"}}</h4>
   {{if .History}}

@@ -12,6 +12,104 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.63 — the running headscale's version is read, not declared (B297)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.62` → this tag · **Compatibility:** none —
+no schema change, no migration. `SKYGATE_HEADSCALE_VERSION_PIN` stays supported and
+becomes the **fallback**.
+
+### Why
+
+skygate's only answer to «which headscale is this?» was `SKYGATE_HEADSCALE_VERSION_PIN`,
+an env var the operator types once. `internal/config/config.go` says so out loud:
+
+> The pin is an env var (not auto-detected) because skygate doesn't shell into the
+> headscale container. Auto-detect could come in a v0.21.0+ …
+
+The two live hosts already disagree — `aro` runs **0.29.0**, the agent VM runs
+**0.29.3** — and 0.29.x is **not** uniform in the surface skygate depends on:
+
+| Difference | Version | Where it is handled today |
+|---|---|---|
+| `POST /api/v1/node/{id}/approve_routes` deprecated/404 in REST | since **0.29.1** | REST first, then the CLI (`internal/headscale/routes.go`) |
+| the REST expire path is broken | **0.29.2** | CLI-only, with a named error (`nodes.go`) |
+| `grants[]` replaced `acls[]` | 0.29.0-beta.4 | the generator emits `grants[]` (`acl.go`) |
+| wildcards in `tagOwners` rejected, `ip: ["*"]` required | **0.29.2** | the generator emits the strict form (`acl.go`) |
+| the policy file is re-read only at startup | 0.29.x | a write is a `systemctl restart` |
+
+None of that is version-branched — every one is a **capability ladder** — so a
+mismatch never breaks skygate silently. What a stale pin *did* break was three
+things, all invisible:
+
+1. the update monitor compared the latest GitHub release against the declaration,
+   so «доступна новая версия headscale» fired in whichever direction the pin was
+   wrong;
+2. `headscale_releases.is_breaking` was computed from it, so patch releases were
+   filed as breaking (or the reverse) in the history table;
+3. nothing anywhere said the daemon and the declaration disagreed — not the
+   journal, not the page whose entire job is comparing versions.
+
+### What
+
+**A probe ladder** (`internal/headscale/version_b297.go`), cheapest and most
+authoritative rung first, in the same style as the B294 live-policy read:
+
+1. authenticated `GET /api/v1/version`;
+2. unauthenticated `GET /version`;
+3. `headscale version` through the install-kind ladder (`runHeadscaleCLI`:
+   `docker exec` on a container host, the local binary on a native one) — the only
+   rung that still answers when the API address itself is wrong.
+
+Every failed rung is remembered (`ServerVersion.Tried` / `Reason()`), so an
+undetected version names what it tried instead of guessing. A **non-2xx answer is a
+note, never a version** — an error body carries HTTP codes and ports that a loose
+parser would happily publish as "the running version". A named JSON field
+(`version` / `Version` / `server_version` / `serverVersion` / `headscale_version`)
+is validated strictly; free text is searched loosely **only on a short body** (a
+proxy error page is not a version). The CLI parser prefers the **server** line over
+the client binary's own version, because a stale `/usr/bin/headscale` next to a
+fresh container is a real layout. The CLI rung is bounded from the outside, so a
+hung `docker exec` cannot hold a boot phase or a monitor tick.
+
+**The monitor prefers the detection.** `internal/headscale_version.Monitor` gains
+`VersionProbe` + `DeclaredPin` + `VersionStatus()`:
+
+* the detected version is used **everywhere** a version is compared — the tick,
+  `IsBreaking`, the alert body, and `Snapshot()` (which feeds both
+  `/admin/headscale` and the bot's `/headscale`);
+* the declaration is kept **beside** it, so the page can show both;
+* a **failed** probe keeps the last real detection and records the error — it never
+  silently hands control back to the declaration it exists to distrust;
+* the probe runs **before** the GitHub poll, so an offline host still notices a
+  headscale upgrade, and `Start()` probes once immediately so the first render is
+  already truthful;
+* alerts no longer **require** the pin: a host whose version is detected but whose
+  `SKYGATE_HEADSCALE_VERSION_PIN` is empty used to sit in observe-only mode forever.
+
+**Operator-visible.** Boot logs `headscale-version: running headscale is X (via …)`
+and a named `MISMATCH` line when the declaration disagrees. `/admin/headscale` gets
+a «Версия запущенного headscale» card — **detected**, **declared**, the **rung that
+answered**, the timestamp, and a mismatch banner — and the banner is semver-aware:
+`0.29` vs `0.29.0` is **not** a mismatch. The old pin help («задаётся через
+SKYGATE_HEADSCALE_VERSION_PIN») now says the version is detected automatically and
+the pin is only the fallback (RU+EN).
+
+### For the operator
+
+Nothing to change: after the update, `aro` will report **0.29.0** and the agent VM
+**0.29.3** by itself. If your `.env` still pins the other host's version, the page
+will now say so — fix or clear `SKYGATE_HEADSCALE_VERSION_PIN` to silence the
+banner. Check with:
+
+```bash
+journalctl -u skygate --since '-10 min' | grep -E 'headscale-version|headscale-update-monitor'
+# /admin/headscale → «Версия запущенного headscale»: Определена / Объявлена / источник
+```
+
+43 contracts in `scripts/check_b297_headscale_version_truth.sh` +
+`internal/headscale/version_b297_test.go`,
+`internal/headscale_version/monitor_b297_test.go`.
+
 ## v1.5.62 — the relay probe address is set from the panel, and applies immediately (B296)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.61` → this tag · **Compatibility:** none —

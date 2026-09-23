@@ -3046,9 +3046,37 @@ func main() {
 	// to render a banner. cfg.HeadscalePollInterval
 	// = 0 disables the goroutine (the page + bot
 	// still work from the cache).
+	// 2026-09-23 (B297): ASK the running headscale what version it is, instead of
+	// trusting SKYGATE_HEADSCALE_VERSION_PIN. The pin is a declaration a human
+	// typed once (config.go says outright that it is not auto-detected), and the
+	// two live hosts already disagree: `aro` runs 0.29.0, the agent VM runs
+	// 0.29.3. 0.29.x is not uniform in the API surface skygate depends on —
+	// approve_routes left REST at 0.29.1, the REST expire path broke at 0.29.2,
+	// and 0.29.2 is the version that rejects wildcards in `tagOwners` — so which
+	// capability rung a host takes was previously unknowable from the portal.
+	// The probe is a ladder (API → root endpoint → CLI) and never fails the boot:
+	// it either reports a version or the rungs it tried. The socket is already
+	// bound (B269), so a slow headscale cannot delay availability.
+	hsVer := hs.DetectServerVersion(ctx)
+	if hsVer.Found() {
+		log.Printf("headscale-version: running headscale is %s (via %s)", hsVer.Version, hsVer.Via)
+		if cfg.HeadscaleVersionPin != "" &&
+			headscale_version.CompareSemver(hsVer.Version, cfg.HeadscaleVersionPin) != 0 {
+			log.Printf("headscale-version: MISMATCH — SKYGATE_HEADSCALE_VERSION_PIN says %q but the daemon answered %s; the DETECTED version is used for the update comparison (fix or clear the pin)",
+				cfg.HeadscaleVersionPin, hsVer.Version)
+		}
+	} else {
+		log.Printf("headscale-version: could not detect the running headscale (%s) — falling back to SKYGATE_HEADSCALE_VERSION_PIN=%q",
+			hsVer.Reason(), cfg.HeadscaleVersionPin)
+	}
 	if cfg.HeadscalePollInterval > 0 {
 		hsMon := headscale_version.NewMonitor(d.DB, cfg.HeadscaleVersionPin, app.Notifier)
 		hsMon.CheckEvery = cfg.HeadscalePollInterval
+		// B297: re-probe on every tick (and once immediately in Start), so a
+		// headscale upgrade is reflected without a skygate restart. The monitor
+		// keeps the declaration for display and reports the mismatch.
+		hsMon.DeclaredPin = cfg.HeadscaleVersionPin
+		hsMon.VersionProbe = hs.VersionProbe
 		hsMon.Start(ctx)
 		app.HeadscaleUpdateMonitor = hsMon
 		// 2026-07-20: v0.20.0 — also wire the
@@ -3058,8 +3086,16 @@ func main() {
 		// Telegram block above so this call is
 		// in scope.
 		rn.SetHeadscaleUpdateMonitor(hsMon)
-		log.Printf("📡 headscale-update-monitor: polling every %s, pinned=%q (set SKYGATE_HEADSCALE_VERSION_PIN to enable alerts)",
-			cfg.HeadscalePollInterval, cfg.HeadscaleVersionPin)
+		// B297: alerts no longer REQUIRE the pin — the probe supplies the running
+		// version, and the pin is only the fallback for a host whose headscale
+		// cannot be asked. Say which of the two is in charge.
+		if hsVer.Found() {
+			log.Printf("📡 headscale-update-monitor: polling every %s, running headscale %s (detected via %s; SKYGATE_HEADSCALE_VERSION_PIN=%q is only the fallback)",
+				cfg.HeadscalePollInterval, hsVer.Version, hsVer.Via, cfg.HeadscaleVersionPin)
+		} else {
+			log.Printf("📡 headscale-update-monitor: polling every %s, version UNDETECTED — falling back to SKYGATE_HEADSCALE_VERSION_PIN=%q (set it to enable alerts)",
+				cfg.HeadscalePollInterval, cfg.HeadscaleVersionPin)
+		}
 	} else {
 		log.Printf("📡 headscale-update-monitor: disabled (SKYGATE_HEADSCALE_POLL_INTERVAL=0). /admin/headscale still works as a manual look-up.")
 	}
