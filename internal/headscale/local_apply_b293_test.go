@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // b293Stub installs fake runners. Each entry decides what a `bin` does.
@@ -93,13 +94,26 @@ func TestApplyRoutesLocally_PermissionFallsThroughToHelper_B293(t *testing.T) {
 	})
 	b293ArmedHelper(t)
 	// Simulate the root applier: it consumes the request and writes a verdict.
+	//
+	// The poll must be DEADLINE-based, not a fixed iteration count. A busy loop of
+	// N os.Stat calls can finish before the request has been staged (the staging
+	// path does real work: read the old verdict, validate, write a temp file,
+	// rename), and then no verdict is ever written — which is exactly how this
+	// test turned red on a loaded CI runner (run 35834971383,
+	// `output = "queued for the privileged helper (no verdict yet …)"` after the
+	// production 8s wait) while passing everywhere else. The request is still
+	// REQUIRED to appear: `consumed` below fails the test when it never does.
+	consumed := make(chan struct{})
 	go func() {
-		for i := 0; i < 200; i++ {
+		deadline := time.Now().Add(6 * time.Second)
+		for time.Now().Before(deadline) {
 			if _, err := os.Stat(filepath.Join(dir, "routes.request.props")); err == nil {
 				_ = os.WriteFile(filepath.Join(dir, "routes-apply.status"),
 					[]byte("RESULT=ok\nTS=2026-09-23T05:00:00Z\nROUTES=0.0.0.0/0\nCOMMAND=tailscale set --advertise-exit-node --advertise-routes=0.0.0.0/0\nREASON=\n"), 0o644)
+				close(consumed)
 				return
 			}
+			time.Sleep(5 * time.Millisecond)
 		}
 	}()
 	c := New("http://127.0.0.1:1", "stub")
@@ -112,6 +126,11 @@ func TestApplyRoutesLocally_PermissionFallsThroughToHelper_B293(t *testing.T) {
 	}
 	if !strings.Contains(out, "helper applied") {
 		t.Errorf("output = %q, want the applier's command echoed back", out)
+	}
+	select {
+	case <-consumed:
+	default:
+		t.Error("the request was never staged where the root applier reads it")
 	}
 }
 

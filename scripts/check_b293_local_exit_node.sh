@@ -299,6 +299,17 @@ if grep -q 'TestDetectRelayPlacement_B293_1' internal/headscale/local_node_b293_
 else
   bad "H1b: the fallback chain is not tested"
 fi
+# H1c: the helper-rung test's fake applier must poll to a DEADLINE. A fixed
+# iteration count (200 busy os.Stat calls) can finish before the request is
+# staged, so no verdict is ever written and the test fails with "queued for the
+# privileged helper (no verdict yet …)" — exactly what happened on CI run
+# 35834971383 while the same test passed everywhere else.
+if grep -q 'time.Now().Add(6 \* time.Second)' internal/headscale/local_apply_b293_test.go 2>/dev/null \
+   && ! grep -q 'for i := 0; i < 200; i++' internal/headscale/local_apply_b293_test.go 2>/dev/null; then
+  ok "H1c: the fake applier polls until a deadline (the fixed-count flake cannot return)"
+else
+  bad "H1c: the fake applier uses a fixed iteration count — the verdict race is back"
+fi
 if command -v go >/dev/null 2>&1; then
   OUT="$(go test ./internal/headscale/ ./internal/feature/admin/ ./internal/feature/exit_rules/ -run 'B293|LocalExitNode|ApplyRoutesLocally|RequestRoutesApply|ReadRoutesApplyStatus|LocalTransports|IsLocalRelay|SelfCoveringRoutes|ParseLocalTailscaleStatus|SplitCommaList|LiveExitNodeIP|ConfigSSHKeyPath' -count=1 2>&1)"
   if grep -q '^ok' <<< "$OUT" && ! grep -q 'FAIL' <<< "$OUT"; then
