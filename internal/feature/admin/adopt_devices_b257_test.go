@@ -4,8 +4,10 @@
 // pin the decision logic so a future refactor doesn't
 // silently flip the rejection list.
 //
-// The 5 rejection rules are documented at the classifyNodeForAdoption
+// The rejection rules are documented at the classifyNodeForAdoption
 // function; the tests below exercise each one plus the happy path.
+// B303 (v1.5.68) renegotiated rules #3 and #4 — see the
+// _BecomesOwnerPick_B303 tests.
 
 package admin
 
@@ -76,53 +78,66 @@ func TestClassifyNodeForAdoption_RejectAlreadyOwned(t *testing.T) {
 	}
 }
 
-// TestClassifyNodeForAdoption_RejectEmptyUserName pins rule #3:
-// headscale's synthetic "tagged-devices" user shows up in
-// node listings with UserName="" (the synthetic user has no
-// per-node user). Rejecting these means they're not surfaced
-// for manual adoption — they belong to the dev-tag strategy
-// (Strategy D in the B77 backfill) instead.
-func TestClassifyNodeForAdoption_RejectEmptyUserName(t *testing.T) {
+// TestClassifyNodeForAdoption_EmptyUserNameBecomesOwnerPick_B303 is
+// the renegotiated rule #3 (B303, v1.5.68): a node whose UserName
+// headscale does not report is no longer dropped — it becomes a
+// candidate that asks the operator to name the owner (NeedsOwnerPick).
+// The pre-B303 rule #3 asserted the skip; THAT is what left the
+// operator's ownerless device with no working action at all.
+func TestClassifyNodeForAdoption_EmptyUserNameBecomesOwnerPick_B303(t *testing.T) {
 	n := mkNode("42", "cyborg", "2147455555", "") // tagged-devices sentinel
 	portal := map[string]portalByHS{
 		"2147455555": {id: 99, username: "tagged-devices"},
 	}
-	if _, ok := classifyNodeForAdoption(n, map[string]struct{}{}, portal); ok {
-		t.Errorf("empty UserName (tagged-devices) should be rejected (rule #3)")
+	c, ok := classifyNodeForAdoption(n, map[string]struct{}{}, portal)
+	if !ok || c == nil {
+		t.Fatalf("empty UserName must now produce a candidate (B303 owner picker)")
+	}
+	if !c.NeedsOwnerPick {
+		t.Errorf("NeedsOwnerPick=false; want true for a node headscale reports no user for")
+	}
+	if c.PortalUsername != "" || c.PortalUserID != 0 {
+		t.Errorf("no owner may be guessed: got username=%q id=%d", c.PortalUsername, c.PortalUserID)
 	}
 }
 
-// TestClassifyNodeForAdoption_RejectOrphanHeadscaleUser pins
-// rule #4: a headscale user with no portal_user row is NOT an
-// adoption candidate. Adopting such a node would assign a
-// portal user who isn't actually associated with the headscale
-// user — wrong attribution. The flow for the orphan
-// headscale user is B-mod-first-run-adoption (separate
-// /admin/users action), not this handler.
-func TestClassifyNodeForAdoption_RejectOrphanHeadscaleUser(t *testing.T) {
-	n := mkNode("42", "cyborg", "77", "orphan_hs_user")
-	// No entry in portalByHSID for user ID 77 — that's
-	// the orphan-HS-user case.
+// TestClassifyNodeForAdoption_OrphanHeadscaleUserBecomesOwnerPick_B303
+// is the renegotiated rule #4 (B303, v1.5.68): the synthetic
+// `tagged-devices` user (and any headscale user that has no
+// portal_users row yet) cannot name a portal owner, so the row is
+// offered with an explicit owner picker instead of being hidden.
+func TestClassifyNodeForAdoption_OrphanHeadscaleUserBecomesOwnerPick_B303(t *testing.T) {
+	n := mkNode("42", "cyborg", "2147455555", "tagged-devices")
 	portal := map[string]portalByHS{
 		"1": {id: 1, username: "skyadmin"},
 	}
-	if _, ok := classifyNodeForAdoption(n, map[string]struct{}{}, portal); ok {
-		t.Errorf("orphan headscale user (no portal_users row) should be rejected (rule #4)")
+	c, ok := classifyNodeForAdoption(n, map[string]struct{}{}, portal)
+	if !ok || c == nil {
+		t.Fatalf("tagged-devices node must now produce a candidate (B303)")
+	}
+	if !c.NeedsOwnerPick {
+		t.Errorf("NeedsOwnerPick=false; want true for a node with no portal owner")
 	}
 }
 
-// TestClassifyNodeForAdoption_RejectZeroPortalID pins rule #5:
-// the caller (findAdoptionCandidates) only inserts rows with
-// HeadscaleUserID > 0 into portalByHSID, so id=0 shouldn't
-// happen at runtime. The classifier doesn't trust it
-// regardless — reject defensively.
+// TestClassifyNodeForAdoption_RejectZeroPortalID pinned rule #5
+// (defensive: a portalByHS entry with id=0 was rejected).
+//
+// **Renegotiated by B303 (v1.5.68)**: a zero id means the map cannot
+// name an owner, which is the owner-pick case — not a reason to hide
+// the device. The defensive intent is kept: no user is auto-selected.
 func TestClassifyNodeForAdoption_RejectZeroPortalID(t *testing.T) {
 	n := mkNode("42", "cyborg", "1", "skyadmin")
 	portal := map[string]portalByHS{
 		"1": {id: 0, username: ""}, // explicit zero — should never roundtrip through, but guard anyway
 	}
-	if _, ok := classifyNodeForAdoption(n, map[string]struct{}{}, portal); ok {
-		t.Errorf("zero portal id should be rejected (rule #5)")
+	c, ok := classifyNodeForAdoption(n, map[string]struct{}{}, portal)
+	if !ok || c == nil {
+		t.Fatalf("zero portal id must produce an owner-pick candidate (B303)")
+	}
+	if !c.NeedsOwnerPick || c.PortalUserID != 0 || c.PortalUsername != "" {
+		t.Errorf("zero portal id must not select an owner: NeedsOwnerPick=%v id=%d username=%q",
+			c.NeedsOwnerPick, c.PortalUserID, c.PortalUsername)
 	}
 }
 

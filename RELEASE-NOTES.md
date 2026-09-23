@@ -12,6 +12,105 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.68 — an ownerless device must have a working admin path (B303)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.67` → this tag · **Compatibility:** none —
+no schema change, no migration, no config change.
+
+### The report
+
+On `/admin/devices`, pressing **Transfer** on a device that «оказалось никому не
+принадлежащим» opened a **separate page** whose entire body was:
+
+```
+node not in node_owner_map: db: node_owner_map: no row
+```
+
+and, in the same message, a device «не привязанное тегом не дается для
+тегирования администратору (словно проигнорировано для тех скриптов что должны
+проверять и добавлять устройства)».
+
+### One deadlock, three pieces — all of them in `node_owner_map`
+
+1. **`PostAdminDeviceTransfer` demanded the row it exists to create.** It read the
+   node's CURRENT `node_owner_map` row first and, when the node had none, answered
+   `http.Error(w, "node not in node_owner_map: "+err, 400)` — a `text/plain` page
+   with no navigation that leaked raw database text. The one button whose job is
+   to give a device an owner refused to run because the device had no owner.
+2. **`PostAdminNodeTag` landed the tag and recorded nothing.** Ownership was
+   written only when headscale named a user *and* the row already existed; the
+   synthetic `tagged-devices` branch called `UpdateNodeOwnerTag` — an `UPDATE`,
+   which matches **no row** for a node that has none. The tag reached headscale,
+   `node_owner_map` stayed empty, every per-device ACL rule missed the device,
+   `/my/devices` never showed it — and the next Transfer click hit piece (1). That
+   is the «словно проигнорировано» half of the report.
+3. **The adoption card hid those devices.** `classifyNodeForAdoption` skipped a
+   node whose `UserName` was empty, whose headscale user had no `portal_users` row
+   (including the synthetic `tagged-devices`), or whose matched portal id was 0 —
+   precisely the ownerless shapes — so the page offered no action for them either.
+
+### The fix
+
+* **A missing row is the adoption.** `errors.Is(err, db.ErrNodeOwnerNotFound)`
+  becomes an empty current owner, the transfer proceeds, the audit action is
+  `device_transfer_adopted_ownerless` (an adoption is now distinguishable from a
+  reassignment) and the new row is stamped with the live hostname through
+  `SetNodeOwnerHostnameIfEmpty` (B272.5). A **real** database error is still
+  refused — as a flash.
+* **Tag always persists ownership.** Missing row →
+  `InsertIgnoreNodeOwnerWithHostname` (owner + live hostname recorded, audited as
+  `node_tag_owner_row_created`); existing row → the tag-bump `UPDATE`, so
+  `hostname`/`os`/`device_type` survive. The live node read inside the handler is
+  now **mandatory**: a failed or empty answer used to fall through silently, which
+  meant the per-user-device exit-node guard ran against an empty tag list and a
+  tag could be applied to a node that had vanished.
+* **No raw error pages on this page.** Every operator-facing refusal in both
+  handlers is a `303` flash on `/admin/devices?err=…` carrying a named reason
+  (shared `devicesFlashErr` helper logs the raw text server-side); the `403` for a
+  non-admin caller remains the only `http.Error`. This is the rule the
+  `skygate-error-ux-migration` skill encodes.
+* **The adoption card offers an owner picker.** Ownerless rows
+  (`NeedsOwnerPick`) render a real dropdown over the portal users that have a
+  `headscale_user_id` instead of a one-click button for a user nobody could infer;
+  new RU+EN labels (`devices.adoption_pick_owner`, `…_button_pick`,
+  `…_no_owner`, `…_ownerless_hint`).
+* **Empty hostname refused.** Transfer will not build `tag:dev-<user>-` from an
+  empty name; if headscale is unreachable and the node has no stored hostname it
+  says so and changes nothing.
+
+### Renegotiated contracts
+
+`scripts/check_b257_adopt_devices.sh` contract F pinned the two former **skip**
+rules as tests named `…_RejectEmptyUserName` / `…_RejectOrphanHeadscaleUser`.
+Those names asserted the behaviour that produced this bug; section F now pins the
+renegotiated rules (`TestClassifyNodeForAdoption_EmptyUserNameBecomesOwnerPick_B303`,
+`…_OrphanHeadscaleUserBecomesOwnerPick_B303`) and says so in place.
+
+### Verification
+
+* `scripts/check_b303_ownerless_device.sh` — 29 contracts (source shape, the
+  absence of the literal raw error string, i18n parity, the two renegotiated
+  classifier tests, and a `go test -run B303` run).
+* `internal/feature/admin/devices_b303_test.go` drives the **real** handlers
+  against in-memory SQLite plus a fake headscale REST server: an ownerless
+  transfer adopts and stamps the hostname; four refusal shapes never leak the raw
+  text; an unreachable headscale is named and no half-adoption row is written; a
+  tag on a row-less node creates the row for both ownerless shapes; an unreadable
+  headscale refuses to tag instead of tagging blind; an unknown node is a flash.
+* `go vet`, `staticcheck`, `go test ./...` clean; the full pre-deploy gate green
+  before the tag (CI-gated).
+
+### What the operator should check after updating
+
+1. `/admin/devices` — the device that answered the raw page now appears in the
+   **«Устройства, ожидающие закрепления»** card with an owner dropdown (or can be
+   Transferred directly); either action writes the `node_owner_map` row, stamps
+   the hostname and applies the dev-tag.
+2. Every refusal on the page is now a red flash on the same page, never a blank
+   `text/plain` page.
+3. After assigning owners, run **Re-apply ACL** on `/admin/exit-rules` so the new
+   `tagOwners` entries reach headscale.
+
 **Post-release correction (B298, 2026-09-23).** The first live run of this probe
 answered `0.29.2` on `aro` — not the 0.29.0 that had been reported, and not what
 any `.env` declared, while rung 2 (`GET /version`) is the rung that answered

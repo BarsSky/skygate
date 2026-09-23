@@ -65,6 +65,7 @@
 package admin
 
 import (
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -114,12 +115,27 @@ func (a adminNotifierSink) SendAlert(text string) int64 { return a.n.SendAlert(t
 type AdoptionCandidate struct {
 	headscale.NodeView
 	// PortalUserID is portal_users.id for the matching owner
-	// (0 means "no match" — should not happen for a candidate,
-	// always populated by the scanner).
+	// (0 means "no match" — the row then needs the operator to
+	// choose one, see NeedsOwnerPick).
 	PortalUserID int64
 	// PortalUsername is the matching portal_users.username.
 	// Renders in the "Assign to <user>" button label.
 	PortalUsername string
+	// NeedsOwnerPick (B303) is true when NO portal user could be inferred for this
+	// node: headscale reported no user at all, the node sits under its synthetic
+	// `tagged-devices` user (which never has a portal_users row), or the reported
+	// headscale user has not been linked in the portal yet.
+	//
+	// WHY this exists: those nodes used to be dropped from the adoption card
+	// entirely, and the per-row Transfer button rejects a node without a
+	// node_owner_map row (it exists to REASSIGN, not to adopt). Together the two
+	// actions left an ownerless device with NO working path from the panel —
+	// live report: «при попытке переместить устройство что оказалось никому не
+	// принадлежащим открылась отдельная страница … node not in node_owner_map»
+	// plus «устройство не привязанное тегом не дается для тегирования
+	// администратору (словно проигнорировано)». The card now lists them and the
+	// UI asks the operator to name the owner instead of guessing one.
+	NeedsOwnerPick bool
 	// OS is the auto-detected OS label ("linux", "android",
 	// "windows", "ios", "macos", or "unknown"). Pre-filled
 	// from the auto-detect so the UI doesn't show "unknown"
@@ -133,10 +149,13 @@ type AdoptionCandidate struct {
 // findAdoptionCandidates returns the headscale nodes that need
 // manual adoption:
 //   - Not already in node_owner_map (so /my/devices can't see them)
-//   - Owned by a headscale user that maps to some portal_users row
+//   - Either owned by a headscale user that maps to some portal_users
+//     row (the row then offers a one-click "Assign to <user>"), or
+//     ownerless / under the synthetic `tagged-devices` user (the row
+//     then offers an explicit owner picker — NeedsOwnerPick, B303)
 //
-// Synthetic `tagged-devices` users are excluded — their nodes are
-// already adopted (via Strategy D in the backfill: match by dev-tag).
+// Pre-B303 the second group was filtered out entirely, which is the
+// deadlock the operator reported; the classification helper documents it.
 //
 // The OS + DeviceType per row are best-effort auto-detect; the
 // helper does not persist them (the real persist happens on
@@ -209,18 +228,20 @@ type portalByHS struct {
 
 // classifyNodeForAdoption returns the (candidate, true) for a
 // headscale node that needs manual adoption, or (nil, false) to
-// skip. Pure function — no DB, no API client. The 5 reject
+// skip. Pure function — no DB, no API client. The reject
 // rules are pinned by TestClassifyNodeForAdoption_*:
 //
 //  1. empty NodeID                → skip (defensive — headscale returns non-empty IDs in practice)
 //  2. already in ownedNodeIDs     → skip (it's adopted)
-//  3. empty UserName               → skip (headscale's synthetic orphan; no real owner to attribute to)
-//  4. no matching portal_user     → skip (the headscale user has no portal_users row yet — separate flow)
-//  5. matching portal_user with id==0 → skip (defensive — the caller should never insert such a row, but the classifier doesn't trust it)
+//  3. empty UserName              → CANDIDATE with NeedsOwnerPick (B303: ownerless node, operator names the owner)
+//  4. no matching portal_user     → CANDIDATE with NeedsOwnerPick (B303 — includes the synthetic `tagged-devices`)
+//  5. matching portal_user with id==0 → CANDIDATE with NeedsOwnerPick (B303: no owner may be auto-selected)
 //
-// All 5 reject rules together reduce to "candidate iff there's
-// exactly one portal_user who could own this node AND we haven't
-// adopted it yet".
+// Rules 3–5 were "skip" before B303 (v1.5.68) and that skip is exactly
+// what the operator hit: the node appeared nowhere on the page, so the
+// only action left was the per-row Transfer button, which refused to run
+// because such a node has no node_owner_map row to reassign — a deadlock
+// with a raw 400 page as its only feedback.
 func classifyNodeForAdoption(n headscale.NodeView, ownedNodeIDs map[string]struct{}, portalByHSID map[string]portalByHS) (*AdoptionCandidate, bool) {
 	if n.ID == "" {
 		return nil, false
@@ -236,19 +257,32 @@ func classifyNodeForAdoption(n headscale.NodeView, ownedNodeIDs map[string]struc
 	// "real" user (skyadmin, michail, ...) without a
 	// dev-tag.
 	if n.UserName == "" {
-		return nil, false
+		// B303: headscale reported no user for this node. That is not a reason to
+		// hide it — it is an ownerless node the operator must be able to adopt.
+		osLabel := devicemeta.DetectOS(n.Hostname)
+		return &AdoptionCandidate{
+			NodeView:       n,
+			OS:             osLabel,
+			DeviceType:     devicemeta.DetectType(n.Tags, n.ApprovedRoutes, n.AvailableRoutes, osLabel),
+			NeedsOwnerPick: true,
+		}, true
 	}
 	pu, ok := portalByHSID[n.UserID]
 	if !ok || pu.id == 0 {
-		// Either the headscale user doesn't have a
-		// matching portal_user row yet, OR the headscale
-		// user is the synthetic tagged-devices (no
-		// portal_users row ever gets that). Both
-		// scenarios are intentionally NOT adoption
-		// candidates — they're separate flows
-		// (B-mod-first-run-adoption for the former,
-		// Strategy D for the latter).
-		return nil, false
+		// Either the headscale user doesn't have a matching portal_user row yet,
+		// OR the headscale user is the synthetic `tagged-devices` (no
+		// portal_users row ever gets that) — B303: both are nodes an operator
+		// adopts BY HAND, so they belong on this card with an explicit owner
+		// picker rather than nowhere at all. (The B77 backfill may still claim
+		// them on its next tick via Strategy D when they carry a dev-tag; the
+		// card simply no longer hides them until it does.)
+		osLabel := devicemeta.DetectOS(n.Hostname)
+		return &AdoptionCandidate{
+			NodeView:       n,
+			OS:             osLabel,
+			DeviceType:     devicemeta.DetectType(n.Tags, n.ApprovedRoutes, n.AvailableRoutes, osLabel),
+			NeedsOwnerPick: true,
+		}, true
 	}
 	osLabel := devicemeta.DetectOS(n.Hostname)
 	typeLabel := devicemeta.DetectType(n.Tags, n.ApprovedRoutes, n.AvailableRoutes, osLabel)
@@ -259,6 +293,23 @@ func classifyNodeForAdoption(n headscale.NodeView, ownedNodeIDs map[string]struc
 		OS:             osLabel,
 		DeviceType:     typeLabel,
 	}, true
+}
+
+// liveUserLinkedToPortal reports whether headscale's user id for a node maps to a
+// portal_users row. B303: that is the difference between "this node already has a
+// portal owner, so a different target is a mistake" and "this node has no portal
+// owner at all, which is exactly the adoption case".
+func liveUserLinkedToPortal(users []db.User, liveUserID string) bool {
+	if strings.TrimSpace(liveUserID) == "" {
+		return false
+	}
+	for i := range users {
+		if users[i].HeadscaleUserID > 0 &&
+			strconv.FormatInt(users[i].HeadscaleUserID, 10) == liveUserID {
+			return true
+		}
+	}
+	return false
 }
 
 // PostAdminDeviceAdopt wires the per-row "Assign to <user>"
@@ -281,13 +332,14 @@ func (s *Service) PostAdminDeviceAdopt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form: "+err.Error(), http.StatusBadRequest)
+		log.Printf("admin.devices.adopt: ParseForm: %v", err)
+		http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape(s.I18n.T(s.I18n.LangFromRequest(r), "error.db")), http.StatusSeeOther)
 		return
 	}
 	nodeIDStr := strings.TrimSpace(r.FormValue("node_id"))
 	targetUsername := strings.TrimSpace(r.FormValue("target_username"))
 	if nodeIDStr == "" || targetUsername == "" {
-		http.Error(w, "node_id and target_username required", http.StatusBadRequest)
+		http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape("node_id and target_username are required"), http.StatusSeeOther)
 		return
 	}
 	// Look up the target portal user + verify they have a
@@ -295,7 +347,8 @@ func (s *Service) PostAdminDeviceAdopt(w http.ResponseWriter, r *http.Request) {
 	// eligible to adopt headscale nodes).
 	users, err := db.GetAllPortalUsers(s.dbc())
 	if err != nil {
-		http.Error(w, "list users failed: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("admin.devices.adopt: GetAllPortalUsers: %v", err)
+		http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape(s.I18n.T(s.I18n.LangFromRequest(r), "error.db")), http.StatusSeeOther)
 		return
 	}
 	var target *db.User
@@ -306,11 +359,12 @@ func (s *Service) PostAdminDeviceAdopt(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if target == nil {
-		http.Error(w, "target user not found: "+targetUsername, http.StatusBadRequest)
+		http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape("target user not found: "+targetUsername), http.StatusSeeOther)
 		return
 	}
 	if target.HeadscaleUserID == 0 {
-		http.Error(w, "target user has no headscale_user_id (run /admin/users first to provision them)", http.StatusBadRequest)
+		http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape(
+			"target user "+targetUsername+" has no headscale_user_id yet — provision them on /admin/users first"), http.StatusSeeOther)
 		return
 	}
 	// Reject the second adoption: refuse to "adopt" a node
@@ -325,12 +379,14 @@ func (s *Service) PostAdminDeviceAdopt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.HSGlobalFn == nil {
-		http.Error(w, "headscale client not configured", http.StatusInternalServerError)
+		log.Printf("admin.devices.adopt: HSGlobalFn is nil (headscale client unavailable)")
+		http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape("headscale client is not configured"), http.StatusSeeOther)
 		return
 	}
 	hs := s.HSGlobalFn()
 	if hs == nil {
-		http.Error(w, "headscale client not configured", http.StatusInternalServerError)
+		log.Printf("admin.devices.adopt: headscale client unavailable")
+		http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape("headscale client is not configured"), http.StatusSeeOther)
 		return
 	}
 	// Pull the live hostname + UserID from headscale. We
@@ -349,18 +405,32 @@ func (s *Service) PostAdminDeviceAdopt(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if liveHostname == "" {
-		http.Error(w, "node "+nodeIDStr+" not found in headscale (it may have been deleted; refresh and retry)", http.StatusBadRequest)
+		http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape(
+			"node "+nodeIDStr+" not found in headscale (it may have been deleted; refresh and retry)"), http.StatusSeeOther)
 		return
 	}
-	// Defensive: confirm headscale agrees the node belongs to
-	// the target user. If not, refuse (the operator picked the
-	// wrong row from the table — likely a UI bug or stale page).
-	if liveUserID != "" && liveUserID != strconv.FormatInt(target.HeadscaleUserID, 10) {
-		http.Error(w,
+	// Defensive: confirm headscale agrees the node belongs to the target user —
+	// but ONLY when the live user is a REAL, portal-linked user. A node under
+	// headscale's synthetic `tagged-devices` user (or one whose headscale user has
+	// no portal row) has no portal owner to agree with, and that is exactly the
+	// node this action exists to adopt by hand (B303): refusing here deadlocked
+	// both actions the panel offers — adopt said "node belongs to a different
+	// headscale user … Use 'Transfer' to reassign", and Transfer answered with a
+	// raw 400 because there was no node_owner_map row to reassign:
+	//
+	//	node not in node_owner_map: db: node_owner_map: no row
+	//
+	// Live report: «при попытке переместить устройство что оказалось никому не
+	// принадлежащим открылась отдельная страница» + «устройство не привязанное
+	// тегом не дается для тегирования администратору».
+	if liveUserID != "" && liveUserID != strconv.FormatInt(target.HeadscaleUserID, 10) && liveUserLinkedToPortal(users, liveUserID) {
+		log.Printf("admin.devices.adopt: refusing node=%s live_user=%s target=%s(hs=%d) — the live user IS a linked portal user",
+			nodeIDStr, liveUserID, targetUsername, target.HeadscaleUserID)
+		http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape(
 			"node belongs to a different headscale user (live UserID="+liveUserID+
 				", target's headscale_user_id="+strconv.FormatInt(target.HeadscaleUserID, 10)+
-				"). Use 'Transfer' to reassign.",
-			http.StatusBadRequest)
+				"). Use 'Transfer' to reassign."),
+			http.StatusSeeOther)
 		return
 	}
 	// B176: lowercase the hostname before building the tag —
@@ -369,7 +439,7 @@ func (s *Service) PostAdminDeviceAdopt(w http.ResponseWriter, r *http.Request) {
 	newDevTag := "tag:dev-" + targetUsername + "-" + strings.ToLower(liveHostname)
 	nodeID, err := strconv.ParseInt(nodeIDStr, 10, 64)
 	if err != nil || nodeID <= 0 {
-		http.Error(w, "bad node id", http.StatusBadRequest)
+		http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape("bad node id: "+nodeIDStr), http.StatusSeeOther)
 		return
 	}
 	// Step 1: ensure the policy knows this dev-tag.
@@ -401,7 +471,8 @@ func (s *Service) PostAdminDeviceAdopt(w http.ResponseWriter, r *http.Request) {
 	// audit log and can re-run /admin/devices/force-backfill-
 	// tags.
 	if err := db.UpsertNodeOwner(s.dbc(), nodeIDStr, target.HeadscaleUserID, targetUsername, newDevTag, c.UserID); err != nil {
-		http.Error(w, "db upsert failed: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("admin.devices.adopt: UpsertNodeOwner node=%s user=%s tag=%s: %v", nodeIDStr, targetUsername, newDevTag, err)
+		http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape(s.I18n.T(s.I18n.LangFromRequest(r), "error.db")), http.StatusSeeOther)
 		return
 	}
 	// Step 3: AddTag the dev-tag on the headscale node.

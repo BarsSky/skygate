@@ -100,11 +100,17 @@ done
 # --- F. unit tests (pure function) ---
 echo
 echo "=== F. unit tests for the classifier ==="
+# **Renegotiated by B303 (v1.5.68).** The pre-B303 classifier SKIPPED a node
+# whose headscale user was empty or had no portal_users row
+# (TestClassifyNodeForAdoption_RejectEmptyUserName /
+# _RejectOrphanHeadscaleUser). Live that produced a device with no working
+# action at all, so those two rules are now the owner-pick candidates asserted
+# by the _B303 tests below. The skip-rule names are gone on purpose.
 for t in TestClassifyNodeForAdoption_HappyPath \
          TestClassifyNodeForAdoption_RejectEmptyNodeID \
          TestClassifyNodeForAdoption_RejectAlreadyOwned \
-         TestClassifyNodeForAdoption_RejectEmptyUserName \
-         TestClassifyNodeForAdoption_RejectOrphanHeadscaleUser \
+         TestClassifyNodeForAdoption_EmptyUserNameBecomesOwnerPick_B303 \
+         TestClassifyNodeForAdoption_OrphanHeadscaleUserBecomesOwnerPick_B303 \
          TestClassifyNodeForAdoption_RejectZeroPortalID \
          TestClassifyNodeForAdoption_PopulatesOSAndRole; do
   if grep -qF "func $t" "$TEST"; then ok "$t exists"

@@ -26,8 +26,20 @@ package admin
 // different portal user). Together they form the "fix everything"
 // admin toolkit: sync the DB from headscale, force re-apply the
 // per-user dev-tags, transfer misattributed devices.
+//
+// 2026-09-21: v1.5.68 — B303 — the ownerless-device deadlock. A headscale node
+// with no node_owner_map row had NO working action on this page: Transfer
+// answered a raw text/plain page ("node not in node_owner_map: db:
+// node_owner_map: no row" — the operator's screenshot) and Tag applied the tag
+// in headscale while writing no ownership row at all (the "tagged-devices"
+// branch used an UPDATE that matched nothing), so the device stayed invisible
+// ("словно проигнорировано для тех скриптов что должны проверять и добавлять
+// устройства"). Transfer now treats a missing row as the adoption it really is,
+// Tag always persists the ownership row, and every refusal in both handlers is a
+// `?err=` flash on /admin/devices instead of a raw error page.
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -363,6 +375,21 @@ func (s *Service) PostAdminDevicesSyncFromHeadscale(w http.ResponseWriter, r *ht
 			fmt.Sprintf("Sync from headscale: %d inserted, %d updated", ins, upd))), http.StatusSeeOther)
 }
 
+// devicesFlashErr (B303) redirects a POST handler of /admin/devices back to the
+// page with the message in the `?err=` flash slot, logging the raw text server
+// side. Every operator-facing refusal on this page goes through here (or the
+// equivalent two-liner) instead of http.Error, which used to answer with a
+// text/plain page that carried no navigation and leaked raw DB text — the
+// operator's live report was a screenshot of exactly such a page:
+//
+//	node not in node_owner_map: db: node_owner_map: no row
+//
+// See the loaded skill skygate-error-ux-migration for the rule.
+func (s *Service) devicesFlashErr(w http.ResponseWriter, r *http.Request, msg string) {
+	log.Printf("web.admin.devices: %s (path=%s)", msg, r.URL.Path)
+	http.Redirect(w, r, "/admin/devices?err="+url.QueryEscape(msg), http.StatusSeeOther)
+}
+
 // PostAdminNodeTag adds a headscale tag to a node. The
 // v0.30.1 guard (nodeTagRefusedForUserDevice) refuses exit-node
 // tags on per-user devices. Admin-only.
@@ -375,51 +402,107 @@ func (s *Service) PostAdminNodeTag(w http.ResponseWriter, r *http.Request) {
 	idStr := extractIDFromPath(r.URL.Path)
 	nodeID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		http.Error(w, "bad node id", http.StatusBadRequest)
+		s.devicesFlashErr(w, r, "bad node id: "+idStr)
 		return
 	}
 	tag := r.FormValue("tag")
 	if tag == "" {
 		tag = headscale.TagPublicTag
 	}
-
-	var origUserID, origUserName string
-	var nodeTags []string
+	if s.HSGlobalFn == nil {
+		s.devicesFlashErr(w, r, "headscale client is not configured")
+		return
+	}
 	hs := s.HSGlobalFn()
-	if nodes, err := hs.ListAllNodes(); err == nil {
-		for _, n := range nodes {
-			if n.ID == strconv.FormatInt(nodeID, 10) {
-				origUserID = n.UserID
-				origUserName = n.UserName
-				nodeTags = n.Tags
-				break
-			}
+	if hs == nil {
+		s.devicesFlashErr(w, r, "headscale client is not configured")
+		return
+	}
+
+	// B303: the live read is MANDATORY now. Pre-B303 its error and its
+	// "node not in the list" case both fell through silently: the guard below
+	// then saw an empty tag list (so it could not refuse an exit-node tag on a
+	// per-user device) and the ownership row was written only when headscale
+	// happened to name a user — the silent half of the operator's report.
+	var origUserID, origUserName, liveHostname string
+	var nodeTags []string
+	nodes, lerr := hs.ListAllNodes()
+	if lerr != nil {
+		s.devicesFlashErr(w, r, fmt.Sprintf("cannot read nodes from headscale: %v", lerr))
+		return
+	}
+	found := false
+	for _, n := range nodes {
+		if n.ID == strconv.FormatInt(nodeID, 10) {
+			origUserID = n.UserID
+			origUserName = n.UserName
+			nodeTags = n.Tags
+			liveHostname = n.Hostname
+			found = true
+			break
 		}
+	}
+	if !found {
+		s.devicesFlashErr(w, r, fmt.Sprintf("node %d is not in headscale (already deleted?)", nodeID))
+		return
 	}
 
 	if refused, msg, hadTag := nodeTagRefusedForUserDevice(nodeID, tag, nodeTags); refused {
 		s.Backend.Audit(c.UserID, c.Username, "node_tag_refused",
 			fmt.Sprintf("node=%d attempted_tag=%s reason=user_device node_had=%s",
 				nodeID, tag, hadTag))
-		http.Error(w, msg, http.StatusBadRequest)
+		s.devicesFlashErr(w, r, msg)
 		return
 	}
 
 	if err := hs.TagNode(nodeID, tag); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.Backend.Audit(c.UserID, c.Username, "node_tag_failed",
+			fmt.Sprintf("node=%d tag=%s err=%v", nodeID, tag, err))
+		s.devicesFlashErr(w, r, fmt.Sprintf("TagNode failed: %v", err))
 		return
 	}
+	// The tag is in headscale now, so the cached node list is stale even if one
+	// of the ownership writes below fails and returns early (B303).
+	hs.InvalidateCache()
 
-	if origUserID != "" && origUserName != "" {
-		nodeIDStr := strconv.FormatInt(nodeID, 10)
-		var hsUID int64
-		if n, err := strconv.ParseInt(origUserID, 10, 64); err == nil {
-			hsUID = n
+	// B303: ALWAYS persist the ownership row. Pre-B303 this block ran only when
+	// `origUserID != "" && origUserName != ""`, and the synthetic
+	// `tagged-devices` case called UpdateNodeOwnerTag — an UPDATE, which matches
+	// no row for a node that has none. Result: the tag landed in headscale, the
+	// node stayed absent from node_owner_map, every per-device ACL rule missed it
+	// and the Transfer button answered the raw 400 page. Now: an existing row
+	// gets its tag bumped (UPDATE — keeps hostname/os/device_type), a missing row
+	// is inserted with the live owner + hostname (INSERT — the headscale user may
+	// legitimately be empty / synthetic, and an empty owner is exactly what the
+	// adoption card then offers to fix).
+	nodeIDStr := strconv.FormatInt(nodeID, 10)
+	var hsUID int64
+	if n, perr := strconv.ParseInt(origUserID, 10, 64); perr == nil {
+		hsUID = n
+	}
+	_, gerr := db.GetNodeOwner(s.dbc(), nodeIDStr)
+	switch {
+	case errors.Is(gerr, db.ErrNodeOwnerNotFound):
+		if ierr := db.InsertIgnoreNodeOwnerWithHostname(
+			s.dbc(), nodeIDStr, hsUID, origUserName, tag, liveHostname, c.UserID); ierr != nil {
+			log.Printf("web.admin.node-tag: InsertIgnoreNodeOwnerWithHostname node=%s tag=%s: %v", nodeIDStr, tag, ierr)
+			s.devicesFlashErr(w, r,
+				fmt.Sprintf("tag %s applied in headscale, but recording ownership in node_owner_map failed: %v", tag, ierr))
+			return
 		}
-		if origUserName == "tagged-devices" {
-			_ = db.UpdateNodeOwnerTag(s.dbc(), nodeIDStr, tag, c.UserID)
-		} else {
-			_ = db.UpsertNodeOwner(s.dbc(), nodeIDStr, hsUID, origUserName, tag, c.UserID)
+		s.Backend.Audit(c.UserID, c.Username, "node_tag_owner_row_created",
+			fmt.Sprintf("node=%d tag=%s hs_user=%q — node had no node_owner_map row (B303)", nodeID, tag, origUserName))
+	case gerr != nil:
+		log.Printf("web.admin.node-tag: GetNodeOwner node=%s: %v", nodeIDStr, gerr)
+		s.devicesFlashErr(w, r,
+			fmt.Sprintf("tag %s applied in headscale, but reading node_owner_map failed: %v", tag, gerr))
+		return
+	default:
+		if uerr := db.UpdateNodeOwnerTag(s.dbc(), nodeIDStr, tag, c.UserID); uerr != nil {
+			log.Printf("web.admin.node-tag: UpdateNodeOwnerTag node=%s tag=%s: %v", nodeIDStr, tag, uerr)
+			s.devicesFlashErr(w, r,
+				fmt.Sprintf("tag %s applied in headscale, but updating node_owner_map failed: %v", tag, uerr))
+			return
 		}
 	}
 
@@ -742,24 +825,24 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form: "+err.Error(), http.StatusBadRequest)
+		s.devicesFlashErr(w, r, "bad form: "+err.Error())
 		return
 	}
 	nodeIDStr := r.FormValue("node_id")
 	targetUsername := strings.TrimSpace(r.FormValue("target_username"))
 	nodeID, err := strconv.ParseInt(nodeIDStr, 10, 64)
 	if err != nil || nodeID <= 0 {
-		http.Error(w, "bad node id", http.StatusBadRequest)
+		s.devicesFlashErr(w, r, "bad node id: "+nodeIDStr)
 		return
 	}
 	if targetUsername == "" {
-		http.Error(w, "target_username required", http.StatusBadRequest)
+		s.devicesFlashErr(w, r, "target_username required")
 		return
 	}
 	// Look up the target portal user.
 	users, err := db.GetAllPortalUsers(s.dbc())
 	if err != nil {
-		http.Error(w, "list users failed: "+err.Error(), http.StatusInternalServerError)
+		s.devicesFlashErr(w, r, "cannot list portal users: "+err.Error())
 		return
 	}
 	var target *db.User
@@ -770,30 +853,41 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if target == nil {
-		http.Error(w, "target user not found: "+targetUsername, http.StatusBadRequest)
+		s.devicesFlashErr(w, r, "target user not found: "+targetUsername)
 		return
 	}
-	// Read the current node_owner_map row FIRST (doesn't
-	// need headscale) so a missing node returns http.StatusBadRequest instead
-	// of the headscale-http.StatusInternalServerError that the v0.33.1.20 pre-check
-	// would otherwise return. v0.33.1.20: the HS check used
-	// to fire before the node check, which made the http.StatusInternalServerError vs
-	// http.StatusBadRequest distinction confusing for the operator — "is the
-	// node missing, or is my headscale down?".
+	if target.HeadscaleUserID == 0 {
+		s.devicesFlashErr(w, r, "target user "+targetUsername+
+			" has no headscale_user_id yet — provision them on /admin/users first")
+		return
+	}
+	// Read the current node_owner_map row FIRST (doesn't need headscale).
+	//
+	// B303: a MISSING row is not an error any more — it means "this node has no
+	// owner yet", and a transfer to a named user is precisely the assignment the
+	// operator wants. Pre-B303 this branch answered a raw text/plain 400
+	// ("node not in node_owner_map: db: node_owner_map: no row"), which is the
+	// page in the operator's screenshot: the button that exists to give the node
+	// an owner refused to run because the node had no owner. A real DB error is
+	// still surfaced (as a flash) — the two cases must not be conflated.
 	currentRow, err := db.GetNodeOwner(s.dbc(), nodeIDStr)
-	if err != nil {
-		http.Error(w, "node not in node_owner_map: "+err.Error(), http.StatusBadRequest)
+	ownerless := false
+	if errors.Is(err, db.ErrNodeOwnerNotFound) {
+		currentRow = &db.NodeOwner{NodeID: nodeIDStr}
+		ownerless = true
+	} else if err != nil {
+		s.devicesFlashErr(w, r, "cannot read node_owner_map: "+err.Error())
 		return
 	}
 	if s.HSGlobalFn == nil {
 		// v0.33.1.20: defensive — see PostAdminDevicesForceBackfillTags
 		// for the rationale (nil func value panics).
-		http.Error(w, "headscale client not configured", http.StatusInternalServerError)
+		s.devicesFlashErr(w, r, "headscale client is not configured")
 		return
 	}
 	hs := s.HSGlobalFn()
 	if hs == nil {
-		http.Error(w, "headscale client not configured", http.StatusInternalServerError)
+		s.devicesFlashErr(w, r, "headscale client is not configured")
 		return
 	}
 	// Pull the live hostname from headscale (n.Hostname
@@ -801,19 +895,43 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 	// dev-tag must be built from THAT, not from the
 	// current row's hostname, which may be stale after
 	// a rename the admin didn't sync).
+	//
+	// B303: the live read is no longer allowed to fail quietly here. The
+	// fallback below needs a stored hostname, and an ownerless node has no row
+	// to fall back to — building "tag:dev-<user>-" from an empty name would
+	// hand headscale an invalid tag and lose the real device name.
 	var liveHostname string
-	if nodes, err := hs.ListAllNodes(); err == nil {
-		for _, n := range nodes {
+	liveNodes, lerr := hs.ListAllNodes()
+	if lerr != nil {
+		log.Printf("web.admin.device-transfer: ListAllNodes err=%v (stored hostname %q)", lerr, currentRow.Hostname)
+		if strings.TrimSpace(currentRow.Hostname) == "" {
+			s.devicesFlashErr(w, r, fmt.Sprintf(
+				"headscale is unreachable (%v) and node %d has no stored hostname — cannot build a device tag, retry when headscale answers", lerr, nodeID))
+			return
+		}
+	} else {
+		found := false
+		for _, n := range liveNodes {
 			if n.ID == nodeIDStr {
 				liveHostname = n.Hostname
+				found = true
 				break
 			}
+		}
+		if !found {
+			s.devicesFlashErr(w, r, fmt.Sprintf("node %d is not in headscale (already deleted? refresh the page)", nodeID))
+			return
 		}
 	}
 	if liveHostname == "" {
 		// Fall back to the row's hostname (e.g. node
 		// is offline / not in headscale list right now).
 		liveHostname = currentRow.Hostname
+	}
+	if strings.TrimSpace(liveHostname) == "" {
+		s.devicesFlashErr(w, r, fmt.Sprintf(
+			"node %d has an empty hostname in headscale — cannot build a device tag", nodeID))
+		return
 	}
 	// B176 (v1.5.2): headscale 0.29 requires tags to be
 	// lowercase. The post-transfer dev-tag is constructed
@@ -827,10 +945,21 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 	// issue bit /my/devices auto-apply (see the live-verify
 	// report on 2026-08-25 for node id=35 "SkyBars").
 	newDevTag := fmt.Sprintf("tag:dev-%s-%s", targetUsername, strings.ToLower(liveHostname))
-	// 1) Upsert the row with the new owner + new dev tag.
+	// 1) Upsert the row with the new owner + new dev tag. For an ownerless node
+	//    (B303) this INSERT is the adoption itself — the same write the
+	//    "Devices awaiting adoption" card performs, which is why the missing row
+	//    is no longer a refusal.
 	if err := db.UpsertNodeOwner(s.dbc(), nodeIDStr, target.HeadscaleUserID, targetUsername, newDevTag, c.UserID); err != nil {
-		http.Error(w, "db upsert failed: "+err.Error(), http.StatusInternalServerError)
+		s.devicesFlashErr(w, r, "cannot record the new owner (db upsert failed): "+err.Error())
 		return
+	}
+	// B272.5: UpsertNodeOwner has no hostname argument, so stamp it when the row
+	// is still empty. Without this an ownerless node adopted through Transfer
+	// would keep an empty node_owner_map.hostname even though headscale knows the
+	// name, and every consumer that resolves identity through the map (the ACL,
+	// the bot) would have to re-derive it.
+	if _, herr := db.SetNodeOwnerHostnameIfEmpty(s.dbc(), nodeIDStr, liveHostname); herr != nil {
+		log.Printf("web.admin.device-transfer: SetNodeOwnerHostnameIfEmpty node=%s hostname=%q: %v", nodeIDStr, liveHostname, herr)
 	}
 	// 2) UntagNode the OLD dev-tag (if any) so headscale
 	//    doesn't accumulate both old+new. Skip when the
@@ -859,11 +988,24 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 			fmt.Sprintf("node=%d new_tag=%s err=%v", nodeID, newDevTag, err))
 	}
 	hs.InvalidateCache()
-	s.Backend.Audit(c.UserID, c.Username, "device_transfer",
-		fmt.Sprintf("node=%d from=%s to=%s new_tag=%s", nodeID, currentRow.Username, targetUsername, newDevTag))
+	// The audit row distinguishes a reassignment from an adoption (B303): the
+	// pre-B303 flow could not tell them apart because the second case could not
+	// happen at all.
+	action := "device_transfer"
+	from := currentRow.Username
+	if ownerless {
+		action = "device_transfer_adopted_ownerless"
+		from = "(none — node had no node_owner_map row)"
+	}
+	s.Backend.Audit(c.UserID, c.Username, action,
+		fmt.Sprintf("node=%d from=%s to=%s new_tag=%s", nodeID, from, targetUsername, newDevTag))
+	verb := "transferred to"
+	if ownerless {
+		verb = "adopted by (it had no owner before)"
+	}
 	http.Redirect(w, r, fmt.Sprintf(
 		"/admin/devices?ok=%s", url.QueryEscape(
-			fmt.Sprintf("Node %d transferred to %s (tag=%s). Click 'Re-apply ACL' on /admin/exit-rules to push the new tagOwners.", nodeID, targetUsername, newDevTag))), http.StatusSeeOther)
+			fmt.Sprintf("Node %d (%s) %s %s (tag=%s). Click 'Re-apply ACL' on /admin/exit-rules to push the new tagOwners.", nodeID, liveHostname, verb, targetUsername, newDevTag))), http.StatusSeeOther)
 }
 
 // PostAdminDeviceDelete (B169, v1.5.2) deletes a node from

@@ -224,6 +224,13 @@ var ruMy = map[string]string{
 	"devices.adoption_col_assign"     : "Действие",
 	"devices.adoption_button"         : "Закрепить за",
 	"devices.adoption_confirm"        : "Закрепить это устройство за выбранным пользователем? После нажмите 'Re-apply ACL' на /admin/exit-rules.",
+	// B303 (v1.5.68): the ownerless rows on the adoption card. headscale
+	// reports no user (or only its synthetic `tagged-devices`) for these
+	// nodes, so there is nobody to pre-select — the operator names the owner.
+	"devices.adoption_pick_owner"     : "— выберите владельца —",
+	"devices.adoption_button_pick"    : "Закрепить за выбранным",
+	"devices.adoption_no_owner"       : "headscale не сообщает владельца",
+	"devices.adoption_ownerless_hint" : "У устройства нет записи в node_owner_map, поэтому 'Передать' и теги не срабатывали. Выберите владельца — skygate создаст запись и поставит dev-тег.",
 	// B162 (v1.5.1): per-row device delete UX. The
 	// button is rendered next to the Renew button
 	// for every device with Expiry!="" (we don't
@@ -774,6 +781,11 @@ var enMy = map[string]string{
 	"devices.adoption_col_assign"     : "Action",
 	"devices.adoption_button"         : "Assign to",
 	"devices.adoption_confirm"        : "Assign this device to the selected user? After this click, run 'Re-apply ACL' on /admin/exit-rules to push the new tagOwners.",
+	// B303 (v1.5.68): see the RU block above.
+	"devices.adoption_pick_owner"     : "— pick an owner —",
+	"devices.adoption_button_pick"    : "Assign to the selected user",
+	"devices.adoption_no_owner"       : "headscale reports no owner",
+	"devices.adoption_ownerless_hint" : "This device has no node_owner_map row, which is why 'Transfer' and tagging did nothing. Pick an owner and skygate creates the row plus the dev-tag.",
 	// B162 (v1.5.1): per-row device delete UX.
 	"devices.delete"                             : "Delete",
 	"devices.delete_title"                       : "Delete device from headscale",
