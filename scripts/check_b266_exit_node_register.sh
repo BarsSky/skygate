@@ -57,6 +57,8 @@ REG_TEST="internal/feature/admin/exit_node_register_b266_test.go"
 ROUTES="internal/headscale/routes.go"
 ROUTES_TEST="internal/headscale/routes_b266_test.go"
 EXIT="internal/feature/admin/exit_nodes.go"
+# B292: the shared SSH-key preflight (empty / not absolute / missing / unreadable).
+SSHKEY="internal/headscale/ssh_key.go"
 TPL="internal/handlers/templates/admin/exit_nodes.html"
 I18N="internal/i18n/catalog_exit_nodes.go"
 
@@ -128,8 +130,17 @@ if grep -q '"ProxyCommand=none"' "$ROUTES" \
 else
   bad "E2: argv hardening missing — a stored target starting with - is still an ssh option"
 fi
-if grep -q 'filepath.IsAbs(keyPath)' "$ROUTES"; then
-  ok "E3: key path must be absolute"
+# B292 contract renegotiation (2026-09-23): the absoluteness check moved out of
+# routes.go into internal/headscale/ssh_key.go, where SSHKeyProblem performs the
+# empty/absolute/exists/readable preflight in one place and the caller renders
+# the same verdict on /admin/exit-nodes. The property is unchanged — a relative
+# key path is still refused — so the assertion follows the implementation.
+if grep -q 'filepath.IsAbs(keyPath)' "$ROUTES" || grep -q 'SSHKeyProblem(keyPath)' "$ROUTES"; then
+  if grep -q 'func sshKeyPathIsAbs(' "$SSHKEY" && grep -q 'not absolute' "$SSHKEY"; then
+    ok "E3: key path must be absolute (checked by the shared SSH key preflight)"
+  else
+    bad "E3: the absoluteness check disappeared with the refactor"
+  fi
 else
   bad "E3: relative key paths are still accepted"
 fi

@@ -544,7 +544,7 @@ func Load() (*Config, error) {
 		OIDCEnabledEnv:     os.Getenv("SKYGATE_OIDC_ENABLED"),
 		BootstrapAdminUser: getenv("SKYGATE_ADMIN_USER", "admin"),
 		BootstrapAdminPass: os.Getenv("SKYGATE_ADMIN_PASS"),
-		// 2026-08-04 v0.33.1: default path points at the
+		// 2026-08-04 v0.33.1: the default points at the
 		// in-container /ssh-sync mount defined in
 		// docker-compose.yml (the operator's ~/.ssh is bind-mounted
 		// at /ssh-sync so the in-container SetAdvertisedRoutes
@@ -555,7 +555,18 @@ func Load() (*Config, error) {
 		// mistake that bit /admin/exit-rules/sync pre-v0.33.1.
 		// Operators can still override per-call by setting
 		// SKYGATE_EXIT_SSH_KEY=… in .env.
-		SSHKeyPath:         getenv("SKYGATE_EXIT_SSH_KEY", "/ssh-sync/id_ed25519"),
+		//
+		// B292 (2026-09-23): the default is now resolved per INSTALL KIND
+		// instead of unconditionally: /ssh-sync/id_ed25519 is a CONTAINER path
+		// and cannot exist on a native/systemd/bare host, where every
+		// advertised-routes push therefore died with
+		//
+		//	ssh=err=ssh exit-node-vps (key /ssh-sync/id_ed25519): Warning:
+		//	Identity file … not accessible: No such file or directory
+		//
+		// while the headscale approve step succeeded and the flash rendered
+		// green. See resolveExitSSHKeyPath.
+		SSHKeyPath: resolveExitSSHKeyPath(resolveDBDSN()),
 		// 2026-08-03: v0.32.29 — moved from source-level
 		// constants to env-driven config so the public
 		// github repo carries no operator-specific DNS,
@@ -919,12 +930,52 @@ func resolveDBDSN() string {
 // derivable without guessing); for PostgreSQL there is no local database file,
 // so the native default /var/lib/skygate is used.
 func defaultOIDCKeyDir(dsn string) string {
+	return filepath.Join(nativeDataDir(dsn), "oidc-keys")
+}
+
+// resolveExitSSHKeyPath returns the SSH private key the exit-node sync uses when
+// neither the per-row exit_servers.ssh_key_path nor SKYGATE_EXIT_SSH_KEY is set
+// (B292).
+//
+//	container  → /ssh-sync/id_ed25519 (docker-compose binds the operator's
+//	             ~/.ssh at /ssh-sync; unchanged since v0.33.1)
+//	native     → <data dir>/ssh/id_ed25519
+//
+// WHY (live, 2026-09-23): the unconditional /ssh-sync default was a container
+// path, so on the native `aro` host every advertised-routes push ran
+// `ssh -i /ssh-sync/id_ed25519 …` against a path that cannot exist. The ssh
+// warning became the operator-facing explanation, the headscale approve step
+// still reported approved=21, and the routes were never advertised (the page
+// showed "have 2, want 19"). A default must be a path that CAN exist on the
+// install kind it is used on — the same rule B270 applied to the OIDC key dir.
+func resolveExitSSHKeyPath(dsn string) string {
+	if v := strings.TrimSpace(os.Getenv("SKYGATE_EXIT_SSH_KEY")); v != "" {
+		return v
+	}
+	if runningInContainer() {
+		return headscaleContainerSSHKey
+	}
+	return filepath.Join(nativeDataDir(dsn), "ssh", "id_ed25519")
+}
+
+// headscaleContainerSSHKey is the in-container SSH key mount from
+// docker-compose.yml. Duplicated as a literal here (rather than imported from
+// internal/headscale) because internal/config must not depend on the API client
+// package; internal/headscale.ContainerDefaultSSHKey is the same string and the
+// B292 contract asserts they agree.
+const headscaleContainerSSHKey = "/ssh-sync/id_ed25519"
+
+// nativeDataDir returns the host directory skygate keeps its state in: the
+// directory holding skygate.db for a SQLite install, otherwise the installer's
+// default /var/lib/skygate (PostgreSQL installs have no local database file to
+// anchor to).
+func nativeDataDir(dsn string) string {
 	if p, ok := sqlitePathFromDSN(dsn); ok && p != "" {
 		if dir := filepath.Dir(p); dir != "" && dir != "." && dir != "/" {
-			return filepath.Join(dir, "oidc-keys")
+			return dir
 		}
 	}
-	return "/var/lib/skygate/oidc-keys"
+	return "/var/lib/skygate"
 }
 
 // sqlitePathFromDSN extracts the on-disk path from the DSN shapes skygate

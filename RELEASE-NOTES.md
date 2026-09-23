@@ -12,6 +12,127 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.56 — the exit-node SSH sync names its blocker (B292)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.55` → this tag · **Compatibility:** none —
+no schema change, no migration. One default changes on **native** installs (the
+SSH private-key path, see below); container installs are unaffected.
+
+Operator report from `/admin/exit-nodes` («он даёт ошибку при пересинхронизации»),
+rendered in the **green** flash box:
+
+```
+Sync exit-node-vps: ssh=err=ssh exit-node-vps (key /ssh-sync/id_ed25519):
+  Warning: Identity file /ssh-sync/id_ed25519 not accessible: No such file or directory.
+  ssh: Could not resolve hostname exit-node-vps: Name or service not known
+  approved=21
+```
+
+…on a page whose only relay showed «1/1 здоровых», «2 маршрутов» advertised and
+«mismatch: have 2, want 19».
+
+### Root cause — three defects in that one line
+
+1. **`/ssh-sync/id_ed25519` is a CONTAINER path.** It is the v0.33.1 default
+   (`docker-compose.yml` binds the operator's `~/.ssh` there) and it can never
+   exist on a native/systemd/bare install. Nothing anywhere said so — the raw
+   `ssh` warning *was* the whole explanation.
+2. **`Could not resolve hostname exit-node-vps` means the SSH target was the bare
+   node NAME.** `exit_servers` had neither `ssh_target` nor `tailscale_ip`: the
+   B81 fallback chain (`ssh_target` → `root@<tailscale_ip>` → `""`) resolved to
+   nothing, and `SetAdvertisedRoutes` fell back to the node name. The column stays
+   empty forever because the discovery pass writes `INSERT OR IGNORE` — while
+   `/admin/exit-nodes` displayed the relay's Tailscale IP (`100.64.0.1`) read from
+   headscale. Two sources of truth, one invisible. And the «Use Tailscale IP»
+   button resolves through the *same* empty chain, so the operator had **no in-UI
+   way out**.
+3. **The failure was reported as success.** `PostAdminExitNodeSync` always
+   redirected with `?ok=`, so `ssh=err=…` rendered green. (The result string
+   itself deliberately keeps both halves — `approved=21` is real: the headscale
+   approve step does run without SSH.)
+
+The user-visible effect of 1+2: the relay advertised **2** routes (the
+`0.0.0.0/0` + `::/0` bases) instead of the 19 its rules ask for, because
+`--advertise-routes` is pushed over SSH.
+
+### What it does now
+
+* **New `internal/headscale/ssh_key.go`** — `SSHKeyProblem` / `SSHKeyFixHint` /
+  `SSHKeyState` / `SSHKeyStateNeedsOperator` preflight the key: empty, not
+  absolute (POSIX-aware, because `filepath.IsAbs` calls `/ssh-sync/…` relative on
+  Windows), not found, a directory, unreadable — each named separately, each with
+  the fix (which field to set, and where the public key must live). The
+  container-only default is explained, not merely rejected.
+* **`SetAdvertisedRoutes` refuses before spawning `ssh`** with that reason plus
+  the fix, and reports **where the target came from** — so
+  «Could not resolve hostname» is no longer the entire story.
+* **The key default is resolved per install kind** (`config.resolveExitSSHKeyPath`):
+  container → `/ssh-sync/id_ed25519` (unchanged), native →
+  `<data dir>/ssh/id_ed25519` — a path that *can* exist there, anchored exactly
+  like B270's OIDC key dir (`nativeDataDir` is now shared by both). The
+  installers create `<data_dir>/ssh` (`0700`, service-owned).
+* **The sync resolves the relay from the live headscale view** when the row has
+  no address, persists it through `db.SetExitServerTailscaleIPIfEmpty` (only into
+  an **empty** column — an operator-set address is never overwritten) so the B81
+  chain and the «Use Tailscale IP» button work afterwards, and logs the case
+  where headscale has no address either. `db.FirstTailscaleIP` is the single
+  address-picking rule (IPv4 wins: an `ssh` argument cannot be a comma list).
+* **The per-row Re-sync flash tells the truth** (`exitSyncFailed`): `ssh=err=` /
+  `approve=err=` / `error=` → `err=` (red, with the fix in the text), while
+  `ssh=ok approved=0` stays a success — that is the normal state of a relay whose
+  routes have not been approved yet.
+* **`/admin/exit-nodes` shows the verdict**: the effective key path per row, a
+  badge whose tooltip carries the reason **and** the fix, and a banner naming
+  both fields to set (RU + EN).
+
+Files: `internal/headscale/ssh_key.go` (new), `internal/headscale/routes.go`,
+`internal/config/config.go`, `internal/feature/exit_rules/sync.go`,
+`internal/db/exit_servers.go`, `internal/feature/admin/exit_nodes.go`,
+`internal/handlers/templates/admin/exit_nodes.html`,
+`internal/i18n/catalog_exit_nodes.go`, `deploy/install-common.sh`,
+`deploy/install-alpine.sh`, `docs/deploy.md`, `docs/operations.md`.
+
+### Verification
+
+40 contracts in `scripts/check_b292_exit_ssh_truth.sh`, plus:
+`internal/headscale/ssh_key_b292_test.go` (every verdict + the container-default
+hint + a behavioural case that a missing key is refused **without** running ssh),
+`internal/feature/exit_rules/sync_b292_test.go` (the live headscale stub: IPv4
+preference, `givenName`/`hostname`/case-insensitive matching, no invented address
+when headscale has none or is down), `internal/db/exit_servers_b292_test.go`
+(`FirstTailscaleIP`, the repaired row resolving to `root@<ip>`, the repair never
+overwriting), `internal/feature/admin/exit_nodes_b292_test.go` (the ok/err
+decision incl. `approved=0`, the effective key path, the template contract).
+
+**Contract renegotiation:** `scripts/check_b266_exit_node_register.sh` E3 (the
+absoluteness check moved into the shared preflight) and
+`TestConfigSSHKeyPath_DefaultChangedForDocker` →
+`TestConfigSSHKeyPath_DefaultPerInstallKind`.
+
+### How to finish the setup on a native host (one-time)
+
+```bash
+# 1. The key the sync expects (the installer already created the directory):
+sudo install -d -m 700 -o skygate -g skygate /var/lib/skygate/ssh
+sudo ssh-keygen -t ed25519 -N '' -f /var/lib/skygate/ssh/id_ed25519
+sudo chown skygate:skygate /var/lib/skygate/ssh/id_ed25519
+
+# 2. Authorise it on the relay (over the tailnet IP the page shows):
+sudo cat /var/lib/skygate/ssh/id_ed25519.pub | \
+  ssh root@100.64.0.1 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'
+
+# 3. Check the path from the skygate host (this is what the sync does):
+sudo -u skygate ssh -i /var/lib/skygate/ssh/id_ed25519 \
+  -o BatchMode=yes -o StrictHostKeyChecking=accept-new root@100.64.0.1 true
+
+# 4. /admin/exit-nodes → Re-sync on the relay: the flash must read
+#    "ssh=ok approved=N" (green) and the ADS ROUTES column must move off 2.
+```
+
+If the relay needs a different user/port or its own key, set `ssh_target`
+(`user@host[:port]`) and `ssh_key_path` on the row — the page now shows which
+path the sync will actually use and warns when it is unusable.
+
 ## v1.5.55 — the cluster/HA tree speaks SQLite (B291)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.54` → this tag · **Compatibility:** none —

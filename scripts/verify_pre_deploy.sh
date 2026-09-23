@@ -5080,3 +5080,47 @@ run_check "B290" "OIDC must be enableable from the UI: /admin/oidc now shows and
 # schema. 50 contracts in scripts/check_b291_cluster_sqlite.sh.
 run_check "B291" "the cluster/HA tree must work on SQLite: new dialect helpers (internal/db/cluster_sql_b291.go) own every PostgreSQL spelling the tree needed — NowExpr, NowMinusExpr, CastJSON, JSONField, CastTextArray, RandomHexExpr, ForUpdateExpr (PostgreSQL only; SQLite has no FOR UPDATE, and a write transaction already locks the database), TimeValue (bind RFC3339 on SQLite instead of the undecodable Go String() form), TextArrayLiteral + RolesContain/RolesAdd/RolesRemove and FindClusterPrimary/NodeRoles/SetNodeRoles; no PostgreSQL-only SQL remains outside comments anywhere in the cluster/HA tree (discovery, cluster bootstrap, node CRUD, invites, join, failover, drill, cluster_audit, elector, /admin/cluster, /admin/ha, the skygate cluster failover CLI); every timestamp is decoded through db.ParseDBTime on read and bound through DialectKind.TimeValue on write, so all three shapes SQLite can hold render; the pending-invite expiry filter and the elector's 5-minute failover-recommendation dedup run in Go (SQLite has no NOW()/INTERVAL and no jsonb ->>); the /admin/ha audit_log branch selects the real columns (created_at + username, not the non-existent unix_timestamp/actor); the CLI promotes through the shared role helpers so unrelated roles survive; and the regression tests run the real entry points against a migrated in-memory SQLite database (discovery idempotency, node lifecycle, invites, failover/drill role surgery, elector tick + dedup, both admin page collectors). Contracts in scripts/check_b291_cluster_sqlite.sh." \
   'test -f scripts/check_b291_cluster_sqlite.sh && bash scripts/check_b291_cluster_sqlite.sh'
+
+# --- B292: the exit-node SSH sync must name its blocker -----------------------
+# Live on the native `aro` host, reported from /admin/exit-nodes: pressing
+# Re-sync answered, in the GREEN flash box,
+#
+#   Sync exit-node-vps: ssh=err=ssh exit-node-vps (key /ssh-sync/id_ed25519):
+#     Warning: Identity file /ssh-sync/id_ed25519 not accessible: No such file or
+#     directory. ssh: Could not resolve hostname exit-node-vps: Name or service
+#     not known approved=21
+#
+# while the single relay showed «1/1 здоровых», «2 маршрутов» and
+# «mismatch: have 2, want 19». Three defects in one line: (A)
+# /ssh-sync/id_ed25519 is the CONTAINER default (docker-compose binds the
+# operator's ~/.ssh there) and can never exist on a native install — nothing said
+# so, and the ssh warning WAS the whole explanation; (B) "Could not resolve
+# hostname exit-node-vps" means the SSH target was the bare node name, because
+# exit_servers had neither ssh_target nor tailscale_ip — the discovery pass
+# writes INSERT OR IGNORE, so an empty column stays empty forever, while
+# /admin/exit-nodes displayed the relay's Tailscale IP (100.64.0.1) read from
+# headscale, and the "Use Tailscale IP" button resolves through the same empty
+# chain (so there was no in-UI way out); (C) the per-row Re-sync handler always
+# redirected with ?ok=, so a failed SSH sync rendered as success. Fix: new
+# internal/headscale/ssh_key.go (SSHKeyProblem / SSHKeyFixHint / SSHKeyState)
+# preflights empty / non-absolute / missing / unreadable / directory and explains
+# the container default, and SetAdvertisedRoutes refuses BEFORE spawning ssh with
+# the reason + the fix + where the target came from; the SSH key default is
+# resolved per install kind (container → /ssh-sync/id_ed25519 unchanged, native →
+# <data dir>/ssh/id_ed25519, anchored like B270's OIDC key dir) and the
+# installers create <data_dir>/ssh; the sync resolves the relay from the live
+# headscale view when the row has no address, persists it (only into an EMPTY
+# column) so the B81 chain and the button work afterwards, and logs the
+# un-resolvable case; the per-row Re-sync flash is derived from the result
+# (ssh=err=/approve=err= → err=, so the failure is red); and /admin/exit-nodes
+# shows the effective key path, a per-row badge with the reason as its tooltip
+# and a banner naming both fields that fix it (RU+EN). 40 contracts in
+# scripts/check_b292_exit_ssh_truth.sh + internal/headscale/ssh_key_b292_test.go,
+# internal/feature/exit_rules/sync_b292_test.go,
+# internal/db/exit_servers_b292_test.go, internal/feature/admin/exit_nodes_b292_test.go.
+# Contract renegotiated: scripts/check_b266_exit_node_register.sh E3 (the
+# absoluteness check moved into the shared preflight);
+# TestConfigSSHKeyPath_DefaultChangedForDocker became
+# TestConfigSSHKeyPath_DefaultIsPerInstallKind.
+run_check "B292" "the exit-node SSH sync must name its blocker instead of echoing ssh: the SSH private key is preflighted before any ssh process runs (empty / not absolute / not found / a directory / unreadable, each named separately) with the fix attached and the container-only default /ssh-sync/id_ed25519 explained; SetAdvertisedRoutes reports WHERE the target came from, so 'Could not resolve hostname <relay>' is no longer the whole story; the SSH key default is resolved per install kind (container → /ssh-sync/id_ed25519 unchanged, native → <data dir>/ssh/id_ed25519, the same data-dir anchor B270 used for the OIDC keys) and the installers create <data_dir>/ssh; the advertised-routes sync resolves the relay address from the LIVE headscale view when exit_servers has neither ssh_target nor tailscale_ip, persists it into an empty column (never overwriting an operator-set address) so the B81 fallback chain and the 'Use Tailscale IP' button work afterwards, and logs the case where even headscale has no address; the per-row Re-sync flash is derived from the sync result, so ssh=err=/approve=err= renders as an ERROR instead of a green success while 'ssh=ok approved=0' stays a success; and /admin/exit-nodes shows the effective key path per row, a badge whose tooltip carries the reason and the fix, and a banner naming both fields to set. Contracts in scripts/check_b292_exit_ssh_truth.sh." \
+  'test -f scripts/check_b292_exit_ssh_truth.sh && bash scripts/check_b292_exit_ssh_truth.sh'

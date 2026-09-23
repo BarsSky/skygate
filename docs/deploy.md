@@ -85,7 +85,16 @@ canonical template is `.env.example`. Required variables are marked
 
 | Var | Default | What it does |
 |---|---|---|
-| `SKYGATE_EXIT_SSH_KEY` | `/ssh-sync/id_ed25519` | Absolute path (inside the container) of the SSH private key skygate uses for every exit node. Overridden per row by `exit_servers.ssh_key_path`. |
+| `SKYGATE_EXIT_SSH_KEY` | container: `/ssh-sync/id_ed25519`; native: `<data_dir>/ssh/id_ed25519` | Absolute path of the SSH private key skygate uses for every exit node. Overridden per row by `exit_servers.ssh_key_path`. |
+
+**B292:** the default is resolved per install kind. `/ssh-sync/id_ed25519` is the
+in-container bind mount (`docker-compose.yml` mounts the operator's `~/.ssh`
+there) and cannot exist on a native/systemd/bare host — on those the default is
+`<data_dir>/ssh/id_ed25519` (`<data_dir>` is `/var/lib/skygate` unless the SQLite
+database lives elsewhere). The installers create `<data_dir>/ssh` (`0700`,
+service-owned). `/admin/exit-nodes` shows the path the next sync will actually
+use and warns per row when it is missing or unreadable, so an unusable key is
+never discovered only from the stderr of a failed `ssh`.
 
 The SSH **target** and **port** live in the database, per row, and are set on
 `/admin/exit-nodes`:

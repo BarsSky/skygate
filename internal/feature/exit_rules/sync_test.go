@@ -41,6 +41,8 @@ package exit_rules
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -143,14 +145,25 @@ func TestCombinedResult_EmptyApproved(t *testing.T) {
 	}
 }
 
-// TestConfigSSHKeyPath_DefaultChangedForDocker pins the
-// v0.33.1 default for the SSH key path. Pre-fix the
-// default was /home/operator/.ssh/skygate_sync (the
-// legacy non-docker install path) which doesn't exist
-// in the dockerised skygate. v0.33.1 changes the default
-// to /ssh-sync/id_ed25519 (the in-container mount
-// defined in docker-compose.yml).
-func TestConfigSSHKeyPath_DefaultChangedForDocker(t *testing.T) {
+// TestConfigSSHKeyPath_DefaultIsPerInstallKind pins the B292 default for the SSH
+// key path.
+//
+// History: pre-v0.33.1 the default was /home/operator/.ssh/skygate_sync (the
+// legacy non-docker layout) which does not exist in the dockerised skygate, so
+// v0.33.1 changed it to /ssh-sync/id_ed25519 — the in-container mount from
+// docker-compose.yml. That was right for a container and WRONG for every other
+// install kind: on the native `aro` host the sync ran
+// `ssh -i /ssh-sync/id_ed25519 …` against a path that cannot exist, printed the
+// ssh warning as the whole explanation, and never advertised a route.
+//
+// B292 makes the default install-kind aware:
+//
+//	container → /ssh-sync/id_ed25519   (unchanged)
+//	native    → <data dir>/ssh/id_ed25519
+//
+// The test asserts whichever branch this host is on, and never accepts the
+// legacy /home/operator/… path.
+func TestConfigSSHKeyPath_DefaultIsPerInstallKind(t *testing.T) {
 	// Ensure no override is set so we exercise the default.
 	t.Setenv("SKYGATE_EXIT_SSH_KEY", "")
 	// config.Load() requires both HEADSCALE_API_KEY and
@@ -170,13 +183,24 @@ func TestConfigSSHKeyPath_DefaultChangedForDocker(t *testing.T) {
 	if c.SSHKeyPath == "" {
 		t.Fatal("SSHKeyPath must be non-empty in the default config")
 	}
-	// /ssh-sync/... is the v0.33.1 default. /home/operator/...
-	// was the pre-v0.33.1 default — if the latter shows up
-	// here, the change has been undone.
 	if c.SSHKeyPath == "/home/operator/.ssh/skygate_sync" {
-		t.Fatalf("SSHKeyPath is the pre-v0.33.1 legacy default %q — SetAdvertisedRoutes will silently fail in the dockerised skygate", c.SSHKeyPath)
+		t.Fatalf("SSHKeyPath is the pre-v0.33.1 legacy default %q — SetAdvertisedRoutes will silently fail", c.SSHKeyPath)
 	}
-	if !strings.HasPrefix(c.SSHKeyPath, "/ssh-sync/") {
-		t.Errorf("SSHKeyPath should default to /ssh-sync/* (the in-container mount), got %q", c.SSHKeyPath)
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		// Container: the ~/.ssh bind mount is at /ssh-sync.
+		if !strings.HasPrefix(c.SSHKeyPath, "/ssh-sync/") {
+			t.Errorf("inside a container SSHKeyPath should default to /ssh-sync/*, got %q", c.SSHKeyPath)
+		}
+		return
+	}
+	// Native: a host path the installers can create and the unit can read.
+	// Built with filepath.Join so the assertion also holds on the platform the
+	// tests happen to run on (the CI runner is Linux; a developer's Windows box
+	// separates with a backslash).
+	wantNative := filepath.Join("/var/lib/skygate", "ssh", "id_ed25519")
+	if c.SSHKeyPath != wantNative {
+		t.Errorf("on a native install SSHKeyPath should default to %q "+
+			"(a path that CAN exist there), got %q — the container-only /ssh-sync default is the live "+
+			"`ssh=err=… Identity file /ssh-sync/id_ed25519 not accessible` bug (B292)", wantNative, c.SSHKeyPath)
 	}
 }

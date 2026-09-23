@@ -22,7 +22,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -316,8 +315,16 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, accep
 	// nodeHostname as the SSH target is a fallback for nodes that
 	// haven't been customised through the /admin/exit-nodes form.
 	target := strings.TrimSpace(sshTarget)
+	// targetSource records WHY the target is what it is, so a failed ssh can
+	// say it (B292): "Could not resolve hostname <node>" is the signature of
+	// this fallback, and pre-B292 nothing anywhere told the operator that
+	// exit_servers had neither ssh_target nor tailscale_ip — while
+	// /admin/exit-nodes displayed the relay's Tailscale IP read from
+	// headscale. The page and the sync disagreed with no way to see it.
+	targetSource := "exit_servers.ssh_target"
 	if target == "" {
 		target = nodeHostname
+		targetSource = "the node name (exit_servers has neither ssh_target nor tailscale_ip for this relay)"
 	}
 	// Refuse to run with an empty key path. The legacy fallback
 	// (`/home/admin/.ssh/config`) silently failed in the dockerised
@@ -340,15 +347,18 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, accep
 		return "", fmt.Errorf("SetAdvertisedRoutes(%s): refusing unsafe ssh_target %q (expected [user@]host[:port])", nodeHostname, target)
 	}
 	keyPath := strings.TrimSpace(sshKeyPath)
-	if keyPath == "" {
-		return "", fmt.Errorf("SetAdvertisedRoutes(%s): no ssh_key_path provided; set exit_servers.ssh_key_path or SKYGATE_EXIT_SSH_KEY", nodeHostname)
-	}
 	// B266: a relative key path would be resolved against the
 	// container's CWD and is almost always an operator typo; require
 	// absolute so the failure mode is a clear message instead of
 	// "Permission denied (publickey)".
-	if !filepath.IsAbs(keyPath) {
-		return "", fmt.Errorf("SetAdvertisedRoutes(%s): ssh_key_path must be absolute (got %q)", nodeHostname, keyPath)
+	//
+	// B292: the emptiness and absoluteness checks now live in
+	// SSHKeyProblem together with the filesystem probe, so every caller gets the
+	// same verdicts AND the same fix hint (see ssh_key.go). sshKeyPathIsAbs is
+	// POSIX-aware: the deployments are Linux, and filepath.IsAbs would call the
+	// container default `/ssh-sync/id_ed25519` a relative path on Windows.
+	if problem := SSHKeyProblem(keyPath); problem != "" {
+		return "", fmt.Errorf("SetAdvertisedRoutes(%s): %s — %s", nodeHostname, problem, SSHKeyFixHint(keyPath))
 	}
 	// Always keep 0.0.0.0/0 and ::/0 advertised so the node stays a usable
 	// exit node. `tailscale set --advertise-routes=` replaces the list, so
@@ -400,5 +410,9 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, accep
 	if err == nil {
 		return strings.TrimSpace(string(out)), nil
 	}
-	return "", fmt.Errorf("ssh %s (key %s): %s", target, keyPath, strings.TrimSpace(string(out)))
+	// B292: name where the target came from. "Could not resolve hostname <node>"
+	// is meaningless without knowing that no ssh_target and no tailscale_ip were
+	// configured, and that /admin/exit-nodes showed an IP from headscale.
+	return "", fmt.Errorf("ssh %s (target from %s, key %s): %s",
+		target, targetSource, keyPath, strings.TrimSpace(string(out)))
 }

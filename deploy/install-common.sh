@@ -897,6 +897,14 @@ create_user_and_dirs() {
     # resolved against / — MkdirAll failed, NewService's error was fatal and the
     # service died before it could bind its HTTP port.
     install -d -m 0700 -o "$user" -g "$user" "$data_dir/oidc-keys"
+    # B292: the exit-node SSH private key lives here (SKYGATE_EXIT_SSH_KEY
+    # defaults to <data_dir>/ssh/id_ed25519 on a native install). Pre-B292 the
+    # default was the CONTAINER path /ssh-sync/id_ed25519, which cannot exist on
+    # a native host, so every advertised-routes sync ran ssh against a missing
+    # file and never advertised a route. Creating the directory here means the
+    # operator has one obvious place to drop the key (and the unit's
+    # ReadWritePaths already covers $data_dir).
+    install -d -m 0700 -o "$user" -g "$user" "$data_dir/ssh"
     echo "[install] created dirs: $data_dir $etc_dir"
 }
 

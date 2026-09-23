@@ -46,13 +46,19 @@ import (
 // circle), and the test needs the row to render past that
 // column to actually reach the SSH column we're asserting on.
 type stubExitNodeInfo struct {
-	NodeID              string
-	Hostname            string
-	TailscaleIP         string
-	SSHTarget           string
-	ResolvedSSHTarget   string
-	SSHTargetAuto       bool
-	SSHKeyPath          string
+	NodeID            string
+	Hostname          string
+	TailscaleIP       string
+	SSHTarget         string
+	ResolvedSSHTarget string
+	SSHTargetAuto     bool
+	SSHKeyPath        string
+	// B292: the effective key path the next sync will use, its verdict
+	// (ok/unset/missing/…) and the reason + fix shown as the badge tooltip. The
+	// SSH column renders a warning badge when the state is not "ok".
+	EffectiveSSHKeyPath string
+	SSHKeyState         string
+	SSHKeyNote          string
 	Enabled             bool
 	Healthy             bool
 	State               string
@@ -80,8 +86,8 @@ func loadExitNodesBody(t *testing.T) *template.Template {
 		t.Fatalf("read exit_nodes.html: %v", err)
 	}
 	tpl, err := template.New("test").Funcs(template.FuncMap{
-		"t":      func(key string) string { return key },
-		"tf":     func(key string, args ...any) string { return key },
+		"t":        func(key string) string { return key },
+		"tf":       func(key string, args ...any) string { return key },
 		"safeJS":   func(s string) template.JS { return template.JS(s) },
 		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
 		"safeJSON": func(s string) template.JS {
@@ -117,12 +123,12 @@ func TestExitNodesRendersB81_ResolvedSSHTarget(t *testing.T) {
 				Enabled:           true,
 			},
 		},
-		"TotalCount":  1,
+		"TotalCount":   1,
 		"HealthyCount": 1,
-		"ControlURL":  "https://head.example.com",
-		"SSHKeyPath":  "/ssh-sync/id_ed25519",
-		"Page":        "admin/exit_nodes",
-		"Title":       "Exit nodes",
+		"ControlURL":   "https://head.example.com",
+		"SSHKeyPath":   "/ssh-sync/id_ed25519",
+		"Page":         "admin/exit_nodes",
+		"Title":        "Exit nodes",
 	}
 	var buf bytes.Buffer
 	if err := tpl.ExecuteTemplate(&buf, "body-admin-exit_nodes", data); err != nil {
@@ -137,6 +143,60 @@ func TestExitNodesRendersB81_ResolvedSSHTarget(t *testing.T) {
 	// and the stored ssh_target is empty.
 	if !strings.Contains(got, "exit_nodes.ssh_target_auto_badge") {
 		t.Errorf("B81 auto badge i18n key must render when SSHTargetAuto=true, got:\n%s", got)
+	}
+}
+
+// TestExitNodesRendersB292_SSHKeyWarning pins the other half of the SSH column:
+// a row whose key cannot be used must carry the warning badge with the effective
+// path and the reason, and a row with a usable key must NOT (a permanent badge
+// would be noise and would train the operator to ignore it).
+func TestExitNodesRendersB292_SSHKeyWarning(t *testing.T) {
+	tpl := loadExitNodesBody(t)
+	data := map[string]any{
+		"Nodes": []stubExitNodeInfo{
+			{
+				NodeID:              "1",
+				Hostname:            "exit-node-vps",
+				TailscaleIP:         "100.64.0.1",
+				Enabled:             true,
+				EffectiveSSHKeyPath: "/ssh-sync/id_ed25519",
+				SSHKeyState:         "missing",
+				SSHKeyNote:          "ssh key not found: /ssh-sync/id_ed25519 — /ssh-sync/id_ed25519 is the CONTAINER default",
+			},
+			{
+				NodeID:              "2",
+				Hostname:            "healthy-relay",
+				TailscaleIP:         "100.64.0.2",
+				ResolvedSSHTarget:   "root@100.64.0.2",
+				Enabled:             true,
+				EffectiveSSHKeyPath: "/var/lib/skygate/ssh/id_ed25519",
+				SSHKeyState:         "ok",
+			},
+		},
+		"TotalCount":   2,
+		"HealthyCount": 2,
+		"ControlURL":   "https://head.example.com",
+		"SSHKeyPath":   "/var/lib/skygate/ssh/id_ed25519",
+		"Page":         "admin/exit_nodes",
+		"Title":        "Exit nodes",
+	}
+	var buf bytes.Buffer
+	if err := tpl.ExecuteTemplate(&buf, "body-admin-exit_nodes", data); err != nil {
+		t.Fatalf("render body: %v", err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "exit_nodes.ssh_key.badge") {
+		t.Errorf("the SSH key badge must render for a row whose key is unusable, got:\n%s", got)
+	}
+	if !strings.Contains(got, "/ssh-sync/id_ed25519") {
+		t.Errorf("the badge must name the effective key path the sync will use, got:\n%s", got)
+	}
+	if !strings.Contains(got, "CONTAINER default") {
+		t.Errorf("the badge tooltip must carry the reason and the fix, got:\n%s", got)
+	}
+	// Exactly one badge: the healthy row must not have one.
+	if n := strings.Count(got, "exit_nodes.ssh_key.badge"); n != 1 {
+		t.Errorf("the SSH key badge rendered %d times, want 1 (only the unusable row)", n)
 	}
 }
 
@@ -162,12 +222,12 @@ func TestExitNodesRendersB81_OperatorOverrideWins(t *testing.T) {
 				Enabled:           true,
 			},
 		},
-		"TotalCount":  1,
+		"TotalCount":   1,
 		"HealthyCount": 1,
-		"ControlURL":  "https://head.example.com",
-		"SSHKeyPath":  "/ssh-sync/id_ed25519",
-		"Page":        "admin/exit_nodes",
-		"Title":       "Exit nodes",
+		"ControlURL":   "https://head.example.com",
+		"SSHKeyPath":   "/ssh-sync/id_ed25519",
+		"Page":         "admin/exit_nodes",
+		"Title":        "Exit nodes",
 	}
 	var buf bytes.Buffer
 	if err := tpl.ExecuteTemplate(&buf, "body-admin-exit_nodes", data); err != nil {
@@ -202,16 +262,16 @@ func TestExitNodesRendersB81_UseTailscaleIPButton(t *testing.T) {
 				TailscaleIP:       "100.64.0.30",
 				SSHTarget:         "root@198.51.100.30:22", // firewalled public IP (RFC 5737 docs)
 				ResolvedSSHTarget: "root@100.64.0.30",      // B81 fallback
-				SSHTargetAuto:     false,                    // SSHTarget is set, so not auto
+				SSHTargetAuto:     false,                   // SSHTarget is set, so not auto
 				Enabled:           true,
 			},
 		},
-		"TotalCount":  1,
+		"TotalCount":   1,
 		"HealthyCount": 1,
-		"ControlURL":  "https://head.example.com",
-		"SSHKeyPath":  "/ssh-sync/id_ed25519",
-		"Page":        "admin/exit_nodes",
-		"Title":       "Exit nodes",
+		"ControlURL":   "https://head.example.com",
+		"SSHKeyPath":   "/ssh-sync/id_ed25519",
+		"Page":         "admin/exit_nodes",
+		"Title":        "Exit nodes",
 	}
 	var buf bytes.Buffer
 	if err := tpl.ExecuteTemplate(&buf, "body-admin-exit_nodes", data); err != nil {
@@ -297,12 +357,12 @@ func TestExitNodesRendersB81_DisabledRowHidesButton(t *testing.T) {
 				Enabled:           false, // operator turned this off
 			},
 		},
-		"TotalCount":  1,
+		"TotalCount":   1,
 		"HealthyCount": 0,
-		"ControlURL":  "https://head.example.com",
-		"SSHKeyPath":  "/ssh-sync/id_ed25519",
-		"Page":        "admin/exit_nodes",
-		"Title":       "Exit nodes",
+		"ControlURL":   "https://head.example.com",
+		"SSHKeyPath":   "/ssh-sync/id_ed25519",
+		"Page":         "admin/exit_nodes",
+		"Title":        "Exit nodes",
 	}
 	var buf bytes.Buffer
 	if err := tpl.ExecuteTemplate(&buf, "body-admin-exit_nodes", data); err != nil {

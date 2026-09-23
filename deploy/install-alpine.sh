@@ -103,6 +103,10 @@ install -d -m 0750 -o "$SKYGATE_USER" -g "$SKYGATE_USER" "$SKYGATE_ETC_DIR"
 install -d -m 0750 -o "$SKYGATE_USER" -g "$SKYGATE_USER" "$SKYGATE_DATA_DIR/ts"
 # B270: OIDC RSA keypair dir (SKYGATE_OIDC_KEY_DIR defaults to this path).
 install -d -m 0700 -o "$SKYGATE_USER" -g "$SKYGATE_USER" "$SKYGATE_DATA_DIR/oidc-keys"
+# B292: exit-node SSH private key dir (SKYGATE_EXIT_SSH_KEY defaults to
+# <data_dir>/ssh/id_ed25519 on a native install; the container-only
+# /ssh-sync/id_ed25519 cannot exist here).
+install -d -m 0700 -o "$SKYGATE_USER" -g "$SKYGATE_USER" "$SKYGATE_DATA_DIR/ssh"
 echo "[install-alpine] created dirs: $SKYGATE_DATA_DIR $SKYGATE_ETC_DIR"
 
 # -------- 3. download + verify + install binary --------

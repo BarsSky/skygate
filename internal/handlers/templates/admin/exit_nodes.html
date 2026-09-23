@@ -55,6 +55,23 @@
 </div>
 {{end}}
 
+{{/* B292 (2026-09-23): the SSH key the advertised-routes sync needs is
+     missing or unreadable. Without it every "Sync" press runs
+     `ssh -i <path>` against a path that cannot be used, the headscale
+     approve step still succeeds, and the routes are never advertised —
+     which is exactly the live `aro` report ("выдает ошибку при
+     пересинхронизации"): green flash, raw ssh warning, `2 маршрутов`
+     instead of the 19 the rules ask for. Named here, above the table,
+     with the two fields that fix it. */}}
+{{if .SSHKeyBlocked}}
+<div class="alert alert-warning" style="margin-bottom:16px">
+  <i class="fa-solid fa-key"></i>
+  <strong>{{tf "exit_nodes.ssh_key.banner" .SSHKeyBlocked}}</strong>
+  <p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px">{{.SSHKeyBlockedNote}}</p>
+  <p style="margin:6px 0 0 0;color:var(--text-muted);font-size:13px">{{t "exit_nodes.ssh_key.banner_help" | safeHTML}}</p>
+</div>
+{{end}}
+
 {{/* 2026-07-20: v0.20.0 — headscale-update-monitor banner.
      Fires when the monitor has seen a headscale release
      newer than the operator's pinned version. Breaking
@@ -158,6 +175,13 @@
           <code>{{.SSHTarget}}</code>
         {{else}}
           <span style="color:var(--text-muted)">—</span>
+        {{end}}
+        {{/* B292: the key the sync will use for THIS row — shown per row so an
+             unusable key is not discovered only in the stderr of a failed ssh.
+             The title carries the reason and the fix (see headscale.SSHKeyProblem
+             / SSHKeyFixHint). */}}
+        {{if ne .SSHKeyState "ok"}}
+          <span class="tag tag-danger" style="font-size:10px;margin-left:4px" title="{{.SSHKeyNote}}">{{t "exit_nodes.ssh_key.badge"}} <code style="font-size:10px">{{.EffectiveSSHKeyPath}}</code></span>
         {{end}}
       </td>
       <td>

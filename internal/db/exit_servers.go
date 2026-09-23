@@ -308,15 +308,12 @@ func LookupExitServerSSHTarget(d *sql.DB, hostname string) (string, error) {
 	}
 	// tailscale_ip is stored as a comma-joined list of
 	// headscale IP addresses (IPv4 + IPv6) by
-	// ensureExitServers. Take the first one — the `ssh`
+	// ensureExitServers. Take the first IPv4 — the `ssh`
 	// CLI doesn't parse a comma in the target, and
 	// headscale's IPAddresses array returns IPv4 first.
 	// The raw column stays untouched for the
 	// /admin/exit-nodes table render.
-	if i := strings.Index(tailscaleIP, ","); i >= 0 {
-		tailscaleIP = tailscaleIP[:i]
-	}
-	tailscaleIP = strings.TrimSpace(tailscaleIP)
+	tailscaleIP = FirstTailscaleIP(tailscaleIP)
 	if tailscaleIP == "" {
 		return "", nil
 	}
@@ -333,6 +330,66 @@ func LookupExitServerSSHTarget(d *sql.DB, hostname string) (string, error) {
 		return "root@" + tailscaleIP + ":" + sshPort, nil
 	}
 	return "root@" + tailscaleIP, nil
+}
+
+// FirstTailscaleIP picks the address the SSH target can actually use out of the
+// comma-joined `tailscale_ip` column (headscale returns IPv4 + IPv6, e.g.
+// "100.64.0.1,fd7a:115c:a1e0::1").
+//
+// IPv4 wins because the literal is spliced into an `ssh` argument as
+// `root@<ip>` — a bare IPv6 literal needs bracket syntax and ssh would mis-parse
+// it. When the list carries only IPv6 the first entry is returned anyway (the
+// caller may still bracket it), and an empty/all-blank list returns "".
+//
+// B292 (2026-09-23): extracted from LookupExitServerSSHTarget so the sync path
+// can apply the SAME rule to the addresses headscale reports live, not only to
+// the ones the discovery pass happened to store.
+func FirstTailscaleIP(csv string) string {
+	parts := strings.Split(csv, ",")
+	first := ""
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if first == "" {
+			first = p
+		}
+		if strings.Contains(p, ".") {
+			return p
+		}
+	}
+	return first
+}
+
+// SetExitServerTailscaleIPIfEmpty stores the address headscale reports for a
+// relay when the row's tailscale_ip column is still empty (B292).
+//
+// WHY: exit_servers rows are created by INSERT OR IGNORE
+// (InsertIgnoreExitServerOnDiscovery), so a row that was added by hand — or by a
+// discovery pass that ran before headscale reported addresses — keeps an empty
+// tailscale_ip FOREVER. The B81 fallback chain (ssh_target → root@<tailscale_ip>
+// → "") then resolves to "", the sync falls back to the bare node name, and ssh
+// dies with "Could not resolve hostname <node>" while /admin/exit-nodes happily
+// displays the relay's Tailscale IP (read from headscale). That disagreement is
+// the live `aro` report this function closes.
+//
+// The UPDATE is deliberately conditional: an address the operator (or a previous
+// pass) already stored is never overwritten — a relay can legitimately be reached
+// on a different address than the one headscale reports.
+func SetExitServerTailscaleIPIfEmpty(d dbExec, hostname, ip string) error {
+	h := strings.TrimSpace(hostname)
+	v := strings.TrimSpace(ip)
+	if h == "" || v == "" {
+		return nil
+	}
+	_, err := d.Exec(`
+		UPDATE exit_servers
+		   SET tailscale_ip = $1
+		 WHERE hostname = $2
+		   AND (tailscale_ip IS NULL OR TRIM(tailscale_ip) = '')
+	`, v, h)
+	return err
 }
 
 // UpsertExitServer inserts a new row or replaces the existing one

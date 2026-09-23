@@ -110,6 +110,21 @@ type ExitNodeInfo struct {
 	// ApprovedRoutesOK is the single-boolean form used by the
 	// template's "маршруты не одобрены" warning tag.
 	ApprovedRoutesOK bool `json:"approved_routes_ok"`
+	// B292 (2026-09-23) — the SSH half of the same "will the next sync be able
+	// to do anything" question.
+	//
+	// EffectiveSSHKeyPath is the path the next sync will pass to `ssh -i`: the
+	// row's ssh_key_path, else the global default (which is now resolved per
+	// install kind — /ssh-sync/id_ed25519 inside the container, a host path under
+	// the data dir on a native install). SSHKeyState is one of
+	// ok/unset/missing/unreadable/directory/relative/inaccessible (see
+	// headscale.SSHKeyState) and SSHKeyNote carries the same reason plus the fix
+	// for the tooltip. Pre-B292 none of this was on the page: the first sign of
+	// trouble was a raw `ssh` warning inside a GREEN flash after pressing
+	// Re-sync, while the sync silently advertised nothing.
+	EffectiveSSHKeyPath string `json:"effective_ssh_key_path"`
+	SSHKeyState         string `json:"ssh_key_state"`
+	SSHKeyNote          string `json:"ssh_key_note"`
 }
 
 // AdminExitNodes renders the /admin/exit-nodes page. Admin-only.
@@ -212,6 +227,17 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		if resolved, lerr := db.LookupExitServerSSHTarget(s.dbc(), e.Hostname); lerr == nil {
 			n.ResolvedSSHTarget = resolved
 			n.SSHTargetAuto = strings.TrimSpace(e.SSHTarget) == "" && resolved != ""
+		}
+		// B292: what the NEXT sync will pass to `ssh -i`. The row's own
+		// ssh_key_path wins; otherwise the global default, which is resolved per
+		// install kind (see config.resolveExitSSHKeyPath). The state + note are
+		// pure filesystem probes, so an unusable key is visible on the page
+		// instead of only in the stderr of a failed ssh.
+		effectiveKey := s.effectiveExitSSHKeyPath(e.SSHKeyPath)
+		n.EffectiveSSHKeyPath = effectiveKey
+		n.SSHKeyState = headscale.SSHKeyState(effectiveKey)
+		if problem := headscale.SSHKeyProblem(effectiveKey); problem != "" {
+			n.SSHKeyNote = problem + " — " + headscale.SSHKeyFixHint(effectiveKey)
 		}
 		nodes = append(nodes, n)
 	}
@@ -370,6 +396,21 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// B292: how many relays the NEXT advertised-routes sync cannot reach because
+	// the SSH key is missing/unreadable. One relay is enough to make the whole
+	// "Sync" button a no-op for that node, and pre-B292 the page said nothing at
+	// all — the operator learned it from the stderr inside a green flash.
+	sshKeyBlocked := 0
+	var sshKeyBlockedNote string
+	for i := range nodes {
+		if headscale.SSHKeyStateNeedsOperator(nodes[i].SSHKeyState) {
+			sshKeyBlocked++
+			if sshKeyBlockedNote == "" {
+				sshKeyBlockedNote = nodes[i].SSHKeyNote
+			}
+		}
+	}
+
 	s.Backend.RenderWithLayout(w, r, "admin/exit_nodes.html", c, map[string]any{
 		"Page":         "exit-nodes",
 		"Title":        "Exit Nodes",
@@ -377,6 +418,9 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		"SSHKeyPath":   s.SSHKeyPath,
 		"HealthyCount": healthyCount,
 		"TotalCount":   len(nodes),
+		// B292: the SSH-key half of "will the next sync do anything".
+		"SSHKeyBlocked":     sshKeyBlocked,
+		"SSHKeyBlockedNote": sshKeyBlockedNote,
 		// B273 (v1.5.18): "works, but the exit-node tag is missing"
 		// and "up, but the route was never approved" are two
 		// DIFFERENT operator problems with two different fixes. The
@@ -417,6 +461,24 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		"HeadscalePinned":   headscalePinnedTag(s),
 		"HeadscaleHTMLURL":  headscaleHTMLURL(s),
 	})
+}
+
+// effectiveExitSSHKeyPath returns the SSH private key the next advertised-routes
+// sync will use for a relay whose exit_servers.ssh_key_path is `rowKeyPath`
+// (B292).
+//
+// The row's own value wins; otherwise the global default from Config
+// (SKYGATE_EXIT_SSH_KEY, or the install-kind default — see
+// config.resolveExitSSHKeyPath). Pure, so the page can be tested without a
+// filesystem.
+func (s *Service) effectiveExitSSHKeyPath(rowKeyPath string) string {
+	if p := strings.TrimSpace(rowKeyPath); p != "" {
+		return p
+	}
+	if s != nil && s.Cfg != nil {
+		return strings.TrimSpace(s.Cfg.SSHKeyPath)
+	}
+	return ""
 }
 
 // hasExitNodeTagFor reports whether the headscale tag list carries
@@ -837,7 +899,32 @@ func (s *Service) PostAdminExitNodeSync(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		msg = fmt.Sprintf("%v", result)
 	}
+	// B292 (2026-09-23): a failed SSH sync must not render as success. The
+	// result string deliberately keeps BOTH halves ("ssh=err=… approved=21" —
+	// see syncOneExitNode), because the headscale approve step really did run;
+	// but this handler used to redirect with ?ok= unconditionally, so the
+	// operator saw a GREEN banner carrying raw `ssh` stderr and read the whole
+	// thing as "synced". The ok/err split is now derived from the result.
+	if exitSyncFailed(msg) {
+		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("Sync "+hostname+": "+msg), http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, "/admin/exit-nodes?ok="+url.QueryEscape("Sync "+hostname+": "+msg), http.StatusSeeOther)
+}
+
+// exitSyncFailed reports whether a per-node sync result describes a failure.
+//
+// The result grammar is produced by syncOneExitNode ("ssh=<label> <approve
+// label>", see internal/feature/exit_rules/sync.go) and is grepped by operators,
+// so it is parsed rather than changed: "ssh=err=" is an SSH failure,
+// "approve=err=" a headscale failure, and a bare "error=…" the shape the
+// /admin/exit-rules JSON endpoint uses. "ssh=ok approved=0" (no routes approved
+// yet) is NOT a failure — it is the normal state of a relay whose routes the
+// operator has not approved.
+func exitSyncFailed(msg string) bool {
+	return strings.Contains(msg, "ssh=err=") ||
+		strings.Contains(msg, "approve=err=") ||
+		strings.HasPrefix(strings.TrimSpace(msg), "error=")
 }
 
 // PostAdminExitNodeSetAcceptRoutes is the v1.4.0 B140 per-row

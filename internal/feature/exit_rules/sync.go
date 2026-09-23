@@ -516,6 +516,40 @@ func reportPrefixLosers(where string, claims []PrefixClaim, owners map[string]st
 	result["prefix_conflicts"] = fmt.Sprintf("%d prefix(es) claimed by a rule but assigned to another relay; see log", total)
 }
 
+// liveExitNodeIP returns the first usable Tailscale address headscale reports
+// for the relay named `hostname`, or "" when headscale has no such node (or no
+// address for it).
+//
+// B292 (2026-09-23): the sync used to read the address ONLY from
+// exit_servers.tailscale_ip, a column nothing backfills once the row exists
+// (discovery INSERTs with OR IGNORE). The live view is what /admin/exit-nodes
+// renders, so consulting it removes the "the page shows an IP but ssh says
+// Could not resolve hostname" disagreement.
+//
+// Matching is case-insensitive against both GivenName and Hostname because
+// device_rules.exit_node_id stores whichever the operator saw first, and
+// tailscale rewrites the name when a host registers with a different one.
+func liveExitNodeIP(hs *headscale.Client, hostname string) string {
+	if hs == nil || strings.TrimSpace(hostname) == "" {
+		return ""
+	}
+	nodes, err := hs.ListAllNodes()
+	if err != nil {
+		log.Printf("exit-node sync(%s): cannot read the node list to resolve the SSH target: %v", hostname, err)
+		return ""
+	}
+	want := strings.TrimSpace(hostname)
+	for _, n := range nodes {
+		if !strings.EqualFold(n.GivenName, want) && !strings.EqualFold(n.Hostname, want) {
+			continue
+		}
+		if ip := db.FirstTailscaleIP(strings.Join(n.IPAddresses, ",")); ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
 // syncOneExitNode is the per-node sync body extracted from
 // SyncAdvertisedRoutes. Both SyncAdvertisedRoutes (all-nodes
 // loop) and SyncAdvertisedRoutesForNode (per-node) call this
@@ -561,6 +595,27 @@ func syncOneExitNode(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func(st
 	sshKeyPath := sshRow.KeyPath
 	if sshKeyPath == "" {
 		sshKeyPath = defaultKeyPath
+	}
+	// B292 (2026-09-23): the row has neither ssh_target nor tailscale_ip, so the
+	// B81 chain resolved to "" and SetAdvertisedRoutes fell back to the bare node
+	// name — ssh answered "Could not resolve hostname exit-node-vps" while
+	// /admin/exit-nodes displayed the relay's Tailscale IP (100.64.0.1) read from
+	// headscale. Two sources of truth, one of them invisible.
+	//
+	// The live headscale view is the authority here: if it reports an address for
+	// this relay, use it AND persist it (only when the column is still empty), so
+	// the next pass — and the "Use Tailscale IP" button, which resolves through
+	// the same helper — work without operator action.
+	if strings.TrimSpace(sshTarget) == "" {
+		if ip := liveExitNodeIP(hs, node); ip != "" {
+			log.Printf("exit-node sync(%s): exit_servers has no ssh_target and no tailscale_ip — using the live Tailscale IP %s from headscale (B292)", node, ip)
+			if err := db.SetExitServerTailscaleIPIfEmpty(d, node, ip); err != nil {
+				log.Printf("exit-node sync(%s): could not persist tailscale_ip=%s: %v", node, ip, err)
+			}
+			sshTarget = "root@" + ip
+		} else {
+			log.Printf("exit-node sync(%s): no ssh_target, no tailscale_ip and headscale reports no address — ssh will be given the bare node name and will most likely fail on DNS (B292)", node)
+		}
 	}
 	// SSH first. On error, we STILL try the headscale approve
 	// step below — the operator may have already approved these
