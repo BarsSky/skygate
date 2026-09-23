@@ -649,39 +649,43 @@ func syncOneExitNode(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func(st
 	// SSH path.
 	routeLabel := "ssh=ok"
 	transportNote := ""
-	if localSelf, selfErr := headscale.LocalTailscaleSelf(); selfErr == nil {
-		if matchedIP, isLocal := headscale.IsLocalRelay(localSelf, liveExitNodeIPs(hs, node)); isLocal {
-			// Refuse to advertise a subnet this host sits INSIDE (the documented
-			// route loop: the host's own traffic to its LAN peers would enter the
-			// tunnel and come back). The exit-node bases are exempt.
-			kept, skipped := headscale.SelfCoveringRoutes(approveRoutes, localSelf.IPs)
-			if len(skipped) > 0 {
-				log.Printf("exit-node sync(%s): local relay is INSIDE %v — NOT advertising those (a co-located relay advertising its own network loops the host's own traffic; docs/networking.md, L-45)", node, skipped)
-				transportNote = fmt.Sprintf(" self_subnet_skipped=%s", strings.Join(skipped, ","))
-				result[node+"_skipped"] = strings.Join(skipped, ",")
-			}
-			transport, out, applyErr := hs.ApplyRoutesLocally(kept, lookupAcceptRoutes(node))
-			switch {
-			case applyErr != nil:
-				routeLabel = "local=err=" + applyErr.Error()
-			default:
-				routeLabel = "local=ok via " + transport.Name
-				if out != "" {
-					transportNote += " out=" + firstLine(out)
-				}
-				log.Printf("exit-node sync(%s): routes applied locally via %s (relay IS this host, matched %s) — no SSH involved", node, transport.Name, matchedIP)
-			}
-			approveLabel := "approved=0"
-			if approved, approveErr := hs.ApproveAllRoutesWithList(node, approveRoutes); approveErr != nil {
-				approveLabel = "approve=err=" + approveErr.Error()
-			} else if approved > 0 {
-				approveLabel = fmt.Sprintf("approved=%d", approved)
-			}
-			result[node] = routeLabel + " " + approveLabel + transportNote
-			return
+	placement := headscale.DetectRelayPlacement(liveExitNodeIPs(hs, node))
+	if placement.Local {
+		// Refuse to advertise a subnet this host sits INSIDE (the documented
+		// route loop: the host's own traffic to its LAN peers would enter the
+		// tunnel and come back). The exit-node bases are exempt.
+		kept, skipped := headscale.SelfCoveringRoutes(approveRoutes, placement.SelfIPs)
+		if len(skipped) > 0 {
+			log.Printf("exit-node sync(%s): local relay is INSIDE %v — NOT advertising those (a co-located relay advertising its own network loops the host's own traffic; docs/networking.md, L-45)", node, skipped)
+			transportNote = fmt.Sprintf(" self_subnet_skipped=%s", strings.Join(skipped, ","))
+			result[node+"_skipped"] = strings.Join(skipped, ",")
 		}
-	} else {
-		log.Printf("exit-node sync(%s): cannot ask the local tailscaled who it is (%v) — using the SSH transport", node, selfErr)
+		transport, out, applyErr := hs.ApplyRoutesLocally(kept, lookupAcceptRoutes(node))
+		switch {
+		case applyErr != nil:
+			routeLabel = "local=err=" + applyErr.Error()
+		default:
+			routeLabel = "local=ok via " + transport.Name
+			if out != "" {
+				transportNote += " out=" + firstLine(out)
+			}
+			log.Printf("exit-node sync(%s): routes applied locally via %s (relay IS this host, matched %s by %s) — no SSH involved", node, transport.Name, placement.MatchedIP, placement.Evidence)
+		}
+		approveLabel := "approved=0"
+		if approved, approveErr := hs.ApproveAllRoutesWithList(node, approveRoutes); approveErr != nil {
+			approveLabel = "approve=err=" + approveErr.Error()
+		} else if approved > 0 {
+			approveLabel = fmt.Sprintf("approved=%d", approved)
+		}
+		result[node] = routeLabel + " " + approveLabel + transportNote
+		return
+	}
+	if placement.DaemonErr != nil {
+		// B293.1: the daemon could not be asked AND the interface list did not
+		// match, so this is either a genuinely remote relay or a host whose local
+		// addresses are not visible — either way SSH is the transport, and the
+		// reason is logged so a silent fallback never hides a broken local path.
+		log.Printf("exit-node sync(%s): not a local relay (local daemon unreadable: %v) — using the SSH transport", node, placement.DaemonErr)
 	}
 	sshLabel := "ok"
 	_, sshErr := hs.SetAdvertisedRoutes(node, approveRoutes, lookupAcceptRoutes(node), sshTarget, sshKeyPath)

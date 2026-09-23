@@ -79,6 +79,101 @@ func LocalTailscaleSelf() (LocalSelf, error) {
 	return ParseLocalTailscaleStatus(out)
 }
 
+// LocalInterfaceIPs returns this host's own non-loopback addresses straight from
+// the kernel.
+//
+// B293.1 (2026-09-23) — WHY the daemon is not the only evidence: the native
+// install runs skygate as an unprivileged service user, and tailscaled's socket is
+// root-owned unless the operator granted `--operator`. `tailscale status --json`
+// then fails with a permission error, detection reported "cannot ask the local
+// daemon", and the sync stayed on SSH for a relay that is this very host — the
+// operator's «команда ничего не дала» exactly. A tailnet address bound on a local
+// interface is the same proof as the daemon's own answer (the address exists on
+// THIS machine), and reading it needs no privileges at all.
+func LocalInterfaceIPs() ([]string, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, fmt.Errorf("list local interface addresses: %w", err)
+	}
+	var out []string
+	for _, a := range addrs {
+		var ip net.IP
+		switch v := a.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			continue
+		}
+		out = append(out, ip.String())
+	}
+	return out, nil
+}
+
+// RelayPlacement is the evidence-based answer to "is this relay this host?".
+type RelayPlacement struct {
+	// Local is true when one of the relay's addresses is owned by this machine.
+	Local bool
+	// Evidence names what proved it: "local tailscaled" (the daemon's own
+	// Self.TailscaleIPs) or "local interface" (the address is bound on a local
+	// interface, read without privileges).
+	Evidence string
+	// MatchedIP is the address that matched.
+	MatchedIP string
+	// SelfIPs are every address this machine owns, for the self-covering-route
+	// guard.
+	SelfIPs []string
+	// DaemonErr is why the local daemon could not be asked (nil when it answered).
+	// Never a reason to stay on SSH by itself — the interface fallback covers it.
+	DaemonErr error
+}
+
+// localSelfFn / localIfacesFn are the two probes DetectRelayPlacement walks,
+// injectable so the evidence chain is unit-tested without a tailscaled daemon.
+var (
+	localSelfFn   = LocalTailscaleSelf
+	localIfacesFn = LocalInterfaceIPs
+)
+
+// DetectRelayPlacement decides how this relay is managed.
+//
+// Order of evidence:
+//  1. the live daemon (best: it also identifies the node by name);
+//  2. this host's interface addresses (no daemon access needed — the native
+//     install's unprivileged service user cannot read a root-owned socket);
+//  3. nothing matched → the relay is remote and keeps the SSH transport.
+//
+// A NEGATIVE answer from the daemon is final (it knows its own address); the
+// interface fallback runs only when the daemon could not be asked at all.
+func DetectRelayPlacement(nodeIPs []string) RelayPlacement {
+	self, daemonErr := localSelfFn()
+	if daemonErr == nil {
+		ip, ok := IsLocalRelay(self, nodeIPs)
+		return RelayPlacement{Local: ok, Evidence: "local tailscaled", MatchedIP: ip, SelfIPs: self.IPs}
+	}
+	if ips, err := localIfacesFn(); err == nil {
+		ip, ok := IsLocalRelay(LocalSelf{IPs: ips}, nodeIPs)
+		return RelayPlacement{Local: ok, Evidence: "local interface", MatchedIP: ip, SelfIPs: ips, DaemonErr: daemonErr}
+	}
+	return RelayPlacement{DaemonErr: daemonErr}
+}
+
+// LocalSelfIPs returns this machine's own addresses, preferring the daemon's
+// answer and falling back to the interfaces. Used by the self-covering-route guard
+// so the loop protection also works for an unprivileged service user.
+func LocalSelfIPs() []string {
+	if self, err := localSelfFn(); err == nil && len(self.IPs) > 0 {
+		return self.IPs
+	}
+	ips, err := localIfacesFn()
+	if err != nil {
+		return nil
+	}
+	return ips
+}
+
 // ParseLocalTailscaleStatus decodes the fields of `tailscale status --json` this
 // package needs. Pure, so the shape is pinned by a unit test instead of by a
 // live daemon.

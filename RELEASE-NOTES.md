@@ -12,6 +12,82 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.58 — the local-relay detection must not need daemon privileges (B293.1)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.57` → this tag · **Compatibility:** none —
+no schema change, no migration.
+
+Operator report right after installing v1.5.57: «команда ничего не дала» — the
+`journalctl … | grep 'IS this host'` line never appeared, so the relay was still on
+the SSH transport.
+
+### Root cause
+
+B293's detection asked the live daemon (`tailscale status --json`) and treated
+"I could not ask" as "fall back to SSH". On the native install skygate runs as an
+**unprivileged service user** and tailscaled's socket is root-owned unless the
+operator granted `tailscale set --operator=<user>`. The probe therefore failed with
+a permission error, detection never matched, no log line was emitted and the sync
+stayed on SSH for a relay that **is** this very host — the same class of failure the
+operator had asked to be covered ("бывает что ставят без [root] … чтобы не было
+ситуации что нет возможности настроить по причине доступа"), one level deeper than
+the apply ladder B293 already had.
+
+### What it does now
+
+* **A second, privilege-free source of evidence.** `LocalInterfaceIPs()` reads this
+  machine's own addresses straight from the kernel (`net.InterfaceAddrs`, loopback
+  and link-local excluded). A tailnet address bound on a local interface is the same
+  proof as the daemon's own answer — it exists on THIS machine — and reading it
+  needs no privileges at all.
+* **`DetectRelayPlacement()` is the evidence chain:** live daemon → local
+  interfaces → not local. A **negative** answer from the daemon is final (it knows
+  its own address) — the fallback runs only when the daemon could not be asked at
+  all. The result carries `Evidence` ("local tailscaled" / "local interface"),
+  `MatchedIP`, `SelfIPs` and `DaemonErr`, so the log now says which evidence was
+  used and why the daemon was unreadable instead of silently staying on SSH.
+* **The pages use the same chain** (`LocalSelfIPs`), so `/admin/exit-nodes` marks
+  the relay «локальный узел» and `/admin/telegram` gives the corrected egress
+  advice even when the service user cannot read the tailscaled socket.
+* **The loop guard works without daemon access too** — `SelfCoveringRoutes` is fed
+  the interface-derived address list.
+
+Note the division of labour: **detection** needs no privileges (this release);
+**applying** still needs root, `--operator`, a `NOPASSWD` rule or the root-owned
+helper (v1.5.57's ladder). The page shows which rung will be used.
+
+Files: `internal/headscale/local_node_b293.go` (the probe + chain),
+`internal/feature/exit_rules/sync.go`, `internal/feature/admin/exit_nodes.go`,
+`internal/feature/admin/telegram.go`.
+
+### Verification
+
+56 contracts in `scripts/check_b293_local_exit_node.sh` (sections A–I) plus
+`TestDetectRelayPlacement_B293_1` — the daemon answering, the daemon unreadable with
+the address bound locally (the live case), a negative daemon answer that must stay
+negative, and neither source answering — and `TestLocalInterfaceIPs_B293_1` (the
+loopback is never returned).
+
+### How to check on the host (after `/admin/update` to v1.5.58)
+
+```bash
+# 0. Which build is actually running? (a native install updates ONLY through
+#    /admin/update — git pull + systemctl restart does not replace the binary)
+curl -s http://127.0.0.1:8080/healthz | grep -o '"build":"[^"]*"'
+
+# 1. Open /admin/exit-nodes once (the check runs on page render), then:
+journalctl -u skygate --since '-10 min' | grep -Ei 'IS this host|own addresses|local relay|local='
+#    expected: [exit-nodes] exit-node-vps IS this host (matched 100.64.0.1) — routes are applied locally via …
+
+# 2. Press Re-sync on the relay. Expected flash:
+#    Sync exit-node-vps: local=ok via direct approved=N      (root / --operator)
+#    …or local=ok via sudo|helper …, or local=err=<reason> with the fix in the text.
+```
+
+If the page still says nothing about a local relay, the journal line
+`cannot determine this host's own addresses` is the one to send — it means neither
+the daemon nor the interface list answered, which no build can paper over.
+
 ## v1.5.57 — an exit node that IS the skygate host is managed locally (B293)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.56` → this tag · **Compatibility:** none —

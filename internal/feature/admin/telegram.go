@@ -347,15 +347,16 @@ func (s *Service) loadTelegramUIState() telegramUIState {
 			selfSet[strings.ToLower(strings.TrimSpace(ip))] = true
 		}
 		// B293: split the co-located relays into "this machine's own tailscale
-		// node" (verified against the live daemon — the warning text is
-		// different and the probe verdict flips) and the rest (B265's warning).
-		localSelf, localErr := headscale.LocalTailscaleSelf()
+		// node" (verified against the live daemon OR the local interface
+		// addresses — B293.1, so it also works for an unprivileged service user)
+		// and the rest (B265's warning).
+		selfAddrs := headscale.LocalSelfIPs()
 		for _, e := range state.Egress.Available {
 			if !selfHostMatches(e, selfSet) {
 				continue
 			}
-			if localErr == nil && len(localSelf.IPs) > 0 {
-				if _, isSelf := headscale.IsLocalRelay(localSelf, splitCommaList(e.TailscaleIP)); isSelf {
+			if len(selfAddrs) > 0 {
+				if _, isSelf := headscale.IsLocalRelay(headscale.LocalSelf{IPs: selfAddrs}, splitCommaList(e.TailscaleIP)); isSelf {
 					state.Egress.LocalSelfRelay = true
 					state.Egress.LocalSelfHostnames = append(state.Egress.LocalSelfHostnames, e.Hostname)
 					continue

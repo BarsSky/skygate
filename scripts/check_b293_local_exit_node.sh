@@ -86,8 +86,8 @@ else
 fi
 
 # --- B: the sync picks the transport ------------------------------------------
-if grep -q 'headscale.LocalTailscaleSelf()' "$SYNC" && grep -q 'headscale.IsLocalRelay(' "$SYNC"; then
-  ok "B1: the sync asks the local daemon and takes the local branch"
+if grep -q 'headscale.DetectRelayPlacement(' "$SYNC" && grep -q 'placement.Local {' "$SYNC"; then
+  ok "B1: the sync asks who this host is and takes the local branch"
 else
   bad "B1: the sync never considers the local transport"
 fi
@@ -168,14 +168,14 @@ if grep -q 'func SelfCoveringRoutes(' "$NODE" && grep -q 'func isExitNodeBaseRou
 else
   bad "D1: a co-located relay can advertise its own network (the documented loop)"
 fi
-if grep -q 'SelfCoveringRoutes(approveRoutes, localSelf.IPs)' "$SYNC" && grep -q 'self_subnet_skipped=' "$SYNC"; then
+if grep -q 'SelfCoveringRoutes(approveRoutes, placement.SelfIPs)' "$SYNC" && grep -q 'self_subnet_skipped=' "$SYNC"; then
   ok "D2: the sync skips + reports them instead of looping silently"
 else
   bad "D2: the loop guard is not applied (or not reported)"
 fi
 
 # --- E: the page ---------------------------------------------------------------
-if grep -q 'LocalRelay' "$EXIT" && grep -q 'headscale.IsLocalRelay(localSelf' "$EXIT"; then
+if grep -q 'LocalRelay' "$EXIT" && grep -q 'headscale.IsLocalRelay(headscale.LocalSelf{IPs: selfIPs}' "$EXIT"; then
   ok "E1: the page marks the relay(s) this host owns"
 else
   bad "E1: the page cannot tell a local relay"
@@ -249,10 +249,56 @@ else
   bad "G7: the path unit watches a different path than skygate stages"
 fi
 
+# --- I: the privilege-free fallback (B293.1) ----------------------------------
+# The live follow-up: «команда ничего не дала» — the native install runs skygate as
+# an unprivileged service user and tailscaled's socket is root-owned unless
+# `--operator` was granted, so `tailscale status --json` fails and the daemon-only
+# detection left the sync on SSH for a relay that IS this host.
+if grep -q '^func LocalInterfaceIPs(' "$NODE" && grep -q 'net.InterfaceAddrs()' "$NODE"; then
+  ok "I1: the host's own addresses can be read without touching the daemon"
+else
+  bad "I1: detection still depends on daemon access (an unprivileged service user cannot see the relay as local)"
+fi
+if grep -q 'IsLoopback()' "$NODE" && grep -q 'IsLinkLocalUnicast()' "$NODE"; then
+  ok "I2: loopback/link-local addresses are excluded (a loopback match would make every relay local)"
+else
+  bad "I2: the interface probe does not filter loopback"
+fi
+if grep -q '^func DetectRelayPlacement(' "$NODE" && grep -q 'localSelfFn()' "$NODE" && grep -q 'localIfacesFn()' "$NODE"; then
+  ok "I3: the evidence chain is daemon → interfaces (injectable, unit-tested)"
+else
+  bad "I3: there is no fallback chain between the daemon and the interface list"
+fi
+if grep -q 'DaemonErr' "$NODE"; then
+  ok "I4: why the daemon could not be asked is carried to the log"
+else
+  bad "I4: a permission failure of the local probe is invisible"
+fi
+if grep -q 'headscale.DetectRelayPlacement(' "$SYNC" && grep -q 'placement.Evidence' "$SYNC"; then
+  ok "I5: the sync uses the chain and names the evidence in its log line"
+else
+  bad "I5: the sync still uses the daemon-only probe"
+fi
+if grep -q 'headscale.LocalSelfIPs()' "$EXIT" && grep -q 'headscale.LocalSelfIPs()' "$TG"; then
+  ok "I6: the page and the Telegram card use the fallback-aware self addresses"
+else
+  bad "I6: the pages still require daemon access to recognise a local relay"
+fi
+if grep -q 'SelfCoveringRoutes(approveRoutes, placement.SelfIPs)' "$SYNC"; then
+  ok "I7: the loop guard also works without daemon access"
+else
+  bad "I7: the loop guard depends on the daemon answer"
+fi
+
 # --- H: tests + git ------------------------------------------------------------
 for t in internal/headscale/local_node_b293_test.go internal/headscale/local_apply_b293_test.go internal/feature/admin/exit_nodes_b293_test.go; do
   if [ -f "$t" ]; then ok "H1: $t exists"; else bad "H1: $t is missing"; fi
 done
+if grep -q 'TestDetectRelayPlacement_B293_1' internal/headscale/local_node_b293_test.go 2>/dev/null; then
+  ok "H1b: the fallback chain is pinned by a test"
+else
+  bad "H1b: the fallback chain is not tested"
+fi
 if command -v go >/dev/null 2>&1; then
   OUT="$(go test ./internal/headscale/ ./internal/feature/admin/ ./internal/feature/exit_rules/ -run 'B293|LocalExitNode|ApplyRoutesLocally|RequestRoutesApply|ReadRoutesApplyStatus|LocalTransports|IsLocalRelay|SelfCoveringRoutes|ParseLocalTailscaleStatus|SplitCommaList|LiveExitNodeIP|ConfigSSHKeyPath' -count=1 2>&1)"
   if grep -q '^ok' <<< "$OUT" && ! grep -q 'FAIL' <<< "$OUT"; then

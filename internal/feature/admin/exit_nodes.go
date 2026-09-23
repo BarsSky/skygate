@@ -253,17 +253,20 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		nodes = append(nodes, n)
 	}
 
-	// B293: ask the LOCAL tailscaled once who it is, then mark the relay(s) it
-	// owns. One exec for the whole page (not per row). The result is evidence,
-	// not a guess: exact address equality with what headscale reports.
-	localSelf, localSelfErr := headscale.LocalTailscaleSelf()
-	if localSelfErr == nil {
+	// B293: ask who this machine is, then mark the relay(s) it owns. The probe
+	// prefers the live daemon and falls back to the local interface addresses
+	// (B293.1) — the native install runs skygate as an unprivileged service user,
+	// and tailscaled's socket is root-owned unless the operator granted
+	// `--operator`, so requiring the daemon would leave exactly this page unable to
+	// recognise the local relay. One probe for the whole page, not per row.
+	selfIPs := headscale.LocalSelfIPs()
+	if len(selfIPs) > 0 {
 		transportName := "unavailable — " + headscale.RoutesFallbackHint()
 		if trs := headscale.LocalTransports(); len(trs) > 0 {
 			transportName = trs[0].Name + " (" + trs[0].Detail + ")"
 		}
 		for i := range nodes {
-			if ip, ok := headscale.IsLocalRelay(localSelf, splitCommaList(nodes[i].TailscaleIP)); ok {
+			if ip, ok := headscale.IsLocalRelay(headscale.LocalSelf{IPs: selfIPs}, splitCommaList(nodes[i].TailscaleIP)); ok {
 				nodes[i].LocalRelay = true
 				nodes[i].LocalTransport = transportName
 				// The SSH key is irrelevant for this row: the sync applies
@@ -275,7 +278,7 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		log.Printf("[exit-nodes] cannot ask the local tailscaled who it is (%v) — every relay keeps the SSH transport", localSelfErr)
+		log.Printf("[exit-nodes] cannot determine this host's own addresses (neither the local tailscaled nor the interface list answered) — every relay keeps the SSH transport")
 	}
 
 	// 2026-07-31: v0.32.13 — same 2s timeout on the second

@@ -11,6 +11,7 @@
 package headscale
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -152,6 +153,80 @@ func TestSelfCoveringRoutes_B293(t *testing.T) {
 	keptAll, skippedNone := SelfCoveringRoutes([]string{"0.0.0.0/0", "::/0", "10.0.0.0/8"}, nil)
 	if len(keptAll) != 3 || len(skippedNone) != 0 {
 		t.Errorf("with no self addresses: kept=%v skipped=%v, want everything kept", keptAll, skippedNone)
+	}
+}
+
+// TestDetectRelayPlacement_B293_1 — the fallback that made the live host work.
+//
+// The native install runs skygate as an unprivileged service user and
+// tailscaled's socket is root-owned unless `--operator` was granted, so
+// `tailscale status --json` fails there. Detection must then fall back to the
+// addresses bound on THIS machine's interfaces (readable by anyone) instead of
+// silently staying on SSH — the operator's «команда ничего не дала».
+func TestDetectRelayPlacement_B293_1(t *testing.T) {
+	origSelf, origIfaces := localSelfFn, localIfacesFn
+	t.Cleanup(func() { localSelfFn, localIfacesFn = origSelf, origIfaces })
+
+	// 1. The daemon answers and owns the relay address → best evidence.
+	localSelfFn = func() (LocalSelf, error) {
+		return LocalSelf{HostName: "exit-node-vps", IPs: []string{"100.64.0.1"}}, nil
+	}
+	localIfacesFn = func() ([]string, error) { return []string{"192.0.2.10"}, nil }
+	p := DetectRelayPlacement([]string{"100.64.0.1"})
+	if !p.Local || p.Evidence != "local tailscaled" || p.MatchedIP != "100.64.0.1" {
+		t.Errorf("daemon evidence: %+v, want local via local tailscaled", p)
+	}
+
+	// 2. The daemon cannot be read (permission denied) but the address IS bound
+	//    locally → still the local transport, with the daemon error carried along
+	//    for the log.
+	localSelfFn = func() (LocalSelf, error) {
+		return LocalSelf{}, errors.New("permission denied opening /var/run/tailscale/tailscaled.sock")
+	}
+	localIfacesFn = func() ([]string, error) { return []string{"192.0.2.10", "100.64.0.1"}, nil }
+	p = DetectRelayPlacement([]string{"100.64.0.1", "fd7a:115c:a1e0::1"})
+	if !p.Local || p.Evidence != "local interface" {
+		t.Fatalf("interface evidence: %+v, want local via local interface", p)
+	}
+	if p.DaemonErr == nil {
+		t.Error("the daemon error must be carried for the log — a silent fallback hides a root-owned socket")
+	}
+	if len(p.SelfIPs) == 0 {
+		t.Error("SelfIPs must be filled so the self-covering-route guard works")
+	}
+
+	// 3. A NEGATIVE answer from the daemon is final: the interface list must not
+	//    turn a remote relay into a local one.
+	localSelfFn = func() (LocalSelf, error) { return LocalSelf{IPs: []string{"100.64.0.9"}}, nil }
+	localIfacesFn = func() ([]string, error) { return []string{"100.64.0.42"}, nil }
+	if p = DetectRelayPlacement([]string{"100.64.0.7"}); p.Local {
+		t.Errorf("a remote relay must stay remote: %+v", p)
+	}
+
+	// 4. Neither source answers → not local, no panic, and the daemon error is
+	//    reported so the caller can log why SSH was used.
+	localSelfFn = func() (LocalSelf, error) { return LocalSelf{}, errors.New("tailscale: not found") }
+	localIfacesFn = func() ([]string, error) { return nil, errors.New("no interfaces") }
+	p = DetectRelayPlacement([]string{"100.64.0.1"})
+	if p.Local || p.DaemonErr == nil {
+		t.Errorf("no evidence: %+v, want not-local with the daemon error", p)
+	}
+}
+
+// TestLocalInterfaceIPs_B293_1 — the privilege-free probe returns real addresses
+// and never the loopback (a loopback match would make every relay look local).
+func TestLocalInterfaceIPs_B293_1(t *testing.T) {
+	ips, err := LocalInterfaceIPs()
+	if err != nil {
+		t.Skipf("no interface list on this host: %v", err)
+	}
+	for _, ip := range ips {
+		if ip == "127.0.0.1" || ip == "::1" {
+			t.Errorf("LocalInterfaceIPs returned the loopback (%v)", ips)
+		}
+		if ip == "" {
+			t.Errorf("LocalInterfaceIPs returned an empty entry: %v", ips)
+		}
 	}
 }
 
