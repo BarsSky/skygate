@@ -104,6 +104,21 @@
   {{t "tailscale.missing_help" | safeHTML}}
 </div>
 {{else}}
+{{/* B318: CONFIGURED but NOT RUNNING. Pre-B318 this branch rendered only the
+     "Disable in container" card, i.e. a page that looks enabled (green, Start
+     clickable) while the daemon is dead — and /admin/exit-nodes said the opposite
+     on the same host, because that page asks the daemon and this one asked the
+     saved configuration. The facts behind the difference (the entrypoint's frozen
+     env value, a missing /dev/net/tun, the last tailscaled failure) are now
+     rendered here, above the card. */}}
+{{if and (not .State.Running) .State.NotRunningReason}}
+<div class="alert alert-warn" style="margin-bottom:12px">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <strong>{{t "tailscale.not_running_title"}}</strong>
+  <div style="margin-top:.4rem">{{.State.NotRunningReason}}</div>
+  <div class="form-hint" style="margin-top:.4rem">{{t "tailscale.not_running_help" | safeHTML}}</div>
+</div>
+{{end}}
 {{/* B259: counterpart button when tailscale IS enabled in the
      container. Lets the operator flip back to disabled without
      editing docker-compose.yml — useful when they want to

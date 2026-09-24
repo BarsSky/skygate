@@ -15,14 +15,14 @@
 //   - PostAdminTailscale — POST /admin/tailscale, dispatches by
 //     action (save_key / start / stop)
 //   - helpers:
-//     - loadTailscaleState — read all state from the container
-//     - tailscaleAvailable — binaries present?
-//     - tailscaledRunning   — process alive?
-//     - tailscaleStatusJSON — parsed `tailscale status --json`
-//     - readTailscaleAuthKey — read /data/ts/authkey (length only;
-//       never log/return the actual key bytes)
-//     - writeTailscaleAuthKey — atomic write to the path
-//     - startTailscaled / stopTailscaled — exec helpers
+//   - loadTailscaleState — read all state from the container
+//   - tailscaleAvailable — binaries present?
+//   - tailscaledRunning   — process alive?
+//   - tailscaleStatusJSON — parsed `tailscale status --json`
+//   - readTailscaleAuthKey — read /data/ts/authkey (length only;
+//     never log/return the actual key bytes)
+//   - writeTailscaleAuthKey — atomic write to the path
+//   - startTailscaled / stopTailscaled — exec helpers
 package admin
 
 import (
@@ -45,6 +45,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/tsstate"
 )
 
 // 2026-08-05 v0.33.1.11 — tailscale auth key auto-generation.
@@ -277,6 +278,28 @@ type TailscaleState struct {
 	// LastError is the last error from start/stop (or empty).
 	// Cleared on every successful action.
 	LastError string
+	// ---- B318: why the daemon is NOT running ----
+	//
+	// The page used to render the "really enabled" branch (a green card with a
+	// clickable Start) whenever AuthKeyDisabled/AuthKeyMissing were false, even with
+	// the daemon dead — so an operator saw "configured" and read it as "works",
+	// while /admin/exit-nodes read the same daemon as absent. Both facts below come
+	// from internal/tsstate and are rendered together with the Start button.
+	//
+	// EnvDisabled: SKYGATE_TS_AUTHKEY_FILE as the CONTAINER ENTRYPOINT sees it is
+	// empty or the /dev/null sentinel, so tailscaled was skipped at container start
+	// and will be skipped again on the next restart. The DB override
+	// (tailscale.auth_key_path) changes only what this page and its Start button do.
+	EnvDisabled bool
+	// DSentinel is that env value, for the banner ("created with …=/dev/null").
+	DSentinel string
+	// TunPresent: /dev/net/tun exists in this container. False means tailscaled can
+	// never create its interface, whatever the operator presses.
+	TunPresent bool
+	// DaemonError is the last failure recorded in the tailscaled log (best effort).
+	DaemonError string
+	// NotRunningReason is the composed explanation shown when Configured && !Running.
+	NotRunningReason string
 }
 
 // tailscaleStateMu guards the status cache so concurrent
@@ -352,15 +375,25 @@ func (s *Service) readTailscaleState() TailscaleState {
 	//   - AuthKeyMissing=true   → "configured but no key" (B258.1)
 	//   - else                  → "configured + key set"
 	st.AuthKeyMissing = !st.AuthKeyDisabled && !st.AuthKeySet
+	// B318: the facts behind "configured but not running".
+	boot := tsstate.Detect(st.StateDir)
+	st.EnvDisabled = boot.EnvDisabled
+	st.DSentinel = boot.AuthKeyFileEnv
+	st.TunPresent = boot.TunPresent
+	st.DaemonError = boot.LastDaemonError
 	if !st.Available {
 		return st
 	}
 	running, ip, routes, backendState, err := tailscaleStatus()
 	if err != nil {
 		st.LastError = err.Error()
+		st.NotRunningReason = boot.Explain()
 		return st
 	}
 	st.Running = running
+	if !running {
+		st.NotRunningReason = boot.Explain()
+	}
 	st.TailnetIP = ip
 	st.AcceptedRoutes = routes
 	st.BackendState = backendState
@@ -385,9 +418,9 @@ func (s *Service) readTailscaleState() TailscaleState {
 // touching docker-compose.yml.
 //
 // Resolution order at read time (highest priority first):
-//   1. global_settings[tailscale.auth_key_path]   (web-UI override)
-//   2. s.TailscaleAuthKeyPath                     (SKYGATE_TS_AUTHKEY_FILE env var)
-//   3. /data/ts/authkey                           (default)
+//  1. global_settings[tailscale.auth_key_path]   (web-UI override)
+//  2. s.TailscaleAuthKeyPath                     (SKYGATE_TS_AUTHKEY_FILE env var)
+//  3. /data/ts/authkey                           (default)
 //
 // The web-UI override is consulted FIRST so the operator
 // can flip the path without restarting the container or
@@ -506,9 +539,9 @@ func (s *Service) SetGlobalSettingForTest(key, value string) error {
 // migrations, and VM clones. v0.33.1.13.
 //
 // Resolution order at read time (highest priority first):
-//   1. global_settings[tailscale.login_server]  (web-UI override)
-//   2. s.TailscaleLoginServer                   (SKYGATE_TS_LOGIN_SERVER env var)
-//   3. "https://head.example.com"               (last-resort default)
+//  1. global_settings[tailscale.login_server]  (web-UI override)
+//  2. s.TailscaleLoginServer                   (SKYGATE_TS_LOGIN_SERVER env var)
+//  3. "https://head.example.com"               (last-resort default)
 //
 // The env var is only consulted on first start (when the
 // global_settings row is empty) — once the operator saves a
@@ -623,8 +656,10 @@ func tailscaledRunning() bool { return tailscaledRunningFn() }
 // file left behind by a previous container (the run dir is a bind mount:
 // data/ts/run → /var/run/tailscale) made the page claim "running" and made the
 // Start flow skip its wait and run `tailscale up` against nothing:
-//   tailscale up: exit status 1 — output: failed to connect to local tailscaled;
-//   it doesn't appear to be running
+//
+//	tailscale up: exit status 1 — output: failed to connect to local tailscaled;
+//	it doesn't appear to be running
+//
 // (operator report 2026-09-19). Dialling the socket is the honest check.
 var tailscaledRunningFn = tailscaleDaemonAnswers
 
@@ -661,7 +696,7 @@ func tailLogTail(path string, n int) string {
 //   - ip = skygate's tailnet IP (e.g. "100.64.100.10") or ""
 //   - acceptedRoutes = list of CIDRs from `tailscale status --json` .Peer[Self].PrimaryRoutes OR AdvertisedRoutes
 //   - backendState = the parsed `tailscale status --json` .BackendState
-//                    (e.g. "Running" / "NeedsLogin" / "Stopped")
+//     (e.g. "Running" / "NeedsLogin" / "Stopped")
 //   - err = the error from the tailscale invocation
 func tailscaleStatus() (bool, string, []string, string, error) {
 	if !tailscaledRunning() {
@@ -696,8 +731,8 @@ func tailscaleStatus() (bool, string, []string, string, error) {
 	// (what the kernel has installed).
 	var parsed2 struct {
 		Peer []struct {
-			HostName    string   `json:"HostName"`
-			TailscaleIPs []string `json:"TailscaleIPs"`
+			HostName      string   `json:"HostName"`
+			TailscaleIPs  []string `json:"TailscaleIPs"`
 			PrimaryRoutes []string `json:"PrimaryRoutes"`
 		} `json:"Peer"`
 	}
@@ -1194,23 +1229,23 @@ func (s *Service) handleTailscaleStop(w http.ResponseWriter, r *http.Request, c 
 //
 // handleTailscaleGenerateKey is the "Generate automatically"
 // button on /admin/tailscale. The flow:
-//   1. Resolve the headscale user that owns a node with the
-//      configured hostname (default "skygate-host-1"). The
-//      admin's first node registration creates the user; the
-//      first /admin/headscale preauth key the operator
-//      generated in the past is what bootstrapped that node,
-//      so the user row is guaranteed to exist if the node
-//      exists.
-//   2. Call headscale preauthkeys create (API + CLI fallback
-//      inside the headscale pkg) with a 1h expiration and
-//      reusable=true. The 1h is conservative — the same key
-//      is reusable for the container's lifetime, but a short
-//      window limits the blast radius if the key leaks.
-//   3. Write the returned key to the same /data/ts/authkey
-//      path the "Save" path uses. Mode 0600.
-//   4. Audit: tailscale_generate_key|username|user_id=N
-//      hostname=X user_name=Y exp=1h reusable=true fp=tske...wxyz
-//      (FP only; full key never logged).
+//  1. Resolve the headscale user that owns a node with the
+//     configured hostname (default "skygate-host-1"). The
+//     admin's first node registration creates the user; the
+//     first /admin/headscale preauth key the operator
+//     generated in the past is what bootstrapped that node,
+//     so the user row is guaranteed to exist if the node
+//     exists.
+//  2. Call headscale preauthkeys create (API + CLI fallback
+//     inside the headscale pkg) with a 1h expiration and
+//     reusable=true. The 1h is conservative — the same key
+//     is reusable for the container's lifetime, but a short
+//     window limits the blast radius if the key leaks.
+//  3. Write the returned key to the same /data/ts/authkey
+//     path the "Save" path uses. Mode 0600.
+//  4. Audit: tailscale_generate_key|username|user_id=N
+//     hostname=X user_name=Y exp=1h reusable=true fp=tske...wxyz
+//     (FP only; full key never logged).
 //
 // The handler does NOT auto-start tailscaled — the operator
 // still clicks "Start" explicitly so they're aware the
@@ -1436,28 +1471,30 @@ func (s *Service) handleTailscaleDisableInContainer(w http.ResponseWriter, r *ht
 // at container start. Saving the value via /admin/tailscale
 // only writes to the DB + (after this fix) the .env file.
 // The operator's next step was either:
-//   (a) SSH in and run `docker compose restart skygate` (or
-//       `systemctl restart skygate` on a native host), or
-//   (b) remember to restart before saving. Both are error-prone.
+//
+//	(a) SSH in and run `docker compose restart skygate` (or
+//	    `systemctl restart skygate` on a native host), or
+//	(b) remember to restart before saving. Both are error-prone.
+//
 // This endpoint makes restart a single click.
 //
 // Flow:
-//   1. Determine the current effective login_server (DB > .env > default).
-//   2. Write it to the in-container .env (atomic via .tmp + rename).
-//      This makes the next entrypoint invocation pick up the
-//      new value.
-//   3. Trigger the restart:
-//      - container mode: spawn a setsid'd subprocess that runs
-//        `docker compose -p skygate -f <host-repo>/docker-compose.yml
-//        restart skygate`. The setsid is critical — the parent
-//        skygate process gets SIGTERM'd by `docker compose
-//        restart` and any child process in the same process
-//        group dies with it. setsid puts the child in a new
-//        session so it survives.
-//      - native mode: try `systemctl restart skygate`. If that
-//        fails, fall back to `service skygate restart`.
-//   4. Return success to the client IMMEDIATELY (the response
-//      flushes before the SIGTERM arrives).
+//  1. Determine the current effective login_server (DB > .env > default).
+//  2. Write it to the in-container .env (atomic via .tmp + rename).
+//     This makes the next entrypoint invocation pick up the
+//     new value.
+//  3. Trigger the restart:
+//     - container mode: spawn a setsid'd subprocess that runs
+//     `docker compose -p skygate -f <host-repo>/docker-compose.yml
+//     restart skygate`. The setsid is critical — the parent
+//     skygate process gets SIGTERM'd by `docker compose
+//     restart` and any child process in the same process
+//     group dies with it. setsid puts the child in a new
+//     session so it survives.
+//     - native mode: try `systemctl restart skygate`. If that
+//     fails, fall back to `service skygate restart`.
+//  4. Return success to the client IMMEDIATELY (the response
+//     flushes before the SIGTERM arrives).
 //
 // Audit: full event log including effective URL, in_container,
 // restart_method.

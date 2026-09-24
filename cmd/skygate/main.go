@@ -4370,6 +4370,48 @@ func schedulerNotifierSink(n telegram.Notifier) update.NotifierSink {
 	return schedulerSink{n: n}
 }
 
+// discoveryErrorIsNew reports whether a discovery failure should be logged and
+// audited now, or is the same one already reported within the last hour (B318).
+//
+// WHY. On the reference host (2026-09-24) a tailnet that was simply not enabled
+// produced `discovery-ticker: discover failed: tailscale status --json: exit 1:
+// failed to connect to local tailscaled` every five minutes AND a
+// cluster.discovery.error audit row with it — 288 identical journal lines and 288
+// identical audit rows a day, in the two places the operator uses to find real
+// events. The first failure of a kind is still reported immediately, and a
+// different error (or the same one an hour later) is never suppressed.
+var (
+	discoveryErrMu   sync.Mutex
+	discoveryErrLast string
+	discoveryErrAt   time.Time
+)
+
+const discoveryErrRepeatAfter = time.Hour
+
+func discoveryErrorIsNew(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	discoveryErrMu.Lock()
+	defer discoveryErrMu.Unlock()
+	if msg == discoveryErrLast && time.Since(discoveryErrAt) < discoveryErrRepeatAfter {
+		return false
+	}
+	discoveryErrLast = msg
+	discoveryErrAt = time.Now()
+	return true
+}
+
+// discoveryErrorCleared forgets the last failure, so the next one is reported at
+// once however soon it happens.
+func discoveryErrorCleared() {
+	discoveryErrMu.Lock()
+	discoveryErrLast = ""
+	discoveryErrAt = time.Time{}
+	discoveryErrMu.Unlock()
+}
+
 // runDiscoveryTicker is the B223 (Phase 4.3)
 // background ticker that runs Tailscale
 // auto-discovery every `interval`. The HTTP
@@ -4383,11 +4425,11 @@ func schedulerNotifierSink(n telegram.Notifier) update.NotifierSink {
 // — the next tick retries. A persistent
 // `tailscaled not running` error (e.g. on a
 // host where the operator forgot to enable
-// Tailscale) will keep firing every interval;
-// the operator sees "discovery-ticker: 0 new
-// nodes" in `docker logs` and the
-// cluster.discovery.error audit row on
-// /admin/cluster.
+// Tailscale) is reported at most once an hour
+// (B318 — it used to fire every interval and
+// write an audit row each time); the operator
+// still sees the failure named in `docker logs`
+// and on /admin/cluster.
 func runDiscoveryTicker(ctx context.Context, d *sql.DB, tagFilter string, interval time.Duration, notifier update.NotifierSink) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -4409,11 +4451,23 @@ func runOneDiscoveryTick(ctx context.Context, d *sql.DB, tagFilter string, notif
 	const clusterID = "skygate-staging"
 	peers, err := cluster.DiscoverNewNodes(ctx, d, clusterID, tagFilter)
 	if err != nil {
-		log.Printf("🔎 discovery-ticker: discover failed: %v", err)
-		_ = db.AppendAuditLogWithTarget(d, 0, "system", "cluster.discovery.error",
-			fmt.Sprintf("error=%q", err.Error()), "", "")
+		// B318: an UNCHANGED failure is reported at most once an hour. The live
+		// host (2026-09-24) logged `discovery-ticker: discover failed: tailscale
+		// status --json: exit 1: failed to connect to local tailscaled` every five
+		// minutes AND wrote a cluster.discovery.error audit row each time — a tailnet
+		// that is simply not enabled produced 288 log lines and 288 audit rows a day,
+		// which buries the real events in both places. A different error, or the same
+		// error after an hour, is still reported immediately.
+		if discoveryErrorIsNew(err) {
+			log.Printf("🔎 discovery-ticker: discover failed: %v", err)
+			_ = db.AppendAuditLogWithTarget(d, 0, "system", "cluster.discovery.error",
+				fmt.Sprintf("error=%q", err.Error()), "", "")
+		} else {
+			log.Printf("🔎 discovery-ticker: discover still failing (same error within the last hour, not re-audited)")
+		}
 		return
 	}
+	discoveryErrorCleared()
 	discovered := 0
 	for _, p := range peers {
 		if err := cluster.EnsureDiscoveredNode(d, clusterID, p.Hostname, p.TailscaleIP, "system"); err != nil {

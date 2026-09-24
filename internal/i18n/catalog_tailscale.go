@@ -14,29 +14,29 @@ package i18n
 // Top-level prefixes: tailscale
 
 var ruTailscale = map[string]string{
-	"tailscale.title"                    : "Tailscale",
-	"tailscale.subtitle"                 : "Управление tailscaled в контейнере skygate (для Telegram-доступа через subnet-routes релея).",
-	"tailscale.status_heading"           : "Состояние",
-	"tailscale.status_available"         : "бинарники tailscale/tailscaled доступны",
-	"tailscale.status_unavailable"       : "бинарники tailscale/tailscaled НЕ НАЙДЕНЫ в PATH — образ собран без Tailscale",
-	"tailscale.status_running"           : "tailscaled запущен",
-	"tailscale.status_stopped"           : "tailscaled остановлен",
-	"tailscale.status_needslogin"        : "tailscaled запущен, но не аутентифицирован (нажмите Start заново)",
-	"tailscale.status_ip"                : "Tailnet IP",
-	"tailscale.status_ip_empty"          : "не назначен",
-	"tailscale.status_backend"           : "Backend state",
-	"tailscale.status_routes_heading"    : "Принятые subnet-routes (с релеев)",
-	"tailscale.status_routes_empty"      : "пока нет — relays ещё не подняли Telegram-CIDR через subnet-routes, либо skygate не успел их принять (~30s после Start).",
-	"tailscale.auth_heading"             : "Auth key",
-	"tailscale.auth_path_label"          : "Где хранится",
-	"tailscale.auth_status_set"          : "Auth key установлен (fp: %s)",
-	"tailscale.auth_status_unset"        : "Auth key НЕ установлен",
-	"tailscale.auth_help"                : "Сгенерируйте preauth key через <code>headscale preauthkeys create --user %s --reusable --ephemeral</code> (или через <a href=\"/admin/headscale\" target=\"_blank\">/admin/headscale</a>), затем вставьте его сюда. После Save нажмите <b>Start</b>.",
-	"tailscale.auth_textarea_label"      : "Auth key (preauth)",
+	"tailscale.title":                     "Tailscale",
+	"tailscale.subtitle":                  "Управление tailscaled в контейнере skygate (для Telegram-доступа через subnet-routes релея).",
+	"tailscale.status_heading":            "Состояние",
+	"tailscale.status_available":          "бинарники tailscale/tailscaled доступны",
+	"tailscale.status_unavailable":        "бинарники tailscale/tailscaled НЕ НАЙДЕНЫ в PATH — образ собран без Tailscale",
+	"tailscale.status_running":            "tailscaled запущен",
+	"tailscale.status_stopped":            "tailscaled остановлен",
+	"tailscale.status_needslogin":         "tailscaled запущен, но не аутентифицирован (нажмите Start заново)",
+	"tailscale.status_ip":                 "Tailnet IP",
+	"tailscale.status_ip_empty":           "не назначен",
+	"tailscale.status_backend":            "Backend state",
+	"tailscale.status_routes_heading":     "Принятые subnet-routes (с релеев)",
+	"tailscale.status_routes_empty":       "пока нет — relays ещё не подняли Telegram-CIDR через subnet-routes, либо skygate не успел их принять (~30s после Start).",
+	"tailscale.auth_heading":              "Auth key",
+	"tailscale.auth_path_label":           "Где хранится",
+	"tailscale.auth_status_set":           "Auth key установлен (fp: %s)",
+	"tailscale.auth_status_unset":         "Auth key НЕ установлен",
+	"tailscale.auth_help":                 "Сгенерируйте preauth key через <code>headscale preauthkeys create --user %s --reusable --ephemeral</code> (или через <a href=\"/admin/headscale\" target=\"_blank\">/admin/headscale</a>), затем вставьте его сюда. После Save нажмите <b>Start</b>.",
+	"tailscale.auth_textarea_label":       "Auth key (preauth)",
 	"tailscale.auth_textarea_placeholder": "tskey-auth-...",
-	"tailscale.save"                     : "Сохранить",
-	"tailscale.start"                    : "Start",
-	"tailscale.stop"                     : "Stop",
+	"tailscale.save":                      "Сохранить",
+	"tailscale.start":                     "Start",
+	"tailscale.stop":                      "Stop",
 	// B258 (v1.5.8+, 2026-09-16): Tailscale intentionally
 	// disabled by env config. Operator set
 	// SKYGATE_TS_AUTHKEY_FILE=/dev/null in docker-compose to
@@ -45,10 +45,15 @@ var ruTailscale = map[string]string{
 	// packages). The web UI mirrors the entrypoint skip so
 	// the operator sees a clear "this is intentional,
 	// here's why" state instead of "file not found" errors.
-	"tailscale.disabled_title"           : "Tailscale отключён в конфигурации",
-	"tailscale.disabled_help"            : "Переменная окружения <code>SKYGATE_TS_AUTHKEY_FILE</code> указывает на путь, который не существует или не является обычным файлом (например, <code>/dev/null</code>). Entrypoint пропустил запуск tailscaled при старте контейнера; UI Start тоже заблокирован. Чтобы включить — измените <code>docker-compose.yml</code> и перезапустите skygate.",
-	"tailscale.disabled_auth_form_help"  : "Сохранение ключа отключено, пока Tailscale заблокирован через env. Измените <code>SKYGATE_TS_AUTHKEY_FILE</code> в <code>docker-compose.yml</code> и перезапустите skygate.",
-	"tailscale.disabled_start_tooltip"   : "Отключено через SKYGATE_TS_AUTHKEY_FILE — см. баннер выше",
+	"tailscale.disabled_title":          "Tailscale отключён в конфигурации",
+	"tailscale.disabled_help":           "Переменная окружения <code>SKYGATE_TS_AUTHKEY_FILE</code> указывает на путь, который не существует или не является обычным файлом (например, <code>/dev/null</code>). Entrypoint пропустил запуск tailscaled при старте контейнера; UI Start тоже заблокирован. Чтобы включить — измените <code>docker-compose.yml</code> и перезапустите skygate.",
+	"tailscale.disabled_auth_form_help": "Сохранение ключа отключено, пока Tailscale заблокирован через env. Измените <code>SKYGATE_TS_AUTHKEY_FILE</code> в <code>docker-compose.yml</code> и перезапустите skygate.",
+	"tailscale.disabled_start_tooltip":  "Отключено через SKYGATE_TS_AUTHKEY_FILE — см. баннер выше",
+	// B318 — «настроено, но не работает»: страница больше не выглядит включённой,
+	// когда демон мёртв, и объясняет разницу между сохранённой настройкой и
+	// значением, которое прочитал entrypoint.
+	"tailscale.not_running_title": "Tailscale настроен, но демон НЕ работает — skygate сейчас не в tailnet",
+	"tailscale.not_running_help":  "Страница настроена (ключ сохранён, Start доступен), но сам демон не отвечает, поэтому маршруты и управление exit-узлами идут по публичному адресу. Нажмите <b>Start</b> ниже, если причина позволяет: значение в переменной окружения контейнера зафиксировано при его создании, а сохранённый здесь путь влияет только на эту страницу и кнопку Start.",
 	// B258.1 (v1.5.8+, 2026-09-17): third visual state — the
 	// auth-key path is configured (DB or env points at a
 	// regular file like /data/ts/authkey) but the file
@@ -63,58 +68,58 @@ var ruTailscale = map[string]string{
 	// card is HIDDEN in this state — there's nothing
 	// running to disable and that button is what caused
 	// the original 2026-09-17 operator confusion.
-	"tailscale.missing_title"            : "Файл ключа Tailscale не найден",
-	"tailscale.missing_help"             : "Путь к файлу ключа настроен (например, <code>/data/ts/authkey</code>), но сам файл отсутствует или пуст. Tailscale не запустится без валидного ключа. Вставьте preauth key в форму ниже или сгенерируйте его через кнопку «Сгенерировать ключ» — файл будет записан и кнопка Start станет активной.",
-	"tailscale.missing_status_unset"     : "Ключ не установлен (файл отсутствует)",
-	"tailscale.missing_start_tooltip"    : "Сначала вставьте или сгенерируйте preauth key — см. предупреждение выше",
+	"tailscale.missing_title":         "Файл ключа Tailscale не найден",
+	"tailscale.missing_help":          "Путь к файлу ключа настроен (например, <code>/data/ts/authkey</code>), но сам файл отсутствует или пуст. Tailscale не запустится без валидного ключа. Вставьте preauth key в форму ниже или сгенерируйте его через кнопку «Сгенерировать ключ» — файл будет записан и кнопка Start станет активной.",
+	"tailscale.missing_status_unset":  "Ключ не установлен (файл отсутствует)",
+	"tailscale.missing_start_tooltip": "Сначала вставьте или сгенерируйте preauth key — см. предупреждение выше",
 	// B259 (v1.5.8+, 2026-09-16): flip the DB-overridable
 	// path via the web UI. Operator doesn't have to edit
 	// docker-compose.yml + restart. The button generates
 	// a fresh preauth key, writes it to /data/ts/authkey,
 	// and starts tailscaled.
-	"tailscale.enable_in_container_btn"      : "Включить Tailscale в контейнере",
-	"tailscale.enable_in_container_confirm"  : "Включить Tailscale в контейнере? Путь будет сохранён в БД, будет сгенерирован новый preauth key через headscale, tailscaled запустится.",
-	"tailscale.disable_in_container_heading" : "Отключить Tailscale в контейнере",
-	"tailscale.disable_in_container_help"    : "Останавливает tailscaled в контейнере и сохраняет <code>/dev/null</code> в БД (без правки <code>docker-compose.yml</code>). Используйте это чтобы переключиться обратно на host-level tailscale.",
-	"tailscale.disable_in_container_btn"      : "Отключить Tailscale в контейнере",
-	"tailscale.disable_in_container_confirm"  : "Отключить Tailscale в контейнере? tailscaled будет остановлен, ключ удалён с диска, путь /dev/null будет сохранён в БД (env-переменная SKYGATE_TS_AUTHKEY_FILE не меняется — на следующем рестарте контейнера вступят в силу настройки из docker-compose.yml).",
-	"tailscale.help_heading"             : "Как это работает",
-	"tailscale.help_body"                : "Tailscale нужен чтобы skygate (в этом контейнере) мог принимать subnet-routes от ваших exit-релеев. Без Tailscale весь трафик skygate идёт через eth0, и api.telegram.org блокируется на RF VPS.<br><br>После <b>Save + Start</b> контейнер получит tailnet IP (например <code>100.64.x.y</code>) и skygate начнёт принимать маршруты релеев. Дальше на <a href=\"/admin/telegram\" target=\"_blank\">/admin/telegram</a> выберите egress-relay — и бот заработает.<br><br>Сохранённый auth key переживает рестарт контейнера — настройка подхватывается автоматически.",
-	"tailscale.help_after_start"         : "После Start подождите ~10-30s и обновите страницу — увидите tailnet IP и routes от релеев.",
-	"tailscale.token_storage_note"       : "Auth key хранится в файле (mode 0600), доступном только процессу skygate. Никогда не пишется в audit (только fingerprint).",
-	"tailscale.legacy_docker_secret"     : "Примечание: если в этом деплое ранее был настроен Tailscale через docker-secret, он имеет приоритет над web-UI ключом. Чтобы переключиться на web-UI — обратитесь к администратору сервера.",
-	"tailscale.generate_btn"              : "Сгенерировать ключ",
-	"tailscale.generate_help"             : "Запросит preauth key у headscale для пользователя <code>%s</code> (1 час, reusable), запишет его в файл ключа и разблокирует кнопку Start. Используйте, если skygate уже зарегистрирован в headscale — копировать ключ вручную из /admin/headscale больше не нужно.",
+	"tailscale.enable_in_container_btn":      "Включить Tailscale в контейнере",
+	"tailscale.enable_in_container_confirm":  "Включить Tailscale в контейнере? Путь будет сохранён в БД, будет сгенерирован новый preauth key через headscale, tailscaled запустится.",
+	"tailscale.disable_in_container_heading": "Отключить Tailscale в контейнере",
+	"tailscale.disable_in_container_help":    "Останавливает tailscaled в контейнере и сохраняет <code>/dev/null</code> в БД (без правки <code>docker-compose.yml</code>). Используйте это чтобы переключиться обратно на host-level tailscale.",
+	"tailscale.disable_in_container_btn":     "Отключить Tailscale в контейнере",
+	"tailscale.disable_in_container_confirm": "Отключить Tailscale в контейнере? tailscaled будет остановлен, ключ удалён с диска, путь /dev/null будет сохранён в БД (env-переменная SKYGATE_TS_AUTHKEY_FILE не меняется — на следующем рестарте контейнера вступят в силу настройки из docker-compose.yml).",
+	"tailscale.help_heading":                 "Как это работает",
+	"tailscale.help_body":                    "Tailscale нужен чтобы skygate (в этом контейнере) мог принимать subnet-routes от ваших exit-релеев. Без Tailscale весь трафик skygate идёт через eth0, и api.telegram.org блокируется на RF VPS.<br><br>После <b>Save + Start</b> контейнер получит tailnet IP (например <code>100.64.x.y</code>) и skygate начнёт принимать маршруты релеев. Дальше на <a href=\"/admin/telegram\" target=\"_blank\">/admin/telegram</a> выберите egress-relay — и бот заработает.<br><br>Сохранённый auth key переживает рестарт контейнера — настройка подхватывается автоматически.",
+	"tailscale.help_after_start":             "После Start подождите ~10-30s и обновите страницу — увидите tailnet IP и routes от релеев.",
+	"tailscale.token_storage_note":           "Auth key хранится в файле (mode 0600), доступном только процессу skygate. Никогда не пишется в audit (только fingerprint).",
+	"tailscale.legacy_docker_secret":         "Примечание: если в этом деплое ранее был настроен Tailscale через docker-secret, он имеет приоритет над web-UI ключом. Чтобы переключиться на web-UI — обратитесь к администратору сервера.",
+	"tailscale.generate_btn":                 "Сгенерировать ключ",
+	"tailscale.generate_help":                "Запросит preauth key у headscale для пользователя <code>%s</code> (1 час, reusable), запишет его в файл ключа и разблокирует кнопку Start. Используйте, если skygate уже зарегистрирован в headscale — копировать ключ вручную из /admin/headscale больше не нужно.",
 	// v0.69.1 (B236) — manage --advertise-routes from /admin/tailscale.
 	// Closes the gap where skygate-host-1 had
 	// --advertise-routes=172.17.0.0/16,192.168.13.0/24,172.18.0.0/16
 	// set manually (the 192.168.13.0/24 shadowed skyworker's
 	// direct LAN route to 192.168.13.67 on 2026-09-04).
-	"tailscale.advertise_routes_heading"        : "Advertise-routes (subnet-routes этого узла)",
-	"tailscale.advertise_routes_empty"          : "ничего не рекламируется (правильное состояние, если skygate-host-1 не используется как subnet-router)",
-	"tailscale.advertise_routes_approved_note"  : "headscale одобрил %d маршрут(ов) — это то, что реально попало в tailnet",
-	"tailscale.advertise_routes_help"           : "Какие подсети этот skygate анонсирует в tailnet. Обычно должно быть пусто (skygate не должен быть subnet-router). <b>Запрещено</b> рекламировать LAN самого skygate-host-1 (например <code>192.168.13.0/24</code>) — это перебивает прямой маршрут у LAN-клиентов. Также запрещены docker bridge сети (<code>172.17-172.32</code>) — они недоступны извне хоста. Поле пустое = ничего не рекламируется.",
-	"tailscale.advertise_routes_label"          : "CIDR-ы через запятую (или пусто)",
-	"tailscale.advertise_routes_placeholder"    : "10.0.0.0/24, 10.1.0.0/16, 2001:db8::/32",
-	"tailscale.advertise_routes_hint"           : "Пример: <code>10.0.0.0/24</code> — для случая когда skygate-контейнер должен быть gateway в локальную сеть. Оставьте пустым если skygate сам по себе ничего не роутит.",
-	"tailscale.advertise_routes_save"           : "Применить",
-	"tailscale.advertise_routes_clear"          : "Очистить (не рекламировать ничего)",
-	"tailscale.advertise_routes_confirm"        : "Применить новые advertise-routes? Headscale может отклонить часть из них согласно policy (auto_approve.routes).",
+	"tailscale.advertise_routes_heading":       "Advertise-routes (subnet-routes этого узла)",
+	"tailscale.advertise_routes_empty":         "ничего не рекламируется (правильное состояние, если skygate-host-1 не используется как subnet-router)",
+	"tailscale.advertise_routes_approved_note": "headscale одобрил %d маршрут(ов) — это то, что реально попало в tailnet",
+	"tailscale.advertise_routes_help":          "Какие подсети этот skygate анонсирует в tailnet. Обычно должно быть пусто (skygate не должен быть subnet-router). <b>Запрещено</b> рекламировать LAN самого skygate-host-1 (например <code>192.168.13.0/24</code>) — это перебивает прямой маршрут у LAN-клиентов. Также запрещены docker bridge сети (<code>172.17-172.32</code>) — они недоступны извне хоста. Поле пустое = ничего не рекламируется.",
+	"tailscale.advertise_routes_label":         "CIDR-ы через запятую (или пусто)",
+	"tailscale.advertise_routes_placeholder":   "10.0.0.0/24, 10.1.0.0/16, 2001:db8::/32",
+	"tailscale.advertise_routes_hint":          "Пример: <code>10.0.0.0/24</code> — для случая когда skygate-контейнер должен быть gateway в локальную сеть. Оставьте пустым если skygate сам по себе ничего не роутит.",
+	"tailscale.advertise_routes_save":          "Применить",
+	"tailscale.advertise_routes_clear":         "Очистить (не рекламировать ничего)",
+	"tailscale.advertise_routes_confirm":       "Применить новые advertise-routes? Headscale может отклонить часть из них согласно policy (auto_approve.routes).",
 	// v0.33.1.13 — login server (SKYGATE_TS_LOGIN_SERVER) editable from web UI.
 	// The value persists in global_settings (key "tailscale.login_server")
 	// and survives container restarts / migrations / VM clones. The env
 	// var is still the bootstrap value on first start (when DB row is
 	// empty); the web UI overrides it from that point on.
-	"tailscale.login_server_heading"      : "Headscale URL (login server)",
-	"tailscale.login_server_label"        : "URL",
-	"tailscale.login_server_placeholder"  : "https://head.example.com",
-	"tailscale.login_server_help"         : "Передаётся в <code>tailscale up</code> как <code>--login-server=</code>. Сохраняется в БД — после рестарта / миграции значение подхватится автоматически. Переменная окружения <code>SKYGATE_TS_LOGIN_SERVER</code> используется как bootstrap-значение при первом старте (когда в БД пусто).",
-	"tailscale.login_server_source_env"    : "источник: переменная окружения <code>SKYGATE_TS_LOGIN_SERVER</code> (ещё не переопределено через web-UI)",
-	"tailscale.login_server_source_db"     : "источник: web-UI / БД (env <code>SKYGATE_TS_LOGIN_SERVER</code> игнорируется)",
-	"tailscale.login_server_save"         : "Сохранить URL",
-	"tailscale.login_server_saved"         : "Headscale URL сохранён в БД. Будет использован при следующем Start.",
-	"tailscale.login_server_saved_reboot" : "Headscale URL сохранён в БД. Перезапустите Tailscale (Stop → Start), чтобы применить.",
-	"tailscale.login_server_invalid"      : "Некорректный URL. Ожидается https:// или http://, например <code>https://head.example.com</code>.",
+	"tailscale.login_server_heading":      "Headscale URL (login server)",
+	"tailscale.login_server_label":        "URL",
+	"tailscale.login_server_placeholder":  "https://head.example.com",
+	"tailscale.login_server_help":         "Передаётся в <code>tailscale up</code> как <code>--login-server=</code>. Сохраняется в БД — после рестарта / миграции значение подхватится автоматически. Переменная окружения <code>SKYGATE_TS_LOGIN_SERVER</code> используется как bootstrap-значение при первом старте (когда в БД пусто).",
+	"tailscale.login_server_source_env":   "источник: переменная окружения <code>SKYGATE_TS_LOGIN_SERVER</code> (ещё не переопределено через web-UI)",
+	"tailscale.login_server_source_db":    "источник: web-UI / БД (env <code>SKYGATE_TS_LOGIN_SERVER</code> игнорируется)",
+	"tailscale.login_server_save":         "Сохранить URL",
+	"tailscale.login_server_saved":        "Headscale URL сохранён в БД. Будет использован при следующем Start.",
+	"tailscale.login_server_saved_reboot": "Headscale URL сохранён в БД. Перезапустите Tailscale (Stop → Start), чтобы применить.",
+	"tailscale.login_server_invalid":      "Некорректный URL. Ожидается https:// или http://, например <code>https://head.example.com</code>.",
 	// v0.33.1.16 — restart-skgate button. Required after
 	// saving SKYGATE_TS_LOGIN_SERVER (the entrypoint reads
 	// the env var at container start, not at runtime). The
@@ -123,85 +128,90 @@ var ruTailscale = map[string]string{
 	// `systemctl restart skygate` on a native host). The
 	// subprocess that runs the restart is setsid'd so it
 	// outlives the SIGTERM that hits the parent process.
-	"tailscale.restart_heading"            : "Перезапустить skygate",
-	"tailscale.restart_help"               : "Требуется после изменения <code>SKYGATE_TS_LOGIN_SERVER</code> (entrypoint читает переменную окружения при старте контейнера, не в рантайме). Также полезно, если нужно подхватить другие переменные окружения из <code>.env</code> после ручного редактирования. В режиме контейнера: <code>docker compose restart skygate</code>. В нативном режиме (systemd): <code>systemctl restart skygate</code>. Страница станет недоступна на ~30s.",
-	"tailscale.restart_btn"                : "Перезапустить skygate",
-	"tailscale.restart_confirm"            : "Перезапустить skygate? Страница будет недоступна ~30s.",
-	"tailscale.restart_in_progress"        : "Перезапуск запущен. Страница вернётся через ~30s.",
+	"tailscale.restart_heading":     "Перезапустить skygate",
+	"tailscale.restart_help":        "Требуется после изменения <code>SKYGATE_TS_LOGIN_SERVER</code> (entrypoint читает переменную окружения при старте контейнера, не в рантайме). Также полезно, если нужно подхватить другие переменные окружения из <code>.env</code> после ручного редактирования. В режиме контейнера: <code>docker compose restart skygate</code>. В нативном режиме (systemd): <code>systemctl restart skygate</code>. Страница станет недоступна на ~30s.",
+	"tailscale.restart_btn":         "Перезапустить skygate",
+	"tailscale.restart_confirm":     "Перезапустить skygate? Страница будет недоступна ~30s.",
+	"tailscale.restart_in_progress": "Перезапуск запущен. Страница вернётся через ~30s.",
 }
 
 var enTailscale = map[string]string{
-	"tailscale.title"                    : "Tailscale",
-	"tailscale.subtitle"                 : "Manage the in-container tailscaled (for Telegram access via relay subnet routes).",
-	"tailscale.status_heading"           : "Status",
-	"tailscale.status_available"         : "tailscale/tailscaled binaries are on PATH",
-	"tailscale.status_unavailable"       : "tailscale/tailscaled binaries NOT FOUND on PATH — image built without Tailscale",
-	"tailscale.status_running"           : "tailscaled is running",
-	"tailscale.status_stopped"           : "tailscaled is stopped",
-	"tailscale.status_needslogin"        : "tailscaled is up but not authenticated (click Start again)",
-	"tailscale.status_ip"                : "Tailnet IP",
-	"tailscale.status_ip_empty"          : "not assigned",
-	"tailscale.status_backend"           : "Backend state",
-	"tailscale.status_routes_heading"    : "Accepted subnet routes (from relays)",
-	"tailscale.status_routes_empty"      : "none yet — relays haven't pushed Telegram-CIDR subnet routes, or skygate hasn't picked them up yet (~30s after Start).",
-	"tailscale.auth_heading"             : "Auth key",
-	"tailscale.auth_path_label"          : "Storage",
-	"tailscale.auth_status_set"          : "Auth key is set (fp: %s)",
-	"tailscale.auth_status_unset"        : "Auth key is NOT set",
+	"tailscale.title":                 "Tailscale",
+	"tailscale.subtitle":              "Manage the in-container tailscaled (for Telegram access via relay subnet routes).",
+	"tailscale.status_heading":        "Status",
+	"tailscale.status_available":      "tailscale/tailscaled binaries are on PATH",
+	"tailscale.status_unavailable":    "tailscale/tailscaled binaries NOT FOUND on PATH — image built without Tailscale",
+	"tailscale.status_running":        "tailscaled is running",
+	"tailscale.status_stopped":        "tailscaled is stopped",
+	"tailscale.status_needslogin":     "tailscaled is up but not authenticated (click Start again)",
+	"tailscale.status_ip":             "Tailnet IP",
+	"tailscale.status_ip_empty":       "not assigned",
+	"tailscale.status_backend":        "Backend state",
+	"tailscale.status_routes_heading": "Accepted subnet routes (from relays)",
+	"tailscale.status_routes_empty":   "none yet — relays haven't pushed Telegram-CIDR subnet routes, or skygate hasn't picked them up yet (~30s after Start).",
+	"tailscale.auth_heading":          "Auth key",
+	"tailscale.auth_path_label":       "Storage",
+	"tailscale.auth_status_set":       "Auth key is set (fp: %s)",
+	"tailscale.auth_status_unset":     "Auth key is NOT set",
 	// B258 (v1.5.8+, 2026-09-16): Tailscale intentionally
 	// disabled by env config (operator manages Tailscale at
 	// the host level). The web UI mirrors the entrypoint skip
 	// check so the operator sees a clear "intentional" state
 	// instead of "file not found" errors.
-	"tailscale.disabled_title"           : "Tailscale is disabled by config",
-	"tailscale.disabled_help"            : "The <code>SKYGATE_TS_AUTHKEY_FILE</code> env var points to a path that either does not exist or is not a regular file (e.g. <code>/dev/null</code>). The container entrypoint skipped tailscaled at start-up; the UI Start button is also disabled. To re-enable — edit <code>docker-compose.yml</code> and restart the skygate container.",
-	"tailscale.disabled_auth_form_help"  : "Saving an auth key is disabled while Tailscale is blocked via env. Edit <code>SKYGATE_TS_AUTHKEY_FILE</code> in <code>docker-compose.yml</code> and restart skygate.",
-	"tailscale.disabled_start_tooltip"   : "Disabled via SKYGATE_TS_AUTHKEY_FILE — see banner above",
+	"tailscale.disabled_title":          "Tailscale is disabled by config",
+	"tailscale.disabled_help":           "The <code>SKYGATE_TS_AUTHKEY_FILE</code> env var points to a path that either does not exist or is not a regular file (e.g. <code>/dev/null</code>). The container entrypoint skipped tailscaled at start-up; the UI Start button is also disabled. To re-enable — edit <code>docker-compose.yml</code> and restart the skygate container.",
+	"tailscale.disabled_auth_form_help": "Saving an auth key is disabled while Tailscale is blocked via env. Edit <code>SKYGATE_TS_AUTHKEY_FILE</code> in <code>docker-compose.yml</code> and restart skygate.",
+	"tailscale.disabled_start_tooltip":  "Disabled via SKYGATE_TS_AUTHKEY_FILE — see banner above",
+	// B318 — "configured but not running": the page no longer looks enabled while
+	// the daemon is dead, and it names the difference between the saved setting and
+	// the value the entrypoint actually read.
+	"tailscale.not_running_title": "Tailscale is configured but the daemon is NOT running — skygate is not on the tailnet right now",
+	"tailscale.not_running_help":  "This page is configured (a key is saved, Start is available) but the daemon does not answer, so routes and exit-node management go over the public address. Press <b>Start</b> below when the reason allows it: the container's environment value was frozen when the container was created, and the path saved here only affects this page and its Start button.",
 	// B258.1 (v1.5.8+, 2026-09-17): third visual state —
 	// configured-but-missing. Mirrors the B258 "intentionally
 	// disabled" branch but with a warn banner (not info)
 	// and a working paste form so the operator can recover
 	// without touching docker-compose.yml.
-	"tailscale.missing_title"            : "Tailscale auth-key file is missing",
-	"tailscale.missing_help"             : "The auth-key path is configured (e.g. <code>/data/ts/authkey</code>) but the file at that path does not exist or is empty. Tailscale cannot start without a valid key. Paste a preauth key in the form below or click the “Generate key” button — either action will write the file and unlock Start.",
-	"tailscale.missing_status_unset"     : "Key not set (file missing)",
-	"tailscale.missing_start_tooltip"    : "Paste or generate a preauth key first — see warning above",
+	"tailscale.missing_title":         "Tailscale auth-key file is missing",
+	"tailscale.missing_help":          "The auth-key path is configured (e.g. <code>/data/ts/authkey</code>) but the file at that path does not exist or is empty. Tailscale cannot start without a valid key. Paste a preauth key in the form below or click the “Generate key” button — either action will write the file and unlock Start.",
+	"tailscale.missing_status_unset":  "Key not set (file missing)",
+	"tailscale.missing_start_tooltip": "Paste or generate a preauth key first — see warning above",
 	// B259: flip the DB-overridable path via the web UI.
 	// Operator doesn't have to edit docker-compose.yml + restart.
-	"tailscale.enable_in_container_btn"      : "Enable in-container Tailscale",
-	"tailscale.enable_in_container_confirm"  : "Enable Tailscale in the container? The path will be persisted in DB, a fresh preauth key will be generated via headscale, and tailscaled will start.",
-	"tailscale.disable_in_container_heading" : "Disable in-container Tailscale",
-	"tailscale.disable_in_container_help"    : "Stops tailscaled in the container and persists <code>/dev/null</code> in DB (no docker-compose.yml edit). Use this to switch back to host-level Tailscale.",
-	"tailscale.disable_in_container_btn"      : "Disable in-container Tailscale",
-	"tailscale.disable_in_container_confirm"  : "Disable Tailscale in the container? tailscaled will be stopped, the key file deleted, and the path /dev/null will be persisted in DB (the SKYGATE_TS_AUTHKEY_FILE env var is NOT touched — it'll re-take effect on the next container restart).",
-	"tailscale.auth_help"                : "Generate a preauth key via <code>headscale preauthkeys create --user %s --reusable --ephemeral</code> (or via <a href=\"/admin/headscale\" target=\"_blank\">/admin/headscale</a>), then paste it here. After Save, click <b>Start</b>.",
-	"tailscale.auth_textarea_label"      : "Auth key (preauth)",
-	"tailscale.auth_textarea_placeholder": "tskey-auth-...",
-	"tailscale.save"                     : "Save",
-	"tailscale.start"                    : "Start",
-	"tailscale.stop"                     : "Stop",
-	"tailscale.help_heading"             : "How this works",
-	"tailscale.help_body"                : "Tailscale is what lets the skygate container (in this VM) accept subnet routes from your exit-relays. Without Tailscale, all skygate traffic goes through eth0 and api.telegram.org is blocked on an RF VPS.<br><br>After <b>Save + Start</b> the container gets a tailnet IP (e.g. <code>100.64.x.y</code>) and skygate starts accepting the relays' routes. Then on <a href=\"/admin/telegram\" target=\"_blank\">/admin/telegram</a> pick an egress-relay — and the bot works.<br><br>The saved auth key survives container restarts — the setting is picked up automatically.",
-	"tailscale.help_after_start"         : "After Start wait ~10-30s and refresh the page — you'll see a tailnet IP and routes from the relays.",
-	"tailscale.token_storage_note"       : "Auth key is stored in a file (mode 0600), only accessible to the skygate process. Never logged in audit (only fingerprint).",
-	"tailscale.legacy_docker_secret"     : "Note: if this deployment was previously configured with a docker-secret for Tailscale, it has higher priority than the web-UI key. To switch — contact the server administrator.",
-	"tailscale.generate_btn"              : "Generate key",
-	"tailscale.generate_help"             : "Requests a preauth key from headscale for user <code>%s</code> (1h, reusable), writes it to the auth-key file and unlocks the Start button. Use this if skygate is already registered in headscale — no more copying the key from /admin/headscale by hand.",
+	"tailscale.enable_in_container_btn":      "Enable in-container Tailscale",
+	"tailscale.enable_in_container_confirm":  "Enable Tailscale in the container? The path will be persisted in DB, a fresh preauth key will be generated via headscale, and tailscaled will start.",
+	"tailscale.disable_in_container_heading": "Disable in-container Tailscale",
+	"tailscale.disable_in_container_help":    "Stops tailscaled in the container and persists <code>/dev/null</code> in DB (no docker-compose.yml edit). Use this to switch back to host-level Tailscale.",
+	"tailscale.disable_in_container_btn":     "Disable in-container Tailscale",
+	"tailscale.disable_in_container_confirm": "Disable Tailscale in the container? tailscaled will be stopped, the key file deleted, and the path /dev/null will be persisted in DB (the SKYGATE_TS_AUTHKEY_FILE env var is NOT touched — it'll re-take effect on the next container restart).",
+	"tailscale.auth_help":                    "Generate a preauth key via <code>headscale preauthkeys create --user %s --reusable --ephemeral</code> (or via <a href=\"/admin/headscale\" target=\"_blank\">/admin/headscale</a>), then paste it here. After Save, click <b>Start</b>.",
+	"tailscale.auth_textarea_label":          "Auth key (preauth)",
+	"tailscale.auth_textarea_placeholder":    "tskey-auth-...",
+	"tailscale.save":                         "Save",
+	"tailscale.start":                        "Start",
+	"tailscale.stop":                         "Stop",
+	"tailscale.help_heading":                 "How this works",
+	"tailscale.help_body":                    "Tailscale is what lets the skygate container (in this VM) accept subnet routes from your exit-relays. Without Tailscale, all skygate traffic goes through eth0 and api.telegram.org is blocked on an RF VPS.<br><br>After <b>Save + Start</b> the container gets a tailnet IP (e.g. <code>100.64.x.y</code>) and skygate starts accepting the relays' routes. Then on <a href=\"/admin/telegram\" target=\"_blank\">/admin/telegram</a> pick an egress-relay — and the bot works.<br><br>The saved auth key survives container restarts — the setting is picked up automatically.",
+	"tailscale.help_after_start":             "After Start wait ~10-30s and refresh the page — you'll see a tailnet IP and routes from the relays.",
+	"tailscale.token_storage_note":           "Auth key is stored in a file (mode 0600), only accessible to the skygate process. Never logged in audit (only fingerprint).",
+	"tailscale.legacy_docker_secret":         "Note: if this deployment was previously configured with a docker-secret for Tailscale, it has higher priority than the web-UI key. To switch — contact the server administrator.",
+	"tailscale.generate_btn":                 "Generate key",
+	"tailscale.generate_help":                "Requests a preauth key from headscale for user <code>%s</code> (1h, reusable), writes it to the auth-key file and unlocks the Start button. Use this if skygate is already registered in headscale — no more copying the key from /admin/headscale by hand.",
 	// v0.33.1.13 — login server (SKYGATE_TS_LOGIN_SERVER) editable from web UI.
 	// The value persists in global_settings (key "tailscale.login_server")
 	// and survives container restarts / migrations / VM clones. The env
 	// var is still the bootstrap value on first start (when DB row is
 	// empty); the web UI overrides it from that point on.
-	"tailscale.login_server_heading"      : "Headscale URL (login server)",
-	"tailscale.login_server_label"        : "URL",
-	"tailscale.login_server_placeholder"  : "https://head.example.com",
-	"tailscale.login_server_help"         : "Passed to <code>tailscale up</code> as <code>--login-server=</code>. Persists in the DB — after a restart or migration the value is picked up automatically. The <code>SKYGATE_TS_LOGIN_SERVER</code> env var is the bootstrap value on first start (when the DB row is empty).",
-	"tailscale.login_server_source_env"    : "source: env var <code>SKYGATE_TS_LOGIN_SERVER</code> (not yet overridden via web-UI)",
-	"tailscale.login_server_source_db"     : "source: web-UI / DB (env <code>SKYGATE_TS_LOGIN_SERVER</code> is ignored)",
-	"tailscale.login_server_save"         : "Save URL",
-	"tailscale.login_server_saved"         : "Headscale URL saved to the DB. Will be used on the next Start.",
-	"tailscale.login_server_saved_reboot" : "Headscale URL saved to the DB. Restart Tailscale (Stop → Start) to apply.",
-	"tailscale.login_server_invalid"      : "Invalid URL. Expected https:// or http://, e.g. <code>https://head.example.com</code>.",
+	"tailscale.login_server_heading":      "Headscale URL (login server)",
+	"tailscale.login_server_label":        "URL",
+	"tailscale.login_server_placeholder":  "https://head.example.com",
+	"tailscale.login_server_help":         "Passed to <code>tailscale up</code> as <code>--login-server=</code>. Persists in the DB — after a restart or migration the value is picked up automatically. The <code>SKYGATE_TS_LOGIN_SERVER</code> env var is the bootstrap value on first start (when the DB row is empty).",
+	"tailscale.login_server_source_env":   "source: env var <code>SKYGATE_TS_LOGIN_SERVER</code> (not yet overridden via web-UI)",
+	"tailscale.login_server_source_db":    "source: web-UI / DB (env <code>SKYGATE_TS_LOGIN_SERVER</code> is ignored)",
+	"tailscale.login_server_save":         "Save URL",
+	"tailscale.login_server_saved":        "Headscale URL saved to the DB. Will be used on the next Start.",
+	"tailscale.login_server_saved_reboot": "Headscale URL saved to the DB. Restart Tailscale (Stop → Start) to apply.",
+	"tailscale.login_server_invalid":      "Invalid URL. Expected https:// or http://, e.g. <code>https://head.example.com</code>.",
 	// v0.33.1.16 — restart-skgate button. Required after
 	// saving SKYGATE_TS_LOGIN_SERVER (the entrypoint reads
 	// the env var at container start, not at runtime). The
@@ -210,20 +220,20 @@ var enTailscale = map[string]string{
 	// `systemctl restart skygate` on a native host). The
 	// subprocess that runs the restart is setsid'd so it
 	// outlives the SIGTERM that hits the parent process.
-	"tailscale.restart_heading"            : "Restart skygate",
-	"tailscale.restart_help"               : "Required after editing <code>SKYGATE_TS_LOGIN_SERVER</code> (the entrypoint reads the env var at container start, not at runtime). Also useful for picking up other <code>.env</code> changes. In container mode: <code>docker compose restart skygate</code>. In native (systemd) mode: <code>systemctl restart skygate</code>. The page will be unreachable for ~30s.",
-	"tailscale.restart_btn"                : "Restart skygate",
-	"tailscale.restart_confirm"            : "Restart skygate? The page will be unreachable for ~30s.",
-	"tailscale.restart_in_progress"        : "Restart triggered. Page will return in ~30s.",
+	"tailscale.restart_heading":     "Restart skygate",
+	"tailscale.restart_help":        "Required after editing <code>SKYGATE_TS_LOGIN_SERVER</code> (the entrypoint reads the env var at container start, not at runtime). Also useful for picking up other <code>.env</code> changes. In container mode: <code>docker compose restart skygate</code>. In native (systemd) mode: <code>systemctl restart skygate</code>. The page will be unreachable for ~30s.",
+	"tailscale.restart_btn":         "Restart skygate",
+	"tailscale.restart_confirm":     "Restart skygate? The page will be unreachable for ~30s.",
+	"tailscale.restart_in_progress": "Restart triggered. Page will return in ~30s.",
 	// v0.69.1 (B236) — manage --advertise-routes from /admin/tailscale.
-	"tailscale.advertise_routes_heading"        : "Advertise-routes (subnet-routes this node advertises)",
-	"tailscale.advertise_routes_empty"          : "none (correct state when skygate-host-1 is not used as a subnet-router)",
-	"tailscale.advertise_routes_approved_note"  : "headscale approved %d route(s) — this is what actually entered the tailnet",
-	"tailscale.advertise_routes_help"           : "Which subnets this skygate advertises to the tailnet. Usually empty (skygate is not a subnet-router). <b>Forbidden</b>: the host's own LAN (e.g. <code>192.168.13.0/24</code>) — shadows direct Ethernet routes on LAN clients. Also forbidden: docker bridge networks (<code>172.17-172.32</code>) — they're unreachable from outside the host. Empty field = no advertising.",
-	"tailscale.advertise_routes_label"          : "CIDRs (comma-separated, or empty)",
-	"tailscale.advertise_routes_placeholder"    : "10.0.0.0/24, 10.1.0.0/16, 2001:db8::/32",
-	"tailscale.advertise_routes_hint"           : "Example: <code>10.0.0.0/24</code> for when the skygate container should be a gateway into a local network. Leave empty if skygate itself doesn't route anything.",
-	"tailscale.advertise_routes_save"           : "Apply",
-	"tailscale.advertise_routes_clear"          : "Clear (advertise nothing)",
-	"tailscale.advertise_routes_confirm"        : "Apply new advertise-routes? Headscale may reject some per its policy (auto_approve.routes).",
+	"tailscale.advertise_routes_heading":       "Advertise-routes (subnet-routes this node advertises)",
+	"tailscale.advertise_routes_empty":         "none (correct state when skygate-host-1 is not used as a subnet-router)",
+	"tailscale.advertise_routes_approved_note": "headscale approved %d route(s) — this is what actually entered the tailnet",
+	"tailscale.advertise_routes_help":          "Which subnets this skygate advertises to the tailnet. Usually empty (skygate is not a subnet-router). <b>Forbidden</b>: the host's own LAN (e.g. <code>192.168.13.0/24</code>) — shadows direct Ethernet routes on LAN clients. Also forbidden: docker bridge networks (<code>172.17-172.32</code>) — they're unreachable from outside the host. Empty field = no advertising.",
+	"tailscale.advertise_routes_label":         "CIDRs (comma-separated, or empty)",
+	"tailscale.advertise_routes_placeholder":   "10.0.0.0/24, 10.1.0.0/16, 2001:db8::/32",
+	"tailscale.advertise_routes_hint":          "Example: <code>10.0.0.0/24</code> for when the skygate container should be a gateway into a local network. Leave empty if skygate itself doesn't route anything.",
+	"tailscale.advertise_routes_save":          "Apply",
+	"tailscale.advertise_routes_clear":         "Clear (advertise nothing)",
+	"tailscale.advertise_routes_confirm":       "Apply new advertise-routes? Headscale may reject some per its policy (auto_approve.routes).",
 }

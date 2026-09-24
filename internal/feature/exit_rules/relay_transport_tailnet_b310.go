@@ -64,6 +64,7 @@ import (
 	"time"
 
 	"skygate/internal/headscale"
+	"skygate/internal/tsstate"
 )
 
 // Endpoint kinds, recorded per relay and rendered on the page.
@@ -416,6 +417,14 @@ func detectTailnetState() TailnetState {
 	// No kernel path. Ask tailscale why, so the page can name the fix instead of
 	// reporting "no interface found".
 	reason := tailscaleBackendReason()
+	// B318: the daemon's own answer is only half the story. Both admin pages used
+	// to describe this state differently — /admin/tailscale rendered "enabled"
+	// because a DB override pointed at a real key file while the CONTAINER ENV still
+	// carried the disabled sentinel — so the shared facts are appended here and the
+	// wording stays one story on both pages.
+	if extra := tsstate.Detect("").Explain(); extra != "" {
+		reason = reason + " — " + extra
+	}
 	return TailnetState{Ready: false, Reason: reason}
 }
 

@@ -12,6 +12,86 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.83 — two pages, one daemon, one story (B318)
+
+**Date:** 2026-09-24 · **Base:** `v1.5.82` → this tag · **Compatibility:** none — no schema
+change, no migration, no config change.
+
+### The report
+
+> «теперь на странице admin/exit-nodes показывает что skygate не включает tailscale
+> однако он работает если переходить на соответствующую вкладку посмотри в чем дело»
+
+That is a contradiction between two pages about one daemon, and both pages lost.
+
+### What the live tools found (read-only)
+
+| source | what it said |
+|---|---|
+| `/admin/exit-nodes` | «skygate НЕ в tailnet … tailscaled is not running: failed to connect to local tailscaled; it doesn't appear to be running» |
+| `/admin/tailscale` | the **ENABLED** branch: green card, clickable Start — because `global_settings[tailscale.auth_key_path]` points at `/data/ts/authkey` and that file exists |
+| container env | `SKYGATE_TS_AUTHKEY_FILE=/dev/null`, and the entrypoint logged «[init] TS_AUTHKEY_FILE not set — Tailscale skipped (non-RF mode)» |
+| `data/ts/tailscaled.log1.txt` (previous container instance) | «`wgengine.NewUserspaceEngine(tun "tailscale0") error: tstun.New("tailscale0"): CreateTUN("tailscale0") failed; /dev/net/tun does not exist`» |
+
+Both pages were internally honest and both named the wrong thing. The daemon is not
+running because:
+
+1. the **entrypoint** was told to skip it — `SKYGATE_TS_AUTHKEY_FILE=/dev/null` — and that
+   value is **frozen when the container is created** (docker does not re-read `.env` on a
+   restart). The path saved on the page is a *web-UI override*: it changes what the page
+   and its **Start** button do, and nothing else; and
+2. the last start attempt died for a missing `/dev/net/tun`.
+
+Neither fact was rendered anywhere, so an operator saw "configured" and read it as "works".
+
+### What changed
+
+* **New `internal/tsstate`** — the facts both pages need, in one place both features can
+  import (admin → exit_rules would be an import cycle): the entrypoint's skip conditions
+  (unset / empty / `/dev/null`), whether `/dev/net/tun` exists in **this** container, and
+  the last error-looking line of the tailscaled log (JSON-lines through logtail, decoded to
+  its `text` field, with routine noise like iptables output filtered out). `Explain()`
+  composes one operator sentence: boot-skip first, then the TUN device with its
+  `docker-compose.yml` fix, then the daemon's own last failure.
+* **`/admin/tailscale` can no longer look enabled with a dead daemon.** It carries
+  `EnvDisabled` / `DSentinel` / `TunPresent` / `DaemonError` / `NotRunningReason` and
+  renders a warning banner — «настроен, но демон НЕ работает» + the reason + the way out —
+  on the **error** path *and* on the **stopped** path.
+* **`/admin/exit-nodes` tells the same story**: its tailnet reason is extended with the
+  same explanation, so the two pages finally agree.
+* **The discovery ticker stops burying the journal.** An *unchanged* failure is logged and
+  audited at most **once an hour** (the live host wrote 288 identical journal lines and 288
+  `cluster.discovery.error` audit rows a day), a success clears the throttle so the next
+  failure is reported immediately, and a different error is never suppressed.
+
+### What the operator should do on this host
+
+1. Press **Start** on `/admin/tailscale` — the current container *does* have `/dev/net/tun`
+   and `NET_ADMIN`/`SYS_ADMIN`, so the failure recorded in the log belongs to the previous
+   container instance; or
+2. remove the disabled sentinel from the service (`SKYGATE_TS_AUTHKEY_FILE=/dev/null`) and
+   recreate the container, so the entrypoint starts tailscaled by itself.
+
+Until the daemon runs, relay management stays on the **public** transport (which works —
+`Транспорт последней синхронизации: … public`), and the exit-nodes page says exactly that
+instead of contradicting the other tab.
+
+### Files
+
+`internal/tsstate/tsstate.go` (+ `tsstate_b318_test.go`),
+`internal/feature/admin/tailscale.go`,
+`internal/feature/exit_rules/relay_transport_tailnet_b310.go`,
+`internal/handlers/templates/admin/tailscale.html`, `internal/i18n/catalog_tailscale.go`,
+`cmd/skygate/main.go`, `docs/INSTALL.md`, `scripts/check_b318_tailscale_state_truth.sh`.
+
+### Verification
+
+23 contracts in `scripts/check_b318_tailscale_state_truth.sh`, plus `internal/tsstate`
+tests that pin the sentinel table, the explanation naming the boot skip and the Start
+button, the TUN sentence with its compose fix, and the daemon-log extraction (the LAST
+`CreateTUN` failure wins, the decoded `text` field is used rather than raw JSON, and a
+missing log invents nothing).
+
 ## v1.5.82 — the relay next to skygate is the recommended DERP again (B317)
 
 **Date:** 2026-09-24 · **Base:** `v1.5.81` → this tag · **Compatibility:** none — no schema
