@@ -12,6 +12,113 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.82 — the relay next to skygate is the recommended DERP again (B317)
+
+**Date:** 2026-09-24 · **Base:** `v1.5.81` → this tag · **Compatibility:** none — no schema
+change, no migration, no config change. The next probe tick (5 min) rewrites the affected
+region rows by itself; no operator action is required, and no data is touched.
+
+### The report
+
+> «давай как предлагаешь также проблема в том что релей что сейчас рядом со skygate не
+> выбирается и не доступен для выбора как основного DERP сервера хотя при этом он должен
+> иметь минимальную задержку. Пройди инструментами по skygate.skynas.ru и оцени работу и
+> отображение DERP»
+
+The screenshot that came with it showed «Рекомендуемый DERP: region_id **`%!s(int=901)`**
+(controlplane.tailscale.com)» and a table with two identical 901 rows — and no sign of the
+operator's own relay, which lives ~20 ms away.
+
+### What the live tools found (read-only)
+
+| source | what it said |
+|---|---|
+| `derp_relays` | **two** enabled rows for region 900: `https://derp.skynas.ru:443` (sort_order 10) and a stale `https://derp.skynas.ru:8443` (sort_order 11, nothing listens); plus the legacy derpmap-URL row for region 901 |
+| `derp_health` | `900 … latency NULL, healthy 0, "tls dial: dial tcp …:8443: connect: connection refused"` |
+| `skygate derp-probe` | `900 own … — FAIL` **and, one line later**, `900 own … 20ms ok` |
+| the published derpmap | region 900 present and correct (`mow-1`, `derp.skynas.ru:443`) — clients were fine |
+
+`derp_health` is keyed by `region_id`, so the two enabled rows of region 900 competed for
+**one** verdict, and the last writer owned it:
+
+* `FetchAllDERPs` collapsed them in a `map[int]DERPInfo` loop where the **last** row in
+  query order won — the dead `:8443` one. The cron then wrote the connection-refused error
+  every five minutes, the dashboard (which shows only healthy, measured rows) hid the
+  operator's own relay, and the recommendation fell through to the public map;
+* `skygate derp-probe` built its own un-deduplicated list and persisted per row, so it
+  wrote 20 ms — the banner then **flipped between two views of the same table**.
+
+The third row was the other half of the lie: the legacy `derp.external_urls` derpmap URL
+was migrated into `derp_relays` as region 901, and the health prober **dialled it** — it
+measured `controlplane.tailscale.com`, Tailscale's *control plane*, filed it as "region
+901, public, healthy, 117 ms" and let the dashboard recommend it. The public Tailscale map
+has 28 regions and none of them is 901 (verified live).
+
+### What changed
+
+* **One region, one verdict.** Every enabled row of a region is still probed (the CLI and
+  the journals want that), but the region's health row records the **best** result through
+  the new pure `BestPerRegion`: healthy beats failed, then lower latency; when every
+  endpoint is dead the first error is kept, so the reason shown is stable.
+* **Deterministic probe order.** `FetchAllDERPs` keeps **every** enabled own row of a
+  region and returns own-first / `region_id` / URL order instead of map iteration, so two
+  runs cannot disagree and nothing downstream can depend on luck.
+* **A derpmap document is not a relay.** `FetchOwnDERPs` skips rows whose URL is not a
+  relay endpoint (the same closed path set the derpmap *publisher* already applied) and
+  names the skip in the journal. Region 901 disappears from the health table; clients were
+  never given it.
+* **The page names the ambiguity.** `/admin/derp/dashboard` warns when a region has several
+  enabled rows, lists them and links to `/admin/derp/relays` — skygate never edits the
+  operator's rows, so disabling the stale one stays their call.
+* **A region that leaves the map loses its verdict.** `derp_health` is a cache of the last
+  probe, so the no-longer-probed region-901 row would have sat in the table for ever
+  reading «public, healthy, 100 ms». The cron tick and the «Re-probe all» button now prune
+  rows for regions that are no longer in the map — and an EMPTY probe list is a no-op, so a
+  failed map fetch can never empty the dashboard.
+* **The CLI says which verdict a multi-row region kept**, so its table and the dashboard can
+  no longer look like two different truths.
+* **The banner reads «region_id 900»** instead of `region_id %!s(int=901)` (the catalogue
+  used `%s` for an int).
+* The dashboard's healthy-only filter now builds a **new** slice instead of filtering in
+  place — the old `visible = all[:0]` left the full set truncated for the recommendation
+  that reads it.
+
+### Files
+
+`internal/derphealth/map.go`, `internal/derphealth/probe.go`,
+`internal/feature/admin/derp_dashboard.go`,
+`internal/handlers/templates/admin/derp_dashboard.html`,
+`internal/i18n/catalog_admin.go`, `cmd/skygate/derp_probe.go`,
+`scripts/check_b317_derp_relay_truth.sh`, `internal/derphealth/relay_rows_b317_test.go`,
+`internal/feature/admin/derp_duplicate_rows_b317_test.go`, `docs/derp.md`.
+
+### Verification
+
+26 contracts in `scripts/check_b317_derp_relay_truth.sh`, plus the Go tests built from the
+live shape: both region-900 rows survive the fetch while the derpmap document does not,
+`BestPerRegion` keeps the working endpoint in either input order, and `ProbeAll` persists
+exactly **one** verdict per region — the working one — against a real TLS relay and a dead
+port.
+
+### Also fixed (drive-by)
+
+Three check scripts were touched while verifying this release, and none of them changes a
+contract's meaning:
+
+* `scripts/check_b237_2.sh` (E.2/E.3) and `scripts/check_b252_derp_cert_sync.sh` (section A)
+  produced a **false** FAIL during a loaded gate run while passing standalone. Both are the
+  AGENTS trap-#9 shape — a producer feeding a reader that exits early under `pipefail`:
+  `go test … | grep -q '^ok'`, and `awk … | head -c 4000` inside a command substitution
+  (where the resulting SIGPIPE (141) made `set -e` abort the script mid-loop and report a
+  column that is present as missing). Both now capture first and truncate/match after;
+* `scripts/check_b228.sh` contract B was **renegotiated**: it grepped for the literal
+  `r.Healthy && r.LatencyMs > 0`, i.e. it pinned the loop-variable NAME, so B317's rewrite
+  of that loop (`for _, row := range all`, building a new slice) was reported as a
+  regression although the predicate is unchanged. It now matches the predicate and
+  tolerates the receiver name, and a new contract B2 pins the property B317 added — the
+  healthy-only view is a new slice, so the full set the recommendation reads is never
+  truncated.
+
 ## v1.5.81 — the device mesh follows the device, not a username headscale rewrote (B316)
 
 **Date:** 2026-09-24 · **Base:** `v1.5.80` → this tag · **Compatibility:** none — no

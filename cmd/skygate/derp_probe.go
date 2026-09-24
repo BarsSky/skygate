@@ -101,5 +101,35 @@ func runDerpProbe(args []string) error {
 		fmt.Fprintf(os.Stdout, "%-5d %-7s %-8s %-30s %-8s %s\n",
 			r.Info.RegionID, typ, r.Info.RegionCode, r.Info.Host, lat, status)
 	}
+
+	// B317: say which verdict each region kept when a region has several rows.
+	// derp_health stores ONE row per region, so this table can show two rows for
+	// region 900 while the dashboard shows the single best of them — the difference
+	// between the two views used to look like a bug in the dashboard, and on the
+	// reference host it was: the dead `:8443` row was the one that got persisted.
+	perRegion := map[int]int{}
+	for _, r := range results {
+		perRegion[r.Info.RegionID]++
+	}
+	for _, best := range derphealth.BestPerRegion(results) {
+		if perRegion[best.Info.RegionID] < 2 {
+			continue
+		}
+		verdict := "FAIL: " + errText(best.Err)
+		if best.Healthy {
+			verdict = fmt.Sprintf("%dms ok", best.LatencyMs)
+		}
+		fmt.Fprintf(os.Stdout,
+			"note: region %d has %d rows; the dashboard keeps the best one (%s @ %s)\n",
+			best.Info.RegionID, perRegion[best.Info.RegionID], verdict, best.Info.URL)
+	}
 	return nil
+}
+
+// errText renders a probe error for the CLI note without printing "<nil>".
+func errText(err error) string {
+	if err == nil {
+		return "no error"
+	}
+	return err.Error()
 }

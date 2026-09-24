@@ -6,7 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
+	"sort"
+	"strings"
 	"time"
 
 	"skygate/internal/derpcfg"
@@ -58,6 +62,7 @@ const mapFetchTimeout = 30 * time.Second
 //     level metadata, same shape as the region-level
 //     fields (Tailscale keeps them on both, for
 //     backwards compat).
+//
 // Other fields (lat/long, capabilities, etc.) are
 // not preserved to keep the struct minimal.
 type derpMapResponse struct {
@@ -65,7 +70,7 @@ type derpMapResponse struct {
 		RegionID   int    `json:"RegionID"`
 		RegionCode string `json:"RegionCode"`
 		RegionName string `json:"RegionName"`
-		Nodes []struct {
+		Nodes      []struct {
 			Name     string `json:"Name"`
 			HostName string `json:"HostName"`
 			Locality string `json:"Locality,omitempty"`
@@ -188,7 +193,7 @@ func FetchOwnDERPs(ctx context.Context, db *sql.DB) ([]DERPInfo, error) {
 		       COALESCE(url, ''), is_bundled
 		  FROM derp_relays
 		 WHERE enabled = 1
-		 ORDER BY is_bundled ASC, sort_order ASC, region_id ASC
+		 ORDER BY is_bundled DESC, sort_order ASC, region_id ASC, url ASC
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("own derp_relays query: %w", err)
@@ -206,6 +211,21 @@ func FetchOwnDERPs(ctx context.Context, db *sql.DB) ([]DERPInfo, error) {
 			&d.Host, &d.URL, &isBundled); err != nil {
 			return nil, fmt.Errorf("own derp_relays scan: %w", err)
 		}
+		// B317: a row whose URL is a derpmap DOCUMENT is not a relay and must not
+		// be probed as one. The legacy `derp.external_urls` value was migrated into
+		// derp_relays as region 901 with the URL of Tailscale's public map, and the
+		// prober happily dialled controlplane.tailscale.com:443 — Tailscale's
+		// CONTROL PLANE — then filed the result as "region 901, public, healthy,
+		// 117 ms" and let the dashboard RECOMMEND it over the operator's own relay
+		// 12 ms away. The public map has no region 901 (verified live: 28 regions,
+		// none of them 901), so nothing legitimate is lost by skipping it; the
+		// /admin/derp/relays page already names this row's reason, and the journal
+		// gets a line here.
+		if !urlIsRelayNode(d.URL) {
+			log.Printf("derphealth: skipping region %d row %q — its URL is not a relay endpoint (%s); see /admin/derp/relays",
+				d.RegionID, d.Host, d.URL)
+			continue
+		}
 		// B265: a bundled row IS the operator's own infrastructure
 		// (the local derper). An external row (is_bundled=0) is NOT
 		// — it points at somebody else's relay.
@@ -214,6 +234,32 @@ func FetchOwnDERPs(ctx context.Context, db *sql.DB) ([]DERPInfo, error) {
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// urlIsRelayNode reports whether a derp_relays URL names a single relay ENDPOINT
+// (as opposed to a derpmap document or any other non-relay path).
+//
+// B317 — this mirrors internal/feature/admin.isDerpMapURL (B265), which already
+// keeps such rows out of the map skygate PUBLISHES. The publisher and the health
+// prober are the two halves of the same claim ("this row is a relay"), and they
+// disagreed: the map skipped the region-901 derpmap row while the prober measured
+// it and the dashboard recommended it. Keep the two rules in step.
+func urlIsRelayNode(rawURL string) bool {
+	s := strings.TrimSpace(rawURL)
+	if s == "" {
+		return false
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	// A hostname with no path is a relay (the protocol lives on / and /derp).
+	switch strings.TrimRight(u.Path, "/") {
+	case "", "/derp", "/derp/probe", "/derp/latency-check":
+		return true
+	}
+	// Everything else — /derpmap/default above all — is a document, not a relay.
+	return false
 }
 
 // derpRelayIsOwn maps the derp_relays.is_bundled flag to the
@@ -242,11 +288,27 @@ func derpRelayIsOwn(isBundled int) bool {
 	return isBundled == 1
 }
 
-// FetchAllDERPs returns the union of FetchPublicDERPs +
-// FetchOwnDERPs. Duplicates by RegionID are deduplicated
-// (the own DERP wins over the public, since the public
-// DERP map is read-only and the operator's own entries
-// reflect their explicit choice).
+// FetchAllDERPs returns the union of FetchPublicDERPs + FetchOwnDERPs.
+//
+// B317 — TWO rules, both learned from the live "the local relay is never the
+// recommended one" report:
+//
+//  1. EVERY enabled own row is kept, even when several share a region_id. The
+//     pre-B317 dedup collapsed them in a `map[int]DERPInfo` loop, so for region
+//     900 the LAST row in query order won — and the operator's rows are
+//     `…:443` (sort_order 10) and a stale `…:8443` (sort_order 11) — the DEAD one.
+//     The stale row then owned region 900's single derp_health row and reported
+//     `dial tcp …:8443: connect: connection refused` forever, which is why the
+//     dashboard hid the local relay and recommended a public one 100 ms away.
+//     Collapsing is the PROBER's job now, and it does it by MEASURING every row
+//     and keeping the best (see BestPerRegion).
+//  2. The result order is deterministic (own first, then region_id, then URL)
+//     instead of the map-iteration order, so two runs cannot disagree about
+//     which row is "first" — and a caller that persists per row can never flip
+//     a region's health by luck.
+//
+// Public rows still lose to an own row for the same region: the public map is
+// read-only and the operator's row is an explicit choice.
 func FetchAllDERPs(ctx context.Context, db *sql.DB, httpClient *http.Client) ([]DERPInfo, error) {
 	own, err := FetchOwnDERPs(ctx, db)
 	if err != nil {
@@ -258,19 +320,25 @@ func FetchAllDERPs(ctx context.Context, db *sql.DB, httpClient *http.Client) ([]
 	if err != nil {
 		public = nil
 	}
-	// Dedup by RegionID: own wins.
-	byID := make(map[int]DERPInfo, len(own)+len(public))
+	ownRegions := make(map[int]bool, len(own))
+	out := make([]DERPInfo, 0, len(own)+len(public))
 	for _, d := range own {
-		byID[d.RegionID] = d
+		out = append(out, d)
+		ownRegions[d.RegionID] = true
 	}
 	for _, d := range public {
-		if _, exists := byID[d.RegionID]; !exists {
-			byID[d.RegionID] = d
+		if !ownRegions[d.RegionID] {
+			out = append(out, d)
 		}
 	}
-	out := make([]DERPInfo, 0, len(byID))
-	for _, d := range byID {
-		out = append(out, d)
-	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].IsOwn != out[j].IsOwn {
+			return out[i].IsOwn
+		}
+		if out[i].RegionID != out[j].RegionID {
+			return out[i].RegionID < out[j].RegionID
+		}
+		return out[i].URL < out[j].URL
+	})
 	return out, nil
 }

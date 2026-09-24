@@ -429,6 +429,47 @@ the tile says so: «ответ пришёл с `<addr>`».
   (the B296 value: DB > `SKYGATE_DERP_PROBE_HOST` > none). A private address here is
   normal and correct; it is not the clients' path.
 
+## B317: one region, one verdict (2026-09-24)
+
+`derp_health` holds **one row per region** (`derp_health_pkey` on `region_id`), but
+`derp_relays` may hold **several enabled rows for the same region** — a re-created relay
+row, a port change, or (on the reference host) a stale `…:8443` left over from the
+`--http-port` era. Those rows used to compete for that single verdict and the **last
+writer owned it**: `FetchAllDERPs` collapsed them in a map (the stale row won), the cron
+wrote its `connect: connection refused` every five minutes, and the dashboard — which
+shows only healthy, measured rows — hid the operator's own relay and recommended a public
+region ~100 ms away. `skygate derp-probe` iterated the rows in another order, wrote
+20 ms, and made the banner flip.
+
+What changed:
+
+* **every** enabled row of a region is still probed, but the region's health row is the
+  **best** result (healthy beats failed, then lower latency; if every endpoint is dead the
+  first error is kept, so the reason shown is stable);
+* the probe list order is deterministic (own rows first, then `region_id`, then URL) — no
+  map iteration, so two runs cannot disagree;
+* a `derp_relays` row whose URL is a **derpmap document** is never probed as a relay. The
+  legacy `derp.external_urls` value was migrated into `derp_relays` as region 901 and the
+  prober dutifully measured `controlplane.tailscale.com` — Tailscale's *control plane* —
+  and filed it as a healthy public relay. The public map has 28 regions and none of them
+  is 901. The rule (`urlIsRelayNode`) is the same closed set the derpmap **publisher**
+  already applied in `admin.isDerpMapURL`;
+* the dashboard warns when a region has several enabled rows and links to
+  `/admin/derp/relays`, where the extra row can be disabled (skygate never edits the
+  operator's rows);
+* a region that leaves the map loses its verdict: the cron tick and **Re-probe all** prune
+  `derp_health` rows for regions no longer in the map (an empty probe list is a no-op, so a
+  failed map fetch can never empty the table);
+* `skygate derp-probe` prints which verdict a multi-row region kept;
+* the «Рекомендуемый DERP» banner formats the region id as an integer — it used to render
+  as `region_id %!s(int=901)`.
+
+If a relay you know is fast never becomes the recommended one: open
+`/admin/derp/dashboard` with **Показать недоступные** enabled and look for the warning
+about several rows for its region. Two rows for one region is legal, but only the best
+measured endpoint is recorded — disable the one you no longer use and the table becomes
+unambiguous.
+
 ## See also
 
 - `docs/headplane.md` — the same "use existing / bundled" pattern,

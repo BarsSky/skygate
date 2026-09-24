@@ -30,6 +30,7 @@ import (
 //     caller persists this in last_error so the dashboard
 //     can surface "degraded" DERPs without dropping the
 //     last good latency value.
+//
 // ProbeOneTLSConfig is the per-probe TLS config override.
 // nil = use the system trust store (default for production
 // DERP). Tests inject a custom config with the test cert as
@@ -196,15 +197,26 @@ type ProbeResult struct {
 	Err       error
 }
 
-// ProbeAll probes every DERP in `derps` in parallel and
-// persists each result via `persist` (one DB upsert per
-// DERP). Bounded by ProbeAllTimeout so a slow set of
-// DERPs doesn't block the cron forever.
+// ProbeAll probes every DERP in `derps` in parallel and persists ONE row per
+// REGION via `persist`. Bounded by ProbeAllTimeout so a slow set of DERPs doesn't
+// block the cron forever.
 //
-// `derps` is the union list (own + public) from
-// FetchAllDERPs. `persist` is a callback the caller wires
-// to write the result into derp_health; decoupling lets
-// unit tests use a fake without standing up a *sql.DB.
+// `derps` is the list from FetchAllDERPs. `persist` is a callback the caller wires
+// to write the result into derp_health; decoupling lets unit tests use a fake
+// without standing up a *sql.DB.
+//
+// B317 — WHY NOT ONE PERSIST PER ROW. derp_health is keyed by region_id (one row
+// per region, enforced by derp_health_pkey), so persisting per row means the LAST
+// writer owns the region's verdict. The live consequence on the operator's host:
+// region 900 has two enabled rows (`derp.skynas.ru:443` and a stale `:8443`), the
+// dead one was persisted last, and the dashboard showed the local relay as
+// unreachable for hours while `skygate derp-probe` — which iterates the rows in a
+// different order — wrote 20 ms and made the banner flip. Two views of the same
+// table disagreed, and neither was wrong about its own probe.
+//
+// So: every row is still PROBED (the CLI and the journals want that), but the
+// region's row records the BEST outcome — a region is healthy when any of its
+// endpoints works, and among working endpoints the fastest wins.
 func ProbeAll(ctx context.Context, derps []DERPInfo, httpClient *http.Client,
 	persist func(context.Context, DERPInfo, int, bool, error) error) []ProbeResult {
 	if httpClient == nil {
@@ -220,13 +232,66 @@ func ProbeAll(ctx context.Context, derps []DERPInfo, httpClient *http.Client,
 			lat, err := ProbeOne(ctx, d, httpClient)
 			healthy := err == nil
 			results[i] = ProbeResult{Info: d, LatencyMs: lat, Healthy: healthy, Err: err}
-			if persist != nil {
-				_ = persist(ctx, d, lat, healthy, err)
-			}
 		}()
 	}
 	wg.Wait()
+	if persist != nil {
+		for _, best := range BestPerRegion(results) {
+			_ = persist(ctx, best.Info, best.LatencyMs, best.Healthy, best.Err)
+		}
+	}
 	return results
+}
+
+// BestPerRegion collapses the probe results to the single best row per region_id,
+// in the order the regions first appear in `results` (which FetchAllDERPs makes
+// deterministic).
+//
+// Ranking, in order:
+//
+//  1. a healthy probe beats a failed one — a region with one working endpoint is
+//     not "unavailable", and saying otherwise hides a relay clients are using;
+//  2. among healthy rows, the lower latency wins (0 ms is a real measurement and
+//     therefore beats nothing — only a FAILED probe has no latency);
+//  3. among failed rows the first one is kept (its error is the one shown, and
+//     the order is stable), so a region never becomes healthy-looking by accident.
+//
+// A single-row region is returned unchanged, so this is a no-op on the common case.
+func BestPerRegion(results []ProbeResult) []ProbeResult {
+	type slot struct {
+		best  ProbeResult
+		order int
+	}
+	byRegion := make(map[int]slot, len(results))
+	order := make([]int, 0, len(results))
+	for _, r := range results {
+		id := r.Info.RegionID
+		cur, seen := byRegion[id]
+		if !seen {
+			byRegion[id] = slot{best: r, order: len(order)}
+			order = append(order, id)
+			continue
+		}
+		if betterProbe(r, cur.best) {
+			byRegion[id] = slot{best: r, order: cur.order}
+		}
+	}
+	out := make([]ProbeResult, 0, len(order))
+	for _, id := range order {
+		out = append(out, byRegion[id].best)
+	}
+	return out
+}
+
+// betterProbe reports whether candidate `c` should replace `cur` for their region.
+func betterProbe(c, cur ProbeResult) bool {
+	if c.Healthy != cur.Healthy {
+		return c.Healthy
+	}
+	if c.Healthy {
+		return c.LatencyMs < cur.LatencyMs
+	}
+	return false // both failed: keep the first, so the shown error is stable
 }
 
 // PersistToDB is the production persist callback for

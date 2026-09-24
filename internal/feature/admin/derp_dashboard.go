@@ -122,12 +122,19 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 	// "healthy" claims).
 	totalCount := len(all)
 	showUnavailable := r.URL.Query().Get("show_unavailable") == "1"
-	visible := all
-	if !showUnavailable {
-		visible = visible[:0]
-		for _, r := range all {
-			if r.Healthy && r.LatencyMs > 0 {
-				visible = append(visible, r)
+	// B317: build the visible list as a NEW slice. The pre-B317 code did
+	// `visible = all[:0]` + append, i.e. it filtered in place, so the `all` slice
+	// that the "recommended" pass and the full-set sort below still read was
+	// left holding a truncated prefix plus a stale tail. The idiom is only safe
+	// while nothing else reads `all`, which stopped being true the moment the
+	// recommendation was computed from the full set.
+	visible := make([]derphealth.HealthRow, 0, len(all))
+	if showUnavailable {
+		visible = append(visible, all...)
+	} else {
+		for _, row := range all {
+			if row.Healthy && row.LatencyMs > 0 {
+				visible = append(visible, row)
 			}
 		}
 	}
@@ -191,6 +198,14 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// B317: surface regions whose ENABLED rows compete for one derp_health row.
+	// Non-fatal by design: the page's job is the status table, and a DB hiccup here
+	// must not take it down (the banner is an explanation, not a measurement).
+	duplicateRegions, derr := enabledRelayRowsByRegion(s.dbc())
+	if derr != nil {
+		log.Printf("derp dashboard: duplicate relay rows: %v", derr)
+	}
+
 	s.Backend.RenderWithLayout(w, r, "admin/derp_dashboard.html", c,
 		map[string]any{
 			"DERPs":           visible,
@@ -198,7 +213,12 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 			"VisibleCount":    len(visible),
 			"ShowUnavailable": showUnavailable,
 			"Recommended":     recommendedID,
-			"Refreshed":       time.Now().UTC(),
+			// B317: regions with more than one ENABLED derp_relays row. derp_health
+			// is keyed by region_id, so such rows compete for one verdict; the prober
+			// now keeps the best measured one, but a stale row is still a trap the
+			// operator should be told about (it is what hid the local relay here).
+			"DuplicateRegions": duplicateRegions,
+			"Refreshed":        time.Now().UTC(),
 			// B272.2: policy-file permissions. Tag application (and therefore
 			// every per-device ACL rule) is impossible while headscale cannot
 			// read its own policy file, so the page states it with the fixes.
@@ -317,6 +337,59 @@ func publicDERPPortFromURL(rawURL string) int {
 // `derp.external_urls` held comma-separated derpmap URLs
 // (`https://controlplane.tailscale.com/derpmap/default`), and
 // AutoMigrateDerpRelays copied that value into derp_relays as a
+// enabledRelayRowsByRegion returns the ENABLED derp_relays rows grouped by
+// region_id — but only the regions that have MORE THAN ONE row, because those are
+// the ambiguous ones.
+//
+// B317. `derp_health` is keyed by region_id (derp_health_pkey), so several enabled
+// rows for one region compete for a single verdict. The reference host had exactly
+// that: region 900 with `https://derp.skynas.ru:443` and a stale
+// `https://derp.skynas.ru:8443`, and the dead row owned the region's health row —
+// the dashboard therefore hid the operator's own relay and recommended a public one
+// ~100 ms away. The prober now measures every row and keeps the best
+// (derphealth.BestPerRegion), which makes a stale row harmless; telling the
+// operator it exists is still the honest half, because only they can decide whether
+// to disable it.
+//
+// The URLs are returned sorted, so the banner is stable across renders.
+func enabledRelayRowsByRegion(db *sql.DB) (map[int][]string, error) {
+	if db == nil {
+		return nil, nil
+	}
+	rows, err := db.Query(`
+		SELECT region_id, COALESCE(url, '')
+		  FROM derp_relays
+		 WHERE enabled = 1
+		 ORDER BY region_id ASC, sort_order ASC, url ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byRegion := map[int][]string{}
+	for rows.Next() {
+		var region int
+		var u string
+		if err := rows.Scan(&region, &u); err != nil {
+			return nil, err
+		}
+		byRegion[region] = append(byRegion[region], u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := map[int][]string{}
+	for region, urls := range byRegion {
+		if len(urls) > 1 {
+			out[region] = urls
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
 // REGION ROW (region_id 901). GetAdminDerpRelaysDerpmap then
 // published it to every client as a relay node, producing a
 // phantom region in headscale's map:

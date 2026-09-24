@@ -54,11 +54,26 @@ fi
 
 # --- B: filter logic (drop !Healthy || LatencyMs==0) ---
 # The filter block is the if !showUnavailable { ... } guard
-# that appends only when (r.Healthy && r.LatencyMs > 0).
-if grep -A5 'showUnavailable' "$HANDLER" | grep -q 'r.Healthy && r.LatencyMs > 0'; then
-  ok "B: filter drops !Healthy || LatencyMs==0 (visible := visible[:0] in-place)"
+# that appends only when (row.Healthy && row.LatencyMs > 0).
+#
+# 2026-09-24 — CONTRACT RENEGOTIATED (B317). This used to grep for the literal
+# `r.Healthy && r.LatencyMs > 0`, i.e. it pinned the loop-variable NAME. B317
+# rewrote that loop (`for _, row := range all`, building a NEW slice instead of
+# filtering `all[:0]` in place, because the recommendation is computed from the
+# full set and the in-place idiom left it truncated) and the contract reported a
+# regression although the predicate is byte-for-byte the same. The property B228
+# owns is the PREDICATE, so match the predicate and tolerate the receiver name.
+if grep -A8 'showUnavailable' "$HANDLER" | grep -Eq '\.Healthy && .*\.LatencyMs > 0'; then
+  ok "B: filter drops !Healthy || LatencyMs==0 (Healthy && LatencyMs > 0)"
 else
-  fail "B: filter doesn't check r.Healthy && r.LatencyMs > 0"
+  fail "B: filter doesn't check Healthy && LatencyMs > 0"
+fi
+# ...and B317's other half: the filtered list must be a NEW slice, so the full set
+# that the "recommended" pass and the pre-B228 sort read is never truncated.
+if grep -q 'visible := make(\[\]derphealth.HealthRow, 0, len(all))' "$HANDLER"; then
+  ok "B2: the healthy-only view is built as a new slice (the full set stays intact)"
+else
+  fail "B2: the filter mutates the slice the recommendation reads (visible = all[:0])"
 fi
 
 # --- C: filtered view sort = latency ASC, own DESC, region ASC ---

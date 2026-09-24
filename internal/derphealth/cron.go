@@ -75,6 +75,13 @@ func runOnce(ctx context.Context, db *sql.DB, httpClient *http.Client) {
 	}
 	persist := PersistToDB(db)
 	results := ProbeAll(ctx, derps, httpClient, persist)
+	// B317: a region that is no longer in the map must not keep a verdict on the
+	// dashboard (the region-901 derpmap row is the live example). Only the FULL
+	// list can answer that question, which is why this lives here and not in
+	// ProbeAll.
+	if _, perr := PruneMissingRegions(ctx, db, derps); perr != nil {
+		log.Printf("derphealth: prune: %v", perr)
+	}
 	ok, bad := 0, 0
 	for _, r := range results {
 		if r.Healthy {
@@ -101,5 +108,11 @@ func RunOnceNow(ctx context.Context, db *sql.DB, httpClient *http.Client) ([]Pro
 	if err != nil && len(derps) == 0 {
 		return nil, err
 	}
-	return ProbeAll(ctx, derps, httpClient, PersistToDB(db)), nil
+	results := ProbeAll(ctx, derps, httpClient, PersistToDB(db))
+	// B317: same prune as the cron tick, so the "Re-probe all" button corrects the
+	// table immediately instead of waiting for the next 5-minute pass.
+	if _, perr := PruneMissingRegions(ctx, db, derps); perr != nil {
+		log.Printf("derphealth: prune: %v", perr)
+	}
+	return results, nil
 }

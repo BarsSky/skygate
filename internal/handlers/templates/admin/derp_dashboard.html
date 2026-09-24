@@ -63,12 +63,36 @@
 {{end}}
 {{end}}
 
+{{/* B317: several ENABLED rows for one region. derp_health keeps ONE row per
+     region (derp_health_pkey), so such rows compete for the same verdict — a stale
+     row pointing at a dead port is what hid this host's own relay and made the
+     banner recommend a public one. The prober now measures every row and records
+     the best, so this is not an alarm; it is the explanation, and disabling the
+     row is the operator's call. */}}
+{{if .DuplicateRegions}}
+<div class="alert alert-warning" style="margin-bottom:12px">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <strong>{{t "derp_dashboard.dupes_title"}}</strong>
+  <ul style="margin:6px 0 6px 0; padding-left:20px; font-size:0.9em">
+    {{range $region, $urls := .DuplicateRegions}}
+    <li><code>region {{$region}}</code>:
+      {{range $urls}}<code>{{.}}</code>{{end}}
+    </li>
+    {{end}}
+  </ul>
+  {{t "derp_dashboard.dupes_body" | safeHTML}}
+  <a href="/admin/derp/relays">{{t "derp_dashboard.dupes_link"}}</a>
+</div>
+{{end}}
+
 {{if .Recommended}}
 <div class="alert alert-success">
   <i class="fa-solid fa-bolt"></i>
   {{/* B286: never `index` a slice that may be empty — an unguarded
        `index .DERPs 0` panics the whole page (`reflect: slice index out of
        range`). */}}
+  {{/* B317: the region id is an int; the catalogue entry used %s, which rendered
+       the banner as "region_id %!s(int=901)" in the operator's screenshot. */}}
   {{with .DERPs}}{{if index . 0}}{{tf "derp_dashboard.recommended" $.Recommended (index . 0).Host | safeHTML}}{{end}}{{end}}
 </div>
 {{end}}

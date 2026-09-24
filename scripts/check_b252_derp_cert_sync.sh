@@ -82,7 +82,17 @@ if [ ! -f "$MIG" ]; then bad "missing $MIG"; else
     # in doc comments). The CREATE TABLE block is the substring
     # between "CREATE TABLE IF NOT EXISTS derp_cert_sync (" and
     # the next 4000 chars (covers even a padded source).
-    block="$(awk '/CREATE TABLE IF NOT EXISTS derp_cert_sync \(/{flag=1} flag{print; if (/^\t*\)`,\?$/||/^\),?$/){flag=0}}' "$MIG" | head -c 4000)"
+    block="$(awk '/CREATE TABLE IF NOT EXISTS derp_cert_sync \(/{flag=1} flag{print; if (/^\t*\)`,\?$/||/^\),?$/){flag=0}}' "$MIG")"
+    # 2026-09-24 (B317 verification) — TRUNCATE IN THE SHELL, NEVER WITH `head`.
+    # This used to be `... | head -c 4000`, i.e. a producer feeding a reader that
+    # exits at its limit: awk then dies with SIGPIPE (141), `pipefail` (set at the
+    # top of this file) turns the pipeline into a failure, and because this is a
+    # COMMAND SUBSTITUTION in an assignment, `set -e` aborts the whole script —
+    # section A stopped mid-loop and the gate reported a column that is present as
+    # missing. It is the same class as AGENTS trap #9, and it is why a green check
+    # can fail on a loaded machine (this file passed 45/0 standalone and reported a
+    # false ✗ in a full gate run).
+    block="${block:0:4000}"
     if echo "$block" | grep -qE "^[[:space:]]+${col}[[:space:]]" && \
        echo "$block" | grep -qE "^[[:space:]]+${col}[[:space:]].*${cn}"; then
       ok "column present: $col  (constraint fragment: $cn)"
