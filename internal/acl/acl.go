@@ -616,7 +616,31 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// duplication. The function comment there is the
 	// canonical reference for the format requirements
 	// (separator pattern, `ip: ["*"]`, dst=tag-only).
-	writePerDeviceGrants(&sb, usernames, tagsByUser)
+	//
+	// B316 (v1.5.80): the mesh source is DeviceTagsForMesh, not the ownership JOIN
+	// alone. headscale rewrites a tagged node's user to the synthetic
+	// `tagged-devices` (B287), so a row carrying that name used to drop its device
+	// out of the mesh entirely and SILENTLY — live on `aro`: daniil's workpc/laptop
+	// were invisible, he was left with one visible device,
+	// `writePerDeviceGrants` skipped him (`len(userTags) < 2`) and the tailnet
+	// ended up with NO device-to-device grant at all while both machines were
+	// online. The resolved source takes the owner from the ownership row, then the
+	// device's own tag, then the user its rules were created under; anything it
+	// cannot attribute is NAMED in the journal instead of vanishing.
+	meshTagsByUser, unattributed, meshErr := db.DeviceTagsForMesh(d)
+	if meshErr != nil {
+		log.Printf("acl: device mesh owner lookup failed (%v) — falling back to the ownership JOIN; some devices may lose their device-to-device grant", meshErr)
+		meshTagsByUser = tagsByUser
+	}
+	if len(unattributed) > 0 {
+		names := make([]string, 0, len(unattributed))
+		for _, u := range unattributed {
+			names = append(names, u.Hostname+" ("+u.Reason+")")
+		}
+		log.Printf("acl: %d device(s) cannot join the device mesh and get NO device-to-device grant: %s — adopt them on /admin/devices (or fix their tag) to restore it",
+			len(unattributed), strings.Join(names, "; "))
+	}
+	writePerDeviceGrants(&sb, usernames, meshTagsByUser)
 
 	// 2026-08-13: v1.3.11 (B111) — public access to
 	// infra-owned exit nodes. The 'infra' user owns
@@ -1688,7 +1712,24 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// shared helper (v0.30.0 refactor). Same code
 	// shape as GenerateACLForPlane; the duplication
 	// introduced by the v0.28.7 fix is now consolidated.
-	writePerDeviceGrants(&sb, usernames, tagsByUser)
+	//
+	// B316: same resolved mesh source as the live-format generator (see the comment
+	// there) — an ownership row whose username is headscale's synthetic
+	// `tagged-devices` must not cost the device its device-to-device grant.
+	meshTagsByUser, unattributed, meshErr := db.DeviceTagsForMesh(d)
+	if meshErr != nil {
+		log.Printf("acl: device mesh owner lookup failed (%v) — falling back to the ownership JOIN; some devices may lose their device-to-device grant", meshErr)
+		meshTagsByUser = tagsByUser
+	}
+	if len(unattributed) > 0 {
+		names := make([]string, 0, len(unattributed))
+		for _, u := range unattributed {
+			names = append(names, u.Hostname+" ("+u.Reason+")")
+		}
+		log.Printf("acl: %d device(s) cannot join the device mesh and get NO device-to-device grant: %s — adopt them on /admin/devices (or fix their tag) to restore it",
+			len(unattributed), strings.Join(names, "; "))
+	}
+	writePerDeviceGrants(&sb, usernames, meshTagsByUser)
 
 	// 2026-08-13: v1.3.11 (B111) — public access to
 	// infra-owned exit nodes (mirrors the same block in

@@ -74,6 +74,24 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	for _, t := range devTags {
 		devTagMap[t.Hostname] = t.Tag
 	}
+	// B316 (v1.5.80): the per-device ACL column must also see a device whose ownership
+	// row carries headscale's synthetic `tagged-devices` — otherwise the row renders «—»
+	// for a device that HAS a per-device tag (live on `aro`: workpc/laptop showed a dash
+	// while the tag existed, which is exactly how the operator noticed that the ACL did
+	// not treat them as daniil's devices). MeshTagsByHost resolves the owner from the
+	// row, the device's tag or its rules, and names the devices it cannot resolve.
+	meshTagsByHost, meshProblems, meshErr := db.MeshTagsByHost(s.dbc())
+	if meshErr != nil {
+		log.Printf("[devices] device mesh owner lookup: %v", meshErr)
+	}
+	for host, tag := range meshTagsByHost {
+		if strings.TrimSpace(devTagMap[host]) == "" {
+			devTagMap[host] = tag
+		}
+	}
+	for host, reason := range meshProblems {
+		log.Printf("[devices] %s has no device-to-device ACL entry: %s (adopt it or fix its tag)", host, reason)
+	}
 
 	deviceExitPrefs, _ := db.ListAllDeviceExitNodePrefs(s.dbc())
 	deviceExitPrefMap := make(map[string]string, len(deviceExitPrefs))
@@ -261,10 +279,10 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.Backend.RenderWithLayout(w, r, "admin/devices.html", c, map[string]any{
-		"Nodes":             deviceRowsWithDead,
-		"Users":             users,
-		"FlashSuccess":      r.URL.Query().Get("ok"),
-		"FlashError":        r.URL.Query().Get("err"),
+		"Nodes":        deviceRowsWithDead,
+		"Users":        users,
+		"FlashSuccess": r.URL.Query().Get("ok"),
+		"FlashError":   r.URL.Query().Get("err"),
 		// B171 (v1.5.2): post-delete flash extensions.
 		// The PostAdminDeviceDelete handler now redirects
 		// to /admin/devices?ok="Node N (host) deleted"
@@ -800,12 +818,12 @@ func (s *Service) PostAdminDevicesForceBackfillTags(w http.ResponseWriter, r *ht
 // svyatoslava's actual device is id=30). The operator
 // resolves the conflict by clicking "Transfer to svyatoslava"
 // on id=27's row in /admin/devices — the handler then:
-//   1. Upserts the node_owner_map row with the new owner
-//   2. UntagNode(oldTag) so headscale drops the stale
-//      `tag:dev-<oldUser>-<oldHost>` (or just renames in
-//      headscale if the hostname also needs to change)
-//   3. AddTag(newTag) so headscale carries the new
-//      `tag:dev-<newUser>-<oldHost>`
+//  1. Upserts the node_owner_map row with the new owner
+//  2. UntagNode(oldTag) so headscale drops the stale
+//     `tag:dev-<oldUser>-<oldHost>` (or just renames in
+//     headscale if the hostname also needs to change)
+//  3. AddTag(newTag) so headscale carries the new
+//     `tag:dev-<newUser>-<oldHost>`
 //
 // The handler does NOT re-apply the ACL automatically —
 // the operator must click "Re-apply ACL" on
@@ -1017,17 +1035,17 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 // on the /admin/devices page.
 //
 // Flow (mirrors B162 + the s.Backend.Audit pattern):
-//   1. Verify admin
-//   2. Parse {id} from the URL path
-//   3. ListAllNodes — verify the node exists (catch 404 from
-//      headscale before the delete call, gives a cleaner error
-//      than "node not found" from headscale)
-//   4. Call hs.DeleteNode (gRPC: headscale.v1.NodeService.DeleteNode)
-//   5. Clean up node_owner_map (the bot's /exit_nodes reads from
-//      this — a stale row would keep showing the deleted node)
-//   6. hs.InvalidateCache (so the next /admin/devices load
-//      re-fetches from headscale)
-//   7. Audit log: device_deleted id=<N> hostname=<H> user=<U>
+//  1. Verify admin
+//  2. Parse {id} from the URL path
+//  3. ListAllNodes — verify the node exists (catch 404 from
+//     headscale before the delete call, gives a cleaner error
+//     than "node not found" from headscale)
+//  4. Call hs.DeleteNode (gRPC: headscale.v1.NodeService.DeleteNode)
+//  5. Clean up node_owner_map (the bot's /exit_nodes reads from
+//     this — a stale row would keep showing the deleted node)
+//  6. hs.InvalidateCache (so the next /admin/devices load
+//     re-fetches from headscale)
+//  7. Audit log: device_deleted id=<N> hostname=<H> user=<U>
 //
 // Failure modes (handled the same way as B162):
 //   - 400 if id is missing or not a valid int64
@@ -1147,10 +1165,10 @@ func (s *Service) PostAdminDeviceDelete(w http.ResponseWriter, r *http.Request) 
 	// the next snapshot cycle catches the absence)
 	// and headscale's policy remains stale.
 	deps := devicedelete.Deps{
-		DB:     s.dbc(),
-		HS:     hs,
-		Cfg:    s.Cfg,
-		Username: c.Username,
+		DB:          s.dbc(),
+		HS:          hs,
+		Cfg:         s.Cfg,
+		Username:    c.Username,
 		AuditDetail: fmt.Sprintf("admin_device_delete id=%s hostname=%s", idStr, hostname),
 		AuditFn: func(action, detail string) {
 			s.Backend.Audit(c.UserID, c.Username, action, detail)

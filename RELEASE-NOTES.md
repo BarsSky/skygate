@@ -12,6 +12,83 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.81 — the device mesh follows the device, not a username headscale rewrote (B316)
+
+**Date:** 2026-09-24 · **Base:** `v1.5.80` → this tag · **Compatibility:** none — no
+schema change, no config change. An existing install repairs itself on the next
+maintenance tick.
+
+### The report
+
+On the native host `aro`, `workpc` and `homepc` did not ping each other over their tailnet
+addresses although both belong to one user — and the panel showed the contradiction: the
+device row said `daniil`, while the **PER-DEVICE ACL** column showed «—». In the
+operator's words:
+
+> «skygate считает эти устройства как у пользователя daniil как и должно быть но во все
+> устройства отображает такую картину по тегам, из-за чего скорей всего и идет конфликт»
+
+### What was measured (read-only, both hosts)
+
+```
+aro:       node_owner_map   2 workpc  tagged-devices  tag:dev-daniil-workpc
+                            3 laptop tagged-devices  tag:dev-daniil-laptop
+                            6 homepc daniil          tag:dev-daniil-homepc
+           live policy      0 grants of the form tag:dev-* → tag:dev-*
+agent VM:  node_owner_map   every row carries a REAL portal username
+           live policy      13 tag→tag grants (6+3+4 — one per device)
+```
+
+Same code, different **data** — and the agent VM works only by luck of that data.
+
+### Root cause
+
+headscale rewrites a tagged node's user to the synthetic `tagged-devices` as soon as the
+node wears any tag (B287), and the device-to-device mesh grouped devices **by that column**
+(`db.GetPerUserDeviceTags`, a JOIN on `portal_users`). On `aro` two of daniil's three
+devices therefore did not exist as far as the mesh was concerned: he looked like a
+**single-device user**, `writePerDeviceGrants` skipped him at its `len(userTags) < 2 →
+continue` guard, and the generated policy contained **no** device-to-device grant at all.
+headscale denies by default, so the two machines could not reach each other while both were
+online — and the skip is a bare `continue`: nothing was logged and nothing appeared on any
+page. A device that is tagged before (or without) its ownership row being re-resolved
+silently loses contact with its owner's other devices.
+
+### The fix
+
+* **Resolve** (`internal/db/device_owner_b316.go`): a device's owner comes from the
+  ownership row, then from the **device's own tag** (`tag:dev-<user>-<host>`, B288's
+  parser), then from the user its `device_rules` were created under. `DeviceTagsForMesh`
+  feeds both ACL generators; `MeshTagsByHost` feeds the panel.
+* **Never silent**: devices no source can attribute are returned and named —
+  `acl: N device(s) cannot join the device mesh and get NO device-to-device grant: workpc
+  (its ownership row names tagged-devices …) — adopt them on /admin/devices (or fix their
+  tag) to restore it`.
+* **Repair** (`RepairSentinelDeviceOwners`): rows whose username is the synthetic sentinel
+  (or empty) are re-attributed from the same tag — only when the tag parses AND names an
+  existing portal user — each change is logged
+  (`workpc: tagged-devices -> daniil (from tag:dev-daniil-workpc)`), the pass is
+  idempotent, and it runs from the periodic maintenance tick, so an existing install heals
+  itself and every consumer (mesh, `tagOwners`, the SSH sources, the panel column) sees a
+  real owner again.
+* `/admin/devices` stops rendering «—» for a device that *has* a per-device tag, because the
+  column now reads the same resolved source.
+
+### Files
+
+`internal/db/device_owner_b316.go` (new), `internal/db/device_owner_b316_test.go` (new),
+`internal/acl/acl_b316_test.go` (new), `internal/acl/acl.go`,
+`internal/nodeownership/auto.go`, `internal/feature/admin/devices.go`,
+`scripts/check_b316_device_mesh_ownership.sh`.
+
+### Verification
+
+25 contracts in `scripts/check_b316_device_mesh_ownership.sh`, plus
+`internal/db/device_owner_b316_test.go` and `internal/acl/acl_b316_test.go`, which both use
+**`aro`'s own inventory** as the fixture: the mesh is now emitted for all three of daniil's
+devices, an unattributable device is never granted to anybody, the repair touches exactly
+the provable sentinel rows (never a real owner, never an unprovable one) and is idempotent.
+
 ## v1.5.80 — the relay's metrics reach the container, and the page stops inventing zeros (B315)
 
 **Date:** 2026-09-24 · **Base:** `v1.5.79` → this tag · **Compatibility:** none — no

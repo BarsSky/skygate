@@ -218,6 +218,23 @@ func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertSin
 	// pass so the per-user backfill doesn't accidentally
 	// steal an infra node first.
 	BackfillInfra(dbConn, nodes)
+	// B316 (v1.5.80): then repair rows whose username is headscale's synthetic
+	// `tagged-devices` by parsing the device's OWN tag (`tag:dev-<user>-<host>`).
+	//
+	// WHY IT MATTERS: the ACL's device-to-device mesh groups devices by the USERNAME
+	// column, so a row carrying the synthetic sentinel silently cost that device every
+	// device-to-device grant (live on `aro`: daniil's workpc/laptop did not ping each
+	// other while both were online, and nothing anywhere said why). The repair only
+	// touches a row whose tag names an EXISTING portal user, so it can never invent an
+	// owner; the resolve half (db.DeviceTagsForMesh) covers whatever it cannot repair.
+	if repaired, changes, rerr := db.RepairSentinelDeviceOwners(dbConn.Current()); rerr != nil {
+		log.Printf("owner-repair: %v", rerr)
+	} else if repaired > 0 {
+		for _, line := range changes {
+			log.Printf("owner-repair: %s", line)
+		}
+		log.Printf("owner-repair: %d node_owner_map row(s) re-attributed from their device tag — their devices rejoin the ACL device mesh", repaired)
+	}
 	// B272: then reconcile DATABASE → headscale, so a tag that never made it
 	// onto the node (a failed apply, a file-mode policy reject, a native
 	// install without docker) is repaired instead of skipped forever.
