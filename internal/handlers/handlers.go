@@ -983,19 +983,33 @@ func sectionPageSet(page string) map[string]bool {
 			"admin/monitor", // B305 (v1.5.70) — the monitoring inbox
 			"admin/system_tests", "admin/services", "admin/audit",
 		},
-		"InSectionIntegrations": {
-			"admin/integrations", "admin/headscale", "admin/headplane",
-			"admin/telegram", "admin/tailscale", "admin/derp",
-			"admin/derp_relays", "admin/ha",       // v1.5.0 / B149
-			"admin/deploy",                        // v1.5.0 / B150
-			"admin/certificates",                  // v1.5.0 / B148
-			"admin/cluster",                       // v1.5.0+ / B199
+		// B314 (v1.5.79) — the operator's grouping. The twelve pages that used to
+		// share one «Integrations» section are split by intent: the integration
+		// surface itself (Integrations + Telegram), the tailscale/headscale/headplane
+		// stack, the DERP relays with their health, deploy+cluster+HA, and the two
+		// OIDC pages on their own. Certificates moved to Settings (they configure
+		// skygate itself). Every name here must match a <details> block in
+		// layout.html — B96 checks both directions.
+		"InSectionServices": {
+			"admin/integrations", "admin/telegram",
+		},
+		"InSectionProviders": {
+			"admin/tailscale", "admin/headscale", "admin/headplane",
+		},
+		"InSectionDERP": {
+			"admin/derp", "admin/derp_relays", "admin/derp_dashboard",
+		},
+		"InSectionDeploy": {
+			"admin/deploy", "admin/cluster", "admin/ha",
+		},
+		"InSectionOIDC": {
+			"admin/oidc", "admin/oidc_sync",
 		},
 		"InSectionData": {
 			"admin/backup", "admin/invites", "admin/control-planes",
 		},
 		"InSectionSettings": {
-			"admin/settings", "admin/users", "admin/update",
+			"admin/settings", "admin/users", "admin/update", "admin/certificates",
 		},
 	}
 	out := make(map[string]bool, len(sections))

@@ -130,34 +130,37 @@ func TestB96_AdminLayoutGroupsAll22Pages(t *testing.T) {
 	// sections directly by counting the <details class="sidebar-section">
 	// opening tags.
 	sectionCount := strings.Count(layout, `<details class="sidebar-section"`)
-	if sectionCount != 6 {
-		t.Errorf("B96 FAIL: expected 6 sidebar sections, found %d in layout.html", sectionCount)
+	if sectionCount != 10 {
+		t.Errorf("B96 FAIL: expected 10 sidebar sections (B314 grouping), found %d in layout.html", sectionCount)
 	}
 
 	// 3. Each section has an InSectionX open conditional.
 	opens := sectionOpenRe.FindAllStringSubmatch(layout, -1)
-	if len(opens) != 6 {
-		t.Errorf("B96 FAIL: expected 6 {{if .InSectionX}}open{{end}} conditionals, found %d in layout.html",
+	if len(opens) != 10 {
+		t.Errorf("B96 FAIL: expected 10 {{if .InSectionX}}open{{end}} conditionals (B314 grouping), found %d in layout.html",
 			len(opens))
 	}
 
 	// 4. Each InSectionX name corresponds to a key the
-	//    renderWithLayout data map sets. The set is fixed:
-	//    InSectionDevices / InSectionAccess / InSectionHealth /
-	//    InSectionIntegrations / InSectionData / InSectionSettings.
-	//    The regex above captures the suffix (Devices, Access, ...);
-	//    the comparison map uses the same suffix form.
+	//    renderWithLayout data map sets. B314 (v1.5.79) renegotiated this set: the
+	//    operator asked for OIDC, DERP, deploy+cluster+HA and
+	//    tailscale+headscale+headplane to be groups of their own and for certificates
+	//    to move into Settings, so the single «Integrations» section is gone.
 	expectedSections := map[string]bool{
-		"Devices":      true,
-		"Access":       true,
-		"Health":       true,
-		"Integrations": true,
-		"Data":         true,
-		"Settings":     true,
+		"Devices":   true,
+		"Access":    true,
+		"Health":    true,
+		"Services":  true,
+		"Providers": true,
+		"DERP":      true,
+		"Deploy":    true,
+		"OIDC":      true,
+		"Data":      true,
+		"Settings":  true,
 	}
 	for _, m := range opens {
 		if !expectedSections[m[1]] {
-			t.Errorf("B96 FAIL: unknown InSection%s in layout.html (must be one of: Devices/Access/Health/Integrations/Data/Settings)", m[1])
+			t.Errorf("B96 FAIL: unknown InSection%s in layout.html (must be one of: Devices/Access/Health/Services/Providers/DERP/Deploy/OIDC/Data/Settings)", m[1])
 		}
 	}
 
@@ -171,12 +174,16 @@ func TestB96_AdminLayoutGroupsAll22Pages(t *testing.T) {
 		t.Error("B96 FAIL: layout.html missing sidebar-toggle label (hamburger contract)")
 	}
 
-	// 6. The 6 section title i18n keys are present.
+	// 6. Every section title i18n key is present (B314: ten sections).
 	requiredKeys := []string{
 		"nav.section_devices",
 		"nav.section_access",
 		"nav.section_health",
-		"nav.section_integrations",
+		"nav.section_services",
+		"nav.section_providers",
+		"nav.section_derp",
+		"nav.section_deploy",
+		"nav.section_oidc",
 		"nav.section_data",
 		"nav.section_settings",
 		"nav.toggle_sidebar",
@@ -207,8 +214,8 @@ func TestB96_AllAdminPagesInASection(t *testing.T) {
 	// inside sections), so a non-greedy match per block is safe.
 	blockRe := regexp.MustCompile(`(?s)<details class="sidebar-section".*?</details>`)
 	blocks := blockRe.FindAllString(layout, -1)
-	if len(blocks) != 6 {
-		t.Fatalf("B96 FAIL: expected 6 <details> blocks, found %d", len(blocks))
+	if len(blocks) != 10 {
+		t.Fatalf("B96 FAIL: expected 10 <details> blocks (B314 grouping), found %d", len(blocks))
 	}
 
 	// Collect every admin page link that appears inside a section.

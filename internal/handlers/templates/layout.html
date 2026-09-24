@@ -102,35 +102,53 @@
       <a href="/admin/audit" {{if eq .Page "admin/audit"}}class="active"{{end}}><i class="fa-solid fa-clipboard-list"></i><span>{{t "nav.audit"}}</span></a>
     </details>
 
-    {{/* Section 4: Integrations (6 pages) */}}
-    <details class="sidebar-section" {{if .InSectionIntegrations}}open{{end}}>
-      <summary class="{{if .InSectionIntegrations}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-puzzle-piece"></i><span>{{t "nav.section_integrations"}}</span></summary>
+    {{/* B314 (v1.5.79) — the operator's grouping. The old single
+         «Integrations» section held twelve unrelated pages; it is now split by
+         WHAT the operator is trying to do:
+           Сервисы        — the integration surface itself (Integrations page +
+                            Telegram, the one real integration) with cross-links
+           Провайдеры     — tailscale + headscale + headplane (one stack)
+           DERP           — the relay map, the relays and their health
+           Развёртывание  — deploy + cluster + HA (one physical cluster)
+           OIDC           — the two OIDC pages, on their own
+         Certificates moved into Settings (it configures skygate itself, not an
+         integration). Section titles live in catalog_common.go. */}}
+    <details class="sidebar-section" {{if .InSectionServices}}open{{end}}>
+      <summary class="{{if .InSectionServices}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-puzzle-piece"></i><span>{{t "nav.section_services"}}</span></summary>
       <a href="/admin/integrations" {{if eq .Page "admin/integrations"}}class="active"{{end}}><i class="fa-solid fa-puzzle-piece"></i><span>{{t "nav.integrations"}}</span></a>
+      <a href="/admin/telegram" {{if eq .Page "admin/telegram"}}class="active"{{end}}><i class="fa-brands fa-telegram"></i><span>{{t "nav.telegram"}}</span></a>
+    </details>
+
+    <details class="sidebar-section" {{if .InSectionProviders}}open{{end}}>
+      <summary class="{{if .InSectionProviders}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-cube"></i><span>{{t "nav.section_providers"}}</span></summary>
+      <a href="/admin/tailscale" {{if eq .Page "admin/tailscale"}}class="active"{{end}}><i class="fa-solid fa-link"></i><span>{{t "tailscale.title"}}</span></a>
       <a href="/admin/headscale" {{if eq .Page "admin/headscale"}}class="active"{{end}}><i class="fa-solid fa-cube"></i><span>{{t "nav.headscale"}}</span></a>
       <a href="/admin/headplane" {{if eq .Page "admin/headplane"}}class="active"{{end}}><i class="fa-solid fa-window-maximize"></i><span>{{t "nav.headplane"}}</span></a>
-      <a href="/admin/telegram" {{if eq .Page "admin/telegram"}}class="active"{{end}}><i class="fa-brands fa-telegram"></i><span>{{t "nav.telegram"}}</span></a>
-      <a href="/admin/tailscale" {{if eq .Page "admin/tailscale"}}class="active"{{end}}><i class="fa-solid fa-link"></i><span>{{t "tailscale.title"}}</span></a>
+    </details>
+
+    <details class="sidebar-section" {{if .InSectionDERP}}open{{end}}>
+      <summary class="{{if .InSectionDERP}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-tower-broadcast"></i><span>{{t "nav.section_derp"}}</span></summary>
       <a href="/admin/derp" {{if eq .Page "admin/derp"}}class="active"{{end}}><i class="fa-solid fa-tower-broadcast"></i><span>{{t "nav.derp"}}</span></a>
       <a href="/admin/derp/relays" {{if eq .Page "admin/derp_relays"}}class="active"{{end}}><i class="fa-solid fa-table-list"></i><span>{{t "derp.relays_nav"}}</span></a>
       <a href="/admin/derp/dashboard" {{if eq .Page "admin/derp_dashboard"}}class="active"{{end}}><i class="fa-solid fa-heart-pulse"></i><span>{{t "nav.derp_dashboard"}}</span></a>
-      <a href="/admin/ha" {{if eq .Page "admin/ha"}}class="active"{{end}}><i class="fa-solid fa-shield-heart"></i><span>{{t "nav.ha"}}</span></a>
+    </details>
+
+    <details class="sidebar-section" {{if .InSectionDeploy}}open{{end}}>
+      <summary class="{{if .InSectionDeploy}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-rocket"></i><span>{{t "nav.section_deploy"}}</span></summary>
+      <a href="/admin/deploy" {{if eq .Page "admin/deploy"}}class="active"{{end}}><i class="fa-solid fa-rocket"></i><span>{{t "nav.deploy"}}</span></a>
       {{/* B199 (v1.5.0+) — cluster topology view. Sits next
-         to /admin/ha and /admin/deploy since they all manage
+         to /admin/deploy and /admin/ha since they all manage
          the same physical cluster. */}}
       <a href="/admin/cluster" {{if eq .Page "admin/cluster"}}class="active"{{end}}><i class="fa-solid fa-circle-nodes"></i><span>{{t "nav.cluster"}}</span></a>
-      <a href="/admin/deploy" {{if eq .Page "admin/deploy"}}class="active"{{end}}><i class="fa-solid fa-rocket"></i><span>{{t "nav.deploy"}}</span></a>
-      <a href="/admin/certificates" {{if eq .Page "admin/certificates"}}class="active"{{end}}><i class="fa-solid fa-certificate"></i><span>{{t "nav.certificates"}}</span></a>
-      {{/* B161.4 (v1.5.1) — OIDC config surface.
-         Sits next to /admin/certificates in the
-         Integrations section (the operator
-         configures TLS + OIDC together for the
-         headscale integration). */}}
+      <a href="/admin/ha" {{if eq .Page "admin/ha"}}class="active"{{end}}><i class="fa-solid fa-shield-heart"></i><span>{{t "nav.ha"}}</span></a>
+    </details>
+
+    <details class="sidebar-section" {{if .InSectionOIDC}}open{{end}}>
+      <summary class="{{if .InSectionOIDC}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-key"></i><span>{{t "nav.section_oidc"}}</span></summary>
+      {{/* B161.4 (v1.5.1) — OIDC config surface, and B167 (v1.5.2) its
+         auto-sync sub-page. The operator asked for these two to be a group of
+         their own instead of being mixed into the integration list. */}}
       <a href="/admin/oidc" {{if eq .Page "admin/oidc"}}class="active"{{end}}><i class="fa-solid fa-key"></i><span>{{t "nav.oidc"}}</span></a>
-      {{/* B167 (v1.5.2) — OIDC config auto-sync.
-         Sub-link under /admin/oidc (the operator
-         clicks "Sync to headscale" from the
-         /admin/oidc page, but a direct link here
-         saves a click for the common case). */}}
       <a href="/admin/oidc/sync" {{if eq .Page "admin/oidc_sync"}}class="active"{{end}} class="sub-link"><i class="fa-solid fa-arrows-rotate"></i><span>{{t "nav.oidc_sync"}}</span></a>
     </details>
 
@@ -148,6 +166,9 @@
       <a href="/admin/settings" {{if eq .Page "admin/settings"}}class="active"{{end}}><i class="fa-solid fa-gear"></i><span>{{t "nav.settings"}}</span></a>
       <a href="/admin/users" {{if eq .Page "admin/users"}}class="active"{{end}}><i class="fa-solid fa-users"></i><span>{{t "nav.users"}}</span></a>
       <a href="/admin/update" {{if eq .Page "admin/update"}}class="active"{{end}}><i class="fa-solid fa-cloud-arrow-down"></i><span>{{t "nav.update"}}</span></a>
+      {{/* B314: certificates configure skygate ITSELF (its own TLS), not an
+           integration — the operator asked for them to live in Settings. */}}
+      <a href="/admin/certificates" {{if eq .Page "admin/certificates"}}class="active"{{end}}><i class="fa-solid fa-certificate"></i><span>{{t "nav.certificates"}}</span></a>
     </details>
 {{end}}
   </nav>

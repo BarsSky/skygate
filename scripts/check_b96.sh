@@ -45,22 +45,24 @@ fi
 test -f internal/handlers/templates/layout.html || { echo "SKY-FAIL: layout.html missing" >&2; exit 1; }
 grep -qF "v1.1.0 (TD-1 + TD-3)" internal/handlers/templates/layout.html || { echo "SKY-FAIL: layout.html missing v1.1.0 (TD-1 + TD-3) marker" >&2; exit 1; }
 
-# 2. Exactly 6 <details class="sidebar-section"> blocks.
+# 2. Exactly 10 <details class="sidebar-section"> blocks (B314: the operator split
+#    the old single Integrations section into Services / Providers / DERP / Deploy /
+#    OIDC and moved certificates into Settings).
 SECTION_COUNT=$(grep -cF '<details class="sidebar-section"' internal/handlers/templates/layout.html || true)
-if [ "$SECTION_COUNT" != "6" ]; then
-    echo "SKY-FAIL: expected 6 sidebar sections, found $SECTION_COUNT" >&2
+if [ "$SECTION_COUNT" != "10" ]; then
+    echo "SKY-FAIL: expected 10 sidebar sections (B314 grouping), found $SECTION_COUNT" >&2
     exit 1
 fi
 
-# 3. All 6 InSectionX booleans appear.
-for s in InSectionDevices InSectionAccess InSectionHealth InSectionIntegrations InSectionData InSectionSettings; do
+# 3. All 10 InSectionX booleans appear.
+for s in InSectionDevices InSectionAccess InSectionHealth InSectionServices InSectionProviders InSectionDERP InSectionDeploy InSectionOIDC InSectionData InSectionSettings; do
     grep -qF "{{if .$s}}open{{end}}" internal/handlers/templates/layout.html || { echo "SKY-FAIL: layout.html missing {{if .$s}}open{{end}} conditional" >&2; exit 1; }
 done
 
-# 4. All 8 i18n keys exist in catalog_common.go (B4 parity
+# 4. All 12 i18n keys exist in catalog_common.go (B4 parity
 #    test already enforces ru == en for the key set; here we
 #    just check both files have them in the right place).
-for k in nav.section_devices nav.section_access nav.section_health nav.section_integrations nav.section_data nav.section_settings nav.toggle_sidebar nav.toggle_section; do
+for k in nav.section_devices nav.section_access nav.section_health nav.section_services nav.section_providers nav.section_derp nav.section_deploy nav.section_oidc nav.section_data nav.section_settings nav.toggle_sidebar nav.toggle_section; do
     grep -qF "\"$k\"" internal/i18n/catalog_common.go || { echo "SKY-FAIL: i18n key $k missing from catalog_common.go" >&2; exit 1; }
 done
 
@@ -79,4 +81,4 @@ grep -qF 'class="sidebar-toggle"' internal/handlers/templates/layout.html || { e
 # 7. Go unit tests pass.
 "$GO" test -count=1 -run "TestB96_" ./internal/handlers/ 2>&1 || { echo "SKY-FAIL: B96 unit tests failed" >&2; exit 1; }
 
-echo "B96 check passed: layout.html groups 22 admin pages into 6 collapsible sidebar sections + 2 Go unit tests pass"
+echo "B96 check passed: layout.html groups the admin pages into 10 collapsible sidebar sections (B314) + 2 Go unit tests pass"

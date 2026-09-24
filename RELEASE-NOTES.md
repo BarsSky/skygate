@@ -12,6 +12,53 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.79 — the sidebar grouped the way you asked (B314)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.78` → this tag · **Compatibility:** none —
+navigation only, no schema, no config, no behaviour change.
+
+### The request
+
+> «Группы по OIDC - явно две страницы, группа по DERP с релеями и здоровьем derp,
+> вынести сертификаты в настройки так как они относяться к настройке самого skygate,
+> группа по deploy кластер highAvailability … группа tailscale headscale headplane …
+> ну и реальные интеграции - это телеграм а сама страница интеграции больше должна
+> называться Сервисы и иметь больше переходных ссылок на остальные сервисы»
+
+The old sidebar had **one** «Integrations» section holding twelve unrelated pages, so
+where a page sat told the operator nothing about it.
+
+### What changed
+
+* **OIDC** — a group of its own, exactly its two pages (`/admin/oidc` +
+  `/admin/oidc/sync`).
+* **DERP** — a group of its own: the relay map, the relays table **and** the relay
+  health dashboard.
+* **Сертификаты → Настройки** (they configure skygate itself, not an integration).
+* **Развёртывание и кластер** — deploy + cluster + HA together, because they describe
+  one physical cluster.
+* **Провайдеры** — tailscale + headscale + headplane together.
+* **«Интеграции» → «Сервисы»**, with **15 cross-links** to every other service page
+  (providers, DERP, relays, DERP health, OIDC and its sync, Telegram, certificates,
+  availability, monitoring, deploy, cluster, HA) so nothing has to be found in the
+  sidebar from memory. Telegram stays the real integration in that group.
+* The availability page keeps a name of its own — «Доступность сервисов» — so two
+  pages cannot both be called «Сервисы».
+
+### Files
+
+`internal/handlers/templates/layout.html`, `internal/handlers/handlers.go`
+(`sectionPageSet`), `internal/handlers/templates/admin/integrations.html`,
+`internal/i18n/catalog_common.go`, `internal/i18n/catalog_admin.go`,
+`scripts/check_b314_nav_grouping.sh`.
+
+### Verification
+
+41 contracts in `scripts/check_b314_nav_grouping.sh` (section by section, the Go map
+and the template agreeing in both directions, the cross-links, the two renamed pages),
+plus the renegotiated **B96** (ten sections, ten `InSection` names, twelve title keys)
+and its Go test (`TestB96_*` now expects the new grouping).
+
 ## v1.5.78 — OIDC is applied from the panel, not copy-pasted (B313)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.77` → this tag · **Compatibility:** a re-run of

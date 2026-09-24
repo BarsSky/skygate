@@ -24,6 +24,32 @@
   <div style="font-size:13px;line-height:1.6">{{t "integrations.apply_help" | safeHTML}}</div>
 </div>
 
+{{/* B314 (v1.5.79): this page is now «Сервисы» — the integration surface — and the
+     operator asked for more cross-links to the service pages that grew up elsewhere
+     in the panel. One block, every service, so nothing has to be found in the
+     sidebar by memory. */}}
+<div class="card">
+  <h3><i class="fa-solid fa-diagram-project"></i>{{t "integrations.links_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "integrations.links_help"}}</p>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+    <a href="/admin/tailscale" class="btn btn-secondary"><i class="fa-solid fa-link"></i> {{t "tailscale.title"}}</a>
+    <a href="/admin/headscale" class="btn btn-secondary"><i class="fa-solid fa-cube"></i> {{t "nav.headscale"}}</a>
+    <a href="/admin/headplane" class="btn btn-secondary"><i class="fa-solid fa-window-maximize"></i> {{t "nav.headplane"}}</a>
+    <a href="/admin/derp" class="btn btn-secondary"><i class="fa-solid fa-tower-broadcast"></i> {{t "nav.derp"}}</a>
+    <a href="/admin/derp/relays" class="btn btn-secondary"><i class="fa-solid fa-table-list"></i> {{t "derp.relays_nav"}}</a>
+    <a href="/admin/derp/dashboard" class="btn btn-secondary"><i class="fa-solid fa-heart-pulse"></i> {{t "nav.derp_dashboard"}}</a>
+    <a href="/admin/oidc" class="btn btn-secondary"><i class="fa-solid fa-key"></i> {{t "nav.oidc"}}</a>
+    <a href="/admin/oidc/sync" class="btn btn-secondary"><i class="fa-solid fa-arrows-rotate"></i> {{t "nav.oidc_sync"}}</a>
+    <a href="/admin/telegram" class="btn btn-secondary"><i class="fa-brands fa-telegram"></i> {{t "nav.telegram"}}</a>
+    <a href="/admin/certificates" class="btn btn-secondary"><i class="fa-solid fa-certificate"></i> {{t "nav.certificates"}}</a>
+    <a href="/admin/services" class="btn btn-secondary"><i class="fa-solid fa-heart-pulse"></i> {{t "title.admin_services"}}</a>
+    <a href="/admin/monitor" class="btn btn-secondary"><i class="fa-solid fa-bell"></i> {{t "monitor.nav"}}</a>
+    <a href="/admin/deploy" class="btn btn-secondary"><i class="fa-solid fa-rocket"></i> {{t "nav.deploy"}}</a>
+    <a href="/admin/cluster" class="btn btn-secondary"><i class="fa-solid fa-circle-nodes"></i> {{t "nav.cluster"}}</a>
+    <a href="/admin/ha" class="btn btn-secondary"><i class="fa-solid fa-shield-heart"></i> {{t "nav.ha"}}</a>
+  </div>
+</div>
+
 <div class="card">
   <h3><i class="fa-solid fa-tower-observation"></i>{{t "control_planes.title"}}</h3>
   <p style="color:var(--text-muted);font-size:13px">{{t "control_planes.subtitle"}}</p>

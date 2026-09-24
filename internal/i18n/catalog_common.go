@@ -67,7 +67,7 @@ var ruCommon = map[string]string{
 	"nav.headscale_acl":              "Сетевой доступ",
 	"nav.system_tests":               "Тесты системы",
 	"nav.headplane":                  "Headplane",
-	"nav.integrations":               "Интеграции",
+	"nav.integrations":               "Сервисы",
 	"nav.ha":                         "High Availability", // v1.5.0 / B149
 	"nav.cluster":                    "Кластер",           // v1.5.0+ / B199
 	"nav.deploy":                     "Deploy",            // v1.5.0 / B150
@@ -83,6 +83,11 @@ var ruCommon = map[string]string{
 	"nav.section_devices":      "Устройства и узлы",
 	"nav.section_access":       "Контроль доступа",
 	"nav.section_health":       "Здоровье и логи",
+	"nav.section_services":     "Сервисы",
+	"nav.section_providers":    "Провайдеры",
+	"nav.section_derp":         "DERP",
+	"nav.section_deploy":       "Развёртывание и кластер",
+	"nav.section_oidc":         "OIDC",
 	"nav.section_integrations": "Интеграции",
 	"nav.section_data":         "Данные",
 	"nav.section_settings":     "Настройки и пользователи",
@@ -151,7 +156,7 @@ var ruCommon = map[string]string{
 	// (/admin/services). Shows the cached status of headscale,
 	// headplane, and the local Tailscale node. The page auto-
 	// refreshes every 30s.
-	"title.admin_services": "Статус интеграций",
+	"title.admin_services": "Доступность сервисов",
 	// 2026-08-06 v0.33.1.18 — DNS autoupdater toggle on the
 	// /admin/system_tests page. Separate from the skygate
 	// self-update banner (title.admin_update). Critical to
@@ -280,7 +285,7 @@ var enCommon = map[string]string{
 	"nav.headscale_acl":              "Network access",
 	"nav.system_tests":               "System tests",
 	"nav.headplane":                  "Headplane",
-	"nav.integrations":               "Integrations",
+	"nav.integrations":               "Services",
 	"nav.ha":                         "High Availability", // v1.5.0 / B149
 	"nav.cluster":                    "Cluster",           // v1.5.0+ / B199
 	"nav.deploy":                     "Deploy",            // v1.5.0 / B150
@@ -293,6 +298,11 @@ var enCommon = map[string]string{
 	"nav.section_devices":      "Devices & Nodes",
 	"nav.section_access":       "Access Control",
 	"nav.section_health":       "System Health & Logs",
+	"nav.section_services":     "Services",
+	"nav.section_providers":    "Providers",
+	"nav.section_derp":         "DERP",
+	"nav.section_deploy":       "Deployment and cluster",
+	"nav.section_oidc":         "OIDC",
 	"nav.section_integrations": "Integrations",
 	"nav.section_data":         "Data",
 	"nav.section_settings":     "Settings & Users",
@@ -354,7 +364,7 @@ var enCommon = map[string]string{
 	"title.admin_headscale":     "Headscale updates",
 	"title.admin_headscale_acl": "Network access (headscale ACL)",
 	"title.admin_system_tests":  "System tests",
-	"title.admin_services":      "Integration status",
+	"title.admin_services":      "Service availability",
 	// 2026-08-06 v0.33.1.18 — DNS autoupdater toggle. See the
 	// RU block above for the design rationale (must be
 	// separate from the skygate self-update banner).
