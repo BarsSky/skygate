@@ -1,4 +1,4 @@
-// device_owner_B316.go — B316 (v1.5.80) — WHO owns a device must not depend on a
+// device_owner_b316.go — B316 (v1.5.81) — WHO owns a device must not depend on a
 // username that headscale has already rewritten.
 //
 // LIVE CASE (native host `aro`, 2026-09-24): the operator's two machines did not ping
@@ -224,10 +224,14 @@ func RepairSentinelDeviceOwners(d *sql.DB) (int, []string, error) {
 	if len(portal) == 0 {
 		return 0, nil, nil
 	}
+	// `$1` is the UNIVERSAL placeholder (placeholders.go): pgx rejects `?` with
+	// SQLSTATE 42601 and the live host that NEEDS this repair is PostgreSQL-backed
+	// on one install kind and SQLite on the other, so the same SQL text must run on
+	// both. A `?` here would have made the repair a no-op with a syntax error on PG.
 	rows, err := d.Query(`SELECT COALESCE(node_id, ''), COALESCE(hostname, ''),
 	                             COALESCE(username, ''), COALESCE(tag, '')
 	                        FROM node_owner_map
-	                       WHERE LOWER(COALESCE(username, '')) IN ('', ?)`, SentinelDeviceOwner)
+	                       WHERE LOWER(COALESCE(username, '')) IN ('', $1)`, SentinelDeviceOwner)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -257,9 +261,9 @@ func RepairSentinelDeviceOwners(d *sql.DB) (int, []string, error) {
 	applied, changes := 0, []string{}
 	for _, ch := range pending {
 		res, uerr := d.Exec(`UPDATE node_owner_map
-		                        SET username = ?
-		                      WHERE node_id = ?
-		                        AND LOWER(COALESCE(username, '')) IN ('', ?)`,
+		                        SET username = $1
+		                      WHERE node_id = $2
+		                        AND LOWER(COALESCE(username, '')) IN ('', $3)`,
 			ch.to, ch.nodeID, SentinelDeviceOwner)
 		if uerr != nil {
 			return applied, changes, uerr

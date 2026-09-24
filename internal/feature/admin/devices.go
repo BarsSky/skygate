@@ -74,7 +74,7 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	for _, t := range devTags {
 		devTagMap[t.Hostname] = t.Tag
 	}
-	// B316 (v1.5.80): the per-device ACL column must also see a device whose ownership
+	// B316 (v1.5.81): the per-device ACL column must also see a device whose ownership
 	// row carries headscale's synthetic `tagged-devices` — otherwise the row renders «—»
 	// for a device that HAS a per-device tag (live on `aro`: workpc/laptop showed a dash
 	// while the tag existed, which is exactly how the operator noticed that the ACL did

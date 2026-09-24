@@ -617,7 +617,7 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// canonical reference for the format requirements
 	// (separator pattern, `ip: ["*"]`, dst=tag-only).
 	//
-	// B316 (v1.5.80): the mesh source is DeviceTagsForMesh, not the ownership JOIN
+	// B316 (v1.5.81): the mesh source is DeviceTagsForMesh, not the ownership JOIN
 	// alone. headscale rewrites a tagged node's user to the synthetic
 	// `tagged-devices` (B287), so a row carrying that name used to drop its device
 	// out of the mesh entirely and SILENTLY — live on `aro`: daniil's workpc/laptop

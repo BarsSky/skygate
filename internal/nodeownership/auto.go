@@ -218,7 +218,7 @@ func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertSin
 	// pass so the per-user backfill doesn't accidentally
 	// steal an infra node first.
 	BackfillInfra(dbConn, nodes)
-	// B316 (v1.5.80): then repair rows whose username is headscale's synthetic
+	// B316 (v1.5.81): then repair rows whose username is headscale's synthetic
 	// `tagged-devices` by parsing the device's OWN tag (`tag:dev-<user>-<host>`).
 	//
 	// WHY IT MATTERS: the ACL's device-to-device mesh groups devices by the USERNAME

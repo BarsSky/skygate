@@ -81,13 +81,40 @@ silently loses contact with its owner's other devices.
 `internal/nodeownership/auto.go`, `internal/feature/admin/devices.go`,
 `scripts/check_b316_device_mesh_ownership.sh`.
 
+### What the first CI run caught (and why it mattered)
+
+The first push of this block went green on every local run and **red on the runner**, with two
+defects that no local run could see — both of them in this block's own new code:
+
+1. **`?` placeholders in the repair's SQL.** `internal/db/placeholders.go` states the rule
+   plainly (`$N` is universal; `?` is a PG syntax error, SQLSTATE 42601) — and the repair used
+   `?` in both the `SELECT … IN ('', ?)` and the `UPDATE`. `aro` is the SQLite install and the
+   agent VM is PostgreSQL, so this would have been a **no-op with a syntax error on exactly the
+   host class that runs PostgreSQL**. Fixed to `$1/$2/$3`; contract **A6** now pins that no `?`
+   placeholder exists in the repair, so the class cannot come back silently.
+2. **The test fixture collided with the real schema.** `portal_users` id `99` is seeded by the
+   v0.54 migration as `infra`, so the PostgreSQL run died with `duplicate key value violates
+   unique constraint "portal_users_pkey"`; the fixture now inserts with
+   `ON CONFLICT (id) DO NOTHING` (the aro roster *is* that migration's row plus `daniil`).
+3. **The gate registered the script under the wrong case** (`scripts/check_B316_…` vs the real
+   `scripts/check_b316_…`). On the case-insensitive Windows mount the registration resolved and
+   the block looked fine; on the runner `test -f` failed and the catalog printed a bare
+   `FAIL B316`. Contract **G5** now asserts that the `run_check` line names this script by its
+   real path.
+
+The lesson is worth stating plainly: a block edited on Windows must be validated **on the
+runner**, because the local mount is case-insensitive and the local test DB is empty — the two
+properties that hid all three defects above.
+
 ### Verification
 
-25 contracts in `scripts/check_b316_device_mesh_ownership.sh`, plus
+27 contracts in `scripts/check_b316_device_mesh_ownership.sh` (including A6 and G5 above), plus
 `internal/db/device_owner_b316_test.go` and `internal/acl/acl_b316_test.go`, which both use
 **`aro`'s own inventory** as the fixture: the mesh is now emitted for all three of daniil's
 devices, an unattributable device is never granted to anybody, the repair touches exactly
 the provable sentinel rows (never a real owner, never an unprovable one) and is idempotent.
+The `internal/db` half is additionally run against a **real PostgreSQL 15** (the CI
+`SKYGATE_TEST_PG_DSN` job), which is what caught defects 1 and 2.
 
 ## v1.5.80 — the relay's metrics reach the container, and the page stops inventing zeros (B315)
 

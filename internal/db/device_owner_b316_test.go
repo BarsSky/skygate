@@ -1,4 +1,4 @@
-// internal/db/device_owner_B316_test.go — B316 (v1.5.80).
+// internal/db/device_owner_b316_test.go — B316 (v1.5.81).
 //
 // The live fixture is `aro`'s own table, verbatim:
 //
@@ -25,8 +25,13 @@ func seedMeshB316(t *testing.T, d *sql.DB) {
 			t.Fatalf("seed %q: %v", q, err)
 		}
 	}
-	mustExec(`INSERT INTO portal_users (id, username, password_hash, is_admin) VALUES (100, 'daniil', 'x', 1)`)
-	mustExec(`INSERT INTO portal_users (id, username, password_hash, is_admin) VALUES (99, 'infra', 'x', 0)`)
+	// ON CONFLICT (id) DO NOTHING is load-bearing on PostgreSQL: the v0.54 migration
+	// already seeds `portal_users` id=99 as `infra`, so a bare INSERT dies with
+	// "duplicate key value violates unique constraint portal_users_pkey". The live
+	// aro roster is exactly that migration's row plus daniil — this fixture must
+	// survive being applied on top of the real schema, not just on an empty one.
+	mustExec(`INSERT INTO portal_users (id, username, password_hash, is_admin) VALUES (100, 'daniil', 'x', 1) ON CONFLICT (id) DO NOTHING`)
+	mustExec(`INSERT INTO portal_users (id, username, password_hash, is_admin) VALUES (99, 'infra', 'x', 0) ON CONFLICT (id) DO NOTHING`)
 	mustExec(`INSERT INTO node_owner_map (node_id, headscale_user_id, username, tag, hostname) VALUES
 	          ('2', 0, 'tagged-devices', 'tag:dev-daniil-workpc', 'workpc'),
 	          ('3', 0, 'tagged-devices', 'tag:dev-daniil-laptop', 'laptop'),
@@ -188,7 +193,7 @@ func TestRepairSentinelDeviceOwners_RefusesUnprovableOwners_B316(t *testing.T) {
 	}
 	for _, host := range []string{"private-only", "mysterybox"} {
 		var username string
-		if err := d.QueryRow(`SELECT username FROM node_owner_map WHERE hostname = ?`, host).Scan(&username); err != nil {
+		if err := d.QueryRow(`SELECT username FROM node_owner_map WHERE hostname = $1`, host).Scan(&username); err != nil {
 			t.Fatalf("read %s: %v", host, err)
 		}
 		if username != SentinelDeviceOwner {

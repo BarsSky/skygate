@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check_b316_device_mesh_ownership.sh
 #
-# 2026-09-24 (B316, v1.5.80) — a device must not lose its device-to-device grants because
+# 2026-09-24 (B316, v1.5.81) — a device must not lose its device-to-device grants because
 # headscale rewrote its owner.
 #
 # OPERATOR REPORT (native host aro): `workpc` and `homepc` did not ping each other over
@@ -53,13 +53,13 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
 skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-OWNER=internal/db/device_owner_B316.go
+OWNER=internal/db/device_owner_b316.go
 ACL=internal/acl/acl.go
 PERDEV=internal/acl/acl_perdevice.go
 AUTO=internal/nodeownership/auto.go
 ADMIN=internal/feature/admin/devices.go
-TESTDB=internal/db/device_owner_B316_test.go
-TESTACL=internal/acl/acl_B316_test.go
+TESTDB=internal/db/device_owner_b316_test.go
+TESTACL=internal/acl/acl_b316_test.go
 
 hdr "B316 — the device mesh follows the DEVICE, not a username headscale rewrote"
 
@@ -89,6 +89,16 @@ if grep -q 'const SentinelDeviceOwner = "tagged-devices"' "$OWNER"; then
   ok "A5: the synthetic owner is a named constant (one spelling everywhere)"
 else
   bad "A5: the sentinel is spelled ad hoc"
+fi
+# `?` is a PostgreSQL syntax error (SQLSTATE 42601 — see internal/db/placeholders.go): the
+# aro install that NEEDS this repair is SQLite while the agent VM is PostgreSQL, so the same
+# SQL text must be valid on both. Caught live: the repair used `?` and would have died with a
+# syntax error on the very hosts that run PostgreSQL.
+if ! grep -nE "IN \('', \?\)|SET username = \?|node_id = \?" "$OWNER" | grep -q .; then
+  ok "A6: the repair's SQL uses \$N placeholders (\`?\` is a PG syntax error)"
+else
+  bad "A6: the repair uses a \`?\` placeholder — it would fail on PostgreSQL:"
+  grep -nE "IN \('', \?\)|SET username = \?|node_id = \?" "$OWNER" | sed 's/^/       /' >&2
 fi
 
 # --- B: nothing is dropped silently ------------------------------------------------
@@ -138,7 +148,7 @@ if grep -q 'func RepairSentinelDeviceOwners(' "$OWNER"; then
 else
   bad "D1: no repair for the sentinel rows"
 fi
-if grep -q "WHERE LOWER(COALESCE(username, '')) IN ('', ?)" "$OWNER"; then
+if grep -q "WHERE LOWER(COALESCE(username, '')) IN ('', \$1)" "$OWNER"; then
   ok "D2: it only touches rows whose username is the sentinel or empty (never a real owner)"
 else
   bad "D2: the repair could overwrite a real owner"
@@ -202,6 +212,15 @@ if git ls-files --error-unmatch scripts/check_b316_device_mesh_ownership.sh >/de
   ok "G4: scripts/check_b316_device_mesh_ownership.sh is tracked by git"
 else
   bad "G4: scripts/check_b316_device_mesh_ownership.sh is NOT tracked"
+fi
+# The registration in verify_pre_deploy.sh must name THIS file EXACTLY. Caught live on CI:
+# the run_check line pointed at `scripts/check_B316_…` (capital B) while the file is
+# `scripts/check_b316_…`, so `test -f` failed with no output and the catalog reported a bare
+# FAIL B316 that no local run could reproduce (a local run invokes the script directly).
+if grep -q "scripts/check_b316_device_mesh_ownership.sh" scripts/verify_pre_deploy.sh; then
+  ok "G5: the gate registers this script by its real (lower-case) path"
+else
+  bad "G5: the run_check line in verify_pre_deploy.sh does not name scripts/check_b316_device_mesh_ownership.sh"
 fi
 
 printf '\n\033[1mB316 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
