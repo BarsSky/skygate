@@ -115,15 +115,15 @@ type ReconcilerChange struct {
 //
 // 2026-09-03: v1.5.2 (B229).
 type DevicePrefState struct {
-	UserID              int64
-	Username            string
-	DeviceHostname      string
-	ExistingPrefTag     string // "" if no row
-	ExistingPrefVia     bool   // via_enabled of the existing row
-	DistinctExitNodes   int    // 0, 1, 2+ — count of distinct exit_node_id across the device's rules
+	UserID               int64
+	Username             string
+	DeviceHostname       string
+	ExistingPrefTag      string // "" if no row
+	ExistingPrefVia      bool   // via_enabled of the existing row
+	DistinctExitNodes    int    // 0, 1, 2+ — count of distinct exit_node_id across the device's rules
 	DominantExitHostname string // hostname of the most-common exit_node_id
-	TotalRules          int
-	CanonicalTag        string // resolved from node_owner_map via NormalizeExitNodeTag ("" if not resolvable)
+	TotalRules           int
+	CanonicalTag         string // resolved from node_owner_map via NormalizeExitNodeTag ("" if not resolvable)
 }
 
 // PlanDevicePrefChange is the pure decision function —
@@ -501,8 +501,38 @@ func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, user
 	//
 	// Two-branch OR: pre-rename (denormalised hostname still old)
 	// OR post-rename (node_owner_map reflects the new hostname).
-	// The sub-select uses (user_id, hostname) which has a UNIQUE
-	// index in node_owner_map.
+	// Either branch alone covers the pre-rename or post-rename
+	// case; both together are idempotent (the OR is symmetric).
+	//
+	// B319 (2026-09-24) — WHY THE SUB-SELECT LOOKS LIKE THIS. It used to read
+	//
+	//	OR device_id IN (SELECT node_id FROM node_owner_map
+	//	                  WHERE user_id = $1 AND hostname = $2)
+	//
+	// and on PostgreSQL that query could never run: `device_rules.device_id` is
+	// INTEGER while `node_owner_map.node_id` is TEXT, so the planner answered
+	// `ERROR: operator does not exist: integer = text (SQLSTATE 42883)` and every
+	// pass logged
+	//
+	//	preferred-reconciler: state for <user>/<device>: rules for …: ERROR: …
+	//
+	// — which is exactly what the operator saw on the agent VM ("правила перестали
+	// работать"): the preferred-exit reconciler could not compute the state for ANY
+	// device that has an ownership row, so those devices were skipped on every tick.
+	// SQLite hides this class completely (dynamic typing compares 9 with '9' happily),
+	// which is why it survived the whole test suite.
+	//
+	// The second defect was hidden INSIDE the first: `node_owner_map` has no
+	// `user_id` column (it links a node through `headscale_user_id`, `username` and
+	// `tag` — see internal/db/device_owner_b316.go), so that predicate was silently
+	// resolved against the OUTER `device_rules.user_id`, i.e. it filtered nothing and
+	// correlated nothing. `node_id` is unique per node and the outer query already
+	// scopes the user, so the sub-select needs only the hostname; re-adding the owner
+	// here would be wrong anyway, because headscale rewrites a TAGGED node's user to
+	// `tagged-devices` (B316) and portal ids are not headscale ids.
+	//
+	// `CAST(device_id AS TEXT)` is valid on both backends and was verified against the
+	// live PostgreSQL database (the same 45 rules are returned).
 	ruleRows, err := s.dbc().QueryContext(ctx, `
 		SELECT exit_node_id, COUNT(*)
 		  FROM device_rules
@@ -510,9 +540,8 @@ func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, user
 		   AND enabled = 1
 		   AND (
 		     device_hostname = $2
-		     OR device_id IN (
-		       SELECT node_id FROM node_owner_map
-		        WHERE user_id = $1 AND hostname = $2
+		     OR CAST(device_id AS TEXT) IN (
+		       SELECT node_id FROM node_owner_map WHERE hostname = $2
 		     )
 		   )
 		 GROUP BY exit_node_id

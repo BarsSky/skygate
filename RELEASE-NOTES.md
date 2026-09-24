@@ -12,6 +12,87 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.84 — the rules lookup runs on PostgreSQL (B319)
+
+**Date:** 2026-09-24 · **Base:** `v1.5.83` → this tag · **Compatibility:** none — no schema
+change, no migration, no config change.
+
+### The report
+
+> «и также перестали работать правила что случилось? на agent vm»
+
+### What the live tools found (read-only, agent VM)
+
+The journal carried this on **every** container start, once per device that has a
+preference:
+
+```
+preferred-reconciler: state for michail/basic: rules for michail/basic:
+  ERROR: operator does not exist: integer = text (SQLSTATE 42883)
+preferred-reconciler: state for skyadmin/skyworker: rules for skyadmin/skyworker: ERROR: …
+```
+
+The query behind it ORed a second rule-matching branch:
+
+```sql
+OR device_id IN (SELECT node_id FROM node_owner_map
+                  WHERE user_id = $1 AND hostname = $2)
+```
+
+Reproduced by hand against the live PostgreSQL:
+
+| fact | value |
+|---|---|
+| `device_rules.device_id` | **INTEGER** |
+| `node_owner_map.node_id` | **TEXT** |
+| the old query | `ERROR: operator does not exist: integer = text` |
+| the same query with `CAST(device_id AS TEXT)` | **45 rows** — the same rules |
+
+So the preferred-exit reconciler could not compute the state for **any device that has
+an ownership row** and skipped it on every tick: a preferred exit node was never
+reconciled for those devices. **SQLite compares `9` with `'9'` happily**, which is why
+the whole test suite stayed green and why this survived on the SQLite dev/CI path.
+
+The same line hid a second defect: `node_owner_map` has **no `user_id` column** (it links
+a node through `headscale_user_id` / `username` / `tag`), so that predicate silently bound
+to the **outer** `device_rules.user_id` — it filtered nothing and correlated nothing.
+
+### What changed
+
+* the lookup now compares `CAST(device_id AS TEXT) IN (SELECT node_id FROM node_owner_map
+  WHERE hostname = $2)` — valid on **both** backends, verified against the live
+  PostgreSQL — and keeps the pre-rename branch intact;
+* the bogus owner predicate is gone: the outer query already scopes the user, `node_id` is
+  unique per node, and re-adding the owner here would be wrong anyway because headscale
+  rewrites a **tagged** node's user to `tagged-devices` (B316), while portal user ids are
+  not headscale ids.
+
+### What was checked and is healthy (so the report can be read precisely)
+
+The rules → prefixes → relays → ACL chain was verified end to end against the live
+control plane: **222 enabled rules**, 146 distinct prefixes, **0 rules whose prefix nobody
+advertises**, **0 rules pinned to a relay that does not advertise its prefix**,
+**0 advertised prefixes left unpinned** (148 ACL pins; the only two "broken" ones are the
+`10.0.1.0/24` / `10.0.6.0/24` user-subnet aliases, which are not exit-node routes). Emilia
+advertises 35 approved routes, karolina 115, and both match their ACL pins.
+
+If a specific destination still fails for a specific device, that is a different question
+from the one this release fixes — send the domain and the device and it can be traced from
+the rule id.
+
+### Files
+
+`internal/feature/exit_rules/reconciler.go` (+ `reconciler_b319_test.go`),
+`scripts/check_b319_rules_owner_type.sh`.
+
+### Verification
+
+The contract checks the **query** (scoped, so the doc comment may still quote the old SQL
+as the record of the defect), pins the SQLite behaviour (a rule whose denormalised hostname
+is stale is still found by node id) and — when a PostgreSQL is reachable — runs both forms
+against it, asserting that the new one works **and that the server still refuses the old
+one**.
+
 ## v1.5.83 — two pages, one daemon, one story (B318)
 
 **Date:** 2026-09-24 · **Base:** `v1.5.82` → this tag · **Compatibility:** none — no schema
