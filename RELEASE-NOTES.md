@@ -12,6 +12,75 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.77 — every exit node shows where it sits, and a lost relay's prefixes go to the nearest one (B312)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.76` → this tag · **Compatibility:** one
+additive migration (v0.77 adds six `exit_servers.location_*` columns on both
+dialects, defaults only — no backfill, nothing to configure). The automatic
+geolocation lookup is **optional** and can be switched off with
+`SKYGATE_GEO_LOOKUP=off`.
+
+### The request
+
+> «если доступ никак нельзя восстановить то необходимо компенсировать правила по
+> другим exit node но предлагаю приоритет расставлять на сходный признак расположения
+> по exit node и как отдельная фича в exit node также отображать локацию где
+> расположен exit node»
+
+The live case behind it: `karolina` was blocked, and its 75 prefixes moved to whichever
+relay answered first. Right for reachability, **arbitrary for latency** — nothing in
+skygate knew that one relay sits in the same country and the other does not.
+
+### What the operator gets
+
+* **A location per relay, on `/admin/exit-nodes`**: shown in the table (with
+  «указано вручную» / «определено автоматически») and with a small form to set it — and
+  to hand it back to the automatic lookup. The lookup needs a public address and a
+  working network, so the manual answer always wins and is never overwritten.
+* **The priority that was asked for**: when a prefix's owner becomes unreachable, its
+  prefixes go to the **closest** healthy relay — same city → same country → smaller
+  great-circle distance — and the move is logged with its reason
+  (`prefix-owner: 104.16.0.0/12 moves to emilia — the previous owner karolina is
+  unreachable and emilia is the closest healthy relay (Amsterdam, Netherlands)`).
+* **Nothing invented**: with no shared fact (or no location at all) the engine's own
+  choice stands; a preference may never name an unhealthy relay, never reshuffle a
+  healthy owner and never override a manual pin or the rules' explicit majority.
+  `Assign`/`Reconcile` keep their signatures, so every existing caller is unchanged.
+
+### How the location is learned
+
+`internal/geoloc` asks one configurable endpoint (default ip-api.com, overridable with
+`SKYGATE_GEO_LOOKUP_URL`, disabled entirely with `SKYGATE_GEO_LOOKUP=off`), bounded at
+4 s, **never** asked about a LAN or tailnet address (a `100.64.x.x` address says nothing
+about where a relay is), and the answer is cached in the database for 30 days behind a
+12 h guard — one lookup per relay, not one per page render or sync tick. An unreadable
+address, a timeout and a refused lookup all mean «unknown», which the page says instead
+of rendering a place nobody verified.
+
+### Files
+
+`internal/db/migrations_v0_77_exit_location.go` (new, both chains),
+`internal/db/exit_location.go` (new), `internal/geoloc/geoloc.go` (new),
+`internal/feature/exit_rules/location_b312.go` (new),
+`internal/feature/admin/exit_node_location_b312.go` (new),
+`internal/feature/admin/exit_nodes.go`, `internal/prefixowner/prefixowner.go`,
+`internal/feature/exit_rules/sync.go`, `cmd/skygate/main.go`,
+`internal/handlers/templates/admin/exit_nodes.html`,
+`internal/i18n/catalog_exit_nodes.go`, `scripts/check_b312_exit_location.sh`.
+
+### Verification
+
+53 contracts in `scripts/check_b312_exit_location.sh`, plus
+`internal/geoloc/geoloc_test.go` (parsing, the tiers, known distances, which addresses
+are worth asking about), `internal/prefixowner/prefixowner_b312_test.go` (the
+preference is honoured, an unhealthy preference is refused, a healthy owner is never
+reshuffled, manual pins still win, `Assign` is unchanged),
+`internal/feature/exit_rules/location_b312_test.go` (the tiers and the distance
+tie-break, the stored auto location, a manual row untouched, offline stays unknown) and
+`internal/feature/admin/exit_node_location_b312_test.go` (save, clear, the four
+refusals, non-admin). The SQLite/PostgreSQL parity test now expects V77 and checks all
+six columns.
+
 ## v1.5.76 — the pre-auth key is issued again (and the gate can no longer park itself) (B311 + B299)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.75` → this tag · **Compatibility:** none —

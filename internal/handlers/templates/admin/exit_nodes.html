@@ -130,6 +130,7 @@
       <th>{{t "exit_nodes.form_ssh_target"}}</th>
       <th>{{t "exit_nodes.form_accept_routes"}}</th>
       <th>{{t "exit_nodes.routes"}}</th>
+      <th>{{t "exit_nodes.location.title"}}</th>
       <th>{{t "exit_nodes.health.state"}}</th>
       <th>{{t "exit_nodes.health.last_seen"}}</th>
       <th>{{t "exit_nodes.status"}}</th>
@@ -194,6 +195,25 @@
         {{if eq .AcceptRoutes 1}}<span class="tag" style="background:var(--info-bg);color:var(--info);border:1px solid var(--info)">true</span>
         {{else if eq .AcceptRoutes -1}}<span class="tag" style="background:var(--warning-bg);color:var(--warning);border:1px solid var(--warning)">false</span>
         {{else}}<span style="color:var(--text-subtle)">{{t "exit_nodes.form_accept_routes_default"}}</span>{{end}}
+      </td>
+      <td>
+        {{/* B312: WHERE this relay sits, and the one control that sets it. The value
+             is the priority the assignment engine uses when this relay becomes
+             unreachable (its prefixes move to the nearest working relay), so the
+             operator has to be able to see it AND correct it — the automatic lookup
+             needs a public address and a working network, and neither is guaranteed. */}}
+        {{if .LocationKnown}}
+          <span title="{{if eq .LocationSource "manual"}}{{t "exit_nodes.location.manual"}}{{else}}{{t "exit_nodes.location.auto"}}{{end}}">{{.Location}}</span>
+          {{if eq .LocationSource "manual"}}<span class="tag" style="background:var(--info-bg);color:var(--info);border:1px solid var(--info);font-size:10px;margin-left:4px">{{t "exit_nodes.location.manual"}}</span>{{end}}
+        {{else}}
+          <span style="color:var(--text-muted)">{{t "exit_nodes.location.unknown"}}</span>
+        {{end}}
+        <form method="post" action="/admin/exit-nodes/location" style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap">
+          <input type="hidden" name="hostname" value="{{.Hostname}}">
+          <input name="label" value="{{if .LocationKnown}}{{.Location}}{{end}}" placeholder="{{t "exit_nodes.location.field_ph"}}" style="width:150px;font-size:11px" title="{{t "exit_nodes.location.help"}}">
+          <input name="country" placeholder="{{t "exit_nodes.location.country"}}" style="width:80px;font-size:11px">
+          <button type="submit" class="btn btn-sm" style="font-size:11px">{{t "exit_nodes.location.save"}}</button>
+        </form>
       </td>
       <td>
         {{/* B273 (v1.5.18): show the APPROVED state next to the

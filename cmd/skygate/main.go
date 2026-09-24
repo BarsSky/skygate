@@ -2608,6 +2608,9 @@ func main() {
 	// the panel (previously no page issued a key carrying tag:exit-node,
 	// whose tagOwners owner is infra@<baseDomain>).
 	mux.Handle("POST /admin/exit-nodes/register", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeRegister)))
+	// B312 (v1.5.77): where a relay sits — shown on the page and used to prefer a
+	// nearby relay when an owner becomes unreachable.
+	mux.Handle("POST /admin/exit-nodes/location", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeLocation)))
 	mux.Handle("POST /admin/exit-nodes/untag", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeUntagAsExitNode)))
 	// 2026-08-09 v0.33.1.29 B81: "Use Tailscale IP" inline button
 	// on each /admin/exit-nodes table row. Sets exit_servers.ssh_target

@@ -75,6 +75,13 @@ type ExitNodeInfo struct {
 	SyncStatus   string   `json:"sync_status"`
 	Description  string   `json:"description"`
 	AcceptRoutes int      `json:"accept_routes"` // -1=false, 0=unset, 1=true
+	// B312: WHERE this relay sits (from exit_servers.location_*, V077). LocationKnown
+	// is false when nothing is known yet — the page then says "неизвестно" instead of
+	// rendering an empty cell that looks like a bug, and the location-priority
+	// fallback simply does not apply to this relay.
+	Location       string `json:"location"`
+	LocationSource string `json:"location_source"`
+	LocationKnown  bool   `json:"location_known"`
 	// 2026-07-15: v0.13.0 — health monitor fields. Populated
 	// from exit_node_health (the snapshot table updated by
 	// the background monitor) and matched on NodeID. Empty
@@ -208,6 +215,10 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var nodes []ExitNodeInfo
+	// B312: one read for every relay's location (the same map the assignment engine
+	// uses), so the table can show WHERE each relay is and the operator can tell
+	// "same country as the relay I just lost" at a glance.
+	exitLocations := db.ListExitLocations(s.dbc())
 	for _, e := range dbRows {
 		n := ExitNodeInfo{
 			NodeID:      e.NodeID,
@@ -250,6 +261,16 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		n.SSHKeyState = headscale.SSHKeyState(effectiveKey)
 		if problem := headscale.SSHKeyProblem(effectiveKey); problem != "" {
 			n.SSHKeyNote = problem + " — " + headscale.SSHKeyFixHint(effectiveKey)
+		}
+		// B312: the relay's place on the map (manual wins over the automatic lookup;
+		// an empty row stays "unknown" rather than pretending to be somewhere).
+		if loc, ok := exitLocations[strings.ToLower(strings.TrimSpace(e.Hostname))]; ok && loc.Known() {
+			n.Location = strings.TrimSpace(loc.Label)
+			if n.Location == "" {
+				n.Location = strings.TrimSpace(loc.Country)
+			}
+			n.LocationSource = strings.TrimSpace(loc.Source)
+			n.LocationKnown = true
 		}
 		nodes = append(nodes, n)
 	}

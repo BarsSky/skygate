@@ -68,6 +68,23 @@ type Assignment struct {
 // relay that is down cannot carry anything, and the prefix is reported
 // as reassigned rather than black-holed).
 func Assign(claims []Claim, healthy []string, existing []Existing) []Assignment {
+	return AssignWithPreference(claims, healthy, existing, nil)
+}
+
+// PreferFunc lets the caller steer the fallback for ONE prefix whose previous owner
+// can no longer serve it (B312: prefer the relay closest to the one that was lost).
+//
+// It is called only in the auto pass, only when the previous owner is NOT healthy
+// (or is too loaded) and the prefix is therefore being reassigned — never for a
+// manual pin, never for a prefix that is staying put, and never to override the
+// explicit majority. Returning "" (or a name outside `healthy`) leaves the decision to
+// the engine, so a preference that cannot be justified from data changes nothing.
+type PreferFunc func(prefix, previousOwner string, candidates []string) string
+
+// AssignWithPreference is Assign with the B312 location preference. Existing callers
+// keep using Assign; the engine's own order (least loaded, sticky) stays the default
+// and the final word whenever the preference names nobody usable.
+func AssignWithPreference(claims []Claim, healthy []string, existing []Existing, prefer PreferFunc) []Assignment {
 	healthySet := map[string]bool{}
 	for _, h := range healthy {
 		if h != "" {
@@ -205,6 +222,17 @@ func Assign(claims []Claim, healthy []string, existing []Existing) []Assignment 
 		}
 		if len(candidates) == 0 {
 			continue
+		}
+		// B312: when this prefix is being REASSIGNED (its previous owner is gone or
+		// overloaded), let the caller name the closest healthy relay. Only a name that
+		// is actually in the healthy set is honoured, so a preference can never pin a
+		// prefix to a relay that is down.
+		if e, ok := prev[p]; ok && e.ExitNode != "" && !healthySet[e.ExitNode] && prefer != nil {
+			if want := prefer(p, e.ExitNode, candidates); want != "" && healthySet[want] {
+				out = append(out, Assignment{Prefix: p, ExitNode: want, Source: "auto", Claims: g.total, Devices: len(g.devices)})
+				load[want]++
+				continue
+			}
 		}
 		best := candidates[0]
 		for _, c := range candidates {
@@ -399,6 +427,13 @@ func ViaForPrefix(target string, tagByPrefix map[string]string) string {
 // healthyRelays may be empty (headscale unreachable), in which case the
 // engine falls back to the relays the rules named.
 func Reconcile(d *sql.DB, healthyRelays []string) (inserted, changed int, err error) {
+	return ReconcileWithPreference(d, healthyRelays, nil)
+}
+
+// ReconcileWithPreference is Reconcile with the B312 fallback preference (see
+// PreferFunc): when a prefix's owner can no longer serve it, `prefer` may name the
+// closest healthy relay instead of letting the engine pick the least loaded one.
+func ReconcileWithPreference(d *sql.DB, healthyRelays []string, prefer PreferFunc) (inserted, changed int, err error) {
 	claims, err := LoadClaims(d)
 	if err != nil {
 		return 0, 0, err
@@ -407,7 +442,7 @@ func Reconcile(d *sql.DB, healthyRelays []string) (inserted, changed int, err er
 	if err != nil {
 		return 0, 0, err
 	}
-	as := Assign(claims, healthyRelays, existing)
+	as := AssignWithPreference(claims, healthyRelays, existing, prefer)
 
 	// B277: the global "everything through one relay" switch, and the manual pins
 	// that deliberately survive it. Order of authority: manual (the operator picked

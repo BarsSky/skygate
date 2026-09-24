@@ -178,6 +178,7 @@ var pgMigrations = []MigrationEntry{
 	{74, "v0.74 (B276.1): device_rules.all_devices — 'all my devices' as a live intent the propagation pass re-materialises", "migrations_v0_74_all_devices.go", migrateV074PG},
 	{75, "v0.75 (B-oidc-setup): oidc_settings — DB-backed OIDC config so the admin web UI can enable / configure OIDC without env-var edits", "migrations_v0_75_oidc_settings.go", migrateV075PG},
 	{76, "v0.76 (B305): monitor_events — the operator monitoring inbox (severity + dedup by fingerprint + ack/resolve)", "migrations_v0_76_monitor_events.go", migrateV076PG},
+	{77, "v0.77 (B312): exit_servers location — where a relay actually sits (shown on /admin/exit-nodes, used to prefer a nearby relay when an owner is unreachable)", "migrations_v0_77_exit_location.go", migrateV077PG},
 }
 
 // PGMigrations returns the list of migrations the current

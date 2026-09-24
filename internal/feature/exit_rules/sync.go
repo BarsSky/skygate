@@ -107,7 +107,16 @@ var (
 // Returns the (inserted, changed) counts the caller logs, so both sync paths report
 // the same numbers they used to.
 func (s *Service) reconcilePrefixOwnership() (int, int, error) {
-	ins, chg, err := prefixowner.Reconcile(s.dbc(), healthyExitRelaysForAssignment(s.dbc()))
+	// B312: fill the location of any relay that is due before the assignment runs, so
+	// the location-priority fallback has data on the very pass that needs it. The
+	// lookup has its own 12h guard, is skipped when SKYGATE_GEO_LOOKUP=off, and can
+	// never fail this pass (a relay simply stays "unknown").
+	s.RefreshExitNodeLocations()
+
+	// B312: and when a prefix's owner is unreachable, hand it to the CLOSEST healthy
+	// relay (same city → same country → shorter distance) instead of whichever relay
+	// the engine visits first — the operator's «приоритет по сходному расположению».
+	ins, chg, err := prefixowner.ReconcileWithPreference(s.dbc(), healthyExitRelaysForAssignment(s.dbc()), s.nearestRelayPreference())
 	if err != nil {
 		return ins, chg, err
 	}

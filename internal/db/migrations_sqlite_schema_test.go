@@ -59,18 +59,41 @@ func TestSQLiteSchemaComplete(t *testing.T) {
 		t.Fatalf("ApplyMigrations(SQLite): %v", err)
 	}
 
-	t.Run("chain reaches V076 like PostgreSQL", func(t *testing.T) {
+	t.Run("chain reaches V077 like PostgreSQL", func(t *testing.T) {
 		var maxV int
 		if err := sqlDB.QueryRow(
 			`SELECT COALESCE(MAX(version), 0) FROM applied_migrations`).Scan(&maxV); err != nil {
 			t.Fatalf("read max(version): %v", err)
 		}
-		// PostgreSQL's chain ends at 76 (v0.76 = monitor_events, B305). If
+		// PostgreSQL's chain ends at 77 (v0.77 = exit_servers location, B312). If
 		// SQLite lags behind, every table/column added by the missing tail is
 		// absent.
-		if maxV != 76 {
-			t.Errorf("SQLite migration chain ends at V%d, want V76 — the PG and SQLite "+
+		if maxV != 77 {
+			t.Errorf("SQLite migration chain ends at V%d, want V77 — the PG and SQLite "+
 				"chains have diverged again (see driver_sqlite.go sqliteMigrations)", maxV)
+		}
+	})
+
+	t.Run("exit_servers location columns exist (V077, B312)", func(t *testing.T) {
+		// V077 is the B312 location feature: /admin/exit-nodes renders these columns
+		// and the assignment engine uses them to prefer a nearby relay when an owner
+		// becomes unreachable. Missing columns on SQLite would make a native install
+		// silently lose both halves (the page would show nothing and the close-relay
+		// preference would never fire).
+		for _, col := range []string{
+			"location_label", "location_country", "location_lat",
+			"location_lon", "location_source", "location_checked_at",
+		} {
+			var present int
+			if err := sqlDB.QueryRow(
+				`SELECT COUNT(*) FROM pragma_table_info('exit_servers') WHERE name = ?`, col,
+			).Scan(&present); err != nil {
+				t.Fatalf("read exit_servers columns: %v", err)
+			}
+			if present != 1 {
+				t.Errorf("exit_servers.%s is missing on SQLite — the location feature "+
+					"would silently do nothing on a native install", col)
+			}
 		}
 	})
 
