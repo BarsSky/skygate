@@ -39,8 +39,10 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"skygate/internal/db"
@@ -180,6 +182,154 @@ func Validate(raw string) (string, error) {
 		}
 	}
 	return strings.ToLower(bare), nil
+}
+
+// ---------------------------------------------------------------------------
+// B315 — the METRICS endpoint (a second, independent knob)
+// ---------------------------------------------------------------------------
+//
+// # WHY A SECOND KNOB AND NOT A SECOND USE OF THE FIRST ONE
+//
+// `derp.probe_host` answers "which ADDRESS do we dial for the relay" — the
+// probes keep the relay's public name in TLS SNI and connect to that address.
+// That is enough for the TCP/TLS probes, and it can never be enough for
+// derper's `/debug/*` endpoints, because those are gated by
+// `tsweb.AllowDebugAccess`: the answer depends on the SOURCE IP of the request,
+// not on which address it reached. A request from the skygate container arrives
+// with the docker bridge address as its source no matter which address it was
+// sent to, so `GET /debug/vars` is answered `403 debug access denied` — measured
+// live on the agent VM: the same request from the host's own loopback returns
+// 200 with 6 KB of metrics.
+//
+// The only fix that does not weaken the relay is to have something that IS
+// loopback fetch the metrics and hand them to the container. skygate ships that
+// something (`skygate derp-metrics-proxy`, a path-allow-listed reverse proxy that
+// runs on the host and speaks TLS to `127.0.0.1:443`), and this package owns the
+// operator-facing knob that points the container at it.
+//
+// The value is therefore a BASE URL (scheme + host + optional port/base path),
+// not a bare address, and it is resolved per page render so the form on
+// /admin/derp takes effect without a restart or a container recreate — exactly
+// the B296 rule.
+//
+//	db    `derp.debug_url` — written by the /admin/derp form;
+//	env   `SKYGATE_DERP_DEBUG_URL` — the bootstrap/unattended default;
+//	default "" — no proxy: the rich metrics stay unavailable and the page says so
+//	      instead of drawing zeros that look like measurements.
+
+const (
+	// DebugSettingKey is the global_settings row behind the metrics-endpoint form.
+	DebugSettingKey = "derp.debug_url"
+
+	// DebugEnvKey is the .env/bootstrap variable for the same value.
+	DebugEnvKey = "SKYGATE_DERP_DEBUG_URL"
+)
+
+// EnvDebugURL returns the .env/bootstrap metrics endpoint, trimmed ("" when unset).
+func EnvDebugURL() string {
+	return strings.TrimSpace(os.Getenv(DebugEnvKey))
+}
+
+// ResolveDebug returns the effective metrics endpoint plus its source.
+//
+// Order: DB override > env > default (""). An empty result means "no proxy is
+// configured" — a legal, honest state, not an error.
+func ResolveDebug(d *sql.DB) Resolution {
+	if d != nil {
+		if v, err := db.GetGlobalSetting(d, DebugSettingKey, ""); err == nil {
+			if v = strings.TrimSpace(v); v != "" {
+				return Resolution{Host: v, Source: SourceDB}
+			}
+		}
+	}
+	if v := EnvDebugURL(); v != "" {
+		return Resolution{Host: v, Source: SourceEnv}
+	}
+	return Resolution{Host: "", Source: SourceDefault}
+}
+
+// DebugBaseURL is ResolveDebug(d).Host — the base URL every metrics scrape is
+// appended to (no trailing slash).
+func DebugBaseURL(d *sql.DB) string {
+	return ResolveDebug(d).Host
+}
+
+// SaveDebug validates and stores the metrics endpoint. An EMPTY value clears the
+// row so the env/default layer takes over again (the "Очистить" button).
+func SaveDebug(d *sql.DB, raw string) error {
+	if d == nil {
+		return fmt.Errorf("derpcfg: no database handle")
+	}
+	v, err := ValidateDebugURL(raw)
+	if err != nil {
+		return err
+	}
+	return db.SetGlobalSetting(d, DebugSettingKey, v)
+}
+
+// ValidateDebugURL normalises an operator-entered metrics endpoint.
+//
+// Accepted:
+//
+//	http://172.18.0.1:8767        the plain-HTTP loopback proxy (the default shape)
+//	http://host.docker.internal:8767/metrics
+//	https://metrics.example.com   a proxy that terminates TLS itself
+//	172.18.0.1:8767               shorthand — http:// is assumed
+//
+// Refused, each with its own Code so the page can say WHY:
+//
+//	spaces   "http://a b"            — one URL, no whitespace
+//	scheme   "ftp://relay.example"   — only http/https are dialled
+//	port     "http://host:99999"     — not a port
+//	invalid  anything unparseable (no host, userinfo, query/fragment)
+//
+// An empty string is VALID and means "clear the override".
+func ValidateDebugURL(raw string) (string, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return "", nil
+	}
+	if strings.ContainsAny(v, " \t\r\n") {
+		return "", &ValidationError{Code: "spaces", Raw: raw}
+	}
+	// A bare "host[:port][/path]" is the shape an operator copies off the proxy's
+	// own start-up line; assume the proxy's default scheme (plain HTTP — the
+	// container-to-host hop is inside the docker bridge, see the package doc).
+	if !strings.Contains(v, "://") {
+		v = "http://" + strings.TrimPrefix(v, "//")
+	}
+	u, err := url.Parse(v)
+	if err != nil {
+		// url.Parse rejects a malformed port itself ("invalid port \":x\" after
+		// host"), and that is the one parse failure with a specific, actionable
+		// advice — keep it distinguishable from "this is not a URL at all".
+		if strings.Contains(err.Error(), "invalid port") {
+			return "", &ValidationError{Code: "port", Raw: raw}
+		}
+		return "", &ValidationError{Code: "invalid", Raw: raw}
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+	default:
+		return "", &ValidationError{Code: "scheme", Raw: raw}
+	}
+	if u.Host == "" {
+		return "", &ValidationError{Code: "invalid", Raw: raw}
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", &ValidationError{Code: "invalid", Raw: raw}
+	}
+	if p := u.Port(); p != "" {
+		n, perr := strconv.Atoi(p)
+		if perr != nil || n < 1 || n > 65535 {
+			return "", &ValidationError{Code: "port", Raw: raw}
+		}
+	}
+	base := strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
+	if path := strings.TrimSuffix(u.EscapedPath(), "/"); path != "" && path != "/" {
+		base += path
+	}
+	return base, nil
 }
 
 // allNumericLabels reports whether every dot-separated label is digits only

@@ -106,10 +106,10 @@ const (
 	// A bare request is therefore counted as "not_stun" and never answered: the
 	// tile showed "STUN UDP :3478 closed" on a relay whose STUN answers real
 	// clients (netcheck scores every region through it).
-	stunAttrSoftware         uint16 = 0x8022
-	stunAttrFingerprint      uint16 = 0x8028
-	stunSoftwareValue               = "tailnode" // 8 bytes: no padding
-	stunFingerprintXORMask   uint32 = 0x5354554e
+	stunAttrSoftware       uint16 = 0x8022
+	stunAttrFingerprint    uint16 = 0x8028
+	stunSoftwareValue             = "tailnode" // 8 bytes: no padding
+	stunFingerprintXORMask uint32 = 0x5354554e
 )
 
 // STUNProbeResult is the outcome of one UDP STUN round trip.
@@ -122,6 +122,12 @@ const (
 type STUNProbeResult struct {
 	RTT           time.Duration
 	ReflexiveAddr string
+	// ReplyFrom is the source address the datagram actually arrived from. It is
+	// normally the address that was dialled, and DIFFERS when something between
+	// the container and the relay rewrites the path (a DNAT to the docker bridge
+	// gateway is the live case) — which is exactly the situation that makes a
+	// CONNECTED UDP socket drop the reply (B315, see probeSTUNShape).
+	ReplyFrom string
 }
 
 // buildSTUNBindingRequest returns an RFC 5389 Binding Request plus
@@ -355,6 +361,13 @@ func probeSTUNForStatus(st *DerpStatus, db *sql.DB, derpHost, stunPort string) {
 		st.STUNRTT = fmt.Sprintf("%d ms", res.RTT.Milliseconds())
 		st.STUNReflex = res.ReflexiveAddr
 		st.STUNErr = ""
+		// B315: remember the address that answered, and only when it is NOT the
+		// address we dialled. A relay behind a DNAT answers from the rewired
+		// source; saying so is what turns "the tile is green but the address is
+		// odd" into a fact the operator can check.
+		if res.ReplyFrom != "" && res.ReplyFrom != net.JoinHostPort(host, stunPort) {
+			st.STUNReplyFrom = res.ReplyFrom
+		}
 		return
 	}
 	st.STUNListening = false
@@ -484,18 +497,55 @@ func probeSTUNUDP(addr string, timeout time.Duration) (STUNProbeResult, error) {
 
 // probeSTUNShape sends one already-built request and waits for the matching
 // Binding Success Response.
+//
+// B315 — WHY AN UNCONNECTED SOCKET (a connected one silently loses the reply on a
+// NAT'd path, and that is a live production state, not a theory):
+//
+// The pre-B315 version used `net.DialTimeout("udp", addr, …)`, i.e. a CONNECTED
+// UDP socket. Linux only delivers a datagram to a connected UDP socket when its
+// SOURCE matches the peer it was connected to. Where the container's path to the
+// relay is rewritten on the way (the operator's host DNATs :3478 to the docker
+// bridge gateway), the reply arrives with the rewritten source — and the kernel
+// drops it before Go ever sees it, so the probe reports `i/o timeout` on a relay
+// that answers instantly. Measured on the agent VM, same network namespace, same
+// instant:
+//
+//	unconnected (python)  → 192.168.13.69:3478  REPLY 0x0101, 44 bytes, source 172.18.0.1
+//	connected   (Go B307) → 192.168.13.69:3478  read udp 172.18.0.3:…->192.168.13.69:3478: i/o timeout
+//	connected   (Go B307) → 172.18.0.1:3478     REPLY 0x0101, rtt 198µs
+//
+// The red STUN tile the operator reported was therefore partly skygate's own
+// instrument lying about the relay.
+//
+// The transaction id (a fresh 96-bit random value per attempt, compared byte for
+// byte) is what makes an unconnected socket as safe as a connected one: a
+// datagram from anyone else — a stale reply, a spoofed packet, a different
+// server — fails `parseSTUNBindingResponse` and is simply not accepted, and the
+// loop keeps waiting until the deadline. `ReplyFrom` records who actually
+// answered, so the page can say when that differs from the address dialled.
 func probeSTUNShape(addr string, pkt, txID []byte, timeout time.Duration) (STUNProbeResult, error) {
 	var res STUNProbeResult
-	conn, err := net.DialTimeout("udp", addr, timeout)
+	remote, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
-		return res, fmt.Errorf("stun: dial %s: %w", addr, err)
+		return res, fmt.Errorf("stun: resolve %s: %w", addr, err)
+	}
+	// Bind the family of the target explicitly, so a dual-stack wildcard socket
+	// cannot turn the peer into an IPv4-mapped address (and so the error text a
+	// red tile shows names the address the operator configured).
+	network := "udp6"
+	if remote.IP.To4() != nil {
+		network = "udp4"
+	}
+	conn, err := net.ListenUDP(network, nil)
+	if err != nil {
+		return res, fmt.Errorf("stun: socket: %w", err)
 	}
 	defer conn.Close()
 	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return res, fmt.Errorf("stun: deadline: %w", err)
 	}
 	start := time.Now()
-	if _, err := conn.Write(pkt); err != nil {
+	if _, err := conn.WriteToUDP(pkt, remote); err != nil {
 		return res, fmt.Errorf("stun: write: %w", err)
 	}
 	// A STUN server answers with a single datagram; anything
@@ -503,7 +553,7 @@ func probeSTUNShape(addr string, pkt, txID []byte, timeout time.Duration) (STUNP
 	// frame or garbage, and both fail the parse below.
 	buf := make([]byte, 1500)
 	for {
-		n, err := conn.Read(buf)
+		n, from, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			return res, fmt.Errorf("stun: read (no UDP response from %s): %w", addr, err)
 		}
@@ -519,6 +569,9 @@ func probeSTUNShape(addr string, pkt, txID []byte, timeout time.Duration) (STUNP
 		}
 		res.RTT = rtt
 		res.ReflexiveAddr = refl
+		if from != nil {
+			res.ReplyFrom = from.String()
+		}
 		return res, nil
 	}
 }

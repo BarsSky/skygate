@@ -12,6 +12,131 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.80 — the relay's metrics reach the container, and the page stops inventing zeros (B315)
+
+**Date:** 2026-09-24 · **Base:** `v1.5.79` → this tag · **Compatibility:** none — no
+schema change, no migration, no config change. The new knob
+(`derp.debug_url` / `SKYGATE_DERP_DEBUG_URL`) is **optional**: with it unset the page
+behaves as before except that the traffic tiles now render «—» instead of `0` and say
+why, and the STUN tile names its vantage point.
+
+### The report
+
+> «по DERP все еще не доступно на VM agent он заявляет публичный адрес - адрес
+> локальной машины а не публичный адрес домена derp.example.com, и также висит
+> предупреждение о падаваемых метриках что никак не управляется и не объясняется
+> для администратора. Найди причину и предложи варианты»
+
+### Root cause 1 — the metrics were never going to arrive
+
+derper serves `/debug/*` (traffic, clients, current connections, byte and packet
+counters, and the STUN counters) through upstream `tsweb.AllowDebugAccess`, which
+admits **loopback and tailnet sources only** and answers everything else
+`403 debug access denied`. The verdict is made on the request's **source** address,
+so no amount of re-dialling from the container could change it — the B296
+probe-host knob solves a *different* half (making the probes **reach** the relay).
+
+Measured on the agent VM:
+
+| from | `GET /debug/vars` |
+|---|---|
+| the host's own loopback | `200`, ~6.3 KB of JSON |
+| the skygate container | `403 debug access denied` |
+
+The page's reaction was to draw `0` in four traffic tiles — numbers that look like
+measurements — beside one warning banner that named neither a cause nor a fix. That
+is exactly what the operator described.
+
+### Root cause 2 — "public IP" could be a private one
+
+`resolvePublicDERPIP`'s last resort is `detectEgressIP()`, i.e. **the skygate
+container's own outbound address** (normally `172.18.0.x` on the docker bridge), and
+the template printed it under the label «Публичный IP». When DNS did not resolve the
+relay's name the row therefore answered the question "where do clients connect" with
+an address that is unreachable from the internet.
+
+### What changed
+
+* **A metrics endpoint, and the bridge to serve it.** `skygate derp-metrics-proxy`
+  runs **on the host**, dials the relay's loopback over TLS (so derper sees a
+  loopback source and admits it) and re-serves five read-only paths to the
+  container: `/debug/`, `/debug/vars`, `/active-conn`, `/all-recent`, `/healthz`.
+  It ships **inside the binary that is already deployed** — no new dependency, no new
+  image, no compose edit. The forwarded paths are a **closed allow-list** (the
+  upstream also carries the DERP protocol, so "forward everything" would republish
+  the relay on a plain-HTTP port), foreign client sources are refused even on a
+  `0.0.0.0` bind, and a failed upstream TLS handshake names `--server-name` /
+  `--insecure` in its response body.
+* **The knob.** `derp.debug_url` (global setting, written by the new card) beats
+  `SKYGATE_DERP_DEBUG_URL` (.env) beats none, re-resolved on **every render** — so
+  saving applies on the next refresh with no restart and no container recreate (the
+  B296 rule). Refusals carry their own code (`spaces` / `scheme` / `port` /
+  `invalid`) so the page can say what to fix.
+* **The verdict is explicit.** `MetricsAvailable` / `MetricsErrCode`
+  (`unconfigured` / `denied` / `unreachable` / `badstatus` / `badbody`) /
+  `MetricsErrDetail` / `MetricsVia` / `MetricsHTTPStatus` / `MetricsBytes`, and
+  `httpGetViaStatus` keeps the status code — a `502` from a broken bridge is no
+  longer reported as a `403` from the relay. The tiles render «—» plus one line
+  saying the values were **not measured**.
+* **`parseDerperVars` now requires the `derp` block.** The old tail compared an int
+  field against zero with `>=`, which is true for **any** JSON object, so an empty
+  `{}` still produced `Running: active` next to twelve zeros.
+* **The STUN tile names its vantage point.** With metrics readable it reports
+  derper's **own** `stun.counter_requests` (`success` and `not_stun`) — what clients
+  experience. Only without them does it fall back to the B265 UDP round trip from
+  inside the container, whose egress is demonstrably not the clients' path (measured:
+  the container timed out while clients scored the relay fine).
+* **The STUN probe no longer lies about a NAT'd path.** The probe used
+  `net.DialTimeout("udp", …)` — a **connected** UDP socket — and Linux only delivers a
+  datagram to a connected UDP socket when its **source** matches the peer it was
+  connected to. Where the container's path to the relay rewrites the address (this host
+  DNATs `:3478` onto the docker bridge gateway) the reply arrives from the rewritten
+  source and the kernel drops it before Go sees it, so the tile read «UDP-проба не
+  прошла» on a relay that had answered in 28 ms. Measured in the same network namespace
+  at the same instant: unconnected → `REPLY`, source `172.18.0.1`; connected → `i/o
+  timeout`; connected to `172.18.0.1:3478` → `REPLY`, 198 µs. The probe now uses an
+  unconnected socket and accepts a reply from any source — the fresh 96-bit transaction
+  id, compared byte for byte, is what proves the datagram is ours (a foreign one is still
+  rejected, pinned by a test) — and when the answering address differs from the one
+  dialled the tile says so («ответ пришёл с …»).
+* **The two addresses are separated.** An egress answer is flagged
+  (`WhiteIPFallback`) and rendered as «не удалось определить» **with the reason**
+  instead of as the public address, and the address skygate itself dials gets its own
+  row («Адрес связи из контейнера») with the layer it came from.
+* **The card is actionable.** `POST /admin/derp/metrics-endpoint` (admin-only,
+  audited) offers **save**, **clear** and **test without saving**, and prints the
+  exact host commands for both install kinds.
+
+### Also fixed (drive-by)
+
+`scripts/check_b237_2.sh` contracts **E.2/E.3** were the AGENTS trap-#9 anti-pattern
+(`go test … | grep -q '^ok'` under `pipefail`): `grep -q` exits at the first match, the
+still-writing `go test` dies with SIGPIPE (141) and the pipeline is reported FAILED even
+though the tests passed. It fired exactly once, during a loaded gate run, as a rotating
+`FAIL E.3` that passed standalone — the documented symptom of that class. Both sites now
+capture first and match after, so the contract is unchanged and deterministic.
+
+### Files
+
+`internal/derpcfg/derpcfg.go` (+ `derpcfg_b315_test.go`),
+`internal/derpmetricsproxy/proxy.go` (+ `proxy_b315_test.go`),
+`cmd/skygate/derp_metrics_proxy.go`, `cmd/skygate/main.go`,
+`internal/feature/admin/derp.go`, `internal/feature/admin/derp_metrics.go`
+(+ `derp_metrics_b315_test.go`),
+`internal/handlers/templates/admin/derp.html`, `internal/i18n/catalog_derp.go`,
+`scripts/check_b315_derp_metrics_endpoint.sh`.
+
+### Verification
+
+50 contracts in `scripts/check_b315_derp_metrics_endpoint.sh` (the two-layer knob and
+its refusal codes; the read path keeping the relay for liveness probes; the explicit
+verdict; the vantage-point rule; the address rows; the bridge's closed path and client
+allow-lists; the three controls and their audit; RU+EN parity), the Go tests above
+(including a real TLS upstream behind a real proxy process: allowed paths forwarded,
+other paths refused **before** reaching the relay, `/healthz` free of the relay, and a
+certificate mismatch whose body names both flags), and the still-true B265 contract H
+(the debug-denied caveat is still rendered).
+
 ## v1.5.79 — the sidebar grouped the way you asked (B314)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.78` → this tag · **Compatibility:** none —

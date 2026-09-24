@@ -167,8 +167,17 @@ else
 fi
 
 # E.2 B237.2 unit tests pass
+#
+# 2026-09-24 (B315, while verifying the DERP page): the two `go test … | grep -q
+# '^ok'` sites below are the AGENTS trap-#9 anti-pattern — `grep -q` exits at the
+# first match and closes the pipe, the still-writing `go test` dies with SIGPIPE
+# (141) and `pipefail` (set at the top of this file) turns that into a FAILED
+# pipeline even though the tests passed. It fired exactly once, during a loaded
+# gate run, as a rotating "FAIL E.3" that passed standalone — the reported symptom
+# of that class. Capture first, then match.
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s -run 'ResolvePublicDERPIP' ./internal/feature/admin/... 2>/dev/null | grep -q '^ok'; then
+    OUT="$(CGO_ENABLED=0 go test -short -count=1 -timeout 180s -run 'ResolvePublicDERPIP' ./internal/feature/admin/... 2>&1)"
+    if grep -q '^ok' <<< "$OUT"; then
         ok "E.2 B237.2 unit tests pass"
     else
         bad "E.2 B237.2 unit tests failed"
@@ -177,9 +186,10 @@ else
     echo "  SKIP  E.2 B237.2 unit tests (no go in PATH)"
 fi
 
-# E.3 TestTemplateArgsMatchCatalog regression guard
+# E.3 TestTemplateArgsMatchCatalog regression guard (same capture-then-match rule)
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s -run TestTemplateArgsMatchCatalog ./internal/handlers/... 2>/dev/null | grep -q '^ok'; then
+    OUT="$(CGO_ENABLED=0 go test -short -count=1 -timeout 180s -run TestTemplateArgsMatchCatalog ./internal/handlers/... 2>&1)"
+    if grep -q '^ok' <<< "$OUT"; then
         ok "E.3 TestTemplateArgsMatchCatalog passes"
     else
         bad "E.3 TestTemplateArgsMatchCatalog failed"

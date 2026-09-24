@@ -301,6 +301,22 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "derp-metrics-proxy":
+			// B315 — the host-side loopback bridge for derper's
+			// /debug/* endpoints. derper admits loopback (and
+			// tailnet) sources only, so the container always got
+			// `403 debug access denied` and /admin/derp drew zeros
+			// where the metrics should be. This runs ON THE HOST and
+			// re-serves five read-only debug paths to the bridge.
+			// See internal/derpmetricsproxy.
+			if err := runDerpMetricsProxy(os.Args[2:]); err != nil {
+				if err == flag.ErrHelp {
+					return
+				}
+				fmt.Fprintf(os.Stderr, "derp-metrics-proxy failed: %v\n", err)
+				os.Exit(2)
+			}
+			return
 		case "regapi-credentials":
 			// B237.21 (v1.5.2+) — CLI mirror of the
 			// /admin/ha "External DNS" form. Pre-B237.21
@@ -431,6 +447,7 @@ func main() {
 			fmt.Println("  backup-verify-fail      mark the latest verify_backup run as fail (B142)")
 			fmt.Println("  backup-show-config      print backup-related config as key=value pairs")
 			fmt.Println("  cleanup-smoke-meshes    delete smoke-mesh cruft (B143) — one-shot manual trigger")
+			fmt.Println("  derp-metrics-proxy      serve derper's loopback-only /debug endpoints to the container (B315)")
 			fmt.Println("  cluster <verb>          cluster CLI: invite / join / nodes / dbs / audit / failover / heartbeat-daemon (B205)")
 			fmt.Println("  regapi-credentials     External DNS provider creds: set / show / test / delete (B237.21)")
 			fmt.Println("  oidc-export            Print the OIDC config headscale needs (env block or headscale block) (B304)")
@@ -2013,6 +2030,12 @@ func main() {
 	// row and redirects with ?ok=/?err= (a plain form POST must never get a
 	// JSON body back — the B180 raw-JSON regression).
 	mux.Handle("POST /admin/derp/cert-sync/run", authMW(http.HandlerFunc(adminSvc.PostAdminDerpCertSyncRun)))
+	// B315 — the metrics endpoint (derper's /debug/vars is loopback/tailnet only,
+	// so the container reads the metrics through the operator's loopback bridge;
+	// see internal/derpmetricsproxy). One form, three actions: save / clear /
+	// test-without-saving. Registered on /admin/derp because that is the page that
+	// shows the warning this control answers.
+	mux.Handle("POST /admin/derp/metrics-endpoint", authMW(http.HandlerFunc(adminSvc.PostAdminDerpMetricsEndpoint)))
 	// 2026-07-15: Этап 14 v14 (v0.11.0) — runtime-editable
 	// integration config. The /admin/integrations landing page
 	// shows the current state of every pluggable component;

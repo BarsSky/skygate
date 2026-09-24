@@ -32,6 +32,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"skygate/internal/derpcfg"
 )
 
 // ---------- HTTP entry points ----------
@@ -59,11 +61,24 @@ func (s *Service) GetAdminDERP(w http.ResponseWriter, r *http.Request) {
 	// Flash from the "Sync now" POST (redirect + ?ok=/?err=; never a JSON
 	// body — see the B180 raw-JSON regression).
 	flash, flashErr := r.URL.Query().Get("ok"), r.URL.Query().Get("err")
+	// B315: the metrics-endpoint card's own flash (save/clear/test + validation).
+	// Kept separate from ?ok=/?err= above so the cert-sync flash and the metrics
+	// flash can never render in each other's card.
+	q := r.URL.Query()
 	s.Backend.RenderWithLayout(w, r, "admin/derp.html", c, map[string]any{
-		"DerpStatus": s.collectDerpStatus(),
-		"CertSync":   certSync,
-		"FlashOk":    flash,
-		"FlashErr":   flashErr,
+		"DerpStatus":   s.collectDerpStatus(),
+		"CertSync":     certSync,
+		"MetricsSaved": q.Get("mok"),
+		"MetricsErr":   q.Get("merr"),
+		"MetricsTest":  q.Get("mt"),
+		"MetricsTestD": q.Get("mtd"),
+		"MetricsTestS": q.Get("mts"),
+		"MetricsTestB": q.Get("mtb"),
+		"MetricsTestA": q.Get("mta"),
+		"MetricsTestU": q.Get("mtu"),
+		"MetricsTestN": q.Get("mtn"),
+		"FlashOk":      flash,
+		"FlashErr":     flashErr,
 	})
 }
 
@@ -99,12 +114,51 @@ type DerpStatus struct {
 	// in that case and the page says so instead of rendering zeros
 	// as if they were measurements.
 	DebugAccessDenied bool
-	Version           string
-	Hostname          string
-	RegionCode        string
-	RegionID          string
-	RegionName        string
-	WhiteIP           string
+
+	// ---- B315: WHERE the metrics came from, and whether they exist ----
+	//
+	// Pre-B315 the page had one bit for this (DebugAccessDenied) and drew `0` in
+	// every traffic tile otherwise, which is the worst possible rendering: a
+	// number that looks measured. These fields let the page state the source,
+	// name the failure, and print the fix.
+	MetricsEndpoint    string // effective base URL the metrics are read from ("" = none configured)
+	MetricsEndpointSrc string // db | env | default
+	MetricsEndpointEnv string // SKYGATE_DERP_DEBUG_URL — what a .env edit would (not) change
+	MetricsVia         string // proxy | relay — which base served THIS render
+	MetricsAvailable   bool   // /debug/vars answered 200 with a real derper block
+	MetricsErrCode     string // unconfigured | denied | unreachable | badstatus | badbody
+	MetricsErrDetail   string // the operator-readable why (already trimmed)
+	MetricsHTTPStatus  int    // the status /debug/vars answered with (0 = no answer)
+	MetricsBytes       int    // body size of the successful /debug/vars read
+
+	// STUNSource is the vantage point the STUN verdict comes from:
+	//   relay     — derper's own `stun.counter_requests` (B315, needs the
+	//               metrics endpoint; this is what CLIENTS experience)
+	//   container — a real UDP Binding Request round trip from inside the
+	//               skygate container (B265; the only option without metrics)
+	// The two disagree in practice — the container's UDP egress is not the
+	// clients' path — so the tile must say which one it is showing.
+	STUNSource  string
+	STUNNotSTUN int
+	// STUNReplyFrom is set only when the STUN reply arrived from an address other
+	// than the one dialled — a NAT/DNAT on the container's path to the relay
+	// (B315). It is the reason a connected socket would have shown "closed".
+	STUNReplyFrom string
+
+	// ProbeDialAddr is the address this container dials to reach the relay
+	// (derpcfg: DB override > SKYGATE_DERP_PROBE_HOST > none) and the layer it
+	// came from. Shown next to the public address so "the page says a private
+	// address" is never ambiguous: one row is "what clients dial", the other is
+	// "what skygate dials from inside".
+	ProbeDialAddr   string
+	ProbeDialSource string
+
+	Version    string
+	Hostname   string
+	RegionCode string
+	RegionID   string
+	RegionName string
+	WhiteIP    string
 	// WhiteIPSource records WHERE the WhiteIP came from:
 	// "dns" (net.LookupHost of the derper's hostname — the
 	// public IP Tailscale clients actually dial), "egress"
@@ -117,21 +171,26 @@ type DerpStatus struct {
 	// the /admin/derp template to show a small annotation
 	// so the operator knows which IP they're looking at.
 	WhiteIPSource string
-	UpTime        string
-	StartedAt     string
-	PID           string
-	Memory        string
-	GoVersion     string
-	Machine       string
-	Connections   int
-	Accepts       int
-	BytesIn       int64
-	BytesOut      int64
-	PacketsIn     int
-	PacketsOut    int
-	Clients       int
-	STUNRequests  int
-	RecentLog     string
+	// WhiteIPFallback is true when WhiteIP is NOT a public address: it came from
+	// `detectEgressIP()` (this container's own outbound interface), which is the
+	// last-resort branch of resolvePublicDERPIP. The template must render that as
+	// "could not be determined", never as «Публичный IP» (B315).
+	WhiteIPFallback bool
+	UpTime          string
+	StartedAt       string
+	PID             string
+	Memory          string
+	GoVersion       string
+	Machine         string
+	Connections     int
+	Accepts         int
+	BytesIn         int64
+	BytesOut        int64
+	PacketsIn       int
+	PacketsOut      int
+	Clients         int
+	STUNRequests    int
+	RecentLog       string
 
 	// Active connections to derper (src IP, reverse DNS).
 	ActiveTCP []DerpPeer
@@ -279,46 +338,101 @@ func (s *Service) collectDerpStatus() DerpStatus {
 			log.Printf("derp: status probes dial %s but speak %s (the hostname does not resolve to the relay from inside this container — see SKYGATE_DERP_PROBE_HOST)", dialAddr, derpHost)
 		}
 	}
+	// B315: record the dial target and its layer on the status itself, so the page
+	// can show "what skygate dials from inside" separately from "what clients
+	// dial". Without that split, a private address next to the words "public IP"
+	// reads as a wrong value instead of what it is (the container's own path).
+	st.ProbeDialAddr = dialAddr
+	st.ProbeDialSource = string(derpcfg.Resolve(s.dbc()).Source)
+
+	// B315: the rich metrics come from the operator's metrics endpoint when one is
+	// configured, and from the relay itself otherwise. derper answers `/debug/*`
+	// with 403 to every non-loopback source, so the "otherwise" branch is the
+	// normal case on a hardened deployment — which is exactly why the page now
+	// says so and prints the fix instead of drawing zeros.
+	mep := resolveMetricsEndpoint(s.dbc(), derpURL)
+	st.MetricsEndpoint = mep.Base
+	st.MetricsEndpointSrc = string(mep.Source)
+	st.MetricsEndpointEnv = mep.Env
+	metricsBase, metricsDial := derpURL, dialAddr
+	if mep.Base != "" {
+		metricsBase, metricsDial = mep.Base, ""
+		st.MetricsVia = "proxy"
+	} else {
+		st.MetricsVia = "relay"
+	}
+	mget := func(path string) ([]byte, int, error) {
+		return httpGetViaStatus(metricsBase+path, metricsDial, 3*time.Second)
+	}
 	get := func(path string) ([]byte, error) {
 		return httpGetVia(derpURL+path, dialAddr, 3*time.Second)
 	}
 
 	// 1. /debug/  -> HTML, contains Uptime, Version, etc.
-	if html, err := get("/debug/"); err == nil {
+	if html, status, err := mget("/debug/"); err == nil && status == http.StatusOK {
 		parseDerperDebugHTML(&st, html)
 	}
 
 	// 2. /debug/vars -> JSON, real metrics
-	if body, err := get("/debug/vars"); err == nil {
-		if isDebugAccessDenied(body) {
-			st.DebugAccessDenied = true
+	varsBody, varsStatus, varsErr := mget("/debug/vars")
+	st.MetricsHTTPStatus = varsStatus
+	switch {
+	case varsErr != nil:
+		st.MetricsErrCode = "unreachable"
+		st.MetricsErrDetail = trimSTUNErr(varsErr.Error())
+	case isDebugAccessDenied(varsBody):
+		st.DebugAccessDenied = true
+		st.MetricsErrCode = "denied"
+		st.MetricsErrDetail = "the relay answered 403 debug access denied to this container's source address"
+		if mep.Base == "" {
+			st.MetricsErrCode = "unconfigured"
+			st.MetricsErrDetail = "no metrics endpoint is configured, and the relay refuses this container's source address"
+		}
+	case varsStatus != http.StatusOK:
+		st.MetricsErrCode = "badstatus"
+		st.MetricsErrDetail = metricsErrorDetail(varsStatus, varsBody, mep.Base)
+	default:
+		if parseDerperVars(&st, varsBody) {
+			st.MetricsAvailable = true
+			st.MetricsBytes = len(varsBody)
+			st.MetricsErrCode, st.MetricsErrDetail = "", ""
 		} else {
-			parseDerperVars(&st, body)
+			st.MetricsErrCode = "badbody"
+			st.MetricsErrDetail = metricsErrorDetail(varsStatus, varsBody, mep.Base)
 		}
 	}
 
-	// 3. Plain / -> quick liveness check
+	// 3. Plain / -> quick liveness check. Always against the RELAY: a metrics
+	//    endpoint forwards a closed set of debug paths and would 404 here, and the
+	//    socket/most-of-the-page questions are about the relay, not about the proxy.
 	if _, err := get("/"); err == nil {
 		st.SocketListening = true
 	}
 
-	// 4. STUN UDP check (B265).
-	//    Pre-B265 this step read `stun.counter_requests.success`
-	//    from /debug/vars — the same URL step 2 already failed on
-	//    (403 "debug access denied" for the container's source
-	//    IP). The tile therefore rendered "closed" (red) on every
-	//    deployment where the operator hardened derper by leaving
-	//    --debug off, even though STUN was healthy. B265 replaces
-	//    the counter-read with a real RFC 5389 Binding Request
-	//    round trip over UDP — the same packet Tailscale clients
-	//    use to score a relay for home-DERP selection, so the tile
-	//    now means "clients on this path can reach STUN".
-	if !st.STUNListening {
+	// 4. STUN check.
+	//    Pre-B265 this step read `stun.counter_requests.success` from /debug/vars —
+	//    the same URL step 2 already failed on (403 for the container's source IP).
+	//    B265 replaced the counter-read with a real RFC 5389 Binding Request round
+	//    trip over UDP. B315 makes the choice explicit instead of either/or:
+	//      * metrics available → use derper's OWN counters. They answer the
+	//        question the tile is named after ("can clients use this relay's
+	//        STUN") with what the relay actually saw, and they are immune to the
+	//        container's own UDP egress being blackholed — which is a real,
+	//        measured state on the agent VM: the container's UDP probe times out
+	//        while clients score the relay fine.
+	//      * metrics unavailable → fall back to the container round trip (B265)
+	//        and label the tile with that vantage point.
+	if st.MetricsAvailable {
+		st.STUNSource = "relay"
+		st.STUNListening = st.STUNRequests > 0
+		st.STUNBlocked = false
+	} else if !st.STUNListening {
+		st.STUNSource = "container"
 		probeSTUNForStatus(&st, s.dbc(), derpHost, stunPort)
 	}
 
 	// 5. Active connections (current TCP/UDP peers with reverse DNS)
-	if body, err := get("/active-conn"); err == nil {
+	if body, status, err := mget("/active-conn"); err == nil && status == http.StatusOK {
 		var ac struct {
 			TCP     []DerpPeer `json:"tcp"`
 			UDPSTUN []DerpPeer `json:"udp_stun"`
@@ -331,7 +445,7 @@ func (s *Service) collectDerpStatus() DerpStatus {
 	}
 
 	// 6. Snapshot history (last 30 records from /var/log/derper-snapshot.log)
-	if body, err := get("/all-recent"); err == nil {
+	if body, status, err := mget("/all-recent"); err == nil && status == http.StatusOK {
 		lines := strings.Split(string(body), "\n")
 		start := 0
 		if len(lines) > 30 {
@@ -397,6 +511,13 @@ func (s *Service) collectDerpStatus() DerpStatus {
 		if ip, src, ok := resolvePublicDERPIP(st.Hostname); ok {
 			st.WhiteIP = ip
 			st.WhiteIPSource = src
+			// B315: an `egress` answer is the skygate container's OWN outbound
+			// address (usually 172.18.0.x on the docker bridge). Printing it under
+			// the label «Публичный IP» is a lie the operator has to catch by
+			// recognising the range — the live complaint was exactly that ("он
+			// заявляет публичный адрес - адрес локальной машины"). Flag it so the
+			// template renders it as a fallback with the reason, not as the answer.
+			st.WhiteIPFallback = strings.HasPrefix(src, "egress")
 		}
 	}
 
@@ -532,10 +653,23 @@ func resolvePublicDERPIP(derperHostname string) (ip, source string, ok bool) {
 //
 // dialAddr == "" keeps the historical behaviour (dial whatever the URL resolves to).
 func httpGetVia(url string, dialAddr string, timeout time.Duration) ([]byte, error) {
+	body, _, err := httpGetViaStatus(url, dialAddr, timeout)
+	return body, err
+}
+
+// httpGetViaStatus is httpGetVia plus the HTTP status code.
+//
+// WHY THE STATUS MATTERS NOW (B315): with a metrics endpoint in front of the
+// relay, `403 debug access denied` is no longer the only possible failure — the
+// endpoint can answer 502 with its own explanation of why it could not reach the
+// relay, or 404 because it does not forward the path. The page has to be able to
+// say WHICH of those happened, and the body alone is ambiguous (an HTML error
+// page and a JSON body are both "some bytes").
+func httpGetViaStatus(url string, dialAddr string, timeout time.Duration) ([]byte, int, error) {
 	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	// B260: HTTP probe for /admin/derp status. The previous
 	// version hard-coded `req.Host = "derper.example.com"` (a
@@ -559,7 +693,7 @@ func httpGetVia(url string, dialAddr string, timeout time.Duration) ([]byte, err
 	//     helpers in this file, not user-supplied data.
 	u, parseErr := neturl.Parse(url)
 	if parseErr != nil {
-		return nil, parseErr
+		return nil, 0, parseErr
 	}
 	hostnameOnly := u.Hostname() // strips :port for Host header + SNI
 	if hostnameOnly != "" {
@@ -596,10 +730,14 @@ func httpGetVia(url string, dialAddr string, timeout time.Duration) ([]byte, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	body, rerr := io.ReadAll(resp.Body)
+	if rerr != nil {
+		return body, resp.StatusCode, rerr
+	}
+	return body, resp.StatusCode, nil
 }
 
 // derperLivenessWebSocketProbe does a minimal WebSocket upgrade
@@ -718,8 +856,26 @@ func parseDerperDebugHTML(st *DerpStatus, html []byte) {
 	}
 }
 
-// parseDerperVars pulls metrics out of /debug/vars JSON.
-func parseDerperVars(st *DerpStatus, body []byte) {
+// parseDerperVars pulls metrics out of /debug/vars JSON and reports whether the
+// body really was derper's metrics — i.e. whether `st` now holds measurements
+// instead of zero values.
+//
+// WHY IT RETURNS A BOOL (B315): the pre-B315 code unmarshalled into a struct with
+// no presence check and then decided `Running` from a comparison that is true for
+// ANY JSON object (an int field tested against zero with a greater-or-equal), so
+// even an empty `{}` marked the relay as active. The page therefore showed
+// `Running: active` plus twelve zeros, which is worse than an error: the operator
+// reads zero clients on a busy relay as a fact. The presence of the `derp` block
+// is the honest signal, and the caller uses it as `MetricsAvailable`.
+func parseDerperVars(st *DerpStatus, body []byte) bool {
+	// Presence check first: an object without a `derp` key is not derper's vars.
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return false
+	}
+	if _, ok := probe["derp"]; !ok {
+		return false
+	}
 	var v struct {
 		ProcessStartUnixTime float64 `json:"process_start_unix_time"`
 		DERP                 struct {
@@ -737,6 +893,7 @@ func parseDerperVars(st *DerpStatus, body []byte) {
 		STUN struct {
 			CounterRequests struct {
 				Success int `json:"success"`
+				NotSTUN int `json:"not_stun"`
 			} `json:"counter_requests"`
 		} `json:"stun"`
 		GoSyncMutexWaitSeconds float64 `json:"go_sync_mutex_wait_seconds"`
@@ -748,7 +905,7 @@ func parseDerperVars(st *DerpStatus, body []byte) {
 		} `json:"memstats"`
 	}
 	if err := json.Unmarshal(body, &v); err != nil {
-		return
+		return false
 	}
 	// Memory in MB
 	if v.Memstats.Alloc > 0 {
@@ -763,6 +920,11 @@ func parseDerperVars(st *DerpStatus, body []byte) {
 	st.PacketsOut = v.DERP.PacketsSent
 	st.Clients = v.DERP.ClientsTotal
 	st.STUNRequests = v.STUN.CounterRequests.Success
+	// B315: `not_stun` is the counter derper increments for every datagram it
+	// could not parse as a tailscale-shaped Binding Request. Surfacing it is what
+	// makes a red STUN tile self-explaining ("the relay saw N unparseable probes")
+	// instead of a bare "недоступно".
+	st.STUNNotSTUN = v.STUN.CounterRequests.NotSTUN
 	// Derive started-at from process_start_unix_time
 	if v.ProcessStartUnixTime > 0 {
 		st.StartedAt = time.Unix(int64(v.ProcessStartUnixTime), 0).Format("2006-01-02 15:04:05 MST")
@@ -776,13 +938,9 @@ func parseDerperVars(st *DerpStatus, body []byte) {
 	if v.GoVersion != "" {
 		st.GoVersion = v.GoVersion
 	}
-	// If we got DERP responses, it's running
-	if v.DERP.Accepts >= 0 {
-		st.Running = true
-	}
-	if v.STUN.CounterRequests.Success > 0 {
-		st.STUNListening = true
-	}
+	// The `derp` block is present, so this body IS derper's metrics.
+	st.Running = true
+	return true
 }
 
 // ---------- classify / summarize ----------

@@ -306,6 +306,129 @@ Still prefer `.env` when the value must survive a database reset or be provision
 unattended (that is what `deploy.sh` writes); use the card when you are looking at a
 «пропущен» row and want it fixed now.
 
+## B315: the relay's metrics, and why they need a bridge (2026-09-24)
+
+derper publishes its metrics on `/debug/vars` (accepts, bytes, packets, clients,
+current connections, the STUN counters) and its debug HTML on `/debug/`. Upstream
+`tsweb.AllowDebugAccess` admits **loopback and Tailscale sources only** and answers
+everything else `403 debug access denied` — and the verdict is made on the request's
+**source address**, not on the address it reached:
+
+| from | `GET /debug/vars` |
+|---|---|
+| the host's own loopback | `200`, ~6.3 KB of JSON |
+| the skygate container | `403 debug access denied` |
+
+That is why `.env`-level tricks and the B296 probe address cannot help here: B296 makes
+the probes **reach** the relay, this decides whether they are **admitted**.
+
+Since v1.5.80 `/admin/derp` shows an explicit **«Метрики релея»** card with the current
+endpoint, the layer it came from, the named failure and the exact commands to start the
+bridge — and the traffic tiles render «—» plus "metrics unavailable" instead of `0`,
+because a zero on a busy relay reads as a measurement.
+
+### Start the bridge (once, on the host that runs derper)
+
+The bridge is a subcommand of the binary you already deploy — no new dependency, no new
+image, no `docker-compose.yml` edit. It dials the relay's **loopback** over TLS (so derper
+sees a loopback source and admits it) and re-serves five read-only paths to the docker
+bridge: `/debug/`, `/debug/vars`, `/active-conn`, `/all-recent` and its own `/healthz`.
+
+Docker install (same image, host network):
+
+```bash
+docker run -d --name skygate-derp-metrics --restart unless-stopped \
+  --network host ghcr.io/barssky/skygate:v1.5.80 derp-metrics-proxy \
+  --listen 172.18.0.1:8767 --upstream 127.0.0.1:443 \
+  --server-name derp.example.com --insecure
+```
+
+Native / systemd install (binary on the host):
+
+```bash
+skygate derp-metrics-proxy \
+  --listen 172.18.0.1:8767 --upstream 127.0.0.1:443 \
+  --server-name derp.example.com --insecure
+```
+
+* `--listen` is the address the **container** dials: the docker bridge gateway
+  (`docker network inspect headscale_default -f '{{(index .IPAM.Config 0).Gateway}}'`).
+  Do not bind `0.0.0.0` unless you also widen `--allow-net`.
+* `--server-name` is the relay's certificate name; `--insecure` is legitimate **only
+  here**, because the upstream hop never leaves the host (loopback → loopback). Without a
+  matching `--server-name` the TLS handshake fails and the bridge's response body says so,
+  naming both flags.
+* The forwarded paths are a **closed allow-list** (the upstream also carries the DERP
+  protocol), and a client address outside loopback/private/CGNAT is refused even on a
+  `0.0.0.0` bind.
+* `skygate derp-metrics-proxy --help` prints the full flag list.
+
+### Point skygate at it
+
+`/admin/derp` → «Метрики релея» → paste `http://172.18.0.1:8767` → **Проверить** (probes
+without saving) → **Сохранить**. The resolved order is the same two layers as B296:
+
+| layer | set by | applies |
+|---|---|---|
+| `global_settings.derp.debug_url` | the card above | on the **next render** (no restart, no recreate) |
+| `SKYGATE_DERP_DEBUG_URL` in `.env` | the operator / provisioning | at container **creation** |
+| unset | — | metrics are read from the relay directly (and get `403`) |
+
+The value is a base URL: `http://172.18.0.1:8767` (the `http://` scheme is assumed when
+you paste a bare `host:port`), or `https://…` if your bridge terminates TLS itself. A
+blank value clears the row. Every save, clear, test and refusal is audited
+(`derp.metrics_endpoint`).
+
+### What the page does with the metrics
+
+* **Traffic tiles** show real numbers, or «—» with "metrics unavailable" — never a zero
+  that was not measured.
+* **The STUN tile names its vantage point.** With metrics readable it reports derper's
+  own `stun.counter_requests` (`success` / `not_stun`) — what clients experience. Without
+  them it falls back to the B265 UDP round trip from **inside** the skygate container, and
+  says so, because that path is not the clients' path (the container's UDP egress can be
+  blackholed while clients score the relay fine).
+* **`/debug/vars` needs the `derp` block.** A `200` that is not derper's metrics does not
+  mark the relay as running, and a `502` from a broken bridge is reported as `502` with the
+  bridge's own explanation, never as a `403` from the relay.
+
+### The STUN probe must not use a connected socket
+
+The same release fixes a defect in skygate's own instrument. The STUN probe used
+`net.DialTimeout("udp", …)`, i.e. a **connected** UDP socket, and Linux only delivers a
+datagram to a connected UDP socket when its **source** matches the peer it was connected
+to. Where the container's path to the relay rewrites the address (the reference host
+DNATs `:3478` onto the docker bridge gateway), the reply arrives from the rewritten
+source and the kernel drops it before Go sees it — so the tile said «UDP-проба не прошла»
+on a relay that had answered in 28 ms.
+
+Measured in the same network namespace, at the same instant:
+
+| socket | probe | result |
+|---|---|---|
+| unconnected (python) | `192.168.13.69:3478` | `REPLY 0x0101`, 44 bytes, source `172.18.0.1` |
+| connected (Go, pre-fix) | `192.168.13.69:3478` | `read udp 172.18.0.3:…->192.168.13.69:3478: i/o timeout` |
+| connected (Go, pre-fix) | `172.18.0.1:3478` | `REPLY`, rtt 198 µs |
+| unconnected (Go, post-fix) | `192.168.13.69:3478` | `REPLY`, rtt 28 ms, `reply came from 172.18.0.1:3478` |
+
+The probe now uses an unconnected socket and accepts a reply from any source — the fresh
+96-bit transaction id (compared byte for byte) is what proves the datagram is ours, and a
+foreign one is still rejected. When the answering address differs from the address dialled
+the tile says so: «ответ пришёл с `<addr>`».
+
+### Reading the two address rows
+
+`/admin/derp` → «Сервис» has two rows that answer two different questions:
+
+* **«Публичный IP»** — the address **clients** dial (DNS of `SKYGATE_DERP_HOSTNAME`, or of
+  the hostname derper reports). When the name does not resolve from inside the container
+  the row says «не удалось определить» and shows the fallback (skygate's own egress
+  address) **as a fallback with the reason**, instead of printing it under a label that
+  promises a public address.
+* **«Адрес связи из контейнера»** — the address **skygate itself** dials to reach the relay
+  (the B296 value: DB > `SKYGATE_DERP_PROBE_HOST` > none). A private address here is
+  normal and correct; it is not the clients' path.
+
 ## See also
 
 - `docs/headplane.md` — the same "use existing / bundled" pattern,

@@ -47,12 +47,28 @@
       <div class="label">{{t "derp.label_stun"}}</div>
       <div class="value">:{{.DerpStatus.STUNPort}}</div>
       <div class="sub">{{if .DerpStatus.STUNListening}}{{t "derp.value_listening"}}{{if .DerpStatus.STUNRTT}} · {{.DerpStatus.STUNRTT}}{{end}}{{else}}{{t "derp.value_closed"}}{{end}}</div>
+      {{/* B315: say WHICH vantage point the verdict comes from. The relay's own
+           counters and a UDP round trip from inside the skygate container answer
+           different questions, and they disagree in practice — the container's
+           UDP egress is not the clients' path. Without this line the tile is an
+           unfalsifiable colour. */}}
+      {{if .DerpStatus.STUNSource}}<div class="sub" style="font-size:11px">{{t (printf "derp.stun_source_%s" .DerpStatus.STUNSource)}}</div>{{end}}
+      {{if .DerpStatus.STUNSource}}
+        {{if eq .DerpStatus.STUNSource "relay"}}
+          <div class="sub" style="font-size:11px">{{tf "derp.stun_counters" .DerpStatus.STUNRequests .DerpStatus.STUNNotSTUN}}</div>
+        {{end}}
+      {{end}}
       {{/* B265: the tile is now backed by a real UDP STUN round
            trip, not by derper's /debug/vars counter (which the
            container cannot read — 403 debug access denied). Show
            WHY it is red instead of a bare "closed". */}}
       {{if and .DerpStatus.STUNBlocked .DerpStatus.STUNErr}}<div class="sub" style="color:var(--danger,#dc3545);font-size:11px" title="{{.DerpStatus.STUNErr}}">{{t "derp.stun_unreachable"}}</div>{{end}}
       {{if .DerpStatus.STUNReflex}}<div class="sub" style="font-size:11px" title="{{t "derp.stun_reflex_help"}}">{{t "derp.stun_reflex"}}: <code>{{.DerpStatus.STUNReflex}}</code></div>{{end}}
+      {{/* B315: the reply arrived from an address other than the one dialled — a
+           NAT/DNAT on the container's path to the relay. Reported because it is
+           exactly the situation in which a CONNECTED udp socket drops the answer
+           and the tile used to read "closed" on a healthy relay. */}}
+      {{if .DerpStatus.STUNReplyFrom}}<div class="sub" style="font-size:11px" title="{{t "derp.stun_reply_from_help"}}">{{t "derp.stun_reply_from"}}: <code>{{.DerpStatus.STUNReplyFrom}}</code></div>{{end}}
     </div>
   </div>
   <div class="metric">
@@ -65,49 +81,121 @@
   </div>
 </div>
 
-{{/* B265: derper answers 403 "debug access denied" to every
-     non-loopback / non-Tailscale source, so the rich metrics
-     below are unavailable in the hardened (no --debug) deployment.
-     Say so explicitly instead of rendering zeros that look like
-     measurements. */}}
-{{if .DerpStatus.DebugAccessDenied}}
-<div class="alert alert-warning" style="margin:8px 0;font-size:13px">
-  <i class="fa-solid fa-circle-info"></i> {{t "derp.debug_access_denied" | safeHTML}}
+{{/* B315: the metrics endpoint. derper answers 403 "debug access denied"
+     to every non-loopback / non-tailnet source, so the rich metrics below
+     are unavailable unless something on the host fetches them from loopback.
+     Pre-B315 this was a one-line banner naming neither a cause nor a fix while
+     the tiles below drew zeros, i.e. it looked like a measurement. Now: a named
+     reason, the current value + its layer, and the controls to set and TEST one
+     (plus the exact host commands, which need no new dependency — the bridge is
+     a subcommand of the binary that is already deployed). */}}
+<div class="card" style="margin:8px 0">
+  <h3 style="margin:0 0 6px 0">
+    <i class="fa-solid fa-gauge-high"></i> {{t "derp.metrics_title"}}
+    {{if .DerpStatus.MetricsAvailable}}
+      <span class="tag tag-success">{{t "derp.metrics_via_proxy"}}</span>
+    {{else if .DerpStatus.MetricsErrCode}}
+      <span class="tag tag-warning">{{t (printf "derp.metrics_err_%s" .DerpStatus.MetricsErrCode)}}</span>
+    {{end}}
+  </h3>
+  <p style="color:var(--text-muted);font-size:13px;margin:0 0 8px 0">{{t "derp.metrics_help" | safeHTML}}</p>
+
+  {{if .MetricsSaved}}<div class="alert alert-success" style="font-size:13px">{{t (printf "derp.metrics_%s" .MetricsSaved)}}</div>{{end}}
+  {{if .MetricsErr}}<div class="alert alert-danger" style="font-size:13px">{{t (printf "derp.metrics_err_%s" .MetricsErr)}}</div>{{end}}
+  {{if .MetricsTest}}
+    {{if eq .MetricsTest "ok"}}
+      <div class="alert alert-success" style="font-size:13px"><i class="fa-solid fa-circle-check"></i> {{tf "derp.metrics_test_ok" .MetricsTestB .MetricsTestA .MetricsTestU .MetricsTestN}}</div>
+    {{else if eq .MetricsTest "empty"}}
+      <div class="alert alert-warning" style="font-size:13px">{{t "derp.metrics_test_empty"}}</div>
+    {{else}}
+      <div class="alert alert-danger" style="font-size:13px">
+        <i class="fa-solid fa-circle-exclamation"></i>
+        {{tf "derp.metrics_test_fail" (t (printf "derp.metrics_err_%s" .MetricsTest)) .MetricsTestD}}
+        {{if .MetricsTestS}}<span class="muted"> ({{tf "derp.metrics_test_status" .MetricsTestS}})</span>{{end}}
+      </div>
+    {{end}}
+  {{end}}
+
+  {{if .DerpStatus.MetricsErrDetail}}
+  <div style="font-family:var(--mono);font-size:11px;color:var(--text-muted);background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:6px 8px;margin:0 0 8px 0;word-break:break-word">{{.DerpStatus.MetricsErrDetail}}</div>
+  {{end}}
+  {{if .DerpStatus.DebugAccessDenied}}
+  <div class="alert alert-warning" style="font-size:12px">{{t "derp.debug_access_denied" | safeHTML}}</div>
+  {{end}}
+
+  <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">
+    {{t "derp.metrics_current"}}:
+    {{if .DerpStatus.MetricsEndpoint}}<code>{{.DerpStatus.MetricsEndpoint}}</code>{{else}}<span>{{t "derp.metrics_none"}}</span>{{end}}
+    <span class="tag">{{t (printf "derp.metrics_src_%s" .DerpStatus.MetricsEndpointSrc)}}</span>
+  </div>
+
+  <form method="post" action="/admin/derp/metrics-endpoint">
+    <label for="metrics_endpoint" style="font-size:12px;color:var(--text-muted)">{{t "derp.metrics_field"}}</label>
+    <input type="text" id="metrics_endpoint" name="metrics_endpoint" value="{{.DerpStatus.MetricsEndpoint}}" placeholder="http://172.18.0.1:8767" style="font-family:var(--mono);width:100%;max-width:420px">
+    <div class="form-hint">{{t "derp.metrics_field_help" | safeHTML}}</div>
+    <div class="btn-row" style="margin-top:8px">
+      <button type="submit" name="action" value="save" class="btn btn-primary btn-sm"><i class="fa-solid fa-floppy-disk"></i> {{t "derp.metrics_save"}}</button>
+      <button type="submit" name="action" value="test" class="btn btn-secondary btn-sm"><i class="fa-solid fa-vial"></i> {{t "derp.metrics_test"}}</button>
+      <button type="submit" name="action" value="clear" class="btn btn-secondary btn-sm"><i class="fa-solid fa-eraser"></i> {{t "derp.metrics_clear"}}</button>
+    </div>
+  </form>
+  {{if .DerpStatus.MetricsEndpointEnv}}<div style="color:var(--text-muted);font-size:12px;margin-top:8px">{{tf "derp.metrics_env" .DerpStatus.MetricsEndpointEnv | safeHTML}}</div>{{end}}
+
+  {{if not .DerpStatus.MetricsAvailable}}
+  <details style="margin-top:10px">
+    <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px"><i class="fa-solid fa-terminal"></i> {{t "derp.metrics_setup_title"}}</summary>
+    <p style="color:var(--text-muted);font-size:12px;margin:8px 0">{{t "derp.metrics_setup_hint" | safeHTML}}</p>
+    <div style="color:var(--text-muted);font-size:12px;margin:8px 0 4px">{{t "derp.metrics_setup_docker"}}</div>
+    <pre style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;font-size:11px;overflow-x:auto;margin:0 0 8px 0">docker run -d --name skygate-derp-metrics --restart unless-stopped \
+  --network host ghcr.io/barssky/skygate:{{.Version}} derp-metrics-proxy \
+  --listen 172.18.0.1:8767 --upstream 127.0.0.1:443 \
+  --server-name {{.DerpStatus.Hostname}} --insecure</pre>
+    <div style="color:var(--text-muted);font-size:12px;margin:8px 0 4px">{{t "derp.metrics_setup_native"}}</div>
+    <pre style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;font-size:11px;overflow-x:auto;margin:0 0 8px 0">skygate derp-metrics-proxy \
+  --listen 172.18.0.1:8767 --upstream 127.0.0.1:443 \
+  --server-name {{.DerpStatus.Hostname}} --insecure</pre>
+    <p style="color:var(--text-muted);font-size:12px;margin:0">{{t "derp.metrics_setup_after" | safeHTML}}</p>
+  </details>
+  {{end}}
 </div>
-{{end}}
 
 <div class="section-title"><i class="fa-solid fa-chart-line"></i>{{t "derp.section_traffic"}}</div>
+{{if not .DerpStatus.MetricsAvailable}}
+<div style="color:var(--text-muted);font-size:12px;margin:-4px 0 8px 0">
+  <i class="fa-solid fa-circle-info"></i> {{t "derp.metrics_tiles_hint"}}
+</div>
+{{end}}
 <div class="metric-grid">
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-plug-circle-bolt"></i></div>
     <div class="body">
       <div class="label">{{t "derp.label_active_conns"}}</div>
-      <div class="value">{{.DerpStatus.Connections}}</div>
-      <div class="sub">{{tf "derp.total_since_start" .DerpStatus.Accepts}}</div>
+      <div class="value">{{if .DerpStatus.MetricsAvailable}}{{.DerpStatus.Connections}}{{else}}{{t "derp.metrics_unavailable"}}{{end}}</div>
+      {{if .DerpStatus.MetricsAvailable}}<div class="sub">{{tf "derp.total_since_start" .DerpStatus.Accepts}}</div>{{end}}
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-users"></i></div>
     <div class="body">
       <div class="label">{{t "derp.label_clients"}}</div>
-      <div class="value">{{.DerpStatus.Clients}}</div>
-      <div class="sub">{{t "derp.with_this_derp_as_home"}}</div>
+      <div class="value">{{if .DerpStatus.MetricsAvailable}}{{.DerpStatus.Clients}}{{else}}{{t "derp.metrics_unavailable"}}{{end}}</div>
+      {{if .DerpStatus.MetricsAvailable}}<div class="sub">{{t "derp.with_this_derp_as_home"}}</div>{{end}}
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-arrow-down"></i></div>
     <div class="body">
       <div class="label">{{t "derp.label_bytes_in"}}</div>
-      <div class="value" style="font-size:16px">{{bytesfmt .DerpStatus.BytesIn}}</div>
-      <div class="sub">{{.DerpStatus.PacketsIn}} {{t "derp.packets_suffix"}}</div>
+      <div class="value" style="font-size:16px">{{if .DerpStatus.MetricsAvailable}}{{bytesfmt .DerpStatus.BytesIn}}{{else}}{{t "derp.metrics_unavailable"}}{{end}}</div>
+      {{if .DerpStatus.MetricsAvailable}}<div class="sub">{{.DerpStatus.PacketsIn}} {{t "derp.packets_suffix"}}</div>{{end}}
     </div>
   </div>
   <div class="metric">
     <div class="icon"><i class="fa-solid fa-arrow-up"></i></div>
     <div class="body">
       <div class="label">{{t "derp.label_bytes_out"}}</div>
-      <div class="value" style="font-size:16px">{{bytesfmt .DerpStatus.BytesOut}}</div>
-      <div class="sub">{{.DerpStatus.PacketsOut}} {{t "derp.packets_suffix"}}</div>
+      <div class="value" style="font-size:16px">{{if .DerpStatus.MetricsAvailable}}{{bytesfmt .DerpStatus.BytesOut}}{{else}}{{t "derp.metrics_unavailable"}}{{end}}</div>
+      {{if .DerpStatus.MetricsAvailable}}<div class="sub">{{.DerpStatus.PacketsOut}} {{t "derp.packets_suffix"}}</div>{{end}}
     </div>
   </div>
 </div>
@@ -250,10 +338,32 @@
       <tr><td style="color:var(--text-muted)">{{t "derp.field_region"}}</td><td><code>{{.DerpStatus.RegionCode}} ({{.DerpStatus.RegionID}})</code> — {{.DerpStatus.RegionName}}</td></tr>
       <tr><td style="color:var(--text-muted)">{{t "derp.field_ws_endpoint"}}</td><td><code>wss://{{.DerpStatus.Hostname}}:{{.DerpStatus.DERPPort}}/derp</code></td></tr>
       <tr><td style="color:var(--text-muted)">{{t "derp.field_stun_endpoint"}}</td><td><code>{{.DerpStatus.Hostname}}:{{.DerpStatus.STUNPort}}</code> (UDP)</td></tr>
+      {{/* B315: never present a fallback as the answer. `egress` means DNS did not
+           resolve the relay's name from inside this container, so the value is
+           skygate's OWN outbound address (usually 172.18.0.x on the docker bridge).
+           Rendering that under «Публичный IP» is what made the operator read the
+           page as "он заявляет адрес локальной машины вместо публичного". */}}
       <tr><td style="color:var(--text-muted)">{{t "derp.field_public_ip"}}</td><td>
-        <code>{{.DerpStatus.WhiteIP}}</code>
-        {{if .DerpStatus.WhiteIPSource}}<span class="muted" style="font-size:11px;margin-left:6px" title="{{t (printf "derp.field_public_ip_source_help_%s" .DerpStatus.WhiteIPSource)}}">(<code>{{.DerpStatus.WhiteIPSource}}</code>)</span>{{end}}
+        {{if .DerpStatus.WhiteIPFallback}}
+          <span style="color:var(--danger,#dc3545)">{{t "derp.field_public_ip_unknown"}}</span>
+          <div class="muted" style="font-size:11px;max-width:640px">{{tf "derp.field_public_ip_egress" .DerpStatus.WhiteIP | safeHTML}}</div>
+        {{else if .DerpStatus.WhiteIP}}
+          <code>{{.DerpStatus.WhiteIP}}</code>
+          {{if .DerpStatus.WhiteIPSource}}<span class="muted" style="font-size:11px;margin-left:6px" title="{{t (printf "derp.field_public_ip_source_help_%s" .DerpStatus.WhiteIPSource)}}">(<code>{{.DerpStatus.WhiteIPSource}}</code>)</span>{{end}}
+        {{else}}
+          <span class="muted">{{t "derp.field_public_ip_unknown"}}</span>
+        {{end}}
       </td></tr>
+      {{/* The other half of the same question: which address THIS container dials
+           to reach the relay. Keeping the two rows apart is the whole point — one
+           is the clients' path, the other is skygate's, and they are normally
+           different addresses. */}}
+      {{if .DerpStatus.ProbeDialAddr}}
+      <tr><td style="color:var(--text-muted)" title="{{t "derp.field_probe_dial_help"}}">{{t "derp.field_probe_dial"}}</td><td>
+        <code>{{.DerpStatus.ProbeDialAddr}}</code>
+        <span class="tag">{{t (printf "derp.relays_probe_host_src_%s" .DerpStatus.ProbeDialSource)}}</span>
+      </td></tr>
+      {{end}}
       <tr><td style="color:var(--text-muted)">{{t "derp.field_started"}}</td><td>{{.DerpStatus.StartedAt}}</td></tr>
       <tr><td style="color:var(--text-muted)">{{t "derp.field_uptime"}}</td><td>{{.DerpStatus.UpTime}}</td></tr>
       {{if .DerpStatus.Machine}}<tr><td style="color:var(--text-muted)">{{t "derp.field_machine"}}</td><td><code>{{.DerpStatus.Machine}}</code></td></tr>{{end}}
