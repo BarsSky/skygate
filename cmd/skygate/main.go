@@ -2416,6 +2416,11 @@ func main() {
 	// egress relay on /admin/telegram to make the bot work.
 	mux.Handle("GET /admin/tailscale", authMW(http.HandlerFunc(adminSvc.GetAdminTailscale)))
 	mux.Handle("POST /admin/tailscale", authMW(http.HandlerFunc(adminSvc.PostAdminTailscale)))
+	// B320 — delete the OFFLINE node that squats the canonical tailnet name
+	// `skygate-host` (a dead registration from an earlier machine key) and rename the
+	// running client back to it. The guards live in the handler: offline, canonical
+	// name, infra family, never the live node.
+	mux.Handle("POST /admin/tailscale/reclaim-name", authMW(http.HandlerFunc(adminSvc.PostAdminTailscaleReclaimName)))
 	mux.Handle("GET /my/tokens", authMW(http.HandlerFunc(authSvc.GetMyTokens)))
 	mux.Handle("POST /my/token", authMW(http.HandlerFunc(authSvc.PostMyToken)))
 	mux.Handle("POST /my/token/{id}/revoke", authMW(http.HandlerFunc(authSvc.PostMyTokenRevoke)))

@@ -67,6 +67,38 @@
          2026-09-17 operator report.
        - else (real enabled) → existing Disable-in-container
          card (unchanged from B259). */}}
+{{if .State.SelfName.Conflict}}
+{{/* B320: the canonical name `skygate-host` is held by an OFFLINE duplicate while the
+     running client wears a suffix — every "is this me?" check matches the canonical
+     name by strict equality, so they all key off the ghost. The button deletes ONLY
+     that node (offline + canonical name + infra family + not the live one). */}}
+<div class="alert alert-danger" style="margin-bottom:12px">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <strong>{{t "tailscale.name_conflict_title"}}</strong>
+  <table style="margin:6px 0;font-size:.9em">
+    <tr><td style="padding-right:.6rem">{{t "tailscale.name_conflict_live"}}</td>
+        <td><code>{{.State.SelfName.Live}}</code> <span style="color:var(--text-muted)">({{t "tailscale.name_conflict_running"}})</span></td></tr>
+    <tr><td style="padding-right:.6rem">{{t "tailscale.name_conflict_canonical"}}</td>
+        <td><code>{{.State.SelfName.Canonical}}</code></td></tr>
+    <tr><td style="padding-right:.6rem">{{t "tailscale.name_conflict_ghost"}}</td>
+        <td><code>{{.State.SelfName.GhostName}}</code> · id <code>{{.State.SelfName.GhostID}}</code>
+            {{if .State.SelfName.GhostIP}}· <code>{{.State.SelfName.GhostIP}}</code>{{end}}
+            {{if .State.SelfName.GhostTag}}· <code>{{.State.SelfName.GhostTag}}</code>{{end}}
+            {{if .State.SelfName.GhostSeen}}· {{t "tailscale.name_conflict_seen"}} <code>{{.State.SelfName.GhostSeen}}</code>{{end}}</td></tr>
+    {{if .State.SelfName.EnvPinned}}<tr><td style="padding-right:.6rem">{{t "tailscale.name_conflict_env"}}</td>
+        <td><code>SKYGATE_TS_HOSTNAME={{.State.SelfName.EnvPinned}}</code></td></tr>{{end}}
+  </table>
+  <div>{{t "tailscale.name_conflict_help" | safeHTML}}</div>
+  <div style="margin-top:.6rem;display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
+    <form action="/admin/tailscale/reclaim-name" method="POST" style="display:inline"
+          onsubmit="return confirm('{{t "tailscale.name_conflict_confirm" | js}}')">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <button type="submit" class="btn btn-warn"><i class="fa-solid fa-broom"></i> {{t "tailscale.name_conflict_btn"}}</button>
+    </form>
+    <code style="font-size:.85em">tailscale set --hostname={{.State.SelfName.Canonical}}</code>
+  </div>
+</div>
+{{end}}
 {{if .State.AuthKeyDisabled}}
 <div class="alert alert-info" style="margin-bottom:12px">
   <i class="fa-solid fa-circle-info"></i>

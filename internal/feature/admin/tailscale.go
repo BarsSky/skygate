@@ -300,6 +300,14 @@ type TailscaleState struct {
 	DaemonError string
 	// NotRunningReason is the composed explanation shown when Configured && !Running.
 	NotRunningReason string
+	// ---- B320: the reserved name must belong to the LIVE client ----
+	//
+	// The agent VM carried a dead registration named `skygate-host` (offline for days,
+	// a different machine key) while the RUNNING client was `skygate-host-1`, because
+	// `.env`/compose still pin the v0.33.1.9 placeholder. Every "is this me?" check
+	// (infra ownership, colocation sanity, the SSH-source ACL) matches the canonical
+	// name by strict equality, so they were all keying off the ghost.
+	SelfName SelfNameState
 }
 
 // tailscaleStateMu guards the status cache so concurrent
@@ -394,6 +402,9 @@ func (s *Service) readTailscaleState() TailscaleState {
 	if !running {
 		st.NotRunningReason = boot.Explain()
 	}
+	// B320: the name the daemon registered with, and whether a dead registration is
+	// squatting the canonical one.
+	st.SelfName = s.selfNameState(tailscaleSelfHostname())
 	st.TailnetIP = ip
 	st.AcceptedRoutes = routes
 	st.BackendState = backendState

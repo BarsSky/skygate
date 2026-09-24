@@ -54,6 +54,19 @@ var ruTailscale = map[string]string{
 	// значением, которое прочитал entrypoint.
 	"tailscale.not_running_title": "Tailscale настроен, но демон НЕ работает — skygate сейчас не в tailnet",
 	"tailscale.not_running_help":  "Страница настроена (ключ сохранён, Start доступен), но сам демон не отвечает, поэтому маршруты и управление exit-узлами идут по публичному адресу. Нажмите <b>Start</b> ниже, если причина позволяет: значение в переменной окружения контейнера зафиксировано при его создании, а сохранённый здесь путь влияет только на эту страницу и кнопку Start.",
+	// B320 — каноническое имя `skygate-host` держит мёртвая регистрация, а живой
+	// клиент носит суффикс: все проверки «это я?» сравнивают имя строго, поэтому
+	// попадают в призрак.
+	"tailscale.name_conflict_title":     "Конфликт имени в tailnet: каноническое имя занято устаревшим узлом",
+	"tailscale.name_conflict_live":      "Подключён сейчас",
+	"tailscale.name_conflict_running":   "этот контейнер",
+	"tailscale.name_conflict_canonical": "Каноническое имя",
+	"tailscale.name_conflict_ghost":     "Занято устаревшим узлом",
+	"tailscale.name_conflict_seen":      "последняя связь",
+	"tailscale.name_conflict_env":       "В конфигурации зафиксировано",
+	"tailscale.name_conflict_help":      "Суффикс <code>-1</code> появился не сам: это остаток плейсхолдера v0.33.1.9 в <code>.env</code>/<code>docker-compose.yml</code>, а каноническое имя <code>skygate-host</code> держит <b>мёртвая</b> регистрация (другой machine key, offline). Из-за этого все проверки «это я?» — принадлежность infra, проверки colocation, ACL для SSH-источника, self-пробы — совпадают со строгим равенством на <code>skygate-host</code>, то есть указывают на призрак. Кнопка удаляет <b>только</b> этот узел (offline + каноническое имя + инфра-семейство + это не текущий узел) и переименовывает текущий клиент; чтобы имя не вернулось после перезапуска, уберите пин <code>SKYGATE_TS_HOSTNAME</code> из <code>.env</code> и compose и пересоздайте контейнер.",
+	"tailscale.name_conflict_btn":       "Удалить устаревший узел и вернуть имя",
+	"tailscale.name_conflict_confirm":   "Удалить offline-узел, который держит каноническое имя skygate-host, и переименовать текущий клиент?",
 	// B258.1 (v1.5.8+, 2026-09-17): third visual state — the
 	// auth-key path is configured (DB or env points at a
 	// regular file like /data/ts/authkey) but the file
@@ -167,6 +180,18 @@ var enTailscale = map[string]string{
 	// the value the entrypoint actually read.
 	"tailscale.not_running_title": "Tailscale is configured but the daemon is NOT running — skygate is not on the tailnet right now",
 	"tailscale.not_running_help":  "This page is configured (a key is saved, Start is available) but the daemon does not answer, so routes and exit-node management go over the public address. Press <b>Start</b> below when the reason allows it: the container's environment value was frozen when the container was created, and the path saved here only affects this page and its Start button.",
+	// B320 — the canonical name `skygate-host` is held by a dead registration while the
+	// live client wears a suffix; every "is this me?" check compares the name strictly.
+	"tailscale.name_conflict_title":     "Tailnet name conflict: the canonical name is held by a stale node",
+	"tailscale.name_conflict_live":      "Connected now",
+	"tailscale.name_conflict_running":   "this container",
+	"tailscale.name_conflict_canonical": "Canonical name",
+	"tailscale.name_conflict_ghost":     "Held by a stale node",
+	"tailscale.name_conflict_seen":      "last seen",
+	"tailscale.name_conflict_env":       "Pinned in the configuration",
+	"tailscale.name_conflict_help":      "The <code>-1</code> suffix is not new: it is the leftover v0.33.1.9 placeholder in <code>.env</code>/<code>docker-compose.yml</code>, while the canonical name <code>skygate-host</code> is held by a <b>dead</b> registration (different machine key, offline). Every \"is this me?\" check — infra ownership, colocation sanity, the SSH-source ACL, the self-probes — matches the canonical name by strict equality, so they all key off the ghost. The button deletes <b>only</b> that node (offline + canonical name + infra family + not the live one) and renames the running client; to keep the name after a restart, drop the <code>SKYGATE_TS_HOSTNAME</code> pin from <code>.env</code> and compose and recreate the container.",
+	"tailscale.name_conflict_btn":       "Delete the stale node and take the name",
+	"tailscale.name_conflict_confirm":   "Delete the offline node that holds the canonical name skygate-host and rename the running client?",
 	// B258.1 (v1.5.8+, 2026-09-17): third visual state —
 	// configured-but-missing. Mirrors the B258 "intentionally
 	// disabled" branch but with a warn banner (not info)

@@ -12,6 +12,100 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.85 — the reserved tailnet name belongs to the live client, not to a ghost (B320)
+
+**Date:** 2026-09-24 · **Base:** `v1.5.84` → this tag · **Compatibility:** none — no schema
+change, no migration, no config change. Purely additive UI + one admin action.
+
+### The report
+
+> «Посмотри не переприменился ли skygate-host — он offline и это tailscale клиент при
+> skygate при этом появился skygate-host-1 и если это тоже клиент tailscale при skygate
+> то у нас явно конфликт так как при skygate устройство с tailscale всегда базово имеет
+> имя skygate-host и skygate-host-1 появляется только у тех что дублируют текущий в
+> кластере и в зависимости от приоритета смены растет цифра в конце»
+
+The diagnosis in the report is exactly right, and the live tools confirmed both halves of it.
+
+### What the live tools found (read-only, agent VM)
+
+```
+headscale nodes list
+  id=57  given_name="skygate-host"    name="skygate-host-1-1"
+         tag:dev-infra-skygate-host   100.64.0.9    OFFLINE since 2026-09-21 21:32   (machine key #1)
+  id=87  given_name="skygate-host-1"  name="skygate-host-1"
+         tag:dev-infra-skygate-host-1 100.64.0.10   ONLINE — this container           (machine key #2)
+
+tailscale status --json | .Self.HostName        →  "skygate-host-1"
+docker exec … env | grep SKYGATE_TS_HOSTNAME    →  skygate-host-1      (pinned in .env AND docker-compose.yml)
+```
+
+So the **canonical** name `skygate-host` is held by a ghost — a registration from an earlier
+epoch with a **different machine key**, offline for three days — while the **real** client
+wears the `-1` suffix. The suffix cascade the report describes is visible in the data itself:
+the ghost had to be given the internal name `skygate-host-1-1` when it registered, i.e. both
+`skygate-host` and `skygate-host-1` were taken at that moment.
+
+The `-1` is **not** a re-application of anything by this container. It is the v0.33.1.9
+placeholder that **B251 already fixed in the code** (the default is `skygate-host`, and
+`isInfraNode` / `isReservedSelfHostname` match it by **strict equality**) but which nobody ever
+removed from the operator's `.env` and `docker-compose.yml`. That is why the two halves
+disagree: every "is this me?" check — infra ownership attribution, exit-node colocation
+sanity, the SSH-source ACL entry, the self-probes — keys off `skygate-host`, which today is
+the ghost, while the process that actually runs is `skygate-host-1`.
+
+### What changed
+
+* **`internal/feature/admin/tailscale_selfname_b320.go`** (new) — `SelfNameState` collects the
+  whole picture in one place: the name the **live daemon** registered with (`.Self.HostName`
+  from `tailscale status --json`), the name the **configuration** asks for, the canonical
+  `ReservedSelfHostname`, the raw `SKYGATE_TS_HOSTNAME` from the container env (so the page can
+  name the pin that would re-apply the suffix on the next restart), and the ghost's id, name,
+  tag, IP and last-seen.
+* **A guarded repair action** — `POST /admin/tailscale/reclaim-name` (admin-only, audited as
+  `tailscale.reclaim_name`). It deletes the ghost **only** when the candidate is (a) wearing
+  exactly the canonical name (B251 strict equality), (b) **offline**, (c) **ours** by
+  attribution (an infra-family tag or the `infra` user) and (d) not the live node itself — the
+  guards live in the pure `pickSelfNameGhost`, so they are unit-tested without a headscale
+  server. After the ghost is gone it renames the running client with
+  `tailscale set --hostname=skygate-host`, and when the daemon is down it says so instead of
+  half-fixing: *the stale node is gone, but Tailscale is not running — press Start, then
+  rename*.
+* **It deliberately does not rename behind the operator's back while the env still pins the
+  old name** — that would produce a name that silently flips back on the next restart. The page
+  prints both the `tailscale set --hostname=…` command and the two files to edit instead.
+* **`/admin/tailscale` banner** — when the live client is not wearing the reserved name, the
+  page shows it in red with both node ids, the ghost's last-seen, the env pin and the one-click
+  action; 10 RU + EN i18n keys.
+
+### The one live bug this release found in itself
+
+The first version of the infra-family matcher checked `:infra-`, which matches **nothing**: the
+real per-device tag is `tag:dev-infra-<host>`, so the substring after `:dev` is `-infra-`. The
+unit test caught it before the release (`scripts/check_b320_tailscale_self_name.sh` contract C1
+now pins the real shape and the legacy `tag:infra-…` form separately).
+
+### Operator follow-up (the half only the operator can do)
+
+Delete the `SKYGATE_TS_HOSTNAME=skygate-host-1` pin from `.env` (and the matching line in
+`docker-compose.yml`), recreate the container, then press **«Удалить устаревший узел и вернуть
+имя»**. Without removing the pin the rename survives only until the next restart.
+
+### Files
+
+`internal/feature/admin/tailscale_selfname_b320.go` (+ `tailscale_selfname_b320_test.go`),
+`internal/feature/admin/tailscale.go`, `cmd/skygate/main.go`,
+`internal/handlers/templates/admin/tailscale.html`, `internal/i18n/catalog_tailscale.go`,
+`scripts/check_b320_tailscale_self_name.sh`.
+
+### Verification
+
+`scripts/check_b320_tailscale_self_name.sh` (21 contracts): the canonical name is one
+constant; the destructive half carries all four guards; the infra-tag matcher understands the
+real shapes; the page renders the conflict with both ids and the action; the route is
+registered and the rename is sequenced **after** the delete; RU+EN key parity; and the unit
+tests (`pickSelfNameGhost`, flagging, the tag-shape regression) run in the gate.
+
 ## v1.5.84 — the rules lookup runs on PostgreSQL (B319)
 
 **Date:** 2026-09-24 · **Base:** `v1.5.83` → this tag · **Compatibility:** none — no schema
