@@ -76,7 +76,10 @@ if [ "${CALLS:-0}" -ge 2 ]; then
 else
   bad "A3: only $CALLS sync path calls it — the other one still moves routes without the ACL"
 fi
-RECONCILES="$(grep -c 'prefixowner.Reconcile(' "$SYNC")"
+# B312 renamed the call to ReconcileWithPreference (the location-aware fallback rides
+# the same assignment). The property is unchanged — exactly ONE place reconciles the
+# table, so no path can move the table without the ACL following.
+RECONCILES="$(grep -cE 'prefixowner\.Reconcile(WithPreference)?\(' "$SYNC")"
 if [ "${RECONCILES:-0}" = "1" ]; then
   ok "A4: exactly one reconcile call site — the one that also re-applies the ACL"
 else

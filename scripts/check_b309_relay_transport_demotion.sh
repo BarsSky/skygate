@@ -102,7 +102,11 @@ else
 fi
 
 # --- C: wiring ------------------------------------------------------------------
-if grep -q 'prefixowner.Reconcile(s.dbc(), healthyExitRelaysForAssignment(s.dbc()))' "$SYNC"; then
+# B312 added the location preference on top of the same healthy set, so either call
+# shape satisfies this contract — the property is that the transport-aware set is what
+# the assignment receives, never the headscale-only list.
+if grep -q 'prefixowner.ReconcileWithPreference(s.dbc(), healthyExitRelaysForAssignment(s.dbc())' "$SYNC" \
+   || grep -q 'prefixowner.Reconcile(s.dbc(), healthyExitRelaysForAssignment(s.dbc()))' "$SYNC"; then
   ok "C1: the assignment uses the transport-aware healthy set"
 else
   bad "C1: reconcilePrefixOwnership still passes the headscale-only healthy set"
