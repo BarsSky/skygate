@@ -769,6 +769,9 @@ EOF
     # B293: the local exit-node routes applier (only used when an exit node IS
     # this host and the service cannot run `tailscale set` itself).
     write_routes_units "$update_dir"
+    # B313: the headscale OIDC applier, so /admin/oidc can APPLY the configuration
+    # instead of telling the operator to copy-paste a script.
+    write_oidc_units "$update_dir"
 }
 
 # write_policy_units: the same privilege split for the headscale POLICY file
@@ -835,6 +838,76 @@ EOF
     systemctl daemon-reload
     systemctl enable --now skygate-policy.path >/dev/null 2>&1 || true
     echo "[install] wrote $service_file + $path_file (skygate-policy.path enabled)"
+}
+
+# write_oidc_units: the same privilege split for the OIDC block (B313).
+#
+# headscale's config lives outside the skygate service's mount namespace and the restart
+# belongs to root, so the panel cannot apply OIDC itself — which is exactly why the
+# operator on `aro` was still told to copy-paste a script. The unprivileged service drops
+# a data-only <update_dir>/oidc.request.props and this root-owned pair applies it,
+# restarts headscale, verifies and records the verdict in <update_dir>/oidc.result.props
+# where /admin/oidc reads it.
+write_oidc_units() {
+    local update_dir="$1"
+    local service_file="/etc/systemd/system/skygate-oidc.service"
+    local path_file="/etc/systemd/system/skygate-oidc.path"
+    local applier="/usr/local/lib/skygate/skygate-apply-oidc.sh"
+    local src="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/skygate-apply-oidc.sh"
+
+    if [ -f "$src" ]; then
+        install -m 0755 -o root -g root "$src" "$applier"
+    elif [ ! -f "$applier" ]; then
+        echo "[install] WARN: $src not found — the OIDC applier was not installed;"
+        echo "[install]       /admin/oidc then offers the copy-paste command instead of the apply button"
+        return 0
+    fi
+
+    cat > "$service_file" <<EOF
+# /etc/systemd/system/skygate-oidc.service
+# 2026-09-23 (B313): PRIVILEGED half of the headscale OIDC apply.
+# Written by install-{debian,rh}.sh — re-running the installer overwrites
+# it (project-owned file).
+#
+# Triggered by skygate-oidc.path, never started at boot: it applies exactly
+# one staged OIDC request (write the managed block, restart headscale, verify,
+# roll back on a failed restart) and exits.
+[Unit]
+Description=Skygate privileged headscale OIDC applier
+Documentation=https://github.com/${GITHUB_OWNER:-BarsSky}/${GITHUB_REPO:-skygate}
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=${applier} --from-request --request ${update_dir}/oidc.request.props --result ${update_dir}/oidc.result.props
+# A config write + one headscale restart + a discovery probe: 120s is generous.
+TimeoutStartSec=120
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    cat > "$path_file" <<EOF
+# /etc/systemd/system/skygate-oidc.path
+# 2026-09-23 (B313): watches for a staged OIDC request.
+# The unprivileged service writes this file inside its own data dir; the
+# path unit turns its appearance into a root-run applier. No sudo, no
+# polkit, no privileged systemd call from the service.
+[Unit]
+Description=Watch for a staged skygate headscale-OIDC request
+
+[Path]
+PathExists=${update_dir}/oidc.request.props
+Unit=skygate-oidc.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now skygate-oidc.path >/dev/null 2>&1 || true
+    echo "[install] wrote $service_file + $path_file (skygate-oidc.path enabled)"
 }
 
 # write_routes_units: the same privilege split for the LOCAL exit-node routes

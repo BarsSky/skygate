@@ -45,10 +45,32 @@ MODE="${SKYGATE_HEADSCALE_MODE:-auto}"   # auto | systemd | docker | none
 DRY_RUN=0
 DO_RESTART=1
 ROLLBACK=0
+# B313: the panel writes a request file (data only, 0600) and a systemd path unit runs
+# this script with --from-request. Everything below the block source is the SAME code
+# path as the manual run, so a button and a hand-run cannot behave differently.
+FROM_REQUEST=0
+REQUEST_FILE="${SKYGATE_OIDC_REQUEST_PATH:-}"
+RESULT_FILE="${SKYGATE_OIDC_RESULT_PATH:-}"
 
 log()  { printf '[oidc-apply] %s\n' "$*"; }
 warn() { printf '[oidc-apply] WARN: %s\n' "$*" >&2; }
-die()  { printf '[oidc-apply] ERROR: %s\n' "$*" >&2; exit 1; }
+# B313: every failure is recorded where the panel can show it, so a button press can
+# never end in "nothing happened". write_result is defined below and is a no-op unless
+# the caller supplied a result path.
+die()  { write_result failed "$*" 2>/dev/null || true; printf '[oidc-apply] ERROR: %s\n' "$*" >&2; exit 1; }
+
+# write_result records the verdict where the panel reads it (B313). Best effort: a
+# failed write must never turn a successful apply into a failure.
+write_result() {
+  local status="$1" detail="$2"
+  [ -n "$RESULT_FILE" ] || return 0
+  local dir; dir="$(dirname "$RESULT_FILE")"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  printf '# skygate privileged OIDC result (B313)\nSTATUS=%s\nDETAIL=%q\nAT=%q\n' \
+    "$status" "$detail" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$RESULT_FILE.tmp" 2>/dev/null || return 0
+  chmod 0644 "$RESULT_FILE.tmp" 2>/dev/null || true
+  mv -f "$RESULT_FILE.tmp" "$RESULT_FILE" 2>/dev/null || true
+}
 
 usage() { sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -77,6 +99,11 @@ restart_headscale() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --from-request)           FROM_REQUEST=1 ;;
+    --request)                shift; REQUEST_FILE="${1:-}" ;;
+    --request=*)              REQUEST_FILE="${1#*=}" ;;
+    --result)                 shift; RESULT_FILE="${1:-}" ;;
+    --result=*)               RESULT_FILE="${1#*=}" ;;
     --dry-run)                DRY_RUN=1 ;;
     --no-restart)             DO_RESTART=0 ;;
     --rollback)               ROLLBACK=1 ;;
@@ -103,17 +130,36 @@ if [ "$(id -u)" -ne 0 ] && [ "${SKYGATE_OIDC_APPLY_ALLOW_NONROOT:-0}" != "1" ]; 
   die "run me as root (sudo bash $0) — headscale's config and its restart both need root"
 fi
 
+# ------------------------------------------------------ read the skygate bin
+# B313: in REQUEST mode the block comes from the request file the panel wrote, so the
+# apply must not depend on the skygate binary or on oidc-export — the helper is a
+# systemd unit that runs with its own environment and may not have either.
+if [ "$FROM_REQUEST" -eq 1 ]; then
+  [ -n "$REQUEST_FILE" ] || die "--from-request needs --request PATH (or SKYGATE_OIDC_REQUEST_PATH)"
+  [ -f "$REQUEST_FILE" ] || die "request file $REQUEST_FILE does not exist"
+  BLOCK="$(awk '/^BLOCK_BEGIN$/{f=1;next} /^BLOCK_END$/{f=0} f' "$REQUEST_FILE")"
+  [ -n "$BLOCK" ] || die "the request carries no BLOCK_BEGIN/BLOCK_END block"
+  printf '%s\n' "$BLOCK" | grep -q 'client_secret: .\+' || die "the request block has no client_secret"
+  ISSUER="$(printf '%s\n' "$BLOCK" | awk '/^  issuer:/{print $2; exit}')"
+  [ -n "$ISSUER" ] || die "the request block has no issuer"
+  REQ_CONFIG="$(awk -F= '/^HEADSCALE_CONFIG=/{gsub(/"/,"",$2); print $2; exit}' "$REQUEST_FILE")"
+  if [ -n "$REQ_CONFIG" ]; then CONFIG="$REQ_CONFIG"; fi
+  log "request mode: $REQUEST_FILE (requested by $(awk -F= '/^REQUESTED_BY=/{gsub(/"/,"",$2); print $2; exit}' "$REQUEST_FILE"), issuer $ISSUER)"
+fi
+
 # ------------------------------------------------------ locate the skygate bin
-if [ -z "$SKYGATE_BIN" ]; then
+if [ "$FROM_REQUEST" -eq 0 ] && [ -z "$SKYGATE_BIN" ]; then
   for cand in /usr/local/bin/skygate /usr/bin/skygate /opt/skygate/skygate; do
     if [ -x "$cand" ]; then SKYGATE_BIN="$cand"; break; fi
   done
 fi
-if [ -z "$SKYGATE_BIN" ]; then
-  SKYGATE_BIN="$(command -v skygate || true)"
+if [ "$FROM_REQUEST" -eq 0 ]; then
+  if [ -z "$SKYGATE_BIN" ]; then
+    SKYGATE_BIN="$(command -v skygate || true)"
+  fi
+  [ -n "$SKYGATE_BIN" ] || die "skygate binary not found — pass --skygate-bin /path/to/skygate"
+  log "skygate binary: $SKYGATE_BIN"
 fi
-[ -n "$SKYGATE_BIN" ] || die "skygate binary not found — pass --skygate-bin /path/to/skygate"
-log "skygate binary: $SKYGATE_BIN"
 
 # ------------------------------------------------------------- read the config
 # oidc-export opens skygate's database, which belongs to the service user; run it
@@ -126,10 +172,12 @@ export_block() {
   fi
 }
 
-BLOCK="$(export_block --headscale --secret)" || die "skygate oidc-export failed — is OIDC configured on /admin/oidc?"
-printf '%s\n' "$BLOCK" | grep -q 'client_secret: .\+' || die "skygate has no client_secret configured — fill /admin/oidc first"
-ISSUER="$(printf '%s\n' "$BLOCK" | awk '/^  issuer:/{print $2; exit}')"
-[ -n "$ISSUER" ] || die "the generated block has no issuer — fill /admin/oidc first"
+if [ "$FROM_REQUEST" -eq 0 ]; then
+  BLOCK="$(export_block --headscale --secret)" || die "skygate oidc-export failed — is OIDC configured on /admin/oidc?"
+  printf '%s\n' "$BLOCK" | grep -q 'client_secret: .\+' || die "skygate has no client_secret configured — fill /admin/oidc first"
+  ISSUER="$(printf '%s\n' "$BLOCK" | awk '/^  issuer:/{print $2; exit}')"
+fi
+[ -n "$ISSUER" ] || die "the block has no issuer — fill /admin/oidc first"
 log "issuer: $ISSUER"
 
 # --------------------------------------------------------- locate the config
@@ -245,3 +293,11 @@ if command -v curl >/dev/null 2>&1; then
   fi
 fi
 log "done. /admin/oidc/sync shows the same values; a Tailscale client login now goes through skygate."
+
+# B313: publish the verdict for the panel, and consume the request so the path unit
+# does not re-run on the same file. The request is removed only on SUCCESS: a failure
+# keeps it, so the operator can see and re-run exactly what was asked for.
+write_result ok "applied $ISSUER to $CONFIG via $MODE (backup $(basename "$BACKUP"))"
+if [ "$FROM_REQUEST" -eq 1 ] && [ -n "$REQUEST_FILE" ] && [ -f "$REQUEST_FILE" ]; then
+  rm -f "$REQUEST_FILE" 2>/dev/null || true
+fi

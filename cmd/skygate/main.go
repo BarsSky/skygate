@@ -2308,6 +2308,10 @@ func main() {
 	// mode (full Option C).
 	mux.Handle("GET /admin/oidc/sync", authMW(http.HandlerFunc(adminSvc.GetAdminOIDCSync)))
 	mux.Handle("POST /admin/oidc/sync", authMW(http.HandlerFunc(adminSvc.PostAdminOIDCSync)))
+	// B313 (v1.5.78): apply the saved configuration to headscale from the panel — a
+	// privileged request the installed skygate-oidc.path unit performs, so the
+	// operator no longer copy-pastes a script (their complaint about `aro`).
+	mux.Handle("POST /admin/oidc/apply-headscale", authMW(http.HandlerFunc(adminSvc.PostAdminOIDCApplyHeadscale)))
 	mux.Handle("GET /admin/headplane", authMW(http.HandlerFunc(adminSvc.GetAdminHeadplane)))
 	mux.Handle("POST /admin/headplane", authMW(http.HandlerFunc(adminSvc.PostAdminHeadplane)))
 	mux.Handle("GET /admin/backup", authMW(http.HandlerFunc(adminSvc.GetAdminBackup)))

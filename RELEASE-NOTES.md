@@ -12,6 +12,58 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.78 — OIDC is applied from the panel, not copy-pasted (B313)
+
+**Date:** 2026-09-23 · **Base:** `v1.5.77` → this tag · **Compatibility:** a re-run of
+the installer (or `deploy/install-policy-helper.sh`) installs the new helper; no schema
+change, no config change.
+
+### The report
+
+> «на aro все еще висит в OIDC предложение по исправлению env и появилось поле со
+> скриптом однако никаких автоматической настройки кнопок нет»
+
+The panel already held every value — what it lacked was the **write**: with
+`ProtectSystem=strict` the skygate unit cannot touch headscale's config, and restarting
+headscale belongs to root.
+
+### What the operator gets
+
+* **One button** on `/admin/oidc`: «Применить настройки к headscale». It stages a
+  privileged request and the installed `skygate-oidc.path` unit writes the managed
+  `oidc:` block, restarts headscale, verifies the discovery URL and **records the
+  verdict where the page shows it** (succeeded / failed + reason). A button press can
+  never end in "nothing happened".
+* **The env hint can no longer be the answer**: when the values are saved in the panel,
+  applying them does not need an env edit — and when the helper is *not* installed the
+  page says so and prints the exact one-line command that installs it (that was the
+  missing half on `aro`).
+* **One renderer**: the block comes from `internal/oidc.RenderHeadscaleBlock`, which
+  `skygate oidc-export` now delegates to — the CLI output and the button cannot drift.
+* **Safe by construction**: the request is data-only, published atomically
+  (temp + rename), created `0600` because it carries the client secret, never sourced by
+  the helper, refused when empty or not an `oidc:` block, and consumed **only on
+  success** (a failure keeps it so it can be inspected and re-run). The audit row names
+  the request, never the secret.
+
+### Files
+
+`internal/oidc/block_b313.go`, `internal/oidc/apply_request_b313.go`,
+`internal/feature/admin/oidc_apply_b313.go`, `internal/feature/admin/oidc_settings.go`,
+`internal/handlers/templates/admin/oidc_settings.html`,
+`internal/i18n/catalog_admin.go`, `cmd/skygate/main.go`,
+`cmd/skygate/oidc_export_b304.go`, `deploy/skygate-apply-oidc.sh`,
+`deploy/install-common.sh`, `scripts/check_b313_oidc_apply_button.sh`.
+
+### Verification
+
+42 contracts in `scripts/check_b313_oidc_apply_button.sh` (including a real
+`bash -n` of the applier and the installer wiring), plus
+`internal/oidc/apply_request_b313_test.go` (atomic write, the 0600 mode, the refusals,
+result parsing, the armed stat, the shared renderer) and
+`internal/feature/admin/oidc_apply_b313_test.go` (a staged request, the refusals, the
+named fallback command, non-admin 403).
+
 ## v1.5.77 — every exit node shows where it sits, and a lost relay's prefixes go to the nearest one (B312)
 
 **Date:** 2026-09-23 · **Base:** `v1.5.76` → this tag · **Compatibility:** one

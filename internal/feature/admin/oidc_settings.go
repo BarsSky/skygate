@@ -40,6 +40,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/i18n"
+	"skygate/internal/oidc"
 )
 
 // GetAdminOIDC renders the /admin/oidc page.
@@ -85,12 +86,12 @@ func (s *Service) GetAdminOIDC(w http.ResponseWriter, r *http.Request) {
 	// The 5 endpoint URLs (the discovery doc + the JWKS
 	// URL is the only one with a different path).
 	endpoints := map[string]string{
-		"issuer":         issuer,
-		"authorization":  issuer + "/oidc/authorize",
-		"token":          issuer + "/oidc/token",
-		"userinfo":       issuer + "/oidc/userinfo",
-		"jwks":           issuer + "/oidc/jwks.json",
-		"discovery":      issuer + "/.well-known/openid-configuration",
+		"issuer":        issuer,
+		"authorization": issuer + "/oidc/authorize",
+		"token":         issuer + "/oidc/token",
+		"userinfo":      issuer + "/oidc/userinfo",
+		"jwks":          issuer + "/oidc/jwks.json",
+		"discovery":     issuer + "/.well-known/openid-configuration",
 	}
 	_ = i18n.T(lang, "oidc.title") // keep the import used
 	// B290: what the RUNNING provider actually holds (which can differ from both
@@ -149,6 +150,11 @@ func (s *Service) GetAdminOIDC(w http.ResponseWriter, r *http.Request) {
 		"FlashSuccess":    r.URL.Query().Get("ok"),
 		"FlashError":      r.URL.Query().Get("err"),
 		"FlashTestResult": r.URL.Query().Get("test"),
+		// B313: whether a single button can apply the configuration to headscale (the
+		// privileged helper is installed) and what it said last time.
+		"OIDCApplyArmed":  oidc.OIDCHelperArmed(),
+		"OIDCApplyScript": oidc.OIDCHelperScriptPath(),
+		"OIDCApplyResult": oidc.ReadOIDCApplyResult(),
 	})
 }
 
@@ -180,12 +186,12 @@ func buildOIDCEnvBlock(eff EffectiveOIDCSettings) string {
 // EffectiveOIDCSettings is the resolved OIDC configuration plus where each field
 // came from, so the page can be honest about it (B290).
 type EffectiveOIDCSettings struct {
-	Enabled       bool
-	Issuer        string
-	ClientID      string
-	ClientSecret  string
-	RedirectURIs  string
-	KeyDir        string
+	Enabled      bool
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	RedirectURIs string
+	KeyDir       string
 	// Source maps a field name ("issuer", "client_id", "client_secret",
 	// "redirect_uris", "key_dir", "enabled") to "ui", "env" or "default".
 	Source map[string]string

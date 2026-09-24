@@ -190,6 +190,43 @@
   {{if .EnvDisabled}}<div class="alert alert-warning" style="margin-bottom:8px"><i class="fa-solid fa-triangle-exclamation"></i> {{t "oidc.env_off_warn" | safeHTML}}</div>{{end}}
 </div>
 
+{{/* B313 (v1.5.78): APPLY the configuration to headscale.
+     The operator's complaint on `aro`: the page still pointed at an env fix and offered
+     only a script to copy-paste, while every value was already saved here. headscale's
+     config and its restart belong to root, so the panel stages a data-only request and
+     the installed skygate-oidc.path unit performs it — one button, and the verdict is
+     shown right here. */}}
+<div class="card">
+  <h3><i class="fa-solid fa-cloud-arrow-up"></i> {{t "oidc.apply.title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">{{t "oidc.apply.help" | safeHTML}}</p>
+  {{with .OIDCApplyResult}}
+    {{if .Present}}
+      <p style="font-size:13px;margin-bottom:8px">
+        {{if .OK}}
+          <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "oidc.apply.status_ok"}}</span>
+        {{else}}
+          <span class="tag tag-danger"><i class="fa-solid fa-circle-xmark"></i> {{t "oidc.apply.status_failed"}}</span>
+        {{end}}
+        <span style="color:var(--text-muted);font-size:12px">{{.At}} · <code>{{.Detail}}</code></span>
+      </p>
+    {{else}}
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:8px">{{t "oidc.apply.status_none"}}</p>
+    {{end}}
+  {{end}}
+  {{if .OIDCApplyArmed}}
+    <form method="post" action="/admin/oidc/apply-headscale">
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-cloud-arrow-up"></i> {{t "oidc.apply.button"}}</button>
+      <span style="color:var(--text-muted);font-size:12px;margin-left:8px">{{t "oidc.apply.async_help"}}</span>
+    </form>
+  {{else}}
+    <div class="alert alert-warning" style="margin-bottom:8px">
+      <i class="fa-solid fa-triangle-exclamation"></i> {{t "oidc.apply.not_armed"}}
+    </div>
+    <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px 0">{{t "oidc.apply.fallback_help" | safeHTML}}</p>
+    <pre style="white-space:pre-wrap;background:var(--bg-subtle,#111);padding:8px;border-radius:6px;font-size:12px">sudo bash {{.OIDCApplyScript}}</pre>
+  {{end}}
+</div>
+
 <form method="post" action="/admin/oidc">
   <div class="card">
     <h3><i class="fa-solid fa-pen-to-square"></i> {{t "oidc.section_form"}}</h3>
