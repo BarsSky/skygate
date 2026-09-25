@@ -476,7 +476,7 @@
             <form method="post" action="/my/devices/preferred-exit" style="display:inline-flex;gap:4px;align-items:center" title="{{t "devices.device_exit_pref_set_help"}}">
               <input type="hidden" name="hostname" value="{{.Hostname}}">
               <input type="hidden" name="via" value="0">
-              <select name="tag" style="font-size:11px;padding:2px 4px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
+              <select name="tag" style="font-size:11px;padding:2px 4px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px" aria-label="{{t "devices.device_exit_pref"}}">
                 {{range $.AvailableExitNodes}}
                   {{/* B188: read the canonical headscale tag
                        from NodeView.DevTag (populated by the

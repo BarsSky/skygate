@@ -139,7 +139,17 @@ func AutoBackfill(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertS
 		return
 	}
 	if dbConn == nil {
-		log.Printf("node-discovery: nil *db.ResettableDB, skipping autoupdater goroutine (defensive guard)")
+		log.Printf("node-discovery: nil db.DBSource, skipping autoupdater goroutine (defensive guard)")
+		return
+	}
+	// B325.1: `dbConn == nil` only catches a nil INTERFACE. A `DBSource` that is
+	// non-nil but whose `Current()` returns nil (a typed-nil stored in the
+	// interface, or a wrapper around a pool that was never opened) slipped
+	// through and was dereferenced on the first tick — inside a goroutine started
+	// from main, where a panic kills the whole process. db.DBCurrent is the
+	// shared nil-safe accessor, so ask it instead.
+	if db.DBCurrent(dbConn) == nil {
+		log.Printf("node-discovery: db.DBSource carries no current *sql.DB (Current() == nil), skipping autoupdater goroutine (defensive guard)")
 		return
 	}
 	if hs == nil {
@@ -180,6 +190,17 @@ func AutoBackfill(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertS
 // availability: a transient headscale API hiccup or DB
 // error should not block subsequent ticks.
 func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertSink *TagAlertSink) {
+	// The tick-level companion to AutoBackfill's guard: this function is also
+	// called directly (tests, and any future manual trigger), so it must not
+	// dereference a nil connection either. db.DBCurrent answers nil for both a
+	// nil interface and a wrapper whose pool is missing, so one check covers
+	// every shape. The helpers below keep reading Current() per use — that is
+	// the DBSource contract, and it is how they follow a mid-tick pool swap.
+	conn := db.DBCurrent(dbConn)
+	if conn == nil {
+		log.Printf("node-discovery: db.DBSource carries no current *sql.DB (Current() == nil), skipping tick")
+		return
+	}
 	// Invalidate the headscale node cache before
 	// ListAllNodes so we get fresh data — otherwise we'd
 	// read stale node lists for `interval` minutes after
@@ -191,7 +212,7 @@ func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertSin
 		log.Printf("node-discovery: ListAllNodes failed: %v (skipping tick)", err)
 		return
 	}
-	users, err := db.GetAllPortalUsers(dbConn.Current())
+	users, err := db.GetAllPortalUsers(conn)
 	if err != nil {
 		log.Printf("node-discovery: GetAllPortalUsers failed: %v (skipping tick)", err)
 		return

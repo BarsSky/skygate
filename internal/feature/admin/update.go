@@ -65,10 +65,25 @@ type runningUpdater struct {
 // deploy (when the running version is a `skygate-pre-update-<sha>`
 // tag, not a `vX.Y.Z` tag). The new rules:
 //
-//   - If target already starts with "v", "skygate-", or looks
-//     like a SHA/branch ref, leave it alone.
-//   - Otherwise (it's a plain semver like "0.33.1.24"), prepend
-//     "v" to produce the conventional release-tag form.
+//   - A target already carrying one of the four prefixes this
+//     helper has always exempted — "v", "skygate-", "main", "HEAD"
+//     — is returned unchanged.
+//   - Anything else gets a "v" prefix, which is what turns a bare
+//     semver like "0.33.1.24" into the conventional release tag
+//     "v0.33.1.24".
+//
+// The helper does NOT detect a raw SHA or a non-main branch: it
+// answers "ve2d0b9e" for "e2d0b9e" and "vdevelop" for "develop".
+// That is deliberate rather than accidental — both consumers
+// normalise the result back (Docker: update.GitRefForBuildLabel
+// strips the "v" from a "v<hex>" label; native: NativeReleaseTagFor
+// refuses a bare SHA as "not a release tag") — and it is pinned by
+// TestNormalizeUpdateTarget so a change here is a conscious one.
+// The reachable input is the `target` form field of an admin-only
+// POST, which the page fills from the GitHub release list; a
+// hand-crafted POST with a branch name is answered with a failed
+// `git checkout` and the orchestrator's normal rollback, not a
+// silent mis-deploy.
 //
 // Both PostAdminUpdateApply and PostAdminUpdatePush use this
 // helper so the pre-fix bug can't reappear in either path.

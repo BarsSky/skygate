@@ -72,7 +72,7 @@
     <h3><i class="fa-solid fa-right-from-bracket"></i> {{t "settings.section_exit_policy"}}</h3>
     <div class="form-group">
       <label>{{t "settings.routing_mode"}}</label>
-      <select name="exit_policy" class="form-control">
+      <select name="exit_policy" class="form-control" aria-label="{{t "settings.routing_mode"}}">
         <option value="allow_all"{{if eq .ExitPolicy "allow_all"}} selected{{end}}>{{t "settings.exit_policy_allow_all"}}</option>
         <option value="deny_all"{{if eq .ExitPolicy "deny_all"}} selected{{end}}>{{t "settings.exit_policy_deny_all"}}</option>
       </select>

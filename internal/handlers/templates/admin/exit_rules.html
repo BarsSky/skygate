@@ -47,7 +47,7 @@
     </label>
     <label style="display:flex;flex-direction:column;gap:2px">
       <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_target_type"}}</span>
-      <select name="target_type" required style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+      <select name="target_type" required style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)" aria-label="{{t "exit_rules_admin.add_form_target_type"}}">
         <option value="ip"{{if eq .form_target_type "ip"}} selected{{end}}>ip</option>
         <option value="subnet"{{if eq .form_target_type "subnet"}} selected{{end}}>subnet</option>
         <option value="domain"{{if eq .form_target_type "domain"}} selected{{end}}>domain</option>
@@ -59,7 +59,7 @@
     </label>
     <label style="display:flex;flex-direction:column;gap:2px">
       <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_action"}}</span>
-      <select name="action" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+      <select name="action" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)" aria-label="{{t "exit_rules_admin.add_form_action"}}">
         <option value="accept"{{if or (not .form_action) (eq .form_action "accept")}} selected{{end}}>accept</option>
         <option value="deny"{{if eq .form_action "deny"}} selected{{end}}>deny</option>
       </select>

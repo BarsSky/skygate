@@ -457,6 +457,16 @@ That is **all** this block does. `.user-form-grid` (3 columns, `themes.css:967-9
     fix for the 4 relay selects) and a real `<label for>` for `admin/devices.html:366` and
     `user/devices.html:479`.
 
+    > **DONE — B325.1 (v1.5.92).** Every `<select>` in the panel now carries an accessible label
+    > (`check_b326_responsive_panel.sh` contract B3 measures **0** unlabelled, down from 31, and
+    > the budget is `0`). The last one exposed a defect in the contract itself rather than in the
+    > markup: `admin/devices.html:133` has its `aria-label` on a *continuation* line of the
+    > `<select>` tag, and B3 only read the first line — so it reported a labelled control as
+    > unlabelled, and because B3 is a count that false positive inflated the budget every other
+    > select was measured against. B3 now reads the whole tag, however many lines it spans. Lesson
+    > for the remaining accessibility work: a count-based contract that reads one line of a
+    > multi-line tag is a budget that lies.
+
 16. **`admin/exit_nodes.html:745,750`** — `style="width:240px"` / `style="width:260px"` on the
     ssh_target / ssh_key_path inputs exceed the ~300px content box of a 360px viewport minus
     `.card{padding:16px}` (`themes.css:905`) and `.shell{padding:0 14px}` (`:904`) — change both

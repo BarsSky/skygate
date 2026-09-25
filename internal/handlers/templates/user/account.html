@@ -76,7 +76,7 @@
   <form method="post" action="/my/account/display" autocomplete="off">
     <div class="field">
       <label>{{t "account.font_family"}}</label>
-      <select name="font_family">
+      <select name="font_family" aria-label="{{t "account.font_family"}}">
         <option value="manrope" {{if eq .DisplayFont "manrope"}}selected{{end}}>Manrope</option>
         <option value="inter"   {{if eq .DisplayFont "inter"}}selected{{end}}>Inter</option>
         <option value="geist"   {{if eq .DisplayFont "geist"}}selected{{end}}>Geist</option>
@@ -87,7 +87,7 @@
     </div>
     <div class="field">
       <label>{{t "account.font_scale"}}</label>
-      <select name="font_scale">
+      <select name="font_scale" aria-label="{{t "account.font_scale"}}">
         <option value="-2" {{if eq .DisplayScale -2}}selected{{end}}>{{t "account.font_scale_smaller"}}</option>
         <option value="-1" {{if eq .DisplayScale -1}}selected{{end}}>{{t "account.font_scale_small"}}</option>
         <option value="0"  {{if eq .DisplayScale 0}}selected{{end}}>{{t "account.font_scale_normal"}}</option>

@@ -181,8 +181,8 @@ curl -X POST -b skygate_session=TOKEN \
 
   <table style="margin-top:12px">
     <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
-    <tr><td><code>device_id</code></td><td>int</td><td>yes</td><td>Device ID (see /my/devices)</td></tr>
-    <tr><td><code>exit_node</code></td><td>string</td><td>no</td><td>Exit node name (e.g. "node-europe")</td></tr>
+    <tr><td><code>device_id</code></td><td>int</td><td>yes</td><td>{{t "help.exit_rules_help.api_field_device_id"}}</td></tr>
+    <tr><td><code>exit_node</code></td><td>string</td><td>no</td><td>{{t "help.exit_rules_help.api_field_exit_node"}}</td></tr>
     <tr><td><code>target_type</code></td><td>string</td><td>yes</td><td>"ip", "subnet", or "domain"</td></tr>
     <tr><td><code>target_value</code></td><td>string</td><td>yes</td><td>IP, subnet (10.0.0.0/24), or domain (example.com)</td></tr>
     <tr><td><code>action</code></td><td>string</td><td>no</td><td>"accept" (default) or "deny"</td></tr>
@@ -215,9 +215,9 @@ Service 3 (domains, autoupdater will pick up the IPs):
   <p style="margin-top:8px">{{t "help.exit_rules_help.ai_what_to_know"}}</p>
   <ul>
     <li>target_type can be "ip", "subnet", or "domain".</li>
-    <li>For domains, the server auto-resolves and pulls in all IPs (autoupdater every 5 min).</li>
-    <li>For Russian sites, use a Russian exit-node (e.g. relay-2) — otherwise Cloudflare shows a challenge.</li>
-    <li>List and revoke tokens at <a href="/my/tokens">/my/tokens</a>.</li>
+    <li>{{t "help.exit_rules_help.ai_tip_domains"}}</li>
+    <li>{{t "help.exit_rules_help.ai_tip_russian"}}</li>
+    <li>{{t "help.exit_rules_help.ai_tip_tokens"}} <a href="/my/tokens">/my/tokens</a>.</li>
   </ul>
 </div>
 
@@ -302,9 +302,9 @@ Service 3 (domains, autoupdater will pick up the IPs):
   <h3><i class="fa-solid fa-lightbulb"></i> {{t "help.exit_rules_help.ip_sources_h3"}}</h3>
   <p>{{t "help.exit_rules_help.ip_sources_intro"}}</p>
   <ul>
-    <li>Service A: <code>https://example.com/ips.txt</code></li>
-    <li>Service B: <code>https://example.com/ipranges.json</code></li>
-    <li>Provider C: <code>https://example.com/ips-v4</code></li>
+    <li>{{t "help.exit_rules_help.ip_sources_service_a"}} <code>https://example.com/ips.txt</code></li>
+    <li>{{t "help.exit_rules_help.ip_sources_service_b"}} <code>https://example.com/ipranges.json</code></li>
+    <li>{{t "help.exit_rules_help.ip_sources_provider_c"}} <code>https://example.com/ips-v4</code></li>
   </ul>
   <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">{{t "help.exit_rules_help.ip_sources_recommendation"}}
   <ul>

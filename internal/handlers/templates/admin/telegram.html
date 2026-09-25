@@ -312,7 +312,7 @@
       <input type="hidden" name="action" value="set_egress">
       <div class="form-group">
         <label>{{t "telegram.egress_select_label"}}</label>
-        <select name="node_id" class="form-control">
+        <select name="node_id" class="form-control" aria-label="{{t "telegram.egress_select_label"}}">
           {{range .State.Egress.Available}}
           <option value="{{.NodeID}}" {{if eq .NodeID $.State.Egress.SelectedNodeID}}selected{{end}}>{{.Hostname}}{{if .TailscaleIP}} ({{.TailscaleIP}}){{end}}{{if .Description}} — {{.Description}}{{end}}</option>
           {{end}}

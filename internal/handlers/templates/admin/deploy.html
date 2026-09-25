@@ -127,7 +127,7 @@
     <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
       <div>
         <label style="display:block;font-size:12px;color:var(--text-muted)">{{t "deploy.target_label"}}</label>
-        <select name="target" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px">
+        <select name="target" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px" aria-label="{{t "deploy.target_label"}}">
           {{if .Data.Chain.Members}}
             {{range .Data.Chain.SortedByPriority}}<option value="{{.Hostname}}" {{if eq .Hostname $.Data.FormState.Target}}selected{{end}}>{{.Hostname}} (P{{.Priority}})</option>{{end}}
           {{else}}
@@ -155,7 +155,7 @@
     <form method="POST" action="/admin/ha/force-promote" style="padding:12px;background:var(--bg-muted);border-radius:4px">
       <h4 style="margin:0 0 8px 0;font-size:14px"><i class="fa-solid fa-arrow-up"></i> {{t "ha.force_promote"}}</h4>
       <div>
-        <select name="hostname" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:8px">
+        <select name="hostname" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:8px" aria-label="{{t "ha.col_hostname"}}">
           {{range .Data.Chain.SortedByPriority}}<option value="{{.Hostname}}">{{.Hostname}} (P{{.Priority}})</option>{{end}}
         </select>
       </div>
@@ -165,7 +165,7 @@
     <form method="POST" action="/admin/ha/force-demote" style="padding:12px;background:var(--bg-muted);border-radius:4px">
       <h4 style="margin:0 0 8px 0;font-size:14px"><i class="fa-solid fa-arrow-down"></i> {{t "ha.force_demote"}}</h4>
       <div>
-        <select name="hostname" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:8px">
+        <select name="hostname" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:8px" aria-label="{{t "ha.col_hostname"}}">
           {{range .Data.Chain.SortedByPriority}}<option value="{{.Hostname}}">{{.Hostname}} (P{{.Priority}})</option>{{end}}
         </select>
       </div>

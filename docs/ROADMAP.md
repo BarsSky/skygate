@@ -232,6 +232,55 @@ read, relink targets `29,31,6`, sentinel `45`, 52 KB policy backup, nothing chan
 | TD-17 | SQLite ↔ PostgreSQL schema/DDL parity contract | OPEN (RR-1 candidate) |
 | TD-19 | Native self-update needs `systemctl reset-failed` | OPEN (RR-3) |
 | TD-20 | Documentation sprawl (`plans/`, `runbooks/`, `internal/`, 900 KB `AGENTS.md`) | DONE (2026-09-18 restructure) |
+| TD-21 | `gofmt -l` is not clean repo-wide and no gate check runs `gofmt` | OPEN (v1.5.92 measurement) |
+| TD-22 | `verify_pre_deploy.sh` prints no summary and exits 0 even with FAILs (locally) | OPEN (v1.5.92 measurement) |
+
+**TD-22 detail (measured 2026-09-25, v1.5.92).** The catalog maintains `RESULTS_PASS` /
+`RESULTS_FAIL` (lines ~218-219, incremented inside `run_check`) but **never reads them**: there is
+no final summary line and no `exit` keyed on them, so the script's exit status is the status of its
+last statement and a run with FAIL rows exits 0. Consequences:
+
+* "the gate must end with `0 FAIL`" is enforced by a **human or agent reading the FAIL list**, plus
+  the CI job in `.github/workflows/ci.yml` ("Run verify_pre_deploy.sh (and refuse any FAIL)"), which
+  greps `^  FAIL`/`^  TIMEOUT` out of the captured log and fails the job. Locally, `make verify-pre`
+  and `$?` say nothing.
+* It also means the run has **no machine-readable verdict at all** — no PASS/SKIP/FAIL totals, and
+  no way for a wrapper (a deploy script, a pre-push hook, a future CI matrix entry) to consume the
+  result without re-implementing the grep.
+* Why it has not simply been "fixed" by adding `[ "$RESULTS_FAIL" -eq 0 ] || exit 1`: the reference
+  VM carries **8 pre-existing environment FAILs** (`B1` — the container-dependent
+  `internal/headscale` tests, `B118`, `B119`, `B176`, `B188.2`, `B188.3`, `B237.16`, `B294`) that
+  SKIP on the CI runner. A non-zero exit without first clearing or reclassifying those turns every
+  local run red and hides real regressions in the noise.
+
+Order of work: (1) make the environment failures SKIP instead of FAIL where they genuinely cannot
+run (the AGENTS rule already says live-state checks must SKIP), (2) print the summary
+(`N PASS, M FAIL, K SKIP`) and exit non-zero on FAIL, (3) assert the exit code in
+`scripts/check_b322_gate_can_fail.sh` so the catalog's own verdict can never silently go dead
+again. Recorded, not started.
+
+**TD-21 detail (measured 2026-09-25, v1.5.92).** `AGENTS.md` rule 3 says `gofmt` must be clean,
+but nothing enforces it: **no** `scripts/check_b*.sh`, `scripts/verify_pre_deploy.sh`, the
+`Makefile` or CI runs `gofmt -l`. Running it over the tree reports ~70 files in two distinct
+classes, both long-standing rather than recent regressions:
+
+* **≈40 i18n catalogues** (`internal/i18n/catalog_*.go`, `internal/feature/*/i18n*.go`) use a
+  deliberate-looking *space before the colon* map style —
+  `"backup.title"                   : "Backup",`. `gofmt` normalises it to `"backup.title":`.
+  `catalog_help.go` and the newer catalogues already use the canonical form, so the tree is
+  mixed. This is cosmetic and mechanical: `gofmt -w internal/i18n/*.go` fixes it in one commit,
+  at the cost of a very large whitespace-only diff;
+* **~30 other files** (`internal/feature/admin/system_tests.go`,
+  `internal/nodeownership/nodeownership.go`, …) carry doc-comment bodies indented with three
+  spaces instead of a tab — the Go 1.19 `gofmt` comment reformat, i.e. these files were last
+  formatted with Go < 1.19 and never re-run.
+
+Why it is not "fixed" here: a whitespace-only diff over 70 files inside a localization release
+would bury the change and make the release unreviewable, and any future `git blame` on those
+files would point at a formatting commit. The two follow-ups, in order: (1) add a `gofmt -l`
+check to the gate (B-check, so the floor stops moving), (2) land the one-commit renormalisation
+(`gofmt -w` + `git add --renormalize .`) as its own single-purpose release. Note that `.gitattributes`
+already pins `*.go text eol=lf`, so line endings are not the cause — this is pure `gofmt` drift.
 
 Module-system work is tracked under the `B-mod-*` IDs in the block index in
 `AGENTS.md` — `B-mod-core`, `B-mod-tailscale`, `B-mod-install`,

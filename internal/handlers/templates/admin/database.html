@@ -102,7 +102,7 @@
           </div>
           <div class="col-12 mt-2">
             <label class="form-label small">{{t "db.sslmode"}}</label>
-            <select class="form-select form-select-sm" name="sslmode">
+            <select class="form-select form-select-sm" name="sslmode" aria-label="{{t "db.sslmode"}}">
               <option value="disable" {{if eq .Data.FormSSLMode "disable"}}selected{{end}}>disable</option>
               <option value="require" {{if eq .Data.FormSSLMode "require"}}selected{{end}}>require</option>
               <option value="verify-full" {{if eq .Data.FormSSLMode "verify-full"}}selected{{end}}>verify-full</option>
@@ -150,7 +150,7 @@
           </div>
           <div class="col-12 mt-2">
             <label class="form-label small">{{t "db.sslmode"}}</label>
-            <select class="form-select form-select-sm" name="target_sslmode">
+            <select class="form-select form-select-sm" name="target_sslmode" aria-label="{{t "db.sslmode"}}">
               <option value="disable" selected>disable</option>
               <option value="require">require</option>
               <option value="verify-full">verify-full</option>

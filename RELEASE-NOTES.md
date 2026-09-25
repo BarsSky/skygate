@@ -12,6 +12,106 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.92 — the localization ratchet is at zero, and the metric can no longer be gamed (B325.1)
+
+**Date:** 2026-09-25 · **Base:** `v1.5.91` → this tag · **Compatibility:** none — no schema
+change, no migration, no config change. Catalogues, templates, five test files, two small Go
+fixes, one gate check.
+
+### The report
+
+> «по всему проекту страдает локализация — большинство новых описаний не переведено на русский»
+
+B325 (v1.5.90) measured the debt and froze a **ratchet**: two counts that may only go down —
+RU catalogue values with no Cyrillic letter (284 → 196) and hardcoded English text nodes in
+templates (68 → 21). This release pays the ratchet off completely and closes the two ways a
+sweep like this can pass its own contract while making the panel worse.
+
+### What changed
+
+* **196 RU catalogue values translated** — every remaining value the metric counted is now real
+  Russian, plus 4 more the formatter exposed;
+* **21 hardcoded English text nodes replaced by keys** (17 new catalogue keys, RU + EN, plus 3
+  reuses): `headplane.ui_label`, `ha.empty_chain_title` / `_hint` / `_current_active`,
+  `exit_nodes.how_to_connect` / `_pick_exit_node_hint`, `help.user.glossary_col_what`,
+  `help.glossary_term_exit_node` / `_preauth_key`, `help.exit_rules_help.*`;
+* **every `<select>` in the panel now carries an accessible label** — the accessibility ratchet in
+  `check_b326_responsive_panel.sh` (contract B3) went **31 → 0** and its budget is now `0`. The
+  sweep used keys that already existed (no new keys). The **last** one was not missing markup at
+  all: `admin/devices.html:133` has its `aria-label` on a *continuation* line of a `<select>` tag
+  that spans three lines, and B3 only read the first line, so it counted a labelled control as
+  unlabelled. Because B3 is a **count**, that false positive inflated the budget every other
+  select was measured against. B3 now reads the whole tag, however many lines it spans — verified
+  by adding a deliberately unlabelled select and watching the contract fail, then removing it;
+* the four RU values that are **commands** (`exit_rules.client_win_cmd`, `…_after`,
+  `exit_nodes.tutorial_step1_persist`, `…_reload`) were deliberately reverted to byte-identical
+  English: a Russian `#` comment appended to a Windows `cmd` line is not a comment, it is part of
+  the command. The metric now excludes command-shaped values instead of the sweep breaking them;
+* **both budgets are now `0`** in `scripts/check_b325_i18n_regressions.sh`. The next untranslated
+  RU value or hardcoded English string fails the gate immediately.
+
+### The two holes a metric sweep opens — both are now contracts
+
+`scripts/check_b325_1_i18n_sweep.sh` (12 contracts):
+
+1. **An empty translation is not an ASCII one.** Blanking a value (`"k": ""`) or replacing it
+   with a bare token lowers the B325 count and turns the gate **green** while the page renders a
+   blank label. So: no RU value may be empty or whitespace-only, and the sweep as a whole is held
+   up by a floor on how many RU values carry Cyrillic (**2872 of 3068** measured, floor 90 % —
+   the remaining 196 are the deliberately byte-identical command/code/protocol values the B325
+   metric excludes). A reverted or gutted translation now fails even though the ASCII count is 0.
+2. **A restored test that never runs is not coverage.** This release also restores the B76/B77/
+   B78 test bodies the v1.3.0 SQLite→PG purge had left as `t.Skip` stubs — **21 test functions
+   across five files** that had been passing vacuously ever since: `normalizeUpdateTarget` (B76),
+   `ListLastRunWithResults` (B78), and the `Backfill` / `BackfillInfra` / `AutoBackfill` tick
+   (B77), all re-implemented against a real migrated in-memory SQLite database and a fake
+   headscale. A `go test -run` filter that matches nothing **exits 0**, so the contract checks the
+   files exist, carry no `t.Skip` stub, and *actually run*: the filter is verified against
+   `-list` and a `[no tests to run]` result fails (the B322 C1 class).
+
+### Two findings the sweep surfaced, fixed here
+
+* **`internal/nodeownership/auto.go` — the nil-DB guard compared the wrong thing.** `AutoBackfill`
+  tested the `DBSource` **interface** against nil, which cannot see a non-nil `DBSource` whose
+  `Current()` returns nil (a typed-nil stored in an interface). Such a value walked past the guard,
+  the ticker started, and the first tick dereferenced a missing pool — inside a goroutine started
+  from `main`, where a panic kills the whole process. It now asks the shared `db.DBCurrent`
+  accessor, and `runOneTick` has the same guard because it is also driven directly.
+  `TestAutoBackfill_NilCurrentDBSourceIsSafe` is the regression guard.
+* **`internal/feature/admin/update.go` — a comment that lied about a git ref.**
+  `normalizeUpdateTarget`'s doc comment promised that a target "looking like a SHA/branch ref" is
+  left alone; the helper only exempts the `v` / `skygate-` / `main` / `HEAD` prefixes, so it
+  answers `vdevelop` for `develop` and `ve2d0b9e` for `e2d0b9e`. The behaviour is deliberate (both
+  consumers normalise the result back, and it is now pinned by test), but a comment that
+  misdescribes a git ref is exactly how the next reader reintroduces the B76 false-rollback class.
+  The comment now states the real rules.
+
+### Verification
+
+`bash scripts/verify_pre_deploy.sh` on the reference VM (detached worktree of the tagged
+commit): **368 PASS, 8 FAIL, 1 SKIP** — and the 8 FAILs are exactly the pre-existing baseline
+set that fails for environmental reasons on this host (`B1` via the two `internal/headscale`
+container-dependent tests `TestGetACLNamesEveryRungInTheError_B294` /
+`TestGetACLAPIFailsNoContainer`, `B118`, `B119`, `B176`, `B188.2`, `B188.3`, `B237.16`, `B294`).
+**No new FAIL**, and `B322`, `B323`, `B324`, `B325`, `B325.1`, `B326` all PASS. The new
+`B325.1` contracts D2/D3 (the restored tests are discoverable and actually run) execute on the
+VM, where `go` is on `PATH`.
+
+> **VM disk note.** That run took the host from 697 MB to 388 MB free — `/` was already at 99 %
+> before it. The Go build cache (`~/.cache/go-build`, 5.5 GB) was cleared afterwards, which put
+> the host back at 85 % (5.9 GB free). The other large consumers are `/home/skyadmin/.cache`
+> (5.7 GB, mostly that cache), `/var/lib/containerd` (6.3 GB), `~/.hermes` (2.7 GB),
+> `~/go/pkg` (2.0 GB) and `/var/log/journal` (502 MB) — procedure in
+> `docs/operations.md` §13.
+
+### Not fixed here (recorded, not silently "fixed")
+
+`gofmt -l` has **never** been clean repo-wide: ≈40 i18n catalogues use a space-before-colon map
+style (`"key"    : "value"`) and ~70 files carry pre-Go-1.19 doc-comment indentation. No gate
+check runs `gofmt`, so this is a real, long-standing style debt rather than a regression from this
+release — reformatting 70+ files inside a localization release would bury the change. Recorded in
+`docs/ROADMAP.md` (TD-21).
+
 ## v1.5.91 — forms fit a phone, and a select has a name (B326.1)
 
 **Date:** 2026-09-25 · **Base:** `v1.5.90` → this tag · **Compatibility:** none — no schema

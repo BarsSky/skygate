@@ -1364,9 +1364,18 @@ they are recorded so a future reader does not trust the wrong copy.
    backend. Its prerequisites (a `v0.32.19` floor, `make verify-pre` == 35/35,
    `make test` == 118/118 smoke) are from that era — use its *shape* (§3), not
    its counts.
-2. **`make verify-pre` / `verify_pre_deploy.sh` is fail-tolerant.** The captured
-   baseline printed **37 FAIL lines and still exited 0**. Read the FAIL list,
-   never `$?`; a future cleanup should make FAIL set a non-zero exit.
+2. **`make verify-pre` / `verify_pre_deploy.sh` is fail-tolerant BY DESIGN locally — CI is the
+   enforcer.** The historical baseline printed **37 FAIL lines and still exited 0**, and that is
+   still true of the script itself: it prints no final summary and no aggregated exit status, so
+   read the FAIL list, never `$?`. Two things changed since: B322 (v1.5.87) made **every
+   individual check** propagate its own verdict (a check that counts FAIL must exit non-zero, a
+   `-run` filter matching no test fails, and the 24 masked `printf | bash … ; rm -f` chains now
+   return their check's status) and the gate prints a failing check's own FAIL lines before its
+   20-line window; and `.github/workflows/ci.yml` ("Run verify_pre_deploy.sh (and refuse any
+   FAIL)") turns the catalog into the gate by failing the job on any `^  FAIL`/`^  TIMEOUT` line.
+   A local run therefore still exits 0 with pre-existing FAILs — those are environment failures
+   (`B1` from the container-dependent `internal/headscale` tests, `B176`, `B188.2/B188.3`,
+   `B237.16`, `B294`) that SKIP on the CI runner. The missing aggregate exit code is TD-22.
 3. **`.env` variable naming is mid-migration.** Older docs and scripts use
    `SKYGATE_DB_DSN` exclusively; the current unified selector is `SKYGATE_DB`,
    with `SKYGATE_DB_DSN` honoured when `SKYGATE_DB` is unset. When both are
@@ -1405,3 +1414,34 @@ they are recorded so a future reader does not trust the wrong copy.
     where they are; their day-2 topics are covered for operators by
     [https.md](https.md), [oidc.md](oidc.md), [derp.md](derp.md), [ha.md](ha.md)
     and [networking.md](networking.md).
+
+---
+
+## 13. Host disk headroom — the guarantee catalog needs ~1 GB free
+
+Measured 2026-09-25 on the reference VM while running the full catalog: `/` was at **99 % (697 MB
+free)** *before* the run and **100 % (388 MB free)** after it. A full `verify_pre_deploy.sh` pass
+costs a few hundred MB (Go build-cache growth for `go build ./...`, `go test ./...`, `go vet` and
+`staticcheck`, plus a detached worktree). Two consequences worth knowing:
+
+* **Check before you run it.** `df -h /` first; a run that hits ENOSPC midway produces a log with
+  no summary and a confusing verdict.
+* **The reclaim that costs nothing** is the Go build cache:
+
+  ```bash
+  du -sh ~/.cache/go-build      # measured 5.5 GB after a full catalog run
+  go clean -cache               # frees it; Go rebuilds on demand, nothing is lost
+  ```
+
+  On the reference VM that took the host from 100 % back to **85 % (5.9 GB free)**. It does not
+  touch `~/go/pkg` (the module cache — re-downloading it needs network, so leave it), the
+  operator's SQLite database or any container image.
+
+The other large consumers measured on that host, in order: `~/.cache` 5.7 GB (mostly the build
+cache above), `/var/lib/containerd` 6.3 GB (container images — do **not** prune blindly, the
+headscale/DERP stack lives there), `~/.hermes` 2.7 GB, `~/go/pkg` 2.0 GB, `/var/log/journal`
+502 MB (`journalctl --vacuum-size=…` is safe but drops diagnostic history — this project's
+incident analysis depends on that journal, so prefer the build cache first), `/var/lib/snapd/cache`
+357 MB (pure download cache, always safe to delete). The catalog itself leaves nothing behind
+beyond the build cache: remove its worktree afterwards with
+`git worktree remove --force <path>`.

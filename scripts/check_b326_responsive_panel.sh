@@ -133,25 +133,46 @@ else
   bad "B2: .table-wrap disappeared from the templates ($NW files) — the mobile scroller regressed"
 fi
 
-# B326.1 (ratchet): a <select> with no accessible label. The audit found 4 in
-# admin/exit_nodes.html; a full pass over all 41 selects (36 without aria-label or a matching
-# <label for>) is the remaining accessibility work, so this freezes the current number: it may
-# go DOWN as labels are added, never up. Lower SELECT_UNLABELLED_BUDGET when you fix some.
-SELECT_UNLABELLED_BUDGET="${B326_SELECT_BUDGET:-31}"
+# B326.1 / B325.1 (ratchet): a <select> with no accessible label. The audit found 4 in
+# admin/exit_nodes.html; a full pass over the panel's selects is the remaining accessibility
+# work, so this freezes the current number: it may go DOWN as labels are added, never up.
+#
+# 2026-09-25 (B325.1): the sweep labelled every one of them, and this contract gained a
+# correctness fix on the way. It used to look only at the SINGLE LINE the <select> starts on,
+# so a select carrying its aria-label (or its id) on a continuation line was counted as
+# unlabelled — `admin/devices.html` line 133 was the live example, and because the contract is
+# a COUNT the false positive inflated the budget every other select was measured against. It
+# now reads the whole TAG, however many lines it spans.
+SELECT_UNLABELLED_BUDGET="${B326_SELECT_BUDGET:-0}"
 UNLABELLED=0
+UNLABELLED_DETAIL=""
 for f in $(grep -rl '<select' internal/handlers/templates --include='*.html' 2>/dev/null); do
-  while IFS= read -r line; do
-    body=$(printf '%s\n' "$line" | cut -d: -f2-)
-    case "$body" in *aria-label*) continue;; *'<label'*) continue;; esac
-    id=$(printf '%s' "$body" | sed -nE 's/.*id="([^"]+)".*/\1/p')
-    if [ -n "$id" ] && grep -q "for=\"$id\"" "$f"; then continue; fi
-    UNLABELLED=$((UNLABELLED+1))
-  done < <(grep -n '<select' "$f" 2>/dev/null)
+  OUT=$(awk '
+    { L[NR] = $0; ALL = ALL "\n" $0 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        if (L[i] !~ /<select/) continue
+        tag = ""
+        for (j = i; j <= NR; j++) { tag = tag " " L[j]; if (L[j] ~ />/) break }
+        if (tag ~ /aria-label/) continue
+        if (tag ~ /<label/) continue
+        id = ""
+        if (match(tag, /id="[^"]+"/)) id = substr(tag, RSTART + 4, RLENGTH - 5)
+        if (id != "" && ALL ~ ("for=\"" id "\"")) continue
+        printf "%d\t%s\n", i, tag
+      }
+    }
+  ' "$f")
+  if [ -n "$OUT" ]; then
+    UNLABELLED=$((UNLABELLED + $(printf '%s\n' "$OUT" | grep -c .)))
+    UNLABELLED_DETAIL="$UNLABELLED_DETAIL$(printf '%s\n' "$OUT" | sed "s|^|       $f:|")"$'\n'
+  fi
 done
 if [ "${UNLABELLED:-0}" -le "$SELECT_UNLABELLED_BUDGET" ]; then
   ok "B3: selects without an accessible label = $UNLABELLED (budget $SELECT_UNLABELLED_BUDGET; lower, never raise)"
 else
   bad "B3: selects without an accessible label = $UNLABELLED, over the frozen budget $SELECT_UNLABELLED_BUDGET"
+  printf '%s' "$UNLABELLED_DETAIL" | head -8 >&2
 fi
 
 # --- D: cheap syntax guard + git ------------------------------------------------------

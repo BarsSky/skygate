@@ -12,9 +12,9 @@ package i18n
 // Top-level prefixes: exit_rules, exit_rules_admin, exit_rules_nodes, cleanup
 
 var ruExitRules = map[string]string{
-	"exit_rules.title":                  "Exit Rules",
+	"exit_rules.title":                  "Правила exit",
 	"exit_rules.subtitle":               "Избирательная маршрутизация трафика через exit-узлы Tailscale",
-	"exit_rules.dns_autoupdate":         "DNS auto-update",
+	"exit_rules.dns_autoupdate":         "Автообновление DNS",
 	"exit_rules.dns_autoupdate_title":   "DNS auto-update каждые 5m",
 	"exit_rules.api_help_btn":           "API / AI-помощник",
 	"exit_rules.client_win_guide":       "Windows",
@@ -57,15 +57,15 @@ var ruExitRules = map[string]string{
 	// that point at a non-preferred exit-node — those rules
 	// are silently ignored by Tailscale.
 	"exit_rules.preferred_mismatch_banner": "%d правил ссылаются на exit-node, который устройство не использует. Правила сохранены, но Tailscale их игнорирует.",
-	"exit_rules.use_preferred_btn":         "Use preferred (%s)",
+	"exit_rules.use_preferred_btn":         "Использовать предпочтительный (%s)",
 	// B277.3: bulk-apply the user's preferred exit-node to every
 	// mismatched rule in one click. %d = mismatch count, %s = preferred.
 	"exit_rules.apply_preferred_btn":      "Применить preferred (%s) к %d правил(ам)",
 	"exit_rules.apply_preferred_confirm":  "Будет обновлено %d правил(а): их exit_node_id изменится на «%s». Продолжить?",
 	"exit_rules.preferred_col":            "Preferred",
-	"exit_rules.preferred_match_title":    "Rule's exit-node matches the device's preferred exit-node (%s) — rule will take effect.",
-	"exit_rules.preferred_mismatch_title": "Rule's exit-node differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",
-	"exit_rules.preferred_none_title":     "No preferred exit-node set for this device — Tailscale picks by metrics, rule may or may not apply.",
+	"exit_rules.preferred_match_title":    "Exit-узел правила совпадает с предпочтительным exit-узлом устройства (%s) — правило сработает.",
+	"exit_rules.preferred_mismatch_title": "Exit-узел правила отличается от предпочтительного exit-узла устройства (%s) — Tailscale проигнорирует это правило.",
+	"exit_rules.preferred_none_title":     "Предпочтительный exit-узел для этого устройства не задан — Tailscale выбирает по метрикам, правило может примениться или нет.",
 	// B277.4: auto-mode status — the rule's exit_node_id is
 	// empty, the engine picks a healthy relay on the next tick.
 	// NOT a mismatch; the badge is informational ("the engine
@@ -83,8 +83,8 @@ var ruExitRules = map[string]string{
 	// push on the next 5-min tick. See the B182 commit
 	// message for why this is a separate state from "✅
 	// preferred matches" (B178 alone was misleading).
-	"exit_rules.approved_in_headscale_title": "Target approved in headscale for %s — rule is working.",
-	"exit_rules.pending_in_headscale_title":  "Rule's exit-node matches the device's preferred, but headscale has NOT approved %s (target %s) yet. The autoupdater will push on the next 5-min tick.",
+	"exit_rules.approved_in_headscale_title": "Цель одобрена в headscale для %s — правило работает.",
+	"exit_rules.pending_in_headscale_title":  "Exit-узел правила совпадает с предпочтительным у устройства, но headscale ещё НЕ одобрил %s (цель %s). Автообновление применит изменения при следующем цикле (раз в 5 минут).",
 	"exit_rules.device":                      "Устройство",
 	"exit_rules.device_hint":                 "Устройство, для которого применяется правило. Видны только ваши устройства. Пункт «все мои устройства» создаёт то же правило для каждого вашего устройства.",
 	"exit_rules.exit_node":                   "Exit node (выходной узел)",
@@ -183,11 +183,11 @@ var ruExitRules = map[string]string{
 	"exit_rules.usage_danger":              "%d/%d (%d%%) — близко к лимиту per-device. Удалите ненужные правила или обратитесь к админу.",
 	"exit_rules.usage_ok":                  "%d/%d (%d%%) — лимит per-device в порядке.",
 	"exit_rules.usage_default":             "Устройство, для которого применяется правило. Видны только ваши устройства.",
-	"exit_rules_admin.title":               "Exit Rules (admin)",
+	"exit_rules_admin.title":               "Правила exit (админ)",
 	"exit_rules_admin.subtitle":            "Все правила всех пользователей",
 	"exit_rules_admin.user":                "Пользователь",
 	"exit_rules_admin.device":              "Устройство",
-	"exit_rules_admin.exit_node":           "Exit node",
+	"exit_rules_admin.exit_node":           "Exit-узел",
 	"exit_rules_admin.node_load":           "Загрузка узлов",
 	"exit_rules_admin.reapply":             "Пере-применить ACL",
 	"exit_rules_admin.reapply_confirm":     "Пере-применить ACL? Политика будет пересобрана из текущего состояния БД и отправлена в headscale. Используйте после изменений в GenerateACL().",
@@ -204,9 +204,9 @@ var ruExitRules = map[string]string{
 	// 2026-08-06: admin-side preferred column + mismatch banner
 	// (mirror of the user-scope ones).
 	"exit_rules_admin.col_preferred":            "Preferred",
-	"exit_rules_admin.preferred_match_title":    "Matches the device's preferred exit-node (%s).",
-	"exit_rules_admin.preferred_mismatch_title": "Differs from the device's preferred exit-node (%s) — Tailscale will ignore this rule.",
-	"exit_rules_admin.preferred_none_title":     "No preferred exit-node set.",
+	"exit_rules_admin.preferred_match_title":    "Совпадает с предпочтительным exit-узлом устройства (%s).",
+	"exit_rules_admin.preferred_mismatch_title": "Отличается от предпочтительного exit-узла устройства (%s) — Tailscale проигнорирует это правило.",
+	"exit_rules_admin.preferred_none_title":     "Предпочтительный exit-узел не задан.",
 	// 2026-08-25 (B182): the new two-state ✅ / ⏳
 	// preferred-exit-node badge. ✅ = rule's target CIDR is
 	// APPROVED in headscale ApprovedRoutes for this
@@ -215,11 +215,11 @@ var ruExitRules = map[string]string{
 	// headscale has NOT approved the rule's target yet —
 	// the autoupdater will push on the next 5-min tick, or
 	// hit "Пере-синхронизировать" on /admin/exit-nodes.
-	"exit_rules_admin.approved_in_headscale_title": "Target approved in headscale for %s — rule is working.",
+	"exit_rules_admin.approved_in_headscale_title": "Цель одобрена в headscale для %s — правило работает.",
 	"exit_rules_admin.pending_in_headscale_title":  "Rule's exit-node matches the device's preferred, but headscale has NOT approved %s (target %s) yet. The autoupdater will push on the next 5-min tick (or hit 'Пере-синхронизировать' on /admin/exit-nodes).",
-	"exit_rules_admin.preferred_mismatch_banner":   "%d rules across all users reference a non-preferred exit-node. Check the 'Preferred' column.",
-	"exit_rules_admin.dead_rules_count":            "%d dead rule(s)",
-	"exit_rules_admin.dead_rules_count_title":      "%d device_rule(s) for this device reference a non-preferred exit-node. Tailscale will ignore them. Open /admin/exit-rules to see which.",
+	"exit_rules_admin.preferred_mismatch_banner":   "%d правил(а) всех пользователей ссылаются на непрепочтительный exit-узел. Проверьте столбец «Предпочтительный».",
+	"exit_rules_admin.dead_rules_count":            "%d неработающих правил",
+	"exit_rules_admin.dead_rules_count_title":      "%d правил(а) device_rules для этого устройства ссылаются на непрепочтительный exit-узел. Tailscale их проигнорирует. Откройте /admin/exit-rules, чтобы увидеть какие.",
 	"exit_rules_admin.device_filter_banner":        "Отфильтровано по устройству %s — показано %d правил",
 	"exit_rules_admin.device_filter_show_all":      "Показать все",
 	"exit_rules_admin.col_created":                 "Создано",

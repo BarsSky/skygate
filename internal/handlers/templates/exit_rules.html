@@ -122,7 +122,7 @@
       <form method="post" action="/my/exit-rules">
         <div class="field">
           <label>{{t "exit_rules.device"}}</label>
-          <select name="device_id" id="device-select" onchange="updateDeviceUsageHint()">
+          <select name="device_id" id="device-select" onchange="updateDeviceUsageHint()" aria-label="{{t "exit_rules.device"}}">
             {{range .DeviceInfos}}<option value="{{.ID}}" data-user-facing="{{.UserFacing}}" data-max="{{.MaxForDevice}}" data-hint-ok="{{.HintOK}}" data-hint-warn="{{.HintWarn}}" data-hint-danger="{{.HintDanger}}" data-hint-default="{{t "exit_rules.usage_default"}}"{{if eq (printf "%v" .ID) $.FormValues.device_id}} selected{{end}}>{{.Hostname}}{{if gt .MaxForDevice 0}} ({{.UserFacing}}/{{.MaxForDevice}}){{end}}</option>{{else}}<option value="">{{t "exit_rules.no_devices"}}</option>{{end}}
             {{if .DeviceInfos}}<option value="all"{{if eq $.FormValues.device_id "all"}} selected{{end}}>{{t "exit_rules.device_all"}}</option>{{end}}
           </select>
@@ -130,7 +130,7 @@
         </div>
         <div class="field">
           <label>{{t "exit_rules.exit_node"}}</label>
-          <select name="exit_node">
+          <select name="exit_node" aria-label="{{t "exit_rules.exit_node"}}">
             <option value=""{{if eq $.FormValues.exit_node ""}} selected{{end}}>{{t "exit_rules.exit_node_auto"}}</option>
             {{range .ExitNodes}}<option value="{{.hostname}}"{{if eq .hostname $.FormValues.exit_node}} selected{{end}}>{{.hostname}}</option>{{else}}<option value="">{{t "exit_rules.no_exit_nodes"}}</option>{{end}}
           </select>
@@ -138,7 +138,7 @@
         </div>
         <div class="field">
           <label>{{t "exit_rules.action"}}</label>
-          <select name="action">
+          <select name="action" aria-label="{{t "exit_rules.action"}}">
             <option value="accept"{{if eq $.FormValues.action "accept"}} selected{{end}}>{{t "exit_rules.action_accept"}}</option>
             <option value="deny"{{if eq $.FormValues.action "deny"}} selected{{end}}>{{t "exit_rules.action_deny"}}</option>
           </select>
@@ -146,7 +146,7 @@
         </div>
         <div class="field">
           <label>{{t "exit_rules.target_type"}}</label>
-          <select name="target_type">
+          <select name="target_type" aria-label="{{t "exit_rules.target_type"}}">
             <option value="ip"{{if eq $.FormValues.target_type "ip"}} selected{{end}}>{{t "exit_rules.target_type_ip"}}</option>
             <option value="subnet"{{if eq $.FormValues.target_type "subnet"}} selected{{end}}>{{t "exit_rules.target_type_subnet"}}</option>
             <option value="domain"{{if eq $.FormValues.target_type "domain"}} selected{{end}}>{{t "exit_rules.target_type_domain"}}</option>
@@ -204,7 +204,7 @@
             {{t "exit_rules.select_all"}}
           </label>
           <span class="count">{{t "exit_rules.selected"}} <b id="sel-count">0</b></span>
-          <select class="filter-target" id="filter-type" onchange="applyFilter()">
+          <select class="filter-target" id="filter-type" onchange="applyFilter()" aria-label="{{t "exit_rules.filter_type"}}">
             <option value="">{{t "exit_rules.filter_type"}}</option>
             <option value="domain">{{t "exit_rules.filter_domain"}}</option>
             <option value="subnet">{{t "exit_rules.filter_subnet"}}</option>
@@ -456,7 +456,7 @@
         {{end}}
         <span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);margin-left:8px">
           {{t "exit_rules.page_size"}}
-          <select id="page-size-select" style="font-size:12px;padding:2px 6px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
+          <select id="page-size-select" style="font-size:12px;padding:2px 6px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px" aria-label="{{t "exit_rules.page_size"}}">
             <option value="25">25</option>
             <option value="50" selected>50</option>
             <option value="100">100</option>

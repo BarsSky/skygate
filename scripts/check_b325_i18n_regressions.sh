@@ -29,9 +29,11 @@
 #   E. the parity test and the template parse test pass; both catalogues exist
 #   F. this script is tracked by git
 #
-# The budgets in B/C are a RATCHET: they are the measured value at the moment of writing, so a
-# new hardcoded string or an untranslated RU value fails the gate. Lower them as the remaining
-# backlog in docs/i18n-audit.md gets paid down — never raise them.
+# The budgets in B/C are a RATCHET: they started at the measured value (196 RU-ASCII values,
+# 21 hardcoded strings) and were driven to **0** by the B325.1 sweep. Never raise them: a value
+# above 0 on either line means a new untranslated RU string or a new hardcoded English string
+# just landed. Remaining (editorial, not gate-visible) localization debt lives in
+# docs/i18n-audit.md — that file is the backlog, this script is the floor.
 
 set -uo pipefail
 if [ -f "$(dirname "$0")/../cmd/skygate/main.go" ]; then
@@ -50,9 +52,13 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
 skip() { printf '\033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-# Frozen budgets (measured 2026-09-25 after the first B325 slice; lower, never raise).
-RU_ASCII_BUDGET="${B325_RU_ASCII_BUDGET:-196}"
-HARDCODED_BUDGET="${B325_HARDCODED_BUDGET:-21}"
+# Frozen budgets (measured 2026-09-25 after the B325.1 sweep; lower, never raise).
+# Both are 0 as of v1.5.92: every RU catalogue value carries Cyrillic except the values that are
+# deliberately byte-identical to EN (commands and code samples, excluded by the awk filter
+# below), and every hardcoded English text node in a template has been replaced by a key.
+# 0 means "the next untranslated value or hardcoded string fails the gate immediately".
+RU_ASCII_BUDGET="${B325_RU_ASCII_BUDGET:-0}"
+HARDCODED_BUDGET="${B325_HARDCODED_BUDGET:-0}"
 
 hdr "B325 — localization must not regress silently"
 
@@ -82,6 +88,12 @@ RU_ASCII=$(awk '
     v = $0
     sub(/^[^:]*:[[:space:]]*"/, "", v)
     sub(/",?[[:space:]]*$/, "", v)
+    # A copy-paste COMMAND is not untranslated text: keep it byte-identical for the operator
+    # (appending a Russian comment would break `exit_rules.client_win_cmd`, a Windows command
+    # where `#` is not a comment). Command-shaped values are therefore out of scope here.
+    if (v ~ /(^|[[:space:]])(&&|\|\||--[a-z][a-z-]*)/) next
+    if (v ~ /^(sudo|echo|tailscale|ssh|scp|systemctl|rc-service|curl|wget|tskey|docker|kubectl|openssl)([[:space:]]|$)/) next
+    if (v ~ /^\/[a-z]/) next
     if (v !~ /[А-Яа-яЁё]/ && v ~ /[A-Za-z]+[[:space:]][A-Za-z]+/) n++
   }
   END { print n + 0 }

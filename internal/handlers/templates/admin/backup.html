@@ -63,7 +63,7 @@
     <div class="form-grid">
       <div class="form-group">
         <label>{{t "backup.protocol"}}</label>
-        <select name="protocol" class="form-control" id="backup-protocol-select">
+        <select name="protocol" class="form-control" id="backup-protocol-select" aria-label="{{t "backup.protocol"}}">
           {{$currentProto := .Config.Protocol}}
           <option value="">{{t "backup.protocol"}}…</option>
           {{range .Protocols}}

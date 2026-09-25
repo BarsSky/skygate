@@ -131,7 +131,7 @@
           <form action="/admin/devices/adopt" method="POST" onsubmit="return confirm('{{t "devices.adoption_confirm" | js}}')">
             <input type="hidden" name="node_id" value="{{.ID}}">
             <select name="target_username" required title="{{t "devices.adoption_ownerless_hint"}}"
-                    style="font-size:11px;padding:1px 3px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px">
+                    style="font-size:11px;padding:1px 3px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px" aria-label="{{t "devices.transfer_target"}}">
               <option value="">{{t "devices.adoption_pick_owner"}}</option>
               {{range $u := $.TransferTargets}}<option value="{{$u}}">{{$u}}</option>{{end}}
             </select>
@@ -171,7 +171,7 @@
          drifted from headscale's given_name gets a new dev-tag
          + UntagNode of the stale one. Idempotent — safe to spam. */}}
     <form method="post" action="/admin/devices/force-backfill-tags" style="display:inline" title="Run the per-user backfill (the same /my/devices helper) against every portal user. Applies the per-device dev-tags to users who haven't loaded /my/devices since their device joined, and fixes renamed devices (new dev-tag + drops the stale one from headscale).">
-      <button type="submit" class="btn btn-sm btn-primary"><i class="fa-solid fa-arrows-rotate"></i> Force resync all tags</button>
+      <button type="submit" class="btn btn-sm btn-primary"><i class="fa-solid fa-arrows-rotate"></i> {{t "devices.force_backfill_btn"}}</button>
     </form>
   </div>
 </div>
@@ -260,7 +260,7 @@
               <input type="hidden" name="node_id" value="{{.ID}}">
               <label style="display:flex;gap:3px;align-items:center">
                 {{t "devices.meta_os_label"}}:
-                <select name="os" style="font-size:11px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
+                <select name="os" style="font-size:11px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px" aria-label="{{t "devices.meta_os_label"}}">
                   <option value="unknown" {{if eq .OS "unknown"}}selected{{end}}>{{t "devices.meta_os_unknown"}}</option>
                   <option value="windows" {{if eq .OS "windows"}}selected{{end}}>Windows</option>
                   <option value="macos"   {{if eq .OS "macos"}}selected{{end}}>macOS</option>
@@ -272,7 +272,7 @@
               </label>
               <label style="display:flex;gap:3px;align-items:center">
                 {{t "devices.meta_type_label"}}:
-                <select name="device_type" style="font-size:11px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
+                <select name="device_type" style="font-size:11px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px" aria-label="{{t "devices.meta_type_label"}}">
                   <option value="unknown"       {{if eq .DeviceType "unknown"}}selected{{end}}>{{t "devices.meta_type_unknown"}}</option>
                   <option value="client"        {{if eq .DeviceType "client"}}selected{{end}}>client</option>
                   <option value="exit-node"     {{if eq .DeviceType "exit-node"}}selected{{end}}>exit-node</option>
@@ -363,7 +363,7 @@
               <input type="hidden" name="user_id" value="{{$skygateUID}}">
               <input type="hidden" name="hostname" value="{{.Hostname}}">
               <input type="hidden" name="via" value="0">
-              <select name="tag" style="font-size:10px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px">
+              <select name="tag" style="font-size:10px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px" aria-label="{{t "devices.device_exit_pref"}}">
                 {{range $.AvailableExits}}
                   {{/* B188: read the canonical headscale tag
                        from NodeView.DevTag. See the same
@@ -420,7 +420,7 @@
               <input type="hidden" name="node_id" value="{{.ID}}">
               <label style="display:flex;gap:3px;align-items:center">
                 {{t "devices.transfer_target"}}:
-                <select name="target_username" style="font-size:11px;padding:1px 3px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px">
+                <select name="target_username" style="font-size:11px;padding:1px 3px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px" aria-label="{{t "devices.transfer_target"}}">
                   {{range $t := $.TransferTargets}}
                     {{if ne $t $.UserName}}
                       <option value="{{$t}}">{{$t}}</option>

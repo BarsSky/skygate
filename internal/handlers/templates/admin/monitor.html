@@ -37,7 +37,7 @@
   <h3><i class="fa-solid fa-filter"></i> {{t "monitor.filters"}}</h3>
   <form method="get" action="/admin/monitor" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
     <label style="font-size:12px;color:var(--text-muted)">{{t "monitor.filter_state"}}
-      <select name="state" style="display:block;font-size:12px;padding:2px 4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:3px">
+      <select name="state" style="display:block;font-size:12px;padding:2px 4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:3px" aria-label="{{t "monitor.filter_state"}}">
         <option value="" {{if eq .StateFilter ""}}selected{{end}}>{{t "monitor.state_open_acked"}}</option>
         <option value="open" {{if eq .StateFilter "open"}}selected{{end}}>{{t "monitor.state_open"}}</option>
         <option value="acked" {{if eq .StateFilter "acked"}}selected{{end}}>{{t "monitor.state_acked"}}</option>
@@ -46,7 +46,7 @@
       </select>
     </label>
     <label style="font-size:12px;color:var(--text-muted)">{{t "monitor.filter_min"}}
-      <select name="min" style="display:block;font-size:12px;padding:2px 4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:3px">
+      <select name="min" style="display:block;font-size:12px;padding:2px 4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:3px" aria-label="{{t "monitor.filter_min"}}">
         {{range .Levels}}
           <option value="{{.}}" {{if eq $.MinSeverity (printf "%s" .)}}selected{{end}}>{{.}}</option>
         {{end}}
@@ -124,7 +124,7 @@
   <p style="color:var(--text-muted);font-size:13px">{{t "monitor.notify_help" | safeHTML}}</p>
   <form method="post" action="/admin/monitor/settings" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
     <label style="font-size:12px;color:var(--text-muted)">{{t "monitor.notify_min"}}
-      <select name="min_severity" style="display:block;font-size:12px;padding:2px 4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:3px">
+      <select name="min_severity" style="display:block;font-size:12px;padding:2px 4px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:3px" aria-label="{{t "monitor.notify_min"}}">
         {{range .Levels}}
           <option value="{{.}}" {{if eq $.NotifyRaw (printf "%s" .)}}selected{{end}}>{{.}}</option>
         {{end}}

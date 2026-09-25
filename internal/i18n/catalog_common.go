@@ -17,60 +17,60 @@ var ruCommon = map[string]string{
 	"title.skygate":                  "Skygate",
 	"title.dashboard":                "Главная",
 	"title.my_devices":               "Мои устройства",
-	"title.my_exit_nodes":            "Exit nodes",
+	"title.my_exit_nodes":            "Exit-узлы",
 	"title.my_keys":                  "Preauth-ключи",
 	"title.preauth":                  "Preauth ключ",
 	"title.account":                  "Аккаунт",
-	"title.exit_rules":               "Exit Rules",
+	"title.exit_rules":               "Правила exit",
 	"title.exit_rules_help":          "Справка: Exit Rules",
 	"title.help":                     "Справка",
 	"title.my_tokens":                "API-токены",
 	"title.admin_users":              "Пользователи",
 	"title.admin_devices":            "Все устройства",
 	"title.admin_acls":               "ACL",
-	"title.admin_audit":              "Audit log",
-	"title.admin_derp":               "DERP relay",
+	"title.admin_audit":              "Журнал аудита",
+	"title.admin_derp":               "DERP-релей",
 	"title.admin_backup":             "Backup",
 	"title.admin_settings":           "Настройки",
 	"title.admin_telegram":           "Telegram",
 	"title.admin_exit_rules":         "Exit Rules (все)",
 	"title.admin_exit_rules_cleanup": "Cleanup",
-	"title.admin_exit_rules_nodes":   "Exit nodes (sync)",
-	"title.admin_exit_nodes":         "Exit nodes",
+	"title.admin_exit_rules_nodes":   "Exit-узлы (синхронизация)",
+	"title.admin_exit_nodes":         "Exit-узлы",
 	"nav.dashboard":                  "Главная",
 	"nav.devices":                    "Мои устройства",
-	"nav.exit_nodes":                 "Exit nodes",
+	"nav.exit_nodes":                 "Exit-узлы",
 	"nav.help":                       "Справка",
-	"nav.tokens":                     "API Tokens",
-	"nav.exit_rules":                 "Exit Rules",
+	"nav.tokens":                     "API-токены",
+	"nav.exit_rules":                 "Правила exit",
 	"nav.account":                    "Аккаунт",
 	"nav.meshes":                     "Mesh-сети",
 	"nav.preauth":                    "Preauth-ключи",
 	"nav.backup":                     "Backup",
-	"nav.certificates":               "Сертификаты",      // v1.5.0 / B148
-	"nav.oidc":                       "OIDC",             // v1.5.1 / B161.4 — headscale OIDC integration
-	"nav.oidc_sync":                  "OIDC → headscale", // v1.5.2 / B167 — auto-sync to headscale
+	"nav.certificates":               "Сертификаты",                      // v1.5.0 / B148
+	"nav.oidc":                       "OIDC-провайдер",                   // v1.5.1 / B161.4 — headscale OIDC integration
+	"nav.oidc_sync":                  "OIDC → headscale (синхронизация)", // v1.5.2 / B167 — auto-sync to headscale
 	"nav.settings":                   "Настройки",
 	"nav.users":                      "Пользователи",
 	"nav.devices_all":                "Все устройства",
 	"nav.acls":                       "ACL",
 	"nav.derp":                       "DERP",
-	"nav.derp_dashboard":             "DERP Health", // v1.5.2 / B189 — latency dashboard
+	"nav.derp_dashboard":             "Состояние DERP", // v1.5.2 / B189 — latency dashboard
 	"nav.audit":                      "Audit",
 	"nav.telegram":                   "Telegram",
-	"nav.telegram_my":                "Telegram bot",
-	"nav.exit_rules_all":             "Exit Rules",
-	"nav.exit_nodes_admin":           "Exit nodes",
+	"nav.telegram_my":                "Telegram-бот",
+	"nav.exit_rules_all":             "Правила exit",
+	"nav.exit_nodes_admin":           "Exit-узлы",
 	"nav.update":                     "Обновления",
-	"nav.control_planes":             "Control planes",
+	"nav.control_planes":             "Контрольные плоскости",
 	"nav.headscale":                  "Headscale",
 	"nav.headscale_acl":              "Сетевой доступ",
 	"nav.system_tests":               "Тесты системы",
 	"nav.headplane":                  "Headplane",
 	"nav.integrations":               "Сервисы",
-	"nav.ha":                         "High Availability", // v1.5.0 / B149
-	"nav.cluster":                    "Кластер",           // v1.5.0+ / B199
-	"nav.deploy":                     "Deploy",            // v1.5.0 / B150
+	"nav.ha":                         "Отказоустойчивость", // v1.5.0 / B149
+	"nav.cluster":                    "Кластер",            // v1.5.0+ / B199
+	"nav.deploy":                     "Deploy",             // v1.5.0 / B150
 	"nav.invites":                    "Инвайт-коды",
 	"nav.meshes_admin":               "Mesh-сети (все)",
 	// 2026-08-12: v1.1.0 (TD-1 + TD-3) — sidebar section
@@ -163,8 +163,8 @@ var ruCommon = map[string]string{
 	// keep this distinction: turning off skygate self-update
 	// MUST NOT silently turn off domain→/32 refresh.
 	"title.dns_autoupdater":       "DNS-autoupdater (обновление /32 для доменов)",
-	"title.pref_reconciler":       "Preferred-exit auto-reconciler (B229/B231)",
-	"pref_reconciler.required":    "Auto-creates device_exit_node_prefs from device_rules + refreshes stale tags. Without it, exit-rules are ALLOWED but not PINNED (Tailscale routes via default exit, not the chosen one).",
+	"title.pref_reconciler":       "Автосинхронизация предпочтительного exit-узла (B229/B231)",
+	"pref_reconciler.required":    "Автоматически создаёт device_exit_node_prefs из device_rules и обновляет устаревшие теги. Без него правила exit РАЗРЕШЕНЫ, но не ЗАКРЕПЛЕНЫ (Tailscale направляет трафик через exit-узел по умолчанию, а не через выбранный).",
 	"dns_autoupdater.required":    "Нужен для любого доменного правила: иначе /32 устаревают после ротации Cloudflare и правило перестаёт матчить реальные IP.",
 	"dns_autoupdater.rot_warning": "домен правила будут устаревать по мере ротации Cloudflare",
 	// 2026-08-09 v0.33.1.26 — per-test status on the

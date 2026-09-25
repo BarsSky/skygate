@@ -23,7 +23,7 @@
     </div>
     <div class="field">
       <label>{{t "tokens.ttl_label"}}</label>
-      <select name="ttl" class="form-control">
+      <select name="ttl" class="form-control" aria-label="{{t "tokens.ttl_label"}}">
         <option value="1h">{{t "tokens.ttl_1h"}}</option>
         <option value="1d" selected>{{t "tokens.ttl_1d"}}</option>
         <option value="7d">{{t "tokens.ttl_7d"}}</option>
@@ -40,7 +40,7 @@
       <label>{{t "tokens.custom_ttl_label"}}</label>
       <div style="display:flex;gap:8px;align-items:center">
         <input type="number" name="custom_ttl_value" min="0" max="43800" step="1" placeholder="—" style="width:120px" inputmode="numeric">
-        <select name="custom_ttl_unit" class="form-control" style="max-width:140px">
+        <select name="custom_ttl_unit" class="form-control" style="max-width:140px" aria-label="{{t "tokens.custom_ttl_label"}}">
           <option value="h">{{t "tokens.custom_ttl_h"}}</option>
           <option value="d" selected>{{t "tokens.custom_ttl_d"}}</option>
           <option value="w">{{t "tokens.custom_ttl_w"}}</option>
@@ -103,7 +103,7 @@
   <form method="post" action="/my/token/{{.RenewForm.ID}}/renew">
     <div class="field">
       <label>{{t "tokens.ttl_label"}}</label>
-      <select name="ttl" class="form-control">
+      <select name="ttl" class="form-control" aria-label="{{t "tokens.ttl_label"}}">
         <option value="1d">{{t "tokens.ttl_1d"}}</option>
         <option value="7d">{{t "tokens.ttl_7d"}}</option>
         <option value="30d" selected>{{t "tokens.ttl_30d"}}</option>

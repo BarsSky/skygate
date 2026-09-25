@@ -106,7 +106,7 @@
   </div>
   <p style="color:var(--text-muted);margin-top:12px;font-size:12px;display:flex;align-items:flex-start;gap:6px">
     <i class="fa-solid fa-info-circle" style="margin-top:2px"></i>
-    <span>Exit-node = <code>tag:exit-node</code> in headscale ACL policy, or hostname starts with <code>exit-</code>. Configure tags in <a href="{{.HeadplaneURL}}" target="_blank" rel="noopener">Headplane UI</a>.</span>
+    <span>Exit-node = <code>tag:exit-node</code> in headscale ACL policy, or hostname starts with <code>exit-</code>. Configure tags in <a href="{{.HeadplaneURL}}" target="_blank" rel="noopener">{{t "headplane.ui_label"}}</a>.</span>
   </p>
   {{end}}
 </div>
@@ -128,8 +128,8 @@
 
 {{if .ExitNodes}}
 <div class="card">
-  <h3><i class="fa-solid fa-terminal"></i>How to connect</h3>
-  <p style="color:var(--text-muted);margin-bottom:12px">Pick an exit-node on your device:</p>
+  <h3><i class="fa-solid fa-terminal"></i>{{t "exit_nodes.how_to_connect"}}</h3>
+  <p style="color:var(--text-muted);margin-bottom:12px">{{t "exit_nodes.pick_exit_node_hint"}}</p>
   <pre>tailscale set --exit-node=&lt;hostname&gt;
 
 # example: tailscale set --exit-node={{(index .ExitNodes 0).Hostname}}</pre>
