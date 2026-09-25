@@ -12,6 +12,97 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.93 — a live-state check must SKIP, not redden the commit (B327)
+
+**Date:** 2026-09-25 · **Base:** `v1.5.92` → this tag · **Compatibility:** none — one check script,
+one contract, docs. No schema change, no migration, no config change, no application code.
+
+### The symptom, measured
+
+CI run `36165848857` failed on a **docs-only** commit with:
+
+```
+FAIL  /healthz returned 502 (want 200) — DO NOT auto-deploy
+```
+
+The banner was true and the conclusion was wrong. The operator was updating skygate to v1.5.92 at
+that moment: nginx was up, the container was being recreated, so the proxy answered 502.
+Re-running **the same commit** gave `catalog clean: 376 PASS, 1 SKIP, 0 FAIL`, with
+`PASS B-prod-health`. The verdict tracked the operator's deploy, not the code — and because
+`release.yml`'s `preflight` refuses a commit whose CI is not green, a red commit also blocks the
+**next** tag.
+
+`AGENTS.md` rule 1 already covered this: *a check that needs live state must report **SKIP, never
+FAIL**, when that state is unavailable.* `scripts/check_b_prod_health.sh` curls the public
+production URL and is registered as a plain `run_check`, so it runs on every push and could not
+tell "the operator is restarting" from "the deployment is broken".
+
+### The fix: whose answer is it?
+
+| What came back | Meaning | Default (CI) | `SKYGATE_PROD_REQUIRE_HEALTHY=1` |
+|---|---|---|---|
+| `200` | the application answered | PASS | PASS |
+| `000` | no connection at all | **SKIP** | FAIL |
+| `502`/`503`/`504` | a proxy is up while its upstream is unavailable or restarting | **SKIP** | FAIL |
+| any other `4xx`/`5xx` | we reached something that answered **wrongly** | FAIL | FAIL |
+| `200` + `build:"dev"` | accidental dev-binary deploy | FAIL | FAIL |
+| `200` + unparseable body | reachable, but not a health document | FAIL | FAIL |
+
+### A second, hidden defect found on the way
+
+`http_get_status` read
+
+```bash
+curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url" || echo "000"
+```
+
+but `curl -w '%{http_code}'` **already prints `000`** on a transport failure *and* exits non-zero,
+so every unreachable host produced the six-character status `000000` — an "unexpected status",
+i.e. a FAIL. The check could not SKIP even where it was trying to. The status is now normalised to
+one three-digit code, and contract `A9` plus the behavioural dead-port case pin it.
+
+### Strict mode belongs to the pre-deploy flow
+
+This script is a *pre-deploy* gate — its own header says "DO NOT auto-deploy". An unreachable or
+502-ing production is exactly when you must not deploy, so the operator runs it in strict mode:
+
+```bash
+SKYGATE_PROD_REQUIRE_HEALTHY=1 bash scripts/check_b_prod_health.sh   # pre-deploy: 502/000 is RED
+bash scripts/check_b_prod_health.sh                                  # CI/default: 502/000 is SKIP
+bash scripts/check_b_prod_health.sh --classify 502                   # explain one status, no network
+```
+
+Honest note on scope: **nothing automated invoked this script before** — only the CI catalog did,
+where a FAIL was noise. So this release removes a false gate rather than a real one. Wiring
+`SKYGATE_PROD_REQUIRE_HEALTHY=1` into the operator's own pre-deploy path is an explicit
+**follow-up**; `scripts/launch_skigate.sh:43` still only names the script in a comment. Procedure
+and rationale: `docs/operations.md` §1.7.
+
+Two more honesty guards: a tolerant run that SKIPped rows prints **INCONCLUSIVE, not a clean bill
+of health**, and `All 4 mandatory contracts PASS` can no longer be printed after a FAIL. A new
+`--classify <http-status> [strict]` mode makes the decision inspectable without touching a network.
+
+### The contract
+
+`scripts/check_b327_prod_health_skip.sh` — **31 contracts**, registered as `B327`:
+
+* the tri-state classifier exists, reads the strict knob, exits non-zero **only** on FAIL, and the
+  "production is healthy" sentence sits inside the FAIL branch (the B322 lesson);
+* the full decision table is exercised through `--classify` for every status in both modes, plus
+  the check that `--classify` agrees with `SKYGATE_PROD_REQUIRE_HEALTHY` and not only with a
+  positional override (it originally read the flag from `argv` alone, so an operator with the env
+  var set would have been told SKIP);
+* **the behavioural half drives the real script against a local HTTP stub** — never the operator's
+  host: 502 → SKIP exit 0; 502 + strict → FAIL exit 1; healthy 200 → all four contracts PASS;
+  200 + `build=dev` → FAIL; 500 → FAIL; dead port → SKIP, and FAIL under strict;
+* `docs/operations.md` documents the strict knob and carries the measured CI run.
+
+### Verification
+
+`bash scripts/verify_pre_deploy.sh` on the reference VM (detached worktree): the pre-existing
+baseline FAILs only, with **B327 PASS** and **B-prod-health PASS**. CI on the tagged commit:
+0 FAIL.
+
 ## v1.5.92 — the localization ratchet is at zero, and the metric can no longer be gamed (B325.1)
 
 **Date:** 2026-09-25 · **Base:** `v1.5.91` → this tag · **Compatibility:** none — no schema

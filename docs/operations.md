@@ -346,6 +346,46 @@ sudo systemctl restart skygate
 #   b) or use the explicit rollback offered on /admin/update to the previous tag
 ```
 
+### 1.7 `check_b_prod_health.sh` — SKIP is the default, strict mode is opt-in
+
+`scripts/check_b_prod_health.sh` curls the **public production URL** and is
+registered in the catalog as `B-prod-health`, so it runs on every push. Two of its
+answers are not the application's answer at all, and those two must not be able to
+redden a commit:
+
+| What came back | Meaning | Tolerant (default) | `SKYGATE_PROD_REQUIRE_HEALTHY=1` |
+|---|---|---|---|
+| `200` | the app answered | PASS | PASS |
+| `000` | no connection: DNS, network, or the host is down | **SKIP** | FAIL |
+| `502`/`503`/`504` | a proxy/gateway is up while its upstream is unavailable or restarting | **SKIP** | FAIL |
+| any other `4xx`/`5xx` | we reached something that answered **wrongly** | FAIL | FAIL |
+| `200` + `build:"dev"` | accidental dev-binary deploy | FAIL | FAIL |
+| `200` + unparseable body | reachable but not a health document | FAIL | FAIL |
+
+**Why the default is SKIP (B327, v1.5.93).** CI run `36165848857` went red on a
+docs-only commit with `FAIL  /healthz returned 502 (want 200)` simply because the
+operator was updating skygate at that moment — nginx up, container recreating.
+Re-running the *same commit* gave `catalog clean: 376 PASS, 1 SKIP, 0 FAIL`. A red
+commit then blocks the next tag, because `release.yml`'s `preflight` refuses a
+commit whose CI is not green. AGENTS.md rule 1 already said it: a check that needs
+live state must report **SKIP, never FAIL**, when that state is unavailable.
+
+**What to do instead, and where strict mode belongs.** This script is a
+*pre-deploy* gate — its own header says "DO NOT auto-deploy". An unreachable or
+502-ing production is exactly when you must not deploy, so the operator's
+pre-deploy flow runs it in strict mode:
+
+```bash
+SKYGATE_PROD_REQUIRE_HEALTHY=1 bash scripts/check_b_prod_health.sh   # pre-deploy: 502/000 is RED
+bash scripts/check_b_prod_health.sh                                  # CI/default: 502/000 is SKIP
+bash scripts/check_b_prod_health.sh --classify 502                   # explain one status, no network
+```
+
+A tolerant run that SKIPped rows is **INCONCLUSIVE, not a clean bill of health** —
+the summary line says so, so a green CI row is never mistaken for "production is
+healthy". Use `SKYGATE_PROD_URL` to point the contracts at a staging host or a
+local stub.
+
 The native applier already self-rolls-back when the post-swap healthz build
 string does not match: it restores `skygate.prev`, restarts, verifies, and
 reports `verdict: rolled_back`. A `verdict: failed` means the applier stopped
