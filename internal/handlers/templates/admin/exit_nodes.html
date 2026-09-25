@@ -510,7 +510,7 @@
     <div style="font-size:13px;color:var(--text-muted);margin:4px 0 8px 0">{{t "exit_nodes.prefix_owner.force_help" | safeHTML}}</div>
     {{if .Force}}<p style="margin:0 0 8px 0"><span class="tag tag-warning">{{t "exit_nodes.prefix_owner.force_active"}}: {{.Force}}</span></p>{{end}}
     <form method="post" action="/admin/exit-nodes/prefix-owner-force" style="display:flex;gap:8px;align-items:center">
-      <select name="relay" style="font-size:12px;padding:3px 6px">
+      <select name="relay" style="font-size:12px;padding:3px 6px" aria-label="{{t "exit_nodes.prefix_owner.col_action"}}">
         <option value="">{{t "exit_nodes.prefix_owner.option_auto"}}</option>
         {{$force := .Force}}
         {{range .Relays}}<option value="{{.}}" {{if eq . $force}}selected{{end}}>{{.}}</option>{{end}}
@@ -540,7 +540,7 @@
         <form method="post" action="/admin/exit-nodes/prefix-owner-bulk" style="display:flex;gap:6px;align-items:center">
           <input type="hidden" name="group_by" value="{{$.PrefixAdmin.GroupBy}}">
           <input type="hidden" name="group_key" value="{{.Key}}">
-          <select name="relay" style="font-size:11px;padding:2px 4px;height:24px">
+          <select name="relay" style="font-size:11px;padding:2px 4px;height:24px" aria-label="{{t "exit_nodes.prefix_owner.col_action"}}">
             <option value="">{{t "exit_nodes.prefix_owner.option_auto"}}</option>
             {{range $.RelayChoices}}<option value="{{.}}">{{.}}</option>{{end}}
           </select>
@@ -588,7 +588,7 @@
         <td>
           <form method="post" action="/admin/exit-nodes/prefix-owner" style="display:flex;gap:6px;align-items:center">
             <input type="hidden" name="prefix" value="{{.Prefix}}">
-            <select name="relay" style="font-size:11px;padding:2px 4px;height:24px">
+            <select name="relay" style="font-size:11px;padding:2px 4px;height:24px" aria-label="{{t "exit_nodes.prefix_owner.col_action"}}">
               {{$cur := .ExitNode}}
               {{range $.RelayChoices}}
               <option value="{{.}}" {{if eq . $cur}}selected{{end}}>{{.}}</option>
@@ -615,7 +615,7 @@
       <span>{{t "exit_nodes.prefix_owner.select_all_visible"}}</span>
     </label>
     <span style="font-size:13px"><b id="multi-pin-count">0</b> {{t "exit_nodes.prefix_owner.selected_count"}}</span>
-    <select name="relay" style="font-size:12px;padding:3px 6px">
+    <select name="relay" style="font-size:12px;padding:3px 6px" aria-label="{{t "exit_nodes.prefix_owner.col_action"}}">
       <option value="">{{t "exit_nodes.prefix_owner.option_auto"}}</option>
       {{range $.RelayChoices}}<option value="{{.}}">{{.}}</option>{{end}}
     </select>
@@ -756,7 +756,7 @@ ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
     </div>
     <div>
       <label style="font-size:12px;color:var(--text-muted)">{{t "exit_nodes.form_accept_routes"}}</label>
-      <select name="accept_routes" style="width:160px">
+      <select name="accept_routes" style="width:160px" aria-label="{{t "exit_nodes.form_accept_routes"}}">
         <option value="">{{t "exit_nodes.form_accept_routes_default_long"}}</option>
         <option value="false">{{t "exit_nodes.form_accept_routes_false_long"}}</option>
         <option value="true">{{t "exit_nodes.form_accept_routes_true_long"}}</option>

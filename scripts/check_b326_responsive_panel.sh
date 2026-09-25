@@ -92,6 +92,13 @@ check_rule "A5: form controls cannot exceed their card (the dropdown half of the
   'select *, *input *, *textarea *\{[^}]*max-width: *100%'
 check_rule "A6: the hard 3-column create-user form collapses on mobile" \
   '\.user-form-grid *\{[^}]*grid-template-columns: *1fr'
+# B326.1: three forms carry an INLINE `display:grid;grid-template-columns:repeat(N,1fr)` that
+# no class-based media query can reach, plus inline `min-width` on controls — the forms half of
+# the operator's report («проблемы с отображением форм»).
+check_rule "A7: an inline fixed-column grid collapses on narrow screens (attribute selector)" \
+  '\[style\*="grid-template-columns"\][^{]*\{[^}]*grid-template-columns: *1fr'
+check_rule "A8: an inline min-width on a control cannot exceed the card" \
+  'min-width: *0!important'
 
 # The reason the fix is needed at all: without a page-level scroller, clipped is worse than
 # scrolled. If someone removes body{overflow-x:hidden} the card scroller is still correct —
@@ -124,6 +131,27 @@ if [ "${NW:-0}" -ge 5 ]; then
   ok "B2: the hand-wrapped path is still used ($NW templates use .table-wrap)"
 else
   bad "B2: .table-wrap disappeared from the templates ($NW files) — the mobile scroller regressed"
+fi
+
+# B326.1 (ratchet): a <select> with no accessible label. The audit found 4 in
+# admin/exit_nodes.html; a full pass over all 41 selects (36 without aria-label or a matching
+# <label for>) is the remaining accessibility work, so this freezes the current number: it may
+# go DOWN as labels are added, never up. Lower SELECT_UNLABELLED_BUDGET when you fix some.
+SELECT_UNLABELLED_BUDGET="${B326_SELECT_BUDGET:-31}"
+UNLABELLED=0
+for f in $(grep -rl '<select' internal/handlers/templates --include='*.html' 2>/dev/null); do
+  while IFS= read -r line; do
+    body=$(printf '%s\n' "$line" | cut -d: -f2-)
+    case "$body" in *aria-label*) continue;; *'<label'*) continue;; esac
+    id=$(printf '%s' "$body" | sed -nE 's/.*id="([^"]+)".*/\1/p')
+    if [ -n "$id" ] && grep -q "for=\"$id\"" "$f"; then continue; fi
+    UNLABELLED=$((UNLABELLED+1))
+  done < <(grep -n '<select' "$f" 2>/dev/null)
+done
+if [ "${UNLABELLED:-0}" -le "$SELECT_UNLABELLED_BUDGET" ]; then
+  ok "B3: selects without an accessible label = $UNLABELLED (budget $SELECT_UNLABELLED_BUDGET; lower, never raise)"
+else
+  bad "B3: selects without an accessible label = $UNLABELLED, over the frozen budget $SELECT_UNLABELLED_BUDGET"
 fi
 
 # --- D: cheap syntax guard + git ------------------------------------------------------

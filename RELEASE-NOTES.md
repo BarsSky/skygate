@@ -12,6 +12,40 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.91 — forms fit a phone, and a select has a name (B326.1)
+
+**Date:** 2026-09-25 · **Base:** `v1.5.90` → this tag · **Compatibility:** none — no schema
+change, no migration, no config change. Stylesheet + one template + the B326 check.
+
+### The report, second half
+
+The B326 release fixed the tables. The operator's report also named **forms and dropdowns**
+(«есть проблемы с отображением форм, выпадающих списков и прочих элементов»), and the audit
+(`docs/responsive-audit.md`) found the reason: several forms carry an **inline**
+`display:grid;grid-template-columns:repeat(2|3,1fr)` — `admin/cluster.html` ×2,
+`admin/exit_rules.html` — which no class-based media query can reach, because the column
+definition lives in a `style` attribute. On a 360 px screen those fields were squeezed into
+two or three columns.
+
+### What changed
+
+* a single attribute-selector rule collapses **every** inline fixed-column grid to one column
+  under the mobile breakpoint (`[style*="grid-template-columns"]{grid-template-columns:1fr}`),
+  and inline `min-width` on a control can no longer exceed its card. Markup-free; the desktop
+  layout is untouched;
+* the four unlabelled `<select name="relay">` in `admin/exit_nodes.html` (the per-prefix owner
+  picker) and the `accept_routes` picker now carry an `aria-label` reusing the existing column
+  heading «Закрепить за» / form label — a screen reader used to announce them as an unnamed
+  combobox.
+
+### The contract grew a ratchet for the remaining accessibility work
+
+`scripts/check_b326_responsive_panel.sh` is now **16 contracts**: A7 (the inline-grid collapse
+rule exists), A8 (inline `min-width` reset) and B3 — selects without an accessible label are
+measured and frozen at **31** (was 36; it may only go down). 31 of the panel's 41 selects still
+have no programmatic label (many have a visual caption only): that is the next accessibility
+pass.
+
 ## v1.5.90 — the panel speaks Russian, and the gate keeps it that way (B325)
 
 **Date:** 2026-09-25 · **Base:** `v1.5.89` → this tag · **Compatibility:** none — no schema

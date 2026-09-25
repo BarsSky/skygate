@@ -1074,5 +1074,14 @@ footer a:hover{color:var(--accent)}
   .btn-row,.title-row{flex-wrap:wrap}
   /* The create-user form is a hard 3-column grid with no mobile override. */
   .user-form-grid{grid-template-columns:1fr}
+  /* B326.1 (2026-09-25) — the operator's «проблемы с отображением форм» half: several forms
+     carry an INLINE `display:grid;grid-template-columns:repeat(2|3,1fr)` (admin/cluster.html
+     x2, admin/exit_rules.html), which no media query can reach because the columns live in a
+     style attribute. An attribute selector collapses every inline fixed-column grid to one
+     column on narrow screens — markup-free, and the desktop layout is untouched. `!important`
+     is required to beat the inline declaration. */
+  [style*="grid-template-columns"]{grid-template-columns:1fr!important}
+  /* The same for inline min-widths on controls (audit §2: 119 inline px widths). */
+  select[style*="min-width"],input[style*="min-width"]{min-width:0!important}
 }
 
