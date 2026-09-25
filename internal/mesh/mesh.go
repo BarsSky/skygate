@@ -45,6 +45,8 @@ import (
 	"math/big"
 	"strings"
 	"time"
+
+	"skygate/internal/db"
 )
 
 // CodeLength is the number of chars in a generated
@@ -240,6 +242,29 @@ func LookupByCode(d *sql.DB, code string) (*Mesh, error) {
 // already in the mesh, ErrNotFound if the code
 // doesn't exist. The mesh MUST be active for the
 // join to succeed — dissolved meshes are kept for
+// meshMemberInsertSQL is the idempotent membership INSERT in the dialect's own syntax.
+//
+// B322 (2026-09-25): the code used SQLite-only `INSERT OR IGNORE` on a shared path, so
+// PostgreSQL answered `ERROR: syntax error at or near "OR"` (verified on PG 15) and every
+// mesh join failed on a PG install — including the reference deployment. The B60 sweep
+// that guarded this class was masked (its chain ended with `rm -f`, so it always passed).
+// Pure, so the B322 contract can pin BOTH forms without a database.
+func meshMemberInsertSQL(backend db.Backend) string {
+	if backend == db.BackendPostgres {
+		return `
+		INSERT INTO mesh_members
+			(mesh_id, user_id, joined_at)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (mesh_id, user_id) DO NOTHING
+	`
+	}
+	return `
+		INSERT OR IGNORE INTO mesh_members
+			(mesh_id, user_id, joined_at)
+		VALUES ($1, $2, $3)
+	`
+}
+
 // audit but cannot accept new members.
 //
 // The caller is responsible for re-applying the
@@ -256,11 +281,15 @@ func JoinMesh(d *sql.DB, code string, userID int64) error {
 	if m.Status == StatusDissolved {
 		return ErrDissolved
 	}
-	_, err = d.Exec(`
-		INSERT OR IGNORE INTO mesh_members
-			(mesh_id, user_id, joined_at)
-		VALUES ($1, $2, $3)
-	`, m.ID, userID, time.Now().Unix())
+	// B322 (2026-09-25): `INSERT OR IGNORE` is SQLite-only syntax. PostgreSQL answers
+	// `ERROR: syntax error at or near "OR"` (verified on PG 15 with EXPLAIN), so on a PG
+	// install — including the reference deployment — joining a mesh failed outright.
+	// This is the dialect leak the B60 sweep used to guard, and the sweep itself was
+	// masked (its chain ended with `rm -f`, so it always reported PASS). Branch on the
+	// backend exactly like internal/db/migration_tracking.go: SQLite keeps OR IGNORE,
+	// PostgreSQL uses ON CONFLICT (mesh_id, user_id) DO NOTHING.
+	query := meshMemberInsertSQL(db.BackendOf(d))
+	_, err = d.Exec(query, m.ID, userID, time.Now().Unix())
 	if err != nil {
 		return fmt.Errorf("mesh: join: %w", err)
 	}

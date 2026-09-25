@@ -236,6 +236,12 @@ EOF
     kill "$MIRROR_PID" 2>/dev/null || true
     MIRROR_PID=""
     printf '\n\033[1mB268 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
+    # B322: this early return used to be a bare `exit 0`, so a FAIL recorded by the
+    # SOURCE sections (A/A2–A4) or the Go sections (C/C2) above was discarded whenever
+    # the behavioural mirror was not ready — the gate then showed a green B268 while the
+    # contract that had actually broken was named nowhere. A SKIP must skip the
+    # behavioural half, not the verdicts already collected.
+    [ "$FAIL" -eq 0 ] || exit 1
     exit 0
   fi
 

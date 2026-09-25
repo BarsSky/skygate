@@ -290,3 +290,6 @@ else
     echo "B150 contracts NOT satisfied"
     exit 1
 fi
+
+# B322 (2026-09-25): reach the gate with a non-zero exit on a recorded FAIL.
+[ "${FAIL:-0}" -eq 0 ] || exit 1

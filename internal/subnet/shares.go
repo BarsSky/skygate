@@ -24,7 +24,31 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"skygate/internal/db"
 )
+
+// subnetShareInsertSQL is the idempotent share INSERT in the dialect's own syntax.
+//
+// B322 (2026-09-25): the code used SQLite-only `INSERT OR IGNORE` on a shared path, so
+// PostgreSQL answered `ERROR: syntax error at or near "OR"` (verified on PG 15) and every
+// subnet-share grant failed on a PG install — including the reference deployment. Pure, so
+// the B322 contract can pin BOTH forms without a database.
+func subnetShareInsertSQL(backend db.Backend) string {
+	if backend == db.BackendPostgres {
+		return `
+		INSERT INTO user_subnet_shares
+			(grantor_user_id, grantee_user_id, created_at)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (grantor_user_id, grantee_user_id) DO NOTHING
+	`
+	}
+	return `
+		INSERT OR IGNORE INTO user_subnet_shares
+			(grantor_user_id, grantee_user_id, created_at)
+		VALUES ($1, $2, $3)
+	`
+}
 
 // Share is one row of user_subnet_shares: the
 // grantor (whose subnet is being shared) and the
@@ -91,11 +115,12 @@ func Grant(d *sql.DB, grantorUserID, granteeUserID int64) error {
 	// on (grantor_user_id, grantee_user_id) prevents
 	// the duplicate; the IGNORE clause skips the
 	// constraint violation silently.
-	_, err = d.Exec(`
-		INSERT OR IGNORE INTO user_subnet_shares
-			(grantor_user_id, grantee_user_id, created_at)
-		VALUES ($1, $2, $3)
-	`, grantorUserID, granteeUserID, now)
+	// B322 (2026-09-25): `INSERT OR IGNORE` is SQLite-only syntax; PostgreSQL answers
+	// `ERROR: syntax error at or near "OR"` (verified on PG 15), so granting a subnet
+	// share failed outright on a PG install. Branch on the backend the way
+	// internal/db/migration_tracking.go does.
+	query := subnetShareInsertSQL(db.BackendOf(d))
+	_, err = d.Exec(query, grantorUserID, granteeUserID, now)
 	if err != nil {
 		return fmt.Errorf("subnet: grant share: %w", err)
 	}

@@ -149,20 +149,22 @@ for fn in TestBuildAdminExitRuleRedirectURL_BasicShape TestBuildAdminExitRuleRed
 done
 ok "all 5 regression tests present"
 
-echo "=== contract L: AGENTS.md / install-dry-run-report mention Issue #2 ==="
-# Closure documentation. The issue close-out commits
-# (a0c66235 + c60f0965) reference gh issue #2 directly in
-# their commit messages — verify the commit-message contract.
-# Use a tmp file (avoids pipefail + grep -q + if interactions
-# where the pipeline can short-circuit before grep finishes).
-TMP_LOG=$(mktemp)
-git log --oneline -20 > "$TMP_LOG"
-if grep -qiE 'Issue #2|admin.*exit.rule.*another user' "$TMP_LOG"; then
-    ok "commit log mentions Issue #2 closure"
+echo "=== contract L: the Issue #2 close-out is documented in the tree ==="
+# B322 (2026-09-25) contract renegotiation. This contract used to grep `git log -20` for
+# "Issue #2" — a **time-bound** assertion that can only pass while the close-out commit is
+# still inside the last 20 commits. It was guaranteed to start failing for a reason that
+# says nothing about the product (the audit found the script unregistered AND failing), so
+# it is replaced by the durable half of the same intent.
+if grep -qE 'admin_add_exit_rule_for_user|PostAdminExitRule' internal/feature/exit_rules/form_admin.go 2>/dev/null; then
+    ok "form_admin.go carries the Issue #2 handler (durable close-out evidence)"
 else
-    bad "no recent commit references Issue #2 — close-out commit missing"
+    bad "form_admin.go no longer carries PostAdminExitRule / the audit action"
 fi
-rm -f "$TMP_LOG"
+if grep -qiE 'Issue ?#2' docs/*.md AGENTS.md 2>/dev/null; then
+    ok "the Issue #2 behaviour is documented in the tree"
+else
+    echo "  WARN  no documentation mentions Issue #2 (not a failure — the code contract above is the real guard)"
+fi
 
 echo ""
 echo "All 12 contracts PASS. Issue #2 closure verified."

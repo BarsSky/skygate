@@ -12,6 +12,97 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.87 — the gate can finally fail (B322)
+
+**Date:** 2026-09-25 · **Base:** `v1.5.86` → this tag · **Compatibility:** none — no schema
+change, no migration, no config change. Two product bug fixes plus the guarantee-catalog
+repair.
+
+### The report
+
+> «необходимо провести ревизию всех тестов B1-320 на тему того помогают ли они определить
+> регрессию так как после некоторых правок что было раньше по сессии правила перестали
+> работать но предварительные прогоны не помогли определить что они сломались тоже и с
+> тегами было и политикой ACL. Правки что вносились ломали рабочее состояние и тесты что
+> должны были это отловить ничего не показывали.»
+
+The report was right, and the audit found the mechanical reasons. Full record:
+[`docs/gate-regression-power.md`](docs/gate-regression-power.md).
+
+### Four ways a contract could not fail
+
+1. **A masked exit status made 24 entries unconditionally green.** B59–B81, B86, B89 and B90
+   ended their command with `bash "$f"; rm -f "$f"` — the pipeline's status was `rm`'s,
+   always 0, and the gate reads rc==0 as PASS. Arming them exposed **21 failing contracts**;
+   the wrapper now propagates `rc=$?`.
+2. **A check that counts failures and never exits non-zero is decorative.**
+   `scripts/check_b251.sh` printed `FAIL` and exited 0, and the gate hides a check's output
+   on PASS — so its 13 contracts, including the reserved `skygate-host` name that B320/B321
+   depend on, were never seen. **33 more scripts had the same defect.**
+3. **`go test -run <PATTERN>` filters pointing at deleted tests always pass** (`ok … [no
+   tests to run]` exits 0). Live examples: B5, B21, `B227`, `TestDBSwap`, `pollOnce`, and the
+   `TestAutoBackfill_*` / `TestBackfill_StrategyD_*` / `TestListLastRunWithResults_*` families
+   deleted with the v1.3.0 SQLite→PG purge. A contract now fails if any filter matches zero
+   tests.
+4. **A check script referenced by no catalog never runs.** 21 scripts were in that state
+   (Telegram async page, device adoption, the Tailscale enable/disable UI, derper-in-docker
+   packaging, the live OIDC probe, the prefix-admin scripts, …). 20 of them are registered
+   now.
+
+The gate also prints a failing check's **own FAIL lines before** the 20-line window that used
+to cut them off — that window was hiding exactly the late behavioural sections (B315 G7/H1/I2,
+B317 I2/I3, B273 F–J, B276 D–F, B288 E–H, B289 F, B290 E–G).
+
+### Two real product bugs the armed band immediately found
+
+* `internal/mesh/mesh.go` — `INSERT OR IGNORE INTO mesh_members` with no dialect branch.
+  PostgreSQL answers `ERROR: syntax error at or near "OR"` (verified on PG 15), so on a PG
+  install — including the reference deployment — **joining a mesh failed outright**.
+* `internal/subnet/shares.go` — the same SQLite-only clause for `user_subnet_shares`;
+  **granting a subnet share failed** on PG.
+
+Both now build their statement through a dialect-aware helper (`meshMemberInsertSQL` /
+`subnetShareInsertSQL`; `INSERT OR IGNORE` for SQLite, `ON CONFLICT … DO NOTHING` for
+PostgreSQL), with unit tests pinning both forms, and the B60 sweep that used to guard the
+class is back with the branch allowance (a legitimately branched statement is not a leak).
+
+### The renegotiated band (B59–B90)
+
+All 24 entries were rewritten against the **current** code and verified three ways (probe
+file, production `printf|bash` wrapper, byte-for-byte printf round-trip), then re-run through
+the gate's own `run_check`: **24/24 PASS**. Notable: B64 dropped two comment-only greps, B66
+dropped `use-preferred-btn` (B277.3 removed that button as a *fix*), B69's chain was invalid
+bash and had never run an assertion, B68a re-pointed a purged migration file, B89 dropped a
+copy-paste assertion from the contract itself, B90 now asserts the re-bind **order**
+behaviourally, and B61 was broken by a bare `<VM_HOST>` that bash parsed as a redirection.
+
+### Deliberately left open (tracked, not silently dropped)
+
+* **B76/B77/B78** lost their unit tests to `t.Skip` stubs; their behaviour is pinned
+  structurally until those Go tests are written.
+* The audit catalogued ~200 further weak assertions (comment-satisfied greps, always-true
+  conjuncts, `grep -c … || echo 0`, `ok` in both branches, i18n "RU+EN" rows that compare
+  counts instead of keys — one scores perfect parity while its RU value is English).
+* The runtime invariants that still have only a grep behind them — a tag reaching headscale,
+  the applied policy matching the generated one, the reconciler running on PostgreSQL —
+  are listed in `docs/gate-regression-power.md` §5 and are the subject of the next block.
+
+### Files
+
+`scripts/verify_pre_deploy.sh` (24 chains + `run_check` evidence printing + 20 registrations),
+`scripts/check_b322_gate_can_fail.sh` (new), 34 `scripts/check_b*.sh` (armed with a real exit
+status), `scripts/check_b_issue_2.sh`, `scripts/check_b104.sh`, `scripts/check_b199.sh`,
+`internal/mesh/mesh.go` (+ `mesh_b322_test.go`), `internal/subnet/shares.go`
+(+ `shares_b322_test.go`), `docs/gate-regression-power.md` (new).
+
+### Verification
+
+`scripts/check_b322_gate_can_fail.sh` carries the 11 meta-contracts (no masked exit status, no
+decorative check, no vacuous `-run` filter, no unreachable script, no no-op entry, the gate's
+FAIL-line echo, plus the two dialect fixes and their tests). The band was re-verified through
+the gate's real `run_check` (`tmp/band_harness.sh`), and the full gate was run on the VM for
+this commit.
+
 ## v1.5.86 — Tailscale survives the update, and the name is strictly `skygate-host` (B321)
 
 **Date:** 2026-09-25 · **Base:** `v1.5.85` → this tag · **Compatibility:** none — no schema

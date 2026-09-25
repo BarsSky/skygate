@@ -58,6 +58,7 @@ docs/
 ├── ROADMAP.md                       current work / next / blocked / tech debt
 ├── LESSONS.md                       incidents, root causes, recurring traps
 ├── operations.md                    release + deploy + PG cutover + bootstrap
+├── gate-regression-power.md        what the B-check catalog can and cannot catch
 ├── internals.md                     package map, invariants, B-check system
 ├── ha.md                            HA topology, failover, open questions
 ├── https.md                         TLS, reverse proxies, certificates

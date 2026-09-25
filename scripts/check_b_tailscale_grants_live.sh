@@ -198,3 +198,6 @@ if [ "${FAIL}" -eq 0 ]; then
     exit 0
 fi
 exit 1
+
+# B322 (2026-09-25): reach the gate with a non-zero exit on a recorded FAIL.
+[ "${FAIL:-0}" -eq 0 ] || exit 1

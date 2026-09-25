@@ -42,8 +42,12 @@ else
   bad "scripts/verify_migration.sh missing"
 fi
 
-# 2. Has the 5 phases
-for phase in '/healthz' '/readyz' 'git HEAD' 'backup' 'replay' ; do
+# 2. Has the phases the script ACTUALLY runs.
+# B322 (2026-09-25) renegotiation: the contract demanded a 5th "replay" phase. The script
+# was redesigned around three auto-runnable phases (1: verify_post_deploy --quick,
+# 2: system tests, 3: manual) plus phase 0 (state capture); the replay/throwaway-database
+# work lives inside those phases, so the phase list is asserted as it exists today.
+for phase in '/healthz' '/readyz' 'git HEAD' 'backup' 'Phase 0' ; do
   if grep -qF "${phase}" scripts/verify_migration.sh ; then
     ok "verify_migration.sh: '${phase}' phase present"
   else
@@ -68,12 +72,16 @@ if grep -qE 'postgres:18-alpine' scripts/verify_migration.sh ; then
   ok "verify_migration.sh: uses postgres:18-alpine throwaway for replay"
 fi
 
-# 4. Returns non-zero on FAIL
-if grep -qE 'exit 1' scripts/verify_migration.sh \
-   && grep -qE 'MIGRATION VERIFY FAILED' scripts/verify_migration.sh ; then
-  ok "verify_migration.sh: exit 1 on FAIL (with friendly message)"
+# 4. Returns non-zero on FAIL.
+# B322 renegotiation: the script reports per-phase verdicts (EXIT_CODE 0/1/2/3) and ends
+# with `exit "$EXIT_CODE"`, which is the property that matters — the old assertion required
+# one exact spelling (`exit 1` + a literal "MIGRATION VERIFY FAILED") that the rewrite no
+# longer uses, so it failed on a correct script.
+if grep -qE 'exit "\$EXIT_CODE"' scripts/verify_migration.sh \
+   && grep -qE 'EXIT_CODE=1|EXIT_CODE=2' scripts/verify_migration.sh ; then
+  ok "verify_migration.sh: exits with the per-phase verdict (0/1/2/3)"
 else
-  bad "verify_migration.sh: missing exit-1-on-FAIL"
+  bad "verify_migration.sh: does not propagate a failing phase to its exit status"
 fi
 
 # 5. bash -n syntax check

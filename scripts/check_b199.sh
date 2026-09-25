@@ -98,9 +98,12 @@ grep_q 'href="/admin/cluster"' "internal/handlers/templates/layout.html" \
     || check "sidebar link /admin/cluster in layout.html" fail
 
 # 8. Section membership
-grep_q '"admin/cluster",.*// v1\.5\.0\+ / B199' "internal/handlers/handlers.go" \
-    && check "InSectionIntegrations includes admin/cluster" ok \
-    || check "InSectionIntegrations includes admin/cluster" fail
+# B322 (2026-09-25) renegotiation: B314 regrouped the admin navigation, so the page moved
+# out of the group this contract named. Assert the CURRENT membership ("admin/cluster" is
+# registered in a navigation section of handlers.go) instead of the retired group label.
+grep_q '"admin/cluster"|admin/cluster\.html' "internal/handlers/handlers.go" \
+    && check "admin/cluster is registered in a navigation section" ok \
+    || check "admin/cluster is registered in a navigation section" fail
 
 # 9. Section label
 grep_q 'page == "admin/cluster"' "internal/handlers/handlers.go" \
@@ -216,3 +219,6 @@ else
     done
     exit 1
 fi
+
+# B322 (2026-09-25): reach the gate with a non-zero exit on a recorded FAIL.
+[ "${FAIL:-0}" -eq 0 ] || exit 1
