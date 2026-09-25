@@ -377,11 +377,21 @@
   <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-arrows-rotate"></i> {{t "tailscale.restart_heading"}}</h3>
     <p class="sub">{{t "tailscale.restart_help" | safeHTML}}</p>
+    {{/* B323 (2026-09-25): the restart control now has its own page. The legacy
+         action keeps working (contracts reference `restart_skgate`), but the
+         operator should not have to find it here — the link says where it moved
+         and why (install kind + env file + restart-vs-recreate). */}}
+    <p class="sub" style="margin-bottom:.6rem">
+      <i class="fa-solid fa-circle-info"></i> {{t "service_ctl.tailscale_moved" | safeHTML}}
+    </p>
+    <p style="margin-bottom:.6rem">
+      <a href="/admin/service" class="btn btn-primary"><i class="fa-solid fa-power-off"></i> {{t "service_ctl.open_page"}}</a>
+    </p>
     <form action="/admin/tailscale" method="POST" autocomplete="off"
           onsubmit="return confirm({{t "tailscale.restart_confirm" | safeJSON}});">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="restart_skgate">
-      <button type="submit" class="btn btn-warn"><i class="fa-solid fa-arrows-rotate"></i> {{t "tailscale.restart_btn"}}</button>
+      <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-arrows-rotate"></i> {{t "tailscale.restart_btn"}}</button>
     </form>
   </div>
 

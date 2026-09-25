@@ -28,12 +28,6 @@ import (
 
 func init() { i18n.SetGlobal(i18n.New()) }
 
-
-
-
-
-
-
 type App struct {
 	Version string
 	// v0.26.0 — process-wide liveness/readiness fields.
@@ -41,11 +35,11 @@ type App struct {
 	// handlers. Carried in the App so the handlers can
 	// render them without reaching into the global
 	// state.
-	InstanceID  string        // SKYGATE_INSTANCE_ID env, "unconfigured" if empty
-	BuildVersion string        // "v0.26.0" + commit SHA (set by main.go at boot)
-	StartedAt   time.Time     // wall-clock when main() returned from setup
-	RateLimiter *ratelimit.Limiter
-	Notifier    telegram.Notifier
+	InstanceID   string    // SKYGATE_INSTANCE_ID env, "unconfigured" if empty
+	BuildVersion string    // "v0.26.0" + commit SHA (set by main.go at boot)
+	StartedAt    time.Time // wall-clock when main() returned from setup
+	RateLimiter  *ratelimit.Limiter
+	Notifier     telegram.Notifier
 	I18n         *i18n.Catalog
 	// DB is the *db.ResettableDB wrapper (NOT a captured
 	// *sql.DB). The B203 watchdog hot-reloads the pool via
@@ -77,7 +71,7 @@ type App struct {
 	// to 503 regardless of the DB row's enabled flag (an
 	// emergency off-switch). Empty string = DB row governs
 	// (or the legacy "issuer non-empty" default if no row).
-	OIDCEnabledEnv   string
+	OIDCEnabledEnv string
 	// ControlURL is the public-facing URL of the headscale control plane,
 	// shown to users in preauth instructions so they can configure
 	// Tailscale with a custom coordination server. Typically
@@ -85,16 +79,16 @@ type App struct {
 	// SKYGATE_CONTROL_URL env var is empty at startup.
 	ControlURL   string
 	SessionHours int
-	DerpBaseURL  string // base URL of the local custom DERP server
-	SSHKeyPath   string // SSH key for exit node route sync
-	Cfg         *config.Config // 2026-07-07: issue #12 — limits & stagger sync
+	DerpBaseURL  string         // base URL of the local custom DERP server
+	SSHKeyPath   string         // SSH key for exit node route sync
+	Cfg          *config.Config // 2026-07-07: issue #12 — limits & stagger sync
 	// 2026-07-15: v0.10.12 — public URL of an existing Headplane
 	// instance (HEADPLANE_EXTERNAL_URL). When set, the admin
 	// ACL page links to this URL instead of the bundled
 	// sidecar. Empty = use the bundled sidecar at
 	// https://${ControlURL-host}:50445/admin/.
 	HeadplaneExternalURL string
-	SecretKeyHex string
+	SecretKeyHex         string
 	// refactor-v0.30 Phase D3 (2026-07-29): the
 	// per-user control plane routing (HSForUser,
 	// HSGlobal, PlaneURLForUser, InvalidateHSCache)
@@ -382,7 +376,7 @@ func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) 
 //     tick so the operator can flip the switch without
 //     a redeploy. Safety belt — never exposed via UI.
 //   - global_settings.preferred_reconcile_enabled (DB)
-//     + SKYGATE_PREFERRED_RECONCILE_ENABLED (env): on/
+//   - SKYGATE_PREFERRED_RECONCILE_ENABLED (env): on/
 //     off toggle. The DB row wins once written; env
 //     var is the default at first start (when no row
 //     exists). The /admin/system_tests page writes
@@ -396,7 +390,8 @@ func (a *App) RunDomainAutoUpdater(ctx context.Context, interval time.Duration) 
 //
 // 2026-09-03: v1.5.2 (B229).
 // 2026-09-03: v1.5.2 (B231) — add the per-tick enabled
-//   toggle + the rename migrator sub-tick.
+//
+//	toggle + the rename migrator sub-tick.
 func (a *App) RunPreferredExitReconciler(ctx context.Context, notifier interface {
 	SendAlert(text string) int64
 }, interval time.Duration) {
@@ -669,11 +664,11 @@ func New(d *db.ResettableDB, hs *headscale.Client, headscaleKey, secret, control
 		// /admin/telegram "Set as egress relay" against
 		// emilia on the live VM (the 2026-08-09 operator
 		// report that triggered the fix).
-		SSHKeyPath:   sshKeyPath,
-		templates:    LoadTemplates(),
-		Notifier:    telegram.NoopNotifier{},
-		I18n:         i18n.New(),
-		Cfg:          cfg,
+		SSHKeyPath: sshKeyPath,
+		templates:  LoadTemplates(),
+		Notifier:   telegram.NoopNotifier{},
+		I18n:       i18n.New(),
+		Cfg:        cfg,
 		// v0.26.0 — process-wide liveness/readiness fields.
 		// InstanceID comes from SKYGATE_INSTANCE_ID env
 		// (so multi-VM operators can tell which instance
@@ -935,9 +930,9 @@ func pageFromName(name string) string {
 		// backward-compat with the v0.32.x era), so we
 		// translate ONLY the 3 known mismatched pages.
 		underscoreToHyphen := map[string]string{
-			"admin/exit_nodes":       "admin/exit-nodes",
-			"admin/exit_rules":       "admin/exit-rules",
-			"admin/control_planes":   "admin/control-planes",
+			"admin/exit_nodes":     "admin/exit-nodes",
+			"admin/exit_rules":     "admin/exit-rules",
+			"admin/control_planes": "admin/control-planes",
 		}
 		if hyphen, ok := underscoreToHyphen[name]; ok {
 			return hyphen
@@ -1009,7 +1004,11 @@ func sectionPageSet(page string) map[string]bool {
 			"admin/backup", "admin/invites", "admin/control-planes",
 		},
 		"InSectionSettings": {
+			// B323 (2026-09-25): /admin/service sits in Settings next to
+			// /admin/update — the neighbour it shares its subject with
+			// (applying a new version / new env to the running service).
 			"admin/settings", "admin/users", "admin/update", "admin/certificates",
+			"admin/service",
 		},
 	}
 	out := make(map[string]bool, len(sections))
@@ -1062,6 +1061,11 @@ func pageTitle(name string) string {
 		return "title.admin_backup"
 	case "admin/settings.html":
 		return "title.admin_settings"
+	case "admin/service.html":
+		// B323 — /admin/service has no dedicated title.* key; the page renders its
+		// own <h2> from service_ctl.title, so the layout <title> reuses the same
+		// key and the browser tab matches the page heading.
+		return "service_ctl.title"
 	case "admin/telegram.html":
 		return "title.admin_telegram"
 	case "admin/exit_rules.html":
@@ -1105,7 +1109,9 @@ func sectionLabel(page string) string {
 		page == "admin/control-planes":
 		return "nav.section_data"
 	case page == "admin/settings" || page == "admin/users" ||
-		page == "admin/update":
+		page == "admin/update" || page == "admin/service":
+		// B323 — /admin/service (the SERVICE CONTROL block) is grouped with
+		// /admin/update: both answer "apply something to the running service".
 		return "nav.section_settings"
 	}
 	return ""
@@ -1164,6 +1170,10 @@ func pageLabel(page string) string {
 		return "nav.users"
 	case "admin/update":
 		return "nav.update"
+	case "admin/service":
+		// B323 — the sidebar label and the breadcrumb label are the same key by
+		// contract (see the function comment above).
+		return "service_ctl.title"
 	}
 	return ""
 }

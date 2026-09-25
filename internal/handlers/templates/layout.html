@@ -169,6 +169,12 @@
       {{/* B314: certificates configure skygate ITSELF (its own TLS), not an
            integration — the operator asked for them to live in Settings. */}}
       <a href="/admin/certificates" {{if eq .Page "admin/certificates"}}class="active"{{end}}><i class="fa-solid fa-certificate"></i><span>{{t "nav.certificates"}}</span></a>
+      {{/* B323 (2026-09-25) — the operator asked for the "restart skygate to
+           apply the new env" control to stop being hidden on /admin/tailscale
+           and become its own state block. It sits next to /admin/update: both
+           apply a change to the running service. Keep this in sync with
+           sectionPageSet() in handlers.go (B96 checks both directions). */}}
+      <a href="/admin/service" {{if eq .Page "admin/service"}}class="active"{{end}}><i class="fa-solid fa-power-off"></i><span>{{t "service_ctl.title"}}</span></a>
     </details>
 {{end}}
   </nav>

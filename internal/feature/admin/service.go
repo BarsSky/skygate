@@ -16,6 +16,7 @@ package admin
 
 import (
 	"net/http"
+	"time"
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
@@ -64,24 +65,24 @@ type Backend interface {
 //   - Backend:             satisfies the Backend interface (typically *App).
 //   - DB:                  the open *sql.DB.
 //   - HSGlobalFn:          returns the global headscale client (for admin
-//                          operations on the primary control plane).
-//                          Modeled as a function (not a *headscale.Client)
-//                          so the Service re-reads on every call — future
-//                          v0.12.0+ per-user plane swap doesn't leave
-//                          admin operations stuck on a stale client.
+//     operations on the primary control plane).
+//     Modeled as a function (not a *headscale.Client)
+//     so the Service re-reads on every call — future
+//     v0.12.0+ per-user plane swap doesn't leave
+//     admin operations stuck on a stale client.
 //   - HSForUserFn:         returns the headscale client for a specific
-//                          user (used by the acls import Apply which
-//                          pushes the policy to every distinct plane).
+//     user (used by the acls import Apply which
+//     pushes the policy to every distinct plane).
 //   - Cfg:                 config flags (AutoAllocateSubnetOnUserCreate
-//                          is the main one used here).
+//     is the main one used here).
 //   - Notifier:            for admin actions that need to send a
-//                          Telegram alert (password reset, ACL import).
+//     Telegram alert (password reset, ACL import).
 //   - HeadscaleUpdateMonitor: for the /admin/headscale page (snapshot +
-//                          CheckNow). Nil-safe (the page handles nil).
+//     CheckNow). Nil-safe (the page handles nil).
 //   - Sidecar:             for the /admin/subnets page (LastSync /
-//                          LastStats). Nil-safe.
+//     LastStats). Nil-safe.
 //   - I18n:                 i18n catalog (for translated status pills
-//                          on the /admin/headscale page).
+//     on the /admin/headscale page).
 //
 // Refactor-v0.30 Phase B step 3b.1a (2026-07-29): the
 // telegramProbeCache field is state that was previously on
@@ -91,7 +92,7 @@ type Backend interface {
 // that uses it. Mutex-guarded (a probe request can run
 // concurrently with a save/rotate/disable invalidate).
 type Service struct {
-	Backend                Backend
+	Backend Backend
 	// DB is the live pool source (B208). Use s.dbc()
 	// at every call site instead of s.dbc().X directly
 	// — the direct pattern would point to a closed
@@ -245,6 +246,13 @@ type Service struct {
 	// once at boot from app.BuildVersion.
 	BuildVersion string
 
+	// B323 (2026-09-25) — StartedAt is when this process finished its boot
+	// sequence, wired once at boot from app.StartedAt. The /admin/service page
+	// renders it as the uptime ("1h02m"), so the operator can tell a fresh
+	// restart from a service that never came back. Zero value = the page omits
+	// the row instead of printing a nonsense duration.
+	StartedAt time.Time
+
 	// 2026-08-17 (B124) — DevBuild is true when this binary
 	// is a dev/edge build (SKYGATE_DEV_BUILD=true at boot).
 	// The /admin/update page shows a "dev build" banner
@@ -276,8 +284,8 @@ type Service struct {
 	//     gets in the tailnet. Default `skygate-host-1` (the
 	//     legacy name from pre-v0.33.0 deployments).
 	TailscaleAuthKeyPath string
-	TailscaleLoginServer  string
-	TailscaleHostname     string
+	TailscaleLoginServer string
+	TailscaleHostname    string
 
 	// v1.5.0 / B149 — /admin/ha page.
 	//

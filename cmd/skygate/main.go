@@ -1310,6 +1310,11 @@ func main() {
 		HeadscaleUpdateMonitor: app.HeadscaleUpdateMonitor,
 		Sidecar:                app.Sidecar,
 		I18n:                   app.I18n,
+		// B323 (2026-09-25): the /admin/service page reports the uptime of THIS
+		// process, so the operator can distinguish "the restart worked" from
+		// "the service never came back". Wired from the same StartedAt /healthz
+		// uses, so the two surfaces cannot disagree.
+		StartedAt: app.StartedAt,
 		// v0.33.1.40 B92: wire the Availability Checker so the
 		// /admin/services page can render the cached status of
 		// headscale + headplane + tailscale. The Checker is
@@ -2428,6 +2433,16 @@ func main() {
 	// egress relay on /admin/telegram to make the bot work.
 	mux.Handle("GET /admin/tailscale", authMW(http.HandlerFunc(adminSvc.GetAdminTailscale)))
 	mux.Handle("POST /admin/tailscale", authMW(http.HandlerFunc(adminSvc.PostAdminTailscale)))
+	// B323 (2026-09-25) — the SERVICE CONTROL page. The operator asked for the
+	// "restart skygate to apply the new env" control to be a first-class, findable
+	// block instead of a button hidden on /admin/tailscale: «явно нужно вынести
+	// подобного рода функционал в настройки и в отдельный блок управления
+	// состоянием skygate чтобы не искать где он есть сейчас». It detects the
+	// install kind (docker/systemd/OpenRC/kubernetes/binary), shows the env file
+	// the unit/compose actually reads, and offers restart + (docker only)
+	// recreate. Same authMW admin gate as every neighbouring /admin/* route.
+	mux.Handle("GET /admin/service", authMW(http.HandlerFunc(adminSvc.GetAdminService)))
+	mux.Handle("POST /admin/service", authMW(http.HandlerFunc(adminSvc.PostAdminService)))
 	// B320 — delete the OFFLINE node that squats the canonical tailnet name
 	// `skygate-host` (a dead registration from an earlier machine key) and rename the
 	// running client back to it. The guards live in the handler: offline, canonical

@@ -539,7 +539,7 @@ var ruAdmin = map[string]string{
 	// non-engineer operator is the primary audience).
 	"oidc.title":                     "OIDC provider (headscale integration)",
 	"oidc.subtitle":                  "Single-pane view of the OIDC config that headscale uses to authenticate Tailscale users against skygate. Paste the headscale.conf snippet below into your headscale.conf and restart headscale to enable the integration.",
-	"oidc.disabled_warn": "<b>OIDC пока выключен</b> — в окружении пусто <code>SKYGATE_OIDC_ISSUER</code>. Страница показывает только то, что сервис уже знает; провайдер включится, когда переменные появятся в окружении контейнера/юнита и сервис перечитает их.<div style=\"margin-top:.55rem\"><b>Что положить в env</b> — issuer это адрес, по которому skygate отдаёт OIDC-эндпоинты, с суффиксом <code>/oidc</code>:</div><pre style=\"margin:.45rem 0;padding:.6rem;overflow-x:auto\">SKYGATE_OIDC_ISSUER=https://skygate.example.com/oidc\nSKYGATE_OIDC_CLIENT_ID=skygate\nSKYGATE_OIDC_CLIENT_SECRET=&lt;сгенерируйте: openssl rand -hex 32&gt;\n# Необязательно: если не заданы, redirect URI выводятся из issuer\nSKYGATE_OIDC_REDIRECT_URIS=https://skygate.example.com/oidc/callback</pre><div>Значения важны буквально: <code>issuer</code> должен совпадать с тем, что объявлено в discovery-документе, иначе headscale ответит <code>issuer mismatch</code>. <code>CLIENT_ID</code>/<code>CLIENT_SECRET</code> — те же, что прописаны в конфиге headscale (или в другом клиенте).</div><div style=\"margin-top:.5rem\"><b>Как применить</b>: откройте <a href=\"/admin/service\">Управление сервисом</a> — там видно тип установки, где лежит env-файл, и есть кнопки «Перезапустить» и «Пересоздать контейнер (применить .env)». Для docker одного <code>restart</code> недостаточно: окружение контейнера фиксируется при создании, поэтому нужен <code>--force-recreate</code>; под systemd/OpenRC достаточно restart — юнит перечитывает <code>EnvironmentFile</code>.</div>",
+	"oidc.disabled_warn":             "<b>OIDC пока выключен</b> — в окружении пусто <code>SKYGATE_OIDC_ISSUER</code>. Страница показывает только то, что сервис уже знает; провайдер включится, когда переменные появятся в окружении контейнера/юнита и сервис перечитает их.<div style=\"margin-top:.55rem\"><b>Что положить в env</b> — issuer это адрес, по которому skygate отдаёт OIDC-эндпоинты, с суффиксом <code>/oidc</code>:</div><pre style=\"margin:.45rem 0;padding:.6rem;overflow-x:auto\">SKYGATE_OIDC_ISSUER=https://skygate.example.com/oidc\nSKYGATE_OIDC_CLIENT_ID=skygate\nSKYGATE_OIDC_CLIENT_SECRET=&lt;сгенерируйте: openssl rand -hex 32&gt;\n# Необязательно: если не заданы, redirect URI выводятся из issuer\nSKYGATE_OIDC_REDIRECT_URIS=https://skygate.example.com/oidc/callback</pre><div>Значения важны буквально: <code>issuer</code> должен совпадать с тем, что объявлено в discovery-документе, иначе headscale ответит <code>issuer mismatch</code>. <code>CLIENT_ID</code>/<code>CLIENT_SECRET</code> — те же, что прописаны в конфиге headscale (или в другом клиенте).</div><div style=\"margin-top:.5rem\"><b>Как применить</b>: откройте <a href=\"/admin/service\">Управление сервисом</a> — там видно тип установки, где лежит env-файл, и есть кнопки «Перезапустить» и «Пересоздать контейнер (применить .env)». Для docker одного <code>restart</code> недостаточно: окружение контейнера фиксируется при создании, поэтому нужен <code>--force-recreate</code>; под systemd/OpenRC достаточно restart — юнит перечитывает <code>EnvironmentFile</code>.</div>",
 	"oidc.section_endpoints":         "OIDC endpoints (paste into headscale.conf)",
 	"oidc.endpoints_help":            "These 5 URLs are what headscale needs to verify the provider's metadata, fetch the public key, exchange the auth code, and resolve the user. The <b>issuer</b> is the only one headscale actually reads from <code>oidc.issuer</code>; the others are derived.",
 	"oidc.row_issuer":                "Issuer",
@@ -1059,6 +1059,109 @@ var ruAdmin = map[string]string{
 	"cluster.invite_no_secret":      "ClusterInviteSecret не настроен — задайте SKYGATE_SECRET_KEY в .env",
 	"cluster.invite_role_required":  "target_hostname обязателен",
 	"cluster.invite_ttl_invalid":    "ttl_hours должен быть положительным целым (1..168)",
+
+	// B323 (2026-09-25) — SERVICE CONTROL (/admin/service).
+	// Оператор: «нужно вынести перезапуск сервиса в настройки и в отдельный блок
+	// управления состоянием skygate, чтобы не искать где он есть сейчас».
+	// Правило 10: каждый ключ есть и в EN-каталоге ниже (тот же набор).
+	"service_ctl.title":    "Управление сервисом",
+	"service_ctl.subtitle": "Тип установки skygate, env-файл, который он реально читает, и обе доступные операции: перезапуск и пересоздание контейнера. Здесь же — когда достаточно перезапуска, а когда нужно пересоздание.",
+	"service_ctl.back":     "Назад",
+	// Кросс-ссылка с /admin/tailscale: там раньше жила единственная кнопка
+	// перезапуска, и оператор просил не искать её больше.
+	"service_ctl.tailscale_moved": "Перезапуск и применение новых параметров из env переехали на отдельную страницу «Управление сервисом»: там видно тип установки, env-файл и когда нужен не restart, а пересоздание контейнера.",
+	"service_ctl.open_page":       "Открыть управление сервисом",
+
+	// Состояние.
+	"service_ctl.state_title":          "Состояние",
+	"service_ctl.row_kind":             "Тип установки",
+	"service_ctl.row_kind_why":         "Как определено",
+	"service_ctl.row_build":            "Сборка",
+	"service_ctl.row_uptime":           "Аптайм процесса",
+	"service_ctl.row_env_file":         "Env-файл",
+	"service_ctl.row_env_source":       "Источник пути",
+	"service_ctl.row_unit":             "Юнит / сервис",
+	"service_ctl.row_container":        "Контейнер",
+	"service_ctl.row_compose_project":  "Compose-проект",
+	"service_ctl.row_compose_file":     "Compose-файл",
+	"service_ctl.not_available":        "нет данных",
+	"service_ctl.env_file_found":       "найден",
+	"service_ctl.env_file_missing":     "не найден",
+	"service_ctl.env_file_none":        "у этого типа установки нет env-файла на хосте",
+	"service_ctl.compose_file_missing": "не найден — пересоздание недоступно",
+	"service_ctl.in_container":         "в контейнере",
+	"service_ctl.native_host":          "нативный хост",
+
+	// Типы установки (ключ собирается как service_ctl.kind_<Kind>).
+	"service_ctl.kind_docker":     "docker / container",
+	"service_ctl.kind_systemd":    "systemd (нативно)",
+	"service_ctl.kind_openrc":     "OpenRC (нативно)",
+	"service_ctl.kind_kubernetes": "Kubernetes (pod)",
+	"service_ctl.kind_binary":     "бинарник (запущен вручную)",
+	"service_ctl.kind_unknown":    "не определено",
+
+	// Источник пути к env-файлу.
+	"service_ctl.envsrc_systemd_unit":    "разобрано из EnvironmentFile= в юните",
+	"service_ctl.envsrc_systemd_default": "юнит не найден — показан путь по умолчанию /etc/skygate/skygate.env",
+	"service_ctl.envsrc_docker_repo":     "SKYGATE_HOST_REPO_PATH на хосте",
+	"service_ctl.envsrc_docker_default":  "путь по умолчанию на хосте (/home/operator/skygate)",
+	"service_ctl.envsrc_openrc":          "конфиг OpenRC /etc/conf.d/skygate",
+	"service_ctl.envsrc_k8s_deployment":  "значения приходят из Deployment",
+	"service_ctl.envsrc_binary_explicit": "задан через SKYGATE_ENV_FILE",
+	"service_ctl.envsrc_none":            "неизвестен (сервис запущен вручную)",
+
+	// Примечания по типу установки.
+	"service_ctl.note_k8s":               "Kubernetes: примените изменение, отредактировав Deployment (env/секрет) и обновив pod. Эта страница НЕ может перезапустить pod: им владеет Deployment, а перезапуск пода изнутри ничего не меняет.",
+	"service_ctl.note_binary":            "Сервисный менеджер не найден: skygate запущен вручную (или из supervisor). Перезапустите его тем же способом, каким запускали; эту страницу перезапуск не выполнит.",
+	"service_ctl.note_unknown":           "Не удалось прочитать ни одного маркера установки (/ .dockerenv, KUBERNETES_SERVICE_HOST, юнит systemd, /etc/init.d/skygate). Перезапуск с этой страницы недоступен.",
+	"service_ctl.note_docker_env_frozen": "Docker фиксирует окружение контейнера в момент создания: обычный restart НЕ применяет изменения из .env — для этого нужна кнопка «Пересоздать» (--force-recreate).",
+	"service_ctl.note_systemd_native":    "systemd: юнит перечитывает EnvironmentFile при каждом restart, поэтому изменения в env-файле применяются обычным перезапуском.",
+	"service_ctl.note_openrc_native":     "OpenRC: /etc/init.d/skygate подключает /etc/conf.d/skygate при каждом start, поэтому изменения применяются обычным перезапуском.",
+	"service_ctl.note_docker_cwd":        "docker compose интерполирует .env относительно текущего каталога: команда запускается с -p и -f (см. строку команды), поэтому каталог не влияет на подстановку.",
+
+	// Действия.
+	"service_ctl.action_restart_title":    "Перезапустить skygate",
+	"service_ctl.action_restart_help":     "Останавливает и снова запускает сервис skygate найденным для этого типа установки способом. Процесс, который показывает вам эту страницу, будет завершён — поэтому ответ приходит до перезапуска, а через ~30 секунд страница откроется заново с новой сборкой.",
+	"service_ctl.action_restart_btn":      "Перезапустить",
+	"service_ctl.action_restart_confirm":  "Перезапустить %s сейчас? Страница станет недоступна на несколько секунд.",
+	"service_ctl.action_restart_note":     "Ответ приходит до перезапуска; проверьте сборку и аптайм после возврата страницы.",
+	"service_ctl.action_recreate_title":   "Пересоздать контейнер (применить .env)",
+	"service_ctl.action_recreate_help":    "Только для docker: <code>docker compose … up -d --force-recreate skygate</code>. Это единственный способ применить изменённый <code>.env</code>, потому что окружение контейнера фиксируется при его создании. Данные и тома сохраняются, контейнер пересоздаётся из того же образа и compose-файла.",
+	"service_ctl.action_recreate_btn":     "Пересоздать",
+	"service_ctl.action_recreate_confirm": "Пересоздать контейнер skygate (--force-recreate)? Сервис будет недоступен несколько секунд.",
+	"service_ctl.action_recreate_note":    "Применяет .env, extra_hosts, тома и образ из compose-файла.",
+	"service_ctl.action_recreate_warn":    "Пересоздание перезапускает контейнер целиком: кратковременный простой и повторная регистрация в tailnet, если состояние не вынесено в том.",
+	"service_ctl.command_label":           "Команда, которая будет выполнена",
+	"service_ctl.flash_launched":          "Запущено: %s. Страница вернётся через ~30 секунд с новой сборкой.",
+
+	// Отказы.
+	"service_ctl.k8s_refuse":           "Kubernetes: перезапуск пода выполняется через Deployment (kubectl rollout restart deployment/<name> либо правка манифеста), а не с этой страницы. Изменения env применяются только при обновлении Deployment.",
+	"service_ctl.binary_refuse":        "Skygate запущен вручную (сервисный менеджер не найден): перезапустите его тем же способом, каким запускали.",
+	"service_ctl.unknown_refuse":       "Не удалось определить тип установки, поэтому перезапуск не запускался. Запустите сервис вручную или откройте /healthz и уточните, как skygate был установлен.",
+	"service_ctl.recreate_docker_only": "Пересоздание доступно только для установки в docker: под systemd/OpenRC перезапуска достаточно, а под Kubernetes контейнером управляет Deployment.",
+	"service_ctl.docker_nocompose":     "Пересоздание недоступно: не найден compose-файл на хосте (искали docker-compose.yml/.yaml в SKYGATE_HOST_REPO_PATH и в /home/operator/skygate).",
+	"service_ctl.restart_unavailable":  "Перезапуск недоступен для этого типа установки.",
+	"service_ctl.recreate_unavailable": "Пересоздание недоступно для этого типа установки.",
+	"service_ctl.unknown_action":       "Неизвестное действие.",
+
+	// Таблица «когда достаточно перезапуска».
+	"service_ctl.hints_title":           "Когда достаточно перезапуска",
+	"service_ctl.hints_help":            "Разница принципиальная: под docker окружение контейнера фиксируется в момент создания, поэтому правка <code>.env</code> без пересоздания не даёт эффекта. Под systemd и OpenRC переменные читаются из env-файла при каждом запуске, поэтому хватает перезапуска.",
+	"service_ctl.hints_col_kind":        "Тип установки",
+	"service_ctl.hints_col_enough":      "Достаточно перезапуска",
+	"service_ctl.hints_col_recreate":    "Что нужно дополнительно",
+	"service_ctl.hints_not_applicable":  "не применимо",
+	"service_ctl.hints_docker_enough":   "Только изменения внутри приложения (например, настройки в БД). <b>Не</b> применяет изменённый <code>.env</code>.",
+	"service_ctl.hints_docker_recreate": "Изменения <code>.env</code>, <code>extra_hosts</code>, томов или образа — кнопка «Пересоздать» (<code>--force-recreate</code>).",
+	"service_ctl.hints_systemd":         "Любые изменения env: юнит перечитывает <code>EnvironmentFile</code> при каждом restart. Если юнит в состоянии failed, сначала <code>systemctl reset-failed skygate</code>.",
+	"service_ctl.hints_openrc":          "Любые изменения env: <code>/etc/init.d/skygate</code> подключает <code>/etc/conf.d/skygate</code> при каждом start.",
+	"service_ctl.hints_k8s":             "Ничего: перезапуск пода выполняет Deployment при обновлении (<code>kubectl rollout restart deployment/&lt;name&gt;</code>). env применяется только новым pod.",
+	"service_ctl.hints_binary":          "Ничего: перезапустите процесс вручную тем же способом, каким он был запущен.",
+
+	// Журнал последнего действия.
+	"service_ctl.log_title": "Журнал последнего действия",
+	"service_ctl.log_path":  "Хвост /tmp/skygate-restart.log — вывод команды перезапуска (пишет отдельный процесс, поэтому запись появляется после возврата страницы).",
+	"service_ctl.log_empty": "Действий ещё не было: журнал /tmp/skygate-restart.log пуст или недоступен.",
 }
 
 var enAdmin = map[string]string{
@@ -1569,7 +1672,7 @@ var enAdmin = map[string]string{
 	// button that runs a live discovery+userinfo probe.
 	"oidc.title":             "OIDC provider (headscale integration)",
 	"oidc.subtitle":          "Single-pane view of the OIDC config that headscale uses to authenticate Tailscale users against skygate. Paste the headscale.conf snippet below into your headscale.conf and restart headscale to enable the integration.",
-	"oidc.disabled_warn": "<b>OIDC is currently disabled</b> — <code>SKYGATE_OIDC_ISSUER</code> is empty in the environment. This page only shows what the service already knows; the provider turns on once the variables are present in the container/unit environment and the service re-reads them.<div style=\"margin-top:.55rem\"><b>What to put in the env</b> — the issuer is the address at which skygate serves its OIDC endpoints, with the <code>/oidc</code> suffix:</div><pre style=\"margin:.45rem 0;padding:.6rem;overflow-x:auto\">SKYGATE_OIDC_ISSUER=https://skygate.example.com/oidc\nSKYGATE_OIDC_CLIENT_ID=skygate\nSKYGATE_OIDC_CLIENT_SECRET=&lt;generate: openssl rand -hex 32&gt;\n# Optional: when unset, the redirect URIs are derived from the issuer\nSKYGATE_OIDC_REDIRECT_URIS=https://skygate.example.com/oidc/callback</pre><div>The values matter literally: <code>issuer</code> must match what the discovery document declares, otherwise headscale answers <code>issuer mismatch</code>. The <code>CLIENT_ID</code>/<code>CLIENT_SECRET</code> are the same ones configured in headscale (or in the other client).</div><div style=\"margin-top:.5rem\"><b>How to apply it</b>: open <a href=\"/admin/service\">Service control</a> — it shows the install kind, where the env file lives, and offers «Restart» and «Recreate the container (apply .env)». Under docker a plain <code>restart</code> is not enough: the container environment is frozen at creation, so <code>--force-recreate</code> is required; under systemd/OpenRC a restart is enough because the unit re-reads <code>EnvironmentFile</code>.</div>",
+	"oidc.disabled_warn":     "<b>OIDC is currently disabled</b> — <code>SKYGATE_OIDC_ISSUER</code> is empty in the environment. This page only shows what the service already knows; the provider turns on once the variables are present in the container/unit environment and the service re-reads them.<div style=\"margin-top:.55rem\"><b>What to put in the env</b> — the issuer is the address at which skygate serves its OIDC endpoints, with the <code>/oidc</code> suffix:</div><pre style=\"margin:.45rem 0;padding:.6rem;overflow-x:auto\">SKYGATE_OIDC_ISSUER=https://skygate.example.com/oidc\nSKYGATE_OIDC_CLIENT_ID=skygate\nSKYGATE_OIDC_CLIENT_SECRET=&lt;generate: openssl rand -hex 32&gt;\n# Optional: when unset, the redirect URIs are derived from the issuer\nSKYGATE_OIDC_REDIRECT_URIS=https://skygate.example.com/oidc/callback</pre><div>The values matter literally: <code>issuer</code> must match what the discovery document declares, otherwise headscale answers <code>issuer mismatch</code>. The <code>CLIENT_ID</code>/<code>CLIENT_SECRET</code> are the same ones configured in headscale (or in the other client).</div><div style=\"margin-top:.5rem\"><b>How to apply it</b>: open <a href=\"/admin/service\">Service control</a> — it shows the install kind, where the env file lives, and offers «Restart» and «Recreate the container (apply .env)». Under docker a plain <code>restart</code> is not enough: the container environment is frozen at creation, so <code>--force-recreate</code> is required; under systemd/OpenRC a restart is enough because the unit re-reads <code>EnvironmentFile</code>.</div>",
 	"oidc.section_endpoints": "OIDC endpoints (paste into headscale.conf)",
 	// B-oidc-setup (v0.75, 2026-09-21): the form section that
 	// lets the operator configure OIDC without editing env vars
@@ -2072,4 +2175,105 @@ var enAdmin = map[string]string{
 	"cluster.invite_no_secret":      "ClusterInviteSecret not configured — set SKYGATE_SECRET_KEY in .env",
 	"cluster.invite_role_required":  "target_hostname is required",
 	"cluster.invite_ttl_invalid":    "ttl_hours must be a positive integer (1..168)",
+
+	// B323 (2026-09-25) — SERVICE CONTROL (/admin/service). See the RU block
+	// above for the design; the EN keys mirror the RU ones in the same order.
+	"service_ctl.title":    "Service control",
+	"service_ctl.subtitle": "The skygate install kind, the env file it actually reads, and the two available operations: restart and container recreate. Also: when a restart is enough and when a recreate is required.",
+	"service_ctl.back":     "Back",
+	// Cross-link from /admin/tailscale, where the only restart button used to
+	// live (the operator asked not to have to hunt for it).
+	"service_ctl.tailscale_moved": "Restart and applying new env values moved to their own page, Service control: it shows the install kind, the env file, and when a recreate is required instead of a restart.",
+	"service_ctl.open_page":       "Open service control",
+
+	// State.
+	"service_ctl.state_title":          "State",
+	"service_ctl.row_kind":             "Install kind",
+	"service_ctl.row_kind_why":         "How it was detected",
+	"service_ctl.row_build":            "Build",
+	"service_ctl.row_uptime":           "Process uptime",
+	"service_ctl.row_env_file":         "Env file",
+	"service_ctl.row_env_source":       "Path source",
+	"service_ctl.row_unit":             "Unit / service",
+	"service_ctl.row_container":        "Container",
+	"service_ctl.row_compose_project":  "Compose project",
+	"service_ctl.row_compose_file":     "Compose file",
+	"service_ctl.not_available":        "not available",
+	"service_ctl.env_file_found":       "found",
+	"service_ctl.env_file_missing":     "not found",
+	"service_ctl.env_file_none":        "this install kind has no env file on the host",
+	"service_ctl.compose_file_missing": "not found — recreate unavailable",
+	"service_ctl.in_container":         "in a container",
+	"service_ctl.native_host":          "native host",
+
+	// Install kinds (the key is assembled as service_ctl.kind_<Kind>).
+	"service_ctl.kind_docker":     "docker / container",
+	"service_ctl.kind_systemd":    "systemd (native)",
+	"service_ctl.kind_openrc":     "OpenRC (native)",
+	"service_ctl.kind_kubernetes": "Kubernetes (pod)",
+	"service_ctl.kind_binary":     "bare binary (started by hand)",
+	"service_ctl.kind_unknown":    "undetermined",
+
+	// Where the env-file path came from.
+	"service_ctl.envsrc_systemd_unit":    "parsed from EnvironmentFile= in the unit",
+	"service_ctl.envsrc_systemd_default": "unit not found — showing the documented default /etc/skygate/skygate.env",
+	"service_ctl.envsrc_docker_repo":     "SKYGATE_HOST_REPO_PATH on the host",
+	"service_ctl.envsrc_docker_default":  "documented host default (/home/operator/skygate)",
+	"service_ctl.envsrc_openrc":          "OpenRC config /etc/conf.d/skygate",
+	"service_ctl.envsrc_k8s_deployment":  "the values come from the Deployment",
+	"service_ctl.envsrc_binary_explicit": "named by SKYGATE_ENV_FILE",
+	"service_ctl.envsrc_none":            "unknown (the service was started by hand)",
+
+	// Kind-specific notes.
+	"service_ctl.note_k8s":               "Kubernetes: apply the change by editing the Deployment (env/secret) and rolling the pod. This page CANNOT restart a pod — the Deployment owns it, and restarting the pod from inside changes nothing.",
+	"service_ctl.note_binary":            "No service manager found: skygate was started by hand (or under supervisor). Restart it the same way you started it; this page will not do it.",
+	"service_ctl.note_unknown":           "No install marker was readable (/.dockerenv, KUBERNETES_SERVICE_HOST, a systemd unit, /etc/init.d/skygate). Restart from this page is unavailable.",
+	"service_ctl.note_docker_env_frozen": "Docker freezes the container environment at creation: a plain restart does NOT apply .env changes — that is what the Recreate button (--force-recreate) is for.",
+	"service_ctl.note_systemd_native":    "systemd: the unit re-reads its EnvironmentFile on every restart, so env-file changes apply with a plain restart.",
+	"service_ctl.note_openrc_native":     "OpenRC: /etc/init.d/skygate sources /etc/conf.d/skygate on every start, so env changes apply with a plain restart.",
+	"service_ctl.note_docker_cwd":        "docker compose interpolates .env relative to the current directory: the command runs with -p and -f (see the command line), so the working directory cannot change the substitution.",
+
+	// Actions.
+	"service_ctl.action_restart_title":    "Restart skygate",
+	"service_ctl.action_restart_help":     "Stops and starts the skygate service the way this install kind requires. The process serving this page is the one being restarted — so the response is sent first, and the page comes back in about 30 seconds with the new build.",
+	"service_ctl.action_restart_btn":      "Restart",
+	"service_ctl.action_restart_confirm":  "Restart %s now? The page will be unreachable for a few seconds.",
+	"service_ctl.action_restart_note":     "The response is sent before the restart; check the build and the uptime once the page returns.",
+	"service_ctl.action_recreate_title":   "Recreate the container (apply .env)",
+	"service_ctl.action_recreate_help":    "Docker only: <code>docker compose … up -d --force-recreate skygate</code>. This is the only way to apply a changed <code>.env</code>, because the container environment is frozen at creation. Data and volumes are preserved — the container is recreated from the same image and compose file.",
+	"service_ctl.action_recreate_btn":     "Recreate",
+	"service_ctl.action_recreate_confirm": "Recreate the skygate container (--force-recreate)? The service will be unreachable for a few seconds.",
+	"service_ctl.action_recreate_note":    "Applies .env, extra_hosts, volumes and image from the compose file.",
+	"service_ctl.action_recreate_warn":    "A recreate restarts the whole container: a brief outage and a re-registration in the tailnet when the state is not kept in a volume.",
+	"service_ctl.command_label":           "The command that will run",
+	"service_ctl.flash_launched":          "Launched: %s. The page returns in about 30 seconds with the new build.",
+
+	// Refusals.
+	"service_ctl.k8s_refuse":           "Kubernetes: a pod restart belongs to the Deployment (kubectl rollout restart deployment/<name>, or a manifest edit), not to this page. Env changes apply only when the Deployment is updated.",
+	"service_ctl.binary_refuse":        "skygate was started by hand (no service manager found): restart it the same way you started it.",
+	"service_ctl.unknown_refuse":       "The install kind could not be determined, so no restart was launched. Start the service by hand, or check /healthz and confirm how skygate was installed.",
+	"service_ctl.recreate_docker_only": "Recreate is available for docker installs only: under systemd/OpenRC a restart is enough, and under Kubernetes the Deployment owns the container.",
+	"service_ctl.docker_nocompose":     "Recreate is unavailable: no host compose file was found (looked for docker-compose.yml/.yaml under SKYGATE_HOST_REPO_PATH and /home/operator/skygate).",
+	"service_ctl.restart_unavailable":  "Restart is unavailable for this install kind.",
+	"service_ctl.recreate_unavailable": "Recreate is unavailable for this install kind.",
+	"service_ctl.unknown_action":       "Unknown action.",
+
+	// The "when is a restart enough" table.
+	"service_ctl.hints_title":           "When a restart is enough",
+	"service_ctl.hints_help":            "The distinction matters: under docker the container environment is frozen at creation, so a <code>.env</code> edit without a recreate does nothing. Under systemd and OpenRC the variables are read from the env file on every start, so a restart is enough.",
+	"service_ctl.hints_col_kind":        "Install kind",
+	"service_ctl.hints_col_enough":      "A restart is enough for",
+	"service_ctl.hints_col_recreate":    "What else is required",
+	"service_ctl.hints_not_applicable":  "not applicable",
+	"service_ctl.hints_docker_enough":   "In-application changes only (settings stored in the DB). It does <b>not</b> apply a changed <code>.env</code>.",
+	"service_ctl.hints_docker_recreate": "Changes to <code>.env</code>, <code>extra_hosts</code>, volumes or the image — the Recreate button (<code>--force-recreate</code>).",
+	"service_ctl.hints_systemd":         "Any env change: the unit re-reads <code>EnvironmentFile</code> on every restart. If the unit is in the failed state, run <code>systemctl reset-failed skygate</code> first.",
+	"service_ctl.hints_openrc":          "Any env change: <code>/etc/init.d/skygate</code> sources <code>/etc/conf.d/skygate</code> on every start.",
+	"service_ctl.hints_k8s":             "Nothing here: the Deployment rolls the pod on update (<code>kubectl rollout restart deployment/&lt;name&gt;</code>). Env changes apply to the new pod only.",
+	"service_ctl.hints_binary":          "Nothing here: restart the process by hand the same way it was started.",
+
+	// Last action log.
+	"service_ctl.log_title": "Last action log",
+	"service_ctl.log_path":  "Tail of /tmp/skygate-restart.log — the restart command output (written by the detached process, so it appears after the page returns).",
+	"service_ctl.log_empty": "Nothing has run yet: /tmp/skygate-restart.log is empty or unreadable.",
 }

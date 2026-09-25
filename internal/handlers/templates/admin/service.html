@@ -1,0 +1,234 @@
+{{define "body-admin-service"}}
+{{/* B323 (2026-09-25) — the SERVICE CONTROL page.
+
+     Operator request (verbatim): «вопрос по осуществлению контрольного перезапуска
+     сервиса skygate либо в докере либо нативно под системой для применения новых
+     параметров из env явно нужно вынести подобного рода функционал в настройки и в
+     отдельный блок управления состоянием skygate чтобы не искать где он есть сейчас
+     и скорей всего текущая функция отработает только под докером».
+
+     This page is that block. It answers, in order:
+       1. WHICH install kind is running and WHY the page concluded that,
+       2. WHERE the env file the unit/compose actually reads lives,
+       3. WHAT the two actions do — with the exact command line in a <pre>,
+       4. WHEN a restart is enough and when only a recreate works (docker freezes
+          the container environment at creation — AGENTS trap #3).
+
+     Every user-visible string is an i18n key (`service_ctl.*`); there is no
+     English (or Russian) literal in this file. Rule 10: each key exists in BOTH
+     catalogues (internal/i18n/catalog_admin.go). */}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-power-off"></i>{{t "service_ctl.title"}}</h2>
+    <div class="sub">{{t "service_ctl.subtitle"}}</div>
+  </div>
+  <div class="btn-row">
+    <a href="/admin/update" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
+  </div>
+</div>
+
+{{if .FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>{{end}}
+{{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
+
+{{/* ---- state card: what is running, and how we know -------------------- */}}
+<div class="card">
+  <h3><i class="fa-solid fa-circle-info"></i> {{t "service_ctl.state_title"}}</h3>
+
+  {{/* The kind badge doubles as the answer to "will the restart button work
+       here?" — colour-coded so the operator sees red BEFORE pressing. */}}
+  <p style="font-size:13px;margin-bottom:10px">
+    {{if eq .State.Kind "docker"}}
+      <span class="tag tag-success">{{t (printf "service_ctl.kind_%s" .State.Kind)}}</span>
+    {{else if eq .State.Kind "systemd"}}
+      <span class="tag tag-success">{{t (printf "service_ctl.kind_%s" .State.Kind)}}</span>
+    {{else if eq .State.Kind "openrc"}}
+      <span class="tag tag-success">{{t (printf "service_ctl.kind_%s" .State.Kind)}}</span>
+    {{else if eq .State.Kind "kubernetes"}}
+      <span class="tag tag-warning">{{t (printf "service_ctl.kind_%s" .State.Kind)}}</span>
+    {{else if eq .State.Kind "binary"}}
+      <span class="tag tag-warning">{{t (printf "service_ctl.kind_%s" .State.Kind)}}</span>
+    {{else}}
+      <span class="tag tag-danger">{{t (printf "service_ctl.kind_%s" .State.Kind)}}</span>
+    {{end}}
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th style="width:220px">{{t "service_ctl.row_kind"}}</th>
+        <td><code>{{t (printf "service_ctl.kind_%s" .State.Kind)}}</code></td>
+      </tr>
+      <tr>
+        <th>{{t "service_ctl.row_kind_why"}}</th>
+        <td><code>{{.State.KindWhy}}</code></td>
+      </tr>
+      <tr>
+        <th>{{t "service_ctl.row_build"}}</th>
+        <td>
+          {{if .State.Build}}<code>{{.State.Build}}</code>{{else}}<span style="color:var(--text-muted)">{{t "service_ctl.not_available"}}</span>{{end}}
+        </td>
+      </tr>
+      <tr>
+        <th>{{t "service_ctl.row_uptime"}}</th>
+        <td>
+          {{if .State.Uptime}}<code>{{.State.Uptime}}</code>{{else}}<span style="color:var(--text-muted)">{{t "service_ctl.not_available"}}</span>{{end}}
+        </td>
+      </tr>
+      <tr>
+        <th>{{t "service_ctl.row_env_file"}}</th>
+        <td>
+          {{if .State.EnvFilePath}}
+            <code>{{.State.EnvFilePath}}</code>
+            {{if .State.EnvFileExists}}
+              <span class="tag tag-success">{{t "service_ctl.env_file_found"}}</span>
+            {{else}}
+              <span class="tag tag-danger">{{t "service_ctl.env_file_missing"}}</span>
+            {{end}}
+          {{else}}
+            <span style="color:var(--text-muted)">{{t "service_ctl.env_file_none"}}</span>
+          {{end}}
+        </td>
+      </tr>
+      <tr>
+        <th>{{t "service_ctl.row_env_source"}}</th>
+        <td>{{t .State.EnvFileSource}}</td>
+      </tr>
+      <tr>
+        <th>{{t "service_ctl.row_unit"}}</th>
+        <td><code>{{.State.UnitName}}</code></td>
+      </tr>
+      <tr>
+        <th>{{t "service_ctl.row_container"}}</th>
+        <td>
+          <code>{{.State.ContainerName}}</code>
+          {{if .State.InContainer}}<span class="tag">{{t "service_ctl.in_container"}}</span>{{else}}<span class="tag">{{t "service_ctl.native_host"}}</span>{{end}}
+        </td>
+      </tr>
+      {{if eq .State.Kind "docker"}}
+      <tr>
+        <th>{{t "service_ctl.row_compose_project"}}</th>
+        <td><code>{{.State.ComposeProject}}</code></td>
+      </tr>
+      <tr>
+        <th>{{t "service_ctl.row_compose_file"}}</th>
+        <td>
+          {{if .State.ComposeFile}}<code>{{.State.ComposeFile}}</code>{{else}}<span style="color:var(--text-muted)">{{t "service_ctl.compose_file_missing"}}</span>{{end}}
+        </td>
+      </tr>
+      {{end}}
+    </table>
+  </div>
+
+  {{range .State.Notes}}
+  <div class="alert alert-warn" style="margin-top:10px">
+    <i class="fa-solid fa-triangle-exclamation"></i> {{t .}}
+  </div>
+  {{end}}
+</div>
+
+{{/* ---- restart -------------------------------------------------------- */}}
+<div class="card">
+  <h3><i class="fa-solid fa-arrows-rotate"></i> {{t "service_ctl.action_restart_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:10px">{{t "service_ctl.action_restart_help" | safeHTML}}</p>
+  {{if .State.CanRestart}}
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:6px">{{t "service_ctl.command_label"}}</p>
+    <pre style="background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;padding:10px;overflow-x:auto;font-size:12px"><code>{{.State.RestartCommand}}</code></pre>
+    <form method="post" action="/admin/service" autocomplete="off" style="margin-top:10px"
+          onsubmit="return confirm({{tf "service_ctl.action_restart_confirm" .State.UnitName | safeJSON}});">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="restart">
+      <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-arrows-rotate"></i> {{t "service_ctl.action_restart_btn"}}</button>
+      <span style="color:var(--text-muted);font-size:12px;margin-left:8px">{{t "service_ctl.action_restart_note"}}</span>
+    </form>
+  {{else}}
+    <div class="alert alert-warn" style="margin-bottom:0">
+      <i class="fa-solid fa-triangle-exclamation"></i> {{t .State.RestartRefusal}}
+    </div>
+  {{end}}
+</div>
+
+{{/* ---- recreate (docker only) ----------------------------------------- */}}
+<div class="card">
+  <h3><i class="fa-solid fa-cube"></i> {{t "service_ctl.action_recreate_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:10px">{{t "service_ctl.action_recreate_help" | safeHTML}}</p>
+  {{if .State.CanRecreate}}
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:6px">{{t "service_ctl.command_label"}}</p>
+    <pre style="background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;padding:10px;overflow-x:auto;font-size:12px"><code>{{.State.RecreateCommand}}</code></pre>
+    <div class="alert alert-warn" style="margin-top:10px">
+      <i class="fa-solid fa-triangle-exclamation"></i> {{t "service_ctl.action_recreate_warn"}}
+    </div>
+    <form method="post" action="/admin/service" autocomplete="off"
+          onsubmit="return confirm({{t "service_ctl.action_recreate_confirm" | safeJSON}});">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="recreate">
+      <button type="submit" class="btn btn-danger"><i class="fa-solid fa-cube"></i> {{t "service_ctl.action_recreate_btn"}}</button>
+      <span style="color:var(--text-muted);font-size:12px;margin-left:8px">{{t "service_ctl.action_recreate_note"}}</span>
+    </form>
+  {{else}}
+    <div class="alert alert-warn" style="margin-bottom:0">
+      <i class="fa-solid fa-triangle-exclamation"></i> {{t .State.RecreateRefusal}}
+    </div>
+  {{end}}
+</div>
+
+{{/* ---- when is a restart enough? -------------------------------------- */}}
+<div class="card">
+  <h3><i class="fa-solid fa-circle-question"></i> {{t "service_ctl.hints_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:10px">{{t "service_ctl.hints_help" | safeHTML}}</p>
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th style="width:220px">{{t "service_ctl.hints_col_kind"}}</th>
+        <th>{{t "service_ctl.hints_col_enough"}}</th>
+        <th>{{t "service_ctl.hints_col_recreate"}}</th>
+      </tr>
+      <tr>
+        <th><code>{{t "service_ctl.kind_docker"}}</code></th>
+        <td>{{t "service_ctl.hints_docker_enough" | safeHTML}}</td>
+        <td>{{t "service_ctl.hints_docker_recreate" | safeHTML}}</td>
+      </tr>
+      <tr>
+        <th><code>{{t "service_ctl.kind_systemd"}}</code></th>
+        <td>{{t "service_ctl.hints_systemd" | safeHTML}}</td>
+        <td><span style="color:var(--text-muted)">{{t "service_ctl.hints_not_applicable"}}</span></td>
+      </tr>
+      <tr>
+        <th><code>{{t "service_ctl.kind_openrc"}}</code></th>
+        <td>{{t "service_ctl.hints_openrc" | safeHTML}}</td>
+        <td><span style="color:var(--text-muted)">{{t "service_ctl.hints_not_applicable"}}</span></td>
+      </tr>
+      <tr>
+        <th><code>{{t "service_ctl.kind_kubernetes"}}</code></th>
+        <td>{{t "service_ctl.hints_k8s" | safeHTML}}</td>
+        <td><span style="color:var(--text-muted)">{{t "service_ctl.hints_not_applicable"}}</span></td>
+      </tr>
+      <tr>
+        <th><code>{{t "service_ctl.kind_binary"}}</code></th>
+        <td>{{t "service_ctl.hints_binary" | safeHTML}}</td>
+        <td><span style="color:var(--text-muted)">{{t "service_ctl.hints_not_applicable"}}</span></td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+{{/* ---- what the last action did --------------------------------------- */}}
+<div class="card">
+  <h3><i class="fa-solid fa-file-lines"></i> {{t "service_ctl.log_title"}}</h3>
+  {{if .State.LastRestartLog}}
+    <p style="color:var(--text-muted);font-size:12px;margin-bottom:8px">{{t "service_ctl.log_path"}}</p>
+    <pre style="background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;padding:10px;overflow-x:auto;font-size:12px">{{.State.LastRestartLog}}</pre>
+  {{else}}
+    <p style="color:var(--text-muted);font-size:13px;margin:0">{{t "service_ctl.log_empty"}}</p>
+  {{end}}
+</div>
+
+<script>
+  // Strip the flash query params so a page reload does not re-show a stale
+  // "restart launched" banner (the same cleanup /admin/tailscale does).
+  if (window.history && window.history.replaceState) {
+    var u = new URL(window.location.href);
+    u.searchParams.delete('ok'); u.searchParams.delete('err');
+    window.history.replaceState({}, '', u);
+  }
+</script>
+{{end}}

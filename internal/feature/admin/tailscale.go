@@ -1539,29 +1539,30 @@ func (s *Service) handleTailscaleDisableInContainer(w http.ResponseWriter, r *ht
 //  2. Write it to the in-container .env (atomic via .tmp + rename).
 //     This makes the next entrypoint invocation pick up the
 //     new value.
-//  3. Trigger the restart:
-//     - container mode: spawn a setsid'd subprocess that runs
-//     `docker compose -p skygate -f <host-repo>/docker-compose.yml
-//     restart skygate`. The setsid is critical — the parent
-//     skygate process gets SIGTERM'd by `docker compose
-//     restart` and any child process in the same process
-//     group dies with it. setsid puts the child in a new
-//     session so it survives.
-//     - native mode: try `systemctl restart skygate`. If that
-//     fails, fall back to `service skygate restart`.
+//  3. Trigger the restart through the B323 SERVICE CONTROL block
+//     (serviceCtlCommandForKind): docker →
+//     `docker compose -p <project> -f <host-compose-file> restart skygate`,
+//     systemd → `systemctl restart skygate` (or `service skygate restart`
+//     without systemctl), OpenRC → `rc-service skygate restart`, and a
+//     Kubernetes/bare-binary install is refused with a message that names the
+//     reason. The setsid detachment is critical — the parent skygate process
+//     gets SIGTERM'd by the action and any child in the same process group dies
+//     with it (see runDetachedServiceControl).
 //  4. Return success to the client IMMEDIATELY (the response
-//     flushes before the SIGTERM arrives).
+//     flushes before the SIGTERM arrives; the spawn sleeps 500ms for that).
 //
-// Audit: full event log including effective URL, in_container,
-// restart_method.
+// B323 note: the operator asked for this control to be discoverable, so the page
+// to press is now /admin/service. This entry point stays because contracts
+// reference the restart_skgate action.
+//
+// Audit: full event log including effective URL, install kind,
+// in_container and the exact command line.
 func (s *Service) handleTailscaleRestart(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
 	effective := s.tailscaleLoginServer()
-	inContainer := isRunningInContainer()
 
-	// Step 1: write the effective value back to the in-container
-	// .env so the next entrypoint invocation picks it up. This
-	// is best-effort — if the .env is read-only or doesn't exist
-	// (e.g. native host), we still want to attempt the restart.
+	// Step 1 (unchanged): write the effective value back to the in-container .env
+	// so the next entrypoint invocation picks it up. Best-effort — if the .env is
+	// read-only or does not exist (native host), the restart is attempted anyway.
 	envPath := filepath.Join(s.Cfg.RepoPath, ".env")
 	envUpdateMsg := ""
 	if _, err := os.Stat(envPath); err == nil {
@@ -1575,76 +1576,40 @@ func (s *Service) handleTailscaleRestart(w http.ResponseWriter, r *http.Request,
 		envUpdateMsg = " .env обновлён"
 	}
 
-	// Step 2: trigger restart. Best-effort — we run the actual
-	// command in a goroutine that uses setsid to detach the
-	// subprocess from our process group. The Go HTTP server
-	// keeps serving until docker compose restart sends SIGTERM
-	// to PID 1; the response has already flushed by then.
-	restartMethod := "none"
-	if inContainer {
-		hostRepo := os.Getenv("SKYGATE_HOST_REPO_PATH")
-		if hostRepo == "" {
-			// Fall back to the parent of the bind-mount
-			// point (in-container RepoPath is /app, so
-			// we can't use it for docker compose -f;
-			// the daemon needs the host path).
-			hostRepo = "/home/operator/skygate"
-		}
-		composeFile := filepath.Join(hostRepo, "docker-compose.yml")
-		go func() {
-			// setsid: new session so the subprocess
-			// outlives the SIGTERM that hits the parent
-			// (docker compose restart sends SIGTERM to
-			// PID 1 = entrypoint.sh = parent of all).
-			cmd := exec.Command("setsid", "docker", "compose",
-				"-p", "skygate",
-				"-f", composeFile,
-				"restart", "skygate")
-			applySysProcAttr(cmd)
-			// Best-effort: log the result to /tmp. We
-			// can't return an error to the client
-			// (we already responded + the parent is
-			// about to die).
-			out, _ := cmd.CombinedOutput()
-			logFile := "/tmp/skygate-restart.log"
-			_ = os.WriteFile(logFile,
-				[]byte(fmt.Sprintf("[%s] docker compose restart: %s\n",
-					time.Now().UTC().Format(time.RFC3339), string(out))),
-				0644)
-		}()
-		restartMethod = "container:docker_compose_restart"
-	} else {
-		// Native host: try systemctl first, fall back
-		// to service. We run the command in a goroutine
-		// + setsid so it survives the parent dying (the
-		// skygate process is itself the service in
-		// question, so the OS will kill the parent).
-		go func() {
-			cmd := exec.Command("setsid", "bash", "-c",
-				"systemctl restart skygate 2>&1 || service skygate restart 2>&1")
-			applySysProcAttr(cmd)
-			out, _ := cmd.CombinedOutput()
-			logFile := "/tmp/skygate-restart.log"
-			_ = os.WriteFile(logFile,
-				[]byte(fmt.Sprintf("[%s] systemctl/service restart: %s\n",
-					time.Now().UTC().Format(time.RFC3339), string(out))),
-				0644)
-		}()
-		restartMethod = "native:systemctl_or_service"
+	// Step 2: B323 — the restart itself now comes from the SERVICE CONTROL block.
+	// Before B323 this branch read isRunningInContainer() alone, so OpenRC,
+	// Kubernetes and bare-binary installs were pushed through
+	// `systemctl restart skygate || service skygate restart` and the operator got a
+	// failure that named neither the install kind nor the reason. Both entry points
+	// now execute the SAME kind-aware argv (serviceCtlCommandForKind) via
+	// runDetachedServiceControl, and /admin/service is where the operator finds it
+	// without hunting for it.
+	state := s.loadServiceControlState()
+	if !state.CanRestart {
+		refusalKey := firstNonEmpty(state.RestartRefusal, "service_ctl.restart_unavailable")
+		s.Backend.Audit(c.UserID, c.Username, "tailscale_restart_skgate",
+			fmt.Sprintf("refused=%s kind=%s", refusalKey, state.Kind))
+		tsRedirect(w, r, "", refusalKey+" — см. /admin/service")
+		return
 	}
+	argv, display, _ := pickServiceControlAction("restart", state)
+	restartMethod := fmt.Sprintf("%s:%s", state.Kind, display)
 
 	s.Backend.Audit(c.UserID, c.Username, "tailscale_restart_skgate",
-		fmt.Sprintf("login_server=%q in_container=%v method=%s%s",
-			effective, inContainer, restartMethod, envUpdateMsg))
+		fmt.Sprintf("login_server=%q kind=%s in_container=%v method=%s%s",
+			effective, state.Kind, state.InContainer, restartMethod, envUpdateMsg))
 
-	// Return IMMEDIATELY. The Go process is about to be
-	// SIGTERM'd by the restart we just triggered; the
-	// response must flush before that happens. The redirect
-	// target reloads the page after the restart completes
-	// (the operator will see the new build label).
+	// Return IMMEDIATELY. The Go process is about to be SIGTERM'd by the restart
+	// we just triggered; the response must flush before that happens (the goroutine
+	// sleeps 500ms for exactly that reason). The redirect target reloads the page
+	// after the restart completes, so the operator sees the new build label.
 	tsRedirect(w, r,
 		fmt.Sprintf("Перезапуск запущен (%s). Страница вернётся через ~30s с новой версией.", restartMethod),
 		"")
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		runDetachedServiceControl(argv, display)
+	}()
 }
 
 // isRunningInContainer returns true if the current process is

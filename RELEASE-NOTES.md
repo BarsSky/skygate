@@ -12,6 +12,107 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.89 — service control, actionable OIDC guidance, and a panel that fits a phone (B323 + B324 + B326)
+
+**Date:** 2026-09-25 · **Base:** `v1.5.88` → this tag · **Compatibility:** none — no schema
+change, no migration, no config change. One new admin page (`/admin/service`).
+
+### The requests
+
+> «вопрос по осуществлению контрольного перезапуска сервиса skygate либо в докере либо
+> нативно под системой для применения новых параметров из env явно нужно вынести подобного
+> рода функционал в настройки и в отдельный блок управления состоянием skygate чтобы не
+> искать где он есть сейчас и скорей всего текущая функция отработает только под докером»
+>
+> «про OIDC, на скрине указано что нехватает параметра в env … однако нигде не пишится
+> пример того что в нем должно быть»
+>
+> «таблицы становятся широкими и большими … некоторые таблицы начинают ломаться и не
+> поддерживают скролл уходя за экран отображения»
+
+### B323 — `/admin/service`: the service-control block
+
+The restart logic existed only as a button buried on `/admin/tailscale`, and it was
+docker-centric. It is now a first-class page in the **Settings** group:
+
+* **it knows the install kind** — docker / systemd / OpenRC / Kubernetes / bare binary —
+  from the container markers, the k8s service-account env, the `skygate.service` unit, the
+  `rc-service` init script, with a one-line explanation of *how* it decided;
+* **it shows the env file and where that path came from** (the `EnvironmentFile=` line of
+  the systemd unit, `SKYGATE_HOST_REPO_PATH`/.env for docker, `/etc/conf.d/skygate` for
+  OpenRC, "the Deployment env" for k8s), the unit/container/compose names, the running build
+  and the uptime;
+* **two actions, each shown with the exact command line before you press it**:
+  * **Restart** — `docker compose … restart skygate` / `systemctl restart skygate` /
+    `rc-service skygate restart`;
+  * **Recreate the container (apply `.env`)** — docker only,
+    `docker compose … up -d --force-recreate skygate`;
+* **it explains when each is needed**: under docker the container environment is *frozen at
+  creation*, so editing `.env` requires `--force-recreate`; under systemd/OpenRC a restart is
+  enough because the unit re-reads `EnvironmentFile`. Kubernetes and bare-binary installs say
+  plainly that this page cannot restart them, instead of pretending;
+* the response is sent **before** the restart is triggered (the action kills the process that
+  ran it), the command runs detached, and its output is appended to
+  `/tmp/skygate-restart.log`, whose tail the page shows.
+
+The `/admin/tailscale` button keeps working and now points here.
+
+### B324 — the OIDC banner is actionable
+
+The old banner named the variable, the file and the action — but never the value, and it sent
+the operator to a restart that under docker applies nothing. Both languages now carry a
+copy-paste block:
+
+```
+SKYGATE_OIDC_ISSUER=https://skygate.example.com/oidc
+SKYGATE_OIDC_CLIENT_ID=skygate
+SKYGATE_OIDC_CLIENT_SECRET=<generate: openssl rand -hex 32>
+SKYGATE_OIDC_REDIRECT_URIS=https://skygate.example.com/oidc/callback
+```
+
+plus the `/oidc` suffix, the literal-match rule (`issuer mismatch`), a link to
+`/admin/service`, and the restart-vs-recreate distinction.
+
+### B326 — a wide table is no longer clipped on a phone
+
+Measured first: **84 tables across 58 templates, only 19 wrapped in `.table-wrap`**, and
+`body{overflow-x:hidden}` means there is **no page-level horizontal scrollbar at all** — an
+unwrapped table is not "scrollable off-screen", its right-hand columns are silently **clipped
+and unreachable**. `table{width:100%}` + `th{white-space:nowrap}` inflated the minimum width
+(one page had 830 px of headers alone).
+
+The fix is systemic and markup-free under the mobile breakpoint: **the card is the horizontal
+scroll container** (covers every table inside a card, and the table keeps its normal layout —
+unlike the `table{display:block}` trick, which also drops `width:100%`), the forced `nowrap`
+on headers is dropped, long tokens (keys, DSNs, UUIDs) wrap, form controls cannot exceed their
+card, the hard 3-column create-user grid collapses, and the two tables that render outside a
+card (`admin/modules.html`, `admin/module_detail.html`) got the explicit wrapper. Desktop is
+untouched.
+
+### Verification
+
+* `scripts/check_b323_service_control.sh` — 51 contracts (kind detection incl. precedence,
+  env-path parsing per kind, the exact argv per kind, the refusals, CSRF/admin gates, the
+  template's i18n-only text, RU+EN parity).
+* `scripts/check_b324_oidc_guidance.sh` — 15 contracts (the example must exist twice, the
+  literal-match rule, the `/admin/service` link, `safeHTML`, parity).
+* `scripts/check_b326_responsive_panel.sh` — 13 contracts (the systemic rules in the
+  **embedded** stylesheet, "every unwrapped table is inside a card or hand-wrapped",
+  brace balance, `.table-wrap` still used).
+* `go build` / `go vet` / `staticcheck` clean; `go test` green for `internal/feature/admin`,
+  `internal/handlers`, `internal/i18n`.
+* Audits kept in the tree: `docs/responsive-audit.md`, `docs/i18n-audit.md`.
+
+### Known follow-ups (tracked, not silent)
+
+The i18n audit measured **311 hardcoded user-visible English strings across 40 templates**,
+**621 RU values that are not Russian**, **6 keys used but undefined** (they render as raw
+keys) and 314 unused keys — B325 is the translation sweep. Worst offenders:
+`user/preauth_result.html` (44), `admin/system_tests.html` (36), `/admin/oidc/sync` (60 RU
+keys still English), `admin/ha.html` (21), the destructive `confirm()` texts in
+`exit_rules_cleanup.html` and `headscale_acl.html`. B76/B77/B78's lost unit tests and the
+remaining weak gate contracts from the B322 audit are still open as well.
+
 ## v1.5.88 — the leftover tag goes away by itself (B321.1)
 
 **Date:** 2026-09-25 · **Base:** `v1.5.87` → this tag · **Compatibility:** none — no schema
