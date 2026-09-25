@@ -53,8 +53,17 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 
-ok()  { echo "  PASS  $*"; }
-bad() { echo "  FAIL  $*"; }
+# B321 (2026-09-25): the counters + the non-zero exit were MISSING here, so every
+# contract in this file was decorative — `bad()` printed a FAIL line and the script
+# still exited 0, and verify_pre_deploy.sh suppresses a check's output on PASS, so a
+# regression of the reserved-name logic (contract C) or of the findUserForHostname pin
+# reported a green gate. Found by the B1–B320 regression-detection audit; this is the
+# single most important repair in it, because this file guards the very name B321 had
+# to stop the product from re-applying.
+PASS=0
+FAIL=0
+ok()  { echo "  PASS  $*"; PASS=$((PASS+1)); }
+bad() { echo "  FAIL  $*" >&2; FAIL=$((FAIL+1)); }
 
 # ── A: main.go TailscaleHostname default ──
 echo "=== A. TailscaleHostname default = skygate-host ==="
@@ -170,4 +179,5 @@ else
 fi
 
 echo
-echo "=== summary: see PASS/FAIL counts above ==="
+printf 'B251 summary: %d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ] || exit 1

@@ -67,6 +67,25 @@ var ruTailscale = map[string]string{
 	"tailscale.name_conflict_help":      "Суффикс <code>-1</code> появился не сам: это остаток плейсхолдера v0.33.1.9 в <code>.env</code>/<code>docker-compose.yml</code>, а каноническое имя <code>skygate-host</code> держит <b>мёртвая</b> регистрация (другой machine key, offline). Из-за этого все проверки «это я?» — принадлежность infra, проверки colocation, ACL для SSH-источника, self-пробы — совпадают со строгим равенством на <code>skygate-host</code>, то есть указывают на призрак. Кнопка удаляет <b>только</b> этот узел (offline + каноническое имя + инфра-семейство + это не текущий узел) и переименовывает текущий клиент; чтобы имя не вернулось после перезапуска, уберите пин <code>SKYGATE_TS_HOSTNAME</code> из <code>.env</code> и compose и пересоздайте контейнер.",
 	"tailscale.name_conflict_btn":       "Удалить устаревший узел и вернуть имя",
 	"tailscale.name_conflict_confirm":   "Удалить offline-узел, который держит каноническое имя skygate-host, и переименовать текущий клиент?",
+	// B321 (2026-09-25) — «при каждом обновлении слетает запуск tailscale … и активным
+	// стал skygate-host-1»: намерение оператора и каноническое имя хранятся в БД, а сам
+	// процесс поднимает клиент после пересоздания контейнера.
+	"tailscale.persist_heading":       "Переживание обновлений: имя и состояние",
+	"tailscale.persist_hostname":      "Имя в tailnet",
+	"tailscale.persist_hostname_src":  "источник:",
+	"tailscale.persist_src_db":        "сохранено на этой странице",
+	"tailscale.persist_src_env":       "переменная окружения SKYGATE_TS_HOSTNAME",
+	"tailscale.persist_src_default":   "значение по умолчанию",
+	"tailscale.persist_intent":        "Состояние по решению оператора",
+	"tailscale.persist_intent_on":     "включён",
+	"tailscale.persist_intent_off":    "выключен",
+	"tailscale.persist_intent_unset":  "не задано (по конфигурации контейнера)",
+	"tailscale.persist_autostart":     "Поднимется сам после обновления",
+	"tailscale.persist_autostart_yes": "да",
+	"tailscale.persist_autostart_no":  "нет",
+	"tailscale.persist_placeholder":   "В конфигурации остался legacy-плейсхолдер <code>skygate-host-1</code> (v0.33.1.9). Он больше не применяется: используется каноническое имя <code>skygate-host</code>. Уберите пин <code>SKYGATE_TS_HOSTNAME</code> из <code>.env</code> и <code>docker-compose.yml</code>, чтобы предупреждение исчезло.",
+	"tailscale.persist_help":          "Обновление пересоздаёт контейнер, поэтому окружение в нём — то, что записано в <code>docker-compose.yml</code>: переменная <code>SKYGATE_TS_AUTHKEY_FILE=/dev/null</code> заставляет entrypoint пропускать Tailscale, и раньше приходилось каждый раз нажимать <b>Start</b>. Теперь решение оператора (Start/Stop/Enable/Disable) и это имя хранятся в БД, и skygate поднимает клиент сам — на старте и далее раз в 5 минут. Если после обновления имя всё-таки стало <code>skygate-host-1</code>, сохраните каноническое имя этой кнопкой.",
+	"tailscale.persist_btn":           "Сохранить каноническое имя",
 	// B258.1 (v1.5.8+, 2026-09-17): third visual state — the
 	// auth-key path is configured (DB or env points at a
 	// regular file like /data/ts/authkey) but the file
@@ -192,6 +211,25 @@ var enTailscale = map[string]string{
 	"tailscale.name_conflict_help":      "The <code>-1</code> suffix is not new: it is the leftover v0.33.1.9 placeholder in <code>.env</code>/<code>docker-compose.yml</code>, while the canonical name <code>skygate-host</code> is held by a <b>dead</b> registration (different machine key, offline). Every \"is this me?\" check — infra ownership, colocation sanity, the SSH-source ACL, the self-probes — matches the canonical name by strict equality, so they all key off the ghost. The button deletes <b>only</b> that node (offline + canonical name + infra family + not the live one) and renames the running client; to keep the name after a restart, drop the <code>SKYGATE_TS_HOSTNAME</code> pin from <code>.env</code> and compose and recreate the container.",
 	"tailscale.name_conflict_btn":       "Delete the stale node and take the name",
 	"tailscale.name_conflict_confirm":   "Delete the offline node that holds the canonical name skygate-host and rename the running client?",
+	// B321 (2026-09-25) — "the tailscale start is lost on every update … and the active
+	// name became skygate-host-1": the operator's intent and the canonical name live in
+	// the DB, and the process itself brings the client up after a container recreate.
+	"tailscale.persist_heading":       "Surviving updates: name and state",
+	"tailscale.persist_hostname":      "Tailnet name",
+	"tailscale.persist_hostname_src":  "source:",
+	"tailscale.persist_src_db":        "saved on this page",
+	"tailscale.persist_src_env":       "SKYGATE_TS_HOSTNAME environment variable",
+	"tailscale.persist_src_default":   "built-in default",
+	"tailscale.persist_intent":        "State recorded by the operator",
+	"tailscale.persist_intent_on":     "on",
+	"tailscale.persist_intent_off":    "off",
+	"tailscale.persist_intent_unset":  "not set (follow the container configuration)",
+	"tailscale.persist_autostart":     "Comes up by itself after an update",
+	"tailscale.persist_autostart_yes": "yes",
+	"tailscale.persist_autostart_no":  "no",
+	"tailscale.persist_placeholder":   "The configuration still carries the legacy <code>skygate-host-1</code> placeholder (v0.33.1.9). It is no longer applied: the canonical name <code>skygate-host</code> is used. Remove the <code>SKYGATE_TS_HOSTNAME</code> pin from <code>.env</code> and <code>docker-compose.yml</code> to make this warning go away.",
+	"tailscale.persist_help":          "An update recreates the container, so its environment is whatever <code>docker-compose.yml</code> says: <code>SKYGATE_TS_AUTHKEY_FILE=/dev/null</code> makes the entrypoint skip Tailscale, which is why <b>Start</b> had to be pressed again every time. The operator's decision (Start/Stop/Enable/Disable) and this name are now stored in the DB, and skygate brings the client up itself — at boot and every 5 minutes after that. If the name still came back as <code>skygate-host-1</code> after an update, save the canonical name with this button.",
+	"tailscale.persist_btn":           "Save the canonical name",
 	// B258.1 (v1.5.8+, 2026-09-17): third visual state —
 	// configured-but-missing. Mirrors the B258 "intentionally
 	// disabled" branch but with a warn banner (not info)

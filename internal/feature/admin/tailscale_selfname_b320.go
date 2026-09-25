@@ -84,6 +84,18 @@ type SelfNameState struct {
 	NeedsName bool
 	// Conflict is true when NeedsName AND a ghost holds the canonical name.
 	Conflict bool
+	// Desired is the name the configuration resolves to (B321: DB > env > default, with
+	// the legacy placeholder rewritten) and DesiredSource says which layer won.
+	Desired       string
+	DesiredSource string
+	// Placeholder is true when the configured value was the legacy v0.33.1.9
+	// `skygate-host-<n>` shape and had to be rewritten (B321).
+	Placeholder bool
+	// Intent is the recorded desired state ("on"/"off"/"" = unset) and Autostart says
+	// whether this process will bring the client up by itself after a recreate.
+	Intent       string
+	Autostart    bool
+	AutostartWhy string
 }
 
 // selfNameState collects the facts. A nil/empty node list (headscale unreachable)
@@ -96,6 +108,11 @@ func (s *Service) selfNameState(live string) SelfNameState {
 		EnvPinned:  strings.TrimSpace(envTailscaleHostname()),
 	}
 	st.NeedsName = st.Live != "" && !strings.EqualFold(st.Live, st.Canonical)
+	// B321: what the configuration resolves to (and whether the env/compose still pins
+	// the legacy placeholder), plus whether this process will re-apply it by itself.
+	st.Desired, st.DesiredSource, st.Placeholder = s.tailscaleHostnameResolved()
+	st.Intent = s.tailscaleDesiredState()
+	st.Autostart, st.AutostartWhy = s.tailscaleAutostartDecision()
 	nodes, err := s.HSGlobalFn().ListAllNodes()
 	if err != nil {
 		log.Printf("tailscale self-name: list nodes: %v", err)
@@ -245,6 +262,16 @@ func (s *Service) PostAdminTailscaleReclaimName(w http.ResponseWriter, r *http.R
 	log.Printf("tailscale self-name: deleted the offline duplicate %q (id=%s, %s, last seen %s) that held the reserved name %s; the live client is %q",
 		state.GhostName, state.GhostID, state.GhostTag, state.GhostSeen, ReservedSelfHostname, state.Live)
 	s.invalidateTailscaleState()
+	// B321: headscale tags are additive, so a rename leaves the OLD
+	// `tag:dev-infra-<previous-name>` on the node (live: after a successful reclaim node
+	// 87 carried both `tag:dev-infra-skygate-host` and `tag:dev-infra-skygate-host-1`).
+	// A stale infra tag is a ghost identity that every "is this me?" check still sees,
+	// so clean it in the same action rather than leaving it for a manual untag.
+	if stale := s.cleanupStaleSelfTags(state.Live, ReservedSelfHostname); len(stale) > 0 {
+		s.Backend.Audit(c.UserID, c.Username, "tailscale.reclaim_name",
+			fmt.Sprintf("action=untag_stale tags=%s (they carried the previous hostname %s)",
+				strings.Join(stale, ","), state.Live))
+	}
 	// The rename itself needs the daemon; say so instead of pretending.
 	if !running {
 		http.Redirect(w, r, "/admin/tailscale?err="+urlFlash(

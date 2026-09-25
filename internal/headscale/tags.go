@@ -105,20 +105,47 @@ func (c *Client) setNodeTagsAPI(nodeID int64, tags []string) error {
 //
 // B272: routes through TagNode, so the REST API is tried before any CLI.
 func (c *Client) UntagNode(nodeID int64, tag string) error {
-	current := []string{}
-	if nodes, err := c.ListAllNodes(); err == nil {
-		for _, n := range nodes {
-			if n.ID == strconv.FormatInt(nodeID, 10) {
-				current = append(current, n.Tags...)
-				break
-			}
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return fmt.Errorf("untag: empty tag for node %d", nodeID)
+	}
+	// B321 (2026-09-25): the read below used to swallow its own error and then fall
+	// through with an EMPTY current list, so a failed read rewrote the node's tags to
+	// `[tag:private]` — silently wiping every other tag it carried. That is the same
+	// class of defect the 2026-08-10 AddTag fix closed in the other direction ("on read
+	// error, do NOT call the inner TagNode"), and it stopped being theoretical once
+	// B321 started calling UntagNode automatically after a name reclaim. Now: a failed
+	// read, a node that is not in the list, and an absent tag each end the call without
+	// writing anything.
+	nodes, err := c.ListAllNodes()
+	if err != nil {
+		return fmt.Errorf("untag: read the tags of node %d: %w (nothing written)", nodeID, err)
+	}
+	var current []string
+	found := false
+	for _, n := range nodes {
+		if n.ID == strconv.FormatInt(nodeID, 10) {
+			current = append(current, n.Tags...)
+			found = true
+			break
 		}
 	}
-	filtered := []string{}
+	if !found {
+		return fmt.Errorf("untag: node %d is not in headscale (nothing written)", nodeID)
+	}
+	filtered := make([]string, 0, len(current))
+	present := false
 	for _, t := range current {
-		if t != tag {
-			filtered = append(filtered, t)
+		if strings.EqualFold(strings.TrimSpace(t), tag) {
+			present = true
+			continue
 		}
+		filtered = append(filtered, t)
+	}
+	if !present {
+		// Nothing to remove: do NOT rewrite the tag set (an equal rewrite is a write
+		// headscale would audit, and a lossy one would be a regression).
+		return nil
 	}
 	if len(filtered) == 0 {
 		filtered = []string{TagPrivateTag}

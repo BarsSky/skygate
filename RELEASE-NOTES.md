@@ -12,6 +12,110 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.86 — Tailscale survives the update, and the name is strictly `skygate-host` (B321)
+
+**Date:** 2026-09-25 · **Base:** `v1.5.85` → this tag · **Compatibility:** none — no schema
+change, no migration, no config change. Purely additive: two `global_settings` keys and one
+new admin action.
+
+### The report
+
+> «при этом при каждом обновлении слетает запуск tailscale приходится прожимать каждый раз
+> старт и активным стал skygate-host-1 как skygate tailscale хотя должен быть строго
+> skygate-host (после обновления выскочило предложение сменить имя и я его прожал, проверь
+> что имя сменилось)»
+
+### First, the good news: the rename DID land
+
+Read-only recon after the reclaim:
+
+| | node 87 (this container) |
+|---|---|
+| `given_name` / `name` | **`skygate-host`** |
+| tailnet IP | `100.64.0.10` (unchanged) |
+| state | **ONLINE** |
+| client's own view | `.Self.HostName = skygate-host`, `DNSName = skygate-host.tsnet.skynas.ru.` |
+| ghost node 57 | **gone** |
+
+So v1.5.85's action did exactly what it promised — deleted the offline duplicate and renamed
+the live client. One leftover was found and is fixed below: node 87 kept **both**
+`tag:dev-infra-skygate-host` **and** `tag:dev-infra-skygate-host-1`, because headscale tags are
+additive and a rename does not remove the old one.
+
+### The two real causes of the two complaints
+
+Both were traced in the live container, and neither was the rename:
+
+1. **"the start is lost on every update."** `docker-compose.yml` pins
+   `SKYGATE_TS_AUTHKEY_FILE=/dev/null`, and **Docker freezes the environment at container
+   creation**. Every update recreates the container, so its entrypoint saw the `/dev/null`
+   sentinel and skipped `tailscaled` entirely; the operator's click on Start was the only thing
+   that brought Tailscale back — because that decision lived in a `global_settings` row the
+   **entrypoint has never heard of**.
+2. **"the active name became skygate-host-1 again."** `tailscaleHostname()` returned the same
+   frozen `SKYGATE_TS_HOSTNAME=skygate-host-1` pin, so that click ran
+   `tailscale up --hostname=skygate-host-1` and renamed the node straight back to the legacy
+   **v0.33.1.9 placeholder** — the shape B251 matches by **strict equality**, which is why a
+   suffixed client misses every "is this me?" check (infra ownership, colocation sanity, the
+   SSH-source ACL, the self-probes).
+
+### What changed
+
+* **The operator's intent is recorded.** `global_settings[tailscale.desired_state]`
+  (`on`/`off`) is written by Start / Stop / Enable / Disable.
+* **The process re-applies it.** A boot pass plus a 5-minute tick call `EnsureTailscaleUp`,
+  which starts `tailscaled`, runs `tailscale up`, and then **enforces the resolved name on the
+  running daemon** (`tailscale up --hostname` sets the name of a *new* registration only;
+  an existing node is renamed with `tailscale set --hostname`). Idempotent, and **never
+  fatal** — a failure is logged, throttled to one line per change, and the app keeps running.
+  An install that never touched the panel keeps the exact pre-B321 env-driven behaviour.
+* **The hostname resolves DB > env > default**, and any `skygate-host-<n>` value is
+  **rewritten** to the reserved canonical name (with a log line naming where it came from)
+  instead of being honoured. The new card on `/admin/tailscale` shows the effective name, which
+  layer it came from, the recorded intent, whether this process will bring the client up after
+  the next update, and offers one button to persist the canonical name.
+* **Reclaiming the name also removes the stale tag** that carried the *previous* name —
+  guarded to the online self node and to tags built from that previous name, so it can never
+  touch a real device tag.
+* **`UntagNode` was hardened in the same pass.** It swallowed its own node-list read error and
+  fell through with an empty list, rewriting the node's tags to `[tag:private]` — the same
+  defect the 2026-08-10 `AddTag` fix closed in the other direction, and B321 made it reachable
+  automatically. Now a failed read, an unknown node id and an absent tag each end the call
+  without writing anything.
+
+### A gate defect this block had to repair first
+
+`scripts/check_b251.sh` — the file that guards the reserved-name logic this release depends on —
+had **no failure counter and no `exit`**: `bad()` printed a `FAIL` line and the script still
+exited 0, and the gate hides a check's own output on PASS, so all 13 of its contracts were
+decorative. It now counts failures and exits non-zero. (Found by the B1–B320
+regression-detection audit that runs alongside this release.)
+
+### Files
+
+`internal/feature/admin/tailscale_boot_b321.go` (+ `tailscale_boot_b321_test.go`),
+`internal/feature/admin/tailscale.go`, `internal/feature/admin/tailscale_selfname_b320.go`,
+`internal/headscale/tags.go` (+ `untag_guard_b321_test.go`), `cmd/skygate/main.go`,
+`internal/handlers/templates/admin/tailscale.html`, `internal/i18n/catalog_tailscale.go`,
+`scripts/check_b251.sh`, `scripts/check_b321_tailscale_survives_update.sh`.
+
+### Operator follow-up (optional, and now cosmetic)
+
+Removing the `SKYGATE_TS_HOSTNAME=skygate-host-1` pin from `.env` and `docker-compose.yml`
+silences the placeholder warning. It is no longer required: the pin can no longer rename the
+node. Leaving `SKYGATE_TS_AUTHKEY_FILE=/dev/null` in place is also fine now — the recorded
+`on` intent outranks it, which is what makes the start survive an update.
+
+### Verification
+
+28 contracts in `scripts/check_b321_tailscale_survives_update.sh` (the intent round-trip and
+which handler writes it; the ON arm must not consult the container sentinel; the name is
+enforced on the running daemon; the placeholder is rewritten while the reserved default literal
+stays in `tailscale.go`; the stale-tag cleaner's scope; `UntagNode`'s three no-write paths;
+RU+EN parity; the repaired B251 harness; git-tracking). Go tests drive a migrated SQLite DB and
+a fake headscale server; the autostart decision table is pinned including the case that fixes
+the live bug — panel intent ON must win over the frozen `/dev/null` sentinel.
+
 ## v1.5.85 — the reserved tailnet name belongs to the live client, not to a ghost (B320)
 
 **Date:** 2026-09-24 · **Base:** `v1.5.84` → this tag · **Compatibility:** none — no schema

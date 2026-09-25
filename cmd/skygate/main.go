@@ -1702,6 +1702,18 @@ func main() {
 	// DB or rebuilding the headscale client.
 	adminsvc.SetTestService(adminSvc)
 
+	// B321 (2026-09-25): Tailscale must survive a container recreate.
+	//
+	// The reference compose pins SKYGATE_TS_AUTHKEY_FILE=/dev/null and Docker freezes
+	// the environment at container CREATION, so every update produced a container whose
+	// entrypoint skipped tailscaled and the operator had to press Start on
+	// /admin/tailscale again. The entrypoint cannot see the operator's decision (it
+	// lives in global_settings), so the PROCESS re-applies it: a boot pass plus a
+	// 5-minute tick bring the client up when tailscale.desired_state=on, and enforce
+	// the resolved hostname (the frozen SKYGATE_TS_HOSTNAME pin must not rename the
+	// node back to the legacy skygate-host-1 placeholder). Idempotent and never fatal.
+	adminSvc.RunTailscaleAutostart(context.Background())
+
 	// refactor-v0.30 Phase B step 5 (2026-07-29):
 	// /my/* feature service. The /my/account, /my/tokens
 	// and /my/telegram routes already live in feature/auth

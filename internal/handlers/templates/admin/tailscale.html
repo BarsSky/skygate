@@ -168,6 +168,50 @@
 </div>
 {{end}}
 
+{{/* B321 (2026-09-25): "при каждом обновлении слетает запуск tailscale приходится
+     прожимать каждый раз старт и активным стал skygate-host-1". The card answers both
+     halves before the operator has to discover them again: which hostname the
+     configuration resolves to (and which layer won), whether the panel records
+     Tailscale as ON/OFF, and whether THIS process will bring the client up by itself
+     after the next container recreate. The form persists the canonical name into the
+     DB so a frozen SKYGATE_TS_HOSTNAME pin in .env/docker-compose.yml can no longer
+     rename the node back to the legacy placeholder. */}}
+<div class="card" style="grid-column:1 / -1">
+  <h3><i class="fa-solid fa-arrows-rotate"></i> {{t "tailscale.persist_heading"}}</h3>
+  <table class="kv">
+    <tr>
+      <th>{{t "tailscale.persist_hostname"}}</th>
+      <td><code>{{.State.SelfName.Desired}}</code>
+        <span class="sub">({{t "tailscale.persist_hostname_src"}}
+        {{if eq .State.SelfName.DesiredSource "db"}}{{t "tailscale.persist_src_db"}}
+        {{else if eq .State.SelfName.DesiredSource "env"}}{{t "tailscale.persist_src_env"}}
+        {{else}}{{t "tailscale.persist_src_default"}}{{end}})</span></td>
+    </tr>
+    <tr>
+      <th>{{t "tailscale.persist_intent"}}</th>
+      <td>{{if eq .State.SelfName.Intent "on"}}<span class="pill pill-success">{{t "tailscale.persist_intent_on"}}</span>
+        {{else if eq .State.SelfName.Intent "off"}}<span class="pill pill-warn">{{t "tailscale.persist_intent_off"}}</span>
+        {{else}}<span class="pill">{{t "tailscale.persist_intent_unset"}}</span>{{end}}</td>
+    </tr>
+    <tr>
+      <th>{{t "tailscale.persist_autostart"}}</th>
+      <td>{{if .State.SelfName.Autostart}}<span class="pill pill-success">{{t "tailscale.persist_autostart_yes"}}</span>
+        {{else}}<span class="pill pill-warn">{{t "tailscale.persist_autostart_no"}}</span>{{end}}
+        <div class="sub" style="margin-top:.3rem">{{.State.SelfName.AutostartWhy}}</div></td>
+    </tr>
+  </table>
+  {{if .State.SelfName.Placeholder}}
+  <div class="alert alert-warn" style="margin:.5rem 0">{{t "tailscale.persist_placeholder" | safeHTML}}</div>
+  {{end}}
+  <div class="form-hint" style="margin:.4rem 0">{{t "tailscale.persist_help" | safeHTML}}</div>
+  <form action="/admin/tailscale" method="POST" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="action" value="save_hostname">
+    <input type="text" name="hostname" value="{{.State.SelfName.Canonical}}" class="form-control" style="max-width:18rem">
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{t "tailscale.persist_btn"}}</button>
+  </form>
+</div>
+
 <div class="card-grid">
   <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-info-circle"></i> {{t "tailscale.status_heading"}}</h3>

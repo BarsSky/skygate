@@ -31,6 +31,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -612,22 +613,34 @@ func (s *Service) tailscaleAuthKeyPathSource() string {
 	return "default"
 }
 
-func (s *Service) tailscaleHostname() string {
-	if s.TailscaleHostname != "" {
-		return s.TailscaleHostname
-	}
-	// B251: hostname `skygate-host` is reserved for the
-	// single VM that runs the skygate container itself
-	// (the `infra` headscale user). The pre-B251 default
-	// `skygate-host-1` was a placeholder from v0.33.1.9
-	// when only one skygate VM existed; with HA and
-	// replicas the un-suffixed form is canonical and
-	// `isInfraNode` in internal/nodeownership matches it
-	// strictly. Operators overriding via SKYGATE_TS_HOSTNAME
-	// retain the old behaviour (the prefix `skygate-host-`
-	// was deprecated in B251 — only the exact reserved
-	// name moves into `infra` automatically).
+// tailscaleHostnameDefault is the reserved canonical hostname of the VM that runs the
+// skygate container itself.
+//
+// B251: `skygate-host` is reserved for the single VM that runs the skygate container
+// (the `infra` headscale user). The pre-B251 default `skygate-host-1` was a
+// placeholder from v0.33.1.9 when only one skygate VM existed; with HA and replicas
+// the un-suffixed form is canonical and `isInfraNode` in internal/nodeownership
+// matches it strictly. The prefix `skygate-host-` was deprecated in B251 — only the
+// exact reserved name moves into `infra` automatically.
+func tailscaleHostnameDefault() string {
 	return "skygate-host"
+}
+
+// tailscaleHostname is the name the tailnet should see.
+//
+// B321 (2026-09-25): this used to return the frozen `SKYGATE_TS_HOSTNAME` value from
+// the container environment, so an install whose .env still carried the legacy
+// `skygate-host-1` placeholder renamed its node straight back to the suffixed form on
+// every Start click and after every update — the operator's live report. The
+// resolution now lives in tailscaleHostnameResolved (DB > env > default) and the
+// legacy placeholder shape is rewritten to tailscaleHostnameDefault() instead of being
+// honoured.
+func (s *Service) tailscaleHostname() string {
+	name, _, _ := s.tailscaleHostnameResolved()
+	if name == "" {
+		return tailscaleHostnameDefault()
+	}
+	return name
 }
 
 // tailscaleStateDir is the --statedir tailscaled writes to.
@@ -1039,6 +1052,11 @@ func (s *Service) PostAdminTailscale(w http.ResponseWriter, r *http.Request) {
 		// restarts, migrations, and VM clones. The env var
 		// is only consulted when the DB row is empty.
 		s.handleTailscaleSaveLoginServer(w, r, c)
+	case "save_hostname":
+		// B321 — persist the desired tailnet hostname so a
+		// container recreate cannot rename the node back to the
+		// legacy v0.33.1.9 placeholder.
+		s.handleTailscaleSaveHostname(w, r, c)
 	case "start":
 		s.handleTailscaleStart(w, r, c)
 	case "stop":
@@ -1095,10 +1113,18 @@ func (s *Service) PostAdminTailscale(w http.ResponseWriter, r *http.Request) {
 
 // handleTailscaleSaveKey writes the pasted auth key to the
 // configured path. Does NOT start tailscaled automatically —
-// that's a separate "Start" button click. The operator can
-// pre-paste the key, then click Start later (or after a
-// container restart, the entrypoint picks the key up
-// automatically — see entrypoint.sh).
+// that's a separate "Start" button click.
+//
+// B321 (2026-09-25) correction: the old comment here claimed
+// that "after a container restart, the entrypoint picks the key
+// up automatically". That is only true when the container
+// environment leaves SKYGATE_TS_AUTHKEY_FILE empty — the
+// reference compose pins it to /dev/null, and Docker freezes the
+// environment at container creation, so every update recreated a
+// container whose entrypoint skipped Tailscale and the operator
+// had to press Start again. The process itself now honours the
+// recorded intent (tailscale.desired_state) in
+// RunTailscaleAutostart, which the entrypoint cannot see.
 func (s *Service) handleTailscaleSaveKey(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
 	key := strings.TrimSpace(r.FormValue("auth_key"))
 	if key == "" {
@@ -1213,6 +1239,11 @@ func (s *Service) handleTailscaleStart(w http.ResponseWriter, r *http.Request, c
 		tsRedirect(w, r, "", "Не удалось запустить Tailscale: "+err.Error()+" — output: "+truncate(out, http.StatusBadRequest))
 		return
 	}
+	// B321: record the operator's intent so this process brings the client up by
+	// itself after the next container recreate, instead of waiting for another click.
+	if err := s.setTailscaleDesiredState(tailscaleDesiredOn); err != nil {
+		log.Printf("tailscale: could not persist tailscale.desired_state=on: %v", err)
+	}
 	s.Backend.Audit(c.UserID, c.Username, "tailscale_start", "ok out="+truncate(out, 200))
 	s.invalidateTailscaleState()
 	if strings.TrimSpace(out) == "" {
@@ -1230,6 +1261,11 @@ func (s *Service) handleTailscaleStop(w http.ResponseWriter, r *http.Request, c 
 			fmt.Sprintf("err=%q out=%q", err.Error(), out))
 		tsRedirect(w, r, "", "Не удалось остановить: "+err.Error())
 		return
+	}
+	// B321: an explicit Stop is an intent too — without this the autostart would
+	// bring the client straight back up on the next tick.
+	if err := s.setTailscaleDesiredState(tailscaleDesiredOff); err != nil {
+		log.Printf("tailscale: could not persist tailscale.desired_state=off: %v", err)
 	}
 	s.Backend.Audit(c.UserID, c.Username, "tailscale_stop", "ok out="+truncate(out, 200))
 	s.invalidateTailscaleState()
@@ -1370,6 +1406,11 @@ func (s *Service) handleTailscaleEnableInContainer(w http.ResponseWriter, r *htt
 	}
 	s.Backend.Audit(c.UserID, c.Username, "tailscale_enable_in_container",
 		fmt.Sprintf("path=%s key_fp=%s out=%s", newPath, key, truncate(out, 200)))
+	// B321: the enable click is the operator saying "Tailscale must be up" — record it
+	// so the next container recreate brings it up without another click.
+	if err := s.setTailscaleDesiredState(tailscaleDesiredOn); err != nil {
+		log.Printf("tailscale: could not persist tailscale.desired_state=on: %v", err)
+	}
 	s.invalidateTailscaleState()
 	tsRedirect(w, r,
 		"Tailscale включён: путь сохранён в БД, ключ сгенерирован, tailscaled запущен.",
@@ -1471,6 +1512,10 @@ func (s *Service) handleTailscaleDisableInContainer(w http.ResponseWriter, r *ht
 	}
 	s.Backend.Audit(c.UserID, c.Username, "tailscale_disable_in_container",
 		"path="+newPath+" stopped="+strconv.FormatBool(tailscaledRunning()))
+	// B321: an explicit disable must survive a recreate as well.
+	if err := s.setTailscaleDesiredState(tailscaleDesiredOff); err != nil {
+		log.Printf("tailscale: could not persist tailscale.desired_state=off: %v", err)
+	}
 	s.invalidateTailscaleState()
 	tsRedirect(w, r, "Tailscale отключён: путь /dev/null сохранён в БД, tailscaled остановлен.", "")
 }
