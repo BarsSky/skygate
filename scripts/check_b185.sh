@@ -201,6 +201,24 @@ if { [ -z "$B185_USER" ] || [ -z "$B185_PASS" ]; } && [ -r /home/skyadmin/skygat
   [ -z "$B185_USER" ] && B185_USER=$(sed -n 's/^SKYGATE_ADMIN_USER=//p' /home/skyadmin/skygate/.env | tail -1)
   [ -z "$B185_PASS" ] && B185_PASS=$(sed -n 's/^SKYGATE_ADMIN_PASS=//p' /home/skyadmin/skygate/.env | tail -1)
 fi
+# Is a Telegram egress relay selected at all? That is the documented opt-in
+# (global_settings['telegram.egress_node_id']). Keep the conservative default ("yes")
+# whenever the answer cannot be determined, so an unreadable DB never turns a real
+# regression into a SKIP.
+EGRESS_SELECTED="yes"
+if command -v python3 >/dev/null 2>&1 && [ -f /home/skyadmin/skygate/data/skygate.db ]; then
+  if python3 - /home/skyadmin/skygate/data/skygate.db <<'PY' >/dev/null 2>&1
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+rows = list(c.execute("select value from global_settings where key='telegram.egress_node_id'"))
+sys.exit(0 if (rows and (rows[0][0] or '').strip()) else 1)
+PY
+  then
+    EGRESS_SELECTED="yes"
+  else
+    EGRESS_SELECTED="no"
+  fi
+fi
 if [ -d /home/skyadmin/skygate ]; then
   if [ -z "$B185_PASS" ]; then
     echo "  SKIP [O] no SKYGATE_ADMIN_PASS (export it or run on the VM where .env lives)"
@@ -229,6 +247,19 @@ if [ -d /home/skyadmin/skygate ]; then
         echo "  SKIP [O] Tailscale-in-container disabled -> Telegram egress relay unavailable"
         echo "           enable it on /admin/tailscale, then apply the Telegram CIDRs on the"
         echo "           relay (/admin/telegram -> Egress relay -> Apply, or Pin nearest)"
+      elif [ "$EGRESS_SELECTED" = "no" ]; then
+        # 2026-09-25 (added while landing B323/B326): since B321 the in-container
+        # Tailscale client comes up BY ITSELF after every update, so the branch below
+        # ("client disabled") no longer describes the default state — and this contract
+        # started failing on a host that never selected an egress relay, because
+        # api.telegram.org is not reachable directly from there. Selecting a relay is the
+        # documented opt-in (global_settings['telegram.egress_node_id']), so: no
+        # selection → WARN + SKIP with the enablement path; a selection that STILL cannot
+        # reach Telegram → FAIL, which is the regression this contract exists for.
+        echo "  WARN  [O] no Telegram egress relay is selected (telegram.egress_node_id unset),"
+        echo "            and api.telegram.org is not reachable directly from this host."
+        echo "  SKIP [O] no egress relay selected -> pick one on /admin/telegram"
+        echo "           (Egress relay -> a relay that reaches Telegram -> Apply / Pin nearest)"
       else
         # Client is up but Telegram is still unreachable: a real problem — the
         # relay's Telegram CIDRs are not advertised/approved, or the relay lost
