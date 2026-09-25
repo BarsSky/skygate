@@ -12,6 +12,54 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.88 — the leftover tag goes away by itself (B321.1)
+
+**Date:** 2026-09-25 · **Base:** `v1.5.87` → this tag · **Compatibility:** none — no schema
+change, no migration, no config change.
+
+### The gap this closes
+
+v1.5.86 made the reclaim action delete the ghost and remove the infra tag that carried the
+**previous** name. Read-only verification of the live host immediately after the operator's
+reclaim showed the combination that the fix could not handle:
+
+```
+headscale node 87  given_name = skygate-host          (the rename DID land)
+                   tags       = [tag:dev-infra-skygate-host, tag:dev-infra-skygate-host-1]
+ghost node 57      deleted
+```
+
+Two problems, one root cause:
+
+1. the tag selection was derived from the **previous** name, which is no longer known once
+   the rename has happened — so the leftover `tag:dev-infra-skygate-host-1` was invisible to
+   it;
+2. the reclaim button answers *«no stale node holds skygate-host»* and returns **before** the
+   cleanup once the ghost is gone, so pressing it again cleaned nothing.
+
+### What changed
+
+* The selection is now a **pure function**, `staleInfraTags(tags, canonical)`: on a node
+  wearing the canonical name, every `tag:dev-infra-<name>` / `tag:infra-<name>` whose name is
+  **not** the canonical one is stale — regardless of which epoch produced it. Tags outside
+  the infra family (`tag:exit-node`, `tag:private`, `tag:subnet-router`, a user's dev-tag) are
+  never touched, and the suffix comparison is case-insensitive.
+* The **autostart tick** (boot + every 5 minutes, since v1.5.86) now clears it, so the
+  leftover disappears on its own after the operator updates — no click, no manual `headscale
+  nodes tag`.
+* The reclaim action also runs the cleanup **before** the "nothing to delete" early return,
+  so pressing the button in the operator's current state reports what it removed instead of
+  refusing.
+
+### Verification
+
+`scripts/check_b321_tailscale_survives_update.sh` grew from 28 to 31 contracts (D3 reworked,
+D4–D6 new: the pure selector exists, the tick clears the leftover, and the reclaim cleans
+before the early return). `TestStaleInfraTags_B321` pins the exact live shape —
+`[tag:dev-infra-skygate-host, tag:dev-infra-skygate-host-1, tag:private]` →
+`[tag:dev-infra-skygate-host-1]` — plus the case-insensitivity and the "other families are
+never touched" guard.
+
 ## v1.5.87 — the gate can finally fail (B322)
 
 **Date:** 2026-09-25 · **Base:** `v1.5.86` → this tag · **Compatibility:** none — no schema

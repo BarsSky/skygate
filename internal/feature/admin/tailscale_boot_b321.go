@@ -52,6 +52,7 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/db"
+	"skygate/internal/feature/exit_rules"
 )
 
 const (
@@ -219,6 +220,16 @@ func (s *Service) EnsureTailscaleUp(reason string) (bool, string) {
 				"(the hostname the configuration asked for)", reason, live, name)
 		}
 	}
+	// B321.1: the same tick also clears an infra tag that no longer describes this node.
+	// The operator's live state after a successful reclaim is exactly that — the ghost is
+	// gone, the node is `skygate-host`, and `tag:dev-infra-skygate-host-1` is still on it —
+	// and the reclaim button refuses to run when there is nothing left to delete, so the
+	// leftover could otherwise only be removed by hand. Idempotent and self-limited to the
+	// online self node.
+	if stale := s.cleanupStaleSelfTags(name, name); len(stale) > 0 {
+		log.Printf("tailscale-autostart: %s: removed the stale infra tag(s) %v from the self node",
+			reason, stale)
+	}
 	tsAutostartLogOnce(reason + ": up (hostname=" + name + ", source=" + source + ")")
 	return true, ""
 }
@@ -246,32 +257,33 @@ func (s *Service) RunTailscaleAutostart(ctx context.Context) {
 	}()
 }
 
-// cleanupStaleSelfTags removes infra tags on the LIVE self node that still carry the
-// previous hostname. headscale tags are additive, so a rename leaves the old
-// `tag:dev-infra-<old-name>` behind (live: node 87 carried both the canonical and the
-// `-1` tag after a successful reclaim), and a stale tag is exactly the class of ghost
-// identity B188/B265 had to clean up by hand.
+// cleanupStaleSelfTags removes infra tags on the LIVE self node that do not describe it:
+// a tag built from the PREVIOUS hostname (immediately after a reclaim) or — B321.1 — any
+// `tag:…-infra-<something-else>` left on a node that is already wearing the canonical name.
+// headscale tags are additive, so a rename leaves the old `tag:dev-infra-<old-name>`
+// behind (live: node 87 carried both the canonical and the `-1` tag after a successful
+// reclaim) and a stale tag is exactly the class of ghost identity B188/B265 had to clean up
+// by hand. The second rule matters because the operator's state after a successful reclaim
+// is precisely "ghost gone, old tag still there": the previous name is no longer derivable
+// from the live name, so the tag set itself has to say what is stale.
 //
-// Read-only on every other node: only an ONLINE node wearing either the previous or
-// the canonical name is touched, and only tags built from the previous name.
+// Read-only on every other node: only an ONLINE node wearing the canonical (or the previous)
+// name is touched, and only infra-family tags that do not match the canonical name.
 func (s *Service) cleanupStaleSelfTags(previousName, canonical string) []string {
 	prev := strings.TrimSpace(previousName)
 	canon := strings.TrimSpace(canonical)
-	if prev == "" || canon == "" || strings.EqualFold(prev, canon) {
+	if canon == "" {
 		return nil
 	}
-	// This helper runs automatically right after a reclaim, so it must be safe when the
-	// service has no headscale client wired at all (unit tests, a very early boot).
+	// This helper runs automatically right after a reclaim and on the autostart tick, so it
+	// must be safe when the service has no headscale client wired at all (unit tests, a very
+	// early boot).
 	if s.HSGlobalFn == nil {
 		return nil
 	}
 	hs := s.HSGlobalFn()
 	if hs == nil {
 		return nil
-	}
-	want := map[string]bool{
-		"tag:dev-infra-" + strings.ToLower(prev): true,
-		"tag:infra-" + strings.ToLower(prev):     true,
 	}
 	nodes, err := hs.ListAllNodes()
 	if err != nil {
@@ -281,27 +293,51 @@ func (s *Service) cleanupStaleSelfTags(previousName, canonical string) []string 
 	var removed []string
 	for _, n := range nodes {
 		name := firstNonEmptyAdmin(n.GivenName, n.Hostname)
-		if !strings.EqualFold(name, canon) && !strings.EqualFold(name, prev) {
+		if !strings.EqualFold(name, canon) && (prev == "" || !strings.EqualFold(name, prev)) {
 			continue
 		}
 		if !n.Online {
 			continue
 		}
 		id := parseNodeID(n.ID)
-		for _, t := range n.Tags {
-			if !want[strings.ToLower(strings.TrimSpace(t))] {
-				continue
-			}
+		for _, t := range staleInfraTags(n.Tags, canon) {
 			if err := hs.UntagNode(id, t); err != nil {
 				log.Printf("tailscale-reclaim: untag %q on node %s: %v", t, n.ID, err)
 				continue
 			}
 			removed = append(removed, t)
-			log.Printf("tailscale-reclaim: removed the stale tag %q (it carried the previous hostname %q) from node %s",
-				t, prev, n.ID)
+			log.Printf("tailscale-reclaim: removed the stale tag %q (it does not describe %q) from node %s",
+				t, canon, n.ID)
 		}
 	}
 	return removed
+}
+
+// staleInfraTags is the pure selection behind cleanupStaleSelfTags: the infra-family tags a
+// node wearing `canonical` must not keep. The tag encodes the hostname, so any
+// `tag:dev-infra-<name>` / `tag:infra-<name>` whose name is not the canonical one is a
+// leftover — whether it came from the rename that just happened or from an earlier epoch.
+// Tags outside the infra family (tag:exit-node, tag:private, tag:subnet-router, a user's
+// dev-tag) are never touched.
+//
+// The hostname is derived with the ONE shared implementation, exit_rules.TagToHostname:
+// B279.1's contract E1 fails the gate on a second `TrimPrefix(…, "tag:…")` derivation, and
+// it caught the first version of this helper.
+func staleInfraTags(tags []string, canonical string) []string {
+	canon := strings.ToLower(strings.TrimSpace(canonical))
+	var out []string
+	for _, raw := range tags {
+		t := strings.TrimSpace(raw)
+		lt := strings.ToLower(t)
+		if !strings.HasPrefix(lt, "tag:dev-infra-") && !strings.HasPrefix(lt, "tag:infra-") {
+			continue
+		}
+		if canon != "" && strings.ToLower(exit_rules.TagToHostname(t)) == canon {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // handleTailscaleSaveHostname persists the desired tailnet name. An empty value hands

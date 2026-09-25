@@ -197,3 +197,47 @@ func TestCleanupStaleSelfTags_Guards_B321(t *testing.T) {
 		t.Fatalf("empty previous name must yield nil, got %v", got)
 	}
 }
+
+// B321.1 — the leftover tag the operator actually has. headscale tags are additive, so a
+// rename leaves the old `tag:dev-infra-<old-name>` on the node: live, node 87 wore BOTH
+// `tag:dev-infra-skygate-host` and `tag:dev-infra-skygate-host-1` after a successful
+// reclaim, and the reclaim button answers "no stale node holds ..." once the ghost is gone
+// — so this selection is what lets the autostart tick clear it without a manual untag.
+func TestStaleInfraTags_B321(t *testing.T) {
+	cases := []struct {
+		name string
+		tags []string
+		want []string
+	}{
+		{
+			"the live leftover",
+			[]string{"tag:dev-infra-skygate-host", "tag:dev-infra-skygate-host-1", "tag:private"},
+			[]string{"tag:dev-infra-skygate-host-1"},
+		},
+		{"only the canonical tag", []string{"tag:dev-infra-skygate-host"}, nil},
+		{
+			"other families are never touched",
+			[]string{"tag:exit-node", "tag:private", "tag:subnet-router", "tag:dev-michail-basic"},
+			nil,
+		},
+		{
+			"the legacy tag:infra-<host> form is covered too",
+			[]string{"tag:infra-old-name", "tag:dev-infra-skygate-host"},
+			[]string{"tag:infra-old-name"},
+		},
+		{"the suffix comparison is case-insensitive", []string{"tag:dev-infra-SKYGATE-HOST"}, nil},
+	}
+	for _, c := range cases {
+		got := staleInfraTags(c.tags, "skygate-host")
+		if len(got) != len(c.want) {
+			t.Errorf("%s: staleInfraTags(%v) = %v, want %v", c.name, c.tags, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("%s: staleInfraTags(%v) = %v, want %v", c.name, c.tags, got, c.want)
+				break
+			}
+		}
+	}
+}

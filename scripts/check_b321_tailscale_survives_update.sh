@@ -199,10 +199,32 @@ fi
 CLEAN_BODY="$(func_body "$BOOT" 'func (s \*Service) cleanupStaleSelfTags(')"
 if grep -q 'if !n.Online {' <<< "$CLEAN_BODY" \
    && grep -q 'strings.EqualFold(name, canon)' <<< "$CLEAN_BODY" \
-   && grep -q '"tag:dev-infra-" + strings.ToLower(prev)' <<< "$CLEAN_BODY"; then
-  ok "D3: it only touches an ONLINE self node and only tags built from the PREVIOUS name"
+   && grep -q 'staleInfraTags(n.Tags, canon)' <<< "$CLEAN_BODY"; then
+  ok "D3: it only touches an ONLINE self node and only infra tags that do not describe it"
 else
-  bad "D3: the cleaner is not scoped to the previous name / the online self node"
+  bad "D3: the cleaner is not scoped to the self node / the canonical name"
+fi
+# B321.1 — the operator's live state after a successful reclaim is "ghost gone, the OLD
+# tag still on the node", and the reclaim button answers "no stale node holds ..." once the
+# ghost is gone; so the leftover must be cleared by the autostart tick, and the selection
+# must be a pure function the tests can pin.
+if grep -q 'func staleInfraTags(tags \[\]string, canonical string) \[\]string' "$BOOT"; then
+  ok "D4: the stale-tag SELECTION is a pure function (unit-tested, no headscale needed)"
+else
+  bad "D4: the stale-tag selection is not separable"
+fi
+TICK_BODY="$(func_body "$BOOT" 'func (s \*Service) EnsureTailscaleUp(')"
+if grep -q 's.cleanupStaleSelfTags(name, name)' <<< "$TICK_BODY"; then
+  ok "D5: the autostart tick clears a leftover tag without an operator click"
+else
+  bad "D5: the leftover tag is only removed by the reclaim button (which refuses once the ghost is gone)"
+fi
+RECLAIM_BODY="$(func_body "$NAME" 'func (s \*Service) PostAdminTailscaleReclaimName(')"
+if grep -n 'cleanupStaleSelfTags' <<< "$RECLAIM_BODY" | head -1 | cut -d: -f1 | \
+   { read -r clean_line; ghost_line=$(grep -n 'if state.GhostID == ""' <<< "$RECLAIM_BODY" | head -1 | cut -d: -f1); [ -n "$clean_line" ] && [ -n "$ghost_line" ] && [ "$clean_line" -lt "$ghost_line" ]; }; then
+  ok "D6: the reclaim action cleans the leftover BEFORE the 'nothing to delete' early return"
+else
+  bad "D6: the reclaim action returns before cleaning when the ghost is already gone"
 fi
 
 # --- E: UntagNode can no longer wipe a tag set ----------------------------------------

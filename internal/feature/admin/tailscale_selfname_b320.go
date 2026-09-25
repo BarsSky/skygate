@@ -243,8 +243,23 @@ func (s *Service) PostAdminTailscaleReclaimName(w http.ResponseWriter, r *http.R
 	}
 	running, _, _, _, _ := tailscaleStatus()
 	state := s.selfNameState(tailscaleSelfHostname())
+	// B321.1: clear the leftover tag FIRST — it is the one repair that is still needed when
+	// the ghost is already gone (the operator's state after a successful reclaim: node 87 is
+	// `skygate-host`, ghost 57 is deleted, and `tag:dev-infra-skygate-host-1` is still on the
+	// node). The old order answered "no stale node holds skygate-host" and returned before
+	// the cleanup, so the leftover could only be removed by hand.
+	stale := s.cleanupStaleSelfTags(state.Live, ReservedSelfHostname)
+	if len(stale) > 0 {
+		s.Backend.Audit(c.UserID, c.Username, "tailscale.reclaim_name",
+			fmt.Sprintf("action=untag_stale tags=%s (they do not describe %s)",
+				strings.Join(stale, ","), ReservedSelfHostname))
+	}
 	if state.GhostID == "" {
-		http.Redirect(w, r, "/admin/tailscale?err="+urlFlash("no stale node holds "+ReservedSelfHostname), http.StatusFound)
+		msg := "no stale node holds " + ReservedSelfHostname
+		if len(stale) > 0 {
+			msg += "; removed the leftover tag(s) " + strings.Join(stale, ", ")
+		}
+		http.Redirect(w, r, "/admin/tailscale?err="+urlFlash(msg), http.StatusFound)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
