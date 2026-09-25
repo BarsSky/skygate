@@ -240,7 +240,7 @@ run_check "B4" "i18n: ru and en key sets match" \
 
 # --- B5: migration v0.47 idempotency ---
 run_check "B5" "migration v0.47 idempotent (3 tests)" \
-  "'$GO' test ./internal/db/ -run TestMigrateV047 -count=1 2>&1"
+  "'$GO' test ./internal/db/ -run 'TestPGMigrationIdempotency|TestExecSQLiteDDL_AddColumnIsIdempotent|TestMigrateV0[0-9]+PG_Idempotent' -count=1 2>&1"
 
 # --- B6: ACL invariants v0.28.x ---
 run_check "B6" "ACL: per-device grant ordering + via opt-in + tagged-device loose" \
@@ -524,7 +524,7 @@ run_check "B21" "exit-nodes filter excludes subnet-routers (v0.32.7)" \
     grep -q \"tag:subnet-router\" internal/feature/admin/exit_nodes.go &&
     grep -q \"tag:dev-\" internal/feature/admin/exit_nodes.go &&
     grep -q \"DELETE FROM exit_servers\" internal/feature/admin/exit_nodes.go &&
-    '\''$GO'\'' test -count=1 -run '\''TestShouldInclude'\'' ./internal/feature/admin/ 2>&1
+    '\''$GO'\'' test -count=1 -run '\''TestShouldBelongToInfra'\'' ./internal/feature/admin/ 2>&1
   '"
 
 # --- B22: Dockerfile builds at image-build time, not at container start (v0.32.8) ---

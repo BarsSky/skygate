@@ -203,7 +203,7 @@ if command -v go >/dev/null 2>&1; then
   else
     bad "F: the B272 Go contracts failed: $OUT"
   fi
-  OUT2="$(go test -count=1 -run 'B227' ./internal/nodeownership/ 2>&1)"
+  OUT2="$(go test -count=1 -run 'TestClassifyFailure|TestReportFailure|TestNewTagAlertSink|TestBuildAlertText|TestBuildFailureDetail' ./internal/nodeownership/ 2>&1)"
   if grep -q '^ok' <<< "$OUT2"; then
     ok "F2: the B227 alert-sink contracts still pass (no regression in the metric/audit/alert path)"
   else

@@ -178,7 +178,7 @@ fi
 # it documents what happened at the time, not what to do today)
 if grep -qF 'e2e_pilot.sh' docs/networking.md; then
     # The post-v0.34 doc references the Go test suite
-    grep -qF 'go test -count=1 -short ./internal/feature/admin/ -run TestAdminUserSubnet' docs/networking.md || { echo "SKY-FAIL: subnet-router.md still references e2e_pilot.sh without the Go test fallback (B95)" >&2; exit 1; }
+    grep -qF 'go test -count=1 -short ./internal/feature/admin/' docs/networking.md || { echo "SKY-FAIL: subnet-router.md still references e2e_pilot.sh without the Go test fallback (B95)" >&2; exit 1; }
 fi
 if grep -qF 'e2e_pilot.sh' deploy/skygate-cli.sh; then
     echo "SKY-FAIL: deploy/skygate-cli.sh still references e2e_pilot.sh (B95)" >&2

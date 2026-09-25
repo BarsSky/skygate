@@ -139,7 +139,7 @@ if command -v go >/dev/null 2>&1 || [ -n "${GO:-}" ]; then
       grep -qE -- "$p" "$IDX" || BADF="$BADF $p"
     done < <(grep -hoE -- "-run[[:space:]]+('[^']*'|\"[^\"]*\"|[^[:space:]'\"]+)" "$GATE" scripts/verify_post_deploy.sh scripts/check_b*.sh 2>/dev/null \
       | sed -E "s/^-run[[:space:]]+//; s/^['\"]//; s/['\"]\$//" \
-      | grep -E '^[A-Za-z0-9_|^$.*+?()-]+$' | grep -E 'Test|Fuzz|Benchmark|^B[0-9]' | sort -u)
+      | grep -E '^[A-Za-z0-9_|^$.*+?()]+$' | grep -E 'Test|Fuzz|Benchmark|^B[0-9]' | sort -u)
     if [ -z "$BADF" ]; then
       ok "C1: every go test -run filter in the catalog matches at least one real test ($TOTAL known)"
     else
@@ -215,7 +215,8 @@ else
   bad "H2: SQLite-only INSERT OR IGNORE on a shared (unbranched) path:$BADSQL"
 fi
 if command -v go >/dev/null 2>&1 || [ -n "${GO:-}" ]; then
-  OUT="$( (${GO:-go} test ./internal/mesh/ ./internal/subnet/ -run 'B322' -count=1) 2>&1 )"
+  GOBIN="${GO:-go}"
+  OUT="$( ("$GOBIN" test ./internal/mesh/ ./internal/subnet/ -run 'B322' -count=1) 2>&1 )"
   if grep -q '^ok' <<< "$OUT" && ! grep -q 'FAIL' <<< "$OUT"; then
     ok "H3: the dialect-form tests for both helpers pass"
   else

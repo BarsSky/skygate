@@ -211,11 +211,17 @@ ping <LAN_DEVICE_IP>               # a device behind the router
 The Go regression coverage for the whole flow:
 
 ```bash
-go test -count=1 -short ./internal/feature/admin/ -run TestAdminUserSubnet
+go test -count=1 -short ./internal/feature/admin/
 ```
 
+> **B322 (2026-09-25):** this command used to be
+> `-run TestAdminUserSubnet`. That test no longer exists in the tree, and a `-run`
+> filter which matches no test makes `go test` print `ok … [no tests to run]` and exit
+> 0 — a vacuous regression guard. The filter is gone; the package's real tests run.
+
+
 The one-time shell script `e2e_pilot.sh` that was used for the original live
-verification of this flow has been removed; the `go test … TestAdminUserSubnet`
+verification of this flow has been removed; the `go test … ./internal/feature/admin/`
 run above is now the canonical regression guard. That live flow was: admin login →
 download the bundle from `/admin/users/<id>/subnet/download` → extract the preauth
 key from `commands.txt` → start a sidecar node → confirm `tag:subnet-router` and
@@ -682,7 +688,7 @@ bash scripts/check_subnet_router.sh <username>     # subnet-router end-to-end
 bash scripts/tailnet_probe.sh                      # peer visibility from skygate
 bash scripts/derp_relay_latency_test.sh            # per-node DERP latency
 go test -count=1 -short ./internal/feature/exit_rules/...
-go test -count=1 -short ./internal/feature/admin/ -run TestAdminUserSubnet
+go test -count=1 -short ./internal/feature/admin/
 
 ip route get <peer IP>                             # direct vs tailscale0
 tailscale status --json | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['Self'].get('Prefs',{}).get('AdvertiseRoutes'))"
