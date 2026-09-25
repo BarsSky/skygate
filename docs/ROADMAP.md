@@ -236,51 +236,85 @@ read, relink targets `29,31,6`, sentinel `45`, 52 KB policy backup, nothing chan
 | TD-22 | `verify_pre_deploy.sh` prints no summary and exits 0 even with FAILs (locally) | OPEN (v1.5.92 measurement) |
 
 **TD-22 detail (measured 2026-09-25, v1.5.92).** The catalog maintains `RESULTS_PASS` /
-`RESULTS_FAIL` (lines ~218-219, incremented inside `run_check`) but **never reads them**: there is
-no final summary line and no `exit` keyed on them, so the script's exit status is the status of its
-last statement and a run with FAIL rows exits 0. Consequences:
+`RESULTS_FAIL` (declared at lines 218-219, incremented inside `run_check` at 187/192/203) but
+**never reads them** — `grep -n 'RESULTS_PASS\|RESULTS_FAIL' scripts/verify_pre_deploy.sh` returns
+exactly those five lines, all writes. There is no final summary and no `exit` keyed on them, so the
+script's exit status is the status of its **last statement**, which is `run_check "B325.1" …`; that
+function's FAIL branch ends with `RESULTS_FAIL=$((…))`, which returns 0. **A run with any number of
+FAIL rows therefore exits 0.**
 
-* "the gate must end with `0 FAIL`" is enforced by a **human or agent reading the FAIL list**, plus
-  the CI job in `.github/workflows/ci.yml` ("Run verify_pre_deploy.sh (and refuse any FAIL)"), which
-  greps `^  FAIL`/`^  TIMEOUT` out of the captured log and fails the job. Locally, `make verify-pre`
-  and `$?` say nothing.
-* It also means the run has **no machine-readable verdict at all** — no PASS/SKIP/FAIL totals, and
-  no way for a wrapper (a deploy script, a pre-push hook, a future CI matrix entry) to consume the
-  result without re-implementing the grep.
-* Why it has not simply been "fixed" by adding `[ "$RESULTS_FAIL" -eq 0 ] || exit 1`: the reference
-  VM carries **8 pre-existing environment FAILs** (`B1` — the container-dependent
-  `internal/headscale` tests, `B118`, `B119`, `B176`, `B188.2`, `B188.3`, `B237.16`, `B294`) that
-  SKIP on the CI runner. A non-zero exit without first clearing or reclassifying those turns every
-  local run red and hides real regressions in the noise.
+Measured, not inferred: a `--quick` run on the VM (deployed revision `3391587`, whose catalog ends
+at `B-issue-2`) printed **362 PASS, 9 FAIL, 1 SKIP** and returned **`GATE EXIT CODE = 0`**. The same
+conclusion holds for the v1.5.92 tree by the source reading above.
+
+Consequences, in order of how much they cost:
+
+* **The pre-push hook is a no-op.** `.githooks/pre-push` lines 92-101 branch on that status:
+  `if bash scripts/verify_pre_deploy.sh; then` → *"pre-push: catalog green — push allowed"*. With an
+  always-0 status the hook takes the green branch **unconditionally**, so the local safety net that
+  is supposed to stop a regression before it reaches `origin` cannot stop anything. (`git push
+  --no-verify` is documented as the emergency bypass; in practice every push is a bypass.)
+* **CI is the only enforcement.** `.github/workflows/ci.yml` ("Run verify_pre_deploy.sh (and refuse
+  any FAIL)") greps `^  FAIL`/`^  TIMEOUT` out of the captured log and fails the job — that is what
+  makes "green means 0 FAIL" true today (measured: `catalog clean: 376 PASS, 1 SKIP, 0 FAIL` on the
+  v1.5.92 commit).
+* **No machine-readable verdict exists.** No PASS/SKIP/FAIL totals, so any wrapper (a deploy
+  script, a future CI matrix entry, the operator's applier) has to re-implement the grep.
+* **Why it has not simply been "fixed"** with `[ "$RESULTS_FAIL" -eq 0 ] || exit 1`: the reference
+  VM carries **8-9 pre-existing environment FAILs** (`B1` — the container-dependent
+  `internal/headscale` tests, `B118`, `B119`, `B176`, `B188.2`, `B188.3`, `B237.16`, `B294`, plus
+  `B185` in `--quick` mode) that **SKIP on the CI runner**. A non-zero exit before those are cleared
+  or reclassified turns every local run red and hides real regressions in the noise.
 
 Order of work: (1) make the environment failures SKIP instead of FAIL where they genuinely cannot
-run (the AGENTS rule already says live-state checks must SKIP), (2) print the summary
+run (AGENTS rule 1 already says live-state checks must SKIP, never FAIL), (2) print the summary
 (`N PASS, M FAIL, K SKIP`) and exit non-zero on FAIL, (3) assert the exit code in
-`scripts/check_b322_gate_can_fail.sh` so the catalog's own verdict can never silently go dead
-again. Recorded, not started.
+`scripts/check_b322_gate_can_fail.sh` so the catalog's own verdict can never silently go dead again,
+(4) then simplify the pre-push hook to a plain status check. Recorded, not started.
 
-**TD-21 detail (measured 2026-09-25, v1.5.92).** `AGENTS.md` rule 3 says `gofmt` must be clean,
-but nothing enforces it: **no** `scripts/check_b*.sh`, `scripts/verify_pre_deploy.sh`, the
-`Makefile` or CI runs `gofmt -l`. Running it over the tree reports ~70 files in two distinct
-classes, both long-standing rather than recent regressions:
+**TD-21 detail (measured 2026-09-25, v1.5.92).** `AGENTS.md` rule 3 says `gofmt` must be clean, but
+**nothing enforces it**: no `scripts/check_b*.sh`, no `scripts/verify_pre_deploy.sh`, not the
+`Makefile` and not CI runs `gofmt`. (`grep -rln gofmt scripts/ .github/ Makefile` finds only two
+*comments* — `check_b321_*` line 73 and `check_b322_*` line 85.) Measured over **tracked** Go files
+only (`git ls-files '*.go'`, so the untracked `.trash/` tree, which `gofmt -l .` also reports, is
+excluded):
 
-* **≈40 i18n catalogues** (`internal/i18n/catalog_*.go`, `internal/feature/*/i18n*.go`) use a
-  deliberate-looking *space before the colon* map style —
-  `"backup.title"                   : "Backup",`. `gofmt` normalises it to `"backup.title":`.
-  `catalog_help.go` and the newer catalogues already use the canonical form, so the tree is
-  mixed. This is cosmetic and mechanical: `gofmt -w internal/i18n/*.go` fixes it in one commit,
-  at the cost of a very large whitespace-only diff;
-* **~30 other files** (`internal/feature/admin/system_tests.go`,
-  `internal/nodeownership/nodeownership.go`, …) carry doc-comment bodies indented with three
-  spaces instead of a tab — the Go 1.19 `gofmt` comment reformat, i.e. these files were last
-  formatted with Go < 1.19 and never re-run.
+```
+tracked .go files                      : 835
+files gofmt -l flags                   : 302   (36 %)
+  struct-field / map-key alignment     : 138
+  doc-comment reformat (Go 1.19)       : 114
+  both import reorder + comment        :  45
+  import order only                    :   5
+one-commit renormalisation diff        : +19440 / -19297 = 38737 changed lines
+```
 
-Why it is not "fixed" here: a whitespace-only diff over 70 files inside a localization release
-would bury the change and make the release unreviewable, and any future `git blame` on those
-files would point at a formatting commit. The two follow-ups, in order: (1) add a `gofmt -l`
-check to the gate (B-check, so the floor stops moving), (2) land the one-commit renormalisation
-(`gofmt -w` + `git add --renormalize .`) as its own single-purpose release. Note that `.gitattributes`
-already pins `*.go text eol=lf`, so line endings are not the cause — this is pure `gofmt` drift.
+The causes are ordinary hand-edit drift, each firing whenever a longer name is added without
+re-running gofmt:
+
+* **alignment (138)** — `Port string` / `DBPath string` become `Port   string` / `DBPath string`; a
+  comment inserted inside a struct or map collapses the whole block's alignment (`internal/config/config.go`);
+* **the Go 1.19 doc-comment reformat (159 files, counting the 45 that also reorder imports)** — a
+  hanging indent inside a comment (`//   - name : text`) is re-indented to `//\t`-plus-one-space
+  (`internal/module/tailscale/tailscale.go`, `internal/nodeownership/nodeownership.go`). These files
+  were last formatted with Go < 1.19 and never re-run;
+* **import ordering (50)** — `"fmt"` left before `"errors"` (`internal/auth/auth.go`);
+* **the space-before-colon map style (4 files: `catalog_backup.go`, `catalog_bot.go`,
+  `catalog_update.go`, `catalog_user_subnet.go`)** — `"key"    : "value"`, which gofmt normalises to
+  `"key": "value"`. This is the only class that looks like a deliberate house style; the other
+  catalogues (including `catalog_help.go`) already use the canonical form, so even this one is
+  mixed.
+
+Why it was not fixed in the v1.5.92 localization release: **38,737 whitespace-only changed lines
+across 302 files** would bury a change whose entire point is that a reviewer can read it, and every
+future `git blame` on those files would point at a formatting commit. (`.gitattributes` already pins
+`*.go text eol=lf`, so line endings are *not* the cause — this is pure gofmt drift. Every file
+v1.5.92 itself touched is gofmt-clean; the drift is pre-existing.)
+
+The two follow-ups, in order: (1) add a `gofmt -l` B-check so the floor stops moving (with the
+302-file legacy set frozen as a ratchet, exactly like the B325 i18n budgets and the B326 select
+labels, so the number can only go down); (2) land the one-commit renormalisation
+(`gofmt -w` over the tracked files) as its own single-purpose release with no other content.
 
 Module-system work is tracked under the `B-mod-*` IDs in the block index in
 `AGENTS.md` — `B-mod-core`, `B-mod-tailscale`, `B-mod-install`,
