@@ -17,11 +17,11 @@ Five read-only passes over `scripts/verify_pre_deploy.sh` and every `scripts/che
 
 | Slice | Entries | Report |
 |---|---|---|
-| B1–B100 | 98 | `tmp/audit/slice-b001-b100.md` |
-| B101–B199 | 98 | `tmp/audit/slice-b101-b199.md` |
-| B200–B262 | 68 | `tmp/audit/slice-b200-b262.md` |
-| B263–B290 | 30 | `tmp/audit/slice-b263-b290.md` |
-| B291–B320 | 30 | `tmp/audit/slice-b291-b320.md` |
+| B1–B100 | 98 | [`gate-audit-b001-b100.md`](gate-audit-b001-b100.md) |
+| B101–B199 | 98 | [`gate-audit-b101-b199.md`](gate-audit-b101-b199.md) |
+| B200–B262 | 68 | [`gate-audit-b200-b262.md`](gate-audit-b200-b262.md) |
+| B263–B290 | 30 | [`gate-audit-b263-b290.md`](gate-audit-b263-b290.md) |
+| B291–B320 | 30 | [`gate-audit-b291-b320.md`](gate-audit-b291-b320.md) |
 
 Each entry was classified by **style** — `behavioural` (executes the product and asserts an
 outcome), `structural` (asserts source text / symbol presence / file existence), `live-only`

@@ -59,6 +59,11 @@ docs/
 ├── LESSONS.md                       incidents, root causes, recurring traps
 ├── operations.md                    release + deploy + PG cutover + bootstrap
 ├── gate-regression-power.md        what the B-check catalog can and cannot catch
+├── gate-audit-b001-b100.md      per-slice regression-detection audit
+├── gate-audit-b101-b199.md      per-slice regression-detection audit
+├── gate-audit-b200-b262.md      per-slice regression-detection audit
+├── gate-audit-b263-b290.md      per-slice regression-detection audit
+├── gate-audit-b291-b320.md      per-slice regression-detection audit
 ├── internals.md                     package map, invariants, B-check system
 ├── ha.md                            HA topology, failover, open questions
 ├── https.md                         TLS, reverse proxies, certificates
