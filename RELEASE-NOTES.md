@@ -12,6 +12,77 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.90 — the panel speaks Russian, and the gate keeps it that way (B325)
+
+**Date:** 2026-09-25 · **Base:** `v1.5.89` → this tag · **Compatibility:** none — no schema
+change, no migration, no config change. Text and i18n only.
+
+### The report
+
+> «также по всему проекту страдает локализация — большинство новых описаний не переведено на
+> русский»
+
+### What the measured audit found (`docs/i18n-audit.md`)
+
+| finding | count |
+|---|---|
+| hardcoded user-visible English strings in templates | **311** across 40 files |
+| RU catalogue values that are not Russian (ASCII-only or identical to the EN value) | **621** |
+| keys **used** in templates but defined in **neither** catalogue | **6** |
+| unused keys | 314 |
+
+The last row is the worst: those pages did not show a missing translation, they showed the
+**key itself** — `/admin/subnets` printed `admin.subnets.total_devices` next to the number,
+and a disabled subnet printed the raw token `user.subnet.cell_disabled` (a family typo: the
+real key is `user_subnet.cell_disabled`). `TestCatalogsParity` cannot see any of it, because
+it only compares the **key sets** — a Russian map full of English passes it happily.
+
+Also fixed in the same pass: `derp.help_title` was declared **twice** with different values,
+and because `catalog_derp.go` comes later in the catalogue order the admin copy was dead —
+exactly the "silently overridden key" class.
+
+### What changed
+
+* the six undefined keys are defined in both catalogues, the family typo is corrected, and the
+  shadowed duplicate is gone;
+* **the device-registration result page is translated** (44 strings) — every new user sees it;
+* `/admin/system_tests` (37 strings, including the primary «Запустить все» button), the
+  exit-rules nodes page (14), the module pages (23) and the destructive `confirm()` texts
+  (exit-rules cleanup, headscale ACL) are translated;
+* **142 RU values became real Russian** — 61 `ha.*` + 61 `oidc_sync.*` (the whole
+  `/admin/oidc/sync` page and its FAQ were English in the Russian catalogue) plus `common`,
+  `exit_rules`, `modules` and `acl.page_title`;
+* 117 new keys, each in both catalogues.
+
+Measured effect: RU values without Cyrillic **284 → 196**, hardcoded English text nodes
+**68 → 21**. What remains is listed in the audit and only ever ratchets down.
+
+### The contract is a ratchet
+
+`scripts/check_b325_i18n_regressions.sh` (8 contracts) fails the gate when:
+
+* a key is **used in a template but defined nowhere** (the page would render the raw key);
+* a catalogue key is declared **more than twice** (a third copy shadows another silently);
+* the measured counts go **up**: RU values without Cyrillic must stay ≤ 196 and hardcoded
+  English text nodes ≤ 21. Lower them as the backlog is paid down — never raise them.
+
+`TestSystemTestsRendersWithLastResults` was renegotiated: it asserted the hardcoded `run #42`
+in the rendered header, which is exactly the text this block replaces with a catalogue key
+(the stub i18n returns the key, so it now asserts the key).
+
+### Files
+
+`internal/i18n/catalog_{admin,common,exit_rules,modules,my,telegram}.go`,
+7 templates (`user/preauth_result.html`, `admin/{system_tests,exit_rules_nodes,module_detail,modules,exit_rules_cleanup,headscale_acl}.html`),
+`internal/handlers/system_tests_render_test.go`, `scripts/check_b325_i18n_regressions.sh`.
+
+### Still open (tracked in the audit, not hidden)
+
+196 RU values without Cyrillic and 21 hardcoded English text nodes remain across the panel
+(the audit lists every one with a proposed translation), plus the B326 per-template tail
+(119 inline px-widths, unlabelled `<select>`s, two inline grid forms in `cluster.html`) and the
+B322 audit backlog.
+
 ## v1.5.89 — service control, actionable OIDC guidance, and a panel that fits a phone (B323 + B324 + B326)
 
 **Date:** 2026-09-25 · **Base:** `v1.5.88` → this tag · **Compatibility:** none — no schema

@@ -1,17 +1,17 @@
-﻿{{define "body-admin-exit_rules_nodes"}}
+{{define "body-admin-exit_rules_nodes"}}
 <div class="title-row">
   <div>
-    <h2><i class="fa-solid fa-server"></i> Node Load Dashboard</h2>
-    <div class="sub">Exit-node load metrics</div>
+    <h2><i class="fa-solid fa-server"></i> {{t "exit_rules_nodes.dashboard_title"}}</h2>
+    <div class="sub">{{t "exit_rules_nodes.load_metrics_subtitle"}}</div>
   </div>
   <div>
-    <a href="/admin/exit-rules" class="btn btn-sm"><i class="fa-solid fa-route"></i> Exit Rules</a>
+    <a href="/admin/exit-rules" class="btn btn-sm"><i class="fa-solid fa-route"></i> {{t "exit_rules_nodes.exit_rules_link"}}</a>
   </div>
 </div>
 
 <div class="card">
   <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-    <span><i class="fa-solid fa-chart-pie"></i> System load</span>
+    <span><i class="fa-solid fa-chart-pie"></i> {{t "exit_rules_nodes.system_load"}}</span>
     {{if .MaxTotalRules}}
     <span class="tag {{if gt .LoadPct 80}}tag-danger{{else if gt .LoadPct 50}}tag-warn{{else}}tag-success{{end}}">{{.LoadPct}}% ({{.TotalRules}}/{{.MaxTotalRules}})</span>
     {{end}}
@@ -22,11 +22,11 @@
     {{else}}<div style="background:var(--success);width:{{.LoadPct}}%;height:100%"></div>
     {{end}}
   </div>
-  <p style="margin-top:8px;color:var(--text-muted);font-size:12px">Limit: SKYGATE_MAX_TOTAL_RULES={{.MaxTotalRules}}. When exceeded, users get 403.</p>
+  <p style="margin-top:8px;color:var(--text-muted);font-size:12px">{{tf "exit_rules_nodes.limit_hint" .MaxTotalRules}}</p>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-server"></i> Exit-nodes ({{len .Nodes}})</h3>
+  <h3><i class="fa-solid fa-server"></i> {{tf "exit_rules_nodes.nodes_title" (len .Nodes)}}</h3>
   <div class="table-wrap">
   <table>
     <tr>
@@ -60,19 +60,19 @@
   </table>
   </div>
   <p style="margin-top:12px;color:var(--text-muted);font-size:12px">
-    <b>Colors:</b> <span class="tag tag-success">green &lt; 50%</span> <span class="tag tag-warn">yellow 50-80%</span> <span class="tag tag-danger">red &gt; 80%</span>.<br>
-    Load = rules_on_node / (MaxTotalRules / 5). If load &gt; 80% — adding new rules on this node may slow down sync.
+    {{t "exit_rules_nodes.colors_legend" | safeHTML}}<br>
+    {{t "exit_rules_nodes.load_formula" | safeHTML}}
   </p>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-clock-rotate-left"></i> Recommendations</h3>
+  <h3><i class="fa-solid fa-clock-rotate-left"></i> {{t "exit_rules_nodes.recommendations"}}</h3>
   <ul style="padding-left:20px;margin:0;line-height:1.6">
-    <li>🟢 <b>Green (&lt;50%):</b> normal. Add rules freely.</li>
-    <li>🟡 <b>Yellow (50-80%):</b> medium load. Watch sync latency.</li>
-    <li>🔴 <b>Red (&gt;80%):</b> high load. Consider moving some rules to another exit-node or reducing the number of domains (autoupdater resolves many IPs).</li>
-    <li>⏱️ <b>Staggered sync:</b> autoupdater updates IPs in batches (SKYGATE_STAGGER_BATCH_SIZE) with an interval (SKYGATE_STAGGER_INTERVAL) — does not overload headscale approve-routes.</li>
-    <li>🔄 <b>Last sync:</b> last successful sync for this node. If "never" — autoupdater hasn't reached it yet.</li>
+    <li>{{t "exit_rules_nodes.rec_green" | safeHTML}}</li>
+    <li>{{t "exit_rules_nodes.rec_yellow" | safeHTML}}</li>
+    <li>{{t "exit_rules_nodes.rec_red" | safeHTML}}</li>
+    <li>{{t "exit_rules_nodes.rec_staggered" | safeHTML}}</li>
+    <li>{{t "exit_rules_nodes.rec_last_sync" | safeHTML}}</li>
   </ul>
 </div>
 {{end}}

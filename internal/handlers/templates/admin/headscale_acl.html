@@ -38,8 +38,8 @@
       <h3 style="margin:0"><i class="fa-solid fa-network-wired"></i> {{t "acl.page_title"}}</h3>
       <p style="color:var(--text-muted);margin:8px 0 0 0">
         {{if .View}}
-        {{.View.TotalCount}} {{t "acl.rules_count"}}: {{.View.SkygateCount}} skygate-managed,
-        {{.View.ExternalCount}} external.
+        {{.View.TotalCount}} {{t "acl.rules_count"}}: {{.View.SkygateCount}} {{t "acl.rules_count_managed"}}
+        {{.View.ExternalCount}} {{t "acl.rules_count_external"}}
         {{end}}
         {{t "acl.page_subtitle" | safeHTML}}
       </p>
@@ -81,7 +81,7 @@
         <td><small>{{.CreatedAt.Format "2006-01-02 15:04"}}</small></td>
         <td>
           <form method="post" action="/admin/headscale/acl/remove" style="display:inline"
-                onsubmit="return confirm('Remove rule &quot;{{.Label}}&quot;? This will also soft-delete it from the audit log.');">
+                onsubmit="return confirm('{{tf "acl.remove_confirm" .Label | js}}');">
             <input type="hidden" name="id" value="{{.ID}}">
             <button type="submit" class="btn btn-sm btn-danger">
               <i class="fa-solid fa-trash"></i>
@@ -151,7 +151,7 @@
     <div style="margin-top:12px">
       <label for="label"><strong>{{t "acl.label_label"}}</strong> <small style="color:var(--text-muted)">({{t "acl.label_help"}})</small></label>
       <input type="text" name="label" id="label" class="form-control"
-             placeholder="admin → all devices"
+             placeholder="{{t "acl.label_placeholder"}}"
              value="">
     </div>
     <div style="margin-top:16px">

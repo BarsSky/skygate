@@ -40,7 +40,7 @@
 
 <div class="card">
   <h3><i class="fa-solid fa-key"></i>{{t "devices.preauth_key"}}</h3>
-  <p style="color:var(--text-muted);margin-bottom:12px">{{t "preauth.warning"}} (instructions for <b>{{.OSLabel}}</b>):</p>
+  <p style="color:var(--text-muted);margin-bottom:12px">{{t "preauth.warning"}} {{tf "preauth.instructions_for" .OSLabel | safeHTML}}</p>
   <div class="key-block"><code>{{.Key}}</code><button class="copy-btn" onclick="navigator.clipboard.writeText('{{.Key}}');this.textContent='{{t "common.copied"}}!';setTimeout(()=>{this.textContent='{{t "common.copy"}}'},1500)"><i class="fa-solid fa-copy"></i>{{t "common.copy"}}</button></div>
   <div class="alert alert-warn" style="margin-bottom:0">
     <i class="fa-solid fa-triangle-exclamation"></i>
@@ -53,106 +53,106 @@
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-server"></i>Step 0 — Connect to our control server</h3>
+  <h3><i class="fa-solid fa-server"></i>{{t "preauth.step0_heading"}}</h3>
   <p style="color:var(--text-muted);margin-bottom:12px">
-    Our tailnet runs on a self-hosted headscale, not the default Tailscale control server.
-    Before entering the key, point your device at our control server:
+    {{t "preauth.step0_intro"}}
+    {{t "preauth.step0_hint"}}
   </p>
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px;font-family:var(--mono);font-size:13px">
     {{.ControlURL}}
   </div>
   <p style="color:var(--text-muted);font-size:13px">
-    Steps for <b>{{.OSLabel}}</b> below: first enable the custom control server, then enter the key.
+    {{tf "preauth.steps_intro" .OSLabel | safeHTML}}
   </p>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-list-check"></i>Instructions for {{.OSLabel}}</h3>
+  <h3><i class="fa-solid fa-list-check"></i>{{tf "preauth.instructions_heading" .OSLabel}}</h3>
   {{if eq .OS "android"}}
   <ol class="plain">
-    <li>Install <b>Tailscale</b> from Google Play (if you don't have it).</li>
-    <li>Open the app — do <b>not</b> tap "Sign in" yet. Instead: <i class="fa-solid fa-bars"></i> menu (top-left) → <b>Settings</b> → scroll down to <b>"Use custom coordination server"</b> → switch ON.</li>
-    <li>Paste into the "Coordination server URL" field: <code>{{.ControlURL}}</code></li>
-    <li>Go back to the main screen → <b>Sign in</b>. Our headscale page will open.</li>
-    <li>Find the <b>"Use a preauth key"</b> option (at the bottom of the form) → tap it.</li>
-    <li>Paste the key you copied above → <b>Continue</b>.</li>
-    <li>Done. The device will appear on the <a href="/my/devices">My devices</a> page in a few seconds.</li>
+    <li>{{t "preauth.android_li_install" | safeHTML}}</li>
+    <li>{{t "preauth.android_li_open" | safeHTML}}</li>
+    <li>{{t "preauth.android_li_paste_url" | safeHTML}} <code>{{.ControlURL}}</code></li>
+    <li>{{t "preauth.android_li_signin" | safeHTML}}</li>
+    <li>{{t "preauth.android_li_preauth" | safeHTML}}</li>
+    <li>{{t "preauth.android_li_continue" | safeHTML}}</li>
+    <li>{{t "preauth.android_li_done" | safeHTML}}</li>
   </ol>
   <div class="alert alert-warn" style="margin-top:12px">
     <i class="fa-solid fa-circle-info"></i>
-    <div>If you don't see "Use a preauth key" in your Tailscale version, update the app (1.50+ required).</div>
+    <div>{{t "preauth.android_version_warn" | safeHTML}}</div>
   </div>
 
   {{else if eq .OS "ios"}}
   <ol class="plain">
-    <li>Install <b>Tailscale</b> from the App Store (if you don't have it).</li>
-    <li>Open the app → <b>Settings</b> → <b>"Use Custom Control Server"</b> → switch ON.</li>
-    <li>Paste into the "Control Server URL" field: <code>{{.ControlURL}}</code></li>
-    <li>Go back to the main screen → <b>Sign in</b>. Our headscale page will open.</li>
-    <li>Find <b>"Use a preauth key"</b> (at the bottom of the login form) → tap it.</li>
-    <li>Paste the key → <b>Continue</b>.</li>
-    <li>Done. The device will appear on the <a href="/my/devices">My devices</a> page in a few seconds.</li>
+    <li>{{t "preauth.ios_li_install" | safeHTML}}</li>
+    <li>{{t "preauth.ios_li_open" | safeHTML}}</li>
+    <li>{{t "preauth.ios_li_paste_url" | safeHTML}} <code>{{.ControlURL}}</code></li>
+    <li>{{t "preauth.ios_li_signin" | safeHTML}}</li>
+    <li>{{t "preauth.ios_li_preauth" | safeHTML}}</li>
+    <li>{{t "preauth.ios_li_continue" | safeHTML}}</li>
+    <li>{{t "preauth.ios_li_done" | safeHTML}}</li>
   </ol>
   <div class="alert alert-warn" style="margin-top:12px">
     <i class="fa-solid fa-circle-info"></i>
-    <div>Tailscale 1.50+ required (App Store). On older versions — update first.</div>
+    <div>{{t "preauth.ios_version_warn"}}</div>
   </div>
 
   {{else if eq .OS "linux"}}
-  <p style="color:var(--text-muted);margin-bottom:12px">One command — installs Tailscale (if needed), connects to our control server, and registers the device with the key:</p>
+  <p style="color:var(--text-muted);margin-bottom:12px">{{t "preauth.linux_intro"}}</p>
   <pre>curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up --login-server={{.ControlURL}} --authkey={{.Key}}</pre>
   <p style="color:var(--text-muted);margin-top:8px">
     <i class="fa-solid fa-circle-info"></i>
-    Add <code>--accept-routes</code> if you want to accept routes from other nodes (e.g. exit nodes).
-    Full list: <code>tailscale up --help</code>.
+    {{t "preauth.linux_accept_routes_hint" | safeHTML}}
+    {{t "preauth.linux_help_hint" | safeHTML}}
   </p>
-  <p>Done — the device will appear on the <a href="/my/devices">My devices</a> page in a few seconds.</p>
+  <p>{{t "preauth.linux_done" | safeHTML}}</p>
 
   {{else if eq .OS "macos"}}
-  <p style="color:var(--text-muted);margin-bottom:12px"><b>Method 1 — GUI (easier):</b></p>
+  <p style="color:var(--text-muted);margin-bottom:12px">{{t "preauth.method_gui" | safeHTML}}</p>
   <ol class="plain">
-    <li>App Store → install <b>Tailscale</b>.</li>
-    <li>Menu bar (top right) → click the Tailscale icon → <b>"Use Custom Control Server"</b> → paste: <code>{{.ControlURL}}</code></li>
-    <li>Same menu → <b>Sign in</b> → our headscale page opens.</li>
-    <li>Find <b>"Use a preauth key"</b> → paste the key → <b>Continue</b>.</li>
+    <li>{{t "preauth.macos_li_install" | safeHTML}}</li>
+    <li>{{t "preauth.macos_li_menu" | safeHTML}} <code>{{.ControlURL}}</code></li>
+    <li>{{t "preauth.macos_li_signin" | safeHTML}}</li>
+    <li>{{t "preauth.macos_li_preauth" | safeHTML}}</li>
   </ol>
-  <p style="color:var(--text-muted);margin:12px 0 4px"><b>Method 2 — CLI (if you have Homebrew):</b></p>
+  <p style="color:var(--text-muted);margin:12px 0 4px">{{t "preauth.method_cli" | safeHTML}}</p>
   <pre>brew install --cask tailscale-app
 open -a Tailscale
 /usr/local/bin/tailscale up --login-server={{.ControlURL}} --authkey={{.Key}}</pre>
-  <p>Done — the device will appear on the <a href="/my/devices">My devices</a> page in a few seconds.</p>
+  <p>{{t "preauth.macos_done" | safeHTML}}</p>
 
   {{else if eq .OS "windows"}}
-  <p style="color:var(--text-muted);margin-bottom:12px"><b>Method 1 — GUI (easier):</b></p>
+  <p style="color:var(--text-muted);margin-bottom:12px">{{t "preauth.method_gui" | safeHTML}}</p>
   <ol class="plain">
-    <li>Download the installer: <a href="https://tailscale.com/download/windows" target="_blank" rel="noopener">tailscale.com/download/windows</a> → install.</li>
-    <li>System tray (bottom right) → click the Tailscale icon → <b>Sign in</b> → browser opens.</li>
-    <li>Our headscale page opens in the browser. Find <b>"Use a preauth key"</b> → paste the key → <b>Continue</b>.</li>
+    <li>{{t "preauth.windows_li_download" | safeHTML}}</li>
+    <li>{{t "preauth.windows_li_tray" | safeHTML}}</li>
+    <li>{{t "preauth.windows_li_preauth" | safeHTML}}</li>
   </ol>
-  <p style="color:var(--text-muted);margin:12px 0 4px"><b>Method 2 — PowerShell (more reliable):</b></p>
+  <p style="color:var(--text-muted);margin:12px 0 4px">{{t "preauth.method_powershell" | safeHTML}}</p>
   <pre>Invoke-WebRequest https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe -OutFile $env:TEMP\ts.exe
 Start-Process $env:TEMP\ts.exe -ArgumentList "/quiet" -Wait
 &amp; "$env:ProgramFiles\Tailscale\tailscale.exe" up --login-server={{.ControlURL}} --authkey={{.Key}}</pre>
-  <p>Done — the device will appear on the <a href="/my/devices">My devices</a> page in a few seconds.</p>
+  <p>{{t "preauth.windows_done" | safeHTML}}</p>
 
   {{else}}
   <div class="alert alert-danger">
     <i class="fa-solid fa-circle-exclamation"></i>
-    <div>Unknown OS "{{.OS}}". Pick an OS on the <a href="/my/devices">My devices</a> page and get a new key.</div>
+    <div>{{tf "preauth.unknown_os" .OS | safeHTML}}</div>
   </div>
   {{end}}
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-arrow-right-arrow-left"></i>Want to sign in with a different account?</h3>
+  <h3><i class="fa-solid fa-arrow-right-arrow-left"></i>{{t "preauth.different_account_heading"}}</h3>
   <p style="color:var(--text-muted);margin-bottom:8px">
-    By default the key is bound to <code>{{.Username}}</code>. If this device is already signed in to Tailscale under a different account, log out first:
+    {{tf "preauth.different_account_intro" .Username | safeHTML}}
   </p>
   <pre>tailscale logout</pre>
   <p style="color:var(--text-muted);margin-top:8px">
-    Then re-run <code>tailscale up --login-server={{.ControlURL}} --authkey={{.Key}}</code>.
-    On mobile (Android/iOS) — log out via <i class="fa-solid fa-bars"></i> → <b>Sign out</b>, then repeat the steps above.
+    {{t "preauth.different_account_rerun"}} <code>tailscale up --login-server={{.ControlURL}} --authkey={{.Key}}</code>
+    {{t "preauth.different_account_mobile" | safeHTML}}
   </p>
 </div>
 

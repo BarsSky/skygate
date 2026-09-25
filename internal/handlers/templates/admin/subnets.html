@@ -68,7 +68,7 @@
         <td>
           {{if eq .Subnet.Status "active"}}<span class="tag tag-success" style="font-size:10px"><i class="fa-solid fa-circle-check"></i> {{t "user_subnet.cell_active"}}</span>
           {{else if eq .Subnet.Status "pending"}}<span class="tag tag-warning" style="font-size:10px"><i class="fa-solid fa-circle-pause"></i> {{t "user_subnet.cell_pending"}}</span>
-          {{else if eq .Subnet.Status "disabled"}}<span class="tag" style="font-size:10px;opacity:0.6"><i class="fa-solid fa-circle-xmark"></i> {{t "user.subnet.cell_disabled"}}</span>
+          {{else if eq .Subnet.Status "disabled"}}<span class="tag" style="font-size:10px;opacity:0.6"><i class="fa-solid fa-circle-xmark"></i> {{t "user_subnet.cell_disabled"}}</span>
           {{else}}<span class="tag" style="font-size:10px"><i class="fa-solid fa-circle-question"></i> {{.Subnet.Status}}</span>{{end}}
         </td>
         <td><code style="font-size:11px">{{if .Subnet.RouterHostname}}{{.Subnet.RouterHostname}}{{else}}—{{end}}</code></td>

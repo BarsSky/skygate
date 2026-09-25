@@ -29,57 +29,57 @@
   .row-back { margin-bottom: 1rem; }
 </style>
 
-<p class="row-back"><a href="/admin/modules">← back to modules</a></p>
+<p class="row-back"><a href="/admin/modules">{{t "module_detail.back_to_modules"}}</a></p>
 <h1>{{.Title}}</h1>
 
 {{if .View.FlashOK}}<div class="flash-ok">{{.View.FlashOK}}</div>{{end}}
 {{if .View.FlashError}}<div class="flash-err">{{.View.FlashError}}</div>{{end}}
 
 <div class="module-detail">
-  <h2>State</h2>
+  <h2>{{t "module_detail.state"}}</h2>
   <p>
     <code>{{.Name}}</code>:
     <span class="module-state {{.View.Row.State}}">{{.View.Row.State}}</span>
-    {{if .View.Row.InstallMode}} · mode: {{.View.Row.InstallMode}}{{end}}
-    {{if .View.Row.InstalledAt}} · installed: {{.View.Row.InstalledAt}}{{end}}
-    {{if .View.Row.StartedAt}} · started: {{.View.Row.StartedAt}}{{end}}
+    {{if .View.Row.InstallMode}}{{t "module_detail.mode_label"}}{{.View.Row.InstallMode}}{{end}}
+    {{if .View.Row.InstalledAt}}{{t "module_detail.installed_label"}}{{.View.Row.InstalledAt}}{{end}}
+    {{if .View.Row.StartedAt}}{{t "module_detail.started_label"}}{{.View.Row.StartedAt}}{{end}}
   </p>
 
   {{if .View.HealthLastCheck}}
-  <h2>Health ({{.View.HealthLastCheck}})</h2>
+  <h2>{{tf "module_detail.health_heading" .View.HealthLastCheck}}</h2>
   <ul class="health-checks">
     {{range $k, $v := .View.HealthChecks}}
       <li class="{{if $v}}ok{{else}}fail{{end}}">
-        <code>{{$k}}</code>: {{if $v}}OK{{else}}FAIL{{end}}
+        <code>{{$k}}</code>: {{if $v}}{{t "module_detail.health_ok"}}{{else}}{{t "module_detail.health_fail"}}{{end}}
       </li>
     {{end}}
     {{if .View.HealthLastError}}
-      <li class="fail">last error: {{.View.HealthLastError}}</li>
+      <li class="fail">{{t "module_detail.last_error"}}{{.View.HealthLastError}}</li>
     {{end}}
   </ul>
   {{end}}
 
   {{if .View.SubFeatures}}
-  <h2>Sub-features</h2>
+  <h2>{{t "modules.subfeatures"}}</h2>
     {{range .View.SubFeatures}}
       <div class="subfeature-row">
         <span class="name">{{.Name}}</span>
-        {{if .Enabled}}<span style="color:#155724;">[on]</span>{{else}}<span style="color:#888;">[off]</span>{{end}}
+        {{if .Enabled}}<span style="color:#155724;">{{t "module_detail.subfeature_on"}}</span>{{else}}<span style="color:#888;">{{t "module_detail.subfeature_off"}}</span>{{end}}
         <p class="desc">{{.Description}}</p>
-        {{if .Requires}}<p class="requires">Requires: {{.Requires}}</p>{{end}}
-        {{if .Impact}}<p class="impact">Impact: {{.Impact}}</p>{{end}}
+        {{if .Requires}}<p class="requires">{{t "module_detail.subfeature_requires"}}{{.Requires}}</p>{{end}}
+        {{if .Impact}}<p class="impact">{{t "module_detail.subfeature_impact"}}{{.Impact}}</p>{{end}}
         {{if .CanToggle}}
           <form method="post" action="/admin/modules/{{$.Name}}/sub/{{.Name}}" style="display:inline;">
             <input type="hidden" name="csrf" value="{{$.CSRF}}">
             <input type="hidden" name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}">
-            <button type="submit">{{if .Enabled}}Disable{{else}}Enable{{end}}</button>
+            <button type="submit">{{if .Enabled}}{{t "module_detail.subfeature_disable"}}{{else}}{{t "module_detail.subfeature_enable"}}{{end}}</button>
           </form>
         {{end}}
       </div>
     {{end}}
   {{end}}
 
-  <h2>Audit history (last 20)</h2>
+  <h2>{{t "modules.audit_heading"}}</h2>
   {{if .View.Audit}}
     {{/* B326: this table renders outside a card, so it needs the explicit mobile scroller. */}}
     <div class="table-wrap">
@@ -90,7 +90,7 @@
           <tr>
             <td>{{.When}}</td>
             <td><code>{{.Action}}</code></td>
-            <td>{{if .By}}{{.By}}{{else}}system{{end}}</td>
+            <td>{{if .By}}{{.By}}{{else}}{{t "module_detail.by_system"}}{{end}}</td>
             <td>{{.Detail}}</td>
           </tr>
         {{end}}
@@ -98,7 +98,7 @@
     </table>
     </div>
   {{else}}
-    <p><em>no audit rows yet.</em></p>
+    <p><em>{{t "modules.no_audit"}}</em></p>
   {{end}}
 </div>
 {{end}}

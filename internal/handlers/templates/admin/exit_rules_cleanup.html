@@ -1,8 +1,8 @@
-﻿{{define "body-admin-exit_rules_cleanup"}}
+{{define "body-admin-exit_rules_cleanup"}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-broom"></i> {{t "cleanup.title"}}</h2>
-    <div class="sub">Merge duplicates by device_id and backfill device_ip. Idempotent.</div>
+    <div class="sub">{{t "cleanup.page_subtitle"}}</div>
   </div>
   <div>
     <a href="/admin/exit-rules" class="btn btn-sm"><i class="fa-solid fa-arrow-left"></i> {{t "common.back"}}</a>
@@ -10,11 +10,11 @@
 </div>
 
 {{if eq .RunResult "applied"}}
-<div class="alert alert-success"><i class="fa-solid fa-check"></i> Applied. Recomputed: merged={{.Plan.MergedIDs}}, resolved_ips={{.Plan.ResolvedIPs}}.</div>
+<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{tf "cleanup.applied_flash" .Plan.MergedIDs .Plan.ResolvedIPs}}</div>
 {{end}}
 
 <div class="card">
-  <h3><i class="fa-solid fa-magnifying-glass"></i> Plan</h3>
+  <h3><i class="fa-solid fa-magnifying-glass"></i> {{t "cleanup.plan_title"}}</h3>
   <table class="kv" style="width:auto">
     <tr><th>{{t "cleanup.col_total_rules"}}</th><td>{{.Plan.TotalRules}}</td></tr>
     <tr><th>{{t "cleanup.col_distinct_device_id"}}</th><td>{{.Plan.DistinctDevIDs}}</td></tr>
@@ -26,14 +26,14 @@
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-layer-group"></i> Groups by hostname</h3>
+  <h3><i class="fa-solid fa-layer-group"></i> {{t "cleanup.groups_title"}}</h3>
   <div class="table-wrap">
     <table>
       <tr><th>{{t "cleanup.col_hostname"}}</th><th>{{t "cleanup.col_canonical_device_id"}}</th><th>{{t "cleanup.col_all_device_id_in_group"}}</th><th>{{t "cleanup.col_rules"}}</th></tr>
       {{range .Plan.Groups}}
       <tr>
         <td>
-          {{if .Hostname}}<code>{{.Hostname}}</code>{{else}}<span class="tag tag-warn">unknown</span>{{end}}
+          {{if .Hostname}}<code>{{.Hostname}}</code>{{else}}<span class="tag tag-warn">{{t "cleanup.unknown_hostname"}}</span>{{end}}
         </td>
         <td><code>{{.Canonical}}</code></td>
         <td>
@@ -47,11 +47,11 @@
 </div>
 
 <form method="post" action="/admin/exit-rules/cleanup/apply"
-      onsubmit="return confirm('Apply cleanup? This will change device_id and device_ip for some rules and is irreversible without a backup.')">
+      onsubmit="return confirm('{{t "cleanup.apply_confirm" | js}}')">
   <button type="submit" class="btn"
           {{if and (eq .Plan.MergedIDs 0) (eq .Plan.ResolvedIPs 0)}}disabled{{end}}>
-    <i class="fa-solid fa-play"></i> Apply
+    <i class="fa-solid fa-play"></i> {{t "cleanup.apply_btn"}}
   </button>
-  <a href="/admin/exit-rules/cleanup" class="btn btn-sm"><i class="fa-solid fa-rotate"></i> Recompute</a>
+  <a href="/admin/exit-rules/cleanup" class="btn btn-sm"><i class="fa-solid fa-rotate"></i> {{t "cleanup.recompute_btn"}}</a>
 </form>
 {{end}}

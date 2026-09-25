@@ -62,8 +62,8 @@ func loadSystemTestsBody(t *testing.T) *template.Template {
 		t.Fatalf("read system_tests.html: %v", err)
 	}
 	tpl, err := template.New("test").Funcs(template.FuncMap{
-		"t":    func(key string) string { return key },
-		"tf":   func(key string, args ...any) string { return key },
+		"t":        func(key string) string { return key },
+		"tf":       func(key string, args ...any) string { return key },
 		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
 		"safeJS":   func(s string) template.JS { return template.JS(s) },
 		"safeJSON": func(v any) template.JS {
@@ -244,8 +244,10 @@ func TestSystemTestsRendersWithLastResults(t *testing.T) {
 	if !strings.Contains(body, "system_tests.last_run_label") {
 		t.Errorf("expected 'system_tests.last_run_label' header, got body:\n%s", body)
 	}
-	// Run # must appear.
-	if !strings.Contains(body, "run #42") {
-		t.Errorf("expected 'run #42' in the header, got body:\n%s", body)
+	// Run number must appear. B325 moved the label into the catalogue (it used to be a
+	// hardcoded English `run #`); this stub returns the key verbatim and does not render the
+	// argument, so the assertion is on the KEY — same shape as the last_run_label check above.
+	if !strings.Contains(body, "system_tests.run_number_label") {
+		t.Errorf("expected the 'system_tests.run_number_label' header, got body:\n%s", body)
 	}
 }

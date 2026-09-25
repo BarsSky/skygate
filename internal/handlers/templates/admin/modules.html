@@ -38,7 +38,7 @@
 
 {{if .NotWired}}
   <div class="modules-not-wired">
-    <strong>Manager not wired.</strong> {{.NotWiredMsg}}
+    <strong>{{t "modules.manager_not_wired"}}</strong> {{.NotWiredMsg}}
   </div>
 {{else}}
   {{/* B326: the card is the mobile horizontal scroller, but this page renders the table
@@ -65,7 +65,7 @@
           <td>{{.InstallMode}}</td>
           <td>{{if .InstalledAt}}{{.InstalledAt}}{{else}}—{{end}}</td>
           <td>{{if .StartedAt}}{{.StartedAt}}{{else}}—{{end}}</td>
-          <td>{{if .HasSubFeat}}yes{{else}}no{{end}}</td>
+          <td>{{if .HasSubFeat}}{{t "common.yes"}}{{else}}{{t "common.no"}}{{end}}</td>
           <td class="modules-actions">
             {{range .Actions}}
               <form method="post" action="{{.URL}}">
@@ -77,7 +77,7 @@
           <td><a href="/admin/modules/{{.Name}}">→</a></td>
         </tr>
       {{else}}
-        <tr><td colspan="8"><em>No modules registered.</em></td></tr>
+        <tr><td colspan="8"><em>{{t "modules.no_modules_registered"}}</em></td></tr>
       {{end}}
     </tbody>
   </table>

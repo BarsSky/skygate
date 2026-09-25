@@ -24,11 +24,17 @@
 {{if .FlashSuccess}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashSuccess}}</div>
 {{end}}
+{{/* Tick intervals live in .Cfg; the two cards below and the toggle flash
+     render them, so resolve them once here (the template has no printf
+     helper for the config struct). */}}
+{{$tick := "5m"}}{{if .Cfg}}{{$tick = .Cfg.DNSAutoCheck}}{{end}}
+{{$prefTick := "1h"}}{{if .Cfg}}{{$prefTick = .Cfg.PrefReconcileInterval}}{{end}}
 {{if .FlashDNSInterval}}
 <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{tf "dns_autoupdater.interval_saved" .FlashDNSInterval}}</div>
 {{end}}
 {{if .FlashDNSAutoToggled}}
-<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> DNS-autoupdater {{.FlashDNSAutoToggled}}. Takes effect on the next autoupdate tick (≤ {{if .Cfg}}{{.Cfg.DNSAutoCheck}}{{else}}5m{{end}}).</div>
+{{$toggled := t "system_tests.state_disabled"}}{{if eq .FlashDNSAutoToggled "enabled"}}{{$toggled = t "system_tests.state_enabled"}}{{end}}
+<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{tf "system_tests.dns_autoupdater_toggle_flash" $toggled $tick}}</div>
 {{end}}
 
 {{/* 2026-08-18 (TD-8): tab bar. CSS-only — the data
@@ -137,10 +143,10 @@
           {{end}}
         </td>
         <td style="text-align:right">
-          {{if eq .LastStatus "pass"}}<i class="fa-solid fa-circle-check" style="color:#198754" title="pass"></i>
-          {{else if eq .LastStatus "fail"}}<i class="fa-solid fa-circle-xmark" style="color:#dc3545" title="fail"></i>
-          {{else if eq .LastStatus "skip"}}<i class="fa-solid fa-circle-pause" style="color:#6c757d" title="skip"></i>
-          {{else}}<i class="fa-solid fa-circle" style="color:#6c757d" title="never run"></i>{{end}}
+          {{if eq .LastStatus "pass"}}<i class="fa-solid fa-circle-check" style="color:#198754" title="{{t "system_tests.status_pass_title"}}"></i>
+          {{else if eq .LastStatus "fail"}}<i class="fa-solid fa-circle-xmark" style="color:#dc3545" title="{{t "system_tests.status_fail_title"}}"></i>
+          {{else if eq .LastStatus "skip"}}<i class="fa-solid fa-circle-pause" style="color:#6c757d" title="{{t "system_tests.status_skip_title"}}"></i>
+          {{else}}<i class="fa-solid fa-circle" style="color:#6c757d" title="{{t "system_tests.status_never_title"}}"></i>{{end}}
         </td>
         <td style="text-align:right">
           {{if .LastRunAt}}
@@ -178,7 +184,7 @@
 
 {{if .RecentRuns}}
 <div class="card">
-  <h4 style="margin-top:0"><i class="fa-solid fa-clock-rotate-left"></i> {{t "system_tests.recent_runs_title"}} (last 20)</h4>
+  <h4 style="margin-top:0"><i class="fa-solid fa-clock-rotate-left"></i> {{t "system_tests.recent_runs_title"}} {{t "system_tests.recent_runs_last_n"}}</h4>
   <table class="table table-sm" style="margin-top:8px">
     <thead>
       <tr>
@@ -221,17 +227,16 @@
     <div style="flex:1;min-width:280px">
       <h3 style="margin:0"><i class="fa-solid fa-arrows-rotate"></i> {{t "title.dns_autoupdater"}}</h3>
       <p style="color:var(--text-muted);margin:8px 0 0 0">
-        Background goroutine that re-resolves every enabled <code>target_type=domain</code> exit-rule
-        to its current <code>/32</code> IPs every <code>{{if .Cfg}}{{.Cfg.DNSAutoCheck}}{{else}}5m{{end}}</code>.
+        {{tf "system_tests.dns_autoupdater_help" $tick | safeHTML}}
         <strong>{{t "dns_autoupdater.required"}}</strong>
       </p>
       <p style="color:var(--text-muted);margin:8px 0 0 0;font-size:12px">
-        State:
+        {{t "system_tests.state_label"}}
         {{if .DNSAutoUpdateEnabled}}
-          <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> ENABLED</span>
-          &nbsp;(DB row in global_settings overrides env on next tick)
+          <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "system_tests.state_enabled"}}</span>
+          &nbsp;{{t "system_tests.state_db_override_hint"}}
         {{else}}
-          <span class="tag tag-warn"><i class="fa-solid fa-circle-pause"></i> DISABLED</span>
+          <span class="tag tag-warn"><i class="fa-solid fa-circle-pause"></i> {{t "system_tests.state_disabled"}}</span>
           &nbsp;({{t "dns_autoupdater.rot_warning"}})
         {{end}}
       </p>
@@ -240,9 +245,9 @@
       <input type="hidden" name="enabled" value="{{if .DNSAutoUpdateEnabled}}0{{else}}1{{end}}">
       <button type="submit" class="btn {{if .DNSAutoUpdateEnabled}}btn-warn{{else}}btn-primary{{end}}">
         {{if .DNSAutoUpdateEnabled}}
-          <i class="fa-solid fa-circle-pause"></i> Disable DNS autoupdater
+          <i class="fa-solid fa-circle-pause"></i> {{t "system_tests.dns_autoupdater_disable_btn"}}
         {{else}}
-          <i class="fa-solid fa-circle-play"></i> Enable DNS autoupdater
+          <i class="fa-solid fa-circle-play"></i> {{t "system_tests.dns_autoupdater_enable_btn"}}
         {{end}}
       </button>
     </form>
@@ -291,24 +296,16 @@
     <div style="flex:1;min-width:280px">
       <h3 style="margin:0"><i class="fa-solid fa-bullseye"></i> {{t "title.pref_reconciler"}}</h3>
       <p style="color:var(--text-muted);margin:8px 0 0 0">
-        Background goroutine (B229) that auto-creates <code>device_exit_node_prefs</code>
-        rows for any device with unanimous <code>device_rules</code> pointing at one exit-node,
-        and refreshes stale tags (B188/V061 migration gap). Runs every
-        <code>{{if .Cfg}}{{.Cfg.PrefReconcileInterval}}{{else}}1h{{end}}</code>.
-        Without this reconciler, the operator's "device → emilia" rule is
-        <em>allowed</em> but not <em>pinned</em> — Tailscale routes through the default
-        exit, not emilia. (B231) also auto-migrates the pref when the operator
-        renames a device in headscale.
+        {{tf "system_tests.pref_reconciler_help" $prefTick | safeHTML}}
       </p>
       <p style="color:var(--text-muted);margin:8px 0 0 0;font-size:12px">
-        State:
+        {{t "system_tests.state_label"}}
         {{if .PrefReconcileEnabled}}
-          <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> ENABLED</span>
-          &nbsp;(DB row in global_settings overrides env on next tick)
+          <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "system_tests.state_enabled"}}</span>
+          &nbsp;{{t "system_tests.state_db_override_hint"}}
         {{else}}
-          <span class="tag tag-warn"><i class="fa-solid fa-circle-pause"></i> DISABLED</span>
-          &nbsp;(new device_rules will NOT be auto-pinned — operator must set the
-          🎯 on /my/devices per device)
+          <span class="tag tag-warn"><i class="fa-solid fa-circle-pause"></i> {{t "system_tests.state_disabled"}}</span>
+          &nbsp;{{t "system_tests.pref_reconciler_disabled_hint"}}
         {{end}}
       </p>
     </div>
@@ -316,9 +313,9 @@
       <input type="hidden" name="enabled" value="{{if .PrefReconcileEnabled}}0{{else}}1{{end}}">
       <button type="submit" class="btn {{if .PrefReconcileEnabled}}btn-warn{{else}}btn-primary{{end}}">
         {{if .PrefReconcileEnabled}}
-          <i class="fa-solid fa-circle-pause"></i> Disable preferred-reconciler
+          <i class="fa-solid fa-circle-pause"></i> {{t "system_tests.pref_reconciler_disable_btn"}}
         {{else}}
-          <i class="fa-solid fa-circle-play"></i> Enable preferred-reconciler
+          <i class="fa-solid fa-circle-play"></i> {{t "system_tests.pref_reconciler_enable_btn"}}
         {{end}}
       </button>
     </form>
@@ -330,27 +327,27 @@
     <div>
       <h3 style="margin:0"><i class="fa-solid fa-vial"></i> {{t "title.admin_system_tests"}}</h3>
       <p style="color:var(--text-muted);margin:8px 0 0 0">
-        {{len .Tests}} test(s). Each runs in-process, ≤ 5s timeout. Failures do not block other tests.
+        {{tf "system_tests.tests_summary_help" (len .Tests)}}
       </p>
     </div>
     <form method="post" action="/admin/system_tests/run" style="display:inline">
       <button type="submit" class="btn btn-primary">
-        <i class="fa-solid fa-play"></i> Run all
+        <i class="fa-solid fa-play"></i> {{t "system_tests.run_all_btn"}}
       </button>
     </form>
   </div>
 
   {{if .LiveResults}}
-  <h4 style="margin-top:24px">Live result ({{.LiveSummary.Pass}} pass, {{.LiveSummary.Fail}} fail, {{.LiveSummary.Skip}} skip · {{.LiveSummary.Duration}})</h4>
+  <h4 style="margin-top:24px">{{tf "system_tests.live_result_summary" .LiveSummary.Pass .LiveSummary.Fail .LiveSummary.Skip .LiveSummary.Duration}}</h4>
   {{else if .LastResults}}
   <h4 style="margin-top:24px">
     {{t "system_tests.last_run_label"}}
     <small style="color:var(--text-muted);font-weight:normal">
       {{tf "system_tests.last_run_age" (humanizeAgeSeconds .LastRunAgeSec)}}
-      · {{.LastSummary.Pass}} <span class="text-pass">pass</span>,
-        {{.LastSummary.Fail}} <span class="text-fail">fail</span>,
-        {{.LastSummary.Skip}} <span class="text-skip">skip</span>
-      · run #{{.LastRunID}}
+      · {{.LastSummary.Pass}} <span class="text-pass">{{t "system_tests.summary_pass"}}</span>,
+        {{.LastSummary.Fail}} <span class="text-fail">{{t "system_tests.summary_fail"}}</span>,
+        {{.LastSummary.Skip}} <span class="text-skip">{{t "system_tests.summary_skip"}}</span>
+      · {{tf "system_tests.run_number_label" .LastRunID}}
     </small>
   </h4>
   {{else}}
@@ -364,8 +361,8 @@
         <th>{{t "system_tests.col_test"}}</th>
         <th>{{t "system_tests.col_category"}}</th>
         <th>{{t "system_tests.col_description"}}</th>
-        <th>Output</th>
-        <th style="width:100px">Duration</th>
+        <th>{{t "system_tests.col_output"}}</th>
+        <th style="width:100px">{{t "system_tests.col_duration"}}</th>
       </tr>
     </thead>
     <tbody>
@@ -387,10 +384,10 @@
             {{else}}<i class="fa-solid fa-circle" style="color:#6c757d"></i>{{end}}
         </td>
         <td><code>{{.TestName}}</code></td>
-        <td><span class="badge badge-category">modules</span></td>
+        <td><span class="badge badge-category">{{t "system_tests.category_modules"}}</span></td>
         <td>
           <a href="{{.Link}}"><code>{{.Name}}</code></a>
-          · state <b>{{.State}}</b>{{if .Enabled}} · enabled{{else}} · disabled{{end}}
+          {{t "system_tests.module_state_label"}} <b>{{.State}}</b>{{if .Enabled}}{{t "system_tests.module_enabled_suffix"}}{{else}}{{t "system_tests.module_disabled_suffix"}}{{end}}
           {{if .LastError}}<div style="color:#dc3545;font-size:12px">{{.LastError}}</div>{{end}}
         </td>
         <td colspan="2">
@@ -409,10 +406,10 @@
       {{$rowStatus := indexResultByName $src $testName}}
       <tr{{if and (not $.LiveResults) $.LastResults}}{{if eq $rowStatus "fail"}} class="row-fail"{{end}}{{end}}>
         <td>
-          {{if eq $rowStatus "pass"}}<i class="fa-solid fa-circle-check" style="color:#198754" title="pass"></i>
-          {{else if eq $rowStatus "fail"}}<i class="fa-solid fa-circle-xmark" style="color:#dc3545" title="fail"></i>
-          {{else if eq $rowStatus "skip"}}<i class="fa-solid fa-circle-pause" style="color:#6c757d" title="skip"></i>
-          {{else}}<i class="fa-solid fa-circle" style="color:#6c757d" title="no data"></i>{{end}}
+          {{if eq $rowStatus "pass"}}<i class="fa-solid fa-circle-check" style="color:#198754" title="{{t "system_tests.status_pass_title"}}"></i>
+          {{else if eq $rowStatus "fail"}}<i class="fa-solid fa-circle-xmark" style="color:#dc3545" title="{{t "system_tests.status_fail_title"}}"></i>
+          {{else if eq $rowStatus "skip"}}<i class="fa-solid fa-circle-pause" style="color:#6c757d" title="{{t "system_tests.status_skip_title"}}"></i>
+          {{else}}<i class="fa-solid fa-circle" style="color:#6c757d" title="{{t "system_tests.status_no_data_title"}}"></i>{{end}}
         </td>
         <td><code>{{.Name}}</code></td>
         <td><span class="badge badge-category">{{.Category}}</span></td>
@@ -584,7 +581,7 @@ function copySystemTestOutput(btn) {
   var text = pre.textContent || '';
   var done = function() {
     var orig = btn.innerHTML;
-    btn.innerHTML = '<i class="fa-solid fa-check"></i> OK';
+    btn.innerHTML = '<i class="fa-solid fa-check"></i> ' + {{t "system_tests.copy_ok_label" | safeJSON}};
     setTimeout(function() { btn.innerHTML = orig; }, 1500);
   };
   if (navigator.clipboard && navigator.clipboard.writeText) {
