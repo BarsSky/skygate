@@ -41,6 +41,9 @@
     <strong>Manager not wired.</strong> {{.NotWiredMsg}}
   </div>
 {{else}}
+  {{/* B326: the card is the mobile horizontal scroller, but this page renders the table
+       outside a card, so it gets the explicit wrapper the other pages use. */}}
+  <div class="table-wrap">
   <table class="modules-table">
     <thead>
       <tr>
@@ -78,5 +81,6 @@
       {{end}}
     </tbody>
   </table>
+  </div>
 {{end}}
 {{end}}

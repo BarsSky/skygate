@@ -1043,3 +1043,36 @@ footer a:hover{color:var(--accent)}
   gap: 6px;
   align-items: center;
 }
+
+/* ── B326 (2026-09-25) — narrow screens: a table must never push the PAGE sideways ────
+   Operator report: «таблицы становятся широкими и большими … некоторые таблицы начинают
+   ломаться и не поддерживают скролл уходя за экран отображения».
+
+   The B1–B320-style audit of the panel (docs/gate-regression-power.md's sibling review)
+   measured why: `body{overflow-x:hidden}` (themes.css, body rule) means there is NO
+   page-level horizontal scrollbar at all — a wide table is not "scrollable off-screen",
+   its right-hand columns are silently CLIPPED and unreachable. The only scroller is
+   `.table-wrap{overflow-x:auto}`, which is opt-in: 64 of the 84 tables in the templates do
+   not use it. The min-content width is inflated further by `table{width:100%}` plus
+   `th{white-space:nowrap}` (one page has 830px of headers alone).
+
+   Fixing 64 templates by hand is a large, error-prone sweep, so the fix here is systemic and
+   markup-free, and only under the mobile breakpoint:
+     * the CARD becomes the horizontal scroll container — every table inside a card scrolls
+       instead of clipping, and the table keeps its normal table layout (unlike the
+       `table{display:block}` trick, which would also drop `width:100%`);
+     * `th{white-space:normal}` removes most of the forced min-width;
+     * long tokens (keys, DSNs, UUIDs) wrap instead of defining a column;
+     * form controls and button/header rows cannot exceed the card.
+   Desktop is untouched. */
+@media (max-width:768px){
+  .card{overflow-x:auto}
+  th{white-space:normal}
+  th,td{padding:8px 8px;font-size:13px}
+  td code,td .mono,td pre,code,.mono,pre{overflow-wrap:anywhere}
+  select,input,textarea{max-width:100%}
+  .btn-row,.title-row{flex-wrap:wrap}
+  /* The create-user form is a hard 3-column grid with no mobile override. */
+  .user-form-grid{grid-template-columns:1fr}
+}
+
