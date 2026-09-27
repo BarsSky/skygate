@@ -20,6 +20,7 @@
 package exit_rules
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net"
@@ -489,17 +490,18 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	groupedByUser := map[string]userGroup{}
 	totalRules := len(rr)
 	totalPct := 0
-	maxTotal := 0
-	if s.Cfg != nil {
-		maxTotal = s.Cfg.MaxTotalRules
-	}
+	// B328: display the caps the guard ENFORCES (global_settings > .env > default), so a
+	// panel override cannot leave the page quoting a limit that is no longer in force.
+	adminLimits, limitSources := s.effectiveRuleLimits(c.Username)
+	maxTotal := adminLimits.MaxTotal
 	if maxTotal > 0 {
 		totalPct = totalRules * 100 / maxTotal
 	}
 	for _, rule := range rr {
 		ug, ok := groupedByUser[rule.UserName]
 		if !ok {
-			ug = userGroup{Devices: map[int]devNodeGroup{}, UserLimit: s.getMaxRulesForUser(rule.UserName)}
+			ruleLimits, _ := s.effectiveRuleLimits(rule.UserName)
+			ug = userGroup{Devices: map[int]devNodeGroup{}, UserLimit: ruleLimits.MaxPerUser}
 		}
 		dg, ok := ug.Devices[rule.DeviceID]
 		if !ok {
@@ -598,7 +600,40 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		"form_target_type": r.URL.Query().Get("form_target_type"),
 		"form_target_value":r.URL.Query().Get("form_target_value"),
 		"form_action":      r.URL.Query().Get("form_action"),
+		// B328: keep the «все устройства» checkbox ticked across the redirect, so a
+		// refused submit does not silently drop the option the operator chose.
+		"all_devices": isFormChecked(r.URL.Query().Get("all_devices")),
+		// B328: the rule-caps card. It renders the EFFECTIVE value of every level with
+		// the layer it came from (db / env / default), so the operator can see whether
+		// editing .env would change anything at all — the same honesty the DERP probe
+		// card uses (B296). The DB row is shown only when it exists, so an empty input
+		// means "inherit".
+		"limit_per_device":          adminLimits.MaxPerDevice,
+		"limit_per_user":            adminLimits.MaxPerUser,
+		"limit_total":               adminLimits.MaxTotal,
+		"limit_per_device_source":   string(limitSources["per_device"].Source),
+		"limit_per_user_source":     string(limitSources["per_user"].Source),
+		"limit_total_source":        string(limitSources["total"].Source),
+		"limit_per_device_override": dbLimitOverride(s.dbc(), SettingKeyMaxPerDevice),
+		"limit_total_override":      dbLimitOverride(s.dbc(), SettingKeyMaxTotal),
+		"limits_saved":              r.URL.Query().Get("limits_saved") == "1",
+		"limits_err":                r.URL.Query().Get("limits_err"),
 	})
+}
+
+// dbLimitOverride returns the raw stored override ("" when the row is absent), so the
+// panel's input shows what is actually stored rather than the effective value — an input
+// pre-filled with the effective value would silently PROMOTE an env/default value into a
+// database override the moment the operator saved the form for an unrelated reason.
+func dbLimitOverride(d *sql.DB, key string) string {
+	if d == nil {
+		return ""
+	}
+	v, err := db.GetGlobalSetting(d, key, "")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(v)
 }
 
 // ============================================================================
@@ -736,6 +771,27 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 		action = "accept"
 	}
 
+	// B328: «все устройства» for the target user. The admin form's device field is a
+	// number, so the option arrives as a separate flag instead of the /my page's extra
+	// <option value="all">. The device that IS named (or the user's first one) stays the
+	// primary and every downstream check — ownership by the TARGET user, exit-node
+	// refusal, IP/CIDR validation — runs against it unchanged; the fan-out at the end
+	// covers the rest. Pre-B328 the admin path had no such option at all: form_admin.go
+	// never called MarkDeviceRulesAllDevices, so mirroring one rule across another
+	// user's device set had to be done device by device.
+	allDevices := isFormChecked(r.FormValue("all_devices"))
+	if allDevices && strings.TrimSpace(deviceIDStr) == "" {
+		targetUID, _ := strconv.Atoi(userIDStr)
+		ids, derr := db.DeviceIDsForPortalUser(s.dbc(), int64(targetUID))
+		if derr != nil || len(ids) == 0 {
+			http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+				fmt.Sprintf("all_devices: user_id=%d has no attributed device to attach the rule to (register or adopt a device first)", targetUID),
+				userIDStr, 0, exitNode, targetType, targetValue, action), http.StatusFound)
+			return
+		}
+		deviceIDStr = strconv.Itoa(ids[0])
+	}
+
 	if !validateAdminRuleForm(userIDStr, deviceIDStr, exitNode, targetType, targetValue, action) {
 		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
 			"missing or invalid form fields",
@@ -802,45 +858,33 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 7+8+9. DNS resolve + limits + insert (mirrors form_my.go).
+	// B328: the caps come from the shared resolver (global_settings > .env > default),
+	// and the unit is the one the page shows — this is now the SAME function the /my path
+	// and the usage panel use, so the three surfaces cannot disagree.
+	//
 	// Per-user limit check uses the TARGET user's rule count
 	// (not the admin's) — admin has no rules of their own,
 	// but a malicious admin should still hit the per-user
 	// cap when stuffing rules into another user's account.
-	maxPerUser := s.getMaxRulesForUser(targetUserName)
-	if maxPerUser > 0 {
-		uc, _ := db.CountEnabledNonSubnetRulesForUser(s.dbc(), int64(uid))
-		if uc >= maxPerUser {
-			http.Redirect(w, r, buildAdminExitRuleRedirectURL(
-				fmt.Sprintf("user limit exceeded: %d/%d rules for user %s", uc, maxPerUser, targetUserName),
-				userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
-			return
-		}
+	limits, _ := s.effectiveRuleLimits(targetUserName)
+	targetCounts := measureRuleLimits(s.dbc(), limits, int64(uid), devID, targetUserName)
+	if limits.MaxPerUser > 0 && targetCounts.PerUser >= limits.MaxPerUser {
+		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+			fmt.Sprintf("user limit exceeded: %d/%d rules for user %s", targetCounts.PerUser, limits.MaxPerUser, targetUserName),
+			userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+		return
 	}
-	maxPerDevice := 0
-	if s.Cfg != nil {
-		maxPerDevice = s.Cfg.MaxRulesPerDevice
+	if limits.MaxPerDevice > 0 && targetCounts.PerDevice >= limits.MaxPerDevice {
+		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+			fmt.Sprintf("device limit exceeded: %d/%d user-facing rules on device %d", targetCounts.PerDevice, limits.MaxPerDevice, devID),
+			userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+		return
 	}
-	if maxPerDevice > 0 {
-		dc, _ := db.CountEnabledNonSubnetRulesForUserDevice(s.dbc(), int64(uid), devID)
-		if dc >= maxPerDevice {
-			http.Redirect(w, r, buildAdminExitRuleRedirectURL(
-				fmt.Sprintf("device limit exceeded: %d/%d user-facing rules on device %d", dc, maxPerDevice, devID),
-				userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
-			return
-		}
-	}
-	maxTotal := 0
-	if s.Cfg != nil {
-		maxTotal = s.Cfg.MaxTotalRules
-	}
-	if maxTotal > 0 {
-		tc, _ := db.CountEnabledRules(s.dbc())
-		if tc >= maxTotal {
-			http.Redirect(w, r, buildAdminExitRuleRedirectURL(
-				fmt.Sprintf("system limit exceeded: %d/%d user-facing rules", tc, maxTotal),
-				userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
-			return
-		}
+	if limits.MaxTotal > 0 && targetCounts.Total >= limits.MaxTotal {
+		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+			fmt.Sprintf("system limit exceeded: %d/%d user-facing rules", targetCounts.Total, limits.MaxTotal),
+			userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+		return
 	}
 
 	// 7. DNS resolve (admin path mirrors my path).
@@ -906,23 +950,54 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = insertedCount
 
+	// B328: materialise «все устройства» for the TARGET user. The intent is marked
+	// first and the SAME pass the five-minute tick runs does the copying, so the
+	// admin path and the /my path cannot drift apart in what they produce.
+	if allDevices {
+		for _, ip := range ipsToInsert {
+			if _, merr := db.MarkDeviceRulesAllDevices(s.dbc(), int64(uid), exitNode, typeToInsert, ip); merr != nil {
+				log.Printf("admin exit-rules: could not mark %s %s as all-devices for user %d: %v", typeToInsert, ip, uid, merr)
+			}
+		}
+		fanned, perr := s.propagateAllDeviceRules()
+		if perr != nil {
+			log.Printf("admin exit-rules: all-devices marked for user %d but the immediate fan-out failed: %v (the maintenance pass will retry)", uid, perr)
+		} else {
+			log.Printf("admin exit-rules: all-devices rule %s %s via %s for user %s marked (fan-out created %d row(s))",
+				typeToInsert, targetValue, exitNode, targetUserName, fanned)
+		}
+	}
+
 	// 10. audit row (action=admin_add_exit_rule_for_user,
 	// not the generic PostMyExitRule's action — the operator
 	// needs to see which admin added the rule on whose
 	// behalf).
 	s.Backend.Audit(c.UserID, c.Username, "admin_add_exit_rule_for_user",
-		fmt.Sprintf("added %d rule(s) for user=%s (uid=%d) device=%d exit=%s target=%s",
-			insertedCount, targetUserName, uid, devID, exitNode, targetValue))
+		fmt.Sprintf("added %d rule(s) for user=%s (uid=%d) device=%d exit=%s target=%s all_devices=%t",
+			insertedCount, targetUserName, uid, devID, exitNode, targetValue, allDevices))
 
 	// success redirect (mirrors PostMyExitRule's ?applied=1).
 	warnParam := ""
 	if dnsWarning != "" {
 		warnParam = "&warn=" + url.QueryEscape(dnsWarning)
 	}
+	if allDevices {
+		warnParam += "&all_devices=1"
+	}
 	http.Redirect(w, r, fmt.Sprintf("/admin/exit-rules?applied=1&form_user_id=%s&form_device_id=%s%s",
 		url.QueryEscape(userIDStr),
 		url.QueryEscape(strconv.Itoa(devID)),
 		warnParam), http.StatusFound)
+}
+
+// isFormChecked reads an HTML checkbox the way browsers submit it: "on" when checked
+// by default, or an explicit value. Anything else (absent, "", "0", "false") is false.
+func isFormChecked(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "on", "true", "yes":
+		return true
+	}
+	return false
 }
 
 // atoiOrZero is a tiny helper to avoid panicking in the

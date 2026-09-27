@@ -168,25 +168,9 @@ func (s *Service) saveACLSnapshot(config, username string) int {
 	return acl.SaveACLSnapshot(s.dbc(), config, username, s.Notifier)
 }
 
-// getMaxRulesForUser returns the per-user rule limit or
-// the default. Reads SKYGATE_USER_MAX_RULES="user:N"
-// overrides from the loaded config (s.Cfg.UserMaxRules).
-//
-// 2026-07-29: extracted from internal/handlers/handlers.go
-// during Phase B step 4e. The form_my + form_admin
-// handlers needed the per-user cap and the *App method
-// was the wrong layer (App has no per-feature state).
-// Moved verbatim: same fallback default
-// (MaxRulesPerDevice, default 200), same env-var lookup
-// via s.Cfg. The legacy App.getMaxRulesForUser wrapper
-// is removed in step 4f when form_my.go moves to
-// feature/exit_rules/ (the only remaining caller).
-func (s *Service) getMaxRulesForUser(username string) int {
-	if s.Cfg == nil {
-		return 0
-	}
-	if v, ok := s.Cfg.UserMaxRules[username]; ok {
-		return v
-	}
-	return s.Cfg.MaxRulesPerDevice
-}
+// getMaxRulesForUser was removed by B328: the per-user level is one rung of the limit
+// ladder, and reading it here while the other rungs were read elsewhere is exactly how
+// the page and the guard drifted apart (the operator saw `cyborg (1/500)` next to a
+// refusal quoting 500/500). All three rungs now resolve in one place —
+// limits_settings_b328.go `effectiveRuleLimits` (global_settings row > .env > default),
+// so the value that is DISPLAYED and the value that is ENFORCED come from the same call.

@@ -108,11 +108,11 @@ func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	addedIDs := []int{}
 	dupCount := 0
 	errors := []string{}
-	// 2026-07-07: issue #12 — pre-check total limit before processing
-	maxTotal := 0
-	if s.Cfg != nil {
-		maxTotal = s.Cfg.MaxTotalRules
-	}
+	// 2026-07-07: issue #12 — pre-check total limit before processing.
+	// B328: the caps come from the shared resolver (global_settings > .env > default) so
+	// the API and both web forms cannot drift apart on what the limit IS.
+	limits, _ := s.effectiveRuleLimits(c.Username)
+	maxTotal := limits.MaxTotal
 	if maxTotal > 0 {
 		// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledRules
 		currentTotal, _ := db.CountEnabledRules(s.dbc())
@@ -130,13 +130,16 @@ func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	for i, rl := range req.Rules {
 		// 2026-07-07: per-device limit
-		maxPerDevice := 0
-		if s.Cfg != nil {
-			maxPerDevice = s.Cfg.MaxRulesPerDevice
-		}
+		maxPerDevice := limits.MaxPerDevice
 		if maxPerDevice > 0 {
-			// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledRulesForDevice
-			deviceRuleCount, _ := db.CountEnabledRulesForDevice(s.dbc(), rl.DeviceID)
+			// B328: the SAME unit of measure as both web forms and the usage panel —
+			// this caller's user-facing (non-subnet, non-derived) rules on this
+			// device. Pre-B328 the API used db.CountEnabledRulesForDevice, which
+			// counts EVERY enabled row including the 454 derived subnet ranges
+			// system-wide: live, device 9 held 263 such rows while the page showed
+			// 33/500, so the API would have refused at 500 where the panel said
+			// there were 467 slots left. One cap, one unit.
+			deviceRuleCount := countUserFacingForUserDevice(s.dbc(), c.UserID, rl.DeviceID)
 			if deviceRuleCount >= maxPerDevice {
 				errors = append(errors, fmt.Sprintf("rule[%d]: device limit exceeded (%d/%d)", i, deviceRuleCount, maxPerDevice))
 				continue

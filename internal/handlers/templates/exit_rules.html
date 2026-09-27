@@ -71,6 +71,25 @@
   <i class="fa-solid fa-triangle-exclamation"></i>
   {{tf "exit_rules.form_error" .err}}
 </div>{{end}}
+{{/* B328: the result of «распространить на все мои устройства». Three distinct
+     outcomes, because "0 rows created" is a legitimate success (the other devices
+     already had the rule) and must not look like a silent no-op:
+       ok     — the intent is recorded and N devices are covered;
+       marked — the intent is recorded but the immediate copy failed, so the
+                five-minute maintenance pass will finish it (recoverable, not lost);
+       already— the rule was already an all-devices rule. */}}
+{{if eq .spread "ok"}}<div class="alert alert-success" id="spread-banner">
+  <i class="fa-solid fa-arrows-turn-right"></i>
+  {{tf "exit_rules.spread_ok" .spread_devices .spread_created}}
+</div>{{end}}
+{{if eq .spread "marked"}}<div class="alert alert-warn" id="spread-banner">
+  <i class="fa-solid fa-clock"></i>
+  {{tf "exit_rules.spread_marked" .spread_err}}
+</div>{{end}}
+{{if eq .spread "already"}}<div class="alert alert-info" id="spread-banner">
+  <i class="fa-solid fa-circle-info"></i>
+  {{t "exit_rules.spread_already"}}
+</div>{{end}}
 {{/* B123: duplicate alert now carries the blocking IP, the parent_domain
      (if the IP is owned by a DNS-tracked /32 from another domain), and a
      link to the rule row that already covers the target. The .existing
@@ -283,11 +302,21 @@
                         {{end}}
                       </td>
                       <td class="col-delete">
+                        {{/* B328: «распространить на все мои устройства» — turns a rule
+                             saved BEFORE the operator's other devices existed into an
+                             all-devices rule. Hidden where the rule already carries the
+                             marker (the ALL-DEVICES section renders those). */}}
+                        {{if not .AllDevices}}<button type="submit" class="btn btn-sm" form="spread-{{.ID}}" title="{{t "exit_rules.spread_button_title"}}"><i class="fa-solid fa-arrows-turn-right"></i></button>{{end}}
                         <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="{{t "common.delete"}}" onclick="return confirm('{{t "exit_rules.confirm_single_delete"}}')"><i class="fa-solid fa-trash"></i></button>
                       </td>
                     </tr>
                     <form id="single-delete-{{.ID}}" method="post" action="/my/exit-rules/delete" style="display:none">
                       <input type="hidden" name="id" value="{{.ID}}">
+                    </form>
+                    <form id="spread-{{.ID}}" method="post" action="/my/exit-rules/spread" style="display:none">
+                      <input type="hidden" name="exit_node" value="{{$exitNode}}">
+                      <input type="hidden" name="target_type" value="{{.TargetType}}">
+                      <input type="hidden" name="target_value" value="{{.TargetValue}}">
                     </form>
                     {{end}}
                   </table>
@@ -319,11 +348,19 @@
                       {{end}}
                     </td>
                     <td class="col-delete">
+                      {{/* B328: see the grouped copy above — omitted where the row
+                           already carries the all-devices marker. */}}
+                      {{if not .AllDevices}}<button type="submit" class="btn btn-sm" form="spread-{{.ID}}" title="{{t "exit_rules.spread_button_title"}}"><i class="fa-solid fa-arrows-turn-right"></i></button>{{end}}
                       <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="{{t "common.delete"}}" onclick="return confirm('{{t "exit_rules.confirm_single_delete"}}')"><i class="fa-solid fa-trash"></i></button>
                     </td>
                   </tr>
                   <form id="single-delete-{{.ID}}" method="post" action="/my/exit-rules/delete" style="display:none">
                     <input type="hidden" name="id" value="{{.ID}}">
+                  </form>
+                  <form id="spread-{{.ID}}" method="post" action="/my/exit-rules/spread" style="display:none">
+                    <input type="hidden" name="exit_node" value="{{$exitNode}}">
+                    <input type="hidden" name="target_type" value="{{.TargetType}}">
+                    <input type="hidden" name="target_value" value="{{.TargetValue}}">
                   </form>
                   {{end}}
                 </table>
@@ -390,11 +427,21 @@
                         {{end}}
                       </td>
                       <td class="col-delete">
+                        {{/* B328: «распространить на все мои устройства» — turns a rule
+                             saved BEFORE the operator's other devices existed into an
+                             all-devices rule. Hidden where the rule already carries the
+                             marker (the ALL-DEVICES section renders those). */}}
+                        {{if not .AllDevices}}<button type="submit" class="btn btn-sm" form="spread-{{.ID}}" title="{{t "exit_rules.spread_button_title"}}"><i class="fa-solid fa-arrows-turn-right"></i></button>{{end}}
                         <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="{{t "common.delete"}}" onclick="return confirm('{{t "exit_rules.confirm_single_delete"}}')"><i class="fa-solid fa-trash"></i></button>
                       </td>
                     </tr>
                     <form id="single-delete-{{.ID}}" method="post" action="/my/exit-rules/delete" style="display:none">
                       <input type="hidden" name="id" value="{{.ID}}">
+                    </form>
+                    <form id="spread-{{.ID}}" method="post" action="/my/exit-rules/spread" style="display:none">
+                      <input type="hidden" name="exit_node" value="{{$exitNode}}">
+                      <input type="hidden" name="target_type" value="{{.TargetType}}">
+                      <input type="hidden" name="target_value" value="{{.TargetValue}}">
                     </form>
                     {{end}}
                   </table>
@@ -421,11 +468,19 @@
                       {{end}}
                     </td>
                     <td class="col-delete">
+                      {{/* B328: see the grouped copy above — omitted where the row
+                           already carries the all-devices marker. */}}
+                      {{if not .AllDevices}}<button type="submit" class="btn btn-sm" form="spread-{{.ID}}" title="{{t "exit_rules.spread_button_title"}}"><i class="fa-solid fa-arrows-turn-right"></i></button>{{end}}
                       <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="{{t "common.delete"}}" onclick="return confirm('{{t "exit_rules.confirm_single_delete"}}')"><i class="fa-solid fa-trash"></i></button>
                     </td>
                   </tr>
                   <form id="single-delete-{{.ID}}" method="post" action="/my/exit-rules/delete" style="display:none">
                     <input type="hidden" name="id" value="{{.ID}}">
+                  </form>
+                  <form id="spread-{{.ID}}" method="post" action="/my/exit-rules/spread" style="display:none">
+                    <input type="hidden" name="exit_node" value="{{$exitNode}}">
+                    <input type="hidden" name="target_type" value="{{.TargetType}}">
+                    <input type="hidden" name="target_value" value="{{.TargetValue}}">
                   </form>
                   {{end}}
                 </table>

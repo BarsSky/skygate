@@ -241,10 +241,12 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		HintDanger string
 	}
 	var deviceInfos []DeviceInfo
-	maxPerDeviceLimit := 0
-	if s.Cfg != nil {
-		maxPerDeviceLimit = s.Cfg.MaxRulesPerDevice
-	}
+	// B328: the number shown next to each device (`cyborg (1/500)`) must be the number
+	// the guard ENFORCES. Reading Cfg directly here is how the page and the guard could
+	// disagree — and the operator's report was literally a page showing 1/500 next to a
+	// refusal quoting 500/500.
+	displayLimits, _ := s.effectiveRuleLimits(c.Username)
+	maxPerDeviceLimit := displayLimits.MaxPerDevice
 	lang := ""
 	if s.I18n != nil {
 		lang = s.I18n.LangFromRequest(r)
@@ -502,12 +504,12 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Total rules count (all enabled)
+	// Total rules count (all enabled).
+	// B328: the ceiling shown here is the one the guard ENFORCES (db > env > default),
+	// not the raw config field — otherwise a panel override would leave the system-load
+	// badge computing a percentage against a limit that is no longer in force.
+	maxTotal := displayLimits.MaxTotal
 	totalRules := 0
-	maxTotal := 0
-	if s.Cfg != nil {
-		maxTotal = s.Cfg.MaxTotalRules
-	}
 	if maxTotal > 0 {
 		// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledRules
 		totalRules, _ = db.CountEnabledRules(s.dbc())
@@ -544,6 +546,9 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	blockingIP := r.URL.Query().Get("blocking_ip")
 	parentDomain := r.URL.Query().Get("parent_domain")
 	partial := r.URL.Query().Get("partial") == "1"
+	// B328: the spread action reports its result through the URL (see the render map).
+	spreadDevices, _ := strconv.Atoi(r.URL.Query().Get("spread_devices"))
+	spreadCreated, _ := strconv.Atoi(r.URL.Query().Get("spread_created"))
 
 	// 2026-07-06: form persistence (issue #1) — после добавления правила
 	// сохраняем введённые значения в URL, чтобы форма не сбрасывалась.
@@ -567,7 +572,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// 2026-07-11: Этап 9 part 2 — moved to db.CountEnabledNonSubnetRulesForUser
 		userFacingCount, _ = db.CountEnabledNonSubnetRulesForUser(s.dbc(), c.UserID)
 	}
-	maxPerUser := s.getMaxRulesForUser(c.Username)
+	maxPerUser := displayLimits.MaxPerUser
 
 	// 2026-07-09: per-device breakdown — shows count per device_id so the
 	// UI can label each device with its own quota.
@@ -803,6 +808,17 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		"parent_domain": parentDomain,
 		"partial":       partial,
 		"HasRoutes":     anyRoutes,
+		// B328: the result of the «распространить на все мои устройства» action.
+		// spread="" (absent) renders nothing; "ok" reports how many devices and rows
+		// it produced; "marked" means the intent is recorded but the immediate fan-out
+		// failed and the maintenance pass will retry; "already" means the rule was
+		// already an all-devices rule. A silent success was the trap here: the action
+		// can legitimately create zero rows (the other devices already had the rule),
+		// so "nothing happened" must be distinguishable from "nothing needed doing".
+		"spread":         r.URL.Query().Get("spread"),
+		"spread_devices": spreadDevices,
+		"spread_created": spreadCreated,
+		"spread_err":     r.URL.Query().Get("spread_err"),
 	})
 }
 
@@ -902,64 +918,27 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	// for DNS-resolved domains are SERVICE rules and must not
 	// block new domain additions. IP/subnet rules entered
 	// manually (without parent_domain) still count.
-	// 2026-07-11: Этап 9 part 2 — closure replaced with the typed
-	// db.* helpers. The `total` flag is now a no-op (the system
-	// always uses the non-subnet count for the per-user cap; the
-	// total-rules ceiling lives in Cfg.MaxTotalRules and is checked
-	// separately in the API).
-	countUserFacing := func(userID int64, deviceID int, _ bool) int {
-		switch {
-		case userID > 0 && deviceID > 0:
-			n, _ := db.CountEnabledNonSubnetRulesForUserDevice(s.dbc(), userID, deviceID)
-			return n
-		case userID > 0:
-			n, _ := db.CountEnabledNonSubnetRulesForUser(s.dbc(), userID)
-			return n
-		default:
-			n, _ := db.CountEnabledRules(s.dbc())
-			return n
-		}
-	}
-	// 2026-07-07: issue #12 — limit check
-	// 2026-07-09: считаем только "user-facing" правила (см. выше).
-	maxPerUser := s.getMaxRulesForUser(c.Username)
-	if maxPerUser > 0 {
-		userRuleCount := countUserFacing(c.UserID, 0, false)
-		if userRuleCount >= maxPerUser {
-			// B237.19: redirect with flash (not http.Error)
-			http.Redirect(w, r, buildFormErrorRedirectURL(
-				fmt.Sprintf("user limit exceeded: %d/%d rules for user %s (auto-resolved /32 IP rules не учитываются)", userRuleCount, maxPerUser, c.Username),
-				devID, exitNode, targetType, targetValue, action), http.StatusFound)
-			return
-		}
-	}
-	maxPerDevice := 0
-	if s.Cfg != nil {
-		maxPerDevice = s.Cfg.MaxRulesPerDevice
-	}
-	if maxPerDevice > 0 {
-		deviceRuleCount := countUserFacing(0, devID, false)
-		if deviceRuleCount >= maxPerDevice {
-			// B237.19: redirect with flash (not http.Error)
-			http.Redirect(w, r, buildFormErrorRedirectURL(
-				fmt.Sprintf("device limit exceeded: %d/%d user-facing rules on this device (auto-resolved /32 IP rules не учитываются)", deviceRuleCount, maxPerDevice),
-				devID, exitNode, targetType, targetValue, action), http.StatusFound)
-			return
-		}
-	}
-	maxTotal := 0
-	if s.Cfg != nil {
-		maxTotal = s.Cfg.MaxTotalRules
-	}
-	if maxTotal > 0 {
-		totalCount := countUserFacing(0, 0, true)
-		if totalCount >= maxTotal {
-			// B237.19: redirect with flash (not http.Error)
-			http.Redirect(w, r, buildFormErrorRedirectURL(
-				fmt.Sprintf("system limit exceeded: %d/%d user-facing rules", totalCount, maxTotal),
-				devID, exitNode, targetType, targetValue, action), http.StatusFound)
-			return
-		}
+	//
+	// B328 (2026-09-25): the ladder now lives in rule_limits_b328.go as a pure decision
+	// over an explicit counts struct, and the caps themselves come from
+	// limits_settings_b328.go (global_settings row > .env > default) so the operator can
+	// change them from the panel instead of an `.env` edit plus a container recreate.
+	// The pre-B328 closure was called as countUserFacing(0, devID, false) for the
+	// PER-DEVICE level, and its switch had no "device without user" case, so it fell
+	// through to the system-wide count (db.CountEnabledRules) — live: 500/500 while the
+	// page showed the same device as 1/500, which refused every insert for every user.
+	limits, _ := s.effectiveRuleLimits(c.Username)
+	// devID is the target device. When the operator picked "all my devices" the form set
+	// it to the user's first device; the fan-out below writes to every one of them, and
+	// each of those writes passes through insertRuleUnique, which does not re-check this
+	// ladder — so the per-device level is enforced against the device the form actually
+	// named, and the fan-out reports what it created.
+	counts := measureRuleLimits(s.dbc(), limits, c.UserID, devID, c.Username)
+	if reason := limits.ExceedReason(counts); reason != "" {
+		// B237.19: redirect with flash (not http.Error)
+		http.Redirect(w, r, buildFormErrorRedirectURL(
+			reason, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+		return
 	}
 
 	// 2026-07-11: bug fix — strict ownership + role validation.

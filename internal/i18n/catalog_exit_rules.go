@@ -131,6 +131,13 @@ var ruExitRules = map[string]string{
 	"exit_rules.cascade_hint_title":        "Удаление домена каскадно удалит все связанные /32",
 	"exit_rules.confirm_multi_delete":      "Удалить выбранные правила? Для доменов также удалятся все связанные /32, которые autoupdater создал.",
 	"exit_rules.confirm_single_delete":     "Удалить правило?",
+	// B328: «распространить на все мои устройства» — для правила, созданного ДО
+	// появления остальных устройств. Раньше это можно было сделать только заново
+	// добавив правило с выбранной опцией «все мои устройства».
+	"exit_rules.spread_button_title": "Распространить это правило на все мои устройства (сейчас оно только на этом)",
+	"exit_rules.spread_ok":           "Правило распространено: устройств у вас %d, создано строк %d. Новые устройства получат его автоматически.",
+	"exit_rules.spread_marked":       "Намерение «все мои устройства» записано, но скопировать сразу не удалось: %s. Периодический проход повторит попытку.",
+	"exit_rules.spread_already":      "Это правило уже помечено как «все мои устройства» — оно применяется ко всем вашим устройствам.",
 	"exit_rules.reset_filters":             "Сбросить фильтры",
 	"exit_rules.delete_selected":           "Удалить выбранные",
 	"exit_rules.user_facing":               "Мои правила: %d/%d",
@@ -248,6 +255,8 @@ var ruExitRules = map[string]string{
 	"exit_rules_admin.add_form_title":        "Добавить правило для устройства пользователя",
 	"exit_rules_admin.add_form_user_id":      "ID пользователя (portal_users.id)",
 	"exit_rules_admin.add_form_device_id":    "ID устройства (headscale node_id)",
+	// B328: пустое поле + эта галочка = «первое устройство пользователя».
+	"exit_rules_admin.add_form_all_devices":  "Применить ко ВСЕМ устройствам пользователя (новые устройства получат правило автоматически; поле ID можно оставить пустым)",
 	"exit_rules_admin.add_form_exit_node":    "Exit-node",
 	"exit_rules_admin.add_form_target_type":  "Тип цели",
 	"exit_rules_admin.add_form_target_value": "Значение (IP/CIDR/домен)",
@@ -255,6 +264,23 @@ var ruExitRules = map[string]string{
 	"exit_rules_admin.add_form_submit":       "Добавить правило",
 	"exit_rules_admin.add_form_help":         "Создаёт правило от имени выбранного пользователя. headscale ACL src остаётся = владелец устройства.",
 	"exit_rules_admin.add_form_applied":      "Правило добавлено",
+	// B328: карточка лимитов. Значения лимитов раньше задавались ТОЛЬКО через .env,
+	// а в докере окружение контейнера фиксируется при СОЗДАНИИ — то есть чтобы
+	// поменять число, нужно было править .env и пересоздавать контейнер.
+	"exit_rules_admin.limits_title":           "Лимиты правил",
+	"exit_rules_admin.limits_help":            "Сколько правил разрешено. Значение задаётся здесь и переопределяет .env; пустое поле = наследовать из .env (или встроенное значение по умолчанию). 0 = уровень выключен. Действует сразу, перезапуск не нужен.",
+	"exit_rules_admin.limits_col_level":       "Уровень",
+	"exit_rules_admin.limits_col_effective":   "Действует сейчас",
+	"exit_rules_admin.limits_col_source":      "Источник",
+	"exit_rules_admin.limits_level_per_device": "На устройство (user-facing)",
+	"exit_rules_admin.limits_level_per_user":  "На пользователя (user-facing)",
+	"exit_rules_admin.limits_level_total":     "Всего в системе",
+	"exit_rules_admin.limits_disabled":        "выключен",
+	"exit_rules_admin.limits_inherit_ph":      "из .env",
+	"exit_rules_admin.limits_save":            "Сохранить лимиты",
+	"exit_rules_admin.limits_saved":           "Лимиты сохранены и уже действуют.",
+	"exit_rules_admin.limits_err":             "Не удалось сохранить лимиты: %s",
+	"exit_rules_admin.limits_per_user_note":   "Лимит на пользователя берётся из SKYGATE_USER_MAX_RULES (если пользователь там указан), иначе равен лимиту на устройство — поэтому он показан только для чтения.",
 	"cleanup.title":                          "Очистка",
 	"cleanup.subtitle":                       "Слияние дубликатов device_id и удаление orphaned /32",
 	"cleanup.duplicates":                     "Дублирующиеся device_id",
@@ -442,6 +468,12 @@ var enExitRules = map[string]string{
 	"exit_rules.cascade_hint_title":        "Deleting a domain cascades to all related /32",
 	"exit_rules.confirm_multi_delete":      "Delete the selected rules? For domains, all related /32 created by autoupdater will also be removed.",
 	"exit_rules.confirm_single_delete":     "Delete this rule?",
+	// B328: «spread to all my devices» — for a rule saved BEFORE the other devices
+	// existed. Pre-B328 the only way was to re-add it with the option selected.
+	"exit_rules.spread_button_title": "Apply this rule to ALL my devices (it is only on this one right now)",
+	"exit_rules.spread_ok":           "Rule spread: you have %d device(s), %d row(s) created. Devices registered later inherit it automatically.",
+	"exit_rules.spread_marked":       "The «all my devices» intent is recorded, but copying it right away failed: %s. The periodic pass will retry.",
+	"exit_rules.spread_already":      "This rule is already marked as «all my devices» — it applies to every device you own.",
 	"exit_rules.reset_filters":             "Reset filters",
 	"exit_rules.delete_selected":           "Delete selected",
 	"exit_rules.user_facing":               "My rules: %d/%d",
@@ -558,6 +590,8 @@ var enExitRules = map[string]string{
 	"exit_rules_admin.add_form_title":        "Add rule for another user's device",
 	"exit_rules_admin.add_form_user_id":      "User ID (portal_users.id)",
 	"exit_rules_admin.add_form_device_id":    "Device ID (headscale node_id)",
+	// B328: empty device field + this checkbox = "the user's first device".
+	"exit_rules_admin.add_form_all_devices":  "Apply to ALL of the user's devices (devices registered later inherit it; the ID field may stay empty)",
 	"exit_rules_admin.add_form_exit_node":    "Exit node",
 	"exit_rules_admin.add_form_target_type":  "Target type",
 	"exit_rules_admin.add_form_target_value": "Target value (IP/CIDR/domain)",
@@ -565,6 +599,23 @@ var enExitRules = map[string]string{
 	"exit_rules_admin.add_form_submit":       "Add rule",
 	"exit_rules_admin.add_form_help":         "Adds a rule on behalf of the selected user. headscale ACL src stays = device owner.",
 	"exit_rules_admin.add_form_applied":      "Rule added",
+	// B328: the limits card. The caps used to be env-only, and under docker the
+	// container environment is frozen at CREATION — changing a number meant editing
+	// .env and recreating the container.
+	"exit_rules_admin.limits_title":           "Rule limits",
+	"exit_rules_admin.limits_help":            "How many rules are allowed. A value set here overrides .env; an empty field inherits from .env (or the built-in default). 0 disables that level. Effective immediately — no restart needed.",
+	"exit_rules_admin.limits_col_level":       "Level",
+	"exit_rules_admin.limits_col_effective":   "In force now",
+	"exit_rules_admin.limits_col_source":      "Source",
+	"exit_rules_admin.limits_level_per_device": "Per device (user-facing)",
+	"exit_rules_admin.limits_level_per_user":  "Per user (user-facing)",
+	"exit_rules_admin.limits_level_total":     "System total",
+	"exit_rules_admin.limits_disabled":        "disabled",
+	"exit_rules_admin.limits_inherit_ph":      "from .env",
+	"exit_rules_admin.limits_save":            "Save limits",
+	"exit_rules_admin.limits_saved":           "Limits saved and already in force.",
+	"exit_rules_admin.limits_err":             "Could not save the limits: %s",
+	"exit_rules_admin.limits_per_user_note":   "The per-user cap comes from SKYGATE_USER_MAX_RULES (when the user is listed there), otherwise it equals the per-device cap — which is why it is read-only here.",
 	"cleanup.title":                          "Cleanup",
 	"cleanup.subtitle":                       "Merge duplicate device_id and remove orphaned /32",
 	"cleanup.duplicates":                     "Duplicate device_id",

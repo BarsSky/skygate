@@ -12,6 +12,108 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.94 — the rule caps count what they name, and you can change them (B328)
+
+**Date:** 2026-09-25 · **Base:** `v1.5.93` → this tag · **Compatibility:** none — no schema
+change, no migration. Two new `global_settings` keys are *optional* overrides; both environments
+and both database backends are unaffected until the panel writes one.
+
+### The report
+
+> «не получилось добавить правило на другое устройство пользователя… правила что были заданы не
+> распространяются на другие устройства»
+
+The screenshot showed `cyborg (1/500)` in the device picker **and** the refusal
+`device limit exceeded: 500/500 user-facing rules on this device`.
+
+Both numbers were real, and they came from **two different queries**:
+
+| What | Value |
+|---|---|
+| page: `user_id=1 AND device_id=56 AND enabled=1 AND (target_type<>'subnet' OR parent_domain='')` | **1** |
+| guard: `countUserFacing(0, devID, false)` → `db.CountEnabledRules` = `SELECT COUNT(*) WHERE enabled=1` | **500** |
+
+`countUserFacing`'s `switch` had `(user+device)`, `(user)` and `(everything)` — but **no "device
+without user" case**, so `userID == 0` fell through to the **system-wide** count, which was then
+compared against `SKYGATE_MAX_RULES_PER_DEVICE=500`. **Every rule insert for every user was
+refused**, and the message blamed their device.
+
+Measured composition of those 500 rows: `subnet`+`parent_domain` **454** (the CIDR ranges a domain
+rule expanded into), `domain`+`parent_domain` **20**, `subnet` without **17**, `domain` without
+**9**. Per device: `skyworker` 263, `basic` 236, `cyborg` 1 — and only **46** counted as
+user-facing at all.
+
+It is a **regression, not a design choice**: the helper whose doc comment says *"The per-device …
+check (`SKYGATE_MAX_RULES_PER_DEVICE`) uses this"* existed, the usage panel uses the per-`(user,
+device)` query, and `form_admin.go` already called the right one. Only the `/my` path degraded,
+when the three checks were folded into that closure.
+
+### What changed
+
+1. **The ladder is a pure decision.** `rule_limits_b328.go` holds `ruleLimits` /
+   `ruleLimitCounts` / `ExceedReason` (no DB, no config), and every count has exactly **one**
+   legitimate producer: `countUserFacingForUserDevice(d, userID, deviceID)`,
+   `countUserFacingForUser`, `countAllEnabledRules`. There is no parameter combination that means
+   "global" by accident, so the ambiguity cannot come back — and `PerDevice` can only be filled by a
+   query that carries both identities.
+2. **«Распространить на все мои устройства» for an already saved rule** — `POST
+   /my/exit-rules/spread`, a button next to *Delete* on every rule that is not already spread. It
+   marks the intent and then runs the **same** `propagateAllDeviceRules` pass the five-minute tick
+   runs, so it cannot produce rows the tick would not. It **refuses to invent** a rule whose natural
+   key the caller does not already own, and it is idempotent. This is the operator's actual gap:
+   **33 user-facing rules on `skyworker`, all 33 absent from `cyborg`** — `all_devices` was `0` on
+   all 500 rows, because the option had only ever existed *at save time*.
+3. **The same option on `/admin/exit-rules`**, which never called `MarkDeviceRulesAllDevices` at
+   all. An empty device field resolves to the target user's first device, so the ownership and
+   exit-node checks still run against a real one.
+4. **The API uses the same unit**: it counted *all* enabled rows per device (263 for `skyworker`)
+   while the page showed `33/500`, so it would have refused at 500 where the panel said 467 slots
+   remained.
+5. **The caps are adjustable from the panel** (`/admin/exit-rules` → *Лимиты правил*): a
+   `global_settings` row **overrides** `.env`, which overrides the built-in default, and each level
+   shows **which layer its effective value came from**. This matters because under docker the
+   container environment is frozen at **creation** — changing a number meant editing `.env` and
+   `--force-recreate` (AGENTS trap #3), i.e. a service interruption, for a value the panel was
+   already displaying. Empty input = inherit; `0` = that level disabled; the *per-user* cap stays
+   read-only because it comes from `SKYGATE_USER_MAX_RULES`.
+
+Both pages now **display the caps the guard enforces**, through the same resolver call. The
+pre-fix shape — a page quoting `1/500` next to a refusal quoting `500/500` — is exactly what one
+resolver removes.
+
+### Why nothing propagated before
+
+A rule is per `(user, device, exit_node, target)`. The supported mechanism is the
+«все мои устройства» option, which fans the rule out at save time and marks it so the maintenance
+pass covers devices registered **later**. It deliberately does **not** copy an already-saved
+single-device rule retroactively — fan-out copies are indistinguishable from hand-made rules, so
+guessing would silently start copying rules nobody asked for. That is why an **explicit** per-rule
+action is the right shape, and why it is now there.
+
+### Verification
+
+- `scripts/check_b328_rule_limits.sh` — 46 contracts on a host with Go, covering: the pre-fix
+  expression cannot return, the counts have one producer each, no call site reads the raw config
+  field, the API unit, the spread action (routing, intent-before-copy, reuse of the tick's pass,
+  refusal to invent, idempotence, the four row renderings, i18n), the admin option, the three-layer
+  cap resolver with its source reporting, and that the B328 tests **actually run** (a `-run` filter
+  matching nothing exits 0 — the B322 class).
+- Four Go test files. The handler-level test
+  `TestB328_HandlerInsertsWhenTheSystemTotalReachesTheDeviceCap` **reproduces the operator's exact
+  redirect** against the pre-fix code — verified by stashing the fix and re-running:
+  `302 /my/exit-rules?err=device+limit+exceeded%3A+500%2F500+user-facing+rules+on+this+device…` —
+  and asserts the rule is inserted after it. Nothing in the package mentioned `MaxRulesPerDevice`
+  or drove `PostMyExitRule` before this, which is why no gate ever caught it.
+- `bash scripts/verify_pre_deploy.sh` on the reference VM: pre-existing baseline FAILs only, **B328
+  PASS**. CI on the tagged commit: 0 FAIL.
+
+### Immediate relief before this ships
+
+The per-device guard reads the system-wide count, so raising the cap above it unblocks everybody:
+`.env` → `SKYGATE_MAX_RULES_PER_DEVICE=5000`, then **recreate** (not restart) the container from
+`/admin/service`, because docker freezes the environment at creation. That is a workaround for the
+bug, not a fix — with the cap that high the per-device level stops constraining anything.
+
 ## v1.5.93 — a live-state check must SKIP, not redden the commit (B327)
 
 **Date:** 2026-09-25 · **Base:** `v1.5.92` → this tag · **Compatibility:** none — one check script,

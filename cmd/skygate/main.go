@@ -2497,6 +2497,12 @@ func main() {
 	// the N rules the mismatch banner was complaining about.
 	mux.Handle("POST /my/exit-rules/apply-preferred", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRulesApplyPreferred)))
 	mux.Handle("POST /my/exit-rules/delete", authMW(http.HandlerFunc(exitRulesSvc.PostDeleteExitRule)))
+	// B328: turn an ALREADY SAVED single-device rule into an "all my devices" rule.
+	// The option existed only at save time (B275.3) plus the intent marker the periodic
+	// pass re-materialises (B276.1), so a rule created before the operator's second
+	// device existed had no path to that device at all — 33 rules on one device and a
+	// second device with none, which is the operator report this closes.
+	mux.Handle("POST /my/exit-rules/spread", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRuleSpread)))
 	mux.Handle("GET /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(exitRulesSvc.GetExitRulesAPI))))
 	mux.Handle("POST /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(exitRulesSvc.PostExitRulesAPI))))
 	mux.Handle("GET /my/exit-rules/help", authMW(http.HandlerFunc(exitRulesSvc.GetExitRulesAPIHelp)))
@@ -2508,6 +2514,11 @@ func main() {
 	// can't bypass the admin-only contract.
 	mux.Handle("POST /admin/exit-rules", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRule)))
 	mux.Handle("POST /admin/exit-rules/rollback", authMW(http.HandlerFunc(exitRulesSvc.PostAdminRollbackACL)))
+	// B328: the rule caps (per-device / per-user / system) were env-only, and under
+	// docker the container environment is frozen at creation — so changing a number
+	// meant editing .env and recreating the container. The panel now owns them, with
+	// `.env` as the fallback layer.
+	mux.Handle("POST /admin/exit-rules/limits", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRuleLimits)))
 	// 2026-07-14: Этап 14 v7 — re-apply ACL without
 	// touching rules. Use when GenerateACL() output
 	// changed (e.g. new SSH rule) but no exit-rule

@@ -1,4 +1,4 @@
-﻿{{define "body-admin-exit_rules"}}
+{{define "body-admin-exit_rules"}}
 {{/* 2026-07-15: v0.12.0.2 — full RU translation of the admin
      Exit Rules page. Previously only the title/subtitle went
      through {{t}}; every other label (Node Load, Re-apply ACL
@@ -29,6 +29,55 @@
      layer. */}}
 {{if .applied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules_admin.add_form_applied"}}</div>{{end}}
 {{if .err}}<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> {{.err}}</div>{{end}}
+{{/* B328: the rule caps used to be env-only, and under docker the container
+     environment is frozen at CREATION — so changing a number meant editing .env
+     and recreating the container, while this page was already showing the
+     operator «x/500». The panel now owns the caps, with `.env` as the fallback
+     layer, and every level is labelled with WHERE its effective value came from
+     (db / env / default) so "would editing .env change anything" is answerable
+     from here. An empty input means "inherit from .env/default" — the inputs show
+     the STORED override, never the effective value, so saving this form for one
+     reason cannot silently promote an env value into a database row. */}}
+{{if .limits_saved}}<div class="alert alert-success" id="limits-saved"><i class="fa-solid fa-check"></i> {{t "exit_rules_admin.limits_saved"}}</div>{{end}}
+{{if .limits_err}}<div class="alert alert-danger" id="limits-err"><i class="fa-solid fa-triangle-exclamation"></i> {{tf "exit_rules_admin.limits_err" .limits_err}}</div>{{end}}
+<div class="card">
+  <h3><i class="fa-solid fa-gauge-high"></i> {{t "exit_rules_admin.limits_title"}}</h3>
+  <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px 0">{{t "exit_rules_admin.limits_help"}}</p>
+  <table style="margin:0 0 12px 0">
+    <tr>
+      <th>{{t "exit_rules_admin.limits_col_level"}}</th>
+      <th>{{t "exit_rules_admin.limits_col_effective"}}</th>
+      <th>{{t "exit_rules_admin.limits_col_source"}}</th>
+    </tr>
+    <tr>
+      <td>{{t "exit_rules_admin.limits_level_per_device"}}</td>
+      <td>{{if gt .limit_per_device 0}}{{.limit_per_device}}{{else}}<span class="tag tag-warning">{{t "exit_rules_admin.limits_disabled"}}</span>{{end}}</td>
+      <td><span class="tag">{{.limit_per_device_source}}</span></td>
+    </tr>
+    <tr>
+      <td>{{t "exit_rules_admin.limits_level_per_user"}}</td>
+      <td>{{if gt .limit_per_user 0}}{{.limit_per_user}}{{else}}<span class="tag tag-warning">{{t "exit_rules_admin.limits_disabled"}}</span>{{end}}</td>
+      <td><span class="tag">{{.limit_per_user_source}}</span></td>
+    </tr>
+    <tr>
+      <td>{{t "exit_rules_admin.limits_level_total"}}</td>
+      <td>{{if gt .limit_total 0}}{{.limit_total}}{{else}}<span class="tag tag-warning">{{t "exit_rules_admin.limits_disabled"}}</span>{{end}}</td>
+      <td><span class="tag">{{.limit_total_source}}</span></td>
+    </tr>
+  </table>
+  <form method="post" action="/admin/exit-rules/limits" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+    <label style="display:flex;flex-direction:column;gap:2px">
+      <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.limits_level_per_device"}}</span>
+      <input type="number" min="0" name="max_rules_per_device" value="{{.limit_per_device_override}}" placeholder="{{t "exit_rules_admin.limits_inherit_ph"}}" style="width:110px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+    </label>
+    <label style="display:flex;flex-direction:column;gap:2px">
+      <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.limits_level_total"}}</span>
+      <input type="number" min="0" name="max_total_rules" value="{{.limit_total_override}}" placeholder="{{t "exit_rules_admin.limits_inherit_ph"}}" style="width:110px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+    </label>
+    <button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-floppy-disk"></i> {{t "exit_rules_admin.limits_save"}}</button>
+    <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.limits_per_user_note"}}</span>
+  </form>
+</div>
 <div class="card">
   <h3><i class="fa-solid fa-plus"></i> {{t "exit_rules_admin.add_form_title"}}</h3>
   <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px 0">{{t "exit_rules_admin.add_form_help"}}</p>
@@ -39,7 +88,14 @@
     </label>
     <label style="display:flex;flex-direction:column;gap:2px">
       <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_device_id"}}</span>
-      <input type="number" name="device_id" value="{{.form_device_id}}" required style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+      {{/* B328: no longer `required` — with «все устройства» ticked the number is
+           optional (an empty one means "the user's first device"), and the handler
+           validates it server-side either way. */}}
+      <input type="number" name="device_id" value="{{.form_device_id}}" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-muted);font-weight:400;margin-top:4px">
+        <input type="checkbox" name="all_devices" value="1"{{if .all_devices}} checked{{end}}>
+        {{t "exit_rules_admin.add_form_all_devices"}}
+      </label>
     </label>
     <label style="display:flex;flex-direction:column;gap:2px">
       <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_exit_node"}}</span>
