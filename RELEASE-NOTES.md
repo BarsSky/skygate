@@ -14,7 +14,7 @@
 
 ## v1.5.94 — the rule caps count what they name, and you can change them (B328)
 
-**Date:** 2026-09-25 · **Base:** `v1.5.93` → this tag · **Compatibility:** none — no schema
+**Date:** 2026-09-27 · **Base:** `v1.5.93` → this tag · **Compatibility:** none — no schema
 change, no migration. Two new `global_settings` keys are *optional* overrides; both environments
 and both database backends are unaffected until the panel writes one.
 
