@@ -537,6 +537,13 @@ func registerRoutes(
 	mux.Handle("POST /admin/cluster/invite/generate", authMW(http.HandlerFunc(adminSvc.PostAdminClusterInviteGenerate)))
 	mux.Handle("POST /admin/cluster/invite/revoke", authMW(http.HandlerFunc(adminSvc.PostAdminClusterInviteRevoke)))
 
+	// B342 (RR-15 option a) — onboard a SECOND host from the panel alone: one
+	// action mints the invite + the tailnet preauth key and parks them behind
+	// an opaque one-time token; GET /admin/cluster?boot=<token> then renders
+	// the ready-to-run block. Without this the operator assembled four steps
+	// by hand in three places (docs/ha.md §2.4).
+	mux.Handle("POST /admin/cluster/onboard", authMW(http.HandlerFunc(adminSvc.PostAdminClusterOnboard)))
+
 	// v1.5.0+ / B222 (Phase 4.2) — rolling upgrade
 	// orchestrator. POST /admin/cluster/upgrade with
 	// target=<hostname> upgrades that one node;

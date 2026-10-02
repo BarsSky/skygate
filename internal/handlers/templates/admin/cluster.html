@@ -285,11 +285,45 @@
   {{end}}
 </div>
 
+{{/* ============ Section 3b: Onboard a second host (B342 / RR-15a) ============ */}}
+<div class="card">
+  <h3><i class="fa-solid fa-rocket"></i>{{t "cluster.onboard_title"}}</h3>
+  <p class="muted" style="font-size:13px">{{t "cluster.onboard_help"}}</p>
+
+  {{if .Data.Onboard}}
+  <div style="padding:12px;background:var(--bg-muted);border-radius:4px;margin-bottom:12px">
+    <div style="font-size:13px;margin-bottom:6px">
+      <strong>{{t "cluster.onboard_block_title"}}</strong> — <code>{{.Data.Onboard.Hostname}}</code>
+      <span class="muted">({{t "cluster.onboard_expires"}} {{.Data.Onboard.ExpiresAt}})</span>
+    </div>
+    <div class="muted" style="font-size:12px;margin-bottom:10px">{{t "cluster.onboard_block_help"}}</div>
+    {{range .Data.Onboard.Steps}}
+    <div style="margin-bottom:10px">
+      <div style="font-size:13px;margin-bottom:4px"><strong>{{.Num}}. {{t .TitleKey}}</strong></div>
+      {{if .Command}}<pre style="margin:0 0 4px 0;padding:8px;background:var(--bg);border-radius:4px;overflow-x:auto;font-size:12px">{{.Command}}</pre>{{end}}
+      <div class="muted" style="font-size:12px">{{t .NoteKey}}</div>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
+  <details style="margin-top:12px" {{if not .Data.Onboard}}open{{end}}>
+    <summary style="cursor:pointer;font-size:13px;color:var(--text-muted)"><i class="fa-solid fa-plus"></i> {{t "cluster.onboard_form_title"}}</summary>
+    <form method="POST" action="/admin/cluster/onboard" style="margin-top:10px;display:grid;grid-template-columns:repeat(2, 1fr);gap:8px;max-width:720px">
+      <label style="font-size:12px;color:var(--text-muted)">{{t "cluster.onboard_hostname"}} *<input type="text" name="hostname" required value="{{.Data.OnboardHostname}}" placeholder="{{t "cluster.onboard_hostname_ph"}}" style="width:100%"></label>
+      <label style="font-size:12px;color:var(--text-muted)">ttl_hours<input type="number" name="ttl_hours" value="24" min="1" max="168" placeholder="{{t "cluster.onboard_ttl_ph"}}" style="width:100%"></label>
+      <label style="font-size:12px;color:var(--text-muted)">api_url<input type="text" name="api_url" placeholder="{{t "cluster.onboard_api_url_ph"}}" style="width:100%"></label>
+      <label style="font-size:12px;color:var(--text-muted)">ts_tag<input type="text" name="ts_tag" placeholder="{{t "cluster.onboard_ts_tag_ph"}}" style="width:100%"></label>
+      <div style="grid-column:1 / -1"><button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-rocket"></i> {{t "cluster.onboard_btn"}}</button></div>
+    </form>
+    <p class="muted" style="font-size:12px;margin-top:6px">{{t "cluster.onboard_form_help"}}</p>
+  </details>
+</div>
+
 {{/* ===================== Section 4: Pending invites ===================== */}}
 <div class="card">
   <h3><i class="fa-solid fa-envelope-open-text"></i>{{t "cluster.section_invites"}} ({{.Data.InviteCount}})</h3>
   <p class="muted" style="font-size:13px">{{t "cluster.invites_help"}}</p>
-
   {{if .Data.Invites}}
   <table class="table" style="width:100%;font-size:13px">
     <thead>

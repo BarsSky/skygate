@@ -217,6 +217,27 @@ when `SKYGATE_HA_ENABLED`, `SKYGATE_HA_ROLE` or
 
 ### 2.4 Adding a second skygate host
 
+**Fast path (B342, since 2026-10-02) — the panel alone.** Open `/admin/cluster` →
+*Onboard a second host*, enter the new host's name and press the button. In one
+action the panel creates the `cluster_node` row, mints the signed invite and a
+tailnet preauth key **for the `infra` user** (never the synthetic
+`tagged-devices`, which is the B175 Strategy E trap below), and renders a
+numbered block to paste on the new host as root:
+
+1. `tailscale up … --netfilter-mode=nodir` (never `off` — it re-creates the
+   iptables trap), with the minted key and the panel's login server;
+2. install **the version this primary runs**, from GitHub Releases, SHA256
+   verified (a standby ahead of its primary breaks the upgrade order);
+3. `skygate join <invite> --api-url=<primary> --write-dsn-to=/etc/skygate/dbs.env`;
+4. `systemctl enable --now skygate` + `healthz`;
+5. Approve the node back in the panel.
+
+The invite token and the preauth key are shown **once**, never in a URL, and the
+audit row stores their *lengths*; an unrendered block is deleted after 15
+minutes. The manual path below remains the reference for everything the panel
+does not cover (a host that is not on the mesh yet, a non-standard layout) and
+for the reasoning behind each step.
+
 **Phase 0 prerequisite:** a second VM on the Tailscale mesh with subnet routes
 advertised **and approved**, so the standby reaches the primary's PostgreSQL /
 object store / headplane behind the Docker bridge.

@@ -62,17 +62,17 @@ import (
 // field is rendered as a row of badge pills; the chain field
 // (on cluster) is rendered as a human-readable line per member.
 type clusterNodeRow struct {
-	ID            string
-	ClusterID     string
-	Hostname      string
-	TailscaleIP   string
-	Roles         []string
-	State         string
-	SkygateVer    string
-	JoinedAt      string
-	LastSeenAt    string
-	IsSelf        bool
-	JoinedAgoSec  int64
+	ID             string
+	ClusterID      string
+	Hostname       string
+	TailscaleIP    string
+	Roles          []string
+	State          string
+	SkygateVer     string
+	JoinedAt       string
+	LastSeenAt     string
+	IsSelf         bool
+	JoinedAgoSec   int64
 	LastSeenAgoSec int64
 }
 
@@ -106,8 +106,8 @@ type clusterAuditEvent struct {
 // doesn't re-fetch.
 type clusterPageData struct {
 	// 1. Cluster summary
-	ClusterID    string
-	ClusterName  string
+	ClusterID   string
+	ClusterName string
 	// SelfHostname is the host name of THIS skygate
 	// instance (from Service.SelfHostname, wired from
 	// cfg.TailscaleHostname at boot). The template uses
@@ -131,17 +131,26 @@ type clusterPageData struct {
 	HasStaleNodes bool // any state=ready with last_seen > threshold (network blip recovery)
 
 	// 3. Database (pointer)
-	DBConfigured  bool
-	DBPrimary     string
-	DBReplicas    []string // cluster_database.replica_node_ids (parsed from PG array)
-	DBReplicaCnt  int
-	DBDSNHost     string // host extracted from current_dsn for "where the primary DB is" display
-	DBSSLMode     string
-	HasReplicas   bool
+	DBConfigured bool
+	DBPrimary    string
+	DBReplicas   []string // cluster_database.replica_node_ids (parsed from PG array)
+	DBReplicaCnt int
+	DBDSNHost    string // host extracted from current_dsn for "where the primary DB is" display
+	DBSSLMode    string
+	HasReplicas  bool
 
 	// 4. Pending invites
-	Invites      []clusterInviteRow
-	InviteCount  int
+	Invites     []clusterInviteRow
+	InviteCount int
+
+	// 4b. Onboarding artifact (B342, RR-15 option a). Non-nil only on the ONE
+	// render that follows POST /admin/cluster/onboard: the parked payload is
+	// consumed here, so a refresh shows nothing and a credential cannot linger
+	// in a URL or a browser history entry.
+	Onboard *ClusterOnboardView
+	// OnboardHostname prefills the form after a failed attempt so the operator
+	// does not retype it.
+	OnboardHostname string
 
 	// 5. Recent cluster audit
 	RecentEvents []clusterAuditEvent
@@ -183,6 +192,16 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 		FlashError:   r.URL.Query().Get("err"),
 		SelfHostname: s.SelfHostname,
 		StateCounts:  map[string]int{},
+	}
+	// B342: the onboarding artifact is rendered exactly once. `?boot=<opaque>`
+	// names a payload parked by POST /admin/cluster/onboard; consuming it here
+	// is what makes the page the only place the credentials ever appear.
+	if boot := strings.TrimSpace(r.URL.Query().Get("boot")); boot != "" {
+		data.Onboard = s.consumeClusterOnboard(boot)
+	}
+	data.OnboardHostname = strings.TrimSpace(r.URL.Query().Get("hostname"))
+	if data.OnboardHostname != "" && !isSafeNodeName(data.OnboardHostname) {
+		data.OnboardHostname = ""
 	}
 
 	// 1. Cluster — for now we read the single "skygate-staging"
