@@ -90,7 +90,11 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # one re-aligned the whole map block, and gofmt then reported the file clean —
 # contract D1 again (a touched file must leave the list). The 230-line alignment
 # diff is the cost of keeping a touched file gofmt-clean inside an aligned map.
-FROZEN=270
+#
+# 2026-10-02: 270 → 268. The same block wired the marker into BOTH rule pages and
+# formatted internal/feature/exit_rules/form_admin.go and form_my.go in the same
+# batch; D1 caught both.
+FROZEN=268
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

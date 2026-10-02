@@ -194,11 +194,9 @@ internal/feature/exit_rules/approved_routes_index_b_test.go
 internal/feature/exit_rules/cdn_group.go
 internal/feature/exit_rules/cdn_group_test.go
 internal/feature/exit_rules/domain_interval_b308_test.go
-internal/feature/exit_rules/form_admin.go
 internal/feature/exit_rules/form_admin_b178_test.go
 internal/feature/exit_rules/form_admin_b182_test.go
 internal/feature/exit_rules/form_admin_b184_test.go
-internal/feature/exit_rules/form_my.go
 internal/feature/exit_rules/form_my_b123_test.go
 internal/feature/exit_rules/form_my_b237_19_test.go
 internal/feature/exit_rules/preferred_check_test.go
