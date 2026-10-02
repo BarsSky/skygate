@@ -113,10 +113,18 @@ if grep -q 'exit_rules.no_exit_node_badge' "$MYTPL"; then
 else
   bad "C3: the badge has no label"
 fi
+# C4 — the POSITIVE half: the operator asked for both («нигде не маркируется что у
+# cyborg доступ теперь появился»), so a device that IS pinned must name its relay
+# next to the red badge for a device that is not.
+if grep -q 'id="exit-node-active-' "$MYTPL" && grep -q 'exit_rules.exit_node_active' "$MYTPL"; then
+  ok "C4: /my/exit-rules also names the relay a pinned device goes through"
+else
+  bad "C4: the page does not mark a device that IS pinned — the operator only sees the failure case"
+fi
 
 hdr "D. the texts say what the state IS, in both languages"
 
-for key in no_exit_node_badge no_exit_node_help no_exit_node_banner; do
+for key in no_exit_node_badge no_exit_node_help no_exit_node_banner exit_node_active exit_node_active_help; do
   n="$(grep -c "\"exit_rules.$key\"" "$I18N" || true)"
   if [ "$n" -eq 2 ]; then
     ok "D: exit_rules.$key is defined in RU and EN"

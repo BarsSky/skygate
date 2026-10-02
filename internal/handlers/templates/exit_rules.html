@@ -251,11 +251,18 @@
       </div>
       {{end}}
       {{range $host, $nodes := .GroupedByHostname}}
+      {{/* B343: the POSITIVE half of the same marker. The operator asked for
+           both — «нигде не маркируется что у cyborg доступ теперь появился» —
+           so a device that IS pinned says which relay carries it, next to the
+           red badge for a device that is not. `PreferredExitNode` is the same
+           per-(user, device) preference the rule rows use. */}}
+      {{$active := ""}}{{range $di := $.DeviceInfos}}{{if eq $di.Hostname $host}}{{$active = $di.PreferredExitNode}}{{end}}{{end}}
       <details open style="margin-bottom:8px">
         <summary style="cursor:pointer;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-weight:600;display:flex;align-items:center;gap:8px">
           <i class="fa-solid fa-laptop"></i>
           <span>{{$host}}</span>
-          {{if index $.no_exit_node_devices $host}}<span class="tag tag-danger" id="no-exit-node-{{$host}}" title="{{t "exit_rules.no_exit_node_help"}}"><i class="fa-solid fa-triangle-exclamation"></i> {{t "exit_rules.no_exit_node_badge"}}</span>{{end}}
+          {{if index $.no_exit_node_devices $host}}<span class="tag tag-danger" id="no-exit-node-{{$host}}" title="{{t "exit_rules.no_exit_node_help"}}"><i class="fa-solid fa-triangle-exclamation"></i> {{t "exit_rules.no_exit_node_badge"}}</span>
+          {{else if $active}}<span class="tag tag-success" id="exit-node-active-{{$host}}" title="{{t "exit_rules.exit_node_active_help"}}"><i class="fa-solid fa-circle-check"></i> {{t "exit_rules.exit_node_active"}}: {{$active}}</span>{{end}}
           <span class="tag">{{len $nodes}}{{t "exit_rules.exit_nodes_suffix"}}</span>
           <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▼</span>
         </summary>
