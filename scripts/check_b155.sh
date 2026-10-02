@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b155.sh — preauth key UX (custom TTL + Reissue + warning pills)
 # (B155, v1.5.0)
 #
@@ -110,7 +111,8 @@ fi
 
 echo ""
 echo "=== contract D: /my/keys/{id}/reissue route wired in main.go ==="
-if grep -q 'POST /my/keys/{id}/reissue' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -q 'POST /my/keys/{id}/reissue' "$SKY_MAIN"; then
     ok "main.go registers POST /my/keys/{id}/reissue"
 else
     bad "main.go MISSING POST /my/keys/{id}/reissue — Reissue button 404s"

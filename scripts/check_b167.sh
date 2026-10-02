@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b167.sh — OIDC config auto-sync (B167, v1.5.2)
 #
 # B161.1-4 made skygate a working OIDC provider for
@@ -163,8 +164,9 @@ fi
 
 # A.12 — routes in main.go (both GET + POST
 # must be registered, both behind authMW).
-if grep -q 'GET /admin/oidc/sync' cmd/skygate/main.go \
-   && grep -q 'POST /admin/oidc/sync' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -q 'GET /admin/oidc/sync' "$SKY_MAIN" \
+   && grep -q 'POST /admin/oidc/sync' "$SKY_MAIN"; then
     ok "main.go registers GET + POST /admin/oidc/sync"
 else
     bad "main.go: GET or POST /admin/oidc/sync route MISSING"
@@ -175,7 +177,7 @@ fi
 # authMW is the first line of defense — covers
 # any future bug in the handler that forgets
 # the admin check).
-if grep -A1 'POST /admin/oidc/sync' cmd/skygate/main.go | grep -q 'authMW'; then
+if grep -A1 'POST /admin/oidc/sync' "$SKY_MAIN" | grep -q 'authMW'; then
     ok "POST /admin/oidc/sync is behind authMW"
 else
     bad "POST /admin/oidc/sync is NOT behind authMW"
@@ -183,7 +185,7 @@ fi
 
 # A.14 — the auto-init hook (boot-time
 # auto-sync when SKYGATE_OIDC_AUTOSYNC=true).
-if grep -q 'oidcsvc.ShouldAutoSync' cmd/skygate/main.go; then
+if grep -q 'oidcsvc.ShouldAutoSync' "$SKY_MAIN"; then
     ok "main.go has boot-time auto-sync (ShouldAutoSync)"
 else
     bad "main.go: auto-sync hook (ShouldAutoSync) MISSING"

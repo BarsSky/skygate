@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B-check for B219 (v1.5.0+): /admin/database
 # Phase 3.3 — Patroni /switchover plumbing.
 #
@@ -32,7 +33,7 @@ DB_GO="internal/db/cluster_patroni.go"
 TEST="internal/db/cluster_patroni_test.go"
 SVC_GO="internal/feature/admin/service.go"
 HANDLER_GO="internal/feature/admin/database.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 TEMPLATE="internal/handlers/templates/admin/database.html"
 CATALOG="internal/i18n/catalog_admin.go"
 

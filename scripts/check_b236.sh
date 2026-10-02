@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b236.sh — B236: Tailscale subnet-routes management on /admin/tailscale.
 #
 # WHY THIS FILE EXISTS (2026-09-18)
@@ -23,7 +24,7 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TST="$REPO_ROOT/internal/feature/admin/tailscale_b236_test.go"
-MAIN="$REPO_ROOT/cmd/skygate/main.go"
+gosurface MAIN $REPO_ROOT/cmd/skygate/*.go
 
 # B236 reads the admin TAILSCALE SURFACE, not one file. tailscale.go was split
 # into seven focused files on 2026-10-01 (refactor Phase D), and a contract that

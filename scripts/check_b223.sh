@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B-check for B223 (v1.5.0+): /admin/cluster
 # Phase 4.3 — Tailscale auto-discovery (new node
 # appears in cluster list, admin still approves).
@@ -46,7 +47,7 @@ DISC_GO="internal/cluster/discovery.go"
 TEST_NEW="internal/cluster/discovery_b223_test.go"
 AUDIT_GO="internal/db/cluster_audit.go"
 HANDLER_GO="internal/feature/admin/cluster.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 SERVICE_GO="internal/feature/admin/service.go"
 TEMPLATE="internal/handlers/templates/admin/cluster.html"
 CATALOG="internal/i18n/catalog_admin.go"

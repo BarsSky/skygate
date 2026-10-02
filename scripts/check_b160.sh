@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b160.sh — /my/devices manual expiry renewal button
 # (B160, v1.5.0)
 #
@@ -75,7 +76,8 @@ fi
 
 echo ""
 echo "=== contract B: route registered ==="
-if grep -qE 'mux\.Handle\("POST /my/devices/\{id\}/renew"' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qE 'mux\.Handle\("POST /my/devices/\{id\}/renew"' "$SKY_MAIN"; then
     ok "POST /my/devices/{id}/renew route registered"
 else
     bad "POST /my/devices/{id}/renew route NOT registered"

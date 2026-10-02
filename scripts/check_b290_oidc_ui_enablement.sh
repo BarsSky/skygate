@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b290_oidc_ui_enablement.sh
 #
 # 2026-09-22 (B290) — «OIDC должен включаться из интерфейса, без правки .env».
@@ -48,7 +49,7 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 PAGE=internal/feature/admin/oidc_settings.go
 SVC=internal/feature/admin/service.go
 DBF=internal/db/oidc_settings_b277_5.go
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 TMPL=internal/handlers/templates/admin/oidc_settings.html
 I18N=internal/i18n/catalog_admin.go
 TEST=internal/feature/admin/oidc_settings_b290_test.go

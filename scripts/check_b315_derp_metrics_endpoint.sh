@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b315_derp_metrics_endpoint.sh
 #
 # 2026-09-24 (B315, v1.5.80) — WHERE /admin/derp reads derper's metrics from, and
@@ -70,7 +71,7 @@ PROXY=internal/derpmetricsproxy/proxy.go
 CMD=cmd/skygate/derp_metrics_proxy.go
 TPL=internal/handlers/templates/admin/derp.html
 I18N=internal/i18n/catalog_derp.go
-ROUTE=cmd/skygate/main.go
+gosurface ROUTE cmd/skygate/*.go
 
 hdr "B315 — the metrics endpoint, and a page that admits what it did not measure"
 

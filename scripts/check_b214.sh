@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b214.sh — B214 (v1.5.0+) /admin/database migration
 # workflow: async Run + cancel + rollback endpoints +
 # UI buttons + i18n. Phase 1.4.4 (cancellation) and
@@ -92,9 +93,10 @@ grep -q 'go func()' "$REPO_ROOT/internal/dbmigrate/handlers.go"
 check "H: PostAdminDatabaseMigrate is async (goroutine)" "0" "$?"
 
 # I: main.go wires the cancel + rollback routes
-grep -q '/admin/database/migrate/{id}/cancel' "$REPO_ROOT/cmd/skygate/main.go"
+gosurface SKY_MAIN $REPO_ROOT/cmd/skygate/*.go
+grep -q '/admin/database/migrate/{id}/cancel' "$SKY_MAIN"
 check "I: cancel route wired in main.go" "0" "$?"
-grep -q '/admin/database/migrate/{id}/rollback' "$REPO_ROOT/cmd/skygate/main.go"
+grep -q '/admin/database/migrate/{id}/rollback' "$SKY_MAIN"
 check "J: rollback route wired in main.go" "0" "$?"
 
 # K: admin/database.go surfaces CanCancel + CanRollback to template

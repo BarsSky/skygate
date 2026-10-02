@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 #===============================================================================
 # Skygate v1.3.20 (B130) — background scheduler for time-of-day auto-update
 #
@@ -49,7 +50,7 @@ echo "skygate root: ${SKYGATE_DIR}"
 
 SCHEDULER_GO="internal/update/scheduler.go"
 SCHEDULER_DB_GO="internal/update/scheduler_db.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 CONFIG_GO="internal/config/config.go"
 
 for f in "${SCHEDULER_GO}" "${SCHEDULER_DB_GO}" "${MAIN_GO}" "${CONFIG_GO}"; do

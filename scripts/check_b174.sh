@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b174.sh — B174 (v1.5.2) OIDC session JWT parsing fix.
 #
 # Operator 2026-08-25 (after B172 + B173 + B173.1 shipped):
@@ -141,8 +142,9 @@ hdr "contract B: wiring contract (main.go passes JWTSecret + UserLookup)"
 # with the JWT secret. The pre-B174 call signature
 # was (issuer, clientID, clientSecret, keyDir,
 # redirectURIs) — B174 adds a 6th param.
-if grep -qE 'oidcsvc\.NewService\(' cmd/skygate/main.go && \
-   grep -qE 'app\.JWTSecret' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qE 'oidcsvc\.NewService\(' "$SKY_MAIN" && \
+   grep -qE 'app\.JWTSecret' "$SKY_MAIN"; then
     ok "main.go passes app.JWTSecret to oidcsvc.NewService (B174: OIDC service can verify the session cookie)"
 else
     bad "main.go does NOT pass app.JWTSecret to oidcsvc.NewService (B174 wiring regression: OIDC readSession will fail to verify any cookie)"
@@ -151,7 +153,7 @@ fi
 # B.2 — main.go wires the UserLookup callback. The
 # callback uses db.GetUserNameByID (or a similar
 # helper) to map the JWT uid → DB username + email.
-if grep -qE 'oidcSvc\.UserLookup\s*=' cmd/skygate/main.go; then
+if grep -qE 'oidcSvc\.UserLookup\s*=' "$SKY_MAIN"; then
     ok "main.go sets oidcSvc.UserLookup (B174: OIDC id_token can populate the email claim)"
 else
     bad "main.go does NOT set oidcSvc.UserLookup (B174 wiring regression: OIDC id_token email will be empty)"

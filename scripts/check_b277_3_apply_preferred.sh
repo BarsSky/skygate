@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b277_3_apply_preferred.sh
 #
 # 2026-09-21 (B277.3) — bulk-apply the user's preferred exit-node.
@@ -49,7 +50,7 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 CAT=internal/i18n/catalog_exit_rules.go
 DB=internal/db/device_rules.go
 SVC=internal/feature/exit_rules/form_my.go
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 TMPL=internal/handlers/templates/exit_rules.html
 
 hdr "B277.3 — bulk-apply the user's preferred exit-node"

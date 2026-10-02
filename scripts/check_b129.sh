@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 #===============================================================================
 # Skygate v1.3.20 (B129) — /admin/update page redesign
 #
@@ -59,7 +60,7 @@ UPDATE_HTML="internal/handlers/templates/admin/update.html"
 UPDATE_GO="internal/feature/admin/update.go"
 UPDATE_SETTINGS_GO="internal/feature/admin/update_settings.go"
 CONFIG_GO="internal/config/config.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 I18N_RU_FILE="internal/i18n/catalog_update.go"
 
 for f in "${UPDATE_HTML}" "${UPDATE_GO}" "${UPDATE_SETTINGS_GO}" "${CONFIG_GO}" "${MAIN_GO}" "${I18N_RU_FILE}"; do

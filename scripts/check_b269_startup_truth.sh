@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b269_startup_truth.sh
 #
 # 2026-09-19 (B269) — a skygate process must never be "active" with nothing
@@ -51,7 +52,7 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
 skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 STARTUP=internal/startup/startup.go
 
 hdr "B269 — startup truth (socket first, phase log, provisional healthz)"

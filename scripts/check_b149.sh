@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b149.sh — v1.5.0 / B149 contracts.
 #
 # This is the B-check that pins the /admin/ha page
@@ -199,7 +200,8 @@ for route in \
     "POST /admin/ha/reclaim" \
     "POST /admin/ha/dns/save" \
     "POST /admin/ha/dns/test"; do
-    if grep -q "mux.Handle(\"$route\"" cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+    if grep -q "mux.Handle(\"$route\"" "$SKY_MAIN"; then
         ok "main.go registers route: $route"
     else
         bad "main.go missing route: $route"
@@ -217,13 +219,13 @@ else
     bad "service.go missing SelfHostname field"
 fi
 # main.go actually wires the DNSCredsStore from the config.
-if grep -q "extcreds.NewStore" cmd/skygate/main.go; then
+if grep -q "extcreds.NewStore" "$SKY_MAIN"; then
     ok "main.go wires extcreds.NewStore"
 else
     bad "main.go does not wire extcreds.NewStore"
 fi
 # main.go wires SelfHostname too.
-if grep -q "SelfHostname:" cmd/skygate/main.go; then
+if grep -q "SelfHostname:" "$SKY_MAIN"; then
     ok "main.go wires SelfHostname"
 else
     bad "main.go does not wire SelfHostname"

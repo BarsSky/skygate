@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # scripts/check_b189.sh — B189 (v1.5.2) DERP Health Dashboard.
 #
 # Verifies:
@@ -159,22 +160,23 @@ fi
 # --- C. Route contracts ---
 
 # C.1 GET /admin/derp/dashboard registered
-if grep -qE 'GET /admin/derp/dashboard[^/]' cmd/skygate/main.go 2>/dev/null; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qE 'GET /admin/derp/dashboard[^/]' "$SKY_MAIN" 2>/dev/null; then
     ok "C.1 GET /admin/derp/dashboard route"
 else
     bad "C.1 GET /admin/derp/dashboard route missing"
 fi
 
 # C.2 POST /admin/derp/dashboard/refresh registered
-if grep -qE 'POST /admin/derp/dashboard/refresh' cmd/skygate/main.go 2>/dev/null; then
+if grep -qE 'POST /admin/derp/dashboard/refresh' "$SKY_MAIN" 2>/dev/null; then
     ok "C.2 POST /admin/derp/dashboard/refresh route"
 else
     bad "C.2 POST /admin/derp/dashboard/refresh route missing"
 fi
 
 # C.3 routes are behind authMW
-if grep -qE 'GET /admin/derp/dashboard[^/].*authMW' cmd/skygate/main.go 2>/dev/null \
-   || grep -qB 1 'GET /admin/derp/dashboard' cmd/skygate/main.go 2>/dev/null | grep -q authMW; then
+if grep -qE 'GET /admin/derp/dashboard[^/].*authMW' "$SKY_MAIN" 2>/dev/null \
+   || grep -qB 1 'GET /admin/derp/dashboard' "$SKY_MAIN" 2>/dev/null | grep -q authMW; then
     ok "C.3 dashboard route is behind authMW"
 else
     bad "C.3 dashboard route may not be behind authMW"
@@ -183,7 +185,7 @@ fi
 # --- D. CLI subcommand contracts ---
 
 # D.1 case "derp-probe" present in main.go switch
-if grep -qE 'case "derp-probe":' cmd/skygate/main.go 2>/dev/null; then
+if grep -qE 'case "derp-probe":' "$SKY_MAIN" 2>/dev/null; then
     ok "D.1 case \"derp-probe\" present in main.go"
 else
     bad "D.1 case \"derp-probe\" missing from main.go"
@@ -193,7 +195,7 @@ fi
 # the case label and the call are 6 lines apart due to comments;
 # grep -A may fail depending on the shell's quoting of the
 # embedded quotes).
-if awk '/case "derp-probe":/{flag=1; next} flag && /runDerpProbe/{print; exit} flag && /^\s*case /{flag=0}' cmd/skygate/main.go | grep -q runDerpProbe; then
+if awk '/case "derp-probe":/{flag=1; next} flag && /runDerpProbe/{print; exit} flag && /^\s*case /{flag=0}' "$SKY_MAIN" | grep -q runDerpProbe; then
     ok "D.2 derp-probe calls runDerpProbe"
 else
     bad "D.2 derp-probe doesn't call runDerpProbe"

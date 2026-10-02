@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 #===============================================================================
 # Skygate v1.3.20.6 (B136) — per-user display preferences (DB-persisted)
 #
@@ -39,7 +40,7 @@ DB_GO="$PROJECT_ROOT/internal/db/db.go"
 DB_MIG="$PROJECT_ROOT/internal/db/migrations_pg.go"
 DB_DRIVER="$PROJECT_ROOT/internal/db/driver_postgres.go"
 SETTINGS_GO="$PROJECT_ROOT/internal/feature/my/settings.go"
-MAIN_GO="$PROJECT_ROOT/cmd/skygate/main.go"
+gosurface MAIN_GO $PROJECT_ROOT/cmd/skygate/*.go
 LAYOUT_HTML="$PROJECT_ROOT/internal/handlers/templates/layout.html"
 ACCOUNT_HTML="$PROJECT_ROOT/internal/handlers/templates/user/account.html"
 CATALOG_MY="$PROJECT_ROOT/internal/i18n/catalog_my.go"

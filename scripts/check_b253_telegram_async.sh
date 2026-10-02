@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # ============================================================================
 # check_b253_telegram_async.sh — B253 Telegram probe async refresh
 # ============================================================================
@@ -90,7 +91,7 @@ else bad "TelegramProbeResult.StaleAt string must be present"; fi
 # --- E. main.go wires the POST route ---
 echo
 echo "=== E. main.go POST /admin/telegram/probe/now route ==="
-MAIN="cmd/skygate/main.go"
+gosurface MAIN cmd/skygate/*.go
 if grep -qF 'POST /admin/telegram/probe/now' "$MAIN" 2>/dev/null; then
   ok "POST /admin/telegram/probe/now registered"
 else bad "main.go must register POST /admin/telegram/probe/now"; fi

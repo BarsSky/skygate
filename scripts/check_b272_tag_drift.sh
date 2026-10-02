@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b272_tag_drift.sh
 #
 # 2026-09-19 (B272) — tags must actually reach headscale, and the operator must
@@ -279,7 +280,8 @@ if grep -q 'func canSudoRead(path, user string) bool' "$ACL" && grep -q 'func mo
 else
   bad "H4: no real probe (a name-based guess would be wrong on any other account)"
 fi
-if grep -q 'headscale.AuditHeadscalePolicy()' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -q 'headscale.AuditHeadscalePolicy()' "$SKY_MAIN"; then
   ok "H5: the boot sequence reports a permission problem with its fixes in the journal"
 else
   bad "H5: the problem is still invisible until an operator reads a nested 500"

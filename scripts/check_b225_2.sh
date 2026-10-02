@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B-check for B225.2 (v1.5.0+): Phase 4.4 follow-up
 # — PG health → automatic alert via B203 watchdog
 # consecutive-failure counter.
@@ -40,7 +41,7 @@ has() { grep -q -E "$2" "$1" 2>/dev/null; }
 
 WD_GO="internal/watchdog/dbswap.go"
 TEST_NEW="internal/watchdog/dbswap_b225_2_test.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 AGENTS="AGENTS.md"
 
 # --- A: Notifier field on Config ---

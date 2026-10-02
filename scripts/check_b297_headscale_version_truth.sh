@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b297_headscale_version_truth.sh
 #
 # 2026-09-23 (B297) — the RUNNING headscale's version must be READ, not assumed.
@@ -52,7 +53,7 @@ VER=internal/headscale/version_b297.go
 VTEST=internal/headscale/version_b297_test.go
 MON=internal/headscale_version/monitor.go
 MTEST=internal/headscale_version/monitor_b297_test.go
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 ADMIN=internal/feature/admin/headscale.go
 TMPL=internal/handlers/templates/admin/headscale.html
 I18N=internal/i18n/catalog_admin.go

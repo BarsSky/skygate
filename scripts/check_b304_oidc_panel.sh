@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b304_oidc_panel.sh
 #
 # 2026-09-23 (B304, v1.5.69) — OIDC must be configurable entirely from the panel.
@@ -109,14 +110,15 @@ if grep -q 's.OIDCKeyDirApplier(keyDir)' "$SETTINGS"; then
 else
   bad "B2: key_dir is saved without being applied"
 fi
+gosurface SKY_MAIN cmd/skygate/*.go
 if grep -q 'key_dir was NOT changed' "$SETTINGS" \
-   && grep -q '\.Reload(dir)' cmd/skygate/main.go; then
+   && grep -q '\.Reload(dir)' "$SKY_MAIN"; then
   ok "B3: a failed move refuses the save and names the reason"
 else
   bad "B3: a failed move is silent"
 fi
-if grep -q 'keys\.Reload\|Reload(dir)' cmd/skygate/main.go \
-   && grep -q 'NewKeyStore(dir)' cmd/skygate/main.go; then
+if grep -q 'keys\.Reload\|Reload(dir)' "$SKY_MAIN" \
+   && grep -q 'NewKeyStore(dir)' "$SKY_MAIN"; then
   ok "B4: main.go can also CREATE the store a failed boot never made (B270 repair path)"
 else
   bad "B4: a key store that failed at boot cannot be repaired from the panel"
@@ -188,8 +190,8 @@ if grep -q 'func oidcApplyScriptCommand(buildVersion string) string' "$SYNC" \
 else
   bad "E3: the apply command is missing from the page"
 fi
-if grep -q 'runOIDCExportSubcommand' cmd/skygate/main.go \
-   && grep -q 'case "oidc-export"' cmd/skygate/main.go \
+if grep -q 'runOIDCExportSubcommand' "$SKY_MAIN" \
+   && grep -q 'case "oidc-export"' "$SKY_MAIN" \
    && grep -q 'renderHeadscaleOIDCBlock' "$EXPORT"; then
   ok "E4: skygate oidc-export (env / headscale / --secret) exists and is dispatched"
 else

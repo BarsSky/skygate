@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B-check for B226 (v1.5.0+): Phase 4.5 — Prometheus
 # exporter. Closes the "operator can't see skygate
 # state in Grafana / Prometheus / kubectl top
@@ -54,7 +55,7 @@ has() { grep -q -E "$2" "$1" 2>/dev/null; }
 METRICS_GO="internal/metrics/metrics.go"
 COLLECTOR_GO="internal/metrics/collector.go"
 TEST_NEW="internal/metrics/metrics_b226_test.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 AGENTS="AGENTS.md"
 
 # --- A: package + types ---

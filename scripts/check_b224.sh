@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B-check for B224 (v1.5.0+): stabilize background services
 # by migrating from captured *sql.DB to db.DBSource (the
 # ResettableDB wrapper). Closes the "sql: database is closed"
@@ -37,7 +38,7 @@ BACKUP_GO="internal/backup/scheduler.go"
 MONITOR_GO="internal/monitoring/exit_node_monitor.go"
 NODE_GO="internal/nodeownership/auto.go"
 TEST_NEW="internal/db/resettable_b224_test.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 LV="scripts/b224_liveverify.sh"
 AGENTS="AGENTS.md"
 

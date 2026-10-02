@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B-check for B225.1 (v1.5.0+): /admin/database
 # Phase 4.4 follow-up — DB health degraded
 # transition alert (closes the "operator finds
@@ -42,7 +43,7 @@ has() { grep -q -E "$2" "$1" 2>/dev/null; }
 
 HEALTHZ_GO="internal/feature/healthz/db_health.go"
 TEST_NEW="internal/feature/healthz/db_health_b225_1_test.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 AGENTS="AGENTS.md"
 
 # --- A: Notifier field on DBHealthConfig ---

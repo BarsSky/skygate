@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # scripts/check_b94.sh — invoked by verify_pre_deploy.sh B94 check.
 #
 # Why a separate file: same as check_b91.sh / check_b92.sh / check_b93.sh.
@@ -73,8 +74,9 @@ grep -qF 'dependencies_healthy' internal/feature/healthz/types.go || { echo "SKY
 grep -qF '/admin/services' internal/handlers/templates/layout.html || { echo "SKY-FAIL: /admin/services missing from layout.html sidebar (D6)" >&2; exit 1; }
 
 # 7. D8: Tailscale BackendState helper in main.go.
-grep -qF 'tailscaleBackendState' cmd/skygate/main.go || { echo "SKY-FAIL: main.go missing tailscaleBackendState helper (D8)" >&2; exit 1; }
-grep -qF 'BackendState' cmd/skygate/main.go || { echo "SKY-FAIL: main.go doesn't reference BackendState in TailscaleFn (D8)" >&2; exit 1; }
+gosurface SKY_MAIN cmd/skygate/*.go
+grep -qF 'tailscaleBackendState' "$SKY_MAIN" || { echo "SKY-FAIL: main.go missing tailscaleBackendState helper (D8)" >&2; exit 1; }
+grep -qF 'BackendState' "$SKY_MAIN" || { echo "SKY-FAIL: main.go doesn't reference BackendState in TailscaleFn (D8)" >&2; exit 1; }
 
 # 8. Unit tests for D5 readyzState changes — the existing
 #    TestAvailability_AllOK / TestAvailability_JSON cover

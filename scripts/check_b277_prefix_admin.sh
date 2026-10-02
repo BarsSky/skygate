@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b277_prefix_admin.sh
 #
 # 2026-09-21 (B277, v1.5.37) — managing the prefix assignment at the operator's scale.
@@ -63,7 +64,7 @@ gosurface ADMIN internal/feature/admin/exit_nodes*.go
 
 PADMIN=internal/feature/admin/prefix_admin_b277.go
 TMPL=internal/handlers/templates/admin/exit_nodes.html
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 CAT=internal/i18n/catalog_exit_nodes.go
 
 hdr "B277 — prefix assignment: pruning, grouping, global override"

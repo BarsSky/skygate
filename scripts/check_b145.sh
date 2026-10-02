@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b145.sh — v1.5.0 / B145 contracts.
 #
 # This is the B-check that pins Phase 1 (B145) of the
@@ -180,34 +181,35 @@ fi
 # --- contract F: main.go wires the elector ----------
 echo
 echo "=== contract F: cmd/skygate/main.go HA wire-up ==="
-if grep -qE 'ha\.NewElector\(' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qE 'ha\.NewElector\(' "$SKY_MAIN"; then
     ok "main.go constructs the elector via ha.NewElector"
 else
     bad "main.go does NOT construct ha.NewElector"
 fi
-if grep -q "elector.Run(ctx)" cmd/skygate/main.go; then
+if grep -q "elector.Run(ctx)" "$SKY_MAIN"; then
     ok "main.go runs the elector as a goroutine"
 else
     bad "main.go does NOT start the elector goroutine"
 fi
-if grep -q "cfg.HAEnabled" cmd/skygate/main.go; then
+if grep -q "cfg.HAEnabled" "$SKY_MAIN"; then
     ok "main.go gates the elector on cfg.HAEnabled (opt-in)"
 else
     bad "main.go does NOT gate the elector on cfg.HAEnabled"
 fi
-if grep -q "dns.BuildProvider" cmd/skygate/main.go; then
+if grep -q "dns.BuildProvider" "$SKY_MAIN"; then
     ok "main.go wires dns.BuildProvider (the factory from contract C)"
 else
     bad "main.go does NOT call dns.BuildProvider"
 fi
 # Verify the import statements are present (catches the
 # "import added but unused" / "unused import" cases).
-if grep -q '"skygate/internal/ha"' cmd/skygate/main.go; then
+if grep -q '"skygate/internal/ha"' "$SKY_MAIN"; then
     ok 'main.go imports "skygate/internal/ha"'
 else
     bad 'main.go does NOT import "skygate/internal/ha"'
 fi
-if grep -q '"skygate/internal/dns"' cmd/skygate/main.go; then
+if grep -q '"skygate/internal/dns"' "$SKY_MAIN"; then
     ok 'main.go imports "skygate/internal/dns"'
 else
     bad 'main.go does NOT import "skygate/internal/dns"'

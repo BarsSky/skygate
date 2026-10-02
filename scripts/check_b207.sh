@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B207 (v1.5.0+) — /admin/audit unified view. Phase 4.1
 # / G8 of docs/ha.md.
 #
@@ -206,7 +207,8 @@ grep -q '"audit.recent_events"' "internal/i18n/catalog_admin.go" \
     || check "i18n audit.recent_events defined" fail
 
 # 9. Route already wired (B93)
-grep_q 'GET /admin/audit' "cmd/skygate/main.go" \
+gosurface SKY_MAIN cmd/skygate/*.go
+grep_q 'GET /admin/audit' "$SKY_MAIN" \
     && check "main.go: GET /admin/audit route registered" ok \
     || check "main.go: GET /admin/audit route registered" fail
 

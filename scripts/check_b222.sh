@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B-check for B222 (v1.5.0+): /admin/cluster
 # Phase 4.2 — rolling upgrade orchestrator
 # (drain → wait for new build → rejoin).
@@ -62,7 +63,7 @@ UPGRADE_GO="internal/cluster/upgrade.go"
 TEST_NEW="internal/cluster/upgrade_b222_test.go"
 AUDIT_GO="internal/db/cluster_audit.go"
 HANDLER_GO="internal/feature/admin/cluster.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 TEMPLATE="internal/handlers/templates/admin/cluster.html"
 CATALOG="internal/i18n/catalog_admin.go"
 CLI_GO="cmd/skygate/cluster.go"

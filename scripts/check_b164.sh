@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b164.sh — DERP server init on a new host
 # (B164, v1.5.1)
 #
@@ -45,18 +46,19 @@ fi
 
 echo ""
 echo "=== contract B: route registered in main.go ==="
-if grep -qE 'mux\.Handle\("GET /admin/derp/relays/init"' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qE 'mux\.Handle\("GET /admin/derp/relays/init"' "$SKY_MAIN"; then
     ok "GET /admin/derp/relays/init route registered"
 else
     bad "GET /admin/derp/relays/init route MISSING"
 fi
-if grep -qE 'mux\.Handle\("POST /admin/derp/relays/init"' cmd/skygate/main.go; then
+if grep -qE 'mux\.Handle\("POST /admin/derp/relays/init"' "$SKY_MAIN"; then
     ok "POST /admin/derp/relays/init route registered"
 else
     bad "POST /admin/derp/relays/init route MISSING"
 fi
 # Both must be behind authMW (admin-only surface).
-if grep -qE '/admin/derp/relays/init".*authMW' cmd/skygate/main.go; then
+if grep -qE '/admin/derp/relays/init".*authMW' "$SKY_MAIN"; then
     ok "/admin/derp/relays/init routes are behind authMW"
 else
     bad "/admin/derp/relays/init NOT behind authMW (security regression)"

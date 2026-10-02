@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b150.sh — v1.5.0 / B150 contracts.
 #
 # This is the B-check that pins the /admin/deploy page +
@@ -230,7 +231,8 @@ for route in \
     "GET /admin/deploy" \
     "POST /admin/deploy/push" \
     "POST /admin/deploy/test-failover"; do
-    if grep -q "mux.Handle(\"$route\"" cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+    if grep -q "mux.Handle(\"$route\"" "$SKY_MAIN"; then
         ok "main.go registers route: $route"
     else
         bad "main.go missing route: $route"
@@ -251,21 +253,21 @@ for sub in \
     "ha-promote" \
     "ha-demote" \
     "ha-reclaim"; do
-    if grep -q "\"$sub\"" cmd/skygate/main.go; then
+    if grep -q "\"$sub\"" "$SKY_MAIN"; then
         ok "main.go handles subcommand: $sub"
     else
         bad "main.go missing subcommand case: $sub"
     fi
 done
 # main.go imports the internal/deploy package.
-if grep -q '"skygate/internal/deploy"' cmd/skygate/main.go; then
+if grep -q '"skygate/internal/deploy"' "$SKY_MAIN"; then
     ok "main.go imports internal/deploy"
 else
     bad "main.go missing internal/deploy import"
 fi
 # runDeploySubcommand and runHASubcommand helper functions exist.
 for helper in "func runDeploySubcommand" "func runHASubcommand"; do
-    if grep -q -F "$helper" cmd/skygate/main.go; then
+    if grep -q -F "$helper" "$SKY_MAIN"; then
         ok "main.go has helper: ${helper##* }"
     else
         bad "main.go missing helper: $helper"

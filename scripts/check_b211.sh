@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b211.sh — B211 (v1.5.0+) `skygate init` cluster
 # bootstrap CLI. Pins the structural + wiring contracts
 # so a future refactor that silently breaks the path
@@ -104,15 +105,16 @@ grep -q "^func runInitStandbyInvite" "$REPO_ROOT/cmd/skygate/init.go"
 check "D: runInitStandbyInvite function exists" "0" "$?"
 
 # E: main.go has the "init" case
-grep -q 'case "init":' "$REPO_ROOT/cmd/skygate/main.go"
+gosurface SKY_MAIN $REPO_ROOT/cmd/skygate/*.go
+grep -q 'case "init":' "$SKY_MAIN"
 check "E: case \"init\" in main.go switch" "0" "$?"
 
 # F: main.go dispatches to runInit
-grep -q "runInit(os.Args\[2:\])" "$REPO_ROOT/cmd/skygate/main.go"
+grep -q "runInit(os.Args\[2:\])" "$SKY_MAIN"
 check "F: main.go dispatches to runInit" "0" "$?"
 
 # G: help text mentions "init [verb]"
-grep -q "init \[verb\]" "$REPO_ROOT/cmd/skygate/main.go"
+grep -q "init \[verb\]" "$SKY_MAIN"
 check "G: help text mentions 'init [verb]'" "0" "$?"
 
 # H: internal/cluster/node.go has UpsertNode

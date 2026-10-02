@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B188 — fix ghost `tag:exit-<hostname>` exit-node-pref tags
 # by routing all form posts through db.NormalizeExitNodeTag
 # (which looks up the canonical `tag:dev-infra-<hostname>`
@@ -337,7 +338,8 @@ fi
 # escape hatch). Forces a one-shot headscale ACL re-apply
 # after a migration that changed exit-node-pref data
 # without triggering any of the user-facing handlers.
-Y=$(grep -c 'case "acl-apply"' "$REPO/cmd/skygate/main.go" 2>/dev/null || echo 0)
+gosurface SKY_MAIN "$REPO"/cmd/skygate/*.go
+Y=$(grep -c 'case "acl-apply"' "$SKY_MAIN" 2>/dev/null || echo 0)
 check_ge "Y-acl-apply-subcommand" 1 "$Y"
 
 # Z. (TD-17.1) source: NormalizeExitNodeTag + isExitNodeTagForm

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b320_tailscale_self_name.sh
 #
 # 2026-09-24 (B320, v1.5.85) — the canonical tailnet name must belong to the LIVE
@@ -57,7 +58,7 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 NAME=internal/feature/admin/tailscale_selfname_b320.go
 TPL=internal/handlers/templates/admin/tailscale.html
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 I18N=internal/i18n/catalog_tailscale.go
 TEST=internal/feature/admin/tailscale_selfname_b320_test.go
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b313_oidc_apply_button.sh
 #
 # 2026-09-23 (B313, v1.5.78) — OIDC must be APPLIED from the panel, not copy-pasted.
@@ -55,7 +56,7 @@ PANEL=internal/feature/admin/oidc_settings.go
 TPL=internal/handlers/templates/admin/oidc_settings.html
 APPLIER=deploy/skygate-apply-oidc.sh
 INSTALL=deploy/install-common.sh
-ROUTE=cmd/skygate/main.go
+gosurface ROUTE cmd/skygate/*.go
 I18N=internal/i18n/catalog_admin.go
 
 hdr "B313 — apply the saved OIDC configuration to headscale from the panel"

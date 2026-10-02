@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b328_rule_limits.sh
 #
 # 2026-09-25 (B328, v1.5.94) — "could not add a rule to another device of the user",
@@ -139,7 +140,8 @@ else
 fi
 
 # --- B: spreading an EXISTING rule to the user's other devices ------------------------
-if grep -qF '"POST /my/exit-rules/spread"' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qF '"POST /my/exit-rules/spread"' "$SKY_MAIN"; then
   ok "B1: POST /my/exit-rules/spread is routed"
 else
   bad "B1: the spread route is not registered"
@@ -213,7 +215,7 @@ if grep -qF 'func SaveRuleLimits' "$SETTINGS" && grep -qF 'db.DeleteGlobalSettin
 else
   bad "D2: clearing an override does not delete the row — .env could never take over again"
 fi
-if grep -qF '"POST /admin/exit-rules/limits"' cmd/skygate/main.go && grep -qF 'func (s *Service) PostAdminExitRuleLimits' "$SETTINGS"; then
+if grep -qF '"POST /admin/exit-rules/limits"' "$SKY_MAIN" && grep -qF 'func (s *Service) PostAdminExitRuleLimits' "$SETTINGS"; then
   ok "D3: POST /admin/exit-rules/limits is routed and handled"
 else
   bad "D3: the limits endpoint is missing"

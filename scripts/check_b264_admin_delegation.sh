@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b264_admin_delegation.sh — source-level B-check for v0.72 (B264):
 # admin role delegation with an immutable primary admin.
 #
@@ -54,7 +55,7 @@ PORTAL="$PROJECT_ROOT/internal/db/portal_users.go"
 QUERIES="$PROJECT_ROOT/internal/db/queries.go"
 DBGO="$PROJECT_ROOT/internal/db/db.go"
 USERS_GO="$PROJECT_ROOT/internal/feature/admin/users.go"
-MAIN_GO="$PROJECT_ROOT/cmd/skygate/main.go"
+gosurface MAIN_GO $PROJECT_ROOT/cmd/skygate/*.go
 USERS_HTML="$PROJECT_ROOT/internal/handlers/templates/admin/users.html"
 CATALOG="$PROJECT_ROOT/internal/i18n/catalog_admin.go"
 DEMOTE_TEST="$PROJECT_ROOT/internal/feature/admin/users_demote_test.go"

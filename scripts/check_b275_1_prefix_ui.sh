@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b275_1_prefix_ui.sh — B275.1: the operator surface for prefix assignment.
 #
 # The engine (B275) decides which relay owns a prefix. This block gives the
@@ -28,7 +29,7 @@ gosurface ADMIN internal/feature/admin/exit_nodes*.go
 
 TPL=internal/handlers/templates/admin/exit_nodes.html
 CAT=internal/i18n/catalog_exit_nodes.go
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 DOC=docs/troubleshooting.md
 
 hdr "B275.1 — operator surface for prefix assignment"

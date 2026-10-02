@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # scripts/check_b93.sh — invoked by verify_pre_deploy.sh B93 check.
 #
 # Why a separate file: same as check_b91.sh / check_b92.sh.
@@ -60,8 +61,9 @@ grep -qF "migrateV054PG" internal/db/migrations_pg.go || { echo "SKY-FAIL: migra
 grep -qF "VALUES (99, \$1, \$2, 0)" internal/db/migrations_pg.go || { echo "SKY-FAIL: V054 PG does NOT use reserved id=99" >&2; exit 1; }
 
 # 4. ensureInfraUser helper is called at startup.
-grep -qE 'ensureInfraUser\(d(\.DB)?, hs\)' cmd/skygate/main.go >/dev/null || { echo "SKY-FAIL: ensureInfraUser NOT wired at startup" >&2; exit 1; }
-grep -qF "func ensureInfraUser" cmd/skygate/main.go || { echo "SKY-FAIL: ensureInfraUser function not defined" >&2; exit 1; }
+gosurface SKY_MAIN cmd/skygate/*.go
+grep -qE 'ensureInfraUser\(d(\.DB)?, hs\)' "$SKY_MAIN" >/dev/null || { echo "SKY-FAIL: ensureInfraUser NOT wired at startup" >&2; exit 1; }
+grep -qF "func ensureInfraUser" "$SKY_MAIN" || { echo "SKY-FAIL: ensureInfraUser function not defined" >&2; exit 1; }
 
 # 5. BackfillInfra helper exists in the autoupdater.
 grep -qF "func BackfillInfra" internal/nodeownership/auto.go || { echo "SKY-FAIL: BackfillInfra function missing" >&2; exit 1; }

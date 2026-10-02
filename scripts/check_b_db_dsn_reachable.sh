@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # ============================================================================
 # check_b_db_dsn_reachable.sh — B-check for DB DSN reachability
 # (B-mod-db-retry, 2026-09-09)
@@ -91,7 +92,7 @@ fi
 echo "=== check_b_db_dsn_reachable.sh (B-mod-db-retry, 2026-09-09) ==="
 
 # A. SKYGATE_DB_RETRY_MAX_ATTEMPTS has a sensible default (5) in main.go
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 if grep -qE 'OpenDSNWithRetry\(cfg\.DBDSN, 5,' "$MAIN_GO"; then
     ok "A: main.go calls OpenDSNWithRetry with maxAttempts=5"
 else

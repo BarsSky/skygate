@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b296_derp_probe_host_ui.sh
 #
 # 2026-09-23 (B296) — «адрес проверки релея задаётся из веб-интерфейса и
@@ -55,7 +56,7 @@ TYPES=internal/derphealth/types.go
 MAP=internal/derphealth/map.go
 TMPL=internal/handlers/templates/admin/derp_relays.html
 I18N=internal/i18n/catalog_derp.go
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 ADMINTEST=internal/feature/admin/derp_probe_host_b296_test.go
 
 hdr "B296 — the relay probe address is editable from the panel (and applies live)"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b_mod_reregister.sh — B-mod-reregister (2026-09-13) — one-click
 # escape hatch for ghost nodes that headscale has reassigned to the
 # synthetic "tagged-devices" sentinel user (id=2147455555).
@@ -49,7 +50,7 @@ DEVICES="internal/feature/my/devices.go"
 TEMPLATE_DEVICES="internal/handlers/templates/user/devices.html"
 TEMPLATE_PREAUTH="internal/handlers/templates/user/preauth_result.html"
 I18N_RU="internal/i18n/catalog_my.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 
 echo "skygate root: ${PROJECT_ROOT}"
 echo

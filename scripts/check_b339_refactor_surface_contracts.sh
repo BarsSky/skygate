@@ -71,6 +71,22 @@ if grep -q '_test.go' "$LIB" 2>/dev/null; then
 else
   bad "A5: the helper does not exclude _test.go — a test-only marker could satisfy a production contract"
 fi
+# A6/A7 pin the 2026-10-02 repair: a caller may read TWO surfaces in one shell
+# (check_b251.sh reads the admin/tailscale surface and the cmd/skygate one), and
+# the first version composed its cleanup by string-surgery on `trap -p` output,
+# which re-quotes a body that itself contains quotes — the second call then
+# installed an unparseable EXIT trap and bash printed
+# "exit trap: line 1: unexpected EOF while looking for matching `'`" at exit.
+if grep -q 'GOSURFACE_TMP' "$LIB" 2>/dev/null; then
+  ok "A6: temp files are collected in an array, not spliced into the trap text"
+else
+  bad "A6: the helper still composes its cleanup from the caller's trap TEXT — a second surface in one shell corrupts it"
+fi
+if grep -q 'GOSURFACE_TRAP_INSTALLED' "$LIB" 2>/dev/null; then
+  ok "A7: the cleanup handler is installed at most once per shell"
+else
+  bad "A7: the helper reinstalls (and re-splices) the EXIT trap on every call"
+fi
 
 hdr "B. every contract that reads the SPLIT surfaces uses the surface form"
 
@@ -102,6 +118,38 @@ scan_split_path "internal/telegram/commands_user.go" "internal/telegram/commands
 scan_split_path "internal/acl/acl.go" "internal/acl/acl.go"
 scan_split_path "internal/feature/admin/exit_nodes.go" "internal/feature/admin/exit_nodes.go"
 scan_split_path "internal/feature/admin/telegram.go" "internal/feature/admin/telegram.go"
+
+# cmd/skygate/main.go is the next surface (4515 lines, 2026-10-02). It stays a
+# REAL file — 236 occurrences are the "am I in the checkout?" existence test
+# and ~100 more are human-readable messages — so only the OPERAND uses are
+# forbidden here. The sweep that rewrote them (111 scripts) also had to teach
+# each one to source scripts/lib/gosurface.sh; that is what these filters
+# protect: a new contract that greps the path directly is the regression.
+MAIN_HITS="$(grep -nF -- 'cmd/skygate/main.go' scripts/check_*.sh 2>/dev/null \
+              | grep -v '^scripts/check_b339_refactor_surface_contracts.sh:' \
+              | grep -v ':[[:space:]]*#' \
+              | grep -v 'gosurface' \
+              | grep -vE ':[[:space:]]*(\[|test)[[:space:]]' \
+              | grep -vE ':[[:space:]]*(if|elif)[[:space:]]+\[[[:space:]]' \
+              | grep -vE ':[[:space:]]*(ok|bad|pass|fail|warn|skip|check|echo|printf|hdr|run_check)[[:space:]]' \
+              || true)"
+if [ -n "$MAIN_HITS" ]; then
+  bad "B: cmd/skygate/main.go is still read as a single file (widen it to the package surface — scripts/lib/gosurface.sh):"
+  printf '%s\n' "$MAIN_HITS" | sed 's/^/        /'
+else
+  ok "B: no check script reads cmd/skygate/main.go as an operand (only existence tests and messages)"
+fi
+MAIN_SOURCED=0
+for c in $(grep -lE 'gosurface [A-Za-z_][A-Za-z0-9_]* [^ ]*cmd/skygate/' scripts/check_*.sh 2>/dev/null); do
+  if grep -q 'lib/gosurface.sh' "$c"; then
+    MAIN_SOURCED=$((MAIN_SOURCED+1))
+  else
+    bad "B: $c calls gosurface for the cmd/skygate surface without sourcing scripts/lib/gosurface.sh"
+  fi
+done
+if [ "$MAIN_SOURCED" -gt 0 ]; then
+  ok "B: all $MAIN_SOURCED scripts that read the cmd/skygate surface source the helper"
+fi
 
 # The catalog's own inline run_checks may name the path only as a gosurface
 # argument (B19/B55/B58/B62/B64/B65/B68 do exactly that) or as the glob form
@@ -181,6 +229,35 @@ case "$REAL_OUT" in
   *tailscaleAuthKeyMissingForStart*) ok "C4: the admin/tailscale surface spans its split files (marker from tailscale_config.go found)" ;;
   *) bad "C4: the admin/tailscale surface did not include the split files — the contracts above would silently read one file" ;;
 esac
+
+# C5 — TWO surfaces in ONE shell, the shape check_b251.sh (and 100+ other
+# checks after the Phase-D sweep) actually uses. The pre-fix helper corrupted
+# the EXIT trap on the second call and bash complained at exit about an
+# unterminated quote, after the check had already printed its verdict.
+TWO_OUT="$( { . "$LIB"; gosurface A internal/feature/admin/tailscale*.go cmd/skygate/*.go; gosurface B cmd/skygate/*.go; printf '%s|%s\n' "$(wc -l < "$A")" "$(wc -l < "$B")"; } 2>&1 )"
+case "$TWO_OUT" in
+  *"unexpected EOF"*|*"exit trap"*)
+    bad "C5: a SECOND surface in one shell corrupts the EXIT trap: $TWO_OUT" ;;
+  *"|"*)
+    ok "C5: two surfaces in one shell both build and the shell exits cleanly ($TWO_OUT)" ;;
+  *)
+    bad "C5: two surfaces in one shell did not both build: $TWO_OUT" ;;
+esac
+
+# C6 — a caller's OWN EXIT trap must still run (the helper must not eat it).
+TRAPDIR="$(mktemp -d)"
+(
+  . "$LIB"
+  trap 'printf caller-trap-ran > "$TRAPDIR/marker"' EXIT
+  gosurface A cmd/skygate/*.go || exit 1
+  gosurface B cmd/skygate/*.go || exit 1
+) >/dev/null 2>&1
+if [ -f "$TRAPDIR/marker" ] && [ "$(cat "$TRAPDIR/marker")" = "caller-trap-ran" ]; then
+  ok "C6: a pre-existing caller EXIT trap still runs (traps are chained, not replaced)"
+else
+  bad "C6: the caller's own EXIT trap did not run after gosurface — cleanup in the check is lost"
+fi
+rm -rf "$TRAPDIR"
 
 hdr "D. tracked, registered, indexed"
 

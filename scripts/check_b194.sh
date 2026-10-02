@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # ============================================================================
 # check_b194.sh — B194 (v1.5.0) auto-deploy framework
 #
@@ -146,7 +147,7 @@ fi
 
 # ----- I) main.go wiring (B194.1) --------------------------------------
 echo "I) main.go wiring (B194.1)"
-f="$PROJECT_DIR/cmd/skygate/main.go"
+gosurface f $PROJECT_DIR/cmd/skygate/*.go
 if grep -q 'deployrun.NewService' "$f"; then
   ok "main.go constructs deployrun.NewService"
 else

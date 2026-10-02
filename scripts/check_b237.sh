@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # scripts/check_b237.sh — B237 (v1.5.2+) own DERP через skygate.
 #
 # Verifies:
@@ -138,7 +139,8 @@ fi
 # --- C. Route contracts ---
 
 # C.1 GET /admin/derp/relays/derpmap.json registered (no authMW — headscale fetches it)
-if grep -qE 'mux\.Handle\("GET /admin/derp/relays/derpmap\.json"' cmd/skygate/main.go 2>/dev/null; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qE 'mux\.Handle\("GET /admin/derp/relays/derpmap\.json"' "$SKY_MAIN" 2>/dev/null; then
     ok "C.1 GET /admin/derp/relays/derpmap.json registered"
 else
     bad "C.1 GET /admin/derp/relays/derpmap.json route missing"
@@ -148,8 +150,8 @@ fi
 # The route registration is on a single line: mux.Handle("GET ...", http.HandlerFunc(...))
 # (no authMW wrapping). The negative-check matches the authMW pattern
 # INSIDE the same line and asserts it's missing.
-if grep 'mux\.Handle("GET /admin/derp/relays/derpmap\.json"' cmd/skygate/main.go 2>/dev/null | grep -qE 'http\.HandlerFunc'; then
-    if ! grep 'mux\.Handle("GET /admin/derp/relays/derpmap\.json"' cmd/skygate/main.go 2>/dev/null | grep -qE 'authMW'; then
+if grep 'mux\.Handle("GET /admin/derp/relays/derpmap\.json"' "$SKY_MAIN" 2>/dev/null | grep -qE 'http\.HandlerFunc'; then
+    if ! grep 'mux\.Handle("GET /admin/derp/relays/derpmap\.json"' "$SKY_MAIN" 2>/dev/null | grep -qE 'authMW'; then
         ok "C.2 derpmap.json endpoint is NOT behind authMW (headscale must be able to fetch it)"
     else
         bad "C.2 derpmap.json is behind authMW (headscale can't carry cookies)"
@@ -159,7 +161,7 @@ else
 fi
 
 # C.3 POST /admin/derp/relays/apply-headscale registered behind authMW
-if grep -qE 'mux\.Handle\("POST /admin/derp/relays/apply-headscale", authMW' cmd/skygate/main.go 2>/dev/null; then
+if grep -qE 'mux\.Handle\("POST /admin/derp/relays/apply-headscale", authMW' "$SKY_MAIN" 2>/dev/null; then
     ok "C.3 POST /admin/derp/relays/apply-headscale behind authMW"
 else
     bad "C.3 POST /admin/derp/relays/apply-headscale must be behind authMW"

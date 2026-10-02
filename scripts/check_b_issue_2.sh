@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b_issue_2.sh — admin can add exit-rules for another user's devices
 # (Issue #2, lamblador/Daniil 2026-09-11)
 #
@@ -53,7 +54,8 @@ else
 fi
 
 echo "=== contract C: POST /admin/exit-rules route wired ==="
-if grep -qE 'mux\.Handle\("POST /admin/exit-rules", authMW\(http\.HandlerFunc\(exitRulesSvc\.PostAdminExitRule\)\)\)' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qE 'mux\.Handle\("POST /admin/exit-rules", authMW\(http\.HandlerFunc\(exitRulesSvc\.PostAdminExitRule\)\)\)' "$SKY_MAIN"; then
     ok "POST /admin/exit-rules route wired"
 else
     bad "POST /admin/exit-rules route NOT wired in cmd/skygate/main.go"

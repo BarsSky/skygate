@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b156.sh — in-app preauth key expiration notification
 # scheduler (B156, v1.5.0)
 #
@@ -185,22 +186,23 @@ fi
 
 echo ""
 echo "=== contract G: main.go wires the scheduler + UserNotifierSink adapter ==="
-if grep -q 'keynotify.Start(ctx' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -q 'keynotify.Start(ctx' "$SKY_MAIN"; then
     ok "main.go calls keynotify.Start"
 else
     bad "main.go does NOT call keynotify.Start — scheduler is dead code"
 fi
-if grep -q 'cfg.KeyNotifyEnabled' cmd/skygate/main.go; then
+if grep -q 'cfg.KeyNotifyEnabled' "$SKY_MAIN"; then
     ok "main.go gates Start on cfg.KeyNotifyEnabled"
 else
     bad "main.go does NOT gate Start"
 fi
-if grep -q 'schedulerUserNotifierSink' cmd/skygate/main.go; then
+if grep -q 'schedulerUserNotifierSink' "$SKY_MAIN"; then
     ok "main.go uses UserNotifierSink adapter (per-user chat)"
 else
     bad "main.go does NOT use UserNotifierSink adapter — would send to operator chat"
 fi
-if grep -q '"skygate/internal/keynotify"' cmd/skygate/main.go; then
+if grep -q '"skygate/internal/keynotify"' "$SKY_MAIN"; then
     ok "main.go imports skygate/internal/keynotify"
 else
     bad "main.go does NOT import the keynotify package"

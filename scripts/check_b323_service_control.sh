@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b323_service_control.sh
 #
 # 2026-09-25 (B323) — the SERVICE CONTROL block.
@@ -61,7 +62,7 @@ GO_TEST=internal/feature/admin/service_control_b323_test.go
 TPL=internal/handlers/templates/admin/service.html
 TPL_TS=internal/handlers/templates/admin/tailscale.html
 I18N=internal/i18n/catalog_admin.go
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 HANDLERS=internal/handlers/handlers.go
 LAYOUT=internal/handlers/templates/layout.html
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 #===============================================================================
 # B103 (v1.3.8): in-app S3 download (BL-18)
 #
@@ -51,7 +52,8 @@ else
 fi
 
 # 2. Route registered in main.go
-if grep -qE '"GET /admin/backup/download-s3"' cmd/skygate/main.go ; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qE '"GET /admin/backup/download-s3"' "$SKY_MAIN" ; then
   ok "main.go: GET /admin/backup/download-s3 route registered"
 else
   bad "main.go: download-s3 route missing"

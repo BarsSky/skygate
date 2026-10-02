@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b154.sh — in-app auto-rotate scheduler for personal API tokens
 # (B154, v1.5.0)
 #
@@ -146,18 +147,19 @@ echo "=== contract E: main.go wires the scheduler ==="
 # The wire-up uses the cfg.TokenAutoRotateEnabled guard +
 # the schedulerNotifierSink adapter (the same one the
 # other B130/B142/B143 schedulers use).
-if grep -q 'tokenrotate.Start(ctx' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -q 'tokenrotate.Start(ctx' "$SKY_MAIN"; then
     ok "main.go calls tokenrotate.Start"
 else
     bad "main.go does NOT call tokenrotate.Start — scheduler is dead code"
 fi
-if grep -q 'cfg.TokenAutoRotateEnabled' cmd/skygate/main.go; then
+if grep -q 'cfg.TokenAutoRotateEnabled' "$SKY_MAIN"; then
     ok "main.go gates Start on cfg.TokenAutoRotateEnabled"
 else
     bad "main.go does NOT gate Start — scheduler always on (or always off)"
 fi
 # The import.
-if grep -q '"skygate/internal/tokenrotate"' cmd/skygate/main.go; then
+if grep -q '"skygate/internal/tokenrotate"' "$SKY_MAIN"; then
     ok "main.go imports skygate/internal/tokenrotate"
 else
     bad "main.go does NOT import the tokenrotate package"

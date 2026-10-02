@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # ============================================================================
 # check_b252_derp_cert_sync.sh — B252 DERP cert auto-renewal
 # ============================================================================
@@ -136,7 +137,7 @@ done
 # --- E. main.go wires the cron ---
 echo
 echo "=== E. main.go cron wiring ==="
-MAIN="cmd/skygate/main.go"
+gosurface MAIN cmd/skygate/*.go
 # main.go imports the admin package as 'adminsvc' (alias) so
 # the call site is adminsvc.StartCertSyncCron(...). We accept
 # either bare 'admin.' or 'adminsvc.' in source — both compile

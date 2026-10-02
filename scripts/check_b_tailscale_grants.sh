@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b_tailscale_grants.sh — Phase 7 (v1.5.2+) — verifies that
 # skygate's Tailscale ACL grants (tagOwners / per-user / per-device)
 # are correctly produced AND applied in headscale.
@@ -216,7 +217,8 @@ APPLY_ROUTES=0
 # The actual routes are /admin/acls/import/apply (POST) and
 # /admin/headscale/acl/add (POST). Both must be wired.
 for route in "/admin/acls/import/apply" "/admin/headscale/acl/add" "/admin/headscale/acl/remove"; do
-    if grep -q "POST ${route}" cmd/skygate/main.go 2>/dev/null; then
+gosurface SKY_MAIN cmd/skygate/*.go
+    if grep -q "POST ${route}" "$SKY_MAIN" 2>/dev/null; then
         APPLY_ROUTES=$((APPLY_ROUTES+1))
     else
         bad "POST ${route} route not registered in main.go"

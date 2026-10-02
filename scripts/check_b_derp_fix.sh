@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # ============================================================================
 # check_b_derp_fix.sh — B-block checks for the 2026-09-15 DERP/infra
 # regression cluster (B-fix). Pins 5 fixes so future edits can't
@@ -81,7 +82,8 @@ else
 fi
 
 # B.3 main.go wires the call
-if grep -qE 'adminsvc\.EnsureBundledDerpRelay' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qE 'adminsvc\.EnsureBundledDerpRelay' "$SKY_MAIN"; then
   ok "B.3 cmd/skygate/main.go calls adminsvc.EnsureBundledDerpRelay"
 else
   bad "B.3 cmd/skygate/main.go does NOT call EnsureBundledDerpRelay"
@@ -90,7 +92,7 @@ fi
 # B.4 main.go reads DERP_HOSTNAME / SKYGATE_DERP_HOSTNAME before the call
 #     (use -B30 since the call has ~25 lines of comment between hostname
 #      declaration and the EnsureBundledDerpRelay invocation.)
-if grep -B30 'EnsureBundledDerpRelay' cmd/skygate/main.go | grep -q 'SKYGATE_DERP_HOSTNAME'; then
+if grep -B30 'EnsureBundledDerpRelay' "$SKY_MAIN" | grep -q 'SKYGATE_DERP_HOSTNAME'; then
   ok "B.4 main.go reads SKYGATE_DERP_HOSTNAME before the EnsureBundledDerpRelay call"
 else
   bad "B.4 main.go does NOT read SKYGATE_DERP_HOSTNAME before EnsureBundledDerpRelay"
@@ -139,14 +141,14 @@ else
 fi
 
 # D.3 main.go wires the call after ensureInfraUser
-if grep -qE 'adminsvc\.SanityCheckInfraUserOwners' cmd/skygate/main.go; then
+if grep -qE 'adminsvc\.SanityCheckInfraUserOwners' "$SKY_MAIN"; then
   ok "D.3 cmd/skygate/main.go calls SanityCheckInfraUserOwners"
 else
   bad "D.3 cmd/skygate/main.go does NOT call SanityCheckInfraUserOwners"
 fi
 
 # D.4 main.go calls it AFTER ensureInfraUser (line ordering)
-if awk '/ensureInfraUser/{found=NR} /SanityCheckInfraUserOwners/{print found; exit}' cmd/skygate/main.go | grep -qE '^[0-9]+$'; then
+if awk '/ensureInfraUser/{found=NR} /SanityCheckInfraUserOwners/{print found; exit}' "$SKY_MAIN" | grep -qE '^[0-9]+$'; then
   ok "D.4 main.go calls SanityCheckInfraUserOwners after ensureInfraUser"
 else
   bad "D.4 main.go ordering: SanityCheckInfraUserOwners must run AFTER ensureInfraUser"

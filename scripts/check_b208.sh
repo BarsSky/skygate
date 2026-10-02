@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B208 (v1.5.0+) — /admin/ha enhancements + fix
 # B203 regression in admin Service. Phase 3.2 of
 # docs/ha.md.
@@ -109,7 +110,8 @@ grep_q 'func .s \*Service. dbc' "internal/feature/admin/dbsource.go" \
 # inside the adminSvc Service{} block. Look at a window of
 # 10 lines after the adminSvc declaration to allow the
 # comment + DB line.
-if grep -A10 'adminSvc := &adminsvc.Service{' "cmd/skygate/main.go" | grep -qE '^[[:space:]]+DB:[[:space:]]+d\b'; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -A10 'adminSvc := &adminsvc.Service{' "$SKY_MAIN" | grep -qE '^[[:space:]]+DB:[[:space:]]+d\b'; then
     check "main.go passes ResettableDB (not app.DB)" ok
 else
     check "main.go passes ResettableDB (not app.DB)" fail

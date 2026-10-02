@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # Phase 3.4 (v1.5.0+) — "Force cluster node failover" button
 # on /admin/ha. Operator-driven counterpart to the B204
 # HA elector's automatic failover_recommend.
@@ -95,12 +96,13 @@ file_grep "func \(s \*Service\) PostAdminHAClusterFailover" "internal/feature/ad
   || check "admin.Service.PostAdminHAClusterFailover handler exists" fail
 
 # 7. Route registered
-file_grep 'POST /admin/ha/cluster/failover' "cmd/skygate/main.go" \
+gosurface SKY_MAIN cmd/skygate/*.go
+file_grep 'POST /admin/ha/cluster/failover' "$SKY_MAIN" \
   && check "main.go registers POST /admin/ha/cluster/failover" ok \
   || check "main.go registers POST /admin/ha/cluster/failover" fail
 
 # 8. Behind authMW
-if file_grep 'authMW\(http\.HandlerFunc\(adminSvc\.PostAdminHAClusterFailover\)' "cmd/skygate/main.go"; then
+if file_grep 'authMW\(http\.HandlerFunc\(adminSvc\.PostAdminHAClusterFailover\)' "$SKY_MAIN"; then
   check "POST /admin/ha/cluster/failover is behind authMW" ok
 else
   check "POST /admin/ha/cluster/failover is behind authMW" fail

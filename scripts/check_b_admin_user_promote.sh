@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b_admin_user_promote.sh — source-level B-check for
 # v1.5.2 admin-user-sync T6.1 (per-row Promote button on the
 # AdminSyncPromoteToAdmin drift banner).
@@ -53,7 +54,7 @@ set -uo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd 2>/dev/null || echo "$SCRIPT_DIR/.." )"
 USERS_GO="$PROJECT_ROOT/internal/feature/admin/users.go"
-MAIN_GO="$PROJECT_ROOT/cmd/skygate/main.go"
+gosurface MAIN_GO $PROJECT_ROOT/cmd/skygate/*.go
 USERS_HTML="$PROJECT_ROOT/internal/handlers/templates/admin/users.html"
 CATALOG="$PROJECT_ROOT/internal/i18n/catalog_admin.go"
 DB_PORTAL="$PROJECT_ROOT/internal/db/portal_users.go"

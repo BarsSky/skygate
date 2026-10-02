@@ -40,8 +40,60 @@
 # `_test.go` files are excluded on purpose: a marker that only a test mentions
 # must not be able to satisfy a contract about production behaviour.
 #
-# The caller never has to clean up — the temp file is removed on shell exit.
+# The caller never has to clean up — every temp file this helper creates is
+# removed when the shell exits.
 #
+# WHY THIS IS AN ARRAY AND NOT `trap -p` STRING SURGERY (measured 2026-10-02)
+# -------------------------------------------------------------------------
+# A caller may read MORE THAN ONE surface in the same shell: check_b251.sh
+# reads the admin/tailscale surface and the cmd/skygate surface, and the
+# Phase-D sweep made that the normal shape (108 scripts gained a
+# `gosurface SKY_MAIN cmd/skygate/*.go`). The first version composed its
+# cleanup by editing the text of the caller's own EXIT trap:
+#
+#   prev_trap="${prev_trap#trap -- \'}"; prev_trap="${prev_trap%\' EXIT}"
+#
+# `trap -p EXIT` prints the body RE-QUOTED, and the body this helper installs
+# contains quotes of its own (`trap "rm -f '<tmp>'" EXIT`), so on the SECOND
+# call within one shell the surgery produced an unparseable action and bash
+# printed
+#
+#   scripts/check_b251.sh: exit trap: line 1: unexpected EOF while looking for
+#   matching `''
+#
+# at exit — a check that had already reported 13/0. The temp files are now an
+# array, the handler is installed at most once, and the caller's own EXIT trap
+# (captured once, before ours) is unquoted with a single `eval` and re-run.
+GOSURFACE_TMP=()
+GOSURFACE_TRAP_INSTALLED=0
+_gosurface_prev_trap=""
+
+_gosurface_cleanup() {
+  if [ "${#GOSURFACE_TMP[@]}" -gt 0 ]; then
+    rm -f "${GOSURFACE_TMP[@]}"
+  fi
+  if [ -n "$_gosurface_prev_trap" ]; then
+    eval "$_gosurface_prev_trap"
+  fi
+}
+
+_gosurface_install_trap() {
+  if [ "$GOSURFACE_TRAP_INSTALLED" -eq 1 ]; then
+    return 0
+  fi
+  local prev
+  prev="$(trap -p EXIT)"
+  if [ -n "$prev" ]; then
+    # `trap -p` prints:  trap -- '<body>' EXIT
+    prev="${prev#trap -- }"
+    prev="${prev% EXIT}"
+    # Unquote the single-quoted body exactly once; the body may contain quotes.
+    eval "_gosurface_prev_trap=$prev" || _gosurface_prev_trap=""
+  fi
+  GOSURFACE_TRAP_INSTALLED=1
+  trap _gosurface_cleanup EXIT
+}
+
 # Globs are expanded HERE, not by the caller, because a check is allowed to run
 # with `set -f` and one does: check_b258_1_auth_key_missing.sh disables pathname
 # expansion so that a grep pattern like "/data/*" is not turned into a file list
@@ -94,18 +146,10 @@ gosurface() {
 
   # Register the file for removal when the check exits. Checks run under
   # `bash -c` / as their own process (verify_pre_deploy.sh run_check), so this
-  # trap belongs to the check alone; append rather than replace so a check that
-  # already has an EXIT trap keeps it.
-  local cleanup prev_trap
-  cleanup="rm -f '$out'"
-  prev_trap="$(trap -p EXIT)"
-  if [ -n "$prev_trap" ]; then
-    prev_trap="${prev_trap#trap -- \'}"
-    prev_trap="${prev_trap%\' EXIT}"
-    cleanup="$prev_trap; $cleanup"
-  fi
-  # shellcheck disable=SC2064
-  trap "$cleanup" EXIT
+  # trap belongs to the check alone; install it ONCE per shell and let the
+  # handler walk the whole array, so a second surface cannot corrupt it.
+  GOSURFACE_TMP+=("$out")
+  _gosurface_install_trap
 
   eval "$var=\$out"
 }

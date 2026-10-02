@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 #===============================================================================
 # Skygate v1.4.1 (B142) — in-app backup-verify scheduler
 #
@@ -61,7 +62,7 @@ CONFIG_GO="internal/backup/config.go"
 SCHED_GO="internal/backup/verify_scheduler.go"
 BACKUP_CFG_GO="internal/feature/admin/backup_config.go"
 CFG_GO="internal/config/config.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 TEMPLATE="internal/handlers/templates/admin/backup.html"
 I18N="internal/i18n/catalog_backup.go"
 TEST_FILE="internal/backup/verify_scheduler_b142_test.go"

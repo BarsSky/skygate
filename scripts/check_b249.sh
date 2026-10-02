@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b249.sh — B249 image-pull update contract check.
 #
 # B249 (2026-09-15): the image-pull update path is a fast (~5-30s)
@@ -76,8 +77,9 @@ check "internal/feature/admin/update.go has PostAdminUpdatePullImage" \
   grep -q 'PostAdminUpdatePullImage' internal/feature/admin/update.go
 
 # A4. Route registration in main.go.
+gosurface SKY_MAIN cmd/skygate/*.go
 check "cmd/skygate/main.go registers POST /admin/update/pull-image" \
-  grep -q 'POST /admin/update/pull-image' cmd/skygate/main.go
+  grep -q 'POST /admin/update/pull-image' "$SKY_MAIN"
 
 # A5. UI button in template.
 check "internal/handlers/templates/admin/update.html has pull-image form" \

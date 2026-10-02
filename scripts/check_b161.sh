@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b161.sh — B161.1 (v1.5.0) OIDC provider
 # skeleton (discovery + JWKS + RSA keypair)
 #
@@ -78,12 +79,13 @@ echo "=== contract C: routes mounted in main.go ==="
 # B161.1 mounts 2 routes, no auth middleware
 # (headscale's OIDC client must be able to
 # reach them without a session).
-if grep -qE 'mux\.Handle\("/\.well-known/", oidcSvc\.Handler\(\)\)' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qE 'mux\.Handle\("/\.well-known/", oidcSvc\.Handler\(\)\)' "$SKY_MAIN"; then
     ok "main.go mounts /.well-known/* via oidcSvc.Handler()"
 else
     bad "main.go MISSING the /.well-known/ mount"
 fi
-if grep -qE 'mux\.Handle\("/oidc/", oidcSvc\.Handler\(\)\)' cmd/skygate/main.go; then
+if grep -qE 'mux\.Handle\("/oidc/", oidcSvc\.Handler\(\)\)' "$SKY_MAIN"; then
     ok "main.go mounts /oidc/* via oidcSvc.Handler()"
 else
     bad "main.go MISSING the /oidc/ mount"
@@ -94,9 +96,9 @@ fi
 # Note: the B161.4 admin-facing /admin/oidc page IS
 # behind authMW (admin-only) — that's a different
 # surface, not the headscale-facing OIDC endpoints.
-if grep -qE 'oidcSvc\.Handler' cmd/skygate/main.go && \
-   grep -qE 'mux\.Handle\("/\.well-known/", oidcSvc\.Handler' cmd/skygate/main.go && \
-   grep -qE 'mux\.Handle\("/oidc/", oidcSvc\.Handler' cmd/skygate/main.go; then
+if grep -qE 'oidcSvc\.Handler' "$SKY_MAIN" && \
+   grep -qE 'mux\.Handle\("/\.well-known/", oidcSvc\.Handler' "$SKY_MAIN" && \
+   grep -qE 'mux\.Handle\("/oidc/", oidcSvc\.Handler' "$SKY_MAIN"; then
     # The headscale-facing endpoints go through oidcSvc.Handler
     # (a separate mux that the contract F handler mounts).
     # That sub-mux does NOT have authMW wrapping (we verify
@@ -343,7 +345,7 @@ else
     bad "Service MISSING Codes field"
 fi
 # 6.6 — main.go starts the sweep goroutine
-if grep -qE 'oidcSvc.Codes.Sweep' cmd/skygate/main.go; then
+if grep -qE 'oidcSvc.Codes.Sweep' "$SKY_MAIN"; then
     ok "main.go runs the auth code sweep goroutine"
 else
     bad "main.go MISSING the sweep goroutine"
@@ -552,18 +554,18 @@ echo "=== contract I: B161.4 — headscale.conf snippet + /admin/oidc + e2e test
 #  6. The operator runbook in docs/oidc.md
 
 # I.1 — /admin/oidc page is reachable.
-if grep -qE 'mux\.Handle\("GET /admin/oidc",' cmd/skygate/main.go; then
+if grep -qE 'mux\.Handle\("GET /admin/oidc",' "$SKY_MAIN"; then
     ok "GET /admin/oidc route registered"
 else
     bad "GET /admin/oidc route MISSING (operator has no source of truth for the OIDC config)"
 fi
-if grep -qE 'mux\.Handle\("POST /admin/oidc/test",' cmd/skygate/main.go; then
+if grep -qE 'mux\.Handle\("POST /admin/oidc/test",' "$SKY_MAIN"; then
     ok "POST /admin/oidc/test route registered (live discovery+userinfo probe)"
 else
     bad "POST /admin/oidc/test route MISSING"
 fi
 # Both must be behind authMW (admin-only surface).
-if grep -qE '/admin/oidc.*authMW' cmd/skygate/main.go; then
+if grep -qE '/admin/oidc.*authMW' "$SKY_MAIN"; then
     ok "/admin/oidc routes are behind authMW"
 else
     bad "/admin/oidc NOT behind authMW (security regression — anyone could read the config)"

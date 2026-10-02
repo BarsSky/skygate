@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b312_exit_location.sh
 #
 # 2026-09-23 (B312, v1.5.77) — WHERE each exit node sits, and the priority by location
@@ -64,7 +65,7 @@ gosurface EXIT internal/feature/admin/exit_nodes*.go
 
 TPL=internal/handlers/templates/admin/exit_nodes.html
 PKG=internal/prefixowner/prefixowner.go
-ROUTE=cmd/skygate/main.go
+gosurface ROUTE cmd/skygate/*.go
 I18N=internal/i18n/catalog_exit_nodes.go
 
 hdr "B312 — a relay's location, and the priority by location when its owner is gone"

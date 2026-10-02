@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b157.sh — in-web notification inbox (B157, v1.5.0)
 #
 # Background (operator 2026-08-20): "кроме телеграмма
@@ -186,12 +187,13 @@ fi
 
 echo ""
 echo "=== contract G: /my/notifications/{id}/read + read-all routes wired in main.go ==="
-if grep -q 'POST /my/notifications/{id}/read' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -q 'POST /my/notifications/{id}/read' "$SKY_MAIN"; then
     ok "main.go registers POST /my/notifications/{id}/read"
 else
     bad "main.go MISSING POST /my/notifications/{id}/read — Mark as read will 404"
 fi
-if grep -q 'POST /my/notifications/read-all' cmd/skygate/main.go; then
+if grep -q 'POST /my/notifications/read-all' "$SKY_MAIN"; then
     ok "main.go registers POST /my/notifications/read-all"
 else
     bad "main.go MISSING POST /my/notifications/read-all"
@@ -296,7 +298,7 @@ if [ -f "internal/handlers/templates/user/notifications.html" ]; then
 else
     bad "user/notifications.html template MISSING"
 fi
-if grep -q 'GET /my/notifications' cmd/skygate/main.go; then
+if grep -q 'GET /my/notifications' "$SKY_MAIN"; then
     ok "main.go registers GET /my/notifications"
 else
     bad "main.go MISSING GET /my/notifications"

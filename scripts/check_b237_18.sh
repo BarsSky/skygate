@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # scripts/check_b237_18.sh — B237.18 (v1.5.2+) headscale_user_id
 # reconciliation cron contract (TD-10 from docs/ROADMAP.md).
 #
@@ -164,14 +165,15 @@ fi
 
 # C.3 the cron is wired in main.go (after
 # ensureHeadscaleUser, so the headscale client exists)
-if grep -qE 'headscale\.StartReconcileCron\(' cmd/skygate/main.go 2>/dev/null; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qE 'headscale\.StartReconcileCron\(' "$SKY_MAIN" 2>/dev/null; then
     ok "C.3 main.go calls headscale.StartReconcileCron"
 else
     bad "C.3 main.go must call headscale.StartReconcileCron (the wire-up)"
 fi
 
 # C.4 the wire-up is gated on cfg.ReconcileHeadscaleUsers
-if grep -qE 'if cfg\.ReconcileHeadscaleUsers \{' cmd/skygate/main.go 2>/dev/null; then
+if grep -qE 'if cfg\.ReconcileHeadscaleUsers \{' "$SKY_MAIN" 2>/dev/null; then
     ok "C.4 main.go wire-up is gated on cfg.ReconcileHeadscaleUsers (opt-in via env var)"
 else
     bad "C.4 main.go wire-up must be gated on cfg.ReconcileHeadscaleUsers"

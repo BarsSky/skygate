@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B201 (v1.5.0+) — /api/cluster/join + /api/cluster/heartbeat
 # (Phase 2.3 of cluster-management.md).
 #
@@ -126,15 +127,16 @@ grep_q 'StatusGone' "internal/feature/cluster/handlers.go" \
     && check "writeJoinError maps to 410 (expired/revoked)" ok || check "writeJoinError maps to 410" fail
 
 # 9. Routes
-grep_q 'mux\.HandleFunc\("POST /api/cluster/join"' "cmd/skygate/main.go" \
+gosurface SKY_MAIN cmd/skygate/*.go
+grep_q 'mux\.HandleFunc\("POST /api/cluster/join"' "$SKY_MAIN" \
     && check "route POST /api/cluster/join" ok || check "route POST /api/cluster/join" fail
-grep_q 'mux\.HandleFunc\("POST /api/cluster/heartbeat"' "cmd/skygate/main.go" \
+grep_q 'mux\.HandleFunc\("POST /api/cluster/heartbeat"' "$SKY_MAIN" \
     && check "route POST /api/cluster/heartbeat" ok || check "route POST /api/cluster/heartbeat" fail
 
 # 10. main.go wiring
-grep_q 'clusterapi\.Service{' "cmd/skygate/main.go" \
+grep_q 'clusterapi\.Service{' "$SKY_MAIN" \
     && check "clusterAPI service constructed" ok || check "clusterAPI service constructed" fail
-grep_q 'InviteSecret:[[:space:]]*cfg\.SecretKeyHex' "cmd/skygate/main.go" \
+grep_q 'InviteSecret:[[:space:]]*cfg\.SecretKeyHex' "$SKY_MAIN" \
     && check "cfg.SecretKeyHex → clusterAPI.InviteSecret" ok || check "cfg.SecretKeyHex wired" fail
 
 # 11. join_b201_test.go

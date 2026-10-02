@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # scripts/check_b92.sh — invoked by verify_pre_deploy.sh B92 check.
 #
 # Why a separate file: the B92 check has too many grep patterns
@@ -55,8 +56,9 @@ grep -qF "IntegrationTailscale" internal/feature/healthz/availability.go || { ec
 grep -qF "NewCheckerFromEnv" internal/feature/healthz/availability.go || { echo "SKY-FAIL: NewCheckerFromEnv not defined" >&2; exit 1; }
 
 # 2. main.go: AvailabilityChecker wired + /admin/services route registered
-grep -qF "AvailabilityChecker" cmd/skygate/main.go || { echo "SKY-FAIL: AvailabilityChecker not wired in main.go" >&2; exit 1; }
-grep -qF "/admin/services" cmd/skygate/main.go || { echo "SKY-FAIL: /admin/services route not registered in main.go" >&2; exit 1; }
+gosurface SKY_MAIN cmd/skygate/*.go
+grep -qF "AvailabilityChecker" "$SKY_MAIN" || { echo "SKY-FAIL: AvailabilityChecker not wired in main.go" >&2; exit 1; }
+grep -qF "/admin/services" "$SKY_MAIN" || { echo "SKY-FAIL: /admin/services route not registered in main.go" >&2; exit 1; }
 
 # 3. Template defines body-admin-services
 test -f internal/handlers/templates/admin/services.html || { echo "SKY-FAIL: services.html template missing" >&2; exit 1; }

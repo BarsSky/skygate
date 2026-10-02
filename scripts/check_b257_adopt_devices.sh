@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # ============================================================================
 # check_b257_adopt_devices.sh — B257 device adoption for pre-existing tailnets
 # ============================================================================
@@ -31,7 +32,7 @@ bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 
 SRC="internal/feature/admin/adopt_devices.go"
 TPL="internal/handlers/templates/admin/devices.html"
-MAIN="cmd/skygate/main.go"
+gosurface MAIN cmd/skygate/*.go
 RU="internal/i18n/catalog_my.go"
 AGENTS="AGENTS.md"
 TEST="internal/feature/admin/adopt_devices_b257_test.go"

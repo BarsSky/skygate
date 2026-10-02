@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b159.sh — /my/keys device column + relative-time hint + bulk cleanup
 # (B159, v1.5.0)
 #
@@ -212,7 +213,8 @@ if grep -qE 'func \(s \*Service\) PostMyKeysCleanup' internal/feature/my/keys.go
 else
     bad "PostMyKeysCleanup handler MISSING"
 fi
-if grep -qE 'mux\.Handle\("POST /my/keys/cleanup"' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qE 'mux\.Handle\("POST /my/keys/cleanup"' "$SKY_MAIN"; then
     ok "POST /my/keys/cleanup route registered in main.go"
 else
     bad "POST /my/keys/cleanup route NOT registered"

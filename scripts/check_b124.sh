@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 #===============================================================================
 # Skygate v1.3.19.2 follow-up (B124) — dev version element + semver suffix fix
 #
@@ -48,7 +49,7 @@ echo "skygate root: ${SKYGATE_DIR}"
 
 CONFIG_GO="internal/config/config.go"
 SERVICE_GO="internal/feature/admin/service.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 TEMPLATE="internal/handlers/templates/admin/update.html"
 CATALOG="internal/i18n/catalog_update.go"
 CHECKER_GO="internal/update/checker.go"

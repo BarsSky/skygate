@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 #===============================================================================
 # Skygate v1.4.3 (B143) — in-app smoke-mesh cleanup scheduler
 #
@@ -54,7 +55,7 @@ echo "skygate root: ${SKYGATE_DIR}"
 CLEANUP_GO="internal/mesh/cleanup.go"
 SCHED_GO="internal/mesh/cleanup_scheduler.go"
 CFG_GO="internal/config/config.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 I18N="internal/i18n/catalog_exit_rules.go"
 TEST_FILE="internal/mesh/cleanup_b143_test.go"
 

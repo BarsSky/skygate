@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b162.sh — /my/devices per-row device delete (B162, v1.5.1)
 #
 # Operator 2026-08-24 follow-up to B160 (device renew):
@@ -68,14 +69,15 @@ fi
 
 echo ""
 echo "=== contract B: route registered in main.go ==="
-if grep -qE 'mux\.Handle\("POST /my/devices/\{id\}/delete"' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -qE 'mux\.Handle\("POST /my/devices/\{id\}/delete"' "$SKY_MAIN"; then
     ok "POST /my/devices/{id}/delete route registered"
 else
     bad "POST /my/devices/{id}/delete route MISSING"
 fi
 # Must be behind authMW (per-user endpoint, not
 # public).
-if grep -qE 'POST /my/devices/\{id\}/delete", authMW' cmd/skygate/main.go; then
+if grep -qE 'POST /my/devices/\{id\}/delete", authMW' "$SKY_MAIN"; then
     ok "POST /my/devices/{id}/delete is behind authMW"
 else
     bad "POST /my/devices/{id}/delete NOT behind authMW (security regression)"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # ============================================================================
 # check_b258_tailscale_disabled.sh — B258 Tailscale "intentionally disabled" UI
 # ============================================================================
@@ -44,7 +45,7 @@ ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
 bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 
 TPL="internal/handlers/templates/admin/tailscale.html"
-MAIN="cmd/skygate/main.go"
+gosurface MAIN cmd/skygate/*.go
 RU="internal/i18n/catalog_tailscale.go"
 TEST="internal/feature/admin/tailscale_b258_test.go"
 

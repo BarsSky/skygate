@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b308_domain_resolve_interval.sh
 #
 # 2026-09-23 (B308, v1.5.73) — a domain rule may be re-resolved only once per
@@ -51,7 +52,7 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 POLICY=internal/feature/exit_rules/domain_interval_b308.go
 SYNC=internal/feature/exit_rules/sync.go
 HANDLER=internal/feature/admin/settings_dns_autoupdate.go
-ROUTE=cmd/skygate/main.go
+gosurface ROUTE cmd/skygate/*.go
 TPL=internal/handlers/templates/admin/system_tests.html
 I18N=internal/i18n/catalog_admin.go
 TEST1=internal/feature/exit_rules/domain_interval_b308_test.go

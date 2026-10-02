@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b212.sh — B212 (v1.5.0+) `skygate join` cluster
 # onboarding CLI. Pins the structural + wiring contracts
 # so a future refactor that silently breaks the path
@@ -81,15 +82,16 @@ grep -q "^func runJoinStatus" "$REPO_ROOT/cmd/skygate/join.go"
 check "C: runJoinStatus function exists" "0" "$?"
 
 # D: main.go has the "join" case
-grep -q 'case "join":' "$REPO_ROOT/cmd/skygate/main.go"
+gosurface SKY_MAIN $REPO_ROOT/cmd/skygate/*.go
+grep -q 'case "join":' "$SKY_MAIN"
 check "D: case \"join\" in main.go switch" "0" "$?"
 
 # E: main.go dispatches to runJoin
-grep -q "runJoin(os.Args\[2:\])" "$REPO_ROOT/cmd/skygate/main.go"
+grep -q "runJoin(os.Args\[2:\])" "$SKY_MAIN"
 check "E: main.go dispatches to runJoin" "0" "$?"
 
 # F: help text mentions "join [verb]"
-grep -q "join \[verb\]" "$REPO_ROOT/cmd/skygate/main.go"
+grep -q "join \[verb\]" "$SKY_MAIN"
 check "F: help text mentions 'join [verb]'" "0" "$?"
 
 # G: runClusterJoin is enhanced (parseJoinArgs helper)

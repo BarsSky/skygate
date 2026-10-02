@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B-mod-admin B-check (2026-09-10).
 #
 # Verifies the /admin/modules list + /admin/modules/{name}
@@ -160,7 +161,8 @@ for route in \
     'mux.Handle("GET /admin/modules/{name}"' \
     'mux.Handle("POST /admin/modules/{name}/{action...}"' \
     'mux.Handle("GET /admin/modules/csrf"'; do
-    if grep -q "${route}" "${REPO_ROOT}/cmd/skygate/main.go"; then
+gosurface SKY_MAIN ${REPO_ROOT}/cmd/skygate/*.go
+    if grep -q "${route}" "$SKY_MAIN"; then
         pass "route ${route} registered"
     else
         fail "route ${route} registered" "missing in main.go"

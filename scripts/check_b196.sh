@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # ============================================================================
 # check_b196.sh — B196 (v1.5.0+) /admin/database (Phase 1.1, read-only)
 #
@@ -28,7 +29,7 @@ no() { echo "  ✗ $*"; FAIL=$((FAIL+1)); }
 HANDLER="$PROJECT_DIR/internal/feature/admin/database.go"
 TPL="$PROJECT_DIR/internal/handlers/templates/admin/database.html"
 DBHELP="$PROJECT_DIR/internal/db/cluster.go"
-MAIN="$PROJECT_DIR/cmd/skygate/main.go"
+gosurface MAIN $PROJECT_DIR/cmd/skygate/*.go
 CATALOG="$PROJECT_DIR/internal/i18n/catalog_admin.go"
 
 # ----- A) handler file exists -------------------------------------------

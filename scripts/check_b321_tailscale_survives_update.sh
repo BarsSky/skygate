@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b321_tailscale_survives_update.sh
 #
 # 2026-09-25 (B321, v1.5.86) — Tailscale must survive a container recreate, and the
@@ -63,7 +64,7 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 BOOT=internal/feature/admin/tailscale_boot_b321.go
 NAME=internal/feature/admin/tailscale_selfname_b320.go
 TAGS=internal/headscale/tags.go
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 TPL=internal/handlers/templates/admin/tailscale.html
 I18N=internal/i18n/catalog_tailscale.go
 TEST1=internal/feature/admin/tailscale_boot_b321_test.go

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 #===============================================================================
 # Skygate v1.3.20.2 (B132) — per-row "Re-sync" + mismatch explainer
 #
@@ -62,7 +63,7 @@ SYNC_GO="internal/feature/exit_rules/sync.go"
 gosurface ADMIN_EXIT_GO internal/feature/admin/exit_nodes*.go
 
 ADMIN_SVC_GO="internal/feature/admin/service.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 TEMPLATE="internal/handlers/templates/admin/exit_nodes.html"
 I18N="internal/i18n/catalog_exit_nodes.go"
 

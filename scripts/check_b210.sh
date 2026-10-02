@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B210 (v1.5.0+) — DBSource pattern for non-admin services
 # (auth, my, exit_rules, feature/cluster).
 #
@@ -93,8 +94,9 @@ auth_remaining=${auth_remaining:-0}
   || check "auth has 0 remaining s.DB.method call sites (got $auth_remaining)" fail
 
 # 5. main.go passes d to authSvc
-file_grep "authSvc := &authsvc\.Service" "cmd/skygate/main.go" && \
-  file_grep "DB:\s+d," "cmd/skygate/main.go" \
+gosurface SKY_MAIN cmd/skygate/*.go
+file_grep "authSvc := &authsvc\.Service" "$SKY_MAIN" && \
+  file_grep "DB:\s+d," "$SKY_MAIN" \
   && check "main.go passes ResettableDB to authSvc" ok \
   || check "main.go passes ResettableDB to authSvc" fail
 
@@ -122,8 +124,8 @@ done
   || check "my has 0 remaining s.DB.method call sites (got $my_remaining)" fail
 
 # 9. main.go passes d to mySvc
-file_grep "mySvc := &mysvc\.Service" "cmd/skygate/main.go" && \
-  file_grep "DB:\s+d," "cmd/skygate/main.go" \
+file_grep "mySvc := &mysvc\.Service" "$SKY_MAIN" && \
+  file_grep "DB:\s+d," "$SKY_MAIN" \
   && check "main.go passes ResettableDB to mySvc" ok \
   || check "main.go passes ResettableDB to mySvc" fail
 
@@ -152,8 +154,8 @@ done
   || check "exit_rules has 0 remaining s.DB.method call sites (got $exr_remaining)" fail
 
 # 13. main.go passes d to exitRulesSvc
-file_grep "exitRulesSvc := &exitrules\.Service" "cmd/skygate/main.go" && \
-  file_grep "DB:\s+d," "cmd/skygate/main.go" \
+file_grep "exitRulesSvc := &exitrules\.Service" "$SKY_MAIN" && \
+  file_grep "DB:\s+d," "$SKY_MAIN" \
   && check "main.go passes ResettableDB to exitRulesSvc" ok \
   || check "main.go passes ResettableDB to exitRulesSvc" fail
 
@@ -168,8 +170,8 @@ file_grep "DB\s+DBSource" "internal/feature/cluster/handlers.go" \
   || check "cluster.Service.DB is DBSource (not *sql.DB)" fail
 
 # 16. main.go passes d to clusterAPI
-file_grep "clusterAPI := &clusterapi\.Service" "cmd/skygate/main.go" && \
-  file_grep "DB:\s+d," "cmd/skygate/main.go" \
+file_grep "clusterAPI := &clusterapi\.Service" "$SKY_MAIN" && \
+  file_grep "DB:\s+d," "$SKY_MAIN" \
   && check "main.go passes ResettableDB to clusterAPI" ok \
   || check "main.go passes ResettableDB to clusterAPI" fail
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B206 (v1.5.0+) — GET /db/health endpoint. Phase 1.5
 # / G3 of docs/ha.md.
 #
@@ -159,13 +160,14 @@ grep_q 'DBHealthSrc[[:space:]]+DBSource' "internal/feature/healthz/service.go" \
     || check "Service has DBHealthSrc field" fail
 
 # 11. main.go
-grep_q 'NewDBHealthSampler' "cmd/skygate/main.go" \
+gosurface SKY_MAIN cmd/skygate/*.go
+grep_q 'NewDBHealthSampler' "$SKY_MAIN" \
     && check "main.go calls NewDBHealthSampler" ok \
     || check "main.go calls NewDBHealthSampler" fail
-grep_q 'dbHealthSampler\.Start\(\)' "cmd/skygate/main.go" \
+grep_q 'dbHealthSampler\.Start\(\)' "$SKY_MAIN" \
     && check "main.go calls dbHealthSampler.Start()" ok \
     || check "main.go calls dbHealthSampler.Start()" fail
-grep_q 'GET /db/health' "cmd/skygate/main.go" \
+grep_q 'GET /db/health' "$SKY_MAIN" \
     && check "main.go registers GET /db/health route" ok \
     || check "main.go registers GET /db/health route" fail
 

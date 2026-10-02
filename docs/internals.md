@@ -522,7 +522,7 @@ sourced as `. "$(dirname "$0")/lib/<name>.sh"`:
 | `skip_if_no_docker.sh` | the pre-flight that turns "no docker daemon" into `SKIP` (5 checks) |
 | `db_credentials.sh` | live-DB access via `docker exec` (B336) — `skygate_live_db_probe` / `skygate_live_db_query`, so a failed read is never rendered as a fact |
 | `go_build.sh` | the `skygate <verb> --help` contracts' Go-binary helper, with one link retry |
-| `gosurface.sh` | `gosurface VAR <file-or-glob>…` — concatenates a Go **surface** (skipping `_test.go`) into one file, so a contract pins a package prefix instead of one path. Added in refactor Phase D after splitting `internal/telegram/commands_user.go` and `internal/feature/admin/tailscale.go` each turned a wave of green contracts red for a pure code move |
+| `gosurface.sh` | `gosurface VAR <file-or-glob>…` — concatenates a Go **surface** (skipping `_test.go`) into one file, so a contract pins a package prefix instead of one path. Added in refactor Phase D after splitting `internal/telegram/commands_user.go` and `internal/feature/admin/tailscale.go` each turned a wave of green contracts red for a pure code move. Temp files live in an array (`GOSURFACE_TMP`) with one exit handler installed at most once, and a caller's own `EXIT` trap is chained rather than spliced — the first version edited `trap -p` output as text, which corrupts on the **second** surface in one shell (B339 A6/A7, C5/C6) |
 
 **Running one check, and the full gate.**
 
@@ -598,8 +598,12 @@ Measured 2026-09-18; ordered roughly by how likely it is to bite. Items struck
 through were closed by refactor Phase D (2026-10-01).
 
 1. **`cmd/skygate/main.go` and `internal/feature/admin` are oversized.** `main.go` is
-   **3 971 lines / 182 KB**, one `main()` spanning ~2 950 lines (117–3068) holding the whole
-   route table (~250 registrations) plus every background-service launch.
+   **4 515 lines / 216 KB**, one `main()` spanning ~3 400 lines (144–3539) holding the whole
+   route table (~254 registrations) plus every background-service launch. Its contracts no
+   longer name the FILE: 110 scripts read the package surface
+   (`gosurface MAIN cmd/skygate/*.go`, 2026-10-02), because 655 occurrences of the path were
+   only 196 operands — the other 459 are existence tests, messages and comments that must
+   keep naming the real file (L-55). That conversion is what unblocks the split itself.
    `internal/feature/admin` was **115 files / 1.2 MB**; `tailscale.go` (73.7 KB) is now
    seven files, the largest of them 18 KB. `internal/acl/acl.go` (2209 lines) is now
    seven files too (`acl_generate_via.go` is the largest at 896 — a single function,

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B-check for B225 (v1.5.0+): /admin/database Phase 4.4 —
 # Telegram alerts on failover / migration failure / DB
 # health degraded. Closes the "operator finds out about
@@ -44,7 +45,7 @@ HANDLER_GO="internal/feature/admin/database.go"
 BACKUP_GO="internal/backup/scheduler.go"
 TEST_ADMIN="internal/feature/admin/database_b225_test.go"
 TEST_BACKUP="internal/backup/scheduler_b225_test.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 LV="scripts/b225_liveverify.sh"
 AGENTS="AGENTS.md"
 

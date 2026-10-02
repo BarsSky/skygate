@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b148.sh — v1.5.0 / B148 contracts.
 #
 # This is the B-check that pins the /admin/certificates page
@@ -208,7 +209,8 @@ for route in \
     "GET /admin/certificates" \
     "POST /admin/certificates/upload" \
     "POST /admin/certificates/toggle-dns01"; do
-    if grep -q "mux.Handle(\"$route\"" cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+    if grep -q "mux.Handle(\"$route\"" "$SKY_MAIN"; then
         ok "main.go registers route: $route"
     else
         bad "main.go missing route: $route"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b318_tailscale_state_truth.sh
 #
 # 2026-09-24 (B318, v1.5.83) — two pages, one daemon, one story.
@@ -57,7 +58,7 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 TS=internal/tsstate/tsstate.go
 TPL=internal/handlers/templates/admin/tailscale.html
 EXIT=internal/feature/exit_rules/relay_transport_tailnet_b310.go
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 I18N=internal/i18n/catalog_tailscale.go
 
 # TSADMIN is the admin TAILSCALE SURFACE, not one file.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b270_startup_blockers.sh
 #
 # 2026-09-19 (B270) — two independent startup blockers found from ONE operator
@@ -57,7 +58,7 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
 skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 OIDC_SVC=internal/oidc/service.go
 OIDC_KEYS=internal/oidc/keys.go
 CONFIG=internal/config/config.go

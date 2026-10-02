@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B-check for B231 (v1.5.2+): preferred-exit
 # reconciler UI toggle + HostnameRenameMigrator.
 # Extends B229 with operator-driven on/off control
@@ -64,7 +65,7 @@ HANDLER="internal/feature/admin/settings_pref_reconcile.go"
 HANDLERS_GO="internal/handlers/handlers.go"
 RENAME="internal/feature/exit_rules/reconciler_rename.go"
 RENAME_TEST="internal/feature/exit_rules/reconciler_rename_b231_test.go"
-MAIN="cmd/skygate/main.go"
+gosurface MAIN cmd/skygate/*.go
 CFG="internal/config/config.go"
 STHANDLERS="internal/feature/admin/system_tests_handlers.go"
 STTPL="internal/handlers/templates/admin/system_tests.html"

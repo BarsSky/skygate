@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 #===============================================================================
 # Skygate v1.4.0 (B140) — per-row accept_routes toggle on /admin/exit-nodes
 #
@@ -63,7 +64,7 @@ EXIT_SRV_GO="internal/db/exit_servers.go"
 . scripts/lib/gosurface.sh
 gosurface ADMIN_EXIT_GO internal/feature/admin/exit_nodes*.go
 
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 TEMPLATE="internal/handlers/templates/admin/exit_nodes.html"
 I18N="internal/i18n/catalog_exit_nodes.go"
 TEST_FILE="internal/feature/admin/exit_nodes_b140_test.go"

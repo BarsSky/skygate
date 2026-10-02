@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 #===============================================================================
 # Skygate v1.4.0 (B141) — "Adopt as skygate user" button on HSOrphans
 #
@@ -68,7 +69,7 @@ echo "skygate root: ${SKYGATE_DIR}"
 QUERIES="internal/db/queries.go"
 PORTAL_GO="internal/db/portal_users.go"
 ADMIN_USERS_GO="internal/feature/admin/users.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 TEMPLATE="internal/handlers/templates/admin/users.html"
 I18N="internal/i18n/catalog_admin.go"
 TEST_FILE="internal/feature/admin/users_b141_test.go"

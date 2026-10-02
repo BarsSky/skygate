@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b147.sh — v1.5.0 / B147 contracts.
 #
 # This is the B-check that pins the in-app certsync
@@ -160,44 +161,45 @@ fi
 # --- contract C: main.go wires the certsync scheduler --------------
 echo
 echo "=== contract C: cmd/skygate/main.go certsync wiring ==="
-if grep -q 'certsync\.Start(' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -q 'certsync\.Start(' "$SKY_MAIN"; then
     ok "main.go calls certsync.Start"
 else
     bad "main.go missing certsync.Start call"
 fi
-if grep -q 'buildBackupConfigForCertSync' cmd/skygate/main.go; then
+if grep -q 'buildBackupConfigForCertSync' "$SKY_MAIN"; then
     ok "main.go has buildBackupConfigForCertSync helper"
 else
     bad "main.go missing buildBackupConfigForCertSync helper"
 fi
-if grep -q "cfg.CertSyncEnabled" cmd/skygate/main.go; then
+if grep -q "cfg.CertSyncEnabled" "$SKY_MAIN"; then
     ok "main.go gates certsync on cfg.CertSyncEnabled"
 else
     bad "main.go does not gate certsync on cfg.CertSyncEnabled"
 fi
-if grep -q 'certsync.NewMinioS3Client' cmd/skygate/main.go; then
+if grep -q 'certsync.NewMinioS3Client' "$SKY_MAIN"; then
     ok "main.go wires the S3 adapter (NewMinioS3Client)"
 else
     bad "main.go missing NewMinioS3Client call"
 fi
-if grep -q 'backup.NewS3ClientForConfig' cmd/skygate/main.go; then
+if grep -q 'backup.NewS3ClientForConfig' "$SKY_MAIN"; then
     ok "main.go uses backup.NewS3ClientForConfig (production S3 client)"
 else
     bad "main.go does not use backup.NewS3ClientForConfig"
 fi
 # main.go imports the certsync package.
-if grep -q '"skygate/internal/certsync"' cmd/skygate/main.go; then
+if grep -q '"skygate/internal/certsync"' "$SKY_MAIN"; then
     ok "main.go imports skygate/internal/certsync"
 else
     bad "main.go missing skygate/internal/certsync import"
 fi
 # Startup log line announces enabled / disabled.
-if grep -q 'certsync: enabled' cmd/skygate/main.go; then
+if grep -q 'certsync: enabled' "$SKY_MAIN"; then
     ok "main.go logs 'certsync: enabled' line on boot"
 else
     bad "main.go missing 'certsync: enabled' log line"
 fi
-if grep -q 'certsync: disabled' cmd/skygate/main.go; then
+if grep -q 'certsync: disabled' "$SKY_MAIN"; then
     ok "main.go logs 'certsync: disabled' line on boot"
 else
     bad "main.go missing 'certsync: disabled' log line"

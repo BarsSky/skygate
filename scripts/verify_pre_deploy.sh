@@ -775,9 +775,10 @@ run_check "B27" "entrypoint.sh runs go build at container start (v0.32.13)" \
 #   (c) When gated off, a log line is emitted.
 run_check "B29" "expirewatch goroutine is gated on ExpireWatchEnabled (v0.32.13)" \
   "bash -c '
-    grep -qF \"if cfg.ExpireWatchEnabled\" cmd/skygate/main.go &&
-    grep -qF \"go expireWatchMgr.Run(ctx)\" cmd/skygate/main.go &&
-    ! grep -qE \"^go expireWatchMgr.Run\" cmd/skygate/main.go
+    . scripts/lib/gosurface.sh; gosurface MAIN cmd/skygate/*.go;
+    grep -qF \"if cfg.ExpireWatchEnabled\" \"\$MAIN\" &&
+    grep -qF \"go expireWatchMgr.Run(ctx)\" \"\$MAIN\" &&
+    ! grep -qE \"^go expireWatchMgr.Run\" \"\$MAIN\"
   '"
 
 # ─── B30 (v0.32.13) — sidecar goroutine gated on SidecarSyncPeriod ───
@@ -795,9 +796,10 @@ run_check "B29" "expirewatch goroutine is gated on ExpireWatchEnabled (v0.32.13)
 #   (c) When gated off, a log line is emitted.
 run_check "B30" "sidecar goroutine is gated on SidecarSyncPeriod (v0.32.13)" \
   "bash -c '
-    grep -qF \"if cfg.SidecarSyncPeriod > 0\" cmd/skygate/main.go &&
-    grep -qF \"go sidecarMgr.Run(ctx)\" cmd/skygate/main.go &&
-    ! grep -qE \"^go sidecarMgr.Run\" cmd/skygate/main.go
+    . scripts/lib/gosurface.sh; gosurface MAIN cmd/skygate/*.go;
+    grep -qF \"if cfg.SidecarSyncPeriod > 0\" \"\$MAIN\" &&
+    grep -qF \"go sidecarMgr.Run(ctx)\" \"\$MAIN\" &&
+    ! grep -qE \"^go sidecarMgr.Run\" \"\$MAIN\"
   '"
 
 # ─── B31 (v0.32.14) — DB connection pool: 15 conns, NORMAL sync, 2s busy (CASCADE-LOCK FIX) ───
@@ -995,8 +997,9 @@ run_check "B34" "device_rules has UNIQUE INDEX on the natural key (B125 schema i
 # B-check is only the route wiring.
 run_check "B35" "POST /admin/users/{id}/subnet/remove wired to adminSvc.PostAdminUserSubnetRemove (v0.32.18)" \
   "bash -c '
-    grep -qE \"subnet/remove[^a-z]\" cmd/skygate/main.go &&
-    grep -qF \"adminSvc.PostAdminUserSubnetRemove\" cmd/skygate/main.go
+    . scripts/lib/gosurface.sh; gosurface MAIN cmd/skygate/*.go;
+    grep -qE \"subnet/remove[^a-z]\" \"\$MAIN\" &&
+    grep -qF \"adminSvc.PostAdminUserSubnetRemove\" \"\$MAIN\"
   '"
 
 
@@ -1045,8 +1048,9 @@ run_check "B36" "migration integrity: applied_migrations table + checksum helper
 #    unit test in update_settings_test.go).
 run_check "B37" "Schedule UI: PostAdminUpdateSchedule handler (B129, replaces pre-B129 auto-toggle) + route + template form posting to /admin/update/schedule + global_settings key 'update_schedule_enabled' (B129, v1.3.20 — was: auto-update UI toggle v0.32.20)" \
   "bash -c '
+    . scripts/lib/gosurface.sh; gosurface MAIN cmd/skygate/*.go;
     grep -qF \"func (s *Service) PostAdminUpdateSchedule\" internal/feature/admin/update_settings.go &&
-    grep -qF \"PostAdminUpdateSchedule\" cmd/skygate/main.go &&
+    grep -qF \"PostAdminUpdateSchedule\" \"\$MAIN\" &&
     grep -qF \"/admin/update/schedule\" internal/handlers/templates/admin/update.html &&
     grep -qF \"GetGlobalSettingBool\" internal/feature/admin/update.go &&
     grep -qF \"update_schedule_enabled\" internal/feature/admin/update_settings.go &&
@@ -1092,12 +1096,13 @@ run_check "B38" "headscale_acl.go: ListACL + AddACL + RemoveACL + fingerprint or
 # /admin/headscale/acl is the GET render.
 run_check "B39" "headscale_acl routes: /admin/headscale/acl + /add + /remove (v0.33.0)" \
   "bash -c '
-    grep -qF \"/admin/headscale/acl\" cmd/skygate/main.go &&
-    grep -qF \"/admin/headscale/acl/add\" cmd/skygate/main.go &&
-    grep -qF \"/admin/headscale/acl/remove\" cmd/skygate/main.go &&
-    grep -qF \"GetAdminHeadscaleACL\" cmd/skygate/main.go &&
-    grep -qF \"PostAdminHeadscaleACLAdd\" cmd/skygate/main.go &&
-    grep -qF \"PostAdminHeadscaleACLRemove\" cmd/skygate/main.go &&
+    . scripts/lib/gosurface.sh; gosurface MAIN cmd/skygate/*.go;
+    grep -qF \"/admin/headscale/acl\" \"\$MAIN\" &&
+    grep -qF \"/admin/headscale/acl/add\" \"\$MAIN\" &&
+    grep -qF \"/admin/headscale/acl/remove\" \"\$MAIN\" &&
+    grep -qF \"GetAdminHeadscaleACL\" \"\$MAIN\" &&
+    grep -qF \"PostAdminHeadscaleACLAdd\" \"\$MAIN\" &&
+    grep -qF \"PostAdminHeadscaleACLRemove\" \"\$MAIN\" &&
     grep -qF \"acl.page_title\" internal/handlers/templates/admin/headscale_acl.html &&
     grep -qF \"nav.headscale_acl\" internal/handlers/templates/layout.html
   '"
@@ -1125,13 +1130,14 @@ run_check "B40" "system_tests.go: TestRegistry has ≥6 tests across network/db/
 # in main.go, and the layout has a link to the page.
 run_check "B41" "system_tests routes: /admin/system_tests + /run + layout link (v0.33.0)" \
   "bash -c '
-    grep -qF \"/admin/system_tests\" cmd/skygate/main.go &&
-    grep -qF \"/admin/system_tests/run\" cmd/skygate/main.go &&
-    grep -qF \"GetAdminSystemTests\" cmd/skygate/main.go &&
-    grep -qF \"PostAdminSystemTestsRun\" cmd/skygate/main.go &&
+    . scripts/lib/gosurface.sh; gosurface MAIN cmd/skygate/*.go;
+    grep -qF \"/admin/system_tests\" \"\$MAIN\" &&
+    grep -qF \"/admin/system_tests/run\" \"\$MAIN\" &&
+    grep -qF \"GetAdminSystemTests\" \"\$MAIN\" &&
+    grep -qF \"PostAdminSystemTestsRun\" \"\$MAIN\" &&
     grep -qF \"title.admin_system_tests\" internal/handlers/templates/admin/system_tests.html &&
     grep -qF \"nav.system_tests\" internal/handlers/templates/layout.html &&
-    grep -qF \"SetTestService\" cmd/skygate/main.go
+    grep -qF \"SetTestService\" \"\$MAIN\"
   '"
 
 # ─── B42 (v0.33.0) — Migration integrity: V050 + V051 registered ───
@@ -2670,9 +2676,10 @@ run_check "B89" "B77 follow-up: Backfill Strategy D (tag fallback) + rotate_ts_a
 #     after the assignment to app.Notifier
 #   - Comment header mentions v0.33.1.38 + the bug context
 run_check "B90" "Notifier order bug fix: adminSvc.Notifier re-bound after app.Notifier = rn (v0.33.1.38). B336: the build output moved from the FIXED path /tmp/x to mktemp — a stale root-owned /tmp/x (left by any earlier run under another user) made this check fail with 'open /tmp/x: permission denied', i.e. for a reason that says nothing about the notifier order it tests." \
-  'f=$(mktemp); out=$(mktemp); printf "%s" "    grep -qF \"app.Notifier = rn\" cmd/skygate/main.go &&
-    grep -qF \"adminSvc.Notifier = app.Notifier\" cmd/skygate/main.go &&
-    awk '\''/app\\.Notifier = rn/{a=NR} /adminSvc\\.Notifier = app\\.Notifier/{b=NR} END{exit !(a&&b&&b>a)}'\'' cmd/skygate/main.go &&
+  'f=$(mktemp); out=$(mktemp); printf "%s" "    . scripts/lib/gosurface.sh; gosurface MAIN cmd/skygate/*.go;
+    grep -qF \"app.Notifier = rn\" \"\$MAIN\" &&
+    grep -qF \"adminSvc.Notifier = app.Notifier\" \"\$MAIN\" &&
+    awk '\''/app\\.Notifier = rn/{a=NR} /adminSvc\\.Notifier = app\\.Notifier/{b=NR} END{exit !(a&&b&&b>a)}'\'' \"\$MAIN\" &&
     '\'"$GO"\'' build -o $out ./cmd/skygate
   " > "$f" && bash "$f"; rc=$?; rm -f "$f" "$out"; exit $rc'
 

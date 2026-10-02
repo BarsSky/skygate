@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # ============================================================================
 # check_b1981.sh — B198.1 (v1.5.0+) DB migration UI completion
 #
@@ -34,7 +35,7 @@ DBPAGE="$PROJECT_DIR/internal/handlers/templates/admin/database.html"
 RUNPAGE="$PROJECT_DIR/internal/handlers/templates/admin/migrate_run.html"
 ADMINDB="$PROJECT_DIR/internal/feature/admin/database.go"
 DBMIG="$PROJECT_DIR/internal/dbmigrate/db.go"
-MAIN="$PROJECT_DIR/cmd/skygate/main.go"
+gosurface MAIN $PROJECT_DIR/cmd/skygate/*.go
 CATALOG="$PROJECT_DIR/internal/i18n/catalog_admin.go"
 
 # ----- A) admin/database.html has migrate form ---------------------------

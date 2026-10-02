@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B200 (v1.5.0+) — /admin/cluster Phase 2.2 action surface.
 #
 # Pin the structural surface so a future refactor can't
@@ -110,16 +111,17 @@ grep_q 'NodeRoleSkygate' "internal/cluster/node.go" \
     || check "NodeRole* constants defined" fail
 
 # 5. 4 POST routes
-grep_q 'mux\.Handle\("POST /admin/cluster/node/add"' "cmd/skygate/main.go" \
+gosurface SKY_MAIN cmd/skygate/*.go
+grep_q 'mux\.Handle\("POST /admin/cluster/node/add"' "$SKY_MAIN" \
     && check "route POST /admin/cluster/node/add" ok \
     || check "route POST /admin/cluster/node/add" fail
-grep_q 'mux\.Handle\("POST /admin/cluster/node/remove"' "cmd/skygate/main.go" \
+grep_q 'mux\.Handle\("POST /admin/cluster/node/remove"' "$SKY_MAIN" \
     && check "route POST /admin/cluster/node/remove" ok \
     || check "route POST /admin/cluster/node/remove" fail
-grep_q 'mux\.Handle\("POST /admin/cluster/invite/generate"' "cmd/skygate/main.go" \
+grep_q 'mux\.Handle\("POST /admin/cluster/invite/generate"' "$SKY_MAIN" \
     && check "route POST /admin/cluster/invite/generate" ok \
     || check "route POST /admin/cluster/invite/generate" fail
-grep_q 'mux\.Handle\("POST /admin/cluster/invite/revoke"' "cmd/skygate/main.go" \
+grep_q 'mux\.Handle\("POST /admin/cluster/invite/revoke"' "$SKY_MAIN" \
     && check "route POST /admin/cluster/invite/revoke" ok \
     || check "route POST /admin/cluster/invite/revoke" fail
 
@@ -143,7 +145,7 @@ grep_q 'ClusterInviteSecret string' "internal/feature/admin/service.go" \
     || check "Service.ClusterInviteSecret field" fail
 
 # 8. main.go wiring
-grep_q 'ClusterInviteSecret:[[:space:]]*cfg\.SecretKeyHex' "cmd/skygate/main.go" \
+grep_q 'ClusterInviteSecret:[[:space:]]*cfg\.SecretKeyHex' "$SKY_MAIN" \
     && check "main.go wires cfg.SecretKeyHex → ClusterInviteSecret" ok \
     || check "main.go wires cfg.SecretKeyHex → ClusterInviteSecret" fail
 

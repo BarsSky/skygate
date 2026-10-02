@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B-check for B217 (v1.5.0+): /admin/cluster Phase 2.2
 # action surface — Approve / Drain / Drain+Remove
 # buttons + the cluster.DrainNode / DrainAndRemoveNode /
@@ -34,7 +35,7 @@ NODE_GO="internal/cluster/node.go"
 DB_GO="internal/db/cluster_audit.go"
 CLUSTER_GO="internal/feature/admin/cluster.go"
 HA_GO="internal/feature/admin/ha.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 CLUSTER_HTML="internal/handlers/templates/admin/cluster.html"
 HA_HTML="internal/handlers/templates/admin/ha.html"
 CATALOG="internal/i18n/catalog_admin.go"

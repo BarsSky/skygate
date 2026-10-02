@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B-check for B227 (v1.5.2+): B77 tag-autoupdater
 # observability. Closes the gap where a stuck ACL
 # reject (e.g. skygate-host-1-1 with `tag:infra-*`
@@ -75,7 +76,7 @@ AUTOBACKFILL_GO="internal/nodeownership/auto.go"
 NODEOWNERSHIP_GO="internal/nodeownership/nodeownership.go"
 HANDLERS_EXPORT="internal/handlers/handlers_export.go"
 ADMIN_DEVICES="internal/feature/admin/devices.go"
-MAIN_GO="cmd/skygate/main.go"
+gosurface MAIN_GO cmd/skygate/*.go
 TEST_NEW="internal/nodeownership/auto_b227_test.go"
 AGENTS="AGENTS.md"
 

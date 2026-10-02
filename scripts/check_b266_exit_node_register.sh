@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b266_exit_node_register.sh
 #
 # 2026-09-19 (B266) — "register a new exit node from the panel" + the
@@ -72,10 +73,11 @@ I18N="internal/i18n/catalog_exit_nodes.go"
 hdr "B266 — exit-node registration from the panel + ssh_target injection fix"
 
 # --- A: handler, route, file ---
+gosurface SKY_MAIN cmd/skygate/*.go
 if [ -f "$REG" ] \
    && grep -q 'func (s \*Service) PostAdminExitNodeRegister' "$REG" \
-   && grep -q 'exit-nodes/register' cmd/skygate/main.go \
-   && grep -q 'PostAdminExitNodeRegister' cmd/skygate/main.go; then
+   && grep -q 'exit-nodes/register' "$SKY_MAIN" \
+   && grep -q 'PostAdminExitNodeRegister' "$SKY_MAIN"; then
   ok "A: PostAdminExitNodeRegister + POST /admin/exit-nodes/register wired"
 else
   bad "A: handler or route missing (register flow cannot be reached)"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b116.sh — v1.3.17 DERP relay CRUD UI (per-row
 # add/edit/delete/toggle/test). Replaces the v0.11.0
 # comma-separated textarea model with a first-class
@@ -111,7 +112,7 @@ done
 pass "6 admin handlers: Get + Add + Edit + Delete + Toggle + Test"
 
 # 10. Routes registered in main.go
-F=cmd/skygate/main.go
+gosurface F cmd/skygate/*.go
 for route in '/admin/derp/relays' '/admin/derp/relays/add' \
              '/admin/derp/relays/edit' '/admin/derp/relays/delete' \
              '/admin/derp/relays/toggle' '/admin/derp/relays/test'; do

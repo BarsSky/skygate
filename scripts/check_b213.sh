@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b213.sh — B213 (v1.5.0+) `skygate migrate` in-DB
 # schema migration CLI. Pins the structural + wiring
 # contracts so a future refactor that silently breaks
@@ -89,15 +90,16 @@ grep -q "^func runMigrateDown" "$REPO_ROOT/cmd/skygate/migrate.go"
 check "E: runMigrateDown function exists (stub)" "0" "$?"
 
 # F: main.go has the "migrate" case
-grep -q 'case "migrate":' "$REPO_ROOT/cmd/skygate/main.go"
+gosurface SKY_MAIN $REPO_ROOT/cmd/skygate/*.go
+grep -q 'case "migrate":' "$SKY_MAIN"
 check "F: case \"migrate\" in main.go switch" "0" "$?"
 
 # G: main.go dispatches to runMigrateSubcommand
-grep -q "runMigrateSubcommand(os.Args\[2:\])" "$REPO_ROOT/cmd/skygate/main.go"
+grep -q "runMigrateSubcommand(os.Args\[2:\])" "$SKY_MAIN"
 check "G: main.go dispatches to runMigrateSubcommand" "0" "$?"
 
 # H: help text mentions "migrate [verb]"
-grep -q "migrate \[verb\]" "$REPO_ROOT/cmd/skygate/main.go"
+grep -q "migrate \[verb\]" "$SKY_MAIN"
 check "H: help text mentions 'migrate [verb]'" "0" "$?"
 
 # I: driver_postgres.go has MigrationEntry struct
@@ -129,7 +131,7 @@ check "N: internal/db/migration_b213_test.go exists" "0" "$?"
 check "O: cmd/skygate/migrate_b213_test.go exists" "0" "$?"
 
 # P: pre-B213 migrate-only is preserved (backward compat)
-grep -q 'case "migrate-only":' "$REPO_ROOT/cmd/skygate/main.go"
+grep -q 'case "migrate-only":' "$SKY_MAIN"
 check "P: pre-B213 migrate-only preserved (backward compat)" "0" "$?"
 
 # Q: go test passes (no DB required for B213 unit tests)

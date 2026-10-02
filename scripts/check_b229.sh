@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B-check for B229 (v1.5.2+): preferred-exit
 # auto-reconciler. Closes the gap where
 # device_rules existed but device_exit_node_prefs
@@ -51,7 +52,7 @@ hasf() { grep -qF -- "$2" "$1" 2>/dev/null; }
 RECON="internal/feature/exit_rules/reconciler.go"
 TEST="internal/feature/exit_rules/reconciler_b229_test.go"
 HANDLERS="internal/handlers/handlers.go"
-MAIN="cmd/skygate/main.go"
+gosurface MAIN cmd/skygate/*.go
 CFG="internal/config/config.go"
 AGENTS="AGENTS.md"
 

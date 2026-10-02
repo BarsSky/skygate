@@ -191,7 +191,7 @@ for picker in \
   internal/telegram/commands_sync_nodes.go \
   internal/feature/admin/devices.go \
   internal/nodeownership/nodeownership.go \
-  cmd/skygate/main.go
+  'cmd/skygate/*.go'
 do
   if grep -q 'PickPerNodeTag' $picker 2>/dev/null; then
     PICKERS_OK=$((PICKERS_OK+1))

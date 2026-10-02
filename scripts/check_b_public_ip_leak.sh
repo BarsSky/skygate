@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b_public_ip_leak.sh — Phase 7 (v1.5.2+) — verifies that
 # skygate does not leak other users' public IPs in API responses,
 # DB queries, audit log, error reports, or headscale user output.
@@ -134,7 +135,8 @@ echo
 echo "--- A.4 /admin/derp/* + /admin/headscale/* redact public IPs for non-admin ---"
 ADMIN_AUTH=0
 # Find all routes under /admin/ and check they use authMW.
-for f in cmd/skygate/main.go; do
+gosurface SKY_MAIN cmd/skygate/*.go
+for f in "$SKY_MAIN"; do
     if [ -f "${f}" ]; then
         ADMIN_ROUTES=$(grep -cE 'mux\.Handle\("(GET|POST) /admin/' "${f}" 2>/dev/null)
         ADMIN_AUTHMW=$(grep -cE 'mux\.Handle\("(GET|POST) /admin/.*authMW' "${f}" 2>/dev/null)
@@ -159,7 +161,7 @@ fi
 # --- A.6: headscale users list output is admin-gated ---
 echo
 echo "--- A.6 /admin/headscale/users list output is admin-gated ---"
-if grep -qE 'mux\.Handle\(".*headscale.*users.*authMW' cmd/skygate/main.go 2>/dev/null || \
+if grep -qE 'mux\.Handle\(".*headscale.*users.*authMW' "$SKY_MAIN" 2>/dev/null || \
    ! grep -qE 'headscale.*users.*list' internal/feature/my/*.go 2>/dev/null; then
     ok "/admin/headscale/users* routes are admin-only (not exposed via /my/)"
     LEAK_GUARDS=$((LEAK_GUARDS+1))

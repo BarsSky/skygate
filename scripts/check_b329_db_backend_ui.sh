@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b329_db_backend_ui.sh
 #
 # 2026-09-28 (B329) — the database-management tab: which backend is in
@@ -67,7 +68,7 @@ DBTPL=internal/handlers/templates/admin/database.html
 OPENISO=internal/db/dialect.go
 CONVERT=internal/db/convert.go
 CLI=cmd/skygate/db_migrate.go
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 LAYOUT=internal/handlers/templates/layout.html
 HANDLERS=internal/handlers/handlers.go
 RU=internal/i18n/catalog_admin.go

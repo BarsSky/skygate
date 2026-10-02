@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B204 (v1.5.0+) — HA elector: auto-detect failed nodes +
 # auto-failover recommendation. Phase 3.2-3.3 of
 # docs/ha.md.
@@ -138,13 +139,14 @@ grep -A100 'func .e \*Elector. recommendFailover' "internal/elector/elector.go" 
     || check "recommendFailover writes failover_recommend audit row" fail
 
 # 9. main.go starts the elector
-grep_q 'elector\.NewElector' "cmd/skygate/main.go" \
+gosurface SKY_MAIN cmd/skygate/*.go
+grep_q 'elector\.NewElector' "$SKY_MAIN" \
     && check "main.go calls elector.NewElector" ok \
     || check "main.go calls elector.NewElector" fail
-grep_q 'el\.Start\(\)' "cmd/skygate/main.go" \
+grep_q 'el\.Start\(\)' "$SKY_MAIN" \
     && check "main.go calls el.Start()" ok \
     || check "main.go calls el.Start()" fail
-grep_q 'ha-elector: started' "cmd/skygate/main.go" \
+grep_q 'ha-elector: started' "$SKY_MAIN" \
     && check "main.go logs ha-elector: started" ok \
     || check "main.go logs ha-elector: started" fail
 

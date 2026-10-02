@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b276_acl_ownership_sync.sh
 #
 # 2026-09-21 (B276, v1.5.36) — the ACL must follow the assignment table.
@@ -65,7 +66,7 @@ PKG=internal/prefixowner/prefixowner.go
 gosurface ADMIN internal/feature/admin/exit_nodes*.go
 
 TMPL=internal/handlers/templates/admin/exit_nodes.html
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 HELPER=internal/headscale/policy_equivalent_b276.go
 CAT_RU=internal/i18n/catalog_exit_nodes.go
 

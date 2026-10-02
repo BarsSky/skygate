@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B203 (v1.5.0+) — skygate-watchdog for cluster_database
 # hot-reload (Phase 3.1 of cluster-management.md).
 #
@@ -185,12 +186,13 @@ grep_q 'func redactDSN' "internal/watchdog/dbswap.go" \
     || check "redactDSN defined" fail
 
 # 20. main.go starts watchdog
-grep_q 'wd\.Start\(\)' "cmd/skygate/main.go" \
+gosurface SKY_MAIN cmd/skygate/*.go
+grep_q 'wd\.Start\(\)' "$SKY_MAIN" \
     && check "main.go calls wd.Start()" ok \
     || check "main.go calls wd.Start()" fail
 
 # 21. main.go wraps DB
-grep_q 'db\.NewResettableDB' "cmd/skygate/main.go" \
+grep_q 'db\.NewResettableDB' "$SKY_MAIN" \
     && check "main.go wraps app.DB in NewResettableDB" ok \
     || check "main.go wraps app.DB in NewResettableDB" fail
 

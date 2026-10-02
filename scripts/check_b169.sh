@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b169.sh — admin-side device delete (B169, v1.5.2)
 #
 # B162 (v1.5.1) added the per-row "Delete" button on
@@ -174,7 +175,8 @@ fi
 hdr "contract D: route contract"
 
 # D.1 — the route is registered in main.go.
-if grep -q 'POST /admin/devices/{id}/delete' cmd/skygate/main.go; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -q 'POST /admin/devices/{id}/delete' "$SKY_MAIN"; then
     ok "main.go registers POST /admin/devices/{id}/delete"
 else
     bad "main.go does NOT register the admin-delete route"
@@ -183,7 +185,7 @@ fi
 # D.2 — the route is behind authMW (so an
 # unauthenticated request is redirected to /login,
 # not the admin handler).
-if grep -A1 'POST /admin/devices/{id}/delete' cmd/skygate/main.go | grep -q 'authMW'; then
+if grep -A1 'POST /admin/devices/{id}/delete' "$SKY_MAIN" | grep -q 'authMW'; then
     ok "route is behind authMW (unauth requests → /login)"
 else
     bad "route is NOT behind authMW (any unauthenticated request would reach the handler)"

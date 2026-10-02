@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b251.sh — verify the B251 "skygate-host reserved name" + B245 hujson fix landed.
 #
 # B251 (2026-09-15) closes three related gaps that surfaced during
@@ -76,7 +77,8 @@ fi
 
 # ── A: main.go TailscaleHostname default ──
 echo "=== A. TailscaleHostname default = skygate-host ==="
-if grep -nE 'TailscaleHostname:\s*tailscaleEnvOr\("SKYGATE_TS_HOSTNAME",\s*"skygate-host"\)' cmd/skygate/main.go >/dev/null 2>&1; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -nE 'TailscaleHostname:\s*tailscaleEnvOr\("SKYGATE_TS_HOSTNAME",\s*"skygate-host"\)' "$SKY_MAIN" >/dev/null 2>&1; then
     ok "cmd/skygate/main.go default hostname = skygate-host"
 else
     bad "cmd/skygate/main.go TailscaleHostname default is not skygate-host"
@@ -85,7 +87,7 @@ fi
 # ── B: main.go SelfHostname default ──
 echo
 echo "=== B. SelfHostname default = skygate-host ==="
-if grep -nE 'SelfHostname:\s*tailscaleEnvOr\("SKYGATE_TS_HOSTNAME",\s*"skygate-host"\)' cmd/skygate/main.go >/dev/null 2>&1; then
+if grep -nE 'SelfHostname:\s*tailscaleEnvOr\("SKYGATE_TS_HOSTNAME",\s*"skygate-host"\)' "$SKY_MAIN" >/dev/null 2>&1; then
     ok "cmd/skygate/main.go SelfHostname default = skygate-host"
 else
     bad "cmd/skygate/main.go SelfHostname default is not skygate-host"

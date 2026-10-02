@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B199 (v1.5.0+) — /admin/cluster (cluster topology view, Phase 2.1 read-only).
 #
 # Pin the structural surface so a future refactor can't
@@ -84,7 +85,8 @@ grep_q '\{\{define "body-admin-cluster"\}\}' "internal/handlers/templates/admin/
     || check 'template defines "body-admin-cluster"' fail
 
 # 4. Route registered
-grep_q 'mux\.Handle\("GET /admin/cluster"' "cmd/skygate/main.go" \
+gosurface SKY_MAIN cmd/skygate/*.go
+grep_q 'mux\.Handle\("GET /admin/cluster"' "$SKY_MAIN" \
     && check "route GET /admin/cluster registered in main.go" ok \
     || check "route GET /admin/cluster registered in main.go" fail
 

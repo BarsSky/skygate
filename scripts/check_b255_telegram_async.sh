@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # ============================================================================
 # check_b255_telegram_async.sh — B255 Telegram background polling + nearest egress
 # ============================================================================
@@ -63,7 +64,7 @@ bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 . scripts/lib/gosurface.sh
 gosurface TG internal/feature/admin/telegram*.go
 
-MAIN="cmd/skygate/main.go"
+gosurface MAIN cmd/skygate/*.go
 TPL="internal/handlers/templates/admin/telegram.html"
 RU="internal/i18n/catalog_telegram.go"
 AGENTS="AGENTS.md"

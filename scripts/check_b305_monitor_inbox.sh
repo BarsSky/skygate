@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # check_b305_monitor_inbox.sh
 #
 # 2026-09-23 (B305, v1.5.70) — the monitoring inbox.
@@ -59,7 +60,7 @@ PAGE=internal/feature/admin/monitor.go
 TPL=internal/handlers/templates/admin/monitor.html
 LAYOUT=internal/handlers/templates/layout.html
 RU=internal/i18n/catalog_admin.go
-MAIN=cmd/skygate/main.go
+gosurface MAIN cmd/skygate/*.go
 # The admin system-tests SURFACE, not one file: internal/feature/admin/system_tests.go
 # was split in refactor Phase D (2026-10-01) and the code this contract greps moved
 # to a sibling (system_tests_query.go / _runtime.go / _runs.go). A contract pinned

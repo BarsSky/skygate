@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # scripts/check_b237_21.sh — B237.21 (v1.5.2+)
 # `skygate regapi-credentials` CLI subcommand contract.
 #
@@ -75,22 +76,23 @@ fi
 # --- B. Wire-up: the case in main.go's dispatcher ---
 
 # B.1 main.go has a case for the new subcommand
-if grep -q 'case "regapi-credentials":' cmd/skygate/main.go 2>/dev/null; then
+gosurface SKY_MAIN cmd/skygate/*.go
+if grep -q 'case "regapi-credentials":' "$SKY_MAIN" 2>/dev/null; then
     ok "B.1 cmd/skygate/main.go has the regapi-credentials case"
 else
     bad "B.1 cmd/skygate/main.go must have the regapi-credentials case"
 fi
 
 # B.2 main.go calls the dispatcher
-if grep -q 'runRegAPICredsSubcommand' cmd/skygate/main.go 2>/dev/null; then
+if grep -q 'runRegAPICredsSubcommand' "$SKY_MAIN" 2>/dev/null; then
     ok "B.2 main.go calls runRegAPICredsSubcommand"
 else
     bad "B.2 main.go must call runRegAPICredsSubcommand"
 fi
 
 # B.3 the help text mentions the new subcommand
-if grep -q 'regapi-credentials' cmd/skygate/main.go 2>/dev/null && \
-   grep -q 'B237.21' cmd/skygate/main.go 2>/dev/null; then
+if grep -q 'regapi-credentials' "$SKY_MAIN" 2>/dev/null && \
+   grep -q 'B237.21' "$SKY_MAIN" 2>/dev/null; then
     ok "B.3 help text mentions the new subcommand (with B237.21 reference)"
 else
     bad "B.3 help text must mention the new subcommand"

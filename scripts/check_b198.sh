@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # ============================================================================
 # check_b198.sh — B198 (v1.5.0+) DB migration workflow (Phase 1.4)
 #
@@ -27,7 +28,7 @@ no() { echo "  ✗ $*"; FAIL=$((FAIL+1)); }
 PKG="$PROJECT_DIR/internal/dbmigrate"
 STEPS="$PROJECT_DIR/internal/dbmigrate/steps"
 MIGRATION="$PROJECT_DIR/internal/db/migrations_v0_65_b198.go"
-MAIN="$PROJECT_DIR/cmd/skygate/main.go"
+gosurface MAIN $PROJECT_DIR/cmd/skygate/*.go
 
 # ----- A) package + core files -----------------------------------------
 echo "A) internal/dbmigrate/ package + core files"

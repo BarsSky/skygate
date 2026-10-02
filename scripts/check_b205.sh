@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B339: the contracts below read the cmd/skygate SURFACE, not one file
 # B205 (v1.5.0+) — `skygate cluster ...` CLI subcommands.
 #
 # Phase 4 of docs/ha.md. The
@@ -181,15 +182,16 @@ grep -A30 '^func clusterRolesToSlice' "cmd/skygate/cluster.go" | grep -q 'inQuot
     || check "clusterRolesToSlice handles quoted segments" fail
 
 # 11. main.go dispatches
-grep_q 'case "cluster":' "cmd/skygate/main.go" \
+gosurface SKY_MAIN cmd/skygate/*.go
+grep_q 'case "cluster":' "$SKY_MAIN" \
     && check "main.go has 'cluster' case" ok \
     || check "main.go has 'cluster' case" fail
-grep -A15 'case "cluster":' "cmd/skygate/main.go" | grep -q "runClusterSubcommand" \
+grep -A15 'case "cluster":' "$SKY_MAIN" | grep -q "runClusterSubcommand" \
     && check "main.go cluster case calls runClusterSubcommand" ok \
     || check "main.go cluster case calls runClusterSubcommand" fail
 
 # 12. help text
-grep -A20 'case "help"' "cmd/skygate/main.go" | grep -q "cluster <verb>" \
+grep -A20 'case "help"' "$SKY_MAIN" | grep -q "cluster <verb>" \
     && check "help text mentions 'cluster <verb>'" ok \
     || check "help text mentions 'cluster <verb>'" fail
 
