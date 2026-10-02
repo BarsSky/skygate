@@ -642,10 +642,35 @@ func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, user
 		if err := ruleRows.Scan(&h, &c); err != nil {
 			continue
 		}
+		totalRules += c
+		if h == "" {
+			// B341.1 (2026-10-02, live) — AN EMPTY exit_node_id IS NOT A RELAY.
+			//
+			// The query groups by exit_node_id, and a device whose rules name no
+			// relay produces exactly one group: `('', 11)`. Counting it as a
+			// distinct relay made `DistinctExitNodes == 1` for the one shape B341
+			// exists for, so the derive-from-prefix_owner branch below
+			// (`totalRules > 0 && DistinctExitNodes == 0`) was UNREACHABLE in
+			// production while its unit test — which hand-built the state with
+			// `DistinctExitNodes: 0` — passed. Measured on the reference VM after
+			// the B341 build went live: `cyborg` (11 rules, every one with an empty
+			// relay, no preference) logged
+			//
+			//	preferred-reconciler: SKIP skyadmin/cyborg —
+			//	reason=missing-pref-relay-untagged rules=11 distinct_relays=0
+			//
+			// i.e. the named skip B341 added to make the state visible was
+			// reporting a relay it did not have. Skipping the empty group makes
+			// the count mean what every reader (and the B341 planner) assumes it
+			// means; a device with real relays is unaffected, because its groups
+			// are unchanged and only the empty one is dropped.
+			continue
+		}
 		if dominant == "" {
+			// The query orders by COUNT(*) DESC, so the first non-empty group is
+			// still the dominant relay — the empty group can no longer shadow it.
 			dominant = h
 		}
-		totalRules += c
 		state.DistinctExitNodes++
 	}
 	state.TotalRules = totalRules

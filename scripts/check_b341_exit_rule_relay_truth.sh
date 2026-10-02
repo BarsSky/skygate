@@ -170,6 +170,23 @@ else
   else
     skip "D3: SKYGATE_TEST_PG_DSN is unset — the PostgreSQL half SKIPs (B334 covers it when the DSN is set)"
   fi
+  # D4/D5 — B341.1 (2026-10-02, measured live). The planner's condition is
+  # `DistinctExitNodes == 0`, but the COLLECTOR counted the SQL GROUP BY's empty
+  # group as a relay, so a device whose rules name no relay reported 1 and the
+  # derive branch was unreachable in production while the pure unit test — which
+  # hand-built the state — passed. The live VM said it in one line:
+  #   preferred-reconciler: SKIP skyadmin/cyborg —
+  #   reason=missing-pref-relay-untagged rules=11 distinct_relays=0
+  if OUT="$("$GO_BIN" test ./internal/feature/exit_rules/ -run 'TestCollectDevicePrefState_.*_B341' -count=1 2>&1)"; then
+    ok "D4: the COLLECTOR (not just the planner) reports zero relays for a relay-less device ($(printf '%s' "$OUT" | tail -1))"
+  else
+    bad "D4: the collector regression test fails: $(printf '%s' "$OUT" | tail -3)"
+  fi
+  if grep -q 'AN EMPTY exit_node_id IS NOT A RELAY' internal/feature/exit_rules/reconciler.go; then
+    ok "D5: the empty-group skip is present in the collector loop (with the measurement that motivated it)"
+  else
+    bad "D5: the collector counts the empty exit_node_id group as a relay again — the derive branch becomes unreachable"
+  fi
 fi
 
 hdr "E. live: every relay-less device must have a relay to derive from"
