@@ -39,18 +39,18 @@ import (
 // B178) so annotateRulesWithPrefs can take it by reference.
 // Fields match the DB column names + post-B178 pref fields.
 type AdminRule struct {
-	ID            int
-	UserID        int
-	UserName      string
-	DeviceID      int
-	DeviceName    string
-	DeviceIP      string
-	ExitNode      string
-	TargetType    string
-	TargetValue   string
-	Action        string
-	ParentDomain  string
-	CreatedAt     string
+	ID           int
+	UserID       int
+	UserName     string
+	DeviceID     int
+	DeviceName   string
+	DeviceIP     string
+	ExitNode     string
+	TargetType   string
+	TargetValue  string
+	Action       string
+	ParentDomain string
+	CreatedAt    string
 	// 2026-09-21 (B277.4): the v0.74 "all my devices" fan-out
 	// marker. Set by the conversion at form_admin.go:284 from
 	// db.DeviceRule.AllDevices (now SELECTed in
@@ -58,7 +58,7 @@ type AdminRule struct {
 	// "все мои устройства" badge when true — before B277.4 the
 	// admin view had no way to tell a per-device rule apart
 	// from a fan-out copy of an all_devices rule.
-	AllDevices    bool
+	AllDevices bool
 	// 2026-08-25 (B178): preferred exit-node hostname for
 	// this (user, device) pair. Empty when no per-device /
 	// per-user pref is set. The admin template renders a
@@ -131,11 +131,12 @@ type AdminRule struct {
 // ExitNode. SUBNET/IP rules check directly. DOMAIN rules
 // check via resolvedByDomain (B184). The template renders
 // three states:
-//   ✅ approved      — Applicable + ApprovedInHeadscale
-//   ⏳ pending       — Applicable but ApprovedInHeadscale=false
-//                       (rule's target not in headscale yet)
-//   ⚠️ wrong-node   — Applicable=false (rule's ExitNode differs
-//                       from the device's preferred exit-node)
+//
+//	✅ approved      — Applicable + ApprovedInHeadscale
+//	⏳ pending       — Applicable but ApprovedInHeadscale=false
+//	                    (rule's target not in headscale yet)
+//	⚠️ wrong-node   — Applicable=false (rule's ExitNode differs
+//	                    from the device's preferred exit-node)
 func annotateRulesWithPrefs(rr []AdminRule, prefFn func(userID int64, hostname string) string, approvedByExitNode map[string]map[string]bool, resolvedByDomain map[string]map[string]bool) int {
 	// Batch by (userID, hostname) — one lookup per unique
 	// (user, device), not per rule. For 324 rules covering
@@ -247,18 +248,18 @@ func ruleApprovedInHeadscale(rule AdminRule, approvedByExitNode map[string]map[s
 //
 // Behaviour:
 //   - no query param        → all rules across all users
-//                             (the original v0.16.x behaviour)
+//     (the original v0.16.x behaviour)
 //   - ?device=NAME present  → only rules whose device_id maps to
-//                             a node_owner_map row with hostname
-//                             = NAME (case-insensitive). The
-//                             template shows a banner with the
-//                             filter name and a "show all" link.
+//     a node_owner_map row with hostname
+//     = NAME (case-insensitive). The
+//     template shows a banner with the
+//     filter name and a "show all" link.
 //   - ?device=NAME not found → empty result set + banner. The
-//                             handler does NOT http.StatusNotFound — the
-//                             "device not found" case is
-//                             indistinguishable from "device
-//                             exists but has no rules" from the
-//                             operator's perspective.
+//     handler does NOT http.StatusNotFound — the
+//     "device not found" case is
+//     indistinguishable from "device
+//     exists but has no rules" from the
+//     operator's perspective.
 func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
@@ -558,26 +559,67 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = totalPct
 
+	// B343 (2026-10-02, operator report): the admin twin of the my-page marker.
+	// A device whose ENABLED rules have no exit-node preference is inert — nothing
+	// pins it to a relay — and the panel used to say nothing while the generated
+	// ACL looked correct (the per-CIDR pins come from prefix_owner since B275).
+	// One query per user that HAS rules (bounded by the portal's user count), not
+	// per rule, so the cost does not grow with the rule table.
+	inertDevices := map[string]int{}
+	inertList := []string{}
+	if urows, uerr := s.dbc().Query(`
+		SELECT DISTINCT user_id, COALESCE(user_name, '')
+		  FROM device_rules
+		 WHERE enabled = 1 AND device_hostname <> ''
+		 ORDER BY user_id`); uerr == nil {
+		defer urows.Close()
+		for urows.Next() {
+			var uid int64
+			var uname string
+			if err := urows.Scan(&uid, &uname); err != nil {
+				continue
+			}
+			m, merr := s.DevicesWithoutExitNodePrefForService(uid)
+			if merr != nil {
+				continue
+			}
+			for host, n := range m {
+				inertDevices[strconv.FormatInt(uid, 10)+":"+host] = n
+				label := host
+				if uname != "" {
+					label = uname + "/" + host
+				}
+				inertList = append(inertList, label+" ("+strconv.Itoa(n)+")")
+			}
+		}
+	}
+
 	s.Backend.RenderWithLayout(w, r, "admin/exit_rules.html", c, map[string]any{
-		"Page":           "exit-rules",
-		"Title":          "Exit Rules",
-		"Rules":          rr,
-		"Logs":           logs,
-		"Snapshots":      snaps,
-		"GroupedByUser":  groupedByUser,
-		"TotalRules":     totalRules,
-		"MaxTotalRules":  maxTotal,
-		"LoadPct":        totalPct,
+		"Page":          "exit-rules",
+		"Title":         "Exit Rules",
+		"Rules":         rr,
+		"Logs":          logs,
+		"Snapshots":     snaps,
+		"GroupedByUser": groupedByUser,
+		"TotalRules":    totalRules,
+		"MaxTotalRules": maxTotal,
+		"LoadPct":       totalPct,
 		// v1.5.43: pagination (only meaningful for the
 		// unfiltered cross-user view; the device-filtered
 		// drill-down sets RulePage=zero-value so the template
 		// renders no controls).
-		"RulePage":       adminRulePage,
+		"RulePage": adminRulePage,
 		// 2026-08-06: cross-check counter — admin sees the total
 		// dead-rule count at the top of the page. Click to
 		// filter the table to only-applicable vs only-mismatch
 		// (the template renders a toggle).
 		"MismatchCount": totalMismatch,
+		// B343: devices whose enabled rules have no exit-node preference, keyed
+		// "userID:hostname" for an inline marker plus a ready-made label list for
+		// the banner (deterministic order, so the page does not shuffle).
+		"NoExitNodeDevices": inertDevices,
+		"NoExitNodeCount":   len(inertList),
+		"NoExitNodeList":    inertList,
 		// 2026-08-06: per-device filter state. Non-empty
 		// when the operator clicked a "dead rules" badge on
 		// /admin/devices. The template renders a banner
@@ -592,14 +634,14 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		// renders the form with the user's typed values
 		// preserved (B237.19 flash-banner UX, mirrored from
 		// /my/exit-rules).
-		"err":              r.URL.Query().Get("err"),
-		"applied":          r.URL.Query().Get("applied") == "1",
-		"form_user_id":     r.URL.Query().Get("form_user_id"),
-		"form_device_id":   r.URL.Query().Get("form_device_id"),
-		"form_exit_node":   r.URL.Query().Get("form_exit_node"),
-		"form_target_type": r.URL.Query().Get("form_target_type"),
-		"form_target_value":r.URL.Query().Get("form_target_value"),
-		"form_action":      r.URL.Query().Get("form_action"),
+		"err":               r.URL.Query().Get("err"),
+		"applied":           r.URL.Query().Get("applied") == "1",
+		"form_user_id":      r.URL.Query().Get("form_user_id"),
+		"form_device_id":    r.URL.Query().Get("form_device_id"),
+		"form_exit_node":    r.URL.Query().Get("form_exit_node"),
+		"form_target_type":  r.URL.Query().Get("form_target_type"),
+		"form_target_value": r.URL.Query().Get("form_target_value"),
+		"form_action":       r.URL.Query().Get("form_action"),
 		// B328: keep the «все устройства» checkbox ticked across the redirect, so a
 		// refused submit does not silently drop the option the operator chose.
 		"all_devices": isFormChecked(r.URL.Query().Get("all_devices")),
@@ -734,19 +776,19 @@ func buildAdminExitRuleRedirectURL(errMsg, userID string, deviceID int, exitNode
 // = device owner (matches the issue's suggested fix).
 //
 // Mirrors PostMyExitRule's flow:
-//   1. IsAdmin gate (defense-in-depth)
-//   2. parse + validate form fields
-//   3. validate target user exists
-//   4. validate device exists + is owned by target user
-//      (node_owner_map.username = target.username)
-//   5. reject if device is an exit-node (routing infra)
-//   6. IP/CIDR validation for target_type=ip/subnet
-//   7. DNS resolve for target_type=domain (each /32 rule
-//      remembers parent_domain for autoupdater stability)
-//   8. per-user / per-device / total rule limits
-//   9. insertRuleUnique + audit row
-//   10. redirect to /admin/exit-rules with success/partial
-//      banner (template reads ?applied=N or ?err=...)
+//  1. IsAdmin gate (defense-in-depth)
+//  2. parse + validate form fields
+//  3. validate target user exists
+//  4. validate device exists + is owned by target user
+//     (node_owner_map.username = target.username)
+//  5. reject if device is an exit-node (routing infra)
+//  6. IP/CIDR validation for target_type=ip/subnet
+//  7. DNS resolve for target_type=domain (each /32 rule
+//     remembers parent_domain for autoupdater stability)
+//  8. per-user / per-device / total rule limits
+//  9. insertRuleUnique + audit row
+//  10. redirect to /admin/exit-rules with success/partial
+//     banner (template reads ?applied=N or ?err=...)
 func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {

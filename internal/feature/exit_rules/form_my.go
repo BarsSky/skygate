@@ -479,12 +479,12 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		totalCount := 0
 		for _, g := range groups {
 			items = append(items, CDNDisplayItem{
-				IsCDNGroup:   true,
-				Source:       g.Source,
-				CDN:          g.CDN,
-				Count:        g.Count,
-				Rules:        g.Rules,
-				FanOutCount:  fanOutTotal / len(g.Rules), // average per row (each row covers fanOutTotal devices)
+				IsCDNGroup:  true,
+				Source:      g.Source,
+				CDN:         g.CDN,
+				Count:       g.Count,
+				Rules:       g.Rules,
+				FanOutCount: fanOutTotal / len(g.Rules), // average per row (each row covers fanOutTotal devices)
 			})
 			totalCount += g.Count
 		}
@@ -746,6 +746,15 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	// User-level preferred exit-node (fallback when no per-device
 	// pref is set). Used by the "Use device's preferred exit-node"
 	// button in the form.
+	//
+	// B343: which of THIS user's devices have enabled rules but no exit-node
+	// preference (their rules are inert until the relay is assigned). A read
+	// failure degrades to "nothing marked" rather than a broken page — the page is
+	// a view, and the reconciler's journal remains the authority on WHY.
+	noExitNodeDevices, inertErr := s.DevicesWithoutExitNodePrefForService(c.UserID)
+	if inertErr != nil {
+		noExitNodeDevices = map[string]int{}
+	}
 	s.Backend.RenderWithLayout(w, r, "exit_rules.html", c, map[string]any{
 		"Page":              "exit-rules",
 		"Title":             "Exit Rules",
@@ -775,8 +784,8 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// "Showing X–Y of Z" + the prev/next controls. Rules
 		// above is the page slice only — TotalRules below is
 		// the unpaged count (kept for the system-load badge).
-		"RulePage":         rulePage,
-		"PageRules":        len(rules),
+		"RulePage":  rulePage,
+		"PageRules": len(rules),
 		// 2026-08-25 (B182): per-rule headscale-state status
 		// for the three-state ✅/⏳/⚠️ badge. See the
 		// for-loop above for the four possible values.
@@ -819,6 +828,15 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		"spread_devices": spreadDevices,
 		"spread_created": spreadCreated,
 		"spread_err":     r.URL.Query().Get("spread_err"),
+		// B343 (2026-10-02, operator report): «правило уже есть, а доступа нет».
+		// A device with ENABLED rules and NO exit-node preference has inert rules —
+		// nothing pins it to a relay, so the client never selects one — and until
+		// now the page said nothing about it while the ACL looked correct (the
+		// per-CIDR pins come from prefix_owner since B275). The badge and the banner
+		// are what make the state visible; the reconciler derives the relay on its
+		// own tick (B341.1), and when it cannot, the journal carries the reason.
+		"no_exit_node_devices": noExitNodeDevices,
+		"no_exit_node_list":    inertDeviceLabels(noExitNodeDevices),
 	})
 }
 

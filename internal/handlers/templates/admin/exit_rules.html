@@ -138,6 +138,22 @@
   </div>
 {{end}}
 
+{{/* B343 (2026-10-02, operator report): «правило есть, а доступа нет» — the
+     admin twin of the my-page marker. A device whose enabled rules have no
+     exit-node preference is INERT (nothing pins it to a relay, so the client
+     never selects one) while the generated ACL looks correct, because the
+     per-CIDR `via=` pins come from prefix_owner since B275. The reconciler
+     derives the relay automatically (B341.1); when it cannot, this banner names
+     the devices and the journal carries the missing-pref-… reason. */}}
+{{if gt .NoExitNodeCount 0}}
+  <div class="alert alert-warn" id="admin-no-exit-node">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <span>{{t "exit_rules.no_exit_node_banner"}}
+      <b>{{range $i, $d := .NoExitNodeList}}{{if $i}}, {{end}}{{$d}}{{end}}</b>
+    </span>
+  </div>
+{{end}}
+
 {{/* 2026-08-06: per-device filter banner. Renders when
      /admin/exit-rules?device=NAME is set (the operator clicked
      a "dead rules" badge on /admin/devices). The banner shows

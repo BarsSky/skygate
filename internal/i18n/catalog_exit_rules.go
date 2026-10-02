@@ -48,6 +48,14 @@ var ruExitRules = map[string]string{
 	// handles updates; the user doesn't need to delete).
 	"exit_rules.duplicate":          "Домен %s уже покрыт правилом — автообновление будет поддерживать его актуальность.",
 	"exit_rules.duplicate_blocking": "Уже покрытый IP:",
+	// B343 (2026-10-02, жалоба оператора): «правило уже есть, но нигде не
+	// маркируется, что доступ появился». Уведомление о дубликате отвечает на
+	// вопрос «не добавил ли я вторую копию», а не на вопрос «работает ли правило
+	// для этого устройства сейчас». Устройство с включёнными правилами и БЕЗ
+	// exit-node — это ровно «правило есть, доступа нет», и оно было невидимым.
+	"exit_rules.no_exit_node_badge":  "нет exit-node",
+	"exit_rules.no_exit_node_help":   "У устройства есть включённые правила, но нет предпочтительного exit-node: пока relay не назначен, эти правила не влияют на трафик (клиент не выбирает exit node). skygate назначает его автоматически из таблицы prefix_owner — причина отказа видна в журнале как missing-pref-…",
+	"exit_rules.no_exit_node_banner": "⚠ Устройства с правилами без exit-node (пока relay не назначен, правила не действуют; причина в журнале как missing-pref-…):",
 	"exit_rules.duplicate_parent":   "Источник:",
 	"exit_rules.duplicate_view":     "→ перейти к правилу #%d",
 	"exit_rules.dns_pending":        "Домен добавлен, но DNS пока не отвечает: %s. Autoupdater попробует при следующем цикле (до 5 минут).",
@@ -387,6 +395,12 @@ var enExitRules = map[string]string{
 	// handles updates; the user doesn't need to delete).
 	"exit_rules.duplicate":          "Domain %s is already covered by an existing rule — the autoupdater will keep it current.",
 	"exit_rules.duplicate_blocking": "Already-covered IP:",
+	// B343 — the duplicate notice answers "did I add a second copy?", not "does
+	// this rule do anything for the device right now?". A device with enabled
+	// rules and NO exit node was exactly that invisible state.
+	"exit_rules.no_exit_node_badge":  "no exit-node",
+	"exit_rules.no_exit_node_help":   "This device has enabled rules but no preferred exit node: until a relay is assigned those rules do not affect traffic (the client never selects an exit node). skygate assigns it automatically from the prefix_owner table — a refusal is named in the journal as missing-pref-…",
+	"exit_rules.no_exit_node_banner": "⚠ Devices with rules but no exit node (until a relay is assigned their rules do nothing; the journal names the reason as missing-pref-…):",
 	"exit_rules.duplicate_parent":   "Source:",
 	"exit_rules.duplicate_view":     "→ jump to rule #%d",
 	"exit_rules.dns_pending":        "Domain added, but DNS is not responding yet: %s. Autoupdater will retry on the next cycle (up to 5 minutes).",
