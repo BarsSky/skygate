@@ -69,11 +69,23 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 CMP=internal/headscale/policy_compare_b288.go
 EQ=internal/headscale/policy_equivalent_b276.go
 TAGS=internal/db/device_tag.go
-ACL=internal/acl/acl.go
+# The admin ACL SURFACE, not one file: internal/acl/acl.go was split into
+# seven on 2026-10-01 (refactor Phase D) and a contract that greps one path turns
+# a pure code move into a false FAIL — and is the weaker contract even while it
+# is green. See scripts/lib/gosurface.sh and B339.
+. scripts/lib/gosurface.sh
+gosurface ACL internal/acl/acl.go internal/acl/acl_apply.go internal/acl/acl_generate.go internal/acl/acl_generate_via.go internal/acl/acl_ownership.go internal/acl/acl_set.go internal/acl/acl_tags.go
 AUTO=internal/nodeownership/auto.go
 NODEOWN=internal/nodeownership/nodeownership.go
 SYNC=internal/feature/exit_rules/sync.go
-PAGE=internal/feature/admin/exit_nodes.go
+# The /admin/exit-nodes SURFACE, not one file: internal/feature/admin/exit_nodes.go
+# was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
+# one path turns a pure code move into a false FAIL — and is the weaker contract
+# even while it is green. gosurface expands the glob itself and skips _test.go, so
+# a future exit_nodes_*.go file is covered automatically. See B339.
+. scripts/lib/gosurface.sh
+gosurface PAGE internal/feature/admin/exit_nodes*.go
+
 TMPL=internal/handlers/templates/admin/exit_nodes.html
 I18N=internal/i18n/catalog_exit_nodes.go
 

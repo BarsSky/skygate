@@ -6,7 +6,17 @@ blocked, and the technical-debt register. It replaces the pre-v1.6 set
 2026-09-18 documentation restructure — the full text of every removed plan stays
 in git history.
 
-**Last updated:** 2026-09-18 (v1.5.9 cycle — native self-update, OpenRC, docs restructure)
+**Last updated:** 2026-10-01 (v1.5.94 cycle — task caps the operator can change,
+a gate that can actually fail, localization driven to zero, and the database
+management tab).
+
+> **This file was 85 releases behind.** Until 2026-10-01 it still described the
+> **v1.5.9** cycle (`Version line: v1.5.9`, "Last updated 2026-09-18"), so every
+> reader was told the project stood a year of work behind where it is. The
+> per-release detail it was missing lives in [`RELEASE-NOTES.md`](../RELEASE-NOTES.md)
+> (one canonical section per tag) and in the block index in [`AGENTS.md`](../AGENTS.md).
+> Keep this file current at release time — the §3 table and the TD register are the
+> two things that rot fastest.
 
 Related: [`AGENTS.md`](../AGENTS.md) (conventions + the compact block index),
 [`docs/LESSONS.md`](LESSONS.md) (what went wrong and why),
@@ -21,14 +31,17 @@ Related: [`AGENTS.md`](../AGENTS.md) (conventions + the compact block index),
   item). Feature work additionally carries its **B-block ID** (`B262`, `B-mod-core`,
   …) — the authoritative one-line description of each block lives in the block
   index inside `AGENTS.md`, and the durable lessons live in `LESSONS.md`.
-* Review after every release: move shipped items into the "shipped" section in the
+* Review after every release: move shipped items into the §3 table in the
   same commit as the release bookkeeping, and re-tag anything the operator
   re-prioritises.
 * A new item is added here **and** (if it becomes real work) as a B-block entry in
   `AGENTS.md` plus a `scripts/check_bNNN_*.sh` contract registered in
   `scripts/verify_pre_deploy.sh`.
 * Anything not planned here and not in the index is either shipped (git history) or
-  deliberately dropped (see §7).
+  deliberately dropped (see §8).
+* When this file and the code disagree, **the code wins** — and the fix is to
+  correct this file in the same change, not to leave the contradiction for the
+  next reader.
 
 ---
 
@@ -36,19 +49,29 @@ Related: [`AGENTS.md`](../AGENTS.md) (conventions + the compact block index),
 
 | | |
 |---|---|
-| Version line | **v1.5.9** (native self-update + OpenRC + entry-point fixes) |
-| Reference host | production deployment healthy; `/readyz` reports db / headscale / headplane / tailscale ok |
-| Verify gate | `scripts/verify_pre_deploy.sh` → `0 FAIL` (live-state checks report `SKIP`, not `FAIL`) |
-| Distribution | docker image `ghcr.io/barssky/skygate` (**linux/amd64 only**), Go tarballs linux/darwin × amd64/arm64, windows-amd64 zip, `SHA256SUMS` attached from v1.5.9 on |
-| Docs | bilingual `INSTALL` / `UPDATE` / `ROADMAP` (RU + EN) + flat topical catalogue |
-| Open operator decisions | the HA question list (see §5) and the Telegram DPI workaround |
+| Version line | **v1.5.94** (B328 — rule caps count what they name and are operator-editable) |
+| Reference host | production deployment healthy; `/readyz` reports db / headscale / headplane / tailscale |
+| Verify gate | `scripts/verify_pre_deploy.sh` runs **381 contracts** (`run_check` entries, counted 2026-10-01); live-state checks report `SKIP`, not `FAIL` (rule 1). The catalog **exits 0 even with FAILs locally** — see TD-22 |
+| Static analysis | `go vet` and `staticcheck` clean; **`gofmt` is NOT clean repo-wide** (302 of 835 tracked files) and nothing enforces it in the gate — see TD-21 |
+| Distribution | docker image `ghcr.io/barssky/skygate` (**linux/amd64 only**), Go tarballs linux/darwin × amd64/arm64, windows-amd64 zip, `SHA256SUMS` attached |
+| Databases | **SQLite and PostgreSQL are both first-class.** Schema parity is now *measured*, not asserted: 45 tables / 404 columns identical, both chains end at V77 (`internal/db/schema_parity_pg_test.go`, TD-17) |
+| Docs | flat catalogue (`docs/*.md` + `docs/ru/`); four documents are maintained bilingually — `README`, `INSTALL`, `UPDATE`, `ROADMAP` |
+| Open operator decisions | the HA question list (§5), the Telegram DPI workaround, and the rotation call on the historical admin password |
 
 ---
 
-## 3. Shipped in the v1.5.9 cycle
+## 3. Shipped since the v1.5.9 cycle (v1.5.10 → v1.5.94)
 
-One line each; the reasoning and the failure modes are in `docs/LESSONS.md`, the
+The v1.5.9 section that used to live here described 11 blocks; **85 releases have
+landed since**. It is kept verbatim as §3.1 — the blocks it names are still what
+`git log v1.5.8..v1.5.9` will show you, and two contracts (`check_b237_23.sh`
+G.2, `check_b237_24.sh` C.1) legitimately assert that this file records them.
+One line per theme for everything after it, with the version range and the
+governing blocks; the reasoning and the failure modes are in
+[`RELEASE-NOTES.md`](../RELEASE-NOTES.md) (one `## vX.Y.Z` section per tag) and the
 contracts are in the corresponding `scripts/check_b*.sh`.
+
+### 3.1 The v1.5.9 cycle
 
 | Block | What shipped |
 |---|---|
@@ -66,33 +89,100 @@ contracts are in the corresponding `scripts/check_b*.sh`.
 | **Gate green** | B237.20 staticcheck-clean, B237.16 numeric HTTP statuses, TD-15 backticks-in-descriptions, TD-16/TD-18 four missing i18n keys, B237.2 DNS-probe contract, B191 / B-mod-admin-user-sync now `SKIP` instead of `FAIL` when the docker daemon is absent. |
 | **Clean-host acceptance** | Passed **2026-09-19** on this commit (throwaway `jrei/systemd-debian:12`: install → path unit → applier → `verdict: done`, `/healthz` build `v1.5.9+acc0001`) — record in [`operations.md`](operations.md) §1.4. This was the last gate before the tag. |
 | **Release notes** | One canonical `RELEASE-NOTES.md` (newest first, v1.5.4–v1.5.8 backfilled); `release.yml` extracts the `## vX.Y.Z` section for the GitHub Release body and falls back to a generated commit list, so the empty-body bug of v1.5.8 cannot repeat. |
-| **Docs** | This file + `INSTALL`/`UPDATE` (RU+EN) + the flat catalogue; `docs/plans/**`, `docs/runbooks/**`, `docs/internal/**`, `docs/BACKLOG.md`, `docs/PLANS.md` removed. |
+| **Docs** | Flat catalogue + `INSTALL`/`UPDATE`/`ROADMAP` (RU+EN); `docs/plans/**`, `docs/runbooks/**`, `docs/internal/**`, `docs/BACKLOG.md`, `docs/PLANS.md` removed. |
+
+### 3.2 Everything after it (v1.5.10 → v1.5.94)
+
+| Theme | Versions | What changed |
+|---|---|---|
+| **Tags actually reach headscale** | v1.5.13–v1.5.17, v1.5.35 | B272.x: `policy.mode: file` support, REST tag writes instead of `docker exec`, the drift reconciler that walks `node_owner_map`, `ensureTagIsPermitted`, the policy permission audit, the root policy applier, the offline-host mirror. B272.7: one `tagOwners` write per pass |
+| **Exit nodes tell the truth** | v1.5.18, v1.5.57–v1.5.59, v1.5.65–v1.5.68 | B273 (one "is this an exit node" predicate + a ladder ordered by what blocks egress), B293.x (a relay that IS the skygate host is managed locally), B294 (reading headscale without docker), B300/B301 (one transport decision; a sudo refusal that cannot succeed falls through), B303 (an ownerless device has an admin path) |
+| **Prefix ownership** | v1.5.19–v1.5.27, v1.5.39–v1.5.43, v1.5.94 | B274/B274.1/B274.2 (one advertising relay per prefix), B275.x (skygate decides the owner; the operator can pin it), B276 (the ACL follows the assignment table), B276.1/B276.2, B277.x, B328 (the caps count what they name and are editable) |
+| **DERP / relay status** | v1.5.61–v1.5.62, v1.5.67, v1.5.72, v1.5.74, v1.5.80, v1.5.82 | B289.x (dial the ADDRESS, speak the HOSTNAME), B296 (the probe address is panel-set and applies at once), B302, B307 (the STUN false negative was ours), B309 (a relay skygate cannot configure stops owning prefixes), B315 (real metrics instead of invented zeros), B317 (the local relay is recommended again) |
+| **OIDC from the panel** | v1.5.44, v1.5.54, v1.5.69, v1.5.78, v1.5.89 | B-oidc-setup (enable from the UI), B290, B304 (fully controllable from the panel), B313 (applied from the panel, not copy-pasted), B324 (the disabled banner says *what value* to set) |
+| **Cluster / HA reads SQLite** | v1.5.55, v1.5.77 | B291 (the whole cluster/HA tree branches on the dialect), B312 (an exit node shows where it sits; a lost relay's prefixes go to the nearest one) |
+| **One monitoring inbox** | v1.5.70 | B305 — every skygate signal (exit-node transitions, tag-reconcile failures, failing system tests, degraded DB) lands in `monitor_events` with severity, fingerprint dedup, ack and resolve, and a page that shows the current state |
+| **Panel UX** | v1.5.79, v1.5.83–v1.5.86, v1.5.88–v1.5.91 | B314 (the sidebar grouped the way the operator asked), B318 (two pages, one daemon, one story), B320/B321/B321.1 (the reserved tailnet name belongs to the live client), B323 (the SERVICE CONTROL block: restart / recreate with the install kind detected), B326/B326.1 (a wide table must not be clipped on a phone; every select labelled), B329 (the database tab and the backend conversion — **see §3.3**) |
+| **Localization** | v1.5.90, v1.5.92 | B325 froze a ratchet (RU values without Cyrillic; hardcoded English nodes) and B325.1 drove **both to zero**, closed the two holes a metric sweep opens (an empty translation is not an ASCII one; a restored test that never runs is not coverage) and restored 21 vacuous `t.Skip` test bodies |
+| **The gate itself** | v1.5.46, v1.5.76, v1.5.87, v1.5.93 | B280/B281 (green CI means 0 FAIL), B299 (the catalog cannot hang), **B322** (four mechanical classes that made contracts decorative: masked exit statuses, checks that print FAIL and exit 0, `-run` filters matching deleted tests, checks referenced by no catalog), B327 (a live-state check must SKIP, never redden the commit) |
+| **Boot and update reliability** | v1.5.10–v1.5.12 | B268 (the applier explains a failed swap), B269 (**bind the socket first** — an active unit with nothing listening was invisible), B270 (a broken OIDC key store no longer kills the boot; the key dir is never relative) |
+| **Rules and devices** | v1.5.81, v1.5.83–v1.5.84 | B316 (a device mesh follows the device, not a username headscale rewrote), B319 (the rules lookup runs on PostgreSQL) |
+
+### 3.3 Unreleased — in the working tree on 2026-10-01
+
+Not tagged yet; listed here so the next release bookkeeping has something to move.
+
+| Block | What it is |
+|---|---|
+| **B329** | **The database tab.** `/admin/database` was reachable only from a button on `/admin/cluster`, could not name the backend (no template contained the word `sqlite`), and was *broken rather than unhelpful* on a SQLite install: it parsed `SKYGATE_DB` with a `postgres://`-only parser and probed it with `pgx`. It now shows the live backend from `db.ActiveDialect()`, the file and its size on SQLite, the version and table count read through the live connection, and a warning when the env DSN disagrees. It has a navigation entry, and `POST /admin/database/convert` moves the whole dataset to the **other backend type**, refusing a same-kind or already-populated target before opening anything. 48 contracts in `scripts/check_b329_db_backend_ui.sh` |
+| **Conversion engine** | `internal/db/convert.go` rewritten. It used to refuse a PostgreSQL source outright (*"only SQLite source supported in v1.5.4"*), so the direction an operator actually needs — PostgreSQL → SQLite — could not run. The target schema now comes from the **target's own migration chain** (indexes, triggers and partial UNIQUE indexes included) instead of six regex substitutions over the source's DDL; tables are filled parents-first from the target's own FOREIGN KEY metadata by a real topological sort; values are coerced to the target column's declared type; the copy runs in **one transaction**; row counts are read back and compared (the old doc comment *claimed* this and the code did `_ = n`); and the PostgreSQL identity sequences are advanced past the copied ids. The CLI also accepts the `--from=<dsn>` form its own help documents |
+| **TD-17 closed (measured)** | `internal/db/schema_parity_pg_test.go` compares the two chains on **real databases**: 45 tables / 404 columns, identical, both heads at V77. Two `TEXT[]` columns in the SQLite chain are a documented exception with their compensating code (`rolesContainLiteral`, `parsePGTextArray`), and a *new* array column in the SQLite chain fails the contract |
+| **PostgreSQL-side tests** | `internal/db/convert_cross_pg_test.go` — both directions, additive drift, dry run, against a real server; SKIP without `SKYGATE_TEST_PG_DSN`. Verified on PostgreSQL **15** (a local container) and **18.4** (the reference VM, where the full `./internal/db/...` suite is green in 166 s) |
+| **Test-infrastructure fix** | `db.OpenTestPG` named each test's schema after the test and only dropped it on a graceful exit, so an interrupted run left the schema and its rows behind and the next run failed with `duplicate key value violates unique constraint "portal_users_username_key"` — measured: 13 stale schemas produced four "failures" in `display_prefs_b136_test.go` that had nothing to do with the code. The helper now drops before it creates |
+| **`deploy/pg-ha/check_pg_health.sh`** | documented in `docs/ha.md` six times and in `deploy/pg-ha/README.md`, but **not in git** — the unanchored `.gitignore` rule `check_*.sh` swallowed it, so a fresh clone carried the instruction and no script. Now tracked (LF, executable) and guarded by `check_b152.sh` contract D |
+| **Docs** | `docs/operations.md` §14 (recipes recovered from 21 one-off scripts that were deleted) and §15 (running the gate with PostgreSQL coverage, including the `CREATE SCHEMA` permission contract); `docs/backup-restore-and-migration.md` §7 (changing the backend type) |
+| **B330** | **The documentation must agree with the tree.** `docs/ROADMAP.md` was 85 releases behind, the RU mirror had diverged, three relative links were broken and the catalogue omitted two documents. Fixed, and now *measured*: 15 contracts in `scripts/check_b330_docs_consistency.sh` check the links, the RU/EN structure, that both roadmaps name the newest release heading (**the drift detector**), and that the catalogue names every `docs/*.md` |
+| **B331** | **The smoke-mesh cleanup was silently dead on SQLite** (TD-23). `ANY($1::bigint[])` + a PostgreSQL array literal → `SQL logic error: near "[]": syntax error (1)`, and only from the moment there was cruft to remove. Now a portable `IN (…)` list through `db.PlaceholdersList`/`PlaceholderAt`, a real SQLite round-trip test, and a class guard: no live `ANY($…)` in any tracked non-test Go file. **The old contract had to be renegotiated** — `check_b143.sh` contract A *required* `int64ArrayToPGArray` and the `ANY($1::bigint[])` literal, i.e. it was pinning the bug |
 
 ---
 
 ## 4. Next up (v1.6.0 candidates, rough priority)
 
-1. **Release-pipeline verification (RR-1)** — assert in CI that every release has a
-   `SHA256SUMS` **file** that lists every uploaded asset, and that the ghcr tag is
-   lowercase. Closes the class of bugs that produced B262 and B237.24.
-2. **Fix the in-app manual steps (RR-2)** — `internal/update/manual.go` still
-   prints the historical asset names `skygate-linux-amd64` / `.sha256`, which the
-   pipeline does not publish; point it at
-   `skygate-<TAG>-<arch>.tar.gz` + `SHA256SUMS` (a contract currently pins the
-   stale string, so the test changes with the code).
-3. **Applier hardening (RR-3)** — `systemctl reset-failed <service>` before a
-   restart (observed during the live rollback drill: a crashed unit refuses to
-   start again and the helper reports a spurious failure).
-4. **Skill/check hygiene (RR-4)** — the B-check catalogue is large and partly
-   redundant; consolidate duplicates and keep the `SKIP`-not-`FAIL` rule for
-   anything that needs live state (docker, a DB, the VM).
-5. **SQLite ↔ PostgreSQL parity (TD-17)** — keep both migration chains and both
-   dialect helpers in lockstep; add a parity check that fails when a schema change
-   lands in only one chain (the `execSQLiteDDL` chokepoint work of the v1.5.9 cycle
-   is the foundation).
-6. **Backup polish (TD-4 + TD-12)** — S3 destination in `/admin/backup/config`, and
-   the weekly auto-verify drill (restore the newest backup to a temp dir, run an
-   integrity check, alert on failure).
+1. **Make the gate's verdict real (TD-22).** `verify_pre_deploy.sh` maintained
+   `RESULTS_PASS`/`RESULTS_FAIL` and **never read them**: there was no summary and
+   no `exit`, so the script's status was its last statement's — and the measured
+   baseline (368 PASS, 10 FAIL, 1 SKIP, **exit code 0**) proves it, because
+   `.githooks/pre-push` branches on that status and therefore blocked nothing.
+   **(b) is DONE (B335):** the catalog prints `PASS / FAIL / TIMEOUT / SKIP /
+   checks / sub-contract SKIP rows`, counts a TIMEOUT as a failure, lists the
+   failing check names, and ends on the verdict's own `exit 0` / `exit 1`;
+   `scripts/check_b335_gate_verdict.sh` extracts that block and executes it, so
+   the contract cannot drift from the code. **(a) is the remaining work:**
+   reclassify the five live-state contracts — `B118`, `B119`, `B188.2`, `B189`,
+   `B190` — which measure the reference VM's accumulated debris (stale
+   `svyatoslava-legacy` / `b188_*` fixture rows, `derp_health` absent from the
+   live DB, 84 `skyworker` grants still pinned to `emilia`) rather than the tree,
+   and which are also **non-deterministic** (two runs of the same catalog gave
+   368/10 and 362/9). `B188.3` only fails because it inherits `B188.2`.
+   **(c)** then assert the exit code in `scripts/check_b322_gate_can_fail.sh`,
+   **(d)** then simplify the pre-push hook to a status check. `B1`, `B176`,
+   `B237.16` and `B294` were in the baseline list only because they run
+   `go test` and inherited the two non-hermetic `internal/headscale` tests that
+   **B332** fixed.
+2. **`gofmt` ratchet, then the renormalisation (TD-21).** Land the ratchet first
+   (the 302-file legacy set frozen as an allow-list, exactly like the B325 i18n
+   budgets, so the number can only fall), then `gofmt -w` over the tracked files as
+   **its own single-purpose release**: 38 737 whitespace-only lines would otherwise
+   bury a real change and poison `git blame`.
+3. **PostgreSQL coverage in the gate (TD-24).** CI's `test-pg` job is scoped to
+   `./internal/db/...`, so the live-PG tests in the two other packages that call
+   `db.OpenTestPG` — `internal/feature/admin` (18 call sites) and `internal/acl`
+   (4) — always skip; and `verify_pre_deploy.sh` exports no `SKYGATE_TEST_PG_DSN`,
+   so the VM gate reports PASS while testing SQLite only. Measured 2026-10-01:
+   CI's job now runs `go test ./...`, and the gate prints its PostgreSQL coverage
+   on every run instead of leaving it implicit. Remaining: run the full-tree
+   PG-enabled gate on the reference VM and record the result. Recipe and the
+   `CREATE SCHEMA` permission contract (including the reserved `pg_` schema
+   prefix that made the old probe fail): `docs/operations.md` §15.
+4. **Applier hardening (RR-3).** `systemctl reset-failed <service>` before the
+   restart (observed live: a crashed unit refuses to start again and the privileged
+   helper reports a spurious failure).
+5. **Fix the in-app manual steps (RR-2).** `internal/update/manual.go` prints the
+   historical asset names `skygate-linux-amd64` / `.sha256`, which the pipeline does
+   not publish; point it at `skygate-<TAG>-<arch>.tar.gz` + `SHA256SUMS` (a contract
+   currently pins the stale string, so the test changes with the code).
+6. **Widen the dialect leak guard (TD-27, PARTIAL).**
+   `internal/db/dialect_leak_guard_test.go` still guards exactly two forbidden
+   tokens and skips every `internal/db/migrations_*` file. B331 added a real guard
+   for the one class the guard missed (a live `ANY($…)` in a tracked non-test Go
+   file), but the Go-side guard itself has to grow the token set and stop skipping
+   the migration chains.
+
+**Landed since this list was written (2026-10-01):** TD-23 — the SQLite dialect leak
+in `internal/mesh/cleanup.go` (B331); TD-25 and TD-26 — the migration-chain audit
+covered only PostgreSQL and the V070 registry label disagreed between the chains
+(B333); RR-14 — the `docs/ru/` mirror had drifted from the English original (B330),
+which is now a standing contract rather than a one-off fix.
 
 ---
 
@@ -102,111 +192,38 @@ contracts are in the corresponding `scripts/check_b*.sh`.
 |---|---|---|
 | **BL-2** | HA Tier 1 (active/passive with a priority chain, Patroni + etcd failover, DNS failover, certsync via S3) | External DNS-provider credentials, and answers to the **open HA questions** list. Topology, second host, etcd and the S3 bucket are already in place; see [`docs/ha.md`](ha.md) |
 | **BL-3** | Telegram bot behind a DPI-blocked network (`api.telegram.org` times out) | Operator decision: route the bot through an exit node without DPI, or tunnel it |
-| **TD-5 / RR-5** | Per-user `exitnode.<user>.<domain>` DNS records | headscale 0.30+ (`dns.extra_records`); 0.29.x rejects the policy |
+| **RR-5 / TD-5** | Per-user `exitnode.<user>.<domain>` DNS records | headscale 0.30+ (`dns.extra_records`); 0.29.x rejects the policy |
 | **RR-6** | Compliance-tier per-user headscale plane migration (move a user's nodes + ACL off the global plane, flip the DB override) | A real operator need; infrastructure exists, no data migration yet |
-| **RR-7** | Public release of v1.5.9 | **DONE 2026-09-19** — tag `v1.5.9` → `1299b7a4`, release workflow `35440687679` green (8/8 jobs), assets verified: `SHA256SUMS` is a file listing every archive, the installer verifies against it without any override, the release body is the `## v1.5.9` section, `ghcr.io/barssky/skygate:v1.5.9` pulls |
-| **RR-8** | `node_owner_map`: 4 stale rows (B243) | Operator decision on relink-vs-delete (see below) |
-| **RR-9** | ACL drifted from the DB: orphan `tagOwners` entry + a missing per-CIDR `via` pin (B188.2/B188.3/B-mod-tag-owners-coverage) | One ACL reapply from the DB (`/admin/acls`) |
-| **RR-10** | Telegram relay probe: the in-container Tailscale client is disabled, and the **selected** relay (`telegram.egress_node_id = 3` → emilia) has only `149.154.167.99/32` approved — which does not cover the current `api.telegram.org` addresses | **Enablement plan (operator)** — see RR-13. Live check 2026-09-19: **karolina** (exit_servers id 118, headscale node 11) already advertises **and has approved** `91.108.12/16/20/56.0/22`, `149.154.160.0/20` and `185.76.151.0/24`, so a working egress path already exists on the tailnet — switching the selector is the cheapest fix |
-| **RR-13** | Turn the Telegram egress relay path on: (1) mint a preauth key for the `infra` user, (2) put it where the client reads it — `/admin/tailscale`'s paste form (DB path `/data/ts/authkey`) writes the file and starts `tailscaled` + `tailscale up --accept-routes` **in the running container**, (3) make that survive a recreate (compose still hardcodes `SKYGATE_TS_AUTHKEY_FILE=/dev/null`; also mind the `skygate-host` name already taken by node 57), (4) `/admin/telegram` → *Egress relay* → select **karolina** → **Apply** (SSH `tailscale set --advertise-routes=<TelegramCIDRs>`), (5) approve any newly advertised CIDR in headscale (the policy has **no** `autoApprovers`; the in-app helper only handles `0.0.0.0/0`+`::/0`), (6) verify `ip route get 149.154.167.220` → `dev tailscale0`, probe → `ok_relay`, then *Send test*. Full procedure + the live state table: [`docs/TELEGRAM.md`](TELEGRAM.md) §8 | Operator go-ahead (preauth key + container-side client + relay route changes) |
-| **RR-11** | Flaky Go-load contracts (B183 `[I]`, B211, B213, B235, B237.2) | **Root cause found and partially fixed (2026-09-19): `cmd \| grep -q` under `pipefail`.** `grep -q` exits at the first match, the still-writing producer dies with SIGPIPE (141), and `pipefail` turns that into a failed pipeline — one rotating FAIL per gate run, always a different check, each passing standalone 20/20. Re-confirmed during the B265 deploy (2026-09-19): one full-gate run FAILed `B211` + `B213` while both passed standalone in the SAME checkout (`B211 B-check: 19 passed, 0 failed`; `B213 rc=0`). Fixed: `B235` E.2/E.3, `B237.20` D.2 (capture-then-match), `B202.5` (a real `cmd.Wait()`-before-pipe-drain race in the ssh transport test), `check_b237_24` (network probe now `SKIP`s), `B211`–`B214` (binary link retries once + prints the error). **TD-19** tracks the remaining ~25 sites. `GOFLAGS=-p=2` and the 180 s budgets stay |
-| **TD-19** | The `producer \| grep -q` pattern under `pipefail` remains in ~25 check scripts (`check_b120/121/125/154/155/156/160/161/189/237*/b_modules_admin`, listed in the 2026-09-19 gate log) | Pay down per check: `OUT="$(cmd 2>&1)"; if grep -q 'PATTERN' <<< "$OUT"; then …`. Only multi-line producers (`go test ./x/...`, multi-package `staticcheck`) actually trip it, so the risk is bounded to the flagged lines |
-| **RR-12** | **Credential hygiene — swept 2026-09-19.** The default PostgreSQL password literal (the string `.githooks/pre-commit` blocks) no longer appears in any tracked script: 34 scripts now resolve it at runtime through `scripts/lib/db_credentials.sh` — `$SKYGATE_DB_PASSWORD` → the password inside `$SKYGATE_DB`/`$SKYGATE_DB_DSN` → the DSN in `.env` → empty (psql then fails loudly). `check_ha_state.sh` keeps the literal **on purpose**: it is the guard that greps for a regression, and the hook keeps blocking the string. The live **admin** password removed earlier is still in git history | Operator call: rotate the admin password |
+| **RR-10 / RR-13** | Telegram egress relay enablement: the container's Tailscale client is off (`SKYGATE_TS_AUTHKEY_FILE=/dev/null`) and no node advertises the canonical Telegram CIDRs. A working path already exists — `karolina` advertises and has approved `91.108.12/16/20/56.0/22`, `149.154.160.0/20` and `185.76.151.0/24` — so switching the selector on `/admin/telegram` is the cheapest fix. Procedure: [`docs/TELEGRAM.md`](TELEGRAM.md) §8 | Operator go-ahead (preauth key + container-side client + relay route changes) |
+| **RR-12** | Credential hygiene — swept 2026-09-19; 34 scripts resolve the DB password at runtime through `scripts/lib/db_credentials.sh` instead of embedding it. `check_ha_state.sh` keeps the literal **on purpose** (it is the guard that greps for a regression) | Operator call: rotate the admin password (the removed literal is still in git history) |
+| **RR-15** | Onboarding a second skygate host from the panel alone | **DECIDED 2026-10-01 — option (a), the tokenised panel-served bootstrap artifact in the B266 style.** The operator asked for this explicitly, so the onboarding model is no longer an open question: the panel mints a one-time token and renders a ready-to-run command; nothing is copied to the target host by skygate and no third-party credential (an SSH key to somebody else's machine) is stored anywhere. Option (b) — a panel-managed encrypted SSH credential store plus an agent — is rejected: it makes the panel a custodian of foreign keys and requires an agent and open SSH on every host, which is more attack surface for the same operator-visible result. Implementation starts at Phase E. Today `/admin/cluster` is a **topology and lifecycle** control plane (invite, approve, drain, rolling upgrade, HA chain, Patroni failover) and not a provisioning one: `skygate init` / `skygate join` are documented as operator-on-the-box commands. `docs/ha.md` §2.4 states the criterion itself — *"If admin must SSH to do X, then X is a gap, not a feature"* |
 
-### 5.1 Live-state contract failures on the reference host (2026-09-18)
+### 5.1 Historical: the 2026-09-18 live-state record
 
-The gate ends with **PASS=289 / 0 FAIL / 1 SKIP** (`B8`, a Windows-host smoke test that
-runs on the VM) in the verification run 2026-09-19. The one live dependency this host cannot
-satisfy is the Telegram relay probe — **BL-3** (DPI). Contract `O` of `check_b185.sh` now
-prints **WARN + SKIP with the evidence** when the container's routing is healthy (contract
-`N` passes: `RouteAll` works, ping through the relay succeeds) and fails only when the
-routing itself regresses — the original B185 bug broke `N` as well, so the distinction is
-safe. History of the live-state work:
-
-* **`node_owner_map` (B243).** Live headscale users are `1 skyadmin`, `8 michail`,
-  `11 guest`, `12 daniil`, `85 infra`. Four rows point elsewhere:
-  `node_id 6/29/31 → headscale_user_id=6 (michail)` — `michail` now lives at **8**, so
-  these are relinkable; and `node_id 45 → 2147455555 (tagged-devices)`, the
-  int-overflow sentinel, which is pure residue.
-  **Why nothing self-heals it:** the hourly reconciler (B237.18) is healthy — its audit
-  row shows `ok:5, linked:0, relinked:0, orphans:0` and `portal_users.headscale_user_id`
-  is correct (`michail=8`) — but it reconciles `portal_users` **only**, so
-  `node_owner_map.headscale_user_id` has no reconciliation and keeps stale IDs.
-  → step 5A of the repair helper, or (as a follow-up feature) extend the reconciler to
-  `node_owner_map` so this class self-heals.
-* **ACL drift (B188.2/B188.3/B-mod-tag-owners-coverage).** Two different causes, both now
-  understood:
-  * **B188.2/B188.3 — check bug, fixed in code (2026-09-18).** Contract T asserted one
-    frozen resolved CIDR (`h-rule-64-233-164-91-32`, youtube's `/32` when B188.2 was
-    written) carried `via=[emilia]`. Domain rules are re-resolved periodically, so after
-    DNS moved the alias vanished while the behaviour was always correct: the reference host
-    had 30 per-CIDR grants pinned to `tag:dev-infra-emilia` and a correctly UN-pinned
-    catch-all. T now asserts the behaviour (≥1 pinned per-CIDR `h-rule-*` grant); S and W
-    still pin the un-pinned catch-all. Both contracts pass (B188.2 19/0, B188.3 12/0).
-  * **B-mod-tag-owners-coverage — stale policy.** The live policy's `tagOwners` still lists
-    `tag:dev-skyadmin-emilia`, `tag:dev-skyadmin-skygate-host-1` and
-    `tag:dev-skyadmin-svyatoslava-1` (legacy pre-B188 naming), and **no** DB row references
-    them (`node_owner_map`, `device_exit_node_prefs`, `user_exit_node_prefs`,
-    `device_rules` all return 0), so a regeneration from the DB drops them. The DB itself is
-    correct for B188.2 (`device_exit_node_prefs (6, basic, tag:dev-infra-emilia,
-    via_enabled=1)` + the `youtube.com` rule, id 189985).
-    → step 5B of the repair helper (`skygate acl-apply`).
-* **Telegram relay (B185) — misdiagnosed on 2026-09-19, now measured correctly.** The design
-  (operator clarification) is: a **Tailscale client runs alongside skygate** and routes
-  `api.telegram.org` through an exit node **where the API is reachable** — the
-  `/admin/telegram` *Egress relay* selector advertises the canonical Telegram CIDRs
-  (`149.154.160.0/20`, `91.108.*`, `185.76.151.0/24`) on the chosen relay and the container's
-  client accepts those routes. Verified live on 2026-09-19:
-  * the relays **can** reach Telegram — `emilia` (213.176.92.205) and `karolina` both answer
-    `https://api.telegram.org/` with **HTTP 302**, so this is *not* an upstream/DPI dead end;
-  * **the container's `tailscaled` is not running** — `SKYGATE_TS_AUTHKEY_FILE=/dev/null`
-    (the documented "Tailscale off by default" opt-in state; log line
-    `[init] TS_AUTHKEY_FILE not set — Tailscale skipped (non-RF mode)`), so no route can be
-    used at all;
-  * **no node advertises the canonical Telegram CIDRs**: `emilia` advertises a single
-    `149.154.167.99/32` (approved), while the probe resolves `149.154.167.220`, so the
-    request leaves via `eth0` (Docker NAT) and dies in the operator's DPI-blocked path.
-  * `check_b185.sh` contract **N** used to pass in this state because `ping 8.8.8.8` succeeds
-    through the Docker bridge regardless of Tailscale; N now requires `tailscale status` inside
-    the container first, and **O** distinguishes "client disabled" (SKIP + the enablement path)
-    from "client up but probe unreachable" (FAIL + the route checklist).
-* **`device_rules` "duplicates" (B183 `[J]`, informational).** `exit_node=emilia` has
-  106 rows, 46 distinct 5-tuples and **106 distinct 6-tuples**: the extra rows differ by
-  `parent_domain` (`cdn:cloudflare:discordapp.com` vs `…discord.gg` vs … all resolving to
-  `188.114.96.0/20`). That is the *current* 6-column design (B232 + B237.23), so a
-  5-tuple-uniqueness expectation is unreachable on this host; `[J]` already SKIPs and the
-  check reports the numbers.
-* **Flakiness — resolved for this host.** Four contracts used to fail inside a full gate run
-  and pass standalone seconds later (`check_b183` 11/11, `check_b213` 19/19,
-  `check_b235` 22/22, `check_b237_2` 21/21) — all of them include a heavy Go step
-  (`go build ./...` or a whole-package `go test`). Capping compile parallelism
-  (`export GOFLAGS=-p=2` in `verify_pre_deploy.sh`, overridable via
-  `SKYGATE_GATE_GOFLAGS`) removed the whole flaky set in the verification run. If a
-  Go-dependent contract fails again on a loaded host, that cap is the first thing to
-  check (RR-11 tracks the general SKIP/retry hardening).
-
-**Repair helper.** The two data drifts above are packaged as one reviewed command:
-`bash scripts/operator_repair_live_drift.sh` (dry run by default) discovers the live
-headscale ID for `michail`, prints the exact relink/delete plan, backs up the live policy
-(`headscale policy get`) and the `node_owner_map` rows, prints the rollback recipe, and only
-mutates anything with `--apply` — after which it re-applies the ACL from the DB and re-runs
-the four contracts. The dry run was verified on the reference host on 2026-09-18 (13 rows
-read, relink targets `29,31,6`, sentinel `45`, 52 KB policy backup, nothing changed).
+The long per-item record that used to sit here (four stale `node_owner_map` rows,
+the orphan `tagOwners` entry, the ACL `via` pin, the Telegram relay misdiagnosis,
+the B183 duplicate-rule report and the flaky Go-load contracts) is **resolved or
+superseded**: the ownership rows and the ACL drift were addressed by B316 and by
+B272+B276+B288, the B183 `[J]` report is the current 6-column design, and the
+flakiness was the `producer | grep -q` SIGPIPE class that B322/B327 and TD-19
+closed. The original text is one `git log -p -- docs/ROADMAP.md` away, and the
+durable lessons are in [`docs/LESSONS.md`](LESSONS.md).
 
 ---
 
 ## 6. Feature roadmap (rough order)
 
-* **v1.6.0** — RR-1…RR-4 (release verification, manual-steps fix, applier hardening,
-  check hygiene) + TD-4 S3 backup destination.
-* **v1.6.x** — TD-17 parity contract; backup auto-verify drill; UI information
-  density on `/admin/devices`; inline confirmation modals.
+* **v1.6.0** — RR-2, RR-3 and the two gate items (TD-21, TD-22), plus TD-24
+  (PostgreSQL coverage) and TD-23 (the mesh dialect leak).
+* **v1.6.x** — TD-13 backfill as features land; UI information density on
+  `/admin/devices`; inline confirmation modals; backup auto-verify drill.
 * **v1.7.0** — module system completion (`B-mod-*`): Tailscale-as-module and the
   remaining sub-features, building on the module core (`internal/module/`).
 * **v1.8.0** — HA residuals that depend on operator choices (DNS failover provider
   hardening, auto-reclaim policy, cluster management UI polish).
 * **Later** — RR-5 when headscale 0.30 is available; RR-6 if a compliance need
-  lands; ARM docker images (revisit the amd64-only decision, see `AGENTS.md`).
+  lands; RR-15 once the onboarding model is chosen; ARM docker images (revisit the
+  amd64-only decision, see `AGENTS.md`).
 
 ---
 
@@ -214,107 +231,32 @@ read, relink targets `29,31,6`, sentinel `45`, 52 KB policy backup, nothing chan
 
 | Ref | Item | Status |
 |---|---|---|
-| TD-1 | Admin UI grouped into 6 collapsible sidebar sections | DONE (v1.1.0, B96) |
-| TD-2 | Replace numeric HTTP status codes with `http.StatusXxx` | DONE (v1.2.0; stragglers fixed in B237.16) |
-| TD-3 | Mobile-responsive UI (drawer < 768px, 44 px tap targets) | DONE (v1.1.0, B97) |
-| TD-4 | S3 backup destination | OPEN (RR-2 candidate) |
+| TD-1 | Admin UI grouped into collapsible sidebar sections | DONE (v1.1.0, B96; regrouped in B314) |
+| TD-2 | Replace numeric HTTP status codes with `http.StatusXxx` | DONE (v1.2.0; stragglers B237.16) |
+| TD-3 | Mobile-responsive UI (drawer < 768px, 44 px tap targets) | DONE (v1.1.0, B97; revisited by B326/B326.1) |
+| TD-4 | S3 backup destination | **DONE — shipped in v1.3.8.** This row claimed OPEN for ~85 releases (`internal/feature/admin/backup_config.go`, `RELEASE-NOTES.md` v1.3.8) |
 | TD-5 | Per-user DNS records | BLOCKED on headscale 0.30 |
 | TD-6 | `/admin/exit-nodes` per-row `accept_routes` toggle | DONE (v1.4.0, B140) |
 | TD-7 | `/admin/users` headscale-orphan "add as skygate user" | DONE (v1.4.0, B141) |
 | TD-8 | System-test run persistence + history tab | DONE (v1.4.4) |
-| TD-9 | Subnet-router smoke-mesh cleanup cron | **DONE** (v1.4.3, B237.17) |
-| TD-10 | `portal_users.headscale_user_id` reconciliation | **DONE** (B237.18) |
+| TD-9 | Subnet-router smoke-mesh cleanup cron | DONE (v1.4.3, B237.17) — **but see TD-23: it does not work on SQLite** |
+| TD-10 | `portal_users.headscale_user_id` reconciliation | DONE (B237.18) |
 | TD-11 | UI-only CDN grouping for exit rules (Approach G) | DONE (B237.22) |
 | TD-13 | Test-helper stubs (~2.8k lines) not exercised by any test | OPEN (low ROI; backfill as features land) |
-| TD-14 | Five `SA1012` staticcheck false positives in test files | CLOSED — never materialised in the current tree (v1.2.0); five real status codes were the actual issue |
-| TD-15 | Backticks inside `run_check` descriptions were executed by bash | DONE (v1.5.9 gate) |
-| TD-16 / TD-18 | Missing i18n keys (`common.online`, `common.offline`, `cluster.col_actions`, `cluster.node_upgrade_help`) | DONE (v1.5.9 gate) |
-| TD-17 | SQLite ↔ PostgreSQL schema/DDL parity contract | OPEN (RR-1 candidate) |
-| TD-19 | Native self-update needs `systemctl reset-failed` | OPEN (RR-3) |
-| TD-20 | Documentation sprawl (`plans/`, `runbooks/`, `internal/`, 900 KB `AGENTS.md`) | DONE (2026-09-18 restructure) |
-| TD-21 | `gofmt -l` is not clean repo-wide and no gate check runs `gofmt` | OPEN (v1.5.92 measurement) |
-| TD-22 | `verify_pre_deploy.sh` prints no summary and exits 0 even with FAILs (locally) | OPEN (v1.5.92 measurement) |
-
-**TD-22 detail (measured 2026-09-25, v1.5.92).** The catalog maintains `RESULTS_PASS` /
-`RESULTS_FAIL` (declared at lines 218-219, incremented inside `run_check` at 187/192/203) but
-**never reads them** — `grep -n 'RESULTS_PASS\|RESULTS_FAIL' scripts/verify_pre_deploy.sh` returns
-exactly those five lines, all writes. There is no final summary and no `exit` keyed on them, so the
-script's exit status is the status of its **last statement**, which is `run_check "B325.1" …`; that
-function's FAIL branch ends with `RESULTS_FAIL=$((…))`, which returns 0. **A run with any number of
-FAIL rows therefore exits 0.**
-
-Measured, not inferred: a `--quick` run on the VM (deployed revision `3391587`, whose catalog ends
-at `B-issue-2`) printed **362 PASS, 9 FAIL, 1 SKIP** and returned **`GATE EXIT CODE = 0`**. The same
-conclusion holds for the v1.5.92 tree by the source reading above.
-
-Consequences, in order of how much they cost:
-
-* **The pre-push hook is a no-op.** `.githooks/pre-push` lines 92-101 branch on that status:
-  `if bash scripts/verify_pre_deploy.sh; then` → *"pre-push: catalog green — push allowed"*. With an
-  always-0 status the hook takes the green branch **unconditionally**, so the local safety net that
-  is supposed to stop a regression before it reaches `origin` cannot stop anything. (`git push
-  --no-verify` is documented as the emergency bypass; in practice every push is a bypass.)
-* **CI is the only enforcement.** `.github/workflows/ci.yml` ("Run verify_pre_deploy.sh (and refuse
-  any FAIL)") greps `^  FAIL`/`^  TIMEOUT` out of the captured log and fails the job — that is what
-  makes "green means 0 FAIL" true today (measured: `catalog clean: 376 PASS, 1 SKIP, 0 FAIL` on the
-  v1.5.92 commit).
-* **No machine-readable verdict exists.** No PASS/SKIP/FAIL totals, so any wrapper (a deploy
-  script, a future CI matrix entry, the operator's applier) has to re-implement the grep.
-* **Why it has not simply been "fixed"** with `[ "$RESULTS_FAIL" -eq 0 ] || exit 1`: the reference
-  VM carries **8-9 pre-existing environment FAILs** (`B1` — the container-dependent
-  `internal/headscale` tests, `B118`, `B119`, `B176`, `B188.2`, `B188.3`, `B237.16`, `B294`, plus
-  `B185` in `--quick` mode) that **SKIP on the CI runner**. A non-zero exit before those are cleared
-  or reclassified turns every local run red and hides real regressions in the noise.
-
-Order of work: (1) make the environment failures SKIP instead of FAIL where they genuinely cannot
-run (AGENTS rule 1 already says live-state checks must SKIP, never FAIL), (2) print the summary
-(`N PASS, M FAIL, K SKIP`) and exit non-zero on FAIL, (3) assert the exit code in
-`scripts/check_b322_gate_can_fail.sh` so the catalog's own verdict can never silently go dead again,
-(4) then simplify the pre-push hook to a plain status check. Recorded, not started.
-
-**TD-21 detail (measured 2026-09-25, v1.5.92).** `AGENTS.md` rule 3 says `gofmt` must be clean, but
-**nothing enforces it**: no `scripts/check_b*.sh`, no `scripts/verify_pre_deploy.sh`, not the
-`Makefile` and not CI runs `gofmt`. (`grep -rln gofmt scripts/ .github/ Makefile` finds only two
-*comments* — `check_b321_*` line 73 and `check_b322_*` line 85.) Measured over **tracked** Go files
-only (`git ls-files '*.go'`, so the untracked `.trash/` tree, which `gofmt -l .` also reports, is
-excluded):
-
-```
-tracked .go files                      : 835
-files gofmt -l flags                   : 302   (36 %)
-  struct-field / map-key alignment     : 138
-  doc-comment reformat (Go 1.19)       : 114
-  both import reorder + comment        :  45
-  import order only                    :   5
-one-commit renormalisation diff        : +19440 / -19297 = 38737 changed lines
-```
-
-The causes are ordinary hand-edit drift, each firing whenever a longer name is added without
-re-running gofmt:
-
-* **alignment (138)** — `Port string` / `DBPath string` become `Port   string` / `DBPath string`; a
-  comment inserted inside a struct or map collapses the whole block's alignment (`internal/config/config.go`);
-* **the Go 1.19 doc-comment reformat (159 files, counting the 45 that also reorder imports)** — a
-  hanging indent inside a comment (`//   - name : text`) is re-indented to `//\t`-plus-one-space
-  (`internal/module/tailscale/tailscale.go`, `internal/nodeownership/nodeownership.go`). These files
-  were last formatted with Go < 1.19 and never re-run;
-* **import ordering (50)** — `"fmt"` left before `"errors"` (`internal/auth/auth.go`);
-* **the space-before-colon map style (4 files: `catalog_backup.go`, `catalog_bot.go`,
-  `catalog_update.go`, `catalog_user_subnet.go`)** — `"key"    : "value"`, which gofmt normalises to
-  `"key": "value"`. This is the only class that looks like a deliberate house style; the other
-  catalogues (including `catalog_help.go`) already use the canonical form, so even this one is
-  mixed.
-
-Why it was not fixed in the v1.5.92 localization release: **38,737 whitespace-only changed lines
-across 302 files** would bury a change whose entire point is that a reviewer can read it, and every
-future `git blame` on those files would point at a formatting commit. (`.gitattributes` already pins
-`*.go text eol=lf`, so line endings are *not* the cause — this is pure gofmt drift. Every file
-v1.5.92 itself touched is gofmt-clean; the drift is pre-existing.)
-
-The two follow-ups, in order: (1) add a `gofmt -l` B-check so the floor stops moving (with the
-302-file legacy set frozen as a ratchet, exactly like the B325 i18n budgets and the B326 select
-labels, so the number can only go down); (2) land the one-commit renormalisation
-(`gofmt -w` over the tracked files) as its own single-purpose release with no other content.
+| TD-14 | Five `SA1012` staticcheck false positives in test files | CLOSED — never materialised; five real status codes were the issue |
+| TD-15 | Backticks inside `run_check` descriptions were executed by bash | DONE |
+| TD-16 / TD-18 | Missing i18n keys | DONE |
+| TD-17 | SQLite ↔ PostgreSQL schema/DDL parity contract | **PARTIAL — the contract now exists** (`internal/db/schema_parity_pg_test.go`: 45 tables / 404 columns compared on real databases, both chains at V77). Remaining: the two `TEXT[]` columns in the SQLite chain are a documented semantic divergence (SQLite has no array type; `DEFAULT '{}'` stores a two-character string) with compensating readers. The structurally auditable half is now closed too — B333 made the B233 shape-drift audit cover the SQLite chain instead of skipping `migrations_sqlite.go` (TD-25) and pinned the two registries against each other (TD-26). The schema contract itself only runs when `SKYGATE_TEST_PG_DSN` is set — see TD-24 |
+| TD-19 | `producer \| grep -q` under `pipefail` | **CLOSED — 0 sites remain.** This row claimed "~25 sites" long after they were paid down; the class is now pinned by B322/B327 |
+| TD-20 | Documentation sprawl (`plans/`, `runbooks/`, 900 KB `AGENTS.md`) | DONE (2026-09-18 restructure) |
+| TD-21 | `gofmt -l` is not clean repo-wide and no gate check runs `gofmt` | **PARTIAL 2026-10-01 (B337) — the RATCHET landed.** Re-measured on the reference VM with `go1.25.4`: **847 tracked `.go` files, 276 not `gofmt`-clean (32.6 %)** — the 2026-09-25 figure (302 of 835) was stale in both directions. `scripts/gofmt_legacy_allowlist.txt` freezes those 276 paths (with the measurement and the rules in its header) and `scripts/check_b337_gofmt_ratchet.sh` enforces four things: every non-frozen tracked `.go` file must be clean; a frozen file that has **become** clean must be **removed** from the list; the list may never grow (budget asserted at 276); and it is sorted under `LC_ALL=C` and unique. It also holds the **file-level** half of rule 3 that a whole-tree ratchet cannot express — every `.go` file changed in *this* tree must be clean even if it is allow-listed — which immediately caught three files touched by the `/admin/database` work (`internal/feature/admin/database.go`, `internal/i18n/catalog_admin.go`, `internal/i18n/catalog_common.go`) that were still drifted; they are clean now. The teeth are proven by mutation: fixing one frozen file without removing it from the list fails D1, restoring it passes. **Remaining: the one-commit renormalisation** (all 276 at once, its own single-purpose release), after which the allow-list empties and the budget drops to 0. Plan in §4, item 2 |
+| TD-22 | `verify_pre_deploy.sh` prints no summary and exits 0 even with FAILs | **PARTIAL 2026-10-01** — the verdict is now real (B335): the catalog prints `PASS / FAIL / TIMEOUT / SKIP / checks / sub-contract SKIP rows`, treats a TIMEOUT as a failure, lists the failing check names, and ends on the verdict's own `exit 0` / `exit 1`, so no later statement can decide the status again. `scripts/check_b335_gate_verdict.sh` extracts that very block from the catalog and executes it against synthetic counters, so the contract cannot drift from the code (clean run → 0, 10 FAILs → non-zero, TIMEOUT alone → non-zero, SKIPs alone → 0). **Baseline measured on the reference VM (v1.5.94, 2026-10-01): 368 PASS, 10 FAIL, 1 SKIP, exit code 0** — an earlier run of the same catalog gave 362/9/1, so the live-state FAILs are also non-deterministic. The 10 FAILs are: `B1` (+`B176`, `B237.16`, `B294`, which run `go test` and inherit it) — the two `internal/headscale` tests B332 made hermetic; `B188.3`, which inherits `B188.2`; and the five live-state contracts `B118`, `B119`, `B188.2`, `B189`, `B190`, which measure the reference VM's accumulated debris (stale `svyatoslava-legacy` / `b188_*` fixture rows, `derp_health` absent from the live DB) rather than the tree. Reclassifying those five is the remaining work — see §4 item 1. **RESOLVED 2026-10-01 (B336), and not by reclassification:** the five FAILs were an ARTEFACT — the checks read `SKYGATE_DB_DSN` from `.env` and ran `psql` from the HOST, while that DSN's host is the docker DNS name `skygate-pg-local` (B278 made it so on purpose; the bridge IP rotates), which resolves only inside the compose network. The psql DNS error went to `/dev/null` and the empty result was compared against 0, so the checks announced facts about a database they had never reached — `B190 A.1 found  b188_* users (expected 0)` with an EMPTY count, `B189 B.4 derp_health table NOT in live DB`. Measured through the new helper: `derp_health` IS in the live DB, `svyatoslava-legacy` refs = 0, `tag:dev-infra-*` owners = 4, `node_owner_map` = 4, `b188_*` debris = 0 — i.e. every one of those contracts already held. `scripts/lib/db_credentials.sh` gained a live-DB access layer that runs psql INSIDE the container (or a plain DSN for external PostgreSQL) and PROBES first, so an unreachable database SKIPs with the real error and `skygate_live_db_query` cannot return a zero without a connection. Two VACUOUS contracts fell out of the same pass (B119's always-true `NOT LIKE '%'`; B118's search for a literal `<placeholder>` hostname inside its SQL) and B188.2's contract X had been pointing at a dead hardcoded `172.17.0.1:5000`. Verified on the VM: B118 18/0, B119 0 fail, B189 0 fail, B190 0 fail, B188.2 X green (`rules=129 via=129 diff=0`). **The last genuine failure, `B188.2 U`, was a STALE CONTRACT, not a stale deployment** — renegotiated in the same block. It asserted `skyworker` must never carry `via=emilia`, written 2026-08-26, before B265 made the pin conditional, B274 made exactly one relay the advertiser of each prefix, and B275 moved the decision into `prefix_owner`. Measured: all **200** of skyworker's enabled subnet/ip rules declare `exit_node_id=karolina`, `prefix_owner` splits those same prefixes **77 emilia / 123 karolina** (`source=explicit`), and the live policy carries **exactly** 77 emilia / 123 karolina — the control plane agrees with the data plane, and the old assertion was measuring the pre-B275 design. U now asserts that agreement per owner (±10 for the autoupdater's churn) across all four sanctioned relays, and it can fail. `B188.2` on the VM: **23 pass / 0 fail** |
+| TD-23 | **The smoke-mesh cleanup was PostgreSQL-only.** `internal/mesh/cleanup.go` deleted with `WHERE id = ANY($1::bigint[])` plus a `{1,2,3}` array literal; SQLite answers `SQL logic error: near "[]": syntax error (1)` (the B282 class). It runs from `mesh.StartCleanupScheduler` on **every** install kind, and it only reaches that statement when `Total > 0` — i.e. it failed exactly when the cleanup had work to do, so the B143 feature was silently dead on SQLite | **FIXED 2026-10-01 (B331)** — the ids are passed as N placeholders in a portable `IN (…)` list built through `db.PlaceholdersList` / `db.PlaceholderAt`, the PG array helper is deleted, and `TestDeleteSmokeMeshes_SQLite` runs the real statement against a real migrated SQLite database (verified to fail with the exact SQLite error when the old form is restored). 11 contracts in `scripts/check_b331_mesh_cleanup_dialect.sh` |
+| TD-24 | **PostgreSQL coverage is CI-only and narrow.** `.github/workflows/ci.yml`'s `test-pg` job sets `SKYGATE_TEST_PG_DSN` but ran **only** `./internal/db/...`, so the live-PG tests in the two other packages that call `db.OpenTestPG` — `internal/feature/admin` (18 call sites) and `internal/acl` (4) — never ran anywhere; and `verify_pre_deploy.sh` never sets the variable, so the VM gate reports PASS while exercising SQLite alone | **PARTIAL 2026-10-01** — CI's `test-pg` job now runs `go test ./... -count=1` with the DSN (and gained the `timeout-minutes` it lacked), and `verify_pre_deploy.sh` prints `PostgreSQL test coverage: ENABLED` / `SQLite only` on every run so the gap can no longer be silent. **MEASURED 2026-10-01 — the PG half is green.** With `SKYGATE_TEST_PG_DSN` pointed at `skygate_citest` (a database the role owns, so `OpenTestPG` can `CREATE SCHEMA`), all three packages that call `OpenTestPG` pass against real PostgreSQL **with 0 SKIP rows** — i.e. the tests actually executed rather than skipping: `internal/db` ok in 210 s (this one CI did cover), `internal/acl` ok in 4.8 s and `internal/feature/admin` ok in 62.8 s — the two that ran **nowhere** before. `scripts/check_b334_pg_test_coverage.sh` reports 24 passed / 0 failed / 0 skipped with the DSN set, including its D3/D4 contracts that assert exactly that: internal/acl's and internal/feature/admin's PG tests really ran. The gate banner prints `PostgreSQL test coverage: ENABLED`. **Confirmed in a FULL gate run** (2026-10-01, the whole 386-check catalog with the DSN exported): `PASS B1 go test ./... exits 0` — the decisive line, because without the DSN that same command silently skips every PG-gated test and still reports success. Recipe: `docs/operations.md` §15. Overstated in this row before the measurement: `internal/backup` never called `OpenTestPG` (comments only), and `cmd/skygate`/`internal/headscale` likewise. Recipe and the `CREATE SCHEMA` contract (plus the reserved `pg_` schema prefix that made the documented probe schema always fail): `docs/operations.md` §15 |
+| TD-25 | `internal/db/migrations_audit_b233_test.go` skips `migrations_sqlite.go`, so the shape-drift audit (the B232 class) covers only the PostgreSQL chain | **FIXED 2026-10-01 (B333)** — the audit is chain-aware: a file belongs to a chain exactly when it defines a `migrateV<NNN>PG` or `migrateV<NNN>SQLite` function (so `migrations_v0_77_exit_location.go`, which defines both, correctly lands in both chains), each chain is walked separately in version order, and the decision logic moved into the pure `shapeDriftOffenders` helper that the mutation test now drives instead of an inlined copy. The V068/B232 repair is additionally pinned on **both** backends by extracting each chain's `migrateV068` body and requiring its `DROP` to precede its `CREATE` |
+| TD-26 | The V070 migration's `Name` string differs between the chains — `v0.70 (B238)` in `driver_postgres.go` vs `v0.70 (B236)` in `driver_sqlite.go`, with the same `SourceFile`. This contradicts the invariant stated in `driver_sqlite.go`'s own header ("same version numbers, **same Name strings**, same SourceFile") | **FIXED 2026-10-01 (B333)** — the SQLite label now reads `v0.70 (B238)`, and `TestMigrations_ChainsRunInLockStep` fails on any future `Name` (or `SourceFile`) drift between the two registries. The same block found and fixed a second registry defect: V060/V061/V062 recorded `SourceFile` as two `_test.go` files and a wrong per-version file while the functions live in `migrations_pg.go` — now pinned by `TestMigrations_SourceFileNamesTheDefiningFile`, which resolves each entry's `Run` function through `runtime.FuncForPC(...).FileLine(...)` |
+| TD-27 | `internal/db/dialect_leak_guard_test.go` guards exactly **two** forbidden tokens and skips all `internal/db/migrations_*`. TD-23 was a live counter-example it did not catch | **PARTIAL 2026-10-01 (B331)** — the specific class has a real guard now: contract B1 of `scripts/check_b331_mesh_cleanup_dialect.sh` fails on any live `ANY($…)` in a tracked non-test Go file (comments may quote it). The Go leak-guard itself still covers two tokens and still skips the migration chains |
+| TD-28 | A killed PG-enabled test run made the next one "fail". `OpenTestPG` named each schema after the test and only dropped it on a graceful exit, so an interrupted run left rows behind and seeded INSERTs failed with a duplicate-key error that looked like a regression (13 stale schemas → four false failures in `display_prefs_b136_test.go`) | **FIXED 2026-10-01** — the helper now drops before it creates; verified by killing a run on purpose and re-running the four tests green |
 
 Module-system work is tracked under the `B-mod-*` IDs in the block index in
 `AGENTS.md` — `B-mod-core`, `B-mod-tailscale`, `B-mod-install`,
@@ -334,12 +276,17 @@ These are tracked so they are not lost, **not** planned:
 * Compliance-tier per-user plane migration (RR-6).
 * Re-enabling multi-arch docker images — deliberately dropped in v1.5.4 (the
   pre-v1.5.4 matrix pushed the same tag twice and the second push overwrote the
-  first, leaving `:v1.5.2` without an amd64 manifest). Revisiting requires either a
-  single `build-push-action` with both platforms, or two buildx jobs merged with
-  `docker imagetools create`.
+  first). Revisiting requires either a single `build-push-action` with both
+  platforms, or two buildx jobs merged with `docker imagetools create`.
 * Historical superpowers B-mod plans and v0.2x refactor plans — removed from the
   tree; the durable outcome is captured in `docs/internals.md` + `docs/LESSONS.md`,
   the text itself in git history.
+* **The large-file refactor.** `cmd/skygate/main.go` is 4 648 lines with a
+  ~3 389-line `main()`; `internal/i18n/catalog_admin.go` is 2 308; `internal/acl/acl.go`
+  is 2 209. The split order (contract-count-ascending) and the per-file seams were
+  mapped in the 2026-09-28 audit, and the work is **gated on TD-21**: a move-diff on
+  unformatted files is unreadable, and 155 check scripts grep `cmd/skygate/main.go`
+  alone.
 
 ---
 
@@ -351,12 +298,18 @@ These are tracked so they are not lost, **not** planned:
 | v1.1.0 | UI refactor (grouped sidebar) + mobile-responsive layout (TD-1, TD-3) |
 | v1.2.0 | Style/debt cleanup (TD-2, TD-14) |
 | v1.3.0–v1.3.2 | PostgreSQL cutover in three phases: Go source, docker + scripts, docs |
+| v1.3.8 | S3 / S3-compatible backup destination (TD-4) |
 | v1.4.0 | `/admin/exit-nodes` accept-routes toggle + orphan adoption (TD-6, TD-7) |
 | v1.4.3–v1.4.4 | Smoke-mesh cleanup cron (TD-9) + system-test history (TD-8) |
-| v1.5.0–v1.5.2 | HA groundwork (cluster tables, deploy subcommands, certsync), OIDC end-to-end on a public hostname, OIDC auto-sync, login/UX fixes (B167–B178) |
-| v1.5.4 | Docker image pinned to linux/amd64 (Issue #4); image-pull update button |
+| v1.5.0–v1.5.2 | HA groundwork (cluster tables, deploy subcommands, certsync), OIDC end-to-end, login/UX fixes (B167–B178) |
+| v1.5.4 | Docker image pinned to linux/amd64 (Issue #4); SQLite restored alongside PostgreSQL; the `db-migrate` conversion subcommand |
 | v1.5.6–v1.5.8 | DERP status/probe fixes, derper-in-docker migration, Tailscale auth-key UX, device-delete with ACL regen |
-| v1.5.9 | **Native self-update (B261)**, OpenRC (B262), `SHA256SUMS` fix, SQLite `sqlite:` DSN fix, autoupdater `ON CONFLICT` fix, green gate, clean-host acceptance **published 2026-09-19** (tag `v1.5.9` → `1299b7a4`; assets verified: checksum file attached, release body present, lowercase ghcr tag) |
+| v1.5.9 | Native self-update (B261), OpenRC (B262), `SHA256SUMS` fix, SQLite `sqlite:` DSN fix, autoupdater `ON CONFLICT` fix |
+| v1.5.10–v1.5.17 | Tag/ACL truth (B272.x), boot reliability (B268–B270), route approval without docker (B267) |
+| v1.5.18–v1.5.36 | Exit-node health truth (B273), prefix ownership (B274–B277), cluster/HA on SQLite (B291) |
+| v1.5.37–v1.5.59 | Exit-rule model rework, OIDC auto-setup, the operator surfaces for prefix assignment and OIDC (B276.x–B294) |
+| v1.5.60–v1.5.86 | DERP/relay truth (B296–B317), one monitoring inbox (B305), sidebar regrouping (B314), the reserved tailnet name (B320/B321), OIDC panels (B304/B313) |
+| v1.5.87–v1.5.94 | **The gate (B322, B327), localization to zero (B325/B325.1), responsive forms (B326.x), service control (B323), rule caps (B328)** |
 
 ---
 
@@ -365,9 +318,12 @@ These are tracked so they are not lost, **not** planned:
 | Looking for | File |
 |---|---|
 | One-line description of every B-block (the full index) | [`AGENTS.md`](../AGENTS.md) |
+| What shipped in a release, with root cause and measurement | [`RELEASE-NOTES.md`](../RELEASE-NOTES.md) |
 | What broke, why, and the guard that prevents it | [`docs/LESSONS.md`](LESSONS.md) |
 | Package map, invariants, the check-contract system | [`docs/internals.md`](internals.md) |
-| Release, deploy, PG cutover, host bootstrap | [`docs/operations.md`](operations.md) |
+| Release, deploy, PG cutover, host bootstrap, the gate-with-PostgreSQL recipe | [`docs/operations.md`](operations.md) |
 | HA topology, failover, open questions | [`docs/ha.md`](ha.md) |
+| Backup / restore / changing the database backend | [`docs/backup-restore-and-migration.md`](backup-restore-and-migration.md) |
 | Install / update procedures (operator-facing) | [`docs/INSTALL.md`](INSTALL.md), [`docs/UPDATE.md`](UPDATE.md) |
+| How much the catalog can and cannot catch | [`docs/gate-regression-power.md`](gate-regression-power.md) |
 | The removed planning archives in full | git history — `git log --diff-filter=D --name-only -- docs/plans docs/runbooks docs/internal docs/BACKLOG.md docs/PLANS.md` finds the restructure commit |

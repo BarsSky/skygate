@@ -17,6 +17,12 @@
 #  D. Route contract (the POST route is registered in
 #     main.go, behind authMW, with the {id} path param)
 set -euo pipefail
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 ok()  { echo "  PASS  $1"; }
 bad() { echo "  FAIL  $1"; exit 1; }
@@ -43,14 +49,14 @@ fi
 # Note: the naive awk '/^func ... /,/^}/' breaks on the
 # FIRST `}` from a nested if/for block. The correct range
 # is "from this func to the NEXT top-level func".
-if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > /tmp/_b169_awk.txt && grep -qE '!c\.IsAdmin|IsAdmin.*false|forbidden' /tmp/_b169_awk.txt; then
+if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > ${SKY_TMP}/_b169_awk.txt && grep -qE '!c\.IsAdmin|IsAdmin.*false|forbidden' ${SKY_TMP}/_b169_awk.txt; then
     ok "PostAdminDeviceDelete is admin-only (checks c.IsAdmin before any work)"
 else
     bad "PostAdminDeviceDelete is NOT admin-only (a non-admin could delete any device)"
 fi
 
 # A.3 — the handler must call headscale.DeleteNode.
-if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > /tmp/_b169_awk.txt && grep -q 'DeleteNode' /tmp/_b169_awk.txt; then
+if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > ${SKY_TMP}/_b169_awk.txt && grep -q 'DeleteNode' ${SKY_TMP}/_b169_awk.txt; then
     ok "handler calls headscale.DeleteNode (the actual node removal)"
 else
     bad "handler does NOT call headscale.DeleteNode (would only clean the local row, not the headscale node)"
@@ -64,7 +70,7 @@ fi
 # handler must trigger the cleanup (directly or
 # via devicedelete.Delete). The two greps below
 # cover both architectures.
-if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > /tmp/_b169_awk.txt && grep -q 'DeleteNodeOwnerByNodeTag' /tmp/_b169_awk.txt; then
+if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > ${SKY_TMP}/_b169_awk.txt && grep -q 'DeleteNodeOwnerByNodeTag' ${SKY_TMP}/_b169_awk.txt; then
     ok "handler cleans up node_owner_map (DeleteNodeOwnerByNodeTag) — direct call"
 elif (grep -q 'devicedelete\.Delete(' internal/feature/admin/devices.go) && (grep -q 'DeleteNodeOwnerByNodeTagCounted\|DeleteNodeOwnerByNodeTag' internal/devicedelete/devicedelete.go); then
     ok "handler cleans up node_owner_map via devicedelete.Delete (B171 rewire)"
@@ -78,7 +84,7 @@ fi
 # after all cleanup, not before). The admin path
 # gets cache invalidation via the devicedelete
 # call.
-if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > /tmp/_b169_awk.txt && grep -q 'InvalidateCache' /tmp/_b169_awk.txt; then
+if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > ${SKY_TMP}/_b169_awk.txt && grep -q 'InvalidateCache' ${SKY_TMP}/_b169_awk.txt; then
     ok "handler calls hs.InvalidateCache directly"
 elif (grep -q 'devicedelete\.Delete(' internal/feature/admin/devices.go) && (grep -q 'InvalidateCache' internal/devicedelete/devicedelete.go); then
     ok "handler calls hs.InvalidateCache via devicedelete.Delete (B171 rewire)"
@@ -97,7 +103,7 @@ fi
 # coordinator (via the AuditFn callback). The
 # handler sets up the callback with the operator's
 # identity; devicedelete emits the row.
-if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > /tmp/_b169_awk.txt && grep -qE '"device_deleted"' /tmp/_b169_awk.txt; then
+if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > ${SKY_TMP}/_b169_awk.txt && grep -qE '"device_deleted"' ${SKY_TMP}/_b169_awk.txt; then
     ok "handler writes 'device_deleted' audit row directly"
 elif (grep -q 'devicedelete\.Delete(' internal/feature/admin/devices.go) && (grep -qE '"device_deleted"' internal/devicedelete/devicedelete.go); then
     ok "handler writes 'device_deleted' audit row via devicedelete.Delete (B171 rewire)"
@@ -106,14 +112,14 @@ else
 fi
 
 # A.7 — the handler must use HSGlobalFn (not HSForUserFn).
-if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > /tmp/_b169_awk.txt && grep -q 'HSGlobalFn' /tmp/_b169_awk.txt; then
+if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > ${SKY_TMP}/_b169_awk.txt && grep -q 'HSGlobalFn' ${SKY_TMP}/_b169_awk.txt; then
     ok "handler uses HSGlobalFn (admin-scoped, not per-user)"
 else
     bad "handler does NOT use HSGlobalFn (would be scoped to one user's control plane — defeating the point of admin delete)"
 fi
 
 # A.8 — the handler must handle the 404 case (node not found).
-if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > /tmp/_b169_awk.txt && grep -qE 'not found|not_found' /tmp/_b169_awk.txt; then
+if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > ${SKY_TMP}/_b169_awk.txt && grep -qE 'not found|not_found' ${SKY_TMP}/_b169_awk.txt; then
     ok "handler handles the 404 case (node not found)"
 else
     bad "handler does NOT handle the 404 case (stale id would 500 instead of redirecting with a flash)"

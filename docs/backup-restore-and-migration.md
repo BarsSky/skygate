@@ -358,3 +358,92 @@ A same-host update does NOT require a restore — just `git pull`
 See `docs/TODO.md` for the unimplemented pieces (autonomous
 migration verify, in-app S3 GET path for /admin/backup
 download, per-protocol end-to-end test for SMB/NFS/SFTP).
+
+---
+
+## 7. Changing the database backend (SQLite ↔ PostgreSQL)
+
+Sections 1–6 move *PostgreSQL* to another host: the backend type never changes.
+This section is about the other axis — **moving all the data to the other
+database type**, which is a different operation with a different tool.
+
+### What the panel does (2026-09-28, B329)
+
+`/admin/database` (sidebar → **Data** → *Database*) has a card
+**«Move the data to the other backend»** / **«Перевод данных на другую СУБД»**:
+
+1. It prints which backend skygate is running on right now — the type comes from
+   the process itself (`db.ActiveDialect()`), not from parsing the DSN, so it
+   cannot disagree with reality. On SQLite it also shows the file path and its
+   size; on both backends it shows the server version and the table count read
+   through the live connection.
+2. The card refuses a target that is the same type as the running one (use the
+   host-migration card above for that), a target that already holds tables, and a
+   non-absolute SQLite path.
+3. It converts, then renders the per-table report on the same page: rows on each
+   side, rows copied, dropped columns, warnings, and whether the row counts
+   matched.
+
+### What the conversion does
+
+* **The target schema comes from the target's own migration chain.** A
+  PostgreSQL target gets the PostgreSQL DDL, a SQLite target gets the SQLite DDL,
+  including indexes, triggers and partial UNIQUE indexes. It is *not* translated
+  from the source's `CREATE TABLE` text.
+* Tables are filled **parents before children**, ordered from the target's own
+  `FOREIGN KEY` metadata (a real topological sort; a cycle is reported instead of
+  failing halfway).
+* Every value is coerced to the **target column's declared type** — SQLite stores
+  timestamps as `INTEGER` unix seconds while PostgreSQL uses `timestamptz`, and
+  the booleans differ too.
+* The whole copy runs in **one transaction**: a failure rolls it back, so a retry
+  is always safe.
+* Per-table row counts are compared afterwards, and the PostgreSQL **identity
+  sequences are advanced** past the copied ids so the first `INSERT` after a
+  conversion cannot collide with a copied row.
+* `applied_migrations` is never copied — it belongs to the target's own
+  migration run.
+
+### Doing it from the CLI
+
+The same converter is available as a subcommand, which is the right tool when
+skygate is not running (a migration host, a maintenance window, CI):
+
+```bash
+# SQLite → PostgreSQL
+skygate db-migrate --from sqlite:/var/lib/skygate/skygate.db \
+                   --to postgres://skygate:<password>@<host>:5432/skygate
+
+# PostgreSQL → SQLite (scale down to a self-host)
+skygate db-migrate --from postgres://skygate:<password>@<host>:5432/skygate \
+                   --to sqlite:/var/lib/skygate/skygate.db
+
+# Plan only — lists the tables and the source row counts, writes nothing
+skygate db-migrate --from <dsn> --to <dsn> --dry-run
+```
+
+Both the `--from <dsn>` and the `--from=<dsn>` forms are accepted.
+
+### After the conversion
+
+Point the new database and restart:
+
+```bash
+# docker
+# .env: SKYGATE_DB=<the new DSN>
+docker compose up -d --force-recreate skygate
+
+# systemd / OpenRC
+# /etc/skygate/skygate.env: SKYGATE_DB=<the new DSN>
+sudo systemctl restart skygate
+```
+
+Then verify `/healthz` and `/readyz`, and check the row counts on
+`/admin/database` against the source. **Keep the old database** until you have
+used the new one for a while — the old file/database is the rollback.
+
+> **Read this before a PostgreSQL → SQLite move.** SQLite is a single-writer
+> database: it is right for a small self-hosted tailnet and wrong for a
+> multi-admin, high-write deployment. PostgreSQL remains the documented choice for
+> production (see `docs/deploy.md`, Mode A vs Mode B).
+

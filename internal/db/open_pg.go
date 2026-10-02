@@ -25,5 +25,5 @@ import (
 //   - network/auth fail → "pgx ping: ..."
 //   - migration fail → "pgx migrate: ..."
 func openPostgres(dsn string) (*sql.DB, error) {
-	return OpenPostgres(dsn)
+	return openPostgresWith(dsn, true)
 }

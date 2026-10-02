@@ -21,7 +21,7 @@ import (
 func b293Stub(t *testing.T, lookPathOK map[string]bool, run func(bin string, args []string) (string, error)) *[]string {
 	t.Helper()
 	var calls []string
-	origLook, origRun, origArmed := localLookPath, localRunner, routesHelperArmedFn
+	origLook, origRun, origArmed, origEuid := localLookPath, localRunner, routesHelperArmedFn, localEuid
 	localLookPath = func(file string) (string, error) {
 		if lookPathOK[file] {
 			return "/usr/bin/" + file, nil
@@ -38,8 +38,24 @@ func b293Stub(t *testing.T, lookPathOK map[string]bool, run func(bin string, arg
 	// The helper rung is opt-in per test: "armed" must not depend on whether the
 	// machine running the tests happens to have systemd and the unit.
 	routesHelperArmedFn = func() (bool, bool) { return false, true }
-	t.Cleanup(func() { localLookPath, localRunner, routesHelperArmedFn = origLook, origRun, origArmed })
+	// The effective UID must not decide the verdict either: the documented
+	// reference gate invocation runs the catalog under `sudo`, where
+	// os.Geteuid() is 0 and the `direct` rung reports "this process is root".
+	// Pin the non-root rung here; TestLocalTransports_RootRung_B293 covers the
+	// root one, so neither branch is lost.
+	localEuid = func() int { return 1000 }
+	t.Cleanup(func() {
+		localLookPath, localRunner, routesHelperArmedFn, localEuid = origLook, origRun, origArmed, origEuid
+	})
 	return &calls
+}
+
+// b293AsRoot flips the effective UID to 0 for one test.
+func b293AsRoot(t *testing.T) {
+	t.Helper()
+	orig := localEuid
+	localEuid = func() int { return 0 }
+	t.Cleanup(func() { localEuid = orig })
 }
 
 // b293ArmedHelper marks the privileged helper as installed for one test.
@@ -266,5 +282,22 @@ func TestLocalTransports_NamesEveryRung_B293(t *testing.T) {
 	}
 	if !strings.Contains(byName["sudo"], "sudo not installed") {
 		t.Errorf("sudo detail = %q, want it to say sudo is absent on this host", byName["sudo"])
+	}
+}
+
+// TestLocalTransports_RootRung_B293 pins the OTHER branch of the same rung, so
+// stubbing the effective UID (above) cannot silently delete the root case: a
+// gate run under sudo must still see the rung reported honestly.
+func TestLocalTransports_RootRung_B293(t *testing.T) {
+	b293Stub(t, map[string]bool{"tailscale": true}, nil)
+	b293AsRoot(t)
+	var direct string
+	for _, tr := range LocalTransports() {
+		if tr.Name == "direct" {
+			direct = tr.Detail
+		}
+	}
+	if !strings.Contains(direct, "root") {
+		t.Errorf("direct detail = %q, want it to say this process is root when euid is 0", direct)
 	}
 }

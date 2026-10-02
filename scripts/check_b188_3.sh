@@ -37,6 +37,12 @@ set -uo pipefail
 PASS=0
 FAIL=0
 [ -d /home/skyadmin/skygate ] && REPO=/home/skyadmin/skygate || REPO="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+# The admin ACL SURFACE, not one file: internal/acl/acl.go was split into
+# seven on 2026-10-01 (refactor Phase D) and a contract that greps one path turns
+# a pure code move into a false FAIL — and is the weaker contract even while it
+# is green. See scripts/lib/gosurface.sh and B339.
+. scripts/lib/gosurface.sh
+gosurface ACL internal/acl/acl.go internal/acl/acl_apply.go internal/acl/acl_generate.go internal/acl/acl_generate_via.go internal/acl/acl_ownership.go internal/acl/acl_set.go internal/acl/acl_tags.go
 
 check_eq() {
   local label="$1" expected="$2" actual="$3"
@@ -61,7 +67,7 @@ check_ge() {
 }
 
 # A. resolvePerCIDRVia helper exists.
-A=$(grep -c '^func resolvePerCIDRVia' "$REPO/internal/acl/acl.go" 2>/dev/null || echo 0)
+A=$(grep -c '^func resolvePerCIDRVia' "$ACL" 2>/dev/null || echo 0)
 check_ge "A-resolvePerCIDRVia-helper-exists" 1 "$A"
 
 # B. GenerateACLForPlane calls resolvePerCIDRVia.
@@ -71,34 +77,34 @@ check_ge "A-resolvePerCIDRVia-helper-exists" 1 "$A"
 # function starts at "func GenerateACLForPlane(" and ends
 # at the next "^func " line. We do a simpler check: grep
 # the whole file for the function body containing the call.
-B=$(awk '/^func GenerateACLForPlane\(/{p=1} p; /^func [A-Z]/{if (NR>1 && $0 !~ /^func GenerateACLForPlane/){p=0}}' "$REPO/internal/acl/acl.go" 2>/dev/null | grep -c 'resolvePerCIDRVia')
+B=$(awk '/^func GenerateACLForPlane\(/{p=1} p; /^func [A-Z]/{if (NR>1 && $0 !~ /^func GenerateACLForPlane/){p=0}}' "$ACL" 2>/dev/null | grep -c 'resolvePerCIDRVia')
 check_ge "B-OLD-calls-resolvePerCIDRVia" 1 "$B"
 
 # C. GenerateACLWithViaForPlane calls resolvePerCIDRVia.
 # Same approach as B but for the NEW function.
-C=$(awk '/^func GenerateACLWithViaForPlane\(/{p=1} p; /^func [A-Z]/{if (NR>1 && $0 !~ /^func GenerateACLWithViaForPlane/){p=0}}' "$REPO/internal/acl/acl.go" 2>/dev/null | grep -c 'resolvePerCIDRVia')
+C=$(awk '/^func GenerateACLWithViaForPlane\(/{p=1} p; /^func [A-Z]/{if (NR>1 && $0 !~ /^func GenerateACLWithViaForPlane/){p=0}}' "$ACL" 2>/dev/null | grep -c 'resolvePerCIDRVia')
 check_ge "C-NEW-calls-resolvePerCIDRVia" 1 "$C"
 
 # D. The helper's doc comment references B188.3.
-D=$(grep -B 1 -A 25 'func resolvePerCIDRVia' "$REPO/internal/acl/acl.go" 2>/dev/null | grep -c 'B188.3')
+D=$(grep -B 1 -A 25 'func resolvePerCIDRVia' "$ACL" 2>/dev/null | grep -c 'B188.3')
 check_ge "D-doc-references-B188.3" 1 "$D"
 
 # E. resolvePerCIDRVia is package-private (lowercase 'r').
 # Should NOT be exported (no "func R" capital R). We check
 # that the function declaration is exactly `func resolvePerCIDRVia`
 # (not `func ResolvePerCIDRVia`).
-E=$(grep -cE '^func [Rr]esolvePerCIDRVia' "$REPO/internal/acl/acl.go" 2>/dev/null || echo 0)
+E=$(grep -cE '^func [Rr]esolvePerCIDRVia' "$ACL" 2>/dev/null || echo 0)
 check_eq "E-package-private-only" "1" "$E"
 
 # F. The OLD function's local ruleEntry struct has exitNodeID.
 # Look for the ruleEntry type definition inside the
 # GenerateACLForPlane function.
-F=$(grep -E -A 30 '^func GenerateACLForPlane\(' "$REPO/internal/acl/acl.go" 2>/dev/null | grep -A 15 'type ruleEntry struct' | grep -c 'exitNodeID')
+F=$(grep -E -A 30 '^func GenerateACLForPlane\(' "$ACL" 2>/dev/null | grep -A 15 'type ruleEntry struct' | grep -c 'exitNodeID')
 check_ge "F-OLD-ruleEntry-has-exitNodeID" 1 "$F"
 
 # G. The OLD function populates viaByDeviceOld from
 # device_exit_node_prefs. Look for the loading code pattern.
-G=$(grep -E -A 80 '^func GenerateACLForPlane\(' "$REPO/internal/acl/acl.go" 2>/dev/null | grep -c 'viaByDeviceOld')
+G=$(grep -E -A 80 '^func GenerateACLForPlane\(' "$ACL" 2>/dev/null | grep -c 'viaByDeviceOld')
 check_ge "G-OLD-populates-viaByDeviceOld" 1 "$G"
 
 # H. AGENTS.md mentions B188.3 with the implementation status.

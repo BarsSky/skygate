@@ -61,15 +61,19 @@ echo ""
 
 UNWRAPPED_COUNT=0
 WRAPPED_NOT_HTML=0
+# Per-run scratch files (B340). A FIXED /tmp path is not writable by the next
+# run under a different user, which made eight checks report phantom FAILs on
+# 2026-10-01. See AGENTS.md trap #13.
 TMP_HTML=$(mktemp)
 TMP_WRAPPED=$(mktemp)
-trap 'rm -f "$HTML_KEYS_RAW" "$WRAPPED_FILE" "$TMP_HTML" "$TMP_WRAPPED"' EXIT
+TMP_UNWRAPPED=$(mktemp)
+trap 'rm -f "$HTML_KEYS_RAW" "$WRAPPED_FILE" "$TMP_HTML" "$TMP_WRAPPED" "$TMP_UNWRAPPED"' EXIT
 sort -u "$HTML_KEYS_RAW" > "$TMP_HTML"
 sort -u "$WRAPPED_FILE" > "$TMP_WRAPPED"
 
 # Keys that have HTML but no safeHTML wrapper anywhere
-comm -23 "$TMP_HTML" "$TMP_WRAPPED" > /tmp/html_unwrapped
-UNWRAPPED_COUNT=$(wc -l < /tmp/html_unwrapped)
+comm -23 "$TMP_HTML" "$TMP_WRAPPED" > "$TMP_UNWRAPPED"
+UNWRAPPED_COUNT=$(wc -l < "$TMP_UNWRAPPED")
 
 echo "  i18n keys with HTML tags, wrapped with | safeHTML:  $(comm -12 "$TMP_HTML" "$TMP_WRAPPED" | wc -l)"
 echo "  i18n keys with HTML tags, NOT wrapped anywhere:       $UNWRAPPED_COUNT"
@@ -77,7 +81,7 @@ echo "  i18n keys with HTML tags, NOT wrapped anywhere:       $UNWRAPPED_COUNT"
 if [ "$UNWRAPPED_COUNT" -gt 0 ]; then
     echo ""
     echo "  First 20 unwrapped keys (operator review required):"
-    head -20 /tmp/html_unwrapped | sed 's/^/    /'
+    head -20 "$TMP_UNWRAPPED" | sed 's/^/    /'
 fi
 
 echo ""

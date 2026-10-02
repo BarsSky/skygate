@@ -70,7 +70,12 @@ else
 fi
 
 # 5. hostnameMapFromHeadscale removed
-if grep -qF 'func hostnameMapFromHeadscale' internal/telegram/commands_user.go; then
+# Refactor Phase D (2026-10-01): read the whole telegram user-command SURFACE,
+# not commands_user.go alone. This is a NEGATIVE contract, so pinning one file
+# made it weaker the moment that 1983-line file was split into nine: the function
+# could be re-introduced in any sibling file and this check would not see it.
+# (`grep -q` over several operands is true when ANY of them matches.)
+if grep -qF 'func hostnameMapFromHeadscale' internal/telegram/commands_user*.go; then
     echo "SKY-FAIL: hostnameMapFromHeadscale still present" >&2
     fail=1
 else

@@ -39,6 +39,12 @@
 #   L:    go build ./... succeeds
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 ok_count=0
 ok() { printf "[ok]   %s\n" "$1"; ok_count=$((ok_count+1)); }
@@ -106,9 +112,9 @@ for spec in \
         # forms: the literal "x" or the constant
         # name (e.g. clusterLabel) — both are
         # permitted by the B226 design.
-        grep -A4 "NewGaugeVec(\"$name\"" "$metrics_dir"/*.go 2>/dev/null > /tmp/b226_block.txt
+        grep -A4 "NewGaugeVec(\"$name\"" "$metrics_dir"/*.go 2>/dev/null > ${SKY_TMP}/b226_block.txt
         # Form 1: literal string "x" in the block.
-        if grep -qF "\"$lbl\"" /tmp/b226_block.txt; then
+        if grep -qF "\"$lbl\"" ${SKY_TMP}/b226_block.txt; then
           continue
         fi
         # Form 2: a named constant x that resolves
@@ -124,14 +130,14 @@ for spec in \
           # the 4-line block (not a different
           # const with the same value).
           const_name=$(grep -E "const[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*\"$lbl\"" <<<"$const_block" | head -1 | sed -E 's/.*const[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\1/')
-          if [ -n "$const_name" ] && grep -qF "$const_name" /tmp/b226_block.txt; then
+          if [ -n "$const_name" ] && grep -qF "$const_name" ${SKY_TMP}/b226_block.txt; then
             continue
           fi
         fi
         all_ok=0
         break
       done
-      rm -f /tmp/b226_block.txt
+      rm -f ${SKY_TMP}/b226_block.txt
       if [ "$all_ok" = "1" ]; then
         ok "C: metric $name declared (labels: $labels)"
       else

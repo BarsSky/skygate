@@ -56,6 +56,12 @@
 #   2 = backend unknown
 
 set -uo pipefail
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 STRICT=0
 for arg in "$@"; do
@@ -207,24 +213,24 @@ except Exception as e:
         if ! sudo -n docker run --rm -v "$VOLUME":/data alpine sh -c \
             'apk add --no-cache sqlite >/dev/null 2>&1 && \
              sqlite3 /data/skygate.db "PRAGMA table_info(portal_users)"' \
-            > /tmp/_admin_cols_$$ 2>&1; then
+            > ${SKY_TMP}/_admin_cols_$$ 2>&1; then
             echo "SKIP: sqlite database in volume $VOLUME is not readable from here — no live DB available"
             exit 0
         fi
-        if grep -q '|is_primary|' /tmp/_admin_cols_$$; then
+        if grep -q '|is_primary|' ${SKY_TMP}/_admin_cols_$$; then
             ok "P: portal_users.is_primary exists (V072 applied)"
         else
             bad "P: portal_users.is_primary is MISSING — V072 (B264 primary admin) has not run on this database"
         fi
-        rm -f /tmp/_admin_cols_$$
+        rm -f ${SKY_TMP}/_admin_cols_$$
         if ! sudo -n docker run --rm -v "$VOLUME":/data alpine sh -c \
             'apk add --no-cache sqlite >/dev/null 2>&1 && \
              sqlite3 /data/skygate.db "SELECT id, username, COALESCE(headscale_user_id, -1), is_admin FROM portal_users WHERE is_primary=1 ORDER BY id"' \
-            > /tmp/_admin_sqlite_$$ 2>&1; then
+            > ${SKY_TMP}/_admin_sqlite_$$ 2>&1; then
             echo "SKIP: sqlite query could not run against volume $VOLUME — no live DB available"
             exit 0
         fi
-        ADMIN_ROW=$(cat /tmp/_admin_sqlite_$$)
+        ADMIN_ROW=$(cat ${SKY_TMP}/_admin_sqlite_$$)
         ADMIN_COUNT=$(echo "$ADMIN_ROW" | grep -c '.' || true)
         if [ "$ADMIN_COUNT" -eq 1 ]; then
             ok "A: exactly one primary admin in portal_users"
@@ -272,7 +278,7 @@ except Exception as e:
                 warn "E: headscale name=$HS_NAMES != portal name=$ADMIN_NAME (drift)"
             fi
         fi
-        rm -f /tmp/_admin_sqlite_$$
+        rm -f ${SKY_TMP}/_admin_sqlite_$$
         ;;
 esac
 

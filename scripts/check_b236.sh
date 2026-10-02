@@ -22,9 +22,15 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TS="$REPO_ROOT/internal/feature/admin/tailscale.go"
 TST="$REPO_ROOT/internal/feature/admin/tailscale_b236_test.go"
 MAIN="$REPO_ROOT/cmd/skygate/main.go"
+
+# B236 reads the admin TAILSCALE SURFACE, not one file. tailscale.go was split
+# into seven focused files on 2026-10-01 (refactor Phase D), and a contract that
+# greps one hardcoded path turns a pure code move into a false FAIL while the
+# product is unchanged. See scripts/lib/gosurface.sh for why the surface is both
+# the honest and the stronger thing to pin.
+. "$REPO_ROOT/scripts/lib/gosurface.sh"
 
 FAILED=0
 fail() { echo "FAIL: $*" >&2; FAILED=1; }
@@ -35,9 +41,12 @@ require_file() {
 }
 
 echo "=== A. source files present ==="
-require_file "$TS"
+require_file "$REPO_ROOT/internal/feature/admin/tailscale.go"
 require_file "$TST"
 require_file "$MAIN"
+if ! gosurface TS "$REPO_ROOT"/internal/feature/admin/tailscale.go "$REPO_ROOT"/internal/feature/admin/tailscale_*.go; then
+  fail "no admin/tailscale surface files found — the contracts below would pass vacuously"
+fi
 
 echo
 echo "=== B. the handler and its route ==="

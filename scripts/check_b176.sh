@@ -56,6 +56,12 @@ skip(){ echo "  SKIP  $1"; }
 hdr() { echo; echo "=== $1 ==="; }
 
 REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
+# The admin ACL SURFACE, not one file: internal/acl/acl.go was split into
+# seven on 2026-10-01 (refactor Phase D) and a contract that greps one path turns
+# a pure code move into a false FAIL — and is the weaker contract even while it
+# is green. See scripts/lib/gosurface.sh and B339.
+. scripts/lib/gosurface.sh
+gosurface ACL internal/acl/acl.go internal/acl/acl_apply.go internal/acl/acl_generate.go internal/acl/acl_generate_via.go internal/acl/acl_ownership.go internal/acl/acl_set.go internal/acl/acl_tags.go
 cd "$REPO"
 
 # ---------------------------------------------------------------------------
@@ -113,13 +119,13 @@ fi
 # headscale policy file. If the rule's tag doesn't match
 # the node's actual tag, the rule is silently ignored by
 # headscale (same effect as the device tag being missing).
-if grep -qE '"tag:dev-"\s*\+\s*e\.userName\s*\+\s*"-"\s*\+\s*strings.ToLower\(e\.deviceHostname\)' internal/acl/acl.go; then
+if grep -qE '"tag:dev-"\s*\+\s*e\.userName\s*\+\s*"-"\s*\+\s*strings.ToLower\(e\.deviceHostname\)' "$ACL"; then
     ok "acl.go (ruleEntry loop) lowercases e.deviceHostname in tag:dev-<user>-<device> construction (B176: ACL policy matches the lowercase node tag)"
 else
     bad "acl.go (ruleEntry loop) does NOT lowercase e.deviceHostname (B176: headscale policy has uppercase src, node has lowercase tag → rule never matches)"
 fi
 
-if grep -qE '"tag:dev-"\s*\+\s*e\.UserName\s*\+\s*"-"\s*\+\s*strings.ToLower\(e\.DeviceHostname\)' internal/acl/acl.go; then
+if grep -qE '"tag:dev-"\s*\+\s*e\.UserName\s*\+\s*"-"\s*\+\s*strings.ToLower\(e\.DeviceHostname\)' "$ACL"; then
     ok "acl.go (DeviceRule loop) lowercases e.DeviceHostname in tag:dev-<user>-<device> construction (B176: ACL policy matches the lowercase node tag)"
 # B265 (2026-09-19): the DeviceRule loop no longer inlines the tag
 # construction — the lowercase + node_owner_map fallback live in the
@@ -139,9 +145,9 @@ if grep -qE '"tag:dev-"\s*\+\s*e\.UserName\s*\+\s*"-"\s*\+\s*strings.ToLower\(e\
 # contract now pins the SOURCE of the tag (node_owner_map) instead of a
 # ToLower call that no longer exists, and the A.4 straggler sweep above still
 # forbids any new hand-built `tag:dev-…Hostname` site.
-elif grep -qE 'func deviceTagForRule' internal/acl/acl.go \
-     && grep -q 'devTag := deviceTagForRule(e, ownerByNodeID)' internal/acl/acl.go \
-     && awk '/^func deviceTagForRule\(/,/^}/' internal/acl/acl.go | grep -q 'o\.Tag'; then
+elif grep -qE 'func deviceTagForRule' "$ACL" \
+     && grep -q 'devTag := deviceTagForRule(e, ownerByNodeID)' "$ACL" \
+     && awk '/^func deviceTagForRule\(/,/^}/' "$ACL" | grep -q 'o\.Tag'; then
     ok "acl.go (DeviceRule loop) uses node_owner_map.tag via deviceTagForRule (B176 + B265 + B284: the policy tag is the lowercase tag the node carries, and it is never synthesised)"
 else
     bad "acl.go (DeviceRule loop) does NOT take the device tag from node_owner_map (B176/B284: a synthesised or uppercase src never matches the node's tag, and an undeclared one makes headscale refuse the whole policy)"

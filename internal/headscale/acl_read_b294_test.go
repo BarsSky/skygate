@@ -69,6 +69,13 @@ func TestGetACLNamesEveryRungInTheError_B294(t *testing.T) {
 	// that does not exist, and a policy path that is not readable either.
 	t.Setenv("SKYGATE_HEADSCALE_POLICY_PATH", filepath.Join(t.TempDir(), "nope.hujson"))
 	t.Setenv("SKYGATE_HEADSCALE_CONFIG", filepath.Join(t.TempDir(), "no-config.yaml"))
+	// B332 (2026-10-01): the CLI rung must be unreachable too, or this test
+	// succeeds on a host that RUNS the `headscale` container and asserts
+	// nothing. On the reference VM docker is on PATH and the container is up,
+	// so `docker exec headscale … policy get` returned the live policy and this
+	// test failed with "with no API, no file and no CLI the read must fail
+	// loudly" — the premise was false, not the product.
+	isolateHeadscaleFallbacks(t)
 
 	c := b294Client(t)
 	_, err := c.GetACL()

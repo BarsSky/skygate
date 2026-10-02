@@ -46,6 +46,18 @@ PASS=0
 FAIL=0
 [ -d /home/skyadmin/skygate ] && REPO=/home/skyadmin/skygate || REPO="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
 
+# Contract P counts occurrences, and `count` hands its argument to `grep -c`,
+# which prints ONE COUNT PER FILE OPERAND when given several — a bare glob would
+# turn the arithmetic below into `a.go:1b.go:2`. So the telegram user-command
+# SURFACE is concatenated into a single file (refactor Phase D, 2026-10-01:
+# commands_user.go was split into nine files and this contract must survive the
+# next split too). See scripts/lib/gosurface.sh.
+. "$REPO/scripts/lib/gosurface.sh"
+if ! gosurface USERCMD "$REPO"/internal/telegram/commands_user.go "$REPO"/internal/telegram/commands_user_*.go; then
+  echo "  FAIL [P-my-status-blocks] no telegram commands_user surface files found"
+  FAIL=$((FAIL+1))
+fi
+
 check_eq() {
   local label="$1" expected="$2" actual="$3"
   if [ "$actual" = "$expected" ]; then
@@ -148,7 +160,7 @@ check_ge "O-version" 1 "$(count "$REPO/internal/telegram/commands.go" 'blocks: v
 # deviceCount int64 but never assigned it, so the rich
 # message always showed "устройств 0" even when the user
 # had 7 devices (operator's 2026-08-25 screenshot).
-check_ge "P-my-status-blocks" 1 "$(count "$REPO/internal/telegram/commands_user.go" 'ListNodeOwnersByUsername\(env\.DB, env\.Username\)')"
+check_ge "P-my-status-blocks" 1 "$(count "$USERCMD" 'ListNodeOwnersByUsername\(env\.DB, env\.Username\)')"
 
 # Q. The regression test for B186.3 exists
 check_ge "Q-b1863-test" 1 "$(count "$REPO/internal/telegram/my_status_blocks_test.go" 'TestMyStatusBlocks_DeviceCountNotZero')"

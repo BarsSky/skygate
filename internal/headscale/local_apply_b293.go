@@ -192,7 +192,7 @@ func LocalTransports() []LocalTransport {
 	var out []LocalTransport
 	bin := TailscaleCLI()
 	if _, err := localLookPath(bin); err == nil {
-		if os.Geteuid() == 0 {
+		if localEuid() == 0 {
 			out = append(out, LocalTransport{Name: "direct", Detail: "this process is root"})
 		} else {
 			out = append(out, LocalTransport{Name: "direct", Detail: "as the skygate service user (needs the daemon's --operator=<user>)"})
@@ -362,6 +362,16 @@ var localRunner = defaultLocalRunner
 
 // localLookPath is exec.LookPath, injectable for the same reason.
 var localLookPath = exec.LookPath
+
+// localEuid is os.Geteuid, injectable so the UID a rung reports does not depend
+// on WHO RUNS THE TESTS. Measured 2026-10-01: TestLocalTransports_NamesEveryRung_B293
+// asserts the non-root `direct` detail, so it passed when the gate ran as the
+// operator and FAILED the moment it ran under the documented reference
+// invocation (`sudo env PATH=… bash scripts/verify_pre_deploy.sh`), where
+// os.Geteuid() is 0 and the detail is "this process is root". A test whose
+// verdict depends on the effective UID is the same class as the B294/B332
+// host-state leaks, and the fix is the same: make the premise true on any host.
+var localEuid = os.Geteuid
 
 // defaultLocalRunner runs one rung's command.
 func defaultLocalRunner(bin string, args ...string) (string, error) {

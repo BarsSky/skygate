@@ -56,11 +56,19 @@ skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 NAME=internal/feature/admin/tailscale_selfname_b320.go
-TS=internal/feature/admin/tailscale.go
 TPL=internal/handlers/templates/admin/tailscale.html
 MAIN=cmd/skygate/main.go
 I18N=internal/i18n/catalog_tailscale.go
 TEST=internal/feature/admin/tailscale_selfname_b320_test.go
+
+# TS is the admin TAILSCALE SURFACE, not one file.
+# internal/feature/admin/tailscale.go was split into seven focused files on
+# 2026-10-01 (refactor Phase D); pinning the single path turns a pure code move
+# into a false FAIL. See scripts/lib/gosurface.sh.
+. scripts/lib/gosurface.sh
+if ! gosurface TS internal/feature/admin/tailscale.go internal/feature/admin/tailscale_*.go; then
+  bad "no admin/tailscale surface files found — the TS contracts would pass vacuously"
+fi
 
 hdr "B320 — the canonical name must belong to the live client"
 

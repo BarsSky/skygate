@@ -2126,6 +2126,13 @@ func main() {
 	// + doc comments and docs/ha.md for
 	// the full design (D3, D8).
 	mux.Handle("GET /admin/database", authMW(http.HandlerFunc(adminSvc.GetAdminDatabase)))
+	// 2026-09-28 — the cross-BACKEND conversion (SQLite ↔ PostgreSQL).
+	// Distinct from the "migrate to a new host" workflow below, which
+	// stays inside PostgreSQL. The handler opens the target through
+	// db.OpenIsolated so a second connection cannot change the dialect
+	// the running process branches on, and it renders the per-table
+	// report on the same page instead of redirecting.
+	mux.Handle("POST /admin/database/convert", authMW(http.HandlerFunc(adminSvc.PostAdminDatabaseConvert)))
 	// v1.5.0+ / B197 — Phase 1.2: Test Connection + Edit DSN.
 	// Test is non-persistent (just probes the DSN and
 	// re-renders with the latency). Edit writes

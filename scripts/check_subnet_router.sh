@@ -30,6 +30,12 @@
 # long-lived psql sidecar.
 
 set -e
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 if [ -z "$1" ]; then
   echo "usage: $0 <portal-user-id-or-username>"
@@ -123,7 +129,7 @@ if [ -z "$ROUTER_NODE_ID" ] || [ "$ROUTER_NODE_ID" = "" ]; then
   echo "       (or the registered node has been deleted from headscale)"
   echo ""
   echo "  current headscale nodes with tag:subnet-router:"
-  docker exec headscale headscale nodes list -o json 2>/dev/null > /tmp/hs-nodes.json
+  docker exec headscale headscale nodes list -o json 2>/dev/null > ${SKY_TMP}/hs-nodes.json
   python3 /home/admin/skygate/scripts/_check_subnet_nodes.py --list-with-tag
   exit 1
 fi
@@ -131,13 +137,13 @@ fi
 # Query the headscale node directly. Write the python to a
 # file to avoid shell-quoting headaches with `$ROUTER_NODE_ID`
 # + `$CIDR` interpolation in `python3 -c`.
-docker exec headscale headscale nodes list -o json 2>/dev/null > /tmp/hs-nodes.json
+docker exec headscale headscale nodes list -o json 2>/dev/null > ${SKY_TMP}/hs-nodes.json
 python3 /home/admin/skygate/scripts/_check_subnet_nodes.py \
-  --node-id "$ROUTER_NODE_ID" --cidr "$CIDR" --json-file /tmp/hs-nodes.json || exit 1
+  --node-id "$ROUTER_NODE_ID" --cidr "$CIDR" --json-file ${SKY_TMP}/hs-nodes.json || exit 1
 
 echo ""
 echo "=== Check 4: status pill in /admin/users/$USER_ID/subnet ==="
-COOKIE=/tmp/sgck_check.txt
+COOKIE=${SKY_TMP}/sgck_check.txt
 PASSWORD=$(grep '^SKYGATE_ADMIN_PASS' .env | cut -d= -f2-)
 rm -f $COOKIE
 curl -sS -c $COOKIE -X POST http://localhost:8080/login \
@@ -145,8 +151,8 @@ curl -sS -c $COOKIE -X POST http://localhost:8080/login \
   --data-urlencode "password=$PASSWORD" \
   -o /dev/null -w "  login: HTTP %{http_code}\n"
 curl -sS -b $COOKIE "http://localhost:8080/admin/users/$USER_ID/subnet" \
-  -o /tmp/subnet-page.html -w "  /admin/users/$USER_ID/subnet: HTTP %{http_code}\n"
-PILL=$(grep -oE 'status[^"]*"[^"]*"|cell_[a-z_]+' /tmp/subnet-page.html | sort -u | head -3)
+  -o ${SKY_TMP}/subnet-page.html -w "  /admin/users/$USER_ID/subnet: HTTP %{http_code}\n"
+PILL=$(grep -oE 'status[^"]*"[^"]*"|cell_[a-z_]+' ${SKY_TMP}/subnet-page.html | sort -u | head -3)
 echo "  status pill text fragments: $PILL"
 
 echo ""

@@ -3,10 +3,11 @@
 //
 // The subcommand is a thin CLI wrapper around internal/db.Convert:
 // it parses --from / --to / --schema-only / --data-only / --dry-run
-// flags, opens both DBs via db.OpenWithDialect, and delegates to
-// Convert. Tests cover the parsing layer + the dispatch path
-// (SQLite→SQLite round-trip is the safe in-process test; the
-// full PG↔SQLite path is the post-v1.5.4 live-verify task).
+// flags (both the `--flag value` and `--flag=value` spellings), opens
+// both DBs via db.OpenWithDialect, and delegates to ConvertWithReport.
+// Tests cover the parsing layer; the SQLite↔SQLite round trip itself is
+// covered by internal/db/convert_test.go, and the PostgreSQL legs are
+// covered by CI's test-pg job (SKYGATE_TEST_PG_DSN).
 package main
 
 import (
@@ -74,6 +75,29 @@ func TestParseDBMigrateArgs(t *testing.T) {
 			wantFrom: "X",
 			wantTo:   "Y",
 			wantMode: "schema+data",
+		},
+		{
+			// 2026-09-28: the `=` form is what the --help text and the
+			// release notes advertise. The pre-fix parser answered
+			// "unknown flag: --from=sqlite:/tmp/src.db" (measured).
+			name:     "equals form for --from and --to",
+			args:     []string{"db-migrate", "--from=sqlite:/tmp/src.db", "--to=postgres://u:p@h/d"},
+			wantFrom: "sqlite:/tmp/src.db",
+			wantTo:   "postgres://u:p@h/d",
+			wantMode: "schema+data",
+		},
+		{
+			name:     "equals form mixed with the space form",
+			args:     []string{"db-migrate", "--from=sqlite:/tmp/src.db", "--to", "Y", "--dry-run"},
+			wantFrom: "sqlite:/tmp/src.db",
+			wantTo:   "Y",
+			wantMode: "schema+data",
+			wantDry:  true,
+		},
+		{
+			name:    "equals form with an empty value",
+			args:    []string{"db-migrate", "--from=", "--to", "Y"},
+			wantErr: true,
 		},
 	}
 

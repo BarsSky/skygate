@@ -60,7 +60,12 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd 2>/dev/null || echo "$SCRIPT_DIR/.." )"
 cd "${PROJECT_ROOT}" || exit 1
 
-ACL_FILE="internal/acl/acl.go"
+# The admin ACL SURFACE, not one file: internal/acl/acl.go was split into
+# seven on 2026-10-01 (refactor Phase D) and a contract that greps one path turns
+# a pure code move into a false FAIL — and is the weaker contract even while it
+# is green. See scripts/lib/gosurface.sh and B339.
+. scripts/lib/gosurface.sh
+gosurface ACL_FILE internal/acl/acl.go internal/acl/acl_apply.go internal/acl/acl_generate.go internal/acl/acl_generate_via.go internal/acl/acl_ownership.go internal/acl/acl_set.go internal/acl/acl_tags.go
 PREAUTH_FILE="internal/deployrun/steps/generate_preauth_key.go"
 ACL_APPLY_FILE="internal/feature/admin/headscale_acl.go"
 EXIT_SVR_FILE="internal/db/exit_node_prefs.go"
@@ -76,7 +81,7 @@ echo "=== STRUCTURAL mode (always runs) ==="
 echo
 
 # --- A.1: GenerateACLForPlane exists ---
-echo "--- A.1 GenerateACLForPlane exists in internal/acl/acl.go ---"
+echo "--- A.1 GenerateACLForPlane exists in the internal/acl policy surface ---"
 if grep -q "func GenerateACLForPlane" "${ACL_FILE}" 2>/dev/null; then
     ok "GenerateACLForPlane defined"
 else

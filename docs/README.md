@@ -3,9 +3,16 @@
 Catalogue of every document in this directory. Start here, then follow the link
 for your role.
 
-Russian translations live in [`docs/ru/`](ru/) — `README`, `INSTALL`, `UPDATE` and
-`ROADMAP` are maintained in both languages; for everything else the English file is
-authoritative.
+Russian translations live in [`ru/`](ru/). **Three** documents are maintained as
+bilingual pairs — [`INSTALL`](INSTALL.md)/[`ru/INSTALL`](ru/INSTALL.md),
+[`UPDATE`](UPDATE.md)/[`ru/UPDATE`](ru/UPDATE.md) and
+[`ROADMAP`](ROADMAP.md)/[`ru/ROADMAP`](ru/ROADMAP.md) — plus the **project** README:
+[`../README.md`](../README.md) has its Russian translation at [`ru/README.md`](ru/README.md).
+Note that `ru/README.md` is a translation of *that* file, **not** of this catalogue —
+this catalogue has no Russian counterpart, and for everything not listed above the
+English file is authoritative. Keep a pair in sync in the **same commit** as its
+original; the RU roadmap once drifted a whole release cycle behind and told readers
+a different repair recipe than the English one.
 
 ---
 
@@ -34,6 +41,8 @@ authoritative.
 | Set up the **Windows client** | [`windows-client.md`](windows-client.md) |
 | Run **headplane** or **sidecar mode** | [`headplane.md`](headplane.md), [`sidecar-mode.md`](sidecar-mode.md) |
 | See **what the project does**, feature by feature | [`features.md`](features.md) |
+| See the **localization** state of the panel (what was untranslated, and the ratchet that keeps it at zero) | [`i18n-audit.md`](i18n-audit.md) |
+| See the **responsive / mobile** audit of the panel (what was clipped off-screen, and the fix) | [`responsive-audit.md`](responsive-audit.md) |
 | Get **AI-agent instructions / conventions** | [`../AGENTS.md`](../AGENTS.md) |
 
 ---
@@ -64,6 +73,9 @@ docs/
 ├── gate-audit-b200-b262.md      per-slice regression-detection audit
 ├── gate-audit-b263-b290.md      per-slice regression-detection audit
 ├── gate-audit-b291-b320.md      per-slice regression-detection audit
+├── gate-regression-power.md     what the B-check catalog can and cannot catch
+├── i18n-audit.md                localization audit + the B325/B325.1 ratchet
+├── responsive-audit.md          mobile/responsive audit (B326)
 ├── internals.md                     package map, invariants, B-check system
 ├── ha.md                            HA topology, failover, open questions
 ├── https.md                         TLS, reverse proxies, certificates
@@ -91,6 +103,12 @@ and `superpowers/` trees plus `BACKLOG.md` and `PLANS.md`. Their durable content
 folded into `ROADMAP.md`, `LESSONS.md`, `operations.md`, `ha.md`, `https.md`,
 `oidc.md`, `networking.md`, `troubleshooting.md` and `internals.md`; the original
 text is one `git log --diff-filter=D` away.
+
+**`i18n-audit.md` and `responsive-audit.md` are frozen snapshots**, not living
+status pages: each records the measured state on the day its sweep ran and the
+contracts that keep the result from regressing. Read the numbers as history — the
+current enforcement lives in `scripts/check_b325_i18n_regressions.sh` and
+`scripts/check_b326_responsive_panel.sh`.
 
 ---
 

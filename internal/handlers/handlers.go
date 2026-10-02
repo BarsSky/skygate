@@ -1001,7 +1001,12 @@ func sectionPageSet(page string) map[string]bool {
 			"admin/oidc", "admin/oidc_sync",
 		},
 		"InSectionData": {
-			"admin/backup", "admin/invites", "admin/control-planes",
+			// 2026-09-28: /admin/database joined the Data section. It
+			// had been reachable only through a button on
+			// /admin/cluster — present, working, and invisible in the
+			// navigation. B96 checks this list against layout.html in
+			// both directions, so the two must move together.
+			"admin/database", "admin/backup", "admin/invites", "admin/control-planes",
 		},
 		"InSectionSettings": {
 			// B323 (2026-09-25): /admin/service sits in Settings next to
@@ -1057,6 +1062,8 @@ func pageTitle(name string) string {
 		return "title.admin_derp"
 	case "admin/cluster.html":
 		return "title.admin_cluster"
+	case "admin/database.html":
+		return "db.page_title"
 	case "admin/backup.html":
 		return "title.admin_backup"
 	case "admin/settings.html":
@@ -1105,7 +1112,8 @@ func sectionLabel(page string) string {
 		page == "admin/tailscale" || page == "admin/derp" ||
 		page == "admin/cluster":
 		return "nav.section_integrations"
-	case page == "admin/backup" || page == "admin/invites" ||
+	case page == "admin/database" ||
+		page == "admin/backup" || page == "admin/invites" ||
 		page == "admin/control-planes":
 		return "nav.section_data"
 	case page == "admin/settings" || page == "admin/users" ||
@@ -1158,6 +1166,8 @@ func pageLabel(page string) string {
 		return "nav.derp"
 	case "admin/cluster":
 		return "nav.cluster"
+	case "admin/database":
+		return "nav.database"
 	case "admin/backup":
 		return "nav.backup"
 	case "admin/invites":

@@ -44,6 +44,12 @@
 #  14. AGENTS.md mentions B208
 
 set -u
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 if [ -n "${SKYGATE_PROJECT_DIR:-}" ]; then
     cd "$SKYGATE_PROJECT_DIR"
@@ -178,23 +184,23 @@ ut_count=$(grep -c '^func Test' "internal/feature/admin/admin_audit_b207_test.go
 
 # 13. Build + vet + tests
 if command -v go >/dev/null 2>&1; then
-    if (cd "$PWD" && go build ./... >/tmp/check_b208_build.log 2>&1); then
+    if (cd "$PWD" && go build ./... >${SKY_TMP}/check_b208_build.log 2>&1); then
         check "go build ./... succeeds" ok
     else
         check "go build ./... succeeds" fail
-        head -10 /tmp/check_b208_build.log
+        head -10 ${SKY_TMP}/check_b208_build.log
     fi
-    if (cd "$PWD" && go vet ./... >/tmp/check_b208_vet.log 2>&1); then
+    if (cd "$PWD" && go vet ./... >${SKY_TMP}/check_b208_vet.log 2>&1); then
         check "go vet ./... succeeds" ok
     else
         check "go vet ./... succeeds" fail
-        head -10 /tmp/check_b208_vet.log
+        head -10 ${SKY_TMP}/check_b208_vet.log
     fi
-    if (cd "$PWD" && go test -count=1 ./internal/feature/admin/ >/tmp/check_b208_test.log 2>&1); then
+    if (cd "$PWD" && go test -count=1 ./internal/feature/admin/ >${SKY_TMP}/check_b208_test.log 2>&1); then
         check "go test ./internal/feature/admin/ passes" ok
     else
         check "go test ./internal/feature/admin/ passes" fail
-        head -20 /tmp/check_b208_test.log
+        head -20 ${SKY_TMP}/check_b208_test.log
     fi
 else
     check "go build/vet/tests skipped (no go in PATH)" ok

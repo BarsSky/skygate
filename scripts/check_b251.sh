@@ -28,11 +28,11 @@
 # Contracts (12):
 #   A. `cmd/skygate/main.go` TailscaleHostname default is `skygate-host`
 #   B. `cmd/skygate/main.go` SelfHostname default is `skygate-host`
-#   C. `internal/feature/admin/tailscale.go` tailscaleHostname default is `skygate-host`
+#   C. admin/tailscale SURFACE tailscaleHostname default is `skygate-host`
 #   D. `internal/nodeownership/auto.go` isInfraNode uses strict equality
 #   E. `internal/nodeownership/auto.go` BackfillInfra rule comment mentions reserved name
-#   F. `internal/feature/admin/tailscale.go` findUserForHostname has the reserved-name shortcut
-#   G. `internal/feature/admin/tailscale.go` infraHeadscaleUserID helper exists
+#   F. admin/tailscale SURFACE findUserForHostname has the reserved-name shortcut
+#   G. admin/tailscale SURFACE infraHeadscaleUserID helper exists
 #   H. `internal/feature/admin/infra_owner_sanity.go` shouldBelongToInfra uses strict equality
 #   I. `internal/headscale/tags.go` imports `github.com/tailscale/hujson`
 #   J. `internal/headscale/tags.go` calls hujson.Standardize in EnsureTagOwner
@@ -65,6 +65,15 @@ FAIL=0
 ok()  { echo "  PASS  $*"; PASS=$((PASS+1)); }
 bad() { echo "  FAIL  $*" >&2; FAIL=$((FAIL+1)); }
 
+# B251 contracts C/F/G read the admin TAILSCALE SURFACE, not one file.
+# internal/feature/admin/tailscale.go was split into seven focused files on
+# 2026-10-01 (refactor Phase D) and pinning the single path turned a pure code
+# move into three false FAILs. See scripts/lib/gosurface.sh.
+. "$ROOT/scripts/lib/gosurface.sh"
+if ! gosurface TS "$ROOT"/internal/feature/admin/tailscale.go "$ROOT"/internal/feature/admin/tailscale_*.go; then
+    bad "no admin/tailscale surface files found — contracts C/F/G would pass vacuously"
+fi
+
 # ── A: main.go TailscaleHostname default ──
 echo "=== A. TailscaleHostname default = skygate-host ==="
 if grep -nE 'TailscaleHostname:\s*tailscaleEnvOr\("SKYGATE_TS_HOSTNAME",\s*"skygate-host"\)' cmd/skygate/main.go >/dev/null 2>&1; then
@@ -85,10 +94,10 @@ fi
 # ── C: tailscale.go tailscaleHostname default ──
 echo
 echo "=== C. tailscaleHostname default = skygate-host ==="
-if grep -nE 'return\s+"skygate-host"' internal/feature/admin/tailscale.go >/dev/null 2>&1; then
-    ok "internal/feature/admin/tailscale.go tailscaleHostname() returns skygate-host"
+if grep -nE 'return\s+"skygate-host"' "$TS" >/dev/null 2>&1; then
+    ok "admin/tailscale surface: tailscaleHostname() returns skygate-host"
 else
-    bad "internal/feature/admin/tailscale.go tailscaleHostname() default is not skygate-host"
+    bad "admin/tailscale surface: tailscaleHostname() default is not skygate-host"
 fi
 
 # ── D: isInfraNode uses strict equality ──
@@ -112,8 +121,8 @@ fi
 # ── F: findUserForHostname reserved-name shortcut ──
 echo
 echo "=== F. findUserForHostname reserved-name shortcut ==="
-if grep -nE 'hostname\s*==\s*"skygate-host"' internal/feature/admin/tailscale.go >/dev/null 2>&1 && \
-   grep -nE 'infraHeadscaleUserID' internal/feature/admin/tailscale.go >/dev/null 2>&1; then
+if grep -nE 'hostname\s*==\s*"skygate-host"' "$TS" >/dev/null 2>&1 && \
+   grep -nE 'infraHeadscaleUserID' "$TS" >/dev/null 2>&1; then
     ok "findUserForHostname pins skygate-host to infra (no longer falls back to headscale search)"
 else
     bad "findUserForHostname missing the reserved-name shortcut or infraHeadscaleUserID helper"
@@ -122,7 +131,7 @@ fi
 # ── G: infraHeadscaleUserID helper exists ──
 echo
 echo "=== G. infraHeadscaleUserID helper exists ==="
-if grep -nE 'func \(s \*Service\) infraHeadscaleUserID' internal/feature/admin/tailscale.go >/dev/null 2>&1; then
+if grep -nE 'func \(s \*Service\) infraHeadscaleUserID' "$TS" >/dev/null 2>&1; then
     ok "infraHeadscaleUserID helper defined"
 else
     bad "infraHeadscaleUserID helper missing"

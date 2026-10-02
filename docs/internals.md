@@ -514,9 +514,15 @@ A/B/C… contract list (keep it accurate — it is the historical record); local
 Most scripts `cd "$(dirname "$0")/.."` so they work from any CWD, and most locate `go` on
 PATH with a `/mnt/c/Program Files/Go/bin` / `/c/Program Files/Go/bin` fallback for Windows
 hosts. A failing contract either exits 1 immediately or is accumulated into a summary —
-either way the exit code is what the gate reads. Shared helpers live in `scripts/lib/`;
-today that is one file, `scripts/lib/skip_if_no_docker.sh`, sourced as
-`. "$(dirname "$0")/lib/skip_if_no_docker.sh"` (5 checks use it).
+either way the exit code is what the gate reads. Shared helpers live in `scripts/lib/`,
+sourced as `. "$(dirname "$0")/lib/<name>.sh"`:
+
+| helper | what it gives a check |
+|---|---|
+| `skip_if_no_docker.sh` | the pre-flight that turns "no docker daemon" into `SKIP` (5 checks) |
+| `db_credentials.sh` | live-DB access via `docker exec` (B336) — `skygate_live_db_probe` / `skygate_live_db_query`, so a failed read is never rendered as a fact |
+| `go_build.sh` | the `skygate <verb> --help` contracts' Go-binary helper, with one link retry |
+| `gosurface.sh` | `gosurface VAR <file-or-glob>…` — concatenates a Go **surface** (skipping `_test.go`) into one file, so a contract pins a package prefix instead of one path. Added in refactor Phase D after splitting `internal/telegram/commands_user.go` and `internal/feature/admin/tailscale.go` each turned a wave of green contracts red for a pure code move |
 
 **Running one check, and the full gate.**
 
@@ -578,7 +584,7 @@ covered by a recorded canary run) is the reference example.
 | **Add an i18n string** | Both `ruXxx` and `enXxx` maps in the same `internal/i18n/catalog_*.go` (parity = `TestCatalogsParity` / gate B4). Templates `{{t "key"}}` / `{{tf "key" .Arg}}`; JS `{{t "key" \| safeJSON}}`. |
 | **Touch the updater** | `internal/update/` (`docker.go`, `image.go`, `native.go`, `state.go`, `install.go`, `platform.go`, `scheduler.go`, `manual.go`), `internal/feature/admin/update.go`, `templates/admin/update.html`, `deploy/skygate-apply-update.sh` + `deploy/install-common.sh` for the helper/units, and `docs/UPDATE.md` for the operator contract. Re-run the B261 native + B249 image-pull checks. |
 | **Add a B-check** | Copy an existing script's structure, name it `scripts/check_b<NNN>_<slug>.sh`, `chmod +x`, add `run_check "B<NNN>" "<description incl. contract count>" 'test -f scripts/check_bNNN_<slug>.sh && bash scripts/check_bNNN_<slug>.sh'` to `scripts/verify_pre_deploy.sh`, and register the block in `AGENTS.md`. |
-| **Change the ACL pipeline** | `internal/acl/acl.go` (`GenerateACL`, `GenerateACLWithVia`, `ApplyACLPipelineForPlane`). Do not re-implement the order (generate → snapshot → `SetPolicy` → mark/log) at a call site. See `docs/acl-rules-reference.md`. |
+| **Change the ACL pipeline** | the `internal/acl` policy surface — `acl_generate.go` (`GenerateACL`, `GenerateACLForPlane`), `acl_generate_via.go` (`GenerateACLWithViaForPlane`), `acl_apply.go` (`ApplyACLPipelineForPlane`, `SaveACLSnapshot`), `acl_tags.go` (tagOwners), `acl_ownership.go` (tag/owner resolution) — the single file `acl.go` until the Phase D split of 2026-10-01. Do not re-implement the order (generate → snapshot → `SetPolicy` → mark/log) at a call site. See `docs/acl-rules-reference.md`. |
 | **Change device deletion** | `internal/devicedelete/devicedelete.go` — both the user and admin paths call the same `Delete`; never add cleanup to only one handler. |
 | **Add a module or sub-feature** | `internal/module/module.go` (implement `Module`, optionally `Installer`), `internal/module/tailscale/*` as the reference, register in `main.go`, surface in `internal/feature/admin/modules.go` + `templates/admin/modules.html`, and update §2 here (the `Plugin API` / `Module interface` strings are contract-checked). |
 | **Add a background service** | Its own `internal/<pkg>` with a `Run(ctx)`/`Start(ctx, deps)` entry point, launched from `main.go` **behind its own config knob**, reading the pool through `ResettableDB.Current()`, and exposing a `SendAlert`-shaped sink instead of importing `internal/telegram` (that cycle is why the sink interfaces exist). |
@@ -588,13 +594,24 @@ covered by a recorded canary run) is the reference example.
 
 ## 9. Known structural debt
 
-Measured 2026-09-18; ordered roughly by how likely it is to bite.
+Measured 2026-09-18; ordered roughly by how likely it is to bite. Items struck
+through were closed by refactor Phase D (2026-10-01).
 
 1. **`cmd/skygate/main.go` and `internal/feature/admin` are oversized.** `main.go` is
    **3 971 lines / 182 KB**, one `main()` spanning ~2 950 lines (117–3068) holding the whole
    route table (~250 registrations) plus every background-service launch.
-   `internal/feature/admin` is **115 files / 1.2 MB** (`tailscale.go` 73.7 KB,
-   `telegram.go` 55.9 KB, `system_tests.go` 53.2 KB, `exit_nodes.go` 46.4 KB). There is no
+   `internal/feature/admin` was **115 files / 1.2 MB**; `tailscale.go` (73.7 KB) is now
+   seven files, the largest of them 18 KB. `internal/acl/acl.go` (2209 lines) is now
+   seven files too (`acl_generate_via.go` is the largest at 896 — a single function,
+   `GenerateACLWithViaForPlane`; its near-duplicate `acl_generate.go`/`GenerateACLForPlane`
+   is 719 — de-duplicating the two is a behavioural change and needs its own block).
+   Still oversized: `telegram.go` 55.9 KB,
+   `system_tests.go` 53.2 KB. `internal/feature/admin/exit_nodes.go` (1880 lines /
+   80 KB) is now seven files as well — `exit_nodes.go` (the shared type),
+   `_page.go` (the ~380-line GET renderer), `_helpers.go`, `_handlers.go` (the POST
+   write paths), `_prefix_drift.go` (the B275/B276 truth block, 464 lines),
+   `_tag.go` and `_servers.go` — with its contracts reading the `exit_nodes*.go`
+   surface. There is no
    route-group abstraction, so adding a page edits three large files; a mechanical
    `routes_*.go` split would shrink every future diff.
 
@@ -661,10 +678,20 @@ Measured 2026-09-18; ordered roughly by how likely it is to bite.
     `test_sql_dryrun_test.go.txt`); they were deleted in the 2026-09-18
     restructure.
 
-11. **`internal/feature/admin/tailscale.go` mixes four concerns** at 73.7 KB (state reader,
-    process-control handlers, subnet-route management, preferred-exit helpers) plus a local
-    `urlQueryEscape` that `deploy.go` carries a comment telling people not to duplicate.
-    Splitting it would let the B258/B258.1/B259 state machine be tested in isolation.
+11. ~~**`internal/feature/admin/tailscale.go` mixes four concerns** at 73.7 KB~~
+    **Resolved 2026-10-01 (refactor Phase D).** The 1963-line file is now seven,
+    split along the seams the item itself named: `tailscale.go` (package doc,
+    hostname → headscale-user resolution, the UI state shape + its 5 s cache),
+    `tailscale_config.go` (DB/env-resolved settings and their sources),
+    `tailscale_runtime.go` (status probes, the auth-key file, start/up/stop),
+    `tailscale_handlers.go` (GET + POST dispatch, save/start/stop),
+    `tailscale_enable.go` (generate key, enable/disable in the container, B259),
+    `tailscale_restart_env.go` (restart skygate + the `.env` rewrite, B323) and
+    `tailscale_advertise_routes.go` (B236). `urlQueryEscape` moved with the B236
+    block that uses it. The B258/B258.1/B259 state machine is still driven through
+    `TailscaleState`, but the contracts that pin it now read the **surface**
+    (`scripts/lib/gosurface.sh`) instead of one path, which is what made the split
+    possible without turning seven green checks red for a pure code move.
 
 12. **The native update path is a two-language boundary with almost no automated
     coverage.** Go (`internal/update/native.go`, 23.5 KB) stages a request and folds a

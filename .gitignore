@@ -233,3 +233,12 @@ scratch_archive/
 # 2026-09-19 RR-12: scripts/lib/db_credentials.sh is the runtime DB-credential
 # resolver; the broad 'db_*.sh' pattern above must not swallow it.
 !scripts/lib/db_credentials.sh
+
+# 2026-09-28: the same unanchored-pattern trap, one directory deeper.
+# `check_*.sh` (line 205) matches at ANY depth, so it swallowed
+# deploy/pg-ha/check_pg_health.sh — a production HA tool that docs/ha.md names
+# in six procedures ("verify with check_pg_health.sh") and that
+# deploy/pg-ha/README.md lists as a deliverable. The file existed only on the
+# operator's machine; a fresh clone got the instruction and no script.
+# scripts/check_b152.sh contract D now asserts git tracks it.
+!deploy/pg-ha/check_pg_health.sh

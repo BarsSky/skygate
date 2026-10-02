@@ -1,4 +1,10 @@
 #!/bin/bash
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 . "$(dirname "$0")/lib/db_credentials.sh"
 SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # B183 — drop parent_domain from device_rules natural-key
@@ -185,10 +191,10 @@ if [ -d /home/skyadmin/skygate ]; then
       SELECT
         (SELECT COUNT(*) FROM device_rules WHERE enabled=1 AND exit_node_id='emilia' AND target_type='subnet') AS total_rows,
         (SELECT COUNT(DISTINCT (user_id, device_id, exit_node_id, target_type, target_value)) FROM device_rules WHERE enabled=1 AND exit_node_id='emilia' AND target_type='subnet') AS distinct_rows;
-    " 2>/dev/null > /tmp/b183_emilia_counts.txt
-    if [ -s /tmp/b183_emilia_counts.txt ]; then
-      TOTAL=$(cat /tmp/b183_emilia_counts.txt | awk -F'|' '{print $1}' | tr -d ' ')
-      DISTINCT=$(cat /tmp/b183_emilia_counts.txt | awk -F'|' '{print $2}' | tr -d ' ')
+    " 2>/dev/null > ${SKY_TMP}/b183_emilia_counts.txt
+    if [ -s ${SKY_TMP}/b183_emilia_counts.txt ]; then
+      TOTAL=$(cat ${SKY_TMP}/b183_emilia_counts.txt | awk -F'|' '{print $1}' | tr -d ' ')
+      DISTINCT=$(cat ${SKY_TMP}/b183_emilia_counts.txt | awk -F'|' '{print $2}' | tr -d ' ')
       TOTAL=${TOTAL:-0}
       DISTINCT=${DISTINCT:-0}
       if [ "$TOTAL" -le 50 ] && [ "$DISTINCT" -gt 0 ] && [ "$TOTAL" -eq "$DISTINCT" ]; then

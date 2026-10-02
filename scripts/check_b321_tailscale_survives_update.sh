@@ -61,7 +61,6 @@ skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 BOOT=internal/feature/admin/tailscale_boot_b321.go
-TS=internal/feature/admin/tailscale.go
 NAME=internal/feature/admin/tailscale_selfname_b320.go
 TAGS=internal/headscale/tags.go
 MAIN=cmd/skygate/main.go
@@ -69,6 +68,17 @@ TPL=internal/handlers/templates/admin/tailscale.html
 I18N=internal/i18n/catalog_tailscale.go
 TEST1=internal/feature/admin/tailscale_boot_b321_test.go
 TEST2=internal/headscale/untag_guard_b321_test.go
+
+# TS is the admin TAILSCALE SURFACE, not one file.
+# internal/feature/admin/tailscale.go was split into seven focused files on
+# 2026-10-01 (refactor Phase D); pinning the single path turns a pure code move
+# into a wave of false FAILs. The concatenation is safe for func_body/arm_of
+# below: both slice on `^func …` / `^}` boundaries that the split preserved.
+# See scripts/lib/gosurface.sh.
+. scripts/lib/gosurface.sh
+if ! gosurface TS internal/feature/admin/tailscale.go internal/feature/admin/tailscale_*.go; then
+  bad "no admin/tailscale surface files found — the TS contracts would pass vacuously"
+fi
 
 # func_body <file> <func-header-prefix> — the gofmt'ed body of a top-level function.
 func_body() { sed -n "/^$2/,/^}/p" "$1"; }

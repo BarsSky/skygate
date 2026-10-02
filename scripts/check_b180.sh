@@ -61,7 +61,14 @@ count() {
 echo "=== B180 contracts ==="
 
 # Find PostAdminExitNodeSync body boundaries (start func to next ^})
-SRC="$REPO/internal/feature/admin/exit_nodes.go"
+# The /admin/exit-nodes SURFACE, not one file: internal/feature/admin/exit_nodes.go
+# was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
+# one path turns a pure code move into a false FAIL — and is the weaker contract
+# even while it is green. gosurface expands the glob itself and skips _test.go, so
+# a future exit_nodes_*.go file is covered automatically. See B339.
+. scripts/lib/gosurface.sh
+gosurface SRC internal/feature/admin/exit_nodes*.go
+
 START=$(grep -n 'func (s \*Service) PostAdminExitNodeSync' "$SRC" | head -1 | cut -d: -f1)
 if [ -z "$START" ]; then
   echo "  FAIL [A] could not find PostAdminExitNodeSync in $SRC"

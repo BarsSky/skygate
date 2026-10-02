@@ -26,6 +26,12 @@
 # + i18n parity + AGENTS.md entry.
 # ============================================================================
 set -euo pipefail
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -36,10 +42,18 @@ log()  { printf '  %s\n' "$*"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
 bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 
-SRC="internal/feature/admin/tailscale.go"
 TPL="internal/handlers/templates/admin/tailscale.html"
 RU="internal/i18n/catalog_tailscale.go"
 TEST="internal/feature/admin/tailscale_b259_test.go"
+
+# Every contract below reads the admin TAILSCALE SURFACE, not one file.
+# internal/feature/admin/tailscale.go was split into seven focused files on
+# 2026-10-01 (refactor Phase D); pinning the single path turns a pure code move
+# into a wave of false FAILs. See scripts/lib/gosurface.sh.
+. "$REPO_ROOT/scripts/lib/gosurface.sh"
+if ! gosurface SRC "$REPO_ROOT"/internal/feature/admin/tailscale.go "$REPO_ROOT"/internal/feature/admin/tailscale_*.go; then
+  bad "no admin/tailscale surface files found — every contract below would pass vacuously"
+fi
 
 # --- A. DB-overridable path resolution ---
 echo "=== A. tailscaleAuthKeyPath resolves DB > env > default ==="
@@ -186,18 +200,18 @@ else bad "generateAndWriteTailscaleKeyForEnable must call findUserForHostname (B
 # Scope the negative checks to the function body — there are
 # OTHER hs.ListUsers() calls elsewhere in tailscale.go we don't
 # want to break (e.g. the audit-row builders).
-awk '/^func \(s \*Service\) generateAndWriteTailscaleKeyForEnable\(/{flag=1} flag{print} /^func \(s \*Service\) handleTailscaleDisableInContainer\(/{flag=0; exit}' "$SRC" > /tmp/b259_body.txt
-if grep -qF 'hs.ListUsers()' /tmp/b259_body.txt; then
+awk '/^func \(s \*Service\) generateAndWriteTailscaleKeyForEnable\(/{flag=1} flag{print} /^func \(s \*Service\) handleTailscaleDisableInContainer\(/{flag=0; exit}' "$SRC" > ${SKY_TMP}/b259_body.txt
+if grep -qF 'hs.ListUsers()' ${SKY_TMP}/b259_body.txt; then
   bad "generateAndWriteTailscaleKeyForEnable body must NOT call hs.ListUsers() (findUserForHostname is the sole source of truth)"
 else
   ok "generateAndWriteTailscaleKeyForEnable body has no hs.ListUsers() (delegated)"
 fi
-if grep -qF 'strings.TrimSuffix(hostname, "-1")' /tmp/b259_body.txt; then
+if grep -qF 'strings.TrimSuffix(hostname, "-1")' ${SKY_TMP}/b259_body.txt; then
   bad "generateAndWriteTailscaleKeyForEnable body must NOT contain the legacy u.Name==hostname-or-strip-1 sentinel"
 else
   ok "generateAndWriteTailscaleKeyForEnable body has no TrimSuffix(hostname, -1) sentinel (B259.1)"
 fi
-rm -f /tmp/b259_body.txt
+rm -f ${SKY_TMP}/b259_body.txt
 if grep -qF 'B259.1' "$REPO_ROOT/AGENTS.md"; then ok "AGENTS.md mentions B259.1"
 else bad "AGENTS.md must mention B259.1 (the findUserForHostname delegation fix)"; fi
 

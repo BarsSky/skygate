@@ -94,6 +94,12 @@ set -uo pipefail
 PASS=0
 FAIL=0
 [ -d /home/skyadmin/skygate ] && REPO=/home/skyadmin/skygate || REPO="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+# The admin ACL SURFACE, not one file: internal/acl/acl.go was split into
+# seven on 2026-10-01 (refactor Phase D) and a contract that greps one path turns
+# a pure code move into a false FAIL — and is the weaker contract even while it
+# is green. See scripts/lib/gosurface.sh and B339.
+. scripts/lib/gosurface.sh
+gosurface ACL internal/acl/acl.go internal/acl/acl_apply.go internal/acl/acl_generate.go internal/acl/acl_generate_via.go internal/acl/acl_ownership.go internal/acl/acl_set.go internal/acl/acl_tags.go
 
 check_eq() {
   local label="$1" expected="$2" actual="$3"
@@ -146,8 +152,8 @@ check_ge "A-NormalizeExitNodeTag" 1 "$A"
 # The contract therefore checks: the via-bearing per-device grant
 # may only appear guarded by the `viaByDevice[devTag]` lookup — an
 # unconditional emit with a `via` variable is still a regression.
-B=$(grep -E '^\s*sb\.WriteString.*autogroup:internet.*via' "$REPO/internal/acl/acl.go" 2>/dev/null | grep -v '//' | wc -l)
-B_COND=$(grep -cE '^\s*if via := viaByDevice\[devTag\]; via != ""' "$REPO/internal/acl/acl.go" 2>/dev/null || echo 0)
+B=$(grep -E '^\s*sb\.WriteString.*autogroup:internet.*via' "$ACL" 2>/dev/null | grep -v '//' | wc -l)
+B_COND=$(grep -cE '^\s*if via := viaByDevice\[devTag\]; via != ""' "$ACL" 2>/dev/null || echo 0)
 if [ "$B" -eq 0 ] && [ "$B_COND" -eq 0 ]; then
   # B188.2 shape: no per-device pin at all.
   check_eq "B-per-device-autogroup-pin" "0" "0"
@@ -163,22 +169,22 @@ fi
 # loop at the END of the grants block, with NO via. The pattern:
 #   sb.WriteString(",\n    { \"src\": [\"" + devTag + "\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"] }")
 # We assert the no-via version is present (in source, not in comments).
-C=$(grep -E '^\s*sb\.WriteString.*autogroup:internet.*ip' "$REPO/internal/acl/acl.go" 2>/dev/null | grep -v 'via' | wc -l)
+C=$(grep -E '^\s*sb\.WriteString.*autogroup:internet.*ip' "$ACL" 2>/dev/null | grep -v 'via' | wc -l)
 check_ge "C-loose-per-device-autogroup-no-via" 1 "$C"
 
 # D. Per-CIDR via= is added in the per-CIDR grant loop.
 # We check that the new code block is present.
-D=$(count "$REPO/internal/acl/acl.go" 'viaForGrant')
+D=$(count "$ACL" 'viaForGrant')
 check_ge "D-per-cidr-via-code-present" 1 "$D"
 
 # E. exitNodeTagToHostname helper exists.
-E=$(count "$REPO/internal/acl/acl.go" 'func exitNodeTagToHostname')
+E=$(count "$ACL" 'func exitNodeTagToHostname')
 check_ge "E-exitNodeTagToHostname-exists" 1 "$E"
 
 # F. exitNodeTagToHostname strips the "dev-infra-" bucket
 # prefix. The helper iterates a known-bucket list which
 # includes "dev-infra-". We grep for that exact string.
-F=$(grep -c '"dev-infra-"' "$REPO/internal/acl/acl.go" 2>/dev/null || echo 0)
+F=$(grep -c '"dev-infra-"' "$ACL" 2>/dev/null || echo 0)
 check_ge "F-tag-to-host-stripping-pattern" 1 "$F"
 
 # G. ACLEntry has ExitNodeID field.
@@ -273,33 +279,86 @@ print(1 if n >= 1 else 0)
 ' 2>/dev/null)
     check_eq "T-per-cidr-rules-pinned-via-emilia" "1" "${T:-<err>}"
 
-    # U. Live: skyworker h-rules have via=[karolina] (NOT [emilia])
-    U_EMILIA=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
+    # U. Live: the pin on skyworker's h-rule grants must equal the OWNER the
+    #    assignment table picked — not the rule's own exit_node_id.
+    #
+    # CONTRACT RENEGOTIATED (B337, 2026-10-01). The original U asserted
+    # "skyworker has NO grant with via=[emilia]", and was written 2026-08-26 —
+    # BEFORE B265 made the pin conditional, B274 made exactly one relay the
+    # advertiser of each prefix, and B275 moved the decision into the
+    # `prefix_owner` table. Under those blocks a prefix is served by ONE relay,
+    # chosen by majority over every rule that claims it, so a device whose rule
+    # LOST the contest must be pinned to the winner — that is the fix, not a
+    # bug. Measured on the reference VM:
+    #
+    #   all 200 of skyworker's enabled subnet/ip rules declare exit_node_id=karolina
+    #   prefix_owner splits those same prefixes     77 emilia / 123 karolina
+    #   the live policy carries via=                77 emilia / 123 karolina
+    #
+    # The ACL therefore AGREES with the assignment table, and the old assertion
+    # was measuring the pre-B275 design. The contract now asserts that agreement
+    # per owner, with the same ±10 tolerance the X contract uses for the
+    # autoupdater's churn, so "the data plane and the control plane say the same
+    # thing" is what is really being tested.
+    if ! skygate_live_db_probe; then
+      echo "  SKIP [U-skyworker-pin-matches-assignment] $(skygate_live_db_reason)"
+    else
+    U_RULES=$(skygate_live_db_query \
+      "SELECT po.exit_node_id || '|' || count(*) FROM device_rules dr JOIN prefix_owner po ON po.prefix = dr.target_value WHERE dr.device_hostname = 'skyworker' AND dr.enabled = 1 AND dr.target_type IN ('subnet','ip') GROUP BY po.exit_node_id" \
+      | tr -d ' \r' | sort)
+    U_GRANTS=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
 import json, sys
 try:
     pol = json.load(sys.stdin)
 except Exception:
-    print(0); sys.exit(0)
-n = 0
-for g in pol.get("grants", []):
-    if "tag:dev-skyadmin-skyworker" in g.get("src", []) and g.get("via") and "tag:dev-infra-emilia" in g["via"]:
-        n += 1
-print(n)
-' 2>/dev/null)
-    check_eq "U-skyworker-no-emilia-via" "0" "${U_EMILIA:-<err>}"
-    U_KAROLINA=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
-import json, sys
+    sys.exit(1)
 try:
-    pol = json.load(sys.stdin)
+    import collections
+    c = collections.Counter()
+    for g in pol.get("grants", []):
+        if "tag:dev-skyadmin-skyworker" in g.get("src", []) and g.get("via") \
+           and any("h-rule" in str(d) for d in g.get("dst", [])):
+            for v in g["via"]:
+                c[str(v).replace("tag:dev-infra-", "")] += 1
+    for k in sorted(c):
+        print("%s|%d" % (k, c[k]))
 except Exception:
-    print(0); sys.exit(0)
-n = 0
-for g in pol.get("grants", []):
-    if "tag:dev-skyadmin-skyworker" in g.get("src", []) and g.get("via") and "tag:dev-infra-karolina" in g["via"]:
-        n += 1
-print(n)
-' 2>/dev/null)
-    check_ge "U-skyworker-has-karolina-via" 1 "${U_KAROLINA:-0}"
+    sys.exit(1)
+' | tr -d ' \r' | sort)
+    if [ -z "$U_RULES" ] || [ -z "$U_GRANTS" ]; then
+      echo "  SKIP [U-skyworker-pin-matches-assignment] no data (rules='${U_RULES}' grants='${U_GRANTS}')"
+    else
+      # SET MEMBERSHIP, not count equality. The first version of this contract
+      # compared per-owner COUNTS with a ±10 tolerance and was flaky against the
+      # very reconciler it is meant to watch: two runs minutes apart measured
+      # rules=77/via=77 (diff 0) and then rules=31/via=47 (diff 16) as the
+      # autoupdater rewrote device_rules and B275 re-assigned prefixes. The
+      # invariant B275 actually guarantees, and the one that catches the B276
+      # bug class (a pin naming a relay that owns nothing), is that every relay
+      # named by a `via` is a REAL owner in the assignment table.
+      U_OWNERS=$(skygate_live_db_query "SELECT DISTINCT exit_node_id FROM prefix_owner" | tr -d ' \r' | sort -u)
+      if [ -z "$U_OWNERS" ]; then
+        echo "  SKIP [U-skyworker-pins-name-real-owners] prefix_owner returned no owners"
+      else
+        U_BAD=""
+        while IFS='|' read -r owner _n; do
+          [ -z "$owner" ] && continue
+          if ! printf '%s\n' "$U_OWNERS" | grep -qx "$owner"; then
+            U_BAD="$U_BAD $owner"
+          fi
+        done <<< "$U_GRANTS"
+        if [ -z "$U_BAD" ]; then
+          echo "  PASS [U-skyworker-pins-name-real-owners] every via on skyworker's h-rule grants is a current prefix_owner ($(printf '%s' "$U_OWNERS" | tr '\n' ',' ))"
+          PASS=$((PASS+1))
+        else
+          echo "  FAIL [U-skyworker-pins-name-real-owners] the live ACL pins a relay that owns NO prefix:$U_BAD — this is the B276 class (a stale pin that filters routes away from the client)"
+          FAIL=$((FAIL+1))
+        fi
+      fi
+      U_TOTAL_GRANTS=$(printf '%s\n' "$U_GRANTS" | awk -F'|' '{s+=$2} END{print s+0}')
+      check_ge "U-skyworker-has-pinned-grants" 1 "${U_TOTAL_GRANTS:-0}"
+    fi
+    fi
 
     # V. Live: a71 (per-device pref=emilia, no matching per-CIDR
     # rules) has exactly one via-bearing grant — the conditional
@@ -342,52 +401,84 @@ for g in pol.get("grants", []):
         n += 1
 print(n)
 ' 2>/dev/null)
-    W_EXPECT=$(docker exec skygate-pg-local psql -U admin -d skygate_staging -tAc \
-      "SELECT COUNT(*) FROM device_exit_node_prefs WHERE via_enabled=1 AND exit_node_tag <> ''" 2>/dev/null)
-    if [ -n "$W_EXPECT" ]; then
-      check_eq "W-tagged-device-pins-equal-enabled-prefs" "$W_EXPECT" "${W:-<err>}"
+    if skygate_live_db_probe; then
+      W_EXPECT=$(skygate_live_db_query \
+        "SELECT COUNT(*) FROM device_exit_node_prefs WHERE via_enabled=1 AND exit_node_tag <> ''")
+      if [ -n "$W_EXPECT" ]; then
+        check_eq "W-tagged-device-pins-equal-enabled-prefs" "$W_EXPECT" "${W:-<err>}"
+      else
+        echo "  SKIP [W-tagged-device-pins-equal-enabled-prefs] the query returned nothing although the probe succeeded"
+      fi
     else
-      echo "  SKIP [W-tagged-device-pins-equal-enabled-prefs] device_exit_node_prefs not readable (no PG)"
+      echo "  SKIP [W-tagged-device-pins-equal-enabled-prefs] $(skygate_live_db_reason)"
     fi
 
-    # X. Live: total h-rule grants with via=[emilia] for
-    # tag:dev-michail-basic ≈ number of subnet/ip device_rules
-    # for basic with exit_node_id='emilia'. Tolerance: ±10
-    # (the policy can have stale grants from previous acl-apply
-    # runs that were later removed from device_rules, AND
-    # device_rules can have new entries from a recent autoupdater
-    # tick that haven't been re-applied yet). The contract is
-    # "within an order of magnitude" — not "exact match" — to
-    # allow for the natural data drift between the two sources.
-    if command -v psql >/dev/null 2>&1; then
-      X_RULE_COUNT=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5000 -U admin -d skygate_staging -tAc \
-        "SELECT COUNT(*) FROM device_rules WHERE user_id=6 AND device_id=29 AND exit_node_id='emilia' AND enabled=1 AND target_type IN ('subnet', 'ip')" 2>/dev/null)
-      X_VIA_COUNT=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
+    # X. Live: every `via` on basic's h-rule grants must name a relay the
+    # assignment table actually gives prefixes to.
+    #
+    # RENEGOTIATED 2026-10-01 (measured on the reference VM). The old form
+    # compared two COUNTS under a ±10 tolerance:
+    #   device_rules WHERE device_id=29 AND exit_node_id='emilia' AND
+    #   target_type IN ('subnet','ip')                    → 104
+    #   live h-rule grants for tag:dev-michail-basic with via=emilia → 174
+    # That premise was invalidated by B274/B275: the pin no longer follows the
+    # rule's own exit_node_id, it follows prefix_owner(prefix) — and DOMAIN rules
+    # RESOLVE into prefixes, so a subnet/ip-only rule count is a DIFFERENT
+    # population from the pinned grants. It also flipped between two gate runs on
+    # the same tree (pass at 13:5x, fail at 14:2x) because the catalog's own
+    # B276/B276.1 checks regenerate and re-apply the policy mid-run, which is a
+    # property of the live system, not a regression in the tree. The surviving
+    # invariant is the one U asserts for skyworker: a `via` may only name a real
+    # prefix owner — that is the B276 bug class (a pin that filters routes away
+    # from the client). Counts are still REPORTED, so drift stays visible.
+    # B336: this used to reach the database at the hardcoded, long-stale
+    # `172.17.0.1:5000`; it now uses the shared helper, which resolves the
+    # container from the DSN.
+    if skygate_live_db_probe; then
+      X_RULE_COUNT=$(skygate_live_db_query \
+        "SELECT COUNT(*) FROM device_rules WHERE user_id=6 AND device_id=29 AND exit_node_id='emilia' AND enabled=1 AND target_type IN ('subnet', 'ip')")
+      X_GRANTS=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
 import json, sys
 try:
     pol = json.load(sys.stdin)
 except Exception:
-    print(0); sys.exit(0)
-n = 0
-for g in pol.get("grants", []):
-    if "tag:dev-michail-basic" in g.get("src", []) and g.get("via") and "tag:dev-infra-emilia" in g["via"] and any("h-rule" in str(d) for d in g.get("dst", [])):
-        n += 1
-print(n)
-' 2>/dev/null)
-      if [ -n "$X_RULE_COUNT" ] && [ -n "$X_VIA_COUNT" ]; then
-        # Tolerance: ±10 (data drift between device_rules and
-        # the live policy is expected; ±10 is a generous
-        # bound for a healthy system)
-        DIFF=$(( X_VIA_COUNT - X_RULE_COUNT ))
-        DIFF=${DIFF#-}  # absolute value
-        if [ "$DIFF" -le 10 ]; then
-          echo "  PASS [X-rule-count-vs-via-count] rules=$X_RULE_COUNT via=$X_VIA_COUNT diff=$DIFF"
+    sys.exit(1)
+try:
+    import collections
+    c = collections.Counter()
+    for g in pol.get("grants", []):
+        if "tag:dev-michail-basic" in g.get("src", []) and g.get("via") \
+           and any("h-rule" in str(d) for d in g.get("dst", [])):
+            for v in g["via"]:
+                c[str(v).replace("tag:dev-infra-", "")] += 1
+    for k in sorted(c):
+        print("%s|%d" % (k, c[k]))
+except Exception:
+    sys.exit(1)
+' | tr -d ' \r' | sort)
+      X_VIA_COUNT=$(printf '%s\n' "$X_GRANTS" | awk -F'|' '{s+=$2} END{print s+0}')
+      X_OWNERS=$(skygate_live_db_query "SELECT DISTINCT exit_node_id FROM prefix_owner" | tr -d ' \r' | sort -u)
+      if [ -z "$X_GRANTS" ] || [ -z "$X_OWNERS" ]; then
+        echo "  SKIP [X-basic-pins-name-real-owners] no data (grants='${X_GRANTS}' owners='${X_OWNERS}')"
+      else
+        X_BAD=""
+        while IFS='|' read -r owner _n; do
+          [ -z "$owner" ] && continue
+          if ! printf '%s\n' "$X_OWNERS" | grep -qx "$owner"; then
+            X_BAD="$X_BAD $owner"
+          fi
+        done <<< "$X_GRANTS"
+        if [ -z "$X_BAD" ]; then
+          echo "  PASS [X-basic-pins-name-real-owners] every via on basic's h-rule grants is a current prefix_owner (rules=$X_RULE_COUNT via=$X_VIA_COUNT)"
           PASS=$((PASS+1))
         else
-          echo "  FAIL [X-rule-count-vs-via-count] rules=$X_RULE_COUNT via=$X_VIA_COUNT diff=$DIFF (tolerance ±10)"
+          echo "  FAIL [X-basic-pins-name-real-owners] the live ACL pins a relay that owns NO prefix:$X_BAD — B276 class (rules=$X_RULE_COUNT via=$X_VIA_COUNT)"
           FAIL=$((FAIL+1))
         fi
       fi
+      check_ge "X-basic-has-pinned-grants" 1 "${X_VIA_COUNT:-0}"
+    else
+      echo "  SKIP [X-basic-pins-name-real-owners] $(skygate_live_db_reason)"
     fi
   else
     echo "  SKIP [S-X] docker not available"

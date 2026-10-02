@@ -76,10 +76,10 @@ func TestDurationFlag_Formats(t *testing.T) {
 
 func TestHasExitNodeTag(t *testing.T) {
 	cases := []struct {
-		name  string
-		tags  []string
+		name   string
+		tags   []string
 		routes []string
-		want  bool
+		want   bool
 	}{
 		{"empty node", nil, nil, false},
 		// explicit tag
@@ -568,7 +568,15 @@ func TestGetACLCacheInvalidatedBySetPolicySuccess(t *testing.T) {
 // TestGetACLAPIFailsNoContainer verifies that when both the API
 // fails AND ExecContainer is empty, the function returns the
 // API error (no panic, no nil deref).
+//
+// B332 (2026-10-01): it also has to ISOLATE the other two rungs. The test
+// used to assume "no CLI" while the code fell back to the container named
+// `headscale` and read the host's real policy file — on the reference VM,
+// where that container runs, GetACL() returned the LIVE policy and this test
+// failed. isolateHeadscaleFallbacks makes the premise true on any host
+// instead of skipping the assertion.
 func TestGetACLAPIFailsNoContainer(t *testing.T) {
+	isolateHeadscaleFallbacks(t)
 	_, c, _ := fakeACLHS(t, http.StatusInternalServerError, "boom")
 	c.ExecContainer = ""
 	_, err := c.GetACL()

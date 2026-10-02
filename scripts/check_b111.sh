@@ -63,7 +63,12 @@ GO_DIR=$(dirname "$GO_BIN")
 export PATH="$GO_DIR:$PATH"
 
 AUTO_FILE="internal/nodeownership/auto.go"
-ACL_FILE="internal/acl/acl.go"
+# The admin ACL SURFACE, not one file: internal/acl/acl.go was split into
+# seven on 2026-10-01 (refactor Phase D) and a contract that greps one path turns
+# a pure code move into a false FAIL — and is the weaker contract even while it
+# is green. See scripts/lib/gosurface.sh and B339.
+. scripts/lib/gosurface.sh
+gosurface ACL_FILE internal/acl/acl.go internal/acl/acl_apply.go internal/acl/acl_generate.go internal/acl/acl_generate_via.go internal/acl/acl_ownership.go internal/acl/acl_set.go internal/acl/acl_tags.go
 PERDEVICE_FILE="internal/acl/acl_perdevice.go"
 TEST_FILE="internal/acl/acl_perdevice_b111_test.go"
 

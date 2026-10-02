@@ -56,7 +56,12 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 KIND=internal/db/tag_kind.go
 PREFS=internal/db/exit_node_prefs.go
-ACL=internal/acl/acl.go
+# The admin ACL SURFACE, not one file: internal/acl/acl.go was split into
+# seven on 2026-10-01 (refactor Phase D) and a contract that greps one path turns
+# a pure code move into a false FAIL — and is the weaker contract even while it
+# is green. See scripts/lib/gosurface.sh and B339.
+. scripts/lib/gosurface.sh
+gosurface ACL internal/acl/acl.go internal/acl/acl_apply.go internal/acl/acl_generate.go internal/acl/acl_generate_via.go internal/acl/acl_ownership.go internal/acl/acl_set.go internal/acl/acl_tags.go
 SYS=internal/feature/admin/system_tests.go
 SUBNET=internal/feature/admin/user_subnet.go
 
@@ -125,15 +130,19 @@ fi
 #   internal/db/tag_kind.go                     — the predicates themselves
 #   internal/feature/exit_rules/preferred_check.go — compare/display helper
 #                                                 (class-guarded since B279)
-#   internal/acl/acl.go                         — the ACL pin helper, whose
+#   internal/acl/acl_ownership.go              — the ACL pin helper, whose
 #                                                 shape (known buckets, unknown
 #                                                 -> "") is deliberately
 #                                                 narrower; class-guarded since
-#                                                 B279.1
+#                                                 B279.1. It was
+#                                                 internal/acl/acl.go until the
+#                                                 Phase D split (2026-10-01), and
+#                                                 this allow-list must name the
+#                                                 file the copy actually lives in.
 #   internal/feature/admin/user_subnet.go       — legacy `tag:exit-<host>` form
 #                                                 re-resolve, class-guarded in
 #                                                 the same expression
-ALLOWED='internal/db/tag_kind.go internal/feature/exit_rules/preferred_check.go internal/feature/admin/user_subnet.go internal/acl/acl.go'
+ALLOWED='internal/db/tag_kind.go internal/feature/exit_rules/preferred_check.go internal/feature/admin/user_subnet.go internal/acl/acl_ownership.go'
 # Comment lines are ignored: this change documents what it replaced, and a
 # contract that a comment can satisfy is not a contract (B279.1 renegotiated
 # check_b119.sh contract H for exactly that reason).

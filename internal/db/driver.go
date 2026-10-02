@@ -135,3 +135,26 @@ func BackendOf(d *sql.DB) Backend {
 	defer registryMu.RUnlock()
 	return registry[d]
 }
+
+// registerToolConnection records the backend of a connection that
+// OpenIsolated opened for in-process tooling, WITHOUT touching the
+// process-wide active dialect.
+//
+// The distinction matters: BackendOf (per-*sql.DB) drives the migration
+// chain and the DDL helpers, while ActiveDialect (process-wide) drives
+// the SQL-fragment shims in every concurrent HTTP request. A conversion
+// opens a second database and must only do the former — see
+// active_dialect.go for the failure mode the process-wide value exists
+// to prevent.
+func registerToolConnection(d *sql.DB, kind DialectKind) {
+	if d == nil {
+		return
+	}
+	b := BackendSQLite
+	if kind == DialectPostgres {
+		b = BackendPostgres
+	}
+	registryMu.Lock()
+	registry[d] = b
+	registryMu.Unlock()
+}

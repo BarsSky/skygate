@@ -225,7 +225,16 @@ for f in "$REPO"/scripts/check_*.sh; do
       *'command -v go'*) ;;
       *) G_INLINE_BAD="$G_INLINE_BAD $(basename "$f"):$ln" ;;
     esac
-  done < <(grep -nE '^[[:space:]]*for[[:space:]].*in[[:space:]].*/usr/local/go/bin/go' "$f" 2>/dev/null)
+  # `/usr/local/go/bin/gofmt` CONTAINS the literal `/usr/local/go/bin/go`, so a
+  # gofmt candidate list matched this pattern by accident and was then judged as
+  # if it were a Go-toolchain probe with the wrong order — measured 2026-10-01:
+  # `[G2-inline-order] expected= actual= check_b337_gofmt_ratchet.sh:82`, a file
+  # whose FIRST probe is already `command -v gofmt` on its own line. gofmt is a
+  # different binary and this contract is about the Go BINARY probe, so gofmt
+  # lines are excluded rather than satisfied by a `command -v go` that would
+  # prove nothing about them.
+  done < <(grep -nE '^[[:space:]]*for[[:space:]].*in[[:space:]].*/usr/local/go/bin/go' "$f" 2>/dev/null \
+             | grep -v '/usr/local/go/bin/gofmt')
 done
 check_eq "G2-inline-order" "" "$G_INLINE_BAD"
 

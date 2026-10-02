@@ -33,6 +33,60 @@ func newTestService(envPath string) *Service {
 	return &Service{TailscaleAuthKeyPath: envPath}
 }
 
+// adminSurfaceSource returns the concatenated NON-TEST Go source of this
+// package — the SURFACE a B259 contract is about.
+//
+// WHY (refactor Phase D, 2026-10-01): both source-grep tests below used to read
+// internal/feature/admin/tailscale.go by name, and that 1963-line file was split
+// into seven focused files that day (config / runtime / handlers / enable /
+// restart+env / advertise-routes). A contract that pins a path turns a pure code
+// MOVE into a red test while the behaviour is unchanged — and it is also the
+// weaker contract, because the same behaviour re-introduced in a sibling file is
+// invisible to it. The admin Tailscale surface is the honest unit: the handlers
+// still live in this package, so read them all.
+//
+// This mirrors scripts/lib/gosurface.sh, the shell half of the same rule.
+func adminSurfaceSource(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for i := 0; i < 8; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			pkgDir := filepath.Join(dir, "internal", "feature", "admin")
+			entries, err := os.ReadDir(pkgDir)
+			if err != nil {
+				t.Skipf("read %s: %v", pkgDir, err)
+			}
+			var b strings.Builder
+			for _, e := range entries {
+				name := e.Name()
+				if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+					continue
+				}
+				data, err := os.ReadFile(filepath.Join(pkgDir, name))
+				if err != nil {
+					t.Fatalf("read %s: %v", name, err)
+				}
+				b.Write(data)
+				b.WriteString("\n")
+			}
+			if b.Len() == 0 {
+				t.Skip("no non-test Go files found in internal/feature/admin")
+			}
+			return b.String()
+		}
+		parent, err := filepath.Abs(filepath.Join(dir, ".."))
+		if err != nil {
+			break
+		}
+		dir = parent
+	}
+	t.Skip("could not find skygate repo root (no go.mod in cwd ancestors)")
+	return ""
+}
+
 // TestTailscaleAuthKeyPath_ResolutionOrder pins the
 // priority of DB > env > default. Without a DB connection
 // the helper falls back to the env var (or default). The
@@ -127,38 +181,15 @@ func TestTailscaleAuthKeyDisabled_RespectsDevNullVariants(t *testing.T) {
 // variable). A future refactor that reorders the calls or
 // uses the wrong DB key fails this test.
 //
-// Implementation: read the source file and grep for the
-// marker. We can't use go's AST here (too heavy for a
-// test) — string-grep on the file is good enough for the
-// contract pin.
+// Implementation: read the admin Tailscale SURFACE (see
+// adminSurfaceSource) and grep for the marker. We can't use go's
+// AST here (too heavy for a test) — string-grep on the surface is
+// good enough for the contract pin.
 func TestEnableInContainerPersistsDBPath(t *testing.T) {
 	const marker = `db.SetGlobalSetting(s.dbc(), tailscaleAuthKeyPathDBKey, newPath)`
-	// Walk up from the test's working dir to find the
-	// skygate repo root (where go.mod lives).
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	var src []byte
-	for i := 0; i < 8; i++ {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			src, err = os.ReadFile(filepath.Join(dir, "internal/feature/admin/tailscale.go"))
-			if err != nil {
-				t.Skipf("read tailscale.go: %v", err)
-			}
-			break
-		}
-		parent, err := filepath.Abs(filepath.Join(dir, ".."))
-		if err != nil {
-			break
-		}
-		dir = parent
-	}
-	if src == nil {
-		t.Skip("could not find skygate repo root (no go.mod in cwd ancestors)")
-	}
-	if !strings.Contains(string(src), marker) {
-		t.Errorf("tailscale.go must call %q in handleTailscaleEnableInContainer (FIRST step — so subsequent startTailscaled picks up the new path)", marker)
+	src := adminSurfaceSource(t)
+	if !strings.Contains(src, marker) {
+		t.Errorf("the admin/tailscale surface must call %q in handleTailscaleEnableInContainer (FIRST step — so subsequent startTailscaled picks up the new path)", marker)
 	}
 }
 
@@ -177,7 +208,7 @@ func TestEnableInContainerPersistsDBPath(t *testing.T) {
 // against the existing user `infra` (uid=85) without any
 // provisioning step on the operator's side.
 //
-// The test asserts three contract markers in tailscale.go:
+// The test asserts three contract markers in the admin Tailscale surface:
 //
 //  1. generateAndWriteTailscaleKeyForEnable calls
 //     findUserForHostname (not the duplicate u.Name==hostname
@@ -188,42 +219,24 @@ func TestEnableInContainerPersistsDBPath(t *testing.T) {
 //     `strings.TrimSuffix(hostname, "-1")` substring (the
 //     pre-B259.1 sentinel that the old logic relied on).
 func TestGenerateAndWriteTailscaleKeyForEnable_B259_DelegatesToFindUserForHostname(t *testing.T) {
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	var src []byte
-	for i := 0; i < 8; i++ {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			src, err = os.ReadFile(filepath.Join(dir, "internal/feature/admin/tailscale.go"))
-			if err != nil {
-				t.Skipf("read tailscale.go: %v", err)
-			}
-			break
-		}
-		parent, err := filepath.Abs(filepath.Join(dir, ".."))
-		if err != nil {
-			break
-		}
-		dir = parent
-	}
-	if src == nil {
-		t.Skip("could not find skygate repo root (no go.mod in cwd ancestors)")
-	}
-	body := string(src)
+	body := adminSurfaceSource(t)
 	if !strings.Contains(body, "s.findUserForHostname(context.Background(), hs, hostname)") {
 		t.Errorf("generateAndWriteTailscaleKeyForEnable must call findUserForHostname (B259.1) — the inline u.Name==hostname lookup is gone")
 	}
 	// Scope the negative checks to the function body so unrelated
-	// hs.ListUsers() calls elsewhere in tailscale.go don't fail
-	// the test. We split the file at the function start + use the
-	// next closing brace as the boundary.
+	// hs.ListUsers() calls elsewhere in the surface don't fail
+	// the test. We split the surface at the function start + use the
+	// next function header as the boundary.
 	const fnStart = "func (s *Service) generateAndWriteTailscaleKeyForEnable("
 	const fnEnd = "func (s *Service) handleTailscaleDisableInContainer("
 	startIdx := strings.Index(body, fnStart)
 	endIdx := strings.Index(body, fnEnd)
 	if startIdx < 0 || endIdx < 0 || endIdx <= startIdx {
-		t.Skipf("could not locate generateAndWriteTailscaleKeyForEnable boundaries (start=%d end=%d)", startIdx, endIdx)
+		// Not a skip: the surface is a source file that is always present, so
+		// "I could not find the function" means the contract cannot be verified
+		// — that is a failure, not a missing live dependency (AGENTS rule 1
+		// covers live state, not the code under test).
+		t.Fatalf("could not locate generateAndWriteTailscaleKeyForEnable boundaries (start=%d end=%d)", startIdx, endIdx)
 	}
 	fnBody := body[startIdx:endIdx]
 	if strings.Contains(fnBody, "hs.ListUsers()") {

@@ -41,6 +41,11 @@
 #   2 — invalid args / missing required env
 
 set -u
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+
 
 # === paths ===
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -113,7 +118,7 @@ fi
 
 # === contract 1: /healthz reachable ===
 section "Reachable"
-HTTP_HEALTHZ=$(curl -sS -o /tmp/b_mod_bcheck_healthz.body -w '%{http_code}' --max-time 10 "$HOST/healthz" 2>/dev/null || echo "000")
+HTTP_HEALTHZ=$(curl -sS -o ${SKY_TMP}/b_mod_bcheck_healthz.body -w '%{http_code}' --max-time 10 "$HOST/healthz" 2>/dev/null || echo "000")
 if [ "$HTTP_HEALTHZ" = "200" ]; then
     pass "/healthz returns 200"
 else
@@ -126,11 +131,11 @@ fi
 # === contract 2: login as admin ===
 section "Auth: POST /login"
 COOKIE_JAR=$(mktemp)
-trap 'rm -f "$COOKIE_JAR" /tmp/b_mod_bcheck_*.body' EXIT
+trap 'rm -f "$COOKIE_JAR"; rm -rf "$SKY_TMP"' EXIT
 
 # Try login. /login redirects to /dashboard on success
 # (HTTP 302) and re-renders the form (HTTP 200) on failure.
-LOGIN_HTTP=$(curl -sS -o /tmp/b_mod_bcheck_login.body -w '%{http_code}' \
+LOGIN_HTTP=$(curl -sS -o ${SKY_TMP}/b_mod_bcheck_login.body -w '%{http_code}' \
     -c "$COOKIE_JAR" \
     -X POST "$HOST/login" \
     -d "username=$USER&password=$PASS" \
@@ -140,7 +145,7 @@ if [ "$LOGIN_HTTP" = "302" ] || [ "$LOGIN_HTTP" = "303" ]; then
 elif [ "$LOGIN_HTTP" = "200" ]; then
     # 200 might be the form re-render on failed login.
     # Check for "invalid credentials" or similar in body.
-    if grep -qi 'invalid\|неверн' /tmp/b_mod_bcheck_login.body 2>/dev/null; then
+    if grep -qi 'invalid\|неверн' ${SKY_TMP}/b_mod_bcheck_login.body 2>/dev/null; then
         fail "POST /login returns 200 + invalid credentials message" "wrong password?"
         exit 1
     else
@@ -162,7 +167,7 @@ fi
 
 # === contract 3: /admin/modules renders with Tailscale row ===
 section "GET /admin/modules (Manager wired)"
-ADMIN_HTTP=$(curl -sS -o /tmp/b_mod_bcheck_modules.body -w '%{http_code}' \
+ADMIN_HTTP=$(curl -sS -o ${SKY_TMP}/b_mod_bcheck_modules.body -w '%{http_code}' \
     -b "$COOKIE_JAR" \
     --max-time 10 "$HOST/admin/modules" 2>/dev/null || echo "000")
 if [ "$ADMIN_HTTP" = "200" ]; then
@@ -176,21 +181,21 @@ fi
 #  - "tailscale" (the module name) — proves the row is there
 #  - "modules.title" or "Modules" (i18n key resolved or fallback)
 #  - "Manager not wired" warning ABSENT (Manager is wired)
-if grep -q '>tailscale<' /tmp/b_mod_bcheck_modules.body 2>/dev/null; then
+if grep -q '>tailscale<' ${SKY_TMP}/b_mod_bcheck_modules.body 2>/dev/null; then
     pass "rendered HTML contains <code>tailscale</code> row"
 else
     fail "rendered HTML contains tailscale row" "Manager might not have any registered modules"
-    head -50 /tmp/b_mod_bcheck_modules.body >&2
+    head -50 ${SKY_TMP}/b_mod_bcheck_modules.body >&2
 fi
 
-if grep -q 'Manager not wired' /tmp/b_mod_bcheck_modules.body 2>/dev/null; then
+if grep -q 'Manager not wired' ${SKY_TMP}/b_mod_bcheck_modules.body 2>/dev/null; then
     fail "Manager not wired warning ABSENT" "found 'Manager not wired' — the wiring is broken"
 else
     pass "Manager not wired warning absent (Manager is wired)"
 fi
 
 # State pill should be one of the 7 lifecycle states.
-if grep -qE 'modules-state (not_installed|installed|starting|running|stopping|stopped|error)' /tmp/b_mod_bcheck_modules.body 2>/dev/null; then
+if grep -qE 'modules-state (not_installed|installed|starting|running|stopping|stopped|error)' ${SKY_TMP}/b_mod_bcheck_modules.body 2>/dev/null; then
     pass "state pill rendered with a valid lifecycle state"
 else
     fail "state pill rendered" "no 'modules-state <state>' found in HTML"
@@ -198,7 +203,7 @@ fi
 
 # === contract 4: detail page renders ===
 section "GET /admin/modules/tailscale"
-DETAIL_HTTP=$(curl -sS -o /tmp/b_mod_bcheck_detail.body -w '%{http_code}' \
+DETAIL_HTTP=$(curl -sS -o ${SKY_TMP}/b_mod_bcheck_detail.body -w '%{http_code}' \
     -b "$COOKIE_JAR" \
     --max-time 10 "$HOST/admin/modules/tailscale" 2>/dev/null || echo "000")
 if [ "$DETAIL_HTTP" = "200" ]; then
@@ -207,13 +212,13 @@ else
     fail "GET /admin/modules/tailscale returns 200" "got $DETAIL_HTTP"
 fi
 # Health sub-heading should be in the page.
-if grep -q 'Health' /tmp/b_mod_bcheck_detail.body 2>/dev/null; then
+if grep -q 'Health' ${SKY_TMP}/b_mod_bcheck_detail.body 2>/dev/null; then
     pass "detail page has 'Health' section"
 else
     fail "detail page has 'Health' section" "B-mod-admin template missing the heading"
 fi
 # Sub-features section should be in the page.
-if grep -q 'Sub-features' /tmp/b_mod_bcheck_detail.body 2>/dev/null; then
+if grep -q 'Sub-features' ${SKY_TMP}/b_mod_bcheck_detail.body 2>/dev/null; then
     pass "detail page has 'Sub-features' section"
 else
     fail "detail page has 'Sub-features' section" "B-mod-admin template missing"

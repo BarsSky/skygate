@@ -83,9 +83,14 @@ var sqliteMigrations = []MigrationEntry{
 	{57, "v0.57 (B0):", "migrations_pg.go", migrateV057SQLite},
 	{58, "v0.58 (B0):", "migrations_pg.go", migrateV058SQLite},
 	{59, "v0.59 (B0):", "migrations_pg.go", migrateV059SQLite},
-	{60, "v0.60 (B183): Telegram + audit_log", "migrations_v0_60_b183_test.go", migrateV060SQLite},
-	{61, "v0.61 (B188): dev-tag owner_map", "migrations_v0_61_b188_test.go", migrateV061SQLite},
-	{62, "v0.62 (B194):", "migrations_v0_62_b194.go", migrateV062SQLite},
+	// 2026-10-01 (B333): V060–V062's SourceFile is kept IDENTICAL to the PG
+	// registry's (the migration AUTHORSHIP is shared — see the file header), and
+	// it now names `migrations_pg.go` instead of the two `_test.go` files and the
+	// wrong per-version file. Pinned by
+	// TestMigrations_ChainsRunInLockStep + TestMigrations_SourceFileNamesTheDefiningFile.
+	{60, "v0.60 (B183): Telegram + audit_log", "migrations_pg.go", migrateV060SQLite},
+	{61, "v0.61 (B188): dev-tag owner_map", "migrations_pg.go", migrateV061SQLite},
+	{62, "v0.62 (B194):", "migrations_pg.go", migrateV062SQLite},
 	{63, "v0.63 (B194):", "migrations_v0_63_b194.go", migrateV063SQLite},
 	{64, "v0.64 (B195): cluster_* tables (cluster / cluster_node / cluster_database / cluster_migration / cluster_invite / cluster_audit)", "migrations_v0_64_b195.go", migrateV064SQLite},
 	{65, "v0.65 (B198): dbmigrate_run + dbmigrate_step", "migrations_v0_65_b198.go", migrateV065SQLite},
@@ -93,7 +98,7 @@ var sqliteMigrations = []MigrationEntry{
 	{67, "v0.67 (B221): audit_log.target_type + target_id (Phase 4.1 generic audit log)", "migrations_v0_67_b221.go", migrateV067SQLite},
 	{68, "v0.68 (B232): repair device_rules_natural_key_uniq shape drift (B188.2 ON CONFLICT 6-col)", "migrations_v0_68_b232.go", migrateV068SQLite},
 	{69, "v0.69 (B235.3): derp_health.name column for the B235 .Name short-label pill", "migrations_v0_69_b235_3.go", migrateV069SQLite},
-	{70, "v0.70 (B236): portal_users AFTER UPDATE audit trigger (catches out-of-band password_hash rotations)", "migrations_v0_70_b238.go", migrateV070SQLite},
+	{70, "v0.70 (B238): portal_users AFTER UPDATE audit trigger (catches out-of-band password_hash rotations)", "migrations_v0_70_b238.go", migrateV070SQLite},
 	// 2026-09-18: V071 was missing entirely, so the SQLite chain stopped at
 	// V070 and derp_cert_sync was never created. Two bugs fixed here: the
 	// entry is added, and its SourceFile now names the file that actually

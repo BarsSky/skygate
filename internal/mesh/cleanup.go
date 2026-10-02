@@ -29,7 +29,8 @@ package mesh
 import (
 	"database/sql"
 	"fmt"
-	"strings"
+
+	"skygate/internal/db"
 )
 
 // SmokeMeshNamePrefix is the LIKE pattern the smoke test
@@ -45,9 +46,9 @@ const SmokeMeshNamePrefix = "smoke-mesh-"
 // audit_log so the operator can correlate future
 // "this mesh disappeared" reports with the cleanup tick.
 type CleanupResult struct {
-	IDs    []int64
-	Names  []string
-	Total  int
+	IDs   []int64
+	Names []string
+	Total int
 }
 
 // DeleteSmokeMeshes removes every meshes row whose name
@@ -116,21 +117,45 @@ func DeleteSmokeMeshes(d *sql.DB) (CleanupResult, error) {
 		return res, nil
 	}
 
-	// Step 2: DELETE in a single statement. We use ANY($1)
-	// to pass the ID list as a single parameter (PG array).
-	// The name-LIKE subquery is repeated so a row that
-	// got a member between the SELECT and the DELETE is
-	// still protected (defense in depth).
-	idsParam := int64ArrayToPGArray(res.IDs)
-	delRes, err := tx.Exec(`
+	// Step 2: DELETE in a single statement. The id list is passed as N
+	// separate placeholders in an IN (…) list rather than as one
+	// PostgreSQL array parameter.
+	//
+	// `WHERE id = ANY($1::bigint[])` — the pre-2026-10-01 form — is
+	// PostgreSQL-only syntax, and this code runs from
+	// mesh.StartCleanupScheduler on EVERY install kind, so on SQLite the
+	// statement died with
+	//
+	//	SQL logic error: near "[]": syntax error (1)
+	//
+	// (the B282 dialect-leak class; measured, not inferred — reverting the
+	// fix makes TestDeleteSmokeMeshes_SQLite fail with exactly that text).
+	// It was invisible until it mattered: the Total==0 early return above
+	// means the DELETE is only reached when there is something to clean,
+	// so B143's cleanup was silently dead on every SQLite install exactly
+	// when it had work to do.
+	//
+	// `$N` is the universal placeholder form — SQLite accepts it as a
+	// named parameter and modernc.org/sqlite binds it by Go argument
+	// ordinal — so one statement text serves both backends
+	// (internal/db/placeholders.go states the rule). The name-LIKE
+	// subquery is repeated so a row that gained a member between the
+	// SELECT and the DELETE is still protected (defense in depth).
+	idPlaceholders := db.PlaceholdersList(len(res.IDs))
+	likePlaceholder := db.PlaceholderAt(len(res.IDs)+1, len(res.IDs))
+	args := make([]any, 0, len(res.IDs)+1)
+	for _, id := range res.IDs {
+		args = append(args, id)
+	}
+	args = append(args, SmokeMeshNamePrefix+"%")
+
+	delRes, err := tx.Exec(fmt.Sprintf(`
 		DELETE FROM meshes
-		WHERE id = ANY($1::bigint[])
-		  AND name LIKE $2
+		WHERE id IN (%s)
+		  AND name LIKE %s
 		  AND NOT EXISTS (
 		    SELECT 1 FROM mesh_members mm WHERE mm.mesh_id = meshes.id
-		  )`,
-		idsParam, SmokeMeshNamePrefix+"%",
-	)
+		  )`, idPlaceholders, likePlaceholder), args...)
 	if err != nil {
 		return res, fmt.Errorf("DeleteSmokeMeshes: delete: %w", err)
 	}
@@ -152,28 +177,6 @@ func DeleteSmokeMeshes(d *sql.DB) (CleanupResult, error) {
 		return res, fmt.Errorf("DeleteSmokeMeshes: commit: %w", err)
 	}
 	return res, nil
-}
-
-// int64ArrayToPGArray formats a Go []int64 as a Postgres
-// array literal: "{1,2,3}". The DELETE statement parses
-// this with $1::bigint[] so we don't need to worry about
-// escaping individual values. Empty slice → "{}" (which
-// matches no rows, so the call site guards with the
-// Total==0 early return).
-func int64ArrayToPGArray(ids []int64) string {
-	if len(ids) == 0 {
-		return "{}"
-	}
-	var sb strings.Builder
-	sb.WriteByte('{')
-	for i, id := range ids {
-		if i > 0 {
-			sb.WriteByte(',')
-		}
-		fmt.Fprintf(&sb, "%d", id)
-	}
-	sb.WriteByte('}')
-	return sb.String()
 }
 
 // FormatCleanupMessage returns a human-readable summary

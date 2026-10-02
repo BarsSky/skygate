@@ -26,22 +26,37 @@ FAIL=0
 ok()  { echo "  PASS  $1"; PASS=$((PASS+1)); }
 bad() { echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
 
-DSN=$(grep '^SKYGATE_DB_DSN' .env 2>/dev/null | head -1 | cut -d= -f2-)
-if [ -z "$DSN" ]; then
-    echo "  SKIP  no DSN in .env (this is fine for a check that"
-    echo "         only runs on the live DB — not in unit CI)"
+# Live-DB access goes through scripts/lib/db_credentials.sh (B336).
+#
+# WHY. The DSN's host is a docker DNS name by design — B278 removed the bridge
+# IP from it because the IP rotates on every container recreate — so it is
+# resolvable only inside the compose network. A host-side `psql "$DSN"` fails
+# with "could not translate host name", and this check used to swallow that
+# with `2>/dev/null` and then compare the EMPTY result against 0:
+#
+#     FAIL  A.1 found  b188_* users in portal_users (expected 0)
+#                     ^^ the count is empty: nothing was ever read
+#
+# That is a fabricated fact about the database (the B294 lesson), and it broke
+# AGENTS rule 1. The helper runs psql INSIDE the container, and it PROBES
+# first, so "zero rows" can no longer mean "no connection".
+. "$REPO/scripts/lib/db_credentials.sh"
+
+if ! skygate_live_db_probe; then
+    echo "  SKIP  $(skygate_live_db_reason)"
+    echo "         B190 only measures the LIVE database; without a connection there"
+    echo "         is nothing it can honestly assert (AGENTS rule 1)"
     echo
-    echo "=== B190 summary: $PASS passed, $FAIL failed, 0 skipped (env) ==="
+    echo "=== B190 summary: $PASS passed, $FAIL failed, 1 skipped (live DB unreachable) ==="
     exit 0
 fi
-export PGPASSWORD=$(echo "$DSN" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p')
 
 # Helper: count rows matching LIKE pattern in a table.
 count_like() {
     local tbl="$1" pat="$2" where="$3"
-    local q="SELECT count(*) FROM $tbl WHERE $where LIKE '$pat'"
-    psql "$DSN" -A -t -c "$q" 2>/dev/null | tr -d ' '
+    skygate_live_db_query "SELECT count(*) FROM $tbl WHERE $where LIKE '$pat'" | tr -d ' '
 }
+count_sql() { skygate_live_db_query "$1" | tr -d ' '; }
 
 # --- A. portal_users ---
 n_users=$(count_like portal_users 'b188%' username)
@@ -62,7 +77,7 @@ fi
 # Also check by user_id (legacy B188.3 IDs were 6002/6003, but
 # since we just deleted the users, no user_id-based rules
 # survive CASCADE — defensive check)
-n_user_rules=$(psql "$DSN" -A -t -c "SELECT count(*) FROM device_rules WHERE user_id IN (6002, 6003);" 2>/dev/null | tr -d ' ')
+n_user_rules=$(count_sql "SELECT count(*) FROM device_rules WHERE user_id IN (6002, 6003);")
 if [ "$n_user_rules" = "0" ]; then
     ok "B.2 no b188_3 user_id (6002/6003) in device_rules"
 else
@@ -112,7 +127,7 @@ for tbl in portal_users devices device_rules device_exit_node_prefs \
     # Check for b188 pattern in the relevant string column.
     # We don't fail on individual mismatches here — just log
     # them so the B190 is exhaustive.
-    n=$(psql "$DSN" -A -t -c "SELECT count(*) FROM $tbl WHERE '$col' IS NOT NULL AND '$col'::text LIKE 'b188%';" 2>/dev/null | tr -d ' ')
+    n=$(count_sql "SELECT count(*) FROM $tbl WHERE '$col' IS NOT NULL AND '$col'::text LIKE 'b188%';")
     if [ -n "$n" ] && [ "$n" != "0" ]; then
         echo "  INFO  F.1 $tbl.$col has $n b188_* rows (review)"
         n_total=$((n_total + n))

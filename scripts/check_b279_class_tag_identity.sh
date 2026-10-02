@@ -175,16 +175,25 @@ else
     | grep -v '_test.go' | grep -vE ':[0-9]+:[[:space:]]*//' | sed 's/^/       /' >&2
 fi
 PICKERS_OK=0
+# B338 (refactor): the producer list names the telegram USER-COMMAND SURFACE as a
+# package glob, not as one file. Contract E2 asks "does the telegram user-command
+# layer take the node's own tag via PickPerNodeTag?", and that question is about
+# the package, not about where the code physically lives. Pinning
+# `internal/telegram/commands_user.go` made the contract fail the moment that
+# 1983-line file was split into nine focused ones — a false alarm that says
+# nothing about the product. The glob is also STRONGER: a future reintroduction
+# of the naive first-tag pick anywhere in the package is caught, not just in the
+# file the author happened to edit.
 for picker in \
   internal/monitoring/exit_node_monitor.go \
   internal/telegram/commands_phase2.go \
-  internal/telegram/commands_user.go \
+  'internal/telegram/commands_user*.go' \
   internal/telegram/commands_sync_nodes.go \
   internal/feature/admin/devices.go \
   internal/nodeownership/nodeownership.go \
   cmd/skygate/main.go
 do
-  if grep -q 'PickPerNodeTag' "$picker" 2>/dev/null; then
+  if grep -q 'PickPerNodeTag' $picker 2>/dev/null; then
     PICKERS_OK=$((PICKERS_OK+1))
   else
     bad "E2: $picker no longer uses PickPerNodeTag — it can feed headscale's first tag back into the DB (the live aro revert)"

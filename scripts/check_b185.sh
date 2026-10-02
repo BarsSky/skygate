@@ -61,6 +61,12 @@
 #     cdn-alias propagation working)
 
 set -uo pipefail
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 PASS=0
 FAIL=0
@@ -223,12 +229,12 @@ if [ -d /home/skyadmin/skygate ]; then
   if [ -z "$B185_PASS" ]; then
     echo "  SKIP [O] no SKYGATE_ADMIN_PASS (export it or run on the VM where .env lives)"
   else
-    PROBE=$(curl -s -c /tmp/b185_cookies.txt -b /tmp/b185_cookies.txt \
+    PROBE=$(curl -s -c ${SKY_TMP}/b185_cookies.txt -b ${SKY_TMP}/b185_cookies.txt \
       -X POST "$B185_URL/login" \
       --data-urlencode "username=$B185_USER" --data-urlencode "password=$B185_PASS" \
       -o /dev/null -w '%{http_code}' 2>/dev/null)
     if [ "$PROBE" = "302" ] || [ "$PROBE" = "200" ]; then
-      PAGE=$(curl -s -b /tmp/b185_cookies.txt "$B185_URL/admin/telegram" 2>/dev/null)
+      PAGE=$(curl -s -b ${SKY_TMP}/b185_cookies.txt "$B185_URL/admin/telegram" 2>/dev/null)
       if echo "$PAGE" | grep -q 'probe-ok_relay'; then
         check_eq "O" "ok_relay" "ok_relay"
       elif echo "$PAGE" | grep -q 'probe-ok_direct'; then
@@ -289,9 +295,9 @@ if [ -d /home/skyadmin/skygate ]; then
       SELECT COUNT(*) FROM device_rules
        WHERE parent_domain LIKE 'cdn:%:%discord%'
          AND target_type IN ('subnet', 'ip')
-    " 2>/dev/null > /tmp/b185_discord_cdn.txt
-    if [ -s /tmp/b185_discord_cdn.txt ]; then
-      DCN_CNT=$(cat /tmp/b185_discord_cdn.txt | tr -d ' \n')
+    " 2>/dev/null > ${SKY_TMP}/b185_discord_cdn.txt
+    if [ -s ${SKY_TMP}/b185_discord_cdn.txt ]; then
+      DCN_CNT=$(cat ${SKY_TMP}/b185_discord_cdn.txt | tr -d ' \n')
       DCN_CNT=${DCN_CNT:-0}
       check_ge "P" 1 "$DCN_CNT"
     else

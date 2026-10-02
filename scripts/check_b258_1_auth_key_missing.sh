@@ -65,10 +65,21 @@ fi
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
-TAILSCALE_GO="internal/feature/admin/tailscale.go"
 TAILSCALE_HTML="internal/handlers/templates/admin/tailscale.html"
 CATALOG="internal/i18n/catalog_tailscale.go"
 TEST_FILE="internal/feature/admin/tailscale_b258_1_test.go"
+
+# Contracts A–D read the admin TAILSCALE SURFACE, not one file.
+# internal/feature/admin/tailscale.go was split into seven focused files on
+# 2026-10-01 (refactor Phase D); pinning the single path turns a pure code move
+# into a wave of false FAILs. Note D uses `grep -c`, which is exactly why
+# gosurface concatenates instead of handing grep a glob: with several file
+# operands `grep -c` prints one count PER FILE and the arithmetic below would
+# silently change meaning. See scripts/lib/gosurface.sh.
+. "$ROOT/scripts/lib/gosurface.sh"
+if ! gosurface TAILSCALE_GO "$ROOT"/internal/feature/admin/tailscale.go "$ROOT"/internal/feature/admin/tailscale_*.go; then
+  fail "A-D: no admin/tailscale surface files found — the contracts below would pass vacuously"
+fi
 
 hdr "B258.1 — Tailscale UI third visual state (auth-key missing)"
 

@@ -1,4 +1,10 @@
 #!/bin/bash
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 . "$(dirname "$0")/lib/db_credentials.sh"
 SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # B184 — DOMAIN rule status propagates from its resolved subnets
@@ -175,9 +181,9 @@ if [ -d /home/skyadmin/skygate ]; then
       SELECT COUNT(*) FROM device_rules
        WHERE user_id=6 AND device_id=29 AND exit_node_id='emilia'
          AND parent_domain='t.me' AND target_type IN ('subnet','ip')
-    " 2>/dev/null > /tmp/b184_tme.txt
-    if [ -s /tmp/b184_tme.txt ]; then
-      TME_CNT=$(cat /tmp/b184_tme.txt | tr -d ' \n')
+    " 2>/dev/null > ${SKY_TMP}/b184_tme.txt
+    if [ -s ${SKY_TMP}/b184_tme.txt ]; then
+      TME_CNT=$(cat ${SKY_TMP}/b184_tme.txt | tr -d ' \n')
       TME_CNT=${TME_CNT:-0}
       check_ge "M" 1 "$TME_CNT"
     else
@@ -198,9 +204,9 @@ if [ -d /home/skyadmin/skygate ]; then
       SELECT COUNT(*) FROM device_rules
        WHERE user_id=6 AND device_id=29 AND exit_node_id='emilia'
          AND parent_domain='discord.com' AND target_type IN ('subnet','ip')
-    " 2>/dev/null > /tmp/b184_discord.txt
-    if [ -s /tmp/b184_discord.txt ]; then
-      DC_CNT=$(cat /tmp/b184_discord.txt | tr -d ' \n')
+    " 2>/dev/null > ${SKY_TMP}/b184_discord.txt
+    if [ -s ${SKY_TMP}/b184_discord.txt ]; then
+      DC_CNT=$(cat ${SKY_TMP}/b184_discord.txt | tr -d ' \n')
       DC_CNT=${DC_CNT:-0}
       check_eq "N" "0" "$DC_CNT"
     else
@@ -222,9 +228,9 @@ if [ -d /home/skyadmin/skygate ]; then
       SELECT COUNT(*) FROM device_rules
        WHERE user_id=6 AND device_id=29 AND exit_node_id='emilia'
          AND parent_domain='youtube.com' AND target_type IN ('subnet','ip')
-    " 2>/dev/null > /tmp/b184_yt.txt
-    if [ -s /tmp/b184_yt.txt ]; then
-      YT_CNT=$(cat /tmp/b184_yt.txt | tr -d ' \n')
+    " 2>/dev/null > ${SKY_TMP}/b184_yt.txt
+    if [ -s ${SKY_TMP}/b184_yt.txt ]; then
+      YT_CNT=$(cat ${SKY_TMP}/b184_yt.txt | tr -d ' \n')
       YT_CNT=${YT_CNT:-0}
       check_ge "O" 1 "$YT_CNT"
     else

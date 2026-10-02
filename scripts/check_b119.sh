@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 . "$(dirname "$0")/lib/db_credentials.sh"
 SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 #===============================================================================
@@ -92,14 +98,14 @@ echo
 echo "=== B. source: case order in TagToHostname is dev-infra BEFORE tag: ==="
 # Extract the TagToHostname function block. The first case must be
 # 'tag:dev-infra-', the last case must be 'tag:' alone.
-awk '/^func TagToHostname/,/^}/' "${PCHECK}" > /tmp/tag_to_hostname.txt
-first_case=$(grep -nE 'case strings\.HasPrefix' /tmp/tag_to_hostname.txt | head -1 || true)
+awk '/^func TagToHostname/,/^}/' "${PCHECK}" > ${SKY_TMP}/tag_to_hostname.txt
+first_case=$(grep -nE 'case strings\.HasPrefix' ${SKY_TMP}/tag_to_hostname.txt | head -1 || true)
 if echo "${first_case}" | grep -q 'tag:dev-infra-'; then
     ok "first case in TagToHostname switch is tag:dev-infra- (prefix order correct)"
 else
     bad "first case is NOT tag:dev-infra-: ${first_case}"
 fi
-last_case=$(grep -nE 'case strings\.HasPrefix' /tmp/tag_to_hostname.txt | tail -1 || true)
+last_case=$(grep -nE 'case strings\.HasPrefix' ${SKY_TMP}/tag_to_hostname.txt | tail -1 || true)
 if echo "${last_case}" | grep -q '"tag:"'; then
     ok "last case in TagToHostname switch is 'tag:' (catches all other tag: forms)"
 else
@@ -160,38 +166,52 @@ fi
 
 # ------------------------------------------------------------------------------
 # Contract G: live DB — all device_exit_node_prefs + user_exit_node_prefs
-# rows use one of the 4 supported tag formats (or are empty)
+# rows use a format TagToHostname recognises.
+#
+# B336 renegotiated this contract twice over.
+#
+# (1) CONNECTION. It built a host-side psql call from the DSN, whose host is a
+#     docker DNS name by design (B278), so it never connected; stderr went to
+#     /dev/null and the check announced `FAIL live prefs:  rows with unsupported
+#     tag format` with an empty count. It now goes through
+#     scripts/lib/db_credentials.sh, which runs psql inside the container and
+#     probes first, so an unreachable database SKIPs instead of failing
+#     (AGENTS rule 1).
+#
+# (2) THE PREDICATE WAS VACUOUS. It ended with `AND exit_node_tag NOT LIKE '%'`
+#     — true for every non-NULL value, so the WHERE clause could never match and
+#     the count was always 0. The contract was green no matter what the database
+#     contained. It now names the malformed classes the project has actually
+#     been bitten by: whitespace (never a tag or a hostname), UPPERCASE
+#     (headscale rejects it — the B176 outage), a bare `tag:` prefix that names
+#     nobody, and a colon that is not a `tag:` prefix (a host:port that leaked
+#     into the column). Everything else is one of the four forms TagToHostname
+#     strips: `tag:dev-infra-X`, `tag:exit-X`, `tag:X`, or a bare hostname.
 # ------------------------------------------------------------------------------
 echo
 echo "=== G. live DB: pref tags use a supported format ==="
-if [ -f /home/skyadmin/skygate/.env ] && command -v psql >/dev/null 2>&1; then
-    DSN=$(grep -E '^SKYGATE_DB_DSN=' /home/skyadmin/skygate/.env 2>/dev/null | head -1 | cut -d= -f2-)
-    if [ -n "${DSN}" ]; then
-        host=$(echo "${DSN}" | sed -E 's|.*@([^:/]+):.*|\1|')
-        port=$(echo "${DSN}" | sed -E 's|.*@[^:/]+:([0-9]+).*|\1|')
-        # Count rows that have a non-empty exit_node_tag but DON'T match
-        # any of the 4 supported formats:
-        #   tag:dev-infra-X, tag:exit-X, tag:X, bare X (no tag prefix).
-        out=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h "${host}" -p "${port}" -U admin -d skygate_staging -A -t -c \
-            "SELECT count(*) FROM (
-                SELECT exit_node_tag FROM user_exit_node_prefs WHERE exit_node_tag != ''
-                UNION ALL
-                SELECT exit_node_tag FROM device_exit_node_prefs WHERE exit_node_tag != ''
-             ) t WHERE exit_node_tag NOT LIKE 'tag:dev-infra-%'
-                AND exit_node_tag NOT LIKE 'tag:exit-%'
-                AND exit_node_tag NOT LIKE 'tag:%'
-                AND exit_node_tag NOT LIKE '%';" 2>/dev/null)
-        cnt=$(echo "${out}" | tr -d '[:space:]')
-        if [ "${cnt}" = "0" ]; then
-            ok "live prefs: 0 rows with unsupported tag format"
-        else
-            bad "live prefs: ${cnt} rows with unsupported tag format (TagToHostname won't recognize)"
-        fi
-    else
-        warn "SKYGATE_DB_DSN not set in /home/skyadmin/skygate/.env — skipping live check"
-    fi
+. "$(dirname "$0")/lib/db_credentials.sh"
+if ! skygate_live_db_probe; then
+    echo "  SKIP  G live pref-format check — $(skygate_live_db_reason)"
 else
-    warn "psql not on PATH or /home/skyadmin/skygate/.env missing — skipping live check"
+    out=$(skygate_live_db_query "SELECT count(*) FROM (
+            SELECT exit_node_tag AS t FROM user_exit_node_prefs
+            UNION ALL
+            SELECT exit_node_tag FROM device_exit_node_prefs
+         ) q
+         WHERE coalesce(t, '') <> ''
+           AND ( t ~ '\s'
+              OR t ~ '[A-Z]'
+              OR t = 'tag:'
+              OR ( position(':' in t) > 0 AND t NOT LIKE 'tag:%' ) );")
+    cnt=$(echo "${out}" | tr -d '[:space:]')
+    if [ -z "${cnt}" ]; then
+        echo "  SKIP  G live pref-format check — the query returned nothing although the probe succeeded"
+    elif [ "${cnt}" = "0" ]; then
+        ok "live prefs: 0 rows with an unsupported tag format (via ${SKYGATE_LIVE_DB_DESC})"
+    else
+        bad "live prefs: ${cnt} rows with an unsupported tag format (TagToHostname won't recognize) — whitespace, uppercase, a bare 'tag:', or a colon that is not a 'tag:' prefix"
+    fi
 fi
 
 # ------------------------------------------------------------------------------

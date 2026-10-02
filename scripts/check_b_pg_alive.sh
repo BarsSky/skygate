@@ -47,6 +47,12 @@
 #   1  at least one contract failed
 # ============================================================================
 set -e
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -211,8 +217,8 @@ if [ "$SKIP_RUNTIME" = "false" ]; then
         # proper -c arg, not a raw "\dt" string which psql
         # would reject). The polygon-mode wrapper sets
         # PGPASSWORD + -h/-p/-U automatically.
-        if pg_query_psql -c '\dt' >/tmp/check_b_pg_alive_tables.log 2>&1; then
-            tables=$(grep -E '^ public \|' /tmp/check_b_pg_alive_tables.log | awk '{print $3}' | tr '\n' ',' | sed 's/,$//')
+        if pg_query_psql -c '\dt' >${SKY_TMP}/check_b_pg_alive_tables.log 2>&1; then
+            tables=$(grep -E '^ public \|' ${SKY_TMP}/check_b_pg_alive_tables.log | awk '{print $3}' | tr '\n' ',' | sed 's/,$//')
             if echo "$tables" | grep -q 'portal_users'; then
                 ok "C: portal_users table exists"
             else

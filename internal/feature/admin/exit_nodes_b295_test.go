@@ -13,12 +13,11 @@ import (
 	"testing"
 )
 
+// Refactor Phase D (2026-10-01): reads the whole non-test admin SURFACE rather
+// than one path — exit_nodes.go was split into seven files that day and the
+// policy-verdict machinery moved to exit_nodes_prefix_drift.go. See B339.
 func TestPrefixDriftStatsCarriesTheVerdictSource_B295(t *testing.T) {
-	src, err := os.ReadFile("exit_nodes.go")
-	if err != nil {
-		t.Fatalf("read exit_nodes.go: %v", err)
-	}
-	code := string(src)
+	code := adminSurfaceSource(t)
 	for _, want := range []string{
 		"db.LastAppliedACLVersion(s.dbc())",
 		"db.GetACLConfig(s.dbc(), version)",
@@ -27,7 +26,7 @@ func TestPrefixDriftStatsCarriesTheVerdictSource_B295(t *testing.T) {
 		"PolicyVia string",
 	} {
 		if !strings.Contains(code, want) {
-			t.Errorf("exit_nodes.go no longer contains %q — a restart-window read failure is «unknown» again", want)
+			t.Errorf("the admin surface no longer contains %q — a restart-window read failure is «unknown» again", want)
 		}
 	}
 	// The blind path must survive: a read failure WITHOUT a usable snapshot is

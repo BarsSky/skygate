@@ -135,6 +135,29 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+hdr "contract D: the PG health-check tool the HA docs tell the operator to run is tracked"
+
+# Trap #11 (AGENTS.md §2): `test -f` proves nothing about what was COMMITTED.
+# deploy/pg-ha/check_pg_health.sh is named by docs/ha.md (six times — the
+# failover, promotion/reclaim and partition-recovery procedures all end with
+# "verify with check_pg_health.sh") and by deploy/pg-ha/README.md, but it was
+# never added to git, so a fresh clone carried the instruction and no script.
+# Assert git TRACKS the file, not that it exists on this disk.
+if git ls-files --error-unmatch deploy/pg-ha/check_pg_health.sh >/dev/null 2>&1; then
+    ok "deploy/pg-ha/check_pg_health.sh is tracked by git (docs/ha.md works on a fresh clone)"
+else
+    bad "deploy/pg-ha/check_pg_health.sh is NOT tracked — docs/ha.md tells the operator to run a file that is not in the repo"
+fi
+
+# And the docs must still name it: if the references disappear, the contract
+# above stops guarding anything and should be retired deliberately.
+if grep -q 'check_pg_health.sh' docs/ha.md; then
+    ok "docs/ha.md still names check_pg_health.sh (the contract above has a subject)"
+else
+    bad "docs/ha.md no longer names check_pg_health.sh — retire this contract deliberately, do not leave it vacuous"
+fi
+
+# ---------------------------------------------------------------------------
 hdr "summary"
 echo "B152: bootstrap_standby.sh (Phase 7 — provision a new skygate-standby node)"
 echo "all contracts satisfied"

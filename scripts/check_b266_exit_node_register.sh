@@ -56,7 +56,14 @@ REG="internal/feature/admin/exit_node_register.go"
 REG_TEST="internal/feature/admin/exit_node_register_b266_test.go"
 ROUTES="internal/headscale/routes.go"
 ROUTES_TEST="internal/headscale/routes_b266_test.go"
-EXIT="internal/feature/admin/exit_nodes.go"
+# The /admin/exit-nodes SURFACE, not one file: internal/feature/admin/exit_nodes.go
+# was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
+# one path turns a pure code move into a false FAIL — and is the weaker contract
+# even while it is green. gosurface expands the glob itself and skips _test.go, so
+# a future exit_nodes_*.go file is covered automatically. See B339.
+. scripts/lib/gosurface.sh
+gosurface EXIT internal/feature/admin/exit_nodes*.go
+
 # B292: the shared SSH-key preflight (empty / not absolute / missing / unreadable).
 SSHKEY="internal/headscale/ssh_key.go"
 TPL="internal/handlers/templates/admin/exit_nodes.html"

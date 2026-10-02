@@ -55,11 +55,19 @@ skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 TS=internal/tsstate/tsstate.go
-TSADMIN=internal/feature/admin/tailscale.go
 TPL=internal/handlers/templates/admin/tailscale.html
 EXIT=internal/feature/exit_rules/relay_transport_tailnet_b310.go
 MAIN=cmd/skygate/main.go
 I18N=internal/i18n/catalog_tailscale.go
+
+# TSADMIN is the admin TAILSCALE SURFACE, not one file.
+# internal/feature/admin/tailscale.go was split into seven focused files on
+# 2026-10-01 (refactor Phase D); pinning the single path turns a pure code move
+# into a wave of false FAILs. See scripts/lib/gosurface.sh.
+. scripts/lib/gosurface.sh
+if ! gosurface TSADMIN internal/feature/admin/tailscale.go internal/feature/admin/tailscale_*.go; then
+  bad "no admin/tailscale surface files found — the TSADMIN contracts would pass vacuously"
+fi
 
 hdr "B318 — the Tailscale state must read the same on both pages"
 

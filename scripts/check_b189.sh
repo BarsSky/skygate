@@ -129,28 +129,31 @@ else
     bad "B.3 migrateV062PG NOT in driver_postgres chain"
 fi
 
-# B.4 derp_health table exists in live DB (if reachable)
-DSN=$(grep '^SKYGATE_DB_DSN' .env 2>/dev/null | head -1 | cut -d= -f2-)
-if [ -n "$DSN" ]; then
-    export PGPASSWORD=$(echo "$DSN" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p')
-    if psql "$DSN" -A -t -c "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='derp_health';" 2>/dev/null | grep -q '^1$'; then
-        ok "B.4 derp_health table exists in live DB"
+# B.4 derp_health table exists in live DB / B.5 V062 recorded as applied.
+#
+# B336: connected through scripts/lib/db_credentials.sh, which runs psql INSIDE
+# the postgres container when the DSN host names one. The DSN host is a docker
+# DNS name by design (B278 removed the rotating bridge IP from it), so a
+# host-side `psql "$DSN"` cannot resolve it; this check swallowed that error with
+# 2>/dev/null and then announced `B.4 derp_health table NOT in live DB` — a
+# fabricated fact. Measured on the VM 2026-10-01 through the helper:
+# `to_regclass('public.derp_health')` returns `derp_health`, i.e. the table IS
+# there and the check was lying about the database. An unreachable database now
+# SKIPs with the real error (AGENTS rule 1) instead of failing.
+. "$REPO/scripts/lib/db_credentials.sh"
+if skygate_live_db_probe; then
+    if [ "$(skygate_live_db_query "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='derp_health';" | tr -d ' ')" = "1" ]; then
+        ok "B.4 derp_health table exists in live DB ($SKYGATE_LIVE_DB_DESC)"
     else
-        bad "B.4 derp_health table NOT in live DB"
+        bad "B.4 derp_health table NOT in live DB (read succeeded via $SKYGATE_LIVE_DB_DESC, so this is a real finding)"
     fi
-else
-    echo "  SKIP  B.4 derp_health live check (no DSN)"
-fi
-
-# B.5 V062 marked applied in applied_migrations
-if [ -n "$DSN" ]; then
-    if psql "$DSN" -A -t -c "SELECT 1 FROM applied_migrations WHERE version=62;" 2>/dev/null | grep -q '^1$'; then
+    if [ "$(skygate_live_db_query "SELECT 1 FROM applied_migrations WHERE version=62;" | tr -d ' ')" = "1" ]; then
         ok "B.5 V062 marked applied in applied_migrations"
     else
-        bad "B.5 V062 NOT in applied_migrations"
+        bad "B.5 V062 NOT in applied_migrations (the table was back-filled only for migrations applied AFTER it existed; check whether this DB pre-dates the tracking table before treating it as a regression)"
     fi
 else
-    echo "  SKIP  B.5 V062 applied check (no DSN)"
+    echo "  SKIP  B.4-B.5 live DB checks — $(skygate_live_db_reason)"
 fi
 
 # --- C. Route contracts ---

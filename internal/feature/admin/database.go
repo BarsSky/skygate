@@ -39,13 +39,16 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"skygate/internal/auth"
 	"skygate/internal/db"
 	"skygate/internal/dbmigrate"
 )
@@ -57,9 +60,26 @@ import (
 // cluster_database), and a quick reachability probe — all in one
 // struct so the template doesn't re-fetch.
 type databasePageData struct {
+	// 0. WHICH DATABASE TYPE this instance is actually running on.
+	// The honest source is db.ActiveDialect() — the dialect the process
+	// itself recorded when it opened its connection. The DSN parse
+	// supplies the human-readable details.
+	//
+	// Before 2026-09-28 the page had no such field at all, and every
+	// section below assumed PostgreSQL: on a SQLite install the page
+	// rendered "could not parse SKYGATE_DB_DSN" plus a failed pgx probe.
+	CurrentKind       string // db.DialectKind.String(): "sqlite" | "postgres"
+	CurrentKindLabel  string // "SQLite" | "PostgreSQL"
+	IsSQLite          bool
+	CurrentSQLitePath string // on-disk file, SQLite only
+	CurrentSQLiteSize string // human-readable size, SQLite only
+	CurrentVersion    string // sqlite_version() / server_version
+	CurrentTableCount int
+	CurrentDSNMatch   bool // the env DSN agrees with db.ActiveDialect()
+
 	// 1. Current DSN (the live one, from env)
 	CurrentDSN       string
-	CurrentSource    string // "env" or "cluster_database"
+	CurrentSource    string // "SKYGATE_DB" or "SKYGATE_DB_DSN"
 	CurrentHost      string
 	CurrentPort      string
 	CurrentDBName    string
@@ -73,14 +93,14 @@ type databasePageData struct {
 	DesiredID          string
 	DesiredPrimaryNode string
 	DesiredReplicas    db.StringArray
-	DesiredTemplate     string
+	DesiredTemplate    string
 	DesiredCurrentDSN  string
 	DesiredDBName      string
-	DesiredUsername     string
-	DesiredSSLMode      string
-	DesiredUpdatedAt    string
-	DesiredUpdatedBy    string
-	HasDesired          bool
+	DesiredUsername    string
+	DesiredSSLMode     string
+	DesiredUpdatedAt   string
+	DesiredUpdatedBy   string
+	HasDesired         bool
 
 	// 3. Test-Connection form (Phase 1.2) — the form
 	// pre-fills with the live DSN values so the operator
@@ -108,8 +128,19 @@ type databasePageData struct {
 	// forward by <operator> at <ts> — rollback?". If
 	// HasLastFailover is false, the Rollback card
 	// is hidden (no previous failover to roll back).
-	LastFailover     *db.LastFailoverState
-	HasLastFailover  bool
+	LastFailover    *db.LastFailoverState
+	HasLastFailover bool
+
+	// 7. Cross-backend conversion (2026-09-28). The card lets the
+	// admin move the whole dataset to the OTHER backend type. The
+	// result of the last run is rendered on the page instead of being
+	// flashed into a one-line query param — a conversion has a
+	// per-table verdict the operator must be able to read.
+	ConvertTargetKind string // "sqlite" | "postgres"
+	ConvertDryRun     bool
+	ConvertReport     *convertReportView
+	ConvertError      string
+	ConvertTargetPath string // SQLite target file prefill
 }
 
 // GetAdminDatabase renders the /admin/database page.
@@ -120,9 +151,7 @@ func (s *Service) GetAdminDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := s.collectDatabasePageData(r)
-	s.Backend.RenderWithLayout(w, r, "admin/database.html", c, map[string]any{
-		"Data": data,
-	})
+	s.renderDatabasePage(w, r, c, data)
 }
 
 // collectDatabasePageData reads the live DSN (env), the desired
@@ -140,37 +169,69 @@ func (s *Service) collectDatabasePageData(r *http.Request) *databasePageData {
 		FlashError:   r.URL.Query().Get("err"),
 	}
 
-	// 1. Current DSN — sourced from env. SKYGATE_DB_DSN is the
-	// standard libpq form. Parse for the page.
-	liveDSN := os.Getenv("SKYGATE_DB_DSN")
+	// 0. The LIVE backend type.
+	//
+	// db.ActiveDialect() is what the running process actually recorded
+	// when it opened its connection, so it is the authoritative answer
+	// to "am I on SQLite or PostgreSQL?". The environment DSN supplies
+	// the readable detail — and if the two disagree (the process was
+	// started with a different env than the one being read now), the
+	// page says so rather than showing a confident wrong answer.
+	liveKind := db.ActiveDialect()
+	data.CurrentKind = liveKind.String()
+	data.IsSQLite = liveKind == db.DialectSQLite
+	data.CurrentKindLabel = dialectLabel(liveKind)
+
+	// 1. Current DSN — resolved the same way the configuration
+	// resolves it: SKYGATE_DB wins over the legacy SKYGATE_DB_DSN.
+	liveDSN := os.Getenv("SKYGATE_DB")
+	data.CurrentSource = "SKYGATE_DB"
 	if liveDSN == "" {
-		liveDSN = os.Getenv("SKYGATE_DB")
+		liveDSN = os.Getenv("SKYGATE_DB_DSN")
+		data.CurrentSource = "SKYGATE_DB_DSN"
 	}
 	data.CurrentDSN = liveDSN
-	data.CurrentSource = "env"
-	if host, port, dbname, user, sslmode, ok := parseLibpqDSN(liveDSN); ok {
-		data.CurrentHost = host
-		data.CurrentPort = port
-		data.CurrentDBName = dbname
-		data.CurrentUsername = user
-		data.CurrentSSLMode = sslmode
-	} else {
-		data.CurrentError = "could not parse SKYGATE_DB_DSN"
+
+	envKind := db.DetectDSN(liveDSN).Kind
+	data.CurrentDSNMatch = liveDSN == "" || envKind == liveKind
+
+	// The PostgreSQL-shaped details are only meaningful on PostgreSQL;
+	// on SQLite the page shows the file path, its size and the
+	// server/library version instead.
+	if liveKind == db.DialectPostgres {
+		if host, port, dbname, user, sslmode, ok := parseLibpqDSN(liveDSN); ok {
+			data.CurrentHost = host
+			data.CurrentPort = port
+			data.CurrentDBName = dbname
+			data.CurrentUsername = user
+			data.CurrentSSLMode = sslmode
+		} else if liveDSN != "" {
+			data.CurrentError = "could not parse the PostgreSQL DSN"
+		}
+	} else if liveKind == db.DialectSQLite {
+		if p, ok := sqlitePathForDisplay(liveDSN); ok {
+			data.CurrentSQLitePath = p
+			data.CurrentSQLiteSize = humanFileSize(p)
+		}
 	}
 
-	// 2. Reachability probe — use a short timeout so the page
-	// never blocks on a dead DB. The probe opens a fresh
-	// connection (not the running pgxpool) so we test the
-	// DSN the operator can SEE, not what the process is
-	// actually using.
-	if liveDSN != "" {
+	// 2. Reachability + version probe, in the LIVE dialect. Use a
+	// short timeout so the page never blocks on a dead database.
+	// The probe opens a fresh connection (not the running pool) so it
+	// tests the DSN the operator can SEE, not what the process is
+	// using.
+	if s.dbc() != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
 		start := time.Now()
-		reachable, errStr := probeDB(ctx, liveDSN)
-		data.CurrentReachable = reachable
+		probe := probeLiveDatabase(ctx, s.dbc(), liveKind)
+		data.CurrentReachable = probe.Reachable
 		data.CurrentLatencyMs = time.Since(start).Milliseconds()
-		data.CurrentError = errStr
+		data.CurrentVersion = probe.Version
+		data.CurrentTableCount = probe.TableCount
+		if !probe.Reachable && probe.Error != "" {
+			data.CurrentError = probe.Error
+		}
 	}
 
 	// 3. Desired DSN — read cluster_database. Empty for now
@@ -204,7 +265,127 @@ func (s *Service) collectDatabasePageData(r *http.Request) *databasePageData {
 	data.FormUsername = data.CurrentUsername
 	data.FormSSLMode = data.CurrentSSLMode
 
+	// 5. The cross-backend conversion card: default the target to the
+	// OTHER backend, because "convert" means "move to the other type".
+	if data.IsSQLite {
+		data.ConvertTargetKind = "postgres"
+	} else {
+		data.ConvertTargetKind = "sqlite"
+	}
+
 	return data
+}
+
+// dialectLabel is the human-readable backend name for the page.
+func dialectLabel(k db.DialectKind) string {
+	switch k {
+	case db.DialectSQLite:
+		return "SQLite"
+	case db.DialectPostgres:
+		return "PostgreSQL"
+	default:
+		return "unknown"
+	}
+}
+
+// sqlitePathForDisplay turns a SQLite DSN into the on-disk path the
+// page shows next to the file size. Display only — it deliberately
+// does NOT try to anchor anything (that is config.sqlitePathFromDSN's
+// job for the OIDC key dir), and it returns ok=false for an in-memory
+// database, where there is no file to describe.
+func sqlitePathForDisplay(dsn string) (string, bool) {
+	d := strings.TrimSpace(dsn)
+	if d == "" || d == ":memory:" || strings.Contains(d, ":memory:") {
+		return "", false
+	}
+	for _, prefix := range []string{"sqlite://", "sqlite:", "file://", "file:"} {
+		if strings.HasPrefix(d, prefix) {
+			d = strings.TrimPrefix(d, prefix)
+			break
+		}
+	}
+	if i := strings.IndexAny(d, "?#"); i >= 0 {
+		d = d[:i]
+	}
+	d = strings.TrimPrefix(d, "//")
+	if d == "" {
+		return "", false
+	}
+	return d, true
+}
+
+// humanFileSize renders a file size for the page, or "—" when the file
+// does not exist yet (a SQLite database is created on first write).
+func humanFileSize(path string) string {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "—"
+	}
+	return humanBytes(fi.Size())
+}
+
+// humanBytes formats a byte count with one decimal.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	value := float64(n)
+	for _, suffix := range []string{"KB", "MB", "GB", "TB"} {
+		value /= unit
+		if value < unit {
+			return fmt.Sprintf("%.1f %s", value, suffix)
+		}
+	}
+	return fmt.Sprintf("%.1f PB", value)
+}
+
+// liveProbe is the outcome of one reachability + identity probe.
+type liveProbe struct {
+	Reachable  bool
+	Error      string
+	Version    string
+	TableCount int
+}
+
+// probeLiveDatabase answers "is the database I am running on alive,
+// which version is it, and how many tables does it have?" in the
+// dialect the process actually uses.
+//
+// It runs the probe through the LIVE connection (s.dbc()) rather than
+// opening a second one: for SQLite a second open of the same file
+// would take a write lock during WAL checkpointing, and for both
+// dialects the running connection is the only one whose configuration
+// is known to be correct.
+//
+// This is the B282 class of defect — the page that reads the database
+// the operator actually runs, rather than the one the page assumed.
+func probeLiveDatabase(ctx context.Context, conn *sql.DB, kind db.DialectKind) liveProbe {
+	var out liveProbe
+	if conn == nil {
+		out.Error = "no live database connection"
+		return out
+	}
+	if err := conn.PingContext(ctx); err != nil {
+		out.Error = "ping: " + err.Error()
+		return out
+	}
+	out.Reachable = true
+
+	switch kind {
+	case db.DialectSQLite:
+		_ = conn.QueryRowContext(ctx, `SELECT sqlite_version()`).Scan(&out.Version)
+		_ = conn.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).
+			Scan(&out.TableCount)
+	case db.DialectPostgres:
+		_ = conn.QueryRowContext(ctx, `SHOW server_version`).Scan(&out.Version)
+		_ = conn.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM information_schema.tables
+			 WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'`).
+			Scan(&out.TableCount)
+	}
+	return out
 }
 
 // ---------- GET /admin/database/migrate (Phase 1.4) ----------------
@@ -311,10 +492,10 @@ func (s *Service) GetAdminDatabaseMigrateRun(w http.ResponseWriter, r *http.Requ
 		run.Status == dbmigrate.RunCancelled
 	s.Backend.RenderWithLayout(w, r, "admin/migrate_run.html", c, map[string]any{
 		"Data": map[string]any{
-			"Run":         run,
-			"Steps":       steps,
-			"CanCancel":   canCancel,
-			"CanRollback": canRollback,
+			"Run":          run,
+			"Steps":        steps,
+			"CanCancel":    canCancel,
+			"CanRollback":  canRollback,
 			"FlashSuccess": r.URL.Query().Get("ok"),
 			"FlashError":   r.URL.Query().Get("err"),
 		},
@@ -438,14 +619,14 @@ func (s *Service) PostAdminDatabaseEdit(w http.ResponseWriter, r *http.Request) 
 	// will overwrite with the real one.
 	currentDSN := "postgres://" + username + ":PASSWORD@" + host + ":" + port + "/" + dbname + "?sslmode=" + sslmode
 	cd := &db.ClusterDatabase{
-		ID:             "skygate-staging",
-		ClusterID:      "skygate-staging",
-		DSNTemplate:    dsnTemplate,
-		DBName:         dbname,
-		Username:       username,
-		SSLMode:        sslmode,
-		CurrentDSN:     currentDSN,
-		UpdatedBy:      c.Username,
+		ID:          "skygate-staging",
+		ClusterID:   "skygate-staging",
+		DSNTemplate: dsnTemplate,
+		DBName:      dbname,
+		Username:    username,
+		SSLMode:     sslmode,
+		CurrentDSN:  currentDSN,
+		UpdatedBy:   c.Username,
 	}
 	if err := db.SetClusterDatabase(s.dbc(), cd); err != nil {
 		http.Redirect(w, r, "/admin/database?err=save+failed:+"+err.Error(), http.StatusSeeOther)
@@ -460,6 +641,289 @@ func (s *Service) PostAdminDatabaseEdit(w http.ResponseWriter, r *http.Request) 
 		_ = err
 	}
 	http.Redirect(w, r, "/admin/database?ok=saved", http.StatusSeeOther)
+}
+
+// ---------- POST /admin/database/convert (2026-09-28) -----------------
+//
+// The cross-BACKEND conversion: move the whole dataset from the
+// database type skygate runs on today to the other one
+// (SQLite → PostgreSQL or PostgreSQL → SQLite).
+//
+// This is deliberately a different action from the "Migrate to a new
+// host" card above, which keeps PostgreSQL and only moves it to another
+// server. Before this handler the only way to change the backend TYPE
+// was the `skygate db-migrate` CLI, and the in-panel workflow could
+// only ever build a PostgreSQL DSN (dbmigrate/handlers.go hardcoded
+// `postgres://…`), so the page could not do what its own title
+// promised.
+
+// convertReportView is the template-facing projection of
+// db.ConvertReport. It is built explicitly field by field rather than
+// passing the db struct through, so the template cannot start
+// depending on internals of the converter.
+type convertReportView struct {
+	FromKind      string
+	ToKind        string
+	Mode          string
+	SchemaCreated bool
+	Verified      bool
+	CopiedRows    int64
+	Warnings      []string
+	Tables        []convertTableRowView
+}
+
+// convertTableRowView is one row of the conversion report table.
+type convertTableRowView struct {
+	Table          string
+	SourceRows     int64
+	TargetRows     int64
+	Copied         int64
+	ColumnCount    int
+	SkippedColumns string
+	Note           string
+	Skipped        bool
+}
+
+// newConvertReportView projects a db.ConvertReport for the template.
+func newConvertReportView(rep *db.ConvertReport) *convertReportView {
+	if rep == nil {
+		return nil
+	}
+	out := &convertReportView{
+		FromKind:      rep.FromKind.String(),
+		ToKind:        rep.ToKind.String(),
+		Mode:          rep.Mode,
+		SchemaCreated: rep.SchemaCreated,
+		Verified:      rep.Verified,
+		CopiedRows:    rep.CopiedRows,
+		Warnings:      append([]string(nil), rep.Warnings...),
+	}
+	for _, t := range rep.Tables {
+		row := convertTableRowView{
+			Table:      t.Table,
+			SourceRows: t.SourceRows,
+			TargetRows: t.TargetRows,
+			Copied:     t.Copied,
+			Note:       t.Reason,
+			Skipped:    t.Skipped,
+		}
+		if len(t.Columns) > 0 {
+			row.ColumnCount = len(t.Columns)
+		}
+		if len(t.SkippedColumns) > 0 {
+			row.SkippedColumns = strings.Join(t.SkippedColumns, ", ")
+		}
+		out.Tables = append(out.Tables, row)
+	}
+	return out
+}
+
+// PostAdminDatabaseConvert runs the cross-backend conversion and
+// renders the report on the same page.
+//
+// It renders directly instead of redirecting (no PRG): a conversion
+// produces a per-table verdict the operator has to be able to read,
+// and re-running it is harmless because the target must be empty —
+// the second attempt refuses before touching anything.
+func (s *Service) PostAdminDatabaseConvert(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/admin/database?err="+err.Error(), http.StatusSeeOther)
+		return
+	}
+
+	data := s.collectDatabasePageData(r)
+	targetKind := strings.TrimSpace(r.FormValue("target_kind"))
+	data.ConvertTargetKind = targetKind
+	data.ConvertDryRun = r.FormValue("dry_run") == "1"
+	data.ConvertTargetPath = strings.TrimSpace(r.FormValue("target_path"))
+
+	rep, err := s.runBackendConversion(r, data, targetKind, data.ConvertDryRun, data.ConvertTargetPath)
+	data.ConvertReport = newConvertReportView(rep)
+	if err != nil {
+		data.ConvertError = err.Error()
+	}
+
+	// Durable record: the audit log is the only place that survives a
+	// page reload, and a backend move is exactly the kind of change an
+	// operator needs to be able to date later.
+	detail := "from=" + data.CurrentKind + " to=" + targetKind
+	if err == nil && rep != nil {
+		detail += fmt.Sprintf(" rows=%d verified=%v dry_run=%v", rep.CopiedRows, rep.Verified, rep.DryRun)
+	} else if err != nil {
+		detail += " error=" + err.Error()
+	}
+	_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "database.convert", detail, "database", targetKind)
+
+	s.renderDatabasePage(w, r, c, data)
+}
+
+// runBackendConversion validates the operator's target, opens it in
+// isolation and runs the conversion. Every refusal happens BEFORE the
+// target is opened, so a rejected request changes nothing anywhere.
+func (s *Service) runBackendConversion(
+	r *http.Request,
+	data *databasePageData,
+	targetKind string,
+	dryRun bool,
+	targetPath string,
+) (*db.ConvertReport, error) {
+	sourceDB := s.dbc()
+	if sourceDB == nil {
+		return nil, fmt.Errorf("no live database connection")
+	}
+	sourceKind := db.ActiveDialect()
+	sourceDSN := liveDSNFromEnv()
+
+	target, err := parseTargetDialect(targetKind)
+	if err != nil {
+		return nil, err
+	}
+	if target == sourceKind {
+		return nil, fmt.Errorf("the target is the same database type as the running one (%s) — "+
+			"this card converts between BACKENDS; to move %s to another server use the "+
+			"host-migration card above", sourceKind, data.CurrentKindLabel)
+	}
+
+	targetDSN, err := buildTargetDSN(r, target, targetPath)
+	if err != nil {
+		return nil, err
+	}
+	if targetDSN == sourceDSN && sourceDSN != "" {
+		return nil, fmt.Errorf("the target is the database skygate is already running on")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+	defer cancel()
+
+	// Refuse a target that already holds a skygate schema BEFORE
+	// opening it through the migration path: a conversion creates the
+	// schema from scratch, and "converting" into a populated database
+	// would clear its rows and replace them with the source's.
+	//
+	// A dry run writes nothing anywhere, so it neither needs the target
+	// to be reachable nor checks it — it reports the source plan.
+	if dryRun {
+		return db.ConvertWithReport(ctx, db.DialectFor(sourceKind, sourceDSN), sourceDB,
+			db.DialectFor(target, targetDSN), nil, db.ConvertOptions{DryRun: true})
+	}
+	if n, err := countTargetTables(ctx, targetDSN, target); err != nil {
+		return nil, fmt.Errorf("the target is not reachable: %w", err)
+	} else if n > 0 {
+		return nil, fmt.Errorf("the target already contains %d table(s) — a conversion needs a "+
+			"NEW, empty database (move the existing one aside, or create an empty "+
+			"database first)", n)
+	}
+
+	targetD, targetDB, err := db.OpenIsolated(targetDSN)
+	if err != nil {
+		return nil, fmt.Errorf("open the target: %w", err)
+	}
+	defer targetDB.Close()
+
+	return db.ConvertWithReport(ctx, db.DialectFor(sourceKind, sourceDSN), sourceDB,
+		targetD, targetDB, db.ConvertOptions{Mode: "schema+data", DryRun: false})
+}
+
+// parseTargetDialect maps the form's radio value onto a dialect.
+func parseTargetDialect(v string) (db.DialectKind, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "sqlite":
+		return db.DialectSQLite, nil
+	case "postgres", "postgresql":
+		return db.DialectPostgres, nil
+	default:
+		return db.DialectUnknown, fmt.Errorf("choose a target backend (sqlite or postgres)")
+	}
+}
+
+// buildTargetDSN turns the conversion form into a DSN, validating the
+// fields the operator can actually get wrong.
+func buildTargetDSN(r *http.Request, target db.DialectKind, prefillPath string) (string, error) {
+	switch target {
+	case db.DialectSQLite:
+		path := strings.TrimSpace(r.FormValue("target_path"))
+		if path == "" {
+			path = strings.TrimSpace(prefillPath)
+		}
+		if path == "" {
+			return "", fmt.Errorf("a target file path is required (e.g. /var/lib/skygate/skygate.db)")
+		}
+		if !filepath.IsAbs(path) {
+			return "", fmt.Errorf("the target path must be absolute: %q", path)
+		}
+		return "sqlite:" + path, nil
+	case db.DialectPostgres:
+		host := strings.TrimSpace(r.FormValue("target_host"))
+		port := strings.TrimSpace(r.FormValue("target_port"))
+		dbname := strings.TrimSpace(r.FormValue("target_dbname"))
+		user := strings.TrimSpace(r.FormValue("target_username"))
+		pass := r.FormValue("target_password")
+		sslmode := strings.TrimSpace(r.FormValue("target_sslmode"))
+		if host == "" || dbname == "" || user == "" {
+			return "", fmt.Errorf("host, database name and user are required for a PostgreSQL target")
+		}
+		if port == "" {
+			port = "5432"
+		}
+		if sslmode == "" {
+			sslmode = "disable"
+		}
+		return fmt.Sprintf("postgres://%s@%s:%s/%s?sslmode=%s",
+			url.UserPassword(user, pass).String(), host, port, dbname, sslmode), nil
+	default:
+		return "", fmt.Errorf("choose a target backend")
+	}
+}
+
+// countTargetTables opens the target WITHOUT going through the
+// migration path (a plain sql.Open, so nothing is created) and counts
+// the tables it already has.
+func countTargetTables(ctx context.Context, dsn string, kind db.DialectKind) (int, error) {
+	driver := "sqlite"
+	query := `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`
+	if kind == db.DialectPostgres {
+		driver = "pgx"
+		query = `SELECT COUNT(*) FROM information_schema.tables
+		         WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'`
+	}
+	conn, err := sql.Open(driver, dsn)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := conn.PingContext(pingCtx); err != nil {
+		return 0, err
+	}
+	var n int
+	if err := conn.QueryRowContext(ctx, query).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// liveDSNFromEnv resolves the DSN the running process was configured
+// with, in the same order the configuration resolves it.
+func liveDSNFromEnv() string {
+	if v := strings.TrimSpace(os.Getenv("SKYGATE_DB")); v != "" {
+		return v
+	}
+	return strings.TrimSpace(os.Getenv("SKYGATE_DB_DSN"))
+}
+
+// renderDatabasePage renders admin/database.html with the collected
+// data, so the GET path and the conversion POST path cannot drift
+// apart.
+func (s *Service) renderDatabasePage(w http.ResponseWriter, r *http.Request, c *auth.Claims, data *databasePageData) {
+	s.Backend.RenderWithLayout(w, r, "admin/database.html", c, map[string]any{
+		"Data": data,
+	})
 }
 
 // ---------- POST /admin/database/failover (B219) ----------------
@@ -617,13 +1081,15 @@ func (s *Service) PostAdminDatabaseFailover(w http.ResponseWriter, r *http.Reque
 // (system detects the new primary is unhealthy
 // and triggers the rollback without operator
 // intervention) is a follow-up that needs:
-//   (a) a background health monitor (the watchdog
-//       B210 already has the per-poll health state)
-//   (b) a stable "is the new primary healthy for
-//       the last N seconds" check
-//   (c) a "no flap" guard (don't rollback twice
-//       in 5 min — the operator should never see
-//       the cluster in a rapid ping-pong state)
+//
+//	(a) a background health monitor (the watchdog
+//	    B210 already has the per-poll health state)
+//	(b) a stable "is the new primary healthy for
+//	    the last N seconds" check
+//	(c) a "no flap" guard (don't rollback twice
+//	    in 5 min — the operator should never see
+//	    the cluster in a rapid ping-pong state)
+//
 // These are deferred to a follow-up B-block —
 // B220 ships the operator-driven rollback + the
 // state-tracking that the auto version will need.

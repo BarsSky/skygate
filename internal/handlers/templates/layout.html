@@ -152,9 +152,14 @@
       <a href="/admin/oidc/sync" {{if eq .Page "admin/oidc_sync"}}class="active"{{end}} class="sub-link"><i class="fa-solid fa-arrows-rotate"></i><span>{{t "nav.oidc_sync"}}</span></a>
     </details>
 
-    {{/* Section 5: Data (3 pages) */}}
+    {{/* Section 5: Data (4 pages) */}}
     <details class="sidebar-section" {{if .InSectionData}}open{{end}}>
       <summary class="{{if .InSectionData}}current-section{{end}}" title="{{t "nav.toggle_section"}}"><i class="fa-solid fa-database"></i><span>{{t "nav.section_data"}}</span></summary>
+      {{/* 2026-09-28 — /admin/database was reachable only from a button on
+           /admin/cluster: it existed, worked, and was invisible in the
+           navigation. The operator asked for the database surface to have a
+           tab, so it sits in Data next to the backup that protects it. */}}
+      <a href="/admin/database" {{if eq .Page "admin/database"}}class="active"{{end}}><i class="fa-solid fa-database"></i><span>{{t "nav.database"}}</span></a>
       <a href="/admin/backup" {{if eq .Page "admin/backup"}}class="active"{{end}}><i class="fa-solid fa-floppy-disk"></i><span>{{t "nav.backup"}}</span></a>
       <a href="/admin/invites" {{if eq .Page "admin/invites"}}class="active"{{end}}><i class="fa-solid fa-envelope-open-text"></i><span>{{t "nav.invites"}}</span></a>
       <a href="/admin/control-planes" {{if eq .Page "admin/control-planes"}}class="active"{{end}}><i class="fa-solid fa-layer-group"></i><span>{{t "nav.control_planes"}}</span></a>

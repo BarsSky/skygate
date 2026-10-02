@@ -20,19 +20,23 @@ import (
 )
 
 // TestPrefixStatsCarriesTheLiveReadFailure_B294: the failure must reach the page.
+//
+// Refactor Phase D (2026-10-01): this used to read `exit_nodes.go` by name, and
+// the 1880-line file was split into seven that day (the live-read fields moved to
+// exit_nodes_prefix_drift.go). A contract pinned to a path turns a pure code MOVE
+// into a red test while the behaviour is unchanged — and it is the weaker
+// contract, because the same code re-introduced in a sibling file is invisible to
+// it. adminSurfaceSource (see tailscale_b259_test.go) reads the whole
+// non-test admin surface instead. See B339.
 func TestPrefixStatsCarriesTheLiveReadFailure_B294(t *testing.T) {
-	src, err := os.ReadFile("exit_nodes.go")
-	if err != nil {
-		t.Fatalf("read exit_nodes.go: %v", err)
-	}
-	code := string(src)
+	code := adminSurfaceSource(t)
 	for _, want := range []string{
 		"stats.LiveReadErr = herr.Error()",
 		"stats.LiveReadHint = headscale.ACLReadHintFor(s.HSGlobalFn(), herr)",
 		"cannot read the advertised routes from headscale",
 	} {
 		if !strings.Contains(code, want) {
-			t.Errorf("exit_nodes.go no longer contains %q — a failed headscale read is silent again", want)
+			t.Errorf("the admin surface no longer contains %q — a failed headscale read is silent again", want)
 		}
 	}
 	if !strings.Contains(code, "LiveReadErr string") || !strings.Contains(code, "LiveReadHint string") {

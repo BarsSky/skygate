@@ -53,9 +53,20 @@ AUDIT="internal/db/migrations_audit_b233_test.go"
 AGENTS="AGENTS.md"
 
 # --- A: B233 file has the expected surface ---
+# B336 CONTRACT RENEGOTIATION. This list used to require
+# `testdataMigrationFiles`, the PG-chain shorthand. B333 made the audit
+# chain-aware and that shorthand lost its last caller, so staticcheck (B95,
+# contract "0 U1000") correctly flagged it as dead code and it was deleted —
+# exactly the conflict the project resolves by RENEGOTIATING the contract
+# rather than by keeping dead code to satisfy a grep. The list now names what
+# the audit actually uses: `migrationFilesForChain` (the chain-aware file set)
+# and `shapeDriftOffenders` (the pure decision function the mutation test
+# drives). Both are load-bearing, so this contract still fails if either
+# disappears.
 all_a=1
 for sym in \
-  "testdataMigrationFiles" \
+  "migrationFilesForChain" \
+  "shapeDriftOffenders" \
   "auditMigrationFile" \
   "TestMigrations_ShapeDriftAudit" \
   "TestMigrations_DeviceRulesNaturalKeyIndexIsSixColumns" \
@@ -104,10 +115,18 @@ else
 fi
 
 # --- E: Mutation test ---
-if has "$AUDIT" "synthetic re-CREATE without DROP was NOT caught"; then
-  ok "E: TestShapeDriftAudit_CatchesSyntheticOffender mutation test pins the audit's correctness"
+# B336 CONTRACT RENEGOTIATION (wording). The mutation test was rewritten to
+# drive the production decision function (`shapeDriftOffenders`) instead of an
+# inlined copy of its logic, so its failure message changed: an inlined copy
+# proves nothing about the code that runs, and the old assertion pinned the
+# sentence rather than the property. What E must guarantee is unchanged and is
+# asserted on the NEW text: the test computes the offenders, compares them
+# against the exact expected set, and calls t.Fatalf naming itself as the broken
+# audit — so it fails first if the audit ever goes blind.
+if has "$AUDIT" "mutation test FAILED" && has "$AUDIT" "M2:idx_x" && has "$AUDIT" "t.Fatalf"; then
+  ok "E: TestShapeDriftAudit_CatchesSyntheticOffender drives the real audit decision function and fails loudly when it goes blind"
 else
-  fail "E: mutation test missing the 'NOT caught' assertion"
+  fail "E: mutation test no longer pins the audit's correctness (missing the FAILED marker, the expected offender set, or the Fatalf)"
 fi
 
 # --- F: docs + build + test ---

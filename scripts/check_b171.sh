@@ -75,6 +75,12 @@
 #     pre-condition checks; the real coverage comes
 #     from the live e2e probe in the deploy script).
 set -euo pipefail
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 ok()  { echo "  PASS  $1"; }
 bad() { echo "  FAIL  $1"; exit 1; }
@@ -191,7 +197,7 @@ fi
 # device, in one transaction. Without this call
 # the orphan rules would persist forever and the
 # next ACL regen would crash.
-if awk '/^func Delete/{flag=1; next} flag && /^func /{flag=0} flag' internal/devicedelete/devicedelete.go > /tmp/_b171_awk.txt && grep -q 'DeleteRulesByDeviceID' /tmp/_b171_awk.txt; then
+if awk '/^func Delete/{flag=1; next} flag && /^func /{flag=0} flag' internal/devicedelete/devicedelete.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'DeleteRulesByDeviceID' ${SKY_TMP}/_b171_awk.txt; then
     ok "devicedelete.Delete calls db.DeleteRulesByDeviceID (the B171 device_rules cleanup)"
 else
     bad "devicedelete.Delete does NOT call db.DeleteRulesByDeviceID (the B171 promise is broken)"
@@ -201,7 +207,7 @@ fi
 # The post-cleanup ACL regen. Without this the
 # device would be gone but headscale's policy would
 # still name it (the second half of the B171 promise).
-if awk '/^func Delete/{flag=1; next} flag && /^func /{flag=0} flag' internal/devicedelete/devicedelete.go > /tmp/_b171_awk.txt && grep -q 'ApplyACLPipelineForPlane' /tmp/_b171_awk.txt; then
+if awk '/^func Delete/{flag=1; next} flag && /^func /{flag=0} flag' internal/devicedelete/devicedelete.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'ApplyACLPipelineForPlane' ${SKY_TMP}/_b171_awk.txt; then
     ok "devicedelete.Delete calls acl.ApplyACLPipelineForPlane (the B171 ACL regen)"
 else
     bad "devicedelete.Delete does NOT call acl.ApplyACLPipelineForPlane (headscale policy would stay stale)"
@@ -262,8 +268,8 @@ fi
 # return, just no tag filter — the live e2e
 # scripts/b_mod_reregister_live.sh caught the
 # silent skip on 2026-09-14).
-if awk '/^func Delete/{flag=1; next} flag && /^func /{flag=0} flag' internal/devicedelete/devicedelete.go > /tmp/_b171_awk.txt && \
-   grep -qE 'DeleteNodeOwnerByNodeTagCounted|DeleteNodeOwnerByNodeIDOnly' /tmp/_b171_awk.txt; then
+if awk '/^func Delete/{flag=1; next} flag && /^func /{flag=0} flag' internal/devicedelete/devicedelete.go > ${SKY_TMP}/_b171_awk.txt && \
+   grep -qE 'DeleteNodeOwnerByNodeTagCounted|DeleteNodeOwnerByNodeIDOnly' ${SKY_TMP}/_b171_awk.txt; then
     ok "devicedelete.Delete uses a row-counted helper (count flows to the audit row)"
 else
     bad "devicedelete.Delete uses the non-counted variant (audit row would lose the count)"
@@ -281,7 +287,7 @@ if grep -q '"skygate/internal/devicedelete"' internal/feature/my/devices.go; the
 else
     bad "internal/feature/my/devices.go does NOT import devicedelete (B162 rewire missing)"
 fi
-if awk '/^func \(s \*Service\) PostMyDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices.go > /tmp/_b171_awk.txt && grep -q 'devicedelete\.Delete(' /tmp/_b171_awk.txt; then
+if awk '/^func \(s \*Service\) PostMyDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'devicedelete\.Delete(' ${SKY_TMP}/_b171_awk.txt; then
     ok "PostMyDeviceDelete calls devicedelete.Delete (B162 rewire complete)"
 else
     bad "PostMyDeviceDelete does NOT call devicedelete.Delete (B162 still has the pre-B171 inline cleanup)"
@@ -292,7 +298,7 @@ fi
 # to render the "+N ACL rules cleaned" pill. A
 # regression that dropped the param would lose
 # the visual feedback.
-if awk '/^func \(s \*Service\) PostMyDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices.go > /tmp/_b171_awk.txt && grep -q 'deleted_rules=' /tmp/_b171_awk.txt; then
+if awk '/^func \(s \*Service\) PostMyDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'deleted_rules=' ${SKY_TMP}/_b171_awk.txt; then
     ok "PostMyDeviceDelete passes deleted_rules=N in the redirect"
 else
     bad "PostMyDeviceDelete does NOT pass deleted_rules=N (the rules-cleaned pill would never render)"
@@ -304,7 +310,7 @@ fi
 # flash. Without this the operator would see a
 # "device deleted" success and not notice that
 # headscale's policy is now stale.
-if awk '/^func \(s \*Service\) PostMyDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices.go > /tmp/_b171_awk.txt && grep -q 'acl_err=' /tmp/_b171_awk.txt; then
+if awk '/^func \(s \*Service\) PostMyDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'acl_err=' ${SKY_TMP}/_b171_awk.txt; then
     ok "PostMyDeviceDelete passes acl_err=... in the redirect (ACL regen failure surfaces to the user)"
 else
     bad "PostMyDeviceDelete does NOT pass acl_err=... (ACL regen failure would be silent)"
@@ -318,7 +324,7 @@ if grep -q '"skygate/internal/devicedelete"' internal/feature/admin/devices.go; 
 else
     bad "internal/feature/admin/devices.go does NOT import devicedelete (B169 rewire missing)"
 fi
-if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > /tmp/_b171_awk.txt && grep -q 'devicedelete\.Delete(' /tmp/_b171_awk.txt; then
+if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'devicedelete\.Delete(' ${SKY_TMP}/_b171_awk.txt; then
     ok "PostAdminDeviceDelete calls devicedelete.Delete (B169 rewire complete)"
 else
     bad "PostAdminDeviceDelete does NOT call devicedelete.Delete (B169 still has the pre-B171 inline cleanup)"
@@ -326,7 +332,7 @@ fi
 
 # C.5 — PostAdminDeviceDelete passes ok_rules=N
 # in the redirect. Mirrors C.2 for the admin path.
-if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > /tmp/_b171_awk.txt && grep -q 'ok_rules=' /tmp/_b171_awk.txt; then
+if awk '/^func \(s \*Service\) PostAdminDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/admin/devices.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'ok_rules=' ${SKY_TMP}/_b171_awk.txt; then
     ok "PostAdminDeviceDelete passes ok_rules=N in the redirect"
 else
     bad "PostAdminDeviceDelete does NOT pass ok_rules=N (admin's rules-cleaned pill would never render)"
@@ -534,7 +540,7 @@ fi
 # "headplane: read-only view, will refresh on next
 # UI load (~30s)" so the operator can confirm the
 # full cleanup with one audit query.
-if awk '/^func Delete/{flag=1; next} flag && /^func /{flag=0} flag' internal/devicedelete/devicedelete.go > /tmp/_b171_awk.txt && grep -q 'headplane: read-only view' /tmp/_b171_awk.txt; then
+if awk '/^func Delete/{flag=1; next} flag && /^func /{flag=0} flag' internal/devicedelete/devicedelete.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'headplane: read-only view' ${SKY_TMP}/_b171_awk.txt; then
     ok "devicedelete.Delete audit row mentions the headplane refresh note"
 else
     bad "devicedelete.Delete audit row does NOT mention headplane (operator can't confirm the headplane cleanup)"

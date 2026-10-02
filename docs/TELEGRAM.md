@@ -196,8 +196,8 @@ IPv4 `91.108.4.0/22`, `91.108.8.0/22`, `91.108.12.0/22`, `91.108.16.0/22`,
    `headscale nodes approve-routes -i <id> -r <cidr>` — потому что в политике
    **нет** `autoApprovers` (разделы политики: `hosts`, `grants`, `tagOwners`,
    `groups`, `ssh`), а in-app помощник одобрения умеет только `0.0.0.0/0` + `::/0`
-   (`internal/feature/admin/exit_nodes.go`). Альтернатива — добавить
-   `autoApprovers.routes` в политику.
+   (`internal/feature/admin/exit_nodes*.go` — файл разбит на семь в Phase D).
+   Альтернатива — добавить `autoApprovers.routes` в политику.
 6. **Проверить**: в контейнере `ip route get 149.154.167.220` → `dev tailscale0`,
    `/admin/telegram` → probe `ok_relay`, затем «Send test» бота.
 

@@ -63,16 +63,26 @@ if ! sudo -n docker inspect "$HEADSCALE_CONTAINER" >/dev/null 2>&1; then
 fi
 
 # ── fetch + parse headscale users ──
-sudo -n docker exec "$HEADSCALE_CONTAINER" headscale users list -o json > /tmp/check_b_dup_users.json 2>/dev/null
-if [ ! -s /tmp/check_b_dup_users.json ]; then
+# Per-run scratch files (B340): a FIXED /tmp path is not writable by the next
+# run under a different user, which made eight checks report phantom FAILs on
+# 2026-10-01. See AGENTS.md trap #13. The python helper below reads the path
+# from the environment because a `<< 'PYEOF'` heredoc does not expand ${…}.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+DUP_USERS_JSON="${SKY_TMP}/check_b_dup_users.json"
+DUP_RESULT_TXT="${SKY_TMP}/check_b_dup_result.txt"
+export DUP_USERS_JSON
+
+sudo -n docker exec "$HEADSCALE_CONTAINER" headscale users list -o json > "$DUP_USERS_JSON" 2>/dev/null
+if [ ! -s "$DUP_USERS_JSON" ]; then
     echo "  FAIL  headscale users list returned empty (headscale unreachable or CLI errored)"
     exit 2
 fi
 
 # Detect duplicates with a small Python helper (json + Counter).
-python3 > /tmp/check_b_dup_result.txt << 'PYEOF'
-import json, collections
-users = json.load(open('/tmp/check_b_dup_users.json'))
+python3 > "$DUP_RESULT_TXT" << 'PYEOF'
+import json, collections, os
+users = json.load(open(os.environ['DUP_USERS_JSON']))
 counts = collections.Counter(u['name'] for u in users)
 total = len(users)
 dups = {n: c for n, c in counts.items() if c > 1}
@@ -86,7 +96,7 @@ else:
         print(f"NAME {name} count={dups[name]} {ids}")
 PYEOF
 
-FIRST_LINE=$(head -1 /tmp/check_b_dup_result.txt)
+FIRST_LINE=$(head -1 "$DUP_RESULT_TXT")
 if [[ "$FIRST_LINE" == OK* ]]; then
     TOTAL=$(echo "$FIRST_LINE" | sed 's/^OK total=//')
     echo "  PASS  A: headscale has no duplicate names ($TOTAL users total)"

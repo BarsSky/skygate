@@ -1,30 +1,39 @@
 // cmd/skygate/db_migrate.go — skygate db-migrate subcommand.
 //
-// B-mod-sqlite-pg-bidi v1.5.4 Task 3: the operator-facing CLI
-// wrapper around internal/db.Convert. Usage:
+// B-mod-sqlite-pg-bidi: the operator-facing CLI wrapper around
+// internal/db.Convert. Usage:
 //
-//	skygate db-migrate --from=<source-dsn> --to=<target-dsn> [--schema-only|--data-only] [--dry-run]
+//	skygate db-migrate --from <source-dsn> --to <target-dsn> [--schema-only|--data-only] [--dry-run]
+//
+// Both spellings of a flag value are accepted (`--from <dsn>` and
+// `--from=<dsn>`); the `=` form is what the help text and the release
+// notes advertise, and until 2026-09-28 it was rejected with
+// "unknown flag: --from=…" — measured, not inferred.
 //
 // Examples:
 //
-//	# Copy SQLite DB to PG (full schema + data):
-//	skygate db-migrate --from=sqlite:/var/lib/skygate/skygate.db \
-//	                   --to=postgres://user:pass@host:5432/skygate
+//	# Move a self-hosted SQLite install onto PostgreSQL:
+//	skygate db-migrate --from sqlite:/var/lib/skygate/skygate.db \
+//	                   --to postgres://user:pass@host:5432/skygate
 //
-//	# Generate the SQL schema only (dry-run for review):
-//	skygate db-migrate --from=sqlite:/var/lib/skygate/skygate.db \
-//	                   --to=postgres://user:pass@host:5432/skygate \
-//	                   --schema-only --dry-run
+//	# Move PostgreSQL back to SQLite (scale down to a self-host):
+//	skygate db-migrate --from postgres://user:pass@host:5432/skygate \
+//	                   --to sqlite:/var/lib/skygate/skygate.db
 //
-// The subcommand reads the source + target dialects via
-// db.DetectDSN, opens both via db.OpenWithDialect, and delegates
-// to db.Convert. See internal/db/convert.go for the algorithm.
+// The subcommand reads the source + target dialects via db.DetectDSN,
+// opens both via db.OpenWithDialect, and delegates to
+// db.ConvertWithReport. See internal/db/convert.go for the algorithm:
+// the target schema is created by the TARGET's own migration chain,
+// the tables are filled parents-first from the target's FOREIGN KEY
+// metadata, the copy runs in one transaction, and the per-table row
+// counts are verified afterwards.
 package main
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"skygate/internal/db"
 )
@@ -40,6 +49,15 @@ type dbMigrateConfig struct {
 	DryRun bool
 }
 
+// splitFlagValue reports whether arg is the "--flag=value" form of
+// flag and, if so, returns the value.
+func splitFlagValue(flag, arg string) (string, bool) {
+	if strings.HasPrefix(arg, flag+"=") {
+		return strings.TrimPrefix(arg, flag+"="), true
+	}
+	return "", false
+}
+
 // parseDBMigrateArgs extracts the flags from the CLI args slice.
 // Accepts the subcommand name as args[0] (skipped if present) OR
 // the raw flag list (for testability).
@@ -49,9 +67,6 @@ type dbMigrateConfig struct {
 //   - --to is missing
 //   - a flag value is missing (e.g. `--from` with no value)
 //   - an unknown flag is present
-//
-// --schema-only and --data-only are mutually exclusive (calling
-// both is a user error — the second one wins, but we warn).
 func parseDBMigrateArgs(args []string) (dbMigrateConfig, error) {
 	cfg := dbMigrateConfig{Mode: "schema+data"}
 	start := 0
@@ -59,7 +74,27 @@ func parseDBMigrateArgs(args []string) (dbMigrateConfig, error) {
 		start = 1
 	}
 	for i := start; i < len(args); i++ {
-		switch args[i] {
+		arg := args[i]
+
+		// `--from=<dsn>` / `--to=<dsn>` first: the help text and the
+		// release notes document the `=` form, and the pre-2026-09-28
+		// parser rejected it with "unknown flag".
+		if v, ok := splitFlagValue("--from", arg); ok {
+			if v == "" {
+				return cfg, fmt.Errorf("--from= requires a value (e.g. --from=sqlite:/path)")
+			}
+			cfg.From = v
+			continue
+		}
+		if v, ok := splitFlagValue("--to", arg); ok {
+			if v == "" {
+				return cfg, fmt.Errorf("--to= requires a value (e.g. --to=postgres://user:pass@host/db)")
+			}
+			cfg.To = v
+			continue
+		}
+
+		switch arg {
 		case "--from":
 			if i+1 >= len(args) {
 				return cfg, fmt.Errorf("--from requires a value (e.g. --from=sqlite:/path or --from=postgres://...)")
@@ -82,7 +117,7 @@ func parseDBMigrateArgs(args []string) (dbMigrateConfig, error) {
 			printDBMigrateHelp()
 			os.Exit(0)
 		default:
-			return cfg, fmt.Errorf("unknown flag: %s (try --help)", args[i])
+			return cfg, fmt.Errorf("unknown flag: %s (try --help)", arg)
 		}
 	}
 	if cfg.From == "" {
@@ -101,47 +136,51 @@ func printDBMigrateHelp() {
 	fmt.Print(`skygate db-migrate — copy schema + data between skygate DBs.
 
 USAGE:
+  skygate db-migrate --from <dsn> --to <dsn> [flags]
   skygate db-migrate --from=<dsn> --to=<dsn> [flags]
 
 FLAGS:
   --from=<dsn>       source DSN (sqlite:/path, postgres://..., or bare path)
   --to=<dsn>         target DSN
-  --schema-only      emit CREATE TABLE statements only (no data)
-  --data-only        copy data only (target schema must already exist)
-  --dry-run          print the plan (table list + row counts) without writing
+  --schema-only      create the target schema, copy no rows
+  --data-only        copy rows only (the target schema must already exist)
+  --dry-run          print the plan (table list + source row counts) without writing
   -h, --help         print this help
 
-EXAMPLES:
-  # Switch from SQLite (self-host) to Postgres (prod scale-up):
-  skygate db-migrate --from=sqlite:/var/lib/skygate/skygate.db \\
-                     --to=postgres://skygate:<REDACTED>@<host>:5432/skygate
+BOTH DIRECTIONS ARE SUPPORTED:
+  SQLite -> PostgreSQL   scale a self-hosted install up
+  PostgreSQL -> SQLite   move a production install back to a single file
 
-  # Generate the SQL schema only, for review:
-  skygate db-migrate --from=sqlite:/var/lib/skygate/skygate.db \\
-                     --to=postgres://skygate:<REDACTED>@<host>:5432/skygate \\
-                     --schema-only --dry-run
+WHAT THE CONVERSION DOES:
+  * The target schema is created by the TARGET's own migration chain,
+    so it gets the columns, indexes, triggers and partial UNIQUE
+    indexes that backend actually needs — it is not translated from
+    the source's DDL.
+  * Tables are filled parents-before-children, ordered from the
+    target's own FOREIGN KEY metadata.
+  * Every row is copied inside ONE transaction; a failure rolls the
+    whole copy back, so a retry is always safe.
+  * Each value is coerced to the TARGET column's declared type
+    (SQLite stores timestamps as INTEGER unix seconds, PostgreSQL as
+    timestamptz, and each side's booleans differ).
+  * Per-table row counts are verified afterwards, and the PostgreSQL
+    identity sequences are advanced past the copied ids.
 
 NOTES:
-  * v1.5.4 minimum-viable implementation: SQLite→SQLite round-trip
-    is fully supported; cross-dialect (SQLite↔PG) conversion uses
-    a small set of type substitutions (see internal/db/convert.go).
-    For production cross-dialect conversion, ensure the target
-    schema is aligned with the source via the per-dialect
-    migration files (internal/db/migrations_sqlite.go /
-    migrations_pg.go).
-  * The target DB is NOT pre-existing: Convert creates every
-    table from scratch. If the target DSN points to an existing
-    DB with the skygate schema, Convert will fail with
-    "table X already exists" — drop the target schema first.
+  * The target must be EMPTY: the schema is created from scratch, and
+    a pre-existing skygate schema makes the run fail with
+    "table X already exists". Use --data-only to merge into a target
+    whose schema you already prepared.
+  * applied_migrations is never copied — it belongs to the target's
+    own migration run.
+  * After a successful conversion, point skygate at the target
+    (SKYGATE_DB) and restart it.
 `)
 }
 
 // runDBMigrate is the entry point for the db-migrate subcommand.
 // Opens both source and target DBs via OpenWithDialect, then
-// delegates to db.Convert. The current implementation does not
-// wrap Convert in a transaction (Convert handles per-table
-// commits internally; a top-level transaction would require
-// re-designing the algorithm).
+// delegates to db.ConvertWithReport and prints the report.
 func runDBMigrate(ctx context.Context, cfg dbMigrateConfig) error {
 	fromD, fromDB, err := db.OpenWithDialect(cfg.From)
 	if err != nil {
@@ -158,10 +197,39 @@ func runDBMigrate(ctx context.Context, cfg dbMigrateConfig) error {
 	fmt.Printf("db-migrate: from=%s (dialect=%s) -> to=%s (dialect=%s) mode=%s dry-run=%v\n",
 		cfg.From, fromD.Kind, cfg.To, toD.Kind, cfg.Mode, cfg.DryRun)
 
-	return db.Convert(ctx, fromD, fromDB, toD, toDB, db.ConvertOptions{
+	rep, err := db.ConvertWithReport(ctx, fromD, fromDB, toD, toDB, db.ConvertOptions{
 		Mode:   cfg.Mode,
 		DryRun: cfg.DryRun,
 	})
+	if rep != nil {
+		printConvertReport(rep)
+	}
+	if err != nil {
+		return err
+	}
+	if cfg.DryRun {
+		fmt.Println("dry run: nothing was written")
+		return nil
+	}
+	fmt.Printf("db-migrate: done — %d row(s) copied, verified=%v\n", rep.CopiedRows, rep.Verified)
+	return nil
+}
+
+// printConvertReport renders the per-table result so the operator (and
+// the CI log) can see what a conversion actually did, not just that it
+// exited 0.
+func printConvertReport(rep *db.ConvertReport) {
+	fmt.Printf("  %-32s %10s %10s %10s  %s\n", "table", "source", "target", "copied", "note")
+	for _, t := range rep.Tables {
+		note := t.Reason
+		if note == "" && len(t.SkippedColumns) > 0 {
+			note = "dropped column(s): " + strings.Join(t.SkippedColumns, ",")
+		}
+		fmt.Printf("  %-32s %10d %10d %10d  %s\n", t.Table, t.SourceRows, t.TargetRows, t.Copied, note)
+	}
+	for _, w := range rep.Warnings {
+		fmt.Printf("  warning: %s\n", w)
+	}
 }
 
 // runDBMigrateSubcommand is the dispatcher entry point (called

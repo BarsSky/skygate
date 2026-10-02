@@ -48,6 +48,12 @@
 #   1  at least one contract failed
 # ============================================================================
 set -e
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -187,18 +193,18 @@ echo "  [L] running go test ./internal/db/ -run TestOpenDSNWithRetry (may take 5
 if [ -z "$GO_BIN" ]; then
     fail "L" "go binary not found in PATH or standard install locations"
 elif [ "$GO_BIN" = "go" ]; then
-    if go test ./internal/db/ -run TestOpenDSNWithRetry >/tmp/check_b_db_dsn_test.log 2>&1; then
+    if go test ./internal/db/ -run TestOpenDSNWithRetry >${SKY_TMP}/check_b_db_dsn_test.log 2>&1; then
         ok "L: go test ./internal/db/ -run TestOpenDSNWithRetry passes"
     else
-        fail "L" "go test failed — see /tmp/check_b_db_dsn_test.log"
-        tail -20 /tmp/check_b_db_dsn_test.log | sed 's/^/      /'
+        fail "L" "go test failed — see ${SKY_TMP}/check_b_db_dsn_test.log"
+        tail -20 ${SKY_TMP}/check_b_db_dsn_test.log | sed 's/^/      /'
     fi
 else
-    if "$GO_BIN" test ./internal/db/ -run TestOpenDSNWithRetry >/tmp/check_b_db_dsn_test.log 2>&1; then
+    if "$GO_BIN" test ./internal/db/ -run TestOpenDSNWithRetry >${SKY_TMP}/check_b_db_dsn_test.log 2>&1; then
         ok "L: go test ./internal/db/ -run TestOpenDSNWithRetry passes (via $GO_BIN)"
     else
-        fail "L" "go test failed — see /tmp/check_b_db_dsn_test.log"
-        tail -20 /tmp/check_b_db_dsn_test.log | sed 's/^/      /'
+        fail "L" "go test failed — see ${SKY_TMP}/check_b_db_dsn_test.log"
+        tail -20 ${SKY_TMP}/check_b_db_dsn_test.log | sed 's/^/      /'
     fi
 fi
 

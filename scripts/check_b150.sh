@@ -32,6 +32,12 @@
 # script is the "is the code even there?" check.
 
 set -euo pipefail
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$REPO_ROOT"
@@ -175,11 +181,11 @@ echo "=== contract D: i18n catalog parity for deploy.* keys ==="
 # catches the RU+EN mismatch. This contract is a "is the
 # TestCatalogsParity test still PASSING" check — i.e. we
 # run the test, see it green.
-if go test -count=1 -run "TestCatalogsParity" ./internal/i18n/ 2>&1 | tee /tmp/b150_parity.log >/dev/null; then
+if go test -count=1 -run "TestCatalogsParity" ./internal/i18n/ 2>&1 | tee ${SKY_TMP}/b150_parity.log >/dev/null; then
     ok "TestCatalogsParity PASS (RU+EN deploy.* keys in lock-step)"
 else
-    bad "TestCatalogsParity FAIL (RU+EN deploy.* keys mismatch) — see /tmp/b150_parity.log"
-    head -10 /tmp/b150_parity.log
+    bad "TestCatalogsParity FAIL (RU+EN deploy.* keys mismatch) — see ${SKY_TMP}/b150_parity.log"
+    head -10 ${SKY_TMP}/b150_parity.log
 fi
 # Spot-check the 10 specific deploy.* keys exist in BOTH maps.
 for key in \

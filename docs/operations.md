@@ -30,6 +30,9 @@ delegation.
 10. [Day-2 checklist](#10-day-2-checklist) — weekly / before every release / after every incident.
 11. [Admin role delegation and the primary admin](#11-admin-role-delegation-and-the-primary-admin) — promote/demote from `/admin/users`, who is immutable, and how to recover the primary marker.
 12. [Caveats — stale or contradictory sources](#12-caveats--stale-or-contradictory-sources)
+13. [Host disk headroom](#13-host-disk-headroom--the-guarantee-catalog-needs--1-gb-free) — what a catalog run costs, and the reclaim that costs nothing.
+14. [Operator recipes recovered from one-off scripts](#14-operator-recipes-recovered-from-one-off-scripts-2026-09) — break-glass update, build identity, DERP probing, Tailscale key resolution, login/cluster POST debugging, the stuck-tag ladder, running Go from Git Bash.
+15. [Running the guarantee catalog with PostgreSQL coverage](#15-running-the-guarantee-catalog-with-postgresql-coverage) — the `CREATE SCHEMA` permission contract, the container-IP recipe, and the SSH-tunnel variant.
 
 ---
 
@@ -1485,3 +1488,311 @@ incident analysis depends on that journal, so prefer the build cache first), `/v
 357 MB (pure download cache, always safe to delete). The catalog itself leaves nothing behind
 beyond the build cache: remove its worktree afterwards with
 `git worktree remove --force <path>`.
+
+---
+
+## 14. Operator recipes recovered from one-off scripts (2026-09)
+
+During the 2026-09-28 workspace cleanup, 21 untracked one-off scripts were removed from the
+working tree (they were never in git and were re-created by hand each time). The commands worth
+keeping are reproduced below in a committable form: **every host, IP, database name and
+credential is a placeholder** (§0). If you find yourself typing one of these again, add it as a
+tracked script under `scripts/` (or `deploy/`) rather than as another untracked file — an untracked
+script that documentation references is the trap `AGENTS.md` §2.11 describes, and
+`deploy/pg-ha/check_pg_health.sh` was exactly that (now tracked, enforced by `check_b152.sh`
+contract D).
+
+### 14.1 Break-glass update of a docker host (when `/admin/update` is not usable)
+
+Emergency path only — rule 13 in `AGENTS.md` makes the in-app updater the routine.
+
+```bash
+cd <PROJECT_DIR>
+git status --short                 # MUST be reviewed first (rule 7)
+git fetch origin
+git stash push -u -m "break-glass $(date -Iseconds)"   # keep the operator's local edits
+git pull --no-rebase --no-edit origin main             # merge, never reset --hard
+git stash pop                                            # then verify docker-compose.yml/go.mod
+sudo docker compose stop skygate
+sudo docker compose up -d --force-recreate --no-deps skygate
+for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/healthz && break; sleep 5; done
+```
+
+`--force-recreate` is mandatory when `extra_hosts`, volumes or the image may have changed
+(AGENTS trap #3) — a plain `restart` keeps the old container network config. Never
+`git reset --hard` here: `docker-compose.yml`, `go.mod` and `go.sum` are operator-managed
+(AGENTS rule 7).
+
+### 14.2 "Is the running container actually the build I think it is?"
+
+```bash
+sudo docker exec skygate-skygate-1 /app/skygate --version
+curl -fsS http://127.0.0.1:8080/healthz          # authoritative: "build":"vX.Y.Z+<sha>"
+sudo docker exec skygate-skygate-1 stat /app/skygate      # binary mtime
+sudo docker logs skygate-skygate-1 --tail 30              # entrypoint rebuild output
+sudo docker inspect skygate-skygate-1 --format '{{ json .Mounts }}'
+git -C <PROJECT_DIR> log --oneline -3
+```
+
+Compare `/healthz`'s `build` with the commit you expect **before** believing any behavioural
+result — on a native install the running binary is not rebuilt by a pull at all (trap #12).
+
+### 14.3 DERP relay: database rows vs. what the probe can reach
+
+The `/admin/derp` status is derived from rows plus a live probe, so check both halves:
+
+```bash
+sudo docker exec <PG_CONTAINER> psql -U <DB_USER> -d <DB_NAME> -c \
+  "SELECT id, hostname, url, port, is_bundled, enabled FROM derp_relays WHERE is_bundled = 1"
+sudo docker exec <PG_CONTAINER> psql -U <DB_USER> -d <DB_NAME> -c \
+  "SELECT region_id, host, url, name, healthy, last_error, last_check FROM derp_health ORDER BY region_id"
+
+# Probe exactly what the container can reach (optionally from inside skygate):
+for p in 443 8443; do
+  curl -sk -m 5 -o /dev/null -w "$p -> HTTP %{http_code}\n" https://<RELAY_HOST>:$p/debug/vars
+done
+sudo docker exec skygate-skygate-1 getent hosts <RELAY_HOST>     # what does it resolve to?
+sudo docker exec skygate-skygate-1 ip route
+```
+
+**The classic trap:** if the *host* resolves its own public name to `127.0.0.1` via
+`/etc/hosts`/`systemd-resolved`, the container inherits that answer and probes its own loopback
+(AGENTS trap #2). Fix with an `extra_hosts` entry whose IP comes from `.env`:
+
+```yaml
+    extra_hosts:
+      - "<RELAY_HOST>:${SKYGATE_DERP_PROBE_HOST:-127.0.0.1}"
+```
+
+Two footguns seen live: (a) `docker compose up` can render the placeholder into a literal — always
+re-check with `docker compose config | grep -A1 extra_hosts` and keep the `${VAR:-default}` form;
+(b) after editing `extra_hosts`, only `up -d --force-recreate --no-deps skygate` applies it.
+
+### 14.4 Tailscale auth-key state resolution order
+
+`/admin/tailscale` resolves the key path in this order — check each level before concluding
+"Tailscale is broken":
+
+```bash
+sudo docker exec skygate-skygate-1 printenv SKYGATE_TS_AUTHKEY_FILE
+sudo docker exec <PG_CONTAINER> psql -U <DB_USER> -d <DB_NAME> -t -c \
+  "SELECT key, value FROM global_settings WHERE key = 'tailscale.auth_key_path'"
+sudo docker exec skygate-skygate-1 ls -la /data/ts/
+sudo docker exec skygate-skygate-1 ps aux | grep -i tailscale
+```
+
+1. `global_settings['tailscale.auth_key_path']` (the web-UI override) → 2. `SKYGATE_TS_AUTHKEY_FILE`
+→ 3. the default `/data/ts/authkey`. `SKYGATE_TS_AUTHKEY_FILE=/dev/null` is the documented
+"deliberately off" state — the container log says `TS_AUTHKEY_FILE not set — Tailscale skipped`,
+and that is not a fault.
+
+### 14.5 Login POST debugging (form, cookie, audit)
+
+```bash
+curl -s -X POST --data-urlencode "username=<ADMIN_USER>" \
+     --data-urlencode "password=$SKYGATE_ADMIN_PASS" \
+     -i http://127.0.0.1:8080/login | grep -iE 'HTTP/|set-cookie|location'
+# then, if the redirect is not what you expect:
+sudo docker exec <PG_CONTAINER> psql -U <DB_USER> -d <DB_NAME> -tA -c \
+  "SELECT id, username, action, substring(detail,1,60) FROM audit_log
+   WHERE action LIKE 'login%' ORDER BY id DESC LIMIT 5"
+```
+
+The password must be URL-encoded (`--data-urlencode`); a shell-special character in a raw `-d`
+payload produces a "wrong password" that is really a truncated form field.
+
+### 14.6 Cluster node / invite POST debugging
+
+Cluster POSTs write rows, so a 500 is usually a schema or FK problem rather than business logic:
+
+```bash
+COOKIE=<SKYGATE_COOKIE>
+curl -s -b "skygate_session=$COOKIE" -X POST \
+  -d 'hostname=test-node&roles=skygate' -i http://127.0.0.1:8080/admin/cluster/node/add
+curl -s -b "skygate_session=$COOKIE" -X POST \
+  -d 'role=skygate-standby&target_hostname=test-host&ttl_hours=24' \
+  -i http://127.0.0.1:8080/admin/cluster/invite/generate
+
+sudo docker exec <PG_CONTAINER> psql -U <DB_USER> -d <DB_NAME> -c \
+  "SELECT conname, confrelid::regclass FROM pg_constraint
+   WHERE conrelid IN ('cluster_node'::regclass, 'cluster_invite'::regclass) AND contype = 'f'"
+```
+
+Delete the probe rows afterwards (`DELETE FROM cluster_node WHERE hostname='test-node'`) — the
+cluster page is the operator's view of reality.
+
+### 14.7 "A device hangs in ⏳ pending tag assignment"
+
+`internal/nodeownership` backfills a device's `tag:dev-<user>-<host>` through four strategies, and
+each has its own guard:
+
+| Strategy | Condition | How it silently fails |
+|---|---|---|
+| A | `node.PreAuthKeyID == preauth_keys.headscale_preauth_id` | the preauth id was never captured in the DB row |
+| C | temporal fallback: a skygate-issued preauth key within 1 h | the device registered long after the key was minted |
+| D | the node already carries a `tag:dev-<user>-*` tag | chicken-and-egg: no tag yet, so nothing to match |
+| E (OIDC, B175) | `PreAuthKeyID == ""` **and** `UserName == portalUsername` | headscale normalised the name differently, or the OIDC `claim_map` uses the email local-part (`strip_email_domain` is gone in headscale 0.23+) |
+
+Collect the evidence before guessing:
+
+```bash
+# 1. the portal row, 2. its preauth keys, 3. what is already attributed
+sudo docker exec <PG_CONTAINER> psql -U <DB_USER> -d <DB_NAME> -c \
+  "SELECT id, username, headscale_user_id FROM portal_users WHERE username = '<USER>'"
+sudo docker exec <PG_CONTAINER> psql -U <DB_USER> -d <DB_NAME> -c \
+  "SELECT * FROM preauth_keys WHERE user_id = (SELECT id FROM portal_users WHERE username='<USER>')"
+sudo docker exec <PG_CONTAINER> psql -U <DB_USER> -d <DB_NAME> -c \
+  "SELECT * FROM node_owner_map WHERE username = '<USER>'"
+# 4. headscale's own view of the node (UserName + PreAuthKeyID + Tags)
+<HEADSCALE_CLI> nodes list -o json
+# 5. did the reconcile pass report it?
+sudo docker exec <PG_CONTAINER> psql -U <DB_USER> -d <DB_NAME> -c \
+  "SELECT id, action, detail FROM audit_log WHERE action LIKE 'tag.%' ORDER BY id DESC LIMIT 20"
+```
+
+`skygate_tag_unmatched_total` (the B272 metric) counts devices no strategy could attribute — a
+non-zero value is the signal that this is happening, rather than a device that simply has no user.
+
+### 14.8 Running Go from Git Bash on Windows
+
+`go` is on the Windows `PATH` but not inside Git Bash, so a check that shells out to `go` reports
+"go not in PATH, skipping" on a Windows workstation. Either run the Go commands from PowerShell, or
+resolve the binary once and call it explicitly:
+
+```bash
+GO="$(powershell -NoProfile -Command "(Get-Command go.exe -ErrorAction SilentlyContinue).Source" | tr -d '\r')"
+cmd.exe //c "\"$GO\" test ./internal/... -count=1"
+```
+
+The `//c` (not `/c`) stops Git Bash from rewriting the argument, and the doubled quotes survive the
+space in `Program Files`. **This is why a local Windows gate run is not authoritative** — run the
+real catalog on the VM (AGENTS rule 4).
+
+---
+
+## 15. Running the guarantee catalog with PostgreSQL coverage
+
+`scripts/verify_pre_deploy.sh` never sets `SKYGATE_TEST_PG_DSN`, and it cannot invent one. So on a
+host where nobody exported it, `B1` (`go test ./...`) **SKIPs every PostgreSQL-gated test and still
+reports PASS** — the gate's database coverage is silently SQLite-only. CI is the exception:
+`.github/workflows/ci.yml`'s `test-pg` job starts a real `postgres:15` service and passes the DSN,
+but it is scoped to `./internal/db/...`, so most of the PG-gated tests never run anywhere.
+
+Measured 2026-10-01 — the packages whose tests open a live PostgreSQL through
+`db.OpenTestPG`:
+
+| Package | How it reaches PostgreSQL | Covered by CI's old `test-pg` scope (`./internal/db/...`)? |
+|---|---|---|
+| `internal/db` | `OpenTestPG` / raw DSN | yes |
+| `internal/feature/admin` | `OpenTestPG` (18 sites) | **no** |
+| `internal/monitoring` | `OpenForTest` (11 sites) | **no** |
+| `internal/invite` | `OpenForTest` (7 sites) | **no** |
+| `internal/acl` | `OpenTestPG` / `OpenForTest` (4 sites) | **no** |
+| `internal/headscale` | raw `SKYGATE_TEST_PG_DSN` | **no** |
+| `internal/backup` | raw `SKYGATE_TEST_PG_DSN` | **no** |
+| `cmd/skygate` | raw `SKYGATE_TEST_PG_DSN` | **no** |
+
+**MEASURED 2026-10-01 (B338) — eight packages, not three.** The first version of this table was produced by grepping `OpenTestPG(` alone; `db.OpenForTest` is a second, equally live gate (it SKIPs without the DSN and delegates to `OpenTestPG` with it), and a raw `os.Getenv("SKYGATE_TEST_PG_DSN")` check is a third. The gap was not academic: with the DSN set, `B1` failed on three tests in `internal/monitoring` that had been silently skipping since B273/B279 and had never run in CI either. `scripts/check_b334_pg_test_coverage.sh` contract D1b now derives this set from all three markers and fails when it changes, so a package cannot lose its coverage to a narrow grep again.
+
+Two of the three ran **nowhere**: CI never reached them and this gate never set the variable, so
+`OpenTestPG` SKIPped in both places and both reported green. (Three `scripts/*_liveverify.go` tools
+read the same DSN, but they are `//go:build ignore` helpers, not part of `go test`.) That is the gap
+TD-24 tracks, and it is not theoretical: the 2026-09-25 gate audit found two real PostgreSQL-only
+regressions (an SQLite-only `INSERT OR IGNORE` on a shared path in `internal/mesh/mesh.go` and
+`internal/subnet/shares.go`) that no job exercised. CI's `test-pg` job now runs `go test ./...`.
+
+On the reference VM the server already exists — `skygate-pg-local` (postgres:18-alpine) — and its
+port is **not published to the host**, so the gate has to point at the container address. Verified
+2026-10-01: the host reaches `172.18.0.4:5432` directly over the docker bridge, and the `admin` role
+holds `CREATE` on `postgres`, `skygate_citest` and `skygate_staging`, so the recipe below works
+unchanged with `skygate_citest` as the database.
+
+### The DSN contract (this is the part that bites)
+
+`db.OpenTestPG` gives each test its own `CREATE SCHEMA skygate_pgtest_<test name>` and then runs
+`MigratePostgres` inside it. The role in `SKYGATE_TEST_PG_DSN` therefore needs **`CREATE` on the
+database** the DSN names. Measured on PostgreSQL 18.4: a role granted only `CREATEDB`, pointed at
+the `postgres` database, fails *every* `OpenTestPG` test with
+
+```
+CREATE SCHEMA "skygate_pgtest_...": ERROR: permission denied for database postgres (SQLSTATE 42501)
+```
+
+Fix by pointing the DSN at a **database the role owns** (or by granting `CREATE` on it). A
+superuser role such as the container's `POSTGRES_USER` can use any database.
+
+### Recipe
+
+The password is read from the container at run time and stays in the environment — do **not** paste
+it into a shell history or a ticket.
+
+```bash
+cd <PROJECT_DIR>
+PG_C=$(sudo docker ps --filter name=skygate-pg-local --format '{{.Names}}' | head -1)
+PG_IP=$(sudo docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$PG_C")
+PG_USER=$(sudo docker exec "$PG_C" printenv POSTGRES_USER)
+PG_PASS=$(sudo docker exec "$PG_C" printenv POSTGRES_PASSWORD)
+export SKYGATE_TEST_PG_DSN="postgres://${PG_USER}:${PG_PASS}@${PG_IP}:5432/postgres?sslmode=disable"
+
+# sanity check: the DSN must be able to create a schema.
+# Do NOT name the probe schema pg_* — the prefix pg_ is RESERVED by
+# PostgreSQL ("unacceptable schema name ... The prefix \"pg_\" is reserved
+# for system schemas"), so a probe named pg_gate_probe fails for a reason
+# that has nothing to do with permissions. Measured on PostgreSQL 18.4,
+# 2026-10-01: this recipe used to say pg_gate_probe and therefore always
+# reported a permission problem on a correctly configured server.
+psql "$SKYGATE_TEST_PG_DSN" -c 'CREATE SCHEMA gate_probe' -c 'DROP SCHEMA gate_probe'
+
+sudo env PATH="$HOME/go/bin:$PATH" GOFLAGS=-p=2 \
+  SKYGATE_TEST_PG_DSN="$SKYGATE_TEST_PG_DSN" \
+  bash scripts/verify_pre_deploy.sh
+```
+
+Two caveats:
+
+* **The container IP changes** when the container is recreated (a `--force-recreate` update does
+  exactly that). Recompute `PG_IP` after every update; do not cache it in a file.
+* A superuser DSN makes the gate exercise the *schema* paths, not the privilege boundaries. To test
+  what an ordinary `skygate` role can do, create an owned database
+  (`CREATE DATABASE skygate_gate OWNER skygate;`) and point the DSN at that instead.
+
+### Interrupted PG runs used to leave debris that looked like a regression
+
+`db.OpenTestPG` names each test's schema after the test, so the name is the **same on every run**,
+while `t.Cleanup` only runs on a graceful exit. Until 2026-09-28 it created the schema with
+`CREATE SCHEMA IF NOT EXISTS`, so an interrupted run (Ctrl-C, `go test -timeout`, a killed CI job)
+left the schema *and its rows* behind, and the next run failed with
+
+```
+display_prefs_b136_test.go:36: insert test user: ERROR: duplicate key value violates unique
+constraint "portal_users_username_key" (SQLSTATE 23505)
+```
+
+Measured: 13 leftover `skygate_pgtest_*` schemas produced exactly four "failures" in
+`display_prefs_b136_test.go` that had nothing to do with the code under test. The helper now does
+`DROP SCHEMA IF EXISTS … CASCADE` before `CREATE SCHEMA`, so a stale schema cannot be inherited —
+verified by killing a run on purpose (4 schemas left) and re-running the four tests green.
+
+If you ever see duplicate-key failures from a `*_test.go` that seeds fixed rows, check for debris
+before believing it:
+
+```bash
+psql "$SKYGATE_TEST_PG_DSN" -tAc \
+  "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'skygate_pgtest_%'" | \
+  while read -r s; do [ -n "$s" ] && psql "$SKYGATE_TEST_PG_DSN" -c "DROP SCHEMA IF EXISTS \"$s\" CASCADE"; done
+```
+
+The reference VM also carries a long-lived `skygate_citest` database (42 tables) used for the same
+purpose by hand; the helper above does not depend on it.
+
+On this repository's Windows workstation the same tests can be run against a local throwaway server
+(see the header of `internal/db/convert_cross_pg_test.go` for the `docker run` line), or against the
+VM's PostgreSQL through an SSH tunnel:
+
+```bash
+ssh -N -L 127.0.0.1:55433:<PG_IP>:5432 skygate &
+SKYGATE_TEST_PG_DSN='postgres://<user>:<pw>@127.0.0.1:55433/<owned-db>?sslmode=disable' \
+  go test ./internal/db/ -run 'TestConvert_.*_Real|TestSchemaParity' -count=1 -v
+```
+
+

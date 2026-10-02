@@ -10,18 +10,15 @@
 //     branches.
 //   - FormatHumanSchedule: the "every minute" / "5 AM
 //     daily" / "invalid (fall back to raw)" branches.
-//   - int64ArrayToPGArray: the empty-slice / single-
-//     element / multi-element branches.
+//   - DeleteSmokeMeshes: a real round trip against a real SQLite database
+//     (the SQL contract used to be verified only by scripts/check_b143.sh
+//     live on the PostgreSQL VM, which is how the `ANY($1::bigint[])`
+//     form survived: SQLite rejects it outright).
 //   - sameCleanupMinute: the same-minute / different-
 //     minute / different-day / zero-value branches.
 //
-// The SQL contract (DeleteSmokeMeshes) is covered
-// by scripts/check_b143.sh live on the VM — the
-// SQL touchpoints are easier to verify in shell
-// against the real PG than to mock in Go. The
-// pure-Go tests below catch the formatting and
-// schedule-parsing bugs that the shell check would
-// miss.
+// The PostgreSQL side of the SQL contract stays in
+// scripts/check_b143.sh (live on the VM).
 
 package mesh
 
@@ -29,6 +26,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	skygatedb "skygate/internal/db"
 )
 
 // TestFormatCleanupMessage_NoRows pins the empty-result
@@ -120,37 +119,100 @@ func TestFormatCleanupMessage_TruncatedAtFive(t *testing.T) {
 	}
 }
 
-// TestInt64ArrayToPGArray_Empty pins the empty-slice
-// branch. DeleteSmokeMeshes guards the empty case
-// before calling this, but the function should still
-// return "{}" (which matches no rows) for defensive
-// reasons.
-func TestInt64ArrayToPGArray_Empty(t *testing.T) {
-	if got := int64ArrayToPGArray(nil); got != "{}" {
-		t.Errorf("empty: got %q, want %q", got, "{}")
+// TestDeleteSmokeMeshes_SQLite is the regression guard for the defect the
+// 2026-10-01 audit found: the DELETE step used
+//
+//	WHERE id = ANY($1::bigint[])
+//
+// with a PostgreSQL array literal (`{1,2,3}`) passed as one parameter.
+// That is PostgreSQL-only syntax, and `DeleteSmokeMeshes` runs from
+// `mesh.StartCleanupScheduler` on **every** install kind, so on SQLite the
+// statement failed with
+//
+//	SQL logic error: near "[]": syntax error (1)
+//
+// (measured by reverting the fix and re-running this test — the exact
+// text is pinned here so the next reader does not have to guess) — the
+// B282 dialect-leak class. It was invisible until it mattered, because the
+// `Total == 0` early return means the DELETE is only reached when there is
+// something to clean: B143's cleanup was silently dead on every SQLite
+// install exactly when it had work to do.
+//
+// The old test suite could not catch it — the header of this file said the
+// SQL contract was "covered by scripts/check_b143.sh live on the VM", and
+// the VM is PostgreSQL. This test runs the real statement against a real
+// SQLite database, so both backends are now exercised in-process.
+func TestDeleteSmokeMeshes_SQLite(t *testing.T) {
+	_, conn, err := skygatedb.OpenWithDialect(":memory:")
+	if err != nil {
+		t.Fatalf("open SQLite: %v", err)
 	}
-	if got := int64ArrayToPGArray([]int64{}); got != "{}" {
-		t.Errorf("empty (len 0): got %q, want %q", got, "{}")
+	defer conn.Close()
+	if err := skygatedb.ApplyMigrations(conn, skygatedb.DialectSQLite); err != nil {
+		t.Fatalf("apply the SQLite chain: %v", err)
 	}
-}
 
-// TestInt64ArrayToPGArray_Single pins the single-
-// element branch.
-func TestInt64ArrayToPGArray_Single(t *testing.T) {
-	if got := int64ArrayToPGArray([]int64{42}); got != "{42}" {
-		t.Errorf("single: got %q, want %q", got, "{42}")
+	// A portal user for the FK, then three meshes: two smoke-mesh rows
+	// without members (the cruft) and one real mesh that must survive.
+	if _, err := conn.Exec(
+		`INSERT INTO portal_users (id, username, password_hash, is_admin) VALUES (1, 'cleanup_probe', 'x', 0)`,
+	); err != nil {
+		t.Fatalf("insert portal user: %v", err)
 	}
-}
+	if _, err := conn.Exec(`
+		INSERT INTO meshes (id, code, name, creator_user_id, status) VALUES
+		  (10, 'smoke-a', 'smoke-mesh-111', 1, 'active'),
+		  (11, 'smoke-b', 'smoke-mesh-222', 1, 'active'),
+		  (12, 'real',    'family-mesh',    1, 'active')`); err != nil {
+		t.Fatalf("insert meshes: %v", err)
+	}
+	// The third smoke mesh has a member, so it must be kept (safety rule).
+	if _, err := conn.Exec(`
+		INSERT INTO meshes (id, code, name, creator_user_id, status) VALUES
+		  (13, 'smoke-c', 'smoke-mesh-333', 1, 'active')`); err != nil {
+		t.Fatalf("insert the member-bearing smoke mesh: %v", err)
+	}
+	if _, err := conn.Exec(
+		`INSERT INTO mesh_members (mesh_id, user_id, joined_at) VALUES (13, 1, 0)`,
+	); err != nil {
+		t.Fatalf("insert mesh member: %v", err)
+	}
 
-// TestInt64ArrayToPGArray_Many pins the multi-element
-// branch. The PG array literal "{1,2,3}" is what the
-// DELETE statement parses with $1::bigint[].
-func TestInt64ArrayToPGArray_Many(t *testing.T) {
-	if got := int64ArrayToPGArray([]int64{1, 2, 3}); got != "{1,2,3}" {
-		t.Errorf("many: got %q, want %q", got, "{1,2,3}")
+	res, err := DeleteSmokeMeshes(conn)
+	if err != nil {
+		t.Fatalf("DeleteSmokeMeshes on SQLite failed (this is the ANY($1::bigint[]) bug): %v", err)
 	}
-	if got := int64ArrayToPGArray([]int64{100, -5, 0, 9999999999}); got != "{100,-5,0,9999999999}" {
-		t.Errorf("many (mixed): got %q, want %q", got, "{100,-5,0,9999999999}")
+	if res.Total != 2 {
+		t.Errorf("Total = %d, want 2 (the two member-less smoke meshes)", res.Total)
+	}
+	if len(res.IDs) != 2 || res.IDs[0] != 10 || res.IDs[1] != 11 {
+		t.Errorf("IDs = %v, want [10 11]", res.IDs)
+	}
+
+	var remaining int
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM meshes`).Scan(&remaining); err != nil {
+		t.Fatalf("count meshes: %v", err)
+	}
+	if remaining != 2 {
+		t.Errorf("meshes remaining = %d, want 2 (the real mesh and the one with a member)", remaining)
+	}
+	for _, id := range []int64{12, 13} {
+		var n int
+		if err := conn.QueryRow(`SELECT COUNT(*) FROM meshes WHERE id = ?`, id).Scan(&n); err != nil {
+			t.Fatalf("count mesh %d: %v", id, err)
+		}
+		if n != 1 {
+			t.Errorf("mesh %d was deleted — the safety rules must keep a real mesh and a mesh with members", id)
+		}
+	}
+
+	// A second run must be the clean no-op path (nothing left to delete).
+	res2, err := DeleteSmokeMeshes(conn)
+	if err != nil {
+		t.Fatalf("second DeleteSmokeMeshes: %v", err)
+	}
+	if res2.Total != 0 {
+		t.Errorf("second run Total = %d, want 0", res2.Total)
 	}
 }
 

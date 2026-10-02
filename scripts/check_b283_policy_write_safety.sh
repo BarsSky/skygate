@@ -64,7 +64,12 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 HELPER=internal/headscale/policy_helper.go
 ACL=internal/headscale/acl.go
 VALIDATE=internal/headscale/policy_validate.go
-GEN=internal/acl/acl.go
+# The admin ACL SURFACE, not one file: internal/acl/acl.go was split into
+# seven on 2026-10-01 (refactor Phase D) and a contract that greps one path turns
+# a pure code move into a false FAIL — and is the weaker contract even while it
+# is green. See scripts/lib/gosurface.sh and B339.
+. scripts/lib/gosurface.sh
+gosurface GEN internal/acl/acl.go internal/acl/acl_apply.go internal/acl/acl_generate.go internal/acl/acl_generate_via.go internal/acl/acl_ownership.go internal/acl/acl_set.go internal/acl/acl_tags.go
 APPLIER=deploy/skygate-apply-policy.sh
 
 hdr "B283 — a policy write must not take the control plane down"

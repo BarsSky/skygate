@@ -471,9 +471,9 @@ go test -tags postgres -count=1 -v -run "TestPG" ./internal/db/
 
 ## Лицензия
 
-[MIT](LICENSE) — Copyright (c) 2026. Использование, изменение и
+[MIT](../../LICENSE) — Copyright (c) 2026. Использование, изменение и
 распространение разрешены на условиях лицензии MIT. Полный текст
-— в файле [LICENSE](LICENSE).
+— в файле [LICENSE](../../LICENSE).
 
 ---
 

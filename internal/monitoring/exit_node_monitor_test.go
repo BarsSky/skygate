@@ -112,9 +112,18 @@ func TestComputeSnapshot_OnlineAllOK(t *testing.T) {
 	n := headscale.NodeView{
 		ID: "3", Hostname: "relay-1",
 		Online:          true,
+		IsExitNode:      true, // B273: computeSnapshot gates on the shared predicate
 		LastSeen:        now.Format(time.RFC3339),
 		Tags:            []string{"tag:exit-node", "tag:public"},
 		AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+		// B273 (B338): "all OK" means the route is APPROVED, not merely
+		// advertised. Pre-B273 the ladder read AvailableRoutes only, which is how
+		// an unapproved relay counted as healthy — the exact false positive the
+		// monitor exists to prevent. Without this the ladder correctly answers
+		// "degraded" and this fixture (named OnlineAllOK) was asserting the old,
+		// wrong semantics. It never ran anywhere: db.OpenForTest SKIPs without
+		// SKYGATE_TEST_PG_DSN.
+		ApprovedRoutes: []string{"0.0.0.0/0", "::/0"},
 	}
 	got, ok := m.computeSnapshot(n, now)
 	if !ok {
@@ -517,9 +526,16 @@ func TestTick_DegradedTransition_RecordedButNotAlerted(t *testing.T) {
 		t.Fatalf("seed tick: %v", err)
 	}
 
-	// Routes unapproved.
+	// Routes unapproved. B273: computeSnapshot gates on NodeView.IsExitNode,
+	// so this fixture must carry it too — the node still HAS tag:exit-node, it
+	// has merely lost the 0.0.0.0/0 approval. Without the field the snapshot was
+	// skipped entirely (ok=false), no row was written, and this test asserted a
+	// transition that could never happen. It never ran anywhere: db.OpenForTest
+	// SKIPs without SKYGATE_TEST_PG_DSN, CI's test-pg job was scoped to
+	// ./internal/db/..., and the VM gate had no DSN.
 	hs.setNodes([]headscale.NodeView{
 		{ID: "3", Hostname: "relay-1", Online: true,
+			IsExitNode:      true,
 			LastSeen:        now.Format(time.RFC3339),
 			Tags:            []string{"tag:exit-node"},
 			AvailableRoutes: []string{}}, // nothing approved any more
@@ -710,6 +726,17 @@ func contains(haystack, needle string) bool {
 // upserts them into node_owner_map. Pre-existing rows get
 // their tag refreshed to match headscale; missing rows are
 // inserted.
+// CONTRACT RENEGOTIATED (B338, 2026-10-01). This test's fixtures used to carry
+// ONLY the class tag `tag:exit-node`, and the assertions expected the sync to
+// write that value into node_owner_map. B279 (v1.5.46) deliberately made that a
+// no-op: the class tag is a ROLE, not an identity, and writing it over the
+// operator's per-node tag is the live `aro` reverter — after which the B272
+// reconciler compared the row against headscale, found the class tag it had just
+// been given, and reported nothing at all. `db.PickPerNodeTag` returns "" for a
+// class-tag-only node, and SyncNodesFromHeadscale then leaves the row alone. The
+// fixtures now carry REAL per-node tags and the assertions expect THEM, and
+// TestTick_AutoSync_ClassTagOnlyLeavesRowAlone_B338 pins B279's fix directly —
+// otherwise the reverter could come back and this test would still be green.
 func TestTick_AutoSyncEnabled_InsertsAndUpdates(t *testing.T) {
 	d := db.OpenForTest(t)
 	sink := &recordingSink{}
@@ -717,7 +744,7 @@ func TestTick_AutoSyncEnabled_InsertsAndUpdates(t *testing.T) {
 
 	// Pre-seed node_owner_map with relay-1 (id=3) at the
 	// wrong tag, so we exercise the UPDATE branch.
-	if err := db.UpsertNodeOwner(d, "3", 1, "admin", "tag:untagged", 0); err != nil {
+	if err := db.UpsertNodeOwner(d, "3", 1, "admin", "tag:dev-admin-old", 0); err != nil {
 		t.Fatalf("seed relay-1: %v", err)
 	}
 
@@ -725,14 +752,14 @@ func TestTick_AutoSyncEnabled_InsertsAndUpdates(t *testing.T) {
 		{ID: "3", Hostname: "relay-1", UserName: "admin", UserID: "1",
 			Online: true, LastSeen: now.Format(time.RFC3339),
 			IsExitNode:      true,
-			Tags:            []string{"tag:exit-node", "tag:public"},
+			Tags:            []string{"tag:exit-node", "tag:dev-admin-relay-1"},
 			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
 			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 		// relay-2 (id=4) is brand-new — should be inserted.
 		{ID: "4", Hostname: "relay-2", UserName: "admin", UserID: "1",
 			Online: true, LastSeen: now.Format(time.RFC3339),
 			IsExitNode:      true,
-			Tags:            []string{"tag:exit-node", "tag:public"},
+			Tags:            []string{"tag:exit-node", "tag:dev-admin-relay-2"},
 			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
 			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
 	}}
@@ -743,15 +770,19 @@ func TestTick_AutoSyncEnabled_InsertsAndUpdates(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	// Both rows present, both tagged exit-node.
-	for _, id := range []string{"3", "4"} {
+	// Both rows present, each at its own PER-NODE tag (B279: never the class tag).
+	want := map[string]string{"3": "tag:dev-admin-relay-1", "4": "tag:dev-admin-relay-2"}
+	for id, wantTag := range want {
 		row, err := db.GetNodeOwner(d, id)
 		if err != nil {
 			t.Errorf("GetNodeOwner(%s) = %v, want row", id, err)
 			continue
 		}
-		if row.Tag != "tag:exit-node" {
-			t.Errorf("row %s tag = %q, want 'tag:exit-node'", id, row.Tag)
+		if row.Tag != wantTag {
+			t.Errorf("row %s tag = %q, want %q", id, row.Tag, wantTag)
+		}
+		if row.Tag == "tag:exit-node" {
+			t.Errorf("row %s kept the CLASS tag — that is the B279 reverter: the class tag is a role, not an identity", id)
 		}
 		if row.Hostname == "" {
 			t.Errorf("row %s hostname empty; backfill should have populated it", id)
@@ -762,6 +793,47 @@ func TestTick_AutoSyncEnabled_InsertsAndUpdates(t *testing.T) {
 	// part of tick() still runs).
 	if got, _ := db.ListExitNodeHealth(d); len(got) != 2 {
 		t.Errorf("snapshots = %d, want 2", len(got))
+	}
+}
+
+// TestTick_AutoSync_ClassTagOnlyLeavesRowAlone_B338 pins the B279 fix itself: a
+// relay whose ONLY tag is the class tag `tag:exit-node` must not overwrite the
+// operator's per-node tag in node_owner_map. Before B279 the monitor handed the
+// class tag to SyncNodesFromHeadscale on every tick; on the live `aro` host that
+// silently replaced the operator's per-node tag, and the B272 reconciler then
+// compared the row against headscale, found the class tag it had just been
+// given, and reported nothing at all.
+func TestTick_AutoSync_ClassTagOnlyLeavesRowAlone_B338(t *testing.T) {
+	d := db.OpenForTest(t)
+	sink := &recordingSink{}
+	now := time.Now().UTC()
+
+	const operatorTag = "tag:dev-admin-keepme"
+	if err := db.UpsertNodeOwner(d, "7", 1, "admin", operatorTag, 0); err != nil {
+		t.Fatalf("seed relay-7: %v", err)
+	}
+
+	hs := &fakeHeadscaleClient{nodes: []headscale.NodeView{
+		{ID: "7", Hostname: "relay-7", UserName: "admin", UserID: "1",
+			Online: true, LastSeen: now.Format(time.RFC3339),
+			IsExitNode:      true,
+			Tags:            []string{"tag:exit-node"}, // class tag only, no per-node tag
+			AvailableRoutes: []string{"0.0.0.0/0", "::/0"},
+			ApprovedRoutes:  []string{"0.0.0.0/0", "::/0"}},
+	}}
+	m := &ExitNodeMonitor{DB: db.NewResettableDB(d), HS: hs, Notifier: sink,
+		OfflineAfter: 2 * time.Minute, AutoSync: true}
+
+	if err := m.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	row, err := db.GetNodeOwner(d, "7")
+	if err != nil {
+		t.Fatalf("GetNodeOwner(7) = %v, want the seeded row", err)
+	}
+	if row.Tag != operatorTag {
+		t.Errorf("row 7 tag = %q, want %q — the class tag overwrote the operator's per-node tag (the B279 reverter is back)", row.Tag, operatorTag)
 	}
 }
 

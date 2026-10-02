@@ -64,6 +64,13 @@ done
 
 # ------------------------------------------------------------------------------
 # Contract A: cleanup.go — DeleteSmokeMeshes + helpers
+#
+# 2026-10-01 (B331) — CONTRACT RENEGOTIATED. This contract used to require
+# `^func int64ArrayToPGArray(` and a literal `ANY($1::bigint[])`: it pinned the
+# PostgreSQL-only DELETE argument, which is exactly the defect B331 removed.
+# `ANY($1::bigint[])` is not valid SQLite at all, and DeleteSmokeMeshes runs on
+# every install kind, so the old assertion was demanding the bug. It now asserts
+# the portable form instead, and that the PG-only path is GONE.
 # ------------------------------------------------------------------------------
 echo
 echo "=== A. mesh/cleanup.go: DeleteSmokeMeshes + CleanupResult + FormatCleanupMessage ==="
@@ -71,19 +78,27 @@ a_delete=$(grep -cE '^func DeleteSmokeMeshes\(' "${CLEANUP_GO}" || true)
 a_result=$(grep -cE '^type CleanupResult struct' "${CLEANUP_GO}" || true)
 a_prefix=$(grep -cE '^const SmokeMeshNamePrefix\s*=' "${CLEANUP_GO}" || true)
 a_format=$(grep -cE '^func FormatCleanupMessage\(' "${CLEANUP_GO}" || true)
-a_pgarr=$(grep -cE '^func int64ArrayToPGArray\(' "${CLEANUP_GO}" || true)
 a_likeprefix=$(grep -cE 'SmokeMeshNamePrefix\+"%"' "${CLEANUP_GO}" || true)
 a_notexists=$(grep -cE 'AND NOT EXISTS' "${CLEANUP_GO}" || true)
 a_tx=$(grep -cE 'tx\.Commit\(\)' "${CLEANUP_GO}" || true)
-a_pgarr_lit=$(grep -cE 'ANY\(\$1::bigint\[\]\)' "${CLEANUP_GO}" || true)
+# The portable form (B331): an IN (…) list built through the db helpers.
+a_inlist=$(grep -cF 'WHERE id IN (' "${CLEANUP_GO}" || true)
+a_ph_list=$(grep -cF 'db.PlaceholdersList(len(res.IDs))' "${CLEANUP_GO}" || true)
+a_ph_at=$(grep -cF 'db.PlaceholderAt(len(res.IDs)+1, len(res.IDs))' "${CLEANUP_GO}" || true)
+# The removed PostgreSQL-only path: must be absent from LIVE code (comments may
+# quote it — this file's own rationale does).
+a_pgarr=$(grep -cE '^func int64ArrayToPGArray\(' "${CLEANUP_GO}" || true)
+a_pgarr_lit=$(grep -nE 'ANY\(\$1::bigint\[\]\)' "${CLEANUP_GO}" | grep -vc ':[[:space:]]*//' || true)
 if [ "${a_delete}" -ge 1 ] && [ "${a_result}" -ge 1 ] && \
    [ "${a_prefix}" -ge 1 ] && [ "${a_format}" -ge 1 ] && \
-   [ "${a_pgarr}" -ge 1 ] && [ "${a_likeprefix}" -ge 1 ] && \
+   [ "${a_likeprefix}" -ge 1 ] && \
    [ "${a_notexists}" -ge 2 ] && [ "${a_tx}" -ge 2 ] && \
-   [ "${a_pgarr_lit}" -ge 1 ]; then
-    ok "DeleteSmokeMeshes + CleanupResult + SmokeMeshNamePrefix + FormatCleanupMessage + int64ArrayToPGArray + tx + NOT EXISTS defense (all 9 present)"
+   [ "${a_inlist}" -ge 1 ] && [ "${a_ph_list}" -ge 1 ] && [ "${a_ph_at}" -ge 1 ] && \
+   [ "${a_pgarr}" -eq 0 ] && [ "${a_pgarr_lit}" -eq 0 ]; then
+    ok "DeleteSmokeMeshes + CleanupResult + SmokeMeshNamePrefix + FormatCleanupMessage + tx + NOT EXISTS defense + portable IN (…) via db.PlaceholdersList/PlaceholderAt (all present)"
+    ok "the PostgreSQL-only path is gone: no int64ArrayToPGArray helper, no live ANY(\$1::bigint[])"
 else
-    bad "cleanup.go incomplete: delete=${a_delete} result=${a_result} prefix=${a_prefix} format=${a_format} pgarr=${a_pgarr} likeprefix=${a_likeprefix} notexists=${a_notexists} tx=${a_tx} pgarr_lit=${a_pgarr_lit}"
+    bad "cleanup.go incomplete or still PostgreSQL-only: delete=${a_delete} result=${a_result} prefix=${a_prefix} format=${a_format} likeprefix=${a_likeprefix} notexists=${a_notexists} tx=${a_tx} inlist=${a_inlist} ph_list=${a_ph_list} ph_at=${a_ph_at} pgarr=${a_pgarr} pgarr_lit=${a_pgarr_lit}"
 fi
 
 # ------------------------------------------------------------------------------
@@ -192,29 +207,31 @@ fi
 # Contract F: unit test + go test
 # ------------------------------------------------------------------------------
 echo
-echo "=== F. cleanup_b143_test.go: 14 test functions + go test passes ==="
+echo "=== F. cleanup_b143_test.go: the test functions + go test passes ==="
 t1=$(grep -cE '^func TestFormatCleanupMessage_NoRows' "${TEST_FILE}" || true)
 t2=$(grep -cE '^func TestFormatCleanupMessage_SingleRow' "${TEST_FILE}" || true)
 t3=$(grep -cE '^func TestFormatCleanupMessage_FewRows' "${TEST_FILE}" || true)
 t4=$(grep -cE '^func TestFormatCleanupMessage_TruncatedAtFive' "${TEST_FILE}" || true)
-t5=$(grep -cE '^func TestInt64ArrayToPGArray_Empty' "${TEST_FILE}" || true)
-t6=$(grep -cE '^func TestInt64ArrayToPGArray_Single' "${TEST_FILE}" || true)
-t7=$(grep -cE '^func TestInt64ArrayToPGArray_Many' "${TEST_FILE}" || true)
-t8=$(grep -cE '^func TestSameCleanupMinute_Same' "${TEST_FILE}" || true)
-t9=$(grep -cE '^func TestSameCleanupMinute_DifferentMinute' "${TEST_FILE}" || true)
-t10=$(grep -cE '^func TestSameCleanupMinute_DifferentDay' "${TEST_FILE}" || true)
-t11=$(grep -cE '^func TestSameCleanupMinute_ZeroValue' "${TEST_FILE}" || true)
-t12=$(grep -cE '^func TestFormatHumanSchedule_EveryMinute' "${TEST_FILE}" || true)
-t13=$(grep -cE '^func TestFormatHumanSchedule_Daily' "${TEST_FILE}" || true)
-t14=$(grep -cE '^func TestFormatHumanSchedule_Empty' "${TEST_FILE}" || true)
-t15=$(grep -cE '^func TestFormatHumanSchedule_Invalid' "${TEST_FILE}" || true)
-t16=$(grep -cE '^func TestSmokeMeshNamePrefix' "${TEST_FILE}" || true)
-t17=$(grep -cE '^func TestStorageKeyConstants' "${TEST_FILE}" || true)
-test_count=$((t1+t2+t3+t4+t5+t6+t7+t8+t9+t10+t11+t12+t13+t14+t15+t16+t17))
-if [ "${test_count}" -ge 14 ]; then
-    ok "Test file: ${test_count} test functions (4 format + 3 pgarr + 4 same-minute + 4 human + 2 constant = 17 total, all present)"
+# 2026-10-01 (B331): the three TestInt64ArrayToPGArray_* contracts are gone with
+# the helper they pinned. In their place the SQL contract itself is tested —
+# on a real SQLite database, which is the backend the old suite never touched.
+t5=$(grep -cE '^func TestDeleteSmokeMeshes_SQLite' "${TEST_FILE}" || true)
+t6=$(grep -cE 'skygatedb.ApplyMigrations\(conn, skygatedb.DialectSQLite\)' "${TEST_FILE}" || true)
+t7=$(grep -cE '^func TestSameCleanupMinute_Same' "${TEST_FILE}" || true)
+t8=$(grep -cE '^func TestSameCleanupMinute_DifferentMinute' "${TEST_FILE}" || true)
+t9=$(grep -cE '^func TestSameCleanupMinute_DifferentDay' "${TEST_FILE}" || true)
+t10=$(grep -cE '^func TestSameCleanupMinute_ZeroValue' "${TEST_FILE}" || true)
+t11=$(grep -cE '^func TestFormatHumanSchedule_EveryMinute' "${TEST_FILE}" || true)
+t12=$(grep -cE '^func TestFormatHumanSchedule_Daily' "${TEST_FILE}" || true)
+t13=$(grep -cE '^func TestFormatHumanSchedule_Empty' "${TEST_FILE}" || true)
+t14=$(grep -cE '^func TestFormatHumanSchedule_Invalid' "${TEST_FILE}" || true)
+t15=$(grep -cE '^func TestSmokeMeshNamePrefix' "${TEST_FILE}" || true)
+t16=$(grep -cE '^func TestStorageKeyConstants' "${TEST_FILE}" || true)
+test_count=$((t1+t2+t3+t4+t5+t6+t7+t8+t9+t10+t11+t12+t13+t14+t15+t16))
+if [ "${t5}" -ge 1 ] && [ "${t6}" -ge 1 ] && [ "${test_count}" -ge 14 ]; then
+    ok "Test file: ${test_count} pinned test functions, including TestDeleteSmokeMeshes_SQLite on a real migrated SQLite DB (the PG-only SQL contract was never verified there before)"
 else
-    bad "Test file incomplete: test_count=${test_count} (expected 14-17)"
+    bad "Test file incomplete: test_count=${test_count} sqlite_test=${t5} sqlite_migrated=${t6} (expected >=14 with the SQLite round trip present)"
 fi
 
 GO=""
@@ -228,7 +245,7 @@ fi
 if [ -z "${GO}" ]; then
     warn "go not found — skipping F go-test (other 5 contracts still hold)"
 else
-    test_out=$("${GO}" test -count=1 -run 'TestFormatCleanupMessage|TestInt64ArrayToPGArray|TestSameCleanupMinute|TestFormatHumanSchedule|TestSmokeMeshNamePrefix|TestStorageKeyConstants' ./internal/mesh/ 2>&1)
+    test_out=$("${GO}" test -count=1 -run 'TestFormatCleanupMessage|TestDeleteSmokeMeshes_SQLite|TestSameCleanupMinute|TestFormatHumanSchedule|TestSmokeMeshNamePrefix|TestStorageKeyConstants' ./internal/mesh/ 2>&1)
     test_rc=$?
     if [ "${test_rc}" -eq 0 ]; then
         ok "go test PASSes for B143 pure-Go helpers (cleanup_b143_test.go compiles + tests green)"

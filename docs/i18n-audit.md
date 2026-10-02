@@ -1,5 +1,17 @@
 # Localization audit (skygate panel)
 
+> **FROZEN SNAPSHOT — read the numbers as history, not as status.**
+>
+> This file records the state measured on **2026-09-25**, before the B325.1 sweep.
+> Both counts it reports (311 hardcoded English strings in templates, 621 RU values
+> that were not Russian) were driven to **zero** by B325.1 in the same release, and
+> the ratchet that keeps them there is enforced by
+> `scripts/check_b325_i18n_regressions.sh` (`RU_ASCII_BUDGET=0`,
+> `HARDCODED_BUDGET=0`) plus `scripts/check_b325_1_i18n_sweep.sh` (no empty RU
+> value; a Cyrillic floor; the restored B76/B77/B78 tests must actually run).
+> **Do not treat the tables below as a current work list** — they are the evidence
+> and the reasoning behind the sweep. To re-measure, re-run the two contracts above.
+
 Снимок, по которому сделан аудит: рабочее дерево `C:\Projects\skygate`, git HEAD `28506fac` + незакоммиченные правки параллельного процесса (`catalog_admin.go`, `layout.html`, `handlers.go`, `service.go`, `tailscale.go`, `main.go`; новые файлы `internal/feature/admin/service_control_b323.go`, `internal/handlers/templates/admin/service.html`).
 
 Хэши на момент сборки отчёта:

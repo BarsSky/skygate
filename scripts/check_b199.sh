@@ -26,6 +26,12 @@
 # Exit 0 on full pass, 1 on any failure. Prints N/M PASS/FAIL summary.
 
 set -u
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 # Resolve the project root. Two options, in priority order:
 #  1. SKYGATE_PROJECT_DIR env var (used when the script is
@@ -165,29 +171,29 @@ grep_q "B199" "AGENTS.md" 2>/dev/null \
 echo ""
 if command -v go >/dev/null 2>&1; then
     echo "  Running go build..."
-    if (cd "$PWD" && go build ./... >/tmp/check_b199_build.log 2>&1); then
+    if (cd "$PWD" && go build ./... >${SKY_TMP}/check_b199_build.log 2>&1); then
         check "go build ./... succeeds" ok
     else
         check "go build ./... succeeds" fail
-        head -10 /tmp/check_b199_build.log
+        head -10 ${SKY_TMP}/check_b199_build.log
     fi
 
     echo ""
     echo "  Running go vet..."
-    if (cd "$PWD" && go vet ./... >/tmp/check_b199_vet.log 2>&1); then
+    if (cd "$PWD" && go vet ./... >${SKY_TMP}/check_b199_vet.log 2>&1); then
         check "go vet ./... succeeds" ok
     else
         check "go vet ./... succeeds" fail
-        head -10 /tmp/check_b199_vet.log
+        head -10 ${SKY_TMP}/check_b199_vet.log
     fi
 
     echo ""
     echo "  Running cluster unit tests..."
-    if (cd "$PWD" && go test ./internal/feature/admin/ -run "TestParsePG|TestParseClusterChain|TestAbbreviateClusterTime" -count=1 >/tmp/check_b199_test.log 2>&1); then
+    if (cd "$PWD" && go test ./internal/feature/admin/ -run "TestParsePG|TestParseClusterChain|TestAbbreviateClusterTime" -count=1 >${SKY_TMP}/check_b199_test.log 2>&1); then
         check "cluster helper unit tests pass" ok
     else
         check "cluster helper unit tests pass" fail
-        head -20 /tmp/check_b199_test.log
+        head -20 ${SKY_TMP}/check_b199_test.log
     fi
 else
     echo "  -- go not in PATH, skipping build/vet/tests (run on the agent)"

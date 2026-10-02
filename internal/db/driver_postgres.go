@@ -61,6 +61,15 @@ const migrateAdvisoryLockWait = 120 * time.Second
 // migration chain. New operators don't have to know about
 // the standalone `apply_pg_migrations` tool.
 func OpenPostgres(dsn string) (*sql.DB, error) {
+	return openPostgresWith(dsn, true)
+}
+
+// openPostgresWith is OpenPostgres with the process-wide registration
+// made optional. register=false is used by OpenIsolated, which opens a
+// SECOND database inside a running server (the /admin/database
+// conversion) and must not change the dialect every other request
+// branches on. See active_dialect.go.
+func openPostgresWith(dsn string, register bool) (*sql.DB, error) {
 	conn, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("pgx open: %w", err)
@@ -75,7 +84,9 @@ func OpenPostgres(dsn string) (*sql.DB, error) {
 		conn.Close()
 		return nil, fmt.Errorf("pgx migrate: %w", err)
 	}
-	registerBackend(conn, BackendPostgres)
+	if register {
+		registerBackend(conn, BackendPostgres)
+	}
 	return conn, nil
 }
 
@@ -161,9 +172,15 @@ var pgMigrations = []MigrationEntry{
 	{57, "v0.57 (B0):", "migrations_pg.go", migrateV057PG},
 	{58, "v0.58 (B0):", "migrations_pg.go", migrateV058PG},
 	{59, "v0.59 (B0):", "migrations_pg.go", migrateV059PG},
-	{60, "v0.60 (B183): Telegram + audit_log", "migrations_v0_60_b183_test.go", migrateV060PG},
-	{61, "v0.61 (B188): dev-tag owner_map", "migrations_v0_61_b188_test.go", migrateV061PG},
-	{62, "v0.62 (B194):", "migrations_v0_62_b194.go", migrateV062PG},
+	// 2026-10-01 (B333): V060–V062 used to name `migrations_v0_60_b183_test.go`,
+	// `migrations_v0_61_b188_test.go` and `migrations_v0_62_b194.go` here, but all
+	// three functions are defined in this file (`migrations_pg.go`). The wrong
+	// authorship landed in `applied_migrations.source_file` and was only visible
+	// to an operator reading the audit trail after a failed migration. Pinned by
+	// TestMigrations_SourceFileNamesTheDefiningFile.
+	{60, "v0.60 (B183): Telegram + audit_log", "migrations_pg.go", migrateV060PG},
+	{61, "v0.61 (B188): dev-tag owner_map", "migrations_pg.go", migrateV061PG},
+	{62, "v0.62 (B194):", "migrations_pg.go", migrateV062PG},
 	{63, "v0.63 (B194):", "migrations_v0_63_b194.go", migrateV063PG},
 	{64, "v0.64 (B195): cluster_* tables (cluster / cluster_node / cluster_database / cluster_migration / cluster_invite / cluster_audit)", "migrations_v0_64_b195.go", migrateV064PG},
 	{65, "v0.65 (B198): dbmigrate_run + dbmigrate_step", "migrations_v0_65_b198.go", migrateV065PG},

@@ -55,7 +55,14 @@ echo "skygate root: ${SKYGATE_DIR}"
 
 QUERIES="internal/db/queries.go"
 EXIT_SRV_GO="internal/db/exit_servers.go"
-ADMIN_EXIT_GO="internal/feature/admin/exit_nodes.go"
+# The /admin/exit-nodes SURFACE, not one file: internal/feature/admin/exit_nodes.go
+# was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
+# one path turns a pure code move into a false FAIL — and is the weaker contract
+# even while it is green. gosurface expands the glob itself and skips _test.go, so
+# a future exit_nodes_*.go file is covered automatically. See B339.
+. scripts/lib/gosurface.sh
+gosurface ADMIN_EXIT_GO internal/feature/admin/exit_nodes*.go
+
 MAIN_GO="cmd/skygate/main.go"
 TEMPLATE="internal/handlers/templates/admin/exit_nodes.html"
 I18N="internal/i18n/catalog_exit_nodes.go"

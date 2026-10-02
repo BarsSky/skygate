@@ -170,19 +170,41 @@ func (c *Client) approveRoutesForNodeID(nodeID int, routes []string) (int, error
 // deployment is: `docker exec <container> <binary> …` when docker and a
 // container name are available, the local `headscale` binary otherwise
 // (systemd/binary installs, where docker is not installed at all).
+//
+// B332 (2026-10-01): an EMPTY ExecContainer means "there is no container to
+// exec into", NOT "use the container literally named `headscale`". The old
+// default made the field impossible to disable, and that was not a theoretical
+// problem:
+//
+//   - tags.go, preauth.go and nodes.go all read `ExecContainer == ""` as
+//     "the CLI path is not configured" and refuse to run it;
+//   - headscale_test.go documented `c.ExecContainer = ""` as "disable CLI
+//     fallback" while this function silently used the `headscale` container;
+//   - measured on the reference VM, where that container IS running: the
+//     "no CLI" premise of TestGetACLAPIFailsNoContainer and
+//     TestGetACLNamesEveryRungInTheError_B294 was false, `GetACL()` returned
+//     the LIVE policy instead of an error, and both tests failed — reading as
+//     a product regression when the product was fine and the test was not
+//     hermetic.
+//
+// New() always sets a non-empty value (HEADSCALE_CONTAINER, default
+// `headscale`), so production behaviour is unchanged; only a caller that
+// deliberately clears the field is affected, and it now gets what it asked
+// for: the local binary, or a clear failure if there is none.
 func (c *Client) runHeadscaleCLI(args ...string) ([]byte, error) {
 	container := c.ExecContainer
-	if container == "" {
-		container = "headscale"
-	}
 	bin := c.headscaleCLIPath()
-	// A native install: no docker in PATH at all — try the local binary first
-	// so we do not even attempt a docker lookup that cannot succeed.
-	if _, err := exec.LookPath("docker"); err == nil && c.dockerRunner != nil {
+	_, lookErr := exec.LookPath("docker")
+	dockerUsable := lookErr == nil && container != ""
+
+	// A native install (or a caller that cleared the container): try the local
+	// binary first so we do not even attempt a docker lookup that cannot
+	// succeed.
+	if dockerUsable && c.dockerRunner != nil {
 		full := append([]string{"exec", container, bin}, args...)
 		return c.dockerRunner(full...)
 	}
-	if _, err := exec.LookPath("docker"); err == nil {
+	if dockerUsable {
 		full := append([]string{"exec", container, bin}, args...)
 		out, err := exec.Command("docker", full...).CombinedOutput()
 		if err == nil {

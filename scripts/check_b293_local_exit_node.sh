@@ -53,7 +53,14 @@ NODE=internal/headscale/local_node_b293.go
 APPLY=internal/headscale/local_apply_b293.go
 ARGS=internal/headscale/route_args.go
 SYNC=internal/feature/exit_rules/sync.go
-EXIT=internal/feature/admin/exit_nodes.go
+# The /admin/exit-nodes SURFACE, not one file: internal/feature/admin/exit_nodes.go
+# was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
+# one path turns a pure code move into a false FAIL — and is the weaker contract
+# even while it is green. gosurface expands the glob itself and skips _test.go, so
+# a future exit_nodes_*.go file is covered automatically. See B339.
+. scripts/lib/gosurface.sh
+gosurface EXIT internal/feature/admin/exit_nodes*.go
+
 TG=internal/feature/admin/telegram.go
 TMPL=internal/handlers/templates/admin/exit_nodes.html
 TGTMPL=internal/handlers/templates/admin/telegram.html

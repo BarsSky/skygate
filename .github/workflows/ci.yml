@@ -202,6 +202,17 @@ jobs:
   test-pg:
     name: go test against a real PostgreSQL
     runs-on: ubuntu-24.04
+    # 2026-10-01 (TD-24): this job used to run `go test ./internal/db/...`,
+    # which covered only ONE of the three packages whose tests open a live
+    # PostgreSQL through db.OpenTestPG — measured: internal/db (13 call sites),
+    # internal/feature/admin (18) and internal/acl (4). The other two therefore
+    # ran nowhere: CI never reached them and the VM gate never sets
+    # SKYGATE_TEST_PG_DSN, so OpenTestPG SKIPped and both halves reported green.
+    # That is not theoretical: the 2026-09-25 gate audit found two real
+    # PostgreSQL-only regressions (a SQLite-only `INSERT OR IGNORE` on a shared
+    # path in internal/mesh/mesh.go and internal/subnet/shares.go) that no job
+    # exercised. The whole tree is now in scope.
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:15
@@ -226,11 +237,15 @@ jobs:
       - name: go mod download
         run: go mod download
       - name: go test with SKYGATE_TEST_PG_DSN
-        # With the DSN set, db.OpenForTest stops skipping and the db helpers
-        # are exercised against a real server instead of being skipped.
+        # With the DSN set, db.OpenTestPG stops skipping and every PG-gated
+        # test in the tree runs against a real server instead — including the
+        # ones in internal/acl, internal/feature/admin and internal/backup that
+        # the narrow scope never reached. Each test gets its own
+        # `skygate_pgtest_*` schema inside `skygate_test`, which the service
+        # user owns, so the CREATE SCHEMA permission contract is satisfied.
         env:
           SKYGATE_TEST_PG_DSN: postgres://skygate:skygate@127.0.0.1:5432/skygate_test?sslmode=disable
-        run: go test ./internal/db/... -count=1
+        run: go test ./... -count=1
 
   test-sqlite:
     name: dialect + migration-chain contracts on SQLite

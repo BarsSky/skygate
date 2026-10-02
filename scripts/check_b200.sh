@@ -30,6 +30,12 @@
 # Exit 0 on full pass, 1 on any failure. Prints N/M PASS/FAIL summary.
 
 set -u
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 # Resolve the project root.
 if [ -n "${SKYGATE_PROJECT_DIR:-}" ]; then
@@ -196,23 +202,23 @@ grep_q 'TestNodeStateConstants' "internal/cluster/node_b200_test.go" \
 
 # 14. go build/vet/tests
 if command -v go >/dev/null 2>&1; then
-    if (cd "$PWD" && go build ./... >/tmp/check_b200_build.log 2>&1); then
+    if (cd "$PWD" && go build ./... >${SKY_TMP}/check_b200_build.log 2>&1); then
         check "go build ./... succeeds" ok
     else
         check "go build ./... succeeds" fail
-        head -10 /tmp/check_b200_build.log
+        head -10 ${SKY_TMP}/check_b200_build.log
     fi
-    if (cd "$PWD" && go vet ./... >/tmp/check_b200_vet.log 2>&1); then
+    if (cd "$PWD" && go vet ./... >${SKY_TMP}/check_b200_vet.log 2>&1); then
         check "go vet ./... succeeds" ok
     else
         check "go vet ./... succeeds" fail
-        head -10 /tmp/check_b200_vet.log
+        head -10 ${SKY_TMP}/check_b200_vet.log
     fi
-    if (cd "$PWD" && go test ./internal/cluster/ -count=1 >/tmp/check_b200_test.log 2>&1); then
+    if (cd "$PWD" && go test ./internal/cluster/ -count=1 >${SKY_TMP}/check_b200_test.log 2>&1); then
         check "go test ./internal/cluster/ passes" ok
     else
         check "go test ./internal/cluster/ passes" fail
-        head -20 /tmp/check_b200_test.log
+        head -20 ${SKY_TMP}/check_b200_test.log
     fi
 else
     check "go build/vet/tests skipped (no go in PATH)" ok

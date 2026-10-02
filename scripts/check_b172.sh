@@ -44,6 +44,12 @@
 #  D. Smoke contract (build + vet + unit test + e2e test
 #     all pass).
 set -euo pipefail
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 ok()  { echo "  PASS  $1"; }
 bad() { echo "  FAIL  $1"; exit 1; }
@@ -70,7 +76,7 @@ fi
 # A.2 — GetLogin reads `next` from the query string
 # and passes it to the template. The pre-B172 code
 # didn't read next at all.
-if awk '/^func \(s \*Service\) GetLogin/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > /tmp/_b172_awk.txt && grep -q 'r\.URL\.Query()\.Get("next")' /tmp/_b172_awk.txt; then
+if awk '/^func \(s \*Service\) GetLogin/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > ${SKY_TMP}/_b172_awk.txt && grep -q 'r\.URL\.Query()\.Get("next")' ${SKY_TMP}/_b172_awk.txt; then
     ok "GetLogin reads ?next= from the query string (B172 fix: the form now knows the OIDC redirect target)"
 else
     bad "GetLogin does NOT read ?next= (B172 fix incomplete: the form will lose the OIDC context)"
@@ -78,7 +84,7 @@ fi
 
 # A.3 — GetLogin passes `next` to the template as
 # "Next" (so login.html can render the hidden input).
-if awk '/^func \(s \*Service\) GetLogin/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > /tmp/_b172_awk.txt && grep -qE 'data\["Next"\]' /tmp/_b172_awk.txt; then
+if awk '/^func \(s \*Service\) GetLogin/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > ${SKY_TMP}/_b172_awk.txt && grep -qE 'data\["Next"\]' ${SKY_TMP}/_b172_awk.txt; then
     ok "GetLogin passes 'Next' to the template (the form renders the hidden next input)"
 else
     bad "GetLogin does NOT pass Next to the template (login.html has no data to render the hidden input)"
@@ -87,7 +93,7 @@ fi
 # A.4 — PostLogin reads `next` from the form.
 # Without this, the post-login redirect has no way
 # to know where to send the user.
-if awk '/^func \(s \*Service\) PostLogin/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > /tmp/_b172_awk.txt && grep -qE 'r\.FormValue\("next"\)' /tmp/_b172_awk.txt; then
+if awk '/^func \(s \*Service\) PostLogin/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > ${SKY_TMP}/_b172_awk.txt && grep -qE 'r\.FormValue\("next"\)' ${SKY_TMP}/_b172_awk.txt; then
     ok "PostLogin reads 'next' from the form (B172 fix: the post-login redirect can now honour the OIDC context)"
 else
     bad "PostLogin does NOT read `next` from the form (B172 fix incomplete: hard-coded /dashboard redirect still in place)"
@@ -97,7 +103,7 @@ fi
 # security wrapper). A regression that just
 # re-redirects to r.FormValue("next") without the
 # wrapper would re-open the open-redirect attack.
-if awk '/^func \(s \*Service\) PostLogin/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > /tmp/_b172_awk.txt && grep -q 'safeNextRedirect' /tmp/_b172_awk.txt; then
+if awk '/^func \(s \*Service\) PostLogin/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > ${SKY_TMP}/_b172_awk.txt && grep -q 'safeNextRedirect' ${SKY_TMP}/_b172_awk.txt; then
     ok "PostLogin calls safeNextRedirect (open-redirect defense is active)"
 else
     bad "PostLogin does NOT call safeNextRedirect (open-redirect attack vector re-opened)"
@@ -110,7 +116,7 @@ fi
 # Post-B172 it's:
 #     http.Redirect(w, r, next, http.StatusFound)
 # where `next` is the safeNextRedirect() output.
-if awk '/^func \(s \*Service\) PostLogin/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > /tmp/_b172_awk.txt && grep -qE 'http\.Redirect\(w, r, next,' /tmp/_b172_awk.txt; then
+if awk '/^func \(s \*Service\) PostLogin/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > ${SKY_TMP}/_b172_awk.txt && grep -qE 'http\.Redirect\(w, r, next,' ${SKY_TMP}/_b172_awk.txt; then
     ok "PostLogin redirects to the validated 'next' (B172 fix: no more hard-coded /dashboard)"
 else
     bad "PostLogin does NOT redirect to `next` (B172 fix incomplete: the hard-coded /dashboard redirect is still in place)"
@@ -155,7 +161,7 @@ fi
 # URLs (//evil.com/path). This is the #1 open-redirect
 # attack vector and the #1 reason the test suite
 # exists.
-if awk '/^func safeNextRedirect/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > /tmp/_b172_awk.txt && grep -q 'strings.HasPrefix(next, "//")' /tmp/_b172_awk.txt; then
+if awk '/^func safeNextRedirect/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > ${SKY_TMP}/_b172_awk.txt && grep -q 'strings.HasPrefix(next, "//")' ${SKY_TMP}/_b172_awk.txt; then
     ok "safeNextRedirect rejects protocol-relative URLs (//evil.com)"
 else
     bad "safeNextRedirect does NOT check for protocol-relative URLs (the #1 open-redirect attack vector)"
@@ -165,7 +171,7 @@ fi
 # whose host != the request's host. The same-host
 # check is the second pillar of the open-redirect
 # defense.
-if awk '/^func safeNextRedirect/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > /tmp/_b172_awk.txt && grep -q 'u\.Host != requestHost' /tmp/_b172_awk.txt; then
+if awk '/^func safeNextRedirect/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > ${SKY_TMP}/_b172_awk.txt && grep -q 'u\.Host != requestHost' ${SKY_TMP}/_b172_awk.txt; then
     ok "safeNextRedirect rejects absolute URLs with a different host"
 else
     bad "safeNextRedirect does NOT check the host (open-redirect via evil.com is still possible)"
@@ -173,7 +179,7 @@ fi
 
 # A.12 — safeNextRedirect rejects non-http(s)
 # schemes (javascript:, data:, file:, ...).
-if awk '/^func safeNextRedirect/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > /tmp/_b172_awk.txt && grep -qE 'u\.Scheme != "http" && u\.Scheme != "https"' /tmp/_b172_awk.txt; then
+if awk '/^func safeNextRedirect/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/auth/service.go > ${SKY_TMP}/_b172_awk.txt && grep -qE 'u\.Scheme != "http" && u\.Scheme != "https"' ${SKY_TMP}/_b172_awk.txt; then
     ok "safeNextRedirect rejects non-http(s) schemes (javascript:, data:, file:)"
 else
     bad "safeNextRedirect does NOT check the scheme (XSS via javascript: URL is still possible)"

@@ -393,3 +393,54 @@ func OpenWithDialect(dsn string) (*Dialect, *sql.DB, error) {
 	}
 	return d, db, nil
 }
+
+// DialectFor describes a connection whose kind is already known —
+// typically the LIVE connection of a running process, whose dialect
+// comes from ActiveDialect rather than from re-parsing a DSN.
+func DialectFor(kind DialectKind, dsn string) *Dialect {
+	return &Dialect{Kind: kind, dsn: dsn}
+}
+
+// OpenIsolated opens a SECOND database from inside a running server
+// and registers it for BackendOf, but deliberately NOT as the
+// process-wide active dialect.
+//
+// WHY THIS EXISTS (2026-09-28). The /admin/database conversion needs a
+// connection to a database that is not the one skygate runs on. The
+// ordinary OpenWithDialect would call registerBackend, which also calls
+// SetActiveDialect — a process-wide value every concurrent request
+// branches on through the SQL-fragment shims (nowUnixSQL, the
+// ON CONFLICT builders, placeholders). A SQLite → PostgreSQL conversion
+// would therefore flip the running server to PostgreSQL SQL while it is
+// still talking to SQLite: every write in flight fails, and restoring
+// the value afterwards only narrows the window rather than closing it.
+//
+// So the target connection is opened with the process-wide write
+// suppressed, and the per-connection backend (which MigrateSQLite /
+// MigratePostgres and BackendOf read) is registered separately.
+//
+// Callers MUST close the returned *sql.DB.
+func OpenIsolated(dsn string) (*Dialect, *sql.DB, error) {
+	d := DetectDSN(dsn)
+	if d.Kind == DialectUnknown {
+		return d, nil, fmt.Errorf("db.OpenIsolated: unknown DSN format %q "+
+			"(use sqlite:/path or postgres://user:pass@host/db)", dsn)
+	}
+	var (
+		conn *sql.DB
+		err  error
+	)
+	switch d.Kind {
+	case DialectSQLite:
+		conn, err = openSQLiteWith(d.dsn, false)
+	case DialectPostgres:
+		conn, err = openPostgresWith(d.dsn, false)
+	default:
+		return d, nil, fmt.Errorf("db.OpenIsolated: unsupported dialect %v", d.Kind)
+	}
+	if err != nil {
+		return d, nil, err
+	}
+	registerToolConnection(conn, d.Kind)
+	return d, conn, nil
+}

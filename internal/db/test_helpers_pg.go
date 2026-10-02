@@ -88,9 +88,22 @@ func OpenTestPG(t testing.TB) *sql.DB {
 	}
 	conn.SetMaxOpenConns(10)
 	conn.SetMaxIdleConns(5)
-	// Create the schema BEFORE running migrations so the
-	// search_path (set via the -c options) resolves to it.
-	if _, err := conn.Exec(`CREATE SCHEMA IF NOT EXISTS ` + schema); err != nil {
+	// Start from a KNOWN-CLEAN schema. `CREATE SCHEMA IF NOT EXISTS` was
+	// not enough: the schema name is derived from t.Name(), so it is the
+	// same on every run, while `t.Cleanup` only runs on a GRACEFUL exit.
+	// An interrupted run (Ctrl-C, `go test -timeout`, a killed CI job, a
+	// developer cancelling the harness) therefore leaves the schema and
+	// its rows behind, and the next run's seeded INSERTs fail with
+	// `duplicate key value violates unique constraint
+	// "portal_users_username_key"` — measured on 2026-09-28: 13 leftover
+	// `skygate_pgtest_*` schemas produced exactly four "failures" in
+	// display_prefs_b136_test.go that looked like a regression and were
+	// not. Dropping first makes a stale schema impossible to inherit.
+	if _, err := conn.Exec(`DROP SCHEMA IF EXISTS ` + schema + ` CASCADE`); err != nil {
+		conn.Close()
+		t.Fatalf("DROP SCHEMA %q (clearing a schema left by an interrupted run): %v", schema, err)
+	}
+	if _, err := conn.Exec(`CREATE SCHEMA ` + schema); err != nil {
 		conn.Close()
 		t.Fatalf("CREATE SCHEMA %q: %v", schema, err)
 	}

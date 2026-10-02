@@ -47,6 +47,7 @@ var ruCommon = map[string]string{
 	"nav.meshes":                     "Mesh-сети",
 	"nav.preauth":                    "Preauth-ключи",
 	"nav.backup":                     "Backup",
+	"nav.database":                   "База данных",                      // 2026-09-28 — /admin/database got a sidebar tab
 	"nav.certificates":               "Сертификаты",                      // v1.5.0 / B148
 	"nav.oidc":                       "OIDC-провайдер",                   // v1.5.1 / B161.4 — headscale OIDC integration
 	"nav.oidc_sync":                  "OIDC → headscale (синхронизация)", // v1.5.2 / B167 — auto-sync to headscale
@@ -299,6 +300,7 @@ var enCommon = map[string]string{
 	"nav.meshes":                     "Meshes",
 	"nav.preauth":                    "Preauth keys",
 	"nav.backup":                     "Backup",
+	"nav.database":                   "Database",         // 2026-09-28 — /admin/database got a sidebar tab
 	"nav.certificates":               "Certificates",     // v1.5.0 / B148
 	"nav.oidc":                       "OIDC",             // v1.5.1 / B161.4 — headscale OIDC integration
 	"nav.oidc_sync":                  "OIDC → headscale", // v1.5.2 / B167 — auto-sync to headscale

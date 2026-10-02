@@ -9,10 +9,10 @@
   {{if .Data.FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>{{end}}
   {{if .Data.FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.Data.FlashError}}</div>{{end}}
 
-  {{/* ---------- 1. Current DSN (live, from env) ---------- */}}
-  <div class="card mb-4">
+  {{/* ---------- 0. Which database type is in use ---------- */}}
+  <div class="card mb-4" id="db-backend-card">
     <div class="card-header d-flex justify-content-between align-items-center">
-      <span><i class="fa fa-bolt me-2"></i>{{t "db.current_dsn_title"}}</span>
+      <span><i class="fa fa-server me-2"></i>{{t "db.backend_title"}}</span>
       <span class="badge bg-{{if .Data.CurrentReachable}}success{{else}}danger{{end}}">
         {{if .Data.CurrentReachable}}{{t "db.reachable"}}{{else}}{{t "db.unreachable"}}{{end}}
       </span>
@@ -20,7 +20,55 @@
     <div class="card-body">
       <table class="table table-sm mb-0">
         <tbody>
+          <tr>
+            <th style="width:200px">{{t "db.backend_type"}}</th>
+            <td>
+              <span class="badge bg-{{if .Data.IsSQLite}}secondary{{else}}primary{{end}} fs-6">
+                <i class="fa {{if .Data.IsSQLite}}fa-file{{else}}fa-database{{end}} me-1"></i>{{.Data.CurrentKindLabel}}
+              </span>
+              <code class="ms-2">{{.Data.CurrentKind}}</code>
+            </td>
+          </tr>
+          {{if not .Data.CurrentDSNMatch}}
+          <tr>
+            <th>{{t "db.backend_dsn_mismatch"}}</th>
+            <td><span class="text-warning"><i class="fa fa-triangle-exclamation me-1"></i>{{t "db.backend_dsn_mismatch_help"}}</span></td>
+          </tr>
+          {{end}}
+          {{if .Data.IsSQLite}}
+          <tr><th>{{t "db.backend_file"}}</th><td>
+            {{if .Data.CurrentSQLitePath}}<code style="word-break:break-all">{{.Data.CurrentSQLitePath}}</code>{{else}}<span class="text-muted">:memory:</span>{{end}}
+          </td></tr>
+          <tr><th>{{t "db.backend_size"}}</th><td><code>{{.Data.CurrentSQLiteSize}}</code></td></tr>
+          {{end}}
+          {{if .Data.CurrentVersion}}
+          <tr><th>{{t "db.backend_version"}}</th><td><code>{{.Data.CurrentVersion}}</code></td></tr>
+          {{end}}
+          <tr><th>{{t "db.backend_tables"}}</th><td><code>{{.Data.CurrentTableCount}}</code></td></tr>
+          <tr><th>{{t "db.latency"}}</th><td>
+            {{if .Data.CurrentReachable}}<span class="text-success">{{.Data.CurrentLatencyMs}} ms</span>
+            {{else}}<span class="text-danger">{{.Data.CurrentError}}</span>{{end}}
+          </td></tr>
+        </tbody>
+      </table>
+      <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.backend_help"}}</p>
+    </div>
+  </div>
+
+  {{/* ---------- 1. Current DSN (live, from env) ---------- */}}
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span><i class="fa fa-bolt me-2"></i>{{t "db.current_dsn_title"}}</span>
+    </div>
+    <div class="card-body">
+      <table class="table table-sm mb-0">
+        <tbody>
           <tr><th style="width:200px">{{t "db.dsn_source"}}</th><td><code>{{.Data.CurrentSource}}</code></td></tr>
+          {{if .Data.IsSQLite}}
+          <tr><th>{{t "db.backend_file"}}</th><td>
+            {{if .Data.CurrentSQLitePath}}<code style="word-break:break-all">{{.Data.CurrentSQLitePath}}</code>{{else}}<span class="text-muted">:memory:</span>{{end}}
+          </td></tr>
+          {{else}}
           <tr><th>{{t "db.host"}}</th><td>
             {{if .Data.CurrentHost}}<code>{{.Data.CurrentHost}}:{{.Data.CurrentPort}}</code>{{else}}<span class="text-muted">—</span>{{end}}
           </td></tr>
@@ -33,10 +81,7 @@
           <tr><th>{{t "db.sslmode"}}</th><td>
             {{if .Data.CurrentSSLMode}}<code>{{.Data.CurrentSSLMode}}</code>{{else}}<span class="text-muted">—</span>{{end}}
           </td></tr>
-          <tr><th>{{t "db.latency"}}</th><td>
-            {{if .Data.CurrentReachable}}<span class="text-success">{{.Data.CurrentLatencyMs}} ms</span>
-            {{else}}<span class="text-danger">{{.Data.CurrentError}}</span>{{end}}
-          </td></tr>
+          {{end}}
           <tr><th>{{t "db.full_dsn"}}</th><td><code style="word-break:break-all;font-size:0.85em">{{.Data.CurrentDSN}}</code></td></tr>
         </tbody>
       </table>
@@ -160,6 +205,133 @@
         </div>
         <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.migrate_steps_help"}}</p>
       </form>
+    </div>
+  </div>
+
+  {{/* ---------- 4a. Convert to the other backend type (2026-09-28) ---------- */}}
+  <div class="card mb-4" id="db-convert-card">
+    <div class="card-header">
+      <i class="fa fa-right-left me-2"></i>{{t "db.convert_title"}}
+    </div>
+    <div class="card-body">
+      <p class="text-muted small">{{t "db.convert_help"}}</p>
+
+      {{if .Data.ConvertError}}
+      <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation me-1"></i>{{.Data.ConvertError}}</div>
+      {{end}}
+
+      <form method="POST" action="/admin/database/convert" onsubmit="return confirm('{{t "db.convert_confirm"}}')">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-4">
+            <label class="form-label small">{{t "db.convert_target_kind"}}</label>
+            <select class="form-select form-select-sm" name="target_kind" aria-label="{{t "db.convert_target_kind"}}">
+              {{if .Data.IsSQLite}}
+              <option value="postgres" selected>PostgreSQL</option>
+              <option value="sqlite">SQLite</option>
+              {{else}}
+              <option value="sqlite" selected>SQLite</option>
+              <option value="postgres">PostgreSQL</option>
+              {{end}}
+            </select>
+          </div>
+          <div class="col-md-8">
+            <label class="form-label small">{{t "db.convert_target_path"}}</label>
+            <input class="form-control form-control-sm" type="text" name="target_path"
+                   value="{{.Data.ConvertTargetPath}}" placeholder="/var/lib/skygate/skygate-new.db">
+          </div>
+        </div>
+
+        <fieldset class="mt-3">
+          <legend class="fs-6 text-muted">{{t "db.convert_pg_legend"}}</legend>
+          <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+              <label class="form-label small">{{t "db.host"}}</label>
+              <input class="form-control form-control-sm" type="text" name="target_host" placeholder="127.0.0.1">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small">{{t "db.port"}}</label>
+              <input class="form-control form-control-sm" type="text" name="target_port" placeholder="5432">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small">{{t "db.dbname"}}</label>
+              <input class="form-control form-control-sm" type="text" name="target_dbname" placeholder="skygate">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small">{{t "db.username"}}</label>
+              <input class="form-control form-control-sm" type="text" name="target_username" placeholder="skygate">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small">{{t "db.convert_password"}}</label>
+              <input class="form-control form-control-sm" type="password" name="target_password" autocomplete="new-password">
+            </div>
+            <div class="col-md-3 mt-2">
+              <label class="form-label small">{{t "db.sslmode"}}</label>
+              <select class="form-select form-select-sm" name="target_sslmode" aria-label="{{t "db.sslmode"}}">
+                <option value="disable" selected>disable</option>
+                <option value="require">require</option>
+                <option value="verify-full">verify-full</option>
+                <option value="verify-ca">verify-ca</option>
+              </select>
+            </div>
+            <div class="col-md-9 mt-2">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" value="1" id="db-convert-dry-run" name="dry_run">
+                <label class="form-check-label small" for="db-convert-dry-run">{{t "db.convert_dry_run"}}</label>
+              </div>
+            </div>
+          </div>
+        </fieldset>
+
+        <button class="btn btn-sm btn-warning mt-3" type="submit">
+          <i class="fa fa-right-left me-1"></i>{{t "db.convert_btn"}}
+        </button>
+        <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.convert_steps_help"}}</p>
+      </form>
+
+      {{with .Data.ConvertReport}}
+      <hr>
+      <h6 class="mt-3">
+        <i class="fa fa-clipboard-check me-1"></i>{{t "db.convert_report_title"}}
+        <span class="badge bg-{{if .Verified}}success{{else}}danger{{end}} ms-2">
+          {{if .Verified}}{{t "db.convert_report_verified"}}{{else}}{{t "db.convert_report_unverified"}}{{end}}
+        </span>
+      </h6>
+      <table class="table table-sm table-striped">
+        <thead>
+          <tr>
+            <th>{{t "db.convert_col_table"}}</th>
+            <th class="text-end">{{t "db.convert_col_source"}}</th>
+            <th class="text-end">{{t "db.convert_col_target"}}</th>
+            <th class="text-end">{{t "db.convert_col_copied"}}</th>
+            <th>{{t "db.convert_col_note"}}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Tables}}
+          <tr class="{{if .Skipped}}text-muted{{end}}">
+            <td><code>{{.Table}}</code></td>
+            <td class="text-end">{{.SourceRows}}</td>
+            <td class="text-end">{{.TargetRows}}</td>
+            <td class="text-end">{{.Copied}}</td>
+            <td class="small">
+              {{if .Note}}{{.Note}}{{end}}
+              {{if .SkippedColumns}}<br><span class="text-warning">{{t "db.convert_dropped_columns"}}: <code>{{.SkippedColumns}}</code></span>{{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      <p class="small text-muted mb-1">
+        {{t "db.convert_from_to"}}: <code>{{.FromKind}}</code> → <code>{{.ToKind}}</code> ·
+        {{t "db.convert_copied_total"}}: <code>{{.CopiedRows}}</code>
+      </p>
+      {{if .Warnings}}
+      <ul class="small text-warning mb-0">
+        {{range .Warnings}}<li>{{.}}</li>{{end}}
+      </ul>
+      {{end}}
+      <p class="small text-muted mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.convert_after_help"}}</p>
+      {{end}}
     </div>
   </div>
 

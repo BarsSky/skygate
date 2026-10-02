@@ -44,6 +44,15 @@ import (
 // an error if the parent directory is missing). The first open creates
 // an empty SQLite DB; MigrateSQLite (Task 2) then applies the schema.
 func openSQLite(dsn string) (*sql.DB, error) {
+	return openSQLiteWith(dsn, true)
+}
+
+// openSQLiteWith is openSQLite with the process-wide registration made
+// optional. register=false is used by OpenIsolated, which opens a
+// second database inside a running server (the /admin/database
+// conversion) and must not change the dialect every other request
+// branches on. See active_dialect.go.
+func openSQLiteWith(dsn string, register bool) (*sql.DB, error) {
 	// 2026-09-18 (B261.1): strip an explicit "sqlite:" scheme prefix.
 	//
 	// "sqlite:/var/lib/skygate/skygate.db" is exactly what
@@ -124,6 +133,8 @@ func openSQLite(dsn string) (*sql.DB, error) {
 	// Register the backend so BackendOf(db) returns BackendSQLite
 	// (not empty). The migration tracking + conversion tool rely
 	// on BackendOf to dispatch DDL fragments.
-	registerBackend(db, BackendSQLite)
+	if register {
+		registerBackend(db, BackendSQLite)
+	}
 	return db, nil
 }

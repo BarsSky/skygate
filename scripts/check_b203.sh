@@ -31,6 +31,12 @@
 #  24. AGENTS.md mentions B203
 
 set -u
+# Per-run scratch directory (B340). A FIXED /tmp path is not writable by the
+# next run under a different user, which made eight checks report phantom FAILs
+# on 2026-10-01. See AGENTS.md trap #13.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+
 
 if [ -n "${SKYGATE_PROJECT_DIR:-}" ]; then
     cd "$SKYGATE_PROJECT_DIR"
@@ -200,23 +206,23 @@ wt=$(grep -c '^func Test' "internal/watchdog/dbswap_b203_test.go")
 
 # 23. Build + vet + tests
 if command -v go >/dev/null 2>&1; then
-    if (cd "$PWD" && go build ./... >/tmp/check_b203_build.log 2>&1); then
+    if (cd "$PWD" && go build ./... >${SKY_TMP}/check_b203_build.log 2>&1); then
         check "go build ./... succeeds" ok
     else
         check "go build ./... succeeds" fail
-        head -10 /tmp/check_b203_build.log
+        head -10 ${SKY_TMP}/check_b203_build.log
     fi
-    if (cd "$PWD" && go vet ./... >/tmp/check_b203_vet.log 2>&1); then
+    if (cd "$PWD" && go vet ./... >${SKY_TMP}/check_b203_vet.log 2>&1); then
         check "go vet ./... succeeds" ok
     else
         check "go vet ./... succeeds" fail
-        head -10 /tmp/check_b203_vet.log
+        head -10 ${SKY_TMP}/check_b203_vet.log
     fi
-    if (cd "$PWD" && go test -run 'TestResettableDB_|TestStringArray_|TestGetClusterDatabase_|TestDBSwap|TestRedactDSN|TestDefaultConfig|TestNewDBSwap|TestClusterDatabaseRow_|TestBackendPID_' ./internal/db/ ./internal/watchdog/ -count=1 >/tmp/check_b203_test.log 2>&1); then
+    if (cd "$PWD" && go test -run 'TestResettableDB_|TestStringArray_|TestGetClusterDatabase_|TestDBSwap|TestRedactDSN|TestDefaultConfig|TestNewDBSwap|TestClusterDatabaseRow_|TestBackendPID_' ./internal/db/ ./internal/watchdog/ -count=1 >${SKY_TMP}/check_b203_test.log 2>&1); then
         check "B203 unit tests (swapdb + watchdog + StringArray + GetClusterDatabase) pass" ok
     else
         check "B203 unit tests (swapdb + watchdog + StringArray + GetClusterDatabase) pass" fail
-        head -30 /tmp/check_b203_test.log
+        head -30 ${SKY_TMP}/check_b203_test.log
     fi
 else
     check "go build/vet/tests skipped (no go in PATH)" ok

@@ -70,13 +70,22 @@ for c in "$HEADSCALE_CONTAINER" "$PG_CONTAINER"; do
 done
 
 # ── fetch live headscale state ──
-sudo -n docker exec "$HEADSCALE_CONTAINER" headscale users list -o json 2>/dev/null > /tmp/attr_users.json
-sudo -n docker exec "$HEADSCALE_CONTAINER" headscale nodes list -o json 2>/dev/null > /tmp/attr_nodes.json
+# Per-run scratch files (B340): a FIXED /tmp path is not writable by the next run
+# under a different user, which made eight checks report phantom FAILs on
+# 2026-10-01. See AGENTS.md trap #13. The python helpers below read the paths
+# from the environment because a `<< 'PYEOF'` heredoc does not expand ${…}.
+SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)" || SKY_TMP="/tmp/skygate-check.$$"
+trap 'rm -rf "$SKY_TMP"' EXIT
+ATTR_USERS_JSON="${SKY_TMP}/attr_users.json"
+ATTR_NODES_JSON="${SKY_TMP}/attr_nodes.json"
+export ATTR_USERS_JSON ATTR_NODES_JSON
+sudo -n docker exec "$HEADSCALE_CONTAINER" headscale users list -o json 2>/dev/null > "$ATTR_USERS_JSON"
+sudo -n docker exec "$HEADSCALE_CONTAINER" headscale nodes list -o json 2>/dev/null > "$ATTR_NODES_JSON"
 
 echo "=== A. no node in sentinel user (id=2147455555) ==="
 SENTINEL_NODES=$(python3 << 'PYEOF'
-import json
-d = json.load(open('/tmp/attr_nodes.json'))
+import json, os
+d = json.load(open(os.environ['ATTR_NODES_JSON']))
 n = 0
 for x in d:
     if x.get('user',{}).get('id') == 2147455555:
@@ -96,8 +105,8 @@ fi
 echo
 echo "=== B. no node with user.name='tagged-devices' ==="
 NAMED_NODES=$(python3 << 'PYEOF'
-import json
-d = json.load(open('/tmp/attr_nodes.json'))
+import json, os
+d = json.load(open(os.environ['ATTR_NODES_JSON']))
 n = 0
 for x in d:
     if x.get('user',{}).get('name') == 'tagged-devices':
@@ -117,8 +126,8 @@ fi
 echo
 echo "=== C. every node_owner_map row points at a live headscale user ==="
 HS_USER_IDS=$(python3 -c "
-import json
-d = json.load(open('/tmp/attr_users.json'))
+import json, os
+d = json.load(open(os.environ['ATTR_USERS_JSON']))
 print(','.join(str(u['id']) for u in d))
 ")
 NOM_ORPHANS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -F'|' -c "
@@ -139,8 +148,8 @@ fi
 echo
 echo "=== D. every ONLINE node is attributed to a real portal user ==="
 ONLINE_UNATTRIBUTED=$(python3 << 'PYEOF'
-import json
-d = json.load(open('/tmp/attr_nodes.json'))
+import json, os
+d = json.load(open(os.environ['ATTR_NODES_JSON']))
 n = 0
 for x in d:
     u = x.get('user', {})

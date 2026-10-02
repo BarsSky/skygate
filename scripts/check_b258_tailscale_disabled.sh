@@ -43,11 +43,19 @@ log()  { printf '  %s\n' "$*"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
 bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 
-SRC="internal/feature/admin/tailscale.go"
 TPL="internal/handlers/templates/admin/tailscale.html"
 MAIN="cmd/skygate/main.go"
 RU="internal/i18n/catalog_tailscale.go"
 TEST="internal/feature/admin/tailscale_b258_test.go"
+
+# Contracts below read the admin TAILSCALE SURFACE, not one file.
+# internal/feature/admin/tailscale.go was split into seven focused files on
+# 2026-10-01 (refactor Phase D); pinning the single path turns a pure code move
+# into a wave of false FAILs. See scripts/lib/gosurface.sh.
+. "$REPO_ROOT/scripts/lib/gosurface.sh"
+if ! gosurface SRC "internal/feature/admin/tailscale.go" internal/feature/admin/tailscale_*.go; then
+  bad "no admin/tailscale surface files found — every contract below would pass vacuously"
+fi
 
 # --- A. helper + state field exist ---
 echo "=== A. tailscaleAuthKeyDisabled helper ==="
