@@ -74,7 +74,13 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # internal/feature/admin/system_tests.go (80 diff lines of struct-tag alignment)
 # while splitting it into four files — a split cannot produce clean output from a
 # drifted source, and contract D1 then demands the removal.
-FROZEN=274
+#
+# 2026-10-01: 274 → 272. B341 touched two more allow-listed files
+# (internal/feature/exit_rules/reconciler_b229_test.go and
+# reconciler_b237_7_test.go) when it renegotiated their "silent no-op" contract
+# into a named skip; rule 3 (and contract E1) require every file you TOUCH to be
+# gofmt-clean, so both were formatted and left the list.
+FROZEN=272
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

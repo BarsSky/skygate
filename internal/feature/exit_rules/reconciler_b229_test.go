@@ -144,15 +144,15 @@ func TestShouldAlert_DifferentHostnamesAreIndependent(t *testing.T) {
 //     Reason=missing-pref-unanimous.
 func TestPlanDevicePrefChange_Create_MissingPrefUnanimous(t *testing.T) {
 	state := DevicePrefState{
-		UserID:              1,
-		Username:            "skyadmin",
-		DeviceHostname:      "cyborg",
-		ExistingPrefTag:     "",
-		ExistingPrefVia:     false,
-		DistinctExitNodes:   1,
+		UserID:               1,
+		Username:             "skyadmin",
+		DeviceHostname:       "cyborg",
+		ExistingPrefTag:      "",
+		ExistingPrefVia:      false,
+		DistinctExitNodes:    1,
 		DominantExitHostname: "emilia",
-		TotalRules:          1,
-		CanonicalTag:        "tag:dev-infra-emilia",
+		TotalRules:           1,
+		CanonicalTag:         "tag:dev-infra-emilia",
 	}
 	ch, ok := PlanDevicePrefChange(state)
 	if !ok {
@@ -185,15 +185,15 @@ func TestPlanDevicePrefChange_Create_MissingPrefUnanimous(t *testing.T) {
 // caller.
 func TestPlanDevicePrefChange_Skip_SplitRules(t *testing.T) {
 	state := DevicePrefState{
-		UserID:              1,
-		Username:            "skyadmin",
-		DeviceHostname:      "cyborg",
-		ExistingPrefTag:     "",
-		ExistingPrefVia:     false,
-		DistinctExitNodes:   2, // emilia + karolina
+		UserID:               1,
+		Username:             "skyadmin",
+		DeviceHostname:       "cyborg",
+		ExistingPrefTag:      "",
+		ExistingPrefVia:      false,
+		DistinctExitNodes:    2, // emilia + karolina
 		DominantExitHostname: "emilia",
-		TotalRules:          10,
-		CanonicalTag:        "tag:dev-infra-emilia",
+		TotalRules:           10,
+		CanonicalTag:         "tag:dev-infra-emilia",
 	}
 	ch, ok := PlanDevicePrefChange(state)
 	if !ok {
@@ -212,22 +212,36 @@ func TestPlanDevicePrefChange_Skip_SplitRules(t *testing.T) {
 // autoupdater applies the dev-tag; if the rule points
 // at an exit_node whose hostname isn't in
 // node_owner_map yet (CanonicalTag=""), the reconciler
-// silently skips.
+// must NOT invent a preference.
+//
+// CONTRACT RENEGOTIATED by B341 (2026-10-01). This used to assert a SILENT skip
+// (`nil, false`) — and silence WAS the defect: the operator saw a rule that
+// "existed and did nothing" with nothing anywhere saying why (live report: device
+// `cyborg`, 11 youtube rules with no relay, no preference row, no log line). The
+// behaviour that matters is unchanged — nothing is written — but the case is now a
+// NAMED, returned skip, so it reaches the journal and the audit trail of the tick.
+// A skip is a log line, not an error, so this stays non-blocking.
 func TestPlanDevicePrefChange_Skip_NoCanonicalTag(t *testing.T) {
 	state := DevicePrefState{
-		UserID:              1,
-		Username:            "skyadmin",
-		DeviceHostname:      "cyborg",
-		ExistingPrefTag:     "",
-		ExistingPrefVia:     false,
-		DistinctExitNodes:   1,
+		UserID:               1,
+		Username:             "skyadmin",
+		DeviceHostname:       "cyborg",
+		ExistingPrefTag:      "",
+		ExistingPrefVia:      false,
+		DistinctExitNodes:    1,
 		DominantExitHostname: "emilia",
-		TotalRules:          1,
-		CanonicalTag:        "", // exit_node not in node_owner_map yet
+		TotalRules:           1,
+		CanonicalTag:         "", // exit_node not in node_owner_map yet
 	}
 	ch, ok := PlanDevicePrefChange(state)
-	if ok || ch != nil {
-		t.Fatalf("expected nil change for no-canonical-tag; got %+v", ch)
+	if !ok || ch == nil {
+		t.Fatal("B341: an untagged relay must produce a NAMED skip, not a silent no-op")
+	}
+	if ch.Action != "skip" || ch.Reason != "missing-pref-relay-untagged" {
+		t.Fatalf("B341: got action=%q reason=%q, want skip/missing-pref-relay-untagged", ch.Action, ch.Reason)
+	}
+	if ch.NewTag == "" {
+		t.Error("B341: the skip must name the relay it could not resolve, so the log is actionable")
 	}
 }
 
@@ -239,15 +253,15 @@ func TestPlanDevicePrefChange_Skip_NoCanonicalTag(t *testing.T) {
 // `tag:dev-infra-X` form.
 func TestPlanDevicePrefChange_Update_StaleTag(t *testing.T) {
 	state := DevicePrefState{
-		UserID:              1,
-		Username:            "skyadmin",
-		DeviceHostname:      "cyborg",
-		ExistingPrefTag:     "tag:exit-emilia", // legacy
-		ExistingPrefVia:     true,
-		DistinctExitNodes:   0, // ignored when pref exists
+		UserID:               1,
+		Username:             "skyadmin",
+		DeviceHostname:       "cyborg",
+		ExistingPrefTag:      "tag:exit-emilia", // legacy
+		ExistingPrefVia:      true,
+		DistinctExitNodes:    0, // ignored when pref exists
 		DominantExitHostname: "",
-		TotalRules:          0, // ignored when pref exists
-		CanonicalTag:        "tag:dev-infra-emilia",
+		TotalRules:           0, // ignored when pref exists
+		CanonicalTag:         "tag:dev-infra-emilia",
 	}
 	ch, ok := PlanDevicePrefChange(state)
 	if !ok {
@@ -281,15 +295,15 @@ func TestPlanDevicePrefChange_Update_StaleTag(t *testing.T) {
 // helper directly or set via_enabled=1 via SQL.
 func TestPlanDevicePrefChange_Update_ViaDisabledButCanonical(t *testing.T) {
 	state := DevicePrefState{
-		UserID:              1,
-		Username:            "skyadmin",
-		DeviceHostname:      "cyborg",
-		ExistingPrefTag:     "tag:dev-infra-emilia", // already canonical
-		ExistingPrefVia:     false,                  // but via=0
-		DistinctExitNodes:   0,
+		UserID:               1,
+		Username:             "skyadmin",
+		DeviceHostname:       "cyborg",
+		ExistingPrefTag:      "tag:dev-infra-emilia", // already canonical
+		ExistingPrefVia:      false,                  // but via=0
+		DistinctExitNodes:    0,
 		DominantExitHostname: "",
-		TotalRules:          0,
-		CanonicalTag:        "tag:dev-infra-emilia",
+		TotalRules:           0,
+		CanonicalTag:         "tag:dev-infra-emilia",
 	}
 	ch, ok := PlanDevicePrefChange(state)
 	if !ok {
@@ -314,15 +328,15 @@ func TestPlanDevicePrefChange_Update_ViaDisabledButCanonical(t *testing.T) {
 // so the reconciler has nothing to do.
 func TestPlanDevicePrefChange_NoOp_CanonicalAndPinned(t *testing.T) {
 	state := DevicePrefState{
-		UserID:              1,
-		Username:            "skyadmin",
-		DeviceHostname:      "cyborg",
-		ExistingPrefTag:     "tag:dev-infra-emilia",
-		ExistingPrefVia:     true,
-		DistinctExitNodes:   1,
+		UserID:               1,
+		Username:             "skyadmin",
+		DeviceHostname:       "cyborg",
+		ExistingPrefTag:      "tag:dev-infra-emilia",
+		ExistingPrefVia:      true,
+		DistinctExitNodes:    1,
 		DominantExitHostname: "emilia",
-		TotalRules:          5,
-		CanonicalTag:        "tag:dev-infra-emilia",
+		TotalRules:           5,
+		CanonicalTag:         "tag:dev-infra-emilia",
 	}
 	ch, ok := PlanDevicePrefChange(state)
 	if ok || ch != nil {
@@ -337,15 +351,15 @@ func TestPlanDevicePrefChange_NoOp_CanonicalAndPinned(t *testing.T) {
 // operator wants to clear it, so we don't clobber).
 func TestPlanDevicePrefChange_Skip_HostnameDeleted(t *testing.T) {
 	state := DevicePrefState{
-		UserID:              1,
-		Username:            "skyadmin",
-		DeviceHostname:      "old-device",
-		ExistingPrefTag:     "tag:dev-infra-emilia",
-		ExistingPrefVia:     true,
-		DistinctExitNodes:   0,
+		UserID:               1,
+		Username:             "skyadmin",
+		DeviceHostname:       "old-device",
+		ExistingPrefTag:      "tag:dev-infra-emilia",
+		ExistingPrefVia:      true,
+		DistinctExitNodes:    0,
 		DominantExitHostname: "",
-		TotalRules:          0,
-		CanonicalTag:        "", // device not in node_owner_map
+		TotalRules:           0,
+		CanonicalTag:         "", // device not in node_owner_map
 	}
 	ch, ok := PlanDevicePrefChange(state)
 	if ok || ch != nil {

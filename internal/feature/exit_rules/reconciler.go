@@ -104,6 +104,12 @@ type ReconcilerChange struct {
 	NewTag         string
 	RuleCount      int    // how many device_rules pointed at NewTag
 	Reason         string // "missing-pref-unanimous" | "missing-pref-split" | "stale-tag" | "via-disabled-but-canonical"
+	// B341 (2026-10-01) adds: "missing-pref-owner-derived" (created from
+	// prefix_owner — the same table the ACL pin uses), and the visible skips
+	// "missing-pref-no-relay" (no relay on the rules AND no owner for their
+	// prefixes), "missing-pref-owner-split" (the device's prefixes are served by
+	// different relays) and "missing-pref-owner-untagged" / "missing-pref-relay-untagged"
+	// (the relay exists but carries no per-node tag yet).
 }
 
 // DevicePrefState is the in-memory shape of one
@@ -124,6 +130,22 @@ type DevicePrefState struct {
 	DominantExitHostname string // hostname of the most-common exit_node_id
 	TotalRules           int
 	CanonicalTag         string // resolved from node_owner_map via NormalizeExitNodeTag ("" if not resolvable)
+
+	// B341 (2026-10-01) — the device's rules name NO relay at all.
+	//
+	// Live case: device `cyborg` had 11 youtube rules with exit_node_id='' and no
+	// device_exit_node_prefs row, so the rule "existed" but the device had no exit
+	// node and nothing happened — while `skyworker`, whose rules do name a relay,
+	// worked. Since B275 the ACL pins those prefixes from prefix_owner(), i.e. the
+	// DATA plane has already decided which relay serves them; the DEVICE half of
+	// that one decision was never made and nothing said so.
+	//
+	// OwnerDistinct is how many distinct relays own the prefixes this device's
+	// enabled subnet/ip rules cover (0 = none of its prefixes has an owner).
+	// OwnerCanonicalTag is the resolved per-node tag when exactly one relay owns
+	// them ("" when that relay has no tag yet, or when they are split).
+	OwnerDistinct     int
+	OwnerCanonicalTag string
 }
 
 // PlanDevicePrefChange is the pure decision function —
@@ -147,13 +169,75 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 	// emilia, some at karolina) and we shouldn't pick
 	// one for them.
 	if s.ExistingPrefTag == "" {
+		// B341 (2026-10-01) — the device's rules name NO relay.
+		//
+		// This case used to be invisible twice over: ReconcileDeviceExitNodePrefs
+		// filtered such devices out of the pair list entirely (`AND exit_node_id
+		// <> ''`), and if one reached here it fell into the silent
+		// `CanonicalTag == ""` branch below. Live: `cyborg` had 11 youtube rules
+		// with an empty relay and no preference — the rule existed, the ACL pinned
+		// the prefixes (from prefix_owner, B275), and the device still had no exit
+		// node, so nothing happened on the client.
+		//
+		// The honest source for "which relay would the data plane use?" is the
+		// SAME table the pin comes from. Deriving from it is not a guess: it is the
+		// decision B275 already made. Everything below is still create-only and
+		// still skips (visibly) when the answer is not unique.
+		if s.TotalRules > 0 && s.DistinctExitNodes == 0 {
+			skip := func(reason string, newTag string) (*ReconcilerChange, bool) {
+				return &ReconcilerChange{
+					Action:         "skip",
+					UserID:         s.UserID,
+					Username:       s.Username,
+					DeviceHostname: s.DeviceHostname,
+					RuleCount:      s.TotalRules,
+					NewTag:         newTag,
+					Reason:         reason,
+				}, true
+			}
+			switch {
+			case s.OwnerDistinct == 0:
+				// No relay on the rule AND no owner for its prefixes: nothing to
+				// derive from. Reported instead of silently ignored — this is the
+				// shape the operator cannot see today.
+				return skip("missing-pref-no-relay", "")
+			case s.OwnerDistinct > 1:
+				// The device's prefixes are served by different relays, so there is
+				// no single exit node to pin it to. The operator picks.
+				return skip("missing-pref-owner-split", s.DominantExitHostname)
+			case s.OwnerCanonicalTag == "":
+				// One owner, but its node carries no per-node tag yet (the B77
+				// autoupdater has not run, or the relay was just added). Deriving a
+				// tag from a class tag here is exactly the B279 defect.
+				return skip("missing-pref-owner-untagged", s.DominantExitHostname)
+			}
+			// One owner, tagged → write the preference the ACL already assumes.
+			return &ReconcilerChange{
+				Action:         "create",
+				UserID:         s.UserID,
+				Username:       s.Username,
+				DeviceHostname: s.DeviceHostname,
+				RuleCount:      s.TotalRules,
+				NewTag:         s.OwnerCanonicalTag,
+				Reason:         "missing-pref-owner-derived",
+			}, true
+		}
 		if s.CanonicalTag == "" {
-			// Can't resolve the canonical tag for the
-			// dominant exit_node. The headscale
-			// node probably isn't tagged yet (B77
-			// autoupdater hasn't run, or the exit
-			// node was just added). Skip silently.
-			return nil, false
+			// One (or more) rules name a relay, but its node carries no per-node
+			// tag yet — the B77 autoupdater has not run, or the relay was just
+			// added. B341: reported as a visible skip rather than the silent
+			// `return nil, false` this used to be, because "this device has rules
+			// and no preference" is actionable and was previously indistinguishable
+			// from "everything is fine".
+			return &ReconcilerChange{
+				Action:         "skip",
+				UserID:         s.UserID,
+				Username:       s.Username,
+				DeviceHostname: s.DeviceHostname,
+				RuleCount:      s.TotalRules,
+				NewTag:         s.DominantExitHostname,
+				Reason:         "missing-pref-relay-untagged",
+			}, true
 		}
 		// B279 (v1.5.46): never derive a preference FROM a class tag.
 		//
@@ -396,7 +480,6 @@ func (s *Service) ReconcileDeviceExitNodePrefs(ctx context.Context, n Reconciler
 		 WHERE enabled = 1
 		   AND device_hostname <> ''
 		   AND user_id IS NOT NULL
-		   AND exit_node_id <> ''
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("reconciler: list rule pairs: %w", err)
@@ -571,6 +654,28 @@ func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, user
 	if dominant != "" {
 		state.CanonicalTag, _ = db.NormalizeExitNodeTag(s.dbc(), dominant)
 	}
+	// B341 (2026-10-01): the rules name NO relay — ask the assignment table which
+	// relay the DATA plane would use for the prefixes they cover.
+	//
+	// This runs ONLY in that case, so a device whose rules already name a relay
+	// (skyworker, basic, a71 …) does exactly the work it did before: no extra
+	// query, no changed decision, nothing to regress. And it is the same table the
+	// ACL pin comes from (prefixowner.ViaForPrefix), so the device half and the
+	// destination half of one decision cannot name different relays.
+	if totalRules > 0 && state.DistinctExitNodes == 0 {
+		owners, err := db.OwnerTagCountsForDeviceRules(s.dbc(), userID, hostname)
+		if err != nil {
+			// Not fatal: the caller logs and skips this device, exactly as it does
+			// for a failed rule aggregation.
+			return state, fmt.Errorf("owner tags for %s/%s: %w", username, hostname, err)
+		}
+		state.OwnerDistinct = len(owners)
+		if state.OwnerDistinct == 1 {
+			for owner := range owners {
+				state.OwnerCanonicalTag, _ = db.NormalizeExitNodeTag(s.dbc(), owner)
+			}
+		}
+	}
 	// Also resolve canonical tag for the device's
 	// own hostname (used in the existing-pref branch
 	// to detect tag mismatch). This is the same
@@ -591,10 +696,13 @@ func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, user
 //
 // 2026-09-03: v1.5.2 (B229).
 func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChange, live bool, n ReconcilerNotifier) {
-	// Skip-changes: log only, no write.
+	// Skip-changes: log only, no write. B341: the REASON is printed — a skip is
+	// the operator's only signal for "this device has rules and no preference",
+	// and the old fixed sentence ("N rules point at M distinct exit_nodes") was
+	// wrong for the new reasons, where there is no relay to point at.
 	if ch.Action == "skip" {
-		log.Printf("preferred-reconciler: SKIP %s/%s — %d rules point at %d distinct exit_nodes (most=%s). Needs manual review.",
-			ch.Username, ch.DeviceHostname, ch.RuleCount, ch.DistinctExitNodesOrZero(), ch.NewTag)
+		log.Printf("preferred-reconciler: SKIP %s/%s — reason=%s rules=%d distinct_relays=%d most=%q. Needs manual review.",
+			ch.Username, ch.DeviceHostname, ch.Reason, ch.RuleCount, ch.DistinctExitNodesOrZero(), ch.NewTag)
 		return
 	}
 	// Dry-run: log only.

@@ -203,8 +203,6 @@ internal/feature/exit_rules/form_my.go
 internal/feature/exit_rules/form_my_b123_test.go
 internal/feature/exit_rules/form_my_b237_19_test.go
 internal/feature/exit_rules/preferred_check_test.go
-internal/feature/exit_rules/reconciler_b229_test.go
-internal/feature/exit_rules/reconciler_b237_7_test.go
 internal/feature/exit_rules/reconciler_rename.go
 internal/feature/exit_rules/reconciler_rename_b231_test.go
 internal/feature/exit_rules/reconciler_rename_rules_b277_5_test.go

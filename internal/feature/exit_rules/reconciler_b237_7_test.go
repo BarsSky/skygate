@@ -55,14 +55,14 @@ import (
 
 func TestPlanDevicePrefChange_CreatesWhenUnanimous(t *testing.T) {
 	ch, ok := PlanDevicePrefChange(DevicePrefState{
-		UserID:              1,
-		Username:            "skyadmin",
-		DeviceHostname:      "cyborg",
-		ExistingPrefTag:     "", // empty — no pref yet
-		DistinctExitNodes:   1,
+		UserID:               1,
+		Username:             "skyadmin",
+		DeviceHostname:       "cyborg",
+		ExistingPrefTag:      "", // empty — no pref yet
+		DistinctExitNodes:    1,
 		DominantExitHostname: "emilia",
-		TotalRules:          10,
-		CanonicalTag:        "tag:dev-infra-emilia",
+		TotalRules:           10,
+		CanonicalTag:         "tag:dev-infra-emilia",
 	})
 	if !ok {
 		t.Fatal("PlanDevicePrefChange: expected change, got no-op")
@@ -82,13 +82,13 @@ func TestPlanDevicePrefChange_SkipsWhenSplit(t *testing.T) {
 	// 3 emilia + 2 karolina = split. Operator must
 	// pick. Reconciler must NOT silently pick one.
 	ch, ok := PlanDevicePrefChange(DevicePrefState{
-		UserID:              1,
-		DeviceHostname:      "splitty",
-		ExistingPrefTag:     "",
-		DistinctExitNodes:   2, // split
+		UserID:               1,
+		DeviceHostname:       "splitty",
+		ExistingPrefTag:      "",
+		DistinctExitNodes:    2, // split
 		DominantExitHostname: "emilia",
-		TotalRules:          5,
-		CanonicalTag:        "tag:dev-infra-emilia",
+		TotalRules:           5,
+		CanonicalTag:         "tag:dev-infra-emilia",
 	})
 	if !ok {
 		t.Fatal("PlanDevicePrefChange: expected skip change")
@@ -103,20 +103,33 @@ func TestPlanDevicePrefChange_SkipsWhenSplit(t *testing.T) {
 
 func TestPlanDevicePrefChange_NoOpWhenCanonicalTagMissing(t *testing.T) {
 	// Empty pref + empty canonical tag = can't derive
-	// the right value. No-op (not a CREATE, not a SKIP).
-	// This is the "host deleted from node_owner_map"
-	// case — better to do nothing than to clobber.
-	_, ok := PlanDevicePrefChange(DevicePrefState{
-		UserID:              1,
-		DeviceHostname:      "orphaned",
-		ExistingPrefTag:     "",
-		DistinctExitNodes:   1,
+	// the right value. No CREATE happens — the operator's
+	// state is never clobbered.
+	//
+	// CONTRACT RENEGOTIATED by B341 (2026-10-01): the case is still a no-WRITE, but
+	// it is no longer an invisible no-op — it returns a NAMED skip
+	// ("missing-pref-relay-untagged") so the tick's journal says "this device has
+	// rules and I cannot derive a preference for it, because its relay carries no
+	// per-node tag yet". Silence here is what let the live `cyborg` case sit
+	// unexplained: a rule that exists, a policy that looks right, and nothing that
+	// says why the device does nothing. A skip is a log line, not an error.
+	ch, ok := PlanDevicePrefChange(DevicePrefState{
+		UserID:               1,
+		DeviceHostname:       "orphaned",
+		ExistingPrefTag:      "",
+		DistinctExitNodes:    1,
 		DominantExitHostname: "emilia",
-		TotalRules:          3,
-		CanonicalTag:        "", // host not in node_owner_map
+		TotalRules:           3,
+		CanonicalTag:         "", // host not in node_owner_map
 	})
-	if ok {
-		t.Errorf("PlanDevicePrefChange: expected no-op when CanonicalTag empty, got a change")
+	if !ok || ch == nil {
+		t.Fatal("B341: this must report a NAMED skip, not vanish")
+	}
+	if ch.Action == "create" || ch.Action == "update" || ch.Action == "clear" {
+		t.Fatalf("B341: no write may happen when the tag cannot be resolved; got action=%q", ch.Action)
+	}
+	if ch.Reason != "missing-pref-relay-untagged" {
+		t.Errorf("Reason = %q, want missing-pref-relay-untagged", ch.Reason)
 	}
 }
 
@@ -125,14 +138,14 @@ func TestPlanDevicePrefChange_UpdatesStaleTag(t *testing.T) {
 	// manually, e.g. 'tag:dev-michail-basic' which is
 	// the device's own tag, not the exit node's). Update.
 	ch, ok := PlanDevicePrefChange(DevicePrefState{
-		UserID:              1,
-		DeviceHostname:      "cyborg",
-		ExistingPrefTag:     "tag:dev-michail-basic", // wrong
-		ExistingPrefVia:     true,
-		DistinctExitNodes:   1,
+		UserID:               1,
+		DeviceHostname:       "cyborg",
+		ExistingPrefTag:      "tag:dev-michail-basic", // wrong
+		ExistingPrefVia:      true,
+		DistinctExitNodes:    1,
 		DominantExitHostname: "emilia",
-		TotalRules:          10,
-		CanonicalTag:        "tag:dev-infra-emilia",
+		TotalRules:           10,
+		CanonicalTag:         "tag:dev-infra-emilia",
 	})
 	if !ok {
 		t.Fatal("PlanDevicePrefChange: expected update change")
@@ -162,14 +175,14 @@ func TestPlanDevicePrefChange_ReEnablesViaFlag(t *testing.T) {
 	// the v1.5.42 path returns Action="skip" + logs the
 	// would-have-updated event for the audit trail.
 	ch, ok := PlanDevicePrefChange(DevicePrefState{
-		UserID:              1,
-		DeviceHostname:      "cyborg",
-		ExistingPrefTag:     "tag:dev-infra-emilia",
-		ExistingPrefVia:     false, // via disabled (operator choice)
-		DistinctExitNodes:   1,
+		UserID:               1,
+		DeviceHostname:       "cyborg",
+		ExistingPrefTag:      "tag:dev-infra-emilia",
+		ExistingPrefVia:      false, // via disabled (operator choice)
+		DistinctExitNodes:    1,
 		DominantExitHostname: "emilia",
-		TotalRules:          10,
-		CanonicalTag:        "tag:dev-infra-emilia",
+		TotalRules:           10,
+		CanonicalTag:         "tag:dev-infra-emilia",
 	})
 	if !ok {
 		t.Fatal("PlanDevicePrefChange: expected skip change (audit-only)")
@@ -186,14 +199,14 @@ func TestPlanDevicePrefChange_NoOpWhenAlreadyCorrect(t *testing.T) {
 	// Everything already correct → no-op (don't churn
 	// audit logs with redundant writes).
 	_, ok := PlanDevicePrefChange(DevicePrefState{
-		UserID:              1,
-		DeviceHostname:      "skyworker",
-		ExistingPrefTag:     "tag:dev-infra-karolina",
-		ExistingPrefVia:     true,
-		DistinctExitNodes:   1,
+		UserID:               1,
+		DeviceHostname:       "skyworker",
+		ExistingPrefTag:      "tag:dev-infra-karolina",
+		ExistingPrefVia:      true,
+		DistinctExitNodes:    1,
 		DominantExitHostname: "karolina",
-		TotalRules:          117,
-		CanonicalTag:        "tag:dev-infra-karolina",
+		TotalRules:           117,
+		CanonicalTag:         "tag:dev-infra-karolina",
 	})
 	if ok {
 		t.Errorf("PlanDevicePrefChange: expected no-op (everything correct), got a change")
@@ -216,14 +229,14 @@ func TestPlanDevicePrefChange_OrphanUserID(t *testing.T) {
 	// (it's used in audit log + alert text, not in
 	// the SQL write path).
 	ch, ok := PlanDevicePrefChange(DevicePrefState{
-		UserID:              6, // michail — no portal_users row
-		Username:            "", // empty (DB scan miss)
-		DeviceHostname:      "basic",
-		ExistingPrefTag:     "", // empty — no pref yet
-		DistinctExitNodes:   1,
+		UserID:               6,  // michail — no portal_users row
+		Username:             "", // empty (DB scan miss)
+		DeviceHostname:       "basic",
+		ExistingPrefTag:      "", // empty — no pref yet
+		DistinctExitNodes:    1,
 		DominantExitHostname: "emilia",
-		TotalRules:          43,
-		CanonicalTag:        "tag:dev-infra-emilia",
+		TotalRules:           43,
+		CanonicalTag:         "tag:dev-infra-emilia",
 	})
 	if !ok {
 		t.Fatal("PlanDevicePrefChange: orphan user_id must NOT swallow the change")
