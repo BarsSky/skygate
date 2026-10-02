@@ -597,13 +597,26 @@ covered by a recorded canary run) is the reference example.
 Measured 2026-09-18; ordered roughly by how likely it is to bite. Items struck
 through were closed by refactor Phase D (2026-10-01).
 
-1. **`cmd/skygate/main.go` and `internal/feature/admin` are oversized.** `main.go` is
-   **4 515 lines / 216 KB**, one `main()` spanning ~3 400 lines (144–3539) holding the whole
+1. **`cmd/skygate/main.go` and `internal/feature/admin` are oversized.** `main.go` was
+   **4 655 lines / 216 KB**, one `main()` spanning ~3 400 lines (144–3539) holding the whole
    route table (~254 registrations) plus every background-service launch. Its contracts no
    longer name the FILE: 110 scripts read the package surface
    (`gosurface MAIN cmd/skygate/*.go`, 2026-10-02), because 655 occurrences of the path were
    only 196 operands — the other 459 are existence tests, messages and comments that must
-   keep naming the real file (L-55). That conversion is what unblocks the split itself.
+   keep naming the real file (L-55). That conversion is what unblocked the split, which
+   then landed in the same change as four pure moves: `main.go` **4 655 → 2 553** (the boot
+   sequence and nothing else), `routes.go` (1 010 — the 239-registration table, moved
+   byte-for-byte), `main_helpers.go` (471 — env readers, discovery ticker, notification
+   sinks), `main_bootstrap.go` (383 — first-run admin/user/backfill provisioning) and
+   `main_subcommands.go` (348 — migrate-only / backup / deploy / ha CLI). The three tail
+   files are contiguous slices of the old file (lines 3531, 3856, 4216) and the route block
+   is byte-identical to `git show HEAD~2`'s lines 1756–2718; the only generated text is each
+   file's header and import block. `registerRoutes` takes **eleven** parameters, and nine
+   more candidates that look like inputs in the raw text are not locals of `main()` at all
+   (`elector` is the imported PACKAGE; `audit`, `fix`, `cancel`, `stop`, `ok`, `n`, `r`, `t`
+   are words in the block's comments) — the set came from `var _ int = x` compiler probes,
+   not from reading. B339 §E now fails if the table is re-inlined (`registerRoutes` exists
+   once, ≥200 registrations in `routes.go`, `main.go` < 3 000 lines).
    `internal/feature/admin` was **115 files / 1.2 MB**; `tailscale.go` (73.7 KB) is now
    seven files, the largest of them 18 KB. `internal/acl/acl.go` (2209 lines) is now
    seven files too (`acl_generate_via.go` is the largest at 896 — a single function,

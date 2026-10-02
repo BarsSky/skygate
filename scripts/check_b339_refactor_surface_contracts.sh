@@ -259,6 +259,52 @@ else
 fi
 rm -rf "$TRAPDIR"
 
+hdr "E. the split itself stays split"
+
+# The surface conversion exists so the FILE can be split. These contracts pin
+# the split's two structural promises against a later re-inlining, which is the
+# only way the 4655-line file comes back: the route table lives in routes.go and
+# is reached through one call, and the boot helpers live in their own files.
+if grep -q '^func registerRoutes(' cmd/skygate/routes.go 2>/dev/null; then
+  ok "E1: the route table is a function in cmd/skygate/routes.go"
+else
+  bad "E1: cmd/skygate/routes.go no longer defines registerRoutes — has the table moved back into main()?"
+fi
+CALLS="$(grep -c '^	registerRoutes(' cmd/skygate/main.go 2>/dev/null || echo 0)"
+if [ "$CALLS" = "1" ]; then
+  ok "E2: main() calls registerRoutes exactly once"
+else
+  bad "E2: main() calls registerRoutes $CALLS time(s) — expected exactly 1"
+fi
+REGS="$(grep -c 'mux\.Handle' cmd/skygate/routes.go 2>/dev/null || echo 0)"
+if [ "$REGS" -ge 200 ]; then
+  ok "E3: routes.go holds $REGS route registrations (the table, not a stub)"
+else
+  bad "E3: routes.go holds only $REGS registrations — the table was split back into the boot sequence"
+fi
+MOVED_OK=0
+for pair in "main_subcommands.go:func runMigrateOnly" "main_bootstrap.go:func ensureInfraUser" \
+            "main_helpers.go:func tailscaleBackendState"; do
+  f="cmd/skygate/${pair%%:*}"; sym="${pair#*:}"
+  if grep -q "^$sym" "$f" 2>/dev/null; then
+    MOVED_OK=$((MOVED_OK + 1))
+  else
+    bad "E4: $sym is not in cmd/skygate/$f — a moved helper came back"
+  fi
+  if grep -q "^$sym" cmd/skygate/main.go 2>/dev/null; then
+    bad "E4: $sym is defined in BOTH cmd/skygate/$f and main.go"
+  fi
+done
+if [ "$MOVED_OK" -eq 3 ]; then
+  ok "E4: the three tail files still own their anchor helpers (and main.go does not duplicate them)"
+fi
+MAIN_LINES="$(wc -l < cmd/skygate/main.go 2>/dev/null || echo 0)"
+if [ "$MAIN_LINES" -gt 0 ] && [ "$MAIN_LINES" -lt 3000 ]; then
+  ok "E5: main.go is $MAIN_LINES lines (was 4655 before the split)"
+else
+  bad "E5: main.go is $MAIN_LINES lines — the boot sequence grew back into a monolith"
+fi
+
 hdr "D. tracked, registered, indexed"
 
 if git ls-files --error-unmatch scripts/check_b339_refactor_surface_contracts.sh >/dev/null 2>&1; then
