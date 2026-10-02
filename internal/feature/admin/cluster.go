@@ -691,6 +691,14 @@ func (s *Service) PostAdminClusterNodeAdd(w http.ResponseWriter, r *http.Request
 		clusterRedirect(w, r, "", "hostname already in cluster_node: "+hostname)
 		return
 	}
+	// B342.1: `cluster_node.cluster_id` FKs to `cluster.id`, and only the CLI
+	// created that row (B211) — on a virgin primary this panel action therefore
+	// failed with a foreign-key error. EnsureCluster is idempotent, so the panel can
+	// bootstrap the cluster itself.
+	if err := cluster.EnsureCluster(s.dbc(), clusterID, clusterID); err != nil {
+		clusterRedirect(w, r, "", "ensure cluster row: "+err.Error())
+		return
+	}
 	id, err := cluster.AddNode(s.dbc(), clusterID, hostname, tailscaleIP, roles, skygateVer)
 	if err != nil {
 		clusterRedirect(w, r, "", "add node: "+err.Error())

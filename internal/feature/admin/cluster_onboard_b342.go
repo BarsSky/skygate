@@ -272,6 +272,18 @@ func (s *Service) PostAdminClusterOnboard(w http.ResponseWriter, r *http.Request
 	//    was added by hand is a legitimate retry, and re-minting the invite is
 	//    the point.
 	const clusterID = "skygate-staging"
+	// B342.1 (2026-10-02, live): THE CLUSTER ROW ITSELF. `cluster_node.cluster_id`
+	// FKs to `cluster.id`, and on a virgin primary that row does not exist — it was
+	// created only by the CLI (`skygate init`, B211), so "onboard from the panel
+	// alone" hit a foreign-key failure before minting anything (measured on the
+	// reference VM: `cluster`, `cluster_node`, `cluster_database` and
+	// `cluster_invite` all empty). EnsureCluster is idempotent (ON CONFLICT DO
+	// NOTHING) and dialect-portable since B291, so calling it here is what makes
+	// the panel path genuinely self-sufficient.
+	if cerr := cluster.EnsureCluster(s.dbc(), clusterID, clusterID); cerr != nil {
+		errf("cluster.onboard_err_cluster")
+		return
+	}
 	if existing, err := cluster.LookupNode(s.dbc(), clusterID, hostname); err == nil && existing == nil {
 		if _, aerr := cluster.AddNode(s.dbc(), clusterID, hostname, "", []string{cluster.NodeRoleStandby}, ""); aerr != nil {
 			errf("cluster.onboard_err_node")

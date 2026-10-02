@@ -74,6 +74,21 @@ if grep -q 'data.Onboard = s.consumeClusterOnboard(boot)' internal/feature/admin
 else
   bad "A4: the cluster page does not consume ?boot= — the block would never be rendered"
 fi
+# A5/A6 — B342.1 (2026-10-02, live): THE CLUSTER ROW ITSELF. `cluster_node.cluster_id`
+# FKs to `cluster.id`, and only the CLI created that row (B211) — on a virgin primary
+# (measured: `cluster`, `cluster_node`, `cluster_database` and `cluster_invite` all
+# empty) the panel path hit a foreign-key failure before minting anything, which is
+# exactly the "panel alone" promise this block makes.
+if grep -q 'cluster.EnsureCluster(s.dbc(), clusterID, clusterID)' "$GO"; then
+  ok "A5: the onboard action ensures the cluster row itself (the panel can bootstrap a virgin primary)"
+else
+  bad "A5: the onboard action assumes the cluster row exists — on a fresh primary it fails with an FK error"
+fi
+if grep -q 'cluster.EnsureCluster' internal/feature/admin/cluster.go; then
+  ok "A6: the older per-row node-add action does too (same FK, same failure)"
+else
+  bad "A6: PostAdminClusterNodeAdd still assumes the cluster row exists"
+fi
 
 hdr "B. the handler's guards"
 
