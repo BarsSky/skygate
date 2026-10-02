@@ -215,5 +215,53 @@ else
   bad "E3: AGENTS.md has no B335 entry (AGENTS rule 2)"
 fi
 
+# ---------------------------------------------------------------------------
+hdr "F. every catalog entry keeps its ARGUMENT BOUNDARIES"
+# ---------------------------------------------------------------------------
+# Measured 2026-10-02: the B343 entry was registered with the description's
+# CLOSING QUOTE missing (`run_check "B343" "…essay \`), so bash swallowed the
+# following lines into the string until the next `"` — which happened to be in a
+# COMMENT block, so the file stayed quote-BALANCED and `bash -n` passed while the
+# command that actually ran was catalog garbage:
+#
+#	must: line 1: admin: command not found
+#
+# The gate read that as a product FAIL on B343. The runtime arity guard cannot
+# see this class: the call still has three arguments, one of them wrong.
+catalog_quote_violations() {
+  local f="$1" line lineno=0 body stripped out=""
+  while IFS= read -r line; do
+    lineno=$((lineno + 1))
+    case "$line" in 'run_check "'*) ;; *) continue ;; esac
+    case "$line" in *'\') ;; *) continue ;; esac   # only continued entries: one-liners carry the command
+    body="${line%\\}"
+    body="${body%"${body##*[![:space:]]}"}"
+    case "$body" in
+      *'"') ;;
+      *) out="$out $lineno(description-not-closed)"; continue ;;
+    esac
+    stripped="${body//\"/}"
+    if [ $(( (${#body} - ${#stripped}) % 2 )) -ne 0 ]; then
+      out="$out $lineno(odd-quote-count)"
+    fi
+  done < "$f"
+  printf '%s' "$out"
+}
+VIOL="$(catalog_quote_violations "$GATE")"
+if [ -z "$VIOL" ]; then
+  ok "F1: every continued run_check closes its description quote before the backslash"
+else
+  bad "F1: malformed catalog entr(ies):$VIOL — a missing closing quote swallows the following lines (AGENTS rule: the description is an ARGUMENT)"
+fi
+# The detector must be able to fail, or "no violations" means "the detector broke".
+PLANTED="$(mktemp)"
+printf 'run_check "B999" "a description with no closing quote \\\n  '"'"'true'"'"'\n' > "$PLANTED"
+PLANTED_VIOL="$(catalog_quote_violations "$PLANTED")"
+rm -f "$PLANTED"
+case "$PLANTED_VIOL" in
+  *not-closed*) ok "F2: the detector fires on the exact shape B343 had (a planted entry with no closing quote)" ;;
+  *) bad "F2: the detector did NOT see a planted unclosed entry — 'no violations' would be vacuous" ;;
+esac
+
 printf '\n\033[1mB335 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ]
