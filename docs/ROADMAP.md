@@ -281,12 +281,19 @@ These are tracked so they are not lost, **not** planned:
 * Historical superpowers B-mod plans and v0.2x refactor plans — removed from the
   tree; the durable outcome is captured in `docs/internals.md` + `docs/LESSONS.md`,
   the text itself in git history.
-* **The large-file refactor.** `cmd/skygate/main.go` is 4 648 lines with a
-  ~3 389-line `main()`; `internal/i18n/catalog_admin.go` is 2 308; `internal/acl/acl.go`
-  is 2 209. The split order (contract-count-ascending) and the per-file seams were
-  mapped in the 2026-09-28 audit, and the work is **gated on TD-21**: a move-diff on
-  unformatted files is unreadable, and 155 check scripts grep `cmd/skygate/main.go`
-  alone.
+* **The large-file refactor.** `cmd/skygate/main.go` was 4 655 lines with a
+  ~3 400-line `main()`; `internal/i18n/catalog_admin.go` is 2 333;
+  `internal/feature/my/devices.go` 1 596; `internal/feature/exit_rules/form_my.go`
+  1 543. **`main.go` is DONE (2026-10-02, 4 655 → 2 553):** the contracts now read
+  the package SURFACE (`gosurface … cmd/skygate/*.go`, 110 scripts — 655 path
+  occurrences were only 196 operands, L-55/L-56), then the route table became
+  `routes.go` (byte-identical move, 241 registrations) and the boot helpers became
+  `main_bootstrap.go` / `main_helpers.go` / `main_subcommands.go` (contiguous
+  slices, proven). B339 §E keeps it split. What remains of the large-file work:
+  the two 1.5 k-line feature files above, the de-duplication of
+  `acl_generate.go` / `acl_generate_via.go` (behavioural, needs its own block), and
+  TD-21 (a `gofmt -w` renormalisation of the frozen 305-file set) — the old gate
+  this item cited, "155 check scripts grep main.go", no longer exists.
 
 ---
 
