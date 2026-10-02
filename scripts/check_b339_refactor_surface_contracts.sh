@@ -87,6 +87,22 @@ if grep -q 'GOSURFACE_TRAP_INSTALLED' "$LIB" 2>/dev/null; then
 else
   bad "A7: the helper reinstalls (and re-splices) the EXIT trap on every call"
 fi
+# A8/A9 pin the SECOND half of the same bug (measured 2026-10-02): thirty
+# scripts source this file twice (the tailscale/acl checks sourced it before the
+# Phase-D sweep added a line-2 source), and re-sourcing RESET the installed flag
+# while the trap stayed, so the next call chained the handler to itself —
+# `eval _gosurface_cleanup` in a loop, stack overflow, exit 139 AFTER a full
+# "RESULT: PASS". The gate called that 15 product FAILs.
+if grep -q 'if \[ -z "\${GOSURFACE_TRAP_INSTALLED:-}" \]' "$LIB" 2>/dev/null; then
+  ok "A8: re-sourcing the helper does not reset its state"
+else
+  bad "A8: the initialisers clobber existing state — a second source resets the installed flag while the trap stays"
+fi
+if grep -q '_gosurface_prev_trap" != "_gosurface_cleanup"' "$LIB" 2>/dev/null; then
+  ok "A9: the handler refuses to chain itself (the recursion guard)"
+else
+  bad "A9: nothing stops the cleanup from eval-ing the handler itself"
+fi
 
 hdr "B. every contract that reads the SPLIT surfaces uses the surface form"
 
@@ -138,6 +154,21 @@ if [ -n "$MAIN_HITS" ]; then
   printf '%s\n' "$MAIN_HITS" | sed 's/^/        /'
 else
   ok "B: no check script reads cmd/skygate/main.go as an operand (only existence tests and messages)"
+fi
+# ...and the same scan for the CATALOG's `printf "%s" "<script>" > "$f"` entries.
+# Their operands sit INSIDE the payload on a line whose first command is
+# `printf`, so the per-line classifier and the "does this line start with grep?"
+# scan both treat it as a message — measured 2026-10-02, B66/B68/B69/B81 were the
+# only four entries the Phase-D sweep missed and they went red on a pure move.
+NESTED_HITS="$(grep -nF -- 'cmd/skygate/main.go' scripts/verify_pre_deploy.sh 2>/dev/null \
+                | grep -v 'gosurface' \
+                | grep -v ':[[:space:]]*#' \
+                | grep -E 'printf "%s"|printf .%s.' || true)"
+if [ -n "$NESTED_HITS" ]; then
+  bad "B: a catalog inline script reads cmd/skygate/main.go as one file (the operand hides inside the printf payload):"
+  printf '%s\n' "$NESTED_HITS" | cut -c1-160 | sed 's/^/        /'
+else
+  ok "B: no catalog inline script greps cmd/skygate/main.go as one file"
 fi
 MAIN_SOURCED=0
 for c in $(grep -lE 'gosurface [A-Za-z_][A-Za-z0-9_]* [^ ]*cmd/skygate/' scripts/check_*.sh 2>/dev/null); do
@@ -259,9 +290,25 @@ else
 fi
 rm -rf "$TRAPDIR"
 
-hdr "E. the split itself stays split"
+# C7 — the shape that produced the 139: source the helper TWICE (thirty checks
+# do) and read two surfaces. The shell must exit 0 with an empty stderr; the
+# pre-fix code recursed inside its own EXIT trap until the stack ran out, AFTER
+# printing a green verdict, so the check looked correct and the gate called it a
+# product failure.
+TWICE_OUT="$( { . "$LIB"; . "$LIB"; gosurface A internal/feature/admin/tailscale*.go; gosurface B cmd/skygate/*.go; echo twice-ok; } 2>&1 )"
+TWICE_RC=$?
+case "$TWICE_OUT" in
+  *twice-ok*)
+    if [ "$TWICE_RC" -eq 0 ] && ! printf '%s' "$TWICE_OUT" | grep -qiE 'segmentation|stack|recursion'; then
+      ok "C7: sourcing the helper twice and reading two surfaces exits cleanly (rc=$TWICE_RC)"
+    else
+      bad "C7: a double source broke the exit path (rc=$TWICE_RC): $TWICE_OUT"
+    fi ;;
+  *)
+    bad "C7: a double source did not get as far as the second surface: $TWICE_OUT" ;;
+esac
 
-# The surface conversion exists so the FILE can be split. These contracts pin
+hdr "E. the split itself stays split"
 # the split's two structural promises against a later re-inlining, which is the
 # only way the 4655-line file comes back: the route table lives in routes.go and
 # is reached through one call, and the boot helpers live in their own files.
@@ -304,6 +351,17 @@ if [ "$MAIN_LINES" -gt 0 ] && [ "$MAIN_LINES" -lt 3000 ]; then
 else
   bad "E5: main.go is $MAIN_LINES lines — the boot sequence grew back into a monolith"
 fi
+
+# C8 — the target variable may be named `f`. The helper used `local f` for its
+# own loop variable, so `gosurface f …` (check_b194.sh's shape) assigned the temp
+# path to the LOCAL and left the caller's `$f` empty: seven B194 contracts
+# reported "main.go missing deployrun.NewService" on a tree where it was in
+# main.go. Every local is now prefixed _gs_.
+F_OUT="$( { . "$LIB"; gosurface f cmd/skygate/*.go && grep -q '^func main(' "$f" && echo f-target-works; } 2>&1 )"
+case "$F_OUT" in
+  *f-target-works*) ok "C8: a caller whose target variable is named f still receives the surface (no local shadowing)" ;;
+  *) bad "C8: gosurface f … did not leave a readable surface in \$f: $F_OUT" ;;
+esac
 
 hdr "D. tracked, registered, indexed"
 

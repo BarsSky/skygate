@@ -92,7 +92,18 @@ fi
 echo "=== check_b_db_dsn_reachable.sh (B-mod-db-retry, 2026-09-09) ==="
 
 # A. SKYGATE_DB_RETRY_MAX_ATTEMPTS has a sensible default (5) in main.go
-gosurface MAIN_GO cmd/skygate/*.go
+#
+# The surface is the BOOT SEQUENCE — the four files that used to be
+# cmd/skygate/main.go (refactor Phase D, 2026-10-02) — not the whole package.
+# The sibling CLI families (cluster.go, init.go, migrate.go, db_migrate.go,
+# acl_apply.go, derp_probe.go, regapi_credentials.go, oidc_export_b304.go) are
+# separate entry points that open their own connection; widening this contract to
+# `cmd/skygate/*.go` made it count THEIR calls and reported "7 OpenDSNWithRetry +
+# 17 plain OpenDSN (expected 6+ / 7+0)" on a tree where the boot path was
+# unchanged. Measured now: OpenDSNWithRetry lives in main.go (1) and
+# main_subcommands.go (6), and NO plain db.OpenDSN call exists in any of the four
+# boot files — which is exactly what this contract has always asserted.
+gosurface MAIN_GO cmd/skygate/main.go cmd/skygate/main_subcommands.go cmd/skygate/main_bootstrap.go cmd/skygate/main_helpers.go
 if grep -qE 'OpenDSNWithRetry\(cfg\.DBDSN, 5,' "$MAIN_GO"; then
     ok "A: main.go calls OpenDSNWithRetry with maxAttempts=5"
 else
