@@ -84,7 +84,13 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # 2026-10-02: 272 → 271. B342 touched internal/feature/admin/cluster.go (two new
 # page-data fields for the onboarding artifact) and formatted it in the same
 # batch; contract D1 caught that the file was now clean and still listed.
-FROZEN=271
+#
+# 2026-10-02: 271 → 270. B343 added two i18n keys to
+# internal/i18n/catalog_exit_rules.go; the key that is longer than any existing
+# one re-aligned the whole map block, and gofmt then reported the file clean —
+# contract D1 again (a touched file must leave the list). The 230-line alignment
+# diff is the cost of keeping a touched file gofmt-clean inside an aligned map.
+FROZEN=270
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.
