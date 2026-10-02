@@ -61,7 +61,14 @@ SYNC=internal/feature/exit_rules/sync.go
 . scripts/lib/gosurface.sh
 gosurface EXIT internal/feature/admin/exit_nodes*.go
 
-TG=internal/feature/admin/telegram.go
+# The /admin/telegram SURFACE, not one file: internal/feature/admin/telegram.go
+# was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
+# one path turns a pure code move into a false FAIL — and is the weaker contract
+# even while it is green. gosurface expands the glob itself and skips _test.go.
+# See B339.
+. scripts/lib/gosurface.sh
+gosurface TG internal/feature/admin/telegram*.go
+
 TMPL=internal/handlers/templates/admin/exit_nodes.html
 TGTMPL=internal/handlers/templates/admin/telegram.html
 I18N=internal/i18n/catalog_telegram.go

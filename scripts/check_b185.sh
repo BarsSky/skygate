@@ -71,6 +71,14 @@ trap 'rm -rf "$SKY_TMP"' EXIT
 PASS=0
 FAIL=0
 [ -d /home/skyadmin/skygate ] && REPO=/home/skyadmin/skygate || REPO="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+# The /admin/telegram SURFACE, not one file: internal/feature/admin/telegram.go
+# was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
+# one path turns a pure code move into a false FAIL — and is the weaker contract
+# even while it is green. gosurface expands the glob itself and skips _test.go.
+# See B339.
+. scripts/lib/gosurface.sh
+gosurface TELEGRAM_GO internal/feature/admin/telegram*.go
+
 
 check_eq() {
   local label="$1" expected="$2" actual="$3"
@@ -137,11 +145,11 @@ check_ge "G" 7 "$(count "$REPO/internal/feature/exit_rules/form_admin_b184_test.
 check_ge "H" 5 "$(count "$REPO/internal/feature/exit_rules/resolved_by_domain_b185_test.go" '^func Test')"
 
 # I. internal/feature/admin/telegram.go has readContainerTailscaleState
-check_ge "I-func" 1 "$(count "$REPO/internal/feature/admin/telegram.go" 'func readContainerTailscaleState')"
+check_ge "I-func" 1 "$(count "$TELEGRAM_GO" 'func readContainerTailscaleState')"
 
 # J. internal/feature/admin/telegram.go has handleTelegramReapplyAcceptRoutes
-check_ge "J-func" 1 "$(count "$REPO/internal/feature/admin/telegram.go" 'func.*handleTelegramReapplyAcceptRoutes')"
-check_ge "J-action" 1 "$(count "$REPO/internal/feature/admin/telegram.go" 'reapply_accept_routes')"
+check_ge "J-func" 1 "$(count "$TELEGRAM_GO" 'func.*handleTelegramReapplyAcceptRoutes')"
+check_ge "J-action" 1 "$(count "$TELEGRAM_GO" 'reapply_accept_routes')"
 
 # K. internal/handlers/templates/admin/telegram.html renders the
 # container-tailscale card

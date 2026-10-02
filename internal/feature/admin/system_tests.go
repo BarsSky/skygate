@@ -1,41 +1,21 @@
-package admin
+//
+// File map after the refactor Phase D split (2026-10-01) — partial ON PURPOSE:
+//   - system_tests.go         — this doc, the types, and TestRegistry (ORDERED)
+//   - system_tests_runtime.go — running the registry + persisting/reporting
+//   - system_tests_runs.go    — reading past runs (NOT system_tests_history.go,
+//     which predates the split: that is the B144 History tab)
+//   - system_tests_query.go   — preferredMismatchRulesQuery + import guards
+//
+// TestRegistry is 17 large closures in one var block, and its order is what the
+// page renders and PersistRun records. Regrouping it by category would reorder
+// an observable list, so it stays a single declaration until that change gets
+// its own block (see docs/internals.md §9.1).
 
-// system_tests.go — Admin Test Page (v0.33.0).
-//
-// The /admin/system_tests page lets the operator run a
-// battery of system checks (network, db, headscale, disk,
-// wal-g, replication) and see the result inline. Each
-// test is a Go function that returns (status, output).
-// Results are stored in the system_tests_runs table
-// (migration v0.51) for the "history" strip on the page.
-//
-// Test definition lifecycle:
-//
-//   1. Add the test func to the TestRegistry below.
-//   2. The /admin/system_tests page renders the registry as
-//      a grid; "Run" buttons call the runner.
-//   3. The runner stores the result in system_tests_runs and
-//      returns the live JSON for the page.
-//   4. The "History" column on the page reads the last 20
-//      rows from system_tests_runs.
-//
-// All tests are best-effort and timeout-fast (≤ 5s each).
-// A test that hangs is a bug — the timeout is a safety net.
-//
-// 2026-08-05 v0.33.1.11 — replaced the two SQLite-only
-// tests (db.sqlite_integrity / db.wal_mode) with
-// backend-dispatching equivalents (db.integrity_check /
-// db.journal_mode) so the same registry works on both
-// SQLite (legacy / test rig) and PostgreSQL (the v0.33.1.7+
-// production backend). Added 7 new tests covering exit-node
-// availability, integrations, DNS resolution, duplicate
-// devices, rule sanity, recent backups, and active meshes.
+package admin
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -43,13 +23,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"skygate/internal/db"
 	"skygate/internal/feature/exit_rules"
 	"skygate/internal/headscale"
-	"skygate/internal/monitorinbox"
 )
 
 // SystemTestStatus is the result of one test.
@@ -63,11 +41,11 @@ const (
 
 // SystemTestResult is the persisted shape of a single test run.
 type SystemTestResult struct {
-	Name     string            `json:"name"`
-	Category string            `json:"category"`
-	Status   SystemTestStatus  `json:"status"`
-	Output   string            `json:"output"`
-	Duration string            `json:"duration"`
+	Name     string           `json:"name"`
+	Category string           `json:"category"`
+	Status   SystemTestStatus `json:"status"`
+	Output   string           `json:"output"`
+	Duration string           `json:"duration"`
 }
 
 // SystemTestDef is a registered test. Run returns
@@ -594,7 +572,7 @@ var TestRegistry = []SystemTestDef{
 			for _, k := range keys {
 				v, err := db.GetGlobalSetting(s.dbc(), k, "")
 				if err != nil {
-					return SystemTestFail, "get "+k+": " + err.Error()
+					return SystemTestFail, "get " + k + ": " + err.Error()
 				}
 				if v != "" {
 					configured++
@@ -899,7 +877,10 @@ var TestRegistry = []SystemTestDef{
 				return SystemTestFail, "query: " + err.Error()
 			}
 			defer rows.Close()
-			type meshRow struct{ name string; members int }
+			type meshRow struct {
+				name    string
+				members int
+			}
 			var meshes []meshRow
 			for rows.Next() {
 				var r meshRow
@@ -1293,347 +1274,4 @@ var TestRegistry = []SystemTestDef{
 			return SystemTestPass, "warn: " + detail
 		},
 	},
-}
-
-// testService is the runtime Service for in-process test
-// closures. Set by SetTestService from main.go after
-// constructing the admin Service. Guarded by testServiceMu.
-var (
-	testService   *Service
-	testServiceMu sync.Mutex
-)
-
-// SetTestService wires the runtime admin Service into the
-// test registry closures. Called from cmd/skygate/main.go
-// after the admin Service is constructed.
-func SetTestService(s *Service) {
-	testServiceMu.Lock()
-	defer testServiceMu.Unlock()
-	testService = s
-}
-
-func getTestService() *Service {
-	testServiceMu.Lock()
-	defer testServiceMu.Unlock()
-	return testService
-}
-
-// SystemRunSummary is the run-level metadata.
-type SystemRunSummary struct {
-	StartedAt   time.Time `json:"started_at"`
-	FinishedAt  time.Time `json:"finished_at"`
-	Duration    string    `json:"duration"`
-	TotalCount  int       `json:"total_count"`
-	Pass        int       `json:"pass"`
-	Fail        int       `json:"fail"`
-	Skip        int       `json:"skip"`
-}
-
-// RunAllTests runs every test in TestRegistry, returns the
-// results + a summary. Each test has a 5s timeout to bound
-// the total runtime. Tests are run sequentially.
-func (s *Service) RunAllTests(ctx context.Context) ([]SystemTestResult, *SystemRunSummary) {
-	if s == nil {
-		s = getTestService()
-	}
-	if s == nil {
-		return nil, nil
-	}
-	results := make([]SystemTestResult, 0, len(TestRegistry))
-	summary := &SystemRunSummary{StartedAt: time.Now().UTC()}
-	// B306 (v1.5.71): the catalogue is the static registry PLUS one generated test
-	// per registered module (status + health), so "Run all" covers the project's
-	// modules too instead of leaving them to their own page.
-	for _, t := range s.AllTests() {
-		testCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		start := time.Now()
-		status, output := t.Run(testCtx)
-		cancel()
-		results = append(results, SystemTestResult{
-			Name:     t.Name,
-			Category: t.Category,
-			Status:   status,
-			Output:   output,
-			Duration: time.Since(start).String(),
-		})
-		switch status {
-		case SystemTestPass:
-			summary.Pass++
-		case SystemTestFail:
-			summary.Fail++
-		case SystemTestSkip:
-			summary.Skip++
-		}
-	}
-	summary.FinishedAt = time.Now().UTC()
-	summary.TotalCount = len(results)
-	summary.Duration = summary.FinishedAt.Sub(summary.StartedAt).String()
-	return results, summary
-}
-
-// PersistRun stores the result + summary in system_tests_runs.
-// Called from the page after RunAllTests returns.
-//
-// 2026-08-05 v0.33.1.11 — replaced the hardcoded "?" placeholders
-// (8 of them) with `placeholdersList(8)` so the same code
-// works on both SQLite ("?,?,?") and PG ("$1,$2,...$8"). The
-// pgx stdlib does NOT auto-convert "?" to "$N" (unlike lib/pq
-// which did), so without this fix the prod PG backend rejects
-// the INSERT with "syntax error at or near ','" and the
-// /admin/system_tests page shows the error flash on every
-// "Run all" click. The dispatch uses the same build-tag
-// pattern as db.SetGlobalSetting + db.nowUnixSQL.
-func (s *Service) PersistRun(ctx context.Context, results []SystemTestResult, summary *SystemRunSummary, userID int64) (int64, error) {
-	if s == nil || s.dbc() == nil {
-		return 0, errors.New("DB not available")
-	}
-	resultsJSON, err := json.Marshal(results)
-	if err != nil {
-		return 0, err
-	}
-	durationMs := summary.FinishedAt.Sub(summary.StartedAt).Milliseconds()
-	ph := db.PlaceholdersList(8)
-	res, err := s.dbc().ExecContext(ctx, `
-		INSERT INTO system_tests_runs
-			(started_at, finished_at, duration_ms, results_json,
-			 pass_count, fail_count, skip_count, triggered_by_user_id)
-		VALUES (`+ph+`)
-	`, summary.StartedAt.Unix(), summary.FinishedAt.Unix(), durationMs,
-		string(resultsJSON), summary.Pass, summary.Fail, summary.Skip, userID)
-	if err != nil {
-		return 0, err
-	}
-	id, _ := res.LastInsertId()
-	// B305 (v1.5.70): a run's outcome must outlive the page render. Every FAIL
-	// becomes an event in the monitoring inbox (deduped by test name, so a test
-	// that keeps failing bumps its counter instead of flooding) and every PASS
-	// RESOLVES the matching event, which is what makes the inbox honest: it shows
-	// what is broken NOW, not what was broken once.
-	s.ReportRunToMonitor(results)
-	return id, nil
-}
-
-// ReportRunToMonitor records the outcome of a system-test run in the monitoring
-// inbox (B305). Split out of PersistRun so it can be tested without a run row and
-// so a future scheduled runner can reuse it.
-func (s *Service) ReportRunToMonitor(results []SystemTestResult) {
-	if s == nil {
-		return
-	}
-	for _, res := range results {
-		// B306 (v1.5.71): a generated module test reports under the MODULE's own
-		// source, so the monitoring inbox can say "the tailscale module is broken"
-		// instead of burying it among the in-process checks — and so the event's
-		// fingerprint is per module (one row per module fault, resolved by the next
-		// healthy run).
-		source, fingerprint, subject := "system_test", "system_test:"+res.Name, res.Name
-		if modName := ModuleNameFromTest(res.Name); modName != "" {
-			source = "module:" + modName
-			fingerprint = "module:" + modName + ":health"
-			subject = modName
-		}
-		ev := monitorinbox.Event{
-			Source:      source,
-			Subject:     subject,
-			Fingerprint: fingerprint,
-			Link:        "/admin/system_tests",
-		}
-		if modName := ModuleNameFromTest(res.Name); modName != "" {
-			ev.Link = "/admin/modules/" + modName
-		}
-		switch res.Status {
-		case SystemTestFail:
-			ev.Severity = monitorinbox.SeverityError
-			if ModuleNameFromTest(res.Name) != "" {
-				ev.Title = "Модуль неисправен: " + subject
-			} else {
-				ev.Title = "Системный тест не прошёл: " + res.Name
-			}
-			ev.Body = strings.TrimSpace(res.Category + " · " + truncateForEvent(res.Output, 400))
-			s.MonitorReport(ev)
-		case SystemTestPass:
-			// Recovery: close the event if this test had one open.
-			if in := s.MonitorInbox(); in != nil {
-				_ = in.Resolve(ev)
-			}
-		default:
-			// SKIP says nothing about health — a skipped test must neither open
-			// nor close anything (a fresh install skips half the catalogue, and a
-			// module that was never installed must not look like a fault).
-		}
-	}
-}
-
-// truncateForEvent keeps an event body readable in the list and in a Telegram
-// message; the full output stays on /admin/system_tests where it belongs.
-func truncateForEvent(s string, max int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
-}
-
-// ListRecentRuns returns the last N runs (default 20) for
-// the history strip on /admin/system_tests.
-//
-// 2026-08-05 v0.33.1.11 — LIMIT ? replaced with
-// placeholdersList(1) for the same PG/SQLite dispatch
-// reason as PersistRun (see comment there).
-func (s *Service) ListRecentRuns(ctx context.Context, limit int) ([]SystemRunSummary, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	rows, err := s.dbc().QueryContext(ctx, `
-		SELECT id, started_at, finished_at, duration_ms,
-		       pass_count, fail_count, skip_count
-		FROM system_tests_runs
-		ORDER BY id DESC LIMIT `+db.PlaceholdersList(1)+`
-	`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]SystemRunSummary, 0, limit)
-	for rows.Next() {
-		var r SystemRunSummary
-		var id, startedAt, finishedAt, durationMs, pass, fail, skip int64
-		if err := rows.Scan(&id, &startedAt, &finishedAt, &durationMs,
-			&pass, &fail, &skip); err != nil {
-			return nil, err
-		}
-		_ = id
-		r.StartedAt = time.Unix(startedAt, 0).UTC()
-		r.FinishedAt = time.Unix(finishedAt, 0).UTC()
-		r.Duration = (time.Duration(durationMs) * time.Millisecond).String()
-		r.TotalCount = int(pass + fail + skip)
-		r.Pass = int(pass)
-		r.Fail = int(fail)
-		r.Skip = int(skip)
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// LastRunWithResults is what ListLastRunWithResults
-// returns: the most recent run's parsed test results +
-// summary + when it started. Used by the
-// /admin/system_tests page to render per-test PASS / FAIL /
-// SKIP icons on initial page load (not just after "Run
-// all" was clicked). Zero-value results means no runs yet.
-//
-// 2026-08-09 v0.33.1.26 — added. The pre-fix
-// /admin/system_tests page only showed per-test status
-// after a fresh "Run all" click (LiveResults was
-// populated by the POST handler, not by GET). On a cold
-// page load the operator saw a wall of gray circles
-// instead of "this test failed with: ..." for the
-// 6 broken tests. B78 wires the last persisted run from
-// system_tests_runs into the page so the operator
-// always sees the actual status of the last suite
-// execution, including failure output, without having
-// to click "Run all" first.
-type LastRunWithResults struct {
-	Results    []SystemTestResult
-	Summary    *SystemRunSummary
-	StartedAt  time.Time
-	FinishedAt time.Time
-	RunID      int64
-}
-
-// ListLastRunWithResults returns the most recent row from
-// system_tests_runs with the results_json unmarshalled
-// into SystemTestResult slice. Returns (nil, nil, no err)
-// if no runs exist yet (fresh install). Returns the
-// already-parsed results even if the JSON is malformed
-// (returns a non-nil error and a partial result so the
-// page degrades to "JSON parse error" rather than
-// silently showing gray circles).
-//
-// 2026-08-09 v0.33.1.26 — added.
-func (s *Service) ListLastRunWithResults(ctx context.Context) (*LastRunWithResults, error) {
-	if s == nil || s.dbc() == nil {
-		return nil, errors.New("DB not configured")
-	}
-	row := s.dbc().QueryRowContext(ctx, `
-		SELECT id, started_at, finished_at, duration_ms,
-		       results_json, pass_count, fail_count, skip_count
-		FROM system_tests_runs
-		ORDER BY id DESC
-		LIMIT 1
-	`)
-	var (
-		id, startedAt, finishedAt, durationMs int64
-		resultsJSON                            string
-		pass, fail, skip                      int
-	)
-	if err := row.Scan(&id, &startedAt, &finishedAt, &durationMs,
-		&resultsJSON, &pass, &fail, &skip); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// Fresh install: no runs yet. The page renders
-			// the gray placeholders. Not an error.
-			return nil, nil
-		}
-		return nil, err
-	}
-	out := &LastRunWithResults{
-		StartedAt: time.Unix(startedAt, 0).UTC(),
-		FinishedAt: time.Unix(finishedAt, 0).UTC(),
-		RunID:      id,
-		Summary: &SystemRunSummary{
-			StartedAt:  time.Unix(startedAt, 0).UTC(),
-			FinishedAt: time.Unix(finishedAt, 0).UTC(),
-			Duration:   (time.Duration(durationMs) * time.Millisecond).String(),
-			TotalCount: pass + fail + skip,
-			Pass:       pass,
-			Fail:       fail,
-			Skip:       skip,
-		},
-	}
-	if resultsJSON == "" || resultsJSON == "{}" {
-		return out, nil
-	}
-	var results []SystemTestResult
-	if err := json.Unmarshal([]byte(resultsJSON), &results); err != nil {
-		// Malformed JSON — return the summary but no
-		// per-test details. The page will still show
-		// the summary counts. The error is bubbled up
-		// so the handler can log it.
-		return out, fmt.Errorf("parse results_json (run #%d): %w", id, err)
-	}
-	out.Results = results
-	return out, nil
-}
-
-// ensureListNodes is here to keep the import of headscale in
-// the file's symbol table even when the test definitions
-// don't reference it. The compiler can dead-code-eliminate
-// the headscale import if no symbol from the package is
-// referenced. We keep headscale imported for the future
-// test additions (e.g. "headscale.exit_node_health").
-var _ = (*headscale.Client)(nil)
-var _ sql.IsolationLevel = 0
-
-// preferredMismatchRulesQuery builds the `exit_rules.preferred_mismatch`
-// rule query for the given dialect.
-//
-// B282 (2026-09-22). The join needs a text cast because
-// node_owner_map.node_id is TEXT (headscale's machine key as a string)
-// while device_rules.device_id is the INTEGER autoincrement:
-//
-//   - PostgreSQL needs it — without the cast the comparison is a hard
-//     error ("operator does not exist: text = integer", SQLSTATE 42883);
-//   - SQLite must NOT see the PG `::` shorthand — it has no such token
-//     and the whole statement fails to parse, which is what the live
-//     native `aro` host reported as
-//     `query rules: SQL logic error: unrecognized token: ":"`.
-//
-// Pure so both forms can be pinned without a database.
-func preferredMismatchRulesQuery(kind db.DialectKind) string {
-	return fmt.Sprintf(`
-				SELECT r.user_id, COALESCE(d.hostname, ''), r.exit_node_id
-				  FROM device_rules r
-				  LEFT JOIN node_owner_map d ON d.node_id = %s
-				 WHERE r.enabled = 1 AND r.exit_node_id != ''`,
-		kind.CastText("r.device_id"))
 }

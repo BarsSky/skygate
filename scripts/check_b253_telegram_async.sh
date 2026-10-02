@@ -35,7 +35,14 @@ bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 
 # --- A. async refresh in telegram.go ---
 echo "=== A. async refresh in cachedTelegramProbe ==="
-TG="internal/feature/admin/telegram.go"
+# The /admin/telegram SURFACE, not one file: internal/feature/admin/telegram.go
+# was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
+# one path turns a pure code move into a false FAIL — and is the weaker contract
+# even while it is green. gosurface expands the glob itself and skips _test.go.
+# See B339.
+. scripts/lib/gosurface.sh
+gosurface TG internal/feature/admin/telegram*.go
+
 if grep -qF 'refreshProbeAsync' "$TG" 2>/dev/null; then
   ok "refreshProbeAsync called from cachedTelegramProbe"
 else bad "cachedTelegramProbe must call refreshProbeAsync on cache miss/stale"; fi

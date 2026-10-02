@@ -41,7 +41,14 @@ skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 SRC=internal/feature/admin/system_tests_modules_b306.go
-TESTS=internal/feature/admin/system_tests.go
+# The admin system-tests SURFACE, not one file: internal/feature/admin/system_tests.go
+# was split in refactor Phase D (2026-10-01) and the code this contract greps moved
+# to a sibling (system_tests_query.go / _runtime.go / _runs.go). A contract pinned
+# to one path turns a pure code move into a false FAIL — and is the weaker contract
+# even while it is green. See B339.
+. scripts/lib/gosurface.sh
+gosurface TESTS internal/feature/admin/system_tests*.go
+
 HANDLERS=internal/feature/admin/system_tests_handlers.go
 MODULES=internal/feature/admin/modules.go
 TPL=internal/handlers/templates/admin/system_tests.html

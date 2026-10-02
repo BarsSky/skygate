@@ -70,7 +70,14 @@ echo "skygate root: ${SKYGATE_DIR}"
 PCHECK="internal/feature/exit_rules/preferred_check.go"
 FORM_MY="internal/feature/exit_rules/form_my.go"
 FORM_ADMIN="internal/feature/exit_rules/form_admin.go"
-SYSTEM_TESTS="internal/feature/admin/system_tests.go"
+# The admin system-tests SURFACE, not one file: internal/feature/admin/system_tests.go
+# was split in refactor Phase D (2026-10-01) and the code this contract greps moved
+# to a sibling (system_tests_query.go / _runtime.go / _runs.go). A contract pinned
+# to one path turns a pure code move into a false FAIL — and is the weaker contract
+# even while it is green. See B339.
+. scripts/lib/gosurface.sh
+gosurface SYSTEM_TESTS internal/feature/admin/system_tests*.go
+
 
 [ -f "${PCHECK}" ] || { bad "source file not found: ${PCHECK}"; exit 1; }
 [ -f "${FORM_MY}" ] || { bad "source file not found: ${FORM_MY}"; exit 1; }

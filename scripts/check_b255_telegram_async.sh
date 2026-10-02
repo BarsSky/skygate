@@ -55,7 +55,14 @@ log()  { printf '  %s\n' "$*"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
 bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 
-TG="internal/feature/admin/telegram.go"
+# The /admin/telegram SURFACE, not one file: internal/feature/admin/telegram.go
+# was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
+# one path turns a pure code move into a false FAIL — and is the weaker contract
+# even while it is green. gosurface expands the glob itself and skips _test.go.
+# See B339.
+. scripts/lib/gosurface.sh
+gosurface TG internal/feature/admin/telegram*.go
+
 MAIN="cmd/skygate/main.go"
 TPL="internal/handlers/templates/admin/telegram.html"
 RU="internal/i18n/catalog_telegram.go"

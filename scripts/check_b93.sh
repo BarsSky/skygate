@@ -18,7 +18,7 @@
 #     function defined + called from runOneTick
 #   - internal/db/queries.go: ACL username query
 #     filters headscale_user_id IS NOT NULL
-#   - internal/feature/admin/telegram.go: SetEgress
+#   - internal/feature/admin/telegram*.go: SetEgress
 #     uses InfraAuditIdentity(c.UserID, c.Username)
 #   - internal/feature/admin/service.go: Backend
 #     interface declares InfraAuditIdentity
@@ -78,7 +78,7 @@ grep -qF "BackfillInfra(dbConn, nodes)" internal/nodeownership/auto.go || { echo
 grep -qF "headscale_user_id IS NOT NULL" internal/db/queries.go || { echo "SKY-FAIL: ACL username query does NOT filter headscale_user_id" >&2; exit 1; }
 
 # 8. /admin/telegram SetEgress uses InfraAuditIdentity.
-grep -qF "InfraAuditIdentity(c.UserID, c.Username)" internal/feature/admin/telegram.go || { echo "SKY-FAIL: SetEgress does NOT use InfraAuditIdentity" >&2; exit 1; }
+grep -qF "InfraAuditIdentity(c.UserID, c.Username)" internal/feature/admin/telegram*.go || { echo "SKY-FAIL: SetEgress does NOT use InfraAuditIdentity" >&2; exit 1; }
 
 # 9. Backend interface has InfraAuditIdentity.
 grep -qF "InfraAuditIdentity(fallbackUID int64" internal/feature/admin/service.go || { echo "SKY-FAIL: Backend interface does NOT declare InfraAuditIdentity" >&2; exit 1; }

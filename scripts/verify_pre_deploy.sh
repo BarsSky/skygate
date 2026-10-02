@@ -1111,12 +1111,12 @@ run_check "B39" "headscale_acl routes: /admin/headscale/acl + /add + /remove (v0
 # network, db, and headscale (the three foundational axes).
 run_check "B40" "system_tests.go: TestRegistry has ≥6 tests across network/db/headscale (v0.33.0)" \
   "bash -c '
-    grep -qE \"Name:\\s*\\\"net\\\\.\" internal/feature/admin/system_tests.go &&
-    grep -qE \"Name:\\s*\\\"db\\\\.\" internal/feature/admin/system_tests.go &&
-    grep -qE \"Name:\\s*\\\"headscale\\\\.\" internal/feature/admin/system_tests.go &&
-    grep -cE \"^\\s*Name:\\s*\\\"\" internal/feature/admin/system_tests.go | grep -qE \"^[6-9]|[1-9][0-9]\" &&
-    grep -qF \"func (s *Service) RunAllTests\" internal/feature/admin/system_tests.go &&
-    grep -qF \"func (s *Service) PersistRun\" internal/feature/admin/system_tests.go &&
+    grep -qE \"Name:\\s*\\\"net\\\\.\" internal/feature/admin/system_tests*.go &&
+    grep -qE \"Name:\\s*\\\"db\\\\.\" internal/feature/admin/system_tests*.go &&
+    grep -qE \"Name:\\s*\\\"headscale\\\\.\" internal/feature/admin/system_tests*.go &&
+    cat internal/feature/admin/system_tests*.go | grep -cE \"^\\s*Name:\\s*\\\"\" | grep -qE \"^[6-9]|[1-9][0-9]\" &&
+    grep -qF \"func (s *Service) RunAllTests\" internal/feature/admin/system_tests*.go &&
+    grep -qF \"func (s *Service) PersistRun\" internal/feature/admin/system_tests*.go &&
     ( grep -qF \"system_tests_runs\" internal/db/migrations_v0.51.go || grep -qF \"system_tests_runs\" internal/db/migrations_pg.go )
   '"
 
@@ -1394,15 +1394,15 @@ run_check "B52" "/admin/update template has no template-var-in-CSS (v0.33.1.7)" 
 # declared (so the regression for "constant gets moved into
 # a test file" can't silently break the production path).
 run_check "B53" "Telegram egress relay admin-UI selector wired (v0.33.1.8)" \
-  'grep -q "func (s \*Service) handleTelegramSetEgress" internal/feature/admin/telegram.go && \
-   grep -q "func (s \*Service) handleTelegramClearEgress" internal/feature/admin/telegram.go && \
-   grep -q "case \"set_egress\":" internal/feature/admin/telegram.go && \
-   grep -q "case \"clear_egress\":" internal/feature/admin/telegram.go && \
+  'grep -q "func (s \*Service) handleTelegramSetEgress" internal/feature/admin/telegram*.go && \
+   grep -q "func (s \*Service) handleTelegramClearEgress" internal/feature/admin/telegram*.go && \
+   grep -q "case \"set_egress\":" internal/feature/admin/telegram*.go && \
+   grep -q "case \"clear_egress\":" internal/feature/admin/telegram*.go && \
    grep -q "telegram.egress_title" internal/handlers/templates/admin/telegram.html && \
    grep -q "telegram.egress_apply" internal/handlers/templates/admin/telegram.html && \
    grep -q "telegram.egress_clear" internal/handlers/templates/admin/telegram.html && \
    grep -q "\"telegram.egress_title\"" internal/i18n/catalog_telegram.go && \
-   grep -q "TelegramCIDRs" internal/feature/admin/telegram.go'
+   grep -q "TelegramCIDRs" internal/feature/admin/telegram*.go'
 
 # ─── B54 (v0.33.1.8) — SetGlobalSetting uses per-backend placeholders ───
 # Background: 2026-08-05 the operator triggered the
@@ -1561,7 +1561,7 @@ run_check "B58" "Tailscale auto-generate preauth key (v0.33.1.11)" '. scripts/li
 #   - no SQLite-only test names remain in the registry
 #   - the new backend-dispatching names are present
 #   - the new category strings (integrations, backup) exist
-run_check "B59" "system_tests works on both backends (v0.33.1.11)" 'f=$(mktemp); printf "%s" "! grep -qE '\''Name:[[:space:]]+\"db\.sqlite_integrity\"'\'' internal/feature/admin/system_tests.go && ! grep -qE '\''Name:[[:space:]]+\"db\.wal_mode\"'\'' internal/feature/admin/system_tests.go && grep -qF '\''\"db.integrity_check\"'\'' internal/feature/admin/system_tests.go && grep -qF '\''\"db.journal_mode\"'\'' internal/feature/admin/system_tests.go && grep -qF '\''BackendPostgres'\'' internal/feature/admin/system_tests.go && grep -qF '\''\"integrations.configured\"'\'' internal/feature/admin/system_tests.go && grep -qF '\''\"backup.recent\"'\'' internal/feature/admin/system_tests.go && grep -qF '\''\"network.dns_resolve\"'\'' internal/feature/admin/system_tests.go && grep -qF '\''\"headscale.exit_nodes_online\"'\'' internal/feature/admin/system_tests.go && grep -qF '\''\"db.duplicate_devices\"'\'' internal/feature/admin/system_tests.go && grep -qF '\''\"db.rules_sanity\"'\'' internal/feature/admin/system_tests.go && grep -qF '\''\"mesh.active_meshes\"'\'' internal/feature/admin/system_tests.go && grep -qF '\''func PlaceholdersList(n int) string'\'' internal/db/placeholders.go && grep -qF '\''db.PlaceholdersList'\'' internal/feature/admin/system_tests.go" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
+run_check "B59" "system_tests works on both backends (v0.33.1.11)" 'f=$(mktemp); printf "%s" "! grep -qE '\''Name:[[:space:]]+\"db\.sqlite_integrity\"'\'' internal/feature/admin/system_tests*.go && ! grep -qE '\''Name:[[:space:]]+\"db\.wal_mode\"'\'' internal/feature/admin/system_tests*.go && grep -qF '\''\"db.integrity_check\"'\'' internal/feature/admin/system_tests*.go && grep -qF '\''\"db.journal_mode\"'\'' internal/feature/admin/system_tests*.go && grep -qF '\''BackendPostgres'\'' internal/feature/admin/system_tests*.go && grep -qF '\''\"integrations.configured\"'\'' internal/feature/admin/system_tests*.go && grep -qF '\''\"backup.recent\"'\'' internal/feature/admin/system_tests*.go && grep -qF '\''\"network.dns_resolve\"'\'' internal/feature/admin/system_tests*.go && grep -qF '\''\"headscale.exit_nodes_online\"'\'' internal/feature/admin/system_tests*.go && grep -qF '\''\"db.duplicate_devices\"'\'' internal/feature/admin/system_tests*.go && grep -qF '\''\"db.rules_sanity\"'\'' internal/feature/admin/system_tests*.go && grep -qF '\''\"mesh.active_meshes\"'\'' internal/feature/admin/system_tests*.go && grep -qF '\''func PlaceholdersList(n int) string'\'' internal/db/placeholders.go && grep -qF '\''db.PlaceholdersList'\'' internal/feature/admin/system_tests*.go" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
 
 # ─── B60 (v0.33.1.12) — comprehensive `?` placeholder PG-unsafe sweep ───
 # The v0.33.1.8 fix (B54) only covered SetGlobalSetting. Many more
@@ -1730,7 +1730,7 @@ run_check "B65" "SKYGATE_TS_LOGIN_SERVER from .env + restart-skgate button (v0.3
 #   - the /admin/devices template renders a per-device dead-rule count
 #   - i18n keys (RU+EN) cover the banner, button, and column
 #   - pure-function unit tests cover IsRuleApplicable + TagToHostname
-run_check "B66" "exit-rule / preferred exit-node cross-check (v0.33.1.17)" 'f=$(mktemp); printf "%s" "grep -qF '\''PreferredExitNodeForRule'\'' internal/feature/exit_rules/preferred_check.go && grep -qF '\''IsRuleApplicable'\'' internal/feature/exit_rules/preferred_check.go && grep -qF '\''TagToHostname'\'' internal/feature/exit_rules/preferred_check.go && grep -qF '\''RulesByDeviceHostname'\'' internal/feature/exit_rules/preferred_check.go && grep -qF '\''TestIsRuleApplicable_NoPreference'\'' internal/feature/exit_rules/preferred_check_test.go && grep -qF '\''TestIsRuleApplicable_Mismatch'\'' internal/feature/exit_rules/preferred_check_test.go && grep -qF '\''TestTagToHostname_StandardForms'\'' internal/feature/exit_rules/preferred_check_test.go && grep -qF '\''exit_rules.preferred_mismatch'\'' internal/feature/admin/system_tests.go && grep -qF '\''preferred-mismatch-banner'\'' internal/handlers/templates/exit_rules.html && grep -qF '\''action=\"/my/exit-rules/apply-preferred\"'\'' internal/handlers/templates/exit_rules.html && grep -qF '\''exit_rules.apply_preferred_btn'\'' internal/handlers/templates/exit_rules.html && grep -qF '\''exit_rules.apply_preferred_btn'\'' internal/i18n/catalog_exit_rules.go && grep -qF '\''admin-preferred-mismatch'\'' internal/handlers/templates/admin/exit_rules.html && grep -qF '\''col-preferred'\'' internal/handlers/templates/admin/exit_rules.html && grep -qF '\''DeadRuleCount'\'' internal/feature/admin/devices.go && grep -qF '\''exit_rules.preferred_mismatch_banner'\'' internal/i18n/catalog_exit_rules.go && grep -qF '\''exit_rules.preferred_col'\'' internal/i18n/catalog_exit_rules.go && grep -qF '\''exit_rules_admin.preferred_mismatch_banner'\'' internal/i18n/catalog_exit_rules.go && grep -qF '\''exit_rules_admin.dead_rules_count'\'' internal/i18n/catalog_exit_rules.go && grep -qF '\''POST /my/exit-rules/apply-preferred'\'' cmd/skygate/main.go" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
+run_check "B66" "exit-rule / preferred exit-node cross-check (v0.33.1.17)" 'f=$(mktemp); printf "%s" "grep -qF '\''PreferredExitNodeForRule'\'' internal/feature/exit_rules/preferred_check.go && grep -qF '\''IsRuleApplicable'\'' internal/feature/exit_rules/preferred_check.go && grep -qF '\''TagToHostname'\'' internal/feature/exit_rules/preferred_check.go && grep -qF '\''RulesByDeviceHostname'\'' internal/feature/exit_rules/preferred_check.go && grep -qF '\''TestIsRuleApplicable_NoPreference'\'' internal/feature/exit_rules/preferred_check_test.go && grep -qF '\''TestIsRuleApplicable_Mismatch'\'' internal/feature/exit_rules/preferred_check_test.go && grep -qF '\''TestTagToHostname_StandardForms'\'' internal/feature/exit_rules/preferred_check_test.go && grep -qF '\''exit_rules.preferred_mismatch'\'' internal/feature/admin/system_tests*.go && grep -qF '\''preferred-mismatch-banner'\'' internal/handlers/templates/exit_rules.html && grep -qF '\''action=\"/my/exit-rules/apply-preferred\"'\'' internal/handlers/templates/exit_rules.html && grep -qF '\''exit_rules.apply_preferred_btn'\'' internal/handlers/templates/exit_rules.html && grep -qF '\''exit_rules.apply_preferred_btn'\'' internal/i18n/catalog_exit_rules.go && grep -qF '\''admin-preferred-mismatch'\'' internal/handlers/templates/admin/exit_rules.html && grep -qF '\''col-preferred'\'' internal/handlers/templates/admin/exit_rules.html && grep -qF '\''DeadRuleCount'\'' internal/feature/admin/devices.go && grep -qF '\''exit_rules.preferred_mismatch_banner'\'' internal/i18n/catalog_exit_rules.go && grep -qF '\''exit_rules.preferred_col'\'' internal/i18n/catalog_exit_rules.go && grep -qF '\''exit_rules_admin.preferred_mismatch_banner'\'' internal/i18n/catalog_exit_rules.go && grep -qF '\''exit_rules_admin.dead_rules_count'\'' internal/i18n/catalog_exit_rules.go && grep -qF '\''POST /my/exit-rules/apply-preferred'\'' cmd/skygate/main.go" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
 
 # ─── B67 (v0.33.1.18) — /admin/exit-rules?device=NAME drill-down ───
 # The /admin/devices "dead rules" badge (B66) links to
@@ -1779,7 +1779,7 @@ run_check "B67" "/admin/exit-rules?device=NAME drill-down (v0.33.1.18)" 'f=$(mkt
 #     must be updated together — otherwise the verification
 #     test will report false-positive "missing grants" for every
 #     row).
-run_check "B68" "DNS-autoupdater flag split + verification test (v0.33.1.18)" '. scripts/lib/gosurface.sh; gosurface ACL internal/acl/acl.go internal/acl/acl_apply.go internal/acl/acl_generate.go internal/acl/acl_generate_via.go internal/acl/acl_ownership.go internal/acl/acl_set.go internal/acl/acl_tags.go || exit 1; export ACL; f=$(mktemp); printf "%s" "grep -qF '\''DNSAutoUpdateEnabled'\'' internal/config/config.go && grep -qF '\''cfg.DNSAutoUpdateEnabled'\'' cmd/skygate/main.go && grep -qF '\''SKYGATE_DNS_AUTOUPDATE_ENABLED'\'' internal/config/config.go && grep -qF '\''PostAdminSystemTestsDNSAutoToggle'\'' internal/feature/admin/settings_dns_autoupdate.go && grep -qF '\''dns-autoupdate-toggle'\'' internal/handlers/templates/admin/system_tests.html && grep -qF '\''title.dns_autoupdater'\'' internal/i18n/catalog_common.go && grep -qF '\''db.GetGlobalSetting(a.DB.Current(), \"dns_autoupdate_enabled\"'\'' internal/handlers/handlers.go && grep -qF '\''exit_rules.all_in_headscale_acl'\'' internal/feature/admin/system_tests.go && grep -qF '\''dns-autoupdate-toggle'\'' cmd/skygate/main.go && grep -qF '\''\"h-rule-\" + strings.NewReplacer('\'' \"\$ACL\" && grep -qF '\''\".\", \"-\", \"/\", \"-\", \":\", \"_\"'\'' \"\$ACL\" && grep -qF '\''dst := \"h-rule-\" + sanitize(r.target)'\'' internal/feature/admin/system_tests.go && grep -qF '\''strings.NewReplacer(\".\", \"-\", \"/\", \"-\", \":\", \"_\")'\'' internal/feature/admin/system_tests.go" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
+run_check "B68" "DNS-autoupdater flag split + verification test (v0.33.1.18)" '. scripts/lib/gosurface.sh; gosurface ACL internal/acl/acl.go internal/acl/acl_apply.go internal/acl/acl_generate.go internal/acl/acl_generate_via.go internal/acl/acl_ownership.go internal/acl/acl_set.go internal/acl/acl_tags.go || exit 1; export ACL; f=$(mktemp); printf "%s" "grep -qF '\''DNSAutoUpdateEnabled'\'' internal/config/config.go && grep -qF '\''cfg.DNSAutoUpdateEnabled'\'' cmd/skygate/main.go && grep -qF '\''SKYGATE_DNS_AUTOUPDATE_ENABLED'\'' internal/config/config.go && grep -qF '\''PostAdminSystemTestsDNSAutoToggle'\'' internal/feature/admin/settings_dns_autoupdate.go && grep -qF '\''dns-autoupdate-toggle'\'' internal/handlers/templates/admin/system_tests.html && grep -qF '\''title.dns_autoupdater'\'' internal/i18n/catalog_common.go && grep -qF '\''db.GetGlobalSetting(a.DB.Current(), \"dns_autoupdate_enabled\"'\'' internal/handlers/handlers.go && grep -qF '\''exit_rules.all_in_headscale_acl'\'' internal/feature/admin/system_tests*.go && grep -qF '\''dns-autoupdate-toggle'\'' cmd/skygate/main.go && grep -qF '\''\"h-rule-\" + strings.NewReplacer('\'' \"\$ACL\" && grep -qF '\''\".\", \"-\", \"/\", \"-\", \":\", \"_\"'\'' \"\$ACL\" && grep -qF '\''dst := \"h-rule-\" + sanitize(r.target)'\'' internal/feature/admin/system_tests*.go && grep -qF '\''strings.NewReplacer(\".\", \"-\", \"/\", \"-\", \":\", \"_\")'\'' internal/feature/admin/system_tests*.go" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
 
 # ─── B68a (v0.33.1.19) — via_enabled column-order + data-repair migration ───
 # The v0.28.5 INSERT in SetUserExitNodePref and
@@ -2081,11 +2081,11 @@ run_check "B77" "node-discovery autoupdater: new devices auto-tag (v0.33.1.25)" 
 # broken.
 #
 # B78 pins the contract:
-#   - internal/feature/admin/system_tests.go:
+#   - internal/feature/admin/system_tests*.go:
 #     `ListLastRunWithResults` method (reads the
 #     MAX(id) row from system_tests_runs + parses
 #     results_json into []SystemTestResult)
-#   - internal/feature/admin/system_tests.go: the
+#   - internal/feature/admin/system_tests*.go: the
 #     LastRunWithResults struct (RunID + Summary +
 #     Results + StartedAt + FinishedAt)
 #   - internal/feature/admin/system_tests_handlers.go:
@@ -2110,7 +2110,7 @@ run_check "B77" "node-discovery autoupdater: new devices auto-tag (v0.33.1.25)" 
 #     internal/handlers/system_tests_render_test.go:
 #     TestSystemTestsRendersWithLastResults (asserts
 #     row-fail class + fail icon + last-run header)
-run_check "B78" "per-test status on /admin/system_tests (v0.33.1.26)" 'f=$(mktemp); printf "%s" "grep -qF \"func (s *Service) ListLastRunWithResults\" internal/feature/admin/system_tests.go && grep -qF \"type LastRunWithResults struct\" internal/feature/admin/system_tests.go && grep -qF \"ListLastRunWithResults\" internal/feature/admin/system_tests_handlers.go && grep -qF \"LastResults\" internal/feature/admin/system_tests_handlers.go && grep -qF \"LastRunAgeSec\" internal/handlers/templates/admin/system_tests.html && grep -qF \"row-fail\" internal/handlers/templates/admin/system_tests.html && grep -qF \"system_tests.last_run_label\" internal/handlers/templates/admin/system_tests.html && grep -qF \"humanizeAgeSeconds\" internal/handlers/templates.go && grep -qF \"indexResultByName\" internal/handlers/templates.go && grep -qF \"system_tests.last_run_label\" internal/i18n/catalog_common.go && grep -qF \"system_tests.no_runs_yet\" internal/i18n/catalog_common.go && grep -qF TestSystemTestsRendersWithLastResults internal/handlers/system_tests_render_test.go && '\'"$GO"\'' test -count=1 -run '\''TestSystemTestsRendersWithLastResults'\'' ./internal/handlers/" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
+run_check "B78" "per-test status on /admin/system_tests (v0.33.1.26)" 'f=$(mktemp); printf "%s" "grep -qF \"func (s *Service) ListLastRunWithResults\" internal/feature/admin/system_tests*.go && grep -qF \"type LastRunWithResults struct\" internal/feature/admin/system_tests*.go && grep -qF \"ListLastRunWithResults\" internal/feature/admin/system_tests_handlers.go && grep -qF \"LastResults\" internal/feature/admin/system_tests_handlers.go && grep -qF \"LastRunAgeSec\" internal/handlers/templates/admin/system_tests.html && grep -qF \"row-fail\" internal/handlers/templates/admin/system_tests.html && grep -qF \"system_tests.last_run_label\" internal/handlers/templates/admin/system_tests.html && grep -qF \"humanizeAgeSeconds\" internal/handlers/templates.go && grep -qF \"indexResultByName\" internal/handlers/templates.go && grep -qF \"system_tests.last_run_label\" internal/i18n/catalog_common.go && grep -qF \"system_tests.no_runs_yet\" internal/i18n/catalog_common.go && grep -qF TestSystemTestsRendersWithLastResults internal/handlers/system_tests_render_test.go && '\'"$GO"\'' test -count=1 -run '\''TestSystemTestsRendersWithLastResults'\'' ./internal/handlers/" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
 
 # B79 — v0.33.1.27: per-user + per-device exit-node pref
 # INSERT (the /my/exit-nodes + /my/devices/preferred-exit
@@ -2354,7 +2354,7 @@ run_check "B83" "handlers.New() assigns sshKeyPath to App.SSHKeyPath (v0.33.1.31
 # the B81 SSH-target chain (operator override → root@<tailscale_ip>
 # → ""), not the legacy relay.Hostname fallback.
 #
-# Pre-fix: handleTelegramSetEgress in internal/feature/admin/telegram.go
+# Pre-fix: handleTelegramSetEgress in internal/feature/admin/telegram*.go
 # used `db.LookupExitServerSSH` for the key + ssh_target, and fell
 # back to `relay.Hostname` (the headscale-given hostname like
 # "emilia") when the stored ssh_target was empty. The `ssh` CLI
@@ -2392,7 +2392,7 @@ run_check "B83" "handlers.New() assigns sshKeyPath to App.SSHKeyPath (v0.33.1.31
 # fallback. The live /admin/telegram "Set as egress
 # relay" button exercises this path.
 run_check "B84" "telegram egress uses B81 SSH-target chain (v0.33.1.32 — production path pinned, code-level grep, runtime coverage via /admin/telegram 'Set as egress relay' button)" \
-  'grep -qF "LookupExitServerSSHTarget" internal/feature/admin/telegram.go && grep -qF "LookupExitServerSSHTarget" internal/feature/exit_rules/sync.go'
+  'grep -qF "LookupExitServerSSHTarget" internal/feature/admin/telegram*.go && grep -qF "LookupExitServerSSHTarget" internal/feature/exit_rules/sync.go'
 
 # B85 — v0.33.1.33: per-row exit_servers.ssh_port column for
 # the B81 auto-fallback chain. The B81 helper builds
@@ -2587,7 +2587,7 @@ run_check "B87" "PostAdminExitNodeTagAsExitNode uses AddTag read-modify (v0.33.1
 # /admin/system_tests page on PG. Future work:
 # rewrite the unit tests for PG.
 run_check "B88" "system_tests bug fixes: duplicate_devices, preferred_mismatch, rules_sanity, acl_admin_present, backup.recent (v0.33.1.36 — SQL strings pinned in system_tests.go, code-level grep, runtime coverage via live /admin/system_tests)" \
-  'grep -qF duplicate_devices internal/feature/admin/system_tests.go && grep -qF preferred_mismatch internal/feature/admin/system_tests.go && grep -qF rules_sanity internal/feature/admin/system_tests.go && grep -qF acl_admin_present internal/feature/admin/system_tests.go && grep -qF backup.recent internal/feature/admin/system_tests.go'
+  'grep -qF duplicate_devices internal/feature/admin/system_tests*.go && grep -qF preferred_mismatch internal/feature/admin/system_tests*.go && grep -qF rules_sanity internal/feature/admin/system_tests*.go && grep -qF acl_admin_present internal/feature/admin/system_tests*.go && grep -qF backup.recent internal/feature/admin/system_tests*.go'
 
 # B89 — v0.33.1.37: B77 follow-up — Strategy D tag-fallback
 # in nodeownership.Backfill, plus scripts/rotate_ts_authkey.sh
@@ -4367,7 +4367,7 @@ run_check "B251" "skygate-host reserved name + B245 hujson fix: default Tailscal
 run_check "B252" "DERP cert auto-renewal (bundled derper): migrations_v0_71_derp_cert_sync.go (derp_cert_sync table: hostname/mode/npm_base_url/npm_cert_id/cert_dir/derper_pid_file/derper_systemd_unit/check_interval_min/enabled/last_checked_at/last_synced_at/last_cert_sha256/last_error/expiry_warn_at/notes) + driver_postgres.go v0.71 B252 entry; internal/feature/admin/derp_cert_sync.go with StartCertSyncCron + DerpCertSyncInterval=24h + DerpCertSyncConfig + SyncOne + syncNPMMode + npmLogin + npmDownloadCert + reloadDerper + expiryFromCert + recordCertSyncError; cmd/skygate/main.go admin.StartCertSyncCron wiring alongside derphealth.StartCron; POST /admin/derp/cert-sync/run route + PostAdminDerpCertSyncRun handler; /admin/derp template cert_sync_title block with Sync now form; 12 i18n keys in catalog_derp.go (RU + EN) covering the new section; AGENTS.md B252 entry. 9-contract grep B-check in scripts/check_b252_derp_cert_sync.sh. Three modes: 'npm' (fetch + write + systemctl reload derper), 'letsencrypt' (derper self-renews, monitor expiry), 'manual' (operator owns cert, monitor expiry)." \
   'test -f scripts/check_b252_derp_cert_sync.sh && bash scripts/check_b252_derp_cert_sync.sh'
 
-run_check "B253" "Telegram probe async refresh (stale-while-revalidate). The /admin/telegram page blocked 5 sec whenever probe-now was triggered (the cachedTelegramProbe called getTelegramProbe synchronously, which slept up to 5s waiting for the Telegram TCP probe to time out). Fix: cachedTelegramProbe now does stale-while-revalidate (30s TTL on success, 5 min on error); refreshProbeAsync launches a single dedup'd goroutine that probes in the background and updates state; probeNowSync exists for the new POST /admin/telegram/probe/now handler; telegram.html has a 'Probe now' button next to the cached state with a stale indicator. PostAdminTelegramProbeNow handler in internal/feature/admin/telegram.go. 3 new i18n keys (probe_now, probe_stale, probe_stale_until) in catalog_telegram.go (RU + EN). 19 grep-contracts in scripts/check_b253_telegram_async.sh. Live-verified on the cached-state path: page renders <100ms with cached state; probe-now button returns 200 immediately and updates state via the async refresh." \
+run_check "B253" "Telegram probe async refresh (stale-while-revalidate). The /admin/telegram page blocked 5 sec whenever probe-now was triggered (the cachedTelegramProbe called getTelegramProbe synchronously, which slept up to 5s waiting for the Telegram TCP probe to time out). Fix: cachedTelegramProbe now does stale-while-revalidate (30s TTL on success, 5 min on error); refreshProbeAsync launches a single dedup'd goroutine that probes in the background and updates state; probeNowSync exists for the new POST /admin/telegram/probe/now handler; telegram.html has a 'Probe now' button next to the cached state with a stale indicator. PostAdminTelegramProbeNow handler in internal/feature/admin/telegram*.go. 3 new i18n keys (probe_now, probe_stale, probe_stale_until) in catalog_telegram.go (RU + EN). 19 grep-contracts in scripts/check_b253_telegram_async.sh. Live-verified on the cached-state path: page renders <100ms with cached state; probe-now button returns 200 immediately and updates state via the async refresh." \
   'test -f scripts/check_b253_telegram_async.sh && bash scripts/check_b253_telegram_async.sh'
 
 run_check "B256" "GetOtherHSUserIDs SQLSTATE 22P02 fix (live PG error spam every 5 min). The pre-fix qSelectOtherHSUserIDs const had 'headscale_user_id != ''' which compares an INTEGER column to the TEXT literal '' — PostgreSQL refused the cast and raised 'invalid input syntax for type integer' (SQLSTATE 22P02) every time the 'id != \$1' filter returned ≥1 row. That happened on every AutoBackfill tick (internal/nodeownership/auto.go, 5-min default via SKYGATE_NODE_DISCOVERY_INTERVAL), once per portal user. The error was silently swallowed by 'ids, _ := dbpkg.GetOtherHSUserIDs(...)' on nodeownership.go:255 — visible only as log spam from headscale's PG-conn stderr. Fix: queries.go qSelectOtherHSUserIDs const changes '!= ''' to '!= 0' (handles both pre-v0.28 NULL and post-v0.28 zero sentinels). portal_users.go comment + portal_users_test.go (TestGetOtherHSUserIDs_B256Regression: 2-user fixture pinned on real PG, fails with SQLSTATE 22P02 without the fix) document the chain. 11 grep-contracts in scripts/check_b256_other_hs_user_ids_int_literal.sh including go vet and a live-state psql query the operator runs post-deploy." \

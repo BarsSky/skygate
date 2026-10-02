@@ -101,6 +101,7 @@ scan_split_path "internal/feature/admin/tailscale.go" "internal/feature/admin/ta
 scan_split_path "internal/telegram/commands_user.go" "internal/telegram/commands_user.go"
 scan_split_path "internal/acl/acl.go" "internal/acl/acl.go"
 scan_split_path "internal/feature/admin/exit_nodes.go" "internal/feature/admin/exit_nodes.go"
+scan_split_path "internal/feature/admin/telegram.go" "internal/feature/admin/telegram.go"
 
 # The catalog's own inline run_checks may name the path only as a gosurface
 # argument (B19/B55/B58/B62/B64/B65/B68 do exactly that) or as the glob form
@@ -109,7 +110,7 @@ scan_split_path "internal/feature/admin/exit_nodes.go" "internal/feature/admin/e
 # were still grepping internal/acl/acl.go after the acl split and were the ONLY
 # two catalog entries that went red for it — the inline commands are easy to
 # forget precisely because they are not scripts.
-for CAT_PATH in 'internal/feature/admin/tailscale.go' 'internal/acl/acl.go' 'internal/feature/admin/exit_nodes.go'; do
+for CAT_PATH in 'internal/feature/admin/tailscale.go' 'internal/acl/acl.go' 'internal/feature/admin/exit_nodes.go' 'internal/feature/admin/telegram.go'; do
   CATALOG_HITS="$(grep -nF -- "$CAT_PATH" scripts/verify_pre_deploy.sh 2>/dev/null \
                     | grep -v 'gosurface' \
                     | grep -v ':[[:space:]]*#' || true)"

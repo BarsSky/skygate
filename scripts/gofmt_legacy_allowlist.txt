@@ -26,6 +26,11 @@
 # 2026-10-01 — refactor Phase D: `internal/telegram/commands_user.go` left this
 # list because the split of that 1983-line file re-emitted its lines and the
 # 752-line remainder is gofmt-clean. Budget 276 → 275.
+#
+# 2026-10-01 (same day) — `internal/feature/admin/system_tests.go` left this list
+# too: it was `gofmt -w`-ed (80 diff lines of struct-tag alignment) as part of
+# splitting it into four files, because a split cannot produce gofmt-clean output
+# from a drifted source. Budget 275 → 274.
 cmd/apply_pg_migrations/main.go
 cmd/jwt-mint/main.go
 cmd/skygate/acl_apply.go
@@ -160,7 +165,6 @@ internal/feature/admin/settings_dns_autoupdate.go
 internal/feature/admin/settings_dns_interval_b308_test.go
 internal/feature/admin/settings_pref_reconcile.go
 internal/feature/admin/subnets_test.go
-internal/feature/admin/system_tests.go
 internal/feature/admin/system_tests_exit_node_speed.go
 internal/feature/admin/system_tests_exit_node_speed_test.go
 internal/feature/admin/system_tests_handlers.go

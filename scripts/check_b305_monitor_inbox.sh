@@ -60,7 +60,14 @@ TPL=internal/handlers/templates/admin/monitor.html
 LAYOUT=internal/handlers/templates/layout.html
 RU=internal/i18n/catalog_admin.go
 MAIN=cmd/skygate/main.go
-SYSTESTS=internal/feature/admin/system_tests.go
+# The admin system-tests SURFACE, not one file: internal/feature/admin/system_tests.go
+# was split in refactor Phase D (2026-10-01) and the code this contract greps moved
+# to a sibling (system_tests_query.go / _runtime.go / _runs.go). A contract pinned
+# to one path turns a pure code move into a false FAIL — and is the weaker contract
+# even while it is green. See B339.
+. scripts/lib/gosurface.sh
+gosurface SYSTESTS internal/feature/admin/system_tests*.go
+
 ADOPT=internal/feature/admin/adopt_devices.go
 
 hdr "B305 — one monitoring inbox for every skygate signal"

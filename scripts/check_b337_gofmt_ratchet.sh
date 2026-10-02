@@ -69,7 +69,12 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # 2026-10-01: 276 → 275. Refactor Phase D split
 # internal/telegram/commands_user.go (1983 lines) into nine files; the 752-line
 # remainder is gofmt-clean, so contract D1 demanded its line leave the list.
-FROZEN=275
+#
+# 2026-10-01: 275 → 274. The same phase `gofmt -w`-ed
+# internal/feature/admin/system_tests.go (80 diff lines of struct-tag alignment)
+# while splitting it into four files — a split cannot produce clean output from a
+# drifted source, and contract D1 then demands the removal.
+FROZEN=274
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

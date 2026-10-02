@@ -611,7 +611,14 @@ through were closed by refactor Phase D (2026-10-01).
    `_page.go` (the ~380-line GET renderer), `_helpers.go`, `_handlers.go` (the POST
    write paths), `_prefix_drift.go` (the B275/B276 truth block, 464 lines),
    `_tag.go` and `_servers.go` — with its contracts reading the `exit_nodes*.go`
-   surface. There is no
+   surface. `internal/feature/admin/telegram.go` (1518 lines / 55.9 KB) is seven
+   files (`telegram.go` = the probe cache, `_state.go`, `_handlers.go`,
+   `_actions.go`, `_helpers.go`, `_container.go`, `_nearest.go`), and
+   `system_tests.go` is a **partial** split — `_runtime.go` (runner/persistence),
+   `_runs.go` (history readers) and `_query.go` moved out, while `TestRegistry`
+   (17 large closures in one var block) stays, because its ORDER is what the page
+   renders and `PersistRun` records: regrouping it by category is a behaviour
+   change that needs its own block. There is no
    route-group abstraction, so adding a page edits three large files; a mechanical
    `routes_*.go` split would shrink every future diff.
 
