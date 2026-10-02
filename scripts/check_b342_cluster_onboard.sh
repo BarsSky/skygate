@@ -172,6 +172,14 @@ if grep -q 'cluster.IssueInvite(' "$GO"; then
 else
   bad "E1: the invite token is minted locally instead of via cluster.IssueInvite"
 fi
+# E5 — B342.2: the block must install the Tailscale client when the host has none
+# (measured on the standby host: no `tailscale` binary at all, so step 1 of a
+# "self-sufficient" block died with "command not found").
+if grep -q 'command -v tailscale >/dev/null ||' "$GO" && grep -q 'tailscale.com/install.sh' "$GO"; then
+  ok "E5: step 1 installs the Tailscale client when it is missing (idempotent)"
+else
+  bad "E5: the block assumes the host already has Tailscale — a fresh host fails on step 1"
+fi
 if grep -q 's.infraHeadscaleUserID(r.Context())' "$GO" && grep -q 'CreatePreauthKeyWithTags(infraID' "$GO"; then
   ok "E2: the tailnet key belongs to the infra user (not the synthetic tagged-devices)"
 else

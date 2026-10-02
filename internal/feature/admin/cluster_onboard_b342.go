@@ -107,11 +107,19 @@ type clusterOnboardPayload struct {
 func clusterOnboardSteps(p clusterOnboardPayload) []ClusterOnboardStep {
 	steps := make([]ClusterOnboardStep, 0, 5)
 
-	// 1. tailnet
-	tailnet := fmt.Sprintf("sudo tailscale up --login-server=%s --hostname=%s --accept-routes --accept-dns=false --netfilter-mode=nodir",
+	// 1. tailnet. B342.2 (2026-10-02, measured on the standby host): a fresh host
+	//    usually has NO Tailscale client — `tailscale up` then fails with
+	//    "command not found" and the operator is stuck on the first step of a block
+	//    that promised to be self-sufficient. The install is prepended and made
+	//    idempotent (`command -v … || install.sh`), so re-running the block on a
+	//    host that already has the client is a no-op — the same shape B266's
+	//    exit-node block uses for its own prerequisites.
+	tailnet := fmt.Sprintf("command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh\n"+
+		"sudo tailscale up --login-server=%s --hostname=%s --accept-routes --accept-dns=false --netfilter-mode=nodir",
 		shellQuote(p.ControlURL), shellQuote(p.Hostname))
 	if p.TSKey != "" {
-		tailnet = fmt.Sprintf("sudo tailscale up --login-server=%s --authkey=%s --hostname=%s --accept-routes --accept-dns=false --netfilter-mode=nodir",
+		tailnet = fmt.Sprintf("command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh\n"+
+			"sudo tailscale up --login-server=%s --authkey=%s --hostname=%s --accept-routes --accept-dns=false --netfilter-mode=nodir",
 			shellQuote(p.ControlURL), shellQuote(p.TSKey), shellQuote(p.Hostname))
 	}
 	steps = append(steps, ClusterOnboardStep{

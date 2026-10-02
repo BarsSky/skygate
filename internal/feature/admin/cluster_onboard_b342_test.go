@@ -61,6 +61,13 @@ func TestClusterOnboardSteps_OrderAndContent_B342(t *testing.T) {
 	if !strings.Contains(tailnet, "--hostname=svyatoslava") {
 		t.Errorf("tailnet step must carry the hostname: %q", tailnet)
 	}
+	// B342.2 (measured on the standby host): a fresh host has no Tailscale client,
+	// and the block promised to be self-sufficient — `tailscale up` alone fails
+	// with "command not found" on step 1.
+	if !strings.Contains(tailnet, "command -v tailscale >/dev/null ||") ||
+		!strings.Contains(tailnet, "tailscale.com/install.sh") {
+		t.Errorf("tailnet step must install the client when it is missing (idempotently): %q", tailnet)
+	}
 	if !strings.Contains(install, "v1.5.94") {
 		t.Errorf("install step must pin the primary's version: %q", install)
 	}
