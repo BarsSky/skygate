@@ -1748,6 +1748,26 @@ sudo env PATH="$HOME/go/bin:$PATH" GOFLAGS=-p=2 \
   bash scripts/verify_pre_deploy.sh
 ```
 
+**MEASURED 2026-10-02 on the reference VM — the recipe works, and this is what it
+prints.** `SKYGATE_TEST_PG_DSN="postgres://admin:***@172.18.0.3:5432/skygate_pgtest?sslmode=disable" go
+test ./... -count=1` → **54 packages `ok`, 0 `FAIL`**, including every test this
+section exists for: `TestConvert_SQLiteToPostgres_Real`,
+`TestConvert_PostgresToSQLite_Real`, `TestConvert_CrossDialectReportsDrift_Real`,
+`TestConvert_DryRunTouchesThePostgresTarget_Real` (the cross-dialect conversion
+suite, each of which creates and drops its own database), the `cluster_database`
+/ Patroni-failover helpers and the audit-log helpers. Two notes that cost time to
+re-learn:
+* **`127.0.0.1:5432` does not work on this host.** The PG container publishes no
+  host port; the app reaches it as `skygate-pg-local:5432` on the compose network,
+  and a HOST shell must use the container's bridge address from `PG_IP` above
+  (`docker exec` works regardless). A DSN pointing at localhost fails with
+  `connect: connection refused` — which looks like eleven broken tests and is not
+  one of them.
+* **The database named in the DSN is only the ADMIN connection.** The suite
+  creates what it needs, so an empty scratch database (`skygate_pgtest`, created
+  with `CREATE DATABASE` inside the container) is enough — and it keeps the run
+  off `skygate_staging`.
+
 Two caveats:
 
 * **The container IP changes** when the container is recreated (a `--force-recreate` update does
