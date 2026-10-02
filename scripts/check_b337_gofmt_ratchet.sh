@@ -80,7 +80,11 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # reconciler_b237_7_test.go) when it renegotiated their "silent no-op" contract
 # into a named skip; rule 3 (and contract E1) require every file you TOUCH to be
 # gofmt-clean, so both were formatted and left the list.
-FROZEN=272
+#
+# 2026-10-02: 272 → 271. B342 touched internal/feature/admin/cluster.go (two new
+# page-data fields for the onboarding artifact) and formatted it in the same
+# batch; contract D1 caught that the file was now clean and still listed.
+FROZEN=271
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

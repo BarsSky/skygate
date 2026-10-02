@@ -109,9 +109,24 @@ fi
 # the space-in-PATH issue — it just hides it. `bash -c '...'
 # "$@"` with proper quoting is the canonical fix.
 run_check() {
-  local name="$1"; shift
-  local desc="$1"; shift
-  local cmd="$1"; shift
+  # A MISSING LINE-CONTINUATION BACKSLASH MUST NOT KILL THE CATALOG (measured
+  # 2026-10-02). `run_check "B342" "…essay…"` followed by its command on the next
+  # line WITHOUT a trailing `\` parses as a TWO-argument call, and `local cmd="$1"`
+  # then aborted the whole run under `set -u` — after the previous entry printed
+  # PASS and before the summary, so the gate produced no verdict at all and the
+  # operator saw only "$1: unbound variable". `bash -n` accepts a two-argument
+  # call, so no syntax check can see it. An arity guard turns it into a NAMED
+  # failure that the verdict counts.
+  local name="${1:-}"; shift || true
+  local desc="${1:-}"; shift || true
+  local cmd="${1:-}"; shift || true
+  if [ -z "$name" ] || [ -z "$cmd" ]; then
+    printf '%sCATALOG ERROR%s: run_check "%s" has no command argument (a missing line-continuation backslash?).\n' \
+      "${RED:-}" "${NC:-}" "$name" >&2
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+    RESULTS_FAILNAMES="$RESULTS_FAILNAMES ${name:-?}"
+    return 1
+  fi
   local out rc
   # B281 (2026-09-22): a PASS row is SHORT on purpose.
   #
@@ -5642,7 +5657,7 @@ run_check "B339" "A CONTRACT MUST READ A SURFACE, NOT A FILE (refactor Phase D, 
 # primary's version → join → service → approve. The B266 pattern (exit-node
 # registration) is reused deliberately: never in a URL, never in the audit log
 # (lengths only), swept after 15 minutes.
-run_check "B342" "ONBOARD A SECOND SKYGATE HOST FROM THE PANEL ALONE (RR-15 option (a), decided 2026-10-01). /admin/cluster has been a topology and lifecycle control plane since B199 — add a node row, mint an invite, approve, drain, rolling upgrade, HA chain, Patroni failover — but it could never tell the operator what to type ON THE NEW HOST, and docs/ha.md §2.4 took five steps in three places (a preauth-key script on the primary, a token copied by hand, a hand-assembled skygate join, a heartbeat unit, then Approve), four of them outside the panel. §2.4 states the criterion itself: 'If admin must SSH to do X, then X is a gap, not a feature.' B342 closes it with the shape RR-15 chose — the panel mints one-time credentials and renders the artifact; nothing is pushed to the target and no third-party credential (an SSH key to somebody else's machine, option (b)) is stored anywhere. ONE admin action, POST /admin/cluster/onboard behind authMW, validates the hostname with the same isSafeNodeName B266 uses (the name is substituted into a shell command), bounds ttl_hours to 1..168, validates api_url, ensures the cluster_node row through the shared cluster helpers, mints the invite with cluster.IssueInvite AND a tailnet preauth key for the infra user (CreatePreauthKeyWithTags — never the synthetic tagged-devices user, the B175 Strategy E trap the standalone script exists to avoid), then parks the whole payload as JSON in global_settings under an opaque 16-byte token. GET /admin/cluster?boot=<token> consumes it ONCE and renders the numbered block: tailnet (--netfilter-mode=nodir, never off — the iptables trap), install the EXACT version this primary runs from GitHub Releases with the SHA256 verified (a standby ahead of its primary is the documented upgrade-order trap; a dev/unknown build falls back to resolving latest instead of inventing a tag), skygate join with --write-dsn-to and the state file, systemctl enable + healthz, then Approve in the panel. SECRETS: the invite token and the preauth key appear only inside the rendered commands — never in the redirect URL (which carries the opaque token), and the audit row records lengths (invite_len/ts_key_len) rather than values, because a token in an audit detail is a token in every backup; the payload is deleted on consume and swept after 15 minutes if the page is never opened. 25 contracts in scripts/check_b342_cluster_onboard.sh (route + guards + one-time parking + credential placement + shared primitives + template + RU/EN parity of every cluster.onboard_* key + the pure unit tests) and 7 pure unit tests in internal/feature/admin/cluster_onboard_b342_test.go."
+run_check "B342" "ONBOARD A SECOND SKYGATE HOST FROM THE PANEL ALONE (RR-15 option (a), decided 2026-10-01). /admin/cluster has been a topology and lifecycle control plane since B199 — add a node row, mint an invite, approve, drain, rolling upgrade, HA chain, Patroni failover — but it could never tell the operator what to type ON THE NEW HOST, and docs/ha.md §2.4 took five steps in three places (a preauth-key script on the primary, a token copied by hand, a hand-assembled skygate join, a heartbeat unit, then Approve), four of them outside the panel. §2.4 states the criterion itself: 'If admin must SSH to do X, then X is a gap, not a feature.' B342 closes it with the shape RR-15 chose — the panel mints one-time credentials and renders the artifact; nothing is pushed to the target and no third-party credential (an SSH key to somebody else's machine, option (b)) is stored anywhere. ONE admin action, POST /admin/cluster/onboard behind authMW, validates the hostname with the same isSafeNodeName B266 uses (the name is substituted into a shell command), bounds ttl_hours to 1..168, validates api_url, ensures the cluster_node row through the shared cluster helpers, mints the invite with cluster.IssueInvite AND a tailnet preauth key for the infra user (CreatePreauthKeyWithTags — never the synthetic tagged-devices user, the B175 Strategy E trap the standalone script exists to avoid), then parks the whole payload as JSON in global_settings under an opaque 16-byte token. GET /admin/cluster?boot=<token> consumes it ONCE and renders the numbered block: tailnet (--netfilter-mode=nodir, never off — the iptables trap), install the EXACT version this primary runs from GitHub Releases with the SHA256 verified (a standby ahead of its primary is the documented upgrade-order trap; a dev/unknown build falls back to resolving latest instead of inventing a tag), skygate join with --write-dsn-to and the state file, systemctl enable + healthz, then Approve in the panel. SECRETS: the invite token and the preauth key appear only inside the rendered commands — never in the redirect URL (which carries the opaque token), and the audit row records lengths (invite_len/ts_key_len) rather than values, because a token in an audit detail is a token in every backup; the payload is deleted on consume and swept after 15 minutes if the page is never opened. 25 contracts in scripts/check_b342_cluster_onboard.sh (route + guards + one-time parking + credential placement + shared primitives + template + RU/EN parity of every cluster.onboard_* key + the pure unit tests) and 7 pure unit tests in internal/feature/admin/cluster_onboard_b342_test.go." \
   'test -f scripts/check_b342_cluster_onboard.sh && bash scripts/check_b342_cluster_onboard.sh'
 
 # --- B341: a rule that names no relay must still decide the DEVICE ----------------

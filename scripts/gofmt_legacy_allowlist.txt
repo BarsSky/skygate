@@ -136,7 +136,6 @@ internal/feature/admin/backup_config.go
 internal/feature/admin/backup_config_test.go
 internal/feature/admin/backup_test.go
 internal/feature/admin/certificates.go
-internal/feature/admin/cluster.go
 internal/feature/admin/cluster_b199_test.go
 internal/feature/admin/cluster_b216_test.go
 internal/feature/admin/control_planes_test.go
