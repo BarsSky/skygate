@@ -99,7 +99,13 @@
     </label>
     <label style="display:flex;flex-direction:column;gap:2px">
       <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_exit_node"}}</span>
-      <input type="text" name="exit_node" value="{{.form_exit_node}}" required placeholder="emilia" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+      {{/* B344: «авто» must be expressible from the ADMIN form too. The user form
+           has had `value=""` = «авто» since B275; this one was a REQUIRED text
+           input, so an admin could not create the same intent and nothing said
+           what an empty value would mean. Left empty now = auto, with the same
+           hint the user sees. */}}
+      <input type="text" name="exit_node" value="{{.form_exit_node}}" placeholder="{{t "exit_rules_admin.add_form_exit_node_ph"}}" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+      <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.exit_node_hint"}}</span>
     </label>
     <label style="display:flex;flex-direction:column;gap:2px">
       <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_target_type"}}</span>

@@ -21,7 +21,7 @@ var ruExitRules = map[string]string{
 	"exit_rules.client_win_guide_title": "Полный гайд по настройке Tailscale на Windows (authkey, login-server, exit-node, метрики маршрутов)",
 	"exit_rules.add_rule":               "Добавить правило",
 	"exit_rules.add_rule_title":         "Добавить правило",
-	"exit_rules.added_ok":               "Правило добавлено — ACL обновлён, exit-node синхронизирован",
+	"exit_rules.added_ok":               "Правило добавлено — ACL обновлён. Если выбран узел, он закреплён; при «авто» skygate назначит узел сам (метка «выход через» у устройства ниже).",
 	"exit_rules.partial":                "Часть IP уже были в правилах — добавлены только новые",
 	// 2026-09-07 (B237.19): form-error flash banner
 	// shown above the form when the form's POST handler
@@ -107,7 +107,7 @@ var ruExitRules = map[string]string{
 	"exit_rules.all_devices_section_help":  "применяются ко всем вашим устройствам, включая те, что появятся позже",
 	"exit_rules.all_devices_fanout_badge":  "применено к %d устройств(ам)",
 	"exit_rules.all_devices_fanout_tip":    "Это правило развёрнуто на каждое ваше устройство (сейчас и в будущем) — копии хранятся в device_rules с разными device_id, но логически это одно правило.",
-	"exit_rules.exit_node_hint":            "Необязательно. Не выбрано — skygate сам назначит exit-узел (по нагрузке) и покажет владельца префикса в /admin/exit-nodes, где его можно закрепить. Выбранный узел — пожелание: если сеть обслуживает другой узел, пин в ACL следует за владельцем, иначе сайт у устройства просто не откроется.",
+	"exit_rules.exit_node_hint":            "Необязательно. «Авто» (пусто) — skygate сам назначит exit-узел по таблице владельцев префиксов (prefix_owner, решение принимает движок: большинство правил + здоровье узла) и закрепит это устройство за ним. Результат виден здесь же — метка «выход через: <узел>» у устройства ниже; если назначить не удалось, страница покажет предупреждение, а причина будет в журнале (missing-pref-…). Выбранный узел — пожелание: если сеть обслуживает другой узел, пин в ACL следует за владельцем, иначе сайт у устройства просто не откроется.",
 	"exit_rules.action":                    "Действие",
 	"exit_rules.action_accept":             "✅ Allow — разрешить доступ",
 	"exit_rules.action_deny":               "🚫 Deny — отбрасывать трафик",
@@ -268,6 +268,7 @@ var ruExitRules = map[string]string{
 	// B328: пустое поле + эта галочка = «первое устройство пользователя».
 	"exit_rules_admin.add_form_all_devices":  "Применить ко ВСЕМ устройствам пользователя (новые устройства получат правило автоматически; поле ID можно оставить пустым)",
 	"exit_rules_admin.add_form_exit_node":    "Exit-node",
+	"exit_rules_admin.add_form_exit_node_ph": "пусто = авто (skygate назначит), или имя узла",
 	"exit_rules_admin.add_form_target_type":  "Тип цели",
 	"exit_rules_admin.add_form_target_value": "Значение (IP/CIDR/домен)",
 	"exit_rules_admin.add_form_action":       "Действие",
@@ -380,7 +381,7 @@ var enExitRules = map[string]string{
 	"exit_rules.client_win_guide_title": "Full Tailscale-on-Windows setup guide (authkey, login-server, exit-node, route metrics)",
 	"exit_rules.add_rule":               "Add rule",
 	"exit_rules.add_rule_title":         "Add rule",
-	"exit_rules.added_ok":               "Rule added — ACL updated, exit node synced",
+	"exit_rules.added_ok":               "Rule added — ACL updated. A selected node is pinned; with “auto” skygate assigns one itself (see the “via” badge on the device below).",
 	"exit_rules.partial":                "Some IPs were already in rules — only new ones were added",
 	// 2026-09-07 (B237.19): form-error flash banner
 	// shown above the form when the form's POST handler
@@ -452,7 +453,7 @@ var enExitRules = map[string]string{
 	"exit_rules.all_devices_section_help":  "applied to every device you own now and to every device you register later",
 	"exit_rules.all_devices_fanout_badge":  "applied to %d device(s)",
 	"exit_rules.all_devices_fanout_tip":    "This rule is fanned out to every device you own (now and in the future) — the copies live in device_rules with different device_ids, but logically it is one rule.",
-	"exit_rules.exit_node_hint":            "Optional. Left empty, skygate assigns the exit node itself (by load) and shows the prefix owner on /admin/exit-nodes, where it can be pinned. A selected node is a preference: if another node serves the network, the ACL pin follows the owner — otherwise the site simply would not open on that device.",
+	"exit_rules.exit_node_hint":            "Optional. “Auto” (empty) — skygate assigns the exit node from the prefix-ownership table (prefix_owner; the engine decides by rule majority and node health) and pins this device to it. The result is visible right here: the “via <node>” badge on the device below; when the assignment cannot be made the page says so and the journal carries the reason (missing-pref-…). A selected node is a preference: if another node serves the network, the ACL pin follows the owner — otherwise the site simply would not open on that device.",
 	"exit_rules.action":                    "Action",
 	"exit_rules.action_accept":             "✅ Allow — permit access",
 	"exit_rules.action_deny":               "🚫 Deny — drop traffic",
@@ -611,6 +612,7 @@ var enExitRules = map[string]string{
 	// B328: empty device field + this checkbox = "the user's first device".
 	"exit_rules_admin.add_form_all_devices":  "Apply to ALL of the user's devices (devices registered later inherit it; the ID field may stay empty)",
 	"exit_rules_admin.add_form_exit_node":    "Exit node",
+	"exit_rules_admin.add_form_exit_node_ph": "empty = auto (skygate assigns), or a node name",
 	"exit_rules_admin.add_form_target_type":  "Target type",
 	"exit_rules_admin.add_form_target_value": "Target value (IP/CIDR/domain)",
 	"exit_rules_admin.add_form_action":       "Action",
