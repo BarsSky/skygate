@@ -78,6 +78,13 @@ registration commands carried **no flags at all**, so a device could not even ac
   intent, and the DNS rule lives in `scripts/check_b350_client_dns_truth.sh` (14 contracts),
   including the reverse guard and the server-side exception.
 * **Lesson `L-58`** records the incident; `AGENTS.md` and `ROADMAP.md` carry B350 + the open B350.1.
+* **`check_b325_1_i18n_sweep.sh` contract B1 was narrowed — a false positive the same payment
+  exposed.** `bot.__catalog_parity_marker__` holds an empty value **on purpose**: it is what proves
+  `TestCatalogsParity` compares key *sets* (documented in `docs/i18n-audit.md`). The "no empty RU
+  value" detector could not see it until `catalog_bot.go` was reformatted (same space-before-colon
+  blind spot), and then reported it as a blanked translation. The exclusion is by **key**, not by
+  position, and the new contract **B2** asserts the marker is still declared exactly twice (RU + EN)
+  and still empty — so the exclusion cannot swallow a real blank value.
 
 ### What cannot be detected — measured, so nobody re-invents it
 

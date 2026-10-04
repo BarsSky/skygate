@@ -86,14 +86,24 @@ fi
 # --- B: no RU value is empty -----------------------------------------------------------
 # A blanked translation lowers B325's count instead of raising it, so it needs its own
 # contract. Whitespace-only counts as empty (the panel would render a blank label).
+#
+# ONE deliberate exception, asserted separately in B2 (2026-10-04, found by B350's gofmt
+# payment): `bot.__catalog_parity_marker__` is an EMPTY value on purpose — it exists so
+# TestCatalogsParity proves it compares KEY SETS (docs/i18n-audit.md). The detector could
+# not see it until catalog_bot.go was reformatted, because this awk walk requires the colon
+# next to the key and that file aligned its maps as `"key"   : "value"`. Excluding a KEY
+# rather than a position is deliberate: B2 asserts the marker is still declared exactly
+# twice (RU + EN) and still empty, so the exclusion cannot swallow a real blank value.
 EMPTY=$(awk '
   /^var ru[A-Za-z0-9_]* = map\[string\]string\{/ { inru = 1; next }
   /^var en[A-Za-z0-9_]* = map\[string\]string\{/ { inru = 0; next }
   /^\}/ { inru = 0 }
   inru && /"[^"]+":[[:space:]]*"/ {
-    v = $0
+    line = $0
+    v = line
     sub(/^[^:]*:[[:space:]]*"/, "", v)
     sub(/",?[[:space:]]*$/, "", v)
+    if (line ~ /"bot\.__catalog_parity_marker__"[[:space:]]*:/) next
     if (v ~ /^[[:space:]]*$/) { print FILENAME ":" FNR }
   }
 ' internal/i18n/*.go)
@@ -102,6 +112,15 @@ if [ -z "$EMPTY" ]; then
 else
   bad "B1: RU value(s) are EMPTY — the page renders a blank label and the B325 metric cannot see it:"
   printf '%s\n' "$EMPTY" | head -10 | sed 's/^/       /' >&2
+fi
+
+# B2: the exclusion above must stay narrow — the deliberate marker is present in BOTH
+# catalogues and is STILL empty (filling it in would silently remove the parity proof).
+MARKER=$(grep -c '"bot\.__catalog_parity_marker__"[[:space:]]*:[[:space:]]*""' internal/i18n/catalog_bot.go 2>/dev/null || true)
+if [ "${MARKER:-0}" -eq 2 ]; then
+  ok "B2: the one deliberate empty value (bot.__catalog_parity_marker__) is declared in BOTH catalogues and is still empty"
+else
+  bad "B2: the parity marker is declared ${MARKER:-0}x with an empty value (expected 2: RU + EN) — it was removed (TestCatalogsParity loses its proof) or filled in"
 fi
 
 # --- C: the Cyrillic floor -------------------------------------------------------------
