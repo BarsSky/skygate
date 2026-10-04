@@ -144,6 +144,43 @@ if [ -n "$VJOB" ]; then
   # D3. the enforcement must run on the ANALYSED log (ANSI stripped), otherwise
   #     the `^  FAIL  ` anchor misses every coloured row
   check_ge "D3-ansi-strip" 1 "$(job_count 'x1B')"
+  # --- D4/D5 (2026-10-04): the guard must not match the SUMMARY block -------
+  #
+  # Measured on CI run 37194800383 (the commit that first carried the new
+  # `=== summary ===` block, added by a19c2dbe and therefore never exercised by
+  # CI before): the catalog printed
+  #     GATE PASSED: 395 check(s) green, 0 failed, 0 timed out.
+  # and the very next line in the job was
+  #     ##[error]the guarantee catalog reported 1 FAIL/TIMEOUT line(s)
+  #     FAIL    : 0
+  # — the guard's own regex matched the SUMMARY COUNTER `  FAIL    : 0`, so a
+  # green catalog could never make CI green and scripts/ci_gate.sh (rule 14)
+  # therefore blocked every tag. The pattern needs a NON-SPACE after the
+  # two-space row prefix, because the summary pads the label to a column
+  # (`FAIL` + 4 spaces + `:`), while a real row is `  FAIL  B341  …`.
+  #
+  # The regex is read OUT of ci.yml (not hardcoded here) and proved in BOTH
+  # directions on a synthetic log, so a future "simplification" of the guard
+  # fails this contract instead of silently wedging releases.
+  GUARD_RE="$(sed -n "s/.*FAIL_RE='\(.*\)'.*/\1/p" "$CI" | head -1)"
+  if [ -n "$GUARD_RE" ]; then
+    D4DIR="$(mktemp -d "${TMPDIR:-/tmp}/skygate-b281-d4.XXXXXX")"
+    printf '  PASS    : 395\n  FAIL    : 0\n  TIMEOUT : 0\n  SKIP    : 0\n' > "$D4DIR/summary"
+    printf '  PASS  B341  ok\n  FAIL  B341  a real failing row\n  TIMEOUT  B999  a real timeout row\n' > "$D4DIR/real"
+    if grep -qE "$GUARD_RE" "$D4DIR/summary"; then
+      bad "D4: the CI guard regex ($GUARD_RE) matches the SUMMARY counter '  FAIL    : 0' — a green catalog would still fail the job and block every tag"
+    else
+      ok "D4: the CI guard ignores the summary counters (pattern: $GUARD_RE)"
+    fi
+    if grep -qE "$GUARD_RE" "$D4DIR/real"; then
+      ok "D5: …and still catches real FAIL and TIMEOUT rows"
+    else
+      bad "D5: the guard no longer matches real rows — it would green-light a red catalog"
+    fi
+    rm -rf "$D4DIR"
+  else
+    bad "D4: could not read the FAIL_RE pattern out of $CI"
+  fi
 else
   bad "[D] verify-pre job block not found in $CI"
 fi

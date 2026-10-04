@@ -124,9 +124,23 @@ jobs:
           set -o pipefail
           bash scripts/verify_pre_deploy.sh 2>&1 | tee /tmp/verify-pre.log
           sed -r 's/\x1B\[[0-9;]*[mK]//g' /tmp/verify-pre.log > /tmp/verify-pre.plain
-          if grep -qE '^  (FAIL|TIMEOUT)  ' /tmp/verify-pre.plain; then
-            echo "::error::the guarantee catalog reported $(grep -cE '^  (FAIL|TIMEOUT)  ' /tmp/verify-pre.plain) FAIL/TIMEOUT line(s)"
-            grep -E '^  (FAIL|TIMEOUT)  ' /tmp/verify-pre.plain | head -40
+          # The anchor is `FAIL` + TWO spaces (the catalog's row shape:
+          # `  FAIL  B341  …`) + a NON-SPACE. The trailing `[^ ]` is load-bearing
+          # and was missing until 2026-10-04: the summary block prints
+          # `  FAIL    : 0` / `  TIMEOUT : 0`, which the old pattern
+          # `^  (FAIL|TIMEOUT)  ` matched as well — so a GREEN catalog
+          # (395 PASS / 0 FAIL) still made this job exit 1, CI could never be
+          # green, and scripts/ci_gate.sh therefore blocked every tag. Measured
+          # on run 37194800383: "GATE PASSED: 395 check(s) green, 0 failed"
+          # immediately followed by "reported 1 FAIL/TIMEOUT line(s)" naming
+          # `  FAIL    : 0`. The summary line has FOUR spaces before the colon,
+          # so one non-space after the two-space prefix excludes it and still
+          # matches every real row (scripts/check_b281_ci_catalog_truth.sh
+          # contract D4 proves both directions on a synthetic log).
+          FAIL_RE='^  (FAIL|TIMEOUT)  [^ ]'
+          if grep -qE "$FAIL_RE" /tmp/verify-pre.plain; then
+            echo "::error::the guarantee catalog reported $(grep -cE "$FAIL_RE" /tmp/verify-pre.plain) FAIL/TIMEOUT line(s)"
+            grep -E "$FAIL_RE" /tmp/verify-pre.plain | head -40
             exit 1
           fi
           echo "catalog clean: $(grep -cE '^  PASS  ' /tmp/verify-pre.plain) PASS, $(grep -cE '^  SKIP  ' /tmp/verify-pre.plain) SKIP, 0 FAIL"
