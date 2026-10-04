@@ -93,15 +93,22 @@ else
 fi
 
 # The positive half — the flag must be PRESENT, not merely "not false": a
-# deleted flag is the same failure with a different spelling. Only a
-# REGISTRATION command (`--login-server` + an auth key) is in scope; prose that
-# mentions the flag, `tailscale up --help`, a mobile `--exit-node=`, a re-auth
-# line and the subnet-router docs are not.
-NODNS="$(grep -rn 'tailscale up' internal/i18n/catalog_*.go 2>/dev/null | grep -- '--login-server' | grep -i 'authkey' | grep -v -- '--accept-dns=true' || true)"
+# deleted flag is the same failure with a different spelling. Two shapes are in
+# scope, and both hand the reader something to type:
+#   (a) a REGISTRATION command (`--login-server` + an auth key);
+#   (b) a bare `tailscale up --accept-routes` short form (the B49 intent, which
+#       the catalogues were never checked for — `exit_rules.scripts_sub` said
+#       "on Windows use tailscale up --accept-routes" until this contract caught it).
+# Out of scope: prose that mentions the flag, `tailscale up --help`, a mobile
+# `--exit-node=`, a re-auth line, and every SERVER role (`--advertise-*`,
+# `--netfilter-mode`), because a relay/router is not a client.
+NODNS="$( { grep -rn 'tailscale up' internal/i18n/catalog_*.go 2>/dev/null | grep -- '--login-server' | grep -i 'authkey'
+            grep -rn 'tailscale up --accept-routes' internal/i18n/catalog_*.go 2>/dev/null; } 2>/dev/null \
+          | grep -v -- '--accept-dns=true' | grep -v -- '--advertise-' | grep -v -- '--netfilter-mode' || true)"
 if [ -z "$NODNS" ]; then
-  ok "A2: every catalogue registration command names --accept-dns=true"
+  ok "A2: every catalogue client command names --accept-dns=true (registration commands and short forms)"
 else
-  bad "A2: a catalogue registration command does not say how DNS is resolved:"
+  bad "A2: a catalogue client command does not say how DNS is resolved:"
   printf '%s\n' "$NODNS" | sed 's/^/       /' >&2
 fi
 
