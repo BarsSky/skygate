@@ -242,6 +242,43 @@
            per-CIDR pins come from prefix_owner since B275), so the panel said
            nothing at all. The reconciler now derives the relay on its own tick
            (B341.1); this banner is what stays true when it cannot. */}}
+      {{/* B347 (2026-10-04, operator report): «нигде не маркируется что у cyborg
+           доступ теперь появился». The B343 badges below live inside the
+           per-device rule GROUPS, and the groups are built from the current PAGE
+           of rule rows — measured live, page 1 of 5 held only skyworker's rows,
+           so cyborg (offered in the picker as «cyborg (1/500)») had no marker
+           anywhere and adding a rule for it changed nothing visible. This strip
+           is computed from the WHOLE rule set by DeviceStatusRows (one query, no
+           LIMIT), so it says what the operator needs to know regardless of which
+           page they are on. */}}
+      {{if .device_status}}
+      <div class="card" id="my-device-status" style="margin-bottom:10px">
+        <h4 style="margin:0 0 8px 0;font-size:14px"><i class="fa-solid fa-list-check"></i> {{t "exit_rules.device_status_title"}}</h4>
+        <p style="color:var(--text-muted);font-size:12px;margin:0 0 8px 0">{{t "exit_rules.device_status_subtitle"}}</p>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          {{range .device_status}}
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px">
+            <i class="fa-solid fa-laptop"></i>
+            <b>{{.Hostname}}</b>
+            <span class="tag">{{.Rules}}{{t "exit_rules.device_status_rules_suffix"}}</span>
+            {{if .Pinned}}
+            <span class="tag tag-success" id="device-status-active-{{.Hostname}}" title="{{t "exit_rules.exit_node_active_help"}}"><i class="fa-solid fa-circle-check"></i> {{t "exit_rules.exit_node_active"}}: {{.Relay}}</span>
+            {{else}}
+            <span class="tag tag-danger" id="device-status-inert-{{.Hostname}}" title="{{t "exit_rules.no_exit_node_help"}}"><i class="fa-solid fa-triangle-exclamation"></i> {{t "exit_rules.no_exit_node_badge"}}</span>
+            {{end}}
+          </div>
+          {{end}}
+        </div>
+      </div>
+      {{end}}
+      {{/* B347: the post-save answer to «правило есть, а доступа нет» — the flash
+           now names the relay this device actually goes through. */}}
+      {{if .AssignedRelay}}
+      <div class="alert alert-success" id="my-assigned-relay" style="margin-bottom:10px">
+        <i class="fa-solid fa-circle-check"></i>
+        {{t "exit_rules.assigned_now"}} <b>{{.AssignedRelay}}</b>
+      </div>
+      {{end}}
       {{if .no_exit_node_list}}
       <div class="alert alert-warn" id="my-no-exit-node" style="margin-bottom:10px">
         <i class="fa-solid fa-triangle-exclamation"></i>

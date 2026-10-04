@@ -58,10 +58,23 @@ var ruExitRules = map[string]string{
 	"exit_rules.exit_node_active":      "выход через",
 	"exit_rules.exit_node_active_help": "Устройство закреплено за этим exit-node: правила, покрывающие его префиксы, направляют трафик через него (в ACL это via=[tag] и на autogroup:internet, и на per-CIDR).",
 	"exit_rules.no_exit_node_banner":   "⚠ Устройства с правилами без exit-node (пока relay не назначен, правила не действуют; причина в журнале как missing-pref-…):",
-	"exit_rules.duplicate_parent":      "Источник:",
-	"exit_rules.duplicate_view":        "→ перейти к правилу #%d",
-	"exit_rules.dns_pending":           "Домен добавлен, но DNS пока не отвечает: %s. Autoupdater попробует при следующем цикле (до 5 минут).",
-	"exit_rules.deleted":               "Правило удалено",
+	// 2026-10-04 (B347): полоса «устройство → relay» и всплывающее подтверждение
+	// после сохранения. Причина: метки B343 живут ВНУТРИ групп правил, а группы
+	// строятся из ТЕКУЩЕЙ страницы (на живом хосте страница 1 из 5 содержала
+	// только skyworker), поэтому у cyborg метки не было нигде.
+	"exit_rules.device_status_title":    "Устройства и назначенный exit-узел",
+	"exit_rules.device_status_subtitle": "Все ваши устройства с правилами и relay, через который идёт их трафик. Список не зависит от страницы правил ниже: если у устройства стоит «нет exit-node», его правила пока не действуют.",
+	// Число здесь — ВСЕ включённые строки устройства (как в заголовке группы), а
+	// не счётчик лимита B328 в списке устройств («cyborg (1/500)»): у cyborg это
+	// 1 пользовательское правило и 11 строк после разворачивания CDN. Подпись
+	// говорит об этом прямо, чтобы два разных числа на одной странице не
+	// выглядели как новый баг.
+	"exit_rules.device_status_rules_suffix": " правил (включая подсети и /32)",
+	"exit_rules.assigned_now":               "Правило сохранено. Это устройство выходит через:",
+	"exit_rules.duplicate_parent":           "Источник:",
+	"exit_rules.duplicate_view":             "→ перейти к правилу #%d",
+	"exit_rules.dns_pending":                "Домен добавлен, но DNS пока не отвечает: %s. Autoupdater попробует при следующем цикле (до 5 минут).",
+	"exit_rules.deleted":                    "Правило удалено",
 	// 2026-08-06: preferred-mismatch cross-check (v0.33.1.16
 	// Cloudflare CIDR debug). Surfaces the count of rules
 	// that point at a non-preferred exit-node — those rules
@@ -406,10 +419,20 @@ var enExitRules = map[string]string{
 	"exit_rules.exit_node_active":      "exit node",
 	"exit_rules.exit_node_active_help": "This device is pinned to that exit node: the rules covering its prefixes send traffic through it (in the ACL that is via=[tag] on both autogroup:internet and the per-CIDR grants).",
 	"exit_rules.no_exit_node_banner":   "⚠ Devices with rules but no exit node (until a relay is assigned their rules do nothing; the journal names the reason as missing-pref-…):",
-	"exit_rules.duplicate_parent":      "Source:",
-	"exit_rules.duplicate_view":        "→ jump to rule #%d",
-	"exit_rules.dns_pending":           "Domain added, but DNS is not responding yet: %s. Autoupdater will retry on the next cycle (up to 5 minutes).",
-	"exit_rules.deleted":               "Rule deleted",
+	// 2026-10-04 (B347): the «device → relay» strip and the post-save
+	// confirmation — see the RU map for the measured reason.
+	"exit_rules.device_status_title":    "Devices and their assigned exit node",
+	"exit_rules.device_status_subtitle": "Every one of your devices that has rules, and the relay its traffic goes through. This list does not depend on the rules page below: while a device shows «no exit-node», its rules do not take effect yet.",
+	// The number is EVERY enabled row for the device (as in the group header), not
+	// the B328 limit counter in the device picker («cyborg (1/500)») — for cyborg
+	// that is 1 user-facing rule and 11 rows after the CDN expansion. The label
+	// says so, so two different numbers on one page do not read as a new bug.
+	"exit_rules.device_status_rules_suffix": " rules (incl. subnets and /32)",
+	"exit_rules.assigned_now":               "Rule saved. This device now exits through:",
+	"exit_rules.duplicate_parent":           "Source:",
+	"exit_rules.duplicate_view":             "→ jump to rule #%d",
+	"exit_rules.dns_pending":                "Domain added, but DNS is not responding yet: %s. Autoupdater will retry on the next cycle (up to 5 minutes).",
+	"exit_rules.deleted":                    "Rule deleted",
 	// 2026-08-06: preferred-mismatch cross-check (mirror of the
 	// RU keys above).
 	"exit_rules.preferred_mismatch_banner": "%d rules reference an exit-node that the device does not use. The rules are saved, but Tailscale ignores them.",

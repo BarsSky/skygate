@@ -755,6 +755,34 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	if inertErr != nil {
 		noExitNodeDevices = map[string]int{}
 	}
+	// B347 (2026-10-04): the SAME state, but page-independent. The badges above
+	// live inside the per-device rule GROUPS, and the groups come from the
+	// current page of rule rows — measured live, page 1 of 5 held only
+	// skyworker's rows, so «cyborg (1/500)» in the picker had no marker anywhere
+	// and adding a rule for it changed nothing the operator could see. This read
+	// covers the WHOLE rule set in one query, so the strip below is the answer
+	// that does not move when the operator pages. A read failure degrades to an
+	// empty strip (the groups and the B343 banner still render) rather than
+	// breaking the page.
+	deviceStatus, statusErr := s.DeviceStatusRowsForService(c.UserID)
+	if statusErr != nil {
+		deviceStatus = []DeviceStatusRow{}
+	}
+	// B347: the post-save flash must name the relay the operator just got
+	// («правило добавлено — устройство выходит через emilia»), because the
+	// duplicate notice they used to get answered a different question. The relay
+	// comes from the SAME DeviceInfo the group badge uses, resolved from the
+	// saved form's device, so the flash and the badge cannot disagree.
+	assignedRelay := ""
+	if r.URL.Query().Get("applied") != "" {
+		wantID := r.URL.Query().Get("form_device_id")
+		for _, di := range deviceInfos {
+			if wantID != "" && di.ID == wantID {
+				assignedRelay = di.PreferredExitNode
+				break
+			}
+		}
+	}
 	s.Backend.RenderWithLayout(w, r, "exit_rules.html", c, map[string]any{
 		"Page":              "exit-rules",
 		"Title":             "Exit Rules",
@@ -837,6 +865,11 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// own tick (B341.1), and when it cannot, the journal carries the reason.
 		"no_exit_node_devices": noExitNodeDevices,
 		"no_exit_node_list":    inertDeviceLabels(noExitNodeDevices),
+		// B347 (2026-10-04): every device with enabled rules + the relay it is
+		// pinned to, computed from the whole rule set so the answer is not
+		// paginated away, plus the relay named in the post-save flash.
+		"device_status": deviceStatus,
+		"AssignedRelay": assignedRelay,
 	})
 }
 
