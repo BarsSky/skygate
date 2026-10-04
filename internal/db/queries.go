@@ -237,12 +237,12 @@ const (
 	// planes and push the right policy to each. Empty
 	// headscale_url = the global default.
 	qSelectControlPlanes = `SELECT headscale_url, COUNT(*) FROM portal_users GROUP BY headscale_url`
-	qSelectUserByID        = `SELECT username, headscale_user_id FROM portal_users WHERE id = $1`
-	qSelectUserNameByID    = `SELECT username FROM portal_users WHERE id = $1`
-	qSelectUserHSByID      = `SELECT headscale_user_id, username FROM portal_users WHERE id = $1`
-	qSelectPasswordHash    = `SELECT password_hash FROM portal_users WHERE id = $1`
-	qSelectHSIDByID        = `SELECT headscale_user_id FROM portal_users WHERE id = $1`
-	qInsertPortalUser      = `INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES ($1, $2, $3, $4) RETURNING id`
+	qSelectUserByID      = `SELECT username, headscale_user_id FROM portal_users WHERE id = $1`
+	qSelectUserNameByID  = `SELECT username FROM portal_users WHERE id = $1`
+	qSelectUserHSByID    = `SELECT headscale_user_id, username FROM portal_users WHERE id = $1`
+	qSelectPasswordHash  = `SELECT password_hash FROM portal_users WHERE id = $1`
+	qSelectHSIDByID      = `SELECT headscale_user_id FROM portal_users WHERE id = $1`
+	qInsertPortalUser    = `INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES ($1, $2, $3, $4) RETURNING id`
 	// qInsertPortalUserAdopt powers db.InsertPortalUserAdopt.
 	// v1.4.0 B141: "Adopt as skygate user" button on /admin/users
 	// HSOrphans list. The pre-B141 admin UI only DISPLAYED the
@@ -268,10 +268,10 @@ const (
 	// promote_to_admin form field and dispatches to either
 	// InsertPortalUserAdopt or InsertPortalUserAdoptAdmin.
 	qInsertPortalUserAdoptAdmin = `INSERT INTO portal_users (username, password_hash, is_admin, headscale_user_id) VALUES ($1, $2, $3, $4) ON CONFLICT(username) DO NOTHING RETURNING id`
-	qUpdatePasswordHash    = `UPDATE portal_users SET password_hash = $1 WHERE id = $2`
-	qUpdatePortalUsername  = `UPDATE portal_users SET username = $1 WHERE id = $2`
-	qUpdatePortalUserIsAdmin = `UPDATE portal_users SET is_admin = $1 WHERE id = $2`
-	qDeletePortalUserByID  = `DELETE FROM portal_users WHERE id = $1`
+	qUpdatePasswordHash         = `UPDATE portal_users SET password_hash = $1 WHERE id = $2`
+	qUpdatePortalUsername       = `UPDATE portal_users SET username = $1 WHERE id = $2`
+	qUpdatePortalUserIsAdmin    = `UPDATE portal_users SET is_admin = $1 WHERE id = $2`
+	qDeletePortalUserByID       = `DELETE FROM portal_users WHERE id = $1`
 )
 
 // 2026-09-19: v0.72 (B264) — the immutable primary admin.
@@ -302,9 +302,9 @@ const (
 // nodeownership.Backfill's Strategy A to short-circuit a node already
 // claimed by a different portal user.
 //
-// 2026-09-15 (B256) — was `headscale_user_id != ''`. port_users.headscale_user_id
+// 2026-09-15 (B256) — was `headscale_user_id != ”`. port_users.headscale_user_id
 // is INTEGER (migrations_pg.go:145 + :184, NOT NULL DEFAULT 0 after
-// the v0.28 denormalisation). PostgreSQL refuses to cast `''` to
+// the v0.28 denormalisation). PostgreSQL refuses to cast `”` to
 // integer and raises SQLSTATE 22P02 "invalid input syntax for type
 // integer: """ the moment the `id != $1` filter returns ≥1 row —
 // which is every per-user Backfill call from the AutoBackfill 5-min
@@ -489,9 +489,10 @@ const qSelectUserRulesForView = `SELECT d.id, d.user_id, d.device_id, d.exit_nod
 // before this fix.
 //
 // Pagination contract:
-//   $1 = user_id
-//   $2 = LIMIT (page_size)
-//   $3 = OFFSET (page * page_size)
+//
+//	$1 = user_id
+//	$2 = LIMIT (page_size)
+//	$3 = OFFSET (page * page_size)
 //
 // Same column shape as qSelectUserRulesForView so the existing
 // scanDeviceRules path consumes the rows without changes.
@@ -521,8 +522,8 @@ const qSelectAllRulesForAdmin = `SELECT r.id, r.user_id, r.device_id, r.exit_nod
 // pre-pagination). Page size is the same clamp as the user
 // page (1–500).
 //
-//   $1 = LIMIT (page_size)
-//   $2 = OFFSET (page * page_size)
+//	$1 = LIMIT (page_size)
+//	$2 = OFFSET (page * page_size)
 const qSelectAllRulesForAdminPaged = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.id LIMIT $1 OFFSET $2`
 
 // qSelectAllRulesForAdminCount — COUNT(*) companion for the
@@ -536,6 +537,25 @@ const qSelectAllRulesForAdminCount = `SELECT COUNT(*) FROM device_rules`
 // (the DB key). Used by the per-device "dead rules" drill-down
 // from /admin/devices.
 //
+// B349 (2026-10-04) — THIS QUERY WAS MISSING `all_devices`, SO EVERY CALL FAILED.
+//
+// B277.4 added `COALESCE(r.all_devices, 0) AS all_devices` to this view's
+// sibling (`qSelectAllRulesForAdmin`) and to the shared scan loop
+// (`getAllRulesForAdminQuery`, which reads 13 destinations: …, &r.UserName, &ad)
+// — but not to THIS constant, which kept 12 columns. Both queries go through that
+// one scan, so the filtered drill-down answered every request with
+//
+//	sql: expected 12 destination arguments in Scan, not 13
+//
+// and the page rendered that as a raw 500. Measured live: clicking any device on
+// /admin/exit-rules (or arriving from the new B348 index) produced an error page,
+// which the operator reported as «пропали правила из админ страницы exit rules и по
+// остальным устройствам что не skyworker» — the rules were fine, the FILTERED VIEW
+// of them was a 500. The column list below now matches its sibling exactly; the
+// two are asserted to agree by scripts/check_b349_admin_device_filter_500.sh and by
+// TestGetAllRulesForAdminQueries_B349, which runs BOTH queries (the behavioural
+// half: a text-only contract cannot prove the scan and the SELECT agree).
+//
 // 2026-08-06: introduced for the /admin/exit-rules?device=NAME
 // drill-down. The previous behavior was that the link from the
 // per-device dead-rule count badge on /admin/devices pointed
@@ -547,7 +567,7 @@ const qSelectAllRulesForAdminCount = `SELECT COUNT(*) FROM device_rules`
 // because /admin/devices stores hostnames in lowercase (see
 // backfillNodeOwnership in internal/nodeownership), but a hand-
 // edited `?device=` URL parameter could be any case.
-const qSelectAllRulesForAdminByDevice = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id LEFT JOIN node_owner_map n ON CAST(n.node_id AS INTEGER) = r.device_id WHERE LOWER(COALESCE(n.hostname, '')) = LOWER($1) ORDER BY r.id`
+const qSelectAllRulesForAdminByDevice = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id LEFT JOIN node_owner_map n ON CAST(n.node_id AS INTEGER) = r.device_id WHERE LOWER(COALESCE(n.hostname, '')) = LOWER($1) ORDER BY r.id`
 
 // qSelectTargetTypeByIDForDelete reads (target_type, parent_domain) of a
 // single rule; the delete handler uses it to decide between single-row
@@ -592,21 +612,21 @@ const (
 	// nullable; COALESCE normalizes NULL → '' / 0 and lets the
 	// single helper serve both fresh DBs (NOT NULL DEFAULT) and
 	// the live install.
-	qSelectPreauthFullByID       = `SELECT id, user_id, key, COALESCE(headscale_preauth_id, ''), used, COALESCE(expires_at, 0), created_at FROM preauth_keys WHERE id = $1 AND user_id = $2`
-	qInsertPreauthKey            = `INSERT INTO preauth_keys (user_id, key, expires_at, headscale_preauth_id) VALUES ($1, $2, $3, $4) RETURNING id`
-	qSelectExpiringPreauthKeys   = `SELECT id, user_id, key, headscale_preauth_id, expires_at, created_at, reusable, used FROM preauth_keys WHERE used = 0 AND expires_at > 0 AND expires_at <= $1 ORDER BY expires_at ASC`
-	qMarkPreauthKeyNotified      = `UPDATE preauth_keys SET notified_at = $2 WHERE id = $1`
-	qResetPreauthKeyNotified     = `UPDATE preauth_keys SET notified_at = 0 WHERE id = $1`
-	qInsertNotification           = `INSERT INTO notifications (user_id, type, severity, title, body, link, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`
-	qListNotificationsByUser     = `SELECT id, user_id, type, severity, title, body, link, created_at, read_at FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`
+	qSelectPreauthFullByID         = `SELECT id, user_id, key, COALESCE(headscale_preauth_id, ''), used, COALESCE(expires_at, 0), created_at FROM preauth_keys WHERE id = $1 AND user_id = $2`
+	qInsertPreauthKey              = `INSERT INTO preauth_keys (user_id, key, expires_at, headscale_preauth_id) VALUES ($1, $2, $3, $4) RETURNING id`
+	qSelectExpiringPreauthKeys     = `SELECT id, user_id, key, headscale_preauth_id, expires_at, created_at, reusable, used FROM preauth_keys WHERE used = 0 AND expires_at > 0 AND expires_at <= $1 ORDER BY expires_at ASC`
+	qMarkPreauthKeyNotified        = `UPDATE preauth_keys SET notified_at = $2 WHERE id = $1`
+	qResetPreauthKeyNotified       = `UPDATE preauth_keys SET notified_at = 0 WHERE id = $1`
+	qInsertNotification            = `INSERT INTO notifications (user_id, type, severity, title, body, link, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`
+	qListNotificationsByUser       = `SELECT id, user_id, type, severity, title, body, link, created_at, read_at FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`
 	qListUnreadNotificationsByUser = `SELECT id, user_id, type, severity, title, body, link, created_at, read_at FROM notifications WHERE user_id = $1 AND read_at = 0 ORDER BY created_at DESC LIMIT $2`
-	qCountUnreadNotifications    = `SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND read_at = 0`
-	qMarkNotificationRead        = `UPDATE notifications SET read_at = $1 WHERE id = $2 AND user_id = $3 AND read_at = 0`
-	qMarkAllNotificationsRead    = `UPDATE notifications SET read_at = $1 WHERE user_id = $2 AND read_at = 0`
-	qDeleteNotificationsForUser  = `DELETE FROM notifications WHERE user_id = $1`
-	qUpdatePreauthExpires        = `UPDATE preauth_keys SET expires_at = $1 WHERE id = $2 AND user_id = $3`
-	qMarkPreauthUsed             = `UPDATE preauth_keys SET used = 1 WHERE headscale_preauth_id = $1 AND used = 0`
-	qDeletePreauthByUser         = `DELETE FROM preauth_keys WHERE user_id = $1`
+	qCountUnreadNotifications      = `SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND read_at = 0`
+	qMarkNotificationRead          = `UPDATE notifications SET read_at = $1 WHERE id = $2 AND user_id = $3 AND read_at = 0`
+	qMarkAllNotificationsRead      = `UPDATE notifications SET read_at = $1 WHERE user_id = $2 AND read_at = 0`
+	qDeleteNotificationsForUser    = `DELETE FROM notifications WHERE user_id = $1`
+	qUpdatePreauthExpires          = `UPDATE preauth_keys SET expires_at = $1 WHERE id = $2 AND user_id = $3`
+	qMarkPreauthUsed               = `UPDATE preauth_keys SET used = 1 WHERE headscale_preauth_id = $1 AND used = 0`
+	qDeletePreauthByUser           = `DELETE FROM preauth_keys WHERE user_id = $1`
 	// B159 (v1.5.0): bulk-cleanup helper. Removes
 	// every (used=0, expires_at>0, expires_at<=now)
 	// row for one user. Used keys are NEVER deleted
@@ -635,10 +655,10 @@ const (
 // ---------------------------------------------------------------
 
 const (
-	qSelectNodeOwnerByUsername  = `SELECT node_id FROM node_owner_map WHERE username = $1`
-	qSelectNodeOwnerByNodeID    = `SELECT node_id FROM node_owner_map WHERE node_id = $1 AND username = $2`
-	qDeleteNodeOwnerByID        = `DELETE FROM node_owner_map WHERE node_id = $1 AND username = $2`
-	qDeleteNodeOwnerByNodeTag   = `DELETE FROM node_owner_map WHERE node_id = $1 AND tag = $2`
+	qSelectNodeOwnerByUsername = `SELECT node_id FROM node_owner_map WHERE username = $1`
+	qSelectNodeOwnerByNodeID   = `SELECT node_id FROM node_owner_map WHERE node_id = $1 AND username = $2`
+	qDeleteNodeOwnerByID       = `DELETE FROM node_owner_map WHERE node_id = $1 AND username = $2`
+	qDeleteNodeOwnerByNodeTag  = `DELETE FROM node_owner_map WHERE node_id = $1 AND tag = $2`
 	// qDeleteNodeOwnerByNodeIDOnly deletes ALL rows for a given
 	// node_id regardless of tag or username. Used by
 	// devicedelete.Delete (B171+) which doesn't have a fixed
@@ -650,7 +670,7 @@ const (
 	// the live e2e (scripts/b_mod_reregister_live.sh) caught on
 	// 2026-09-14.
 	qDeleteNodeOwnerByNodeIDOnly = `DELETE FROM node_owner_map WHERE node_id = $1`
-	qCountNodeOwnerByNodeUser   = `SELECT COUNT(*) FROM node_owner_map WHERE node_id = $1 AND username = $2`
+	qCountNodeOwnerByNodeUser    = `SELECT COUNT(*) FROM node_owner_map WHERE node_id = $1 AND username = $2`
 	// 2026-09-18: qInsertOrReplaceNodeOwner / qUpdateNodeOwnerTag moved
 	// OUT of this const block — they embed the "current UNIX timestamp"
 	// fragment, which is now dialect-dependent (see now_unix.go) and
@@ -689,15 +709,15 @@ func qUpdateNodeOwnerTag() string {
 // ---------------------------------------------------------------
 
 const (
-	qSelectAllAPITokensForLookup = `SELECT pt.user_id, pu.username, pu.is_admin, pt.token_hash, pt.expires_at FROM personal_api_tokens pt JOIN portal_users pu ON pu.id = pt.user_id`
-	qSelectAPITokensByUser       = `SELECT id, label, last_used_at, created_at, expires_at, auto_rotate FROM personal_api_tokens WHERE user_id = $1 ORDER BY created_at DESC`
-	qInsertAPIToken              = `INSERT INTO personal_api_tokens (user_id, token_hash, label, expires_at, auto_rotate) VALUES ($1, $2, $3, $4, $5) RETURNING id`
-	qDeleteAPITokenByUser        = `DELETE FROM personal_api_tokens WHERE id = $1 AND user_id = $2`
-	qUpdateAPITokenExpiryByUser  = `UPDATE personal_api_tokens SET expires_at = $3 WHERE id = $1 AND user_id = $2`
-	qUpdateAPITokenExpiryByID    = `UPDATE personal_api_tokens SET expires_at = $2 WHERE id = $1`
+	qSelectAllAPITokensForLookup  = `SELECT pt.user_id, pu.username, pu.is_admin, pt.token_hash, pt.expires_at FROM personal_api_tokens pt JOIN portal_users pu ON pu.id = pt.user_id`
+	qSelectAPITokensByUser        = `SELECT id, label, last_used_at, created_at, expires_at, auto_rotate FROM personal_api_tokens WHERE user_id = $1 ORDER BY created_at DESC`
+	qInsertAPIToken               = `INSERT INTO personal_api_tokens (user_id, token_hash, label, expires_at, auto_rotate) VALUES ($1, $2, $3, $4, $5) RETURNING id`
+	qDeleteAPITokenByUser         = `DELETE FROM personal_api_tokens WHERE id = $1 AND user_id = $2`
+	qUpdateAPITokenExpiryByUser   = `UPDATE personal_api_tokens SET expires_at = $3 WHERE id = $1 AND user_id = $2`
+	qUpdateAPITokenExpiryByID     = `UPDATE personal_api_tokens SET expires_at = $2 WHERE id = $1`
 	qSelectAPITokensForAutoRotate = `SELECT id, user_id, label, expires_at FROM personal_api_tokens WHERE auto_rotate = 1 AND expires_at > 0 AND expires_at <= $1 ORDER BY expires_at ASC`
-	qDeleteAPITokensByUserID     = `DELETE FROM personal_api_tokens WHERE user_id = $1`
-	qTouchAPITokenLastUsed       = `UPDATE personal_api_tokens SET last_used_at = strftime('%s', 'now') WHERE token_hash = $1`
+	qDeleteAPITokensByUserID      = `DELETE FROM personal_api_tokens WHERE user_id = $1`
+	qTouchAPITokenLastUsed        = `UPDATE personal_api_tokens SET last_used_at = strftime('%s', 'now') WHERE token_hash = $1`
 )
 
 // ---------------------------------------------------------------
@@ -719,11 +739,11 @@ const (
 	// user explicitly chose with /lang. The lang column still
 	// appears in the INSERT for fresh binds (so auto-detect at
 	// /login writes the right value the first time).
-	qInsertTelegramBinding         = `INSERT INTO telegram_bindings (chat_id, portal_user_id, is_admin, bound_by_user_id, lang) VALUES ($1, $2, $3, $4, $5)
+	qInsertTelegramBinding = `INSERT INTO telegram_bindings (chat_id, portal_user_id, is_admin, bound_by_user_id, lang) VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT(chat_id) DO UPDATE SET portal_user_id = excluded.portal_user_id, is_admin = excluded.is_admin, bound_at = strftime('%s','now'), bound_by_user_id = excluded.bound_by_user_id`
-	qUpdateTelegramBindingLang     = `UPDATE telegram_bindings SET lang = $1 WHERE chat_id = $2`
-	qDeleteTelegramBindingByChat   = `DELETE FROM telegram_bindings WHERE chat_id = $1`
-	qDeleteTelegramBindingsByUser  = `DELETE FROM telegram_bindings WHERE portal_user_id = $1`
+	qUpdateTelegramBindingLang    = `UPDATE telegram_bindings SET lang = $1 WHERE chat_id = $2`
+	qDeleteTelegramBindingByChat  = `DELETE FROM telegram_bindings WHERE chat_id = $1`
+	qDeleteTelegramBindingsByUser = `DELETE FROM telegram_bindings WHERE portal_user_id = $1`
 )
 
 // ---------------------------------------------------------------
@@ -753,9 +773,9 @@ const (
 		SET used_at = strftime('%s','now'),
 		    used_by_chat_id = $1
 		WHERE token = $2 AND used_at = 0`
-	qDeleteTelegramLoginToken         = `DELETE FROM telegram_login_tokens WHERE token = $1`
-	qDeleteExpiredTelegramLoginTokens = `DELETE FROM telegram_login_tokens WHERE expires_at < $1`
-	qDeleteTelegramLoginTokensByUser  = `DELETE FROM telegram_login_tokens WHERE portal_user_id = $1`
+	qDeleteTelegramLoginToken             = `DELETE FROM telegram_login_tokens WHERE token = $1`
+	qDeleteExpiredTelegramLoginTokens     = `DELETE FROM telegram_login_tokens WHERE expires_at < $1`
+	qDeleteTelegramLoginTokensByUser      = `DELETE FROM telegram_login_tokens WHERE portal_user_id = $1`
 	qCountActiveTelegramLoginTokensByUser = `SELECT COUNT(*) FROM telegram_login_tokens
 		WHERE portal_user_id = $1 AND used_at = 0 AND expires_at > strftime('%s','now')`
 	qListTelegramLoginTokensByUser = `SELECT token, portal_user_id, created_at, expires_at, used_at, used_by_chat_id, request_ip
@@ -802,15 +822,15 @@ const (
 	// v0.33.1.33 B85: also returns ssh_port (the per-row non-default
 	// SSH port for the B81 auto-fallback) — see the ExitServer.SSHPort
 	// field comment for the contract.
-	qSelectAllExitServers         = `SELECT id, node_id, hostname, tailscale_ip, ssh_target, ssh_key_path, COALESCE(ssh_port, ''), enabled, COALESCE(description, ''), accept_routes FROM exit_servers ORDER BY hostname`
+	qSelectAllExitServers = `SELECT id, node_id, hostname, tailscale_ip, ssh_target, ssh_key_path, COALESCE(ssh_port, ''), enabled, COALESCE(description, ''), accept_routes FROM exit_servers ORDER BY hostname`
 	// qSelectAcceptRoutesByHost powers db.LookupExitServerAcceptRoutes.
-	qSelectAcceptRoutesByHost     = `SELECT accept_routes FROM exit_servers WHERE hostname = $1 LIMIT 1`
+	qSelectAcceptRoutesByHost = `SELECT accept_routes FROM exit_servers WHERE hostname = $1 LIMIT 1`
 	// qSelectExitServerSSH powers db.LookupExitServerSSH. Returns the
 	// per-row ssh_target + ssh_key_path so the v0.33.1 SetAdvertisedRoutes
 	// call can SSH to the right host:port as the right user with the right
 	// key (the previous hard-coded `-F /home/admin/.ssh/config` only worked
 	// for one operator on one machine).
-	qSelectExitServerSSH         = `SELECT COALESCE(ssh_target, ''), COALESCE(ssh_key_path, '') FROM exit_servers WHERE hostname = $1 LIMIT 1`
+	qSelectExitServerSSH = `SELECT COALESCE(ssh_target, ''), COALESCE(ssh_key_path, '') FROM exit_servers WHERE hostname = $1 LIMIT 1`
 	// qSelectExitServerSSHTarget powers db.LookupExitServerSSHTarget.
 	// v0.33.1.29 B81: returns BOTH ssh_target AND tailscale_ip so the
 	// helper can implement the fallback chain in Go (the chain is
@@ -819,18 +839,18 @@ const (
 	// append a ":<port>" suffix when the operator has set a
 	// non-default SSH port on the exit-node (the exit-node may
 	// not be running sshd on 22, e.g. moved to 2222 for security).
-	qSelectExitServerSSHTarget   = `SELECT COALESCE(ssh_target, ''), COALESCE(tailscale_ip, ''), COALESCE(ssh_port, '') FROM exit_servers WHERE hostname = $1 LIMIT 1`
+	qSelectExitServerSSHTarget = `SELECT COALESCE(ssh_target, ''), COALESCE(tailscale_ip, ''), COALESCE(ssh_port, '') FROM exit_servers WHERE hostname = $1 LIMIT 1`
 	// qInsertOrReplaceExitServer powers db.UpsertExitServer.
 	// v0.33.1.33 B85: also writes ssh_port so the B81 auto-fallback
 	// can append ":<port>" to "root@<tailscale_ip>". The COALESCE
 	// in the ON CONFLICT branch isn't needed (excluded.ssh_port is
 	// the value we just inserted, never NULL), but keeping the
 	// form consistent with the row read.
-	qInsertOrReplaceExitServer    = `INSERT INTO exit_servers (node_id, hostname, ssh_target, ssh_key_path, description, ssh_port, accept_routes) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(node_id) DO UPDATE SET hostname = excluded.hostname, ssh_target = excluded.ssh_target, ssh_key_path = excluded.ssh_key_path, description = excluded.description, ssh_port = excluded.ssh_port, accept_routes = excluded.accept_routes`
+	qInsertOrReplaceExitServer = `INSERT INTO exit_servers (node_id, hostname, ssh_target, ssh_key_path, description, ssh_port, accept_routes) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(node_id) DO UPDATE SET hostname = excluded.hostname, ssh_target = excluded.ssh_target, ssh_key_path = excluded.ssh_key_path, description = excluded.description, ssh_port = excluded.ssh_port, accept_routes = excluded.accept_routes`
 	// qDeleteExitServerByNodeID powers db.DeleteExitServerByNodeID.
-	qDeleteExitServerByNodeID     = `DELETE FROM exit_servers WHERE node_id = $1`
+	qDeleteExitServerByNodeID = `DELETE FROM exit_servers WHERE node_id = $1`
 	// qInsertExitServerOnDiscovery powers db.InsertIgnoreExitServerOnDiscovery.
-	qInsertExitServerOnDiscovery  = `INSERT INTO exit_servers (node_id, hostname, tailscale_ip) VALUES ($1, $2, $3) ON CONFLICT(node_id) DO NOTHING`
+	qInsertExitServerOnDiscovery = `INSERT INTO exit_servers (node_id, hostname, tailscale_ip) VALUES ($1, $2, $3) ON CONFLICT(node_id) DO NOTHING`
 	// qUpdateExitServerAcceptRoutes powers db.SetExitServerAcceptRoutes.
 	// v1.4.0 B140: per-row accept_routes toggle on /admin/exit-nodes.
 	// Updates just the accept_routes column (1=true, -1=false, 0=default)
@@ -845,7 +865,7 @@ const (
 	// Returns the node_id for a given node_id (the lookup is used
 	// to validate the row exists before attempting an UPDATE — gives
 	// a clear 404 error instead of a silent no-op on missing rows).
-	qSelectExitServerByNodeID      = `SELECT COALESCE(hostname, '') FROM exit_servers WHERE node_id = $1 LIMIT 1`
+	qSelectExitServerByNodeID = `SELECT COALESCE(hostname, '') FROM exit_servers WHERE node_id = $1 LIMIT 1`
 )
 
 // ---------------------------------------------------------------
@@ -854,7 +874,6 @@ const (
 //   value        TEXT NOT NULL DEFAULT ''
 //   updated_at   INTEGER DEFAULT (strftime('%s','now'))
 // ---------------------------------------------------------------
-
 
 // ---------------------------------------------------------------
 // node_owner_map JOIN portal_users  —  v0.28.0 per-device ACL tag
