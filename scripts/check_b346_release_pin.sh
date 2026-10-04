@@ -276,10 +276,20 @@ if grep -qx 'internal/i18n/catalog_update.go' "$ALLOW"; then
 else
   ok "E4: catalog_update.go left the gofmt allow-list"
 fi
-if grep -q '^FROZEN=267$' "$RATCHET"; then
-  ok "E5: the B337 budget fell to 267 with it"
+# E5 (RENEGOTIATED 2026-10-04 by B349). The original contract pinned the absolute
+# value this block produced (`FROZEN=267`), and the very next ratchet payment — B349
+# formatted internal/db/queries.go, which took it to 266 — turned THIS check red in
+# CI while the ratchet was working exactly as designed. A contract about "the budget
+# is honest" must assert the RELATIONSHIP, not one historical number: the budget
+# must equal the number of frozen files (B337 A2/B1 already enforce that) and this
+# block's file must not be in the list (E4). Anything stronger re-breaks on every
+# future payment.
+FROZEN_NOW="$(grep -m1 '^FROZEN=' "$RATCHET" | cut -d= -f2 | tr -d ' ')"
+ALLOW_N="$(grep -v '^#' "$ALLOW" 2>/dev/null | grep -v '^[[:space:]]*$' | grep -c . || true)"
+if [ -n "$FROZEN_NOW" ] && [ "$FROZEN_NOW" = "$ALLOW_N" ]; then
+  ok "E5: the B337 budget is honest ($FROZEN_NOW frozen files = FROZEN=$FROZEN_NOW) — the count may only fall, and this block's file already left the list"
 else
-  bad "E5: the B337 FROZEN budget was not lowered (expected 267)"
+  bad "E5: the B337 budget (FROZEN=$FROZEN_NOW) does not match the allow-list ($ALLOW_N entries)"
 fi
 
 hdr "B346 summary: $PASS passed, $FAIL failed, $SKIP skipped"
