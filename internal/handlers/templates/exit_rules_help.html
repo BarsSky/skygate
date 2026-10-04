@@ -1,4 +1,4 @@
-﻿{{define "body-exit_rules_help"}}
+{{define "body-exit_rules_help"}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-book"></i> {{t "title.exit_rules_help"}}</h2>
@@ -20,7 +20,7 @@
       </ul>
     </li>
     <li>{{t "help.exit_rules_help.users_click_add"}}</li>
-    <li>{{t "help.exit_rules_help.users_on_device_prefix"}} <code>tailscale up --login-server=https://head.example.com --authkey=&lt;key&gt; --accept-routes --accept-dns=false</code> (Windows/Linux) or <code>tailscale up --exit-node=node-name</code> (Android/iOS). {{t "help.exit_rules_help.users_on_device_windows_guide"}}</li>
+    <li>{{t "help.exit_rules_help.users_on_device_prefix"}} <code>tailscale up --login-server=https://head.example.com --authkey=&lt;key&gt; --accept-routes --accept-dns=true</code> (Windows/Linux) or <code>tailscale up --exit-node=node-name</code> (Android/iOS). {{t "help.exit_rules_help.users_on_device_windows_guide"}}</li>
   </ol>
 </div>
 
@@ -291,10 +291,11 @@ Service 3 (domains, autoupdater will pick up the IPs):
 
   <h3><i class="fa-solid fa-bug"></i> {{t "help.exit_rules_help.pitfalls_h3"}}</h3>
   <ul>
-    <li>{{t "help.exit_rules_help.pitfall_ip_no_32"}}</li>
-    <li>{{t "help.exit_rules_help.pitfall_shared_ip"}}</li>
-    <li>{{t "help.exit_rules_help.pitfall_dns_fail"}}</li>
-    <li>{{t "help.exit_rules_help.pitfall_cf_ru"}}</li>
+    <li>{{t "help.exit_rules_help.pitfall_ip_no_32" | safeHTML}}</li>
+    <li>{{t "help.exit_rules_help.pitfall_shared_ip" | safeHTML}}</li>
+    <li>{{t "help.exit_rules_help.pitfall_dns_fail" | safeHTML}}</li>
+    <li>{{t "help.exit_rules_help.pitfall_client_dns" | safeHTML}}</li>
+    <li>{{t "help.exit_rules_help.pitfall_cf_ru" | safeHTML}}</li>
   </ul>
 </div>
 

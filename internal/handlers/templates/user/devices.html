@@ -620,7 +620,7 @@ ssh-add ~/.ssh/id_ed25519  # если используете ssh-agent</code></p
 curl -fsSL https://tailscale.com/install.sh | sh
 
 # 2. Залогиньтесь с preauth-ключом (см. выше):
-sudo tailscale up --login-server={{.ControlURL}} --authkey=ВАШ_КЛЮЧ
+sudo tailscale up --login-server={{.ControlURL}} --authkey=ВАШ_КЛЮЧ --accept-routes --accept-dns=true
 
 # 3. Если это будет exit-node:
 sudo tailscale set --advertise-exit-node
@@ -638,7 +638,7 @@ sudo tailscale set --advertise-routes=192.168.1.0/24</code></pre>
 
       <p style="margin-top:12px"><b>{{t "reg.help_windows_title"}}</b></p>
       <p style="color:var(--text-muted)">{{t "reg.help_windows_intro" | safeHTML}}</p>
-      <pre><code>tailscale up --login-server={{.ControlURL}} --authkey=ВАШ_КЛЮЧ</code></pre>
+      <pre><code>tailscale up --login-server={{.ControlURL}} --authkey=ВАШ_КЛЮЧ --accept-routes --accept-dns=true</code></pre>
 
     </div>
   </details>

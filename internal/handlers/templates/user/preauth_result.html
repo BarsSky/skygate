@@ -101,7 +101,7 @@
   {{else if eq .OS "linux"}}
   <p style="color:var(--text-muted);margin-bottom:12px">{{t "preauth.linux_intro"}}</p>
   <pre>curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --login-server={{.ControlURL}} --authkey={{.Key}}</pre>
+sudo tailscale up --login-server={{.ControlURL}} --authkey={{.Key}} --accept-routes --accept-dns=true</pre>
   <p style="color:var(--text-muted);margin-top:8px">
     <i class="fa-solid fa-circle-info"></i>
     {{t "preauth.linux_accept_routes_hint" | safeHTML}}
@@ -120,7 +120,7 @@ sudo tailscale up --login-server={{.ControlURL}} --authkey={{.Key}}</pre>
   <p style="color:var(--text-muted);margin:12px 0 4px">{{t "preauth.method_cli" | safeHTML}}</p>
   <pre>brew install --cask tailscale-app
 open -a Tailscale
-/usr/local/bin/tailscale up --login-server={{.ControlURL}} --authkey={{.Key}}</pre>
+/usr/local/bin/tailscale up --login-server={{.ControlURL}} --authkey={{.Key}} --accept-routes --accept-dns=true</pre>
   <p>{{t "preauth.macos_done" | safeHTML}}</p>
 
   {{else if eq .OS "windows"}}
@@ -133,7 +133,7 @@ open -a Tailscale
   <p style="color:var(--text-muted);margin:12px 0 4px">{{t "preauth.method_powershell" | safeHTML}}</p>
   <pre>Invoke-WebRequest https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe -OutFile $env:TEMP\ts.exe
 Start-Process $env:TEMP\ts.exe -ArgumentList "/quiet" -Wait
-&amp; "$env:ProgramFiles\Tailscale\tailscale.exe" up --login-server={{.ControlURL}} --authkey={{.Key}}</pre>
+&amp; "$env:ProgramFiles\Tailscale\tailscale.exe" up --login-server={{.ControlURL}} --authkey={{.Key}} --accept-routes --accept-dns=true</pre>
   <p>{{t "preauth.windows_done" | safeHTML}}</p>
 
   {{else}}
@@ -151,7 +151,7 @@ Start-Process $env:TEMP\ts.exe -ArgumentList "/quiet" -Wait
   </p>
   <pre>tailscale logout</pre>
   <p style="color:var(--text-muted);margin-top:8px">
-    {{t "preauth.different_account_rerun"}} <code>tailscale up --login-server={{.ControlURL}} --authkey={{.Key}}</code>
+    {{t "preauth.different_account_rerun"}} <code>tailscale up --login-server={{.ControlURL}} --authkey={{.Key}} --accept-routes --accept-dns=true</code>
     {{t "preauth.different_account_mobile" | safeHTML}}
   </p>
 </div>

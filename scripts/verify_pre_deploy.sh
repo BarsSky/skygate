@@ -1341,13 +1341,25 @@ run_check "B48" "admin handlers: RenderWithLayout names resolve to defined bodie
 # wrong / incomplete command. v0.33.1.4 moved all tailscale-up
 # references into the i18n catalog (client_win_cmd /
 # client_win_cmd_after) and added docs/windows-client.md as the
-# canonical reference. B49 pins the convention: future template
-# changes that re-introduce a hardcoded `tailscale up --accept-routes`
-# (in the OLD short form, with no auth) fail at PR time. The full
-# command `tailscale up --login-server=... --authkey=...` is
-# allowed in the help page because that is the reference doc.
-run_check "B49" "templates: no hardcoded OLD tailscale up --accept-routes short form (v0.33.1.4)" \
-  'grep -nP "tailscale up --accept-routes(?! --accept-dns=false)" internal/handlers/templates/exit_rules.html internal/handlers/templates/exit_rules_help.html 2>/dev/null | head -5 | grep -q . && exit 1 || true'
+# canonical reference.
+#
+# 2026-10-04 (B350) — RENEGOTIATED. The original contract was
+#   grep -nP "tailscale up --accept-routes(?! --accept-dns=false)" … && exit 1
+# i.e. it REQUIRED the client command to say `--accept-dns=false`, which is the
+# exact spelling that made a device unable to resolve a filtered domain (a rule
+# is granted by IP prefix; with the ISP resolver answering NXDOMAIN the
+# destination IP never exists on the device and the rule is unobservable — L-58).
+# The negative lookahead is gone: this check keeps the historical intent (a bare
+# short form with no DNS decision is a worse command than the full reference) and
+# scripts/check_b350_client_dns_truth.sh owns the DNS rule itself, including the
+# reverse guard (no user-facing surface may recommend --accept-dns=false) and the
+# server-side exception (the relay installers keep it).
+run_check "B49" "templates: no bare tailscale up --accept-routes short form — a client command must name its DNS decision (v0.33.1.4, renegotiated by B350 on 2026-10-04)" \
+  '! grep -rqE "tailscale up --accept-routes([[:space:]]|$)" internal/handlers/templates/'
+
+# ─── B350 (v1.5.99) — the client must resolve through the tailnet ───
+run_check "B350" "THE CLIENT MUST RESOLVE THROUGH THE TAILNET, AND THE PANEL MUST NOT TALK IT OUT OF THAT. Operator report: youtube on cyborg was unreachable while the SAME rule set carried skyworker. Every server-side fact was measured and green — 12 enabled rules for the device, its tenant tag applied, 10 per-CIDR grants carrying via=tag:dev-infra-emilia, prefix_owner 10/10 on that relay, and the relay advertising 73 of 73 approved routes with all ten youtube prefixes among them — while the device answered curl https://www.youtube.com with Could not resolve host. The missing half was a CLIENT preference, --accept-dns=false: skygate grants access by IP PREFIX, so a rule becomes reachable only once the device resolves the domain INTO that prefix, and a filtering ISP resolver answers NXDOMAIN or a substituted address. The cause of the misconfiguration was the product itself: /my/exit-rules, /my/exit-rules/help, the preauth key page, the device-registration help, the Telegram add-device instructions, both i18n catalogues and docs/windows-client.md all printed --accept-dns=false, and the B49 gate contract ENFORCED that spelling with a negative lookahead; the preauth and bot registration commands carried no flags at all, so a device could not accept a route either. B49 is renegotiated in the same commit (it keeps the historical bare-short-form intent) and this block owns the DNS rule: no user-facing surface may recommend --accept-dns=false, every catalogue and template registration command carries BOTH --accept-routes and --accept-dns=true, the SERVER-side installers keep --accept-dns=false (a relay is not a client), the new warning surfaces explain symptom to check to fix (tailscale debug prefs to CorpDNS, tailscale set --accept-dns=true, and the DNS-free proof curl --resolve), and the client docs name them. NOTE what cannot be detected: headscale carries no client DNS preference and host_info.Services is NOT a proxy — peerapi-dns-proxy was advertised by ALL 12 nodes, the broken one included — so no page can alert on this and the correct default plus a named symptom is the only defence. 14 contracts in scripts/check_b350_client_dns_truth.sh." \
+  'test -f scripts/check_b350_client_dns_truth.sh && bash scripts/check_b350_client_dns_truth.sh'
 
 # ─── B50 (v0.33.1.7) — /admin/devices table overflow ───
 # Background: 2026-08-04 the user reported that the 12-column

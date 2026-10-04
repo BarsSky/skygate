@@ -25,7 +25,7 @@ skygate (SQLite / headscale API)        user device (Windows)
   └──────────────────┘
 ```
 
-The **client only runs `tailscale up --accept-routes`**. Skygate is the source of truth for the route table; the client just receives.
+The **client only runs `tailscale up --accept-routes --accept-dns=true`**. Skygate is the source of truth for the route table; the client just receives. Both flags matter: `--accept-routes` installs the prefixes, and `--accept-dns=true` makes the device resolve names through the tailnet instead of a resolver that may filter them (see [Step 2](#step-2--first-time-tailscale-up-windows)).
 
 ---
 
@@ -60,7 +60,7 @@ tailscale up `
   --login-server=https://head.example.com `
   --authkey=tskey-auth-XXXXXXXXXXXXXXXX `
   --accept-routes `
-  --accept-dns=false `
+  --accept-dns=true `
   --hostname=my-windows-pc
 ```
 
@@ -69,7 +69,7 @@ tailscale up `
 | `--login-server=https://head.example.com` | Points Tailscale at skygate's headscale, not `login.tailscale.com` | Without it, the device registers on the public SaaS and never joins the tailnet. Use the value from `SKYGATE_CONTROL_URL` in `.env`. |
 | `--authkey=tskey-auth-...` | The preauth token from Step 1 | Tailscale uses it to register the device without an interactive browser login. **Single use.** |
 | `--accept-routes` | Installs subnet routes that exit nodes advertise to headscale | This is the whole point: the client receives whitelisted CIDRs (Telegram, YouTube, Google, ...) and routes them through the chosen exit node. |
-| `--accept-dns=false` | Keeps the system's existing DNS (corporate AD, ISP, etc.) | By default Tailscale replaces `127.0.0.1` DNS with MagicDNS (100.100.100.100). On a corporate laptop this breaks SSO. Set `true` only if you DO want tailnet DNS. |
+| `--accept-dns=true` | Points the device's resolver at the tailnet: MagicDNS (`100.100.100.100`) forwards to the nameservers `headscale` hands out, whose traffic is routed through the relay | **Required for a domain/IP rule to work.** skygate grants access by IP **prefix**, so the rule is only reachable once the device resolves the domain *into* that prefix. A filtered ISP resolver answers `NXDOMAIN` or a substituted address, the real IP never exists on the device, and the rule looks dead while every server-side check is green (measured 2026-10-04: `curl https://www.youtube.com` → `Could not resolve host` on a device with the same rule set that carried another device). Keep `false` **only** on a device that must use a corporate AD resolver, and then expect domain rules to be unreliable. To flip it without re-authenticating: `tailscale set --accept-dns=true`. |
 | `--hostname=my-windows-pc` | Optional — gives the device a stable name in headscale | Without it, Tailscale picks something like `DESKTOP-7FQ3LAP2`. The hostname is what `tailscale status` shows and what skygate's `/my/devices` lists. |
 
 ### Common PowerShell pitfall — auth key with quotes
@@ -78,7 +78,7 @@ If you paste the command into a `.ps1` file, escape the `$` correctly. The authk
 
 ```powershell
 $key = "tskey-auth-XXXXXXXXXXXXXXXX"
-tailscale up --login-server=https://head.example.com --authkey=$key --accept-routes --accept-dns=false
+tailscale up --login-server=https://head.example.com --authkey=$key --accept-routes --accept-dns=true
 ```
 
 ## Step 3 — Verify the device joined the tailnet
@@ -149,12 +149,39 @@ route print -4
 # from the destination set.
 ```
 
+### The rule exists on the server, but the device still has no access
+
+Symptom: the rule is listed in `/my/exit-rules` (and in `/admin/exit-rules`), the device is online, the relay advertises the prefix, headscale has it approved — and the site does not open. `curl` on the device answers `Could not resolve host`.
+
+Check the client's DNS **first**, because the server cannot see it:
+
+```powershell
+tailscale debug prefs | findstr /C:"CorpDNS" /C:"RouteAll"
+#   "CorpDNS": true     <- DNS goes through the tailnet (required)
+#   "RouteAll": true    <- the device also sends 0.0.0.0/0 to its exit node
+
+# Proof that ONLY DNS is broken: resolve the domain yourself and keep the route path.
+curl.exe -4 -sI --max-time 15 --resolve www.youtube.com:443:142.251.154.4 https://www.youtube.com
+#   HTTP/2 200  -> the rule and the route are fine; the resolver is the problem
+```
+
+With `CorpDNS: false` the device asks the DHCP/ISP resolver. In a network that filters DNS the answer is a substituted address or `NXDOMAIN`, so the traffic never reaches a pinned prefix and the rule looks dead. Fix it without re-authenticating:
+
+```powershell
+tailscale set --accept-dns=true
+```
+
+`--accept-dns` is a **client-side preference**: neither `headscale nodes list` nor the node's
+`host_info` carries it, and `host_info.Services` is not a substitute (every client advertises
+`peerapi-dns-proxy`, the broken one included). No skygate page can detect this for you — which is
+why the flag is in the command above rather than optional.
+
 ## Step 6 — `--accept-routes` after a reboot / `tailscale down`
 
 Tailscale persists the auth state across reboots, so the device stays in the tailnet. But if you run `tailscale down` (manual disconnect) or if the `tailscaled` service gets recreated, re-apply the flags:
 
 ```powershell
-tailscale up --accept-routes --accept-dns=false
+tailscale up --accept-routes --accept-dns=true
 ```
 
 Note: this is the **short form** (no `--login-server`, no `--authkey`) — Tailscale remembers those from the first registration. The key is consumed once.
@@ -164,10 +191,10 @@ Note: this is the **short form** (no `--login-server`, no `--authkey`) — Tails
 ```powershell
 # First-time
 $key = (Invoke-WebRequest -UseBasicParsing -Uri "https://head.example.com/my/preauth" -SessionVariable ...).Content  # or paste
-tailscale up --login-server=https://head.example.com --authkey=$key --accept-routes --accept-dns=false --hostname=my-pc
+tailscale up --login-server=https://head.example.com --authkey=$key --accept-routes --accept-dns=true --hostname=my-pc
 
 # Subsequent
-tailscale up --accept-routes --accept-dns=false
+tailscale up --accept-routes --accept-dns=true
 
 # Verify
 tailscale status

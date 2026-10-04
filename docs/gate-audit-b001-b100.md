@@ -323,6 +323,12 @@ Two entries are green for a second, independent reason and need their own fix:
   while the actual old short form lives in `internal/handlers/templates/admin/exit_nodes.html:714`; `-P`
   aborts under the MSYS/Git-Bash grep 3.0 locale (AGENTS.md trap #10) and `|| true` absorbs the failure.
   **Revival:** `! grep -rqF 'tailscale up --accept-routes' internal/handlers/templates/`.
+  **Renegotiated by B350 (2026-10-04):** the negative lookahead pinned `--accept-dns=false`, i.e. the
+  contract *required* the very spelling that made a device unable to resolve a filtered domain
+  (L-58). B49 now asserts the positive form — a first-registration client command in a user-facing
+  template must carry both `--accept-routes` and `--accept-dns=true` — while
+  `scripts/check_b350_client_dns_truth.sh` owns the reverse guard (no user-facing surface may
+  recommend `--accept-dns=false`) and keeps the server-side installers on the old spelling.
 - `scripts/verify_pre_deploy.sh:1074`, `:1101` — B40/B42's count and "called in order" claims are
   presence-only (B42 asserts the symbols exist in `internal/db/driver_postgres.go:155-156`, not their order).
 

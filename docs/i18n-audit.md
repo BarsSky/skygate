@@ -318,7 +318,7 @@
 | internal/handlers/templates/user/preauth_result.html:94 | Done. The device will appear on the <a href="/my/devices">My devices</a> page in a few seconds. | text | `preauth.ios_li_done` |
 | internal/handlers/templates/user/preauth_result.html:98 | Tailscale 1.50+ required (App Store). On older versions — update first. | text | `preauth.ios_version_warn` |
 | internal/handlers/templates/user/preauth_result.html:102 | One command — installs Tailscale (if needed), connects to our control server, and registers the device with the key: | text | `preauth.linux_intro` |
-| internal/handlers/templates/user/preauth_result.html:107 | Add <code>--accept-routes</code> if you want to accept routes from other nodes (e.g. exit nodes). | text | `preauth.linux_accept_routes_hint` |
+| internal/handlers/templates/user/preauth_result.html:107 | <code>--accept-routes</code> accepts the exit-node routes and <code>--accept-dns=true</code> sends DNS through the tailnet — without it a domain rule cannot work when the ISP filters DNS. | text | `preauth.linux_accept_routes_hint` |
 | internal/handlers/templates/user/preauth_result.html:108 | Full list: <code>tailscale up --help</code>. | text | `preauth.linux_help_hint` |
 | internal/handlers/templates/user/preauth_result.html:110 | Done — the device will appear on the <a href="/my/devices">My devices</a> page in a few seconds. | text | `preauth.linux_done` |
 | internal/handlers/templates/user/preauth_result.html:113 | <b>Method 1 — GUI (easier):</b> | text | `preauth.method_gui` |
@@ -660,8 +660,8 @@
 | `exit_nodes.via_title` | Strict pinning (via) | Strict pinning (via) | Жёсткая привязка (via) |
 | `exit_rules.approved_in_headscale_title` | Target approved in headscale for %s — rule is working. | Target approved in headscale for %s — rule is working. | Цель одобрена в headscale для %s — правило работает. |
 | `exit_rules.client_mobile` | Android / iOS | Android / iOS | язык-нейтрально |
-| `exit_rules.client_win_cmd` | tailscale up --login-server=https://head.example.com --authkey=<key> --accept-routes --accept-dns=false | tailscale up --login-server=https://head.example.com --authkey=<key> --accept-routes --accept-dns=false | язык-нейтрально |
-| `exit_rules.client_win_cmd_after` | tailscale up --accept-routes --accept-dns=false | tailscale up --accept-routes --accept-dns=false | язык-нейтрально |
+| `exit_rules.client_win_cmd` | tailscale up --login-server=https://head.example.com --authkey=<key> --accept-routes --accept-dns=true | tailscale up --login-server=https://head.example.com --authkey=<key> --accept-routes --accept-dns=true | язык-нейтрально |
+| `exit_rules.client_win_cmd_after` | tailscale up --accept-routes --accept-dns=true | tailscale up --accept-routes --accept-dns=true | язык-нейтрально |
 | `exit_rules.client_win_guide` | Windows | Windows | язык-нейтрально |
 | `exit_rules.client_win_linux` | Windows / Linux | Windows / Linux | язык-нейтрально |
 | `exit_rules.dns_autoupdate` | DNS auto-update | DNS auto-update | Автообновление DNS |

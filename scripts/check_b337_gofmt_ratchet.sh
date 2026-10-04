@@ -104,7 +104,23 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # internal/db/queries.go and gofmt then reported the file clean (it had been frozen
 # as drifted), so it left the list too. D1 caught it in CI on the B349 commit —
 # the ratchet working as designed, not a regression.
-FROZEN=266
+#
+# 2026-10-04: 266 → 265. B350 fixed the client registration commands in
+# internal/i18n/catalog_bot.go (Telegram add-device instructions), which forced the
+# file to be renormalised (1012 whitespace-only line changes inside the aligned
+# maps) and removed from the list. The content change and the formatting payment
+# cannot be split: D1 holds every TOUCHED file to gofmt, and the B350 contract
+# reads the same file, so a half-commit would be red either way.
+#
+# The payment also EXPOSED five real localization misses that the drift had been
+# hiding: B325 contract B1 matches `"key"[[:space:]]*:` on one line, and this file
+# aligned its maps as `"key"   : "value"` (space BEFORE the colon), so the counter
+# never saw a single value in it — the five were counted only after gofmt moved the
+# colon next to the key. They are translated now (from the recommendations already
+# recorded in docs/i18n-audit.md). internal/i18n/catalog_user_subnet.go still has
+# that alignment and is still allow-listed, so the same blind spot remains there —
+# see ROADMAP §3.3.
+FROZEN=265
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

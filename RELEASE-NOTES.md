@@ -12,6 +12,89 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.99 — the client must resolve through the tailnet, and the panel must not talk it out of it (B350)
+
+**Date:** 2026-10-04 · **Base:** `v1.5.98` → this tag · **Compatibility:** no schema change, no
+migration, no new setting. Two bookkeeping changes: the **B49 gate contract is renegotiated** (it
+used to *require* `--accept-dns=false` in the client command) and the **B337 gofmt allow-list drops
+one file** (266 → 265). Behaviour for a device that already accepts tailnet DNS is
+unchanged; a device that does not will start honouring its domain rules after
+`tailscale set --accept-dns=true`.
+
+### The report
+
+> «youtube на cyborg всё ещё недоступен»
+
+The rule set for `cyborg` was the same shape as `skyworker`'s, and `skyworker` worked.
+
+### What was measured — the server side was not wrong
+
+| Question | Answer (live) |
+|---|---|
+| enabled rules for the device | **12**, including the same 10 youtube prefixes as the working device |
+| tenant tag on the node | applied (`tag:dev-skyadmin-cyborg`) |
+| per-CIDR ACL grants | **10/10** carrying `via=[tag:dev-infra-emilia]` |
+| `prefix_owner` for those prefixes | **10/10** → `emilia` |
+| routes advertised / approved by that relay | **73 / 73**, all ten youtube prefixes present |
+| `curl https://www.youtube.com` **on the device** | **`Could not resolve host`** |
+| `nslookup www.youtube.com 8.8.4.4` on the device | `142.251.150-157.4` |
+
+Every server-side link in the chain was verified and correct, so the failure had to be on the
+device — and it was: the client ran with **`--accept-dns=false`**.
+
+### Why a client with the rules still cannot reach the site
+
+skygate grants access by **IP prefix**. The rule is only reachable once the device resolves the
+domain *into* one of the pinned prefixes; with `--accept-dns=false` the device asks the DHCP/ISP
+resolver, which in a filtered network answers `NXDOMAIN` or a substituted address. The destination IP
+then never exists on that device, the per-CIDR grant never matches, and the rule looks dead while
+every panel, audit row and route table says it is fine. `--accept-dns=true` points the resolver at
+MagicDNS (`100.100.100.100`) → the resolvers headscale hands out → **through the relay**, which is
+where the uncensored answer comes from.
+
+**The product had taught the wrong command.** `/my/exit-rules`, `/my/exit-rules/help`, the preauth key
+page, the device-registration help, the Telegram add-device instructions, both i18n catalogues (RU +
+EN) and `docs/windows-client.md` all printed `tailscale up --accept-routes --accept-dns=false` — and
+the **B49 gate contract enforced that spelling** with a negative lookahead. The preauth and bot
+registration commands carried **no flags at all**, so a device could not even accept a route from them.
+
+### What changed
+
+* **Every user-facing client command** (i18n catalogues RU + EN, the help template, the admin
+  exit-node tutorial, the preauth key page, the device-registration help, the Telegram add-device
+  instructions) now carries **both** `--accept-routes` and **`--accept-dns=true`**.
+* **Two new diagnostic surfaces**: `exit_rules.client_dns_warn` on `/my/exit-rules` and
+  `help.exit_rules_help.pitfall_client_dns` on the help page explain symptom → check → fix —
+  `tailscale debug prefs` → `CorpDNS: true`, `tailscale set --accept-dns=true` (no re-auth), and the
+  DNS-free proof `curl.exe -4 -sI --resolve <host>:443:<pinned IP> https://<host>` that separates
+  "the resolver is wrong" from "the route is wrong". The pitfalls list also gained the `safeHTML` it
+  needed — its `<b>`/`<code>` had been printing literally.
+* **Server-side installers keep `--accept-dns=false`** (relay, native exit-node, standby): a machine
+  that forwards for the tailnet must use its own resolver. A contract pins that, so a well-meant
+  sweep cannot break the relays.
+* **`docs/windows-client.md`** flips the flag, explains the failure mode and carries the symptom
+  section; `docs/networking.md` §6.2 gained two rows (client DNS; a resolver no relay routes).
+* **B49 renegotiated**: it keeps the historical "no bare `tailscale up --accept-routes` short form"
+  intent, and the DNS rule lives in `scripts/check_b350_client_dns_truth.sh` (14 contracts),
+  including the reverse guard and the server-side exception.
+* **Lesson `L-58`** records the incident; `AGENTS.md` and `ROADMAP.md` carry B350 + the open B350.1.
+
+### What cannot be detected — measured, so nobody re-invents it
+
+`--accept-dns` is a **client-side preference** and headscale does not carry it: no panel can warn
+about it. `host_info.Services` is **not** a proxy — `peerapi-dns-proxy` was advertised by **all 12**
+nodes in this tailnet, the broken one included. The only defence is a correct default plus a named
+symptom, which is what this release adds.
+
+### Still open — B350.1
+
+The deployment's tailnet DNS works because `8.8.8.0/24` + `8.8.4.0/24` are advertised by the relay —
+but only because a **user rule** happens to claim `8.8.8.8`; remove that rule and every device falls
+back to its ISP resolver. `dns.nameservers.global` is also still `[1.1.1.1, 8.8.8.8]`, and **no node
+advertises `1.1.1.1`** (measured: `/32` and `/24` → nobody), so half the queries leave locally. The
+plan is to advertise the configured resolver prefixes as a system-owned prefix and keep the
+nameserver list to what the tailnet actually routes.
+
 ## v1.5.94 — the rule caps count what they name, and you can change them (B328)
 
 **Date:** 2026-09-27 · **Base:** `v1.5.93` → this tag · **Compatibility:** none — no schema

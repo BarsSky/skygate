@@ -711,7 +711,7 @@ sudo mkdir -p /etc/iptables && sudo iptables-save | sudo tee /etc/iptables/rules
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
     <h4 style="margin:0 0 8px 0">{{t "exit_nodes.tutorial_step3_h4"}}</h4>
     <p style="color:var(--text-muted);margin-bottom:8px">{{t "exit_nodes.tutorial_step3_donot" | safeHTML}}</p>
-    <pre style="font-size:12px;background:var(--bg)">tailscale up --accept-routes</pre>
+    <pre style="font-size:12px;background:var(--bg)">tailscale up --accept-routes --accept-dns=true</pre>
     <p style="color:var(--text-muted);margin-top:4px;font-size:12px">
       {{t "exit_nodes.tutorial_step3_help" | safeHTML}}
     </p>
