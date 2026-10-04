@@ -330,6 +330,17 @@ for c in check_b191 check_b_admin_user_sync check_b_duplicate_users \
          check_b_tag_owners check_b_node_attribution; do bash scripts/$c.sh; done
 ```
 
+**Then pin the release (B346).** A published tag is not yet "the release every
+instance runs": the panel's update target, the scheduled updater and the cluster
+onboarding block followed GitHub's latest, so a host could sit on an older or a
+never-tagged build while every surface said "up to date". Once the tag is verified
+above, set **Pinned release** on `/admin/update` to it (one field, `vX.Y.Z`), and
+do the same on every other instance — including the ones that will join later,
+since the onboarding block then installs the pinned tag rather than whatever the
+primary happens to be built from. The page flags any instance whose running build
+differs from the pin and offers the one-click repair. Details: `docs/UPDATE.md`
+§4.5.
+
 ### 1.6 Rollback / abort
 
 Operator rule: **if CI failed, delete the tag and re-tag** — do not try to

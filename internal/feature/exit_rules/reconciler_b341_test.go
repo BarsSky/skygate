@@ -97,17 +97,70 @@ func TestPlan_B341_OwnerUntagged_Skips(t *testing.T) {
 	}
 }
 
-// TestPlan_B341_ExistingPreferenceIsNeverOverwritten: the new path lives strictly
-// inside the "no existing preference" branch. A device that already has one must
-// behave EXACTLY as before, even when the assignment table disagrees — otherwise
-// this change would silently re-route devices that work today.
-func TestPlan_B341_ExistingPreferenceIsNeverOverwritten(t *testing.T) {
+// TestPlan_B345_ExistingPreferenceIsKeptUnlessItNamesANonOwner — RENEGOTIATED by
+// B345 (2026-10-03, live).
+//
+// B341 promised "an existing preference is never overwritten", to be sure devices
+// that work today keep working. The live cyborg case proved the promise has to be
+// narrower: `device_exit_node_prefs` said `tag:dev-infra-karolina` while
+// `prefix_owner` said emilia owned all ten youtube prefixes AND emilia was the only
+// node advertising them — so the stored preference named the one relay that could
+// not serve the destinations the device's own ACL grants allowed, and YouTube did
+// not open no matter how many rules the operator added. Preserving that value is
+// preserving the breakage.
+//
+// The guarantee that survives is: the stored value is left alone UNLESS the covered
+// prefixes have exactly one owner, that owner is tagged, and the stored value names
+// a different relay.
+func TestPlan_B345_ExistingPreferenceIsKeptUnlessItNamesANonOwner(t *testing.T) {
+	// (1) The stored value IS the owner → never touched.
 	s := b341Cyborg()
+	s.ExistingPrefTag = "tag:dev-infra-emilia"
+	s.ExistingPrefVia = true
+	if ch, ok := PlanDevicePrefChange(s); ok && ch != nil {
+		t.Errorf("a preference that names the owner must not be touched; got action=%q new=%q reason=%q",
+			ch.Action, ch.NewTag, ch.Reason)
+	}
+
+	// (2) The stored value names a NON-owner while one owner is known → repaired to
+	// the owner, with a reason that says so (this is the live cyborg repair).
+	s = b341Cyborg()
 	s.ExistingPrefTag = "tag:dev-infra-karolina"
 	s.ExistingPrefVia = true
 	ch, ok := PlanDevicePrefChange(s)
-	if ok && ch != nil {
-		t.Fatalf("an existing, non-class preference must not be touched by the B341 path; got action=%q new=%q reason=%q",
+	if !ok || ch == nil {
+		t.Fatal("a preference naming a non-owner must be repaired")
+	}
+	if ch.Action != "update" || ch.NewTag != "tag:dev-infra-emilia" || ch.Reason != "owner-overrides-rule-relay" {
+		t.Errorf("got action=%q new=%q reason=%q, want update/tag:dev-infra-emilia/owner-overrides-rule-relay",
+			ch.Action, ch.NewTag, ch.Reason)
+	}
+
+	// (3) No owner can be determined (nothing in prefix_owner) and the stored value
+	// agrees with the rules → the operator's value stands.
+	s = b341Cyborg()
+	s.OwnerDistinct = 0
+	s.OwnerCanonicalTag = ""
+	s.DominantExitHostname = "karolina"
+	s.CanonicalTag = "tag:dev-infra-karolina"
+	s.ExistingPrefTag = "tag:dev-infra-karolina"
+	s.ExistingPrefVia = true
+	if ch, ok := PlanDevicePrefChange(s); ok && ch != nil {
+		t.Errorf("with no known owner the stored preference must stand; got action=%q new=%q reason=%q",
+			ch.Action, ch.NewTag, ch.Reason)
+	}
+
+	// (4) The prefixes are split between owners → no single owner to impose, the
+	// stored value stands (the operator picks).
+	s = b341Cyborg()
+	s.OwnerDistinct = 2
+	s.OwnerCanonicalTag = ""
+	s.DominantExitHostname = "karolina"
+	s.CanonicalTag = "tag:dev-infra-karolina"
+	s.ExistingPrefTag = "tag:dev-infra-karolina"
+	s.ExistingPrefVia = true
+	if ch, ok := PlanDevicePrefChange(s); ok && ch != nil {
+		t.Errorf("with split owners the stored preference must stand; got action=%q new=%q reason=%q",
 			ch.Action, ch.NewTag, ch.Reason)
 	}
 }

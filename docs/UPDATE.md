@@ -147,6 +147,43 @@ non-Docker install kind ⇒ the tick is skipped, not queued).
 **Native installs are never updated automatically** — systemd/OpenRC/bare require
 the explicit **Update** click, because the helper restarts the service.
 
+### 4.5 Pinning the release every instance orients on (B346)
+
+"Follow the latest release" is not a version policy when more than one instance
+exists: the primary, a cluster standby provisioned a week later, and an agent host
+installed from a copy-pasted command can each land on a different release while
+every one of them reports "up to date". The measured 2026-10-04 state was worse
+than that — the running instance answered `/healthz` with `v1.5.94+4b2186b` while
+its working tree carried **21 commits that no tag described**, because the newest
+published tag pointed at a commit 21 commits behind the tree.
+
+**Pinned release** on `/admin/update` fixes that: one release tag, stored in
+`global_settings["update.pinned_release"]`, that every target-choosing path reads.
+
+| Path | Without a pin | With a pin |
+|---|---|---|
+| `/admin/update` target ("Update now") | GitHub's latest | the pinned tag |
+| **Push update** (force a rebuild) | the running build | the pinned tag |
+| Scheduled auto-update (§4.4) | GitHub's latest | the pinned tag, applied even when the running build is *newer* |
+| Cluster onboarding (B342, `/admin/cluster`) | the primary's own build label | the pinned tag |
+
+The page shows the pin, the release this instance actually runs and a **drift
+banner** when they differ; the Update button appears on drift alone, because
+GitHub may have nothing newer while this host is off the pinned tag. Entering the
+pin with the field cleared **removes** it (back to "latest"). Only a release tag
+is accepted (`v1.5.95`, `1.5.95`, `v0.33.1.24`); a branch, a raw commit, a
+`git describe` label and the updater's own `skygate-pre-update-*` tag are refused
+— a pin that cannot be checked out on every install kind would be a false claim of
+version equality.
+
+To bring the whole fleet to one release:
+
+1. publish the release (`docs/operations.md` §1.2), which the pin will name;
+2. set **Pinned release** to that tag on each instance (the field pre-filled with
+   the current pin, so a later instance copies it verbatim);
+3. apply the update on every instance that shows the drift banner — the scheduled
+   updater does it unattended on Docker installs.
+
 ---
 
 ## 5. Native installs (systemd / OpenRC / bare)

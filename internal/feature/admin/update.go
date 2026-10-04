@@ -267,10 +267,24 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 	// version" — useful for re-applying a known-good release
 	// after a botched deployment).
 	current := s.BuildVersion
+	// B346 (2026-10-04): a pinned release is the target of every instance,
+	// so it wins over "the latest release" here too. The page must show
+	// exactly what "Update now" will check out — otherwise the operator
+	// pins v1.5.95 and the button silently installs v1.5.99.
+	pinned := s.PinnedRelease()
 	target := current
-	if result != nil && result.Latest != "" {
+	switch {
+	case pinned != "":
+		target = pinned
+	case result != nil && result.Latest != "":
 		target = result.Latest
 	}
+	// runningRelease is the release part of the running build label
+	// ("v1.5.94+4b2186b" → "v1.5.94"); empty when the build is a
+	// git-describe/dev label, in which case drift is unknowable and the
+	// page must not claim the instance matches the pin.
+	runningRelease := update.ReleaseOfBuildLabel(s.BuildVersion)
+	pinDrift := pinned != "" && runningRelease != pinned
 	if !strings.HasPrefix(current, "v") {
 		current = "v" + current
 	}
@@ -343,6 +357,18 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		// The background scheduler writes it on every run;
 		// the page shows it as "Последний запуск: …".
 		"UpdateScheduleLastRun": safeGetString(s.dbc(), "update_schedule_last_run", ""),
+		// B346 (2026-10-04): the pinned release — the ONE tag every
+		// instance orients on. PinnedRelease is "" when the operator
+		// follows the latest release (the pre-B346 behaviour), so the
+		// section renders as "не зафиксирован" and the target above
+		// falls back to GitHub's latest. PinDrift is the answer to
+		// "versions must match": true means THIS instance does not run
+		// the pinned release, and the page says so instead of leaving
+		// the operator to compare two strings by eye.
+		"PinnedRelease":  pinned,
+		"PinDrift":       pinDrift,
+		"RunningRelease": runningRelease,
+		"PinSaved":       r.URL.Query().Get("pin_saved"),
 		// 2026-08-17 (B124): when this is a dev build
 		// (SKYGATE_DEV_BUILD=true), the template renders
 		// a "dev build" banner instead of the "update
@@ -466,10 +492,18 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find the target version. The page's "Update now" form
-	// posts `target` (the latest release tag). If missing
-	// (e.g. operator hand-crafts a POST), use the cached
-	// Latest from the last check.
+	// posts `target` (the pinned release when one is set, else
+	// the latest release tag). If missing (e.g. operator
+	// hand-crafts a POST), use the pinned release first, then
+	// the cached Latest from the last check.
 	target := strings.TrimSpace(r.FormValue("target"))
+	if target == "" {
+		// B346 (2026-10-04): a pinned release is the target of every
+		// instance, so it is resolved BEFORE the network round trip —
+		// an offline host that has a pin must still be able to apply
+		// it, which is the whole point of pinning.
+		target = s.PinnedRelease()
+	}
 	if target == "" {
 		// Re-check GitHub synchronously (8s timeout, plenty
 		// for one API call) so the target is up to date.
@@ -666,7 +700,15 @@ func (s *Service) PostAdminUpdatePush(w http.ResponseWriter, r *http.Request) {
 	// auto-apply, or to re-apply without waiting for a new
 	// release. If the operator typed a specific tag in the
 	// form, use that instead.
+	//
+	// B346 (2026-10-04): with a pinned release set, the
+	// default becomes the PIN — "force a rebuild" of a build
+	// that is not the shared release would restore exactly
+	// the divergence the pin exists to remove.
 	target := strings.TrimSpace(r.FormValue("target"))
+	if target == "" {
+		target = s.PinnedRelease()
+	}
 	if target == "" {
 		target = s.BuildVersion
 	}

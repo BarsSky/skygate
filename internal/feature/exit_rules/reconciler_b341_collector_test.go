@@ -129,6 +129,64 @@ func TestCollectDevicePrefState_NoRelayIsNotARelay_B341(t *testing.T) {
 	}
 }
 
+// TestCollectDevicePrefState_OwnerBeatsRuleRelay_B345 — the live cyborg case of
+// 2026-10-03: the rules DO name a relay, but it is not the owner of the prefixes
+// they cover.
+//
+// Measured: `cyborg` had 10 youtube subnets with «авто» plus a DUPLICATE
+// `youtube.com` domain rule naming **karolina**, while `prefix_owner` said
+// **emilia** owned all ten prefixes — and emilia was the only node advertising them
+// (37 routes, all approved; karolina advertised none). The reconciler pinned the
+// DEVICE to the relay the RULE named, so the preference said karolina while every
+// per-CIDR ACL pin (and the actual route) said emilia. `via` is a permission
+// FILTER, so the device's chosen exit node could not serve the destinations its own
+// grants allowed: YouTube stayed unreachable however many rules were added.
+//
+// The planner must therefore take the OWNER, and say why.
+func TestCollectDevicePrefState_OwnerBeatsRuleRelay_B345(t *testing.T) {
+	d := b3411DB(t)
+	seedB3411(t, d)
+	if _, err := d.Exec(`INSERT INTO device_rules (user_id, device_id, device_hostname, user_name, exit_node_id, target_type, target_value, action, enabled) VALUES
+	          (1, 56, 'cyborg', 'skyadmin', 'karolina', 'domain', 'youtube.com', 'accept', 1)`); err != nil {
+		t.Fatalf("seed the karolina domain rule: %v", err)
+	}
+	// karolina's per-node tag exists, so nothing can be skipped for a missing tag:
+	// the point is that the OWNER decides, not that a tag is absent.
+	if _, err := d.Exec(`INSERT INTO node_owner_map (node_id, headscale_user_id, username, tag, hostname) VALUES ('11', 0, 'tagged-devices', 'tag:dev-infra-karolina', 'karolina')`); err != nil {
+		t.Fatalf("seed karolina's owner row: %v", err)
+	}
+	s := &Service{DB: skygatedb.FixedDBSource{DB: d}}
+	st, err := s.collectDevicePrefState(context.Background(), 1, "skyadmin", "cyborg")
+	if err != nil {
+		t.Fatalf("collectDevicePrefState: %v", err)
+	}
+	if st.DistinctExitNodes != 1 || st.CanonicalTag != "tag:dev-infra-karolina" {
+		t.Fatalf("the rules must be seen as naming karolina (got distinct=%d canonical=%q) — otherwise this test proves nothing",
+			st.DistinctExitNodes, st.CanonicalTag)
+	}
+	if st.OwnerDistinct != 1 || st.OwnerCanonicalTag != "tag:dev-infra-emilia" {
+		t.Fatalf("the owner must be computed even when the rules name a relay (got distinct=%d tag=%q)",
+			st.OwnerDistinct, st.OwnerCanonicalTag)
+	}
+	ch, ok := PlanDevicePrefChange(st)
+	if !ok || ch == nil {
+		t.Fatal("expected a change (the owner must win)")
+	}
+	if ch.Action != "create" || ch.NewTag != "tag:dev-infra-emilia" || ch.Reason != "owner-overrides-rule-relay" {
+		t.Fatalf("plan = %s/%s (%s), want create/tag:dev-infra-emilia/owner-overrides-rule-relay",
+			ch.Action, ch.NewTag, ch.Reason)
+	}
+	// An EXISTING preference naming the non-owner is repaired the same way — that is
+	// the state the live host was actually in.
+	st.ExistingPrefTag = "tag:dev-infra-karolina"
+	st.ExistingPrefVia = true
+	ch, ok = PlanDevicePrefChange(st)
+	if !ok || ch == nil || ch.Action != "update" || ch.NewTag != "tag:dev-infra-emilia" ||
+		ch.Reason != "owner-overrides-rule-relay" {
+		t.Fatalf("existing pref naming the non-owner: plan = %v, want update to tag:dev-infra-emilia (owner-overrides-rule-relay)", ch)
+	}
+}
+
 // TestCollectDevicePrefState_RealRelayPlusEmptyGroup_B341 guards the other
 // direction: a device that DOES name a relay and also has relay-less rows must
 // still count exactly one relay (pre-fix it counted two and looked "split").

@@ -334,6 +334,16 @@ func (s *Service) PostAdminClusterOnboard(w http.ResponseWriter, r *http.Request
 		errf("cluster.onboard_err_token")
 		return
 	}
+	// B346 (2026-10-04): a host that JOINS the cluster must be provisioned with
+	// the release every other instance runs — "versions must match" is the
+	// operator's requirement, and the joined host is exactly where the old
+	// "resolve latest from the GitHub API" fallback produced a mismatch. The
+	// pin therefore wins over this build's own label; releaseTagFromBuild()
+	// below accepts both forms ("v1.5.95" and "v1.5.94+abc1234").
+	installVersion := s.BuildVersion
+	if p := s.PinnedRelease(); p != "" {
+		installVersion = p
+	}
 	payload := clusterOnboardPayload{
 		Hostname:   hostname,
 		InviteTok:  inviteToken,
@@ -341,7 +351,7 @@ func (s *Service) PostAdminClusterOnboard(w http.ResponseWriter, r *http.Request
 		APIURL:     apiURL,
 		TSKey:      tsKey,
 		ControlURL: s.controlURL(),
-		Version:    s.BuildVersion,
+		Version:    installVersion,
 	}
 	blob, merr := json.Marshal(payload)
 	if merr != nil {

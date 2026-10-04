@@ -200,7 +200,25 @@ func tick(ctx context.Context, deps SchedulerDeps) {
 		scheduledMu.Unlock()
 	}()
 
-	// 5. Check GitHub. If no newer release, do nothing —
+	// 5. B346 (2026-10-04) — the pinned release wins over "the latest
+	//    release".
+	//
+	//    The schedule's contract is "all instances converge on one
+	//    release", not "run whenever GitHub publishes something". With a
+	//    pin stored, the target is that tag and the ONLY reason to skip is
+	//    that this instance already runs it. A pin older than the running
+	//    build is applied on purpose: an operator pins a known-good release
+	//    to bring a host that drifted forward back in line (the measured
+	//    2026-10-04 case: `/healthz` said v1.5.94 while the working tree
+	//    carried 21 untagged commits).
+	if pin := PinnedReleaseFromDB(deps.DB); pin != "" {
+		if target, run := PinnedTargetFor(pin, deps.BuildVersion); run {
+			runScheduled(ctx, deps, target, now)
+		}
+		return
+	}
+
+	// 6. No pin → check GitHub. If no newer release, do nothing —
 	//    the schedule is "run only when there's an update
 	//    to apply", not "run a no-op every day at 03:00".
 	ctxCheck, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -213,7 +231,7 @@ func tick(ctx context.Context, deps SchedulerDeps) {
 		return
 	}
 
-	// 6. ALL conditions met. Run the orchestrator.
+	// 7. ALL conditions met. Run the orchestrator.
 	runScheduled(ctx, deps, result.Latest, now)
 }
 

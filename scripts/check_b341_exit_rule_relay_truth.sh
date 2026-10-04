@@ -135,10 +135,31 @@ if grep -q 'PreferredExitReconcilerLive()' "$REC" && grep -q 'if !live' "$REC"; 
 else
   bad "C3: the live/dry-run gate is gone"
 fi
-if grep -q 'ExistingPreferenceIsNeverOverwritten' "$UNIT" 2>/dev/null; then
-  ok "C4: the unit suite pins 'an existing preference is never overwritten'"
+# C4 (RENEGOTIATED 2026-10-04 by B345). The original contract asserted the
+# ABSOLUTE promise "an existing preference is never overwritten", pinned by
+# TestPlan_B341_ExistingPreferenceIsNeverOverwritten. The live cyborg case
+# proved that promise wrong in the one direction that matters: the device's
+# stored preference named `tag:dev-infra-karolina` while `prefix_owner` said
+# emilia owned every prefix its rules covered, so the promise preserved a
+# preference that could not carry the traffic its own ACL grants allowed.
+# B345 narrows the guarantee — kept UNLESS it names a relay that is not the
+# single owner of the covered prefixes — and renames the test. C4 now asserts
+# the NARROWED form, and C5 asserts the old absolute form is gone, so the
+# renegotiation is visible in the contracts and not only in a commit message.
+if grep -q 'ExistingPreferenceIsKeptUnlessItNamesANonOwner' "$UNIT" 2>/dev/null; then
+  ok "C4: the unit suite pins the narrowed guarantee (kept unless it names a non-owner relay, B345)"
 else
-  bad "C4: nothing pins that an existing preference is left alone"
+  bad "C4: nothing pins the preference-preservation guarantee in its narrowed form"
+fi
+if grep -q 'owner-overrides-rule-relay' "$REC" 2>/dev/null; then
+  ok "C5: the repair is named in the journal (reason=owner-overrides-rule-relay), so an override is never silent"
+else
+  bad "C5: the owner override has no named reason — an override would be indistinguishable from a stale tag"
+fi
+if grep -q 'ExistingPreferenceIsNeverOverwritten' "$UNIT" 2>/dev/null; then
+  bad "C5b: the pre-B345 ABSOLUTE guarantee is still asserted — it contradicts the measured live repair"
+else
+  ok "C5b: the absolute form is gone (renegotiated by B345, with the live measurement in the new test's doc comment)"
 fi
 
 hdr "D. the decisions are tested, on both backends"

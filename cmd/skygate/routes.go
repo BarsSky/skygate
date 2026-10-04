@@ -930,6 +930,11 @@ func registerRoutes(
 	// (the form's hidden field) but writes to the B129+
 	// key (see PostAdminUpdateAutoToggle).
 	mux.Handle("POST /admin/update/schedule", authMW(http.HandlerFunc(adminSvc.PostAdminUpdateSchedule)))
+	// B346 (2026-10-04): pin the release every instance orients on.
+	// Writes global_settings["update.pinned_release"] — read by this
+	// page's target, by the B130 scheduled updater and by the B342
+	// cluster-onboarding install command. Empty input clears the pin.
+	mux.Handle("POST /admin/update/pin", authMW(http.HandlerFunc(adminSvc.PostAdminUpdatePin)))
 	// 2026-07-20: v0.20.0 — "Run check now" button on
 	// /admin/headscale. Forces the monitor to re-poll
 	// GitHub immediately. Same pattern as

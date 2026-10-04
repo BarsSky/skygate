@@ -267,6 +267,36 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 				Reason:         "missing-pref-split",
 			}, true
 		}
+		// B345 (2026-10-03, measured live on cyborg) — THE OWNER WINS over a rule
+		// that names a relay which does NOT serve the prefixes the rule covers.
+		//
+		// Live case: cyborg had 10 youtube subnets with «авто» (exit_node_id='') and
+		// ONE duplicate `youtube.com` domain rule naming **karolina**, while
+		// `prefix_owner` said **emilia** owned all ten prefixes — and emilia was the
+		// only node advertising them (37 routes, all approved; karolina advertised
+		// none of them). The reconciler pinned the DEVICE to the relay the RULE
+		// named, so `device_exit_node_prefs` said karolina while every per-CIDR ACL
+		// pin (and the actual route) said emilia. headscale treats `via` as a
+		// permission FILTER, so the device's chosen exit node did not serve the
+		// destinations its own grants allowed: YouTube stayed unreachable no matter
+		// how many rules the operator added.
+		//
+		// B275 made `prefix_owner` the authority for the DESTINATION half; the
+		// DEVICE half must not contradict it, or the two halves of one decision name
+		// different relays again — the exact failure B276 exists to prevent. So when
+		// the covered prefixes have exactly ONE owner and that owner is tagged, the
+		// owner's tag is what gets written, and the reason names the override.
+		if s.OwnerDistinct == 1 && s.OwnerCanonicalTag != "" && s.OwnerCanonicalTag != s.CanonicalTag {
+			return &ReconcilerChange{
+				Action:         "create",
+				UserID:         s.UserID,
+				Username:       s.Username,
+				DeviceHostname: s.DeviceHostname,
+				NewTag:         s.OwnerCanonicalTag,
+				RuleCount:      s.TotalRules,
+				Reason:         "owner-overrides-rule-relay",
+			}, true
+		}
 		// Unanimous → CREATE.
 		return &ReconcilerChange{
 			Action:         "create",
@@ -291,6 +321,35 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 	// behaviour is preserved as a separate audit-event-only
 	// skip so the operator can still see the catch-up case in
 	// logs, but no UPDATE is issued.
+	//
+	// B345 (2026-10-03, measured live on cyborg) — AN EXISTING PREFERENCE THAT
+	// NAMES A NON-OWNER MUST BE REPAIRED, not preserved.
+	//
+	// `device_exit_node_prefs` said `tag:dev-infra-karolina` while `prefix_owner`
+	// said **emilia** owned all ten of cyborg's youtube prefixes and emilia was the
+	// only node advertising them. The pref had been written from a duplicate
+	// `youtube.com` rule that named karolina, and the "stale tag" branch below then
+	// kept it in step with that rule on every tick — so the device's exit node was
+	// the one relay that could NOT serve the destinations its own ACL grants
+	// allowed. A `via` pin is a filter: the symptom is "YouTube does not open no
+	// matter which rules I add".
+	//
+	// When the covered prefixes have exactly ONE owner and it is tagged, that owner
+	// is the desired tag; a difference from the stored value is an UPDATE whose
+	// reason names the override, so the journal shows the repair instead of a silent
+	// "stale-tag" flip in the wrong direction.
+	if s.OwnerDistinct == 1 && s.OwnerCanonicalTag != "" && s.OwnerCanonicalTag != s.ExistingPrefTag {
+		return &ReconcilerChange{
+			Action:         "update",
+			UserID:         s.UserID,
+			Username:       s.Username,
+			DeviceHostname: s.DeviceHostname,
+			OldTag:         s.ExistingPrefTag,
+			NewTag:         s.OwnerCanonicalTag,
+			RuleCount:      s.TotalRules,
+			Reason:         "owner-overrides-rule-relay",
+		}, true
+	}
 	if s.CanonicalTag == "" {
 		// B279 (v1.5.46): if the row itself holds a CLASS tag, repair
 		// it — that value can never identify a node, and leaving it
@@ -679,15 +738,23 @@ func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, user
 	if dominant != "" {
 		state.CanonicalTag, _ = db.NormalizeExitNodeTag(s.dbc(), dominant)
 	}
-	// B341 (2026-10-01): the rules name NO relay — ask the assignment table which
-	// relay the DATA plane would use for the prefixes they cover.
+	// B341 (2026-10-01) / B345 (2026-10-03): ask the assignment table which relay
+	// the DATA plane would use for the prefixes these rules cover.
 	//
-	// This runs ONLY in that case, so a device whose rules already name a relay
-	// (skyworker, basic, a71 …) does exactly the work it did before: no extra
-	// query, no changed decision, nothing to regress. And it is the same table the
-	// ACL pin comes from (prefixowner.ViaForPrefix), so the device half and the
-	// destination half of one decision cannot name different relays.
-	if totalRules > 0 && state.DistinctExitNodes == 0 {
+	// B341 ran this ONLY when the rules named no relay. B345 removed that guard: a
+	// rule that names a relay can name one that does NOT own the prefixes it
+	// covers, and then the destination half (the per-CIDR ACL pin, from
+	// `prefix_owner`) and the device half (this preference) disagree — the device's
+	// exit node cannot serve the routes its own grants allow, and the site does not
+	// open however many rules the operator adds. Measured live on cyborg
+	// 2026-10-03: `youtube.com → karolina` while emilia owned all ten youtube
+	// prefixes (and was the only node advertising them).
+	//
+	// The cost is one extra query per device per tick (the sweep runs hourly), and
+	// the planner ignores the result unless exactly one relay owns the covered
+	// prefixes AND it carries a per-node tag — otherwise the previous behaviour is
+	// unchanged.
+	if totalRules > 0 {
 		owners, err := db.OwnerTagCountsForDeviceRules(s.dbc(), userID, hostname)
 		if err != nil {
 			// Not fatal: the caller logs and skips this device, exactly as it does

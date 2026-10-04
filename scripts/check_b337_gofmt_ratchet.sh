@@ -94,7 +94,12 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # 2026-10-02: 270 → 268. The same block wired the marker into BOTH rule pages and
 # formatted internal/feature/exit_rules/form_admin.go and form_my.go in the same
 # batch; D1 caught both.
-FROZEN=268
+#
+# 2026-10-04: 268 → 267. B346 added the pinned-release keys to
+# internal/i18n/catalog_update.go; the map's alignment was reformatted in the same
+# change, so the file is gofmt-clean and left the list (D1 is the contract that
+# makes "I touched it, I formatted it" non-optional).
+FROZEN=267
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.
