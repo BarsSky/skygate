@@ -171,6 +171,21 @@
     <span>{{tf "exit_rules_admin.device_filter_banner" .DeviceFilter .DeviceRuleCount}}</span>
     <a href="/admin/exit-rules" class="btn btn-sm" style="margin-left:8px"><i class="fa-solid fa-xmark"></i> {{t "exit_rules_admin.device_filter_show_all"}}</a>
   </div>
+{{else}}
+  {{/* B348 (2026-10-04): the complete device inventory. The table below is paged by
+       ROW, so a page can belong entirely to one device — measured live: page 1 of 7
+       was only skyworker (the auto-updater had just added ~54 /32 rows for it) and
+       every other device sat on a later page, which reads as "правила пропали". This
+       index lists EVERY device with enabled rules and its count, straight to the
+       existing unpaged per-device drill-down, so nothing depends on the page. */}}
+  {{if .DeviceIndex}}
+  <div class="card" id="admin-device-index" style="margin-bottom:10px;padding:8px 12px">
+    <span style="color:var(--text-muted);font-size:12px">{{t "exit_rules_admin.device_index_title"}}:</span>
+    {{range .DeviceIndex}}
+    <a href="/admin/exit-rules?device={{.Hostname}}" class="btn btn-sm" style="margin:2px 4px;font-size:12px">{{if .UserName}}{{.UserName}} / {{end}}{{.Hostname}} <span class="tag">{{.Rules}}</span></a>
+    {{end}}
+  </div>
+  {{end}}
 {{end}}
 
 {{if .MaxTotalRules}}

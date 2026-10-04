@@ -259,13 +259,14 @@
           {{range .device_status}}
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px">
             <i class="fa-solid fa-laptop"></i>
-            <b>{{.Hostname}}</b>
+            <a href="/my/exit-rules?device={{.Hostname}}" style="font-weight:600;text-decoration:none"><b>{{.Hostname}}</b></a>
             <span class="tag">{{.Rules}}{{t "exit_rules.device_status_rules_suffix"}}</span>
             {{if .Pinned}}
             <span class="tag tag-success" id="device-status-active-{{.Hostname}}" title="{{t "exit_rules.exit_node_active_help"}}"><i class="fa-solid fa-circle-check"></i> {{t "exit_rules.exit_node_active"}}: {{.Relay}}</span>
             {{else}}
             <span class="tag tag-danger" id="device-status-inert-{{.Hostname}}" title="{{t "exit_rules.no_exit_node_help"}}"><i class="fa-solid fa-triangle-exclamation"></i> {{t "exit_rules.no_exit_node_badge"}}</span>
             {{end}}
+            <a href="/my/exit-rules?device={{.Hostname}}" class="btn btn-sm" style="font-size:11px;padding:2px 8px">{{t "exit_rules.device_status_open"}}</a>
           </div>
           {{end}}
         </div>
@@ -273,6 +274,29 @@
       {{end}}
       {{/* B347: the post-save answer to «правило есть, а доступа нет» — the flash
            now names the relay this device actually goes through. */}}
+      {{/* B348 (2026-10-04): the per-device drill-down banner. Measured live:
+           with 227 rules and a 50-row window, page 1 held ONLY skyworker's rows,
+           so a device with no rows in the window looked like it had no rules at
+           all. The strip above links here, and the post-save landing derives the
+           same filter, so "I just added a rule" always lands on that device. */}}
+      {{if .DeviceFilter}}
+      <div class="alert alert-info" id="my-device-filter-banner" style="margin-bottom:10px">
+        <i class="fa-solid fa-filter"></i>
+        <span>{{tf "exit_rules_admin.device_filter_banner" .DeviceFilter .DeviceRuleCount}}</span>
+        <a href="/my/exit-rules" class="btn btn-sm" style="margin-left:8px"><i class="fa-solid fa-xmark"></i> {{t "exit_rules_admin.device_filter_show_all"}}</a>
+      </div>
+      {{else if gt (len .DeviceIndex) 1}}
+      {{/* The complete inventory, so a device is never invisible behind the row
+           window: every device with enabled rules, its count, and a link to its
+           own view. Rendered only when there is more than one device to choose
+           from (with a single device the list below IS that device). */}}
+      <div class="card" id="my-device-index" style="margin-bottom:10px;padding:8px 12px">
+        <span style="color:var(--text-muted);font-size:12px">{{t "exit_rules.device_status_title"}}:</span>
+        {{range .DeviceIndex}}
+        <a href="/my/exit-rules?device={{.Hostname}}" class="btn btn-sm" style="margin:2px 4px;font-size:12px">{{.Hostname}} <span class="tag">{{.Rules}}</span></a>
+        {{end}}
+      </div>
+      {{end}}
       {{if .AssignedRelay}}
       <div class="alert alert-success" id="my-assigned-relay" style="margin-bottom:10px">
         <i class="fa-solid fa-circle-check"></i>

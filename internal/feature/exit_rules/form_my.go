@@ -291,6 +291,55 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	// Overall HasRoutes for backward compat
 	anyRoutes := len(hasRoutes) > 0
 
+	// B348 (2026-10-04): DEVICE-first navigation, resolved BEFORE the grouping
+	// below (every group map is built from `rules`, so a filter applied later
+	// would change the slice and leave the rendered groups untouched — the exact
+	// kind of half-applied change that made the page lie in the first place).
+	//
+	// Measured live: with 227 rules and a 50-row window, page 1 held ONLY
+	// skyworker's rows (the auto-updater had just added ~54 /32 rows for it), so a
+	// device with no rows in the window — cyborg, right after the operator added a
+	// rule for it — had no group at all and looked like it had no rules.
+	//
+	// Priority: an explicit ?device=<host> wins; otherwise, on the post-save
+	// landing, the device that was just saved. Either way the device's rules are
+	// shown UNPAGED (a device is bounded by the per-device cap), and the row is
+	// matched by device id as well as by the displayed name, because the page
+	// groups by DeviceName (a headscale lookup) while the drill-down link carries
+	// the denormalised device_hostname.
+	deviceFilter := strings.TrimSpace(r.URL.Query().Get("device"))
+	if deviceFilter == "" && r.URL.Query().Get("applied") != "" {
+		wantID := r.URL.Query().Get("form_device_id")
+		for _, di := range deviceInfos {
+			if wantID != "" && di.ID == wantID && di.Hostname != "" {
+				deviceFilter = di.Hostname
+				break
+			}
+		}
+	}
+	if deviceFilter != "" {
+		wanted := map[int]bool{}
+		for _, di := range deviceInfos {
+			if equalFoldASCII(di.Hostname, deviceFilter) {
+				if id, cerr := strconv.Atoi(di.ID); cerr == nil {
+					wanted[id] = true
+				}
+			}
+		}
+		if all, aerr := db.GetDeviceRulesForUser(s.dbc(), c.UserID); aerr == nil {
+			only := filterRulesByDevice(all, deviceFilter, wanted)
+			rulePage = db.RulePage{Rules: only, Total: len(only), Page: 1, PageSize: len(only)}
+			rules = rulePage.Rules
+			s.enrichDeviceNames(rules)
+		}
+	}
+	// The complete inventory (one unpaginated query) so a device can never be
+	// invisible merely because its rows fall outside the current window.
+	deviceIndex, indexErr := s.DeviceRuleCountsForUserService(c.UserID)
+	if indexErr != nil {
+		deviceIndex = []DeviceRuleCount{}
+	}
+
 	// 2026-07-07: issue #12 — hierarchical view
 	// Group rules by device_id -> exit_node. B276.2 (2026-09-21):
 	// all_devices=true rules go into a SEPARATE map (allDevicesByExitNode)
@@ -870,6 +919,14 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// paginated away, plus the relay named in the post-save flash.
 		"device_status": deviceStatus,
 		"AssignedRelay": assignedRelay,
+		// B348 (2026-10-04): the device drill-down and the complete inventory.
+		// DeviceFilter is the hostname whose rules THIS page shows ("" = the
+		// paginated list of everything), DeviceRuleCount is that device's rule
+		// count for the banner, and DeviceIndex is every device with enabled
+		// rules + its count, so nothing is invisible behind a page window.
+		"DeviceFilter":    deviceFilter,
+		"DeviceRuleCount": len(rules),
+		"DeviceIndex":     deviceIndex,
 	})
 }
 

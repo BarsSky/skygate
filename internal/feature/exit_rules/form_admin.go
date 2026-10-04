@@ -306,6 +306,14 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// B348 (2026-10-04): the device inventory for the index below. A read failure
+	// degrades to an empty index (the table and the filter banner still render)
+	// rather than breaking the page — the list is a view over data the table
+	// already shows.
+	adminDeviceIndex, idxErr := s.DeviceRuleCountsForAdminService()
+	if idxErr != nil {
+		adminDeviceIndex = []DeviceRuleCount{}
+	}
 
 	var rr []AdminRule
 	for _, r := range dbRules {
@@ -627,6 +635,14 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		// rule count scoped to this device only.
 		"DeviceFilter":    deviceFilter,
 		"DeviceRuleCount": len(rr),
+		// B348 (2026-10-04): the COMPLETE cross-user inventory — every device with
+		// enabled rules and its count, one unpaginated query. Measured live: the
+		// unfiltered view is paged by ROW, so page 1 of 7 held only skyworker (the
+		// auto-updater had just added ~54 /32 rows for it) and every other device
+		// was on a later page — which the operator read, correctly, as "правила
+		// пропали". The index is rendered when no drill-down is active, so any
+		// device is one click from its full, unpaged rule list.
+		"DeviceIndex": adminDeviceIndex,
 		// 2026-09-11 (Issue #2 closure): admin add form state.
 		// The form posts to /admin/exit-rules and redirects
 		// back here with ?err=...&form_*=... on validation
