@@ -99,7 +99,12 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # internal/i18n/catalog_update.go; the map's alignment was reformatted in the same
 # change, so the file is gofmt-clean and left the list (D1 is the contract that
 # makes "I touched it, I formatted it" non-optional).
-FROZEN=267
+#
+# 2026-10-04: 267 → 266. B349 added a column to a query in
+# internal/db/queries.go and gofmt then reported the file clean (it had been frozen
+# as drifted), so it left the list too. D1 caught it in CI on the B349 commit —
+# the ratchet working as designed, not a regression.
+FROZEN=266
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

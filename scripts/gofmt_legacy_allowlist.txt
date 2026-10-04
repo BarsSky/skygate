@@ -84,7 +84,6 @@ internal/db/portal_users.go
 internal/db/portal_users_controlplane.go
 internal/db/portal_users_test.go
 internal/db/preauth_keys.go
-internal/db/queries.go
 internal/db/resettable_b224_test.go
 internal/db/swapdb_b203_test.go
 internal/db/telegram_login_tokens.go
