@@ -12,7 +12,7 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
-## v1.5.100 — the admin counters come from the database, and the auto-updater writes the owner (B351)
+## v1.5.100 — the admin counters come from the database, the auto-updater writes the owner, and the ownership decision converges (B351 + B352)
 
 **Date:** 2026-10-05 · **Base:** `v1.5.99` → this tag · **Compatibility:** no schema change and no
 migration; the heal is an ordinary `UPDATE` that the auto-updater tick runs (idempotent — a quiet tick
@@ -84,6 +84,86 @@ stale column can never split a device again. After the first tick the journal ca
 The legacy `devices` table holds **no rows** for the live devices — device ownership is resolved from
 `node_owner_map` (headscale) plus `device_rules.device_hostname`. Nothing under discussion reads it,
 but it is recorded in `docs/ROADMAP.md` §3.3 so the next reader does not treat it as a source of truth.
+
+---
+
+## v1.5.100 (continued) — B352: the ownership decision must converge, and a relay skygate cannot configure must not own prefixes
+
+### The report
+
+> «при попытке применить exit node напрямую не идет доступ у basic может и у остальных устройств
+> windows также. При этом для sharlotta никто не выставлял свои правила но почему то они указаны
+> в админском exit rules и помечены как проблемные»
+
+### The measured sequence
+
+| Time | What happened |
+|---|---|
+| 19:44:10 | karolina's route application times out — **one** SSH hiccup (`100.64.0.2:18022 i/o timeout`) |
+| 19:54:07 | the B309 exclusion fires: karolina leaves the healthy set, **251 claimed prefixes** move to emilia/shardlotta |
+| 19:54:10 | the very next application to karolina **succeeds** (`ssh=ok via tailnet`) — and **nothing re-runs the assignment** |
+| 20:2x | `basic`'s 21 prefixes are pinned `via=emilia`/`via=sharlotta` while the device is pinned to karolina → **no access**, with every server-side fact green |
+
+The claims never moved: all 21 prefixes were claimed by **karolina alone** (81 rules). `karolina` was
+healthy the whole time (`tailscale ping` 135 ms, port 18022 OPEN) — it was evicted for one failed
+application and never given the decision back.
+
+A second, independent defect: **`sharlotta` owned 95 prefixes while advertising 2**, and no rule has
+ever named it — the sync lists are built from `device_rules.exit_node_id`, so a relay skygate has never
+configured was still a legal owner, and its per-CIDR pins pointed at a relay that could not serve them.
+That is the "sharlotta appears in the admin pages as problematic" the operator saw (the rule list never
+mentions it; the **ownership** view did).
+
+### What changed
+
+* **The ownership pass runs on the maintenance tick.** It used to run only from a sync, so a relay that
+  recovered after one failed apply kept none of its prefixes until somebody pressed Sync. Ownership now
+  converges within one tick (5 min), and a quiet pass moves nothing.
+* **An INSERT is a decision.** The pass regenerated the ACL only when a prefix *changed* owner, so a
+  rebuilt table (`inserted=191 changed=0`) left every per-CIDR `via=` pin naming the previous owner —
+  measured while repairing the deployment. It now re-applies on `ins > 0 || chg > 0`.
+* **Only a relay skygate has configured may take prefixes.** The healthy set is partitioned into
+  *proven* relays (a recorded `relay_apply_state:<relay>` = `ok`) and the rest: when any relay is proven,
+  only proven relays are candidates; when nothing is proven yet (a fresh install) the healthy set is
+  returned unchanged, so the model does not silently change on day one.
+* **A relay that lost its prefixes gets its advertisement pruned.** `relaysToKeepSynced` adds every relay
+  with a recorded apply and every relay the assignment table names; both sync paths visit them, and the
+  per-row **Re-sync** now prunes a relay that has a recorded apply even when no rule targets it (before,
+  the only tool for a stale relay was SSH to it). Rules with an empty `exit_node_id` (B277.3 "engine
+  auto") no longer produce a node named `""` in the sync result.
+* **Two live contracts renegotiated.** `check_b188.sh` X and `check_b188_2.sh` T hardcoded
+  `via=[tag:dev-infra-emilia]` for `basic` — the relay that owned those prefixes on 2026-08-26 — so a
+  legitimate ownership move turned them red on a healthy tailnet. They now assert the invariant they
+  were expressing: **every per-CIDR pin names its prefix's owner in the assignment table, and at least
+  one such pin exists** (which is also what catches the B276 class).
+
+### Live repair performed (and verified)
+
+1. snapshot of the ownership table to `~/prefix_owner_snapshot_b352.sql`; all 191 rows were `source=auto`
+   (no manual pins), so the auto decisions were handed back to the engine;
+2. `GET /admin/exit-rules/sync` → `prefix-owner: assignment table updated (inserted=191 changed=0)`,
+   `karolina: ssh=ok approved=193`;
+3. `POST /admin/exit-rules/reapply` → `basic` = **22 grants, all `via=tag:dev-infra-karolina`**
+   (skyworker 231, cyborg 21);
+4. emilia's stale advertisement stripped on the relay
+   (`tailscale set --advertise-exit-node --advertise-routes=0.0.0.0/0,::/0`) and its 29 stale approvals
+   pruned with `headscale nodes approve-routes -i 3 -r "0.0.0.0/0,::/0"` (the same call skygate makes)
+   → **prefixes approved on two relays: 0**, ownership view `владелец не объявляет: 0`.
+
+### For the operator: "exit node напрямую"
+
+The per-CIDR pin is a **permission filter**: a device gets a prefix only when its selected exit node is
+the relay that owns it. After this release `basic`, `skyworker` and `cyborg` are all pinned to
+`karolina`, which owns and advertises **191/191** of the prefixes — so selecting **karolina** in the
+Windows Tailscale menu works, while selecting any other relay (or none) yields nothing, by design.
+That is the strict pin, not a broken `--accept-routes`.
+
+### Contracts
+
+9 in `scripts/check_b352_ownership_convergence.sh` + `TestB352_NeverAppliedRelayIsNotAnAssignmentCandidate`,
+`TestB352_RecoveredRelayReclaimsItsClaimedPrefixes`, `TestB352_FirstAssignmentReappliesACL`,
+`TestB352_RelaysToKeepSynced`, `TestB352_PruneTargetIsTheOwnedSet`, plus the post-deploy assertion
+`R-B352` (every prefix owner has a recorded successful apply).
 
 ### Contracts
 

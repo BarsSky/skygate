@@ -938,6 +938,41 @@ print(n)
   fi
 
   # ---------------------------------------------------------------------------
+  # Phase 8d: B352 — every prefix owner must be a relay skygate has configured
+  # ---------------------------------------------------------------------------
+  # The ownership engine may only hand a prefix to a relay whose route application has
+  # succeeded at least once (B352): live, sharlotta owned 95 prefixes while advertising
+  # 2, because it had NEVER been configured and the sync lists are built from the rules.
+  # A POST-deploy assertion on purpose: the running build has to have produced the
+  # records before this can hold (the pre-deploy catalog only reports — B352 E2 SKIPs).
+  if [ -n "${SKYGATE_POSTDEPLOY_NO_DB:-}" ]; then
+    echo "  ${YLW}SKIP${NC}  R-B352 disabled by SKYGATE_POSTDEPLOY_NO_DB"
+  else
+    B352_OWNERS=$(psql_vm "SELECT DISTINCT exit_node_id FROM prefix_owner" 2>/dev/null | tr -d '\r' | tr '\n' ' ')
+    if [ -z "$B352_OWNERS" ]; then
+      echo "  ${YLW}SKIP${NC}  R-B352 could not read prefix_owner (no live DB from here)"
+    else
+      B352_UNPROVEN=""
+      for relay in $B352_OWNERS; do
+        state=$(psql_vm "SELECT value FROM global_settings WHERE key = 'relay_apply_state:${relay}'" 2>/dev/null | tr -d '\r')
+        case "$state" in
+          *"|ok") ;;
+          *) B352_UNPROVEN="${B352_UNPROVEN}${relay} " ;;
+        esac
+      done
+      if [ -z "$B352_UNPROVEN" ]; then
+        echo "  ${GRN}PASS${NC}  R-B352 every prefix owner has a recorded successful route application (${B352_OWNERS})"
+        RESULTS_PASS=$((RESULTS_PASS+1))
+      else
+        echo "  ${RED}FAIL${NC}  R-B352 these prefix owners have no recorded successful apply: ${B352_UNPROVEN}"
+        echo "        Press «Sync» on /admin/exit-rows — a relay skygate never configured must"
+        echo "        not own prefixes: its per-CIDR pins point at a relay that cannot serve them."
+        RESULTS_FAIL=$((RESULTS_FAIL+1))
+      fi
+    fi
+  fi
+
+  # ---------------------------------------------------------------------------
   # Phase 8b: disk space check (R31)
   # ---------------------------------------------------------------------------
   # 2026-07-30: v0.32.5. The recurring DB corruption was traced to

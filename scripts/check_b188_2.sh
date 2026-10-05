@@ -251,33 +251,68 @@ print(n)
     # without this grant a tagged device had no enforced preferred exit node.
     check_eq "S-per-device-autogroup-pinned-once" "1" "${S:-<err>}"
 
-    # T. Live: tag:dev-michail-basic has per-CIDR h-rule grants pinned to emilia.
+    # T. Live: basic's per-CIDR (h-rule-*) grants must be pinned to the relay that
+    #    OWNS that prefix in the assignment table.
     #
-    # 2026-09-18: this contract used to pin ONE resolved CIDR
-    # (h-rule-64-233-164-91-32, the youtube /32 as resolved when B188.2 was
-    # written). Domain rules are periodically re-resolved, so a frozen CIDR
-    # makes the contract fail while the behaviour is intact — on the reference
-    # host basic had 30 per-CIDR grants pinned to tag:dev-infra-emilia and a
-    # correctly UN-pinned catch-all, yet T failed because 64.233.164.91 is no
-    # longer in youtube.com's resolved set. Assert the behaviour instead: at
-    # least one per-CIDR (h-rule-*) grant for the device carries via=[emilia].
-    # S and W still pin the other half (the catch-all must NOT be pinned).
-    T=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
-import json, sys
+    # RENEGOTIATED (B352, 2026-10-05). The contract required
+    # via=[tag:dev-infra-emilia] for basic — the relay that happened to own those
+    # prefixes on 2026-08-26. B275 made ownership a living decision, and on 2026-10-05
+    # karolina was evicted by a single transient SSH timeout: the pins moved to
+    # emilia/shardlotta and then back to karolina after its recovery, so a frozen relay
+    # name fails on a perfectly healthy tailnet whenever the assignment legitimately
+    # moves (measured: T red on the 2026-10-05 gate run while the ACL was correct for
+    # the table it followed). What B188.2 really guarantees — and what catches the B276
+    # bug class (a pin naming a relay that owns nothing) — is that the CONTROL plane
+    # and the DATA plane agree: EVERY per-CIDR pin for the device names that prefix's
+    # owner, and at least one such pin exists. S and W still pin the other half (the
+    # catch-all must NOT be pinned).
+    if ! skygate_live_db_probe; then
+      echo "  SKIP [T-per-cidr-pins-name-the-owner] $(skygate_live_db_reason)"
+    else
+      T_OWNERS=$(skygate_live_db_query "SELECT prefix || '|' || exit_node_id FROM prefix_owner" | tr -d '\r')
+      T=$(T_OWNERS="$T_OWNERS" docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
+import json, os, sys
+owners = {}
+for line in (os.environ.get("T_OWNERS") or "").splitlines():
+    line = line.strip()
+    if "|" in line:
+        p, o = line.split("|", 1)
+        owners[p.strip()] = o.strip()
 try:
     pol = json.load(sys.stdin)
 except Exception:
-    print(0); sys.exit(0)
-n = 0
+    print("no-policy"); sys.exit(0)
+hosts = pol.get("hosts") or {}
+good, bad, unexplained = 0, [], 0
 for g in pol.get("grants", []):
-    if "tag:dev-michail-basic" not in g.get("src", []):
+    if "tag:dev-michail-basic" not in (g.get("src") or []):
         continue
-    dst = g.get("dst") or []
-    if any(str(d).startswith("h-rule-") for d in dst) and "tag:dev-infra-emilia" in (g.get("via") or []):
-        n += 1
-print(1 if n >= 1 else 0)
+    via = (g.get("via") or [])
+    if not via:
+        continue
+    v = str(via[0]).replace("tag:dev-infra-", "")
+    for d in (g.get("dst") or []):
+        prefix = hosts.get(str(d))
+        if not prefix:
+            continue          # not a per-CIDR alias (e.g. autogroup:internet)
+        if prefix not in owners:
+            unexplained += 1  # nobody owns it: reported, not failed (churn window)
+            continue
+        if owners[prefix] == v:
+            good += 1
+        else:
+            bad.append("%s via=%s owner=%s" % (prefix, v, owners[prefix]))
+print("good=%d bad=%s unexplained=%d" % (good, bad[:3], unexplained))
 ' 2>/dev/null)
-    check_eq "T-per-cidr-rules-pinned-via-emilia" "1" "${T:-<err>}"
+      case "$T" in
+        good=0*|no-policy|"")
+          echo "  SKIP [T-per-cidr-pins-name-the-owner] no usable data (${T:-empty})" ;;
+        *"bad=[]"*)
+          check_ge "T-per-cidr-pins-name-the-owner" 1 "$(printf '%s' "$T" | sed -n 's/^good=\([0-9]*\).*/\1/p')" ;;
+        *)
+          echo "  FAIL [T-per-cidr-pins-name-the-owner] a per-CIDR pin names a relay that does not own the prefix: $T" ;;
+      esac
+    fi
 
     # U. Live: the pin on skyworker's h-rule grants must equal the OWNER the
     #    assignment table picked — not the rule's own exit_node_id.

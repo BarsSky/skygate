@@ -241,13 +241,33 @@ func (s *Service) RelayApplyState(relay string) RelayApplyState {
 // The exclusion is logged ONCE per pass with the reason and the age, so the
 // journal explains why the prefixes moved instead of the operator seeing an
 // unexplained reassignment.
+//
+// B352 (2026-10-05) — "never applied" is not the same as "healthy", but it is not the
+// same as "broken" either. The rule is a PREFERENCE, not a veto:
+//
+//   - a relay whose last application FAILED inside the window is excluded outright
+//     (B309 — it cannot carry traffic right now);
+//   - a relay skygate has successfully applied to at least once is PROVEN: if any
+//     proven relay exists, only proven relays may take prefixes. Live: `sharlotta`
+//     owned 95 prefixes while advertising 2 routes, because the sync lists are built
+//     from `device_rules.exit_node_id`, no rule ever named it, and it had never been
+//     configured — so it was elected owner of prefixes whose `via=` pin pointed at a
+//     relay that could not serve them, and every device with such a rule lost the
+//     destination;
+//   - when NOTHING is proven yet (a fresh install, or a database restored without the
+//     records) the healthy set is returned unchanged, because an empty candidate set
+//     would push every prefix onto the rules' own relays and quietly change the model.
+//
+// Either way a relay only stops being a candidate for a RECORDED reason, and the
+// reason is logged once per pass.
 func healthyExitRelaysForAssignment(d *sql.DB) []string {
 	base := healthyExitRelays(d)
 	if len(base) == 0 {
 		return base
 	}
 	now := time.Now().Unix()
-	out := make([]string, 0, len(base))
+	proven := make([]string, 0, len(base))
+	unproven := make([]string, 0, len(base))
 	for _, relay := range base {
 		st := RelayApplyStateOf(d, relay)
 		if st.Failed(now, RelayApplyFailureWindow) {
@@ -255,9 +275,22 @@ func healthyExitRelaysForAssignment(d *sql.DB) []string {
 				relay, time.Since(time.Unix(st.At, 0)).Truncate(time.Second), st.Detail)
 			continue
 		}
-		out = append(out, relay)
+		if st.At > 0 && st.OK {
+			proven = append(proven, relay)
+			continue
+		}
+		unproven = append(unproven, relay)
 	}
-	return out
+	if len(proven) == 0 {
+		// Nothing has been applied yet: keep every healthy relay (B309's original
+		// behaviour). The engine has no evidence to prefer any of them.
+		return append(proven, unproven...)
+	}
+	for _, relay := range unproven {
+		log.Printf("prefix-owner: %s excluded from the healthy set — skygate has never applied routes to it, so it cannot carry a prefix while a proven relay (%s) is available",
+			relay, strings.Join(proven, ","))
+	}
+	return proven
 }
 
 // ListRelayApplyStates returns the recorded transport state of every relay that
