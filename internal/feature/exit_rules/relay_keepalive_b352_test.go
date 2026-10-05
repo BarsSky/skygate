@@ -51,6 +51,33 @@ func TestB352_NeverAppliedRelayIsNotAnAssignmentCandidate(t *testing.T) {
 	}
 }
 
+// TestB352_AgedOutFailureIsUnprovenButNotForgotten: a failure that has outlived the B309
+// exclusion window must not turn into "never applied". The relay is still not allowed to
+// outrank a proven one (its last attempt failed), but the reason has to be the real one —
+// an operator who reads "never applied" about a relay they configured yesterday goes
+// looking for a lost record instead of a failed transport.
+func TestB352_AgedOutFailureIsUnprovenButNotForgotten(t *testing.T) {
+	d := newB276DB(t)
+	seedB276(t, d)
+	now := time.Now().Unix()
+	b352SetState(t, d, "karolina", fmt.Sprintf("%d|ok", now))
+	// emilia's last application failed two hours ago — well outside the 15-minute window,
+	// so `Failed()` is false and the B309 exclusion does not fire.
+	b352SetState(t, d, "emilia", fmt.Sprintf("%d|err|dial tcp 213.176.92.205:22: i/o timeout", now-7200))
+
+	got := healthyExitRelaysForAssignment(d)
+	if len(got) != 1 || got[0] != "karolina" {
+		t.Fatalf("healthy set = %v, want [karolina] only — an unproven relay must not outrank a proven one", got)
+	}
+	// And with nothing proven at all, the same relay must come back (the fallback), so a
+	// single aged failure can never leave the tailnet with no candidate.
+	b352SetState(t, d, "karolina", fmt.Sprintf("%d|err|dial tcp 100.64.0.2:18022: i/o timeout", now-7200))
+	got = healthyExitRelaysForAssignment(d)
+	if len(got) != 2 {
+		t.Fatalf("healthy set with nothing proven = %v, want both relays (the fallback must keep them)", got)
+	}
+}
+
 // TestB352_RecoveredRelayReclaimsItsClaimedPrefixes is the live sequence: karolina's
 // application fails, the prefix moves to emilia, karolina answers again — and the NEXT
 // pass must bring the prefix home. Before B352 the second pass never happened (the

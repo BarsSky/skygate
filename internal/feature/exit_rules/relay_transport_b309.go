@@ -267,7 +267,7 @@ func healthyExitRelaysForAssignment(d *sql.DB) []string {
 	}
 	now := time.Now().Unix()
 	proven := make([]string, 0, len(base))
-	unproven := make([]string, 0, len(base))
+	var staleFailure, neverApplied []string
 	for _, relay := range base {
 		st := RelayApplyStateOf(d, relay)
 		if st.Failed(now, RelayApplyFailureWindow) {
@@ -275,18 +275,31 @@ func healthyExitRelaysForAssignment(d *sql.DB) []string {
 				relay, time.Since(time.Unix(st.At, 0)).Truncate(time.Second), st.Detail)
 			continue
 		}
-		if st.At > 0 && st.OK {
+		switch {
+		case st.At > 0 && st.OK:
 			proven = append(proven, relay)
-			continue
+		case st.At > 0:
+			// The failure has aged out of the exclusion window, so B309 no longer
+			// removes the relay — but it still has no proof that skygate CAN configure
+			// it, so it does not get to outrank a relay that does. This is a distinct
+			// state from "never applied" and must be logged as such: an operator who
+			// read "never applied" about a relay they configured yesterday would be
+			// looking for a lost record instead of a failed transport (L-10.2).
+			staleFailure = append(staleFailure, relay)
+		default:
+			neverApplied = append(neverApplied, relay)
 		}
-		unproven = append(unproven, relay)
 	}
 	if len(proven) == 0 {
-		// Nothing has been applied yet: keep every healthy relay (B309's original
-		// behaviour). The engine has no evidence to prefer any of them.
-		return append(proven, unproven...)
+		// Nothing has been applied successfully yet: keep every healthy relay (B309's
+		// original behaviour). The engine has no evidence to prefer any of them.
+		return append(append(proven, staleFailure...), neverApplied...)
 	}
-	for _, relay := range unproven {
+	for _, relay := range staleFailure {
+		log.Printf("prefix-owner: %s excluded from the healthy set — its last recorded route application FAILED and the exclusion window has passed, so it is unproven until the next successful apply (a proven relay is available: %s)",
+			relay, strings.Join(proven, ","))
+	}
+	for _, relay := range neverApplied {
 		log.Printf("prefix-owner: %s excluded from the healthy set — skygate has never applied routes to it, so it cannot carry a prefix while a proven relay (%s) is available",
 			relay, strings.Join(proven, ","))
 	}
