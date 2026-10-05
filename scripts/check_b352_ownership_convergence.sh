@@ -98,9 +98,13 @@ else
   printf '%s' "$B_MISS" | sed 's/^/       /' >&2
 fi
 # The B309 default must survive: with nothing proven yet, the healthy set is returned.
-grep -q 'Nothing has been applied yet' "$B309" \
-  && ok "B2: with nothing proven yet the healthy set is returned unchanged (a fresh install keeps working)" \
-  || bad "B2: the never-applied rule no longer has its fresh-install fallback"
+# Assert the CODE (the fallback return), not a comment string — B352.1 renamed the
+# comment and a comment-pinned contract failed for the wording, which is the L-50 class.
+if grep -q 'return append(append(proven, staleFailure...), neverApplied...)' "$B309"; then
+  ok "B2: with nothing proven yet every healthy relay is returned (a fresh install keeps working, and one aged-out failure cannot empty the candidate set)"
+else
+  bad "B2: the never-applied rule no longer has its fresh-install fallback"
+fi
 
 # --- C: prune the stale advertisement -----------------------------------------
 C_MISS=""
