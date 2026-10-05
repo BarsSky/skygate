@@ -87,7 +87,7 @@ but it is recorded in `docs/ROADMAP.md` §3.3 so the next reader does not treat 
 
 ---
 
-## v1.5.100 (continued) — B352: the ownership decision must converge, and a relay skygate cannot configure must not own prefixes
+### B352 — the ownership decision must converge, and a relay skygate cannot configure must not own prefixes
 
 ### The report
 
