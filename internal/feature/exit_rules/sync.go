@@ -1157,6 +1157,15 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 	resolveInterval := s.DomainResolveInterval()
 	nowUnix := time.Now().Unix()
 	skipped := 0
+	// B351 (2026-10-05): both INSERTs below are raw (they need DO NOTHING +
+	// RowsAffected to count what was newly added, which the canonical
+	// qInsertDeviceRule cannot express), and until this block they listed neither
+	// user_name nor device_hostname. The one-time V0.44 migration filled
+	// user_name once and nothing ever filled it again, so 220 of 349 live rows
+	// carried an empty owner and the B348 admin index listed one device twice.
+	// The pair is resolved from portal_users / node_owner_map, one query per
+	// unique (user, device) per pass.
+	owners := newRuleOwnerLookup(s.dbc())
 	for _, d := range domains {
 		if !s.domainResolveDueFor(d.domain, nowUnix, resolveInterval) {
 			skipped++
@@ -1253,11 +1262,12 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 				// check saw "no resolved subnets" → ⏳ orange
 				// forever (false positive — the rules work,
 				// karolina's ApprovedRoutes has the IP).
+				ownerName, ownerHost := owners.get(d.userID, d.deviceID)
 				tag, err := s.dbc().Exec(
-					`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain)
-					 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)
+					`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname)
+					 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7, $8, $9)
 					 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO NOTHING`,
-					d.userID, d.deviceID, d.exitNode, cidr, d.action, d.deviceIP, marker)
+					d.userID, d.deviceID, d.exitNode, cidr, d.action, d.deviceIP, marker, ownerName, ownerHost)
 				if err != nil {
 					continue
 				}
@@ -1354,11 +1364,12 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			// correctly finds the /32 for the parent_domain
 			// it's looking for. See B237.23 entry in
 			// AGENTS.md for the full regression analysis.
+			ownerName, ownerHost := owners.get(d.userID, d.deviceID)
 			tag, ierr := s.dbc().Exec(
-				`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain)
-				 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)
+				`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname)
+				 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7, $8, $9)
 				 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO NOTHING`,
-				d.userID, d.deviceID, d.exitNode, ip+"/32", d.action, d.deviceIP, d.domain)
+				d.userID, d.deviceID, d.exitNode, ip+"/32", d.action, d.deviceIP, d.domain, ownerName, ownerHost)
 			if ierr != nil {
 				continue
 			}
@@ -1403,6 +1414,15 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 	// user's "all my devices" rules were just extended to; otherwise those rows
 	// would wait a whole tick for their grants.
 	defer func() {
+		// B351: heal the denormalised owner column BEFORE the propagation and the
+		// ACL comparison, so the device index, the fan-out label and the generated
+		// policy all read a repaired row in the same pass. The UPDATE matches
+		// nothing once the table is healed, so a quiet tick pays one statement.
+		if n, herr := db.BackfillDeviceRuleUserNames(s.dbc()); herr != nil {
+			log.Printf("auto-updater: user_name backfill failed: %v", herr)
+		} else if n > 0 {
+			log.Printf("auto-updater: backfilled the owner on %d rule row(s)", n)
+		}
 		if n, perr := s.propagateAllDeviceRules(); perr != nil {
 			log.Printf("all-devices: propagation failed: %v", perr)
 		} else if n > 0 {

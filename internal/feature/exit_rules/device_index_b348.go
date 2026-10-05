@@ -58,18 +58,27 @@ func DeviceRuleCountsForUser(d *sql.DB, userID int64) ([]DeviceRuleCount, error)
 }
 
 // DeviceRuleCountsForAdmin is the cross-user inventory behind the
-// /admin/exit-rules index. The denormalised `user_name` is used when present (it
-// is, for rows written since v0.28) and an empty value means the row predates the
-// backfill — the template then shows the same "—" the table does rather than
-// inventing an owner.
+// /admin/exit-rules index.
+//
+// 2026-10-05 (B351) — the group key is the RESOLVED owner, not the denormalised
+// column. This query used to GROUP BY `COALESCE(r.user_name,”)` on the stated
+// assumption that an empty value meant "the row predates the v0.28 backfill" —
+// measured live, that assumption was false: the domain auto-updater's two raw
+// INSERTs never wrote the column at all (see rule_owner_b351.go), so 220 of 349
+// rows had an empty owner and ONE device was listed twice — once under `michail`
+// and once under "" — while `basic` appeared only under "". The join below has no
+// such dependency: it resolves the username from portal_users by user_id, so the
+// index is correct whether or not the denormalised column is populated (the
+// backfill in the same block heals the column for the other readers).
 func DeviceRuleCountsForAdmin(d *sql.DB) ([]DeviceRuleCount, error) {
 	return deviceRuleCounts(d, `
-		SELECT COALESCE(r.user_name, ''), r.device_hostname, COUNT(*)
+		SELECT COALESCE(p.username, ''), r.device_hostname, COUNT(*)
 		  FROM device_rules r
+		  LEFT JOIN portal_users p ON p.id = r.user_id
 		 WHERE r.enabled = 1
 		   AND r.device_hostname <> ''
-		 GROUP BY COALESCE(r.user_name, ''), r.device_hostname
-		 ORDER BY COALESCE(r.user_name, ''), r.device_hostname`)
+		 GROUP BY COALESCE(p.username, ''), r.device_hostname
+		 ORDER BY COALESCE(p.username, ''), r.device_hostname`)
 }
 
 // deviceRuleCounts runs either inventory; both share one scan/error path, and

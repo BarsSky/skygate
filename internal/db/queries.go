@@ -425,6 +425,29 @@ const qDeleteRulesByDeviceID = `DELETE FROM device_rules WHERE device_id = $1`
 // rules as already-counted under their parent domain).
 const qCountEnabledUserRulesNonSubnet = `SELECT COUNT(*) FROM device_rules WHERE user_id = $1 AND enabled = 1 AND (target_type != 'subnet' OR COALESCE(parent_domain, '') = '')`
 
+// ─── B351 (2026-10-05) — the admin page's REAL counters ───────────────────────
+//
+// The four GROUP BY queries behind db.AdminRuleCounters. They exist because the
+// page used to derive its user/device counters from the 50-row page slice (see
+// rule_counts_b351.go for the measured report). The quota query mirrors
+// qCountEnabledUserRulesNonSubnet EXACTLY — the badge must quote the number the
+// insert guard enforces, not a second definition of "user-facing".
+const qCountEnabledRulesByUser = `SELECT user_id, COUNT(*) FROM device_rules WHERE enabled = 1 GROUP BY user_id`
+
+const qCountUserFacingRulesByUser = `SELECT user_id, COUNT(*) FROM device_rules WHERE enabled = 1 AND (target_type != 'subnet' OR COALESCE(parent_domain, '') = '') GROUP BY user_id`
+
+const qCountEnabledRulesByUserDevice = `SELECT user_id, device_id, COUNT(*) FROM device_rules WHERE enabled = 1 GROUP BY user_id, device_id`
+
+const qCountEnabledRulesByUserDeviceExit = `SELECT user_id, device_id, COALESCE(exit_node_id, ''), COUNT(*) FROM device_rules WHERE enabled = 1 GROUP BY user_id, device_id, COALESCE(exit_node_id, '')`
+
+// qBackfillDeviceRuleUserNames is the missing twin of the runtime
+// device_hostname backfill. The one-time V0.44 migration filled user_name once;
+// the auto-updater's raw INSERTs (sync.go) have listed neither column ever since,
+// so 220 of 349 live rows carried an empty owner. The EXISTS guard leaves rows
+// whose portal_users entry is gone untouched (the ACL resolves those from
+// node_owner_map by device_id since B265).
+const qBackfillDeviceRuleUserNames = `UPDATE device_rules SET user_name = (SELECT username FROM portal_users WHERE id = device_rules.user_id) WHERE COALESCE(user_name, '') = '' AND EXISTS (SELECT 1 FROM portal_users WHERE id = device_rules.user_id)`
+
 // qCountUserRulesWithExistingDomain is used by insertRuleUnique to check
 // whether a duplicate (user, device, exit_node, domain) already exists.
 const qSelectRuleByComposite = `SELECT id FROM device_rules WHERE user_id = $1 AND device_id = $2 AND exit_node_id = $3 AND target_type = $4 AND target_value = $5 LIMIT 1`
@@ -524,7 +547,7 @@ const qSelectAllRulesForAdmin = `SELECT r.id, r.user_id, r.device_id, r.exit_nod
 //
 //	$1 = LIMIT (page_size)
 //	$2 = OFFSET (page * page_size)
-const qSelectAllRulesForAdminPaged = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.id LIMIT $1 OFFSET $2`
+const qSelectAllRulesForAdminPaged = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.user_id, r.device_id, r.id LIMIT $1 OFFSET $2`
 
 // qSelectAllRulesForAdminCount — COUNT(*) companion for the
 // admin page (no JOIN needed; just rules).

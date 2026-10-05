@@ -86,9 +86,16 @@ type CDNDisplayItemAdmin struct {
 // row counts). The /admin/exit-rules template reads
 // .TotalCount directly to render the per-(user, device,
 // exitNode) "N rules" badge.
+//
+// B351 (2026-10-05): TotalCount is the rows in THIS PAGE's slice — the group is
+// built from the paginated rule list — so the template must never present it as a
+// database total. RealTotalCount carries the unpaginated count for the same
+// (user, device, relay) triple, and the template renders "N из M" when they
+// differ.
 type CDNDisplayViewAdmin struct {
-	Items      []CDNDisplayItemAdmin
-	TotalCount int
+	Items          []CDNDisplayItemAdmin
+	TotalCount     int
+	RealTotalCount int
 }
 
 // GroupAdminRulesByCDN groups AdminRule rows by their

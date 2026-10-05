@@ -315,6 +315,25 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		adminDeviceIndex = []DeviceRuleCount{}
 	}
 
+	// B351 (2026-10-05): the REAL counters. The groups below are built from the
+	// page slice (that is what a page is), so every number derived from it changed
+	// with the page — the operator saw the same user at «19 правил / 3% (19/500)»
+	// on page 6 and «49 правил / 9% (49/500)» on page 7, because the CDN
+	// auto-updater interleaves new rows across devices and `ORDER BY r.id` splits
+	// one group over many pages. These maps are unpaginated, so the badges and the
+	// heading now quote the database. A read failure degrades to the page window
+	// (the old behaviour) rather than failing the page.
+	realCounts, rcErr := db.AdminRuleCounters(s.dbc())
+	if rcErr != nil {
+		log.Printf("admin/exit-rules: AdminRuleCounters: %v (counters fall back to the page window)", rcErr)
+	}
+	// The heading total: the pagination total on the unfiltered view, the full
+	// (single-device) list on the drill-down.
+	realTotal := len(dbRules)
+	if adminRulePage.Total > 0 {
+		realTotal = adminRulePage.Total
+	}
+
 	var rr []AdminRule
 	for _, r := range dbRules {
 		rr = append(rr, AdminRule{
@@ -402,9 +421,19 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2026-07-07: hierarchical grouping by user -> device -> exit_node
+	//
+	// B351 (2026-10-05): Count/ShownCount are the rows in THIS PAGE's slice, while
+	// TotalCount/RealTotalCount are the database's unpaginated numbers. Before this
+	// block every count here was page-scoped, so the same user read different
+	// totals on different pages (measured: 19/500 on page 6, 49/500 on page 7) and
+	// the heading said "Все правила (50)" on a page whose own pagination line said
+	// "всего 349 правил".
 	type devNodeGroup struct {
 		DeviceName string
-		Count      int
+		// Count is the rows of this device inside the current page.
+		Count int
+		// TotalCount is every ENABLED rule of this device (db.AdminRuleCounters).
+		TotalCount int
 		Nodes      map[string][]AdminRule
 		// 2026-09-07: B237.22 / TD-11 (Approach G) —
 		// parallel CDN-grouped view. Same (exitNode) keys
@@ -417,8 +446,16 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		NodesCDN map[string]CDNDisplayViewAdmin
 	}
 	type userGroup struct {
-		UserCount  int
+		// UserID is the rule owner's portal id; the real counters are keyed by it.
+		UserID int64
+		// UserCount is the QUOTA numerator — the same number the insert guard
+		// compares against UserLimit (B328's countUserFacingForUser), never the
+		// page window.
+		UserCount int
+		// TotalCount is every ENABLED rule of this user.
 		TotalCount int
+		// ShownCount is how many of them are on this page.
+		ShownCount int
 		UserLimit  int
 		LoadPct    int
 		Devices    map[int]devNodeGroup
@@ -497,33 +534,45 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	}, approvedByExitNode, resolvedByDomain)
 
 	groupedByUser := map[string]userGroup{}
-	totalRules := len(rr)
+	// B351: the system-load badge quotes the DATABASE, not the page (it used to be
+	// totalRules/maxTotal with totalRules = the 50-row slice).
 	totalPct := 0
 	// B328: display the caps the guard ENFORCES (global_settings > .env > default), so a
 	// panel override cannot leave the page quoting a limit that is no longer in force.
 	adminLimits, limitSources := s.effectiveRuleLimits(c.Username)
 	maxTotal := adminLimits.MaxTotal
 	if maxTotal > 0 {
-		totalPct = totalRules * 100 / maxTotal
+		totalPct = realTotal * 100 / maxTotal
 	}
 	for _, rule := range rr {
+		uid := int64(rule.UserID)
 		ug, ok := groupedByUser[rule.UserName]
 		if !ok {
 			ruleLimits, _ := s.effectiveRuleLimits(rule.UserName)
-			ug = userGroup{Devices: map[int]devNodeGroup{}, UserLimit: ruleLimits.MaxPerUser}
+			ug = userGroup{
+				UserID:     uid,
+				Devices:    map[int]devNodeGroup{},
+				UserLimit:  ruleLimits.MaxPerUser,
+				TotalCount: realCounts.EnabledByUser[uid],
+				UserCount:  realCounts.UserFacingByUser[uid],
+			}
+			if ug.UserLimit > 0 {
+				ug.LoadPct = ug.UserCount * 100 / ug.UserLimit
+			}
 		}
 		dg, ok := ug.Devices[rule.DeviceID]
 		if !ok {
-			dg = devNodeGroup{DeviceName: rule.DeviceName, Nodes: map[string][]AdminRule{}, NodesCDN: map[string]CDNDisplayViewAdmin{}}
+			dg = devNodeGroup{
+				DeviceName: rule.DeviceName,
+				TotalCount: realCounts.EnabledByUserDevice[db.UserDeviceKey(uid, rule.DeviceID)],
+				Nodes:      map[string][]AdminRule{},
+				NodesCDN:   map[string]CDNDisplayViewAdmin{},
+			}
 		}
 		dg.Nodes[rule.ExitNode] = append(dg.Nodes[rule.ExitNode], rule)
 		dg.Count++
 		ug.Devices[rule.DeviceID] = dg
-		ug.UserCount++
-		ug.TotalCount++
-		if ug.UserLimit > 0 {
-			ug.LoadPct = ug.UserCount * 100 / ug.UserLimit
-		}
+		ug.ShownCount++
 		groupedByUser[rule.UserName] = ug
 	}
 
@@ -556,9 +605,19 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 					})
 					totalCount += len(ungrouped)
 				}
+				// B351: the unpaginated count for the same triple, so the
+				// exchange-level badge cannot pass a page window off as a total.
+				// A triple present in the page always has a real count >= its
+				// slice count, so 0 can only mean "the map missed it" — fall back
+				// to the slice then, never to zero.
+				realExit := realCounts.EnabledByUserDeviceExit[db.UserDeviceExitKey(ug.UserID, devID, exitNode)]
+				if realExit < totalCount {
+					realExit = totalCount
+				}
 				dg.NodesCDN[exitNode] = CDNDisplayViewAdmin{
-					Items:      items,
-					TotalCount: totalCount,
+					Items:          items,
+					TotalCount:     totalCount,
+					RealTotalCount: realExit,
 				}
 			}
 			ug.Devices[devID] = dg
@@ -609,9 +668,12 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		"Logs":          logs,
 		"Snapshots":     snaps,
 		"GroupedByUser": groupedByUser,
-		"TotalRules":    totalRules,
+		"TotalRules":    realTotal,
 		"MaxTotalRules": maxTotal,
 		"LoadPct":       totalPct,
+		// B351: the page window, so the template can say what it is showing
+		// instead of letting a slice look like a total.
+		"ShownRules": len(rr),
 		// v1.5.43: pagination (only meaningful for the
 		// unfiltered cross-user view; the device-filtered
 		// drill-down sets RulePage=zero-value so the template

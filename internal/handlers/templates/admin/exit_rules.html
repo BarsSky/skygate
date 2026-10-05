@@ -205,6 +205,12 @@
 
 <div class="card">
   <h3><i class="fa-solid fa-list"></i> {{tf "exit_rules_admin.all_rules" .TotalRules}}</h3>
+  {{/* B351: the heading count is the DATABASE total (the page used to print its
+       50-row window next to a pagination line saying "всего 349 правил"). When
+       this page shows fewer rows than the table holds, say so explicitly. */}}
+  {{if ne .ShownRules .TotalRules}}
+  <p style="font-size:12px;color:var(--text-muted);margin:4px 0 0">{{tf "exit_rules_admin.shown_of_total" .ShownRules .TotalRules}}</p>
+  {{end}}
   {{/* v1.5.43: pagination controls (admin). Same shape as the
        /my/exit-rules version; the JS preserves the live filter
        state via URLSearchParams. RulePage.Total=0 when the
@@ -238,7 +244,8 @@
         <i class="fa-solid fa-user"></i>
         <span>{{$user}}</span>
         <span class="tag">{{tf "exit_rules_admin.rules_count" $userData.TotalCount}}</span>
-        {{if gt $userData.UserLimit 0}}<span class="tag {{if gt $userData.LoadPct 80}}tag-danger{{else if gt $userData.LoadPct 50}}tag-warn{{else}}tag-success{{end}}">{{$userData.LoadPct}}% ({{$userData.UserCount}}/{{$userData.UserLimit}})</span>{{end}}
+        {{if ne $userData.ShownCount $userData.TotalCount}}<span style="font-size:11px;color:var(--text-muted)">{{tf "exit_rules_admin.shown_of_total" $userData.ShownCount $userData.TotalCount}}</span>{{end}}
+        {{if gt $userData.UserLimit 0}}<span class="tag {{if gt $userData.LoadPct 80}}tag-danger{{else if gt $userData.LoadPct 50}}tag-warn{{else}}tag-success{{end}}" title="{{t "exit_rules_admin.quota_badge_title"}}">{{$userData.LoadPct}}% ({{$userData.UserCount}}/{{$userData.UserLimit}})</span>{{end}}
         <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▼</span>
       </summary>
 
@@ -247,7 +254,8 @@
         <summary style="cursor:pointer;padding:4px 8px;background:var(--bg-card);border-radius:4px;display:flex;align-items:center;gap:6px;font-size:13px">
           <i class="fa-solid fa-laptop"></i>
           <span>{{$devData.DeviceName}}</span>
-          <span class="tag">{{tf "exit_rules_admin.rules_count" $devData.Count}}</span>
+          <span class="tag">{{tf "exit_rules_admin.rules_count" $devData.TotalCount}}</span>
+          {{if ne $devData.Count $devData.TotalCount}}<span style="font-size:11px;color:var(--text-muted)">{{tf "exit_rules_admin.shown_of_total" $devData.Count $devData.TotalCount}}</span>{{end}}
         </summary>
 
         {{range $exitNode, $rules := $devData.Nodes}}
@@ -261,7 +269,8 @@
                  pre-B237.22 (a flat list of N rows per
                  (user, device, exitNode) tuple). */}}
             {{$cdnView := index $devData.NodesCDN $exitNode}}
-            <span style="color:var(--text-muted)">{{tf "exit_rules_admin.rules_count" $cdnView.TotalCount}}</span>
+            <span style="color:var(--text-muted)">{{tf "exit_rules_admin.rules_count" $cdnView.RealTotalCount}}</span>
+            {{if ne $cdnView.TotalCount $cdnView.RealTotalCount}}<span style="font-size:11px;color:var(--text-muted)">{{tf "exit_rules_admin.shown_of_total" $cdnView.TotalCount $cdnView.RealTotalCount}}</span>{{end}}
           </summary>
           <div class="table-wrap" style="margin-top:6px">
             {{range $item := $cdnView.Items}}

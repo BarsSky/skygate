@@ -12,6 +12,88 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.100 — the admin counters come from the database, and the auto-updater writes the owner (B351)
+
+**Date:** 2026-10-05 · **Base:** `v1.5.99` → this tag · **Compatibility:** no schema change and no
+migration; the heal is an ordinary `UPDATE` that the auto-updater tick runs (idempotent — a quiet tick
+costs one statement). No setting, no restart, no client change.
+
+### The report
+
+> «Проверь доступность правил для пользователя michail от basic почему то правил 7 страниц у админа,
+> и при этом на каждой по разному, посмотри что не так с отображением и нет ли
+> обновлятора сервиса что переписывает в неправильном ключе»
+
+Both halves of that sentence were right, and they were two different defects.
+
+### What was measured (live PostgreSQL, 349 enabled rows)
+
+| Question | Answer |
+|---|---|
+| page 6 of `/admin/exit-rules` | `michail` — «19 правил», badge **3% (19/500)** |
+| page 7 of the same page | `michail` — «49 правил», badge **9% (49/500)** |
+| the heading on those pages | «ВСЕ ПРАВИЛА (50)» |
+| the pagination line on the same page | «Страница 6 из 7 (всего 349 правил)» |
+| rows with an **empty** `device_rules.user_name` | **220 of 349** |
+| … on `basic` alone | **68 of 68** |
+| `basic`'s rules / exit node / prefix owner | **68**, all naming `karolina`; `prefix_owner` → `karolina` |
+| `karolina` advertised / approved routes | **188 / 188** |
+| ACL for `basic` | `src=[tag:dev-michail-basic]` → its destinations `via=[tag:dev-infra-karolina]` |
+
+**So `basic`'s access was never broken** — the rules, the pin, the routes and the grants were all
+correct. What was broken was the *bookkeeping*: the numbers on the page, and the column behind them.
+
+### Defect 1 — every counter on `/admin/exit-rules` measured the page window
+
+The page is `ORDER BY r.id LIMIT 50 OFFSET n`, and the CDN auto-updater inserts new rows for every
+device on every tick, so one `(user, device)` group is scattered across the whole table. The groups
+**and** their counters were built from that slice, which is why the same user read `19/500` on one
+page and `49/500` on the next, and why the heading said `(50)` while the pagination line on the very
+same page said `349`.
+
+Now: the heading, the system-load badge, the per-user rule count, the **per-user quota badge**, the
+per-device count and the per-relay count are all read from the database in one set of unpaginated
+`GROUP BY` queries (`db.AdminRuleCounters`), the quota badge deliberately reuses **B328's unit**
+(`enabled AND (target_type != 'subnet' OR parent_domain = '')`) so it quotes the limit the insert
+guard actually enforces, and the page says «показано N из M» whenever it is showing less than the
+table holds. The paged query now orders by `r.user_id, r.device_id, r.id`, so a device's rows stay
+contiguous instead of being interleaved by the auto-updater's insert order.
+
+### Defect 2 — the auto-updater wrote rows without their owner (the "wrong key")
+
+`device_rules.user_name` is filled by exactly one thing: the **one-time** V0.44 migration. The runtime
+backfill that exists for `device_hostname` (`UpdateDeviceRuleHostnameForNode`, called from the node
+sync) has **no twin**, and the auto-updater's two raw INSERTs (`sync.go`: the CDN expansion and the
+`/32` fallback) list neither column — they cannot use the canonical `qInsertDeviceRule` because they
+need `DO NOTHING` + `RowsAffected` to count what was newly added.
+
+The consumer made it visible: `DeviceRuleCountsForAdmin` (B348) **grouped by that column**, so the
+admin device index listed **one device twice** — once under its owner and once under `""`. Its own doc
+comment claimed an empty value meant "the row predates the backfill"; measured, that was false, and it
+is corrected in the same change.
+
+Fixed in three places: the INSERTs resolve and write the pair from `portal_users` + `node_owner_map`
+(one lookup per unique `(user, device)` per pass — never from the column being repaired, or the blank
+copies itself forward); the auto-updater tick **heals the rows that are already there**
+(`db.BackfillDeviceRuleUserNames`); and the admin inventory resolves the owner by `user_id`, so a
+stale column can never split a device again. After the first tick the journal carries
+`auto-updater: backfilled the owner on N rule row(s)` — once.
+
+### Also observed (not fixed here)
+
+The legacy `devices` table holds **no rows** for the live devices — device ownership is resolved from
+`node_owner_map` (headscale) plus `device_rules.device_hostname`. Nothing under discussion reads it,
+but it is recorded in `docs/ROADMAP.md` §3.3 so the next reader does not treat it as a source of truth.
+
+### Contracts
+
+12 in `scripts/check_b351_rule_owner_and_counts.sh` — including a **class guard** (no non-test
+`INSERT INTO device_rules` may omit `user_name`/`device_hostname`, so a third writer cannot
+reintroduce the bug), the healer's existence *and* its wiring into the tick, the inventory's join, and
+a live-state contract that SKIPs when the rule table is unreachable — plus `TestAdminRuleCounters_B351`,
+`TestBackfillDeviceRuleUserNames_B351` (+ a `_PG` variant for the dialect the live deployment runs),
+`TestDeviceRuleCountsForAdmin_MergesBlankOwner_B351` and `TestRuleOwnerLookup_B351`.
+
 ## v1.5.99 — the client must resolve through the tailnet, and the panel must not talk it out of it (B350)
 
 **Date:** 2026-10-04 · **Base:** `v1.5.98` → this tag · **Compatibility:** no schema change, no
