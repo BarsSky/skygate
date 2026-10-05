@@ -66,12 +66,12 @@ var ErrExitServerNotFound = errors.New("exit_servers row not found")
 // is INTEGER; we expose it as int (not bool) so the unset case is
 // preserved through the helper boundary.
 type ExitServer struct {
-	ID           int64
-	NodeID       string
-	Hostname     string
-	TailscaleIP  string
-	SSHTarget    string
-	SSHKeyPath   string
+	ID          int64
+	NodeID      string
+	Hostname    string
+	TailscaleIP string
+	SSHTarget   string
+	SSHKeyPath  string
 	// SSHPort is the per-row non-default SSH port (added in
 	// v0.33.1.33 B85). The B81 auto-fallback builds
 	// "root@<tailscale_ip>:<ssh_port>" when this is non-empty
@@ -233,49 +233,51 @@ func LookupExitServerSSH(d *sql.DB, hostname string) (ExitServerSSH, error) {
 // SetAdvertisedRoutes call will use for the given exit-server
 // hostname, applying the v0.33.1.29 B81 fallback chain:
 //
-//	1. exit_servers.ssh_target (operator override — non-default port,
-//	   custom user, public IP, etc.). The most common case is
-//	   "root@karolina.example.com:18022" on the live VM.
-//	2. "root@<tailscale_ip>" or "root@<tailscale_ip>:<ssh_port>"
-//	   (B81 + B85: the auto-fallback). When the operator hasn't set
-//	   an override, the helper builds "root@<tailscale_ip>" from
-//	   the tailscale_ip column populated by ensureExitServers. The
-//	   Tailscale IP is always reachable from the skygate host
-//	   (they're in the same headscale network by definition) — no
-//	   public IP, no DNS, no firewall holes required. This is
-//	   the v0.33.1.29 fix for the
-//	   "ssh root@<firewalled-public-ip>:22: Operation timed out"
-//	   failure mode where operators had set ssh_target to a
-//	   public IP that wasn't actually open on port 22.
+//  1. exit_servers.ssh_target (operator override — non-default port,
+//     custom user, public IP, etc.). The most common case is
+//     "root@karolina.example.com:18022" on the live VM.
 //
-//	   v0.33.1.30 B82 follow-up: the tailscale_ip column can
-//	   contain a comma-joined list of headscale IP addresses
-//	   (IPv4 + IPv6) — e.g. "100.64.0.3,fd7a:115c:a1e0::3". The
-//	   `ssh` CLI doesn't parse a comma in the target, so the
-//	   helper takes the first IP from the list (typically the
-//	   IPv4 address — headscale's API returns IPv4 first). The
-//	   raw tailscale_ip column is unchanged so the
-//	   /admin/exit-nodes table can still show the full list
-//	   for diagnostic purposes.
+//  2. "root@<tailscale_ip>" or "root@<tailscale_ip>:<ssh_port>"
+//     (B81 + B85: the auto-fallback). When the operator hasn't set
+//     an override, the helper builds "root@<tailscale_ip>" from
+//     the tailscale_ip column populated by ensureExitServers. The
+//     Tailscale IP is always reachable from the skygate host
+//     (they're in the same headscale network by definition) — no
+//     public IP, no DNS, no firewall holes required. This is
+//     the v0.33.1.29 fix for the
+//     "ssh root@<firewalled-public-ip>:22: Operation timed out"
+//     failure mode where operators had set ssh_target to a
+//     public IP that wasn't actually open on port 22.
 //
-//	   v0.33.1.33 B85 follow-up: the operator may have set
-//	   exit_servers.ssh_port to a non-default port (the design
-//	   intent: use Tailscale, AND remember the exit-node may
-//	   have sshd on 2222 / 8022 / etc., not 22). When ssh_port
-//	   is set, the auto-fallback is "root@<tailscale_ip>:<port>"
-//	   — the SetAdvertisedRoutes helper at
-//	   internal/headscale/routes.go:222-230 already parses the
-//	   "user@host:port" syntax into target + -p <port> for the
-//	   ssh command, so this just slots in. Empty ssh_port =
-//	   no port suffix (preserves the v0.33.1.29/v0.33.1.32
-//	   behaviour for operators who don't need a non-default
-//	   port).
-//	3. "" (no SSH target available). The caller must surface a
-//	   clear "no ssh_target, no tailscale_ip — set one in
-//	   /admin/exit-nodes" error instead of falling back to
-//	   nodeHostname (which doesn't resolve for typical exit-nodes
-//	   and produced a "Could not resolve hostname relay-N" error
-//	   in the v0.33.1 era).
+//     v0.33.1.30 B82 follow-up: the tailscale_ip column can
+//     contain a comma-joined list of headscale IP addresses
+//     (IPv4 + IPv6) — e.g. "100.64.0.3,fd7a:115c:a1e0::3". The
+//     `ssh` CLI doesn't parse a comma in the target, so the
+//     helper takes the first IP from the list (typically the
+//     IPv4 address — headscale's API returns IPv4 first). The
+//     raw tailscale_ip column is unchanged so the
+//     /admin/exit-nodes table can still show the full list
+//     for diagnostic purposes.
+//
+//     v0.33.1.33 B85 follow-up: the operator may have set
+//     exit_servers.ssh_port to a non-default port (the design
+//     intent: use Tailscale, AND remember the exit-node may
+//     have sshd on 2222 / 8022 / etc., not 22). When ssh_port
+//     is set, the auto-fallback is "root@<tailscale_ip>:<port>"
+//     — the SetAdvertisedRoutes helper at
+//     internal/headscale/routes.go:222-230 already parses the
+//     "user@host:port" syntax into target + -p <port> for the
+//     ssh command, so this just slots in. Empty ssh_port =
+//     no port suffix (preserves the v0.33.1.29/v0.33.1.32
+//     behaviour for operators who don't need a non-default
+//     port).
+//
+//  3. "" (no SSH target available). The caller must surface a
+//     clear "no ssh_target, no tailscale_ip — set one in
+//     /admin/exit-nodes" error instead of falling back to
+//     nodeHostname (which doesn't resolve for typical exit-nodes
+//     and produced a "Could not resolve hostname relay-N" error
+//     in the v0.33.1 era).
 //
 // Errors are returned for actual DB failures; sql.ErrNoRows is folded
 // to ("", nil) so a missing row gives the same "no target" answer as
@@ -330,6 +332,45 @@ func LookupExitServerSSHTarget(d *sql.DB, hostname string) (string, error) {
 		return "root@" + tailscaleIP + ":" + sshPort, nil
 	}
 	return "root@" + tailscaleIP, nil
+}
+
+// TailscaleSSHTargetFor builds the TAILNET ssh target of one exit server:
+// "root@<first tailscale IPv4>[:<ssh_port>]", or "" when the row has no
+// `tailscale_ip` yet.
+//
+// B352.2 (2026-10-05) — this exists because the "Use Tailscale IP" button needed it
+// and could not use LookupExitServerSSHTarget: that helper is the SYNC path's
+// "effective target" resolver and returns an operator-set `ssh_target` FIRST (correct
+// there — an explicit target must win), so calling it from the button returned the very
+// value the button is supposed to replace. Live: emilia's `ssh_target` was a public IP
+// that is geo-blocked from the deployment, the button answered
+// «SSH target set to Tailscale IP: root@213.176.92.205» (its own old value) and wrote it
+// back, and the row was unchanged.
+//
+// The two resolvers are deliberately separate: one answers "where will the sync
+// connect?", the other "what is this relay's tailnet address?". The first prefers the
+// operator, the second ignores `ssh_target` on purpose.
+func TailscaleSSHTargetFor(d *sql.DB, hostname string) (string, error) {
+	if d == nil {
+		return "", nil
+	}
+	var tailscaleIP, sshPort string
+	err := d.QueryRow(`SELECT COALESCE(tailscale_ip, ''), COALESCE(ssh_port, '') FROM exit_servers WHERE hostname = $1`,
+		hostname).Scan(&tailscaleIP, &sshPort)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	ip := FirstTailscaleIP(strings.TrimSpace(tailscaleIP))
+	if ip == "" {
+		return "", nil
+	}
+	if p := strings.TrimSpace(sshPort); p != "" {
+		return "root@" + ip + ":" + p, nil
+	}
+	return "root@" + ip, nil
 }
 
 // FirstTailscaleIP picks the address the SSH target can actually use out of the
@@ -434,9 +475,10 @@ func DeleteExitServerByNodeID(d dbExec, nodeID string) error {
 // re-add (which clobbered every other field) or direct SQL.
 //
 // state uses the same -1/0/1 tri-state as the column:
-//   1  = true  (node accepts routes from peers)
-//   0  = unset (Tailscale decides the default)
-//   -1 = false (node does NOT accept routes from peers)
+//
+//	1  = true  (node accepts routes from peers)
+//	0  = unset (Tailscale decides the default)
+//	-1 = false (node does NOT accept routes from peers)
 //
 // Returns db.ErrExitServerNotFound (or a wrapped err from
 // sql.ErrNoRows via the row existence check) when the node_id
@@ -495,7 +537,7 @@ func GetExitServerHostname(d dbExec, nodeID string) (string, error) {
 // to keep the storage format consistent with the v0.20 schema
 // (TEXT, comma-joined). The discovery path doesn't set ssh_target,
 // ssh_key_path, description, or accept_routes — those are
-// admin-curated and stay default ('' / 0).
+// admin-curated and stay default (” / 0).
 func InsertIgnoreExitServerOnDiscovery(d dbExec, nodeID, hostname, tailscaleIP string) error {
 	_, err := d.Exec(qInsertExitServerOnDiscovery, nodeID, hostname, tailscaleIP)
 	return err

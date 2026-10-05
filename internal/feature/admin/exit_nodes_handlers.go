@@ -196,7 +196,14 @@ func (s *Service) PostAdminExitNodeUseTailscaleIP(w http.ResponseWriter, r *http
 	// tailscale_ip is set, the helper returns "" and we
 	// short-circuit with a clear error (instead of writing
 	// a malformed ssh_target = "root@").
-	resolved, _ := db.LookupExitServerSSHTarget(s.dbc(), hostname)
+	//
+	// B352.2 (2026-10-05): this MUST be the TAILNET resolver, not
+	// LookupExitServerSSHTarget. That helper is the sync path's "effective target" and
+	// returns an operator-set ssh_target first — so the button handed the operator back
+	// the very value it exists to replace. Live: emilia's ssh_target was a public IP that
+	// is geo-blocked from the deployment; the button answered «SSH target set to
+	// Tailscale IP: root@213.176.92.205» and the row did not change.
+	resolved, _ := db.TailscaleSSHTargetFor(s.dbc(), hostname)
 	if resolved == "" || !strings.HasPrefix(resolved, "root@") {
 		http.Redirect(w, r, "/admin/exit-nodes?err="+url.QueryEscape("Use Tailscale IP: no Tailscale IP discovered yet (wait for /admin/exit-nodes to refresh discovery)"), http.StatusSeeOther)
 		return

@@ -154,6 +154,44 @@ else
   printf '%s' "$D_MISS" | sed 's/^/       /' >&2
 fi
 
+# --- D2: the "Use Tailscale IP" button must write the TAILNET address --------------
+# B352.2: it called LookupExitServerSSHTarget, the sync path's "effective target"
+# resolver, which returns an operator-set ssh_target FIRST — so on the one row the button
+# exists for (a public ssh_target the deployment cannot reach) it echoed that value back
+# and the row did not change. Live: emilia answered «SSH target set to Tailscale IP:
+# root@<its own public IP>».
+D2_MISS=""
+grep -q 'func TailscaleSSHTargetFor' internal/db/exit_servers.go \
+  || D2_MISS="${D2_MISS}db.TailscaleSSHTargetFor does not exist"$'\n'
+grep -q 'db.TailscaleSSHTargetFor(s.dbc(), hostname)' internal/feature/admin/exit_nodes_handlers.go \
+  || D2_MISS="${D2_MISS}PostAdminExitNodeUseTailscaleIP does not use the tailnet resolver"$'\n'
+# Comment lines are stripped first: the handler DOCUMENTS the resolver it must not use,
+# and a naive grep on the body would fail on that explanation (the same trap the B188
+# check hit).
+D2_BUTTON=$(python3 - <<'PY'
+import re
+src = open("internal/feature/admin/exit_nodes_handlers.go").read()
+m = re.search(r"func \(s \*Service\) PostAdminExitNodeUseTailscaleIP.*?\n}\n", src, re.S)
+if not m:
+    print("handler-not-found")
+else:
+    body = "\n".join(l for l in m.group(0).splitlines() if not l.strip().startswith("//"))
+    print("uses-effective-resolver" if "LookupExitServerSSHTarget" in body else "ok")
+PY
+)
+case "$D2_BUTTON" in
+  ok) ;;
+  *) D2_MISS="${D2_MISS}the button's body still reaches the effective-target resolver ($D2_BUTTON)"$'\n' ;;
+esac
+grep -q 'TestTailscaleSSHTargetFor_IgnoresTheOperatorTarget_B352_2' internal/db/exit_servers_b352_2_test.go 2>/dev/null \
+  || D2_MISS="${D2_MISS}no test pins the two resolvers apart"$'\n'
+if [ -z "$D2_MISS" ]; then
+  ok "D2: the Use-Tailscale-IP button writes the relay's tailnet address, while the sync path keeps preferring an explicit ssh_target"
+else
+  bad "D2: the button and the sync path share one resolver, so the button can echo the value it must replace:"
+  printf '%s' "$D2_MISS" | sed 's/^/       /' >&2
+fi
+
 # --- E: bookkeeping ------------------------------------------------------------
 E_MISS=""
 git ls-files --error-unmatch scripts/check_b352_ownership_convergence.sh >/dev/null 2>&1 \
