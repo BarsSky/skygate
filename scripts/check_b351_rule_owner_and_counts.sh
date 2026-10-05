@@ -221,22 +221,21 @@ else
 fi
 
 # The live half: after the healer has run, no row may still carry an empty owner.
-# It reads the LIVE deployment (the reference VM is PostgreSQL-backed) and SKIPs —
-# never FAILs — when that deployment is not reachable (AGENTS rule 1).
 #
-# `sudo -n` everywhere: a bare `sudo` that wants a password opens /dev/tty and, as
-# the gate runs without a controlling terminal, either fails the check or parks it
-# (AGENTS trap #13, L-48). The probe is what decides, so an unreachable docker is a
-# SKIP and never a hang.
+# 2026-10-05 — SCOPED AS INFORMATIONAL, on purpose. The first run of this contract
+# made the pre-deploy gate RED with a correct measurement (the live table still had
+# 220 empty rows because the RUNNING build predates the healer), which is the B327
+# class exactly: a pre-deploy catalog must not assert a POST-deploy fact, and a check
+# that reports a state it cannot fix must SKIP. The assertion now lives where it
+# belongs — scripts/verify_post_deploy.sh (R-B351) — and this row only reports the
+# number, so an operator reading a pre-deploy run still sees it.
 if command -v docker >/dev/null 2>&1 && sudo -n docker ps >/dev/null 2>&1; then
   EMPTY=$(timeout 20 sudo -n docker exec skygate-pg-local psql -U admin -d skygate_staging -tAc \
     "SELECT COUNT(*) FROM device_rules WHERE COALESCE(user_name,'') = ''" 2>/dev/null | tr -d '[:space:]')
   if [ -z "$EMPTY" ]; then
     skip "D2: live device_rules not reachable from here (run this script on the reference VM)"
-  elif [ "$EMPTY" = "0" ]; then
-    ok "D2: live device_rules carries no empty user_name"
   else
-    bad "D2: live device_rules still has $EMPTY row(s) with an empty user_name — the healer has not run yet (it runs in the auto-updater tick)"
+    skip "D2: live device_rules currently has $EMPTY row(s) with an empty user_name — informational; the assertion is scripts/verify_post_deploy.sh R-B351 (the healer runs in the auto-updater tick, i.e. after the deploy)"
   fi
 else
   skip "D2: docker unavailable or passwordless sudo not configured — cannot inspect the live rule table"

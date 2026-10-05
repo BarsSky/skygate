@@ -915,6 +915,29 @@ print(n)
   fi
 
   # ---------------------------------------------------------------------------
+  # Phase 8c: B351 — the denormalised rule owner must be healed
+  # ---------------------------------------------------------------------------
+  # `device_rules.user_name` was filled by exactly one thing, the one-time V0.44
+  # migration, while the auto-updater's two raw INSERTs omitted it: measured live on
+  # 2026-10-05, 220 of 349 rows had an empty owner and the admin device index listed
+  # one device twice. B351 added the runtime healer, which runs in the auto-updater
+  # tick — so a deploy MUST make this zero. It is deliberately a POST-deploy
+  # assertion: the pre-deploy catalog cannot heal a running instance and only
+  # reports the number (check_b351_rule_owner_and_counts.sh D2 SKIPs).
+  EMPTY_OWNERS=$(psql_vm "SELECT COUNT(*) FROM device_rules WHERE COALESCE(user_name,'') = ''" 2>/dev/null | tr -d '[:space:]')
+  if [ -z "$EMPTY_OWNERS" ]; then
+    echo "  ${YLW}SKIP${NC}  R-B351 could not read device_rules (no live DB from here)"
+  elif [ "$EMPTY_OWNERS" = "0" ]; then
+    echo "  ${GRN}PASS${NC}  R-B351 no device_rules row carries an empty user_name (the B351 healer ran)"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R-B351 $EMPTY_OWNERS device_rules row(s) still carry an empty user_name"
+    echo "        The healer runs in the auto-updater tick. Wait one tick and grep the log for"
+    echo "        'backfilled the owner on N rule row(s)'; if it never appears, the tick is not running."
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
+
+  # ---------------------------------------------------------------------------
   # Phase 8b: disk space check (R31)
   # ---------------------------------------------------------------------------
   # 2026-07-30: v0.32.5. The recurring DB corruption was traced to

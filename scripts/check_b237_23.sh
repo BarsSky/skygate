@@ -67,7 +67,16 @@ else
 fi
 
 # A.2 Per-IP /32 INSERT (sync.go: ~587) — same 6-col target
-A2=$(grep -cE 'VALUES \(\$1, \$2, \$3, .subnet., \$4, \$5, \$6, \$7\)' "$REPO/internal/feature/exit_rules/sync.go")
+#
+# 2026-10-05 (B351) — RENEGOTIATED. This contract pinned the exact value list
+# `VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)`, i.e. it was coupled to the
+# COLUMN COUNT, and B351 added `user_name, device_hostname` ($8, $9) to both subnet
+# INSERTs — so a correct change turned a positional-text contract red (the L-50
+# class: a contract that reads a literal rather than the behaviour). The optional
+# tail accepts both shapes; what this contract is actually for — "both subnet INSERT
+# sites exist" — is unchanged, and that both of them carry the owner pair is
+# asserted by B351 (scripts/check_b351_rule_owner_and_counts.sh A1/A2).
+A2=$(grep -cE 'VALUES \(\$1, \$2, \$3, .subnet., \$4, \$5, \$6, \$7(, \$8, \$9)?\)' "$REPO/internal/feature/exit_rules/sync.go")
 if [ "$A2" -ge 2 ]; then
   ok "A.2 sync.go has >= 2 subnet INSERT statements (CDN-range + per-IP)"
 else
