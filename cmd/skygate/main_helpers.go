@@ -278,6 +278,39 @@ func discoveryErrorCleared() {
 	discoveryErrMu.Unlock()
 }
 
+// discoveryEnsureErrorIsNew is the same throttle for the per-peer ENSURE stage
+// (B354). It takes the joined message for the whole tick rather than one host at a
+// time: the failure is a property of the database, not of a peer, so three peers
+// with the same error are ONE event.
+var (
+	discoveryEnsureMu   sync.Mutex
+	discoveryEnsureLast string
+	discoveryEnsureAt   time.Time
+)
+
+func discoveryEnsureErrorIsNew(msg string) bool {
+	if msg == "" {
+		return false
+	}
+	discoveryEnsureMu.Lock()
+	defer discoveryEnsureMu.Unlock()
+	if msg == discoveryEnsureLast && time.Since(discoveryEnsureAt) < discoveryErrRepeatAfter {
+		return false
+	}
+	discoveryEnsureLast = msg
+	discoveryEnsureAt = time.Now()
+	return true
+}
+
+// discoveryEnsureErrorCleared forgets the ensure failure once a tick succeeds, so
+// the next occurrence is reported immediately.
+func discoveryEnsureErrorCleared() {
+	discoveryEnsureMu.Lock()
+	discoveryEnsureLast = ""
+	discoveryEnsureAt = time.Time{}
+	discoveryEnsureMu.Unlock()
+}
+
 // runDiscoveryTicker is the B223 (Phase 4.3)
 // background ticker that runs Tailscale
 // auto-discovery every `interval`. The HTTP
@@ -335,14 +368,32 @@ func runOneDiscoveryTick(ctx context.Context, d *sql.DB, tagFilter string, notif
 	}
 	discoveryErrorCleared()
 	discovered := 0
+	var ensureErrs []string
 	for _, p := range peers {
 		if err := cluster.EnsureDiscoveredNode(d, clusterID, p.Hostname, p.TailscaleIP, "system"); err != nil {
-			log.Printf("🔎 discovery-ticker: ensure %q failed: %v", p.Hostname, err)
-			_ = db.AppendAuditLogWithTarget(d, 0, "system", "cluster.discovery.error",
-				fmt.Sprintf("hostname=%q error=%q", p.Hostname, err.Error()), "cluster_node", p.Hostname)
+			// B354 (2026-10-06): the ensure stage is throttled like the discover stage
+			// above. Live: the empty `cluster` table made all three peers fail with
+			// `cluster_node_cluster_id_fkey` on EVERY tick — three journal lines and
+			// three audit rows every five minutes (864 of each a day), which is the
+			// same noise B318 removed from the discover stage. The root cause is fixed
+			// (EnsureDiscoveredNode bootstraps the row), and a genuinely broken insert
+			// now says so once an hour instead of drowning the log.
+			ensureErrs = append(ensureErrs, fmt.Sprintf("%s: %v", p.Hostname, err))
 			continue
 		}
 		discovered++
+	}
+	if len(ensureErrs) > 0 {
+		msg := strings.Join(ensureErrs, "; ")
+		if discoveryEnsureErrorIsNew(msg) {
+			log.Printf("🔎 discovery-ticker: ensure failed for %d peer(s): %s", len(ensureErrs), msg)
+			_ = db.AppendAuditLogWithTarget(d, 0, "system", "cluster.discovery.error",
+				fmt.Sprintf("peers=%d error=%q", len(ensureErrs), msg), "", "")
+		} else {
+			log.Printf("🔎 discovery-ticker: ensure still failing for %d peer(s) (same error within the last hour, not re-audited)", len(ensureErrs))
+		}
+	} else {
+		discoveryEnsureErrorCleared()
 	}
 	runDetail := fmt.Sprintf("discovered=%d total_peers=%d tag_filter=%q via=ticker", discovered, len(peers), tagFilter)
 	_ = db.AppendAuditLogWithTarget(d, 0, "system", "cluster.discovery.run", runDetail, "", "")

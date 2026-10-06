@@ -124,7 +124,12 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # internal/db/exit_servers.go; the file had been frozen as drifted, and the new
 # function left it gofmt-clean, so D1 required it to leave the list (budget paid,
 # not exempted). Same pattern as queries.go above — the ratchet doing its job.
-FROZEN=264
+# 2026-10-06 (second payment of the day): 264 → 263.
+# internal/cluster/discovery.go was frozen as drifted; B354 touched it (the cluster
+# bootstrap) and rule 3 holds every TOUCHED file to gofmt, so the 14 whitespace lines
+# of struct-tag alignment were paid with the change. Same pattern as queries.go and
+# exit_servers.go above.
+FROZEN=263
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

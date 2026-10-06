@@ -12,6 +12,58 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.102 — the ladder stops refusing its own candidate, and the cluster tree bootstraps itself (B353.1 + B354)
+
+**Date:** 2026-10-06 · **Base:** `v1.5.101` → this tag · **Compatibility:** no schema change, no
+migration, no new setting. Behaviour only.
+
+### B353.1 — the transport handed its own candidate to a gate that refused it
+
+Found by the **live verification of B353**, one log line above the rung that worked:
+
+```
+exit-node sync(emilia): tailnet fd7a:115c:a1e0::3 answered but the routes could not be applied:
+  SetAdvertisedRoutes(emilia): refusing unsafe ssh_target "root@fd7a:115c:a1e0::3"
+  (expected [user@]host[:port]) — trying the next transport
+```
+
+`RelayEndpoint.Target()` rendered an IPv6 literal **unbracketed**, so `ssh` would have read
+`root@fd7a:115c:a1e0::3` as user `root@fd7a` plus a malformed host, and the shape gate — correctly —
+refused it. An IPv6-only relay therefore had one path fewer, and the failure text blamed a value the
+transport itself had just produced. `bracketHost` now brackets an IPv6 literal (driven by `net.ParseIP`,
+so IPv4 and hostnames are untouched and an already-bracketed host is not double-wrapped), and `Label()`
+brackets it too, so `[fd7a:115c:a1e0::3]:22` cannot be misread as host+port.
+
+### B354 — the cluster tree bootstraps itself, and a broken insert stops filling the journal
+
+Every five minutes, three times per tick (karolina, sharlotta, emilia):
+
+```
+🔎 discovery-ticker: ensure "karolina" failed: insert discovered node: ERROR: insert or update on table
+   "cluster_node" violates foreign key constraint "cluster_node_cluster_id_fkey" (SQLSTATE 23503)
+```
+
+Measured on the live database: `cluster` had **0 rows**, `cluster_node` had **0 rows**, and the FK is
+`cluster_node_cluster_id_fkey -> cluster`. The ticker inserts with `cluster_id='skygate-staging'`, and
+that row was created **only** by the admin handlers' first-use paths (`AddNode` / `IssueInvite`) — so an
+operator who never opened `/admin/cluster` got a permanently empty cluster tree, an empty
+`/admin/cluster`, and **864 log lines plus 864 audit rows a day** in the two places used to find real
+events.
+
+* **Discovery is a first use too.** `EnsureDiscoveredNode` bootstraps the row B200 would have created:
+  `LookupCluster` first, then `EnsureCluster` with the same id, whose `ON CONFLICT (id) DO NOTHING`
+  means an operator's own cluster row (its name, its approved nodes) is never touched.
+* **A genuinely broken insert must not fill the journal.** The ensure stage is throttled exactly like
+  the discover stage B318 fixed: keyed on the **joined message for the whole tick** (three peers with
+  one error are ONE event), reported immediately the first time and again after an hour, cleared by any
+  successful tick, and a suppressed repeat says *still failing* instead of going silent.
+* **Verified live** on v1.5.101 (which does not contain the fix): the bootstrap row was inserted by
+  hand — the repair the fix automates — and the very next tick logged
+  `🔎 discovery-ticker: discovered 3 new node(s) from Tailscale` with `cluster_node` at 3 rows in
+  `pending`, ready for approval on `/admin/cluster`.
+
+---
+
 ## v1.5.101 — a relay the portal cannot reach is still manageable, and two quiet fallbacks stop lying (B352.1 + B352.2 + B353)
 
 **Date:** 2026-10-06 · **Base:** `v1.5.100` → this tag · **Compatibility:** no schema change, no

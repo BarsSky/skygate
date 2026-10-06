@@ -143,10 +143,10 @@ type TailscaleStatus struct {
 // (Tailscale uses the DNS name as the map key).
 // We model the fields we need.
 type TailscalePeerRaw struct {
-	HostName      string   `json:"HostName"`
-	TailscaleIPs  []string `json:"TailscaleIPs"`
-	Online        bool     `json:"Online"`
-	Tags          []string `json:"Tags"`
+	HostName     string   `json:"HostName"`
+	TailscaleIPs []string `json:"TailscaleIPs"`
+	Online       bool     `json:"Online"`
+	Tags         []string `json:"Tags"`
 }
 
 // TailscaleStatus runs `tailscale status --json`
@@ -201,8 +201,8 @@ func TailscaleStatusRaw(ctx context.Context) ([]byte, error) {
 // (they feed in canned bytes).
 func parseTailscaleStatus(raw []byte) (*TailscaleStatus, error) {
 	var s struct {
-		Self  TailscalePeerRaw            `json:"Self"`
-		Peer  map[string]TailscalePeerRaw `json:"Peer"`
+		Self TailscalePeerRaw            `json:"Self"`
+		Peer map[string]TailscalePeerRaw `json:"Peer"`
 	}
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return nil, fmt.Errorf("parse tailscale status: %w", err)
@@ -409,6 +409,28 @@ func EnsureDiscoveredNode(d *sql.DB, clusterID, hostname, tailscaleIP, actor str
 	}
 	if actor == "" {
 		actor = "system"
+	}
+	// B354 (2026-10-06): the row this INSERT depends on must exist FIRST. Every
+	// cluster_* table FKs to `cluster`, and the bootstrap row was created only by the
+	// admin handlers' first-use paths (AddNode / IssueInvite) — so a deployment where
+	// nobody had opened /admin/cluster had an EMPTY `cluster` table and this INSERT
+	// failed on every tick:
+	//
+	//	🔎 discovery-ticker: ensure "karolina" failed: insert discovered node: ERROR:
+	//	   insert or update on table "cluster_node" violates foreign key constraint
+	//	   "cluster_node_cluster_id_fkey" (SQLSTATE 23503)
+	//
+	// measured live: three peers per tick (karolina, sharlotta, emilia), three log
+	// lines and three audit rows every five minutes, `cluster_node` at 0 rows, and
+	// /admin/cluster permanently empty. Discovery IS a first use of the cluster tree,
+	// so it bootstraps the same row B200 would have — same id, name defaulted to the
+	// id, ON CONFLICT DO NOTHING — and an operator's own cluster row is never touched.
+	if _, err := LookupCluster(d, clusterID); err == ErrClusterNotFound {
+		if err := EnsureCluster(d, clusterID, clusterID); err != nil {
+			return fmt.Errorf("ensure cluster row: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("look up cluster row: %w", err)
 	}
 	now := time.Now().UTC()
 	// Synthetic node id — the B201 join flow

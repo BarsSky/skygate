@@ -202,23 +202,49 @@ else
   skip "E1-E4: no Go toolchain — the B353 test contracts were not run"
 fi
 
-# --- F: the check itself cannot be silently dropped ----------------------------
+# --- F: B353.1 — the ladder must not hand its own candidate to a gate that refuses it
+# Found by the LIVE verification of B353, one log line above the rung that worked:
+#
+#	exit-node sync(emilia): tailnet fd7a:115c:a1e0::3 answered but the routes could not
+#	  be applied: SetAdvertisedRoutes(emilia): refusing unsafe ssh_target
+#	  "root@fd7a:115c:a1e0::3" (expected [user@]host[:port]) — trying the next transport
+#
+# The IPv6 candidate was built without brackets, so `ssh` would have read it as user
+# `root@fd7a` plus a malformed host, and the shape gate refused it — an IPv6-only relay
+# had one fewer path, and the failure blamed a value the transport had just produced.
+if grep -q 'func bracketHost(' "$LADDER"; then
+  ok "F1: an IPv6 literal is bracketed before it reaches ssh (B353.1)"
+else
+  bad "F1: the ladder still builds unbracketed IPv6 targets"
+fi
+if grep -q 'bracketHost(e.Host)' "$LADDER" && grep -q 'net.ParseIP' "$LADDER"; then
+  ok "F2: bracketing is driven by the actual address family, not by a guess"
+else
+  bad "F2: bracketing does not inspect the address"
+fi
+if [ -f internal/feature/exit_rules/relay_transport_ipv6_b353_1_test.go ]; then
+  ok "F3: the IPv6 case has its own tests (the live candidate, a port, already-bracketed, IPv4/name unchanged)"
+else
+  bad "F3: the IPv6 regression test is missing"
+fi
+
+# --- G: the check itself cannot be silently dropped ----------------------------
 # AGENTS trap #11: `test -f` proves nothing about what was committed, and a check
 # nobody runs is the same as no check.
 if git ls-files --error-unmatch scripts/check_b353_transport_jump_fallback.sh >/dev/null 2>&1; then
-  ok "F1: this script is tracked by git (a new script can be eaten silently)"
+  ok "G1: this script is tracked by git (a new script can be eaten silently)"
 else
-  bad "F1: scripts/check_b353_transport_jump_fallback.sh is NOT tracked by git"
+  bad "G1: scripts/check_b353_transport_jump_fallback.sh is NOT tracked by git"
 fi
 if grep -q 'check_b353_transport_jump_fallback.sh' scripts/verify_pre_deploy.sh; then
-  ok "F2: verify_pre_deploy.sh registers B353"
+  ok "G2: verify_pre_deploy.sh registers B353"
 else
-  bad "F2: the gate does not run this contract"
+  bad "G2: the gate does not run this contract"
 fi
 if grep -q '^- \*\*B353\*\*' AGENTS.md; then
-  ok "F3: AGENTS.md's block index carries B353"
+  ok "G3: AGENTS.md's block index carries B353"
 else
-  bad "F3: the block index does not know B353"
+  bad "G3: the block index does not know B353"
 fi
 
 hdr "B353 summary"

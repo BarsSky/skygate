@@ -98,25 +98,52 @@ type RelayEndpoint struct {
 }
 
 // Target renders the `[user@]host[:port]` shape SetAdvertisedRoutes expects.
+//
+// An IPv6 literal must be BRACKETED (B353.1). Measured live on the deployed
+// transport — the ladder built its own candidate and then refused it:
+//
+//	exit-node sync(emilia): tailnet fd7a:115c:a1e0::3 answered but the routes could
+//	  not be applied: SetAdvertisedRoutes(emilia): refusing unsafe ssh_target
+//	  "root@fd7a:115c:a1e0::3" (expected [user@]host[:port]) — trying the next transport
+//
+// `ssh` parses `root@fd7a:115c:a1e0::3` as user `root@fd7a` and a malformed host, and
+// `IsSafeSSHTarget` — correctly — rejects the unbracketed form, so an IPv6-only relay
+// could never be reached and the rung was spent refusing the ladder's own value.
 func (e RelayEndpoint) Target() string {
 	user := strings.TrimSpace(e.User)
 	if user == "" {
 		user = "root"
 	}
-	t := user + "@" + e.Host
+	t := user + "@" + bracketHost(e.Host)
 	if p := strings.TrimSpace(e.Port); p != "" && p != "22" {
 		t += ":" + p
 	}
 	return t
 }
 
+// bracketHost wraps an IPv6 literal in brackets and leaves everything else alone.
+// Pure (unit-tested): `100.64.0.2` and `relay.example.com` are unchanged, while
+// `fd7a:115c:a1e0::3` becomes `[fd7a:115c:a1e0::3]`.
+func bracketHost(host string) string {
+	h := strings.TrimSpace(host)
+	if h == "" || strings.HasPrefix(h, "[") {
+		return h
+	}
+	ip := net.ParseIP(strings.Trim(h, "[]"))
+	if ip == nil || ip.To4() != nil {
+		return h
+	}
+	return "[" + strings.Trim(h, "[]") + "]"
+}
+
 // Label is the short human form used in the log and in the failure report
 // ("tailnet 100.64.0.2:18022"). A candidate reached through a peer relay names
 // BOTH ends (B353): "tailnet 100.64.0.3 via root@100.64.0.2" — the target is the
 // part that failed and the hop is the part that has to be checked, so a label with
-// only one of them cannot be acted on.
+// only one of them cannot be acted on. An IPv6 literal is bracketed so
+// `[fd7a:115c:a1e0::3]:22` cannot be misread as a host with a port suffix.
 func (e RelayEndpoint) Label() string {
-	host := e.Host
+	host := bracketHost(e.Host)
 	if p := strings.TrimSpace(e.Port); p != "" {
 		host += ":" + p
 	}
