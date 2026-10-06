@@ -719,6 +719,7 @@ POST /admin/exit-nodes  → per-row "Re-sync"        # one node only
 | Tailnet DNS is still filtered on some/none of the devices | `dns.nameservers.global` lists a resolver **no relay routes** (live: `[1.1.1.1, 8.8.8.8]` while only `8.8.8.0/24` + `8.8.4.0/24` are advertised) — that query leaves via the local ISP, where it can be hijacked | keep the global list to resolvers a relay advertises (`headscale nodes list -o json` → `approved_routes`); the structural fix is B350.1 |
 | Brand-new device cannot use an exit node | dev-tag not yet applied → the per-device grant doesn't match | wait one `SKYGATE_NODE_DISCOVERY_INTERVAL` tick (5 min) |
 | Exit-node sync log shows `ssh=err=…` | `ssh_target` unresolvable, missing `ssh_key_path`, or the relay is down | fix `exit_servers.ssh_target` (`user@host` / `user@host:port`), set `ssh_key_path` or `SKYGATE_EXIT_SSH_KEY` |
+| `ssh=err=tailnet 100.64.0.x is not answering` for a relay that is online and answers its **peers** | the portal's own network cannot reach that relay: it has no direct path (its `lastHS` is `never`) and its home DERP region is unreachable from here (`nc -z derpNN.tailscale.com 443` times out) | v1.5.101+ tries a **peer relay as a hop** automatically; the durable fix is a DERP region both sides reach — §6.4 |
 | Exit node IS this host (`tailscale status` reports the relay's address as `Self`), yet the sync still wants SSH or reports a missing key | before v1.5.57 the transport was always SSH, and `/admin/exit-nodes` warned about a key the local node does not need | upgrade to v1.5.57+: the relay is marked «локальный узел» and the routes are applied with a local `tailscale set`. If the service user cannot run it, the page shows the rung — see §6.3 |
 | Local exit node: `local=err=… permission denied` / `local=err=… no local way to apply tailscale routes` | the skygate user may not run `tailscale set` (daemon socket is root-only, no `--operator`, no `NOPASSWD` rule) | one of: `sudo tailscale set --operator=<skygate user>`; a sudoers rule `skygate ALL=(root) NOPASSWD: /usr/bin/tailscale set`; or `sudo bash deploy/install-routes-helper.sh` (root-owned applier, no sudoers needed) |
 | Local exit node: the sync reports `self_subnet_skipped=…` | the relay advertises a subnet this host sits INSIDE → the documented route loop (`500–1700 ms` to a LAN peer) | intended: skygate refuses that route and reports it. Remove the rule/subnet, or move the relay to a host outside the advertised network |
@@ -771,6 +772,47 @@ internet is skygate's own, so `telegram.egress_node_id` pointing at it cannot ro
 anything — and the `api.telegram.org` probe on `/admin/telegram` becomes
 *representative* (it measures exactly the path the bot will use). If Telegram is
 unreachable from this host, the answer is a **different** relay on another machine.
+
+### 6.4 When the portal cannot reach a relay at all (the peer-relay hop, B353)
+
+Being on the tailnet is not the same as being able to reach a peer. Measured on the
+reference deployment (2026-10-06): the container pinged `karolina` (129 ms) and
+`sharlotta` (130 ms) while `emilia` timed out, and emilia's own view of the portal was
+`skygate-host online=true relay=waw cur='' lastHS=never` — **no handshake had ever
+completed**. The reason was one level down: emilia's home DERP is the Helsinki region,
+whose servers (`derp28b/c/d.tailscale.com`) are unreachable from this site's network,
+while emilia reaches them in 13.4 ms. A peer relay reached emilia without trouble.
+
+Since v1.5.101 the transport ladder ends with a **hop through a peer relay**:
+
+* only for a relay whose **tailnet** address is unreachable — the public address is
+  reachable or not from the portal by definition, so a hop there only adds a way to
+  time out;
+* the hop is another `exit_servers` row, **TCP-probed itself** before use (probing the
+  target is the measurement that already failed), never the target nor one of its
+  addresses, ordered **proven-first** (a recorded successful apply), capped at three
+  per target;
+* the hop is an explicit `-o ProxyCommand=ssh -W '[%h]:%p' -i <key> … -p <port> -- <hop>`,
+  **not** `ssh -J`: OpenSSH's implicit jump connection gets neither the identity nor the
+  host-key policy and answers `Permission denied (publickey,password)`;
+* a successful hop is recorded as `relay_apply_via:<relay>` = `tailnet-jump|<endpoint>`
+  and rendered on `/admin/exit-nodes`, so both ends of the path are visible.
+
+Diagnosing the underlying condition (a relay the portal cannot reach while it is
+perfectly healthy) on the relay itself:
+
+```console
+# on the relay: which DERP region is it homed to, and is that region reachable from the portal?
+$ tailscale status --json | jq '.Self.Relay'
+"hel"
+# on the portal host: the region's servers must answer, or every packet to this relay goes nowhere
+$ for h in derp28b.tailscale.com derp28c.tailscale.com; do nc -z -w5 "$h" 443; done
+```
+
+`tailscale debug force-prefer-derp <region>` + `tailscale debug break-derp-conns` moves
+a relay's home region in ~15 s and is the quickest way to confirm the diagnosis — it is
+**not persistent**, so treat it as a test, not a fix, and see `docs/derp.md` for making
+a region both sides can reach the durable answer.
 
 ---
 

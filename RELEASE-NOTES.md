@@ -12,6 +12,67 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.101 — a relay the portal cannot reach is still manageable, and two quiet fallbacks stop lying (B352.1 + B352.2 + B353)
+
+**Date:** 2026-10-06 · **Base:** `v1.5.100` → this tag · **Compatibility:** no schema change, no
+migration, no new setting. Behaviour only; safe to apply and safe to ignore.
+
+### The report
+
+> «Проверь доступность правил для пользователя michail от basic … надо восстановить и также возникла
+> проблема что при попытке применить exit node напрямую не идет доступ у basic может и у остальных
+> устройств windows также» → … → «проверь еще раз доступ к emilia по tailscale»
+
+The first half was B352 (shipped in v1.5.100). This release closes the follow-ups it exposed and the
+question that ended the session: **why the portal could not reach a healthy relay at all.**
+
+### B353 — the tailnet path is not automatically a path
+
+*Measured:* the container pinged `karolina` (129 ms) and `sharlotta` (130 ms) while `emilia` timed out;
+emilia's own view of the portal was `skygate-host online=true relay=waw cur='' lastHS=never` — **no
+handshake had ever completed** — and the container's route to it went through DERP region 28
+(Helsinki), whose three servers time out from **both** the VM host and the container while emilia
+reaches them in 13.4 ms. A peer relay reached emilia without trouble (`nc -z 100.64.0.3 22` → OPEN).
+
+*A/B, everything else held constant:* emilia homed at `waw` → `pong … via DERP(waw) in 85ms`, TCP22
+OPEN, ssh OK; homed at `hel` → ping timeout, TCP22 blocked, ssh timeout (`tailscale debug
+force-prefer-derp 22` + `break-derp-conns` flips it in 15 s, and it is **not** persistent).
+
+*Fix:* the SSH transport ladder gains a **last rung** — candidates that reach a relay THROUGH a peer
+relay, appended after every direct candidate so a healthy relay never pays for a hop. The hop is
+another `exit_servers` row, probed **itself** before use, never the target nor one of its addresses,
+ordered proven-first (a recorded successful apply), capped at three per target with the truncation
+logged, and refused unless it passes `IsSafeSSHTarget`.
+
+*Honest failure, learned by running it:* the first implementation emitted `ssh -J <hop>`, and the unit
+tests pinned that argv happily. On the real deployment it answered `root@100.64.0.2: Permission denied
+(publickey,password)` — OpenSSH builds the implicit jump connection as
+`ssh -l <user> -W '[%h]:%p' <hop>` and gives it **neither** the identity nor the host-key policy, so
+`-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no` on the outer command does not reach it
+either. The hop is now spelled out as
+`-o ProxyCommand=ssh -W '[%h]:%p' -i <key> … -p <port> -- <hop>`, verified live (same deployment,
+returns the target's hostname), and a key path that cannot be quoted into that shell string
+**refuses** the jump with a named reason instead of quietly applying over the direct connection the
+caller asked to avoid. The transport used is logged and stored
+(`relay_apply_via:<relay>` = `tailnet-jump|<endpoint>`), so `/admin/exit-nodes` shows both ends.
+
+### B352.1 — "an aged-out failure" is not "never applied"
+
+`healthyExitRelaysForAssignment` partitions the relays into **proven** (a recorded successful apply),
+**stale-failure** (a failure that has aged out of the 15-minute window) and **never-applied**, and the
+exclusion log now names which one it is. Before, every excluded relay was reported as *"skygate has
+never applied routes to it"* — including a relay that had been fine for days and hit one timeout, so
+the journal sent the reader looking for a configuration mistake that did not exist.
+
+### B352.2 — "Use Tailscale IP" no longer echoes the target it exists to replace
+
+The per-row button on `/admin/exit-nodes` wrote back the operator's current `ssh_target` (live:
+`root@213.176.92.205`) instead of the relay's Tailscale address — a no-op dressed as a repair.
+`db.TailscaleSSHTargetFor` now builds `root@<live Tailscale IP>[:<ssh_port>]` from headscale, ignoring
+the stored target, which is the whole point of the button on a host whose public route is blocked.
+
+---
+
 ## v1.5.100 — the admin counters come from the database, the auto-updater writes the owner, and the ownership decision converges (B351 + B352)
 
 **Date:** 2026-10-05 · **Base:** `v1.5.99` → this tag · **Compatibility:** no schema change and no
