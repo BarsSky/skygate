@@ -202,6 +202,25 @@ else
   skip "E1-E4: no Go toolchain — the B353 test contracts were not run"
 fi
 
+# --- F: the check itself cannot be silently dropped ----------------------------
+# AGENTS trap #11: `test -f` proves nothing about what was committed, and a check
+# nobody runs is the same as no check.
+if git ls-files --error-unmatch scripts/check_b353_transport_jump_fallback.sh >/dev/null 2>&1; then
+  ok "F1: this script is tracked by git (a new script can be eaten silently)"
+else
+  bad "F1: scripts/check_b353_transport_jump_fallback.sh is NOT tracked by git"
+fi
+if grep -q 'check_b353_transport_jump_fallback.sh' scripts/verify_pre_deploy.sh; then
+  ok "F2: verify_pre_deploy.sh registers B353"
+else
+  bad "F2: the gate does not run this contract"
+fi
+if grep -q '^- \*\*B353\*\*' AGENTS.md; then
+  ok "F3: AGENTS.md's block index carries B353"
+else
+  bad "F3: the block index does not know B353"
+fi
+
 hdr "B353 summary"
 printf 'PASS=%d FAIL=%d SKIP=%d\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1
