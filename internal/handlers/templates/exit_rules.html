@@ -11,7 +11,7 @@
 .help-card h4 i { font-size: 12px; }
 .help-card p, .help-card li { font-size: 12px; line-height: 1.5; color: var(--text-muted); margin: 0 0 6px 0; }
 .help-card ul, .help-card ol { padding-left: 16px; margin: 0; }
-.help-card code { font-size: 11px; background: var(--bg-hover); padding: 1px 4px; border-radius: 3px; word-break: break-all; }
+.help-card code { font-size: 11px; background: var(--bg-hover); padding: 1px 4px; border-radius: 3px; overflow-wrap: break-word; }
 .help-card .tag { font-size: 11px; }
 .device-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .device-row .os-badge { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--bg-hover); color: var(--text-muted); }
@@ -19,11 +19,11 @@
 
 .exit-main .card .table-wrap { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
 .exit-main .card table { table-layout: auto; width: 100%; }
-.exit-main .card table code { word-break: break-all; font-size: 11px; }
+.exit-main .card table code { overflow-wrap: break-word; font-size: 11px; }
 .exit-main .card table td { vertical-align: top; }
 .exit-main .card table th, .exit-main .card table td { white-space: normal; }
 .exit-main .card table th { white-space: nowrap; }
-.exit-main .card table td.col-target { max-width: 200px; word-break: break-all; }
+.exit-main .card table td.col-target { max-width: 200px; overflow-wrap: break-word; }
 .exit-main .card table td.col-target code { display: inline-block; max-width: 100%; }
 .exit-main .card table td.col-action { white-space: nowrap; }
 .exit-main .card table td.col-delete { white-space: nowrap; text-align: right; }

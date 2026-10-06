@@ -206,7 +206,7 @@
   </p>
   <div style="margin-top:10px;display:grid;grid-template-columns:120px 1fr;gap:6px 12px;font-size:13px">
     <span style="color:var(--text-muted)">{{t "user_subnet.preauth_key"}}</span>
-    <code style="user-select:all;font-size:12px;background:var(--bg-elev);padding:4px 6px;border-radius:3px;word-break:break-all">{{.FlashPreauth.Key}}</code>
+    <code style="user-select:all;font-size:12px;background:var(--bg-elev);padding:4px 6px;border-radius:3px;overflow-wrap:break-word">{{.FlashPreauth.Key}}</code>
     <span style="color:var(--text-muted)">{{t "user_subnet.preauth_hostname"}}</span>
     <code style="font-size:12px">{{.FlashPreauth.Hostname}}</code>
     <span style="color:var(--text-muted)">{{t "user_subnet.preauth_routes"}}</span>

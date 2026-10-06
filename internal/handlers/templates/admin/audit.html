@@ -99,7 +99,7 @@
             <span style="color:var(--text-muted)">—</span>
           {{end}}
         </td>
-        <td style="color:var(--text-muted);font-family:monospace;font-size:12px;word-break:break-all">
+        <td style="color:var(--text-muted);font-family:monospace;font-size:12px;overflow-wrap:break-word">
           {{.Detail}}
           {{if .Result}}<span style="color:{{if eq .Result "error"}}var(--error){{else}}var(--text-muted){{end}}"> [{{.Result}}]</span>{{end}}
           {{if .ErrorMessage}}<br><span style="color:var(--error)">{{.ErrorMessage}}</span>{{end}}

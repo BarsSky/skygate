@@ -34,8 +34,8 @@
       <table class="table table-sm mb-0">
         <tbody>
           <tr><th style="width:200px">{{t "db.migrate_operator"}}</th><td><code>{{.Data.Run.Operator}}</code></td></tr>
-          <tr><th>{{t "db.migrate_source"}}</th><td><code style="word-break:break-all">{{.Data.Run.SourceDSN}}</code></td></tr>
-          <tr><th>{{t "db.migrate_target"}}</th><td><code style="word-break:break-all">{{.Data.Run.TargetDSN}}</code></td></tr>
+          <tr><th>{{t "db.migrate_source"}}</th><td><code style="overflow-wrap:break-word">{{.Data.Run.SourceDSN}}</code></td></tr>
+          <tr><th>{{t "db.migrate_target"}}</th><td><code style="overflow-wrap:break-word">{{.Data.Run.TargetDSN}}</code></td></tr>
           {{if .Data.Run.Error}}
           <tr><th>{{t "db.migrate_error"}}</th><td><pre class="text-danger mb-0" style="white-space:pre-wrap">{{.Data.Run.Error}}</pre></td></tr>
           {{end}}

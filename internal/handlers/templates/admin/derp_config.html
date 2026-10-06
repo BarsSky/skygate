@@ -39,7 +39,7 @@
       <tbody>
         {{range .TestResults}}
         <tr>
-          <td style="padding:6px;font-family:monospace;word-break:break-all">{{.URL}}</td>
+          <td style="padding:6px;font-family:monospace;overflow-wrap:break-word">{{.URL}}</td>
           <td style="padding:6px">
             {{if .OK}}<span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "derp.config_test_ok"}}</span>
             {{else}}<span class="tag tag-error"><i class="fa-solid fa-circle-exclamation"></i> {{.Err}}</span>{{end}}

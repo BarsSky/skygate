@@ -1067,9 +1067,24 @@ footer a:hover{color:var(--accent)}
    Desktop is untouched. */
 @media (max-width:768px){
   .card{overflow-x:auto}
+  /* B357: 62 of 89 tables have no .table-wrap, and body{overflow-x:hidden} (themes.css:209)
+     CLIPS their overflow instead of scrolling it — a wide table simply lost its right-hand
+     columns on a phone. One rule on the mobile shell gives every bare table a scroller. */
+  .shell{overflow-x:auto}
   th{white-space:normal}
   th,td{padding:8px 8px;font-size:13px}
-  td code,td .mono,td pre,code,.mono,pre{overflow-wrap:anywhere}
+  /* B357 (2026-10-06) — «П о л ь з о в а т е л ь»: `overflow-wrap:anywhere` REDUCES the
+     intrinsic min-content width of a cell to ONE character, so under the auto table layout
+     of `table{width:100%}` (:460) the column collapses to ~29px and every value prints one
+     glyph per line — measured on /admin/devices at 390px: `100.64.0.3` filled 10 lines at
+     1.00 chars/line. `break-word` does NOT shrink min-content: the cell keeps its longest
+     token, the table exceeds the card, and the scroller (`.card{overflow-x:auto}` above)
+     does the work instead of destroying the text. The same reasoning applies to every
+     `word-break:break-all` a template set inline — those are gone (B357). */
+  td code,td .mono,td pre,code,.mono,pre{overflow-wrap:break-word}
+  /* Addresses and timestamps are what the operator reads first, and they have no
+     meaningful break opportunity: keep them on one line and let the table scroll. */
+  td .mono,td code{white-space:nowrap}
   select,input,textarea{max-width:100%}
   .btn-row,.title-row{flex-wrap:wrap}
   /* The create-user form is a hard 3-column grid with no mobile override. */

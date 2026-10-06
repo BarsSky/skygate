@@ -37,7 +37,7 @@
           {{end}}
           {{if .Data.IsSQLite}}
           <tr><th>{{t "db.backend_file"}}</th><td>
-            {{if .Data.CurrentSQLitePath}}<code style="word-break:break-all">{{.Data.CurrentSQLitePath}}</code>{{else}}<span class="text-muted">:memory:</span>{{end}}
+            {{if .Data.CurrentSQLitePath}}<code style="overflow-wrap:break-word">{{.Data.CurrentSQLitePath}}</code>{{else}}<span class="text-muted">:memory:</span>{{end}}
           </td></tr>
           <tr><th>{{t "db.backend_size"}}</th><td><code>{{.Data.CurrentSQLiteSize}}</code></td></tr>
           {{end}}
@@ -66,7 +66,7 @@
           <tr><th style="width:200px">{{t "db.dsn_source"}}</th><td><code>{{.Data.CurrentSource}}</code></td></tr>
           {{if .Data.IsSQLite}}
           <tr><th>{{t "db.backend_file"}}</th><td>
-            {{if .Data.CurrentSQLitePath}}<code style="word-break:break-all">{{.Data.CurrentSQLitePath}}</code>{{else}}<span class="text-muted">:memory:</span>{{end}}
+            {{if .Data.CurrentSQLitePath}}<code style="overflow-wrap:break-word">{{.Data.CurrentSQLitePath}}</code>{{else}}<span class="text-muted">:memory:</span>{{end}}
           </td></tr>
           {{else}}
           <tr><th>{{t "db.host"}}</th><td>
@@ -82,7 +82,7 @@
             {{if .Data.CurrentSSLMode}}<code>{{.Data.CurrentSSLMode}}</code>{{else}}<span class="text-muted">—</span>{{end}}
           </td></tr>
           {{end}}
-          <tr><th>{{t "db.full_dsn"}}</th><td><code style="word-break:break-all;font-size:0.85em">{{.Data.CurrentDSN}}</code></td></tr>
+          <tr><th>{{t "db.full_dsn"}}</th><td><code style="overflow-wrap:break-word;font-size:0.85em">{{.Data.CurrentDSN}}</code></td></tr>
         </tbody>
       </table>
       <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.current_dsn_help"}}</p>
@@ -106,8 +106,8 @@
             {{if .Data.DesiredReplicas}}
             <tr><th>{{t "db.replicas"}}</th><td>{{range .Data.DesiredReplicas}}<code class="me-1">{{.}}</code>{{end}}</td></tr>
             {{end}}
-            <tr><th>{{t "db.dsn_template"}}</th><td><code style="word-break:break-all">{{.Data.DesiredTemplate}}</code></td></tr>
-            <tr><th>{{t "db.full_dsn"}}</th><td><code style="word-break:break-all;font-size:0.85em">{{.Data.DesiredCurrentDSN}}</code></td></tr>
+            <tr><th>{{t "db.dsn_template"}}</th><td><code style="overflow-wrap:break-word">{{.Data.DesiredTemplate}}</code></td></tr>
+            <tr><th>{{t "db.full_dsn"}}</th><td><code style="overflow-wrap:break-word;font-size:0.85em">{{.Data.DesiredCurrentDSN}}</code></td></tr>
             <tr><th>{{t "db.updated_at"}}</th><td>{{.Data.DesiredUpdatedAt}} ({{t "db.by"}}: <code>{{.Data.DesiredUpdatedBy}}</code>)</td></tr>
           </tbody>
         </table>
@@ -431,8 +431,8 @@
               <span class="badge bg-{{if eq .Status "success"}}success{{else if eq .Status "failed"}}danger{{else if eq .Status "running"}}warning{{else}}secondary{{end}}">{{.Status}}</span>
             </td>
             <td><code>{{.Operator}}</code></td>
-            <td><code style="word-break:break-all;font-size:0.85em">{{.SourceDSN}}</code></td>
-            <td><code style="word-break:break-all;font-size:0.85em">{{.TargetDSN}}</code></td>
+            <td><code style="overflow-wrap:break-word;font-size:0.85em">{{.SourceDSN}}</code></td>
+            <td><code style="overflow-wrap:break-word;font-size:0.85em">{{.TargetDSN}}</code></td>
             <td><small>{{.StartedAt.Format "2006-01-02 15:04:05"}}</small></td>
           </tr>
           {{end}}

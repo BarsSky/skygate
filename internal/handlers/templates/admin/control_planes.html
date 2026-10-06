@@ -45,7 +45,7 @@
     <tbody>
       {{range .Planes}}
       <tr>
-        <td style="padding:6px;font-family:monospace;word-break:break-all">
+        <td style="padding:6px;font-family:monospace;overflow-wrap:break-word">
           {{.URL}}
           {{if not .URL}}{{t "control_planes.global_default"}}{{end}}
         </td>
@@ -83,7 +83,7 @@
       {{range .Rows}}
       <tr>
         <td style="padding:6px">{{.Username}}</td>
-        <td style="padding:6px;font-family:monospace;word-break:break-all">
+        <td style="padding:6px;font-family:monospace;overflow-wrap:break-word">
           {{if .HasOverride}}{{.URL}}{{else}}<span style="color:var(--text-muted)">— {{t "control_planes.uses_default"}}</span>{{end}}
         </td>
         <td style="padding:6px">
