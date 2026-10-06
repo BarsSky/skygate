@@ -459,10 +459,19 @@ func DeleteNodeOwnerByNodeIDOnly(d dbExec, nodeID string) (int64, error) {
 // the caller (PostAdminNodeTag) is fine to ignore this; the
 // bot-side SyncTagsFromHeadscale will pick up the new tag on
 // the next read.
+// UpdateNodeOwnerTag rewrites the tag of ONE node's ownership row, keyed on node_id.
+// Used by the ADMIN tag action, which acts on the row the operator is looking at.
+//
+// A DISCOVERY pass must not use this: it sees every node on every pass, and a row may
+// belong to a different portal user (an admin pin, or a device attributed elsewhere), so
+// rewriting by node_id alone would let a background pass overwrite somebody else's
+// ownership. Backfill uses UpdateNodeOwnerTagForUser instead.
+//
+// Returns ErrNodeOwnerNotFound if no row exists for nodeID.
 func UpdateNodeOwnerTag(d *sql.DB, nodeID, tag string, taggedByUserID int64) error {
 	res, err := d.Exec(
 		`UPDATE node_owner_map
-		    SET tag = $1, tagged_by_user_id = $2, tagged_at = strftime('%s','now')
+		    SET tag = $1, tagged_by_user_id = $2, tagged_at = `+NowUnixSQL()+`
 		  WHERE node_id = $3`,
 		tag, taggedByUserID, nodeID,
 	)
@@ -484,6 +493,37 @@ func UpdateNodeOwnerTag(d *sql.DB, nodeID, tag string, taggedByUserID int64) err
 // other columns (username, headscale_user_id, tagged_by_user_id)
 // are preserved — only hostname + tag + tagged_at are touched.
 //
+// UpdateNodeOwnerTagForUser is the OWNERSHIP-GUARDED variant of UpdateNodeOwnerTag, for
+// the attribution pass (B355). It records the per-device tag a discovery pass has just
+// applied to headscale, but only while the row still belongs to `username`.
+//
+// WHY THE GUARD. Backfill walks every node on every pass. Updating by node_id alone
+// would let that background pass rewrite a row that belongs to somebody else — an admin
+// pin (tag:public) or a device attributed to another portal user — which is precisely
+// what the INSERT-OR-IGNORE write it follows deliberately avoids.
+//
+// A zero match returns ErrNodeOwnerNotFound: either the node has no row, or the row is
+// not ours. Both mean "nothing to record", and the caller treats it that way.
+func UpdateNodeOwnerTagForUser(d *sql.DB, nodeID, username, tag string, taggedByUserID int64) error {
+	res, err := d.Exec(
+		`UPDATE node_owner_map
+		    SET tag = $1, tagged_by_user_id = $2, tagged_at = `+NowUnixSQL()+`
+		  WHERE node_id = $3 AND username = $4`,
+		tag, taggedByUserID, nodeID, username,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNodeOwnerNotFound
+	}
+	return nil
+}
+
 // 2026-08-09: v0.33.1.20 — the backfill used to InsertIgnore
 // (preserving stale rows forever) and only AddTag'd the new
 // tag in headscale. That left two problems for the

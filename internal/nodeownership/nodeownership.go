@@ -23,11 +23,11 @@
 //
 // The migration is mechanical:
 //
-//   handlers.BackfillNodeOwnershipFn (used by feature/my
-//   via the Service.BackfillNodeOwnership field) is now a
-//   thin wrapper that calls nodeownership.Backfill(d, hs,
-//   nodes, userID, username). The function signature is
-//   unchanged from the *App method.
+//	handlers.BackfillNodeOwnershipFn (used by feature/my
+//	via the Service.BackfillNodeOwnership field) is now a
+//	thin wrapper that calls nodeownership.Backfill(d, hs,
+//	nodes, userID, username). The function signature is
+//	unchanged from the *App method.
 package nodeownership
 
 import (
@@ -136,25 +136,25 @@ func matchOIDCStrategy(n headscale.NodeView, portalUsername string) (matchedTag 
 //
 // Two strategies, applied in order, first match wins:
 //
-//   A. Strict join on n.PreAuthKeyID == preauth_keys.headscale_preauth_id.
-//      Works for keys whose headscale_preauth_id was captured at issue
-//      time. This is the original path from v0.3.9 - fast and accurate,
-//      but vulnerable to API response shape changes (a preauth key issued
-//      when the response field name shifted will not have a stored
-//      headscale_preauth_id, and the node will not match here).
+//	A. Strict join on n.PreAuthKeyID == preauth_keys.headscale_preauth_id.
+//	   Works for keys whose headscale_preauth_id was captured at issue
+//	   time. This is the original path from v0.3.9 - fast and accurate,
+//	   but vulnerable to API response shape changes (a preauth key issued
+//	   when the response field name shifted will not have a stored
+//	   headscale_preauth_id, and the node will not match here).
 //
-//   C. Temporal fallback. If (A) failed AND the node has a non-empty
-//      CreatedAt AND the user has at least one preauth key created
-//      within 1 hour BEFORE the node's CreatedAt, we attribute the node
-//      to that key's owner. The 1-hour window is a safety margin: a
-//      user can't physically generate a preauth key, ship it to a remote
-//      device, and have that device register with headscale faster
-//      than that. If a key was created within the window, it's
-//      effectively the only plausible cause. This recovers ownership
-//      for keys whose headscale_preauth_id was never captured (the
-//      user1 case: 5/7 keys have NULL headscale_preauth_id because
-//      the API stopped populating that field on the day they were
-//      generated).
+//	C. Temporal fallback. If (A) failed AND the node has a non-empty
+//	   CreatedAt AND the user has at least one preauth key created
+//	   within 1 hour BEFORE the node's CreatedAt, we attribute the node
+//	   to that key's owner. The 1-hour window is a safety margin: a
+//	   user can't physically generate a preauth key, ship it to a remote
+//	   device, and have that device register with headscale faster
+//	   than that. If a key was created within the window, it's
+//	   effectively the only plausible cause. This recovers ownership
+//	   for keys whose headscale_preauth_id was never captured (the
+//	   user1 case: 5/7 keys have NULL headscale_preauth_id because
+//	   the API stopped populating that field on the day they were
+//	   generated).
 //
 // Safety: BOTH strategies skip nodes whose current headscale user
 // belongs to a *different* portal user. A node that headscale has
@@ -165,14 +165,15 @@ func matchOIDCStrategy(n headscale.NodeView, portalUsername string) (matchedTag 
 // OR for nodes that the user plausibly owns via temporal correlation.
 //
 // Parameters:
-//   db             — open *sql.DB
-//   hs             — headscale client (for AddTag calls). May be nil
-//                    (the function is a no-op for the AddTag side
-//                    effects; the DB writes still happen).
-//   nodes          — live headscale nodes (ListAllNodes result).
-//   portalUserID   — the user_id from portal_users.
-//   portalUsername — the username from portal_users (used to
-//                    match snapshot rows + build dev tags).
+//
+//	db             — open *sql.DB
+//	hs             — headscale client (for AddTag calls). May be nil
+//	                 (the function is a no-op for the AddTag side
+//	                 effects; the DB writes still happen).
+//	nodes          — live headscale nodes (ListAllNodes result).
+//	portalUserID   — the user_id from portal_users.
+//	portalUsername — the username from portal_users (used to
+//	                 match snapshot rows + build dev tags).
 //
 // Pre-D2 callers (still working via the *App wrapper
 // `BackfillNodeOwnershipFn` in internal/handlers/handlers_export.go):
@@ -759,6 +760,39 @@ func Backfill(
 								Tag:      devTag,
 								Username: portalUsername,
 							}
+						}
+						// B355 (2026-10-06): record the PER-DEVICE tag in the ownership row,
+						// not only in headscale.
+						//
+						// The row used to keep the attribution STRATEGY's scope tag —
+						// `tag:private` for the OIDC (E) and preauth (A/C) strategies — while
+						// headscale was given `tag:dev-<user>-<host>` three lines above. Every
+						// reader of the row then believed the device carried no per-device tag,
+						// and the readers are exactly the ones that matter: the mesh grant
+						// source (`internal/db/device_owner_b316.go` refuses anything that does
+						// not parse as `tag:dev-<user>-<host>`), the per-device ACL/rules and
+						// the «ожидание» state on the page.
+						//
+						// Live (2026-10-06, a device that logged in through OIDC):
+						//
+						//	19:39:04 DBG backfill node=150 name=s24-fe--ned matchedTag=tag:private api_tags=[] hasPrivate=false
+						//	19:39:05 DBG backfill AddTag called for node=150 (ensure tag:private)
+						//	19:42:56 [devices] s24-fe--ned has no device-to-device ACL entry:
+						//	         no per-device tag is recorded for it, so the mesh has nothing to grant
+						//
+						// — while the row said tag:private and headscale carried BOTH tags. The
+						// operator had to transfer the device by hand, which is what finally
+						// wrote the per-device tag into the row. The row is now the truth of
+						// what the device carries, so nothing downstream has to guess.
+						//
+						// Additive: the scope tag `tag:private` stays on the node in headscale
+						// (AddTag is a union), and the ACL still emits its tagOwners entry.
+						// Scoped to THIS portal user: the row may belong to somebody else (an
+						// admin pin, or a device attributed elsewhere) and a discovery pass
+						// must never rewrite another user's ownership.
+						if err := dbpkg.UpdateNodeOwnerTagForUser(db.Current(), n.ID, portalUsername, devTag, portalUserID); err != nil &&
+							!errors.Is(err, dbpkg.ErrNodeOwnerNotFound) {
+							log.Printf("warn: record per-device tag %q for node %s: %v", devTag, n.ID, err)
 						}
 					}
 				}

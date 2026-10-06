@@ -129,7 +129,11 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # bootstrap) and rule 3 holds every TOUCHED file to gofmt, so the 14 whitespace lines
 # of struct-tag alignment were paid with the change. Same pattern as queries.go and
 # exit_servers.go above.
-FROZEN=263
+# 2026-10-06 (third payment of the day): 263 → 262.
+# internal/nodeownership/nodeownership.go was frozen as drifted; B355 touched it (the
+# per-device tag must reach the ownership row) and rule 3 holds every TOUCHED file to
+# gofmt, so its comment re-indentation was paid with the change.
+FROZEN=262
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

@@ -250,7 +250,6 @@ internal/module/tailscale/tailscale.go
 internal/module/tailscale/tailscale_test.go
 internal/monitorinbox/monitorinbox.go
 internal/nodeownership/isinfra_b251_test.go
-internal/nodeownership/nodeownership.go
 internal/notifications/notifications.go
 internal/notifications/notifications_test.go
 internal/oidc/authorize.go
