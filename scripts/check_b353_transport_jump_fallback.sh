@@ -139,20 +139,29 @@ if grep -q "$ARGV_MARK" "$ROUTES"; then
 else
   bad "C1: buildSetAdvertisedRoutesArgv is missing — the argv cannot be tested without spawning ssh"
 fi
-if grep -q '"ProxyCommand=none"' "$ROUTES" && grep -q '"-J"' "$ROUTES"; then
-  ok "C2: -J for a hop, ProxyCommand=none for a direct connection (B266 + B353)"
+if grep -q '"ProxyCommand=none"' "$ROUTES" && grep -q '"ProxyCommand="+jumpProxyCommand(keyPath, jump)' "$ROUTES"; then
+  ok "C2: ProxyCommand=none for a direct connection, an explicit ssh -W tunnel for a hop"
 else
   bad "C2: the argv lost one of the two forms"
 fi
-if grep -q 'Cannot specify -J with ProxyCommand' "$ROUTES"; then
-  ok "C3: the reason the two options are mutually exclusive is recorded where the choice is made"
+# The obvious `-J` form was TRIED and does not work from the container: OpenSSH builds
+# the implicit jump connection as `ssh -l <user> -W '[%h]:%p' <hop>` with neither the
+# identity nor the host-key policy, so it answers "Permission denied
+# (publickey,password)". A future editor must not "simplify" it back to -J.
+if grep -qF 'Permission denied (publickey,password)' "$ROUTES" && grep -qF "W '[%h]:%p'" "$ROUTES"; then
+  ok "C3: the measured reason -J cannot be used here is recorded next to the explicit form"
 else
-  bad "C3: the OpenSSH conflict is undocumented — the next editor will re-add both"
+  bad "C3: the file does not record why the hop is an explicit ProxyCommand"
+fi
+if grep -q 'jumpProxyCommandAllowed' "$ROUTES" && grep -q 'refusing the ssh jump hop' "$ROUTES"; then
+  ok "C4: a key path that cannot be quoted into the ProxyCommand refuses the jump instead of silently going direct"
+else
+  bad "C4: an unquotable key path would silently drop the hop (or break the shell string)"
 fi
 if grep -q 'refusing unsafe ssh jump hop' "$ROUTES" && grep -q 'IsSafeSSHTarget(jumpTarget)' "$ROUTES"; then
-  ok "C4: the hop passes the same shape check as ssh_target (B266 class)"
+  ok "C5: the hop passes the same shape check as ssh_target (B266 class)"
 else
-  bad "C4: the hop reaches the argv unvalidated"
+  bad "C5: the hop reaches the argv unvalidated"
 fi
 
 # --- D: the B300 property survives --------------------------------------------

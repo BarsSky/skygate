@@ -29,8 +29,8 @@
 // # WHAT THIS ADDS
 //
 // A LAST RUNG on the B310 ladder: for a relay whose tailnet address is unreachable,
-// candidates that reach it THROUGH a peer relay (`ssh -J <peer>`). They are appended
-// after every direct path, so a healthy relay never pays for a hop, and the hop is:
+// candidates that reach it THROUGH a peer relay. They are appended after every direct
+// path, so a healthy relay never pays for a hop, and the hop is:
 //
 //   - another row in `exit_servers` (the table where relays are configured);
 //   - provably reachable right now — the hop itself is TCP-probed before use, and
@@ -40,9 +40,11 @@
 //     "this relay answers the portal" is the only evidence available from inside the
 //     container.
 //
-// The hop needs no key of its own: `ssh -J` tunnels TCP, so the SAME identity
-// authenticates both legs — which is why this works on the deployment that motivated
-// it (every relay authorises the portal's management key).
+// The hop carries the SAME management identity and the SAME host-key policy as the
+// outer connection: skygate spells it out as an explicit `ssh -W` ProxyCommand (see
+// headscale.jumpProxyCommand). OpenSSH's implicit `-J` connection gets neither —
+// measured live on this deployment, it answers `Permission denied
+// (publickey,password)`, so the obvious form is a second way to fail.
 //
 // Deliberately NOT changed: which relay owns which prefix (B274/B275), the direct
 // ladder's order and wording, and the local transport.
@@ -85,11 +87,12 @@ type jumpHopRow struct {
 	Proven bool
 }
 
-// jumpHop is one usable `ssh -J` hop.
+// jumpHop is one usable peer-relay hop.
 type jumpHop struct {
 	// Hostname is the relay's own name, for the log and the failure text.
 	Hostname string
-	// Target is the `[user@]host[:port]` handed to `ssh -J`.
+	// Target is the `[user@]host[:port]` the hop connection must dial (it becomes
+	// the `ssh -W` ProxyCommand's destination, with its own port).
 	Target string
 	// Why names the evidence behind the choice.
 	Why string

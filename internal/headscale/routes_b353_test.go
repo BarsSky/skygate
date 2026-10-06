@@ -1,13 +1,16 @@
 // routes_b353_test.go — B353 (2026-10-06).
 //
-// The transport may now reach a relay THROUGH a peer relay (`ssh -J`), because the
-// portal can be on the tailnet and still have no path to a healthy relay (live:
-// emilia homed on DERP region 28, which this site's network cannot reach, while the
-// peer relay karolina answered it fine — see relay_transport_jump_b353.go).
+// The transport may now reach a relay THROUGH a peer relay, because the portal can
+// be on the tailnet and still have no path to a healthy relay (live: emilia homed on
+// DERP region 28, which this site's network cannot reach, while the peer relay
+// karolina answered it fine — see relay_transport_jump_b353.go).
 //
-// These tests pin the argv itself: one place composes it, the direct form keeps
-// every B266 hardening property, and the jump form cannot be injected through the
-// hop value. They do NOT run ssh.
+// These tests pin the argv itself. They do NOT run ssh — but the argv they pin was
+// RUN before it was pinned, because the obvious form is a trap: `ssh -J <hop>` looks
+// right and does not work from the container (OpenSSH's implicit jump connection gets
+// neither the identity nor the host-key policy), so the hop is spelled out as an
+// explicit `ssh -W` ProxyCommand. The measured live commands are quoted in
+// jumpProxyCommand's comment.
 package headscale
 
 import (
@@ -25,43 +28,57 @@ func TestB353_DirectArgvKeepsTheHardening(t *testing.T) {
 			t.Errorf("direct argv lost %q: %v", want, args)
 		}
 	}
-	if strings.Contains(joined, "-J") {
-		t.Errorf("a direct connection must not carry -J: %v", args)
+	if strings.Contains(joined, "-W '[%h]:%p'") {
+		t.Errorf("a direct connection must not tunnel through anything: %v", args)
 	}
 	if args[len(args)-3] != "--" {
 		t.Errorf("`--` must still terminate option parsing before the host: %v", args)
 	}
 }
 
-// TestB353_JumpArgvUsesDashJAndNotProxyCommand: OpenSSH refuses both at once —
-// measured on OpenSSH 10.3p1: `Cannot specify -J with ProxyCommand`. Emitting both
-// would turn the new fallback into a guaranteed failure, which is worse than the
-// timeout it is meant to fix.
-func TestB353_JumpArgvUsesDashJAndNotProxyCommand(t *testing.T) {
+// TestB353_JumpArgvSpellsOutTheHop: the hop connection must carry the SAME identity
+// and host-key policy as the outer one, or it answers
+// "Permission denied (publickey,password)" (measured live, OpenSSH 10.3p1) and the
+// fallback becomes a second way to fail.
+func TestB353_JumpArgvSpellsOutTheHop(t *testing.T) {
 	args := buildSetAdvertisedRoutesArgv("/k", "root@100.64.0.3", "22", "tailscale set --y", "root@100.64.0.2:18022")
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "-J root@100.64.0.2:18022") {
-		t.Fatalf("the hop must reach ssh as -J: %v", args)
+	if !strings.Contains(joined, "-o ProxyCommand=ssh -W '[%h]:%p' -i /k") {
+		t.Fatalf("the hop must be an explicit ssh -W ProxyCommand carrying the identity: %v", args)
 	}
-	if strings.Contains(joined, "ProxyCommand") {
-		t.Fatalf("ssh refuses -J together with ProxyCommand: %v", args)
+	if !strings.Contains(joined, "-p 18022 -- root@100.64.0.2") {
+		t.Fatalf("the hop must carry its OWN port and end after `--`: %v", args)
 	}
-	if !strings.Contains(joined, "-o IdentitiesOnly=yes") {
-		t.Errorf("the jump form must keep identity pinning: %v", args)
+	if strings.Contains(joined, "ProxyCommand=none") {
+		t.Fatalf("a jump argv must not also disable the proxy command: %v", args)
 	}
-	if args[len(args)-3] != "--" || args[len(args)-2] != "root@100.64.0.3" {
-		t.Errorf("the target must stay after `--`: %v", args)
+	if strings.Count(joined, "-i /k") != 2 {
+		t.Fatalf("both legs must use the management identity: %v", args)
 	}
-	// The hop is a value, never an option: it sits AFTER -J, so `--` still protects
-	// the host, and the caller validates the value before this point.
-	i := 0
-	for ; i < len(args); i++ {
-		if args[i] == "-J" {
-			break
+	if strings.Count(joined, "-o IdentitiesOnly=yes") != 2 {
+		t.Fatalf("both legs must pin the identity: %v", args)
+	}
+	if strings.Count(joined, "StrictHostKeyChecking=accept-new") != 2 {
+		t.Fatalf("both legs must accept a new host key (an implicit -J hop does not inherit this): %v", args)
+	}
+	if !strings.HasSuffix(joined, "-o IdentitiesOnly=yes -p 22 -- root@100.64.0.3 tailscale set --y") {
+		t.Fatalf("the target must stay after `--` with its own port: %v", args)
+	}
+}
+
+// TestB353_HopWithoutAPortUsesSSHDefault: a relay reached on 22 must not gain a
+// stray `-p ""`.
+func TestB353_HopWithoutAPortUsesSSHDefault(t *testing.T) {
+	args := buildSetAdvertisedRoutesArgv("/k", "root@100.64.0.3", "", "cmd", "root@100.64.0.4")
+	proxy := ""
+	for i, a := range args {
+		if strings.HasPrefix(a, "ProxyCommand=") {
+			proxy = a
+			_ = i
 		}
 	}
-	if i+1 >= len(args) || args[i+1] != "root@100.64.0.2:18022" {
-		t.Fatalf("-J must be followed by the hop value: %v", args)
+	if !strings.HasSuffix(proxy, "-- root@100.64.0.4") || strings.Contains(proxy, "-p ") {
+		t.Fatalf("a hop on the default port must not carry -p: %q", proxy)
 	}
 }
 
@@ -84,11 +101,30 @@ func TestB353_UnsafeJumpHopIsRefusedBeforeSSH(t *testing.T) {
 	}
 }
 
-// TestB353_JumpFailureNamesTheHop: "Operation timed out" straight from the portal and
-// the same message through a peer relay have different fixes, so the error must say
-// which path was attempted.
-func TestB353_JumpFailureNamesTheHop(t *testing.T) {
-	// ssh is not run: the key preflight fails first, and that is the error we read.
+// TestB353_UnquotableKeyPathRefusesTheJump: the ProxyCommand is a SHELL string that
+// ssh runs with `sh -c`, and the key path goes inside it. A path that would need
+// quoting is refused with a named reason rather than silently turning the jump into
+// a direct connection the caller asked to avoid.
+func TestB353_UnquotableKeyPathRefusesTheJump(t *testing.T) {
+	if jumpProxyCommandAllowed("/ssh-sync/skygate_sync") != true {
+		t.Fatalf("the deployment's own key path must be allowed")
+	}
+	for _, bad := range []string{"", "   ", "/keys/my key", "/keys/$(id)", "/keys/a;rm -rf /", "/keys/`id`", "/keys/a\"b"} {
+		if jumpProxyCommandAllowed(bad) {
+			t.Errorf("key path %q must not be quoted into a ProxyCommand", bad)
+		}
+	}
+	if got := jumpProxyCommandAllowed("/keys/ok-1_2.3@host"); !got {
+		t.Errorf("an ordinary absolute path must stay allowed, got %v", got)
+	}
+}
+
+// TestB353_JumpFailuresCannotBeSilent: the errors that name a hop are the difference
+// between "the target is down" and "the path to it is", so the hop must appear in
+// what the caller sees.
+func TestB353_JumpFailuresCannotBeSilent(t *testing.T) {
+	// A valid hop with an unusable key: the key preflight runs, and the message must
+	// not pretend a hop carried anything.
 	c := New("http://127.0.0.1:1", "stub-key")
 	_, err := c.SetAdvertisedRoutes("emilia", []string{"0.0.0.0/0"}, -1, "root@100.64.0.3", "/definitely/missing/key", "root@100.64.0.2:18022")
 	if err == nil {
@@ -97,10 +133,9 @@ func TestB353_JumpFailureNamesTheHop(t *testing.T) {
 	if strings.Contains(err.Error(), "through root@100.64.0.2:18022") {
 		t.Fatalf("the key preflight error must not claim a hop was used: %v", err)
 	}
-	// The pure builder is what carries the hop into the message we care about; assert
-	// the wiring rather than spawning ssh.
+	// The hop wiring itself: the argv handed to ssh names the hop.
 	args := buildSetAdvertisedRoutesArgv("/k", "root@100.64.0.3", "", "cmd", "root@100.64.0.2")
-	if !strings.Contains(strings.Join(args, " "), "-J root@100.64.0.2") {
+	if !strings.Contains(strings.Join(args, " "), "-- root@100.64.0.2") {
 		t.Fatalf("hop missing from the argv: %v", args)
 	}
 }

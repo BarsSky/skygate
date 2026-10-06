@@ -386,6 +386,14 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, accep
 		if jumpTarget != "" && !IsSafeSSHTarget(jumpTarget) {
 			return "", fmt.Errorf("SetAdvertisedRoutes(%s): refusing unsafe ssh jump hop %q (expected [user@]host[:port])", nodeHostname, jumpTarget)
 		}
+		// B353: the hop is spelled out as a ProxyCommand (see jumpProxyCommand),
+		// which is a shell string — so the key path that goes into it has to be
+		// quotable. Refuse loudly instead of silently applying over a direct
+		// connection the caller asked to avoid. An EMPTY key path is left to the
+		// key preflight below, which already names it precisely.
+		if jumpTarget != "" && strings.TrimSpace(sshKeyPath) != "" && !jumpProxyCommandAllowed(sshKeyPath) {
+			return "", fmt.Errorf("SetAdvertisedRoutes(%s): refusing the ssh jump hop through %s: the key path %q cannot be quoted into a ProxyCommand (use a path without spaces or shell metacharacters)", nodeHostname, jumpTarget, strings.TrimSpace(sshKeyPath))
+		}
 	}
 	keyPath := strings.TrimSpace(sshKeyPath)
 	// B266: a relative key path would be resolved against the
@@ -459,10 +467,9 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, accep
 //     plus `-o IdentitiesOnly=yes` and `--` before the host, so neither the
 //     operator's ssh_config nor a validation regression can turn the target value
 //     into an option or a command.
-//   - B353: a connection THROUGH a peer relay carries `-J <hop>` instead. OpenSSH
-//     refuses both at once — measured on OpenSSH 10.3p1:
-//     `Cannot specify -J with ProxyCommand` — so the belt-and-braces override is
-//     dropped for exactly this argv, and the hop value is validated by
+//   - B353: a connection THROUGH a peer relay carries an EXPLICIT
+//     `-o ProxyCommand=ssh -W '[%h]:%p' …` instead — see jumpProxyCommand for why
+//     the obvious `-J` form cannot be used, and why the hop value is validated by
 //     IsSafeSSHTarget in the caller before it arrives here.
 func buildSetAdvertisedRoutesArgv(keyPath, host, port, cmd, jumpTarget string) []string {
 	args := []string{
@@ -471,10 +478,10 @@ func buildSetAdvertisedRoutesArgv(keyPath, host, port, cmd, jumpTarget string) [
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ConnectTimeout=10",
 	}
-	if strings.TrimSpace(jumpTarget) == "" {
-		args = append(args, "-o", "ProxyCommand=none")
+	if jump := strings.TrimSpace(jumpTarget); jump != "" {
+		args = append(args, "-o", "ProxyCommand="+jumpProxyCommand(keyPath, jump))
 	} else {
-		args = append(args, "-J", strings.TrimSpace(jumpTarget))
+		args = append(args, "-o", "ProxyCommand=none")
 	}
 	args = append(args, "-o", "IdentitiesOnly=yes")
 	if port != "" {
@@ -484,4 +491,61 @@ func buildSetAdvertisedRoutesArgv(keyPath, host, port, cmd, jumpTarget string) [
 	// non-option argument even if validation above regresses.
 	args = append(args, "--", host, cmd)
 	return args
+}
+
+// jumpProxyCommand renders the tunnel through a peer relay (B353).
+//
+// WHY NOT `-J`. The obvious form is `ssh -J <hop> <target>`, and it does not work
+// from the skygate container — measured live on the reference deployment,
+// OpenSSH 10.3p1:
+//
+//	ssh -i /ssh-sync/skygate_sync -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+//	    -J root@100.64.0.2:18022 -- root@100.64.0.3 hostname
+//	  → root@100.64.0.2: Permission denied (publickey,password).
+//
+// OpenSSH builds the implicit jump connection as
+// `ssh -l <user> -W '[%h]:%p' <hop>`: it inherits neither the identity (`-i`) nor
+// the host-key policy, so the hop is asked for a password the container does not
+// have, and a hop whose key is not already in known_hosts fails with
+// `Host key verification failed` even when the outer command says
+// `StrictHostKeyChecking=accept-new`. Spelling the hop out as a ProxyCommand fixes
+// both (verified on the same deployment: the same command with
+// `-o ProxyCommand=ssh -W '[%h]:%p' -i <key> … -p 18022 -- root@100.64.0.2`
+// answers with the target's hostname).
+//
+// `%h`/`%p` are ssh's own expansions of the TARGET the outer command was given, so
+// the tunnel always points at the relay this application is for. The hop string
+// comes from `exit_servers` (validated by IsSafeSSHTarget) and the key path is
+// checked to be quotable by jumpProxyCommandAllowed, because this value is a shell
+// string by definition — ssh runs it with `sh -c`.
+func jumpProxyCommand(keyPath, hopTarget string) string {
+	hopHost, hopPort := splitSSHTarget(strings.TrimSpace(hopTarget))
+	parts := []string{
+		"ssh", "-W", "'[%h]:%p'",
+		"-i", keyPath,
+		"-o", "BatchMode=yes",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=10",
+		"-o", "IdentitiesOnly=yes",
+	}
+	if hopPort != "" {
+		parts = append(parts, "-p", hopPort)
+	}
+	parts = append(parts, "--", hopHost)
+	return strings.Join(parts, " ")
+}
+
+// jumpProxyCommandAllowed reports whether the key path can be embedded in the
+// ProxyCommand shell string. A path with whitespace or a shell metacharacter would
+// change the command's meaning, and quoting it correctly is not worth the risk:
+// SetAdvertisedRoutes REFUSES such a jump (with a named reason) rather than quietly
+// falling back to a direct connection the caller asked it to avoid.
+//
+// Pure (unit-tested).
+func jumpProxyCommandAllowed(keyPath string) bool {
+	p := strings.TrimSpace(keyPath)
+	if p == "" {
+		return false
+	}
+	return !strings.ContainsAny(p, " \t\n\r\"'`$\\;|&<>()*?!#~{}[]")
 }
