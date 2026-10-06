@@ -132,9 +132,15 @@ if grep -q 'func IsSafeSSHTarget' "$ROUTES" \
 else
   bad "E: routes.go has no ssh_target shape gate (option injection stays open)"
 fi
+# CONTRACT RENEGOTIATION (2026-10-06, B353): the argv moved into the pure builder
+# `buildSetAdvertisedRoutesArgv`, because the jump form (`ssh -J`, which OpenSSH
+# refuses together with ProxyCommand) has to be composed in exactly one place and
+# be testable without spawning ssh. The property is unchanged — every argv carries
+# `--` before the host, plus ProxyCommand=none on the direct form and
+# IdentitiesOnly=yes on both — so the assertion follows the implementation.
 if grep -q '"ProxyCommand=none"' "$ROUTES" \
    && grep -q '"IdentitiesOnly=yes"' "$ROUTES" \
-   && grep -q 'sshArgs = append(sshArgs, "--", host, cmd)' "$ROUTES"; then
+   && grep -qE 'append\((sshArgs|args), "--", host, cmd\)' "$ROUTES"; then
   ok "E2: argv hardened (-- before host, ProxyCommand=none, IdentitiesOnly)"
 else
   bad "E2: argv hardening missing — a stored target starting with - is still an ssh option"

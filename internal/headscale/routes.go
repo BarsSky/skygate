@@ -327,7 +327,14 @@ func (c *Client) ApproveRoutesForNodeID(nodeID int64, routes []string) (int, err
 // skygate; the per-exit-node `ssh_target` (which encodes the
 // non-default `Port 18022` karolina uses) was being ignored.
 // Callers MUST pass both sshTarget and sshKeyPath now.
-func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, acceptRoutes int, sshTarget, sshKeyPath string) (string, error) {
+//
+// The optional trailing `jump` is a PEER relay to reach `sshTarget` THROUGH
+// (`ssh -J`, B353): when the portal's own network has no route to a relay — a
+// blocked DERP region or a geo-blocked address — another relay that is on the
+// same tailnet usually has one, and one extra hop restores management instead
+// of leaving the relay permanently unconfigurable. Empty means a direct
+// connection, which is what every pre-B353 caller gets.
+func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, acceptRoutes int, sshTarget, sshKeyPath string, jump ...string) (string, error) {
 	if len(routes) == 0 {
 		return "", fmt.Errorf("empty routes list")
 	}
@@ -367,6 +374,18 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, accep
 	//      into an option.
 	if !IsSafeSSHTarget(target) {
 		return "", fmt.Errorf("SetAdvertisedRoutes(%s): refusing unsafe ssh_target %q (expected [user@]host[:port])", nodeHostname, target)
+	}
+	// B353: the jump hop comes from the same operator-writable table (another
+	// relay's row), so it gets the same shape check before it reaches an argv.
+	// `ssh -J <value>` parses its argument as a connection spec, not as options,
+	// but an embedded `-o…`/space/newline is still the class this project already
+	// paid for once (B266) — validate rather than argue.
+	jumpTarget := ""
+	if len(jump) > 0 {
+		jumpTarget = strings.TrimSpace(jump[0])
+		if jumpTarget != "" && !IsSafeSSHTarget(jumpTarget) {
+			return "", fmt.Errorf("SetAdvertisedRoutes(%s): refusing unsafe ssh jump hop %q (expected [user@]host[:port])", nodeHostname, jumpTarget)
+		}
 	}
 	keyPath := strings.TrimSpace(sshKeyPath)
 	// B266: a relative key path would be resolved against the
@@ -410,23 +429,8 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, accep
 	// target into (user@host, port) and use `-p port` explicitly.
 	// When the target has no `:port` suffix, port stays "" and
 	// ssh uses 22.
-	sshArgs := []string{
-		"-i", keyPath,
-		"-o", "BatchMode=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
-		"-o", "ConnectTimeout=10",
-		// B266 hardening: never let the operator's ssh_config inject a
-		// command, and never fall back to a different identity.
-		"-o", "ProxyCommand=none",
-		"-o", "IdentitiesOnly=yes",
-	}
 	host, port := splitSSHTarget(target)
-	if port != "" {
-		sshArgs = append(sshArgs, "-p", port)
-	}
-	// B266: `--` terminates option parsing, so the host is always the
-	// first non-option argument even if validation above regresses.
-	sshArgs = append(sshArgs, "--", host, cmd)
+	sshArgs := buildSetAdvertisedRoutesArgv(keyPath, host, port, cmd, jumpTarget)
 	sshCmd := exec.Command("ssh", sshArgs...)
 	out, err := sshCmd.CombinedOutput()
 	if err == nil {
@@ -435,6 +439,49 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, accep
 	// B292: name where the target came from. "Could not resolve hostname <node>"
 	// is meaningless without knowing that no ssh_target and no tailscale_ip were
 	// configured, and that /admin/exit-nodes showed an IP from headscale.
-	return "", fmt.Errorf("ssh %s (target from %s, key %s): %s",
-		target, targetSource, keyPath, strings.TrimSpace(string(out)))
+	// B353: a hop that failed must appear here too — "ssh … Operation timed out"
+	// through a peer relay and the same message straight from the portal have
+	// completely different fixes.
+	through := ""
+	if jumpTarget != "" {
+		through = " through " + jumpTarget
+	}
+	return "", fmt.Errorf("ssh %s%s (target from %s, key %s): %s",
+		target, through, targetSource, keyPath, strings.TrimSpace(string(out)))
+}
+
+// buildSetAdvertisedRoutesArgv composes the ssh argv for one relay application —
+// the ONE place that decides which options a route application carries.
+//
+// Pure (unit-tested). Two properties are deliberate and pinned by contracts:
+//
+//   - B266 (security): a DIRECT connection always carries `-o ProxyCommand=none`,
+//     plus `-o IdentitiesOnly=yes` and `--` before the host, so neither the
+//     operator's ssh_config nor a validation regression can turn the target value
+//     into an option or a command.
+//   - B353: a connection THROUGH a peer relay carries `-J <hop>` instead. OpenSSH
+//     refuses both at once — measured on OpenSSH 10.3p1:
+//     `Cannot specify -J with ProxyCommand` — so the belt-and-braces override is
+//     dropped for exactly this argv, and the hop value is validated by
+//     IsSafeSSHTarget in the caller before it arrives here.
+func buildSetAdvertisedRoutesArgv(keyPath, host, port, cmd, jumpTarget string) []string {
+	args := []string{
+		"-i", keyPath,
+		"-o", "BatchMode=yes",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=10",
+	}
+	if strings.TrimSpace(jumpTarget) == "" {
+		args = append(args, "-o", "ProxyCommand=none")
+	} else {
+		args = append(args, "-J", strings.TrimSpace(jumpTarget))
+	}
+	args = append(args, "-o", "IdentitiesOnly=yes")
+	if port != "" {
+		args = append(args, "-p", port)
+	}
+	// B266: `--` terminates option parsing, so the host is always the first
+	// non-option argument even if validation above regresses.
+	args = append(args, "--", host, cmd)
+	return args
 }

@@ -89,6 +89,10 @@ type RelayEndpoint struct {
 	Host string
 	// Port is the sshd port ("" means 22).
 	Port string
+	// Jump is the PEER relay this candidate is reached THROUGH, in
+	// `[user@]host[:port]` form (B353, `ssh -J`). Empty means a direct
+	// connection, which is every pre-B353 candidate.
+	Jump string
 	// Why names how this candidate was derived, for the log and the page.
 	Why string
 }
@@ -107,13 +111,35 @@ func (e RelayEndpoint) Target() string {
 }
 
 // Label is the short human form used in the log and in the failure report
-// ("tailnet 100.64.0.2:18022").
+// ("tailnet 100.64.0.2:18022"). A candidate reached through a peer relay names
+// BOTH ends (B353): "tailnet 100.64.0.3 via root@100.64.0.2" — the target is the
+// part that failed and the hop is the part that has to be checked, so a label with
+// only one of them cannot be acted on.
 func (e RelayEndpoint) Label() string {
 	host := e.Host
 	if p := strings.TrimSpace(e.Port); p != "" {
 		host += ":" + p
 	}
+	if j := strings.TrimSpace(e.Jump); j != "" {
+		return e.Kind + " " + host + " via " + j
+	}
 	return e.Kind + " " + host
+}
+
+// ProbeEndpoint returns the endpoint whose TCP reachability must be established
+// before this candidate may be used.
+//
+// For a direct candidate that is the candidate itself. For a jump candidate it is
+// the HOP (B353): probing the target is exactly the measurement that already failed,
+// while the hop is the new, checkable fact — "the peer relay answers the portal right
+// now" is what makes the extra ssh attempt worth spending.
+func (e RelayEndpoint) ProbeEndpoint() RelayEndpoint {
+	if strings.TrimSpace(e.Jump) == "" {
+		return e
+	}
+	user, host, port := splitSSHEndpoint(e.Jump)
+	return RelayEndpoint{Kind: RelayEndpointJump, User: user, Host: host, Port: port,
+		Why: "the peer relay that carries this hop"}
 }
 
 // IsTailnetAddress reports whether host is inside the CGNAT range Tailscale hands
@@ -512,12 +538,20 @@ func applyRoutesOverSSHLadder(hs *headscale.Client, node string, routes []string
 		return res
 	}
 	for _, ep := range cands {
-		if err := ProbeRelayEndpoint(ep, relayProbeTimeout); err != nil {
-			res.Attempts = append(res.Attempts, ep.Label()+" is not answering: "+err.Error())
-			log.Printf("exit-node sync(%s): %s is not answering (%v) — trying the next transport", node, ep.Label(), err)
+		// B353: a jump candidate is proved by its HOP answering, not by the target
+		// (which is the thing already known to be unreachable).
+		probe := ep.ProbeEndpoint()
+		if err := ProbeRelayEndpoint(probe, relayProbeTimeout); err != nil {
+			if ep.Jump == "" {
+				res.Attempts = append(res.Attempts, ep.Label()+" is not answering: "+err.Error())
+				log.Printf("exit-node sync(%s): %s is not answering (%v) — trying the next transport", node, ep.Label(), err)
+			} else {
+				res.Attempts = append(res.Attempts, ep.Label()+": the peer relay "+probe.Label()+" is not answering: "+err.Error())
+				log.Printf("exit-node sync(%s): %s: the peer relay %s is not answering (%v) — trying the next transport", node, ep.Label(), probe.Label(), err)
+			}
 			continue
 		}
-		out, err := hs.SetAdvertisedRoutes(node, routes, acceptRoutes, ep.Target(), keyPath)
+		out, err := hs.SetAdvertisedRoutes(node, routes, acceptRoutes, ep.Target(), keyPath, ep.Jump)
 		if err != nil {
 			res.Attempts = append(res.Attempts, ep.Label()+": "+err.Error())
 			log.Printf("exit-node sync(%s): %s answered but the routes could not be applied: %v — trying the next transport", node, ep.Label(), err)

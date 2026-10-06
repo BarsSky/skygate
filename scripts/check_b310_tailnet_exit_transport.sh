@@ -104,7 +104,13 @@ else
 fi
 
 # --- B: the ladder --------------------------------------------------------------
-if grep -q 'func applyRoutesOverSSHLadder(' "$LADDER" && grep -q 'ProbeRelayEndpoint(ep, relayProbeTimeout)' "$LADDER"; then
+# CONTRACT RENEGOTIATION (2026-10-06, B353): the probe target is no longer always the
+# candidate itself. A candidate reached THROUGH a peer relay (`ssh -J`) is proved by
+# its HOP answering, because probing the target is exactly the measurement that
+# already failed (relay_transport_jump_b353.go). The property is unchanged — every
+# candidate is TCP-probed with the bounded timeout before ssh runs — so the assertion
+# now names the endpoint the ladder actually probes.
+if grep -q 'func applyRoutesOverSSHLadder(' "$LADDER" && grep -qE 'ProbeRelayEndpoint\(probe, relayProbeTimeout\)' "$LADDER"; then
   ok "B1: every candidate is probed before ssh runs"
 else
   bad "B1: the ladder does not probe its candidates"

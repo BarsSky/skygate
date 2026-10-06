@@ -900,6 +900,14 @@ func applyRoutesToRelay(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func
 		// headscale CLI) and the SSH failure should be visible without blocking
 		// the approval side.
 		cands, notes := relaySSHEndpoints(hs, cfg, node)
+		// B353 (2026-10-06): the ladder's direct candidates can ALL be dead while a
+		// peer relay on the same tailnet reaches the target fine — measured live:
+		// emilia's DERP home (Helsinki) is unreachable from this site's network
+		// while karolina answers it, so the portal had no path to a healthy relay.
+		// The jump rung is appended last, so a reachable relay never pays for it.
+		var jumpNotes []string
+		cands, jumpNotes = appendJumpCandidates(d, hs, cfg, node, cands)
+		notes = append(notes, jumpNotes...)
 		ladder := applyRoutesOverSSHLadder(hs, node, approveRoutes, lookupAcceptRoutes(node), sshKeyPath, cands, notes)
 		if ladder.OK {
 			out.Label = "ssh=ok via " + ladder.Via
