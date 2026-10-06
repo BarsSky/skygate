@@ -62,7 +62,6 @@ internal/db/db_test.go
 internal/db/device_rules.go
 internal/db/exit_node_health.go
 internal/db/exit_node_health_test.go
-internal/db/exit_servers.go
 internal/db/file_reader_helpers.go
 internal/db/migration_tracking.go
 internal/db/migrations_pg.go

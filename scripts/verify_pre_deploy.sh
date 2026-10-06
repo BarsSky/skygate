@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # scripts/verify_pre_deploy.sh — build-time guarantees for skygate.
 #
 # Runs BEFORE `docker build` / `git push` / `docker compose up -d`.
@@ -1192,9 +1192,10 @@ run_check "B42" "db.MigratePostgres: migrateV050PG + migrateV051PG called (v0.33
 # to the hard-coded path (or drops the per-row lookup) is
 # caught at PR time, not at the next deploy when the
 # operator's routes go missing again.
-run_check "B43" "headscale.SetAdvertisedRoutes: per-node SSH config (v0.33.1)" \
+run_check "B43" "headscale.SetAdvertisedRoutes: per-node SSH config (v0.33.1). CONTRACT RENEGOTIATED 2026-10-06 (B353): the signature gained an optional trailing hop (variadic jump ...string), so a relay the portal cannot reach directly can be reached THROUGH a peer relay, and the argv moved into the pure builder buildSetAdvertisedRoutesArgv (one place decides the options). The property is unchanged — the per-node sshTarget and sshKeyPath are what the ssh invocation uses, with an explicit identity and BatchMode, never the operator's ssh_config — so the assertion follows the implementation." \
   "bash -c '
-    grep -qF \"func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, acceptRoutes int, sshTarget, sshKeyPath string)\" internal/headscale/routes.go &&
+    grep -qE \"func \(c \\*Client\) SetAdvertisedRoutes\(nodeHostname string, routes \[\]string, acceptRoutes int, sshTarget, sshKeyPath string, jump \.\.\.string\)\" internal/headscale/routes.go &&
+    grep -qF \"func buildSetAdvertisedRoutesArgv(keyPath, host, port, cmd, jumpTarget string)\" internal/headscale/routes.go &&
     grep -qF \"\\\"-i\\\", keyPath\" internal/headscale/routes.go &&
     grep -qF \"BatchMode=yes\" internal/headscale/routes.go &&
     grep -qF \"func splitSSHTarget\" internal/headscale/routes.go &&

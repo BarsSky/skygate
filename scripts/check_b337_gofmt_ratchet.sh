@@ -120,7 +120,11 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # recorded in docs/i18n-audit.md). internal/i18n/catalog_user_subnet.go still has
 # that alignment and is still allow-listed, so the same blind spot remains there —
 # see ROADMAP §3.3.
-FROZEN=265
+# 2026-10-06: 265 → 264. B352.2 added db.TailscaleSSHTargetFor to
+# internal/db/exit_servers.go; the file had been frozen as drifted, and the new
+# function left it gofmt-clean, so D1 required it to leave the list (budget paid,
+# not exempted). Same pattern as queries.go above — the ratchet doing its job.
+FROZEN=264
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.
