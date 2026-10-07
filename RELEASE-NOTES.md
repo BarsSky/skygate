@@ -12,7 +12,7 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
-## v1.5.102 — the ladder stops refusing its own candidate, a phone stops printing one glyph per line, and the admin rule page paginates by group (B353.1 + B354 + B355 + B357 + B358)
+## v1.5.102 — the ladder stops refusing its own candidate, the portal keeps talking to Telegram through a relay, and the cluster list holds only skygate hosts (B353.1 + B354 + B355 + B356 + B356.1 + B357 + B358 + B359)
 
 **Date:** 2026-10-06 … 2026-10-07 · **Base:** `v1.5.101` → this tag · **Compatibility:** no schema
 change, no migration, no new setting. Behaviour only.
@@ -167,6 +167,134 @@ Guard: `scripts/check_b358_group_pagination.sh`, `internal/db/device_rules_b358_
 shape: 2 users / 3 devices / 393 rows = ONE page; pages of whole groups; PG dialect) and
 `internal/feature/exit_rules/form_admin_b358_test.go` (window defaults + oversized threshold).
 Touching `internal/db/device_rules.go` paid one entry off the B337 gofmt ratchet (262 → 261).
+
+### B356 — a device must not stay pinned to a relay that is serving nothing
+
+The first of the operator's seven reported items: **when `karolina` and `sharlotta` went offline the
+exit-node preference was not redistributed.** Devices stayed pinned to a relay that was serving
+nothing, their egress broke, and nothing re-pointed them — no page, no log, no audit row.
+
+Measured on the live database:
+
+| user_id | device | `exit_node_tag` | `set_by_user_id` |
+|---|---|---|---|
+| 1 | `a71` | `tag:dev-infra-emilia` | 1 |
+| 1 | `cyborg` | `tag:dev-infra-emilia` | 0 |
+| 6 (`michail`) | `basic` | `tag:dev-infra-karolina` | **0** |
+| 1 (`skyadmin`) | `skyworker` | `tag:dev-infra-karolina` | **0** |
+
+…while `prefix_owner` held **139 rows and every single one of them was `emilia`**. Since B265 that
+preference is emitted as `via=[the preferred tag]` on the per-device `autogroup:internet` grant, and
+headscale applies `via` as a permission **filter** — so a pin to the relay that owns nothing filters
+the device's egress into a black hole. And nothing re-evaluated an **existing** row, because the
+reconciliation subject set was built from `device_rules` while the row lives in
+`device_exit_node_prefs` (L-54: look for the filter that defines the *subject set*).
+
+* `ReconcileDeviceExitNodePrefs` now walks the **union** of rule pairs and preference rows and
+  re-points a stale **derived** row (`set_by_user_id = 0`) at the relay `prefix_owner` actually
+  chose, with a **named** reason for every move and every undecidable state
+  (`stale-pref-relay-unusable`, `stale-pref-no-owner`, `stale-pref-owner-split`,
+  `stale-pref-owner-untagged`, `stale-pref-owner-is-pref-relay`) — never a silent `return nil, false`.
+* A row a **person** set (`set_by_user_id != 0`) is never rewritten. It is surfaced
+  (`stale-pref-human-pinned` / `stale-pref-human-non-owner`) with an audit row and a rate-limited
+  Telegram alert, because silently undoing an operator's choice is the other way to lose their trust.
+* **The ACL safety net.** `monitoring.ExitNodeUsable` (the B273 predicate, now **exported** rather
+  than re-derived) gates the per-device pin, so an unusable preferred relay leaves the **unpinned**
+  `autogroup:internet` grant instead of filtering the device out; the fallback is logged per device
+  and counted once per generation. This is a deliberate **B265 renegotiation**: `check_b188_2.sh`
+  contract B (exactly one conditional emit, guarded by the per-device preference lookup) is
+  untouched and still green, while its live contract W is renegotiated in place — the expected pin
+  count is now the preferences whose relay is usable or unmeasured.
+* Convergence rides the existing hourly maintenance tick (L-60: *only act on a change* is a liveness
+  bug), with one audit row and one notification per (device, reason) per hour.
+* `/admin/exit-nodes` shows the stale or ignored preference, the relay's measured state, the data
+  plane's choice and the consequence (17 new keys, RU + EN).
+
+Guard: `scripts/check_b356_exit_pref_failover.sh` (48 contracts) + `reconciler_b356_test.go`,
+`reconciler_b356_collector_test.go`, `acl_b356_test.go`, `exit_nodes_stale_prefs_b356_test.go`.
+
+### B356.1 — the portal cannot reach a destination it must reach, and a peer relay can
+
+The fifth reported item, and it was **still failing while this release was written**:
+
+```
+telegram: getUpdates error: Get "https://api.telegram.org/bot<TOKEN>/getUpdates":
+  context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+```
+
+…every ~47 seconds, forever. Measured:
+
+| From | `api.telegram.org:443` |
+|---|---|
+| the VM host | **blocked** (TCP connect times out; DNS resolves fine to `149.154.166.110`) |
+| inside the container | **blocked** |
+| `karolina` / `emilia` / `sharlotta` (over the tailnet, with the key the container already holds) | **open** |
+
+The existing `ok_relay` vocabulary never applied: it expects the kernel to route the request via
+`tailscale0` through a relay **subnet** route, while the container runs `RouteAll=true` with **no**
+exit node and the kernel sends the Telegram IPs out of `eth0` through the docker bridge. This is the
+B353 problem again — the portal cannot reach what it must reach, and a peer relay can.
+
+* A **last rung** on the egress ladder: an `http.Transport` whose `DialContext` runs
+  `ssh -W api.telegram.org:443 -- <relay>` and uses the child's stdio as the socket, so TLS
+  terminates **in this process** and the bot token can never reach a relay's argv, process list or
+  logs (never `curl`-on-the-relay).
+* **Direct first, always.** The direct path is used unless a recent direct failure is recorded
+  (re-probed once a minute, cleared the moment it succeeds), so a working path is never bypassed and
+  pays no added latency.
+* One argv builder, `headscale.SSHTunnelArgv`, reuses the gates the project already paid for:
+  `IsSafeSSHTarget` (B266) on the relay target, `jumpProxyCommandAllowed` (B353) on the key path,
+  `ProxyCommand=none`, `IdentitiesOnly=yes`, `--` before the host — and **`-W` placed before `--`**,
+  because after `--` ssh would run `-W` as a remote command.
+* Relays come from `exit_servers`: tailnet address preferred over `ssh_target` (B310), proven-first
+  from the B309 `relay_apply_state` record (B353), at most 3 candidates with exactly one attempt
+  each, and a relay that just failed goes into a cooldown instead of being retried in a loop.
+* `/admin/telegram` gains the honest state **`ok_relay_tunnel`**;
+  `SKYGATE_TELEGRAM_RELAY_FALLBACK=0` is the off switch and `SKYGATE_TELEGRAM_PREFERRED_RELAY` names
+  the first relay; every decision is logged once per five-minute window, not per attempt.
+* **The recorded token leak is fixed.** `RedactToken`/`redactError` strip the token and the
+  `bot-id:secret` pattern from `getUpdates`, POST, `sendMessage`, `editMessageText`,
+  `answerCallbackQuery`, `getMe`, `sendRichMessage`, `setMyCommands` and the admin probe.
+
+Runbook: `docs/operations.md` §8.5. Guard: `scripts/check_b356_1_telegram_relay_fallback.sh` (45
+contracts) + 24 unit tests.
+
+### B359 — the cluster is creatable from the panel alone, and the list holds only skygate hosts
+
+The operator's work-order item «собрать кластер со святославой и проверить, что он может быть создан
+автономно только через админ-панель». `svyatoslava` does not exist on the tailnet yet, so the
+end-to-end run still needs a host — but everything up to it is now in the panel, and the reason the
+cluster page was useless is fixed.
+
+Measured live: `cluster_node` carried **three exit-node relays** (`emilia`, `karolina`,
+`sharlotta`) as permanently-`failed` `skygate-standby` rows, because the B223 discovery predicate
+adopted every online peer that was not already a member and had **no positive notion of a skygate
+host**.
+
+* One pure rule decides — `ClassifyPeerForAdoption` — and its **order** is the contract: **refuse a
+  relay first** (it carries `tag:exit-node`, or it has a row in `exit_servers`; the relay check must
+  come first because B111 gives every relay its own `tag:dev-infra-<host>`, so a bare prefix test
+  would accept `emilia`), otherwise adopt only positive evidence in the shape the panel's **own**
+  onboarding mints — `tag:dev-infra-<lowercase hostname>`.
+* Every examined peer that is not adopted is returned with a **named** reason
+  (`relay-exit-tag`, `relay-exit-server`, `not-skygate-host`, `already-cluster-member`, `ipv6-only`,
+  `no-address`, `no-hostname`), because "we cannot decide" must not look like "there is nothing
+  there" (L-54). The ticker reports the candidate-shaped refusals behind the same once-an-hour
+  throttle as B318/B354 (`cluster.discovery.skip`).
+* The **Discover** button names the refusals in its flash and reports an unlinked `infra` portal user
+  as a precondition to fix *before* a VM is provisioned — the preauth key would otherwise be refused
+  by headscale and ownership could never be recorded.
+* `/admin/cluster` renders a per-row **reason and next action** in RU + EN, calling a relay row out
+  as *not a skygate host* with the `node_health` sentence the B204 elector wrote.
+* The panel-only procedure is `docs/operations.md` §17: onboard (mints the invite **and** the
+  `tag:dev-infra-<host>` preauth key in one action, rendered as a paste-once block), then ownership
+  lands by itself through `nodeownership.BackfillInfra` because the minted key carries exactly the
+  tag `isInfraNode` keys on, then approve. It also records why a `failed` row is terminal (the
+  elector only transitions `pending`/`ready`) and the safe way to remove the historical junk rows.
+
+Guard: `scripts/check_b359_cluster_panel_admission.sh` (34 contracts) + 16 tests. **Contract
+renegotiated:** `check_b318_tailscale_state_truth.sh` D3 matches `:= cluster.DiscoverNewNodes(`
+(the function now returns a `Report`), and a new D4 pins the third stage's noise floor.
 
 ---
 
