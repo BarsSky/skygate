@@ -34,9 +34,14 @@
 {{end}}
 
 {{/*
-  2026-07-14: Этап 14 v2 — Tailscale reachability banner. Three states:
+  2026-07-14: Этап 14 v2 — Tailscale reachability banner. Four states:
     .probe-ok-direct  — green; api.telegram.org reachable, no Tailscale.
     .probe-ok-relay   — green; reachable via Tailscale relay.
+    .probe-ok-relay-tunnel - green; the BOT's own client reaches the API through an
+      SSH tunnel to a peer relay because the portal's own egress is blocked (B356.1).
+      The probe below measures the DIRECT path on purpose, so it can fail while this
+      state is green - that is the honest pair, and the message names the relay plus
+      why the direct path failed.
     .probe-unreachable — red; unreachable. Show troubleshooting.
   The probe only runs when a token is set; otherwise the section
   is omitted entirely (the "configured" pill above already tells
@@ -53,7 +58,7 @@
 */}}
 {{if .State.Configured}}
 <div id="telegram-probe-slot" class="alert alert-probe probe-{{.State.Probe.State}}">
-  <i class="fa-solid {{if eq .State.Probe.State.String "ok_direct"}}fa-globe{{else if eq .State.Probe.State.String "ok_relay"}}fa-route{{else}}fa-triangle-exclamation{{end}}"></i>
+  <i class="fa-solid {{if eq .State.Probe.State.String "ok_direct"}}fa-globe{{else if eq .State.Probe.State.String "ok_relay"}}fa-route{{else if eq .State.Probe.State.String "ok_relay_tunnel"}}fa-network-wired{{else}}fa-triangle-exclamation{{end}}"></i>
   <div>
     {{/* B253: the probe result may come from the cache while a background
          refresh runs (stale-while-revalidate). Say so explicitly, with the
@@ -68,6 +73,7 @@
     <strong>
       {{if eq .State.Probe.State.String "ok_direct"}}{{t "telegram.probe_ok_direct_label"}}{{end}}
       {{if eq .State.Probe.State.String "ok_relay"}}{{t "telegram.probe_ok_relay_label"}}{{end}}
+      {{if eq .State.Probe.State.String "ok_relay_tunnel"}}{{t "telegram.probe_ok_relay_tunnel_label"}}{{end}}
       {{if eq .State.Probe.State.String "unreachable"}}{{t "telegram.probe_unreachable_label"}}{{end}}
     </strong>
     <div class="sub">

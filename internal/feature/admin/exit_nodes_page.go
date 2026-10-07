@@ -346,6 +346,11 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// B356 (2026-10-07): every stored device preference whose relay cannot serve the
+	// device — the population that had no page at all before this block. Derived rows
+	// are re-pointed by the reconciler; human rows are surfaced and left alone.
+	stalePrefs := s.loadStaleExitPrefs()
+
 	s.Backend.RenderWithLayout(w, r, "admin/exit_nodes.html", c, map[string]any{
 		"Page":         "exit-nodes",
 		"Title":        "Exit Nodes",
@@ -353,6 +358,10 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		"SSHKeyPath":   s.SSHKeyPath,
 		"HealthyCount": healthyCount,
 		"TotalCount":   len(nodes),
+		// B356: the device half of "which relay serves this device".
+		"StalePrefs":      stalePrefs,
+		"StalePrefsCount": len(stalePrefs),
+		"StalePrefsHuman": countHumanStalePrefs(stalePrefs),
 		// B292: the SSH-key half of "will the next sync do anything".
 		"SSHKeyBlocked":     sshKeyBlocked,
 		"SSHKeyBlockedNote": sshKeyBlockedNote,

@@ -99,7 +99,7 @@ func TestCollectDevicePrefState_NoRelayIsNotARelay_B341(t *testing.T) {
 	seedB3411(t, d)
 	s := &Service{DB: skygatedb.FixedDBSource{DB: d}}
 
-	st, err := s.collectDevicePrefState(context.Background(), 1, "skyadmin", "cyborg")
+	st, err := s.collectDevicePrefState(context.Background(), 1, "skyadmin", "cyborg", nil)
 	if err != nil {
 		t.Fatalf("collectDevicePrefState: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestCollectDevicePrefState_OwnerBeatsRuleRelay_B345(t *testing.T) {
 		t.Fatalf("seed karolina's owner row: %v", err)
 	}
 	s := &Service{DB: skygatedb.FixedDBSource{DB: d}}
-	st, err := s.collectDevicePrefState(context.Background(), 1, "skyadmin", "cyborg")
+	st, err := s.collectDevicePrefState(context.Background(), 1, "skyadmin", "cyborg", nil)
 	if err != nil {
 		t.Fatalf("collectDevicePrefState: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestCollectDevicePrefState_RealRelayPlusEmptyGroup_B341(t *testing.T) {
 		t.Fatalf("seed skyworker: %v", err)
 	}
 	s := &Service{DB: skygatedb.FixedDBSource{DB: d}}
-	st, err := s.collectDevicePrefState(context.Background(), 1, "skyadmin", "skyworker")
+	st, err := s.collectDevicePrefState(context.Background(), 1, "skyadmin", "skyworker", nil)
 	if err != nil {
 		t.Fatalf("collectDevicePrefState: %v", err)
 	}

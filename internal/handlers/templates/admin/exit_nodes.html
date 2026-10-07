@@ -387,6 +387,53 @@
   <h3><i class="fa-solid fa-diagram-project"></i> {{t "exit_nodes.prefix_owner.title"}}</h3>
   <p style="color:var(--text-muted);margin:8px 0 0 0;font-size:13px">{{t "exit_nodes.prefix_owner.help" | safeHTML}}</p>
 
+  {{/* B356: the DEVICE half of the same decision. A stored preference is a
+       permission FILTER on the per-device autogroup:internet grant (B265), so a
+       preference naming a relay that cannot serve turns "the device has its own
+       exit node" into "the device has no egress". Derived rows are re-pointed by
+       the reconciler; a row a HUMAN set is never rewritten and must be visible
+       here instead. */}}
+  {{with .StalePrefs}}
+  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.4)">
+    <b>{{t "exit_nodes.prefix_owner.stale_pref_title"}} ({{len .}}{{if gt $.StalePrefsHuman 0}}, {{$.StalePrefsHuman}} {{t "exit_nodes.prefix_owner.stale_pref_human"}}{{end}})</b>
+    <div style="font-size:13px;margin-top:4px">{{t "exit_nodes.prefix_owner.stale_pref_help" | safeHTML}}</div>
+    <table style="width:100%;margin-top:8px;font-size:13px;border-collapse:collapse">
+      <thead>
+        <tr style="text-align:left;color:var(--text-muted)">
+          <th>{{t "exit_nodes.prefix_owner.stale_pref_col_device"}}</th>
+          <th>{{t "exit_nodes.prefix_owner.stale_pref_col_pref"}}</th>
+          <th>{{t "exit_nodes.prefix_owner.stale_pref_col_relay"}}</th>
+          <th>{{t "exit_nodes.prefix_owner.stale_pref_col_reason"}}</th>
+          <th>{{t "exit_nodes.prefix_owner.stale_pref_col_candidate"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .}}
+        <tr style="border-top:1px solid rgba(220,53,69,.25)">
+          <td><code>{{.DeviceHostname}}</code>{{if .Username}} <span style="color:var(--text-muted)">{{.Username}}</span>{{end}}</td>
+          <td><code>{{.PrefTag}}</code></td>
+          <td>{{if .RelayKnown}}<code>{{.RelayHostname}}</code> <span class="tag tag-danger">{{.RelayState}}</span>{{else}}<span style="color:var(--text-muted)">{{t "exit_nodes.prefix_owner.stale_pref_relay_unknown"}}</span>{{end}}</td>
+          <td>
+            {{if eq .Cause "unusable"}}{{t "exit_nodes.prefix_owner.stale_pref_cause_unusable"}}
+            {{else}}{{t "exit_nodes.prefix_owner.stale_pref_cause_owner"}}{{end}}
+            <div style="font-size:11px;color:var(--text-muted)"><code>{{.Reason}}</code></div>
+          </td>
+          <td>
+            {{if .CandidateTag}}<code>{{.CandidateTag}}</code>
+            {{else}}<span style="color:var(--text-muted)">{{t "exit_nodes.prefix_owner.stale_pref_no_candidate"}}</span>{{end}}
+            <div style="margin-top:2px">
+              {{if .HumanPinned}}<span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.stale_pref_human_tip"}}">{{t "exit_nodes.prefix_owner.stale_pref_human_badge"}} #{{.SetByUserID}}</span>
+              {{else}}<span class="tag tag-info" title="{{t "exit_nodes.prefix_owner.stale_pref_derived_tip"}}">{{t "exit_nodes.prefix_owner.stale_pref_derived_badge"}}</span>{{end}}
+            </div>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:6px">{{t "exit_nodes.prefix_owner.stale_pref_consequence" | safeHTML}}</div>
+  </div>
+  {{end}}
+
   {{/* B276: is the LIVE policy the one skygate would generate right now? The
        per-CIDR pin lives in the ACL and is regenerated only on a rule/user/device
        change, while the assignment table is recomputed every few minutes — a

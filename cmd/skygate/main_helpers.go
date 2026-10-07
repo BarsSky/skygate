@@ -311,6 +311,40 @@ func discoveryEnsureErrorCleared() {
 	discoveryEnsureMu.Unlock()
 }
 
+// discoveryRejectionIsNew is the same noise floor for the THIRD stage B359 adds:
+// the peers the skygate-host predicate refused. The key is the whole joined
+// message, so a tailnet that keeps producing the same refusals is one event an
+// hour while a new refusal (a relay appearing, a candidate turning v6-only) is
+// reported at once.
+var (
+	discoveryRejectMu   sync.Mutex
+	discoveryRejectLast string
+	discoveryRejectAt   time.Time
+)
+
+func discoveryRejectionIsNew(msg string) bool {
+	if msg == "" {
+		return false
+	}
+	discoveryRejectMu.Lock()
+	defer discoveryRejectMu.Unlock()
+	if msg == discoveryRejectLast && time.Since(discoveryRejectAt) < discoveryErrRepeatAfter {
+		return false
+	}
+	discoveryRejectLast = msg
+	discoveryRejectAt = time.Now()
+	return true
+}
+
+// discoveryRejectionCleared forgets the last refusal set, so the next one is
+// reported immediately after a clean pass.
+func discoveryRejectionCleared() {
+	discoveryRejectMu.Lock()
+	discoveryRejectLast = ""
+	discoveryRejectAt = time.Time{}
+	discoveryRejectMu.Unlock()
+}
+
 // runDiscoveryTicker is the B223 (Phase 4.3)
 // background ticker that runs Tailscale
 // auto-discovery every `interval`. The HTTP
@@ -348,7 +382,7 @@ func runDiscoveryTicker(ctx context.Context, d *sql.DB, tagFilter string, interv
 // without spinning up a real ticker.
 func runOneDiscoveryTick(ctx context.Context, d *sql.DB, tagFilter string, notifier update.NotifierSink) {
 	const clusterID = "skygate-staging"
-	peers, err := cluster.DiscoverNewNodes(ctx, d, clusterID, tagFilter)
+	report, err := cluster.DiscoverNewNodes(ctx, d, clusterID, tagFilter, nil)
 	if err != nil {
 		// B318: an UNCHANGED failure is reported at most once an hour. The live
 		// host (2026-09-24) logged `discovery-ticker: discover failed: tailscale
@@ -369,7 +403,7 @@ func runOneDiscoveryTick(ctx context.Context, d *sql.DB, tagFilter string, notif
 	discoveryErrorCleared()
 	discovered := 0
 	var ensureErrs []string
-	for _, p := range peers {
+	for _, p := range report.ToAdopt {
 		if err := cluster.EnsureDiscoveredNode(d, clusterID, p.Hostname, p.TailscaleIP, "system"); err != nil {
 			// B354 (2026-10-06): the ensure stage is throttled like the discover stage
 			// above. Live: the empty `cluster` table made all three peers fail with
@@ -395,14 +429,68 @@ func runOneDiscoveryTick(ctx context.Context, d *sql.DB, tagFilter string, notif
 	} else {
 		discoveryEnsureErrorCleared()
 	}
-	runDetail := fmt.Sprintf("discovered=%d total_peers=%d tag_filter=%q via=ticker", discovered, len(peers), tagFilter)
+	runDetail := fmt.Sprintf("discovered=%d total_peers=%d tag_filter=%q via=ticker", discovered, len(report.ToAdopt), tagFilter)
 	_ = db.AppendAuditLogWithTarget(d, 0, "system", "cluster.discovery.run", runDetail, "", "")
+	// B359: the peers the predicate REFUSED are a first-class outcome, not a
+	// silence. Pre-B359 an exit-node relay became a permanently-failed
+	// "skygate-standby" row; the operator saw three dead nodes and no sentence
+	// explaining them. Now the tick names the class and the count, behind the
+	// same once-an-hour throttle the discover and ensure stages use (B318/B354)
+	// so a tailnet full of laptops cannot bury the journal either.
+	//
+	// Only the CANDIDATE-shaped refusals go in this line. A laptop with no
+	// infra tag is not news and is already counted in total_peers; a relay or
+	// a misconfigured v6-only skygate host is exactly the thing the operator
+	// must be able to find.
+	if len(report.Rejected) > 0 {
+		counts := map[cluster.DiscoverySkipReason]int{}
+		var candidateRejects []string
+		for _, r := range report.Rejected {
+			counts[r.Reason]++
+			if discoveryReasonIsNews(r.Reason) {
+				candidateRejects = append(candidateRejects, fmt.Sprintf("%s(%s)", r.Hostname, r.Reason))
+			}
+		}
+		if len(candidateRejects) > 0 {
+			msg := fmt.Sprintf("%d of %d refused peer(s) are candidate-shaped and NOT skygate hosts: %s",
+				len(candidateRejects), len(report.Rejected), strings.Join(candidateRejects, ", "))
+			if discoveryRejectionIsNew(msg) {
+				log.Printf("🔎 discovery-ticker: %s", msg)
+				_ = db.AppendAuditLogWithTarget(d, 0, "system", "cluster.discovery.skip",
+					fmt.Sprintf("skipped=%d relay_exit_tag=%d relay_exit_server=%d already_member=%d not_host=%d unnamed=%d detail=%q",
+						len(report.Rejected), counts[cluster.SkipRelayExitTag], counts[cluster.SkipRelayExitServer],
+						counts[cluster.SkipAlreadyClusterMember], counts[cluster.SkipNotSkygateHost],
+						counts[cluster.SkipIPv6Only]+counts[cluster.SkipNoAddress]+counts[cluster.SkipNoHostname], msg), "", "")
+			} else {
+				log.Printf("🔎 discovery-ticker: %d peer(s) still not adoptable (same set within the last hour, not re-audited)", len(report.Rejected))
+			}
+		} else {
+			// Nothing candidate-shaped was refused this pass (only laptops and
+			// phones), so the next relay/v6-only refusal is reported at once.
+			discoveryRejectionCleared()
+		}
+	} else {
+		discoveryRejectionCleared()
+	}
 	if discovered > 0 {
 		log.Printf("🔎 discovery-ticker: discovered %d new node(s) from Tailscale (tag_filter=%q)", discovered, tagFilter)
 		if notifier != nil {
 			notifier.SendAlert(fmt.Sprintf("Tailscale auto-discovery found %d new node(s) (tag_filter=%q). See /admin/cluster → Approve.", discovered, tagFilter))
 		}
 	}
+}
+
+// discoveryReasonIsNews reports whether a rejection reason is worth naming in the
+// ticker's log line (B359). A laptop or a phone with no infra tag is counted in
+// total_peers and deliberately not spelled out; a relay, a candidate the cluster
+// already has, or a candidate whose address cannot be recorded is.
+func discoveryReasonIsNews(reason cluster.DiscoverySkipReason) bool {
+	switch reason {
+	case cluster.SkipRelayExitTag, cluster.SkipRelayExitServer,
+		cluster.SkipIPv6Only, cluster.SkipNoAddress, cluster.SkipNoHostname:
+		return true
+	}
+	return false
 }
 
 type schedulerSink struct{ n telegram.Notifier }

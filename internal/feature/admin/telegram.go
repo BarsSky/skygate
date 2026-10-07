@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/telegram"
 )
 
 // Service extension: probe cache state. The struct is in
@@ -65,11 +66,29 @@ const (
 
 // telegramProbeTTLFor returns the TTL that applies to a cached result:
 // successes expire quickly, failures are remembered for 5 minutes.
+//
+// B356.1: the healthy set is now TelegramProbeState.Healthy(), which includes
+// ok_relay_tunnel (the bot is being carried by a relay because the direct path is
+// blocked) — a green state must expire as fast as the other green ones.
 func telegramProbeTTLFor(res TelegramProbeResult) time.Duration {
-	if res.State == ProbeOKDirect || res.State == ProbeOKRelay {
+	if res.State.Healthy() {
 		return telegramProbeTTLSuccess
 	}
 	return telegramProbeTTLError
+}
+
+// telegramEgressSnapshot reports the live Bot API egress state of the notifier the
+// admin page is wired to (B356.1). An empty snapshot means "no fallback information" —
+// either the notifier is a NoopNotifier, or the page runs without a real one — and the
+// probe then renders exactly as it did before B356.1.
+func (s *Service) telegramEgressSnapshot() telegram.EgressSnapshot {
+	type egressReporter interface {
+		EgressSnapshot() telegram.EgressSnapshot
+	}
+	if r, ok := s.Notifier.(egressReporter); ok && r != nil {
+		return r.EgressSnapshot()
+	}
+	return telegram.EgressSnapshot{}
 }
 
 // Helper attached to Service (we can't add methods to a struct
@@ -100,18 +119,18 @@ func (s *Service) cachedTelegramProbe(ctx context.Context, tokenFP string) Teleg
 
 	if sameToken && !at.IsZero() {
 		if age := time.Since(at); age < telegramProbeTTLFor(cached) {
-			return cached
+			return reconcileProbeWithEgress(cached, s.telegramEgressSnapshot())
 		}
 		// Stale: serve what we have and refresh out of band. The request's
 		// ctx is deliberately NOT used — it dies with the response.
 		go s.refreshProbeAsync(tokenFP)
 		cached.Stale = true
 		cached.StaleAt = at.UTC().Format(time.RFC3339)
-		return cached
+		return reconcileProbeWithEgress(cached, s.telegramEgressSnapshot())
 	}
 
 	// Cache miss / token rotated — probe once, synchronously.
-	return s.probeNowSync(ctx, tokenFP)
+	return reconcileProbeWithEgress(s.probeNowSync(ctx, tokenFP), s.telegramEgressSnapshot())
 }
 
 // probeNowSync runs the probe synchronously, stores the result in the cache
@@ -177,10 +196,10 @@ func (s *Service) PostAdminTelegramProbeNow(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	token, _, _, _ := db.LoadTelegramToken(s.dbc())
-	res := s.probeNowSync(r.Context(), db.TelegramFingerprint(token))
+	res := reconcileProbeWithEgress(s.probeNowSync(r.Context(), db.TelegramFingerprint(token)), s.telegramEgressSnapshot())
 	s.Backend.Audit(c.UserID, c.Username, "telegram_probe_now",
 		fmt.Sprintf("state=%s stale=false", res.State.String()))
-	if res.State == ProbeOKDirect || res.State == ProbeOKRelay {
+	if res.State.Healthy() {
 		http.Redirect(w, r, "/admin/telegram?ok="+url.QueryEscape("probe: "+res.State.String()), http.StatusSeeOther)
 		return
 	}

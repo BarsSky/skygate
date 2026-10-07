@@ -96,6 +96,7 @@
         <th>{{t "cluster.col_skygate_version"}}</th>
         <th>{{t "cluster.col_joined"}}</th>
         <th>{{t "cluster.col_last_seen"}}</th>
+        <th>{{t "cluster.col_reason"}}</th>
         <th>{{t "cluster.col_actions"}}</th>
       </tr>
     </thead>
@@ -122,6 +123,36 @@
         <td>{{if .SkygateVer}}<code style="font-size:0.85em">{{.SkygateVer}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
         <td><span class="muted" title="{{.JoinedAt}}">{{.JoinedAt}}</span></td>
         <td><span class="muted" title="{{.LastSeenAt}}">{{.LastSeenAt}}</span></td>
+        {{/* B359: the NAMED reason this row is in its state + the next action.
+            Both strings come from the catalogue (never hardcoded here, B325);
+            ReasonKey/ActionKey are always non-empty, so no row can render a
+            blank reason — "we cannot decide" must not look like "nothing is
+            there" (L-54). A row whose host is an exit-node relay is called out
+            as NOT a skygate host instead of being offered for approval. */}}
+        <td style="font-size:12px">
+          {{if eq .ReasonKey "cluster.reason_foreign_relay"}}
+            <span class="tag tag-danger">{{t "cluster.reason_foreign_relay"}}</span>
+          {{else if eq .ReasonKey "cluster.reason_failed"}}
+            {{tf "cluster.reason_failed" .HealthReason}}
+          {{else if eq .ReasonKey "cluster.reason_ready"}}
+            {{tf "cluster.reason_ready" .OwnedBy}}
+          {{else if eq .ReasonKey "cluster.reason_unknown"}}
+            {{tf "cluster.reason_unknown" .State}}
+          {{else}}
+            {{t .ReasonKey}}
+          {{end}}
+          <div class="muted" style="margin-top:2px">
+            {{if and .OwnedBy (ne .ReasonKey "cluster.reason_ready")}}
+              <span>{{t "cluster.owned_by"}} <code>{{.OwnedBy}}</code>{{if .OwnedTag}} <code>{{.OwnedTag}}</code>{{end}}</span><br>
+            {{end}}
+            <i class="fa-solid fa-arrow-right"></i>
+            {{if eq .ActionKey "cluster.action_foreign_relay"}}
+              <span class="tag tag-danger">{{t "cluster.action_foreign_relay"}}</span>
+            {{else}}
+              {{t .ActionKey}}
+            {{end}}
+          </div>
+        </td>
         <td>
           {{if .IsSelf}}
             <span class="muted" title="{{tf "cluster.node_remove_self" $.Data.SelfHostname}}">—</span>

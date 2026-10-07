@@ -77,6 +77,7 @@ package exit_rules
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -85,6 +86,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/monitoring"
 )
 
 // ReconcilerChange — single change the reconciler applied
@@ -110,6 +112,17 @@ type ReconcilerChange struct {
 	// prefixes), "missing-pref-owner-split" (the device's prefixes are served by
 	// different relays) and "missing-pref-owner-untagged" / "missing-pref-relay-untagged"
 	// (the relay exists but carries no per-node tag yet).
+	//
+	// B356 (2026-10-07) adds the stale-EXISTING-preference family, mirroring the
+	// B341 vocabulary so the two halves of one decision read the same way:
+	// "stale-pref-relay-unusable" (a derived preference re-pointed because its
+	// relay is not usable — the move), "stale-pref-no-owner" /
+	// "stale-pref-owner-split" / "stale-pref-owner-untagged" /
+	// "stale-pref-owner-is-pref-relay" (cannot decide — visible skips), and
+	// "stale-pref-human-pinned" / "stale-pref-human-non-owner" (a HUMAN's choice
+	// that the engine refuses to rewrite and instead surfaces).
+	SetByUserID int64  // B356: provenance of the existing row (0 = derived by the engine)
+	RelayState  string // B356: the B273 state of the relay the existing preference names
 }
 
 // DevicePrefState is the in-memory shape of one
@@ -146,6 +159,40 @@ type DevicePrefState struct {
 	// them ("" when that relay has no tag yet, or when they are split).
 	OwnerDistinct     int
 	OwnerCanonicalTag string
+
+	// B356 (2026-10-07) — the half B341/B345 left out: an EXISTING preference
+	// whose relay cannot serve anything.
+	//
+	// B341 derived a preference when none existed; B345 repaired one that named a
+	// non-owner. Neither asked "is the relay this ROW names still able to carry
+	// traffic?" — and nothing re-evaluated an existing row on a periodic pass, so a
+	// derived preference kept pointing at a relay that had gone offline while the
+	// data plane (`prefix_owner`) had already moved every prefix to somebody else.
+	//
+	// Live on the reference deployment (2026-10-07): relays `karolina` and
+	// `sharlotta` went offline; `prefix_owner` had 139/139 rows on `emilia` while
+	// `basic` and `skyworker` were still pinned to `tag:dev-infra-karolina`. Since
+	// B265 the per-device `autogroup:internet` grant carries
+	// `via=[<preferred tag>]`, which headscale applies as a permission FILTER — so
+	// those two devices lost their routes and nothing re-pointed them.
+	//
+	// ExistingPrefSetByUserID is the provenance every surface must respect:
+	// 0 = the engine derived this row (safe to re-point), != 0 = a human chose it
+	// (surface it, never rewrite it).
+	ExistingPrefSetByUserID int64
+
+	// PrefRelayKnown/PrefRelayUsable describe the relay the EXISTING preference
+	// names, using the B273 predicate (`online` | `untagged` are usable). Known is
+	// false when `exit_node_health` has no row for that relay — "we have never
+	// measured it" is NOT "it is broken", so the planner leaves such a row alone.
+	// The zero value of both fields therefore means "unknown" and preserves the
+	// pre-B356 decision for every caller that does not populate them.
+	PrefRelayKnown  bool
+	PrefRelayUsable bool
+	// PrefRelayState is the raw B273 state string (`online`/`untagged`/`degraded`/
+	// `offline`), carried so the log line and the audit row can name what the
+	// monitor actually said instead of only "not usable".
+	PrefRelayState string
 }
 
 // PlanDevicePrefChange is the pure decision function —
@@ -338,7 +385,102 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 	// is the desired tag; a difference from the stored value is an UPDATE whose
 	// reason names the override, so the journal shows the repair instead of a silent
 	// "stale-tag" flip in the wrong direction.
+	//
+	// B356 (2026-10-07) — AN UNUSABLE PREFERRED RELAY IS THE OTHER HALF OF THE SAME
+	// RULE, and it is asked FIRST.
+	//
+	// "The owner disagrees with the preference" and "the preference names a relay
+	// that cannot carry traffic" are two ways to say the device is pinned to a relay
+	// that serves nothing, and the second one has no owner to compare against: a
+	// relay that is offline (or whose 0.0.0.0/0 route lost its approval) is removed
+	// from the healthy set, so the assignment table moves its prefixes away and
+	// `OwnerCanonicalTag` is *by construction* different — but only when the
+	// device's own rules cover prefixes with a single owner. When they do not (no
+	// rules left, split owners, untagged owner) the row stayed exactly where it was,
+	// forever, and the device was filtered into a black hole.
+	//
+	// Provenance decides what may happen:
+	//   - derived (`set_by_user_id = 0`) → re-point to the owner the data plane
+	//     chose, with a named reason; every way of NOT being able to decide is a
+	//     NAMED skip rather than a silent `return nil, false`.
+	//   - human (`set_by_user_id != 0`) → leave the value ALONE and surface the
+	//     consequence (named skip + notification + audit). A human pin to a dead
+	//     relay is exactly the state that broke the operator's device, so it must be
+	//     visible, and it must not be silently undone either.
+	if s.PrefRelayKnown && !s.PrefRelayUsable {
+		if s.ExistingPrefSetByUserID != 0 {
+			return &ReconcilerChange{
+				Action:         "skip",
+				UserID:         s.UserID,
+				Username:       s.Username,
+				DeviceHostname: s.DeviceHostname,
+				OldTag:         s.ExistingPrefTag,
+				NewTag:         s.OwnerCanonicalTag,
+				RuleCount:      s.TotalRules,
+				Reason:         "stale-pref-human-pinned",
+				SetByUserID:    s.ExistingPrefSetByUserID,
+				RelayState:     s.PrefRelayState,
+			}, true
+		}
+		switch {
+		case s.OwnerDistinct == 0:
+			// Nothing in the assignment table covers this device's prefixes, so
+			// there is no owner to move the row to. Reported, not swallowed.
+			return stalePrefSkip(s, "stale-pref-no-owner", "")
+		case s.OwnerDistinct > 1:
+			// Several relays serve the device's prefixes: pinning it to one of them
+			// would break the others. The operator picks.
+			return stalePrefSkip(s, "stale-pref-owner-split", s.DominantExitHostname)
+		case s.OwnerCanonicalTag == "":
+			// One owner, but it carries no per-node tag yet — writing a class tag
+			// here is the B279 defect.
+			return stalePrefSkip(s, "stale-pref-owner-untagged", s.DominantExitHostname)
+		case tagsNameSameRelay(s.OwnerCanonicalTag, s.ExistingPrefTag):
+			// The data plane still gives these prefixes to the very relay the
+			// preference names, even though our health snapshot calls it unusable.
+			// Moving the row would contradict the destination half, so it stays —
+			// but the contradiction is named so the operator can look at the relay.
+			// (`tagsNameSameRelay`, not a string compare: the tag FORM may differ
+			// while the relay is the same, and a "move" that lands on the same relay
+			// would be a failover label on a normalisation.)
+			return stalePrefSkip(s, "stale-pref-owner-is-pref-relay", s.OwnerCanonicalTag)
+		}
+		return &ReconcilerChange{
+			Action:         "update",
+			UserID:         s.UserID,
+			Username:       s.Username,
+			DeviceHostname: s.DeviceHostname,
+			OldTag:         s.ExistingPrefTag,
+			NewTag:         s.OwnerCanonicalTag,
+			RuleCount:      s.TotalRules,
+			Reason:         "stale-pref-relay-unusable",
+			RelayState:     s.PrefRelayState,
+		}, true
+	}
 	if s.OwnerDistinct == 1 && s.OwnerCanonicalTag != "" && s.OwnerCanonicalTag != s.ExistingPrefTag {
+		if s.ExistingPrefSetByUserID != 0 && !tagsNameSameRelay(s.ExistingPrefTag, s.OwnerCanonicalTag) {
+			// B356: a preference a HUMAN chose is not the engine's to rewrite. B345
+			// repaired this shape unconditionally, which is the behaviour this
+			// report's item 2 forbids — the repair itself stays for derived rows
+			// (that is the live cyborg fix), and the operator's own pin is surfaced
+			// with its consequence instead.
+			//
+			// `tagsNameSameRelay` is the exception that must survive: a legacy tag
+			// form of the SAME relay (`tag:exit-emilia`) is not a change of exit
+			// node, and refusing to normalise it would break the very relay the
+			// human picked (headscale knows no `tag:exit-<host>`).
+			return &ReconcilerChange{
+				Action:         "skip",
+				UserID:         s.UserID,
+				Username:       s.Username,
+				DeviceHostname: s.DeviceHostname,
+				OldTag:         s.ExistingPrefTag,
+				NewTag:         s.OwnerCanonicalTag,
+				RuleCount:      s.TotalRules,
+				Reason:         "stale-pref-human-non-owner",
+				SetByUserID:    s.ExistingPrefSetByUserID,
+			}, true
+		}
 		return &ReconcilerChange{
 			Action:         "update",
 			UserID:         s.UserID,
@@ -395,6 +537,32 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 		return nil, false
 	}
 	// Tag mismatch → UPDATE.
+	//
+	// B356 (2026-10-07) — a mismatch may mean two very different things, and only
+	// one of them is the engine's business:
+	//
+	//	same relay, new tag form — `tag:exit-emilia` → `tag:dev-infra-emilia`.
+	//	    A normalisation: the legacy form is not a tag headscale knows, so
+	//	    leaving it would break the very relay the human picked. Always applied.
+	//	a DIFFERENT relay — the dominant (or owning) relay of this device's rules
+	//	    is not the relay the preference names, so a rewrite here would silently
+	//	    move a human's choice of exit node. That is surfaced, never applied.
+	//
+	// Guarded rather than dropped so the derived rows keep the pre-B356
+	// normalisation, which is what `stale-tag` has always meant.
+	if s.ExistingPrefSetByUserID != 0 && !prefNamesSameRelayAsDominant(s) {
+		return &ReconcilerChange{
+			Action:         "skip",
+			UserID:         s.UserID,
+			Username:       s.Username,
+			DeviceHostname: s.DeviceHostname,
+			OldTag:         s.ExistingPrefTag,
+			NewTag:         s.CanonicalTag,
+			RuleCount:      s.TotalRules,
+			Reason:         "stale-pref-human-non-owner",
+			SetByUserID:    s.ExistingPrefSetByUserID,
+		}, true
+	}
 	return &ReconcilerChange{
 		Action:         "update",
 		UserID:         s.UserID,
@@ -403,6 +571,53 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 		OldTag:         s.ExistingPrefTag,
 		NewTag:         s.CanonicalTag,
 		Reason:         "stale-tag",
+	}, true
+}
+
+// prefNamesSameRelayAsDominant reports whether the EXISTING preference names the
+// same relay as the device's dominant rule relay — i.e. whether the only thing
+// wrong with the stored value is its tag FORM.
+//
+// Used by the B356 provenance guard: a normalisation of the same relay may be
+// applied to a human-set row, a change of relay may not.
+func prefNamesSameRelayAsDominant(s DevicePrefState) bool {
+	if s.ExistingPrefTag == "" || s.DominantExitHostname == "" {
+		return false
+	}
+	return strings.EqualFold(TagToHostname(s.ExistingPrefTag), s.DominantExitHostname)
+}
+
+// tagsNameSameRelay reports whether two exit-node tags name the same relay, i.e.
+// whether the difference between them is the tag FORM and not the exit node.
+//
+// B356: this is the one rewrite a human-set row may still receive. `tag:exit-emilia`
+// and `tag:dev-infra-emilia` are the same relay before and after the B118 rename, and
+// the legacy form is not a tag headscale knows — refusing to normalise it would break
+// the relay the operator deliberately chose.
+func tagsNameSameRelay(a, b string) bool {
+	ha := strings.TrimSpace(TagToHostname(a))
+	hb := strings.TrimSpace(TagToHostname(b))
+	return ha != "" && hb != "" && strings.EqualFold(ha, hb)
+}
+
+// stalePrefSkip builds a VISIBLE skip for the B356 family: a device whose stored
+// preference cannot be acted on, with the named reason the operator needs in order
+// to know which decision is missing.
+//
+// `newTag` is the relay the planner WOULD have used (or the one it cannot judge) —
+// carried for the log line and the page, empty when there is no candidate at all.
+func stalePrefSkip(s DevicePrefState, reason, newTag string) (*ReconcilerChange, bool) {
+	return &ReconcilerChange{
+		Action:         "skip",
+		UserID:         s.UserID,
+		Username:       s.Username,
+		DeviceHostname: s.DeviceHostname,
+		OldTag:         s.ExistingPrefTag,
+		NewTag:         newTag,
+		RuleCount:      s.TotalRules,
+		Reason:         reason,
+		SetByUserID:    s.ExistingPrefSetByUserID,
+		RelayState:     s.PrefRelayState,
 	}, true
 }
 
@@ -506,6 +721,48 @@ type noopNotifier struct{}
 // 2026-09-03: v1.5.2 (B229).
 func (noopNotifier) SendAlert(string) int64 { return 0 }
 
+// relayHealth is one relay's last health verdict as the B273 monitor recorded it.
+//
+// Known is false when `exit_node_health` has no row for the relay: "we have never
+// measured this relay" is NOT "it is broken", and the difference decides whether the
+// engine may rewrite a stored preference.
+type relayHealth struct {
+	Known  bool
+	Usable bool // monitoring.ExitNodeUsable(state)
+	State  string
+}
+
+// loadRelayHealth reads the health snapshot ONCE per reconcile pass, keyed by the
+// lowercased relay hostname (the case the assignment table and node_owner_map use).
+//
+// B356 (2026-10-07). The predicate is monitoring.ExitNodeUsable — the SAME function
+// the monitor derives `Healthy` from and B273 made the single source of truth for
+// "can a device route internet through this relay right now?". Re-asking the
+// question here with `state == "online"` would be a second health predicate, which
+// is exactly what B273 exists to prevent (an untagged-but-working relay reads as
+// usable, and would read as broken under a literal comparison).
+func loadRelayHealth(d *sql.DB) map[string]relayHealth {
+	rows, err := db.ListExitNodeHealth(d)
+	if err != nil {
+		log.Printf("preferred-reconciler: cannot read exit_node_health (%v) — the stale-preference repair is SKIPPED this pass; the ACL pin fallback still protects the devices", err)
+		return nil
+	}
+	out := make(map[string]relayHealth, len(rows))
+	for _, h := range rows {
+		host := strings.ToLower(strings.TrimSpace(h.Hostname))
+		if host == "" {
+			continue
+		}
+		out[host] = relayHealth{Known: true, Usable: monitoring.ExitNodeUsable(h.State), State: h.State}
+	}
+	return out
+}
+
+// pairKey is the (user, device) identity of one subject of the reconciler.
+func pairKey(userID int64, hostname string) string {
+	return itoa(userID) + "\x00" + strings.ToLower(strings.TrimSpace(hostname))
+}
+
 // ReconcileDeviceExitNodePrefs walks the (user, device)
 // pairs and applies the changes described in the file
 // header. Returns the list of changes (for logging +
@@ -519,11 +776,30 @@ func (noopNotifier) SendAlert(string) int64 { return 0 }
 // surface).
 //
 // 2026-09-03: v1.5.2 (B229).
+//
+// B356 (2026-10-07) — THE SUBJECT SET IS THE UNION, and that is the L-54 rule.
+//
+// The list of devices to judge used to be "every (user, device) with an ENABLED
+// device_rules row". A preference is a row in `device_exit_node_prefs`, and the row
+// that breaks a device is exactly the one whose rules have gone away (or never
+// existed): `a71` — the operator's own report — plus a device whose rules were
+// deleted is pinned for ALL of its internet traffic by the B265 per-device
+// `autogroup:internet` grant, and a device with no rules was not a candidate at
+// all. A decision whose subject set is built from a DIFFERENT table than the one it
+// writes cannot see the rows it must repair (L-54: "look for the filter that
+// defines the SUBJECT SET of a decision").
+//
+// So the pass now walks rule pairs ∪ preference rows. For a pair that has both, the
+// second loop skips it (the planner already ran with the richer state).
 func (s *Service) ReconcileDeviceExitNodePrefs(ctx context.Context, n ReconcilerNotifier) ([]ReconcilerChange, error) {
 	if n == nil {
 		n = noopNotifier{}
 	}
 	live := PreferredExitReconcilerLive()
+
+	// B356: one health read for the whole pass. Every relay's last verdict is what
+	// answers "can the relay this preference names carry traffic at all?".
+	health := loadRelayHealth(s.dbc())
 
 	// Step 1: every (user, device) pair that has
 	// `device_rules` rows. We need the (user_id,
@@ -544,6 +820,7 @@ func (s *Service) ReconcileDeviceExitNodePrefs(ctx context.Context, n Reconciler
 		return nil, fmt.Errorf("reconciler: list rule pairs: %w", err)
 	}
 	var pairs []userDevice
+	seenPair := make(map[string]bool)
 	for rows.Next() {
 		var p userDevice
 		if err := rows.Scan(&p.userID, &p.hostname); err != nil {
@@ -554,8 +831,27 @@ func (s *Service) ReconcileDeviceExitNodePrefs(ctx context.Context, n Reconciler
 			continue
 		}
 		pairs = append(pairs, p)
+		seenPair[pairKey(p.userID, p.hostname)] = true
 	}
 	rows.Close()
+
+	// Step 1b (B356): and every device that already HAS a preference, whether or
+	// not a rule still names it. This is the population the live incident lived in.
+	if prefRows, perr := db.ListAllDeviceExitNodePrefs(s.dbc()); perr != nil {
+		log.Printf("preferred-reconciler: list preference rows: %v — the stale-preference pass skips this tick", perr)
+	} else {
+		for _, p := range prefRows {
+			if p.UserID == 0 || p.DeviceHostname == "" || p.ExitNodeTag == "" {
+				continue
+			}
+			key := pairKey(p.UserID, p.DeviceHostname)
+			if seenPair[key] {
+				continue
+			}
+			seenPair[key] = true
+			pairs = append(pairs, userDevice{userID: p.UserID, hostname: p.DeviceHostname})
+		}
+	}
 
 	var changes []ReconcilerChange
 	usernameCache := make(map[int64]string)
@@ -571,7 +867,7 @@ func (s *Service) ReconcileDeviceExitNodePrefs(ctx context.Context, n Reconciler
 			usernameCache[p.userID] = username
 		}
 
-		state, err := s.collectDevicePrefState(ctx, p.userID, username, p.hostname)
+		state, err := s.collectDevicePrefState(ctx, p.userID, username, p.hostname, health)
 		if err != nil {
 			log.Printf("preferred-reconciler: state for %s/%s: %v", username, p.hostname, err)
 			continue
@@ -629,7 +925,16 @@ func (s *Service) ReconcileDeviceExitNodePrefs(ctx context.Context, n Reconciler
 // are idempotent (the OR is symmetric). The sub-select on
 // node_owner_map is parameterised on (hostname, user_id) so it
 // uses the same indexes as the existing reconciler lookups.
-func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, username, hostname string) (DevicePrefState, error) {
+//
+// B356 (2026-10-07): `health` is the last verdict per relay (keyed by lowercased
+// hostname). A nil / incomplete map is safe and means "never measured", which the
+// planner treats as "leave the row alone" — absence of evidence must not rewrite
+// an operator's data. The parameter lives on this function rather than on a
+// wrapper so a contract that reads the function body still reads the SQL
+// (scripts/check_apply_acl_drifted_and_rename.sh contract C1 anchors on this
+// name, and a two-line wrapper in front of the real body would have made that
+// extraction a false FAIL).
+func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, username, hostname string, health map[string]relayHealth) (DevicePrefState, error) {
 	state := DevicePrefState{
 		UserID:         userID,
 		Username:       username,
@@ -639,6 +944,19 @@ func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, user
 	existing, _ := db.GetDeviceExitNodePref(s.dbc(), userID, hostname)
 	state.ExistingPrefTag = existing.ExitNodeTag
 	state.ExistingPrefVia = existing.ViaEnabled
+	// B356: the provenance of that row, and whether the relay it names can serve
+	// anything right now. `set_by_user_id = 0` is "the engine derived this";
+	// anything else is a human decision the engine must not rewrite.
+	state.ExistingPrefSetByUserID = existing.SetByUserID
+	if existing.ExitNodeTag != "" {
+		if host := strings.ToLower(strings.TrimSpace(TagToHostname(existing.ExitNodeTag))); host != "" {
+			if h, ok := health[host]; ok {
+				state.PrefRelayKnown = true
+				state.PrefRelayUsable = h.Usable
+				state.PrefRelayState = h.State
+			}
+		}
+	}
 	// Dominant exit_node + distinct count + total.
 	//
 	// Two-branch OR: pre-rename (denormalised hostname still old)
@@ -787,14 +1105,28 @@ func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, user
 //     (hostname, reason)) for live create + update.
 //
 // 2026-09-03: v1.5.2 (B229).
+//
+// B356 (2026-10-07): the stale-preference family (`stale-pref-*`) is not a plain
+// log-only skip. These are the states where a device is PINNED to a relay that
+// cannot serve it — the operator's report was that "nothing re-pointed them and no
+// page or log said so". So a B356 skip is logged (named reason), audited and
+// notified; a B356 MOVE goes through the ordinary update path and therefore already
+// has all three.
+//
+// The audit row and the notification share ONE throttle slot per (device, reason)
+// per hour, so a state that persists across ticks is reported once an hour instead
+// of filling audit_log — the same `shouldAlert` window the B229/B227 alerters use.
 func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChange, live bool, n ReconcilerNotifier) {
 	// Skip-changes: log only, no write. B341: the REASON is printed — a skip is
 	// the operator's only signal for "this device has rules and no preference",
 	// and the old fixed sentence ("N rules point at M distinct exit_nodes") was
 	// wrong for the new reasons, where there is no relay to point at.
 	if ch.Action == "skip" {
-		log.Printf("preferred-reconciler: SKIP %s/%s — reason=%s rules=%d distinct_relays=%d most=%q. Needs manual review.",
-			ch.Username, ch.DeviceHostname, ch.Reason, ch.RuleCount, ch.DistinctExitNodesOrZero(), ch.NewTag)
+		log.Printf("preferred-reconciler: SKIP %s/%s — reason=%s rules=%d distinct_relays=%d most=%q relay_state=%q. Needs manual review.",
+			ch.Username, ch.DeviceHostname, ch.Reason, ch.RuleCount, ch.DistinctExitNodesOrZero(), ch.NewTag, ch.RelayState)
+		if strings.HasPrefix(ch.Reason, "stale-pref-") {
+			s.reportStalePref(ch, live, n)
+		}
 		return
 	}
 	// Dry-run: log only.
@@ -847,6 +1179,12 @@ func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChang
 		if ch.Reason == "via-disabled-but-canonical" {
 			reasonKey = "update-via"
 		}
+		if strings.HasPrefix(ch.Reason, "stale-pref-") {
+			// B356: keep the throttle bucket per REASON. "the relay died and we
+			// moved the device" and "the tag form changed" are different events and
+			// must not silence each other.
+			reasonKey = ch.Reason
+		}
 		if shouldAlert(ch.DeviceHostname, reasonKey, time.Now()) {
 			n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B229)\nUPDATE hostname=%s user=%s\ntag: %s → %s\nreason: %s\nrollback via SQL: DELETE FROM device_exit_node_prefs WHERE user_id=%d AND device_hostname=%s",
 				ch.DeviceHostname, ch.Username, ch.OldTag, ch.NewTag, ch.Reason, ch.UserID, ch.DeviceHostname))
@@ -874,6 +1212,43 @@ func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChang
 				ch.DeviceHostname, ch.Username, ch.OldTag, ch.Reason))
 		}
 	}
+}
+
+// reportStalePref is the B356 surface for a device whose stored preference could
+// not be acted on: one audit row + one rate-limited notification per (device,
+// reason) per hour, and never a silent skip.
+//
+// Why an audit row at all, when B341's skips are log-only: a B356 reason describes a
+// device that is CURRENTLY unable to reach the internet through its pinned relay —
+// the operator's "their internet access broke and nothing said so". That belongs in
+// the same durable trail as the repairs (`preferred_exit_reconciled`), with the
+// device, the stored value, the reason and the state the monitor reported, so
+// /admin/audit?action=preferred_exit_reconciled answers both halves of the story:
+// what the engine changed and what it refused to change.
+//
+// The throttle is the SAME shouldAlert window the alerter uses, consulted once, so a
+// state that persists for days writes one row per hour instead of one per tick.
+func (s *Service) reportStalePref(ch *ReconcilerChange, live bool, n ReconcilerNotifier) {
+	mode := "would report"
+	if live {
+		mode = "reported"
+	}
+	if !shouldAlert(ch.DeviceHostname, ch.Reason, time.Now()) {
+		return
+	}
+	detail := fmt.Sprintf("STALE-PREF hostname=%s user=%s stored=%s reason=%s relay_state=%s candidate=%s rules=%d set_by_user_id=%d",
+		ch.DeviceHostname, ch.Username, ch.OldTag, ch.Reason, ch.RelayState, ch.NewTag, ch.RuleCount, ch.SetByUserID)
+	if live {
+		_ = db.AppendAuditLogWithTarget(s.dbc(), 0, "system",
+			"preferred_exit_reconciled", detail, "headscale_node", ch.DeviceHostname)
+	}
+	log.Printf("preferred-reconciler: %s (%s) %s", mode, ch.Reason, detail)
+	human := ""
+	if ch.SetByUserID != 0 {
+		human = fmt.Sprintf("\nThis preference was set by a HUMAN (set_by_user_id=%d), so the engine will NOT rewrite it.", ch.SetByUserID)
+	}
+	n.SendAlert(fmt.Sprintf("⚠️ exit-node preference is stale (%s)\nhostname=%s user=%s\nstored preference: %s%s\nrelay state: %s\nreason: %s\ncandidate relay: %s\nFix it on /admin/exit-nodes (device preferences) — until then the device is pinned by `via` and loses the destinations that relay cannot serve.",
+		ch.Reason, ch.DeviceHostname, ch.Username, ch.OldTag, human, ch.RelayState, ch.Reason, ch.NewTag))
 }
 
 // DistinctExitNodesOrZero returns DistinctExitNodes

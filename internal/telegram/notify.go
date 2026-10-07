@@ -85,6 +85,13 @@ type RealNotifier struct {
 	db       *sql.DB
 	client   *http.Client
 	pollInt  time.Duration
+	// 2026-10-07 (B356.1): the Bot API egress ladder. Every request through
+	// n.client travels through this transport, which tries the direct path
+	// first and falls back to an SSH tunnel through a relay that can reach
+	// api.telegram.org when the portal's own egress cannot (see
+	// egress_fallback.go). nil means "the direct path only" — which is what
+	// happens when SKYGATE_TELEGRAM_RELAY_FALLBACK=0.
+	egress *egressTransport
 	// 2026-07-16: v0.15.3 — last inline-keyboard message per
 	// chat, used by editMessageText so callback replies
 	// (e.g. /lang button tap) overwrite the original message
@@ -168,10 +175,16 @@ func NewRealNotifier(d *sql.DB) *RealNotifier {
 	if api == "" {
 		api = "https://api.telegram.org"
 	}
+	// B356.1: the client carries the egress ladder (direct first, then an SSH
+	// tunnel through a relay). The transport is exposed via EgressSnapshot so
+	// /admin/telegram can render the honest state instead of a bare
+	// "unreachable" while the bot is in fact being carried by a relay.
+	client, egress := newTelegramHTTPClient(d, loadEgressConfig())
 	return &RealNotifier{
 		apiBase:          api,
 		db:               d,
-		client:           &http.Client{Timeout: 15 * time.Second},
+		client:           client,
+		egress:           egress,
 		pollInt:          2 * time.Second,
 		lastInlineMessage: map[int64]int64{},
 	}
@@ -370,7 +383,9 @@ func (n *RealNotifier) fetchBotUsername(token string) (string, error) {
 	endpoint := n.apiBase + "/bot" + url.PathEscape(token) + "/getMe"
 	resp, err := n.client.Get(endpoint)
 	if err != nil {
-		return "", err
+		// B356.1: the URL embeds the bot token and net/http puts it into the
+		// error string — never let that reach a caller or a log line.
+		return "", redactError(err, token)
 	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
@@ -647,7 +662,8 @@ func (n *RealNotifier) postToChat(token string, chatID int64, text string) {
 	body, _ := json.Marshal(payload)
 	resp, err := n.client.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
-		log.Printf("telegram: POST %s failed: %v", endpoint, err)
+		// B356.1: endpoint AND err both embed the bot token.
+		log.Printf("telegram: POST %s failed: %v", RedactToken(endpoint, token), redactError(err, token))
 		return
 	}
 	defer resp.Body.Close()
@@ -698,7 +714,9 @@ func (n *RealNotifier) Run(ctx context.Context) {
 		}
 		updates, err := n.fetch(token, offset)
 		if err != nil {
-			log.Printf("telegram: getUpdates error: %v", err)
+			// B356.1: fetch() already redacts; the belt is here too because the
+			// getUpdates error was the one that leaked the token in the incident.
+			log.Printf("telegram: getUpdates error: %v", redactError(err, token))
 			select {
 			case <-ctx.Done():
 				return
@@ -835,7 +853,9 @@ func (n *RealNotifier) fetch(token string, offset int64) ([]update, error) {
 	}
 	resp, err := n.client.Get(endpoint + args)
 	if err != nil {
-		return nil, err
+		// B356.1: the getUpdates URL embeds the bot token (the live incident
+		// logged exactly this string, token and all).
+		return nil, redactError(err, token)
 	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
@@ -972,7 +992,7 @@ func (n *RealNotifier) sendPlain(token string, chatID int64, text string, pendin
 	body, _ := json.Marshal(payload)
 	resp, err := n.client.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
-		log.Printf("telegram: sendMessage HTTP failed: %v", err)
+		log.Printf("telegram: sendMessage HTTP failed: %v", redactError(err, token))
 		return 0, false
 	}
 	defer resp.Body.Close()
@@ -1051,7 +1071,7 @@ func (n *RealNotifier) editMessageText(token string, chatID, messageID int64, te
 	body, _ := json.Marshal(payload)
 	resp, err := n.client.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
-		log.Printf("telegram: editMessageText HTTP failed: %v", err)
+		log.Printf("telegram: editMessageText HTTP failed: %v", redactError(err, token))
 		return false
 	}
 	defer resp.Body.Close()
@@ -1276,7 +1296,7 @@ func (n *RealNotifier) ackCallback(token, callbackID, text string) {
 	body, _ := json.Marshal(payload)
 	resp, err := n.client.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
-		log.Printf("telegram: answerCallbackQuery failed: %v", err)
+		log.Printf("telegram: answerCallbackQuery failed: %v", redactError(err, token))
 		return
 	}
 	defer resp.Body.Close()

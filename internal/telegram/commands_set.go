@@ -260,7 +260,8 @@ func postSetMyCommands(ctx context.Context, n *RealNotifier, token, scope, lang 
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := n.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", endpoint, err)
+		// B356.1: the endpoint (and therefore the error) embeds the bot token.
+		return fmt.Errorf("POST %s: %w", RedactToken(endpoint, token), redactError(err, token))
 	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)

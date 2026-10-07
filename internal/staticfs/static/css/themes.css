@@ -760,6 +760,12 @@ select{padding-right:28px;background-image:url("data:image/svg+xml;charset=utf-8
 .probe-ok-direct{border-left-color:var(--success);background:var(--success-bg);color:var(--success)}
 .probe-ok-relay{border-left-color:var(--success);background:var(--success-bg);color:var(--success)}
 .probe-ok-relay i{color:var(--info)}
+/* B356.1 (2026-10-07): the bot is reaching api.telegram.org through an SSH
+   tunnel to a peer relay because the portal's own egress is blocked. Green
+   (notifications ARE being delivered) with the info-tinted icon, so it is never
+   mistaken for the kernel subnet-route case above. */
+.probe-ok-relay-tunnel{border-left-color:var(--info);background:var(--success-bg);color:var(--success)}
+.probe-ok-relay-tunnel i{color:var(--info)}
 .probe-unreachable{border-left-color:var(--danger);background:var(--danger-bg);color:var(--danger)}
 
 /* OS TILES */

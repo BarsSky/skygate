@@ -88,7 +88,9 @@ func TestB319_RuleLookupFindsThePreRenameRuleByNodeID(t *testing.T) {
 	seedB319(t, d)
 	svc := &Service{DB: &skygatedb.FixedDBSource{DB: d}}
 
-	state, err := svc.collectDevicePrefState(t.Context(), 1, "skyadmin", "skyworker")
+	// The trailing nil is the B356 health snapshot: these tests pin the SQL /
+	// pre-rename behaviour, for which "no relay measured yet" is the right input.
+	state, err := svc.collectDevicePrefState(t.Context(), 1, "skyadmin", "skyworker", nil)
 	if err != nil {
 		t.Fatalf("collectDevicePrefState: %v (this is the live PostgreSQL failure on SQLite's dialect)", err)
 	}

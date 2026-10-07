@@ -44,6 +44,7 @@ package admin
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -74,6 +75,27 @@ type clusterNodeRow struct {
 	IsSelf         bool
 	JoinedAgoSec   int64
 	LastSeenAgoSec int64
+
+	// B359 — the named reason this row is in its state, and the next action
+	// the operator should take. ReasonKey/ActionKey are i18n KEYS resolved by
+	// the template (the template may not contain a hardcoded string, B325), and
+	// both are always non-empty: "no reason" would be the silent-drop failure
+	// L-54 warns about, one page further out.
+	//
+	// HealthReason is the elector's own sentence about the LAST state change
+	// ("no heartbeat since pending (3× heartbeat interval)"), which is a
+	// value, not a key — it is the only place that fact exists.
+	//
+	// ReasonKey == "cluster.reason_failed" means HealthReason is set and the
+	// template must render it via `tf`; ReasonKey ==
+	// "cluster.reason_failed_unknown" means it is empty and the template
+	// renders the plain "unknown" sentence instead.
+	ReasonKey    string
+	ActionKey    string
+	HealthReason string
+	OwnedBy      string // node_owner_map.username when a row exists — the panel-only path must record ownership
+	OwnedTag     string // node_owner_map.tag for that row
+	ForeignRow   bool   // true when the hostname/IP belongs to a relay (exit_servers / tag:exit-node): the row is not a skygate host
 }
 
 // clusterInviteRow is one cluster_invite row (Phase 2.2 will
@@ -232,6 +254,18 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 	// AND last_seen_at is within OnlineThresholdSec. This
 	// matches the HA elector's stale-failover threshold so
 	// the page and the HA chain agree.
+	//
+	// B359: the same pass asks two more questions per row — "is this row
+	// actually a relay rather than a skygate host?" (the exit_servers /
+	// tag:exit-node fact that the discovery predicate now uses to refuse
+	// adoption, asked of rows that were inserted before that predicate
+	// existed) and "what does node_owner_map say about it?" (the ownership
+	// the manual runbook used to require an INSERT for). Both are batched:
+	// one query for the relays, one for the ownership rows, one for the last
+	// health reasons.
+	relayIndex := loadClusterRelayIndex(s.dbc())
+	healthReasons := loadClusterHealthReasons(s.dbc(), clusterID)
+	ownedByHost := loadClusterOwnership(s.dbc(), clusterID)
 	rows, err := s.dbc().QueryContext(r.Context(), `
 		SELECT id, cluster_id, hostname, COALESCE(tailscale_ip, ''),
 		       roles, state, COALESCE(skygate_version, ''),
@@ -280,6 +314,19 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 				n.LastSeenAt = "—"
 			}
 			n.IsSelf = (n.Hostname == s.SelfHostname)
+			// B359: name the reason and the next action. The relay fact is
+			// checked for EVERY row (not only rows discovery touched), so the
+			// three pre-B359 junk rows — which the new predicate can no longer
+			// re-discover, and would therefore never be re-classified — are
+			// flagged as "not a skygate host" right where the operator needs
+			// to see it.
+			own := ownedByHost[strings.ToLower(n.Hostname)]
+			n.OwnedBy = own.username
+			n.OwnedTag = own.tag
+			isRelayRow := relayIndex.IsRelay(n.Hostname, n.TailscaleIP) || own.tag == "tag:exit-node"
+			n.ForeignRow = isRelayRow
+			n.HealthReason = healthReasons[n.ID]
+			n.ReasonKey, n.ActionKey = clusterNodeReasonAndNext(n, isRelayRow, own.username)
 			// B216: online/offline count. "Stale" means
 			// state=ready but last_seen beyond the
 			// threshold — the node hasn't been flipped
@@ -451,6 +498,159 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 }
 
 // ---------- Pure helpers (testable without DB) ------------------------
+
+// clusterNodeOwnership is the projection of one node_owner_map row the cluster
+// page needs: who owns the device, and with which tag.
+type clusterNodeOwnership struct {
+	username string
+	tag      string
+}
+
+// loadClusterRelayIndex is the set of hosts/IPs that belong to `exit_servers`
+// (B359). It is the very same reader the discovery predicate uses
+// (cluster.RelayIndexFromDB), so "which nodes are relays" has one answer in the
+// product. A failure is logged and treated as "no relays known" — the cluster
+// page must not 500 because a secondary table is unreadable.
+func loadClusterRelayIndex(d *sql.DB) *cluster.RelayIndex {
+	idx, err := cluster.RelayIndexFromDB(d)
+	if err != nil {
+		log.Printf("cluster-page: exit_servers unavailable, relay classification degraded: %v", err)
+		return &cluster.RelayIndex{}
+	}
+	return idx
+}
+
+// loadClusterHealthReasons returns, per cluster_node.id, the `reason` string of
+// its most recent `node_health` cluster_audit row — the sentence the B204
+// elector wrote when it flipped the row to state=failed ("no heartbeat since
+// pending (3× heartbeat interval)"). The event is the only place that reason
+// exists: no column carries it and B359 adds no schema.
+//
+// One query, then a Go-side match on the last N events, because cluster_audit
+// has no (action, target) index and the page needs at most the last few.
+func loadClusterHealthReasons(d *sql.DB, clusterID string) map[string]string {
+	out := map[string]string{}
+	rows, err := d.Query(`
+		SELECT target_node_id, `+db.ActiveDialect().CastText("detail")+`
+		  FROM cluster_audit
+		 WHERE cluster_id = $1
+		   AND action = 'node_health'
+		 ORDER BY id DESC
+		 LIMIT 20
+	`, clusterID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var target string
+		var detail sql.NullString
+		if scanErr := rows.Scan(&target, &detail); scanErr != nil {
+			continue
+		}
+		if target == "" {
+			continue
+		}
+		if _, seen := out[target]; seen {
+			continue
+		}
+		out[target] = extractAuditReason(detail.String)
+	}
+	return out
+}
+
+// extractAuditReason pulls the "reason" field out of a cluster_audit detail
+// blob without pulling in encoding/json for one field. The elector writes
+// `"reason":"…"` with no escaped quotes inside (the reasons are fixed
+// sentences), and anything unexpected degrades to "" — a missing sentence is
+// rendered as "неизвестно", never as a wrong one.
+func extractAuditReason(detail string) string {
+	const key = `"reason":"`
+	i := strings.Index(detail, key)
+	if i < 0 {
+		return ""
+	}
+	rest := detail[i+len(key):]
+	j := strings.IndexByte(rest, '"')
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
+}
+
+// loadClusterOwnership maps lowercased hostname → the node_owner_map row for
+// that hostname. Keyed by hostname, not node_id, because cluster_node rows
+// created by discovery have a synthetic id ("node-disc-<host>") that only
+// matches node_owner_map once the host has actually joined the tailnet and been
+// attributed by name. An empty username is skipped so a later row can win.
+func loadClusterOwnership(d *sql.DB, clusterID string) map[string]clusterNodeOwnership {
+	out := map[string]clusterNodeOwnership{}
+	rows, err := d.Query(`
+		SELECT o.hostname, o.username, o.tag
+		  FROM node_owner_map o
+		  JOIN cluster_node n ON LOWER(n.hostname) = LOWER(o.hostname)
+		 WHERE n.cluster_id = $1
+		   AND o.hostname IS NOT NULL
+		   AND o.hostname != ''
+	`, clusterID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var host, user, tag string
+		if scanErr := rows.Scan(&host, &user, &tag); scanErr != nil {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(host))
+		if key == "" || user == "" {
+			continue
+		}
+		out[key] = clusterNodeOwnership{username: user, tag: tag}
+	}
+	return out
+}
+
+// clusterNodeReasonAndNext is the B359 rule table for /admin/cluster: given the
+// facts the page can read, WHICH named reason does this row carry, and WHAT is
+// the next action? It is pure so the rule can be unit-tested without a server.
+//
+// The relay test comes first: a row whose host is an exit node is not a skygate
+// host no matter what else is true about it (that is the whole of B359), so the
+// page must never tell the operator to approve it as a standby.
+//
+// ownedBy is the node_owner_map username for the row, when one exists. It is
+// the fact the manual bootstrap runbook required an INSERT for, so its absence
+// is itself an actionable reason ("nobody owns this device — finish the
+// onboarding"), not a silent blank.
+func clusterNodeReasonAndNext(n clusterNodeRow, isRelayRow bool, ownedBy string) (reasonKey, actionKey string) {
+	if isRelayRow {
+		return "cluster.reason_foreign_relay", "cluster.action_foreign_relay"
+	}
+	if n.IsSelf {
+		return "cluster.reason_self", "cluster.action_self"
+	}
+	switch n.State {
+	case "pending":
+		if ownedBy != "" {
+			return "cluster.reason_pending_owned", "cluster.action_pending_owned"
+		}
+		return "cluster.reason_pending_new", "cluster.action_pending_new"
+	case "ready":
+		if ownedBy == "" {
+			return "cluster.reason_ready_unowned", "cluster.action_ready_unowned"
+		}
+		return "cluster.reason_ready", "cluster.action_ready"
+	case "draining":
+		return "cluster.reason_draining", "cluster.action_draining"
+	case "failed":
+		if n.HealthReason != "" {
+			return "cluster.reason_failed", "cluster.action_failed"
+		}
+		return "cluster.reason_failed_unknown", "cluster.action_failed"
+	}
+	return "cluster.reason_unknown", "cluster.action_unknown"
+}
 
 // parsePGTextArray parses a postgres TEXT[] literal of the
 // form "{a,b,c}" into a []string. Empty / NULL returns nil.
@@ -1035,13 +1235,25 @@ func (s *Service) PostAdminClusterDiscover(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	clusterID := "skygate-staging"
-	peers, err := cluster.DiscoverNewNodes(r.Context(), s.dbc(), clusterID, s.DiscoveryTag)
+	report, err := cluster.DiscoverNewNodes(r.Context(), s.dbc(), clusterID, s.DiscoveryTag, nil)
 	if err != nil {
 		_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.discovery.error",
 			fmt.Sprintf("error=%q", err.Error()), "", "")
 		clusterRedirect(w, r, "", "discovery failed: "+err.Error())
 		return
 	}
+	// B359: the panel-only bootstrap has one precondition the operator cannot
+	// see from the cluster page — the `infra` portal user must be linked to a
+	// headscale user, because that is whose preauth key the onboard action
+	// mints. Say so here, where the operator is already looking at candidates,
+	// instead of on the new host after a VM has been provisioned.
+	infraLinked, ierr := cluster.InfraUserLinked(s.dbc())
+	if ierr == nil && !infraLinked {
+		report.Rejected = append(report.Rejected, cluster.DiscoveryRejection{
+			Hostname: "infra", IP: "", Reason: cluster.SkipNoInfraUser,
+		})
+	}
+	peers := report.ToAdopt
 	discovered := 0
 	for _, p := range peers {
 		if err := cluster.EnsureDiscoveredNode(s.dbc(), clusterID, p.Hostname, p.TailscaleIP, c.Username); err != nil {
@@ -1054,14 +1266,77 @@ func (s *Service) PostAdminClusterDiscover(w http.ResponseWriter, r *http.Reques
 		}
 		discovered++
 	}
-	// Run-level audit row (no specific target).
-	runDetail := fmt.Sprintf("discovered=%d total_peers=%d tag_filter=%q", discovered, len(peers), s.DiscoveryTag)
+	// Run-level audit row (no specific target). B359 adds the skip counts, so a
+	// discovery pass that adopted nothing because every peer was a relay is
+	// distinguishable in the audit trail from one that found no peers at all.
+	runDetail := fmt.Sprintf("discovered=%d total_peers=%d tag_filter=%q skipped=%d",
+		discovered, discoveryScannedTotal(report), s.DiscoveryTag, len(report.Rejected))
 	_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.discovery.run", runDetail, "", "")
+	// B359: every peer the predicate refused is NAMED in the flash. Pre-B359
+	// they simply did not appear, which read as "there is nothing out there"
+	// while three exit-node relays sat in the node table as failed standbys.
+	skipNote := discoverySkipNote(report)
+	if skipNote != "" {
+		_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.discovery.skip",
+			fmt.Sprintf("%s tag_filter=%q", skipNote, s.DiscoveryTag), "", "")
+	}
 	if discovered == 0 {
-		clusterRedirect(w, r, fmt.Sprintf("Tailscale discovery: 0 new nodes (scanned %d peers, tag filter %q).", len(peers), s.DiscoveryTag), "")
+		okMsg := fmt.Sprintf("Tailscale discovery: 0 new nodes (scanned %d peers, tag filter %q).", discoveryScannedTotal(report), s.DiscoveryTag)
+		if skipNote != "" {
+			okMsg += " " + skipNote
+		}
+		clusterRedirect(w, r, okMsg, "")
 		return
 	}
-	clusterRedirect(w, r, fmt.Sprintf("Discovered %d new node(s) from Tailscale — see pending rows on /admin/cluster for the Approve button.", discovered), "")
+	okMsg := fmt.Sprintf("Discovered %d new node(s) from Tailscale — see pending rows on /admin/cluster for the Approve button.", discovered)
+	if skipNote != "" {
+		okMsg += " " + skipNote
+	}
+	clusterRedirect(w, r, okMsg, "")
+}
+
+// discoveryScannedTotal is the honest "scanned N peers" number: the peers the
+// pass adopted, the peers it refused by name, and the peers it never considered
+// (self, offline, tag-filtered). B359 — the pre-B359 flash counted only the
+// adoptable list, so "scanned 3 peers" could print while 14 devices were
+// examined.
+func discoveryScannedTotal(report cluster.Report) int {
+	return len(report.ToAdopt) + len(report.Rejected) + report.NotCandidate
+}
+
+// discoverySkipNote renders the "these peers were NOT adopted, and here is why"
+// sentence for the flash and the audit row (B359). It groups by reason so the
+// sentence stays short on a tailnet with many devices, and it always names the
+// exit-node relay case explicitly — that is the refusal the operator must be
+// able to act on.
+func discoverySkipNote(report cluster.Report) string {
+	if len(report.Rejected) == 0 {
+		return ""
+	}
+	counts := map[cluster.DiscoverySkipReason]int{}
+	for _, r := range report.Rejected {
+		counts[r.Reason]++
+	}
+	var parts []string
+	for _, reason := range []cluster.DiscoverySkipReason{
+		cluster.SkipRelayExitTag,
+		cluster.SkipRelayExitServer,
+		cluster.SkipIPv6Only,
+		cluster.SkipNoAddress,
+		cluster.SkipNoHostname,
+		cluster.SkipAlreadyClusterMember,
+		cluster.SkipNoInfraUser,
+		cluster.SkipNotSkygateHost,
+	} {
+		if n := counts[reason]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", reason, n))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Not adopted as skygate hosts: %s. A relay is never a skygate host; see /admin/cluster for the per-node reason and the next action.",
+		strings.Join(parts, ", "))
 }
 
 // ---------- POST /admin/cluster/invite/generate (B200) ----------------

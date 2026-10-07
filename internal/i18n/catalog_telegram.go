@@ -42,18 +42,22 @@ var ruTelegram = map[string]string{
 	"telegram.pill_configured_title":    "Бот настроен через БД",
 	"telegram.probe_ok_direct_label":    "Telegram API: доступен (прямой интернет)",
 	// B253: stale-while-revalidate probe UI (cached result + background refresh).
-	"telegram.probe_now":               "Проверить сейчас",
-	"telegram.probe_stale":             "показан кэш",
-	"telegram.probe_stale_until":       "Результат взят из кэша, фоновая проверка уже идёт — кнопка «Проверить сейчас» даёт свежий результат немедленно.",
-	"telegram.probe_ok_relay_label":    "Telegram API: доступен (через Tailscale relay)",
-	"telegram.probe_unreachable_label": "Telegram API: недоступен",
-	"telegram.probe_latency":           " · задержка %s",
-	"telegram.probe_resolved_prefix":   "Резолв: ",
-	"telegram.probe_troubleshooting":   "Что проверить:",
-	"telegram.probe_tip_advertise":     "Проверьте, что <code>tailscale up --advertise-routes</code> на relay покрывает указанные IP (выполните <code>tailscale status</code> в контейнере relay).",
-	"telegram.probe_tip_approve":       "Проверьте, что headscale подтвердил subnet-маршруты relay: <code>docker exec headscale headscale nodes list</code> → сравните <code>advertised-routes</code> vs <code>enabled-routes</code>.",
-	"telegram.probe_tip_update":        "Запустите <code>make tailscale-update-telegram-routes</code> на relay, если Telegram добавил новые IP-диапазоны.",
-	"telegram.probe_tip_docs":          "См. <a href=\"/docs/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/telegram-relay.md</a> для полной инструкции.",
+	"telegram.probe_now":            "Проверить сейчас",
+	"telegram.probe_stale":          "показан кэш",
+	"telegram.probe_stale_until":    "Результат взят из кэша, фоновая проверка уже идёт — кнопка «Проверить сейчас» даёт свежий результат немедленно.",
+	"telegram.probe_ok_relay_label": "Telegram API: доступен (через Tailscale relay)",
+	// B356.1 (2026-10-07): the bot's own client reaches the API through an SSH
+	// tunnel to a peer relay, because the portal's direct egress is blocked while
+	// the relay can reach api.telegram.org.
+	"telegram.probe_ok_relay_tunnel_label": "Telegram API: доступен (через SSH-туннель к relay)",
+	"telegram.probe_unreachable_label":     "Telegram API: недоступен",
+	"telegram.probe_latency":               " · задержка %s",
+	"telegram.probe_resolved_prefix":       "Резолв: ",
+	"telegram.probe_troubleshooting":       "Что проверить:",
+	"telegram.probe_tip_advertise":         "Проверьте, что <code>tailscale up --advertise-routes</code> на relay покрывает указанные IP (выполните <code>tailscale status</code> в контейнере relay).",
+	"telegram.probe_tip_approve":           "Проверьте, что headscale подтвердил subnet-маршруты relay: <code>docker exec headscale headscale nodes list</code> → сравните <code>advertised-routes</code> vs <code>enabled-routes</code>.",
+	"telegram.probe_tip_update":            "Запустите <code>make tailscale-update-telegram-routes</code> на relay, если Telegram добавил новые IP-диапазоны.",
+	"telegram.probe_tip_docs":              "См. <a href=\"/docs/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/telegram-relay.md</a> для полной инструкции.",
 	// 2026-09-15 (B-bug-fix): conditional hints that fire when
 	// the live container's tailscaled is down / has accept-routes
 	// off — the most common reason "Telegram API: недоступен" on
@@ -161,18 +165,22 @@ var enTelegram = map[string]string{
 	"telegram.pill_configured_title":    "Bot configured via DB",
 	"telegram.probe_ok_direct_label":    "Telegram API: reachable (direct internet)",
 	// B253: see the RU block — stale-while-revalidate probe UI.
-	"telegram.probe_now":               "Probe now",
-	"telegram.probe_stale":             "cached result",
-	"telegram.probe_stale_until":       "This result came from the cache and a background probe is already running — the 'Probe now' button returns a fresh result immediately.",
-	"telegram.probe_ok_relay_label":    "Telegram API: reachable (Tailscale relay)",
-	"telegram.probe_unreachable_label": "Telegram API: unreachable",
-	"telegram.probe_latency":           " · latency %s",
-	"telegram.probe_resolved_prefix":   "Resolved: ",
-	"telegram.probe_troubleshooting":   "Troubleshooting:",
-	"telegram.probe_tip_advertise":     "Check that the relay's <code>tailscale up --advertise-routes</code> covers the IPs above (run <code>tailscale status</code> in the relay container).",
-	"telegram.probe_tip_approve":       "Check that headscale has approved the relay's subnet routes: <code>docker exec headscale headscale nodes list</code> → look for the relay's <code>advertised-routes</code> vs <code>enabled-routes</code>.",
-	"telegram.probe_tip_update":        "Run <code>make tailscale-update-telegram-routes</code> on the relay if Telegram added new IP ranges.",
-	"telegram.probe_tip_docs":          "See <a href=\"/docs/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/telegram-relay.md</a> for the full setup procedure.",
+	"telegram.probe_now":            "Probe now",
+	"telegram.probe_stale":          "cached result",
+	"telegram.probe_stale_until":    "This result came from the cache and a background probe is already running — the 'Probe now' button returns a fresh result immediately.",
+	"telegram.probe_ok_relay_label": "Telegram API: reachable (Tailscale relay)",
+	// B356.1 (2026-10-07): the bot's own client reaches the API through an SSH
+	// tunnel to a peer relay, because the portal's direct egress is blocked while
+	// the relay can reach api.telegram.org.
+	"telegram.probe_ok_relay_tunnel_label": "Telegram API: reachable (SSH tunnel to a relay)",
+	"telegram.probe_unreachable_label":     "Telegram API: unreachable",
+	"telegram.probe_latency":               " · latency %s",
+	"telegram.probe_resolved_prefix":       "Resolved: ",
+	"telegram.probe_troubleshooting":       "Troubleshooting:",
+	"telegram.probe_tip_advertise":         "Check that the relay's <code>tailscale up --advertise-routes</code> covers the IPs above (run <code>tailscale status</code> in the relay container).",
+	"telegram.probe_tip_approve":           "Check that headscale has approved the relay's subnet routes: <code>docker exec headscale headscale nodes list</code> → look for the relay's <code>advertised-routes</code> vs <code>enabled-routes</code>.",
+	"telegram.probe_tip_update":            "Run <code>make tailscale-update-telegram-routes</code> on the relay if Telegram added new IP ranges.",
+	"telegram.probe_tip_docs":              "See <a href=\"/docs/telegram-relay.md\" target=\"_blank\" rel=\"noopener\">docs/telegram-relay.md</a> for the full setup procedure.",
 	// 2026-09-15 (B-bug-fix): see RU counterpart above.
 	"telegram.probe_tip_container_off":       "In the skygate container <strong>tailscaled is not running</strong> — <code>SKYGATE_TS_AUTHKEY_FILE=/dev/null</code> or an empty authkey. Fix: open <code>/admin/tailscale</code> (Start) OR set a real <code>TS_AUTHKEY_FILE</code> in <code>docker-compose.yml</code> and restart skygate.",
 	"telegram.probe_tip_container_no_accept": "In the skygate container <strong>tailscale set --accept-routes=false</strong> — the relay's subnet routes are ignored. Click the \"Re-apply accept-routes\" button in the <em>Container tailscale state</em> card below.",

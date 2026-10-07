@@ -290,7 +290,8 @@ func (n *RealNotifier) SendRich(token string, chatID int64, blocks []RichBlock, 
 				resp.StatusCode, string(rb))
 		}
 	} else {
-		log.Printf("telegram: sendRichMessage transport err: %v — falling back to sendMessage", err)
+		// B356.1: the transport error carries the full URL, token included.
+		log.Printf("telegram: sendRichMessage transport err: %v — falling back to sendMessage", redactError(err, token))
 	}
 	// 2. Fallback: render blocks as flat HTML and post via
 	// sendMessage. The rendering is "good enough" — the

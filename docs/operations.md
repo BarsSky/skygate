@@ -33,6 +33,7 @@ delegation.
 13. [Host disk headroom](#13-host-disk-headroom--the-guarantee-catalog-needs--1-gb-free) — what a catalog run costs, and the reclaim that costs nothing.
 14. [Operator recipes recovered from one-off scripts](#14-operator-recipes-recovered-from-one-off-scripts-2026-09) — break-glass update, build identity, DERP probing, Tailscale key resolution, login/cluster POST debugging, the stuck-tag ladder, running Go from Git Bash.
 15. [Running the guarantee catalog with PostgreSQL coverage](#15-running-the-guarantee-catalog-with-postgresql-coverage) — the `CREATE SCHEMA` permission contract, the container-IP recipe, and the SSH-tunnel variant.
+17. [Admitting a second skygate node from the panel](#17-admitting-a-second-skygate-node-from-the-panel) — the skygate-host predicate, the one-paste onboarding block, approving the row, and removing pre-B359 relay rows.
 
 ---
 
@@ -1180,6 +1181,82 @@ file and binary; only the auth-key env var changes the behaviour).
 
 ---
 
+### 8.5 Bot API fallback: an SSH tunnel through a peer relay (B356.1)
+
+The subnet-route design in §8.1 works when the skygate container accepts the relay's
+advertised Telegram ranges. On the reference deployment (2026-10-07) it never applied:
+the container's tailscaled has `RouteAll: true` but no exit node, the kernel routes
+`149.154.167.220` out of `eth0` through the docker bridge, and the host's upstream path
+blocks `api.telegram.org` — so the kernel route never went through `tailscale0`, the
+`ok_relay` classification could not fire, and **every notification was lost** while the
+log repeated:
+
+```
+telegram: getUpdates error: Get "https://api.telegram.org/bot<TOKEN>/getUpdates":
+  context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+```
+
+B356.1 adds a LAST RUNG to the Bot API path — the same shape as B353's route hop:
+
+1. **Direct first, always.** A request is attempted directly unless a recent direct
+   failure is recorded (the direct path is then re-probed once a minute). A working
+   direct path is never bypassed and pays no extra latency.
+2. **The fallback is a tunnel, not a remote command.** `ssh -W api.telegram.org:443 --
+   <relay>` is started and the child's stdin/stdout become the socket, so TLS terminates
+   in the skygate process: the relay moves ciphertext only, and the bot token never
+   appears in its process list, argv or logs.
+3. **Relays come from `exit_servers`** (the same table §8.2/§8.3 use): the tailnet
+   address is preferred over `ssh_target`, the order is proven-first (B309's
+   `relay_apply_state:<relay>`), the target and the key path pass the B266/B353 shape
+   gates, and a relay that fails goes into a short cooldown instead of being retried in
+   a loop.
+
+**Knobs**
+
+| Variable | Default | What it does |
+|---|---|---|
+| `SKYGATE_TELEGRAM_RELAY_FALLBACK` | on | `0` / `false` / `no` / `off` disables the fallback entirely — the Bot API path is then the direct path only, exactly as before B356.1 |
+| `SKYGATE_TELEGRAM_PREFERRED_RELAY` | empty | relay hostname (as in `exit_servers.hostname`) to try FIRST |
+| `SKYGATE_TELEGRAM_SSH_KEY` | empty | private key for the tunnel when the relay row's `ssh_key_path` is empty; falls back to `SKYGATE_EXIT_SSH_KEY`, then to `/ssh-sync/skygate_sync` and `/ssh-sync/id_ed25519` when those files exist |
+
+The per-relay `exit_servers.ssh_key_path` always wins over the env vars. A target or key
+path that could become an ssh option or a shell metacharacter is refused **by name** —
+the tunnel never silently connects somewhere else.
+
+**Verify**
+
+```bash
+# 1. Inside the container: is the API reachable at all?
+docker exec skygate sh -c 'curl -sS -m 5 -o /dev/null -w "%{http_code}\n" https://api.telegram.org'
+
+# 2. /admin/telegram shows one of
+#      ok_direct         reachable directly
+#      ok_relay          reachable through a relay's SUBNET ROUTE (the §8.1 kernel path)
+#      ok_relay_tunnel   the BOT is carried by an SSH tunnel to <relay>; the direct probe
+#                        fails and the message names the relay plus the direct error
+#      unreachable       neither path works
+
+# 3. The journal names the carrying relay once per 5-minute window, never per attempt:
+docker logs skygate 2>&1 | grep -E 'telegram egress'
+#   telegram egress: the direct call to the Bot API failed (...); carrying Telegram
+#   traffic through the relay tunnel via karolina (root@100.64.0.2:18022) - set
+#   SKYGATE_TELEGRAM_RELAY_FALLBACK=0 to disable this fallback ...
+```
+
+**Failure modes**
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `unreachable`, and the message says the fallback is switched off | `SKYGATE_TELEGRAM_RELAY_FALLBACK=0` is set | unset it (or set `1`) and restart |
+| `unreachable`, and the message lists "no usable ssh private key" | the relay row has no `ssh_key_path`, and no env key exists or is readable | set `exit_servers.ssh_key_path` per relay, or `SKYGATE_TELEGRAM_SSH_KEY` |
+| `unreachable`, and the message names an "unsafe ssh target" | the relay row's `ssh_target` is not `[user@]host[:port]` | fix the row (the B266 rules) |
+| `ok_relay_tunnel`, but messages still fail | the relay carries the TCP connection; the Bot API is rejecting the request | send a test message from `/admin/telegram`; the relay is not the problem |
+| It worked, then the page says `unreachable` | the relay is down or its identity changed; the reason is in the fallback error | run `ssh -W api.telegram.org:443 <relay>` by hand from the container |
+| Traffic stays on the tunnel after the network is fixed | the direct path is re-probed once a minute; the tunnel is dropped on the first direct success | wait one minute, or restart |
+
+Every Bot API error path redacts the token (`bot<redacted>`), so a journal line or the
+admin page can never be used to steal the bot.
+
 ## 9. Backup, WAL-G and the restore drill
 
 [backup-restore-and-migration.md](backup-restore-and-migration.md) owns the
@@ -1934,5 +2011,123 @@ sudo docker exec headscale headscale policy get        # the policy still parses
 Then have the affected device log in through OIDC once and confirm the user count did **not** grow.
 Related: L-63 in `docs/LESSONS.md`, and B355 (the per-device tag must reach the ownership row) —
 the two halves of the same operator report.
+
+---
+
+## 17. Admitting a second skygate node from the panel
+
+**When to use:** you have provisioned a new VM (`<HA_HOST>`) and want it in the cluster as a
+standby — an HA mirror, *not* an exit node. Everything below happens on `/admin/cluster` of the
+running primary; the only thing you do on the new host is paste one generated block.
+
+This section replaces the deleted `docs/runbooks/svyatoslava-bootstrap.md`, whose steps 3–5 (tag
+the node, `INSERT INTO node_owner_map`, push the binary) were the manual work B342 and B359 moved
+into the panel. A skygate host is a **technical HA host**: it must never be added to
+`exit_servers` and must never advertise `0.0.0.0/0` / `::/0`.
+
+### 17.1 What "this is a skygate host" means now (B359)
+
+Discovery (`/admin/cluster` → **Run Tailscale discovery**, and the 5-minute background tick) adopts
+a tailnet peer as a `skygate-standby` candidate only when **both** hold:
+
+* it is **not a relay** — it does not carry `tag:exit-node`, and it has no row in `exit_servers`
+  (skygate's own relay record, the one `/admin/exit-nodes` shows); **and**
+* it carries the **per-node infra tag for exactly that hostname**:
+  `tag:dev-infra-<hostname>` (lower-case hostname).
+
+That tag is precisely what the panel's own onboarding mints with the tailnet preauth key, and it
+is the same tag the old runbook applied by hand with
+`headscale nodes tag -i <id> --tags tag:dev-infra-<hostname>`. A relay is refused **before** the tag
+is even considered, because B111 gives every relay an infra tag too (`tag:dev-infra-emilia` on the
+node `emilia`) — the tag alone cannot separate a relay from a host.
+
+Peers that are not adopted are **never silently dropped**: the discovery flash says
+`Not adopted as skygate hosts: relay-exit-tag=3, …`, the background tick logs the same sentence at
+most once an hour (`cluster.discovery.skip` in the audit log), and the node table carries a
+per-row reason and next action. If a host you just provisioned shows up nowhere, read that sentence
+first.
+
+### 17.2 Procedure (panel only)
+
+1. **Check the precondition.** On `/admin/cluster`, run discovery once. If the flash reports
+   `infra-user-not-linked`, the `infra` portal user has no headscale user id, so skygate cannot mint
+   a preauth key or record ownership. Fix that first (see §4); nothing below will work until it is
+   linked.
+2. **Onboard from the panel.** `/admin/cluster` → **Onboard a second host** →
+   *hostname* = `<HA_HOST>`, *api_url* = the URL you reached the panel with,
+   *ttl_hours* ≤ 24. Leave *ts_tag* empty to get `tag:dev-infra-<HA_HOST>`.
+   The action creates the `cluster_node` row, mints the `sgn1` cluster invite **and** a headscale
+   preauth key for the `infra` user, and parks both behind an opaque one-time token — never in a
+   URL.
+3. **Paste the generated block on `<HA_HOST>`.** The page renders it exactly once (it is deleted on
+   render; unrendered payloads are swept after 15 minutes). It is five numbered steps: install the
+   Tailscale client if missing, `tailscale up --login-server=… --authkey=… --hostname=<HA_HOST>`, install
+   the release version **the primary runs**, `sudo skygate join <sgn1 token> --api-url=… --write-dsn-to=/etc/skygate/dbs.env`,
+   then `systemctl enable --now skygate` and a `/healthz` check.
+   Do **not** add `--advertise-exit-node` and do **not** add `--accept-routes` to that `tailscale up`:
+   a mirror that advertises exit routes becomes a relay.
+4. **Watch the row.** It appears on `/admin/cluster` in state `pending`. Its reason column says
+   whether ownership is recorded yet:
+   * *pending, no owner* — skygate has not seen the node in headscale yet; give the reconciliation
+     tick (~5 minutes) one pass, or re-run discovery.
+   * *pending, owner recorded* — the `node_owner_map` row exists (`infra`, `tag:dev-infra-<HA_HOST>`);
+     this is the state the old runbook's manual `INSERT` produced, now automatic.
+5. **Approve.** Press **Approve** on that row once `curl -fsS http://<HA_HOST>:8080/healthz` answers
+   200. The row moves to `ready` and the HA chain may schedule failover to it (see `/admin/ha`).
+6. **Verify ownership independently** (one read, no writes):
+
+   ```bash
+   sudo docker exec headscale headscale nodes list | grep <HA_HOST>   # owner + tags
+   sudo docker exec headscale headscale users list                    # the infra user exists
+   ```
+
+   On `/admin/cluster` the row must show `owner: infra` and `tag:dev-infra-<HA_HOST>`.
+
+### 17.3 Removing the pre-B359 junk rows (only if your deployment has them)
+
+Before B359 the discovery ticker adopted **every** online peer, so a deployment whose tailnet has
+exit-node relays can carry rows that are not skygate hosts at all. Measured on the reference
+deployment on 2026-10-07:
+
+```
+cluster_node: node-disc-emilia    | emilia    | failed | {skygate-standby}
+              node-disc-karolina  | karolina  | failed | {skygate-standby}
+              node-disc-sharlotta | sharlotta | failed | {skygate-standby}
+```
+
+These are **relays**, not hosts: they have no skygate to join and can never leave `failed`. B359
+refuses to insert new rows like them, but it does not delete existing ones — and it must not guess
+at a row that might be a real host that is merely down. Such a row is now flagged on the page as
+`Это relay exit-узла …, а не skygate-хост` with the next action *remove this row*.
+
+**Delete them from the panel**, one row at a time, with the **Drain & Remove** button on
+`/admin/cluster`. That is the supported path: it writes the `node_drain` / `node_leave` audit rows in
+one transaction and cannot mistype a hostname. Only if you must do it from SQL (break-glass), after
+confirming the hostname is in `exit_servers` or carries `tag:exit-node`:
+
+```sql
+-- Confirm FIRST: every name below must appear here, or do not delete it.
+SELECT hostname FROM exit_servers WHERE hostname IN ('emilia', 'karolina', 'sharlotta');
+
+-- Then, one host at a time, with the row's exact hostname:
+DELETE FROM cluster_node WHERE cluster_id = 'skygate-staging' AND hostname = 'emilia';
+```
+
+Never delete a row whose host is a real skygate instance — `cluster_node` is the HA chain's input,
+and removing a live standby silently shrinks the chain.
+
+### 17.4 What is still manual (honest list)
+
+* **Provisioning the VM** — skygate does not create VMs.
+* **The block's execution on the new host** — one paste, as root; nothing is pushed over SSH by
+  skygate.
+* **`skygate deploy-push`** — the old runbook shipped the binary from the operator's laptop. The
+  onboarding block installs the release instead (checksum-verified), so this step is gone.
+* **`/admin/ha` "Add HA member"** — the member row itself (priority, role) is still an `/admin/ha`
+  action after the node is `ready`.
+
+See also: B342 (the onboarding artifact), B266 (the same one-time-token pattern for exit nodes),
+B354 (the cluster row bootstrap), B359 (the predicate and the per-row reasons).
+
 
 

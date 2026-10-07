@@ -166,10 +166,22 @@ else
 fi
 if grep -q 'func discoveryErrorCleared()' "$MAIN" \
    && grep -q 'discoveryErrorCleared()' "$MAIN" \
-   && awk '/peers, err := cluster.DiscoverNewNodes/{f=1} f&&/discoveryErrorCleared\(\)/{print "found"; exit}' "$MAIN" | grep -q found; then
+   && awk '/:= cluster.DiscoverNewNodes\(/{f=1} f&&/discoveryErrorCleared\(\)/{print "found"; exit}' "$MAIN" | grep -q found; then
   ok "D3: a success clears the throttle, so the next failure is reported at once"
 else
   bad "D3: the throttle is never cleared"
+fi
+# B359 (2026-10-07) added a THIRD stage to the discovery pass: the peers the
+# skygate-host predicate REFUSED (an exit-node relay is not a skygate host).
+# B318's rule applies to it unchanged — reported once, not once per tick —
+# because a tailnet with a dozen relays and laptops would otherwise reproduce the
+# 288-lines-a-day noise this contract exists to prevent. The reason is NAMED.
+if grep -q 'func discoveryRejectionIsNew(' "$MAIN" \
+   && grep -q 'func discoveryReasonIsNews(' "$MAIN" \
+   && grep -q 'discoveryRejectionCleared()' "$MAIN"; then
+  ok "D4: the B359 refusal stage is throttled like the other two and can be cleared"
+else
+  bad "D4: the peers B359 refuses are logged without a noise floor"
 fi
 
 # --- E: i18n parity ------------------------------------------------------------------

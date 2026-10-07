@@ -122,6 +122,12 @@ type TailscalePeer struct {
 	// applied to the peer (e.g. ["tag:skygate-
 	// candidate"]). Empty for untagged peers.
 	Tags []string
+	// Addresses is the RAW TailscaleIPs list as the peer reported it.
+	// B359: TailscaleIP is the first IPv4 (empty for a v6-only peer), so
+	// the raw list is what lets the predicate tell "this candidate is
+	// reachable only over IPv6" from "this candidate reported no address"
+	// instead of silently dropping it.
+	Addresses []string
 }
 
 // TailscaleStatus is the parsed `tailscale status
@@ -226,6 +232,7 @@ func peerFromRaw(p TailscalePeerRaw) TailscalePeer {
 		TailscaleIP: firstIPv4(p.TailscaleIPs),
 		Online:      p.Online,
 		Tags:        p.Tags,
+		Addresses:   p.TailscaleIPs,
 	}
 }
 
@@ -291,31 +298,64 @@ func matchesTagFilter(peer TailscalePeer, tagFilter string) bool {
 	return false
 }
 
-// DiscoverNewNodes returns the list of Tailscale
-// peers that are NOT already in cluster_node.
-// The caller is expected to INSERT one row per
-// returned peer via EnsureDiscoveredNode.
+// DiscoverNewNodes returns the Tailscale peers
+// that are candidates for ADOPTION as skygate
+// hosts, together with a named reason for every
+// peer that was not adopted.
 //
-// Filters applied:
-//   - excludes the local node (Self)
-//   - excludes offline peers (we don't want
-//     a cluster_node row for a phone that's off)
-//   - excludes peers that fail the tag filter
-//   - excludes peers that already exist in
-//     cluster_node (idempotent re-runs are
-//     no-ops)
+// B359 (2026-10-07). Pre-B359 the only filter
+// was "tag filter + not already in cluster_node",
+// so EVERY online peer became a pending
+// `skygate-standby` row — including the
+// exit-node relays. Measured live on the
+// reference deployment: `emilia`, `karolina`
+// and `sharlotta` are exit-node RELAYS (they
+// carry tag:exit-node and rows in
+// `exit_servers`), they were inserted as
+// standby candidates by the ticker, had no
+// skygate to join, and settled in state=failed
+// forever. /admin/cluster showed three
+// permanently-failed "standby" nodes that could
+// never succeed, because the discovery
+// predicate had no positive notion of "this is
+// a skygate host".
 //
-// On any error from TailscaleStatus (binary
-// missing, tailscaled down, JSON parse fail),
-// returns the error so the caller can log it
-// and write a cluster.discovery.error audit
-// row. The caller decides whether to retry
-// (background ticker does) or surface the
-// error to the admin (HTTP handler does).
-func DiscoverNewNodes(ctx context.Context, d *sql.DB, clusterID, tagFilter string) ([]TailscalePeer, error) {
+// THE PREDICATE (the whole of it is
+// ClassifyPeerForAdoption, a pure function):
+//
+//	A peer is adopted only when it is NOT a
+//	relay AND it is positive evidence of a
+//	skygate host. A relay is: the peer carries
+//	`tag:exit-node`, or its hostname/IP is in
+//	`exit_servers`. Positive evidence of a
+//	skygate host is the per-node infra tag the
+//	panel's own onboarding mints —
+//	`tag:dev-infra-<lowercase hostname>` —
+//	which is exactly the `headscale nodes tag`
+//	step of the manual bootstrap runbook that
+//	/admin/cluster/onboard replaced.
+//
+// Every peer that fails is returned in
+// `Report.Rejected` with a DiscoverySkipReason,
+// never silently dropped: "we cannot decide"
+// must not look like "there is nothing there"
+// (L-54). The callers surface them (the HTTP
+// handler in the flash, the ticker in a
+// rate-limited log line + audit row).
+//
+// Relay index: `relayIndex` may be nil (the
+// unit tests pass one explicitly); when it is
+// nil the function loads `exit_servers` from
+// `d`. On any error from TailscaleStatus
+// (binary missing, tailscaled down, JSON parse
+// fail) or from the `exit_servers` read, the
+// error is returned so the caller can log it
+// and write a cluster.discovery.error audit row.
+func DiscoverNewNodes(ctx context.Context, d *sql.DB, clusterID, tagFilter string, relayIndex *RelayIndex) (Report, error) {
+	var report Report
 	status, err := GetTailscaleStatus(ctx)
 	if err != nil {
-		return nil, err
+		return report, err
 	}
 	// List existing hostnames in cluster_node
 	// (state doesn't matter — we skip duplicates
@@ -323,30 +363,35 @@ func DiscoverNewNodes(ctx context.Context, d *sql.DB, clusterID, tagFilter strin
 	// draining). Empty cluster (no rows) is fine.
 	existing, err := listClusterHostnames(d, clusterID)
 	if err != nil {
-		return nil, fmt.Errorf("list cluster_node hostnames: %w", err)
+		return report, fmt.Errorf("list cluster_node hostnames: %w", err)
 	}
-	var out []TailscalePeer
+	idx := relayIndex
+	if idx == nil {
+		loaded, lerr := RelayIndexFromDB(d)
+		if lerr != nil {
+			return report, fmt.Errorf("load exit_servers (the relay index): %w", lerr)
+		}
+		idx = loaded
+	}
 	for _, p := range status.Peer {
-		// Skip self.
-		if p.Hostname == status.Self.Hostname {
-			continue
+		adopt, rejected, reason := ClassifyPeerForAdoption(p, status.Self, tagFilter, existing, idx)
+		switch {
+		case adopt:
+			report.ToAdopt = append(report.ToAdopt, p)
+		case rejected:
+			report.Rejected = append(report.Rejected, DiscoveryRejection{
+				Hostname: p.Hostname,
+				IP:       p.TailscaleIP,
+				Reason:   reason,
+			})
+		default:
+			// A peer that is not a skygate-host candidate at all
+			// (self, a laptop, an offline phone): counted for the
+			// operator's "scanned N peers" line, never adopted.
+			report.NotCandidate++
 		}
-		// Skip offline (B223 only discovers peers
-		// we can actually reach).
-		if !p.Online {
-			continue
-		}
-		// Skip tag-filtered-out peers.
-		if !matchesTagFilter(p, tagFilter) {
-			continue
-		}
-		// Skip duplicates.
-		if _, found := existing[p.Hostname]; found {
-			continue
-		}
-		out = append(out, p)
 	}
-	return out, nil
+	return report, nil
 }
 
 // listClusterHostnames returns the set of
@@ -374,6 +419,225 @@ func listClusterHostnames(d *sql.DB, clusterID string) (map[string]struct{}, err
 		}
 	}
 	return out, rows.Err()
+}
+
+// ============================================================================
+// B359 (2026-10-07) — the skygate-host predicate and the named rejection reasons
+// ============================================================================
+
+// DiscoverySkipReason is the NAMED reason a discovered peer was not adopted as
+// a skygate host. It is a code, not prose: the UI maps it to an i18n key and the
+// log line prints it, so the same fact is spelled the same way in both places.
+type DiscoverySkipReason string
+
+const (
+	// SkipRelayExitTag — the peer carries tailscale's literal `tag:exit-node`.
+	// This is the B273 predicate for "this is an exit node" and the strongest
+	// single fact available from `tailscale status --json`.
+	SkipRelayExitTag DiscoverySkipReason = "relay-exit-tag"
+	// SkipRelayExitServer — the peer has a row in `exit_servers`, skygate's own
+	// record of the relays it manages (/admin/exit-nodes).
+	SkipRelayExitServer DiscoverySkipReason = "relay-exit-server"
+	// SkipNotSkygateHost — the peer carries none of the positive evidence that
+	// it is a skygate host (the per-node infra tag the panel's onboarding mints
+	// for that exact hostname).
+	SkipNotSkygateHost DiscoverySkipReason = "not-skygate-host"
+	// SkipAlreadyClusterMember — a cluster_node row for this hostname already
+	// exists. Re-running discovery is a no-op (the idempotency property). This
+	// also covers a host that is MID-ONBOARDING: /admin/cluster/onboard creates
+	// the row before it mints the invite, so a host being provisioned through
+	// the panel is already here.
+	SkipAlreadyClusterMember DiscoverySkipReason = "already-cluster-member"
+	// SkipIPv6Only — the peer has no IPv4 address, so it cannot be written to
+	// `cluster_node.tailscale_ip`. This is a MISCONFIGURATION of a potential
+	// skygate host, not "nothing to see": the whole point of naming it is that
+	// the operator learns why a host they just provisioned never showed up.
+	SkipIPv6Only DiscoverySkipReason = "ipv6-only"
+	// SkipNoAddress — the peer reported no address at all. Same visibility
+	// argument as SkipIPv6Only.
+	SkipNoAddress DiscoverySkipReason = "no-address"
+	// SkipNoHostname — the peer reported an empty HostName.
+	SkipNoHostname DiscoverySkipReason = "no-hostname"
+	// SkipSelf — the local node (we never adopt ourselves).
+	SkipSelf DiscoverySkipReason = "self"
+	// SkipOffline — the peer is not Online right now (B223's rule: we do not
+	// create rows for a phone that is off).
+	SkipOffline DiscoverySkipReason = "offline"
+	// SkipTagFilter — the peer does not carry SKYGATE_DISCOVERY_TAG.
+	SkipTagFilter DiscoverySkipReason = "tag-filter"
+	// SkipNoInfraUser — the `infra` portal user is not linked to a headscale
+	// user, so a preauth key minted for it would carry a tag headscale refuses
+	// and ownership could never be recorded (see B266/B342).
+	SkipNoInfraUser DiscoverySkipReason = "infra-user-not-linked"
+)
+
+// RelayIndex is the set of hostnames and IPs that belong to `exit_servers`.
+// Lookups are case-insensitive on the hostname (headscale lower-cases node
+// names, the operator's row may not) and exact on the IP.
+type RelayIndex struct {
+	Hostnames map[string]struct{}
+	IPs       map[string]struct{}
+}
+
+// RelayIndexFromDB loads the relay index from `exit_servers`. It is the single
+// reader of that table inside the discovery path: the same rows drive the
+// /admin/exit-nodes page, so "the relay list" has exactly one source.
+func RelayIndexFromDB(d *sql.DB) (*RelayIndex, error) {
+	if d == nil {
+		return &RelayIndex{}, nil
+	}
+	rows, err := d.Query(`SELECT hostname, COALESCE(tailscale_ip, '') FROM exit_servers`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	idx := &RelayIndex{Hostnames: map[string]struct{}{}, IPs: map[string]struct{}{}}
+	for rows.Next() {
+		var host, ip string
+		if scanErr := rows.Scan(&host, &ip); scanErr != nil {
+			return nil, scanErr
+		}
+		if h := strings.ToLower(strings.TrimSpace(host)); h != "" {
+			idx.Hostnames[h] = struct{}{}
+		}
+		if ip = strings.TrimSpace(ip); ip != "" {
+			idx.IPs[ip] = struct{}{}
+		}
+	}
+	return idx, rows.Err()
+}
+
+// ContainsHost reports whether `hostname` is a known relay (case-insensitive).
+func (r *RelayIndex) ContainsHost(hostname string) bool {
+	if r == nil {
+		return false
+	}
+	_, found := r.Hostnames[strings.ToLower(strings.TrimSpace(hostname))]
+	return found
+}
+
+// ContainsIP reports whether `ip` is a known relay address.
+func (r *RelayIndex) ContainsIP(ip string) bool {
+	if r == nil {
+		return false
+	}
+	_, found := r.IPs[strings.TrimSpace(ip)]
+	return found
+}
+
+// IsRelay is the composed question the discovery predicate asks about a peer.
+func (r *RelayIndex) IsRelay(hostname, ip string) bool {
+	return r.ContainsHost(hostname) || (strings.TrimSpace(ip) != "" && r.ContainsIP(ip))
+}
+
+// hasExitNodeTag reports whether the peer carries tailscale's literal
+// `tag:exit-node`. Compared case-insensitively, matching headscale (the same
+// fold B273's admin tag test uses).
+func hasExitNodeTag(tags []string) bool {
+	for _, t := range tags {
+		if strings.EqualFold(strings.TrimSpace(t), "tag:exit-node") {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSkygateHostTag reports whether `tag` is the per-node infra tag for EXACTLY
+// this hostname: `tag:dev-infra-<lowercase hostname>`. The exact-host match is
+// deliberate — it is the same shape /admin/cluster/onboard mints
+// ("tag:dev-infra-" + hostname) and the same shape the manual runbook's step 3
+// applied. A bare `tag:dev-infra-` prefix would accept a relay tagged
+// `tag:dev-infra-emilia` for the host `karolina`, and would accept the relay's
+// own infra tag if the `tag:exit-node` / exit_servers facts were ever missing.
+func IsSkygateHostTag(tag, hostname string) bool {
+	h := strings.ToLower(strings.TrimSpace(hostname))
+	if h == "" {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(tag), "tag:dev-infra-"+h)
+}
+
+// DiscoveryRejection is one peer that discovery examined and did NOT adopt,
+// with the named reason why. Every field is copied out of the live
+// TailscalePeer — no live object is retained.
+type DiscoveryRejection struct {
+	Hostname string
+	IP       string
+	Reason   DiscoverySkipReason
+}
+
+// Report is the outcome of one discovery pass.
+//
+//	ToAdopt      — peers that passed the predicate; the caller INSERTs one
+//	               cluster_node row each via EnsureDiscoveredNode.
+//	Rejected     — peers that were examined and named as NOT skygate hosts
+//	               (or not yet adoptable), with the reason.
+//	NotCandidate — peers the pass never even considered (self, offline, tag
+//	               filtered). Counted so "scanned N peers" stays honest.
+type Report struct {
+	ToAdopt      []TailscalePeer
+	Rejected     []DiscoveryRejection
+	NotCandidate int
+}
+
+// ClassifyPeerForAdoption is THE discovery predicate, as a pure function: no
+// DB, no clock, no network. It answers three questions: adopt this peer? if
+// not, is it a rejection the operator must be told about, and with what named
+// reason?
+//
+// The relay check comes FIRST, so exit-node RELAYS are never adopted as
+// skygate hosts even when they also carry an infra tag (they do: B111 gives
+// every relay `tag:dev-infra-<its own hostname>`, and the relay happens to be
+// the node `isInfraNode` was written for).
+//
+// The (name, ip) pair in the returned reason is the DECISION KEY the callers
+// throttle on, so a repeat of the same verdict is one event, not one per tick.
+func ClassifyPeerForAdoption(p, self TailscalePeer, tagFilter string, existing map[string]struct{}, relayIndex *RelayIndex) (adopt, rejected bool, reason DiscoverySkipReason) {
+	if p.Hostname != "" && p.Hostname == self.Hostname {
+		return false, false, SkipSelf
+	}
+	if !p.Online {
+		return false, false, SkipOffline
+	}
+	if !matchesTagFilter(p, tagFilter) {
+		return false, false, SkipTagFilter
+	}
+	// A relay is never a skygate host. Checked before every other fact.
+	if hasExitNodeTag(p.Tags) {
+		return false, true, SkipRelayExitTag
+	}
+	if relayIndex.IsRelay(p.Hostname, p.TailscaleIP) {
+		return false, true, SkipRelayExitServer
+	}
+	if p.Hostname == "" {
+		return false, true, SkipNoHostname
+	}
+	// Positive evidence: the per-node infra tag this exact host would carry if
+	// it had been provisioned through the panel.
+	infraTagged := false
+	for _, t := range p.Tags {
+		if IsSkygateHostTag(t, p.Hostname) {
+			infraTagged = true
+			break
+		}
+	}
+	if !infraTagged {
+		return false, true, SkipNotSkygateHost
+	}
+	if _, found := existing[p.Hostname]; found {
+		return false, true, SkipAlreadyClusterMember
+	}
+	// cluster_node.tailscale_ip is INET (v4-only): a v6-only peer cannot be
+	// recorded. That is a misconfiguration of a REAL candidate, so it is
+	// reported rather than dropped (pre-B359 firstIPv4 returned "" and the
+	// peer vanished).
+	if p.TailscaleIP == "" {
+		if len(p.Addresses) > 0 {
+			return false, true, SkipIPv6Only
+		}
+		return false, true, SkipNoAddress
+	}
+	return true, false, ""
 }
 
 // EnsureDiscoveredNode inserts a cluster_node
@@ -476,4 +740,32 @@ func EnsureDiscoveredNode(d *sql.DB, clusterID, hostname, tailscaleIP, actor str
 		discID, hostname, tailscaleIP, now.Format(time.RFC3339))
 	_, _ = db.InsertClusterAudit(d, clusterID, db.NodeDiscovered, discID, actor, detail)
 	return nil
+}
+
+// InfraUserLinked reports whether the `infra` portal user (the account that owns
+// every skygate host and every relay, B111) is linked to a headscale user.
+//
+// B359: this is a PRECONDITION of the panel-only bootstrap, not decoration. The
+// onboard action mints the new host's preauth key for that user
+// (s.InfraHeadscaleUserID → CreatePreauthKeyWithTags); with no linked headscale
+// user the key would carry a tag headscale refuses, and the ownership row could
+// never be written — so the panel must say so BEFORE the operator provisions a
+// VM, instead of letting them discover it on the new host. A missing `infra`
+// row returns (false, nil): "not provisioned yet" is a state to report, not an
+// error to raise.
+func InfraUserLinked(d *sql.DB) (bool, error) {
+	if d == nil {
+		return false, nil
+	}
+	var hsID sql.NullInt64
+	err := d.QueryRow(
+		`SELECT headscale_user_id FROM portal_users WHERE username = 'infra'`,
+	).Scan(&hsID)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return hsID.Valid && hsID.Int64 > 0, nil
 }

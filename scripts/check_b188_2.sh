@@ -437,8 +437,34 @@ for g in pol.get("grants", []):
 print(n)
 ' 2>/dev/null)
     if skygate_live_db_probe; then
+      # RENEGOTIATED 2026-10-07 (B356). The old expectation counted EVERY
+      # `device_exit_node_prefs` row with `via_enabled=1`, because the pin was
+      # conditional on the preference ALONE. B356 makes it conditional on the relay
+      # being USABLE too (the B273 predicate: `online` | `untagged`): with
+      # `via` acting as a permission FILTER, pinning a device to an offline relay
+      # filters its egress into a black hole, so the generator now emits the
+      # UNPINNED grant for that device instead — measured live on 2026-10-07, when
+      # `karolina` went down and two devices stayed pinned to it.
+      #
+      # The property this contract was written for is UNCHANGED: exactly the devices
+      # whose preferred relay can serve them carry a pin, and nobody else does. What
+      # changed is only the definition of "can serve them" — it now includes the
+      # relay's health, which is what the B265 comment above always assumed.
+      #
+      # A relay with NO `exit_node_health` row counts as pinnable: "never measured"
+      # is not "broken", and the generator keeps the pin (absence of evidence must not
+      # rewrite a policy). A device whose tag resolves to no `node_owner_map` row
+      # cannot be pinned at all — the generator needs the tag headscale carries — so
+      # it is excluded here, exactly as the generator excludes it.
       W_EXPECT=$(skygate_live_db_query \
-        "SELECT COUNT(*) FROM device_exit_node_prefs WHERE via_enabled=1 AND exit_node_tag <> ''")
+        "SELECT COUNT(*) FROM device_exit_node_prefs p
+           JOIN node_owner_map dn ON LOWER(dn.hostname) = LOWER(p.device_hostname)
+           LEFT JOIN node_owner_map rn ON rn.tag = p.exit_node_tag
+          WHERE p.via_enabled = 1 AND COALESCE(p.exit_node_tag,'') <> ''
+            AND NOT EXISTS (
+              SELECT 1 FROM exit_node_health h
+               WHERE LOWER(h.hostname) = LOWER(rn.hostname)
+                 AND h.state NOT IN ('online','untagged'))")
       if [ -n "$W_EXPECT" ]; then
         check_eq "W-tagged-device-pins-equal-enabled-prefs" "$W_EXPECT" "${W:-<err>}"
       else

@@ -133,6 +133,10 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// below to pin a per-CIDR grant to the relay that can actually serve
 	// the prefix (see prefixowner.ViaForPrefix).
 	ownerTagByPrefix := prefixowner.TagByPrefix(d)
+	// B356: relay → is it usable (B273 predicate). Read once per generation; see
+	// acl_relay_health_b356.go for why an unusable preferred relay must lose its
+	// `via` pin instead of filtering the device's egress away.
+	relayHealth := relayVerdicts(d)
 
 	devTags, err := db.GetPerUserDeviceTags(d, planeURL)
 	if err != nil {
@@ -609,6 +613,19 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// The `via` tag comes from the same `viaByDevice` map the per-CIDR
 	// pins use, so it can only be a tag the reconciler resolved for
 	// THIS device.
+	//
+	// B356 (2026-10-07) — AND ONLY IF THAT RELAY CAN ACTUALLY SERVE.
+	//
+	// "The device has a preference" was conflated with "the device has a usable
+	// preference". Because the pinned grant replaces the loose one, a preference
+	// naming an offline relay is a full egress outage for that device, and it lasts
+	// until the preference reconciler re-points the row — which it may legitimately
+	// never do (the pin is the operator's own, or no single owner can be derived).
+	// The `via` pin is now conditional on the B273 usability predicate as well, so
+	// the failure mode degrades to "the device uses any working exit node" instead
+	// of "the device has no exit node". Every fallback is logged and counted — a
+	// silent fallback would be indistinguishable from a bug.
+	pinFallbacks := 0
 	for _, uname := range usernames {
 		if uname == "" {
 			continue
@@ -622,11 +639,19 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 			// conditional pin from the pre-B188.2 unconditional
 			// one; an empty value is falsy in Go anyway.
 			if via := viaByDevice[devTag]; via != "" {
-				sb.WriteString(",\n    { \"src\": [\"" + devTag + "\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"], \"via\": [\"" + via + "\"] }")
-				continue
+				if state, dead := unusablePreferredRelay(via, relayHealth); dead {
+					pinFallbacks++
+					log.Printf("acl: B356 via-pin FALLBACK — %s prefers %s, which the exit-node monitor reports as %q (NOT usable): emitting the autogroup:internet grant UNPINNED, so the device keeps egress instead of being filtered into a black hole. Set a working preference for this device on /admin/exit-nodes.", devTag, via, state)
+				} else {
+					sb.WriteString(",\n    { \"src\": [\"" + devTag + "\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"], \"via\": [\"" + via + "\"] }")
+					continue
+				}
 			}
 			sb.WriteString(",\n    { \"src\": [\"" + devTag + "\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"] }")
 		}
+	}
+	if pinFallbacks > 0 {
+		log.Printf("acl: B356 — %d per-device autogroup:internet pin(s) were dropped because the preferred relay is not usable; those devices fall back to the unpinned grant (this is a safety net: fix the preferences on /admin/exit-nodes)", pinFallbacks)
 	}
 
 	// 2026-07-25: v0.28.2 — catch-all dst references

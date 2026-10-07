@@ -167,6 +167,12 @@ func renderProbeHTML(probe TelegramProbeResult, container ContainerTailscaleStat
 		sb.WriteString(`<i class="fa-solid fa-globe"></i>`)
 	case "ok_relay":
 		sb.WriteString(`<i class="fa-solid fa-route"></i>`)
+	case "ok_relay_tunnel":
+		// B356.1: the bot's traffic is carried by an SSH tunnel to a peer relay
+		// because the portal's own egress to api.telegram.org is blocked. Green —
+		// notifications ARE being delivered — with its own icon so nobody mistakes
+		// it for the kernel subnet-route case.
+		sb.WriteString(`<i class="fa-solid fa-network-wired"></i>`)
 	default:
 		sb.WriteString(`<i class="fa-solid fa-triangle-exclamation"></i>`)
 	}
@@ -176,6 +182,8 @@ func renderProbeHTML(probe TelegramProbeResult, container ContainerTailscaleStat
 		sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.probe_ok_direct_label")))
 	case "ok_relay":
 		sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.probe_ok_relay_label")))
+	case "ok_relay_tunnel":
+		sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.probe_ok_relay_tunnel_label")))
 	default:
 		sb.WriteString(html.EscapeString(i18n.T(lang, "telegram.probe_unreachable_label")))
 	}

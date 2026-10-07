@@ -565,6 +565,18 @@ func exitNodeUsable(state string) bool {
 	return false
 }
 
+// ExitNodeUsable is the EXPORTED form of exitNodeUsable for callers outside this
+// package (B356, 2026-10-07).
+//
+// Why an export instead of a copy: the property it answers — "can a device route
+// internet through this relay right now?" — is the one the ACL generator needs in
+// order to decide whether a `via=` pin may name a relay at all. B273 made this the
+// single source of truth for `Healthy` and for the alert boundary; an ACL-side
+// re-derivation (`state == "online"`) would be the second predicate B273 exists to
+// prevent, and it would drift the day a new usable state is added. Delegating keeps
+// `exitNodeUsable` itself (and the B273 contracts that grep for it) untouched.
+func ExitNodeUsable(state string) bool { return exitNodeUsable(state) }
+
 // transitionNote returns a human-readable annotation for the
 // transition log row. Today the note is just the reason
 // (last_seen, routes, or tag); future changes (e.g. latency

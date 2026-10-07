@@ -111,6 +111,107 @@ func loadExitNodesBody(t *testing.T) *template.Template {
 	return tpl
 }
 
+// stubStaleExitPref mimics admin.StaleExitPref for the B356 banner. The template
+// reads exactly these fields; an edit that needs another one fails here as
+// "can't evaluate field X in type handlers.stubStaleExitPref" instead of on the page.
+type stubStaleExitPref struct {
+	Username       string
+	DeviceHostname string
+	PrefTag        string
+	RelayHostname  string
+	RelayState     string
+	RelayKnown     bool
+	HumanPinned    bool
+	SetByUserID    int64
+	Reason         string
+	Cause          string
+	CandidateTag   string
+}
+
+// TestExitNodesRendersB356_StalePrefBanner — B356 (2026-10-07).
+//
+// The operator's report was that a device stayed pinned to an offline relay "and no
+// page or log said so". This pins the page half: the banner must name the device, the
+// stored preference, the relay's measured state, the reason and where the data plane
+// points — and it must say that a HUMAN's pin will not be rewritten by the engine,
+// because that is the row the reconciler deliberately leaves alone.
+func TestExitNodesRendersB356_StalePrefBanner(t *testing.T) {
+	tpl := loadExitNodesBody(t)
+	data := map[string]any{
+		"Nodes":        []stubExitNodeInfo{},
+		"TotalCount":   0,
+		"HealthyCount": 0,
+		"ControlURL":   "https://head.example.com",
+		"SSHKeyPath":   "/ssh-sync/id_ed25519",
+		"Page":         "admin/exit_nodes",
+		"Title":        "Exit nodes",
+		"StalePrefs": []stubStaleExitPref{
+			{
+				Username: "skyadmin", DeviceHostname: "skyworker",
+				PrefTag:       "tag:dev-infra-karolina",
+				RelayHostname: "karolina", RelayState: "offline", RelayKnown: true,
+				HumanPinned: false, Reason: "stale-pref-relay-unusable", Cause: "unusable",
+				CandidateTag: "tag:dev-infra-emilia",
+			},
+			{
+				Username: "michail", DeviceHostname: "basic",
+				PrefTag:       "tag:dev-infra-karolina",
+				RelayHostname: "karolina", RelayState: "offline", RelayKnown: true,
+				HumanPinned: true, SetByUserID: 7, Reason: "stale-pref-human-pinned", Cause: "unusable",
+				CandidateTag: "tag:dev-infra-emilia",
+			},
+		},
+		"StalePrefsCount": 2,
+		"StalePrefsHuman": 1,
+	}
+	var buf bytes.Buffer
+	if err := tpl.ExecuteTemplate(&buf, "body-admin-exit_nodes", data); err != nil {
+		t.Fatalf("render body: %v", err)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"exit_nodes.prefix_owner.stale_pref_title",
+		"exit_nodes.prefix_owner.stale_pref_cause_unusable",
+		"exit_nodes.prefix_owner.stale_pref_consequence",
+		"exit_nodes.prefix_owner.stale_pref_human_badge",
+		"exit_nodes.prefix_owner.stale_pref_derived_badge",
+		"tag:dev-infra-karolina",
+		"tag:dev-infra-emilia",
+		"stale-pref-relay-unusable",
+		"skyworker",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the stale-preference banner must render %q, got:\n%s", want, got)
+		}
+	}
+}
+
+// TestExitNodesRendersB356_NoBannerWhenNothingIsStale — the "do not cry wolf" half:
+// an empty row set must render no banner at all, or the page trains the operator to
+// ignore it.
+func TestExitNodesRendersB356_NoBannerWhenNothingIsStale(t *testing.T) {
+	tpl := loadExitNodesBody(t)
+	data := map[string]any{
+		"Nodes":           []stubExitNodeInfo{},
+		"TotalCount":      0,
+		"HealthyCount":    0,
+		"ControlURL":      "https://head.example.com",
+		"SSHKeyPath":      "/ssh-sync/id_ed25519",
+		"Page":            "admin/exit_nodes",
+		"Title":           "Exit nodes",
+		"StalePrefs":      []stubStaleExitPref{},
+		"StalePrefsCount": 0,
+		"StalePrefsHuman": 0,
+	}
+	var buf bytes.Buffer
+	if err := tpl.ExecuteTemplate(&buf, "body-admin-exit_nodes", data); err != nil {
+		t.Fatalf("render body: %v", err)
+	}
+	if strings.Contains(buf.String(), "exit_nodes.prefix_owner.stale_pref_title") {
+		t.Errorf("the stale-preference banner rendered with no stale rows:\n%s", buf.String())
+	}
+}
+
 // TestExitNodesRendersB81_ResolvedSSHTarget pins the headline B81
 // fix: a row whose stored ssh_target is empty but TailscaleIP is
 // set shows the RESOLVED value (`root@<tailscale_ip>`) in the SSH

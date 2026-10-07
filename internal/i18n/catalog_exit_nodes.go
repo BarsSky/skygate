@@ -267,6 +267,28 @@ var ruExitNodes = map[string]string{
 	// 2026-09-25 (B325): the "How to connect" card on /my/exit-nodes.
 	"exit_nodes.how_to_connect":      "Как подключиться",
 	"exit_nodes.pick_exit_node_hint": "Выберите exit-узел на своём устройстве:",
+
+	// B356 (2026-10-07): the stale device-preference banner. A stored preference is
+	// a permission FILTER (via=) on the per-device autogroup:internet grant, so a
+	// preference naming a relay that cannot serve is a full egress outage for that
+	// device — the operator's "relays went offline and nothing re-pointed them".
+	"exit_nodes.prefix_owner.stale_pref_title":          "Предпочтения устройств указывают на нерабочий exit-узел",
+	"exit_nodes.prefix_owner.stale_pref_help":           "Устройство закреплено за exit-узлом, который сейчас не может обслуживать трафик. С B265 предпочтение превращается в <code>via=</code> в ACL — это <b>фильтр разрешений</b>: клиент обязан выходить через этот узел, а если узел лежит, интернет у устройства пропадает целиком. Строки, выведенные движком (set_by_user_id = 0), skygate переназначит сам на следующем проходе; строки, которые выбрал человек, движок не переписывает — их надо поменять здесь вручную.",
+	"exit_nodes.prefix_owner.stale_pref_col_device":     "Устройство",
+	"exit_nodes.prefix_owner.stale_pref_col_pref":       "Сохранённое предпочтение",
+	"exit_nodes.prefix_owner.stale_pref_col_relay":      "Состояние узла",
+	"exit_nodes.prefix_owner.stale_pref_col_reason":     "Причина",
+	"exit_nodes.prefix_owner.stale_pref_col_candidate":  "Куда указывает data plane",
+	"exit_nodes.prefix_owner.stale_pref_relay_unknown":  "нет данных монитора",
+	"exit_nodes.prefix_owner.stale_pref_cause_unusable": "узел не работает (offline/degraded) — монитор B273 считает его непригодным",
+	"exit_nodes.prefix_owner.stale_pref_cause_owner":    "узел доступен, но не обслуживает ни одного префикса этого устройства",
+	"exit_nodes.prefix_owner.stale_pref_no_candidate":   "не определить — выберите узел вручную",
+	"exit_nodes.prefix_owner.stale_pref_human":          "выбраны человеком",
+	"exit_nodes.prefix_owner.stale_pref_human_badge":    "выбрано человеком",
+	"exit_nodes.prefix_owner.stale_pref_human_tip":      "Значение записал пользователь или администратор (set_by_user_id ≠ 0). Движок намеренно не переписывает человеческий выбор — поменяйте его на странице устройства в /my/devices или /admin/devices.",
+	"exit_nodes.prefix_owner.stale_pref_derived_badge":  "выведено движком",
+	"exit_nodes.prefix_owner.stale_pref_derived_tip":    "Значение вывел сам skygate (set_by_user_id = 0). На следующем проходе планировщика оно будет переназначено на узел, которым реально владеет таблица prefix_owner.",
+	"exit_nodes.prefix_owner.stale_pref_consequence":    "Пока предпочтение не исправлено, ACL не ставит <code>via=</code> на неработающий узел: устройство получает разрешение без закрепления и выходит через любой доступный exit-узел — то есть интернет не пропадает. Это страховка, а не исправление: переназначьте предпочтение, иначе устройство теряет выбранный маршрут.",
 }
 
 var enExitNodes = map[string]string{
@@ -525,4 +547,26 @@ var enExitNodes = map[string]string{
 	// 2026-09-25 (B325): the "How to connect" card on /my/exit-nodes.
 	"exit_nodes.how_to_connect":      "How to connect",
 	"exit_nodes.pick_exit_node_hint": "Pick an exit-node on your device:",
+
+	// B356 (2026-10-07): the stale device-preference banner. A stored preference is
+	// a permission FILTER (via=) on the per-device autogroup:internet grant, so a
+	// preference naming a relay that cannot serve is a full egress outage for that
+	// device — the operator's "relays went offline and nothing re-pointed them".
+	"exit_nodes.prefix_owner.stale_pref_title":          "Device preferences point at a relay that is not working",
+	"exit_nodes.prefix_owner.stale_pref_help":           "A device is pinned to an exit node that cannot serve traffic right now. Since B265 the preference becomes a <code>via=</code> in the ACL — a <b>permission filter</b>: the client must exit through that relay, and while the relay is down the device loses its internet access entirely. Rows the engine derived (set_by_user_id = 0) are re-pointed by skygate on the next pass; rows a human chose are never rewritten by the engine — change those here.",
+	"exit_nodes.prefix_owner.stale_pref_col_device":     "Device",
+	"exit_nodes.prefix_owner.stale_pref_col_pref":       "Stored preference",
+	"exit_nodes.prefix_owner.stale_pref_col_relay":      "Relay state",
+	"exit_nodes.prefix_owner.stale_pref_col_reason":     "Reason",
+	"exit_nodes.prefix_owner.stale_pref_col_candidate":  "What the data plane chose",
+	"exit_nodes.prefix_owner.stale_pref_relay_unknown":  "no monitor data",
+	"exit_nodes.prefix_owner.stale_pref_cause_unusable": "the relay is not usable (offline/degraded) — the B273 monitor refuses it",
+	"exit_nodes.prefix_owner.stale_pref_cause_owner":    "the relay is up but serves none of this device's prefixes",
+	"exit_nodes.prefix_owner.stale_pref_no_candidate":   "cannot be determined — pick a relay by hand",
+	"exit_nodes.prefix_owner.stale_pref_human":          "set by a human",
+	"exit_nodes.prefix_owner.stale_pref_human_badge":    "set by a human",
+	"exit_nodes.prefix_owner.stale_pref_human_tip":      "A user or administrator wrote this value (set_by_user_id != 0). The engine deliberately does not rewrite a human's choice — change it on the device page in /my/devices or /admin/devices.",
+	"exit_nodes.prefix_owner.stale_pref_derived_badge":  "derived by the engine",
+	"exit_nodes.prefix_owner.stale_pref_derived_tip":    "skygate derived this value itself (set_by_user_id = 0). On the next planner pass it is re-pointed at the relay that actually owns the prefixes in the prefix_owner table.",
+	"exit_nodes.prefix_owner.stale_pref_consequence":    "Until the preference is fixed the ACL does not put <code>via=</code> on the dead relay: the device gets the unpinned grant and exits through any working exit node, so it does not lose the internet. That is a safety net, not a repair — re-point the preference, or the device keeps losing its chosen route.",
 }
