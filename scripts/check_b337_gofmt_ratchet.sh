@@ -154,7 +154,14 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # (maxV != 77). Rule 3 (and contract E1) hold every TOUCHED file to gofmt, so the
 # two pre-existing string-concatenation lines inside it were formatted in the same
 # change and the entry left the list.
-FROZEN=259
+# 2026-10-07 (sixth payment): 259 → 258.
+# internal/feature/my/device_exit_pref.go was frozen as drifted; B361 touched it (the
+# per-device pin must not outlive the routing it names) and rule 3 holds every TOUCHED
+# file to gofmt, so it was formatted in the same change. Found by CI, not locally: the
+# WSL shell on the workstation has no gofmt, so contract D1 SKIPPED there and only the
+# Linux run could see it — the check reports the offending entry by name, which is why
+# the message must list the FILE and not just the count.
+FROZEN=258
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

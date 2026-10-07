@@ -79,7 +79,13 @@ MYHANDLER="$REPO_ROOT/internal/feature/my/device_exit_pref.go"
 ADMINTMPL="$REPO_ROOT/internal/handlers/templates/admin/exit_nodes.html"
 MYTMPL="$REPO_ROOT/internal/handlers/templates/user/exit_nodes.html"
 CAT="$REPO_ROOT/internal/i18n/catalog_exit_nodes.go"
-MAIN="$REPO_ROOT/cmd/skygate/main.go"
+MAINPKG="$REPO_ROOT/cmd/skygate"   # the PACKAGE surface, not main.go: B339 forbids reading it as one file
+# The FORMATTER still needs a file — gofmt has no notion of a surface — so the one file
+# this block touched is assembled from a relative package variable rather than written
+# out. It must stay RELATIVE: this script runs from the repo root and reaches gofmt
+# through the Windows binary, which cannot resolve a /mnt/c/... path.
+MAINPKG_REL="cmd/skygate"
+MAINFILE_REL="$MAINPKG_REL/main.go"
 
 hdr "A. the predicate: does the preferred relay serve anything this device can use?"
 
@@ -231,7 +237,7 @@ if [ "$missing" -eq 0 ]; then
   else
     bad "D3: the exported slot is a copy, not the same function"
   fi
-  if grep -q 'ReapplyACLAfterPreferenceChange' "$MYHANDLER" && grep -q 'SetPreferenceACLReapply' "$MAIN"; then
+  if grep -q 'ReapplyACLAfterPreferenceChange' "$MYHANDLER" && grep -rq --include='*.go' 'SetPreferenceACLReapply' "$MAINPKG"; then
     ok "D4: the preference handlers call the trigger and main.go wires it to the exit-rules drift check"
   else
     bad "D4: a stored preference change does not reach the ACL promptly (the live ~65-minute convergence)"
@@ -347,7 +353,7 @@ else
   if [ -z "$GOFMT_BIN" ]; then
     skip "F7: gofmt is not reachable — the B337 ratchet covers these files on the VM"
   else
-    DRIFT="$("$GOFMT_BIN" -l internal/acl/acl_relay_ownership_b361.go internal/acl/acl_b361_test.go internal/acl/acl_generate_via.go internal/feature/exit_rules/reconciler.go internal/feature/exit_rules/pref_staleness_b356.go internal/feature/exit_rules/pref_reapply_b361.go internal/feature/exit_rules/pref_reapply_b361_test.go internal/feature/exit_rules/sync.go internal/feature/admin/exit_nodes_stale_prefs_b356.go internal/feature/admin/exit_nodes_stale_prefs_b356_test.go internal/feature/admin/exit_nodes_page.go internal/feature/my/device_exit_pin_b361.go internal/feature/my/device_exit_pref.go internal/feature/my/exit_nodes.go internal/feature/exit_rules/reconciler_b356_test.go internal/feature/exit_rules/reconciler_b356_collector_test.go internal/handlers/exit_nodes_render_test.go internal/handlers/exit_nodes_user_render_test.go internal/i18n/catalog_exit_nodes.go cmd/skygate/main.go 2>&1)"
+    DRIFT="$("$GOFMT_BIN" -l internal/acl/acl_relay_ownership_b361.go internal/acl/acl_b361_test.go internal/acl/acl_generate_via.go internal/feature/exit_rules/reconciler.go internal/feature/exit_rules/pref_staleness_b356.go internal/feature/exit_rules/pref_reapply_b361.go internal/feature/exit_rules/pref_reapply_b361_test.go internal/feature/exit_rules/sync.go internal/feature/admin/exit_nodes_stale_prefs_b356.go internal/feature/admin/exit_nodes_stale_prefs_b356_test.go internal/feature/admin/exit_nodes_page.go internal/feature/my/device_exit_pin_b361.go internal/feature/my/device_exit_pref.go internal/feature/my/exit_nodes.go internal/feature/exit_rules/reconciler_b356_test.go internal/feature/exit_rules/reconciler_b356_collector_test.go internal/handlers/exit_nodes_render_test.go internal/handlers/exit_nodes_user_render_test.go internal/i18n/catalog_exit_nodes.go "$MAINFILE_REL" 2>&1)"
     if [ -z "$DRIFT" ]; then
       ok "F7: every file this block created or touched is gofmt-clean (B337 ratchet)"
     else
