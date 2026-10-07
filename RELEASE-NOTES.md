@@ -12,6 +12,43 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.104 — a deadline that expired on our own clock is not evidence about a relay (B362)
+
+**Date:** 2026-10-07 · **Base:** `v1.5.103` → this tag · **Compatibility:** behaviour only — no
+schema change, no migration, no new setting.
+
+v1.5.103 shipped the Telegram relay fallback (B356.1) and the deployment log, minutes after it was
+applied, showed the ladder running and the fallback **never carrying a single request**:
+
+```
+telegram: setMyCommands failed: … (context deadline exceeded) and no relay could carry it
+  (tried emilia, karolina, sharlotta): relay sharlotta (root@100.64.0.4): context deadline exceeded
+telegram: getUpdates error: … dial tcp 149.154.166.110:443: i/o timeout and the relay fallback is
+  unavailable: every relay is cooling down after a failure
+… two minutes of that …
+telegram egress: the direct path to the Bot API works again
+```
+
+**Cause.** `setMyCommands` carries its own **5-second** context while the bounded direct dial alone
+is allowed **6**, so the first call spent its whole budget and the relay attempts came back
+`context deadline exceeded` — and the failure handler then cooled **every relay down for
+`RelayCooldown` (2 minutes)**, which locked the 30-second `getUpdates` loop out of the fallback
+entirely. Measured in the same container at the same moment: the identical argv
+(`ssh -i /ssh-sync/skygate_sync … -W api.telegram.org:443 -- <relay>`) completed in **2.1 s**
+against karolina and **2.0 s** against sharlotta. The relays were healthy; only our clock was not.
+
+**Fix.** The new pure `relayFailureIsEvidence(candidate, callerContext, err)` answers *false* when
+the caller's context is done or the error is `context.Canceled`. The relay loop records such a
+failure through `noteNoRelayFailure` — **no cooldown, and the reason is still kept for the
+operator** — and stops trying the remaining relays on a dead context. A tunnel error raised while
+the caller **still has budget** remains evidence and cools that relay down exactly as before, so a
+genuinely broken relay is still taken out of the pool. Pinned in both directions by
+`TestB362_ExpiredCallerBudgetDoesNotCoolTheRelayDown` (an expired caller budget leaves both
+candidates available; a refused tunnel leaves none) plus the B356.1 ladder tests, with 11 contracts
+in `scripts/check_b362_expired_budget_is_not_a_relay_failure.sh`.
+
+---
+
 ## v1.5.103 — a failover is a reservation, a recovered relay gets its prefixes back, and a pin may not outlive the routing it names (B360 + B361, with the devices.go split and two check repairs)
 
 **Date:** 2026-10-07 · **Base:** `v1.5.102` → this tag · **Compatibility:** one **additive**
