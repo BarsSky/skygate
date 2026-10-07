@@ -92,7 +92,18 @@ else
 fi
 
 if grep -q 's.applyACLIfDrifted' "$SVC"; then
-  if awk 'NR>=1200 && NR<=1400 && /s\.applyACLIfDrifted/' "$SVC" | grep -q 'user-rule-delete'; then
+  # A3 is a FUNCTION-level property, so it must be read from the function body
+  # and not from an absolute line window. The pre-2026-10-07 form was
+  # `awk 'NR>=1200 && NR<=1400 && /s\.applyACLIfDrifted/' | grep -q 'user-rule-delete'`,
+  # which asserted that ONE LINE carried BOTH strings: it went red the day the call
+  # was wrapped across lines, and it would have gone red again the day form_my.go
+  # grew past line 1400 — a check that reports a product regression for a reason
+  # that is not one (LESSONS L-57). Anchoring on the function also makes the
+  # contract stronger: the two strings now have to be in PostDeleteExitRule itself.
+  # Capture first, then match: `awk … | grep -q` under `set -o pipefail` dies with
+  # SIGPIPE (141) the moment grep finds its match (AGENTS trap #9).
+  A3_BODY="$(awk '/^func \(s \*Service\) PostDeleteExitRule/,/^}/' "$SVC")"
+  if grep -q 's\.applyACLIfDrifted' <<< "$A3_BODY" && grep -q 'user-rule-delete' <<< "$A3_BODY"; then
     ok "A3: PostDeleteExitRule uses applyACLIfDrifted (no more direct SetPolicy)"
   else
     bad "A3: PostDeleteExitRule still calls generateACL + SetPolicy directly"
@@ -137,13 +148,18 @@ else
 fi
 
 # --- C: collectDevicePrefState post-rename OR-clause ---------------------
-if awk '/func \(s \*Service\) collectDevicePrefState/,/^}/' "$RECON" | grep -q 'device_id IN'; then
+# Capture first, then match: `awk … | grep -q` under `set -o pipefail` makes awk die
+# with SIGPIPE (141) as soon as grep finds its match, so the pipeline reports a
+# failure for a file that CONTAINS the string (AGENTS trap #9, LESSONS L-57). Both
+# C contracts read the same function body once.
+C_BODY="$(awk '/^func \(s \*Service\) collectDevicePrefState/,/^}/' "$RECON")"
+if grep -q 'device_id IN' <<< "$C_BODY"; then
   ok "C1: collectDevicePrefState SQL has the post-rename OR-branch (sub-select on node_owner_map)"
 else
   bad "C1: the B229 SQL still filters only on the denormalised hostname — the rename-in-flight window breaks it"
 fi
 
-if awk '/func \(s \*Service\) collectDevicePrefState/,/^}/' "$RECON" | grep -q 'pre-rename\|post-rename'; then
+if grep -q 'pre-rename\|post-rename' <<< "$C_BODY"; then
   ok "C2: the OR-branch doc comment explains the pre-rename / post-rename semantics"
 fi
 
