@@ -255,6 +255,10 @@ func TestB356_1_SelectRelayAttemptsSkipsCooldownAndKeepsOneProbe(t *testing.T) {
 
 func TestB356_1_DirectAttemptFitsHonoursTheCallerDeadline(t *testing.T) {
 	now := nowFixture()
+	// A nil Context is not "no deadline left": the helper must say the direct
+	// attempt fits, because that is what keeps the last rung reachable for a
+	// caller that never declared a deadline in the first place.
+	//lint:ignore SA1012 this branch IS the contract being pinned
 	if !directAttemptFits(nil, now, 6*time.Second) {
 		t.Fatal("no context means the direct attempt always fits")
 	}
