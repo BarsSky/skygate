@@ -254,7 +254,15 @@ if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/n
   PSQL="docker exec skygate-pg-local psql -U admin -d skygate_staging -t -A -c"
 fi
 if [ -n "$PSQL" ]; then
-  BADSRC="$($PSQL "SELECT COUNT(*) FROM prefix_owner WHERE exit_node_id = '' OR source NOT IN ('explicit','manual','auto')" 2>/dev/null | tr -d '[:space:]')"
+  # CONTRACT RENEGOTIATION (2026-10-06, B357 follow-up): the allow-list was
+  # ('explicit','manual','auto') and the live table carries source='global' on all 142
+  # rows — because the engine WRITES that value, deliberately, at
+  # internal/prefixowner/prefixowner.go:458 (`as[i].Source = "global"`, the global
+  # spread used when a prefix has no explicit claims). The property this contract
+  # guards is unchanged — no row may lack an owner or carry a source the engine never
+  # produces — so the list now names the fourth value, with the code line as evidence.
+  # If the engine gains a fifth value, this contract must learn it the same way.
+  BADSRC="$($PSQL "SELECT COUNT(*) FROM prefix_owner WHERE exit_node_id = '' OR source NOT IN ('explicit','manual','auto','global')" 2>/dev/null | tr -d '[:space:]')"
   if [ "${BADSRC:-1}" = "0" ]; then
     ok "E1: every assignment row has an owner and a known source ($($PSQL 'SELECT COUNT(*) FROM prefix_owner' 2>/dev/null | tr -d '[:space:]') rows)"
   else
