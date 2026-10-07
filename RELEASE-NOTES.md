@@ -12,10 +12,10 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
-## v1.5.102 — the ladder stops refusing its own candidate, and the cluster tree bootstraps itself (B353.1 + B354)
+## v1.5.102 — the ladder stops refusing its own candidate, a phone stops printing one glyph per line, and the admin rule page paginates by group (B353.1 + B354 + B355 + B357 + B358)
 
-**Date:** 2026-10-06 · **Base:** `v1.5.101` → this tag · **Compatibility:** no schema change, no
-migration, no new setting. Behaviour only.
+**Date:** 2026-10-06 … 2026-10-07 · **Base:** `v1.5.101` → this tag · **Compatibility:** no schema
+change, no migration, no new setting. Behaviour only.
 
 ### B353.1 — the transport handed its own candidate to a gate that refused it
 
@@ -61,6 +61,112 @@ events.
   hand — the repair the fix automates — and the very next tick logged
   `🔎 discovery-ticker: discovered 3 new node(s) from Tailscale` with `cluster_node` at 3 rows in
   `pending`, ready for approval on `/admin/cluster`.
+
+### B355 — attribution recorded the strategy's scope tag, not the tag the device carries
+
+Operator report: a device added through OIDC «устройство добавилось во вкладке Мои Устройства
+пометилось тегом ожидания … но ничего так и не произошло и пришлось вручную делать трансфер
+устройства на пользователя». The live trace of that device (node 150, `s24-fe--ned`, registered
+through OIDC):
+
+```
+19:39:04 DBG backfill node=150 name=s24-fe--ned matchedTag=tag:private api_tags=[] hasPrivate=false
+19:39:05 DBG backfill AddTag called for node=150 (ensure tag:private)
+19:42:56 [devices] s24-fe--ned has no device-to-device ACL entry:
+         no per-device tag is recorded for it, so the mesh has nothing to grant
+```
+
+Attribution had worked and headscale was given `tag:dev-skyadmin-s24-fe--ned`, but the
+`node_owner_map` row kept the **strategy's scope tag** (`tag:private`) — and that row is what every
+access decision reads: the mesh grant source (`internal/db/device_owner_b316.go` refuses anything
+that is not `tag:dev-<user>-<host>`), the per-device ACL and the rule fan-out, and the page's own
+«ожидание» state. The device therefore never joined the mesh until the operator transferred it by
+hand — and that transfer is what finally wrote a per-device tag into the row.
+
+* `internal/nodeownership/nodeownership.go` now records the tag the device **actually carries** (the
+  same value applied to headscale) in the ownership row, so nothing downstream has to guess. The
+  scope tag stays on the node in headscale (`AddTag` is a union) and the ACL still emits its
+  `tagOwners` entry.
+* The write is scoped to the portal user being attributed (new `db.UpdateNodeOwnerTagForUser`,
+  `WHERE node_id = ? AND username = ?`), because `Backfill` walks every node on every pass and a row
+  may belong to somebody else — an admin pin (`tag:public`), or a device attributed elsewhere. The
+  owner-agnostic `UpdateNodeOwnerTag` stays for the admin tag action, which deliberately acts on the
+  row the operator is looking at.
+* `UpdateNodeOwnerTag` hardcoded SQLite's `strftime('%s','now')`; it now uses the dialect-aware
+  `NowUnixSQL()` (PostgreSQL installs a compatibility `strftime()`, so this was latent rather than
+  broken — but the project's rule is one helper for "now").
+
+Guard: `scripts/check_b355_device_tag_recorded.sh`; `internal/nodeownership/nodeownership_b355_test.go`
+reproduces the live shape (OIDC node, no preauth key, no tags, the live hostname) and asserts the
+**row**, plus the rename case staying in step. Touching `internal/nodeownership/nodeownership.go`
+paid one entry off the B337 gofmt ratchet (263 → 262).
+
+### B357 — on a phone the tables printed one glyph per line, and twelve pages shared the cause
+
+Measured by the mobile audit on the **live v1.5.101 panel** at 390×844 (headless browser, live
+pages): `overflow-wrap:anywhere` in the mobile block of `internal/staticfs/static/css/themes.css`
+reduces a cell's intrinsic min-content width to ONE character, so under `table{width:100%}` and auto
+layout the column collapsed to 29 px and `/admin/devices` rendered `100.64.0.3` as ten lines at
+1.00 chars/line — «П о л ь з о в а т е л ь». The scroller already existed and could not help:
+scrolling cannot widen a 29 px column. Four more pages broke through an inline
+`word-break:break-all`, which breaks at any character.
+
+* `break-word` does **not** shrink min-content, so the cell keeps its longest token and the scroller
+  does the work; addresses and timestamps now stay on one line inside a data cell
+  (`td .mono, td code { white-space: nowrap }`).
+* The 18 audited `word-break:break-all` sites are gone (9 template files plus `themes.css`).
+* Because `body{overflow-x:hidden}` (`themes.css:209`) silently **clipped** the overflow of the 62
+  tables that have no `.table-wrap`, the mobile shell now scrolls (`.shell { overflow-x: auto }`).
+
+Guard: `scripts/check_b357_mobile_table_legibility.sh`. **Live re-measure pending:** the numbers
+above are the pre-fix measurement of record; the 390 px pass is repeated against the deployed tag.
+
+### B358 — the window unit is the group, not the rule row
+
+Operator report (verbatim): «веб-форма до сих пор странно отображает правила exit rules для
+администратора теперь восемь страниц при том что в группе всего три устройства и два пользователя
+но видимо из-за общего количества правил отображает в свернутом виде 8 страниц при этом
+пользователи и группы размазаны по этим восьми страницам».
+
+Measured on the **live PostgreSQL deployment**: **393** enabled `device_rules` rows, **2** users,
+**3** devices — `skyadmin`/device 9 `skyworker` 219 rows, `skyadmin`/56 `cyborg` 12,
+`michail`/29 `basic` 162 — while the handler windowed RULE ROWS
+(`ORDER BY r.user_id, r.device_id, r.id` with `LIMIT`/`OFFSET`, defaults page 1 / `page_size` 50), so
+the unit of a page was a row and no single page could answer the operator's question. B358 makes the
+window unit the **group**: one distinct `(user_id, device_id)` pair.
+
+* `qSelectAdminRuleGroups` (`internal/db/queries.go`) windows the groups themselves (grouped by
+  `user_id, device_id`, `enabled = 1`, `LEFT JOIN portal_users` so an orphaned row still forms a
+  group named `?`); `qCountAdminRuleGroups` returns the group and distinct-user totals unpaginated;
+  and `qSelectAllRulesForAdminPaged` — which no longer carries a ROW limit — fetches the rows of
+  exactly that page's groups in **one** query through an OR-chain of
+  `(r.user_id = N AND r.device_id = N)` pairs built with `db.PlaceholderAt`, so a group is never
+  split across pages however many rows it holds (the OR-chain, not a row-value `IN`, is the form both
+  dialects bind).
+* The default window is `db.AdminGroupsPerPage = 20` groups, which renders the measured live shape
+  (3 groups) as **one** page; `page_size` keeps being clamped to 1..500.
+* `realTotal` now comes from the count companion (`AdminRulePage.TotalRules`) and not from the row
+  window; `ShownRules` stays `len(rr)`. The rule COUNT gained the missing `enabled = 1` — it counted
+  disabled rows too, so it disagreed with every other counter on the page as soon as a rule was
+  disabled.
+* A group larger than `db.AdminOversizedGroupRows = 150` rows renders as a COLLAPSED `<details>` whose
+  rows are already fetched (presentation only — no second query, no new JS state) with a hint, so one
+  device with hundreds of rules cannot turn the page into a wall of rows.
+* The `?device=` drill-down is untouched: it still takes its own unpaged path on
+  `qSelectAllRulesForAdminByDevice` (B348/B349 preserved).
+* New i18n keys `exit_rules_admin.pagination_page_of_groups`,
+  `exit_rules_admin.pagination_total_groups` and `exit_rules_admin.group_oversized_hint` in **both**
+  catalogues.
+* **Contract renegotiation:** `scripts/check_b351_rule_owner_and_counts.sh` contract C3 pinned the
+  row-based `ORDER BY` as the desired state and is renegotiated IN PLACE to assert the GROUP window,
+  with the reason recorded where the old assertion was. The property it protects is unchanged (the
+  window follows the grouping the page renders); the unit it protects it at is now the group, because
+  grouping the `ORDER BY` alone still let a 219-row device straddle a page boundary.
+
+Guard: `scripts/check_b358_group_pagination.sh`, `internal/db/device_rules_b358_test.go` (the live
+shape: 2 users / 3 devices / 393 rows = ONE page; pages of whole groups; PG dialect) and
+`internal/feature/exit_rules/form_admin_b358_test.go` (window defaults + oversized threshold).
+Touching `internal/db/device_rules.go` paid one entry off the B337 gofmt ratchet (262 → 261).
 
 ---
 

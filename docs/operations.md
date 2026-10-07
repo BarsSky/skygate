@@ -1718,6 +1718,30 @@ port is **not published to the host**, so the gate has to point at the container
 holds `CREATE` on `postgres`, `skygate_citest` and `skygate_staging`, so the recipe below works
 unchanged with `skygate_citest` as the database.
 
+### One worktree per run, and run it detached
+
+The catalog is long (tens of minutes) and it needs a **clean checkout** that the running gate owns
+for the whole run. Two rules, both paid for on 2026-10-06:
+
+* **Never point two runs at one worktree.** A second `git worktree remove --force` + `add` on the
+  same path deletes the tree the first run is standing in, and the first run then reports ~239 FAILs
+  that are pure artefact (`No such file or directory` from every check that reads a source file).
+  Name the worktree after the tip — `skygate-gate-<sha>` — and reuse a path only after
+  `pgrep -f verify_pre_deploy.sh` is empty.
+* **Detach it and read a log file.** A foreground run dies with the ssh session and leaves *no*
+  verdict at all, because the summary never prints. The reference invocation:
+
+  ```bash
+  cd /home/<user>/skygate
+  git worktree add --detach /home/<user>/skygate-gate-<sha> <sha>
+  cd /home/<user>/skygate-gate-<sha>
+  setsid env PATH="$HOME/go/bin:$PATH" GOFLAGS=-p=2 \
+    bash scripts/verify_pre_deploy.sh > ~/gate-<sha>.log 2>&1 < /dev/null &
+  ```
+
+  Then `grep -c PASS ~/gate-<sha>.log` / `grep FAIL` while it runs and read the tail for the verdict.
+  Remove the worktree (`git worktree remove --force <path>`) once the verdict is recorded.
+
 ### The DSN contract (this is the part that bites)
 
 `db.OpenTestPG` gives each test its own `CREATE SCHEMA skygate_pgtest_<test name>` and then runs
@@ -1825,5 +1849,90 @@ ssh -N -L 127.0.0.1:55433:<PG_IP>:5432 skygate &
 SKYGATE_TEST_PG_DSN='postgres://<user>:<pw>@127.0.0.1:55433/<owned-db>?sslmode=disable' \
   go test ./internal/db/ -run 'TestConvert_.*_Real|TestSchemaParity' -count=1 -v
 ```
+
+---
+
+## 16. Repairing a headscale user duplicated by OIDC
+
+### Symptom
+
+A device registered through OIDC appears in the tailnet under a **different** headscale user than the
+one the operator expects, `headscale users list` shows two rows with the same name (one of them with
+an empty provider), and per-device tags/ACL entries never attach to the new device — so it sits in
+«ожидание» until the device is transferred by hand. The portal is not at fault; the duplicate is a
+property of the headscale schema plus a row that predates the OIDC configuration.
+
+### Why it happens (measured on headscale 0.29.3, 2026-10-06)
+
+```sql
+CREATE UNIQUE INDEX idx_provider_identifier ON users(provider_identifier) WHERE provider_identifier IS NOT NULL;
+CREATE UNIQUE INDEX idx_name_provider_identifier ON users(name, provider_identifier);
+CREATE UNIQUE INDEX idx_name_no_provider_identifier ON users(name) WHERE provider_identifier IS NULL;
+```
+
+Three indexes, and the OIDC login matches on **`provider_identifier` alone**. A row created before
+OIDC was configured has `provider = ''` and `provider_identifier IS NULL`, so it satisfies
+`idx_name_no_provider_identifier` and is invisible to that lookup — while a new row with the same
+`name` and a non-NULL identifier does **not** collide with it (`idx_name_provider_identifier`
+compares the pair). Headscale therefore inserts a second user with the same name.
+
+### Diagnose (read only)
+
+```bash
+# the container's own view
+sudo docker exec headscale headscale users list
+
+# the authoritative view: which column is set
+sudo sqlite3 -header -column /var/lib/docker/volumes/headscale_headscale_data/_data/db.sqlite \
+  "select id,name,provider,coalesce(provider_identifier,'<NULL>') as pid from users order by id"
+```
+
+Healthy state = one row per person, every row `provider=oidc` and `pid` = `<ISSUER>/<sub>`:
+
+```
+id  name      provider  pid
+--  --------  --------  ----------------------------------
+1   skyadmin  oidc      https://<ISSUER>/skyadmin
+8   michail   oidc      https://<ISSUER>/michail
+```
+
+A duplicate is a **second row with the same `name`** whose `pid` is set while the older one is NULL.
+
+### Repair — the order is load-bearing
+
+1. **Back up first**: copy the sqlite file next to itself with a timestamp
+   (`/home/<user>/headscale-db-backup-<UTC>.sqlite`) and keep it until the tailnet is verified.
+2. **Destroy the duplicate BEFORE backfilling the legacy row.** The `UPDATE` claims the same
+   `(name, provider_identifier)` pair the duplicate currently occupies, so backfilling first fails
+   with `UNIQUE constraint failed: users.name, users.provider_identifier`.
+   Prefer the CLI (`headscale users destroy --identifier <duplicate-id>`) so headscale also cleans
+   its own references; the node rows that pointed at it are re-attributed from the portal afterwards.
+3. **Backfill the legacy rows** — one `UPDATE` per user, using the identifier the OIDC provider
+   actually issues (`<ISSUER>/<sub>`; for skygate's own provider the `sub` is the username):
+
+   ```sql
+   UPDATE users SET provider='oidc', provider_identifier='<ISSUER>/'||name
+   WHERE provider_identifier IS NULL;
+   ```
+
+   Do **not** guess the `<sub>`: confirm it against a login that already maps correctly (`pid` of a
+   user created through OIDC) before rewriting the others.
+4. **Restart headscale** so it re-reads the users table (`docker restart headscale`, or the
+   systemd unit on a native install).
+5. **Clear the portal's stale attribution of the destroyed user** — any `node_owner_map` row that
+   named it, plus the junk portal user itself if one was created, so ACL rules stop referring to a
+   user that no longer exists.
+
+### Verify (three independent reads, not the absence of an error)
+
+```bash
+sudo docker exec headscale headscale users list        # one row per person
+sudo docker exec headscale headscale nodes list        # every node under its owner
+sudo docker exec headscale headscale policy get        # the policy still parses
+```
+
+Then have the affected device log in through OIDC once and confirm the user count did **not** grow.
+Related: L-63 in `docs/LESSONS.md`, and B355 (the per-device tag must reach the ownership row) —
+the two halves of the same operator report.
 
 
