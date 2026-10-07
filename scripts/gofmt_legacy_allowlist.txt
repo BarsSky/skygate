@@ -58,7 +58,6 @@ internal/db/audit_log.go
 internal/db/cluster.go
 internal/db/cluster_patroni.go
 internal/db/db_test.go
-internal/db/device_rules.go
 internal/db/exit_node_health.go
 internal/db/exit_node_health_test.go
 internal/db/file_reader_helpers.go

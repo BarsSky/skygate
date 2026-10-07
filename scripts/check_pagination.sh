@@ -125,10 +125,19 @@ fi
 
 # The controls must be HIDDEN when the dataset fits in one page —
 # `gt .RulePage.Total .RulePage.PageSize` guards the block.
-if grep -q 'gt .RulePage.Total .RulePage.PageSize' "$TMPL" && grep -q 'gt .RulePage.Total .RulePage.PageSize' "$ADMINTMPL"; then
-  ok "E3: pagination controls are hidden when Total <= PageSize (no useless controls)"
+#
+# 2026-10-06 — RENEGOTIATED IN PLACE by B358 for the ADMIN template only. The
+# property is unchanged: the controls are hidden when the window fits in one page.
+# What changed is the window UNIT of /admin/exit-rules — it paginates by GROUP
+# (a distinct (user_id, device_id) pair), because a ROW window turned the operator's
+# 2 users / 3 devices / 393 rules into EIGHT pages with the users and groups smeared
+# across them. The admin guard therefore divides GROUPS by the group window
+# (`.RulePage.TotalGroups`); /my/exit-rules still windows rows and keeps the original
+# expression. Both are asserted, each on the template whose unit it counts.
+if grep -q 'gt .RulePage.Total .RulePage.PageSize' "$TMPL" && grep -q 'gt .RulePage.TotalGroups .RulePage.PageSize' "$ADMINTMPL"; then
+  ok "E3: pagination controls are hidden when the window fits in one page (rows on /my, groups on /admin since B358)"
 else
-  bad "E3: the conditional guard is missing — pagination renders even on a single page"
+  bad "E3: the conditional guard is missing — pagination renders even on a single page (or the admin guard does not use the GROUPS it paginates)"
 fi
 
 # --- F: template funcs divceil / sub are registered -------------------

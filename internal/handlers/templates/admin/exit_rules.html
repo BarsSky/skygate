@@ -213,15 +213,19 @@
   {{end}}
   {{/* v1.5.43: pagination controls (admin). Same shape as the
        /my/exit-rules version; the JS preserves the live filter
-       state via URLSearchParams. RulePage.Total=0 when the
+       state via URLSearchParams. RulePage.TotalGroups=0 when the
        device-filter path is active (drill-down), so the
-       controls are hidden in that case. */}}
-  {{if and .RulePage (gt .RulePage.Total .RulePage.PageSize)}}
+       controls are hidden in that case.
+       B358 (2026-10-06): the window unit is the GROUP
+       (user → device), so the page counter divides GROUPS by
+       PageSize (GROUPS per page) and the totals line names both
+       units. The rule total is in the heading above, not here. */}}
+  {{if and .RulePage (gt .RulePage.TotalGroups .RulePage.PageSize)}}
   <nav class="pagination" style="margin:8px 0;display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap">
-    <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pagination_page_of" .RulePage.Page (divceil .RulePage.Total .RulePage.PageSize)}}</span>
-    <span style="font-size:12px;color:var(--text-muted)">({{tf "exit_rules.pagination_total" .RulePage.Total}})</span>
+    <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules_admin.pagination_page_of_groups" .RulePage.Page (divceil .RulePage.TotalGroups .RulePage.PageSize)}}</span>
+    <span style="font-size:12px;color:var(--text-muted)">({{tf "exit_rules_admin.pagination_total_groups" .RulePage.TotalGroups .RulePage.TotalUsers}})</span>
     {{if gt .RulePage.Page 1}}<a class="btn btn-sm" id="admin-page-prev" href="#"><i class="fa-solid fa-chevron-left"></i> {{t "exit_rules.prev_page"}}</a>{{end}}
-    {{if lt .RulePage.Page (divceil .RulePage.Total .RulePage.PageSize)}}<a class="btn btn-sm" id="admin-page-next" href="#"><i class="fa-solid fa-chevron-right"></i> {{t "exit_rules.next_page"}}</a>{{end}}
+    {{if lt .RulePage.Page (divceil .RulePage.TotalGroups .RulePage.PageSize)}}<a class="btn btn-sm" id="admin-page-next" href="#"><i class="fa-solid fa-chevron-right"></i> {{t "exit_rules.next_page"}}</a>{{end}}
   </nav>
   <script>
   (function(){
@@ -250,12 +254,18 @@
       </summary>
 
       {{range $devID, $devData := $userData.Devices}}
-      <details style="margin:6px 0 6px 24px">
+      {{/* B358 (2026-10-06): the (user → device) group is the unit the page
+           windows, so it is never split across pages. A group with more than
+           db.AdminOversizedGroupRows rows stays COLLAPSED — its rows were fetched
+           with the rest of the group (no second query, no new JS state) — so one
+           device with hundreds of rules cannot turn the page into a wall of rows. */}}
+      <details{{if not $devData.Oversized}} open{{end}} style="margin:6px 0 6px 24px">
         <summary style="cursor:pointer;padding:4px 8px;background:var(--bg-card);border-radius:4px;display:flex;align-items:center;gap:6px;font-size:13px">
           <i class="fa-solid fa-laptop"></i>
           <span>{{$devData.DeviceName}}</span>
           <span class="tag">{{tf "exit_rules_admin.rules_count" $devData.TotalCount}}</span>
           {{if ne $devData.Count $devData.TotalCount}}<span style="font-size:11px;color:var(--text-muted)">{{tf "exit_rules_admin.shown_of_total" $devData.Count $devData.TotalCount}}</span>{{end}}
+          {{if $devData.Oversized}}<span style="font-size:11px;color:var(--text-muted)">{{tf "exit_rules_admin.group_oversized_hint" $devData.TotalCount}}</span>{{end}}
         </summary>
 
         {{range $exitNode, $rules := $devData.Nodes}}

@@ -96,6 +96,37 @@ type AdminRule struct {
 	ApprovedInHeadscale bool
 }
 
+// adminWindowFromQuery is B358's (2026-10-06) pure parser for the /admin/exit-rules
+// window: which page of (user → device) GROUPS to render, and how many groups per
+// page. Pulled out of the handler so the defaults and the "garbage in the URL"
+// behaviour are testable without an HTTP round trip.
+//
+//	?page=      — 1-based page number; < 1, empty or non-numeric → 1
+//	?page_size= — GROUPS per page since B358 (it counted rule rows before);
+//	              empty, < 1 or non-numeric → db.AdminGroupsPerPage (20)
+//
+// The upper clamp stays inside db.GetAllRulesForAdminPaged (pageSizeClamp = 500), so
+// a hand-typed ?page_size= stays bounded no matter what reaches this parser.
+func adminWindowFromQuery(q url.Values) (page, groupsPerPage int) {
+	page = 1
+	groupsPerPage = db.AdminGroupsPerPage
+	if p, err := strconv.Atoi(q.Get("page")); err == nil && p > 0 {
+		page = p
+	}
+	if ps, err := strconv.Atoi(q.Get("page_size")); err == nil && ps > 0 {
+		groupsPerPage = ps
+	}
+	return page, groupsPerPage
+}
+
+// adminGroupIsOversized reports whether a (user, device) group is too large to be
+// worth expanding by default. B358: such a group renders as a COLLAPSED <details>
+// with its rows already fetched — one device with hundreds of rules must not turn
+// the page into a wall of rows.
+func adminGroupIsOversized(rows int) bool {
+	return rows > db.AdminOversizedGroupRows
+}
+
 // 2026-08-25 (B178): annotateRulesWithPrefs fills in the
 // PreferredHost + Applicable fields for every rule in rr,
 // in place, and returns the total number of "dead rules"
@@ -288,16 +319,16 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		dbRules, err = db.GetAllRulesForAdminByDevice(s.dbc(), deviceFilter)
 	} else {
 		// v1.5.43: pagination for the unfiltered cross-user view.
-		// Default page=1, page_size=50, clamp [1, 500].
-		page := 1
-		pageSize := 50
-		if p, perr := strconv.Atoi(r.URL.Query().Get("page")); perr == nil && p > 0 {
-			page = p
-		}
-		if ps, perr := strconv.Atoi(r.URL.Query().Get("page_size")); perr == nil && ps > 0 {
-			pageSize = ps
-		}
-		adminRulePage, err = db.GetAllRulesForAdminPaged(s.dbc(), page, pageSize)
+		// B358 (2026-10-06): the window unit is the GROUP (user → device), not the
+		// rule row. Measured live: 2 users, 3 devices, 393 enabled rows rendered
+		// EIGHT pages of 50 rows with the users and the devices smeared across
+		// them, because the CDN auto-updater adds rows per device on every tick and
+		// a row window cuts through a group. `?page_size=` therefore counts
+		// GROUPS now (default db.AdminGroupsPerPage = 20, still clamped to
+		// [1, pageSizeClamp] inside db.GetAllRulesForAdminPaged); the live shape
+		// then renders ONE page holding all three groups whole.
+		page, groupsPerPage := adminWindowFromQuery(r.URL.Query())
+		adminRulePage, err = db.GetAllRulesForAdminPaged(s.dbc(), page, groupsPerPage)
 		if err == nil {
 			dbRules = adminRulePage.Rules
 		}
@@ -327,11 +358,17 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	if rcErr != nil {
 		log.Printf("admin/exit-rules: AdminRuleCounters: %v (counters fall back to the page window)", rcErr)
 	}
-	// The heading total: the pagination total on the unfiltered view, the full
-	// (single-device) list on the drill-down.
+	// The heading total: the unpaginated enabled-rule total on the unfiltered view,
+	// the full (single-device) list on the drill-down.
+	//
+	// B358 (2026-10-06): realTotal comes from the COUNT the group window carries
+	// (AdminRulePage.TotalRules), NOT from the rows the page happens to hold. The
+	// window is now a set of whole groups, so `len(rr)` would be "the rows of the
+	// groups that fit on this page" — a page window dressed as a total, which is
+	// exactly the B351 defect the counters above exist to prevent.
 	realTotal := len(dbRules)
-	if adminRulePage.Total > 0 {
-		realTotal = adminRulePage.Total
+	if adminRulePage.TotalRules > 0 {
+		realTotal = adminRulePage.TotalRules
 	}
 
 	var rr []AdminRule
@@ -434,7 +471,12 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		Count int
 		// TotalCount is every ENABLED rule of this device (db.AdminRuleCounters).
 		TotalCount int
-		Nodes      map[string][]AdminRule
+		// B358 (2026-10-06): the group holds more than
+		// db.AdminOversizedGroupRows rows, so the template renders it COLLAPSED —
+		// the rows were fetched with the rest of the group (no second query, no new
+		// JS state), this flag only decides whether the <details> starts open.
+		Oversized bool
+		Nodes     map[string][]AdminRule
 		// 2026-09-07: B237.22 / TD-11 (Approach G) —
 		// parallel CDN-grouped view. Same (exitNode) keys
 		// as Nodes, but the value is a CDNDisplayViewAdmin
@@ -571,6 +613,10 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		}
 		dg.Nodes[rule.ExitNode] = append(dg.Nodes[rule.ExitNode], rule)
 		dg.Count++
+		// B358: the whole group was fetched, so Count IS the group's size — the
+		// oversized decision is made on it. Presentation only: the rows are already
+		// in the page.
+		dg.Oversized = adminGroupIsOversized(dg.Count)
 		ug.Devices[rule.DeviceID] = dg
 		ug.ShownCount++
 		groupedByUser[rule.UserName] = ug

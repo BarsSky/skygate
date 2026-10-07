@@ -434,34 +434,132 @@ func GetAllRulesForAdmin(d *sql.DB) ([]DeviceRule, error) {
 	return getAllRulesForAdminQuery(d, qSelectAllRulesForAdmin)
 }
 
-// AdminRulePage (v1.5.43) — pagination shape for the admin
-// cross-user view. Same contract as RulePage (Total + Rules +
-// Page + PageSize).
+// AdminGroupsPerPage is B358's (2026-10-06) default window for
+// /admin/exit-rules: how many (user → device) GROUPS one page holds.
+//
+// Chosen against the measured live case — 2 users, 3 devices, 393 enabled rules
+// (skyadmin/skyworker 219, skyadmin/cyborg 12, michail/basic 162) — where the
+// row-based window (`LIMIT 50 OFFSET n`) rendered EIGHT pages with the users and
+// the devices smeared across them. 20 groups puts that tailnet on ONE page with
+// room to spare, while still bounding the response for a tail with many devices:
+// a group is never split (that is the contract), and the template collapses a
+// group larger than AdminOversizedGroupRows.
+const AdminGroupsPerPage = 20
+
+// AdminOversizedGroupRows is B358's presentation threshold: a group with more rows
+// than this renders as a COLLAPSED <details> (the rows are already fetched — the
+// collapse is presentation only, no second query, no new JS state), so one device
+// with hundreds of rules cannot make the page unusable.
+const AdminOversizedGroupRows = 150
+
+// AdminRuleGroup is one window unit of the admin page: a distinct
+// (user_id, device_id) pair with its display name and its full row count.
+type AdminRuleGroup struct {
+	UserID    int64
+	UserName  string
+	DeviceID  int
+	RuleCount int
+}
+
+// AdminRulePage (v1.5.43; the window unit was renegotiated by B358) — pagination
+// shape for the admin cross-user view.
+//
+// B358 (2026-10-06): the window unit is the GROUP (a distinct (user_id, device_id)
+// pair), not the rule row. The fields therefore do NOT mirror RulePage's
+// row semantics:
+//
+//   - TotalGroups is what Page/PageSize window (so the template's page counter is
+//     divceil(TotalGroups, PageSize));
+//   - TotalRules is the UNPAGINATED enabled-rule count — the heading total and the
+//     «показано N из M» comparison (page rows vs the table), never the window;
+//   - TotalUsers is the unpaginated count of distinct owners.
 type AdminRulePage struct {
-	Rules    []DeviceRule
-	Total    int
-	Page     int
+	Rules []DeviceRule
+	// TotalGroups is the number of distinct (user, device) groups with at least one
+	// enabled rule — the number of pages is ceil(TotalGroups / PageSize).
+	TotalGroups int
+	// TotalRules is COUNT(*) over ENABLED rules, across every group.
+	TotalRules int
+	// TotalUsers is COUNT(DISTINCT user_id) over the same set.
+	TotalUsers int
+	// GroupsOnPage is how many groups THIS page renders.
+	GroupsOnPage int
+	Page         int
+	// PageSize is GROUPS per page (db.AdminGroupsPerPage by default), clamped to
+	// [1, pageSizeClamp].
 	PageSize int
 }
 
-// GetAllRulesForAdminPaged (v1.5.43) returns one page of admin
-// rules + the unpaged count. pageSize clamped to [1, 500];
-// page clamped to [1, ceil(Total/pageSize)].
-func GetAllRulesForAdminPaged(d *sql.DB, page, pageSize int) (AdminRulePage, error) {
-	if page < 1 { page = 1 }
-	if pageSize < 1 { pageSize = 50 }
-	if pageSize > pageSizeClamp { pageSize = pageSizeClamp }
+// GetAllRulesForAdminPaged (v1.5.43; window unit renegotiated by B358) returns one
+// page of admin rules plus the database's unpaginated totals.
+//
+// B358 (2026-10-06): `page` windows GROUPS, not rule rows.
+//
+//	page      — 1-based page of groups, clamped to [1, ceil(TotalGroups/pageSize)]
+//	groupsPerPage — groups per page, clamped to [1, pageSizeClamp];
+//	                < 1 defaults to AdminGroupsPerPage
+//
+// The rows are fetched by whole groups (never by a row window), so a device's rules
+// can never be split across two pages. A database failure at any step is returned
+// with the step's name; all four statements are read-only.
+func GetAllRulesForAdminPaged(d *sql.DB, page, groupsPerPage int) (AdminRulePage, error) {
+	if page < 1 {
+		page = 1
+	}
+	if groupsPerPage < 1 {
+		groupsPerPage = AdminGroupsPerPage
+	}
+	if groupsPerPage > pageSizeClamp {
+		groupsPerPage = pageSizeClamp
+	}
 
-	var total int
-	if err := d.QueryRow(qSelectAllRulesForAdminCount).Scan(&total); err != nil {
+	// The heading total: every ENABLED rule, unpaginated (B358 fixed the missing
+	// `enabled = 1`, which made this count disagree with every other counter as soon
+	// as a rule was disabled).
+	var totalRules int
+	if err := d.QueryRow(qSelectAllRulesForAdminCount).Scan(&totalRules); err != nil {
 		return AdminRulePage{}, fmt.Errorf("count device_rules: %w", err)
 	}
-	lastPage := (total + pageSize - 1) / pageSize
-	if lastPage < 1 { lastPage = 1 }
-	if page > lastPage { page = lastPage }
-	offset := (page - 1) * pageSize
 
-	rows, err := d.Query(qSelectAllRulesForAdminPaged, pageSize, offset)
+	// The window's own totals: how many groups exist (that is what paginates) and how
+	// many users own them.
+	var totalGroups, totalUsers int
+	if err := d.QueryRow(qCountAdminRuleGroups).Scan(&totalGroups, &totalUsers); err != nil {
+		return AdminRulePage{}, fmt.Errorf("count admin rule groups: %w", err)
+	}
+
+	lastPage := (totalGroups + groupsPerPage - 1) / groupsPerPage
+	if lastPage < 1 {
+		lastPage = 1
+	}
+	if page > lastPage {
+		page = lastPage
+	}
+	offset := (page - 1) * groupsPerPage
+
+	groups, err := adminRuleGroupsPage(d, groupsPerPage, offset)
+	if err != nil {
+		return AdminRulePage{}, err
+	}
+	out := AdminRulePage{
+		// An empty page is an empty slice, never nil: the template and the handler
+		// both treat nil as "no query ran".
+		Rules:        []DeviceRule{},
+		TotalGroups:  totalGroups,
+		TotalRules:   totalRules,
+		TotalUsers:   totalUsers,
+		GroupsOnPage: len(groups),
+		Page:         page,
+		PageSize:     groupsPerPage,
+	}
+	if len(groups) == 0 {
+		return out, nil
+	}
+
+	// Whole groups, however many rows they hold: ONE query for every group on the
+	// page. Fetching per group would be N round-trips; a row window would split one.
+	query, args := adminRulesForGroupsQuery(groups)
+	rows, err := d.Query(query, args...)
 	if err != nil {
 		return AdminRulePage{}, fmt.Errorf("page admin device_rules: %w", err)
 	}
@@ -470,9 +568,50 @@ func GetAllRulesForAdminPaged(d *sql.DB, page, pageSize int) (AdminRulePage, err
 	if err != nil {
 		return AdminRulePage{}, err
 	}
-	return AdminRulePage{
-		Rules: rules, Total: total, Page: page, PageSize: pageSize,
-	}, nil
+	out.Rules = rules
+	return out, nil
+}
+
+// adminRuleGroupsPage reads the window: the groups of one page, ordered by the group
+// key so the rendered order is stable across requests.
+func adminRuleGroupsPage(d *sql.DB, limit, offset int) ([]AdminRuleGroup, error) {
+	rows, err := d.Query(qSelectAdminRuleGroups, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("page admin rule groups: %w", err)
+	}
+	defer rows.Close()
+	var out []AdminRuleGroup
+	for rows.Next() {
+		var g AdminRuleGroup
+		if err := rows.Scan(&g.UserID, &g.UserName, &g.DeviceID, &g.RuleCount); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// adminRulesForGroupsQuery builds the row fetch for exactly the given groups.
+//
+// The predicate is an OR-chain of `(r.user_id = $n AND r.device_id = $n+1)` pairs —
+// not `(user_id, device_id) IN ((…), …)`: the row-value form is understood by
+// PostgreSQL and modern SQLite but not by every driver/version this project
+// supports, while an OR-chain over scalar comparisons is portable by construction.
+// The placeholders are produced by PlaceholderAt so the numbering is `$N` on both
+// dialects and the Go argument order is the predicate order.
+//
+// Callers pass a non-empty group slice (GetAllRulesForAdminPaged returns before
+// calling it otherwise), so the returned predicate is never empty.
+func adminRulesForGroupsQuery(groups []AdminRuleGroup) (string, []any) {
+	parts := make([]string, 0, len(groups))
+	args := make([]any, 0, len(groups)*2)
+	total := len(groups) * 2
+	for i, g := range groups {
+		parts = append(parts, "(r.user_id = "+PlaceholderAt(total, i*2)+
+			" AND r.device_id = "+PlaceholderAt(total, i*2+1)+")")
+		args = append(args, g.UserID, g.DeviceID)
+	}
+	return fmt.Sprintf(qSelectAllRulesForAdminPaged, strings.Join(parts, " OR ")), args
 }
 
 // scanAdminRules reads the admin SELECT result (12 columns incl.
@@ -854,7 +993,7 @@ func DeleteRuleForUser(d *sql.DB, id int, userID int64) error {
 // the rule is a subnet /32 with a parent_domain — also removes the
 // entire family of /32 rules with the same parent_domain. The
 // user_id check keeps the cascade from leaking across users.
-// parentDomain is the COALESCE(parent_domain,'') of the row being
+// parentDomain is the COALESCE(parent_domain,”) of the row being
 // deleted (pass the empty string if it's already empty).
 //
 // Returns the number of rows deleted (the original id + any /32

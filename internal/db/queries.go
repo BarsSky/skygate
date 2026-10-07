@@ -537,21 +537,65 @@ const qSelectUserRulesForViewCount = `SELECT COUNT(*) FROM device_rules d WHERE 
 // LEFT JOIN onto portal_users is preserved.
 const qSelectAllRulesForAdmin = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.id`
 
-// qSelectAllRulesForAdminPaged (v1.5.43) — LIMIT/OFFSET
-// version of qSelectAllRulesForAdmin. Same column shape. The
-// /admin/exit-rules view can have tens of thousands of rows
-// across all users (one user with 1500 rules + another 800 +
-// another 500 = 2800+ rows, all rendered as one flat table
-// pre-pagination). Page size is the same clamp as the user
-// page (1–500).
+// qSelectAllRulesForAdminPaged (v1.5.43; the WINDOW was renegotiated by B358) —
+// the rules of the admin page, scoped to the groups that page windows. Same
+// 13-column shape as qSelectAllRulesForAdmin / qSelectAllRulesForAdminByDevice, so
+// `scanAdminRules` and the template are unchanged.
 //
-//	$1 = LIMIT (page_size)
-//	$2 = OFFSET (page * page_size)
-const qSelectAllRulesForAdminPaged = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.user_id, r.device_id, r.id LIMIT $1 OFFSET $2`
+// B358 (2026-10-06): the window unit is the GROUP — a distinct
+// `(user_id, device_id)` pair — not the rule row. Measured live: 2 users, 3 devices,
+// 393 enabled rows rendered EIGHT pages of 50 rows (`ORDER BY r.user_id,
+// r.device_id, r.id LIMIT $1 OFFSET $2`), with the users and the devices smeared
+// across those pages, because the CDN auto-updater inserts rows per device on every
+// tick and a row window cuts through a group. The LIMIT/OFFSET therefore lives on
+// `qSelectAdminRuleGroups`, and this SELECT receives that page's group predicate as
+// `%s` (built by adminRulesForGroupsPredicate) so it returns EVERY row of exactly
+// those groups — a group is never split across pages. `fmt.Sprintf` is the only
+// formatter: the predicate carries the `$N` placeholders, so the argument order is
+// the predicate's order.
+//
+// `r.enabled = 1` matches the group window and every counter the page prints (B351's
+// AdminRuleCounters): a disabled row is not part of a group, so it is neither counted
+// nor rendered — before B358 the row window had no filter at all and the page showed
+// disabled rules the counters did not count.
+//
+// The `?device=` drill-down does NOT come through here: it stays unpaged on
+// qSelectAllRulesForAdminByDevice (one device is already one whole group).
+//
+// Ordering still keeps a group contiguous (r.user_id, r.device_id) and the rows
+// inside it stable (r.id) — the property B351 C3 pinned, now expressed one level up.
+const qSelectAllRulesForAdminPaged = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id WHERE (%s) AND r.enabled = 1 ORDER BY r.user_id, r.device_id, r.id`
+
+// qSelectAdminRuleGroups is B358's WINDOW: one row per distinct
+// `(user_id, device_id)` group that holds at least one ENABLED rule, with the group's
+// display name and its full row count. This is the query the admin page paginates.
+//
+//	$1 = LIMIT (groups per page)
+//	$2 = OFFSET ((page-1) * groups per page)
+//
+// The LEFT JOIN mirrors the sibling rule queries: an orphaned row (the portal user is
+// gone) still forms a group and is named "?" rather than disappearing. MAX() is only
+// there because the column is not in the GROUP BY — every row of one user_id has the
+// same username.
+const qSelectAdminRuleGroups = `SELECT r.user_id, MAX(COALESCE(u.username, '?')) AS user_name, r.device_id, COUNT(*) AS rule_count FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id WHERE r.enabled = 1 GROUP BY r.user_id, r.device_id ORDER BY r.user_id, r.device_id LIMIT $1 OFFSET $2`
+
+// qCountAdminRuleGroups is the unpaginated companion of qSelectAdminRuleGroups: how
+// many GROUPS exist and how many distinct USERS own them. Both numbers feed the page
+// counter and the «всего N устройств / M пользователей» line, so they must come from
+// the database, never from the page slice (that is the B351 defect one level up).
+//
+// A derived table (not a GROUPING SETS/ROLLUP) is used because it is the form both
+// dialects accept verbatim, and `enabled = 1` matches the window exactly.
+const qCountAdminRuleGroups = `SELECT COUNT(*), COUNT(DISTINCT user_id) FROM (SELECT user_id, device_id FROM device_rules WHERE enabled = 1 GROUP BY user_id, device_id) g`
 
 // qSelectAllRulesForAdminCount — COUNT(*) companion for the
 // admin page (no JOIN needed; just rules).
-const qSelectAllRulesForAdminCount = `SELECT COUNT(*) FROM device_rules`
+//
+// B358 (2026-10-06): this counted EVERY row, including disabled ones, so it
+// disagreed with every counter the page shows (B351's AdminRuleCounters all scan
+// `enabled = 1`) the moment any rule was disabled. It is the heading total —
+// «Все правила (N)» — so it must count what the page renders.
+const qSelectAllRulesForAdminCount = `SELECT COUNT(*) FROM device_rules WHERE enabled = 1`
 
 // qSelectAllRulesForAdminByDevice is the cross-user admin view
 // filtered to a single device hostname. The LEFT JOIN onto

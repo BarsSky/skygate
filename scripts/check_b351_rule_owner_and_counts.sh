@@ -193,10 +193,23 @@ fi
 
 # One user's rows must be contiguous, so a group cannot be interleaved across the
 # whole table by the auto-updater's insert order (it was `ORDER BY r.id`).
-if grep -q 'ORDER BY r.user_id, r.device_id, r.id LIMIT \$1 OFFSET \$2' "$QUERIES"; then
-  ok "C3: the paged admin query orders by the group key, so a device's rows stay contiguous"
+#
+# 2026-10-06 — RENEGOTIATED IN PLACE by B358. The property this contract protects is
+# unchanged — «the window follows the grouping the page renders» — but the window
+# UNIT moved from the rule row to the (user_id, device_id) group. The old assertion
+# pinned the row-based form (`ORDER BY r.user_id, r.device_id, r.id LIMIT $1 OFFSET
+# $2`): it kept a device's rows contiguous INSIDE one page while a device with more
+# than 50 rows still straddled pages, and the operator measured the result —
+# «восемь страниц при том что в группе всего три устройства и два пользователя …
+# пользователи и группы размазаны по этим восьми страницам». Grouping alone cannot
+# fix that; the window itself has to be the group. B358 therefore asserts the GROUP
+# window: the LIMIT/OFFSET moved onto qSelectAdminRuleGroups, and the row fetch is
+# scoped to exactly that page's groups (scripts/check_b358_group_pagination.sh owns
+# the full contract, including "a group is never split").
+if grep -q 'qSelectAdminRuleGroups = .*GROUP BY r\.user_id, r\.device_id ORDER BY r\.user_id, r\.device_id LIMIT \$1 OFFSET \$2' "$QUERIES"; then
+  ok "C3: the paged admin window is the (user_id, device_id) GROUP — a group's rows travel together and a group is never split across pages"
 else
-  bad "C3: the paged admin query still orders by r.id alone — one device's rows are scattered across pages and every page tells a different story"
+  bad "C3: the paged admin window is not a (user_id, device_id) group window — a device's rules can still be cut in half by a page boundary and every page tells a different story"
 fi
 
 if grep -q 'TestAdminRuleCounters_B351' internal/db/rule_counts_b351_test.go 2>/dev/null; then

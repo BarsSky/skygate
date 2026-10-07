@@ -133,7 +133,13 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # internal/nodeownership/nodeownership.go was frozen as drifted; B355 touched it (the
 # per-device tag must reach the ownership row) and rule 3 holds every TOUCHED file to
 # gofmt, so its comment re-indentation was paid with the change.
-FROZEN=262
+# 2026-10-06 (fourth payment of the day): 262 → 261.
+# internal/db/device_rules.go was frozen as drifted; B358 rewrote
+# GetAllRulesForAdminPaged to window GROUPS instead of rule rows and is therefore a
+# touched file. gofmt's only complaint was `COALESCE(parent_domain,'')` inside one
+# doc comment (Go 1.19+ doc-comment formatting turns the `''` into a right double
+# quote) — one line, paid with the change, entry removed.
+FROZEN=261
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.
