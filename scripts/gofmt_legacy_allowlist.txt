@@ -63,7 +63,6 @@ internal/db/exit_node_health_test.go
 internal/db/file_reader_helpers.go
 internal/db/migration_tracking.go
 internal/db/migrations_pg.go
-internal/db/migrations_sqlite_schema_test.go
 internal/db/migrations_sqlite_test.go
 internal/db/migrations_v0_45_46_test.go
 internal/db/migrations_v0_64_b195.go

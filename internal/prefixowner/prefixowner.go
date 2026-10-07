@@ -34,6 +34,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"time"
 
 	"skygate/internal/db"
 )
@@ -50,15 +51,28 @@ type Existing struct {
 	Prefix   string
 	ExitNode string
 	Source   string
+	// B360 reservation (V078): failover_from is the relay this prefix was taken
+	// from because it was unhealthy ("" = no active reservation), failover_at is
+	// when that happened — or, when failover_from is empty, when the reservation
+	// was returned — and failover_flaps is the consecutive-quick-flap streak.
+	FailoverFrom  string
+	FailoverAt    int64
+	FailoverFlaps int
 }
 
 // Assignment is the engine's decision for one prefix.
 type Assignment struct {
 	Prefix   string
 	ExitNode string
-	Source   string // explicit | manual | auto
+	Source   string // explicit | manual | auto | global
 	Claims   int
 	Devices  int
+	// B360 reservation columns, carried through so Save writes them and the
+	// return planner can read the decision the engine just made (see
+	// reservation_b360.go).
+	FailoverFrom  string
+	FailoverAt    int64
+	FailoverFlaps int
 }
 
 // Assign computes the prefix→relay table.
@@ -84,11 +98,32 @@ type PreferFunc func(prefix, previousOwner string, candidates []string) string
 // AssignWithPreference is Assign with the B312 location preference. Existing callers
 // keep using Assign; the engine's own order (least loaded, sticky) stays the default
 // and the final word whenever the preference names nobody usable.
+//
+// B360: this is also where a failover is RECORDED. A prefix whose previous owner is
+// not in the healthy set and which therefore moves away records `failover_from` =
+// that owner; a prefix whose previous owner was healthy and which moves anyway is a
+// genuine decision change and clears any stale reservation (see reserveOnMove in
+// reservation_b360.go). The signature is unchanged for every existing caller: the
+// reservation defaults are applied here.
 func AssignWithPreference(claims []Claim, healthy []string, existing []Existing, prefer PreferFunc) []Assignment {
+	return AssignWithReservations(claims, healthy, existing, prefer, nowUnix(), DefaultReservationConfig())
+}
+
+// AssignWithReservations is AssignWithPreference with the B360 reservation config
+// and an explicit clock, so a caller (and a test) can drive a scripted timeline
+// deterministically. `now` is unix seconds.
+func AssignWithReservations(claims []Claim, healthy []string, existing []Existing, prefer PreferFunc, now int64, cfg ReservationConfig) []Assignment {
 	healthySet := map[string]bool{}
+	// healthyLower is the same set for the B360 reservation lookups, which compare
+	// hostnames case-insensitively (headscale's spelling of a relay varies). It is
+	// kept SEPARATE on purpose: `healthySet` is also the source of the auto-pass
+	// candidate list, and adding a second key per relay there would put the same
+	// relay in the candidate set twice.
+	healthyLower := map[string]bool{}
 	for _, h := range healthy {
 		if h != "" {
 			healthySet[h] = true
+			healthyLower[strings.ToLower(h)] = true
 		}
 	}
 	// Group the claims per prefix.
@@ -244,6 +279,11 @@ func AssignWithPreference(claims []Claim, healthy []string, existing []Existing,
 		load[best]++
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
+	// B360: record, carry over or clear the failover reservation of every decided
+	// prefix. This is the "a failover is a reservation" half — see reserveOnMove.
+	for i := range out {
+		reserveOnMove(&out[i], prev[out[i].Prefix], healthyLower, now, cfg)
+	}
 	return out
 }
 
@@ -280,9 +320,11 @@ func LoadClaims(d *sql.DB) ([]Claim, error) {
 	return out, rows.Err()
 }
 
-// LoadExisting reads the current table.
+// LoadExisting reads the current table, including the B360 reservation columns.
 func LoadExisting(d *sql.DB) ([]Existing, error) {
-	rows, err := d.Query(`SELECT prefix, exit_node_id, COALESCE(source,'auto') FROM prefix_owner`)
+	rows, err := d.Query(`SELECT prefix, exit_node_id, COALESCE(source,'auto'),
+	                            COALESCE(failover_from,''), COALESCE(failover_at,0), COALESCE(failover_flaps,0)
+	                     FROM prefix_owner`)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +332,8 @@ func LoadExisting(d *sql.DB) ([]Existing, error) {
 	var out []Existing
 	for rows.Next() {
 		var e Existing
-		if err := rows.Scan(&e.Prefix, &e.ExitNode, &e.Source); err != nil {
+		if err := rows.Scan(&e.Prefix, &e.ExitNode, &e.Source,
+			&e.FailoverFrom, &e.FailoverAt, &e.FailoverFlaps); err != nil {
 			continue
 		}
 		out = append(out, e)
@@ -315,15 +358,20 @@ func Save(d *sql.DB, as []Assignment) (int, int, error) {
 		} else if old != a.ExitNode {
 			chg++
 		}
-		if _, err := d.Exec(`INSERT INTO prefix_owner (prefix, exit_node_id, source, claims, devices, updated_at)
-		                     VALUES ($1,$2,$3,$4,$5,$6)
+		if _, err := d.Exec(`INSERT INTO prefix_owner (prefix, exit_node_id, source, claims, devices, updated_at,
+		                                                  failover_from, failover_at, failover_flaps)
+		                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		                     ON CONFLICT(prefix) DO UPDATE SET
 		                       exit_node_id = excluded.exit_node_id,
 		                       source = excluded.source,
 		                       claims = excluded.claims,
 		                       devices = excluded.devices,
-		                       updated_at = excluded.updated_at`,
-			a.Prefix, a.ExitNode, a.Source, a.Claims, a.Devices, nowUnix()); err != nil {
+		                       updated_at = excluded.updated_at,
+		                       failover_from = excluded.failover_from,
+		                       failover_at = excluded.failover_at,
+		                       failover_flaps = excluded.failover_flaps`,
+			a.Prefix, a.ExitNode, a.Source, a.Claims, a.Devices, nowUnix(),
+			a.FailoverFrom, a.FailoverAt, a.FailoverFlaps); err != nil {
 			return ins, chg, err
 		}
 	}
@@ -345,7 +393,8 @@ func SetManual(d *sql.DB, prefix, exitNode string) error {
 	_, err := d.Exec(`INSERT INTO prefix_owner (prefix, exit_node_id, source, claims, devices, updated_at)
 	                  VALUES ($1,$2,'manual',0,0,$3)
 	                  ON CONFLICT(prefix) DO UPDATE SET exit_node_id = excluded.exit_node_id,
-	                    source = 'manual', updated_at = excluded.updated_at`,
+	                    source = 'manual', updated_at = excluded.updated_at,
+	                    failover_from = '', failover_at = 0, failover_flaps = 0`,
 		prefix, exitNode, nowUnix())
 	return err
 }
@@ -433,23 +482,76 @@ func Reconcile(d *sql.DB, healthyRelays []string) (inserted, changed int, err er
 // ReconcileWithPreference is Reconcile with the B312 fallback preference (see
 // PreferFunc): when a prefix's owner can no longer serve it, `prefer` may name the
 // closest healthy relay instead of letting the engine pick the least loaded one.
+//
+// B360: this is also the pass that RECORDS a failover, decides whether a recovered
+// relay gets its prefixes back, and warns while the operator's override outlives
+// the outage it was set for. It runs inside the function the existing maintenance
+// tick already calls, so convergence does not depend on "something changed"
+// (docs/LESSONS.md L-60) and the whole pass is idempotent.
 func ReconcileWithPreference(d *sql.DB, healthyRelays []string, prefer PreferFunc) (inserted, changed int, err error) {
+	return ReconcileWithReservationConfig(d, healthyRelays, prefer, DefaultReservationConfig())
+}
+
+// ReconcileWithReservationConfig is ReconcileWithPreference with an explicit B360
+// hysteresis/quarantine configuration (the defaults are what production uses; the
+// parameter exists so a test can script a timeline in seconds instead of minutes).
+//
+// Order of the pass:
+//
+//  1. the engine's decision (manual > explicit > auto, B312 preference for a
+//     prefix being reassigned), with the B360 reservation recorded on the way;
+//  2. the operator's global override (B277) — never auto-cleared;
+//  3. the reservation plan: returns, or a NAMED reason for every prefix that
+//     stays where it is (PlanReturns), folded back by ApplyPlan;
+//  4. the override warning (B360 §4) — the 19-hour silent state;
+//  5. prune, then save.
+func ReconcileWithReservationConfig(d *sql.DB, healthyRelays []string, prefer PreferFunc, cfg ReservationConfig) (inserted, changed int, err error) {
+	return ReconcileAt(d, healthyRelays, prefer, cfg, nowUnix())
+}
+
+// ReconcileAt is ReconcileWithReservationConfig with an explicit clock, so a test
+// (and any future operator-driven replay) can drive a scripted timeline without
+// waiting minutes for the hysteresis to elapse. Production always goes through
+// ReconcileWithReservationConfig → nowUnix().
+func ReconcileAt(d *sql.DB, healthyRelays []string, prefer PreferFunc, cfg ReservationConfig, now int64) (inserted, changed int, err error) {
+	rep, err := ReconcileReportAt(d, healthyRelays, prefer, cfg, now)
+	return rep.Inserted, rep.Changed, err
+}
+
+// ReconcileReport is one pass's decision, exposed so the operator surface (and a
+// test) can see WHY a reserved prefix did or did not come back instead of reading
+// the process log. Nothing here is live data: the entries are the planner's own
+// plain structs.
+type ReconcileReport struct {
+	Inserted int
+	Changed  int
+	Returns  []Return
+	Kept     []Return
+}
+
+// ReconcileReportAt runs the pass and returns its report as well as the counts.
+func ReconcileReportAt(d *sql.DB, healthyRelays []string, prefer PreferFunc, cfg ReservationConfig, now int64) (ReconcileReport, error) {
+	rep := ReconcileReport{}
+	cfg = cfg.normalize()
 	claims, err := LoadClaims(d)
 	if err != nil {
-		return 0, 0, err
+		return rep, err
 	}
 	existing, err := LoadExisting(d)
 	if err != nil {
-		return 0, 0, err
+		return rep, err
 	}
-	as := AssignWithPreference(claims, healthyRelays, existing, prefer)
+	as := AssignWithReservations(claims, healthyRelays, existing, prefer, now, cfg)
 
 	// B277: the global "everything through one relay" switch, and the manual pins
 	// that deliberately survive it. Order of authority: manual (the operator picked
 	// THIS prefix) > global (the operator picked a relay for everything) > explicit
 	// (the rules' majority) > auto.
-	if force := ForceRelay(d); force != "" {
+	force := ForceRelay(d)
+	forceHealthy := false
+	if force != "" {
 		if relayIsHealthy(force, healthyRelays) {
+			forceHealthy = true
 			for i := range as {
 				if as[i].Source == "manual" {
 					continue
@@ -462,6 +564,24 @@ func ReconcileWithPreference(d *sql.DB, healthyRelays []string, prefer PreferFun
 		}
 	}
 
+	// B360: may a reserved prefix go back to the relay it was taken from? The
+	// decision is pure (PlanReturns) and every withheld return carries a named
+	// reason, so nothing is dropped silently.
+	returns, kept := PlanReturns(claims, as, existing, healthyRelays,
+		ProvenRelays(d), HealthySince(d, now), force, forceHealthy, now, cfg)
+	rep.Returns, rep.Kept = returns, kept
+	if len(returns) > 0 || len(kept) > 0 {
+		log.Printf("prefix-owner: reservation plan — %s", DescribePlan(returns, kept))
+	}
+	as = ApplyPlan(as, returns, kept, now)
+	if n := clearDroppedReservations(d, kept, as); n > 0 {
+		log.Printf("prefix-owner: dropped %d stale reservation(s) (the prefix is no longer claimed by the relay they name)", n)
+	}
+
+	// B360 §4: the override is an operator TOOL, and its exit must be visible. The
+	// warning never clears it — that stays a human decision.
+	warnWhileOverrideSuperseded(d, healthyRelays, time.Unix(now, 0).UTC())
+
 	// B277: drop rows whose prefix no rule claims any more. The table used to keep
 	// every prefix it had ever seen (live: 1655 rows, 1497 of them dead — the page
 	// was unreadable and the "nobody announces" counter described history, not the
@@ -473,7 +593,8 @@ func ReconcileWithPreference(d *sql.DB, healthyRelays []string, prefer PreferFun
 		log.Printf("prefix-owner: pruned %d assignment row(s) whose prefix no enabled rule claims any more", n)
 	}
 
-	return Save(d, as)
+	rep.Inserted, rep.Changed, err = Save(d, as)
+	return rep, err
 }
 
 // forceRelaySettingKey is the global_settings row the override lives in.

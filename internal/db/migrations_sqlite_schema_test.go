@@ -59,18 +59,34 @@ func TestSQLiteSchemaComplete(t *testing.T) {
 		t.Fatalf("ApplyMigrations(SQLite): %v", err)
 	}
 
-	t.Run("chain reaches V077 like PostgreSQL", func(t *testing.T) {
+	t.Run("chain reaches V078 like PostgreSQL", func(t *testing.T) {
 		var maxV int
 		if err := sqlDB.QueryRow(
 			`SELECT COALESCE(MAX(version), 0) FROM applied_migrations`).Scan(&maxV); err != nil {
 			t.Fatalf("read max(version): %v", err)
 		}
-		// PostgreSQL's chain ends at 77 (v0.77 = exit_servers location, B312). If
-		// SQLite lags behind, every table/column added by the missing tail is
-		// absent.
-		if maxV != 77 {
-			t.Errorf("SQLite migration chain ends at V%d, want V77 — the PG and SQLite "+
+		// PostgreSQL's chain ends at 78 (v0.78 = prefix_owner failover
+		// reservation, B360). If SQLite lags behind, every table/column added by
+		// the missing tail is absent.
+		if maxV != 78 {
+			t.Errorf("SQLite migration chain ends at V%d, want V78 — the PG and SQLite "+
 				"chains have diverged again (see driver_sqlite.go sqliteMigrations)", maxV)
+		}
+	})
+
+	t.Run("prefix_owner reservation columns exist (V078, B360)", func(t *testing.T) {
+		// V078 is the B360 failover reservation: /admin/exit-nodes and the
+		// assignment engine read failover_from to answer "where did this prefix
+		// come from, and may it go back?", failover_at to date the reservation
+		// (and to detect a quick flap), and failover_flaps to widen the return
+		// window of a relay that keeps dropping out. Missing columns on SQLite
+		// would make a native install silently lose the whole mechanism — the
+		// exact state the operator reported after karolina recovered.
+		for _, col := range []string{"failover_from", "failover_at", "failover_flaps"} {
+			if !sqliteColumnExists(sqlDB, "prefix_owner", col) {
+				t.Errorf("prefix_owner.%s is MISSING in the SQLite schema — V078 (B360 "+
+					"failover reservation) did not run on SQLite", col)
+			}
 		}
 	})
 
@@ -108,7 +124,7 @@ func TestSQLiteSchemaComplete(t *testing.T) {
 			t.Fatalf("read monitor_events presence: %v", err)
 		}
 		if present != 1 {
-			t.Errorf("monitor_events is MISSING in the SQLite schema — V076 "+
+			t.Errorf("monitor_events is MISSING in the SQLite schema — V076 " +
 				"didn't run end-to-end (see migrations_v0_76_monitor_events.go)")
 		}
 	})
@@ -124,7 +140,7 @@ func TestSQLiteSchemaComplete(t *testing.T) {
 			t.Fatalf("read oidc_settings presence: %v", err)
 		}
 		if present != 1 {
-			t.Errorf("oidc_settings is MISSING in the SQLite schema — V075 "+
+			t.Errorf("oidc_settings is MISSING in the SQLite schema — V075 " +
 				"didn't run end-to-end (see migrations_v0_75_oidc_settings.go)")
 		}
 	})

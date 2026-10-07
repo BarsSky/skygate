@@ -148,7 +148,13 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # line of the original is present in the new set, and the four moved declaration
 # bodies differ from the original only by gofmt alignment or by the doc comment
 # that travelled with the NEXT function (see the split proof in the commit).
-FROZEN=260
+# 2026-10-07 (sixth payment): 260 -> 259.
+# internal/db/migrations_sqlite_schema_test.go had to be touched by B360: the V078
+# migration moves the chain head, and that test pins it with a hard-coded literal
+# (maxV != 77). Rule 3 (and contract E1) hold every TOUCHED file to gofmt, so the
+# two pre-existing string-concatenation lines inside it were formatted in the same
+# change and the entry left the list.
+FROZEN=259
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.
