@@ -317,6 +317,60 @@ func TestB356_1_FailedRelayIsNotRetriedInATightLoop(t *testing.T) {
 	}
 }
 
+// TestB362_ExpiredCallerBudgetDoesNotCoolTheRelayDown pins the live defect of
+// 2026-10-07 20:32 on v1.5.103: setMyCommands carries a 5-second context while the
+// direct dial alone is allowed 6, so its relay attempts came back "context deadline
+// exceeded" — and the code cooled every relay down for RelayCooldown anyway. The
+// 30-second getUpdates loop then reported "every relay is cooling down after a
+// failure" for two minutes and NO relay ever carried a request, while the identical
+// ssh -W argv run by hand inside the container completed in two seconds.
+func TestB362_ExpiredCallerBudgetDoesNotCoolTheRelayDown(t *testing.T) {
+	direct := &fakeRT{fail: errors.New("dial tcp 149.154.166.110:443: i/o timeout")}
+	log := &dialLog{}
+	// The tunnel honours the caller's context: it blocks until that context is done and
+	// returns its error, which is what ssh -W does under a budget that has run out.
+	dial := func(ctx context.Context, c relayCandidate, a, b string) (net.Conn, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	cfg := envCfg()
+	cfg.RelayCooldown = 2 * time.Minute
+	tr := testTransport(cfg, direct, direct, candidates("karolina", "emilia"), dial, nil, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	req, rerr := http.NewRequestWithContext(ctx, http.MethodGet, telegramURL(), nil)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if _, err := tr.RoundTrip(req); err == nil {
+		t.Fatal("nothing could carry the request once the caller's budget expired")
+	}
+
+	// THE PROPERTY: our own expired deadline must not take the relays out of the pool,
+	// or one short-budget call locks the whole fallback out for RelayCooldown.
+	now := nowFixture()
+	sel := selectRelayAttempts(tr.inventory(now).Candidates, tr.cooldowns(), now, "", cfg.RelayCooldown, cfg.MaxRelaysPerRequest)
+	if len(sel) != 2 {
+		t.Fatalf("an expired CALLER budget must not cool a relay down: %d of 2 candidates remain available", len(sel))
+	}
+
+	// And the contrast, so the rule can never be read as "never cool down": a tunnel
+	// error raised while the caller STILL has budget is evidence about that relay.
+	direct2 := &fakeRT{fail: errors.New("direct blocked")}
+	tr2 := testTransport(envCfg(), direct2, direct2, candidates("karolina"), newPipeDialer(okReply, log, map[string]error{
+		"karolina": errors.New("ssh: connect to host 100.64.0.2 port 18022: Connection refused"),
+	}), nil, nil)
+	if _, err := doRequest(t, tr2); err == nil {
+		t.Fatal("a refused tunnel must fail the request")
+	}
+	now2 := nowFixture()
+	left := selectRelayAttempts(tr2.inventory(now2).Candidates, tr2.cooldowns(), now2, "", envCfg().RelayCooldown, envCfg().MaxRelaysPerRequest)
+	if len(left) != 0 {
+		t.Fatalf("a tunnel that genuinely refused the connection MUST be cooled down: %d candidate(s) left", len(left))
+	}
+}
+
 func TestB356_1_TunnelFailureIsNamedNotAHang(t *testing.T) {
 	direct := &fakeRT{fail: errors.New("direct blocked")}
 	log := &dialLog{}

@@ -461,7 +461,23 @@ func (t *egressTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			err = fmt.Errorf("%w (ssh: %s)", err, RedactToken(tail, ""))
 		}
 		lastErr = fmt.Errorf("telegram egress: relay %s (%s): %w", c.Hostname, c.Target, err)
-		t.noteRelayFailure(c, now, lastErr.Error())
+		// A failure that happened on OUR clock is not evidence about the relay. Measured
+		// live on 2026-10-07 (v1.5.103, 20:32): three setMyCommands calls carry a
+		// 5-second context while the direct dial alone is allowed 6, so the first one
+		// spent its whole budget and the relay attempts came back context deadline
+		// exceeded. Cooling every relay down for that locked the 30-second getUpdates
+		// loop out of the fallback for RelayCooldown — the log said "every relay is
+		// cooling down after a failure" for two minutes and NO relay ever carried a
+		// request, while the identical ssh -W argv run by hand inside the container
+		// completed in two seconds.
+		if relayFailureIsEvidence(c, areq.Context(), err) {
+			t.noteRelayFailure(c, now, lastErr.Error())
+		} else {
+			t.noteNoRelayFailure(now, lastErr.Error())
+			// Nothing left on the caller's clock: the remaining relays would fail
+			// instantly for the same reason, and their cooldown state must not change.
+			break
+		}
 	}
 	if lastErr == nil {
 		lastErr = errors.New("no relay attempt was made")
@@ -620,6 +636,24 @@ func (t *egressTransport) noteNoRelayFailure(now time.Time, msg string) {
 	t.relayErr = msg
 	t.relayErrAt = now
 	t.mu.Unlock()
+}
+
+// relayFailureIsEvidence reports whether err is evidence about the RELAY rather than about
+// the caller's own time budget. A cancelled or expired context means WE ran out of time (or
+// gave up) while the tunnel might have been seconds from working, so it must not put the
+// relay in cooldown; only an error the tunnel itself produced while the caller still had
+// budget may. See the call site for the live measurement that produced this rule.
+func relayFailureIsEvidence(c relayCandidate, ctx context.Context, err error) bool {
+	if strings.TrimSpace(c.Hostname) == "" {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	return true
 }
 
 // entryFor returns (and caches) the transport for one relay.
