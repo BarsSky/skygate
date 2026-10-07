@@ -139,14 +139,28 @@ func TestB356Page_SilentForAWorkingDevice(t *testing.T) {
 	}
 }
 
-// TestB356Page_ShowsTheOwnerDisagreement: the relay is UP, but the data plane gives the
-// device's prefixes to another relay. The row is still stale (the device's per-CIDR
-// pins name emilia while the device itself is pinned to karolina), and the page has to
-// say the cause is the owner, not the relay's health.
+// TestB356Page_ShowsTheOwnerDisagreement: the relay is UP and serves prefixes, but the
+// data plane gives THIS DEVICE's prefixes to another relay. The row is still stale (the
+// device's per-CIDR pins name emilia while the device itself is pinned to karolina), and
+// the page has to say the cause is the owner, not the relay's health.
+//
+// SETUP WIDENED 2026-10-07 (B361) — the property is unchanged, the fixture is now
+// honest about which case it describes. The old fixture left karolina owning ZERO rows
+// in `prefix_owner`, and the old predicate could not tell that apart from "the owner
+// disagrees", because it was built from the device's owners only. B361 asks the sharper
+// question first (does the relay own ANYTHING?), so "karolina owns nothing" is now its
+// own named case (`stale-pref-relay-owns-nothing` — the operator's a71 shape) and the
+// owner-disagreement case needs a relay that really does serve: karolina owns one
+// prefix, just not the two this device's rules claim. That is the distinction the
+// operator needs in order to act, and the two cases now render differently.
 func TestB356Page_ShowsTheOwnerDisagreement(t *testing.T) {
 	d := b356AdminDB(t)
 	seedB356Admin(t, d, "tag:dev-infra-karolina", 0)
-	// karolina recovers: the relay is usable again, but it still owns no prefix.
+	// karolina recovers AND serves something — merely not this device's prefixes.
+	if _, err := d.Exec(`INSERT INTO prefix_owner (prefix, exit_node_id, source, claims, devices, updated_at)
+	                     VALUES ('203.0.113.0/24', 'karolina', 'explicit', 1, 1, 0)`); err != nil {
+		t.Fatalf("seed karolina's own prefix: %v", err)
+	}
 	if err := skygatedb.UpsertExitNodeHealth(d, skygatedb.ExitNodeHealth{
 		NodeID: "karolina", Hostname: "karolina", State: "online", Healthy: true, AdvertisedRoutesOK: true,
 	}); err != nil {
@@ -159,9 +173,66 @@ func TestB356Page_ShowsTheOwnerDisagreement(t *testing.T) {
 		t.Fatalf("rows = %d, want 1 (the owner disagrees with the preference)", len(rows))
 	}
 	if rows[0].Cause != "owner" {
-		t.Errorf("Cause = %q, want owner (the relay is healthy; the ASSIGNMENT disagrees)", rows[0].Cause)
+		t.Errorf("Cause = %q, want owner (the relay is healthy and serves prefixes; the ASSIGNMENT for THIS device disagrees)", rows[0].Cause)
 	}
 	if rows[0].RelayState != "online" {
 		t.Errorf("RelayState = %q, want online", rows[0].RelayState)
+	}
+	// B361: and the one-click fix names the relay that owns this device's routing.
+	if rows[0].CandidateTag != "tag:dev-infra-emilia" {
+		t.Errorf("CandidateTag = %q, want tag:dev-infra-emilia (where the data plane points)", rows[0].CandidateTag)
+	}
+}
+
+// TestB361Page_ShowsARelayThatOwnsNothing is the a71 case on the page: a device with NO
+// rules pinned to a relay that owns ZERO prefixes. The health predicate has nothing to
+// say (the relay is online) and the owner comparison has nothing to compare (there are
+// no rules), which is exactly why the operator saw no state at all.
+func TestB361Page_ShowsARelayThatOwnsNothing(t *testing.T) {
+	d := b356AdminDB(t)
+	// The preference names the relay that owns NOTHING; the two seeded prefixes belong
+	// to emilia. (Seeding it the other way round would make the fixture describe a
+	// device that is actually fine — `servesNothing` is false when the relay owns
+	// prefix_owner rows.)
+	seedB356Admin(t, d, "tag:dev-infra-karolina", 1)
+	// The device loses its rules; the preference stays (the live a71 shape).
+	if _, err := d.Exec(`DELETE FROM device_rules`); err != nil {
+		t.Fatalf("delete rules: %v", err)
+	}
+	// Only emilia owns prefixes; the pinned karolina owns none.
+	if _, err := d.Exec(`INSERT INTO prefix_owner (prefix, exit_node_id, source, claims, devices, updated_at)
+	                     VALUES ('198.51.100.0/24', 'emilia', 'explicit', 1, 1, 0)`); err != nil {
+		t.Fatalf("seed emilia's prefix: %v", err)
+	}
+	if err := skygatedb.UpsertExitNodeHealth(d, skygatedb.ExitNodeHealth{
+		NodeID: "karolina", Hostname: "karolina", State: "online", Healthy: true, AdvertisedRoutesOK: true,
+	}); err != nil {
+		t.Fatalf("heal karolina: %v", err)
+	}
+	s := &Service{DB: skygatedb.FixedDBSource{DB: d}}
+
+	rows := s.loadStaleExitPrefs()
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d (%+v), want 1 — the a71 shape must be visible", len(rows), rows)
+	}
+	r := rows[0]
+	if r.Cause != "no-rules" || r.Reason != "stale-pref-no-rules" {
+		t.Errorf("Cause/Reason = %q/%q, want no-rules/stale-pref-no-rules", r.Cause, r.Reason)
+	}
+	if r.Rules != 0 {
+		t.Errorf("Rules = %d, want 0 (the device has none — that is the whole point)", r.Rules)
+	}
+	if r.PrefRelayPrefixes != 0 {
+		t.Errorf("PrefRelayPrefixes = %d, want 0 (the pinned relay serves nothing)", r.PrefRelayPrefixes)
+	}
+	if r.AlternativeRelay != "emilia" || r.AlternativePrefixes == 0 {
+		t.Errorf("AlternativeRelay = %q (%d prefixes), want emilia with a non-zero count — the page must name who DOES serve the routing",
+			r.AlternativeRelay, r.AlternativePrefixes)
+	}
+	if r.CandidateTag != "tag:dev-infra-emilia" {
+		t.Errorf("CandidateTag = %q, want tag:dev-infra-emilia (the relay that serves most of the routing)", r.CandidateTag)
+	}
+	if !r.HumanPinned || r.SetByUserID != 1 {
+		t.Errorf("HumanPinned=%v SetByUserID=%d, want true/1 (the stored row is a human's and must stay untouched)", r.HumanPinned, r.SetByUserID)
 	}
 }

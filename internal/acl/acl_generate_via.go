@@ -173,6 +173,32 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// because the tag minted on the node is lowercased.
 	ownerByNodeID := resolveNodeOwners(d)
 
+	// B361 (2026-10-07): EVERY prefix the device's own enabled ip/subnet rules
+	// claim, in ONE pass over aclRows — the input the per-device pin needs in order
+	// to ask "does the preferred relay own anything this device's rules cover?".
+	// Built from the same `deviceTagForRule` resolution as the per-CIDR grant loop
+	// below, so a rule whose denormalised owner columns are empty is attributed
+	// correctly instead of silently dropping the device into the no-rules branch.
+	claimedByDevice := map[string]map[string]bool{}
+	for _, e := range aclRows {
+		if e.TargetType != "subnet" && e.TargetType != "ip" {
+			continue
+		}
+		if e.Action != "accept" || e.TargetValue == "" {
+			continue
+		}
+		tag := deviceTagForRule(e, ownerByNodeID)
+		if tag == "" {
+			continue
+		}
+		set := claimedByDevice[tag]
+		if set == nil {
+			set = map[string]bool{}
+			claimedByDevice[tag] = set
+		}
+		set[e.TargetValue] = true
+	}
+
 	var identities []string
 	for _, uname := range usernames {
 		if uname != "" {
@@ -625,6 +651,22 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// the failure mode degrades to "the device uses any working exit node" instead
 	// of "the device has no exit node". Every fallback is logged and counted — a
 	// silent fallback would be indistinguishable from a bug.
+	// B361 (2026-10-07) — AND ONLY IF THAT RELAY SERVES SOMETHING THIS DEVICE CAN
+	// USE. B356 asked "is the relay up?"; the live case of this block was a relay
+	// that was `online` and owned ZERO of the 120 prefixes in `prefix_owner` (all
+	// karolina), while the device had no rules of its own and was pinned to it by a
+	// HUMAN ~46 days earlier. Since B265 that pin is a permission FILTER, so the
+	// destinations karolina carried became unreachable and nothing logged, counted
+	// or rendered the reason.
+	//
+	// The predicate (`servesNothing`, acl_relay_ownership_b361.go): with rules, at
+	// least one claimed prefix must be owned by the preferred relay; with no rules,
+	// the relay must own at least one prefix at all. Failing that, the gate below
+	// falls through to the UNPINNED emit — the device keeps working through any
+	// available relay. The stored row is NEVER deleted or rewritten here: only the
+	// pin is withheld, so the operator's choice takes effect again by itself the
+	// moment that relay serves something again (and it is what makes "never undo a
+	// human's choice" and "never lock the device out" both true at once).
 	pinFallbacks := 0
 	for _, uname := range usernames {
 		if uname == "" {
@@ -642,6 +684,10 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 				if state, dead := unusablePreferredRelay(via, relayHealth); dead {
 					pinFallbacks++
 					log.Printf("acl: B356 via-pin FALLBACK — %s prefers %s, which the exit-node monitor reports as %q (NOT usable): emitting the autogroup:internet grant UNPINNED, so the device keeps egress instead of being filtered into a black hole. Set a working preference for this device on /admin/exit-nodes.", devTag, via, state)
+				} else if reason, servesNothingForThisDevice := servesNothing(via, ownerTagByPrefix, claimedByDevice[devTag]); servesNothingForThisDevice {
+					pinFallbacks++
+					_, ownedN := relayOwnsAnyPrefix(via, ownerTagByPrefix)
+					log.Printf("acl: B361 via-pin WITHHELD — %s prefers %s, which serves nothing this device can use (%s; it owns %d prefix(es) in prefix_owner). Emitting the autogroup:internet grant UNPINNED so the device keeps egress through any working relay. The stored preference is UNCHANGED — it takes effect again as soon as that relay serves this device again. Fix it on /admin/exit-nodes (or /my/exit-nodes).", devTag, via, reason, ownedN)
 				} else {
 					sb.WriteString(",\n    { \"src\": [\"" + devTag + "\"], \"dst\": [\"autogroup:internet\"], \"ip\": [\"*\"], \"via\": [\"" + via + "\"] }")
 					continue
@@ -651,7 +697,12 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		}
 	}
 	if pinFallbacks > 0 {
-		log.Printf("acl: B356 — %d per-device autogroup:internet pin(s) were dropped because the preferred relay is not usable; those devices fall back to the unpinned grant (this is a safety net: fix the preferences on /admin/exit-nodes)", pinFallbacks)
+		// The historical wording ("dropped") is kept deliberately: it is the vocabulary
+		// the operator's journal and scripts/check_b356_exit_pref_failover.sh contract D4
+		// already use for "this device did not get a pin it asked for", and B361 is the
+		// same event with one more reason. The per-device line above distinguishes the two
+		// causes.
+		log.Printf("acl: B356/B361 — %d per-device autogroup:internet pin(s) were dropped because the preferred relay is either not usable or serves nothing this device can use; those devices fall back to the unpinned grant (this is a safety net, not a repair: fix the preferences on /admin/exit-nodes)", pinFallbacks)
 	}
 
 	// 2026-07-25: v0.28.2 — catch-all dst references

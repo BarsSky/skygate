@@ -282,6 +282,7 @@ var ruExitNodes = map[string]string{
 	"exit_nodes.prefix_owner.stale_pref_relay_unknown":  "нет данных монитора",
 	"exit_nodes.prefix_owner.stale_pref_cause_unusable": "узел не работает (offline/degraded) — монитор B273 считает его непригодным",
 	"exit_nodes.prefix_owner.stale_pref_cause_owner":    "узел доступен, но не обслуживает ни одного префикса этого устройства",
+	"exit_nodes.prefix_owner.stale_pref_cause_no_rules": "узел доступен, но не обслуживает ни одного префикса вообще — устройство без своих правил зависит только от него",
 	"exit_nodes.prefix_owner.stale_pref_no_candidate":   "не определить — выберите узел вручную",
 	"exit_nodes.prefix_owner.stale_pref_human":          "выбраны человеком",
 	"exit_nodes.prefix_owner.stale_pref_human_badge":    "выбрано человеком",
@@ -289,6 +290,27 @@ var ruExitNodes = map[string]string{
 	"exit_nodes.prefix_owner.stale_pref_derived_badge":  "выведено движком",
 	"exit_nodes.prefix_owner.stale_pref_derived_tip":    "Значение вывел сам skygate (set_by_user_id = 0). На следующем проходе планировщика оно будет переназначено на узел, которым реально владеет таблица prefix_owner.",
 	"exit_nodes.prefix_owner.stale_pref_consequence":    "Пока предпочтение не исправлено, ACL не ставит <code>via=</code> на неработающий узел: устройство получает разрешение без закрепления и выходит через любой доступный exit-узел — то есть интернет не пропадает. Это страховка, а не исправление: переназначьте предпочтение, иначе устройство теряет выбранный маршрут.",
+
+	// B361 (2026-10-07): the state the operator asked for by name — the relay is UP and
+	// carries none of this device's routing. `%RELAY%`/`%N%`/`%OTHER%`/`%M%` are
+	// substituted by the handler (`admin.AnnotateStalePrefSentences`), because the
+	// catalogue's T() takes (lang, key) with no verbs and B325 forbids hardcoding the
+	// sentence in a template.
+	"exit_nodes.prefix_owner.stale_pref_serves_nothing": "выход закреплён за <b>%RELAY%</b>; он сейчас не обслуживает ни одного вашего маршрута (в таблице назначений у него %N% префикс(ов), а маршрутизацию несёт <b>%OTHER%</b> — %M%), поэтому трафик может не проходить",
+	"exit_nodes.prefix_owner.stale_pref_no_rules_line":  "у этого устройства нет собственных правил выхода — его интернет целиком зависит от того, что объявляет закреплённый узел (%N%), а маршруты обслуживает %OTHER% (%M%)",
+	"exit_nodes.prefix_owner.stale_pref_rules_line":     "у устройства %N% правил(о), и ни один обслуживаемый ими префикс не принадлежит <b>%RELAY%</b> (у него %M%)",
+	"exit_nodes.prefix_owner.stale_pref_action_switch":  "Переключить на %OTHER%",
+	"exit_nodes.prefix_owner.stale_pref_action_clear":   "Снять закрепление (любой рабочий exit-узел)",
+	"exit_nodes.prefix_owner.stale_pref_action_help":    "Кнопка переключения записывает в предпочтение узел, который реально несёт вашу маршрутизацию (устройство получит <code>via=</code> на него). Кнопка снятия убирает закрепление целиком: устройство выходит через любой доступный exit-узел. Ни одна из кнопок не трогает таблицу <code>prefix_owner</code>.",
+
+	// The USER-facing wording on /my/exit-nodes (B361). Same keys, simpler sentences:
+	// this reader is the device's owner, not the operator, so the text names the device
+	// and says what the two buttons do without the assignment-table vocabulary.
+	"exit_nodes.prefix_owner.stale_pref_serves_nothing_user": "Выход закреплён за <b>%RELAY%</b>, но этот узел сейчас не обслуживает ни одного вашего маршрута (маршруты несёт <b>%OTHER%</b>) — трафик может не проходить",
+	"exit_nodes.prefix_owner.stale_pref_title_user":          "Ваше устройство закреплено за exit-узлом, который ничего не обслуживает",
+	"exit_nodes.prefix_owner.stale_pref_action_switch_user":  "Переключить на %OTHER%",
+	"exit_nodes.prefix_owner.stale_pref_action_clear_user":   "Снять закрепление",
+	"exit_nodes.prefix_owner.stale_pref_action_help_user":    "Переключение закрепит устройство за узлом, который реально несёт ваши маршруты; снятие уберёт закрепление, и устройство сможет выходить через любой доступный exit-узел. Пока закрепление указывает на неработающий узел, skygate не ставит <code>via=</code> и устройство работает через любой узел — но выбранный маршрут при этом теряется.",
 }
 
 var enExitNodes = map[string]string{
@@ -562,6 +584,7 @@ var enExitNodes = map[string]string{
 	"exit_nodes.prefix_owner.stale_pref_relay_unknown":  "no monitor data",
 	"exit_nodes.prefix_owner.stale_pref_cause_unusable": "the relay is not usable (offline/degraded) — the B273 monitor refuses it",
 	"exit_nodes.prefix_owner.stale_pref_cause_owner":    "the relay is up but serves none of this device's prefixes",
+	"exit_nodes.prefix_owner.stale_pref_cause_no_rules": "the relay is up but serves no prefix at all — a device with no rules of its own depends on it alone",
 	"exit_nodes.prefix_owner.stale_pref_no_candidate":   "cannot be determined — pick a relay by hand",
 	"exit_nodes.prefix_owner.stale_pref_human":          "set by a human",
 	"exit_nodes.prefix_owner.stale_pref_human_badge":    "set by a human",
@@ -569,4 +592,21 @@ var enExitNodes = map[string]string{
 	"exit_nodes.prefix_owner.stale_pref_derived_badge":  "derived by the engine",
 	"exit_nodes.prefix_owner.stale_pref_derived_tip":    "skygate derived this value itself (set_by_user_id = 0). On the next planner pass it is re-pointed at the relay that actually owns the prefixes in the prefix_owner table.",
 	"exit_nodes.prefix_owner.stale_pref_consequence":    "Until the preference is fixed the ACL does not put <code>via=</code> on the dead relay: the device gets the unpinned grant and exits through any working exit node, so it does not lose the internet. That is a safety net, not a repair — re-point the preference, or the device keeps losing its chosen route.",
+
+	// B361 (2026-10-07): the relay is UP and carries none of this device's routing.
+	// `%RELAY%`/`%N%`/`%OTHER%`/`%M%` are substituted by the handler
+	// (`admin.AnnotateStalePrefSentences`).
+	"exit_nodes.prefix_owner.stale_pref_serves_nothing": "the exit is pinned to <b>%RELAY%</b>; it currently serves none of your routes (it owns %N% prefix(es) in the assignment table, while <b>%OTHER%</b> carries the routing — %M%), so traffic may not pass",
+	"exit_nodes.prefix_owner.stale_pref_no_rules_line":  "this device has no rules of its own — its internet depends entirely on what the pinned relay advertises (%N%), and %OTHER% (%M%) serves the routes",
+	"exit_nodes.prefix_owner.stale_pref_rules_line":     "the device has %N% rule(s), and none of the prefixes they cover belongs to <b>%RELAY%</b> (it owns %M%)",
+	"exit_nodes.prefix_owner.stale_pref_action_switch":  "Switch to %OTHER%",
+	"exit_nodes.prefix_owner.stale_pref_action_clear":   "Clear the pin (any working exit node)",
+	"exit_nodes.prefix_owner.stale_pref_action_help":    "The switch button stores the relay that actually carries your routing as the preference (the device gets <code>via=</code> on it). The clear button removes the pin entirely: the device exits through any available exit node. Neither button touches the <code>prefix_owner</code> table.",
+
+	// The USER-facing wording on /my/exit-nodes (B361) — same keys, simpler sentences.
+	"exit_nodes.prefix_owner.stale_pref_serves_nothing_user": "Your exit is pinned to <b>%RELAY%</b>, but that relay currently serves none of your routes (<b>%OTHER%</b> carries them) — traffic may not pass",
+	"exit_nodes.prefix_owner.stale_pref_title_user":          "One of your devices is pinned to an exit node that serves nothing",
+	"exit_nodes.prefix_owner.stale_pref_action_switch_user":  "Switch to %OTHER%",
+	"exit_nodes.prefix_owner.stale_pref_action_clear_user":   "Clear the pin",
+	"exit_nodes.prefix_owner.stale_pref_action_help_user":    "Switching pins the device to the relay that actually carries your routes; clearing removes the pin so the device can exit through any available exit node. While the pin names a relay that serves nothing, skygate does not emit <code>via=</code> and the device keeps working through any node — but the chosen route is lost.",
 }

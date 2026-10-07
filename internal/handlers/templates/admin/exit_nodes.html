@@ -415,6 +415,7 @@
           <td>{{if .RelayKnown}}<code>{{.RelayHostname}}</code> <span class="tag tag-danger">{{.RelayState}}</span>{{else}}<span style="color:var(--text-muted)">{{t "exit_nodes.prefix_owner.stale_pref_relay_unknown"}}</span>{{end}}</td>
           <td>
             {{if eq .Cause "unusable"}}{{t "exit_nodes.prefix_owner.stale_pref_cause_unusable"}}
+            {{else if eq .Cause "no-rules"}}{{t "exit_nodes.prefix_owner.stale_pref_cause_no_rules"}}
             {{else}}{{t "exit_nodes.prefix_owner.stale_pref_cause_owner"}}{{end}}
             <div style="font-size:11px;color:var(--text-muted)"><code>{{.Reason}}</code></div>
           </td>
@@ -424,6 +425,33 @@
             <div style="margin-top:2px">
               {{if .HumanPinned}}<span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.stale_pref_human_tip"}}">{{t "exit_nodes.prefix_owner.stale_pref_human_badge"}} #{{.SetByUserID}}</span>
               {{else}}<span class="tag tag-info" title="{{t "exit_nodes.prefix_owner.stale_pref_derived_tip"}}">{{t "exit_nodes.prefix_owner.stale_pref_derived_badge"}}</span>{{end}}
+            </div>
+          </td>
+        </tr>
+        <tr style="border-top:none">
+          <td colspan="5" style="padding-bottom:8px">
+            {{/* B361: the sentence the operator asked for, built handler-side from the
+                 catalogue so the template stays free of hardcoded text (B325). */}}
+            {{if .ServesLine}}<div style="font-size:12px">{{.ServesLine | safeHTML}}</div>{{end}}
+            {{if .RulesLine}}<div style="font-size:12px;color:var(--text-muted);margin-top:2px">{{.RulesLine | safeHTML}}</div>{{end}}
+            <div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              {{if .CandidateTag}}
+              <form method="post" action="/admin/devices/preferred-exit" style="display:inline">
+                <input type="hidden" name="user_id" value="{{.UserID}}">
+                <input type="hidden" name="hostname" value="{{.DeviceHostname}}">
+                <input type="hidden" name="tag" value="{{.CandidateTag}}">
+                <input type="hidden" name="via" value="{{if .ViaEnabled}}1{{else}}0{{end}}">
+                <button type="submit" class="btn btn-sm">{{t "exit_nodes.prefix_owner.stale_pref_action_switch"}}</button>
+              </form>
+              {{end}}
+              <form method="post" action="/admin/devices/preferred-exit" style="display:inline">
+                <input type="hidden" name="user_id" value="{{.UserID}}">
+                <input type="hidden" name="hostname" value="{{.DeviceHostname}}">
+                <input type="hidden" name="tag" value="">
+                <input type="hidden" name="via" value="0">
+                <button type="submit" class="btn btn-sm btn-secondary">{{t "exit_nodes.prefix_owner.stale_pref_action_clear"}}</button>
+              </form>
+              <span style="font-size:11px;color:var(--text-muted)">{{t "exit_nodes.prefix_owner.stale_pref_action_help" | safeHTML}}</span>
             </div>
           </td>
         </tr>

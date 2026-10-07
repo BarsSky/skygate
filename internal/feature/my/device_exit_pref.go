@@ -2,8 +2,8 @@
 // per-device preferred exit-node POST endpoints
 // (v0.28.4):
 //
-//   * POST /my/devices/preferred-exit   (self-service, all users)
-//   * POST /admin/devices/preferred-exit (admin override, any device)
+//   - POST /my/devices/preferred-exit   (self-service, all users)
+//   - POST /admin/devices/preferred-exit (admin override, any device)
 //
 // Both write to the same table. The user endpoint
 // is scoped to the caller's own devices; the admin
@@ -30,6 +30,7 @@ import (
 
 	"skygate/internal/acl"
 	"skygate/internal/db"
+	"skygate/internal/feature/exit_rules"
 )
 
 // PostMyDevicePreferredExit sets (or clears) the
@@ -39,13 +40,13 @@ import (
 // caller's user_id).
 //
 // Form fields:
-//   * hostname — the device's hostname (case-insensitive
-//                match; we lowercase before the lookup
-//                to match the v0.28.0 backfill convention)
-//   * tag      — the exit-node tag (e.g.
-//                "tag:dev-infra-emilia"); empty clears
-//                the override (device falls back to
-//                per-user pref, if any)
+//   - hostname — the device's hostname (case-insensitive
+//     match; we lowercase before the lookup
+//     to match the v0.28.0 backfill convention)
+//   - tag      — the exit-node tag (e.g.
+//     "tag:dev-infra-emilia"); empty clears
+//     the override (device falls back to
+//     per-user pref, if any)
 //
 // 2026-08-26: v1.5.2 (B188) — the form's `tag` value
 // is now normalized via db.NormalizeExitNodeTag BEFORE
@@ -105,6 +106,14 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 	}
 	s.Backend.Audit(c.UserID, c.Username, "my_device_preferred_exit_set",
 		"hostname="+hostname+" tag="+tag+" via="+strconv.FormatBool(viaEnabled))
+	// B361 (2026-10-07): a stored preference is the INPUT to the per-device
+	// `autogroup:internet` pin, so changing it must reach headscale promptly and
+	// through the shared path — measured live: without this trigger the ACL waited
+	// for an unrelated throttle (the slowest of four artefacts that converged over
+	// ~65 minutes). The call spends the SAME 60s budget every other apply path
+	// spends, so a burst of changes from this page is one apply, not a burst.
+	exit_rules.ReapplyACLAfterPreferenceChange("my_device_preferred_exit_set",
+		"preference for "+hostname+" set to "+tag)
 	viaFlag := false
 	if s.Cfg != nil {
 		viaFlag = s.Cfg.ACLWithViaEnabled
@@ -126,9 +135,9 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 // relay-1).
 //
 // Form fields:
-//   * user_id  — the device's owner
-//   * hostname — the device's hostname (lowercased)
-//   * tag      — the exit-node tag; empty clears
+//   - user_id  — the device's owner
+//   - hostname — the device's hostname (lowercased)
+//   - tag      — the exit-node tag; empty clears
 //
 // 2026-07-25: v0.28.4.
 //
@@ -185,6 +194,11 @@ func (s *Service) PostAdminDevicePreferredExit(w http.ResponseWriter, r *http.Re
 	}
 	s.Backend.Audit(c.UserID, c.Username, "admin_device_preferred_exit_set",
 		"target_user_id="+itoa64(userID)+" hostname="+hostname+" tag="+tag+" via="+strconv.FormatBool(viaEnabled))
+	// B361: same prompt re-apply as the self-service path above, through the same
+	// shared budget — this is the endpoint the live repair of `a71` used, and the
+	// reason it took ~65 minutes to take effect elsewhere.
+	exit_rules.ReapplyACLAfterPreferenceChange("admin_device_preferred_exit_set",
+		"preference for "+hostname+" (user "+itoa64(userID)+") set to "+tag)
 	viaFlag := false
 	if s.Cfg != nil {
 		viaFlag = s.Cfg.ACLWithViaEnabled

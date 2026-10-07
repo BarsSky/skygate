@@ -87,6 +87,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/monitoring"
+	"skygate/internal/prefixowner"
 )
 
 // ReconcilerChange — single change the reconciler applied
@@ -193,6 +194,34 @@ type DevicePrefState struct {
 	// `offline`), carried so the log line and the audit row can name what the
 	// monitor actually said instead of only "not usable".
 	PrefRelayState string
+
+	// B361 (2026-10-07) — THE DEVICE THAT HAS NO RULES AT ALL.
+	//
+	// The a71 case verbatim: ZERO rows in `device_rules`, one
+	// `device_exit_node_prefs` row set by a HUMAN ~46 days earlier, and
+	// `prefix_owner` holding 120 rows — every one of them another relay
+	// (karolina) while the preference named emilia, which advertised only
+	// `0.0.0.0/0` + `::/0`. Since B265 that preference is emitted as
+	// `via=[the preferred tag]` on the per-device `autogroup:internet` grant and
+	// headscale applies `via` as a permission FILTER, so the device's egress was
+	// restricted to a relay that served none of its destinations.
+	//
+	// B356's safety net never fired (the relay was `online`) and this reconciler
+	// skipped the device with `stale-pref-no-owner`, because `OwnerDistinct` is
+	// built from the device's RULES — of which there are none. The facts the
+	// operator needs are therefore carried here explicitly: which relay the
+	// preference names, and how many prefixes that relay serves to anybody at all.
+	// Zero is the a71 case.
+	PrefRelayHostname    string
+	PrefRelayOwnsPrefix  bool
+	PrefRelayPrefixCount int
+	// PrefRelayOwnershipKnown is "the assignment table was readable AND not
+	// empty". An empty `prefix_owner` (a fresh install, or a pass before the first
+	// assignment) answers NOTHING, and "I cannot answer" must keep the pre-B361
+	// decision — the same rule the B273 health predicate applies to a relay the
+	// monitor has never measured. Without this, the first reconcile on a fresh
+	// install would report every pinned device as owning nothing.
+	PrefRelayOwnershipKnown bool
 }
 
 // PlanDevicePrefChange is the pure decision function —
@@ -407,6 +436,38 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 	//     consequence (named skip + notification + audit). A human pin to a dead
 	//     relay is exactly the state that broke the operator's device, so it must be
 	//     visible, and it must not be silently undone either.
+	if s.TotalRules == 0 && s.ExistingPrefVia && s.PrefRelayOwnershipKnown && !s.PrefRelayOwnsPrefix {
+		// B361 (2026-10-07) — THE DEVICE WITH NO RULES OF ITS OWN, pinned to a
+		// relay that serves nothing (the a71 case verbatim).
+		//
+		// Such a device used to fall into the `stale-pref-no-owner` branch below
+		// when its relay was unusable, and into a bare `return nil, false` (an
+		// invisible no-op) when the relay was merely OWNERLESS — emilia was
+		// `online` with two advertised defaults and zero rows in `prefix_owner`,
+		// so B356's monitoring predicate said "fine" while the per-device
+		// `autogroup:internet` grant carried `via=[emilia]` and filtered the
+		// device away from every destination karolina had taken over.
+		//
+		// The honest statement is not "we cannot decide" but "this preference
+		// cannot be satisfied": the device has no rules whose prefixes could be
+		// compared against an owner, so its egress depends ENTIRELY on what that
+		// relay advertises, and that relay advertises nothing of the tailnet's
+		// routing. Reported with its own named reason, never rewritten here — the
+		// stored row survives untouched and only the PIN is withheld
+		// (`acl.servesNothing`).
+		return &ReconcilerChange{
+			Action:         "skip",
+			UserID:         s.UserID,
+			Username:       s.Username,
+			DeviceHostname: s.DeviceHostname,
+			OldTag:         s.ExistingPrefTag,
+			NewTag:         s.OwnerCanonicalTag,
+			RuleCount:      0,
+			Reason:         "stale-pref-no-rules",
+			SetByUserID:    s.ExistingPrefSetByUserID,
+			RelayState:     s.PrefRelayState,
+		}, true
+	}
 	if s.PrefRelayKnown && !s.PrefRelayUsable {
 		if s.ExistingPrefSetByUserID != 0 {
 			return &ReconcilerChange{
@@ -763,6 +824,44 @@ func pairKey(userID int64, hostname string) string {
 	return itoa(userID) + "\x00" + strings.ToLower(strings.TrimSpace(hostname))
 }
 
+// loadOwnerTagByPrefix reads `prefix_owner` ONCE per reconcile pass, as
+// prefix → owning relay TAG.
+//
+// B361 (2026-10-07). The tag (not the hostname) is the currency the ACL pin is
+// written in, and the shape here is deliberately the same as
+// `prefixowner.TagByPrefix` — the function the generator calls — so the
+// reconciler's verdict and the generated policy cannot name different relays.
+//
+// The boolean is `false` when the table is EMPTY. That is not pedantry: an empty
+// assignment table means "nobody has assigned anything yet", and the planner must
+// treat it exactly as it treats a relay with no health row — as a question it
+// cannot answer — rather than reporting every pinned device as owning nothing.
+func loadOwnerTagByPrefix(d *sql.DB) (map[string]string, bool) {
+	rows, err := d.Query(`SELECT prefix, exit_node_id FROM prefix_owner`)
+	if err != nil {
+		log.Printf("preferred-reconciler: cannot read prefix_owner (%v) — the no-rules ownership check is SKIPPED this pass; the ACL pin fallback still protects the devices", err)
+		return nil, false
+	}
+	defer rows.Close()
+	byHost := prefixowner.TagsByHost(d)
+	out := map[string]string{}
+	n := 0
+	for rows.Next() {
+		var prefix, host string
+		if rows.Scan(&prefix, &host) != nil || prefix == "" || host == "" {
+			continue
+		}
+		n++
+		if tag := byHost[strings.ToLower(strings.TrimSpace(host))]; tag != "" {
+			out[prefix] = tag
+		}
+	}
+	if n == 0 {
+		return nil, false
+	}
+	return out, true
+}
+
 // ReconcileDeviceExitNodePrefs walks the (user, device)
 // pairs and applies the changes described in the file
 // header. Returns the list of changes (for logging +
@@ -800,6 +899,13 @@ func (s *Service) ReconcileDeviceExitNodePrefs(ctx context.Context, n Reconciler
 	// B356: one health read for the whole pass. Every relay's last verdict is what
 	// answers "can the relay this preference names carry traffic at all?".
 	health := loadRelayHealth(s.dbc())
+	// B361: and one read of the assignment table, so the pass can answer the OTHER
+	// half — "does that relay serve anything this device can use?" — for a device
+	// whose rule set is empty and which therefore has no per-device owner to
+	// compare against. Keyed by TAG (the same shape the ACL pin uses, so the
+	// planner, the page and the generated policy can never disagree about which
+	// relay a preference names).
+	ownerTagsByPrefix, ownershipKnown := loadOwnerTagByPrefix(s.dbc())
 
 	// Step 1: every (user, device) pair that has
 	// `device_rules` rows. We need the (user_id,
@@ -867,7 +973,7 @@ func (s *Service) ReconcileDeviceExitNodePrefs(ctx context.Context, n Reconciler
 			usernameCache[p.userID] = username
 		}
 
-		state, err := s.collectDevicePrefState(ctx, p.userID, username, p.hostname, health)
+		state, err := s.collectDevicePrefState(ctx, p.userID, username, p.hostname, health, ownerTagsByPrefix, ownershipKnown)
 		if err != nil {
 			log.Printf("preferred-reconciler: state for %s/%s: %v", username, p.hostname, err)
 			continue
@@ -934,7 +1040,7 @@ func (s *Service) ReconcileDeviceExitNodePrefs(ctx context.Context, n Reconciler
 // (scripts/check_apply_acl_drifted_and_rename.sh contract C1 anchors on this
 // name, and a two-line wrapper in front of the real body would have made that
 // extraction a false FAIL).
-func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, username, hostname string, health map[string]relayHealth) (DevicePrefState, error) {
+func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, username, hostname string, health map[string]relayHealth, ownerTagsByPrefix map[string]string, ownershipKnown bool) (DevicePrefState, error) {
 	state := DevicePrefState{
 		UserID:         userID,
 		Username:       username,
@@ -948,13 +1054,25 @@ func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, user
 	// anything right now. `set_by_user_id = 0` is "the engine derived this";
 	// anything else is a human decision the engine must not rewrite.
 	state.ExistingPrefSetByUserID = existing.SetByUserID
+	state.PrefRelayOwnershipKnown = ownershipKnown
 	if existing.ExitNodeTag != "" {
 		if host := strings.ToLower(strings.TrimSpace(TagToHostname(existing.ExitNodeTag))); host != "" {
+			state.PrefRelayHostname = host
 			if h, ok := health[host]; ok {
 				state.PrefRelayKnown = true
 				state.PrefRelayUsable = h.Usable
 				state.PrefRelayState = h.State
 			}
+			// B361: and how many prefixes that relay serves to ANYBODY. Zero is the
+			// a71 case (the relay owns none of the 120 rows in the assignment table)
+			// and is what makes "the device has no rules and its egress depends
+			// entirely on this relay" actionable instead of a bare skip.
+			for _, tag := range ownerTagsByPrefix {
+				if strings.EqualFold(strings.TrimSpace(tag), strings.TrimSpace(existing.ExitNodeTag)) {
+					state.PrefRelayPrefixCount++
+				}
+			}
+			state.PrefRelayOwnsPrefix = state.PrefRelayPrefixCount > 0
 		}
 	}
 	// Dominant exit_node + distinct count + total.
@@ -1162,6 +1280,7 @@ func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChang
 			n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B229)\nCREATE hostname=%s user=%s tag=%s via=1\nreason: %s (%d device_rules pointed at this exit-node)\nlive-mode is ON; rollback via SQL: DELETE FROM device_exit_node_prefs WHERE user_id=%d AND device_hostname=%s",
 				ch.DeviceHostname, ch.Username, ch.NewTag, ch.Reason, ch.RuleCount, ch.UserID, ch.DeviceHostname))
 		}
+		s.reapplyACLAfterPrefWrite("create", ch)
 	case "update":
 		if err := db.SetDeviceExitNodePref(s.dbc(), ch.UserID, ch.DeviceHostname, ch.NewTag, 0, true); err != nil {
 			log.Printf("preferred-reconciler: UPDATE %s/%s: %s → %s FAILED: %v",
@@ -1189,6 +1308,7 @@ func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChang
 			n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B229)\nUPDATE hostname=%s user=%s\ntag: %s → %s\nreason: %s\nrollback via SQL: DELETE FROM device_exit_node_prefs WHERE user_id=%d AND device_hostname=%s",
 				ch.DeviceHostname, ch.Username, ch.OldTag, ch.NewTag, ch.Reason, ch.UserID, ch.DeviceHostname))
 		}
+		s.reapplyACLAfterPrefWrite("update", ch)
 	case "clear":
 		// B279 (v1.5.46): the stored preference is a CLASS tag
 		// ("tag:exit-node" / "tag:public" / ...), which names a role,
@@ -1211,7 +1331,32 @@ func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChang
 			n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B229)\nCLEAR hostname=%s user=%s\nremoved preference: %s\nreason: %s — a class tag names a role, not a node, and any hostname derived from it never matched a real relay. The device now uses any healthy exit-node (or set a per-node tag:dev-infra-<host> on the relay and pick it again).",
 				ch.DeviceHostname, ch.Username, ch.OldTag, ch.Reason))
 		}
+		s.reapplyACLAfterPrefWrite("clear", ch)
 	}
+}
+
+// reapplyACLAfterPrefWrite is the B361 propagation trigger for a preference the
+// RECONCILER changed.
+//
+// Measured on the reference deployment the day this block was written: after the
+// assignment returned (B360), the four artefacts that depend on it converged at
+// four unrelated moments over ~65 minutes — ownership 15:03, the stored
+// preferences 15:43 (the hourly reconciler), the relay's routes had needed a
+// manual sync since 12:44, and the ACL only at 16:07. A preference write is a
+// decision the ACL must follow, and the ACL is what pins the device, so the write
+// now triggers the same throttled drift check every other path uses.
+//
+// It goes through `ReapplyACLAfterPreferenceChange` (pref_reapply_b361.go), i.e.
+// the callback main.go wires to THIS service's own `applyACLIfDrifted` — one
+// implementation, one 60s budget shared with the ownership flips, so a burst of
+// preference changes becomes ONE apply and a deferral always leaves a log line
+// naming the budget. A nil hook is a no-op, never a panic: the preference write
+// must not fail because the trigger is absent (a test, or a boot path that did not
+// wire it).
+func (s *Service) reapplyACLAfterPrefWrite(action string, ch *ReconcilerChange) {
+	ReapplyACLAfterPreferenceChange("skygate-preferred-reconciler",
+		fmt.Sprintf("%s preference for %s/%s (tag=%s, reason=%s) — the per-device autogroup:internet pin must follow the stored value",
+			action, ch.Username, ch.DeviceHostname, ch.NewTag, ch.Reason))
 }
 
 // reportStalePref is the B356 surface for a device whose stored preference could

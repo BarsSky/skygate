@@ -243,9 +243,16 @@ func TestB356_RepairedStateIsAStableFixedPoint(t *testing.T) {
 // TestB356_SharedStalenessPredicateAgreesWithThePlanner pins the ONE predicate the
 // page and the reconciler share: /admin/exit-nodes must not claim a device is fine
 // while the engine is moving it, and must not warn about one the engine leaves alone.
+//
+// RENEGOTIATED 2026-10-07 (B361) — the SIGNATURE gained two facts, because the
+// predicate could not see the a71 case without them: whether the preferred relay owns
+// ANY prefix at all, and whether the device has any rules. The properties asserted
+// below are unchanged and every case still pins the same reason it did before; what is
+// new is the case the old signature could not express (a device with no rules pinned
+// to a relay that owns nothing — section (5)).
 func TestB356_SharedStalenessPredicateAgreesWithThePlanner(t *testing.T) {
 	// The live shape: derived row on an unusable relay, one owner (emilia).
-	reason, stale := StaleExitPrefReason("tag:dev-infra-karolina", true, false, map[string]string{"emilia": "tag:dev-infra-emilia"})
+	reason, stale := StaleExitPrefReason("tag:dev-infra-karolina", true, true, false, true, 1, false)
 	if !stale || reason != StalePrefRelayUnusable {
 		t.Fatalf("StaleExitPrefReason = (%q, %v), want (%q, true)", reason, stale, StalePrefRelayUnusable)
 	}
@@ -254,17 +261,42 @@ func TestB356_SharedStalenessPredicateAgreesWithThePlanner(t *testing.T) {
 		t.Fatalf("the page predicate (%q) and the planner (%v) disagree on the same state", reason, planner)
 	}
 
-	// A preference naming the owner, on a usable relay: neither surface may report it.
-	if r, st := StaleExitPrefReason("tag:dev-infra-emilia", true, true, map[string]string{"emilia": "tag:dev-infra-emilia"}); st {
+	// A preference naming the owner, on a usable relay that owns prefixes: neither
+	// surface may report it. (`prefNamesOwner = true` is the whole point of this case
+	// — the owner IS the preferred relay, so there is nothing to warn about.)
+	if r, st := StaleExitPrefReason("tag:dev-infra-emilia", true, true, true, true, 1, true); st {
 		t.Fatalf("StaleExitPrefReason reported %q for a perfectly healthy preference", r)
 	}
-	// A human pin to a usable relay that owns none of the device's prefixes: the page
-	// reports the same shape the planner refuses to repair.
-	if r, st := StaleExitPrefReason("tag:dev-infra-karolina", true, true, map[string]string{"emilia": "tag:dev-infra-emilia"}); !st || r != StalePrefOwnerOverrides {
+	// A human pin to a usable relay that owns prefixes but none of the device's:
+	// the page reports the same shape the planner refuses to repair.
+	if r, st := StaleExitPrefReason("tag:dev-infra-karolina", true, true, true, true, 1, false); !st || r != StalePrefOwnerOverrides {
 		t.Fatalf("StaleExitPrefReason = (%q, %v), want (%q, true)", r, st, StalePrefOwnerOverrides)
 	}
 	// No preference at all is never stale.
-	if r, st := StaleExitPrefReason("", true, false, map[string]string{"emilia": "tag:dev-infra-emilia"}); st {
+	if r, st := StaleExitPrefReason("", false, false, false, true, 1, false); st {
 		t.Fatalf("StaleExitPrefReason reported %q for a device with NO preference — that is the 'any exit node' state", r)
+	}
+	// (5) B361 — the a71 case: a device with NO rules, pinned to a relay that owns
+	// NOTHING. It was invisible to both the health predicate (the relay is online)
+	// and the owner comparison (there are no owners to compare), so the page said
+	// nothing while `via=[emilia]` filtered the device away from every destination
+	// karolina carried.
+	if r, st := StaleExitPrefReason("tag:dev-infra-emilia", false, true, true, false, 0, false); !st || r != StalePrefNoRules {
+		t.Fatalf("StaleExitPrefReason = (%q, %v), want (%q, true) for the a71 case", r, st, StalePrefNoRules)
+	}
+	// And a device WITH rules whose relay owns nothing at all is the neighbouring
+	// case: named, and named differently, because the operator's fix differs.
+	if r, st := StaleExitPrefReason("tag:dev-infra-emilia", false, true, true, true, 1, false); !st || r != StalePrefRelayOwnsNothing {
+		t.Fatalf("StaleExitPrefReason = (%q, %v), want (%q, true) for a device with rules", r, st, StalePrefRelayOwnsNothing)
+	}
+	// And the planner names the same case for the same input.
+	plannerNoRules, ok := PlanDevicePrefChange(DevicePrefState{
+		UserID: 1, Username: "skyadmin", DeviceHostname: "a71",
+		ExistingPrefTag: "tag:dev-infra-emilia", ExistingPrefVia: true,
+		TotalRules: 0, PrefRelayKnown: true, PrefRelayUsable: true,
+		PrefRelayOwnershipKnown: true, PrefRelayOwnsPrefix: false,
+	})
+	if !ok || plannerNoRules == nil || plannerNoRules.Reason != StalePrefNoRules {
+		t.Fatalf("the planner does not name the a71 case: %+v", plannerNoRules)
 	}
 }

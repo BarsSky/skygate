@@ -114,18 +114,33 @@ func loadExitNodesBody(t *testing.T) *template.Template {
 // stubStaleExitPref mimics admin.StaleExitPref for the B356 banner. The template
 // reads exactly these fields; an edit that needs another one fails here as
 // "can't evaluate field X in type handlers.stubStaleExitPref" instead of on the page.
+//
+// B361 (2026-10-07) widened this list with the fields the new one-click fix renders:
+// `UserID` (the form's hidden target), `ViaEnabled` (posted back unchanged, so the
+// control flips the RELAY and not the operator's via setting), `Rules` /
+// `PrefRelayPrefixes` / `AlternativeRelay` / `AlternativePrefixes` (the facts the
+// sentence names), and the two pre-rendered sentences the handler builds from the
+// catalogue.
 type stubStaleExitPref struct {
-	Username       string
-	DeviceHostname string
-	PrefTag        string
-	RelayHostname  string
-	RelayState     string
-	RelayKnown     bool
-	HumanPinned    bool
-	SetByUserID    int64
-	Reason         string
-	Cause          string
-	CandidateTag   string
+	UserID              int64
+	Username            string
+	DeviceHostname      string
+	PrefTag             string
+	RelayHostname       string
+	RelayState          string
+	RelayKnown          bool
+	HumanPinned         bool
+	SetByUserID         int64
+	Reason              string
+	Cause               string
+	CandidateTag        string
+	Rules               int
+	PrefRelayPrefixes   int
+	AlternativeRelay    string
+	AlternativePrefixes int
+	ViaEnabled          bool
+	ServesLine          string
+	RulesLine           string
 }
 
 // TestExitNodesRendersB356_StalePrefBanner — B356 (2026-10-07).
@@ -147,22 +162,35 @@ func TestExitNodesRendersB356_StalePrefBanner(t *testing.T) {
 		"Title":        "Exit nodes",
 		"StalePrefs": []stubStaleExitPref{
 			{
-				Username: "skyadmin", DeviceHostname: "skyworker",
+				UserID: 1, Username: "skyadmin", DeviceHostname: "skyworker",
 				PrefTag:       "tag:dev-infra-karolina",
 				RelayHostname: "karolina", RelayState: "offline", RelayKnown: true,
 				HumanPinned: false, Reason: "stale-pref-relay-unusable", Cause: "unusable",
 				CandidateTag: "tag:dev-infra-emilia",
+				ServesLine:   "stale_pref_serves_nothing RENDERED", RulesLine: "stale_pref_rules_line RENDERED",
 			},
 			{
-				Username: "michail", DeviceHostname: "basic",
+				UserID: 6, Username: "michail", DeviceHostname: "basic",
 				PrefTag:       "tag:dev-infra-karolina",
 				RelayHostname: "karolina", RelayState: "offline", RelayKnown: true,
 				HumanPinned: true, SetByUserID: 7, Reason: "stale-pref-human-pinned", Cause: "unusable",
 				CandidateTag: "tag:dev-infra-emilia",
+				ServesLine:   "stale_pref_serves_nothing RENDERED", RulesLine: "stale_pref_rules_line RENDERED",
+			},
+			{
+				// B361: the a71 shape — a device with NO rules pinned to a relay that
+				// owns nothing. It must render the same banner (visible), the no-rules
+				// cause and the one-click fix.
+				UserID: 1, Username: "skyadmin", DeviceHostname: "a71",
+				PrefTag:       "tag:dev-infra-emilia",
+				RelayHostname: "emilia", RelayState: "online", RelayKnown: true,
+				HumanPinned: true, SetByUserID: 1, Reason: "stale-pref-no-rules", Cause: "no-rules",
+				CandidateTag: "tag:dev-infra-karolina",
+				ServesLine:   "stale_pref_serves_nothing RENDERED", RulesLine: "stale_pref_no_rules_line RENDERED",
 			},
 		},
-		"StalePrefsCount": 2,
-		"StalePrefsHuman": 1,
+		"StalePrefsCount": 3,
+		"StalePrefsHuman": 2,
 	}
 	var buf bytes.Buffer
 	if err := tpl.ExecuteTemplate(&buf, "body-admin-exit_nodes", data); err != nil {
@@ -172,6 +200,7 @@ func TestExitNodesRendersB356_StalePrefBanner(t *testing.T) {
 	for _, want := range []string{
 		"exit_nodes.prefix_owner.stale_pref_title",
 		"exit_nodes.prefix_owner.stale_pref_cause_unusable",
+		"exit_nodes.prefix_owner.stale_pref_cause_no_rules",
 		"exit_nodes.prefix_owner.stale_pref_consequence",
 		"exit_nodes.prefix_owner.stale_pref_human_badge",
 		"exit_nodes.prefix_owner.stale_pref_derived_badge",
@@ -179,10 +208,26 @@ func TestExitNodesRendersB356_StalePrefBanner(t *testing.T) {
 		"tag:dev-infra-emilia",
 		"stale-pref-relay-unusable",
 		"skyworker",
+		// B361: the a71 row, its named reason and the two controls.
+		"a71",
+		"stale-pref-no-rules",
+		"stale_pref_no_rules_line RENDERED",
+		"stale_pref_serves_nothing RENDERED",
+		"exit_nodes.prefix_owner.stale_pref_action_switch",
+		"exit_nodes.prefix_owner.stale_pref_action_clear",
+		"/admin/devices/preferred-exit",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the stale-preference banner must render %q, got:\n%s", want, got)
 		}
+	}
+	// The one-click switch must POST the candidate relay for the device it belongs to —
+	// a control that posts the wrong hostname would re-point somebody else's device.
+	if !strings.Contains(got, `name="hostname" value="a71"`) {
+		t.Errorf("the switch control does not name the a71 device:\n%s", got)
+	}
+	if !strings.Contains(got, `name="tag" value="tag:dev-infra-karolina"`) {
+		t.Errorf("the switch control does not carry the candidate relay:\n%s", got)
 	}
 }
 

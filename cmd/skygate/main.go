@@ -1683,6 +1683,15 @@ func main() {
 	// the all-nodes sync (extracted to syncOneExitNode so
 	// the two paths share the code).
 	adminSvc.SyncRoutesForNode = exitRulesSvc.SyncAdvertisedRoutesForNode
+	// B361 (2026-10-07): wire the ACL trigger the preference-writing surfaces use.
+	// `my.PostMyDevicePreferredExit` / `my.PostAdminDevicePreferredExit` (the page
+	// an operator uses to re-point a device) and the B356 reconciler all call
+	// `exit_rules.ReapplyACLAfterPreferenceChange`, which is THIS method — the same
+	// throttled, trigger-agnostic drift check the ownership flips and the rule churn
+	// already use. One implementation, one 60s budget: a preference change reaches
+	// headscale within a minute instead of waiting for an unrelated throttle, and a
+	// burst of changes is still one apply.
+	exitrules.SetPreferenceACLReapply(exitRulesSvc.ReapplyACLIfDrifted)
 	app.SetExitRulesService(exitRulesSvc)
 	// 2026-08-04: v0.33.0 — wire the runtime admin Service
 	// into the TestRegistry closures so the /admin/system_tests

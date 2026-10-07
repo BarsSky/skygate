@@ -350,6 +350,9 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 	// device — the population that had no page at all before this block. Derived rows
 	// are re-pointed by the reconciler; human rows are surfaced and left alone.
 	stalePrefs := s.loadStaleExitPrefs()
+	// B361 (2026-10-07): the two sentences the operator asked for, rendered in the
+	// request's language through the catalogue (never hardcoded in the template).
+	AnnotateStalePrefSentences(stalePrefs, s.I18n, s.I18n.LangFromRequest(r))
 
 	s.Backend.RenderWithLayout(w, r, "admin/exit_nodes.html", c, map[string]any{
 		"Page":         "exit-nodes",

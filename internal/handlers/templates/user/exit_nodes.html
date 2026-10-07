@@ -111,6 +111,45 @@
   {{end}}
 </div>
 
+{{/* B361: the caller's own device pinned to a relay that serves nothing. The verdict is
+     the same shared predicate the admin page and the reconciler use; only the wording and
+     the two controls differ. Every string is a catalogue key (RU + EN) and every sentence
+     is pre-rendered by the handler, so nothing here is hardcoded (B325). */}}
+{{with .StalePins}}
+<div class="card" style="border:1px solid rgba(220,53,69,.4);background:rgba(220,53,69,.10)">
+  <h3><i class="fa-solid fa-triangle-exclamation"></i>{{t "exit_nodes.prefix_owner.stale_pref_title_user"}}</h3>
+  <table style="width:100%;font-size:13px;border-collapse:collapse">
+    <tbody>
+      {{range .}}
+      <tr style="border-top:1px solid rgba(220,53,69,.25)">
+        <td style="padding:6px 0">
+          <div><code>{{.DeviceHostname}}</code> <span style="color:var(--text-muted)">{{.PrefTag}}</span></div>
+          <div style="margin-top:4px">{{.ServesSentence | safeHTML}}</div>
+          <div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            {{if .CandidateTag}}
+            <form method="POST" action="/my/devices/preferred-exit" style="display:inline">
+              <input type="hidden" name="hostname" value="{{.DeviceHostname}}">
+              <input type="hidden" name="tag" value="{{.CandidateTag}}">
+              <input type="hidden" name="via" value="{{if .ViaEnabled}}1{{else}}0{{end}}">
+              <button type="submit" class="btn btn-sm">{{t "exit_nodes.prefix_owner.stale_pref_action_switch_user"}}</button>
+            </form>
+            {{end}}
+            <form method="POST" action="/my/devices/preferred-exit" style="display:inline">
+              <input type="hidden" name="hostname" value="{{.DeviceHostname}}">
+              <input type="hidden" name="tag" value="">
+              <input type="hidden" name="via" value="0">
+              <button type="submit" class="btn btn-sm btn-secondary">{{t "exit_nodes.prefix_owner.stale_pref_action_clear_user"}}</button>
+            </form>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:6px">{{.FixSentence | safeHTML}}</div>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
 {{if .PreferredExitNodeTag}}
 <div class="card">
   <h3><i class="fa-solid fa-shield-halved"></i>{{t "exit_nodes.via_title"}}</h3>

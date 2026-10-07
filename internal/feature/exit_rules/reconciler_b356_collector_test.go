@@ -266,8 +266,22 @@ func TestB356_SubjectSetIncludesPrefRowsWithoutRules(t *testing.T) {
 		t.Fatalf("ReconcileDeviceExitNodePrefs: %v", err)
 	}
 	// There is no owner to move the row to, so it is a NAMED skip — but it is SEEN.
-	if got := changesWithReason(changes, "stale-pref-no-owner"); len(got) != 1 {
-		t.Fatalf("a preference row with no rules was not examined (changes: %+v)", changes)
+	//
+	// RENEGOTIATED 2026-10-07 (B361). The property this contract protects is
+	// UNCHANGED and is exactly what it says: a preference row whose device has no
+	// rules is EXAMINED and NAMED, never silently skipped (L-54 — the filter that
+	// defines the subject set). What changed is the NAME. The old assertion pinned
+	// `stale-pref-no-owner`, which was the only vocabulary available when the row
+	// was judged through `OwnerDistinct` (built from the device's RULES, of which
+	// there are none). B361 asks the sharper question first — the device has no
+	// rules AND the relay it is pinned to owns nothing at all — because that is the
+	// live a71 case: `karolina` was `online` and owned 0 of the 120 `prefix_owner`
+	// rows, so B356's health predicate said "fine" while the per-device
+	// `autogroup:internet` grant carried `via=[karolina]`. The old reason would
+	// still have been a skip nobody could act on; the new one names the relay and
+	// the fact that it serves nothing.
+	if got := changesWithReason(changes, "stale-pref-no-rules"); len(got) != 1 {
+		t.Fatalf("a preference row with no rules was not examined, or was not named (changes: %+v)", changes)
 	}
 	if tag := prefTagOf(t, d); tag != "tag:dev-infra-karolina" {
 		t.Errorf("stored preference = %q, want it kept — with no owner there is nothing to re-point to, and a guess is worse", tag)

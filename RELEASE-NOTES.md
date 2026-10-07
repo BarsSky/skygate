@@ -12,6 +12,103 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.103 — a failover is a reservation, a recovered relay gets its prefixes back, and a pin may not outlive the routing it names (B360 + B361, with the devices.go split and two check repairs)
+
+**Date:** 2026-10-07 · **Base:** `v1.5.102` → this tag · **Compatibility:** one **additive**
+schema change (V078, both chains: three columns on `prefix_owner`, all with defaults). No
+migration of existing rows, no new setting. Existing installs are unaffected until a relay
+actually fails over.
+
+### B360 — a failover is a RESERVATION, and a recovered exit node gets its prefixes back
+
+The operator reported that the exit nodes had come back and the rules had not: «произошло
+восстановление exit nodes и правила стоит обратно вернуть как было». The cause was one row —
+a global override set from the panel during the outage and never cleared:
+
+```
+global_settings.prefix_owner_force_relay = emilia
+audit_log: action=prefix_owner_force  detail=relay=emilia  username=skyadmin  2026-10-06 19:49:23Z
+```
+
+With it active, `prefix_owner` held **139 rows, all `emilia`, all `source='global'`**, while
+`LoadClaims` saw **194 ip/subnet claims naming karolina** — the data plane contradicted the rules
+for about 19 hours, and nothing on any page said so. Clearing the override by hand made the very
+next assignment pass return all 139 prefixes (`changed=139`, ACL regenerated) — **the engine could
+always return; it had no memory that the move was a failover and no obligation to re-ask.**
+
+* **V078** adds `prefix_owner.failover_from` / `failover_at` / `failover_flaps` in **both** chains
+  (additive, SQLite through `execSQLiteDDL`). A prefix taken from a relay that is **not** in the
+  healthy set records where it came from. A prefix whose previous owner was **healthy** and which
+  moves anyway is a genuine decision change and **clears** the reservation — a reservation must not
+  outlive its reason (L-60). `source='manual'` is never reserved and never returned.
+* The pure planner `PlanReturns` hands a prefix back only when the reserved relay is healthy (B273
+  `online`/`untagged`, never `degraded`), **proven** (B309 `relay_apply_state` = `ok`), still
+  **claims** the prefix, and has been continuously healthy for the hysteresis (10 min by default).
+  Everything else stays reserved and is reported with a **named** reason
+  (`return-not-healthy|not-proven|no-longer-claimed|too-soon|quarantined|overridden|manual-pin`),
+  never silently dropped.
+* **Anti-flap:** a return followed by a failover inside the 30-minute quarantine increments a streak
+  that **persists in the table**, so a flapping relay cannot yank its prefixes back every 10 minutes.
+* **The override stays an operator tool**: never auto-cleared, with its age and the assignment it
+  displaces readable, and a warning once per 6-hour window while it overrides relays that are
+  healthy again — the exact state that silently persisted for 19 hours.
+* The pass runs inside `ReconcileWithPreference`, which the existing maintenance tick already calls,
+  and is idempotent.
+
+### B361 — a stored pin must not outlive the routing it names
+
+The operator then reported that `a71` (skyadmin's Android) had lost access. Measured: `a71` has
+**zero** rows in `device_rules`, and its only internet permission was ONE preference row
+(`tag:dev-skyadmin-a71` → `tag:dev-infra-emilia`, **`set_by_user_id = 1`** — a human choice recorded
+~46 days earlier). After the return, `prefix_owner` held **120 rows, every one of them `karolina`**,
+which advertised 122 routes while **emilia advertised 2** (`0.0.0.0/0`, `::/0`). Since B265 that
+preference is emitted as `via=[the preferred tag]` on the per-device `autogroup:internet` grant,
+which headscale applies as a permission **filter** — so `a71` could exit only through a relay
+carrying none of its destinations. The B356 safety net could not fire (it drops a pin only when the
+relay is *unusable*, and emilia was `online`), and the reconciler skipped the device with
+`stale-pref-no-owner` — a device with no rules has no owner to derive, a named skip in a log nobody
+reads. The panel's own help text already warned that older Android clients may reject a `via`
+policy outright.
+
+* The pure `servesNothing` asks whether the preferred relay serves anything **the device can use**:
+  with rules, at least one prefix they claim must be owned by that relay; with **no rules** the relay
+  must own at least one prefix **at all**. An **empty** `prefix_owner` keeps every pin — absence of
+  evidence must not rewrite a policy.
+* The emit is gated on health **and** ownership; a withheld pin falls through to the **unpinned**
+  grant, so the device keeps egress through any working relay, logged per device and counted per
+  generation.
+* **The operator's row is never deleted or rewritten — only the PIN is withheld**, so the human's
+  choice revives by itself the moment that relay serves something again. Never undo a human's
+  choice; never lock the device out.
+* The reconciler gains the named state `stale-pref-no-rules` (audited + notified, throttled per
+  device+reason) carrying the relay and its prefix count.
+* BOTH `/admin/exit-nodes` and `/my/exit-nodes` render the state and a one-click fix through the
+  **existing** preference endpoints, with 13 new keys in both catalogues (RU+EN).
+* **Propagation:** the four dependent artefacts had converged at four unrelated moments over
+  ~65 minutes (ownership 15:03, preferences 15:43, the relay's routes since 12:44, the ACL at
+  16:07). A preference change — and the reconciler's own write — now call
+  `ReapplyACLAfterPreferenceChange`, wired to the **same shared 60 s apply slot** every other trigger
+  spends, so a burst of five changes is ONE apply.
+
+### Also in this release
+
+* **`internal/feature/my/devices.go` (1637 lines) split into five files** (803 + 342 + 227 + 214 +
+  112), a pure move proved line-by-line; every contract operand redirected to the file that now
+  holds the pinned symbol, three messages corrected deliberately, and the B337 gofmt ratchet paid
+  down (261 → 260).
+* **`check_b191.sh` contract G fixed**: it probed the OIDC surface only through
+  `https://$SKYGATE_HOST`, which on the reference VM is the host's own public address and therefore
+  depends on the router's hairpin NAT — a gate run went red with five rows while the same probes
+  answered 200/200/400 seconds later. It now reads the local listener first, falls back to the public
+  URL, and SKIPs (naming both errors) when neither answers.
+* **`check_apply_acl_drifted_and_rename.sh` repaired**: its A3 asserted a function-level property with
+  a line-level proxy anchored to absolute line numbers, and C1/C2 piped a producer into `grep -q`
+  under `pipefail` (AGENTS trap #9). 16/0 now.
+* **LESSONS L-65/L-66**: a latch with no expiry and no surface outlives its incident; two PG-gated
+  test runs against one database collide on the schema name.
+
+---
+
 ## v1.5.102 — the ladder stops refusing its own candidate, the portal keeps talking to Telegram through a relay, and the cluster list holds only skygate hosts (B353.1 + B354 + B355 + B356 + B356.1 + B357 + B358 + B359)
 
 **Date:** 2026-10-06 … 2026-10-07 · **Base:** `v1.5.101` → this tag · **Compatibility:** no schema

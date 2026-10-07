@@ -62,11 +62,59 @@ var (
 	ownershipACLLastRun time.Time
 )
 
+// aclApplySlotLastRun is the same instant `ownershipACLLastRun` holds, exposed for the
+// DEFERRAL LOG ONLY.
+//
+// B361 needed the throttle decision in one function so that a preference change spends the
+// same budget as an ownership flip. That moved the "when did one last run" read inside
+// `takeACLApplySlot`, and the deferral line is the operator's only signal that a re-apply
+// was postponed — so it has to keep naming how long ago the last apply ran and which
+// budget held it back (scripts/check_b298_cdn_rule_churn.sh contract B7). Reading the
+// instant here, under the same mutex, is not a second throttle: it is the same slot,
+// observed.
+func aclApplySlotLastRun() time.Time {
+	ownershipACLMu.Lock()
+	defer ownershipACLMu.Unlock()
+	return ownershipACLLastRun
+}
+
 // ownershipACLThrottle bounds how often an ownership-driven ACL re-apply may run.
 // Ownership flips are rare once B276's per-device claim counting is in place, so
 // this only absorbs a genuinely churning table (the domain auto-updater rewrites
 // derived rows every few minutes).
 const ownershipACLThrottle = 60 * time.Second
+
+// B361 (2026-10-07) — THE ONE PLACE THAT HANDS OUT AN APPLY SLOT.
+//
+// Every path that may need a re-apply (an ownership flip, an operator rule change,
+// and now a stored exit preference change) must go through this function, because
+// the budget it enforces is what turns a BURST of changes into ONE apply — on a
+// `policy.mode: file` host every apply is a `systemctl restart headscale`.
+//
+// It is a pure function of (lastRun, now, throttle) plus the atomic claim of the
+// package-level slot, so a test can drive a scripted burst without a clock:
+//
+//	run1 at T          → ok=true  (the first change applies)
+//	run2 at T+1s       → ok=false (deferred: inside the budget)
+//	run3 at T+61s      → ok=true  (the budget elapsed; the deferred state applies)
+//
+// A DEFERRAL IS NEVER SILENT (L-60): the caller logs the interval it is waiting
+// for, so "the ACL did not follow" always has a line in the journal naming the
+// budget that held it back. The deferred state is not lost either — the periodic
+// drift check re-asks the question on its own interval, and the next change within
+// the window applies on the same slot.
+func takeACLApplySlot(now time.Time, throttle time.Duration) (bool, time.Duration) {
+	ownershipACLMu.Lock()
+	defer ownershipACLMu.Unlock()
+	if !ownershipACLLastRun.IsZero() {
+		elapsed := now.Sub(ownershipACLLastRun)
+		if elapsed < throttle {
+			return false, throttle - elapsed
+		}
+	}
+	ownershipACLLastRun = now
+	return true, 0
+}
 
 // churnACLThrottle bounds an ACL re-apply driven by DERIVED-rule churn: the
 // domain auto-updater rewriting its resolved /32 rows (normal DNS/CDN rotation,
@@ -236,6 +284,15 @@ func (s *Service) applyACLIfDrifted(actor, detail string) acl.ApplyResult {
 	return s.applyACLIfDriftedThrottled(actor, detail, true, ownershipACLThrottle)
 }
 
+// ReapplyACLIfDrifted is the EXPORTED trigger B361 wires into the preference
+// surfaces (see pref_reapply_b361.go). It is deliberately the very same call the
+// ownership flip and the rule churn make — one decision, one budget, one audit
+// trail — so a preference change cannot invent a second apply path (or a second
+// throttle) beside them.
+func (s *Service) ReapplyACLIfDrifted(actor, detail string) {
+	_ = s.applyACLIfDrifted(actor, detail)
+}
+
 // applyACLIfDriftedChurn is the DERIVED-rule path — the domain auto-updater and
 // the periodic drift check that follows it — behind the long churn budget (B298).
 // Same decision, same generator, same equivalence guard; only the minimum interval
@@ -250,15 +307,19 @@ func (s *Service) applyACLIfDriftedChurn(actor, detail string, logNoop bool) acl
 // since the previous write that this caller accepts (B298: 60s for an operator
 // action, 30m for derived-rule churn).
 func (s *Service) applyACLIfDriftedThrottled(actor, detail string, logNoop bool, throttle time.Duration) acl.ApplyResult {
-	ownershipACLMu.Lock()
-	if !ownershipACLLastRun.IsZero() && time.Since(ownershipACLLastRun) < throttle {
-		ownershipACLMu.Unlock()
+	// B361: the shared slot. One function decides whether this caller may apply,
+	// so a burst of changes inside the budget produces ONE apply and a deferral
+	// always leaves a line naming the budget.
+	if ok, _ := takeACLApplySlot(time.Now(), throttle); !ok {
+		// Contract B7 of scripts/check_b298_cdn_rule_churn.sh pins this line's shape: it
+		// must name the budget it actually spent (`throttle`) and how long ago the last
+		// apply ran, so a deferral is never silent and never mislabelled. B361 moved the
+		// decision into `takeACLApplySlot`; the instant is read back through the same
+		// slot's accessor, under the same mutex.
 		log.Printf("acl-drift: %s needs a re-apply but one ran %s ago — deferring to the next pass (throttle %s)",
-			detail, time.Since(ownershipACLLastRun).Round(time.Second), throttle)
+			detail, time.Since(aclApplySlotLastRun()).Round(time.Second), throttle)
 		return acl.ApplyResult{Version: 0, Applied: false, Err: nil}
 	}
-	ownershipACLLastRun = time.Now()
-	ownershipACLMu.Unlock()
 
 	if s.HS == nil {
 		log.Printf("acl-drift: %s but no headscale client is wired — the live policy is STALE; re-apply it manually on /admin/exit-rules", detail)

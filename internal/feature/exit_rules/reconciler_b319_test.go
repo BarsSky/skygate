@@ -90,7 +90,7 @@ func TestB319_RuleLookupFindsThePreRenameRuleByNodeID(t *testing.T) {
 
 	// The trailing nil is the B356 health snapshot: these tests pin the SQL /
 	// pre-rename behaviour, for which "no relay measured yet" is the right input.
-	state, err := svc.collectDevicePrefState(t.Context(), 1, "skyadmin", "skyworker", nil)
+	state, err := svc.collectDevicePrefState(t.Context(), 1, "skyadmin", "skyworker", nil, nil, false)
 	if err != nil {
 		t.Fatalf("collectDevicePrefState: %v (this is the live PostgreSQL failure on SQLite's dialect)", err)
 	}

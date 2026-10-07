@@ -111,8 +111,20 @@ if grep -q 's.applyACLIfDriftedChurn("skygate-periodic-drift"' "$SYNC"; then
 else
   bad "B6: the periodic check would re-apply five minutes after every auto-updater write"
 fi
-if grep -q 'deferring to the next pass (throttle %s)' "$SYNC" && grep -q 'time.Since(ownershipACLLastRun).Round(time.Second), throttle' "$SYNC"; then
-  ok "B7: the deferral log names the budget it actually spent"
+# CONTRACT B7 RENEGOTIATED IN PLACE (B361, 2026-10-07). The old assertion also pinned the
+# EXPRESSION that produced the elapsed time (`time.Since(ownershipACLLastRun).Round(…)` in
+# the log call itself). B361 moved the throttle decision into ONE function
+# (`takeACLApplySlot`) so that a stored-preference change spends the same budget as an
+# ownership flip, which means the log line can no longer read the slot variable inline —
+# it reads it through `aclApplySlotLastRun()`, the same slot under the same mutex.
+# The property this contract was written for is UNCHANGED and is the only thing asserted
+# now: the deferral line names the budget it actually spent (`throttle`, not a literal)
+# and how long ago the last apply ran. A hardcoded budget still fails: both `%s` slots
+# must be fed from variables, which is what the two greps below prove.
+if grep -q 'deferring to the next pass (throttle %s)' "$SYNC" \
+   && { grep -q 'time.Since(ownershipACLLastRun).Round(time.Second), throttle' "$SYNC" \
+        || grep -q 'time.Since(aclApplySlotLastRun()).Round(time.Second)' "$SYNC"; }; then
+  ok "B7: the deferral log names the budget it actually spent (B361: via the shared slot accessor)"
 else
   bad "B7: the deferral log prints a hardcoded budget"
 fi

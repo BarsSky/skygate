@@ -91,11 +91,19 @@ func (s *Service) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 		prefTag = ""
 		viaEnabled = false
 	}
+	// B361 (2026-10-07): the caller's OWN devices whose stored preference names a relay
+	// that cannot serve them. This is the half the operator's report lived in — a71 was
+	// pinned to an online relay that owned zero prefixes, and /my/exit-nodes said
+	// nothing about it (only the admin page had the state, and only since B356).
+	stalePins := s.LoadStaleDevicePins(c.UserID)
+	s.AnnotateDevicePinSentences(stalePins, s.I18n.LangFromRequest(r))
 	s.Backend.RenderWithLayout(w, r, "user/exit_nodes.html", c, map[string]any{
 		"ExitNodes":            exits,
 		"PreferredExitNodeTag": prefTag,
 		"ViaEnabled":           viaEnabled,
 		"NoPerNodeTag":         noPerNodeTag,
+		"StalePins":            stalePins,
+		"StalePinsCount":       len(stalePins),
 		"FlashSuccess":         r.URL.Query().Get("ok"),
 		"FlashError":           r.URL.Query().Get("err"),
 	})
