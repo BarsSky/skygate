@@ -47,6 +47,7 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd 2>/dev/null || echo "$SCRIPT_DIR/.."
 cd "${PROJECT_ROOT}" || exit 1
 
 DEVICES="internal/feature/my/devices.go"
+REREG="internal/feature/my/devices_reregister.go"
 TEMPLATE_DEVICES="internal/handlers/templates/user/devices.html"
 TEMPLATE_PREAUTH="internal/handlers/templates/user/preauth_result.html"
 I18N_RU="internal/i18n/catalog_my.go"
@@ -57,10 +58,10 @@ echo
 
 # --- A: PostMyDeviceReregister handler exists ---
 echo "=== A. PostMyDeviceReregister handler exists ==="
-if grep -q "func (s \*Service) PostMyDeviceReregister" "${DEVICES}"; then
-    ok "PostMyDeviceReregister handler defined in ${DEVICES}"
+if grep -q "func (s \*Service) PostMyDeviceReregister" "${REREG}"; then
+    ok "PostMyDeviceReregister handler defined in ${REREG}"
 else
-    bad "PostMyDeviceReregister handler NOT FOUND in ${DEVICES}"
+    bad "PostMyDeviceReregister handler NOT FOUND in ${REREG}"
 fi
 
 # --- B: route wired ---
@@ -111,8 +112,12 @@ fi
 # --- F: handler refuses real-user nodes ---
 echo
 echo "=== F. handler refuses nodes that already belong to a real user ==="
-if grep -q "if !isTaggedGhost" "${DEVICES}" && \
-   grep -q "use Delete instead" "${DEVICES}"; then
+# The property is about the REREGISTER handler, so read its body (2026-10-07: the
+# handler moved out of devices.go into devices_reregister.go) and capture before
+# matching — `awk … | grep -q` under pipefail dies with SIGPIPE (AGENTS trap #9).
+REREG_BODY="$(awk '/^func \(s \*Service\) PostMyDeviceReregister/,/^}/' "${REREG}")"
+if grep -q "if !isTaggedGhost" <<< "$REREG_BODY" && \
+   grep -q "use Delete instead" <<< "$REREG_BODY"; then
     ok "handler has the 'wrong-user' scope-check guard"
 else
     bad "handler missing the wrong-user scope-check guard"

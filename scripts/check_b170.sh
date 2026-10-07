@@ -62,8 +62,8 @@ hdr "contract A: source contract"
 # matters: GetMyDevices calls it by name from the
 # expiry-enrichment pass, so a rename would silently
 # break the heuristic.
-if grep -q '^func parseLastSeenAndClassify(' internal/feature/my/devices.go; then
-    ok "parseLastSeenAndClassify defined in internal/feature/my/devices.go"
+if grep -q '^func parseLastSeenAndClassify(' internal/feature/my/devices_helpers.go; then
+    ok "parseLastSeenAndClassify defined in internal/feature/my/devices_helpers.go"
 else
     bad "parseLastSeenAndClassify MISSING (the /my/devices heuristic has no implementation)"
 fi
@@ -76,7 +76,7 @@ fi
 # would then compute a 2000-year |delta| and classify
 # EVERY expired row as "while_offline", which defeats
 # the whole point of the hint.
-if awk '/^func parseLastSeenAndClassify/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices.go | grep -q 'lastSeenRaw == ""'; then
+if awk '/^func parseLastSeenAndClassify/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices_helpers.go | grep -q 'lastSeenRaw == ""'; then
     ok "helper has the empty-LastSeen guard (returns no_activity instead of mis-classifying as 2000-year-ago)"
 else
     bad "helper is MISSING the empty-LastSeen guard (would mis-classify every row as while_offline)"
@@ -89,7 +89,7 @@ fi
 # refactor that switches to a stricter parser would
 # silently break on timestamps with sub-second digits.
 # Pin the explicit Nano to keep the contract visible.
-if awk '/^func parseLastSeenAndClassify/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices.go | grep -q 'time.RFC3339Nano'; then
+if awk '/^func parseLastSeenAndClassify/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices_helpers.go | grep -q 'time.RFC3339Nano'; then
     ok "helper uses time.RFC3339Nano (matches headscale's wire format)"
 else
     bad "helper does NOT use time.RFC3339Nano (would silently break on sub-second timestamps)"
@@ -101,7 +101,7 @@ fi
 # mis-classify a future-dated LastSeen (rare but
 # possible under headscale clock skew) as
 # "near_expiry" instead of "while_offline".
-if awk '/^func parseLastSeenAndClassify/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices.go | grep -qE 'delta = -delta|if delta < 0'; then
+if awk '/^func parseLastSeenAndClassify/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices_helpers.go | grep -qE 'delta = -delta|if delta < 0'; then
     ok "helper uses the absolute |LastSeen - Expiry| delta (handles future-dated LastSeen)"
 else
     bad "helper does NOT use the absolute delta (would mis-classify future-dated LastSeen)"
@@ -116,7 +116,7 @@ fi
 # "while_offline" (defeats the point), and a
 # regression that lowers it to e.g. 10s would
 # mis-classify slow clients as "while_offline".
-if awk '/^func parseLastSeenAndClassify/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices.go | grep -q '5\*time.Minute'; then
+if awk '/^func parseLastSeenAndClassify/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices_helpers.go | grep -q '5\*time.Minute'; then
     ok "helper uses a 5-minute threshold (matches the unit-test boundary)"
 else
     bad "helper does NOT use 5*time.Minute (the documented threshold) — would mis-classify logouts"

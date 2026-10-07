@@ -210,7 +210,6 @@ internal/feature/healthz/types.go
 internal/feature/my/audit.go
 internal/feature/my/dashboard.go
 internal/feature/my/device_exit_pref.go
-internal/feature/my/devices.go
 internal/feature/my/devices_b170_test.go
 internal/feature/my/keys.go
 internal/feature/my/preauth.go

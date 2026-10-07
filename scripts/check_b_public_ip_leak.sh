@@ -71,22 +71,24 @@ echo
 # --- A.1: /my/* routes never include another user's public IP ---
 echo "--- A.1 /my/devices + /my/peers routes do not leak peer.PublicIP ---"
 LEAK_GUARDS=0
-# /my/devices handler in internal/feature/my/devices.go must NOT
-# dereference peer.PublicIP (it's a private field — but we check
-# that the handler does NOT include it in the rendered template
-# context).
-if grep -q "PublicIP\b" internal/feature/my/devices.go 2>/dev/null; then
+# /my/devices used to live in one file (internal/feature/my/devices.go); since the
+# 2026-10-07 split it is five (devices.go, devices_renew.go, devices_delete.go,
+# devices_reregister.go, devices_helpers.go), so the ABSENCE contract reads the whole
+# set — a widened absence check is strictly stronger than the file-scoped one it
+# replaces (LESSONS L-55): the handler must NOT dereference peer.PublicIP anywhere,
+# which includes passing it into the rendered template context.
+if grep -q "PublicIP\b" internal/feature/my/devices*.go 2>/dev/null; then
     # PublicIP is OK in node view itself, but the handler must
     # not pass it to RenderWithLayout for a non-admin caller.
     # The check below verifies the IP field is filtered.
-    if grep -q "n\.PublicIP\|node\.PublicIP\|PublicIP:" internal/feature/my/devices.go 2>/dev/null; then
-        warn "internal/feature/my/devices.go references .PublicIP — verify it is admin-only"
+    if grep -q "n\.PublicIP\|node\.PublicIP\|PublicIP:" internal/feature/my/devices*.go 2>/dev/null; then
+        warn "internal/feature/my/devices*.go references .PublicIP — verify it is admin-only"
     else
-        ok "internal/feature/my/devices.go does not reference node.PublicIP in handler output"
+        ok "internal/feature/my/devices*.go does not reference node.PublicIP in handler output"
         LEAK_GUARDS=$((LEAK_GUARDS+1))
     fi
 else
-    ok "internal/feature/my/devices.go does not import PublicIP"
+    ok "internal/feature/my/devices*.go does not import PublicIP"
     LEAK_GUARDS=$((LEAK_GUARDS+1))
 fi
 # /my/peers handler — check it does NOT include public IPs

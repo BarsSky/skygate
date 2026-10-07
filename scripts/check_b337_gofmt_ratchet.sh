@@ -139,7 +139,16 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # touched file. gofmt's only complaint was `COALESCE(parent_domain,'')` inside one
 # doc comment (Go 1.19+ doc-comment formatting turns the `''` into a right double
 # quote) — one line, paid with the change, entry removed.
-FROZEN=261
+# 2026-10-07 (fifth payment): 261 → 260.
+# internal/feature/my/devices.go was frozen as drifted (17 map-literal alignment
+# lines in GetMyDevices' template-data map). The refactor of that 1637-line file
+# into five re-emitted every one of its lines, and the 803-line remainder plus the
+# four new files are gofmt-clean — contract D1 therefore demanded the entry leave
+# the list. The move itself changed nothing but that whitespace: every non-blank
+# line of the original is present in the new set, and the four moved declaration
+# bodies differ from the original only by gofmt alignment or by the doc comment
+# that travelled with the NEXT function (see the split proof in the commit).
+FROZEN=260
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

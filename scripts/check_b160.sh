@@ -39,7 +39,7 @@ bad() { echo "  FAIL  $1"; exit 1; }
 
 echo "=== contract A: PostMyDeviceRenew handler exists + scope-checks ==="
 # The handler must be a method on *Service.
-if grep -qE 'func \(s \*Service\) PostMyDeviceRenew' internal/feature/my/devices.go; then
+if grep -qE 'func \(s \*Service\) PostMyDeviceRenew' internal/feature/my/devices_renew.go; then
     ok "PostMyDeviceRenew handler defined on *Service"
 else
     bad "PostMyDeviceRenew handler MISSING"
@@ -48,7 +48,7 @@ fi
 # user before extending. We check the same
 # pattern as B155 PostMyKeyReissue: ListAllNodes
 # + user_id scope check.
-if grep -qE 'snapIDs, _ := db\.ListNodeOwnerNodeIDsByUsername\(s\.dbc\(\), c\.Username\)' internal/feature/my/devices.go; then
+if grep -qE 'snapIDs, _ := db\.ListNodeOwnerNodeIDsByUsername\(s\.dbc\(\), c\.Username\)' internal/feature/my/devices_renew.go; then
     ok "PostMyDeviceRenew scope-checks via node_owner_map"
 else
     bad "PostMyDeviceRenew MISSING the user-scope check"
@@ -56,19 +56,19 @@ fi
 # Must reject when node has no Expiry (tagged
 # / shared / no-expiry nodes are policy-
 # controlled, not user-controlled).
-if grep -qE 'device has no expiry' internal/feature/my/devices.go; then
+if grep -qE 'device has no expiry' internal/feature/my/devices_renew.go; then
     ok "PostMyDeviceRenew rejects nodes with no expiry"
 else
     bad "PostMyDeviceRenew MISSING the no-expiry guard"
 fi
 # Must write the audit log.
-if grep -qE '"device_renewed"' internal/feature/my/devices.go; then
+if grep -qE '"device_renewed"' internal/feature/my/devices_renew.go; then
     ok "PostMyDeviceRenew writes 'device_renewed' audit log"
 else
     bad "PostMyDeviceRenew MISSING the audit log entry"
 fi
 # Must call ExtendNodeExpiry with a future timestamp.
-if grep -qE 'hsClient\.ExtendNodeExpiry' internal/feature/my/devices.go; then
+if grep -qE 'hsClient\.ExtendNodeExpiry' internal/feature/my/devices_renew.go; then
     ok "PostMyDeviceRenew calls ExtendNodeExpiry"
 else
     bad "PostMyDeviceRenew MISSING the ExtendNodeExpiry call"
@@ -216,7 +216,7 @@ echo "=== contract H: B160.1 — 'node no longer exists' handling ==="
 #   3. Render a friendly i18n message
 # Future edits to the renew error handling must
 # keep all three.
-if grep -qE 'tryRenewNode' internal/feature/my/devices.go; then
+if grep -qE 'tryRenewNode' internal/feature/my/devices_renew.go; then
     ok "PostMyDeviceRenew uses tryRenewNode helper"
 else
     bad "PostMyDeviceRenew MISSING the tryRenewNode wrapper"
@@ -224,15 +224,15 @@ fi
 # Pattern must include "no longer exists in NodeStore"
 # (the current headscale 0.29.x wording) — the
 # operator hit this exact string on 2026-08-20.
-if grep -qE 'no longer exists in NodeStore' internal/feature/my/devices.go; then
+if grep -qE 'no longer exists in NodeStore' internal/feature/my/devices_renew.go; then
     ok "tryRenewNode matches 'no longer exists in NodeStore'"
 else
     bad "tryRenewNode MISSING the headscale error pattern"
 fi
 # 410 Gone (not 500) for the deleted case — the
 # user should refresh the page to see the new state.
-if grep -qE 'StatusGone' internal/feature/my/devices.go; then
-    c=$(grep -cE 'StatusGone' internal/feature/my/devices.go)
+if grep -qE 'StatusGone' internal/feature/my/devices_renew.go; then
+    c=$(grep -cE 'StatusGone' internal/feature/my/devices_renew.go)
     if [ "$c" -ge 2 ]; then
         ok "PostMyDeviceRenew returns 410 Gone for deleted nodes (>=2 sites: live + snapshot)"
     else

@@ -33,7 +33,7 @@ bad() { echo "  FAIL  $1"; exit 1; }
 
 echo "=== contract A: PostMyDeviceDelete handler exists + scope-checks ==="
 # The handler must be a method on *Service.
-if grep -qE 'func \(s \*Service\) PostMyDeviceDelete' internal/feature/my/devices.go; then
+if grep -qE 'func \(s \*Service\) PostMyDeviceDelete' internal/feature/my/devices_delete.go; then
     ok "PostMyDeviceDelete handler defined on *Service"
 else
     bad "PostMyDeviceDelete handler MISSING"
@@ -42,26 +42,26 @@ fi
 # user before deleting. We use the same dual
 # check (live user_name + snapshot node_owner_map)
 # as PostMyDeviceRenew.
-if grep -qE 'snapIDs, _ := db\.ListNodeOwnerNodeIDsByUsername\(s\.dbc\(\), c\.Username\)' internal/feature/my/devices.go; then
+if grep -qE 'snapIDs, _ := db\.ListNodeOwnerNodeIDsByUsername\(s\.dbc\(\), c\.Username\)' internal/feature/my/devices_delete.go; then
     ok "PostMyDeviceDelete scope-checks via node_owner_map snapshot"
 else
     bad "PostMyDeviceDelete: snapshot scope-check MISSING"
 fi
-if grep -qE 'n\.UserName == c\.Username' internal/feature/my/devices.go; then
+if grep -qE 'n\.UserName == c\.Username' internal/feature/my/devices_delete.go; then
     ok "PostMyDeviceDelete scope-checks via live n.UserName"
 else
     bad "PostMyDeviceDelete: live scope-check MISSING"
 fi
 # Cross-user attempt must return 404 (defense
 # against IDOR).
-if grep -qE '"device not found", http\.StatusNotFound' internal/feature/my/devices.go; then
+if grep -qE '"device not found", http\.StatusNotFound' internal/feature/my/devices_delete.go; then
     ok "PostMyDeviceDelete returns 404 on cross-user / unknown id"
 else
     bad "PostMyDeviceDelete: 404 on cross-user MISSING"
 fi
 # Must call hsClient.DeleteNode (the headscale
 # primitive that the Renew handler parallels).
-if grep -qE 'hsClient\.DeleteNode\(nodeID\)' internal/feature/my/devices.go; then
+if grep -qE 'hsClient\.DeleteNode\(nodeID\)' internal/feature/my/devices_delete.go; then
     ok "PostMyDeviceDelete calls hsClient.DeleteNode"
 else
     bad "PostMyDeviceDelete: DeleteNode call MISSING"
@@ -122,7 +122,7 @@ echo "=== contract D: audit log on every delete ==="
 # must write a device_deleted audit row so the
 # admin /audit page can correlate "user X deleted
 # device Y" with any later headscale activity.
-if grep -qE 'device_deleted' internal/feature/my/devices.go; then
+if grep -qE 'device_deleted' internal/feature/my/devices_delete.go; then
     ok "PostMyDeviceDelete writes 'device_deleted' audit row"
 else
     bad "PostMyDeviceDelete: audit log MISSING"
@@ -163,8 +163,8 @@ echo "=== contract F: local cleanup (node_owner_map + device_exit_node_prefs) ==
 # handler must STILL trigger the cleanup (directly
 # or via devicedelete.Delete). The two greps below
 # cover both architectures.
-if grep -qE 'db\.DeleteNodeOwnerByNodeTag\(s\.DB, idStr, ""\)' internal/feature/my/devices.go || \
-    (grep -qE 'devicedelete\.Delete\(' internal/feature/my/devices.go && \
+if grep -qE 'db\.DeleteNodeOwnerByNodeTag\(s\.DB, idStr, ""\)' internal/feature/my/devices_delete.go || \
+    (grep -qE 'devicedelete\.Delete\(' internal/feature/my/devices_delete.go && \
      grep -qE 'DeleteNodeOwnerByNodeTag' internal/devicedelete/devicedelete.go); then
     ok "PostMyDeviceDelete cleans up node_owner_map (directly or via devicedelete.Delete)"
 else
@@ -178,8 +178,8 @@ fi
 # devicedelete.Delete (which looks up the
 # original user_id from node_owner_map before
 # the row was deleted).
-if grep -qE 'db\.DeleteDeviceExitNodePref\(s\.DB, c\.UserID, strings\.ToLower\(host\)\)' internal/feature/my/devices.go || \
-    (grep -qE 'devicedelete\.Delete\(' internal/feature/my/devices.go && \
+if grep -qE 'db\.DeleteDeviceExitNodePref\(s\.DB, c\.UserID, strings\.ToLower\(host\)\)' internal/feature/my/devices_delete.go || \
+    (grep -qE 'devicedelete\.Delete\(' internal/feature/my/devices_delete.go && \
      grep -qE 'DeleteDeviceExitNodePref' internal/devicedelete/devicedelete.go); then
     ok "PostMyDeviceDelete cleans up device_exit_node_prefs (directly or via devicedelete.Delete)"
 else
@@ -202,13 +202,13 @@ echo "=== contract G: 410 Gone on 'no longer exists' gRPC error ==="
 # found". We treat that as 410 Gone + still
 # clean up the local snapshot + return the
 # i18n devices.delete_err_deleted string.
-if grep -qE '"no longer exists in NodeStore"' internal/feature/my/devices.go && \
-   grep -qE '"node not found"' internal/feature/my/devices.go; then
+if grep -qE '"no longer exists in NodeStore"' internal/feature/my/devices_delete.go && \
+   grep -qE '"node not found"' internal/feature/my/devices_delete.go; then
     ok "PostMyDeviceDelete detects both 'no longer exists' + 'node not found' gRPC errors"
 else
     bad "PostMyDeviceDelete: 410 Gone detection MISSING (the device-deleted-mid-click race would 500)"
 fi
-if grep -qE 'devices\.delete_err_deleted' internal/feature/my/devices.go; then
+if grep -qE 'devices\.delete_err_deleted' internal/feature/my/devices_delete.go; then
     ok "PostMyDeviceDelete returns the i18n devices.delete_err_deleted on 410"
 else
     bad "PostMyDeviceDelete: i18n for the 410 case MISSING"

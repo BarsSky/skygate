@@ -282,12 +282,12 @@ hdr "contract C: handler contract (B162 + B169 rewire)"
 # new devicedelete package. The B162 rewire
 # replaces the inline cleanup block with a
 # devicedelete.Delete call.
-if grep -q '"skygate/internal/devicedelete"' internal/feature/my/devices.go; then
-    ok "internal/feature/my/devices.go imports skygate/internal/devicedelete"
+if grep -q '"skygate/internal/devicedelete"' internal/feature/my/devices_delete.go; then
+    ok "internal/feature/my/devices_delete.go imports skygate/internal/devicedelete"
 else
-    bad "internal/feature/my/devices.go does NOT import devicedelete (B162 rewire missing)"
+    bad "internal/feature/my/devices_delete.go does NOT import devicedelete (B162 rewire missing)"
 fi
-if awk '/^func \(s \*Service\) PostMyDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'devicedelete\.Delete(' ${SKY_TMP}/_b171_awk.txt; then
+if awk '/^func \(s \*Service\) PostMyDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices_delete.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'devicedelete\.Delete(' ${SKY_TMP}/_b171_awk.txt; then
     ok "PostMyDeviceDelete calls devicedelete.Delete (B162 rewire complete)"
 else
     bad "PostMyDeviceDelete does NOT call devicedelete.Delete (B162 still has the pre-B171 inline cleanup)"
@@ -298,7 +298,7 @@ fi
 # to render the "+N ACL rules cleaned" pill. A
 # regression that dropped the param would lose
 # the visual feedback.
-if awk '/^func \(s \*Service\) PostMyDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'deleted_rules=' ${SKY_TMP}/_b171_awk.txt; then
+if awk '/^func \(s \*Service\) PostMyDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices_delete.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'deleted_rules=' ${SKY_TMP}/_b171_awk.txt; then
     ok "PostMyDeviceDelete passes deleted_rules=N in the redirect"
 else
     bad "PostMyDeviceDelete does NOT pass deleted_rules=N (the rules-cleaned pill would never render)"
@@ -310,7 +310,7 @@ fi
 # flash. Without this the operator would see a
 # "device deleted" success and not notice that
 # headscale's policy is now stale.
-if awk '/^func \(s \*Service\) PostMyDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'acl_err=' ${SKY_TMP}/_b171_awk.txt; then
+if awk '/^func \(s \*Service\) PostMyDeviceDelete/{flag=1; next} flag && /^func /{flag=0} flag' internal/feature/my/devices_delete.go > ${SKY_TMP}/_b171_awk.txt && grep -q 'acl_err=' ${SKY_TMP}/_b171_awk.txt; then
     ok "PostMyDeviceDelete passes acl_err=... in the redirect (ACL regen failure surfaces to the user)"
 else
     bad "PostMyDeviceDelete does NOT pass acl_err=... (ACL regen failure would be silent)"
