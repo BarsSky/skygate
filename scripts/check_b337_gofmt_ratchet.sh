@@ -167,7 +167,13 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # set is on|nodivert|off — so every `tailscale up` this module issues was rejected
 # outright). Rule 3 holds every TOUCHED file to gofmt, and changing the flag value
 # re-aligned the argv literal around it, so it was formatted with the change.
-FROZEN=257
+# 2026-10-08 (eighth payment): 257 -> 256.
+# internal/cluster/join.go was frozen as drifted; B363 moved three Go comment
+# lines OUT of its SQL literal (they were part of the statement PostgreSQL
+# received, which is why `insert node` died with SQLSTATE 42601 and the cluster
+# join never worked on the production dialect). Re-emitting that statement left
+# the file gofmt-clean, so contract D1 demanded its entry leave the list.
+FROZEN=256
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

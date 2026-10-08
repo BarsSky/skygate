@@ -12,6 +12,52 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.105 — the cluster join never worked on PostgreSQL, and four more reasons the panel's onboarding block could not succeed (B363)
+
+**Date:** 2026-10-08 · **Base:** `v1.5.104` → this tag · **Compatibility:** behaviour only — no
+schema change, no migration, no new setting.
+
+The work order asked to prove that a cluster «может быть создан автономно только через
+админ-панель». Running the panel's own onboarding block on the real second host answered that
+question: **it could not**, for five independent reasons. All five are fixed, and every fix came
+from live output rather than from reading the code.
+
+1. **The join endpoint had never worked on PostgreSQL.** `internal/cluster/join.go` built its INSERT
+   by string concatenation, and three Go comment lines landed **inside the SQL literal**:
+
+   ```
+   ... last_seen_at = EXTRACT(epoch FROM now())
+   	// B291: bind the timestamps through DialectKind.TimeValue — a raw
+   ```
+
+   PostgreSQL answered `insert node: ERROR: syntax error at or near ":" (SQLSTATE 42601)`, which the
+   panel surfaced as a `401`. The comments moved outside the literal; the statement now ends where
+   the concatenation ends.
+2. **`--netfilter-mode=nodir` is not a value the client accepts** (Tailscale 1.104.1: `invalid value
+   --netfilter-mode="nodir"`) — and the client rejects the **whole** `tailscale up`, so the host never
+   joined the tailnet and every later step was moot. The valid set is `on|nodivert|off`. Fixed in all
+   **21** places: the panel's block, the RU+EN notes, `internal/module/tailscale/install.go` (every
+   install path), `deploy/scripts/install-tailscale.sh`, `scripts/bootstrap_standby.sh`, the
+   contracts that pinned the old value, and the documentation that told operators to use it.
+3. **The OS hostname must match the invite.** The server answered `403 hostname does not match token
+   target` because the host still carried its provider's default name, and `skygate join` has no flag
+   to override the name it presents. The block now sets it — the hand-written runbook that this block
+   replaced had that step, and the generated version had lost it.
+4. **The token goes last.** The block rendered `skygate join <token> --api-url=…`, and the CLI refuses
+   exactly that: `flag "…" after the token is not supported; put flags BEFORE the token`.
+5. **The default `api_url` is unreachable from a remote host.** `primaryURLFromRequest` returns
+   whatever host the operator's browser used — here a private LAN address. Measured from the new
+   host: the tailnet address times out, `https://skygate.skynas.ru` answers (`/healthz` 200).
+
+Also paid: the B337 gofmt ratchet, 258 → 256 (`internal/module/tailscale/install.go` and
+`internal/cluster/join.go` both left the frozen list).
+
+**Live state:** the second host joined the tailnet during this work (`100.64.0.20`, node id 158) and
+the join request now reaches the server; defect 1 is the last thing between the panel and a working
+cluster.
+
+---
+
 ## v1.5.104 — a deadline that expired on our own clock is not evidence about a relay (B362)
 
 **Date:** 2026-10-07 · **Base:** `v1.5.103` → this tag · **Compatibility:** behaviour only — no
