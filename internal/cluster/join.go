@@ -187,55 +187,57 @@ func Join(d *sql.DB, secret string, req *JoinRequest) (*JoinResponse, error) {
 		return nil, ErrHostnameMismatch
 	}
 
-	// 5. Idempotency: if a cluster_node with this
-	// hostname already exists, return the existing one
-	// instead of failing. The new node may have crashed
-	// mid-join and is retrying.
-	if existing, err := LookupNode(d, clusterID, req.Hostname); err == nil && existing != nil {
-		// Mark the invite as used (idempotent) and
-		// return the existing node_id. This way a retry
-		// from the new node is a no-op.
-		_, _ = d.Exec(`
-			UPDATE cluster_invite
-			   SET used_at = COALESCE(used_at, `+db.ActiveDialect().NowExpr()+`),
-			       used_by_node_id = COALESCE(NULLIF(used_by_node_id, ''), $2)
-			 WHERE id = $1 AND used_at IS NULL
-		`, payload.Inv, existing.ID)
-		// Fetch the dsn_template from cluster_database (if
-		// configured) so the new node can bootstrap its
-		// own pgxpool. B212 also substitutes the primary's
-		// hostname into the template so the standby gets a
-		// ready-to-use DSN.
-		dsnTpl, dbName, dbUser := readDBBootstrap(d, clusterID)
-		primaryHost := readPrimaryHost(d, clusterID)
-		return &JoinResponse{
-			ClusterID:     clusterID,
-			NodeID:        existing.ID,
-			Hostname:      existing.Hostname,
-			DSNTemplate:   dsnTpl,
-			DSN:           substituteDSNTemplate(dsnTpl, primaryHost),
-			PrimaryHost:   primaryHost,
-			DBName:        dbName,
-			DBUsername:    dbUser,
-			HeartbeatHint: 30,
-		}, nil
-	}
-	if err != nil && !errors.Is(err, ErrNodeNotFound) {
-		return nil, fmt.Errorf("lookup node: %w", err)
-	}
+	// 5. Adoption: a cluster_node row for THIS hostname may already exist —
+	//    created by the B223 discovery pass ("node-disc-<hostname>",
+	//    skygate_version = "(discovered via Tailscale)"), by the panel's
+	//    /admin/cluster/onboard action (AddNode, empty version), or by an
+	//    earlier join. The natural key is (cluster_id, hostname), which has its
+	//    own unique index (`idx_cluster_node_cluster_hostname` / PG's
+	//    `cluster_node_cluster_id_hostname_key`), while `id` is a *different*
+	//    unique key.
+	//
+	//    B365 (2026-10-08, live): the version of the JOIN must land on the row
+	//    the operator sees. Measured on the reference standby the join's own
+	//    upsert never fired at all — this branch used to mark the invite used
+	//    and RETURN the existing row untouched, so the row kept
+	//    "(discovered via Tailscale)" as its skygate_version while the
+	//    heartbeat daemon kept its last_seen_at fresh, and /admin/cluster showed
+	//    `id=node-disc-<host> … skygate_version=(discovered via Tailscale)` for a
+	//    host that had really joined. The row is therefore ADOPTED here:
+	//    refreshed in place, id preserved (the invite's used_by_node_id and the
+	//    already-running heartbeat daemon both name it).
 
-	// 6. Parse the roles (comma-sep), default to skygate-standby.
+	// 6. Parse the roles (comma-sep), default to skygate-standby. Parsed BEFORE
+	//    the row is adopted so a re-join can refresh the role set.
 	roles := parseRolesField(req.Roles)
 	if len(roles) == 0 {
 		roles = []string{NodeRoleStandby}
 	}
-
-	// 7. Create the cluster_node row in "pending" state.
-	// We use a unique id derived from the invite so a
-	// re-join (if the previous node was force-removed)
-	// is a clean INSERT, not a flaky UPDATE.
-	nodeID := "node-" + payload.Inv[:12]
 	now := time.Now().UTC()
+	if existing, err := LookupNode(d, clusterID, req.Hostname); err == nil && existing != nil {
+		if err := adoptNodeOnJoin(d, existing.ID, req, roles, now); err != nil {
+			return nil, err
+		}
+		markInviteUsed(d, payload.Inv, existing.ID)
+		auditNodeJoin(d, clusterID, existing.ID, req, roles, payload.Inv)
+		return joinResponse(d, clusterID, existing.ID, req.Hostname), nil
+	} else if err != nil && !errors.Is(err, ErrNodeNotFound) {
+		return nil, fmt.Errorf("lookup node: %w", err)
+	}
+
+	// 7. No row for this hostname yet — create it in "pending" state. The id is
+	//    derived from the invite so a re-join after a force-remove is a clean
+	//    INSERT, not a flaky UPDATE. The conflict target is the row's NATURAL
+	//    key (cluster_id, hostname) — the key a concurrent discovery tick would
+	//    actually collide on — and the DO UPDATE clause makes such a race land
+	//    the join's version/state on the discovered row instead of failing the
+	//    whole join with a unique-violation. (Pre-B365 this read `ON CONFLICT
+	//    (id)`, i.e. it named a key the discovery row never collides on.)
+	//
+	//    The DO UPDATE deliberately does NOT overwrite `id`: the row that
+	//    collides keeps its own id, because an invite and a heartbeat daemon may
+	//    already name it. Only the join-owned columns are refreshed.
+	nodeID := "node-" + payload.Inv[:12]
 	// B291: bind the timestamps through DialectKind.TimeValue — a raw
 	// time.Time lands in a SQLite column as Go's String() form, which the
 	// page readers could not decode before B291 (the row rendered "—").
@@ -253,77 +255,123 @@ func Join(d *sql.DB, secret string, req *JoinRequest) (*JoinResponse, error) {
 	// here with a 401 carrying that SQL text. Found by running the panel's own
 	// onboarding block on a real second host, which is exactly what that flow
 	// exists for.
-	_, err = d.Exec(`
+	dialect := db.ActiveDialect()
+	err = d.QueryRow(`
 		INSERT INTO cluster_node (
 			id, cluster_id, hostname, tailscale_ip, roles, state,
 			skygate_version, joined_at, last_seen_at
-		) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $7)
-		ON CONFLICT (id) DO UPDATE SET
+		) VALUES ($1, $2, $3, $4, `+dialect.CastTextArray("$5")+`, 'pending', $6, $7, $7)
+		ON CONFLICT (cluster_id, hostname) DO UPDATE SET
 			tailscale_ip = EXCLUDED.tailscale_ip,
+			roles = EXCLUDED.roles,
 			skygate_version = EXCLUDED.skygate_version,
 			state = 'pending',
-			last_seen_at = `+db.ActiveDialect().NowExpr(),
-		nodeID, clusterID, req.Hostname, req.TailscaleIP,
-		pqStringArray(roles), req.SkygateVersion, db.ActiveDialect().TimeValue(now))
+			joined_at = EXCLUDED.joined_at,
+			last_seen_at = EXCLUDED.last_seen_at
+		RETURNING id
+	`, nodeID, clusterID, req.Hostname, req.TailscaleIP,
+		db.TextArrayLiteral(roles), req.SkygateVersion, dialect.TimeValue(now)).Scan(&nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("insert node: %w", err)
 	}
 
 	// 8. Mark the invite as used (atomic with the node
 	// INSERT — both inside the same transaction in a
-	// future improvement; for now, sequential).
-	_, err = d.Exec(`
-		UPDATE cluster_invite
-		   SET used_at = `+db.ActiveDialect().NowExpr()+`,
-		       used_by_node_id = $2
-		 WHERE id = $1 AND used_at IS NULL
-	`, payload.Inv, nodeID)
-	if err != nil {
-		// Don't fail the join — the node row is already
-		// there. A future heartbeat will re-attempt
-		// the used_at update.
-		_ = err
+	// future improvement; for now, sequential). The
+	// INSERT above answers the id that actually owns the
+	// (cluster_id, hostname) row, so the invite is bound
+	// to the row the operator will see.
+	markInviteUsed(d, payload.Inv, nodeID)
+
+	// 9. B215: emit the node_join audit event. We use db.InsertClusterAudit
+	//    (the canonical helper) so the JSONB shape is consistent with the
+	//    failover events. Both join paths write it (see auditNodeJoin), so a join
+	//    that ADOPTED a discovered row is no longer invisible in the per-node
+	//    event history: before B365 that host produced no node_join event at all.
+	auditNodeJoin(d, clusterID, nodeID, req, roles, payload.Inv)
+
+	// 10. Bootstrap info (DSN template + substituted DSN) — the helper reads
+	//     cluster_database, so both join paths return identical material.
+	return joinResponse(d, clusterID, nodeID, req.Hostname), nil
+}
+
+// auditNodeJoin writes the B215 node_join cluster_audit row for one join.
+//
+// Best-effort on purpose: the cluster_node row is already committed, so a
+// failure here must not abort the join — the operator just loses one audit row.
+// The detail captures the join-relevant fields so /admin/ha's "Last 20 events"
+// view can show the new node's metadata.
+func auditNodeJoin(d *sql.DB, clusterID, nodeID string, req *JoinRequest, roles []string, inviteID string) {
+	if d == nil {
+		return
 	}
-
-	// 9. Fetch the bootstrap DSN (if configured) so the
-	// new node can point its own pgxpool at the cluster
-	// PG. For now, the new node probably doesn't have
-	// its own skygate yet — it just runs bootstrap_standby
-	// (Phase 7) which uses these values to set up its
-	// own .env. B212 also substitutes the primary's
-	// hostname into the template so the standby gets a
-	// ready-to-use DSN.
-	dsnTpl, dbName, dbUser := readDBBootstrap(d, clusterID)
-	primaryHost := readPrimaryHost(d, clusterID)
-
-	// 10. B215: emit the node_join audit event. We
-	//     use db.InsertClusterAudit (the canonical
-	//     helper) so the JSONB shape is consistent
-	//     with the failover events. Best-effort: a
-	//     failure here doesn't abort the join (the
-	//     node row is already committed; the operator
-	//     just loses the audit row for this join).
-	//     For the same reason, we don't wrap the
-	//     insert in the join's transaction (none).
-	//     Detail captures the join-relevant fields
-	//     so the /admin/ha "Last 20 events" view can
-	//     show the new node's metadata.
-	roleStr := strings.Join(roles, ",")
 	_, _ = db.InsertClusterAudit(d, clusterID, db.NodeJoin, nodeID, req.Hostname,
 		fmt.Sprintf(`{"node_id":%q,"hostname":%q,"roles":%q,"tailscale_ip":%q,"skygate_version":%q,"invite_id":%q}`,
-			nodeID, req.Hostname, roleStr, req.TailscaleIP, req.SkygateVersion, payload.Inv))
+			nodeID, req.Hostname, strings.Join(roles, ","), req.TailscaleIP, req.SkygateVersion, inviteID))
+}
 
+// joinResponse assembles the bootstrap payload from the cluster's
+// cluster_database row. Extracted (B365) so the adopt path and the
+// fresh-insert path cannot drift: both must return the same DSN material for
+// the same cluster.
+func joinResponse(d *sql.DB, clusterID, nodeID, hostname string) *JoinResponse {
+	dsnTpl, dbName, dbUser := readDBBootstrap(d, clusterID)
+	primaryHost := readPrimaryHost(d, clusterID)
 	return &JoinResponse{
 		ClusterID:     clusterID,
 		NodeID:        nodeID,
-		Hostname:      req.Hostname,
+		Hostname:      hostname,
 		DSNTemplate:   dsnTpl,
 		DSN:           substituteDSNTemplate(dsnTpl, primaryHost),
 		PrimaryHost:   primaryHost,
 		DBName:        dbName,
 		DBUsername:    dbUser,
 		HeartbeatHint: 30,
-	}, nil
+	}
+}
+
+// adoptNodeOnJoin refreshes the EXISTING cluster_node row of the joining
+// hostname (B365). It writes only the columns a join owns — the identity
+// columns `id` and `cluster_id` are the caller's key and are never rewritten.
+//
+// state is forced to 'pending': the row it adopts may carry
+// "(discovered via Tailscale)" from the B223 pass, or an older join's
+// state='ready'. ApproveNode is the operator's gate afterwards, and a join that
+// did not reset the state would let a node it never approved look approved.
+func adoptNodeOnJoin(d *sql.DB, nodeID string, req *JoinRequest, roles []string, now time.Time) error {
+	dialect := db.ActiveDialect()
+	_, err := d.Exec(`
+		UPDATE cluster_node
+		   SET hostname = $2,
+		       tailscale_ip = $3,
+		       roles = `+dialect.CastTextArray("$4")+`,
+		       state = 'pending',
+		       skygate_version = $5,
+		       joined_at = $6,
+		       last_seen_at = $6
+		 WHERE id = $1
+	`, nodeID, req.Hostname, req.TailscaleIP,
+		db.TextArrayLiteral(roles), req.SkygateVersion, dialect.TimeValue(now))
+	if err != nil {
+		return fmt.Errorf("adopt node: %w", err)
+	}
+	return nil
+}
+
+// markInviteUsed binds the invite to the node row that the join adopted or
+// created. Idempotent (`used_at IS NULL` + COALESCE) and best-effort: the node
+// row is already committed, so a failure here must not fail the join — the next
+// heartbeat retries the binding.
+func markInviteUsed(d *sql.DB, inviteID, nodeID string) {
+	if d == nil || inviteID == "" || nodeID == "" {
+		return
+	}
+	_, _ = d.Exec(`
+		UPDATE cluster_invite
+		   SET used_at = COALESCE(used_at, `+db.ActiveDialect().NowExpr()+`),
+		       used_by_node_id = COALESCE(NULLIF(used_by_node_id, ''), $2)
+		 WHERE id = $1 AND used_at IS NULL
+	`, inviteID, nodeID)
 }
 
 // HeartbeatRequest is the JSON body the new node POSTs

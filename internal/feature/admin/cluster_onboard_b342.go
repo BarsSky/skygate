@@ -65,6 +65,54 @@ const clusterOnboardSweepAfter = 15 * time.Minute
 // clusterOnboardMaxTTLHours mirrors the invite form's cap (7 days).
 const clusterOnboardMaxTTLHours = 168
 
+// clusterOnboardHeartbeatStateFile is the join state file the heartbeat daemon
+// reads. It is the same path step 3 passes to `--state-file`, and the same
+// default the CLI uses (`cmd/skygate` StateFilePath), so the unit the block
+// writes cannot point at a file the join never produced.
+const clusterOnboardHeartbeatStateFile = "/etc/skygate/cluster-state.json"
+
+// clusterOnboardHeartbeatUnit is the systemd unit NAME of the heartbeat daemon
+// written by step 4. The name is part of the contract the operator reads on the
+// page, so it lives in one place.
+const clusterOnboardHeartbeatUnit = "skygate-heartbeat"
+
+// heartbeatDaemonStepCommand renders the standby's "make it run" step (B365).
+//
+// The unit text is a single-quoted here-doc, so systemd's `%` specifiers and
+// `$` need no escaping at the shell layer; `<hostname>` inside `%H` is resolved
+// by systemd, not by the shell. `tee` REPLACES the file rather than appending,
+// which is what makes re-pasting the block idempotent.
+func heartbeatDaemonStepCommand(stateFile string) string {
+	if strings.TrimSpace(stateFile) == "" {
+		stateFile = clusterOnboardHeartbeatStateFile
+	}
+	return strings.Join([]string{
+		"sudo tee /etc/systemd/system/" + clusterOnboardHeartbeatUnit + ".service >/dev/null <<'EOF'",
+		"[Unit]",
+		"Description=skygate cluster heartbeat daemon (sends heartbeats to the primary)",
+		"After=network-online.target",
+		"Wants=network-online.target",
+		"",
+		"[Service]",
+		"Type=simple",
+		"ExecStart=/usr/local/bin/skygate cluster heartbeat-daemon --state-file=" + stateFile,
+		"Restart=always",
+		"RestartSec=10",
+		"",
+		"[Install]",
+		"WantedBy=multi-user.target",
+		"EOF",
+		"sudo systemctl daemon-reload",
+		"sudo systemctl enable --now " + clusterOnboardHeartbeatUnit,
+		// Verify the DAEMON (there is no skygate web service on a standby), and
+		// then verify the thing the operator actually cares about: a heartbeat
+		// that reached the primary.
+		"systemctl is-active --quiet " + clusterOnboardHeartbeatUnit +
+			" && echo '" + clusterOnboardHeartbeatUnit + ": active' && sudo journalctl -u " +
+			clusterOnboardHeartbeatUnit + " -n 5 --no-pager",
+	}, "\n")
+}
+
 // ClusterOnboardStep is one copy-paste step of the rendered block. TitleKey and
 // NoteKey are i18n keys (RU + EN); Command is shell text and is never
 // translated.
@@ -85,6 +133,13 @@ type ClusterOnboardView struct {
 	TSKey     string
 	ExpiresAt string
 	Steps     []ClusterOnboardStep
+	// DSNReady reports whether the primary has a `cluster_database.dsn_template`
+	// for this cluster. B365 gap 2 (measured live): when it is empty, `skygate
+	// join` reports "no DSN bootstrap from primary", and the standby becomes a
+	// cluster member that can never serve as a mirror without a hand edit — the
+	// exact class of gap this panel-only flow exists to remove. The flag is
+	// therefore rendered as a warning naming the ONE remaining action.
+	DSNReady bool
 }
 
 // clusterOnboardPayload is the parked form. JSON (not a packed string) because
@@ -98,6 +153,11 @@ type clusterOnboardPayload struct {
 	TSKey      string `json:"ts_key"`
 	ControlURL string `json:"control_url"`
 	Version    string `json:"version"`
+	// ClusterID names the cluster row this block belongs to. B365 added it so
+	// the render can ask cluster_database whether a dsn_template exists; an
+	// older parked payload has no such field and the empty value falls back to
+	// the same single cluster id the action mints against.
+	ClusterID string `json:"cluster_id"`
 }
 
 // clusterOnboardSteps builds the operator's block. Order matters and is pinned:
@@ -157,15 +217,37 @@ func clusterOnboardSteps(p clusterOnboardPayload) []ClusterOnboardStep {
 	steps = append(steps, ClusterOnboardStep{
 		Num: 3, TitleKey: "cluster.onboard_step_join",
 		Command: fmt.Sprintf("sudo skygate join --api-url=%s --write-dsn-to=/etc/skygate/dbs.env --state-file=%s --role=%s %s",
-			shellQuote(p.APIURL), "/etc/skygate/cluster-state.json", cluster.NodeRoleStandby, shellQuote(p.InviteTok)),
+			shellQuote(p.APIURL), clusterOnboardHeartbeatStateFile, cluster.NodeRoleStandby, shellQuote(p.InviteTok)),
 		NoteKey: "cluster.onboard_note_join",
 	})
 
-	// 4. service
+	// 4. the heartbeat daemon
+	//
+	// B365 (2026-10-08, live): a STANDBY HAS NO `skygate` WEB SERVICE, so this
+	// step used to be a dead end. It rendered
+	//
+	//	sudo systemctl enable --now skygate && systemctl is-active skygate && curl -fsS http://127.0.0.1:8080/healthz
+	//
+	// and told the operator to start a unit that nothing on a bare host ever
+	// installs: the standby receives a single BINARY (step 2), no package, no
+	// unit. Measured on the reference standby — the operator had to start the
+	// long-running process by hand (`setsid`), which is exactly the "if admin
+	// must SSH to do X, then X is a gap" criterion of docs/ha.md §2.4. What
+	// actually has to run is the heartbeat daemon, and `skygate join`'s own next
+	// steps already said so.
+	//
+	// The unit is therefore rendered INLINE by the block (it must not depend on
+	// a file being present on the new host — nothing installs one), written
+	// idempotently (cat > … replaces, daemon-reload + enable --now are already
+	// idempotent, so re-pasting the block is safe), and VERIFIED for what is
+	// actually running: the daemon unit, plus the first heartbeat in its journal.
+	// There is deliberately no `curl /healthz` here — a standby has no web
+	// service to answer it, and this project does not ship a verification step
+	// that can only fail.
 	steps = append(steps, ClusterOnboardStep{
-		Num: 4, TitleKey: "cluster.onboard_step_service",
-		Command: "sudo systemctl enable --now skygate && systemctl is-active skygate && curl -fsS http://127.0.0.1:8080/healthz",
-		NoteKey: "cluster.onboard_note_service",
+		Num: 4, TitleKey: "cluster.onboard_step_heartbeat",
+		Command: heartbeatDaemonStepCommand(clusterOnboardHeartbeatStateFile),
+		NoteKey: "cluster.onboard_note_heartbeat",
 	})
 
 	// 5. approve back in the panel
@@ -372,6 +454,7 @@ func (s *Service) PostAdminClusterOnboard(w http.ResponseWriter, r *http.Request
 		TSKey:      tsKey,
 		ControlURL: s.controlURL(),
 		Version:    installVersion,
+		ClusterID:  clusterID,
 	}
 	blob, merr := json.Marshal(payload)
 	if merr != nil {
@@ -424,7 +507,40 @@ func (s *Service) consumeClusterOnboard(token string) *ClusterOnboardView {
 		TSKey:     p.TSKey,
 		ExpiresAt: p.ExpiresAt,
 		Steps:     clusterOnboardSteps(p),
+		DSNReady:  s.onboardDSNTemplateReady(p.ClusterID),
 	}
+}
+
+// onboardDSNTemplateReady reports whether `cluster_database.dsn_template` is
+// non-empty for the cluster — i.e. whether the join that follows this block can
+// actually hand the standby a DSN.
+//
+// B365 gap 2. It reports, it does not repair: inventing a DSN (or defaulting to
+// the primary's own) would be a credential guess the operator never made, so an
+// absent template is a named, actionable warning instead. A read error is
+// treated as "not ready" — the warning is the safe side of that error, because
+// the failure it describes (a standby with no DSN) is silent otherwise, and
+// silence is what the whole block exists to remove.
+//
+// clusterID is the operator's cluster row ("skygate-staging" on every
+// deployment so far, the same id the cluster page and the onboard action use).
+// An empty id falls back to it, so an older parked payload still renders the
+// truthful warning instead of silently claiming readiness.
+func (s *Service) onboardDSNTemplateReady(clusterID string) bool {
+	d := s.dbc()
+	if d == nil {
+		return false
+	}
+	if strings.TrimSpace(clusterID) == "" {
+		clusterID = "skygate-staging"
+	}
+	var tpl string
+	if err := d.QueryRow(
+		`SELECT COALESCE(dsn_template, '') FROM cluster_database WHERE id = $1`, clusterID,
+	).Scan(&tpl); err != nil {
+		return false
+	}
+	return strings.TrimSpace(tpl) != ""
 }
 
 // scheduleClusterOnboardSweep clears a parked payload the operator never

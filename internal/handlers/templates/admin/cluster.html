@@ -328,6 +328,13 @@
       <span class="muted">({{t "cluster.onboard_expires"}} {{.Data.Onboard.ExpiresAt}})</span>
     </div>
     <div class="muted" style="font-size:12px;margin-bottom:10px">{{t "cluster.onboard_block_help"}}</div>
+    {{if not .Data.Onboard.DSNReady}}
+    <div style="padding:8px;margin-bottom:10px;border-left:3px solid var(--danger,#dc3545);background:var(--bg);border-radius:4px;font-size:12px">
+      <strong>{{t "cluster.onboard_dsn_missing_title"}}</strong><br>
+      {{t "cluster.onboard_dsn_missing_help"}}<br>
+      <code>UPDATE cluster_database SET dsn_template = 'postgres://&lt;user&gt;:%s@&lt;host&gt;:5432/&lt;dbname&gt;?sslmode=disable' WHERE id = 'skygate-staging';</code>
+    </div>
+    {{end}}
     {{range .Data.Onboard.Steps}}
     <div style="margin-bottom:10px">
       <div style="font-size:13px;margin-bottom:4px"><strong>{{.Num}}. {{t .TitleKey}}</strong></div>

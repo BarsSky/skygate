@@ -173,7 +173,14 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # received, which is why `insert node` died with SQLSTATE 42601 and the cluster
 # join never worked on the production dialect). Re-emitting that statement left
 # the file gofmt-clean, so contract D1 demanded its entry leave the list.
-FROZEN=256
+# 2026-10-08 (ninth payment): 256 -> 255.
+# cmd/skygate/cluster.go was frozen as drifted; B365 rewrote the missing-DSN hint
+# the join prints when cluster_database.dsn_template is empty (it named a
+# deploy/heartbeat-daemon.service file the repo does not contain). Rule 3 and
+# contract E1 hold every TOUCHED file to gofmt even when it is allow-listed, so
+# its struct-tag and doc-comment alignment was paid with the change and the entry
+# left the list.
+FROZEN=255
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

@@ -2060,20 +2060,50 @@ first.
    preauth key for the `infra` user, and parks both behind an opaque one-time token — never in a
    URL.
 3. **Paste the generated block on `<HA_HOST>`.** The page renders it exactly once (it is deleted on
-   render; unrendered payloads are swept after 15 minutes). It is five numbered steps: install the
-   Tailscale client if missing, `tailscale up --login-server=… --authkey=… --hostname=<HA_HOST>`, install
-   the release version **the primary runs**, `sudo skygate join <sgn1 token> --api-url=… --write-dsn-to=/etc/skygate/dbs.env`,
-   then `systemctl enable --now skygate` and a `/healthz` check.
-   Do **not** add `--advertise-exit-node` and do **not** add `--accept-routes` to that `tailscale up`:
-   a mirror that advertises exit routes becomes a relay.
+   render; unrendered payloads are swept after 15 minutes). It is five numbered steps, in this order:
+   1. `hostnamectl set-hostname <HA_HOST>`, install the Tailscale client if it is missing
+      (`command -v tailscale || … | sh`, idempotent) and
+      `tailscale up --login-server=… --hostname=<HA_HOST> … --netfilter-mode=nodivert`;
+   2. install the release version **the primary runs** (the page also warns when that pinned tag is
+      not the version this primary is actually running — B365's predecessor B342.2);
+   3. `sudo skygate join --api-url=… --write-dsn-to=/etc/skygate/dbs.env
+      --state-file=/etc/skygate/cluster-state.json --role=skygate-standby <sgn1 token>` — the flags
+      come **before** the token; the CLI refuses the reversed order outright;
+   4. **start the heartbeat.** A standby has **no `skygate` web service** — it receives a single
+      binary — so this step *renders* `/etc/systemd/system/skygate-heartbeat.service` inline
+      (`ExecStart=/usr/local/bin/skygate cluster heartbeat-daemon --state-file=…`),
+      `systemctl daemon-reload`s, `enable --now`s it and verifies **the daemon**
+      (`systemctl is-active --quiet skygate-heartbeat` plus the first lines of its journal). Do not
+      substitute `systemctl enable --now skygate` and do not expect `curl /healthz` to answer on
+      that host: nothing installs such a unit and there is no web service behind it (B365 — the
+      pre-B365 block rendered exactly that dead end);
+   5. press **Approve** (see below).
+   Do **not** add `--advertise-exit-node` to that `tailscale up` and do **not** add
+   `--login-server` variants of your own: a mirror that advertises exit routes becomes a relay.
+
+   If the page shows the amber **DSN** banner next to the block, `cluster_database.dsn_template` is
+   empty: the join will report `no DSN bootstrap from primary …` and the standby receives no
+   `SKYGATE_DB_DSN`, so it can never serve as a mirror without a hand edit. Fill it on
+   `/admin/database` (**Edit** + **Test**) or with
+
+   ```sql
+   UPDATE cluster_database
+      SET dsn_template = 'host=<PRIMARY_HOST> port=5432 user=skygate password=%s dbname=skygate'
+    WHERE id = 'skygate-staging';
+   ```
+
+   `%s` is the **PASSWORD** placeholder and nothing else is substituted — the rest is a literal
+   connection string. An existing template is used as is; no DSN is ever invented by skygate.
 4. **Watch the row.** It appears on `/admin/cluster` in state `pending`. Its reason column says
    whether ownership is recorded yet:
    * *pending, no owner* — skygate has not seen the node in headscale yet; give the reconciliation
      tick (~5 minutes) one pass, or re-run discovery.
    * *pending, owner recorded* — the `node_owner_map` row exists (`infra`, `tag:dev-infra-<HA_HOST>`);
      this is the state the old runbook's manual `INSERT` produced, now automatic.
-5. **Approve.** Press **Approve** on that row once `curl -fsS http://<HA_HOST>:8080/healthz` answers
-   200. The row moves to `ready` and the HA chain may schedule failover to it (see `/admin/ha`).
+5. **Approve.** Press **Approve** on that row once the heartbeat is landing: `last_seen_at` on the row
+   is fresh and `systemctl is-active skygate-heartbeat` is `active` on `<HA_HOST>`. The row moves to
+   `ready` and the HA chain may schedule failover to it (see `/admin/ha`). There is **no**
+   `curl :8080/healthz` gate here — a standby runs no web service.
 6. **Verify ownership independently** (one read, no writes):
 
    ```bash
@@ -2127,7 +2157,9 @@ and removing a live standby silently shrinks the chain.
   action after the node is `ready`.
 
 See also: B342 (the onboarding artifact), B266 (the same one-time-token pattern for exit nodes),
-B354 (the cluster row bootstrap), B359 (the predicate and the per-row reasons).
+B354 (the cluster row bootstrap), B359 (the predicate and the per-row reasons), B363 (the PG-only
+join and the four other blockers behind this block) and B365 (the heartbeat step, the loud empty
+`dsn_template`, and the join that adopts the row discovery created).
 
 
 

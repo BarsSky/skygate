@@ -33,7 +33,7 @@ func TestClusterOnboardSteps_OrderAndContent_B342(t *testing.T) {
 		"cluster.onboard_step_tailnet",
 		"cluster.onboard_step_install",
 		"cluster.onboard_step_join",
-		"cluster.onboard_step_service",
+		"cluster.onboard_step_heartbeat",
 		"cluster.onboard_step_approve",
 	}
 	for i, s := range steps {

@@ -207,17 +207,18 @@ func runClusterInvite(args []string) error {
 // Usage:
 //
 //	skygate cluster join <token> [--api-url http://127.0.0.1:8080] [--state-file /etc/skygate/cluster-state.json]
+//
 // joinOpts is the parsed-flag shape for runClusterJoin.
 // Extracted so the top-level `skygate join` dispatcher
 // (in join.go) can reuse the same parsing logic without
 // duplicating it.
 type joinOpts struct {
-	APIURL         string
-	StateFile      string
-	RolesCSV       string // comma-separated role list (default: skygate-standby)
-	WriteDSNTo     string // optional path to write SKYGATE_DB_DSN=<DSN> env file (B212: DSN bootstrap)
-	DSNKey         string // env key name to use (default: SKYGATE_DB_DSN)
-	NoHeartbeatHint bool  // suppress "start heartbeat-daemon" hint at the end
+	APIURL          string
+	StateFile       string
+	RolesCSV        string // comma-separated role list (default: skygate-standby)
+	WriteDSNTo      string // optional path to write SKYGATE_DB_DSN=<DSN> env file (B212: DSN bootstrap)
+	DSNKey          string // env key name to use (default: SKYGATE_DB_DSN)
+	NoHeartbeatHint bool   // suppress "start heartbeat-daemon" hint at the end
 }
 
 // runClusterJoin is the canonical "join this node to
@@ -241,10 +242,10 @@ type joinOpts struct {
 // The stdout format is scriptable: the standby's
 // bootstrap_standby.sh can read these lines:
 //
-//   line 1: node_id          (the new cluster_node id)
-//   line 2: cluster_id
-//   line 3: dsn              (the substituted DSN, if any)
-//   line 4: primary_host     (the hostname we substituted)
+//	line 1: node_id          (the new cluster_node id)
+//	line 2: cluster_id
+//	line 3: dsn              (the substituted DSN, if any)
+//	line 4: primary_host     (the hostname we substituted)
 //
 // stderr carries the human-readable next-steps message.
 //
@@ -377,13 +378,19 @@ func runClusterJoin(args []string) error {
 	if jr.DSN != "" {
 		fmt.Fprintf(os.Stderr, "cluster join: dsn=%s\n", jr.DSN)
 	} else {
-		fmt.Fprintf(os.Stderr, "cluster join: no DSN bootstrap from primary (cluster_database.dsn_template is empty); use the standby's own .env SKYGATE_DB_DSN\n")
+		fmt.Fprint(os.Stderr, missingDSNBootstrapHint())
 	}
 	if !opts.NoHeartbeatHint {
 		fmt.Fprintf(os.Stderr, "cluster join: NEXT STEPS:\n")
 		fmt.Fprintf(os.Stderr, "  1. Start the heartbeat-daemon (long-running, sends heartbeats to %s every ~%ds):\n", opts.APIURL, jr.HeartbeatHint)
 		fmt.Fprintf(os.Stderr, "       skygate cluster heartbeat-daemon --state-file=%s &\n", opts.StateFile)
-		fmt.Fprintf(os.Stderr, "     (or via systemd: see deploy/heartbeat-daemon.service)\n")
+		// B365 (2026-10-08, live): this used to point at
+		// `deploy/heartbeat-daemon.service`, a file the repo does NOT contain —
+		// so the "or via systemd" escape hatch led nowhere, and a bare host has
+		// no unit at all. The panel's onboarding block renders one; the CLI says
+		// so and names the unit and its path instead of a missing file.
+		fmt.Fprintf(os.Stderr, "     (or as a unit: the panel's onboarding block writes %s.service; name it %s)\n",
+			clusterHeartbeatUnit, clusterHeartbeatUnit)
 		fmt.Fprintf(os.Stderr, "  2. Watch the new node appear on /admin/cluster as state=pending → state=ready (after the first heartbeat)\n")
 	}
 	return nil
@@ -449,6 +456,39 @@ func parseJoinArgs(args []string) (*joinOpts, string, error) {
 	}, token, nil
 }
 
+// clusterHeartbeatUnit is the systemd unit name the heartbeat daemon is
+// installed under. The panel's onboarding block (internal/feature/admin) renders
+// the same unit — the name is a user-visible contract, so both surfaces spell it
+// identically even though the two packages cannot share a constant.
+const clusterHeartbeatUnit = "skygate-heartbeat"
+
+// missingDSNBootstrapHint is the operator-facing text `skygate join` prints
+// when the primary returned NO DSN — i.e. `cluster_database.dsn_template` is
+// empty for this cluster (B365 gap 2, measured live on the reference standby:
+//
+//	cluster join: no DSN bootstrap from primary (cluster_database.dsn_template
+//	              is empty); use the standby's own .env SKYGATE_DB_DSN
+//
+// which named the symptom but not the ONE action that fixes it).
+//
+// The property this message must keep: it names the exact setting, the exact
+// page/statement that fills it, and the ONE fact a wrong guess would get wrong
+// (%s is the password placeholder, not the host). It never invents credentials
+// and never pretends the join produced a DSN it did not.
+func missingDSNBootstrapHint() string {
+	return strings.Join([]string{
+		"cluster join: NO DSN BOOTSTRAP from the primary — cluster_database.dsn_template is empty for this cluster.",
+		"cluster join: the standby is a cluster member with no DSN, so it cannot serve as a mirror until this is set.",
+		"cluster join: FIX (on the primary): /admin/database -> \"Test + Edit (Phase 1.2)\" -> host/port/dbname/username -> Save.",
+		"cluster join:   or the equivalent SQL, where %s is the PASSWORD placeholder (never the host):",
+		"cluster join:     UPDATE cluster_database",
+		"cluster join:        SET dsn_template = 'postgres://<user>:%s@<host>:5432/<dbname>?sslmode=disable'",
+		"cluster join:      WHERE id = 'skygate-staging';",
+		"cluster join: then re-run this join so the standby receives it (--write-dsn-to=/etc/skygate/dbs.env).",
+		"cluster join: meanwhile the standby uses its own .env SKYGATE_DB_DSN.",
+	}, "\n") + "\n"
+}
+
 // writeDSNEnvFile writes a single-line KEY=VALUE env
 // file (the format skygate's entrypoint.sh sources).
 // The file is overwritten (not appended) so a re-run
@@ -506,12 +546,12 @@ func runClusterNodes(args []string) error {
 	}
 	defer rows.Close()
 	type nodeRow struct {
-		ID         string          `json:"id"`
-		Hostname   string          `json:"hostname"`
-		State      string          `json:"state"`
-		Roles      db.StringArray  `json:"roles"`
-		LastSeenAt *time.Time      `json:"last_seen_at,omitempty"`
-		JoinedAt   time.Time       `json:"joined_at"`
+		ID         string         `json:"id"`
+		Hostname   string         `json:"hostname"`
+		State      string         `json:"state"`
+		Roles      db.StringArray `json:"roles"`
+		LastSeenAt *time.Time     `json:"last_seen_at,omitempty"`
+		JoinedAt   time.Time      `json:"joined_at"`
 	}
 	var out []nodeRow
 	for rows.Next() {
@@ -667,14 +707,14 @@ func runClusterAudit(args []string) error {
 	}
 	defer rows.Close()
 	type auditRow struct {
-		ID            int64           `json:"id"`
-		ClusterID     string          `json:"cluster_id"`
-		Action        string          `json:"action"`
-		TargetNodeID  string          `json:"target_node_id,omitempty"`
-		Detail        json.RawMessage `json:"detail,omitempty"`
-		Result        string          `json:"result"`
-		ErrorMessage  string          `json:"error_message,omitempty"`
-		CreatedAt     time.Time       `json:"created_at"`
+		ID           int64           `json:"id"`
+		ClusterID    string          `json:"cluster_id"`
+		Action       string          `json:"action"`
+		TargetNodeID string          `json:"target_node_id,omitempty"`
+		Detail       json.RawMessage `json:"detail,omitempty"`
+		Result       string          `json:"result"`
+		ErrorMessage string          `json:"error_message,omitempty"`
+		CreatedAt    time.Time       `json:"created_at"`
 	}
 	var out []auditRow
 	for rows.Next() {
@@ -850,7 +890,7 @@ func runClusterFailover(args []string) error {
 // runClusterFailoverDrill is the safe-test counterpart of
 // runClusterFailover. Phase 3.6 of cluster-management.md.
 //
-// Background
+// # Background
 //
 // runClusterFailover is a production swap: it changes
 // cluster_node state and writes action='node_failover' to

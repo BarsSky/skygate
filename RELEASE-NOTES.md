@@ -12,6 +12,75 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.107 — the panel-only onboarding loses its last three dead steps and silent gaps (B365)
+
+**Date:** 2026-10-08 · **Base:** `v1.5.106` → this tag · **Compatibility:** behaviour only — no
+schema change, no migration, no new setting. One i18n key pair was **renamed** (see below).
+
+The work order asked to prove that a cluster «может быть создан автономно только через
+админ-панель». v1.5.105/v1.5.106 made the join itself work on the real second host; the
+remaining three gaps were the ones an operator hits **after** the join, and every one of them
+came out of running the panel's own block rather than reading the code.
+
+1. **Step 4 told the operator to start a service that does not exist.** The block rendered
+   `sudo systemctl enable --now skygate && systemctl is-active skygate && curl -fsS
+   http://127.0.0.1:8080/healthz`. A standby receives a single **binary** — nothing installs a
+   unit, and there is no web service to answer a `/healthz` probe — so the step could only fail
+   and the long-running process had to be started by hand with `setsid`. The CLI's own
+   `NEXT STEPS` hint pointed at `deploy/heartbeat-daemon.service`, **a file this repository does
+   not contain**. Step 4 is now the heartbeat: the block **renders**
+   `/etc/systemd/system/skygate-heartbeat.service` inline
+   (`ExecStart=/usr/local/bin/skygate cluster heartbeat-daemon --state-file=/etc/skygate/cluster-state.json`),
+   runs `daemon-reload`, `enable --now`s it idempotently and verifies **the daemon**
+   (`systemctl is-active --quiet skygate-heartbeat` plus the first lines of `journalctl -u …`).
+   There is deliberately no `curl`: this project does not ship a verification step that can only
+   fail. Unit name, command and state path live in one place (`heartbeatDaemonStepCommand`), so
+   the CLI and the page cannot drift again. **Contract renegotiated:** the step-4 i18n keys were
+   **renamed** to `cluster.onboard_step_heartbeat` / `_note_heartbeat` in both catalogues (they
+   were `…_step_service` / `_note_service`) — a standby has no service to enable, and keeping the
+   old names would have left the page promising one.
+
+2. **`cluster_database.dsn_template` is empty, and the silence cost a hand edit.** The join
+   reported only `no DSN bootstrap from primary`; the standby became a cluster member that can
+   never serve as a mirror until somebody fills the setting. **No DSN is ever invented** — the
+   absence is now loud on both surfaces and actionable: `missingDSNBootstrapHint()` in the CLI and
+   `ClusterOnboardView.DSNReady` on the page name the exact setting, the page that fills it
+   (`/admin/database`, Test + Edit) and the equivalent
+   `UPDATE cluster_database … WHERE id='skygate-staging'`, and say the one fact a wrong guess gets
+   wrong: `%s` in the template is the **PASSWORD** placeholder, not the host. An existing template
+   keeps today's behaviour — the DSN is printed, not a warning.
+
+3. **A join did not adopt the row it had just discovered.** `cluster_node` has **two** unique keys:
+   the `id` PRIMARY KEY and B211's `UNIQUE (cluster_id, hostname)`. The join looked the row up **by
+   hostname** and returned it **untouched**, so a host that had really joined kept
+   `skygate_version = "(discovered via Tailscale)"`, the invite stayed bound to a row whose version
+   was never refreshed, and **no `node_join` audit row was written** — the fresh `last_seen_at` came
+   from the heartbeat daemon and made it look healthy. The join now **adopts** the row
+   (`adoptNodeOnJoin`): refreshed in place, `state=pending` so the panel's Approve is meaningful,
+   the `id` preserved because an invite and a running heartbeat daemon both name it. The INSERT's
+   conflict target is corrected from `(id)` to `(cluster_id, hostname) DO UPDATE … RETURNING id`, so
+   a concurrent discovery tick degrades into the same adoption instead of a unique violation. Both
+   branches now share `markInviteUsed` / `auditNodeJoin` / `joinResponse`, and roles and timestamps
+   go through `DialectKind.CastTextArray` / `TimeValue`, so **SQLite** (the native install) behaves
+   exactly like PostgreSQL.
+
+**Verification.** 26 contracts in `scripts/check_b365_cluster_onboard_gaps.sh` — including one that
+**FAILS** if the rendered step mentions `healthz`, `curl` or a bare `skygate` unit, and one that
+FAILS if the join's message stops naming the setting. Three behavioural Go test files pin the rest on
+a **migrated SQLite database** (`internal/cluster/join_b365_test.go`: a discovered row ends
+`state=pending` with the joining build's version; a panel-created row likewise; a re-join from `ready`
+returns to `pending`; one insert conflicting on **both** unique keys lands on the existing row) plus
+the rendered step and the messages in `internal/feature/admin/cluster_onboard_b365_test.go` and
+`cmd/skygate/join_b365_test.go`. `AGENTS.md`'s index entry and the `run_check` description carry the
+same story.
+
+**Also in this tag (housekeeping, no behaviour):** `cmd/skygate/cluster.go` was touched by the DSN
+hint and is therefore formatted in the same change — the gofmt ratchet's budget falls 256 → 255 and
+the entry leaves `scripts/gofmt_legacy_allowlist.txt` (B337 contract D1 makes "I only edited it a
+little" non-optional).
+
+---
+
 ## v1.5.106 — a real join must revive the row the elector settled in `failed` (B364)
 
 **Date:** 2026-10-08 · **Base:** `v1.5.105` → this tag · **Compatibility:** behaviour only.

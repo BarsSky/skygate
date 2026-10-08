@@ -34,7 +34,6 @@
 cmd/apply_pg_migrations/main.go
 cmd/jwt-mint/main.go
 cmd/skygate/acl_apply.go
-cmd/skygate/cluster.go
 cmd/skygate/init.go
 cmd/skygate/join_b212_test.go
 cmd/skygate/migrate_only_test.go
