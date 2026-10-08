@@ -12,6 +12,38 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.106 — a real join must revive the row the elector settled in `failed` (B364)
+
+**Date:** 2026-10-08 · **Base:** `v1.5.105` → this tag · **Compatibility:** behaviour only.
+
+Found on the reference standby minutes after v1.5.105 made the join work at all. The join
+registered the node server-side — `cluster_node` gained `node-disc-svyatoslava` and
+`node_owner_map` gained `158 | infra | svyatoslava | tag:dev-infra-svyatoslava`, the ownership
+landing by itself exactly as B359 predicted — and the row was still **unusable**:
+`state = failed`, `skygate_version = "(discovered via Tailscale)"`.
+
+Sequence, measured: the B223 discovery pass created the row first (the host IS a skygate host, so
+B359's predicate accepts it) with `state=pending`; the B204 elector then settled it in `failed`
+because skygate was not running there yet; and the join's `ON CONFLICT (id) DO UPDATE` refreshed
+only `tailscale_ip`, `skygate_version` and `last_seen_at` — **never `state`**. A `failed` row is
+terminal for the elector (it only walks pending<->ready), so the operator could never Approve the
+node the join had just registered.
+
+The conflict branch now sets `state = 'pending'`: a join is the strongest possible evidence about a
+node, so it re-asserts the state the machine understands and waits for the operator's Approve.
+Discovery is unaffected — `EnsureDiscoveredNode` uses `ON CONFLICT (id) DO NOTHING`.
+
+**Still open in the same area, measured the same session (follow-up):**
+
+* `cluster_database.dsn_template` is empty, so the join reports `no DSN bootstrap from primary …
+  use the standby's own .env SKYGATE_DB_DSN` — a standby does not receive the primary's DSN and
+  cannot become a mirror without a hand edit.
+* The onboarding block's step 4 (`systemctl enable --now skygate`) is wrong for a standby: a bare
+  host has no skygate unit. What must run is `skygate cluster heartbeat-daemon --state-file=…`
+  (the join's own NEXT STEPS say so) and no unit for it is installed.
+
+---
+
 ## v1.5.105 — the cluster join never worked on PostgreSQL, and four more reasons the panel's onboarding block could not succeed (B363)
 
 **Date:** 2026-10-08 · **Base:** `v1.5.104` → this tag · **Compatibility:** behaviour only — no

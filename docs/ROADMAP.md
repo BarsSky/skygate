@@ -49,7 +49,7 @@ Related: [`AGENTS.md`](../AGENTS.md) (conventions + the compact block index),
 
 | | |
 |---|---|
-| Version line | **v1.5.105** (B363 — the cluster join never worked on PostgreSQL, and four more reasons the panel's own onboarding block could not succeed) |
+| Version line | **v1.5.106** (B364 — a real join revives the cluster row the elector had settled in failed, so the panel can finally approve the node it just registered) |
 | Reference host | production deployment healthy; `/readyz` reports db / headscale / headplane / tailscale |
 | Verify gate | `scripts/verify_pre_deploy.sh` runs **381 contracts** (`run_check` entries, counted 2026-10-01); live-state checks report `SKIP`, not `FAIL` (rule 1). The catalog **exits 0 even with FAILs locally** — see TD-22 |
 | Static analysis | `go vet` and `staticcheck` clean; **`gofmt` is NOT clean repo-wide** (302 of 835 tracked files) and nothing enforces it in the gate — see TD-21 |
