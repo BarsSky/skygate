@@ -261,6 +261,7 @@ func Join(d *sql.DB, secret string, req *JoinRequest) (*JoinResponse, error) {
 		ON CONFLICT (id) DO UPDATE SET
 			tailscale_ip = EXCLUDED.tailscale_ip,
 			skygate_version = EXCLUDED.skygate_version,
+			state = 'pending',
 			last_seen_at = `+db.ActiveDialect().NowExpr(),
 		nodeID, clusterID, req.Hostname, req.TailscaleIP,
 		pqStringArray(roles), req.SkygateVersion, db.ActiveDialect().TimeValue(now))
