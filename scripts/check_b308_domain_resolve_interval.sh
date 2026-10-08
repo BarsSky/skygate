@@ -50,7 +50,9 @@ skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 POLICY=internal/feature/exit_rules/domain_interval_b308.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move); the resolve-interval
+# gate lives in the autoupdater, i.e. sync_domain.go.
+SYNC=internal/feature/exit_rules/sync_domain.go
 HANDLER=internal/feature/admin/settings_dns_autoupdate.go
 gosurface ROUTE cmd/skygate/*.go
 TPL=internal/handlers/templates/admin/system_tests.html

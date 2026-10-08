@@ -52,7 +52,11 @@ skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 STATE=internal/feature/exit_rules/relay_transport_b309.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move): the ownership
+# reconcile call is in sync_acl.go, the two recordRelayApply call sites in
+# sync_routes.go.
+SYNC=internal/feature/exit_rules/sync_acl.go
+SYNC_ROUTES=internal/feature/exit_rules/sync_routes.go
 # The /admin/exit-nodes SURFACE, not one file: internal/feature/admin/exit_nodes.go
 # was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
 # one path turns a pure code move into a false FAIL — and is the weaker contract
@@ -118,11 +122,11 @@ if grep -q 'prefixowner.ReconcileWithPreference(s.dbc(), healthyExitRelaysForAss
 else
   bad "C1: reconcilePrefixOwnership still passes the headscale-only healthy set"
 fi
-cnt="$(grep -c 'recordRelayApply(' "$SYNC")"
+cnt="$(grep -c 'recordRelayApply(' "$SYNC_ROUTES")"
 if [ "$cnt" -eq 2 ]; then
   ok "C2: both sync paths record the outcome (per-node + aggregated staggered)"
 else
-  bad "C2: recordRelayApply appears $cnt time(s) in sync.go, want 2 (the aggregated path is the one that runs)"
+  bad "C2: recordRelayApply appears $cnt time(s) in sync_routes.go, want 2 (the aggregated path is the one that runs)"
 fi
 if grep -q 'excluded from the healthy set — its last route application failed' "$STATE"; then
   ok "C3: the exclusion is logged with the reason and the age"

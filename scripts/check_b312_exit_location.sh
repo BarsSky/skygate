@@ -146,7 +146,7 @@ else
 fi
 
 # --- D: the page ------------------------------------------------------------------
-if grep -q 's.RefreshExitNodeLocations()' internal/feature/exit_rules/sync.go; then
+if grep -q 's.RefreshExitNodeLocations()' internal/feature/exit_rules/sync_acl.go; then
   ok "D1: the sync path refreshes due locations before it assigns"
 else
   bad "D1: nothing ever fills the locations"
@@ -202,7 +202,7 @@ else
   bad "E3: a preference could be invented from nothing"
 fi
 if grep -q 'func (s \*Service) nearestRelayPreference()' "$LOC" \
-   && grep -q 'prefixowner.ReconcileWithPreference(s.dbc(), healthyExitRelaysForAssignment(s.dbc()), s.nearestRelayPreference())' internal/feature/exit_rules/sync.go; then
+   && grep -q 'prefixowner.ReconcileWithPreference(s.dbc(), healthyExitRelaysForAssignment(s.dbc()), s.nearestRelayPreference())' internal/feature/exit_rules/sync_acl.go; then
   ok "E4: the assignment is wired to the preference (on top of the B309 healthy set)"
 else
   bad "E4: the preference is not wired into the assignment"

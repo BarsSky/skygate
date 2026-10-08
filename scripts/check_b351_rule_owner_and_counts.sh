@@ -54,7 +54,9 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
 skip() { printf '\033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move); the owner-pair
+# INSERTs + the backfill call live in the autoupdater, i.e. sync_domain.go.
+SYNC=internal/feature/exit_rules/sync_domain.go
 OWNER=internal/feature/exit_rules/rule_owner_b351.go
 IDX=internal/feature/exit_rules/device_index_b348.go
 FORM=internal/feature/exit_rules/form_admin.go

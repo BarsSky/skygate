@@ -48,7 +48,9 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 JUMP=internal/feature/exit_rules/relay_transport_jump_b353.go
 LADDER=internal/feature/exit_rules/relay_transport_tailnet_b310.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move); the jump-rung call
+# site lives in sync_routes.go.
+SYNC=internal/feature/exit_rules/sync_routes.go
 ROUTES=internal/headscale/routes.go
 JTESTS=internal/feature/exit_rules/relay_transport_jump_b353_test.go
 RTESTS=internal/headscale/routes_b353_test.go

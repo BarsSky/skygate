@@ -60,7 +60,9 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 KEY=internal/headscale/ssh_key.go
 ROUTES=internal/headscale/routes.go
 CFG=internal/config/config.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move); the live relay-IP
+# resolver and the target repair live in sync_routes.go.
+SYNC=internal/feature/exit_rules/sync_routes.go
 DB=internal/db/exit_servers.go
 # The /admin/exit-nodes SURFACE, not one file: internal/feature/admin/exit_nodes.go
 # was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps

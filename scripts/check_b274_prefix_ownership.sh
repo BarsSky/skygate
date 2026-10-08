@@ -60,7 +60,11 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 OWNER=internal/feature/exit_rules/prefix_owner.go
 TEST=internal/feature/exit_rules/prefix_owner_b274_test.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move): route advertisement
+# is in sync_routes.go, the domain auto-updater's dedup call in
+# sync_domain.go.
+SYNC=internal/feature/exit_rules/sync_routes.go
+SYNC_DOMAIN=internal/feature/exit_rules/sync_domain.go
 CLEAN=scripts/b188_3_fixture_cleanup.sh
 
 hdr "B274 — one advertising relay per prefix, and the losers named"
@@ -158,7 +162,7 @@ if grep -q "LIKE 'cdn:%' THEN 0 ELSE 1 END, id" "$OWNER"; then
 else
   bad "D.3 the dedup must prefer the cdn:-prefixed parent_domain"
 fi
-if grep -q 's.CollapseDuplicateDerivedRules()' "$SYNC"; then
+if grep -q 's.CollapseDuplicateDerivedRules()' "$SYNC_DOMAIN"; then
   ok "D.4 the domain autoupdater runs the dedup every tick"
 else
   bad "D.4 DomainAutoUpdater must call CollapseDuplicateDerivedRules"

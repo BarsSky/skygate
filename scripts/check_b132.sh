@@ -19,7 +19,7 @@
 # label (was icon-only, operators consistently missed it).
 #
 # What this script verifies (live, on the VM):
-#   A. internal/feature/exit_rules/sync.go: per-row
+#   A. internal/feature/exit_rules/sync_routes.go: per-row
 #      SyncAdvertisedRoutesForNode function exists, and the
 #      shared syncOneExitNode helper is extracted
 #   B. internal/feature/admin/exit_nodes.go: per-row handler
@@ -53,7 +53,9 @@ warn(){ echo "  WARN  $*"; WARN=$((WARN+1)); }
 cd "${SKYGATE_DIR}" || exit 1
 echo "skygate root: ${SKYGATE_DIR}"
 
-SYNC_GO="internal/feature/exit_rules/sync.go"
+# The three-way split (2026-10-08, pure move) put the per-row
+# SyncAdvertisedRoutesForNode + syncOneExitNode helper in sync_routes.go.
+SYNC_GO="internal/feature/exit_rules/sync_routes.go"
 # The /admin/exit-nodes SURFACE, not one file: internal/feature/admin/exit_nodes.go
 # was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
 # one path turns a pure code move into a false FAIL — and is the weaker contract
@@ -75,7 +77,7 @@ done
 # Contract A: exit_rules per-row sync + shared helper
 # ------------------------------------------------------------------------------
 echo
-echo "=== A. exit_rules/sync.go: per-row SyncAdvertisedRoutesForNode + syncOneExitNode helper ==="
+echo "=== A. exit_rules/sync_routes.go: per-row SyncAdvertisedRoutesForNode + syncOneExitNode helper ==="
 a_pernode=$(grep -cE 'func \(s \*Service\) SyncAdvertisedRoutesForNode' "${SYNC_GO}" || true)
 a_helper=$(grep -cE 'func syncOneExitNode' "${SYNC_GO}" || true)
 a_loop_call=$(grep -cE 'syncOneExitNode\(s\.HS' "${SYNC_GO}" || true)

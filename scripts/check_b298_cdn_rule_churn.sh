@@ -52,7 +52,11 @@ skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 OWNER=internal/feature/exit_rules/prefix_owner.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move): the two budgets and
+# the drift cores are in sync_acl.go, the autoupdater's CDN loop (B5/C1/C2/C3)
+# in sync_domain.go.
+SYNC=internal/feature/exit_rules/sync_acl.go
+SYNC_DOMAIN=internal/feature/exit_rules/sync_domain.go
 TEST=internal/feature/exit_rules/churn_b298_test.go
 B274=scripts/check_b274_prefix_ownership.sh
 B276=scripts/check_b276_acl_ownership_sync.sh
@@ -101,7 +105,7 @@ if grep -q 'func (s \*Service) applyACLIfDriftedChurn(actor, detail string, logN
 else
   bad "B4: the churn wrapper is missing or does not spend churnACLThrottle"
 fi
-if grep -q 's.applyACLIfDriftedChurn("skygate-auto-updater"' "$SYNC"; then
+if grep -q 's.applyACLIfDriftedChurn("skygate-auto-updater"' "$SYNC_DOMAIN"; then
   ok "B5: the domain auto-updater spends the churn budget"
 else
   bad "B5: the auto-updater is still on the 60s budget (a rotating /32 restarts headscale)"
@@ -130,17 +134,17 @@ else
 fi
 
 # --- C: what must NOT have moved ---------------------------------------------
-if grep -q "parent_domain LIKE \$4" "$SYNC" && grep -q 'isCDNMarker(existingMarker)' "$SYNC"; then
+if grep -q "parent_domain LIKE \$4" "$SYNC_DOMAIN" && grep -q 'isCDNMarker(existingMarker)' "$SYNC_DOMAIN"; then
   ok "C1: the CDN short-circuit is untouched (it now fires because the row survives)"
 else
   bad "C1: the CDN short-circuit changed — the insert/dedup cycle would come back another way"
 fi
-if grep -q 'ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO NOTHING' "$SYNC"; then
+if grep -q 'ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO NOTHING' "$SYNC_DOMAIN"; then
   ok "C2: the six-column ON CONFLICT target is unchanged (B237.23)"
 else
   bad "C2: the ON CONFLICT target drifted from the 6-col index"
 fi
-if grep -q 's.CollapseDuplicateDerivedRules()' "$SYNC"; then
+if grep -q 's.CollapseDuplicateDerivedRules()' "$SYNC_DOMAIN"; then
   ok "C3: the dedup still runs after the resolve loop (B274)"
 else
   bad "C3: the dedup call disappeared"

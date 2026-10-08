@@ -28,7 +28,11 @@ MIG=internal/db/migrations_v0_73_prefix_owner.go
 # is green. See scripts/lib/gosurface.sh and B339.
 . scripts/lib/gosurface.sh
 gosurface ACL internal/acl/acl.go internal/acl/acl_apply.go internal/acl/acl_generate.go internal/acl/acl_generate_via.go internal/acl/acl_ownership.go internal/acl/acl_set.go internal/acl/acl_tags.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move): the ownership
+# reconcile call is in the ACL pipeline (sync_acl.go), the advertising
+# operands read the assignment table in sync_routes.go.
+SYNC_ACL=internal/feature/exit_rules/sync_acl.go
+SYNC_ROUTES=internal/feature/exit_rules/sync_routes.go
 
 hdr "B275 — one owner per prefix, chosen by skygate"
 
@@ -57,18 +61,18 @@ grep -q 'ownerTagByPrefix := prefixowner.TagByPrefix(d)' "$ACL" && ok "C.2 the o
 # s.nearestRelayPreference())` — B312 prefers the healthy relay CLOSEST to a lost owner.
 # The property is unchanged: the engine receives a real healthy list (never nil) and the
 # reconcile call must exist. All forms pass; only nil fails.
-if grep -q 'prefixowner.ReconcileWithPreference(s.dbc(), healthyExitRelaysForAssignment(s.dbc())' "$SYNC"; then
+if grep -q 'prefixowner.ReconcileWithPreference(s.dbc(), healthyExitRelaysForAssignment(s.dbc())' "$SYNC_ACL"; then
   ok "C.3 the sync path reconciles with the transport-aware healthy list + the B312 location preference"
-elif grep -q 'prefixowner.Reconcile(s.dbc(), healthyExitRelaysForAssignment(s.dbc()))' "$SYNC"; then
+elif grep -q 'prefixowner.Reconcile(s.dbc(), healthyExitRelaysForAssignment(s.dbc()))' "$SYNC_ACL"; then
   ok "C.3 the sync path reconciles with the transport-aware healthy list (B275.2 + B309)"
-elif grep -q 'prefixowner.Reconcile(s.dbc(), healthyExitRelays(s.dbc()))' "$SYNC"; then
+elif grep -q 'prefixowner.Reconcile(s.dbc(), healthyExitRelays(s.dbc()))' "$SYNC_ACL"; then
   ok "C.3 the sync path reconciles the table with the healthy-relay list (B275.2)"
-elif grep -q 'prefixowner.Reconcile(s.dbc(), nil)' "$SYNC"; then
+elif grep -q 'prefixowner.Reconcile(s.dbc(), nil)' "$SYNC_ACL"; then
   bad "C.3 the sync path passes a nil healthy-relay list — that is the B275.2 regression (owners flicker)"
 else
   bad "C.3 SyncAdvertisedRoutes must call prefixowner.Reconcile"
 fi
-grep -q 'prefixowner.OwnerByPrefix(s.dbc())' "$SYNC" && ok "C.4 advertising uses the persisted table" || bad "C.4 advertising must read the table"
+grep -q 'prefixowner.OwnerByPrefix(s.dbc())' "$SYNC_ROUTES" && ok "C.4 advertising uses the persisted table" || bad "C.4 advertising must read the table"
 
 if command -v go >/dev/null 2>&1; then
   out="$(go test ./internal/prefixowner/ ./internal/acl/ ./internal/feature/exit_rules/ 2>&1)"

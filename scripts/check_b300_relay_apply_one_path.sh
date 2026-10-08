@@ -54,7 +54,9 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
 skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move); the shared transport
+# tail applyRoutesToRelay + both sync paths live in sync_routes.go.
+SYNC=internal/feature/exit_rules/sync_routes.go
 
 hdr "B300 — one transport decision for every sync path"
 
@@ -77,7 +79,7 @@ ssh_total=$(( ${ssh_calls:-0} + ${ladder_calls:-0} ))
 if [ "$ssh_total" -eq 1 ]; then
   ok "A2: exactly ONE SetAdvertisedRoutes call site (the shared tail + the B310 ladder) — a second copy is how the two paths drifted"
 else
-  bad "A2: SetAdvertisedRoutes is called from $ssh_total place(s) (sync.go=$ssh_calls, ladder=$ladder_calls), want 1"
+  bad "A2: SetAdvertisedRoutes is called from $ssh_total place(s) (sync_routes.go=$ssh_calls, ladder=$ladder_calls), want 1"
 fi
 stray=$(grep -cE 's\.HS\.SetAdvertisedRoutes\(' "$SYNC" || true)
 if [ "${stray:-0}" -eq 0 ]; then

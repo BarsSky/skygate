@@ -56,17 +56,17 @@ ok()  { echo "  PASS  $1"; PASS=$((PASS+1)); }
 bad() { echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
 skip() { echo "  SKIP  $1"; }
 
-# --- A. Source contract: sync.go has 6-col ON CONFLICT (both places) ---
+# --- A. Source contract: sync_domain.go has 6-col ON CONFLICT (both places) ---
 
-# A.1 CDN-range INSERT (sync.go: ~492)
-A1=$(grep -cE 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value, parent_domain\) DO NOTHING' "$REPO/internal/feature/exit_rules/sync.go")
+# A.1 CDN-range INSERT (sync_domain.go)
+A1=$(grep -cE 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value, parent_domain\) DO NOTHING' "$REPO/internal/feature/exit_rules/sync_domain.go")
 if [ "$A1" = "2" ]; then
-  ok "A.1 sync.go has 2x 6-col ON CONFLICT (CDN-range + per-IP /32)"
+  ok "A.1 sync_domain.go has 2x 6-col ON CONFLICT (CDN-range + per-IP /32)"
 else
-  bad "A.1 sync.go 6-col ON CONFLICT count=$A1 (want 2: CDN-range + per-IP)"
+  bad "A.1 sync_domain.go 6-col ON CONFLICT count=$A1 (want 2: CDN-range + per-IP)"
 fi
 
-# A.2 Per-IP /32 INSERT (sync.go: ~587) — same 6-col target
+# A.2 Per-IP /32 INSERT (sync_domain.go) — same 6-col target
 #
 # 2026-10-05 (B351) — RENEGOTIATED. This contract pinned the exact value list
 # `VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7)`, i.e. it was coupled to the
@@ -76,19 +76,19 @@ fi
 # tail accepts both shapes; what this contract is actually for — "both subnet INSERT
 # sites exist" — is unchanged, and that both of them carry the owner pair is
 # asserted by B351 (scripts/check_b351_rule_owner_and_counts.sh A1/A2).
-A2=$(grep -cE 'VALUES \(\$1, \$2, \$3, .subnet., \$4, \$5, \$6, \$7(, \$8, \$9)?\)' "$REPO/internal/feature/exit_rules/sync.go")
+A2=$(grep -cE 'VALUES \(\$1, \$2, \$3, .subnet., \$4, \$5, \$6, \$7(, \$8, \$9)?\)' "$REPO/internal/feature/exit_rules/sync_domain.go")
 if [ "$A2" -ge 2 ]; then
-  ok "A.2 sync.go has >= 2 subnet INSERT statements (CDN-range + per-IP)"
+  ok "A.2 sync_domain.go has >= 2 subnet INSERT statements (CDN-range + per-IP)"
 else
-  bad "A.2 sync.go subnet INSERTs count=$A2 (want >= 2)"
+  bad "A.2 sync_domain.go subnet INSERTs count=$A2 (want >= 2)"
 fi
 
-# A.3 Pre-B237.23 5-col target should be GONE from sync.go
-A3=$(grep -cE 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value\) DO NOTHING' "$REPO/internal/feature/exit_rules/sync.go")
+# A.3 Pre-B237.23 5-col target should be GONE from sync_domain.go
+A3=$(grep -cE 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value\) DO NOTHING' "$REPO/internal/feature/exit_rules/sync_domain.go")
 if [ "$A3" = "0" ]; then
-  ok "A.3 sync.go has NO 5-col ON CONFLICT (B183 design reverted)"
+  ok "A.3 sync_domain.go has NO 5-col ON CONFLICT (B183 design reverted)"
 else
-  bad "A.3 sync.go 5-col ON CONFLICT count=$A3 (want 0 — see B237.23 in AGENTS.md)"
+  bad "A.3 sync_domain.go 5-col ON CONFLICT count=$A3 (want 0 — see B237.23 in AGENTS.md)"
 fi
 
 # --- B. qInsertDeviceRule in queries.go is 6-col (unchanged but pin) ---
@@ -139,15 +139,15 @@ fi
 if [ -d /home/skyadmin/skygate ] && [ -f /home/skyadmin/skygate/scripts/verify_pre_deploy.sh ]; then
   E1=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -A -t -F'|' -c "SELECT indexdef FROM pg_indexes WHERE indexname='device_rules_natural_key_uniq'" 2>/dev/null)
   if echo "$E1" | grep -qE '\(user_id, device_id, exit_node_id, target_type, target_value, parent_domain\)'; then
-    ok "E.1 live index is 6-col (matches sync.go's 6-col ON CONFLICT)"
+    ok "E.1 live index is 6-col (matches sync_domain.go's 6-col ON CONFLICT)"
   else
     bad "E.1 live index is NOT 6-col: $E1"
   fi
 
   # E.2 No pre-B237.23 5-col ON CONFLICT source in the live build
-  E2=$(docker exec skygate-skygate-1 find / -name 'sync.go' 2>/dev/null | head -1)
+  E2=$(docker exec skygate-skygate-1 find / -name 'sync_domain.go' 2>/dev/null | head -1)
   if [ -z "$E2" ]; then
-    skip "E.2 live source path not findable (no /sync.go in container) — skip"
+    skip "E.2 live source path not findable (no /sync_domain.go in container) — skip"
   else
     E2_5COL=$(docker exec skygate-skygate-1 grep -cE 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value\) DO NOTHING' "$E2" 2>/dev/null)
     if [ "$E2_5COL" = "0" ]; then

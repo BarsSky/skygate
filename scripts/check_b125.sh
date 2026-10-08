@@ -11,7 +11,7 @@
 #      `ON CONFLICT (...) DO UPDATE SET id = device_rules.id RETURNING id`
 #      so AppendDeviceRule is now a true "insert or get-existing"
 #      with no race window.
-#   3. Replaces the SELECT-then-INSERT in sync.go:432, 512 (the
+#   3. Replaces the SELECT-then-INSERT in sync_domain.go:432, 512 (the
 #      /32 auto-add loop) with direct INSERT ... ON CONFLICT DO NOTHING,
 #      using RowsAffected() to track how many rows were actually
 #      added (vs silently dropped on conflict).
@@ -25,9 +25,9 @@
 #      exit_node_id, target_type, target_value, parent_domain)
 #   E. qInsertDeviceRule uses DO UPDATE SET id = device_rules.id
 #      RETURNING id (not DO NOTHING, so we can RETURN the existing id)
-#   F. sync.go:432 (CDN marker loop) uses INSERT ... ON CONFLICT
+#   F. sync_domain.go:432 (CDN marker loop) uses INSERT ... ON CONFLICT
 #      DO NOTHING + RowsAffected
-#   G. sync.go:512 (per-IP /32 loop) uses INSERT ... ON CONFLICT
+#   G. sync_domain.go:512 (per-IP /32 loop) uses INSERT ... ON CONFLICT
 #      DO NOTHING + RowsAffected
 #   H. B125 test file has at least 3 test functions (Sequential + Distinct
 #      + SameKeyReturnsSameID) — the SQL contract is pinned by tests
@@ -52,7 +52,9 @@ echo "skygate root: ${SKYGATE_DIR}"
 MIGRATIONS_PG="internal/db/migrations_pg.go"
 DRIVER_PG="internal/db/driver_postgres.go"
 QUERIES="internal/db/queries.go"
-SYNC_GO="internal/feature/exit_rules/sync.go"
+# The three-way split (2026-10-08, pure move) put the autoupdater's
+# INSERT/ON CONFLICT loops in sync_domain.go.
+SYNC_GO="internal/feature/exit_rules/sync_domain.go"
 B125_TEST="internal/db/device_rules_b125_test.go"
 
 [ -f "${MIGRATIONS_PG}" ] || { bad "source file not found: ${MIGRATIONS_PG}"; exit 1; }
@@ -153,21 +155,21 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# Contract F: sync.go:432 (CDN marker loop) uses ON CONFLICT + RowsAffected
+# Contract F: sync_domain.go:432 (CDN marker loop) uses ON CONFLICT + RowsAffected
 # ------------------------------------------------------------------------------
 echo
-echo "=== F. sync.go CDN marker loop uses ON CONFLICT + RowsAffected ==="
+echo "=== F. sync_domain.go CDN marker loop uses ON CONFLICT + RowsAffected ==="
 # The CDN loop is around line 432 (per B125 commit). Check both patterns.
 if grep -qE 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value, parent_domain\) DO NOTHING' "${SYNC_GO}"; then
-    ok "sync.go has ON CONFLICT DO NOTHING (CDN loop uses it)"
+    ok "sync_domain.go has ON CONFLICT DO NOTHING (CDN loop uses it)"
 else
-    bad "sync.go is missing ON CONFLICT DO NOTHING — auto-add can still race"
+    bad "sync_domain.go is missing ON CONFLICT DO NOTHING — auto-add can still race"
 fi
 # RowsAffected is used to track cdnAdded
 if grep -qE 'RowsAffected' "${SYNC_GO}"; then
-    ok "sync.go uses RowsAffected() to track new vs skipped rows"
+    ok "sync_domain.go uses RowsAffected() to track new vs skipped rows"
 else
-    bad "sync.go does NOT use RowsAffected() — added counter is wrong on duplicates"
+    bad "sync_domain.go does NOT use RowsAffected() — added counter is wrong on duplicates"
 fi
 # cdnAdded counter is incremented only when n > 0
 if grep -qE 'if n, _ := tag\.RowsAffected\(\); n > 0' "${SYNC_GO}"; then
@@ -177,16 +179,16 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# Contract G: sync.go:512 (per-IP /32 loop) also uses ON CONFLICT
+# Contract G: sync_domain.go:512 (per-IP /32 loop) also uses ON CONFLICT
 # ------------------------------------------------------------------------------
 echo
-echo "=== G. sync.go per-IP /32 loop also uses ON CONFLICT ==="
-# Count ON CONFLICT occurrences in sync.go
+echo "=== G. sync_domain.go per-IP /32 loop also uses ON CONFLICT ==="
+# Count ON CONFLICT occurrences in sync_domain.go
 oc_count=$(grep -cE 'ON CONFLICT' "${SYNC_GO}")
 if [ "${oc_count}" -ge 2 ]; then
-    ok "sync.go has ${oc_count} ON CONFLICT clauses (CDN loop + per-IP loop)"
+    ok "sync_domain.go has ${oc_count} ON CONFLICT clauses (CDN loop + per-IP loop)"
 else
-    bad "sync.go has only ${oc_count} ON CONFLICT clause(s) — per-IP loop may still race"
+    bad "sync_domain.go has only ${oc_count} ON CONFLICT clause(s) — per-IP loop may still race"
 fi
 # Per-IP loop also uses RowsAffected
 per_ip_rows=$(grep -A 2 'B125.*per-IP\|per-IP /32' "${SYNC_GO}" | grep -c 'RowsAffected')

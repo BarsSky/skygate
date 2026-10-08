@@ -390,7 +390,7 @@ run_check "B14" "skygate host-side wrapper exists + syntax-valid + uses correct 
 run_check "B15" "exit-rules parent_domain fix (insertRuleUnique accepts parentDomain)" \
   "bash -c '
     grep -q parentDomain internal/feature/exit_rules/store.go &&
-    grep -q parent_domain internal/feature/exit_rules/sync.go &&
+    grep -q parent_domain internal/feature/exit_rules/sync_domain.go &&
     grep -q parent_domain internal/feature/exit_rules/api.go &&
     '\''$GO'\'' test ./internal/feature/exit_rules/ -run '\''Test'\'' -count=1 2>&1
   '"
@@ -422,7 +422,7 @@ run_check "B16" "exit-rules CDN detection helper (Cloudflare/Fastly/Google/Akama
     grep -q detectCDN internal/feature/exit_rules/cdn.go &&
     grep -q knownCDNs internal/feature/exit_rules/cdn.go &&
     grep -q cdnParentMarker internal/feature/exit_rules/cdn.go &&
-    grep -q detectCDN internal/feature/exit_rules/sync.go &&
+    grep -q detectCDN internal/feature/exit_rules/sync_domain.go &&
     '\''$GO'\'' test ./internal/feature/exit_rules/ -run '\''Test'\'' -count=1 2>&1
   '"
 
@@ -1201,8 +1201,8 @@ run_check "B43" "headscale.SetAdvertisedRoutes: per-node SSH config (v0.33.1). C
     grep -qF \"func splitSSHTarget\" internal/headscale/routes.go &&
     grep -qF \"func LookupExitServerSSH\" internal/db/exit_servers.go &&
     grep -qF \"qSelectExitServerSSH\" internal/db/queries.go &&
-    { grep -qF \"db.LookupExitServerSSH\" internal/feature/exit_rules/sync.go || grep -qF \"lookupRelaySSHConfig\" internal/feature/exit_rules/sync.go; } &&
-    grep -qF \"sync_advertised_routes\" internal/feature/exit_rules/sync.go &&
+    { grep -qF \"db.LookupExitServerSSH\" internal/feature/exit_rules/sync_routes.go || grep -qF \"lookupRelaySSHConfig\" internal/feature/exit_rules/sync_routes.go; } &&
+    grep -qF \"sync_advertised_routes\" internal/feature/exit_rules/sync_routes.go &&
     grep -qF \"safeJSON\" internal/handlers/templates.go &&
     grep -qF \"safeJSON\" internal/handlers/templates/admin/exit_rules.html &&
     grep -qF \"/ssh-sync\" docker-compose.yml
@@ -2301,7 +2301,7 @@ run_check "B80" "orchestrator swap uses operator .env (v0.33.1.28)" 'f=$(mktemp)
 #     sql.ErrNoRows for clean call-site fallthrough)
 #   - internal/db/queries.go: qSelectExitServerSSHTarget
 #     SQL constant (returns ssh_target + tailscale_ip)
-#   - internal/feature/exit_rules/sync.go: both
+#   - internal/feature/exit_rules/sync_routes.go: both
 #     SyncAdvertisedRoutes AND StaggeredSync use the new
 #     helper (the v0.33.1 path used LookupExitServerSSH.Target
 #     directly — the pre-fix behaviour)
@@ -2326,7 +2326,7 @@ run_check "B80" "orchestrator swap uses operator .env (v0.33.1.28)" 'f=$(mktemp)
 #     (ResolvedSSHTarget, OperatorOverrideWins,
 #     UseTailscaleIPButton, FormHelperText,
 #     DisabledRowHidesButton)
-run_check "B81" "SSH target fallback to Tailscale IP (v0.33.1.29)" 'f=$(mktemp); printf "%s" "grep -qF \"func LookupExitServerSSHTarget\" internal/db/exit_servers.go && grep -qF \"qSelectExitServerSSHTarget\" internal/db/queries.go && grep -qF \"LookupExitServerSSHTarget\" internal/feature/exit_rules/sync.go && grep -qF \"ResolvedSSHTarget\" internal/feature/admin/exit_nodes*.go && grep -qF \"SSHTargetAuto\" internal/feature/admin/exit_nodes*.go && grep -qF \"PostAdminExitNodeUseTailscaleIP\" internal/feature/admin/exit_nodes*.go && grep -qF \"/admin/exit-nodes/use-ts-ip\" cmd/skygate/*.go && grep -qF \"ssh_target_auto_badge\" internal/handlers/templates/admin/exit_nodes.html && grep -qF \"exit_nodes.use_ts_ip_short\" internal/handlers/templates/admin/exit_nodes.html && grep -qF \"exit_nodes.use_ts_ip_help_tooltip\" internal/handlers/templates/admin/exit_nodes.html && grep -qF \"form_ssh_target_help\" internal/handlers/templates/admin/exit_nodes.html && grep -qF \"form_ssh_target_placeholder\" internal/i18n/catalog_exit_nodes.go && grep -qF \"form_ssh_target_help\" internal/i18n/catalog_exit_nodes.go && grep -qF \"ssh_target_auto_badge\" internal/i18n/catalog_exit_nodes.go && grep -qF \"use_ts_ip_short\" internal/i18n/catalog_exit_nodes.go && grep -qF \"use_ts_ip_help_tooltip\" internal/i18n/catalog_exit_nodes.go && grep -qF TestLookupExitServerSSHTarget_OperatorOverrideWins internal/db/exit_servers_test.go && grep -qF TestLookupExitServerSSHTarget_FallsBackToTailscaleIP internal/db/exit_servers_test.go && grep -qF TestLookupExitServerSSHTarget_BothEmptyReturnsEmpty internal/db/exit_servers_test.go && grep -qF TestLookupExitServerSSHTarget_NotFoundReturnsEmpty internal/db/exit_servers_test.go && grep -qF TestLookupExitServerSSHTarget_B292 internal/db/exit_servers_b292_test.go && grep -qF TestExitNodesRendersB81_ResolvedSSHTarget internal/handlers/exit_nodes_render_test.go && grep -qF TestExitNodesRendersB81_OperatorOverrideWins internal/handlers/exit_nodes_render_test.go && grep -qF TestExitNodesRendersB81_UseTailscaleIPButton internal/handlers/exit_nodes_render_test.go && grep -qF TestExitNodesRendersB81_FormHelperText internal/handlers/exit_nodes_render_test.go && grep -qF TestExitNodesRendersB81_DisabledRowHidesButton internal/handlers/exit_nodes_render_test.go && '\'"$GO"\'' test -count=1 -run '\''TestLookupExitServerSSHTarget'\'' ./internal/db/ && '\'"$GO"\'' test -count=1 -run '\''TestExitNodesRendersB81'\'' ./internal/handlers/" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
+run_check "B81" "SSH target fallback to Tailscale IP (v0.33.1.29)" 'f=$(mktemp); printf "%s" "grep -qF \"func LookupExitServerSSHTarget\" internal/db/exit_servers.go && grep -qF \"qSelectExitServerSSHTarget\" internal/db/queries.go && grep -qF \"LookupExitServerSSHTarget\" internal/feature/exit_rules/sync_routes.go && grep -qF \"ResolvedSSHTarget\" internal/feature/admin/exit_nodes*.go && grep -qF \"SSHTargetAuto\" internal/feature/admin/exit_nodes*.go && grep -qF \"PostAdminExitNodeUseTailscaleIP\" internal/feature/admin/exit_nodes*.go && grep -qF \"/admin/exit-nodes/use-ts-ip\" cmd/skygate/*.go && grep -qF \"ssh_target_auto_badge\" internal/handlers/templates/admin/exit_nodes.html && grep -qF \"exit_nodes.use_ts_ip_short\" internal/handlers/templates/admin/exit_nodes.html && grep -qF \"exit_nodes.use_ts_ip_help_tooltip\" internal/handlers/templates/admin/exit_nodes.html && grep -qF \"form_ssh_target_help\" internal/handlers/templates/admin/exit_nodes.html && grep -qF \"form_ssh_target_placeholder\" internal/i18n/catalog_exit_nodes.go && grep -qF \"form_ssh_target_help\" internal/i18n/catalog_exit_nodes.go && grep -qF \"ssh_target_auto_badge\" internal/i18n/catalog_exit_nodes.go && grep -qF \"use_ts_ip_short\" internal/i18n/catalog_exit_nodes.go && grep -qF \"use_ts_ip_help_tooltip\" internal/i18n/catalog_exit_nodes.go && grep -qF TestLookupExitServerSSHTarget_OperatorOverrideWins internal/db/exit_servers_test.go && grep -qF TestLookupExitServerSSHTarget_FallsBackToTailscaleIP internal/db/exit_servers_test.go && grep -qF TestLookupExitServerSSHTarget_BothEmptyReturnsEmpty internal/db/exit_servers_test.go && grep -qF TestLookupExitServerSSHTarget_NotFoundReturnsEmpty internal/db/exit_servers_test.go && grep -qF TestLookupExitServerSSHTarget_B292 internal/db/exit_servers_b292_test.go && grep -qF TestExitNodesRendersB81_ResolvedSSHTarget internal/handlers/exit_nodes_render_test.go && grep -qF TestExitNodesRendersB81_OperatorOverrideWins internal/handlers/exit_nodes_render_test.go && grep -qF TestExitNodesRendersB81_UseTailscaleIPButton internal/handlers/exit_nodes_render_test.go && grep -qF TestExitNodesRendersB81_FormHelperText internal/handlers/exit_nodes_render_test.go && grep -qF TestExitNodesRendersB81_DisabledRowHidesButton internal/handlers/exit_nodes_render_test.go && '\'"$GO"\'' test -count=1 -run '\''TestLookupExitServerSSHTarget'\'' ./internal/db/ && '\'"$GO"\'' test -count=1 -run '\''TestExitNodesRendersB81'\'' ./internal/handlers/" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
 
 # B82 — v0.33.1.30: per-user device + tag:exit-node override
 # (the B21 / v0.32.7 follow-up that fixes the case where
@@ -2463,7 +2463,7 @@ run_check "B83" "handlers.New() assigns sshKeyPath to App.SSHKeyPath (v0.33.1.31
 # fallback. The live /admin/telegram "Set as egress
 # relay" button exercises this path.
 run_check "B84" "telegram egress uses B81 SSH-target chain (v0.33.1.32 — production path pinned, code-level grep, runtime coverage via /admin/telegram 'Set as egress relay' button)" \
-  'grep -qF "LookupExitServerSSHTarget" internal/feature/admin/telegram*.go && grep -qF "LookupExitServerSSHTarget" internal/feature/exit_rules/sync.go'
+  'grep -qF "LookupExitServerSSHTarget" internal/feature/admin/telegram*.go && grep -qF "LookupExitServerSSHTarget" internal/feature/exit_rules/sync_routes.go'
 
 # B85 — v0.33.1.33: per-row exit_servers.ssh_port column for
 # the B81 auto-fallback chain. The B81 helper builds

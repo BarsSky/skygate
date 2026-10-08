@@ -30,7 +30,7 @@ DEFAULT_FILES = [
     "internal/feature/exit_rules/api.go",
     "internal/feature/exit_rules/form_my.go",
     "internal/feature/exit_rules/cleanup.go",
-    "internal/feature/exit_rules/sync.go",
+    "internal/feature/exit_rules/sync_domain.go",
     "internal/feature/exit_rules/rollback.go",
     "internal/feature/admin/devices.go",
     "internal/feature/admin/subnets.go",

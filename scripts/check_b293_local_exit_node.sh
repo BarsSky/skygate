@@ -52,7 +52,9 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 NODE=internal/headscale/local_node_b293.go
 APPLY=internal/headscale/local_apply_b293.go
 ARGS=internal/headscale/route_args.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move); the local-vs-SSH
+# transport decision lives in sync_routes.go.
+SYNC=internal/feature/exit_rules/sync_routes.go
 # The /admin/exit-nodes SURFACE, not one file: internal/feature/admin/exit_nodes.go
 # was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
 # one path turns a pure code move into a false FAIL — and is the weaker contract

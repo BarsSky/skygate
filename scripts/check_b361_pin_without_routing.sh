@@ -71,7 +71,9 @@ ACLTEST="$REPO_ROOT/internal/acl/acl_b361_test.go"
 REC="$REPO_ROOT/internal/feature/exit_rules/reconciler.go"
 STALE="$REPO_ROOT/internal/feature/exit_rules/pref_staleness_b356.go"
 REAPPLY="$REPO_ROOT/internal/feature/exit_rules/pref_reapply_b361.go"
-SYNC="$REPO_ROOT/internal/feature/exit_rules/sync.go"
+# sync.go was split three ways (2026-10-08, pure move); the shared apply
+# slot + the exported trigger live in sync_acl.go.
+SYNC="$REPO_ROOT/internal/feature/exit_rules/sync_acl.go"
 REAPPLYTEST="$REPO_ROOT/internal/feature/exit_rules/pref_reapply_b361_test.go"
 STALEPAGE="$REPO_ROOT/internal/feature/admin/exit_nodes_stale_prefs_b356.go"
 MYPIN="$REPO_ROOT/internal/feature/my/device_exit_pin_b361.go"

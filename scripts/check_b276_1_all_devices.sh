@@ -48,7 +48,9 @@ FORM=internal/feature/exit_rules/form_my.go
 # GetMyExitRules moved to form_my_rules.go (pure move); the GET-handler
 # operands (D2, D5b) read the new file, the POST-side ones stay in FORM.
 FORM_RULES=internal/feature/exit_rules/form_my_rules.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move); both operands below
+# (propagation + drift check) are inside DomainAutoUpdater, i.e. sync_domain.go.
+SYNC=internal/feature/exit_rules/sync_domain.go
 TMPL=internal/handlers/templates/exit_rules.html
 SCHEMA_TEST=internal/db/migrations_sqlite_schema_test.go
 

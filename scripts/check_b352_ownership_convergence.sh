@@ -52,7 +52,12 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
 skip() { printf '\033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move): the ownership
+# re-apply (sync_acl.go), the tick body (sync_domain.go) and the prune/
+# keep-synced operands (sync_routes.go).
+SYNC_ACL=internal/feature/exit_rules/sync_acl.go
+SYNC_DOMAIN=internal/feature/exit_rules/sync_domain.go
+SYNC_ROUTES=internal/feature/exit_rules/sync_routes.go
 B309=internal/feature/exit_rules/relay_transport_b309.go
 KEEPALIVE=internal/feature/exit_rules/relay_keepalive_b352.go
 TESTS=internal/feature/exit_rules/relay_keepalive_b352_test.go
@@ -62,13 +67,13 @@ hdr "B352 — ownership converges, and an unconfigurable relay owns nothing"
 # --- A: convergence ------------------------------------------------------------
 A_MISS=""
 # A1: an INSERT is a decision — the ACL must be regenerated for ins > 0 as well.
-grep -q 'if ins > 0 || chg > 0 {' "$SYNC" \
+grep -q 'if ins > 0 || chg > 0 {' "$SYNC_ACL" \
   || A_MISS="${A_MISS}reconcilePrefixOwnership still re-applies the ACL only on CHANGE (ins > 0 is a decision too)"$'\n'
-grep -q 'applyACLAfterOwnershipChange(ins, chg)' "$SYNC" \
+grep -q 'applyACLAfterOwnershipChange(ins, chg)' "$SYNC_ACL" \
   || A_MISS="${A_MISS}applyACLAfterOwnershipChange is not called from the ownership pass"$'\n'
 # A2: the maintenance tick must run the ownership pass, or a recovered relay waits for
 # a human to press Sync (the live 40-minute gap).
-TICK_BLOCK=$(awk '/^func \(s \*Service\) DomainAutoUpdater/,/^}/' "$SYNC")
+TICK_BLOCK=$(awk '/^func \(s \*Service\) DomainAutoUpdater/,/^}/' "$SYNC_DOMAIN")
 if printf '%s' "$TICK_BLOCK" | grep -q 's.reconcilePrefixOwnership()'; then
   ok "A1: the ownership pass is part of the auto-updater tick, and an INSERT re-applies the ACL"
 else
@@ -112,11 +117,11 @@ grep -q 'func (s \*Service) relaysToKeepSynced' "$KEEPALIVE" \
   || C_MISS="${C_MISS}relaysToKeepSynced does not exist"$'\n'
 grep -q 'SettingRelayApplyStatePrefix' "$KEEPALIVE" \
   || C_MISS="${C_MISS}the keep-synced list ignores the recorded apply state"$'\n'
-grep -q 's.relaysToKeepSynced(' "$SYNC" \
+grep -q 's.relaysToKeepSynced(' "$SYNC_ROUTES" \
   || C_MISS="${C_MISS}no sync path uses the keep-synced list"$'\n'
-grep -q 'hasRelayApplyRecord(node)' "$SYNC" \
+grep -q 'hasRelayApplyRecord(node)' "$SYNC_ROUTES" \
   || C_MISS="${C_MISS}the per-row Re-sync still answers info=no rules and touches nothing"$'\n'
-grep -q "exit_node_id <> ''" "$SYNC" \
+grep -q "exit_node_id <> ''" "$SYNC_ROUTES" \
   || C_MISS="${C_MISS}the sync still builds a node named \"\" from rules with no exit node"$'\n'
 if [ -z "$C_MISS" ]; then
   ok "C1: a relay that lost its prefixes is visited and its advertisement pruned to the owned set (incl. the empty set)"

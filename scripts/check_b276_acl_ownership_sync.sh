@@ -48,7 +48,13 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
 skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move): the ACL apply
+# pipeline (sync_acl.go), route advertisement (sync_routes.go) and the
+# domain auto-updater (sync_domain.go). Each operand below names the file
+# that holds the code it asserts.
+SYNC=internal/feature/exit_rules/sync_acl.go
+SYNC_ROUTES=internal/feature/exit_rules/sync_routes.go
+SYNC_DOMAIN=internal/feature/exit_rules/sync_domain.go
 REAPPLY=internal/feature/exit_rules/form_reapply.go
 # The admin ACL SURFACE, not one file: internal/acl/acl.go was split into
 # seven on 2026-10-01 (refactor Phase D) and a contract that greps one path turns
@@ -83,7 +89,7 @@ if grep -q 'func (s \*Service) applyACLAfterOwnershipChange(ins, chg int)' "$SYN
 else
   bad "A2: nothing regenerates the ACL when an owner changes"
 fi
-CALLS="$(grep -c 's\.reconcilePrefixOwnership()' "$SYNC")"
+CALLS="$(grep -c 's\.reconcilePrefixOwnership()' "$SYNC_ROUTES")"
 if [ "${CALLS:-0}" -ge 2 ]; then
   ok "A3: both sync paths use it (SyncAdvertisedRoutes + StaggeredSync: $CALLS call sites)"
 else
@@ -141,8 +147,8 @@ fi
 # apply is `systemctl restart headscale` and this path is driven by DNS rotation.
 # The pattern accepts both spellings so the assertion is about the CALL, not the
 # budget (the budget itself is pinned by scripts/check_b298_cdn_rule_churn.sh).
-if grep -A4 'func (s \*Service) DomainAutoUpdater' "$SYNC" | grep -q 'applyACLIfDrifted' \
-   || grep -qE 's\.applyACLIfDrifted(Churn)?\("skygate-auto-updater"' "$SYNC"; then
+if grep -A4 'func (s \*Service) DomainAutoUpdater' "$SYNC_DOMAIN" | grep -q 'applyACLIfDrifted' \
+   || grep -qE 's\.applyACLIfDrifted(Churn)?\("skygate-auto-updater"' "$SYNC_DOMAIN"; then
   ok "A10: the periodic auto-updater tick also checks the policy (the rules ARE the ACL; live: 8 of the 15 newest rules had no alias)"
 else
   bad "A10: rule changes still never re-apply the ACL — the policy outruns the rules"
@@ -165,7 +171,7 @@ if grep -q 'GROUP BY target_value, COALESCE(exit_node_id' "$PKG"; then
 else
   bad "B1: LoadClaims still counts derived ROWS — the updater's churn decides the owner"
 fi
-if grep -q "SELECT DISTINCT exit_node_id, target_value FROM device_rules" "$SYNC"; then
+if grep -q "SELECT DISTINCT exit_node_id, target_value FROM device_rules" "$SYNC_ROUTES"; then
   ok "B2: the B274 fallback path counts distinct (relay, prefix) pairs too"
 else
   bad "B2: the fallback path still counts duplicate rows"

@@ -77,7 +77,9 @@ TAGS=internal/db/device_tag.go
 gosurface ACL internal/acl/acl.go internal/acl/acl_apply.go internal/acl/acl_generate.go internal/acl/acl_generate_via.go internal/acl/acl_ownership.go internal/acl/acl_set.go internal/acl/acl_tags.go
 AUTO=internal/nodeownership/auto.go
 NODEOWN=internal/nodeownership/nodeownership.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move); the drift checks
+# (periodicDriftCheck + the churn-budget apply) live in sync_acl.go.
+SYNC=internal/feature/exit_rules/sync_acl.go
 # The /admin/exit-nodes SURFACE, not one file: internal/feature/admin/exit_nodes.go
 # was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
 # one path turns a pure code move into a false FAIL — and is the weaker contract

@@ -61,7 +61,9 @@ LITEREG=internal/db/driver_sqlite.go
 PLANNER=internal/prefixowner/reservation_b360.go
 PKG=internal/prefixowner/prefixowner.go
 TESTS=internal/prefixowner/reservation_b360_test.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move); the ownership
+# reconcile call lives in sync_acl.go.
+SYNC=internal/feature/exit_rules/sync_acl.go
 
 # body_of <file> <header-regex> — the lines of one function, so a contract reads
 # the CODE and not a comment that happens to quote it (the B352 D2 lesson).

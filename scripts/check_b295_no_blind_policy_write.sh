@@ -46,7 +46,9 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 ACL=internal/headscale/acl.go
 SNAP=internal/headscale/policy_snapshot_b295.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move); the
+# decideWithoutLivePolicy "write blind?" path lives in sync_acl.go.
+SYNC=internal/feature/exit_rules/sync_acl.go
 # The /admin/exit-nodes SURFACE, not one file: internal/feature/admin/exit_nodes.go
 # was split into seven on 2026-10-01 (refactor Phase D) and a contract that greps
 # one path turns a pure code move into a false FAIL — and is the weaker contract

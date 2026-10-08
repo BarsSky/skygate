@@ -112,7 +112,7 @@ check_ge "D-row-number" 1 "$(count "$REPO/internal/db/migrations_pg.go" 'ROW_NUM
 check_ge "D-cdn-prefix" 1 "$(count "$REPO/internal/db/migrations_pg.go" "WHEN parent_domain LIKE 'cdn:%'")"
 check_ge "D-order-desc" 1 "$(count "$REPO/internal/db/migrations_pg.go" 'id DESC')"
 
-# E. sync.go ON CONFLICT clauses are 6-column (with parent_domain)
+# E. sync_domain.go ON CONFLICT clauses are 6-column (with parent_domain)
 # matching the live 6-col UNIQUE INDEX on device_rules
 # (migrateV068PG / B232) and qInsertDeviceRule in queries.go.
 # 2026-09-07 (B237.23): the pre-B237.23 5-col target (B183) was
@@ -122,8 +122,10 @@ check_ge "D-order-desc" 1 "$(count "$REPO/internal/db/migrations_pg.go" 'id DESC
 # causing ⏳ orange false-positives on the UI's B184 status
 # check. V068 (B232) recreated the index as 6-col but
 # didn't update sync.go; B237.23 finishes the revert.
-B183_5COL=$(count "$REPO/internal/feature/exit_rules/sync.go" 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value\) DO NOTHING')
-B237_23_6COL=$(count "$REPO/internal/feature/exit_rules/sync.go" 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value, parent_domain\) DO NOTHING')
+# sync.go was split three ways (2026-10-08, pure move); the autoupdater's
+# INSERT/ON CONFLICT loops live in sync_domain.go.
+B183_5COL=$(count "$REPO/internal/feature/exit_rules/sync_domain.go" 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value\) DO NOTHING')
+B237_23_6COL=$(count "$REPO/internal/feature/exit_rules/sync_domain.go" 'ON CONFLICT \(user_id, device_id, exit_node_id, target_type, target_value, parent_domain\) DO NOTHING')
 if [ "$B183_5COL" = "0" ] && [ "$B237_23_6COL" -ge 1 ]; then
   echo "  PASS [E-b183-reverted+6col-restored] 5-col=0 (reverted), 6-col=$B237_23_6COL (restored)"
   PASS=$((PASS+1))

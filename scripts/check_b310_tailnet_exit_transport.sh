@@ -60,7 +60,9 @@ skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 LADDER=internal/feature/exit_rules/relay_transport_tailnet_b310.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move); the transport ladder
+# call site (applyRoutesToRelay) lives in sync_routes.go.
+SYNC=internal/feature/exit_rules/sync_routes.go
 STATE=internal/feature/exit_rules/relay_transport_b309.go
 REG=internal/feature/admin/exit_node_register.go
 # The /admin/exit-nodes SURFACE, not one file: internal/feature/admin/exit_nodes.go

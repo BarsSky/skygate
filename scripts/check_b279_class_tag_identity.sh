@@ -64,7 +64,9 @@ NOM=internal/db/node_owner_map.go
 CHECK=internal/feature/exit_rules/preferred_check.go
 RECON=internal/feature/exit_rules/reconciler.go
 HYG=internal/feature/exit_rules/pref_hygiene.go
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move); route advertisement
+# lives in sync_routes.go.
+SYNC=internal/feature/exit_rules/sync_routes.go
 PO=internal/feature/exit_rules/prefix_owner.go
 FORMMY=internal/feature/exit_rules/form_my_rules.go
 STORE=internal/feature/exit_rules/store.go

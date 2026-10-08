@@ -64,7 +64,9 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
 skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-SYNC=internal/feature/exit_rules/sync.go
+# sync.go was split three ways (2026-10-08, pure move); the ACL apply
+# pipeline lives in sync_acl.go.
+SYNC=internal/feature/exit_rules/sync_acl.go
 SVC=internal/feature/exit_rules/form_my.go
 # GetMyExitRules moved to form_my_rules.go (pure move), so the /my/exit-rules
 # call-site operands below read the new file.
