@@ -45,10 +45,20 @@ came out of running the panel's own block rather than reading the code.
    never serve as a mirror until somebody fills the setting. **No DSN is ever invented** — the
    absence is now loud on both surfaces and actionable: `missingDSNBootstrapHint()` in the CLI and
    `ClusterOnboardView.DSNReady` on the page name the exact setting, the page that fills it
-   (`/admin/database`, Test + Edit) and the equivalent
-   `UPDATE cluster_database … WHERE id='skygate-staging'`, and say the one fact a wrong guess gets
+   (`/admin/database`, Test + Edit) and the exact statement, and say the one fact a wrong guess gets
    wrong: `%s` in the template is the **PASSWORD** placeholder, not the host. An existing template
    keeps today's behaviour — the DSN is printed, not a warning.
+
+   **The statement had to be an UPSERT, and that was measured, not assumed.** Checking the fix on
+   the live primary the same session: `cluster_database` held **0 rows** — nothing creates one until
+   `/admin/database` is opened for the first time — so the recipe this block first shipped with
+   (`UPDATE cluster_database SET dsn_template = … WHERE id = 'skygate-staging'`) would have changed
+   **0 rows and reported success**. That is the *same* defect as gap 1 below: a step that cannot
+   succeed. Both the CLI hint and the page warning now carry
+   `INSERT INTO cluster_database (id, cluster_id, dsn_template) VALUES (…) ON CONFLICT (id) DO UPDATE
+   SET dsn_template = EXCLUDED.dsn_template`, which works whether or not the row exists, and B365's
+   contract set rejects a bare `UPDATE`. **A recipe is part of the fix and must be run where it is
+   printed.**
 
 3. **A join did not adopt the row it had just discovered.** `cluster_node` has **two** unique keys:
    the `id` PRIMARY KEY and B211's `UNIQUE (cluster_id, hostname)`. The join looked the row up **by
@@ -64,15 +74,26 @@ came out of running the panel's own block rather than reading the code.
    go through `DialectKind.CastTextArray` / `TimeValue`, so **SQLite** (the native install) behaves
    exactly like PostgreSQL.
 
-**Verification.** 26 contracts in `scripts/check_b365_cluster_onboard_gaps.sh` — including one that
-**FAILS** if the rendered step mentions `healthz`, `curl` or a bare `skygate` unit, and one that
-FAILS if the join's message stops naming the setting. Three behavioural Go test files pin the rest on
+**Verification.** 28 contracts in `scripts/check_b365_cluster_onboard_gaps.sh` — including one that
+**FAILS** if the rendered step mentions `healthz`, `curl` or a bare `skygate` unit, one that FAILS if
+the join's message stops naming the setting, and one that FAILS if the prescribed SQL is a bare
+`UPDATE` that cannot create the missing row. Three behavioural Go test files pin the rest on
 a **migrated SQLite database** (`internal/cluster/join_b365_test.go`: a discovered row ends
 `state=pending` with the joining build's version; a panel-created row likewise; a re-join from `ready`
 returns to `pending`; one insert conflicting on **both** unique keys lands on the existing row) plus
 the rendered step and the messages in `internal/feature/admin/cluster_onboard_b365_test.go` and
 `cmd/skygate/join_b365_test.go`. `AGENTS.md`'s index entry and the `run_check` description carry the
 same story.
+
+**And the emitted step was RUN, on the live standby** (this project's standard: a pinned argv proves
+nothing until the command it produces is executed — B353/L-61). `systemd-analyze verify` accepted the
+rendered unit (exit 0); running the block's own step 4 verbatim wrote
+`/etc/systemd/system/skygate-heartbeat.service`, `daemon-reload`ed, and `enable --now` reported
+`skygate-heartbeat: active` with `Started skygate-heartbeat.service` in the journal. The daemon the
+operator had been keeping alive by hand under `sudo … &` was retired, and `cluster_node.last_seen_at`
+on the primary **advanced from the unit-managed process** (19:49:39Z against a server clock of
+19:50:06Z, i.e. one 30-second beat). The host now survives a reboot with a heartbeat
+(`systemctl is-enabled` = `enabled`), which the hand-started process did not.
 
 **Also in this tag (housekeeping, no behaviour):** `cmd/skygate/cluster.go` was touched by the DSN
 hint and is therefore formatted in the same change — the gofmt ratchet's budget falls 256 → 255 and

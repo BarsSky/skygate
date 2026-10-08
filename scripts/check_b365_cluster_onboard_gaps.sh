@@ -205,6 +205,23 @@ if grep -q 'cluster.onboard_dsn_missing_help' "$TPL" && grep -q 'Onboard.DSNRead
 else
   bad "B8: the template does not render the DSN warning"
 fi
+# B9/B10 — the recipe must WORK on the deployment it is printed on. Measured live
+# on the reference primary (2026-10-08): `cluster_database` had ZERO rows, because
+# nothing creates one until /admin/database is opened. The pre-fix recipe was a
+# bare `UPDATE ... WHERE id='skygate-staging'`, which changes 0 rows there and
+# reports success — a step that cannot succeed is worse than no step (see B365's
+# own step-4 defect). The statement must therefore CREATE the row.
+if [ -n "$(printf '%s\n' "$CLI_HINT" | grep -F 'INSERT INTO cluster_database')" ] \
+   && [ -n "$(printf '%s\n' "$CLI_HINT" | grep -F 'ON CONFLICT (id) DO UPDATE')" ]; then
+  ok "B9: the join's SQL CREATES the cluster_database row (upsert), so it works when the row is absent"
+else
+  bad "B9: the join's SQL is UPDATE-only — on a deployment whose cluster_database table is empty (measured live: 0 rows) it silently changes nothing"
+fi
+if [ -n "$(printf '%s\n' "$DSN_WARN_KEYS" | grep -F 'ON CONFLICT (id) DO UPDATE')" ]; then
+  ok "B10: the panel warning carries the same upsert, so the page and the CLI cannot drift"
+else
+  bad "B10: the panel warning still prescribes a statement that cannot create the missing row"
+fi
 
 # =====================================================================
 hdr "C. a join adopts the row that already exists for its hostname"

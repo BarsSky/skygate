@@ -34,7 +34,8 @@ func TestB365_MissingDSNHintNamesTheSetting(t *testing.T) {
 	}{
 		{"cluster_database.dsn_template", "the exact setting that is empty"},
 		{"/admin/database", "the page on the primary that fills it"},
-		{"UPDATE cluster_database", "the exact statement, for an operator without the panel"},
+		{"INSERT INTO cluster_database", "the statement must CREATE the row — measured live: cluster_database had 0 rows"},
+		{"ON CONFLICT (id) DO UPDATE", "the statement must be an UPSERT, so it also works when the row exists"},
 		{"dsn_template", "the column name inside the statement"},
 		{"%s", "the placeholder the template must carry"},
 		{"PASSWORD", "what %s actually is — the ONE fact a wrong guess gets wrong"},
@@ -45,6 +46,13 @@ func TestB365_MissingDSNHintNamesTheSetting(t *testing.T) {
 		if !strings.Contains(hint, w.needle) {
 			t.Errorf("the missing-DSN hint does not mention %q (%s); hint:\n%s", w.needle, w.why, hint)
 		}
+	}
+	// B365 gap 2, measured on the live primary 2026-10-08: `cluster_database`
+	// had ZERO rows, so the pre-fix recipe (`UPDATE … WHERE id='skygate-staging'`)
+	// was a silent no-op — the step could not succeed. A bare UPDATE must not be
+	// the only statement the operator is given.
+	if strings.Contains(hint, "UPDATE cluster_database") && !strings.Contains(hint, "ON CONFLICT") {
+		t.Errorf("the hint offers a bare UPDATE, which changes 0 rows when the cluster_database row does not exist; hint:\n%s", hint)
 	}
 	// Honesty: the message must say the DSN was NOT received, and must never
 	// look like a DSN was printed (a bare postgres:// URL with a password would

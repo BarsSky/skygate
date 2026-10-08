@@ -2084,13 +2084,19 @@ first.
    If the page shows the amber **DSN** banner next to the block, `cluster_database.dsn_template` is
    empty: the join will report `no DSN bootstrap from primary …` and the standby receives no
    `SKYGATE_DB_DSN`, so it can never serve as a mirror without a hand edit. Fill it on
-   `/admin/database` (**Edit** + **Test**) or with
+   `/admin/database` (**Edit** + **Test**) — that page upserts, so it works even when the row does
+   not exist yet — or with an upsert:
 
    ```sql
-   UPDATE cluster_database
-      SET dsn_template = 'host=<PRIMARY_HOST> port=5432 user=skygate password=%s dbname=skygate'
-    WHERE id = 'skygate-staging';
+   INSERT INTO cluster_database (id, cluster_id, dsn_template)
+   VALUES ('skygate-staging', 'skygate-staging',
+           'host=<PRIMARY_HOST> port=5432 user=skygate password=%s dbname=skygate')
+   ON CONFLICT (id) DO UPDATE SET dsn_template = EXCLUDED.dsn_template;
    ```
+
+   **Use the upsert, not a bare `UPDATE`.** Measured on the reference primary (2026-10-08):
+   `cluster_database` held **0 rows**, because nothing creates one until `/admin/database` is opened
+   — `UPDATE … WHERE id = 'skygate-staging'` there changes 0 rows and reports success.
 
    `%s` is the **PASSWORD** placeholder and nothing else is substituted — the rest is a literal
    connection string. An existing template is used as is; no DSN is ever invented by skygate.
