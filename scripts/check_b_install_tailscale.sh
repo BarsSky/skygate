@@ -75,12 +75,12 @@ for mode in os_level in_container attach none uninstall; do
     fi
 done
 
-# 5. B179 safety: --netfilter-mode=nodir present, --netfilter-mode=off absent.
-NODIR_COUNT=$(grep -c -- '--netfilter-mode=nodir' "$INSTALL_SH" || true)
+# 5. B179 safety: --netfilter-mode=nodivert present, --netfilter-mode=off absent.
+NODIR_COUNT=$(grep -c -- '--netfilter-mode=nodivert' "$INSTALL_SH" || true)
 if [ "$NODIR_COUNT" -ge 3 ]; then
-    pass "B179 safety: --netfilter-mode=nodir in 3+ call sites (${NODIR_COUNT})"
+    pass "B179 safety: --netfilter-mode=nodivert in 3+ call sites (${NODIR_COUNT})"
 else
-    fail "B179 safety: --netfilter-mode=nodir in 3+ sites" "found ${NODIR_COUNT}"
+    fail "B179 safety: --netfilter-mode=nodivert in 3+ sites" "found ${NODIR_COUNT}"
 fi
 if grep -q -- '--netfilter-mode=off' "$INSTALL_SH"; then
     fail "B179 safety: --netfilter-mode=off absent" "found --netfilter-mode=off"

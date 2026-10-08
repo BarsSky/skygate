@@ -161,7 +161,13 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # WSL shell on the workstation has no gofmt, so contract D1 SKIPPED there and only the
 # Linux run could see it — the check reports the offending entry by name, which is why
 # the message must list the FILE and not just the count.
-FROZEN=258
+# 2026-10-08 (seventh payment): 258 → 257.
+# internal/module/tailscale/install.go was frozen as drifted; B363 touched it
+# (--netfilter-mode=nodir is not a value the Tailscale client accepts — the valid
+# set is on|nodivert|off — so every `tailscale up` this module issues was rejected
+# outright). Rule 3 holds every TOUCHED file to gofmt, and changing the flag value
+# re-aligned the argv literal around it, so it was formatted with the change.
+FROZEN=257
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

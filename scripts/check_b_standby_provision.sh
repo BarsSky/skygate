@@ -23,7 +23,7 @@
 # F. ... records the preauth creation in skygate audit_log
 # G. scripts/bootstrap_standby.sh has the new "step 0: Tailscale auth" block
 # H. ... references SKYGATE_STANDBY_TS_AUTHKEY env var
-# I. ... uses --netfilter-mode=nodir (B179 safety, NOT --netfilter-mode=off)
+# I. ... uses --netfilter-mode=nodivert (B179 safety, NOT --netfilter-mode=off)
 # J. ... has an idempotency check (skip if tailscale already Running)
 # K. ... calls sudo tailscale up with --login-server=https://head.skynas.ru
 # L. ... falls back gracefully when SKYGATE_STANDBY_TS_AUTHKEY is unset
@@ -110,12 +110,12 @@ grep -qE 'SKYGATE_STANDBY_TS_AUTHKEY' "$BOOT_SCRIPT" 2>/dev/null \
     && ok "uses SKYGATE_STANDBY_TS_AUTHKEY env var (set by create-standby-preauth.sh output)" \
     || nok "does NOT use SKYGATE_STANDBY_TS_AUTHKEY (operator would have to set the env var manually)"
 
-# --- I. --netfilter-mode=nodir (B179 safety) ---
-hdr "I. --netfilter-mode=nodir (B179 safety, NOT 'off')"
-if grep -qE 'netfilter-mode=nodir' "$BOOT_SCRIPT" 2>/dev/null; then
-    ok "uses --netfilter-mode=nodir (safe: doesn't touch iptables — survives the 2026-08-31 / 2026-09-08 iptables-trap repeat)"
+# --- I. --netfilter-mode=nodivert (B179 safety) ---
+hdr "I. --netfilter-mode=nodivert (B179 safety, NOT 'off')"
+if grep -qE 'netfilter-mode=nodivert' "$BOOT_SCRIPT" 2>/dev/null; then
+    ok "uses --netfilter-mode=nodivert (safe: doesn't touch iptables — survives the 2026-08-31 / 2026-09-08 iptables-trap repeat)"
 else
-    nok "does NOT use --netfilter-mode=nodir (B179 trap will re-occur on every new standby)"
+    nok "does NOT use --netfilter-mode=nodivert (B179 trap will re-occur on every new standby)"
 fi
 if grep -qE 'netfilter-mode=off' "$BOOT_SCRIPT" 2>/dev/null; then
     nok "uses the DANGEROUS '--netfilter-mode=off' (B179 trap — leaves stale ts-input rules from previous session)"
@@ -161,7 +161,7 @@ grep -qE "standby.*provisioning|create-standby-preauth|tagged-devices.*synthetic
 
 # --- P. ha-v1.5.0-execution.md ---
 hdr "P. docs/ha.md mentions the new flow"
-grep -qE "create-standby-preauth|SKYGATE_STANDBY_TS_AUTHKEY|netfilter-mode=nodir" docs/ha.md 2>/dev/null \
+grep -qE "create-standby-preauth|SKYGATE_STANDBY_TS_AUTHKEY|netfilter-mode=nodivert" docs/ha.md 2>/dev/null \
     && ok "ha-v1.5.0-execution.md mentions the new preauth flow" \
     || nok "ha-v1.5.0-execution.md does NOT mention the new flow (operator will follow the old manual runbook)"
 

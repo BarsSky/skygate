@@ -114,13 +114,29 @@ func clusterOnboardSteps(p clusterOnboardPayload) []ClusterOnboardStep {
 	//    idempotent (`command -v … || install.sh`), so re-running the block on a
 	//    host that already has the client is a no-op — the same shape B266's
 	//    exit-node block uses for its own prerequisites.
-	tailnet := fmt.Sprintf("command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh\n"+
-		"sudo tailscale up --login-server=%s --hostname=%s --accept-routes --accept-dns=false --netfilter-mode=nodir",
-		shellQuote(p.ControlURL), shellQuote(p.Hostname))
+	// B363 (2026-10-08, live): TWO fixes to this step, both found by running the
+	// block on a real second host.
+	//   (a) `--netfilter-mode=nodir` is not a value the client accepts. Measured on
+	//       Tailscale 1.104.1: `invalid value --netfilter-mode="nodir"` — and the
+	//       client rejects the WHOLE `tailscale up`, so the host never joined the
+	//       tailnet and every later step was moot. The valid set is on|nodivert|off
+	//       (`nodivert` is the one the project wants: it sets up without the divert
+	//       table, where `off` re-creates the iptables trap).
+	//   (b) The OS HOSTNAME must match the name the invite was minted for. The
+	//       server answers 403 `hostname does not match token target` otherwise, and
+	//       `skygate join` has no flag to override the name it presents — measured
+	//       on a host whose hostname was still the provider's default
+	//       (`envious-blush.ptr.network`). Setting it here is what makes the block
+	//       genuinely self-sufficient; the old hand-written runbook had this as an
+	//       explicit operator step and the generated block had lost it.
+	hostnameLine := fmt.Sprintf("sudo hostnamectl set-hostname %s", shellQuote(p.Hostname))
+	tailnet := fmt.Sprintf("%s\ncommand -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh\n"+
+		"sudo tailscale up --login-server=%s --hostname=%s --accept-routes --accept-dns=false --netfilter-mode=nodivert",
+		hostnameLine, shellQuote(p.ControlURL), shellQuote(p.Hostname))
 	if p.TSKey != "" {
-		tailnet = fmt.Sprintf("command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh\n"+
-			"sudo tailscale up --login-server=%s --authkey=%s --hostname=%s --accept-routes --accept-dns=false --netfilter-mode=nodir",
-			shellQuote(p.ControlURL), shellQuote(p.TSKey), shellQuote(p.Hostname))
+		tailnet = fmt.Sprintf("%s\ncommand -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh\n"+
+			"sudo tailscale up --login-server=%s --authkey=%s --hostname=%s --accept-routes --accept-dns=false --netfilter-mode=nodivert",
+			hostnameLine, shellQuote(p.ControlURL), shellQuote(p.TSKey), shellQuote(p.Hostname))
 	}
 	steps = append(steps, ClusterOnboardStep{
 		Num: 1, TitleKey: "cluster.onboard_step_tailnet",
@@ -134,10 +150,14 @@ func clusterOnboardSteps(p clusterOnboardPayload) []ClusterOnboardStep {
 	})
 
 	// 3. join
+	// B363 (2026-10-08, live): the token goes LAST. The block used to render
+	// `skygate join <token> --api-url=… …`, and the CLI refuses exactly that:
+	// `flag "--api-url=…" after the token is not supported; put flags BEFORE the
+	// token`. Measured on the reference standby — the join never reached the server.
 	steps = append(steps, ClusterOnboardStep{
 		Num: 3, TitleKey: "cluster.onboard_step_join",
-		Command: fmt.Sprintf("sudo skygate join %s --api-url=%s --write-dsn-to=/etc/skygate/dbs.env --state-file=%s --role=%s",
-			shellQuote(p.InviteTok), shellQuote(p.APIURL), "/etc/skygate/cluster-state.json", cluster.NodeRoleStandby),
+		Command: fmt.Sprintf("sudo skygate join --api-url=%s --write-dsn-to=/etc/skygate/dbs.env --state-file=%s --role=%s %s",
+			shellQuote(p.APIURL), "/etc/skygate/cluster-state.json", cluster.NodeRoleStandby, shellQuote(p.InviteTok)),
 		NoteKey: "cluster.onboard_note_join",
 	})
 

@@ -187,7 +187,7 @@ install_os_level() {
         "--login-server=${LOGIN_SERVER}"
         "--authkey=${AUTHKEY}"
         "--accept-routes=false"
-        "--netfilter-mode=nodir"   # B179 safety
+        "--netfilter-mode=nodivert"   # B179 safety
         "--accept-dns=false")
     if [ -n "$HOSTNAME" ]; then
         args+=("--hostname=${HOSTNAME}")
@@ -239,7 +239,7 @@ install_in_container() {
         "--login-server=${LOGIN_SERVER}"
         "--authkey=${AUTHKEY}"
         "--accept-routes=false"
-        "--netfilter-mode=nodir"   # B179 safety
+        "--netfilter-mode=nodivert"   # B179 safety
         "--accept-dns=false")
     if [ -n "$HOSTNAME" ]; then
         up_args+=("--hostname=${HOSTNAME}")
@@ -279,7 +279,7 @@ install_attach() {
         "--login-server=${LOGIN_SERVER}"
         "--authkey=${AUTHKEY}"
         "--accept-routes=false"
-        "--netfilter-mode=nodir"   # B179 safety
+        "--netfilter-mode=nodivert"   # B179 safety
         "--accept-dns=false")
     if [ -n "$HOSTNAME" ]; then
         args+=("--hostname=${HOSTNAME}")

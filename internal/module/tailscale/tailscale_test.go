@@ -243,12 +243,12 @@ func TestInstall_OsLevel(t *testing.T) {
 			t.Errorf("call %d: name = %q, want %q", i, mock.calls[i].name, want)
 		}
 	}
-	// tailscale up should have --authkey= and --netfilter-mode=nodir.
+	// tailscale up should have --authkey= and --netfilter-mode=nodivert.
 	if !mock.hasCallNamed("tailscale", "--authkey=tskey-auth-test-placeholder") {
 		t.Error("tailscale up was not called with --authkey=")
 	}
-	if !mock.hasCallNamed("tailscale", "--netfilter-mode=nodir") {
-		t.Error("tailscale up was not called with --netfilter-mode=nodir (B179 safety)")
+	if !mock.hasCallNamed("tailscale", "--netfilter-mode=nodivert") {
+		t.Error("tailscale up was not called with --netfilter-mode=nodivert (B179 safety)")
 	}
 	// State should now be StateInstalled.
 	if m.state.State != module.StateInstalled {

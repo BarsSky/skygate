@@ -55,7 +55,7 @@ func TestClusterOnboardSteps_OrderAndContent_B342(t *testing.T) {
 	if !strings.Contains(tailnet, "--authkey=hskey-auth-abc123") {
 		t.Errorf("tailnet step must carry the minted preauth key: %q", tailnet)
 	}
-	if !strings.Contains(tailnet, "--netfilter-mode=nodir") {
+	if !strings.Contains(tailnet, "--netfilter-mode=nodivert") {
 		t.Errorf("tailnet step must use nodir, not off (the iptables trap): %q", tailnet)
 	}
 	if !strings.Contains(tailnet, "--hostname=svyatoslava") {

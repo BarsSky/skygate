@@ -224,7 +224,7 @@ tailnet preauth key **for the `infra` user** (never the synthetic
 `tagged-devices`, which is the B175 Strategy E trap below), and renders a
 numbered block to paste on the new host as root:
 
-1. `tailscale up … --netfilter-mode=nodir` (never `off` — it re-creates the
+1. `tailscale up … --netfilter-mode=nodivert` (never `off` — it re-creates the
    iptables trap), with the minted key and the panel's login server;
 2. install **the version this primary runs**, from GitHub Releases, SHA256
    verified (a standby ahead of its primary breaks the upgrade order);
@@ -288,7 +288,7 @@ bash scripts/bootstrap_standby.sh
 `bootstrap_standby.sh` (B152; state-tracked wrapper `scripts/ha-phase7.sh`):
 
 0. **Tailscale auth**, gated on `SKYGATE_STANDBY_TS_AUTHKEY`: runs
-   `tailscale up --login-server=https://head.example.com --netfilter-mode=nodir`
+   `tailscale up --login-server=https://head.example.com --netfilter-mode=nodivert`
    — deliberately **`nodir`, never `off`**, which would re-create the iptables
    trap. Idempotent (`BackendState=Running` → skip); unset → assume already
    joined (legacy path).
@@ -945,7 +945,7 @@ pkill -9 tailscaled
 iptables -F; iptables -X ts-*        # repeat across filter/nat/mangle as needed
 iptables -P INPUT ACCEPT
 systemctl start tailscaled
-tailscale up --netfilter-mode=nodir --login-server=https://head.example.com ...
+tailscale up --netfilter-mode=nodivert --login-server=https://head.example.com ...
 
 # If `tailscale up` hangs at "regen=true but server says NodeKeyExpired",
 # the local state still carries a deleted node's machine key:
@@ -953,7 +953,7 @@ rm /var/lib/tailscale/tailscaled.state
 rm -rf /var/lib/tailscale/{files,profile-data}
 ```
 
-Always use `--netfilter-mode=nodir` going forward (the bootstrap script does).
+Always use `--netfilter-mode=nodivert` going forward (the bootstrap script does).
 
 ---
 
@@ -1024,7 +1024,7 @@ Always use `--netfilter-mode=nodir` going forward (the bootstrap script does).
 | Rolling upgrade stuck in `draining`, or Approve refused for a `failed`/`draining` node | New build never appeared on `/healthz` within 5 min; Approve only accepts `pending` | Push the binary and rejoin, or re-run `skygate init` | Push the binary before the upgrade; use **Drain** for maintenance |
 | `cluster join` returns 410 / 403 | Invite expired (24 h) / hostname mismatch | Issue a new token for the correct hostname | Keep the TTL short; don't rename hosts |
 | New standby invisible to other tailnet nodes | Untagged node + headscale grants (0.29.1 omits untagged nodes from peers' netmaps) | Tag the node (`headscale nodes tag … --force`); restart headscale | Mint keys with `create-standby-preauth.sh` |
-| New standby lost SSH / all non-Tailscale traffic | `--netfilter-mode=off` left a `ts-input` REJECT chain | Console recovery (§6.4) | Always use `--netfilter-mode=nodir` |
+| New standby lost SSH / all non-Tailscale traffic | `--netfilter-mode=off` left a `ts-input` REJECT chain | Console recovery (§6.4) | Always use `--netfilter-mode=nodivert` |
 | `tailscale up` hangs | Old `tailscaled` without `--socket`, or a stale machine key | Kill the old pid / wipe `/var/lib/tailscale` state (§6.4) | Use the systemd unit; delete stale nodes |
 | WAL archive failing, disk filling | Object store down / network blip | Restore connectivity; watch the primary's disk | Monitor `wal-g backup-list`; alert on disk > 85 % (`R31`) |
 | No `dbmigrate-watchdog: pool swapped…` after a DSN change | Watchdog disabled, or the row was deleted | Edit the DSN again / recreate the row | Keep `cluster_database.current_dsn` the single knob |

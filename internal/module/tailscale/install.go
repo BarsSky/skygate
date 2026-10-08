@@ -164,7 +164,7 @@ func (m *Module) install(ctx context.Context, opts installOpts) error {
 //  4. systemctl enable --now tailscaled.
 //  5. tailscale up --login-server=$LOGIN_SERVER --authkey=$AUTH_KEY
 //     --hostname=$HOSTNAME --accept-routes=false
-//     --netfilter-mode=nodir (B179 safety).
+//     --netfilter-mode=nodivert (B179 safety).
 //
 // Step 5 is skipped if AuthKey is empty (the operator may
 // prefer to run it manually from the CLI to avoid putting
@@ -210,7 +210,7 @@ func (m *Module) installOsLevel(ctx context.Context, opts installOpts) error {
 		"--login-server=" + opts.LoginServer,
 		"--authkey=" + opts.AuthKey,
 		"--accept-routes=false",
-		"--netfilter-mode=nodir", // B179 safety: never 'off' on a new node
+		"--netfilter-mode=nodivert", // B179 safety: never 'off' on a new node
 		"--accept-dns=false",
 	}
 	if opts.Hostname != "" {
@@ -226,7 +226,9 @@ func (m *Module) installOsLevel(ctx context.Context, opts installOpts) error {
 // Steps:
 //
 //  1. Verify docker is on PATH.
+//
 //  2. Check if the container is already running (idempotent).
+//
 //  3. docker run -d --name=$NAME --network=host
 //     --cap-add=NET_ADMIN --cap-add=NET_RAW
 //     -v /var/lib/tailscale-skygate:/var/lib/tailscale
@@ -277,7 +279,7 @@ func (m *Module) installInContainer(ctx context.Context, opts installOpts) error
 		"--login-server=" + opts.LoginServer,
 		"--authkey=" + opts.AuthKey,
 		"--accept-routes=false",
-		"--netfilter-mode=nodir",
+		"--netfilter-mode=nodivert",
 		"--accept-dns=false",
 	}
 	if opts.Hostname != "" {
@@ -316,7 +318,7 @@ func (m *Module) installAttach(ctx context.Context, opts installOpts) error {
 		"--login-server=" + opts.LoginServer,
 		"--authkey=" + opts.AuthKey,
 		"--accept-routes=false",
-		"--netfilter-mode=nodir",
+		"--netfilter-mode=nodivert",
 		"--accept-dns=false",
 	}
 	if opts.Hostname != "" {

@@ -97,13 +97,17 @@ except Exception:
     else
         # Default hostname = the VM's hostname; allow override via env
         TS_HOSTNAME="${SKYGATE_STANDBY_TS_HOSTNAME:-$(hostname)}"
-        # Use --netfilter-mode=nodir (B179 safety): do NOT install iptables
+        # Use --netfilter-mode=nodivert (B179 safety): do NOT install iptables
         # rules that block the public IP. Same as B179 recovery command.
-        log "  tailscale up --hostname=$TS_HOSTNAME --netfilter-mode=nodir"
+        # B363 (2026-10-08): this said `nodir`, which the client does not accept
+        # (Tailscale 1.104.1: invalid value --netfilter-mode="nodir") and it
+        # rejects the WHOLE `tailscale up` — the standby never joined. The valid
+        # set is on|nodivert|off.
+        log "  tailscale up --hostname=$TS_HOSTNAME --netfilter-mode=nodivert"
         sudo tailscale up --login-server=https://head.skynas.ru \
             --authkey="$SKYGATE_STANDBY_TS_AUTHKEY" \
             --hostname="$TS_HOSTNAME" \
-            --accept-routes --accept-dns=false --netfilter-mode=nodir 2>&1 | tail -5 \
+            --accept-routes --accept-dns=false --netfilter-mode=nodivert 2>&1 | tail -5 \
             || die "tailscale up failed — check the authkey (single-use? expired? wrong user?)"
         log "  tailscale up OK, waiting 5s for state sync"
         sleep 5

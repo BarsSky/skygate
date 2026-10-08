@@ -103,9 +103,9 @@ type JoinResponse struct {
 	ClusterID     string `json:"cluster_id"`
 	NodeID        string `json:"node_id"`
 	Hostname      string `json:"hostname"`
-	DSNTemplate   string `json:"dsn_template"`   // raw template (the %s is unsubstituted) — kept for backward compat with the B200 / B201 clients that want to do their own substitution
-	DSN           string `json:"dsn"`            // B212: the template with %s substituted by the primary's reachable hostname (e.g. Tailscale hostname). Empty if no primary is configured (the standby falls back to its own .env DSN).
-	PrimaryHost   string `json:"primary_host"`   // B212: the hostname we substituted into DSN. Useful for the standby to log + verify the DSN points where it expects.
+	DSNTemplate   string `json:"dsn_template"` // raw template (the %s is unsubstituted) — kept for backward compat with the B200 / B201 clients that want to do their own substitution
+	DSN           string `json:"dsn"`          // B212: the template with %s substituted by the primary's reachable hostname (e.g. Tailscale hostname). Empty if no primary is configured (the standby falls back to its own .env DSN).
+	PrimaryHost   string `json:"primary_host"` // B212: the hostname we substituted into DSN. Useful for the standby to log + verify the DSN points where it expects.
 	DBName        string `json:"dbname"`
 	DBUsername    string `json:"db_username"`
 	HeartbeatHint int    `json:"heartbeat_seconds"` // recommended heartbeat interval
@@ -236,6 +236,23 @@ func Join(d *sql.DB, secret string, req *JoinRequest) (*JoinResponse, error) {
 	// is a clean INSERT, not a flaky UPDATE.
 	nodeID := "node-" + payload.Inv[:12]
 	now := time.Now().UTC()
+	// B291: bind the timestamps through DialectKind.TimeValue — a raw
+	// time.Time lands in a SQLite column as Go's String() form, which the
+	// page readers could not decode before B291 (the row rendered "—").
+	//
+	// B363 (2026-10-08, live): these three comment lines used to sit INSIDE the
+	// SQL literal — they followed the `+db.ActiveDialect().NowExpr()+`
+	// concatenation, so PostgreSQL received
+	//
+	//     … last_seen_at = EXTRACT(epoch FROM now())
+	//     	// B291: bind the timestamps through DialectKind.TimeValue — a raw
+	//
+	// and answered `insert node: ERROR: syntax error at or near ":" (SQLSTATE
+	// 42601)`. The JOIN ENDPOINT THEREFORE NEVER WORKED on the production
+	// dialect: every "create the cluster from the panel alone" attempt died
+	// here with a 401 carrying that SQL text. Found by running the panel's own
+	// onboarding block on a real second host, which is exactly what that flow
+	// exists for.
 	_, err = d.Exec(`
 		INSERT INTO cluster_node (
 			id, cluster_id, hostname, tailscale_ip, roles, state,
@@ -244,11 +261,8 @@ func Join(d *sql.DB, secret string, req *JoinRequest) (*JoinResponse, error) {
 		ON CONFLICT (id) DO UPDATE SET
 			tailscale_ip = EXCLUDED.tailscale_ip,
 			skygate_version = EXCLUDED.skygate_version,
-			last_seen_at = `+db.ActiveDialect().NowExpr()+`
-	// B291: bind the timestamps through DialectKind.TimeValue — a raw
-	// time.Time lands in a SQLite column as Go's String() form, which the
-	// page readers could not decode before B291 (the row rendered "—").
-	`, nodeID, clusterID, req.Hostname, req.TailscaleIP,
+			last_seen_at = `+db.ActiveDialect().NowExpr(),
+		nodeID, clusterID, req.Hostname, req.TailscaleIP,
 		pqStringArray(roles), req.SkygateVersion, db.ActiveDialect().TimeValue(now))
 	if err != nil {
 		return nil, fmt.Errorf("insert node: %w", err)
@@ -322,11 +336,11 @@ type HeartbeatRequest struct {
 // returns on success. State is the new state of the
 // node (e.g. "ready" after the first heartbeat).
 type HeartbeatResponse struct {
-	NodeID                string `json:"node_id"`
-	State                 string `json:"state"`
-	LastSeenAt            int64  `json:"last_seen_unix"`
-	NextHeartbeatSeconds  int    `json:"next_heartbeat_seconds"`
-	HeartbeatsUntilStale  int    `json:"heartbeats_until_stale"`
+	NodeID               string `json:"node_id"`
+	State                string `json:"state"`
+	LastSeenAt           int64  `json:"last_seen_unix"`
+	NextHeartbeatSeconds int    `json:"next_heartbeat_seconds"`
+	HeartbeatsUntilStale int    `json:"heartbeats_until_stale"`
 }
 
 // ErrNodeNotFound is returned by Heartbeat when the

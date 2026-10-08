@@ -241,7 +241,6 @@ internal/metrics/metrics.go
 internal/middleware/middleware.go
 internal/module/manager.go
 internal/module/module_test.go
-internal/module/tailscale/install.go
 internal/module/tailscale/tailscale.go
 internal/module/tailscale/tailscale_test.go
 internal/monitorinbox/monitorinbox.go

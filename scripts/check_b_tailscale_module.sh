@@ -171,19 +171,19 @@ else
     fail "NewModuleWithRunner() constructor exists" "missing"
 fi
 
-# --- contract 10: B179 netfilter-mode=nodir safety ---
-# Tailscale up must always use --netfilter-mode=nodir (never
+# --- contract 10: B179 netfilter-mode=nodivert safety ---
+# Tailscale up must always use --netfilter-mode=nodivert (never
 # --netfilter-mode=off) per B179.
-if grep -q '\-\-netfilter-mode=nodir' "${PKG_DIR}/install.go"; then
-    N_NODIR=$(grep -c '\-\-netfilter-mode=nodir' "${PKG_DIR}/install.go")
-    pass "B179 safety: --netfilter-mode=nodir present in install.go (${N_NODIR} sites)"
+if grep -q '\-\-netfilter-mode=nodivert' "${PKG_DIR}/install.go"; then
+    N_NODIR=$(grep -c '\-\-netfilter-mode=nodivert' "${PKG_DIR}/install.go")
+    pass "B179 safety: --netfilter-mode=nodivert present in install.go (${N_NODIR} sites)"
     if grep -q '\-\-netfilter-mode=off' "${PKG_DIR}/install.go"; then
         fail "B179 safety: --netfilter-mode=off absent" "found --netfilter-mode=off — this re-occurs the B179 trap"
     else
         pass "B179 safety: --netfilter-mode=off absent"
     fi
 else
-    fail "B179 safety: --netfilter-mode=nodir present in install.go" "missing"
+    fail "B179 safety: --netfilter-mode=nodivert present in install.go" "missing"
 fi
 
 # --- contract 11: sub-feature Requires chain (DERP needs telegram + exit) ---

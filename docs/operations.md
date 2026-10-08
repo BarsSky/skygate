@@ -472,7 +472,7 @@ The auto-deploy/auto-config surface, by name:
    headscale 0.29.x has no `nodes move`, so the only fix is re-provisioning.
 6. **Migrate the DB before swapping the binary.** The applier runs `migrate-only`
    *before* the swap for exactly this reason.
-7. **`--netfilter-mode=nodir`, never `off`** — `off` leaves a stale `ts-input`
+7. **`--netfilter-mode=nodivert`, never `off`** — `off` leaves a stale `ts-input`
    chain that can black-hole traffic later.
 
 ### 2.4 How the pipeline is tested
