@@ -45,6 +45,9 @@ SQDRV=internal/db/driver_sqlite.go
 DBH=internal/db/device_rules_all_devices.go
 PROP=internal/feature/exit_rules/all_devices.go
 FORM=internal/feature/exit_rules/form_my.go
+# GetMyExitRules moved to form_my_rules.go (pure move); the GET-handler
+# operands (D2, D5b) read the new file, the POST-side ones stay in FORM.
+FORM_RULES=internal/feature/exit_rules/form_my_rules.go
 SYNC=internal/feature/exit_rules/sync.go
 TMPL=internal/handlers/templates/exit_rules.html
 SCHEMA_TEST=internal/db/migrations_sqlite_schema_test.go
@@ -148,7 +151,7 @@ if grep -q 'func (s \*Service) allDeviceRuleKeys(userID int64) map\[string\]bool
 else
   bad "D1: the user cannot tell a rule that follows their new device from one that does not"
 fi
-if grep -q 'AllDevices bool' internal/db/device_rules.go && grep -q '\.AllDevices = keys\[' "$FORM"; then
+if grep -q 'AllDevices bool' internal/db/device_rules.go && grep -q '\.AllDevices = keys\[' "$FORM_RULES"; then
   ok "D2: DeviceRule carries the marker and the page fills it in"
 else
   bad "D2: the marker never reaches the template"
@@ -187,8 +190,8 @@ if grep -qE '^\s*AllDevices\s+bool\s*$' internal/feature/exit_rules/cdn_group.go
 else
   bad "D5a: RuleRow has no AllDevices field — the template badge path crashes the render"
 fi
-if grep -q 'AllDevices:\s*r\.AllDevices' "$FORM"; then
-  ok "D5b: form_my.go copies r.AllDevices during db.DeviceRule → RuleRow"
+if grep -q 'AllDevices:\s*r\.AllDevices' "$FORM_RULES"; then
+  ok "D5b: form_my_rules.go copies r.AllDevices during db.DeviceRule → RuleRow"
 else
   bad "D5b: the projection drops r.AllDevices — the badge never reaches the template"
 fi

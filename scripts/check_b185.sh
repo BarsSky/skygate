@@ -134,8 +134,8 @@ check_ge "D-cdn-prefix" 1 "$(count "$REPO/internal/feature/exit_rules/resolved_b
 # E. ruleApprovedInHeadscale calls LookupResolvedForDomain
 check_ge "E" 1 "$(count "$REPO/internal/feature/exit_rules/form_admin.go" 'LookupResolvedForDomain')"
 
-# F. form_my.go statusByRuleID calls LookupResolvedForDomain
-check_ge "F" 1 "$(count "$REPO/internal/feature/exit_rules/form_my.go" 'LookupResolvedForDomain')"
+# F. form_my_rules.go statusByRuleID calls LookupResolvedForDomain (GetMyExitRules moved here)
+check_ge "F" 1 "$(count "$REPO/internal/feature/exit_rules/form_my_rules.go" 'LookupResolvedForDomain')"
 
 # G. form_admin_b184_test.go still has 7 tests
 # (B185 didn't break B184; we check the old count)

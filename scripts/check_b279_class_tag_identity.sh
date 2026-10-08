@@ -66,7 +66,7 @@ RECON=internal/feature/exit_rules/reconciler.go
 HYG=internal/feature/exit_rules/pref_hygiene.go
 SYNC=internal/feature/exit_rules/sync.go
 PO=internal/feature/exit_rules/prefix_owner.go
-FORMMY=internal/feature/exit_rules/form_my.go
+FORMMY=internal/feature/exit_rules/form_my_rules.go
 STORE=internal/feature/exit_rules/store.go
 MON=internal/monitoring/exit_node_monitor.go
 TPL=internal/handlers/templates/user/exit_nodes.html
@@ -224,7 +224,10 @@ fi
 # Capture the function body first: `awk | grep -q` under `pipefail` can
 # fail spuriously (AGENTS trap #9 — grep -q exits at the first match and
 # awk dies with SIGPIPE).
-APPLY_PREF_BODY="$(awk '/func \(s \*Service\) PostMyExitRulesApplyPreferred/,/^}/' "$FORMMY" 2>/dev/null)"
+# NOTE: PostMyExitRulesApplyPreferred stayed in form_my.go when GetMyExitRules
+# moved to form_my_rules.go (pure move), so read the remainder file here.
+MY_FILE=internal/feature/exit_rules/form_my.go
+APPLY_PREF_BODY="$(awk '/func \(s \*Service\) PostMyExitRulesApplyPreferred/,/^}/' "$MY_FILE" 2>/dev/null)"
 if grep -q 'ListExitNodes' <<< "$APPLY_PREF_BODY"; then
   ok "G1: apply-preferred checks the preferred hostname against the LIVE exit nodes before writing"
 else

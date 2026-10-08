@@ -66,6 +66,9 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 SYNC=internal/feature/exit_rules/sync.go
 SVC=internal/feature/exit_rules/form_my.go
+# GetMyExitRules moved to form_my_rules.go (pure move), so the /my/exit-rules
+# call-site operands below read the new file.
+SVC_RULES=internal/feature/exit_rules/form_my_rules.go
 ADMIN=internal/feature/exit_rules/form_admin.go
 RECON=internal/feature/exit_rules/reconciler.go
 INDEX=internal/feature/exit_rules/approved_routes_index.go
@@ -134,8 +137,8 @@ else
   bad "B2: dual-index is missing — the GivenName/Hostname mismatch bug is back"
 fi
 
-if grep -q 'indexNodesApprovedRoutes' "$SVC" && grep -q 'indexNodesApprovedRoutes' "$ADMIN"; then
-  ok "B3: both /my/exit-rules (form_my.go) and /admin/exit-rules (form_admin.go) use the helper"
+if grep -q 'indexNodesApprovedRoutes' "$SVC_RULES" && grep -q 'indexNodesApprovedRoutes' "$ADMIN"; then
+  ok "B3: both /my/exit-rules (form_my_rules.go) and /admin/exit-rules (form_admin.go) use the helper"
 else
   bad "B3: one of the two views still has the inline loop — admin/myrules will diverge again"
 fi

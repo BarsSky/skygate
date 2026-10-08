@@ -35,7 +35,9 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 QUERIES=internal/db/queries.go
 DB=internal/db/device_rules.go
-SVC=internal/feature/exit_rules/form_my.go
+# GetMyExitRules moved to form_my_rules.go (pure move), so the /my/exit-rules
+# pagination operands below read the new file.
+SVC=internal/feature/exit_rules/form_my_rules.go
 ADMIN=internal/feature/exit_rules/form_admin.go
 TMPL=internal/handlers/templates/exit_rules.html
 ADMINTMPL=internal/handlers/templates/admin/exit_rules.html
@@ -83,7 +85,7 @@ fi
 
 # --- C: /my/exit-rules reads ?page=&page_size= ---------------------------
 if grep -q 'GetDeviceRulesForUserPaged' "$SVC"; then
-  ok "C1: form_my.go GetMyExitRules calls the paged helper"
+  ok "C1: form_my_rules.go GetMyExitRules calls the paged helper"
 else
   bad "C1: /my/exit-rules still uses the unpaged getDeviceRules — load is O(N)"
 fi

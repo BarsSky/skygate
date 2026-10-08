@@ -68,7 +68,7 @@ cd "${SKYGATE_DIR}" || exit 1
 echo "skygate root: ${SKYGATE_DIR}"
 
 PCHECK="internal/feature/exit_rules/preferred_check.go"
-FORM_MY="internal/feature/exit_rules/form_my.go"
+FORM_MY="internal/feature/exit_rules/form_my_rules.go"   # GetMyExitRules moved here (pure move)
 FORM_ADMIN="internal/feature/exit_rules/form_admin.go"
 # The admin system-tests SURFACE, not one file: internal/feature/admin/system_tests.go
 # was split in refactor Phase D (2026-10-01) and the code this contract greps moved

@@ -73,6 +73,7 @@ QUERIES=internal/db/queries.go
 DB=internal/db/device_rules.go
 ADMIN=internal/feature/exit_rules/form_admin.go
 SVC=internal/feature/exit_rules/form_my.go
+SVC_RULES=internal/feature/exit_rules/form_my_rules.go
 ALLDEV=internal/feature/exit_rules/all_devices.go
 RECON=internal/feature/exit_rules/reconciler.go
 RSDATA=internal/feature/exit_rules/routescript_data.go
@@ -172,18 +173,18 @@ else
 fi
 
 # --- G: form_my.go status loop has auto_pending + user-level fallback -------
-STATUS_LINE=$(grep -n 'statusByRuleID := map\[int\]string{}' "$SVC" | head -1 | cut -d: -f1)
+STATUS_LINE=$(grep -n 'statusByRuleID := map\[int\]string{}' "$SVC_RULES" | head -1 | cut -d: -f1)
 if [ -n "$STATUS_LINE" ]; then
   # Find the matching closing brace via a counter (the block
   # contains nested `if`/`else` but no inner functions).
-  STATUS_END=$(awk -v start="$STATUS_LINE" 'NR==start {depth=0} NR>=start {n=gsub(/\{/,"{"); depth+=n; n=gsub(/\}/,"}"); depth-=n; if (NR>start && depth==0) {print NR; exit}}' "$SVC")
+  STATUS_END=$(awk -v start="$STATUS_LINE" 'NR==start {depth=0} NR>=start {n=gsub(/\{/,"{"); depth+=n; n=gsub(/\}/,"}"); depth-=n; if (NR>start && depth==0) {print NR; exit}}' "$SVC_RULES")
   STATUS_END="${STATUS_END:-99999}"
-  if sed -n "${STATUS_LINE},${STATUS_END}p" "$SVC" | grep -q '"auto_pending"'; then
-    ok "G1: form_my.go status loop emits auto_pending for empty exit_node_id rules"
+  if sed -n "${STATUS_LINE},${STATUS_END}p" "$SVC_RULES" | grep -q '"auto_pending"'; then
+    ok "G1: form_my_rules.go status loop emits auto_pending for empty exit_node_id rules"
   else
     bad "G1: auto rules are still counted as a mismatch (no auto_pending branch)"
   fi
-  if sed -n "${STATUS_LINE},${STATUS_END}p" "$SVC" | grep -q 'pref = userPreferredHost'; then
+  if sed -n "${STATUS_LINE},${STATUS_END}p" "$SVC_RULES" | grep -q 'pref = userPreferredHost'; then
     ok "G2: user-level preferred is the fallback when the device has no per-device pref"
   else
     bad "G2: mismatch count still ignores user-level preferred (banner undercounts)"

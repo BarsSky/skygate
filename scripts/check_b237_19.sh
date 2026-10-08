@@ -110,16 +110,16 @@ fi
 
 # --- C. The page-data wiring ---
 
-# C.1 the GET handler (GetMyExitRules) reads ?err= and
-# puts it on the page data
-if grep -qE 'errMsg := r\.URL\.Query\(\)\.Get\("err"\)' internal/feature/exit_rules/form_my.go 2>/dev/null; then
+# C.1 the GET handler (GetMyExitRules — moved to form_my_rules.go) reads ?err=
+# and puts it on the page data
+if grep -qE 'errMsg := r\.URL\.Query\(\)\.Get\("err"\)' internal/feature/exit_rules/form_my_rules.go 2>/dev/null; then
     ok "C.1 GET handler reads ?err= and wires it to the page data"
 else
     bad "C.1 GET handler must read ?err= and wire it to the page data"
 fi
 
 # C.2 the page data struct includes the err field
-if grep -qE '"err":\s+errMsg' internal/feature/exit_rules/form_my.go 2>/dev/null; then
+if grep -qE '"err":\s+errMsg' internal/feature/exit_rules/form_my_rules.go 2>/dev/null; then
     ok "C.2 page data includes the 'err' field"
 else
     bad "C.2 page data must include the 'err' field for the template"

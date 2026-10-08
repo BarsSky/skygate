@@ -51,6 +51,9 @@ cd "${SKYGATE_DIR}" || exit 1
 echo "skygate root: ${SKYGATE_DIR}"
 
 FORM_MY="internal/feature/exit_rules/form_my.go"
+# GetMyExitRules moved to form_my_rules.go (pure move); contract D below
+# asserts the GET handler, so it reads the new file.
+FORM_MY_RULES="internal/feature/exit_rules/form_my_rules.go"
 TEMPLATE="internal/handlers/templates/exit_rules.html"
 CATALOG="internal/i18n/catalog_exit_rules.go"
 
@@ -145,34 +148,34 @@ done
 # Contract D: GET handler reads new params + back-compat for ?existing=
 # ------------------------------------------------------------------------------
 echo
-echo "=== D. form_my.go GetMyExitRules reads new params + back-compat ==="
-if grep -q 'Query().Get("existing_id")' "${FORM_MY}"; then
+echo "=== D. form_my_rules.go GetMyExitRules reads new params + back-compat ==="
+if grep -q 'Query().Get("existing_id")' "${FORM_MY_RULES}"; then
     ok "GET handler reads existing_id"
 else
     bad "GET handler missing Query().Get(\"existing_id\")"
 fi
-if grep -q 'Query().Get("blocking_ip")' "${FORM_MY}"; then
+if grep -q 'Query().Get("blocking_ip")' "${FORM_MY_RULES}"; then
     ok "GET handler reads blocking_ip"
 else
     bad "GET handler missing Query().Get(\"blocking_ip\")"
 fi
-if grep -q 'Query().Get("parent_domain")' "${FORM_MY}"; then
+if grep -q 'Query().Get("parent_domain")' "${FORM_MY_RULES}"; then
     ok "GET handler reads parent_domain"
 else
     bad "GET handler missing Query().Get(\"parent_domain\")"
 fi
 # Back-compat: ?existing= should still be honored (treated as target)
-if grep -q 'Query().Get("existing")' "${FORM_MY}" && \
-   grep -q 'target := r.URL.Query().Get("target")' "${FORM_MY}"; then
+if grep -q 'Query().Get("existing")' "${FORM_MY_RULES}" && \
+   grep -q 'target := r.URL.Query().Get("target")' "${FORM_MY_RULES}"; then
     ok "back-compat: ?existing= falls back to ?target= in GET handler"
 else
     bad "GET handler missing back-compat for ?existing="
 fi
 # Template data dict: blocking_ip, parent_domain, existing_id
 # are all passed.
-if grep -q '"blocking_ip":' "${FORM_MY}" && \
-   grep -q '"parent_domain":' "${FORM_MY}" && \
-   grep -q '"existing_id":' "${FORM_MY}"; then
+if grep -q '"blocking_ip":' "${FORM_MY_RULES}" && \
+   grep -q '"parent_domain":' "${FORM_MY_RULES}" && \
+   grep -q '"existing_id":' "${FORM_MY_RULES}"; then
     ok "template data dict exposes blocking_ip + parent_domain + existing_id"
 else
     bad "template data dict missing one of: blocking_ip, parent_domain, existing_id"

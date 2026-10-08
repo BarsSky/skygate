@@ -53,6 +53,7 @@ LIMITS=internal/feature/exit_rules/rule_limits_b328.go
 SETTINGS=internal/feature/exit_rules/limits_settings_b328.go
 SPREAD=internal/feature/exit_rules/spread_b328.go
 MY=internal/feature/exit_rules/form_my.go
+MY_RULES=internal/feature/exit_rules/form_my_rules.go
 ADMIN=internal/feature/exit_rules/form_admin.go
 API=internal/feature/exit_rules/api.go
 TPLMY=internal/handlers/templates/exit_rules.html
@@ -245,7 +246,7 @@ for key in 'exit_rules_admin.limits_title' 'exit_rules_admin.limits_help' 'exit_
   fi
 done
 # D8: the DISPLAYED caps must come from the same call the guard uses.
-if grep -qF 'displayLimits, _ := s.effectiveRuleLimits(c.Username)' "$MY" && \
+if grep -qF 'displayLimits, _ := s.effectiveRuleLimits(c.Username)' "$MY_RULES" && \
    grep -qF 'adminLimits, limitSources := s.effectiveRuleLimits(c.Username)' "$ADMIN"; then
   ok "D8: both pages display the caps the guard enforces (one resolver call each)"
 else

@@ -47,7 +47,7 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 B347=internal/feature/exit_rules/device_status_b347.go
 B347_TEST=internal/feature/exit_rules/device_status_b347_test.go
-FORM=internal/feature/exit_rules/form_my.go
+FORM=internal/feature/exit_rules/form_my_rules.go
 TPL=internal/handlers/templates/exit_rules.html
 CATALOG=internal/i18n/catalog_exit_rules.go
 ALLOW=scripts/gofmt_legacy_allowlist.txt

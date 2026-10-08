@@ -43,7 +43,7 @@ skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 GO=internal/feature/exit_rules/inert_rules_b343.go
-MYGO=internal/feature/exit_rules/form_my.go
+MYGO=internal/feature/exit_rules/form_my_rules.go
 ADMGO=internal/feature/exit_rules/form_admin.go
 MYTPL=internal/handlers/templates/exit_rules.html
 ADMTPL=internal/handlers/templates/admin/exit_rules.html

@@ -126,8 +126,8 @@ check_ge "F-eq-wrong" 1 "$(count "$REPO/internal/handlers/templates/exit_rules.h
 # G. /admin/exit-rules template uses .ApprovedInHeadscale
 check_ge "G" 1 "$(count "$REPO/internal/handlers/templates/admin/exit_rules.html" '\.ApprovedInHeadscale')"
 
-# H. form_my.go passes StatusByRuleID to the template
-check_ge "H" 1 "$(count "$REPO/internal/feature/exit_rules/form_my.go" '"StatusByRuleID":\s*statusByRuleID')"
+# H. form_my_rules.go passes StatusByRuleID to the template (GetMyExitRules moved here)
+check_ge "H" 1 "$(count "$REPO/internal/feature/exit_rules/form_my_rules.go" '"StatusByRuleID":\s*statusByRuleID')"
 
 # I. form_admin.go passes approvedByExitNode to annotator
 # (multi-line call — the map arg is on the closing line, separated

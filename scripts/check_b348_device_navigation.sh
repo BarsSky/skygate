@@ -49,7 +49,7 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 LIB=internal/feature/exit_rules/device_index_b348.go
 LIB_TEST=internal/feature/exit_rules/device_index_b348_test.go
-FORM_MY=internal/feature/exit_rules/form_my.go
+FORM_MY=internal/feature/exit_rules/form_my_rules.go
 FORM_ADMIN=internal/feature/exit_rules/form_admin.go
 TPL_MY=internal/handlers/templates/exit_rules.html
 TPL_ADMIN=internal/handlers/templates/admin/exit_rules.html

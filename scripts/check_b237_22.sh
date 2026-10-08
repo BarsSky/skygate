@@ -110,18 +110,19 @@ fi
 
 # --- B. Wire-up: form_my.go + form_admin.go pass the view ---
 
-# B.1 form_my.go passes GroupedByHostnameCDN to the template
-if grep -q '"GroupedByHostnameCDN":' internal/feature/exit_rules/form_my.go 2>/dev/null; then
-    ok "B.1 form_my.go passes GroupedByHostnameCDN to the template"
+# B.1 form_my_rules.go passes GroupedByHostnameCDN to the template
+# (GetMyExitRules moved there — pure move)
+if grep -q '"GroupedByHostnameCDN":' internal/feature/exit_rules/form_my_rules.go 2>/dev/null; then
+    ok "B.1 form_my_rules.go passes GroupedByHostnameCDN to the template"
 else
-    bad "B.1 form_my.go must pass GroupedByHostnameCDN to the template"
+    bad "B.1 form_my_rules.go must pass GroupedByHostnameCDN to the template"
 fi
 
-# B.2 form_my.go calls GroupRulesByCDN
-if grep -q 'GroupRulesByCDN(' internal/feature/exit_rules/form_my.go 2>/dev/null; then
-    ok "B.2 form_my.go calls GroupRulesByCDN"
+# B.2 form_my_rules.go calls GroupRulesByCDN
+if grep -q 'GroupRulesByCDN(' internal/feature/exit_rules/form_my_rules.go 2>/dev/null; then
+    ok "B.2 form_my_rules.go calls GroupRulesByCDN"
 else
-    bad "B.2 form_my.go must call GroupRulesByCDN"
+    bad "B.2 form_my_rules.go must call GroupRulesByCDN"
 fi
 
 # B.3 form_admin.go calls GroupAdminRulesByCDN
