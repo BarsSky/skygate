@@ -196,7 +196,10 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 #     left the file clean;
 #   * internal/backup/mount.go — B368 made the S3 branch of TestConnection do a
 #     real BucketExists probe, and formatting the new code left the file clean.
-FROZEN=252
+#   * internal/certsync/certsync.go — B371 made the tick suppress a repeated
+#     identical fetch failure; `gofmt -w` (rule 3 requires it for every file this
+#     block touches) reflowed the file's long doc comment and left it clean.
+FROZEN=251
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

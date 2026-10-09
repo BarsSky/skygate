@@ -28,24 +28,22 @@
 //     clicked Apply, and within a minute both nodes have the
 //     new cert").
 //   - On each tick:
-//       1. HEAD .version in S3 (no body — just metadata).
-//       2. If the remote version > local version OR the
-//          remote cert SHA-256 != local cert SHA-256:
-//            a. Download cert.pem + key.pem to a temp file.
-//            b. Verify the pair is a valid x509 cert + RSA/EC
-//               key (crypto/x509.ParseCertificate + ParsePKCS1/8).
-//            c. Atomic rename into the live path.
-//            d. Trigger the Caddy reload callback (operator-
-//               supplied: usually `docker exec skygate-caddy
-//               caddy reload`).
-//            e. Update local .version cache + write an
-//               audit_log row "certsync.pull" with the new
-//               SHA-256 + version.
-//   - On each tick (regardless of cert change):
-//       - Run a "self" check: if the local cert expires within
-//         7 days, log a WARNING + send Telegram alert (so the
-//         operator has time to renew before the cert actually
-//         dies and breaks the HTTPS listener).
+//     1. HEAD .version in S3 (no body — just metadata).
+//     2. If the remote version > local version OR the remote
+//     cert SHA-256 != local cert SHA-256, then: download
+//     cert.pem + key.pem to a temp file; verify the pair is a
+//     valid x509 cert + RSA/EC key (crypto/x509.ParseCertificate
+//     and ParsePKCS1/ParsePKCS8); atomically rename it into the
+//     live path; trigger the Caddy reload callback
+//     (operator-supplied: usually `docker exec skygate-caddy
+//     caddy reload`); and update the local .version cache +
+//     write an audit_log row "certsync.pull" with the new
+//     SHA-256 + version.
+//   - On each tick (regardless of cert change), run a "self"
+//     check: if the local cert expires within 7 days, log a
+//     WARNING + send a Telegram alert (so the operator has time
+//     to renew before the cert actually dies and breaks the
+//     HTTPS listener).
 //
 // Why S3 + a .version file (not a watch on the active node):
 //   - The active node is the SOURCE of truth for cert content
@@ -86,8 +84,10 @@
 //     the certsync log lines.
 //
 // Concurrency:
-//     + 1 Caddy reload) so a 30s tick never overlaps with
-//     itself in practice; the mutex is a safety net.
+//   - One tick runs at a time (the S3 read + the pull + the
+//     Caddy reload are serialised), so a 30s tick never
+//     overlaps with itself in practice; the mutex is a
+//     safety net.
 //   - The local .version cache is read on every tick; it's a
 //     single file read, no locking needed.
 package certsync
@@ -122,7 +122,7 @@ import (
 // the operator can reason about it without knowing the
 // internals.
 type CertSync struct {
-	mu              sync.Mutex
+	mu               sync.Mutex
 	lastLocalVersion int64
 	lastLocalSHA     string
 }
@@ -290,6 +290,41 @@ func Start(ctx context.Context, deps CertSyncDeps) (*CertSync, error) {
 	return cs, nil
 }
 
+// fetchFailureIsNew reports whether an identical .version fetch failure should be
+// logged now (B371).
+//
+// WHY. On the reference deployment (2026-10-09) certsync was pointed at the
+// nonsense host `s3..amazonaws.com` (see cmd/skygate/main_helpers.go,
+// certSyncS3Config) and the journal carried the SAME line every 30 seconds —
+// 2880 identical lines a day, in exactly the place the operator looks for real
+// events. The first failure of a kind is still reported immediately; a different
+// failure is never suppressed; and the same one reappears after an hour, so a
+// long outage is still visible in the journal. This is the B318 pattern
+// (discoveryErrorIsNew) applied to the cert pull.
+var (
+	certFetchErrMu   sync.Mutex
+	certFetchErrLast string
+	certFetchErrAt   time.Time
+)
+
+// certFetchErrRepeatAfter is how long an identical failure is suppressed.
+const certFetchErrRepeatAfter = time.Hour
+
+func fetchFailureIsNew(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	certFetchErrMu.Lock()
+	defer certFetchErrMu.Unlock()
+	if msg == certFetchErrLast && time.Since(certFetchErrAt) < certFetchErrRepeatAfter {
+		return false
+	}
+	certFetchErrLast = msg
+	certFetchErrAt = time.Now()
+	return true
+}
+
 // run is the goroutine body. Splits into tick() (one pass
 // over S3 + maybe pull) and a sleep that's canceled by
 // ctx. Mirrors the B130/B142 scheduler pattern.
@@ -321,7 +356,13 @@ func (c *CertSync) tick(ctx context.Context, deps CertSyncDeps) {
 		// boot state, not an error. Anything else is a
 		// transient S3 issue; next tick retries.
 		if !isNotFound(err) {
-			log.Printf("certsync: get .version: %v", err)
+			// B371: and the SAME failure is reported at most once an hour —
+			// a wrong endpoint used to print this line every 30 s (2880
+			// times a day), which is how a configuration error read as
+			// "certsync is hanging" instead of "certsync cannot reach S3".
+			if fetchFailureIsNew(err) {
+				log.Printf("certsync: get .version: %v", err)
+			}
 		}
 		return
 	}

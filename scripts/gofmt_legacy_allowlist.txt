@@ -44,7 +44,6 @@ internal/backup/config.go
 internal/backup/prune_test.go
 internal/backup/s3.go
 internal/backup/verify_scheduler.go
-internal/certsync/certsync.go
 internal/cluster/join_b201_test.go
 internal/config/config.go
 internal/config/config_test.go

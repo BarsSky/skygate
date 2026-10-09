@@ -12,6 +12,76 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.111 — certsync must read the S3 the operator configured (B371)
+
+**Date:** 2026-10-09 · **Base:** `v1.5.110` → this tag · **Compatibility:** behaviour only — no
+schema change, no migration, no new setting.
+
+### What was measured
+
+The operator configured S3 on `/admin/backup` (endpoint `https://minio.skynas.ru`, bucket
+`skygate-backups`) and the panel's own backup worked. The journal carried, **every 30 seconds,
+forever**:
+
+```
+certsync: get .version: Get "http://s3..amazonaws.com/skygate-backups/?location=": no such host
+```
+
+`2880` identical lines a day, in the one place the operator looks for real events — which is why a
+configuration error read as "certsync is hanging".
+
+### Root cause — a stale premise, not a typo
+
+B147 built certsync's config with `buildBackupConfigForCertSync`, which read
+`SKYGATE_S3_ENDPOINT` / `SKYGATE_S3_REGION` from the **environment only**, documented as "same
+source the backup subsystem uses, so operators only configure one place". That stopped being true
+when the backup subsystem moved to `global_settings` (`backup.Load`, written by `/admin/backup`).
+
+With those variables unset **both** the endpoint and the region were empty, and
+`internal/backup/s3.go` derived:
+
+```go
+ep = fmt.Sprintf("https://s3.%s.amazonaws.com", c.S3Region)   // region == ""
+```
+
+— the double-dotted host `s3..amazonaws.com`, which minio-go normalised to `http`. The scheduler
+started happily (the failure happens inside the first tick, so nothing at boot could notice) and
+no surface anywhere said which S3 it was reading from.
+
+### Fixes
+
+1. **The DB is the first source.** The four transport settings (endpoint, region, access key,
+   secret key) come from the same `global_settings` the panel writes; the `SKYGATE_S3_*` env vars
+   are the documented **fallback**, used only where the DB leaves a field empty. The certsync
+   **bucket** stays its own setting (`cfg.CertSyncBucket`) — a standby's cert bucket need not be
+   the primary's backup destination bucket.
+2. **An unusable config is refused by name.** New `certSyncS3ConfigProblem` rejects, at boot: no
+   endpoint AND no region (it would be handed to minio-go), missing credentials, missing bucket —
+   each naming the setting to fix. `main.go` then logs `certsync: disabled — <reason>` and does
+   **not** start the doomed 30 s loop.
+3. **The startup line says where it reads from**, and an identical tick failure is reported at most
+   **once an hour** (`fetchFailureIsNew` — the B318 `discoveryErrorIsNew` pattern, in the same
+   file). A different failure is never suppressed and the same one returns after the window, so a
+   long outage stays visible.
+
+### Files
+
+* `cmd/skygate/main_helpers.go` — `certSyncS3Config`, `certSyncS3ConfigProblem`,
+  `certSyncS3EndpointLog` (the env-only builder is gone)
+* `cmd/skygate/main.go` — passes the DB, refuses to start on a bad config, reports endpoint+region
+* `internal/certsync/certsync.go` — `fetchFailureIsNew` + the tick guard (`gofmt -w` also applied;
+  the file left the B337 gofmt allowlist, 252 → 251)
+* `cmd/skygate/cert_sync_s3_b371_test.go`, `internal/certsync/certsync_b371_test.go` (new)
+* `scripts/check_b147.sh` — contract C renegotiated in place (it asserted the env-only helper by name)
+* `scripts/check_b371_certsync_uses_the_configured_s3.sh` (new, 26 contracts)
+
+### Live verification
+
+The reference deployment has `backup.s3_endpoint=https://minio.skynas.ru`,
+`backup.s3_region=us-east-1` and the panel credentials in `global_settings`; after this change
+certsync's client is built from those values and the enabled line names
+`endpoint=https://minio.skynas.ru, region=us-east-1`.
+
 ## v1.5.110 — the portal's own missing tailnet is not a relay failure, and an IPv6 jump rung must bracket once (B370)
 
 **Date:** 2026-10-09 · **Base:** `v1.5.109` → this tag · **Compatibility:** behaviour only — no

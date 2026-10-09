@@ -15,10 +15,14 @@
 #      VersionBumpTriggersPull, SHAMismatchTriggersPull,
 #      InvalidCertFails.
 #   C. cmd/skygate/main.go wires the certsync scheduler
-#      via Start() (gated on cfg.CertSyncEnabled), the
-#      buildBackupConfigForCertSync helper builds a
-#      minimal backup.Config from env vars, and the
-#      S3 adapter wraps the production minio client.
+#      via Start() (gated on cfg.CertSyncEnabled), and the
+#      S3 config is built from the place the operator
+#      configures S3 — since B371 the DB global_settings the
+#      panel writes, with SKYGATE_S3_* as the env fallback
+#      (B147 itself read the env vars alone, which handed a
+#      panel-configured deployment the host
+#      s3..amazonaws.com) — and the S3 adapter wraps the
+#      production minio client.
 #   D. internal/config/config.go has the 4 new env-driven
 #      config fields (CertSyncEnabled, CertSyncBucket,
 #      CertSyncLocalDir, CertSyncInterval) with the
@@ -167,10 +171,19 @@ if grep -q 'certsync\.Start(' "$SKY_MAIN"; then
 else
     bad "main.go missing certsync.Start call"
 fi
-if grep -q 'buildBackupConfigForCertSync' "$SKY_MAIN"; then
-    ok "main.go has buildBackupConfigForCertSync helper"
+if grep -q 'certSyncS3Config(d.DB, cfg)' "$SKY_MAIN"; then
+    # B371 renegotiated this contract in place: the builder used to be
+    # buildBackupConfigForCertSync, which read SKYGATE_S3_* from the ENVIRONMENT
+    # alone on the (stale) premise that the backup subsystem does the same. It does
+    # not — the panel writes global_settings and backup.Load reads it — so on a
+    # deployment configured in the UI both the endpoint and the region were empty
+    # and minio-go got the nonsense host s3..amazonaws.com. The property this
+    # contract exists for is unchanged: main.go builds the certsync S3 config from
+    # the ONE place the operator configures S3, and passes it to
+    # backup.NewS3ClientForConfig (asserted two lines below).
+    ok "main.go builds the certsync S3 config (certSyncS3Config) from the DB the panel writes"
 else
-    bad "main.go missing buildBackupConfigForCertSync helper"
+    bad "main.go does not build the certsync S3 config from the DB — see B371"
 fi
 if grep -q "cfg.CertSyncEnabled" "$SKY_MAIN"; then
     ok "main.go gates certsync on cfg.CertSyncEnabled"

@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -192,34 +193,106 @@ func isTailscaleRunningInContainer() bool {
 	return false
 }
 
-// 2026-08-18 (B130): adapter from the full telegram.Notifier
-// to the update package's NotifierSink. Avoids an import
-// cycle (internal/update can't import internal/telegram
-// because internal/telegram doesn't import internal/update,
-// buildBackupConfigForCertSync builds a minimal
-// backup.Config from env vars + the certsync-specific
-// bucket (cfg.CertSyncBucket). The certsync scheduler
-// uses the same S3 endpoint / credentials as the backup
-// subsystem (the bucket is the only certsync-specific
-// field), so the operator configures one place.
+// certSyncS3Config resolves the S3 settings the certsync scheduler must use
+// (B371, 2026-10-09).
 //
-// v1.5.0 / B147.
+// WHY THIS REPLACED THE ENV-ONLY BUILDER. B147 built this config from
+// SKYGATE_S3_ENDPOINT / _REGION / _ACCESS_KEY / _SECRET_KEY alone, with the
+// comment "same source the backup subsystem uses, so operators only configure
+// one place". That premise stopped being true when the backup subsystem moved to
+// global_settings (`backup.Load`, written by /admin/backup): on the reference
+// deployment the operator configured the MinIO endpoint in the PANEL, the
+// SKYGATE_S3_* variables were unset, and certsync therefore received an EMPTY
+// endpoint AND an EMPTY region — minio-go was handed the nonsense host
+// `http://s3..amazonaws.com` (note the double dot: `https://s3.%s.amazonaws.com`
+// with an empty region) and the journal carried
 //
-// Returns a Config that's safe to pass to
-// backup.NewS3ClientForConfig. The S3Prefix is left
-// empty — the certsync uses hardcoded `certs/...` keys
-// (see internal/certsync/certsync.go), not the backup's
-// S3 prefix.
-func buildBackupConfigForCertSync(cfg *config.Config) *backup.Config {
-	return &backup.Config{
-		S3Endpoint:  os.Getenv("SKYGATE_S3_ENDPOINT"),
-		S3Region:    os.Getenv("SKYGATE_S3_REGION"),
-		S3AccessKey: os.Getenv("SKYGATE_S3_ACCESS_KEY"),
-		S3SecretKey: os.Getenv("SKYGATE_S3_SECRET_KEY"),
-		S3Bucket:    cfg.CertSyncBucket,
-		// S3Prefix intentionally empty (certsync uses
-		// absolute keys: `certs/cert.pem`, etc).
+//	certsync: get .version: Get "http://s3..amazonaws.com/skygate-backups/?location=":
+//	no such host
+//
+// every 30 seconds, forever, while the panel's own S3 backup worked. The DB is
+// now the FIRST source (the panel is where the operator configures S3), the env
+// vars are the documented fallback for a deployment that sets them instead, and
+// a config that cannot work is REFUSED BY NAME instead of being handed to
+// minio-go (see certSyncS3ConfigProblem).
+//
+// The bucket stays the certsync-specific `cfg.CertSyncBucket`: it is a separate
+// setting on purpose (a standby's cert bucket need not be the primary's backup
+// destination bucket), and only the transport settings are shared.
+func certSyncS3Config(d *sql.DB, cfg *config.Config) (*backup.Config, error) {
+	out := &backup.Config{S3UseSSL: true}
+	if cfg != nil {
+		out.S3Bucket = strings.TrimSpace(cfg.CertSyncBucket)
 	}
+	if d != nil {
+		if dbc, err := backup.Load(d); err == nil && dbc != nil {
+			out.S3Endpoint = strings.TrimSpace(dbc.S3Endpoint)
+			out.S3Region = strings.TrimSpace(dbc.S3Region)
+			out.S3AccessKey = dbc.S3AccessKey
+			out.S3SecretKey = dbc.S3SecretKey
+			out.S3UseSSL = dbc.S3UseSSL
+		}
+	}
+	if out.S3Endpoint == "" {
+		out.S3Endpoint = strings.TrimSpace(os.Getenv("SKYGATE_S3_ENDPOINT"))
+	}
+	if out.S3Region == "" {
+		out.S3Region = strings.TrimSpace(os.Getenv("SKYGATE_S3_REGION"))
+	}
+	if out.S3AccessKey == "" {
+		out.S3AccessKey = os.Getenv("SKYGATE_S3_ACCESS_KEY")
+	}
+	if out.S3SecretKey == "" {
+		out.S3SecretKey = os.Getenv("SKYGATE_S3_SECRET_KEY")
+	}
+	if out.S3Bucket == "" {
+		out.S3Bucket = "skygate-backups"
+	}
+	if err := certSyncS3ConfigProblem(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// certSyncS3ConfigProblem is the single place that decides whether the resolved
+// S3 settings can carry a cert pull. It names the SPECIFIC missing piece and
+// where to set it, because the pre-B371 failure mode was not an error at all: the
+// scheduler started happily and failed with a DNS name no operator could connect
+// to a setting.
+func certSyncS3ConfigProblem(c *backup.Config) error {
+	if c == nil {
+		return errors.New("certsync: no S3 config was built")
+	}
+	if strings.TrimSpace(c.S3Bucket) == "" {
+		return errors.New("certsync: no S3 bucket — set SKYGATE_CERTSYNC_S3_BUCKET")
+	}
+	if strings.TrimSpace(c.S3Endpoint) == "" && strings.TrimSpace(c.S3Region) == "" {
+		return errors.New(`certsync: neither the S3 endpoint nor the region is set, so the client would be handed the nonsense host "s3..amazonaws.com" — set them on /admin/backup (backup.s3_endpoint / backup.s3_region) or as SKYGATE_S3_ENDPOINT / SKYGATE_S3_REGION`)
+	}
+	if strings.TrimSpace(c.S3AccessKey) == "" || strings.TrimSpace(c.S3SecretKey) == "" {
+		return errors.New("certsync: the S3 access key or secret key is empty — set them on /admin/backup (backup.s3_access_key / backup.s3_secret_key) or as SKYGATE_S3_ACCESS_KEY / SKYGATE_S3_SECRET_KEY")
+	}
+	return nil
+}
+
+// certSyncS3EndpointLog renders where the client will actually read from, for the
+// startup line: "which S3 is certsync using?" has to be answerable from the
+// journal alone (pre-B371 the only evidence was the failure).
+func certSyncS3EndpointLog(c *backup.Config) string {
+	if c == nil {
+		return "(none)"
+	}
+	ep := strings.TrimSpace(c.S3Endpoint)
+	if ep == "" {
+		// newS3Client's AWS default — mirror it so the log cannot disagree with
+		// the client that is about to be built.
+		region := strings.TrimSpace(c.S3Region)
+		if region == "" {
+			region = "us-east-1"
+		}
+		return fmt.Sprintf("(aws default) https://s3.%s.amazonaws.com", region)
+	}
+	return ep
 }
 
 // 2026-08-18 (B130): adapter from the full telegram.Notifier

@@ -2344,17 +2344,23 @@ func main() {
 	// by default (operator opts in via
 	// SKYGATE_CERTSYNC_ENABLED=true).
 	if cfg.CertSyncEnabled {
-		// B147 reads the S3 config from the backup's
-		// well-known env vars (SKYGATE_S3_*) — same
-		// source the backup subsystem uses, so
-		// operators only configure one place. The
-		// bucket is the certsync-specific one
-		// (cfg.CertSyncBucket, default
-		// "skygate-backups"); the key prefix
-		// `certs/` is hardcoded in the scheduler.
-		backupCfg := buildBackupConfigForCertSync(cfg)
-		s3Client, s3Err := backup.NewS3ClientForConfig(backupCfg)
-		if s3Err != nil {
+		// B371 (2026-10-09): the S3 settings come from the DB
+		// the panel writes (global_settings via backup.Load),
+		// with the SKYGATE_S3_* env vars as the fallback —
+		// B147 read the env vars ALONE, so a deployment whose
+		// S3 is configured on /admin/backup handed certsync an
+		// empty endpoint and an empty region and minio-go got
+		// the nonsense host "s3..amazonaws.com", retried every
+		// 30 s forever, and the panel's own backup worked.
+		// A config that cannot work is refused by name below
+		// instead of being started. The bucket stays the
+		// certsync-specific cfg.CertSyncBucket (default
+		// "skygate-backups"); the key prefix `certs/` is
+		// hardcoded in the scheduler.
+		backupCfg, cfgErr := certSyncS3Config(d.DB, cfg)
+		if cfgErr != nil {
+			log.Printf("🔐 certsync: disabled — %v (certsync will not run; fix the setting and restart)", cfgErr)
+		} else if s3Client, s3Err := backup.NewS3ClientForConfig(backupCfg); s3Err != nil {
 			log.Printf("🔐 certsync: WARN could not build S3 client: %v (certsync disabled)", s3Err)
 		} else {
 			certsyncAdapter, err := certsync.NewMinioS3Client(s3Client)
@@ -2373,7 +2379,7 @@ func main() {
 				if err != nil {
 					log.Printf("🔐 certsync: WARN start failed: %v (certsync disabled)", err)
 				} else {
-					log.Printf("🔐 certsync: enabled (interval=%s, bucket=%s, local_dir=%s, caddy_reload=not_configured)", cfg.CertSyncInterval, cfg.CertSyncBucket, cfg.CertSyncLocalDir)
+					log.Printf("🔐 certsync: enabled (interval=%s, bucket=%s, endpoint=%s, region=%s, local_dir=%s, caddy_reload=not_configured)", cfg.CertSyncInterval, backupCfg.S3Bucket, certSyncS3EndpointLog(backupCfg), backupCfg.S3Region, cfg.CertSyncLocalDir)
 				}
 			}
 		}
