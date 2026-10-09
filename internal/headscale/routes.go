@@ -479,7 +479,7 @@ func buildSetAdvertisedRoutesArgv(keyPath, host, port, cmd, jumpTarget string) [
 		"-o", "ConnectTimeout=10",
 	}
 	if jump := strings.TrimSpace(jumpTarget); jump != "" {
-		args = append(args, "-o", "ProxyCommand="+jumpProxyCommand(keyPath, jump))
+		args = append(args, "-o", "ProxyCommand="+jumpProxyCommand(keyPath, jump, host, port))
 	} else {
 		args = append(args, "-o", "ProxyCommand=none")
 	}
@@ -518,10 +518,10 @@ func buildSetAdvertisedRoutesArgv(keyPath, host, port, cmd, jumpTarget string) [
 // comes from `exit_servers` (validated by IsSafeSSHTarget) and the key path is
 // checked to be quotable by jumpProxyCommandAllowed, because this value is a shell
 // string by definition — ssh runs it with `sh -c`.
-func jumpProxyCommand(keyPath, hopTarget string) string {
+func jumpProxyCommand(keyPath, hopTarget, destHost, destPort string) string {
 	hopHost, hopPort := splitSSHTarget(strings.TrimSpace(hopTarget))
 	parts := []string{
-		"ssh", "-W", "'[%h]:%p'",
+		"ssh", "-W", "'" + ForwardSpec(destHost, destPort) + "'",
 		"-i", keyPath,
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=accept-new",
@@ -533,6 +533,49 @@ func jumpProxyCommand(keyPath, hopTarget string) string {
 	}
 	parts = append(parts, "--", hopHost)
 	return strings.Join(parts, " ")
+}
+
+// ForwardSpec renders the `-W <host>:<port>` token ssh expects, bracketing an
+// IPv6 literal EXACTLY ONCE (B370).
+//
+// WHY THIS IS NOT `'[%h]:%p' ANY MORE. ssh expands `%h` to the target AS TYPED on
+// the outer command line, and an IPv6 target must be typed bracketed
+// (`root@[fd7a:115c:a1e0::2]`) or ssh cannot tell the address from the port — so
+// `-[%h]:%p` rendered `[[fd7a:115c:a1e0::2]]:18022` and ssh refused it:
+//
+//	exit-node sync(karolina): tailnet-jump [fd7a:115c:a1e0::2]:18022 via
+//	root@100.64.0.3 … Bad stdio forwarding specification '[[fd7a:115c:a1e0::2]]:18022'
+//
+// Measured live on the reference deployment 2026-10-09: the jump rung that
+// reaches an IPv6-only relay was dead, so a relay whose Tailscale IPs are
+// IPv6-first lost one rung of the ladder. The spec is now built from the SAME
+// host/port the outer ssh is given (the caller passes both), which keeps the
+// original property — the tunnel always points at the relay this application is
+// for — and makes the bracketing deterministic.
+//
+// IPv4 and hostnames are NOT bracketed: `ssh -W host:port` is the documented
+// form, and it is what the live IPv4 jumps always carried once ssh had stripped
+// the brackets `%h` supplied.
+func ForwardSpec(host, port string) string {
+	h := strings.TrimSpace(host)
+	// The caller passes the same `[user@]host` string the outer ssh receives, so
+	// the user (if any) must be dropped here: `-W` takes a HOST, and `user@host`
+	// is not a hostname. An IPv6 literal cannot contain '@', so the last '@' is
+	// always the user separator.
+	if i := strings.LastIndex(h, "@"); i >= 0 {
+		h = h[i+1:]
+	}
+	h = strings.TrimPrefix(h, "[")
+	h = strings.TrimSuffix(h, "]")
+	if strings.Contains(h, ":") {
+		// An IPv6 literal (the caller splits a port off before this).
+		h = "[" + h + "]"
+	}
+	p := strings.TrimSpace(port)
+	if p == "" {
+		p = "22"
+	}
+	return h + ":" + p
 }
 
 // jumpProxyCommandAllowed reports whether the key path can be embedded in the

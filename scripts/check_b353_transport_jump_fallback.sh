@@ -141,8 +141,8 @@ if grep -q "$ARGV_MARK" "$ROUTES"; then
 else
   bad "C1: buildSetAdvertisedRoutesArgv is missing — the argv cannot be tested without spawning ssh"
 fi
-if grep -q '"ProxyCommand=none"' "$ROUTES" && grep -q '"ProxyCommand="+jumpProxyCommand(keyPath, jump)' "$ROUTES"; then
-  ok "C2: ProxyCommand=none for a direct connection, an explicit ssh -W tunnel for a hop"
+if grep -q '"ProxyCommand=none"' "$ROUTES" && grep -q '"ProxyCommand="+jumpProxyCommand(keyPath, jump, host, port)' "$ROUTES"; then
+  ok "C2: ProxyCommand=none for a direct connection, an explicit ssh -W tunnel for a hop (the tunnel is built from the hop AND the destination, B370)"
 else
   bad "C2: the argv lost one of the two forms"
 fi
@@ -150,7 +150,15 @@ fi
 # the implicit jump connection as `ssh -l <user> -W '[%h]:%p' <hop>` with neither the
 # identity nor the host-key policy, so it answers "Permission denied
 # (publickey,password)". A future editor must not "simplify" it back to -J.
-if grep -qF 'Permission denied (publickey,password)' "$ROUTES" && grep -qF "W '[%h]:%p'" "$ROUTES"; then
+#
+# B370 (2026-10-09): the SPEC is no longer `'[%h]:%p'`. ssh expands `%h` to the
+# target AS TYPED, an IPv6 target must be typed bracketed, so that form rendered
+# `[[fd7a:115c:a1e0::2]]:18022` and ssh refused the rung outright ("Bad stdio
+# forwarding specification"). The assertion below is therefore about the reason
+# being recorded next to the explicit form; the spec's own shape is pinned by
+# check_b370_off_tailnet_is_not_a_relay_failure.sh (single bracket, built from the
+# same host/port the outer ssh is given).
+if grep -qF 'Permission denied (publickey,password)' "$ROUTES" && grep -qF 'ProxyCommand=ssh -W' "$ROUTES"; then
   ok "C3: the measured reason -J cannot be used here is recorded next to the explicit form"
 else
   bad "C3: the file does not record why the hop is an explicit ProxyCommand"

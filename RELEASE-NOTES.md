@@ -12,6 +12,86 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.110 — the portal's own missing tailnet is not a relay failure, and an IPv6 jump rung must bracket once (B370)
+
+**Date:** 2026-10-09 · **Base:** `v1.5.109` → this tag · **Compatibility:** behaviour only — no
+schema change, no migration, no new setting.
+
+One operator action (`/admin/update`) produced a red banner naming a relay that was never broken.
+
+### What was measured
+
+The container was **recreated** at 11:18:51 and its entrypoint logged
+`[init] TS_AUTHKEY_FILE not set — Tailscale skipped`. The exit-node sync pass started at 11:19:47.
+Between 11:19:52 and 11:20:07 **every rung** of karolina's transport ladder failed:
+
+| time (UTC) | rung | result |
+|---|---|---|
+| 11:19:52 | direct tailnet `100.64.0.2:18022` | dial timeout |
+| 11:19:57 | node **name** | needs the container's DNS, unavailable |
+| 11:19:59 | peer hop `100.64.0.3:22` (emilia) | timeouts |
+| 11:20:0x | peer hop `100.64.0.4:22` (sharlotta) | timeouts |
+| — | IPv6 hop | `Bad stdio forwarding specification '[[fd7a:115c:a1e0::2]]:18022'` |
+
+Both peer hops are **tailnet** addresses, so the ladder had no rung left that did not need the
+tailnet the container did not yet have. `tailscaled` came up at 11:19:59
+(`tailscale-autostart: boot: up`, `hostname=skygate-host`) — about 70 s after start — and at
+**11:20:38, in the same pass**, emilia's routes applied over the tailnet. A live TCP probe of
+`100.64.0.2:18022` then answered **5/5 in 135 ms**, and the operator's manual Re-sync succeeded on
+the **first** rung.
+
+Nothing was wrong with karolina. But `relay_apply_state:karolina` had already been written as an
+error, so the B309/B352 machinery dropped her from the healthy set, **moved her 196 prefixes to
+another relay** and painted «Ретранслятор не удалось настроить — его префиксы переданы другому».
+Only B361's safety net kept the two devices pinned to her tag online (it withheld their pin, so
+their egress stayed unpinned rather than blackholed).
+
+### Fix 1 — the portal's own missing tailnet is not evidence about a relay
+
+This is the B362 lesson ("a deadline that expired on our own clock is not evidence about a relay")
+applied to the transport ladder.
+
+* `relayApplyOutcome` gained `NotEvidence` + `NotEvidenceReason`.
+* The ladder's failure point sets them when `!SkygateTailnetState().Ready` **and**
+  `AllCandidatesNeedThePortalTailnet(cands)` — i.e. every candidate **and every jump hop** is a
+  tailnet address. An **empty** candidate list is deliberately *not* not-evidence: that is a
+  misconfiguration and it *is* about the relay.
+* `recordRelayApply` returns before writing either `relay_apply_state:<relay>` or
+  `relay_apply_via:<relay>`, logs the named reason, and the aggregated pass logs
+  `SKIPPED (not recorded)`. The previous state stands, so there is no demotion and no prefix
+  migration.
+* A **real** failure is still recorded and still demotes — pinned by a regression that would fail
+  if the guard swallowed everything.
+
+### Fix 2 — an IPv6 jump rung must bracket its target exactly once
+
+`%h` expands to the **already-bracketed** form for a literal IPv6 target, so the B353-era
+`-W '[%h]:%p'` rendered `[[fd7a:…]]:18022` and ssh refused the rung outright.
+
+New exported `headscale.ForwardSpec(host, port)` strips a `user@` prefix and any existing
+brackets, re-brackets **only** when the host contains `:`, defaults the port to `22`, and the jump
+rung passes it to `-W` — built from the **same** host/port the outer ssh is given. The old B353 C3
+contract asserted the broken string verbatim and was **renegotiated**; it now asserts
+`ProxyCommand=ssh -W` plus the `-J` reason and rejects `%h`/`%p`.
+
+### Files
+
+* `internal/feature/exit_rules/relay_transport_tailnet_b310.go` — `AllCandidatesNeedThePortalTailnet`
+* `internal/feature/exit_rules/sync_routes.go` — `NotEvidence` / `NotEvidenceReason`, the
+  `SKIPPED (not recorded)` aggregate line
+* `internal/feature/exit_rules/relay_transport_b309.go` — `recordRelayApply` early return
+* `internal/feature/exit_rules/relay_apply_not_evidence_b370_test.go` (new)
+* `internal/headscale/routes.go` — `ForwardSpec` + the `-W` caller
+* `internal/headscale/routes_b370_test.go` (new); `routes_b353_test.go` updated
+* `scripts/check_b353_transport_jump_fallback.sh` — contract C3 renegotiated
+* `scripts/check_b370_off_tailnet_is_not_a_relay_failure.sh` (new, 14 contracts)
+
+### Live verification
+
+Re-sync of karolina from the panel succeeded on the first rung and wrote
+`relay_apply_state:karolina = …|ok` with `relay_apply_via:karolina = tailnet|tailnet 100.64.0.2:18022`.
+The IPv6 hop now renders a single-bracketed spec.
+
 ## v1.5.109 — an ARRAY column is not a string, a Test button that could not go red, and a table that was clipped (B367 + B368 + B369)
 
 **Date:** 2026-10-09 · **Base:** `v1.5.108` → this tag · **Compatibility:** behaviour only — no

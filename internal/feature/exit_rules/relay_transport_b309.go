@@ -166,6 +166,14 @@ func recordRelayApply(d *sql.DB, relay string, out relayApplyOutcome) {
 	if d == nil || strings.TrimSpace(relay) == "" {
 		return
 	}
+	// B370: an outcome that is not evidence about the relay must not demote it.
+	// The portal having no tailnet of its own says nothing about whether this
+	// relay works, and treating it as a failure moved the relay's prefixes to
+	// another relay and painted the page red after every /admin/update.
+	if out.NotEvidence {
+		log.Printf("relay-apply(%s): NOT recorded as a failure — %s, so this attempt says nothing about the relay; the previous state stands and its prefixes stay put. Enable Tailscale on /admin/tailscale (or give the container a real SKYGATE_TS_AUTHKEY_FILE) so the next pass can run over the tailnet", relay, out.NotEvidenceReason)
+		return
+	}
 	now := time.Now().Unix()
 	if failed, detail := relayApplyFailedFromOutcome(out); failed {
 		if len(detail) > 300 {

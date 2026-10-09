@@ -31,6 +31,12 @@ func TestB353_DirectArgvKeepsTheHardening(t *testing.T) {
 	if strings.Contains(joined, "-W '[%h]:%p'") {
 		t.Errorf("a direct connection must not tunnel through anything: %v", args)
 	}
+	// B370: the forwarded spec is built from the target the outer ssh gets, not
+	// from ssh's own `%h` expansion — that expansion carries the BRACKETS of an
+	// IPv6 target and produced `[[fd7a:…]]:18022`, which ssh refuses.
+	if strings.Contains(joined, "%h") || strings.Contains(joined, "%p") {
+		t.Errorf("the ProxyCommand must not use ssh's %%h/%%p expansions any more: %v", args)
+	}
 	if args[len(args)-3] != "--" {
 		t.Errorf("`--` must still terminate option parsing before the host: %v", args)
 	}
@@ -43,7 +49,7 @@ func TestB353_DirectArgvKeepsTheHardening(t *testing.T) {
 func TestB353_JumpArgvSpellsOutTheHop(t *testing.T) {
 	args := buildSetAdvertisedRoutesArgv("/k", "root@100.64.0.3", "22", "tailscale set --y", "root@100.64.0.2:18022")
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "-o ProxyCommand=ssh -W '[%h]:%p' -i /k") {
+	if !strings.Contains(joined, "-o ProxyCommand=ssh -W '100.64.0.3:22' -i /k") {
 		t.Fatalf("the hop must be an explicit ssh -W ProxyCommand carrying the identity: %v", args)
 	}
 	if !strings.Contains(joined, "-p 18022 -- root@100.64.0.2") {

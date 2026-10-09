@@ -49,7 +49,7 @@ Related: [`AGENTS.md`](../AGENTS.md) (conventions + the compact block index),
 
 | | |
 |---|---|
-| Version line | **v1.5.109** (B367 + B368 + B369 — `COALESCE(roles, '')` was an invalid ARRAY literal on PostgreSQL and killed both the drain button and the failover transaction; the S3 «Test» button could not go red, so a MinIO that had moved went unnoticed; and `/admin/cluster`'s tables were clipped on desktop, hanging the action buttons outside the card) |
+| Version line | **v1.5.110** (B370 — a `/admin/update` that recreates the container left the portal without a tailnet for ~70 s, every rung of the relay transport ladder needed one, and the resulting failure was recorded as a fact about the relay: karolina was demoted and her 196 prefixes migrated for a defect that did not exist; such an attempt is now marked **not evidence** and the previous relay state stands. Plus: `%h` expands to the already-bracketed IPv6 form, so the jump rung's `-W '[%h]:%p'` rendered `[[addr]]:port` and ssh refused it every time) |
 | Reference host | production deployment healthy; `/readyz` reports db / headscale / headplane / tailscale |
 | Verify gate | `scripts/verify_pre_deploy.sh` runs **381 contracts** (`run_check` entries, counted 2026-10-01); live-state checks report `SKIP`, not `FAIL` (rule 1). The catalog **exits 0 even with FAILs locally** — see TD-22 |
 | Static analysis | `go vet` and `staticcheck` clean; **`gofmt` is NOT clean repo-wide** (302 of 835 tracked files) and nothing enforces it in the gate — see TD-21 |

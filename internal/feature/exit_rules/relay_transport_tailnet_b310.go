@@ -186,6 +186,48 @@ func IsTailnetAddress(host string) bool {
 	return false
 }
 
+// AllCandidatesNeedThePortalTailnet reports whether EVERY candidate can only be
+// reached over the tailnet — a tailnet address, or a jump whose target and hop
+// are both tailnet addresses (the hop carries the connection, so it needs the
+// portal's tailnet just as much).
+//
+// B370 (2026-10-09, live): this is the predicate that keeps an attempt honest.
+// The reference deployment recreated the panel container (an /admin/update), the
+// entrypoint skipped tailscaled, and the FIRST sync pass ran while the portal had
+// no tailnet at all: every candidate timed out, the ladder recorded `err`, B309/
+// B352 demoted the relay, its prefixes moved to another relay and the page showed
+// the red «Ретранслятор не удалось настроить» banner. None of that was a fact
+// about the relay — the portal's own missing tailnet is not evidence about it
+// (the same reasoning LESSONS records for B362's expired caller deadline). When
+// this returns true and the portal is off the tailnet, the outcome is marked
+// NOT-EVIDENCE and the previous relay state is left alone.
+//
+// An EMPTY list is NOT "all tailnet": no candidate at all is a configuration
+// problem, and that IS evidence about the relay.
+func AllCandidatesNeedThePortalTailnet(cands []RelayEndpoint) bool {
+	if len(cands) == 0 {
+		return false
+	}
+	for _, c := range cands {
+		switch c.Kind {
+		case RelayEndpointTailnet:
+			if !IsTailnetAddress(c.Host) {
+				return false
+			}
+		case RelayEndpointJump:
+			_, target, _ := splitSSHEndpoint(c.Host)
+			_, hop, _ := splitSSHEndpoint(c.Jump)
+			if !IsTailnetAddress(target) || !IsTailnetAddress(hop) {
+				return false
+			}
+		default:
+			// public / name / anything new: reachable without the portal's tailnet.
+			return false
+		}
+	}
+	return true
+}
+
 // splitSSHEndpoint splits `[user@]host[:port]` into its three parts. IPv6
 // literals are accepted in brackets (`root@[fd7a::1]:22`), which is the only
 // unambiguous shape once a port is present.

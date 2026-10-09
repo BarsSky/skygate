@@ -468,6 +468,14 @@ type relayApplyOutcome struct {
 	// Endpoint is the concrete address that worked ("tailnet 100.64.0.2:18022"),
 	// recorded and rendered so "which path is management using?" has an answer.
 	Endpoint string
+	// NotEvidence marks an application that failed for a reason that is NOT a
+	// fact about the relay: the portal itself is off the tailnet, and every
+	// candidate (and every jump hop) can only be reached over that tailnet
+	// (B370). The state store keeps the PREVIOUS record — so the relay is not
+	// demoted and its prefixes do not migrate — and the reason is logged.
+	NotEvidence bool
+	// NotEvidenceReason names the condition, for the log line and the page.
+	NotEvidenceReason string
 }
 
 // resultLabel renders "<label> approved=N|approve=err=…<note>" — the exact shape
@@ -618,6 +626,15 @@ func applyRoutesToRelay(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func
 			parts := append([]string{}, ladder.Attempts...)
 			parts = append(parts, ladder.Notes...)
 			out.Label = "ssh=err=" + strings.Join(parts, "; ")
+			// B370: was this failure even ABOUT the relay? If the portal is off
+			// the tailnet and every candidate needs that tailnet, the answer is
+			// no — the portal's own missing interface is not evidence about a
+			// relay (measured live: the first pass after an /admin/update
+			// recreated the container demoted karolina and moved her prefixes).
+			if state := SkygateTailnetState(); !state.Ready && AllCandidatesNeedThePortalTailnet(cands) {
+				out.NotEvidence = true
+				out.NotEvidenceReason = "the portal is not on the tailnet (" + firstLine(state.Reason) + ")"
+			}
 		}
 	}
 
@@ -810,6 +827,10 @@ func (s *Service) StaggeredSync() {
 			switch {
 			case applied.Local:
 				log.Printf("staggeredSync(aggregated): %s applied LOCALLY: %s — no SSH involved", n.name, applied.Label)
+			case applied.NotEvidence:
+				// B370: not an SSH error — the portal itself had no tailnet, so
+				// the attempt was not recorded and the relay keeps its prefixes.
+				log.Printf("staggeredSync(aggregated): %s SKIPPED (not recorded): %s", n.name, applied.NotEvidenceReason)
 			case strings.HasPrefix(applied.Label, "ssh=err="):
 				log.Printf("staggeredSync(aggregated): %s SSH err: %s", n.name, strings.TrimPrefix(applied.Label, "ssh=err="))
 			default:
