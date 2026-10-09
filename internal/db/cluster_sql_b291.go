@@ -173,6 +173,22 @@ func (k DialectKind) ForUpdateExpr() string {
 	return ""
 }
 
+// EmptyTextArrayLiteral is the SQL literal for an EMPTY text[] value, and it is
+// the ONLY empty value valid on both backends (B367).
+//
+// PostgreSQL types `cluster_node.roles` and `cluster_database.replica_node_ids`
+// as ARRAY, so `COALESCE(roles, ”)` is not "the empty array": the untyped ”
+// is coerced to text[] and PostgreSQL rejects the statement at parse time with
+// `ERROR: malformed array literal: "" (SQLSTATE 22P02)`. Measured live on the
+// reference PostgreSQL deployment (2026-10-09): the operator's "Drain & remove"
+// button answered exactly that, and the same statement sits in
+// FindClusterPrimary / NodeRoles, i.e. in the FAILOVER and DRILL transactions.
+//
+// On SQLite the column is TEXT holding the identical `{a,b}` literal, so '{}'
+// reads back as an empty array through StringArray.Scan / parsePGTextArray —
+// which is why the defect is invisible on a native (SQLite) install.
+const EmptyTextArrayLiteral = `'{}'`
+
 // TextArrayLiteral encodes vals as a PostgreSQL array literal (`{a,b}`, `{}`).
 //
 // This is the ONE representation both backends accept: PostgreSQL casts it to
@@ -288,7 +304,7 @@ type execer interface {
 // "skygate-standby" and would promote the node that is already the standby.
 // Returns ErrNoPrimary when nothing qualifies (the caller's contract).
 func FindClusterPrimary(q rowQueryer) (string, string, error) {
-	rows, err := q.Query(`SELECT id, hostname, COALESCE(roles, '') FROM cluster_node WHERE state = 'ready' ORDER BY id ASC`)
+	rows, err := q.Query(`SELECT id, hostname, COALESCE(roles, ` + EmptyTextArrayLiteral + `) FROM cluster_node WHERE state = 'ready' ORDER BY id ASC`)
 	if err != nil {
 		return "", "", fmt.Errorf("find current primary: %w", err)
 	}
@@ -312,7 +328,7 @@ func FindClusterPrimary(q rowQueryer) (string, string, error) {
 // same way on both backends).
 func NodeRoles(q rowQueryer, nodeID string) ([]string, error) {
 	var raw string
-	if err := q.QueryRow(`SELECT COALESCE(roles, '') FROM cluster_node WHERE id = $1`, nodeID).Scan(&raw); err != nil {
+	if err := q.QueryRow(`SELECT COALESCE(roles, `+EmptyTextArrayLiteral+`) FROM cluster_node WHERE id = $1`, nodeID).Scan(&raw); err != nil {
 		return nil, err
 	}
 	var sa StringArray

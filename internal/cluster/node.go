@@ -50,15 +50,15 @@ var ErrNodeNotFound = errors.New("cluster node not found")
 // Node is the in-memory shape of one cluster_node row.
 // Roles is []string because the DB column is TEXT[].
 type Node struct {
-	ID            string
-	ClusterID     string
-	Hostname      string
-	TailscaleIP   string
-	Roles         []string
-	State         string
-	SkygateVer    string
-	JoinedAt      time.Time
-	LastSeenAt    time.Time
+	ID          string
+	ClusterID   string
+	Hostname    string
+	TailscaleIP string
+	Roles       []string
+	State       string
+	SkygateVer  string
+	JoinedAt    time.Time
+	LastSeenAt  time.Time
 }
 
 // LookupNode returns the cluster_node row with the given
@@ -163,7 +163,7 @@ func RemoveNode(d *sql.DB, clusterID, hostname string) error {
 	}()
 	var nodeID, lastState, rolesText string
 	if scanErr := tx.QueryRow(`
-		SELECT id, COALESCE(state, ''), COALESCE(roles, '')
+		SELECT id, COALESCE(state, ''), COALESCE(roles, `+db.EmptyTextArrayLiteral+`)
 		  FROM cluster_node
 		 WHERE cluster_id = $1 AND hostname = $2
 	`, clusterID, hostname).Scan(&nodeID, &lastState, &rolesText); scanErr != nil {
@@ -241,7 +241,7 @@ func DrainNode(d *sql.DB, clusterID, hostname, actor, reason string) error {
 	}()
 	var nodeID, prevState, rolesText string
 	if scanErr := tx.QueryRow(`
-		SELECT id, COALESCE(state, ''), COALESCE(roles, '')
+		SELECT id, COALESCE(state, ''), COALESCE(roles, `+db.EmptyTextArrayLiteral+`)
 		  FROM cluster_node
 		 WHERE cluster_id = $1 AND hostname = $2`+db.ActiveDialect().ForUpdateExpr()+`
 	`, clusterID, hostname).Scan(&nodeID, &prevState, &rolesText); scanErr != nil {
@@ -314,7 +314,7 @@ func DrainAndRemoveNode(d *sql.DB, clusterID, hostname, actor, reason string) er
 	}()
 	var nodeID, prevState, rolesText string
 	if scanErr := tx.QueryRow(`
-		SELECT id, COALESCE(state, ''), COALESCE(roles, '')
+		SELECT id, COALESCE(state, ''), COALESCE(roles, `+db.EmptyTextArrayLiteral+`)
 		  FROM cluster_node
 		 WHERE cluster_id = $1 AND hostname = $2`+db.ActiveDialect().ForUpdateExpr()+`
 	`, clusterID, hostname).Scan(&nodeID, &prevState, &rolesText); scanErr != nil {
@@ -705,7 +705,8 @@ func pqStringArray(roles []string) string {
 //
 // (For Phase 2.2 this is duplicated; if we end up with
 // 3+ call sites we should move to a shared helper in
-//  internal/db/.)
+//
+//	internal/db/.)
 func parsePGTextArray(s string) []string {
 	s = strings.TrimSpace(s)
 	if s == "" || s == "{}" || s == "NULL" {
