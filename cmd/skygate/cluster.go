@@ -469,24 +469,36 @@ const clusterHeartbeatUnit = "skygate-heartbeat"
 // which named the symptom but not the ONE action that fixes it).
 //
 // The property this message must keep: it names the exact setting, the exact
-// page/statement that fills it, and the ONE fact a wrong guess would get wrong
-// (%s is the password placeholder, not the host). It never invents credentials
-// and never pretends the join produced a DSN it did not.
+// page/statement that fills it, and the ONE fact a wrong guess would get wrong.
+//
+// B373 CORRECTED that fact. The message used to say "%s is the PASSWORD
+// placeholder (never the host)" and showed `postgres://<user>:%s@<host>:…`,
+// which is what the panel composed — but the only substitution in the tree is
+// substituteDSNTemplate(tpl, primaryHost), i.e. %s is the HOST, and
+// scripts/b212_join_verify.sh pins the same shape. With the old text the join
+// produced `postgres://user:<primary-hostname>@host/db` and the standby could not
+// authenticate. The text, the panel composer and buildDSNTemplate now all agree:
+// %s = host, the password is never stored in cluster_database (it is rendered on
+// the page, audited, and copied by every backup), and the standby supplies it in
+// its own DSN.
 func missingDSNBootstrapHint() string {
 	return strings.Join([]string{
 		"cluster join: NO DSN BOOTSTRAP from the primary — cluster_database.dsn_template is empty for this cluster.",
 		"cluster join: the standby is a cluster member with no DSN, so it cannot serve as a mirror until this is set.",
-		"cluster join: FIX (on the primary): /admin/database -> \"Test + Edit (Phase 1.2)\" -> host/port/dbname/username -> Save.",
-		"cluster join:   that page UPSERTS, so it works whether or not the cluster_database row exists yet.",
-		"cluster join:   or the equivalent SQL, where %s is the PASSWORD placeholder (never the host).",
+		"cluster join: FIX (on the primary): /admin/database -> the \"DSN template\" hint card -> the button",
+		"cluster join:   \"Заполнить из моего DSN\" fills it from the primary's own DSN, or use Test + Edit / the SQL below.",
+		"cluster join:   %s is the HOST placeholder (the primary's hostname is substituted at join time).",
+		"cluster join:   The PASSWORD is deliberately NOT stored in cluster_database — that table is rendered on the page,",
+		"cluster join:   written to audit_log and copied by every backup. The standby supplies it in its own DSN.",
 		"cluster join:   Use an UPSERT, not a bare UPDATE: measured on the reference primary (2026-10-08), the row",
 		"cluster join:   can be ABSENT (cluster_database had 0 rows on a deployment that never opened",
 		"cluster join:   /admin/database), and `UPDATE ... WHERE id = 'skygate-staging'` then silently changes 0 rows:",
 		"cluster join:     INSERT INTO cluster_database (id, cluster_id, dsn_template)",
 		"cluster join:     VALUES ('skygate-staging', 'skygate-staging',",
-		"cluster join:             'postgres://<user>:%s@<host>:5432/<dbname>?sslmode=disable')",
+		"cluster join:             'postgres://<user>@%s:5432/<dbname>?sslmode=disable')",
 		"cluster join:     ON CONFLICT (id) DO UPDATE SET dsn_template = EXCLUDED.dsn_template;",
-		"cluster join: then re-run this join so the standby receives it (--write-dsn-to=/etc/skygate/dbs.env).",
+		"cluster join: then re-run this join so the standby receives it (--write-dsn-to=/etc/skygate/dbs.env),",
+		"cluster join:   and add the password to that DSN on the standby (the file is 0600 and operator-owned).",
 		"cluster join: meanwhile the standby uses its own .env SKYGATE_DB_DSN.",
 	}, "\n") + "\n"
 }

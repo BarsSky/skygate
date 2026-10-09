@@ -118,6 +118,24 @@
     </div>
   </div>
 
+  {{/* ---------- 2b. B373: the DSN-template hint card with its button ---------- */}}
+  <div class="card mb-4">
+    <div class="card-header">
+      <i class="fa fa-circle-question me-2"></i>{{t "db.tpl_title"}}
+    </div>
+    <div class="card-body">
+      <p class="mb-2" style="font-size:14px">{{t "db.tpl_what" | safeHTML}}</p>
+      <p class="text-muted small mb-2"><i class="fa fa-info-circle me-1"></i>{{t "db.tpl_why" | safeHTML}}</p>
+      <p class="mb-3"><code style="overflow-wrap:break-word">postgres://&lt;user&gt;@%s:&lt;port&gt;/&lt;dbname&gt;?sslmode=&lt;mode&gt;</code></p>
+      <form method="POST" action="/admin/database/apply-default">
+        <button class="btn btn-sm btn-primary" type="submit">
+          <i class="fa fa-wand-magic-sparkles me-1"></i>{{t "db.tpl_apply_btn"}}
+        </button>
+        <span class="text-muted small ms-2">{{t "db.tpl_apply_help"}}</span>
+      </form>
+    </div>
+  </div>
+
   {{/* ---------- 3. Test-Connection / Edit form (Phase 1.2) ---------- */}}
   <div class="card mb-4">
     <div class="card-header">

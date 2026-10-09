@@ -67,6 +67,28 @@
          2026-09-17 operator report.
        - else (real enabled) → existing Disable-in-container
          card (unchanged from B259). */}}
+{{/* B373: the "apply the defaults" card. It states WHY Tailscale comes back down
+     after every update (the container environment is frozen at CREATION and the
+     compose file pins the /dev/null sentinel, which the entrypoint cannot ignore),
+     what the button persists (auth-key path + desired_state=on + the canonical
+     name) and what it will NOT do (it never mints a key — with no usable key file
+     it refuses and names that fact). The button is idempotent and its effect is
+     immediate: the handler brings the client up through the same B321 path the
+     boot pass and the 5-minute tick use. */}}
+<div class="card" style="margin-bottom:12px">
+  <div class="card-header"><i class="fa-solid fa-wand-magic-sparkles"></i> {{t "tailscale.defaults_title"}}</div>
+  <div class="card-body">
+    <p style="margin:0 0 .5rem 0;font-size:.95em">{{t "tailscale.defaults_what" | safeHTML}}</p>
+    <p class="form-hint" style="margin:0 0 .6rem 0">{{t "tailscale.defaults_why" | safeHTML}}</p>
+    <form action="/admin/tailscale" method="POST" style="display:inline">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="action" value="apply_defaults">
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-wand-magic-sparkles"></i> {{t "tailscale.defaults_btn"}}</button>
+    </form>
+    <span class="form-hint" style="margin-left:.5rem">{{t "tailscale.defaults_btn_help" | safeHTML}}</span>
+  </div>
+</div>
+
 {{if .State.SelfName.Conflict}}
 {{/* B320: the canonical name `skygate-host` is held by an OFFLINE duplicate while the
      running client wears a suffix — every "is this me?" check matches the canonical

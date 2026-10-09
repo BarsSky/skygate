@@ -345,8 +345,19 @@
     {{if not .Data.Onboard.DSNReady}}
     <div style="padding:8px;margin-bottom:10px;border-left:3px solid var(--danger,#dc3545);background:var(--bg);border-radius:4px;font-size:12px">
       <strong>{{t "cluster.onboard_dsn_missing_title"}}</strong><br>
-      {{t "cluster.onboard_dsn_missing_help"}}<br>
-      <code>UPDATE cluster_database SET dsn_template = 'postgres://&lt;user&gt;:%s@&lt;host&gt;:5432/&lt;dbname&gt;?sslmode=disable' WHERE id = 'skygate-staging';</code>
+      {{t "cluster.onboard_dsn_missing_help" | safeHTML}}<br>
+      <code>INSERT INTO cluster_database (id, cluster_id, dsn_template) VALUES ('skygate-staging', 'skygate-staging', 'postgres://&lt;user&gt;@%s:5432/&lt;dbname&gt;?sslmode=disable') ON CONFLICT (id) DO UPDATE SET dsn_template = EXCLUDED.dsn_template;</code>
+      {{/* B373: the same one-click default the /admin/database hint card offers,
+           reached from the banner that reports the gap. %s is the HOST (that is
+           the only substitution the code performs); the password is never stored
+           here. */}}
+      <form method="POST" action="/admin/database/apply-default" style="margin-top:8px">
+        <input type="hidden" name="next" value="/admin/cluster">
+        <button class="btn btn-primary btn-sm" type="submit">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> {{t "cluster.onboard_dsn_apply_btn"}}
+        </button>
+        <span class="muted">{{t "cluster.onboard_dsn_apply_help"}}</span>
+      </form>
     </div>
     {{end}}
     {{range .Data.Onboard.Steps}}

@@ -150,6 +150,12 @@ func (s *Service) PostAdminTailscale(w http.ResponseWriter, r *http.Request) {
 		// docker bridge ranges (172.17/172.18/172.19/...)
 		// which are unreachable from outside the host.
 		s.handleTailscaleSetAdvertiseRoutes(w, r, c)
+	case "apply_defaults":
+		// B373 — "применить значения по умолчанию": persist the usable auth-key
+		// path, desired_state=on and the canonical hostname, then bring the client
+		// up through the B321 path. Refuses by name when no key file exists (it
+		// never mints one). See internal/feature/admin/tailscale_apply_defaults.go.
+		s.handleTailscaleApplyDefaults(w, r, c)
 	default:
 		tsRedirect(w, r, "", "Неизвестное действие: "+action)
 	}

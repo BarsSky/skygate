@@ -49,7 +49,6 @@ internal/config/config.go
 internal/config/config_test.go
 internal/controlplane/router.go
 internal/db/audit_log.go
-internal/db/cluster.go
 internal/db/cluster_patroni.go
 internal/db/db_test.go
 internal/db/exit_node_health.go
@@ -84,7 +83,6 @@ internal/dbmigrate/ssh_transport_test.go
 internal/dbmigrate/steps/b202_helpers_test.go
 internal/dbmigrate/steps/cleanup.go
 internal/dbmigrate/steps/dump.go
-internal/dbmigrate/steps/flip.go
 internal/dbmigrate/steps/precheck.go
 internal/dbmigrate/steps/restore.go
 internal/dbmigrate/steps/verify.go

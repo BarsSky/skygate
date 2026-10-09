@@ -199,7 +199,13 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 #   * internal/certsync/certsync.go — B371 made the tick suppress a repeated
 #     identical fetch failure; `gofmt -w` (rule 3 requires it for every file this
 #     block touches) reflowed the file's long doc comment and left it clean.
-FROZEN=251
+#   * internal/db/cluster.go — B373 decoded cluster_database's timestamps through
+#     ParseDBTime instead of scanning them into time.Time (the SQLite read died
+#     with "unsupported Scan … into type *time.Time"), and `gofmt -w` realigned the
+#     ClusterDatabase struct fields.
+#   * internal/dbmigrate/steps/flip.go — B373 moved the %s in buildDSNTemplate to
+#     the HOST position; `gofmt -w` reflowed the surrounding file.
+FROZEN=249
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

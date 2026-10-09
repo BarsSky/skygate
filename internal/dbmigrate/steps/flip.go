@@ -28,8 +28,8 @@ type flipStep struct{}
 
 func (flipStep) Name() string        { return "flip" }
 func (flipStep) Description() string { return "Update cluster_database + .env to point to target" }
-func (flipStep) Ordinal() int       { return 5 }
-func (flipStep) IsOptional() bool   { return false }
+func (flipStep) Ordinal() int        { return 5 }
+func (flipStep) IsOptional() bool    { return false }
 func (flipStep) DependsOn() []string { return []string{"verify"} }
 
 func (flipStep) Run(ctx context.Context, mc *dbmigrate.MigrationContext) error {
@@ -47,15 +47,15 @@ func (flipStep) Run(ctx context.Context, mc *dbmigrate.MigrationContext) error {
 	// 1. Update cluster_database with the new DSN. This is
 	// the source of truth per D8.
 	cd := &db.ClusterDatabase{
-		ID:             "skygate-staging",
-		ClusterID:      "skygate-staging",
-		PrimaryNodeID:  "", // operator updates separately
-		DSNTemplate:    buildDSNTemplate(mc),
-		DBName:         mc.TargetDBName,
-		Username:       mc.TargetUsername,
-		SSLMode:        mc.TargetSSLMode,
-		CurrentDSN:     redactDSNForStorage(mc.TargetDSN), // storage can keep redacted
-		UpdatedBy:      mc.Operator,
+		ID:            "skygate-staging",
+		ClusterID:     "skygate-staging",
+		PrimaryNodeID: "", // operator updates separately
+		DSNTemplate:   buildDSNTemplate(mc),
+		DBName:        mc.TargetDBName,
+		Username:      mc.TargetUsername,
+		SSLMode:       mc.TargetSSLMode,
+		CurrentDSN:    redactDSNForStorage(mc.TargetDSN), // storage can keep redacted
+		UpdatedBy:     mc.Operator,
 	}
 	if err := db.SetClusterDatabase(conn, cd); err != nil {
 		return fmt.Errorf("cluster_database update: %w", err)
@@ -93,22 +93,31 @@ func (flipStep) Rollback(ctx context.Context, mc *dbmigrate.MigrationContext) er
 	// pre-migration state. We re-read the source DSN from
 	// the mc.SourceDSN (the framework stashed it at start).
 	cd := &db.ClusterDatabase{
-		ID:         "skygate-staging",
-		ClusterID:  "skygate-staging",
+		ID:          "skygate-staging",
+		ClusterID:   "skygate-staging",
 		DSNTemplate: redactDSNForStorage(mc.SourceDSN),
-		DBName:     extractDBName(mc.SourceDSN),
-		Username:   extractUser(mc.SourceDSN),
-		SSLMode:    extractSSLMode(mc.SourceDSN),
-		CurrentDSN: redactDSNForStorage(mc.SourceDSN),
-		UpdatedBy:  mc.Operator + " (rollback)",
+		DBName:      extractDBName(mc.SourceDSN),
+		Username:    extractUser(mc.SourceDSN),
+		SSLMode:     extractSSLMode(mc.SourceDSN),
+		CurrentDSN:  redactDSNForStorage(mc.SourceDSN),
+		UpdatedBy:   mc.Operator + " (rollback)",
 	}
 	return db.SetClusterDatabase(conn, cd)
 }
 
 // buildDSNTemplate composes the passwordless DSN template
-// from MigrationContext fields. The %s is the password
-// placeholder that the watchdog (Phase 3.1) substitutes at
-// read time from .env.
+// from MigrationContext fields.
+//
+// B373: the single %s is the HOST. That is the one convention the tree
+// implements — internal/cluster.substituteDSNTemplate replaces it with the
+// primary's hostname when the primary answers `skygate join`, and
+// scripts/b212_join_verify.sh exercises exactly that shape. The pre-B373 comment
+// called %s "the password placeholder that the watchdog (Phase 3.1) substitutes
+// at read time from .env"; no such substitution exists anywhere in the tree, and
+// the password shape made the join hand the standby
+// `postgres://user:<primary-hostname>@host/db` — the hostname in the password
+// field. The password is deliberately absent here: cluster_database is rendered
+// on /admin/database, written to audit_log and copied by every database backup.
 func buildDSNTemplate(mc *dbmigrate.MigrationContext) string {
 	port := mc.TargetPort
 	if port == "" {
@@ -118,8 +127,8 @@ func buildDSNTemplate(mc *dbmigrate.MigrationContext) string {
 	if sslmode == "" {
 		sslmode = "disable"
 	}
-	return fmt.Sprintf("postgres://%s:%%s@%s:%s/%s?sslmode=%s",
-		mc.TargetUsername, mc.TargetHost, port, mc.TargetDBName, sslmode)
+	return fmt.Sprintf("postgres://%s@%%s:%s/%s?sslmode=%s",
+		mc.TargetUsername, port, mc.TargetDBName, sslmode)
 }
 
 // updateEnvFile rewrites SKYGATE_DB_DSN in .env. We don't
@@ -161,9 +170,9 @@ func updateEnvFile(mc *dbmigrate.MigrationContext) error {
 }
 
 // small extractors for the rollback path.
-func extractDBName(dsn string) string   { return between(dsn, "/", "?") }
-func extractUser(dsn string) string     { return between(dsn, "://", ":") }
-func extractSSLMode(dsn string) string  { return between(dsn, "sslmode=", "&") }
+func extractDBName(dsn string) string  { return between(dsn, "/", "?") }
+func extractUser(dsn string) string    { return between(dsn, "://", ":") }
+func extractSSLMode(dsn string) string { return between(dsn, "sslmode=", "&") }
 func between(s, a, b string) string {
 	i := indexOf(s, a)
 	if i < 0 {

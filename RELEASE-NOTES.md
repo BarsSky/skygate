@@ -12,6 +12,75 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.113 — hints with buttons that apply the defaults, and one meaning for `%s` (B373)
+
+**Date:** 2026-10-09 · **Base:** `v1.5.112` → this tag · **Compatibility:** behaviour only — no
+schema change, no migration, no new setting.
+
+The request: «добавь подсказки с активными кнопками чтобы пользователь мог как прочитать что надо
+сделать и для чего так и применить параметры по умолчанию». Writing the hint exposed two defects that
+had to close first, or the buttons would have applied the wrong thing.
+
+### Defect 1 — `cluster_database.dsn_template` had TWO placeholder conventions, and the panel taught the wrong one
+
+| who | what `%s` meant | where |
+|---|---|---|
+| the panel composer, `buildDSNTemplate` | the **password** ("the watchdog (Phase 3.1) substitutes it at read time") | `internal/feature/admin/database.go`, `internal/dbmigrate/steps/flip.go` |
+| the only real substitution, `substituteDSNTemplate(tpl, primaryHost)` | the **HOST** (B212) | `internal/cluster/join.go` |
+
+No password substitution exists anywhere in the tree — grepped: zero hits. Following the panel's own
+instruction therefore made the primary answer `skygate join` with
+`postgres://user:<primary-hostname>@host/db`: **the hostname in the password field**, and an
+authentication failure no surface explained. The CLI hint and both i18n texts repeated the same wrong
+sentence.
+
+Now **one convention everywhere** (composer + `dsnTemplateFromParts`, `buildDSNTemplate`, the join hint,
+RU + EN): `%s` is the **HOST**. The password is never stored in `cluster_database` — that row is
+rendered on `/admin/database`, written to `audit_log` and copied by every database backup — and the
+standby adds it to its own DSN (`/etc/skygate/dbs.env`, `SKYGATE_DB_DSN`, mode 0600).
+
+### Defect 2 — a button that acts had nothing to act on
+
+Tailscale had a Start button but no *"make this the default"* action, and the reason the client comes
+back down at every container recreate is not in the panel at all: the container environment is **frozen
+at container creation** and compose pins `SKYGATE_TS_AUTHKEY_FILE=/dev/null`, so the entrypoint skips
+`tailscaled` (B321's lesson — measured again 2026-10-09: recreate at 11:18:51,
+`[init] TS_AUTHKEY_FILE not set — Tailscale skipped`, client up at 11:19:59).
+
+### What shipped
+
+* **`/admin/database`** — a DSN-template hint card (what `%s` is, why no password is stored, why the
+  write is an **upsert** because the row can be absent — measured 0 rows on this primary) plus the
+  button **«Заполнить из моего DSN»**: it composes the template from the DSN *this* process runs on,
+  i.e. exactly the database a standby must mirror. It refuses by name when that DSN cannot be parsed
+  (a SQLite deployment, an empty env) instead of inventing values.
+* **`/admin/cluster`** — the onboarding banner that reports the gap now offers the same action
+  (`next=/admin/cluster`) and its inline SQL sample is corrected to the upsert in the host shape.
+* **`/admin/tailscale`** — a hint card that explains *why* the client goes down and what removes the
+  ~70 s window, plus the button **«Применить значения по умолчанию»**: it persists the usable
+  auth-key path, `desired_state=on` and the canonical hostname `skygate-host`, then brings the client
+  up through the same B321 path the boot pass and the 5-minute tick use (idempotent). It **refuses by
+  name** when no usable key file exists — it never mints one — and points at «Сгенерировать ключ».
+* **`internal/db/cluster.go`** — `GetClusterDatabase` scanned `created_at`/`updated_at` straight into
+  `time.Time`. On SQLite the writer binds `CURRENT_TIMESTAMP` (TEXT), so the read died with
+  `unsupported Scan, storing driver.Value type string into type *time.Time`: `/admin/database` could
+  not read back the row the new button had just written on a native install (the same helper backs the
+  dbmigrate watchdog's row loader). It now decodes through `db.ParseDBTime` (B291).
+
+### Files
+
+* `internal/feature/admin/database.go` — `dsnTemplateFromParts`, `dsnTemplateFromDSN`,
+  `saveDSNTemplateFromDSN`, `PostAdminDatabaseApplyDefault`, corrected composer
+* `internal/feature/admin/tailscale_apply_defaults.go` (new) + `tailscale_handlers.go`
+  (`action=apply_defaults`)
+* `cmd/skygate/routes.go` — `POST /admin/database/apply-default`
+* `internal/handlers/templates/admin/{database,cluster,tailscale}.html`
+* `internal/i18n/catalog_admin.go`, `catalog_tailscale.go` (RU + EN)
+* `internal/dbmigrate/steps/flip.go`, `cmd/skygate/cluster.go` (the corrected hint)
+* `internal/feature/admin/apply_defaults_b373_test.go` (new, behavioural on real SQLite)
+* `scripts/check_b373_operator_hints_apply_defaults.sh` (new, 33 contracts)
+* gofmt ratchet 252 → 249 (`certsync.go`, `cluster.go`, `flip.go` left the allowlist)
+
 ## v1.5.112 — starting the boot sequence out of the one giant `main()` (B372)
 
 **Date:** 2026-10-09 · **Base:** `v1.5.111` → this tag · **Compatibility:** refactor only — no

@@ -37,6 +37,7 @@ package admin
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -609,11 +610,19 @@ func (s *Service) PostAdminDatabaseEdit(w http.ResponseWriter, r *http.Request) 
 	if sslmode == "" {
 		sslmode = "disable"
 	}
-	// Compose the DSN (without password — the password
-	// stays in .env). The dsn_template uses %s for the
-	// password placeholder so the watchdog (Phase 3.1)
-	// can substitute the actual password at read time.
-	dsnTemplate := "postgres://" + username + ":%s@" + host + ":" + port + "/" + dbname + "?sslmode=" + sslmode
+	// B373: compose the DSN WITHOUT the password, and with %s where the HOST
+	// goes. That is the ONE convention the code implements — internal/cluster's
+	// substituteDSNTemplate replaces the single %s with the primary's hostname
+	// when the primary answers `skygate join` (B212), and scripts/b212_join_verify.sh
+	// exercises exactly that shape. The pre-B373 comment claimed %s was a PASSWORD
+	// placeholder substituted by "the watchdog (Phase 3.1)"; no such substitution
+	// exists anywhere in the tree, and a template in the password shape made the
+	// join hand the standby `postgres://user:<primary-hostname>@host/db` — the
+	// hostname sitting in the password field. The password is deliberately NOT
+	// stored here: cluster_database is rendered on this page, audited, and copied
+	// by every backup, so a credential written into it would leak into all three.
+	// The standby fills it in its own DSN (see the hint card on the page).
+	dsnTemplate := dsnTemplateFromParts(username, host, port, dbname, sslmode)
 	// We don't have a real password in the form, so
 	// current_dsn uses a placeholder that the watchdog
 	// will overwrite with the real one.
@@ -642,6 +651,167 @@ func (s *Service) PostAdminDatabaseEdit(w http.ResponseWriter, r *http.Request) 
 	}
 	http.Redirect(w, r, "/admin/database?ok=saved", http.StatusSeeOther)
 }
+
+// ---------- POST /admin/database/apply-default (B373) -----------------
+//
+// The "apply the defaults" half of the DSN hint card. The operator reads WHY
+// the template exists, WHY the password is not in it, and then clicks ONE
+// button instead of typing a libpq URL by hand.
+//
+// The source of truth is the DSN THIS PROCESS is running on (SKYGATE_DB /
+// SKYGATE_DB_DSN), because that is by definition the database the standby must
+// mirror — no value is guessed and none is invented. The password is parsed and
+// then DROPPED: dsnTemplateFromDSN never returns it (a credential here would be
+// rendered on the page, written to audit_log by the caller and copied by every
+// database backup).
+//
+// Refusals are named, never silent: a SQLite deployment has no PG host to
+// substitute, and a DSN that cannot be parsed must not become a template that
+// makes `skygate join` hand the standby a broken DSN.
+func (s *Service) PostAdminDatabaseApplyDefault(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/admin/database?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	// Where to send the operator back. Only a local /admin path is honoured, so
+	// this endpoint cannot be turned into an open redirector.
+	back := strings.TrimSpace(r.FormValue("next"))
+	if !strings.HasPrefix(back, "/admin/") {
+		back = "/admin/database"
+	}
+	fail := func(msg string) {
+		sep := "?"
+		if strings.Contains(back, "?") {
+			sep = "&"
+		}
+		http.Redirect(w, r, back+sep+"err="+url.QueryEscape(msg), http.StatusSeeOther)
+	}
+
+	if db.ActiveDialect() != db.DialectPostgres {
+		fail("шаблон DSN нужен только PostgreSQL-кластеру: этот процесс работает на " +
+			db.ActiveDialect().String() + ", у него нет host/port для подстановки")
+		return
+	}
+	live := strings.TrimSpace(os.Getenv("SKYGATE_DB"))
+	if live == "" {
+		live = strings.TrimSpace(os.Getenv("SKYGATE_DB_DSN"))
+	}
+	if live == "" {
+		fail("SKYGATE_DB / SKYGATE_DB_DSN пуст — не из чего собрать шаблон (впишите host/port/dbname/username вручную)")
+		return
+	}
+	tpl, errS := s.saveDSNTemplateFromDSN(live, c.Username)
+	if errS != nil {
+		if errors.Is(errS, errDSNTemplateUnparseable) {
+			fail("не удалось разобрать PostgreSQL DSN из окружения — заполните форму вручную (host / port / dbname / username)")
+			return
+		}
+		s.Backend.Audit(c.UserID, c.Username, "cluster.db.apply_default", "err="+errS.Error())
+		fail("не удалось сохранить шаблон: " + errS.Error())
+		return
+	}
+	// The template keeps the %s placeholder instead of the host, so it is safe to
+	// audit verbatim (dsnTemplateFromDSN dropped the password).
+	if err := db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username,
+		"cluster.db.apply_default", "dsn_template="+tpl, "cluster_database", "skygate-staging"); err != nil {
+		_ = err // audit failure is non-fatal, matching PostAdminDatabaseEdit
+	}
+	sep := "?"
+	if strings.Contains(back, "?") {
+		sep = "&"
+	}
+	http.Redirect(w, r, back+sep+"ok="+url.QueryEscape(
+		"Шаблон DSN заполнен из DSN этого процесса: "+tpl+
+			"  (%s подставит host при join; пароль здесь не хранится — его допишет стендбай)"),
+		http.StatusSeeOther)
+}
+
+// dsnTemplateFromParts composes the panel's DSN template from the five fields the
+// edit form collects (B373). It is the ONE composer: PostAdminDatabaseEdit and
+// dsnTemplateFromDSN both call it, so the two entry points cannot drift into two
+// conventions again — the defect B373 exists to close.
+//
+// The shape is `postgres://<user>@%s:<port>/<dbname>?sslmode=<mode>`: the single
+// %s is the HOST, because internal/cluster.substituteDSNTemplate substitutes the
+// primary's hostname into it. No password is ever part of the value.
+func dsnTemplateFromParts(username, host, port, dbname, sslmode string) string {
+	if strings.TrimSpace(port) == "" {
+		port = "5432"
+	}
+	if strings.TrimSpace(sslmode) == "" {
+		sslmode = "disable"
+	}
+	// The host parameter is accepted for signature symmetry with the old inline
+	// form and for the audit/log side; the template itself carries %s instead so
+	// the SAME row works for any node that joins (the primary's own name changes
+	// when a failover promotes another host).
+	_ = host
+	return "postgres://" + username + "@%s:" + port + "/" + dbname + "?sslmode=" + sslmode
+}
+
+// dsnTemplateFromDSN composes the cluster_database.dsn_template for a PostgreSQL
+// DSN, in the ONE convention the code implements (B373):
+//
+//	postgres://<user>@%s:<port>/<dbname>?sslmode=<mode>
+//
+// `%s` is the HOST — internal/cluster.substituteDSNTemplate replaces it with the
+// primary's hostname when the primary answers `skygate join`, and
+// scripts/b212_join_verify.sh pins the same shape. The PASSWORD is parsed and
+// then dropped on purpose: this value is rendered on /admin/database, written to
+// audit_log and copied by every database backup, so a credential must never be
+// part of it. The standby supplies the password in its own DSN.
+//
+// Returns the template plus the fields it was built from; ok=false when the DSN
+// cannot be parsed or lacks a host/dbname/user the template needs (the caller
+// must then refuse and say so, not invent a value).
+func dsnTemplateFromDSN(dsn string) (tpl, host, port, dbname, username, sslmode string, ok bool) {
+	h, p, d, u, s, parsed := parseLibpqDSN(strings.TrimSpace(dsn))
+	if !parsed || strings.TrimSpace(h) == "" || strings.TrimSpace(d) == "" || strings.TrimSpace(u) == "" {
+		return "", "", "", "", "", "", false
+	}
+	if p == "" {
+		p = "5432"
+	}
+	if s == "" {
+		s = "disable"
+	}
+	return dsnTemplateFromParts(u, h, p, d, s), h, p, d, u, s, true
+}
+
+// saveDSNTemplateFromDSN writes the ready-to-use cluster_database row for the
+// PostgreSQL DSN the process is running on. Split out of the handler so the
+// BEHAVIOUR (an upsert that creates the row when the page was never opened, with
+// the password absent) can be tested without HTTP.
+func (s *Service) saveDSNTemplateFromDSN(live, updatedBy string) (string, error) {
+	tpl, host, port, dbname, username, sslmode, ok := dsnTemplateFromDSN(live)
+	if !ok {
+		return "", errDSNTemplateUnparseable
+	}
+	cd := &db.ClusterDatabase{
+		ID:          "skygate-staging",
+		ClusterID:   "skygate-staging",
+		DSNTemplate: tpl,
+		DBName:      dbname,
+		Username:    username,
+		SSLMode:     sslmode,
+		CurrentDSN:  "postgres://" + username + ":PASSWORD@" + host + ":" + port + "/" + dbname + "?sslmode=" + sslmode,
+		UpdatedBy:   updatedBy,
+	}
+	if err := db.SetClusterDatabase(s.dbc(), cd); err != nil {
+		return "", err
+	}
+	return tpl, nil
+}
+
+// errDSNTemplateUnparseable is returned when the live DSN cannot be turned into a
+// template. Named so the handler can tell the operator WHICH refusal happened
+// instead of printing a generic failure.
+var errDSNTemplateUnparseable = errors.New("dsn template: the live PostgreSQL DSN could not be parsed")
 
 // ---------- POST /admin/database/convert (2026-09-28) -----------------
 //

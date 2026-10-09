@@ -33,18 +33,18 @@ var ErrClusterDatabaseNotFound = errors.New("cluster_database not found")
 // scan into a *[]string. StringArray implements
 // sql.Scanner + driver.Valuer to handle both directions.
 type ClusterDatabase struct {
-	ID              string
-	ClusterID       string
-	PrimaryNodeID   string
-	ReplicaNodeIDs  StringArray
-	DSNTemplate     string
-	DBName          string
-	Username        string
-	SSLMode         string
-	CurrentDSN      string
-	UpdatedBy       string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID             string
+	ClusterID      string
+	PrimaryNodeID  string
+	ReplicaNodeIDs StringArray
+	DSNTemplate    string
+	DBName         string
+	Username       string
+	SSLMode        string
+	CurrentDSN     string
+	UpdatedBy      string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // GetClusterDatabase returns the cluster_database row with the
@@ -59,7 +59,7 @@ type ClusterDatabase struct {
 // which REFERENCES cluster_node(id) ON DELETE SET NULL) to an
 // empty string so the watchdog's every-5s Scan doesn't crash
 // on rows where the admin hasn't picked a primary node yet.
-// All other columns are NOT NULL with DEFAULT '' / DEFAULT '{}',
+// All other columns are NOT NULL with DEFAULT ” / DEFAULT '{}',
 // so COALESCE is unnecessary for them. We don't COALESCE
 // replica_node_ids because it's TEXT[] (array), and COALESCE
 // with a string literal would change the return type from
@@ -76,16 +76,33 @@ func GetClusterDatabase(d *sql.DB, id string) (*ClusterDatabase, error) {
 		WHERE id = $1
 	`, id)
 	out := &ClusterDatabase{}
+	// B373: created_at / updated_at are decoded through ParseDBTime instead of
+	// being scanned straight into a time.Time. On SQLite the writer binds
+	// DialectKind.NowExpr() = CURRENT_TIMESTAMP, which the driver hands back as a
+	// TEXT value ("2026-10-09 14:11:22"); scanning that into time.Time fails with
+	// `unsupported Scan, storing driver.Value type string into type *time.Time`,
+	// so the whole read died on a native install — /admin/database reported
+	// "load desired DSN: …" for a row that was present, and the same helper backs
+	// the dbmigrate watchdog's row loader. ParseDBTime (B291) already knows every
+	// shape either backend produces (Unix seconds, RFC3339, SQLite's
+	// CURRENT_TIMESTAMP text, Go's time.Time.String()).
+	var createdRaw, updatedRaw any
 	err := row.Scan(
 		&out.ID, &out.ClusterID, &out.PrimaryNodeID, &out.ReplicaNodeIDs,
 		&out.DSNTemplate, &out.DBName, &out.Username, &out.SSLMode, &out.CurrentDSN,
-		&out.UpdatedBy, &out.CreatedAt, &out.UpdatedAt,
+		&out.UpdatedBy, &createdRaw, &updatedRaw,
 	)
 	if err == sql.ErrNoRows {
 		return nil, ErrClusterDatabaseNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if ts, ok := ParseDBTime(createdRaw); ok {
+		out.CreatedAt = ts
+	}
+	if ts, ok := ParseDBTime(updatedRaw); ok {
+		out.UpdatedAt = ts
 	}
 	return out, nil
 }

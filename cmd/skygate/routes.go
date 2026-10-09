@@ -433,6 +433,11 @@ func registerRoutes(
 	// must restart the container to apply.
 	mux.Handle("POST /admin/database/test", authMW(http.HandlerFunc(adminSvc.PostAdminDatabaseTest)))
 	mux.Handle("POST /admin/database/edit", authMW(http.HandlerFunc(adminSvc.PostAdminDatabaseEdit)))
+	// B373 — "apply the defaults" for cluster_database.dsn_template: composes the
+	// template from the DSN THIS process runs on (the database a standby must
+	// mirror), with %s in the HOST position and no password. Reached from the hint
+	// cards on /admin/database and /admin/cluster (the latter passes ?next=).
+	mux.Handle("POST /admin/database/apply-default", authMW(http.HandlerFunc(adminSvc.PostAdminDatabaseApplyDefault)))
 	// v1.5.0+ / B219 — Phase 3.3 PG failover (Patroni plumbing).
 	// Triggers a Patroni /switchover on the configured
 	// PatroniURL (default http://localhost:8008). The

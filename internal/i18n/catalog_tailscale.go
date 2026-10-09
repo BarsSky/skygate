@@ -84,8 +84,14 @@ var ruTailscale = map[string]string{
 	"tailscale.persist_autostart_yes": "да",
 	"tailscale.persist_autostart_no":  "нет",
 	"tailscale.persist_placeholder":   "В конфигурации остался legacy-плейсхолдер <code>skygate-host-1</code> (v0.33.1.9). Он больше не применяется: используется каноническое имя <code>skygate-host</code>. Уберите пин <code>SKYGATE_TS_HOSTNAME</code> из <code>.env</code> и <code>docker-compose.yml</code>, чтобы предупреждение исчезло.",
-	"tailscale.persist_help":          "Обновление пересоздаёт контейнер, поэтому окружение в нём — то, что записано в <code>docker-compose.yml</code>: переменная <code>SKYGATE_TS_AUTHKEY_FILE=/dev/null</code> заставляет entrypoint пропускать Tailscale, и раньше приходилось каждый раз нажимать <b>Start</b>. Теперь решение оператора (Start/Stop/Enable/Disable) и это имя хранятся в БД, и skygate поднимает клиент сам — на старте и далее раз в 5 минут. Если после обновления имя всё-таки стало <code>skygate-host-1</code>, сохраните каноническое имя этой кнопкой.",
-	"tailscale.persist_btn":           "Сохранить каноническое имя",
+	/* B373 — карточка «применить значения по умолчанию»: что кнопка делает и чего не делает. */
+	"tailscale.defaults_title":    "Значения по умолчанию: чтобы Tailscale переживал обновления",
+	"tailscale.defaults_what":     "Кнопка сохраняет три вещи в БД — путь к файлу с auth key, намерение <code>on</code> и каноническое имя узла <code>skygate-host</code> — и сразу поднимает клиент. Дальше skygate делает это сам: при старте процесса и далее раз в 5 минут, поэтому <b>обновление больше не выключает Tailscale</b>.",
+	"tailscale.defaults_why":      "Почему он вообще выключается: окружение контейнера фиксируется при его СОЗДАНИИ, а в <code>docker-compose.yml</code> записан стоп-сигнал <code>SKYGATE_TS_AUTHKEY_FILE=/dev/null</code> — entrypoint пропускает tailscaled и не может этого не сделать. Кнопка не спорит с этим: она переносит решение в БД, которую процесс читает сам. Чтобы клиент поднимался <em>вместе с контейнером</em> (а не через ~70 секунд после него), замените в <code>docker-compose.yml</code> значение на путь к файлу ключа и пересоздайте контейнер — кнопка скажет, какой именно путь. Ключ она <b>не выдумывает</b>: если пригодного файла нет, она откажется и назовёт причину (выпустить ключ — кнопка «Сгенерировать ключ»).",
+	"tailscale.defaults_btn":      "Применить значения по умолчанию",
+	"tailscale.defaults_btn_help": "Путь к ключу + «включён» + каноническое имя, затем попытка поднять клиент сейчас. Идемпотентно.",
+	"tailscale.persist_help":      "Обновление пересоздаёт контейнер, поэтому окружение в нём — то, что записано в <code>docker-compose.yml</code>: переменная <code>SKYGATE_TS_AUTHKEY_FILE=/dev/null</code> заставляет entrypoint пропускать Tailscale, и раньше приходилось каждый раз нажимать <b>Start</b>. Теперь решение оператора (Start/Stop/Enable/Disable) и это имя хранятся в БД, и skygate поднимает клиент сам — на старте и далее раз в 5 минут. Если после обновления имя всё-таки стало <code>skygate-host-1</code>, сохраните каноническое имя этой кнопкой.",
+	"tailscale.persist_btn":       "Сохранить каноническое имя",
 	// B258.1 (v1.5.8+, 2026-09-17): third visual state — the
 	// auth-key path is configured (DB or env points at a
 	// regular file like /data/ts/authkey) but the file
@@ -228,8 +234,14 @@ var enTailscale = map[string]string{
 	"tailscale.persist_autostart_yes": "yes",
 	"tailscale.persist_autostart_no":  "no",
 	"tailscale.persist_placeholder":   "The configuration still carries the legacy <code>skygate-host-1</code> placeholder (v0.33.1.9). It is no longer applied: the canonical name <code>skygate-host</code> is used. Remove the <code>SKYGATE_TS_HOSTNAME</code> pin from <code>.env</code> and <code>docker-compose.yml</code> to make this warning go away.",
-	"tailscale.persist_help":          "An update recreates the container, so its environment is whatever <code>docker-compose.yml</code> says: <code>SKYGATE_TS_AUTHKEY_FILE=/dev/null</code> makes the entrypoint skip Tailscale, which is why <b>Start</b> had to be pressed again every time. The operator's decision (Start/Stop/Enable/Disable) and this name are now stored in the DB, and skygate brings the client up itself — at boot and every 5 minutes after that. If the name still came back as <code>skygate-host-1</code> after an update, save the canonical name with this button.",
-	"tailscale.persist_btn":           "Save the canonical name",
+	/* B373 — the "apply the defaults" card: what the button does and does not do. */
+	"tailscale.defaults_title":    "Defaults: make Tailscale survive updates",
+	"tailscale.defaults_what":     "The button stores three things in the DB — the auth-key file path, the intent <code>on</code>, and the canonical node name <code>skygate-host</code> — and brings the client up right away. From then on skygate does it itself: at process start and every 5 minutes after that, so <b>an update no longer turns Tailscale off</b>.",
+	"tailscale.defaults_why":      "Why it goes down at all: the container environment is frozen at container CREATION, and <code>docker-compose.yml</code> carries the stop signal <code>SKYGATE_TS_AUTHKEY_FILE=/dev/null</code>, so the entrypoint skips tailscaled and cannot do otherwise. The button does not fight that — it moves the decision into the DB the process reads itself. To have the client come up <em>with the container</em> (instead of ~70 seconds after it), replace that value in <code>docker-compose.yml</code> with the key file path and recreate the container — the button tells you which path. It never <b>invents</b> a key: with no usable file it refuses and names that fact (minting one is what the «Generate key» button is for).",
+	"tailscale.defaults_btn":      "Apply the defaults",
+	"tailscale.defaults_btn_help": "Key path + intent on + canonical name, then an immediate attempt to bring the client up. Idempotent.",
+	"tailscale.persist_help":      "An update recreates the container, so its environment is whatever <code>docker-compose.yml</code> says: <code>SKYGATE_TS_AUTHKEY_FILE=/dev/null</code> makes the entrypoint skip Tailscale, which is why <b>Start</b> had to be pressed again every time. The operator's decision (Start/Stop/Enable/Disable) and this name are now stored in the DB, and skygate brings the client up itself — at boot and every 5 minutes after that. If the name still came back as <code>skygate-host-1</code> after an update, save the canonical name with this button.",
+	"tailscale.persist_btn":       "Save the canonical name",
 	// B258.1 (v1.5.8+, 2026-09-17): third visual state —
 	// configured-but-missing. Mirrors the B258 "intentionally
 	// disabled" branch but with a warn banner (not info)
