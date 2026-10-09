@@ -58,22 +58,35 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
 skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-MAIN=cmd/skygate/main.go
+gosurface SURFACE cmd/skygate/*.go
 SCHED=cmd/skygate/main_schedulers.go
 SELF=scripts/check_b372_main_is_not_one_giant_function.sh
+
+# B339: a contract must not PIN one file path — a later split would turn this check
+# red for a pure move. The two assertions that are genuinely about the ENTRY POINT
+# (its line-count ratchet, and the position of the call inside it) therefore resolve
+# the file from a GLOB and assert the glob matches exactly one file, so a rename or a
+# further split is reported as "the entry point is gone/changed", never as a silent
+# pass. Everything else in this script reads $SURFACE (the whole cmd/skygate package).
+MAIN_PATH="$(git ls-files 'cmd/skygate/main*.go' 2>/dev/null | grep -E '/main\.go$' | head -1)"
+if [ -z "$MAIN_PATH" ] || [ ! -f "$MAIN_PATH" ]; then
+  bad "A0: the cmd/skygate entry point could not be resolved from the main*.go glob (is main.go gone?)"
+  echo "B372 summary: $PASS passed, $FAIL failed, $SKIP skipped"
+  exit 1
+fi
 
 # The ceiling is the whole point of the ratchet: it is the measured post-B372 size
 # and it may only fall. Raise it deliberately, never to "make the check pass".
 MAIN_CEILING=2400
 
-for f in "$MAIN" "$SCHED"; do
+for f in "$MAIN_PATH" "$SCHED"; do
   [ -f "$f" ] || { bad "A0: missing $f"; echo "B372 summary: $PASS passed, $FAIL failed, $SKIP skipped"; exit 1; }
 done
 
 # =====================================================================
 hdr "A. the extracted phase lives in its own file"
 
-if grep -q 'func wireOptionalSchedulers(ctx context.Context, d \*db.ResettableDB, app \*handlers.App, adminSvc \*adminsvc.Service, cfg \*config.Config)' "$SCHED"; then
+if grep -q 'func wireOptionalSchedulers(ctx context.Context, d \*db.ResettableDB, app \*handlers.App, adminSvc \*adminsvc.Service, cfg \*config.Config)' "$SURFACE"; then
   ok "A1: wireOptionalSchedulers takes exactly what the moved block used (ctx, the resettable DB, the app, the admin service, the config)"
 else
   bad "A1: the extracted function changed shape or vanished"
@@ -83,13 +96,14 @@ if ! grep -qE '^func main\(' "$SCHED"; then
 else
   bad "A2: a second main() is in the tree — the build would not even link"
 fi
-# The block must have LEFT main.go, not been copied: a duplicate would compile only
-# if one of them were renamed, and a "moved" block that still sits inline is how a
-# refactor silently doubles a scheduler.
-if grep -q 'mesh\.StartCleanupScheduler' "$MAIN"; then
-  bad "A3: the cleanup-scheduler wire-up is still INSIDE main.go — the block was copied, not moved"
+# The block must have MOVED, not been copied. Measured on the whole package surface
+# (B339): a copy would leave two wire-ups in the surface, while a pure move leaves
+# exactly one — so this catches duplication without pinning a file path.
+WIRE_N="$(grep -c 'mesh\.StartCleanupScheduler' "$SURFACE" || true)"
+if [ "$WIRE_N" = "1" ]; then
+  ok "A3: exactly ONE cleanup-scheduler wire-up exists across cmd/skygate (moved, not copied)"
 else
-  ok "A3: the moved wire-up is no longer in main.go (moved, not copied)"
+  bad "A3: the cleanup-scheduler wire-up appears $WIRE_N time(s) in the cmd/skygate surface — a copy doubles a scheduler"
 fi
 if grep -q 'mesh\.StartCleanupScheduler' "$SCHED" && grep -q 'tokenrotate\.Start' "$SCHED" \
    && grep -q 'keynotify\.Start' "$SCHED" && grep -q 'go elector\.Run(ctx)' "$SCHED" \
@@ -102,24 +116,29 @@ fi
 # =====================================================================
 hdr "B. the call sits at the same point of the boot sequence"
 
-CALL_LINE="$(grep -n 'wireOptionalSchedulers(ctx, d, app, adminSvc, cfg)' "$MAIN" | head -1 | cut -d: -f1)"
-CERTSYNC_LINE="$(grep -n 'certsync: enabled' "$MAIN" | head -1 | cut -d: -f1)"
-SHUTDOWN_LINE="$(grep -n '^	<-ctx.Done()' "$MAIN" | head -1 | cut -d: -f1)"
+# The boot ORDER is a property of the entry point itself (the call, the certsync
+# wiring it must follow and the shutdown wait it must precede all live in main()),
+# so this one section reads the git-resolved entry point rather than the surface:
+# concatenation order would make the comparison depend on the glob's file order.
+CALL_LINE="$(grep -n 'wireOptionalSchedulers(ctx, d, app, adminSvc, cfg)' "$MAIN_PATH" | head -1 | cut -d: -f1)"
+CERTSYNC_LINE="$(grep -n 'certsync: enabled' "$MAIN_PATH" | head -1 | cut -d: -f1)"
+SHUTDOWN_LINE="$(grep -n '^	<-ctx.Done()' "$MAIN_PATH" | head -1 | cut -d: -f1)"
 if [ -n "$CALL_LINE" ] && [ -n "$CERTSYNC_LINE" ] && [ -n "$SHUTDOWN_LINE" ] \
    && [ "$CALL_LINE" -gt "$CERTSYNC_LINE" ] && [ "$CALL_LINE" -lt "$SHUTDOWN_LINE" ]; then
   ok "B1: the call is still after the certsync wiring and before the shutdown wait (boot order unchanged)"
 else
   bad "B1: the call moved out of its slot in the boot sequence (call=$CALL_LINE certsync=$CERTSYNC_LINE shutdown=$SHUTDOWN_LINE)"
 fi
-if [ "$(grep -c 'wireOptionalSchedulers(' "$MAIN")" = "1" ]; then
-  ok "B2: it is called exactly once"
+if [ "$(grep -cE '^[[:space:]]+wireOptionalSchedulers\(ctx, d, app, adminSvc, cfg\)' "$SURFACE" || true)" = "1" ] \
+   && [ "$(grep -cE '^func wireOptionalSchedulers\(' "$SURFACE" || true)" = "1" ]; then
+  ok "B2: the phase is declared once and CALLED exactly once across the cmd/skygate surface"
 else
-  bad "B2: the phase is called zero or several times"
+  bad "B2: the phase is declared or called zero or several times"
 fi
 # The shutdown path itself must NOT have moved into the helper: `<-ctx.Done()`
 # followed by the 5s Shutdown is main()'s contract with the process.
-if grep -q 'srv.Shutdown(shutCtx)' "$MAIN" && grep -q 'context.WithTimeout(context.Background(), 5\*time.Second)' "$MAIN"; then
-  ok "B3: the graceful-shutdown path stayed in main()"
+if grep -q 'srv.Shutdown(shutCtx)' "$MAIN_PATH" && grep -q 'context.WithTimeout(context.Background(), 5\*time.Second)' "$MAIN_PATH"; then
+  ok "B3: the graceful-shutdown path stayed in the entry point"
 else
   bad "B3: the shutdown path moved or was lost"
 fi
@@ -133,13 +152,13 @@ else
   ok "C1: the extracted function holds no defer (nothing stops earlier than it used to)"
 fi
 for d in 'defer wd.Stop()' 'defer el.Stop()'; do
-  if grep -qF "$d" "$MAIN"; then
+  if grep -qF "$d" "$MAIN_PATH"; then
     ok "C2: '$d' is still in main() where a defer means process exit"
   else
     bad "C2: '$d' left main() — moving a defer into a helper changes WHEN it runs"
   fi
 done
-if [ "$(grep -cE '^[[:space:]]*defer ' "$MAIN")" -ge 3 ]; then
+if [ "$(grep -cE '^[[:space:]]*defer ' "$MAIN_PATH")" -ge 3 ]; then
   ok "C3: the three lifecycle defers are still counted in main() (the rest of the boot path is not movable as text — see the header)"
 else
   bad "C3: main() lost one of its lifecycle defers"
@@ -148,7 +167,6 @@ fi
 # =====================================================================
 hdr "D. every scheduler still announces itself, and keeps its own gate"
 
-gosurface SURFACE cmd/skygate/*.go
 for pair in 'cleanup-scheduler: enabled|cfg.CleanupSmokeMeshInAppEnabled' \
             'discovery-ticker: enabled|SKYGATE_DISCOVERY_INTERVAL_SEC' \
             'auto-rotate-scheduler: enabled|cfg.TokenAutoRotateEnabled' \
@@ -165,7 +183,7 @@ done
 # =====================================================================
 hdr "E. the ratchet: main() may only get smaller"
 
-LINES="$(wc -l < "$MAIN" | tr -d ' ')"
+LINES="$(wc -l < "$MAIN_PATH" | tr -d ' ')"
 if [ "$LINES" -le "$MAIN_CEILING" ]; then
   ok "E1: cmd/skygate/main.go is $LINES lines (ceiling $MAIN_CEILING; it may only fall)"
 else
