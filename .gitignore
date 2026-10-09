@@ -161,7 +161,15 @@ Thumbs.db
 *.swp
 
 # ---- Backup output directory ----
-backup/
+# B368: anchored to the repository ROOT. The unanchored `backup/` matched a
+# directory of that name at ANY depth, so it also swallowed `internal/backup/` —
+# and while the already-tracked files there survived (ignore rules do not apply
+# to tracked paths), every NEW file in that package was invisible to `git add`:
+# measured 2026-10-09, `internal/backup/mount_b368_test.go` did not appear in
+# `git status` at all. That is AGENTS trap #11, and a contract that asserts its
+# own test file is TRACKED is what turns it into a red CI run instead of a
+# missing file on the operator's machine.
+/backup/
 
 # Hermes agent backup directories (do not commit)
 .hermes-*/

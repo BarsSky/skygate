@@ -12,6 +12,98 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.109 — an ARRAY column is not a string, a Test button that could not go red, and a table that was clipped (B367 + B368 + B369)
+
+**Date:** 2026-10-09 · **Base:** `v1.5.108` → this tag · **Compatibility:** behaviour only — no
+schema change, no migration, no new setting.
+
+Three defects, all found by the operator using the panel on a live PostgreSQL deployment.
+
+### B367 — `COALESCE(roles, '')` made the drain button and the failover transaction dead
+
+The operator pressed **«Слить и удалить»** (Drain & remove) on one of the relay rows the pre-B359
+discovery pass had adopted into `cluster_node`, and the panel answered:
+
+```
+drain+remove: lookup node: ERROR: malformed array literal: "" (SQLSTATE 22P02)
+```
+
+`cluster_node.roles` is `TEXT[]` on PostgreSQL, so the untyped `''` in `COALESCE(roles, '')` is
+coerced to `text[]` and PostgreSQL **rejects the statement at parse time** — no data can make it
+work. Reproduced directly against the live database:
+
+```sql
+SELECT id, COALESCE(state,''), COALESCE(roles,'') FROM cluster_node …;
+ERROR:  malformed array literal: ""
+```
+
+**Five** statements carried it:
+
+| file | statements | who calls them |
+|---|---|---|
+| `internal/cluster/node.go` | the lookup of `RemoveNode`, `DrainNode`, `DrainAndRemoveNode` | the operator's buttons |
+| `internal/db/cluster_sql_b291.go` | `FindClusterPrimary`, `NodeRoles` | the **failover** transaction and the failover **drill** |
+
+That second row is the severe one: on this deployment a real failover could not even find the
+current primary. On SQLite the same column is the `{a,b}` TEXT literal, so `'{}'` parses identically
+and a native install cannot see the defect at all — LESSONS L-16's dialect leak, sitting in the path
+the operator reaches for during an incident.
+
+Fix: `db.EmptyTextArrayLiteral` (`'{}'`), defined **once** with the SQLSTATE, the five affected
+statements and the reason `''` is invalid in its comment. Verified at three levels: the SQL itself
+against the live PostgreSQL (old form errors, new form returns the row); behavioural Go tests that
+call the **real** functions on SQLite and on PostgreSQL (`TestB367_FailoverLookupsWorkOnPostgres`,
+`TestB367_DrainAndRemoveWorksOnPostgres` — the PG halves run in CI's PG job); and a source contract
+that **derives every `TEXT[]` column from the PostgreSQL migration chain** and fails on
+`COALESCE(<array column>, '')`, proved to fire on a planted violation.
+
+### B368 — a Test button that cannot go red is worse than no button
+
+The in-app S3 backup had been failing for weeks:
+
+```
+backup.last_error: s3 upload: s3 bucket check: Head "http://172.18.0.5:9000/skygate-backups/":
+                   dial tcp 172.18.0.5:9000: connect: connection refused
+```
+
+while the panel's **«Test»** answered `S3 доступен: http://172.18.0.5:9000 · корзина:
+skygate-backups · регион: us-east-1`. The S3 branch of `backup.TestConnection` validated only that
+the fields were **non-empty** and echoed the endpoint back — its own comment claimed the probe
+happens later in `uploadToS3`, which is true and useless. That green tick is why a MinIO that had
+**moved to another host** stayed unnoticed.
+
+The branch now performs the same `BucketExists` round trip the upload path makes, bounded by
+`s3TestTimeout` so a wrong endpoint cannot hang the page, and names **why** it failed (endpoint
+unreachable / credentials rejected / no such bucket); a half-filled form is still reported as
+missing fields rather than as a transport error. Behavioural regressions pin both directions.
+
+**Live reconfiguration performed with the operator's own target** (`https://minio.skynas.ru`,
+bucket `skygate-backups`): the endpoint, TLS flag, access key and prefix were written through the
+panel's audited save handler; the bucket did not exist on that MinIO (only `rocket-chat` and
+`skygate-pg-wal` did) and was **created**; one backup was then run end to end and the archive was
+verified **independently** of the app (AWS-SigV4 `ListObjectsV2`, not the app's own report):
+
+```
+portal/skygate-full-20261009_101919.tar.gz  20,729,891 bytes
+```
+
+### B369 — `/admin/cluster`'s tables were clipped, so the action buttons hung outside the card
+
+The operator's screenshot (1088 px desktop) shows «Снять / Слить и удалить / Обновить» **past the
+card's right border**. The cause is systemic: `body{overflow-x:hidden}` means there is no
+page-level horizontal scrollbar, so a table wider than its card is silently **clipped**;
+`.table-wrap{overflow-x:auto}` is the project's only scroller and it is **opt-in** (27 template files
+use it) — `cluster.html` was the one wide-table page with **none**; and the B357 systemic fix
+(`.card{overflow-x:auto}`, `th{white-space:normal}`) lives inside `@media (max-width:768px)`, i.e.
+**mobile only**. The nodes table has **nine** columns, one of them the long B359 reason sentence
+(which defined the table's preferred width) and one the action buttons.
+
+Every table on the page is now wrapped in `.table-wrap` and the reason cell is bounded by a
+block-level `max-width` — deliberately **not** `overflow-wrap:anywhere`, which B357 removed because
+it collapses a cell's min-content to one character.
+
+---
+
 ## v1.5.108 — the onboarding must not cut the operator off, and a join must register the build it joined with (B366)
 
 **Date:** 2026-10-09 · **Base:** `v1.5.107` → this tag · **Compatibility:** behaviour only — no

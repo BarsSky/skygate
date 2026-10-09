@@ -36,14 +36,21 @@
 package backup
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// s3TestTimeout bounds the S3 branch of TestConnection (B368). The probe is a
+// real BucketExists round trip, so a wrong endpoint must fail the test rather
+// than hang the operator's click.
+const s3TestTimeout = 10 * time.Second
 
 // Mount attaches the configured destination at
 // Config.Mountpoint using the protocol-appropriate
@@ -342,10 +349,10 @@ func mountSFTP(c *Config) error {
 
 // ConnectionTest is the structured result of TestConnection.
 type ConnectionTest struct {
-	OK        bool
-	Protocol  Protocol
-	Fields    map[string]string // parsed fields shown to the user
-	Issues    []string          // things to fix before mounting
+	OK       bool
+	Protocol Protocol
+	Fields   map[string]string // parsed fields shown to the user
+	Issues   []string          // things to fix before mounting
 }
 
 // TestConnection returns the parsed fields and any
@@ -409,17 +416,16 @@ func TestConnection(c *Config) *ConnectionTest {
 			out.Issues = append(out.Issues, "mountpoint is required")
 		}
 	// 2026-08-12 v1.3.8: S3 test path.
-	// We don't do a real HEAD request here
-	// (that would couple the form click
-	// to network latency + bucket ACLs).
-	// Instead we check the config is
-	// self-consistent: bucket + creds +
-	// region all non-empty. The actual
-	// network probe happens in
-	// uploadToS3's BucketExists call at
-	// run time, where a clear "bucket
-	// does not exist: foo" error surfaces
-	// in the audit log.
+	//
+	// B368 (2026-10-09, measured live): this branch used to check ONLY that the
+	// fields were non-empty and echo the endpoint back — the operator pressed
+	// «Test» and the panel answered "S3 доступен: http://172.18.0.5:9000 · корзина:
+	// skygate-backups" for an address that REFUSES CONNECTIONS, while every
+	// scheduled backup failed with `s3 bucket check: … connection refused`. A
+	// green tick that cannot go red is worse than no tick: it is why a MinIO that
+	// had moved to another host went unnoticed. The probe below is the SAME
+	// BucketExists call the upload path makes, with a short deadline so a click
+	// still cannot hang the page.
 	case ProtocolS3:
 		// Endpoint defaults to AWS regional
 		// (matches newS3Client logic).
@@ -448,6 +454,28 @@ func TestConnection(c *Config) *ConnectionTest {
 			// RunBackup falls back to
 			// us-east-1 silently.
 			out.Issues = append(out.Issues, "s3_region is empty (will default to us-east-1)")
+		}
+		// B368: the real probe — only when the config is otherwise usable, so a
+		// missing field is reported as itself instead of as a network error.
+		if len(out.Issues) == 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), s3TestTimeout)
+			defer cancel()
+			t0 := time.Now()
+			mc, cerr := newS3Client(c)
+			switch {
+			case cerr != nil:
+				out.Issues = append(out.Issues, "s3 client: "+cerr.Error())
+			default:
+				exists, berr := mc.BucketExists(ctx, c.S3Bucket)
+				switch {
+				case berr != nil:
+					out.Issues = append(out.Issues, "s3 endpoint unreachable or credentials rejected: "+berr.Error())
+				case !exists:
+					out.Issues = append(out.Issues, "s3 bucket does not exist: "+c.S3Bucket)
+				default:
+					out.Fields["latency_ms"] = strconv.FormatInt(time.Since(t0).Milliseconds(), 10)
+				}
+			}
 		}
 	default:
 		out.Issues = append(out.Issues, "unknown protocol: "+string(c.Protocol))

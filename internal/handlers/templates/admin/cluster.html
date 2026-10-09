@@ -32,6 +32,7 @@
 <div class="card">
   <h3><i class="fa-solid fa-sitemap"></i>{{t "cluster.section_summary"}}</h3>
   {{if .Data.HasCluster}}
+    <div class="table-wrap">{{/* B369: every table on this page scrolls instead of being clipped */}}
     <table class="table" style="font-size:13px">
       <tbody>
         <tr><th style="width:200px">{{t "cluster.col_cluster_id"}}</th><td><code>{{.Data.ClusterID}}</code></td></tr>
@@ -49,6 +50,7 @@
         {{end}}
       </tbody>
     </table>
+    </div><!-- /.table-wrap (B369) -->
   {{else}}
     <div class="muted" style="padding:12px;background:var(--bg-muted);border-radius:4px;font-size:13px">
       <strong>{{t "cluster.no_cluster"}}</strong>
@@ -86,6 +88,13 @@
   <p class="muted" style="font-size:13px">{{t "cluster.nodes_help"}}</p>
 
   {{if .Data.Nodes}}
+  {{/* B369: nine columns, one of them the long B359 reason and one the action
+      buttons. On DESKTOP `body{overflow-x:hidden}` (themes.css) CLIPS a table
+      wider than its card — the operator saw the «Снять / Слить и удалить /
+      Обновить» buttons hanging past the card's border. `.table-wrap` is the
+      project's only scroller (B357) and this file was the one wide-table page
+      without it. */}}
+  <div class="table-wrap">
   <table class="table" style="width:100%;font-size:13px">
     <thead>
       <tr style="text-align:left">
@@ -129,7 +138,11 @@
             blank reason — "we cannot decide" must not look like "nothing is
             there" (L-54). A row whose host is an exit-node relay is called out
             as NOT a skygate host instead of being offered for approval. */}}
-        <td style="font-size:12px">
+        {{/* B369: the reason is a full sentence and it was defining the table's
+            preferred width. A block-level max-width bounds it WITHOUT the
+            `overflow-wrap:anywhere` that B357 removed (that property collapses a
+            cell's min-content to one character and prints values glyph by glyph). */}}
+        <td style="font-size:12px"><div style="max-width:360px">
           {{if eq .ReasonKey "cluster.reason_foreign_relay"}}
             <span class="tag tag-danger">{{t "cluster.reason_foreign_relay"}}</span>
           {{else if eq .ReasonKey "cluster.reason_failed"}}
@@ -152,7 +165,7 @@
               {{t .ActionKey}}
             {{end}}
           </div>
-        </td>
+        </div></td>
         <td>
           {{if .IsSelf}}
             <span class="muted" title="{{tf "cluster.node_remove_self" $.Data.SelfHostname}}">—</span>
@@ -216,6 +229,7 @@
       {{end}}
     </tbody>
   </table>
+  </div><!-- /.table-wrap (B369) -->
   {{else}}
     <div class="muted" style="padding:12px;background:var(--bg-muted);border-radius:4px;font-size:13px">
       {{t "cluster.no_nodes"}}
@@ -363,6 +377,7 @@
   <h3><i class="fa-solid fa-envelope-open-text"></i>{{t "cluster.section_invites"}} ({{.Data.InviteCount}})</h3>
   <p class="muted" style="font-size:13px">{{t "cluster.invites_help"}}</p>
   {{if .Data.Invites}}
+  <div class="table-wrap">{{/* B369: same clipping rule as the nodes table */}}
   <table class="table" style="width:100%;font-size:13px">
     <thead>
       <tr style="text-align:left">
@@ -390,6 +405,7 @@
       {{end}}
     </tbody>
   </table>
+  </div><!-- /.table-wrap (B369) -->
   {{else}}
     <div class="muted" style="padding:12px;background:var(--bg-muted);border-radius:4px;font-size:13px">
       {{t "cluster.no_invites"}}
@@ -413,6 +429,7 @@
 <div class="card">
   <h3><i class="fa-solid fa-clipboard-list"></i>{{t "cluster.section_audit"}}</h3>
   {{if .Data.RecentEvents}}
+  <div class="table-wrap">{{/* B369: the detail column is long JSON; clip it and the row loses its explanation */}}
   <table class="table" style="width:100%;font-size:13px">
     <thead>
       <tr style="text-align:left">
@@ -452,6 +469,7 @@
       {{end}}
     </tbody>
   </table>
+  </div><!-- /.table-wrap (B369) -->
   {{else}}
     <div class="muted" style="padding:12px;background:var(--bg-muted);border-radius:4px;font-size:13px">
       {{t "cluster.no_events"}}
