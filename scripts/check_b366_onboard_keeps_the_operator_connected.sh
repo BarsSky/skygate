@@ -68,6 +68,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# B339: cmd/skygate was itself split (main.go + routes.go + tail files), so the
+# contract below reads the whole PACKAGE SURFACE, never one file.
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"
+
 SKY_TMP="$(mktemp -d /tmp/skygate-check.XXXXXX)"
 trap 'rm -rf "$SKY_TMP"' EXIT
 
@@ -83,14 +87,16 @@ CLI=cmd/skygate/cluster.go
 INIT=cmd/skygate/init.go
 SELFVER=cmd/skygate/self_version.go
 SELFTEST=cmd/skygate/self_version_b366_test.go
-MAIN=cmd/skygate/main.go
 I18N=internal/i18n/catalog_admin.go
 DOC=docs/operations.md
 SELF=scripts/check_b366_onboard_keeps_the_operator_connected.sh
 
-for f in "$ONBOARD" "$ONBOARDTEST" "$CLI" "$INIT" "$SELFVER" "$SELFTEST" "$MAIN" "$I18N" "$DOC"; do
+for f in "$ONBOARD" "$ONBOARDTEST" "$CLI" "$INIT" "$SELFVER" "$SELFTEST" "$I18N" "$DOC"; do
   [ -f "$f" ] || { bad "A0: missing $f"; echo "B366 summary: $PASS passed, $FAIL failed, $SKIP skipped"; exit 1; }
 done
+
+# the cmd/skygate surface (B339) — used by B5.
+gosurface MAIN cmd/skygate/*.go
 
 # fn_body <file> <func-name-prefix> — print a Go function body, so the assertions
 # below are made against the COMMAND the step renders, not against a file that
