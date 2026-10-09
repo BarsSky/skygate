@@ -261,10 +261,7 @@ func runInitBootstrap(args []string) error {
 	if tsHostname == "" {
 		tsHostname = hostname
 	}
-	skygateVersion := os.Getenv("SKYGATE_VERSION")
-	if skygateVersion == "" {
-		skygateVersion = "unknown"
-	}
+	skygateVersion := selfVersion()
 	nodeID, err := cluster.UpsertNode(d, cluster.DefaultClusterID, hostname, tsHostname, roles, skygateVersion)
 	if err != nil {
 		return fmt.Errorf("init: upsert node: %w", err)
@@ -459,8 +456,8 @@ func runInitStatus(args []string) error {
 			UpdatedAt  string   `json:"updated_at"`
 		} `json:"database"`
 		StateFile struct {
-			Path          string `json:"path"`
-			Exists        bool   `json:"exists"`
+			Path           string `json:"path"`
+			Exists         bool   `json:"exists"`
 			BootstrappedAt string `json:"bootstrapped_at,omitempty"`
 		} `json:"state_file"`
 	}
@@ -617,10 +614,11 @@ func runInitStandbyInvite(args []string) error {
 // the other standbys in the cluster).
 //
 // Presets:
-//   "primary"    → ["skygate", "patroni-primary", "control"]
-//   "standby"    → ["skygate-standby", "patroni-replica"]
-//   "db-replica" → ["patroni-replica"]
-//   "control"    → ["skygate", "control"]
+//
+//	"primary"    → ["skygate", "patroni-primary", "control"]
+//	"standby"    → ["skygate-standby", "patroni-replica"]
+//	"db-replica" → ["patroni-replica"]
+//	"control"    → ["skygate", "control"]
 //
 // A role list is considered a preset if EVERY element
 // (after split + trim) matches a known preset name.

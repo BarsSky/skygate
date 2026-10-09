@@ -180,7 +180,13 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # contract E1 hold every TOUCHED file to gofmt even when it is allow-listed, so
 # its struct-tag and doc-comment alignment was paid with the change and the entry
 # left the list.
-FROZEN=255
+# 2026-10-09 (tenth payment): 255 -> 254.
+# cmd/skygate/init.go was frozen as drifted; B366 replaced the env-var-plus-
+# "unknown" version fallback `skygate init` used with selfVersion(). Rule 3 and
+# contract E1 hold every TOUCHED file to gofmt, so its struct-tag alignment and
+# the gofmt-1.19 doc-comment list were paid with the change and the entry left
+# the list. Caught locally by B337 E1, one commit before CI would have.
+FROZEN=254
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

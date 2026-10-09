@@ -265,10 +265,7 @@ func runClusterJoin(args []string) error {
 	if tsHostname == "" {
 		tsHostname = hostname
 	}
-	skygateVersion := os.Getenv("SKYGATE_VERSION")
-	if skygateVersion == "" {
-		skygateVersion = "unknown"
-	}
+	skygateVersion := selfVersion()
 	roles := opts.RolesCSV
 	if roles == "" {
 		roles = "skygate-standby"

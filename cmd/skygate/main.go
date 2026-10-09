@@ -857,10 +857,10 @@ func main() {
 	// "+<commit>". compareSemver in internal/update/checker.go
 	// strips the `+...` part before comparing, so the
 	// IsNewer result is unchanged.
-	app.BuildVersion = version
-	if !strings.Contains(version, "-g") && commit != "unknown" {
-		app.BuildVersion = version + "+" + commit
-	}
+	// B366: the rule now lives in buildVersionString() (self_version.go), so
+	// /healthz, the panel footer, `skygate version` and the version a JOIN
+	// registers cannot drift apart.
+	app.BuildVersion = buildVersionString()
 	log.Printf("🌐 Skygate %s (commit %s, built %s)", version, commit, buildTime)
 
 	startup.Enter("routes")

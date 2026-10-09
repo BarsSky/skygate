@@ -49,7 +49,7 @@ Related: [`AGENTS.md`](../AGENTS.md) (conventions + the compact block index),
 
 | | |
 |---|---|
-| Version line | **v1.5.107** (B365 — the panel-only onboarding loses its last three dead steps and silent gaps: step 4 starts the heartbeat daemon it actually renders, an empty `dsn_template` is loud instead of silent, and a join ADOPTS the row the discovery pass created) |
+| Version line | **v1.5.108** (B366 — the onboarding's step 1 no longer passes `--accept-routes` (measured: it installed the operator's own /32 into routing table 52 and every SSH session died), a join registers the build it joined with instead of `unknown`, and two more thousand-line files are split by proved-pure moves) |
 | Reference host | production deployment healthy; `/readyz` reports db / headscale / headplane / tailscale |
 | Verify gate | `scripts/verify_pre_deploy.sh` runs **381 contracts** (`run_check` entries, counted 2026-10-01); live-state checks report `SKIP`, not `FAIL` (rule 1). The catalog **exits 0 even with FAILs locally** — see TD-22 |
 | Static analysis | `go vet` and `staticcheck` clean; **`gofmt` is NOT clean repo-wide** (302 of 835 tracked files) and nothing enforces it in the gate — see TD-21 |

@@ -12,6 +12,84 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.108 — the onboarding must not cut the operator off, and a join must register the build it joined with (B366)
+
+**Date:** 2026-10-09 · **Base:** `v1.5.107` → this tag · **Compatibility:** behaviour only — no
+schema change, no migration, no new setting.
+
+Both findings come from running the whole v1.5.107 flow **end to end on a real second host**:
+wipe the host, mint the block in the panel, run all five steps, Approve. Two of them only appear
+that way — neither is visible in the source.
+
+1. **Step 1 locked the operator out of the host it was setting up.** The rendered
+   `tailscale up …` passed `--accept-routes`, and that flag installs every prefix the relays
+   advertise into routing table 52 — which the kernel consults **before** `main` (policy rule
+   5270). On the reference standby the table held **220 entries** (206 from one relay, because
+   exit rules resolve domains to single IPs) and **one of them was the operator's own address**
+   (`95.165.170.190/32`), so the host answered SSH over `tailscale0` instead of its default
+   gateway and the session died mid-setup.
+
+   The evidence is direct, not inferential:
+
+   ```
+   ip route get 95.165.170.190
+     → dev tailscale0 table 52 src 100.64.0.20     (--accept-routes ON)
+     → via 10.0.0.1 dev net0 src 45.152.198.217    (--accept-routes OFF)
+
+   tcpdump -ni net0 'tcp port 22'   # during the lock-out
+     the operator's SYNs ARRIVING, no SYN-ACK ever leaving
+     a different client completing a full handshake in the same capture
+   ```
+
+   Reproduced twice in each direction; `tailscale set --accept-routes=false` restored the session
+   within seconds. A standby is a **server**: it needs the tailnet for the cluster API and the
+   heartbeat, not the relays' subnets. The block no longer passes the flag in **either** branch
+   (with or without a preauth key), keeps `hostnamectl`, the idempotent client install, the login
+   server, `--netfilter-mode=nodivert` and `--accept-dns=false`, and records the measurement in
+   the source, in the panel note (RU+EN) and in the runbook — so it cannot be re-added as an
+   "obvious" improvement. The pre-B365 hand-written runbook had said exactly this; the generated
+   block had lost it.
+
+2. **The join registered `skygate_version = unknown`.** The live row read
+   `node-disc-svyatoslava | ready | unknown` and the audit row
+   `cluster_audit: node_join {"skygate_version": "unknown", …}` — because `skygate join` and
+   `skygate init` built the version they send from the environment variable `SKYGATE_VERSION`
+   (which **nothing in the CLI sets**) with a literal `unknown` fallback, while the real identity
+   is injected into `package main` by ldflags. B365's promise — "the version of the JOIN must land
+   on the row" — had replaced one placeholder with another, and the operator still could not see
+   which build joined.
+
+   New `selfVersion()` owns the rule: `SKYGATE_VERSION` (explicit override, still honoured) → the
+   build's own `version` + `commit` in the same shape `/healthz` displays → `dev`. It never
+   returns `unknown` for a real build. `main.go` now derives the displayed version from the same
+   helper (`buildVersionString()`), so the string the cluster row carries and the string the panel
+   shows cannot drift.
+
+**Also in this tag (documentation integrity, and it caught real omissions).** Contract B366's
+last four checks police the **shape** of the AGENTS.md block index, because writing this very
+block produced the failure they detect: an insertion replaced B365's anchor line instead of
+re-emitting it, so B366 took its place, the index still carried the same number of bullets, and
+every `grep '\*\*B365\*\*'` contract kept passing (LESSONS L-64(3), paid for a second time). The
+same scan then found two pre-existing defects: **B336/B337/B338 were glued into one physical
+line**, and **B363 and B364 had no index entry at all** (they shipped as fixes inside the
+v1.5.105/v1.5.106 cycle). All three are repaired; the count ratchet is frozen at 390 bullets and
+may only rise.
+
+**Refactoring (the "не тонуть в тысячестрочных файлах" work, shipped in this tag):**
+
+* `internal/feature/exit_rules/form_my.go` 1697 → **829** lines, with the 866-line
+  `GetMyExitRules` moved verbatim into `form_my_rules.go` (**891**);
+* `internal/feature/exit_rules/sync.go` 1632 → **29** (a doc anchor), split three ways into
+  `sync_acl.go` (**361**), `sync_routes.go` (**875**) and `sync_domain.go` (**484**).
+
+Both are **pure moves, proved rather than asserted**: the moved text is byte-identical to the
+original (for `sync.go`: HEAD's 1632 non-blank lines = a 38-line package doc replaced by a 29-line
+one + 1594 declaration lines, reproduced exactly by 320 + 832 + 442, each an ordered subsequence of
+the original). 48 check scripts were redirected so that no contract points at a file that no longer
+holds the code.
+
+---
+
 ## v1.5.107 — the panel-only onboarding loses its last three dead steps and silent gaps (B365)
 
 **Date:** 2026-10-08 · **Base:** `v1.5.106` → this tag · **Compatibility:** behaviour only — no

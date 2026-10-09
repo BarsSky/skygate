@@ -189,13 +189,30 @@ func clusterOnboardSteps(p clusterOnboardPayload) []ClusterOnboardStep {
 	//       (`envious-blush.ptr.network`). Setting it here is what makes the block
 	//       genuinely self-sufficient; the old hand-written runbook had this as an
 	//       explicit operator step and the generated block had lost it.
+	// B366 (2026-10-09, live, reproduced twice in each direction): the step no
+	// longer passes `--accept-routes`, because on a real standby it CUT THE
+	// OPERATOR OFF. `--accept-routes` installs every prefix the relays advertise
+	// into routing table 52, and policy rule 5270 consults that table BEFORE
+	// `main`: on the reference standby the table held 220 entries and one of them
+	// was the operator's OWN address (`95.165.170.190/32`, among the 206 prefixes
+	// `karolina` advertises because exit rules resolve domains to single IPs).
+	// The host then answered the operator's SSH over tailscale0 instead of net0 —
+	// tcpdump showed the SYNs arriving and NO SYN-ACK ever leaving — and the
+	// session died. `tailscale set --accept-routes=false` restored it instantly
+	// (table 52 back to 14 entries, route to the client via the default gateway).
+	// A standby is a SERVER: it needs the tailnet for the cluster API and the
+	// heartbeat, not the relays' subnet routes, so the block must not silently
+	// capture the operator's own management path. The old hand-written runbook
+	// said exactly this ("do not add --accept-routes"); the generated block had
+	// lost it. An operator who DOES need those routes can add the flag by hand —
+	// and now knows the risk by name.
 	hostnameLine := fmt.Sprintf("sudo hostnamectl set-hostname %s", shellQuote(p.Hostname))
 	tailnet := fmt.Sprintf("%s\ncommand -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh\n"+
-		"sudo tailscale up --login-server=%s --hostname=%s --accept-routes --accept-dns=false --netfilter-mode=nodivert",
+		"sudo tailscale up --login-server=%s --hostname=%s --accept-dns=false --netfilter-mode=nodivert",
 		hostnameLine, shellQuote(p.ControlURL), shellQuote(p.Hostname))
 	if p.TSKey != "" {
 		tailnet = fmt.Sprintf("%s\ncommand -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh\n"+
-			"sudo tailscale up --login-server=%s --authkey=%s --hostname=%s --accept-routes --accept-dns=false --netfilter-mode=nodivert",
+			"sudo tailscale up --login-server=%s --authkey=%s --hostname=%s --accept-dns=false --netfilter-mode=nodivert",
 			hostnameLine, shellQuote(p.ControlURL), shellQuote(p.TSKey), shellQuote(p.Hostname))
 	}
 	steps = append(steps, ClusterOnboardStep{

@@ -2063,12 +2063,14 @@ first.
    render; unrendered payloads are swept after 15 minutes). It is five numbered steps, in this order:
    1. `hostnamectl set-hostname <HA_HOST>`, install the Tailscale client if it is missing
       (`command -v tailscale || … | sh`, idempotent) and
-      `tailscale up --login-server=… --hostname=<HA_HOST> … --netfilter-mode=nodivert`;
+      `tailscale up --login-server=… --hostname=<HA_HOST> --accept-dns=false
+      --netfilter-mode=nodivert`;
    2. install the release version **the primary runs** (the page also warns when that pinned tag is
       not the version this primary is actually running — B365's predecessor B342.2);
    3. `sudo skygate join --api-url=… --write-dsn-to=/etc/skygate/dbs.env
       --state-file=/etc/skygate/cluster-state.json --role=skygate-standby <sgn1 token>` — the flags
-      come **before** the token; the CLI refuses the reversed order outright;
+      come **before** the token; the CLI refuses the reversed order outright; the row records the
+      build the join reports about itself, so `/admin/cluster` shows which version joined;
    4. **start the heartbeat.** A standby has **no `skygate` web service** — it receives a single
       binary — so this step *renders* `/etc/systemd/system/skygate-heartbeat.service` inline
       (`ExecStart=/usr/local/bin/skygate cluster heartbeat-daemon --state-file=…`),
@@ -2078,8 +2080,21 @@ first.
       that host: nothing installs such a unit and there is no web service behind it (B365 — the
       pre-B365 block rendered exactly that dead end);
    5. press **Approve** (see below).
-   Do **not** add `--advertise-exit-node` to that `tailscale up` and do **not** add
-   `--login-server` variants of your own: a mirror that advertises exit routes becomes a relay.
+
+   Do **not** add `--advertise-exit-node` to that `tailscale up`: a mirror that advertises exit
+   routes becomes a relay.
+
+   Do **not** add `--accept-routes` either, and this one is measured rather than cautious. The block
+   used to pass it, and on the reference standby (2026-10-09) it **cut the operator off**: the flag
+   installs every prefix the relays advertise into routing table 52, the kernel consults that table
+   *before* `main` (policy rule 5270), and one of the 220 entries was the operator's own address
+   (`<OPERATOR_IP>/32`, among the 206 prefixes a relay advertises because exit rules resolve domains
+   to single IPs). The host then answered SSH over `tailscale0` instead of its default gateway —
+   `tcpdump` showed the SYNs arriving and **no SYN-ACK ever leaving** — and the session died.
+   `tailscale set --accept-routes=false` restored it instantly. A standby is a **server**: it needs
+   the tailnet for the cluster API and the heartbeat, not the relays' subnets. Add the flag by hand
+   only if this host genuinely must reach relay-served destinations, and keep a second way in (a
+   console, or a management address that no relay advertises).
 
    If the page shows the amber **DSN** banner next to the block, `cluster_database.dsn_template` is
    empty: the join will report `no DSN bootstrap from primary …` and the standby receives no
