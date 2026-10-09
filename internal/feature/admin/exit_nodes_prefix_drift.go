@@ -133,6 +133,34 @@ type PrefixDriftStats struct {
 	TailnetIP     string
 	TailnetIface  string
 	TailnetReason string
+	// StaleAdvertisements lists the relays that are excluded from the healthy set
+	// AND still advertise prefixes the assignment table no longer gives them
+	// (B374). It is the other half of TransportFailed: that banner says "this relay
+	// could not be configured and its prefixes moved"; this one says "and it is
+	// still SERVING them, because the portal cannot reach it to prune the
+	// advertisement". Without it the operator sees the prefixes move on one page and
+	// the routes stay live in headscale with no line anywhere connecting the two.
+	//
+	// The value is `relay_advertise_stale:<relay>` in global_settings, written by the
+	// route-convergence pass and cleared by it the moment the advertisement matches
+	// (or by the next successful re-sync).
+	StaleAdvertisements []StaleAdvertisementNote
+}
+
+// StaleAdvertisementNote is one relay's B374 stale-advertisement warning, rendered
+// next to the B309 transport banner.
+type StaleAdvertisementNote struct {
+	// Relay is the relay name as recorded (lower-cased).
+	Relay string
+	// Age is how long ago the fact was recorded, for the same "how stale is this?"
+	// reading the transport banner gives.
+	Age string
+	// Count is how many advertised prefixes the assignment table no longer assigns
+	// this relay.
+	Count int
+	// Reason is the stored sentence, shown verbatim so the page and the journal
+	// cannot disagree.
+	Reason string
 }
 
 // RelayTransportNote is one relay's last route application on the prefix card
@@ -322,6 +350,26 @@ func (s *Service) fillTransportState(stats *PrefixDriftStats, rows []PrefixOwner
 	sort.Slice(stats.TransportPaths, func(i, j int) bool {
 		return stats.TransportPaths[i].Relay < stats.TransportPaths[j].Relay
 	})
+	// B374: the excluded relays that are STILL advertising. Read from the same
+	// global_settings family the transport banner uses, so the two cannot be filled
+	// from different sources.
+	stale := exit_rules.ListStaleAdvertisements(s.dbc())
+	if len(stale) > 0 {
+		names := make([]string, 0, len(stale))
+		for relay := range stale {
+			names = append(names, relay)
+		}
+		sort.Strings(names)
+		for _, relay := range names {
+			st := stale[relay]
+			stats.StaleAdvertisements = append(stats.StaleAdvertisements, StaleAdvertisementNote{
+				Relay:  relay,
+				Age:    time.Since(time.Unix(st.At, 0)).Truncate(time.Second).String(),
+				Count:  st.Count,
+				Reason: st.Reason,
+			})
+		}
+	}
 }
 
 // fillPolicyDrift compares the policy headscale is serving with the one skygate

@@ -231,6 +231,25 @@ type exitRulesRunner interface {
 	// class tag names a role, not a node, and the live `aro` host
 	// turned one into the phantom hostname "node" in 23 rules.
 	ClearClassTagPrefs(ctx context.Context) (int, error)
+	// 2026-10-09: B374 — the periodic ROUTE-convergence pass.
+	//
+	// The only periodic caller of StaggeredSync() used to be the
+	// domain auto-updater, gated on `added > 0 || removed > 0`.
+	// On the reference deployment the auto-updater legitimately
+	// logged "18 domain(s) skipped (re-resolve interval 6h0m0s)"
+	// every tick, so added=removed=0 and NO route sync ran for
+	// 75+ minutes after the container was recreated — while the
+	// ownership table had already moved 197 prefixes from
+	// karolina to emilia. Every device pinned via that relay lost
+	// its destinations until an operator pressed "Re-sync all".
+	//
+	// This call is the missing periodic trigger. It is throttled
+	// and idempotent, and it opens NO transport for a relay whose
+	// advertisement already matches its owned set, so calling it
+	// from the ~5-minute maintenance tick cannot become an SSH
+	// storm. It returns how many relays it applied and how many it
+	// skipped (the maintenance tick logs both).
+	ConvergeAdvertisedRoutes(reason string) (applied int, skipped int)
 }
 
 // SetAdminService wires the admin feature service into the
@@ -489,6 +508,28 @@ func (a *App) RunPreferredExitReconciler(ctx context.Context, notifier interface
 			log.Printf("preferred-reconciler: %s class-tag-prefs: %v", stage, cErr)
 		} else if cleared > 0 {
 			log.Printf("preferred-reconciler: %s class-tag-prefs: %d preference(s) %s", stage, cleared, map[bool]string{true: "removed", false: "would be removed (dry-run)"}[live])
+		}
+		// Step 4 (B374, 2026-10-09): the periodic ROUTE-convergence pass.
+		//
+		// WHY IT LIVES HERE. This goroutine is the ~5-minute maintenance tick that is
+		// INDEPENDENT of DNS churn (it heals preferences whether or not a domain
+		// re-resolved), and before this the routes had exactly ONE periodic trigger —
+		// `DomainAutoUpdater` calling `StaggeredSync()` when `added > 0 ||
+		// removed > 0`. On the reference deployment the auto-updater tick skipped all
+		// 18 domains (the 6h re-resolve interval) for 75+ minutes after the 14:08
+		// container recreate, so no sync ran at all: emilia's `--advertise-routes`
+		// kept the pre-move set (`available=2`) while `prefix_owner` had already
+		// given it 197 of karolina's prefixes, and every device pinned
+		// `via=[tag:dev-infra-emilia]` lost YouTube/Telegram until the operator
+		// pressed "Re-sync all".
+		//
+		// The pass is safe to run every tick: `RoutesNeedConvergence` compares the
+		// owned set with what headscale reports BEFORE any transport is touched, so a
+		// converged relay costs one node read and nothing else — no ssh, no local
+		// `tailscale set`, no SQL write.
+		applied, skipped := a.exitRulesSvc.ConvergeAdvertisedRoutes("preferred-exit maintenance tick")
+		if applied > 0 || skipped > 0 {
+			log.Printf("preferred-reconciler: %s route-converge: applied=%d skipped=%d (see the route-converge: lines above for the per-relay reasons)", stage, applied, skipped)
 		}
 	}
 	runOnce("initial")

@@ -544,6 +544,22 @@
     <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.prefix_owner.transport_failed_help" | safeHTML}}</div>
   </div>
   {{end}}
+  {{/* B374: the excluded relay is STILL SERVING the prefixes the assignment table
+       took away, because the portal cannot reach it to run
+       `tailscale set --advertise-routes=`. The transport banner above says why the
+       relay was excluded; this one names the consequence, which is the fact the
+       2026-10-09 outage was missing on every page. */}}
+  {{if .StaleAdvertisements}}
+  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.4)">
+    <b>{{t "exit_nodes.prefix_owner.stale_advertise"}}</b>
+    <ul style="margin:6px 0 0 0;padding-left:18px;font-size:13px">
+      {{range .StaleAdvertisements}}
+      <li><code>{{.Relay}}</code> — {{t "exit_nodes.prefix_owner.transport_failed_ago"}} {{.Age}}, {{t "exit_nodes.prefix_owner.stale_advertise_count"}} {{.Count}}: <code>{{.Reason}}</code></li>
+      {{end}}
+    </ul>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.prefix_owner.stale_advertise_help" | safeHTML}}</div>
+  </div>
+  {{end}}
   {{if or .NotAdvertised .Unserved .Duplicated}}
   <p style="margin:8px 0 0 0;font-size:13px">
     <span class="tag tag-danger">{{t "exit_nodes.prefix_owner.drift_count"}}: {{.NotAdvertised}}</span>

@@ -39,6 +39,8 @@ import (
 // they must share one throttle: a churning table must not turn into an apply storm
 // (each apply writes an acl_snapshots row and restarts nothing, but it does hit the
 // policy API, and on a file-mode host a policy write restarts headscale).
+//
+// B374 (2026-10-09) — A DRIFT IS NOT ALWAYS CHURN. See `aclDriftBudget`.
 var (
 	ownershipACLMu      sync.Mutex
 	ownershipACLLastRun time.Time
@@ -117,6 +119,51 @@ func takeACLApplySlot(now time.Time, throttle time.Duration) (bool, time.Duratio
 // within a minute.
 const churnACLThrottle = 30 * time.Minute
 
+// B374 (2026-10-09) — THE DRIFT PATH MUST NOT HIDE BEHIND THE CHURN BUDGET WHEN THE
+// PLANES DISAGREE.
+//
+// Measured live on the reference deployment: after the 14:08 container recreate the
+// assignment table had moved karolina's 197 prefixes to emilia minutes earlier, and
+// the periodic drift check deferred its re-apply with
+//
+//	acl-drift: periodic drift check (the assignment table did not move) needs a
+//	re-apply but one ran … ago — deferring to the next pass (throttle 30m0s)
+//
+// — a FALSE statement (the table HAD moved) carrying a FALSE budget: it spends the
+// 30-minute DERIVED-ROW budget on a conflict that is not churn at all.
+// The drill-down: `churnACLThrottle` exists for DERIVED rows the domain auto-updater
+// rewrites from DNS (B298: one rotating /32 must not restart headscale every five
+// minutes). The owner-convergence path has no such excuse: an ownership move
+// changes every affected per-CIDR `via=` pin, and on a `policy.mode: file` host the
+// apply is a headscale restart, so deferring it for half an hour leaves every client
+// of every moved prefix without its route.
+//
+// The two halves are therefore named, not inferred:
+//
+//   - `moved == true` — the tables moved in this pass or the advertised/owned planes
+//     disagree — spends the OPERATOR budget (ownershipACLThrottle, 60s), the same one
+//     an operator action spends, and the detail text says which of the two actually
+//     happened;
+//   - `moved == false` — the pure derived-row churn path — keeps the 30m budget and
+//     B298 is untouched.
+func aclDriftBudget(moved bool) time.Duration {
+	if moved {
+		return ownershipACLThrottle
+	}
+	return churnACLThrottle
+}
+
+// aclDriftReason names WHY a drift re-apply is being considered, so a deferral (and
+// the apply line) can never report a state that did not happen. B374: the live
+// journal said "the assignment table did not move" about a pass whose table had moved
+// minutes earlier, which sends the operator looking at the wrong plane.
+func aclDriftReason(moved bool) string {
+	if moved {
+		return "the assignment table or the advertised/owned planes disagree (an ownership move, not derived-rule churn)"
+	}
+	return "no ownership move was observed in this pass"
+}
+
 // periodicDriftCheckInterval bounds how often the ownership-stable path compares
 // the live policy with the one the database implies (B288). The comparison costs
 // one `GenerateACLLiveFormat` + one headscale policy read and writes nothing when
@@ -185,16 +232,49 @@ func (s *Service) reconcilePrefixOwnership() (int, int, error) {
 // write restarts headscale, and this path re-checks a rule set the domain
 // auto-updater rewrites from DNS every tick), and the no-op line is suppressed
 // (the periodic path runs unattended; the ownership-triggered path keeps its log).
+//
+// B374 (2026-10-09): `moved` is the caller's knowledge that the ownership table
+// moved in THIS pass (or that the advertised and owned planes disagree). When it is
+// true the check spends the OPERATOR budget and says so — see `aclDriftBudget`. The
+// DEFAULT is false and is what the periodic caller passes: the periodic check's own
+// reason is genuinely "no ownership move was observed this tick", so the historical
+// message stays TRUE where it was always meant, and can no longer be printed about a
+// pass that did move the table.
+//
+// The two variants are SEPARATE FUNCTIONS, not one function with a flag, because
+// scripts/check_b298_cdn_rule_churn.sh contract B6 and
+// scripts/check_b288_policy_drift_truth.sh contracts C1/C2/C3 legitimately pin the
+// churn call site's exact shape — and that shape is what makes "which budget does
+// this path spend?" auditable by grep. The moved variant reuses the same guard.
 func (s *Service) periodicDriftCheck() {
-	periodicDriftMu.Lock()
-	if !periodicDriftLastRun.IsZero() && time.Since(periodicDriftLastRun) < periodicDriftCheckInterval {
-		periodicDriftMu.Unlock()
+	if !s.claimPeriodicDriftSlot() {
 		return
 	}
-	periodicDriftLastRun = time.Now()
-	periodicDriftMu.Unlock()
 	s.applyACLIfDriftedChurn("skygate-periodic-drift",
-		"periodic drift check (the assignment table did not move)", false)
+		"periodic drift check ("+aclDriftReason(false)+")", false)
+}
+
+// periodicDriftCheckAfterOwnershipMove is the B374 half: the pass KNOWS the
+// ownership table moved (or the advertised/owned planes disagree), so it must not
+// spend the 30-minute derived-row budget on it and must not describe it as churn.
+func (s *Service) periodicDriftCheckAfterOwnershipMove() {
+	if !s.claimPeriodicDriftSlot() {
+		return
+	}
+	s.applyACLIfDriftedThrottled("skygate-periodic-drift",
+		"periodic drift check ("+aclDriftReason(true)+")", false, aclDriftBudget(true))
+}
+
+// claimPeriodicDriftSlot applies the five-minute guard shared by both variants and
+// reports whether this caller may run.
+func (s *Service) claimPeriodicDriftSlot() bool {
+	periodicDriftMu.Lock()
+	defer periodicDriftMu.Unlock()
+	if !periodicDriftLastRun.IsZero() && time.Since(periodicDriftLastRun) < periodicDriftCheckInterval {
+		return false
+	}
+	periodicDriftLastRun = time.Now()
+	return true
 }
 
 // decideWithoutLivePolicy answers "should we write the policy?" from the last

@@ -12,6 +12,114 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.114 — the advertised routes must have a periodic owner (B374)
+
+**Date:** 2026-10-09 · **Base:** `v1.5.113` → this tag · **Compatibility:** behaviour only — no
+schema change, no migration, no new setting (the new fact lives in `global_settings`, the B309 family).
+
+### The outage, measured
+
+| time (UTC) | what happened |
+|---|---|
+| 14:08 | the container is recreated; the binary is rebuilt by the entrypoint |
+| 14:0x | the first route-apply pass cannot reach **karolina** (SSH `100.64.0.2:18022` times out), so the B352 machinery excludes her: `prefix_owner` moves **197 prefixes to emilia**, and `device_exit_node_prefs` is re-pinned (`skyworker`/`basic`/`cyborg` → `tag:dev-infra-emilia`) |
+| 14:0x–15:2x | **emilia's `--advertise-routes` is never pushed.** `headscale nodes list` shows `emilia available=2 approved=2` (only `0.0.0.0/0` + `::/0`) while karolina still holds `199/199`, and `global_settings[relay_apply_state:emilia]` keeps its **13:01:07** timestamp for 75+ minutes. The container log holds **zero** lines containing `advertis` or `staggeredSync`. Every device whose ACL grant pins `via=[tag:dev-infra-emilia]` (e.g. `skyworker`) loses YouTube, Telegram and every other pinned prefix |
+| 15:2x | a manual **Re-sync all** (`POST /admin/exit-nodes/sync`) fixes it instantly: emilia 205/205 approved, karolina 199→2, both `relay_apply_state = ok` |
+
+### Root cause — the data plane had no periodic trigger of its own
+
+The **only** periodic caller of `StaggeredSync()` was the domain auto-updater loop
+(`internal/handlers/handlers.go`, `RunDomainAutoUpdater`):
+
+```go
+added, removed, err := a.exitRulesSvc.DomainAutoUpdater()
+if added > 0 || removed > 0 {
+    a.exitRulesSvc.StaggeredSync()
+}
+```
+
+That tick legitimately logged, every five minutes:
+
+```
+auto-updater: 18 domain(s) skipped (re-resolve interval 6h0m0s; the derived rows and the ACL stay put until then)
+```
+
+so `added=0 removed=0` and **no route sync ran at all**. The ownership table *is* recomputed by
+maintenance ticks that are independent of DNS churn (`RunPreferredExitReconciler` →
+`ReconcileDeviceExitNodePrefs`), but nothing pushed the result to the relays. **Domain churn must not be
+the only trigger of the data plane.**
+
+### Secondary defect — the drift path hid behind the churn budget
+
+The ACL drift path deferred its own re-apply with
+
+```
+acl-drift: periodic drift check (the assignment table did not move) needs a re-apply but one ran … ago — deferring to the next pass (throttle 30m0s)
+```
+
+a **false statement** (the table HAD moved minutes earlier) on the **wrong budget**: 30 minutes of
+derived-DNS-row churn for what was an ownership move.
+
+### What shipped
+
+* **`internal/feature/exit_rules/sync_routes_converge_b374.go` (new)** —
+  `ConvergeAdvertisedRoutes(reason) (applied, skipped int)` computes each relay's **owned set** from
+  `prefix_owner` (plus the always-present `0.0.0.0/0` and `::/0`) and compares it with what the relay
+  **actually advertises** right now, read from the **same headscale node view the rest of the code
+  already uses** (`s.HS.ListAllNodes()` → `NodeView.AvailableRoutes` — the source of
+  `SyncAdvertisedRoutes`, `syncOneExitNode` and the `/admin/exit-nodes` АНОНС column; no new API call).
+  Only relays whose normalised sets differ are applied, through the **shared** apply path
+  (`syncOneExitNode`, aliased as `syncOneExitNodeFn`), so the manual Re-sync, `StaggeredSync` and this
+  pass cannot drift.
+* **`RoutesNeedConvergence(owned, advertised)`** — the pure predicate. Ordering and duplicates are
+  ignored, both sides always carry the two base routes, an empty advertisement is treated as the base
+  pair on the wire (tailscale's default for a node that never ran the command), and the verdict is the
+  **symmetric difference** — a same-size swap is a difference too. **A converged relay opens no
+  transport at all**: no `ssh`, no local `tailscale set`, no SQL write. An unreadable advertised plane
+  applies nothing, because "we could not ask headscale" is not evidence that every relay needs
+  rewriting.
+* **Wired into the ~5-minute maintenance tick** (`internal/handlers/handlers.go`,
+  `RunPreferredExitReconciler`), **not** into the churn-gated auto-updater, with its own
+  `routeConvergenceInterval` (5 min) and its own **`route-converge:`** journal prefix, so the journal
+  shows whether the route plane ran and what it did.
+* **`internal/feature/exit_rules/sync_acl.go`** — `aclDriftBudget`/`aclDriftReason` plus
+  `periodicDriftCheckAfterOwnershipMove()`: when the ownership table moved or the advertised/owned
+  planes disagree, the drift check spends the **60 s operator** budget and names the true reason; the
+  derived-DNS path keeps `churnACLThrottle` (30 m, **B298 untouched**). The deferral line now names the
+  real trigger, never "the assignment table did not move" about a pass that moved it.
+* **A stale advertisement that could not be revoked is now a named fact.** When a relay is excluded
+  from the healthy set (B309/B352) **and** still advertises prefixes the assignment table no longer
+  gives it, the pass does **not** retry the apply (B309 already proved the transport fails — retrying
+  every tick is the SSH storm the pass exists to avoid). It logs `route-converge: <relay> DECLARED
+  STALE …` and stores
+
+  ```
+  global_settings[relay_advertise_stale:<relay>] = "<unix>|<relay> still advertises N prefix(es) that prefix_owner no longer assigns to it: <detail>"
+  ```
+
+  which `/admin/exit-nodes` renders as a warning next to the existing B309 transport banner (RU+EN
+  i18n), and which clears itself the moment the advertisement matches.
+
+### Files
+
+* `internal/feature/exit_rules/sync_routes_converge_b374.go` (new)
+* `internal/feature/exit_rules/sync_routes_converge_b374_test.go` (new)
+* `internal/feature/exit_rules/sync_acl.go`
+* `internal/feature/exit_rules/sync_acl_b374_test.go` (new)
+* `internal/handlers/handlers.go`
+* `internal/feature/admin/exit_nodes_prefix_drift.go`
+* `internal/handlers/templates/admin/exit_nodes.html`
+* `internal/i18n/catalog_exit_nodes.go`
+* `scripts/check_b374_route_convergence.sh` (new, 16 contracts)
+* `scripts/verify_pre_deploy.sh`, `AGENTS.md`
+
+### Verification
+
+`go build ./...`, `go vet` on the touched packages, `go test ./internal/feature/exit_rules/ -count=1`
+(the B374 group plus the whole package) and `go test ./internal/handlers/ ./internal/feature/admin/
+./internal/i18n/ -count=1`, plus `scripts/check_b374_route_convergence.sh` — see the block's contracts
+for the exact assertions.
+
 ## v1.5.113 — hints with buttons that apply the defaults, and one meaning for `%s` (B373)
 
 **Date:** 2026-10-09 · **Base:** `v1.5.112` → this tag · **Compatibility:** behaviour only — no

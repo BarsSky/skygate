@@ -130,6 +130,11 @@ var ruExitNodes = map[string]string{
 	"exit_nodes.prefix_owner.transport_failed_ago":      "последняя попытка",
 	"exit_nodes.prefix_owner.transport_failed_prefixes": "префиксов было у него",
 	"exit_nodes.prefix_owner.transport_failed_help":     "Эти узлы отвечают headscale (поэтому в таблице здоровья они «здоровы»), но применить к ним маршруты не получилось: skygate не смог до них дойти (SSH или локальный транспорт) либо headscale не одобрил маршруты. Пока это так, узел исключён из набора здоровых для распределения префиксов — его префиксы отданы ретранслятору, который отвечает, чтобы они вообще работали. Это не проблема ACL: «Пересобрать и применить ACL» тут не поможет. Проверьте доступ к узлу (обычно SSH: адрес, порт, ключ) — после первой успешной попытки узел вернётся в набор автоматически, ничего снимать вручную не нужно.",
+	// B374: исключённый ретранслятор ВСЁ ЕЩЁ объявляет префиксы, которые таблица
+	// назначения у него забрала, — портал не может до него дойти и снять анонс.
+	"exit_nodes.prefix_owner.stale_advertise":       "Ретранслятор всё ещё объявляет чужие префиксы — снять анонс не удалось",
+	"exit_nodes.prefix_owner.stale_advertise_count": "лишних префиксов в анонсе",
+	"exit_nodes.prefix_owner.stale_advertise_help":  "Этот узел исключён из набора здоровых (см. предупреждение выше), его префиксы уже переданы другому ретранслятору — но сам он продолжает их объявлять, потому что skygate не может до него дойти и выполнить <code>tailscale set --advertise-routes=</code>. headscale отдаёт каждый префикс ровно одному ретранслятору, поэтому такой «фантомный» анонс может перехватывать маршрут у настоящего владельца, а устройства с закреплением <code>via=</code> теряют доступ. Пока узел не ответит, исправить это из панели нельзя: восстановите доступ к узлу (обычно SSH: адрес, порт, ключ) и нажмите «Пересинхронизировать» — после первой успешной попытки запись снимется сама.",
 	// B310: путь управления exit-узлами — tailnet (переживает блокировку
 	// публичного IP) или публичный адрес (не переживает).
 	"exit_nodes.prefix_owner.tailnet_ok":           "skygate в tailnet — управление exit-узлами может идти по tailnet",
@@ -438,6 +443,11 @@ var enExitNodes = map[string]string{
 	"exit_nodes.prefix_owner.transport_failed_ago":      "last attempt",
 	"exit_nodes.prefix_owner.transport_failed_prefixes": "prefixes it held",
 	"exit_nodes.prefix_owner.transport_failed_help":     "These nodes answer headscale (so the health table calls them healthy) but their routes could not be applied: skygate could not reach them (SSH or the local transport) or headscale refused to approve the routes. While that lasts the node is excluded from the healthy set used for prefix assignment — its prefixes go to a relay that answers, so they actually work. This is not an ACL problem: «Rebuild and apply the ACL» cannot fix it. Check the access to the node (usually SSH: address, port, key); after the first successful attempt the node returns to the set automatically and nothing has to be unblocked by hand.",
+	// B374: the excluded relay is STILL advertising the prefixes the assignment
+	// table took away — the portal cannot reach it to prune the advertisement.
+	"exit_nodes.prefix_owner.stale_advertise":       "A relay still advertises prefixes it no longer owns — the advertisement could not be pruned",
+	"exit_nodes.prefix_owner.stale_advertise_count": "extra prefixes in its advertisement",
+	"exit_nodes.prefix_owner.stale_advertise_help":  "This node is excluded from the healthy set (see the warning above) and its prefixes have already been handed to another relay — but it keeps advertising them, because skygate cannot reach it to run <code>tailscale set --advertise-routes=</code>. headscale serves each prefix from exactly ONE relay, so such a phantom advertisement can steal the route from the real owner and devices pinned with <code>via=</code> lose access. Until the node answers, the panel cannot fix this: restore access to the node (usually SSH: address, port, key) and press «Re-sync» — after the first successful attempt the record clears itself.",
 	// B310: the path that manages the exit nodes — tailnet (survives a blocked
 	// public IP) or the public address (does not).
 	"exit_nodes.prefix_owner.tailnet_ok":           "skygate is on the tailnet — exit nodes can be managed over it",
