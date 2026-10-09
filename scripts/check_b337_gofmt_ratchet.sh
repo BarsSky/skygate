@@ -186,7 +186,17 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 # contract E1 hold every TOUCHED file to gofmt, so its struct-tag alignment and
 # the gofmt-1.19 doc-comment list were paid with the change and the entry left
 # the list. Caught locally by B337 E1, one commit before CI would have.
-FROZEN=254
+# 2026-10-09 (eleventh payment): 254 -> 252.
+# TWO files left the list in the same cycle, both caught by CI's contract D1
+# rather than locally (the WSL shell on the workstation has no gofmt, so D1
+# SKIPPED there and only the Linux run could see it — the same asymmetry LESSONS
+# records for device_exit_pref.go):
+#   * internal/cluster/node.go — B367 rewrote the drain/remove lookup that
+#     PostgreSQL rejected with SQLSTATE 22P02, and re-emitting those statements
+#     left the file clean;
+#   * internal/backup/mount.go — B368 made the S3 branch of TestConnection do a
+#     real BucketExists probe, and formatting the new code left the file clean.
+FROZEN=252
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

@@ -250,9 +250,14 @@ for f in $(git ls-files '*_test.go' 2>/dev/null); do
   case " $DISCOVERED " in *" $d "*) ;; *) DISCOVERED="$DISCOVERED $d" ;; esac
 done
 DISCOVERED="$(printf '%s\n' $DISCOVERED | sort | tr '\n' ' ' | sed 's/ *$//')"
-DOCUMENTED="$(printf '%s\n' cmd/skygate internal/acl internal/backup internal/db internal/feature/admin internal/headscale internal/invite internal/monitoring | sort | tr '\n' ' ' | sed 's/ *$//')"
+# B367 (2026-10-09): internal/cluster joined the set. Its drain/remove and
+# failover statements are the ones that broke with SQLSTATE 22P02 on PostgreSQL,
+# so the regression tests that call the REAL functions now gate on the DSN there
+# too — the discovery below is what forced this list to be updated, exactly as
+# this contract intends.
+DOCUMENTED="$(printf '%s\n' cmd/skygate internal/acl internal/backup internal/cluster internal/db internal/feature/admin internal/headscale internal/invite internal/monitoring | sort | tr '\n' ' ' | sed 's/ *$//')"
 if [ "$DISCOVERED" = "$DOCUMENTED" ]; then
-  ok "D1b: the PG-gated package set matches the documented one (8 packages: $DISCOVERED)"
+  ok "D1b: the PG-gated package set matches the documented one (9 packages: $DISCOVERED)"
 else
   bad "D1b: the PG-gated package set CHANGED. discovered: '$DISCOVERED' documented: '$DOCUMENTED'. Update this check, the CI comment in .github/workflows/ci.yml and docs/operations.md §15 together — a measured set that is narrower than reality is how internal/monitoring and internal/invite lost their coverage (B338)."
 fi
