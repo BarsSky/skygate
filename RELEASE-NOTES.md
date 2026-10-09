@@ -12,6 +12,59 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.112 — starting the boot sequence out of the one giant `main()` (B372)
+
+**Date:** 2026-10-09 · **Base:** `v1.5.111` → this tag · **Compatibility:** refactor only — no
+behaviour change, no schema change, no new setting.
+
+### The problem, measured
+
+`cmd/skygate/main.go` is not "many long functions" — it is **one** function: 2568 lines, of which
+`128..2567` are the body of `main()`. The only other top-level declarations are a `var` block and
+three small helpers (`redactPGPassword`, `listenAddr`, `handlerBox`). Every refactor since v0.30 has
+**added** to it, so the file grows by construction, and the operator's standing complaint — «чтобы
+кодовая база не тонула в тысячелетних файлах» — cannot be answered by linting.
+
+### What moved, and why the tail first
+
+The five opt-in background schedulers moved to `cmd/skygate/main_schedulers.go` as
+`wireOptionalSchedulers(ctx, d, app, adminSvc, cfg)`:
+
+| scheduler | block | gate |
+|---|---|---|
+| smoke-mesh cleanup | B143 | `cfg.CleanupSmokeMeshInAppEnabled` |
+| Tailscale discovery | B223 | `SKYGATE_DISCOVERY_INTERVAL_SEC` |
+| personal-token auto-rotate | B154 | `cfg.TokenAutoRotateEnabled` |
+| preauth-key expiry notify | B156 | `cfg.KeyNotifyEnabled` |
+| HA chain / elector | B145 | `cfg.HAEnabled` |
+
+**2568 → 2398 lines.** The call sits at the **same** point of the sequence (after the certsync
+wiring, before the shutdown wait), the graceful-shutdown path stays in `main()`, and every scheduler
+keeps its own gate and its own enabled/disabled log line.
+
+### Why the middle did *not* move — recorded so nobody "finishes" it wrongly
+
+The middle of `main()` **cannot** be moved as text: it holds bare `defer`s in `main()`:
+
+```go
+1844  defer wd.Stop()   // the dbmigrate watchdog
+1862  defer el.Stop()   // the HA elector
+2015  defer stop()      // the headscale-version ask
+```
+
+A `defer` inside an `if` block still defers to the enclosing **function**, so lifting those lines
+into a helper would stop the watchdog and the elector the moment the helper returned — a silent
+behaviour change no grep would catch. They need a lifecycle-owned type with an explicit `Stop()`
+called from the shutdown path, which is its own block (B373+). The contract asserts this boundary
+explicitly.
+
+### Files
+
+* `cmd/skygate/main_schedulers.go` (new, 213 lines)
+* `cmd/skygate/main.go` — five imports removed with the block
+* `scripts/check_b372_main_is_not_one_giant_function.sh` (new, 26 contracts, incl. a line ceiling of
+  2400 that may only fall)
+
 ## v1.5.111 — certsync must read the S3 the operator configured (B371)
 
 **Date:** 2026-10-09 · **Base:** `v1.5.110` → this tag · **Compatibility:** behaviour only — no
