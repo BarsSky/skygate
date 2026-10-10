@@ -205,7 +205,13 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 #     ClusterDatabase struct fields.
 #   * internal/dbmigrate/steps/flip.go — B373 moved the %s in buildDSNTemplate to
 #     the HOST position; `gofmt -w` reflowed the surrounding file.
-FROZEN=249
+#   * internal/update/scheduler_test.go — B375 renegotiated its TestTimeMatches
+#     contract (exact-minute equality → the bounded catch-up window) and
+#     `gofmt -w` (rule 3) reflowed the case table, leaving the file clean.
+#   * internal/update/state.go — B375 made StateStore.Get() return a snapshot
+#     (the store's own pointer raced with its writers); `gofmt -w` reflowed the
+#     State struct, leaving the file clean.
+FROZEN=247
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

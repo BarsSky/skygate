@@ -20,7 +20,12 @@
 #   B. internal/update/scheduler_db.go wires the db helpers
 #      (getGlobalSetting / setGlobalSetting) via init()
 #   C. cmd/skygate/main.go: update.Start(...) is called in the
-#      boot sequence, guarded by cfg.UpdateScheduleEnabled
+#      boot sequence UNCONDITIONALLY (B375 renegotiated this: the
+#      pre-B375 `if cfg.UpdateScheduleEnabled` guard was the live
+#      defect — the goroutine was gated on the ENV value while the
+#      DATABASE is authoritative, so a panel-enabled schedule never ran).
+#      The arming is now recorded via update.SetSchedulerArmed so
+#      /admin/update can render "планировщик запущен / не запущен".
 #   D. main.go has the schedulerNotifierSink adapter so the
 #      update package can use telegram.Notifier without an
 #      import cycle
@@ -90,16 +95,32 @@ fi
 
 # ------------------------------------------------------------------------------
 # Contract C: main.go calls update.Start() in the boot sequence
+#
+# B375 (2026-10-10) RENEGOTIATED this contract. It used to require the
+# `if cfg.UpdateScheduleEnabled` guard; that guard WAS the live defect (the
+# goroutine was gated on SKYGATE_UPDATE_SCHEDULE_ENABLED while global_settings
+# is the authoritative toggle, so a schedule the operator enabled in the panel
+# had no scheduler). The contract now requires the OPPOSITE: `update.Start(...)`
+# is called unconditionally, the arming is recorded with
+# `update.SetSchedulerArmed`, and the env value survives only as the fallback
+# inside SchedulerCfg.
 # ------------------------------------------------------------------------------
 echo
-echo "=== C. cmd/skygate/main.go: update.Start() called, guarded by cfg.UpdateScheduleEnabled ==="
+echo "=== C. cmd/skygate/main.go: update.Start() called UNCONDITIONALLY (B375) ==="
 c_start=$(grep -c 'update\.Start(' "${MAIN_GO}" || true)
-c_guard=$(grep -c 'if cfg\.UpdateScheduleEnabled' "${MAIN_GO}" || true)
 c_deps=$(grep -c 'update\.SchedulerDeps' "${MAIN_GO}" || true)
-if [ "${c_start}" -ge 1 ] && [ "${c_guard}" -ge 1 ] && [ "${c_deps}" -ge 1 ]; then
-    ok "main.go calls update.Start() + cfg.UpdateScheduleEnabled guard + SchedulerDeps literal (all 3 present)"
+c_armed=$(grep -c 'update\.SetSchedulerArmed(' "${MAIN_GO}" || true)
+c_cfg=$(grep -c 'update\.SchedulerCfg' "${MAIN_GO}" || true)
+c_guard=$(grep -cE '^[[:space:]]*if cfg\.UpdateScheduleEnabled' "${MAIN_GO}" || true)
+if [ "${c_start}" -ge 1 ] && [ "${c_deps}" -ge 1 ] && [ "${c_armed}" -ge 1 ] && [ "${c_cfg}" -ge 1 ]; then
+    ok "main.go calls update.Start() + SchedulerDeps + SetSchedulerArmed + SchedulerCfg (all 4 present)"
 else
-    bad "main.go is missing the scheduler wire-up: start=${c_start} guard=${c_guard} deps=${c_deps}"
+    bad "main.go is missing the scheduler wire-up: start=${c_start} deps=${c_deps} armed=${c_armed} cfg=${c_cfg}"
+fi
+if [ "${c_guard}" -eq 0 ]; then
+    ok "the pre-B375 env guard (a STATEMENT 'if cfg.UpdateScheduleEnabled {') is gone — the DATABASE decides, the goroutine is always armed"
+else
+    bad "main.go still gates the scheduler on the env value (${c_guard} statement(s) starting with 'if cfg.UpdateScheduleEnabled') — the B375 defect is back"
 fi
 
 # ------------------------------------------------------------------------------

@@ -12,6 +12,137 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.115 — the scheduled auto-update must actually run (B375)
+
+**Date:** 2026-10-10 · **Base:** `v1.5.114` → this tag · **Compatibility:** behaviour only — no
+schema change, no migration, no new setting (existing `global_settings` keys and the existing
+`SKYGATE_UPDATE_SCHEDULE_ENABLED` fallback, unchanged).
+
+### The defect, measured
+
+| what was read | value |
+|---|---|
+| `global_settings.update_schedule_enabled` | `1` |
+| `global_settings.update_schedule_time` | `08:00` |
+| `global_settings.update.pinned_release` | *(empty)* |
+| container env `SKYGATE_UPDATE_SCHEDULE_ENABLED` | `false` |
+| `/home/skyadmin/skygate/.env` | carries `SKYGATE_AUTO_UPDATE_ENABLED`, and **no** `SKYGATE_UPDATE_SCHEDULE_ENABLED` — so `config.go`'s default `"false"` wins |
+| container journal | **zero** `update-scheduler:` lines since the container started |
+
+The operator had set the schedule in the panel and nothing happened. The panel was not lying
+about the write: the two keys were in the database. The **goroutine that reads them had never
+been created.**
+
+### Root cause — the goroutine was gated on the ENV value, not on the DATABASE
+
+`cmd/skygate/main.go`:
+
+```go
+if cfg.UpdateScheduleEnabled {
+    ... update.Start(ctx, …) ...
+    log.Printf("⏰ update-scheduler: enabled (time=%s, env-var default; …)")
+} else {
+    log.Printf("⏰ update-scheduler: disabled (SKYGATE_UPDATE_SCHEDULE_ENABLED=false; /admin/update page can enable)")
+}
+```
+
+`internal/update/scheduler.go`'s own header already documents the DB-persisted toggle as the
+authority — *"`global_settings["update_schedule_enabled"]` … (DB-persisted; falls back to
+`Cfg.UpdateScheduleEnabled`)"* — but the goroutine that would have read it was gated on the ENV
+value. The else-branch sentence is **false**: `/admin/update` writes `global_settings`; it
+cannot start a goroutine that does not exist. So the operator's "включено" in the panel was a
+setting nothing could act on, and no surface said so.
+
+Two more defects in the same path made the class worse:
+
+* `timeMatches` demanded **exact** hour+minute equality, so a container recreated at 08:00:40 —
+  or one still migrating at 08:00 — lost that day's update **silently**;
+* `runScheduled` returned **without a word** for every install kind other than Docker, so on a
+  native (systemd/OpenRC/bare) host an armed, enabled schedule was an invisible no-op.
+
+### What shipped
+
+* **`cmd/skygate/main_update_scheduler.go` (new)** — the wire-up moved out of `main()` the way
+  B372 moved the opt-in schedulers, because B372 pins a ceiling on `cmd/skygate/main.go` that may
+  only fall and the new boot-log code pushed it to 2424 lines; `main.go` now reads **2381** and
+  calls `wireUpdateScheduler(ctx, d, app, cfg)` at the same point of the boot path.
+* **The scheduler is ARMED UNCONDITIONALLY** (`cmd/skygate/main.go`): `update.SchedulerDeps` is
+  always built and `update.Start(ctx, deps)` is always called, so the ticker always exists. The
+  **database** decides whether it acts. `cfg.UpdateScheduleEnabled` / `cfg.UpdateScheduleTime`
+  stay in `SchedulerCfg` as the fallback for an install that has never opened the panel, so an
+  untouched deployment behaves exactly as before.
+* **The boot log tells the truth**, through one pure, unit-tested function
+  (`update.SchedulerBootLog`) because `main()` itself is not testable. It reports: armed or not,
+  whether the schedule is ON and at what time, that the env default is in use when
+  `global_settings` has no row (naming `SKYGATE_UPDATE_SCHEDULE_ENABLED`), and names
+  `/admin/update` as the place the schedule is switched. For the not-armed case it no longer
+  promises that a page can fix it.
+* **`/admin/update` SHOWS whether the scheduler is running.** New process-level, race-safe state
+  in `internal/update` (`SetSchedulerArmed` / `SchedulerArmed()` / `SchedulerArmedReason()` /
+  `SchedulerTrap()`), set by `main.go` at boot and read by the admin Service (which must not
+  import `cmd/`). The Schedule card renders «планировщик запущен / не запущен» with its reason,
+  a distinct line for «запущен, но расписание выключено», a warning for install kinds the
+  scheduled path cannot drive, and a **red banner for the trap**: «расписание включено, но
+  планировщик не запущен» — exactly the state the operator hit — with the advice to read the
+  `update-scheduler:` journal lines and restart, not to save the form again. New i18n keys in
+  **both** catalogues (RU + EN).
+* **A bounded catch-up window** replaces exact-minute equality:
+  `CatchUpWindow = 10 * time.Minute`; a run is due when `now` is at or after the scheduled
+  minute and strictly before `scheduled + CatchUpWindow`. The per-slot **per-day** dedup
+  (`ranTodayAt`, replacing the minute-scoped `sameMinute` guard) is what keeps a 10-minute window
+  on a 30-second tick from firing twenty times, and it is also why a schedule set to a time
+  already past today fires **once**. A late run logs `late by Nm ... inside the 10m catch-up
+  window`; an on-time run logs `(on time)`. `Start` also runs **one tick immediately**, so a
+  container recreate that straddles the scheduled minute catches up at boot instead of waiting a
+  full tick.
+* **The non-Docker skip is visible**: `logScheduledSkip` logs
+  `⏰ update-scheduler: NOT SUPPORTED on install kind "systemd" — the scheduled path runs only on
+  Docker ("docker"); use /admin/update with the manual steps for this kind`. The tick asks
+  **before** the GitHub release check, so an unreachable GitHub cannot hide the reason.
+
+### Files
+
+* **`internal/update/state.go`** — `StateStore.Get()` now returns a **snapshot** taken under
+  the store's mutex instead of the store's own `*State`. Every writer (`SetPhase` / `Log` /
+  `Fail` / `Complete`) mutates that struct under `s.mu`, so a reader — the `/admin/update`
+  render, the scheduler's own post-run notification block, or a test polling for the terminal
+  phase — was reading fields no lock protected. `go test -race` reports it as a real data race
+  on `State.Phase`; the B375 suite is `-race`-clean after the fix.
+* `internal/update/scheduler_state.go` (new)
+* `internal/update/scheduler.go`
+* `internal/update/scheduler_test.go` (contract C renegotiated: `timeMatches` → `scheduledRunDue`)
+* `internal/update/scheduler_b375_test.go` (new)
+* `cmd/skygate/main.go`
+* `cmd/skygate/main_update_scheduler.go` (new — the wire-up moved out of `main()` to keep
+  B372's 2400-line ceiling on `cmd/skygate/main.go`, which now reads 2381; the same pattern
+  B372 used for the opt-in schedulers)
+* `internal/feature/admin/update.go`
+* `internal/handlers/templates/admin/update.html`
+* `internal/i18n/catalog_update.go`
+* `scripts/check_b375_schedule_actually_runs.sh` (new, 15 contracts)
+* `scripts/check_b130.sh` (contract C renegotiated: the env guard is now forbidden, not required)
+* `scripts/verify_pre_deploy.sh`, `AGENTS.md`
+* `scripts/gofmt_legacy_allowlist.txt` + `scripts/check_b337_gofmt_ratchet.sh` (`FROZEN: 249 → 247`;
+  `internal/update/scheduler_test.go` and `internal/update/state.go` both left the list after
+  `gofmt -w`)
+* `RELEASE-NOTES.md`, `docs/ROADMAP.md`, `docs/ru/ROADMAP.md`
+
+### Verification
+
+`go build ./...`; `go vet` + `staticcheck` on `./internal/update/`, `./internal/feature/admin/`,
+`./cmd/skygate/`; `go test ./internal/update/ ./internal/feature/admin/ ./internal/i18n/
+./cmd/skygate/ -count=1`; `scripts/check_b375_schedule_actually_runs.sh` (15 PASS / 0 FAIL) with
+`scripts/check_b130.sh`, `check_b129.sh`, `check_b337_gofmt_ratchet.sh`,
+`check_b339_refactor_surface_contracts.sh`, `check_b340_no_fixed_tmp_scratch.sh` and
+`check_b325_i18n_regressions.sh`.
+
+The behavioural tests run against a **real SQLite database** (`db.OpenWithDialect("sqlite:"+t.TempDir()+"/b375.db")`
++ `db.ApplyMigrations`), so the toggle under test is the toggle the panel writes: DB toggle off ⇒
+no tick action even when the env default is `true`; toggle on + the exact minute ⇒ it runs;
+late by 5 minutes ⇒ it runs; late by 20 minutes ⇒ it does not; already ran today for that slot ⇒
+it does not; yesterday's stamp does not block today; and a schedule enabled in the database
+while the env default is `false` is reported as armed **and** active.
+
 ## v1.5.114 — the advertised routes must have a periodic owner (B374)
 
 **Date:** 2026-10-09 · **Base:** `v1.5.113` → this tag · **Compatibility:** behaviour only — no

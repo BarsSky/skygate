@@ -299,7 +299,44 @@
       <code>{{if .UpdateScheduleLastRun}}{{.UpdateScheduleLastRun}}{{else}}{{t "update.schedule_never"}}{{end}}</code>
     </div>
   </div>
+
+  {{/* B375 (2026-10-10): IS THE SCHEDULER ACTUALLY RUNNING? The measured live
+       defect: the schedule showed "включено" while the scheduler goroutine had
+       never been started, so nothing ever ran and no surface said why. These
+       three states are deliberately NOT derived from the toggle above — the
+       toggle lives in the database, the scheduler lives in the process, and the
+       whole bug was reading one as if it were the other. */}}
+  <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:13px">
+    {{if .SchedulerArmed}}
+      <span style="color:var(--success)"><i class="fa-solid fa-circle-check"></i> {{t "update.scheduler_running"}}</span>
+      {{if .SchedulerScheduleOff}}
+        <span style="color:var(--text-muted)"> — {{t "update.scheduler_running_but_off"}}</span>
+      {{end}}
+    {{else}}
+      <span style="color:var(--danger)"><i class="fa-solid fa-circle-xmark"></i> {{t "update.scheduler_not_running"}}</span>
+    {{end}}
+    {{if .SchedulerArmedReason}}
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">{{.SchedulerArmedReason}}</div>
+    {{end}}
+    {{if .SchedulerNotSupported}}
+      <div style="color:var(--warning);font-size:12px;margin-top:6px">
+        <i class="fa-solid fa-triangle-exclamation"></i> {{t "update.scheduler_not_supported"}}
+      </div>
+    {{end}}
+  </div>
 </div>
+
+{{/* B375: the trap itself, as its own red banner. This is what the operator
+     actually hit: the schedule is enabled in the database and nothing will ever
+     run, because the process did not start the scheduler. Saving the form again
+     cannot fix it, so the banner says what can. */}}
+{{if .SchedulerTrap}}
+<div class="alert alert-danger" style="margin-bottom:24px">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <strong>{{t "update.scheduler_trap_title"}}</strong>
+  {{t "update.scheduler_trap_body"}}
+</div>
+{{end}}
 
 {{/* B346 (2026-10-04): the PINNED RELEASE. One tag that every instance
      orients on — this host, the scheduled updater and a host that joins the

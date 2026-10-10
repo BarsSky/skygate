@@ -49,12 +49,12 @@ var randReadOS = func(b []byte) (int, error) { return 0, fmt.Errorf("not initial
 type Phase string
 
 const (
-	PhasePending    Phase = "pending"
-	PhaseBackup     Phase = "backup"
-	PhasePullBuild  Phase = "pull_build"
-	PhaseMigrate    Phase = "migrate"
-	PhaseSwap       Phase = "swap"
-	PhaseVerify     Phase = "verify"
+	PhasePending   Phase = "pending"
+	PhaseBackup    Phase = "backup"
+	PhasePullBuild Phase = "pull_build"
+	PhaseMigrate   Phase = "migrate"
+	PhaseSwap      Phase = "swap"
+	PhaseVerify    Phase = "verify"
 	// PhaseBuildDone is the new terminal phase added in
 	// v0.29.1: the orchestrator stops at "image rebuilt +
 	// migrations applied" and writes a manual_step telling
@@ -67,9 +67,9 @@ const (
 	// undefined state with no healthz verification. The
 	// sidecar-based orchestrator (v0.29.2 follow-up) will
 	// restore the full auto-swap.
-	PhaseBuildDone Phase = "build_done"
-	PhaseDone      Phase = "done"
-	PhaseFailed    Phase = "failed"
+	PhaseBuildDone  Phase = "build_done"
+	PhaseDone       Phase = "done"
+	PhaseFailed     Phase = "failed"
 	PhaseRolledBack Phase = "rolled_back"
 )
 
@@ -170,9 +170,9 @@ const MaxLogLines = http.StatusInternalServerError
 // read by the /admin/update handler which can race with the
 // background updater goroutine).
 type StateStore struct {
-	mu     sync.Mutex
-	state  *State
-	path   string // status file path (e.g. /data/skygate-update-status.json)
+	mu    sync.Mutex
+	state *State
+	path  string // status file path (e.g. /data/skygate-update-status.json)
 }
 
 // NewStateStore creates a StateStore backed by the given file
@@ -213,12 +213,29 @@ func (s *StateStore) Load() (*State, error) {
 	return &st, nil
 }
 
-// Get returns a copy of the current state, or nil if no
+// Get returns a SNAPSHOT of the current state, or nil if no
 // update is in progress / completed recently.
+//
+// B375 (2026-10-10): this used to return the store's own *State under a released
+// mutex. Every writer (SetPhase / Log / Fail / Complete) mutates that same struct
+// while holding s.mu, so a reader — the /admin/update render, the scheduler's
+// own notification block, or a test polling for the terminal phase — was reading
+// fields no lock protected. `go test -race` reports it as a genuine data race on
+// State.Phase. The copy is taken UNDER the lock, so the snapshot is consistent
+// and the returned struct is exclusively the caller's.
 func (s *StateStore) Get() *State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.state
+	if s.state == nil {
+		return nil
+	}
+	cp := *s.state
+	// The log slice must be copied too: appendLog can append in place, so
+	// sharing the backing array would let a later write mutate the snapshot.
+	if s.state.Log != nil {
+		cp.Log = append([]LogEntry(nil), s.state.Log...)
+	}
+	return &cp
 }
 
 // Start initializes a new state with the given job metadata
@@ -230,16 +247,16 @@ func (s *StateStore) Start(jobID, installKind, fromVersion, toVersion string, ma
 	defer s.mu.Unlock()
 	now := time.Now().UTC()
 	st := &State{
-		JobID:        jobID,
-		InstallKind:  installKind,
-		FromVersion:  fromVersion,
-		ToVersion:    toVersion,
-		Phase:        PhasePending,
-		StartedAt:    now,
-		Log:          []LogEntry{{At: now, Level: LogInfo, Msg: "update job started"}},
-		ManualSteps:  manualSteps,
-		Rollback:     rollback,
-		VerifyAfter:  verifyAfter,
+		JobID:       jobID,
+		InstallKind: installKind,
+		FromVersion: fromVersion,
+		ToVersion:   toVersion,
+		Phase:       PhasePending,
+		StartedAt:   now,
+		Log:         []LogEntry{{At: now, Level: LogInfo, Msg: "update job started"}},
+		ManualSteps: manualSteps,
+		Rollback:    rollback,
+		VerifyAfter: verifyAfter,
 	}
 	s.state = st
 	_ = s.persistLocked()

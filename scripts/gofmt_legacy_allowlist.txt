@@ -273,8 +273,6 @@ internal/update/checker_test.go
 internal/update/docker_test.go
 internal/update/image.go
 internal/update/image_b249_test.go
-internal/update/scheduler_test.go
-internal/update/state.go
 internal/update/state_test.go
 internal/watchdog/dbswap.go
 internal/watchdog/dbswap_b248_test.go

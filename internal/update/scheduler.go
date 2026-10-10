@@ -12,22 +12,35 @@
 //     fine enough that an operator-set 03:00 schedule is
 //     never more than ~30s late.
 //   - Trigger conditions (all must hold):
+//       0. The goroutine is ARMED. Since B375 (2026-10-10) main.go arms it
+//          UNCONDITIONALLY — the ticker always exists. Pre-B375 the whole
+//          goroutine was gated on cfg.UpdateScheduleEnabled (the ENV value),
+//          so a deployment whose env said false and whose /admin/update page
+//          said "enabled" had NO scheduler at all: the page wrote
+//          global_settings, the operator saw "включено", and nothing ever ran
+//          (this is the measured live defect B375 fixes).
 //       1. global_settings["update_schedule_enabled"] = "1"
 //          (DB-persisted; falls back to Cfg.UpdateScheduleEnabled)
-//       2. global_settings["update_schedule_time"] matches the
-//          current HH:MM in the server's local time
+//       2. global_settings["update_schedule_time"] is DUE: the current local
+//          time is at or after the configured HH:MM and strictly before
+//          HH:MM + CatchUpWindow (B375 — the pre-B375 exact-minute equality
+//          lost the whole day when a container recreate straddled the
+//          scheduled minute)
 //       3. A newer release is available (compareSemver
 //          CurrentVersion < LatestVersion)
 //       4. No update is already in progress (no inFlight
 //          job — same mutex used by the admin handlers)
-//       5. The schedule wasn't already triggered for this
-//          HH:MM today (we track the last successful run
-//          in global_settings["update_schedule_last_run"] to
-//          avoid double-firing on the same tick + a second
-//          tick that happens to fall in the same minute)
+//       5. The schedule wasn't already triggered TODAY for that slot (we track
+//          the last successful run in
+//          global_settings["update_schedule_last_run"] to avoid double-firing
+//          on the same tick, a second tick inside the catch-up window, or a
+//          boot that happens after today's run)
 //   - On trigger:
 //       - Spawn the Docker upgrader (same as
-//         PostAdminUpdateApply's goroutine)
+//         PostAdminUpdateApply's goroutine). Install kinds the scheduled
+//         path cannot drive are LOGGED (B375: the pre-B375 silent return
+//         left the operator to guess why an armed, enabled schedule did
+//         nothing on a native install)
 //       - Send a Telegram alert at start AND on
 //         done/fail (same pattern as the manual handlers)
 //       - Update global_settings["update_schedule_last_run"]
@@ -58,6 +71,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -134,12 +148,38 @@ var (
 // checker call per 30s.
 const TickInterval = 30 * time.Second
 
+// defaultScheduleTime is the schedule used when neither the DB nor the config
+// carries one. Named since B375 so readSchedule, the boot log and the
+// catch-up arithmetic quote ONE value.
+const defaultScheduleTime = "03:00"
+
+// fallbackScheduleTime is the "HH:MM" an unreadable/absent schedule resolves
+// to. Kept separate from readSchedule so the readers that answer the PAGE and
+// the BOOT LOG (scheduler_state.go) can resolve a time without a second error
+// path.
+func fallbackScheduleTime(cfg SchedulerCfg) string {
+	if cfg.UpdateScheduleTime == "" {
+		return defaultScheduleTime
+	}
+	return cfg.UpdateScheduleTime
+}
+
 // Start launches the scheduler goroutine. Returns immediately;
 // the goroutine runs until ctx is cancelled. The caller is
 // responsible for keeping deps valid (the DB, the State, the
 // Notifier must outlive the ctx).
+//
+// B375 (2026-10-10): the caller arms this UNCONDITIONALLY (the database decides
+// whether it ACTS) and records that fact with SetSchedulerArmed, so
+// /admin/update can distinguish "the schedule is off" from "there is no
+// scheduler at all".
 func Start(ctx context.Context, deps SchedulerDeps) {
 	go func() {
+		// Run one tick immediately. A container recreate that straddles the
+		// scheduled minute is exactly the B375 case, and the pre-B375 shape
+		// waited a full TickInterval before its first look — the difference
+		// between catching up and losing the day.
+		tick(ctx, deps)
 		ticker := time.NewTicker(TickInterval)
 		defer ticker.Stop()
 		for {
@@ -170,16 +210,21 @@ func tick(ctx context.Context, deps SchedulerDeps) {
 	if !enabled {
 		return
 	}
-	// 2. Does the current HH:MM match the configured time?
+	// 2. Is the run DUE? Since B375 this is a bounded window, not exact-minute
+	//    equality: `now` at or after the configured HH:MM and strictly before
+	//    HH:MM + CatchUpWindow. A schedule set to a time already past today
+	//    still fires — once — and the dedup below is what stops the repeat.
 	now := time.Now()
-	if !timeMatches(now, timeStr) {
+	due, late := scheduledRunDue(now, timeStr)
+	if !due {
 		return
 	}
-	// 3. Did we already fire for this HH:MM today? Read
-	//    update_schedule_last_run. If it already has today's
-	//    date + matching HH:MM, skip.
+	// 3. Did we already fire for this slot TODAY? Read
+	//    update_schedule_last_run. A stamp from today at or after the slot
+	//    means the run happened (or was refused as a duplicate), so a
+	//    catch-up window cannot fire once per tick.
 	lastRun, _ := readLastRun(deps.DB)
-	if sameMinute(lastRun, now) {
+	if ranTodayAt(timeStr, lastRun, now) {
 		return
 	}
 	// 4. Is an update already in progress (manual or
@@ -200,6 +245,16 @@ func tick(ctx context.Context, deps SchedulerDeps) {
 		scheduledMu.Unlock()
 	}()
 
+	// 4b. B375: answer "why did nothing happen" for the install kinds the
+	//     scheduled path cannot drive, BEFORE the release check, so the reason
+	//     is in the journal even when GitHub is unreachable. Pre-B375 this
+	//     answer lived only inside runScheduled, which returned silently.
+	installKind := DetectInstallKind()
+	if installKind != InstallDocker {
+		logScheduledSkip(installKind)
+		return
+	}
+
 	// 5. B346 (2026-10-04) — the pinned release wins over "the latest
 	//    release".
 	//
@@ -213,6 +268,7 @@ func tick(ctx context.Context, deps SchedulerDeps) {
 	//    carried 21 untagged commits).
 	if pin := PinnedReleaseFromDB(deps.DB); pin != "" {
 		if target, run := PinnedTargetFor(pin, deps.BuildVersion); run {
+			logScheduledTrigger(now, late, timeStr, target, true)
 			runScheduled(ctx, deps, target, now)
 		}
 		return
@@ -232,6 +288,7 @@ func tick(ctx context.Context, deps SchedulerDeps) {
 	}
 
 	// 7. ALL conditions met. Run the orchestrator.
+	logScheduledTrigger(now, late, timeStr, result.Latest, false)
 	runScheduled(ctx, deps, result.Latest, now)
 }
 
@@ -243,10 +300,11 @@ func tick(ctx context.Context, deps SchedulerDeps) {
 func runScheduled(ctx context.Context, deps SchedulerDeps, target string, triggeredAt time.Time) {
 	installKind := DetectInstallKind()
 	if installKind != InstallDocker {
-		// Systemd / bare not yet supported (same as the
-		// manual apply path). The /admin/update page
-		// already shows "manual steps" for these install
-		// kinds; the scheduled path just silently skips.
+		// Systemd / bare / OpenRC are not yet supported by the scheduled path
+		// (same as the manual apply path). B375: this must be VISIBLE — the
+		// pre-B375 silent return left an operator with an armed, enabled
+		// schedule and no journal line explaining why nothing ran.
+		logScheduledSkip(installKind)
 		return
 	}
 	current := "v" + trimV(deps.BuildVersion)
@@ -301,7 +359,7 @@ func readSchedule(db *sql.DB, cfg SchedulerCfg) (bool, string, error) {
 		return false, "", err
 	}
 	if timeStr == "" {
-		timeStr = "03:00"
+		timeStr = defaultScheduleTime
 	}
 	enabled := enabledStr == "1" || enabledStr == "true"
 	return enabled, timeStr, nil
@@ -326,26 +384,91 @@ func writeLastRun(db *sql.DB, t time.Time) error {
 	return setGlobalSetting(db, "update_schedule_last_run", t.UTC().Format(time.RFC3339))
 }
 
-// timeMatches returns true if now's local HH:MM equals the
-// configured HH:MM. We don't try to be smart about the
-// second-precision "what if the scheduler missed the exact
-// 03:00:00 by 5 seconds" case — a 30s tick means the
-// operator can set the schedule 1 minute early to be safe.
-// The sameMinute guard on the last-run timestamp prevents
-// double-firing.
-func timeMatches(now time.Time, hhmm string) bool {
+// scheduledRunDue is the "is the configured HH:MM due right now?" predicate.
+//
+// B375 (2026-10-10) replaced exact hour+minute equality with a bounded window:
+// the run is due when `now` is AT OR AFTER the scheduled minute and STRICTLY
+// BEFORE scheduled + CatchUpWindow. The window is what makes a container
+// recreate at the scheduled minute survivable; the ranTodayAt dedup below is
+// what keeps it from firing once per tick.
+//
+// The returned `late` duration is the lateness when the run is due (0 for the
+// exactly-on-time case), so the caller can LOG `late by Nm` instead of firing a
+// catch-up silently.
+func scheduledRunDue(now time.Time, hhmm string) (due bool, late time.Duration) {
+	want, err := parseHHMM(hhmm)
+	if err != nil {
+		return false, 0
+	}
+	slot := time.Date(now.Year(), now.Month(), now.Day(), want.hour, want.min, 0, 0, now.Location())
+	if now.Before(slot) {
+		// Before today's slot (including the "the schedule is set to 23:55
+		// and it is 00:05 tomorrow" case, where slot is in the future).
+		return false, 0
+	}
+	if now.Sub(slot) >= CatchUpWindow {
+		return false, 0
+	}
+	return true, now.Sub(slot)
+}
+
+// ranTodayAt reports whether this slot already ran today: update_schedule_last_run
+// is stamped on this calendar day at or after the slot's minute. Pre-B375 this
+// was sameMinute (exact hour+minute equality); with a catch-up window the stamp
+// no longer has to be in the SAME minute as the tick that reads it — it has to
+// be in the same DAY and no earlier than the slot.
+//
+// Consequences, all intended:
+//   - a run at 08:00:15 makes every later tick of 2026-10-10 a no-op (the
+//     pre-B375 behaviour, preserved);
+//   - a schedule set to a time already past today fires ONCE (the first tick
+//     after the write stamps the day) and never again until tomorrow;
+//   - a boot after today's run does NOT re-run it.
+func ranTodayAt(hhmm string, lastRun, now time.Time) bool {
+	if lastRun.IsZero() {
+		return false
+	}
 	want, err := parseHHMM(hhmm)
 	if err != nil {
 		return false
 	}
-	return now.Hour() == want.hour && now.Minute() == want.min
+	if lastRun.Year() != now.Year() || lastRun.Month() != now.Month() || lastRun.Day() != now.Day() {
+		return false
+	}
+	return !lastRun.Before(time.Date(lastRun.Year(), lastRun.Month(), lastRun.Day(), want.hour, want.min, 0, 0, lastRun.Location()))
+}
+
+// logScheduledSkip records the one thing the pre-B375 code left to guesswork:
+// the scheduled path cannot drive this install kind, so an armed, enabled
+// schedule is a no-op here.
+func logScheduledSkip(kind InstallKind) {
+	log.Printf("⏰ update-scheduler: NOT SUPPORTED on install kind %q — the scheduled path runs only on Docker (%q); use /admin/update with the manual steps for this kind",
+		kind.String(), InstallDocker.String())
+}
+
+// logScheduledTrigger records every firing, so the journal answers "did the
+// scheduler run, and was it on time?" without a second log line. A catch-up
+// names its lateness (B375 requirement: a run that happens inside the window is
+// not allowed to look like an on-time run).
+func logScheduledTrigger(now time.Time, late time.Duration, hhmm, target string, pinned bool) {
+	source := "latest release"
+	if pinned {
+		source = "pinned release"
+	}
+	if late >= time.Minute {
+		log.Printf("⏰ update-scheduler: firing at %s for the %s slot (late by %s, inside the %s catch-up window) — target=%s (%s)",
+			now.Format("15:04:05"), hhmm, late.Round(time.Minute), CatchUpWindow, target, source)
+		return
+	}
+	log.Printf("⏰ update-scheduler: firing at %s for the %s slot (on time) — target=%s (%s)",
+		now.Format("15:04:05"), hhmm, target, source)
 }
 
 // sameMinute returns true if a and b are in the same
-// calendar minute (year+month+day+hour+minute). Used to
-// deduplicate: if the last successful trigger was at
-// 03:00:15 today, the next tick at 03:00:45 today must
-// NOT fire again.
+// calendar minute (year+month+day+hour+minute). Kept for the
+// callers that still need minute identity (B130's contract) —
+// the scheduler's own dedup now uses ranTodayAt, because a
+// catch-up run is stamped in a LATER minute than the slot.
 func sameMinute(a, b time.Time) bool {
 	if a.IsZero() {
 		return false

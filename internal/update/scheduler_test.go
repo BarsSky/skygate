@@ -26,14 +26,14 @@ func TestParseHHMM(t *testing.T) {
 		{"00:00", true, 0, 0},
 		{"23:59", true, 23, 59},
 		{"12:30", true, 12, 30},
-		{"", false, 0, 0},        // empty
-		{"25:00", false, 0, 0},   // hour out of range
-		{"12:60", false, 0, 0},   // min out of range
-		{"1:00", false, 0, 0},    // missing leading zero
-		{"12:5", false, 0, 0},    // missing leading zero
-		{"12-00", false, 0, 0},   // wrong separator
-		{"abcd", false, 0, 0},    // garbage
-		{"12345", false, 0, 0},   // no separator
+		{"", false, 0, 0},      // empty
+		{"25:00", false, 0, 0}, // hour out of range
+		{"12:60", false, 0, 0}, // min out of range
+		{"1:00", false, 0, 0},  // missing leading zero
+		{"12:5", false, 0, 0},  // missing leading zero
+		{"12-00", false, 0, 0}, // wrong separator
+		{"abcd", false, 0, 0},  // garbage
+		{"12345", false, 0, 0}, // no separator
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
@@ -50,25 +50,32 @@ func TestParseHHMM(t *testing.T) {
 }
 
 func TestTimeMatches(t *testing.T) {
-	// Build a fixed-time "now" for each case so the test is
-	// deterministic.
+	// B375 (2026-10-10) RENEGOTIATED this contract. The helper used to be
+	// `timeMatches` with EXACT hour+minute equality; it is now
+	// `scheduledRunDue`, a bounded window (now >= slot && now < slot+CatchUpWindow)
+	// that reports the lateness. The rows below therefore changed in one
+	// direction on purpose: a SLOT in the recent past is now due (the catch-up
+	// the live defect needed), while a slot still in the future is not, and the
+	// window is still bounded. The full decision table (including the 10-minute
+	// edge) lives in TestB375_ScheduledRunDueWindow.
 	now := time.Date(2026, 8, 18, 3, 15, 0, 0, time.UTC)
 	cases := []struct {
-		hhmm   string
-		want   bool
+		hhmm string
+		want bool
 	}{
-		{"03:15", true},   // exact match
-		{"03:14", false},  // one minute off
-		{"03:16", false},
-		{"04:15", false},  // one hour off
-		{"25:00", false},  // invalid input
-		{"", false},       // empty
+		{"03:15", true},  // exact match
+		{"03:14", true},  // B375: the slot was one minute ago — inside the window
+		{"03:16", false}, // the slot is one minute in the FUTURE — nothing to catch up
+		{"02:15", false}, // one hour ago (outside the window)
+		{"04:15", false}, // one hour ahead (outside the window)
+		{"25:00", false}, // invalid input
+		{"", false},      // empty
 	}
 	for _, c := range cases {
 		t.Run(c.hhmm, func(t *testing.T) {
-			got := timeMatches(now, c.hhmm)
+			got, _ := scheduledRunDue(now, c.hhmm)
 			if got != c.want {
-				t.Errorf("timeMatches(now=03:15, %q) = %v, want %v", c.hhmm, got, c.want)
+				t.Errorf("scheduledRunDue(now=03:15, %q) = %v, want %v", c.hhmm, got, c.want)
 			}
 		})
 	}
@@ -79,8 +86,8 @@ func TestSameMinute(t *testing.T) {
 	// the same minute; 2026-08-18 03:01:00 is in the next.
 	a := time.Date(2026, 8, 18, 3, 0, 0, 0, time.UTC)
 	b := time.Date(2026, 8, 18, 3, 0, 45, 0, time.UTC) // same minute as a
-	c := time.Date(2026, 8, 18, 3, 1, 0, 0, time.UTC)   // next minute
-	d := time.Date(2026, 8, 19, 3, 0, 0, 0, time.UTC)   // next day, same HH:MM
+	c := time.Date(2026, 8, 18, 3, 1, 0, 0, time.UTC)  // next minute
+	d := time.Date(2026, 8, 19, 3, 0, 0, 0, time.UTC)  // next day, same HH:MM
 
 	cases := []struct {
 		name string

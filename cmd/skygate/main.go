@@ -2270,35 +2270,18 @@ func main() {
 	// time-of-day auto-update. Reads the schedule from
 	// global_settings (with env-var fallbacks) and
 	// triggers the update orchestrator when (a) schedule
-	// is enabled, (b) current time matches the configured
-	// HH:MM, (c) GitHub has a newer release, and (d) no
-	// update is already in flight. The /admin/update
-	// page (B129) shows the schedule + last-run state.
-	if cfg.UpdateScheduleEnabled {
-		schedChecker := &update.Checker{
-			Owner:          cfg.GitHubOwner,
-			Repo:           cfg.GitHubRepo,
-			Channel:        cfg.UpdateChannel,
-			GitHubToken:    cfg.GitHubToken,
-			CurrentVersion: app.BuildVersion,
-		}
-		schedState := update.NewStateStore("") // path resolved internally
-		update.Start(ctx, update.SchedulerDeps{
-			DB:           d.DB,
-			State:        schedState,
-			Checker:      schedChecker,
-			BuildVersion: app.BuildVersion,
-			Notifier:     schedulerNotifierSink(app.Notifier),
-			RepoPath:     cfg.RepoPath,
-			Cfg: update.SchedulerCfg{
-				UpdateScheduleEnabled: cfg.UpdateScheduleEnabled,
-				UpdateScheduleTime:    cfg.UpdateScheduleTime,
-			},
-		})
-		log.Printf("⏰ update-scheduler: enabled (time=%s, env-var default; /admin/update page can override)", cfg.UpdateScheduleTime)
-	} else {
-		log.Printf("⏰ update-scheduler: disabled (SKYGATE_UPDATE_SCHEDULE_ENABLED=false; /admin/update page can enable)")
-	}
+	// is enabled, (b) the configured HH:MM is due, (c) GitHub
+	// has a newer release, and (d) no update is already in
+	// flight. The /admin/update page (B129) shows the schedule + last-run state.
+	//
+	// 2026-10-10 (B375): the goroutine is ARMED UNCONDITIONALLY — the DATABASE
+	// decides whether it acts, because this block used to sit behind
+	// `if cfg.UpdateScheduleEnabled` (the ENV value) while global_settings is the
+	// authoritative toggle, so a schedule the operator enabled in the panel had
+	// no scheduler at all. See main_update_scheduler.go for the measured defect,
+	// the boot-log contract and why the wire-up lives in its own function (B372's
+	// ceiling on this file).
+	wireUpdateScheduler(ctx, d, app, cfg)
 
 	// 2026-08-18 (B142, v1.4.1): in-app backup-verify
 	// scheduler. Mirrors the B130 update-scheduler wire-up

@@ -304,6 +304,17 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 	// now" button is also a page load (no DB write).
 	s.Backend.Audit(c.UserID, c.Username, "update_page_view", "version="+s.BuildVersion)
 
+	// B375 (2026-10-10): the two halves of "is the scheduled auto-update
+	// actually going to run?" are read ONCE, from the same sources the
+	// scheduler itself reads: the process-level arming state (set by
+	// cmd/skygate/main.go when it started the goroutine) and the DB toggle
+	// (global_settings, with the env default as the fallback). The page must
+	// never derive one from the other — conflating them is exactly the defect
+	// that made "включено в панели" look like "работает".
+	schedArmed := update.SchedulerArmed()
+	schedReason := update.SchedulerArmedReason()
+	schedEnabled := db.GetGlobalSettingBool(s.dbc(), "update_schedule_enabled", s.Cfg.UpdateScheduleEnabled)
+
 	// Strip "v" from the user-visible labels (the page shows
 	// "v0.28.6" everywhere anyway; the BuildVersion is the
 	// canonical "vX.Y.Z+commit" form).
@@ -349,7 +360,7 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		// + SKYGATE_UPDATE_SCHEDULE_TIME). The background
 		// scheduler (B130) reads these same values to
 		// decide when to trigger the orchestrator.
-		"UpdateScheduleEnabled": db.GetGlobalSettingBool(s.dbc(), "update_schedule_enabled", s.Cfg.UpdateScheduleEnabled),
+		"UpdateScheduleEnabled": schedEnabled,
 		"UpdateScheduleTime":    safeGetString(s.dbc(), "update_schedule_time", s.Cfg.UpdateScheduleTime),
 		// 2026-08-18 (B129): last-run timestamp of the
 		// scheduled auto-update. Stored in global_settings
@@ -357,6 +368,17 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		// The background scheduler writes it on every run;
 		// the page shows it as "Последний запуск: …".
 		"UpdateScheduleLastRun": safeGetString(s.dbc(), "update_schedule_last_run", ""),
+		// B375 (2026-10-10): WHETHER THE SCHEDULER IS ACTUALLY RUNNING, and the
+		// three-way answer the page has to render. The measured live defect: the
+		// schedule read "включено" in the panel while the goroutine had never
+		// been created, so nothing happened and no surface said why. The trap is
+		// exactly (schedule enabled && !scheduler armed) — the page must say so
+		// instead of implying that saving the form is enough.
+		"SchedulerArmed":        schedArmed,
+		"SchedulerArmedReason":  schedReason,
+		"SchedulerTrap":         update.SchedulerTrap(schedArmed, schedEnabled),
+		"SchedulerScheduleOff":  schedArmed && !schedEnabled,
+		"SchedulerNotSupported": installKind != update.InstallDocker,
 		// B346 (2026-10-04): the pinned release — the ONE tag every
 		// instance orients on. PinnedRelease is "" when the operator
 		// follows the latest release (the pre-B346 behaviour), so the

@@ -106,6 +106,16 @@ var ruUpdate = map[string]string{
 	"update.schedule_fallback":   "Некорректное время — использовано значение по умолчанию (03:00).",
 	"update.schedule_next_run":   "Следующий запуск",
 	"update.section_settings":    "Параметры",
+	// 2026-10-10 (B375): «планировщик запущен / не запущен» + the trap the
+	// operator actually hit — the schedule reads enabled while the process
+	// never started the scheduler, so nothing will run and saving the form
+	// again cannot help.
+	"update.scheduler_running":         "Планировщик запущен",
+	"update.scheduler_not_running":     "Планировщик НЕ запущен",
+	"update.scheduler_running_but_off": "расписание выключено — планировщик работает, но запускать ему нечего",
+	"update.scheduler_not_supported":   "Автоматическое обновление по расписанию поддерживается только для установок Docker: на этом хосте планировщик запущен, но обновиться сам не сможет — используйте ручные шаги ниже.",
+	"update.scheduler_trap_title":      "Расписание включено, но планировщик не запущен.",
+	"update.scheduler_trap_body":       "Заданное время наступит, и ничего не произойдёт: настройка хранится в базе, а сам планировщик — это процесс, который сейчас не работает. Сохранение формы ещё раз не поможет — проверьте журнал контейнера (строки «update-scheduler:») и перезапустите skygate.",
 	// 2026-10-04 (B346): the PINNED RELEASE section. One tag every
 	// instance orients on — this host, the scheduled updater and a host
 	// that joins the cluster (see internal/update/pinned_release.go).
@@ -208,6 +218,16 @@ var enUpdate = map[string]string{
 	"update.schedule_fallback":   "Invalid time - fell back to default (03:00).",
 	"update.schedule_next_run":   "Next run",
 	"update.section_settings":    "Settings",
+	// 2026-10-10 (B375): «планировщик запущен / не запущен» + the trap the
+	// operator actually hit — the schedule reads enabled while the process
+	// never started the scheduler, so nothing will run and saving the form
+	// again cannot help.
+	"update.scheduler_running":         "Scheduler is running",
+	"update.scheduler_not_running":     "Scheduler is NOT running",
+	"update.scheduler_running_but_off": "the schedule is off — the scheduler runs, but has nothing to trigger",
+	"update.scheduler_not_supported":   "Scheduled auto-update is supported on Docker installs only: on this host the scheduler is running but cannot update by itself — use the manual steps below.",
+	"update.scheduler_trap_title":      "The schedule is enabled but the scheduler is not running.",
+	"update.scheduler_trap_body":       "The configured time will arrive and nothing will happen: the setting lives in the database, while the scheduler is a process that is not running right now. Saving the form again will not help — check the container journal (lines starting with «update-scheduler:») and restart skygate.",
 	// 2026-10-04 (B346): the PINNED RELEASE section — see the RU map.
 	"update.pin_title":         "Pinned release",
 	"update.pin_subtitle":      "One release that ALL instances orient on: this host, the scheduled auto-update and any host that joins the cluster. Empty - follow the latest release.",
