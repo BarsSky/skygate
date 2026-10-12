@@ -12,6 +12,78 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.117 — a push is always checked, and the gate now says WHAT failed (B378)
+
+**Date:** 2026-10-12 · **Base:** `v1.5.116` → this tag · **Compatibility:** **nothing in the running
+panel changes.** No Go code, no template, no i18n key, no schema, no migration, no setting, no route:
+this release is entirely the **guarantee chain** (`.githooks/pre-push`, three `scripts/check_*.sh`,
+`docs/ROADMAP.md`) plus one new contract. The deployed binary is behaviourally identical to v1.5.116,
+so it is safe to skip, and safe to roll back by tag.
+
+### Why it exists (operator instruction, verbatim)
+
+> «Пуш должен всегда проверяться и выявлять причины не работы и правится сразу»
+
+v1.5.116 was pushed with `git push --no-verify`. The instruction is right and the bypass was wrong, but
+the *reason* matters, because not one of the blockers was a product defect — they were four **host
+artefacts reported as product facts**, the class B327/B336 exist to forbid:
+
+| # | The false FAIL | The real cause | Fixed at the cause |
+|---|---|---|---|
+| 1 | `B352 D2`: «the button's body still reaches the effective-target resolver» | D2 needs a WORKING `python3` and asked `command -v python3`. On Windows that is the Microsoft Store alias **stub**: it resolves, runs NOTHING and exits 49 → the parsed value was empty → the `case` fell through to `*` → a correct handler was declared broken | the interpreter is probed for **function** (`python3 -c 'print(1)'`); a missing/broken one SKIPs that half with a named reason while the two greps and the test pin keep enforcing the contract |
+| 2 | `B-prod-health` + `B327`: «USER: unbound variable» | `check_b_prod_health.sh` read `${USER}` bare under `set -u`, and a PowerShell-launched Git Bash exports `PATH` but **not** `USER` (measured: `USER=<unset>` in a login *and* a non-login shell here). It died **after** its four HTTP contracts had PASSed, and B327's behavioural half — which drives that very script — went red with it | `${USER:-${LOGNAME:-$(id -un)}}` |
+| 3 | `B337 C1`: «22 tracked .go file(s) are not gofmt-clean and are NOT in the allowlist» | the working tree carried CRLF while the **index** is LF (`.gitattributes: eol=lf`). B375 had already recorded this as «the KNOWN local C1 CRLF false failure» — i.e. it was *tolerated* for a release instead of fixed, and it reddened every local push | the ratchet judges the **repository**: a CR-stripped copy is re-checked, so only REAL drift fails and the checkout artefact is printed as a note. The CR test is `cmp` against the stripped copy, **not** `grep $'\r'` — measured here, MSYS grep reads in text mode and HIDES the CR, so a grep-based detector would have been dead code that always answered «not an artefact» |
+| 4 | `B144`: `default_tab=0` | MSYS `grep -P` aborts under the default Windows locale (AGENTS trap #10) and the hook left the locale to the host | the hook exports `LC_ALL=C.UTF-8` for Git Bash/Cygwin only, and never overrides an explicit `LC_ALL` |
+
+### The gate now explains itself
+
+`scripts/verify_pre_deploy.sh` has ended on its own verdict since B335 (`exit 1` on any FAIL or
+TIMEOUT), so the hook really did block — but it could only say «catalog RED — push ABORTED» and left the
+operator to scroll a 400-line wall. New `scripts/push_gate_verdict.sh` is the one local reader of that
+verdict, and `.githooks/pre-push` now:
+
+* captures the catalog's output while still showing it, and on RED **names the failing checks**
+  (`push-gate: failing: B337 B237.7`);
+* treats a log with **no verdict block** as a FAILURE, not a pass — the exact shape a crashed catalog
+  had before B335;
+* treats a **TIMEOUT** as a failure (a check killed at its budget produced no result);
+* reads the catalog's status from `PIPESTATUS[0]`, never from the `tee` in the pipeline (a formatter
+  must not decide whether a check passed — AGENTS trap #9's cousin);
+* keeps the full log for the operator and says plainly that `--no-verify` is not a fix: it pushes the
+  regression to `main` and from there to every device.
+
+### Verification
+
+* New contract **B378** (`scripts/check_b378_push_gate_and_host_artefacts.sh`): 19 contracts, 0 failed,
+  0 skipped — of which **four are behavioural and each one reproduces its original false FAIL**: the
+  verdict reader against planted green / red / timeout / crashed logs; `B352` with a `python3` that
+  runs nothing; `check_b_prod_health.sh` with `USER` and `LOGNAME` unset; and a conversion of a clean
+  file to CRLF in the working tree, which must leave `B337 C1` **PASS** while naming the artefact. The
+  check never executes the hook — that would run the catalog from inside the catalog.
+* **The release itself was pushed THROUGH the hook, with no `--no-verify`:** the catalog ran to
+  `PASS 426 / FAIL 0 / TIMEOUT 0`, the new reader printed `push-gate: 426 passed, 0 failed, 0 timed
+  out`, the hook answered «catalog green — push allowed», and CI is green for the pushed commit.
+* Neighbours re-run green: B322 14/0, B281 47/0, B327 31/0, B330 15/0, B335 25/0, B337 14/0,
+  B340 12/0, B352 9/0, B325 8/0, B325.1 0 fail.
+
+### Also corrected
+
+* `docs/ROADMAP.md` + `docs/ru/ROADMAP.md` still claimed «the catalog **exits 0 even with FAILs
+  locally**» — false since B335 made the catalog end on its own verdict. The row now says what the code
+  does, and the static-analysis row records that the B337 ratchet judges the repository, not the
+  checkout.
+* The operator's Windows host got a working `python3` on `PATH` (`%USERPROFILE%\bin\python3.exe`, a copy
+  of the real interpreter, prepended to the user `PATH`), because the Store alias cannot be repaired
+  without elevation. Verified: it resolves and runs in both login and non-login Git Bash, so the
+  dynamic halves of these checks now **execute** locally instead of SKIPping.
+
+### Upgrade notes
+
+Nothing to do on any host: no migration runs, no `.env` key is added, no route or template changes. The
+new scripts and the hook arrive with the checkout, so the next `git push` from a normal Git Bash is
+gated and self-explaining. The only deliberately unchanged escape hatches are the ones AGENTS rule 14
+already documents for tags (`SKIP_PRE_TAG_CHECK=1` locally, the CI check itself is never skippable).
+
 ## v1.5.116 — rules you can read by target, install as a batch, and hand to an AI assistant (B376, B377)
 
 **Date:** 2026-10-12 · **Base:** `v1.5.115` → this tag · **Compatibility:** UI + API only — **no
