@@ -173,7 +173,22 @@ grep -q 'db.TailscaleSSHTargetFor(s.dbc(), hostname)' internal/feature/admin/exi
 # Comment lines are stripped first: the handler DOCUMENTS the resolver it must not use,
 # and a naive grep on the body would fail on that explanation (the same trap the B188
 # check hit).
-D2_BUTTON=$(python3 - <<'PY'
+#
+# THE INTERPRETER IS PROBED FIRST (2026-10-12). This half needs a WORKING python3, and
+# `command -v python3` is not that question: on Windows `python3` is the Microsoft Store
+# alias stub, which resolves, runs NOTHING and exits 49. Pre-fix, D2_BUTTON was then
+# empty, the `case` fell through to `*)` and the check announced «the button's body still
+# reaches the effective-target resolver» — a PRODUCT defect invented out of a HOST
+# artefact, which is precisely the class B327/B336 forbid, and it reddened every local
+# push on that host. A missing/broken interpreter now SKIPs this half with a named reason
+# while the two greps and the test pin below keep enforcing the contract, so the check is
+# still able to fail for a real reason on the same host.
+PY3=""
+if command -v python3 >/dev/null 2>&1 && python3 -c 'print(1)' >/dev/null 2>&1; then
+  PY3="python3"
+fi
+if [ -n "$PY3" ]; then
+  D2_BUTTON=$("$PY3" - <<'PY'
 import re
 src = open("internal/feature/admin/exit_nodes_handlers.go").read()
 m = re.search(r"func \(s \*Service\) PostAdminExitNodeUseTailscaleIP.*?\n}\n", src, re.S)
@@ -184,8 +199,13 @@ else:
     print("uses-effective-resolver" if "LookupExitServerSSHTarget" in body else "ok")
 PY
 )
+else
+  D2_BUTTON="no-working-python3"
+fi
 case "$D2_BUTTON" in
   ok) ;;
+  no-working-python3)
+    skip "D2 (dynamic half): no WORKING python3 on this host — the handler body was not parsed. The static pins (TailscaleSSHTargetFor + its use + the test) still ran and are what fails for a real regression; CI/Linux runs the parse." ;;
   *) D2_MISS="${D2_MISS}the button's body still reaches the effective-target resolver ($D2_BUTTON)"$'\n' ;;
 esac
 grep -q 'TestTailscaleSSHTargetFor_IgnoresTheOperatorTarget_B352_2' internal/db/exit_servers_b352_2_test.go 2>/dev/null \

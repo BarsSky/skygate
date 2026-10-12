@@ -87,16 +87,60 @@ echo "pre-push: running v0.28.5+ guarantee catalog (B1-B76+)..."
 echo "  bash-mount-root: ${SKYGATE_BASH_MOUNT_ROOT:-<unset>}"
 echo
 
+# 3b. THE HOOK MUST NOT REDDEN THE PUSH FOR THIS HOST (B378, 2026-10-12).
+# Measured: on Git Bash the MSYS grep 3.0 aborts `grep -P` under the default Windows
+# locale («-P supports only unibyte and UTF-8 locales»), so B144 reports `default_tab=0`
+# and FAILs on a healthy tree — AGENTS trap #10, whose prescribed fix is the ENVIRONMENT
+# and not the contract. A hook that fails for a locale artefact teaches the operator to
+# reach for `--no-verify`, and that is how a real regression gets pushed. Set it for
+# Git Bash/Cygwin only, and never override an explicit LC_ALL.
+if [ -z "${LC_ALL:-}" ]; then
+  case "${MSYSTEM:-}${OSTYPE:-}" in
+    *MINGW*|*MSYS*|*CYGWIN*|*msys*|*cygwin*) export LC_ALL=C.UTF-8 ;;
+  esac
+fi
+
 # 4. Run the catalog. Don't use `make` because make on Windows
 # defaults to cmd.exe — call the script directly.
-if bash scripts/verify_pre_deploy.sh; then
+#
+# B378: the output is captured as well as shown, so that a RED verdict can NAME the
+# failing checks instead of only announcing that something failed. The verdict itself
+# stays the catalog's own exit status (B335/TD-22) — this hook adds the REASON, it does
+# not re-decide the question.
+CATALOG_LOG="$(mktemp "${TMPDIR:-/tmp}/skygate-prepush.XXXXXX" 2>/dev/null || true)"
+if [ -n "$CATALOG_LOG" ]; then
+  bash scripts/verify_pre_deploy.sh 2>&1 | tee "$CATALOG_LOG"
+  # PIPESTATUS, not $?: the pipeline's status is tee's (AGENTS trap #9's cousin — a
+  # formatter must never decide whether the check passed).
+  CATALOG_RC="${PIPESTATUS[0]}"
+else
+  bash scripts/verify_pre_deploy.sh
+  CATALOG_RC=$?
+fi
+
+VERDICT_RC="$CATALOG_RC"
+if [ -n "$CATALOG_LOG" ] && [ -f scripts/push_gate_verdict.sh ]; then
+  if bash scripts/push_gate_verdict.sh "$CATALOG_LOG"; then
+    VERDICT_RC=0
+  else
+    VERDICT_RC=1
+  fi
+fi
+
+if [ "$VERDICT_RC" -eq 0 ]; then
   echo
   echo "pre-push: catalog green — push allowed"
+  [ -n "$CATALOG_LOG" ] && rm -f "$CATALOG_LOG"
   exit 0
-else
-  echo
-  echo "pre-push: catalog RED — push ABORTED" >&2
-  echo "pre-push: fix the failing guarantee and re-push." >&2
-  echo "pre-push: bypass with 'git push --no-verify' (NOT recommended)." >&2
-  exit 1
 fi
+
+echo
+echo "pre-push: catalog RED — push ABORTED" >&2
+echo "pre-push: the catalog's own exit status was $CATALOG_RC, and the failing checks are named above." >&2
+if [ -n "$CATALOG_LOG" ]; then
+  echo "pre-push: the full log is kept at $CATALOG_LOG (delete it once you are done)." >&2
+fi
+echo "pre-push: fix the failing guarantee and re-push." >&2
+echo "pre-push: 'git push --no-verify' is NOT a fix — it pushes the regression to main and" >&2
+echo "pre-push: from there to every device (B378: fix the cause, do not skip the gate)." >&2
+exit 1

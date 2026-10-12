@@ -223,8 +223,18 @@ fi
 # Cross-platform HOME: try $HOME first, then the WSL path /mnt/c/Users/<user>/.ssh
 # (the user might be running this from Windows-PowerShell→bash-bridge or
 # from native WSL bash — both need to find ~/.ssh/id_ed25519).
+#
+# USER IS NOT ALWAYS SET (fixed 2026-10-12). The script runs under `set -u` and read
+# `${USER}` bare in the two Windows paths below, so on a host/shell without it (a
+# PowerShell-launched Git Bash exports PATH but not USER; minimal containers likewise)
+# the reference crashed with «USER: unbound variable» AFTER the four HTTP contracts had
+# already PASSed — the exit code said FAIL, B327's behavioural half (which drives this
+# very script) went red with it, and both blamed the commit for a missing environment
+# variable. `id -un` is the portable answer; the fallback chain is deliberately
+# best-effort because a missing key simply SKIPs contract 5.
+WIN_USER="${USER:-${LOGNAME:-$(id -un 2>/dev/null || true)}}"
 SSH_KEY=""
-for k in "${HOME}/.ssh/id_ed25519" "/mnt/c/Users/${USER}/.ssh/id_ed25519" "/c/Users/${USER}/.ssh/id_ed25519"; do
+for k in "${HOME}/.ssh/id_ed25519" "/mnt/c/Users/${WIN_USER}/.ssh/id_ed25519" "/c/Users/${WIN_USER}/.ssh/id_ed25519"; do
     if [ -f "$k" ]; then
         SSH_KEY="$k"
         break

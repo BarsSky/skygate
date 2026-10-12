@@ -286,6 +286,37 @@ fi
 # ---------------------------------------------------------------------------
 hdr "C. everything NOT frozen is clean"
 # ---------------------------------------------------------------------------
+# A WINDOWS CHECKOUT MUST NOT LOOK LIKE DRIFT (fixed 2026-10-12). `gofmt` also
+# reformats line endings, so on a host whose working tree carries CRLF — the repo
+# stores LF (`.gitattributes: eol=lf`) and the INDEX is LF, but a tool that rewrote
+# a file on Windows leaves CRLF behind — C1 named 22 perfectly formatted files as
+# «not gofmt-clean and NOT in the allowlist» while `git status` was clean and CI was
+# green. That artefact has already cost two sessions (it is recorded in the B375
+# commit message as "the KNOWN local C1 CRLF false failure", i.e. it was tolerated
+# rather than fixed), and it reddens every local push on that host. The ratchet's
+# question is about the REPOSITORY content, so a file whose ONLY complaint is CR is
+# re-checked with the CR stripped: still unformatted after that means real drift,
+# clean means the checkout was the problem. The artefact is printed, never silent.
+cr_only_drift() {
+  # $1 = path. Returns 0 when gofmt flags it ONLY because of CR line endings.
+  #
+  # The CR test is `cmp` against a CR-stripped copy, NOT `grep $'\r'`: measured on
+  # MSYS (Git Bash) 2026-10-12, `grep -q $'\r'` reported «no CR» about a file that
+  # gofmt flagged for exactly that reason — MSYS grep reads in text mode and eats the
+  # CR before matching, so the detector would have been dead code that always said
+  # "not an artefact". `cmp` is binary-safe and answers the same question.
+  local f="$1" tmp
+  [ -f "$f" ] || return 1
+  tmp="$(mktemp "${TMPDIR:-/tmp}/skygate-b337cr.XXXXXX")" || return 1
+  tr -d '\r' < "$f" > "$tmp"
+  if cmp -s "$f" "$tmp"; then        # no CR at all: not this artefact
+    rm -f "$tmp"; return 1
+  fi
+  if "$GOFMT" -l "$tmp" 2>/dev/null | grep -q .; then   # still unformatted: real drift
+    rm -f "$tmp"; return 1
+  fi
+  rm -f "$tmp"; return 0
+}
 if [ -z "$GOFMT" ]; then
   skip "C: gofmt is not on this host — run this check on the VM"
 else
@@ -293,13 +324,28 @@ else
   ALLN="$(printf '%s\n' "$ALL" | grep -c .)"
   DIRTY="$(printf '%s\n' "$ALL" | xargs "$GOFMT" -l 2>/dev/null | sort)"
   DIRTYN="$(printf '%s\n' "$DIRTY" | grep -c .)"
+  CRONLY=""
   NEWDIRTY="$(printf '%s\n' "$DIRTY" | while read -r f; do
     [ -z "$f" ] && continue
-    grep -qxF "$f" <<< "$ENTRIES" || echo "$f"
+    grep -qxF "$f" <<< "$ENTRIES" && continue
+    if cr_only_drift "$f"; then echo "CR-ONLY $f"; else echo "$f"; fi
   done)"
-  NEWN="$(printf '%s\n' "$NEWDIRTY" | grep -c .)"
+  CRONLY="$(printf '%s\n' "$NEWDIRTY" | grep '^CR-ONLY ' | sed 's/^CR-ONLY //' || true)"
+  NEWDIRTY="$(printf '%s\n' "$NEWDIRTY" | grep -v '^CR-ONLY ' | grep -v '^$' || true)"
+  # Count with an explicit emptiness test: `printf '%s\n' "" | grep -vc PATTERN`
+  # reports 1 for the empty line, so the pre-fix version announced «1 file(s) are
+  # not gofmt-clean» with an EMPTY list underneath it (the same empty-line trap
+  # B352's D2 taught, in the other direction).
+  NEWN=0
+  [ -n "$NEWDIRTY" ] && NEWN="$(printf '%s\n' "$NEWDIRTY" | grep -c .)"
+  CRN=0
+  [ -n "$CRONLY" ] && CRN="$(printf '%s\n' "$CRONLY" | grep -c .)"
+  if [ "$CRN" -gt 0 ]; then
+    echo "  note: $CRN file(s) are gofmt-clean in the REPOSITORY but carry CRLF in this working tree (git index is LF — a checkout artefact, not drift):"
+    printf '%s\n' "$CRONLY" | head -5 | sed 's/^/        /'
+  fi
   if [ "$NEWN" -eq 0 ]; then
-    ok "C1: all $((ALLN - DIRTYN)) non-frozen tracked .go files are gofmt-clean (of $ALLN)"
+    ok "C1: all $((ALLN - DIRTYN + CRN)) non-frozen tracked .go files are gofmt-clean (of $ALLN${CRN:+; $CRN CRLF-only checkout artefact(s) counted as clean})"
   else
     bad "C1: $NEWN tracked .go file(s) are not gofmt-clean and are NOT in the allowlist:"
     printf '%s\n' "$NEWDIRTY" | head -10 | sed 's/^/        /' >&2
