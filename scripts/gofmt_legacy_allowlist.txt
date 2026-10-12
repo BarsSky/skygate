@@ -174,7 +174,6 @@ internal/feature/admin/users_adopt_promote_test.go
 internal/feature/admin/users_b141_test.go
 internal/feature/admin/users_rename_test.go
 internal/feature/admin/users_sync_banner.go
-internal/feature/auth/service.go
 internal/feature/auth/service_b172_test.go
 internal/feature/cluster/handlers.go
 internal/feature/exit_rules/approved_routes_index_b_test.go
@@ -192,7 +191,6 @@ internal/feature/exit_rules/reconciler_rename_b231_test.go
 internal/feature/exit_rules/reconciler_rename_rules_b277_5_test.go
 internal/feature/exit_rules/resolved_by_domain.go
 internal/feature/exit_rules/resolved_by_domain_b185_test.go
-internal/feature/exit_rules/store.go
 internal/feature/healthz/availability.go
 internal/feature/healthz/db_health_b206_test.go
 internal/feature/healthz/db_health_b225_1_test.go

@@ -106,8 +106,25 @@ var ruHelp = map[string]string{
 	"help.exit_rules_help.ai_h3":           "Пример промпта для AI-ассистента",
 	"help.exit_rules_help.ai_intro":        "<b>Чтобы добавлять правила через AI (Hermes/Claude/Cline):</b>",
 	"help.exit_rules_help.ai_use_post":     "Используйте POST /my/exit-rules/api.",
-	"help.exit_rules_help.ai_base_url":     "Базовый URL: {{.BaseURL}}",
+	"help.exit_rules_help.ai_base_url":     "Базовый URL: %s",
 	"help.exit_rules_help.ai_what_to_know": "<b>Что AI-ассистент должен знать:</b>",
+	// B377 (2026-10-11): «подключение одной ссылкой». Оператору не нужно
+	// собирать промпт руками — он копирует ссылку с токеном в чат, а помощник
+	// по ней получает пакет: инструкции, ограничения и текущее состояние.
+	"help.exit_rules_help.ai_link_h3":             "ИИ-помощник: подключение одной ссылкой",
+	"help.exit_rules_help.ai_link_intro":          "Помощник сам прочитает пакет с инструкциями и текущими правилами — вам останется проверить план и подтвердить.",
+	"help.exit_rules_help.ai_link_step1":          "Создайте токен на <a href=\"/my/tokens\"><b>/my/tokens</b></a> и скопируйте его (он показывается один раз).",
+	"help.exit_rules_help.ai_link_step2":          "Вставьте токен в поле ниже — ссылка собирается прямо в браузере, токен никуда не отправляется.",
+	"help.exit_rules_help.ai_link_step3":          "Скопируйте ссылку и отправьте её в чат ИИ-помощника.",
+	"help.exit_rules_help.ai_link_step4":          "Помощник откроет ссылку, получит пакет и предложит план таблицей. Проверьте план, подтвердите — правила добавятся одним запросом.",
+	"help.exit_rules_help.ai_link_token_label":    "Ваш токен",
+	"help.exit_rules_help.ai_link_build":          "Собрать ссылку",
+	"help.exit_rules_help.ai_link_output_label":   "Ссылка для ИИ-помощника",
+	"help.exit_rules_help.ai_link_copy":           "Скопировать",
+	"help.exit_rules_help.ai_link_what_agent":     "Что помощник получает по ссылке: ваши устройства с идентификаторами и узлами выхода, доступные exit-узлы, лимиты и текущую занятость, уже существующие правила и ограничения, которые нельзя угадать: одна подсеть обслуживается только одним узлом, домены переразрешаются сами, а версия в имени хоста — нет; правила на CDN разворачиваются в чужие диапазоны.",
+	"help.exit_rules_help.ai_link_security":       "Ссылка содержит токен — это секрет. Не публикуйте её. Отзыв токена на /my/tokens немедленно обезвредит ссылку.",
+	"help.exit_rules_help.ai_link_json":           "Тот же пакет в JSON для инструментов: <code>GET %s/my/exit-rules/agent?format=json&amp;token=&lt;токен&gt;</code>",
+	"help.exit_rules_help.ai_link_manual_summary": "Если помощник не умеет открывать ссылки — вставьте промпт вручную",
 	// Bulk delete section
 	"help.exit_rules_help.bulk_delete_h3":    "Массовое удаление (multi-delete)",
 	"help.exit_rules_help.bulk_delete_intro": "В таблице правил есть <b>чекбоксы</b> и <b>sticky-панели</b> сверху и снизу:",
@@ -428,8 +445,25 @@ var enHelp = map[string]string{
 	"help.exit_rules_help.ai_h3":           "Example prompt for an AI assistant",
 	"help.exit_rules_help.ai_intro":        "<b>To add rules via AI (Hermes/Claude/Cline):</b>",
 	"help.exit_rules_help.ai_use_post":     "Use POST /my/exit-rules/api.",
-	"help.exit_rules_help.ai_base_url":     "Base URL: {{.BaseURL}}",
+	"help.exit_rules_help.ai_base_url":     "Base URL: %s",
 	"help.exit_rules_help.ai_what_to_know": "<b>What the AI assistant should know:</b>",
+	// B377 (2026-10-11): connect with ONE link. The operator does not assemble a
+	// prompt by hand — they copy a tokenised link into the chat and the assistant
+	// receives the package: instructions, constraints and the live state.
+	"help.exit_rules_help.ai_link_h3":             "AI assistant: connect with one link",
+	"help.exit_rules_help.ai_link_intro":          "The assistant reads the package itself — instructions plus your current rules — and you only review and confirm the plan.",
+	"help.exit_rules_help.ai_link_step1":          "Create a token on <a href=\"/my/tokens\"><b>/my/tokens</b></a> and copy it (it is shown once).",
+	"help.exit_rules_help.ai_link_step2":          "Paste the token below — the link is built in your browser, the token is not sent anywhere.",
+	"help.exit_rules_help.ai_link_step3":          "Copy the link and send it to your AI assistant's chat.",
+	"help.exit_rules_help.ai_link_step4":          "The assistant opens the link, receives the package and proposes a plan as a table. Review it, confirm, and the rules are added in one request.",
+	"help.exit_rules_help.ai_link_token_label":    "Your token",
+	"help.exit_rules_help.ai_link_build":          "Build the link",
+	"help.exit_rules_help.ai_link_output_label":   "Link for the AI assistant",
+	"help.exit_rules_help.ai_link_copy":           "Copy",
+	"help.exit_rules_help.ai_link_what_agent":     "What the assistant receives: your devices with their ids and relays, the available exit relays, the caps and current usage, the rules that already exist, and the constraints it cannot guess — one relay serves a subnet prefix at a time, domains are re-resolved automatically while a versioned hostname is not, and a CDN rule expands into ranges shared with unrelated sites.",
+	"help.exit_rules_help.ai_link_security":       "The link contains a token: treat it as a secret and do not publish it. Revoking the token on /my/tokens disarms the link immediately.",
+	"help.exit_rules_help.ai_link_json":           "The same package as JSON for tools: <code>GET %s/my/exit-rules/agent?format=json&amp;token=&lt;token&gt;</code>",
+	"help.exit_rules_help.ai_link_manual_summary": "If your assistant cannot open links, paste the prompt manually",
 	// Bulk delete section
 	"help.exit_rules_help.bulk_delete_h3":    "Bulk delete (multi-delete)",
 	"help.exit_rules_help.bulk_delete_intro": "The rules table has <b>checkboxes</b> and a <b>sticky bar</b> at top and bottom:",

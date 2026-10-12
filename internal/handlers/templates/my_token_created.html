@@ -1,0 +1,60 @@
+{{define "body-my_token_created"}}
+{{/* B377 (2026-10-11): the one moment the raw token is visible is the right place
+     to hand the operator their AI-assistant link. Before this page existed the
+     handler answered with a bare HTML fragment (no layout, hardcoded Russian) and
+     the assistant flow was assembled by hand from the help page. */}}
+<div class="title-row">
+  <div>
+    <h2><i class="fa-solid fa-key"></i> {{t "tokens.created_title"}}</h2>
+    <div class="sub">{{t "tokens.created_warning"}}</div>
+  </div>
+</div>
+
+<div class="card">
+  <pre id="raw-token" data-token="{{.Token}}" style="background:var(--bg);padding:12px;border-radius:6px;overflow-x:auto;overflow-wrap:break-word;white-space:pre-wrap">{{.Token}}</pre>
+  <button type="button" class="btn btn-primary" style="margin-top:8px" onclick="skyCopyField('raw-token', this)">
+    <i class="fa-solid fa-copy"></i> {{t "tokens.copy_token_btn"}}
+  </button>
+</div>
+
+<div class="card" id="ai-connect">
+  <h3><i class="fa-solid fa-robot"></i> {{t "tokens.agent_card_title"}}</h3>
+  <p>{{t "tokens.agent_card_intro"}}</p>
+  <div class="field">
+    <label for="agent-link">{{t "tokens.agent_link_label"}}</label>
+    <pre id="agent-link" style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;overflow-wrap:break-word;white-space:pre-wrap"></pre>
+  </div>
+  <button type="button" class="btn btn-primary" onclick="skyCopyField('agent-link', this)">
+    <i class="fa-solid fa-copy"></i> {{t "tokens.agent_copy_btn"}}
+  </button>
+  <p class="hint" style="margin-top:10px;color:var(--text-muted);font-size:0.85em">{{t "tokens.agent_card_security"}}</p>
+  <p style="font-size:0.85em"><a href="/my/exit-rules/help"><i class="fa-solid fa-book"></i> {{t "tokens.agent_card_more"}}</a></p>
+  <p><a href="/my/tokens" class="btn btn-secondary">{{t "tokens.back_to_list"}}</a></p>
+</div>
+
+<script>
+(function(){
+  // The link is built in the browser from the token that is already on this page,
+  // so the token is not sent anywhere else and the server never stores a second
+  // copy of it.
+  var raw = document.getElementById('raw-token');
+  var out = document.getElementById('agent-link');
+  if (!raw || !out) return;
+  var token = raw.getAttribute('data-token') || '';
+  out.textContent = window.location.origin + '/my/exit-rules/agent?token=' + encodeURIComponent(token);
+})();
+window.skyCopyField = function(id, btn){
+  var el = document.getElementById(id);
+  if (!el) return;
+  var text = el.getAttribute('data-token') || el.textContent || '';
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function(){
+      if (!btn) return;
+      var old = btn.innerHTML;
+      btn.innerHTML = '✓';
+      setTimeout(function(){ btn.innerHTML = old; }, 1200);
+    });
+  }
+};
+</script>
+{{end}}

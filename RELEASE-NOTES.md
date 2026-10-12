@@ -12,6 +12,101 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.116 — rules you can read by target, install as a batch, and hand to an AI assistant (B376, B377)
+
+**Date:** 2026-10-12 · **Base:** `v1.5.115` → this tag · **Compatibility:** UI + API only — **no
+schema change, no migration, no new setting.** One response field is added and it is optional
+(`parent_domain` on `GET /my/exit-rules/api`, omitted for hand-typed rules); no existing field
+changed meaning or type, and every existing route keeps its auth. Safe to roll back by tag.
+
+### What the operator asked for (verbatim)
+
+> «сейчас не удобно отображение по группам у пользователя и нет возможности набрасывать правила группой»
+
+> «ранее был функционал … передавался токен и адрес для ИИ чтобы тот мог помочь настроить правила — к
+> примеру в таких случаях как с игрой выше, найти вручную человеку сложно а вот ии проще …
+> пользователь копирует в чат ссылку с токеном, а агент уже пройдя по ссылке получает пакет с
+> командами и помогает сформировать правила для таблиц»
+
+### B376 — read rules BY TARGET, install them as a BATCH
+
+`/my/exit-rules` rendered **one tree** (`device → exit node → CDN group → CIDR rows`), so *"which of
+my machines route this destination, and through which relay?"* meant opening a section per device and
+comparing by eye — the same destination on two devices appeared twice, in two branches, with no visual
+link. Adding N destinations was N form submits per device; the admin page could add one destination at
+a time for a device id typed by hand.
+
+| shipped | what it does |
+|---|---|
+| `target_view.go` — `GroupRulesByTarget` | one row per destination, devices as tags (`skyworker → emilia ×2`); a CDN rule is named after the domain you typed, not its 15 ranges; accept and deny never merge; it is the **default** view (`?view=device` keeps the tree), and both views read the **same** slice |
+| `bulk_values.go` | a pasted list (one value per line, type derived per entry, CIDR normalised to its network address), CSV/TSV columns (`value` / `value,action` / `type,value` / `type,value,action` / `device,type,value,action`), and a JSON/CSV **file import**; bad rows are reported while the good ones are kept |
+| `bulk_add.go` | `POST /my/exit-rules/bulk` + `POST /admin/exit-rules/bulk`: many destinations on several devices, **one** ACL apply / audit row / notification / route sync; the single-rule core moved out of `PostMyExitRule` into `addRuleTarget`, so the single form, the batch and the admin path cannot drift (the package now contains exactly **one** DNS-resolve implementation) |
+| caps | enforced per ROW against a **live** counter — a paste larger than the remaining budget stops at the budget and the banner says so |
+| both pages | collapse / expand **all** levels of the tree in one click |
+| admin | device picker built from `node_owner_map`, exit-nodes excluded, ownership re-checked server-side |
+
+### B377 — one LINK that an AI assistant can follow
+
+A personal API token existed, but the credential could only travel in a **header** — so "paste this
+link into a chat" could not work at all.
+
+| shipped | what it does |
+|---|---|
+| `GET /my/exit-rules/agent` | renders the **package**: role, credentials (and *where* they came from), the API contract with a ready-to-edit request body, the constraints that cannot be guessed (one relay per prefix — headscale's own rule; an existing rule is a `duplicate`, not an error; a device with no exit-node preference has **inert** rules; domains are re-resolved while a **versioned** hostname is not; a CDN domain expands into ranges shared with unrelated sites; `deny` is informational), and the **live state** — devices with ids/counts/relays, the relays, the caps and usage, and the existing rules grouped by destination |
+| formats | Markdown by default; `?format=json` returns the same data structured, plus a ready-to-post plan |
+| auth | cookie **or** `Authorization: Bearer` **or** `?token=` — the last one is pinned to this ONE path (in `handlers.currentUser`, next to the bcrypt walk, now shared as `claimsForAPIToken`); the route is deliberately not behind the session-shaped `authMW` (it would redirect an assistant to `/login`), and the handler's own **401** is the gate |
+| secret hygiene | `no-store` + `no-referrer`, the token is never echoed into the body, and revoking the token disarms the link immediately |
+| operator side | `/my/tokens` "token created" is a real page (RU+EN) that shows the token **and builds the agent link in the browser**; `/my/exit-rules/help` gained a "connect with one link" section (steps + link builder + security note) with the old hand-made prompt kept under `<details>` |
+
+### Also fixed in this release
+
+* **`parent_domain` was documented but never returned.** `/my/exit-rules/help` and `docs/api.md` had
+  described it since the API shipped, while `apiRule` did not carry it — so neither a script nor an
+  assistant could tell a hand-typed `/32` from one the auto-updater derived. It is now returned
+  (`omitempty`, so manual rules gain no key) and the help note explains the `cdn:<provider>:<domain>`
+  marker.
+* **`docs/api.md`'s `GET /my/exit-rules/api` example was fiction** (a bare array with `exit_node_id`,
+  `enabled`, `created_at` — none of which the code ever returned) and the `POST` example showed a body
+  the handler rejects (a bare array and `exit_node_id` instead of `{"rules":[…]}` + `device_id` +
+  `exit_node`). Both now match the code.
+* **The help page printed an empty base URL** in six curl examples: `{{.BaseURL}}` was never injected
+  by the render helper, and the catalogue string printed the literal `{{.BaseURL}}` (the `t` helper
+  does not re-expand templates). The page now receives the request origin and `ai_base_url` is a `%s`
+  key.
+* **"Token created" was a bare HTML fragment** (no layout, no i18n, hardcoded Russian) — replaced by
+  `my_token_created.html` with RU+EN copy and the agent link.
+* **The new `<pre>` blocks carried `word-break:break-all`** — the very declaration B357 removed
+  because it breaks at ANY character; both the token block and the agent-link block (and the help
+  page's link block) now use `overflow-wrap:break-word` + `overflow-x:auto`, so a long token or URL
+  stays inside the card on a phone without the one-glyph-per-line collapse. `B357`'s contract
+  (`scripts/check_b357_mobile_table_legibility.sh` B2) forbids the declaration in any template and
+  is green.
+
+### Verification
+
+* New contract **B377** (25 checks, 0 failed) + **B376** (32 checks, 0 failed) + 4 template render
+  tests (`internal/handlers/exit_rules_render_b376_test.go`: the real templates execute with a
+  synthetic context, so a dropped context field fails a test instead of the page) + 28 unit tests
+  (8 for the assistant package, 8 + 3 for the by-target views, 9 for the batch parser).
+* Neighbouring contracts re-run and green: B328, B358, B237.22, B123, B113, B237.19, B325/B325.1
+  (i18n ratchet), B153, B337 (gofmt ratchet), B322, B340, TD-15, B339, B182/B184/B185, B347, B348,
+  B351, B343, B276.1, B286, B-public-ip-leak, B-issue-2 — 0 FAIL.
+* `go build ./...`, `go vet ./...`, `staticcheck` (touched packages), `go test` (exit_rules,
+  handlers, i18n, feature/auth) — clean; every touched `.go` is `gofmt`-clean.
+* **End-to-end on a local stand** (SQLite + a stub headscale): the tokenised link returned a package
+  naming `cyborg` (id=9) and `skyworker` (id=29); `POST /my/exit-rules/api` with the same token added
+  the game's rules — 6 Valve/Steam subnets + 3 backend domains — to both devices in one batch
+  (`{"added":18,"duplicates":0,"errors":[]}`), and the derived `/32` rows carried their origin domain
+  in `parent_domain`.
+
+### Upgrade notes
+
+Nothing to do on the host beyond the normal update: no migration runs, no `.env` key is added, and
+existing rules, ACLs, `prefix_owner` assignments and route scripts are untouched. To use the assistant
+flow: open `/my/tokens` → create a token → copy the link the page shows (or build it on
+`/my/exit-rules/help`) and paste it into the AI chat; the assistant gets the package, proposes a plan,
+and applies it with the same token. Treat the link as a secret — revoking the token disarms it.
+
 ## v1.5.115 — the scheduled auto-update must actually run (B375)
 
 **Date:** 2026-10-10 · **Base:** `v1.5.114` → this tag · **Compatibility:** behaviour only — no

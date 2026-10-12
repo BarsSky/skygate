@@ -211,7 +211,14 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 #   * internal/update/state.go — B375 made StateStore.Get() return a snapshot
 #     (the store's own pointer raced with its writers); `gofmt -w` reflowed the
 #     State struct, leaving the file clean.
-FROZEN=247
+#   * internal/feature/auth/service.go — B377 replaced the bare hardcoded-RU HTML
+#     fragment PostMyToken answered with by rendering my_token_created.html
+#     (RU+EN, the agent link); `gofmt -w` reflowed the surrounding handler and
+#     left the file clean.
+#   * internal/feature/exit_rules/store.go — B377 added the documented-but-never-
+#     returned parent_domain to apiRule (api.go populates it); `gofmt -w`
+#     realigned the struct, leaving the file clean.
+FROZEN=245
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

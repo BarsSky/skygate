@@ -35,12 +35,25 @@ type apiRule struct {
 	TargetValue string `json:"target_value"`
 	Action      string `json:"action"` // "accept" or "deny"
 	DeviceIP    string `json:"device_ip,omitempty"`
+	// ParentDomain is the origin of a DERIVED row: the domain a /32 was
+	// resolved from, or a "cdn:<provider>:<domain>" marker for the ranges a
+	// CDN expansion produced. Empty for a row the operator typed by hand.
+	//
+	// 2026-10-12 (B377 follow-up): the field was DOCUMENTED on /my/exit-rules/help
+	// ("for /32 rules created by autoupdater, contains the originating domain")
+	// and in docs/api.md, but the struct never carried it, so an AI assistant
+	// reading the contract could not tell a hand-made /32 from a derived one —
+	// exactly the distinction the agent package asks it to make ("do not treat an
+	// auto-added CIDR as something the operator typed"). The tag is omitempty, so
+	// an existing consumer sees no extra key on manual rules.
+	ParentDomain string `json:"parent_domain,omitempty"`
 }
 
 // insertRuleUnique returns:
-//   (true, existingID) — rule already existed; do not re-insert.
-//   (true, 0)          — new rule inserted successfully.
-//   (false, 0)         — DB error.
+//
+//	(true, existingID) — rule already existed; do not re-insert.
+//	(true, 0)          — new rule inserted successfully.
+//	(false, 0)         — DB error.
 //
 // 2026-07-07: issue #5 — dedup protection.
 // 2026-07-11: Этап 9 part 2 — the SELECT-then-INSERT pattern is

@@ -813,9 +813,28 @@ func registerRoutes(
 	// device existed had no path to that device at all — 33 rules on one device and a
 	// second device with none, which is the operator report this closes.
 	mux.Handle("POST /my/exit-rules/spread", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRuleSpread)))
+	// B376: «набросить правила группой» — a pasted list (or an uploaded
+	// JSON/CSV) installed on several devices in one action. The endpoint is the
+	// form twin of the already-existing batch API (POST /my/exit-rules/api) and
+	// shares its insertion core with the single-rule form (addRuleTarget).
+	mux.Handle("POST /my/exit-rules/bulk", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRulesBulk)))
 	mux.Handle("GET /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(exitRulesSvc.GetExitRulesAPI))))
 	mux.Handle("POST /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(exitRulesSvc.PostExitRulesAPI))))
 	mux.Handle("GET /my/exit-rules/help", authMW(http.HandlerFunc(exitRulesSvc.GetExitRulesAPIHelp)))
+	// B377: the AI-assistant bootstrap link — the operator copies ONE link (with
+	// their personal token) into a chat and the assistant fetches the package:
+	// credentials, the API contract, the constraints that are not guessable, and
+	// the live device/relay/limit state.
+	//
+	// Deliberately NOT wrapped in authMW: that middleware is a session-shaped
+	// gate (it looks for a cookie or an Authorization header and otherwise
+	// redirects to /login), and the whole point of this endpoint is a credential
+	// that travels in the URL. The real check is the handler's own
+	// `CurrentUser` + 401 — the same function every other route ends up calling —
+	// and `?token=` is accepted for THIS path only (handlers.currentUser pins it
+	// next to the bcrypt walk). apiMW stays, so a runaway assistant still hits
+	// the 30-req/min API limiter instead of the panel.
+	mux.Handle("GET /my/exit-rules/agent", apiMW(http.HandlerFunc(exitRulesSvc.GetMyExitRulesAgentBrief)))
 	mux.Handle("GET /admin/exit-rules", authMW(http.HandlerFunc(exitRulesSvc.AdminExitRules)))
 	// 2026-09-11 (Issue #2 closure): admin can add exit-rules
 	// for another user's devices. The handler does its own
@@ -823,6 +842,10 @@ func registerRoutes(
 	// is "any logged-in user", so a future router refactor
 	// can't bypass the admin-only contract.
 	mux.Handle("POST /admin/exit-rules", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRule)))
+	// B376: the admin twin of the bulk form — same fields, plus the target
+	// user. The handler does its own IsAdmin check (defense-in-depth), exactly
+	// like PostAdminExitRule above.
+	mux.Handle("POST /admin/exit-rules/bulk", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRulesBulk)))
 	mux.Handle("POST /admin/exit-rules/rollback", authMW(http.HandlerFunc(exitRulesSvc.PostAdminRollbackACL)))
 	// B328: the rule caps (per-device / per-user / system) were env-only, and under
 	// docker the container environment is frozen at creation — so changing a number

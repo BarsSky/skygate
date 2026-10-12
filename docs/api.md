@@ -194,39 +194,87 @@ curl -b cookies.txt -X POST http://localhost:8080/my/exit-rules/delete \
 
 ### `GET /my/exit-rules/api` (Bearer or cookie)
 
-Public REST API. Returns your rules as JSON.
+Public REST API. Returns your rules as JSON, wrapped in a `rules` array.
 
 ```bash
 curl -H "Authorization: Bearer $SKYGATE_PAT" \
   http://localhost:8080/my/exit-rules/api
-# [
-#   {"id":42,"device_id":8,"exit_node_id":"2","target_type":"domain",
-#    "target_value":"google.com","action":"accept","enabled":1,"created_at":1785153600},
-#   …
-# ]
+# {"rules":[
+#   {"id":42,"device_id":8,"device_name":"my-laptop","exit_node":"emilia",
+#    "target_type":"domain","target_value":"google.com","action":"accept",
+#    "device_ip":"100.64.0.8"},
+#   {"id":43,"device_id":8,"device_name":"my-laptop","exit_node":"emilia",
+#    "target_type":"subnet","target_value":"142.250.0.0/15","action":"accept",
+#    "device_ip":"100.64.0.8","parent_domain":"google.com"}
+# ]}
 ```
+
+`parent_domain` is present only on **derived** rows: the domain a `/32` or CIDR was
+resolved from, or a `cdn:<provider>:<domain>` marker for the ranges a CDN expansion
+produced (those are shared with unrelated sites). A rule you typed by hand has no
+such key — which is how an assistant tells "the operator asked for this" from "the
+auto-updater added this".
 
 ### `POST /my/exit-rules/api` (Bearer or cookie)
 
-Bulk create rules. JSON body. **Returns `{added, duplicates, errors,
-ids: [N1, N2, ...]}` so the client can clean up.**
+Bulk create rules. JSON body: `{"rules":[ … ]}` — an envelope, not a bare
+array. **Returns `{added, duplicates, errors, ids: [N1, N2, ...]}`**;
+`duplicates` counts rules that were already there (not an error) and a
+non-empty `errors` array means a partial success. Rate-limited to 30
+requests/min per IP.
 
 ```bash
 curl -X POST -H "Authorization: Bearer $SKYGATE_PAT" \
   -H "Content-Type: application/json" \
-  -d '[
-    {"device_id":8,"exit_node_id":"2","target_type":"domain",
+  -d '{"rules":[
+    {"device_id":8,"exit_node":"emilia","target_type":"domain",
      "target_value":"google.com","action":"accept"},
-    {"device_id":8,"exit_node_id":"2","target_type":"ip",
-     "target_value":"1.1.1.1","action":"accept"}
-  ]' \
+    {"device_id":8,"exit_node":"emilia","target_type":"subnet",
+     "target_value":"162.254.192.0/21","action":"accept"}
+  ]}' \
   http://localhost:8080/my/exit-rules/api
 # {"added":2,"duplicates":0,"errors":[],"ids":[101,102]}
 ```
 
+`device_id` is an integer and is what the API takes (device *names* are only
+labels — see the agent package below for the id↔name table). `exit_node` may be
+empty, which lets skygate assign a relay.
+
+### `GET /my/exit-rules/agent` (Bearer, cookie **or** `?token=`)
+
+**The AI-assistant bootstrap link.** Renders a self-contained package for a model:
+its credentials and where they came from, the API contract with a ready-to-edit
+request body, the constraints that cannot be guessed (one relay per prefix, an
+existing rule is a duplicate, a device with no exit-node preference has inert
+rules, domains are re-resolved while a versioned hostname is not, a CDN domain
+expands into shared ranges, `deny` is informational), and the **live state** —
+every device with its id/hostname/rule counts/relay, the relays, the caps and the
+current usage, and the existing rules grouped by destination.
+
+Markdown by default; the same data as JSON with `?format=json`. This is the ONLY
+route that accepts the token in the URL (`?token=<personal API token>`), because a
+link cannot carry an `Authorization` header: the operator creates a token on
+`/my/tokens` and copies the link the page builds for them, or assembles it on
+`/my/exit-rules/help`. The response is `no-store` + `no-referrer`, never echoes the
+token, and revoking the token disarms the link immediately.
+
+```bash
+# What the operator pastes into the chat (the assistant fetches this):
+curl "https://head.example.com/my/exit-rules/agent?token=$SKYGATE_PAT"
+# The machine-readable twin, for a tool-calling agent:
+curl "https://head.example.com/my/exit-rules/agent?format=json&token=$SKYGATE_PAT"
+# Every write still uses the header:
+curl -H "Authorization: Bearer $SKYGATE_PAT" https://head.example.com/my/exit-rules/api
+```
+
+Without a token (or with an expired/revoked one) the answer is `401`, in the
+requested format — never a redirect to the login page.
+
 ### `GET /my/exit-rules/help`
 
-Full help page with API reference and curl examples.
+Full help page with API reference and curl examples, plus the
+"connect an AI assistant" section (create a token → build the link → paste it into
+the chat).
 
 ## Authenticated — admin (`/admin/*`)
 

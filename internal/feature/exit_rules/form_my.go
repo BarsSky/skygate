@@ -231,120 +231,34 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	// 2026-07-07: issue #10 — softer DNS handling.
 	// If domain resolves, store as subnet /32 (Issue #3).
 	// If not, store as target_type=domain anyway; autoupdater will try later.
-	dnsWarning := ""
-	ipsToInsert := []string{targetValue}
-	typeToInsert := targetType
-	// 2026-07-09: для type=ip автоматически добавляем /32.  Tailscale advertised-routes
-	// требует CIDR, иначе headscale approve-routes падает с "no '/'".
-	if typeToInsert == "ip" && !strings.Contains(targetValue, "/") {
-		ipsToInsert = []string{targetValue + "/32"}
+	// B376: the installation of ONE destination (DNS resolve → /32 derivation →
+	// the domain row the auto-updater tracks → dedup-classified inserts) now
+	// lives in addRuleTarget (bulk_add.go) and is shared with the bulk form, so
+	// the two paths cannot drift. The values below are the same ones this
+	// function used to compute inline; the redirect branches are unchanged.
+	ins := s.addRuleTarget(c.UserID, devID, deviceIP, exitNode, targetType, targetValue, action)
+	if ins.Err != "" {
+		// 2026-09-18 (R6): this branch used to answer with a raw
+		// http.Error carrying a literal 500 status — a raw
+		// text/plain page that ALSO threw away every field the user had
+		// filled in. The validation branches in this same function
+		// already redirect through buildFormErrorRedirectURL (which
+		// restores the form values), so use it here too.
+		http.Redirect(w, r, buildFormErrorRedirectURL(
+			s.I18n.T(s.I18n.LangFromRequest(r), "error.db"),
+			devID, exitNode, ins.TypeInserted, targetValue, action),
+			http.StatusSeeOther)
+		return
 	}
-	if targetType == "domain" {
-		if addrs, err := net.LookupHost(targetValue); err == nil {
-			ipsToInsert = nil
-			seen := map[string]bool{}
-			for _, a := range addrs {
-				if strings.Contains(a, ":") {
-					continue
-				}
-				if seen[a] {
-					continue
-				}
-				seen[a] = true
-				ipsToInsert = append(ipsToInsert, a+"/32")
-			}
-			if len(ipsToInsert) > 0 {
-				typeToInsert = "subnet"
-			}
-		} else {
-			dnsWarning = targetValue + " (DNS: " + err.Error() + ")"
-		}
-	}
-
-	// 2026-07-07: also save the domain rule itself (target_type=domain) so
-	// autoupdater can track it and add knownSubdomains (e.g. static.rutracker.cc).
-	// Check for existing domain rule first to avoid dedup.
-	if targetType == "domain" {
-		// 2026-07-11: Этап 9 part 2 — moved to db.FindDomainRuleID + db.AppendDeviceRule
-		existingDomainID, _ := db.FindDomainRuleID(s.dbc(), c.UserID, devID, exitNode, targetValue)
-		if existingDomainID == 0 {
-			// v0.28.0: pass userName (from c.UserID via portal_users)
-			// lookup) and deviceHostname. The form path doesn't
-			// have the user's name in scope at this callsite,
-			// so we pass "" and let the migration backfill +
-			// /my/devices load fill it. The ACL builder falls
-			// back to src=device_ip for rules with empty
-			// userName/deviceHostname, so the rule is live
-			// immediately after this insert.
-			_, _ = db.AppendDeviceRule(s.dbc(), c.UserID, devID, exitNode, "domain", targetValue, action, deviceIP, targetValue, "", "")
-		}
-	}
-
-	dupCount := 0
-	insertedCount := 0
-	// 2026-07-28: when DNS resolved successfully, each /32 rule
-	// should remember its origin domain as parentDomain, so the
-	// autoupdater can update the row in place on the next tick
-	// instead of churning through create/delete cycles when
-	// Cloudflare anycast rotates IPs.
-	//
-	// Before this fix, the form's /32 rows had parent_domain=''
-	// (because insertRuleUnique only set it when targetType was
-	// "domain"; after DNS resolve typeToInsert="subnet" so the
-	// implicit assignment didn't fire). The autoupdater then
-	// couldn't see the form's rows and created duplicates on top.
-	subnetParent := ""
-	if targetType == "domain" && typeToInsert == "subnet" {
-		subnetParent = targetValue
-	}
-	// B123: track metadata of the first duplicate for the warning banner.
-	// Before B123, the redirect only carried ?existing=<targetValue> which
-	// gave no way for the user to know which specific rule blocked the
-	// insert — especially painful in the shared-IP case where one /32
-	// already exists for a DIFFERENT parent_domain. Now we surface the
-	// blocking IP, the conflicting rule's ID (so the template can link
-	// to it), and the parent_domain that already owns the IP.
-	var firstExistingID int
-	var firstBlockingIP string
-	var firstParentDomain string
-	for _, ip := range ipsToInsert {
-		ok, existingID := s.insertRuleUnique(c.UserID, devID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent)
-		if !ok {
-			// 2026-09-18 (R6): this branch used to answer with a raw
-			// http.Error carrying a literal 500 status — a raw
-			// text/plain page that ALSO threw away every field the user had
-			// filled in. The validation branches in this same function
-			// already redirect through buildFormErrorRedirectURL (which
-			// restores the form values), so use it here too.
-			http.Redirect(w, r, buildFormErrorRedirectURL(
-				s.I18n.T(s.I18n.LangFromRequest(r), "error.db"),
-				devID, exitNode, typeToInsert, targetValue, action),
-				http.StatusSeeOther)
-			return
-		}
-		if existingID > 0 {
-			// 2026-07-11: Этап 9 part 2 — moved to db.GetParentDomain
-			existingParent, _ := db.GetParentDomain(s.dbc(), existingID)
-			if existingParent == "" || existingParent == targetValue {
-				// Ручной IP/subnet (без parent_domain) или уже наш parent_domain → дубликат
-				dupCount++
-			} else {
-				// Shared IP: уже есть /32 с другим parent_domain (другой домен
-				// резолвится в тот же IP).  Не создаём дубль — autoupdater
-				// всё равно не удалит этот IP (см. DomainAutoUpdater), потому
-				// что для другого домена этот IP ещё нужен.
-				dupCount++
-			}
-			// B123: capture the first blocker for the alert.
-			if firstExistingID == 0 {
-				firstExistingID = existingID
-				firstBlockingIP = ip
-				firstParentDomain = existingParent
-			}
-		} else {
-			insertedCount++
-		}
-	}
+	dnsWarning := ins.Warning
+	ipsToInsert := ins.ValuesInserted
+	typeToInsert := ins.TypeInserted
+	subnetParent := ins.SubnetParent
+	dupCount := ins.Duplicates
+	insertedCount := ins.Inserted
+	firstExistingID := ins.FirstExistingID
+	firstBlockingIP := ins.FirstBlockingIP
+	firstParentDomain := ins.FirstParentDomain
 	if dupCount > 0 && insertedCount == 0 {
 		// B123: All already exist — return user-friendly redirect with details.
 		// Params: target (the value the user tried to add), existing_id (the

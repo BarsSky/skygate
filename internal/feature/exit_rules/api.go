@@ -44,6 +44,11 @@ func (s *Service) GetExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 			TargetValue: rl.TargetValue,
 			Action:      rl.Action,
 			DeviceIP:    rl.DeviceIP,
+			// B377 follow-up: the documented field is now actually returned, so a
+			// client (or an AI assistant) can tell a hand-typed /32 from one the
+			// auto-updater derived (parent_domain = the domain) and from the
+			// ranges a CDN expansion produced (parent_domain = "cdn:<p>:<domain>").
+			ParentDomain: rl.ParentDomain,
 		})
 	}
 	if out == nil {
@@ -224,6 +229,13 @@ func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 
 // GetExitRulesAPIHelp renders the API documentation page.
 // GET /my/exit-rules/help
+//
+// B377: BaseURL is passed explicitly. The page has printed `{{.BaseURL}}` in
+// several places since it was written and NOTHING ever injected it (the render
+// helper does not know the request's origin), so every curl example on the page
+// showed a bare path while the i18n string printed the literal `{{.BaseURL}}` —
+// the page that teaches the API was the one place the base URL was missing, and
+// the new agent-link section would have inherited the same hole.
 func (s *Service) GetExitRulesAPIHelp(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil {
@@ -231,7 +243,8 @@ func (s *Service) GetExitRulesAPIHelp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Backend.RenderWithLayout(w, r, "exit_rules_help.html", c, map[string]any{
-		"Page":  "exit-rules",
-		"Title": "Exit Rules API Help",
+		"Page":    "exit-rules",
+		"Title":   "Exit Rules API Help",
+		"BaseURL": agentBaseURL(r),
 	})
 }

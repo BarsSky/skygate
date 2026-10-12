@@ -29,6 +29,17 @@
      layer. */}}
 {{if .applied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules_admin.add_form_applied"}}</div>{{end}}
 {{if .err}}<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> {{.err}}</div>{{end}}
+{{/* B376: the «набросить группой» result. Same counters the single form uses,
+     one banner for the whole batch, and the problem list (capped server-side) so
+     a 50-row paste says WHICH rows it refused instead of only how many. */}}
+{{if .bulk}}
+<div class="alert {{if .bulk_err}}alert-warn{{else}}alert-success{{end}}" id="admin-bulk-result">
+  <i class="fa-solid fa-layer-group"></i>
+  {{tf "exit_rules_admin.bulk_result" .bulk_added .bulk_dup .bulk_skip}}
+  {{if .bulk_limit}}<br><small>{{t "exit_rules.bulk_limit_note"}}</small>{{end}}
+  {{if .bulk_err}}<br><small><b>{{t "exit_rules.bulk_problems"}}</b> {{.bulk_err}}</small>{{end}}
+</div>
+{{end}}
 {{/* B328: the rule caps used to be env-only, and under docker the container
      environment is frozen at CREATION — so changing a number meant editing .env
      and recreating the container, while this page was already showing the
@@ -127,6 +138,73 @@
       </select>
     </label>
     <button type="submit" class="btn btn-primary" style="grid-column:2/3;justify-self:end"><i class="fa-solid fa-plus"></i> {{t "exit_rules_admin.add_form_submit"}}</button>
+  </form>
+</div>
+
+{{/* B376: «набросить правила группой» для устройств другого пользователя.
+     Pre-B376 the admin page could only add ONE destination at a time, and only
+     for a device id typed by hand — mirroring one rule across a user's three
+     machines meant three submits with the node ids looked up elsewhere. The
+     batch is written with the SAME insert core as the single form
+     (addRuleTarget) and the same caps, and the device list comes from
+     node_owner_map (the ownership source of truth), so the picker cannot offer a
+     device that the ACL would ignore. */}}
+<div class="card" id="admin-bulk-add-card">
+  <h3><i class="fa-solid fa-layer-group"></i> {{t "exit_rules_admin.bulk_title"}}</h3>
+  <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px 0">{{t "exit_rules_admin.bulk_sub"}}</p>
+  <form method="post" action="/admin/exit-rules/bulk" enctype="multipart/form-data">
+    <div class="field">
+      <label for="bulk-user-select">{{t "exit_rules_admin.bulk_user_label"}}</label>
+      <select id="bulk-user-select" name="bulk_user_id" onchange="skyBulkUserChanged()" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)" aria-label="{{t "exit_rules_admin.bulk_user_label"}}">
+        {{range .BulkUsers}}<option value="{{.ID}}"{{if eq (printf "%v" .ID) $.form_user_id}} selected{{end}}>{{.Username}} ({{len .Devices}})</option>{{else}}<option value="">{{t "exit_rules_admin.bulk_no_users"}}</option>{{end}}
+      </select>
+    </div>
+    <div class="field">
+      <label>{{t "exit_rules_admin.bulk_devices_label"}}</label>
+      <div style="display:flex;flex-wrap:wrap;gap:10px" id="bulk-device-list">
+        {{range $u := .BulkUsers}}{{range $d := $u.Devices}}
+        <label class="bulk-device" data-user="{{$u.ID}}" style="display:flex;align-items:center;gap:6px;font-size:13px">
+          <input type="checkbox" name="bulk_devices" value="{{$d.ID}}"> {{if $d.Name}}{{$d.Name}}{{else}}#{{$d.ID}}{{end}}
+        </label>
+        {{end}}{{end}}
+      </div>
+      <div style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.bulk_devices_hint"}}</div>
+    </div>
+    <div class="field">
+      <label for="bulk-admin-values">{{t "exit_rules.bulk_values_label"}}</label>
+      <textarea id="bulk-admin-values" name="bulk_values" rows="6" spellcheck="false"
+                style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:8px"
+                placeholder="{{t "exit_rules.bulk_values_ph"}}"></textarea>
+      <div style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.bulk_values_hint"}}</div>
+    </div>
+    <div class="field">
+      <label for="bulk-admin-file">{{t "exit_rules.bulk_file_label"}}</label>
+      <input type="file" id="bulk-admin-file" name="bulk_file" accept=".json,.csv,.txt">
+      <div style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.bulk_file_hint"}}</div>
+    </div>
+    <div class="field">
+      <label for="bulk-admin-type">{{t "exit_rules.bulk_type_label"}}</label>
+      <select id="bulk-admin-type" name="bulk_target_type" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)" aria-label="{{t "exit_rules.bulk_type_label"}}">
+        <option value="auto">{{t "exit_rules.bulk_type_auto"}}</option>
+        <option value="domain">{{t "exit_rules.target_type_domain"}}</option>
+        <option value="subnet">{{t "exit_rules.target_type_subnet"}}</option>
+        <option value="ip">{{t "exit_rules.target_type_ip"}}</option>
+      </select>
+      <div style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.bulk_type_hint"}}</div>
+    </div>
+    <div class="field">
+      <label for="bulk-admin-exit-node">{{t "exit_rules_admin.add_form_exit_node"}}</label>
+      <input type="text" id="bulk-admin-exit-node" name="bulk_exit_node" placeholder="{{t "exit_rules_admin.add_form_exit_node_ph"}}" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+      <div style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.exit_node_hint"}}</div>
+    </div>
+    <div class="field">
+      <label for="bulk-admin-action">{{t "exit_rules.action"}}</label>
+      <select id="bulk-admin-action" name="bulk_action" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)" aria-label="{{t "exit_rules.action"}}">
+        <option value="accept">{{t "exit_rules.action_accept"}}</option>
+        <option value="deny">{{t "exit_rules.action_deny"}}</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-layer-group"></i> {{t "exit_rules_admin.bulk_submit"}}</button>
   </form>
 </div>
 
@@ -241,6 +319,89 @@
   })();
   </script>
   {{end}}
+
+  {{/* B376: collapse / expand EVERY level of the cross-user tree (user → device
+       → exit node → CDN group) in one click, plus the view selector. The tree
+       stays the place where a single rule is managed; the by-target list answers
+       «кто ещё ходит через этот адрес и через какой узел», which on this page
+       spans users. */}}
+  <div class="multi-bar" id="admin-view-controls">
+    <span style="font-size:12px;color:var(--text-muted)">{{t "exit_rules.view_label"}}</span>
+    <a class="btn btn-sm {{if eq .ViewMode "target"}}btn-primary{{end}}" id="admin-view-target-link" href="/admin/exit-rules?view=target">{{t "exit_rules.view_target"}}</a>
+    <a class="btn btn-sm {{if eq .ViewMode "device"}}btn-primary{{end}}" id="admin-view-device-link" href="/admin/exit-rules?view=device">{{t "exit_rules.view_device"}}</a>
+    <span class="spacer"></span>
+    <button type="button" class="btn btn-sm" onclick="skyToggleAllDetails(true)" title="{{t "exit_rules.expand_all_title"}}"><i class="fa-solid fa-angles-down"></i> {{t "exit_rules.expand_all"}}</button>
+    <button type="button" class="btn btn-sm" onclick="skyToggleAllDetails(false)" title="{{t "exit_rules.collapse_all_title"}}"><i class="fa-solid fa-angles-up"></i> {{t "exit_rules.collapse_all"}}</button>
+  </div>
+  <div id="admin-rules-view">
+  {{if eq .ViewMode "target"}}
+  {{/* B376: THE BY-TARGET VIEW (admin). One row per destination, with the devices
+       that carry it as tags carrying their OWNER ("michail/basic"), because this
+       page is cross-user. The per-rule rows live in the expander with the B178 /
+       B182 / B184 annotation badges; deletion deliberately stays in the tree view
+       (this row's own delete control would post to a route that does not exist —
+       see target_view_admin.go's header). */}}
+  {{if .TargetRowsAdmin}}
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>{{t "exit_rules.col_action"}}</th>
+        <th>{{t "exit_rules.col_target"}}</th>
+        <th>{{t "exit_rules.target_col_devices"}}</th>
+        <th class="col-delete">{{t "exit_rules.target_col_rules"}}</th>
+      </tr>
+      {{range $row := .TargetRowsAdmin}}
+      <tr data-type="{{$row.TargetType}}" data-target="{{$row.TargetValue}}">
+        <td class="col-action">{{if eq $row.Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+        <td class="col-target">
+          <code>{{$row.TargetValue}}</code>
+          <span class="tag">{{$row.TargetType}}</span>
+          {{if $row.IsCDNGroup}}<span class="tag tag-info"><i class="fa-solid fa-cloud"></i> {{$row.CDN}}</span> <span style="color:var(--text-muted)">{{tf "exit_rules.target_cidr_count" $row.Count}}</span>{{end}}
+        </td>
+        <td class="col-devices">
+          {{range $d := $row.Devices}}
+          <span class="tag" title="{{t "exit_rules.target_device_tag_title"}}">
+            <i class="fa-solid fa-laptop"></i>
+            {{if $d.DeviceName}}{{$d.DeviceName}}{{else}}#{{$d.DeviceID}}{{end}}
+            {{if $d.ExitNode}}→ {{$d.ExitNode}}{{else}}→ {{t "exit_rules.target_relay_auto"}}{{end}}
+            {{if gt $d.RuleCount 1}}×{{$d.RuleCount}}{{end}}
+            {{if $d.AllDevices}}<i class="fa-solid fa-users" title="{{t "exit_rules.all_devices_fanout_tip"}}"></i>{{end}}
+          </span>
+          {{end}}
+        </td>
+        <td class="col-delete">
+          <details>
+            <summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">{{tf "exit_rules.target_show_rules" $row.Count}}</summary>
+            <div class="table-wrap" style="margin-top:6px">
+              <table style="margin:0">
+                <tr><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_preferred"}}</th><th>{{t "exit_rules_admin.col_created"}}</th></tr>
+                {{range $row.Rules}}<tr>
+                  <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+                  <td><span class="tag">{{.TargetType}}</span></td>
+                  <td class="col-target"><code>{{.TargetValue}}</code></td>
+                  <td>{{if .ParentDomain}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
+                  <td class="col-preferred">
+                    {{if not .Applicable}}
+                      <span class="tag tag-danger" title="{{tf "exit_rules_admin.preferred_mismatch_title" .PreferredHost}}"><i class="fa-solid fa-triangle-exclamation"></i> {{.PreferredHost}}</span>
+                    {{else if .ApprovedInHeadscale}}
+                      <span class="tag tag-success" title="{{tf "exit_rules_admin.approved_in_headscale_title" .ExitNode}}"><i class="fa-solid fa-check"></i></span>
+                    {{else}}
+                      <span class="tag tag-warning" title="{{tf "exit_rules_admin.pending_in_headscale_title" .ExitNode .TargetValue}}"><i class="fa-solid fa-clock"></i></span>
+                    {{end}}
+                  </td>
+                  <td class="mono" style="font-size:11px">{{.CreatedAt}}</td>
+                </tr>{{end}}
+              </table>
+              <div style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.target_delete_hint"}}</div>
+            </div>
+          </details>
+        </td>
+      </tr>
+      {{end}}
+    </table>
+  </div>
+  {{else}}<p style="color:var(--text-muted)">{{t "exit_rules_admin.no_rules"}}</p>{{end}}
+  {{else}}
   {{if .Rules}}
     {{range $user, $userData := .GroupedByUser}}
     <details open style="margin-bottom:8px">
@@ -357,6 +518,8 @@
     </details>
     {{end}}
   {{else}}<p style="color:var(--text-muted)">{{t "exit_rules_admin.no_rules"}}</p>{{end}}
+  {{end}}
+  </div>
 </div>
 
 <div class="card">
@@ -452,4 +615,45 @@ async function syncRoutes() {
   </table>
   {{else}}<p style="color:var(--text-muted)">{{t "exit_rules_admin.no_snapshots"}}</p>{{end}}
 </div>
+
+<script>
+// B376: drive every <details> of the cross-user tree together.
+function skyToggleAllDetails(open){
+  var root = document.getElementById('admin-rules-view');
+  if (!root) return;
+  root.querySelectorAll('details').forEach(function(d){ d.open = !!open; });
+}
+// B376: the bulk form's device checkboxes belong to the selected user. Devices
+// of other users are hidden (and unchecked, so a hidden box can never be
+// submitted). Runs on load too, so the initial state matches the select instead
+// of showing every user's devices at once.
+function skyBulkUserChanged(){
+  var sel = document.getElementById('bulk-user-select');
+  if (!sel) return;
+  var uid = sel.value;
+  document.querySelectorAll('#bulk-device-list .bulk-device').forEach(function(l){
+    var mine = l.getAttribute('data-user') === uid;
+    l.style.display = mine ? 'flex' : 'none';
+    if (!mine) {
+      var cb = l.querySelector('input[type=checkbox]');
+      if (cb) cb.checked = false;
+    }
+  });
+}
+document.addEventListener('DOMContentLoaded', skyBulkUserChanged);
+// B376: the view links must keep the live query (page, device drill-down,
+// filters) and only change `view`, exactly like the /my/exit-rules switch.
+(function(){
+  var base = window.location.pathname;
+  function linkWithView(id, view){
+    var a = document.getElementById(id);
+    if (!a) return;
+    var p = new URLSearchParams(window.location.search);
+    p.set('view', view);
+    a.href = base + '?' + p.toString();
+  }
+  linkWithView('admin-view-target-link', 'target');
+  linkWithView('admin-view-device-link', 'device');
+})();
+</script>
 {{end}}

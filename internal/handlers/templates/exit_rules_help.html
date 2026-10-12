@@ -154,7 +154,7 @@ curl -H "Authorization: Bearer &lt;token&gt;" {{.BaseURL}}/my/exit-rules/api
 curl -b skygate_session=TOKEN {{.BaseURL}}/my/exit-rules/api</pre>
   <p>Response: <code>{"rules": [{"id":1, "device_id":5, "device_name":"my-laptop", "exit_node":"node-europe", "target_type":"ip", "target_value":"1.2.3.4", "action":"accept", "device_ip":"100.64.0.x", "parent_domain":""}]}</code></p>
   <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
-    The <code>parent_domain</code> field — for /32 rules created by autoupdater, contains the originating domain.
+    The <code>parent_domain</code> field — for /32 rules created by autoupdater, contains the originating domain; a <code>cdn:&lt;provider&gt;:&lt;domain&gt;</code> value marks a range a CDN expansion produced (those are shared with unrelated sites); it is absent for a rule you typed by hand.
   </p>
 
   <h4>{{t "help.exit_rules_help.api_post_h4"}}</h4>
@@ -193,10 +193,35 @@ curl -X POST -b skygate_session=TOKEN \
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">curl -H "Authorization: Bearer &lt;token&gt;" {{.BaseURL}}/admin/exit-rules/sync</pre>
 </div>
 
-<div class="card">
-  <h3><i class="fa-solid fa-robot"></i> {{t "help.exit_rules_help.ai_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.ai_intro"}}</p>
-  <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
+<div class="card" id="ai-connect">
+  <h3><i class="fa-solid fa-robot"></i> {{t "help.exit_rules_help.ai_link_h3"}}</h3>
+  <p>{{t "help.exit_rules_help.ai_link_intro"}}</p>
+  <ol style="padding-left:20px;margin:0 0 10px 0">
+    <li>{{t "help.exit_rules_help.ai_link_step1" | safeHTML}}</li>
+    <li>{{t "help.exit_rules_help.ai_link_step2"}}</li>
+    <li>{{t "help.exit_rules_help.ai_link_step3"}}</li>
+    <li>{{t "help.exit_rules_help.ai_link_step4"}}</li>
+  </ol>
+  <div class="field">
+    <label for="ai-token">{{t "help.exit_rules_help.ai_link_token_label"}}</label>
+    <input type="text" id="ai-token" autocomplete="off" spellcheck="false" style="width:100%;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px;padding:6px 8px">
+  </div>
+  <button type="button" class="btn btn-primary" onclick="skyBuildAgentLink()"><i class="fa-solid fa-link"></i> {{t "help.exit_rules_help.ai_link_build"}}</button>
+  <div class="field" style="margin-top:10px">
+    <label>{{t "help.exit_rules_help.ai_link_output_label"}}</label>
+    <pre id="ai-link" style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;overflow-wrap:break-word"></pre>
+  </div>
+  <button type="button" class="btn" onclick="skyCopyAgentLink(this)"><i class="fa-solid fa-copy"></i> {{t "help.exit_rules_help.ai_link_copy"}}</button>
+
+  <p style="margin-top:12px;color:var(--text-muted);font-size:0.85em">{{t "help.exit_rules_help.ai_link_what_agent"}}</p>
+  <p style="color:var(--text-muted);font-size:0.85em">{{t "help.exit_rules_help.ai_link_security"}}</p>
+  <p style="font-size:0.85em">{{tf "help.exit_rules_help.ai_link_json" .BaseURL | safeHTML}}</p>
+
+  <details style="margin-top:12px">
+    <summary style="cursor:pointer">{{t "help.exit_rules_help.ai_link_manual_summary"}}</summary>
+    <h4 style="margin-top:12px">{{t "help.exit_rules_help.ai_h3"}}</h4>
+    <p>{{t "help.exit_rules_help.ai_intro"}}</p>
+    <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
 Add routing rules for my-laptop (device_id=5) through exit-node node-europe.
 Token: &lt;copy from /my/tokens&gt;
 
@@ -210,16 +235,47 @@ Service 3 (domains, autoupdater will pick up the IPs):
   rutracker.org, kernel.org, github.com
 
 {{t "help.exit_rules_help.ai_use_post"}}
-{{t "help.exit_rules_help.ai_base_url"}}</pre>
+{{tf "help.exit_rules_help.ai_base_url" .BaseURL}}</pre>
 
-  <p style="margin-top:8px">{{t "help.exit_rules_help.ai_what_to_know"}}</p>
-  <ul>
-    <li>target_type can be "ip", "subnet", or "domain".</li>
-    <li>{{t "help.exit_rules_help.ai_tip_domains"}}</li>
-    <li>{{t "help.exit_rules_help.ai_tip_russian"}}</li>
-    <li>{{t "help.exit_rules_help.ai_tip_tokens"}} <a href="/my/tokens">/my/tokens</a>.</li>
-  </ul>
+    <p style="margin-top:8px">{{t "help.exit_rules_help.ai_what_to_know"}}</p>
+    <ul>
+      <li>target_type can be "ip", "subnet", or "domain".</li>
+      <li>{{t "help.exit_rules_help.ai_tip_domains"}}</li>
+      <li>{{t "help.exit_rules_help.ai_tip_russian"}}</li>
+      <li>{{t "help.exit_rules_help.ai_tip_tokens"}} <a href="/my/tokens">/my/tokens</a>.</li>
+    </ul>
+  </details>
 </div>
+
+<script>
+// B377: build the agent link in the browser. The token the operator pastes here
+// never leaves the page — no request carries it, and the link is just text they
+// hand to their assistant.
+function skyBuildAgentLink(){
+  var inp = document.getElementById('ai-token');
+  var out = document.getElementById('ai-link');
+  if (!inp || !out) return;
+  var tok = (inp.value || '').trim();
+  if (!tok) {
+    out.textContent = '';
+    inp.focus();
+    return;
+  }
+  out.textContent = window.location.origin + '/my/exit-rules/agent?token=' + encodeURIComponent(tok);
+}
+function skyCopyAgentLink(btn){
+  var out = document.getElementById('ai-link');
+  if (!out || !out.textContent) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(out.textContent).then(function(){
+      if (!btn) return;
+      var old = btn.innerHTML;
+      btn.innerHTML = '✓';
+      setTimeout(function(){ btn.innerHTML = old; }, 1200);
+    });
+  }
+}
+</script>
 
 <div class="card">
   <h3><i class="fa-solid fa-square-check"></i> {{t "help.exit_rules_help.bulk_delete_h3"}}</h3>

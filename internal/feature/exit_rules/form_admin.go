@@ -23,7 +23,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -707,6 +706,16 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// B376: the admin by-target view — the same projection the operator asked for
+	// on /my/exit-rules (one row per destination, devices as tags), plus the OWNER
+	// in every tag, because this page is cross-user. Built from the SAME `rr`
+	// slice the tree iterates (the page window, or the unpaged device drill-down),
+	// so the two views cannot disagree about what is in scope.
+	targetRowsAdmin := GroupAdminRulesByTarget(rr)
+	viewMode := "target"
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("view")), "device") {
+		viewMode = "device"
+	}
 	s.Backend.RenderWithLayout(w, r, "admin/exit_rules.html", c, map[string]any{
 		"Page":          "exit-rules",
 		"Title":         "Exit Rules",
@@ -784,6 +793,23 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		"limit_total_override":      dbLimitOverride(s.dbc(), SettingKeyMaxTotal),
 		"limits_saved":              r.URL.Query().Get("limits_saved") == "1",
 		"limits_err":                r.URL.Query().Get("limits_err"),
+		// B376: «набросить правила группой» — the admin twin of the /my bulk
+		// form. BulkUsers carries every portal user with the devices a batch may
+		// be written to (node_owner_map ownership, exit nodes excluded), so the
+		// operator picks a user and their devices instead of typing node ids.
+		"BulkUsers":    s.BulkUsersWithDevices(),
+		"bulk":         r.URL.Query().Get("bulk") != "",
+		"bulk_added":   r.URL.Query().Get("bulk_added"),
+		"bulk_dup":     r.URL.Query().Get("bulk_dup"),
+		"bulk_skip":    r.URL.Query().Get("bulk_skip"),
+		"bulk_devices": r.URL.Query().Get("bulk_devices"),
+		"bulk_limit":   r.URL.Query().Get("bulk_limit") == "1",
+		"bulk_err":     r.URL.Query().Get("bulk_err"),
+		// B376: the by-target view of the same rule window, its distinct-device
+		// count, and the view selector (?view=device keeps the tree).
+		"TargetRowsAdmin":    targetRowsAdmin,
+		"TargetDevicesAdmin": TargetRowAdminDeviceCount(targetRowsAdmin),
+		"ViewMode":           viewMode,
 	})
 }
 
@@ -1053,68 +1079,35 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 7. DNS resolve (admin path mirrors my path).
-	dnsWarning := ""
-	ipsToInsert := []string{targetValue}
-	typeToInsert := targetType
-	if typeToInsert == "ip" && !strings.Contains(targetValue, "/") {
-		ipsToInsert = []string{targetValue + "/32"}
+	// 7+9. DNS resolve + insert — B376: the SAME core as PostMyExitRule
+	// (addRuleTarget, bulk_add.go), so the admin path and the user path cannot
+	// drift on DNS handling, the derived /32 rows, the duplicate
+	// classification, or the domain row the auto-updater tracks.
+	//
+	// Pre-B376 this handler carried its own copy of the resolve loop AND never
+	// wrote the domain row at all (the /my path does, since B237.24): a domain
+	// rule created from the admin panel was therefore invisible to the
+	// auto-updater's churn handling — the exact asymmetry that made the two
+	// surfaces behave differently on the same input.
+	ins := s.addRuleTarget(int64(uid), devID, deviceIP, exitNode, targetType, targetValue, action)
+	if ins.Err != "" {
+		// 2026-09-18 (R6): this branch used to answer with a raw
+		// http.Error carrying a literal 500 status (which leaked the
+		// DB error and replaced the page with text/plain). The
+		// validation branches in this same handler already redirect
+		// through buildAdminExitRuleRedirectURL (which restores the
+		// form), so the DB-error branch uses it too instead of
+		// replacing the page with a bare text/plain body.
+		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
+			s.I18n.T(s.I18n.LangFromRequest(r), "error.db"),
+			fmt.Sprint(uid), devID, exitNode, ins.TypeInserted, targetValue, action),
+			http.StatusSeeOther)
+		return
 	}
-	if targetType == "domain" {
-		if addrs, err := net.LookupHost(targetValue); err == nil {
-			ipsToInsert = nil
-			seen := map[string]bool{}
-			for _, a := range addrs {
-				if strings.Contains(a, ":") {
-					continue
-				}
-				if seen[a] {
-					continue
-				}
-				seen[a] = true
-				ipsToInsert = append(ipsToInsert, a+"/32")
-			}
-			if len(ipsToInsert) > 0 {
-				typeToInsert = "subnet"
-			}
-		} else {
-			dnsWarning = fmt.Sprintf("DNS resolve failed for %q: %v (autoupdater will retry)", targetValue, err)
-		}
-	}
-	subnetParent := ""
-	if targetType == "domain" && typeToInsert == "subnet" {
-		subnetParent = targetValue
-	}
-
-	// 9. insert (one row per resolved IP, idempotent on
-	// existing rules). insertRuleUnique is shared with
-	// PostMyExitRule so the row shape can't drift.
-	insertedCount := 0
-	dupCount := 0
-	for _, ip := range ipsToInsert {
-		ok, _ := s.insertRuleUnique(int64(uid), devID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent)
-		if !ok {
-			// 2026-09-18 (R6): this branch used to answer with a raw
-			// http.Error carrying a literal 500 status (which leaked the
-			// DB error and replaced the page with text/plain). The
-			// validation branches in this same handler already redirect
-			// through buildAdminExitRuleRedirectURL (which restores the
-			// form), so the DB-error branch uses it too instead of
-			// replacing the page with a bare text/plain body.
-			http.Redirect(w, r, buildAdminExitRuleRedirectURL(
-				s.I18n.T(s.I18n.LangFromRequest(r), "error.db"),
-				fmt.Sprint(uid), devID, exitNode, typeToInsert, targetValue, action),
-				http.StatusSeeOther)
-			return
-		}
-		// insertRuleUnique returns (true, existingID) when
-		// the row already exists — we treat that as a dup
-		// for the admin redirect (the rule is already in
-		// place, no harm done).
-		insertedCount++
-		_ = dupCount
-	}
-	_ = insertedCount
+	dnsWarning := ins.Warning
+	ipsToInsert := ins.ValuesInserted
+	typeToInsert := ins.TypeInserted
+	insertedCount := ins.Inserted
 
 	// B328: materialise «все устройства» for the TARGET user. The intent is marked
 	// first and the SAME pass the five-minute tick runs does the copying, so the

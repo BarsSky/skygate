@@ -792,6 +792,33 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// B376: the «по цели» projection — one row per destination, with the devices
+	// that carry it rendered as tags in the same row. Built from the SAME
+	// `rules` slice the device tree iterates (the page window, or the unpaged
+	// device drill-down), so the two views cannot disagree about what is in
+	// scope — the failure mode B348 was written to close.
+	deviceNameByID := map[int]string{}
+	for _, di := range deviceInfos {
+		if id, cerr := strconv.Atoi(di.ID); cerr == nil {
+			deviceNameByID[id] = di.Hostname
+		}
+	}
+	targetRows := GroupRulesByTarget(ruleRowsFromDeviceRules(rules), func(id int) string {
+		if n := deviceNameByID[id]; n != "" {
+			return n
+		}
+		// A device that is no longer in the picker (deleted, or attributed to
+		// nobody) still has rows; the tree's own label map names it.
+		return deviceNames[id]
+	})
+	// The view selector is a query parameter, so a link can point at either
+	// view. The by-target list is the default: it answers the question the
+	// device tree made the operator reconstruct by eye ("which of my machines
+	// route this destination, and through which relay?").
+	viewMode := "target"
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("view")), "device") {
+		viewMode = "device"
+	}
 	s.Backend.RenderWithLayout(w, r, "exit_rules.html", c, map[string]any{
 		"Page":              "exit-rules",
 		"Title":             "Exit Rules",
@@ -887,5 +914,19 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		"DeviceFilter":    deviceFilter,
 		"DeviceRuleCount": len(rules),
 		"DeviceIndex":     deviceIndex,
+		// B376: the by-target view (one row per destination, devices as tags),
+		// the view selector, and the «набросить группой» form state. The bulk
+		// result travels in the query string exactly like the single-rule flash
+		// (?applied/?partial/?duplicate), so a refresh does not re-submit.
+		"TargetRows":        targetRows,
+		"TargetDeviceCount": TargetRowDeviceCount(targetRows),
+		"ViewMode":          viewMode,
+		"bulk":              r.URL.Query().Get("bulk") != "",
+		"bulk_added":        r.URL.Query().Get("bulk_added"),
+		"bulk_dup":          r.URL.Query().Get("bulk_dup"),
+		"bulk_skip":         r.URL.Query().Get("bulk_skip"),
+		"bulk_devices":      r.URL.Query().Get("bulk_devices"),
+		"bulk_limit":        r.URL.Query().Get("bulk_limit") == "1",
+		"bulk_err":          r.URL.Query().Get("bulk_err"),
 	})
 }

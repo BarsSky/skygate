@@ -1240,33 +1240,53 @@ func (a *App) currentUser(r *http.Request) *auth.Claims {
 	}
 	authHdr := r.Header.Get("Authorization")
 	if strings.HasPrefix(authHdr, "Bearer ") {
-		tok := strings.TrimPrefix(authHdr, "Bearer ")
-		if tok != "" {
-			// 2026-07-11: Этап 10 part 2 — SQL moved to db helpers.
-			// We still need to walk every row because the stored
-			// token_hash is a bcrypt hash (see auth.GenerateAPIToken),
-			// so we have to CompareHashAndPassword every candidate
-			// — there's no way to do an indexed lookup.
-			// 2026-07-16: v0.15.5 — filter out expired tokens
-			// (TTL = 0 means "never expires" — the pre-v0.15.5
-			// behaviour, preserved for legacy rows).
-			candidates, err := db.ListAPITokenHashesForLookup(a.DB.Current())
-			if err == nil {
-				now := time.Now().Unix()
-				for _, c := range candidates {
-					if c.ExpiresAt > 0 && c.ExpiresAt <= now {
-						// Token has expired. Skip — keep walking
-						// the candidates in case a sibling row
-						// has a matching hash (extremely rare —
-						// token_hash is unique, but be defensive).
-						continue
-					}
-					if auth.CheckAPIToken(c.TokenHash, tok) {
-						_ = db.TouchAPITokenLastUsed(a.DB.Current(), c.TokenHash)
-						return &auth.Claims{UserID: c.UserID, Username: c.Username, IsAdmin: c.IsAdmin}
-					}
-				}
+		if tok := strings.TrimSpace(strings.TrimPrefix(authHdr, "Bearer ")); tok != "" {
+			if claims := a.claimsForAPIToken(tok); claims != nil {
+				return claims
 			}
+		}
+	}
+	// B377: the AI-assistant bootstrap link. A URL cannot carry an Authorization
+	// header, and the operator's flow is «скопировал ссылку в чат ИИ» — so the
+	// agent package accepts ?token=, and ONLY that path. The exception is pinned
+	// HERE, next to the walk it reuses, for two reasons: the bcrypt comparison
+	// keeps one implementation, and no other route can start accepting a token
+	// that arrives in a URL (and therefore in access logs) by accident.
+	if r.URL.Path == "/my/exit-rules/agent" {
+		if tok := strings.TrimSpace(r.URL.Query().Get("token")); tok != "" {
+			if claims := a.claimsForAPIToken(tok); claims != nil {
+				return claims
+			}
+		}
+	}
+	return nil
+}
+
+// claimsForAPIToken validates a raw personal API token and returns its claims,
+// or nil when the token is unknown, expired or revoked.
+//
+// 2026-07-11: Этап 10 part 2 — SQL moved to db helpers. We still need to walk
+// every row because the stored token_hash is a bcrypt hash (see
+// auth.GenerateAPIToken), so we have to CompareHashAndPassword every candidate —
+// there is no way to do an indexed lookup.
+// 2026-07-16: v0.15.5 — filter out expired tokens (TTL = 0 means "never
+// expires" — the pre-v0.15.5 behaviour, preserved for legacy rows).
+func (a *App) claimsForAPIToken(tok string) *auth.Claims {
+	candidates, err := db.ListAPITokenHashesForLookup(a.DB.Current())
+	if err != nil {
+		return nil
+	}
+	now := time.Now().Unix()
+	for _, c := range candidates {
+		if c.ExpiresAt > 0 && c.ExpiresAt <= now {
+			// Token has expired. Skip — keep walking the candidates in case a
+			// sibling row has a matching hash (extremely rare — token_hash is
+			// unique, but be defensive).
+			continue
+		}
+		if auth.CheckAPIToken(c.TokenHash, tok) {
+			_ = db.TouchAPITokenLastUsed(a.DB.Current(), c.TokenHash)
+			return &auth.Claims{UserID: c.UserID, Username: c.Username, IsAdmin: c.IsAdmin}
 		}
 	}
 	return nil

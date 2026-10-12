@@ -103,6 +103,19 @@
 </div>{{end}}
 {{if .warn}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{tf "exit_rules.dns_pending" .warn}}</div>{{end}}
 {{if .deleted}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> {{t "exit_rules.deleted"}}</div>{{end}}
+{{/* B376: the «набросить группой» result. Before this block a batch had no
+     answer at all (the form did not exist), and the single-rule flash could not
+     describe N destinations on M devices. The numbers come from the same
+     counters the caps use, so a batch that hit a budget says so instead of
+     pretending it finished. */}}
+{{if .bulk}}
+<div class="alert {{if .bulk_err}}alert-warn{{else}}alert-success{{end}}" id="my-bulk-result">
+  <i class="fa-solid fa-layer-group"></i>
+  {{tf "exit_rules.bulk_result" .bulk_added .bulk_dup .bulk_skip}}
+  {{if .bulk_limit}}<br><small>{{t "exit_rules.bulk_limit_note"}}</small>{{end}}
+  {{if .bulk_err}}<br><small><b>{{t "exit_rules.bulk_problems"}}</b> {{.bulk_err}}</small>{{end}}
+</div>
+{{end}}
 
 {{/* 2026-08-06: cross-check between device_rules and the device/user preferred exit-node.
      Renders a single warning banner when at least one rule's exit_node_id doesn't match
@@ -180,6 +193,71 @@
       </form>
     </div>
 
+    {{/* B376: «набросить правила группой». The REST API accepted a batch all
+         along (POST /my/exit-rules/api) but it lives on a help page and speaks
+         JSON, so a fifteen-line paste meant fifteen form submits. Same
+         insertion core as the single form (addRuleTarget), same caps, ONE ACL
+         apply for the whole batch. */}}
+    <div class="card" id="bulk-add-card">
+      <h3><i class="fa-solid fa-layer-group"></i> {{t "exit_rules.bulk_form_title"}}</h3>
+      <p class="hint" style="margin-top:0">{{t "exit_rules.bulk_sub"}}</p>
+      <form method="post" action="/my/exit-rules/bulk" enctype="multipart/form-data">
+        <div class="field">
+          <label for="bulk-values">{{t "exit_rules.bulk_values_label"}}</label>
+          <textarea id="bulk-values" name="bulk_values" rows="6" spellcheck="false"
+                    style="width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px;padding:8px"
+                    placeholder="{{t "exit_rules.bulk_values_ph"}}"></textarea>
+          <div class="hint">{{t "exit_rules.bulk_values_hint"}}</div>
+        </div>
+        <div class="field">
+          <label for="bulk-file">{{t "exit_rules.bulk_file_label"}}</label>
+          <input type="file" id="bulk-file" name="bulk_file" accept=".json,.csv,.txt">
+          <div class="hint">{{t "exit_rules.bulk_file_hint"}}</div>
+        </div>
+        <div class="field">
+          <label>{{t "exit_rules.bulk_devices_label"}}</label>
+          <div style="display:flex;flex-wrap:wrap;gap:10px">
+            {{range .DeviceInfos}}
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px">
+              <input type="checkbox" name="bulk_devices" value="{{.ID}}"> {{.Hostname}}{{if gt .MaxForDevice 0}} ({{.UserFacing}}/{{.MaxForDevice}}){{end}}
+            </label>
+            {{end}}
+            {{if .DeviceInfos}}
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px">
+              <input type="checkbox" name="bulk_devices" value="all"> {{t "exit_rules.device_all"}}
+            </label>
+            {{else}}<span class="hint">{{t "exit_rules.no_devices"}}</span>{{end}}
+          </div>
+          <div class="hint">{{t "exit_rules.bulk_devices_hint"}}</div>
+        </div>
+        <div class="field">
+          <label for="bulk-type">{{t "exit_rules.bulk_type_label"}}</label>
+          <select id="bulk-type" name="bulk_target_type" aria-label="{{t "exit_rules.bulk_type_label"}}">
+            <option value="auto">{{t "exit_rules.bulk_type_auto"}}</option>
+            <option value="domain">{{t "exit_rules.target_type_domain"}}</option>
+            <option value="subnet">{{t "exit_rules.target_type_subnet"}}</option>
+            <option value="ip">{{t "exit_rules.target_type_ip"}}</option>
+          </select>
+          <div class="hint">{{t "exit_rules.bulk_type_hint"}}</div>
+        </div>
+        <div class="field">
+          <label for="bulk-exit-node">{{t "exit_rules.exit_node"}}</label>
+          <select id="bulk-exit-node" name="bulk_exit_node" aria-label="{{t "exit_rules.exit_node"}}">
+            <option value="">{{t "exit_rules.exit_node_auto"}}</option>
+            {{range .ExitNodes}}<option value="{{.hostname}}">{{.hostname}}</option>{{end}}
+          </select>
+        </div>
+        <div class="field">
+          <label for="bulk-action">{{t "exit_rules.action"}}</label>
+          <select id="bulk-action" name="bulk_action" aria-label="{{t "exit_rules.action"}}">
+            <option value="accept">{{t "exit_rules.action_accept"}}</option>
+            <option value="deny">{{t "exit_rules.action_deny"}}</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-layer-group"></i> {{t "exit_rules.bulk_submit"}}</button>
+      </form>
+    </div>
+
     {{if .DeviceInfos}}
     <div class="card">
       <h3><i class="fa-solid fa-download"></i> {{t "exit_rules.scripts_title"}}</h3>
@@ -215,6 +293,24 @@
           {{if .MaxTotalRules}}<span class="tag" style="opacity:0.6" title="{{t "exit_rules.system_title"}}">{{tf "exit_rules.system" .LoadPct .TotalRules .MaxTotalRules}}</span>{{end}}
         </span>
       </h3>
+
+      {{/* B376: view selector + collapse controls. The by-target list is the
+           default because it answers the question the device tree made the
+           operator reconstruct by eye («на каких моих устройствах это правило и
+           через какой узел?»); the tree stays one click away, and every level of
+           it keeps its <details> — these two buttons now drive ALL of them, per
+           view, instead of the operator clicking each section. The links carry
+           no query of their own: the script at the bottom of the page copies the
+           live search params (page, device, filters) into them, so switching the
+           view cannot silently drop the filter the operator is standing in. */}}
+      <div class="multi-bar" id="view-switch">
+        <span style="font-size:12px;color:var(--text-muted)">{{t "exit_rules.view_label"}}</span>
+        <a class="btn btn-sm {{if eq .ViewMode "target"}}btn-primary{{end}}" id="view-target-link" href="/my/exit-rules?view=target">{{t "exit_rules.view_target"}}</a>
+        <a class="btn btn-sm {{if eq .ViewMode "device"}}btn-primary{{end}}" id="view-device-link" href="/my/exit-rules?view=device">{{t "exit_rules.view_device"}}</a>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-sm" onclick="skyToggleAllDetails(true)" title="{{t "exit_rules.expand_all_title"}}"><i class="fa-solid fa-angles-down"></i> {{t "exit_rules.expand_all"}}</button>
+        <button type="button" class="btn btn-sm" onclick="skyToggleAllDetails(false)" title="{{t "exit_rules.collapse_all_title"}}"><i class="fa-solid fa-angles-up"></i> {{t "exit_rules.collapse_all"}}</button>
+      </div>
 
       <form id="multi-delete-form" method="post" action="/my/exit-rules/delete" onsubmit="return confirm('{{t "exit_rules.confirm_multi_delete"}}')">
         <div class="multi-bar">
@@ -311,6 +407,94 @@
         </span>
       </div>
       {{end}}
+      {{if eq .ViewMode "target"}}
+      {{/* B376: THE BY-TARGET VIEW — one row per DESTINATION, with the devices
+           that carry it as tags in the same row. Built by GroupRulesByTarget
+           (target_view.go) from the same rule slice the tree iterates, so the
+           two views cannot disagree about scope. A CDN rule shows the domain the
+           operator typed (not its 15 ranges), and a device that carries several
+           ranges of that domain appears ONCE with a ×N badge. The per-rule rows
+           (with their own delete/spread buttons and checkboxes) live in the
+           expander, so multi-delete keeps working on real rows only. */}}
+      <div class="table-wrap">
+        <table>
+          <tr>
+            <th>{{t "exit_rules.col_action"}}</th>
+            <th>{{t "exit_rules.col_target"}}</th>
+            <th>{{t "exit_rules.target_col_devices"}}</th>
+            <th class="col-delete">{{t "exit_rules.target_col_rules"}}</th>
+          </tr>
+          {{range $row := .TargetRows}}
+          <tr class="rule-row" data-type="{{$row.TargetType}}" data-target="{{$row.TargetValue}} {{range $row.Rules}}{{.TargetValue}} {{end}}">
+            <td class="col-action">{{if eq $row.Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+            <td class="col-target">
+              <code>{{$row.TargetValue}}</code>
+              <span class="tag">{{$row.TargetType}}</span>
+              {{if $row.IsCDNGroup}}<span class="tag tag-info"><i class="fa-solid fa-cloud"></i> {{$row.CDN}}</span> <span style="color:var(--text-muted)">{{tf "exit_rules.target_cidr_count" $row.Count}}</span>{{end}}
+            </td>
+            <td class="col-devices">
+              {{range $d := $row.Devices}}
+              <span class="tag" title="{{t "exit_rules.target_device_tag_title"}}">
+                <i class="fa-solid fa-laptop"></i>
+                {{if $d.DeviceName}}{{$d.DeviceName}}{{else}}#{{$d.DeviceID}}{{end}}
+                {{if $d.ExitNode}}→ {{$d.ExitNode}}{{else}}→ {{t "exit_rules.target_relay_auto"}}{{end}}
+                {{if gt $d.RuleCount 1}}×{{$d.RuleCount}}{{end}}
+                {{if $d.AllDevices}}<i class="fa-solid fa-users" title="{{t "exit_rules.all_devices_fanout_tip"}}"></i>{{end}}
+              </span>
+              {{end}}
+            </td>
+            <td class="col-delete">
+              <details>
+                <summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">{{tf "exit_rules.target_show_rules" $row.Count}}</summary>
+                <div class="table-wrap" style="margin-top:6px">
+                  <table style="margin:0">
+                    <tr><th class="col-check"></th><th>{{t "exit_rules.col_action"}}</th><th>{{t "exit_rules.col_target"}}</th><th>{{t "exit_rules.preferred_col"}}</th><th></th></tr>
+                    {{range $row.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
+                      <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
+                      <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+                      <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="{{tf "exit_rules.auto_managed_title" .ParentDomain}}"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
+                      <td class="col-preferred">
+                        {{/* The per-rule device is not in scope here (a target row
+                             spans devices), so the badge leans on StatusByRuleID,
+                             which already encodes approved / pending / wrong. */}}
+                        {{$status := index $.StatusByRuleID .ID}}
+                        {{if eq $status "approved"}}
+                          <span class="tag tag-success" title="{{t "exit_rules.approved_in_headscale_title_short"}}"><i class="fa-solid fa-check"></i></span>
+                        {{else if eq $status "auto_pending"}}
+                          <span class="tag tag-info" title="{{t "exit_rules.auto_pending_title"}}"><i class="fa-solid fa-arrows-rotate"></i> auto</span>
+                        {{else if eq $status "pending"}}
+                          <span class="tag tag-warning" title="{{t "exit_rules.pending_in_headscale_title_short"}}"><i class="fa-solid fa-clock"></i></span>
+                        {{else if eq $status "wrong"}}
+                          <span class="tag tag-danger" title="{{t "exit_rules.preferred_mismatch_title_short"}}"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                        {{else}}
+                          <span class="tag" title="{{t "exit_rules.preferred_none_title"}}"><i class="fa-solid fa-question"></i></span>
+                        {{end}}
+                      </td>
+                      <td class="col-delete">
+                        {{if not .AllDevices}}<button type="submit" class="btn btn-sm" form="spread-{{.ID}}" title="{{t "exit_rules.spread_button_title"}}"><i class="fa-solid fa-arrows-turn-right"></i></button>{{end}}
+                        <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="{{t "common.delete"}}" onclick="return confirm('{{t "exit_rules.confirm_single_delete"}}')"><i class="fa-solid fa-trash"></i></button>
+                      </td>
+                    </tr>
+                    <form id="single-delete-{{.ID}}" method="post" action="/my/exit-rules/delete" style="display:none">
+                      <input type="hidden" name="id" value="{{.ID}}">
+                    </form>
+                    <form id="spread-{{.ID}}" method="post" action="/my/exit-rules/spread" style="display:none">
+                      <input type="hidden" name="exit_node" value="{{.ExitNode}}">
+                      <input type="hidden" name="target_type" value="{{.TargetType}}">
+                      <input type="hidden" name="target_value" value="{{.TargetValue}}">
+                    </form>
+                    {{end}}
+                  </table>
+                </div>
+              </details>
+            </td>
+          </tr>
+          {{end}}
+        </table>
+      </div>
+      {{end}}
+      <div id="rules-view">
+      {{if eq .ViewMode "device"}}
       {{range $host, $nodes := .GroupedByHostname}}
       {{/* B343: the POSITIVE half of the same marker. The operator asked for
            both — «нигде не маркируется что у cyborg доступ теперь появился» —
@@ -575,6 +759,8 @@
         </div>
       </details>
       {{end}}
+      {{end}}
+      </div>
 
       {{/* v1.5.43: pagination controls. Render only when the
            page is smaller than the total — single-page results
@@ -663,6 +849,28 @@
         visible.forEach(function(cb){ cb.checked = checked; });
         syncCount();
       };
+      // B376: collapse / expand every <details> of the rule list (both views),
+      // so the operator stops walking the device tree section by section.
+      window.skyToggleAllDetails = function(open){
+        var root = document.getElementById('rules-view');
+        if (!root) return;
+        root.querySelectorAll('details').forEach(function(d){ d.open = !!open; });
+      };
+      // B376: the view links must not drop the filter the operator is standing
+      // in (page, page_size, device drill-down), so they are rebuilt from the
+      // live query string with only `view` changed.
+      (function(){
+        var base = window.location.pathname;
+        function linkWithView(id, view){
+          var a = document.getElementById(id);
+          if (!a) return;
+          var p = new URLSearchParams(window.location.search);
+          p.set('view', view);
+          a.href = base + '?' + p.toString();
+        }
+        linkWithView('view-target-link', 'target');
+        linkWithView('view-device-link', 'device');
+      })();
       window.applyFilter = function(){
         var t = document.getElementById('filter-type').value;
         var q = (document.getElementById('search-input').value || '').toLowerCase();

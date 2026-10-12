@@ -75,8 +75,18 @@ fi
 echo "=== contract E: rule is inserted with TARGET user_id ==="
 # The rule's device_rules.user_id must be the TARGET user
 # (not the admin session), so headscale ACL src = target.
-if grep -qE 's\.insertRuleUnique\(int64\(uid\),' internal/feature/exit_rules/form_admin.go; then
-    ok "insertRuleUnique called with int64(uid) = target user"
+#
+# B376 (2026-10-11) renegotiated this grep, not its intent. The admin handler no
+# longer calls insertRuleUnique itself: the single-rule installation core moved
+# into exit_rules.addRuleTarget (bulk_add.go) so the /my path, the /admin path and
+# the new batch form share ONE implementation of DNS resolution, /32 derivation,
+# the parent_domain bookkeeping and the duplicate classification — the drift this
+# contract exists to prevent. addRuleTarget's FIRST parameter is the owner, and
+# the admin handler passes int64(uid) (the target user, never the admin's UserID),
+# so the guarantee is unchanged and now holds for the batch path too. Both call
+# shapes are accepted so an older tree still satisfies the contract.
+if grep -qE 's\.(insertRuleUnique|addRuleTarget)\(int64\(uid\),' internal/feature/exit_rules/form_admin.go; then
+    ok "insertRuleUnique/addRuleTarget called with int64(uid) = target user"
 else
     bad "rule insert must use target uid, not admin's UserID"
 fi

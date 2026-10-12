@@ -53,11 +53,11 @@ type Backend interface {
 // Field semantics:
 //   - Backend:     satisfies the Backend interface (typically *App).
 //   - DB:          the open *sql.DB. Used for user lookups, token
-//                  storage, and password-hash writes.
+//     storage, and password-hash writes.
 //   - I18n:        the i18n catalog (lang from cookie / Accept-Language).
 //   - JWTSecret:   the HMAC secret for new session JWTs.
 //   - SessionHours: default session lifetime in hours. "Remember me"
-//                  extends this to 30 days (720h) on the login form.
+//     extends this to 30 days (720h) on the login form.
 //   - Version:     the build version string, shown on the login page.
 type Service struct {
 	Backend      Backend
@@ -488,16 +488,16 @@ func (s *Service) GetMyTokens(w http.ResponseWriter, r *http.Request) {
 			renewable = true
 		}
 		rows = append(rows, map[string]any{
-			"ID":            fmt.Sprintf("%d", t.ID),
-			"Label":         t.Label,
-			"LastUsed":      last,
-			"Created":       t.CreatedAt.Format("2006-01-02 15:04"),
-			"Expires":       exp,
-			"ExpiresWarn":   warn,
-			"ExpiresBadge":  badge,
+			"ID":             fmt.Sprintf("%d", t.ID),
+			"Label":          t.Label,
+			"LastUsed":       last,
+			"Created":        t.CreatedAt.Format("2006-01-02 15:04"),
+			"Expires":        exp,
+			"ExpiresWarn":    warn,
+			"ExpiresBadge":   badge,
 			"ExpiresInWords": inWords,
-			"Renewable":     renewable,
-			"AutoRotate":    fmt.Sprintf("%v", t.AutoRotate),
+			"Renewable":      renewable,
+			"AutoRotate":     fmt.Sprintf("%v", t.AutoRotate),
 		})
 	}
 
@@ -642,8 +642,15 @@ func (s *Service) PostMyToken(w http.ResponseWriter, r *http.Request) {
 	}
 	detail := fmt.Sprintf("label=%q ttl=%s auto_rotate=%v", label, ttlUsed, autoRotate)
 	s.Backend.Audit(c.UserID, c.Username, "token_create", detail)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, "<div class=\"card\"><h3>Токен создан</h3><p>Скопируйте сейчас — больше он показан не будет.</p><pre style=\"background:var(--bg);padding:12px;border-radius:4px;word-break:break-all\">%s</pre><p><a href=\"/my/tokens\">← Назад к списку</a></p></div>", raw)
+	// B377: render a real page instead of the pre-refactor bare fragment. It is
+	// the only moment the raw token exists, so it is also the only place the
+	// AI-assistant link can be built for the operator (the link is assembled in
+	// the browser from the token already on the page).
+	s.Backend.RenderWithLayout(w, r, "my_token_created.html", c, map[string]any{
+		"Page":  "my-token-created",
+		"Title": "API token",
+		"Token": raw,
+	})
 }
 
 // PostMyTokenRevoke deletes one of the caller's API tokens. Bad id
