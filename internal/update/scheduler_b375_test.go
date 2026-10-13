@@ -167,6 +167,35 @@ func b375StubShell(t *testing.T) {
 // output that contains it is obviously a fixture, not a product error.
 var errB375StubShell = errors.New("b375 test: subprocess execution is stubbed")
 
+// b375JoinScheduledRun waits for the goroutine runScheduled spawned to RETURN.
+//
+// B382 (2026-10-13): a terminal PHASE is not the end of the WRITER. The goroutine
+// keeps persisting state transitions after it publishes the final phase, so a test
+// that returns at the phase leaves that writer running while testing.TempDir's
+// RemoveAll deletes the directories underneath it — measured on CI:
+//
+//	--- FAIL: TestB375_YesterdaysRunDoesNotBlockToday (0.62s)
+//	    testing.go:1369: TempDir RemoveAll cleanup: unlinkat
+//	        /tmp/TestB375_YesterdaysRunDoesNotBlockToday…/002: directory not empty
+//	FAIL	skygate/internal/update	6.357s
+//
+// The product joins nothing here (nothing calls Wait outside a fixture); the
+// WaitGroup exists so a fixture cannot leak a writer into a directory it is about
+// to delete. The timeout is generous — it only bounds a genuinely stuck run.
+func b375JoinScheduledRun(t *testing.T) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		scheduledRunWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(60 * time.Second):
+		t.Fatalf("the scheduled run's goroutine did not return within 60s — its writer would race this test's TempDir cleanup")
+	}
+}
+
 // b375AwaitTerminal waits (bounded) for the goroutine runScheduled spawned to
 // reach a terminal phase, so a test cannot leak a live upgrader into the next
 // one. It returns the final state, or nil when no state was ever created.
@@ -176,6 +205,8 @@ func b375AwaitTerminal(t *testing.T, st *StateStore) *State {
 		if s := st.Get(); s != nil {
 			switch s.Phase {
 			case PhaseDone, PhaseFailed, PhaseRolledBack, PhaseBuildDone:
+				// B382: join the writer BEFORE returning — see b375JoinScheduledRun.
+				b375JoinScheduledRun(t)
 				return s
 			}
 		}

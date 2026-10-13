@@ -140,6 +140,16 @@ type NotifierSink interface {
 var (
 	scheduledMu       sync.Mutex
 	scheduledInFlight bool
+	// scheduledRunWG joins the goroutine runScheduled spawns for the actual
+	// upgrade. A caller must be able to wait for the WRITER to stop, not only for
+	// a terminal PHASE: the goroutine keeps persisting state transitions after it
+	// publishes the final phase, and a test that returns at the phase lets that
+	// writer race testing.TempDir's RemoveAll — measured on CI 2026-10-13 (B382):
+	// `TestB375_YesterdaysRunDoesNotBlockToday … TempDir RemoveAll cleanup:
+	// unlinkat /tmp/…/002: directory not empty` → `FAIL skygate/internal/update`.
+	// It joins nothing in production (nothing calls Wait there); it exists so a
+	// fixture cannot leak a writer into a directory it is about to delete.
+	scheduledRunWG sync.WaitGroup
 )
 
 // TickInterval is how often the scheduler checks the schedule.
@@ -329,7 +339,9 @@ func runScheduled(ctx context.Context, deps SchedulerDeps, target string, trigge
 	ctxRun, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
+	scheduledRunWG.Add(1)
 	go func() {
+		defer scheduledRunWG.Done()
 		u := NewDockerUpgrader(deps.RepoPath, deps.State, current)
 		u.Run(ctxRun, target)
 

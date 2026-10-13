@@ -103,9 +103,33 @@ The cost itself is unchanged and still recorded: the `exit_rules` suite is
 fsync-heavy because every test migrates a fresh SQLite DB (shared-DB template and the
 other TD-30 candidates remain open in `docs/ROADMAP.md`).
 
+### The flake this block found in its own CI run
+
+The first CI run of this commit refused it:
+
+```
+--- FAIL: TestB375_YesterdaysRunDoesNotBlockToday (0.62s)
+    testing.go:1369: TempDir RemoveAll cleanup: unlinkat
+        /tmp/TestB375_YesterdaysRunDoesNotBlockToday…/002: directory not empty
+FAIL	skygate/internal/update	6.357s
+```
+
+Not an assertion — a **race**, and the second run of the same commit passed, which is
+what a race looks like. `tick` runs synchronously, but `runScheduled` hands the upgrade
+to a goroutine, and the B375 fixture returned as soon as the state reached a terminal
+**phase**. That goroutine keeps persisting state transitions *after* publishing the
+final phase, so `testing.TempDir`'s `RemoveAll` deleted directories out from under a
+live writer. The fix removes the window instead of tolerating it: `scheduler.go` tracks
+the goroutine (`scheduledRunWG`, incremented **before** the `go` statement so the join
+cannot miss it) and the fixture **joins** it before returning, recording the measured
+failure in the comment that explains why. Nothing in production calls `Wait`; the
+counter exists so no fixture can leak a writer into a directory it is about to delete.
+Verified with 15 repetitions of the three fixtures that spawn the goroutine, 5
+repetitions of the package, and `-race` clean.
+
 ### Verification
 
-* `scripts/check_b382_update_path_truth.sh` — 25 contracts. Two are behavioural: the
+* `scripts/check_b382_update_path_truth.sh` — 30 contracts. Two are behavioural: the
   Go test that **renders** the real steps, and the shape-exact hang dump fed to the
   verdict reader (rc=2, the test name, and the new budget line). Five guard RR-3's
   order and conditions (inside the systemd branch, before the restart, `is-failed`

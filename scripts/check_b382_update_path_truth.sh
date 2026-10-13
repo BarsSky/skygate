@@ -284,6 +284,59 @@ else
   bad "E4: docs/ROADMAP.md does not mention B382"
 fi
 
+# ---------------------------------------------------------------------------
+hdr "F. a terminal PHASE is not the end of the WRITER (the CI flake this block hit)"
+# ---------------------------------------------------------------------------
+# The first CI run of this block failed with
+#   --- FAIL: TestB375_YesterdaysRunDoesNotBlockToday (0.62s)
+#       testing.go:1369: TempDir RemoveAll cleanup: unlinkat /tmp/…/002: directory not empty
+#   FAIL skygate/internal/update
+# — a fixture that returns as soon as the state reaches a terminal PHASE, while
+# the goroutine runScheduled spawned is still persisting transitions, so
+# testing.TempDir's RemoveAll races the writer. It passed on re-run, which is what
+# a race looks like; the join below removes the window instead of tolerating it.
+SCHED=internal/update/scheduler.go
+B375T=internal/update/scheduler_b375_test.go
+
+if grep -q 'scheduledRunWG sync.WaitGroup' "$SCHED"; then
+  ok "F1: $SCHED tracks the scheduled-run goroutine in a WaitGroup"
+else
+  bad "F1: nothing lets a caller wait for the scheduled-run goroutine to RETURN — only for a terminal phase"
+fi
+
+f_add="$(grep -n 'scheduledRunWG.Add(1)' "$SCHED" | head -1 | cut -d: -f1)"
+f_go="$(grep -n 'go func() {' "$SCHED" | tail -1 | cut -d: -f1)"
+f_done="$(grep -c 'defer scheduledRunWG.Done()' "$SCHED")"
+if [ -n "$f_add" ] && [ -n "$f_go" ] && [ "$f_add" -lt "$f_go" ] && [ "$f_done" -ge 1 ]; then
+  ok "F2: the counter is incremented BEFORE the goroutine starts ($f_add < $f_go) and released by a defer inside it"
+else
+  bad "F2: the WaitGroup is wired wrong (add=$f_add go=$f_go done=$f_done) — an Add inside the goroutine would race the join"
+fi
+
+if grep -q 'b375JoinScheduledRun(t)' "$B375T" && grep -q 'scheduledRunWG.Wait()' "$B375T"; then
+  ok "F3: the B375 fixture JOINS the writer before it returns the terminal state"
+else
+  bad "F3: the fixture still returns at the phase, leaving a writer alive while t.TempDir is removed"
+fi
+
+if grep -q 'TempDir RemoveAll cleanup' "$B375T"; then
+  ok "F4: the fixture records the measured failure it exists to prevent, so the reason survives a refactor"
+else
+  bad "F4: the fixture does not record why the join is there"
+fi
+
+if [ -z "$GO" ]; then
+  skip "F5: 'go' not found — the repeated fixture run could not be executed"
+else
+  f5_out="$("$GO" test -count=3 -timeout 5m -run 'TestB375_YesterdaysRunDoesNotBlockToday' ./internal/update/ 2>&1)"
+  f5_rc=$?
+  if [ "$f5_rc" -eq 0 ]; then
+    ok "F5: the fixture that failed CI passes three times in a row in the gate itself"
+  else
+    bad "F5: the failing fixture did not pass 3x (rc=$f5_rc): $(printf '%s' "$f5_out" | tail -4 | tr '\n' ' ')"
+  fi
+fi
+
 printf '\n\033[1mB382 summary: %d passed, %d failed, %d skipped\033[0m\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1
 exit 0
