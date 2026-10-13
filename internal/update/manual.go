@@ -119,6 +119,16 @@ func GenerateDockerSteps(current, target, owner, repo string) ManualSteps {
 // bare-binary install (no Docker, no systemd). The operator
 // stops the running process, swaps the binary, restarts.
 //
+// RR-2 (B382, v1.5.121): every path in these steps must name a file the release
+// pipeline REALLY publishes. Until this block step 3 fetched the historical
+// assets `skygate-linux-amd64` and `skygate-linux-amd64.sha256`, neither of which
+// has ever existed on a release: the operator following the documented bare path
+// got a 404 from curl on step 3. The published set is the five
+// `skygate-<tag>-<os>-<arch>.tar.gz|.zip` archives plus ONE `SHA256SUMS` that
+// lists the ARCHIVES (not the binaries inside them), which is why the check
+// filters that file down to the archive we actually downloaded before
+// `sha256sum -c`.
+//
 // Used when skygate runs as a nohup/background process under
 // tmux, supervisord, runit, or hand-rolled scripts. The
 // v0.29.0 plan does NOT automate this path — the operator
@@ -143,12 +153,18 @@ func GenerateBareSteps(current, target, owner, repo string) ManualSteps {
 			"cp skygate skygate." + shortCurrent + ".bak",
 			"cp -p skygate.db skygate.db." + shortCurrent + ".bak",
 			"",
-			"# 3. Download the new version (verify SHA256 before swap)",
-			"curl -fsSL -o skygate." + shortTarget + " \\",
-			"  https://github.com/" + owner + "/" + repo + "/releases/download/" + target + "/skygate-linux-amd64",
-			"curl -fsSL -o skygate." + shortTarget + ".sha256 \\",
-			"  https://github.com/" + owner + "/" + repo + "/releases/download/" + target + "/skygate-linux-amd64.sha256",
-			"sha256sum -c skygate." + shortTarget + ".sha256",
+			"# 3. Download the new version and verify it against the release's checksums",
+			"#    the release publishes TARBALLS named skygate-<tag>-<os>-<arch>.tar.gz",
+			"#    plus ONE SHA256SUMS file that lists them",
+			"curl -fsSL -o skygate." + shortTarget + ".tar.gz \\",
+			"  https://github.com/" + owner + "/" + repo + "/releases/download/" + target + "/skygate-" + target + "-linux-amd64.tar.gz",
+			"curl -fsSL -o SHA256SUMS." + shortTarget + " \\",
+			"  https://github.com/" + owner + "/" + repo + "/releases/download/" + target + "/SHA256SUMS",
+			"# SHA256SUMS lists EVERY archive of the release, so verify only the one we have",
+			"grep 'skygate-" + target + "-linux-amd64.tar.gz' SHA256SUMS." + shortTarget + " | sha256sum -c -",
+			"# the archive carries the 'skygate' binary at its root; extract it under the",
+			"# versioned name these steps use, so the running binary is never overwritten",
+			"tar -xzOf skygate." + shortTarget + ".tar.gz skygate > skygate." + shortTarget,
 			"",
 			"# 4. Apply migrations (uses the new binary; idempotent on a current DB)",
 			"chmod +x skygate." + shortTarget,

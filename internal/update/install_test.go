@@ -66,8 +66,30 @@ func TestGenerateBareSteps(t *testing.T) {
 	// "skygate-operator/skygate" would 404 against
 	// github.com/BarsSky/skygate.
 	joined := strings.Join(steps.Steps, "\n")
-	if !strings.Contains(joined, "github.com/BarsSky/skygate/releases/download/v0.29.0/skygate-linux-amd64") {
+	if !strings.Contains(joined, "github.com/BarsSky/skygate/releases/download/v0.29.0/") {
 		t.Errorf("Bare steps should reference the configured GitHub owner/repo in the download URL; got: %s", joined)
+	}
+	// RR-2 (B382): the download must name a file the release pipeline ACTUALLY
+	// publishes. Until v1.5.121 these steps fetched `skygate-linux-amd64` and
+	// `skygate-linux-amd64.sha256`, which have never existed as release assets —
+	// the operator following the documented bare path got a 404 on step 3. The
+	// real assets are `skygate-<tag>-<os>-<arch>.tar.gz` + one `SHA256SUMS`.
+	published := "github.com/BarsSky/skygate/releases/download/v0.29.0/skygate-v0.29.0-linux-amd64.tar.gz"
+	if !strings.Contains(joined, published) {
+		t.Errorf("Bare steps must download the published tarball %q; got: %s", published, joined)
+	}
+	if !strings.Contains(joined, "releases/download/v0.29.0/SHA256SUMS") {
+		t.Errorf("Bare steps must download the published SHA256SUMS (it lists the archives); got: %s", joined)
+	}
+	if !strings.Contains(joined, "-linux-amd64.tar.gz' SHA256SUMS.") {
+		t.Errorf("Bare steps must verify the checksum of the ONE archive they downloaded (SHA256SUMS lists every archive); got: %s", joined)
+	}
+	// The heavy-handed half: the unpublished names must not come back, in the URL
+	// or anywhere else in the copy-paste block.
+	for _, stale := range []string{"skygate-linux-amd64", "-linux-amd64.sha256", "sha256sum -c skygate."} {
+		if strings.Contains(joined, stale) {
+			t.Errorf("Bare steps still reference the unpublished asset/verification %q (RR-2): %s", stale, joined)
+		}
 	}
 }
 

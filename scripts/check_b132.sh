@@ -181,7 +181,15 @@ fi
 if [ -z "${GO}" ]; then
     warn "go not found — skipping G (other 6 contracts still hold)"
 else
-    test_out=$("${GO}" test -count=1 ./internal/feature/exit_rules/ ./internal/feature/admin/ ./internal/i18n/ 2>&1)
+    # TD-30 (B382, v1.5.121): the budget is now an EXPLICIT number, not Go's
+    # implicit 10-minute-per-package default. Measured on a quiet Windows host:
+    # exit_rules 214s + admin 68s + i18n 0.6s, and every test migrates a fresh
+    # SQLite DB, so the suite is fsync-heavy. `-timeout` is per PACKAGE, which is
+    # why 10m is the smallest safe floor: it is the number that was already in
+    # force, now stated out loud, printed in both verdicts, and overridable
+    # without editing a gate script.
+    GO_TEST_TIMEOUT="${SKYGATE_GO_TEST_TIMEOUT:-10m}"
+    test_out=$("${GO}" test -count=1 -timeout "${GO_TEST_TIMEOUT}" ./internal/feature/exit_rules/ ./internal/feature/admin/ ./internal/i18n/ 2>&1)
     test_rc=$?
     # B378: a HANG is not an assertion failure, and the message must say which it is.
     # Measured 2026-10-13 during the v1.5.117 checked push: exit_rules was killed at
@@ -192,11 +200,12 @@ else
     verdict="$(printf '%s' "$test_out" | bash scripts/go_test_verdict.sh 2>/dev/null)"
     vrc=$?
     if [ "${test_rc}" -eq 0 ]; then
-        ok "go test PASSes for exit_rules + admin + i18n (B132 compiles + tests green)"
+        ok "go test PASSes for exit_rules + admin + i18n (B132 compiles + tests green, within the explicit -timeout ${GO_TEST_TIMEOUT} per package)"
     elif [ "${vrc}" -eq 2 ]; then
         bad "go test HUNG — this is NOT a failed assertion, so look at the HOST and the cost of the suite before hunting a product regression:"
         printf '%s\n' "$verdict" | sed 's/^/        /'
-        echo "        measured baseline on a quiet Windows host: exit_rules 214s, admin 68s, i18n 0.6s — the suite is fsync-heavy (every test migrates a fresh SQLite DB) and Go's own default budget is 10m PER PACKAGE" >&2
+        echo "        the budget was -timeout ${GO_TEST_TIMEOUT} PER PACKAGE (raise it with SKYGATE_GO_TEST_TIMEOUT=20m if the host is merely slow — B382 made the number explicit for exactly this call)" >&2
+        echo "        measured baseline on a quiet Windows host: exit_rules 214s, admin 68s, i18n 0.6s — the suite is fsync-heavy (every test migrates a fresh SQLite DB)" >&2
     else
         bad "go test FAILED: ${verdict}"
         printf '%s\n' "$test_out" | tail -n 8 | sed 's/^/        /' >&2

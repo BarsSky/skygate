@@ -63,6 +63,9 @@ if printf '%s\n' "$OUT" | grep -qaE 'panic: test timed out'; then
   printf 'HUNG: %s — the test never finished (this is NOT a failed assertion)\n' "${BUDGET:-go test timed out}"
   [ -n "$RUNNING" ] && printf 'HUNG: running test(s) at the alarm: %s\n' "$RUNNING"
   [ -n "$FRAME" ] && printf 'HUNG: first blocking frame: %s\n' "$FRAME"
+  # B382: the budget is a number the caller CHOSE (B132 passes an explicit
+  # -timeout since v1.5.121), so a hang is no longer only Go's implicit default.
+  printf 'HUNG: that budget is the caller-supplied -timeout (B132: SKYGATE_GO_TEST_TIMEOUT, default 10m per package)\n'
   printf 'HUNG: re-run with -v and a short -timeout to see it live; a host filesystem stall (FlushFileBuffers under modernc.org/sqlite) is the measured cause on Windows\n'
   exit 2
 fi

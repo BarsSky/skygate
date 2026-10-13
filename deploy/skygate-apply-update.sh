@@ -453,6 +453,20 @@ restart_service() {
             log "ERROR: systemctl not found (MODE=systemd)"
             return 1
         fi
+        # RR-3 (B382, trap #6): a unit that CRASHED is latched in the `failed`
+        # state, and `systemctl restart` refuses to act on it — measured on the
+        # native-update rollback drill. The applier then reported only "the
+        # service did not come up", i.e. a spurious update failure caused by our
+        # own earlier crash, with the operator told to go read the journal for a
+        # product problem that does not exist. Clearing the latch is a no-op for
+        # a healthy unit (and for the OpenRC/bare kinds, which have no latch),
+        # so it is asked for only when the unit is really failed — which also
+        # makes the log line evidence rather than noise.
+        if systemctl is-failed --quiet "$SERVICE" 2>/dev/null; then
+            log "unit $SERVICE is in the failed state (trap #6: a crashed unit refuses to restart) — clearing it with systemctl reset-failed before the restart"
+            systemctl reset-failed "$SERVICE" >> "$LOG" 2>&1 \
+                || log "WARN: systemctl reset-failed $SERVICE returned non-zero; continuing to the restart"
+        fi
         systemctl restart "$SERVICE" >> "$LOG" 2>&1
         return $?
     fi

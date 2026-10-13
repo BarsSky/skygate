@@ -12,6 +12,116 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.121 — the update path stops naming files that do not exist (RR-2 + RR-3 + TD-30)
+
+**Date:** 2026-10-13 · **Base:** `v1.5.120` → this tag · **Compatibility:** no schema
+change, no request/response change, no routing change. One Go package's message text
+(`internal/update`), one shell script (`deploy/skygate-apply-update.sh`), the `B132`
+contract's `go test` invocation and the hang reader. Nothing an existing installation
+depends on changes behaviour; the fixes make three operator-facing messages tell the
+truth.
+
+### RR-2 — the manual steps told the operator to download files that do not exist
+
+`GenerateBareSteps` (`internal/update/manual.go`) is the copy-paste procedure for a
+bare-binary install. Step 3 said:
+
+```
+curl -fsSL -o skygate.<ver>     …/releases/download/<tag>/skygate-linux-amd64
+curl -fsSL -o skygate.<ver>.sha256 …/releases/download/<tag>/skygate-linux-amd64.sha256
+sha256sum -c skygate.<ver>.sha256
+```
+
+**Neither `skygate-linux-amd64` nor `skygate-linux-amd64.sha256` has ever been a
+release asset.** The pipeline publishes the five archives
+`skygate-<tag>-<os>-<arch>.tar.gz|.zip` — with the `skygate` binary at the archive
+root — plus **one** `SHA256SUMS`, and that file lists the **archives**, not the
+binaries inside them. So the first `curl` answered 404, and a corrected `curl` would
+still have failed the documented `sha256sum -c`: four of the five listed archives are
+not on the operator's disk.
+
+Now (rendered from the real function, verified against the assets of v1.5.120):
+
+```
+curl -fsSL -o skygate.<ver>.tar.gz \
+  …/releases/download/<tag>/skygate-<tag>-linux-amd64.tar.gz
+curl -fsSL -o SHA256SUMS.<ver> \
+  …/releases/download/<tag>/SHA256SUMS
+grep 'skygate-<tag>-linux-amd64.tar.gz' SHA256SUMS.<ver> | sha256sum -c -
+tar -xzOf skygate.<ver>.tar.gz skygate > skygate.<ver>
+```
+
+The filtered `sha256sum -c -` works with GNU and busybox alike, and the extraction
+writes the versioned name the rest of the steps already use, so the running binary is
+never overwritten. `TestGenerateBareSteps` no longer merely checks that the owner/repo
+appears in the URL — it requires the published tarball and `SHA256SUMS`, and fails if
+the dead names come back. The B382 contract additionally cross-checks the asset shape
+against `.github/workflows/release.yml`, the workflow that **builds** them, so
+`manual.go` and the pipeline cannot drift apart silently.
+
+### RR-3 — the applier turned our own crash into "your install is broken"
+
+`restart_service` in `deploy/skygate-apply-update.sh` ran `systemctl restart`
+directly. A unit that crashed is **latched in the `failed` state**, and systemd
+refuses to act on it (AGENTS trap #6, seen live during the native-update rollback
+drill) — so the applier stopped a healthy install, failed to bring it back, and
+reported only *"the service did not come up"*, sending the operator to the journal for
+a product problem that does not exist.
+
+It now clears the latch first:
+
+* `systemctl reset-failed "$SERVICE"` runs **before** the restart, **inside** the
+  `MODE = systemd` branch;
+* only when `systemctl is-failed --quiet` says the unit really is failed, so a healthy
+  unit is untouched and the log line is **evidence** rather than noise;
+* a non-zero `reset-failed` is a **warning** — the restart still gets its chance;
+* the OpenRC branch keeps its `start` fallback (B262 behaviour unchanged), and the
+  bare kind has no latch to clear.
+
+`docs/UPDATE.md` (EN + RU) records both fixes, and its troubleshooting row for a
+restart after a crash loop now names the automatic path.
+
+### TD-30, the cheap half — the `go test` budget is an explicit number
+
+B132 (the exit-rules block) kills its `go test` at Go's own **implicit**
+10-minute-per-package default. Measured during the v1.5.117 push: `601.705s` with
+`syscall.FlushFileBuffers` blocked inside a test's SQLite migration, reported as
+«go test FAILED» with neither the budget nor the test named. B378 fixed the
+**message**; the budget itself was still implicit, so "slow" and "hung" could not be
+told apart by a number.
+
+* `check_b132.sh` now passes an explicit `-timeout` taken from
+  `SKYGATE_GO_TEST_TIMEOUT` (**default `10m` per package** — the smallest safe floor,
+  because the measured cost is 214 s for `exit_rules` + 68 s for `admin` + 0.6 s for
+  `i18n`, and `-timeout` is per package), so the budget can be raised on a slow host
+  without editing a gate script;
+* the budget is printed in **both** verdicts — the pass line and the hang line;
+* `scripts/go_test_verdict.sh` now says the budget is the **caller's own**
+  `-timeout` and names the knob.
+
+The cost itself is unchanged and still recorded: the `exit_rules` suite is
+fsync-heavy because every test migrates a fresh SQLite DB (shared-DB template and the
+other TD-30 candidates remain open in `docs/ROADMAP.md`).
+
+### Verification
+
+* `scripts/check_b382_update_path_truth.sh` — 25 contracts. Two are behavioural: the
+  Go test that **renders** the real steps, and the shape-exact hang dump fed to the
+  verdict reader (rc=2, the test name, and the new budget line). Five guard RR-3's
+  order and conditions (inside the systemd branch, before the restart, `is-failed`
+  gated, non-fatal, OpenRC untouched).
+* `go test ./internal/update/` ok; `gofmt`/`staticcheck` clean on the touched Go
+  files; `bash -n` clean on the applier and both scripts.
+* `scripts/check_b132.sh`, `check_b378_push_gate_and_host_artefacts.sh`,
+  `check_b268_applier_failure_diagnostics.sh`, `check_b261_native_self_update.sh`,
+  `check_b330_docs_parity` and the B381 catalog-structure guard re-run green.
+* **The first gate run of this block was refused by `B281` `[G2-inline-order]`, and the
+  contract was right:** the new check's Go lookup listed the hardcoded
+  `/usr/local/go/bin/go` in its `for cand in …` without `command -v go` **inline and
+  first** — the same shape that on the CI runner resolved to the image's Go 1.24.13
+  while `go.mod` wants 1.25. It now uses the B132 reference order
+  (`"$(command -v go 2>/dev/null)"` first in the list); `B281` is 47 PASS / 0 FAIL.
+
 ## v1.5.120 — the CI gate must look up the sha it was asked about (B381)
 
 **Date:** 2026-10-13 · **Base:** `v1.5.119` → this tag · **Compatibility:** no schema

@@ -476,7 +476,7 @@ curl -fsS http://127.0.0.1:8080/readyz    # db + headscale + headplane + tailsca
 | `target "…" is not a release tag` | the form got a git-describe label (`v1.5.8-39-g…`) or a bare SHA | pass a real tag (`v1.5.9`); for a commit build use the manual steps |
 | Update aborts, service still on the old version, `result.status=rolled_back` | new binary booted but `/healthz` never reported the target build | read `apply.log`; the old binary is back in place — this is the designed safety net |
 | Update aborts before the swap with a migration error | DB cannot be migrated (e.g. SQLite on a pre-v1.5.9 release) | migrate to a compatible release; the old binary was never replaced |
-| `systemctl restart` refuses after a crash loop | unit is in `failed` state | `sudo systemctl reset-failed skygate` |
+| `systemctl restart` refuses after a crash loop | unit is in `failed` state | the applier clears it itself since v1.5.121 (RR-3); by hand: `sudo systemctl reset-failed skygate` |
 | `docker compose pull` → `denied` / `no matching manifest for linux/amd64` | registry blocked (a local build is needed) or an ARM-only tag | use the source-rebuild path, or the Go tarball on ARM |
 | Scheduled update never fires | install kind is native (the scheduler skips it) | use **Update** manually, or keep a Docker install |
 | `.env` values ignored after `docker compose -f …` from another CWD | compose interpolation is CWD-relative | `cd` into the project dir or pass `--env-file` |
@@ -491,12 +491,13 @@ curl -fsS http://127.0.0.1:8080/readyz    # db + headscale + headplane + tailsca
 * **`SHA256SUMS` is only attached to releases from v1.5.9 on.** Older releases are
   verified through the GitHub asset digest automatically; a mirror cannot use that
   fallback.
-* **The in-app manual command lists** (`internal/update/manual.go`) still reference
-  the historical asset names `skygate-linux-amd64` / `…​.sha256`, which the current
-  release pipeline does **not** publish (it publishes
-  `skygate-<TAG>-linux-amd64.tar.gz` + `SHA256SUMS`). Copy the commands from
-  [§6](#6-manual-update-procedures) of this document instead, and check the release
-  page. *(Tracked as a documentation defect.)*
+* **The in-app manual command lists** (`internal/update/manual.go`) name the assets
+  the pipeline really publishes — `skygate-<TAG>-linux-amd64.tar.gz` + the single
+  `SHA256SUMS` — and verify the one archive they downloaded (`SHA256SUMS` lists
+  every archive, so `grep … | sha256sum -c -` is the correct form). **Fixed in
+  v1.5.121 (RR-2):** until then those steps fetched the historical
+  `skygate-linux-amd64` / `…​.sha256`, which have never existed as release assets,
+  so an operator following the bare path got a 404 on step 3.
 * **The Docker image is linux/amd64 only** by design; the Go tarballs cover
   linux/darwin × amd64/arm64 and windows-amd64.
 * **Native installs never auto-apply** — the scheduler is Docker-only, and
