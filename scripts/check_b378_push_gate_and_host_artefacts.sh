@@ -35,7 +35,11 @@
 #   C. the hook is honest about the host it runs on (locale, MSYSTEM detection intact)
 #   D. the three host-artefact defects stay fixed (behavioural, each one reproduces the
 #      original false FAIL's conditions)
-#   E. bookkeeping (tracked, registered, indexed)
+#   E. a HANG is not a wrong answer: `go test` output is read by
+#      scripts/go_test_verdict.sh, which names the hanging test and the blocking frame
+#      (the 2026-10-13 incident: B132 reported «go test FAILED» with two informational
+#      log lines while FlushFileBuffers was blocked inside a test's SQLite migration)
+#   F. bookkeeping (tracked, registered, indexed)
 #
 # NOTE FOR FUTURE EDITORS: this check NEVER executes `.githooks/pre-push`, because that
 # would run the whole catalog from inside the catalog. The hook is pinned statically and
@@ -234,22 +238,97 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-hdr "E. bookkeeping"
+hdr "E. a hang is not a wrong answer (the 2026-10-13 incident)"
+# ---------------------------------------------------------------------------
+# The checked push for v1.5.117 failed B132 with a message that named nothing: the
+# exit_rules package was killed at Go's own 10-minute budget with FlushFileBuffers
+# blocked inside a test's SQLite migration, and the check printed two informational log
+# lines. The reader below turns that into a verdict that names the test and the frame.
+GTV="scripts/go_test_verdict.sh"
+if [ -f "$GTV" ] && bash -n "$GTV" 2>/dev/null; then
+  ok "E1: $GTV exists and parses"
+else
+  bad "E1: $GTV is missing or does not parse — a hang would again be reported as «go test FAILED»"
+fi
+if grep -q 'go_test_verdict.sh' scripts/check_b132.sh; then
+  ok "E2: B132 contract G reads its go test output through the verdict reader"
+else
+  bad "E2: B132 contract G does not use the reader — a hang would be reported as an assertion failure"
+fi
+if grep -q 'HUNG' scripts/check_b132.sh && grep -q 'NOT a failed assertion' scripts/check_b132.sh; then
+  ok "E3: B132 says out loud that a HANG is not a failed assertion, and gives the measured cost baseline"
+else
+  bad "E3: B132 cannot distinguish a hang from a wrong expectation in its message"
+fi
+
+if [ -f "$GTV" ]; then
+  # A trimmed but shape-exact copy of the REAL dump from the incident (no fixture
+  # outside the repo, and every shape that must be recognised is present).
+  {
+    printf '2026/10/13 07:49:13 all-devices: propagated 1 rule row(s) to the current devices\n'
+    printf 'panic: test timed out after 2m0s\n'
+    printf '\trunning tests:\n'
+    printf '\t\tTestB2761_MarkGroupKeepsTheIntent (7s)\n\n'
+    printf 'goroutine 22 [syscall]:\n'
+    printf 'syscall.Syscall(0x7ff6ccd40f83?, 0xc00014a180?)\n'
+    printf '\tC:/Program Files/Go/src/runtime/syscall_windows.go:457 +0x29\n'
+    printf 'syscall.FlushFileBuffers(0x1c0)\n'
+    printf 'modernc.org/sqlite/lib._winSync(0xc00014a180, 0x1ecfe3f05c0)\n'
+    printf 'skygate/internal/db.addColumnIfMissingSQLite(0xc000116f70)\n'
+    printf '\tC:/Projects/skygate/internal/db/sqlite_ddl.go:84 +0x114\n'
+    printf 'skygate/internal/feature/exit_rules.TestB2761_MarkGroupKeepsTheIntent(0xc000106a80)\n'
+    printf 'FAIL\tskygate/internal/feature/exit_rules\t121.480s\n'
+  } > "$SKY_TMP/hang.txt"
+  printf -- '--- FAIL: TestFoo (0.01s)\n    foo_test.go:12: want 1 got 2\nFAIL\tskygate/internal/i18n\t0.3s\nFAIL\n' > "$SKY_TMP/assert.txt"
+  printf 'ok  \tskygate/internal/i18n\t0.6s\n' > "$SKY_TMP/ok.txt"
+  printf '# skygate/x\n./x.go:3:2: undefined: Foo\n' > "$SKY_TMP/build.txt"
+
+  h_out="$(bash "$GTV" < "$SKY_TMP/hang.txt" 2>&1)"; h_rc=$?
+  a_out="$(bash "$GTV" < "$SKY_TMP/assert.txt" 2>&1)"; a_rc=$?
+  o_out="$(bash "$GTV" < "$SKY_TMP/ok.txt" 2>&1)"; o_rc=$?
+  b_out="$(bash "$GTV" < "$SKY_TMP/build.txt" 2>&1)"; b_rc=$?
+
+  if [ "$h_rc" -eq 2 ] && printf '%s' "$h_out" | grep -q 'TestB2761_MarkGroupKeepsTheIntent' && printf '%s' "$h_out" | grep -q 'addColumnIfMissingSQLite'; then
+    ok "E4: the REAL hang shape is read as a HANG, and it names the test AND the blocking skygate frame"
+  else
+    bad "E4: the hang dump was not read as a hang naming the test/frame (rc=$h_rc): $(printf '%s' "$h_out" | tr '\n' ' ')"
+  fi
+  if [ "$a_rc" -eq 1 ] && printf '%s' "$a_out" | grep -q 'TestFoo'; then
+    ok "E5: an assertion failure is read as FAILED and names the failing test"
+  else
+    bad "E5: an assertion failure was misread (rc=$a_rc): $a_out"
+  fi
+  if [ "$o_rc" -eq 0 ]; then
+    ok "E6: a green run is read as OK"
+  else
+    bad "E6: a green run was misread (rc=$o_rc): $o_out"
+  fi
+  if [ "$b_rc" -eq 3 ] && printf '%s' "$b_out" | grep -q 'NO VERDICT'; then
+    ok "E7: a build error is read as NO VERDICT (neither a passing nor a failing test run)"
+  else
+    bad "E7: a build error was misread (rc=$b_rc): $b_out"
+  fi
+else
+  skip "E4-E7: $GTV unavailable"
+fi
+
+# ---------------------------------------------------------------------------
+hdr "F. bookkeeping"
 # ---------------------------------------------------------------------------
 if git ls-files --error-unmatch scripts/check_b378_push_gate_and_host_artefacts.sh >/dev/null 2>&1; then
-  ok "E1: this script is tracked by git (AGENTS trap #11)"
+  ok "F1: this script is tracked by git (AGENTS trap #11)"
 else
-  bad "E1: this script is NOT tracked — .gitignore can eat it silently"
+  bad "F1: this script is NOT tracked — .gitignore can eat it silently"
 fi
 if grep -q 'check_b378_push_gate_and_host_artefacts.sh' scripts/verify_pre_deploy.sh; then
-  ok "E2: verify_pre_deploy.sh registers B378"
+  ok "F2: verify_pre_deploy.sh registers B378"
 else
-  bad "E2: not registered — the contract would never run"
+  bad "F2: not registered — the contract would never run"
 fi
 if grep -q '^- \*\*B378\*\*' AGENTS.md; then
-  ok "E3: AGENTS.md's block index carries B378"
+  ok "F3: AGENTS.md's block index carries B378"
 else
-  bad "E3: the block index does not know B378 (AGENTS rule 2)"
+  bad "F3: the block index does not know B378 (AGENTS rule 2)"
 fi
 
 printf '\n\033[1mB378 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"

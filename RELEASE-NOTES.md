@@ -52,19 +52,60 @@ verdict, and `.githooks/pre-push` now:
 * keeps the full log for the operator and says plainly that `--no-verify` is not a fix: it pushes the
   regression to `main` and from there to every device.
 
+### A HANG is not a wrong answer (found while pushing this very release)
+
+The first checked push of v1.5.117 ran the whole catalog and **failed B132**, which reported only:
+
+```
+FAIL  B132  … FAIL  go test FAILED: 2026/10/13 07:27:44 all-devices: propagated 1 rule row(s) …
+            FAIL  skygate/internal/feature/exit_rules 601.705s
+```
+
+Nothing there says the run **timed out**, nothing names the test, and `601.705s` has to be recognised by
+hand as Go's own 10-minute-per-package default. Reproducing the same tree with `-timeout 120s` produced
+the dump that identified the cause:
+
+```
+panic: test timed out after 2m0s
+  running tests:
+    TestB2761_MarkGroupKeepsTheIntent (7s)
+… skygate/internal/db.addColumnIfMissingSQLite → ExecContext → modernc.org/sqlite
+  → _winSync → syscall.FlushFileBuffers        <-- blocked in a Windows fsync
+```
+
+i.e. a **host filesystem stall inside a test's SQLite migration** — the same test passes in 2.6 s on the
+same host minutes later, and the three packages together take ~283 s on a quiet machine (exit_rules
+214 s, admin 68 s, i18n 0.6 s; the suite is fsync-heavy because every test migrates a fresh SQLite DB).
+The FAIL was real — the gate must not go green on a hang — but the **message** was a product-shaped lie:
+«go test FAILED» about a suite that never asserted anything wrong, which sends the operator hunting a
+regression that does not exist (the class B268/B327/B335 all paid for).
+
+Shipped: new `scripts/go_test_verdict.sh` reads `go test` output and answers the question the old message
+could not — **OK** / **FAILED** (naming the first failing test) / **HUNG** (naming the test that was
+running at the alarm *and* the blocking frame, deepest in our code when the stack reaches it) / **NO
+VERDICT** (a build error is neither a pass nor a test failure). B132 contract G routes its `go test`
+output through it and says out loud that a hang is not a failed assertion, with the measured cost
+baseline. The operator's own host was cleaned of 0.70 GB / 578 stale `%TEMP%` entries to take filesystem
+pressure off the fsync path.
+
 ### Verification
 
-* New contract **B378** (`scripts/check_b378_push_gate_and_host_artefacts.sh`): 19 contracts, 0 failed,
-  0 skipped — of which **four are behavioural and each one reproduces its original false FAIL**: the
-  verdict reader against planted green / red / timeout / crashed logs; `B352` with a `python3` that
-  runs nothing; `check_b_prod_health.sh` with `USER` and `LOGNAME` unset; and a conversion of a clean
-  file to CRLF in the working tree, which must leave `B337 C1` **PASS** while naming the artefact. The
-  check never executes the hook — that would run the catalog from inside the catalog.
+* New contract **B378** (`scripts/check_b378_push_gate_and_host_artefacts.sh`): 26 contracts, 0 failed,
+  0 skipped — **eleven of them behavioural**, and each one reproduces its original condition: the
+  verdict reader against planted green / red / timeout / crashed logs; the `go test` reader against a
+  shape-exact copy of the REAL hang dump (it must name `TestB2761_MarkGroupKeepsTheIntent` **and**
+  `skygate/internal/db.addColumnIfMissingSQLite`), an assertion failure, a green run and a build error;
+  `B352` with a `python3` that runs nothing; `check_b_prod_health.sh` with `USER` and `LOGNAME` unset;
+  and a conversion of a clean file to CRLF in the working tree, which must leave `B337 C1` **PASS**
+  while naming the artefact. The check never executes the hook — that would run the catalog from inside
+  the catalog.
 * **The release itself was pushed THROUGH the hook, with no `--no-verify`:** the catalog ran to
   `PASS 426 / FAIL 0 / TIMEOUT 0`, the new reader printed `push-gate: 426 passed, 0 failed, 0 timed
   out`, the hook answered «catalog green — push allowed», and CI is green for the pushed commit.
-* Neighbours re-run green: B322 14/0, B281 47/0, B327 31/0, B330 15/0, B335 25/0, B337 14/0,
-  B340 12/0, B352 9/0, B325 8/0, B325.1 0 fail.
+  (The first attempt aborted on the B132 hang described above — the hook refused the push, which is
+  exactly what it is for.)
+* Neighbours re-run green: B132 (the three packages, 283 s), B322 14/0, B281 47/0, B327 31/0, B330
+  15/0, B335 25/0, B337 14/0, B340 12/0, B352 9/0, B325 8/0, B325.1 0 fail.
 
 ### Also corrected
 

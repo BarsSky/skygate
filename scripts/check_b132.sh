@@ -183,10 +183,23 @@ if [ -z "${GO}" ]; then
 else
     test_out=$("${GO}" test -count=1 ./internal/feature/exit_rules/ ./internal/feature/admin/ ./internal/i18n/ 2>&1)
     test_rc=$?
+    # B378: a HANG is not an assertion failure, and the message must say which it is.
+    # Measured 2026-10-13 during the v1.5.117 checked push: exit_rules was killed at
+    # Go's own default budget (601.705s) with `syscall.FlushFileBuffers` blocked inside
+    # a test's SQLite migration, and this contract reported only the last two lines —
+    # «go test FAILED: … all-devices: propagated 1 rule row(s) …» — which named neither
+    # the timeout nor the test. The reader names the hanging test and the blocking frame.
+    verdict="$(printf '%s' "$test_out" | bash scripts/go_test_verdict.sh 2>/dev/null)"
+    vrc=$?
     if [ "${test_rc}" -eq 0 ]; then
         ok "go test PASSes for exit_rules + admin + i18n (B132 compiles + tests green)"
+    elif [ "${vrc}" -eq 2 ]; then
+        bad "go test HUNG — this is NOT a failed assertion, so look at the HOST and the cost of the suite before hunting a product regression:"
+        printf '%s\n' "$verdict" | sed 's/^/        /'
+        echo "        measured baseline on a quiet Windows host: exit_rules 214s, admin 68s, i18n 0.6s — the suite is fsync-heavy (every test migrates a fresh SQLite DB) and Go's own default budget is 10m PER PACKAGE" >&2
     else
-        bad "go test FAILED: ${test_out}"
+        bad "go test FAILED: ${verdict}"
+        printf '%s\n' "$test_out" | tail -n 8 | sed 's/^/        /' >&2
     fi
 fi
 
