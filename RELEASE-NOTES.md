@@ -12,6 +12,77 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.118 — the admin can finally delete a rule, and it deletes what the owner's page deletes (B379, closes TD-29)
+
+**Date:** 2026-10-13 · **Base:** `v1.5.117` → this tag · **Compatibility:** UI + API only — **no
+schema change, no migration, no new setting, no ACL semantics changed.** One route that the admin page
+has always posted to is now registered, four response fields are read from the query string, and three
+i18n keys are added. Every existing route keeps its auth; rollback by tag is safe.
+
+### The defect (measured 2026-10-11, filed while B376 was being written)
+
+Both delete controls on `/admin/exit-rules` post to `/admin/exit-rules/delete`, and **no `mux.Handle`
+registered that path**: a grep over the whole tree found the two forms and zero server-side matches.
+Every admin delete — of any rule, of any user — answered **404**, and there was no way at all to remove
+a rule from another user's device. `PostDeleteExitRule` exists, but it is registered only under
+`/my/exit-rules/delete` and deletes by the row's own `user_id`, so it can only ever delete the
+**caller's** rules. The workaround was to impersonate the user's page or edit the database by hand.
+
+### Why the fix is not a one-line `DeleteRule(id)`
+
+The owner's own delete is a decision tree, and the admin path had to copy it rather than invent one:
+
+| the rule being deleted | what the owner's page does | why it matters |
+|---|---|---|
+| `all_devices = 1` | cascades the whole **fan-out group** (B277.4) | one logical «все устройства» rule is one row PER DEVICE; deleting the clicked row alone leaves N-1 ghosts that keep the destination routed |
+| `target_type = 'domain'` | also deletes the derived **`/32` children** (B123/B184) | they are what the ACL actually pins, and the domain auto-updater re-resolves them on its next tick |
+| anything else | deletes the one row | — |
+
+Every one of those helpers is scoped by `user_id`, and the scope is load-bearing across users. So the
+handler resolves the rule's **owner** first — through the new `db.GetRuleAdminContext`, the one helper
+that reads a rule *without* a user filter — and then calls exactly the same three owner-scoped deletes
+the owner's page calls. The single-row delete goes through `DeleteRuleForUser` with the resolved owner,
+so a row that changed hands between the SELECT and the DELETE cannot be removed by accident.
+
+### Also shipped
+
+* The route sits behind `authMW` and the handler re-checks `IsAdmin` (defense in depth, like
+  `PostAdminExitRule`).
+* **The operator is told which cascade fired** — `deleted` / `deleted_cascade` / `deleted_fanout`, three
+  new keys in **both** catalogues — because "1 rule deleted" and "1 rule + 12 derived `/32` deleted" are
+  different outcomes for whoever reads the ACL next.
+* A **partial** delete (some ids were already gone) is warned about instead of being reported as a
+  complete one, and a **missing** rule produces a message instead of the `/my` path's silent skip (right
+  for a checkbox list, wrong for one explicit admin click).
+* Every delete writes an audit row `admin_delete_exit_rule_for_user` naming the **owner** (uid and
+  username), the device, the exit node, the target and which cascade ran.
+* The ACL is regenerated only on real drift, with the same throttle both other delete paths use, so a
+  delete whose effect the live policy already reflects does not spend a `SetPolicy` round trip.
+
+### Verification
+
+* **6 handler tests** (`internal/feature/exit_rules/admin_delete_b379_test.go`) against a real migrated
+  SQLite database: another user's rule is deleted; a domain row takes its derived `/32` children **and a
+  decoy row owned by a second user survives**; an `all_devices` rule takes its whole fan-out group; a
+  missing rule is reported and writes no audit row; a non-admin gets **403** and nothing is deleted; and
+  a legacy domain row with an **empty** `parent_domain` deletes as one row exactly as it does on `/my`
+  — the boundary of the parity, pinned rather than guessed.
+* **20 contracts** in `scripts/check_b379_admin_rule_delete.sh`, including the route registration, the
+  owner resolution, the three shared helpers and the i18n pairs in both catalogues.
+* Neighbours re-run green: B376 32/0 (its E10 contract still holds — the by-target view deliberately has
+  no delete control, and its comment now says why the route's existence does not change that decision),
+  B378 26/0, B330 15/0, B337 15/0, B340 12/0, B325 8/0.
+* The release was pushed **through the pre-push hook** (full catalog) with no `--no-verify`.
+
+### Documentation
+
+`docs/ROADMAP.md` + `docs/ru/ROADMAP.md`: TD-29 → **FIXED (B379)**; **TD-30 filed** (the
+`internal/feature/exit_rules` suite takes ~214 s on Windows because every test migrates a fresh SQLite
+DB, and that cost is what let a transient `FlushFileBuffers` stall reach Go's 10-minute budget); §4 was
+refreshed (TD-22's remaining "(a) reclassify five live-state contracts" was already closed by **B336** —
+they were an artefact — and its "(d) simplify the pre-push hook" was superseded by **B378**); §6's
+v1.6.0 line now names what is actually left (RR-2, RR-3, TD-21, TD-24, TD-30).
+
 ## v1.5.117 — a push is always checked, and the gate now says WHAT failed (B378)
 
 **Date:** 2026-10-12 · **Base:** `v1.5.116` → this tag · **Compatibility:** **nothing in the running

@@ -940,6 +940,45 @@ func FindSubnet32NoParentDomain(d *sql.DB, userID int64, deviceID int, exitNode 
 	return out, rows.Err()
 }
 
+// RuleAdminContext is everything a cross-user (admin) delete needs to know about one
+// device_rules row: WHO owns it and the natural key that decides which cascade applies.
+// B379 / TD-29.
+type RuleAdminContext struct {
+	UserID       int64
+	UserName     string
+	DeviceID     int
+	ExitNode     string
+	TargetType   string
+	TargetValue  string
+	ParentDomain string
+	AllDevices   bool
+}
+
+// GetRuleAdminContext resolves the owner of one rule by id, with NO user filter — the
+// deliberate difference from GetRuleFanOutKey, which takes a userID and therefore
+// returns ErrNotFound for a rule the caller does not own. The admin delete path reads
+// this FIRST, then calls the same owner-scoped deletes the owner's own page calls
+// (DeleteRuleForUser / DeleteRuleOrCascadeByParentDomain / DeleteAllDeviceFanOut), so
+// an admin delete and a self-service delete cannot diverge in what they remove.
+//
+// Returns ErrNotFound when the id does not exist, so the handler can tell "no such
+// rule" from "the delete failed".
+func GetRuleAdminContext(d *sql.DB, id int) (RuleAdminContext, error) {
+	var out RuleAdminContext
+	var allDevices int
+	err := d.QueryRow(qSelectRuleAdminContext, id).Scan(
+		&out.UserID, &out.UserName, &out.DeviceID, &out.ExitNode,
+		&out.TargetType, &out.TargetValue, &out.ParentDomain, &allDevices)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return out, ErrNotFound
+		}
+		return out, err
+	}
+	out.AllDevices = allDevices == 1
+	return out, nil
+}
+
 // DeleteRule removes a single rule by id, with no ownership check.
 // Use this only from contexts that already verified ownership
 // (e.g. admin actions, autoupdater). User-initiated deletes go

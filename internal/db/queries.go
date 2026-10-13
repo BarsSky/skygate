@@ -403,6 +403,18 @@ const qDeleteRulesByIDOrParentDomain = `DELETE FROM device_rules WHERE user_id =
 // qDeleteRulesByIDAndUser is the safe-by-ownership single delete.
 const qDeleteRulesByIDAndUser = `DELETE FROM device_rules WHERE id = $1 AND user_id = $2`
 
+// qSelectRuleAdminContext reads ONE device_rules row together with the identity of the
+// user who owns it, WITHOUT a user filter. It exists for the ADMIN delete path
+// (B379 / TD-29): an admin acts on behalf of the rule's owner, so the handler must
+// first learn who that is, and only then may it run the same cascade the owner's own
+// delete runs — otherwise an admin delete would silently skip the derived /32 children
+// (whose cascade is scoped by user_id) and the auto-updater would put them straight
+// back on its next tick.
+const qSelectRuleAdminContext = `SELECT user_id, COALESCE(user_name, ''), device_id,
+       COALESCE(exit_node_id, ''), target_type, target_value,
+       COALESCE(parent_domain, ''), COALESCE(all_devices, 0)
+  FROM device_rules WHERE id = $1`
+
 // qDeleteRulesByDeviceID removes every device_rules row that
 // references the given headscale node ID. Used by the
 // comprehensive device-delete flow (B171, v1.5.2) to clean up

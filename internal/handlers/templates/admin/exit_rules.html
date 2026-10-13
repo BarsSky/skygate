@@ -28,7 +28,16 @@
      of the user but doesn't impersonate them at the ACL
      layer. */}}
 {{if .applied}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{t "exit_rules_admin.add_form_applied"}}</div>{{end}}
+{{/* B379 / TD-29: the delete banner. It names WHICH cascade fired, because
+     "1 rule deleted" and "1 rule + 12 derived /32 deleted" are different
+     outcomes for whoever is reading the ACL next. */}}
+{{if .deleted}}{{if .deleted_cascade}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{tf "exit_rules_admin.deleted_cascade" .deleted .deleted_cascade}}</div>
+{{else if .deleted_fanout}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{tf "exit_rules_admin.deleted_fanout" .deleted .deleted_fanout}}</div>
+{{else}}<div class="alert alert-success"><i class="fa-solid fa-check"></i> {{tf "exit_rules_admin.deleted" .deleted}}</div>{{end}}{{end}}
 {{if .err}}<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> {{.err}}</div>{{end}}
+{{/* B379: a PARTIAL delete (some ids were already gone) is neither a success nor a
+     failure, and saying nothing would report it as a complete one. */}}
+{{if .warn}}<div class="alert alert-warn" id="admin-delete-warn"><i class="fa-solid fa-triangle-exclamation"></i> {{.warn}}</div>{{end}}
 {{/* B376: the «набросить группой» result. Same counters the single form uses,
      one banner for the whole batch, and the problem list (capped server-side) so
      a 50-row paste says WHICH rows it refused instead of only how many. */}}
@@ -338,9 +347,11 @@
   {{/* B376: THE BY-TARGET VIEW (admin). One row per destination, with the devices
        that carry it as tags carrying their OWNER ("michail/basic"), because this
        page is cross-user. The per-rule rows live in the expander with the B178 /
-       B182 / B184 annotation badges; deletion deliberately stays in the tree view
-       (this row's own delete control would post to a route that does not exist —
-       see target_view_admin.go's header). */}}
+       B182 / B184 annotation badges; deletion deliberately stays in the tree view,
+       where the per-rule controls have worked since B379 registered the
+       /admin/exit-rules/delete route (TD-29) — a delete HERE would mean "remove this
+       destination everywhere", which is a different action (see target_view_admin.go's
+       header). */}}
   {{if .TargetRowsAdmin}}
   <div class="table-wrap">
     <table>

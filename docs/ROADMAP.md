@@ -6,9 +6,10 @@ blocked, and the technical-debt register. It replaces the pre-v1.6 set
 2026-09-18 documentation restructure — the full text of every removed plan stays
 in git history.
 
-**Last updated:** 2026-10-12 (v1.5.117 cycle — the local push became a gate that names what
-failed, and the four host artefacts that had been mistaken for product defects were fixed at
-the cause; nothing in the running panel changed).
+**Last updated:** 2026-10-13 (v1.5.118 cycle — the admin per-rule delete works and closes
+TD-29, §4 was refreshed (TD-22's remaining work was already closed by B336 and its hook item
+was superseded by B378), and TD-30 was filed for the fsync cost that turns a host stall into
+a test timeout).
 
 > **This file was 85 releases behind.** Until 2026-10-01 it still described the
 > **v1.5.9** cycle (`Version line: v1.5.9`, "Last updated 2026-09-18"), so every
@@ -49,10 +50,11 @@ Related: [`AGENTS.md`](../AGENTS.md) (conventions + the compact block index),
 
 | | |
 |---|---|
-| Version line | **v1.5.117** (B378 — a push is always checked, and the gate now says WHAT failed. Operator instruction: «Пуш должен всегда проверяться и выявлять причины не работы и правится сразу». v1.5.116 had been pushed with `--no-verify`, and the honest reason was four HOST artefacts reported as product facts: `B352 D2` asked `command -v python3`, which on Windows is the Microsoft Store alias stub that resolves, runs NOTHING and exits 49, so a correct handler was declared broken (the interpreter is now probed for FUNCTION and a broken one SKIPs that half with a named reason); `check_b_prod_health.sh` read `${USER}` bare under `set -u` and died AFTER its four HTTP contracts had passed, on a shell that exports `PATH` but not `USER` (now `${USER:-${LOGNAME:-$(id -un)}}`); `B337 C1` judged a Windows working tree carrying CRLF while the INDEX is LF and named 22 correctly formatted files as drifted — recorded by B375 as «the KNOWN local C1 CRLF false failure», i.e. tolerated instead of fixed (the ratchet now re-checks a CR-stripped copy, detected with `cmp` because MSYS grep hides the CR in text mode); and B144 needed `LC_ALL=C.UTF-8` under MSYS (trap #10), which the hook now sets for Git Bash only. The hook also became self-explaining: `scripts/push_gate_verdict.sh` reads the catalog's verdict, NAMES the failing checks on RED, treats a log with NO verdict block as a failure (the pre-B335 symptom) and a TIMEOUT as a failure, reads the status from `PIPESTATUS[0]` rather than the `tee` in the pipeline, keeps the log, and says plainly that `--no-verify` is not a fix. No Go code, template, i18n key, schema or route changed — and the FIRST checked push then caught `B132` hanging in a Windows `FlushFileBuffers` inside a test's SQLite migration, reported as «go test FAILED» with neither the timeout nor the test named; the new `scripts/go_test_verdict.sh` now answers OK / FAILED (the first failing test) / HUNG (the test running at the alarm *and* the blocking frame) / NO VERDICT (a build error is neither), and `check_b132.sh` contract G routes its output through it) |
+| Version line | **v1.5.118** (B379 — the admin per-rule delete works, closing TD-29. Both delete controls on `/admin/exit-rules` had posted to `/admin/exit-rules/delete` since the page was written and **no route registered that path** (measured 2026-10-11: two forms, zero server-side matches), so every admin delete — of any rule, of any user — answered 404 and there was no way at all to remove a rule from another user's device. The route is registered behind `authMW` and the handler re-checks `IsAdmin`; the risk was never the route but the CASCADE, so it copies the owner's own decision tree instead of inventing one: `db.GetRuleAdminContext` (the one helper that reads a rule WITHOUT a user filter) resolves the OWNER, and the handler then calls the same owner-scoped deletes `/my/exit-rules` calls — the `all_devices` fan-out cascade (B277.4), the derived-`/32` cascade (B123/B184) or the single row — with `DeleteRuleForUser` re-checking the owner at DELETE time, so a row that changed hands between the SELECT and the DELETE cannot be removed by accident. The operator is told WHICH cascade fired (three new keys in both catalogues), a partial delete is warned about instead of passing as a complete one, a missing rule produces a message instead of `/my`'s silent skip, and every delete writes `admin_delete_exit_rule_for_user` naming the owner. 6 handler tests on a real migrated SQLite DB (incl. a decoy row owned by a second user that the cascade must not touch, and a legacy domain row with an empty `parent_domain` pinned as the boundary of the parity) + 20 contracts in `scripts/check_b379_admin_rule_delete.sh`) |
+| Version line (B378, previous) | **v1.5.117** (B378 — a push is always checked, and the gate now says WHAT failed. Operator instruction: «Пуш должен всегда проверяться и выявлять причины не работы и правится сразу». v1.5.116 had been pushed with `--no-verify`, and the honest reason was four HOST artefacts reported as product facts: `B352 D2` asked `command -v python3`, which on Windows is the Microsoft Store alias stub that resolves, runs NOTHING and exits 49, so a correct handler was declared broken (the interpreter is now probed for FUNCTION and a broken one SKIPs that half with a named reason); `check_b_prod_health.sh` read `${USER}` bare under `set -u` and died AFTER its four HTTP contracts had passed, on a shell that exports `PATH` but not `USER` (now `${USER:-${LOGNAME:-$(id -un)}}`); `B337 C1` judged a Windows working tree carrying CRLF while the INDEX is LF and named 22 correctly formatted files as drifted — recorded by B375 as «the KNOWN local C1 CRLF false failure», i.e. tolerated instead of fixed (the ratchet now re-checks a CR-stripped copy, detected with `cmp` because MSYS grep hides the CR in text mode); and B144 needed `LC_ALL=C.UTF-8` under MSYS (trap #10), which the hook now sets for Git Bash only. The hook also became self-explaining: `scripts/push_gate_verdict.sh` reads the catalog's verdict, NAMES the failing checks on RED, treats a log with NO verdict block as a failure (the pre-B335 symptom) and a TIMEOUT as a failure, reads the status from `PIPESTATUS[0]` rather than the `tee` in the pipeline, keeps the log, and says plainly that `--no-verify` is not a fix. No Go code, template, i18n key, schema or route changed — and the FIRST checked push then caught `B132` hanging in a Windows `FlushFileBuffers` inside a test's SQLite migration, reported as «go test FAILED» with neither the timeout nor the test named; the new `scripts/go_test_verdict.sh` now answers OK / FAILED (the first failing test) / HUNG (the test running at the alarm *and* the blocking frame) / NO VERDICT (a build error is neither), and `check_b132.sh` contract G routes its output through it) |
 | Version line (B376 + B377, previous) | **v1.5.116** (B376 + B377 — rules must be readable BY TARGET, installable as a BATCH, and handleable by an AI assistant from ONE link. Operator request: «сейчас не удобно отображение по группам у пользователя и нет возможности набрасывать правила группой» and «передавался токен и адрес для ИИ … агент уже пройдя по ссылке получает пакет с командами». `/my/exit-rules` and `/admin/exit-rules` gain a BY-TARGET view (one row per destination, the devices as tags, `?view=device` keeps the old tree) with collapse/expand-all, and a batch form (pasted list or JSON/CSV import) that installs on several devices in ONE action, applies the ACL ONCE and checks the caps per row against a live counter; the single-rule install core left `PostMyExitRule` for the shared `addRuleTarget`, so the single form, the batch and the admin path share one DNS-resolve / dedup / `parent_domain` implementation (exactly one `net.LookupHost` in the surface). `GET /my/exit-rules/agent` renders a self-contained package: credentials and where they came from, the API contract with a ready-to-edit request body, the constraints that cannot be guessed (one relay per prefix, a duplicate is not an error, a device with no relay preference has INERT rules, domains are re-resolved while a versioned hostname is not, a CDN domain expands into ranges shared with unrelated sites), and the LIVE state (devices with ids/counts/relays, relays, caps and usage, existing rules grouped by destination) — Markdown by default, `?format=json` for tools; `?token=` is accepted on that ONE path (pinned in `handlers.currentUser` beside the bcrypt walk, now shared as `claimsForAPIToken`) and the route deliberately does not sit behind the session-shaped `authMW`, because its own 401 is the gate. Also fixed: `parent_domain` is returned at last, `docs/api.md`'s stale GET/POST examples were corrected to the real shapes, the help page finally receives `BaseURL`, and `/my/tokens` renders a real created-token page (RU+EN) that builds the link in the browser. TD-29 filed: `/admin/exit-rules/delete` is registered nowhere, so both admin delete buttons answer 404) |
 | Reference host | production deployment healthy; `/readyz` reports db / headscale / headplane / tailscale |
-| Verify gate | `scripts/verify_pre_deploy.sh` runs **426 contracts** (`run_check` entries, counted 2026-10-12); live-state checks report `SKIP`, not `FAIL` (rule 1), and a SKIP never fails the gate. The catalog **ends on its own verdict** — `exit 1` on any FAIL or TIMEOUT (B335/TD-22) — so `.githooks/pre-push` really does block a red push, and since B378 it also **names the failing checks** instead of only announcing that something failed |
+| Verify gate | `scripts/verify_pre_deploy.sh` runs **427 contracts** (`run_check` entries, counted 2026-10-13); live-state checks report `SKIP`, not `FAIL` (rule 1), and a SKIP never fails the gate. The catalog **ends on its own verdict** — `exit 1` on any FAIL or TIMEOUT (B335/TD-22) — so `.githooks/pre-push` really does block a red push, and since B378 it also **names the failing checks** instead of only announcing that something failed |
 | Static analysis | `go vet` and `staticcheck` clean; **`gofmt` is NOT clean repo-wide** (302 of 835 tracked files) but the B337 ratchet freezes the leftover set and may only shrink — and it judges the **repository** content, so a Windows checkout's CRLF is no longer reported as drift (B378) |
 | Distribution | docker image `ghcr.io/barssky/skygate` (**linux/amd64 only**), Go tarballs linux/darwin × amd64/arm64, windows-amd64 zip, `SHA256SUMS` attached |
 | Databases | **SQLite and PostgreSQL are both first-class.** Schema parity is now *measured*, not asserted: 45 tables / 404 columns identical, both chains end at V77 (`internal/db/schema_parity_pg_test.go`, TD-17) |
@@ -156,32 +158,31 @@ Not tagged yet; listed here so the next release bookkeeping has something to mov
    checks / sub-contract SKIP rows`, counts a TIMEOUT as a failure, lists the
    failing check names, and ends on the verdict's own `exit 0` / `exit 1`;
    `scripts/check_b335_gate_verdict.sh` extracts that block and executes it, so
-   the contract cannot drift from the code. **(a) is the remaining work:**
-   reclassify the five live-state contracts — `B118`, `B119`, `B188.2`, `B189`,
-   `B190` — which measure the reference VM's accumulated debris (stale
-   `svyatoslava-legacy` / `b188_*` fixture rows, `derp_health` absent from the
-   live DB, 84 `skyworker` grants still pinned to `emilia`) rather than the tree,
-   and which are also **non-deterministic** (two runs of the same catalog gave
-   368/10 and 362/9). `B188.3` only fails because it inherits `B188.2`.
-   **(c)** then assert the exit code in `scripts/check_b322_gate_can_fail.sh`,
-   **(d)** then simplify the pre-push hook to a status check. `B1`, `B176`,
-   `B237.16` and `B294` were in the baseline list only because they run
-   `go test` and inherited the two non-hermetic `internal/headscale` tests that
-   **B332** fixed.
-2. **`gofmt` ratchet, then the renormalisation (TD-21).** Land the ratchet first
-   (the 302-file legacy set frozen as an allow-list, exactly like the B325 i18n
-   budgets, so the number can only fall), then `gofmt -w` over the tracked files as
-   **its own single-purpose release**: 38 737 whitespace-only lines would otherwise
+   the contract cannot drift from the code. **(a) is CLOSED, and not by
+   reclassification:** the five live-state contracts — `B118`, `B119`, `B188.2`,
+   `B189`, `B190` — were an **artefact** (B336): they read `SKYGATE_DB_DSN` from
+   `.env` and ran `psql` from the HOST while that DSN's host is the docker DNS name
+   `skygate-pg-local`, which resolves only inside the compose network, so the DNS
+   error went to `/dev/null` and an empty result was compared against 0. The per-check
+   budget (B281) and the hermetic headscale tests (B332) closed the rest.
+   **(c)** is DONE in substance: `scripts/check_b322_gate_can_fail.sh` carries the
+   "the catalog can fail" contracts (14) beside B335's verdict extraction —
+   re-verify before touching either. **(d) is SUPERSEDED by B378** rather than
+   simplified away: the hook runs the catalog, reads the verdict through
+   `scripts/push_gate_verdict.sh`, names the failing checks, treats a log with no
+   verdict block as a failure, and reports a HANG (`scripts/go_test_verdict.sh`)
+   differently from a failed assertion.
+2. **`gofmt` ratchet, then the renormalisation (TD-21).** The ratchet landed (B337):
+   the legacy set is frozen in `scripts/gofmt_legacy_allowlist.txt` and may only
+   shrink — **245 files** as of 2026-10-13 (was 276 at the measurement, then 247,
+   and B378 retired two more). Remaining: `gofmt -w` over the frozen set as **its
+   own single-purpose release**, because ~30k whitespace-only lines would otherwise
    bury a real change and poison `git blame`.
-3. **PostgreSQL coverage in the gate (TD-24).** CI's `test-pg` job is scoped to
-   `./internal/db/...`, so the live-PG tests in the two other packages that call
-   `db.OpenTestPG` — `internal/feature/admin` (18 call sites) and `internal/acl`
-   (4) — always skip; and `verify_pre_deploy.sh` exports no `SKYGATE_TEST_PG_DSN`,
-   so the VM gate reports PASS while testing SQLite only. Measured 2026-10-01:
-   CI's job now runs `go test ./...`, and the gate prints its PostgreSQL coverage
-   on every run instead of leaving it implicit. Remaining: run the full-tree
-   PG-enabled gate on the reference VM and record the result. Recipe and the
-   `CREATE SCHEMA` permission contract (including the reserved `pg_` schema
+3. **PostgreSQL coverage in the gate (TD-24).** CI's `test-pg` job now runs
+   `go test ./...` with the DSN, and `verify_pre_deploy.sh` prints its PostgreSQL
+   coverage on every run instead of leaving it implicit. Remaining: run the
+   full-tree PG-enabled gate on the reference VM and record the result. Recipe and
+   the `CREATE SCHEMA` permission contract (including the reserved `pg_` schema
    prefix that made the old probe fail): `docs/operations.md` §15.
 4. **Applier hardening (RR-3).** `systemctl reset-failed <service>` before the
    restart (observed live: a crashed unit refuses to start again and the privileged
@@ -196,12 +197,28 @@ Not tagged yet; listed here so the next release bookkeeping has something to mov
    for the one class the guard missed (a live `ANY($…)` in a tracked non-test Go
    file), but the Go-side guard itself has to grow the token set and stop skipping
    the migration chains.
+7. **TD-30 — the exit_rules suite is fsync-heavy, and that is what makes a host
+   stall look like a timeout.** Measured 2026-10-13 while pushing v1.5.117:
+   `go test ./internal/feature/exit_rules/` takes **214 s** on a quiet Windows host
+   (admin 68 s, i18n 0.6 s) because every test migrates a fresh SQLite DB, and Go's
+   own default budget is 10 minutes PER PACKAGE. A transient Windows stall inside
+   `FlushFileBuffers` (modernc.org/sqlite `_winSync`, reached through
+   `skygate/internal/db.addColumnIfMissingSQLite`) then took the package past that
+   budget and `B132` reported «go test FAILED» with neither the timeout nor the test
+   named. B378 fixed the MESSAGE (`scripts/go_test_verdict.sh` names the hanging test
+   and the blocking frame) and cleaned 0.70 GB of stale `%TEMP%` on the operator's
+   host, but the COST is still there. Candidate work: share one migrated DB template
+   across the package's tests, or give the contract an explicit `-timeout` so "slow"
+   and "hung" are told apart by a number instead of by intuition.
 
 **Landed since this list was written (2026-10-01):** TD-23 — the SQLite dialect leak
 in `internal/mesh/cleanup.go` (B331); TD-25 and TD-26 — the migration-chain audit
 covered only PostgreSQL and the V070 registry label disagreed between the chains
 (B333); RR-14 — the `docs/ru/` mirror had drifted from the English original (B330),
-which is now a standing contract rather than a one-off fix.
+which is now a standing contract rather than a one-off fix; **TD-29 — the admin
+per-rule delete answered 404 and is now a working, cross-user, audited handler with
+the owner's own cascades (B379)**; **B378 — the push gate is checked, self-explaining
+and no longer reddens for host artefacts.**
 
 ---
 
@@ -232,8 +249,11 @@ durable lessons are in [`docs/LESSONS.md`](LESSONS.md).
 
 ## 6. Feature roadmap (rough order)
 
-* **v1.6.0** — RR-2, RR-3 and the two gate items (TD-21, TD-22), plus TD-24
-  (PostgreSQL coverage) and TD-23 (the mesh dialect leak).
+* **v1.6.0** — RR-2, RR-3, TD-21 (the `gofmt` renormalisation release), TD-24 (the
+  full-tree PG-enabled gate run on the reference VM) and TD-30 (the `exit_rules`
+  suite's fsync cost, which is what turned a host stall into a 10-minute timeout).
+  TD-23 and TD-29 shipped, and TD-22 is closed except for re-verifying B322's
+  exit-code contracts.
 * **v1.6.x** — TD-13 backfill as features land; UI information density on
   `/admin/devices`; inline confirmation modals; backup auto-verify drill.
 * **v1.7.0** — module system completion (`B-mod-*`): Tailscale-as-module and the
@@ -276,7 +296,8 @@ durable lessons are in [`docs/LESSONS.md`](LESSONS.md).
 | TD-26 | The V070 migration's `Name` string differs between the chains — `v0.70 (B238)` in `driver_postgres.go` vs `v0.70 (B236)` in `driver_sqlite.go`, with the same `SourceFile`. This contradicts the invariant stated in `driver_sqlite.go`'s own header ("same version numbers, **same Name strings**, same SourceFile") | **FIXED 2026-10-01 (B333)** — the SQLite label now reads `v0.70 (B238)`, and `TestMigrations_ChainsRunInLockStep` fails on any future `Name` (or `SourceFile`) drift between the two registries. The same block found and fixed a second registry defect: V060/V061/V062 recorded `SourceFile` as two `_test.go` files and a wrong per-version file while the functions live in `migrations_pg.go` — now pinned by `TestMigrations_SourceFileNamesTheDefiningFile`, which resolves each entry's `Run` function through `runtime.FuncForPC(...).FileLine(...)` |
 | TD-27 | `internal/db/dialect_leak_guard_test.go` guards exactly **two** forbidden tokens and skips all `internal/db/migrations_*`. TD-23 was a live counter-example it did not catch | **PARTIAL 2026-10-01 (B331)** — the specific class has a real guard now: contract B1 of `scripts/check_b331_mesh_cleanup_dialect.sh` fails on any live `ANY($…)` in a tracked non-test Go file (comments may quote it). The Go leak-guard itself still covers two tokens and still skips the migration chains |
 | TD-28 | A killed PG-enabled test run made the next one "fail". `OpenTestPG` named each schema after the test and only dropped it on a graceful exit, so an interrupted run left rows behind and seeded INSERTs failed with a duplicate-key error that looked like a regression (13 stale schemas → four false failures in `display_prefs_b136_test.go`) | **FIXED 2026-10-01** — the helper now drops before it creates; verified by killing a run on purpose and re-running the four tests green |
-| TD-29 | **The admin exit-rules page has no working per-rule delete.** Both delete controls in `internal/handlers/templates/admin/exit_rules.html` post to `/admin/exit-rules/delete`, and **no `mux.Handle` registers that path** — measured 2026-10-11: a grep over the whole tree finds the two forms and zero server-side matches (`PostDeleteExitRule` is registered only under `/my/exit-rules/delete`, and it deletes by the row's own `user_id`, not on an admin's behalf). Clicking delete on `/admin/exit-rules` therefore answers 404. Found while adding B376's by-target view, which is why that view renders its per-rule rows **without** a delete control and points the operator at the tree instead of spreading the defect | OPEN — needs a handler (ownership check against the TARGET user, audit row, and the same caps the add path enforces) plus a contract; deliberately out of B376's scope |
+| TD-29 | **The admin exit-rules page had no working per-rule delete.** Both delete controls in `internal/handlers/templates/admin/exit_rules.html` post to `/admin/exit-rules/delete`, and **no `mux.Handle` registered that path** — measured 2026-10-11: a grep over the whole tree found the two forms and zero server-side matches (`PostDeleteExitRule` is registered only under `/my/exit-rules/delete`, and it deletes by the row's own `user_id`, not on an admin's behalf). Clicking delete on `/admin/exit-rules` therefore answered 404, and there was no way at all to remove a rule from another user's device | **FIXED 2026-10-13 (B379)** — the route is registered behind `authMW`, the handler re-checks `IsAdmin`, and it copies the owner's own decision tree instead of inventing one: it resolves the rule's OWNER through the new `db.GetRuleAdminContext` (the one helper that reads a rule without a user filter) and then calls the same owner-scoped deletes `/my/exit-rules` calls — the `all_devices` fan-out cascade (B277.4), the derived-`/32` cascade (B123/B184) or the single row, with `DeleteRuleForUser` re-checking the owner at DELETE time. The redirect names WHICH cascade fired, a partial delete is warned about, a missing rule produces a message instead of `/my`'s silent skip, and every delete writes `admin_delete_exit_rule_for_user` naming the owner. 6 handler tests against a real migrated SQLite DB (incl. a decoy row owned by a second user that the cascade must not touch) + 20 contracts in `scripts/check_b379_admin_rule_delete.sh` |
+| TD-30 | **The `internal/feature/exit_rules` suite is fsync-heavy, so a host stall looks like a test timeout.** Measured 2026-10-13 (Windows, quiet host): `go test ./internal/feature/exit_rules/` **214 s**, `internal/feature/admin` 68 s, `internal/i18n` 0.6 s — every test migrates a fresh SQLite DB — while Go's own default budget is 10 minutes PER PACKAGE. A transient `FlushFileBuffers` stall (modernc.org/sqlite `_winSync` under `skygate/internal/db.addColumnIfMissingSQLite`) pushed the package past the budget and `B132` reported «go test FAILED» without naming the timeout or the test | OPEN — B378 fixed the MESSAGE (`scripts/go_test_verdict.sh` now names the hanging test and the blocking frame, and the same test passes in 2.6 s afterwards) and cleaned 0.70 GB of stale `%TEMP%` on the operator's host, but the COST remains. Candidate work: share one migrated DB template across the package's tests, or give B132 an explicit `-timeout` so "slow" and "hung" are told apart by a number — see §4 item 7 |
 
 Module-system work is tracked under the `B-mod-*` IDs in the block index in
 `AGENTS.md` — `B-mod-core`, `B-mod-tailscale`, `B-mod-install`,

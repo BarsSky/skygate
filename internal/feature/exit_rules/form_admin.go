@@ -767,8 +767,21 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		// renders the form with the user's typed values
 		// preserved (B237.19 flash-banner UX, mirrored from
 		// /my/exit-rules).
-		"err":               r.URL.Query().Get("err"),
-		"applied":           r.URL.Query().Get("applied") == "1",
+		"err":     r.URL.Query().Get("err"),
+		"applied": r.URL.Query().Get("applied") == "1",
+		// B379 / TD-29: the admin per-rule delete posts to the now-registered
+		// /admin/exit-rules/delete and redirects back with the counts. `deleted` is the
+		// number of rows removed (the deleted rule plus any cascade it took with it), and
+		// the two extra numbers say WHICH cascade fired, because "1 rule deleted" and
+		// "1 rule + 12 derived /32 deleted" are very different outcomes for the operator
+		// who is looking at the ACL.
+		"deleted":         r.URL.Query().Get("deleted"),
+		"deleted_cascade": r.URL.Query().Get("deleted_cascade"),
+		"deleted_fanout":  r.URL.Query().Get("deleted_fanout"),
+		// B379: a delete that removed what it could and SKIPPED some ids must say so —
+		// the /my page has rendered `warn` since B237.19, and an admin path that dropped
+		// it would report a partial delete as a complete one.
+		"warn":              r.URL.Query().Get("warn"),
 		"form_user_id":      r.URL.Query().Get("form_user_id"),
 		"form_device_id":    r.URL.Query().Get("form_device_id"),
 		"form_exit_node":    r.URL.Query().Get("form_exit_node"),

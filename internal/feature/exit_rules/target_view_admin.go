@@ -19,12 +19,15 @@
 // operator typed, accept and deny never merge, the action is part of the key —
 // has exactly ONE implementation for both pages.
 //
-// Deliberately NOT here: a per-row delete control. The admin TREE's delete button
-// posts to /admin/exit-rules/delete, which no route registers (measured
-// 2026-10-11: grep over the whole tree finds the form in the template and no
-// mux.Handle for it), so it answers 404. Reproducing that control in a second
-// place would spread the defect; the new view is an overview and the tree keeps
-// whatever deletion story it has until that route exists.
+// Deliberately NOT here: a per-row delete control. When this view was added the admin
+// TREE's delete button posted to /admin/exit-rules/delete, which no route registered
+// (measured 2026-10-11: the form was in the template and there was no mux.Handle for it),
+// so it answered 404 — and reproducing that control in a second place would have spread
+// the defect. The route EXISTS since B379 (TD-29 closed, see admin_delete_b379.go), but
+// the decision stands on its own merits now: this view is an OVERVIEW — one row per
+// destination with devices as tags — and a delete here would have to mean "delete this
+// destination everywhere", which is a different, sharper action than the per-rule delete
+// the tree offers. Nothing is hidden: the tree is one click away (`?view=device`).
 package exit_rules
 
 import "sort"

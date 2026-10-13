@@ -842,6 +842,12 @@ func registerRoutes(
 	// is "any logged-in user", so a future router refactor
 	// can't bypass the admin-only contract.
 	mux.Handle("POST /admin/exit-rules", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRule)))
+	// B379 / TD-29: this path is what BOTH delete controls on /admin/exit-rules have
+	// posted to since the admin page was written — and nothing registered it, so every
+	// admin delete answered 404. The handler is cross-user (it resolves the rule's OWNER
+	// and then runs that owner's own cascade, see admin_delete_b379.go) and re-checks
+	// IsAdmin itself, like PostAdminExitRule above.
+	mux.Handle("POST /admin/exit-rules/delete", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRuleDelete)))
 	// B376: the admin twin of the bulk form — same fields, plus the target
 	// user. The handler does its own IsAdmin check (defense-in-depth), exactly
 	// like PostAdminExitRule above.
