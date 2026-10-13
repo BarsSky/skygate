@@ -21,13 +21,31 @@
 # A tag is a promise that a commit was tested; this script is what makes
 # the promise checkable.
 #
+# RESOLVING THE SHA (B381, 2026-10-13)
+#   Both sanctioned callers already pass a FULL sha (`.githooks/pre-tag` gets
+#   `$2` from git, `tag-release.yml` runs `git rev-parse HEAD`), so this never
+#   affects tagging. It does affect the operator who types
+#   `scripts/ci_gate.sh --sha 124f54ef`: `repos/.../runs?head_sha=<prefix>`
+#   matches NOTHING — the API compares the full value — and the empty answer
+#   was reported as `no 'ci.yml' run found for 124f54ef (was the commit pushed
+#   with --no-verify?)` while that commit's CI was green and running. The sha
+#   is therefore canonicalised through the local object database whenever it
+#   resolves, and a sha that does NOT resolve is reported as a limitation of
+#   the query rather than as a fact about the commit. Exit codes are unchanged.
+#
 # USAGE
 #   scripts/ci_gate.sh [--repo OWNER/NAME] [--sha SHA] [--workflow ci.yml]
 #                      [--branch main] [--wait SECONDS] [--allow-off-main]
 #                      [--quiet]
 #
 #   --repo        GitHub repo; defaults to $GITHUB_REPOSITORY, then `gh repo view`
-#   --sha         commit to verify; defaults to HEAD
+#   --sha         commit to verify; defaults to HEAD. A SHORT sha is accepted
+#                 and resolved through the local object database (B381): the
+#                 GitHub `head_sha` filter only matches the full 40-character
+#                 value, so a prefix used to be answered with an empty list and
+#                 reported as "this commit was never tested" — a false refusal
+#                 about a commit whose CI was green, which the operator cannot
+#                 act on. See the RESOLVING THE SHA note below.
 #   --workflow    the workflow file that must be green (default ci.yml)
 #   --branch      the branch the commit must be an ancestor of (default main)
 #   --wait N      poll up to N seconds while runs are queued/in_progress
@@ -48,6 +66,7 @@
 # workflow) so every bypass is visible where it is taken.
 #
 # 2026-09-22: B280.
+# 2026-10-13: B381 — a short sha is resolved, never reported as an untested commit.
 
 set -uo pipefail
 
@@ -102,6 +121,26 @@ case "$SHA" in
   *[!0-9a-fA-F]*) cant "sha '$SHA' is not a hex git object name" ;;
 esac
 
+# B381: the GitHub `head_sha` filter compares the FULL 40-character value, so a
+# prefix answers with an empty list — which used to be reported as "this commit
+# was never tested". Canonicalise through the local object database when we can;
+# a sha we cannot resolve is a limitation of the QUERY, and must never be turned
+# into a verdict about the commit (see the RESOLVING THE SHA note above).
+SHA_IS_SHORT=0
+if [ "${#SHA}" -lt 40 ]; then
+  SHA_IS_SHORT=1
+  resolved="$(git rev-parse --verify --quiet "${SHA}^{commit}" 2>/dev/null || true)"
+  if [ -n "$resolved" ]; then
+    say "ci_gate: $SHA resolved to $resolved"
+    SHA="$resolved"
+    SHA_IS_SHORT=0
+  else
+    say "ci_gate: WARNING — '$SHA' is ${#SHA} character(s) and does not resolve in this repository."
+    say "ci_gate:           GitHub's head_sha filter needs the full 40-character sha, so a short sha"
+    say "ci_gate:           can only be answered with an empty list. Pass the full sha (git rev-parse <ref>)."
+  fi
+fi
+
 say "ci_gate: repo=$REPO sha=$SHA workflow=$WORKFLOW branch=$BRANCH"
 
 # ── the commit must be on the release branch ──────────────────────────────
@@ -113,6 +152,13 @@ if [ "$ALLOW_OFF_MAIN" != "1" ]; then
   fi
   if ! git rev-parse --verify --quiet "origin/$BRANCH" >/dev/null; then
     cant "origin/$BRANCH is not available locally (fetch it: git fetch origin $BRANCH)"
+  fi
+  # B381, same principle as above: a commit this clone cannot resolve is a
+  # limitation of the LOOKUP. `git merge-base --is-ancestor <unknown>` fails, and
+  # that failure used to be reported as "$SHA is not an ancestor of origin/main"
+  # — a claim about the commit built out of our own missing object.
+  if ! git rev-parse --verify --quiet "${SHA}^{commit}" >/dev/null 2>&1; then
+    cant "sha '$SHA' is not in this repository's object database, so its ancestry cannot be checked (fetch it: git fetch origin $BRANCH)"
   fi
   if ! git merge-base --is-ancestor "$SHA" "origin/$BRANCH" 2>/dev/null; then
     fail "$SHA is not an ancestor of origin/$BRANCH — a release tag must point at a commit that went through the $BRANCH pipeline (override for a genuine hotfix with --allow-off-main / the SKYGATE_ALLOW_TAG_OFF_MAIN repo variable)"
@@ -153,6 +199,11 @@ while :; do
     summary "### CI gate: REFUSED"
     summary ""
     summary "No \`$WORKFLOW\` run exists for \`$SHA\` — the commit was never tested."
+    if [ "$SHA_IS_SHORT" = "1" ]; then
+      # B381: do not send the operator hunting for a --no-verify push that never
+      # happened. An unresolvable short sha explains this empty answer by itself.
+      fail "no '$WORKFLOW' run found for the short sha $SHA, and it does not resolve in this repository — the GitHub head_sha filter needs the full 40-character sha, so re-run with the full sha (git rev-parse <ref>) before concluding anything about CI"
+    fi
     fail "no '$WORKFLOW' run found for $SHA (was the commit pushed with --no-verify, or is CI disabled for it?)"
   fi
   if [ -n "$bad" ]; then

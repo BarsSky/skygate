@@ -12,6 +12,80 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.120 — the CI gate must look up the sha it was asked about (B381)
+
+**Date:** 2026-10-13 · **Base:** `v1.5.119` → this tag · **Compatibility:** no schema
+change, no request/response change, no routing semantics. One shell script
+(`scripts/ci_gate.sh`) and its contract change; the supported invocations and every exit
+code are unchanged, so the pre-tag hook and the release preflight keep their verdicts.
+
+### What happened (measured, while releasing v1.5.119)
+
+The push was green — `428 passed, 0 failed` — and `ci.yml` was **running** for `124f54ef`.
+Asking the gate about that very commit:
+
+```
+$ bash scripts/ci_gate.sh --sha 124f54ef
+ci_gate: NOT GREEN — no 'ci.yml' run found for 124f54ef (was the commit pushed with
+         --no-verify, or is CI disabled for it?)
+```
+
+The commit had been tested and its run was in flight.
+
+### Root cause
+
+`scripts/ci_gate.sh` puts the value it was given straight into GitHub's query:
+
+```
+GET repos/<repo>/actions/workflows/ci.yml/runs?head_sha=<sha>
+```
+
+That filter compares the **full 40-character** SHA. A prefix matches **nothing**, the API
+answers with an empty list, and the `total -eq 0` branch reported that empty answer as *"the
+commit was never tested"* — with a diagnosis (`--no-verify`?) that names a completely
+different situation. The verdict **fails safe** (it refuses; it never published anything),
+but it is wrong, and it sends the operator to hunt for a bypass that never happened. This is
+the same misleading-verdict class B378 closed on the push gate.
+
+### Measured impact — stated, not assumed
+
+Both sanctioned callers already pass a **full** SHA — `.githooks/pre-tag` receives `$2` from
+git, and `.github/workflows/tag-release.yml` runs `git rev-parse HEAD` — so **tagging was
+never at risk**. The defect is confined to a hand-invoked `--sha <prefix>`, which is exactly
+how an operator asks *"was the commit I just pushed tested?"*.
+
+### The fix
+
+* A short SHA is **canonicalised through the local object database**
+  (`git rev-parse --verify --quiet "<sha>^{commit}"`) **before** the ancestry check and
+  before the API query, so a prefix that names a real commit is looked up as that commit.
+* A SHA that does **not** resolve is reported as a limitation of the **query** — *"the
+  head_sha filter needs the full 40-character sha"* — and never as a fact about CI.
+* **The same principle one step earlier.** The ancestry check ran
+  `git merge-base --is-ancestor "$SHA" origin/main` without first asking whether the commit
+  was present at all, so a missing object was converted into the claim *"`<sha>` is not an
+  ancestor of origin/main"*. An unresolvable commit is now **exit 2 (cannot verify)** — the
+  status both callers are required to refuse on — instead of a wrong exit 1.
+* Exit codes are otherwise untouched: `0` green, `1` not green, `2` cannot verify. The whole
+  B280 D-matrix (green / failed / cancelled / timed-out / pending / mixed / none / API error)
+  keeps its verdicts, which is asserted by that check itself.
+
+### Verification
+
+* `scripts/check_b381_ci_gate_sha_resolution.sh` — 24 contracts, including the **mutation
+  tooth**: a stubbed `gh` records the URL it was handed, so deleting the canonicalisation
+  turns B1/B2/B3 red (the short sha is seen reaching the API). `D4`/`D5` pin the
+  missing-object case: exit 2, and no `not an ancestor` claim. `G1`–`G3` guard the
+  catalog's own registration — a `run_check "ID" "description"` line that forgot its
+  trailing ` \` calls `run_check` with two arguments, and B381 paid a full 55-minute
+  gate run for exactly that before its first push (the catalog's runtime guard refused
+  the push, so the safety net worked — but three seconds of `awk` is the right price);
+  `G1` is proven by mutation against the REAL catalog, not just a synthetic pair. The
+  behaviour half runs in a scratch git repository with a real commit, uses no network,
+  and keeps every scratch file under `mktemp -d` (trap #13).
+* `scripts/check_b280_ci_gates_release.sh` — unchanged and re-run green: the escape hatch,
+  the ancestry contracts and the exit-code matrix are untouched.
+
 ## v1.5.119 — rules you can group by your OWN name (B380)
 
 **Date:** 2026-10-13 · **Base:** `v1.5.118` → this tag · **Compatibility:** one **additive**
