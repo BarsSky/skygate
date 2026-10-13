@@ -194,6 +194,9 @@ func (s *Service) buildAgentSnapshot(r *http.Request, username string, isAdmin b
 				Action:       rr.Action,
 				ParentDomain: rr.ParentDomain,
 				AllDevices:   rr.AllDevices,
+				// B380: the human's own group name travels with the rule, so a plan can
+				// be filed the way they already file things.
+				Group: rr.GroupLabel,
 			})
 		}
 	}

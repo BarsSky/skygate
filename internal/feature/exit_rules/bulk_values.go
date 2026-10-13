@@ -65,6 +65,14 @@ type BulkValue struct {
 	// Device is a device hostname from an optional per-row device column
 	// ("" = the devices selected in the form apply).
 	Device string
+
+	// Group is the operator's own group name for this rule (v0.79 / B380), already
+	// normalised. It can only arrive from JSON: the positional CSV/TSV shapes are
+	// deliberately NOT extended with a free-text column, because a label containing a
+	// comma would make the positional contract ambiguous — for a pasted list the
+	// batch-level `group_label` field of the form applies to every row instead, and
+	// the help page says so.
+	Group string
 }
 
 // TargetTypeKindOf returns the target_type a bare value implies, or "" when
@@ -206,6 +214,9 @@ func parseBulkJSON(text, defaultType, defaultAction string) ([]BulkValue, []stri
 		Value       string `json:"value"`
 		Action      string `json:"action"`
 		Device      string `json:"device"`
+		// B380: the operator's own group name, per rule. This is the ONLY
+		// per-rule way to set a label (see BulkValue.Group for why CSV has none).
+		Group string `json:"group"`
 	}
 
 	var envelope struct {
@@ -277,6 +288,7 @@ func parseBulkJSON(text, defaultType, defaultAction string) ([]BulkValue, []stri
 			Value:      canonical,
 			Action:     action,
 			Device:     strings.TrimSpace(r.Device),
+			Group:      NormaliseGroupLabel(r.Group),
 		}
 		key := bv.Device + "|" + bv.TargetType + "|" + bv.Value
 		if seen[key] {

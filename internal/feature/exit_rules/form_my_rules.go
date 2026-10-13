@@ -566,6 +566,8 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	formTargetType := r.URL.Query().Get("form_target_type")
 	formTargetValue := r.URL.Query().Get("form_target_value")
 	formAction := r.URL.Query().Get("form_action")
+	// B380: the group name is part of the preserved form state (see FormValues below).
+	formGroupLabel := NormaliseGroupLabel(r.URL.Query().Get("form_group_label"))
 	if formTargetType == "" {
 		formTargetType = "ip"
 	}
@@ -811,14 +813,31 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// nobody) still has rows; the tree's own label map names it.
 		return deviceNames[id]
 	})
-	// The view selector is a query parameter, so a link can point at either
-	// view. The by-target list is the default: it answers the question the
-	// device tree made the operator reconstruct by eye ("which of my machines
-	// route this destination, and through which relay?").
+	// The view selector is a query parameter, so a link can point at any view.
+	// "target" (B376) is the default: it answers the question the device tree made
+	// the operator reconstruct by eye ("which of my machines route this destination,
+	// and through which relay?"). "group" (B380) answers the OTHER question the
+	// operator asked for — «сгруппировать правила по своему названию» — and "device"
+	// keeps the original tree.
 	viewMode := "target"
-	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("view")), "device") {
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("view"))) {
+	case "device":
 		viewMode = "device"
+	case "group", "group_label", "labels":
+		// Three spellings accepted so a hand-typed or older link still lands on the
+		// view instead of silently falling back to by-target.
+		viewMode = "group"
 	}
+	// B380: the label groups are built from the SAME rule slice the other two views
+	// read, so no view can disagree with another about what the user has.
+	ruleRows := ruleRowsFromDeviceRules(rules)
+	labelGroups := GroupRulesByLabel(ruleRows, func(id int) string {
+		if n := deviceNameByID[id]; n != "" {
+			return n
+		}
+		return deviceNames[id]
+	})
+	groupNames := GroupNamesForSuggestions(ruleRows)
 	s.Backend.RenderWithLayout(w, r, "exit_rules.html", c, map[string]any{
 		"Page":              "exit-rules",
 		"Title":             "Exit Rules",
@@ -871,6 +890,10 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 			"target_type":  formTargetType,
 			"target_value": formTargetValue,
 			"action":       formAction,
+			// B380: keep the group name the operator typed when a submit is refused,
+			// for the same reason every other field is kept — re-typing it is exactly
+			// the friction the flash-banner UX (B237.19) removed.
+			"group_label": formGroupLabel,
 		},
 		"duplicate":     duplicate,
 		"warn":          r.URL.Query().Get("warn"),
@@ -921,12 +944,28 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		"TargetRows":        targetRows,
 		"TargetDeviceCount": TargetRowDeviceCount(targetRows),
 		"ViewMode":          viewMode,
-		"bulk":              r.URL.Query().Get("bulk") != "",
-		"bulk_added":        r.URL.Query().Get("bulk_added"),
-		"bulk_dup":          r.URL.Query().Get("bulk_dup"),
-		"bulk_skip":         r.URL.Query().Get("bulk_skip"),
-		"bulk_devices":      r.URL.Query().Get("bulk_devices"),
-		"bulk_limit":        r.URL.Query().Get("bulk_limit") == "1",
-		"bulk_err":          r.URL.Query().Get("bulk_err"),
+		// B380: the operator's own groups, in render order (named groups
+		// alphabetically, the ungrouped bucket last), plus the suggestion list for the
+		// forms' group input so a second rule filed under the same thing cannot become
+		// a near-duplicate by a typo.
+		"LabelGroups":      labelGroups,
+		"GroupLabelNames":  groupNames,
+		"GroupLabelMaxLen": GroupLabelMaxRunes,
+		"bulk":             r.URL.Query().Get("bulk") != "",
+		"bulk_added":       r.URL.Query().Get("bulk_added"),
+		"bulk_dup":         r.URL.Query().Get("bulk_dup"),
+		"bulk_skip":        r.URL.Query().Get("bulk_skip"),
+		"bulk_devices":     r.URL.Query().Get("bulk_devices"),
+		"bulk_limit":       r.URL.Query().Get("bulk_limit") == "1",
+		"bulk_err":         r.URL.Query().Get("bulk_err"),
+		// B380: the rename/clear flash. It travels in the query string like every
+		// other flash on this page, so a refresh does not re-submit the form.
+		"group_renamed": r.URL.Query().Get("group_renamed"),
+		"group_cleared": r.URL.Query().Get("group_cleared") == "1",
+		"group_to":      r.URL.Query().Get("group_to"),
+		"group_err":     r.URL.Query().Get("group_err"),
+		// B380: which group the operator just filed rules under, so the page can
+		// open that group instead of leaving them to find it.
+		"group_saved": NormaliseGroupLabel(r.URL.Query().Get("group_saved")),
 	})
 }

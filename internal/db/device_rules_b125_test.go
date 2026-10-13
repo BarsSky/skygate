@@ -43,7 +43,7 @@ func TestAppendDeviceRule_B125_Sequential_SameKey_OneRow(t *testing.T) {
 	for i := 0; i < N; i++ {
 		id, err := AppendDeviceRule(d, 1, 8, "relay-b125",
 			"subnet", "1.2.3.4/32", "accept",
-			"100.64.0.1", "b125test.com", "", "")
+			"100.64.0.1", "b125test.com", "", "", "")
 		if err != nil {
 			t.Fatalf("call %d: AppendDeviceRule: %v", i, err)
 		}
@@ -102,7 +102,7 @@ func TestAppendDeviceRule_B125_DistinctKeys(t *testing.T) {
 	seenIDs := make(map[int64]bool)
 	for _, c := range cases {
 		id, err := AppendDeviceRule(d, 1, c.deviceID, c.exitNode,
-			c.targetType, c.targetVal, "accept", "100.64.0.1", c.parent, "", "")
+			c.targetType, c.targetVal, "accept", "100.64.0.1", c.parent, "", "", "")
 		if err != nil {
 			t.Errorf("%s: AppendDeviceRule: %v", c.name, err)
 		}
@@ -130,11 +130,11 @@ func TestAppendDeviceRule_B125_SameKeyReturnsSameID(t *testing.T) {
 		t.Fatalf("seed portal_users: %v", err)
 	}
 
-	id1, err := AppendDeviceRule(d, 1, 8, "relay-b125", "domain", "example.com", "accept", "100.64.0.1", "example.com", "", "")
+	id1, err := AppendDeviceRule(d, 1, 8, "relay-b125", "domain", "example.com", "accept", "100.64.0.1", "example.com", "", "", "")
 	if err != nil {
 		t.Fatalf("first AppendDeviceRule: %v", err)
 	}
-	id2, err := AppendDeviceRule(d, 1, 8, "relay-b125", "domain", "example.com", "accept", "100.64.0.1", "example.com", "", "")
+	id2, err := AppendDeviceRule(d, 1, 8, "relay-b125", "domain", "example.com", "accept", "100.64.0.1", "example.com", "", "", "")
 	if err != nil {
 		t.Fatalf("second AppendDeviceRule: %v", err)
 	}

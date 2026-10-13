@@ -818,6 +818,10 @@ func registerRoutes(
 	// form twin of the already-existing batch API (POST /my/exit-rules/api) and
 	// shares its insertion core with the single-rule form (addRuleTarget).
 	mux.Handle("POST /my/exit-rules/bulk", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRulesBulk)))
+	// B380: rename (or clear) the user's OWN group label across their rules. Owner-scoped
+	// in db.SetDeviceRuleGroup, and deliberately free of any ACL consequence: the label is
+	// presentation the user owns and never reaches the policy generator.
+	mux.Handle("POST /my/exit-rules/group", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRuleGroup)))
 	mux.Handle("GET /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(exitRulesSvc.GetExitRulesAPI))))
 	mux.Handle("POST /my/exit-rules/api", authMW(apiMW(http.HandlerFunc(exitRulesSvc.PostExitRulesAPI))))
 	mux.Handle("GET /my/exit-rules/help", authMW(http.HandlerFunc(exitRulesSvc.GetExitRulesAPIHelp)))

@@ -139,6 +139,13 @@
       <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_target_value"}}</span>
       <input type="text" name="target_value" value="{{.form_target_value}}" required placeholder="1.2.3.4 or example.com" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
     </label>
+    {{/* B380: the admin types the group name the USER asked for — the label is stored
+         on the target user's rules (device_rules.group_label), exactly as their own
+         form would store it, and it never changes routing. */}}
+    <label style="display:flex;flex-direction:column;gap:2px;grid-column:2/3">
+      <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.group_label"}}</span>
+      <input type="text" name="group_label" value="{{.form_group_label}}" maxlength="{{.GroupLabelMaxLen}}" placeholder="{{t "exit_rules.group_label_ph"}}" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+    </label>
     <label style="display:flex;flex-direction:column;gap:2px">
       <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.add_form_action"}}</span>
       <select name="action" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)" aria-label="{{t "exit_rules_admin.add_form_action"}}">

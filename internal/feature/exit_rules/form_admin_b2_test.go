@@ -41,8 +41,8 @@ import (
 func TestBuildAdminExitRuleRedirectURL_BasicShape(t *testing.T) {
 	got := buildAdminExitRuleRedirectURL(
 		"device not owned by user daniil",
-		"7", // user_id (daniil's portal_users.id, form-value as string)
-		42, "karolina", "ip", "1.2.3.4", "accept",
+		"7", // user_id (daniil's portal_users.id, form-value as string, "")
+		42, "karolina", "ip", "1.2.3.4", "accept", "",
 	)
 	u, err := url.Parse(got)
 	if err != nil {
@@ -77,7 +77,7 @@ func TestBuildAdminExitRuleRedirectURL_BasicShape(t *testing.T) {
 func TestBuildAdminExitRuleRedirectURL_SpecialChars(t *testing.T) {
 	got := buildAdminExitRuleRedirectURL(
 		"bad value: a&b=c?d#e+f%",
-		"7", 42, "host", "ip", "1.2.3.4", "accept",
+		"7", 42, "host", "ip", "1.2.3.4", "accept", "",
 	)
 	u, err := url.Parse(got)
 	if err != nil {

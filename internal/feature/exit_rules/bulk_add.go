@@ -114,7 +114,16 @@ type targetInsert struct {
 // addRuleTarget resolves (for target_type=domain) and inserts one destination
 // for one device. It is the single installation path shared by the single-rule
 // form (form_my.go, form_admin.go) and the bulk form.
-func (s *Service) addRuleTarget(userID int64, devID int, deviceIP, exitNode, targetType, targetValue, action string) targetInsert {
+//
+// B380: groupLabel is the operator's own group name for this destination. It is written
+// to the domain row AND to every derived /32 row, because the derived rows are what the
+// page lists once a domain resolves — a label that stopped at the domain row would leave
+// the visible rows ungrouped. It is normalised HERE as well as at the form layer: the
+// invariant "what is stored is normalised" has to hold for every caller (the two forms,
+// the bulk parser, the API, the fan-out), and an unnormalised label would create a second
+// group the user cannot reproduce by typing its name again.
+func (s *Service) addRuleTarget(userID int64, devID int, deviceIP, exitNode, targetType, targetValue, action, groupLabel string) targetInsert {
+	groupLabel = NormaliseGroupLabel(groupLabel)
 	res := targetInsert{
 		TypeInserted: targetType,
 		Warning:      "",
@@ -154,7 +163,7 @@ func (s *Service) addRuleTarget(userID int64, devID int, deviceIP, exitNode, tar
 	// read this row.
 	if targetType == "domain" {
 		if existingDomainID, _ := db.FindDomainRuleID(s.dbc(), userID, devID, exitNode, targetValue); existingDomainID == 0 {
-			_, _ = db.AppendDeviceRule(s.dbc(), userID, devID, exitNode, "domain", targetValue, action, deviceIP, targetValue, "", "")
+			_, _ = db.AppendDeviceRule(s.dbc(), userID, devID, exitNode, "domain", targetValue, action, deviceIP, targetValue, groupLabel, "", "")
 			res.DomainRowInserted = true
 			res.UserFacing++
 		} else {
@@ -169,7 +178,7 @@ func (s *Service) addRuleTarget(userID int64, devID int, deviceIP, exitNode, tar
 	}
 
 	for _, ip := range ipsToInsert {
-		ok, existingID := s.insertRuleUnique(userID, devID, exitNode, res.TypeInserted, ip, action, deviceIP, res.SubnetParent)
+		ok, existingID := s.insertRuleUnique(userID, devID, exitNode, res.TypeInserted, ip, action, deviceIP, res.SubnetParent, groupLabel)
 		if !ok {
 			res.Err = "db error"
 			return res
@@ -219,6 +228,10 @@ type bulkRuleRequest struct {
 	ExitNode      string
 	DefaultAction string
 	Values        []BulkValue
+
+	// GroupLabel (B380) is the batch-level group name; a row that carries its own
+	// (JSON group) wins over it.
+	GroupLabel string
 
 	// ActorName is the portal user performing the action (for the audit text).
 	ActorName string
@@ -302,7 +315,12 @@ func (s *Service) applyBulkRules(req bulkRuleRequest) bulkRuleOutcome {
 				out.Problems = append(out.Problems, reason)
 				continue
 			}
-			ins := s.addRuleTarget(req.UserID, devID, ipByID[devID], req.ExitNode, bv.TargetType, bv.Value, action)
+			// B380: the row's own group wins over the batch's.
+			label := bv.Group
+			if label == "" {
+				label = req.GroupLabel
+			}
+			ins := s.addRuleTarget(req.UserID, devID, ipByID[devID], req.ExitNode, bv.TargetType, bv.Value, action, label)
 			if ins.Err != "" {
 				out.Skipped++
 				out.Problems = append(out.Problems, fmt.Sprintf("%s %s: %s", bv.TargetType, bv.Value, ins.Err))
@@ -336,6 +354,11 @@ type bulkFormInput struct {
 	DeviceIDs     []int
 	AllDevices    bool
 	Problems      []string
+	// GroupLabel (B380) is the batch-level group name: every rule in the batch that
+	// does not carry its own (JSON `group`) is filed under it. A pasted list gets its
+	// label from here because the positional CSV shapes have no group column — see
+	// BulkValue.Group.
+	GroupLabel string
 }
 
 // parseBulkForm reads the shared bulk fields from a (possibly multipart) form
@@ -356,6 +379,9 @@ func (s *Service) parseBulkForm(r *http.Request, devField, userField string) (bu
 	in.DefaultType = strings.TrimSpace(r.FormValue("bulk_target_type"))
 	in.DefaultAction = strings.TrimSpace(r.FormValue("bulk_action"))
 	in.ExitNode = strings.TrimSpace(r.FormValue("bulk_exit_node"))
+	// B380: one group name for the whole batch (normalised here, so the parser and the
+	// writer cannot disagree about what "the same group" means).
+	in.GroupLabel = NormaliseGroupLabel(r.FormValue("bulk_group_label"))
 	if in.DefaultAction == "" {
 		in.DefaultAction = "accept"
 	}
@@ -543,6 +569,7 @@ func (s *Service) PostMyExitRulesBulk(w http.ResponseWriter, r *http.Request) {
 		ExitNode:      in.ExitNode,
 		DefaultAction: in.DefaultAction,
 		Values:        in.Values,
+		GroupLabel:    in.GroupLabel,
 		ActorName:     c.Username,
 	})
 	out.Problems = append(in.Problems, out.Problems...)
@@ -642,6 +669,7 @@ func (s *Service) PostAdminExitRulesBulk(w http.ResponseWriter, r *http.Request)
 		ExitNode:      in.ExitNode,
 		DefaultAction: in.DefaultAction,
 		Values:        in.Values,
+		GroupLabel:    in.GroupLabel,
 		ActorName:     c.Username,
 	})
 	out.Problems = append(in.Problems, out.Problems...)
@@ -757,6 +785,10 @@ func ruleRowsFromDeviceRules(rules []db.DeviceRule) []RuleRow {
 			ParentDomain: r.ParentDomain,
 			Action:       r.Action,
 			AllDevices:   r.AllDevices,
+			// B380: the operator's own group label rides along with the row, so the
+			// group view and the by-target chips read ONE projection — a second source
+			// of truth here is how a label goes missing on exactly one view.
+			GroupLabel: r.GroupLabel,
 		}
 	}
 	return out

@@ -27,7 +27,7 @@ import (
 func TestBuildFormErrorRedirectURL_BasicShape(t *testing.T) {
 	got := buildFormErrorRedirectURL(
 		"invalid target_value \"foo\": expected IP or CIDR for target_type=ip",
-		42, "karolina", "ip", "foo", "accept",
+		42, "karolina", "ip", "foo", "accept", "",
 	)
 	u, err := url.Parse(got)
 	if err != nil {
@@ -65,8 +65,8 @@ func TestBuildFormErrorRedirectURL_SpecialCharsInErrMsg(t *testing.T) {
 	// fmt.Sprintf — so we need url.QueryEscape on
 	// the errMsg.
 	got := buildFormErrorRedirectURL(
-		"bad value: a&b=c?d#e+f%",  // every reserved char
-		1, "host", "ip", "1.2.3.4", "accept",
+		"bad value: a&b=c?d#e+f%", // every reserved char
+		1, "host", "ip", "1.2.3.4", "accept", "",
 	)
 	u, err := url.Parse(got)
 	if err != nil {
@@ -92,7 +92,7 @@ func TestBuildFormErrorRedirectURL_EmptyErrMsg(t *testing.T) {
 	// check fires before the errMsg is populated. The
 	// resulting URL must still be valid (template's
 	// `{{if .err}}` gate filters it out).
-	got := buildFormErrorRedirectURL("", 1, "host", "ip", "1.2.3.4", "accept")
+	got := buildFormErrorRedirectURL("", 1, "host", "ip", "1.2.3.4", "accept", "")
 	u, err := url.Parse(got)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -106,7 +106,7 @@ func TestBuildFormErrorRedirectURL_NumericFormDeviceID(t *testing.T) {
 	// Same invariant as B123: form_device_id is always a
 	// numeric string (strconv.Itoa). The template's
 	// <select> default-matching depends on it.
-	got := buildFormErrorRedirectURL("oops", 999, "host", "ip", "1.2.3.4", "accept")
+	got := buildFormErrorRedirectURL("oops", 999, "host", "ip", "1.2.3.4", "accept", "")
 	u, err := url.Parse(got)
 	if err != nil {
 		t.Fatalf("parse: %v", err)

@@ -213,7 +213,11 @@ func addRuleReply(env BotEnv, args []string) string {
 		// src=device_ip for that one rule, so the rule is live
 		// immediately and switches to the tag-based src after the
 		// backfill lands.
-		rowID, err := db.AppendDeviceRule(env.DB, target.ID, devID, exitNodeHostname, typeToInsert, ip, action, deviceIP, parentDomain, target.Username, "")
+		// B380: the bot does not offer a group name yet (a chat command has no room for
+		// an optional label without inventing syntax), so its rules are inserted
+		// ungrouped — exactly what a rule added before v0.79 looked like. The user can
+		// file it afterwards from /my/exit-rules in one click.
+		rowID, err := db.AppendDeviceRule(env.DB, target.ID, devID, exitNodeHostname, typeToInsert, ip, action, deviceIP, parentDomain, "", target.Username, "")
 		if err != nil {
 			return i18n.Tf(lang, "bot.add_rule.db_error", err)
 		}

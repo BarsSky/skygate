@@ -220,9 +220,23 @@ var ruExitRules = map[string]string{
 	// B376 (2026-10-11, жалоба оператора): «не удобно отображение по группам у
 	// пользователя» + «нет возможности набрасывать правила группой». Вид «по цели»,
 	// общее сворачивание групп и групповая наброска правил.
-	"exit_rules.view_label":                        "Показать:",
-	"exit_rules.view_target":                       "По цели",
-	"exit_rules.view_device":                       "По устройству",
+	"exit_rules.view_label":  "Показать:",
+	"exit_rules.view_target": "По цели",
+	"exit_rules.view_device": "По устройству",
+	// B380: the operator's own grouping. Everything else in this block is DERIVED
+	// (CDN ranges, destination, device); these keys are for the labels the USER typed.
+	"exit_rules.view_group":                        "По моим группам",
+	"exit_rules.group_label":                       "Группа",
+	"exit_rules.group_label_ph":                    "например: Игры",
+	"exit_rules.group_label_hint":                  "Ваше собственное название для этих правил — по нему их можно собрать на странице. На маршрутизацию не влияет.",
+	"exit_rules.group_label_bulk_hint":             "Одна группа для всего списка. В JSON группу можно задать каждой строке («group»), у вставленного списка — только здесь.",
+	"exit_rules.group_ungrouped":                   "Без группы",
+	"exit_rules.group_rule_count":                  "правил: %d",
+	"exit_rules.group_rename_label":                "Переименовать группу",
+	"exit_rules.group_rename_btn":                  "Сохранить",
+	"exit_rules.group_clear_btn":                   "Снять группу",
+	"exit_rules.group_rename_hint":                 "Переименование меняет только название — правила и маршрутизация не затрагиваются.",
+	"exit_rules.group_empty":                       "Правил пока нет — добавьте первое и назовите его группу, чтобы страницу можно было читать по своим названиям.",
 	"exit_rules.expand_all":                        "Развернуть всё",
 	"exit_rules.expand_all_title":                  "Развернуть все группы правил на странице",
 	"exit_rules.collapse_all":                      "Свернуть всё",
@@ -650,9 +664,22 @@ var enExitRules = map[string]string{
 	// B376 (2026-10-11, operator report): «не удобно отображение по группам у
 	// пользователя» + «нет возможности набрасывать правила группой». By-target
 	// view, shared collapse controls and the batch add form.
-	"exit_rules.view_label":                        "View:",
-	"exit_rules.view_target":                       "By target",
-	"exit_rules.view_device":                       "By device",
+	"exit_rules.view_label":  "View:",
+	"exit_rules.view_target": "By target",
+	"exit_rules.view_device": "By device",
+	// B380: the operator's own grouping (see the RU map).
+	"exit_rules.view_group":                        "By my groups",
+	"exit_rules.group_label":                       "Group",
+	"exit_rules.group_label_ph":                    "e.g. Games",
+	"exit_rules.group_label_hint":                  "Your own name for these rules — the page can collect them by it. It does not affect routing.",
+	"exit_rules.group_label_bulk_hint":             "One group for the whole list. JSON can set a group per rule (\"group\"); a pasted list can only use this field.",
+	"exit_rules.group_ungrouped":                   "Ungrouped",
+	"exit_rules.group_rule_count":                  "%d rule(s)",
+	"exit_rules.group_rename_label":                "Rename the group",
+	"exit_rules.group_rename_btn":                  "Save",
+	"exit_rules.group_clear_btn":                   "Clear the group",
+	"exit_rules.group_rename_hint":                 "Renaming changes the name only — the rules and the routing are untouched.",
+	"exit_rules.group_empty":                       "No rules yet — add the first one and name its group, so this page can be read by your own names.",
 	"exit_rules.expand_all":                        "Expand all",
 	"exit_rules.expand_all_title":                  "Expand every rule group on the page",
 	"exit_rules.collapse_all":                      "Collapse all",

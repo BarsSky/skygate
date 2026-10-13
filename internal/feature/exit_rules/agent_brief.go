@@ -54,6 +54,10 @@ type AgentRuleInfo struct {
 	Action       string `json:"action"`
 	ParentDomain string `json:"parent_domain"`
 	AllDevices   bool   `json:"all_devices"`
+	// Group is the human's own name for this rule's group (v0.79 / B380), empty when
+	// ungrouped — so an assistant can file a new rule the way the human already files
+	// things, and report the change in their vocabulary.
+	Group string `json:"group,omitempty"`
 }
 
 // AgentLimits mirrors the effective caps the API enforces (B328: one resolver,
@@ -143,6 +147,10 @@ func BuildAgentBriefMarkdown(s AgentSnapshot) string {
 	b.WriteString("- `domain` rules are re-resolved periodically, so an IP that rotates is handled; a **versioned hostname** (e.g. `prod.v11.2.1.main.vendor-backend.net`) is NOT — it changes when the vendor ships, and the rule must be updated then. Say so when you use one.\n")
 	b.WriteString("- A rule for a whole CDN (e.g. a `*.cloudflare` destination) expands into that CDN's published prefixes — that can be an entire `/11` shared with unrelated sites. For a game or a specific service, prefer the vendor's own prefixes over a CDN domain.\n")
 	b.WriteString("- `deny` rules are stored but headscale's `grants` cannot express a denial, so a `deny` row is informational (the panel reports how many were skipped). Do not build a plan that depends on a `deny` actually blocking traffic.\n")
+	// B380: grouping is the operator's own axis, and an assistant that files the rules it
+	// proposes under the name the human uses is the difference between a list the human
+	// recognises and a pile of rows they have to re-sort by hand.
+	b.WriteString("- `group` (optional) is the human's OWN name for a set of rules — «Игры», «Работа» — and the page groups by it. Use the name the human used in the request, ask if they did not give one and the batch is large, and keep it consistent with the rules they already have (the table in section 4 shows the labels in use). It is presentation only: it never changes the ACL, the relay or the routes.\n")
 	b.WriteString("- The caps below are enforced per row; a batch that would exceed them is refused row by row and the response lists which. Do not pad a batch with speculative destinations.\n\n")
 
 	b.WriteString("## 4. What the fleet looks like right now\n\n")
@@ -185,6 +193,7 @@ func BuildAgentBriefMarkdown(s AgentSnapshot) string {
 		type agg struct {
 			devices []string
 			relays  map[string]bool
+			groups  map[string]bool
 		}
 		order := []string{}
 		byTarget := map[string]*agg{}
@@ -195,7 +204,7 @@ func BuildAgentBriefMarkdown(s AgentSnapshot) string {
 			}
 			a := byTarget[key]
 			if a == nil {
-				a = &agg{relays: map[string]bool{}}
+				a = &agg{relays: map[string]bool{}, groups: map[string]bool{}}
 				byTarget[key] = a
 				order = append(order, key)
 			}
@@ -210,6 +219,11 @@ func BuildAgentBriefMarkdown(s AgentSnapshot) string {
 			if r.ExitNode != "" {
 				a.relays[r.ExitNode] = true
 			}
+			// B380: the human's own group names, so a plan can be filed the way they
+			// already file things instead of inventing a parallel scheme.
+			if g := strings.TrimSpace(r.Group); g != "" {
+				a.groups[g] = true
+			}
 		}
 		sort.Strings(order)
 		for _, key := range order {
@@ -223,7 +237,16 @@ func BuildAgentBriefMarkdown(s AgentSnapshot) string {
 			if len(relays) > 0 {
 				relay = strings.Join(relays, ", ")
 			}
-			fmt.Fprintf(&b, "- `%s` — via %s — %s\n", key, relay, strings.Join(a.devices, ", "))
+			groups := make([]string, 0, len(a.groups))
+			for g := range a.groups {
+				groups = append(groups, g)
+			}
+			sort.Strings(groups)
+			suffix := ""
+			if len(groups) > 0 {
+				suffix = " — group: " + strings.Join(groups, ", ")
+			}
+			fmt.Fprintf(&b, "- `%s` — via %s — %s%s\n", key, relay, strings.Join(a.devices, ", "), suffix)
 		}
 		b.WriteString("\n")
 	}

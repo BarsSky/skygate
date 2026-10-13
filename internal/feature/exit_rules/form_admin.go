@@ -788,6 +788,9 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		"form_target_type":  r.URL.Query().Get("form_target_type"),
 		"form_target_value": r.URL.Query().Get("form_target_value"),
 		"form_action":       r.URL.Query().Get("form_action"),
+		// B380: the admin's typed group name survives a refused submit, like every other
+		// field of this form (B237.19).
+		"form_group_label": NormaliseGroupLabel(r.URL.Query().Get("form_group_label")),
 		// B328: keep the «все устройства» checkbox ticked across the redirect, so a
 		// refused submit does not silently drop the option the operator chose.
 		"all_devices": isFormChecked(r.URL.Query().Get("all_devices")),
@@ -917,11 +920,11 @@ func validateAdminRuleForm(userID, deviceID, exitNode, targetType, targetValue, 
 // form_target_value + form_action + err. The user_id is the
 // extra dimension admin needs (so the form re-renders with
 // the same target user pre-selected).
-func buildAdminExitRuleRedirectURL(errMsg, userID string, deviceID int, exitNode, targetType, targetValue, action string) string {
+func buildAdminExitRuleRedirectURL(errMsg, userID string, deviceID int, exitNode, targetType, targetValue, action, groupLabel string) string {
 	if action == "" {
 		action = "accept"
 	}
-	return fmt.Sprintf("/admin/exit-rules?err=%s&form_user_id=%s&form_device_id=%s&form_exit_node=%s&form_target_type=%s&form_target_value=%s&form_action=%s",
+	return fmt.Sprintf("/admin/exit-rules?err=%s&form_user_id=%s&form_device_id=%s&form_exit_node=%s&form_target_type=%s&form_target_value=%s&form_action=%s&form_group_label=%s",
 		url.QueryEscape(errMsg),
 		url.QueryEscape(userID),
 		url.QueryEscape(strconv.Itoa(deviceID)),
@@ -929,6 +932,7 @@ func buildAdminExitRuleRedirectURL(errMsg, userID string, deviceID int, exitNode
 		url.QueryEscape(targetType),
 		url.QueryEscape(targetValue),
 		url.QueryEscape(action),
+		url.QueryEscape(NormaliseGroupLabel(groupLabel)),
 	)
 }
 
@@ -970,6 +974,10 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 	deviceIDStr := r.FormValue("device_id")
 	exitNode := r.FormValue("exit_node")
 	targetType := r.FormValue("target_type")
+	// B380: the group name is the TARGET user's data, not the admin's — the admin types
+	// the label the user asked for, and it is stored on the user's rules exactly as the
+	// user's own form would. Normalised here so both entry points agree.
+	groupLabel := NormaliseGroupLabel(r.FormValue("group_label"))
 	targetValue := strings.TrimSpace(r.FormValue("target_value"))
 	action := r.FormValue("action")
 	if action == "" {
@@ -991,7 +999,7 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 		if derr != nil || len(ids) == 0 {
 			http.Redirect(w, r, buildAdminExitRuleRedirectURL(
 				fmt.Sprintf("all_devices: user_id=%d has no attributed device to attach the rule to (register or adopt a device first)", targetUID),
-				userIDStr, 0, exitNode, targetType, targetValue, action), http.StatusFound)
+				userIDStr, 0, exitNode, targetType, targetValue, action, groupLabel), http.StatusFound)
 			return
 		}
 		deviceIDStr = strconv.Itoa(ids[0])
@@ -1000,7 +1008,7 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 	if !validateAdminRuleForm(userIDStr, deviceIDStr, exitNode, targetType, targetValue, action) {
 		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
 			"missing or invalid form fields",
-			userIDStr, atoiOrZero(deviceIDStr), exitNode, targetType, targetValue, action), http.StatusFound)
+			userIDStr, atoiOrZero(deviceIDStr), exitNode, targetType, targetValue, action, groupLabel), http.StatusFound)
 		return
 	}
 	uid, _ := strconv.Atoi(userIDStr)
@@ -1011,7 +1019,7 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 	if uerr != nil || targetUserName == "" {
 		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
 			fmt.Sprintf("user_id=%d not found in portal_users", uid),
-			userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+			userIDStr, devID, exitNode, targetType, targetValue, action, groupLabel), http.StatusFound)
 		return
 	}
 
@@ -1042,13 +1050,13 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 	if !owned {
 		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
 			fmt.Sprintf("device %d is not in node_owner_map for user %q (admin session=%q)", devID, targetUserName, c.Username),
-			userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+			userIDStr, devID, exitNode, targetType, targetValue, action, groupLabel), http.StatusFound)
 		return
 	}
 	if isExitNode {
 		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
 			"cannot attach rules to exit-node (routing infrastructure)",
-			userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+			userIDStr, devID, exitNode, targetType, targetValue, action, groupLabel), http.StatusFound)
 		return
 	}
 
@@ -1057,7 +1065,7 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 		if !isValidIPOrCIDR(targetValue) {
 			http.Redirect(w, r, buildAdminExitRuleRedirectURL(
 				fmt.Sprintf("invalid target_value %q: expected IP or CIDR for target_type=%q", targetValue, targetType),
-				userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+				userIDStr, devID, exitNode, targetType, targetValue, action, groupLabel), http.StatusFound)
 			return
 		}
 	}
@@ -1076,19 +1084,19 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 	if limits.MaxPerUser > 0 && targetCounts.PerUser >= limits.MaxPerUser {
 		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
 			fmt.Sprintf("user limit exceeded: %d/%d rules for user %s", targetCounts.PerUser, limits.MaxPerUser, targetUserName),
-			userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+			userIDStr, devID, exitNode, targetType, targetValue, action, groupLabel), http.StatusFound)
 		return
 	}
 	if limits.MaxPerDevice > 0 && targetCounts.PerDevice >= limits.MaxPerDevice {
 		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
 			fmt.Sprintf("device limit exceeded: %d/%d user-facing rules on device %d", targetCounts.PerDevice, limits.MaxPerDevice, devID),
-			userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+			userIDStr, devID, exitNode, targetType, targetValue, action, groupLabel), http.StatusFound)
 		return
 	}
 	if limits.MaxTotal > 0 && targetCounts.Total >= limits.MaxTotal {
 		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
 			fmt.Sprintf("system limit exceeded: %d/%d user-facing rules", targetCounts.Total, limits.MaxTotal),
-			userIDStr, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+			userIDStr, devID, exitNode, targetType, targetValue, action, groupLabel), http.StatusFound)
 		return
 	}
 
@@ -1102,7 +1110,7 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 	// rule created from the admin panel was therefore invisible to the
 	// auto-updater's churn handling — the exact asymmetry that made the two
 	// surfaces behave differently on the same input.
-	ins := s.addRuleTarget(int64(uid), devID, deviceIP, exitNode, targetType, targetValue, action)
+	ins := s.addRuleTarget(int64(uid), devID, deviceIP, exitNode, targetType, targetValue, action, groupLabel)
 	if ins.Err != "" {
 		// 2026-09-18 (R6): this branch used to answer with a raw
 		// http.Error carrying a literal 500 status (which leaked the
@@ -1113,7 +1121,7 @@ func (s *Service) PostAdminExitRule(w http.ResponseWriter, r *http.Request) {
 		// replacing the page with a bare text/plain body.
 		http.Redirect(w, r, buildAdminExitRuleRedirectURL(
 			s.I18n.T(s.I18n.LangFromRequest(r), "error.db"),
-			fmt.Sprint(uid), devID, exitNode, ins.TypeInserted, targetValue, action),
+			fmt.Sprint(uid), devID, exitNode, ins.TypeInserted, targetValue, action, groupLabel),
 			http.StatusSeeOther)
 		return
 	}

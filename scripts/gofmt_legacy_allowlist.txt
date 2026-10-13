@@ -177,14 +177,12 @@ internal/feature/admin/users_sync_banner.go
 internal/feature/auth/service_b172_test.go
 internal/feature/cluster/handlers.go
 internal/feature/exit_rules/approved_routes_index_b_test.go
-internal/feature/exit_rules/cdn_group.go
 internal/feature/exit_rules/cdn_group_test.go
 internal/feature/exit_rules/domain_interval_b308_test.go
 internal/feature/exit_rules/form_admin_b178_test.go
 internal/feature/exit_rules/form_admin_b182_test.go
 internal/feature/exit_rules/form_admin_b184_test.go
 internal/feature/exit_rules/form_my_b123_test.go
-internal/feature/exit_rules/form_my_b237_19_test.go
 internal/feature/exit_rules/preferred_check_test.go
 internal/feature/exit_rules/reconciler_rename.go
 internal/feature/exit_rules/reconciler_rename_b231_test.go

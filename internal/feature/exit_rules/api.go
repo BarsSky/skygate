@@ -49,6 +49,9 @@ func (s *Service) GetExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 			// auto-updater derived (parent_domain = the domain) and from the
 			// ranges a CDN expansion produced (parent_domain = "cdn:<p>:<domain>").
 			ParentDomain: rl.ParentDomain,
+			// B380: the operator's own group name travels with the rule, so a client
+			// can render the same grouping the page does.
+			Group: rl.GroupLabel,
 		})
 	}
 	if out == nil {
@@ -178,7 +181,7 @@ func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 		if rl.TargetType == "domain" {
 			apiParent = rl.TargetValue
 		}
-		ok, newID := s.insertRuleUnique(c.UserID, rl.DeviceID, rl.ExitNode, rl.TargetType, rl.TargetValue, rl.Action, deviceIP, apiParent)
+		ok, newID := s.insertRuleUnique(c.UserID, rl.DeviceID, rl.ExitNode, rl.TargetType, rl.TargetValue, rl.Action, deviceIP, apiParent, NormaliseGroupLabel(rl.Group))
 		if !ok {
 			errors = append(errors, fmt.Sprintf("rule[%d]: db error", i))
 			continue

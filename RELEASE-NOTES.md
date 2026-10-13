@@ -12,6 +12,90 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.119 — rules you can group by your OWN name (B380)
+
+**Date:** 2026-10-13 · **Base:** `v1.5.118` → this tag · **Compatibility:** one **additive**
+schema change (v0.79 `device_rules.group_label`, `DEFAULT ''`, plus an index) — an existing
+installation keeps its behaviour and every pre-v0.79 rule is simply ungrouped. New optional
+request/response field `group`. **No routing semantics changed:** the label never reaches the
+ACL, the prefix assignment, the exit-node choice or the auto-updater's decisions. Rollback by
+tag is safe (the column stays behind, unused).
+
+### What the operator asked for (verbatim)
+
+> «возможность добавить в exit rules для пользователей группировать те правила что они задают
+> так им будет проще ориентироваться не только по домену но и по пользовательскому названию»
+
+### Three groupings on one page — and they are not the same thing
+
+| grouping | what decides it | can it be wrong? |
+|---|---|---|
+| CDN grouping (B237.22) | the destination's published ranges | derived, cannot be wrong |
+| By-target view (B376) | the destination the operator typed | derived, cannot be wrong |
+| **Group label (B380)** | **the operator's own name for the rules** | **user data** |
+
+Because the third one is user data, it is held to a different rule: **it must not reach
+routing.** The rename action contains no ACL write (a contract asserts it), and neither
+`internal/acl` nor `internal/prefixowner` mentions the column at all (also asserted) — so
+renaming «Игры» to «Гейминг» cannot re-route a single packet. That is stated in the code, in
+the audit row and in `docs/api.md`, because a rename that could change traffic is a trap.
+
+### Shipped
+
+* **v0.79 migration** `device_rules.group_label TEXT NOT NULL DEFAULT ''` in **both** chains
+  (SQLite through `execSQLiteDDL`), plus a `(user_id, group_label)` index. Additive: every
+  existing rule is ungrouped, which is what it was.
+* **A third view** on `/my/exit-rules` — `?view=group` — reached next to «по цели» / «по
+  устройству». Named groups are listed **alphabetically and case-insensitively**; the
+  **ungrouped bucket is LAST**, because it is the leftovers and not a category of its own.
+* **The label follows the derivation.** A domain rule becomes a domain row **plus** its
+  resolved `/32` rows, and the `/32` rows are what the page lists — so the label is written to
+  both, from one shared variable. The same for the B276.1 all-devices fan-out copies. And the
+  **domain auto-updater**, which creates most derived rows with its own INSERT, now inherits
+  the domain row's label in the same statement (a gap this release's own contract found and
+  which would have silently un-grouped every re-resolved destination).
+* **The label is normalised where it is written**, not only in the form: trimmed, inner runs
+  of whitespace collapsed, control characters turned into **spaces rather than deleted**
+  (deleting a separator silently glues two words into a group the user never typed), capped at
+  40 runes and rune-safe. `Игры` and `игры` are **one** group, in the view, in the suggestion
+  list and in the rename — all three fold the same way.
+* **A rename action** — `POST /my/exit-rules/group` — that renames (or clears) a group across
+  the caller's own rules. Owner-scoped, refuses an empty source (that would stamp a label on
+  every ungrouped rule), reports a label nobody uses instead of doing nothing silently, and
+  writes an audit row (`exit_rule_group_rename`).
+* **Inputs:** a `Группа` field on the single form, on the batch form (one group for the whole
+  paste) and on the **admin** form (the TARGET user's label), plus JSON `"group"` per rule;
+  every one of them offers the user's existing names as a `datalist`, so the same group cannot
+  drift into two by a typo. The label survives a refused submit (form-state flash, B237.19).
+* **The assistant package** (`GET /my/exit-rules/agent`, B377) now lists each target's group
+  names and tells the model that `group` exists — so an AI that proposes rules can file them
+  in the human's own vocabulary instead of inventing a parallel scheme.
+
+### Verification
+
+* **6 tests** on a real migrated SQLite DB (`internal/feature/exit_rules/group_label_b380_test.go`):
+  the normaliser (incl. the rune-safe cap and the control-character case), the render order
+  with the ungrouped bucket last and a trailing-space duplicate folded in, the suggestion list,
+  the write path (domain row **and** derived `/32`), the owner-scoped rename with a **decoy row
+  of a second user** that must not move, and the HTTP action incl. the audit row and the
+  "no such group" message.
+* **35 contracts** in `scripts/check_b380_rule_groups.sh`: both migration chains registered in
+  lockstep, the additive DDL, the label in every `/my` and `/admin` SELECT, both writers
+  normalising, the rename route + scope + case folding, the third view and its switch, the
+  **no-routing-consequence** assertions, the auto-updater inheritance, the i18n pairs, and the
+  behavioural half.
+* Neighbours re-run green: B379 20/0, B378 26/0, B377 (agent) tests, B337 15/0 (the gofmt
+  ratchet paid two more files down — 245 → 243 — because this change touched them), B325 8/0,
+  B11 (no destructive DDL), B333 (chain lockstep), B330 15/0, B340 12/0.
+* The release was pushed **through the pre-push hook** (full catalog) with no `--no-verify`.
+
+### Upgrade notes
+
+The migration runs on the next start; nothing else to do. Rules added before this release are
+ungrouped and stay visible in the new «Без группы» bucket — nothing is hidden. The bot's
+`/rule add` inserts ungrouped rules (a chat command has no room for an optional label without
+inventing syntax); the operator can file them from the page in one click.
+
 ## v1.5.118 — the admin can finally delete a rule, and it deletes what the owner's page deletes (B379, closes TD-29)
 
 **Date:** 2026-10-13 · **Base:** `v1.5.117` → this tag · **Compatibility:** UI + API only — **no

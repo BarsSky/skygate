@@ -218,7 +218,14 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 #   * internal/feature/exit_rules/store.go — B377 added the documented-but-never-
 #     returned parent_domain to apiRule (api.go populates it); `gofmt -w`
 #     realigned the struct, leaving the file clean.
-FROZEN=245
+#   * internal/feature/exit_rules/cdn_group.go — B380 added the GroupLabel field to
+#     the RuleRow projection (both the group view and the by-target chips read it);
+#     rule 3 requires every file this change TOUCHES to be clean, allow-listed or
+#     not, so `gofmt -w` realigned the struct and the file left the list.
+#   * internal/feature/exit_rules/form_my_b237_19_test.go — B380 added the group
+#     label to buildFormErrorRedirectURL, and its call sites in this test moved with
+#     it; `gofmt -w` reflowed the calls, leaving the file clean.
+FROZEN=243
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.

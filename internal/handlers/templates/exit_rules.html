@@ -189,6 +189,15 @@
           <label>{{t "exit_rules.target_value"}}</label>
           <input type="text" name="target_value" placeholder="{{t "exit_rules.target_value_ph"}}" value="{{.FormValues.target_value}}" required>
         </div>
+        {{/* B380: the operator's own group name for the rules they are adding —
+             «Игры», «Работа», … — with their existing names offered as suggestions so
+             the same group cannot drift into two by a typo. */}}
+        <div class="field">
+          <label for="group_label">{{t "exit_rules.group_label"}}</label>
+          <input id="group_label" type="text" name="group_label" list="group-label-names" maxlength="{{.GroupLabelMaxLen}}"
+                 placeholder="{{t "exit_rules.group_label_ph"}}" value="{{.FormValues.group_label}}">
+          <div class="hint">{{t "exit_rules.group_label_hint"}}</div>
+        </div>
         <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{t "exit_rules.submit"}}</button> <a href="/my/exit-rules" class="btn"><i class="fa-solid fa-eraser"></i> {{t "exit_rules.clear"}}</a>
       </form>
     </div>
@@ -254,6 +263,16 @@
             <option value="deny">{{t "exit_rules.action_deny"}}</option>
           </select>
         </div>
+        {{/* B380: the whole batch lands in ONE group. A pasted list has no group column
+             (see the help text): a free-text column among positional fields would make
+             the shapes ambiguous, so the batch gets its label here, and JSON can carry a
+             per-rule `group`. */}}
+        <div class="field">
+          <label for="bulk-group-label">{{t "exit_rules.group_label"}}</label>
+          <input id="bulk-group-label" type="text" name="bulk_group_label" list="group-label-names" maxlength="{{.GroupLabelMaxLen}}"
+                 placeholder="{{t "exit_rules.group_label_ph"}}">
+          <div class="hint">{{t "exit_rules.group_label_bulk_hint"}}</div>
+        </div>
         <button type="submit" class="btn btn-primary"><i class="fa-solid fa-layer-group"></i> {{t "exit_rules.bulk_submit"}}</button>
       </form>
     </div>
@@ -307,6 +326,9 @@
         <span style="font-size:12px;color:var(--text-muted)">{{t "exit_rules.view_label"}}</span>
         <a class="btn btn-sm {{if eq .ViewMode "target"}}btn-primary{{end}}" id="view-target-link" href="/my/exit-rules?view=target">{{t "exit_rules.view_target"}}</a>
         <a class="btn btn-sm {{if eq .ViewMode "device"}}btn-primary{{end}}" id="view-device-link" href="/my/exit-rules?view=device">{{t "exit_rules.view_device"}}</a>
+        {{/* B380: the operator's OWN grouping («Игры», «Работа», …), read next to the
+             two derived ones — by destination (B376) and by device. */}}
+        <a class="btn btn-sm {{if eq .ViewMode "group"}}btn-primary{{end}}" id="view-group-link" href="/my/exit-rules?view=group">{{t "exit_rules.view_group"}}</a>
         <span class="spacer"></span>
         <button type="button" class="btn btn-sm" onclick="skyToggleAllDetails(true)" title="{{t "exit_rules.expand_all_title"}}"><i class="fa-solid fa-angles-down"></i> {{t "exit_rules.expand_all"}}</button>
         <button type="button" class="btn btn-sm" onclick="skyToggleAllDetails(false)" title="{{t "exit_rules.collapse_all_title"}}"><i class="fa-solid fa-angles-up"></i> {{t "exit_rules.collapse_all"}}</button>
@@ -494,6 +516,58 @@
       </div>
       {{end}}
       <div id="rules-view">
+      {{if eq .ViewMode "group"}}
+      {{/* B380: THE OPERATOR'S OWN GROUPS. GroupRulesByLabel (group_label_b380.go)
+           splits the same rule slice the other views read, so no view can disagree
+           about what the user has: named groups alphabetically, the ungrouped bucket
+           LAST (it is the leftovers, not a category of its own). Each named group
+           carries its own rename control — the label is the user's data, and a group
+           they cannot rename is a group they will stop using. */}}
+      <datalist id="group-label-names">
+        {{range $n := .GroupLabelNames}}<option value="{{$n}}"></option>{{end}}
+      </datalist>
+      {{if .LabelGroups}}
+      {{range $g := .LabelGroups}}
+      <details class="card" {{if $g.Label}}open{{end}} style="margin-bottom:10px">
+        <summary style="cursor:pointer">
+          {{if $g.Label}}<i class="fa-solid fa-folder"></i> <b>{{$g.Label}}</b>{{else}}<i class="fa-solid fa-folder-open"></i> <b>{{t "exit_rules.group_ungrouped"}}</b>{{end}}
+          <span class="tag">{{tf "exit_rules.group_rule_count" (len $g.Rules)}}</span>
+        </summary>
+        {{if $g.Label}}
+        <form method="post" action="/my/exit-rules/group" style="margin:8px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <input type="hidden" name="group_from" value="{{$g.Label}}">
+          <label style="font-size:12px;color:var(--text-muted)" for="rename-group-{{$g.Label}}">{{t "exit_rules.group_rename_label"}}</label>
+          <input id="rename-group-{{$g.Label}}" type="text" name="group_to" value="{{$g.Label}}" maxlength="{{$.GroupLabelMaxLen}}" list="group-label-names" style="max-width:220px">
+          <button type="submit" class="btn btn-sm btn-secondary"><i class="fa-solid fa-pen"></i> {{t "exit_rules.group_rename_btn"}}</button>
+          <button type="submit" class="btn btn-sm" name="group_to" value="">{{t "exit_rules.group_clear_btn"}}</button>
+          <span style="font-size:12px;color:var(--text-muted)">{{t "exit_rules.group_rename_hint"}}</span>
+        </form>
+        {{end}}
+        <div class="table-wrap">
+          <table>
+            <tr>
+              <th>{{t "exit_rules.col_action"}}</th>
+              <th>{{t "exit_rules.col_target"}}</th>
+              <th>{{t "exit_rules.target_col_devices"}}</th>
+            </tr>
+            {{range $r := $g.Rules}}
+            <tr class="rule-row" id="rule-{{$r.ID}}" data-type="{{$r.TargetType}}" data-target="{{$r.TargetValue}}">
+              <td class="col-action">{{if eq $r.Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+              <td class="col-target"><code>{{$r.TargetValue}}</code> <span class="tag">{{$r.TargetType}}</span></td>
+              <td class="col-devices">
+                <span class="tag"><i class="fa-solid fa-laptop"></i> {{if $r.DeviceName}}{{$r.DeviceName}}{{else}}#{{$r.DeviceID}}{{end}}{{if $r.ExitNode}} → {{$r.ExitNode}}{{else}} → {{t "exit_rules.target_relay_auto"}}{{end}}</span>
+                {{if $r.AllDevices}}<span class="tag tag-info"><i class="fa-solid fa-users"></i></span>{{end}}
+              </td>
+            </tr>
+            {{end}}
+          </table>
+        </div>
+      </details>
+      {{end}}
+      {{else}}
+      <div class="alert alert-warn">{{t "exit_rules.group_empty"}}</div>
+      {{end}}
+      {{end}}
       {{if eq .ViewMode "device"}}
       {{range $host, $nodes := .GroupedByHostname}}
       {{/* B343: the POSITIVE half of the same marker. The operator asked for

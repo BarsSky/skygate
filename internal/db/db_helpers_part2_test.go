@@ -153,7 +153,7 @@ func insertRule(t *testing.T, d *sql.DB, userID, deviceID int, exitNode, tt, tv,
 		t.Fatalf("seed portal_users: %v", err)
 	}
 	// v0.28.0: added userName + deviceHostname (empty here for back-compat)
-	id, err := AppendDeviceRule(d, int64(userID), deviceID, exitNode, tt, tv, action, ip, parent, "", "")
+	id, err := AppendDeviceRule(d, int64(userID), deviceID, exitNode, tt, tv, action, ip, parent, "", "", "")
 	if err != nil {
 		t.Fatalf("AppendDeviceRule: %v", err)
 	}

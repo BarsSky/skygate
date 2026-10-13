@@ -200,10 +200,13 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 				// karolina's ApprovedRoutes has the IP).
 				ownerName, ownerHost := owners.get(d.userID, d.deviceID)
 				tag, err := s.dbc().Exec(
-					`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname)
-					 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7, $8, $9)
+					`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname, group_label)
+					 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7, $8, $9,
+					         COALESCE((SELECT group_label FROM device_rules
+					                    WHERE user_id = $1 AND device_id = $2 AND exit_node_id = $3
+					                      AND target_type = 'domain' AND target_value = $10), ''))
 					 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO NOTHING`,
-					d.userID, d.deviceID, d.exitNode, cidr, d.action, d.deviceIP, marker, ownerName, ownerHost)
+					d.userID, d.deviceID, d.exitNode, cidr, d.action, d.deviceIP, marker, ownerName, ownerHost, d.domain)
 				if err != nil {
 					continue
 				}
@@ -301,9 +304,16 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			// it's looking for. See B237.23 entry in
 			// AGENTS.md for the full regression analysis.
 			ownerName, ownerHost := owners.get(d.userID, d.deviceID)
+			// B380: the derived row inherits the DOMAIN row's own group label, read in
+			// the same statement (a scalar subquery) rather than in a second round trip —
+			// a label that stopped at the domain row would leave every row the page
+			// lists ungrouped, and this is the path that creates most of them.
 			tag, ierr := s.dbc().Exec(
-				`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname)
-				 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7, $8, $9)
+				`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname, group_label)
+				 VALUES ($1, $2, $3, 'subnet', $4, $5, $6, $7, $8, $9,
+				         COALESCE((SELECT group_label FROM device_rules
+				                    WHERE user_id = $1 AND device_id = $2 AND exit_node_id = $3
+				                      AND target_type = 'domain' AND target_value = $7), ''))
 				 ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO NOTHING`,
 				d.userID, d.deviceID, d.exitNode, ip+"/32", d.action, d.deviceIP, d.domain, ownerName, ownerHost)
 			if ierr != nil {

@@ -123,6 +123,10 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	if action == "" {
 		action = "accept"
 	}
+	// B380: the operator's own group name for this rule ("" = ungrouped). Normalised
+	// here so the stored value is the one the page will group by — the form and the
+	// chip must never disagree about a trailing space.
+	groupLabel := NormaliseGroupLabel(r.FormValue("group_label"))
 	if devID == 0 || targetValue == "" {
 		http.Error(w, "missing fields", http.StatusBadRequest)
 		return
@@ -147,7 +151,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 			// values).
 			http.Redirect(w, r, buildFormErrorRedirectURL(
 				fmt.Sprintf("invalid target_value %q: expected IP or CIDR for target_type=%q (use target_type=domain for hostnames like youtube.com — the system will resolve it to IPs and add /32 rules automatically)", targetValue, targetType),
-				devID, exitNode, targetType, targetValue, action), http.StatusFound)
+				devID, exitNode, targetType, targetValue, action, groupLabel), http.StatusFound)
 			return
 		}
 	}
@@ -177,7 +181,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	if reason := limits.ExceedReason(counts); reason != "" {
 		// B237.19: redirect with flash (not http.Error)
 		http.Redirect(w, r, buildFormErrorRedirectURL(
-			reason, devID, exitNode, targetType, targetValue, action), http.StatusFound)
+			reason, devID, exitNode, targetType, targetValue, action, groupLabel), http.StatusFound)
 		return
 	}
 
@@ -214,14 +218,14 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		// B237.19: redirect with flash (not http.Error)
 		http.Redirect(w, r, buildFormErrorRedirectURL(
 			"invalid device (not in your node_owner_map)",
-			devID, exitNode, targetType, targetValue, action), http.StatusFound)
+			devID, exitNode, targetType, targetValue, action, groupLabel), http.StatusFound)
 		return
 	}
 	if isExitNode {
 		// B237.19: redirect with flash (not http.Error)
 		http.Redirect(w, r, buildFormErrorRedirectURL(
 			"cannot attach rules to exit-node (routing infrastructure)",
-			devID, exitNode, targetType, targetValue, action), http.StatusFound)
+			devID, exitNode, targetType, targetValue, action, groupLabel), http.StatusFound)
 		return
 	}
 
@@ -236,7 +240,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 	// lives in addRuleTarget (bulk_add.go) and is shared with the bulk form, so
 	// the two paths cannot drift. The values below are the same ones this
 	// function used to compute inline; the redirect branches are unchanged.
-	ins := s.addRuleTarget(c.UserID, devID, deviceIP, exitNode, targetType, targetValue, action)
+	ins := s.addRuleTarget(c.UserID, devID, deviceIP, exitNode, targetType, targetValue, action, groupLabel)
 	if ins.Err != "" {
 		// 2026-09-18 (R6): this branch used to answer with a raw
 		// http.Error carrying a literal 500 status — a raw
@@ -246,7 +250,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		// restores the form values), so use it here too.
 		http.Redirect(w, r, buildFormErrorRedirectURL(
 			s.I18n.T(s.I18n.LangFromRequest(r), "error.db"),
-			devID, exitNode, ins.TypeInserted, targetValue, action),
+			devID, exitNode, ins.TypeInserted, targetValue, action, groupLabel),
 			http.StatusSeeOther)
 		return
 	}
@@ -351,7 +355,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			for _, ip := range ipsToInsert {
-				ok, _ := s.insertRuleUnique(c.UserID, otherID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent)
+				ok, _ := s.insertRuleUnique(c.UserID, otherID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent, groupLabel)
 				if ok {
 					fannedOut++
 				}
@@ -730,14 +734,15 @@ func (s *Service) PostMyExitRulesApplyPreferred(w http.ResponseWriter, r *http.R
 // The template renders the .err field via {{ .err }} which
 // auto-escapes via html/template's auto-escaping (Go's
 // stdlib).
-func buildFormErrorRedirectURL(errMsg string, devID int, exitNode, targetType, targetValue, action string) string {
+func buildFormErrorRedirectURL(errMsg string, devID int, exitNode, targetType, targetValue, action, groupLabel string) string {
 	return fmt.Sprintf(
-		"/my/exit-rules?err=%s&form_device_id=%s&form_exit_node=%s&form_target_type=%s&form_target_value=%s&form_action=%s",
+		"/my/exit-rules?err=%s&form_device_id=%s&form_exit_node=%s&form_target_type=%s&form_target_value=%s&form_action=%s&form_group_label=%s",
 		url.QueryEscape(errMsg),
 		url.QueryEscape(strconv.Itoa(devID)),
 		url.QueryEscape(exitNode),
 		url.QueryEscape(targetType),
 		url.QueryEscape(targetValue),
 		url.QueryEscape(action),
+		url.QueryEscape(NormaliseGroupLabel(groupLabel)),
 	)
 }

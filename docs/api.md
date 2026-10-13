@@ -215,6 +215,14 @@ produced (those are shared with unrelated sites). A rule you typed by hand has n
 such key — which is how an assistant tells "the operator asked for this" from "the
 auto-updater added this".
 
+`group` (added in v1.5.119) is the **user's own name for a set of rules** — «Игры»,
+«Работа» — and `/my/exit-rules` can render the list grouped by it. It is normalised on
+write (trimmed, inner whitespace collapsed, control characters become spaces, capped at
+40 runes) and matched **case-insensitively**, so `Игры` and `игры` are one group. Like
+the key itself, it is `omitempty`: an ungrouped rule returns no `group` field. It is
+presentation only — it never changes the ACL, the relay assignment or the routes, and
+renaming a group never triggers an ACL re-apply.
+
 ### `POST /my/exit-rules/api` (Bearer or cookie)
 
 Bulk create rules. JSON body: `{"rules":[ … ]}` — an envelope, not a bare
@@ -222,6 +230,13 @@ array. **Returns `{added, duplicates, errors, ids: [N1, N2, ...]}`**;
 `duplicates` counts rules that were already there (not an error) and a
 non-empty `errors` array means a partial success. Rate-limited to 30
 requests/min per IP.
+
+Each rule may carry an optional `"group"` (v1.5.119) — the user's own name for the group
+the rule belongs to; it is stored on the domain row **and** on every `/32` the domain
+resolves to, so the rows the page actually lists are grouped too. The web form's batch
+field (`bulk_group_label`) is the pasted-list equivalent: a positional CSV/TSV column of
+free text would make the documented column shapes ambiguous, so per-rule groups come from
+JSON only.
 
 ```bash
 curl -X POST -H "Authorization: Bearer $SKYGATE_PAT" \

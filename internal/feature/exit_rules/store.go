@@ -47,6 +47,13 @@ type apiRule struct {
 	// auto-added CIDR as something the operator typed"). The tag is omitempty, so
 	// an existing consumer sees no extra key on manual rules.
 	ParentDomain string `json:"parent_domain,omitempty"`
+	// Group is the operator's own name for a group of rules (v0.79 / B380),
+	// normalised on write by NormaliseGroupLabel. It is accepted on POST so an
+	// assistant (see GET /my/exit-rules/agent) can file the rules it proposes into the
+	// group the operator asked for, and returned so a client can render them grouped.
+	// Empty means ungrouped; the tag is omitempty so an existing consumer sees no extra
+	// key on rows that have none.
+	Group string `json:"group,omitempty"`
 }
 
 // insertRuleUnique returns:
@@ -66,7 +73,14 @@ type apiRule struct {
 // them on the next tick and update them in place.
 //
 // For manual subnet/IP rules (no DNS-resolve parent), pass "".
-func (s *Service) insertRuleUnique(userID int64, deviceID int, exitNode, targetType, targetValue, action, deviceIP, parentDomain string) (bool, int) {
+//
+// B380: groupLabel is the operator's own group name ("" = ungrouped). It rides along
+// with parentDomain because both describe the row for the PAGE rather than for the
+// routing decision, and both are inherited by derived rows.
+func (s *Service) insertRuleUnique(userID int64, deviceID int, exitNode, targetType, targetValue, action, deviceIP, parentDomain, groupLabel string) (bool, int) {
+	// B380: normalise here too — this is the single low-level writer, so the stored
+	// value is the one the group view will compare and display.
+	groupLabel = NormaliseGroupLabel(groupLabel)
 	existingID, err := db.FindDeviceRuleID(s.dbc(), userID, deviceID, exitNode, targetType, targetValue)
 	if err == nil {
 		return true, existingID
@@ -76,7 +90,7 @@ func (s *Service) insertRuleUnique(userID int64, deviceID int, exitNode, targetT
 	}
 	// not found → insert. parentDomain is caller-supplied; the
 	// form passes the original domain for DNS-resolved /32 rules.
-	newID, err := db.AppendDeviceRule(s.dbc(), userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain, "", "")
+	newID, err := db.AppendDeviceRule(s.dbc(), userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain, groupLabel, "", "")
 	if err != nil {
 		return false, 0
 	}

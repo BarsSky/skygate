@@ -58,12 +58,12 @@ count() { grep -c -- "$1" "$2" 2>/dev/null || true; }
 
 hdr "A. both admin views select the same trailing column set"
 
-if grep -q 'const qSelectAllRulesForAdmin = .*COALESCE(r.all_devices, 0) AS all_devices FROM' "$QUERIES"; then
+if grep -q 'const qSelectAllRulesForAdmin = .*COALESCE(r.all_devices, 0) AS all_devices' "$QUERIES"; then
   ok "A1: the unfiltered view carries all_devices (it always did — that is why only the filtered one broke)"
 else
   bad "A1: the unfiltered admin view lost its all_devices column"
 fi
-if grep -q 'const qSelectAllRulesForAdminByDevice = .*COALESCE(r.all_devices, 0) AS all_devices FROM' "$QUERIES"; then
+if grep -q 'const qSelectAllRulesForAdminByDevice = .*COALESCE(r.all_devices, 0) AS all_devices' "$QUERIES"; then
   ok "A2: the FILTERED view carries all_devices too (the B349 fix)"
 else
   bad "A2: the filtered admin view is missing all_devices — it would 500 again with 'expected 12 destination arguments in Scan, not 13'"
@@ -91,10 +91,10 @@ hdr "B. the shared scan reads one destination per column"
 # the number of commas+1 in each SELECT list, ignoring commas inside parentheses
 # (COALESCE(a, b) has one).
 SCAN_DESTS="$(awk '/func getAllRulesForAdminQuery\(/,/^}/' "$RULES" | grep -o '&[a-zA-Z_.]*' | wc -l | tr -d ' ')"
-if [ "$SCAN_DESTS" = "13" ]; then
-  ok "B1: the shared scan reads 13 destinations (the arity B277.4 introduced)"
+if [ "$SCAN_DESTS" = "14" ]; then
+  ok "B1: the shared scan reads 14 destinations (B277.4 introduced the arity; B380 added group_label to it AND to both views, so the lockstep the contract guards still holds)"
 else
-  bad "B1: the shared scan reads $SCAN_DESTS destinations, expected 13 — every caller must select exactly that many columns"
+  bad "B1: the shared scan reads $SCAN_DESTS destinations, expected 14 — every caller must select exactly that many columns"
 fi
 
 # Depth-aware column count of one SELECT list: commas at nesting depth 0 + 1.

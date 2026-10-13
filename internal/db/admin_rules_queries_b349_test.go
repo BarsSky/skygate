@@ -39,7 +39,7 @@ func newAdminQueriesTestDB(t *testing.T) *sql.DB {
 	mustExec(`CREATE TABLE IF NOT EXISTS device_rules (
 		id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, device_id INTEGER, exit_node_id TEXT,
 		target_type TEXT, target_value TEXT, action TEXT, enabled INTEGER, device_ip TEXT,
-		parent_domain TEXT, created_at INTEGER, all_devices INTEGER)`)
+		parent_domain TEXT, created_at INTEGER, all_devices INTEGER, group_label TEXT NOT NULL DEFAULT '')`)
 	mustExec(`INSERT INTO portal_users (id, username, password_hash, is_admin) VALUES (1, 'skyadmin', 'x', 0)`)
 	mustExec(`INSERT INTO node_owner_map (node_id, username, hostname) VALUES ('56', 'skyadmin', 'cyborg')`)
 	mustExec(`INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, enabled, parent_domain, created_at, all_devices) VALUES

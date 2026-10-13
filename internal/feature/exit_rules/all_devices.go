@@ -78,8 +78,10 @@ func (s *Service) propagateAllDeviceRules() (int, error) {
 			} else if !errors.Is(ferr, db.ErrNotFound) {
 				return created, fmt.Errorf("look up rule for user %d device %d: %w", g.UserID, devID, ferr)
 			}
+			// B380: the copy carries the owner's group label, so a rule filed under
+			// «Игры» is not ungrouped on every device except the one it was typed on.
 			ok, _ := s.insertRuleUnique(g.UserID, devID, g.ExitNode, g.TargetType, g.TargetValue,
-				g.Action, g.DeviceIP, g.ParentDomain)
+				g.Action, g.DeviceIP, g.ParentDomain, g.GroupLabel)
 			if !ok {
 				continue
 			}

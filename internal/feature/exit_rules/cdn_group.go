@@ -161,9 +161,9 @@ type CDNDisplayItem struct {
 // fanned out to. 0 in the per-host view; populated only
 // in the dedicated ALL-DEVICES section.
 type CDNDisplayView struct {
-	Items        []CDNDisplayItem
-	TotalCount   int
-	FanOutTotal  int
+	Items       []CDNDisplayItem
+	TotalCount  int
+	FanOutTotal int
 }
 
 // CDNGroup is a set of device_rules that share the same
@@ -245,16 +245,22 @@ type RuleRow struct {
 	// projection; the admin path (CDNDisplayItemAdmin / AdminRule)
 	// is a separate type and does not need this field.
 	AllDevices bool
+
+	// GroupLabel is the operator's OWN name for a group of rules (v0.79 / B380),
+	// copied from db.DeviceRule by ruleRowsFromDeviceRules. Empty means ungrouped.
+	// It is projected here because BOTH the group view and the by-target chips read
+	// it, and both read RuleRow — one projection, no second source of truth.
+	GroupLabel string
 }
 
 // GroupRulesByCDN takes a slice of RuleRow and returns:
 //
-//   1. The CDN groups (rules whose parent_domain is a
-//      "cdn:<name>:<domain>" marker), grouped by the
-//      marker. Each group is sorted by Source.
-//   2. The ungrouped rules (parent_domain is empty, or not
-//      a CDN marker). These are returned in their original
-//      order.
+//  1. The CDN groups (rules whose parent_domain is a
+//     "cdn:<name>:<domain>" marker), grouped by the
+//     marker. Each group is sorted by Source.
+//  2. The ungrouped rules (parent_domain is empty, or not
+//     a CDN marker). These are returned in their original
+//     order.
 //
 // The function is pure (no DB access, no side effects).
 // Callers are responsible for fetching the rules from

@@ -54,6 +54,11 @@ type DeviceRule struct {
 	// the periodic propagation pass keeps it on every device the user owns. Set by
 	// the service after loading rows (the column is not part of the shared scans).
 	AllDevices bool
+	// GroupLabel is the operator's OWN name for a group of rules (v0.79 / B380) —
+	// «Игры», «Работа», … — normalised on write by the feature package. Empty means
+	// "ungrouped", which is what every pre-V079 row is. It is presentation the user
+	// owns: it never influences the ACL, the prefix assignment or the auto-updater.
+	GroupLabel string
 }
 
 // ACLEntry is a slimmed-down view of DeviceRule used by
@@ -145,10 +150,15 @@ var ErrNotFound = errors.New("db: device_rule not found")
 // Empty strings are accepted for back-compat but the ACL
 // builder will fall back to device_ip src for those rows.
 // v0.32.27: uses RETURNING id (works for both SQLite 3.35+ and PG).
-func AppendDeviceRule(d *sql.DB, userID int64, deviceID int, exitNode, targetType, targetValue, action, deviceIP, parentDomain, userName, deviceHostname string) (int64, error) {
+// v0.79 (B380): groupLabel is the operator's own group name ("" = ungrouped). It is
+// stored verbatim — the caller normalises it through NormaliseGroupLabel — and it is
+// deliberately NOT part of the ON CONFLICT key: re-adding the same target keeps the
+// existing row (and its label), and renaming a group is an explicit action
+// (SetDeviceRuleGroup), not a side effect of an insert.
+func AppendDeviceRule(d *sql.DB, userID int64, deviceID int, exitNode, targetType, targetValue, action, deviceIP, parentDomain, groupLabel, userName, deviceHostname string) (int64, error) {
 	var id int64
 	err := d.QueryRow(qInsertDeviceRule,
-		userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain, userName, deviceHostname).Scan(&id)
+		userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain, groupLabel, userName, deviceHostname).Scan(&id)
 	return id, err
 }
 
@@ -625,7 +635,7 @@ func scanAdminRules(rows *sql.Rows) ([]DeviceRule, error) {
 		var en, ad int
 		if err := rows.Scan(&r.ID, &r.UserID, &r.DeviceID, &r.ExitNodeID,
 			&r.TargetType, &r.TargetValue, &r.Action, &r.ParentDomain,
-			&r.CreatedAt, &en, &r.DeviceIP, &r.UserName, &ad); err != nil {
+			&r.CreatedAt, &en, &r.DeviceIP, &r.UserName, &ad, &r.GroupLabel); err != nil {
 			return nil, err
 		}
 		r.Enabled = en == 1
@@ -676,7 +686,7 @@ func getAllRulesForAdminQuery(d *sql.DB, q string, args ...interface{}) ([]Devic
 		var en, ad int
 		if err := rows.Scan(&r.ID, &r.UserID, &r.DeviceID, &r.ExitNodeID, &r.TargetType,
 			&r.TargetValue, &r.Action, &r.ParentDomain, &r.CreatedAt, &en,
-			&r.DeviceIP, &r.UserName, &ad); err != nil {
+			&r.DeviceIP, &r.UserName, &ad, &r.GroupLabel); err != nil {
 			return nil, err
 		}
 		r.Enabled = en == 1
@@ -954,6 +964,68 @@ type RuleAdminContext struct {
 	AllDevices   bool
 }
 
+// SetDeviceRuleGroup (v0.79, B380) renames a group on every rule its OWNER has, or
+// clears the group when to is empty. It is scoped by user_id on purpose: a rename is a
+// user action on their own list, and the label is free text the user chose, so a
+// missing scope would let one user's rename rewrite another user's list (the same
+// cross-user risk the delete helpers guard against).
+//
+// from == "" is refused rather than honoured: "rename the ungrouped rows" is not a
+// meaningful request, and treating it as one would silently stamp a label on every
+// ungrouped rule the user owns.
+//
+// Returns the number of rows changed. A rename that changes nothing (no such group, or
+// to == from) returns 0 without an error — the action is idempotent.
+func SetDeviceRuleGroup(d *sql.DB, userID int64, from, to string) (int64, error) {
+	if strings.TrimSpace(from) == "" {
+		return 0, fmt.Errorf("db: SetDeviceRuleGroup refuses an empty source group (nothing to rename)")
+	}
+	// LOWER(...) on both sides: «игры» is the same group as «Игры» to the person who
+	// typed them, and the group VIEW merges them by the same rule (groupLabelKey in the
+	// feature package). If the rename were case-SENSITIVE while the view folded, a user
+	// looking at one merged group could not rename all of it.
+	res, err := d.Exec(
+		`UPDATE device_rules SET group_label = $1
+		  WHERE user_id = $2 AND LOWER(COALESCE(group_label, '')) = LOWER($3)`, to, userID, from)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// DeviceRuleGroupsForUser returns the distinct non-empty group labels the user has
+// given, with how many rules carry each — the shape the /my/exit-rules group view and
+// the add form's suggestion list both need, in ONE query instead of a scan of the whole
+// rule list. Rows are ordered by label so the page is stable between renders.
+func DeviceRuleGroupsForUser(d *sql.DB, userID int64) ([]struct {
+	Label string
+	Count int
+}, error) {
+	rows, err := d.Query(
+		`SELECT group_label, COUNT(*) FROM device_rules
+		  WHERE user_id = $1 AND enabled = 1 AND COALESCE(group_label, '') != ''
+		  GROUP BY group_label ORDER BY group_label`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []struct {
+		Label string
+		Count int
+	}
+	for rows.Next() {
+		var g struct {
+			Label string
+			Count int
+		}
+		if err := rows.Scan(&g.Label, &g.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
 // GetRuleAdminContext resolves the owner of one rule by id, with NO user filter — the
 // deliberate difference from GetRuleFanOutKey, which takes a userID and therefore
 // returns ErrNotFound for a rule the caller does not own. The admin delete path reads
@@ -1102,7 +1174,7 @@ func scanDeviceRules(rows *sql.Rows) ([]DeviceRule, error) {
 		var r DeviceRule
 		var en, ad int
 		if err := rows.Scan(&r.ID, &r.UserID, &r.DeviceID, &r.ExitNodeID,
-			&r.TargetType, &r.TargetValue, &r.Action, &r.DeviceIP, &en, &r.ParentDomain, &ad); err != nil {
+			&r.TargetType, &r.TargetValue, &r.Action, &r.DeviceIP, &en, &r.ParentDomain, &ad, &r.GroupLabel); err != nil {
 			return nil, err
 		}
 		r.Enabled = en == 1

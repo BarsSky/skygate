@@ -197,6 +197,7 @@ var pgMigrations = []MigrationEntry{
 	{76, "v0.76 (B305): monitor_events — the operator monitoring inbox (severity + dedup by fingerprint + ack/resolve)", "migrations_v0_76_monitor_events.go", migrateV076PG},
 	{77, "v0.77 (B312): exit_servers location — where a relay actually sits (shown on /admin/exit-nodes, used to prefer a nearby relay when an owner is unreachable)", "migrations_v0_77_exit_location.go", migrateV077PG},
 	{78, "v0.78 (B360): prefix_owner failover reservation — a prefix taken from an unhealthy relay remembers where to return", "migrations_v0_78_prefix_reservation.go", migrateV078PG},
+	{79, "v0.79 (B380): device_rules.group_label — the operator's own name for a group of rules, so the page can be read by «Игры» instead of by domain", "migrations_v0_79_rule_group.go", migrateV079PG},
 }
 
 // PGMigrations returns the list of migrations the current

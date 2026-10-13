@@ -76,11 +76,17 @@ fi
 # tail accepts both shapes; what this contract is actually for — "both subnet INSERT
 # sites exist" — is unchanged, and that both of them carry the owner pair is
 # asserted by B351 (scripts/check_b351_rule_owner_and_counts.sh A1/A2).
-A2=$(grep -cE 'VALUES \(\$1, \$2, \$3, .subnet., \$4, \$5, \$6, \$7(, \$8, \$9)?\)' "$REPO/internal/feature/exit_rules/sync_domain.go")
+# CONTRACT RENEGOTIATED (2026-10-13, B380): the derived INSERTs gained a `group_label`
+# column (inherited from the domain row through a scalar subquery), so the old pattern —
+# which pinned the VALUES list down to its closing `$9)` — matched nothing and reported
+# "0 subnet INSERTs" about two INSERTs that were right there. What this contract is ABOUT
+# is that both derived rows (the CDN-range one and the per-IP /32 one) exist and carry the
+# 6-col target A.1/A.3 pin, so it now counts the INSERTs themselves.
+A2=$(grep -cE 'INSERT INTO device_rules \(' "$REPO/internal/feature/exit_rules/sync_domain.go")
 if [ "$A2" -ge 2 ]; then
-  ok "A.2 sync_domain.go has >= 2 subnet INSERT statements (CDN-range + per-IP)"
+  ok "A.2 sync_domain.go has >= 2 derived INSERT statements (CDN-range + per-IP)"
 else
-  bad "A.2 sync_domain.go subnet INSERTs count=$A2 (want >= 2)"
+  bad "A.2 sync_domain.go derived INSERTs count=$A2 (want >= 2)"
 fi
 
 # A.3 Pre-B237.23 5-col target should be GONE from sync_domain.go

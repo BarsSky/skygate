@@ -59,18 +59,31 @@ func TestSQLiteSchemaComplete(t *testing.T) {
 		t.Fatalf("ApplyMigrations(SQLite): %v", err)
 	}
 
-	t.Run("chain reaches V078 like PostgreSQL", func(t *testing.T) {
+	t.Run("chain reaches V079 like PostgreSQL", func(t *testing.T) {
 		var maxV int
 		if err := sqlDB.QueryRow(
 			`SELECT COALESCE(MAX(version), 0) FROM applied_migrations`).Scan(&maxV); err != nil {
 			t.Fatalf("read max(version): %v", err)
 		}
-		// PostgreSQL's chain ends at 78 (v0.78 = prefix_owner failover
-		// reservation, B360). If SQLite lags behind, every table/column added by
-		// the missing tail is absent.
-		if maxV != 78 {
-			t.Errorf("SQLite migration chain ends at V%d, want V78 — the PG and SQLite "+
+		// PostgreSQL's chain ends at 79 (v0.79 = device_rules.group_label, B380). If
+		// SQLite lags behind, every table/column added by the missing tail is absent.
+		if maxV != 79 {
+			t.Errorf("SQLite migration chain ends at V%d, want V79 — the PG and SQLite "+
 				"chains have diverged again (see driver_sqlite.go sqliteMigrations)", maxV)
+		}
+	})
+
+	t.Run("group_label exists (V079, B380)", func(t *testing.T) {
+		// V079 is B380's operator-named rule group: the column is what the group view
+		// reads and what the writers normalise. Absent on SQLite, the view would render
+		// one «Без группы» bucket for every install on that backend.
+		var n int
+		if err := sqlDB.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('device_rules') WHERE name = 'group_label'`).Scan(&n); err != nil {
+			t.Fatalf("pragma_table_info: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("device_rules.group_label is missing on SQLite — the v0.79 migration did not run")
 		}
 	})
 

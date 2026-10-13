@@ -493,7 +493,7 @@ const qSelectSubnet32NoParentDomain = `SELECT id, target_value FROM device_rules
 // fires (PG's DO NOTHING can't RETURNING the old id) — so
 // AppendDeviceRule is now a true "insert or get-existing" with
 // no race window, returning the row's id in both cases.
-const qInsertDeviceRule = `INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, user_name, device_hostname) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO UPDATE SET id = device_rules.id RETURNING id`
+const qInsertDeviceRule = `INSERT INTO device_rules (user_id, device_id, exit_node_id, target_type, target_value, action, device_ip, parent_domain, group_label, user_name, device_hostname) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (user_id, device_id, exit_node_id, target_type, target_value, parent_domain) DO UPDATE SET id = device_rules.id RETURNING id`
 
 // qSelectUserRulesForView is used by /my/exit-rules: every enabled rule
 // for a user, ordered for stable display.
@@ -513,7 +513,7 @@ const qInsertDeviceRule = `INSERT INTO device_rules (user_id, device_id, exit_no
 // The column has existed since v0.74 (the v0.74 migration added
 // `all_devices INTEGER NOT NULL DEFAULT 0`); the SELECT was simply
 // missing it. This is the schema-correct path.
-const qSelectUserRulesForView = `SELECT d.id, d.user_id, d.device_id, d.exit_node_id, d.target_type, d.target_value, COALESCE(d.action, 'accept') AS action, COALESCE(d.device_ip, '') AS device_ip, d.enabled, COALESCE(d.parent_domain, '') AS parent_domain, COALESCE(d.all_devices, 0) AS all_devices FROM device_rules d WHERE d.user_id = $1 ORDER BY d.id`
+const qSelectUserRulesForView = `SELECT d.id, d.user_id, d.device_id, d.exit_node_id, d.target_type, d.target_value, COALESCE(d.action, 'accept') AS action, COALESCE(d.device_ip, '') AS device_ip, d.enabled, COALESCE(d.parent_domain, '') AS parent_domain, COALESCE(d.all_devices, 0) AS all_devices, COALESCE(d.group_label, '') AS group_label FROM device_rules d WHERE d.user_id = $1 ORDER BY d.id`
 
 // qSelectUserRulesForViewPaged is the v1.5.43 paginated version
 // of qSelectUserRulesForView. The /my/exit-rules page renders
@@ -531,7 +531,7 @@ const qSelectUserRulesForView = `SELECT d.id, d.user_id, d.device_id, d.exit_nod
 //
 // Same column shape as qSelectUserRulesForView so the existing
 // scanDeviceRules path consumes the rows without changes.
-const qSelectUserRulesForViewPaged = `SELECT d.id, d.user_id, d.device_id, d.exit_node_id, d.target_type, d.target_value, COALESCE(d.action, 'accept') AS action, COALESCE(d.device_ip, '') AS device_ip, d.enabled, COALESCE(d.parent_domain, '') AS parent_domain, COALESCE(d.all_devices, 0) AS all_devices FROM device_rules d WHERE d.user_id = $1 ORDER BY d.id LIMIT $2 OFFSET $3`
+const qSelectUserRulesForViewPaged = `SELECT d.id, d.user_id, d.device_id, d.exit_node_id, d.target_type, d.target_value, COALESCE(d.action, 'accept') AS action, COALESCE(d.device_ip, '') AS device_ip, d.enabled, COALESCE(d.parent_domain, '') AS parent_domain, COALESCE(d.all_devices, 0) AS all_devices, COALESCE(d.group_label, '') AS group_label FROM device_rules d WHERE d.user_id = $1 ORDER BY d.id LIMIT $2 OFFSET $3`
 
 // qSelectUserRulesForViewCount is the COUNT(*) companion to
 // qSelectUserRulesForViewPaged. Same WHERE clause (user_id +
@@ -547,7 +547,7 @@ const qSelectUserRulesForViewCount = `SELECT COUNT(*) FROM device_rules d WHERE 
 // /admin/exit-rules — before B277.4 the admin view had no way to
 // tell a per-device rule apart from a fan-out copy. The
 // LEFT JOIN onto portal_users is preserved.
-const qSelectAllRulesForAdmin = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.id`
+const qSelectAllRulesForAdmin = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices, COALESCE(r.group_label, '') AS group_label FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id ORDER BY r.id`
 
 // qSelectAllRulesForAdminPaged (v1.5.43; the WINDOW was renegotiated by B358) —
 // the rules of the admin page, scoped to the groups that page windows. Same
@@ -576,7 +576,7 @@ const qSelectAllRulesForAdmin = `SELECT r.id, r.user_id, r.device_id, r.exit_nod
 //
 // Ordering still keeps a group contiguous (r.user_id, r.device_id) and the rows
 // inside it stable (r.id) — the property B351 C3 pinned, now expressed one level up.
-const qSelectAllRulesForAdminPaged = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id WHERE (%s) AND r.enabled = 1 ORDER BY r.user_id, r.device_id, r.id`
+const qSelectAllRulesForAdminPaged = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices, COALESCE(r.group_label, '') AS group_label FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id WHERE (%s) AND r.enabled = 1 ORDER BY r.user_id, r.device_id, r.id`
 
 // qSelectAdminRuleGroups is B358's WINDOW: one row per distinct
 // `(user_id, device_id)` group that holds at least one ENABLED rule, with the group's
@@ -646,7 +646,7 @@ const qSelectAllRulesForAdminCount = `SELECT COUNT(*) FROM device_rules WHERE en
 // because /admin/devices stores hostnames in lowercase (see
 // backfillNodeOwnership in internal/nodeownership), but a hand-
 // edited `?device=` URL parameter could be any case.
-const qSelectAllRulesForAdminByDevice = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id LEFT JOIN node_owner_map n ON CAST(n.node_id AS INTEGER) = r.device_id WHERE LOWER(COALESCE(n.hostname, '')) = LOWER($1) ORDER BY r.id`
+const qSelectAllRulesForAdminByDevice = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices, COALESCE(r.group_label, '') AS group_label FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id LEFT JOIN node_owner_map n ON CAST(n.node_id AS INTEGER) = r.device_id WHERE LOWER(COALESCE(n.hostname, '')) = LOWER($1) ORDER BY r.id`
 
 // qSelectTargetTypeByIDForDelete reads (target_type, parent_domain) of a
 // single rule; the delete handler uses it to decide between single-row

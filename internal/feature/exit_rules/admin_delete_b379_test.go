@@ -102,6 +102,21 @@ func b379SeedUser(t *testing.T, d *sql.DB, id int64, username string) {
 	}
 }
 
+// b379SeedRuleWithLabel seeds one rule that carries a group label (v0.79 / B380). It
+// lives beside b379SeedRule rather than inside it so the B379 fixtures keep their exact
+// shape (no label) and a B380 test says in one line what it needs.
+func b379SeedRuleWithLabel(t *testing.T, d *sql.DB, owner int64, ownerName string, deviceID int, label string) {
+	t.Helper()
+	b379SeedUser(t, d, owner, ownerName)
+	if _, err := d.Exec(`INSERT INTO device_rules
+		(user_id, user_name, device_id, device_ip, exit_node_id, target_type, target_value,
+		 action, enabled, parent_domain, all_devices, group_label, created_at)
+		VALUES ($1,$2,$3,'100.64.0.20','emilia','domain',$4,'accept',1,'',0,$5,0)`,
+		owner, ownerName, deviceID, "b380-"+label+".invalid", label); err != nil {
+		t.Fatalf("seed labelled rule for user %d: %v", owner, err)
+	}
+}
+
 // b379Post drives the handler with the given id and claims.
 func b379Post(s *Service, id int, cookie string) *httptest.ResponseRecorder {
 	form := url.Values{"id": {strconv.Itoa(id)}}

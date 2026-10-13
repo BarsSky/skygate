@@ -22,6 +22,10 @@ type DeviceRuleGroup struct {
 	Action       string
 	DeviceIP     string
 	ParentDomain string
+	// GroupLabel (v0.79 / B380) is the owner's own group name. The fan-out COPY of a
+	// rule must carry it, or a rule the user filed under «Игры» would appear ungrouped
+	// on every device except the one it was typed on.
+	GroupLabel string
 }
 
 // MarkDeviceRulesAllDevices records the intent on every row of one rule group —
@@ -50,11 +54,11 @@ func MarkDeviceRulesAllDevices(d *sql.DB, userID int64, exitNode, targetType, ta
 func ListAllDeviceRuleGroups(d *sql.DB) ([]DeviceRuleGroup, error) {
 	rows, err := d.Query(
 		`SELECT user_id, COALESCE(exit_node_id,''), target_type, target_value, action,
-		        COALESCE(device_ip,''), COALESCE(parent_domain,'')
+		        COALESCE(device_ip,''), COALESCE(parent_domain,''), COALESCE(group_label,'')
 		   FROM device_rules
 		  WHERE enabled = 1 AND all_devices = 1
 		  GROUP BY user_id, COALESCE(exit_node_id,''), target_type, target_value, action,
-		           COALESCE(device_ip,''), COALESCE(parent_domain,'')`)
+		           COALESCE(device_ip,''), COALESCE(parent_domain,''), COALESCE(group_label,'')`)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +67,7 @@ func ListAllDeviceRuleGroups(d *sql.DB) ([]DeviceRuleGroup, error) {
 	for rows.Next() {
 		var g DeviceRuleGroup
 		if err := rows.Scan(&g.UserID, &g.ExitNode, &g.TargetType, &g.TargetValue, &g.Action,
-			&g.DeviceIP, &g.ParentDomain); err != nil {
+			&g.DeviceIP, &g.ParentDomain, &g.GroupLabel); err != nil {
 			return nil, err
 		}
 		out = append(out, g)

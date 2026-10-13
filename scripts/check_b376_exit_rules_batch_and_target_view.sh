@@ -100,7 +100,11 @@ else
   bad "A4: found $LOOKUPS DNS-resolve implementations in the surface, want exactly 1 (the batch and the single form must share addRuleTarget)"
 fi
 
-if grep -q 's\.addRuleTarget(c\.UserID, devID, deviceIP, exitNode, targetType, targetValue, action)' "$SKY_EXIT"; then
+# CONTRACT RENEGOTIATED (2026-10-13, B380): the call gained the operator's group label as its
+# last argument, so this pattern no longer pins the argument LIST — it pins what the contract
+# is actually about, which is that the single form still routes through the shared install
+# core (and, via A4, that there is still exactly one DNS-resolve path in the surface).
+if grep -Eq 's\.addRuleTarget\(c\.UserID, devID, deviceIP, exitNode, targetType, targetValue, action' "$SKY_EXIT"; then
   ok "A5: PostMyExitRule calls addRuleTarget (single form and batch form cannot drift)"
 else
   bad "A5: PostMyExitRule no longer calls addRuleTarget — the single path has its own copy again"
