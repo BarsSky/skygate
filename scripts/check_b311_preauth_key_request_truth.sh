@@ -67,27 +67,51 @@ PAT=internal/headscale/preauth_b311_test.go
 # Code only — the file's own documentation names the WRONG spellings on purpose
 # (that is how the next reader learns why they must not come back).
 CODE="$(grep -v '^[[:space:]]*//' "$PA")"
+# 2026-10-14 (measured, not theorised): this check PASSED the full gate twice and then
+# FAILED A2 on the third run with the SAME tree — "does not put tags in acl_tags" about a
+# file whose line 241 is exactly `body["acl_tags"] = tags`, verified by hand immediately
+# afterwards and reproducible 0 times in 300 rounds, including 400 rounds under 8 CPU
+# burners. The assertion was `printf '%s' "$CODE" | grep -q …`, i.e. two forked processes
+# and a pipe per clause, and A1/A3 (same variable, same form) passed in the same run — the
+# signature of the host-transient class AGENTS trap #9 documents (a producer/consumer pipe
+# whose status is not the command's own status), not of a missing pattern.
+#
+# So the matching below uses `case`, a SHELL BUILTIN: no fork, no pipe, no SIGPIPE, and the
+# verdict can only come from the text itself. The failure message also separates the two
+# states the old text merged: a pattern that is genuinely absent (a product fact) from an
+# EMPTY read (a fact about this check — which must never be reported as a regression, B378).
+has_any() { # has_any <var> <pattern…> — prints 1 when any pattern matches, else 0
+  _s_var="$1"; shift
+  for _s_pat in "$@"; do
+    case "$_s_var" in *"$_s_pat"*) printf '1'; return ;; esac
+  done
+  printf '0'
+}
 hdr "B311 — the preauth key must be issuable on the host the headscale runs on"
 
+if [ -z "$CODE" ]; then
+  bad "B311: reading the CODE of $PA produced NOTHING — that is a property of this check (or of file access), not of the product: do not read the verdicts below as regression evidence"
+fi
+
 # --- A: create body ----------------------------------------------------------
-if printf '%s' "$CODE" | grep -q '"user":' && ! printf '%s' "$CODE" | grep -q '"user_id":'; then
+has_code() { [ "$(has_any "$CODE" "$@")" = "1" ]; }
+if has_code '"user":' && ! has_code '"user_id":'; then
   ok "A1: the owner travels as \`user\` (the field 0.29.x reads), never \`user_id\`"
 else
   bad "A1: $PA still sends the ignored \`user_id\` (headscale answers 'auth-key must be either tagged or owned by user')"
 fi
-if printf '%s' "$CODE" | grep -q 'body\["acl_tags"\] = tags' \
-   && ! printf '%s' "$CODE" | grep -q 'body\["tags"\] = tags'; then
+if has_code 'body["acl_tags"] = tags' && ! has_code 'body["tags"] = tags'; then
   ok "A2: tags travel as \`acl_tags\` (the \`tags\` spelling is silently dropped)"
 else
-  bad "A2: $PA does not put tags in \`acl_tags\` — a tag:exit-node key would register an untagged node"
+  bad "A2: $PA does not put tags in \`acl_tags\` — a tag:exit-node key would register an untagged node (code read: ${#CODE} bytes)"
 fi
 # A3: the RESPONSE is wrapped in {"preAuthKey": {…}} with `user` as an object and
 # `expiration` as a protobuf Timestamp, so a 200 with a real key used to look like
 # an empty answer and the caller fell through to the CLI rung.
-if printf '%s' "$CODE" | grep -q 'func parsePreauthKey(' \
-   && printf '%s' "$CODE" | grep -q '"preAuthKey"' \
-   && printf '%s' "$CODE" | grep -q 'func wireUser(' \
-   && printf '%s' "$CODE" | grep -q 'func wireExpiration('; then
+if has_code 'func parsePreauthKey(' \
+   && has_code '"preAuthKey"' \
+   && has_code 'func wireUser(' \
+   && has_code 'func wireExpiration('; then
   ok "A3: the create response is parsed from the 0.29.x envelope (tolerant user/expiration shapes)"
 else
   bad "A3: $PA cannot read the wrapped preAuthKey response — a successful create would fall through to the CLI"
@@ -117,9 +141,9 @@ else
   bad "C2: the older expire rung was dropped instead of kept as a fallback"
 fi
 EXP_LINE="$(grep '"preauthkeys", "expire"' "$PA" | head -1)"
-if printf '%s' "$EXP_LINE" | grep -q -- '--id' \
-   && printf '%s' "$EXP_LINE" | grep -q -- '--force' \
-   && ! printf '%s' "$EXP_LINE" | grep -q -- '"-u"'; then
+if [ "$(has_any "$EXP_LINE" --id)" = "1" ] \
+   && [ "$(has_any "$EXP_LINE" --force)" = "1" ] \
+   && [ "$(has_any "$EXP_LINE" '"-u"')" = "0" ]; then
   ok "C3: the expire CLI rung passes --id/--force and no user flag"
 else
   bad "C3: the expire CLI rung does not match the flag set 0.29.x actually has (-i/--id only): $EXP_LINE"
@@ -127,11 +151,14 @@ fi
 
 # --- behavioural: the Go tests pin all of the above --------------------------
 if command -v go >/dev/null 2>&1; then
-  OUT="$(go test ./internal/headscale/ -run 'B311|Preauth' -count=1 2>&1)"
-  if printf '%s' "$OUT" | grep -q '^ok' && ! printf '%s' "$OUT" | grep -q 'FAIL'; then
+  # The COMMAND's own exit status, not a grep of its output: `has_any` matches literally,
+  # so a `'^ok'` pattern would never match go test's line (and a regex is not the point —
+  # the question is "did the tests pass", which go itself answers).
+  OUT="$(go test ./internal/headscale/ -run 'B311|Preauth' -count=1 2>&1)"; GO_RC=$?
+  if [ "$GO_RC" -eq 0 ]; then
     ok "D1: the B311/preauth tests pass (body fields, CLI ladder, local binary, expire rungs)"
   else
-    bad "D1: the preauth tests failed:"
+    bad "D1: the preauth tests failed (go test rc=$GO_RC):"
     printf '%s\n' "$OUT" | tail -20 | sed 's/^/       /' >&2
   fi
 else
