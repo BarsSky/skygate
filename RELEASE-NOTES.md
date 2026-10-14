@@ -12,6 +12,81 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.124 — the `set` rung must not pass a flag this client does not have (B384.1)
+
+**Date:** 2026-10-14 · **Base:** `v1.5.123` → this tag · **Compatibility:** no schema
+change, no request/response change, no routing change. A follow-up to v1.5.123 found by
+verifying the applied release on the reference host, one tick after it started.
+
+### What the verification of v1.5.123 showed
+
+The good news first, because it is the proof that B384 did what it promised:
+
+```
+[init] tailscale-apply: OK hostname=skygate-host tags=tag:dev-infra-skygate-host
+```
+
+and the old permanent failure text — `requires mentioning all non-default flags` — is
+**gone** (0 occurrences). The cause is now precisely known: that refusal appears whenever
+the call does not mention the persisted `AdvertiseTags` pref, and B384's `up` invocation
+does mention it, which is why the failure stopped the moment the release was applied.
+
+The bad news is what the same journal admitted five minutes later, on Tailscale **1.102.3**
+(the version the image ships):
+
+```
+tailscale-apply: 'tailscale set' failed (unclassified):
+  flag provided but not defined: -advertise-tags
+```
+
+`tailscale set --help` on that client lists `--hostname`, `--accept-routes`,
+`--accept-dns`, `--exit-node` … and **no `--advertise-tags`** — while `tailscale up` does
+have it. So the **first rung of the ladder could never succeed** on this client: every boot
+and every 5-minute tick burned a failed invocation and printed a red, "unclassified" line —
+the exact noise class B384 exists to remove — and the tags were applied *only* because the
+ladder fell through to `up`. A tag edit in the panel would still have landed (via `up`), but
+the log told the operator a rung was broken, and a broken rung is a landmine: the next
+person to "simplify" the ladder would keep it and lose the tags.
+
+### What changed
+
+1. **Ask the client, do not discover by failing.** `tailscaleSetSupportsAdvertiseTags`
+   (Go, cached once per process through a pure `parseSetSupportsAdvertiseTags`) and
+   `skygate_tc_set_supports_advertise_tags` (entrypoint) read `tailscale set --help` and the
+   tag flag is passed to `set` **only when this client has it**.
+2. **`set` must prove itself.** The `set` rung is accepted **only when the daemon's own view
+   then matches the intent** (`tailscaleSettingsMatch`, `skygate_tc_try_set`); otherwise the
+   ladder continues with `up`, which carries the tags. On a client *with* the flag, `set`
+   alone is still enough — the ladder did not get weaker, it got honest.
+3. **The classifier names it.** `flag provided but not defined` is now its own kind
+   (`bad-flag`) in both halves, so the log says what happened instead of `(unclassified)`.
+4. The intermediate check is **quiet** (`tailscaleSettingsMatch`, no polling, no log line),
+   so a `set` that cannot carry tags no longer prints a false `SETTINGS NOT APPLIED` right
+   before `up` succeeds; the loud verdict still comes from every path that ends the ladder.
+
+### Verified on the live node before the tag
+
+Run inside the operator's running container against the real daemon (idempotent values, so
+nothing changed):
+
+```
+probe: this set has NO --advertise-tags (tag left to up) — the live case
+tag arg, support=0: []
+tag arg, support=1: [--advertise-tags=tag:dev-infra-skygate-host]
+set rung rc=0 (0 = applied AND verified, 2 = applied but the daemon still differs, 1 = failed)
+verify: OK hostname=skygate-host tags=tag:dev-infra-skygate-host
+```
+
+* **Go:** `gofmt`/`staticcheck`/`go vet` clean; the new pure parser and the live
+  unsupported-flag text are unit-tested (`TestParseSetSupportsAdvertiseTags_B3841`,
+  `TestTailscalePrefDriftKind_B384`); the `internal/feature/admin` suite is green.
+* **Contract:** `scripts/check_b384_tailscale_settings_apply.sh` grew from 32 to **46
+  contracts** — section G asserts the probe in both halves, the conditional tag argument,
+  the verify-gated `set` (rc 0 / 2 / 1), the `bad-flag` classification, and drives the
+  probe and the rung against a **stubbed** `tailscale` whose help text has no
+  `--advertise-tags` (the live case) and one that has it.
+* `bash -n` **and** `sh -n` clean on `entrypoint.sh`.
+
 ## v1.5.123 — the Tailscale settings must actually apply (B384)
 
 **Date:** 2026-10-14 · **Base:** `v1.5.122` → this tag · **Compatibility:** no schema

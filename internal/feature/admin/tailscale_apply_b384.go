@@ -55,6 +55,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -84,6 +85,9 @@ func AdvertiseTagForHostname(hostname string) string {
 // Pure. The caller uses it to decide whether a retry can help and what to log:
 //   - "drift"              the persisted prefs the invocation did not mention
 //     (upstream's own words; `--reset` is its printed remedy)
+//   - "bad-flag"           this CLIENT does not know a flag we passed (1.102.3 has no
+//     `set --advertise-tags`; the live text is
+//     `flag provided but not defined: -advertise-tags`)
 //   - "tags-not-permitted" headscale refused a tag (no tagOwners entry for it)
 //   - "logged-out"         the node needs (re)authentication
 //   - "timeout"            the 30s ceiling fired
@@ -103,6 +107,8 @@ func tailscalePrefDriftKind(out string) string {
 	switch {
 	case strings.Contains(o, "requires mentioning all non-default flags"):
 		return "drift"
+	case strings.Contains(o, "flag provided but not defined"):
+		return "bad-flag"
 	case strings.Contains(o, "invalid or not permitted"), strings.Contains(o, "not permitted"):
 		return "tags-not-permitted"
 	case strings.Contains(o, "logged out"), strings.Contains(o, "not logged in"):
@@ -111,6 +117,64 @@ func tailscalePrefDriftKind(out string) string {
 		return "timeout"
 	}
 	return ""
+}
+
+// B384.1 (v1.5.124) — the `set` rung must not pass a flag this CLIENT does not have.
+//
+// Measured on the reference host one tick after v1.5.123 was applied (Tailscale 1.102.3,
+// the version the image ships):
+//
+//	tailscale-apply: 'tailscale set' failed (unclassified):
+//	  flag provided but not defined: -advertise-tags
+//
+// `tailscale set --help` on that client lists --hostname, --accept-routes, --accept-dns,
+// --exit-node … and NO --advertise-tags, while `tailscale up` does have it. So the first
+// rung of the ladder could never succeed there: it burned a failed invocation and printed
+// a permanent red line on every boot and every 5-minute tick — the exact noise class B384
+// exists to remove — and the tags were only ever applied because the ladder fell through
+// to `up`.
+//
+// Two rules follow, and both are pinned by contracts:
+//  1. ask the client whether `set` supports the flag (once per process) and omit it when
+//     it does not, instead of discovering it by failing;
+//  2. `set` is trusted ONLY when the daemon's own view then matches the intent — tags it
+//     cannot carry are the `up` rung's job, and on a version with the flag `set` alone is
+//     still enough.
+var tailscaleSetAdvertiseTags = struct {
+	once sync.Once
+	ok   bool
+}{}
+
+// parseSetSupportsAdvertiseTags is the PURE half of the capability probe: does this
+// `tailscale set --help` text advertise --advertise-tags? Split out so the decision is
+// unit-tested without a tailscale binary on the machine.
+func parseSetSupportsAdvertiseTags(help string) bool {
+	return strings.Contains(help, "--advertise-tags")
+}
+
+// tailscaleSetSupportsAdvertiseTags reports whether `tailscale set` on THIS client accepts
+// --advertise-tags. Probed once and cached; a missing client or an unreadable help means
+// "no", which only means the tag is left to `up` (the rung that certainly has it).
+func tailscaleSetSupportsAdvertiseTags() bool {
+	tailscaleSetAdvertiseTags.once.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "tailscale", "set", "--help").CombinedOutput()
+		if err != nil && len(out) == 0 {
+			return
+		}
+		tailscaleSetAdvertiseTags.ok = parseSetSupportsAdvertiseTags(string(out))
+	})
+	return tailscaleSetAdvertiseTags.ok
+}
+
+// tailscaleSettingsMatch is the QUIET half of verifyTailscaleSettings: one read of the
+// daemon's own view, no log line, no polling. It is the gate that decides whether the
+// `set` rung may be accepted as final (an intermediate verdict must not print
+// "SETTINGS NOT APPLIED" for a mismatch the next rung is about to fix).
+func tailscaleSettingsMatch(wantHost string, wantTags []string) bool {
+	gotHost, gotTags := tailscaleSelfStatus()
+	return gotHost != "" && hostAndTagsMatch(wantHost, wantTags, gotHost, gotTags)
 }
 
 // runTailscale runs one tailscale verb under the shared timeout and returns its
@@ -276,18 +340,32 @@ func (s *Service) applyTailscaleSettings(key string) (string, error) {
 
 	// 1. The daemon already answers: `set` changes only what we name, and upstream
 	//    guarantees it does NOT require the complete set of desired settings.
+	//
+	//    B384.1: the tag flag is passed ONLY when this client's `set` knows it (1.102.3
+	//    does not), and `set` is accepted only when the daemon then matches the intent —
+	//    otherwise the tags are left to the `up` rung, which carries them.
 	if tailscaleDaemonAnswers() {
 		args := append([]string{"set", "--hostname=" + host}, common...)
-		if tagArg != "" {
+		tagCarriedBySet := tagArg != "" && tailscaleSetSupportsAdvertiseTags()
+		if tagCarriedBySet {
 			args = append(args, "--advertise-tags="+tagArg)
 		}
 		out, err := runTailscale(args...)
-		if err == nil {
+		switch {
+		case err == nil && tailscaleSettingsMatch(host, tags):
 			verifyTailscaleSettings(host, tags)
 			return out, nil
+		case err == nil:
+			reason := "has no --advertise-tags, so the tags are not part of what it can set"
+			if tagCarriedBySet {
+				reason = "has --advertise-tags, but the tag set still did not land"
+			}
+			log.Printf("tailscale-apply: 'tailscale set' applied the flags it can, but the daemon still does "+
+				"not match the intent (this client's `set` %s) — continuing with 'tailscale up', which carries them", reason)
+		default:
+			log.Printf("tailscale-apply: 'tailscale set' failed (%s): %s — falling back to 'tailscale up'",
+				orOther(tailscalePrefDriftKind(out)), truncate(out, 200))
 		}
-		log.Printf("tailscale-apply: 'tailscale set' failed (%s): %s — falling back to 'tailscale up'",
-			orOther(tailscalePrefDriftKind(out)), truncate(out, 200))
 	}
 
 	// 2. First join (no state) or the fallback: `up` with every flag this container owns.

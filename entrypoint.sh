@@ -168,11 +168,49 @@ skygate_tc_error_kind() {
     _b384_o="$(printf '%s' "${1:-}" | tr '\n\t' '  ' | tr -s ' ' | tr 'A-Z' 'a-z')"
     case "$_b384_o" in
         *"requires mentioning all non-default flags"*) printf '%s\n' "drift" ;;
+        *"flag provided but not defined"*)             printf '%s\n' "bad-flag" ;;
         *"invalid or not permitted"*|*"not permitted"*) printf '%s\n' "tags-not-permitted" ;;
         *"logged out"*|*"not logged in"*)              printf '%s\n' "logged-out" ;;
         *"context deadline exceeded"*|*"timed out"*)   printf '%s\n' "timeout" ;;
         *)                                             printf '%s\n' "" ;;
     esac
+}
+# skygate_tc_set_supports_advertise_tags — does THIS client's `set` accept the flag?
+# Measured on the reference host (Tailscale 1.102.3, the version the image ships):
+# `tailscale set --help` lists --hostname/--accept-routes/--accept-dns/--exit-node and NO
+# --advertise-tags, while `tailscale up` has it. Passing it anyway made the FIRST rung fail
+# on every boot ("flag provided but not defined: -advertise-tags"), so the tags only ever
+# landed through `up` — and the log carried a permanent failure line. Exit 0 = supported.
+skygate_tc_set_supports_advertise_tags() {
+    tailscale set --help 2>&1 | grep -q -- '--advertise-tags'
+}
+# skygate_tc_set_tag_arg <tags> <support 0|1> — the --advertise-tags argument for `set`,
+# or nothing when this client's `set` does not know the flag (then `up` carries the tags).
+skygate_tc_set_tag_arg() {
+    [ "${2:-0}" = "1" ] || return 0
+    [ -n "${1:-}" ] || return 0
+    printf '%s\n' "--advertise-tags=$1"
+}
+# skygate_tc_try_set <hostname> <tags> <common-flags> <tag-arg> — run the `set` rung and
+# report whether it may be ACCEPTED as final:
+#   0  `set` succeeded AND the daemon's own view now matches the intent (accepted)
+#   2  `set` succeeded, but the daemon does not match (tags this client's `set` cannot
+#      carry) — the caller must continue with `up`, which does have the flag
+#   1  `set` failed (the caller continues with `up` anyway)
+# The command's own output is printed on stdout for the caller to classify.
+skygate_tc_try_set() {
+    _b384_sh="$1"; _b384_st="${2:-}"; _b384_scommon="$3"; _b384_stag="${4:-}"
+    # shellcheck disable=SC2086
+    if _b384_sout="$(timeout 30 tailscale set --hostname="$_b384_sh" $_b384_scommon $_b384_stag 2>&1)"; then
+        if skygate_tc_verify "$_b384_sh" "$_b384_st" >/dev/null 2>&1; then
+            printf '%s\n' "$_b384_sout"
+            return 0
+        fi
+        printf '%s\n' "$_b384_sout"
+        return 2
+    fi
+    printf '%s\n' "$_b384_sout"
+    return 1
 }
 # skygate_tc_verify <want-host> <want-tags> — compare the intent with the daemon's OWN
 # view (.Self.HostName + .Self.Tags) and report ONE named line. Empty tags means "no
@@ -325,14 +363,28 @@ except Exception:
     #      "the command exited 0" is not the same statement as "the settings are applied".
     TC_COMMON_SET="--accept-routes --accept-dns=false --exit-node="
     TC_APPLIED=0
+    # B384.1 (v1.5.124) — probe ONE flag capability instead of discovering it by failing:
+    # 1.102.3's `set` has no --advertise-tags, so the tag belongs to the `up` rung there.
+    if skygate_tc_set_supports_advertise_tags; then
+        TC_SET_TAG_SUPPORT=1
+    else
+        TC_SET_TAG_SUPPORT=0
+        echo "[init] this client's 'tailscale set' has no --advertise-tags — the tag is left to 'tailscale up' (it has it)"
+    fi
+    TC_SET_TAG_ARG="$(skygate_tc_set_tag_arg "$ADVERTISE_TAGS" "$TC_SET_TAG_SUPPORT")"
     if tailscale status >/dev/null 2>&1; then
-        # shellcheck disable=SC2086
-        if TC_OUT="$(timeout 30 tailscale set --hostname="$HOSTNAME" $TC_COMMON_SET \
-                --advertise-tags="$ADVERTISE_TAGS" 2>&1)"; then
-            echo "[init] tailscale set applied (hostname=$HOSTNAME tags=$ADVERTISE_TAGS)"
+        if TC_OUT="$(skygate_tc_try_set "$HOSTNAME" "$ADVERTISE_TAGS" "$TC_COMMON_SET" "$TC_SET_TAG_ARG")"; then
+            echo "[init] tailscale set applied and VERIFIED (hostname=$HOSTNAME tags=$ADVERTISE_TAGS)"
             TC_APPLIED=1
         else
-            echo "[init] tailscale set failed ($(skygate_tc_error_kind "$TC_OUT")): $(printf '%s' "$TC_OUT" | head -2 | tr '\n' ' ')"
+            # $? must be read FIRST: it is the rung's verdict (2 = set worked, the daemon
+            # does not match yet → `up` carries the tags; 1 = set failed).
+            TC_SET_RC=$?
+            if [ "$TC_SET_RC" = "2" ]; then
+                echo "[init] tailscale set applied the flags it can, but the daemon does not match the intent yet — continuing with 'tailscale up' (it carries the flags 'set' cannot)"
+            else
+                echo "[init] tailscale set failed ($(skygate_tc_error_kind "$TC_OUT")): $(printf '%s' "$TC_OUT" | head -2 | tr '\n' ' ')"
+            fi
         fi
     fi
     if [ "$TC_APPLIED" != "1" ]; then

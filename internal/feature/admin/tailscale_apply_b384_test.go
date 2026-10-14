@@ -40,6 +40,10 @@ func TestTailscalePrefDriftKind_B384(t *testing.T) {
 		"  tailscale up --advertise-exit-node=false --netfilter-mode=on"
 	cases := []struct{ name, in, want string }{
 		{"the live drift text", drift, "drift"},
+		// B384.1: the SECOND live text, one tick after v1.5.123 was applied on Tailscale
+		// 1.102.3 — this client's `set` has no --advertise-tags, so the first rung failed
+		// on every boot and every tick until the flag was made conditional.
+		{"the unsupported-flag text", "flag provided but not defined: -advertise-tags", "bad-flag"},
 		{"headscale refused a tag", "requested tags [tag:dev-infra-x] are invalid or not permitted", "tags-not-permitted"},
 		{"the node needs auth", "Logged out.", "logged-out"},
 		{"the ceiling fired", "context deadline exceeded", "timeout"},
@@ -112,4 +116,30 @@ func TestDesiredAdvertiseTags_ExplicitWins_B384(t *testing.T) {
 		t.Fatalf("explicit SKYGATE_TS_ADVERTISE_TAGS was not honoured: %v", got)
 	}
 	os.Unsetenv("SKYGATE_TS_ADVERTISE_TAGS")
+}
+
+// B384.1 — the `set` rung must ask the client what it supports instead of discovering it
+// by failing. The live help text below is the tail of `tailscale set --help` on 1.102.3
+// (the version the image ships): no --advertise-tags, while `up` has it.
+func TestParseSetSupportsAdvertiseTags_B3841(t *testing.T) {
+	without := `"tailscale set" allows changing specific preferences.
+FLAGS
+  --accept-routes, --accept-routes=false
+  --advertise-routes value
+  --exit-node value
+  --hostname value`
+	with := without + "\n  --advertise-tags value\n    	ACL tags to advertise for the node"
+	cases := []struct {
+		name, help string
+		want       bool
+	}{
+		{"the live 1.102.3 help (no --advertise-tags)", without, false},
+		{"a client whose set does support it", with, true},
+		{"empty output (no client / unreadable help)", "", false},
+	}
+	for _, c := range cases {
+		if got := parseSetSupportsAdvertiseTags(c.help); got != c.want {
+			t.Errorf("%s: parseSetSupportsAdvertiseTags = %v, want %v", c.name, got, c.want)
+		}
+	}
 }

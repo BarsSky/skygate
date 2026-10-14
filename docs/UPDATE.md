@@ -150,6 +150,22 @@ node looked perfectly healthy, which is why it went unnoticed.
 | `tailscale up …` | the first join (no state yet), and as the fallback | it is what authenticates a node that is not registered yet |
 | `tailscale up --reset …` | retried **once**, and only when the failure text is the full-flag refusal | upstream prints `--reset` as the remedy; safe here because this invocation genuinely names every pref the container owns |
 
+**The tag belongs to whichever command can carry it (B384.1, v1.5.124).** `set` is not
+the same command as `up` in every client version: Tailscale **1.102.3** (the version this
+image ships) accepts `set --hostname`, `--accept-routes`, `--accept-dns` and `--exit-node`
+but has **no `set --advertise-tags`**, while `up` does. Asking for it anyway made the whole
+first rung fail on every start — `flag provided but not defined: -advertise-tags` — so the
+tags only ever landed by falling through to `up`. Skygate now asks the client once
+(`tailscale set --help`), omits the flag when it is not there, and accepts the `set` rung
+**only when the daemon's own view then matches the intent**; otherwise the ladder continues
+with `up`, which carries the tags. Nothing to configure — the boot log says which path was
+taken:
+
+```
+[init] this client's 'tailscale set' has no --advertise-tags — the tag is left to 'tailscale up' (it has it)
+[init] tailscale set applied and VERIFIED (hostname=skygate-host tags=tag:dev-infra-skygate-host)
+```
+
 The advertise tag is **derived, not configured**: `tag:dev-infra-<hostname>`, and the
 hostname goes through the same canonicaliser as the node name (so a legacy
 `skygate-host-1` yields `skygate-host`). An existing tag set is preserved — the derived tag

@@ -31,6 +31,8 @@
 #   D. docs/README.md names every docs/*.md
 #   E. the bilingual set the catalogue claims actually exists
 #   F. tracked by git (AGENTS trap #11) and registered in the catalog
+#   G. the OTHER bilingual pairs (UPDATE, INSTALL, README) mirror their numbering too —
+#      added 2026-10-14 after docs/ru/UPDATE.md was found missing the EN §4.5 (B346)
 
 set -uo pipefail
 if [ -f "$(dirname "$0")/../cmd/skygate/main.go" ]; then
@@ -165,6 +167,40 @@ if grep -q 'B330' AGENTS.md; then
 else
   bad "F3: AGENTS.md has no B330 entry (AGENTS rule 2)"
 fi
+
+# --- G: the OTHER bilingual pairs must mirror their numbering too -------------
+# B330 started with the roadmap because that is where the rot was found. On 2026-10-14 a
+# second divergence surfaced the same way — by a human reading the pair: docs/UPDATE.md
+# had a §4.5 (B346, the pinned release) that docs/ru/UPDATE.md never received, so the
+# Russian reader was told the fleet is steered by "latest" while the English reader was
+# told it is steered by a pin. Nothing noticed, because only the roadmap was compared.
+# The check is deliberately about STRUCTURE, not prose: a translator may word things
+# differently, but a section cannot simply be absent from one side.
+h2_numbers() { grep -E '^## [0-9]+\.' "$1" 2>/dev/null | sed -E 's/^## ([0-9]+)\..*/\1/' | tr '\n' ' '; }
+h3_numbers() { grep -E '^### [0-9]+\.[0-9]+' "$1" 2>/dev/null | sed -E 's/^### ([0-9]+\.[0-9]+).*/\1/' | tr '\n' ' '; }
+for pair in "docs/UPDATE.md docs/ru/UPDATE.md" "docs/INSTALL.md docs/ru/INSTALL.md" \
+            "README.md docs/ru/README.md"; do
+  set -- $pair
+  if [ ! -f "$1" ] || [ ! -f "$2" ]; then
+    bad "G1: $1 <-> $2 — a side is missing"
+    continue
+  fi
+  en="$(h2_numbers "$1")"; ru="$(h2_numbers "$2")"
+  if [ "$en" = "$ru" ]; then
+    ok "G1: $2 mirrors the EN section numbering of $1 ($en)"
+  else
+    bad "G1: $2 does not mirror $1's sections (EN: '$en' RU: '$ru')"
+  fi
+done
+for pair in "docs/UPDATE.md docs/ru/UPDATE.md"; do
+  set -- $pair
+  en="$(h3_numbers "$1")"; ru="$(h3_numbers "$2")"
+  if [ "$en" = "$ru" ]; then
+    ok "G2: $2 mirrors the EN SUBSECTION numbering of $1 ($en)"
+  else
+    bad "G2: $2 is missing/extra a numbered subsection of $1 (EN: '$en' RU: '$ru')"
+  fi
+done
 
 printf '\n\033[1mB330 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1

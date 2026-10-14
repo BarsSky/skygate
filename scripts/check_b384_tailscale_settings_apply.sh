@@ -51,6 +51,9 @@
 #      error classifier, and a real verify() against a stubbed `tailscale`)
 #   E. the Go half: the pure helpers + the unit tests exist, `tailscaleUp` delegates
 #   F. registered, tracked, documented
+#   G. B384.1 (v1.5.124): the `set` rung asks the CLIENT about --advertise-tags before
+#      using it (1.102.3 has no such flag) and is accepted only when the daemon confirms —
+#      statically in both halves AND behaviourally against a stubbed `tailscale`
 #
 # Scratch files live under mktemp -d (trap #13); nothing here touches the network or a
 # real daemon.
@@ -323,6 +326,152 @@ if grep -q 'SKYGATE_TS_ADVERTISE_TAGS' docs/UPDATE.md 2>/dev/null; then
   ok "F5: docs/UPDATE.md documents the operator knob"
 else
   bad "F5: docs/UPDATE.md does not document SKYGATE_TS_ADVERTISE_TAGS"
+fi
+
+# ---------------------------------------------------------------------------
+# G. B384.1 (v1.5.124) — the `set` rung must not pass a flag this client lacks, and it is
+#    accepted only when the daemon confirms
+# ---------------------------------------------------------------------------
+hdr "B384.1 (v1.5.124) — the set rung asks the client first, and must prove itself"
+# The live evidence, one tick after v1.5.123 was applied (Tailscale 1.102.3):
+#   tailscale-apply: 'tailscale set' failed (unclassified):
+#     flag provided but not defined: -advertise-tags
+# …so the FIRST rung failed on every boot and every 5-minute tick, and the tags only ever
+# landed because the ladder fell through to `up`.
+if grep -q 'skygate_tc_set_supports_advertise_tags()' "$EP" \
+   && grep -q 'tailscale set --help' "$EP"; then
+  ok "G1a: the entrypoint probes the CLIENT for the flag (tailscale set --help) before using it"
+else
+  bad "G1a: the entrypoint does not probe whether this client's set supports --advertise-tags"
+fi
+if grep -q 'func parseSetSupportsAdvertiseTags(help string) bool' "$GO_APPLY" \
+   && grep -q 'func tailscaleSetSupportsAdvertiseTags() bool' "$GO_APPLY" \
+   && grep -q '"tailscale", "set", "--help"' "$GO_APPLY"; then
+  ok "G1b: the Go half probes the client once (pure parser + cached probe)"
+else
+  bad "G1b: the Go half does not probe whether this client's set supports --advertise-tags"
+fi
+
+if grep -q 'TC_SET_TAG_ARG="$(skygate_tc_set_tag_arg' "$EP" \
+   && grep -q 'skygate_tc_set_tag_arg()' "$EP"; then
+  ok "G2a: the entrypoint passes --advertise-tags to set only through the conditional helper"
+else
+  bad "G2a: the entrypoint still passes --advertise-tags to set unconditionally"
+fi
+if grep -q 'tagCarriedBySet := tagArg != "" && tailscaleSetSupportsAdvertiseTags()' "$GO_APPLY"; then
+  ok "G2b: the Go half makes the tag flag conditional on the probe"
+else
+  bad "G2b: the Go half passes --advertise-tags to set unconditionally"
+fi
+# The old shape must be gone from BOTH halves: a literal set invocation carrying the tag.
+if grep -q 'timeout 30 tailscale set .*--advertise-tags' "$EP"; then
+  bad "G2c: the entrypoint still has a set invocation with a literal --advertise-tags"
+else
+  ok "G2c: no set invocation carries a literal --advertise-tags any more"
+fi
+
+if grep -q 'skygate_tc_try_set()' "$EP" && grep -q 'skygate_tc_verify "\$_b384_sh" "\$_b384_st" >/dev/null 2>&1' "$EP"; then
+  ok "G3a: the shell set rung returns 0 only after the daemon's own view matches the intent"
+else
+  bad "G3a: the shell set rung is accepted without a verification step"
+fi
+if grep -q 'case err == nil && tailscaleSettingsMatch(host, tags):' "$GO_APPLY" \
+   && grep -q 'func tailscaleSettingsMatch(wantHost string, wantTags \[\]string) bool' "$GO_APPLY"; then
+  ok "G3b: the Go set rung is accepted only when the daemon matches (a quiet gate, so no false SETTINGS NOT APPLIED)"
+else
+  bad "G3b: the Go set rung is accepted whenever the command exits 0"
+fi
+
+if grep -q 'flag provided but not defined' "$EP" && grep -q '"bad-flag"' "$EP"; then
+  ok "G4a: the shell classifier names the unsupported-flag outcome (bad-flag), not an empty kind"
+else
+  bad "G4a: the shell classifier does not name the unsupported-flag outcome"
+fi
+if grep -q 'strings.Contains(o, "flag provided but not defined")' "$GO_APPLY"; then
+  ok "G4b: the Go classifier names the unsupported-flag outcome too"
+else
+  bad "G4b: the Go classifier does not name the unsupported-flag outcome"
+fi
+
+# Behavioural: the extracted helpers, driven against a stubbed `tailscale`.
+if declare -F skygate_tc_try_set >/dev/null 2>&1 && declare -F skygate_tc_set_tag_arg >/dev/null 2>&1 \
+   && command -v python3 >/dev/null 2>&1; then
+  stub1="$SKY_TMP/bin3841"; mkdir -p "$stub1"
+  cat > "$stub1/tailscale" <<'STUBEOF'
+#!/usr/bin/env bash
+# `set --help` advertises --advertise-tags only when STUB_SET_HAS_TAG=1 — the live 1.102.3
+# client does NOT. `set` itself exits STUB_SET_RC and prints STUB_SET_OUT; `status --json`
+# answers STUB_STATUS_JSON. (Do NOT default these with ${VAR:-{…}}: bash counts braces and
+# the closing ones leak into the JSON — recorded here because it broke D5/D6 once.)
+case "${1:-}" in
+  set)
+    if [ "${2:-}" = "--help" ]; then
+      printf 'FLAGS\n  --accept-routes\n  --exit-node value\n  --hostname value\n'
+      [ "${STUB_SET_HAS_TAG:-0}" = "1" ] && printf '  --advertise-tags value\n'
+      exit 0
+    fi
+    [ -n "${STUB_SET_OUT:-}" ] && printf '%s\n' "$STUB_SET_OUT"
+    exit "${STUB_SET_RC:-0}"
+    ;;
+  status)
+    if [ -n "${STUB_STATUS_JSON:-}" ]; then printf '%s\n' "$STUB_STATUS_JSON"; else printf '%s\n' '{"Self":{"HostName":"skygate-host","Tags":["tag:dev-infra-skygate-host"]}}'; fi
+    exit 0
+    ;;
+esac
+exit 0
+STUBEOF
+  chmod +x "$stub1/tailscale" 2>/dev/null || true
+
+  g5a=0
+  PATH="$stub1:$PATH" skygate_tc_set_supports_advertise_tags && g5a=1
+  g5b=0
+  PATH="$stub1:$PATH" STUB_SET_HAS_TAG=1 skygate_tc_set_supports_advertise_tags && g5b=1
+  if [ "$g5a" -eq 0 ] && [ "$g5b" -eq 1 ]; then
+    ok "G5: the probe reads the CLIENT (the live 1.102.3 help says no, a newer client says yes)"
+  else
+    bad "G5: the probe is wrong (without the flag: rc=$g5a, with it: rc=$g5b)"
+  fi
+
+  ta_no="$(skygate_tc_set_tag_arg 'tag:dev-infra-skygate-host' 0)"
+  ta_yes="$(skygate_tc_set_tag_arg 'tag:dev-infra-skygate-host' 1)"
+  if [ -z "$ta_no" ] && [ "$ta_yes" = "--advertise-tags=tag:dev-infra-skygate-host" ]; then
+    ok "G6: the tag argument is emitted only for a client whose set supports it"
+  else
+    bad "G6: the tag argument is wrong (unsupported=[$ta_no] supported=[$ta_yes])"
+  fi
+
+  match_json='{"Self":{"HostName":"skygate-host","Tags":["tag:dev-infra-skygate-host"]}}'
+  mismatch_json='{"Self":{"HostName":"skygate-host","Tags":[]}}'
+  g7_ok_out="$(PATH="$stub1:$PATH" STUB_SET_RC=0 STUB_STATUS_JSON="$match_json" \
+      skygate_tc_try_set skygate-host 'tag:dev-infra-skygate-host' '--accept-routes --exit-node=' '' 2>&1)"; g7_ok_rc=$?
+  g7_mm_rc=0
+  PATH="$stub1:$PATH" STUB_SET_RC=0 STUB_STATUS_JSON="$mismatch_json" \
+      skygate_tc_try_set skygate-host 'tag:dev-infra-skygate-host' '--accept-routes --exit-node=' '' >/dev/null 2>&1 || g7_mm_rc=$?
+  g7_fail_rc=0
+  PATH="$stub1:$PATH" STUB_SET_RC=1 STUB_SET_OUT='flag provided but not defined: -advertise-tags' STUB_STATUS_JSON="$match_json" \
+      skygate_tc_try_set skygate-host 'tag:dev-infra-skygate-host' '--accept-routes --exit-node=' '' >/dev/null 2>&1 || g7_fail_rc=$?
+  if [ "$g7_ok_rc" -eq 0 ] && [ "$g7_mm_rc" -eq 2 ] && [ "$g7_fail_rc" -eq 1 ]; then
+    ok "G7: the set rung returns 0 only when VERIFIED, 2 when the daemon still differs (→ up carries the tags), 1 when set failed"
+  else
+    bad "G7: the set rung's verdicts are wrong (verified=$g7_ok_rc mismatch=$g7_mm_rc failed=$g7_fail_rc)"
+  fi
+
+  g8="$(PATH="$stub1:$PATH" STUB_SET_RC=1 STUB_SET_OUT='flag provided but not defined: -advertise-tags' \
+      skygate_tc_error_kind 'flag provided but not defined: -advertise-tags')"
+  if [ "$g8" = "bad-flag" ]; then
+    ok "G8: the live unsupported-flag text is classified as bad-flag (it used to print 'unclassified')"
+  else
+    bad "G8: the live unsupported-flag text classifies as [$g8]"
+  fi
+else
+  skip "G5-G8: python3 (or the set-rung helpers) unavailable — the stub-driven half is skipped"
+fi
+
+if [ -f "$GO_TEST" ] && grep -q 'TestParseSetSupportsAdvertiseTags_B3841' "$GO_TEST" \
+   && grep -q 'flag provided but not defined: -advertise-tags' "$GO_TEST"; then
+  ok "G9: the Go pure parser AND the live unsupported-flag text are unit-tested"
+else
+  bad "G9: $GO_TEST does not cover the capability parser / the live unsupported-flag text"
 fi
 
 printf '\n\033[1mB384 summary: %d passed, %d failed, %d skipped\033[0m\n' "$PASS" "$FAIL" "$SKIP"
