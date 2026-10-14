@@ -70,8 +70,8 @@ useful on a VM that tracks `main`.
 
 ### 4.1 Source checkout (compose from the repo)
 
-The container's `entrypoint.sh` runs `go build` on every start, so a
-`git pull` + restart is a complete update for source changes.
+The container's `entrypoint.sh` builds skygate from the bind-mounted checkout on
+start, so a `git pull` + recreate is a complete update for source changes.
 
 ```bash
 cd /path/to/skygate                 # ALWAYS the project dir (see the trap below)
@@ -82,7 +82,46 @@ sudo docker compose exec skygate /app/skygate migrate-only
 until curl -fsS http://127.0.0.1:8080/healthz | grep -q "$(git describe --tags)"; do sleep 3; done
 ```
 
-`docker compose build` is only needed when the **Dockerfile** changes.
+`docker compose build` is needed when the **Dockerfile** *or* **`entrypoint.sh`**
+changes — both live in the image, so a `git pull` alone does not pick them up. The
+in-app **Update** button already rebuilds the image, which is why it is the
+recommended path; by hand:
+
+```bash
+sudo docker compose build skygate && sudo docker compose up -d --force-recreate --no-deps skygate
+```
+
+### 4.2 What a container start costs, and how to keep it short (B383)
+
+Every recreate runs `go build` inside the container. Since v1.5.122 the two Go
+caches live on a **persisted** path, so a restart is seconds instead of minutes:
+
+| `SKYGATE_GO_CACHE_ROOT` | module cache + build cache location |
+|---|---|
+| default | `/data/go-caches` (the bind mount that survives a recreate) |
+| `SKYGATE_GOMODCACHE` / `SKYGATE_GOCACHE` | override each cache individually |
+| unusable root (e.g. read-only `/data`) | falls back to the container-local `/go/pkg/mod` + `/root/.cache/go-build`, i.e. the pre-1.5.122 behaviour with a warning |
+
+Measured on the reference host: `go mod download` **0.03 s** with a warm module
+cache, a full rebuild **3.1 s** (warm build cache) or **48 s** (cold), and a start
+with an unchanged tree **skips the build entirely** (0.4 s). Before v1.5.122 a
+recreate with cold caches could take **18 minutes**, during which nothing answered
+on `:8080` at all.
+
+Other knobs:
+
+| variable | effect |
+|---|---|
+| `SKYGATE_GO_MOD_TIMEOUT` | bound on `go mod download` (default `900` s). On timeout the log names the incomplete cache and the unreachable proxy instead of hanging. |
+| `SKYGATE_GO_MOD_TIDY=1` | opt in to `go mod tidy` at start. **Off by default**: it needs the network and it rewrites `go.mod`/`go.sum`. |
+| `SKYGATE_FORCE_BUILD=1` | rebuild even when the sources are unchanged (the default skip compares a source fingerprint **and** the binary's size+mtime, so a replaced binary is never reused). |
+| `SKYGATE_BUILD_PLAN=1` | print the build decision (caches, fingerprint, stamp, binary) and exit — the answer to “why is it rebuilding?”. |
+| `SKYGATE_PREBUILT=1` | prebuilt-image path: skip the in-container build entirely. |
+
+While a build runs, a provisional `/healthz` answers with
+`{"status":"booting","phase":"building","ready":false}` (and a small HTML page for a
+browser), so the panel is never a dead port during an update. The body carries **no**
+build label, so a health poll cannot mistake “compiling” for “up”.
 
 > **Trap — `docker compose` interpolation is CWD-relative.** Running
 > `docker compose -f /path/docker-compose.yml …` from another directory does **not**

@@ -8,9 +8,13 @@
 #      is not set, so a non-RF deployment can run the same image
 #      without joining a tailnet at all.
 #
-#   2. Build skygate from the bind-mounted source (the original
-#      entrypoint flow: go mod download, go mod tidy, git for build
-#      labels, go build with LDFLAGS).
+#   2. Build skygate from the bind-mounted source (go mod download, git for
+#      build labels, go build with LDFLAGS). B383 (v1.5.122): the two Go caches
+#      live on a PERSISTED path, the module download is bounded, and a start
+#      whose sources are unchanged skips the build entirely — measured before
+#      the fix: a recreate with cold caches took 18 MINUTES (proxy.golang.org
+#      timed out) with no listener on :8080 at all; after it: ~3s warm, and a
+#      provisional /healthz answers while the build runs.
 #
 #   3. exec /app/skygate so it becomes PID 1 of the container and
 #      receives signals directly from docker.
@@ -347,6 +351,206 @@ else
     echo "[init] DB pre-flight: SKYGATE_DB_DSN not set — skygate v1.3.0+ will fail to start (no SQLite fallback)"
 fi
 
+# ---------------------------------------------------------------------------
+# B383 (v1.5.122) — the helpers that decide what a container start costs.
+#
+# Everything between the BEGIN/END markers is pure shell with no side effects,
+# so scripts/check_b383_entrypoint_build_budget.sh extracts exactly this block
+# and exercises it against synthetic trees and stamps — the contract tests the
+# SAME code the container runs, not a copy of it.
+#
+# Why this exists (measured on the reference host 2026-10-14):
+#   * caches inside the container layer  -> lost on every recreate;
+#   * `go mod download` with a COLD module cache hit proxy.golang.org, the
+#     connection timed out, and the whole start took 18 minutes with nothing
+#     listening on :8080 — the operator saw "the web panel does not display";
+#   * measured costs after a warm-up: `go mod download` 0.03s, full rebuild
+#     3.1s (warm build cache) / 48s (cold build cache), no-op rebuild 0.4s.
+# ---------------------------------------------------------------------------
+# >>> B383 helpers (begin)
+#
+# skygate_go_cache_dirs <preferred_root> <fallback_mod> <fallback_build>
+#   Prints "<mod>\t<build>". Prefers <preferred_root>/{mod,build} — a path the
+#   operator's install already persists (the /data bind mount) — and falls back
+#   to the container-local defaults when that root cannot be created or written,
+#   so an install with a read-only /data behaves exactly as it did before.
+#   Exit 0 = persisted root in use, 1 = fell back (the caller logs a warning).
+skygate_go_cache_dirs() {
+    _b383_root="${1:-}"
+    _b383_fb_mod="${2:-/go/pkg/mod}"
+    _b383_fb_build="${3:-/root/.cache/go-build}"
+    if [ -n "$_b383_root" ] \
+        && mkdir -p "$_b383_root/mod" "$_b383_root/build" 2>/dev/null \
+        && [ -w "$_b383_root/mod" ] && [ -w "$_b383_root/build" ]; then
+        printf '%s\t%s\n' "$_b383_root/mod" "$_b383_root/build"
+        return 0
+    fi
+    printf '%s\t%s\n' "$_b383_fb_mod" "$_b383_fb_build"
+    return 1
+}
+
+# skygate_go_source_fingerprint <appdir>
+#   Prints a stable hash of exactly what a rebuild depends on. In a git checkout
+#   (the docker install always binds one) it hashes HEAD plus the porcelain
+#   status, so the panel's updater — which does `git checkout <tag>` in that very
+#   tree — ALWAYS changes the fingerprint and the rebuild still happens. Outside
+#   git it falls back to a listing of sizes and mtimes of the Go sources.
+skygate_go_source_fingerprint() {
+    _b383_app="${1:-/app}"
+    if command -v git >/dev/null 2>&1 && git -C "$_b383_app" rev-parse --git-dir >/dev/null 2>&1; then
+        {
+            git -C "$_b383_app" rev-parse HEAD 2>/dev/null || true
+            git -C "$_b383_app" status --porcelain 2>/dev/null || true
+        } | sha256sum 2>/dev/null | awk '{print $1}'
+        return 0
+    fi
+    find "$_b383_app/cmd" "$_b383_app/internal" "$_b383_app/go.mod" "$_b383_app/go.sum" \
+        -type f 2>/dev/null \
+        | sort \
+        | while read -r _b383_f; do
+            printf '%s %s %s\n' "$_b383_f" "$(wc -c < "$_b383_f" 2>/dev/null || echo 0)" \
+                "$(stat -c %Y "$_b383_f" 2>/dev/null || echo 0)"
+        done \
+        | sha256sum 2>/dev/null | awk '{print $1}'
+    return 0
+}
+
+# skygate_go_stamp_binary / skygate_go_binary_unchanged
+#   The stamp records the fingerprint AND the binary's own size+mtime, so a
+#   binary that was replaced or rebuilt by anything else can never be mistaken
+#   for "the one this stamp describes".
+skygate_go_stamp_binary() {
+    _b383_bin="${1:-/app/skygate}"
+    stat -c '%s %Y' "$_b383_bin" 2>/dev/null || echo "missing"
+}
+skygate_go_binary_unchanged() {
+    _b383_bin="${1:-/app/skygate}"
+    _b383_recorded="${2:-}"
+    [ -n "$_b383_recorded" ] || return 1
+    [ "$(skygate_go_stamp_binary "$_b383_bin")" = "$_b383_recorded" ]
+}
+
+# skygate_go_build_needed <appdir> <binary> <stampfile> <force>
+#   Prints one line explaining the decision; exit 0 = build, 1 = skip.
+#   A skip requires ALL of: an executable binary, a stamp, an identical
+#   fingerprint, and the same binary the stamp describes. Anything else —
+#   including an unreadable tree — builds, which is the pre-B383 behaviour.
+skygate_go_build_needed() {
+    _b383_app="${1:-/app}"
+    _b383_bin="${2:-/app/skygate}"
+    _b383_stamp="${3:-}"
+    _b383_force="${4:-0}"
+    if [ "$_b383_force" = "1" ]; then
+        echo "build forced (SKYGATE_FORCE_BUILD=1)"
+        return 0
+    fi
+    if [ ! -x "$_b383_bin" ]; then
+        echo "build no executable at $_b383_bin"
+        return 0
+    fi
+    if [ -z "$_b383_stamp" ] || [ ! -f "$_b383_stamp" ]; then
+        echo "build no build stamp yet"
+        return 0
+    fi
+    _b383_now="$(skygate_go_source_fingerprint "$_b383_app")"
+    if [ -z "$_b383_now" ]; then
+        echo "build fingerprint unavailable"
+        return 0
+    fi
+    _b383_prev="$(head -n 1 "$_b383_stamp" 2>/dev/null || true)"
+    _b383_prevbin="$(sed -n '2p' "$_b383_stamp" 2>/dev/null || true)"
+    if [ "$_b383_now" != "$_b383_prev" ]; then
+        echo "build sources changed since the last build (${_b383_prev:-none} -> $_b383_now)"
+        return 0
+    fi
+    if ! skygate_go_binary_unchanged "$_b383_bin" "$_b383_prevbin"; then
+        echo "build the recorded binary is not the one on disk any more"
+        return 0
+    fi
+    echo "skip sources unchanged and the binary matches the stamp ($_b383_now)"
+    return 1
+}
+
+# skygate_boot_responder_start <port>
+#   While the build runs there is no process to answer, so the operator's browser
+#   and the panel's health poll see a dead port (that is exactly what the
+#   18-minute incident looked like). The provisional body has ready:false and NO
+#   build label, so a poller can never mistake "still compiling" for "up".
+#
+#   Measured on the reference image: `busybox httpd` is NOT there (Alpine ships
+#   it in busybox-extras: "httpd: applet not found"), and neither is curl — but
+#   python3 and wget ARE. So the responder prefers python3's stdlib server, falls
+#   back to a netcat loop, and says so when neither exists instead of pretending.
+skygate_boot_responder_start() {
+    _b383_port="${1:-8080}"
+    B383_BOOT_DIR="$(mktemp -d 2>/dev/null)"
+    [ -n "$B383_BOOT_DIR" ] || return 0
+    cat > "$B383_BOOT_DIR/healthz" <<EOF
+{"status":"booting","phase":"building","stage":"go-build","ready":false,"started":"${B383_BOOT_TS:-}","note":"skygate is compiling from source; this provisional endpoint disappears when the process takes over :${_b383_port}"}
+EOF
+    cat > "$B383_BOOT_DIR/index.html" <<EOF
+<!doctype html><title>Skygate — building</title>
+<h1>Skygate is building</h1>
+<p>The container is compiling skygate from the bind-mounted source. This page
+disappears as soon as the process takes over port ${_b383_port}. Reload in a
+few seconds. Measured warm-cache cost: about 3 seconds.</p>
+EOF
+
+    if command -v python3 >/dev/null 2>&1; then
+        ( cd "$B383_BOOT_DIR" && exec python3 -m http.server "$_b383_port" --bind 0.0.0.0 ) >/dev/null 2>&1 &
+        B383_BOOT_PID=$!
+    elif command -v nc >/dev/null 2>&1; then
+        # netcat loop: one request at a time, good enough for a boot page.
+        # `-l -p PORT` is GNU netcat, `-l PORT` is OpenBSD nc; try the first and
+        # fall back to the second on the same port.
+        (
+            while :; do
+                { printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n'
+                  cat "$B383_BOOT_DIR/healthz"; } | nc -l -p "$_b383_port" >/dev/null 2>&1 \
+                || { printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n'
+                     cat "$B383_BOOT_DIR/healthz"; } | nc -l "$_b383_port" >/dev/null 2>&1
+            done
+        ) >/dev/null 2>&1 &
+        B383_BOOT_PID=$!
+    else
+        echo "[init] WARN: neither python3 nor nc is available — no provisional /healthz during the build (the panel stays dark until the process starts)"
+        B383_BOOT_PID=""
+        return 0
+    fi
+
+    sleep 0.5
+    if ! kill -0 "$B383_BOOT_PID" 2>/dev/null; then
+        echo "[init] WARN: the provisional /healthz on :$_b383_port could not be started (port busy?) — the panel stays dark until the process starts"
+        B383_BOOT_PID=""
+        return 0
+    fi
+    # Prove it actually SERVES, not merely that a process exists.
+    _b383_wget=""
+    command -v wget >/dev/null 2>&1 && _b383_wget="wget"
+    [ -z "$_b383_wget" ] && command -v busybox >/dev/null 2>&1 && _b383_wget="busybox wget"
+    if [ -n "$_b383_wget" ]; then
+        if $_b383_wget -qO- "http://127.0.0.1:$_b383_port/healthz" 2>/dev/null | grep -q '"phase":"building"'; then
+            echo "[init] provisional /healthz answering on :$_b383_port while the build runs (pid $B383_BOOT_PID)"
+        else
+            echo "[init] WARN: the provisional responder is running but did not answer on :$_b383_port"
+        fi
+    else
+        echo "[init] provisional /healthz on :$_b383_port (pid $B383_BOOT_PID; no wget to verify it)"
+    fi
+    return 0
+}
+skygate_boot_responder_stop() {
+    [ -n "${B383_BOOT_PID:-}" ] || return 0
+    kill "$B383_BOOT_PID" 2>/dev/null || true
+    wait "$B383_BOOT_PID" 2>/dev/null || true
+    B383_BOOT_PID=""
+    [ -n "${B383_BOOT_DIR:-}" ] && rm -rf "$B383_BOOT_DIR" 2>/dev/null
+    B383_BOOT_DIR=""
+    return 0
+}
+# <<< B383 helpers (end)
+# ---------------------------------------------------------------------------
+
 # 2. Build skygate (existing flow, preserved verbatim from the
 # pre-Tailscale entrypoint).
 #
@@ -383,11 +587,70 @@ if [ "${SKYGATE_PREBUILT:-0}" = "1" ]; then
     echo "[init] SKYGATE_PREBUILT=1: using prebuilt binary ($(stat -c '%s' /app/skygate) bytes)"
 else
     cd /app
-    echo "Downloading Go modules..."
-    go mod download || true
-    go mod tidy || true
-    apk add --no-cache openssh-client git 2>/dev/null
-    echo "Building Skygate..."
+    # B383: resolve the caches onto a path that SURVIVES a container recreate.
+    # /data is a bind mount on the docker install, so the 570 MB module cache and
+    # the 261 MB build cache stop being re-downloaded and re-compiled from
+    # scratch every time the panel's updater recreates the container.
+    GO_CACHE_ROOT="${SKYGATE_GO_CACHE_ROOT:-/data/go-caches}"
+    if B383_DIRS="$(skygate_go_cache_dirs "$GO_CACHE_ROOT" "/go/pkg/mod" "/root/.cache/go-build")"; then
+        echo "[init] Go caches on the persisted path ($GO_CACHE_ROOT)"
+    else
+        echo "[init] WARN: $GO_CACHE_ROOT is not usable — falling back to the container-local Go caches (a recreate will have to re-fetch modules)"
+    fi
+    GOMODCACHE="$(printf '%s' "$B383_DIRS" | cut -f1)"
+    GOCACHE="$(printf '%s' "$B383_DIRS" | cut -f2)"
+    export GOMODCACHE GOCACHE
+    B383_STAMP="$GO_CACHE_ROOT/build.stamp"
+    [ -d "$GO_CACHE_ROOT" ] || B383_STAMP=""
+    echo "[init] GOMODCACHE=$GOMODCACHE GOCACHE=$GOCACHE"
+
+    # One decision, captured once (the function prints WHY and returns 0=build).
+    if B383_REASON="$(skygate_go_build_needed /app /app/skygate "$B383_STAMP" "${SKYGATE_FORCE_BUILD:-0}")"; then
+        B383_BUILD=1
+    else
+        B383_BUILD=0
+    fi
+    # `SKYGATE_BUILD_PLAN=1` reports the decision and exits without touching
+    # anything — the operator's answer to "why is it rebuilding?", and the
+    # surface the contract can exercise on a real host.
+    if [ "${SKYGATE_BUILD_PLAN:-0}" = "1" ]; then
+        echo "[plan] decision   : $B383_REASON"
+        echo "[plan] fingerprint: $(skygate_go_source_fingerprint /app)"
+        echo "[plan] stamp      : ${B383_STAMP:-<none>}"
+        echo "[plan] binary     : $(skygate_go_stamp_binary /app/skygate)"
+        echo "[plan] forced     : ${SKYGATE_FORCE_BUILD:-0}"
+        exit 0
+    fi
+
+    if [ "$B383_BUILD" = "1" ]; then
+        B383_BOOT_TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        echo "[init] build decision: $B383_REASON"
+        skygate_boot_responder_start "${SKYGATE_PORT:-8080}"
+        # git/openssh are already in the image (Dockerfile). Only reach for apk
+        # when they are genuinely missing: the unconditional `apk add` used to
+        # put the alpine CDN in the critical path of every container start.
+        if ! command -v git >/dev/null 2>&1 || ! command -v ssh >/dev/null 2>&1; then
+            apk add --no-cache openssh-client git 2>/dev/null || true
+        fi
+        echo "Downloading Go modules..."
+        # A cold cache + a slow proxy used to hang here for 18 minutes with no
+        # message. Bound it, and say what happened instead of failing silently:
+        # `go mod download` is 0.03s when the cache is warm, so a timeout means
+        # the cache is incomplete AND the proxy is unreachable.
+        if ! timeout "${SKYGATE_GO_MOD_TIMEOUT:-900}" go mod download 2>&1; then
+            echo "[init] ERROR: 'go mod download' failed or exceeded SKYGATE_GO_MOD_TIMEOUT=${SKYGATE_GO_MOD_TIMEOUT:-900}s." >&2
+            echo "[init]        The module cache at $GOMODCACHE is incomplete and the Go proxy is unreachable from this container." >&2
+            echo "[init]        Either restore egress (proxy.golang.org), point GOPROXY at a mirror, or pre-populate $GO_CACHE_ROOT on the host." >&2
+            echo "[init]        Continuing: the build below will fail if a module is really missing." >&2
+        fi
+        # `go mod tidy` used to run on EVERY start against the operator's
+        # bind-mounted checkout: it needs the network and it REWRITES go.mod /
+        # go.sum (the three files rule 7 says must survive). Opt-in only now.
+        if [ "${SKYGATE_GO_MOD_TIDY:-0}" = "1" ]; then
+            echo "[init] go mod tidy (SKYGATE_GO_MOD_TIDY=1)"
+            go mod tidy || true
+        fi
+        echo "Building Skygate..."
 # 2026-07-11: inject build label from git so the web footer + telegram
 # /version reflect the real tag/commit. .git is bind-mounted via
 # docker-compose (`./:/app`); if it's missing (e.g. CI build from a
@@ -413,9 +676,24 @@ fi
 BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS="-X main.version=${GIT_VER} -X main.commit=${GIT_COMMIT} -X main.buildTime=${BUILD_TIME}"
 echo "  version=${GIT_VER} commit=${GIT_COMMIT} built=${BUILD_TIME}"
+B383_T0=$(date +%s)
 go build -buildvcs=false -ldflags "${LDFLAGS}" -o /app/skygate ./cmd/skygate || { echo "BUILD FAILED"; exit 1; }
 chmod +x /app/skygate
-echo "Skygate ready, starting..."
+echo "  build finished in $(( $(date +%s) - B383_T0 ))s"
+# Record the stamp only after a SUCCESSFUL build: fingerprint on line 1, the
+# binary it produced on line 2.
+if [ -n "$B383_STAMP" ]; then
+    {
+        printf '%s\n' "$(skygate_go_source_fingerprint /app)"
+        printf '%s\n' "$(skygate_go_stamp_binary /app/skygate)"
+    } > "$B383_STAMP" 2>/dev/null || echo "[init] WARN: could not write the build stamp $B383_STAMP"
+fi
+skygate_boot_responder_stop
+    else
+        echo "[init] build decision: $B383_REASON"
+        echo "[init] reusing the existing binary — force a rebuild with SKYGATE_FORCE_BUILD=1"
+    fi
+    echo "Skygate ready, starting..."
 fi  # end of the SKYGATE_PREBUILT gate (the build-block above only runs in dev mode)
 
 # 3. SSH key setup (B202.5). The agent's ~/.ssh/ is bind-mounted

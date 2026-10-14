@@ -12,6 +12,109 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.122 — a container start must not spend 18 minutes re-fetching the world (B383)
+
+**Date:** 2026-10-14 · **Base:** `v1.5.121` → this tag · **Compatibility:** no schema
+change, no request/response change, no routing change, and **no change to the update
+mechanism**. The container's `entrypoint.sh` changes how it builds, not what it builds;
+`SKYGATE_PREBUILT=1` (the prebuilt-image path) is untouched.
+
+### What the operator saw
+
+*"После обновления skygate не отображает вебпанель."* Measured on the host:
+
+```
+container started   06:32:47
+Skygate ready       06:50:07     ← nothing was bound to :8080 for 18 MINUTES
+```
+
+The panel was not broken — the container spent 18 minutes **building the binary with
+no listener at all**, so the browser saw a dead port. The app itself came up healthy
+(`/healthz` = `v1.5.121`, `/login` = 200, LAN reachable) and has not restarted since.
+
+### Why it took 18 minutes
+
+The image deliberately does **not** prebuild skygate (`Dockerfile`: *“Build happens at
+container start via entrypoint”*), so every container recreate recompiles from the
+bind-mounted source. Four things turned a trivial rebuild into an outage:
+
+| # | what | effect |
+|---|---|---|
+| 1 | both Go caches lived **inside** the container (`/go/pkg/mod` 570 MB, `/root/.cache/go-build` 261 MB) | a recreate loses them, so everything is re-fetched |
+| 2 | `go mod download` then went to `proxy.golang.org`, the connection **timed out**, and the retry loop ran | **this is what burned the 18 minutes** — with no message and no bound |
+| 3 | `go mod tidy` ran on **every** start against the operator's bind-mounted checkout | needs the network, and **rewrites `go.mod`/`go.sum`** — the files rule 7 says must survive |
+| 4 | `apk add openssh-client git` ran on every start | both are already in the image (Dockerfile), so this was a needless alpine-CDN round trip in the boot path |
+
+Measured costs on the same host, same tree:
+
+| scenario | time |
+|---|---|
+| `go mod download`, warm module cache | **0.03 s** |
+| full rebuild, warm build cache | **3.1 s** |
+| full rebuild, **cold** build cache | **48 s** |
+| rebuild when nothing changed | **0.4 s** |
+| the incident (cold module cache + proxy timeout) | **18 min** |
+
+### What changed
+
+* **The caches are persisted.** `SKYGATE_GO_CACHE_ROOT` (default `/data/go-caches` — the
+  bind mount that already survives a recreate) holds both; `SKYGATE_GOMODCACHE` /
+  `SKYGATE_GOCACHE` override each one, and an unusable root **falls back** to the
+  container-local defaults, so an install with a read-only `/data` behaves exactly as
+  before. A recreate now costs ~3 s and needs **no network at all**.
+* **The download is bounded and self-explaining.** `go mod download` runs under
+  `SKYGATE_GO_MOD_TIMEOUT` (900 s) and, on failure, names the incomplete cache, the
+  unreachable proxy and the three ways out — instead of hanging silently.
+* **`go mod tidy` is opt-in** (`SKYGATE_GO_MOD_TIDY=1`): it no longer rewrites the
+  operator's `go.mod`/`go.sum` on every start.
+* **`apk add` only runs when git/ssh are actually missing.**
+* **An unchanged tree skips the build.** The stamp records the source fingerprint
+  **and** the binary's own size+mtime, so a replaced or hand-built binary can never be
+  mistaken for the stamped one. `SKYGATE_FORCE_BUILD=1` forces a rebuild.
+* **The window is no longer invisible.** While a build runs, a provisional server
+  (python3's stdlib `http.server`, with a netcat fallback — **measured: this image has no
+  `busybox httpd` and no `curl`**, busybox ships httpd only in `busybox-extras`) answers
+  `/healthz` with `{"status":"booting","phase":"building","ready":false}` (and a small
+  HTML page for a browser) and **deliberately without a build label**, so no poller can
+  mistake “compiling” for “up”. The entrypoint *proves* it serves (a `wget` probe for the
+  building body) rather than assuming a live process is a working one, and it is stopped
+  before `exec` so the port is free for skygate. That is B269's “bind the socket first”
+  idea, one level lower — at the entrypoint, where it was missing.
+* **`SKYGATE_BUILD_PLAN=1` prints the decision and exits** — the operator's answer to
+  “why is it rebuilding?”.
+
+### Why the in-app update still works (the thing that could not be broken)
+
+The fingerprint is `git rev-parse HEAD` + `git status --porcelain` in the bind-mounted
+checkout. The panel's updater (`internal/update/docker.go`) does exactly
+`git checkout <target>` in that tree and recreates the container, so the fingerprint
+**always** changes, the build **always** runs, and the build label still comes from
+`git describe` — the post-restart verification compares the same value it always did.
+The stamp can therefore only skip a build when the tree really is identical to the last
+one that produced the binary on disk. `contract C1–C7` pins all seven cases, and
+section E pins the strings `B237.15` and `B91` depend on, so this rewrite cannot
+silently break the other deployment variants.
+
+### Applying it
+
+`entrypoint.sh` lives **in the image**, so the fix takes effect when the image is
+rebuilt: the panel's own **Update** button does that (`docker compose build skygate`),
+or by hand `docker compose build skygate && docker compose up -d`. The first start
+after applying it warms the new cache (one normal-length build, ~48 s here once the
+modules are down); every start after that is seconds. The old behaviour is one env
+change away (`SKYGATE_GO_CACHE_ROOT` pointed elsewhere, `SKYGATE_FORCE_BUILD=1`).
+
+### Verification
+
+* `scripts/check_b383_entrypoint_build_budget.sh` — **33 contracts**, and the
+  behavioural ones run the **same functions the container runs** (extracted from
+  `entrypoint.sh` between the `B383 helpers` markers): the cache fallback, the
+  fingerprint on a real git repository (stable when unchanged, different after an
+  uncommitted edit **and** after a new commit) and seven build-decision cases.
+* `check_b237_15` 58/0, `check_b91`, `check_b381` (the catalog-structure guard scans
+  the new registration too), `check_b340` 12/0, `check_b330` docs parity — all green.
+* `bash -n` **and** `sh -n` on `entrypoint.sh` (the image runs it with `/bin/sh`).
+
 ## v1.5.121 — the update path stops naming files that do not exist (RR-2 + RR-3 + TD-30)
 
 **Date:** 2026-10-13 · **Base:** `v1.5.120` → this tag · **Compatibility:** no schema
