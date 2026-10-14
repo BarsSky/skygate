@@ -115,9 +115,109 @@ if [ -n "$TS_AUTHKEY_FILE" ] && [ -f "$TS_AUTHKEY_FILE" ]; then
     # SKYGATE_TS_LOGIN_SERVER (which docker-compose / .env
     # set).
     LOGIN_SERVER="${TS_LOGIN_SERVER:-${SKYGATE_TS_LOGIN_SERVER:-https://head.example.com}}"
-    # Same pattern for the hostname: legacy TS_HOSTNAME +
-    # newer SKYGATE_TS_HOSTNAME.
-    HOSTNAME="${TS_HOSTNAME:-${SKYGATE_TS_HOSTNAME:-skygate-host-1}}"
+    # Same pattern for the hostname: legacy TS_HOSTNAME + newer SKYGATE_TS_HOSTNAME.
+    # B384 (v1.5.123): the default was the legacy `skygate-host-1` placeholder — the
+    # shape B320/B321 exist to remove, because a suffixed client silently fails every
+    # "is this me?" check (infra ownership, the SSH-source ACL, the self-probes). The
+    # canonical name is `skygate-host`, and a configured placeholder is REWRITTEN to it
+    # (below) exactly as the Go side's NormalizeTailscaleHostname does — the two must
+    # agree or the name flips depending on which half runs last.
+    HOSTNAME="${TS_HOSTNAME:-${SKYGATE_TS_HOSTNAME:-skygate-host}}"
+
+# ---------------------------------------------------------------------------
+# B384 (v1.5.123) — the client's settings must actually APPLY, and the node must be
+# able to say whether they did.
+#
+# The measured defect (reference host, 2026-10-14): `tailscale up` failed on EVERY boot
+# and EVERY 5-minute tick with
+#     Error: changing settings via 'tailscale up' requires mentioning all
+#     non-default flags. To proceed, either re-run your command with --reset or …
+# because the persisted state carried prefs nobody mentioned (NoStatefulFiltering=true,
+# NetfilterMode=2). `up` therefore applied NOTHING — an operator editing the hostname or
+# the tags in the panel waited forever — and the journal carried a permanent failure
+# line. Two traps are encoded below because both were paid for:
+#   * the message is WRAPPED across lines, so every match collapses whitespace first
+#     (the Go twin, tailscalePrefDriftKind, is unit-tested on the real wrapped text);
+#   * `tailscale set` is the tool that does NOT require the full flag set (upstream's
+#     own words), so it is tried FIRST whenever the daemon already answers.
+#
+# The helpers between the markers are pure, and
+# scripts/check_b384_tailscale_settings_apply.sh extracts and exercises them.
+# ---------------------------------------------------------------------------
+# >>> B384 helpers (begin)
+#
+# skygate_tc_normalize_hostname <name> — the canonical name for a configured one: the
+# legacy `skygate-host-<n>…` placeholder maps to `skygate-host`. Prints the name.
+skygate_tc_normalize_hostname() {
+    _b384_n="$(printf '%s' "${1:-}" | tr -d '[:space:]')"
+    case "$(printf '%s' "$_b384_n" | tr 'A-Z' 'a-z')" in
+        skygate-host-[0-9]*) printf '%s\n' "skygate-host" ;;
+        *)                   printf '%s\n' "$_b384_n" ;;
+    esac
+}
+# skygate_tc_advertise_tag <hostname> — the ONE derivation of the tag that describes a
+# node: tag:dev-infra-<canonical-name>. Never emits the retired `-1` shape.
+skygate_tc_advertise_tag() {
+    _b384_h="$(skygate_tc_normalize_hostname "${1:-}")"
+    [ -n "$_b384_h" ] || return 0
+    printf 'tag:dev-infra-%s\n' "$(printf '%s' "$_b384_h" | tr 'A-Z' 'a-z')"
+}
+# skygate_tc_error_kind <output> — classify a failed set/up. Whitespace is collapsed
+# FIRST: the live message is wrapped, so a plain substring search never matches it.
+skygate_tc_error_kind() {
+    _b384_o="$(printf '%s' "${1:-}" | tr '\n\t' '  ' | tr -s ' ' | tr 'A-Z' 'a-z')"
+    case "$_b384_o" in
+        *"requires mentioning all non-default flags"*) printf '%s\n' "drift" ;;
+        *"invalid or not permitted"*|*"not permitted"*) printf '%s\n' "tags-not-permitted" ;;
+        *"logged out"*|*"not logged in"*)              printf '%s\n' "logged-out" ;;
+        *"context deadline exceeded"*|*"timed out"*)   printf '%s\n' "timeout" ;;
+        *)                                             printf '%s\n' "" ;;
+    esac
+}
+# skygate_tc_verify <want-host> <want-tags> — compare the intent with the daemon's OWN
+# view (.Self.HostName + .Self.Tags) and report ONE named line. Empty tags means "no
+# expectation". Prints "OK …" or "WARN …"; exit 0 when it matches.
+skygate_tc_verify() {
+    _b384_wh="$1"; _b384_wt="${2:-}"
+    _b384_v="$(tailscale status --json 2>/dev/null | python3 -c '
+import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("|"); raise SystemExit
+s = d.get("Self") or {}
+host = (s.get("HostName") or "").strip()
+if not host:
+    dns = (s.get("DNSName") or "").rstrip(".")
+    host = dns.split(".")[0] if dns else ""
+print(host + "|" + ",".join(sorted(t.strip() for t in (s.get("Tags") or []) if t.strip())))
+' 2>/dev/null)"
+    _b384_gh="${_b384_v%%|*}"
+    _b384_gt="${_b384_v#*|}"
+    if [ -z "$_b384_gh" ]; then
+        printf 'WARN cannot verify — the daemon did not answer tailscale status --json (wanted hostname=%s tags=%s)\n' \
+            "$_b384_wh" "${_b384_wt:-none}"
+        return 1
+    fi
+    _b384_gt_sorted="$(printf '%s' "$_b384_gt" | tr ',' '\n' | tr -d '[:space:]' | tr 'A-Z' 'a-z' | grep -v '^$' | sort | paste -sd, -)"
+    _b384_wt_sorted="$(printf '%s' "$_b384_wt" | tr ',' '\n' | tr -d '[:space:]' | tr 'A-Z' 'a-z' | grep -v '^$' | sort | paste -sd, -)"
+    if [ "$(printf '%s' "$_b384_gh" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$_b384_wh" | tr 'A-Z' 'a-z')" ] \
+        && [ "$_b384_gt_sorted" = "$_b384_wt_sorted" ]; then
+        printf 'OK hostname=%s tags=%s\n' "$_b384_gh" "${_b384_gt:-none}"
+        return 0
+    fi
+    printf 'SETTINGS NOT APPLIED — the daemon reports hostname=%s tags=%s, the configuration asks for hostname=%s tags=%s\n' \
+        "$_b384_gh" "${_b384_gt:-none}" "$_b384_wh" "${_b384_wt:-none}"
+    return 1
+}
+# <<< B384 helpers (end)
+# ---------------------------------------------------------------------------
+    # B384: a configured placeholder is normalised to the canonical name, loudly.
+    _canon_hostname="$(skygate_tc_normalize_hostname "$HOSTNAME")"
+    if [ "$_canon_hostname" != "$HOSTNAME" ]; then
+        echo "[init] hostname=$HOSTNAME is the legacy v0.33.1.9 placeholder — using the canonical name $_canon_hostname (update SKYGATE_TS_HOSTNAME in .env/docker-compose.yml to silence this)"
+        HOSTNAME="$_canon_hostname"
+    fi
     # 2026-08-25 (B185): Tailscale's `tailscale up` is an
     # "all-or-nothing" command — if the persisted state has
     # any non-default flag set (e.g. --advertise-tags), the
@@ -136,8 +236,9 @@ if [ -n "$TS_AUTHKEY_FILE" ] && [ -f "$TS_AUTHKEY_FILE" ]; then
     #
     # The fix: read the existing state's advertise-tags
     # (if any) and pass them back. If the state has no
-    # advertise-tags, fall back to the B111-canonical
-    # value (`tag:dev-infra-skygate-host-1,tag:private`).
+    # advertise-tags, DERIVE the tag from the canonical hostname (B384: the literal
+    # `tag:dev-infra-skygate-host-1,tag:private` this used to fall back to was the
+    # retired placeholder shape and named a node that does not exist).
     # Operators can override with SKYGATE_TS_ADVERTISE_TAGS.
     ADVERTISE_TAGS="${SKYGATE_TS_ADVERTISE_TAGS:-}"
     if [ -z "$ADVERTISE_TAGS" ] && [ -f /var/lib/tailscale/tailscaled.state ]; then
@@ -160,7 +261,10 @@ except Exception:
     pass
 " 2>/dev/null)
     fi
-    ADVERTISE_TAGS="${ADVERTISE_TAGS:-tag:dev-infra-skygate-host-1,tag:private}"
+    if [ -z "$ADVERTISE_TAGS" ]; then
+        ADVERTISE_TAGS="$(skygate_tc_advertise_tag "$HOSTNAME")"
+        echo "[init] advertise-tags derived from the hostname: $ADVERTISE_TAGS"
+    fi
     echo "[init] advertise-tags=$ADVERTISE_TAGS"
 
     echo "[init] tailscale up --accept-routes (login-server=$LOGIN_SERVER, hostname=$HOSTNAME)"
@@ -207,24 +311,65 @@ except Exception:
     # the skygate container to be an exit-node itself, they can
     # explicitly set it AFTER the entrypoint runs (`docker exec
     # skygate tailscale set --exit-node=<tag>`).
-    if ! timeout 30 tailscale up \
-        --login-server="$LOGIN_SERVER" \
-        --authkey="$AUTHKEY" \
-        --hostname="$HOSTNAME" \
-        --accept-routes \
-        --accept-dns=false \
-        --exit-node= \
-        --advertise-tags="$ADVERTISE_TAGS" 2>&1; then
-        # timeout exits 124, tailscale up itself exits non-zero
-        # on auth failure. Either way: log and move on. v0.33.1.9
-        # entry-point fix — without the timeout, `tailscale up`
-        # blocks forever when tailscaled didn't come up (e.g.
-        # because the headscale login-server was unreachable),
-        # which hung the entrypoint and prevented skygate from
-        # ever reaching /healthz. The 30s ceiling matches the
-        # tailscaled-readiness wait above.
-        echo "[init] WARNING: tailscale up failed or timed out; continuing without Tailscale"
+    # B384 (v1.5.123) — the apply ladder. `tailscale up` alone FAILED on every boot and
+    # every tick on the reference host because the state carried prefs this invocation
+    # never mentions (NoStatefulFiltering, NetfilterMode), and upstream refuses to change
+    # ANY setting in that case. So:
+    #   1. the daemon already answers  → `tailscale set` (upstream: "does not require the
+    #      complete set of desired settings") — the one property `up` cannot offer here;
+    #   2. otherwise                   → `up` with every flag this container owns (the
+    #      first join, where no state exists to drift from);
+    #   3. `up` refused for drift      → retry ONCE with `up --reset`, the remedy upstream
+    #      prints, safe here because this call names every pref the container owns;
+    #   4. then VERIFY against the daemon's own view and report one named line, because
+    #      "the command exited 0" is not the same statement as "the settings are applied".
+    TC_COMMON_SET="--accept-routes --accept-dns=false --exit-node="
+    TC_APPLIED=0
+    if tailscale status >/dev/null 2>&1; then
+        # shellcheck disable=SC2086
+        if TC_OUT="$(timeout 30 tailscale set --hostname="$HOSTNAME" $TC_COMMON_SET \
+                --advertise-tags="$ADVERTISE_TAGS" 2>&1)"; then
+            echo "[init] tailscale set applied (hostname=$HOSTNAME tags=$ADVERTISE_TAGS)"
+            TC_APPLIED=1
+        else
+            echo "[init] tailscale set failed ($(skygate_tc_error_kind "$TC_OUT")): $(printf '%s' "$TC_OUT" | head -2 | tr '\n' ' ')"
+        fi
     fi
+    if [ "$TC_APPLIED" != "1" ]; then
+        if TC_OUT="$(timeout 30 tailscale up \
+                --login-server="$LOGIN_SERVER" \
+                --authkey="$AUTHKEY" \
+                --hostname="$HOSTNAME" \
+                $TC_COMMON_SET \
+                --advertise-tags="$ADVERTISE_TAGS" 2>&1)"; then
+            echo "[init] tailscale up applied (hostname=$HOSTNAME tags=$ADVERTISE_TAGS)"
+            TC_APPLIED=1
+        else
+            TC_KIND="$(skygate_tc_error_kind "$TC_OUT")"
+            if [ "$TC_KIND" = "drift" ]; then
+                echo "[init] tailscale up refused: the persisted prefs drifted from this invocation — retrying ONCE with --reset (upstream's own remedy)"
+                if TC_OUT="$(timeout 30 tailscale up --reset \
+                        --login-server="$LOGIN_SERVER" \
+                        --authkey="$AUTHKEY" \
+                        --hostname="$HOSTNAME" \
+                        $TC_COMMON_SET \
+                        --advertise-tags="$ADVERTISE_TAGS" 2>&1)"; then
+                    echo "[init] tailscale up --reset applied (hostname=$HOSTNAME tags=$ADVERTISE_TAGS) — the drift is cleared for good"
+                    TC_APPLIED=1
+                fi
+            fi
+        fi
+    fi
+    if [ "$TC_APPLIED" != "1" ]; then
+        # timeout exits 124, tailscale itself exits non-zero on auth failure. Either way:
+        # log WHICH kind of failure it was and move on. v0.33.1.9 entry-point fix — without
+        # the timeout, `tailscale up` blocks forever when tailscaled didn't come up (e.g.
+        # because the headscale login-server was unreachable), which hung the entrypoint
+        # and prevented skygate from ever reaching /healthz. The 30s ceiling matches the
+        # tailscaled-readiness wait above.
+        echo "[init] WARNING: could not apply the Tailscale settings (kind=$(skygate_tc_error_kind "$TC_OUT")); continuing — the app re-tries every 5 minutes"
+    fi
+    echo "[init] tailscale-apply: $(skygate_tc_verify "$HOSTNAME" "$ADVERTISE_TAGS" || true)"
 
     echo "[init] tailscale status:"
     tailscale status 2>&1 | head -10 || true

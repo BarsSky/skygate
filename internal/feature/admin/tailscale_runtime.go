@@ -320,21 +320,16 @@ func (s *Service) startTailscaled() (string, error) {
 // tailscaleUp authenticates the (already running) daemon with the key from the
 // auth-key file. Split out of startTailscaled so the "daemon already answers"
 // path can reuse it without spawning a second tailscaled.
+//
+// B384 (v1.5.123): this is now a thin delegation to applyTailscaleSettings, whose
+// ladder is `tailscale set` (no full-flag requirement) → `tailscale up` (first join)
+// → `up --reset` (the drift remedy upstream itself prints), followed by a check that
+// the daemon really carries the intended hostname and tags. The previous body ran
+// `up` alone, which on a state carrying any pref the invocation did not mention
+// (NoStatefulFiltering, NetfilterMode) failed on every boot and every tick without
+// ever applying anything.
 func (s *Service) tailscaleUp(key string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	up := exec.CommandContext(ctx, "tailscale", "up",
-		"--accept-routes",
-		"--accept-dns=false",
-		"--login-server="+s.tailscaleLoginServer(),
-		"--hostname="+s.tailscaleHostname(),
-		"--authkey="+key,
-	)
-	out, err := up.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("tailscale up: %w", err)
-	}
-	return string(out), nil
+	return s.applyTailscaleSettings(key)
 }
 
 // stopTailscaled kills the running tailscaled. Best-effort:

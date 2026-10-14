@@ -91,7 +91,7 @@ recommended path; by hand:
 sudo docker compose build skygate && sudo docker compose up -d --force-recreate --no-deps skygate
 ```
 
-### 4.2 What a container start costs, and how to keep it short (B383)
+### 4.1.1 What a container start costs, and how to keep it short (B383)
 
 Every recreate runs `go build` inside the container. Since v1.5.122 the two Go
 caches live on a **persisted** path, so a restart is seconds instead of minutes:
@@ -132,6 +132,58 @@ build label, so a health poll cannot mistake “compiling” for “up”.
 > **Trap — `--force-recreate` is required** after any change to `extra_hosts`,
 > volumes or the image tag; a plain `restart` keeps the old container network
 > config.
+
+### 4.1.2 Tailscale settings are applied on every start — and verified (B384)
+
+Every recreate — and then every 5 minutes — the container re-asserts its Tailscale
+identity: hostname, tags, `--accept-routes`, `--accept-dns=false`, no exit node. Since
+v1.5.123 that goes through the ladder below, because `tailscale up` **cannot** change a
+setting on an already-connected node unless the call names *every* persisted non-default
+pref. This container's state carries `NoStatefulFiltering=true` and `NetfilterMode=2`,
+which no caller ever mentioned, so before v1.5.123 every invocation failed with
+`requires mentioning all non-default flags` and **nothing was applied at all** — while the
+node looked perfectly healthy, which is why it went unnoticed.
+
+| step | when | why |
+|---|---|---|
+| `tailscale set …` | whenever the daemon answers | upstream: it "does not require the complete set of desired settings" — the only command that works on an already-drifted state |
+| `tailscale up …` | the first join (no state yet), and as the fallback | it is what authenticates a node that is not registered yet |
+| `tailscale up --reset …` | retried **once**, and only when the failure text is the full-flag refusal | upstream prints `--reset` as the remedy; safe here because this invocation genuinely names every pref the container owns |
+
+The advertise tag is **derived, not configured**: `tag:dev-infra-<hostname>`, and the
+hostname goes through the same canonicaliser as the node name (so a legacy
+`skygate-host-1` yields `skygate-host`). An existing tag set is preserved — the derived tag
+is *added* to what the daemon already carries, because `--advertise-tags` **replaces** the
+whole set.
+
+| variable | effect |
+|---|---|
+| `SKYGATE_TS_ADVERTISE_TAGS` | explicit comma-separated tag set, used **verbatim**, which disables the derivation. Set it only when this node needs extra tags in the tailnet (e.g. `tag:private`) |
+| `SKYGATE_TS_HOSTNAME` | the node name. A legacy `skygate-host-<n>` value still works (it is normalised and the normalisation is logged), but the canonical `skygate-host` silences the warning |
+
+Every path ends with a **verification against the daemon's own view**, printed as one line
+you can grep for in `docker compose logs skygate`:
+
+```
+[init] tailscale-apply: OK hostname=skygate-host tags=tag:dev-infra-skygate-host
+```
+
+When the node's real settings do not match the intent, the line says so and names **both**
+sides instead of passing silently:
+
+```
+tailscale-apply: SETTINGS NOT APPLIED — the daemon reports hostname="…" tags=[…],
+  the configuration asks for hostname="…" tags=[…]
+```
+
+> **Trap — the drift message is wrapped across lines.** `grep 'requires mentioning all
+> non-default flags'` against the raw `tailscale up` output finds nothing, because the
+> sentence is broken by a newline. Both classifiers (Go and entrypoint) collapse whitespace
+> before matching; do the same in any script you write. This wrapping is part of what hid
+> the failure for so long.
+
+The same self-check runs from the panel's 5-minute re-assert, so `/admin/tailscale`, the
+journal and `tailscale status` on the node agree with each other.
 
 ### 4.2 Docker compose, prebuilt image
 

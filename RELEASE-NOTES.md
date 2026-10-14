@@ -12,6 +12,106 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.123 — the Tailscale settings must actually apply (B384)
+
+**Date:** 2026-10-14 · **Base:** `v1.5.122` → this tag · **Compatibility:** no schema
+change, no request/response change, no routing change. The container's Tailscale client
+now applies its settings through `tailscale set` first (with `up` for the first join and
+`up --reset` as the drift remedy), the advertise-tags default is derived from the
+canonical hostname instead of the retired `skygate-host-1` literal, and the result is
+verified against the daemon's own view.
+
+### What the journal said, every boot and every 5 minutes
+
+```
+tailscale-autostart: boot: start FAILED: tailscale up: exit status 1
+  (out=Error: changing settings via 'tailscale up' requires mentioning all
+   non-default flags. To proceed, either re-run your command with --reset or
+   use the command below to explicitly mention the current va…)
+```
+
+The node itself looked healthy — `skygate-host`, `tag:dev-infra-skygate-host`,
+`BackendState=Running` — so nothing appeared broken. But **nothing the invocation asked
+for was ever applied**: `tailscale up` refuses to change *any* setting unless the call
+lists *every* persisted non-default pref, and this container's state carries
+`NoStatefulFiltering=true` and `NetfilterMode=2`, which no caller ever mentioned. An
+operator editing the hostname or the tags in the panel would therefore wait forever, and
+the permanent failure line hid real errors.
+
+The entrypoint carried the same bug **plus the retired name**: its advertise-tags
+fallback was the literal `tag:dev-infra-skygate-host-1,tag:private` — the
+`skygate-host-<n>` shape B320/B321 exist to remove, which names a node that does not
+exist while the real node stays untagged.
+
+### The trap both halves had to learn
+
+The live message is **wrapped across lines**, so `grep -q 'requires mentioning all
+non-default flags'` never matches it. The Go unit test caught this while the classifier
+was being written (`tailscalePrefDriftKind` returned `""` for the real text); both
+classifiers now collapse whitespace before matching, and both the unit test and contract
+`D4` pin the wrapped form. Without that, the drift would have kept going undetected —
+which is exactly what had been happening.
+
+### What changed (one behaviour, two implementations)
+
+1. **`tailscale set` first, whenever the daemon answers.** Upstream's own words:
+   *"does not require the complete set of desired settings"* — the one property `up`
+   cannot offer on a drifted state.
+2. **`tailscale up`** stays for the **first join** (no state to drift from) and as the
+   fallback.
+3. **`up --reset`** is retried **once**, and only when the failure text is the full-flag
+   refusal (upstream prints `--reset` as the remedy). It is safe here because this
+   invocation names every pref the container owns.
+4. **The tag is derived, not hardcoded:** `tag:dev-infra-<canonical hostname>`
+   (`AdvertiseTagForHostname` in Go, `skygate_tc_advertise_tag` in the entrypoint), both
+   canonicalising through the one normaliser, so `skygate-host-1` can never come back out.
+   An explicit `SKYGATE_TS_ADVERTISE_TAGS` still wins verbatim; an existing tag set is
+   preserved (the derived tag is *added* to what the daemon already carries, because
+   `set --advertise-tags` replaces the set).
+5. **The result is VERIFIED and reported in one named line** — what the operator asked
+   for («проверить, что мой узел реально применил свои настройки»):
+
+```
+[init] tailscale set applied (hostname=skygate-host tags=tag:dev-infra-skygate-host)
+[init] tailscale-apply: OK hostname=skygate-host tags=tag:dev-infra-skygate-host
+```
+
+   or, when it did not land, a line naming **both** sides:
+
+```
+tailscale-apply: SETTINGS NOT APPLIED — the daemon reports hostname="…" tags=[…],
+  the configuration asks for hostname="…" tags=[…]
+```
+
+   The same wording is used by the Go tick, so the 5-minute re-assert reports the truth
+   instead of a permanent failure.
+
+### Verification
+
+* **Go:** `gofmt`/`staticcheck` clean; 5 unit tests (`tailscale_apply_b384_test.go`)
+  cover the derivation (including "the retired `-1` shape can never come out"), the
+  **real wrapped drift text**, the host/tag comparison (order-insensitive, exact), the
+  tag-list splitter and the explicit-knob precedence; the whole
+  `internal/feature/admin` suite is green.
+* **Shell:** `bash -n` **and** `sh -n` clean; the helpers are exercised behaviourally by
+  the contract.
+* **Contract:** 32 contracts in `scripts/check_b384_tailscale_settings_apply.sh` — the
+  legacy placeholder is gone from the *code* of both halves, the ladder order is asserted
+  (`set` → `up` → `up --reset`, with `--reset` reachable only through the drift verdict),
+  every Go exit path verifies, normalisation and derivation tables, the wrapped-text
+  classifier, and `verify()` against a **stubbed** `tailscale` in both directions (a
+  matching node says OK; one extra tag fails loudly).
+* Both halves are pinned against the strings `B320`/`B321`/`B91`/`B185` depend on.
+
+### Notes for the operator
+
+* `SKYGATE_TS_ADVERTISE_TAGS` is the knob for the tag set (comma-separated); leave it
+  unset to let skygate derive `tag:dev-infra-<hostname>`.
+* A `.env` still carrying `SKYGATE_TS_HOSTNAME=skygate-host-1` keeps working — it is
+  normalised to `skygate-host` and logged — but editing it to the canonical name
+  silences the warning.
+* `docs/UPDATE.md` §4.3 documents the ladder, the knobs and the self-check.
+
 ## v1.5.122 — a container start must not spend 18 minutes re-fetching the world (B383)
 
 **Date:** 2026-10-14 · **Base:** `v1.5.121` → this tag · **Compatibility:** no schema
