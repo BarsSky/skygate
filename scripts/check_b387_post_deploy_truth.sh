@@ -104,68 +104,88 @@ done
 # deliberately QUOTES the removed pins to explain why they went).
 code_only() { grep -vE '^[[:space:]]*#' "$1"; }
 
+# B387's own trap, paid for by CI on the first push of this block: the assertions below
+# used `code_only "$VP" | grep -qF …`, i.e. a producer piped into `grep -q` under
+# `set -o pipefail`. `grep -q` exits at the FIRST match and closes the pipe; if the
+# producer is still writing, it dies with `grep: write error: Broken pipe` (SIGPIPE) and
+# pipefail makes the PIPELINE fail — so a pattern that IS present is reported as absent.
+# verify_post_deploy.sh is now ~110 KB, well past the 64 KB pipe buffer, and the A4-A8
+# patterns sit near its TOP, so Linux CI failed all five while MSYS accepted them. That is
+# AGENTS trap #9, in the check that exists to enforce honesty.
+#
+# The fix is B386's: capture the producer ONCE and match it without a pipe — `case` for a
+# literal, a herestring for a regex. Nothing below pipes into grep -q any more, and A14
+# asserts exactly that about this file.
+VP_CODE="$(code_only "$VP")"
+
 hdr "B387 — a plumbing failure must never be reported as a product verdict"
 
 # ---------------------------------------------------------------------------
 # A. static: the two defects are gone
 # ---------------------------------------------------------------------------
-A1=$(code_only "$VP" | grep -cE '100\.64\.100\.10|172\.18\.0\.3' || true)
+A1=$(grep -cE '100\.64\.100\.10|172\.18\.0\.3' <<< "$VP_CODE" || true)
 if [ "${A1:-0}" -eq 0 ]; then
   ok "A1: no code line still pins the reference topology (100.64.100.10 / 172.18.0.3)"
 else
   bad "A1: ${A1} code line(s) still assert the reference deployment's addresses — R5/R6/R7 will FAIL on any other host"
-  code_only "$VP" | grep -nE '100\.64\.100\.10|172\.18\.0\.3' | head -5 >&2
+  grep -nE '100\.64\.100\.10|172\.18\.0\.3' <<< "$VP_CODE" | head -5 >&2
 fi
 
-A2=$(code_only "$VP" | grep -cE '\$\{[A-Za-z_]*:-fail\}' || true)
+A2=$(grep -cE '\$\{[A-Za-z_]*:-fail\}' <<< "$VP_CODE" || true)
 if [ "${A2:-0}" -eq 0 ]; then
   ok "A2: no database answer is defaulted to 'fail' (the corrupt-database collapse)"
 else
   bad "A2: ${A2} site(s) still turn a missing answer into 'fail'"
-  code_only "$VP" | grep -nE '\$\{[A-Za-z_]*:-fail\}' | head -5 >&2
+  grep -nE '\$\{[A-Za-z_]*:-fail\}' <<< "$VP_CODE" | head -5 >&2
 fi
 
-A3=$(code_only "$VP" | grep -cE 'vpd_query_reached_db|db_expect_ok_verdict' || true)
+A3=$(grep -cE 'vpd_query_reached_db|db_expect_ok_verdict' <<< "$VP_CODE" || true)
 if [ "${A3:-0}" -ge 3 ]; then
   ok "A3: the DB contracts classify the read (${A3} classification sites: R9/R10/R30/R-B351)"
 else
   bad "A3: only ${A3} classification site(s) — the DB contracts are not all covered"
 fi
 
-if code_only "$VP" | grep -qF '. "$(dirname "$0")/lib/post_deploy_truth.sh"'; then
-  ok "A4: the catalog sources the shared classifier (one implementation, not a copy)"
-else
-  bad "A4: the catalog does not source scripts/lib/post_deploy_truth.sh"
-fi
+case "$VP_CODE" in
+  *'. "$(dirname "$0")/lib/post_deploy_truth.sh"'*)
+    ok "A4: the catalog sources the shared classifier (one implementation, not a copy)" ;;
+  *)
+    bad "A4: the catalog does not source scripts/lib/post_deploy_truth.sh" ;;
+esac
 
-if code_only "$VP" | grep -qE '^RESULTS_SKIP=0'; then
+if grep -qE '^RESULTS_SKIP=0' <<< "$VP_CODE"; then
   ok "A5: RESULTS_SKIP is initialised (it was incremented under set -u without ever being set)"
 else
   bad "A5: RESULTS_SKIP is still never initialised — the R26 skip path aborts with 'unbound variable'"
 fi
-if code_only "$VP" | grep -qE 'SKIP..NC\}: \$RESULTS_SKIP'; then
+if grep -qE 'SKIP..NC\}: \$RESULTS_SKIP' <<< "$VP_CODE"; then
   ok "A5b: the summary prints the SKIP count (a run must not hide how much went unverified)"
 else
   bad "A5b: the summary does not print RESULTS_SKIP"
 fi
 
 # The ladder: the three rungs, in the right ORDER, and no --network host fallback.
-if code_only "$VP" | grep -qF 'if docker inspect \"\$PH\" >/dev/null 2>&1; then'; then
-  ok "A6: rung 1 — the DSN host as a local container is asked first (no resolver involved)"
-else
-  bad "A6: psql_vm does not try the DSN host as a local container"
-fi
-if code_only "$VP" | grep -qF 'getent hosts \"\$PH\" >/dev/null 2>&1'; then
-  ok "A7: rung 2 — host psql is used only when the host can actually RESOLVE the DSN host"
-else
-  bad "A7: host psql is still used without checking that the host can resolve the DSN host"
-fi
-if code_only "$VP" | grep -qF 'NetworkSettings.Networks'; then
-  ok "A8: rung 3 — the throwaway container joins skygate's OWN network (where a service name resolves)"
-else
-  bad "A8: the last-resort path does not attach to the docker network that knows the service name"
-fi
-if code_only "$VP" | grep -qE 'docker run --rm.*--network host'; then
+# The patterns are the file's LITERAL text: inside psql_vm's double-quoted ssh string the
+# remote expansions are escaped, so the source reads \"\$PH\" — the backslash is part of it.
+case "$VP_CODE" in
+  *'if docker inspect \"\$PH\" >/dev/null 2>&1; then'*)
+    ok "A6: rung 1 — the DSN host as a local container is asked first (no resolver involved)" ;;
+  *)
+    bad "A6: psql_vm does not try the DSN host as a local container" ;;
+esac
+case "$VP_CODE" in
+  *'getent hosts \"\$PH\" >/dev/null 2>&1'*)
+    ok "A7: rung 2 — host psql is used only when the host can actually RESOLVE the DSN host" ;;
+  *)
+    bad "A7: host psql is still used without checking that the host can resolve the DSN host" ;;
+esac
+case "$VP_CODE" in
+  *'NetworkSettings.Networks'*)
+    ok "A8: rung 3 — the throwaway container joins skygate's OWN network (where a service name resolves)" ;;
+  *)
+    bad "A8: the last-resort path does not attach to the docker network that knows the service name" ;;
+esac
+if grep -qE 'docker run --rm.*--network host' <<< "$VP_CODE"; then
   bad "A9: the throwaway container still uses --network host — the host's resolver, i.e. the same failure one rung lower"
 else
   ok "A9: no --network host in the throwaway path"
@@ -192,9 +212,9 @@ else
   printf '        %s\n' "$CRED" >&2
 fi
 
-if code_only "$VP" | grep -qF 'docker exec skygate-skygate-1'; then
+if grep -qF 'docker exec skygate-skygate-1' <<< "$VP_CODE"; then
   bad "A11: a remote docker exec still hardcodes the compose-generated name skygate-skygate-1"
-  code_only "$VP" | grep -nF 'docker exec skygate-skygate-1' | head -3 >&2
+  grep -nF 'docker exec skygate-skygate-1' <<< "$VP_CODE" | head -3 >&2
 else
   ok "A11: remote docker exec calls use the resolved container, not a compose-generated name"
 fi
@@ -205,17 +225,37 @@ fi
 # operator's real name, so the answer is an env var or a SKIP — never a hardcoded host).
 # The contract is about a PROBE, not about the string: the SKIP message names the
 # placeholder on purpose, so that the operator can see what used to be asserted.
-PROBE=$(code_only "$VP" | grep -nE '(curl|openssl|--connect|-connect).*skygate\.example\.com' || true)
+PROBE=$(grep -nE '(curl|openssl|--connect|-connect).*skygate\.example\.com' <<< "$VP_CODE" || true)
 if [ -z "$PROBE" ]; then
   ok "A12: no code line PROBES the placeholder public hostname (curl/openssl targets are all variables)"
 else
   bad "A12: a code line still probes the placeholder public hostname:"
   printf '        %s\n' "$PROBE" >&2
 fi
-if code_only "$VP" | grep -qF 'SKYGATE_PUBLIC_HOST' && code_only "$VP" | grep -qE 'SKIP..NC\}: \$RESULTS_SKIP' ; then
+if grep -qF 'SKYGATE_PUBLIC_HOST' <<< "$VP_CODE" && grep -qE 'SKIP..NC\}: \$RESULTS_SKIP' <<< "$VP_CODE"; then
   ok "A13: R22/R23 take the public hostname from SKYGATE_PUBLIC_HOST and SKIP (counted) when it is unset"
 else
   bad "A13: the HTTPS checks are not behind an overridable public hostname with a counted SKIP"
+fi
+
+# A14 — THIS FILE. The first CI run of B387 failed A4-A8 with `grep: write error: Broken
+# pipe`: the assertions piped a ~110 KB producer into `grep -q`, whose early exit killed the
+# producer (SIGPIPE) and pipefail turned that into "the pattern is absent". The token below
+# is ESCAPED (`\|`) because in ERE a bare `|` is an alternation with an empty branch, which
+# matches every line; the message text deliberately avoids the literal sequence so this
+# contract cannot match its own output.
+PIPE_TOKEN='\|'
+GQ_PAT='grep[[:space:]]+-[A-Za-z]*q'
+# Resolve this file's own path robustly (the script may have cd'd to the repo root).
+SELF_FILE="$0"
+[ -r "$SELF_FILE" ] || SELF_FILE="scripts/check_b387_post_deploy_truth.sh"
+SELF_HITS=$(grep -nE "$PIPE_TOKEN[[:space:]]*$GQ_PAT" <<< "$(code_only "$SELF_FILE")" || true)
+SELF_PIPES=$(printf '%s' "$SELF_HITS" | grep -c . || true)
+if [ "${SELF_PIPES:-0}" -eq 0 ]; then
+  ok "A14: this check never pipes a producer into grep -q (the SIGPIPE class that failed its first CI run)"
+else
+  bad "A14: ${SELF_PIPES} producer-piped site(s) remain IN THIS CHECK — an early match in a large producer reports a present pattern as absent"
+  printf '        %s\n' "$SELF_HITS" >&2
 fi
 
 # ---------------------------------------------------------------------------

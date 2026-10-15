@@ -124,12 +124,53 @@ snapshot, exactly as the page had claimed all along. The `70889s` was never a pr
 
 ### The check is behavioural, because a source grep cannot tell "prints SKIP" from "prints SKIP and still exits 0"
 
-`scripts/check_b387_post_deploy_truth.sh` (50 contracts) executes the **real** classifier on
+`scripts/check_b387_post_deploy_truth.sh` (51 contracts) executes the **real** classifier on
 planted inputs and drives the **real catalog** against a **stubbed host** (stub `ssh`/`scp`,
 the measured error text, the measured container address `100.64.0.10`) in three states: an
 unreachable database must `SKIP` and must **not** mention `recover_db_corruption`; a healthy one
 must `PASS`; and one that really answers `fail` must still `FAIL` **with** the recovery advice —
 so the fix cannot pass by silencing the verdict.
+
+### The first CI run of this block failed — trap #9, inside the check that enforces honesty
+
+The gate was green locally (**435 PASS / 0 FAIL**) and CI then failed the same catalog on the
+same commit:
+
+```
+FAIL  B387 …
+      FAIL A4: the catalog does not source scripts/lib/post_deploy_truth.sh
+      FAIL A5: RESULTS_SKIP is still never initialised …
+      FAIL A6/A7/A8 …
+      grep: write error: Broken pipe
+```
+
+The assertions piped a producer into `grep -q` under `set -o pipefail`:
+
+```bash
+if code_only "$VP" | grep -qF '. "$(dirname "$0")/lib/post_deploy_truth.sh"'; then
+```
+
+`grep -q` exits at the **first** match and closes the pipe; `verify_post_deploy.sh` is now
+~110 KB (past the 64 KB pipe buffer) and the A4–A8 patterns sit near its **top**, so the
+upstream `grep` was still writing when the consumer left, died with SIGPIPE, and `pipefail`
+reported the pipeline as failed — turning a pattern that **is** present into "absent". MSYS
+buffered differently and accepted all five. Reproduced locally on the same shape:
+`pipeline_rc=141` for a match on the first line, `rc=0` for a match on the last line of the
+same input. That is AGENTS **trap #9**, in the block written to stop a checker from reporting a
+plumbing failure as a verdict.
+
+Fixed the way B386 fixed the class: the producer is captured **once**
+(`VP_CODE="$(code_only "$VP")"`) and every match is a `case` or a herestring — no pipe at all.
+Contract **A14** now asserts that this file contains no producer-piped-into-`grep -q` site at
+all (the pattern is assembled from an escaped `\|` token, because in ERE a bare `|` is an
+alternation with an empty branch that matches *every* line — which made the first version of
+A14 report 382 findings).
+
+**It also exposed that B386's guard is too narrow to have caught it:** that detector only
+matched `printf`/`echo` producers. A detector broadened to any producer finds **304 sites in
+~120 check scripts**, which is now tracked as **TD-32** in `docs/ROADMAP.md` with the measured
+predicate (it bites only when the consumer leaves while the producer is still writing, so a
+last-line match on a small producer is safe by accident) and the per-site method B386 used.
 
 ### Operator action
 
