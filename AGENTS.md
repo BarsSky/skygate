@@ -32,14 +32,26 @@ silently — it was folded into the files above.
    `scripts/check_bNNN_*.sh`, registered in `scripts/verify_pre_deploy.sh`, and a
    one-line entry in the block index below.
 3. **`go vet ./...`, `staticcheck ./...` and `go test` must be clean** (0 findings,
-   no silenced tests). **`gofmt` is the exception, and the rule says what is
-   actually enforceable:** every file you *touch* — and every file you create — must
-   be `gofmt`-clean, while the pre-existing repo-wide drift (302 of 835 tracked
-   files, 36 %, measured 2026-09-25) stays frozen until the TD-21 ratchet plus
-   one-commit renormalisation land. Do not run `gofmt -w` across the tree inside an
-   unrelated change: 38 737 whitespace-only lines would bury it and poison
-   `git blame`. Nothing enforces any of this today — that is TD-22's problem, not a
-   reason to read the rule as satisfied. **This is now enforced:** `scripts/check_b337_gofmt_ratchet.sh` (B337) freezes the 275-file legacy set in `scripts/gofmt_legacy_allowlist.txt`, fails on any *non-listed* drifted file, and fails when a *listed* file has been fixed but not removed from the list, so the number can only fall.
+   no silenced tests). **`gofmt` is no longer an exception: the tree is 100 % clean
+   since TD-21 landed (v1.5.127, 2026-10-15).** Every tracked `.go` file is
+   `gofmt`-clean — 992 of 992 — and `scripts/check_b337_gofmt_ratchet.sh` (B337)
+   enforces it with a budget of **0** against an **empty**
+   `scripts/gofmt_legacy_allowlist.txt`: a drifted file fails the check, and so does
+   a file appended to that list, because an exemption nobody argued for is exactly
+   how the previous 243 accumulated (they were frozen on 2026-10-01 and paid off all
+   at once). **Do not run `gofmt -w` across the tree inside an unrelated change** —
+   there is nothing left to renormalise, and a whole-tree rewrite would still bury
+   the real diff and poison `git blame`; `gofmt -w` only ever applies to the files
+   your own change touches. If a large pre-existing drift ever appears again, its
+   block must record the measurement and raise the budget in B337 **deliberately**.
+   How TD-21 itself was proven safe: `gofmt -w` to a fixed point (9 of the 243 files
+   needed a SECOND pass — go1.25.4's doc-comment reformatter re-lays-out a comment it
+   has just re-wrapped), then a token-level comparison of every file showing the
+   multiset of identifiers/keywords/literal contents identical and the ordered
+   punctuation sequence identical for **243 of 243** — an invariant that deliberately
+   ignores the three things gofmt may change (automatically inserted semicolons,
+   doc-comment layout, import ordering inside a group), each of which a naive
+   "same token stream" check reports as damage.
 4. **Work on the VM, verify on the VM.** Checks and live verification run on
    `<VM_HOST>`; local Windows is for editing only. Long-running verification must
    be run so its output can be read back.

@@ -11,8 +11,8 @@ import (
 )
 
 type Config struct {
-	Port               string
-	DBPath             string
+	Port   string
+	DBPath string
 	// DBDSN is the connection string for whichever DB the operator
 	// chose at install time. Supports SQLite (bare path or sqlite:/
 	// prefix) and PostgreSQL (postgres:// URL).
@@ -26,9 +26,9 @@ type Config struct {
 	// --db-type flag on install-debian.sh, switch DBs without data
 	// loss), see docs/deploy.md and the B-mod-sqlite-pg-bidi plan
 	// at docs/ROADMAP.md.
-	DBDSN              string
-	HeadscaleURL       string
-	HeadscaleKey       string
+	DBDSN        string
+	HeadscaleURL string
+	HeadscaleKey string
 	// HeadplaneExternalURL is the public URL of an existing
 	// Headplane instance the operator wants to use instead of
 	// the bundled sidecar. Empty = use the bundled sidecar.
@@ -84,9 +84,9 @@ type Config struct {
 	// vs "ws_relay"). Default "192.0.2.0/24" (RFC 5737).
 	// Operators set SKYGATE_DERP_LAN_NET in .env to their
 	// real LAN CIDR (e.g. "192.168.1.0/24").
-	DerpLANNet string
-	JWTSecret          string
-	SessionHours       int
+	DerpLANNet   string
+	JWTSecret    string
+	SessionHours int
 	// B161.1 (v1.5.0): OIDC provider config. The
 	// issuer is the public URL of skygate (used as
 	// the iss claim in id_tokens + the discovery
@@ -96,10 +96,10 @@ type Config struct {
 	// is where the RSA keypair is persisted
 	// (./data/oidc-keys/ by default — generated
 	// on first start if missing).
-	OIDCIssuerURL      string
-	OIDCClientID       string
-	OIDCClientSecret   string
-	OIDCKeyDir         string
+	OIDCIssuerURL    string
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCKeyDir       string
 	// B161.2 (v1.5.0): OIDC redirect-URI allowlist.
 	// Comma-separated list of URLs the OIDC
 	// provider will redirect to after a successful
@@ -107,7 +107,7 @@ type Config struct {
 	// MUST do an exact-string match. headscale's
 	// default is https://<headscale-host>/oidc/callback
 	// — operators add this to the list.
-	OIDCRedirectURIs   string
+	OIDCRedirectURIs string
 	// B-oidc-setup (v0.75 / 2026-09-21): explicit on/off toggle
 	// for the boot sequence. Empty = legacy behaviour (OIDC
 	// is enabled iff SKYGATE_OIDC_ISSUER is non-empty).
@@ -120,7 +120,7 @@ type Config struct {
 	OIDCEnabledEnv     string
 	BootstrapAdminUser string
 	BootstrapAdminPass string
-	SSHKeyPath         string // path to SSH key for exit node sync
+	SSHKeyPath         string        // path to SSH key for exit node sync
 	DNSAutoCheck       time.Duration // 0 = disabled, default 5m
 	// 2026-09-03: v1.5.2 (B229) — preferred-exit
 	// auto-reconciler period. The goroutine in
@@ -174,7 +174,7 @@ type Config struct {
 	StaggerInterval   time.Duration // delay between batches (default 30s)
 	// 2026-07-07: per-user rule limits. Map username -> max rules. Default = MaxRulesPerDevice.
 	// Example: "SKYGATE_USER_MAX_RULES=admin:1000,user1:http.StatusInternalServerError"
-	UserMaxRules       map[string]int
+	UserMaxRules map[string]int
 	// 2026-07-15: v0.12.0 — per-user headscale control plane
 	// keys are encrypted with this 32-byte hex key. Empty
 	// means "encryption not configured"; the per-user router
@@ -404,7 +404,7 @@ type Config struct {
 	// Default: disabled, daily 03:00 (matches the
 	// B130 update scheduler so all lifecycle jobs
 	// share the 03:00 window).
-	TokenAutoRotateEnabled bool
+	TokenAutoRotateEnabled  bool
 	TokenAutoRotateSchedule string // cron expression, e.g. "0 3 * * *"
 	// 2026-08-20: v1.5.0 (B156) — in-app preauth key
 	// expiration notification scheduler. Scans
@@ -432,12 +432,12 @@ type Config struct {
 	// role, no DNS provider (operator opts in via
 	// SKYGATE_DNS_PROVIDER=external or via /admin/ha
 	// once Phase 5 lands).
-	HAEnabled                 bool
-	HAHeartbeatInterval       time.Duration
-	HAMissedThreshold         int
-	HASelfRoleOverride        HARole
-	HAOnTransition            func(from, to string, memberName string) // optional, set in main.go
-	DNSProvider               string
+	HAEnabled           bool
+	HAHeartbeatInterval time.Duration
+	HAMissedThreshold   int
+	HASelfRoleOverride  HARole
+	HAOnTransition      func(from, to string, memberName string) // optional, set in main.go
+	DNSProvider         string
 	// 2026-09-07 (B237.18, closes TD-10) — periodic
 	// reconciliation of portal_users.headscale_user_id
 	// against the live headscale user list. Default ON
@@ -451,9 +451,9 @@ type Config struct {
 	// package). Changing the default changes the
 	// operator's stale-id window — see the B-check
 	// for the pin.
-	ReconcileHeadscaleUsers       bool
+	ReconcileHeadscaleUsers         bool
 	ReconcileHeadscaleUsersInterval time.Duration
-	GitHubToken         string
+	GitHubToken                     string
 	// 2026-08-17 (B124) — DevBuild marks the running binary
 	// as a dev/edge build. The /admin/update page shows a
 	// "dev build" banner instead of the "update available"
@@ -514,15 +514,15 @@ type Config struct {
 
 func Load() (*Config, error) {
 	c := &Config{
-		Port:               getenv("SKYGATE_PORT", "8080"),
-		DBPath:             getenv("SKYGATE_DB_PATH", "/var/lib/skygate/skygate.db"),
-		DBDSN:              resolveDBDSN(),
-		HeadscaleURL:       getenv("HEADSCALE_URL", "http://headscale:50444"),
-		HeadscaleKey:       os.Getenv("HEADSCALE_API_KEY"),
+		Port:                 getenv("SKYGATE_PORT", "8080"),
+		DBPath:               getenv("SKYGATE_DB_PATH", "/var/lib/skygate/skygate.db"),
+		DBDSN:                resolveDBDSN(),
+		HeadscaleURL:         getenv("HEADSCALE_URL", "http://headscale:50444"),
+		HeadscaleKey:         os.Getenv("HEADSCALE_API_KEY"),
 		HeadplaneExternalURL: os.Getenv("HEADPLANE_EXTERNAL_URL"),
-		ControlURL:         deriveControlURL(getenv("SKYGATE_CONTROL_URL", ""), getenv("HEADSCALE_URL", "http://headscale:50444")),
-		JWTSecret:          os.Getenv("SKYGATE_JWT_SECRET"),
-		SessionHours:       24,
+		ControlURL:           deriveControlURL(getenv("SKYGATE_CONTROL_URL", ""), getenv("HEADSCALE_URL", "http://headscale:50444")),
+		JWTSecret:            os.Getenv("SKYGATE_JWT_SECRET"),
+		SessionHours:         24,
 		// B161.1: OIDC defaults. If SKYGATE_OIDC_ISSUER
 		// is unset the OIDC routes are mounted but
 		// return 503 (disabled) — this lets us ship
@@ -530,15 +530,15 @@ func Load() (*Config, error) {
 		// operator to set env vars immediately. The
 		// full OIDC flow (B161.2 + B161.3) requires
 		// the issuer to be set.
-		OIDCIssuerURL:      os.Getenv("SKYGATE_OIDC_ISSUER"),
-		OIDCClientID:       getenv("SKYGATE_OIDC_CLIENT_ID", "headscale"),
-		OIDCClientSecret:   os.Getenv("SKYGATE_OIDC_CLIENT_SECRET"),
-		OIDCKeyDir:         os.Getenv("SKYGATE_OIDC_KEY_DIR"),
+		OIDCIssuerURL:    os.Getenv("SKYGATE_OIDC_ISSUER"),
+		OIDCClientID:     getenv("SKYGATE_OIDC_CLIENT_ID", "headscale"),
+		OIDCClientSecret: os.Getenv("SKYGATE_OIDC_CLIENT_SECRET"),
+		OIDCKeyDir:       os.Getenv("SKYGATE_OIDC_KEY_DIR"),
 		// B161.2: default to headscale's canonical
 		// callback URL (matches the operator's
 		// headscale.conf `oidc.redirect_uri`). The
 		// operator can override via env.
-		OIDCRedirectURIs:   getenv("SKYGATE_OIDC_REDIRECT_URIS", "https://head.skynas.ru/oidc/callback"),
+		OIDCRedirectURIs: getenv("SKYGATE_OIDC_REDIRECT_URIS", "https://head.skynas.ru/oidc/callback"),
 		// B-oidc-setup: explicit enable flag (empty = legacy
 		// "enabled iff issuer is non-empty" semantics).
 		OIDCEnabledEnv:     os.Getenv("SKYGATE_OIDC_ENABLED"),
@@ -573,12 +573,12 @@ func Load() (*Config, error) {
 		// IPs, hostnames, or usernames. Live deployments
 		// MUST set SKYGATE_BASE_DOMAIN, SKYGATE_ADMIN_IDENTITY,
 		// SKYGATE_DERP_BASE_URL in .env to their real values.
-		BaseDomain:    getenv("SKYGATE_BASE_DOMAIN", "tsnet.example.com"),
-		AdminIdentity: getenv("SKYGATE_ADMIN_IDENTITY", "admin"),
-		DerpBaseURL:   getenv("SKYGATE_DERP_BASE_URL", "http://derp.example.com:8766"),
-		DerpPeerNPM:   getenv("SKYGATE_DERP_PEER_NPM", "192.0.2.67"),
-		DerpLANNet:    getenv("SKYGATE_DERP_LAN_NET", "192.0.2.0/24"),
-		DNSAutoCheck:       getDuration("SKYGATE_DNS_AUTO_CHECK", 5*time.Minute),
+		BaseDomain:            getenv("SKYGATE_BASE_DOMAIN", "tsnet.example.com"),
+		AdminIdentity:         getenv("SKYGATE_ADMIN_IDENTITY", "admin"),
+		DerpBaseURL:           getenv("SKYGATE_DERP_BASE_URL", "http://derp.example.com:8766"),
+		DerpPeerNPM:           getenv("SKYGATE_DERP_PEER_NPM", "192.0.2.67"),
+		DerpLANNet:            getenv("SKYGATE_DERP_LAN_NET", "192.0.2.0/24"),
+		DNSAutoCheck:          getDuration("SKYGATE_DNS_AUTO_CHECK", 5*time.Minute),
 		PrefReconcileInterval: getDuration("SKYGATE_PREFERRED_RECONCILE_INTERVAL", 1*time.Hour),
 		PrefReconcileEnabled:  getenv("SKYGATE_PREFERRED_RECONCILE_ENABLED", "true") == "true",
 		// 2026-08-09: v0.33.1.25 (B77) — node-discovery
@@ -593,13 +593,13 @@ func Load() (*Config, error) {
 		// self-update" change in .env was silently disabling their
 		// domain rule refresh.
 		DNSAutoUpdateEnabled: getenv("SKYGATE_DNS_AUTOUPDATE_ENABLED", "true") == "true",
-		MaxRulesPerDevice:  getInt("SKYGATE_MAX_RULES_PER_DEVICE", 200),
-		MaxTotalRules:      getInt("SKYGATE_MAX_TOTAL_RULES", 10000),
-		StaggerSync:        getenv("SKYGATE_STAGGER_SYNC", "true") == "true",
-		StaggerBatchSize:   getInt("SKYGATE_STAGGER_BATCH_SIZE", 20),
-		StaggerInterval:    getDuration("SKYGATE_STAGGER_INTERVAL", 30*time.Second),
-		UserMaxRules:       parseUserLimits(getenv("SKYGATE_USER_MAX_RULES", "")),
-		SecretKeyHex:       os.Getenv("SKYGATE_SECRET_KEY"),
+		MaxRulesPerDevice:    getInt("SKYGATE_MAX_RULES_PER_DEVICE", 200),
+		MaxTotalRules:        getInt("SKYGATE_MAX_TOTAL_RULES", 10000),
+		StaggerSync:          getenv("SKYGATE_STAGGER_SYNC", "true") == "true",
+		StaggerBatchSize:     getInt("SKYGATE_STAGGER_BATCH_SIZE", 20),
+		StaggerInterval:      getDuration("SKYGATE_STAGGER_INTERVAL", 30*time.Second),
+		UserMaxRules:         parseUserLimits(getenv("SKYGATE_USER_MAX_RULES", "")),
+		SecretKeyHex:         os.Getenv("SKYGATE_SECRET_KEY"),
 		// 2026-07-15: v0.13.0 — exit-node health monitor
 		// knobs. "off" / "0" disables the monitor (default
 		// is 5m; same shape as SKYGATE_DNS_AUTO_CHECK so an
@@ -627,8 +627,8 @@ func Load() (*Config, error) {
 		// default poll is 24h (one check per day is plenty
 		// for headscale's release cadence). Set the
 		// interval to "off" or "0" to disable.
-		HeadscaleVersionPin:    os.Getenv("SKYGATE_HEADSCALE_VERSION_PIN"),
-		HeadscalePollInterval:  getDuration("SKYGATE_HEADSCALE_POLL_INTERVAL", 24*time.Hour),
+		HeadscaleVersionPin:   os.Getenv("SKYGATE_HEADSCALE_VERSION_PIN"),
+		HeadscalePollInterval: getDuration("SKYGATE_HEADSCALE_POLL_INTERVAL", 24*time.Hour),
 		// 2026-07-20: v0.20.0 — auto-allocate subnet on
 		// user create. Default true. Set to "false" in
 		// .env to revert to v0.16.0-v0.18.1 manual
@@ -665,8 +665,8 @@ func Load() (*Config, error) {
 		UpdateChannel:       getenv("SKYGATE_UPDATE_CHANNEL", "stable"),
 		// 2026-08-17 (B124): dev-build marker. Default false
 		// (treated as a regular release build).
-		DevBuild:            getenv("SKYGATE_DEV_BUILD", "false") == "true",
-		GitHubToken:         os.Getenv("SKYGATE_GITHUB_TOKEN"),
+		DevBuild:    getenv("SKYGATE_DEV_BUILD", "false") == "true",
+		GitHubToken: os.Getenv("SKYGATE_GITHUB_TOKEN"),
 		// v0.32.3: auto-update flag. Default false.
 		// SKYGATE_AUTO_UPDATE_ENABLED=true enables the
 		// banner + "Apply" button. When false, the operator
@@ -740,9 +740,9 @@ func Load() (*Config, error) {
 		// Default: disabled, daily 09:00 (after
 		// the 5 AM smoke-mesh cleanup + 3 AM
 		// backup + 4 AM verify window).
-		KeyNotifyEnabled:  getenv("SKYGATE_KEY_NOTIFY_ENABLED", "false") == "true",
-		KeyNotifySchedule: getenv("SKYGATE_KEY_NOTIFY_SCHEDULE", "0 9 * * *"),
-		CleanupSmokeMeshSchedule:     getenv("SKYGATE_CLEANUP_SMOKE_MESH_SCHEDULE", "0 5 * * *"),
+		KeyNotifyEnabled:         getenv("SKYGATE_KEY_NOTIFY_ENABLED", "false") == "true",
+		KeyNotifySchedule:        getenv("SKYGATE_KEY_NOTIFY_SCHEDULE", "0 9 * * *"),
+		CleanupSmokeMeshSchedule: getenv("SKYGATE_CLEANUP_SMOKE_MESH_SCHEDULE", "0 5 * * *"),
 		// 2026-08-18: v1.5.0 (B145) — HA chain + elector
 		// + DNS provider. Env-var defaults match the
 		// plan. HASelfRoleOverride defaults to "auto"
@@ -757,8 +757,8 @@ func Load() (*Config, error) {
 		// configured chain logs "no chain" every tick
 		// and exits the loop, so there's no false
 		// promotion risk during the ramp-up.
-		HAEnabled:                 getenv("SKYGATE_HA_ENABLED", "false") == "true",
-		HAHeartbeatInterval:       getDuration("SKYGATE_HA_HEARTBEAT_INTERVAL", 5*time.Second),
+		HAEnabled:           getenv("SKYGATE_HA_ENABLED", "false") == "true",
+		HAHeartbeatInterval: getDuration("SKYGATE_HA_HEARTBEAT_INTERVAL", 5*time.Second),
 		// 2026-09-07 (B237.18) — see the field
 		// comment above for the rationale. The 0
 		// sentinel for the interval triggers the
@@ -767,11 +767,11 @@ func Load() (*Config, error) {
 		// default" by simply not setting the env
 		// var. We document this in the env-var
 		// table in AGENTS.md.
-		ReconcileHeadscaleUsers:       getenv("SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED", "true") == "true",
+		ReconcileHeadscaleUsers:         getenv("SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED", "true") == "true",
 		ReconcileHeadscaleUsersInterval: getDuration("SKYGATE_RECONCILE_HEADSCALE_USERS_INTERVAL", 0),
-		HAMissedThreshold:         getInt("SKYGATE_HA_MISSED_THRESHOLD", 3),
-		HASelfRoleOverride:        HARole(getenv("SKYGATE_HA_ROLE", "auto")),
-		DNSProvider:               getenv("SKYGATE_DNS_PROVIDER", ""),
+		HAMissedThreshold:               getInt("SKYGATE_HA_MISSED_THRESHOLD", 3),
+		HASelfRoleOverride:              HARole(getenv("SKYGATE_HA_ROLE", "auto")),
+		DNSProvider:                     getenv("SKYGATE_DNS_PROVIDER", ""),
 		// 2026-08-05 v0.33.1.10: GitHub repo coordinates.
 		// The "BarsSky/skygate" default matches the
 		// operator's actual github.com repo (the previous
@@ -1035,8 +1035,6 @@ func deriveControlURL(explicit, hsAPI string) string {
 	return u
 }
 
-
-
 func getInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -1098,15 +1096,23 @@ const (
 
 func parseUserLimits(s string) map[string]int {
 	m := map[string]int{}
-	if s == "" { return m }
+	if s == "" {
+		return m
+	}
 	for _, pair := range strings.Split(s, ",") {
 		pair = strings.TrimSpace(pair)
-		if pair == "" { continue }
+		if pair == "" {
+			continue
+		}
 		parts := strings.SplitN(pair, ":", 2)
-		if len(parts) != 2 { continue }
+		if len(parts) != 2 {
+			continue
+		}
 		name := strings.TrimSpace(parts[0])
 		n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-		if err != nil || n <= 0 { continue }
+		if err != nil || n <= 0 {
+			continue
+		}
 		m[name] = n
 	}
 	return m

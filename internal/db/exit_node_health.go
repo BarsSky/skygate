@@ -37,18 +37,18 @@ import (
 // boundary so call sites don't have to remember which fields are
 // 0/1 vs. unix timestamps.
 type ExitNodeHealth struct {
-	NodeID               string
-	Hostname             string
-	Online               bool
-	LastSeen             string    // RFC3339 from headscale, may be "" if never seen
-	LastSeenParsed       time.Time // parsed; zero if LastSeen == "" or unparseable
-	AdvertisedRoutesOK   bool
-	HasExitTag           bool
-	State                string    // unknown | online | offline | degraded
-	Healthy              bool
-	LastCheckAt          time.Time
-	LastStateChangeAt    time.Time
-	ConsecutiveFailures  int
+	NodeID              string
+	Hostname            string
+	Online              bool
+	LastSeen            string    // RFC3339 from headscale, may be "" if never seen
+	LastSeenParsed      time.Time // parsed; zero if LastSeen == "" or unparseable
+	AdvertisedRoutesOK  bool
+	HasExitTag          bool
+	State               string // unknown | online | offline | degraded
+	Healthy             bool
+	LastCheckAt         time.Time
+	LastStateChangeAt   time.Time
+	ConsecutiveFailures int
 }
 
 // ExitNodeStateChange is the typed view of one row in

@@ -49,7 +49,7 @@ func TestLookupResolvedForDomain_CDNAlias(t *testing.T) {
 // return the union (not just one or the other).
 func TestLookupResolvedForDomain_BothMerged(t *testing.T) {
 	resolved := map[string]map[string]bool{
-		"6:29:emilia:discord.gg":                 {"1.1.1.1/32": true},
+		"6:29:emilia:discord.gg":                {"1.1.1.1/32": true},
 		"6:29:emilia:cdn:cloudflare:discord.gg": {"104.16.0.0/12": true, "162.158.0.0/15": true},
 	}
 	got := LookupResolvedForDomain(resolved, 6, 29, "emilia", "discord.gg")

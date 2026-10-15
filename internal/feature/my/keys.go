@@ -140,9 +140,9 @@ func (s *Service) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 			// template uses this to decide whether
 			// to render the row in the "eligible
 			// for cleanup" style).
-			"Device":         "",
-			"TimeRemaining":  "",
-			"ExpiredUnused":  false,
+			"Device":        "",
+			"TimeRemaining": "",
+			"ExpiredUnused": false,
 		}
 		// B159: device name. Look up the bound device
 		// by headscale_preauth_id. Unused keys get
@@ -244,10 +244,10 @@ func (s *Service) GetMyKeys(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		"Keys":              viewRows,
-		"HasKeys":           len(viewRows) > 0,
-		"Now":               nowUnix,
-		"ExpiringCount":     expiringCount,
+		"Keys":               viewRows,
+		"HasKeys":            len(viewRows) > 0,
+		"Now":                nowUnix,
+		"ExpiringCount":      expiringCount,
 		"ExpiredUnusedCount": expiredUnused,
 		// 2026-09-18 (R7/R6): the flash surface for this page. Pre-fix
 		// keys.html had no error block at all, so POST failures
@@ -619,12 +619,12 @@ func (s *Service) PostMyKeyExpire(w http.ResponseWriter, r *http.Request) {
 // PostMyKeysCleanup (B159, v1.5.0) bulk-deletes every
 // preauth_keys row for the current user that is:
 //   - used = 0  (consumed-by-device keys are audit
-//                history; we never delete those)
+//     history; we never delete those)
 //   - expires_at > 0  (the key had a finite TTL —
-//                "never" keys are not eligible)
+//     "never" keys are not eligible)
 //   - expires_at <= now  (the key has actually
-//                passed its expiry, not just the
-//                warning-window)
+//     passed its expiry, not just the
+//     warning-window)
 //
 // Returns the count of removed rows via ?cleaned=<N>
 // query param. The /my/keys GET handler reads this
@@ -677,19 +677,19 @@ func (s *Service) PostMyKeysCleanup(w http.ResponseWriter, r *http.Request) {
 // Granularity (matches the B156 notification
 // scheduler's "key.expiring" message style):
 //
-//   expiresAt == 0   → "no expiry"  (the caller
-//                                 treats ExpiresAt==0
-//                                 as "never")
-//   now < expiresAt  → future hint:
-//                       <1m:  "1 min left"
-//                       <1h:  "<N> min left"
-//                       <24h: "<N> hours left"
-//                       >=24h:"<N> days left"
-//   now >= expiresAt → past hint:
-//                       <1m:  "expired 1 min ago"
-//                       <1h:  "expired <N> min ago"
-//                       <24h: "expired <N> hours ago"
-//                       >=24h:"expired <N> days ago"
+//	expiresAt == 0   → "no expiry"  (the caller
+//	                              treats ExpiresAt==0
+//	                              as "never")
+//	now < expiresAt  → future hint:
+//	                    <1m:  "1 min left"
+//	                    <1h:  "<N> min left"
+//	                    <24h: "<N> hours left"
+//	                    >=24h:"<N> days left"
+//	now >= expiresAt → past hint:
+//	                    <1m:  "expired 1 min ago"
+//	                    <1h:  "expired <N> min ago"
+//	                    <24h: "expired <N> hours ago"
+//	                    >=24h:"expired <N> days ago"
 //
 // The function is intentionally tiny and pure so
 // the test file (preauth_test.go) can drive it

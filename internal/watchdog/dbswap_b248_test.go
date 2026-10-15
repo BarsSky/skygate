@@ -49,8 +49,8 @@ func okReaderFunc(row *ClusterDatabaseRow) DSNReader {
 // not-found / no-row paths).
 type noopMigrator struct{ cur *sql.DB }
 
-func (n noopMigrator) Current() *sql.DB  { return n.cur }
-func (n noopMigrator) Reset(*sql.DB)     {}
+func (n noopMigrator) Current() *sql.DB      { return n.cur }
+func (n noopMigrator) Reset(*sql.DB)         {}
 func (n noopMigrator) Migrate(*sql.DB) error { return nil }
 
 // makeB248Watchdog builds a watchdog wired for B248 tests. Logger
@@ -239,4 +239,3 @@ func TestTick_LogMessageOnNotFound(t *testing.T) {
 		}
 	}
 }
-

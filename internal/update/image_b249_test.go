@@ -108,9 +108,9 @@ func TestImageIsFromRegistry(t *testing.T) {
 		{"skygate/skygate:latest", false}, // "skygate" has no dot/colon
 		{"foo/bar:v1", false},             // "foo" has no dot/colon
 		// Edge cases.
-		{"", false},                         // empty
-		{"alpine", false},                   // bare name, no slash, no tag
-		{"alpine:3.19", false},              // bare name with tag — local-style
+		{"", false},            // empty
+		{"alpine", false},      // bare name, no slash, no tag
+		{"alpine:3.19", false}, // bare name with tag — local-style
 	}
 	for _, c := range cases {
 		if got := s.imageIsFromRegistry(c.image); got != c.want {

@@ -499,7 +499,7 @@ func TestGetOtherHSUserIDs(t *testing.T) {
 // in internal/nodeownership/auto.go runs Backfill per portal user
 // on the SKYGATE_NODE_DISCOVERY_INTERVAL, default 5m). Each tick
 // triggered the qSelectOtherHSUserIDs query, which compared
-// INTEGER headscale_user_id against the literal TEXT ''; PG refused
+// INTEGER headscale_user_id against the literal TEXT ”; PG refused
 // the cast and bubbled the error back. The fix (queries.go
 // qSelectOtherHSUserIDs) drops the empty-string filter in favour
 // of `!= 0` (the post-v0.28 unlinked sentinel).

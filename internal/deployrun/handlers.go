@@ -279,11 +279,11 @@ func (s *Service) streamRun(w http.ResponseWriter, r *http.Request, id int64) {
 // PostAdminDeploys — start a new run. The form fields
 // come from /admin/ha (or /admin/deploys/new). On
 // success, the handler:
-//   1. Inserts the DeployRun row (status=pending).
-//   2. Creates a fresh SSEBroker, stores it in the
-//      service's broker map.
-//   3. Launches the framework's Run() in a goroutine.
-//   4. Redirects to /admin/deploys/{id} for the live UI.
+//  1. Inserts the DeployRun row (status=pending).
+//  2. Creates a fresh SSEBroker, stores it in the
+//     service's broker map.
+//  3. Launches the framework's Run() in a goroutine.
+//  4. Redirects to /admin/deploys/{id} for the live UI.
 //
 // On failure, clears the broker and redirects with
 // an error.

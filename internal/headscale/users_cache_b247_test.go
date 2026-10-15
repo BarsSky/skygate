@@ -9,10 +9,10 @@
 // changed)" — but the user was actually created successfully.
 //
 // The fix is two-pronged:
-//   1. CreateUser invalidates the user cache on success (so the next
-//      ListUsers sees the new user).
-//   2. CreateUser's fallback path uses ListUsersFresh (which bypasses
-//      the cache and forces a fresh GET /api/v1/user).
+//  1. CreateUser invalidates the user cache on success (so the next
+//     ListUsers sees the new user).
+//  2. CreateUser's fallback path uses ListUsersFresh (which bypasses
+//     the cache and forces a fresh GET /api/v1/user).
 //
 // These tests pin both behaviours via an httptest server that records
 // the number of GET /api/v1/user calls so we can prove the cache hit

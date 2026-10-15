@@ -15,17 +15,17 @@ import (
 )
 
 type HSNode struct {
-	ID              string        `json:"id"`
-	MachineKey      string        `json:"machineKey"`
-	NodeKey         string        `json:"nodeKey"`
-	DiscoKey        string        `json:"discoKey"`
-	Name            string        `json:"name"`
-	GivenName       string        `json:"givenName"`
-	User            HSUser        `json:"user"`
-	IPAddresses     []string      `json:"ipAddresses"`
-	Online          bool          `json:"online"`
-	LastSeen        string        `json:"lastSeen"`
-	CreatedAt       string        `json:"createdAt"`
+	ID          string   `json:"id"`
+	MachineKey  string   `json:"machineKey"`
+	NodeKey     string   `json:"nodeKey"`
+	DiscoKey    string   `json:"discoKey"`
+	Name        string   `json:"name"`
+	GivenName   string   `json:"givenName"`
+	User        HSUser   `json:"user"`
+	IPAddresses []string `json:"ipAddresses"`
+	Online      bool     `json:"online"`
+	LastSeen    string   `json:"lastSeen"`
+	CreatedAt   string   `json:"createdAt"`
 	// Expiry is the headscale-side node.expiry field as a
 	// RFC3339Nano string. Empty when the node has no
 	// expiry (the typical state for tagged nodes; see
@@ -36,9 +36,9 @@ type HSNode struct {
 	// trip per node per tick. headscale's /api/v1/node
 	// endpoint always populates this when the field is
 	// non-null in the DB.
-	Expiry          string        `json:"expiry"`
-	Tags            []string      `json:"tags"`
-	AvailableRoutes []string      `json:"availableRoutes"`
+	Expiry          string   `json:"expiry"`
+	Tags            []string `json:"tags"`
+	AvailableRoutes []string `json:"availableRoutes"`
 	// ApprovedRoutes is what headscale has actually approved for
 	// this node (after `headscale nodes approve-routes` runs).
 	// Distinct from AvailableRoutes (what the node asked for)
@@ -46,8 +46,8 @@ type HSNode struct {
 	// approved a subset, or none at all. Read by the sidecar
 	// auto-approver (v0.16.7) to decide when to flip
 	// user_subnets.status to active.
-	ApprovedRoutes  []string      `json:"approvedRoutes"`
-	PreAuthKey      *HSPreauthKey `json:"preAuthKey"`
+	ApprovedRoutes []string      `json:"approvedRoutes"`
+	PreAuthKey     *HSPreauthKey `json:"preAuthKey"`
 }
 
 type NodeView struct {
@@ -65,7 +65,7 @@ type NodeView struct {
 	// ApprovedRoutes mirrors HSNode.ApprovedRoutes — see the
 	// comment on HSNode for the distinction. Used by
 	// sidecar.auto_approver.
-	ApprovedRoutes  []string
+	ApprovedRoutes []string
 	// PreAuthKeyID is the headscale ID of the preauth key this node
 	// registered with, or "" if the node predates our key tracking.
 	PreAuthKeyID string
@@ -145,7 +145,7 @@ func (n HSNode) toView() NodeView {
 		// it's non-null in the DB; empty string = nil
 		// expiry (tagged nodes, pre-v0.23.3 installs
 		// that predate the regReq.Expiry path).
-		Expiry:          n.Expiry,
+		Expiry: n.Expiry,
 	}
 }
 

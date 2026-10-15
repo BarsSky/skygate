@@ -8,8 +8,8 @@
 // download their OWN audit trail as CSV or JSON, gated
 // by their session cookie.
 //
-//   GET /my/account/audit?format=csv&since=7d
-//   GET /my/account/audit?format=json&since=30d
+//	GET /my/account/audit?format=csv&since=7d
+//	GET /my/account/audit?format=json&since=30d
 //
 // The default range is 7 days. Older rows require
 // explicit `since=` with a Unix timestamp. The response
@@ -202,4 +202,3 @@ func parseSinceParam(s string) (int64, error) {
 // removed — it now lives in internal/httputil/. The
 // caller above (GetMyAccountAuditExport) routes through
 // httputil.SanitizeFilename.)
-

@@ -81,7 +81,7 @@ func newFakeExternalAPI(t *testing.T) (*httptest.Server, *fakeExternalAPI) {
 func newTestClient(t *testing.T, srv *httptest.Server, login, password, zone, certPEM string) (*Client, *fakeExternalAPI) {
 	t.Helper()
 	c := &Client{
-		Store: nil,
+		Store:      nil,
 		HTTPClient: &http.Client{Timeout: 5e9},
 		credsOverride: &dnsexternal.Credentials{
 			Provider: "external",

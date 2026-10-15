@@ -65,6 +65,7 @@ import (
 //     and uses the published IP ranges for that CDN
 //     (e.g. discord.gg → cdn:cloudflare:discord.gg, then
 //     INSERTs the 15 published Cloudflare CIDRs).
+//
 // The B184 DOMAIN-rule status propagation must look up
 // BOTH formats — otherwise a Cloudflare-routed domain
 // shows ⏳ pending even when its 15 published CDN ranges

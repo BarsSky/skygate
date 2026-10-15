@@ -244,9 +244,9 @@ type Config struct {
 	// global_settings keys (backup.last_verify_*) — see
 	// the runBackupVerifyOK / runBackupVerifyFail subcommands
 	// in cmd/skygate/main.go for the read/write side.
-	LastVerifyAt     int64  // unix seconds of last completed verify (0 = never)
-	LastVerifyStatus string // "ok" / "fail" / "" (empty = never run)
-	LastVerifyError  string // last verify failure message
+	LastVerifyAt      int64  // unix seconds of last completed verify (0 = never)
+	LastVerifyStatus  string // "ok" / "fail" / "" (empty = never run)
+	LastVerifyError   string // last verify failure message
 	LastVerifyArchive string // archive that was last verified
 }
 
@@ -272,14 +272,14 @@ const (
 	// "s3_" prefix groups them in the global_settings
 	// table so /admin/backup/config's grep for
 	// "s3_*" finds all the relevant rows.
-	keyS3Endpoint    = "backup.s3_endpoint"
-	keyS3Region      = "backup.s3_region"
-	keyS3AccessKey   = "backup.s3_access_key"
-	keyS3SecretKey   = "backup.s3_secret_key"
-	keyS3Bucket      = "backup.s3_bucket"
-	keyS3Prefix      = "backup.s3_prefix"
-	keyS3StagingDir  = "backup.s3_staging_dir"
-	keyS3UseSSL      = "backup.s3_use_ssl"
+	keyS3Endpoint   = "backup.s3_endpoint"
+	keyS3Region     = "backup.s3_region"
+	keyS3AccessKey  = "backup.s3_access_key"
+	keyS3SecretKey  = "backup.s3_secret_key"
+	keyS3Bucket     = "backup.s3_bucket"
+	keyS3Prefix     = "backup.s3_prefix"
+	keyS3StagingDir = "backup.s3_staging_dir"
+	keyS3UseSSL     = "backup.s3_use_ssl"
 	// 2026-08-18 (B142): in-app verify-scheduler storage keys.
 	// Same naming convention as the in-app backup-scheduler pair
 	// (backup.in_app_enabled + backup.schedule).
@@ -348,10 +348,10 @@ func Default() *Config {
 		// Status fields default to "never run" — same as
 		// the pre-B142 LastRun/LastStatus/LastArchive
 		// pattern.
-		LastVerifyAt:       0,
-		LastVerifyStatus:   "",
-		LastVerifyError:    "",
-		LastVerifyArchive:  "",
+		LastVerifyAt:      0,
+		LastVerifyStatus:  "",
+		LastVerifyError:   "",
+		LastVerifyArchive: "",
 	}
 }
 

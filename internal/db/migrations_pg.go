@@ -13,8 +13,8 @@ import (
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV020PG(d *sql.DB) error {
 
-		queries := []string{
-			`CREATE TABLE IF NOT EXISTS exit_servers (
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS exit_servers (
 				id BIGSERIAL PRIMARY KEY,
 				node_id TEXT NOT NULL UNIQUE,
 				hostname TEXT NOT NULL,
@@ -23,7 +23,7 @@ func migrateV020PG(d *sql.DB) error {
 				enabled INTEGER DEFAULT 1,
 				created_at INTEGER DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
 			)`,
-			`CREATE TABLE IF NOT EXISTS device_rules (
+		`CREATE TABLE IF NOT EXISTS device_rules (
 				id BIGSERIAL PRIMARY KEY,
 				user_id INTEGER NOT NULL,
 				device_id INTEGER NOT NULL,
@@ -34,7 +34,7 @@ func migrateV020PG(d *sql.DB) error {
 				created_at INTEGER DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
 				FOREIGN KEY (user_id) REFERENCES portal_users (id) ON DELETE CASCADE
 			)`,
-			`CREATE TABLE IF NOT EXISTS acl_snapshots (
+		`CREATE TABLE IF NOT EXISTS acl_snapshots (
 				id BIGSERIAL PRIMARY KEY,
 				version INTEGER NOT NULL,
 				config TEXT NOT NULL,
@@ -43,67 +43,69 @@ func migrateV020PG(d *sql.DB) error {
 				error_msg TEXT DEFAULT '',
 				created_at INTEGER DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
 			)`,
-			`CREATE TABLE IF NOT EXISTS exit_rule_logs (
+		`CREATE TABLE IF NOT EXISTS exit_rule_logs (
 				id BIGSERIAL PRIMARY KEY,
 				version INTEGER NOT NULL,
 				action TEXT NOT NULL,
 				detail TEXT DEFAULT '',
 				created_at INTEGER DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
 			)`,
+	}
+	for _, q := range queries {
+		if _, err := d.Exec(q); err != nil {
+			return err
 		}
-		for _, q := range queries {
-			if _, err := d.Exec(q); err != nil {
-				return err
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV021PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV021PG(d *sql.DB) error {
 
-		queries := []string{
-			`ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'accept'`,
-			`CREATE TABLE IF NOT EXISTS global_settings (
+	queries := []string{
+		`ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'accept'`,
+		`CREATE TABLE IF NOT EXISTS global_settings (
 				key TEXT PRIMARY KEY,
 				value TEXT NOT NULL DEFAULT '',
 				updated_at INTEGER DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
 			)`,
-			`INSERT INTO global_settings (key, value) VALUES ('exit_policy', 'allow_all') ON CONFLICT (key) DO NOTHING`,
+		`INSERT INTO global_settings (key, value) VALUES ('exit_policy', 'allow_all') ON CONFLICT (key) DO NOTHING`,
+	}
+	for _, q := range queries {
+		if _, err := d.Exec(q); err != nil {
+			// ALTER TABLE ADD COLUMN may fail if column exists — ignore
+			continue
 		}
-		for _, q := range queries {
-			if _, err := d.Exec(q); err != nil {
-				// ALTER TABLE ADD COLUMN may fail if column exists — ignore
-				continue
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV022PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV022PG(d *sql.DB) error {
 
-		// 2026-07-11: Этап 9 part 2 — the original 2026-07-09 statement had
-		// `DEFAULT ` with no value, which is a syntax error. The function
-		// ignored the error so the migration silently no-op'd, leaving
-		// device_rules without device_ip on fresh DBs. Fixed.
-		_, err := d.Exec("ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS device_ip TEXT NOT NULL DEFAULT ''")
-		if err != nil { return nil } // column exists
+	// 2026-07-11: Этап 9 part 2 — the original 2026-07-09 statement had
+	// `DEFAULT ` with no value, which is a syntax error. The function
+	// ignored the error so the migration silently no-op'd, leaving
+	// device_rules without device_ip on fresh DBs. Fixed.
+	_, err := d.Exec("ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS device_ip TEXT NOT NULL DEFAULT ''")
+	if err != nil {
 		return nil
+	} // column exists
+	return nil
 }
 
 // migrateV023PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV023PG(d *sql.DB) error {
 
-		// 2026-07-09: refactor v0.6.0 — original statement had a syntax error
-		// (`DEFAULT ,` with no value) which made the table creation silently
-		// fail — the function was invoked without an err check so the migration
-		// was a no-op. Production tables were created out-of-band and exist
-		// today, but fresh deployments lost this table. Fixed below.
-		const q = `CREATE TABLE IF NOT EXISTS personal_api_tokens (
+	// 2026-07-09: refactor v0.6.0 — original statement had a syntax error
+	// (`DEFAULT ,` with no value) which made the table creation silently
+	// fail — the function was invoked without an err check so the migration
+	// was a no-op. Production tables were created out-of-band and exist
+	// today, but fresh deployments lost this table. Fixed below.
+	const q = `CREATE TABLE IF NOT EXISTS personal_api_tokens (
 			id BIGSERIAL PRIMARY KEY,
 			user_id INTEGER NOT NULL,
 			token_hash TEXT NOT NULL UNIQUE,
@@ -112,32 +114,32 @@ func migrateV023PG(d *sql.DB) error {
 			created_at INTEGER DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
 			FOREIGN KEY (user_id) REFERENCES portal_users (id) ON DELETE CASCADE
 		)`
-		if _, err := d.Exec(q); err != nil {
-			return err
-		}
-		return nil
+	if _, err := d.Exec(q); err != nil {
+		return err
+	}
+	return nil
 }
 
 // migrateV024PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV024PG(d *sql.DB) error {
 
-		queries := []string{
-			"ALTER TABLE exit_servers ADD COLUMN IF NOT EXISTS ssh_target TEXT NOT NULL DEFAULT ''",
-			"ALTER TABLE exit_servers ADD COLUMN IF NOT EXISTS ssh_key_path TEXT NOT NULL DEFAULT ''",
-		}
-		for _, q := range queries {
-			d.Exec(q) // ignore errors (column may exist)
-		}
-		return nil
+	queries := []string{
+		"ALTER TABLE exit_servers ADD COLUMN IF NOT EXISTS ssh_target TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE exit_servers ADD COLUMN IF NOT EXISTS ssh_key_path TEXT NOT NULL DEFAULT ''",
+	}
+	for _, q := range queries {
+		d.Exec(q) // ignore errors (column may exist)
+	}
+	return nil
 }
 
 // migrateV025PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV025PG(d *sql.DB) error {
 
-		queries := []string{
-			`CREATE TABLE IF NOT EXISTS portal_users (
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS portal_users (
 				id BIGSERIAL PRIMARY KEY,
 				username TEXT UNIQUE NOT NULL,
 				password_hash TEXT NOT NULL,
@@ -146,7 +148,7 @@ func migrateV025PG(d *sql.DB) error {
 				created_at INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
 				theme TEXT NOT NULL DEFAULT 'linear'
 			)`,
-			`CREATE TABLE IF NOT EXISTS preauth_keys (
+		`CREATE TABLE IF NOT EXISTS preauth_keys (
 				id BIGSERIAL PRIMARY KEY,
 				user_id INTEGER NOT NULL,
 				key TEXT NOT NULL UNIQUE,
@@ -157,7 +159,7 @@ func migrateV025PG(d *sql.DB) error {
 				created_at INTEGER DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
 				FOREIGN KEY (user_id) REFERENCES portal_users (id) ON DELETE CASCADE
 			)`,
-			`CREATE TABLE IF NOT EXISTS devices (
+		`CREATE TABLE IF NOT EXISTS devices (
 				id BIGSERIAL PRIMARY KEY,
 				user_id INTEGER NOT NULL,
 				hostname TEXT NOT NULL,
@@ -170,7 +172,7 @@ func migrateV025PG(d *sql.DB) error {
 				created_at INTEGER DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
 				FOREIGN KEY (user_id) REFERENCES portal_users (id) ON DELETE CASCADE
 			)`,
-			`CREATE TABLE IF NOT EXISTS audit_log (
+		`CREATE TABLE IF NOT EXISTS audit_log (
 				id BIGSERIAL PRIMARY KEY,
 				user_id INTEGER DEFAULT 0,
 				username TEXT DEFAULT '',
@@ -179,7 +181,7 @@ func migrateV025PG(d *sql.DB) error {
 				ip_address TEXT DEFAULT '',
 				created_at INTEGER DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
 			)`,
-			`CREATE TABLE IF NOT EXISTS node_owner_map (
+		`CREATE TABLE IF NOT EXISTS node_owner_map (
 				node_id TEXT PRIMARY KEY,
 				headscale_user_id INTEGER NOT NULL DEFAULT 0,
 				username TEXT NOT NULL DEFAULT '',
@@ -188,136 +190,136 @@ func migrateV025PG(d *sql.DB) error {
 				tagged_at INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
 				hostname TEXT NOT NULL DEFAULT ''
 			)`,
+	}
+	for _, q := range queries {
+		if _, err := d.Exec(q); err != nil {
+			return err
 		}
-		for _, q := range queries {
-			if _, err := d.Exec(q); err != nil {
-				return err
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV026PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV026PG(d *sql.DB) error {
 
-		stmts := []string{
-			"ALTER TABLE exit_servers ADD COLUMN IF NOT EXISTS accept_routes INTEGER NOT NULL DEFAULT 0",
+	stmts := []string{
+		"ALTER TABLE exit_servers ADD COLUMN IF NOT EXISTS accept_routes INTEGER NOT NULL DEFAULT 0",
+	}
+	for _, q := range stmts {
+		if _, err := d.Exec(q); err != nil {
+			// ignore: column may already exist on a re-run
+			continue
 		}
-		for _, q := range stmts {
-			if _, err := d.Exec(q); err != nil {
-				// ignore: column may already exist on a re-run
-				continue
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV027PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV027PG(d *sql.DB) error {
 
-		stmts := []string{
-			`CREATE TABLE IF NOT EXISTS telegram_alerts (
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS telegram_alerts (
 				id BIGSERIAL PRIMARY KEY,
 				body TEXT NOT NULL,
 				sent_at INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
 				acked_at INTEGER NOT NULL DEFAULT 0,
 				acked_by TEXT NOT NULL DEFAULT ''
 			)`,
-			`CREATE INDEX IF NOT EXISTS idx_telegram_alerts_unacked
+		`CREATE INDEX IF NOT EXISTS idx_telegram_alerts_unacked
 				ON telegram_alerts(id) WHERE acked_at = 0`,
+	}
+	for _, q := range stmts {
+		if _, err := d.Exec(q); err != nil {
+			return err
 		}
-		for _, q := range stmts {
-			if _, err := d.Exec(q); err != nil {
-				return err
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV028PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV028PG(d *sql.DB) error {
 
-		stmts := []string{
-			`ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS parent_domain TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS username TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS headscale_user_id INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS tag TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS tagged_by_user_id INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS tag TEXT NOT NULL DEFAULT ''`, // safe no-op if V028 ran twice
-			// 2026-07-15: v0.14.1 — the original V028 ALTER list
-			// forgot tagged_at. Production DBs got the column
-			// out-of-band (commit a8b07f8 added INSERT OR REPLACE
-			// before V028 ran, so a manual ALTER was the only way
-			// for a fresh install to work), but the v0.25
-			// CREATE+ALTER chain + the v0.14.1 test suite
-			// exposed the gap: db.UpsertNodeOwner panics on a
-			// fresh DB with "no column named tagged_at". Adding
-			// the ALTER here closes the gap for new installs;
-			// the _, _ = d.Exec(q) below swallows the "duplicate
-			// column" error so the migration stays idempotent on
-			// existing installs.
-			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS tagged_at INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE preauth_keys ADD COLUMN IF NOT EXISTS headscale_preauth_id TEXT NOT NULL DEFAULT ''`,
-		}
-		for _, q := range stmts {
-			// SQLite ALTER TABLE ADD COLUMN fails if the column already
-			// exists — that's the case on live DBs (the column was
-			// created out-of-band). We swallow the error so the
-			// migration is idempotent.
-			_, _ = d.Exec(q)
-		}
-		return nil
+	stmts := []string{
+		`ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS parent_domain TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS username TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS headscale_user_id INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS tag TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS tagged_by_user_id INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS tag TEXT NOT NULL DEFAULT ''`, // safe no-op if V028 ran twice
+		// 2026-07-15: v0.14.1 — the original V028 ALTER list
+		// forgot tagged_at. Production DBs got the column
+		// out-of-band (commit a8b07f8 added INSERT OR REPLACE
+		// before V028 ran, so a manual ALTER was the only way
+		// for a fresh install to work), but the v0.25
+		// CREATE+ALTER chain + the v0.14.1 test suite
+		// exposed the gap: db.UpsertNodeOwner panics on a
+		// fresh DB with "no column named tagged_at". Adding
+		// the ALTER here closes the gap for new installs;
+		// the _, _ = d.Exec(q) below swallows the "duplicate
+		// column" error so the migration stays idempotent on
+		// existing installs.
+		`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS tagged_at INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE preauth_keys ADD COLUMN IF NOT EXISTS headscale_preauth_id TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, q := range stmts {
+		// SQLite ALTER TABLE ADD COLUMN fails if the column already
+		// exists — that's the case on live DBs (the column was
+		// created out-of-band). We swallow the error so the
+		// migration is idempotent.
+		_, _ = d.Exec(q)
+	}
+	return nil
 }
 
 // migrateV029PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV029PG(d *sql.DB) error {
 
-		stmts := []string{
-			`CREATE TABLE IF NOT EXISTS telegram_bindings (
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS telegram_bindings (
 				chat_id          INTEGER PRIMARY KEY,
 				portal_user_id   INTEGER NOT NULL,
 				is_admin         INTEGER NOT NULL DEFAULT 0,
 				bound_at         INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
 				bound_by_user_id INTEGER NOT NULL DEFAULT 0
 			)`,
-			`CREATE INDEX IF NOT EXISTS idx_telegram_bindings_user
+		`CREATE INDEX IF NOT EXISTS idx_telegram_bindings_user
 				ON telegram_bindings(portal_user_id)`,
+	}
+	for _, q := range stmts {
+		if _, err := d.Exec(q); err != nil {
+			return err
 		}
-		for _, q := range stmts {
-			if _, err := d.Exec(q); err != nil {
-				return err
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV030PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV030PG(d *sql.DB) error {
 
-		stmts := []string{
-			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS default_device_node_id TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS default_exit_node_id    TEXT NOT NULL DEFAULT ''`,
-		}
-		for _, q := range stmts {
-			// ALTER TABLE ADD COLUMN returns an error if the column
-			// already exists; that's the "migration already applied"
-			// signal and we swallow it (same idiom as v0.21/v0.22).
-			_, _ = d.Exec(q)
-		}
-		return nil
+	stmts := []string{
+		`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS default_device_node_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS default_exit_node_id    TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, q := range stmts {
+		// ALTER TABLE ADD COLUMN returns an error if the column
+		// already exists; that's the "migration already applied"
+		// signal and we swallow it (same idiom as v0.21/v0.22).
+		_, _ = d.Exec(q)
+	}
+	return nil
 }
 
 // migrateV031PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV031PG(d *sql.DB) error {
 
-		stmts := []string{
-			`CREATE TABLE IF NOT EXISTS telegram_login_tokens (
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS telegram_login_tokens (
 				token            TEXT PRIMARY KEY,
 				portal_user_id   INTEGER NOT NULL,
 				created_at       INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
@@ -326,130 +328,130 @@ func migrateV031PG(d *sql.DB) error {
 				used_by_chat_id  INTEGER NOT NULL DEFAULT 0,
 				request_ip       TEXT    NOT NULL DEFAULT ''
 			)`,
-			`CREATE INDEX IF NOT EXISTS idx_telegram_login_tokens_user
+		`CREATE INDEX IF NOT EXISTS idx_telegram_login_tokens_user
 				ON telegram_login_tokens(portal_user_id)`,
-			`CREATE INDEX IF NOT EXISTS idx_telegram_login_tokens_expiry
+		`CREATE INDEX IF NOT EXISTS idx_telegram_login_tokens_expiry
 				ON telegram_login_tokens(expires_at)`,
-			// Default strict_mode = 0 (off) so the migration doesn't
-			// surprise existing single-admin-chat deploys. New deploys
-			// that want strict mode flip it via /admin/telegram.
-			// We use INSERT OR IGNORE so re-running the migration is a
-			// no-op (the row already exists from a previous run).
-			`INSERT INTO global_settings (key, value, updated_at)
+		// Default strict_mode = 0 (off) so the migration doesn't
+		// surprise existing single-admin-chat deploys. New deploys
+		// that want strict mode flip it via /admin/telegram.
+		// We use INSERT OR IGNORE so re-running the migration is a
+		// no-op (the row already exists from a previous run).
+		`INSERT INTO global_settings (key, value, updated_at)
 				VALUES ('telegram.strict_mode', '0', EXTRACT(EPOCH FROM now())::bigint)
 				ON CONFLICT (key) DO NOTHING`,
-			// Default token TTL = 300s (5 min). Operators can tune via
-			// /admin/telegram UI or by editing the global_settings row
-			// directly. Stored as a string to keep the schema uniform
-			// (all global_settings values are TEXT).
-			`INSERT INTO global_settings (key, value, updated_at)
+		// Default token TTL = 300s (5 min). Operators can tune via
+		// /admin/telegram UI or by editing the global_settings row
+		// directly. Stored as a string to keep the schema uniform
+		// (all global_settings values are TEXT).
+		`INSERT INTO global_settings (key, value, updated_at)
 				VALUES ('telegram.login_token_ttl_seconds', '300', EXTRACT(EPOCH FROM now())::bigint)
 				ON CONFLICT (key) DO NOTHING`,
+	}
+	for _, q := range stmts {
+		if _, err := d.Exec(q); err != nil {
+			return err
 		}
-		for _, q := range stmts {
-			if _, err := d.Exec(q); err != nil {
-				return err
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV032PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV032PG(d *sql.DB) error {
 
-		stmts := []string{
-			`CREATE TABLE IF NOT EXISTS telegram_rate_limit (
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS telegram_rate_limit (
 				key    TEXT NOT NULL,
 				action TEXT NOT NULL DEFAULT '',
 				ts     INTEGER NOT NULL
 			)`,
-			`CREATE INDEX IF NOT EXISTS idx_telegram_rate_limit_lookup
+		`CREATE INDEX IF NOT EXISTS idx_telegram_rate_limit_lookup
 				ON telegram_rate_limit(key, ts)`,
-			`CREATE INDEX IF NOT EXISTS idx_telegram_rate_limit_prune
+		`CREATE INDEX IF NOT EXISTS idx_telegram_rate_limit_prune
 				ON telegram_rate_limit(ts)`,
+	}
+	for _, q := range stmts {
+		if _, err := d.Exec(q); err != nil {
+			return err
 		}
-		for _, q := range stmts {
-			if _, err := d.Exec(q); err != nil {
-				return err
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV033PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV033PG(d *sql.DB) error {
 
-		stmts := []string{
-			`ALTER TABLE telegram_bindings ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'en'`,
+	stmts := []string{
+		`ALTER TABLE telegram_bindings ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'en'`,
+	}
+	for _, q := range stmts {
+		// ALTER TABLE ADD COLUMN with a DEFAULT is idempotent
+		// in our model: if the column already exists, the
+		// statement returns an error and we move on. Fresh
+		// DBs get the column with the default; existing DBs
+		// silently no-op. Same pattern as the v0.21 ALTER
+		// for device_rules.action.
+		if _, err := d.Exec(q); err != nil {
+			// Column already exists — that's the expected
+			// "already migrated" path. Continue.
+			continue
 		}
-		for _, q := range stmts {
-			// ALTER TABLE ADD COLUMN with a DEFAULT is idempotent
-			// in our model: if the column already exists, the
-			// statement returns an error and we move on. Fresh
-			// DBs get the column with the default; existing DBs
-			// silently no-op. Same pattern as the v0.21 ALTER
-			// for device_rules.action.
-			if _, err := d.Exec(q); err != nil {
-				// Column already exists — that's the expected
-				// "already migrated" path. Continue.
-				continue
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV034PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV034PG(d *sql.DB) error {
 
-		stmts := []string{
-			`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS hostname TEXT NOT NULL DEFAULT ''`,
-			`CREATE INDEX IF NOT EXISTS idx_node_owner_map_hostname ON node_owner_map (hostname) WHERE hostname != ''`,
+	stmts := []string{
+		`ALTER TABLE node_owner_map ADD COLUMN IF NOT EXISTS hostname TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_node_owner_map_hostname ON node_owner_map (hostname) WHERE hostname != ''`,
+	}
+	for _, q := range stmts {
+		if _, err := d.Exec(q); err != nil {
+			// Column / index already exists — that's the
+			// "already migrated" path. Continue.
+			continue
 		}
-		for _, q := range stmts {
-			if _, err := d.Exec(q); err != nil {
-				// Column / index already exists — that's the
-				// "already migrated" path. Continue.
-				continue
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV035PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV035PG(d *sql.DB) error {
 
-		stmts := []string{
-			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS headscale_url TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS headscale_api_key_enc TEXT NOT NULL DEFAULT ''`,
-			`CREATE INDEX IF NOT EXISTS idx_portal_users_hs_url ON portal_users (headscale_url) WHERE headscale_url != ''`,
+	stmts := []string{
+		`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS headscale_url TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS headscale_api_key_enc TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_portal_users_hs_url ON portal_users (headscale_url) WHERE headscale_url != ''`,
+	}
+	for _, q := range stmts {
+		if _, err := d.Exec(q); err != nil {
+			// Column / index already exists — that's the
+			// "already migrated" path. Continue.
+			continue
 		}
-		for _, q := range stmts {
-			if _, err := d.Exec(q); err != nil {
-				// Column / index already exists — that's the
-				// "already migrated" path. Continue.
-				continue
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV036PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV036PG(d *sql.DB) error {
 
-		stmts := []string{
-			// 2026-07-15: v0.13.0 — exit-node health snapshot.
-			// `state` is one of: unknown | online | offline | degraded.
-			// `degraded` = online + has the tag but routes are not
-			// approved (e.g. admin ran --advertise-routes but forgot
-			// to approve on headscale, or the approval was rolled
-			// back). `healthy` is the combined boolean that the
-			// /admin/exit-nodes page renders as a green/red dot.
-			`CREATE TABLE IF NOT EXISTS exit_node_health (
+	stmts := []string{
+		// 2026-07-15: v0.13.0 — exit-node health snapshot.
+		// `state` is one of: unknown | online | offline | degraded.
+		// `degraded` = online + has the tag but routes are not
+		// approved (e.g. admin ran --advertise-routes but forgot
+		// to approve on headscale, or the approval was rolled
+		// back). `healthy` is the combined boolean that the
+		// /admin/exit-nodes page renders as a green/red dot.
+		`CREATE TABLE IF NOT EXISTS exit_node_health (
 				node_id TEXT PRIMARY KEY,
 				hostname TEXT NOT NULL DEFAULT '',
 				online INTEGER NOT NULL DEFAULT 0,
@@ -462,15 +464,15 @@ func migrateV036PG(d *sql.DB) error {
 				last_state_change_at INTEGER NOT NULL DEFAULT 0,
 				consecutive_failures INTEGER NOT NULL DEFAULT 0
 			)`,
-			`CREATE INDEX IF NOT EXISTS idx_exit_node_health_state
+		`CREATE INDEX IF NOT EXISTS idx_exit_node_health_state
 				ON exit_node_health (state, healthy)`,
-			// 2026-07-15: v0.13.0 — state-transition log.
-			// Inserted by the monitor on detected transitions
-			// (online→offline, offline→online). `alerted_at` is
-			// updated to a unix timestamp once the Telegram alert
-			// has been queued. The dispatch loop queries
-			// `WHERE alerted_at = 0` to find pending alerts.
-			`CREATE TABLE IF NOT EXISTS exit_node_state_changes (
+		// 2026-07-15: v0.13.0 — state-transition log.
+		// Inserted by the monitor on detected transitions
+		// (online→offline, offline→online). `alerted_at` is
+		// updated to a unix timestamp once the Telegram alert
+		// has been queued. The dispatch loop queries
+		// `WHERE alerted_at = 0` to find pending alerts.
+		`CREATE TABLE IF NOT EXISTS exit_node_state_changes (
 				id BIGSERIAL PRIMARY KEY,
 				node_id TEXT NOT NULL,
 				hostname TEXT NOT NULL DEFAULT '',
@@ -480,57 +482,57 @@ func migrateV036PG(d *sql.DB) error {
 				alerted_at INTEGER NOT NULL DEFAULT 0,
 				note TEXT NOT NULL DEFAULT ''
 			)`,
-			`CREATE INDEX IF NOT EXISTS idx_exit_node_state_changes_pending
+		`CREATE INDEX IF NOT EXISTS idx_exit_node_state_changes_pending
 				ON exit_node_state_changes (alerted_at, detected_at)`,
-			`CREATE INDEX IF NOT EXISTS idx_exit_node_state_changes_node
+		`CREATE INDEX IF NOT EXISTS idx_exit_node_state_changes_node
 				ON exit_node_state_changes (node_id, detected_at DESC)`,
+	}
+	for _, q := range stmts {
+		if _, err := d.Exec(q); err != nil {
+			// CREATE IF NOT EXISTS already covers the
+			// "already migrated" path; the if-guard is
+			// belt-and-suspenders.
+			continue
 		}
-		for _, q := range stmts {
-			if _, err := d.Exec(q); err != nil {
-				// CREATE IF NOT EXISTS already covers the
-				// "already migrated" path; the if-guard is
-				// belt-and-suspenders.
-				continue
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV037PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV037PG(d *sql.DB) error {
 
-		stmts := []string{
-			`ALTER TABLE personal_api_tokens ADD COLUMN IF NOT EXISTS expires_at INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE personal_api_tokens ADD COLUMN IF NOT EXISTS auto_rotate INTEGER NOT NULL DEFAULT 0`,
-			`CREATE INDEX IF NOT EXISTS idx_personal_api_tokens_expires
+	stmts := []string{
+		`ALTER TABLE personal_api_tokens ADD COLUMN IF NOT EXISTS expires_at INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE personal_api_tokens ADD COLUMN IF NOT EXISTS auto_rotate INTEGER NOT NULL DEFAULT 0`,
+		`CREATE INDEX IF NOT EXISTS idx_personal_api_tokens_expires
 				ON personal_api_tokens (expires_at)`,
+	}
+	for _, q := range stmts {
+		if _, err := d.Exec(q); err != nil {
+			// ALTER TABLE ADD COLUMN fails with "duplicate
+			// column" on a re-run; ignore that case (the
+			// column already exists, which is fine).
+			// CREATE INDEX IF NOT EXISTS is a no-op on
+			// re-run, so it shouldn't hit this branch.
+			continue
 		}
-		for _, q := range stmts {
-			if _, err := d.Exec(q); err != nil {
-				// ALTER TABLE ADD COLUMN fails with "duplicate
-				// column" on a re-run; ignore that case (the
-				// column already exists, which is fine).
-				// CREATE INDEX IF NOT EXISTS is a no-op on
-				// re-run, so it shouldn't hit this branch.
-				continue
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV038PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV038PG(d *sql.DB) error {
 
-		stmts := []string{
-			// New table: user_subnets. The unique constraints
-			// on user_id and cidr let the allocator rely on
-			// the DB to prevent duplicate allocations (a
-			// second AllocateCIDR call for the same user_id
-			// hits the UNIQUE(user_id) and the manager can
-			// detect "already allocated" via the error).
-			`CREATE TABLE IF NOT EXISTS user_subnets (
+	stmts := []string{
+		// New table: user_subnets. The unique constraints
+		// on user_id and cidr let the allocator rely on
+		// the DB to prevent duplicate allocations (a
+		// second AllocateCIDR call for the same user_id
+		// hits the UNIQUE(user_id) and the manager can
+		// detect "already allocated" via the error).
+		`CREATE TABLE IF NOT EXISTS user_subnets (
 				id INTEGER PRIMARY KEY,
 				user_id INTEGER NOT NULL UNIQUE,
 				cidr TEXT NOT NULL UNIQUE,
@@ -544,56 +546,56 @@ func migrateV038PG(d *sql.DB) error {
 				updated_at INTEGER NOT NULL,
 				FOREIGN KEY (user_id) REFERENCES portal_users(id) ON DELETE CASCADE
 			)`,
-			// Indexes: the (cidr) UNIQUE in the table definition
-			// already creates a unique index; we add plain
-			// indexes for the (status) and (control_plane_url)
-			// lookups that the manager / bot / admin pages do.
-			`CREATE INDEX IF NOT EXISTS idx_user_subnets_status
+		// Indexes: the (cidr) UNIQUE in the table definition
+		// already creates a unique index; we add plain
+		// indexes for the (status) and (control_plane_url)
+		// lookups that the manager / bot / admin pages do.
+		`CREATE INDEX IF NOT EXISTS idx_user_subnets_status
 				ON user_subnets (status)`,
-			`CREATE INDEX IF NOT EXISTS idx_user_subnets_plane
+		`CREATE INDEX IF NOT EXISTS idx_user_subnets_plane
 				ON user_subnets (control_plane_url)`,
-			// Denormalized columns on portal_users. The 3
-			// queries that read these columns are:
-			//   1. /mysubnet: SELECT subnet_cidr, subnet_status,
-			//      subnet_router_node_id FROM portal_users WHERE id = ?
-			//   2. /myexitnodes: JOIN against user_subnets via
-			//      portal_users.subnet_cidr (for "your default
-			//      exit-node can route through your personal
-			//      subnet" hint, v0.17.0+)
-			//   3. /admin/users/{id} admin page: shows the
-			//      subnet_status next to the username
-			// Keeping these in portal_users saves a JOIN on the
-			// hot path. The user_subnets table is the source
-			// of truth; the portal_users columns are kept in
-			// sync by the manager (internal/subnet/manager.go).
-			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS subnet_cidr TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS subnet_status TEXT NOT NULL DEFAULT 'none'`,
-			`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS subnet_router_node_id TEXT NOT NULL DEFAULT ''`,
-			`CREATE INDEX IF NOT EXISTS idx_portal_users_subnet_status
+		// Denormalized columns on portal_users. The 3
+		// queries that read these columns are:
+		//   1. /mysubnet: SELECT subnet_cidr, subnet_status,
+		//      subnet_router_node_id FROM portal_users WHERE id = ?
+		//   2. /myexitnodes: JOIN against user_subnets via
+		//      portal_users.subnet_cidr (for "your default
+		//      exit-node can route through your personal
+		//      subnet" hint, v0.17.0+)
+		//   3. /admin/users/{id} admin page: shows the
+		//      subnet_status next to the username
+		// Keeping these in portal_users saves a JOIN on the
+		// hot path. The user_subnets table is the source
+		// of truth; the portal_users columns are kept in
+		// sync by the manager (internal/subnet/manager.go).
+		`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS subnet_cidr TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS subnet_status TEXT NOT NULL DEFAULT 'none'`,
+		`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS subnet_router_node_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_portal_users_subnet_status
 				ON portal_users (subnet_status)`,
+	}
+	for _, q := range stmts {
+		if _, err := d.Exec(q); err != nil {
+			// ALTER TABLE ADD COLUMN fails with "duplicate
+			// column" on a re-run; ignore that case (the
+			// column already exists, which is fine).
+			// CREATE TABLE / INDEX IF NOT EXISTS is a no-op
+			// on re-run, so it shouldn't hit this branch.
+			continue
 		}
-		for _, q := range stmts {
-			if _, err := d.Exec(q); err != nil {
-				// ALTER TABLE ADD COLUMN fails with "duplicate
-				// column" on a re-run; ignore that case (the
-				// column already exists, which is fine).
-				// CREATE TABLE / INDEX IF NOT EXISTS is a no-op
-				// on re-run, so it shouldn't hit this branch.
-				continue
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV039PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV039PG(d *sql.DB) error {
 
-		stmts := []string{
-			// The shares table. grantor is the user whose
-			// subnet is being shared; grantee is the user
-			// who gets access to grantor's subnet.
-			`CREATE TABLE IF NOT EXISTS user_subnet_shares (
+	stmts := []string{
+		// The shares table. grantor is the user whose
+		// subnet is being shared; grantee is the user
+		// who gets access to grantor's subnet.
+		`CREATE TABLE IF NOT EXISTS user_subnet_shares (
 				grantor_user_id INTEGER NOT NULL,
 				grantee_user_id INTEGER NOT NULL,
 				created_at INTEGER NOT NULL DEFAULT 0,
@@ -601,29 +603,29 @@ func migrateV039PG(d *sql.DB) error {
 				FOREIGN KEY (grantor_user_id) REFERENCES portal_users(id) ON DELETE CASCADE,
 				FOREIGN KEY (grantee_user_id) REFERENCES portal_users(id) ON DELETE CASCADE
 			)`,
-			// Index on grantee — the ACL builder iterates
-			// "for each user, what subnets are shared with
-			// them" which is a scan by grantee. The
-			// PRIMARY KEY index covers grantor lookups
-			// (grantor-side); the grantee-side needs its
-			// own index.
-			`CREATE INDEX IF NOT EXISTS idx_user_subnet_shares_grantee
+		// Index on grantee — the ACL builder iterates
+		// "for each user, what subnets are shared with
+		// them" which is a scan by grantee. The
+		// PRIMARY KEY index covers grantor lookups
+		// (grantor-side); the grantee-side needs its
+		// own index.
+		`CREATE INDEX IF NOT EXISTS idx_user_subnet_shares_grantee
 				ON user_subnet_shares (grantee_user_id)`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return err
 		}
-		for _, s := range stmts {
-			if _, err := d.Exec(s); err != nil {
-				return err
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV041PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV041PG(d *sql.DB) error {
 
-		stmts := []string{
-			`CREATE TABLE IF NOT EXISTS headscale_releases (
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS headscale_releases (
 				version TEXT PRIMARY KEY,
 				published_at INTEGER NOT NULL DEFAULT 0,
 				first_seen_at INTEGER NOT NULL DEFAULT 0,
@@ -633,28 +635,28 @@ func migrateV041PG(d *sql.DB) error {
 				is_breaking INTEGER NOT NULL DEFAULT 0,
 				notified INTEGER NOT NULL DEFAULT 0
 			)`,
-			// Index on published_at DESC for the
-			// /admin/headscale "history" view (newest
-			// first). The PRIMARY KEY covers exact
-			// lookups; the index covers the range scan
-			// the page renders.
-			`CREATE INDEX IF NOT EXISTS idx_headscale_releases_published
+		// Index on published_at DESC for the
+		// /admin/headscale "history" view (newest
+		// first). The PRIMARY KEY covers exact
+		// lookups; the index covers the range scan
+		// the page renders.
+		`CREATE INDEX IF NOT EXISTS idx_headscale_releases_published
 				ON headscale_releases (published_at DESC)`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return err
 		}
-		for _, s := range stmts {
-			if _, err := d.Exec(s); err != nil {
-				return err
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV042PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV042PG(d *sql.DB) error {
 
-		stmts := []string{
-			`CREATE TABLE IF NOT EXISTS invite_codes (
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS invite_codes (
 				id BIGSERIAL PRIMARY KEY,
 				code TEXT NOT NULL UNIQUE,
 				grantor_user_id INTEGER NOT NULL,
@@ -667,41 +669,41 @@ func migrateV042PG(d *sql.DB) error {
 				audit_message TEXT NOT NULL DEFAULT '',
 				FOREIGN KEY (grantor_user_id) REFERENCES portal_users(id) ON DELETE CASCADE
 			)`,
-			// Note: consumed_by_user_id does NOT have
-			// an FK because the user may not exist at
-			// generation time (we store grantee by
-			// username, resolved to id at consume).
-			// At consume time the consuming user IS
-			// known (they have to be authenticated to
-			// reach /accept), so we add a partial FK
-			// to gate "consumed but user_id is now
-			// gone" cases. Setting to ON DELETE SET
-			// DEFAULT 0 keeps the audit trail even if
-			// the consumer is later deleted.
-			`CREATE INDEX IF NOT EXISTS idx_invite_codes_grantor
+		// Note: consumed_by_user_id does NOT have
+		// an FK because the user may not exist at
+		// generation time (we store grantee by
+		// username, resolved to id at consume).
+		// At consume time the consuming user IS
+		// known (they have to be authenticated to
+		// reach /accept), so we add a partial FK
+		// to gate "consumed but user_id is now
+		// gone" cases. Setting to ON DELETE SET
+		// DEFAULT 0 keeps the audit trail even if
+		// the consumer is later deleted.
+		`CREATE INDEX IF NOT EXISTS idx_invite_codes_grantor
 				ON invite_codes (grantor_user_id)`,
-			`CREATE INDEX IF NOT EXISTS idx_invite_codes_status_expires
+		`CREATE INDEX IF NOT EXISTS idx_invite_codes_status_expires
 				ON invite_codes (status, expires_at)`,
-			// Also: lookup by grantee_username (the
-			// "show me invites for me" query — the
-			// consume path joins on this).
-			`CREATE INDEX IF NOT EXISTS idx_invite_codes_grantee
+		// Also: lookup by grantee_username (the
+		// "show me invites for me" query — the
+		// consume path joins on this).
+		`CREATE INDEX IF NOT EXISTS idx_invite_codes_grantee
 				ON invite_codes (grantee_username)`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return err
 		}
-		for _, s := range stmts {
-			if _, err := d.Exec(s); err != nil {
-				return err
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV043PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV043PG(d *sql.DB) error {
 
-		stmts := []string{
-			`CREATE TABLE IF NOT EXISTS meshes (
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS meshes (
 				id BIGSERIAL PRIMARY KEY,
 				code TEXT NOT NULL UNIQUE,
 				name TEXT NOT NULL DEFAULT '',
@@ -711,7 +713,7 @@ func migrateV043PG(d *sql.DB) error {
 				dissolved_at INTEGER NOT NULL DEFAULT 0,
 				FOREIGN KEY (creator_user_id) REFERENCES portal_users(id) ON DELETE CASCADE
 			)`,
-			`CREATE TABLE IF NOT EXISTS mesh_members (
+		`CREATE TABLE IF NOT EXISTS mesh_members (
 				mesh_id INTEGER NOT NULL,
 				user_id INTEGER NOT NULL,
 				joined_at INTEGER NOT NULL DEFAULT 0,
@@ -719,107 +721,107 @@ func migrateV043PG(d *sql.DB) error {
 				FOREIGN KEY (mesh_id) REFERENCES meshes(id) ON DELETE CASCADE,
 				FOREIGN KEY (user_id) REFERENCES portal_users(id) ON DELETE CASCADE
 			)`,
-			// Lookups:
-			//   - "which meshes does user U belong to" → idx_mesh_members_user
-			//   - "which users are in mesh M" → idx_mesh_members_mesh (PK already covers)
-			//   - "find a mesh by its code" → UNIQUE on meshes.code (PK-like)
-			`CREATE INDEX IF NOT EXISTS idx_mesh_members_user
+		// Lookups:
+		//   - "which meshes does user U belong to" → idx_mesh_members_user
+		//   - "which users are in mesh M" → idx_mesh_members_mesh (PK already covers)
+		//   - "find a mesh by its code" → UNIQUE on meshes.code (PK-like)
+		`CREATE INDEX IF NOT EXISTS idx_mesh_members_user
 				ON mesh_members (user_id)`,
+	}
+	for _, s := range stmts {
+		if _, err := d.Exec(s); err != nil {
+			return err
 		}
-		for _, s := range stmts {
-			if _, err := d.Exec(s); err != nil {
-				return err
-			}
-		}
-		return nil
+	}
+	return nil
 }
 
 // migrateV044PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV044PG(d *sql.DB) error {
 
-		// PG 9.6+ supports ADD COLUMN IF NOT EXISTS natively,
-		// which is the atomic way to make this idempotent. The
-		// pre-v0.32.24 code used a PRAGMA table_info-based
-		// `hasColumn` check (a SQLite idiom that didn't work on
-		// PG); v0.32.24 replaces it with IF NOT EXISTS.
-		if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS user_name TEXT NOT NULL DEFAULT ''`); err != nil {
-			return fmt.Errorf("v0.44 add user_name: %w", err)
-		}
-		if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS device_hostname TEXT NOT NULL DEFAULT ''`); err != nil {
-			return fmt.Errorf("v0.44 add device_hostname: %w", err)
-		}
-		// Backfill user_name from portal_users. Every
-		// device_rules row has a non-zero user_id (the FK
-		// is NOT NULL); the portal_users row might be gone
-		// in pathological cleanup cases, in which case we
-		// leave user_name empty and the ACL builder falls
-		// back to device_ip.
-		if _, err := d.Exec(`
+	// PG 9.6+ supports ADD COLUMN IF NOT EXISTS natively,
+	// which is the atomic way to make this idempotent. The
+	// pre-v0.32.24 code used a PRAGMA table_info-based
+	// `hasColumn` check (a SQLite idiom that didn't work on
+	// PG); v0.32.24 replaces it with IF NOT EXISTS.
+	if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS user_name TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v0.44 add user_name: %w", err)
+	}
+	if _, err := d.Exec(`ALTER TABLE device_rules ADD COLUMN IF NOT EXISTS device_hostname TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v0.44 add device_hostname: %w", err)
+	}
+	// Backfill user_name from portal_users. Every
+	// device_rules row has a non-zero user_id (the FK
+	// is NOT NULL); the portal_users row might be gone
+	// in pathological cleanup cases, in which case we
+	// leave user_name empty and the ACL builder falls
+	// back to device_ip.
+	if _, err := d.Exec(`
 			UPDATE device_rules
 			   SET user_name = COALESCE(
 			     (SELECT username FROM portal_users WHERE id = device_rules.user_id),
 			     ''
 			   )
 			 WHERE user_name = ''`); err != nil {
-			return fmt.Errorf("v0.44 backfill user_name: %w", err)
-		}
-		// device_hostname is NOT backfilled here — node_owner_map
-		// has no tailscale_ip column to JOIN on. The runtime
-		// backfill happens in handlers.backfillNodeOwnership
-		// on the next /my/devices load (the function knows the
-		// device hostname from headscale's list response).
-		// For pre-v0.28.0 rules, the ACL builder falls back to
-		// src=device_ip until the runtime backfill lands, so
-		// the rules are live immediately and switch to the
-		// tag-based src transparently on the next /my/devices
-		// load.
-		return nil
+		return fmt.Errorf("v0.44 backfill user_name: %w", err)
+	}
+	// device_hostname is NOT backfilled here — node_owner_map
+	// has no tailscale_ip column to JOIN on. The runtime
+	// backfill happens in handlers.backfillNodeOwnership
+	// on the next /my/devices load (the function knows the
+	// device hostname from headscale's list response).
+	// For pre-v0.28.0 rules, the ACL builder falls back to
+	// src=device_ip until the runtime backfill lands, so
+	// the rules are live immediately and switch to the
+	// tag-based src transparently on the next /my/devices
+	// load.
+	return nil
 }
 
 // migrateV045PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV045PG(d *sql.DB) error {
 
-		// 2026-07-24: v0.28.1 — user_exit_node_prefs table.
-		// One row per user (PK on user_id). Cascade on user
-		// delete is intentional: a deleted user has no
-		// preference. exit_node_tag is the headscale tag
-		// (e.g. "tag:exit-relay-1") — NOT the hostname, NOT
-		// the node id. The tag is what `grants[].via` takes.
-		const q = `CREATE TABLE IF NOT EXISTS user_exit_node_prefs (
+	// 2026-07-24: v0.28.1 — user_exit_node_prefs table.
+	// One row per user (PK on user_id). Cascade on user
+	// delete is intentional: a deleted user has no
+	// preference. exit_node_tag is the headscale tag
+	// (e.g. "tag:exit-relay-1") — NOT the hostname, NOT
+	// the node id. The tag is what `grants[].via` takes.
+	const q = `CREATE TABLE IF NOT EXISTS user_exit_node_prefs (
 			user_id INTEGER NOT NULL PRIMARY KEY,
 			exit_node_tag TEXT NOT NULL,
 			set_by_user_id INTEGER NOT NULL DEFAULT 0,
 			updated_at INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
 			FOREIGN KEY (user_id) REFERENCES portal_users(id) ON DELETE CASCADE
 		)`
-		if _, err := d.Exec(q); err != nil {
-			return err
-		}
-		return nil
+	if _, err := d.Exec(q); err != nil {
+		return err
+	}
+	return nil
 }
 
 // migrateV046PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV046PG(d *sql.DB) error {
 
-		// 2026-07-25: v0.28.4 — device_exit_node_prefs table.
-		// One row per (user_id, device_hostname). Composite
-		// primary key enforces uniqueness. Cascade on user
-		// delete is intentional: a deleted user has no
-		// device prefs (their devices are also gone).
-		//
-		// device_hostname is the lowercase form (matches the
-		// v0.28.0 backfill's tag:dev-<user>-<device> naming).
-		// The UI normalizes input to lowercase before the
-		// INSERT so case differences don't create duplicate
-		// rows for the same device.
-		//
-		// exit_node_tag is the headscale tag (e.g.
-		// "tag:exit-relay-3") — NOT the hostname, NOT the
-		// node id. The tag is what `grants[].via` takes.
-		const q = `CREATE TABLE IF NOT EXISTS device_exit_node_prefs (
+	// 2026-07-25: v0.28.4 — device_exit_node_prefs table.
+	// One row per (user_id, device_hostname). Composite
+	// primary key enforces uniqueness. Cascade on user
+	// delete is intentional: a deleted user has no
+	// device prefs (their devices are also gone).
+	//
+	// device_hostname is the lowercase form (matches the
+	// v0.28.0 backfill's tag:dev-<user>-<device> naming).
+	// The UI normalizes input to lowercase before the
+	// INSERT so case differences don't create duplicate
+	// rows for the same device.
+	//
+	// exit_node_tag is the headscale tag (e.g.
+	// "tag:exit-relay-3") — NOT the hostname, NOT the
+	// node id. The tag is what `grants[].via` takes.
+	const q = `CREATE TABLE IF NOT EXISTS device_exit_node_prefs (
 			user_id INTEGER NOT NULL,
 			device_hostname TEXT NOT NULL,
 			exit_node_tag TEXT NOT NULL,
@@ -828,74 +830,74 @@ func migrateV046PG(d *sql.DB) error {
 			PRIMARY KEY (user_id, device_hostname),
 			FOREIGN KEY (user_id) REFERENCES portal_users(id) ON DELETE CASCADE
 		)`
-		if _, err := d.Exec(q); err != nil {
-			return err
-		}
-		return nil
+	if _, err := d.Exec(q); err != nil {
+		return err
+	}
+	return nil
 }
 
 // migrateV047PG is the v0.27.0 PostgreSQL port of the SQLite migration.
 // Review the body for any TODO comments and adjust conflict targets.
 func migrateV047PG(d *sql.DB) error {
 
-		// v0.32.24: on PG, ALTER TABLE ADD COLUMN IF NOT EXISTS
-		// is the atomic way to add a column idempotently.
-		// The pre-fix code used the SQLite-style "try ALTER
-		// and catch the duplicate-column error" pattern
-		// via the shared `addViaEnabledUserPrefSQL` const
-		// (in migrations_v0.47.go) + `isSQLiteDuplicateColumnError`
-		// helper — both SQLite-isms that don't work on PG
-		// (PG returns SQLSTATE 42701 not a string message).
-		// We inline the IF NOT EXISTS form here so the
-		// freshlyAdded heuristic isn't needed.
-		//
-		// For the backfill logic: if the column already exists
-		// (IF NOT EXISTS makes the ALTER a no-op), we still
-		// run the backfill ONLY on the first deploy — see
-		// the freshlyAdded check below. We detect "already
-		// existed" via information_schema instead of error
-		// matching.
-		colExists := func(table, col string) bool {
-			var n int
-			row := d.QueryRow(`
+	// v0.32.24: on PG, ALTER TABLE ADD COLUMN IF NOT EXISTS
+	// is the atomic way to add a column idempotently.
+	// The pre-fix code used the SQLite-style "try ALTER
+	// and catch the duplicate-column error" pattern
+	// via the shared `addViaEnabledUserPrefSQL` const
+	// (in migrations_v0.47.go) + `isSQLiteDuplicateColumnError`
+	// helper — both SQLite-isms that don't work on PG
+	// (PG returns SQLSTATE 42701 not a string message).
+	// We inline the IF NOT EXISTS form here so the
+	// freshlyAdded heuristic isn't needed.
+	//
+	// For the backfill logic: if the column already exists
+	// (IF NOT EXISTS makes the ALTER a no-op), we still
+	// run the backfill ONLY on the first deploy — see
+	// the freshlyAdded check below. We detect "already
+	// existed" via information_schema instead of error
+	// matching.
+	colExists := func(table, col string) bool {
+		var n int
+		row := d.QueryRow(`
 				SELECT COUNT(*) FROM information_schema.columns
 				WHERE table_name = $1 AND column_name = $2`,
-				table, col)
-			if err := row.Scan(&n); err != nil {
-				return false
-			}
-			return n > 0
+			table, col)
+		if err := row.Scan(&n); err != nil {
+			return false
 		}
-		freshlyAdded := !colExists("user_exit_node_prefs", "via_enabled")
-		if _, err := d.Exec(`ALTER TABLE user_exit_node_prefs ADD COLUMN IF NOT EXISTS via_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
-			return err
-		}
-		if !colExists("device_exit_node_prefs", "via_enabled") && freshlyAdded {
-			freshlyAdded = true
-		}
-		if _, err := d.Exec(`ALTER TABLE device_exit_node_prefs ADD COLUMN IF NOT EXISTS via_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
-			return err
-		}
-		// Backfill ONLY on the first-time migration. On
-		// every subsequent startup, skip the UPDATE so
-		// the operator's via_enabled=0 (un-pinned) is
-		// preserved across restarts.
-		if !freshlyAdded {
-			return nil
-		}
-		// Backfill existing rows: every row that was
-		// created under v0.28.1 / v0.28.4 had the
-		// pinning enforced. Preserve that behavior on
-		// upgrade (the operator has to explicitly flip
-		// the flag to un-pin). The UPDATE is a no-op on
-		// a fresh install (column defaults to 0).
-		if _, err := d.Exec(`UPDATE user_exit_node_prefs SET via_enabled = 1 WHERE via_enabled = 0`); err != nil {
-			return err
-		}
-		if _, err := d.Exec(`UPDATE device_exit_node_prefs SET via_enabled = 1 WHERE via_enabled = 0`); err != nil {
-			return err
-		}
+		return n > 0
+	}
+	freshlyAdded := !colExists("user_exit_node_prefs", "via_enabled")
+	if _, err := d.Exec(`ALTER TABLE user_exit_node_prefs ADD COLUMN IF NOT EXISTS via_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if !colExists("device_exit_node_prefs", "via_enabled") && freshlyAdded {
+		freshlyAdded = true
+	}
+	if _, err := d.Exec(`ALTER TABLE device_exit_node_prefs ADD COLUMN IF NOT EXISTS via_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	// Backfill ONLY on the first-time migration. On
+	// every subsequent startup, skip the UPDATE so
+	// the operator's via_enabled=0 (un-pinned) is
+	// preserved across restarts.
+	if !freshlyAdded {
 		return nil
+	}
+	// Backfill existing rows: every row that was
+	// created under v0.28.1 / v0.28.4 had the
+	// pinning enforced. Preserve that behavior on
+	// upgrade (the operator has to explicitly flip
+	// the flag to un-pin). The UPDATE is a no-op on
+	// a fresh install (column defaults to 0).
+	if _, err := d.Exec(`UPDATE user_exit_node_prefs SET via_enabled = 1 WHERE via_enabled = 0`); err != nil {
+		return err
+	}
+	if _, err := d.Exec(`UPDATE device_exit_node_prefs SET via_enabled = 1 WHERE via_enabled = 0`); err != nil {
+		return err
+	}
+	return nil
 }
 
 // migrateV048PG is the v0.32.0 PostgreSQL port of the SQLite migration.
@@ -1101,7 +1103,7 @@ func migrateV054PG(d *sql.DB) error {
 //
 // Natural key = (user_id, device_id, exit_node_id, target_type,
 // target_value, parent_domain). All 6 columns are NOT NULL in
-// the current schema (parent_domain is TEXT NOT NULL DEFAULT ''),
+// the current schema (parent_domain is TEXT NOT NULL DEFAULT ”),
 // so a plain UNIQUE INDEX covers every row — no need for
 // COALESCE() or partial indexes.
 //
@@ -1130,7 +1132,7 @@ func migrateV056PG(d *sql.DB) error {
 // Adds 3 columns to portal_users:
 //   - font_family   TEXT NOT NULL DEFAULT 'manrope' (manrope|inter|geist|sora|system)
 //   - font_scale    INTEGER NOT NULL DEFAULT 0       (-2..+2 px delta on body font-size)
-//   - selection_bg  TEXT NOT NULL DEFAULT ''         (CSS color for ::selection, '' = use theme default)
+//   - selection_bg  TEXT NOT NULL DEFAULT ”         (CSS color for ::selection, ” = use theme default)
 //
 // These are per-user settings, persisted in DB so the user's
 // preferred display travels with their account (the pre-B136
@@ -1273,8 +1275,8 @@ func migrateV058PG(d *sql.DB) error {
 //   - type         TEXT    NOT NULL  -- enum-like: 'key.expiring', future types
 //   - severity     TEXT    NOT NULL DEFAULT 'info'  -- 'info' | 'warn' | 'danger'
 //   - title        TEXT    NOT NULL  -- short title (1 line)
-//   - body         TEXT    NOT NULL DEFAULT ''  -- longer description (1-2 lines)
-//   - link         TEXT    NOT NULL DEFAULT ''  -- relative URL the bell links to (e.g. /my/keys)
+//   - body         TEXT    NOT NULL DEFAULT ”  -- longer description (1-2 lines)
+//   - link         TEXT    NOT NULL DEFAULT ”  -- relative URL the bell links to (e.g. /my/keys)
 //   - created_at   INTEGER NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
 //   - read_at      INTEGER NOT NULL DEFAULT 0  -- unix-seconds; 0 = unread
 //
@@ -1323,9 +1325,9 @@ func migrateV059PG(d *sql.DB) error {
 //
 // The pre-B183 index
 //
-//   CREATE UNIQUE INDEX device_rules_natural_key_uniq
-//     ON device_rules(user_id, device_id, exit_node_id,
-//                     target_type, target_value, parent_domain)
+//	CREATE UNIQUE INDEX device_rules_natural_key_uniq
+//	  ON device_rules(user_id, device_id, exit_node_id,
+//	                  target_type, target_value, parent_domain)
 //
 // was 6-column, which let the autoupdater accumulate one
 // row per (user, device, exit, type, value) tuple PER
@@ -1347,9 +1349,10 @@ func migrateV059PG(d *sql.DB) error {
 //
 // Dedup strategy: pick the "winner" row per (user, device,
 // exit, type, value) natural key. Prefer:
-//   1. cdn: prefixed parent_domain (more informative —
-//      tells the operator which CDN provides the route)
-//   2. most recent id (highest id wins) as a tiebreaker
+//  1. cdn: prefixed parent_domain (more informative —
+//     tells the operator which CDN provides the route)
+//  2. most recent id (highest id wins) as a tiebreaker
+//
 // All other rows with the same natural key are DELETEd.
 //
 // The migration is idempotent (IF EXISTS / DROP IF EXISTS
@@ -1419,28 +1422,28 @@ func migrateV060PG(d *sql.DB) error {
 //
 // This migration has two parts:
 //
-// 1. Tag backfill. Walk every row in
-//    user_exit_node_prefs + device_exit_node_prefs
-//    whose exit_node_tag matches the legacy
-//    "tag:exit-<hostname>" form. For each, look up
-//    the matching node_owner_map row and replace
-//    exit_node_tag with the canonical tag. Rows
-//    with no match are LEFT ALONE (with a NOTICEs
-//    in the migration log) so the operator can
-//    decide whether to clean them up by hand.
+//  1. Tag backfill. Walk every row in
+//     user_exit_node_prefs + device_exit_node_prefs
+//     whose exit_node_tag matches the legacy
+//     "tag:exit-<hostname>" form. For each, look up
+//     the matching node_owner_map row and replace
+//     exit_node_tag with the canonical tag. Rows
+//     with no match are LEFT ALONE (with a NOTICEs
+//     in the migration log) so the operator can
+//     decide whether to clean them up by hand.
 //
-// 2. Re-enable via pinning. The original intent of
-//    v0.28.5 was to set via_enabled=1 for every
-//    pre-existing row so the user's intent
-//    (pinned exit-node) was preserved through the
-//    opt-in migration. We do that here, but ONLY
-//    for rows whose exit_node_tag points at a
-//    real headscale tag (i.e. starts with
-//    "tag:dev-infra-"). A row pointing at a
-//    ghost tag (e.g. tag:exit-emilia that the
-//    tag backfill couldn't resolve) stays
-//    via_enabled=0 — we don't want headscale to
-//    reject the policy on a missing tag.
+//  2. Re-enable via pinning. The original intent of
+//     v0.28.5 was to set via_enabled=1 for every
+//     pre-existing row so the user's intent
+//     (pinned exit-node) was preserved through the
+//     opt-in migration. We do that here, but ONLY
+//     for rows whose exit_node_tag points at a
+//     real headscale tag (i.e. starts with
+//     "tag:dev-infra-"). A row pointing at a
+//     ghost tag (e.g. tag:exit-emilia that the
+//     tag backfill couldn't resolve) stays
+//     via_enabled=0 — we don't want headscale to
+//     reject the policy on a missing tag.
 //
 // The migration is idempotent: re-running it is a
 // no-op (the LIKE 'tag:exit-%' WHERE clause
@@ -1513,7 +1516,6 @@ func migrateV061PG(d *sql.DB) error {
 	}
 	return nil
 }
-
 
 // migrateV062PG — v1.5.2 (B189) — DERP health dashboard.
 //

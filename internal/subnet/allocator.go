@@ -87,10 +87,11 @@ var ErrUserOutOfRange = fmt.Errorf("subnet: user_id out of range")
 // existing 100.64.100.0/10 tailnet.
 //
 // Examples:
-//   user_id=0   → 10.0.0.0/24
-//   user_id=42  → 10.0.42.0/24
-//   user_id=255 → 10.0.255.0/24
-//   user_id=256 → error (out of range)
+//
+//	user_id=0   → 10.0.0.0/24
+//	user_id=42  → 10.0.42.0/24
+//	user_id=255 → 10.0.255.0/24
+//	user_id=256 → error (out of range)
 func AllocateCIDR(userID int64) (string, error) {
 	if userID < 0 || userID > MaxUserID {
 		return "", fmt.Errorf("%w: user_id=%d (max %d)", ErrUserOutOfRange, userID, MaxUserID)

@@ -423,11 +423,11 @@ func (s *MigrationService) PostAdminDatabaseMigrateRollback(w http.ResponseWrite
 	}
 	// Reconstruct the MigrationContext.
 	mc := &MigrationContext{
-		DB:             s.DB,
-		RunID:          run.ID,
-		SourceDSN:      run.SourceDSN,
-		TargetDSN:      run.TargetDSN,
-		Operator:       run.Operator,
+		DB:        s.DB,
+		RunID:     run.ID,
+		SourceDSN: run.SourceDSN,
+		TargetDSN: run.TargetDSN,
+		Operator:  run.Operator,
 	}
 	// We can't reconstruct the parsed TargetHost/Port/etc.
 	// from the run row (those aren't persisted — they

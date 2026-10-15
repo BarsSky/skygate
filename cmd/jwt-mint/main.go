@@ -6,8 +6,9 @@
 // within the same module can import internal/*).
 //
 // Usage:
-//   SKYGATE_JWT_SECRET=<hex> go run ./cmd/jwt-mint \
-//     -uid=1 -username=skyadmin -admin=true -ttl-hours=1
+//
+//	SKYGATE_JWT_SECRET=<hex> go run ./cmd/jwt-mint \
+//	  -uid=1 -username=skyadmin -admin=true -ttl-hours=1
 //
 // The script writes the JWT to stdout. The
 // /tmp/skygate_b215_liveverify-style scripts save

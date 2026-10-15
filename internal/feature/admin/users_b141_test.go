@@ -46,19 +46,19 @@ func TestValidateHSOrphanName_Empty(t *testing.T) {
 
 func TestValidateHSOrphanName_Invalid(t *testing.T) {
 	cases := []string{
-		"Alice",       // uppercase
-		"alice.bob",   // dot
-		"alice bob",   // space
-		"alice@bob",   // at sign
-		"alice/bob",   // slash
-		"alice+1",     // plus
-		"а",           // cyrillic (non-ASCII)
-		"user\nname",  // newline
-		"a;b",         // semicolon
-		"a%b",         // percent
-		"a:b",         // colon
-		"<script>",    // HTML-ish (defense in depth)
-		"'",           // single quote (SQL-ish)
+		"Alice",      // uppercase
+		"alice.bob",  // dot
+		"alice bob",  // space
+		"alice@bob",  // at sign
+		"alice/bob",  // slash
+		"alice+1",    // plus
+		"а",          // cyrillic (non-ASCII)
+		"user\nname", // newline
+		"a;b",        // semicolon
+		"a%b",        // percent
+		"a:b",        // colon
+		"<script>",   // HTML-ish (defense in depth)
+		"'",          // single quote (SQL-ish)
 	}
 	for _, c := range cases {
 		if err := validateHSOrphanName(c); err == nil {

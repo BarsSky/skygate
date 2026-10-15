@@ -189,13 +189,13 @@ func TestTransition_NoOpOnStable(t *testing.T) {
 			ClusterID: "skygate-staging",
 		},
 	}
-	s.detectTransition(makeSample(""))            // baseline
-	s.detectTransition(makeSample(""))            // same as baseline
-	s.detectTransition(makeSample(""))            // same
+	s.detectTransition(makeSample(""))                   // baseline
+	s.detectTransition(makeSample(""))                   // same as baseline
+	s.detectTransition(makeSample(""))                   // same
 	s.detectTransition(makeSample("connection refused")) // transition: 1 alert
 	s.detectTransition(makeSample("connection refused")) // same as last
 	s.detectTransition(makeSample("connection refused")) // same
-	s.detectTransition(makeSample(""))                     // transition: 1 alert
+	s.detectTransition(makeSample(""))                   // transition: 1 alert
 
 	rec := s.cfg.Notifier.(*recordingSink)
 	if n := rec.count(); n != 2 {

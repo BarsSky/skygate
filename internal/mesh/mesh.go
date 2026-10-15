@@ -87,13 +87,13 @@ var ErrDissolved = errors.New("mesh: dissolved")
 
 // Mesh is one row of the meshes table.
 type Mesh struct {
-	ID             int64
-	Code           string
-	Name           string
-	CreatorUserID  int64
-	Status         string
-	CreatedAt      time.Time
-	DissolvedAt    time.Time // zero value if not dissolved
+	ID            int64
+	Code          string
+	Name          string
+	CreatorUserID int64
+	Status        string
+	CreatedAt     time.Time
+	DissolvedAt   time.Time // zero value if not dissolved
 }
 
 // Member is one row of mesh_members — the (mesh_id,

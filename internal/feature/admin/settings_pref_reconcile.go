@@ -12,12 +12,12 @@
 //
 // Read order (mirrors dns_autoupdate_enabled in
 // settings_dns_autoupdate.go):
-//   1. SKYGATE_PREFERRED_RECONCILE_ENABLED env var
-//      (default at first start, when the
-//      global_settings row doesn't exist yet). Read
-//      at the start of every tick so the operator can
-//      also flip via env without UI.
-//   2. global_settings row (after the first UI toggle).
+//  1. SKYGATE_PREFERRED_RECONCILE_ENABLED env var
+//     (default at first start, when the
+//     global_settings row doesn't exist yet). Read
+//     at the start of every tick so the operator can
+//     also flip via env without UI.
+//  2. global_settings row (after the first UI toggle).
 //
 // Two safety belts stay env-only (NOT exposed in UI):
 //   - SKYGATE_PREFERRED_RECONCILER_LIVE: live-mode vs

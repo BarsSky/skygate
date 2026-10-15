@@ -40,17 +40,17 @@
 // steps/ + one line in registry.go.
 //
 // Phase 1 (B194) ships 6 steps:
-//   1. ValidateInputStep      — parse + validate form fields
-//   2. GeneratePreauthKeyStep — headscale preauthkeys create
-//   3. UpdateHAChainStep      — append member to global_settings.ha_chain
-//   4. PushEnvToS3Step        — push .env to ha/deploy/<hostname>/
-//   5. TagNodeStep            — pre-tag the preauth key with the canonical tag
-//   6. AuditLogStep           — write the deploy audit row
+//  1. ValidateInputStep      — parse + validate form fields
+//  2. GeneratePreauthKeyStep — headscale preauthkeys create
+//  3. UpdateHAChainStep      — append member to global_settings.ha_chain
+//  4. PushEnvToS3Step        — push .env to ha/deploy/<hostname>/
+//  5. TagNodeStep            — pre-tag the preauth key with the canonical tag
+//  6. AuditLogStep           — write the deploy audit row
 //
 // Phase 2 (B195+, future):
-//   7. SSHConnectStep         — open SSH to the new node
-//   8. RunBootstrapScriptStep — execute bootstrap_standby.sh via SSH
-//   9. HealthCheckStep        — verify /healthz + headscale node
+//  7. SSHConnectStep         — open SSH to the new node
+//  8. RunBootstrapScriptStep — execute bootstrap_standby.sh via SSH
+//  9. HealthCheckStep        — verify /healthz + headscale node
 //
 // All steps are independent of each other (no implicit coupling);
 // the DependsOn() field documents the explicit dependencies.
@@ -97,7 +97,7 @@ type DeployRun struct {
 	FinishedAt time.Time `json:"finished_at,omitempty"`
 	Operator   string    `json:"operator"`
 	FormData   string    `json:"form_data"` // JSON-encoded url.Values
-	Hostname   string    `json:"hostname"`   // denormalized for query convenience
+	Hostname   string    `json:"hostname"`  // denormalized for query convenience
 	Error      string    `json:"error,omitempty"`
 }
 

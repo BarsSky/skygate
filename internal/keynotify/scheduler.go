@@ -684,6 +684,7 @@ func formatNotificationTitleBody(lang string, k db.ExpiringPreauthKey, days, hou
 	body := "Open /my/keys and click Reissue to renew."
 	return title, body
 }
+
 // audit log detail string. Format:
 //
 //	key-notify: notified=<N> skipped=<M> at=<RFC3339>

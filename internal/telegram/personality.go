@@ -111,8 +111,8 @@ func footerFor(lang string) string {
 // Given a lang, a context, a body, and a "verbose" flag
 // it returns the full reply string:
 //
-//   if verbose:  HEADER\n\nbody\n\n— signoff
-//   if not:      HEADER\n\nbody
+//	if verbose:  HEADER\n\nbody\n\n— signoff
+//	if not:      HEADER\n\nbody
 //
 // "verbose" is a hint, not a rule: a reply is verbose if
 // it has more than three body lines OR if the body is
@@ -179,9 +179,12 @@ func verboseForBody(body string) bool {
 // only specifies lang/context/body and ComposeDefault
 // picks verbose vs not based on the body length. Saves
 // every command from writing
-//   return Compose(lang, ctx, body, verboseForBody(body))
+//
+//	return Compose(lang, ctx, body, verboseForBody(body))
+//
 // and instead they write
-//   return ComposeDefault(lang, ctx, body)
+//
+//	return ComposeDefault(lang, ctx, body)
 func ComposeDefault(lang, context, body string) string {
 	return Compose(lang, context, body, verboseForBody(body))
 }

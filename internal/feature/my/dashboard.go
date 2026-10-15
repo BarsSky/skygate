@@ -63,9 +63,9 @@ type TailnetMetrics struct {
 	// consistent: the hero shows the actual current
 	// recommendation, with the same source of truth
 	// as the admin dashboard.
-	ActiveDERP           string
-	ActiveDERPLatencyMs  int
-	ActiveDERPRegionID   int
+	ActiveDERP          string
+	ActiveDERPLatencyMs int
+	ActiveDERPRegionID  int
 	// User-scoped metrics (populated when called with a username)
 	MyTotalNodes     int
 	MyOnlineNodes    int
@@ -166,7 +166,7 @@ func (s *Service) computeTailnetMetrics(myUsername string, myUserID int64, hs *h
 // hardcoded "waw" placeholder.
 //
 // B235.2: the bundled controlplane DERP (region_id=901,
-// is_own=1) has region_code='' because the operator
+// is_own=1) has region_code=” because the operator
 // didn't set one in derp_relays — it's the Tailscale
 // control plane's fallback, not a real geographic
 // region. Without a fallback the hero rendered "—"
@@ -175,7 +175,7 @@ func (s *Service) computeTailnetMetrics(myUsername string, myUserID int64, hs *h
 // from the host: "controlplane" → "cdn", or the
 // first label of the hostname otherwise. The fallback
 // is local to this function (the DB stays the source
-// of truth — region_code='' remains the operator's
+// of truth — region_code=” remains the operator's
 // choice, and a future /admin/derp edit can set a
 // real code).
 func (s *Service) bestHealthyDERP() (code string, latencyMs int, regionID int, ok bool) {

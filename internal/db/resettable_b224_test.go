@@ -48,6 +48,7 @@ import (
 // The types/funcs LOOK unused to staticcheck but
 // they're required to satisfy database/sql/driver
 // interfaces. //lint:ignore per type+func below.
+//
 //lint:ignore U1000 required for database/sql/driver.Conn interface (B224 test stub)
 type fakeConn struct{ label string }
 

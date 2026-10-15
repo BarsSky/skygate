@@ -146,7 +146,10 @@ func rulesReply(env BotEnv) string {
 	}
 	defer rows.Close()
 
-	type rule struct{ id int64; user, exitNode, tType, tValue, action string }
+	type rule struct {
+		id                                    int64
+		user, exitNode, tType, tValue, action string
+	}
 	var rules []rule
 	for rows.Next() {
 		var rr rule
@@ -194,9 +197,9 @@ func auditReply(env BotEnv) string {
 	defer rows.Close()
 
 	type entry struct {
-		id                   int64
+		id                    int64
 		username, action, det string
-		ts                   int64
+		ts                    int64
 	}
 	var entries []entry
 	for rows.Next() {
@@ -229,10 +232,10 @@ func auditReply(env BotEnv) string {
 	// The header row is a separate <b>line so it doesn't
 	// get lost in the monospace block.
 	const (
-		colID    = "#%-6d"
-		colWhen  = "%-16s"
-		colAct   = "%-18s"
-		colBy    = "%s"
+		colID   = "#%-6d"
+		colWhen = "%-16s"
+		colAct  = "%-18s"
+		colBy   = "%s"
 	)
 	header := fmt.Sprintf(
 		"<b>"+colID+"  "+colWhen+"  "+colAct+"  "+colBy+"</b>",

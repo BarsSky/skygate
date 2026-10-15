@@ -211,7 +211,7 @@ func GetPortalUsernames(d *sql.DB) ([]string, error) {
 
 // GetPortalUsernamesForPlane returns every portal username on the
 // given control plane. planeURL == "" means "the global default
-// plane" (every user with headscale_url = ''). Used by
+// plane" (every user with headscale_url = ”). Used by
 // GenerateACLForPlane to scope the per-plane policy to the
 // identities that actually live on that headscale instance —
 // headscale rejects unknown identities in tagOwners, so we
@@ -318,7 +318,6 @@ func GetPerUserDeviceTags(d *sql.DB, planeURL string) ([]PerUserDeviceTag, error
 	return out, rows.Err()
 }
 
-
 // SharedSubnet is one row of GetSharedSubnetsForPlane: a
 // grantor whose subnet is shared with the grantee.
 // CIDR is the grantor's per-user CIDR (routable
@@ -326,9 +325,9 @@ func GetPerUserDeviceTags(d *sql.DB, planeURL string) ([]PerUserDeviceTag, error
 //
 // 2026-07-17: v0.17.1.
 type SharedSubnet struct {
-	GranteeUser   string // username of the user who gets access
-	GrantorUser   string // username of the user whose subnet is shared
-	GrantorCIDR   string // grantor's per-user CIDR (e.g. "10.0.42.0/24")
+	GranteeUser string // username of the user who gets access
+	GrantorUser string // username of the user whose subnet is shared
+	GrantorCIDR string // grantor's per-user CIDR (e.g. "10.0.42.0/24")
 }
 
 // GetSharedSubnetsForPlane returns every (grantee, grantor, cidr)
@@ -371,9 +370,9 @@ func GetSharedSubnetsForPlane(d *sql.DB, planeURL string) ([]SharedSubnet, error
 //
 // 2026-07-20: v0.22.0.
 type MeshMembership struct {
-	SelfUser   string // username of the user who gains visibility
-	OtherUser  string // username of the other mesh member
-	OtherCIDR  string // OtherUser's personal subnet CIDR (empty if not allocated)
+	SelfUser  string // username of the user who gains visibility
+	OtherUser string // username of the other mesh member
+	OtherCIDR string // OtherUser's personal subnet CIDR (empty if not allocated)
 }
 
 // GetMeshMembershipsForPlane returns every
@@ -458,7 +457,7 @@ func ListControlPlanes(d *sql.DB) ([]ControlPlaneUserCount, error) {
 // headscale unlink).
 //
 // 2026-09-15 (B256) — the previous filter was `headscale_user_id !=
-// ''`, which is a TEXT literal comparison against an INTEGER column.
+// ”`, which is a TEXT literal comparison against an INTEGER column.
 // SQLite is permissive and the test suite skipped on PG (no
 // SKYGATE_TEST_PG_DSN), so the bug shipped to production where
 // PostgreSQL raises SQLSTATE 22P02 every time the query plan reaches
@@ -514,7 +513,7 @@ func InsertPortalUser(d *sql.DB, username, passwordHash string, isAdmin bool, hs
 //     (T5 of admin-user-sync, 2026-09-12).
 //   - theme / font_family / font_scale / selection_bg are NOT
 //     set explicitly — the V057 column defaults ('linear' /
-//     'manrope' / 0 / '') apply. This matches the behaviour of
+//     'manrope' / 0 / ”) apply. This matches the behaviour of
 //     the legacy SQL INSERT the operator used to run by hand.
 //   - ON CONFLICT(username) DO NOTHING means a concurrent second
 //     click on the same orphan doesn't fail; the handler maps

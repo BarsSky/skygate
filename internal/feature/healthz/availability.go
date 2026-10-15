@@ -55,10 +55,10 @@ import (
 type IntegrationKind string
 
 const (
-	IntegrationHeadscale  IntegrationKind = "headscale"
-	IntegrationHeadplane  IntegrationKind = "headplane"
-	IntegrationTailscale  IntegrationKind = "tailscale"
-	IntegrationDatabase   IntegrationKind = "database"
+	IntegrationHeadscale IntegrationKind = "headscale"
+	IntegrationHeadplane IntegrationKind = "headplane"
+	IntegrationTailscale IntegrationKind = "tailscale"
+	IntegrationDatabase  IntegrationKind = "database"
 )
 
 // IntegrationStatus is the per-integration probe result. We
@@ -93,7 +93,7 @@ func (s IntegrationStatus) IsZero() bool {
 // at a point in time. Returned by Checker.Snapshot() and embedded
 // in the /admin/services page render.
 type Availability struct {
-	GeneratedAt time.Time           `json:"generated_at"`
+	GeneratedAt  time.Time           `json:"generated_at"`
 	Integrations []IntegrationStatus `json:"integrations"`
 }
 
@@ -132,11 +132,11 @@ func (a Availability) Find(id IntegrationKind) (IntegrationStatus, bool) {
 // Concurrency: state uses atomic.Pointer so /readyz reads are
 // lock-free. Start() / Stop() are idempotent.
 type Checker struct {
-	HeadscaleURL  string
-	HeadplaneURL  string
-	TailscaleFn   func() (online bool, detail string) // for local node status
-	Interval      time.Duration
-	httpClient    *http.Client
+	HeadscaleURL string
+	HeadplaneURL string
+	TailscaleFn  func() (online bool, detail string) // for local node status
+	Interval     time.Duration
+	httpClient   *http.Client
 
 	snapshot atomic.Pointer[Availability]
 	stop     chan struct{}
@@ -234,9 +234,9 @@ func (c *Checker) runOnce(parent context.Context) {
 	}
 	// Independent checks; collect results then publish.
 	var (
-		hs  IntegrationStatus
-		hp  IntegrationStatus
-		ts  IntegrationStatus
+		hs IntegrationStatus
+		hp IntegrationStatus
+		ts IntegrationStatus
 	)
 	// headscale (HTTP GET /health)
 	hsCtx, hsCancel := context.WithTimeout(parent, 3*time.Second)

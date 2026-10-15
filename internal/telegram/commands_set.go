@@ -61,7 +61,7 @@ type telegramMenuCommand struct {
 // update (or a new language) automatically propagates to
 // the Telegram-side menu on the next deploy.
 type MenuEntry struct {
-	Command       string // without leading "/", e.g. "help"
+	Command        string // without leading "/", e.g. "help"
 	DescriptionKey string // i18n key, e.g. "bot.menu.help.description"
 }
 

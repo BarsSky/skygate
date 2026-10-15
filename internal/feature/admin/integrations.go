@@ -68,14 +68,14 @@ func (s *Service) GetAdminDerpConfig(w http.ResponseWriter, r *http.Request) {
 
 // PostAdminDerpConfig handles the form submit. Three actions:
 //
-//   action=save (default) — persist the form fields to
-//     global_settings. The next GET renders the new state.
+//	action=save (default) — persist the form fields to
+//	  global_settings. The next GET renders the new state.
 //
-//   action=apply — save AND push the change to headscale
-//     (re-render the config, push via docker cp, SIGHUP).
+//	action=apply — save AND push the change to headscale
+//	  (re-render the config, push via docker cp, SIGHUP).
 //
-//   action=test — probe each external URL and re-render the
-//     page with per-URL test results inline.
+//	action=test — probe each external URL and re-render the
+//	  page with per-URL test results inline.
 func (s *Service) PostAdminDerpConfig(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {

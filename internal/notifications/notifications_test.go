@@ -66,9 +66,9 @@ func TestTypeIcon(t *testing.T) {
 		want string
 	}{
 		{TypeKeyExpiring, "fa-key"},
-		{"cert.renewal", "fa-bell"},   // future type — fallback
-		{"unknown.type", "fa-bell"},   // unknown — fallback
-		{"", "fa-bell"},               // empty — fallback
+		{"cert.renewal", "fa-bell"}, // future type — fallback
+		{"unknown.type", "fa-bell"}, // unknown — fallback
+		{"", "fa-bell"},             // empty — fallback
 	}
 	for _, c := range cases {
 		t.Run(c.typ, func(t *testing.T) {

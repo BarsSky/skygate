@@ -70,11 +70,11 @@ const AllowDestructiveEnv = "SKYGATE_ALLOW_DESTRUCTIVE_MIGRATION"
 // Parameters:
 //   - ctx: context for cancellation (e.g. on updater timeout)
 //   - d:   the *sql.DB to use. The function acquires a single
-//          connection from the pool for the duration of the
-//          transaction (so a concurrent migration can't interleave).
-//          Pass nil returns an error (no panic) so the updater can
-//          safely call this in early-startup paths where the DB
-//          connection is not yet available.
+//     connection from the pool for the duration of the
+//     transaction (so a concurrent migration can't interleave).
+//     Pass nil returns an error (no panic) so the updater can
+//     safely call this in early-startup paths where the DB
+//     connection is not yet available.
 //   - stmts: the SQL statements to execute in order
 //
 // Returns the underlying error from BeginTx / Exec / Commit if any
@@ -137,18 +137,18 @@ func Run(ctx context.Context, d *sql.DB, stmts ...string) error {
 //   - ctx: context
 //   - d:   *sql.DB
 //   - table:  table name (NOT quoted — caller is responsible for
-//             using the right schema if needed; skygate uses the
-//             default `public` schema in PG)
+//     using the right schema if needed; skygate uses the
+//     default `public` schema in PG)
 //   - column: column name
 //   - sqlType: PG type (e.g. "TEXT", "INTEGER", "BOOLEAN",
-//              "TIMESTAMP WITH TIME ZONE")
+//     "TIMESTAMP WITH TIME ZONE")
 //   - defaultExpr: SQL expression for the default. Use a CONSTANT
-//                  for the fast-default path (e.g. "'pending'",
-//                  "0", "false"). For non-constant defaults
-//                  (e.g. "now()", "gen_random_uuid()"), the fast-
-//                  default optimization does NOT apply — the caller
-//                  must use the manual expand-contract pattern
-//                  (add nullable → backfill in batches → SET NOT NULL).
+//     for the fast-default path (e.g. "'pending'",
+//     "0", "false"). For non-constant defaults
+//     (e.g. "now()", "gen_random_uuid()"), the fast-
+//     default optimization does NOT apply — the caller
+//     must use the manual expand-contract pattern
+//     (add nullable → backfill in batches → SET NOT NULL).
 func AddColumnIfNotExists(ctx context.Context, d *sql.DB, table, column, sqlType, defaultExpr string) error {
 	stmt := fmt.Sprintf(
 		"ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s DEFAULT %s",
@@ -174,9 +174,9 @@ func AddColumnIfNotExists(ctx context.Context, d *sql.DB, table, column, sqlType
 //   - indexName: name of the index (e.g. "idx_user_subnets_status")
 //   - table:     table name
 //   - columns:   the columns to index, as a comma-separated string
-//                (e.g. "user_id, status" or "hostname")
+//     (e.g. "user_id, status" or "hostname")
 //   - where:     optional partial-index WHERE clause (e.g.
-//                "hostname != ''"). Pass "" for a full index.
+//     "hostname != ”"). Pass "" for a full index.
 func CreateIndexConcurrently(ctx context.Context, d *sql.DB, indexName, table, columns, where string) error {
 	driverName := driverOf(d)
 	stmt := buildCreateIndexStmt(driverName, indexName, table, columns, where)

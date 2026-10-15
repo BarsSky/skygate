@@ -124,7 +124,7 @@ func TestTagToHostname_PostB111_DevInfraFormat(t *testing.T) {
 		"tag:dev-infra-sharlotta":      "sharlotta",
 		"tag:dev-infra-skygate-host-1": "skygate-host-1",
 		// Whitespace + post-fix
-		"  tag:dev-infra-emilia  ":     "emilia",
+		"  tag:dev-infra-emilia  ": "emilia",
 	}
 	for in, want := range cases {
 		got := TagToHostname(in)

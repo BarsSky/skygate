@@ -47,16 +47,16 @@ package healthz
 //     want the stricter view (e.g. K8s readinessProbe that
 //     gates traffic on every dependency being up).
 type readyzState struct {
-	Healthy            bool              `json:"healthy"`             // DB-only (D5)
+	Healthy             bool              `json:"healthy"`              // DB-only (D5)
 	DependenciesHealthy bool              `json:"dependencies_healthy"` // AND-of-all (D5, pre-D5 behavior)
-	DB                 string            `json:"db"`                   // "ok" / "error: <reason>"
-	Headscale          string            `json:"headscale"`            // "ok" / "skipped" / "error: <reason>"
-	Headplane          string            `json:"headplane"`            // "ok" / "skipped" / "checking" / "error: <reason>"
-	Tailscale          string            `json:"tailscale"`            // "ok" / "skipped" / "checking" / "error: <reason>"
-	InstanceID         string            `json:"instance_id"`          // SKYGATE_INSTANCE_ID env, or "unconfigured"
-	Build              string            `json:"build"`                // vX.Y.Z + commit (set at boot)
-	UptimeSec          int64             `json:"uptime_sec"`
-	Timestamp          string            `json:"timestamp"`            // RFC3339, server time
-	Checks             map[string]string `json:"checks"`               // individual check results
-	Availability       *Availability     `json:"availability,omitempty"` // B92: full snapshot
+	DB                  string            `json:"db"`                   // "ok" / "error: <reason>"
+	Headscale           string            `json:"headscale"`            // "ok" / "skipped" / "error: <reason>"
+	Headplane           string            `json:"headplane"`            // "ok" / "skipped" / "checking" / "error: <reason>"
+	Tailscale           string            `json:"tailscale"`            // "ok" / "skipped" / "checking" / "error: <reason>"
+	InstanceID          string            `json:"instance_id"`          // SKYGATE_INSTANCE_ID env, or "unconfigured"
+	Build               string            `json:"build"`                // vX.Y.Z + commit (set at boot)
+	UptimeSec           int64             `json:"uptime_sec"`
+	Timestamp           string            `json:"timestamp"`              // RFC3339, server time
+	Checks              map[string]string `json:"checks"`                 // individual check results
+	Availability        *Availability     `json:"availability,omitempty"` // B92: full snapshot
 }

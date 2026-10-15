@@ -29,9 +29,9 @@ func TestIndexNodesApprovedRoutes_BothNames(t *testing.T) {
 	nodes := []headscale.NodeView{
 		{
 			Hostname:       "node",
-			GivenName:       "node.tail-scale.ts.net",
-			ApprovedRoutes:  []string{"104.16.0.0/12", "8.8.8.8/32"},
-			IsExitNode:      true,
+			GivenName:      "node.tail-scale.ts.net",
+			ApprovedRoutes: []string{"104.16.0.0/12", "8.8.8.8/32"},
+			IsExitNode:     true,
 		},
 	}
 	got := indexNodesApprovedRoutes(nodes)
@@ -55,7 +55,7 @@ func TestIndexNodesApprovedRoutes_BothNames(t *testing.T) {
 func TestIndexNodesApprovedRoutes_OnlyHostname(t *testing.T) {
 	nodes := []headscale.NodeView{
 		{
-			Hostname:      "karolina",
+			Hostname:       "karolina",
 			GivenName:      "",
 			ApprovedRoutes: []string{"1.1.1.0/24"},
 		},
@@ -77,7 +77,7 @@ func TestIndexNodesApprovedRoutes_OnlyHostname(t *testing.T) {
 func TestIndexNodesApprovedRoutes_OnlyGivenName(t *testing.T) {
 	nodes := []headscale.NodeView{
 		{
-			Hostname:      "",
+			Hostname:       "",
 			GivenName:      "realname",
 			ApprovedRoutes: []string{"2.2.2.2/32"},
 		},
@@ -96,7 +96,7 @@ func TestIndexNodesApprovedRoutes_OnlyGivenName(t *testing.T) {
 func TestIndexNodesApprovedRoutes_NoApprovedRoutes(t *testing.T) {
 	nodes := []headscale.NodeView{
 		{
-			Hostname:      "no-routes",
+			Hostname:       "no-routes",
 			GivenName:      "no-routes.tail-scale.ts.net",
 			ApprovedRoutes: nil,
 		},
@@ -113,12 +113,12 @@ func TestIndexNodesApprovedRoutes_NoApprovedRoutes(t *testing.T) {
 func TestIndexNodesApprovedRoutes_MultipleNodes(t *testing.T) {
 	nodes := []headscale.NodeView{
 		{
-			Hostname:      "karolina",
+			Hostname:       "karolina",
 			GivenName:      "karolina.tail-scale.ts.net",
 			ApprovedRoutes: []string{"1.1.1.0/24"},
 		},
 		{
-			Hostname:      "emilia",
+			Hostname:       "emilia",
 			GivenName:      "emilia.tail-scale.ts.net",
 			ApprovedRoutes: []string{"2.2.2.0/24"},
 		},
@@ -149,7 +149,7 @@ func TestIndexNodesApprovedRoutes_MultipleNodes(t *testing.T) {
 func TestIndexNodesApprovedRoutes_PointersNoMutation(t *testing.T) {
 	nodes := []headscale.NodeView{
 		{
-			Hostname:      "node",
+			Hostname:       "node",
 			GivenName:      "node.tail-scale.ts.net",
 			ApprovedRoutes: []string{"104.16.0.0/12"},
 		},

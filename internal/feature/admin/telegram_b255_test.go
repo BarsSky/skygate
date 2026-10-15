@@ -220,14 +220,14 @@ func TestRenderContainerHTML_Unavailable(t *testing.T) {
 // "Re-apply accept-routes" form with the CSRF field.
 func TestRenderContainerHTML_AvailableRouteAllOff(t *testing.T) {
 	ct := ContainerTailscaleState{
-		Available:     true,
-		Hostname:      "skygate-skygate-1",
-		BackendState:  "Running",
-		IP4:           "100.64.0.20",
-		IP6:           "",
-		RouteAll:      false,
-		AdvertiseTags: []string{"tag:skygate"},
-		ExitNodeID:    "",
+		Available:      true,
+		Hostname:       "skygate-skygate-1",
+		BackendState:   "Running",
+		IP4:            "100.64.0.20",
+		IP6:            "",
+		RouteAll:       false,
+		AdvertiseTags:  []string{"tag:skygate"},
+		ExitNodeID:     "",
 		HasAcceptIssue: true,
 	}
 	out := renderContainerHTML(ct, "csrf-token-XYZ", "ru")
@@ -256,13 +256,13 @@ func TestRenderContainerHTML_AvailableRouteAllOff(t *testing.T) {
 // HasAcceptIssue alert.
 func TestRenderContainerHTML_AvailableRouteAllOn(t *testing.T) {
 	ct := ContainerTailscaleState{
-		Available:     true,
-		Hostname:      "skygate-skygate-1",
-		BackendState:  "Running",
-		IP4:           "100.64.0.20",
-		RouteAll:      true,
-		AdvertiseTags: []string{"tag:skygate"},
-		ExitNodeID:    "1234",
+		Available:      true,
+		Hostname:       "skygate-skygate-1",
+		BackendState:   "Running",
+		IP4:            "100.64.0.20",
+		RouteAll:       true,
+		AdvertiseTags:  []string{"tag:skygate"},
+		ExitNodeID:     "1234",
 		HasAcceptIssue: false,
 	}
 	out := renderContainerHTML(ct, "csrf-token", "ru")

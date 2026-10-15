@@ -71,7 +71,7 @@ func (c *Client) PingContext(ctx context.Context) error {
 // internals.
 var (
 	errClientNotConfigured = &pingError{"headscale client not configured"}
-	errServerDegraded       = &pingError{"headscale server returned 5xx"}
+	errServerDegraded      = &pingError{"headscale server returned 5xx"}
 )
 
 type pingError struct{ msg string }

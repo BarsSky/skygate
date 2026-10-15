@@ -38,12 +38,13 @@ import (
 // PreauthKey is a row in preauth_keys.
 //
 // Zero values carry the same meaning as the schema defaults:
-//   HeadscalePreauthID == ""  → not linked to a headscale preauth
-//                               (e.g. keys issued before the API
-//                               response field started populating)
-//   ExpiresAt          == 0   → no expiry (TTL issued = forever,
-//                               or a freshly-issued 1h key whose
-//                               expires_at is the future ts)
+//
+//	HeadscalePreauthID == ""  → not linked to a headscale preauth
+//	                            (e.g. keys issued before the API
+//	                            response field started populating)
+//	ExpiresAt          == 0   → no expiry (TTL issued = forever,
+//	                            or a freshly-issued 1h key whose
+//	                            expires_at is the future ts)
 //
 // CreatedAt is always populated by the schema default
 // (strftime('%s','now')), so a 0 here means the row predates that

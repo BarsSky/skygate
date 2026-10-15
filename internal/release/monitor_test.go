@@ -15,7 +15,7 @@ func TestCompareSemver(t *testing.T) {
 		{"v0.10.7", "v0.10.7", 0},
 		{"v0.10.7", "v0.10.8", -1},
 		{"v0.10.8", "v0.10.7", +1},
-		{"v0.10.7", "0.10.7", 0},  // v prefix is optional
+		{"v0.10.7", "0.10.7", 0}, // v prefix is optional
 		{"0.10.7", "v0.10.8", -1},
 		{"v1.0.0", "v0.99.99", +1},
 		{"v0.10.8-dev.1", "v0.10.8", -1}, // pre-release < release
@@ -23,8 +23,8 @@ func TestCompareSemver(t *testing.T) {
 		{"v0.10.8-dev.1", "v0.10.8-dev.2", -1},
 		{"v0.10.8-dev.2", "v0.10.8-dev.1", +1},
 		{"v0.10.8-dev.5", "v0.10.8-dev.10", -1}, // lexical
-		{"v1.0", "v1.0.0", 0},                    // missing patch == 0
-		{"v1", "v1.0.0", 0},                       // missing minor.patch == 0
+		{"v1.0", "v1.0.0", 0},                   // missing patch == 0
+		{"v1", "v1.0.0", 0},                     // missing minor.patch == 0
 		{"v2", "v1.99.99", +1},
 		{"v0.10.8-rc.1", "v0.10.7", +1},
 		// 2026-08-18: B128 — 4-component versions (skygate
@@ -34,11 +34,11 @@ func TestCompareSemver(t *testing.T) {
 		// the wrong "latest" version. After B128 the 4th
 		// component is included in the compare.
 		{"v1.3.19.2", "v1.3.19.2", 0},
-		{"v1.3.19.2", "v1.3.19.1", +1},    // sub-patch bump
+		{"v1.3.19.2", "v1.3.19.1", +1}, // sub-patch bump
 		{"v1.3.19.1", "v1.3.19.2", -1},
-		{"v1.3.19.4", "v1.3.19.2", +1},    // the live B128 trigger
+		{"v1.3.19.4", "v1.3.19.2", +1}, // the live B128 trigger
 		{"v1.3.19.2", "v1.3.19.4", -1},
-		{"v1.3.19", "v1.3.19.0", 0},       // implicit .0 padding
+		{"v1.3.19", "v1.3.19.0", 0}, // implicit .0 padding
 	}
 	for _, c := range cases {
 		got := CompareSemver(c.a, c.b)

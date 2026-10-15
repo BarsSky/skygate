@@ -1,4 +1,4 @@
-﻿// 2026-08-25 (B182): regression tests for ApprovedInHeadscale.
+// 2026-08-25 (B182): regression tests for ApprovedInHeadscale.
 //
 // Live bug (operator report, 2026-08-25):
 //   "правила что решил поставить себе пользователь michail

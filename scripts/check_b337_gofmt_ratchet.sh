@@ -225,7 +225,7 @@ LIST=scripts/gofmt_legacy_allowlist.txt
 #   * internal/feature/exit_rules/form_my_b237_19_test.go — B380 added the group
 #     label to buildFormErrorRedirectURL, and its call sites in this test moved with
 #     it; `gofmt -w` reflowed the calls, leaving the file clean.
-FROZEN=243
+FROZEN=0
 
 # Resolve gofmt the way verify_pre_deploy.sh resolves go: the Windows install
 # lives under a path with a space, so `command -v` is not enough.
@@ -253,10 +253,15 @@ fi
 
 ENTRIES="$(grep -v '^#' "$LIST" 2>/dev/null | grep -v '^[[:space:]]*$')"
 N="$(printf '%s\n' "$ENTRIES" | grep -c .)"
-if [ "$N" -gt 0 ]; then
-  ok "A2: the list carries $N frozen files"
+# TD-21 LANDED (v1.5.127, 2026-10-15): the expectation INVERTED. The list used to be a frozen
+# set of 276 files and "no entries" meant somebody had emptied it by accident. The tree is now
+# 100% gofmt-clean and the allow-list is empty BY DESIGN — so zero is the contract and a
+# non-empty list is the failure: an exemption nobody argued for is exactly how the previous
+# 243 accumulated.
+if [ "$N" -eq 0 ]; then
+  ok "A2: the allow-list is empty — TD-21 landed and the tree is 100% gofmt-clean (the budget is 0)"
 else
-  bad "A2: the list has no entries — either the drift is gone (then say so and drop the ratchet) or the file was emptied by accident"
+  bad "A2: the allow-list has $N entr(y|ies) again, but the tree is supposed to be 100% gofmt-clean since TD-21 (v1.5.127): run 'gofmt -w <file>' on them instead of freezing them, and only re-open this ratchet deliberately (with a measurement and a raised budget) if a large pre-existing drift ever appears"
 fi
 if [ "$(printf '%s\n' "$ENTRIES" | LC_ALL=C sort)" = "$(printf '%s\n' "$ENTRIES")" ]; then
   ok "A3: the list is sorted under LC_ALL=C (a change to it reviews as one line per file)"
@@ -284,8 +289,8 @@ if [ "$N" -le "$FROZEN" ]; then
 else
   bad "B1: the frozen set GREW to $N (budget $FROZEN). Adding a file to the allow-list is how a ratchet dies: fix the file, or if it is genuinely pre-existing drift, say so in the commit and raise the budget deliberately"
 fi
-if grep -q "MEASURED 2026-10-01" "$LIST"; then
-  ok "B2: the list records the measurement it came from (date, Go version, file count)"
+if grep -q "MEASURED 2026-10-15" "$LIST"; then
+  ok "B2: the list records the measurement it came from (the 2026-10-15 renormalisation, go version and file count)"
 else
   bad "B2: the list does not record its measurement — the next reader cannot tell what the budget was for"
 fi

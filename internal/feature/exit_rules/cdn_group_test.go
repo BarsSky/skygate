@@ -36,22 +36,22 @@ func TestIsCDNGroupMarker(t *testing.T) {
 		{"cdn:fastly:github.com", true},
 		{"cdn:google:youtube.com", true},
 		{"cdn:akamai:agent.example.io", true},
-		{"cdn:", false},              // missing both name + domain
-		{"cdn:cloudflare", false},   // missing domain
+		{"cdn:", false},                   // missing both name + domain
+		{"cdn:cloudflare", false},         // missing domain
 		{"CDN:cloudflare:foo.com", false}, // case-sensitive on "cdn:" prefix
 		{"cdn:CloudFlare:foo.com", true},  // CDN name case is NOT validated
-		                                   // — the prefix check is the only
-		                                   // structural rule. "CloudFlare" is
-		                                   // treated as a valid CDN slot
-		                                   // (the autoupdate uses
-		                                   // cdnParentMarkerGuess("foo.com")
-		                                   // with "cdn:%:foo.com" to match
-		                                   // any CDN name).
-		{"cdn:unknown:foo.com", true},     // "unknown" is a valid marker
-		                                   // (just not a known CDN); the
-		                                   // grouping helper doesn't care
-		                                   // about the CDN name, only
-		                                   // about the marker format.
+		// — the prefix check is the only
+		// structural rule. "CloudFlare" is
+		// treated as a valid CDN slot
+		// (the autoupdate uses
+		// cdnParentMarkerGuess("foo.com")
+		// with "cdn:%:foo.com" to match
+		// any CDN name).
+		{"cdn:unknown:foo.com", true}, // "unknown" is a valid marker
+		// (just not a known CDN); the
+		// grouping helper doesn't care
+		// about the CDN name, only
+		// about the marker format.
 	}
 	for _, c := range cases {
 		if got := IsCDNGroupMarker(c.in); got != c.want {
@@ -62,10 +62,10 @@ func TestIsCDNGroupMarker(t *testing.T) {
 
 func TestParseCDNGroupMarker(t *testing.T) {
 	cases := []struct {
-		in       string
-		wantCDN  string
-		wantSrc  string
-		wantOK   bool
+		in      string
+		wantCDN string
+		wantSrc string
+		wantOK  bool
 	}{
 		{"cdn:cloudflare:discordapp.com", "cloudflare", "discordapp.com", true},
 		{"cdn:fastly:github.com", "fastly", "github.com", true},

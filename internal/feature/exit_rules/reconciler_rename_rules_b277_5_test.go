@@ -112,12 +112,12 @@ func TestApplyRenameMigration_PropagatesToDeviceRules(t *testing.T) {
 	}
 	defer rows.Close()
 	want := map[string]struct {
-		ExitNode     string
-		DeviceHost   string
-		Enabled      int
+		ExitNode   string
+		DeviceHost string
+		Enabled    int
 	}{
 		"104.16.0.0/12": {"exit-node-vps", "exit-node-vps", 1},
-		"example.com":  {"exit-node-vps", "exit-node-vps", 1},
+		"example.com":   {"exit-node-vps", "exit-node-vps", 1},
 		"8.8.4.0/24":    {"exit-node-vps", "exit-node-vps", 1},
 	}
 	for rows.Next() {

@@ -256,7 +256,7 @@ func (c *Client) UpdateRecord(ctx context.Context, zone, name, ip string) error 
 
 	// The API returns 200 even on logical errors; check the ack.
 	var ack struct {
-		Status  string `json:"status"`
+		Status    string `json:"status"`
 		ErrorCode string `json:"error_code"`
 		ErrorText string `json:"error_text"`
 	}

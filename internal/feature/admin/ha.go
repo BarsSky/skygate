@@ -80,24 +80,24 @@ type haPageData struct {
 	// with the pre-computed Elig* flags so the template
 	// can render the per-row "Promote" form without doing
 	// its own SQL.
-	ClusterNodes        []haClusterNodeRow
-	FlashSuccess        string
-	FlashError          string
-	FlashInfo           string
+	ClusterNodes []haClusterNodeRow
+	FlashSuccess string
+	FlashError   string
+	FlashInfo    string
 }
 
 // haClusterNodeRow is one row in the Section 5b table.
 // The pre-computed eligibility flags are the difference
 // between "show a button" and "show a why-not hint".
 type haClusterNodeRow struct {
-	ID                string
-	Hostname          string
-	RolesStr          string // rendered "skygate,skygate-standby" string
-	State             string
-	LastSeenUnix      int64  // 0 = never
-	LastSeenAgo       string // human-readable
-	EligibleForPromote bool  // true → show the promote form
-	EligibleReason    string // false → why-not (shown in the cell)
+	ID                 string
+	Hostname           string
+	RolesStr           string // rendered "skygate,skygate-standby" string
+	State              string
+	LastSeenUnix       int64  // 0 = never
+	LastSeenAgo        string // human-readable
+	EligibleForPromote bool   // true → show the promote form
+	EligibleReason     string // false → why-not (shown in the cell)
 }
 
 // haAuditEvent is one row of the "Last 20 HA events" table.

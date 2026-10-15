@@ -54,8 +54,8 @@ import (
 // signing secret (the same SKYGATE_SECRET_KEY used
 // for JWT signing).
 type Service struct {
-	DB              DBSource // B210: was *sql.DB — now DBSource (live getter, see dbsource.go)
-	InviteSecret    string
+	DB           DBSource // B210: was *sql.DB — now DBSource (live getter, see dbsource.go)
+	InviteSecret string
 }
 
 // NewService returns a Service. Both fields are

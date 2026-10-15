@@ -6,10 +6,10 @@
 // `/app/skygate --migrate-only` to apply pending migrations
 // BEFORE swapping. Three bugs in v0.32.13 / v0.33.x silently
 // disabled this:
-//   1. `bash` not in alpine's PATH
-//   2. `--volumes-from skygate` referencing a non-existent
-//      container (v0.29.2 removed `container_name: skygate`)
-//   3. `--migrate-only` flag never implemented in main.go
+//  1. `bash` not in alpine's PATH
+//  2. `--volumes-from skygate` referencing a non-existent
+//     container (v0.29.2 removed `container_name: skygate`)
+//  3. `--migrate-only` flag never implemented in main.go
 //
 // v0.33.1.21 fixes all three. The tests below pin the
 // `migrate-only` subcommand contract — `runMigrateOnly()`

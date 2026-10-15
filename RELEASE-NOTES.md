@@ -12,6 +12,58 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.127 — the gofmt renormalisation (TD-21)
+
+**Date:** 2026-10-15 · **Base:** `v1.5.126` → this tag · **Compatibility:** no behaviour
+change of any kind. This release is the deferred whitespace/format renormalisation: 243 files
+of formatting, no logic change — nothing in `cmd/`'s behaviour, no schema, no route, no
+template, no i18n key.
+
+### What it is, and why it was deferred for two weeks
+
+Since 2026-10-01 the repo carried **pre-existing `gofmt` drift in files nobody had needed to
+touch** — 276 files at the first measurement, 243 by the time this release ran, because the
+ratchet B337 required every file that got *touched* to leave the list. Renormalising them all
+at once meant a several-thousand-line commit that would bury any real change and poison
+`git blame`, so it was deliberately deferred to its own single-purpose release (TD-21).
+
+### The measurement, and the trap in making it
+
+A single `gofmt -l $(git ls-files '*.go')` call on Windows answers **`Argument list too long`**
+and prints nothing — which reads as *"zero drifted files"*, i.e. a check that reports success
+while verifying nothing (the same class AGENTS trap #14 describes for WSL). The drifted set was
+therefore measured **per file**: **243 of 992** tracked `.go` files, exactly the frozen set, and
+`diff -w` confirmed all 243 were whitespace-only.
+
+### What was done, and how it was proven safe
+
+1. **`gofmt -w` to a FIXED POINT.** 9 of the 243 files needed a **second** pass: go1.25.4's
+   doc-comment reformatter re-lays-out a comment it has just re-wrapped (typographic quotes,
+   list reflow), so one pass is not a fixed point. Measured, not assumed — the first pass left
+   10 files still flagged.
+2. **The change was proved code-inert before committing it.** A token-level comparison
+   (`go/scanner`) of every one of the 243 files showed:
+   * the **multiset of identifiers, keywords and literal contents** identical, and
+   * the **ordered sequence of punctuation/operator tokens** identical —
+   **243 of 243, 0 failures**. That invariant deliberately ignores three things gofmt is
+   allowed to change, each of which a naive "same token stream" comparison reports as damage:
+   **automatically inserted semicolons** (moving a statement to its own line changes the
+   semicolon count), **doc-comment layout**, and **import ordering inside a group**. A naive
+   comparison produced 63 false failures on this tree — that is how the invariant was found.
+3. **Everything that can catch a real regression ran green on the result:** `gofmt -l` over all
+   992 tracked `.go` files (0), `go build ./...`, `go vet ./...`, `staticcheck ./...` and the
+   whole test suite, plus the full 434-contract gate.
+
+### The ratchet is now a hard zero
+
+`scripts/gofmt_legacy_allowlist.txt` is **empty** and `scripts/check_b337_gofmt_ratchet.sh` no
+longer freezes anything: the contract was changed so that **zero entries is the expected state
+and any entry is a failure** — an exemption nobody argued for is exactly how the previous 243
+accumulated. The list keeps its history (what it was, how it was paid down, and the
+MEASURED lines for both the 2026-10-01 276-file measurement and this 2026-10-15 0-file one).
+`AGENTS.md` rule 3 changed accordingly: **`gofmt` is no longer an exception — every tracked
+`.go` file must be clean, and `gofmt -w` applies only to the files your own change touches.**
+
 ## v1.5.126 — no check may turn a host transient into a product verdict (B386)
 
 **Date:** 2026-10-15 · **Base:** `v1.5.125` → this tag · **Compatibility:** no product

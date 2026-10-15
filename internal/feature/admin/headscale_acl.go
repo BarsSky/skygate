@@ -91,37 +91,37 @@ type ACLRule struct {
 // SkygateACLs is the subset skygate manages (also preserved).
 // ExternalACLs is everything else (operator-added).
 type ACLView struct {
-	AllACLs      []ACLRule  `json:"acls"`
-	SkygateACLs  []ManagedACL `json:"skygate_managed"`
-	ExternalACLs []ACLRule  `json:"external_managed"`
-	SSH          []ACLRule  `json:"ssh"`
-	Groups       map[string][]string `json:"groups"`
-	TagOwners    map[string][]string `json:"tagOwners"`
-	Hosts        map[string]string   `json:"hosts"`
-	PolicyRaw    string      `json:"policy_raw"` // full JSON for export
-	TotalCount   int         `json:"total_count"`
-	SkygateCount int         `json:"skygate_count"`
-	ExternalCount int        `json:"external_count"`
+	AllACLs       []ACLRule           `json:"acls"`
+	SkygateACLs   []ManagedACL        `json:"skygate_managed"`
+	ExternalACLs  []ACLRule           `json:"external_managed"`
+	SSH           []ACLRule           `json:"ssh"`
+	Groups        map[string][]string `json:"groups"`
+	TagOwners     map[string][]string `json:"tagOwners"`
+	Hosts         map[string]string   `json:"hosts"`
+	PolicyRaw     string              `json:"policy_raw"` // full JSON for export
+	TotalCount    int                 `json:"total_count"`
+	SkygateCount  int                 `json:"skygate_count"`
+	ExternalCount int                 `json:"external_count"`
 }
 
 // ManagedACL is a skygate-owned rule + its metadata.
 type ManagedACL struct {
-	ID            string    `json:"id"`
-	Rule          ACLRule   `json:"rule"`
-	Label         string    `json:"label"`
-	CreatedAt     time.Time `json:"created_at"`
-	CreatedByUID  int64     `json:"created_by_user_id"`
-	Fingerprint   string    `json:"fingerprint"`
+	ID           string    `json:"id"`
+	Rule         ACLRule   `json:"rule"`
+	Label        string    `json:"label"`
+	CreatedAt    time.Time `json:"created_at"`
+	CreatedByUID int64     `json:"created_by_user_id"`
+	Fingerprint  string    `json:"fingerprint"`
 }
 
 // ACLDiff is what /admin/headscale/acl returns for the
 // "Add rule" preview form. Added = rules that will be
 // inserted into the live policy if Apply is clicked.
 type ACLDiff struct {
-	Added   []ACLRule `json:"added"`
-	Removed []ACLRule `json:"removed"`
-	Unchanged int     `json:"unchanged_count"`
-	NewTotal int      `json:"new_total_count"`
+	Added     []ACLRule `json:"added"`
+	Removed   []ACLRule `json:"removed"`
+	Unchanged int       `json:"unchanged_count"`
+	NewTotal  int       `json:"new_total_count"`
 }
 
 // ListACL returns the full headscale policy as a structured
@@ -397,11 +397,11 @@ func (s *Service) writePolicy(ctx context.Context, view *ACLView) error {
 	// Build the policy object preserving order of every field.
 	// We do NOT mutate ssh/groups/tagOwners/hosts from view.
 	pol := map[string]any{
-		"acls":       view.AllACLs,
-		"ssh":        view.SSH,
-		"groups":     view.Groups,
-		"tagOwners":  view.TagOwners,
-		"hosts":      view.Hosts,
+		"acls":      view.AllACLs,
+		"ssh":       view.SSH,
+		"groups":    view.Groups,
+		"tagOwners": view.TagOwners,
+		"hosts":     view.Hosts,
 	}
 	// Round-trip via JSON to ensure deterministic order.
 	polJSON, err := json.Marshal(pol)

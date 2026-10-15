@@ -38,6 +38,7 @@ import (
 //	  • 0.29.1 (2026-06-15) — patch
 //
 // If the monitor is nil:
+//
 //	📡 Headscale update monitor disabled
 //	Set SKYGATE_HEADSCALE_VERSION_PIN and restart skygate
 //	to enable it.

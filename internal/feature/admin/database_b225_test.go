@@ -32,9 +32,9 @@ import (
 // from a goroutine — though the current code path is
 // synchronous; the mutex is future-proofing).
 type recordingNotifier struct {
-	mu     sync.Mutex
-	texts  []string
-	ids    []int64
+	mu    sync.Mutex
+	texts []string
+	ids   []int64
 }
 
 func (r *recordingNotifier) SendTelegram(text string) {}
@@ -48,13 +48,14 @@ func (r *recordingNotifier) SendAlert(text string) int64 {
 	r.ids = append(r.ids, int64(len(r.texts)))
 	return r.ids[len(r.ids)-1]
 }
+
 // Noop methods (other Notifier interface methods that
 // B225 doesn't exercise) — return zero values.
 func (r *recordingNotifier) SendUserMessage(userID int64, text string) int64 {
 	return 0
 }
-func (r *recordingNotifier) BotUsernameCached() string  { return "" }
-func (r *recordingNotifier) Stop()                      {}
+func (r *recordingNotifier) BotUsernameCached() string { return "" }
+func (r *recordingNotifier) Stop()                     {}
 
 func (r *recordingNotifier) first() (string, bool) {
 	r.mu.Lock()

@@ -5,14 +5,14 @@
 // tailnet base), every node registered in the tailnet
 // auto-resolves as `<node-name>.<base-domain>`. So:
 //
-//   * The v0.16.7 sidecar registered with
+//   - The v0.16.7 sidecar registered with
 //     `--hostname=skygate-subnet-<username>` resolves
 //     as `skygate-subnet-<username>.tsnet.example.com`.
 //     This is the entry point the operator's tailnet
 //     clients use to reach the user's 10.0.<uid>.0/24
 //     subnet.
 //
-//   * Devices in the tailnet that are tagged
+//   - Devices in the tailnet that are tagged
 //     `tag:private` and have names matching the
 //     `<username>-*` pattern resolve as
 //     `<device>.skygate-subnet-<username>.tsnet.example.com`.

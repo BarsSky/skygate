@@ -56,13 +56,15 @@ func TestCatalogsParity(t *testing.T) {
 // regression is caught at unit-test time instead of in production.
 //
 // Keys covered (10 prefixes):
-//   bot.help.*, bot.exit_nodes_health.*, bot.audit.*, bot.version.*,
-//   bot.my_status.*, bot.my_nodes.*, bot.my_rules.*, bot.my_quota.*,
-//   bot.myexitnodes.*, bot.add_device.*
+//
+//	bot.help.*, bot.exit_nodes_health.*, bot.audit.*, bot.version.*,
+//	bot.my_status.*, bot.my_nodes.*, bot.my_rules.*, bot.my_quota.*,
+//	bot.myexitnodes.*, bot.add_device.*
 //
 // NOT covered (plain text):
-//   bot.welcome.*, bot.start.*, bot.strict_locked.*, bot.unbind_self.*,
-//   bot.help_detail.*, bot.ack.* (no markHTMLReply())
+//
+//	bot.welcome.*, bot.start.*, bot.strict_locked.*, bot.unbind_self.*,
+//	bot.help_detail.*, bot.ack.* (no markHTMLReply())
 func TestHTMLSafeCatalog(t *testing.T) {
 	htmlPrefixes := []string{
 		"bot.help.",

@@ -75,5 +75,3 @@ func TestPostAdminSystemTestsDNSIntervalRejectsNonAdmin_B308(t *testing.T) {
 		t.Errorf("a non-admin changed the setting to %q", got)
 	}
 }
-
-

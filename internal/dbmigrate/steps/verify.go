@@ -50,10 +50,12 @@ func init() {
 
 type verifyStep struct{}
 
-func (verifyStep) Name() string        { return "verify" }
-func (verifyStep) Description() string { return "Count rows on source and target per key table; fail if any differ" }
-func (verifyStep) Ordinal() int       { return 4 }
-func (verifyStep) IsOptional() bool   { return false }
+func (verifyStep) Name() string { return "verify" }
+func (verifyStep) Description() string {
+	return "Count rows on source and target per key table; fail if any differ"
+}
+func (verifyStep) Ordinal() int        { return 4 }
+func (verifyStep) IsOptional() bool    { return false }
 func (verifyStep) DependsOn() []string { return []string{"restore"} }
 
 // keyTables is the set of tables we count and compare.

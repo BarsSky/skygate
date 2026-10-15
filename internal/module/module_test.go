@@ -85,6 +85,7 @@ func (f *fakeModule) Stop(_ context.Context) error {
 	return f.stopErr
 }
 func (f *fakeModule) Status() ModuleStatus { return f.state }
+
 // 2026-09-16 (B254 fix): added lock — the test flips f.healthResult
 // (under f.mu) while the healthLoop goroutine calls Health() (without
 // lock) which read+returned the same field. With `-race`, Go's race
@@ -466,8 +467,8 @@ func TestManager_HealthLoop_StateTransition(t *testing.T) {
 	// Flip to unhealthy.
 	a.mu.Lock()
 	a.healthResult = HealthStatus{
-		Healthy: false,
-		Checks:  map[string]bool{"ok": false},
+		Healthy:   false,
+		Checks:    map[string]bool{"ok": false},
 		LastError: "auth expired",
 	}
 	a.mu.Unlock()
@@ -596,17 +597,17 @@ type statefulTestModule struct {
 	onInit func(ModuleConfig) error
 }
 
-func (s *statefulTestModule) Name() string                                { return "test" }
+func (s *statefulTestModule) Name() string { return "test" }
 func (s *statefulTestModule) Init(_ context.Context, cfg ModuleConfig) error {
 	if s.onInit != nil {
 		return s.onInit(cfg)
 	}
 	return nil
 }
-func (s *statefulTestModule) Start(_ context.Context) error  { return nil }
-func (s *statefulTestModule) Stop(_ context.Context) error   { return nil }
-func (s *statefulTestModule) Status() ModuleStatus            { return ModuleStatus{State: StateNotInstalled} }
-func (s *statefulTestModule) Health() HealthStatus            { return HealthStatus{Healthy: true} }
-func (s *statefulTestModule) SubFeatures() []SubFeature       { return nil }
+func (s *statefulTestModule) Start(_ context.Context) error                       { return nil }
+func (s *statefulTestModule) Stop(_ context.Context) error                        { return nil }
+func (s *statefulTestModule) Status() ModuleStatus                                { return ModuleStatus{State: StateNotInstalled} }
+func (s *statefulTestModule) Health() HealthStatus                                { return HealthStatus{Healthy: true} }
+func (s *statefulTestModule) SubFeatures() []SubFeature                           { return nil }
 func (s *statefulTestModule) EnableSubFeature(_ context.Context, _ string) error  { return nil }
 func (s *statefulTestModule) DisableSubFeature(_ context.Context, _ string) error { return nil }

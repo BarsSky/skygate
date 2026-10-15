@@ -50,7 +50,7 @@ func TestMigrateV071PG_SourceShape(t *testing.T) {
 	tableBody := body[tableStart:tableEnd]
 
 	requiredTokens := []struct {
-		col       string
+		col        string
 		constraint string
 	}{
 		{"hostname", "UNIQUE"},
@@ -106,8 +106,8 @@ func TestMigrateV071PG_Idempotent(t *testing.T) {
 // enabled_idx partial index is keyed on enabled=1 only. The
 // cron scan is:
 //
-//   SELECT hostname, mode, ... FROM derp_cert_sync
-//   WHERE enabled = 1 AND last_checked_at < now - interval_min
+//	SELECT hostname, mode, ... FROM derp_cert_sync
+//	WHERE enabled = 1 AND last_checked_at < now - interval_min
 //
 // A partial index WHERE enabled = 1 makes this O(log n) on
 // the enabled subset instead of scanning the table when most

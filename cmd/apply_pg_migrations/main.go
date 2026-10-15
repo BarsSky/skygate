@@ -4,8 +4,9 @@
 // the v0.32.24 PG migrations on the production PG.
 //
 // Usage:
-//   SKYGATE_TEST_PG_DSN=postgres://skygate:...@host:5432/skygate?sslmode=disable \
-//     go run -tags postgres ./cmd/apply_pg_migrations
+//
+//	SKYGATE_TEST_PG_DSN=postgres://skygate:...@host:5432/skygate?sslmode=disable \
+//	  go run -tags postgres ./cmd/apply_pg_migrations
 //
 // The `postgres` build tag is required to enable the pgx driver.
 // The binary applies all PG migrations, then exits 0.

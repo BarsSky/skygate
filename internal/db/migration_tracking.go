@@ -77,8 +77,8 @@ func SetMigrationIntegrityMode(mode MigrationIntegrityMode) {
 // dialect-aware helper.
 //
 // Both branches produce the same shape: version BIGINT/INTEGER PK,
-// sha256 TEXT, source_file TEXT default '', applied_at default
-// unix-epoch-as-integer, first_seen TEXT default ''.
+// sha256 TEXT, source_file TEXT default ”, applied_at default
+// unix-epoch-as-integer, first_seen TEXT default ”.
 func ensureMigrationTrackingTable(d *sql.DB) error {
 	var ddl string
 	if BackendOf(d) == Backend("sqlite") {
@@ -205,8 +205,8 @@ func GetRecordedMigrationChecksum(d *sql.DB, version int) (sha256Hex, firstSeen 
 //   - ok=false, recorded=X, current=Y : MISMATCH. The migration
 //     body in the binary differs from what was previously applied.
 //     Caller behavior depends on migrationIntegrityMode:
-//       SOFT: log a warning, return ok=true (continue).
-//       HARD: return ok=false + non-nil error (refuse to start).
+//     SOFT: log a warning, return ok=true (continue).
+//     HARD: return ok=false + non-nil error (refuse to start).
 func VerifyMigrationChecksum(d *sql.DB, version int, currentSQL string) (ok bool, recorded, current string, err error) {
 	current = ComputeMigrationChecksum(currentSQL)
 	recorded, firstSeen, err := GetRecordedMigrationChecksum(d, version)

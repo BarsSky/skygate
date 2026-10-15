@@ -124,11 +124,11 @@ func TestHaChain_FindByHostname(t *testing.T) {
 func TestHaMember_IsAlive(t *testing.T) {
 	now := time.Now().Unix()
 	tests := []struct {
-		name             string
-		lastSeen         int64
-		heartbeat        time.Duration
-		threshold        int
-		want             bool
+		name      string
+		lastSeen  int64
+		heartbeat time.Duration
+		threshold int
+		want      bool
 	}{
 		{"never seen", 0, 5 * time.Second, 3, false},
 		{"just seen", now, 5 * time.Second, 3, true},
@@ -223,7 +223,7 @@ func TestHaChain_NextActiveToPromote_SelfNotPrimary(t *testing.T) {
 func TestHaChain_NextActiveToPromote_ActiveUnreachable(t *testing.T) {
 	now := time.Now().Unix()
 	c := &HaChain{Members: []HaMember{
-		{Hostname: "skygate", Priority: 1, Role: RoleActive, LastSeen: now - 100}, // dead
+		{Hostname: "skygate", Priority: 1, Role: RoleActive, LastSeen: now - 100},    // dead
 		{Hostname: "skygate-standby", Priority: 2, Role: RoleStandby, LastSeen: now}, // alive
 	}}
 	// P1 unreachable → P2 should be promoted.

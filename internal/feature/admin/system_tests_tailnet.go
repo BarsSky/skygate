@@ -148,17 +148,17 @@ func tailnetSelfHostname() string {
 // tailnetSkipHostnames returns the set of hostnames that
 // should be SKIPPED by the all-nodes reachability + split
 // tests. v1.3.16 — was needed because:
-//   1. The skygate container itself doesn't have SSH
-//      listening on 22 or 18022, so self-probing always
-//      fails (with "connection refused"). Excluding self
-//      is required for the tests to be meaningful.
-//   2. The operator's home-LAN devices (skyworker,
-//      skybars, a71, nothing-phone-2) have no SSH daemon
-//      at all (they're phones/tablets/desktops, not
-//      servers). The test would always report them as
-//      unreachable, dragging the reachability % down
-//      and triggering false-positive TAILNET SPLIT
-//      alerts every run.
+//  1. The skygate container itself doesn't have SSH
+//     listening on 22 or 18022, so self-probing always
+//     fails (with "connection refused"). Excluding self
+//     is required for the tests to be meaningful.
+//  2. The operator's home-LAN devices (skyworker,
+//     skybars, a71, nothing-phone-2) have no SSH daemon
+//     at all (they're phones/tablets/desktops, not
+//     servers). The test would always report them as
+//     unreachable, dragging the reachability % down
+//     and triggering false-positive TAILNET SPLIT
+//     alerts every run.
 //
 // The self hostname is computed at runtime via
 // `tailnetSelfHostname()`. The home-LAN set is hardcoded
@@ -177,10 +177,10 @@ func tailnetSkipHostnames() map[string]bool {
 	// hostnames. Matches the operator's deploy as of
 	// 2026-08-13. Add new entries here as the fleet changes.
 	homeLANWithoutSSH := []string{
-		"skyworker",     // operator's workstation
-		"skybars",       // operator's NAS
-		"a71",           // Android phone
-		"olesya",        // iPad (added 2026-08-13 — was previously reachable)
+		"skyworker",       // operator's workstation
+		"skybars",         // operator's NAS
+		"a71",             // Android phone
+		"olesya",          // iPad (added 2026-08-13 — was previously reachable)
 		"nothing-phone-2", // Android phone (added 2026-08-13)
 	}
 	for _, h := range homeLANWithoutSSH {
@@ -260,14 +260,15 @@ func probeTailnetNode(ctx context.Context, host string) (time.Duration, string, 
 // disconnected from headscale entirely).
 //
 // Output format:
-//   7/10 online Tailscale nodes reachable (70%)
-//     100.64.0.3  emilia          : 82ms
-//     100.64.0.4  sharlotta       : 87ms
-//     ...
-//   UNREACHABLE (3):
-//     100.64.0.5  skybars         : timeout
-//     100.64.0.1  skyworker       : timeout
-//     100.64.0.19 a71             : timeout
+//
+//	7/10 online Tailscale nodes reachable (70%)
+//	  100.64.0.3  emilia          : 82ms
+//	  100.64.0.4  sharlotta       : 87ms
+//	  ...
+//	UNREACHABLE (3):
+//	  100.64.0.5  skybars         : timeout
+//	  100.64.0.1  skyworker       : timeout
+//	  100.64.0.19 a71             : timeout
 var allNodesReachabilityTest = SystemTestDef{
 	Name:        "tailnet.all_nodes_reachability",
 	Category:    "network",
@@ -521,8 +522,9 @@ var vpsToVPSLatencyTest = SystemTestDef{
 // (multiple home devices unreachable from the server is
 // NOT fine — it's a network split). Two separate tests
 // because they answer different operator questions:
-//   "is egress healthy?" (reachability, B98 already covers)
-//   "is my tailnet broken?" (split, this test)
+//
+//	"is egress healthy?" (reachability, B98 already covers)
+//	"is my tailnet broken?" (split, this test)
 var splitSuspectedTest = SystemTestDef{
 	Name:        "tailnet.split_suspected",
 	Category:    "network",

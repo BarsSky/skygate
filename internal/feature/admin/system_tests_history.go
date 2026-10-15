@@ -42,11 +42,11 @@ import (
 // (the operator sees ALL tests, even ones that have never
 // run — they show 0/0/0 + LastStatus="" + "never run").
 type TestHistoryRow struct {
-	Name       string           `json:"name"`
-	Category   string           `json:"category"`
-	PassCount  int              `json:"pass_count"`
-	FailCount  int              `json:"fail_count"`
-	SkipCount  int              `json:"skip_count"`
+	Name      string `json:"name"`
+	Category  string `json:"category"`
+	PassCount int    `json:"pass_count"`
+	FailCount int    `json:"fail_count"`
+	SkipCount int    `json:"skip_count"`
 	// LastStatus is the status of the most recent run that
 	// included this test. Empty string means "never run in
 	// the requested window" (the row still shows 0/0/0).
@@ -177,10 +177,10 @@ func (s *Service) ComputeTestHistory(ctx context.Context, since, until time.Time
 	// to know the per-test row shape until we serialize
 	// to TestHistoryRow.
 	type acc struct {
-		pass, fail, skip                  int
-		lastStatus                        SystemTestStatus
-		lastRunAt                         time.Time
-		lastError                         string
+		pass, fail, skip int
+		lastStatus       SystemTestStatus
+		lastRunAt        time.Time
+		lastError        string
 	}
 	accumulator := make(map[string]*acc, len(TestRegistry))
 
@@ -199,8 +199,8 @@ func (s *Service) ComputeTestHistory(ctx context.Context, since, until time.Time
 	for rows.Next() {
 		var (
 			id, startedAt, finishedAt, durationMs int64
-			resultsJSON                            string
-			pass, fail, skip                       int
+			resultsJSON                           string
+			pass, fail, skip                      int
 		)
 		if err := rows.Scan(&id, &startedAt, &finishedAt, &durationMs,
 			&resultsJSON, &pass, &fail, &skip); err != nil {

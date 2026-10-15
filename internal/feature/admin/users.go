@@ -478,36 +478,42 @@ func (s *Service) PostAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 // into a single button per orphan row.
 //
 // Flow:
-//   1. Parse hs_id from form (the headscale user id from the
-//      orphans table). 404 if missing.
-//   2. Validate password length (>= 6 chars; same rule as
-//      PostAdminUser at users.go:99-101).
-//   3. Fetch the headscale user by id via HSGlobalFn().ListUsers
-//      and find the matching one. 404 if not found (the headscale
-//      side was the source of the orphans list, so the id is
-//      normally valid — but the operator could click an old
-//      bookmarked page after the orphan was deleted).
-//   4. INSERT into portal_users with the headscale username +
-//      bcrypt-hashed password + headscale_user_id.
 //
-//      is_admin behavior:
-//        - promote_to_admin form field absent or != "true" →
-//          InsertPortalUserAdopt (is_admin=0; the B141 default).
-//        - promote_to_admin == "true" → InsertPortalUserAdoptAdmin
-//          (is_admin=1; added in v1.5.2 admin-user-sync T5,
-//          2026-09-12). This is what the startup detection
-//          banner (T6) calls when SKYGATE_ADMIN_USER drift is
-//          detected.
+//  1. Parse hs_id from form (the headscale user id from the
+//     orphans table). 404 if missing.
 //
-//      ON CONFLICT(username) DO NOTHING closes the concurrent
-//      adopt race (atomic primitive; see portal_users.go:
-//      InsertPortalUserAdopt).
-//   5. Audit log "hs_orphan_adopt" with username + hs_id +
-//      outcome + is_admin.
-//   6. 303 redirect to /admin/users?adopted=<username> on success
-//      or ?err=... on failure (no-op duplicate gets a separate
-//      ?already_adopted=<username> flash so the operator can
-//      distinguish "I clicked twice" from "real error").
+//  2. Validate password length (>= 6 chars; same rule as
+//     PostAdminUser at users.go:99-101).
+//
+//  3. Fetch the headscale user by id via HSGlobalFn().ListUsers
+//     and find the matching one. 404 if not found (the headscale
+//     side was the source of the orphans list, so the id is
+//     normally valid — but the operator could click an old
+//     bookmarked page after the orphan was deleted).
+//
+//  4. INSERT into portal_users with the headscale username +
+//     bcrypt-hashed password + headscale_user_id.
+//
+//     is_admin behavior:
+//     - promote_to_admin form field absent or != "true" →
+//     InsertPortalUserAdopt (is_admin=0; the B141 default).
+//     - promote_to_admin == "true" → InsertPortalUserAdoptAdmin
+//     (is_admin=1; added in v1.5.2 admin-user-sync T5,
+//     2026-09-12). This is what the startup detection
+//     banner (T6) calls when SKYGATE_ADMIN_USER drift is
+//     detected.
+//
+//     ON CONFLICT(username) DO NOTHING closes the concurrent
+//     adopt race (atomic primitive; see portal_users.go:
+//     InsertPortalUserAdopt).
+//
+//  5. Audit log "hs_orphan_adopt" with username + hs_id +
+//     outcome + is_admin.
+//
+//  6. 303 redirect to /admin/users?adopted=<username> on success
+//     or ?err=... on failure (no-op duplicate gets a separate
+//     ?already_adopted=<username> flash so the operator can
+//     distinguish "I clicked twice" from "real error").
 //
 // Admin-only. Wire-up is in cmd/skygate/main.go.
 func (s *Service) PostAdminHSOrphanAdopt(w http.ResponseWriter, r *http.Request) {
@@ -669,28 +675,28 @@ func (s *Service) PostAdminUserResetPassword(w http.ResponseWriter, r *http.Requ
 // SKYGATE_ADMIN_USER drifted from the headscale admin user.
 //
 // T4 wraps that into a single POST:
-//   1. Validate the new name against the portal-users pattern
-//      (lowercase letters, digits, _ and -; same as PostAdminUser)
-//      → 400 BEFORE hitting headscale if invalid.
-//   2. No-op short-circuit: if new == current, redirect without
-//      calling headscale. Pre-fix this hit headscale every time
-//      and produced a stale-cache 500 ("expected exactly one user,
-//      found 2" when the rename target matched an existing row).
-//   3. If the user has a headscale_user_id linked:
-//        a. Call HSGlobalFn().RenameUser(hsID, newUsername). This
-//           posts to POST /api/v1/user/{id}/rename/{new_name} (NO
-//           body — see internal/headscale/users.go RenameUser).
-//        b. If the call returns *APIError with StatusCode=500
-//           and body matching "expected exactly one user", redirect
-//           with err= explaining the operator must delete the
-//           duplicate headscale user first. Don't UPDATE the
-//           portal row — we want the rename to be atomic across
-//           both systems.
-//        c. Any other *APIError → 500 with audit row.
-//   4. UPDATE portal_users.username = newUsername (helper:
-//      db.UpdatePortalUsername). 0 rows affected → 404.
-//   5. Audit log "admin_user_rename" with id + old + new + hs_id.
-//   6. 303 redirect to /admin/users?renamed=<old>.
+//  1. Validate the new name against the portal-users pattern
+//     (lowercase letters, digits, _ and -; same as PostAdminUser)
+//     → 400 BEFORE hitting headscale if invalid.
+//  2. No-op short-circuit: if new == current, redirect without
+//     calling headscale. Pre-fix this hit headscale every time
+//     and produced a stale-cache 500 ("expected exactly one user,
+//     found 2" when the rename target matched an existing row).
+//  3. If the user has a headscale_user_id linked:
+//     a. Call HSGlobalFn().RenameUser(hsID, newUsername). This
+//     posts to POST /api/v1/user/{id}/rename/{new_name} (NO
+//     body — see internal/headscale/users.go RenameUser).
+//     b. If the call returns *APIError with StatusCode=500
+//     and body matching "expected exactly one user", redirect
+//     with err= explaining the operator must delete the
+//     duplicate headscale user first. Don't UPDATE the
+//     portal row — we want the rename to be atomic across
+//     both systems.
+//     c. Any other *APIError → 500 with audit row.
+//  4. UPDATE portal_users.username = newUsername (helper:
+//     db.UpdatePortalUsername). 0 rows affected → 404.
+//  5. Audit log "admin_user_rename" with id + old + new + hs_id.
+//  6. 303 redirect to /admin/users?renamed=<old>.
 //
 // Admin-only. Wire-up is in cmd/skygate/main.go.
 func (s *Service) PostAdminUserRename(w http.ResponseWriter, r *http.Request) {

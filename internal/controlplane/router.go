@@ -10,8 +10,8 @@
 // The router is centralised here so the lookup + cache logic
 // is in one place. Handlers call:
 //
-//   router.ForUser(c.UserID).ListAllNodes()  // user's own plane
-//   router.Global().ListAllNodes()          // explicit "global"
+//	router.ForUser(c.UserID).ListAllNodes()  // user's own plane
+//	router.Global().ListAllNodes()          // explicit "global"
 //
 // ForUser reads portal_users.headscale_url for the given id;
 // if it's empty, it returns the default Global() client
@@ -51,18 +51,18 @@ import (
 // Router is the per-user headscale client cache +
 // resolver. One Router per process. Construction:
 //
-//   r := controlplane.New(db, secretKeyHex, globalClient)
-//   r.Init()  // allocates the cache map
+//	r := controlplane.New(db, secretKeyHex, globalClient)
+//	r.Init()  // allocates the cache map
 //
 // Methods:
 //   - Global() — returns the default client (the same instance
-//                every time; no alloc).
+//     every time; no alloc).
 //   - ForUser(uid) — returns the per-user client (or falls
-//                    through to Global() on miss / error).
+//     through to Global() on miss / error).
 //   - PlaneURLForUser(uid) — the URL of the user's plane
-//                            ("" = the global default plane).
+//     ("" = the global default plane).
 //   - InvalidateCache(url) — drop the cache entry for url
-//                            (or all entries if url == "").
+//     (or all entries if url == "").
 //
 // Thread-safe: the cache is guarded by sync.Mutex.
 type Router struct {

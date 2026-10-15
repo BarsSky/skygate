@@ -22,16 +22,16 @@ import "testing"
 // TestSafeNextRedirect covers the 5 categories of `next`
 // values that the post-login redirect can receive:
 //
-//   1. Empty (default to /dashboard — backwards-compat).
-//   2. Relative path starting with a single "/" (same-
-//      origin, no host part) — allow as-is.
-//   3. Protocol-relative URL ("//evil.com/path") —
-//      REJECT (would navigate to a different host).
-//   4. Absolute URL with a different host (e.g.
-//      "https://evil.com/...") — REJECT (open redirect).
-//   5. Absolute URL with the same host as the request
-//      (the OIDC case: "https://skygate.skynas.ru/oidc/
-//      authorize?client_id=...") — allow as-is.
+//  1. Empty (default to /dashboard — backwards-compat).
+//  2. Relative path starting with a single "/" (same-
+//     origin, no host part) — allow as-is.
+//  3. Protocol-relative URL ("//evil.com/path") —
+//     REJECT (would navigate to a different host).
+//  4. Absolute URL with a different host (e.g.
+//     "https://evil.com/...") — REJECT (open redirect).
+//  5. Absolute URL with the same host as the request
+//     (the OIDC case: "https://skygate.skynas.ru/oidc/
+//     authorize?client_id=...") — allow as-is.
 //
 // Cases 3 and 4 are the open-redirect defenses. Cases 1,
 // 2, 5 are the legitimate flows (login redirect after
@@ -41,9 +41,9 @@ func TestSafeNextRedirect(t *testing.T) {
 	const reqHost = "skygate.skynas.ru"
 
 	cases := []struct {
-		name     string
-		in       string
-		want     string
+		name string
+		in   string
+		want string
 	}{
 		// Case 1: empty input — backwards-compat with the
 		// pre-B172 behaviour (always go to /dashboard

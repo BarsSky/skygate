@@ -170,14 +170,14 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().Unix()
 	exp := now + idTokenTTLSeconds
 	idTok, err := s.signIDToken(IDTokenClaims{
-		Issuer:    s.Issuer(),
-		Subject:   entry.Username, // RFC 7519 sec 4.1.2: sub is the user identifier
-		Audience:  clientID,
-		Expiry:    exp,
-		IssuedAt:  now,
-		Nonce:     entry.Nonce,
-		Email:     entry.Email,
-		Name:      entry.Username, // skygate doesn't have a separate "display name" column; use username
+		Issuer:            s.Issuer(),
+		Subject:           entry.Username, // RFC 7519 sec 4.1.2: sub is the user identifier
+		Audience:          clientID,
+		Expiry:            exp,
+		IssuedAt:          now,
+		Nonce:             entry.Nonce,
+		Email:             entry.Email,
+		Name:              entry.Username, // skygate doesn't have a separate "display name" column; use username
 		PreferredUsername: entry.Username,
 	})
 	if err != nil {

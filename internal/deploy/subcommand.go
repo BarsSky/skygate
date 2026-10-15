@@ -8,26 +8,38 @@
 //	skygate ha    {promote,demote,reclaim}
 //
 // `deploy push`       — build the local binary, upload to
-//                       s3://skygate-backups/ha/deploy/<target-hostname>/
+//
+//	s3://skygate-backups/ha/deploy/<target-hostname>/
+//
 // `deploy pull`       — pull the latest deployed binary from
-//                       S3, write to /usr/local/bin/skygate,
-//                       trigger a graceful restart.
+//
+//	S3, write to /usr/local/bin/skygate,
+//	trigger a graceful restart.
+//
 // `deploy sync`       — atomic push+wait+pull, used by
-//                       scripts/rolling_deploy.sh.
+//
+//	scripts/rolling_deploy.sh.
+//
 // `deploy status`     — print local + remote build version,
-//                       timestamps, and S3 object metadata.
+//
+//	timestamps, and S3 object metadata.
 //
 // `ha promote <host>` — write ApplyActiveRole=host to
-//                       global_settings; the elector (B145)
-//                       picks it up on the next 5s tick.
+//
+//	global_settings; the elector (B145)
+//	picks it up on the next 5s tick.
+//
 // `ha demote  <host>` — write ApplyActiveRole=""
-//                       (auto = the elector decides). Same
-//                       5s tick propagation.
+//
+//	(auto = the elector decides). Same
+//	5s tick propagation.
+//
 // `ha reclaim`        — force the highest-priority ALIVE
-//                       member back to "active" (manual
-//                       version of auto-reclaim; useful when
-//                       auto-reclaim is disabled, the
-//                       per-plan default).
+//
+//	member back to "active" (manual
+//	version of auto-reclaim; useful when
+//	auto-reclaim is disabled, the
+//	per-plan default).
 //
 // The package is intentionally self-contained: no HTTP
 // handlers, no DB dependency at import time. CLI subcommands
@@ -214,11 +226,11 @@ func runHA(ctx context.Context, args []string) error {
 // Lives in subcommand.go (not push.go/pull.go) so both
 // verbs see the same fields without circular imports.
 type Deps struct {
-	DB         *sql.DB
-	Bucket     string
-	BinPath    string
-	BuildInfo  BuildInfo
-	SelfHost   string
+	DB        *sql.DB
+	Bucket    string
+	BinPath   string
+	BuildInfo BuildInfo
+	SelfHost  string
 }
 
 // BuildInfo is the read-only metadata the local binary

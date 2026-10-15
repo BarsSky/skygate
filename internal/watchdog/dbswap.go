@@ -76,8 +76,8 @@ import (
 	"sync"
 	"time"
 
-	"skygate/internal/db"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
+	"skygate/internal/db"
 )
 
 // DBMigrator is the minimum surface the watchdog needs
@@ -94,11 +94,11 @@ type DBMigrator interface {
 // Mirrors internal/db.ClusterDatabase but kept local
 // to avoid the import cycle.
 type ClusterDatabaseRow struct {
-	ID           string
-	CurrentDSN   string
-	DBName       string
-	Username     string
-	SSLMode      string
+	ID         string
+	CurrentDSN string
+	DBName     string
+	Username   string
+	SSLMode    string
 }
 
 // DSNReader reads the current cluster_database row.
@@ -198,9 +198,9 @@ func DefaultConfig() Config {
 // NewDBSwap, then call Start to launch the goroutine.
 // Call Stop to shut down cleanly.
 type DBSwap struct {
-	cfg     Config
+	cfg      Config
 	migrator DBMigrator
-	reader  DSNReader
+	reader   DSNReader
 
 	mu          sync.Mutex
 	currentDSN  string

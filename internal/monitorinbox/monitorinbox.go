@@ -118,7 +118,7 @@ type Event struct {
 	Source string
 	// Subject is what the event is about ("headscale.ping", a hostname, a node
 	// id, a prefix). Source+Subject form the dedup fingerprint.
-	Subject string
+	Subject  string
 	Severity Severity
 	Title    string
 	Body     string

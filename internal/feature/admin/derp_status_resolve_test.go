@@ -52,11 +52,11 @@ func TestResolveDERPPort_EmptyEnvFallsBackToDefault(t *testing.T) {
 // anymore — they're treated as ordinary non-infra nodes.
 func TestShouldBelongToInfra_B251_Negative(t *testing.T) {
 	for _, hostname := range []string{
-		"skygate-host-1",     // legacy v0.33.1.9 placeholder
-		"skygate-host-1-1",   // post-B227.1 rename
-		"skygate-host-test",  // hypothetical typo
-		"skygate-host-foo",   // hypothetical operator typo
-		"skyhosts-host",      // contains `skygate-host` but doesn't start with it
+		"skygate-host-1",    // legacy v0.33.1.9 placeholder
+		"skygate-host-1-1",  // post-B227.1 rename
+		"skygate-host-test", // hypothetical typo
+		"skygate-host-foo",  // hypothetical operator typo
+		"skyhosts-host",     // contains `skygate-host` but doesn't start with it
 		"some-other-host",
 	} {
 		violations := shouldBelongToInfra(

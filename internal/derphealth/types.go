@@ -38,7 +38,7 @@ type DERPInfo struct {
 	// the dashboard shows both (e.g. "derp1f (1f) WAW").
 	// Empty for own DERP rows (the operator configures
 	// the hostname but not a short label).
-	Name string `json:"name,omitempty"`
+	Name  string `json:"name,omitempty"`
 	URL   string `json:"url"`
 	IsOwn bool   `json:"is_own"`
 	// ProbeHost is the operator's "where can THIS container reach the relay"

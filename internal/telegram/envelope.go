@@ -202,6 +202,7 @@ func WithUrgency(level int) ButlerOpt {
 // Required for the standard butler-voice envelope:
 //   - title: <b>...</b> heading (1 line, what happened)
 //   - subheader: <blockquote>...</blockquote> context
+//
 // Optional:
 //   - body: raw HTML (for <pre>/<code>/lists/etc.)
 //   - footer: <i>...</i> next-steps hint
@@ -299,10 +300,11 @@ func butlerEnvelope(lang, envUsername string, title, subheader, body, footer str
 // greetingFor returns the time-of-day greeting for the
 // current hour in lang ("Добрый день, admin" /
 // "Good afternoon, admin"). Buckets:
-//   05:00–10:59  → morning
-//   11:00–16:59  → afternoon
-//   17:00–21:59  → evening
-//   22:00–04:59  → night
+//
+//	05:00–10:59  → morning
+//	11:00–16:59  → afternoon
+//	17:00–21:59  → evening
+//	22:00–04:59  → night
 func greetingFor(lang string, t time.Time) string {
 	h := t.Hour()
 	var key string

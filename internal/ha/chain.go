@@ -37,11 +37,16 @@ import (
 // HaRole is a node's role within the HA chain.
 //
 // "active"   — currently serving skygate.<your-domain> (owns DNS,
-//              Patroni primary, holds the cert + secret).
+//
+//	Patroni primary, holds the cert + secret).
+//
 // "standby"  — alive and ready to take over; lower priority = later
-//              in the failover order.
+//
+//	in the failover order.
+//
 // "unreachable" — heartbeat missed; should be removed from the
-//              active rotation until it recovers.
+//
+//	active rotation until it recovers.
 type HaRole string
 
 const (
@@ -59,12 +64,12 @@ const (
 // "skygate-standby"); PublicIP is what the external DNS A-record
 // should resolve to when this node is active.
 type HaMember struct {
-	Hostname  string  `json:"hostname"`
-	Priority  int     `json:"priority"`
-	PublicIP  string  `json:"public_ip,omitempty"`
+	Hostname    string `json:"hostname"`
+	Priority    int    `json:"priority"`
+	PublicIP    string `json:"public_ip,omitempty"`
 	TailscaleIP string `json:"tailscale_ip,omitempty"`
-	LastSeen  int64   `json:"last_seen_unix,omitempty"` // 0 = never seen
-	Role      HaRole  `json:"role,omitempty"`
+	LastSeen    int64  `json:"last_seen_unix,omitempty"` // 0 = never seen
+	Role        HaRole `json:"role,omitempty"`
 }
 
 // HaChain is the entire chain. Members MUST be sorted by

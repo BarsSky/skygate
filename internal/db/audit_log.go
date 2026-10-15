@@ -54,7 +54,7 @@ const (
 // B221: this is the legacy 5-arg signature. New code should use
 // AppendAuditLogWithTarget so the /admin/audit unified view can
 // show the target_type + target_id columns. The legacy path
-// passes target_type='' + target_id='' — visible in the view
+// passes target_type=” + target_id=” — visible in the view
 // as "—" (no target) instead of an error.
 func AppendAuditLog(d *sql.DB, userID int64, username, action, detail string) error {
 	_, err := d.Exec(qInsertAuditLog, userID, username, action, detail)
@@ -133,12 +133,12 @@ func ListAuditActions(d *sql.DB) ([]string, error) {
 // as the wire types (string + int64 + time.Time) so the same
 // struct works for both CSV and JSON output.
 type AuditRow struct {
-	ID         int64
-	CreatedAt  time.Time
-	UserID     int64
-	Username   string
-	Action     string
-	Detail     string
+	ID        int64
+	CreatedAt time.Time
+	UserID    int64
+	Username  string
+	Action    string
+	Detail    string
 }
 
 // ListAuditLogForUser returns every audit_log row owned by

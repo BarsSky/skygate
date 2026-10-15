@@ -152,11 +152,11 @@ func runInitPath(d *sql.DB, actor string) {
 		die("count: %v", err)
 	}
 	printJSON(map[string]interface{}{
-		"event":          "node_init",
-		"hostname":       hostname,
-		"tailscale_ip":   tsHostname,
-		"audit_rows":     n,
-		"node_id":        nodeID,
+		"event":        "node_init",
+		"hostname":     hostname,
+		"tailscale_ip": tsHostname,
+		"audit_rows":   n,
+		"node_id":      nodeID,
 	})
 }
 
@@ -319,12 +319,12 @@ func runDrainPath(d *sql.DB, actor, reason string) {
 	}
 
 	printJSON(map[string]interface{}{
-		"event":            "node_drain",
-		"from_id":          fromID,
-		"to_id":            toID,
-		"audit_rows":       n,
-		"real_primary":     realPrimaryID,
-		"real_untouched":   fromID != realPrimaryID,
+		"event":          "node_drain",
+		"from_id":        fromID,
+		"to_id":          toID,
+		"audit_rows":     n,
+		"real_primary":   realPrimaryID,
+		"real_untouched": fromID != realPrimaryID,
 	})
 }
 

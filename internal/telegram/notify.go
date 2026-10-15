@@ -80,11 +80,11 @@ func (NoopNotifier) BotUsernameCached() string        { return "" }
 // configured flag is consulted at SendTelegram time so a hot-swap
 // (admin saves a token at runtime) takes effect without restart.
 type RealNotifier struct {
-	mu       sync.Mutex
-	apiBase  string
-	db       *sql.DB
-	client   *http.Client
-	pollInt  time.Duration
+	mu      sync.Mutex
+	apiBase string
+	db      *sql.DB
+	client  *http.Client
+	pollInt time.Duration
 	// 2026-10-07 (B356.1): the Bot API egress ladder. Every request through
 	// n.client travels through this transport, which tries the direct path
 	// first and falls back to an SSH tunnel through a relay that can reach
@@ -133,7 +133,7 @@ type RealNotifier struct {
 	// closure over the same secret-key + portal_users cache.
 	// nil falls through to the global default.
 	planeURLForUser func(userID int64) string
-	sidecar *sidecar.Manager
+	sidecar         *sidecar.Manager
 	// 2026-07-20: v0.20.0 — headscale-update-monitor
 	// (the same instance main.go runs as a background
 	// goroutine for the /admin/headscale page + the
@@ -181,11 +181,11 @@ func NewRealNotifier(d *sql.DB) *RealNotifier {
 	// "unreachable" while the bot is in fact being carried by a relay.
 	client, egress := newTelegramHTTPClient(d, loadEgressConfig())
 	return &RealNotifier{
-		apiBase:          api,
-		db:               d,
-		client:           client,
-		egress:           egress,
-		pollInt:          2 * time.Second,
+		apiBase:           api,
+		db:                d,
+		client:            client,
+		egress:            egress,
+		pollInt:           2 * time.Second,
 		lastInlineMessage: map[int64]int64{},
 	}
 }
@@ -447,18 +447,18 @@ func (n *RealNotifier) env(chatID int64) BotEnv {
 	// reads its snapshot to render /headscale.
 	hsUpdateMon := n.headscaleUpdateMonitor
 	env := BotEnv{
-		DB:                 n.db,
-		UserMaxRules:       max,
-		DefaultMax:         n.defaultMax,
-		Version:            n.version,
-		ChatID:             chatID,
-		HS:                 n.HS,
-		HSForPortalUser:    hsForUser,
-		PortalPlaneURL:     planeURLForUser,
-		MaxRulesPerDevice:  n.maxRulesPerDevice,
-		MaxTotalRules:      n.maxTotalRules,
-		Notifier:           n,
-		Sidecar:            sidecarMgr,
+		DB:                     n.db,
+		UserMaxRules:           max,
+		DefaultMax:             n.defaultMax,
+		Version:                n.version,
+		ChatID:                 chatID,
+		HS:                     n.HS,
+		HSForPortalUser:        hsForUser,
+		PortalPlaneURL:         planeURLForUser,
+		MaxRulesPerDevice:      n.maxRulesPerDevice,
+		MaxTotalRules:          n.maxTotalRules,
+		Notifier:               n,
+		Sidecar:                sidecarMgr,
 		HeadscaleUpdateMonitor: hsUpdateMon,
 		// 2026-07-14: Этап 14 v5 — default Lang is "en";
 		// envForMessage() overrides for unbound chats with
@@ -655,8 +655,8 @@ func (n *RealNotifier) postToChat(token string, chatID int64, text string) {
 	}
 	endpoint := n.apiBase + "/bot" + url.PathEscape(token) + "/sendMessage"
 	payload := map[string]any{
-		"chat_id":                chatID,
-		"text":                   text,
+		"chat_id":                  chatID,
+		"text":                     text,
 		"disable_web_page_preview": true,
 	}
 	body, _ := json.Marshal(payload)
@@ -977,8 +977,8 @@ func splitReplyParts(text string) []string {
 func (n *RealNotifier) sendPlain(token string, chatID int64, text string, pending *PendingReply) (int64, bool) {
 	endpoint := n.apiBase + "/bot" + url.PathEscape(token) + "/sendMessage"
 	payload := map[string]any{
-		"chat_id":                chatID,
-		"text":                   text,
+		"chat_id":                  chatID,
+		"text":                     text,
 		"disable_web_page_preview": true,
 	}
 	if pending != nil && pending.ParseMode != "" {
@@ -1342,9 +1342,9 @@ type update struct {
 // after the inline-button bind; the From field is on
 // every callback_query envelope so we can pick it up.)
 type callbackQuery struct {
-	ID      string `json:"id"`
-	Data    string `json:"data"`
-	ChatID  int64  `json:"chat_id"` // populated by some
+	ID     string `json:"id"`
+	Data   string `json:"data"`
+	ChatID int64  `json:"chat_id"` // populated by some
 	// 2026-07-14 (Этап 14 v5): From is the same shape as
 	// update.Message.From — Telegram sends the originating
 	// user's language_code on every callback_query so the

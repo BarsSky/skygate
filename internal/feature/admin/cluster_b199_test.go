@@ -82,7 +82,7 @@ func TestAbbreviateClusterTime(t *testing.T) {
 		{7200, "2h ago"},
 		{86400, "1d ago"},
 		{172800, "2d ago"},
-		{-30, "in 30s"},  // future — clock skew
+		{-30, "in 30s"}, // future — clock skew
 		{-3600, "in 3600s"},
 	}
 	for _, c := range cases {

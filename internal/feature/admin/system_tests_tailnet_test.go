@@ -151,9 +151,9 @@ func TestAllNodesReachabilityTest_SplitScenario_FailsBelow60(t *testing.T) {
 	})
 	setUpServiceWithFakeHS(t, url)
 	setUpProbe(t, map[string]fakeProbeResult{
-		"100.64.0.3":  {latency: 50 * time.Millisecond},
-		"100.64.0.2":  {latency: 75 * time.Millisecond},
-		"100.64.0.4":  {latency: 60 * time.Millisecond},
+		"100.64.0.3": {latency: 50 * time.Millisecond},
+		"100.64.0.2": {latency: 75 * time.Millisecond},
+		"100.64.0.4": {latency: 60 * time.Millisecond},
 		// 3 VPS nodes unreachable (split signature)
 		"100.64.0.15": {err: errors.New("i/o timeout")},
 		"100.64.0.7":  {err: errors.New("i/o timeout")},
@@ -204,7 +204,7 @@ func TestAllNodesReachabilityTest_OneUnreachable_Passes(t *testing.T) {
 		"100.64.0.4":  {latency: 60 * time.Millisecond},
 		"100.64.0.15": {latency: 80 * time.Millisecond},
 		// 1 VPS unreachable = "phone asleep" or relay hiccup
-		"100.64.0.7":  {err: errors.New("i/o timeout")},
+		"100.64.0.7": {err: errors.New("i/o timeout")},
 		// home-LAN unreachable — skipped
 		"100.64.0.18": {err: errors.New("connection refused")},
 		"100.64.0.5":  {err: errors.New("i/o timeout")},
@@ -414,7 +414,7 @@ func TestSplitSuspectedTest_OneUnreachable_Passes(t *testing.T) {
 		"100.64.0.2": {latency: 80 * time.Millisecond},
 		"100.64.0.4": {latency: 100 * time.Millisecond},
 		// 1 VPS unreachable (relay-1) — "phone asleep" case
-		"100.64.0.7":  {err: errors.New("i/o timeout")},
+		"100.64.0.7": {err: errors.New("i/o timeout")},
 		// self + home-LAN unreachable — should be SKIPPED
 		"100.64.0.18": {err: errors.New("connection refused")},
 		"100.64.0.5":  {err: errors.New("i/o timeout")},
@@ -450,9 +450,9 @@ func TestSplitSuspectedTest_ManyUnreachable_Fails(t *testing.T) {
 	})
 	setUpServiceWithFakeHS(t, url)
 	setUpProbe(t, map[string]fakeProbeResult{
-		"100.64.0.3":  {latency: 50 * time.Millisecond},
-		"100.64.0.2":  {latency: 80 * time.Millisecond},
-		"100.64.0.4":  {latency: 100 * time.Millisecond},
+		"100.64.0.3": {latency: 50 * time.Millisecond},
+		"100.64.0.2": {latency: 80 * time.Millisecond},
+		"100.64.0.4": {latency: 100 * time.Millisecond},
 		// 3 VPS nodes unreachable (split signature)
 		"100.64.0.15": {err: errors.New("i/o timeout")},
 		"100.64.0.7":  {err: errors.New("i/o timeout")},

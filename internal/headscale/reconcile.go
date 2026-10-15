@@ -126,27 +126,27 @@ const (
 // audit row. Field names are stable (the B-check
 // scripts and the /admin/headscale page read them).
 type ReconcileRow struct {
-	PortalUserID    int64           `json:"portal_user_id"`
-	PortalUsername  string          `json:"portal_username"`
-	OldHSID         int64           `json:"old_hs_id"`
-	NewHSID         int64           `json:"new_hs_id"`
-	Outcome         ReconcileOutcome `json:"outcome"`
-	Error           string          `json:"error,omitempty"`
+	PortalUserID   int64            `json:"portal_user_id"`
+	PortalUsername string           `json:"portal_username"`
+	OldHSID        int64            `json:"old_hs_id"`
+	NewHSID        int64            `json:"new_hs_id"`
+	Outcome        ReconcileOutcome `json:"outcome"`
+	Error          string           `json:"error,omitempty"`
 }
 
 // ReconcileResult is the summary returned by RunOnce.
 // Counts + the per-row breakdown for the audit row.
 type ReconcileResult struct {
-	StartedAt  time.Time         `json:"started_at"`
-	FinishedAt time.Time         `json:"finished_at"`
-	Rows       []ReconcileRow    `json:"rows"`
-	OK              int               `json:"ok"`
-	Linked          int               `json:"linked"`
-	Relinked        int               `json:"relinked"`
-	Orphans         int               `json:"orphans"`
-	DuplicateNames  int               `json:"duplicate_names"`
-	Errors          int               `json:"errors"`
-	HSUsers         int               `json:"hs_users_total"`
+	StartedAt      time.Time      `json:"started_at"`
+	FinishedAt     time.Time      `json:"finished_at"`
+	Rows           []ReconcileRow `json:"rows"`
+	OK             int            `json:"ok"`
+	Linked         int            `json:"linked"`
+	Relinked       int            `json:"relinked"`
+	Orphans        int            `json:"orphans"`
+	DuplicateNames int            `json:"duplicate_names"`
+	Errors         int            `json:"errors"`
+	HSUsers        int            `json:"hs_users_total"`
 }
 
 // ReconcileUsers runs one reconciliation cycle against

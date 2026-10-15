@@ -39,30 +39,34 @@ import (
 // Status is the lifecycle state of a user_subnets row.
 //
 // pending       — no devices yet (or no nodes snapshot for the user)
-//                 the row is allocated, but the user has not added
-//                 any Tailscale devices, so there's nothing to
-//                 route into the personal subnet. This is the
-//                 natural state for a freshly-created user.
+//
+//	the row is allocated, but the user has not added
+//	any Tailscale devices, so there's nothing to
+//	route into the personal subnet. This is the
+//	natural state for a freshly-created user.
 //
 // active        — user has ≥1 device (any tag) in headscale, the
-//                 10.0.<uid>.0/24 CIDR is "active" as a logical
-//                 namespace. Devices can reach it via the per-user
-//                 ACL rule, but the user has NOT set up a
-//                 subnet-router (no machine advertising 10.0.<uid>.0/24
-//                 into the tailnet). This is the v0.22.3 default
-//                 for every user with at least one device.
+//
+//	10.0.<uid>.0/24 CIDR is "active" as a logical
+//	namespace. Devices can reach it via the per-user
+//	ACL rule, but the user has NOT set up a
+//	subnet-router (no machine advertising 10.0.<uid>.0/24
+//	into the tailnet). This is the v0.22.3 default
+//	for every user with at least one device.
 //
 // router_active — bonus status: active + a tag:subnet-router node
-//                 is registered in headscale AND has the user's
-//                 CIDR in its approved routes. Means the user has
-//                 actually set up a subnet-router on their home
-//                 network and the 10.0.<uid>.0/24 is a real,
-//                 routable subnet (not just a label).
+//
+//	is registered in headscale AND has the user's
+//	CIDR in its approved routes. Means the user has
+//	actually set up a subnet-router on their home
+//	network and the 10.0.<uid>.0/24 is a real,
+//	routable subnet (not just a label).
 //
 // disabled      — opt-out; row kept for audit but no live
-//                 subnet. Manual override via the admin "Disable"
-//                 button. SyncStatus preserves this state across
-//                 re-runs (admin's intent wins over derived state).
+//
+//	subnet. Manual override via the admin "Disable"
+//	button. SyncStatus preserves this state across
+//	re-runs (admin's intent wins over derived state).
 //
 // 2026-07-21: v0.22.3 — added router_active status + reworked
 // pending semantics. Pre-v0.22.3, pending meant "no subnet-router
@@ -122,7 +126,7 @@ var ErrNotFound = fmt.Errorf("subnet: no subnet for user")
 // subnet allocated; here it is").
 //
 // controlPlaneURL is the per-plane context (v0.12.0
-// multi-plane); '' = global plane. The same string is
+// multi-plane); ” = global plane. The same string is
 // also written to user_subnets.control_plane_url so
 // v0.13.0's per-plane ACL generation can scope subnet
 // rules to the right plane.

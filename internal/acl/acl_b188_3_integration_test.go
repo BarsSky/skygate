@@ -201,7 +201,6 @@ func b188_3RegisterTeardown(t *testing.T, d *sql.DB, userID int64, nodeIDs ...st
 	})
 }
 
-
 // TestGenerateACLForPlane_B1883_NoDevicePref_NoPin —
 // regression guard: when the device has NO per-device
 // pref, the per-CIDR grant is unpinned in BOTH paths.

@@ -47,14 +47,14 @@ func TestRunSync_DownloadOnly(t *testing.T) {
 	}
 
 	res, err := RunSync(SyncRequest{
-		SkygateURL:         "https://skygate.example.com",
-		ClientID:           "headscale",
-		ClientSecret:       "test-secret-do-not-use-in-prod",
-		RedirectURIs:       "https://head.skynas.ru/oidc/callback",
-		ModeOverride:       "download",
-		ScriptPath:         script,
+		SkygateURL:          "https://skygate.example.com",
+		ClientID:            "headscale",
+		ClientSecret:        "test-secret-do-not-use-in-prod",
+		RedirectURIs:        "https://head.skynas.ru/oidc/callback",
+		ModeOverride:        "download",
+		ScriptPath:          script,
 		HeadscaleConfigPath: "/nonexistent/path/to/headscale/config.yaml",
-		SkygateEnvPath:     "/nonexistent/path/to/skygate/.env",
+		SkygateEnvPath:      "/nonexistent/path/to/skygate/.env",
 	})
 	if err != nil {
 		t.Skipf("RunSync (script execution) failed in this env: %v", err)
@@ -232,20 +232,20 @@ func TestSyncResult_JSONFields(t *testing.T) {
 	// Round-trip a sample struct and verify all
 	// fields survive
 	original := SyncResult{
-		Ok:                   true,
-		SkygateURL:           "x",
-		ClientID:             "y",
-		HeadscaleConfigPath:  "z",
-		ConfigBackupPath:     "b",
-		EnvPath:              "e",
-		EnvBackupPath:        "eb",
-		OIDCBlockYAML:        "y",
-		Mode:                 "m",
-		HeadscaleRestarted:   true,
-		HeadscaleHealthy:     true,
-		EnvUpdated:           true,
-		TestResult:           "200",
-		DurationMs:           123,
+		Ok:                  true,
+		SkygateURL:          "x",
+		ClientID:            "y",
+		HeadscaleConfigPath: "z",
+		ConfigBackupPath:    "b",
+		EnvPath:             "e",
+		EnvBackupPath:       "eb",
+		OIDCBlockYAML:       "y",
+		Mode:                "m",
+		HeadscaleRestarted:  true,
+		HeadscaleHealthy:    true,
+		EnvUpdated:          true,
+		TestResult:          "200",
+		DurationMs:          123,
 	}
 	data, err := json.Marshal(original)
 	if err != nil {

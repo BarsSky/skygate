@@ -16,18 +16,18 @@
 // headscale.conf" form), clicks Apply, and the
 // page does the rest:
 //
-//   1. Generates the headscale.conf `oidc:` block
-//   2. Backs up the existing headscale.conf
-//   3. Writes the new block into headscale.conf
-//      (or downloads the YAML for manual apply)
-//   4. Restarts headscale (docker / systemd / k8s
-//      — auto-detected)
-//   5. Waits for /health
-//   6. Updates skygate's .env with the new
-//      SKYGATE_OIDC_ISSUER + SKYGATE_OIDC_REDIRECT_URIS
-//   7. Reports back the result (JSON) on the
-//      /admin/oidc/sync page (flash + collapsible
-//      log)
+//  1. Generates the headscale.conf `oidc:` block
+//  2. Backs up the existing headscale.conf
+//  3. Writes the new block into headscale.conf
+//     (or downloads the YAML for manual apply)
+//  4. Restarts headscale (docker / systemd / k8s
+//     — auto-detected)
+//  5. Waits for /health
+//  6. Updates skygate's .env with the new
+//     SKYGATE_OIDC_ISSUER + SKYGATE_OIDC_REDIRECT_URIS
+//  7. Reports back the result (JSON) on the
+//     /admin/oidc/sync page (flash + collapsible
+//     log)
 //
 // This file implements the Get + Post handlers.
 // The form is in admin/oidc_sync.html. The actual
@@ -194,16 +194,16 @@ func liveOIDCKeyDir(s *Service) string {
 
 // PostAdminOIDCSync handles the "Apply" form
 // submission. The flow:
-//   1. Parse the form
-//   2. Validate the inputs (no blank issuer /
-//      client_id / client_secret — those come
-//      from the current env, not the form, but
-//      we double-check)
-//   3. Call oidc.RunSync with the form values
-//   4. Redirect back to /admin/oidc/sync with
-//      a flash message (ok=1 or err=...) + a
-//      detail=base64-encoded stdout/stderr for
-//      the collapsible log
+//  1. Parse the form
+//  2. Validate the inputs (no blank issuer /
+//     client_id / client_secret — those come
+//     from the current env, not the form, but
+//     we double-check)
+//  3. Call oidc.RunSync with the form values
+//  4. Redirect back to /admin/oidc/sync with
+//     a flash message (ok=1 or err=...) + a
+//     detail=base64-encoded stdout/stderr for
+//     the collapsible log
 //
 // The function is admin-only + behind authMW.
 // The sync is synchronous (the operator sees the
@@ -260,15 +260,15 @@ func (s *Service) PostAdminOIDCSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := oidcpkg.SyncRequest{
-		SkygateURL:           issuer,
-		ClientID:             clientID,
-		ClientSecret:         clientSecret,
-		RedirectURIs:         redirectURIs,
-		HeadscaleConfigPath:  strings.TrimSpace(r.FormValue("headscale_config_path")),
-		HeadscaleContainer:   strings.TrimSpace(r.FormValue("headscale_container")),
-		SkygateEnvPath:       strings.TrimSpace(r.FormValue("skygate_env_path")),
-		ModeOverride:         strings.TrimSpace(r.FormValue("mode")),
-		DownloadOnly:         r.FormValue("mode") == "download",
+		SkygateURL:          issuer,
+		ClientID:            clientID,
+		ClientSecret:        clientSecret,
+		RedirectURIs:        redirectURIs,
+		HeadscaleConfigPath: strings.TrimSpace(r.FormValue("headscale_config_path")),
+		HeadscaleContainer:  strings.TrimSpace(r.FormValue("headscale_container")),
+		SkygateEnvPath:      strings.TrimSpace(r.FormValue("skygate_env_path")),
+		ModeOverride:        strings.TrimSpace(r.FormValue("mode")),
+		DownloadOnly:        r.FormValue("mode") == "download",
 	}
 
 	log.Printf("oidc sync: admin apply by user=%s mode=%q", c.Username, req.ModeOverride)
@@ -322,6 +322,6 @@ func summarizeSyncResult(res *oidcpkg.SyncResult) string {
 		parts = append(parts, ".env updated")
 	}
 	parts = append(parts, "mode="+res.Mode)
-	parts = append(parts, "took="+(time.Duration(res.DurationMs) * time.Millisecond).String())
+	parts = append(parts, "took="+(time.Duration(res.DurationMs)*time.Millisecond).String())
 	return strings.Join(parts, " · ")
 }

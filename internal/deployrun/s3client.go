@@ -27,7 +27,7 @@ import (
 type S3Client struct {
 	client   *minio.Client
 	bucket   string
-	endpoint  string
+	endpoint string
 	hasCreds bool
 }
 

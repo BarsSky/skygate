@@ -111,8 +111,8 @@ func clearRulesReply(env BotEnv, arg string) string {
 	//   parts=2  → "<user> confirm" → admin confirm for that user
 	//   parts=3+ → usage hint
 	var (
-		doConfirm   bool
-		targetName  string // "" = caller; non-empty = admin-specified
+		doConfirm  bool
+		targetName string // "" = caller; non-empty = admin-specified
 	)
 	switch len(parts) {
 	case 0:

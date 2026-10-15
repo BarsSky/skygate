@@ -207,6 +207,7 @@ func TestEnsureTagOwner_B251_PreservesExistingTagOwners(t *testing.T) {
 		}
 	}
 }
+
 // TestEnsureTagOwner_B251_StringifiedPolicy covers the actual
 // failure mode that bit the skygate-host-1-1 autoupdater on
 // 2026-09-15: headscale's /api/v1/policy returns the policy
@@ -214,7 +215,9 @@ func TestEnsureTagOwner_B251_PreservesExistingTagOwners(t *testing.T) {
 // rather than as a top-level JSON object. Pre-B251 EnsureTagOwner
 // passed those bytes straight to `json.Unmarshal(p, &map[string]interface{})`
 // which crashed with:
-//   `cannot unmarshal string into Go value of type map[string]interface {}`
+//
+//	`cannot unmarshal string into Go value of type map[string]interface {}`
+//
 // (the live skygate stderr: `ensure-tag-owner: parse ACL (got 61854 bytes): json: cannot unmarshal string into Go value of type map[string]interface {}`).
 //
 // The B251 fix unquotes the stringified form first via

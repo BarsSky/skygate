@@ -8,25 +8,27 @@
 // normally call ApplyACLPipelineForPlane.
 //
 // The command:
-//   1. Loads .env config
-//   2. Opens the PG DB
-//   3. Looks up the admin user (skyadmin by default)
-//   4. Opens a headscale client for that user's
-//      control plane
-//   5. Calls acl.ApplyACLPipelineForPlane — this
-//      rebuilds the headscale policy from the current
-//      state of device_rules + user_exit_node_prefs +
-//      device_exit_node_prefs + tagOwners
-//   6. Logs the result + exits 0/1.
+//  1. Loads .env config
+//  2. Opens the PG DB
+//  3. Looks up the admin user (skyadmin by default)
+//  4. Opens a headscale client for that user's
+//     control plane
+//  5. Calls acl.ApplyACLPipelineForPlane — this
+//     rebuilds the headscale policy from the current
+//     state of device_rules + user_exit_node_prefs +
+//     device_exit_node_prefs + tagOwners
+//  6. Logs the result + exits 0/1.
 //
 // Usage:
-//   skygate acl-apply [-plane URL] [-user USERNAME]
+//
+//	skygate acl-apply [-plane URL] [-user USERNAME]
 //
 // Flags:
-//   -plane ""     — plane URL (empty = global default)
-//   -user "skyadmin" — the portal user whose headscale
-//                     control plane hosts the policy.
-//                     Defaults to the canonical admin.
+//
+//	-plane ""     — plane URL (empty = global default)
+//	-user "skyadmin" — the portal user whose headscale
+//	                  control plane hosts the policy.
+//	                  Defaults to the canonical admin.
 //
 // 2026-08-26: v1.5.2 (B188.1).
 package main

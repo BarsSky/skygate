@@ -159,10 +159,10 @@ func TestGetDBHealth_EmptySample(t *testing.T) {
 	// in this test — the handler's response marshalling
 	// is the only thing under test).
 	resp := DBHealthResponse{
-		SampledAt: time.Now().UTC(),
-		Version:   "PostgreSQL 15.0",
-		SizeBytes: 539 * 1024 * 1024,
-		SizeHuman: "539.0 MB",
+		SampledAt:    time.Now().UTC(),
+		Version:      "PostgreSQL 15.0",
+		SizeBytes:    539 * 1024 * 1024,
+		SizeHuman:    "539.0 MB",
 		XLogLocation: "0/16A0C58",
 	}
 	data, err := json.Marshal(resp)
@@ -259,6 +259,7 @@ func TestGetDBHealth_PopulatedSample(t *testing.T) {
 // unused to staticcheck but they're required to
 // satisfy http.ResponseWriter. //lint:ignore per
 // type+method below.
+//
 //lint:ignore U1000 reserved for future httptest expansion (B206)
 type recordingResponseWriter struct {
 	header http.Header

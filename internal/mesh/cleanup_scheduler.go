@@ -446,13 +446,13 @@ func sameCleanupMinute(a, b time.Time) bool {
 // the "Next cleanup" column without forcing the
 // template to import backup.ParseSchedule.
 //
-//   "0 5 * * *"   → "Daily at 05:00"
-//   "30 4 * * 0"  → "Weekly on Sunday at 04:30"
-//   "0 5 * * 1-5" → "Weekdays at 05:00" (we
-//                    best-effort the day-of-week
-//                    range; a literal "1-5" is the
-//                    most common non-trivial case)
-//   "*"           → "Every minute"
+//	"0 5 * * *"   → "Daily at 05:00"
+//	"30 4 * * 0"  → "Weekly on Sunday at 04:30"
+//	"0 5 * * 1-5" → "Weekdays at 05:00" (we
+//	                 best-effort the day-of-week
+//	                 range; a literal "1-5" is the
+//	                 most common non-trivial case)
+//	"*"           → "Every minute"
 func FormatHumanSchedule(s string) string {
 	if s == "" {
 		s = DefaultCleanupSchedule

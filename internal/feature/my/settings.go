@@ -81,10 +81,10 @@ func stripThemeParam(url string) string {
 //
 // form fields:
 //   - font_family  : "manrope" | "inter" | "geist" | "sora" | "system"
-//                    (validated; unknown → "manrope")
+//     (validated; unknown → "manrope")
 //   - font_scale   : -2..+2 integer (clamped; out-of-range → 0)
 //   - selection_bg : CSS color string ("#rrggbb" or "rgba(...)" or
-//                    "transparent" or empty for theme default)
+//     "transparent" or empty for theme default)
 //
 // All 3 fields are optional in the form — missing fields keep
 // the user's current value. This is intentional so the user

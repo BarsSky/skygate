@@ -130,8 +130,9 @@ func tailscaleIPFromNode(ipAddrs []string) string {
 // Skip condition: no online exit nodes registered.
 //
 // Output format (one line per exit node):
-//   relay-1 (100.64.0.3): 23ms
-//   relay-2 (100.64.0.4): timeout (2s)
+//
+//	relay-1 (100.64.0.3): 23ms
+//	relay-2 (100.64.0.4): timeout (2s)
 var exitNodesTCPSpeedTest = SystemTestDef{
 	Name:        "exit_nodes.tcp_connect_speed",
 	Category:    "network",
@@ -178,9 +179,9 @@ var exitNodesTCPSpeedTest = SystemTestDef{
 		}
 		// Build a per-node output line; flag slow / failed.
 		var (
-			failed  []string
-			slow    []string
-			lines   []string
+			failed []string
+			slow   []string
+			lines  []string
 		)
 		const slowThreshold = 1 * time.Second
 		for _, p := range probes {
@@ -241,10 +242,11 @@ var exitNodesTCPSpeedTest = SystemTestDef{
 // Skip condition: no online exit nodes registered.
 //
 // Output format:
-//   3/3 exit nodes responsive (100%)
-//     relay-1 (100.64.0.3): 23ms
-//     relay-2 (100.64.0.4): 47ms
-//     relay-3 (100.64.0.5): 1.2s
+//
+//	3/3 exit nodes responsive (100%)
+//	  relay-1 (100.64.0.3): 23ms
+//	  relay-2 (100.64.0.4): 47ms
+//	  relay-3 (100.64.0.5): 1.2s
 var exitNodesAvailabilityTest = SystemTestDef{
 	Name:        "exit_nodes.availability_summary",
 	Category:    "network",

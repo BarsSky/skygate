@@ -219,15 +219,15 @@ func TestGenerateJobID_Unique(t *testing.T) {
 // and asserts every field survives.
 func TestStateStore_JSONRoundTrip(t *testing.T) {
 	in := &State{
-		JobID:           "abc12345",
-		InstallKind:     "docker",
-		FromVersion:     "v0.28.6",
-		ToVersion:       "v0.29.0",
-		Phase:           PhasePullBuild,
-		ManualFallback:  true,
-		ManualSteps:     []string{"echo step1", "echo step2"},
-		Rollback:        []string{"echo rollback"},
-		VerifyAfter:     "curl /healthz",
+		JobID:          "abc12345",
+		InstallKind:    "docker",
+		FromVersion:    "v0.28.6",
+		ToVersion:      "v0.29.0",
+		Phase:          PhasePullBuild,
+		ManualFallback: true,
+		ManualSteps:    []string{"echo step1", "echo step2"},
+		Rollback:       []string{"echo rollback"},
+		VerifyAfter:    "curl /healthz",
 		Log: []LogEntry{
 			{Level: LogInfo, Msg: "starting"},
 			{Level: LogError, Msg: "FAILED: oh no"},

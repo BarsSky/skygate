@@ -48,13 +48,13 @@ import (
 // archives that disappeared, and the host backup dir stayed
 // empty. The fix:
 //
-//   1. SKYGATE_BACKUP_DIR wins (preferred; matches the prefix
-//      convention of every other SKYGATE_* env var).
-//   2. DEPLOY_BACKUP_DIR (legacy alias from the deploy scripts).
-//   3. /tmp/skygate-backup (the pre-v0.33.1.7 in-container path,
-//      kept as a final fallback so an operator who never set any
-//      env var still has a working backup target — even if the
-//      result disappears on container restart).
+//  1. SKYGATE_BACKUP_DIR wins (preferred; matches the prefix
+//     convention of every other SKYGATE_* env var).
+//  2. DEPLOY_BACKUP_DIR (legacy alias from the deploy scripts).
+//  3. /tmp/skygate-backup (the pre-v0.33.1.7 in-container path,
+//     kept as a final fallback so an operator who never set any
+//     env var still has a working backup target — even if the
+//     result disappears on container restart).
 //
 // The path is resolved lazily on every call so a config change
 // via /admin/backup/config (which re-reads the DB) doesn't need
@@ -460,17 +460,17 @@ func (s *Service) PostAdminBackupRestore(w http.ResponseWriter, r *http.Request)
 // closes that loop with this streaming endpoint.
 //
 // The flow:
-//   1. Read the S3 config from global_settings (same
-//      path the upload uses).
-//   2. Parse the `archive=s3://bucket/key` query arg
-//      to extract bucket + key.
-//   3. minio-go GetObject opens a stream from S3.
-//   4. We copy that stream to the response writer with
-//      Content-Disposition: attachment so the browser
-//      saves the file with the right name.
-//   5. Content-Length and Content-Type mirror what
-//      the S3 server reports (we use FGetObject-style
-//      metadata via StatObject first, then GetObject).
+//  1. Read the S3 config from global_settings (same
+//     path the upload uses).
+//  2. Parse the `archive=s3://bucket/key` query arg
+//     to extract bucket + key.
+//  3. minio-go GetObject opens a stream from S3.
+//  4. We copy that stream to the response writer with
+//     Content-Disposition: attachment so the browser
+//     saves the file with the right name.
+//  5. Content-Length and Content-Type mirror what
+//     the S3 server reports (we use FGetObject-style
+//     metadata via StatObject first, then GetObject).
 //
 // Security:
 //   - Admin-only (gated by s.Backend.CurrentUser + IsAdmin).

@@ -14,8 +14,8 @@ import (
 	"strings"
 
 	"skygate/internal/db"
-	"skygate/internal/invite"
 	"skygate/internal/i18n"
+	"skygate/internal/invite"
 )
 
 // inviteRow is the template-side row shape for the

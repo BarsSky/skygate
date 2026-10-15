@@ -51,16 +51,16 @@ func TestUpsertAndGetExitNodeHealth_RoundTrip(t *testing.T) {
 	// preserved the timestamp") without flakiness.
 	now := time.Now().UTC().Truncate(time.Second)
 	want := ExitNodeHealth{
-		NodeID:             "3",
-		Hostname:           "relay-1",
-		Online:             true,
-		LastSeen:           "2026-07-15T12:34:56Z",
-		AdvertisedRoutesOK: true,
-		HasExitTag:         true,
-		State:              "online",
-		Healthy:            true,
-		LastCheckAt:        now,
-		LastStateChangeAt:  now,
+		NodeID:              "3",
+		Hostname:            "relay-1",
+		Online:              true,
+		LastSeen:            "2026-07-15T12:34:56Z",
+		AdvertisedRoutesOK:  true,
+		HasExitTag:          true,
+		State:               "online",
+		Healthy:             true,
+		LastCheckAt:         now,
+		LastStateChangeAt:   now,
 		ConsecutiveFailures: 0,
 	}
 	seedExitNodeHealth(t, d, want)

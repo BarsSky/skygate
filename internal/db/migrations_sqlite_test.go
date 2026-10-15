@@ -28,11 +28,11 @@ import (
 // TestMigrationsSQLite_AllApply walks the entire SQLite migration
 // chain on a fresh in-memory DB and verifies:
 //
-//   1. Every migration applies without error
-//   2. The applied_migrations bookkeeping table has at least 40
-//      rows (the live PG set has ~50 migrations v0.20 through
-//      v0.70; we accept >=40 to allow for the optional v0.54
-//      disabled + any future migrations not yet in scope)
+//  1. Every migration applies without error
+//  2. The applied_migrations bookkeeping table has at least 40
+//     rows (the live PG set has ~50 migrations v0.20 through
+//     v0.70; we accept >=40 to allow for the optional v0.54
+//     disabled + any future migrations not yet in scope)
 //
 // Pre-v1.5.4 (B-mod-db-retry era) this test could not even
 // compile — there was no SQLite migration set, no Dialect-aware

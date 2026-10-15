@@ -84,17 +84,17 @@ func (s *Service) GetAdminBackupConfig(w http.ResponseWriter, r *http.Request) {
 //
 // Form fields (snake_case → struct field):
 //
-//   protocol         → c.Protocol (auto-detected from
-//                      destination if blank)
-//   destination      → c.Destination (required)
-//   mountpoint       → c.Mountpoint
-//   username         → c.Username
-//   password         → c.Password
-//   ssh_key_path     → c.SSHKeyPath
-//   keep_count       → c.KeepCount (0 = keep all)
-//   schedule         → c.Schedule
-//   enabled          → c.Enabled (master switch)
-//   in_app_enabled   → c.InAppEnabled
+//	protocol         → c.Protocol (auto-detected from
+//	                   destination if blank)
+//	destination      → c.Destination (required)
+//	mountpoint       → c.Mountpoint
+//	username         → c.Username
+//	password         → c.Password
+//	ssh_key_path     → c.SSHKeyPath
+//	keep_count       → c.KeepCount (0 = keep all)
+//	schedule         → c.Schedule
+//	enabled          → c.Enabled (master switch)
+//	in_app_enabled   → c.InAppEnabled
 func (s *Service) PostAdminBackupConfig(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {

@@ -161,7 +161,7 @@ type BotEnv struct {
 	// value (Telegram's resolve vs. our two-language
 	// vocabulary is a one-way translation we don't want to
 	// re-do on every command).
-	Lang            string
+	Lang             string
 	TelegramLangCode string
 }
 
@@ -423,35 +423,35 @@ var commandContext = map[string]string{
 	"/bind":              "bind",
 	"/unbind":            "unbind",
 	// user scope
-	"/my_status":         "registry",
-	"/my_nodes":          "registry",
-	"/my_rules":          "registry",
-	"/my_quota":          "registry",
-	"/myexitnodes":       "registry",
-	"/mysubnet":          "registry",
-	"/add_device":        "add",
-	"/add_rule":          "add",
-	"/delrule":           "del",
-	"/delete_rule":       "del", // deprecated alias of /delrule
-	"/clearrules":        "del",
-	"/setdefaultdevice":  "add",
-	"/defaultdevice":     "registry",
-	"/setexitnode":       "add",
-	"/defaultexitnode":   "registry",
+	"/my_status":        "registry",
+	"/my_nodes":         "registry",
+	"/my_rules":         "registry",
+	"/my_quota":         "registry",
+	"/myexitnodes":      "registry",
+	"/mysubnet":         "registry",
+	"/add_device":       "add",
+	"/add_rule":         "add",
+	"/delrule":          "del",
+	"/delete_rule":      "del", // deprecated alias of /delrule
+	"/clearrules":       "del",
+	"/setdefaultdevice": "add",
+	"/defaultdevice":    "registry",
+	"/setexitnode":      "add",
+	"/defaultexitnode":  "registry",
 	// auth / preferences
-	"/login":             "bind",
-	"/start":             "welcome", // overridden by dispatchCommand for /start with token → "bind"
-	"/lang":              "registry",
-	"/_bind_cancel":      "bind",
-	"/unbind_self":       "unbind",
-	"/invite":            "registry",  // 2026-07-20: v0.21.0 — user-to-user bridge
-	"/accept":            "registry",  // 2026-07-20: v0.21.0 — user-to-user bridge
-	"/invites":           "registry",  // 2026-07-20: v0.21.0 — user-to-user bridge
-	"/mesh":              "registry",  // 2026-07-20: v0.22.0 — shared network mesh
-	"/meshes":            "registry",  // 2026-07-20: v0.22.0 — shared network mesh
+	"/login":        "bind",
+	"/start":        "welcome", // overridden by dispatchCommand for /start with token → "bind"
+	"/lang":         "registry",
+	"/_bind_cancel": "bind",
+	"/unbind_self":  "unbind",
+	"/invite":       "registry", // 2026-07-20: v0.21.0 — user-to-user bridge
+	"/accept":       "registry", // 2026-07-20: v0.21.0 — user-to-user bridge
+	"/invites":      "registry", // 2026-07-20: v0.21.0 — user-to-user bridge
+	"/mesh":         "registry", // 2026-07-20: v0.22.0 — shared network mesh
+	"/meshes":       "registry", // 2026-07-20: v0.22.0 — shared network mesh
 	// meta
-	"/version":           "version",
-	"/help":              "codex",
+	"/version": "version",
+	"/help":    "codex",
 }
 
 // cmdReply is the internal return shape of dispatchCommand:
@@ -491,27 +491,27 @@ type cmdReply struct {
 //
 // Command categories (2026-07-12: Этап 11; 2026-07-13: Этап 12):
 //
-//   user-scope  /my_status, /my_nodes, /my_rules, /my_quota,
-//                /myexitnodes, /add_device, /add_rule,
-//                /delrule, /clearrules
-//                — work for any identified user; data is filtered
-//                  to the caller's own. Admin can use them too and
-//                  gets the same scoping (admin's own data).
+//	user-scope  /my_status, /my_nodes, /my_rules, /my_quota,
+//	             /myexitnodes, /add_device, /add_rule,
+//	             /delrule, /clearrules
+//	             — work for any identified user; data is filtered
+//	               to the caller's own. Admin can use them too and
+//	               gets the same scoping (admin's own data).
 //
-//   admin-only  /status, /nodes, /rules, /quota, /audit, /exit_nodes,
-//                /ack, /restart, /bind, /unbind
-//                — show ALL data; rejected for non-admin callers.
+//	admin-only  /status, /nodes, /rules, /quota, /audit, /exit_nodes,
+//	             /ack, /restart, /bind, /unbind
+//	             — show ALL data; rejected for non-admin callers.
 //
-//   common      /help [command], /version
-//                — open to any caller.
+//	common      /help [command], /version
+//	             — open to any caller.
 //
-//   auth        /login, /start
-//                — open to any caller (including unidentified),
-//                  because they're the ONLY way an unidentified
-//                  chat can become identified. /start <token> is
-//                  an alias of /login <token> for Telegram UX
-//                  convention (Telegram sends /start when the user
-//                  first opens a chat, so we can't ignore it).
+//	auth        /login, /start
+//	             — open to any caller (including unidentified),
+//	               because they're the ONLY way an unidentified
+//	               chat can become identified. /start <token> is
+//	               an alias of /login <token> for Telegram UX
+//	               convention (Telegram sends /start when the user
+//	               first opens a chat, so we can't ignore it).
 //
 // Legacy (single-admin-chat deploys and tests) treats unidentified
 // callers (BotEnv.ChatID==0) as admin so the original behaviour is
@@ -947,7 +947,7 @@ func statusBlocks(env BotEnv) ([]RichBlock, error) {
 // until they bind.
 //
 // 2026-07-16: v0.15.5 — gutter widened to 18 chars (max command
-// `/exit_nodes_health` is 17 chars) and the duplicate `\`<cmd>\`` in
+// `/exit_nodes_health` is 17 chars) and the duplicate `\`<cmd>\“ in
 // every EN description was dropped. The gutter now carries the
 // command name; the description is the explanation. Inline
 // sub-commands (like `/clearrules confirm`) are still back-ticked
@@ -981,17 +981,17 @@ func statusBlocks(env BotEnv) ([]RichBlock, error) {
 //
 // Rationale: the v0.16.1/v0.16.2 "more HTML" pass left /help
 // in plain text, so the catalog's markdown backticks showed up
-// as raw `\`<id>\`` characters. The v0.16.2 hotfix for
+// as raw `\`<id>\“ characters. The v0.16.2 hotfix for
 // /my_rules et al. didn't touch /help because the helper
 // would have rejected the literal `<` from the placeholders
 // in parse_mode=HTML. The fix is two-pronged:
-//   1) catalog: every backtick inside bot.help.* is now
-//      `<code>...</code>` (with &, <, > escaped inside),
-//   2) reply: tabular <pre> blocks per section so the
-//      command column lines up on every Telegram client
-//      (Telegram's <pre> uses a fixed-pitch font).
-//   3) v0.16.5: split into multiple bubbles so each
-//      section gets its own screen on mobile.
+//  1. catalog: every backtick inside bot.help.* is now
+//     `<code>...</code>` (with &, <, > escaped inside),
+//  2. reply: tabular <pre> blocks per section so the
+//     command column lines up on every Telegram client
+//     (Telegram's <pre> uses a fixed-pitch font).
+//  3. v0.16.5: split into multiple bubbles so each
+//     section gets its own screen on mobile.
 func helpReply(env BotEnv) string {
 	// 2026-07-16: v0.16.3 — mark HTML so the <b>, <i>,
 	// <pre>, <code> in the body render instead of

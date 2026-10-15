@@ -1,4 +1,4 @@
-﻿// 2026-08-25 (B178): regression tests for annotateRulesWithPrefs.
+// 2026-08-25 (B178): regression tests for annotateRulesWithPrefs.
 //
 // Live bug (operator report, 2026-08-25):
 //   /admin/exit-rules showed "karolina" as the preferred

@@ -132,16 +132,16 @@ func GenerateCode() (string, error) {
 // (matches the convention used in every other
 // table in the schema).
 type Invite struct {
-	ID                int64
-	Code              string
-	GrantorUserID     int64
-	GranteeUsername   string
-	Status            string
-	CreatedAt         time.Time
-	ExpiresAt         time.Time
-	ConsumedAt        time.Time // zero value if not consumed
-	ConsumedByUserID  int64     // 0 if not consumed
-	AuditMessage      string
+	ID               int64
+	Code             string
+	GrantorUserID    int64
+	GranteeUsername  string
+	Status           string
+	CreatedAt        time.Time
+	ExpiresAt        time.Time
+	ConsumedAt       time.Time // zero value if not consumed
+	ConsumedByUserID int64     // 0 if not consumed
+	AuditMessage     string
 }
 
 // CreateInvite inserts a new invite row and
@@ -257,11 +257,11 @@ func LookupByCode(d *sql.DB, code string) (*Invite, error) {
 //   - ErrExpired         — past expires_at
 //   - ErrNotForYou       — consumerUsername != inv.GranteeUsername
 //   - ErrSelfInvite      — grantor is consuming their own invite
-//                          (defensive — the bot handler
-//                           also checks this, but
-//                           ValidateCode catches it
-//                           early for callers that
-//                           don't)
+//     (defensive — the bot handler
+//     also checks this, but
+//     ValidateCode catches it
+//     early for callers that
+//     don't)
 func ValidateCode(d *sql.DB, code, consumerUsername string, consumerUserID int64) (*Invite, error) {
 	inv, err := LookupByCode(d, code)
 	if err != nil {

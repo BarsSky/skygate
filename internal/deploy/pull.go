@@ -59,12 +59,15 @@ var ErrAlreadyUpToDate = errors.New("local build is already at-or-ahead of remot
 // continues to serve traffic from the old in-memory image.
 //
 // target == ""  → use SelfHost (the typical "pull my own
-//                 host's build" flow, used by the per-node
-//                 rolling deploy script).
+//
+//	host's build" flow, used by the per-node
+//	rolling deploy script).
+//
 // target != ""  → pull the build staged under deploy/<target>/
-//                 (used by the live operator flow when they
-//                 want to pull the active node's binary onto
-//                 a standby).
+//
+//	(used by the live operator flow when they
+//	want to pull the active node's binary onto
+//	a standby).
 func RunPull(ctx context.Context, d *Deps, target string) error {
 	if d == nil {
 		return errors.New("RunPull: nil Deps")

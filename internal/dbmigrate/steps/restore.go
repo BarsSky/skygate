@@ -55,8 +55,8 @@ func init() {
 
 type restoreStep struct{}
 
-func (restoreStep) Name() string         { return "restore" }
-func (restoreStep) Description() string  { return "Run pg_restore on target host" }
+func (restoreStep) Name() string        { return "restore" }
+func (restoreStep) Description() string { return "Run pg_restore on target host" }
 func (restoreStep) Ordinal() int        { return 3 }
 func (restoreStep) IsOptional() bool    { return false }
 func (restoreStep) DependsOn() []string { return []string{"dump"} }

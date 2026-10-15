@@ -13,6 +13,7 @@
 //
 // firstRunNeedsBanner returns true when the banner SHOULD show:
 //   - node_owner_map is empty (operator hasn't adopted yet)
+//
 // AND
 //   - headscale has at least 1 user with no matching portal_user
 //     (i.e. at least one HS user is un-adopted)
@@ -53,9 +54,9 @@ import (
 // probes; passed directly to firstRunNeedsBannerFromCounts in
 // tests.
 type FirstRunCounts struct {
-	NodeOwnerMapCount   int // rows in node_owner_map (0 = nothing adopted yet)
-	HeadscaleUserCount  int // users in headscale (0 = nothing to adopt)
-	PortalUsersWithHS   int // portal_users with headscale_user_id IS NOT NULL
+	NodeOwnerMapCount  int // rows in node_owner_map (0 = nothing adopted yet)
+	HeadscaleUserCount int // users in headscale (0 = nothing to adopt)
+	PortalUsersWithHS  int // portal_users with headscale_user_id IS NOT NULL
 }
 
 // firstRunNeedsBanner is the integration entry point used by the

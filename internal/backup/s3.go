@@ -200,10 +200,10 @@ func NewS3ClientForConfig(c *Config) (*minio.Client, error) {
 // stripped. Returns just the basename when prefix is
 // empty. Examples:
 //
-//   ("", "foo.tar.gz")            → "foo.tar.gz"
-//   ("backups", "foo.tar.gz")     → "backups/foo.tar.gz"
-//   ("backups/", "foo.tar.gz")    → "backups/foo.tar.gz"
-//   ("a/b/", "foo.tar.gz")        → "a/b/foo.tar.gz"
+//	("", "foo.tar.gz")            → "foo.tar.gz"
+//	("backups", "foo.tar.gz")     → "backups/foo.tar.gz"
+//	("backups/", "foo.tar.gz")    → "backups/foo.tar.gz"
+//	("a/b/", "foo.tar.gz")        → "a/b/foo.tar.gz"
 func buildS3Key(prefix, basename string) string {
 	p := strings.TrimRight(prefix, "/")
 	b := strings.TrimLeft(basename, "/")

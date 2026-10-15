@@ -9,24 +9,24 @@
 // node_owner_map (per-user, per-hostname). Two writes
 // happen:
 //
-//   1. Auto-detect: every /my/devices load calls
-//      Detect(hostname, tags, approvedRoutes) and
-//      persists the result via db.SetDeviceMeta if the
-//      row is currently empty (i.e. first visit since
-//      this feature shipped). The auto-detect is
-//      intentionally conservative — we never OVERWRITE
-//      an operator-set value, and "unknown" / "" means
-//      "fall back to the auto-detect".
+//  1. Auto-detect: every /my/devices load calls
+//     Detect(hostname, tags, approvedRoutes) and
+//     persists the result via db.SetDeviceMeta if the
+//     row is currently empty (i.e. first visit since
+//     this feature shipped). The auto-detect is
+//     intentionally conservative — we never OVERWRITE
+//     an operator-set value, and "unknown" / "" means
+//     "fall back to the auto-detect".
 //
-//   2. Manual override: /admin/devices/{id}/meta POST
-//      lets the operator set os / device_type explicitly
-//      when the auto-detect is wrong (e.g. a hostname
-//      like "laptop" with no OS hint). The override
-//      sticks across restarts and across new
-//      /my/devices loads (the auto-detect skips the
-//      row if both fields are non-empty AND the
-//      override-flag is set, or alternatively if the
-//      stored value is non-default).
+//  2. Manual override: /admin/devices/{id}/meta POST
+//     lets the operator set os / device_type explicitly
+//     when the auto-detect is wrong (e.g. a hostname
+//     like "laptop" with no OS hint). The override
+//     sticks across restarts and across new
+//     /my/devices loads (the auto-detect skips the
+//     row if both fields are non-empty AND the
+//     override-flag is set, or alternatively if the
+//     stored value is non-default).
 package devicemeta
 
 import "strings"
@@ -36,23 +36,23 @@ import "strings"
 // (not "android" + "ios" + ...) so the UI badge
 // stays compact.
 const (
-	OSUnknown  = "unknown"
-	OSWindows  = "windows"
-	OSMacOS    = "macos"
-	OSLinux    = "linux"
-	OSAndroid  = "android"
-	OSiOS      = "ios"
-	OSFreeBSD  = "freebsd"
+	OSUnknown = "unknown"
+	OSWindows = "windows"
+	OSMacOS   = "macos"
+	OSLinux   = "linux"
+	OSAndroid = "android"
+	OSiOS     = "ios"
+	OSFreeBSD = "freebsd"
 )
 
 // Type values stored in node_owner_map.device_type.
 const (
-	TypeUnknown     = "unknown"
-	TypeClient      = "client"
-	TypeExitNode    = "exit-node"
-	TypeSubnetRtr   = "subnet-router"
-	TypeServer      = "server"
-	TypePhone       = "phone"
+	TypeUnknown   = "unknown"
+	TypeClient    = "client"
+	TypeExitNode  = "exit-node"
+	TypeSubnetRtr = "subnet-router"
+	TypeServer    = "server"
+	TypePhone     = "phone"
 )
 
 // OSIcon returns the FontAwesome icon class for the OS

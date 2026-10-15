@@ -213,4 +213,3 @@ func TestSetUserExitNodePref_RecentTimestamp(t *testing.T) {
 			got.UpdatedAt, before, after)
 	}
 }
-

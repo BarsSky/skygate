@@ -149,8 +149,8 @@ func TestPrune_IgnoresNonBackupFiles(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
 		"skygate-full-20260101_000000.tar.gz": "x",
-		"headplane-data":                     "x",
-		"README.md":                          "x",
+		"headplane-data":                      "x",
+		"README.md":                           "x",
 	}
 	for n, c := range files {
 		if err := os.WriteFile(filepath.Join(dir, n), []byte(c), 0644); err != nil {

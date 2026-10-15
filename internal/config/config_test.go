@@ -41,10 +41,10 @@ func TestParseUserLimits(t *testing.T) {
 		{"alice:100,bob:200", map[string]int{"alice": 100, "bob": 200}},
 		{"alice : 100 , bob : 200", map[string]int{"alice": 100, "bob": 200}}, // spaces trimmed
 		// malformed entries silently dropped
-		{"alice:0", map[string]int{}},    // n<=0 dropped
-		{"alice:-1", map[string]int{}},   // n<=0 dropped
+		{"alice:0", map[string]int{}},  // n<=0 dropped
+		{"alice:-1", map[string]int{}}, // n<=0 dropped
 		{"alice:not-a-number", map[string]int{}},
-		{"alice", map[string]int{}},      // no colon
+		{"alice", map[string]int{}}, // no colon
 		{",,alice:5,", map[string]int{"alice": 5}},
 	}
 	for _, c := range cases {

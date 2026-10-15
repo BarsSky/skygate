@@ -54,15 +54,15 @@ import (
 //
 // Behaviour:
 //   - target == ""  → uses SelfHost from Deps (the current
-//                     node's hostname). This is the default
-//                     for `skygate deploy push` with no
-//                     --target flag.
+//     node's hostname). This is the default
+//     for `skygate deploy push` with no
+//     --target flag.
 //   - target != ""  → uploads under deploy/<target>/, so
-//                     `skygate deploy pull --target=skygate`
-//                     on the standby node reads the active
-//                     node's binary. Used by the live
-//                     operator flow when staging a build
-//                     on a specific host.
+//     `skygate deploy pull --target=skygate`
+//     on the standby node reads the active
+//     node's binary. Used by the live
+//     operator flow when staging a build
+//     on a specific host.
 //
 // Returns the S3 URL of the uploaded object (or a
 // descriptive error). The caller (subcommand.go) prints it
@@ -98,12 +98,12 @@ func RunPush(ctx context.Context, d *Deps, target string) error {
 	// the binary itself so the puller can verify the
 	// downloaded bytes.
 	meta := struct {
-		Version   string    `json:"version"`
-		Commit    string    `json:"commit"`
-		BuildTime string    `json:"build_time"`
-		Size      int64     `json:"size"`
+		Version    string    `json:"version"`
+		Commit     string    `json:"commit"`
+		BuildTime  string    `json:"build_time"`
+		Size       int64     `json:"size"`
 		UploadedAt time.Time `json:"uploaded_at"`
-		Target    string    `json:"target"`
+		Target     string    `json:"target"`
 	}{
 		Version:    d.BuildInfo.Version,
 		Commit:     d.BuildInfo.Commit,

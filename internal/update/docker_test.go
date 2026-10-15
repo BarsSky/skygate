@@ -15,11 +15,12 @@ import (
 // --tags --always` and the +commit suffix from -ldflags.
 //
 // Format examples (see Dockerfile entrypoint):
-//   v0.28.6-21-ge3ce6f0+e3ce6f0   → "e3ce6f0"
-//   v0.28.6+e3ce6f0               → "e3ce6f0"
-//   v0.30.0-rc.1-3-gabcdef+abcdef → "abcdef"
-//   no-plus                       → "unknown" (fallback)
-//   ""                            → "unknown" (empty)
+//
+//	v0.28.6-21-ge3ce6f0+e3ce6f0   → "e3ce6f0"
+//	v0.28.6+e3ce6f0               → "e3ce6f0"
+//	v0.30.0-rc.1-3-gabcdef+abcdef → "abcdef"
+//	no-plus                       → "unknown" (fallback)
+//	""                            → "unknown" (empty)
 func TestShortSHA(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -57,14 +58,15 @@ func TestShortSHA(t *testing.T) {
 //
 // Format coverage (matches the live cases + every
 // documented BuildVersion shape):
-//   "v1.5.0"                     → "v1.5.0"            (clean tag, untouched)
-//   "v1.5.0-3-gabc1234"          → "v1.5.0-3-gabc1234" (describe-style, untouched)
-//   "v1.5.0+abc1234"             → "v1.5.0"            (tag + commit, strip +...)
-//   "v1.5.0-3-gabc1234+abc1234"  → "v1.5.0-3-gabc1234" (describe + dup, strip +...)
-//   "e2d0b9e+e2d0b9e"            → "e2d0b9e"           (untagged deploy, strip +...)
-//   "ve2d0b9e+e2d0b9e"           → "e2d0b9e"           (operator live 2026-09-04, strip +... + v)
-//   "abc1234"                    → "abc1234"           (raw SHA, untouched)
-//   ""                           → ""                  (no-op)
+//
+//	"v1.5.0"                     → "v1.5.0"            (clean tag, untouched)
+//	"v1.5.0-3-gabc1234"          → "v1.5.0-3-gabc1234" (describe-style, untouched)
+//	"v1.5.0+abc1234"             → "v1.5.0"            (tag + commit, strip +...)
+//	"v1.5.0-3-gabc1234+abc1234"  → "v1.5.0-3-gabc1234" (describe + dup, strip +...)
+//	"e2d0b9e+e2d0b9e"            → "e2d0b9e"           (untagged deploy, strip +...)
+//	"ve2d0b9e+e2d0b9e"           → "e2d0b9e"           (operator live 2026-09-04, strip +... + v)
+//	"abc1234"                    → "abc1234"           (raw SHA, untouched)
+//	""                           → ""                  (no-op)
 func TestGitRefForBuildLabel(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -79,8 +81,8 @@ func TestGitRefForBuildLabel(t *testing.T) {
 		{"operator-live-2026-09-04", "ve2d0b9e+e2d0b9e", "e2d0b9e"},
 		{"raw-sha", "abc1234", "abc1234"},
 		{"empty", "", ""},
-		{"v-prefix-untagged-only", "ve2d0b9e", "e2d0b9e"},  // defense-in-depth: v + hex
-		{"v-prefix-semver-untouched", "v1.5.0", "v1.5.0"},  // semver: dot is not hex, keep v
+		{"v-prefix-untagged-only", "ve2d0b9e", "e2d0b9e"}, // defense-in-depth: v + hex
+		{"v-prefix-semver-untouched", "v1.5.0", "v1.5.0"}, // semver: dot is not hex, keep v
 		{"prerelease-with-plus", "v2.0.0-beta.1+meta", "v2.0.0-beta.1"},
 		{"long-sha-untouched", "abcdef1234567890", "abcdef1234567890"},
 		{"uppercase-hex-with-v-stripped", "vABCDEF1", "ABCDEF1"}, // mixed-case hex IS hex → "v" stripped
@@ -165,7 +167,7 @@ func TestIsAllHex(t *testing.T) {
 		{"ABCDEF1", true},
 		{"0123456789abcdefABCDEF", true},
 		{"xyz", false},
-		{"1.5.0", false},  // dot is not hex
+		{"1.5.0", false},    // dot is not hex
 		{"abc-1234", false}, // dash is not hex
 		{"abc 1234", false}, // space is not hex
 		{"abc!", false},     // punctuation is not hex

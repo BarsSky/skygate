@@ -38,10 +38,10 @@ import (
 // row came from. They're stringified for the JSON /
 // template + the ?source= query filter.
 const (
-	AuditSourceAll        = ""             // show all sources
-	AuditSourceAuditLog   = "audit_log"    // legacy audit_log table
-	AuditSourceCluster    = "cluster_audit" // B195 cluster_audit table
-	AuditSourceLimitDefault = 200           // rows per page
+	AuditSourceAll          = ""              // show all sources
+	AuditSourceAuditLog     = "audit_log"     // legacy audit_log table
+	AuditSourceCluster      = "cluster_audit" // B195 cluster_audit table
+	AuditSourceLimitDefault = 200             // rows per page
 )
 
 // AuditEntry is the unified row shape (the template
@@ -55,21 +55,21 @@ const (
 //     "cluster_invite", "cluster_database") and
 //     TargetID is the natural key (hostname,
 //     invite_id, etc.). Empty for pre-B221 rows
-//     + for legacy call sites that still use the
+//   - for legacy call sites that still use the
 //     5-arg AppendAuditLog.
 //   - For cluster_audit rows: TargetType is
 //     always "cluster_node" and TargetID is the
 //     target_node_id.
 type AuditEntry struct {
-	Source      string // "audit_log" or "cluster_audit"
-	Time        string // formatted RFC3339-ish
-	Actor       string // username (audit_log) or actor (cluster_audit)
-	Action      string
-	Target      string // DEPRECATED — use TargetType + TargetID. Kept for the B207 view.
-	TargetType  string // B221 — discriminator (e.g. "cluster_node", "cluster_invite", "")
-	TargetID    string // B221 — entity id (e.g. hostname, invite_id, "")
-	Detail      string // raw text (audit_log) or JSONB->text (cluster_audit)
-	Result      string // "" (audit_log) or "ok"/"error" (cluster_audit)
+	Source       string // "audit_log" or "cluster_audit"
+	Time         string // formatted RFC3339-ish
+	Actor        string // username (audit_log) or actor (cluster_audit)
+	Action       string
+	Target       string // DEPRECATED — use TargetType + TargetID. Kept for the B207 view.
+	TargetType   string // B221 — discriminator (e.g. "cluster_node", "cluster_invite", "")
+	TargetID     string // B221 — entity id (e.g. hostname, invite_id, "")
+	Detail       string // raw text (audit_log) or JSONB->text (cluster_audit)
+	Result       string // "" (audit_log) or "ok"/"error" (cluster_audit)
 	ErrorMessage string // "" (audit_log) or error_message (cluster_audit)
 }
 
@@ -409,11 +409,11 @@ func normalizeSourceFilter(s string) string {
 // (or policy.ssh[]). We parse the full shape so the template
 // can show a categorised table view instead of the raw JSON blob.
 type ACLGrant struct {
-	Src     []string `json:"src"`
-	Dst     []string `json:"dst"`
-	IP      []string `json:"ip,omitempty"`
-	Via     []string `json:"via,omitempty"`
-	Users   []string `json:"users,omitempty"` // only for SSH rules
+	Src   []string `json:"src"`
+	Dst   []string `json:"dst"`
+	IP    []string `json:"ip,omitempty"`
+	Via   []string `json:"via,omitempty"`
+	Users []string `json:"users,omitempty"` // only for SSH rules
 }
 
 // ACLCategory groups grants by purpose. The category ID is
@@ -450,31 +450,31 @@ type ACLPolicyView struct {
 // Categories:
 //
 //   - per_user_main:    src contains user@host AND dst contains
-//                       h-user-X-subnet. The "main" grant each
-//                       portal user gets on adoption.
+//     h-user-X-subnet. The "main" grant each
+//     portal user gets on adoption.
 //   - per_user_self:    src contains user@host AND dst contains
-//                       user@host:* (self-access only, no subnet).
-//                       Falls back from per_user_main when the
-//                       user's subnet isn't allocated.
+//     user@host:* (self-access only, no subnet).
+//     Falls back from per_user_main when the
+//     user's subnet isn't allocated.
 //   - per_device_inet:  src is a single tag:dev-X-Y, dst contains
-//                       autogroup:internet, no h-rule. The
-//                       "default internet" grant most devices get.
+//     autogroup:internet, no h-rule. The
+//     "default internet" grant most devices get.
 //   - cidr_outbound:    dst contains h-rule-X-Y (per-IP CIDR
-//                       access). The hundreds of granular grants
-//                       that route specific IP ranges through
-//                       specific exit nodes via tag:dev-infra-*.
-//                       Sub-grouped by the first `via` tag in
-//                       the template (one row per exit-node).
+//     access). The hundreds of granular grants
+//     that route specific IP ranges through
+//     specific exit nodes via tag:dev-infra-*.
+//     Sub-grouped by the first `via` tag in
+//     the template (one row per exit-node).
 //   - infra_mesh:       src is tag:dev-infra-* AND dst contains
-//                       tag:dev-infra-*. The mesh between exit
-//                       nodes themselves.
+//     tag:dev-infra-*. The mesh between exit
+//     nodes themselves.
 //   - tag_mesh:         both src and dst are tag:dev-* (per-device
-//                       tag-to-tag access within a user's fleet)
-//                       but not matching the buckets above.
+//     tag-to-tag access within a user's fleet)
+//     but not matching the buckets above.
 //   - wildcard:         either src or dst contains "*". Catch-all
-//                       default-allow rules.
+//     default-allow rules.
 //   - other:            fallback for anything that doesn't match
-//                       (reported as `other` for visibility).
+//     (reported as `other` for visibility).
 func classifyGrantID(g ACLGrant) string {
 	src := g.Src
 	dst := g.Dst

@@ -6,11 +6,11 @@
 // even though the subnets were literally the
 // resolved-from-this-domain rows. B184 closes the gap:
 //
-//   DOMAIN rule status = "approved" iff AT LEAST ONE of its
-//   resolved subnets (device_rules rows with parent_domain
-//   = this rule's target_value, same (user, device, exit)
-//   triple) is in headscale ApprovedRoutes for the rule's
-//   ExitNode.
+//	DOMAIN rule status = "approved" iff AT LEAST ONE of its
+//	resolved subnets (device_rules rows with parent_domain
+//	= this rule's target_value, same (user, device, exit)
+//	triple) is in headscale ApprovedRoutes for the rule's
+//	ExitNode.
 //
 // The tests cover the 6 critical paths (resolved+approved,
 // resolved+none-in-headscale, no-resolved, cross-tuple
@@ -101,7 +101,7 @@ func TestRuleApprovedInHeadscale_B184_CrossTupleIsolation(t *testing.T) {
 		"1:9:karolina:youtube.com": {"8.8.8.0/24": true}, // skyworker's karolina
 	}
 	approvedByExitNode := map[string]map[string]bool{
-		"karolina": {"8.8.8.0/24": true}, // karolina has 8.8.8.0/24
+		"karolina": {"8.8.8.0/24": true},              // karolina has 8.8.8.0/24
 		"emilia":   {"0.0.0.0/0": true, "::/0": true}, // emilia has no 8.8.8.0/24
 	}
 	if ruleApprovedInHeadscale(rule, approvedByExitNode, resolved) {

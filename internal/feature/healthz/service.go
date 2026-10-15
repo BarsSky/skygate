@@ -26,27 +26,27 @@ import (
 //
 // Field semantics:
 //   - DB:        the open *sql.DB. Required (liveness will fail
-//                otherwise — see /readyz).
+//     otherwise — see /readyz).
 //   - HeadscaleFn: a function that returns the current headscale
-//                client (nil if disabled). Modeled as a function
-//                (not a *headscale.Client) so the Service
-//                re-reads the active client on every probe —
-//                a v0.12.0+ per-user headscale swap doesn't
-//                leave the readiness probe stuck on a stale
-//                client. Passed as a method value (e.g.
-//                `app.HSGlobal`).
+//     client (nil if disabled). Modeled as a function
+//     (not a *headscale.Client) so the Service
+//     re-reads the active client on every probe —
+//     a v0.12.0+ per-user headscale swap doesn't
+//     leave the readiness probe stuck on a stale
+//     client. Passed as a method value (e.g.
+//     `app.HSGlobal`).
 //   - Availability: optional v0.33.1.40 B92 background checker.
-//                When non-nil, the headscale/headplane/tailscale
-//                fields in /readyz are read from the CACHED
-//                snapshot (refreshed every 30s by the checker)
-//                instead of synchronously probing headscale
-//                on every scrape. The headscale field is still
-//                used as the per-component summary; the full
-//                snapshot is included under `availability` for
-//                callers that want latency / last_checked /
-//                error details.
+//     When non-nil, the headscale/headplane/tailscale
+//     fields in /readyz are read from the CACHED
+//     snapshot (refreshed every 30s by the checker)
+//     instead of synchronously probing headscale
+//     on every scrape. The headscale field is still
+//     used as the per-component summary; the full
+//     snapshot is included under `availability` for
+//     callers that want latency / last_checked /
+//     error details.
 //   - InstanceID: the SKYGATE_INSTANCE_ID env value, or
-//                "unconfigured".
+//     "unconfigured".
 //   - BuildVersion: "vX.Y.Z+<commit>" set by main.go at boot.
 //   - StartedAt:  wall-clock when main() returned from setup.
 type Service struct {

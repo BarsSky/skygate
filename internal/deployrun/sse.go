@@ -31,7 +31,7 @@ import (
 type EventType string
 
 const (
-	EventRunStarted  EventType = "run_started"
+	EventRunStarted   EventType = "run_started"
 	EventStepStarted  EventType = "step_started"
 	EventStepLog      EventType = "step_log"
 	EventStepFinished EventType = "step_finished"

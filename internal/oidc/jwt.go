@@ -23,7 +23,7 @@ const (
 	ClaimNotBefore         = "nbf"
 	ClaimNonce             = "nonce"
 	ClaimEmail             = "email"
-	ClaimName               = "name"
+	ClaimName              = "name"
 	ClaimPreferredUsername = "preferred_username"
 )
 
@@ -40,7 +40,7 @@ type IDTokenClaims struct {
 	IssuedAt          int64  `json:"iat"`
 	Nonce             string `json:"nonce,omitempty"`
 	Email             string `json:"email"`
-	Name               string `json:"name,omitempty"`
+	Name              string `json:"name,omitempty"`
 	PreferredUsername string `json:"preferred_username"`
 }
 
@@ -77,7 +77,7 @@ func (s *Service) signIDToken(claims IDTokenClaims) (string, error) {
 		ClaimExpiry:            claims.Expiry,
 		ClaimIssuedAt:          claims.IssuedAt,
 		ClaimEmail:             claims.Email,
-		ClaimName:               claims.Name,
+		ClaimName:              claims.Name,
 		ClaimPreferredUsername: claims.PreferredUsername,
 	}
 	if claims.Nonce != "" {
@@ -99,14 +99,14 @@ func (s *Service) signIDToken(claims IDTokenClaims) (string, error) {
 // contain user claims).
 //
 // B161.3 chose embed-over-fetch because:
-//   1. /userinfo is the ONLY consumer of the
-//      access_token (headscale doesn't use it
-//      for anything else)
-//   2. The 1h TTL bounds the staleness window
-//      if the user's email changes after the
-//      token was issued
-//   3. A future B-check can switch to a DB
-//      re-fetch if the operator asks for it
+//  1. /userinfo is the ONLY consumer of the
+//     access_token (headscale doesn't use it
+//     for anything else)
+//  2. The 1h TTL bounds the staleness window
+//     if the user's email changes after the
+//     token was issued
+//  3. A future B-check can switch to a DB
+//     re-fetch if the operator asks for it
 func (s *Service) signAccessToken(issuer, subject, audience, scope, email, name, preferredUsername string, exp, iat int64) (string, error) {
 	if s.Issuer() == "" {
 		return "", errors.New("oidc: issuer not configured")
@@ -146,13 +146,13 @@ func (s *Service) signAccessToken(issuer, subject, audience, scope, email, name,
 //
 // We re-parse the JWT in /userinfo rather than
 // using a server-side session store because:
-//   1. /userinfo is the ONLY place access_token
-//      is consumed (headscale doesn't use it for
-//      anything else)
-//   2. Stateless = no shared state between skygate
-//      instances (important for HA later)
-//   3. The access_token has a short TTL (1h) so
-//      the window for a leaked token is small
+//  1. /userinfo is the ONLY place access_token
+//     is consumed (headscale doesn't use it for
+//     anything else)
+//  2. Stateless = no shared state between skygate
+//     instances (important for HA later)
+//  3. The access_token has a short TTL (1h) so
+//     the window for a leaked token is small
 func (s *Service) parseAccessToken(tokenString string) (jwt.MapClaims, error) {
 	ks := s.KeysRef().ActiveKey()
 	if ks == nil {

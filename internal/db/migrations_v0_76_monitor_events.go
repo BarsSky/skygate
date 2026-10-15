@@ -12,12 +12,12 @@
 //
 // The table is deliberately SEPARATE from the per-user `notifications` table
 // (V059, B157):
-//   * those rows are per-user and disappear with the user; these are per-INSTALL
+//   - those rows are per-user and disappear with the user; these are per-INSTALL
 //     and belong to the operator's view of the system;
-//   * a monitoring event needs DEDUPLICATION (a recurring failure must update one
+//   - a monitoring event needs DEDUPLICATION (a recurring failure must update one
 //     row with repeats/last_seen, not flood the list) and a RESOLVED state, which
 //     a per-user inbox has no concept of;
-//   * an event can exist before any user is known (boot-time checks), and the
+//   - an event can exist before any user is known (boot-time checks), and the
 //     per-user table has a NOT NULL foreign key to portal_users.
 //
 // fingerprint is the dedup key (`<source>:<subject>:<kind>`), UNIQUE so the

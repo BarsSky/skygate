@@ -19,16 +19,16 @@
 //     and doesn't pull).
 //
 // Migration path (one-time, manual):
-//   1. Stop skygate: `docker compose down skygate`
-//   2. Switch compose file:
-//        mv docker-compose.yml docker-compose.yml.local
-//        mv docker-compose.ghcr.yml docker-compose.yml
-//   3. Set SKYGATE_IMAGE in .env:
-//        SKYGATE_IMAGE=ghcr.io/barssky/skygate:v1.5.4
-//   4. First pull + start:
-//        docker compose pull skygate
-//        docker compose up -d skygate
-//   5. From now on: /admin/update → "Pull image" button.
+//  1. Stop skygate: `docker compose down skygate`
+//  2. Switch compose file:
+//     mv docker-compose.yml docker-compose.yml.local
+//     mv docker-compose.ghcr.yml docker-compose.yml
+//  3. Set SKYGATE_IMAGE in .env:
+//     SKYGATE_IMAGE=ghcr.io/barssky/skygate:v1.5.4
+//  4. First pull + start:
+//     docker compose pull skygate
+//     docker compose up -d skygate
+//  5. From now on: /admin/update → "Pull image" button.
 //
 // After migration, /admin/update shows a "Pull image" button
 // in addition to the existing "Push update" (git+build) button.

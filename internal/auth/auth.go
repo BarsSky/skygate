@@ -2,8 +2,8 @@ package auth
 
 import (
 	"crypto/rand"
-	"fmt"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -11,9 +11,9 @@ import (
 )
 
 type Claims struct {
-	UserID    int64  `json:"uid"`
-	Username  string `json:"usr"`
-	IsAdmin   bool   `json:"adm"`
+	UserID   int64  `json:"uid"`
+	Username string `json:"usr"`
+	IsAdmin  bool   `json:"adm"`
 	jwt.RegisteredClaims
 }
 
@@ -42,7 +42,6 @@ func GenerateAPIToken() (string, string) {
 func CheckAPIToken(hash, token string) bool {
 	return CheckPassword(hash, token)
 }
-
 
 func IssueJWT(secret string, userID int64, username string, isAdmin bool, ttlHours int) (string, error) {
 	c := Claims{

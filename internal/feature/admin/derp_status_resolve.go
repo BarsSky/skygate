@@ -44,15 +44,15 @@ import (
 // other non-standard ports.
 //
 // Resolution order (first non-empty wins) — B260.2.3 fix:
-//   1. Bundled derp_relays row's URL port (the DB is the source of
-//      truth for what /admin/derp/relays/derpmap.json publishes to
-//      headscale — and it's editable via the web UI, so it stays in
-//      sync with reality)
-//   2. DERP_HTTP_PORT env var (legacy override; pre-B260.2.3 the env
-//      took priority and the stale value `:8443` from the pre-B-derper-cert
-//      systemd era masked the correct `:443` even after B260's
-//      ORDER BY id ASC LIMIT 1 fix)
-//   3. "443" — historical default; caller treats empty as "443"
+//  1. Bundled derp_relays row's URL port (the DB is the source of
+//     truth for what /admin/derp/relays/derpmap.json publishes to
+//     headscale — and it's editable via the web UI, so it stays in
+//     sync with reality)
+//  2. DERP_HTTP_PORT env var (legacy override; pre-B260.2.3 the env
+//     took priority and the stale value `:8443` from the pre-B-derper-cert
+//     systemd era masked the correct `:443` even after B260's
+//     ORDER BY id ASC LIMIT 1 fix)
+//  3. "443" — historical default; caller treats empty as "443"
 //
 // Returns "" if both DB and env lookups failed. Caller should fall
 // back to "443" rather than treating "" as a real port.

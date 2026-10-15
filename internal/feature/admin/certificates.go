@@ -104,14 +104,14 @@ type certificatesPageData struct {
 // "current cert" card. DaysLeft is negative if the
 // cert has already expired.
 type certDisplayInfo struct {
-	Subject    string
-	Issuer     string
-	NotBefore  string
-	NotAfter   string
-	DaysLeft   int
-	SHA256     string
+	Subject     string
+	Issuer      string
+	NotBefore   string
+	NotAfter    string
+	DaysLeft    int
+	SHA256      string
 	IssuerChain []string
-	DNSNames   []string
+	DNSNames    []string
 }
 
 // certAuditEvent is one row of the "Recent events"
@@ -327,13 +327,13 @@ func readLocalCertInfo(path string) (*certDisplayInfo, error) {
 	}
 	h := sha256.Sum256(raw)
 	return &certDisplayInfo{
-		Subject:    cert.Subject.String(),
-		Issuer:     cert.Issuer.String(),
-		NotBefore:  cert.NotBefore.Format("2006-01-02 15:04 MST"),
-		NotAfter:   cert.NotAfter.Format("2006-01-02 15:04 MST"),
-		DaysLeft:   int(time.Until(cert.NotAfter).Hours() / 24),
-		SHA256:     hex.EncodeToString(h[:]),
-		DNSNames:   cert.DNSNames,
+		Subject:     cert.Subject.String(),
+		Issuer:      cert.Issuer.String(),
+		NotBefore:   cert.NotBefore.Format("2006-01-02 15:04 MST"),
+		NotAfter:    cert.NotAfter.Format("2006-01-02 15:04 MST"),
+		DaysLeft:    int(time.Until(cert.NotAfter).Hours() / 24),
+		SHA256:      hex.EncodeToString(h[:]),
+		DNSNames:    cert.DNSNames,
 		IssuerChain: certChainStrings(cert),
 	}, nil
 }

@@ -37,20 +37,20 @@ func TestButlerEnvelope_AllZones(t *testing.T) {
 		"Footer hint here",
 	)
 	for _, want := range []string{
-		"🪶",                       // butler feather icon
-		"═══ Skygate ═══",         // opening gate
+		"🪶",               // butler feather icon
+		"═══ Skygate ═══", // opening gate
 		// Greeting: any time-of-day bucket ("Доброе утро" /
 		// "Добрый день" / "Добрый вечер" / "Доброй ночи")
 		// depending on the test machine's local hour. We
 		// check the common "Добр" prefix instead of pinning
 		// one bucket, which would flake on CI / local.
 		"Добр",
-		"admin",                  // username
-		"<b>Title here</b>",        // title in <b>
+		"admin",             // username
+		"<b>Title here</b>", // title in <b>
 		"<blockquote>Subheader here</blockquote>", // subheader in blockquote
-		"<pre>key</pre>",            // body kept verbatim
-		"<i>Footer hint here</i>",   // footer in <i>
-		"═══ — Ваш Дворецкий ═══",   // closing gate with signoff
+		"<pre>key</pre>",          // body kept verbatim
+		"<i>Footer hint here</i>", // footer in <i>
+		"═══ — Ваш Дворецкий ═══", // closing gate with signoff
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("envelope missing %q\ngot:\n%s", want, got)
@@ -145,12 +145,12 @@ func TestButlerEnvelope_WithUrgency(t *testing.T) {
 		icon    string
 		wantPre string
 	}{
-		{UrgencyNormal, "", "🪶"},               // default icon, no mark
-		{UrgencyNormal, "🔑", "🔑"},             // icon, no mark
-		{UrgencyWarning, "", "🪶!"},              // default icon, warning
-		{UrgencyWarning, "🔑", "🔑!"},            // icon, warning
-		{UrgencyCritical, "", "🪶!!"},            // default icon, critical
-		{UrgencyCritical, "🛡", "🛡!!"},          // icon, critical
+		{UrgencyNormal, "", "🪶"},      // default icon, no mark
+		{UrgencyNormal, "🔑", "🔑"},     // icon, no mark
+		{UrgencyWarning, "", "🪶!"},    // default icon, warning
+		{UrgencyWarning, "🔑", "🔑!"},   // icon, warning
+		{UrgencyCritical, "", "🪶!!"},  // default icon, critical
+		{UrgencyCritical, "🛡", "🛡!!"}, // icon, critical
 	}
 	for _, c := range cases {
 		var opts []ButlerOpt
@@ -176,9 +176,9 @@ func TestButlerEnvelope_WithUrgency(t *testing.T) {
 // follows the hour of the day in the user's locale.
 func TestButlerEnvelope_TimeOfDayGreeting(t *testing.T) {
 	cases := []struct {
-		hour   int
-		ruKey  string
-		enKey  string
+		hour  int
+		ruKey string
+		enKey string
 	}{
 		{7, "Доброе утро", "Good morning"},
 		{13, "Добрый день", "Good afternoon"},

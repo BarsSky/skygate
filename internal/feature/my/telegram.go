@@ -433,17 +433,17 @@ func loadMyTelegramState(d *sql.DB, userID int64, _ string) (myTelegramState, er
 		case t.UsedAt > 0:
 			state.RecentTokens = append(state.RecentTokens, myTelegramTokenView{
 				TelegramLoginToken: t,
-				Status:            "used",
+				Status:             "used",
 			})
 		case t.ExpiresAt <= now:
 			state.RecentTokens = append(state.RecentTokens, myTelegramTokenView{
 				TelegramLoginToken: t,
-				Status:            "expired",
+				Status:             "expired",
 			})
 		default:
 			state.RecentTokens = append(state.RecentTokens, myTelegramTokenView{
 				TelegramLoginToken: t,
-				Status:            "active",
+				Status:             "active",
 			})
 		}
 	}

@@ -19,26 +19,26 @@
 //     that an operator-set "0 4 * * 0" schedule is never more than
 //     ~30s late.
 //   - On each tick:
-//       1. Read backup.in_app_verify_enabled from global_settings.
-//       2. Read backup.verify_schedule (cron expression).
-//       3. Check if (a) the schedule is due this tick, (b) the
-//          schedule wasn't already triggered for this HH:MM today
-//          (we track backup.last_verify_at — same minute dedup
-//          pattern as B130's update_schedule_last_run).
+//     1. Read backup.in_app_verify_enabled from global_settings.
+//     2. Read backup.verify_schedule (cron expression).
+//     3. Check if (a) the schedule is due this tick, (b) the
+//     schedule wasn't already triggered for this HH:MM today
+//     (we track backup.last_verify_at — same minute dedup
+//     pattern as B130's update_schedule_last_run).
 //   - On trigger:
-//       - Spawn the existing scripts/verify_backup.sh as a
-//         subprocess (don't re-implement the verify logic — it's
-//         a 170-line bash script that handles the throwaway
-//         postgres + dump replay + table-count assertion).
-//       - The script itself calls `skygate backup-verify-ok/fail`
-//         which writes the status to global_settings. We just
-//         wait for the exit code and send a Telegram alert on
-//         failure.
-//       - On non-zero exit: NOTIFY the operator via SendAlert
-//         with the tail of the script's stderr (last 30 lines,
-//         truncated to 1500 chars).
-//       - On zero exit: silent — the verify-script's own stdout
-//         (and the /admin/backup page) show the success.
+//   - Spawn the existing scripts/verify_backup.sh as a
+//     subprocess (don't re-implement the verify logic — it's
+//     a 170-line bash script that handles the throwaway
+//     postgres + dump replay + table-count assertion).
+//   - The script itself calls `skygate backup-verify-ok/fail`
+//     which writes the status to global_settings. We just
+//     wait for the exit code and send a Telegram alert on
+//     failure.
+//   - On non-zero exit: NOTIFY the operator via SendAlert
+//     with the tail of the script's stderr (last 30 lines,
+//     truncated to 1500 chars).
+//   - On zero exit: silent — the verify-script's own stdout
+//     (and the /admin/backup page) show the success.
 //
 // Failure modes:
 //   - DB read error on the schedule keys → tick is a no-op

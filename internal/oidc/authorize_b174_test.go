@@ -23,11 +23,11 @@ import (
 //
 // The 5 subtests below cover the 5 critical paths:
 //
-//   1. Valid JWT → skygateSession with the claims
-//   2. Missing cookie → nil
-//   3. Empty cookie → nil
-//   4. Invalid JWT (bad signature) → nil
-//   5. Expired JWT → nil
+//  1. Valid JWT → skygateSession with the claims
+//  2. Missing cookie → nil
+//  3. Empty cookie → nil
+//  4. Invalid JWT (bad signature) → nil
+//  5. Expired JWT → nil
 func TestReadSession_ParsesJWT(t *testing.T) {
 	const secret = "b174-test-secret"
 	s := &Service{JWTSecret: secret}

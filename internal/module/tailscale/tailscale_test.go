@@ -48,10 +48,10 @@ type runnerMock struct {
 }
 
 type mockResponse struct {
-	stdout  string
-	stderr  string
-	exit    int
-	err     error
+	stdout string
+	stderr string
+	exit   int
+	err    error
 }
 
 type mockCall struct {

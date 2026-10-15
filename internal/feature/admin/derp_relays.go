@@ -49,12 +49,13 @@ import (
 // gated by a "derp.relays_migrated"=1 global_settings marker.
 //
 // Renders admin/derp_relays.html with:
-//   .Relays          []db.DerpRelay
-//   .FlashSuccess    string (from ?ok=)
-//   .FlashError      string (from ?err=)
-//   .LastTestResult  *db.DerpRelay (id+latency_ms of the
-//                    most recent /test POST, so the operator
-//                    sees the test result inline)
+//
+//	.Relays          []db.DerpRelay
+//	.FlashSuccess    string (from ?ok=)
+//	.FlashError      string (from ?err=)
+//	.LastTestResult  *db.DerpRelay (id+latency_ms of the
+//	                 most recent /test POST, so the operator
+//	                 sees the test result inline)
 func (s *Service) GetAdminDerpRelays(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {

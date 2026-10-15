@@ -9,10 +9,10 @@
 //
 // B237.21 adds:
 //
-//   skygate regapi-credentials set      --login=X --password=Y --zone=Z --cert-path=P [--key-path=K] [--provider=external]
-//   skygate regapi-credentials show     (prints current creds with the secret fields masked)
-//   skygate regapi-credentials test     (calls /api/v1/<...>/zone/get_resource_records against the live provider)
-//   skygate regapi-credentials delete   (clears the stored creds; the cert/password rows + the plaintext rows)
+//	skygate regapi-credentials set      --login=X --password=Y --zone=Z --cert-path=P [--key-path=K] [--provider=external]
+//	skygate regapi-credentials show     (prints current creds with the secret fields masked)
+//	skygate regapi-credentials test     (calls /api/v1/<...>/zone/get_resource_records against the live provider)
+//	skygate regapi-credentials delete   (clears the stored creds; the cert/password rows + the plaintext rows)
 //
 // All four verbs share the same dispatcher
 // (runRegAPICredsSubcommand) + the same Store / Load
@@ -30,11 +30,12 @@
 // the password into the shell history).
 //
 // Exit codes:
-//   0 = success (the requested verb completed)
-//   1 = error (the error is printed to stderr with
-//       enough context for the operator to fix and retry)
-//   2 = invalid args (the flag parser returns
-//       flag.ErrHelp which the dispatcher treats as 2)
+//
+//	0 = success (the requested verb completed)
+//	1 = error (the error is printed to stderr with
+//	    enough context for the operator to fix and retry)
+//	2 = invalid args (the flag parser returns
+//	    flag.ErrHelp which the dispatcher treats as 2)
 package main
 
 import (
@@ -90,11 +91,12 @@ func runRegAPICredsSubcommand(args []string) error {
 // `--import-file=path.json`.
 //
 // Example:
-//   skygate regapi-credentials set \
-//     --login=kanagaenko@mail.ru \
-//     --password='<the alternative password>' \
-//     --zone=skynas.ru \
-//     --cert-path=/home/skyadmin/skygate-secrets/regapi/cert.pem
+//
+//	skygate regapi-credentials set \
+//	  --login=kanagaenko@mail.ru \
+//	  --password='<the alternative password>' \
+//	  --zone=skynas.ru \
+//	  --cert-path=/home/skyadmin/skygate-secrets/regapi/cert.pem
 func runRegAPICredsSet(args []string) error {
 	fs := flag.NewFlagSet("regapi-credentials set", flag.ExitOnError)
 	login := fs.String("login", os.Getenv("SKYGATE_DNS_REGAPI_LOGIN"), "reg.ru login (env fallback: SKYGATE_DNS_REGAPI_LOGIN)")

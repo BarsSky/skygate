@@ -118,10 +118,10 @@ type RenameMigration struct {
 // classification is the unit-testable surface
 // (mirrors B229's PlanDevicePrefChange).
 type RenameOrphanCandidate struct {
-	UserID           int64
-	Username         string
-	Hostname         string
-	ExitNodeTag      string
+	UserID      int64
+	Username    string
+	Hostname    string
+	ExitNodeTag string
 	// HasNodeOwnerMapRow is true if (user, hostname) is
 	// in node_owner_map. Computed by the caller.
 	HasNodeOwnerMapRow bool
@@ -323,12 +323,12 @@ func (s *Service) MigrateRenamedDevicePrefs(ctx context.Context, n ReconcilerNot
 // PlanDevicePrefChange split).
 //
 // Lookups:
-//   1. node_owner_map.tagged_by_user_id = $1 AND
-//      LOWER(hostname) = LOWER($2) → IsRowPresent
-//   2. node_owner_map.tagged_by_user_id = $1 AND tag
-//      = $3 AND LOWER(hostname) <> LOWER($2) → the
-//      rename candidates (hostnames that share the
-//      same tag under the same user)
+//  1. node_owner_map.tagged_by_user_id = $1 AND
+//     LOWER(hostname) = LOWER($2) → IsRowPresent
+//  2. node_owner_map.tagged_by_user_id = $1 AND tag
+//     = $3 AND LOWER(hostname) <> LOWER($2) → the
+//     rename candidates (hostnames that share the
+//     same tag under the same user)
 //
 // We LOWER both sides so the rename-detection
 // tolerates case drift in node_owner_map (the B77

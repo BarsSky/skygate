@@ -42,7 +42,7 @@ func UndeclaredTags(policy string) ([]string, error) {
 		return nil, err
 	}
 	var doc struct {
-		TagOwners map[string]json.RawMessage `json:"tagOwners"`
+		TagOwners map[string]json.RawMessage   `json:"tagOwners"`
 		Grants    []map[string]json.RawMessage `json:"grants"`
 		ACLs      []map[string]json.RawMessage `json:"acls"`
 	}

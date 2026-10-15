@@ -10,14 +10,14 @@ import (
 
 func TestParseLibpqDSN(t *testing.T) {
 	cases := []struct {
-		name     string
-		dsn      string
-		host     string
-		port     string
-		dbname   string
-		user     string
-		sslmode  string
-		wantOK   bool
+		name    string
+		dsn     string
+		host    string
+		port    string
+		dbname  string
+		user    string
+		sslmode string
+		wantOK  bool
 	}{
 		{
 			name:    "standard",
@@ -30,20 +30,20 @@ func TestParseLibpqDSN(t *testing.T) {
 			wantOK:  true,
 		},
 		{
-			name:    "no password",
-			dsn:     "postgres://skyadmin@host/db",
-			host:    "host",
-			dbname:  "db",
-			user:    "skyadmin",
-			wantOK:  true,
+			name:   "no password",
+			dsn:    "postgres://skyadmin@host/db",
+			host:   "host",
+			dbname: "db",
+			user:   "skyadmin",
+			wantOK: true,
 		},
 		{
-			name:    "no port",
-			dsn:     "postgres://u@h/d",
-			host:    "h",
-			dbname:  "d",
-			user:    "u",
-			wantOK:  true,
+			name:   "no port",
+			dsn:    "postgres://u@h/d",
+			host:   "h",
+			dbname: "d",
+			user:   "u",
+			wantOK: true,
 		},
 		{
 			name:   "no scheme",

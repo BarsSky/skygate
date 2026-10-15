@@ -10,16 +10,16 @@
 // устройства").
 //
 // Root cause: node_owner_map had no row for the node.
-//   * PostAdminDeviceTransfer required the row it exists to create.
-//   * PostAdminNodeTag recorded ownership only when headscale named a user AND
+//   - PostAdminDeviceTransfer required the row it exists to create.
+//   - PostAdminNodeTag recorded ownership only when headscale named a user AND
 //     the row already existed (the `tagged-devices` branch used an UPDATE), so
 //     the tag landed in headscale while skygate stayed blind to the device.
 //
 // The tests below drive the REAL handlers against an in-memory SQLite DB and a
 // fake headscale REST server, and assert the operator-visible contract:
-//   * a missing row is treated as "ownerless" — the transfer/adoption succeeds
-//   * the node_owner_map row (with hostname) is written
-//   * every refusal is a 303 flash on /admin/devices, never a raw error page
+//   - a missing row is treated as "ownerless" — the transfer/adoption succeeds
+//   - the node_owner_map row (with hostname) is written
+//   - every refusal is a 303 flash on /admin/devices, never a raw error page
 package admin
 
 import (

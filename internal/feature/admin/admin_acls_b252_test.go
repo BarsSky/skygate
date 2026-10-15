@@ -232,12 +232,12 @@ func TestParseACLPolicy_EmptyString(t *testing.T) {
 // default).
 func TestUnescapeHTML(t *testing.T) {
 	cases := map[string]string{
-		`&#34;hello&#34;`:     `"hello"`,
-		`&amp;`:            `&`,
-		`&lt;tag&gt;`:       `<tag>`,
+		`&#34;hello&#34;`:      `"hello"`,
+		`&amp;`:                `&`,
+		`&lt;tag&gt;`:          `<tag>`,
 		`&#39;apostrophe&#39;`: `'apostrophe'`,
-		`&quot;` + `quoted`: `"quoted`,
-		`no entities`:      `no entities`,
+		`&quot;` + `quoted`:    `"quoted`,
+		`no entities`:          `no entities`,
 	}
 	for in, want := range cases {
 		if got := unescapeHTML(in); got != want {
@@ -263,11 +263,11 @@ func TestParseACLPolicy_LiveVerify(t *testing.T) {
 	}
 
 	want := map[string]int{
-		"per_user_main":    3, // skyadmin, michail, guest
-		"per_user_self":    1, // infra
-		"per_device_inet":  2, // dev tag + tag:public → autogroup:internet
-		"cidr_outbound":    3, // 3 h-rule grants
-		"infra_mesh":       1, // infra-to-infra
+		"per_user_main":   3, // skyadmin, michail, guest
+		"per_user_self":   1, // infra
+		"per_device_inet": 2, // dev tag + tag:public → autogroup:internet
+		"cidr_outbound":   3, // 3 h-rule grants
+		"infra_mesh":      1, // infra-to-infra
 	}
 	got := make(map[string]int)
 	for _, c := range view.Categories {

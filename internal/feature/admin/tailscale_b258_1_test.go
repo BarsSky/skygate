@@ -46,8 +46,8 @@ func TestTailscaleAuthKeyMissingForStart_PathButNoFile(t *testing.T) {
 		t.Fatalf("regular missing file path must NOT report disabled=true")
 	}
 	if !s.tailscaleAuthKeyMissingForStart() {
-		t.Fatalf("regular missing file path MUST report missing=true "+
-			"(this is the B258.1 third state — pre-fix it was silently "+
+		t.Fatalf("regular missing file path MUST report missing=true " +
+			"(this is the B258.1 third state — pre-fix it was silently " +
 			"fall-through to 'enabled' which gave a confusing UI)")
 	}
 }

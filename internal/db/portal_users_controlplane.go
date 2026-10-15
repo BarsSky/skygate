@@ -24,7 +24,7 @@ import (
 )
 
 // ErrNoUserControlPlane is returned by GetUserHeadscaleConfig when
-// the row has no per-user override (url == ''). Callers should
+// the row has no per-user override (url == ”). Callers should
 // treat this as "use the global default" and not an error to
 // surface to the operator — the admin UI uses it to know which
 // rows to render in the "Use default headscale" column.
@@ -165,11 +165,11 @@ func AllUsersHeadscaleConfig(d *sql.DB) ([]PortalUserControlPlaneRow, error) {
 // output. HasOverride is a pre-computed bool (URL != "") so the
 // admin UI doesn't have to repeat the check.
 type PortalUserControlPlaneRow struct {
-	UserID      int64
-	Username    string
-	URL         string
+	UserID       int64
+	Username     string
+	URL          string
 	KeyEncrypted string
-	HasOverride bool
+	HasOverride  bool
 }
 
 // ControlPlaneSummary aggregates the rows from
@@ -182,9 +182,9 @@ type PortalUserControlPlaneRow struct {
 // is "global first, then planes by URL" so the default is
 // always at the top of /admin/control-planes.
 type ControlPlaneSummary struct {
-	URL                string
-	Users              []string // usernames on this plane
-	HealthLastCheck    string   // "ok" / "fail: <err>" / "" (never checked)
+	URL             string
+	Users           []string // usernames on this plane
+	HealthLastCheck string   // "ok" / "fail: <err>" / "" (never checked)
 }
 
 // SummariseControlPlanes groups the per-user rows into per-plane

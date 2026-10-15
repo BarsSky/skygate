@@ -227,10 +227,10 @@ func Run(ctx context.Context, db *sql.DB, mc *MigrationContext) error {
 
 		// Persist step row.
 		stepRow := &MigrationStep{
-			RunID:     mc.RunID,
-			StepName:  step.Name(),
-			Ordinal:   ordinal,
-			Status:    StepPending,
+			RunID:    mc.RunID,
+			StepName: step.Name(),
+			Ordinal:  ordinal,
+			Status:   StepPending,
 		}
 		if err := persistStep(db, stepRow); err != nil {
 			return fmt.Errorf("persist step %s: %w", step.Name(), err)

@@ -116,10 +116,10 @@ func TestReadBackupDirFromStatus_HandlesMalformedJSON(t *testing.T) {
 	cases := []string{
 		"",
 		"not json at all",
-		`{"backup_dir":}`,                                // missing value
-		`{"backup_dir": "no closing brace"`,              // truncated
-		`{"backup_dir": 42}`,                             // wrong type
-		`{"backup_dir": "relative/path"}`,                // not absolute
+		`{"backup_dir":}`,                   // missing value
+		`{"backup_dir": "no closing brace"`, // truncated
+		`{"backup_dir": 42}`,                // wrong type
+		`{"backup_dir": "relative/path"}`,   // not absolute
 	}
 	for i, body := range cases {
 		if err := os.WriteFile(statusFile, []byte(body), 0600); err != nil {

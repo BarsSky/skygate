@@ -26,15 +26,15 @@ import (
 
 func TestBuildDuplicateRedirectURL_AllParamsPresent(t *testing.T) {
 	got := buildDuplicateRedirectURL(
-		"1.2.3.4",     // target
-		42,            // existingID
-		"1.2.3.4/32",  // blockingIP
-		"",            // parentDomain (manual IP rule, no parent)
-		9,             // devID
-		"karolina",    // exitNode
-		"ip",          // typeToInsert
-		"1.2.3.4",     // targetValue
-		"accept",      // action
+		"1.2.3.4",    // target
+		42,           // existingID
+		"1.2.3.4/32", // blockingIP
+		"",           // parentDomain (manual IP rule, no parent)
+		9,            // devID
+		"karolina",   // exitNode
+		"ip",         // typeToInsert
+		"1.2.3.4",    // targetValue
+		"accept",     // action
 	)
 	u, err := url.Parse(got)
 	if err != nil {
@@ -68,14 +68,14 @@ func TestBuildDuplicateRedirectURL_SharedIP_HasParentDomain(t *testing.T) {
 	// the user understands why a "new" rule for example.com is
 	// rejected.
 	got := buildDuplicateRedirectURL(
-		"example.com",     // target (domain)
-		123,               // existingID of the /32 that already exists
-		"1.2.3.4/32",      // blockingIP
+		"example.com",      // target (domain)
+		123,                // existingID of the /32 that already exists
+		"1.2.3.4/32",       // blockingIP
 		"other-domain.com", // parentDomain (the domain that "owns" the /32)
-		1,                 // devID
-		"emilia",          // exitNode
-		"subnet",          // typeToInsert
-		"example.com",     // targetValue
+		1,                  // devID
+		"emilia",           // exitNode
+		"subnet",           // typeToInsert
+		"example.com",      // targetValue
 		"accept",
 	)
 	q, err := url.Parse(got)
@@ -100,10 +100,10 @@ func TestBuildDuplicateRedirectURL_SpecialCharsAreEscaped(t *testing.T) {
 	// query string (e.g. unescaped & would split a single param
 	// into two and break the template's q.Get() calls).
 	got := buildDuplicateRedirectURL(
-		"a&b=c",         // target with & and =
+		"a&b=c", // target with & and =
 		7,
 		"1.2.3.4/32&x=1", // blockingIP with & and =
-		"foo.com?bar=1", // parentDomain with ? and =
+		"foo.com?bar=1",  // parentDomain with ? and =
 		1,
 		"host&one", // exitNode with &
 		"ip",

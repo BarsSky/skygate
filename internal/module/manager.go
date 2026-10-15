@@ -178,9 +178,9 @@ func (m *Manager) Register(mod Module) error {
 }
 
 // InitAll initializes every registered module. For each module:
-//   1. Read persistent state from /var/lib/skygate/modules/<name>/state.json
-//   2. Build ModuleConfig (data dir, socket dir, env, dbc, audit log)
-//   3. Call Module.Init(ctx, cfg)
+//  1. Read persistent state from /var/lib/skygate/modules/<name>/state.json
+//  2. Build ModuleConfig (data dir, socket dir, env, dbc, audit log)
+//  3. Call Module.Init(ctx, cfg)
 //
 // Modules that fail Init are marked as StateError in their state
 // and the error is returned (the caller decides whether to abort
@@ -779,4 +779,3 @@ func (m *Manager) checkOneHealth(ctx context.Context, name string) {
 		}
 	}
 }
-

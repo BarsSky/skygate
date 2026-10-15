@@ -114,12 +114,12 @@ func (t LocalDumpTransport) Dump(ctx context.Context, sourceDSN, destPath string
 	}
 
 	cmd := exec.CommandContext(ctx, pgDumpBin,
-		"-Fc",              // custom format (compressed, parallel-restorable)
-		"--no-owner",       // don't emit ALTER OWNER / SET SESSION AUTHORIZATION
-		"--no-acl",         // don't emit GRANT/REVOKE
-		"--no-comments",    // don't emit COMMENT ON (noise; the row data is what matters)
-		"-d", sourceDSN,    // source DSN
-		"-f", destPath,     // output file
+		"-Fc",           // custom format (compressed, parallel-restorable)
+		"--no-owner",    // don't emit ALTER OWNER / SET SESSION AUTHORIZATION
+		"--no-acl",      // don't emit GRANT/REVOKE
+		"--no-comments", // don't emit COMMENT ON (noise; the row data is what matters)
+		"-d", sourceDSN, // source DSN
+		"-f", destPath, // output file
 	)
 
 	// Stream stdout/stderr to onLog so the operator sees
@@ -212,7 +212,10 @@ func streamLines(r io.Reader, onLog func(string)) {
 // (the rest of the package does use sync, but keeping
 // the wait group local makes the transport self-contained
 // and easier to test in isolation).
-type io_waitGroup struct{ n int; ch chan struct{} }
+type io_waitGroup struct {
+	n  int
+	ch chan struct{}
+}
 
 func (g *io_waitGroup) add(n int) {
 	g.n += n

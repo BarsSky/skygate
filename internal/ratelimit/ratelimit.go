@@ -27,12 +27,12 @@ type Limiter struct {
 
 	// Per-second-style settings. We use "capacity" (max burst) and "refill
 	// per second". Each Allow() consumes one token; tokens refill linearly.
-	loginPerKeyCapacity   int
-	loginPerKeyRefill     float64 // tokens per second
-	loginPerIPCapacity    int
-	loginPerIPRefill      float64
-	apiPerIPCapacity      int
-	apiPerIPRefill        float64
+	loginPerKeyCapacity int
+	loginPerKeyRefill   float64 // tokens per second
+	loginPerIPCapacity  int
+	loginPerIPRefill    float64
+	apiPerIPCapacity    int
+	apiPerIPRefill      float64
 
 	loginCleanupAfter time.Duration
 	cleanupAfter      time.Duration

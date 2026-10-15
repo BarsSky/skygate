@@ -165,9 +165,9 @@ func (s *Service) PostMyPreauth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.Backend.RenderWithLayout(w, r, "user/preauth_result.html", c, map[string]any{
-		"Key":         key.Key,
-		"Expires":     humanizeTTL(ttlSeconds),
-		"OS":          r.FormValue("os"),
+		"Key":     key.Key,
+		"Expires": humanizeTTL(ttlSeconds),
+		"OS":      r.FormValue("os"),
 		// 2026-09-18: the template prints {{.OSLabel}} in three places but
 		// no handler ever set it, so the page said "instructions for
 		// <no value>". See osLabel() in keys_issue.go.

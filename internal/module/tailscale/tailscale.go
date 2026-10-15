@@ -258,13 +258,13 @@ func (m *Module) Status() module.ModuleStatus {
 //
 // The health checks (in checkHealth below) are:
 //   - tailscaled_running : tailscale status --json returns
-//                          BackendState=Running
+//     BackendState=Running
 //   - auth_ok             : BackendState=Running AND
-//                          Peer.Relay != "" or
-//                          Peer.APIBase != ""
+//     Peer.Relay != "" or
+//     Peer.APIBase != ""
 //   - headscale_reachable : login server URL is reachable
 //   - peers_visible       : > 0 peers in the tailnet
-//                          (warning if 0, not error)
+//     (warning if 0, not error)
 func (m *Module) Health() module.HealthStatus {
 	health, err := m.checkHealth(context.Background())
 	if err != nil {

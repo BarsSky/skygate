@@ -8,9 +8,9 @@
 // device_rules. V056's CREATE statement includes
 // `parent_domain`:
 //
-//   CREATE UNIQUE INDEX IF NOT EXISTS device_rules_natural_key_uniq
-//     ON device_rules(user_id, device_id, exit_node_id,
-//                     target_type, target_value, parent_domain)
+//	CREATE UNIQUE INDEX IF NOT EXISTS device_rules_natural_key_uniq
+//	  ON device_rules(user_id, device_id, exit_node_id,
+//	                  target_type, target_value, parent_domain)
 //
 // But `CREATE UNIQUE INDEX IF NOT EXISTS` is a no-op when an
 // index with the same NAME already exists, even if the
@@ -28,8 +28,8 @@
 // INDEX, but the live DB only has 5-col. Every INSERT
 // of a new rule failed with:
 //
-//   ERROR: there is no unique or exclusion constraint
-//          matching the ON CONFLICT specification
+//	ERROR: there is no unique or exclusion constraint
+//	       matching the ON CONFLICT specification
 //
 // (pre-B188.2 INSERTs with a 5-col ON CONFLICT would have
 // been fine; the B188.2 ON CONFLICT was the trigger that
@@ -46,17 +46,17 @@
 //
 // Safety
 // ------
-// 1. Pre-flight check: SELECT any 6-tuple duplicates
-//    before DROP. If duplicates exist, refuse to run
-//    and tell the operator to run scripts/check_b125.sh
-//    + a manual cleanup first. (V056's audit found
-//    0 duplicates on the live DB; the check is here
-//    for future deploys.)
-// 2. DROP IF EXISTS — safe even if the index doesn't exist.
-// 3. CREATE UNIQUE INDEX — fails clearly if the table
-//    has 6-tuple duplicates (caught by the pre-flight).
-// 4. ANALYZE device_rules — refresh the planner's
-//    statistics so the new index is picked up.
+//  1. Pre-flight check: SELECT any 6-tuple duplicates
+//     before DROP. If duplicates exist, refuse to run
+//     and tell the operator to run scripts/check_b125.sh
+//     + a manual cleanup first. (V056's audit found
+//     0 duplicates on the live DB; the check is here
+//     for future deploys.)
+//  2. DROP IF EXISTS — safe even if the index doesn't exist.
+//  3. CREATE UNIQUE INDEX — fails clearly if the table
+//     has 6-tuple duplicates (caught by the pre-flight).
+//  4. ANALYZE device_rules — refresh the planner's
+//     statistics so the new index is picked up.
 //
 // Idempotency: applied_migrations table records v68
 // after success. Re-running the migration is a no-op

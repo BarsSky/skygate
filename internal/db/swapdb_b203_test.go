@@ -23,7 +23,7 @@ import (
 // *stubConn. We count Open/Close calls to verify the
 // wrapper calls Close on the old pool.
 type stubDriver struct {
-	openCount int32
+	openCount  int32
 	closeCount int32
 }
 
@@ -43,19 +43,19 @@ type stubConn struct {
 	driver *stubDriver
 }
 
-func (c *stubConn) Prepare(_ string) (driver.Stmt, error)       { return &stubStmt{}, nil }
-func (c *stubConn) Close() error                                { c.driver.closeOne(); return nil }
-func (c *stubConn) Begin() (driver.Tx, error)                   { return nil, errors.New("not impl") }
-func (c *stubConn) ResetSession(_ context.Context) error         { return nil }
+func (c *stubConn) Prepare(_ string) (driver.Stmt, error) { return &stubStmt{}, nil }
+func (c *stubConn) Close() error                          { c.driver.closeOne(); return nil }
+func (c *stubConn) Begin() (driver.Tx, error)             { return nil, errors.New("not impl") }
+func (c *stubConn) ResetSession(_ context.Context) error  { return nil }
 
 // stubStmt satisfies driver.Stmt minimally so that
 // QueryContext can be called against the stub.
 type stubStmt struct{}
 
-func (s *stubStmt) Close() error                              { return nil }
-func (s *stubStmt) NumInput() int                             { return -1 }
-func (s *stubStmt) Exec(_ []driver.Value) (driver.Result, error) { return nil, nil }
-func (s *stubStmt) Query(_ []driver.Value) (driver.Rows, error) { return nil, errors.New("not impl") }
+func (s *stubStmt) Close() error                                     { return nil }
+func (s *stubStmt) NumInput() int                                    { return -1 }
+func (s *stubStmt) Exec(_ []driver.Value) (driver.Result, error)     { return nil, nil }
+func (s *stubStmt) Query(_ []driver.Value) (driver.Rows, error)      { return nil, errors.New("not impl") }
 func (s *stubStmt) CheckNamedArgs(_ []driver.NamedValue) (err error) { return nil }
 
 // stubConnector is what database/sql.OpenDB uses

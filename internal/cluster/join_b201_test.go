@@ -18,8 +18,8 @@ func TestHostnamesEqual(t *testing.T) {
 		want bool
 	}{
 		{"svi-1", "svi-1", true},
-		{"svi-1", "SVI-1", true},         // case-insensitive
-		{"svi-1", " svi-1 ", true},       // trims whitespace
+		{"svi-1", "SVI-1", true},   // case-insensitive
+		{"svi-1", " svi-1 ", true}, // trims whitespace
 		{"svi-1", "evil-host", false},
 		{"svi-1", "svi-2", false},
 		{"", "", true},

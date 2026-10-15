@@ -47,17 +47,17 @@ const skygateSessionCookie = "skygate_session"
 // ServeAuthorize handles the OIDC authorization
 // request from headscale. The flow:
 //
-//   1. Tailscale client wants to register →
-//      headscale issues a 302 to skygate's
-//      /oidc/authorize?client_id=headscale&...
-//   2. Tailscale shows the URL to the user
-//   3. User opens the URL in a browser →
-//      this handler
-//   4. If user is logged in: issue auth code +
-//      302 to headscale's callback URL
-//   5. If user is not logged in: 302 to
-//      /login?next=<this URL> so the OIDC
-//      params survive the round trip
+//  1. Tailscale client wants to register →
+//     headscale issues a 302 to skygate's
+//     /oidc/authorize?client_id=headscale&...
+//  2. Tailscale shows the URL to the user
+//  3. User opens the URL in a browser →
+//     this handler
+//  4. If user is logged in: issue auth code +
+//     302 to headscale's callback URL
+//  5. If user is not logged in: 302 to
+//     /login?next=<this URL> so the OIDC
+//     params survive the round trip
 //
 // B161.2 deliberately SKIPS a consent screen.
 // The user is already logging in to skygate;
@@ -148,16 +148,16 @@ func (s *Service) ServeAuthorize(w http.ResponseWriter, r *http.Request) {
 	// request to be a strict subset of the auth
 	// request).
 	code := s.Codes.Put(AuthCodeEntry{
-		UserID:             user.UserID,
-		Username:           user.Username,
-		Email:              user.Email,
-		ClientID:           clientID,
-		RedirectURI:        redirectURI,
-		Scope:              scope,
-		Nonce:              nonce,
-		CodeChallenge:      codeChallenge,
+		UserID:              user.UserID,
+		Username:            user.Username,
+		Email:               user.Email,
+		ClientID:            clientID,
+		RedirectURI:         redirectURI,
+		Scope:               scope,
+		Nonce:               nonce,
+		CodeChallenge:       codeChallenge,
 		CodeChallengeMethod: codeChallengeMethod,
-		ExpiresAt:          time.Now().Add(s.Codes.ttl), // set explicitly so the sweep can see it
+		ExpiresAt:           time.Now().Add(s.Codes.ttl), // set explicitly so the sweep can see it
 	})
 
 	// 302 to the client's callback URL with

@@ -2,22 +2,22 @@
 //
 // Closes 3 latent bugs in the reconcile cron:
 //
-//   1. writeAudit + writeAuditRaw used SQLite-style "(?, ?, ?, ?, ?)"
-//      placeholders, which PostgreSQL rejects with SQLSTATE 42601 —
-//      every reconcile audit row was silently lost on PG. The
-//      portal-side UPDATE succeeded, but the operator had no record.
+//  1. writeAudit + writeAuditRaw used SQLite-style "(?, ?, ?, ?, ?)"
+//     placeholders, which PostgreSQL rejects with SQLSTATE 42601 —
+//     every reconcile audit row was silently lost on PG. The
+//     portal-side UPDATE succeeded, but the operator had no record.
 //
-//   2. reconcileOne built byName as map[string]HSUser (single value
-//      per name). When headscale had >1 user with the same name (e.g.
-//      an OIDC-created duplicate + the bootstrap admin), the second
-//      occurrence overwrote the first. reconcileOne then decided the
-//      FIRST id was "stale" (not in byName) and silently relinked
-//      to the second id. This is how /admin/devices for skyadmin
-//      showed 0 devices while id=1 had 7 (live VM at 13.69, 2026-09-12).
+//  2. reconcileOne built byName as map[string]HSUser (single value
+//     per name). When headscale had >1 user with the same name (e.g.
+//     an OIDC-created duplicate + the bootstrap admin), the second
+//     occurrence overwrote the first. reconcileOne then decided the
+//     FIRST id was "stale" (not in byName) and silently relinked
+//     to the second id. This is how /admin/devices for skyadmin
+//     showed 0 devices while id=1 had 7 (live VM at 13.69, 2026-09-12).
 //
-//   3. There was no audit row for the "duplicate_name in headscale"
-//      condition — even if reconcileOne refused to relink, the operator
-//      had no signal that the duplicate existed.
+//  3. There was no audit row for the "duplicate_name in headscale"
+//     condition — even if reconcileOne refused to relink, the operator
+//     had no signal that the duplicate existed.
 //
 // B243 fix:
 //

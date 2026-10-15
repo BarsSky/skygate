@@ -168,7 +168,7 @@ func Header(title string) string {
 //	          "relay-2 (relay, RU)")
 //
 // → • relay-3 (relay, relay-1)
-//	 • relay-2 (relay, RU)
+//   - relay-2 (relay, RU)
 func BulletList(items ...string) string {
 	var sb strings.Builder
 	for _, it := range items {

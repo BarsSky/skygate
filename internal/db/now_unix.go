@@ -7,8 +7,8 @@
 // returned SQL is a hard error, and because the fragment is spliced into
 // a dozen write paths, essentially every timestamped write failed there.
 //
-//	  - PostgreSQL: EXTRACT(EPOCH FROM now())::bigint
-//	  - SQLite:     strftime('%s','now')
+//   - PostgreSQL: EXTRACT(EPOCH FROM now())::bigint
+//   - SQLite:     strftime('%s','now')
 //
 // Note the asymmetry that made this so easy to miss: PostgreSQL ALSO
 // works with strftime() because migrations_pg.go:965 installs a

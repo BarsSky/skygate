@@ -41,11 +41,12 @@ import (
 // by the adopt-promote tests. The HS client is hard-coded to return
 // one headscale user so the orphan-adopt path is exercised end-to-end.
 type adoptPromoteStubBackend struct {
-	admin    bool
+	admin     bool
 	auditRows *[]capturedAudit
 }
 
-func (s *adoptPromoteStubBackend) Render(w http.ResponseWriter, r *http.Request, name string, data any) {}
+func (s *adoptPromoteStubBackend) Render(w http.ResponseWriter, r *http.Request, name string, data any) {
+}
 func (s *adoptPromoteStubBackend) RenderWithLayout(w http.ResponseWriter, r *http.Request, name string, c *auth.Claims, data map[string]any) {
 }
 func (s *adoptPromoteStubBackend) CurrentUser(r *http.Request) *auth.Claims {
@@ -71,8 +72,8 @@ func TestPostAdminHSOrphanAdopt_PromoteToAdmin_AbsentFlag(t *testing.T) {
 	hsClient.BaseURL = hsSrv.URL
 	stubHS := func() *headscale.Client { return hsClient }
 	svc := &Service{
-		DB: &dbDBSource{db: src},
-		Backend: &adoptPromoteStubBackend{admin: true},
+		DB:         &dbDBSource{db: src},
+		Backend:    &adoptPromoteStubBackend{admin: true},
 		HSGlobalFn: stubHS,
 	}
 
@@ -112,8 +113,8 @@ func TestPostAdminHSOrphanAdopt_PromoteToAdmin_TrueFlag(t *testing.T) {
 	stubHS := func() *headscale.Client { return hsClient }
 	var rows []capturedAudit
 	svc := &Service{
-		DB: &dbDBSource{db: src},
-		Backend: &adoptPromoteStubBackend{admin: true, auditRows: &rows},
+		DB:         &dbDBSource{db: src},
+		Backend:    &adoptPromoteStubBackend{admin: true, auditRows: &rows},
 		HSGlobalFn: stubHS,
 	}
 
@@ -168,8 +169,8 @@ func TestPostAdminHSOrphanAdopt_PromoteToAdmin_DefensiveValues(t *testing.T) {
 		}))
 		stubHS := func() *headscale.Client { return hsClient }
 		svc := &Service{
-			DB: &dbDBSource{db: src},
-			Backend: &adoptPromoteStubBackend{admin: true},
+			DB:         &dbDBSource{db: src},
+			Backend:    &adoptPromoteStubBackend{admin: true},
 			HSGlobalFn: stubHS,
 		}
 		hsClient.BaseURL = hsSrv.URL

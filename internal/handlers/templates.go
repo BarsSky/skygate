@@ -45,10 +45,12 @@ func LoadTemplates() *Templates {
 			lang, _ := i18n.GlobalLang.Load().(string)
 			return i18n.GlobalCatalog.Tf(lang, key, args...)
 		},
-		"safeJS": func(s string) template.JS { return template.JS(s) },
+		"safeJS":   func(s string) template.JS { return template.JS(s) },
 		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
 		"dividefloat": func(a, b float64) float64 {
-			if b == 0 { return 0 }
+			if b == 0 {
+				return 0
+			}
 			return a / b
 		},
 		// 2026-07-25: v0.28.4 — `tolower` for the
@@ -66,7 +68,9 @@ func LoadTemplates() *Templates {
 		// the prev-button href (already implied by add(.,-1)
 		// but exposed as a named helper for readability).
 		"divceil": func(a, b int) int {
-			if b <= 0 { return 0 }
+			if b <= 0 {
+				return 0
+			}
 			return (a + b - 1) / b
 		},
 		"sub": func(a, b int) int { return a - b },

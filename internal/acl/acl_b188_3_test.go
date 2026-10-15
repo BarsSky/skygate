@@ -132,8 +132,8 @@ func TestResolvePerCIDRVia(t *testing.T) {
 // "no cross-device leakage" guarantee.
 func TestResolvePerCIDRVia_MultipleDevices(t *testing.T) {
 	viaByDevice := map[string]string{
-		"tag:dev-michail-basic":  "tag:dev-infra-emilia",
-		"tag:dev-skyadmin-a71":   "tag:dev-infra-emilia",
+		"tag:dev-michail-basic":   "tag:dev-infra-emilia",
+		"tag:dev-skyadmin-a71":    "tag:dev-infra-emilia",
 		"tag:dev-skyadmin-cyborg": "tag:dev-infra-karolina",
 	}
 	// basic + a71 both want emilia; cyborg wants karolina.

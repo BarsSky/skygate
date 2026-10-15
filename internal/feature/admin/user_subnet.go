@@ -503,9 +503,9 @@ func (s *Service) PostAdminUserSubnetPreferredExit(w http.ResponseWriter, r *htt
 // hand it to the user. The user pastes the key into a tailscale
 // up command on their sidecar host:
 //
-//   sudo tailscale up --authkey=<key> \
-//     --hostname=skygate-subnet-<username> \
-//     --advertise-routes=10.0.<uid>.0/24
+//	sudo tailscale up --authkey=<key> \
+//	  --hostname=skygate-subnet-<username> \
+//	  --advertise-routes=10.0.<uid>.0/24
 //
 // The auto-approver (internal/sidecar) watches headscale for
 // the new node, approves the route, and flips status to active

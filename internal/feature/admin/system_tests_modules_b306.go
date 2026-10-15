@@ -12,18 +12,18 @@
 //
 // B306 makes every registered module a first-class test:
 //
-//   * MODULE tests are generated from the live Manager (one per module, named
+//   - MODULE tests are generated from the live Manager (one per module, named
 //     "module.<name>", category "modules"), so a module added later is covered
 //     without touching the catalogue;
-//   * a module that is not installed reports SKIP — a fresh install must not show
+//   - a module that is not installed reports SKIP — a fresh install must not show
 //     a wall of red for features the operator never turned on;
-//   * an installed module reports PASS/FAIL from its own Status()+Health(), with
+//   - an installed module reports PASS/FAIL from its own Status()+Health(), with
 //     the module's LastError and its failed health checks in the output, so the
 //     failure is actionable instead of "something is wrong";
-//   * the failures flow into the B305 monitoring inbox under the module's own
+//   - the failures flow into the B305 monitoring inbox under the module's own
 //     source ("module:<name>"), and a recovery RESOLVES that event — the operator
 //     is notified once per module fault, not once per run;
-//   * the per-module control the operator asked for is a single POST
+//   - the per-module control the operator asked for is a single POST
 //     (/admin/modules/{name}/test) that runs exactly that module's test, persists
 //     the run, reports to the inbox and answers with a flash naming the result.
 package admin

@@ -18,10 +18,10 @@ import (
 // stubExec records the last SQL + args passed to Exec so we can
 // inspect what the caller did without standing up a real DB.
 type stubExec struct {
-	lastSQL  string
-	lastArgs []interface{}
+	lastSQL      string
+	lastArgs     []interface{}
 	rowsAffected int64
-	err      error
+	err          error
 }
 
 func (s *stubExec) Exec(query string, args ...interface{}) (sql.Result, error) {

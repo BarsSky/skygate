@@ -64,7 +64,7 @@ type Checker struct {
 	CurrentVersion string
 
 	// lastResult caches the most recent successful Result.
-	lastResult *Result
+	lastResult   *Result
 	lastResultAt time.Time
 
 	// lastErrorAt is the timestamp of the most recent failed
@@ -329,10 +329,11 @@ func splitVersionParts(v string, n int) []string {
 // stripBuildLabelSuffix returns the version with both
 // git-describe ("-N-g<hex>") and explicit-commit ("+<hex>")
 // suffixes removed. Examples:
-//   "1.3.11-27-g03a1d97"   → "1.3.11"
-//   "1.3.11-27-g03a1d97+abc1234" → "1.3.11"
-//   "0.28.6+abc1234"       → "0.28.6"
-//   "1.3.11"               → "1.3.11"  (unchanged)
+//
+//	"1.3.11-27-g03a1d97"   → "1.3.11"
+//	"1.3.11-27-g03a1d97+abc1234" → "1.3.11"
+//	"0.28.6+abc1234"       → "0.28.6"
+//	"1.3.11"               → "1.3.11"  (unchanged)
 func stripBuildLabelSuffix(v string) string {
 	// Strip the explicit-commit "+<hex>" suffix first (it's
 	// always at the very end if present).

@@ -61,9 +61,9 @@ func TestSameRotationMinute(t *testing.T) {
 func TestFormatAuditLine_IncludesAllTokens(t *testing.T) {
 	now := time.Date(2026, 8, 20, 3, 0, 0, 0, time.UTC)
 	res := AutoRotateResult{
-		Extended:     2,
-		Failed:       0,
-		TriggeredAt:  now,
+		Extended:    2,
+		Failed:      0,
+		TriggeredAt: now,
 		Tokens: []AutoRotateTokenResult{
 			{ID: 1, Label: "hermes-laptop", OldExpiry: time.Unix(1700000000, 0), NewExpiry: time.Unix(1702592000, 0), UpdatedRows: 1},
 			{ID: 2, Label: "claude-ai", OldExpiry: time.Unix(1700000000, 0), NewExpiry: time.Unix(1702592000, 0), UpdatedRows: 1},
@@ -155,9 +155,9 @@ func TestFormatTelegramSummary_TruncatesLongLists(t *testing.T) {
 	tokens := make([]AutoRotateTokenResult, 25)
 	for i := range tokens {
 		tokens[i] = AutoRotateTokenResult{
-			ID:        int64(i + 1),
-			Label:     "tok-" + string(rune('a'+i%26)) + string(rune('A'+i/26)),
-			NewExpiry: time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC),
+			ID:          int64(i + 1),
+			Label:       "tok-" + string(rune('a'+i%26)) + string(rune('A'+i/26)),
+			NewExpiry:   time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC),
 			UpdatedRows: 1,
 		}
 	}

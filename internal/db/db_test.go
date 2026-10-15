@@ -13,10 +13,10 @@ func TestThemeLabel(t *testing.T) {
 		{ThemeVercel, "Vercel"},
 		{ThemeSentry, "Sentry"},
 		{ThemeNvidia, "NVIDIA"},
-		{ThemeMint, "Mint"}, // 2026-08-17 B121
-		{"dark", "Linear"},       // fallback for unknown
-		{"", "Linear"},            // empty → fallback
-		{"VerCeL", "Linear"},      // case sensitive: unknown
+		{ThemeMint, "Mint"},  // 2026-08-17 B121
+		{"dark", "Linear"},   // fallback for unknown
+		{"", "Linear"},       // empty → fallback
+		{"VerCeL", "Linear"}, // case sensitive: unknown
 	}
 	for _, c := range cases {
 		if got := ThemeLabel(c.in); got != c.want {
@@ -48,13 +48,13 @@ func TestOpenAndMigrate(t *testing.T) {
 	// 2026-08-12: PG-only check via information_schema.tables
 	// (was sqlite_master pre-v1.3.0).
 	want := []string{
-		"portal_users",          // v0.25 (bootstrap)
-		"personal_api_tokens",   // v0.23
-		"device_rules",          // v0.20
-		"exit_servers",          // v0.20
-		"acl_snapshots",         // v0.20
-		"exit_rule_logs",        // v0.20
-		"global_settings",       // v0.21
+		"portal_users",        // v0.25 (bootstrap)
+		"personal_api_tokens", // v0.23
+		"device_rules",        // v0.20
+		"exit_servers",        // v0.20
+		"acl_snapshots",       // v0.20
+		"exit_rule_logs",      // v0.20
+		"global_settings",     // v0.21
 	}
 	for _, name := range want {
 		var got string

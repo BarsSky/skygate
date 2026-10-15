@@ -50,8 +50,8 @@ type Framework struct {
 //     b. Calls step.Run(ctx).
 //     c. Records step_end (status=success/failed, log).
 //     d. On failure of non-optional step: triggers
-//        Rollback chain on previously-succeeded steps,
-//        marks run as rolled_back, returns error.
+//     Rollback chain on previously-succeeded steps,
+//     marks run as rolled_back, returns error.
 //  3. Marks run as success.
 //
 // The function is safe to call from a goroutine; the

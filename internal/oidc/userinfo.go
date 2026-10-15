@@ -22,7 +22,7 @@ import (
 type UserinfoResponse struct {
 	Sub               string `json:"sub"`
 	Email             string `json:"email,omitempty"`
-	Name               string `json:"name,omitempty"`
+	Name              string `json:"name,omitempty"`
 	PreferredUsername string `json:"preferred_username,omitempty"`
 }
 
@@ -103,7 +103,7 @@ func (s *Service) ServeUserinfo(w http.ResponseWriter, r *http.Request) {
 	resp := UserinfoResponse{
 		Sub:               sub,
 		Email:             email,
-		Name:               name,
+		Name:              name,
 		PreferredUsername: pref,
 	}
 	// OIDC core sec 5.3: when the access_token

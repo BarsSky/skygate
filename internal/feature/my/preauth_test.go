@@ -23,11 +23,11 @@ import (
 
 func TestResolvePreauthTTL_CustomValid(t *testing.T) {
 	cases := []struct {
-		value           string
-		unit            string
-		wantExp         string
-		wantSec         int64
-		wantUsed        string
+		value    string
+		unit     string
+		wantExp  string
+		wantSec  int64
+		wantUsed string
 	}{
 		{"1", "h", "1h", 3600, "custom:1h"},
 		{"24", "h", "24h", 24 * 3600, "custom:24h"},
@@ -119,9 +119,9 @@ func TestResolvePreauthTTL_OutOfRangeFallsThrough(t *testing.T) {
 // when the new custom_ttl_value is not provided.
 func TestResolvePreauthTTL_LegacyDropdown(t *testing.T) {
 	cases := []struct {
-		ttl     string
-		wantExp string
-		wantSec int64
+		ttl      string
+		wantExp  string
+		wantSec  int64
 		wantUsed string
 	}{
 		{"1h", "1h", 3600, "1h"},
@@ -247,22 +247,22 @@ func TestFormatRelativeExpiry(t *testing.T) {
 		// Past — minutes / hours / days
 		{"expired_30s_ago_ru", now - 30, now, "ru", "истёк 1 мин назад"},
 		{"expired_5m_ago_en", now - 300, now, "en", "expired 5 min ago"},
-		{"expired_3h_ago_ru", now - 3 * 3600, now, "ru", "истёк 3 ч назад"},
-		{"expired_23h_ago_en", now - 23 * 3600, now, "en", "expired 23 hours ago"},
-		{"expired_2d_ago_ru", now - 2 * 86400, now, "ru", "истёк 2 д назад"},
-		{"expired_30d_ago_en", now - 30 * 86400, now, "en", "expired 30 days ago"},
+		{"expired_3h_ago_ru", now - 3*3600, now, "ru", "истёк 3 ч назад"},
+		{"expired_23h_ago_en", now - 23*3600, now, "en", "expired 23 hours ago"},
+		{"expired_2d_ago_ru", now - 2*86400, now, "ru", "истёк 2 д назад"},
+		{"expired_30d_ago_en", now - 30*86400, now, "en", "expired 30 days ago"},
 		// Future — minutes / hours / days. The
 		// operator wants CONCRETE time (not "today" /
 		// "tomorrow"), so <24h is "<N> hours left".
 		{"in_30s_ru", now + 30, now, "ru", "осталось 1 мин"},
 		{"in_5m_en", now + 300, now, "en", "5 min left"},
-		{"in_3h_ru", now + 3 * 3600, now, "ru", "осталось 3 ч"},
-		{"in_12h_en", now + 12 * 3600, now, "en", "12 hours left"},
-		{"in_23h_ru", now + 23 * 3600, now, "ru", "осталось 23 ч"},
-		{"in_36h_en", now + 36 * 3600, now, "en", "36 hours left"},
+		{"in_3h_ru", now + 3*3600, now, "ru", "осталось 3 ч"},
+		{"in_12h_en", now + 12*3600, now, "en", "12 hours left"},
+		{"in_23h_ru", now + 23*3600, now, "ru", "осталось 23 ч"},
+		{"in_36h_en", now + 36*3600, now, "en", "36 hours left"},
 		// Days (>=2d)
-		{"in_2d_ru", now + 2 * 86400, now, "ru", "осталось 2 д"},
-		{"in_14d_en", now + 14 * 86400, now, "en", "14 days left"},
+		{"in_2d_ru", now + 2*86400, now, "ru", "осталось 2 д"},
+		{"in_14d_en", now + 14*86400, now, "en", "14 days left"},
 		// Boundary: exactly now → delta=0 falls
 		// through to the past branch (delta>0 is
 		// strictly future) → "expired 1 min ago"

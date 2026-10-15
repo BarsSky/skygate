@@ -40,8 +40,10 @@ func init() {
 
 type ValidateInputStep struct{}
 
-func (s *ValidateInputStep) Name() string        { return "ValidateInput" }
-func (s *ValidateInputStep) Description() string { return "Validate operator form fields (hostname, IP, priority)" }
+func (s *ValidateInputStep) Name() string { return "ValidateInput" }
+func (s *ValidateInputStep) Description() string {
+	return "Validate operator form fields (hostname, IP, priority)"
+}
 func (s *ValidateInputStep) IsOptional() bool    { return false }
 func (s *ValidateInputStep) DependsOn() []string { return nil }
 

@@ -56,10 +56,11 @@ const (
 // internally idempotent.
 //
 // Returns:
-//   inserted  bool   — true if a new row was inserted
-//   reason    string — "no derper.conf" / "DERP_ENABLED=false" /
-//                     "already registered" / "ok" — for stderr log
-//   err       error  — non-nil only on DB write failure
+//
+//	inserted  bool   — true if a new row was inserted
+//	reason    string — "no derper.conf" / "DERP_ENABLED=false" /
+//	                  "already registered" / "ok" — for stderr log
+//	err       error  — non-nil only on DB write failure
 //
 // Caller logs and continues; the function never aborts the boot on
 // failure (a missing bundled row is not fatal — headscale still has

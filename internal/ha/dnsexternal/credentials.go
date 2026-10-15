@@ -51,11 +51,11 @@ import (
 // the same keys (CertPEMKey / PasswordKey stay valid for
 // any provider that uses mTLS).
 const (
-	CertPEMKey   = "ha.dns.cert_pem_enc"
-	PasswordKey  = "ha.dns.password_enc"
-	ZoneKey      = "ha.dns.zone"             // plaintext: <your-domain>
-	LoginKey     = "ha.dns.login"            // plaintext: provider login / email
-	ProviderKey  = "ha.dns.provider"         // plaintext: "external" | "cloudflare" | "route53" | "rfc2136"
+	CertPEMKey  = "ha.dns.cert_pem_enc"
+	PasswordKey = "ha.dns.password_enc"
+	ZoneKey     = "ha.dns.zone"     // plaintext: <your-domain>
+	LoginKey    = "ha.dns.login"    // plaintext: provider login / email
+	ProviderKey = "ha.dns.provider" // plaintext: "external" | "cloudflare" | "route53" | "rfc2136"
 )
 
 // ProviderExternal is the shipped v1.5.0 (B145) provider
@@ -261,8 +261,8 @@ func (s *Store) IsConfigured() bool {
 // verbatim (red banner for "auth_error", green for
 // "ok", grey for "not_configured").
 type TestConnectionResult struct {
-	Status     string `json:"status"`     // "ok" | "auth_error" | "network_error" | "not_configured"
-	Message    string `json:"message"`    // human-readable, safe to show to the operator
+	Status     string `json:"status"`  // "ok" | "auth_error" | "network_error" | "not_configured"
+	Message    string `json:"message"` // human-readable, safe to show to the operator
 	HTTPStatus int    `json:"http_status,omitempty"`
 	LatencyMS  int64  `json:"latency_ms"`
 }

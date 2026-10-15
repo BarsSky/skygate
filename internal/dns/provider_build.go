@@ -12,8 +12,8 @@ import (
 	"errors"
 	"fmt"
 
-	extcreds "skygate/internal/ha/dnsexternal"
 	dnsexternal "skygate/internal/dnsexternal"
+	extcreds "skygate/internal/ha/dnsexternal"
 )
 
 // BuildDeps is the dependency bundle BuildProvider needs.

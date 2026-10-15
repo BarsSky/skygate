@@ -9,10 +9,10 @@
 // (set the `oidc:` block) and `docker restart headscale`
 // to apply. The two steps were:
 //
-//   1. Copy the snippet from /admin/oidc into
-//      /etc/headscale/config.yaml (or wherever
-//      headscale reads its config from)
-//   2. Restart headscale (and wait for it to come back)
+//  1. Copy the snippet from /admin/oidc into
+//     /etc/headscale/config.yaml (or wherever
+//     headscale reads its config from)
+//  2. Restart headscale (and wait for it to come back)
 //
 // That left room for a typo, a wrong redirect_uri, or
 // a stale `oidc.client_secret`. B167 closes the loop:
@@ -59,17 +59,17 @@
 //
 // What B167 does NOT include
 // --------------------------
-// - External headscale via API key (headscale 0.30
-//   gRPC API has a `configure oidc` call, but the
-//   path requires gRPC client code we don't have;
-//   we use the headscale CLI via `docker exec`
-//   instead, which works for the same-machine case
-//   but not for a remote headscale). A follow-up
-//   could add a gRPC client.
-// - headplane-side OIDC config (headplane is a
-//   web UI; its OIDC config is in headplane-config
-//   and is orthogonal to headscale.conf). Not in
-//   scope for B167.
+//   - External headscale via API key (headscale 0.30
+//     gRPC API has a `configure oidc` call, but the
+//     path requires gRPC client code we don't have;
+//     we use the headscale CLI via `docker exec`
+//     instead, which works for the same-machine case
+//     but not for a remote headscale). A follow-up
+//     could add a gRPC client.
+//   - headplane-side OIDC config (headplane is a
+//     web UI; its OIDC config is in headplane-config
+//     and is orthogonal to headscale.conf). Not in
+//     scope for B167.
 package oidc
 
 import (
@@ -352,12 +352,12 @@ func findSyncScript() (string, error) {
 // install if the env vars are wrong.
 //
 // The auto-sync is only run when:
-//   1. SKYGATE_OIDC_AUTOSYNC=true (explicit opt-in)
-//   2. SKYGATE_OIDC_ISSUER is non-empty (otherwise
-//      there's nothing to sync)
-//   3. SKYGATE_OIDC_CLIENT_SECRET is non-empty
-//      (otherwise the generated headscale.conf
-//      would have a blank client_secret)
+//  1. SKYGATE_OIDC_AUTOSYNC=true (explicit opt-in)
+//  2. SKYGATE_OIDC_ISSUER is non-empty (otherwise
+//     there's nothing to sync)
+//  3. SKYGATE_OIDC_CLIENT_SECRET is non-empty
+//     (otherwise the generated headscale.conf
+//     would have a blank client_secret)
 //
 // All three conditions prevent the most common
 // "I forgot to set the env vars" footguns.

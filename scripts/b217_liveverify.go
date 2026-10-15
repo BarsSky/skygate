@@ -42,11 +42,11 @@ import (
 )
 
 const (
-	cookieName    = "skygate_session"
-	testClusterID = "skygate-staging"
-	hostnamePending  = "test-b217-pending-node"
-	hostnameReady    = "test-b217-ready-node"
-	hostnameFailed   = "test-b217-drain-remove-node"
+	cookieName      = "skygate_session"
+	testClusterID   = "skygate-staging"
+	hostnamePending = "test-b217-pending-node"
+	hostnameReady   = "test-b217-ready-node"
+	hostnameFailed  = "test-b217-drain-remove-node"
 )
 
 func main() {
@@ -103,9 +103,9 @@ func main() {
 func setupTempRows(d *sql.DB) {
 	fmt.Fprintln(os.Stderr, "=== Setup: insert 3 temp cluster_node rows ===")
 	for _, h := range []struct {
-		host   string
-		state  string
-		roles  string
+		host  string
+		state string
+		roles string
 	}{
 		{hostnamePending, "pending", "skygate-standby"},
 		{hostnameReady, "ready", "skygate-standby"},

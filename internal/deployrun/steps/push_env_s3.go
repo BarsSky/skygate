@@ -44,8 +44,10 @@ func init() {
 
 type PushEnvToS3Step struct{}
 
-func (s *PushEnvToS3Step) Name() string        { return "PushEnvToS3" }
-func (s *PushEnvToS3Step) Description() string { return "Push .env to s3://<bucket>/ha/deploy/<hostname>/.env" }
+func (s *PushEnvToS3Step) Name() string { return "PushEnvToS3" }
+func (s *PushEnvToS3Step) Description() string {
+	return "Push .env to s3://<bucket>/ha/deploy/<hostname>/.env"
+}
 func (s *PushEnvToS3Step) IsOptional() bool    { return true } // can be skipped if S3 not configured
 func (s *PushEnvToS3Step) DependsOn() []string { return []string{"ValidateInput"} }
 

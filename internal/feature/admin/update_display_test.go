@@ -35,10 +35,10 @@ import "testing"
 
 func TestDisplayVersionForUpdate(t *testing.T) {
 	cases := []struct {
-		name           string
-		build          string
-		wantCurrent    string
-		wantSubtitle   string
+		name         string
+		build        string
+		wantCurrent  string
+		wantSubtitle string
 	}{
 		{
 			// The live broken case on operator's VM as of

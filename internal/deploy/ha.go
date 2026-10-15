@@ -174,7 +174,7 @@ func writeApplyActiveRole(ctx context.Context, db *sql.DB, target string) error 
 	return err
 }
 
-// clearApplyActiveRole sets the row to '' (empty string).
+// clearApplyActiveRole sets the row to ” (empty string).
 // We use empty-string (not DELETE) so the row's existence
 // is unchanged — the elector's SQL query is a single
 // SELECT, and an empty value semantically means "no

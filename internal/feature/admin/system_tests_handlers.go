@@ -99,30 +99,30 @@ func (s *Service) GetAdminSystemTests(w http.ResponseWriter, r *http.Request) {
 	// is the next bottleneck.
 	history, _ := s.ComputeTestHistory(r.Context(), hw.Since, hw.Until)
 	data := map[string]any{
-		"Page":                  "admin/system_tests",
-		"Title":                 i18n.T(lang, "title.admin_system_tests"),
+		"Page":  "admin/system_tests",
+		"Title": i18n.T(lang, "title.admin_system_tests"),
 		// B306 (v1.5.71): the catalogue is the static registry plus one generated
 		// test per registered module (status + health), so the page, "Run all" and
 		// the per-module button all describe the same set.
-		"Tests":                 s.AllTests(),
-		"ModuleRows":            s.ModuleTestRows(),
-		"RecentRuns":            recent,
-		"FlashError":            r.URL.Query().Get("err"),
-		"DNSAutoUpdateEnabled":  dnsAutoEnabled,
+		"Tests":                s.AllTests(),
+		"ModuleRows":           s.ModuleTestRows(),
+		"RecentRuns":           recent,
+		"FlashError":           r.URL.Query().Get("err"),
+		"DNSAutoUpdateEnabled": dnsAutoEnabled,
 		// B308 (v1.5.73): the per-domain re-resolve interval, shown in the same
 		// card so the operator can see (and change) how often a domain rule may be
 		// rewritten — the knob that stopped the permanent ACL drift.
-		"DNSResolveIntervalSec":   dnsResolveIntervalSec,
-		"DNSResolveIntervalHuman": exit_rules.DomainResolveIntervalLabel(dnsResolveInterval),
-		"FlashDNSInterval":        r.URL.Query().Get("dns_interval"),
-		"PrefReconcileEnabled": prefReconcileEnabled,
-		"FlashDNSAutoToggled":   r.URL.Query().Get("dns_auto_toggled"),
+		"DNSResolveIntervalSec":     dnsResolveIntervalSec,
+		"DNSResolveIntervalHuman":   exit_rules.DomainResolveIntervalLabel(dnsResolveInterval),
+		"FlashDNSInterval":          r.URL.Query().Get("dns_interval"),
+		"PrefReconcileEnabled":      prefReconcileEnabled,
+		"FlashDNSAutoToggled":       r.URL.Query().Get("dns_auto_toggled"),
 		"FlashPrefReconcileToggled": r.URL.Query().Get("pref_reconcile_toggled"),
-		"Now":                   now,
-		"Tab":                   tab,
-		"Window":                windowStr,
-		"WindowLabel":           hw.Label,
-		"History":               history,
+		"Now":                       now,
+		"Tab":                       tab,
+		"Window":                    windowStr,
+		"WindowLabel":               hw.Label,
+		"History":                   history,
 	}
 	if last != nil {
 		data["LastRunID"] = last.RunID

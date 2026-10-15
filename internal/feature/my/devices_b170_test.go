@@ -12,20 +12,20 @@
 //
 // These tests are pure (no DB, no headscale, no HTTP),
 // so they run in <1ms each. The contracts pinned here:
-//   1. Empty LastSeen → "no_activity"
-//   2. Unparseable LastSeen → "no_activity"
-//   3. LastSeen within 5 min of Expiry → "near_expiry"
-//   4. LastSeen > 5 min before Expiry → "while_offline"
-//   5. LastSeen > 5 min AFTER Expiry (rare but possible
-//      if a clock skew / future-dated LastSeen lands in
-//      headscale) → still "while_offline" (we use the
-//      absolute delta, not signed)
-//   6. The 5-min boundary is INCLUSIVE (|delta| == 5min
-//      → "near_expiry", not "while_offline")
-//   7. parseLastSeenAndClassify returns the parsed
-//      time.Time when the input is valid (for reuse
-//      from the template or future B-checks) and a zero
-//      time when it is empty / unparseable
+//  1. Empty LastSeen → "no_activity"
+//  2. Unparseable LastSeen → "no_activity"
+//  3. LastSeen within 5 min of Expiry → "near_expiry"
+//  4. LastSeen > 5 min before Expiry → "while_offline"
+//  5. LastSeen > 5 min AFTER Expiry (rare but possible
+//     if a clock skew / future-dated LastSeen lands in
+//     headscale) → still "while_offline" (we use the
+//     absolute delta, not signed)
+//  6. The 5-min boundary is INCLUSIVE (|delta| == 5min
+//     → "near_expiry", not "while_offline")
+//  7. parseLastSeenAndClassify returns the parsed
+//     time.Time when the input is valid (for reuse
+//     from the template or future B-checks) and a zero
+//     time when it is empty / unparseable
 package my
 
 import (

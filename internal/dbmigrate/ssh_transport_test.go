@@ -31,7 +31,7 @@ import (
 // (`@`, `:`, `/`, `?`, embedded single quotes). The
 // transport must wrap with single quotes + escape any
 // embedded single quotes per the POSIX idiom
-// ('foo'\''bar').
+// ('foo'\”bar').
 func TestSSHDumpTransport_QuoteForRemoteShell(t *testing.T) {
 	cases := []struct {
 		in   string

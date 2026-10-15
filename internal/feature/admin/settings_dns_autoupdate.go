@@ -38,7 +38,7 @@ import (
 	"strings"
 	"time"
 
-		"skygate/internal/db"
+	"skygate/internal/db"
 	"skygate/internal/feature/exit_rules"
 )
 

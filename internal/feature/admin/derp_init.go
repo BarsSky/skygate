@@ -53,19 +53,19 @@ var DerpInitScriptPath = "/usr/local/bin/derp-init.sh"
 // Go side parses them 1:1. Adding a field is
 // non-breaking; renaming is.
 type DerpInitResult struct {
-	Hostname     string `json:"hostname"`
-	PublicIP     string `json:"public_ip"`
-	RegionID     int    `json:"region_id"`
-	RegionCode   string `json:"region_code"`
-	RegionName   string `json:"region_name"`
-	URL          string `json:"url"`
-	DERPPort     int    `json:"derp_port"`
-	STUNPort     int    `json:"stun_port"`
-	CertPath     string `json:"cert_path"`
-	KeyPath      string `json:"key_path"`
-	SortOrder    int    `json:"sort_order"`
-	SystemdUnit  string `json:"systemd_unit"`
-	DurationMS   int    `json:"duration_ms"`
+	Hostname    string `json:"hostname"`
+	PublicIP    string `json:"public_ip"`
+	RegionID    int    `json:"region_id"`
+	RegionCode  string `json:"region_code"`
+	RegionName  string `json:"region_name"`
+	URL         string `json:"url"`
+	DERPPort    int    `json:"derp_port"`
+	STUNPort    int    `json:"stun_port"`
+	CertPath    string `json:"cert_path"`
+	KeyPath     string `json:"key_path"`
+	SortOrder   int    `json:"sort_order"`
+	SystemdUnit string `json:"systemd_unit"`
+	DurationMS  int    `json:"duration_ms"`
 }
 
 // ---------- GET /admin/derp/relays/init ----------
@@ -105,13 +105,13 @@ func (s *Service) GetAdminDerpRelaysInit(w http.ResponseWriter, r *http.Request)
 	}
 	lang := s.I18n.LangFromRequest(r)
 	s.Backend.RenderWithLayout(w, r, "admin/derp_relays_init.html", c, map[string]any{
-		"Page":             "admin/derp/relays/init",
-		"Title":            i18n.T(lang, "derp_init.title"),
-		"DefaultSSHKey":    s.SSHKeyPath,
-		"SuggestedRegionID": nextRegionID,
+		"Page":               "admin/derp/relays/init",
+		"Title":              i18n.T(lang, "derp_init.title"),
+		"DefaultSSHKey":      s.SSHKeyPath,
+		"SuggestedRegionID":  nextRegionID,
 		"SuggestedSortOrder": nextSortOrder,
-		"FlashError":       r.URL.Query().Get("err"),
-		"FlashSuccess":     r.URL.Query().Get("ok"),
+		"FlashError":         r.URL.Query().Get("err"),
+		"FlashSuccess":       r.URL.Query().Get("ok"),
 	})
 }
 
@@ -119,14 +119,14 @@ func (s *Service) GetAdminDerpRelaysInit(w http.ResponseWriter, r *http.Request)
 
 // PostAdminDerpRelaysInit handles the "Initialize &
 // Register" form submit. The flow:
-//   1. Validate the form fields (region_id range,
-//      ssh_target format, etc).
-//   2. Shell out to bash deploy/derp-init.sh with
-//      the form fields as args.
-//   3. Parse the JSON result.
-//   4. Insert a derp_relays row via the existing
-//      db.AddDerpRelay helper.
-//   5. Audit log + redirect with success flash.
+//  1. Validate the form fields (region_id range,
+//     ssh_target format, etc).
+//  2. Shell out to bash deploy/derp-init.sh with
+//     the form fields as args.
+//  3. Parse the JSON result.
+//  4. Insert a derp_relays row via the existing
+//     db.AddDerpRelay helper.
+//  5. Audit log + redirect with success flash.
 //
 // On any failure (script not found, SSH refused,
 // port already in use, JSON parse error) we surface

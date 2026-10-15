@@ -158,10 +158,11 @@ func SanityCheckInfraUserOwners(hs *headscale.Client) ([]InfraOwnerMismatch, err
 // node is correctly on infra, or not a candidate at all).
 //
 // Rules (B251: hostname match is strict equality):
-//   R1: hostname equals "skygate-host" → must be on infra
-//       AND must have a tag starting with "tag:dev-infra-"
-//   R2: has tag:exit-node  → must be on infra
-//   R3: has tag:dev-infra-*  → must be on infra
+//
+//	R1: hostname equals "skygate-host" → must be on infra
+//	    AND must have a tag starting with "tag:dev-infra-"
+//	R2: has tag:exit-node  → must be on infra
+//	R3: has tag:dev-infra-*  → must be on infra
 //
 // Each violation is a stable string the caller can map to a
 // remediation message.

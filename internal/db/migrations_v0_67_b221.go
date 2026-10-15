@@ -35,19 +35,20 @@
 // Schema after this migration
 // -----------------------------
 // audit_log:
-//   id          BIGSERIAL PRIMARY KEY
-//   user_id     INTEGER DEFAULT 0
-//   username    TEXT DEFAULT ''
-//   action      TEXT NOT NULL
-//   detail      TEXT DEFAULT ''
-//   ip_address  TEXT DEFAULT ''
-//   created_at  INTEGER DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
-//   target_type TEXT DEFAULT ''     <-- NEW (B221)
-//   target_id   TEXT DEFAULT ''     <-- NEW (B221)
+//
+//	id          BIGSERIAL PRIMARY KEY
+//	user_id     INTEGER DEFAULT 0
+//	username    TEXT DEFAULT ''
+//	action      TEXT NOT NULL
+//	detail      TEXT DEFAULT ''
+//	ip_address  TEXT DEFAULT ''
+//	created_at  INTEGER DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+//	target_type TEXT DEFAULT ''     <-- NEW (B221)
+//	target_id   TEXT DEFAULT ''     <-- NEW (B221)
 //
 // Backward compat
 // ---------------
-// Both new columns default to '' (empty string), so
+// Both new columns default to ” (empty string), so
 // pre-existing rows get an empty target_type +
 // empty target_id — visible in the /admin/audit view
 // as "—" (no target) instead of the previous "all
@@ -86,7 +87,8 @@ import (
 )
 
 // migrateV067PG — v1.5.0+ (B221) —
-//   audit_log.target_type + audit_log.target_id.
+//
+//	audit_log.target_type + audit_log.target_id.
 //
 // Idempotent: ADD COLUMN IF NOT EXISTS is a no-op
 // when the column already exists. Re-running this

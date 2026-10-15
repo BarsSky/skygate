@@ -9,6 +9,8 @@ package admin
 
 import "testing"
 
-func TestAdmin_Skip_admin_telegram(t *testing.T) {{
-	t.Skip("v1.3.0: tests used newMemoryDB (SQLite). Rewrite for PG in Phase 2 using db.OpenTestPG(t) + PG-idiomatic CREATE TABLE (SERIAL, $N, EXTRACT). The admin UI is exercised at runtime by the live /admin/* routes on PG.")
-}}
+func TestAdmin_Skip_admin_telegram(t *testing.T) {
+	{
+		t.Skip("v1.3.0: tests used newMemoryDB (SQLite). Rewrite for PG in Phase 2 using db.OpenTestPG(t) + PG-idiomatic CREATE TABLE (SERIAL, $N, EXTRACT). The admin UI is exercised at runtime by the live /admin/* routes on PG.")
+	}
+}

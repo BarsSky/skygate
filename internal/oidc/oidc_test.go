@@ -306,7 +306,7 @@ func TestAllowedRedirect_ExactMatch(t *testing.T) {
 	}{
 		{"https://head.skynas.ru/oidc/callback", true},
 		{"http://localhost:8085/oidc/callback", true},
-		{"https://head.skynas.ru/oidc/callback/", false},   // trailing slash
+		{"https://head.skynas.ru/oidc/callback/", false},      // trailing slash
 		{"https://head.skynas.ru/oidc/callback?foo=1", false}, // query
 		{"https://attacker.example.com/oidc/callback", false},
 		{"", false},
@@ -340,10 +340,10 @@ func TestServeAuthorize_NoIssuerReturns503(t *testing.T) {
 // response.
 func TestServeAuthorize_UnknownClientID(t *testing.T) {
 	s := &Service{
-		IssuerURL:     "https://skygate.example.com",
-		ClientID:      "headscale",
-		RedirectURIs:  "https://head.skynas.ru/oidc/callback",
-		Codes:         NewAuthCodeStore(),
+		IssuerURL:    "https://skygate.example.com",
+		ClientID:     "headscale",
+		RedirectURIs: "https://head.skynas.ru/oidc/callback",
+		Codes:        NewAuthCodeStore(),
 	}
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/oidc/authorize?client_id=wrong", nil)
@@ -493,7 +493,7 @@ func TestSignIDToken_RoundTrip(t *testing.T) {
 		IssuedAt:          now,
 		Nonce:             "nonce-xyz",
 		Email:             "alice@example.com",
-		Name:               "alice",
+		Name:              "alice",
 		PreferredUsername: "alice",
 	})
 	if err != nil {

@@ -5,9 +5,9 @@
 // v1.5.1) and /admin/devices (B169, v1.5.2) cleaned three
 // things:
 //
-//   1. headscale (gRPC DeleteNode) — the node itself
-//   2. skygate's node_owner_map (DeleteNodeOwnerByNodeTag)
-//   3. skygate's device_exit_node_prefs (DeleteDeviceExitNodePref)
+//  1. headscale (gRPC DeleteNode) — the node itself
+//  2. skygate's node_owner_map (DeleteNodeOwnerByNodeTag)
+//  3. skygate's device_exit_node_prefs (DeleteDeviceExitNodePref)
 //
 // That left the device_rules table full of orphaned rows
 // pointing at a non-existent device_id. The next ACL regen
@@ -29,33 +29,33 @@
 // PostAdminDeviceDelete (internal/feature/admin/devices.go)
 // call after headscale.DeleteNode succeeds. The flow is:
 //
-//   1. db.DeleteNodeOwnerByNodeTag — clean the
-//      node_owner_map (this is what the bot's /exit_nodes
-//      reads; a stale row would keep showing the deleted
-//      node as a relay candidate).
-//   2. db.DeleteDeviceExitNodePref — clean the per-user
-//      per-hostname exit-node preference. For the admin
-//      path the userID is the original owner (looked up
-//      from node_owner_map before the row was deleted);
-//      the helper accepts userID=0 as a no-op so the
-//      admin path can pass 0 if the device never had a
-//      portal user.
-//   3. db.DeleteRulesByDeviceID — clean every device_rules
-//      row that referenced this device. The pre-B171 code
-//      only did this on a per-rule basis (the user had to
-//      click each rule's Delete button in /my/exit-rules).
-//      Post-B171 a single device delete cleans all of them
-//      in one transaction.
-//   4. acl.ApplyACLPipelineForPlane — regenerate the HuJSON
-//      ACL from the now-clean device_rules and re-apply
-//      it to headscale. The pre-B171 code didn't re-apply,
-//      so the policy headscale was serving still named
-//      the deleted device. Post-B171 headscale's policy
-//      matches the user's /my/exit-rules view.
-//   5. hs.InvalidateCache — the headscale.Client caches
-//      ListAllNodes for 5s. Without this the next
-//      /my/devices or /admin/devices page load would
-//      show the deleted node for up to 5s.
+//  1. db.DeleteNodeOwnerByNodeTag — clean the
+//     node_owner_map (this is what the bot's /exit_nodes
+//     reads; a stale row would keep showing the deleted
+//     node as a relay candidate).
+//  2. db.DeleteDeviceExitNodePref — clean the per-user
+//     per-hostname exit-node preference. For the admin
+//     path the userID is the original owner (looked up
+//     from node_owner_map before the row was deleted);
+//     the helper accepts userID=0 as a no-op so the
+//     admin path can pass 0 if the device never had a
+//     portal user.
+//  3. db.DeleteRulesByDeviceID — clean every device_rules
+//     row that referenced this device. The pre-B171 code
+//     only did this on a per-rule basis (the user had to
+//     click each rule's Delete button in /my/exit-rules).
+//     Post-B171 a single device delete cleans all of them
+//     in one transaction.
+//  4. acl.ApplyACLPipelineForPlane — regenerate the HuJSON
+//     ACL from the now-clean device_rules and re-apply
+//     it to headscale. The pre-B171 code didn't re-apply,
+//     so the policy headscale was serving still named
+//     the deleted device. Post-B171 headscale's policy
+//     matches the user's /my/exit-rules view.
+//  5. hs.InvalidateCache — the headscale.Client caches
+//     ListAllNodes for 5s. Without this the next
+//     /my/devices or /admin/devices page load would
+//     show the deleted node for up to 5s.
 //
 // The audit row + the user-visible flash message are
 // composed by the caller from the Result struct — this

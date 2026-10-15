@@ -41,13 +41,13 @@ var ErrTelegramLoginTokenAlreadyUsed = errors.New("telegram: login token already
 // telegram_login_tokens. created_at / expires_at / used_at are
 // unix seconds (int64). used_by_chat_id is 0 until consumed.
 type TelegramLoginToken struct {
-	Token         string
-	PortalUserID  int64
-	CreatedAt     int64
-	ExpiresAt     int64
-	UsedAt        int64
-	UsedByChatID  int64
-	RequestIP     string
+	Token        string
+	PortalUserID int64
+	CreatedAt    int64
+	ExpiresAt    int64
+	UsedAt       int64
+	UsedByChatID int64
+	RequestIP    string
 }
 
 // CreateTelegramLoginToken inserts a fresh row. The caller is

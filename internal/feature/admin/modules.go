@@ -79,10 +79,10 @@ type SubFeatureRow struct {
 
 // AuditRow is one audit_log row for the detail page.
 type AuditRow struct {
-	When    string // formatted for display
-	Action  string
-	Detail  string
-	By      string // username (or empty for system)
+	When   string // formatted for display
+	Action string
+	Detail string
+	By     string // username (or empty for system)
 }
 
 // AdminModulesList renders /admin/modules. Admin-only.
@@ -149,11 +149,11 @@ func (s *Service) AdminModuleDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	row := s.buildModuleRow(c, name, mod)
 	view := ModuleDetailView{
-		Row:        row,
+		Row:         row,
 		SubFeatures: s.buildSubFeatureRows(c, mod),
-		Audit:      s.loadModuleAudit(c, name, 20),
-		FlashOK:    r.URL.Query().Get("ok"),
-		FlashError: r.URL.Query().Get("err"),
+		Audit:       s.loadModuleAudit(c, name, 20),
+		FlashOK:     r.URL.Query().Get("ok"),
+		FlashError:  r.URL.Query().Get("err"),
 	}
 	// Health snapshot — best effort, 3s timeout.
 	if health, err := s.getModuleHealth(name); err == nil {
@@ -167,11 +167,11 @@ func (s *Service) AdminModuleDetail(w http.ResponseWriter, r *http.Request) {
 	title := s.I18nT(c, "modules.detail_title", name)
 	csrf := s.mintModulesCSRF(w)
 	s.Backend.RenderWithLayout(w, r, "admin/module_detail.html", c, map[string]any{
-		"Page":   "admin/modules",
-		"Title":  title,
-		"View":   view,
-		"Name":   name,
-		"CSRF":   csrf,
+		"Page":  "admin/modules",
+		"Title": title,
+		"View":  view,
+		"Name":  name,
+		"CSRF":  csrf,
 	})
 }
 
@@ -524,10 +524,10 @@ func (s *Service) loadModuleAudit(c *auth.Claims, name string, limit int) []Audi
 	var out []AuditRow
 	for rows.Next() {
 		var (
-			ts      int64
-			action  string
-			detail  sql.NullString
-			byUser  sql.NullString
+			ts     int64
+			action string
+			detail sql.NullString
+			byUser sql.NullString
 		)
 		if err := rows.Scan(&ts, &action, &detail, &byUser); err != nil {
 			continue

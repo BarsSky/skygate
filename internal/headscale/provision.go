@@ -10,22 +10,22 @@
 //
 // v0.23.0 Phase 1 closes the operational gap that v0.12.0 left
 // open: the manual form requires the operator to:
-//   1. ssh to the VM
-//   2. set up a headscale container (or use a remote one)
-//   3. create a user + API key
-//   4. paste the URL + key into the form
+//  1. ssh to the VM
+//  2. set up a headscale container (or use a remote one)
+//  3. create a user + API key
+//  4. paste the URL + key into the form
 //
 // Provision is the one-click shortcut for the common case
 // (a fresh per-user headscale container on the same host):
-//   1. admin clicks "Provision per-user headscale" on
-//      /admin/users/{id}/plane
-//   2. handler calls ProvisionUser(username, uid)
-//   3. shell out to deploy/headscale-users/headscale-bootstrap.sh
-//   4. script creates the container + user + API key,
-//      returns JSON
-//   5. handler parses JSON, encrypts the API key with
-//      SKYGATE_SECRET_KEY, persists via db.SetUserHeadscaleConfig
-//   6. handler invalidates the per-url HSForUser cache
+//  1. admin clicks "Provision per-user headscale" on
+//     /admin/users/{id}/plane
+//  2. handler calls ProvisionUser(username, uid)
+//  3. shell out to deploy/headscale-users/headscale-bootstrap.sh
+//  4. script creates the container + user + API key,
+//     returns JSON
+//  5. handler parses JSON, encrypts the API key with
+//     SKYGATE_SECRET_KEY, persists via db.SetUserHeadscaleConfig
+//  6. handler invalidates the per-url HSForUser cache
 //
 // Decommission is the reverse: teardown the container, clear
 // the DB row. Data on disk is preserved (moved to a sibling

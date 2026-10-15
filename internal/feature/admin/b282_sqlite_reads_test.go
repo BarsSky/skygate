@@ -132,7 +132,7 @@ func TestAuditQueryRunsOnSQLiteB282(t *testing.T) {
 	for rows.Next() {
 		var (
 			source, actor, action, target, targetType, targetID, detail, result, errMsg string
-			tsRaw                                                                        any
+			tsRaw                                                                       any
 		)
 		if err := rows.Scan(&source, &tsRaw, &actor, &action, &target, &targetType, &targetID,
 			&detail, &result, &errMsg); err != nil {
@@ -271,7 +271,7 @@ func TestAuditQueryClusterBranchOnSQLiteB282(t *testing.T) {
 	for rows.Next() {
 		var (
 			source, actor, action, target, targetType, targetID, detail, result, errMsg string
-			tsRaw                                                                        any
+			tsRaw                                                                       any
 		)
 		if err := rows.Scan(&source, &tsRaw, &actor, &action, &target, &targetType, &targetID,
 			&detail, &result, &errMsg); err != nil {

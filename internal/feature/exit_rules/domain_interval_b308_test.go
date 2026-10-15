@@ -17,16 +17,16 @@ func TestParseDomainResolveInterval_B308(t *testing.T) {
 		raw  string
 		want time.Duration
 	}{
-		{"", DefaultDomainResolveInterval},          // never set → default 6h
-		{"   ", DefaultDomainResolveInterval},       // whitespace tolerated
-		{"21600", 6 * time.Hour},                    // the default, explicit
-		{"3600", time.Hour},                         // an hour is fine
-		{"0", 0},                                    // explicit "every tick"
-		{"-5", 0},                                   // negative = unlimited too
-		{"60", MinDomainResolveInterval},            // below the floor → clamped up
-		{"604800", MaxDomainResolveInterval},        // exactly a week
-		{"99999999", MaxDomainResolveInterval},      // above the ceiling → clamped down
-		{"garbage", DefaultDomainResolveInterval},   // unparseable → default
+		{"", DefaultDomainResolveInterval},        // never set → default 6h
+		{"   ", DefaultDomainResolveInterval},     // whitespace tolerated
+		{"21600", 6 * time.Hour},                  // the default, explicit
+		{"3600", time.Hour},                       // an hour is fine
+		{"0", 0},                                  // explicit "every tick"
+		{"-5", 0},                                 // negative = unlimited too
+		{"60", MinDomainResolveInterval},          // below the floor → clamped up
+		{"604800", MaxDomainResolveInterval},      // exactly a week
+		{"99999999", MaxDomainResolveInterval},    // above the ceiling → clamped down
+		{"garbage", DefaultDomainResolveInterval}, // unparseable → default
 		{"not-a-number", DefaultDomainResolveInterval},
 	}
 	for _, tc := range cases {

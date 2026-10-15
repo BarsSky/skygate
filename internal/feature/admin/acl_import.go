@@ -101,11 +101,11 @@ func (s *Service) PostAdminACLsImport(w http.ResponseWriter, r *http.Request) {
 	hCur := sha256.Sum256([]byte(currentPolicy))
 	hImp := sha256.Sum256([]byte(policy))
 	s.Backend.RenderWithLayout(w, r, "admin/acls_import.html", c, map[string]any{
-		"CurrentPolicy": currentPolicy,
+		"CurrentPolicy":  currentPolicy,
 		"ImportedPolicy": policy,
-		"SameAsCurrent": hCur == hImp,
-		"CurrentHash":   hex.EncodeToString(hCur[:8]),
-		"ImportedHash":  hex.EncodeToString(hImp[:8]),
+		"SameAsCurrent":  hCur == hImp,
+		"CurrentHash":    hex.EncodeToString(hCur[:8]),
+		"ImportedHash":   hex.EncodeToString(hImp[:8]),
 	})
 }
 

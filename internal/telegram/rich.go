@@ -79,8 +79,8 @@ func Heading(text string, level int) RichBlock {
 		level = 4
 	}
 	return RichBlock{
-		"type": "section_heading",
-		"text": text,
+		"type":  "section_heading",
+		"text":  text,
 		"level": level,
 	}
 }

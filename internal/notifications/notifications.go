@@ -118,13 +118,14 @@ func DeleteForUser(d *sql.DB, userID int64) (int64, error) {
 // on lang without a schema change.
 //
 // Examples (ref=now):
-//   30 seconds ago → "just now"
-//   5 minutes ago  → "5 min ago"
-//   2 hours ago    → "2 h ago"
-//   1 day ago      → "1 d ago"
-//   3 days ago     → "3 d ago"
-//   2 months ago    → "2 mo ago"
-//   older          → "YYYY-MM-DD" (raw date)
+//
+//	30 seconds ago → "just now"
+//	5 minutes ago  → "5 min ago"
+//	2 hours ago    → "2 h ago"
+//	1 day ago      → "1 d ago"
+//	3 days ago     → "3 d ago"
+//	2 months ago    → "2 mo ago"
+//	older          → "YYYY-MM-DD" (raw date)
 //
 // The thresholds are tuned for the B156 keynotify
 // scheduler's daily 9 AM run: most notifications

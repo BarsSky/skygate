@@ -52,7 +52,7 @@ func TestLimitOverride(t *testing.T) {
 		{"valid 50", "50", 50},
 		{"valid 500", "500", 500},
 		{"valid 5000", "5000", 5000},
-		{"invalid (zero)", "0", 200},    // 0 → default
+		{"invalid (zero)", "0", 200}, // 0 → default
 		{"invalid (negative)", "-5", 200},
 		{"invalid (non-numeric)", "abc", 200},
 		{"invalid (too large)", "5001", 200}, // 5001 > 5000 → default

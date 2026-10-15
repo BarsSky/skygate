@@ -53,11 +53,11 @@ func TestB121_MintThemeInThemesCSS(t *testing.T) {
 	// verification is a separate sub-check so a future
 	// palette tweak doesn't fail the whole test.
 	wantPalette := map[string]string{
-		"--bg":          "#f5f7f6", // silver with subtle mint tint
-		"--bg-card":     "#ffffff", // pure white for card lift
-		"--border":      "#d4dad6", // soft silver border
-		"--accent":      "#10b981", // mint/emerald accent
-		"--accent-fg":   "#ffffff", // white text on mint
+		"--bg":           "#f5f7f6", // silver with subtle mint tint
+		"--bg-card":      "#ffffff", // pure white for card lift
+		"--border":       "#d4dad6", // soft silver border
+		"--accent":       "#10b981", // mint/emerald accent
+		"--accent-fg":    "#ffffff", // white text on mint
 		"--accent-hover": "#059669", // deeper mint
 	}
 	// Extract the [data-theme="mint"]{...} block.

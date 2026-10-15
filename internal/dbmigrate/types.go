@@ -39,11 +39,11 @@ import (
 type StepStatus string
 
 const (
-	StepPending   StepStatus = "pending"
-	StepRunning   StepStatus = "running"
-	StepSuccess   StepStatus = "success"
-	StepFailed    StepStatus = "failed"
-	StepSkipped   StepStatus = "skipped"
+	StepPending    StepStatus = "pending"
+	StepRunning    StepStatus = "running"
+	StepSuccess    StepStatus = "success"
+	StepFailed     StepStatus = "failed"
+	StepSkipped    StepStatus = "skipped"
 	StepRolledBack StepStatus = "rolled_back"
 )
 
@@ -61,7 +61,8 @@ const (
 // had even started.
 //
 // The order we want:
-//   1 (precheck) → 2 (dump) → 3 (restore) → 4 (verify) → 5 (flip) → 6 (cleanup)
+//
+//	1 (precheck) → 2 (dump) → 3 (restore) → 4 (verify) → 5 (flip) → 6 (cleanup)
 //
 // Steps declare their position explicitly. Adding a new
 // step means picking the next free ordinal (7+ for
@@ -184,32 +185,32 @@ type DBMigrator interface {
 // MigrationRun is the DB row representing a single migration
 // run. Persisted in dbmigrate_run.
 type MigrationRun struct {
-	ID          int64
-	ClusterID   string
-	SourceDSN   string
-	TargetDSN   string
-	Operator    string
-	Status      MigrationStatus
-	StartedAt   time.Time
-	FinishedAt  *time.Time
-	Error       string
-	CreatedAt   time.Time
+	ID         int64
+	ClusterID  string
+	SourceDSN  string
+	TargetDSN  string
+	Operator   string
+	Status     MigrationStatus
+	StartedAt  time.Time
+	FinishedAt *time.Time
+	Error      string
+	CreatedAt  time.Time
 }
 
 // MigrationStep is the DB row for a single step within a run.
 // Persisted in dbmigrate_step.
 type MigrationStep struct {
-	ID          int64
-	RunID       int64
-	StepName    string
-	Ordinal     int
-	Status      StepStatus
-	StartedAt   *time.Time
-	FinishedAt  *time.Time
-	DurationMs  int64
-	Logs        string // JSON array of log lines
-	Error       string
-	Metadata    string // JSON: step-specific results
+	ID         int64
+	RunID      int64
+	StepName   string
+	Ordinal    int
+	Status     StepStatus
+	StartedAt  *time.Time
+	FinishedAt *time.Time
+	DurationMs int64
+	Logs       string // JSON array of log lines
+	Error      string
+	Metadata   string // JSON: step-specific results
 }
 
 // RunView is the lightweight projection of a MigrationRun

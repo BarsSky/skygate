@@ -65,7 +65,7 @@ type deployPageData struct {
 	// FormState is the per-row target dropdown preselect.
 	// (Mostly so a re-render after a push keeps the
 	// operator's last target selection.)
-	FormState deployFormState
+	FormState    deployFormState
 	FlashSuccess string
 	FlashError   string
 	// DryRunResult is populated only after the operator
@@ -281,13 +281,13 @@ func (s *Service) PostAdminDeployTestFailover(w http.ResponseWriter, r *http.Req
 // /admin/ha handlers, so importing back would cycle).
 //
 // Algorithm:
-//   1. If ApplyActiveRole is set AND that hostname is a
-//      chain member AND it's not currently the active
-//      member, predict it (operator's forced intent).
-//   2. Otherwise, find the lowest-priority ALIVE member
-//      (P1, P2, ...) and predict it.
-//   3. If no member is alive, return "" (the dry-run
-//      page renders "no alive members" and exits).
+//  1. If ApplyActiveRole is set AND that hostname is a
+//     chain member AND it's not currently the active
+//     member, predict it (operator's forced intent).
+//  2. Otherwise, find the lowest-priority ALIVE member
+//     (P1, P2, ...) and predict it.
+//  3. If no member is alive, return "" (the dry-run
+//     page renders "no alive members" and exits).
 func predictNextActive(chain *ha.HaChain) string {
 	if chain == nil || len(chain.Members) == 0 {
 		return ""

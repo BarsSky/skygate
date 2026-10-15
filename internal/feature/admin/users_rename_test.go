@@ -41,7 +41,7 @@ import (
 // emitted detail string without standing up a full DB-side audit
 // log. CurrentUser is configurable (admin vs non-admin).
 type renameStubBackend struct {
-	admin   bool
+	admin     bool
 	auditRows *[]capturedAudit
 }
 
@@ -101,8 +101,8 @@ func TestPostAdminUserRename_HappyPath(t *testing.T) {
 	stubHS := func() *headscale.Client { hsCalls++; return hsClient }
 	var rows []capturedAudit
 	svc := &Service{
-		DB: &dbDBSource{db: src},
-		Backend: &renameStubBackend{admin: true, auditRows: &rows},
+		DB:         &dbDBSource{db: src},
+		Backend:    &renameStubBackend{admin: true, auditRows: &rows},
 		HSGlobalFn: stubHS,
 	}
 
@@ -174,8 +174,8 @@ func TestPostAdminUserRename_NonAdminForbidden(t *testing.T) {
 	hsClient := headscale.New("http://hs.test", "k")
 	stubHS := func() *headscale.Client { hsCalls++; return hsClient }
 	svc := &Service{
-		DB: &dbDBSource{db: src},
-		Backend: &renameStubBackend{admin: false},
+		DB:         &dbDBSource{db: src},
+		Backend:    &renameStubBackend{admin: false},
 		HSGlobalFn: stubHS,
 	}
 
@@ -216,8 +216,8 @@ func TestPostAdminUserRename_InvalidPattern(t *testing.T) {
 	hsClient := headscale.New("http://hs.test", "k")
 	stubHS := func() *headscale.Client { hsCalls++; return hsClient }
 	svc := &Service{
-		DB: &dbDBSource{db: src},
-		Backend: &renameStubBackend{admin: true},
+		DB:         &dbDBSource{db: src},
+		Backend:    &renameStubBackend{admin: true},
 		HSGlobalFn: stubHS,
 	}
 
@@ -284,8 +284,8 @@ func TestPostAdminUserRename_HeadscaleDuplicateNameError(t *testing.T) {
 	hsClient.BaseURL = hsSrv.URL
 	stubHS := func() *headscale.Client { return hsClient }
 	svc := &Service{
-		DB: &dbDBSource{db: src},
-		Backend: &renameStubBackend{admin: true},
+		DB:         &dbDBSource{db: src},
+		Backend:    &renameStubBackend{admin: true},
 		HSGlobalFn: stubHS,
 	}
 
@@ -325,8 +325,8 @@ func TestPostAdminUserRename_NoChangeIsIdempotent(t *testing.T) {
 	hsClient := headscale.New("http://hs.test", "k")
 	stubHS := func() *headscale.Client { hsCalls++; return hsClient }
 	svc := &Service{
-		DB: &dbDBSource{db: src},
-		Backend: &renameStubBackend{admin: true},
+		DB:         &dbDBSource{db: src},
+		Backend:    &renameStubBackend{admin: true},
 		HSGlobalFn: stubHS,
 	}
 
@@ -359,8 +359,8 @@ func TestPostAdminUserRename_HeadscaleNotLinked(t *testing.T) {
 	stubHS := func() *headscale.Client { hsCalls++; return hsClient }
 	var rows []capturedAudit
 	svc := &Service{
-		DB: &dbDBSource{db: src},
-		Backend: &renameStubBackend{admin: true, auditRows: &rows},
+		DB:         &dbDBSource{db: src},
+		Backend:    &renameStubBackend{admin: true, auditRows: &rows},
 		HSGlobalFn: stubHS,
 	}
 

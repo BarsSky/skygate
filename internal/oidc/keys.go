@@ -33,15 +33,15 @@
 //
 // What B161.1 does NOT include
 // ----------------------------
-// - /oidc/authorize handler (B161.2) — renders the
-//   skygate login UI (or uses an existing cookie
-//   session) and issues an auth code
-// - /oidc/token handler (B161.3) — exchanges the
-//   auth code for id_token + access_token (RS256
-//   signed with the private key from this file)
-// - /oidc/userinfo handler (B161.3) — returns the
-//   OIDC user claims (sub, email, name) for the
-//   access_token's subject
+//   - /oidc/authorize handler (B161.2) — renders the
+//     skygate login UI (or uses an existing cookie
+//     session) and issues an auth code
+//   - /oidc/token handler (B161.3) — exchanges the
+//     auth code for id_token + access_token (RS256
+//     signed with the private key from this file)
+//   - /oidc/userinfo handler (B161.3) — returns the
+//     OIDC user claims (sub, email, name) for the
+//     access_token's subject
 //
 // Discovery + JWKS are enough to ship a safe B161.1
 // commit that operators can verify the OIDC
@@ -125,8 +125,9 @@ type KeyStore struct {
 // ready-to-use *KeyStore.
 //
 // The key files are:
-//   <dir>/oidc-signing.pem   — PKCS#1 PEM (RSA PRIVATE KEY)
-//   <dir>/oidc-signing.pub   — PKCS#8 PEM (PUBLIC KEY)
+//
+//	<dir>/oidc-signing.pem   — PKCS#1 PEM (RSA PRIVATE KEY)
+//	<dir>/oidc-signing.pub   — PKCS#8 PEM (PUBLIC KEY)
 //
 // We persist both so the public key is available
 // for offline inspection + so the JWKS endpoint
@@ -242,7 +243,6 @@ func (ks *KeyStore) KID() string {
 	}
 	return string(ks.key.KID)
 }
-
 
 // Ready returns true once a keypair is loaded.
 // While the keypair is generating (cold start on

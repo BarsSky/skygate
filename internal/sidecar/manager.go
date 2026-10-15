@@ -481,10 +481,10 @@ func (m *Manager) GeneratePreauth(ctx context.Context, userID int64) (string, ti
 // in the admin page so the operator can copy the key into a
 // message to the user.
 type PreauthInfo struct {
-	Key        string
-	ExpiresAt  time.Time
-	Hostname   string // suggested --hostname for tailscale up
-	Routes     string // suggested --advertise-routes
+	Key       string
+	ExpiresAt time.Time
+	Hostname  string // suggested --hostname for tailscale up
+	Routes    string // suggested --advertise-routes
 }
 
 // BuildPreauthInfo returns a ready-to-display preauth + command

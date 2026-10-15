@@ -587,7 +587,7 @@ func TestExitNodesAvailabilityTest_NoExitNodes_Skips(t *testing.T) {
 // the tests.
 func TestExitNodeSpeedTestsAreRegistered(t *testing.T) {
 	wants := map[string]string{
-		"exit_nodes.tcp_connect_speed":   "network",
+		"exit_nodes.tcp_connect_speed":    "network",
 		"exit_nodes.availability_summary": "network",
 	}
 	for _, def := range TestRegistry {

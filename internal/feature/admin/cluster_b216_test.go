@@ -96,12 +96,12 @@ func TestClassifyNodeHealth(t *testing.T) {
 	}
 
 	cases := []struct {
-		name        string
-		state       string
-		lastSeen    sql.NullTime
-		nowUnix     int64
-		wantOnline  bool
-		wantStale   bool
+		name       string
+		state      string
+		lastSeen   sql.NullTime
+		nowUnix    int64
+		wantOnline bool
+		wantStale  bool
 	}{
 		// ready + fresh heartbeat = online
 		{"ready + last_seen 0s ago", "ready", mkTime(now), now, true, false},

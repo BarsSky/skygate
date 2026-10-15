@@ -33,7 +33,8 @@ import (
 )
 
 // migrateV066PG — v1.5.0+ (B211) —
-//   UNIQUE (cluster_id, hostname) on cluster_node.
+//
+//	UNIQUE (cluster_id, hostname) on cluster_node.
 //
 // PG has no "ADD CONSTRAINT IF NOT EXISTS" before v17;
 // we wrap the ADD in a DO block that checks
@@ -43,10 +44,10 @@ import (
 //
 // The check is:
 //
-//   SELECT 1 FROM pg_constraint
-//    WHERE conrelid = 'cluster_node'::regclass
-//      AND contype  = 'u'
-//      AND conname  = 'cluster_node_cluster_id_hostname_key'
+//	SELECT 1 FROM pg_constraint
+//	 WHERE conrelid = 'cluster_node'::regclass
+//	   AND contype  = 'u'
+//	   AND conname  = 'cluster_node_cluster_id_hostname_key'
 //
 // If the constraint is missing, ADD it. We pick the
 // "_key" suffix to match PG's default naming for

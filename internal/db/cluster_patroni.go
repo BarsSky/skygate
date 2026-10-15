@@ -87,7 +87,7 @@ type FailoverDBSwitchoverResult struct {
 	// Patroni error responses use a "err" or
 	// "error" key (varies by version). We capture
 	// both for forward-compat.
-	Err  string `json:"err,omitempty"`
+	Err   string `json:"err,omitempty"`
 	Error string `json:"error,omitempty"`
 }
 

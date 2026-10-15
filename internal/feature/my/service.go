@@ -13,13 +13,13 @@
 //   - exit_nodes.go     — GET /my/exit-nodes + preferred-set
 //   - keys.go           — GET /my/keys + expire
 //   - audit.go          — GET /my/account/audit (CSV/JSON
-//                          export, uses SanitizeFilename)
+//     export, uses SanitizeFilename)
 //   - device_exit_pref.go — POST /my/devices/preferred-exit
-//                            + admin override (admin half
-//                            moves to feature/admin in a
-//                            later step; left here in the
-//                            interim to keep the file
-//                            self-contained)
+//   - admin override (admin half
+//     moves to feature/admin in a
+//     later step; left here in the
+//     interim to keep the file
+//     self-contained)
 //   - devices.go        — GET /my/devices + backfill (step 5b)
 //   - meshes.go         — /my/meshes CRUD (step 5c)
 //
@@ -99,11 +99,11 @@ type Backend interface {
 //     feature/my/devices.go). Modeled as a callback
 //     instead of duplicated. Set by main.go at boot.
 type Service struct {
-	Backend                Backend
-	DB                     DBSource // B210: was *sql.DB — now DBSource (live getter, see dbsource.go)
-	HS                     *headscale.Client
-	Cfg                    *config.Config
-	I18n                   *i18n.Catalog
-	Notifier                telegram.Notifier
-	BackfillNodeOwnership  func(d db.DBSource, nodes []headscale.NodeView, userID int64, username string)
+	Backend               Backend
+	DB                    DBSource // B210: was *sql.DB — now DBSource (live getter, see dbsource.go)
+	HS                    *headscale.Client
+	Cfg                   *config.Config
+	I18n                  *i18n.Catalog
+	Notifier              telegram.Notifier
+	BackfillNodeOwnership func(d db.DBSource, nodes []headscale.NodeView, userID int64, username string)
 }

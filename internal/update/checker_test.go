@@ -52,17 +52,17 @@ func TestCompareSemver(t *testing.T) {
 		// ["1","3","19.2"] and the parseUint fallback lex-compared
 		// "9" < "19.2" (incorrectly reporting v1.3.9 as newer
 		// than v1.3.19.2).
-		{"1.3.19.2", "1.3.9", 1},    // local newer (live B124 case)
-		{"1.3.9", "1.3.19.2", -1},   // GitHub old, local new
+		{"1.3.19.2", "1.3.9", 1},  // local newer (live B124 case)
+		{"1.3.9", "1.3.19.2", -1}, // GitHub old, local new
 		{"1.3.19.2", "1.3.19.2", 0},
 		// B128: 4th component IS now compared.
-		{"1.3.19.2", "1.3.19.1", 1},    // sub-patch bump
+		{"1.3.19.2", "1.3.19.1", 1}, // sub-patch bump
 		{"1.3.19.1", "1.3.19.2", -1},
-		{"1.3.19.4", "1.3.19.2", 1},    // the live B128 trigger
-		{"1.3.19.2", "1.3.19.4", -1},   // the live B128 trigger (reversed)
+		{"1.3.19.4", "1.3.19.2", 1},  // the live B128 trigger
+		{"1.3.19.2", "1.3.19.4", -1}, // the live B128 trigger (reversed)
 		// Padding still works for 3-part versions.
-		{"1.3.19", "1.3.19.0", 0},      // implicit .0 == explicit .0
-		{"1.3.19.1", "1.3.19", 1},      // .1 > implicit .0
+		{"1.3.19", "1.3.19.0", 0}, // implicit .0 == explicit .0
+		{"1.3.19.1", "1.3.19", 1}, // .1 > implicit .0
 		// (Pre-release suffix handling like "0.29.0-rc.1" is a
 		// separate concern — the channel check filters those
 		// out before compareSemver is called. compareSemver
@@ -87,8 +87,8 @@ func TestStripBuildLabelSuffix(t *testing.T) {
 		{"1.3.11-0-gdeadbeef", "1.3.11"},
 		{"1.3.11-27-g03a1d97+extra", "1.3.11"},
 		{"0.28.6+abc1234", "0.28.6"},
-		{"1.3.11", "1.3.11"},                              // unchanged
-		{"v1.3.11-27-g03a1d97", "v1.3.11"},                // preserves "v"
+		{"1.3.11", "1.3.11"},               // unchanged
+		{"v1.3.11-27-g03a1d97", "v1.3.11"}, // preserves "v"
 		// Plain pre-release NOT stripped
 		{"0.29.0-rc.1", "0.29.0-rc.1"},
 		{"0.29.0-beta", "0.29.0-beta"},
@@ -268,7 +268,7 @@ func TestParseUint(t *testing.T) {
 		{"0", 0, false},
 		{"1", 1, false},
 		{"99", 99, false},
-		{"0.5", 0, true},   // not pure digits
+		{"0.5", 0, true}, // not pure digits
 		{"abc", 0, true},
 		{"", 0, true},
 		{"1234567890", 1234567890, false},

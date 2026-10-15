@@ -42,9 +42,9 @@ func escapeHTML(s string) string { return html.EscapeString(s) }
 // buildPlatformPicker constructs the inline-keyboard reply for
 // /add_device. Three rows:
 //
-//   📋 Скопировать            ← (full-width, copy_text = preauth key)
-//   🐧 Linux  ⊞ Windows  🍎 macOS
-//   📱 iOS    🤖 Android
+//	📋 Скопировать            ← (full-width, copy_text = preauth key)
+//	🐧 Linux  ⊞ Windows  🍎 macOS
+//	📱 iOS    🤖 Android
 //
 // The Copy button is the new addition (Этап 14 v12,
 // 2026-07-14): Telegram Bot API v7.0+ supports a `copy_text`

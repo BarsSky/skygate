@@ -32,10 +32,10 @@ import (
 // migrateV064PG — v1.5.0+ (B195) — cluster management tables.
 //
 // All tables follow the project conventions:
-//   * id TEXT PRIMARY KEY (string ids, not auto-increment; admin-friendly)
-//   * created_at / updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-//   * JSONB for structured fields (chain, detail, etc.)
-//   * All foreign keys are TEXT (not bigint) for joinability from logs
+//   - id TEXT PRIMARY KEY (string ids, not auto-increment; admin-friendly)
+//   - created_at / updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+//   - JSONB for structured fields (chain, detail, etc.)
+//   - All foreign keys are TEXT (not bigint) for joinability from logs
 func migrateV064PG(d *sql.DB) error {
 	queries := []string{
 		// cluster — definition of one cluster

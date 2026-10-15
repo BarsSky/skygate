@@ -49,9 +49,9 @@ func New() *Catalog {
 }
 
 // LangFromRequest returns the user's preferred language, in priority order:
-//   1. cookie "lang"
-//   2. Accept-Language header
-//   3. default (RU)
+//  1. cookie "lang"
+//  2. Accept-Language header
+//  3. default (RU)
 func (c *Catalog) LangFromRequest(r *http.Request) string {
 	if cookie, err := r.Cookie("lang"); err == nil {
 		l := strings.ToLower(strings.TrimSpace(cookie.Value))

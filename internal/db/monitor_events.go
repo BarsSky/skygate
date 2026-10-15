@@ -3,13 +3,13 @@
 // Typed access to the monitoring inbox (v0.76 monitor_events). The semantics the
 // page and the producers rely on:
 //
-//   * Report is an UPSERT keyed on fingerprint: a recurring condition updates ONE
+//   - Report is an UPSERT keyed on fingerprint: a recurring condition updates ONE
 //     row (repeats++, last_seen=now, state back to open) instead of adding a row
 //     per occurrence, so a flapping alert cannot drown the list. It reports
 //     whether the row was NEW (or reopened), which is what a notifier needs: a
 //     repeat of a condition the operator already saw must not re-page them.
-//   * Resolve marks a condition gone (state=resolved) without deleting history.
-//   * Ack is the operator saying "I know" — it keeps the row in the list but out
+//   - Resolve marks a condition gone (state=resolved) without deleting history.
+//   - Ack is the operator saying "I know" — it keeps the row in the list but out
 //     of the unhandled count.
 package db
 

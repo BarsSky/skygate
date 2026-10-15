@@ -51,8 +51,8 @@ func init() {
 
 type dumpStep struct{}
 
-func (dumpStep) Name() string         { return "dump" }
-func (dumpStep) Description() string  { return "Run pg_dump -Fc on source host" }
+func (dumpStep) Name() string        { return "dump" }
+func (dumpStep) Description() string { return "Run pg_dump -Fc on source host" }
 func (dumpStep) Ordinal() int        { return 2 }
 func (dumpStep) IsOptional() bool    { return false }
 func (dumpStep) DependsOn() []string { return []string{"precheck"} }

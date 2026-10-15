@@ -213,7 +213,7 @@ func TestInstallModeDisplay(t *testing.T) {
 		{"in_container", "modules.install_mode_in"},
 		{"attach", "modules.install_mode_at"},
 		{"unknown_mode", "unknown_mode"}, // pass-through
-		{"", ""},                          // empty pass-through
+		{"", ""},                         // empty pass-through
 	}
 	for _, tc := range tests {
 		got := s.installModeDisplay(c, tc.in)

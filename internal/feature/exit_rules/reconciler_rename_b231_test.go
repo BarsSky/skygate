@@ -24,11 +24,11 @@ import (
 // no rename detection is needed.
 func TestClassifyRenameMigration_Normal(t *testing.T) {
 	cand := RenameOrphanCandidate{
-		UserID:             1,
-		Username:           "skyadmin",
-		Hostname:           "cyborg",
-		ExitNodeTag:        "tag:dev-infra-emilia",
-		HasNodeOwnerMapRow: true,
+		UserID:              1,
+		Username:            "skyadmin",
+		Hostname:            "cyborg",
+		ExitNodeTag:         "tag:dev-infra-emilia",
+		HasNodeOwnerMapRow:  true,
 		CandidatesForRename: nil,
 	}
 	if got := ClassifyRenameMigration(cand); got != ClassificationNormal {
@@ -43,11 +43,11 @@ func TestClassifyRenameMigration_Normal(t *testing.T) {
 // hostname.
 func TestClassifyRenameMigration_Rename(t *testing.T) {
 	cand := RenameOrphanCandidate{
-		UserID:             1,
-		Username:           "skyadmin",
-		Hostname:           "cyborg", // old hostname, no longer in node_owner_map
-		ExitNodeTag:        "tag:dev-infra-emilia",
-		HasNodeOwnerMapRow: false,
+		UserID:              1,
+		Username:            "skyadmin",
+		Hostname:            "cyborg", // old hostname, no longer in node_owner_map
+		ExitNodeTag:         "tag:dev-infra-emilia",
+		HasNodeOwnerMapRow:  false,
 		CandidatesForRename: []string{"cyborg-v2"}, // single match
 	}
 	if got := ClassifyRenameMigration(cand); got != ClassificationRename {
@@ -62,11 +62,11 @@ func TestClassifyRenameMigration_Rename(t *testing.T) {
 // B231 cannot auto-pick; log + alert + manual review.
 func TestClassifyRenameMigration_Ambiguous(t *testing.T) {
 	cand := RenameOrphanCandidate{
-		UserID:             1,
-		Username:           "skyadmin",
-		Hostname:           "cyborg", // old hostname
-		ExitNodeTag:        "tag:dev-infra-emilia",
-		HasNodeOwnerMapRow: false,
+		UserID:              1,
+		Username:            "skyadmin",
+		Hostname:            "cyborg", // old hostname
+		ExitNodeTag:         "tag:dev-infra-emilia",
+		HasNodeOwnerMapRow:  false,
 		CandidatesForRename: []string{"cyborg-v2", "cyborg-v3"}, // 2 matches
 	}
 	if got := ClassifyRenameMigration(cand); got != ClassificationAmbiguous {
@@ -81,11 +81,11 @@ func TestClassifyRenameMigration_Ambiguous(t *testing.T) {
 // alert + manual SQL DELETE.
 func TestClassifyRenameMigration_Orphan(t *testing.T) {
 	cand := RenameOrphanCandidate{
-		UserID:             1,
-		Username:           "skyadmin",
-		Hostname:           "cyborg-deleted", // old hostname
-		ExitNodeTag:        "tag:dev-infra-emilia",
-		HasNodeOwnerMapRow: false,
+		UserID:              1,
+		Username:            "skyadmin",
+		Hostname:            "cyborg-deleted", // old hostname
+		ExitNodeTag:         "tag:dev-infra-emilia",
+		HasNodeOwnerMapRow:  false,
 		CandidatesForRename: nil, // no match
 	}
 	if got := ClassifyRenameMigration(cand); got != ClassificationOrphan {
@@ -101,11 +101,11 @@ func TestClassifyRenameMigration_Orphan(t *testing.T) {
 // → orphan).
 func TestClassifyRenameMigration_OrphanWithStaleTag(t *testing.T) {
 	cand := RenameOrphanCandidate{
-		UserID:             1,
-		Username:           "skyadmin",
-		Hostname:           "cyborg",
-		ExitNodeTag:        "tag:exit-emilia", // legacy form
-		HasNodeOwnerMapRow: false,
+		UserID:              1,
+		Username:            "skyadmin",
+		Hostname:            "cyborg",
+		ExitNodeTag:         "tag:exit-emilia", // legacy form
+		HasNodeOwnerMapRow:  false,
 		CandidatesForRename: nil,
 	}
 	if got := ClassifyRenameMigration(cand); got != ClassificationOrphan {
@@ -121,11 +121,11 @@ func TestClassifyRenameMigration_OrphanWithStaleTag(t *testing.T) {
 // reporting but the classification is the same.
 func TestClassifyRenameMigration_TwoHostsSameTagReal(t *testing.T) {
 	cand := RenameOrphanCandidate{
-		UserID:             1,
-		Username:           "skyadmin",
-		Hostname:           "iphone", // original pref
-		ExitNodeTag:        "tag:dev-infra-emilia",
-		HasNodeOwnerMapRow: false,
+		UserID:              1,
+		Username:            "skyadmin",
+		Hostname:            "iphone", // original pref
+		ExitNodeTag:         "tag:dev-infra-emilia",
+		HasNodeOwnerMapRow:  false,
 		CandidatesForRename: []string{"ipad", "macbook"}, // 2 devices share the emilia tag
 	}
 	if got := ClassifyRenameMigration(cand); got != ClassificationAmbiguous {
@@ -138,16 +138,16 @@ func TestClassifyRenameMigration_TwoHostsSameTagReal(t *testing.T) {
 // row (per-USER slot) should be classified Normal so
 // it never gets migrated. The DB-touching
 // MigrateRenamedDevicePrefs filters these out
-// upstream (WHERE device_hostname <> '' AND
+// upstream (WHERE device_hostname <> ” AND
 // device_hostname IS NOT NULL), but the pure
 // function should still be safe.
 func TestClassifyRenameMigration_EmptyHostname(t *testing.T) {
 	cand := RenameOrphanCandidate{
-		UserID:             1,
-		Username:           "skyadmin",
-		Hostname:           "", // per-USER slot
-		ExitNodeTag:        "tag:dev-infra-emilia",
-		HasNodeOwnerMapRow: false,
+		UserID:              1,
+		Username:            "skyadmin",
+		Hostname:            "", // per-USER slot
+		ExitNodeTag:         "tag:dev-infra-emilia",
+		HasNodeOwnerMapRow:  false,
 		CandidatesForRename: nil,
 	}
 	// Empty hostname + no node_owner_map row +

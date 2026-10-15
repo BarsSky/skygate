@@ -65,9 +65,9 @@ import (
 // populated when mode='npm'.
 //
 // Indexes:
-//   * hostname_idx — derp_cert_sync is read by hostname when the
+//   - hostname_idx — derp_cert_sync is read by hostname when the
 //     cron loop iterates rows
-//   * mode_enabled_idx — partial index for the cron scan
+//   - mode_enabled_idx — partial index for the cron scan
 //     ("enabled AND mode IN ('npm','letsencrypt')")
 func migrateV071PG(d *sql.DB) error {
 	stmts := []string{

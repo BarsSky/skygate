@@ -8,14 +8,14 @@
 // no remediation inside the UI" gap.
 //
 // Two drift cases:
-//   1. SKYGATE_ADMIN_USER is a name that EXISTS in headscale but
-//      doesn't have a matching portal_users row → suggest "Adopt
-//      as Admin" (creates portal row with is_admin=1 + hs_id).
-//      Pre-fix the operator had to find the headscale orphan
-//      manually and run InsertPortalUserAdoptAdmin by SQL.
-//   2. SKYGATE_ADMIN_USER is a name that EXISTS in headscale AND
-//      matches a portal user with is_admin=0 → suggest "Promote
-//      to Admin" (single UPDATE).
+//  1. SKYGATE_ADMIN_USER is a name that EXISTS in headscale but
+//     doesn't have a matching portal_users row → suggest "Adopt
+//     as Admin" (creates portal row with is_admin=1 + hs_id).
+//     Pre-fix the operator had to find the headscale orphan
+//     manually and run InsertPortalUserAdoptAdmin by SQL.
+//  2. SKYGATE_ADMIN_USER is a name that EXISTS in headscale AND
+//     matches a portal user with is_admin=0 → suggest "Promote
+//     to Admin" (single UPDATE).
 //
 // (We don't show a banner for the "no admin row at all" case —
 // that's already the first-run banner's territory. We don't show

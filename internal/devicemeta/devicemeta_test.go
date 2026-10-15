@@ -118,4 +118,3 @@ func TestIconsKnown(t *testing.T) {
 		}
 	}
 }
-

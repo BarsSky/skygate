@@ -25,13 +25,13 @@ func TestParseTargetDSNForRollback(t *testing.T) {
 		wantSSL string
 	}{
 		{
-			name:   "standard libpq DSN",
-			dsn:    "postgres://admin:secret@192.168.13.69:5433/skygate_staging?sslmode=disable",
-			wantOK: true,
-			wantH:  "192.168.13.69",
-			wantP:  "5433",
-			wantDB: "skygate_staging",
-			wantU:  "admin",
+			name:    "standard libpq DSN",
+			dsn:     "postgres://admin:secret@192.168.13.69:5433/skygate_staging?sslmode=disable",
+			wantOK:  true,
+			wantH:   "192.168.13.69",
+			wantP:   "5433",
+			wantDB:  "skygate_staging",
+			wantU:   "admin",
 			wantSSL: "disable",
 		},
 		{
@@ -221,10 +221,10 @@ func TestRunIDFromPath(t *testing.T) {
 	// The suffix must be stripped first; id is the
 	// last path segment of the remaining path.
 	cases := []struct {
-		name   string
-		path   string
+		name    string
+		path    string
 		suffix  string
-		wantID int64
+		wantID  int64
 		wantErr bool
 	}{
 		{
@@ -240,9 +240,9 @@ func TestRunIDFromPath(t *testing.T) {
 			wantID: 123,
 		},
 		{
-			name:   "non-numeric id",
-			path:   "/admin/database/migrate/abc/cancel",
-			suffix: "/cancel",
+			name:    "non-numeric id",
+			path:    "/admin/database/migrate/abc/cancel",
+			suffix:  "/cancel",
 			wantErr: true,
 		},
 	}

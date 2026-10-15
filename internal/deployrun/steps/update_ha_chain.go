@@ -29,8 +29,10 @@ func init() {
 
 type UpdateHAChainStep struct{}
 
-func (s *UpdateHAChainStep) Name() string        { return "UpdateHAChain" }
-func (s *UpdateHAChainStep) Description() string { return "Append the new member to the HA chain in global_settings" }
+func (s *UpdateHAChainStep) Name() string { return "UpdateHAChain" }
+func (s *UpdateHAChainStep) Description() string {
+	return "Append the new member to the HA chain in global_settings"
+}
 func (s *UpdateHAChainStep) IsOptional() bool    { return false }
 func (s *UpdateHAChainStep) DependsOn() []string { return []string{"ValidateInput"} }
 

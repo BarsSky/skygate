@@ -54,15 +54,15 @@ import (
 // active, it watches the standbys and self-demotes if it loses
 // PG primary (Patroni).
 type Elector struct {
-	DB                       *sql.DB
-	HTTPClient               *http.Client
-	PatroniURL               string        // default "http://localhost:8008"
-	HeartbeatInterval        time.Duration // default 5s
-	MissedThreshold          int           // default 3
-	SelfHostname             string        // set from os.Hostname() or SKYGATE_HA_SELF_HOSTNAME
-	TailscaleIPSelf          string        // optional, for self-reachability checks
-	Notifier                 Notifier      // alerts on transitions (Telegram etc.)
-	OnTransition             func(from, to string, member HaMember)
+	DB                *sql.DB
+	HTTPClient        *http.Client
+	PatroniURL        string        // default "http://localhost:8008"
+	HeartbeatInterval time.Duration // default 5s
+	MissedThreshold   int           // default 3
+	SelfHostname      string        // set from os.Hostname() or SKYGATE_HA_SELF_HOSTNAME
+	TailscaleIPSelf   string        // optional, for self-reachability checks
+	Notifier          Notifier      // alerts on transitions (Telegram etc.)
+	OnTransition      func(from, to string, member HaMember)
 	// SelfRoleOverride forces the elector to consider itself
 	// NOT a primary regardless of Patroni's state. Used for
 	// manual "demote" debugging (operator wants to keep the

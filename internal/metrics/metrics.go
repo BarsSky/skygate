@@ -16,21 +16,21 @@
 //
 // Surface
 // -------
-// - Registry (singleton via Default()) — holds all
-//   registered metrics
-// - Counter / CounterVec — monotonic, can increment
-// - Gauge / GaugeVec — settable, can go up or down
-// - Handler() http.Handler — returns the renderer
-//   for /metrics (text/plain; version=0.0.4)
-// - All metrics live in memory (no disk persistence,
-//   no push gateway).
+//   - Registry (singleton via Default()) — holds all
+//     registered metrics
+//   - Counter / CounterVec — monotonic, can increment
+//   - Gauge / GaugeVec — settable, can go up or down
+//   - Handler() http.Handler — returns the renderer
+//     for /metrics (text/plain; version=0.0.4)
+//   - All metrics live in memory (no disk persistence,
+//     no push gateway).
 //
 // Concurrency
 // -----------
-// - All metric mutations (Inc, Set, Add) are guarded
-//   by a per-metric sync.RWMutex.
-// - The renderer takes a read lock per metric.
-// - No global lock — each metric is independent.
+//   - All metric mutations (Inc, Set, Add) are guarded
+//     by a per-metric sync.RWMutex.
+//   - The renderer takes a read lock per metric.
+//   - No global lock — each metric is independent.
 package metrics
 
 import (
@@ -128,7 +128,8 @@ func MustDefault(m Metric) { Default().MustRegister(m) }
 // Handler returns an http.Handler that serves the
 // registry in Prometheus text-format (text/plain;
 // version=0.0.4). Use:
-//   mux.Handle("/metrics", metrics.Default().Handler())
+//
+//	mux.Handle("/metrics", metrics.Default().Handler())
 func (r *Registry) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -192,9 +193,9 @@ func (c *Counter) Add(v float64) {
 
 // Name / Help / Type / WriteText satisfy the
 // Metric interface.
-func (c *Counter) Name() string       { return c.name }
-func (c *Counter) Help() string       { return c.help }
-func (c *Counter) Type() MetricType   { return TypeCounter }
+func (c *Counter) Name() string     { return c.name }
+func (c *Counter) Help() string     { return c.help }
+func (c *Counter) Type() MetricType { return TypeCounter }
 func (c *Counter) WriteText(w io.Writer) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -263,11 +264,11 @@ func (g *Gauge) WriteText(w io.Writer) {
 // count per state). Use for cardinality-bounded
 // label sets (cluster="X", state="ready|draining|...").
 type GaugeVec struct {
-	mu      sync.RWMutex
-	name    string
-	help    string
-	labels  []string
-	series  map[string]*GaugeVecEntry // labelValues joined by "\x00" → entry
+	mu     sync.RWMutex
+	name   string
+	help   string
+	labels []string
+	series map[string]*GaugeVecEntry // labelValues joined by "\x00" → entry
 }
 
 // NewGaugeVec creates + registers a labelled gauge.
@@ -323,7 +324,7 @@ func (gv *GaugeVec) Reset() {
 // in the same series).
 type GaugeVecEntry struct {
 	labelValues []string
-	value        float64
+	value       float64
 }
 
 func (e *GaugeVecEntry) Set(v float64)  { e.value = v }
@@ -356,11 +357,11 @@ func (gv *GaugeVec) WriteText(w io.Writer) {
 // CounterVec is a labelled counter (e.g. audit_log
 // rows by action + cluster).
 type CounterVec struct {
-	mu      sync.RWMutex
-	name    string
-	help    string
-	labels  []string
-	series  map[string]*CounterVecEntry
+	mu     sync.RWMutex
+	name   string
+	help   string
+	labels []string
+	series map[string]*CounterVecEntry
 }
 
 func NewCounterVec(name, help string, labels []string) *CounterVec {
@@ -393,7 +394,7 @@ func (cv *CounterVec) WithLabelValues(vals ...string) *CounterVecEntry {
 // CounterVec (one per label-value tuple).
 type CounterVecEntry struct {
 	labelValues []string
-	value        float64
+	value       float64
 }
 
 func (e *CounterVecEntry) Inc() { e.value++ }
@@ -425,7 +426,9 @@ func (cv *CounterVec) WriteText(w io.Writer) {
 }
 
 // formatLabels renders a Prometheus label set:
-//   {key1="val1",key2="val2"}
+//
+//	{key1="val1",key2="val2"}
+//
 // Empty list → empty string (no braces).
 // Label values are escaped: \ → \\, " → \", newline → \n.
 func formatLabels(names, values []string) string {

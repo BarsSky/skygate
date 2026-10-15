@@ -20,11 +20,11 @@ import (
 // helper: build a minimal NodeView for tests.
 func mkNode(id, hostname, userID, userName string, tags ...string) headscale.NodeView {
 	return headscale.NodeView{
-		ID:         id,
-		Hostname:   hostname,
-		UserID:     userID,
-		UserName:   userName,
-		Tags:       tags,
+		ID:          id,
+		Hostname:    hostname,
+		UserID:      userID,
+		UserName:    userName,
+		Tags:        tags,
 		IPAddresses: []string{"100.64.0.99"},
 	}
 }

@@ -27,16 +27,16 @@ type b306ModuleStub struct {
 	health module.HealthStatus
 }
 
-func (s b306ModuleStub) Name() string                                              { return "stub" }
-func (s b306ModuleStub) Init(context.Context, module.ModuleConfig) error           { return nil }
-func (s b306ModuleStub) Start(context.Context) error                               { return nil }
-func (s b306ModuleStub) Stop(context.Context) error                                { return nil }
-func (s b306ModuleStub) Status() module.ModuleStatus                               { return s.status }
-func (s b306ModuleStub) Health() module.HealthStatus                               { return s.health }
-func (s b306ModuleStub) SubFeatures() []module.SubFeature                          { return nil }
-func (s b306ModuleStub) EnableSubFeature(context.Context, string) error            { return nil }
-func (s b306ModuleStub) DisableSubFeature(context.Context, string) error           { return nil }
-func (s b306ModuleStub) Install(context.Context, module.ModuleConfig) error        { return nil }
+func (s b306ModuleStub) Name() string                                       { return "stub" }
+func (s b306ModuleStub) Init(context.Context, module.ModuleConfig) error    { return nil }
+func (s b306ModuleStub) Start(context.Context) error                        { return nil }
+func (s b306ModuleStub) Stop(context.Context) error                         { return nil }
+func (s b306ModuleStub) Status() module.ModuleStatus                        { return s.status }
+func (s b306ModuleStub) Health() module.HealthStatus                        { return s.health }
+func (s b306ModuleStub) SubFeatures() []module.SubFeature                   { return nil }
+func (s b306ModuleStub) EnableSubFeature(context.Context, string) error     { return nil }
+func (s b306ModuleStub) DisableSubFeature(context.Context, string) error    { return nil }
+func (s b306ModuleStub) Install(context.Context, module.ModuleConfig) error { return nil }
 
 // TestModuleCheckLadder_B306 pins the four outcomes the operator will actually see.
 func TestModuleCheckLadder_B306(t *testing.T) {
