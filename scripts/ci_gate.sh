@@ -103,9 +103,60 @@ summary() {
   printf '%s\n' "$*" >> "$GITHUB_STEP_SUMMARY"
 }
 
+# ── host diagnostics (B385, 2026-10-14) ───────────────────────────────────
+# Three consecutive CANNOT VERIFY runs on the reference workstation each named the WRONG
+# cause, and the real one was never printed:
+#   * "the GitHub API query failed (repo=… workflow=… sha=…)" — the API call's stderr was
+#     thrown away by `2>/dev/null` INSIDE query_runs, and the actual reason was that `gh`
+#     could not read the Windows credential store ("unable to get credential storage lock
+#     in 1000 ms: File exists");
+#   * "'gh' is not authenticated (run: gh auth login, or set GH_TOKEN)" — the token was
+#     fine; the credential store was LOCKED at that instant. That advice sends the operator
+#     to re-authenticate a working account;
+#   * "'gh' CLI not on PATH" — true, but it did not say WHICH interpreter was running. On
+#     that host a bare `bash` is C:\Windows\System32\bash, the WSL launcher: its PATH has
+#     no `gh` at all, and its /c/Projects/skygate is an EMPTY directory, so a command that
+#     "worked a minute ago" fails with no visible difference.
+# So every refusal below names the class of the failure, the raw text it was classified
+# from, and the interpreter/gh it was observed with. Exit codes are unchanged (0/1/2) and
+# no bypass was added — the callers depend on both (rule 14).
+bash_path() { command -v bash 2>/dev/null || printf 'unknown'; }
+gh_path()   { command -v gh 2>/dev/null || printf 'NOT FOUND'; }
+path_head() { printf '%s' "$PATH" | cut -c1-200; }
+squash()    { printf '%s' "${1:-}" | tr '\n\t' '  ' | tr -s ' ' | cut -c1-400; }
+
+# classify_auth <gh auth status output> — WHY it failed, in the operator's terms.
+classify_auth() {
+  _ca="$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')"
+  case "$_ca" in
+    *"credential storage lock"*|*"keyring"*|*"stub received bad data"*|*"failed to get token"*)
+      printf 'the stored token could not be READ — the host credential store is locked or unavailable. This is NOT "not logged in", and re-authenticating cannot fix it: retry, or hand the token over explicitly (GH_TOKEN="$(gh auth token)" bash scripts/ci_gate.sh …)' ;;
+    *"not logged"*|*"authentication required"*|*"bad credentials"*|*"http 401"*|*"http 403"*)
+      printf 'gh is genuinely NOT AUTHENTICATED — run `gh auth login`, or set GH_TOKEN' ;;
+    *)
+      printf 'the auth check itself failed' ;;
+  esac
+}
+
+# classify_api <gh api stderr> — which layer refused the query.
+classify_api() {
+  _cp="$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')"
+  case "$_cp" in
+    *"rate limit"*)                                            printf 'GitHub API rate limit' ;;
+    *"could not resolve"*|*"no such host"*|*"connection"*|*"timed out"*|*"tls"*|*"network"*)
+                                                               printf 'network/DNS to api.github.com' ;;
+    *"credential"*|*"auth"*|*"401"*|*"403"*|*"locked"*)         printf 'credentials could not be read by the API layer' ;;
+    "")                                                        printf 'no stderr at all (the command failed silently)' ;;
+    *)                                                         printf 'unclassified — the raw text below is the whole evidence' ;;
+  esac
+}
+
 # ── environment ───────────────────────────────────────────────────────────
-command -v gh >/dev/null 2>&1 || cant "'gh' CLI not on PATH (needed to query the CI runs)"
-gh auth status >/dev/null 2>&1 || cant "'gh' is not authenticated (run: gh auth login, or set GH_TOKEN)"
+command -v gh >/dev/null 2>&1 || cant "'gh' CLI not on PATH — interpreter=$(bash_path), PATH head: $(path_head). NOTE: where a bare \`bash\` is C:\\Windows\\System32\\bash (the WSL launcher) its PATH carries no gh and its /c/Projects/skygate is an EMPTY directory; run the gate with the MSYS shell instead (/usr/bin/bash scripts/ci_gate.sh …) or put the GitHub CLI on PATH"
+if ! AUTH_OUT="$(gh auth status 2>&1)"; then
+  cant "'gh' cannot authenticate: $(classify_auth "$AUTH_OUT"). raw: [$(squash "$AUTH_OUT")] (interpreter=$(bash_path) gh=$(gh_path) PATH head: $(path_head))"
+fi
+say "ci_gate: interpreter=$(bash_path) gh=$(gh_path)"
 
 if [ -z "$REPO" ]; then
   REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
@@ -169,15 +220,22 @@ fi
 # ── CI runs for this exact commit ─────────────────────────────────────────
 # head_sha filtering is what makes this the RIGHT run: a later push to main
 # must never be able to satisfy the gate for an earlier commit.
+# B385: the API's stderr is CAPTURED, not discarded — `2>/dev/null` here is what made the
+# three false diagnoses possible ("API query failed" said nothing about why).
+GH_ERR="$(mktemp 2>/dev/null || printf '/tmp/ci_gate_err.%s' "$$")"
+trap 'rm -f "$GH_ERR"' EXIT
 query_runs() {
   gh api --paginate \
     "repos/$REPO/actions/workflows/$WORKFLOW/runs?head_sha=$SHA&per_page=100" \
-    --jq '.workflow_runs[] | [.id, .status, (.conclusion // ""), .event, .html_url] | @tsv' 2>/dev/null
+    --jq '.workflow_runs[] | [.id, .status, (.conclusion // ""), .event, .html_url] | @tsv' 2>"$GH_ERR"
 }
 
 deadline=$(( $(date +%s) + WAIT ))
 while :; do
-  runs="$(query_runs)" || cant "the GitHub API query failed (repo=$REPO workflow=$WORKFLOW sha=$SHA)"
+  if ! runs="$(query_runs)"; then
+    api_err="$(cat "$GH_ERR" 2>/dev/null || true)"
+    cant "the GitHub API query failed (repo=$REPO workflow=$WORKFLOW sha=$SHA): $(classify_api "$api_err"). raw: [$(squash "$api_err")] (gh=$(gh_path) interpreter=$(bash_path))"
+  fi
   # A missing workflow file answers with an empty list, not an error.
   total=0; ok=0; pending=0; bad=""
   while IFS=$'\t' read -r id status conclusion event url; do

@@ -12,6 +12,70 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.125 — a refusal must name the reason, and the interpreter (B385)
+
+**Date:** 2026-10-14 · **Base:** `v1.5.124` → this tag · **Compatibility:** no schema
+change, no API change, no product behaviour change. `scripts/ci_gate.sh` — the CI gate that
+stands between a commit and a tag — used to refuse with the wrong reason, and on 2026-10-14
+it did so three times in a row while releasing v1.5.124.
+
+### What the three verdicts said, and what had actually happened
+
+| The verdict said | The truth |
+|---|---|
+| `the GitHub API query failed (repo=… workflow=… sha=…)` | **No cause at all**, because `query_runs` discarded the API call's stderr with `2>/dev/null`. The line that explained everything was `gh` failing to read the Windows credential store: `unable to get credential storage lock in 1000 ms: File exists` |
+| `'gh' is not authenticated (run: gh auth login, or set GH_TOKEN)` | The token was **valid** — the credential store was locked at that instant. The advice sent the operator to re-authenticate a working account, and the real remedy (`GH_TOKEN="$(gh auth token)"`) was nowhere |
+| `'gh' CLI not on PATH` | True but incomplete: it never said **which interpreter** was running. On this workstation a bare `bash` is `C:\Windows\System32\bash` — the **WSL launcher** — whose `PATH` carries no `gh` and whose `/c/Projects/skygate` is an **empty** directory (the real checkout is `/mnt/c/Projects/skygate`), so a command that worked a minute earlier fails with nothing visibly changed |
+
+The verdict always **failed safe** — it refused, and nothing was published that should not
+have been — but it could not be trusted to say *why*, which is the same
+misleading-verdict class B378 closed on the push gate and B381 closed in the sha lookup, in
+the one path that had not been converted.
+
+### What changed
+
+1. **The cause survives.** The API call's stderr is captured into a `mktemp` file
+   (`2>"$GH_ERR"`) instead of `/dev/null`, and the refusal prints it.
+2. **Every refusal names a CLASS**: `classify_auth` distinguishes a locked/unreadable
+   credential store from a genuinely unauthenticated `gh` and says so in plain words —
+   including that the locked case is **not** "not logged in" and that `gh auth login`
+   cannot fix it; `classify_api` names rate limit vs network/DNS vs rejected credentials.
+3. **Every refusal names the interpreter**: `interpreter=… gh=… PATH head: …`, plus a
+   `ci_gate: interpreter=… gh=…` line at the start of every run, and the
+   `gh not on PATH` case carries the WSL-launcher hint and the remedy
+   (`/usr/bin/bash scripts/ci_gate.sh …`).
+4. **Nothing else moved**: exit codes are still `0` green / `1` not green / `2` cannot
+   verify, no bypass switch was added (rule 14), and `.githooks/pre-tag`,
+   `.github/workflows/tag-release.yml` and `release.yml`'s `preflight` still go through the
+   single gate.
+
+### Verified
+
+`scripts/check_b385_ci_gate_reasons.sh` — **19 contracts**, of which the behavioural half
+drives the **real** gate against a stubbed `gh` in seven modes and asserts both the class
+and the raw text:
+
+* `gh` missing entirely → exit 2, naming the interpreter, the PATH and the WSL trap;
+* credential store locked (`unable to get credential storage lock…`) → exit 2, naming the
+  lock, and **no** `gh auth login` advice;
+* genuinely unauthenticated → exit 2, `NOT AUTHENTICATED` **and** the correct advice;
+* API rate limit / DNS failure → exit 2, class **and** the raw `gh` message;
+* green → 0, failed run → 1, no run at all → 1 (the diagnostics did not break the paths
+  that matter).
+
+The contract drives the gate with `$BASH`, never a bare `bash` — a bare bash is the very
+trap the block documents. `B280` (46/0) and `B381` (24/0), which pin the gate's verdicts,
+stay green.
+
+### Also recorded
+
+* `AGENTS.md` §2 gained trap **14** (a bare `bash` here is the WSL launcher: an empty
+  `/c/Projects/skygate`, a PATH without `gh`) and trap **15** (a check must never let a
+  host transient masquerade as a product regression — the `B311 A2` false FAIL that cost a
+  full gate run, 0 reproductions in 300 rounds).
+* `docs/operations.md` §1.2 carries the same table, so the next operator recognises the
+  three messages.
+
 ## v1.5.124 — the `set` rung must not pass a flag this client does not have (B384.1)
 
 **Date:** 2026-10-14 · **Base:** `v1.5.123` → this tag · **Compatibility:** no schema

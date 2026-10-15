@@ -137,12 +137,28 @@ gh workflow run tag-release.yml -f version=vX.Y.Z
 gh run watch
 ```
 
+**B385 (v1.5.125): a refusal must name the reason, and the interpreter.** Three
+consecutive `CANNOT VERIFY` runs on the maintainer's workstation each named the wrong
+cause, and the real one was never printed at all:
+
+| The verdict said | What had actually happened |
+|---|---|
+| `the GitHub API query failed (repo=… workflow=… sha=…)` | `2>/dev/null` **inside** `query_runs` threw the API's stderr away; `gh` could not read the Windows credential store (`unable to get credential storage lock in 1000 ms: File exists`) |
+| `'gh' is not authenticated (run: gh auth login, or set GH_TOKEN)` | the token was fine — the credential store was **locked** at that instant, so the advice sent the operator to re-authenticate a working account |
+| `'gh' CLI not on PATH` | true, but it did not say **which** interpreter was running: a bare `bash` on that host is `C:\Windows\System32\bash`, the **WSL launcher**, whose `PATH` has no `gh` and whose `/c/Projects/skygate` is an **empty** directory |
+
+So every refusal now names the **class** of the failure, the **raw text** it was classified
+from, and the interpreter/`gh` it was observed with (`interpreter=… gh=… PATH head: …`) —
+and the WSL case carries its own hint: run the gate with the MSYS shell
+(`/usr/bin/bash scripts/ci_gate.sh …`). Exit codes are unchanged (`0` green / `1` not green
+/ `2` cannot verify) and **no bypass was added**, because the three callers and
+`release.yml`'s `preflight` depend on both. Contracts: `scripts/check_b385_ci_gate_reasons.sh`.
+
 The direct path still works when the hooks are installed — `git tag vX.Y.Z &&
 git push origin vX.Y.Z` — and ends in the same place: the local hook checks
 first, and `release.yml`'s `preflight` checks again on the server. What the
 direct path cannot do is bypass the rule: if `ci.yml` is not green for the
-tagged commit, `preflight` fails and `docker`, `binaries`, `sums` and `release`
-are all skipped, so nothing is published and no image tag moves.
+tagged commit, `preflight` fails and `docker`, `binaries`, `sums` and `release`are all skipped, so nothing is published and no image tag moves.
 
 Escape hatches (both are deliberate, narrow, and visible where they are taken):
 
