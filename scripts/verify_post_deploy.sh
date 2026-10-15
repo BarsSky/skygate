@@ -1,5 +1,8 @@
 #!/bin/bash
 . "$(dirname "$0")/lib/db_credentials.sh"
+# B387: the verdict helpers. Sourced, not duplicated, so that "did the database
+# actually ANSWER?" has one implementation and a behavioural check can execute it.
+. "$(dirname "$0")/lib/post_deploy_truth.sh"
 SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # scripts/verify_post_deploy.sh — runtime guarantees for skygate.
 #
@@ -11,9 +14,11 @@ SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 #   R2  /readyz 200 (DB + headscale OK)
 #   R3  skygate build label matches HEAD
 #   R4  tailscaled running inside skygate-host-1
-#   R5  skygate-host-1 has tailnet IP 100.64.100.10
-#   R6  skygate-host-1 does NOT use an exit-node (Docker bridge reachable)
-#   R7  Docker bridge 172.18.0.0/16 reachable from skygate-host-1
+#   R5  skygate-host-1 holds a REAL tailnet IPv4 (100.64.0.0/10 — discovered live,
+#       not the reference deployment's literal address) (B387)
+#   R6  skygate-host-1 does NOT use an exit-node
+#   R7  headscale API reachable from the skygate container at the address the APP is
+#       configured with (SKYGATE_HEADSCALE_URL, else the compose service name) (B387)
 #   R8  headscale API responds with policy
 #   R9  Live policy == last applied snapshot
 #   R10 Per-user grants: src=user@, dst includes autogroup:internet
@@ -28,7 +33,9 @@ SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 #   R19 DB: all per-user via_enabled match live policy
 #   R20 Migration v0.47 idempotent (smoke: re-running doesn't re-backfill)
 #   R21 tailscaled.state on disk has no stale --exit-node pref
-#   R22 https://skygate.example.com/healthz → 200
+#   R22 the panel answers /healthz over HTTPS at SKYGATE_PUBLIC_HOST, and R23 its cert
+#       is valid — both SKIP with a named reason when the public name is not supplied
+#       (B387: this repo cannot hardcode the operator's public hostname, rule 6)
 #   R23 TLS cert is Let's Encrypt, not expiring within 30d
 #   R24 openresty upstream reachable
 #   R25 skygate-host-1 can reach 8.8.8.8 (direct, no exit-node)
@@ -53,6 +60,28 @@ SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 #   bash scripts/verify_post_deploy.sh --quick                   # only R1-R9 + R26 (core)
 #   bash scripts/verify_post_deploy.sh --skip-network             # no R22-R25
 #   SSH_HOST=admin@<VM_HOST> bash scripts/verify_post_deploy.sh   # legacy env-var form (still works)
+#   SKYGATE_PUBLIC_HOST=<fqdn> bash scripts/verify_post_deploy.sh  # enables R22/R23 (else they SKIP)
+#   SKYGATE_ADMIN_USER=… SKYGATE_ADMIN_PASSWORD=… …                # for R31/R32/R34 (else read from the host)
+#
+# B387 (2026-10-15) — "no answer" is never a verdict about the product.
+# Measured on the operator's docker-compose host right after the v1.5.127 update:
+# the catalog announced "skygate.db integrity_check FAILED ... Run
+# scripts/recover_db_corruption.sh" about a database that answered pg_isready,
+# held 2071 acl_snapshots and served a 611 KB /admin/exit-rules. Cause: psql_vm
+# preferred the host's psql and handed it the DSN hostname, which for a compose
+# install is a SERVICE NAME the host cannot resolve. R30, R9, R10 and R-B351 all
+# reported that plumbing failure as a product fact. Now:
+#   * psql_vm is a LADDER (the DSN host as a container -> host psql only when the
+#     host really resolves it -> a throwaway container on skygate's own network),
+#     so the checker gets a real answer instead of an error string;
+#   * every DB contract classifies the read with scripts/lib/post_deploy_truth.sh:
+#     no answer => SKIP naming the reason (AGENTS rule 1), a real answer that is
+#     not "ok" => FAIL (the corruption verdict is only reachable from here);
+#   * R5/R6/R7 stop asserting the reference VM's topology (100.64.100.10 /
+#     172.18.0.3) and discover the live address / use the app's own headscale URL;
+#   * RESULTS_SKIP is initialised and printed (it was incremented at the R26 skip
+#     without ever being set, under `set -u`).
+# Contracts: scripts/check_b387_post_deploy_truth.sh (behavioural, planted inputs).
 #
 # SSH_HOST resolution order (highest priority first):
 #   1. Positional $1 if it looks like "user@host" (e.g. "skyadmin@<VM_HOST>")
@@ -285,8 +314,18 @@ fi
 # skygate_session entry" message from verify_login.sh, which
 # looked like a session bug but was actually a missing env var.
 if [ -z "${SKYGATE_ADMIN_PASSWORD:-}" ]; then
-  SKYGATE_ADMIN_PASS_FROM_ENV=$(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$SSH_HOST" \
-    "docker exec skygate-skygate-1 sh -c 'echo \$SKYGATE_ADMIN_PASS' 2>/dev/null" 2>/dev/null || echo "")
+  # B387: this block used `ssh -i "$SSH_KEY" …` BEFORE SSH_KEY was ever assigned
+  # (it is resolved ~50 lines below, and `set -u` is on) — so the substitution died
+  # with "SSH_KEY: unbound variable", the password was never read, and R31/R32/R34
+  # FAILed on a host where they should pass. Measured 2026-10-15: exactly two such
+  # lines, and R34 then reported "SKYGATE_ADMIN_PASSWORD env var is required".
+  # `${SSH_KEY:+-i "$SSH_KEY"}` is order-independent (the same idiom ssh_vm uses),
+  # and the container is now found by its compose LABEL instead of the hardcoded
+  # compose-generated name "skygate-skygate-1" (which is what this project name
+  # happens to produce — not what every deployment produces).
+  SKYGATE_ADMIN_PASS_FROM_ENV=$(ssh ${SSH_KEY:+-i "$SSH_KEY"} -o StrictHostKeyChecking=accept-new \
+    "$SSH_HOST" \
+    "c=\$(docker ps -q -f label=com.docker.compose.service=skygate | head -1); [ -n \"\$c\" ] && docker exec \"\$c\" sh -c 'echo \$SKYGATE_ADMIN_PASS' 2>/dev/null" 2>/dev/null || echo "")
   if [ -n "$SKYGATE_ADMIN_PASS_FROM_ENV" ]; then
     export SKYGATE_ADMIN_PASSWORD="$SKYGATE_ADMIN_PASS_FROM_ENV"
   fi
@@ -302,7 +341,7 @@ if [ -z "${SKYGATE_ADMIN_USER:-}" ]; then
   # cookie-jar dance has a username to authenticate as. The
   # operator can override by exporting SKYGATE_ADMIN_USER before
   # running the script.
-  SKYGATE_ADMIN_USER_FROM_ENV=$(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$SSH_HOST" \
+  SKYGATE_ADMIN_USER_FROM_ENV=$(ssh ${SSH_KEY:+-i "$SSH_KEY"} -o StrictHostKeyChecking=accept-new "$SSH_HOST" \
     "grep '^SKYGATE_ADMIN_USER=' /home/skyadmin/skygate/.env 2>/dev/null | cut -d= -f2- | tr -d '\"'" 2>/dev/null || echo "")
   if [ -n "$SKYGATE_ADMIN_USER_FROM_ENV" ]; then
     export SKYGATE_ADMIN_USER="$SKYGATE_ADMIN_USER_FROM_ENV"
@@ -446,6 +485,10 @@ run_policy_check() {
 
 RESULTS_PASS=0
 RESULTS_FAIL=0
+# B387: RESULTS_SKIP was incremented at the R26 skip below and never initialised,
+# so under `set -u` that path printed "RESULTS_SKIP: unbound variable" and the
+# summary did not report SKIPs at all. Initialised here and printed in the summary.
+RESULTS_SKIP=0
 
 # v1.3.19.4 B127: pre-init REMOTE_CK so the R34 block (which runs
 # even in --quick mode) can safely check [ -z "$REMOTE_CK" ]. The
@@ -503,22 +546,70 @@ psql_vm() {
     REST=\${REST#*:}
     PPORT=\${REST%%/*}
     PDB=\${REST#*/}
-    if command -v psql >/dev/null 2>&1; then
+    # B387: a LADDER, because the old primary rung was wrong on a compose install.
+    # It ran the host's psql against the DSN hostname verbatim; for a
+    # docker-compose deployment that hostname is a COMPOSE SERVICE NAME
+    # (measured 2026-10-15: PH=skygate-pg-local, /usr/bin/psql present, the host's
+    # resolver answered "Temporary failure in name resolution"), so psql printed an
+    # error, the caller read it as a non-'ok' answer, and the catalog announced a
+    # CORRUPT DATABASE about a healthy one holding 2071 acl_snapshots.
+    #
+    #   rung 1 — the DSN host is a local CONTAINER: ask that container. No resolver,
+    #            no bridge address, no image pull; the container's own local socket
+    #            is the most direct path there is.
+    #   rung 2 — the host's psql, but only when the host can actually RESOLVE the
+    #            DSN host (the HA setup's 127.0.0.1:5000 HAProxy endpoint).
+    #   rung 3 — a throwaway container attached to the SAME network as skygate, which
+    #            is where a compose service name resolves. The pre-B387 fallback used
+    #            --network host, i.e. the host's resolver again — the same failure
+    #            one layer down.
+    # Every rung that is skipped says why on stderr, so a plumbing failure is never
+    # silent (and never becomes a verdict about the database).
+    if docker inspect \"\$PH\" >/dev/null 2>&1; then
+      docker exec -e PGPASSWORD=\"\$PP\" \"\$PH\" \\
+        psql -U \"\$PU\" -d \"\$PDB\" -tA -v ON_ERROR_STOP=1 -c \"$sql\" 2>&1
+    elif command -v psql >/dev/null 2>&1 && getent hosts \"\$PH\" >/dev/null 2>&1; then
       PGPASSWORD=\"\$PP\" psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" \\
         -tA -v ON_ERROR_STOP=1 -c \"$sql\" 2>&1
     else
-      # Fallback: throwaway postgres:18-alpine container.
-      # --network host so the container can reach the host's
-      # 127.0.0.1 (HAProxy :5000 on the HA setup) and the docker
-      # service name (postgres:5432 on the docker-compose setup
-      # both resolve via the host's docker DNS).
-      docker run --rm -i --network host \\
+      NET=\$(docker inspect -f '{{range \$k,\$v := .NetworkSettings.Networks}}{{\$k}} {{end}}' \"$SKYGATE_CONTAINER\" 2>/dev/null | awk '{print \$1}')
+      NET=\"\${NET:-headscale_default}\"
+      echo \"psql_vm: '\$PH' is not a local container and this host cannot resolve it as a DSN host (psql=\$(command -v psql >/dev/null 2>&1 && echo present || echo absent)) — querying from a throwaway container on network \$NET\" >&2
+      docker run --rm --network \"\$NET\" \\
         -e PGPASSWORD=\"\$PP\" \\
         postgres:18-alpine \\
         psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" \\
           -tA -v ON_ERROR_STOP=1 -c \"$sql\" 2>&1
     fi
   "
+}
+
+# B387: run SQL and record whether the DATABASE answered at all, so callers can tell
+# "the live dependency is unavailable" (AGENTS rule 1 → SKIP) from "the database
+# answered something unexpected" (a real finding → FAIL). Sets PSQL_OUT and PSQL_RC;
+# never aborts the run itself, because a checker's plumbing must not fail the deploy.
+PSQL_OUT=""
+PSQL_RC=0
+psql_query() {
+  PSQL_OUT="$(psql_vm "$1" 2>&1)"
+  PSQL_RC=$?
+  PSQL_OUT="${PSQL_OUT%$'\n'}"
+}
+
+# The verdict for a query whose only acceptable answer is the literal "ok".
+# Prints nothing; returns 0 PASS, 2 SKIP (no answer), 3 FAIL (a real answer that is
+# not ok). Callers echo the row so every R-check keeps its own wording.
+VPD_PASS=0
+VPD_SKIP=2
+VPD_FAIL=3
+db_expect_ok_verdict() {
+  if ! vpd_query_reached_db "$PSQL_RC" "$PSQL_OUT"; then
+    return "$VPD_SKIP"
+  fi
+  if vpd_ok_answer "$PSQL_OUT"; then
+    return "$VPD_PASS"
+  fi
+  return "$VPD_FAIL"
 }
 
 # R1: /healthz (also gives us the build label for R3)
@@ -561,24 +652,55 @@ HEAD_SHA=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --short HEAD 2>/
 
 run_vm_check "R4" "tailscaled running in skygate-host-1" \
   "docker exec $SKYGATE_CONTAINER sh -c 'pgrep tailscaled | grep -q .'"
-run_vm_check "R5" "skygate-host-1 tailnet IP = 100.64.100.10" \
-  "docker exec $SKYGATE_CONTAINER tailscale --socket=/var/run/tailscale/tailscaled.sock status 2>&1 | grep -q '^100.64.100.10'"
+# R5: the container must hold a REAL tailnet address (100.64.0.0/10, Tailscale's
+# CGNAT range) — but WHICH address is a property of the deployment, not of the
+# product. Pre-B387 this asserted the reference VM's literal 100.64.100.10, so on
+# the operator's own host (which answers 100.64.0.10) R5, R6 and R7 all FAILed
+# while the tailnet was perfectly healthy — measured 2026-10-15: the container
+# reported 100.64.0.10 and /admin/exit-nodes showed 3/3 healthy relays over it.
+# The address is now DISCOVERED and then checked against the range, which keeps the
+# guarantee ("skygate's node is on the tailnet with a real CGNAT address") without
+# pinning somebody else's topology. Captured first, matched with a herestring:
+# never a producer piped into a reader that can exit early (AGENTS trap #9).
+SELF_IP_RAW=$(ssh_vm "docker exec $SKYGATE_CONTAINER tailscale --socket=/var/run/tailscale/tailscaled.sock ip -4 2>/dev/null" 2>/dev/null)
+SELF_IP=$(vpd_pick_self_ipv4 <<< "$SELF_IP_RAW")
+if [ -n "$SELF_IP" ]; then
+  echo "  ${GRN}PASS${NC}  R5  skygate-host-1 tailnet IP = $SELF_IP (discovered live; inside 100.64.0.0/10)"
+  RESULTS_PASS=$((RESULTS_PASS+1))
+else
+  echo "  ${RED}FAIL${NC}  R5  skygate-host-1 has no tailnet IPv4 (tailscale ip -4 answered: '$(printf '%s' "$SELF_IP_RAW" | head -1 | cut -c1-120)')"
+  RESULTS_FAIL=$((RESULTS_FAIL+1))
+fi
 # R6: skygate-host-1 must NOT use an exit-node. The Tailscale status line
 # for self shows "<hostname>  ...  linux  -" with trailing "-" (no
 # exit-node marker), then trailing spaces. We grep the LAST non-space
-# field: should be "-" (none) or a hostname (set).
-EXITNODE_LINE=$(ssh_vm \
-  "docker exec $SKYGATE_CONTAINER tailscale --socket=/var/run/tailscale/tailscaled.sock status 2>&1 | grep '^100.64.100.10'")
-LAST_FIELD=$(echo "$EXITNODE_LINE" | awk '{print $NF}')
-if [ "$LAST_FIELD" = "-" ]; then
-  echo "  ${GRN}PASS${NC}  R6  skygate-host-1 has NO exit-node (last field = '-')"
-  RESULTS_PASS=$((RESULTS_PASS+1))
+# field: should be "-" (none) or a hostname (set). Keyed on the DISCOVERED
+# address (B387), so this check no longer depends on R5's pin.
+if [ -z "$SELF_IP" ]; then
+  echo "  ${YLW}SKIP${NC}  R6  no discovered tailnet address — cannot read the self line's exit-node field"
+  RESULTS_SKIP=$((RESULTS_SKIP+1))
 else
-  echo "  ${RED}FAIL${NC}  R6  skygate-host-1 has exit-node = $LAST_FIELD"
-  RESULTS_FAIL=$((RESULTS_FAIL+1))
+  EXITNODE_LINE=$(ssh_vm \
+    "docker exec $SKYGATE_CONTAINER tailscale --socket=/var/run/tailscale/tailscaled.sock status 2>&1 | grep -F '$SELF_IP'")
+  LAST_FIELD=$(printf '%s' "$EXITNODE_LINE" | awk '{print $NF}')
+  if [ "$LAST_FIELD" = "-" ]; then
+    echo "  ${GRN}PASS${NC}  R6  skygate-host-1 has NO exit-node (last field = '-')"
+    RESULTS_PASS=$((RESULTS_PASS+1))
+  else
+    echo "  ${RED}FAIL${NC}  R6  skygate-host-1 has exit-node = $LAST_FIELD"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
+  fi
 fi
-run_vm_check "R7" "headscale API reachable from skygate-host-1 (172.18.0.3:50444)" \
-  "docker exec $SKYGATE_CONTAINER wget --spider --timeout=3 http://172.18.0.3:50444 2>&1 | grep -q 'remote file exists'"
+# R7: the skygate container must reach the headscale API at the address the APP is
+# configured with — pre-B387 this probed the reference deployment's bridge IP
+# (172.18.0.3), which on the operator's host is not even the headscale container
+# (measured: skygate at 172.18.0.4, headscale reachable as the compose name
+# 'headscale', answering {"status":"pass"}). The URL is derived from
+# SKYGATE_HEADSCALE_URL / SKYGATE_HEADSCALE_API_URL when set, else the compose name.
+HS_BASE=$(ssh_vm "grep -hE '^(SKYGATE_HEADSCALE_URL|SKYGATE_HEADSCALE_API_URL|HEADSCALE_URL)=' /home/skyadmin/skygate/.env 2>/dev/null | head -1 | cut -d= -f2-" 2>/dev/null)
+HS_HEALTH_URL=$(vpd_headscale_health_url "$HS_BASE")
+run_vm_check "R7" "headscale API reachable from the skygate container ($HS_HEALTH_URL)" \
+  "docker exec $SKYGATE_CONTAINER wget -qO- --timeout=3 '$HS_HEALTH_URL' 2>&1 | grep -q 'status'"
 [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ] && \
   { echo "  ${GRN}PASS${NC}  R8  headscale /api/v1/policy responds with non-empty policy"; RESULTS_PASS=$((RESULTS_PASS+1)); } || \
   { echo "  ${RED}FAIL${NC}  R8  headscale /api/v1/policy is empty or unreachable"; RESULTS_FAIL=$((RESULTS_FAIL+1)); }
@@ -623,11 +745,22 @@ UPDATED_AT=$(echo "$LIVE_POLICY" | grep -oE '"updatedAt":"[^"]+"' | cut -d'"' -f
 # ~midnight-today, not 0). B126 (v1.3.19.4): use the column
 # directly. The downstream R9 arithmetic (`date -d "@$EPOCH"`)
 # is unchanged.
-SNAPSHOT_INFO=$(psql_vm "SELECT created_at || ' ' || COALESCE(applied_success::text, '0') FROM acl_snapshots ORDER BY id DESC LIMIT 1" 2>/dev/null)
-LAST_ATTEMPT_EPOCH=$(echo "$SNAPSHOT_INFO" | awk '{print $1}')
-LAST_ATTEMPT_SUCCESS=$(echo "$SNAPSHOT_INFO" | awk '{print $2}')
+# B387: capture the rc so "no snapshot exists" and "the database did not answer"
+# are not the same sentence. Pre-B387 both collapsed into one SKIP that named
+# neither, and the R30 corruption FAIL above was the same mistake with a scarier
+# wording.
+psql_query "SELECT created_at || ' ' || COALESCE(applied_success::text, '0') FROM acl_snapshots ORDER BY id DESC LIMIT 1"
+SNAPSHOT_INFO="$PSQL_OUT"
+SNAPSHOT_RC="$PSQL_RC"
+LAST_ATTEMPT_EPOCH=$(printf '%s' "$SNAPSHOT_INFO" | awk '{print $1}')
+LAST_ATTEMPT_SUCCESS=$(printf '%s' "$SNAPSHOT_INFO" | awk '{print $2}')
 
-LAST_APPLIED_EPOCH=$(psql_vm "SELECT created_at FROM acl_snapshots WHERE applied_success=1 ORDER BY id DESC LIMIT 1" 2>/dev/null)
+if vpd_query_reached_db "$SNAPSHOT_RC" "$SNAPSHOT_INFO"; then
+  psql_query "SELECT created_at FROM acl_snapshots WHERE applied_success=1 ORDER BY id DESC LIMIT 1"
+  LAST_APPLIED_EPOCH="$PSQL_OUT"
+else
+  LAST_APPLIED_EPOCH=""
+fi
 
 if [ -n "$LAST_ATTEMPT_EPOCH" ] && [ -n "$UPDATED_AT" ]; then
   LAST_ATTEMPT_ISO=$(date -u -d "@$LAST_ATTEMPT_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
@@ -659,6 +792,12 @@ if [ -n "$LAST_ATTEMPT_EPOCH" ] && [ -n "$UPDATED_AT" ]; then
   fi
 else
   echo "  ${YLW}SKIP${NC}  R9  live policy / applied snapshot: insufficient data"
+  if [ -z "$UPDATED_AT" ]; then
+    echo "        reason: headscale did not report a policy updatedAt (R8 above is the authority on that)"
+  else
+    echo "        reason: $(vpd_no_answer_reason "$SNAPSHOT_RC" "$SNAPSHOT_INFO")"
+  fi
+  RESULTS_SKIP=$((RESULTS_SKIP+1))
 fi
 
 # ---------------------------------------------------------------------------
@@ -691,9 +830,19 @@ if [ -n "$LIVE_POLICY" ] && [ "$LIVE_POLICY" != '{"policy":""}' ]; then
   # Authoritative usernames: SELECT username FROM portal_users
   # via ssh-into-vm sqlite3 (the .db file is bind-mounted from
   # the host, so we have to docker cp it out for sqlite to read).
-  PORTAL_USERNAMES=$(psql_vm "SELECT username FROM portal_users ORDER BY id" 2>/dev/null | tr -d ' ' | grep -v '^$' || true)
-  if [ -z "$PORTAL_USERNAMES" ]; then
-    echo "  ${RED}FAIL${NC}  R10 cannot read portal_users usernames (sqlite/docker cp issue)"
+  # B387: "the DB did not answer" is a SKIP naming the reason, not "R10 missing
+  # per-user grants for: psql:error:couldnottranslatehostname..." — which is exactly
+  # what a healthy host printed on 2026-10-15, accusing the product of a defect that
+  # belonged to the checker's resolver.
+  psql_query "SELECT username FROM portal_users ORDER BY id"
+  R10_DB_RC="$PSQL_RC"
+  PORTAL_USERNAMES="$(printf '%s' "$PSQL_OUT" | tr -d ' ' | grep -v '^$' || true)"
+  if ! vpd_query_reached_db "$R10_DB_RC" "$PSQL_OUT"; then
+    echo "  ${YLW}SKIP${NC}  R10 cannot read portal_users — THE DATABASE DID NOT ANSWER (not a grant problem)"
+    echo "        reason: $(vpd_no_answer_reason "$R10_DB_RC" "$PSQL_OUT")"
+    RESULTS_SKIP=$((RESULTS_SKIP+1))
+  elif [ -z "$PORTAL_USERNAMES" ]; then
+    echo "  ${RED}FAIL${NC}  R10 the database answered but portal_users is EMPTY (no portal user exists to hold a grant)"
     RESULTS_FAIL=$((RESULTS_FAIL+1))
   else
     # Pass the username list as PORTAL_USERNAMES env var; the
@@ -890,28 +1039,39 @@ print(n)
   # (see scripts/recover_db_corruption.sh for the long version).
   # We use psql_vm to do both checks in one query.
   if [ -z "$SKYGATE_CONTAINER" ]; then
-    INTEGRITY="SKIP_NO_CONTAINER"
+    echo "  ${YLW}SKIP${NC}  R30 skygate container down — can't check DB integrity"
+    RESULTS_SKIP=$((RESULTS_SKIP+1))
   else
-    INTEGRITY=$(psql_vm "SELECT CASE
+    # B387: the query result is classified BEFORE it is interpreted. Pre-B387 this
+    # was `INTEGRITY="${INTEGRITY:-fail}"`, so an unreachable database, bad
+    # credentials, a missing psql or a pip-install of anything else was reported as
+    # "your database is corrupt — run scripts/recover_db_corruption.sh". A SKIP here
+    # names the plumbing; only a real answer that is not "ok" may claim corruption.
+    psql_query "SELECT CASE
       WHEN (SELECT count(*) FROM pg_tables WHERE schemaname='public') >= 20
        AND (SELECT to_regclass('public.portal_users') IS NOT NULL)
        AND (SELECT to_regclass('public.device_rules') IS NOT NULL)
        AND (SELECT to_regclass('public.acl_snapshots') IS NOT NULL)
        AND (SELECT to_regclass('public.audit_log') IS NOT NULL)
-      THEN 'ok' ELSE 'fail' END" 2>/dev/null | tr -d '[:space:]')
-    INTEGRITY="${INTEGRITY:-fail}"
-  fi
-  if [ "$INTEGRITY" = "SKIP_NO_CONTAINER" ]; then
-    echo "  ${YLW}SKIP${NC}  R30 skygate container down — can't check DB integrity"
-  elif [ "$INTEGRITY" = "ok" ]; then
-    echo "  ${GRN}PASS${NC}  R30 skygate.db integrity_check=ok"
-    RESULTS_PASS=$((RESULTS_PASS+1))
-  else
-    echo "  ${RED}FAIL${NC}  R30 skygate.db integrity_check FAILED: $INTEGRITY"
-    echo "        This is the corruption that triggered the R9 SKIP on 2026-07-30."
-    echo "        Run scripts/recover_db_corruption.sh (the .recover-based recovery)"
-    echo "        to extract the data and rebuild a clean DB."
-    RESULTS_FAIL=$((RESULTS_FAIL+1))
+      THEN 'ok' ELSE 'fail' END"
+    db_expect_ok_verdict
+    R30_VERDICT=$?
+    if [ "$R30_VERDICT" -eq "$VPD_PASS" ]; then
+      echo "  ${GRN}PASS${NC}  R30 skygate.db integrity_check=ok"
+      RESULTS_PASS=$((RESULTS_PASS+1))
+    elif [ "$R30_VERDICT" -eq "$VPD_SKIP" ]; then
+      echo "  ${YLW}SKIP${NC}  R30 skygate.db integrity_check: THE DATABASE DID NOT ANSWER — this is NOT a corruption verdict"
+      echo "        reason: $(vpd_no_answer_reason "$PSQL_RC" "$PSQL_OUT")"
+      RESULTS_SKIP=$((RESULTS_SKIP+1))
+    else
+      echo "  ${RED}FAIL${NC}  R30 skygate.db integrity_check FAILED: $PSQL_OUT"
+      echo "        The database ANSWERED, and its public schema is incomplete"
+      echo "        (expected >=20 public tables plus portal_users / device_rules /"
+      echo "        acl_snapshots / audit_log). Run scripts/recover_db_corruption.sh"
+      echo "        (the .recover-based recovery) to extract the data and rebuild a"
+      echo "        clean DB."
+      RESULTS_FAIL=$((RESULTS_FAIL+1))
+    fi
   fi
 
   # ---------------------------------------------------------------------------
@@ -924,9 +1084,15 @@ print(n)
   # tick — so a deploy MUST make this zero. It is deliberately a POST-deploy
   # assertion: the pre-deploy catalog cannot heal a running instance and only
   # reports the number (check_b351_rule_owner_and_counts.sh D2 SKIPs).
-  EMPTY_OWNERS=$(psql_vm "SELECT COUNT(*) FROM device_rules WHERE COALESCE(user_name,'') = ''" 2>/dev/null | tr -d '[:space:]')
-  if [ -z "$EMPTY_OWNERS" ]; then
-    echo "  ${YLW}SKIP${NC}  R-B351 could not read device_rules (no live DB from here)"
+  psql_query "SELECT COUNT(*) FROM device_rules WHERE COALESCE(user_name,'') = ''"
+  EMPTY_OWNERS="$(printf '%s' "$PSQL_OUT" | tr -d '[:space:]')"
+  if ! vpd_query_reached_db "$PSQL_RC" "$PSQL_OUT"; then
+    echo "  ${YLW}SKIP${NC}  R-B351 could not read device_rules — THE DATABASE DID NOT ANSWER"
+    echo "        reason: $(vpd_no_answer_reason "$PSQL_RC" "$PSQL_OUT")"
+    RESULTS_SKIP=$((RESULTS_SKIP+1))
+  elif [ -z "$EMPTY_OWNERS" ]; then
+    echo "  ${RED}FAIL${NC}  R-B351 the database answered with no count at all (got: '$(printf '%s' "$PSQL_OUT" | head -1 | cut -c1-120)')"
+    RESULTS_FAIL=$((RESULTS_FAIL+1))
   elif [ "$EMPTY_OWNERS" = "0" ]; then
     echo "  ${GRN}PASS${NC}  R-B351 no device_rules row carries an empty user_name (the B351 healer ran)"
     RESULTS_PASS=$((RESULTS_PASS+1))
@@ -1260,18 +1426,35 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$SKIP_NETWORK" = 0 ]; then
   echo
-  echo "[R22-R24] HTTPS path (skygate.example.com)"
-  HTTPS_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://skygate.example.com/healthz 2>&1)
+  # B387: the public hostname is NOT a property of this repo — rule 6 forbids hardcoding
+  # the operator's name, and the pre-B387 code hardcoded the PLACEHOLDER
+  # `skygate.example.com` with no override at all. Every operator whose panel is not
+  # reachable at that RFC-style placeholder therefore got a permanent
+  # `FAIL R22 … → 000` (measured 2026-10-15, and DNS for the placeholder does not even
+  # resolve). The same rule-1 discipline as the DB checks applies: if the checker cannot
+  # know the public name, it SKIPs and says how to supply it.
+  PUBLIC_HOST="${SKYGATE_PUBLIC_HOST:-${PUBLIC_HOST:-}}"
+  if [ -z "$PUBLIC_HOST" ]; then
+    echo "[R22-R24] HTTPS path — SKIPPED (no public hostname known)"
+    echo "  ${YLW}SKIP${NC}  R22 public /healthz over HTTPS: set SKYGATE_PUBLIC_HOST=<fqdn> (or PUBLIC_HOST) to enable"
+    echo "        reason: this repo cannot hardcode the operator's public name (rule 6); pre-B387 the check"
+    echo "        probed the placeholder skygate.example.com and FAILed for every deployment but the reference one"
+    RESULTS_SKIP=$((RESULTS_SKIP+1))
+    echo "  ${YLW}SKIP${NC}  R23 TLS certificate: needs the same public hostname"
+    RESULTS_SKIP=$((RESULTS_SKIP+1))
+  else
+  echo "[R22-R24] HTTPS path ($PUBLIC_HOST)"
+  HTTPS_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "https://$PUBLIC_HOST/healthz" 2>&1)
   if [ "$HTTPS_CODE" = "200" ]; then
-    echo "  ${GRN}PASS${NC}  R22 https://skygate.example.com/healthz → 200"
+    echo "  ${GRN}PASS${NC}  R22 https://$PUBLIC_HOST/healthz → 200"
     RESULTS_PASS=$((RESULTS_PASS+1))
   else
-    echo "  ${RED}FAIL${NC}  R22 https://skygate.example.com/healthz → $HTTPS_CODE"
+    echo "  ${RED}FAIL${NC}  R22 https://$PUBLIC_HOST/healthz → $HTTPS_CODE"
     RESULTS_FAIL=$((RESULTS_FAIL+1))
   fi
 
   # R23: TLS cert expiry (must be > 7 days from now)
-  CERT_END=$(echo | openssl s_client -servername skygate.example.com -connect skygate.example.com:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | sed 's/^notAfter=//')
+  CERT_END=$(echo | openssl s_client -servername "$PUBLIC_HOST" -connect "$PUBLIC_HOST:443" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | sed 's/^notAfter=//')
   if [ -n "$CERT_END" ]; then
     CERT_EPOCH=$(date -d "$CERT_END" +%s 2>/dev/null || echo 0)
     NOW_EPOCH=$(date +%s)
@@ -1284,7 +1467,9 @@ if [ "$SKIP_NETWORK" = 0 ]; then
       RESULTS_FAIL=$((RESULTS_FAIL+1))
     fi
   else
-    echo "  ${YLW}SKIP${NC}  R23 TLS cert check (openssl failed)"
+    echo "  ${YLW}SKIP${NC}  R23 TLS cert check (openssl failed or the host is unreachable)"
+    RESULTS_SKIP=$((RESULTS_SKIP+1))
+  fi
   fi
 
   # R24: openresty upstream reachable (the local 8080 → 172.18.0.4 path)
@@ -1778,8 +1963,8 @@ echo "[R35] Tailscale BackendState='Running' (D2 + D8: tailscale status --json)"
 # run json_field on the captured result. Previous form piped
 # through an inline `python3 -c` (which was fine on Linux hosts
 # but broke on WSL/Windows — same root cause as the other R-checks).
-TS_STATE_RAW=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$SSH_HOST" \
-  'docker exec skygate-skygate-1 tailscale status --json 2>/dev/null' 2>/dev/null || echo "")
+TS_STATE_RAW=$(ssh ${SSH_KEY:+-i "$SSH_KEY"} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 "$SSH_HOST" \
+  "docker exec ${SKYGATE_CONTAINER:-skygate-skygate-1} tailscale status --json 2>/dev/null" 2>/dev/null || echo "")
 if [ -z "$TS_STATE_RAW" ]; then
   TS_STATE="EXEC_ERROR"
 else
@@ -1811,6 +1996,12 @@ echo
 echo "=== summary ==="
 echo "  ${GRN}PASS${NC}: $RESULTS_PASS"
 echo "  ${RED}FAIL${NC}: $RESULTS_FAIL"
+# B387: SKIPs are reported (they were counted but never printed, and RESULTS_SKIP
+# was not even initialised while R26 incremented it under `set -u`). A SKIP means
+# the live dependency was unavailable, so like AGENTS rule 1 it never fails a run —
+# but the operator must be able to SEE how much was left unverified.
+echo "  ${YLW}SKIP${NC}: $RESULTS_SKIP"
+echo "  checks: $((RESULTS_PASS + RESULTS_FAIL + RESULTS_SKIP))"
 
 if [ "$RESULTS_FAIL" -gt 0 ]; then
   echo

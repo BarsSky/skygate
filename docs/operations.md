@@ -530,6 +530,45 @@ grant generator skips users with fewer than two devices; the exit-node catch-all
 excludes `tag:dev-infra-skygate-*` hosts; and the standby bootstrap uses
 `$(hostname)` in its S3 path, so a hostname mismatch silently pulls nothing.
 
+### 2.6 Running the post-deploy catalog, and what a SKIP means (B387)
+
+```bash
+# from the dev box, against the host:
+SSH_HOST=<user>@<VM_HOST> bash scripts/verify_post_deploy.sh            # everything
+SSH_HOST=<user>@<VM_HOST> bash scripts/verify_post_deploy.sh --quick    # core (R1-R9 + more)
+
+# optional knobs — each one turns a SKIP into a real check:
+SKYGATE_PUBLIC_HOST=<fqdn>        # enables R22/R23 (the public HTTPS path + cert expiry)
+SKYGATE_ADMIN_USER=<name>         # otherwise read from the host's container / .env
+SKYGATE_ADMIN_PASSWORD=<secret>   # ditto
+SKYGATE_PUBLIC_HOST=<fqdn> SKYGATE_ADMIN_USER=… SKYGATE_ADMIN_PASSWORD=… \
+  SSH_HOST=<user>@<VM_HOST> bash scripts/verify_post_deploy.sh
+```
+
+**A `SKIP` never fails the run, and it is always counted** (the summary prints
+`PASS` / `FAIL` / `SKIP` / `checks`). It means the checker could not ground the
+question — not that the product is broken:
+
+| SKIP | Why, and how to make it real |
+|---|---|
+| `R22` / `R23` — public HTTPS path, cert expiry | the repo cannot hardcode your public name (rule 6). Set `SKYGATE_PUBLIC_HOST`. |
+| `R30` / `R9` / `R10` / `R-B351` — "the database did not answer" | the checker's host could not reach the DB (see below). Run it from a host that can, or from the same network. |
+| `R23` — "openssl failed or the host is unreachable" | `openssl` is missing locally, or the public name does not resolve. |
+| `R6` — "no discovered tailnet address" | the container reported no `100.64.0.0/10` address, so the self line cannot be keyed. |
+
+**The database checks read the DB the way the deployment is shaped.** `psql_vm`
+tries, in order: the DSN host **as a local container** (`docker exec … psql` — its
+own socket, no resolver involved), the host's `psql` **only if the host actually
+resolves the DSN host**, then a throwaway container attached to **skygate's own
+network**, where a compose service name resolves. Before B387 it used the host's
+`psql` with the DSN hostname verbatim and turned the resulting *resolver* error into
+`R30 skygate.db integrity_check FAILED … run scripts/recover_db_corruption.sh` —
+a **corruption** verdict about a healthy database (2071 `acl_snapshots`, `/readyz`
+`healthy:true`, a 611 KB `/admin/exit-rules`). If you ever see that message again,
+check *which* of the three rungs answered before touching the data: the check now
+prints "THE DATABASE DID NOT ANSWER — this is NOT a corruption verdict" with the
+reason and the raw text when it cannot read.
+
 ---
 
 ## 3. PostgreSQL cutover / migration between hosts

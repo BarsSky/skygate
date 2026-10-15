@@ -12,6 +12,133 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.128 — the post-deploy catalog stops calling a plumbing failure "corruption" (B387)
+
+**Date:** 2026-10-15 · **Base:** `v1.5.127` → this tag · **Compatibility:** no application
+change of any kind. Every file in this release is a **check** (`scripts/verify_post_deploy.sh`,
+the new `scripts/lib/post_deploy_truth.sh`, `scripts/check_b387_post_deploy_truth.sh`,
+`scripts/verify_pre_deploy.sh`, `AGENTS.md`). No `.go` file, no template, no migration, no
+route, no i18n key — the running panel is byte-identical to v1.5.127.
+
+### The false alarm: "your database is corrupt" about a healthy database
+
+Minutes after v1.5.127 was applied to a docker-compose host, the post-deploy catalog printed:
+
+```
+FAIL  R30 skygate.db integrity_check FAILED: psql:error:couldnottranslatehostname
+      "skygate-pg-local"toaddress:Temporaryfailureinnameresolution
+      This is the corruption that triggered the R9 SKIP on 2026-07-30.
+      Run scripts/recover_db_corruption.sh (the .recover-based recovery)
+      to extract the data and rebuild a clean DB.
+```
+
+The database was **provably healthy in the same session**: `pg_isready` answered *accepting
+connections*, `acl_snapshots` held **2071** rows, `/readyz` said `healthy:true (db+headscale
+ok)`, `/admin/exit-rules` served a **611 KB** page, `/admin/exit-nodes` read «политика
+headscale совпадает с текущей таблицей владельцев», «владелец не объявляет: 0», «3/3
+здоровых» — and the **same R30 query answered `ok`** when it was run from a container on the
+docker network.
+
+**The mechanism was two lines.** `psql_vm` preferred the host's `psql` (this host has
+`/usr/bin/psql`) and handed it the DSN hostname **verbatim** — and on a docker-compose install
+that hostname is a **compose service name** (`skygate-pg-local`) that resolves only *inside*
+the docker network. The host's resolver failed, psql's error text *became* the check's answer,
+and:
+
+```bash
+INTEGRITY=$(psql_vm "SELECT ..." 2>/dev/null | tr -d '[:space:]')
+INTEGRITY="${INTEGRITY:-fail}"
+```
+
+reported **every** non-`ok` value as corruption. `R9`, `R10` and `R-B351` inherited it — R10
+printed the psql error as the *name of a missing grant*
+(«missing per-user grants for: psql:error:couldnottranslatehostname…»).
+
+That is two of this repo's own rules broken at once: **rule 1** (a check whose live dependency
+is unavailable must `SKIP`, never `FAIL`) and **trap #15** (a host transient must never
+masquerade as a product regression) — at the exact moment an operator runs the catalog.
+
+### What was fixed
+
+1. **`psql_vm` is a ladder**, so the checker gets a real answer instead of an error string:
+   * rung 1 — the DSN host as a **local container** (`docker exec … psql`, its own socket: no
+     resolver, no bridge address, no image pull);
+   * rung 2 — the host's `psql` **only when the host really resolves the DSN host** (the HA
+     setup's `127.0.0.1:5000` HAProxy endpoint);
+   * rung 3 — a throwaway container attached to **skygate's own network**, where a service name
+     resolves. The pre-B387 fallback used `--network host` — the host's resolver again, the same
+     bug one rung lower.
+   Every skipped rung names its reason on stderr.
+2. **New `scripts/lib/post_deploy_truth.sh` classifies the read** — `vpd_query_reached_db`,
+   `vpd_no_answer_reason`, `vpd_ok_answer`, `vpd_is_tailnet_ipv4`, `vpd_pick_self_ipv4`,
+   `vpd_headscale_health_url` — so **no answer ⇒ `SKIP` naming the reason**, and only a real
+   answer that is not `ok` can reach the corruption verdict. `R9`, `R10`, `R30` and `R-B351`
+   all use it.
+3. **`R5`/`R6`/`R7` stop asserting the reference deployment's topology.** They pinned the
+   literal `100.64.100.10` and the bridge IP `172.18.0.3`, so on the operator's host (container
+   at `100.64.0.10`, headscale reachable as the compose name `headscale`, answering
+   `{"status":"pass"}`) all three `FAIL`ed on a healthy tailnet. `R5` now **discovers** the live
+   address and checks the `100.64.0.0/10` range, `R6` keys on the discovered address and
+   `SKIP`s when there is none, `R7` probes **the address the app is configured with**
+   (`SKYGATE_HEADSCALE_URL`, else the compose name).
+4. **`RESULTS_SKIP` is initialised and printed.** It was incremented at the `R26` skip without
+   ever being assigned, so under `set -u` that path printed `RESULTS_SKIP: unbound variable` and
+   the summary never reported `SKIP`s at all.
+5. **Three more defects of the same class, found while verifying the fix:**
+   * the credential fetch used `ssh -i "$SSH_KEY"` **before** `SSH_KEY` was assigned (~50 lines
+     below, with `set -u` on), so it died with `SSH_KEY: unbound variable`, the password was
+     never read, and `R31`/`R32`/`R34` failed with «`SKYGATE_ADMIN_PASSWORD` env var is
+     required» on a host where they should pass. Now `${SSH_KEY:+-i "$SSH_KEY"}` (the idiom
+     `ssh_vm` already uses) and the container is found by its **compose label** instead of the
+     compose-generated name `skygate-skygate-1`;
+   * `R35` ran `docker exec skygate-skygate-1 …` from the same hardcoded name — now the
+     resolved container;
+   * `R22`/`R23` probed the literal placeholder `skygate.example.com` **with no override at
+     all**, so every deployment that is not the reference one carried a permanent
+     `FAIL R22 … → 000` (DNS for that placeholder does not even resolve). Rule 6 forbids
+     committing the operator's real public name, so the check now reads
+     `SKYGATE_PUBLIC_HOST` (or `PUBLIC_HOST`) and **SKIPs with a named reason**, counted in the
+     summary, when it is not supplied.
+
+### The measurement that proves it
+
+The same catalog, run from the same Windows box against the same host, **before and after**:
+
+| Row | Before | After |
+|---|---|---|
+| `R5` | `FAIL  tailnet IP = 100.64.100.10` | `PASS  tailnet IP = 100.64.0.10 (discovered live; inside 100.64.0.0/10)` |
+| `R7` | `FAIL  172.18.0.3:50444` | `PASS  headscale API reachable (http://headscale:50444/health)` |
+| `R9` | `FAIL  ≠ last applied (diff=70889s)` | `PASS  updatedAt=…16:41:29Z ≈ last applied 16:41:30Z (diff=-1s)` |
+| `R10` | `FAIL  missing per-user grants for: psql:error:couldnottranslatehostname…` | `PASS  all 5 portal_users have a per-user grant` |
+| `R30` | `FAIL  integrity_check FAILED … run scripts/recover_db_corruption.sh` | `PASS  integrity_check=ok` |
+| `R-B351` | `FAIL  psql:error:couldnottranslatehostname…` | `PASS  no device_rules row carries an empty user_name` |
+| `R34` | `FAIL  SKYGATE_ADMIN_PASSWORD env var is required` | `PASS  /admin/services=200 with admin session (3/3 integration labels visible)` |
+| `R22` | `FAIL  https://skygate.example.com/healthz → 000` | `SKIP  set SKYGATE_PUBLIC_HOST=<fqdn> to enable` |
+| summary | `3 PASS / 5 FAIL` in the DB+topology block, no `SKIP` line | `25 PASS / 1 FAIL / 2 SKIP` (28 checks) — and the one FAIL is R31, the disk, which is **real** |
+
+The pre-B387 run's `R34` FAIL was itself the second defect above (no password reached
+`verify_login.sh`); the `R22` FAIL was the fourth. Neither was ever a fact about the product.
+
+`R9`'s `diff=-1s` is the whole story in one number: the live policy **is** the last applied
+snapshot, exactly as the page had claimed all along. The `70889s` was never a product fact.
+
+### The check is behavioural, because a source grep cannot tell "prints SKIP" from "prints SKIP and still exits 0"
+
+`scripts/check_b387_post_deploy_truth.sh` (50 contracts) executes the **real** classifier on
+planted inputs and drives the **real catalog** against a **stubbed host** (stub `ssh`/`scp`,
+the measured error text, the measured container address `100.64.0.10`) in three states: an
+unreachable database must `SKIP` and must **not** mention `recover_db_corruption`; a healthy one
+must `PASS`; and one that really answers `fail` must still `FAIL` **with** the recovery advice —
+so the fix cannot pass by silencing the verdict.
+
+### Operator action
+
+The catalog now reports **one real finding on the reference host: `R31` — disk 90 % full**
+(`/dev/sda2` 42 G, 4.1 G free). Measured reclaimable: Docker build cache **1.0 GB**, dangling
+images 5, images 2.4 GB reclaimable, volumes 1.2 GB reclaimable — plus `/var/log` at 948 MB.
+Nothing in this release touches that; it is a host that needs housekeeping, and the pre-B387
+catalog was hiding it behind five false failures.
+
 ## v1.5.127 — the gofmt renormalisation (TD-21)
 
 **Date:** 2026-10-15 · **Base:** `v1.5.126` → this tag · **Compatibility:** no behaviour
