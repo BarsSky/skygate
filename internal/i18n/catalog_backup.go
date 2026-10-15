@@ -26,7 +26,7 @@ var ruBackup = map[string]string{
 	"backup.config_subtitle":  "Куда и как часто сохранять бэкапы (локально, SMB, NFS, SFTP, S3)",
 	"backup.protocol":         "Протокол",
 	"backup.protocol_local":   "Локальная папка",
-	"backup.protocol_smb":     "SMB / CIFS (Synology, Windows share)",
+	"backup.protocol_smb":     "SMB / CIFS (Synology, общая папка Windows)",
 	"backup.protocol_nfs":     "NFS",
 	"backup.protocol_sftp":    "SFTP / SSHFS",
 	// 2026-08-12 v1.3.8: S3 / S3-compatible
@@ -48,12 +48,12 @@ var ruBackup = map[string]string{
 	// shows these when the protocol dropdown
 	// is set to "s3" (driven by the JS
 	// data-show-for="s3" on each .form-group).
-	"backup.s3_endpoint":         "S3 endpoint URL",
+	"backup.s3_endpoint":         "URL эндпоинта S3",
 	"backup.s3_endpoint_help":    "Например: https://s3.amazonaws.com, https://storage.yandexcloud.net, http://minio.local:9000. Пусто = AWS по умолчанию",
 	"backup.s3_region":           "Регион",
 	"backup.s3_region_help":      "Например us-east-1, ru-central1. Для MinIO — любое непустое значение",
-	"backup.s3_access_key":       "Access Key ID",
-	"backup.s3_secret_key":       "Secret Access Key",
+	"backup.s3_access_key":       "Ключ доступа (Access Key ID)",
+	"backup.s3_secret_key":       "Секретный ключ (Secret Access Key)",
 	"backup.s3_bucket":           "Bucket (имя корзины)",
 	"backup.s3_bucket_help":      "Корзина должна существовать. Скрипт не создаёт её",
 	"backup.s3_prefix":           "Префикс (опц.)",

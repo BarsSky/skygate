@@ -142,7 +142,12 @@ else
 fi
 
 # --- I: AuditEntry struct has TargetType + TargetID ---
-if has "$PAGES_GO" "TargetType  string // B221" && has "$PAGES_GO" "TargetID    string // B221"; then
+# ALIGNMENT-AGNOSTIC since TD-21 (v1.5.127): the pinned text used to carry the struct's
+# hand-made alignment (`TargetType  string // B221`), and the renormalisation realigned the
+# whole struct to the longest field name — a formatting change that made this contract fail
+# on a tree where the fields were present and correct. A contract must pin the FIELDS, not
+# their columns.
+if has "$PAGES_GO" "TargetType[[:space:]]+string // B221" && has "$PAGES_GO" "TargetID[[:space:]]+string // B221"; then
   ok "I: AuditEntry struct extended with TargetType + TargetID (B221)"
 else
   fail "I: AuditEntry struct missing B221 fields"

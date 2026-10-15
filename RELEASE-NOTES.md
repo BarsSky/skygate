@@ -64,6 +64,30 @@ MEASURED lines for both the 2026-10-01 276-file measurement and this 2026-10-15 
 `AGENTS.md` rule 3 changed accordingly: **`gofmt` is no longer an exception — every tracked
 `.go` file must be clean, and `gofmt -w` applies only to the files your own change touches.**
 
+### What the renormalisation EXPOSED (and this release therefore fixes)
+
+The gate rejected the first push with four failures, and all four were **pre-existing defects
+that the old formatting had been hiding** — not regressions:
+
+| Check | What was wrong | Fix |
+|---|---|---|
+| **B221 I** | the contract pinned the struct's hand-made alignment (`TargetType  string // B221`); gofmt realigned the struct to the longest field name | the pattern is now alignment-agnostic (`TargetType[[:space:]]+string // B221`) — a contract pins the FIELDS, not their columns |
+| **B306 A4** | the same class in a map literal: `"Tests":                 s.AllTests()` | `"Tests":[[:space:]]+s\.AllTests\(\)` |
+| **B325 B1** | the metric's awk required `"key":` with **no space before the colon**, but both of the files it reads most (the backup and user-subnet catalogues) were hand-aligned as `"key"                    : "value"` — so it silently skipped **every aligned entry**. When gofmt removed that padding the metric suddenly counted **13 untranslated RU values** that had been there all along | the metric tolerates the padding (`"[^"]+"[[:space:]]*:[[:space:]]*"`), so the blindness cannot return |
+| **B325.1** | fails only because it asserts that B325 passes | — |
+
+And the 13 values the metric had never seen are now actually translated — they were real debt:
+`Personal subnet`, `Control plane`, `Router hostname`, `Headscale node_id`, `Sanity check`,
+`Cross-user sharing`, `Sidecar FQDN`, `Preferred exit-node (v0.28.1)`, `router active`,
+`SMB / CIFS (Synology, Windows share)`, `S3 endpoint URL`, `Access Key ID` and
+`Secret Access Key` → Russian, with the technical terms kept in brackets. That is the only
+product-visible change in this release, and it is an improvement the budget of 0 had already
+demanded in principle.
+
+**The lesson is the same one three times:** a check must read the **data**, not the layout.
+Two contracts and one metric were passing only because the code was *formatted* a particular
+way — which is exactly what a formatting release changes.
+
 ## v1.5.126 — no check may turn a host transient into a product verdict (B386)
 
 **Date:** 2026-10-15 · **Base:** `v1.5.125` → this tag · **Compatibility:** no product

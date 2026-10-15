@@ -84,7 +84,13 @@ RU_ASCII=$(awk '
   /^var ru[A-Za-z0-9_]* = map\[string\]string\{/ { inru = 1; next }
   /^var en[A-Za-z0-9_]* = map\[string\]string\{/ { inru = 0; next }
   /^\}/ { inru = 0 }
-  inru && /"[^"]+":[[:space:]]*"/ {
+  # The key may be padded BEFORE the colon: the catalogues were hand-aligned as
+  # `"key"                    : "value"`, and this pattern used to require a quote
+  # immediately followed by `:`, so it silently skipped every aligned entry — measured
+  # 2026-10-15, when the TD-21 `gofmt` renormalisation removed that padding and the
+  # metric suddenly reported 13 untranslated RU values that had been there all along.
+  # A metric must read the DATA, not the layout (the same lesson as B221 I / B306 A4).
+  inru && /"[^"]+"[[:space:]]*:[[:space:]]*"/ {
     v = $0
     sub(/^[^:]*:[[:space:]]*"/, "", v)
     sub(/",?[[:space:]]*$/, "", v)

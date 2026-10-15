@@ -75,7 +75,10 @@ if grep -q 'for _, t := range s.AllTests()' "$TESTS"; then
 else
   bad "A3: Run all still ignores the modules"
 fi
-if grep -q '"Tests":                 s.AllTests()' "$HANDLERS" && grep -q '"ModuleRows":' "$HANDLERS"; then
+# ALIGNMENT-AGNOSTIC since TD-21 (v1.5.127): the pinned text carried the map literal's
+# column padding (`"Tests":                 s.AllTests()`), and the renormalisation realigned
+# it. A contract pins the KEY and the CALL, not the columns.
+if grep -qE '"Tests":[[:space:]]+s\.AllTests\(\)' "$HANDLERS" && grep -q '"ModuleRows":' "$HANDLERS"; then
   ok "A4: the page renders the shared catalogue + the module rows"
 else
   bad "A4: the page still renders the static registry only"
