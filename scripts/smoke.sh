@@ -179,14 +179,14 @@ CODE=$(status "$BASE/dashboard")
 # <h2>Welcome with the username, plus a sub line and the page title
 # in the <title> tag (resolved by pageTitle() per language).
 H=$(html "$BASE/dashboard")
-if echo "$H" | grep -q "<title>${S_TITLE_DEVICES}\\|<title>${S_PAGE_DASHBOARD}\\|<title>Skygate"; then
+if ( set +o pipefail; echo "$H" | grep -q "<title>${S_TITLE_DEVICES}\\|<title>${S_PAGE_DASHBOARD}\\|<title>Skygate" ); then
   ok "/dashboard title rendered"
 else
   bad "/dashboard title missing or wrong language"
 fi
 # The first <h2> in the body must contain either the localized nav label
 # or the localized heading. (Some pages reuse the title for both.)
-if echo "$H" | grep -q "Welcome, $USER\|Добро пожаловать, $USER"; then
+if ( set +o pipefail; echo "$H" | grep -q "Welcome, $USER\|Добро пожаловать, $USER" ); then
   ok "/dashboard greets the user in the right language"
 else
   bad "/dashboard greeting missing or wrong language"
@@ -215,7 +215,7 @@ done
 # 'template:' on the first three response lines.
 for path in /admin/users /admin/acls /admin/devices /admin/audit /admin/headscale /admin/invites /admin/meshes; do
   HTML=$(html "$BASE$path")
-  if echo "$HTML" | head -3 | grep -q "^template:"; then
+  if ( set +o pipefail; echo "$HTML" | head -3 | grep -q "^template:" ); then
     bad "$path: template render error ($(echo "$HTML" | head -3 | grep '^template:' | head -1))"
   else
     ok "$path HTML renders cleanly"
@@ -239,7 +239,7 @@ fi
 # Step 5: API endpoints
 note "5. API: GET /my/exit-rules/api"
 RESP=$(json "$BASE/my/exit-rules/api")
-if echo "$RESP" | grep -q '"rules"'; then
+if [[ $RESP == *'"rules"'* ]]; then
   ok "/my/exit-rules/api returns JSON with 'rules'"
 else
   bad "/my/exit-rules/api response unexpected: ${RESP:0:80}"
@@ -271,7 +271,7 @@ fi
 note "7. rule visible in /my/exit-rules/api"
 sleep 1
 RESP=$(json "$BASE/my/exit-rules/api")
-if echo "$RESP" | grep -q "$RAND_VAL"; then
+if ( set +o pipefail; echo "$RESP" | grep -q "$RAND_VAL" ); then
   ok "rule $RAND_VAL/32 present in API response"
 else
   bad "rule $RAND_VAL/32 NOT in API response"
@@ -279,7 +279,7 @@ fi
 
 # Verify /my/exit-rules HTML renders with no template error
 HTML=$(html "$BASE/my/exit-rules")
-if echo "$HTML" | grep -q "^template:"; then
+if grep -q "^template:" <<< "$HTML"; then
   bad "GET /my/exit-rules: template error"
 else
   ok "/my/exit-rules HTML renders"
@@ -298,7 +298,7 @@ if [ -n "$IDS" ]; then
   [ "$CODE" = "302" ] && ok "delete via ids= returned 302" || bad "delete returned $CODE"
   sleep 1
   RESP=$(json "$BASE/my/exit-rules/api")
-  if echo "$RESP" | grep -q "$RAND_VAL"; then
+  if ( set +o pipefail; echo "$RESP" | grep -q "$RAND_VAL" ); then
     bad "rule $RAND_VAL/32 still present after delete"
   else
     ok "rule $RAND_VAL/32 removed (no orphans)"
@@ -323,11 +323,11 @@ CODE=$(status "$BASE/admin/exit-rules/sync")
 # Same page must render in both languages with no template errors.
 note "11. UI sanity: /my/exit-rules contains localized strings ($SMOKE_LANG)"
 HTML=$(html "$BASE/my/exit-rules")
-if echo "$HTML" | grep -q "^template:"; then
+if grep -q "^template:" <<< "$HTML"; then
   bad "/my/exit-rules template error"
 fi
 for needle in "$S_PAGE_RULES_HEADER" "$S_PAGE_MY_RULES" "$S_PAGE_ADD_RULE"; do
-  if echo "$HTML" | grep -qF "$needle"; then
+  if ( set +o pipefail; echo "$HTML" | grep -qF "$needle" ); then
     ok "page contains '$needle'"
   else
     bad "page missing '$needle'"
@@ -344,13 +344,13 @@ CODE=$(status "$BASE/my/account")
 
 # Verify body renders (template not undefined error).
 HTML=$(html "$BASE/my/account")
-if echo "$HTML" | grep -q "^template:"; then
+if grep -q "^template:" <<< "$HTML"; then
   bad "GET /my/account: template error ($(echo "$HTML" | grep -oE 'template:[^<]*' | head -1))"
 else
   ok "/my/account HTML renders without template error"
 fi
 # form name attributes are language-agnostic — check them in both langs.
-if echo "$HTML" | grep -q 'name="current_password"' && echo "$HTML" | grep -q 'name="new_password"'; then
+if [[ $HTML == *'name="current_password"'* ]] && [[ $HTML == *'name="new_password"'* ]]; then
   ok "/my/account contains password-change form fields"
 else
   bad "/my/account: missing current_password or new_password field"
@@ -362,7 +362,7 @@ LOC=$(curl -s -i "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" -X POST \
   --data-urlencode "new_password=${SMOKE_TEST_NEW_PASSWORD}" \
   --data-urlencode "confirm_new_password=${SMOKE_TEST_NEW_PASSWORD}" \
   "$BASE/my/account/password" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
-echo "$LOC" | grep -q "wrong_current_password" \
+[[ $LOC == *'wrong_current_password'* ]] \
   && ok "wrong current returns err=wrong_current_password" \
   || bad "wrong current got $LOC"
 
@@ -372,7 +372,7 @@ LOC=$(curl -s -i "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" -X POST \
   --data-urlencode "new_password=${SMOKE_TEST_NEW_PASSWORD}" \
   --data-urlencode "confirm_new_password=DIFFERENT_PASSWORD" \
   "$BASE/my/account/password" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
-echo "$LOC" | grep -q "passwords_dont_match" \
+[[ $LOC == *'passwords_dont_match'* ]] \
   && ok "mismatch returns err=passwords_dont_match" \
   || bad "mismatch got $LOC"
 
@@ -382,7 +382,7 @@ LOC=$(curl -s -i "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" -X POST \
   --data-urlencode "new_password=short" \
   --data-urlencode "confirm_new_password=short" \
   "$BASE/my/account/password" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
-echo "$LOC" | grep -q "password_too_short" \
+[[ $LOC == *'password_too_short'* ]] \
   && ok "short password returns err=password_too_short" \
   || bad "short got $LOC"
 
@@ -392,7 +392,7 @@ LOC=$(curl -s -i "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" -X POST \
   --data-urlencode "new_password=${SMOKE_TEST_NEW_PASSWORD}" \
   --data-urlencode "confirm_new_password=${SMOKE_TEST_NEW_PASSWORD}" \
   "$BASE/my/account/password" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
-echo "$LOC" | grep -q "saved=ok" \
+[[ $LOC == *'saved=ok'* ]] \
   && ok "valid change returns saved=ok" \
   || bad "valid change got $LOC"
 
@@ -512,7 +512,7 @@ MESH_RESP=$(curl -s -i -b "$COOKIE" -X POST "${ACCEPT_LANG_HDR[@]}" \
   "$BASE/my/meshes/create")
 MESH_HTTP=$(echo "$MESH_RESP" | head -1 | awk '{print $2}')
 MESH_LOC=$(echo "$MESH_RESP" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
-if [ "$MESH_HTTP" = "302" ] && echo "$MESH_LOC" | grep -qE 'ok=created&code=[A-Z0-9]{8}'; then
+if [ "$MESH_HTTP" = "302" ] && grep -qE 'ok=created&code=[A-Z0-9]{8}' <<< "$MESH_LOC"; then
   MESH_CODE=$(echo "$MESH_LOC" | sed -E 's/.*code=([A-Z0-9]+).*/\1/')
   ok "admin created mesh, code=$MESH_CODE"
 else
@@ -524,13 +524,13 @@ fi
 # /admin/meshes (the shared admin overview).
 if [ -n "$MESH_CODE" ]; then
   ADMIN_HTML=$(curl -s "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" "$BASE/my/meshes")
-  if echo "$ADMIN_HTML" | grep -q "$MESH_CODE" && echo "$ADMIN_HTML" | grep -q "smoke-mesh-$$"; then
+  if ( set +o pipefail; echo "$ADMIN_HTML" | grep -q "$MESH_CODE" ) && ( set +o pipefail; echo "$ADMIN_HTML" | grep -q "smoke-mesh-$$" ); then
     ok "admin's /my/meshes shows the new mesh (name + code)"
   else
     bad "admin's /my/meshes missing the new mesh"
   fi
   ADMIN_OVERVIEW=$(curl -s "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" "$BASE/admin/meshes")
-  if echo "$ADMIN_OVERVIEW" | grep -q "$MESH_CODE"; then
+  if ( set +o pipefail; echo "$ADMIN_OVERVIEW" | grep -q "$MESH_CODE" ); then
     ok "admin's /admin/meshes shows the new mesh"
   else
     bad "admin's /admin/meshes missing the new mesh"
@@ -548,13 +548,13 @@ if [ -n "$MESH_CODE" ]; then
     "$BASE/my/meshes/join")
   JOIN_HTTP=$(echo "$JOIN_RESP" | head -1 | awk '{print $2}')
   JOIN_LOC=$(echo "$JOIN_RESP" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
-  if [ "$JOIN_HTTP" = "302" ] && echo "$JOIN_LOC" | grep -q "ok=joined"; then
+  if [ "$JOIN_HTTP" = "302" ] && [[ $JOIN_LOC == *'ok=joined'* ]]; then
     ok "test user joined mesh via /my/meshes/join"
   else
     bad "test user join: HTTP $JOIN_HTTP Location=$JOIN_LOC"
   fi
   USER_HTML=$(curl -s "${ACCEPT_LANG_HDR[@]}" -b "$MESH_CK" "$BASE/my/meshes")
-  if echo "$USER_HTML" | grep -q "$MESH_CODE" && echo "$USER_HTML" | grep -q "smoke-mesh-$$"; then
+  if ( set +o pipefail; echo "$USER_HTML" | grep -q "$MESH_CODE" ) && ( set +o pipefail; echo "$USER_HTML" | grep -q "smoke-mesh-$$" ); then
     ok "test user's /my/meshes shows the joined mesh"
   else
     bad "test user's /my/meshes missing the joined mesh"
@@ -564,7 +564,7 @@ if [ -n "$MESH_CODE" ]; then
   # creator + first member), and joining by a second user
   # doesn't remove the creator from the mesh.
   ADMIN_HTML_AFTER=$(curl -s "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" "$BASE/my/meshes")
-  if echo "$ADMIN_HTML_AFTER" | grep -q "$MESH_CODE"; then
+  if ( set +o pipefail; echo "$ADMIN_HTML_AFTER" | grep -q "$MESH_CODE" ); then
     ok "admin's /my/meshes still shows the mesh (creator not removed)"
   else
     bad "admin's /my/meshes lost the mesh after the test user joined"
@@ -573,8 +573,8 @@ if [ -n "$MESH_CODE" ]; then
   # now show 2 members in the <details> expansion. We
   # check for both usernames being in the rendered HTML.
   ADMIN_OVERVIEW_AFTER=$(curl -s "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" "$BASE/admin/meshes")
-  if echo "$ADMIN_OVERVIEW_AFTER" | grep -q "$USER" \
-     && echo "$ADMIN_OVERVIEW_AFTER" | grep -q "$MESH_USER"; then
+  if ( set +o pipefail; echo "$ADMIN_OVERVIEW_AFTER" | grep -q "$USER" ) \
+     && ( set +o pipefail; echo "$ADMIN_OVERVIEW_AFTER" | grep -q "$MESH_USER" ); then
     ok "/admin/meshes shows both users in the mesh"
   else
     bad "/admin/meshes missing one of the two members"
@@ -591,13 +591,13 @@ BAD_CODE_RESP=$(curl -s -i -b "$MESH_CK" -X POST "${ACCEPT_LANG_HDR[@]}" \
   "$BASE/my/meshes/join")
 BAD_HTTP=$(echo "$BAD_CODE_RESP" | head -1 | awk '{print $2}')
 BAD_LOC=$(echo "$BAD_CODE_RESP" | grep -i "^location:" | tr -d "\r" | awk '{print $2}')
-if [ "$BAD_HTTP" = "302" ] && echo "$BAD_LOC" | grep -q "err=not_found"; then
+if [ "$BAD_HTTP" = "302" ] && [[ $BAD_LOC == *'err=not_found'* ]]; then
   ok "/my/meshes/join with bad code: 302 → ?err=not_found"
 else
   bad "/my/meshes/join with bad code: HTTP $BAD_HTTP Location=$BAD_LOC"
 fi
 BAD_HTML=$(curl -s "${ACCEPT_LANG_HDR[@]}" -b "$MESH_CK" "$BASE/my/meshes?err=not_found")
-if echo "$BAD_HTML" | grep -qE "(Mesh not found with that code|Меш с таким кодом не найден)"; then
+if grep -qE "(Mesh not found with that code|Меш с таким кодом не найден)" <<< "$BAD_HTML"; then
   ok "/my/meshes?err=not_found: translated banner renders"
 else
   bad "/my/meshes?err=not_found: translated banner missing or raw key"
@@ -622,13 +622,13 @@ if [ -n "$MESH_CODE" ]; then
   [ "$USER_LEAVE" = "302" ] && ok "test user left the mesh" || bad "test user leave: $USER_LEAVE"
   # Verify both /my/meshes views are now empty.
   ADMIN_EMPTY=$(curl -s "${ACCEPT_LANG_HDR[@]}" -b "$COOKIE" "$BASE/my/meshes")
-  if echo "$ADMIN_EMPTY" | grep -qE "(No active meshes yet|Активных мешей пока нет)"; then
+  if grep -qE "(No active meshes yet|Активных мешей пока нет)" <<< "$ADMIN_EMPTY"; then
     ok "admin's /my/meshes: empty-state after leave"
   else
     bad "admin's /my/meshes: empty-state missing after leave"
   fi
   USER_EMPTY=$(curl -s "${ACCEPT_LANG_HDR[@]}" -b "$MESH_CK" "$BASE/my/meshes")
-  if echo "$USER_EMPTY" | grep -qE "(No active meshes yet|Активных мешей пока нет)"; then
+  if grep -qE "(No active meshes yet|Активных мешей пока нет)" <<< "$USER_EMPTY"; then
     ok "test user's /my/meshes: empty-state after leave"
   else
     bad "test user's /my/meshes: empty-state missing after leave"

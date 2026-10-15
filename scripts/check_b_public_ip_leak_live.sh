@@ -33,7 +33,7 @@ trap "rm -f ${COOKIE_JAR}" EXIT
 # URL-encode the password for form post
 PW_ENC=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "${PASS}" 2>/dev/null || echo "${PASS}")
 LOGIN_RESP=$(curl -s -i -c "${COOKIE_JAR}" -d "username=${USER}&password=${PW_ENC}" "${HOST}/login" 2>&1)
-if ! echo "${LOGIN_RESP}" | grep -q "302\|303"; then
+if ! { [[ $LOGIN_RESP == *'302'* ]] || [[ $LOGIN_RESP == *'303'* ]]; }; then
     skip "login failed for ${USER}@${HOST} — check credentials"
     exit 2
 fi

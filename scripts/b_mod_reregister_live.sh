@@ -212,7 +212,7 @@ else
     fi
     ok "preauth key created"
     REG_OUT=$("${HS_ARGS[@]}" auth register --user tagged-devices --auth-id "${PREAUTH_KEY}" "${TEST_HOST}" 2>&1)
-    if echo "${REG_OUT}" | grep -qE "Error|Failed|invalid"; then
+    if grep -qE "Error|Failed|invalid" <<< "$REG_OUT"; then
         REG_OUT=$("${HS_ARGS[@]}" nodes register --user tagged-devices --key "${PREAUTH_KEY}" "${TEST_HOST}" 2>&1)
     fi
     echo "${REG_OUT}" | head -5
@@ -243,7 +243,7 @@ echo
 echo "--- Step 2: login as ${USER} ---"
 PW_ENC=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "${PASS}" 2>/dev/null)
 LOGIN_RESP=$(curl -s -i -c "${COOKIE_JAR}" -d "username=${USER}&password=${PW_ENC}" "${HOST}/login" 2>&1)
-if ! echo "${LOGIN_RESP}" | grep -q "302\|303"; then
+if ! { [[ $LOGIN_RESP == *'302'* ]] || [[ $LOGIN_RESP == *'303'* ]]; }; then
     bad "login failed for ${USER}@${HOST}"
     exit 1
 fi
@@ -262,20 +262,20 @@ echo "--- Step 3: /my/devices shows ghost + Re-register button + banner ---"
 DEVICES_HTML=$(curl -s -H "Cookie: skygate_session=${SESSION}" "${HOST}/my/devices" 2>&1)
 # Use case-insensitive grep because headscale stores hostnames in
 # uppercase (Windows machine name) but skygate code uses lowercase.
-if echo "${DEVICES_HTML}" | grep -qi "${TEST_HOST}"; then
+if ( set +o pipefail; echo "${DEVICES_HTML}" | grep -qi "${TEST_HOST}" ); then
     ok "${TEST_HOST} is rendered in /my/devices (case-insensitive match)"
 else
     bad "${TEST_HOST} NOT visible in /my/devices (snapshot may need a moment)"
     echo "    hint: hit /my/devices once before this test so node_owner_map snapshot includes the ghost"
     exit 1
 fi
-if echo "${DEVICES_HTML}" | grep -q "/my/devices/${GHOST_ID}/reregister"; then
+if ( set +o pipefail; echo "${DEVICES_HTML}" | grep -q "/my/devices/${GHOST_ID}/reregister" ); then
     ok "Re-register <form> action is /my/devices/${GHOST_ID}/reregister"
 else
     bad "Re-register button HTML missing for ghost id=${GHOST_ID}"
     exit 1
 fi
-if echo "${DEVICES_HTML}" | grep -qiE 'alert-warning|fa-ghost|reregister_banner'; then
+if grep -qiE 'alert-warning|fa-ghost|reregister_banner' <<< "$DEVICES_HTML"; then
     ok "page-top ghost-node banner is rendered (TaggedGhostCount > 0)"
 else
     bad "ghost-node banner missing — TaggedGhostCount not incremented"
@@ -383,7 +383,7 @@ else
     PW2_ENC=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "${PASS2}" 2>/dev/null)
     COOKIE_JAR2=$(mktemp)
     LOGIN2_RESP=$(curl -s -i -c "${COOKIE_JAR2}" -d "username=${USER2}&password=${PW2_ENC}" "${HOST}/login" 2>&1)
-    if ! echo "${LOGIN2_RESP}" | grep -q "302\|303"; then
+    if ! { [[ $LOGIN2_RESP == *'302'* ]] || [[ $LOGIN2_RESP == *'303'* ]]; }; then
         bad "USER2 (${USER2}) login failed — Step 6 skipped"
     else
         SESSION2=$(grep "skygate_session" "${COOKIE_JAR2}" | awk '{print $7}')

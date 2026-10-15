@@ -113,27 +113,27 @@ else
 fi
 
 RUNTES="$(printf '%s\n' "$JOB" | grep -E '^[[:space:]]*run: go test' | sed 's/^[[:space:]]*run:[[:space:]]*//')"
-if printf '%s' "$RUNTES" | grep -qE 'go test \./\.\.\.'; then
+if grep -qE 'go test \./\.\.\.' <<< "$RUNTES"; then
   ok "A3: the job runs the WHOLE tree (found: $RUNTES)"
 else
   bad "A3: the job does not run './...' — found '$RUNTES'. A package-scoped run leaves every other OpenTestPG package skipping; the scope is the bug (TD-24)"
 fi
-if printf '%s' "$RUNTES" | grep -qE 'go test \./internal/db/\.\.\.'; then
+if grep -qE 'go test \./internal/db/\.\.\.' <<< "$RUNTES"; then
   bad "A4: the job is still pinned to './internal/db/...' — internal/feature/admin (18 OpenTestPG sites) and internal/acl (4) would skip again"
 else
   ok "A4: the old single-package scope is gone"
 fi
-if printf '%s\n' "$JOB" | grep -q 'SKYGATE_TEST_PG_DSN:'; then
+if [[ $JOB == *'SKYGATE_TEST_PG_DSN:'* ]]; then
   ok "A5: the job still passes SKYGATE_TEST_PG_DSN to the test run"
 else
   bad "A5: the job no longer sets SKYGATE_TEST_PG_DSN — without it every PG-gated test skips and the job proves nothing"
 fi
-if printf '%s\n' "$JOB" | grep -qE '^[[:space:]]*timeout-minutes:'; then
+if grep -qE '^[[:space:]]*timeout-minutes:' <<< "$JOB"; then
   ok "A6: the job has an explicit timeout-minutes"
 else
   bad "A6: the job has no timeout-minutes — a hung PG test would be reported as a cancelled job, which hides the reason (B281)"
 fi
-if printf '%s\n' "$JOB" | grep -qi 'internal/feature/admin' && printf '%s\n' "$JOB" | grep -qi 'internal/acl'; then
+if [[ ${JOB,,} == *'internal/feature/admin'* ]] && [[ ${JOB,,} == *'internal/acl'* ]]; then
   ok "A7: the job's comment names the two packages the widening was measured for"
 else
   bad "A7: the job's comment does not name internal/feature/admin and internal/acl — the scope change has to carry its evidence, otherwise the next reader narrows it back"
@@ -181,7 +181,7 @@ fi
 # not about where the line breaks fall.
 OPS_FLAT="$(tr '\n' ' ' < "$OPS" 2>/dev/null)"
 
-if printf '%s' "$OPS_FLAT" | grep -q 'on the database' && grep -q 'CREATE SCHEMA' "$OPS" && grep -q '42501' "$OPS"; then
+if [[ $OPS_FLAT == *'on the database'* ]] && grep -q 'CREATE SCHEMA' "$OPS" && grep -q '42501' "$OPS"; then
   ok "C2: the section explains that the role needs CREATE on the database OpenTestPG creates schemas in, and shows the 42501 error it produces when it does not"
 else
   bad "C2: the section no longer explains the CREATE-on-database requirement, which is the failure an operator hits first (SQLSTATE 42501)"
@@ -268,7 +268,7 @@ if [ -z "$GO_BIN" ]; then
   skip "D2-D4: no usable go binary found (set GO=/path/to/go) — run this check on the VM"
 else
   no_dsn_out="$(env -u SKYGATE_TEST_PG_DSN "$GO_BIN" test ./internal/acl/ -run "^${ACL_TEST}\$" -count=1 -v 2>&1)"
-  if printf '%s' "$no_dsn_out" | grep -q -- '--- SKIP'; then
+  if [[ $no_dsn_out == *'--- SKIP'* ]]; then
     ok "D2: without the DSN, internal/acl's PG test SKIPs (the probe can detect missing coverage)"
   else
     bad "D2: internal/acl's PG-gated test did NOT skip without SKYGATE_TEST_PG_DSN. Either the test stopped going through OpenTestPG, or it now runs against something else: $(printf '%s' "$no_dsn_out" | tail -3 | tr '\n' ' ')"
@@ -279,18 +279,18 @@ if [ -z "$GO_BIN" ]; then
   :
 elif [ -n "${SKYGATE_TEST_PG_DSN:-}" ]; then
   acl_out="$("$GO_BIN" test ./internal/acl/ -run "^${ACL_TEST}\$" -count=1 -v 2>&1)"
-  if printf '%s' "$acl_out" | grep -q -- '--- PASS'; then
+  if [[ $acl_out == *'--- PASS'* ]]; then
     ok "D3: with the DSN set, internal/acl's PG test really ran (a package CI never reached before)"
-  elif printf '%s' "$acl_out" | grep -q -- '--- SKIP'; then
+  elif [[ $acl_out == *'--- SKIP'* ]]; then
     bad "D3: SKYGATE_TEST_PG_DSN is set but internal/acl's PG test STILL skipped — the DSN is not reaching the test or OpenTestPG rejects it: $(printf '%s' "$acl_out" | tail -3 | tr '\n' ' ')"
   else
     bad "D3: internal/acl's PG test neither passed nor skipped with the DSN set: $(printf '%s' "$acl_out" | tail -5 | tr '\n' ' ')"
   fi
 
   admin_out="$("$GO_BIN" test ./internal/feature/admin/ -run "^${ADMIN_TEST}\$" -count=1 -v 2>&1)"
-  if printf '%s' "$admin_out" | grep -q -- '--- PASS'; then
+  if [[ $admin_out == *'--- PASS'* ]]; then
     ok "D4: with the DSN set, internal/feature/admin's PG test really ran (a package CI never reached before)"
-  elif printf '%s' "$admin_out" | grep -q -- '--- SKIP'; then
+  elif [[ $admin_out == *'--- SKIP'* ]]; then
     bad "D4: SKYGATE_TEST_PG_DSN is set but internal/feature/admin's PG test STILL skipped: $(printf '%s' "$admin_out" | tail -3 | tr '\n' ' ')"
   else
     bad "D4: internal/feature/admin's PG test neither passed nor skipped with the DSN set: $(printf '%s' "$admin_out" | tail -5 | tr '\n' ' ')"
@@ -306,9 +306,9 @@ elif [ -n "${SKYGATE_TEST_PG_DSN:-}" ]; then
               "internal/invite:TestApplyBridgeWritesShareRow"; do
     pkg="${pair%%:*}"; tname="${pair##*:}"
     pout="$("$GO_BIN" test "./${pkg}/" -run "^${tname}\$" -count=1 -v 2>&1)"
-    if printf '%s' "$pout" | grep -q -- '--- PASS'; then
+    if [[ $pout == *'--- PASS'* ]]; then
       ok "D5: with the DSN set, ${pkg}::${tname} really ran (a package the first measurement missed)"
-    elif printf '%s' "$pout" | grep -q -- '--- SKIP'; then
+    elif [[ $pout == *'--- SKIP'* ]]; then
       bad "D5: SKYGATE_TEST_PG_DSN is set but ${pkg}::${tname} still SKIPPED — the package gates through db.OpenForTest, so it must run: $(printf '%s' "$pout" | tail -3 | tr '\n' ' ')"
     else
       bad "D5: ${pkg}::${tname} neither passed nor skipped with the DSN set: $(printf '%s' "$pout" | tail -5 | tr '\n' ' ')"

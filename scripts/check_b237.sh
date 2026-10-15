@@ -260,7 +260,7 @@ if command -v go >/dev/null 2>&1; then
     out=$(CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         -run 'RewriteDerpURLs|ShortNameFromHostname|PublicDERPPortFromURL' \
         ./internal/feature/admin/... 2>&1)
-    if echo "$out" | grep -q '^ok'; then
+    if grep -q '^ok' <<< "$out"; then
         ok "G.2 B237 unit tests pass"
     else
         bad "G.2 B237 unit tests failed: $out"

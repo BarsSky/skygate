@@ -75,13 +75,13 @@ echo "=== A. update.html: Update button is unconditional when IsNewer ==="
 # Look for the /admin/update/apply form. The B129 contract is that
 # the conditional does NOT include .AutoUpdateEnabled.
 apply_block=$(grep -B1 -A4 'action="/admin/update/apply"' "${UPDATE_HTML}" | head -20 || true)
-if echo "${apply_block}" | grep -q 'AutoUpdateEnabled'; then
+if [[ $apply_block == *'AutoUpdateEnabled'* ]]; then
     bad "Apply form is still gated by .AutoUpdateEnabled (pre-B129 contract)"
 else
     ok "Apply form is NOT gated by .AutoUpdateEnabled (B129 contract)"
 fi
 # Confirm the conditional uses .IsNewer and not .DevBuild
-if echo "${apply_block}" | grep -qE 'IsNewer|IsNewer.*DevBuild|DevBuild.*IsNewer'; then
+if grep -qE 'IsNewer|IsNewer.*DevBuild|DevBuild.*IsNewer' <<< "$apply_block"; then
     ok "Apply form conditional includes .IsNewer (and excludes .DevBuild when present)"
 else
     bad "Apply form conditional does NOT include .IsNewer — the button would never show"

@@ -85,7 +85,7 @@ fi
 
 # 4. The Go tests actually pass.
 test_output=$(cd internal/feature/admin && "$GO_BIN" test -count=1 -run 'TestExitNodeSpeed|TestExitNodes|TestTailscaleIPFromNode|TestFormatLatencyMs|TestProbeExitNodeConnect_' 2>&1)
-if ! echo "$test_output" | grep -qE '^ok\s+skygate/internal/feature/admin'; then
+if ! grep -qE '^ok\s+skygate/internal/feature/admin' <<< "$test_output"; then
   echo "FAIL: Go tests for exit-node speed/availability did not pass"
   echo "$test_output" | tail -5
   exit 1

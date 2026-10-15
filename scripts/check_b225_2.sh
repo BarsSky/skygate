@@ -46,21 +46,21 @@ AGENTS="AGENTS.md"
 
 # --- A: Notifier field on Config ---
 config_struct=$(sed -n '/^type Config struct/,/^}$/p' "$WD_GO" 2>/dev/null)
-if echo "$config_struct" | grep -q "Notifier NotifierSink"; then
+if [[ $config_struct == *'Notifier NotifierSink'* ]]; then
   ok "A: watchdog.Config has Notifier field (NotifierSink interface)"
 else
   fail "A: watchdog.Config Notifier field missing"
 fi
 
 # --- B: ReadFailureThreshold field on Config ---
-if echo "$config_struct" | grep -q "ReadFailureThreshold int"; then
+if [[ $config_struct == *'ReadFailureThreshold int'* ]]; then
   ok "B: watchdog.Config has ReadFailureThreshold field"
 else
   fail "B: watchdog.Config ReadFailureThreshold field missing"
 fi
 
 # --- C: ClusterID field on Config ---
-if echo "$config_struct" | grep -q "ClusterID string"; then
+if [[ $config_struct == *'ClusterID string'* ]]; then
   ok "C: watchdog.Config has ClusterID field"
 else
   fail "C: watchdog.Config ClusterID field missing"
@@ -68,7 +68,7 @@ fi
 
 # --- D: DefaultConfig sets NoopNotifierSink ---
 default_config=$(sed -n '/^func DefaultConfig/,/^}$/p' "$WD_GO" 2>/dev/null)
-if echo "$default_config" | grep -q "NoopNotifierSink{}"; then
+if grep -q "NoopNotifierSink{}" <<< "$default_config"; then
   ok "D: DefaultConfig sets Notifier to NoopNotifierSink{} (silent default)"
 else
   fail "D: DefaultConfig missing NoopNotifierSink default"
@@ -76,8 +76,8 @@ fi
 
 # --- E: DBSwap struct has transition state fields ---
 dbswap_struct=$(sed -n '/^type DBSwap struct/,/^}$/p' "$WD_GO" 2>/dev/null)
-if echo "$dbswap_struct" | grep -q "consecutiveReadFailures int" && \
-   echo "$dbswap_struct" | grep -q "hasFirstTick bool"; then
+if [[ $dbswap_struct == *'consecutiveReadFailures int'* ]] && \
+   [[ $dbswap_struct == *'hasFirstTick bool'* ]]; then
   ok "E: DBSwap has consecutiveReadFailures + hasFirstTick fields"
 else
   fail "E: DBSwap missing transition state fields"

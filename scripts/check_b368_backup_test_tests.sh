@@ -66,7 +66,7 @@ hdr "A. the S3 test branch really probes the endpoint"
 S3_BRANCH="$(awk '/case ProtocolS3:/{p=1} p{print} p && /^	default:/{exit}' "$MOUNT")"
 if [ -z "$S3_BRANCH" ]; then
   bad "A1: the ProtocolS3 branch of TestConnection is gone"
-elif printf '%s\n' "$S3_BRANCH" | grep -q 'BucketExists'; then
+elif [[ $S3_BRANCH == *'BucketExists'* ]]; then
   ok "A1: the S3 branch calls BucketExists — the click now measures the endpoint it names"
 else
   bad "A1: the S3 branch validates fields and returns OK without touching the network — the dead-endpoint green tick is back"

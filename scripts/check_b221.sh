@@ -159,12 +159,12 @@ fi
 # (The Scan is split across multiple lines in admin_pages.go — use a
 # block match to handle either layout.)
 scan_block=$(awk '/rows\.Scan\(/,/err != nil/' "$PAGES_GO" | tr -d '\n' | tr -s ' ')
-if echo "$scan_block" | grep -q "&e\.Target," && \
-   echo "$scan_block" | grep -q "&e\.TargetType," && \
-   echo "$scan_block" | grep -q "&e\.TargetID," && \
-   echo "$scan_block" | grep -q "&e\.Detail," && \
-   echo "$scan_block" | grep -q "&e\.Result," && \
-   echo "$scan_block" | grep -q "&e\.ErrorMessage"; then
+if grep -q "&e\.Target," <<< "$scan_block" && \
+   grep -q "&e\.TargetType," <<< "$scan_block" && \
+   grep -q "&e\.TargetID," <<< "$scan_block" && \
+   grep -q "&e\.Detail," <<< "$scan_block" && \
+   grep -q "&e\.Result," <<< "$scan_block" && \
+   grep -q "&e\.ErrorMessage" <<< "$scan_block"; then
   ok "K: rows.Scan reads 10 columns (incl TargetType + TargetID)"
 else
   fail "K: rows.Scan does not read TargetType + TargetID (block: $scan_block)"

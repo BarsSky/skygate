@@ -107,13 +107,13 @@ echo "=== B. source: case order in TagToHostname is dev-infra BEFORE tag: ==="
 # 'tag:dev-infra-', the last case must be 'tag:' alone.
 awk '/^func TagToHostname/,/^}/' "${PCHECK}" > ${SKY_TMP}/tag_to_hostname.txt
 first_case=$(grep -nE 'case strings\.HasPrefix' ${SKY_TMP}/tag_to_hostname.txt | head -1 || true)
-if echo "${first_case}" | grep -q 'tag:dev-infra-'; then
+if [[ $first_case == *'tag:dev-infra-'* ]]; then
     ok "first case in TagToHostname switch is tag:dev-infra- (prefix order correct)"
 else
     bad "first case is NOT tag:dev-infra-: ${first_case}"
 fi
 last_case=$(grep -nE 'case strings\.HasPrefix' ${SKY_TMP}/tag_to_hostname.txt | tail -1 || true)
-if echo "${last_case}" | grep -q '"tag:"'; then
+if [[ $last_case == *'"tag:"'* ]]; then
     ok "last case in TagToHostname switch is 'tag:' (catches all other tag: forms)"
 else
     bad "last case is NOT 'tag:': ${last_case}"

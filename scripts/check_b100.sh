@@ -253,7 +253,7 @@ if [[ -z "${GO_BIN}" ]] ; then
   warn "go binary not found in PATH; skipping live test run (covered by CI)"
 else
   test_out=$("${GO_BIN}" test ./internal/backup/ -run 'TestBuildS3Key|TestDetectProtocolS3|TestS3Validate|TestIsValidProtocolIncludesS3' -count=1 2>&1)
-  if echo "${test_out}" | grep -qE '^ok.*internal/backup' ; then
+  if grep -qE '^ok.*internal/backup' <<< "$test_out" ; then
     ok "go test ./internal/backup/ S3 tests: ok"
   else
     bad "go test ./internal/backup/ S3 tests failed: ${test_out}"

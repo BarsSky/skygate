@@ -71,7 +71,7 @@ for kv in "--bg:#f5f7f6" "--bg-card:#ffffff" "--accent:#10b981" "--accent-fg:#ff
     val="${kv##*:}"
     # Use `grep -e` so `--` in the key (e.g. `--bg`) isn't
     # treated as a flag.
-    if echo "${mint_block}" | grep -qE -e "${key}\s*:\s*${val}"; then
+    if ( set +o pipefail; echo "${mint_block}" | grep -qE -e "${key}\s*:\s*${val}" ); then
         ok "mint palette ${key} = ${val}"
     else
         bad "mint palette ${key} != ${val} (got something else)"

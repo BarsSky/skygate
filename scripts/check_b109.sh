@@ -60,7 +60,7 @@ if [ -z "$MEDIA_BLOCK" ]; then
   echo "B109 FAIL: could not extract @media (max-width:768px) block" >&2
   exit 1
 fi
-if ! echo "$MEDIA_BLOCK" | grep -qE '\.admin-breadcrumb\{padding-left:60px\}|\.admin-breadcrumb[[:space:]]*\{[[:space:]]*padding-left:[[:space:]]*60px'; then
+if ! grep -qE '\.admin-breadcrumb\{padding-left:60px\}|\.admin-breadcrumb[[:space:]]*\{[[:space:]]*padding-left:[[:space:]]*60px' <<< "$MEDIA_BLOCK"; then
   echo "B109 FAIL: @media (max-width:768px) missing .admin-breadcrumb{padding-left:60px} (B107 mobile hamburger-clearance broken)" >&2
   exit 1
 fi

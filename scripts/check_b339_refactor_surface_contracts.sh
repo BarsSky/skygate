@@ -299,7 +299,7 @@ TWICE_OUT="$( { . "$LIB"; . "$LIB"; gosurface A internal/feature/admin/tailscale
 TWICE_RC=$?
 case "$TWICE_OUT" in
   *twice-ok*)
-    if [ "$TWICE_RC" -eq 0 ] && ! printf '%s' "$TWICE_OUT" | grep -qiE 'segmentation|stack|recursion'; then
+    if [ "$TWICE_RC" -eq 0 ] && ! grep -qiE 'segmentation|stack|recursion' <<< "$TWICE_OUT"; then
       ok "C7: sourcing the helper twice and reading two surfaces exits cleanly (rc=$TWICE_RC)"
     else
       bad "C7: a double source broke the exit path (rc=$TWICE_RC): $TWICE_OUT"

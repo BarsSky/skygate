@@ -73,14 +73,14 @@ fi
 echo "=== B179 contracts ==="
 
 # A. DOCKER-USER has no block for 192.168.13.67
-if echo "$IPTABLES_OUTPUT$RULES_V4" | grep -qE 'DOCKER-USER.*192.168.13.67.*DROP'; then
+if grep -qE 'DOCKER-USER.*192.168.13.67.*DROP' <<< "$IPTABLES_OUTPUT$RULES_V4"; then
   check_eq "A" "no-block" "block-present (regression: DOCKER-USER is blocking 192.168.13.67 → 50444)"
 else
   check_eq "A" "no-block" "no-block"
 fi
 
 # B. INPUT has no block for 192.168.13.67
-if echo "$IPTABLES_OUTPUT$RULES_V4" | grep -qE 'INPUT.*192.168.13.67.*DROP'; then
+if grep -qE 'INPUT.*192.168.13.67.*DROP' <<< "$IPTABLES_OUTPUT$RULES_V4"; then
   check_eq "B" "no-block" "block-present (regression: INPUT is blocking 192.168.13.67 → 50444)"
 else
   check_eq "B" "no-block" "no-block"

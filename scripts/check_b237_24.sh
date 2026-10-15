@@ -135,7 +135,7 @@ if command -v git >/dev/null 2>&1; then
   D_RC=$?
   if [ "$D_RC" -ne 0 ]; then
     skip "D.1 git ls-remote failed (rc=$D_RC; no network / no origin) — live v1.5.2 tag state unavailable"
-  elif printf '%s\n' "$D_OUT" | grep -q .; then
+  elif grep -q . <<< "$D_OUT"; then
     ok "D.1 remote v1.5.2 tag EXISTS (release workflow passed, tag is the release pointer)"
   else
     bad "D.1 remote v1.5.2 tag is absent — was the release workflow re-run? per operator's rule: no v1.5.2 tag if CI failed"
@@ -180,9 +180,9 @@ if [ -n "$GH_BIN" ]; then
   EOUT="$EOUT_RAW"
   if [ "$E_RC" -ne 0 ]; then
     skip "E.1 gh release view failed (rc=$E_RC; no token / no network) — live v1.5.2 release state unavailable"
-  elif echo "$EOUT" | grep -q '"isDraft":true'; then
+  elif [[ $EOUT == *'"isDraft":true'* ]]; then
     bad "E.1 v1.5.2 release exists as DRAFT (CI failed; clean it up)"
-  elif echo "$EOUT" | grep -q '"tagName":"v1.5.2"'; then
+  elif grep -q '"tagName":"v1.5.2"' <<< "$EOUT"; then
     ok "E.1 v1.5.2 release is PUBLISHED (clean state, release workflow passed)"
   else
     bad "E.1 v1.5.2 release is missing entirely — release workflow may have failed: $(printf '%s' "$EOUT" | head -c 200)"

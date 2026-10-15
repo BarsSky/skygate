@@ -114,10 +114,10 @@ fi
 
 # --- contract 4: unit tests pass ---
 TEST_OUT="$("$GO_BIN" test -count=1 -timeout=60s ./internal/module/tailscale/... 2>&1)"
-if printf '%s' "${TEST_OUT}" | grep -q '^FAIL'; then
+if grep -q '^FAIL' <<< "$TEST_OUT"; then
     fail "unit tests pass" "see output above"
     printf '%s\n' "${TEST_OUT}" | sed 's/^/           /'
-elif printf '%s' "${TEST_OUT}" | grep -q '^ok'; then
+elif grep -q '^ok' <<< "$TEST_OUT"; then
     # Count how many tests ran.
     N=$(printf '%s' "${TEST_OUT}" | grep -oE 'ok[ \t]+skygate/internal/module/tailscale[ \t]+[0-9.]+s' | head -1)
     pass "unit tests pass (${N})"

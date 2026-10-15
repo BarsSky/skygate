@@ -71,7 +71,7 @@ if [ -z "$MEDIA_BLOCK" ]; then
 fi
 
 # 3. The .toggle display:none rule is inside the @media block.
-if ! echo "$MEDIA_BLOCK" | grep -qE '\.sidebar[[:space:]]+\.toggle[[:space:]]*\{[^}]*display:[[:space:]]*none'; then
+if ! grep -qE '\.sidebar[[:space:]]+\.toggle[[:space:]]*\{[^}]*display:[[:space:]]*none' <<< "$MEDIA_BLOCK"; then
   echo "SKY-FAIL: @media (max-width:768px) block missing .sidebar .toggle{display:none} (the in-sidebar button is still visible on mobile)" >&2
   exit 1
 fi
@@ -94,7 +94,7 @@ fi
 
 # 5. The .sidebar.collapsed{width:280px} force-clear is also
 #    inside the @media block.
-if ! echo "$MEDIA_BLOCK" | grep -qE '\.sidebar\.collapsed\{width:280px\}|\.sidebar\.collapsed[[:space:]]*\{[[:space:]]*width:[[:space:]]*280px'; then
+if ! grep -qE '\.sidebar\.collapsed\{width:280px\}|\.sidebar\.collapsed[[:space:]]*\{[[:space:]]*width:[[:space:]]*280px' <<< "$MEDIA_BLOCK"; then
   echo "SKY-FAIL: @media (max-width:768px) block missing .sidebar.collapsed{width:280px} (stuck collapsed state would not be auto-cleared on mobile)" >&2
   exit 1
 fi

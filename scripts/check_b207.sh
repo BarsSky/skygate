@@ -99,16 +99,16 @@ if [ -n "$AUDIT_HANDLER" ] && [ -n "$AUDIT_BUILDER" ]; then
 else
     check "GetAdminAudit + its query builder are both present" fail
 fi
-printf '%s\n' "$AUDIT_HANDLER" | grep -q 'buildUnifiedAuditQuery' \
+[[ $AUDIT_HANDLER == *'buildUnifiedAuditQuery'* ]] \
     && check "GetAdminAudit delegates to the unified query builder" ok \
     || check "GetAdminAudit delegates to the unified query builder" fail
-printf '%s\n' "$AUDIT_BUILDER" | grep -qE "FROM[[:space:]]+audit_log" \
+grep -qE "FROM[[:space:]]+audit_log" <<< "$AUDIT_BUILDER" \
     && check "the unified audit query reads from audit_log" ok \
     || check "the unified audit query reads from audit_log" fail
-printf '%s\n' "$AUDIT_BUILDER" | grep -qE "FROM[[:space:]]+cluster_audit" \
+grep -qE "FROM[[:space:]]+cluster_audit" <<< "$AUDIT_BUILDER" \
     && check "the unified audit query reads from cluster_audit" ok \
     || check "the unified audit query reads from cluster_audit" fail
-printf '%s\n' "$AUDIT_BUILDER" | grep -q "UNION ALL" \
+[[ $AUDIT_BUILDER == *'UNION ALL'* ]] \
     && check "audit branches are UNION ALL'd" ok \
     || check "audit branches are UNION ALL'd" fail
 

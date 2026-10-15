@@ -91,7 +91,7 @@ fi
 check "ssh on PATH" ok
 
 SSH_VERSION=$(ssh -V 2>&1 | head -1)
-if echo "$SSH_VERSION" | grep -qiE "OpenSSH"; then
+if grep -qiE "OpenSSH" <<< "$SSH_VERSION"; then
   check "ssh is OpenSSH ($SSH_VERSION)" ok
 else
   check "ssh is OpenSSH (got: $SSH_VERSION)" fail
@@ -154,7 +154,7 @@ fi
 echo "[Phase 5] Tailscale status (svi at 100.64.0.24 is reachable only via Tailscale)"
 if command -v tailscale >/dev/null 2>&1; then
   TS_STATUS=$(tailscale status 2>&1 | head -5)
-  if echo "$TS_STATUS" | grep -qE "Logged out|not logged in|stopped"; then
+  if grep -qE "Logged out|not logged in|stopped" <<< "$TS_STATUS"; then
     warn "tailscale is logged out (post-B209.1 emergency fix): svi at 100.64.0.24 is NOT reachable from the agent. Restore tailscale (set SKYGATE_TS_AUTHKEY_FILE to a valid authkey + restart container) before the svi→agent move."
   else
     check "tailscale is logged in (svi at 100.64.0.24 reachable)" ok
@@ -183,11 +183,11 @@ echo "  the agent's id_ed25519.pub is added to svi's authorized_keys; this"
 echo "  dry-run is a code-construction check, not an end-to-end test).${NC}"
 
 # Verify the cmd structure (sanity check on the echo logic)
-if echo "$DRY_CMD" | grep -q "BatchMode=yes" \
-   && echo "$DRY_CMD" | grep -q "StrictHostKeyChecking=accept-new" \
-   && echo "$DRY_CMD" | grep -q "pg_dump -Fc --no-owner --no-acl --no-comments" \
-   && echo "$DRY_CMD" | grep -q "root@100.64.0.24" \
-   && echo "$DRY_CMD" | grep -q "$QUOTED_DSN"; then
+if [[ $DRY_CMD == *'BatchMode=yes'* ]] \
+   && [[ $DRY_CMD == *'StrictHostKeyChecking=accept-new'* ]] \
+   && [[ $DRY_CMD == *'pg_dump -Fc --no-owner --no-acl --no-comments'* ]] \
+   && grep -q "root@100.64.0.24" <<< "$DRY_CMD" \
+   && ( set +o pipefail; echo "$DRY_CMD" | grep -q "$QUOTED_DSN" ); then
   check "dry-run command has the expected flags + host + remote pg_dump" ok
 else
   check "dry-run command structure" fail

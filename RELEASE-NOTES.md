@@ -12,6 +12,85 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.126 — no check may turn a host transient into a product verdict (B386)
+
+**Date:** 2026-10-15 · **Base:** `v1.5.125` → this tag · **Compatibility:** no product
+change at all — this release touches the CHECK SCRIPTS only (`scripts/check_*.sh`), plus the
+documentation. Nothing in `cmd/`, `internal/` or the database moves.
+
+### The 2-hour bill one pipeline can produce
+
+`B311 A2` failed a full gate run on a tree that had passed the same gate twice an hour
+earlier. The claim was *"`internal/headscale/preauth.go` does not put tags in `acl_tags`"*
+about a file whose line 241 is literally `body["acl_tags"] = tags`. It then reproduced
+**0 times in 300 rounds**, including 400 rounds under 8 CPU burners, and the two sibling
+assertions reading the same variable through the same form passed in the failing run.
+
+The assertion was:
+
+```sh
+if printf '%s' "$CODE" | grep -q 'body\["acl_tags"\] = tags'; then
+```
+
+`grep -q` exits at the **first** match and closes the pipe. Under `set -o pipefail` the
+pipeline's status is then the **producer's** status, not grep's — so anything the host does
+to that pipe (EPIPE/SIGPIPE, a failed fork, a scheduling hiccup) is reported as *"the pattern
+is not there"*: a fact about the **machine** turned into a claim about the **product**. The
+check had no way to fail honestly, and the run cost two hours.
+
+### What ships
+
+Every `producer | grep -q` site in `scripts/check_*.sh` — **303 sites in 86 files** — was
+rewritten, and the rewrite was **proved equivalent before it was applied**: a behavioural
+selftest evaluated the old pipeline and the new expression on ten haystacks per site (empty,
+case variants, regex metacharacters, multi-line, quotes, backslashes) and compared exit
+statuses. Result: **303 checked, 0 mismatches**.
+
+| kind | replacement | why |
+|---|---|---|
+| R1/R2 literal (case-folded when `-i`) | `[[ $V == *'pat'* ]]` | no fork at all — the verdict can only come from the text |
+| R3 alternation of literals | `[[ $V == *'a'* \|\| … ]]` | same, and `-i` aware |
+| R4 any other regex | `grep <flags> <pattern verbatim> <<< "$V"` | identical command, no producer in the pipeline |
+| R5 trailing-newline-sensitive, `-x`, or a **pattern variable** | `( set +o pipefail; printf … \| grep … )` | the pipeline stays, its status cannot decide the verdict |
+
+Out of scope **by design** (and audited): the `-o` / `-c` / `-n` sites — grep reads all of
+its input there, so there is no early exit and no producer status to lose. Comments and
+here-document bodies are never rewritten: a comment that mentions the pattern is
+documentation, and heredoc text is data.
+
+### Three traps this block had to survive — all caught, all recorded
+
+1. **A greedy-quote regex silently destroyed semantics.** The first rewriter matched
+   `['"]…['"]`, so the pattern `"href=\"/admin/$p\""` matched only `href=\"` and the rebuilt
+   line became `grep -q "href=\" <<< "$deploy_block"/admin/$p\""`. **`bash -n` accepted it** —
+   valid syntax, destroyed meaning. It was caught by reviewing the diff; the rewriter is now
+   a hand-rolled, quote/escape-aware parser that replaces the matched span **whole** or not
+   at all.
+2. **Comments were rewritten and `-i` was dropped in one branch.** The second version
+   rewrote comment lines that merely *mentioned* the pipeline (a "pattern" of ``X` ``), and
+   its alternation branch ignored grep's `-i`, silently turning `grep -qi 'unknown\|stopped'`
+   into a **case-sensitive** test. Both were caught by the behavioural selftest — which is
+   exactly why the transform is proved rather than eyeballed.
+3. **`grep -e PATTERN` puts the pattern *after* an option**, so the herestring landed between
+   two operands: `grep -qE -e <<< "$mint_block" "${key}\s*:\s*${val}"` — again valid syntax,
+   broken command. Caught by reviewing the diff of the *later* passes (the site had survived
+   the first two because the parser read `-e` as the pattern). The rule is now a contract
+   assertion: for a grep, `<<< "$V"` must be its **last** operand.
+
+The rewriter itself lives outside the repository (it is a one-shot tool, not a product), and
+the class it eliminates is guarded by the contract below — so the tool cannot be needed again
+without the check going red first.
+
+### Verified
+
+* `scripts/check_b386_no_variable_grep_q.sh` — the class is gone from `scripts/` (0
+  unprotected sites), the detector is **exercised on planted violations** (a real pipeline,
+  a commented-out line, a heredoc body, a status-neutralized line) so it cannot rot into a
+  green no-op, and the five transforms are re-proved on fresh haystacks.
+* All **68 touched checks** were run locally before the push, and the full gate (which runs
+  every check that consumes these scripts) is the authoritative pass.
+* `bash -n` passes on all 73 touched files; the diff is mechanical and reviewable.
+
 ## v1.5.125 — a refusal must name the reason, and the interpreter (B385)
 
 **Date:** 2026-10-14 · **Base:** `v1.5.124` → this tag · **Compatibility:** no schema

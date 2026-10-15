@@ -55,7 +55,7 @@ echo "=== contract A: internal/oidc/ package exists + builds + tests ==="
 
 # Package compiles + tests pass.
 out=$(go test ./internal/oidc/ 2>&1)
-if echo "$out" | grep -q '^ok'; then
+if grep -q '^ok' <<< "$out"; then
     ok "internal/oidc tests pass"
 else
     bad "internal/oidc tests FAILED: $out"
@@ -409,7 +409,7 @@ for t in "${needed_tests[@]}"; do
 done
 # 6.11 — all OIDC tests pass (covers B161.1 + B161.2)
 out=$(go test ./internal/oidc/ -count=1 2>&1)
-if echo "$out" | grep -q '^ok'; then
+if grep -q '^ok' <<< "$out"; then
     ok "internal/oidc tests pass (B161.1 + B161.2)"
 else
     bad "internal/oidc tests FAILED: $out"
@@ -529,7 +529,7 @@ done
 
 # I.12 — all OIDC tests pass (B161.1 + B161.2 + B161.3)
 out=$(go test ./internal/oidc/ -count=1 2>&1)
-if echo "$out" | grep -q '^ok'; then
+if grep -q '^ok' <<< "$out"; then
     ok "internal/oidc tests pass (B161.1 + B161.2 + B161.3)"
 else
     bad "internal/oidc tests FAILED: $out"
@@ -579,7 +579,7 @@ else
 fi
 # Run it.
 out=$(go test ./internal/oidc/ -run TestE2E_HeadscaleClientFlow -count=1 2>&1)
-if echo "$out" | grep -q '^ok\|--- PASS'; then
+if grep -q '^ok\|--- PASS' <<< "$out"; then
     ok "TestE2E_HeadscaleClientFlow PASSes (e2e contract is healthy)"
 else
     bad "TestE2E_HeadscaleClientFlow FAILED: $out"

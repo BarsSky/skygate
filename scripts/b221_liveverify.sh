@@ -124,7 +124,7 @@ LOC=$(curl -s -o /dev/null -w '%{redirect_url}' \
   -d "ttl_hours=1" \
   "http://127.0.0.1:8080/admin/cluster/invite/generate" 2>&1)
 echo "  POST → 303 redirect to: $LOC"
-if echo "$LOC" | grep -q "ok="; then
+if [[ $LOC == *'ok='* ]]; then
   echo "  [ok]   invite generated (302/303 with ok= flash)"
   INVITE_OK=1
 else

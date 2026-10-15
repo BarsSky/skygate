@@ -212,7 +212,7 @@ done
 # (RU) + `var enAdmin` (EN). The /admin page is RU by default
 # so we check the RU map.
 ru_approve=$(awk '/^var ruAdmin/,/^}$/' "$CATALOG" | grep '"cluster.node_approve"' | head -1)
-if echo "$ru_approve" | grep -q 'Одобрить'; then
+if [[ $ru_approve == *'Одобрить'* ]]; then
   ok "U: cluster.node_approve RU value is 'Одобрить' (not English)"
 else
   fail "U: cluster.node_approve RU value wrong (expected Одобрить, got: $ru_approve)"

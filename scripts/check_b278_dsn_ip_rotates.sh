@@ -86,7 +86,7 @@ AUTODETECT_BLOCK=$(perl -0777 -ne '
     }
   }
 ' scripts/launch_skigate.sh)
-if printf '%s\n' "$AUTODETECT_BLOCK" | grep -qF 'PG_HOST="$PG_CONTAINER_NAME"'; then
+if ( set +o pipefail; printf '%s\n' "$AUTODETECT_BLOCK" | grep -qF 'PG_HOST="$PG_CONTAINER_NAME"' ); then
   ok "B  auto-detect assigns PG_HOST=\"\$PG_CONTAINER_NAME\" (docker DNS name, NOT IP)"
 else
   bad "B  auto-detect does NOT assign PG_HOST to the container name (still resolves an IP?)"
@@ -94,7 +94,7 @@ else
 fi
 
 # --- C: no .IPAddress substring survives in the auto-detect block ---
-if printf '%s\n' "$AUTODETECT_BLOCK" | grep -qF '.IPAddress'; then
+if grep -qF '.IPAddress' <<< "$AUTODETECT_BLOCK"; then
   bad "C  auto-detect block still references .IPAddress (stale-IP regression)"
 else
   ok "C  auto-detect block has NO .IPAddress substring"
@@ -106,12 +106,12 @@ fi
 RESTART_LINE=$(grep -E '^[[:space:]]+--restart=' scripts/launch_skigate.sh || true)
 if [ -z "$RESTART_LINE" ]; then
   bad "D  no docker-run --restart= line found at all"
-elif printf '%s' "$RESTART_LINE" | grep -qF 'unless-stopped'; then
+elif grep -qF 'unless-stopped' <<< "$RESTART_LINE"; then
   ok "D  docker-run line uses --restart=unless-stopped"
 else
   bad "D  docker-run line does NOT use --restart=unless-stopped (got: $RESTART_LINE)"
 fi
-if printf '%s' "$RESTART_LINE" | grep -qF 'on-failure'; then
+if grep -qF 'on-failure' <<< "$RESTART_LINE"; then
   bad "D  docker-run line still uses --restart=on-failure (the B278 root-cause second-half)"
 else
   ok "D  docker-run line has no on-failure policy (no permanent-stop risk)"

@@ -77,28 +77,28 @@ fi
 
 # THE contract of this block: a LIMIT would reintroduce exactly the pagination
 # that hid cyborg.
-if printf '%s' "$SQL" | grep -qi 'limit'; then
+if [[ ${SQL,,} == *'limit'* ]]; then
   bad "A3: the strip query contains LIMIT — the answer would depend on the page again (that is the B347 defect)"
 else
   ok "A3: the strip query has NO LIMIT — it cannot be paginated away"
 fi
 
-if printf '%s' "$SQL" | grep -q 'enabled = 1'; then
+if [[ $SQL == *'enabled = 1'* ]]; then
   ok "A4: only ENABLED rules are counted (a disabled-only device must not appear)"
 else
   bad "A4: the query does not filter on enabled = 1"
 fi
-if printf '%s' "$SQL" | grep -q "device_hostname <> ''"; then
+if grep -q "device_hostname <> ''" <<< "$SQL"; then
   ok "A5: empty hostnames are skipped (pre-rename leftovers, matched through node_owner_map)"
 else
   bad "A5: the query does not skip empty device_hostname rows"
 fi
-if printf '%s' "$SQL" | grep -q 'LEFT JOIN device_exit_node_prefs'; then
+if [[ $SQL == *'LEFT JOIN device_exit_node_prefs'* ]]; then
   ok "A6: LEFT JOIN device_exit_node_prefs — the same 'no preference row' definition B343 uses"
 else
   bad "A6: the query does not LEFT JOIN the preference table"
 fi
-if printf '%s' "$SQL" | grep -q 'p.user_id = r.user_id' && printf '%s' "$SQL" | grep -q 'p.device_hostname = r.device_hostname'; then
+if grep -q 'p.user_id = r.user_id' <<< "$SQL" && grep -q 'p.device_hostname = r.device_hostname' <<< "$SQL"; then
   ok "A7: the join is scoped to the same (user, device) pair — another user's preference cannot leak in"
 else
   bad "A7: the join is not scoped by user_id AND device_hostname"
@@ -106,12 +106,12 @@ fi
 # The B319 lesson: device_rules.device_id is INTEGER while node_owner_map.node_id
 # is TEXT, so a join between them answers differently per backend. The strip must
 # not introduce one.
-if printf '%s' "$SQL" | grep -q 'node_owner_map'; then
+if [[ $SQL == *'node_owner_map'* ]]; then
   bad "A8: the strip joins node_owner_map — that is the INTEGER-vs-TEXT class (B319); it must stay on TEXT columns"
 else
   ok "A8: no node_owner_map join (no INTEGER/TEXT comparison across backends)"
 fi
-if printf '%s' "$SQL" | grep -q '\$1'; then
+if ( set +o pipefail; printf '%s' "$SQL" | grep -q '\$1' ); then
   ok "A9: the universal \$N placeholder — one statement for SQLite and PostgreSQL"
 else
   bad "A9: the query does not use the \$N placeholder form"

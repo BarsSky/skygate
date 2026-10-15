@@ -76,7 +76,7 @@ echo "=== Step 4: GET /metrics (Content-Type + first 50 lines) ==="
 curl -s -o /tmp/b226_metrics.txt -D /tmp/b226_headers.txt http://127.0.0.1:8080/metrics
 CONTENT_TYPE=$(grep -i 'content-type' /tmp/b226_headers.txt | tr -d '\r' | sed 's/.*: //')
 echo "  Content-Type: $CONTENT_TYPE"
-if echo "$CONTENT_TYPE" | grep -q "text/plain; version=0.0.4"; then
+if grep -q "text/plain; version=0.0.4" <<< "$CONTENT_TYPE"; then
   echo "  [ok]   Content-Type matches Prometheus spec"
   CT_OK=1
 else
@@ -116,7 +116,7 @@ echo "=== Step 6: assert skygate_build_info has the right labels ==="
 BUILD_INFO=$(grep -E "^skygate_build_info\{" /tmp/b226_metrics.txt | head -1)
 if [ -n "$BUILD_INFO" ]; then
   echo "  [ok]   $BUILD_INFO"
-  if echo "$BUILD_INFO" | grep -q 'go_version="go'; then
+  if [[ $BUILD_INFO == *'go_version="go'* ]]; then
     echo "  [ok]   go_version label set"
     BUILD_OK=1
   else
@@ -132,7 +132,7 @@ echo ""
 echo "=== Step 7: assert skygate_db_health is 1 (DB reachable) ==="
 HEALTH=$(grep -E "^skygate_db_health\{" /tmp/b226_metrics.txt | head -1)
 echo "  $HEALTH"
-if echo "$HEALTH" | grep -qE '} 1$'; then
+if ( set +o pipefail; echo "$HEALTH" | grep -qE '} 1$' ); then
   echo "  [ok]   skygate_db_health = 1 (DB reachable)"
   HEALTH_OK=1
 else
@@ -160,7 +160,7 @@ FAIL_LOC=$(curl -s -X POST -b "skygate_session=${TOK}" \
   -d "reason=B226 live-verify test" \
   -o /dev/null -w '%{http_code} %{redirect_url}\n' --max-time 30 http://127.0.0.1:8080/admin/database/failover)
 echo "  failover: $FAIL_LOC"
-if echo "$FAIL_LOC" | grep -q "^303"; then
+if grep -q "^303" <<< "$FAIL_LOC"; then
   FAIL_HANDLER_OK=1
 else
   FAIL_HANDLER_OK=0
@@ -174,7 +174,7 @@ sleep 35
 curl -s http://127.0.0.1:8080/metrics > /tmp/b226_metrics_2.txt
 FAILOVER_STATE=$(grep -E "^skygate_failover_state\{" /tmp/b226_metrics_2.txt | head -1)
 echo "  skygate_failover_state after failover attempt: $FAILOVER_STATE"
-if [ -n "$FAILOVER_STATE" ] && echo "$FAILOVER_STATE" | grep -qE '} 0$'; then
+if [ -n "$FAILOVER_STATE" ] && ( set +o pipefail; echo "$FAILOVER_STATE" | grep -qE '} 0$' ); then
   echo "  [ok]   failover_state = 0 (no last_failover — B220 only sets on success)"
   FAILOVER_OK=1
 else

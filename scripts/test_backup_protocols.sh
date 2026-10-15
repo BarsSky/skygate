@@ -117,7 +117,7 @@ test_local() {
     contents=$(tar tzf "${tarball}" 2>/dev/null | head -50)
     local missing=0
     for f in skygate-pg.sql skygate.env inventory.txt skygate-repo.bundle ; do
-        if ! echo "${contents}" | grep -qF "${f}" ; then
+        if ! ( set +o pipefail; echo "${contents}" | grep -qF "${f}" ) ; then
             warn "local: tarball missing ${f}"
             missing=$((missing+1))
         fi

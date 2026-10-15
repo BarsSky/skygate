@@ -69,8 +69,8 @@ fi
 
 # --- D: Sampler has transition state fields ---
 sampler_struct=$(sed -n '/^type Sampler struct/,/^}$/p' "$HEALTHZ_GO" 2>/dev/null)
-if echo "$sampler_struct" | grep -q "hasFirstSample bool" && \
-   echo "$sampler_struct" | grep -q "lastHealthy bool"; then
+if [[ $sampler_struct == *'hasFirstSample bool'* ]] && \
+   [[ $sampler_struct == *'lastHealthy bool'* ]]; then
   ok "D: Sampler has hasFirstSample + lastHealthy fields"
 else
   fail "D: Sampler missing transition state fields"
@@ -88,14 +88,14 @@ fi
 # "DEGRADED" (combined with the "DB health " prefix in
 # the format string to form "DB health DEGRADED").
 detect_body=$(sed -n '/^func (s \*Sampler) detectTransition/,/^}$/p' "$HEALTHZ_GO" 2>/dev/null)
-if echo "$detect_body" | grep -q 'verb = "DEGRADED"'; then
+if [[ $detect_body == *'verb = "DEGRADED"'* ]]; then
   ok "F: ok→degraded alert uses \"DB health DEGRADED\""
 else
   fail "F: ok→degraded verb constant missing"
 fi
 
 # --- G: degraded→ok alert ---
-if echo "$detect_body" | grep -q 'verb = "recovered"'; then
+if [[ $detect_body == *'verb = "recovered"'* ]]; then
   ok "G: degraded→ok alert uses \"DB health recovered\""
 else
   fail "G: recovered verb constant missing"

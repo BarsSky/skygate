@@ -132,12 +132,12 @@ if [ -f "$VERDICT" ] && command -v bash >/dev/null 2>&1; then
   else
     bad "B3: a green log was refused (rc=$g_rc): $g_out"
   fi
-  if [ "$r_rc" -ne 0 ] && printf '%s' "$r_out" | grep -q 'B337'; then
+  if [ "$r_rc" -ne 0 ] && [[ $r_out == *'B337'* ]]; then
     ok "B4: a RED log is refused AND the failing checks are named ($(printf '%s' "$r_out" | tr '\n' ' '))"
   else
     bad "B4: a RED log did not name the failing checks (rc=$r_rc): $r_out"
   fi
-  if [ "$t_rc" -ne 0 ] && printf '%s' "$t_out" | grep -q 'B261'; then
+  if [ "$t_rc" -ne 0 ] && [[ $t_out == *'B261'* ]]; then
     ok "B5: a TIMEOUT counts as a failure and is named (B335's rule, kept by the reader)"
   else
     bad "B5: a TIMEOUT did not fail the verdict (rc=$t_rc): $t_out"
@@ -180,7 +180,7 @@ mkdir -p "$D1_TMP"
 printf '#!/bin/sh\nexit 49\n' > "$D1_TMP/python3"
 chmod +x "$D1_TMP/python3"
 d1_out="$(PATH="$D1_TMP:$PATH" bash scripts/check_b352_ownership_convergence.sh 2>&1)"; d1_rc=$?
-if printf '%s' "$d1_out" | grep -q 'reaches the effective-target resolver'; then
+if [[ $d1_out == *'reaches the effective-target resolver'* ]]; then
   bad "D1: a host whose python3 runs nothing still produces B352's «reaches the effective-target resolver» FAIL — a host artefact reported as a product defect (B327/B336)"
 elif [ "$d1_rc" -ne 0 ]; then
   bad "D1: B352 failed for another reason with a broken python3 (rc=$d1_rc): $(printf '%s' "$d1_out" | grep -a FAIL | head -3 | tr '\n' ' ')"
@@ -191,7 +191,7 @@ fi
 # D2 — check_b_prod_health.sh must survive an unset USER/LOGNAME.
 if command -v curl >/dev/null 2>&1; then
   d2_out="$(env -u USER -u LOGNAME SKYGATE_PROD_URL=http://127.0.0.1:1 bash scripts/check_b_prod_health.sh 2>&1)"; d2_rc=$?
-  if printf '%s' "$d2_out" | grep -q 'unbound variable'; then
+  if [[ $d2_out == *'unbound variable'* ]]; then
     bad "D2: check_b_prod_health.sh dies with «unbound variable» when USER is unset (it did, under set -u, after its HTTP contracts had passed)"
   elif [ "$d2_rc" -ne 0 ]; then
     bad "D2: check_b_prod_health.sh exited $d2_rc against an unreachable target — a dead port must SKIP, not FAIL (B327)"
@@ -229,7 +229,7 @@ else
     d3_out="$(bash scripts/check_b337_gofmt_ratchet.sh 2>&1)"; d3_rc=$?
     git checkout -- "$CAND" 2>/dev/null
     RESTORE_FILE=""
-    if printf '%s' "$d3_out" | grep -q 'CRLF-only checkout artefact' && printf '%s' "$d3_out" | grep -q 'C1: all'; then
+    if [[ $d3_out == *'CRLF-only checkout artefact'* ]] && [[ $d3_out == *'C1: all'* ]]; then
       ok "D3: a CRLF working copy of a gofmt-clean file is not reported as drift ($CAND) — C1 stays PASS and names the artefact"
     else
       bad "D3: a CRLF working copy still reddens B337 C1 (rc=$d3_rc): $(printf '%s' "$d3_out" | grep -a 'C1:' | head -2 | tr '\n' ' ')"
@@ -288,12 +288,12 @@ if [ -f "$GTV" ]; then
   o_out="$(bash "$GTV" < "$SKY_TMP/ok.txt" 2>&1)"; o_rc=$?
   b_out="$(bash "$GTV" < "$SKY_TMP/build.txt" 2>&1)"; b_rc=$?
 
-  if [ "$h_rc" -eq 2 ] && printf '%s' "$h_out" | grep -q 'TestB2761_MarkGroupKeepsTheIntent' && printf '%s' "$h_out" | grep -q 'addColumnIfMissingSQLite'; then
+  if [ "$h_rc" -eq 2 ] && [[ $h_out == *'TestB2761_MarkGroupKeepsTheIntent'* ]] && [[ $h_out == *'addColumnIfMissingSQLite'* ]]; then
     ok "E4: the REAL hang shape is read as a HANG, and it names the test AND the blocking skygate frame"
   else
     bad "E4: the hang dump was not read as a hang naming the test/frame (rc=$h_rc): $(printf '%s' "$h_out" | tr '\n' ' ')"
   fi
-  if [ "$a_rc" -eq 1 ] && printf '%s' "$a_out" | grep -q 'TestFoo'; then
+  if [ "$a_rc" -eq 1 ] && [[ $a_out == *'TestFoo'* ]]; then
     ok "E5: an assertion failure is read as FAILED and names the failing test"
   else
     bad "E5: an assertion failure was misread (rc=$a_rc): $a_out"
@@ -303,7 +303,7 @@ if [ -f "$GTV" ]; then
   else
     bad "E6: a green run was misread (rc=$o_rc): $o_out"
   fi
-  if [ "$b_rc" -eq 3 ] && printf '%s' "$b_out" | grep -q 'NO VERDICT'; then
+  if [ "$b_rc" -eq 3 ] && [[ $b_out == *'NO VERDICT'* ]]; then
     ok "E7: a build error is read as NO VERDICT (neither a passing nor a failing test run)"
   else
     bad "E7: a build error was misread (rc=$b_rc): $b_out"

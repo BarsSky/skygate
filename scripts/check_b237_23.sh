@@ -144,7 +144,7 @@ fi
 # E.1 Live index is 6-col (B232 / V068)
 if [ -d /home/skyadmin/skygate ] && [ -f /home/skyadmin/skygate/scripts/verify_pre_deploy.sh ]; then
   E1=$(PGPASSWORD=${SKYGATE_DB_PASSWORD} psql -h 172.17.0.1 -p 5433 -U admin -d skygate_staging -A -t -F'|' -c "SELECT indexdef FROM pg_indexes WHERE indexname='device_rules_natural_key_uniq'" 2>/dev/null)
-  if echo "$E1" | grep -qE '\(user_id, device_id, exit_node_id, target_type, target_value, parent_domain\)'; then
+  if grep -qE '\(user_id, device_id, exit_node_id, target_type, target_value, parent_domain\)' <<< "$E1"; then
     ok "E.1 live index is 6-col (matches sync_domain.go's 6-col ON CONFLICT)"
   else
     bad "E.1 live index is NOT 6-col: $E1"
@@ -202,14 +202,14 @@ else
 
   # F.4 Unit tests for cdn_group + acl + b188.3 integration
   F4=$(go test -short -count=1 -run 'TestGroupRulesByCDN|TestGroupAdminRulesByCDN|TestIsCDNGroupMarker|TestParseCDNGroupMarker' ./internal/feature/exit_rules/... 2>&1)
-  if echo "$F4" | grep -qE 'FAIL|--- FAIL'; then
+  if grep -qE 'FAIL|--- FAIL' <<< "$F4"; then
     bad "F.4 cdn_group unit tests failed: $F4"
   else
     ok "F.4 cdn_group unit tests pass"
   fi
 
   F5=$(go test -short -count=1 ./internal/acl/... 2>&1)
-  if echo "$F5" | grep -qE 'FAIL|--- FAIL'; then
+  if grep -qE 'FAIL|--- FAIL' <<< "$F5"; then
     bad "F.5 acl unit tests failed"
   else
     ok "F.5 acl unit tests pass (including b188_3 test with 6-col ON CONFLICT)"

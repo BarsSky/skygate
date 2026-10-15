@@ -41,11 +41,11 @@ if [ -z "$REGION" ]; then
   echo "B108 FAIL: could not extract </footer>...</body> region"
   exit 1
 fi
-if ! echo "$REGION" | grep -q '<script>'; then
+if ! [[ $REGION == *'<script>'* ]]; then
   echo "B108 FAIL: no <script> tag between </footer> and </body>"
   exit 1
 fi
-if ! echo "$REGION" | grep -q '</script>'; then
+if ! [[ $REGION == *'</script>'* ]]; then
   echo "B108 FAIL: no </script> closing tag between </footer> and </body>"
   exit 1
 fi
@@ -74,7 +74,7 @@ fi
 #    that lives between </footer> and </body>) to avoid false positives
 #    from Go template comments that mention the word.
 SCRIPT_BLOCK=$(echo "$REGION" | awk '/<script>/{p=1;next} /<\/script>/{p=0} p')
-if echo "$SCRIPT_BLOCK" | grep -q 'preventDefault'; then
+if [[ $SCRIPT_BLOCK == *'preventDefault'* ]]; then
   echo "B108 FAIL: script calls preventDefault() — would block native <details> toggle"
   exit 1
 fi

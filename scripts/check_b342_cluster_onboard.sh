@@ -149,7 +149,7 @@ fi
 hdr "D. the credentials never reach a URL or the audit log"
 
 REDIRECT="$(grep -n 'admin/cluster?boot=' "$GO" || true)"
-if [ -n "$REDIRECT" ] && ! printf '%s' "$REDIRECT" | grep -q 'inviteToken\|tsKey'; then
+if [ -n "$REDIRECT" ] && ! { [[ $REDIRECT == *'inviteToken'* ]] || [[ $REDIRECT == *'tsKey'* ]]; }; then
   ok "D1: the redirect carries only the opaque token (never the invite or the preauth key)"
 else
   bad "D1: the redirect URL carries a credential: $REDIRECT"

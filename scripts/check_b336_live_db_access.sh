@@ -121,7 +121,7 @@ fi
 # The query helper must REFUSE to run without a successful probe. This is the
 # contract that makes "zero rows" impossible to confuse with "no connection".
 NORUN="$(bash -c '. ./'"$LIB"' 2>/dev/null; skygate_live_db_query "SELECT 1"; printf "rc=%s" "$?"' 2>/dev/null)"
-if printf '%s' "$NORUN" | grep -q 'rc=[1-9]' && ! printf '%s' "$NORUN" | grep -qE '^[0-9]+rc='; then
+if grep -q 'rc=[1-9]' <<< "$NORUN" && ! grep -qE '^[0-9]+rc=' <<< "$NORUN"; then
   ok "A3: the query helper refuses to run before a successful probe (no mode set)"
 else
   bad "A3: the query helper ran without a probe: '$NORUN' — that is how an unreachable database becomes a zero row count"
@@ -136,7 +136,7 @@ fi
 QFN="$(awk '/^skygate_live_db_query\(\)/{f=1} f{print} f&&/^}/{exit}' "$LIB" 2>/dev/null)"
 if [ -z "$QFN" ]; then
   bad "A4: could not extract skygate_live_db_query from $LIB"
-elif printf '%s' "$QFN" | grep -qE 'psql[^|]*2>/dev/null'; then
+elif grep -qE 'psql[^|]*2>/dev/null' <<< "$QFN"; then
   bad "A4: skygate_live_db_query still sends psql's stderr to /dev/null — a SQL error would read as an empty result"
 else
   ok "A4: skygate_live_db_query keeps psql's stderr, so a failed statement is not an empty one"
@@ -147,7 +147,7 @@ else
   bad "A4b: the query helper has no error channel, so a failed statement is indistinguishable from zero rows"
 fi
 A4C="$(bash -c '. ./'"$LIB"' 2>/dev/null; skygate_live_db_query "SELECT 1" >/dev/null 2>&1; printf "rc=%s err=%s" "$?" "${SKYGATE_LIVE_DB_QUERY_ERR:-EMPTY}"' 2>/dev/null)"
-if printf '%s' "$A4C" | grep -q 'rc=[1-9]' && ! printf '%s' "$A4C" | grep -q 'err=EMPTY$'; then
+if grep -q 'rc=[1-9]' <<< "$A4C" && ! ( set +o pipefail; printf '%s' "$A4C" | grep -q 'err=EMPTY$' ); then
   ok "A4c: a failed statement returns non-zero AND names the reason"
 else
   bad "A4c: a failed statement did not report both a non-zero status and a reason: $A4C"
@@ -162,17 +162,17 @@ PROBE_OUT="$(SKYGATE_DB_DSN='postgres://nobody:nothing@skygate-pg-no-such-host.i
   bash -c '. ./'"$LIB"' 2>/dev/null
     if skygate_live_db_probe; then echo "PROBE-OK"; else echo "PROBE-FAIL"; skygate_live_db_reason; fi
     echo "query=[$(skygate_live_db_query "SELECT 1")]"' 2>&1)"
-if printf '%s' "$PROBE_OUT" | grep -q 'PROBE-FAIL'; then
+if [[ $PROBE_OUT == *'PROBE-FAIL'* ]]; then
   ok "B1: an unreachable live database makes the probe fail"
 else
   bad "B1: the probe reported success for a host that cannot resolve: $PROBE_OUT"
 fi
-if printf '%s' "$PROBE_OUT" | grep -qivE '^(PROBE-FAIL|query=\[\])$' && printf '%s' "$PROBE_OUT" | grep -qiE 'not installed|no such host|not resolve|not known|name or service|failed|could not|unreachable|no SKYGATE_DB_DSN'; then
+if ( set +o pipefail; printf '%s' "$PROBE_OUT" | grep -qivE '^(PROBE-FAIL|query=\[\])$' ) && grep -qiE 'not installed|no such host|not resolve|not known|name or service|failed|could not|unreachable|no SKYGATE_DB_DSN' <<< "$PROBE_OUT"; then
   ok "B2: the failure NAMES the real error instead of inventing a fact"
 else
   bad "B2: the probe failed without naming a reason: $PROBE_OUT"
 fi
-if printf '%s' "$PROBE_OUT" | grep -q 'query=\[\]'; then
+if grep -q 'query=\[\]' <<< "$PROBE_OUT"; then
   ok "B3: with the probe failed, the query helper returned NOTHING (not a zero)"
 else
   bad "B3: the query helper returned data for an unreachable database: $PROBE_OUT"

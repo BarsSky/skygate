@@ -91,7 +91,7 @@ FAIL_LOC=$(curl -s -X POST -b "skygate_session=${TOK}" \
   -d "reason=B225 live-verify test" \
   -o /dev/null -w '%{http_code} %{redirect_url}\n' --max-time 30 http://127.0.0.1:8080/admin/database/failover)
 echo "  failover: $FAIL_LOC"
-if echo "$FAIL_LOC" | grep -q "^303"; then
+if grep -q "^303" <<< "$FAIL_LOC"; then
   echo "  [ok]   failover returned 303 (handler ran, error redirect as expected — no Patroni)"
   FAIL_HANDLER_OK=1
 else
@@ -121,7 +121,7 @@ echo "  rollback: $ROLL_LOC"
 # write (it only writes an audit row when GetLastFailover
 # succeeds AND the candidate is non-empty). So we expect
 # delta=0 for the error audit row.
-if echo "$ROLL_LOC" | grep -qE "(no\+last\+failover|no\+candidate)"; then
+if grep -qE "(no\+last\+failover|no\+candidate)" <<< "$ROLL_LOC"; then
   echo "  [ok]   rollback short-circuited with 'no last failover' / 'no candidate' (expected without B219 success)"
   ROLL_OK=1
 else

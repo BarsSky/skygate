@@ -92,10 +92,10 @@ fi
 
 # --- 3. unit tests pass ---
 TEST_OUT="$("$GO_BIN" test -count=1 -timeout=60s -run 'TestAdmin|TestActionsFor|TestInstallModeDisplay|TestUrlEscape' ./internal/feature/admin/... 2>&1)"
-if printf '%s' "${TEST_OUT}" | grep -q '^FAIL'; then
+if grep -q '^FAIL' <<< "$TEST_OUT"; then
     fail "modules tests pass" "see output"
     printf '%s\n' "${TEST_OUT}" | sed 's/^/           /' | head -20
-elif printf '%s' "${TEST_OUT}" | grep -q '^ok'; then
+elif grep -q '^ok' <<< "$TEST_OUT"; then
     pass "modules tests pass"
 else
     fail "modules tests pass" "no PASS/FAIL line"

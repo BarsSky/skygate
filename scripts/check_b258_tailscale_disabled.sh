@@ -129,7 +129,7 @@ fi
 if [ -z "$GO" ]; then
   echo "  (skipping G — go binary not found)"
 else
-  if echo "$GO" | grep -qE '^[A-Z]:'; then
+  if grep -qE '^[A-Z]:' <<< "$GO"; then
     GO_RUN() { cmd.exe //c "\"$GO\" $*" >/dev/null 2>&1; }
   else
     GO_RUN() { "$GO" "$@" >/dev/null 2>&1; }

@@ -86,7 +86,7 @@ fi
 # Defensive: must NOT use EXTRACT in any non-comment line within the
 # R9 query block (between the R9 comment and the if statement).
 r9_block=$(sed -n '/Read both: last attempt/,/fi$/p' "${VERIFY_POST}" | grep -vE '^\s*#')
-if echo "${r9_block}" | grep -qE 'EXTRACT'; then
+if grep -qE 'EXTRACT' <<< "$r9_block"; then
     bad "R9 query block still contains EXTRACT in non-comment lines — bug regressed"
 else
     ok "R9 query block has no EXTRACT in non-comment lines"
@@ -113,7 +113,7 @@ echo "=== D. Script comment correctly states created_at is INTEGER ==="
 # that the column type is NOT TIMESTAMPTZ. The comment lives in the R9
 # block (between the SNAPSHOT_INFO comment and the SNAPSHOT_INFO query).
 r9_comment_block=$(sed -n '/Read both: last attempt/,/SNAPSHOT_INFO=/p' "${VERIFY_POST}")
-if echo "${r9_comment_block}" | grep -qE 'INTEGER'; then
+if grep -qE 'INTEGER' <<< "$r9_comment_block"; then
     ok "R9 comment block mentions INTEGER (correct column type)"
 else
     bad "R9 comment block does NOT mention INTEGER — refactor risk"
@@ -162,9 +162,9 @@ if command -v ssh >/dev/null 2>&1; then
               docker run --rm -i --network host -e PGPASSWORD=\"\$PP\" postgres:18-alpine psql -h \"\$PH\" -p \"\$PPORT\" -U \"\$PU\" -d \"\$PDB\" -tA -c 'SELECT created_at || '\'' '\'' || COALESCE(applied_success::text, '\''0'\'') FROM acl_snapshots ORDER BY id DESC LIMIT 1' 2>&1
             fi" 2>/dev/null | head -1)
         # Raw output should be "<epoch> <applied_success>" e.g. "1786994716 1"
-        if echo "${SNAPSHOT_INFO}" | grep -qE '^[0-9]+ [01]$'; then
+        if ( set +o pipefail; echo "${SNAPSHOT_INFO}" | grep -qE '^[0-9]+ [01]$' ); then
             ok "Live query returned '${SNAPSHOT_INFO}' (parseable: epoch + applied_success)"
-        elif echo "${SNAPSHOT_INFO}" | grep -qE '^ERROR'; then
+        elif grep -qE '^ERROR' <<< "$SNAPSHOT_INFO"; then
             bad "Live query returned an ERROR: ${SNAPSHOT_INFO:0:100}"
         else
             bad "Live query returned unexpected: ${SNAPSHOT_INFO:0:100}"
@@ -184,7 +184,7 @@ echo "=== F. R9 awk parse produces a numeric LAST_ATTEMPT_EPOCH ==="
 SNAPSHOT_INFO_SIM="1786994716 1"
 LAST_ATTEMPT_EPOCH=$(echo "${SNAPSHOT_INFO_SIM}" | awk '{print $1}')
 LAST_ATTEMPT_SUCCESS=$(echo "${SNAPSHOT_INFO_SIM}" | awk '{print $2}')
-if [ -n "${LAST_ATTEMPT_EPOCH}" ] && echo "${LAST_ATTEMPT_EPOCH}" | grep -qE '^[0-9]+$'; then
+if [ -n "${LAST_ATTEMPT_EPOCH}" ] && ( set +o pipefail; echo "${LAST_ATTEMPT_EPOCH}" | grep -qE '^[0-9]+$' ); then
     ok "R9 awk parse produces numeric epoch: '${LAST_ATTEMPT_EPOCH}'"
 else
     bad "R9 awk parse produced non-numeric: '${LAST_ATTEMPT_EPOCH}'"

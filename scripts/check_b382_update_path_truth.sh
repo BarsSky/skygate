@@ -251,8 +251,8 @@ fi
 } > "$SKY_TMP/hang.txt"
 d5_out="$(bash "$GTV" < "$SKY_TMP/hang.txt" 2>&1)"; d5_rc=$?
 if [ "$d5_rc" -eq 2 ] \
-   && printf '%s' "$d5_out" | grep -q 'caller-supplied -timeout' \
-   && printf '%s' "$d5_out" | grep -q 'TestB2761_MarkGroupKeepsTheIntent'; then
+   && [[ $d5_out == *'caller-supplied -timeout'* ]] \
+   && [[ $d5_out == *'TestB2761_MarkGroupKeepsTheIntent'* ]]; then
   ok "D5: the hang dump is still read as HUNG (rc=2), still names the test, and now names the budget's origin"
 else
   bad "D5: the reader regressed on the hang shape (rc=$d5_rc): $(printf '%s' "$d5_out" | tr '\n' ' ')"

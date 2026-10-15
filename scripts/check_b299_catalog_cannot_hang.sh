@@ -158,8 +158,8 @@ NOTE
 echo "hint: sudo docker exec headscale headscale users list"
 PLANT
 SELF_OUT="$(find_executed_bare_sudo "$TMPD/planted.sh" || true)"
-if printf '%s' "$SELF_OUT" | grep -q 'if ! sudo docker info' \
-   && ! printf '%s' "$SELF_OUT" | grep -q 'Rollback'; then
+if [[ $SELF_OUT == *'if ! sudo docker info'* ]] \
+   && ! [[ $SELF_OUT == *'Rollback'* ]]; then
   ok "B2: the detector finds a planted bare sudo and ignores heredoc/echo mentions"
 else
   bad "B2: the detector is unreliable (found: $(printf '%s' "$SELF_OUT" | tr '\n' ' '))"

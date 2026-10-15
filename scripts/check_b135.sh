@@ -120,7 +120,7 @@ echo "=== A. --font declares Manrope (was 'Inter' pre-B135) ==="
 FONT_DECL=$(search_one '--font:[^;]+' "$THEMES_CSS" 2>/dev/null || true)
 # Extract value (after :)
 FONT_VAL=$(echo "$FONT_DECL" | sed -nE "s/^--font:(.*)$/\1/p")
-if echo "$FONT_VAL" | grep -q "Manrope"; then
+if [[ $FONT_VAL == *'Manrope'* ]]; then
   pass "--font declares Manrope: $FONT_DECL"
 else
   fail "--font does NOT declare Manrope: $FONT_DECL"

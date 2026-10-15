@@ -124,14 +124,14 @@ LOC=$(curl -s -o /dev/null -w '%{redirect_url}' \
   -d "reason=B219 live-verify test (Patroni not configured)" \
   "http://127.0.0.1:8080/admin/database/failover" 2>&1)
 echo "  POST → 303 redirect to: $LOC"
-if echo "$LOC" | grep -q "/admin/database"; then
+if [[ $LOC == *'/admin/database'* ]]; then
   echo "  [ok]   redirect to /admin/database"
   REDIRECT_OK=1
 else
   echo "  [FAIL] unexpected redirect: $LOC"
   REDIRECT_OK=0
 fi
-if echo "$LOC" | grep -q "err="; then
+if [[ $LOC == *'err='* ]]; then
   echo "  [ok]   redirect carries err= flash (Patroni call failed as expected)"
   ERR_OK=1
 else

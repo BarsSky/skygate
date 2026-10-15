@@ -55,14 +55,14 @@ AGENTS="AGENTS.md"
 # The success path's sendFailoverAlert("✅" call should be within
 # that range.
 failover_block=$(sed -n '/^func (s \*Service) PostAdminDatabaseFailover/,/^}$/p' "$HANDLER_GO" 2>/dev/null)
-if echo "$failover_block" | grep -q 'sendFailoverAlert("✅"'; then
+if grep -q 'sendFailoverAlert("✅"' <<< "$failover_block"; then
   ok "A: PostAdminDatabaseFailover success → sendFailoverAlert(\"✅\", ...)"
 else
   fail "A: PostAdminDatabaseFailover success path missing sendFailoverAlert(\"✅\", ...)"
 fi
 
 # --- B: failover error path calls sendFailoverAlert ---
-if echo "$failover_block" | grep -q 'sendFailoverAlert("❌"'; then
+if grep -q 'sendFailoverAlert("❌"' <<< "$failover_block"; then
   ok "B: PostAdminDatabaseFailover error → sendFailoverAlert(\"❌\", ...)"
 else
   fail "B: PostAdminDatabaseFailover error path missing sendFailoverAlert(\"❌\", ...)"
@@ -70,14 +70,14 @@ fi
 
 # --- C: rollback success path calls sendFailoverAlert ---
 rollback_block=$(sed -n '/^func (s \*Service) PostAdminDatabaseFailoverRollback/,/^}$/p' "$HANDLER_GO" 2>/dev/null)
-if echo "$rollback_block" | grep -q 'sendFailoverAlert("✅"'; then
+if grep -q 'sendFailoverAlert("✅"' <<< "$rollback_block"; then
   ok "C: PostAdminDatabaseFailoverRollback success → sendFailoverAlert(\"✅\", ...)"
 else
   fail "C: PostAdminDatabaseFailoverRollback success path missing sendFailoverAlert(\"✅\", ...)"
 fi
 
 # --- D: rollback error path also calls sendFailoverAlert (❌) ---
-if echo "$rollback_block" | grep -q 'sendFailoverAlert("❌"'; then
+if grep -q 'sendFailoverAlert("❌"' <<< "$rollback_block"; then
   ok "D: PostAdminDatabaseFailoverRollback error → sendFailoverAlert(\"❌\", ...)"
 else
   fail "D: PostAdminDatabaseFailoverRollback error path missing sendFailoverAlert(\"❌\", ...)"
@@ -93,7 +93,7 @@ fi
 
 # --- F: backup.Scheduler has Notifier field ---
 sched_struct=$(sed -n '/^type Scheduler struct/,/^}$/p' "$BACKUP_GO" 2>/dev/null)
-if echo "$sched_struct" | grep -q "Notifier SchedulerAlertSink"; then
+if [[ $sched_struct == *'Notifier SchedulerAlertSink'* ]]; then
   ok "F: backup.Scheduler has Notifier field (SchedulerAlertSink interface)"
 else
   fail "F: backup.Scheduler Notifier field missing"
@@ -111,7 +111,7 @@ tick_block=$(sed -n '/^func (s \*Scheduler) tick/,/^}$/p' "$BACKUP_GO" 2>/dev/nu
 # Look for the RunBackup call + the error branch right after.
 # The error path is `if err != nil { ... sendSchedulerAlert(...) ... }`
 # after `res, err := RunBackup(s.DB.Current(), cfg)`.
-if echo "$tick_block" | grep -A8 "res, err := RunBackup" | grep -q "sendSchedulerAlert"; then
+if ( set +o pipefail; echo "$tick_block" | grep -A8 "res, err := RunBackup" | grep -q "sendSchedulerAlert" ); then
   ok "H: backup.Scheduler.tick RunBackup error → sendSchedulerAlert"
 else
   fail "H: backup.Scheduler.tick RunBackup error missing sendSchedulerAlert"

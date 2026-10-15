@@ -116,12 +116,12 @@ prod_classify() {
 # APPLICATION answer, so an empty body here means a reachable 200 with no payload.
 prod_build_classify() {
     local body="$1" strict="${2:-0}"
-    if printf '%s' "$body" | grep -qiE '"build"[[:space:]]*:[[:space:]]*"v[0-9]+\.[0-9]+\.[0-9]'; then
+    if grep -qiE '"build"[[:space:]]*:[[:space:]]*"v[0-9]+\.[0-9]+\.[0-9]' <<< "$body"; then
         printf 'OK  production build is a release tag (%s)\n' \
             "$(printf '%s' "$body" | grep -oiE '"build"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1)"
         return 0
     fi
-    if printf '%s' "$body" | grep -qiE '"build"[[:space:]]*:[[:space:]]*"dev"'; then
+    if grep -qiE '"build"[[:space:]]*:[[:space:]]*"dev"' <<< "$body"; then
         printf 'FAIL  build=dev detected — accidental dev-binary prod deploy\n'; return 1
     fi
     if [ -z "$(printf '%s' "$body" | tr -d '[:space:]')" ]; then
@@ -256,12 +256,12 @@ if [ -n "$PROD_HOST" ] && [ "$PROD_HOST" != "<polygon-vm-host>" ] && [ -n "$SSH_
         'docker ps --format "{{.Names}} {{.Status}}" | grep -E "^skygate-skygate-1 " || echo NOT_PRESENT;
          curl -s -m 3 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/healthz' 2>&1) || ssh_out="SSH_FAIL"
 
-    if echo "$ssh_out" | grep -q "NOT_PRESENT\|SSH_FAIL"; then
+    if { [[ $ssh_out == *'NOT_PRESENT'* ]] || [[ $ssh_out == *'SSH_FAIL'* ]]; }; then
         skip "SSH probe failed (host unreachable or skygate container absent)"
     else
         docker_line=$(echo "$ssh_out" | head -1)
         loop_status=$(echo "$ssh_out" | tail -1)
-        if echo "$docker_line" | grep -qE "Up.*\(healthy\)|^skygate-skygate-1 Up"; then
+        if grep -qE "Up.*\(healthy\)|^skygate-skygate-1 Up" <<< "$docker_line"; then
             ok "docker: skygate-skygate-1 status=$(echo "$docker_line" | awk '{print $2}')"
         else
             bad "docker: skygate-skygate-1 not 'Up (healthy)' (got: $docker_line)"

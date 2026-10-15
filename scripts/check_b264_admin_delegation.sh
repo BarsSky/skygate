@@ -233,9 +233,9 @@ grep -qE 'users\.primary_help' "$USERS_HTML" \
 # `{{if .IsPrimary}}` opener and the demote form action.
 DEMOTE_SEG=$(awk '/\{\{if \.IsPrimary\}\}/{f=1} f{print} /\/admin\/users\/\{\{\.ID\}\}\/demote/{if(f) exit}' "$USERS_HTML")
 HAS_ELSE=0
-printf '%s' "$DEMOTE_SEG" | grep -q '{{else}}' && HAS_ELSE=1
+grep -q '{{else}}' <<< "$DEMOTE_SEG" && HAS_ELSE=1
 HAS_DEMOTE=0
-printf '%s' "$DEMOTE_SEG" | grep -qF '/admin/users/{{.ID}}/demote' && HAS_DEMOTE=1
+grep -qF '/admin/users/{{.ID}}/demote' <<< "$DEMOTE_SEG" && HAS_DEMOTE=1
 if [ "$HAS_ELSE" -eq 1 ] && [ "$HAS_DEMOTE" -eq 1 ]; then
   pass "  └ per-row role forms live in the non-primary branch (hidden for primary)"
 else

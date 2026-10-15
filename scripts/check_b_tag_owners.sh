@@ -94,7 +94,7 @@ for tag in $TAGOWNERS; do
     case " $STANDARD_TAGS " in
         *" $tag "*) continue ;;
     esac
-    if ! echo "$USED_TAGS" | grep -qxF "$tag"; then
+    if ! ( set +o pipefail; echo "$USED_TAGS" | grep -qxF "$tag" ); then
         bad "tagOwners entry $tag has no matching node_owner_map or device_rules row (orphan)"
         orphans=$((orphans+1))
     fi
@@ -152,7 +152,7 @@ else
         # FAIL line in an otherwise green check). Accept either quoting style and
         # take the usernames from portal_users, with the historical five as a
         # fallback when the DB is not reachable.
-        if echo "$owner_json" | grep -qE "[\"']?($PSQL_USERS)@"; then
+        if ( set +o pipefail; echo "$owner_json" | grep -qE "[\"']?($PSQL_USERS)@" ); then
             : # ok; user-owned
         else
             bad "$tag owner $owner_json is not a known portal user (potential ACL injection)"

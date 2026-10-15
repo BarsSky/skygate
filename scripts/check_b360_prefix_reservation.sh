@@ -102,9 +102,9 @@ else
   LITE_LABEL="$(printf '%s' "$LITE_LINE" | sed -E 's/^[[:space:]]*\{78, "([^"]*)".*/\1/')"
   [ "$PG_LABEL" = "$LITE_LABEL" ] \
     || A_MISS="${A_MISS}the V078 registry label drifted between the chains"$'\n'
-  printf '%s' "$PG_LINE" | grep -q 'migrations_v0_78_prefix_reservation.go' \
+  grep -q 'migrations_v0_78_prefix_reservation.go' <<< "$PG_LINE" \
     || A_MISS="${A_MISS}the PG entry does not name the migration file"$'\n'
-  printf '%s' "$LITE_LINE" | grep -q 'migrations_v0_78_prefix_reservation.go' \
+  grep -q 'migrations_v0_78_prefix_reservation.go' <<< "$LITE_LINE" \
     || A_MISS="${A_MISS}the SQLite entry does not name the migration file"$'\n'
 fi
 if [ -z "$A_MISS" ]; then
@@ -126,7 +126,7 @@ grep -q 'failover_from' "$PKG" || B_MISS="${B_MISS}LoadExisting/Save do not carr
 grep -q 'failover_flaps' "$PKG" || B_MISS="${B_MISS}LoadExisting/Save do not carry failover_flaps"$'\n'
 # A manual pin is NEVER reserved: the guard must live inside reserveOnMove itself.
 RESERVE_BODY="$(body_of "$PLANNER" '^func reserveOnMove')"
-if printf '%s' "$RESERVE_BODY" | grep -q 'prev.Source == "manual"'; then
+if grep -q 'prev.Source == "manual"' <<< "$RESERVE_BODY"; then
   ok "B1: reserveOnMove refuses to reserve a source='manual' row"
 else
   bad "B1: reserveOnMove does not check for a manual pin — an operator's pin could be recorded as a failover and later RETURNED"
@@ -196,7 +196,7 @@ fi
 if grep -rn 'DeleteGlobalSetting(d, forceRelaySettingKey)' --include='*.go' internal/ | grep -q .; then
   E_MISS="${E_MISS}something deletes the override's setting key"$'\n'
 fi
-if printf '%s' "$(body_of "$PLANNER" '^func warnWhileOverrideSuperseded')" | grep -q 'SetForceRelay'; then
+if ( set +o pipefail; printf '%s' "$(body_of "$PLANNER" '^func warnWhileOverrideSuperseded')" | grep -q 'SetForceRelay' ); then
   E_MISS="${E_MISS}the warning path writes the override instead of only reporting it"$'\n'
 fi
 if [ -z "$E_MISS" ]; then

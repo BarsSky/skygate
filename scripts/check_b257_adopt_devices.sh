@@ -133,7 +133,7 @@ if [ -z "$GO" ]; then
 else
   # If GO is a Windows-style path (C:\...), invoke through cmd.exe
   # because bash can't exec it directly under mixed-mode cygwin/MSYS.
-  if echo "$GO" | grep -qE '^[A-Z]:'; then
+  if grep -qE '^[A-Z]:' <<< "$GO"; then
     GO_RUN() { cmd.exe //c "\"$GO\" $*" >/dev/null 2>&1; }
   else
     GO_RUN() { "$GO" "$@" >/dev/null 2>&1; }

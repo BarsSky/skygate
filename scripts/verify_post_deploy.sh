@@ -209,12 +209,12 @@ unset _pydir
 python3() {
   local cand
   cand="$(type -p python3 2>/dev/null || true)"
-  if [ -n "$cand" ] && ! echo "$cand" | grep -q "WindowsApps"; then
+  if [ -n "$cand" ] && ! [[ $cand == *'WindowsApps'* ]]; then
     "$cand" "$@"
     return
   fi
   cand="$(type -p python 2>/dev/null || true)"
-  if [ -n "$cand" ] && ! echo "$cand" | grep -q "WindowsApps"; then
+  if [ -n "$cand" ] && ! [[ $cand == *'WindowsApps'* ]]; then
     "$cand" "$@"
     return
   fi
@@ -548,10 +548,10 @@ DB_JSON=$(psql_vm "SELECT json_build_object('user_prefs', COALESCE((SELECT json_
 # Phase 2: core (R1-R9) — always run
 # ---------------------------------------------------------------------------
 echo "[R1-R9] core liveness + headscale sync"
-[ -n "$HEALTHZ" ] && echo "$HEALTHZ" | grep -q '"status":"ok"' && \
+[ -n "$HEALTHZ" ] && [[ $HEALTHZ == *'"status":"ok"'* ]] && \
   { echo "  ${GRN}PASS${NC}  R1  /healthz status:ok"; RESULTS_PASS=$((RESULTS_PASS+1)); } || \
   { echo "  ${RED}FAIL${NC}  R1  /healthz: $HEALTHZ"; RESULTS_FAIL=$((RESULTS_FAIL+1)); }
-[ -n "$READYZ" ] && echo "$READYZ" | grep -qE '"healthy":true|"status":"ok"' && \
+[ -n "$READYZ" ] && grep -qE '"healthy":true|"status":"ok"' <<< "$READYZ" && \
   { echo "  ${GRN}PASS${NC}  R2  /readyz healthy:true (db+headscale ok)"; RESULTS_PASS=$((RESULTS_PASS+1)); } || \
   { echo "  ${RED}FAIL${NC}  R2  /readyz: $READYZ"; RESULTS_FAIL=$((RESULTS_FAIL+1)); }
 HEAD_SHA=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --short HEAD 2>/dev/null)
@@ -1312,7 +1312,7 @@ if [ "$SKIP_NETWORK" = 0 ]; then
   # exit-node misuse; R25 catches the actual connectivity.
   PING_LOSS=$(ssh_vm \
     "docker exec $SKYGATE_CONTAINER ping -c 2 -W 2 8.8.8.8 2>&1 | grep -oE '[0-9]+% packet loss'" | head -1)
-  if echo "$PING_LOSS" | grep -q '0%'; then
+  if [[ $PING_LOSS == *'0%'* ]]; then
     echo "  ${GRN}PASS${NC}  R25 skygate-host-1 pings 8.8.8.8 (loss=$PING_LOSS)"
     RESULTS_PASS=$((RESULTS_PASS+1))
   else
@@ -1480,17 +1480,17 @@ if [ "$QUICK" = 0 ]; then
     fi
     sudo -u postgres bash -c '. /etc/wal-g/env && wal-g backup-list' 2>&1 | tail -5
   " 2>&1)
-  if echo "$WALG_OUT" | grep -q '^NO_BINARY'; then
+  if grep -q '^NO_BINARY' <<< "$WALG_OUT"; then
     echo "  ${RED}FAIL${NC}  R28 wal-g binary not installed at /usr/local/bin/wal-g (run deploy/pg-ha/wal-g/install_wal_g.sh)"
     RESULTS_FAIL=$((RESULTS_FAIL+1))
-  elif echo "$WALG_OUT" | grep -q '^NO_ENV'; then
+  elif grep -q '^NO_ENV' <<< "$WALG_OUT"; then
     echo "  ${RED}FAIL${NC}  R28 /etc/wal-g/env missing or unreadable (run deploy/pg-ha/wal-g/install_wal_g.sh)"
     RESULTS_FAIL=$((RESULTS_FAIL+1))
-  elif echo "$WALG_OUT" | grep -qE 'InvalidAccessKeyId|SignatureDoesNotMatch|NoSuchBucket|Failed to find any configured storage'; then
+  elif grep -qE 'InvalidAccessKeyId|SignatureDoesNotMatch|NoSuchBucket|Failed to find any configured storage' <<< "$WALG_OUT"; then
     echo "  ${RED}FAIL${NC}  R28 wal-g auth/config error:"
     echo "$WALG_OUT" | sed 's/^/        /'
     RESULTS_FAIL=$((RESULTS_FAIL+1))
-  elif echo "$WALG_OUT" | grep -qE 'No backups found|backup_list|base_'; then
+  elif grep -qE 'No backups found|backup_list|base_' <<< "$WALG_OUT"; then
     # SEGMENTS COUNT is column 7 in the wal-show table; awk's split counts
     # delimiters and gives us the 7th cell of the data row. Use the
     # data row (the one starting with "| 1 |" since TLI=1).
@@ -1548,7 +1548,7 @@ if [ "$QUICK" = 0 ]; then
   ARCHIVE_MODE=$(echo "$R30_OUT" | grep -oE '^[a-z]+' | head -1)
   ARCHIVE_CMD=$(echo "$R30_OUT" | sed -E 's/^[a-z]+\|//' | sed -E 's/\|[0-9]+$//')
   ARCHIVED_COUNT=$(echo "$R30_OUT" | grep -oE '[0-9]+$' | head -1)
-  if [ "$ARCHIVE_MODE" = "on" ] && echo "$ARCHIVE_CMD" | grep -q "wal-g" && [ "${ARCHIVED_COUNT:-0}" -gt 0 ]; then
+  if [ "$ARCHIVE_MODE" = "on" ] && [[ $ARCHIVE_CMD == *'wal-g'* ]] && [ "${ARCHIVED_COUNT:-0}" -gt 0 ]; then
     echo "  ${GRN}PASS${NC}  R30 archive_mode=on, archive_command uses wal-g, $ARCHIVED_COUNT WAL segments archived"
     RESULTS_PASS=$((RESULTS_PASS+1))
   else
@@ -1706,7 +1706,7 @@ if [ -n "$REMOTE_CK" ]; then
   # by name in the page body. Pre-D1 we just checked
   # "non-404 status"; post-D1 we count labels.
   for LABEL in headscale headplane tailscale; do
-    if echo "$SERVICES_BODY" | grep -qi "$LABEL"; then
+    if ( set +o pipefail; echo "$SERVICES_BODY" | grep -qi "$LABEL" ); then
       SERVICES_GREP_HITS=$((SERVICES_GREP_HITS + 1))
     fi
   done

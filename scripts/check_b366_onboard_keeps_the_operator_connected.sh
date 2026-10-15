@@ -126,7 +126,7 @@ if [ -z "$STEP1" ]; then
 else
   MISS=""
   for want in 'hostnamectl set-hostname' 'tailscale up' '--login-server=' '--hostname=' '--netfilter-mode=nodivert' '--accept-dns=false' 'command -v tailscale >/dev/null ||'; do
-    printf '%s\n' "$STEP1_CODE" | grep -qF -- "$want" || MISS="${MISS}${want} "
+    ( set +o pipefail; printf '%s\n' "$STEP1_CODE" | grep -qF -- "$want" ) || MISS="${MISS}${want} "
   done
   if [ -z "$MISS" ]; then
     ok "A2: the step keeps the hostname, the login server, the idempotent client install, nodivert and --accept-dns=false"
@@ -151,7 +151,7 @@ fi
 
 # A4 — the reason must be recorded where the next reader looks: at the code that
 # renders the command.
-if printf '%s\n' "$STEP1" | grep -qi 'accept-routes' \
+if [[ ${STEP1,,} == *'accept-routes'* ]] \
    && [ -n "$(printf '%s\n' "$STEP1" | grep -E 'route|table 52|SYN' | head -1)" ]; then
   ok "A4: the source records WHY the flag is gone (the measured routing-table capture), so it cannot be re-added as an 'obvious' improvement"
 else

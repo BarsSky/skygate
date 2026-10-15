@@ -95,7 +95,7 @@ if [ -z "$MEDIA_BLOCK" ]; then
   echo "SKY-FAIL: could not extract @media (max-width:768px) block from themes.css" >&2
   exit 1
 fi
-if ! echo "$MEDIA_BLOCK" | grep -qE '\.title-row[[:space:]]*\{[^}]*padding-left:[[:space:]]*60px'; then
+if ! grep -qE '\.title-row[[:space:]]*\{[^}]*padding-left:[[:space:]]*60px' <<< "$MEDIA_BLOCK"; then
   echo "SKY-FAIL: .title-row padding-left:60px is not inside @media (max-width:768px) (would leave a 60px gap on desktop)" >&2
   exit 1
 fi

@@ -243,9 +243,9 @@ if [ -d /home/skyadmin/skygate ]; then
       -o /dev/null -w '%{http_code}' 2>/dev/null)
     if [ "$PROBE" = "302" ] || [ "$PROBE" = "200" ]; then
       PAGE=$(curl -s -b ${SKY_TMP}/b185_cookies.txt "$B185_URL/admin/telegram" 2>/dev/null)
-      if echo "$PAGE" | grep -q 'probe-ok_relay'; then
+      if [[ $PAGE == *'probe-ok_relay'* ]]; then
         check_eq "O" "ok_relay" "ok_relay"
-      elif echo "$PAGE" | grep -q 'probe-ok_direct'; then
+      elif [[ $PAGE == *'probe-ok_direct'* ]]; then
         check_eq "O" "ok_relay" "ok_direct_probe"
       elif [ "$TAILSCALED_UP" != "1" ]; then
         # 2026-09-19: the in-container Tailscale client is switched off, so the

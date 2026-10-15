@@ -234,7 +234,7 @@ if command -v psql >/dev/null 2>&1; then
     fi
     if INIT_ROW=$(psql -h "$PG_HOST" -U "$PG_USER" -d "$PG_DB" -tA -c "SELECT action, detail FROM audit_log WHERE action = 'module.tailscale.init' ORDER BY created_at DESC LIMIT 1;" 2>/dev/null); then
         if [ -n "$INIT_ROW" ]; then
-            if printf '%s' "$INIT_ROW" | grep -q 'ok'; then
+            if [[ $INIT_ROW == *'ok'* ]]; then
                 pass "audit_log has 'module.tailscale.init | ok' (Manager wired + Init succeeded)"
             else
                 fail "audit_log module.tailscale.init succeeded" "last row: $INIT_ROW"

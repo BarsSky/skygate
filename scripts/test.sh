@@ -121,7 +121,7 @@ if [ -n "${ARCHIVE}" ]; then
 
     CONTENTS=$(tar tzf "${ARCHIVE}")
     for needed in "skygate.env" "inventory.txt"; do
-        if echo "${CONTENTS}" | grep -q "${needed}"; then
+        if ( set +o pipefail; echo "${CONTENTS}" | grep -q "${needed}" ); then
             ok "  Contains: ${needed}"
         else
             fail "  Missing: ${needed}"
@@ -134,7 +134,7 @@ echo ""
 echo "--- 6. Docker Status ---"
 for container in skygate headscale headplane; do
     STATUS=$(docker ps --format "{{.Status}}" --filter "name=${container}" 2>/dev/null || echo "not found")
-    if echo "${STATUS}" | grep -q "Up"; then
+    if [[ $STATUS == *'Up'* ]]; then
         ok "${container}: ${STATUS}"
     else
         fail "${container}: ${STATUS:-not running}"

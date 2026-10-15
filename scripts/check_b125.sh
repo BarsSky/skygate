@@ -108,7 +108,7 @@ echo "=== C. UNIQUE INDEX covers all 6 natural-key columns ==="
 # Extract the CREATE UNIQUE INDEX statement and check the column list
 idx_stmt=$(grep -A 2 'CREATE UNIQUE INDEX IF NOT EXISTS device_rules_natural_key_uniq' "${MIGRATIONS_PG}" | head -3)
 expected_cols="user_id, device_id, exit_node_id, target_type, target_value, parent_domain"
-if echo "${idx_stmt}" | grep -qF "${expected_cols}"; then
+if ( set +o pipefail; echo "${idx_stmt}" | grep -qF "${expected_cols}" ); then
     ok "UNIQUE INDEX covers all 6 natural-key columns (user_id, device_id, exit_node_id, target_type, target_value, parent_domain)"
 else
     bad "UNIQUE INDEX does NOT cover all 6 natural-key columns — got: ${idx_stmt}"
@@ -228,7 +228,7 @@ if command -v go >/dev/null 2>&1; then
     rc=$?
     if [ "${rc}" -eq 0 ]; then
         ok "go test -run TestAppendDeviceRule_B125 passed"
-    elif echo "${out}" | grep -qE 'SKIP|skip'; then
+    elif grep -qE 'SKIP|skip' <<< "$out"; then
         warn "B125 tests SKIPPED (no live PG) — verify on VM with SKYGATE_TEST_PG_DSN set"
     else
         bad "go test -run TestAppendDeviceRule_B125 FAILED (rc=${rc})"

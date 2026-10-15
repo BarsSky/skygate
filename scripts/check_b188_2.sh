@@ -378,7 +378,7 @@ except Exception:
         U_BAD=""
         while IFS='|' read -r owner _n; do
           [ -z "$owner" ] && continue
-          if ! printf '%s\n' "$U_OWNERS" | grep -qx "$owner"; then
+          if ! ( set +o pipefail; printf '%s\n' "$U_OWNERS" | grep -qx "$owner" ); then
             U_BAD="$U_BAD $owner"
           fi
         done <<< "$U_GRANTS"
@@ -525,7 +525,7 @@ except Exception:
         X_BAD=""
         while IFS='|' read -r owner _n; do
           [ -z "$owner" ] && continue
-          if ! printf '%s\n' "$X_OWNERS" | grep -qx "$owner"; then
+          if ! ( set +o pipefail; printf '%s\n' "$X_OWNERS" | grep -qx "$owner" ); then
             X_BAD="$X_BAD $owner"
           fi
         done <<< "$X_GRANTS"

@@ -69,7 +69,7 @@ hdr "B385 — the CI gate must name the reason it cannot verify"
 # A. the cause survives, and the gate's contract is unchanged
 # ---------------------------------------------------------------------------
 api_line="$(grep -n 'gh api --paginate' "$GATE" 2>/dev/null | head -1)"
-if [ -n "$api_line" ] && ! printf '%s' "$api_line" | grep -q '2>/dev/null' \
+if [ -n "$api_line" ] && ! [[ $api_line == *'2>/dev/null'* ]] \
    && grep -q '2>"\$GH_ERR"' "$GATE"; then
   ok "A1: the API call's stderr is CAPTURED (2>\$GH_ERR), not discarded (the 2>/dev/null that hid every cause)"
 else

@@ -107,7 +107,7 @@ check_ge "D-nodes-iter" 1 "$(count "$REPO/internal/feature/exit_rules/form_admin
 ANNO_LINE=$(grep -n 'func annotateRulesWithPrefs' "$REPO/internal/feature/exit_rules/form_admin.go" | head -1 | cut -d: -f1)
 if [ -n "$ANNO_LINE" ]; then
   ANNO_SIG=$(sed -n "${ANNO_LINE}p" "$REPO/internal/feature/exit_rules/form_admin.go")
-  if echo "$ANNO_SIG" | grep -qE 'rr \[\]AdminRule.*prefFn.*approvedByExitNode'; then
+  if grep -qE 'rr \[\]AdminRule.*prefFn.*approvedByExitNode' <<< "$ANNO_SIG"; then
     check_eq "E1" "3-args" "3-args"
   else
     check_eq "E1" "3-args" "wrong-signature"

@@ -74,7 +74,7 @@ grep -q 'applyACLAfterOwnershipChange(ins, chg)' "$SYNC_ACL" \
 # A2: the maintenance tick must run the ownership pass, or a recovered relay waits for
 # a human to press Sync (the live 40-minute gap).
 TICK_BLOCK=$(awk '/^func \(s \*Service\) DomainAutoUpdater/,/^}/' "$SYNC_DOMAIN")
-if printf '%s' "$TICK_BLOCK" | grep -q 's.reconcilePrefixOwnership()'; then
+if grep -q 's.reconcilePrefixOwnership()' <<< "$TICK_BLOCK"; then
   ok "A1: the ownership pass is part of the auto-updater tick, and an INSERT re-applies the ACL"
 else
   bad "A1: the auto-updater tick never reconciles ownership — a relay that recovers after one failed apply keeps none of its prefixes until somebody presses Sync:"

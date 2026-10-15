@@ -127,7 +127,7 @@ if [ -z "$HEADPLANE_EXTERNAL_URL" ]; then
     if [ -z "$HEADPLANE_API_KEY" ]; then
         echo "  empty — needs generation" >&2
         NEEDS_KEY=1
-    elif echo "$HEADPLANE_API_KEY" | grep -qE "$PLACEHOLDER_KEYS"; then
+    elif ( set +o pipefail; echo "$HEADPLANE_API_KEY" | grep -qE "$PLACEHOLDER_KEYS" ); then
         echo "  matches deploy.sh placeholder — needs replacement" >&2
         NEEDS_KEY=1
     else
@@ -213,7 +213,7 @@ else
 
     # Step 2: ensure HEADPLANE_HEADSCALE__API_KEY is set
     echo "[2/4] check HEADPLANE_HEADSCALE__API_KEY" >&2
-    if [ -z "$HEADPLANE_API_KEY" ] || echo "$HEADPLANE_API_KEY" | grep -qE "$PLACEHOLDER_KEYS"; then
+    if [ -z "$HEADPLANE_API_KEY" ] || ( set +o pipefail; echo "$HEADPLANE_API_KEY" | grep -qE "$PLACEHOLDER_KEYS" ); then
         echo "  empty or placeholder — operator must paste the real key" >&2
         if [ -t 0 ]; then
             # Interactive: read from stdin

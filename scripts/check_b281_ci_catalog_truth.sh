@@ -301,7 +301,7 @@ B178="$REPO/scripts/check_b178.sh"
 if [ -f "$B178" ]; then
   N_LINE=$(grep -nE '^[[:space:]]*for[[:space:]].*in[[:space:]]' "$B178" | grep 'go/bin/go' | head -1)
   if [ -n "$N_LINE" ]; then
-    if echo "$N_LINE" | grep -q 'command -v go'; then
+    if [[ $N_LINE == *'command -v go'* ]]; then
       ok "[J1-probe-order] candidate list consults command -v go"
     else
       bad "[J1-probe-order] candidate list does not consult command -v go first"

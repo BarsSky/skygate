@@ -91,7 +91,7 @@ LOC=$(curl -s -o /dev/null -w '%{redirect_url}' \
   -d "reason=B220 live-verify test (no prior state)" \
   "http://127.0.0.1:8080/admin/database/failover/rollback" 2>&1)
 echo "  POST → 303 redirect to: $LOC"
-if echo "$LOC" | grep -q "no+last+failover+recorded"; then
+if grep -q "no+last+failover+recorded" <<< "$LOC"; then
   echo "  [ok]   guard rail fired: 'no last failover recorded' error"
   GUARD_OK=1
 else
@@ -118,14 +118,14 @@ LOC2=$(curl -s -o /dev/null -w '%{redirect_url}' \
   -d "reason=B220 live-verify test (Patroni not configured)" \
   "http://127.0.0.1:8080/admin/database/failover/rollback" 2>&1)
 echo "  POST → 303 redirect to: $LOC2"
-if echo "$LOC2" | grep -q "/admin/database"; then
+if [[ $LOC2 == *'/admin/database'* ]]; then
   echo "  [ok]   redirect to /admin/database"
   REDIRECT_OK=1
 else
   echo "  [FAIL] unexpected redirect: $LOC2"
   REDIRECT_OK=0
 fi
-if echo "$LOC2" | grep -q "err="; then
+if [[ $LOC2 == *'err='* ]]; then
   echo "  [ok]   redirect carries err= flash (Patroni call failed as expected)"
   ERR_OK=1
 else

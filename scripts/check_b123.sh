@@ -97,7 +97,7 @@ missing=0
 # and `parentDomain` are separated by a comma in the source
 # (Go allows `blockingIP, parentDomain string`).
 for p in "target string" "existingID int" "blockingIP" "parentDomain"; do
-    if ! echo "${helper_block}" | tr -d '\n' | grep -q "${p}"; then
+    if ! ( set +o pipefail; echo "${helper_block}" | tr -d '\n' | grep -q "${p}" ); then
         bad "helper signature param missing: ${p}"
         missing=$((missing+1))
     fi
@@ -135,7 +135,7 @@ need=("target=" "existing_id=" "blocking_ip=" "parent_domain=" \
       "form_device_id=" "form_exit_node=" "form_target_type=" "form_target_value=" "form_action=")
 missing=0
 for needle in "${need[@]}"; do
-    if echo "${HELPER_BODY}" | grep -qF "${needle}"; then
+    if ( set +o pipefail; echo "${HELPER_BODY}" | grep -qF "${needle}" ); then
         ok "redirect includes ${needle}"
     else
         bad "redirect missing ${needle}"

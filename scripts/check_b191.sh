@@ -132,7 +132,7 @@ fi
 echo
 echo "=== contract A: headscale CLI reachable ==="
 HS_VERSION_OUT=$(hs version 2>&1)
-if echo "$HS_VERSION_OUT" | head -1 | grep -qE "headscale v"; then
+if ( set +o pipefail; echo "$HS_VERSION_OUT" | head -1 | grep -qE "headscale v" ); then
   ok "headscale CLI: $(echo "$HS_VERSION_OUT" | head -1)"
 else
   # B281 (2026-09-22): an ABSENT live dependency is a SKIP, not a FAIL
@@ -296,12 +296,12 @@ OIDC_LOCAL="http://127.0.0.1:${SKYGATE_PORT:-8080}"
 OIDC_PUBLIC="https://$SKYGATE_HOST"
 OIDC_BASE=""
 LOCAL_DISC="$(curl -s -m 10 "$OIDC_LOCAL/.well-known/openid-configuration" 2>&1)"
-if printf '%s' "$LOCAL_DISC" | grep -q 'issuer'; then
+if [[ $LOCAL_DISC == *'issuer'* ]]; then
   OIDC_BASE="$OIDC_LOCAL"
   ok "OIDC surface answered on the local listener ($OIDC_LOCAL) — no proxy or hairpin NAT in the path"
 else
   PUBLIC_DISC="$(curl -s -m 10 "$OIDC_PUBLIC/.well-known/openid-configuration" 2>&1)"
-  if printf '%s' "$PUBLIC_DISC" | grep -q 'issuer'; then
+  if [[ $PUBLIC_DISC == *'issuer'* ]]; then
     OIDC_BASE="$OIDC_PUBLIC"
     ok "OIDC surface answered on the public URL ($OIDC_PUBLIC) — this host has no local listener"
   else
@@ -310,7 +310,7 @@ else
 fi
 if [ -n "$OIDC_BASE" ]; then
   OIDC_DISC="$(curl -s -m 10 "$OIDC_BASE/.well-known/openid-configuration" 2>&1)"
-  if printf '%s' "$OIDC_DISC" | grep -q "issuer"; then
+  if [[ $OIDC_DISC == *'issuer'* ]]; then
     ok "OIDC discovery endpoint serves metadata ($OIDC_BASE)"
     ISSUER=$(printf '%s' "$OIDC_DISC" | python3 -c "import json,sys; print(json.load(sys.stdin).get('issuer',''))" 2>/dev/null)
     ok "OIDC issuer: $ISSUER"
@@ -320,7 +320,7 @@ if [ -n "$OIDC_BASE" ]; then
 
   # JWKS endpoint
   JWKS="$(curl -s -m 10 "$OIDC_BASE/oidc/jwks.json" 2>&1)"
-  if printf '%s' "$JWKS" | grep -q '"keys"'; then
+  if [[ $JWKS == *'"keys"'* ]]; then
     ok "OIDC JWKS endpoint returns keys"
   else
     bad "OIDC JWKS failed on $OIDC_BASE: $(printf '%s' "$JWKS" | head -3)"

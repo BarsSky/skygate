@@ -50,7 +50,7 @@ verdict_line() {
   printf '%s\n' "$OUT" | grep -aE '^--- FAIL|^[[:space:]]+--- FAIL' | head -n 1 | sed 's/^[[:space:]]*//'
 }
 
-if printf '%s\n' "$OUT" | grep -qaE 'panic: test timed out'; then
+if grep -qaE 'panic: test timed out' <<< "$OUT"; then
   BUDGET="$(printf '%s\n' "$OUT" | grep -aoE 'test timed out after [0-9a-zA-Z.]+' | head -n 1)"
   # Go prints the tests that were running at the alarm — that is the answer to «which
   # test hangs», and it is the one thing the old message never carried.
@@ -70,13 +70,13 @@ if printf '%s\n' "$OUT" | grep -qaE 'panic: test timed out'; then
   exit 2
 fi
 
-if printf '%s\n' "$OUT" | grep -qaE '^ok[[:space:]]|^ok$'; then
+if ( set +o pipefail; printf '%s\n' "$OUT" | grep -qaE '^ok[[:space:]]|^ok$' ); then
   printf 'OK: every package reported ok\n'
   exit 0
 fi
 
 FAILED="$(verdict_line)"
-if printf '%s\n' "$OUT" | grep -qaE '^FAIL|^--- FAIL'; then
+if grep -qaE '^FAIL|^--- FAIL' <<< "$OUT"; then
   printf 'FAILED: %s\n' "${FAILED:-go test reported FAIL (no "--- FAIL" line: read the output above)}"
   exit 1
 fi

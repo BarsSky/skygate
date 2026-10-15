@@ -121,19 +121,19 @@ fi
 if [ -z "$b38_line" ]; then
     echo "SKY-FAIL: run_check \"B38\" not found in scripts/verify_pre_deploy.sh" >&2
     fail=1
-elif printf '%s\n' "$b38_block" | grep -qF 'migrations_v0.50.go'; then
+elif grep -qF 'migrations_v0.50.go' <<< "$b38_block"; then
     echo "SKY-FAIL: B38 run_check still references migrations_v0.50.go" >&2
     fail=1
 else
     echo "  PASS: B38 run_check uses migrations_pg.go"
 fi
-if printf '%s\n' "$b38_block" | grep -qF 'migrations_pg.go'; then
+if grep -qF 'migrations_pg.go' <<< "$b38_block"; then
     echo "  PASS: B38 run_check references migrations_pg.go"
 else
     echo "SKY-FAIL: B38 run_check should reference migrations_pg.go" >&2
     fail=1
 fi
-if printf '%s\n' "$b38_block" | grep -qF 't.Skip'; then
+if grep -qF 't.Skip' <<< "$b38_block"; then
     echo "  PASS: B38 run_check accepts t.Skip stub"
 else
     echo "SKY-FAIL: B38 run_check should accept t.Skip stub" >&2

@@ -65,7 +65,7 @@ if [ -z "$MEDIA_BLOCK" ]; then
   echo "SKY-FAIL: could not extract @media (max-width:768px) block from themes.css" >&2
   exit 1
 fi
-if ! echo "$MEDIA_BLOCK" | grep -qE '\.admin-breadcrumb\{padding-left:60px\}|\.admin-breadcrumb[[:space:]]*\{[[:space:]]*padding-left:[[:space:]]*60px'; then
+if ! grep -qE '\.admin-breadcrumb\{padding-left:60px\}|\.admin-breadcrumb[[:space:]]*\{[[:space:]]*padding-left:[[:space:]]*60px' <<< "$MEDIA_BLOCK"; then
   echo "SKY-FAIL: @media (max-width:768px) block missing .admin-breadcrumb{padding-left:60px} (breadcrumb is hidden behind the hamburger on mobile)" >&2
   exit 1
 fi

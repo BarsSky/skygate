@@ -96,8 +96,8 @@ C_LINE=$(grep -n 'CREATE UNIQUE INDEX IF NOT EXISTS device_rules_natural_key_uni
 if [ -n "$C_LINE" ]; then
   NEXT_LINE=$((C_LINE + 1))
   INDEX_DEF=$(sed -n "${NEXT_LINE}p" "$REPO/internal/db/migrations_pg.go")
-  if echo "$INDEX_DEF" | grep -q 'user_id.*device_id.*exit_node_id.*target_type.*target_value' \
-      && ! echo "$INDEX_DEF" | grep -q 'parent_domain'; then
+  if grep -q 'user_id.*device_id.*exit_node_id.*target_type.*target_value' <<< "$INDEX_DEF" \
+      && ! [[ $INDEX_DEF == *'parent_domain'* ]]; then
     check_eq "C" "5-cols-no-parent_domain" "5-cols-no-parent_domain"
   else
     check_eq "C" "5-cols-no-parent_domain" "wrong-definition: $INDEX_DEF"
@@ -170,7 +170,7 @@ if [ -n "$GO_BIN" ]; then
   # heaviest compile in the catalog, and without the output a failure under gate load
   # is indistinguishable from a real regression.
   b183_i_out=$(cd "$REPO" && "$GO_BIN" test -count=1 -timeout 600s ./internal/db/... 2>&1)
-  if printf '%s' "$b183_i_out" | grep -q '^ok\s'; then
+  if grep -q '^ok\s' <<< "$b183_i_out"; then
     check_eq "I" "ok" "ok"
   else
     echo "  --- internal/db test output (tail) ---"

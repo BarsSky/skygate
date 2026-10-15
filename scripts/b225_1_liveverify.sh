@@ -65,7 +65,7 @@ echo "=== Step 3: confirm B225.1 notifier wiring via /db/health response ==="
 HEALTH=$(curl -s --max-time 5 http://127.0.0.1:8080/db/health)
 HEALTH_HAS_ERROR=$(echo "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("YES" if d.get("sample_error") else "NO")' 2>&1)
 echo "  /db/health sample_error: $HEALTH_HAS_ERROR"
-if echo "$HEALTH" | grep -q "sampled_at"; then
+if [[ $HEALTH == *'sampled_at'* ]]; then
   echo "  [ok]   /db/health returns a valid sample (sampled_at present)"
   HEALTH_OK=1
 else

@@ -171,7 +171,7 @@ grep -q 'a.exitRulesSvc.ConvergeAdvertisedRoutes(' "$HANDLERS" \
 # The function's brace is on its OWN line (the signature spans two lines), so the awk
 # range starts at the name and ends at the first column-0 closing brace.
 TICK_BLOCK="$(awk '/RunPreferredExitReconciler/{f=1} f{print} f&&/^\}/{exit}' "$HANDLERS")"
-if printf '%s' "$TICK_BLOCK" | grep -q 'ConvergeAdvertisedRoutes('; then
+if grep -q 'ConvergeAdvertisedRoutes(' <<< "$TICK_BLOCK"; then
   ok "C1: the route-convergence pass runs on the ~5-minute maintenance tick (RunPreferredExitReconciler), independent of domain churn"
 else
   bad "C1: the pass is not called from the maintenance tick — domain churn would still be the only periodic trigger (the live root cause)"

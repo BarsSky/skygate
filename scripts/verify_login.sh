@@ -128,7 +128,7 @@ fi
 COOKIE_CONTENTS=$(ssh $SSH_KEY_FLAG -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   "$SSH_HOST" "cat /tmp/_skygate_verify_cookie 2>/dev/null" 2>/dev/null || echo "")
 
-if ! echo "$COOKIE_CONTENTS" | grep -q "skygate_session"; then
+if ! [[ $COOKIE_CONTENTS == *'skygate_session'* ]]; then
   echo "verify_login: cookie jar on VM has no skygate_session entry (login appeared to succeed but Set-Cookie missing)" >&2
   exit 1
 fi

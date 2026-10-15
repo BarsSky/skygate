@@ -104,7 +104,7 @@ check_ge "C-format" 1 "$(count "$REPO/internal/feature/exit_rules/resolved_by_do
 # D. annotateRulesWithPrefs takes 4th arg (resolvedByDomain)
 # The pre-B184 signature was 3 args; post-B184 is 4.
 D_SIG=$(grep -E 'func annotateRulesWithPrefs' "$REPO/internal/feature/exit_rules/form_admin.go" | head -1)
-if echo "$D_SIG" | grep -q 'resolvedByDomain'; then
+if [[ $D_SIG == *'resolvedByDomain'* ]]; then
   check_eq "D" "4-args" "4-args"
 else
   check_eq "D" "4-args" "got: $D_SIG"
@@ -112,7 +112,7 @@ fi
 
 # E. ruleApprovedInHeadscale takes 3rd arg (resolvedByDomain)
 E_SIG=$(grep -E 'func ruleApprovedInHeadscale' "$REPO/internal/feature/exit_rules/form_admin.go" | head -1)
-if echo "$E_SIG" | grep -q 'resolvedByDomain'; then
+if [[ $E_SIG == *'resolvedByDomain'* ]]; then
   check_eq "E" "3-args" "3-args"
 else
   check_eq "E" "3-args" "got: $E_SIG"

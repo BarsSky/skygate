@@ -121,7 +121,7 @@ echo "      On a polygon (svi-style) VM, set SKYGATE_PG_ALIVE_MODE=polygon + PGP
 # I. SKYGATE_DB_DSN parseable
 if [ -z "$SKYGATE_DB_DSN" ]; then
     echo "  [SKIP] I: SKYGATE_DB_DSN not set (export SKYGATE_DB_DSN or run on the skygate VM)"
-elif echo "$SKYGATE_DB_DSN" | grep -qE '^postgres://[^:]+:[^@]+@[^:]+:[0-9]+/[^?]+\?sslmode=disable$'; then
+elif ( set +o pipefail; echo "$SKYGATE_DB_DSN" | grep -qE '^postgres://[^:]+:[^@]+@[^:]+:[0-9]+/[^?]+\?sslmode=disable$' ); then
     ok "I: SKYGATE_DB_DSN parseable (postgres://user:pass@host:port/db?sslmode=disable)"
 else
     fail "I" "SKYGATE_DB_DSN does not match expected format"
@@ -219,17 +219,17 @@ if [ "$SKIP_RUNTIME" = "false" ]; then
         # PGPASSWORD + -h/-p/-U automatically.
         if pg_query_psql -c '\dt' >${SKY_TMP}/check_b_pg_alive_tables.log 2>&1; then
             tables=$(grep -E '^ public \|' ${SKY_TMP}/check_b_pg_alive_tables.log | awk '{print $3}' | tr '\n' ',' | sed 's/,$//')
-            if echo "$tables" | grep -q 'portal_users'; then
+            if [[ $tables == *'portal_users'* ]]; then
                 ok "C: portal_users table exists"
             else
                 fail "C" "portal_users table NOT found in $DB_NAME"
             fi
-            if echo "$tables" | grep -q 'audit_log'; then
+            if [[ $tables == *'audit_log'* ]]; then
                 ok "D: audit_log table exists"
             else
                 fail "D" "audit_log table NOT found in $DB_NAME"
             fi
-            if echo "$tables" | grep -q 'applied_migrations'; then
+            if [[ $tables == *'applied_migrations'* ]]; then
                 ok "E: applied_migrations table exists (migration tracking is ON)"
             else
                 fail "E" "applied_migrations table NOT found — migration tracking is OFF"
@@ -276,11 +276,11 @@ if [ "$SKIP_RUNTIME" = "false" ] && command -v systemctl >/dev/null 2>&1; then
             echo "  [SKIP] H: Patroni state check skipped (mode=polygon — this VM is a client, not the PG host)"
         else
             patroni_state=$(sudo -u postgres patronictl -c /etc/patroni.yml list 2>/dev/null | tail -1 || echo "(patronictl not available)")
-            if echo "$patroni_state" | grep -qi 'Leader'; then
+            if [[ ${patroni_state,,} == *'leader'* ]]; then
                 ok "H: Patroni has Leader (HA chain healthy)"
-            elif echo "$patroni_state" | grep -qi 'Replica'; then
+            elif [[ ${patroni_state,,} == *'replica'* ]]; then
                 ok "H: Patroni has Replica (HA chain present, agent is standby)"
-            elif echo "$patroni_state" | grep -qi 'unknown\|stopped'; then
+            elif { [[ ${patroni_state,,} == *'unknown'* ]] || [[ ${patroni_state,,} == *'stopped'* ]]; }; then
                 echo "  [WARN] H: Patroni state is '$patroni_state' — HA chain degraded, PG running standalone"
             else
                 echo "  [INFO] H: Patroni state: $patroni_state (check HA status manually)"

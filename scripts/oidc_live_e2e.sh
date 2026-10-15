@@ -77,16 +77,16 @@ DISC_RAW=$(curl -sS -w '\nHTTP_CODE:%{http_code}' "$ISSUER/.well-known/openid-co
 DISC_CODE=$(echo "$DISC_RAW" | grep -oE 'HTTP_CODE:[0-9]+' | cut -d: -f2)
 DISC_BODY=$(echo "$DISC_RAW" | sed 's/HTTP_CODE:[0-9]*$//')
 [ "$DISC_CODE" = "200" ] || bad "discovery: HTTP $DISC_CODE (want 200). Body: $DISC_BODY"
-echo "$DISC_BODY" | grep -qE '"issuer":' || bad "discovery: missing 'issuer' field. Body: $DISC_BODY"
-echo "$DISC_BODY" | grep -qE '"authorization_endpoint":' || bad "discovery: missing 'authorization_endpoint'"
-echo "$DISC_BODY" | grep -qE '"token_endpoint":' || bad "discovery: missing 'token_endpoint'"
-echo "$DISC_BODY" | grep -qE '"userinfo_endpoint":' || bad "discovery: missing 'userinfo_endpoint'"
-echo "$DISC_BODY" | grep -qE '"jwks_uri":' || bad "discovery: missing 'jwks_uri'"
-echo "$DISC_BODY" | grep -qE '"id_token_signing_alg_values_supported":[^]]*"RS256"' || bad "discovery: must advertise RS256 as supported id_token signing alg"
-echo "$DISC_BODY" | grep -qE '"response_types_supported":[^]]*"code"' || bad "discovery: must advertise 'code' as supported response_type"
-echo "$DISC_BODY" | grep -qE '"subject_types_supported":[^]]*"public"' || bad "discovery: must advertise 'public' as supported subject_type"
-echo "$DISC_BODY" | grep -qE '"scopes_supported":[^]]*"openid"' || bad "discovery: must advertise 'openid' as supported scope"
-echo "$DISC_BODY" | grep -qE '"token_endpoint_auth_methods_supported":[^]]*"client_secret_post"' || bad "discovery: must advertise 'client_secret_post' (headscale uses form-encoded client auth)"
+grep -qE '"issuer":' <<< "$DISC_BODY" || bad "discovery: missing 'issuer' field. Body: $DISC_BODY"
+grep -qE '"authorization_endpoint":' <<< "$DISC_BODY" || bad "discovery: missing 'authorization_endpoint'"
+grep -qE '"token_endpoint":' <<< "$DISC_BODY" || bad "discovery: missing 'token_endpoint'"
+grep -qE '"userinfo_endpoint":' <<< "$DISC_BODY" || bad "discovery: missing 'userinfo_endpoint'"
+grep -qE '"jwks_uri":' <<< "$DISC_BODY" || bad "discovery: missing 'jwks_uri'"
+grep -qE '"id_token_signing_alg_values_supported":[^]]*"RS256"' <<< "$DISC_BODY" || bad "discovery: must advertise RS256 as supported id_token signing alg"
+grep -qE '"response_types_supported":[^]]*"code"' <<< "$DISC_BODY" || bad "discovery: must advertise 'code' as supported response_type"
+grep -qE '"subject_types_supported":[^]]*"public"' <<< "$DISC_BODY" || bad "discovery: must advertise 'public' as supported subject_type"
+grep -qE '"scopes_supported":[^]]*"openid"' <<< "$DISC_BODY" || bad "discovery: must advertise 'openid' as supported scope"
+grep -qE '"token_endpoint_auth_methods_supported":[^]]*"client_secret_post"' <<< "$DISC_BODY" || bad "discovery: must advertise 'client_secret_post' (headscale uses form-encoded client auth)"
 ok "discovery doc: 200, 4 endpoints, RS256, code, public, openid, client_secret_post"
 
 # ─────────────────────────────────────────────
@@ -97,12 +97,12 @@ JWKS_RAW=$(curl -sS -w '\nHTTP_CODE:%{http_code}' "$ISSUER/oidc/jwks.json" 2>&1)
 JWKS_CODE=$(echo "$JWKS_RAW" | grep -oE 'HTTP_CODE:[0-9]+' | cut -d: -f2)
 JWKS_BODY=$(echo "$JWKS_RAW" | sed 's/HTTP_CODE:[0-9]*$//')
 [ "$JWKS_CODE" = "200" ] || bad "JWKS: HTTP $JWKS_CODE (want 200). Body: $JWKS_BODY"
-echo "$JWKS_BODY" | grep -qE '"kty":[[:space:]]*"RSA"' || bad "JWKS: missing or wrong 'kty' (expected RSA)"
-echo "$JWKS_BODY" | grep -qE '"alg":[[:space:]]*"RS256"' || bad "JWKS: missing or wrong 'alg' (expected RS256)"
-echo "$JWKS_BODY" | grep -qE '"use":[[:space:]]*"sig"' || bad "JWKS: missing or wrong 'use' (expected sig)"
-echo "$JWKS_BODY" | grep -qE '"kid":[[:space:]]*"[a-f0-9]+"' || bad "JWKS: missing or wrong 'kid' (expected hex kid)"
-echo "$JWKS_BODY" | grep -qE '"n":[[:space:]]*"[A-Za-z0-9_-]+"' || bad "JWKS: missing or wrong 'n' (modulus)"
-echo "$JWKS_BODY" | grep -qE '"e":[[:space:]]*"[A-Za-z0-9_-]+"' || bad "JWKS: missing or wrong 'e' (exponent)"
+grep -qE '"kty":[[:space:]]*"RSA"' <<< "$JWKS_BODY" || bad "JWKS: missing or wrong 'kty' (expected RSA)"
+grep -qE '"alg":[[:space:]]*"RS256"' <<< "$JWKS_BODY" || bad "JWKS: missing or wrong 'alg' (expected RS256)"
+grep -qE '"use":[[:space:]]*"sig"' <<< "$JWKS_BODY" || bad "JWKS: missing or wrong 'use' (expected sig)"
+grep -qE '"kid":[[:space:]]*"[a-f0-9]+"' <<< "$JWKS_BODY" || bad "JWKS: missing or wrong 'kid' (expected hex kid)"
+grep -qE '"n":[[:space:]]*"[A-Za-z0-9_-]+"' <<< "$JWKS_BODY" || bad "JWKS: missing or wrong 'n' (modulus)"
+grep -qE '"e":[[:space:]]*"[A-Za-z0-9_-]+"' <<< "$JWKS_BODY" || bad "JWKS: missing or wrong 'e' (exponent)"
 KEY_COUNT=$(echo "$JWKS_BODY" | grep -oE '"kty":' | wc -l)
 [ "$KEY_COUNT" -ge 1 ] || bad "JWKS: no keys in the doc"
 ok "JWKS: 200, 1 RSA/RS256 key with kid + n + e"
@@ -129,20 +129,20 @@ AUTH_CODE=$(echo "$AUTH_HEADERS" | head -1 | awk '{print $2}')
 [ "$AUTH_CODE" = "302" ] || bad "authorize: HTTP $AUTH_CODE (want 302). Headers: $AUTH_HEADERS"
 AUTH_LOCATION=$(echo "$AUTH_HEADERS" | grep -i '^location:' | head -1 | awk '{print $2}' | tr -d '\r')
 [ -n "$AUTH_LOCATION" ] || bad "authorize: 302 has no Location header"
-echo "$AUTH_LOCATION" | grep -q '/login' || bad "authorize: Location = $AUTH_LOCATION (expected to contain /login)"
+[[ $AUTH_LOCATION == *'/login'* ]] || bad "authorize: Location = $AUTH_LOCATION (expected to contain /login)"
 # The next= param must contain the full /oidc/authorize URL.
-echo "$AUTH_LOCATION" | grep -qE 'next=[^&]*%2Foidc%2Fauthorize' || bad "authorize: next= param is missing the /oidc/authorize URL"
+grep -qE 'next=[^&]*%2Foidc%2Fauthorize' <<< "$AUTH_LOCATION" || bad "authorize: next= param is missing the /oidc/authorize URL"
 # The next= param must echo back client_id + state +
 # code_challenge + scope.
 # The next= param is a URL-encoded authorize URL,
 # so the inner params are double-encoded (e.g.
 # client_id%3Dheadscale inside next=%2Foidc...).
 # We check for the URL-encoded form.
-echo "$AUTH_LOCATION" | grep -qE 'client_id%3Dheadscale' || bad "authorize: next= param missing client_id=headscale (URL-encoded)"
-echo "$AUTH_LOCATION" | grep -qE 'head\.skynas\.ru' || bad "authorize: next= param redirect_uri host mismatch"
-echo "$AUTH_LOCATION" | grep -qE 'state%3Dtest-state' || bad "authorize: next= param missing state=test-state (URL-encoded)"
-echo "$AUTH_LOCATION" | grep -qE 'code_challenge%3D' || bad "authorize: next= param missing code_challenge (URL-encoded)"
-echo "$AUTH_LOCATION" | grep -qE 'scope%3Dopenid' || bad "authorize: next= param missing scope=openid (URL-encoded)"
+grep -qE 'client_id%3Dheadscale' <<< "$AUTH_LOCATION" || bad "authorize: next= param missing client_id=headscale (URL-encoded)"
+grep -qE 'head\.skynas\.ru' <<< "$AUTH_LOCATION" || bad "authorize: next= param redirect_uri host mismatch"
+grep -qE 'state%3Dtest-state' <<< "$AUTH_LOCATION" || bad "authorize: next= param missing state=test-state (URL-encoded)"
+grep -qE 'code_challenge%3D' <<< "$AUTH_LOCATION" || bad "authorize: next= param missing code_challenge (URL-encoded)"
+grep -qE 'scope%3Dopenid' <<< "$AUTH_LOCATION" || bad "authorize: next= param missing scope=openid (URL-encoded)"
 ok "authorize: 302 → /login?next=... with full OIDC params echoed back (URL-encoded)"
 
 # ─────────────────────────────────────────────
@@ -155,7 +155,7 @@ TOKEN_RAW=$(curl -sS -w '\nHTTP_CODE:%{http_code}' -X POST "$ISSUER/oidc/token" 
 TOKEN_CODE=$(echo "$TOKEN_RAW" | grep -oE 'HTTP_CODE:[0-9]+' | cut -d: -f2)
 TOKEN_BODY=$(echo "$TOKEN_RAW" | sed 's/HTTP_CODE:[0-9]*$//')
 [ "$TOKEN_CODE" = "400" ] || bad "token (bad code): HTTP $TOKEN_CODE (want 400). Body: $TOKEN_BODY"
-echo "$TOKEN_BODY" | grep -q '"error":"invalid_grant"' || bad "token (bad code): body should contain invalid_grant. Body: $TOKEN_BODY"
+[[ $TOKEN_BODY == *'"error":"invalid_grant"'* ]] || bad "token (bad code): body should contain invalid_grant. Body: $TOKEN_BODY"
 ok "token (bad code): 400 + invalid_grant (auth-code-orphan case)"
 
 # ─────────────────────────────────────────────
@@ -166,7 +166,7 @@ UI_RAW=$(curl -sS -w '\nHTTP_CODE:%{http_code}\nWA:' -D - -o /dev/null \
     -X GET "$ISSUER/oidc/userinfo" 2>&1) || bad "curl failed for /userinfo (no auth)"
 UI_CODE=$(echo "$UI_RAW" | grep -oE 'HTTP_CODE:[0-9]+' | cut -d: -f2)
 [ "$UI_CODE" = "401" ] || bad "userinfo (no auth): HTTP $UI_CODE (want 401). Headers: $UI_RAW"
-echo "$UI_RAW" | grep -iqE '^Www-Authenticate:.*Bearer' || bad "userinfo (no auth): 401 has no WWW-Authenticate: Bearer header. Headers: $UI_RAW"
+grep -iqE '^Www-Authenticate:.*Bearer' <<< "$UI_RAW" || bad "userinfo (no auth): 401 has no WWW-Authenticate: Bearer header. Headers: $UI_RAW"
 ok "userinfo (no auth): 401 + WWW-Authenticate: Bearer (RFC 6750 sec 3)"
 
 # ─────────────────────────────────────────────
@@ -178,7 +178,7 @@ UI_BAD_RAW=$(curl -sS -w '\nHTTP_CODE:%{http_code}\nWA:' -D - -o /dev/null \
     -H "Authorization: Bearer not-a-real-jwt" 2>&1) || bad "curl failed for /userinfo (bad bearer)"
 UI_BAD_CODE=$(echo "$UI_BAD_RAW" | grep -oE 'HTTP_CODE:[0-9]+' | cut -d: -f2)
 [ "$UI_BAD_CODE" = "401" ] || bad "userinfo (bad bearer): HTTP $UI_BAD_CODE (want 401). Headers: $UI_BAD_RAW"
-echo "$UI_BAD_RAW" | grep -iqE '^Www-Authenticate:.*Bearer' || bad "userinfo (bad bearer): 401 has no WWW-Authenticate: Bearer header. Headers: $UI_BAD_RAW"
+grep -iqE '^Www-Authenticate:.*Bearer' <<< "$UI_BAD_RAW" || bad "userinfo (bad bearer): 401 has no WWW-Authenticate: Bearer header. Headers: $UI_BAD_RAW"
 ok "userinfo (bad bearer): 401 + WWW-Authenticate: Bearer (invalid_token case)"
 
 # ─────────────────────────────────────────────

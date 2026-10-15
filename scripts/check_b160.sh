@@ -200,7 +200,7 @@ echo "=== contract G: pre-existing tests still pass ==="
 # that uses {{t "keys.expires_in_days" 7}} would
 # fail this test (we hit it during B160 development).
 out=$(go test ./internal/handlers/ -run TestTemplateArgsMatchCatalog 2>&1)
-if echo "$out" | grep -q '^ok'; then
+if grep -q '^ok' <<< "$out"; then
     ok "TestTemplateArgsMatchCatalog passes"
 else
     bad "TestTemplateArgsMatchCatalog FAILED: $out"

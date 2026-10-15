@@ -284,17 +284,17 @@ if command -v go >/dev/null 2>&1; then
   OUT="$(go test ./internal/cluster/ ./internal/feature/admin/ ./cmd/skygate/ \
            -run 'B365' -count=1 -v 2>&1)"
   printf '%s\n' "$OUT" > "$SKY_TMP/b365-go-test.log"
-  if printf '%s\n' "$OUT" | grep -qE '^(FAIL|--- FAIL)'; then
+  if grep -qE '^(FAIL|--- FAIL)' <<< "$OUT"; then
     bad "E1: a B365 Go test FAILED (log: $SKY_TMP/b365-go-test.log)"
     printf '%s\n' "$OUT" | grep -E '^(--- FAIL|FAIL|    )' | head -20 | sed 's/^/        /'
-  elif printf '%s\n' "$OUT" | grep -q '^ok'; then
+  elif grep -q '^ok' <<< "$OUT"; then
     ok "E1: the B365 Go contracts pass (join adoption on migrated SQLite, the rendered step, the messages)"
   else
     bad "E1: the B365 Go tests did not report ok (log: $SKY_TMP/b365-go-test.log)"
   fi
   # The B342 block's own tests must keep passing — B365 renamed one of its steps.
   OUT2="$(go test ./internal/feature/admin/ -run 'B342' -count=1 2>&1)"
-  if printf '%s\n' "$OUT2" | grep -q '^ok'; then
+  if grep -q '^ok' <<< "$OUT2"; then
     ok "E2: the B342 onboarding-block contracts still pass after the step rename"
   else
     bad "E2: the B342 block contracts broke: $(printf '%s' "$OUT2" | tail -3)"

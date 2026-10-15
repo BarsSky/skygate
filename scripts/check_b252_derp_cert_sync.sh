@@ -94,8 +94,8 @@ if [ ! -f "$MIG" ]; then bad "missing $MIG"; else
     # can fail on a loaded machine (this file passed 45/0 standalone and reported a
     # false ✗ in a full gate run).
     block="${block:0:4000}"
-    if echo "$block" | grep -qE "^[[:space:]]+${col}[[:space:]]" && \
-       echo "$block" | grep -qE "^[[:space:]]+${col}[[:space:]].*${cn}"; then
+    if ( set +o pipefail; echo "$block" | grep -qE "^[[:space:]]+${col}[[:space:]]" ) && \
+       ( set +o pipefail; echo "$block" | grep -qE "^[[:space:]]+${col}[[:space:]].*${cn}" ); then
       ok "column present: $col  (constraint fragment: $cn)"
     else
       bad "missing column $col or constraint $cn in CREATE TABLE block"

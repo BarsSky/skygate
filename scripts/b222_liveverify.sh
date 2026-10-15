@@ -130,7 +130,7 @@ LOC_EMPTY=$(curl -s -o /dev/null -w '%{redirect_url}' \
   -b "skygate_session=${TOK}" \
   "http://127.0.0.1:8080/admin/cluster/upgrade" 2>&1)
 echo "  POST → 303 redirect to: $LOC_EMPTY"
-if echo "$LOC_EMPTY" | grep -q "target+is+required"; then
+if grep -q "target+is+required" <<< "$LOC_EMPTY"; then
   echo "  [ok]   guard rail fired: 'target is required'"
   EMPTY_OK=1
 else
@@ -146,7 +146,7 @@ LOC_SELF=$(curl -s -o /dev/null -w '%{redirect_url}' \
   -d "target=${SELF_HOSTNAME}" \
   "http://127.0.0.1:8080/admin/cluster/upgrade" 2>&1)
 echo "  POST → 303 redirect to: $LOC_SELF"
-if echo "$LOC_SELF" | grep -q "refusing+to+upgrade+self"; then
+if grep -q "refusing+to+upgrade+self" <<< "$LOC_SELF"; then
   echo "  [ok]   self-upgrade guard fired"
   SELF_OK=1
 else

@@ -112,14 +112,14 @@ else
         bad "discovery doc unreachable at ${OIDC_ISSUER}/.well-known/openid-configuration (skygate is not running or the OIDC route is broken)"
     }
     for field in issuer authorization_endpoint token_endpoint userinfo_endpoint jwks_uri id_token_signing_alg_values_supported response_types_supported; do
-        if echo "$discovery" | grep -q "\"$field\""; then
+        if ( set +o pipefail; echo "$discovery" | grep -q "\"$field\"" ); then
             ok "discovery doc declares '$field'"
         else
             bad "discovery doc: '$field' MISSING (headscale will fail to discover the endpoint)"
         fi
     done
     # Algorithm must be RS256 (matches skygate's keypair).
-    if echo "$discovery" | grep -q '"RS256"'; then
+    if [[ $discovery == *'"RS256"'* ]]; then
         ok "discovery doc: id_token_signing_alg_values_supported includes RS256"
     else
         bad "discovery doc: RS256 MISSING (skygate signs with RS256 — headscale will reject id_tokens signed with anything else)"
@@ -127,7 +127,7 @@ else
     # response_types must include "code" (the
     # only flow skygate supports; B161.2 rejected
     # 'token' / 'id_token' at /authorize).
-    if echo "$discovery" | grep -q '"code"'; then
+    if [[ $discovery == *'"code"'* ]]; then
         ok "discovery doc: response_types_supported includes 'code'"
     else
         bad "discovery doc: 'code' MISSING (skygate only supports the authorization_code flow)"
@@ -144,7 +144,7 @@ else
         bad "JWKS has $key_count keys (B161.1 ships exactly 1 — multiple keys would mean skygate is rotating mid-session)"
     fi
     for k in '"kty":\s*"RSA"' '"alg":\s*"RS256"' '"use":\s*"sig"' '"kid":'; do
-        if echo "$jwks" | grep -qE "$k"; then
+        if ( set +o pipefail; echo "$jwks" | grep -qE "$k" ); then
             ok "JWKS key has $(echo "$k" | head -c 12)"
         else
             bad "JWKS key MISSING $(echo "$k" | head -c 12)"

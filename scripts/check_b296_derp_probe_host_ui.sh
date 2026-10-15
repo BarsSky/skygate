@@ -197,14 +197,14 @@ fi
 # --- D: behaviour ------------------------------------------------------------
 if command -v go >/dev/null 2>&1; then
   OUT="$(go test ./internal/derpcfg/ -run 'B296' -count=1 2>&1)"
-  if printf '%s' "$OUT" | grep -q '^ok' && ! printf '%s' "$OUT" | grep -q 'FAIL'; then
+  if grep -q '^ok' <<< "$OUT" && ! [[ $OUT == *'FAIL'* ]]; then
     ok "D1: the resolver tests pass (precedence db > env, clearing, validation)"
   else
     bad "D1: internal/derpcfg B296 tests failed:"
     printf '%s\n' "$OUT" | tail -20 | sed 's/^/       /' >&2
   fi
   OUT="$(go test ./internal/feature/admin/ -run 'B296' -count=1 2>&1)"
-  if printf '%s' "$OUT" | grep -q '^ok' && ! printf '%s' "$OUT" | grep -q 'FAIL'; then
+  if grep -q '^ok' <<< "$OUT" && ! [[ $OUT == *'FAIL'* ]]; then
     ok "D2: the handler tests pass (save -> the next derpmap fetch publishes the region)"
   else
     bad "D2: the admin B296 tests failed:"

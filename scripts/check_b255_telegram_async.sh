@@ -93,10 +93,10 @@ slow_in_page=$(awk '
   /^func \(s \*Service\) AdminTelegramPost\(w http\.ResponseWriter, r \*http\.Request\) \{/ {f=1}
   f {print; lc++; if (lc > 80) {f=0}}
 ' "$TG" | grep -v '^\s*//' | grep -v '^\s*$')
-if echo "$slow_in_page" | grep -qF 'cachedTelegramProbe'; then
+if grep -qF 'cachedTelegramProbe' <<< "$slow_in_page"; then
   bad "AdminTelegram/loadTelegramUIState must NOT call cachedTelegramProbe synchronously"
 else ok "AdminTelegram + loadTelegramUIState no longer call cachedTelegramProbe sync"; fi
-if echo "$slow_in_page" | grep -qF 'readContainerTailscaleState'; then
+if grep -qF 'readContainerTailscaleState' <<< "$slow_in_page"; then
   bad "AdminTelegram/loadTelegramUIState must NOT call readContainerTailscaleState synchronously"
 else ok "AdminTelegram + loadTelegramUIState no longer call readContainerTailscaleState sync"; fi
 
@@ -193,7 +193,7 @@ echo "=== J. build + vet + admin tests ==="
 # Run go via cmd.exe if the discovered path is a Windows path
 # (Git Bash can't exec .exe files directly when found via
 # PowerShell — only cmd.exe can).
-if echo "$GO" | grep -qE '^[A-Z]:'; then
+if grep -qE '^[A-Z]:' <<< "$GO"; then
   GO_RUN() { cmd.exe //c "\"$GO\" $*" >/dev/null 2>&1; }
   GO_VERBOSE() { cmd.exe //c "\"$GO\" $*"; }
 else

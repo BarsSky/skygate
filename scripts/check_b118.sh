@@ -184,7 +184,7 @@ if [ "${LIVE_OK}" = 1 ]; then
             bad_infra=0
             while IFS='|' read -r tag owners; do
                 [ -z "${tag}" ] && continue
-                if echo "${owners}" | grep -q '"infra@'; then
+                if [[ $owners == *'"infra@'* ]]; then
                     ok "live policy: ${tag} owner = ${owners}"
                 else
                     bad "live policy: ${tag} owner = ${owners} (expected infra@)"
@@ -217,7 +217,7 @@ if [ "${LIVE_OK}" = 1 ]; then
         "SELECT value FROM jsonb_each_text((SELECT config::jsonb->'tagOwners' FROM acl_snapshots WHERE version=(SELECT max(version) FROM acl_snapshots))) WHERE key = 'tag:exit-node';" 2>/dev/null)
     if [ -z "${out}" ]; then
         warn "tag:exit-node not in live policy tagOwners — is the policy applied?"
-    elif echo "${out}" | grep -q '"infra@'; then
+    elif [[ $out == *'"infra@'* ]]; then
         ok "live policy: tag:exit-node owner = ${out}"
     else
         bad "live policy: tag:exit-node owner = ${out} (expected infra@)"

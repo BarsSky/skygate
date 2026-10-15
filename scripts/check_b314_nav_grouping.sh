@@ -82,14 +82,14 @@ done
 # --- B: OIDC on its own ------------------------------------------------------------
 oidc_block="$(awk '/InSectionOIDC}}open/,/<\/details>/' "$LAYOUT")"
 n=$(printf '%s' "$oidc_block" | grep -c 'href="/admin/oidc' || true)
-if printf '%s' "$oidc_block" | grep -q 'href="/admin/oidc"' \
-   && printf '%s' "$oidc_block" | grep -q 'href="/admin/oidc/sync"' \
+if [[ $oidc_block == *'href="/admin/oidc"'* ]] \
+   && [[ $oidc_block == *'href="/admin/oidc/sync"'* ]] \
    && [ "${n:-0}" -eq 2 ]; then
   ok "B1: OIDC is its own group with exactly its two pages"
 else
   bad "B1: the OIDC group does not hold exactly /admin/oidc + /admin/oidc/sync (found ${n:-0} links)"
 fi
-if ! printf '%s' "$oidc_block" | grep -q '/admin/certificates'; then
+if ! [[ $oidc_block == *'/admin/certificates'* ]]; then
   ok "B2: certificates are no longer bundled with OIDC"
 else
   bad "B2: certificates are still in the OIDC group"
@@ -97,9 +97,9 @@ fi
 
 # --- C: DERP with relays and health ------------------------------------------------
 derp_block="$(awk '/InSectionDERP}}open/,/<\/details>/' "$LAYOUT")"
-if printf '%s' "$derp_block" | grep -q 'href="/admin/derp"' \
-   && printf '%s' "$derp_block" | grep -q 'href="/admin/derp/relays"' \
-   && printf '%s' "$derp_block" | grep -q 'href="/admin/derp/dashboard"'; then
+if [[ $derp_block == *'href="/admin/derp"'* ]] \
+   && [[ $derp_block == *'href="/admin/derp/relays"'* ]] \
+   && [[ $derp_block == *'href="/admin/derp/dashboard"'* ]]; then
   ok "C1: DERP holds the map, the relays and the relay health"
 else
   bad "C1: the DERP group is incomplete (map + relays + health)"
@@ -108,7 +108,7 @@ fi
 # --- D: deploy + cluster + HA ------------------------------------------------------
 deploy_block="$(awk '/InSectionDeploy}}open/,/<\/details>/' "$LAYOUT")"
 for p in deploy cluster ha; do
-  if printf '%s' "$deploy_block" | grep -q "href=\"/admin/$p\""; then
+  if ( set +o pipefail; printf '%s' "$deploy_block" | grep -q "href=\"/admin/$p\"" ); then
     ok "D1: /admin/$p is in the deployment group"
   else
     bad "D1: /admin/$p is not in the deployment group"
@@ -118,7 +118,7 @@ done
 # --- E: the providers --------------------------------------------------------------
 prov_block="$(awk '/InSectionProviders}}open/,/<\/details>/' "$LAYOUT")"
 for p in tailscale headscale headplane; do
-  if printf '%s' "$prov_block" | grep -q "href=\"/admin/$p\""; then
+  if ( set +o pipefail; printf '%s' "$prov_block" | grep -q "href=\"/admin/$p\"" ); then
     ok "E1: /admin/$p is in the providers group"
   else
     bad "E1: /admin/$p is not in the providers group"
@@ -127,7 +127,7 @@ done
 
 # --- F: certificates in Settings ---------------------------------------------------
 settings_block="$(awk '/InSectionSettings}}open/,/<\/details>/' "$LAYOUT")"
-if printf '%s' "$settings_block" | grep -q 'href="/admin/certificates"'; then
+if [[ $settings_block == *'href="/admin/certificates"'* ]]; then
   ok "F1: certificates live in Settings"
 else
   bad "F1: certificates are not in Settings"

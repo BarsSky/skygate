@@ -89,7 +89,7 @@ echo "=== Step 5: trigger a public-URL login (should write login_ok audit row) =
 # encoded (the previous B214 issue was the test using raw -d).
 LOGIN_LOC=$(curl -s -X POST --data-urlencode "username=skyadmin" --data-urlencode "password=$SKYGATE_ADMIN_PASS" -o /dev/null -w '%{http_code} %{redirect_url}\n' --max-time 30 https://skygate.skynas.ru/login)
 echo "  login: $LOGIN_LOC"
-if echo "$LOGIN_LOC" | grep -q "^302"; then
+if grep -q "^302" <<< "$LOGIN_LOC"; then
   echo "  [ok]   login returned 302 (success)"
   LOGIN_OK=1
 else
