@@ -79,12 +79,15 @@ done
 
 # --- 2. compile + vet ---
 section "Compile + vet"
-if "$GO_BIN" build ./... 2>&1 | grep -q .; then
+# B388: "did the tool print anything?" — a FAILING build/vet is what prints, and under
+# `set -o pipefail` its non-zero status decided the pipeline, so the failure branch was
+# skipped and a broken build passed. `set +o pipefail` restores the test's own meaning.
+if ( set +o pipefail; "$GO_BIN" build ./... 2>&1 | grep -q . ); then
     fail "go build ./..." "build returned output"
 else
     pass "go build ./... clean"
 fi
-if "$GO_BIN" vet ./... 2>&1 | grep -q .; then
+if ( set +o pipefail; "$GO_BIN" vet ./... 2>&1 | grep -q . ); then
     fail "go vet ./..." "vet returned warnings"
 else
     pass "go vet ./... clean"

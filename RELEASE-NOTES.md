@@ -12,6 +12,104 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.129 — the pipeline's verdict must be grep's, not the producer's (B388, closes TD-32)
+
+**Date:** 2026-10-15 · **Base:** `v1.5.128` → this tag · **Compatibility:** no application change
+of any kind. Every file in this release is a **check** (`scripts/check_*.sh` ×18, the new
+`scripts/check_b388_grep_q_pipeline.sh`, `scripts/verify_pre_deploy.sh`, `AGENTS.md`, docs). No
+`.go` file, no template, no migration, no route, no i18n key — the running panel is byte-identical
+to v1.5.128.
+
+### TD-32 was one item; measuring it produced two hazards with two remedies
+
+TD-32 said «`producer | grep -q` under `pipefail` is still present in ~120 check scripts». Counting
+the **333** piped `grep -q` sites in `scripts/` split that into two different failures:
+
+**H1 — SIGPIPE.** `grep -q` exits at the FIRST match and closes the pipe. A producer still writing
+dies with **141**, and `pipefail` reports the **pipeline** as failed — so a pattern that **is**
+present reads as absent. It needs a producer larger than the 64 KB pipe buffer **and** a pattern
+that can match early. That is exactly how **B387 failed its own first CI run** (`code_only "$VP" |
+grep -qF …` over a ~110 KB file: MSYS passed, Linux did not).
+
+**H2 — POLARITY, and it was hiding a real bug.** Even with a small producer, `pipefail` makes a
+**failing** producer fail the pipeline. For an output-presence test that **inverts the verdict**:
+`go build 2>&1 | grep -q .` asks «did the tool print anything?» — a broken build is exactly what
+prints — so the pipeline reported failure-of-the-wrong-kind, the «build is broken» branch was
+**skipped**, and **nine checks passed a broken tree**.
+
+Both are removed by neutralising pipefail for that one pipeline:
+
+```bash
+( set +o pipefail; producer | grep -q pat )
+```
+
+The subshell keeps the pipeline's shape, so grep still decides and the exit status is unchanged
+(0 matched / 1 not / 2 error), while the producer's status — 141 from SIGPIPE, or 1 from a failing
+tool — can no longer decide anything.
+
+### The 15 sites that were measured dangerous, and why the other 318 are safe
+
+Wrapped and pinned **by name** in the contract: `check_b237_22.sh` (build, vet, staticcheck),
+`check_b237_24.sh` (build, vet), `check_b_modules_admin.sh` (build, vet),
+`check_b_tailscale_module.sh` (build, vet), `check_b360_prefix_reservation.sh` (two repo-wide
+greps), `check_b378_push_gate_and_host_artefacts.sh` (gofmt), `check_b95.sh` (two `git ls-remote`),
+`verify_backup.sh` (find).
+
+The other ~318 sites are **safe, and the reason is recorded rather than assumed**: either the
+producer is bounded (a 3-byte `curl -w '%{http_code}'`, a docker name list, `grep -A<n>` over one
+file, `head`) or the pattern can only match the **last** line (`go test | grep -q '^ok'`), which
+forces grep to read everything before it can answer. Two further real sites surfaced from the
+widened detector and were fixed properly with a `case` builtin instead of a pipe
+(`check_b_tag_owners.sh` ×2 — the original B311 shape).
+
+### The guard itself had stopped reading, and that is the part worth reading twice
+
+B386's detector matched only `printf`/`echo` producers — which is why it reported «0 unprotected
+sites» while B387 failed straight through that hole. Two further defects were found while fixing
+it, **both by distrusting a green result**:
+
+1. **Its heredoc state was shared across files.** `BEGIN` runs once for the whole invocation, so a
+   script that ended with a heredoc still open made every **later** file be skipped entirely. The
+   detector was reporting «0» about files it had never read. Fixed with `FNR == 1 { heredoc = "" }`.
+   **Correcting it raised the honest count from 0 to 8** — the measurement that had justified the
+   previous «everything is fine» was itself an artifact.
+2. **It matched the second bar of `||`.** A `||` chain is not a pipeline; the first widened version
+   flagged eight `if grep -q a f || grep -q b f; then` lines as pipelines.
+
+The predicate is now the property that actually matters: a producer that can outrun the pipe buffer
+**and** a pattern that can match early, plus the printf/echo-of-a-variable class. Its
+planted-violation selftest gained those shapes, and it now asserts that a bounded producer, a
+last-line-only pattern and a `||` chain are **not** violations. Five lines in B386's own section C
+are excluded from the scan, explicitly and with the reason: they carry the OLD pipelines as
+**quoted test data** for the equivalence proof, and a line-based detector cannot tell a quoted
+argument from a live pipeline.
+
+### What was deliberately NOT done
+
+The equivalent H1-only remedy — drop `-q` and redirect the grep's stdout, so plain `grep` reads all
+of its input and the producer is never killed — **is proved equivalent** in the contract (B3), but it
+was **not** applied tree-wide. Doing that mechanically needs a real shell parser, and the obvious
+tokenizer corrupts text **inside quoted strings**: `"$( … sed 's/…"[^"]*"…' … )"` is re-parsed by
+the shell, and no naive tokenizer models that. The first attempt here mangled message strings and
+B386's own contract C-section — **the same class of damage B386 had already paid for once** — before
+it was caught by diffing the result against HEAD. The wrapper needs no parsing at all, which is why
+it shipped, and the abandoned approach is recorded here rather than quietly dropped.
+
+### The contract is behavioural, because a source grep cannot tell a fixed pipeline from a broken one
+
+`scripts/check_b388_grep_q_pipeline.sh` (17 contracts) builds a **deliberately broken Go package**
+and runs both shapes through the real toolchain:
+
+| shape | answer for a build that prints its errors |
+|---|---|
+| `go build … \| grep -q .` (old) | **SAW_NOTHING** — the bug: the failure branch is skipped |
+| `( set +o pipefail; … )` (new) | **SAW_OUTPUT** — the failure is reported |
+
+It then reproduces H1 with a >64 KB producer whose match is on the first line
+(`rc=141` under `pipefail`, `rc=0` wrapped), and proves the `-q`-drop remedy's equivalence on
+planted haystacks. `A1` asserts the danger predicate is empty by **running B386's detector**, so
+there is one implementation; `A2` pins all 15 fixed sites by name.
+
 ## v1.5.128 — the post-deploy catalog stops calling a plumbing failure "corruption" (B387)
 
 **Date:** 2026-10-15 · **Base:** `v1.5.127` → this tag · **Compatibility:** no application

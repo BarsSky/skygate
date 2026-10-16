@@ -80,7 +80,10 @@ DUMP_FILE=$(find "$TMPDIR" -name 'skygate-pg.sql' -type f | head -1)
 if [ -z "$DUMP_FILE" ]; then
     # SQLite-era archive? Detect skygate.db and bail with a clear
     # error pointing to the upgrade path.
-    if find "$TMPDIR" -name 'skygate.db' -type f | grep -q .; then
+    # B388: `find | grep -q .` is an output-presence test, and `find` exits non-zero on a
+    # permission error while still printing matches — under `set -o pipefail` that non-zero
+    # decided the pipeline and the archive was misclassified. The wrapper makes grep the judge.
+    if ( set +o pipefail; find "$TMPDIR" -name 'skygate.db' -type f | grep -q . ); then
         echo "verify_backup: ERROR — $LATEST is a v0.33.x SQLite-era archive"
         echo "  v1.3.0+ requires PG backups. Re-run scripts/backup.sh after upgrading."
         "$SKYGATE_DIR/skygate" backup-verify-fail "$LATEST" "sqlite-era archive (pre-v1.3.1)" 2>/dev/null || true

@@ -67,12 +67,39 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 SKY_TMP="$(mktemp -d 2>/dev/null || mktemp -d "${TMPDIR:-/tmp}/skygate-b386.XXXXXX")"
 trap 'rm -rf "$SKY_TMP"' EXIT
 
-# The detector: a line that pipes a printf/echo of a VARIABLE into `grep -q`, where the grep
-# is not already behind `set +o pipefail`. Comment lines and heredoc bodies are exempt (the
-# same rule the rewriter used — a comment mentioning the pattern is documentation).
+# The detector: a line that pipes a producer into `grep -q`, where the grep is not already
+# behind `set +o pipefail`, and where the producer's output can still be arriving when grep
+# leaves. Comment lines and heredoc bodies are exempt (the same rule the rewriter used — a
+# comment mentioning the pattern is documentation).
+#
+# THREE GENERATIONS, and the reason the predicate is what it is (B388 measured the middle one):
+#   1. `(printf|echo) … | grep -q` — the B311 class. Correct but NARROW: it matched only the
+#      producers that had already been fixed, and reported "0 unprotected sites" while the same
+#      hazard sat behind every other producer. B387 then failed its first CI run through that
+#      hole (`code_only "$VP" | grep -qF …` over a ~110 KB file: `grep -q` left early, the
+#      producer died of SIGPIPE, `pipefail` reported the pipeline as failed, and a pattern that
+#      IS present read as absent).
+#   2. ANY producer — too BROAD: it flags ~300 sites, almost all of them harmless, because
+#      `grep -q` only kills the producer if it is STILL WRITING. A `grep -A3 pat one-file |
+#      grep -q x` has a few KB of output; a `grep -q '^ok'` over `go test` can only match the
+#      LAST line, so grep has already read everything. A detector nobody can satisfy is a
+#      detector everyone exempts.
+#   3. the DANGER predicate (below): the producer can exceed the 64 KB pipe buffer (a build,
+#      test or lint tool, a repo-wide grep/find, a file dump, or a printf/echo of a VARIABLE)
+#      AND the pattern can match early (an output-presence test: `.`, `.*`) — because that is
+#      exactly when the verdict rides on SIGPIPE and on pipefail's choice of status.
+#      Measured by `td32_danger`: 15 such sites existed; B388 wrapped all 15.
+# The pipe test requires a SINGLE `|`: a `||` (logical OR) is not a pipeline, and matching its
+# second bar was the first version's false positive.
 detect() { # detect <file>…  -> prints "file:line: code"
   awk '
     BEGIN { heredoc = "" }
+    # The heredoc state is PER FILE: `BEGIN` runs once for the whole invocation, so a script
+    # that ends while a heredoc is still open used to leak that state into every later file —
+    # their lines were skipped until something matched the stale terminator. Found when this
+    # detector reported "0 unprotected sites" while its own sibling file contained one; a
+    # detector that silently stops reading is worse than none.
+    FNR == 1 { heredoc = "" }
     {
       line = $0
       if (heredoc != "") { if (line ~ ("^[[:space:]]*" heredoc "[[:space:]]*$")) heredoc = ""; next }
@@ -81,8 +108,18 @@ detect() { # detect <file>…  -> prints "file:line: code"
         t = substr(line, RSTART, RLENGTH); gsub(/<<-?[[:space:]]*[\047"]?/, "", t); gsub(/[\047"]?$/, "", t)
         heredoc = t
       }
-      if (line ~ /(printf|echo)[^\n]*\|[[:space:]]*grep[[:space:]]+-[A-Za-z]*q[A-Za-z]*/ &&
-          line !~ /set \+o pipefail/) {
+      if (line ~ /set \+o pipefail/) next
+      # a pipeline whose last visible stage is `grep -…q…`, and NOT a `||` chain
+      if (line !~ /[^|]\|[[:space:]]*grep[[:space:]]+-[A-Za-z]*q[A-Za-z]*/ &&
+          line !~ /^\|[[:space:]]*grep[[:space:]]+-[A-Za-z]*q[A-Za-z]*/) next
+      # (a) the producer is printf/echo of a VARIABLE: its size is the size of that variable.
+      #     `.*` and not `[^|]*`: the producer may itself be a pipeline (`echo "$V" | tr -d
+      #     '\n' | grep -q x`), and that shape was one of the original planted violations.
+      var_prod = (line ~ /(printf|echo).*\|[[:space:]]*grep[[:space:]]+-[A-Za-z]*q[A-Za-z]*/)
+      # (b) the producer is a large-output tool AND the pattern is an output-presence test
+      presence = (line ~ /grep[[:space:]]+-[A-Za-z]*q[A-Za-z]*[[:space:]]+[\047"]?\.[\047"]?[[:space:]]*([;|&)].*)?$/)
+      big = (line ~ /(\$GO_BIN|go[[:space:]]+(build|vet|test)|staticcheck|gofmt|grep[[:space:]]+-[A-Za-z]*r|find[[:space:]]|tar[[:space:]]|tr[[:space:]]|awk[[:space:]]|sed[[:space:]]|journalctl|python3|git[[:space:]]+ls-remote|docker[[:space:]]+(ps|images|compose)|cat[[:space:]])/)
+      if (var_prod || (big && presence)) {
         printf "%s:%d: %s\n", FILENAME, FNR, line
       }
     }
@@ -94,7 +131,13 @@ hdr "B386 — no check may turn a host transient into a product verdict"
 # ---------------------------------------------------------------------------
 # A. the class is gone from scripts/
 # ---------------------------------------------------------------------------
-mapfile -t hits < <(detect scripts/*.sh)
+# THIS FILE is excluded, explicitly and for one reason: its section C carries the OLD pipelines
+# as QUOTED TEST DATA (`prove "literal" "printf '%s' \"\$V\" | grep -q 'literal'" …`) so the
+# rewrite can be proved equivalent against the form it replaced. A line-based detector cannot
+# tell a quoted argument from a live pipeline, and those five lines are data. The exclusion is
+# safe because the detector is exercised on PLANTED violations in section B below, so a
+# detector that stops working fails there rather than passing silently here.
+mapfile -t hits < <(detect $(ls scripts/*.sh | grep -v 'scripts/check_b386_no_variable_grep_q.sh'))
 if [ "${#hits[@]}" -eq 0 ]; then
   ok "A1: no unprotected 'producer | grep -q' site remains in scripts/ (the B311 class)"
 else
@@ -151,12 +194,17 @@ printf '%s' "$V" | grep -q 'inside a heredoc — data, not code'
 HEREDOC
 )"
 if ( set +o pipefail; printf '%s' "$V" | grep -q 'x' ); then :; fi
+if go build ./... 2>&1 | grep -q .; then :; fi
+if grep -rn 'x' internal/ | grep -q .; then :; fi
+if grep -q 'a' one.txt || grep -q 'b' two.txt; then :; fi
+if grep -A3 'pat' one.txt | grep -q 'x'; then :; fi
+if go test ./... 2>&1 | grep -q '^ok'; then :; fi
 EOF
 planted="$(detect "$plant" | wc -l)"
-if [ "$planted" -eq 4 ]; then
-  ok "B1: the detector finds exactly the 4 planted violations — a literal, a braced variable, a trailing-comment line and a longer pipeline — and not the comment, the heredoc or the neutralized line"
+if [ "$planted" -eq 6 ]; then
+  ok "B1: the detector finds exactly the 6 planted violations — the four printf/echo-of-a-variable shapes plus a build tool and a repo-wide grep, both with an output-presence pattern — while the comment, the heredoc, the 'set +o pipefail' line, the '||' chain, the bounded producer and the last-line-only pattern stay clean"
 else
-  bad "B1: the detector found $planted violation(s) in the planted file, expected 4"
+  bad "B1: the detector found $planted violation(s) in the planted file, expected 6"
   detect "$plant" | sed 's/^/        /' >&2
 fi
 

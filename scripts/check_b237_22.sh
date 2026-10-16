@@ -294,16 +294,20 @@ else
 fi
 
 # --- I. Build + vet are clean ---
-
+# B388: these three are output-presence tests — `grep .` asks "did the tool print ANYTHING?" —
+# and a FAILING build/vet/staticcheck is exactly what prints. `set -o pipefail` made the
+# producer's non-zero status decide the pipeline, so the `bad` branch (a broken build) was
+# SKIPPED and the check passed silently. `set +o pipefail` inside the subshell gives the test
+# its own verdict back: grep decides, and grep matched.
 # I.1 go build is clean
-if go build ./... 2>&1 | grep -q .; then
+if ( set +o pipefail; go build ./... 2>&1 | grep -q . ); then
     bad "I.1 go build ./... must be clean"
 else
     ok "I.1 go build ./... is clean"
 fi
 
 # I.2 go vet is clean
-if go vet ./... 2>&1 | grep -q .; then
+if ( set +o pipefail; go vet ./... 2>&1 | grep -q . ); then
     bad "I.2 go vet ./... must be clean"
 else
     ok "I.2 go vet ./... is clean"
@@ -311,7 +315,7 @@ fi
 
 # I.3 staticcheck for the new files is clean (no SA-rules triggered
 #     in cdn_group.go or cdn_group_admin.go)
-if staticcheck ./internal/feature/exit_rules/... 2>&1 | grep -E 'cdn_group' | grep -q .; then
+if ( set +o pipefail; staticcheck ./internal/feature/exit_rules/... 2>&1 | grep -E 'cdn_group' | grep -q . ); then
     bad "I.3 staticcheck must not flag cdn_group.go or cdn_group_admin.go"
 else
     ok "I.3 staticcheck clean for cdn_group*.go"

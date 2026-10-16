@@ -158,11 +158,16 @@ if git rev-parse --verify refs/heads/feat/postgres-migration >/dev/null 2>&1; th
     echo "SKY-FAIL: feat/postgres-migration branch still exists locally (B95)" >&2
     exit 1
 fi
-if git ls-remote origin 'refs/heads/feature/telegram-bot-ux' 2>/dev/null | grep -q .; then
+# B388: `grep -q .` asks "did the command print anything?" — an output-presence test. Under
+# `set -o pipefail` a FAILING producer also fails the pipeline, so the verdict is not grep's;
+# `set +o pipefail` inside the subshell gives the test back its meaning. (Here git prints
+# nothing to stdout when the ref is absent, so the old form happened to work — the wrapper
+# makes that a property instead of a coincidence.)
+if ( set +o pipefail; git ls-remote origin 'refs/heads/feature/telegram-bot-ux' 2>/dev/null | grep -q . ); then
     echo "SKY-FAIL: feature/telegram-bot-ux branch still exists on origin (B95)" >&2
     exit 1
 fi
-if git ls-remote origin 'refs/heads/feat/postgres-migration' 2>/dev/null | grep -q .; then
+if ( set +o pipefail; git ls-remote origin 'refs/heads/feat/postgres-migration' 2>/dev/null | grep -q . ); then
     echo "SKY-FAIL: feat/postgres-migration branch still exists on origin (B95)" >&2
     exit 1
 fi

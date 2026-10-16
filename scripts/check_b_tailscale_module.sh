@@ -99,14 +99,16 @@ done
 
 # --- contract 2: package compiles ---
 section "Compile"
-if "$GO_BIN" build ./internal/module/tailscale/... 2>&1 | grep -q .; then
+# B388: BOTH of these are output-presence tests, and a FAILING tool is what prints — under
+# `set -o pipefail` its status decided the pipeline, so a broken build took the `pass` branch.
+if ( set +o pipefail; "$GO_BIN" build ./internal/module/tailscale/... 2>&1 | grep -q . ); then
     fail "tailscale package builds" "go build returned output"
 else
     pass "tailscale package builds"
 fi
 
 # --- contract 3: vet clean ---
-if "$GO_BIN" vet ./internal/module/tailscale/... 2>&1 | grep -q .; then
+if ( set +o pipefail; "$GO_BIN" vet ./internal/module/tailscale/... 2>&1 | grep -q . ); then
     fail "go vet clean" "go vet returned warnings"
 else
     pass "go vet clean"

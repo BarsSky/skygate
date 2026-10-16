@@ -207,7 +207,10 @@ CAND=""
 while IFS= read -r f; do
   [ -f "$f" ] || continue
   grep -qxF "$f" scripts/gofmt_legacy_allowlist.txt && continue
-  if ! gofmt -l "$f" 2>/dev/null | grep -q .; then CAND="$f"; break; fi
+  # B388: `! gofmt -l "$f" | grep -q .` is an output-presence test ("this file is already
+  # formatted") — a failing gofmt also leaves no stdout, and under `set -o pipefail` its
+  # status decided the pipeline. The wrapper keeps the verdict grep's own.
+  if ! ( set +o pipefail; gofmt -l "$f" 2>/dev/null | grep -q . ); then CAND="$f"; break; fi
 done < <(git ls-files '*.go')
 if [ -z "$CAND" ]; then
   skip "D3: no clean, non-frozen .go file to convert — the CRLF class cannot be exercised here"

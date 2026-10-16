@@ -60,11 +60,16 @@ echo "=== A. standard tags in live policy tagOwners ==="
 TAGOWNERS=$(sudo -n docker exec "$HEADSCALE_CONTAINER" headscale policy get -o json 2>/dev/null \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(d.get("tagOwners",{}).keys()))')
 for tag in tag:public tag:exit-node tag:private tag:subnet-router; do
-    if echo " $TAGOWNERS " | grep -q " $tag "; then
-        ok "tag:public / tag:exit-node / tag:private / tag:subnet-router present ($tag)"
-    else
-        bad "$tag MISSING from policy tagOwners"
-    fi
+    # B388: was `echo " $TAGOWNERS " | grep -q " $tag "` — an echo of a VARIABLE piped into
+    # `grep -q`, i.e. the B311 class: the producer's size is whatever the variable holds, and
+    # `grep -q` leaving early makes the verdict the producer's under `set -o pipefail`. The
+    # `case` builtin matches the same substring with no fork and no pipe at all.
+    case " $TAGOWNERS " in
+      *" $tag "*)
+        ok "tag:public / tag:exit-node / tag:private / tag:subnet-router present ($tag)" ;;
+      *)
+        bad "$tag MISSING from policy tagOwners" ;;
+    esac
 done
 
 # ── B. Every tag in tagOwners maps to a real tag in use ──
@@ -111,10 +116,14 @@ echo
 echo "=== C. node_owner_map tags all in tagOwners ==="
 MISSING=0
 for tag in $NOM_TAGS; do
-    if ! echo " $TAGOWNERS " | grep -q " $tag "; then
+    # B388: same reason as section A — a `case` builtin instead of an echo-of-a-variable
+    # piped into `grep -q`.
+    case " $TAGOWNERS " in
+      *" $tag "*) ;;
+      *)
         bad "node_owner_map has $tag but policy tagOwners does NOT (headscale will silently drop per-device grants for this tag)"
-        MISSING=$((MISSING+1))
-    fi
+        MISSING=$((MISSING+1)) ;;
+    esac
 done
 if [ "$MISSING" = "0" ]; then
     ok "every tag in node_owner_map has a matching tagOwners entry"

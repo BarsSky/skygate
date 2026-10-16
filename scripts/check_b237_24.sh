@@ -211,12 +211,14 @@ find_go() {
 
 GO_BIN="$(find_go || true)"
 if [ -n "$GO_BIN" ]; then
-  if "$GO_BIN" build ./... 2>&1 | grep -q .; then
+# B388: output-presence tests — a FAILING build/vet is what prints, and `set -o pipefail`
+# let its status decide the pipeline, so a broken build took the `ok` branch silently.
+  if ( set +o pipefail; "$GO_BIN" build ./... 2>&1 | grep -q . ); then
     bad "F.1 go build ./... not clean"
   else
     ok "F.1 go build ./... clean"
   fi
-  if "$GO_BIN" vet ./... 2>&1 | grep -q .; then
+  if ( set +o pipefail; "$GO_BIN" vet ./... 2>&1 | grep -q . ); then
     bad "F.2 go vet ./... not clean"
   else
     ok "F.2 go vet ./... clean"

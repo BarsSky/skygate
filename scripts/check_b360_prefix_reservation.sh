@@ -190,10 +190,14 @@ grep -q 'func warnWhileOverrideSuperseded' "$PLANNER" || E_MISS="${E_MISS}the ov
 grep -q 'warnWhileOverrideSuperseded(d, healthyRelays' "$PKG" || E_MISS="${E_MISS}the pass never warns about a superseded override"$'\n'
 # The human's decision is never auto-cleared: no write of an empty override (or a
 # delete of its key) may appear outside the test files.
-if grep -rn 'SetForceRelay(d, "")' --include='*.go' internal/ | grep -v '_test.go' | grep -q .; then
+# B388: both of these pipe a REPO-WIDE grep into `grep -q .`, so the match happens on the
+# first hit while the producer is still walking internal/ — `grep -q` then closes the pipe,
+# the first grep dies of SIGPIPE and `pipefail` reported a CLEAN tree as dirty. The wrapper
+# removes pipefail from the equation so the verdict is the one the test asks for.
+if ( set +o pipefail; grep -rn 'SetForceRelay(d, "")' --include='*.go' internal/ | grep -v '_test.go' | grep -q . ); then
   E_MISS="${E_MISS}something in internal/ clears the operator's override by itself (SetForceRelay(d, \"\"))"$'\n'
 fi
-if grep -rn 'DeleteGlobalSetting(d, forceRelaySettingKey)' --include='*.go' internal/ | grep -q .; then
+if ( set +o pipefail; grep -rn 'DeleteGlobalSetting(d, forceRelaySettingKey)' --include='*.go' internal/ | grep -q . ); then
   E_MISS="${E_MISS}something deletes the override's setting key"$'\n'
 fi
 if ( set +o pipefail; printf '%s' "$(body_of "$PLANNER" '^func warnWhileOverrideSuperseded')" | grep -q 'SetForceRelay' ); then
