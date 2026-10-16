@@ -78,8 +78,12 @@ func meshCreateReply(env BotEnv, args []string) string {
 	// own CIDR). The re-apply is only meaningful when
 	// a second user joins, at which point the join
 	// handler triggers it.
+	// B389: the catalogue value has FOUR placeholders (name, code,
+	// creator, and the join command it repeats) while this call passed
+	// three, so the reply rendered a literal "%!s(MISSING)" where the
+	// join command should have been.
 	return i18n.Tf(lang, "bot.mesh.created",
-		m.Name, m.Code, env.Username)
+		m.Name, m.Code, env.Username, m.Code)
 }
 
 // meshJoinReply handles /mesh join <code>.

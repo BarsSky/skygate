@@ -91,7 +91,7 @@ func myStatusBlocks(env BotEnv) ([]RichBlock, error) {
 
 	blocks := []RichBlock{
 		Heading(header, 2),
-		KeyValueTable([]KVRow{
+		KeyValueTableLang(lang, []KVRow{
 			{Label: i18n.T(lang, "bot.my_status.label_rules"), Value: rulesLine},
 			{Label: i18n.T(lang, "bot.my_status.label_devices"), Value: deviceS},
 			{Label: i18n.T(lang, "bot.my_status.label_last_acl"), Value: lastACLS},
@@ -149,7 +149,7 @@ func myQuotaReply(env BotEnv) string {
 	if max > 0 {
 		pct = (cnt * 100) / max
 	}
-	bar := quotaBar(pct)
+	bar := quotaBar(lang, pct)
 	capStr := i18n.T(lang, "bot.my_quota.label_unlimited")
 	if max > 0 {
 		capStr = strconv.Itoa(max)
@@ -415,7 +415,7 @@ func setDefaultDeviceReply(env BotEnv, arg string) string {
 			fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.setdefaultdevice.list_row", hn, id))
 		}
 		sb.WriteString(i18n.T(lang, "bot.setdefaultdevice.cta"))
-		return trimForTelegram(sb.String())
+		return trimForTelegram(env.Lang, sb.String())
 	}
 
 	// "clear" → reset to no default.
@@ -524,7 +524,7 @@ func setExitNodeReply(env BotEnv, arg string) string {
 			fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.setexitnode.list_row", s.Hostname, s.NodeID))
 		}
 		sb.WriteString(i18n.T(lang, "bot.setexitnode.cta"))
-		return trimForTelegram(sb.String())
+		return trimForTelegram(env.Lang, sb.String())
 	}
 
 	// "clear" → reset.
@@ -550,7 +550,7 @@ func setExitNodeReply(env BotEnv, arg string) string {
 		for _, s := range enabled {
 			fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.setexitnode.list_row", s.Hostname, s.NodeID))
 		}
-		return trimForTelegram(sb.String())
+		return trimForTelegram(env.Lang, sb.String())
 	}
 
 	if _, err := db.SetDefaultExitNode(env.DB, env.PortalUserID, picked.NodeID); err != nil {

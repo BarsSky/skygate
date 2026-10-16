@@ -125,7 +125,7 @@ func nodesReply(env BotEnv) string {
 		}
 		sb.WriteString("\n")
 	}
-	return trimForTelegram(sb.String())
+	return trimForTelegram(env.Lang, sb.String())
 }
 
 // rulesReply shows recent exit-rules with user, exit-node, target and
@@ -167,7 +167,7 @@ func rulesReply(env BotEnv) string {
 		fmt.Fprintf(&sb, "%s\n\n",
 			i18n.Tf(lang, "bot.rules.row", rr.id, rr.user, rr.exitNode, rr.tType, rr.tValue, rr.action))
 	}
-	return trimForTelegram(sb.String())
+	return trimForTelegram(env.Lang, sb.String())
 }
 
 // auditReply shows the last 20 audit_log entries (admin actions: user

@@ -104,9 +104,11 @@ func myExitNodesReply(env BotEnv) string {
 	lines = append(lines, header, "<i>"+ruleLine+"</i>")
 	for _, s := range enabled {
 		st := devMap[s.NodeID]
-		status := "offline"
+		// B389: shared with /exit_nodes — the pair used to be hardcoded
+		// English in both replies.
+		status := i18n.T(lang, "bot.exit_nodes.status_offline")
 		if st.online == 1 {
-			status = "online"
+			status = i18n.T(lang, "bot.exit_nodes.status_online")
 		}
 		m := ""
 		if s.NodeID == defaultNodeID {
@@ -158,7 +160,7 @@ func myExitNodesReply(env BotEnv) string {
 	// is the cleanest fix (a "merge" helper would be more
 	// code for a single call site).
 	pendingReplyForCurrentMessage = &PendingReply{InlineKeyboard: btnRows, ParseMode: "HTML"}
-	return trimForTelegram(reply)
+	return trimForTelegram(env.Lang, reply)
 }
 
 // addDeviceReply issues a 1h single-use preauth key. For a regular

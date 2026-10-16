@@ -98,9 +98,14 @@ func myNodesReply(env BotEnv) string {
 		colDev = "%-30s"
 		colTag = "%s"
 	)
+	// B389: each row is ~45 characters and the reply had NO cap, so a
+	// tailnet with roughly 90+ devices produced a body over Telegram's
+	// 4096-character limit — the API rejects the whole message and the
+	// user gets nothing. The header names the node count, so the trim
+	// cannot hide the fact that the list was shortened.
 	header := fmt.Sprintf(
 		"<b>"+colDev+"  "+colTag+"</b>",
-		"NODE", "TAG",
+		i18n.T(lang, "bot.my_nodes.col_node"), i18n.T(lang, "bot.my_nodes.col_tag"),
 	)
 	rule := strings.Repeat("─", 30+2+10)
 	var lines []string
@@ -125,8 +130,8 @@ func myNodesReply(env BotEnv) string {
 			label, n.tag,
 		))
 	}
-	return i18n.Tf(lang, "bot.my_nodes.header", env.Username, len(nodes)) + "\n\n" +
-		PreLinesRaw(lines...)
+	return trimForTelegram(lang, i18n.Tf(lang, "bot.my_nodes.header", env.Username, len(nodes))+"\n\n"+
+		PreLinesRaw(lines...))
 }
 
 // hostnameMapFromHeadscale calls hs.ListAllNodes and returns

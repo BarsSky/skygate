@@ -30,6 +30,7 @@ package telegram
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"skygate/internal/i18n"
 )
@@ -294,19 +295,95 @@ func TestGreetingForReturningUserRussian(t *testing.T) {
 	}
 }
 
-// TestTrimForTelegramStaysWithinBudget: the trim function
-// must produce output that fits Telegram's 3800-char reply
-// budget. 5000 "a"s exercises the hard-trim path.
+// TestTrimForTelegramStaysWithinBudget: the trim function must fit
+// Telegram's reply budget. The budget is counted in RUNES (Telegram's
+// own unit — the hard cap is 4096 code points); the byte length is
+// checked against the hard cap separately, because the pre-B389
+// byte-based implementation silently over-trimmed Cyrillic by half.
 func TestTrimForTelegramStaysWithinBudget(t *testing.T) {
 	long := strings.Repeat("a", 5000)
-	got := trimForTelegram(long)
+	got := trimForTelegram(i18n.LangEN, long)
 	const budget = 3800
-	if len(got) > budget {
-		t.Errorf("trim output %d > budget %d", len(got), budget)
+	if n := len([]rune(got)); n > budget {
+		t.Errorf("trim output %d runes > budget %d", n, budget)
+	}
+	if len(got) > 4096 {
+		t.Errorf("trim output %d bytes exceeds Telegram's 4096 hard cap", len(got))
 	}
 	if !strings.Contains(got, "truncated") {
 		t.Errorf("trim output should announce truncation, got tail: %q", got[len(got)-60:])
 	}
+}
+
+// TestTrimForTelegram_CyrillicStaysValidUTF8 — B389. The byte-based
+// implementation could cut a Cyrillic body mid-rune, producing invalid
+// UTF-8 that Telegram rejects outright (the whole reply is lost, not
+// just shortened).
+func TestTrimForTelegram_CyrillicStaysValidUTF8(t *testing.T) {
+	long := strings.Repeat("привет мир ", 600) // 6600 bytes, 6600 runes worth of 2-byte chars
+	got := trimForTelegram(i18n.LangRU, long)
+	if len([]rune(got)) > 3800 {
+		t.Errorf("rune length %d > budget 3800", len([]rune(got)))
+	}
+	if !utf8.ValidString(got) {
+		t.Error("trim output is not valid UTF-8 — a rune was cut in half")
+	}
+	if strings.ContainsRune(got, '\uFFFD') {
+		t.Error("trim output contains a replacement character")
+	}
+}
+
+// TestTrimForTelegram_MarkerFollowsLanguage — the truncation marker
+// used to be fetched in English for every language, so a Russian chat
+// ended with an English sentence.
+func TestTrimForTelegram_MarkerFollowsLanguage(t *testing.T) {
+	long := strings.Repeat("a", 5000)
+	ru := trimForTelegram(i18n.LangRU, long)
+	en := trimForTelegram(i18n.LangEN, long)
+	if ru == en {
+		t.Fatal("ru and en trims are identical — the marker is not localised")
+	}
+	if !strings.Contains(ru, "обрезано") {
+		t.Errorf("ru trim missing the Russian marker: %q", ru[len(ru)-80:])
+	}
+	if !strings.Contains(en, "truncated") {
+		t.Errorf("en trim missing the English marker: %q", en[len(en)-80:])
+	}
+}
+
+// TestTrimForTelegram_NeverEndsInsideATag — a cut inside "<code..." or
+// "&am..." leaves wreckage the send boundary would have to escape, and
+// the reader would see "<co" at the truncation point. A COMPLETE tag
+// in the trimmed body is fine; an unterminated one is not.
+func TestTrimForTelegram_NeverEndsInsideATag(t *testing.T) {
+	marker := i18n.New().T(i18n.LangEN, "bot.trim.marker")
+	assertNoPartialMarkup := func(head string) {
+		t.Helper()
+		if i := strings.LastIndex(head, "<"); i >= 0 && !strings.Contains(head[i:], ">") {
+			t.Errorf("trim left a partial tag: %q", head[i:])
+		}
+		if i := strings.LastIndex(head, "&"); i >= 0 && !strings.Contains(head[i:], ";") {
+			t.Errorf("trim left a partial entity: %q", head[i:])
+		}
+	}
+	body := strings.Repeat("x", 3700) + "<code>" + strings.Repeat("y", 400)
+	assertNoPartialMarkup(strings.TrimSuffix(trimForTelegram(i18n.LangEN, body), marker))
+
+	// An entity that lost its ";" is the other half of the same hazard.
+	body = strings.Repeat("x", 3700) + "&amp" + strings.Repeat("y", 400)
+	assertNoPartialMarkup(strings.TrimSuffix(trimForTelegram(i18n.LangEN, body), marker))
+
+	// A tag that would be cut in half must be dropped entirely. Place
+	// it so the cut lands inside it: bodyBudget is the index the body
+	// is truncated at.
+	bodyBudget := 3800 - len([]rune(marker))
+	body = strings.Repeat("x", bodyBudget-2) + "<code>" + strings.Repeat("y", 100)
+	got := trimForTelegram(i18n.LangEN, body)
+	head := strings.TrimSuffix(got, marker)
+	if strings.Contains(head, "<") {
+		t.Errorf("trim cut a tag in half: %q", head[len(head)-20:])
+	}
+	assertNoPartialMarkup(head)
 }
 
 // TestWelcomeNameVariants: v1 welcome line — kept stable.

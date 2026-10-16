@@ -143,7 +143,7 @@ func versionBlocks(env BotEnv) []RichBlock {
 	}
 	return []RichBlock{
 		Heading(i18n.T(env.Lang, "bot.version.title"), 2),
-		KeyValueTable([]KVRow{
+		KeyValueTableLang(env.Lang, []KVRow{
 			{Label: i18n.T(env.Lang, "bot.version.label_build"), Value: v},
 			{Label: i18n.T(env.Lang, "bot.version.label_go"), Value: runtime.Version()},
 			{Label: i18n.T(env.Lang, "bot.version.label_schema"), Value: dbSchemaVersion},

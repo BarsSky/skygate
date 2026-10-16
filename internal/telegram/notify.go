@@ -792,7 +792,12 @@ func (n *RealNotifier) Run(ctx context.Context) {
 			// legacy path on any error, so even an old client
 			// gets the message — never a dropped notification.
 			if len(blocks) > 0 {
-				if err := n.SendRich(token, updateChatID, blocks, nil); err != nil {
+				// B389: hand the reply's inline keyboard to the rich
+				// path (sendRichMessage accepts reply_markup), so a
+				// future block-carrying reply with buttons does not
+				// lose them.
+				richOpts := RichReplyMarkup(pendingReplyForCurrentMessage)
+				if err := n.SendRich(token, updateChatID, blocks, richOpts); err != nil {
 					log.Printf("telegram: SendRich failed, falling back to sendMessage: %v", err)
 					n.reply(token, updateChatID, body, pendingReplyForCurrentMessage)
 				}
@@ -976,6 +981,14 @@ func splitReplyParts(text string) []string {
 // land" checkable in one line at the call site.
 func (n *RealNotifier) sendPlain(token string, chatID int64, text string, pending *PendingReply) (int64, bool) {
 	endpoint := n.apiBase + "/bot" + url.PathEscape(token) + "/sendMessage"
+	// B389: the HTML body is sanitised HERE — the last point before
+	// the wire, after trimming and splitting. A body that carries a
+	// literal <placeholder> (the /invite <username> class) used to be
+	// rejected with HTTP 400 "can't parse entities" and only logged,
+	// so the user got nothing at all. See htmlsafe.go.
+	if pending != nil && pending.ParseMode == "HTML" {
+		text = sanitizeTelegramHTML(text)
+	}
 	payload := map[string]any{
 		"chat_id":                  chatID,
 		"text":                     text,
@@ -1055,6 +1068,11 @@ func (n *RealNotifier) editMessageText(token string, chatID, messageID int64, te
 		return false
 	}
 	endpoint := n.apiBase + "/bot" + url.PathEscape(token) + "/editMessageText"
+	// B389: same send-boundary sanitiser as sendPlain — an edited
+	// message must not be able to lose the reply either.
+	if pending != nil && pending.ParseMode == "HTML" {
+		text = sanitizeTelegramHTML(text)
+	}
 	payload := map[string]any{
 		"chat_id":    chatID,
 		"message_id": messageID,
@@ -1176,9 +1194,14 @@ func (n *RealNotifier) handleCallback(token string, cq *callbackQuery) {
 			return
 		}
 		reply := renderPlatformInstructions(env.Lang, platform, key)
-		edited := n.editMessageText(token, chatID, n.lastInlineMessageID(chatID), reply, nil)
+		// B389: the platform instructions are HTML (<code>/<pre> for
+		// the shell commands). They used to be sent with parse_mode
+		// unset, so the user saw raw backticks and a literal
+		// <HEADSCALE_URL> placeholder instead of formatted commands.
+		htmlReply := &PendingReply{ParseMode: "HTML"}
+		edited := n.editMessageText(token, chatID, n.lastInlineMessageID(chatID), reply, htmlReply)
 		if !edited {
-			n.sendPlain(token, chatID, reply, nil)
+			n.sendPlain(token, chatID, reply, htmlReply)
 		}
 		return
 	case strings.HasPrefix(data, "lang:"):
@@ -1272,7 +1295,7 @@ func (n *RealNotifier) handleCallback(token string, cq *callbackQuery) {
 	// back to sendMessage internally on API errors, so
 	// this is a safety net for the missing-token case).
 	if len(blocks) > 0 {
-		if err := n.SendRich(token, chatID, blocks, nil); err != nil {
+		if err := n.SendRich(token, chatID, blocks, RichReplyMarkup(pendingReplyForCurrentMessage)); err != nil {
 			n.sendPlain(token, chatID, body, pendingReplyForCurrentMessage)
 		}
 	} else {

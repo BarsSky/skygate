@@ -28,6 +28,61 @@
 //   - 16 nesting levels
 //   - 50 media attachments (we don't use media yet)
 //   - 20 columns in a table
+//
+// ---------------------------------------------------------------------
+// 2026-10-16 (B389) — THE WIRE FORMAT, MEASURED AGAINST THE LIVE API.
+//
+// The B186 implementation was wrong in two independent ways and every
+// rich send therefore fell back to plain sendMessage, unnoticed for two
+// months. Both were reproduced against api.telegram.org on the reference
+// host, with the bot's own token and a bound chat:
+//
+//  1. WRONG ENVELOPE. `sendRichMessage` takes the message under
+//     `rich_message`; the pre-B389 code posted `blocks` at the TOP
+//     level, together with `chat_id`. Unknown top-level fields are
+//     silently IGNORED, so the API answered
+//     400 "Bad Request: rich message must be non-empty" — and
+//     SendRich's own fallback logged the rejection and re-sent the
+//     message as flat parse_mode=HTML. The rich path had never
+//     delivered a single message.
+//
+//     `{"chat_id": 1, "blocks": [...]}`                  -> 400
+//     `{"chat_id": 1, "rich_message": {"blocks": [...]}}` -> parsed
+//     `{"chat_id": 1, "rich_message": {"html": "<h2>x</h2>"}}` -> 200
+//
+//  2. THE BLOCK VOCABULARY IS NOT THE API'S. `InputRichBlock` does not
+//     use the type names this file invented from the HTML tag list.
+//     Verified type-by-type on the live parser (the API names the first
+//     offending type, which is how this list was obtained):
+//
+//     accepted: paragraph, heading (numeric `size`, NOT `level`),
+//     list (items are OBJECTS, not strings),
+//     table (field is `cells` of PageBlockTableCell objects,
+//     NOT `rows` of RichText),
+//     details, footer, divider
+//     rejected: section_heading, aside, inline `text` (a plain inline
+//     node must be a bare JSON string), mark/sub/sup;
+//     `url` needs the field `url`, not `href`
+//
+//     So the RichBlock values below are NOT the wire format of
+//     sendRichMessage — they are skygate's own internal IR, and
+//     `renderBlocksAsRichHTML` is the single serialiser to the wire.
+//     Do not "fix" the type names back into the payload: the payload
+//     carries HTML.
+//
+// The HTML form was chosen deliberately over the blocks form: it needs
+// no reverse-engineered struct schema, it reuses the renderer that
+// already existed for the old-client fallback, and the accepted tag
+// vocabulary was enumerated in one shot (all 31 of h1-h6, p, b, i, u,
+// s, code, pre, a, br, hr, blockquote (plain + expandable), ul, ol,
+// details/summary, footer, table (bordered striped + caption + th),
+// tg-spoiler, span.tg-spoiler, mark, sub, sup, tg-time, divider and
+// input[type=checkbox] were accepted in ONE message). `reply_markup`
+// (inline keyboards) is accepted alongside `rich_message` too, so a
+// rich reply is not restricted to button-less messages.
+//
+// Guarded by `scripts/check_b389_rich_message_wire.sh` and
+// `internal/telegram/rich_b389_test.go`.
 //   - "Show more" button folds long messages after ~8000 chars
 package telegram
 
@@ -40,20 +95,20 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+
+	"skygate/internal/i18n"
 )
 
-// RichBlock is the discriminated union of block types we
-// emit. The HTTP API takes a raw JSON list of blocks; the
-// caller is responsible for assembling the right shapes per
-// the Bot API 10.1 spec (see internal/telegram/rich_test.go
-// for the JSON contract tests). We don't pre-define Go
-// structs for every block type — the rich-message shape
-// is large and a map[string]any keeps the wire format
-// readable when diffing with the Bot API docs.
+// RichBlock is skygate's INTERNAL rich-message IR — it is NOT the
+// wire format of sendRichMessage (see the B389 note at the top of
+// this file: the API's InputRichBlock uses different type names and
+// different field names). renderBlocksAsRichHTML is the single place
+// that turns this IR into what the API actually accepts.
 //
 // The discriminated union key is "type". Values:
 //
-//	"section_heading" — <h1>..<h4> with optional "level" (1..4)
+//	"section_heading" — <h1>..<h6> with optional "level" (1..6)
 //	"paragraph"       — plain text block
 //	"list"            — bullet or ordered list of items
 //	"table"           — header row + body rows
@@ -61,6 +116,7 @@ import (
 //	"aside"           — pull-quote (used for warnings / alerts)
 //	"footer"          — small-text footer line
 //	"divider"         — horizontal rule
+//	"preformatted"    — monospace block
 type RichBlock = map[string]any
 
 // RichText is the inline-text node inside a block. The Bot
@@ -243,12 +299,19 @@ func Plain(text string) RichText {
 // sendMessage with parse_mode=HTML so the operator still
 // sees the body — never silently drops a notification.
 //
-// `blocks` is the list of top-level RichBlock. The body
-// is built by passing the same list as InputRichMessage.blocks.
+// `blocks` is skygate's internal IR (see RichBlock). It is
+// serialised by renderBlocksAsRichHTML into the `rich_message.html`
+// form the API accepts — 2026-10-16 (B389): the previous version
+// posted the IR itself as a top-level `blocks` field, which the API
+// ignores, so EVERY rich send was answered
+// `400 rich message must be non-empty` and silently degraded to the
+// flat fallback. Both the envelope and the empty-body guard below are
+// pinned by rich_b389_test.go.
 //
-// `opts` is a free-form map for future fields
-// (is_rtl, skip_entity_detection, media, etc.) — most
-// call sites can pass nil.
+// `opts` is a free-form map of extra top-level fields (reply_markup,
+// is_rtl, skip_entity_detection, media, ...). An inline keyboard
+// passed here survives the fallback path, so a rich reply with
+// buttons never loses them.
 func (n *RealNotifier) SendRich(token string, chatID int64, blocks []RichBlock, opts map[string]any) error {
 	if n == nil || token == "" || chatID == 0 {
 		return fmt.Errorf("SendRich: missing token or chatID")
@@ -256,11 +319,20 @@ func (n *RealNotifier) SendRich(token string, chatID int64, blocks []RichBlock, 
 	if len(blocks) == 0 {
 		return fmt.Errorf("SendRich: empty blocks")
 	}
+	html := renderBlocksAsRichHTML(blocks)
+	if strings.TrimSpace(html) == "" {
+		// A body that renders to nothing would be rejected by the API
+		// with the same "rich message must be non-empty" answer that
+		// hid the B389 envelope bug. Fail loudly instead.
+		return fmt.Errorf("SendRich: %d block(s) rendered to an empty body", len(blocks))
+	}
 	// 1. Try sendRichMessage first.
 	endpoint := n.apiBase + "/bot" + url.PathEscape(token) + "/sendRichMessage"
 	payload := map[string]any{
 		"chat_id": chatID,
-		"blocks":  blocks,
+		"rich_message": map[string]any{
+			"html": html,
+		},
 	}
 	for k, v := range opts {
 		payload[k] = v
@@ -297,9 +369,133 @@ func (n *RealNotifier) SendRich(token string, chatID int64, blocks []RichBlock, 
 	// sendMessage. The rendering is "good enough" — the
 	// structured <h2>/<ul>/<table> tags degrade gracefully
 	// to bold + bullets on older clients.
-	html := renderBlocksAsHTML(blocks)
-	_, _ = n.sendPlain(token, chatID, html, &PendingReply{ParseMode: "HTML"})
+	flat := renderBlocksAsHTML(blocks)
+	_, _ = n.sendPlain(token, chatID, flat, pendingFromRichOpts(opts))
 	return nil
+}
+
+// pendingFromRichOpts rebuilds the PendingReply for the sendMessage
+// fallback from the options handed to SendRich, so an inline keyboard
+// survives a rich rejection. Only reply_markup is understood; every
+// other option is a rich-only field with no sendMessage equivalent.
+func pendingFromRichOpts(opts map[string]any) *PendingReply {
+	pending := &PendingReply{ParseMode: "HTML"}
+	if len(opts) == 0 {
+		return pending
+	}
+	rm, ok := opts["reply_markup"].(map[string]any)
+	if !ok {
+		return pending
+	}
+	if kb, ok := rm["inline_keyboard"].([][]map[string]any); ok {
+		pending.InlineKeyboard = kb
+	}
+	return pending
+}
+
+// RichReplyMarkup builds the SendRich `opts` map for a reply that
+// carries an inline keyboard. Returns nil when there is no keyboard,
+// so the common case adds nothing to the payload.
+func RichReplyMarkup(pending *PendingReply) map[string]any {
+	if pending == nil || len(pending.InlineKeyboard) == 0 {
+		return nil
+	}
+	return map[string]any{
+		"reply_markup": map[string]any{
+			"inline_keyboard": pending.InlineKeyboard,
+		},
+	}
+}
+
+// renderBlocksAsRichHTML serialises the internal IR into the
+// `rich_message.html` body. This is the ONLY encoder to the
+// sendRichMessage wire format (see the B389 note at the top of the
+// file). Every value passes through escapeHTML, so user-controlled
+// text (hostnames, rule targets, mesh names) cannot inject markup.
+//
+// Tag choice is not arbitrary: every tag emitted here was verified
+// accepted by the live API in a single message on 2026-10-16.
+func renderBlocksAsRichHTML(blocks []RichBlock) string {
+	var b strings.Builder
+	for _, blk := range blocks {
+		renderBlockAsRichHTML(&b, blk)
+		b.WriteString("\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func renderBlockAsRichHTML(b *strings.Builder, blk RichBlock) {
+	t, _ := blk["type"].(string)
+	switch t {
+	case "section_heading":
+		level, _ := blk["level"].(int)
+		if level < 1 || level > 6 {
+			level = 3
+		}
+		fmt.Fprintf(b, "<h%d>%s</h%d>", level, escapeHTML(getString(blk, "text")), level)
+	case "paragraph":
+		b.WriteString("<p>")
+		b.WriteString(renderRichTextRich(getRichText(blk)))
+		b.WriteString("</p>")
+	case "list":
+		items := getRawSlice(blk, "items")
+		ordered, _ := blk["style"].(string)
+		tag := "ul"
+		if ordered == "ordered" {
+			tag = "ol"
+		}
+		fmt.Fprintf(b, "<%s>", tag)
+		for _, raw := range items {
+			b.WriteString("<li>")
+			b.WriteString(renderRichTextRich(toRichText(raw)))
+			b.WriteString("</li>")
+		}
+		fmt.Fprintf(b, "</%s>", tag)
+	case "table":
+		rows := getRawSlice(blk, "rows")
+		if len(rows) == 0 {
+			return
+		}
+		b.WriteString("<table bordered striped>")
+		for i, raw := range rows {
+			b.WriteString("<tr>")
+			cell := "td"
+			if i == 0 {
+				cell = "th"
+			}
+			for _, c := range toRichTextArray(raw) {
+				fmt.Fprintf(b, "<%s>%s</%s>", cell, renderRichTextRich(c), cell)
+			}
+			b.WriteString("</tr>")
+		}
+		b.WriteString("</table>")
+	case "details":
+		b.WriteString("<details><summary>")
+		b.WriteString(escapeHTML(getString(blk, "summary")))
+		b.WriteString("</summary>")
+		body := getRawSlice(blk, "body")
+		for _, inner := range body {
+			if ib, ok := inner.(RichBlock); ok {
+				renderBlockAsRichHTML(b, ib)
+				b.WriteString("\n")
+			}
+		}
+		b.WriteString("</details>")
+	case "aside":
+		b.WriteString("<blockquote>")
+		b.WriteString(escapeHTML(getString(blk, "text")))
+		b.WriteString("</blockquote>")
+	case "footer":
+		b.WriteString("<footer>")
+		b.WriteString(renderRichTextRich(getRichText(blk)))
+		b.WriteString("</footer>")
+	case "divider":
+		b.WriteString("<hr>")
+	case "preformatted":
+		b.WriteString("<pre>")
+		b.WriteString(escapeHTML(getString(blk, "text")))
+		b.WriteString("</pre>")
+	}
 }
 
 // renderBlocksAsHTML is the fallback for clients that
@@ -378,9 +574,87 @@ func renderBlockAsHTML(b *strings.Builder, blk RichBlock) {
 		b.WriteString("<i>")
 		b.WriteString(escapeHTML(text))
 		b.WriteString("</i>")
+	case "preformatted":
+		// B389: this case was missing, so a preformatted block
+		// rendered as NOTHING on the fallback path (the rich path
+		// had no preformatted case either). Both now emit <pre>.
+		b.WriteString("<pre>")
+		b.WriteString(escapeHTML(getString(blk, "text")))
+		b.WriteString("</pre>")
 	case "divider":
 		b.WriteString("———")
 	}
+}
+
+// renderRichTextRich is the rich-HTML twin of renderRichText: same
+// RichText input, but it may emit the tags only the rich vocabulary
+// accepts (<tg-time>) and prefers the native <tg-spoiler> over
+// <span class="tg-spoiler">. Both forms were verified accepted in
+// rich_message.html, so the substitution is cosmetic.
+func renderRichTextRich(rt RichText) string {
+	var b strings.Builder
+	for _, raw := range rt {
+		if m, ok := raw.(RichBlock); ok {
+			renderInlineNodeRich(&b, m)
+		} else if s, ok := raw.(string); ok {
+			b.WriteString(escapeHTML(s))
+		}
+	}
+	return b.String()
+}
+
+func renderInlineNodeRich(b *strings.Builder, m RichBlock) {
+	t, _ := m["type"].(string)
+	text := getString(m, "text")
+	switch t {
+	case "text":
+		b.WriteString(escapeHTML(text))
+	case "bold":
+		b.WriteString("<b>")
+		b.WriteString(escapeHTML(text))
+		b.WriteString("</b>")
+	case "italic":
+		b.WriteString("<i>")
+		b.WriteString(escapeHTML(text))
+		b.WriteString("</i>")
+	case "code":
+		b.WriteString("<code>")
+		b.WriteString(escapeHTML(text))
+		b.WriteString("</code>")
+	case "spoiler":
+		b.WriteString("<tg-spoiler>")
+		b.WriteString(escapeHTML(text))
+		b.WriteString("</tg-spoiler>")
+	case "url":
+		href := getString(m, "href")
+		fmt.Fprintf(b, `<a href="%s">%s</a>`, escapeHTML(href), escapeHTML(text))
+	case "date_time":
+		// <tg-time unix="..."> lets the client render the moment in
+		// the reader's own locale and timezone. The IR carries the
+		// visible label plus an RFC3339 stamp; without a parseable
+		// stamp we fall back to the label alone rather than lying
+		// about the instant.
+		if unix, ok := timeUnixFromISO(getString(m, "iso")); ok {
+			fmt.Fprintf(b, `<tg-time unix="%d">%s</tg-time>`, unix, escapeHTML(text))
+		} else {
+			b.WriteString(escapeHTML(text))
+		}
+	default:
+		b.WriteString(escapeHTML(text))
+	}
+}
+
+// timeUnixFromISO converts an RFC3339 stamp into a Unix second count.
+// Returns ok=false for an empty or unparseable value.
+func timeUnixFromISO(iso string) (int64, bool) {
+	if iso == "" {
+		return 0, false
+	}
+	ts, err := time.Parse(time.RFC3339, iso)
+	if err != nil {
+		return 0, false
+	}
+	return ts.Unix(), true
 }
 
 func renderRichText(rt RichText) string {
@@ -559,12 +833,21 @@ type KVRow struct {
 // migration mechanical — replace "list of Field lines"
 // with "one call to KeyValueTable(rows)".
 func KeyValueTable(rows []KVRow) RichBlock {
+	return KeyValueTableLang(i18n.LangEN, rows)
+}
+
+// KeyValueTableLang is KeyValueTable with the header row localised.
+// B389: the header used to be the hardcoded English "Field / Value"
+// for every language, so a Russian chat rendered an English header
+// above Russian labels (and the same fix applies to /version and
+// /status). Keys: bot.table.field / bot.table.value.
+func KeyValueTableLang(lang string, rows []KVRow) RichBlock {
 	if len(rows) == 0 {
 		return Paragraph("") // safer than an empty table
 	}
 	tableRows := make([][]RichText, 0, len(rows)+1)
 	tableRows = append(tableRows, []RichText{
-		Bold("Field"), Bold("Value"),
+		Bold(i18n.T(lang, "bot.table.field")), Bold(i18n.T(lang, "bot.table.value")),
 	})
 	for _, r := range rows {
 		tableRows = append(tableRows, []RichText{

@@ -221,40 +221,59 @@ func ComposeRich(lang, context string, body []RichBlock) []RichBlock {
 	return out
 }
 
-// trimForTelegram is unchanged from v1. The body budget
-// is 3800 chars (Telegram's hard cap is 4096; the
-// headroom covers the header/footer wrapper, code-block
-// backticks, and any inline-keyboard markup the
-// notifier might add on top).
+// trimForTelegram caps a reply body before it is posted.
 //
-// The trim happens at the last "\n\n" before the cap so
-// we don't cut a sentence in half. If there's no
-// double-newline in the budget, we hard-trim at the
-// cap. Either way the returned string is at or under
-// 3800 chars (the truncation marker is included in that
-// budget; we cut the body to make room for it).
+// B389 (2026-10-16) fixed three defects here:
 //
-// 2026-07-14: Этап 14 v9 — the marker now appends a
-// single line saying "the rest was cut; ask for a
-// narrower slice". The marker is rendered through
-// bot.trim.marker (the same key v1 used) so the
-// translation still applies, but we no longer treat
-// the marker as a header; it's just a trailing line.
-func trimForTelegram(s string) string {
+//   - the length test and the cut both used BYTE counts while the
+//     sibling heuristic (verboseForBody) counted runes, so a Cyrillic
+//     body could be cut in the middle of a rune and Telegram would
+//     reject the whole message. Everything is rune-based now.
+//   - the truncation marker was fetched in English for every language
+//     (i18n.T(i18n.LangEN, ...)), so a Russian chat ended with an
+//     English sentence. The caller's language is now a parameter.
+//   - the cut could land inside an HTML tag, leaving a half tag that
+//     Telegram rejects; the cut now stops at the last tag boundary.
+//
+// The cut still prefers the last "\n\n" before the cap so a sentence
+// is not split in half.
+// The budget is counted in RUNES, which is Telegram's own unit (the
+// limit is 4096 UTF-8 characters, i.e. code points); the 296-character
+// headroom covers the header/footer wrapper and any markup the
+// notifier adds on top. Counting bytes — as this function used to —
+// over-trims Cyrillic by half and can cut a rune in two.
+func trimForTelegram(lang, s string) string {
 	const budget = 3800
-	if len(s) <= budget {
+	if len([]rune(s)) <= budget {
 		return s
 	}
-	marker := i18n.T(i18n.LangEN, "bot.trim.marker")
-	bodyBudget := budget - len(marker)
+	marker := i18n.T(lang, "bot.trim.marker")
+	bodyBudget := budget - len([]rune(marker))
 	if bodyBudget < 0 {
 		bodyBudget = 0
 	}
-	cut := s[:bodyBudget]
+	runes := []rune(s)
+	cut := string(runes[:bodyBudget])
 	if idx := strings.LastIndex(cut, "\n\n"); idx > 200 {
 		cut = cut[:idx]
 	}
+	cut = trimToTagBoundary(cut)
 	return cut + marker
+}
+
+// trimToTagBoundary shortens s so it does not end inside an HTML tag
+// or entity: if the last "<" has no ">" after it, everything from that
+// "<" on is dropped. A dangling "&" with no ";" is dropped the same
+// way. The send boundary would otherwise have to escape the wreckage
+// and the reader would see "<co" or "&am" at the truncation point.
+func trimToTagBoundary(s string) string {
+	if i := strings.LastIndex(s, "<"); i >= 0 && !strings.Contains(s[i:], ">") {
+		s = s[:i]
+	}
+	if i := strings.LastIndex(s, "&"); i >= 0 && !strings.Contains(s[i:], ";") {
+		s = s[:i]
+	}
+	return strings.TrimRight(s, " \t\n")
 }
 
 // --- v1 helpers, kept stable for backward compatibility ---

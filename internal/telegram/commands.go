@@ -913,10 +913,15 @@ func statusBlocks(env BotEnv) ([]RichBlock, error) {
 	}
 	return []RichBlock{
 		Heading(i18n.T(env.Lang, "bot.status.header"), 2),
-		KeyValueTable([]KVRow{
-			{Label: i18n.T(env.Lang, "bot.status.rules"), Value: strconv.FormatInt(totalRules, 10)},
-			{Label: i18n.T(env.Lang, "bot.status.users"), Value: strconv.FormatInt(totalUsers, 10)},
-			{Label: i18n.T(env.Lang, "bot.status.last_acl"), Value: fmt.Sprintf("#%d", lastACL)},
+		// B389: the labels used to come from bot.status.rules/users/
+		// last_acl, which are FORMAT strings ("rules: %d"). Used as a
+		// table label they rendered the raw placeholder — the rich
+		// /status read "rules: %d | 12". The label-only keys existed
+		// all along (bot.status.label_*).
+		KeyValueTableLang(env.Lang, []KVRow{
+			{Label: i18n.T(env.Lang, "bot.status.label_rules"), Value: strconv.FormatInt(totalRules, 10)},
+			{Label: i18n.T(env.Lang, "bot.status.label_users"), Value: strconv.FormatInt(totalUsers, 10)},
+			{Label: i18n.T(env.Lang, "bot.status.label_last_acl"), Value: fmt.Sprintf("#%d", lastACL)},
 		}),
 	}, nil
 }

@@ -78,17 +78,19 @@ func exitNodesReply(env BotEnv) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s\n\n", i18n.Tf(lang, "bot.exit_nodes.header", len(byUser)))
 	for _, r := range byUser {
-		status := "offline"
+		// B389: "offline"/"online" were hardcoded English and showed up
+		// verbatim in a Russian chat (/myexitnodes had the same pair).
+		status := i18n.T(lang, "bot.exit_nodes.status_offline")
 		if r.online == 1 {
-			status = "online"
+			status = i18n.T(lang, "bot.exit_nodes.status_online")
 		}
 		var seen string
 		if r.lastSeen > 0 {
-			seen = fmt.Sprintf(", last_seen %s", unixToShort(r.lastSeen))
+			seen = i18n.Tf(lang, "bot.exit_nodes.last_seen", unixToShort(r.lastSeen))
 		}
 		fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.exit_nodes.row", r.nodeID, r.user, status, seen))
 	}
-	return trimForTelegram(sb.String())
+	return trimForTelegram(env.Lang, sb.String())
 }
 
 // quotaReply shows rule counts per user alongside their per-user
@@ -137,7 +139,7 @@ func quotaReply(env BotEnv) string {
 		} else {
 			pct = -1 // -1 = no limit configured
 		}
-		bar := quotaBar(pct)
+		bar := quotaBar(lang, pct)
 		maxStr := fmt.Sprintf("%d", r.max)
 		if r.max == 0 {
 			maxStr = "∞"
@@ -150,7 +152,7 @@ func quotaReply(env BotEnv) string {
 	} else {
 		fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.quota.total", total))
 	}
-	return trimForTelegram(sb.String())
+	return trimForTelegram(env.Lang, sb.String())
 }
 
 // ackReply handles "/ack <id>". It marks the matching row in
@@ -207,9 +209,10 @@ func ackReply(env BotEnv, arg string) string {
 }
 
 // quotaBar renders a 10-char progress bar. pct<0 means "no limit".
-func quotaBar(pct int) string {
+// B389: the "no limit" label was hardcoded English in both languages.
+func quotaBar(lang string, pct int) string {
 	if pct < 0 {
-		return "[no limit]"
+		return i18n.T(lang, "bot.quota.no_limit")
 	}
 	if pct > 100 {
 		pct = 100

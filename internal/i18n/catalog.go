@@ -13,7 +13,7 @@
 // into 12 per-feature files for navigability. The
 // translation contract (T(lang, key) → string) is unchanged.
 // Tests that previously read ruCatalog / enCatalog directly
-// (TestCatalogsParity, TestPlaceholderOrder, TestHTMLSafeCatalog)
+// (TestCatalogsParity, TestPlaceholderOrder, TestBotCatalogHasNoBakedInEscaping)
 // now build the catalog via New() and inspect the merged
 // result — the tests work the same way, but the source
 // data is split by feature.

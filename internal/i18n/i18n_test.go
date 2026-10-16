@@ -3,7 +3,6 @@ package i18n
 import (
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -40,88 +39,76 @@ func TestCatalogsParity(t *testing.T) {
 	}
 }
 
-// TestHTMLSafeCatalog — every bot.* key whose reply is sent in
-// parse_mode=HTML must not contain a literal `<` or `>` that isn't
-// part of a known HTML tag. Telegram rejects the whole sendMessage
-// payload with HTTP 400 "can't parse entities: Unsupported start
-// tag" if the message contains a `<word>` (or `</word>`) that isn't
-// a valid HTML entity.
+// TestBotCatalogHasNoBakedInEscaping — B389 (2026-10-16).
 //
-// 2026-07-16: v0.16.4 — added after the v0.16.3 release shipped
-// HTML formatting for /help and Telegram rejected the /help reply
-// with HTTP 400 because the bot.help.subtitle key had a literal
-// "<команда>" placeholder (Cyrillic word in angle brackets). The
-// fix was to HTML-escape the `<` to `&lt;`; this test pins that
-// for every bot.* key that goes through parse_mode=HTML, so the
-// regression is caught at unit-test time instead of in production.
+// This test replaces the old prefix-list TestHTMLSafeCatalog, whose
+// premise was wrong in both directions and which therefore certified
+// a broken channel.
 //
-// Keys covered (10 prefixes):
+// The old test asserted that every value under ten selected prefixes
+// carried NO raw `<word>`, i.e. that the catalogue itself must be
+// HTML-escaped. Consequences, both measured on the live host:
 //
-//	bot.help.*, bot.exit_nodes_health.*, bot.audit.*, bot.version.*,
-//	bot.my_status.*, bot.my_nodes.*, bot.my_rules.*, bot.my_quota.*,
-//	bot.myexitnodes.*, bot.add_device.*
+//	(a) four commands were silently dead — `bot.invite.usage_invite`
+//	    ("Использование: /invite <username>") and three siblings had a
+//	    RAW placeholder while their builder set parse_mode=HTML, so
+//	    Telegram answered 400 can't parse entities and the reply never
+//	    arrived. The prefixes with the bug were simply not on the list.
+//	(b) 61 values carried `&lt;placeholder&gt;` and were sent WITHOUT
+//	    parse_mode, so the user read `&lt;username&gt;` literally.
 //
-// NOT covered (plain text):
-//
-//	bot.welcome.*, bot.start.*, bot.strict_locked.*, bot.unbind_self.*,
-//	bot.help_detail.*, bot.ack.* (no markHTMLReply())
-func TestHTMLSafeCatalog(t *testing.T) {
-	htmlPrefixes := []string{
-		"bot.help.",
-		"bot.exit_nodes_health.",
-		"bot.audit.",
-		"bot.version.",
-		"bot.my_status.",
-		"bot.my_nodes.",
-		"bot.my_rules.",
-		"bot.my_quota.",
-		"bot.myexitnodes.",
-		"bot.add_device.",
-	}
-	// Tags Telegram accepts in parse_mode=HTML. Every other
-	// `<word>` in the value is a violation (must be escaped
-	// to `&lt;` and `&gt;`).
-	allowedTags := map[string]bool{
-		"b": true, "i": true, "u": true, "s": true,
-		"strike": true, "del": true, "code": true,
-		"pre": true, "a": true, "tg-spoiler": true,
-		"blockquote": true,
-	}
-	// Reject <word> or </word> where word is not in allowedTags.
-	// We use a permissive regex: < (or </) [a-zA-Z][a-zA-Z0-9-]*
-	// — Cyrillic placeholders like <команда> don't match
-	// [a-zA-Z] (so they're not caught by this regex), but
-	// the live deploy already proved they fail HTML parsing
-	// in production. We use a more permissive regex that
-	// catches any Unicode letter so Cyrillic is covered too.
-	badTagRE := regexp.MustCompile(`</?[\p{L}][\p{L}\p{N}-]*`)
-
+// Escaping now belongs to the SEND BOUNDARY (internal/telegram/htmlsafe.go
+// sanitises every parse_mode=HTML body after trimming, so a new prefix
+// cannot reintroduce the class), and this test enforces the matching
+// catalogue rule: a bot value carries LOGICAL text. Write `<username>`,
+// never `&lt;username&gt;`; a bare `<` is safe on both paths and renders
+// correctly on each.
+func TestBotCatalogHasNoBakedInEscaping(t *testing.T) {
+	entities := []string{"&lt;", "&gt;", "&amp;", "&quot;", "&#"}
 	check := func(name string, cat map[string]string) {
 		for k, v := range cat {
-			isHTMLKey := false
-			for _, p := range htmlPrefixes {
-				if strings.HasPrefix(k, p) {
-					isHTMLKey = true
-					break
-				}
-			}
-			if !isHTMLKey {
+			if !strings.HasPrefix(k, "bot.") {
 				continue
 			}
-			for _, m := range badTagRE.FindAllString(v, -1) {
-				// m is the full match like "<code" or "</b".
-				// Strip leading "<" or "</" to get the tag name.
-				tag := strings.TrimPrefix(m, "</")
-				tag = strings.TrimPrefix(tag, "<")
-				if allowedTags[tag] {
-					continue
+			for _, e := range entities {
+				if strings.Contains(v, e) {
+					t.Errorf("%s: %q contains the baked-in entity %q — write the logical text "+
+						"instead; the Telegram send boundary escapes it for parse_mode=HTML "+
+						"(internal/telegram/htmlsafe.go, B389)", name, k, e)
 				}
-				t.Errorf("%s: %q has unsafe HTML tag %q — escape to &lt; / &gt;", name, k, m)
 			}
 		}
 	}
-	check("ruCatalog", mergedRU)
-	check("enCatalog", mergedEN)
+	check("ruBot", mergedRU)
+	check("enBot", mergedEN)
+}
+
+// TestBotCatalogHasNoRichOnlyTags — a `bot.*` value is rendered either
+// as plain text or with parse_mode=HTML, never as a rich_message.html
+// body (the rich path builds its own HTML from the block IR). The tags
+// only the rich vocabulary accepts are therefore a guaranteed HTTP 400
+// if they ever appear in a catalogue value.
+func TestBotCatalogHasNoRichOnlyTags(t *testing.T) {
+	richOnly := []string{
+		"<h1>", "<h2>", "<h3>", "<h4>", "<h5>", "<h6>",
+		"<table", "<details", "<summary", "<footer", "<blockquote",
+		"<ul>", "<ol>", "<li>", "<hr>", "<mark>", "<tg-time", "<divider",
+	}
+	check := func(name string, cat map[string]string) {
+		for k, v := range cat {
+			if !strings.HasPrefix(k, "bot.") {
+				continue
+			}
+			for _, tag := range richOnly {
+				if strings.Contains(v, tag) {
+					t.Errorf("%s: %q uses the rich-only tag %q, which Telegram rejects with "+
+						"parse_mode=HTML (B389)", name, k, tag)
+				}
+			}
+		}
+	}
+	check("ruBot", mergedRU)
+	check("enBot", mergedEN)
 }
 
 // TestPlaceholderOrder — placeholder counts must match between languages

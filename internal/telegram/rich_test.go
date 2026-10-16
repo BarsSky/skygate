@@ -1,19 +1,27 @@
 // Package telegram — rich_test.go pins the B186 Bot API 10.1
-// Rich Messages adapter. The tests cover the four concerns
-// the operator cares about:
+// Rich Messages IR (the block builders and the flat fallback).
 //
-//  1. The builder produces the right JSON shape (verified
-//     against the Bot API 10.1 spec — see the live block list
-//     in https://core.telegram.org/bots/api#inputrichblock).
-//  2. The escape layer never lets user-controlled strings
-//     inject HTML or break out of a block.
-//  3. The fallback path (client < 10.1) degrades to a flat
-//     HTML body that still conveys the same info.
-//  4. The size limits (32768 chars / 500 blocks / 20 table
-//     columns) are enforced at the builder boundary, not at
-//     the network boundary — the operator gets an inline
-//     "table too wide" cell instead of a silent API
-//     rejection.
+// 2026-10-16 (B389) — READ THIS BEFORE TRUSTING AN ASSERTION HERE.
+// The original header of this file claimed the tests verified the JSON
+// "against the Bot API 10.1 spec". They did not: they marshalled a map
+// this package built and asserted this package's own field names, so
+// the suite stayed green while the live API rejected every rich send
+// (`400 rich message must be non-empty`) for two months. Nothing in
+// THIS file may be read as a statement about the wire format.
+//
+// The wire contract lives in rich_b389_test.go, which captures the
+// payload the notifier actually posts. What this file covers is the
+// internal IR and the old-client fallback:
+//
+//  1. The builders produce the IR shapes the renderers understand.
+//  2. The escape layer never lets user-controlled strings inject HTML.
+//  3. The fallback path degrades to a flat HTML body that still
+//     conveys the same info, using only the tags parse_mode=HTML
+//     accepts.
+//  4. The size limits (32768 chars / 500 blocks / 20 table columns)
+//     are enforced at the builder boundary, not at the network
+//     boundary — the operator gets an inline "table too wide" cell
+//     instead of a silent API rejection.
 package telegram
 
 import (
@@ -22,32 +30,29 @@ import (
 	"testing"
 )
 
-// TestRichBuilder_HeadingsAndParagraph — section_heading +
-// paragraph + paragraph + footer compose the most common
-// "summary message" shape (the one /my_status renders).
+// TestRichBuilder_HeadingsAndParagraph — the heading/paragraph/footer
+// shape that /my_status renders. The IR keys are skygate's own (see
+// the B389 note in rich.go: the API's InputRichBlock calls the heading
+// type "heading" with a numeric "size" and rejects this IR's names), so
+// the assertion is about the IR plus the rich HTML the block renders
+// to — never about the wire payload.
 func TestRichBuilder_HeadingsAndParagraph(t *testing.T) {
 	blocks := []RichBlock{
 		Heading("Добрый вечер, skyadmin.", 2),
 		Paragraph("У вас 12 правил на 3 устройствах."),
 		Footer("— Ваш Дворецкий"),
 	}
-	body, err := json.Marshal(map[string]any{
-		"chat_id": 12345,
-		"blocks":  blocks,
-	})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
+	if blocks[0]["type"] != "section_heading" || blocks[0]["level"] != 2 {
+		t.Errorf("Heading IR = %v, want section_heading/level 2", blocks[0])
 	}
-	s := string(body)
+	html := renderBlocksAsRichHTML(blocks)
 	for _, want := range []string{
-		`"type":"section_heading"`,
-		`"level":2`,
-		`"type":"paragraph"`,
-		`"type":"footer"`,
-		`"chat_id":12345`,
+		"<h2>Добрый вечер, skyadmin.</h2>",
+		"<p>У вас 12 правил на 3 устройствах.</p>",
+		"<footer>— Ваш Дворецкий</footer>",
 	} {
-		if !strings.Contains(s, want) {
-			t.Errorf("body missing %q\nfull body: %s", want, s)
+		if !strings.Contains(html, want) {
+			t.Errorf("rich render missing %q\nfull body: %s", want, html)
 		}
 	}
 }
@@ -114,25 +119,23 @@ func TestRichBuilder_TableWidthLimit(t *testing.T) {
 // TestRichBuilder_EscapeHTML — user-controlled strings
 // (hostnames with &, IDs with <) must not inject HTML.
 // The Plain/Bold/Code helpers all run their input through
-// escapeHTML.
+// escapeHTML, so the RENDERED body is what has to be checked —
+// asserting JSON-level escaping of the IR only proved that
+// json.Marshal escapes by default.
 func TestRichBuilder_EscapeHTML(t *testing.T) {
 	// Mix of & < > " in a single label.
 	bad := "evil & <script> \"quoted\""
-	blocks := []RichBlock{
+	html := renderBlocksAsRichHTML([]RichBlock{
 		ParagraphStyled(Plain(bad)),
+	})
+	if strings.Contains(html, "<script>") {
+		t.Errorf("script tag reached the body: %s", html)
 	}
-	body, _ := json.Marshal(blocks)
-	// JSON-level escaping: & becomes \u0026, < becomes \u003c.
-	// The test asserts the escape happened, not the literal
-	// character.
-	if !strings.Contains(string(body), `\u0026`) {
-		t.Errorf("& not JSON-escaped: %s", body)
+	if !strings.Contains(html, "&lt;script&gt;") {
+		t.Errorf("<script> not escaped: %s", html)
 	}
-	if !strings.Contains(string(body), `\u003c`) {
-		t.Errorf("< not JSON-escaped: %s", body)
-	}
-	if !strings.Contains(string(body), `\u003e`) {
-		t.Errorf("> not JSON-escaped: %s", body)
+	if !strings.Contains(html, "&amp;") {
+		t.Errorf("& not escaped: %s", html)
 	}
 }
 

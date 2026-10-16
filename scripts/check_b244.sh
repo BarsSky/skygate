@@ -22,7 +22,10 @@
 #   L-1. catalog_bot.go has 6 RU keys ending in "&gt;>."
 #        (extra `>` before period) instead of "&gt;.".
 #   L-2. catalog_bot.go has 4 RU keys with raw "<ключ>"
-#        that Telegram HTML mode rejects.
+#        that Telegram HTML mode rejects.  (RENEGOTIATED by B389, 2026-10-16: the catalogue now
+#        carries LOGICAL text and the SEND BOUNDARY escapes it — see contract 9 below. The old
+#        phrasing aimed the fix at the catalogue, which is why the same class came back as four
+#        dead commands while the catalogue obeyed it.)
 #
 # Each of these drifts in silence for months because
 # nothing compares docs against code. B244 turns the
@@ -48,8 +51,9 @@
 #      path
 #   8. internal/i18n/catalog_bot.go has no "&gt;>."
 #      literal in any RU key
-#   9. internal/i18n/catalog_bot.go has no raw "<ключ>"
-#      in any RU key (must be "&lt;ключ&gt;")
+#   9. internal/i18n/catalog_bot.go carries logical text: no
+#      `&lt;` / `&gt;` / `&amp;` / `&quot;` anywhere (B389 moved
+#      HTML escaping to the send boundary)
 #  10. verify_pre_deploy.sh registers B244
 #      (this script — wires the gate into the gate)
 #
@@ -162,19 +166,25 @@ else
   check "C8 catalog_bot.go has no '&gt;>.'" 0 "$KEY_COUNT lines affected (first: $(echo "$GT_TYPO" | head -1))"
 fi
 
-# 9. catalog_bot.go has no raw "<ключ>" outside &lt;...&gt; form (L-2)
-#    Exclude lines where "<ключ" is inside backticks (markdown code — Telegram
-#    HTML mode does not parse content inside <code>...</code>).
-#    Examples that ARE flagged: "/login <ключ>" (raw, not in backticks).
-#    Examples that are NOT flagged: "`/login <ключ>`" (markdown code).
-RAW_KLUCH=$(grep -nE '<ключ[^a-zA-Z0-9;]|ключ>' internal/i18n/catalog_bot.go 2>/dev/null \
-  | grep -v '&lt;ключ&gt;' \
-  | grep -vE '`<|>`' || true)
+# 9. catalog_bot.go carries LOGICAL text — no baked-in HTML escaping (L-2, renegotiated by B389).
+#
+# L-2 used to be "a raw <ключ> in a catalogue value is a 400 from Telegram", and this contract
+# forbade the raw form, requiring `&lt;ключ&gt;` instead. That was a SYMPTOM-level guard for a
+# defect that lives on the SEND PATH, and it aimed the fix at the wrong end:
+#   * it did not stop the class — four commands (/invite, /accept, /mesh create, /mesh join)
+#     carried a raw <placeholder> while their builder opted into parse_mode=HTML, so Telegram
+#     answered 400 and the reply never arrived (measured live 2026-10-16);
+#   * obeying it produced the mirror-image defect — 141 values were escaped but sent WITHOUT
+#     parse_mode, so the user read `&lt;ключ&gt;` literally.
+# B389 moved escaping to the send boundary (internal/telegram/htmlsafe.go runs at the last moment
+# before the request and escapes anything that is not a valid entity/tag), so a catalogue value
+# now holds the logical text and MUST NOT contain `&lt;` / `&gt;` / `&amp;` / `&quot;`.
+RAW_KLUCH=$(grep -nE '&lt;|&gt;|&amp;|&quot;' internal/i18n/catalog_bot.go 2>/dev/null || true)
 if [ -z "$RAW_KLUCH" ]; then
-  check "C9 catalog_bot.go has no raw '<ключ>' (L-2 typo fixed)" 1
+  check "C9 catalog_bot.go carries logical text (no baked-in HTML entities; B389)" 1
 else
   KEY_COUNT=$(echo "$RAW_KLUCH" | wc -l)
-  check "C9 catalog_bot.go has no raw '<ключ>'" 0 "$KEY_COUNT lines affected (first: $(echo "$RAW_KLUCH" | head -1))"
+  check "C9 catalog_bot.go has no baked-in HTML entities" 0 "$KEY_COUNT lines affected (first: $(echo "$RAW_KLUCH" | head -1))"
 fi
 
 # 10. verify_pre_deploy.sh wires B244 into the gate.

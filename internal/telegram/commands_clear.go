@@ -197,7 +197,7 @@ func mintClearRules(env BotEnv, targetName string) string {
 	sb.WriteString("\n")
 	sb.WriteString(i18n.Tf(lang, "bot.clearrules.mint_send_confirm", clearTTL) + "\n")
 	sb.WriteString(i18n.T(lang, "bot.clearrules.mint_ignored_note"))
-	return trimForTelegram(sb.String())
+	return trimForTelegram(env.Lang, sb.String())
 }
 
 // confirmClearRules is the second phase of /clearrules. It looks up

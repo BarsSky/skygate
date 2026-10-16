@@ -12,6 +12,151 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.130 — the rich message reaches the wire, and every reply survives it (B389)
+
+**Date:** 2026-10-16 · **Base:** `v1.5.128`/`v1.5.129` → this tag · **Compatibility:** application
+change (Telegram bot + i18n catalogues + 3 new files). No migration, no route, no template, no
+schema change — the panel's HTML is unchanged, but **every Telegram message the bot sends** is
+affected, and four commands that were previously silent start answering.
+
+### What was measured, on the live bot
+
+The bot's own token (from `global_settings.telegram.bot_token`) and a bound chat (from
+`telegram_bindings.chat_id`) were used to POST to `api.telegram.org` **from inside the skygate
+container** — the only side with a working egress (B356.1). The **host cannot reach the Bot API at
+all**: `curl https://api.telegram.org/` times out with `000`, and the relay hostnames do not
+resolve there either, so a host-side script (for example `scripts/monitor_disk.sh`) can never
+deliver its own alert; the signal has to go through the application.
+
+| Payload | Answer |
+|---|---|
+| `{"chat_id":N,"blocks":[…]}` | **400 `rich message must be non-empty`** |
+| `{"chat_id":N,"rich_message":{"blocks":[…]}}` | 400 `type "section_heading" is unsupported` |
+| `{"chat_id":N,"rich_message":{"html":"<h2>x</h2>"}}` | **200, delivered** |
+| `… , "reply_markup":{…}` alongside `rich_message` | **200, keyboard accepted** |
+| `/invite` usage text as the code sent it (`parse_mode=HTML`) | **400 `can't parse entities: Unsupported start tag "username"`** |
+| the same text with the placeholders escaped | **200, delivered** |
+
+### Two defects, both masked because every failure path only logs
+
+**1. The envelope was wrong, so the rich path had never delivered a single message since B186.**
+`sendRichMessage` takes its content under `rich_message`; the code posted `blocks` at the **top
+level**, and Telegram **silently ignores unknown top-level fields** — so the API saw an empty rich
+message, answered `400 rich message must be non-empty`, and `SendRich`'s own fallback quietly
+re-sent the body as flat `parse_mode=HTML`. Nesting them then failed too
+(`type "section_heading" is unsupported`), because the IR's type names had been invented from the
+**HTML tag list** instead of from `InputRichBlock`. The live parser was asked type by type:
+
+* **accepted:** `paragraph`, `heading` (numeric `size`), `list` (items are **objects**),
+  `table` (field **`cells`**, `PageBlockTableCell`), `details`, `footer`, `divider`;
+* **rejected:** `section_heading`, `aside`, inline `text`, `mark`, `sub`, `sup`;
+  `url` wants the field `url`, not `href`.
+
+The HTML form answered 200, and the accepted tag vocabulary was then enumerated the same way —
+**all 31** of `h1`–`h6`, `p`, `b`, `i`, `u`, `s`, `code`, `pre`, `a`, `br`, `hr`, `blockquote`
+(plain **and** `expandable`), `ul`, `ol`, `details`/`summary`, `footer`,
+`table bordered striped` (with `caption` and `th`), `tg-spoiler`, `mark`, `sub`, `sup`, `tg-time`,
+`input type=checkbox` and `divider` were accepted **in one message**.
+
+**2. Four commands could not be delivered in ANY form.** `/invite`, `/accept`, `/mesh create` and
+`/mesh join` call `markHTMLReply()` at the top of the builder, so their **usage** branch also goes
+out as HTML — while the catalogue value carries a literal `<placeholder>`. Telegram answered
+`400 can't parse entities: Unsupported start tag "username"` (and `"код"`), and `sendPlain` only
+logs a rejection, so the user received **nothing**. The mirror-image defect was just as bad: **141**
+catalogue values had been written with `&lt;`/`&gt;` and were sent **without** `parse_mode`, so the
+user read `&lt;username&gt;` instead of `<username>`.
+
+### Shipped
+
+**Escaping moved from the catalogue VALUE to the SEND BOUNDARY.**
+`internal/telegram/htmlsafe.go` (`sanitizeTelegramHTML`) runs at the last moment before the request —
+inside `sendPlain` and `editMessageText`, after trimming and splitting, so a truncation can no
+longer leave a half tag behind:
+
+* a tag Telegram accepts passes through untouched, attributes included
+  (`<a href="…">`, `<span class="tg-spoiler">`);
+* any other `<word>` becomes `&lt;word&gt;` — this is the `/invite <username>` class, and it can no
+  longer drop a reply;
+* an **unbalanced** accepted tag is escaped too (a truncated body is the realistic source, and
+  Telegram rejects an unterminated entity outright);
+* a bare `&` becomes an entity that renders identically (the Windows install command starts with
+  `& "…tailscale.exe" up …`);
+* existing entities are left alone, so the function is **idempotent** and mixes freely with
+  `format.go`'s `escapeHTML`-based helpers.
+
+The catalogue now carries **logical text**: the 141 values were unwrapped, and
+`TestBotCatalogHasNoBakedInEscaping` fails if escaping is ever baked back in.
+
+**The rich path now uses the verified wire format.** `SendRich` posts
+`{"chat_id":N,"rich_message":{"html":…}}`, built by `renderBlocksAsRichHTML` — the single serialiser
+from skygate's own IR to the wire. A body that renders to nothing is refused instead of posted, and
+an inline keyboard handed to `SendRich` survives the flat fallback. `preformatted`, which had **no
+case in either renderer**, now renders (as `<pre>`), and the rich renderer emits headings, striped
+tables, `<details>`, `<blockquote>`, `<footer>`, `<hr>` and `<ul>/<ol>`.
+
+**What the reader sees was fixed in the same pass:**
+
+* the rich `/status` table printed the raw `%d` — it used the **format-string** keys
+  (`bot.status.rules` = `"rules: %d"`) as row labels; the label-only keys existed all along;
+* `/mesh create` printed `%!s(MISSING)`: the value has four placeholders and the call passed three;
+* the key/value table header read `Field`/`Value` in **every** language (new keys
+  `bot.table.field`/`bot.table.value`);
+* `trimForTelegram` counted **bytes** while its sibling heuristic counted runes, so a Cyrillic
+  reply could be cut mid-rune and rejected outright — and its truncation marker was always English;
+  it is now rune-based, language-aware, and stops at a tag boundary;
+* `/my_nodes` had **no cap at all**, so a tailnet of ~90+ devices exceeded the 4096 limit and the
+  whole reply was dropped;
+* the exit-node status words, the relative-time suffixes, the `[no limit]` quota label and the
+  `NODE`/`TAG` column headers were hardcoded English in a Russian chat;
+* the `/add_device` platform instructions became real HTML code blocks (`<code>`/`<pre>`) instead of
+  raw Markdown fences and a literal `&lt;HEADSCALE_URL&gt;`.
+
+### Why the guard is behavioural now, and what the gate itself found
+
+The suite that stayed green for two months asserted **its own JSON**: it marshalled a map this
+package built, checked this package's own field names, and never once looked at what the notifier
+puts on the wire. `internal/telegram/rich_b389_test.go` captures the payload the notifier
+**actually posts** to a stub server and asserts the nested envelope, the absence of a top-level
+`blocks` field, the rendered vocabulary, the empty-render refusal and the keyboard-preserving
+fallback; `internal/telegram/htmlsafe_test.go` runs the real catalogue values of the four dead
+commands, the platform instructions and adversarial markup through the sanitiser.
+
+**The gate then failed B389 on its first run — correctly, and for the most instructive reason of
+the whole block.** `scripts/check_b186.sh` contract **I** read
+`check_ge "I-blocks" 1 "$(count …/rich.go '"blocks":  blocks')"`: it *asserted the payload Telegram
+rejects*. A green B186 was therefore **evidence for the bug**, and it is why nobody looked. The
+contract is **renegotiated**, not deleted: it now pins the nested `rich_message` envelope, the
+`html` body and the **absence** of the old wire key, with the measured responses written into the
+script's header (the project's usual pattern for a superseded contract — see B20 and B188.2). The
+`run_check "B186"` description in `scripts/verify_pre_deploy.sh` records the renegotiation, and
+B389's own contract **E9** fails if anyone reverts it.
+
+### Files
+
+New: `internal/telegram/htmlsafe.go`, `internal/telegram/htmlsafe_test.go`,
+`internal/telegram/rich_b389_test.go`, `scripts/check_b389_rich_message_wire.sh`,
+`.dsh/skills/skygate-telegram-message-style/SKILL.md`.
+Changed: `internal/telegram/rich.go`, `internal/telegram/notify.go`,
+`internal/telegram/personality.go` (+ its test), `internal/telegram/commands.go`,
+`commands_phase2.go`, `commands_phase3.go`, `commands_phase4.go`, `commands_mesh.go`,
+`commands_user.go`, `commands_user_exit.go`, `commands_user_nodes.go`,
+`commands_exit_node_health.go`, `commands_clear.go`, `internal/i18n/catalog_bot.go`,
+`internal/i18n/i18n_test.go`, `internal/telegram/rich_test.go`, `docs/TELEGRAM.md`,
+`AGENTS.md`, `scripts/verify_pre_deploy.sh`, and — renegotiated by the gate's own first run —
+`scripts/check_b186.sh` (contract I), plus the two stale comments that still named the replaced
+i18n test (`internal/i18n/catalog.go`, `scripts/split_i18n.py`).
+
+### Deliberately NOT in this release
+
+`/exit_nodes` and `/myexitnodes` still label **every** relay `offline`: the `devices` table they
+read has **no writer anywhere in the repository** (its only `INSERT` was a test fixture removed in
+v1.3.0), so the status word is a language fix here and the *logic* is the next block (B390, together
+with `/my_status`'s `devices: 0` on a failed read, `/version`'s hardcoded `v0.32` against a real
+`v0.79`, `/mysubnet share|revoke` claiming an ACL re-apply that failed, the `/admin/telegram`
+"Send test" button that cannot report failure, and `/delrule`/`/clearrules` counting rows they did
+not delete). Notifications (61 trigger types, none of them i18n, all sent without `parse_mode` and
+wrapped in literal backticks) and the host disk monitor's undeliverable alert are B391.
+
 ## v1.5.129 — the pipeline's verdict must be grep's, not the producer's (B388, closes TD-32)
 
 **Date:** 2026-10-15 · **Base:** `v1.5.128` → this tag · **Compatibility:** no application change

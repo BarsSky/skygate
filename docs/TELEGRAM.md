@@ -241,10 +241,105 @@ no-op, маршруты уже одобрены) и включить клиен�
   `tailscale status` в контейнере не отвечает (клиент не запущен), либо на релее
   одобрен только отдельный `/32` вместо `149.154.160.0/20`.
 
+## 9. Формат сообщений: как устроен rich-путь (B389)
+
+**Проверено на живом Bot API** 2026-10-16 с боевым токеном из
+`global_settings.telegram.bot_token` и привязанным чатом из
+`telegram_bindings.chat_id`. Вызовы идут **изнутри контейнера** skygate: это
+единственная сторона с рабочим выходом (B356.1). **Сам хост `api.telegram.org`
+не видит вообще** — `curl` уходит в таймаут (`000`), и имена релеев с хоста не
+резолвятся, поэтому хост-скрипт (например `scripts/monitor_disk.sh`) не может
+доставить своё уведомление в принципе; сигнал должен идти через приложение.
+
+### 9.1 Конверт `sendRichMessage`
+
+| Полезная нагрузка | Ответ API |
+|---|---|
+| `{"chat_id":N,"blocks":[…]}` | **400 `rich message must be non-empty`** — неизвестные поля верхнего уровня **игнорируются**, rich-сообщение пустое |
+| `{"chat_id":N,"rich_message":{"blocks":[…]}}` | 400 `type "section_heading" is unsupported` |
+| `{"chat_id":N,"rich_message":{"html":"<h2>x</h2>"}}` | **200, доставлено** |
+
+`reply_markup` (инлайн-клавиатура) принимается **вместе** с `rich_message`, так
+что rich-ответ может нести кнопки.
+
+Типы `InputRichBlock` **не совпадают** с именами, которые skygate придумал по
+списку HTML-тегов. Живой парсер называет первое неподдерживаемое имя, поэтому
+список получен прямым перебором:
+
+* принимаются: `paragraph`, `heading` (числовое `size`, а не `level`),
+  `list` (элементы — **объекты**), `table` (поле **`cells`**, ячейки —
+  `PageBlockTableCell`), `details`, `footer`, `divider`;
+* отвергаются: `section_heading`, `aside`, инлайновый `text` (простая строка в
+  массиве инлайнов должна быть обычной JSON-строкой), `mark`, `sub`, `sup`;
+* `url` требует поле `url`, а не `href`.
+
+Поэтому `RichBlock` в `internal/telegram/rich.go` — это **внутренний IR skygate**,
+а не формат провода; на провод его сериализует ровно одна функция
+`renderBlocksAsRichHTML` (HTML-форма). HTML выбран сознательно: не нужно
+реверс-инжинирить структуры, и переиспользуется рендерер, который уже был для
+фолбэка.
+
+### 9.2 Словарь rich-HTML (принят целиком, одним сообщением)
+
+`h1`–`h6`, `p`, `b`, `i`, `u`, `s`, `code`, `pre`, `a`, `br`, `hr`,
+`blockquote` (в т.ч. `expandable`), `ul`, `ol`, `li`, `details`/`summary`,
+`footer`, `table bordered striped` (+`caption`, `th`), `tg-spoiler`, `mark`,
+`sub`, `sup`, `tg-time`, `input type=checkbox`, `divider`.
+
+Незакрытые теги rich-парсер прощает (автозакрывает) — но `parse_mode=HTML` в
+`sendMessage` их **отвергает**, и это разные словари: rich-only теги в плоском
+фолбэке — гарантированный 400.
+
+### 9.3 Экранирование — на границе отправки, а не в каталоге
+
+Правило: **значение каталога хранит логический текст** (`<username>`,
+`<b>жирный</b>`), а экранирование делает путь отправки.
+`internal/telegram/htmlsafe.go:sanitizeTelegramHTML` вызывается из `sendPlain` и
+`editMessageText` **последним действием** перед запросом (после обрезки и
+разбиения), когда `parse_mode=HTML`:
+
+* тег из словаря Telegram проходит как есть, вместе с атрибутами
+  (`<a href="…">`, `<span class="tg-spoiler">`);
+* любое другое `<слово>` превращается в `&lt;слово&gt;` — это и есть класс
+  `/invite <username>`, который раньше **молча терял команду** (400
+  `can't parse entities: Unsupported start tag`);
+* **несбалансированный** разрешённый тег тоже экранируется (обрезанное тело —
+  реалистичный источник, а Telegram отвергает незакрытый тег целиком);
+* голый `&` становится сущностью (рендерится так же) — команда установки для
+  Windows начинается с `& "…tailscale.exe"`;
+* существующие сущности не трогаются, поэтому функция идемпотентна и мирно
+  сосуществует с `escapeHTML` из `format.go`.
+
+Обратная ошибка была не лучше: **141** значение каталога было записано через
+`&lt;`/`&gt;`, но отправлялось **без** `parse_mode`, и пользователь читал
+`&lt;username&gt;`. Каталог приведён к логическому тексту, а тест
+`TestBotCatalogHasNoBakedInEscaping` не даст вернуть это обратно.
+
+### 9.4 Как оформлять новое сообщение (и скилл)
+
+Полный чек-лист — в скилле `.dsh/skills/skygate-telegram-message-style/SKILL.md`;
+коротко:
+
+* заголовок называет объект и состояние, глиф важности первым
+  (🚨/❌/⚠️/✅/ℹ️);
+* факты — таблицей (`<table bordered striped>`), до 8 строк;
+* смысл одной фразой — в `<blockquote>`;
+* длинный дамп — под `<details><summary>`, чтобы не заставлять листать;
+* подпись — `<footer>`: версия сборки и время UTC;
+* всё через i18n (RU+EN), ни одного зашитого слова;
+* бюджет: ≤16 блоков и ~3000 знаков на сообщение;
+* никогда не отправляй голый `err.Error()` — он ничего не говорит оператору.
+
 ## Где смотреть в коде
 
 - `internal/telegram/notify.go` — `Notifier` interface + `RealNotifier`
-  (hot-swap, `getUpdates` loop, Go-native HTTP — без curl)
+  (hot-swap, `getUpdates` loop, Go-native HTTP — без curl); `sendPlain` /
+  `editMessageText` — точка, где применяется `sanitizeTelegramHTML`
+- `internal/telegram/rich.go` — внутренний IR + `renderBlocksAsRichHTML`
+  (единственный сериализатор в `rich_message.html`, B389) + плоский фолбэк
+  `renderBlocksAsHTML` для `sendMessage`
+- `internal/telegram/htmlsafe.go` — санитайзер `parse_mode=HTML` на границе
+  отправки (B389): словарь тегов, баланс, голый `&`, идемпотентность
 - `internal/feature/admin/telegram.go` — `handleTelegramSetEgress` (SSH +
   `tailscale set --advertise-routes`), `TelegramCIDRs`, `handleTailscaleStart`
 - `internal/feature/admin/telegram_probe.go` — DNS + `ip route get` →

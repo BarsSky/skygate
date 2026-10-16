@@ -36,9 +36,33 @@
 #  F. Details block carries a summary + a body slice
 #  G. Aside block type is "aside"
 #  H. Time inline node has type "date_time" + ISO 8601
-#  I. JSON serialisation of the blocks matches the Bot API
-#     spec (chat_id + blocks in one POST body)
+#  I. JSON serialisation matches the Bot API
 #  J. Build goes through + all package tests pass
+#
+# ---------------------------------------------------------------------------
+# CONTRACT I RENEGOTIATED BY B389 (2026-10-16) — AND WHY IT MATTERED.
+#
+# I used to read:
+#     check_ge "I-blocks" 1 "$(count …/rich.go '"blocks":  blocks')"
+# i.e. it ASSERTED the payload that Telegram rejects. The Bot API takes the
+# content under `rich_message`; `blocks` at the TOP level is an unknown field and
+# unknown top-level fields are silently IGNORED, so every POST answered
+# `400 Bad Request: rich message must be non-empty`, SendRich logged the rejection
+# and re-sent the body as flat parse_mode=HTML. Measured live on 2026-10-16 with
+# the bot's own token and a bound chat, from inside the container:
+#
+#     {"chat_id":N,"blocks":[…]}
+#         -> 400 "rich message must be non-empty"
+#     {"chat_id":N,"rich_message":{"blocks":[…]}}
+#         -> 400 type "section_heading" is unsupported
+#     {"chat_id":N,"rich_message":{"html":"<h2>x</h2>"}}
+#         -> 200, delivered
+#
+# So this contract certified the bug for two months, and "the check is green" was
+# the reason nobody looked. I now pins the nested envelope, the HTML body and the
+# ABSENCE of the old wire key. The type-name half of the same defect is recorded in
+# rich.go's header and pinned by scripts/check_b389_rich_message_wire.sh.
+# ---------------------------------------------------------------------------
 
 set -uo pipefail
 
@@ -126,11 +150,15 @@ check_ge "G-aside" 1 "$(count "$REPO/internal/telegram/rich.go" '\"type\": \"asi
 check_ge "H-datetime" 1 "$(count "$REPO/internal/telegram/rich.go" '\"date_time\"')"
 check_ge "H-iso" 1 "$(count "$REPO/internal/telegram/rich.go" '\"iso\":')"
 
-# I. JSON serialisation shape
-# Verifies the SendRich POST body uses the new sendRichMessage
-# shape (chat_id + blocks at the top level).
+# I. JSON serialisation shape (renegotiated by B389, 2026-10-16 — see the header).
+# The POST body nests the message under rich_message and carries it as HTML. The body it used
+# to pin — chat_id + blocks at the TOP level — is the payload the live API answers with
+# `400 rich message must be non-empty`, because unknown top-level fields are ignored.
 check_ge "I-endpoint" 1 "$(count "$REPO/internal/telegram/rich.go" 'sendRichMessage')"
-check_ge "I-blocks" 1 "$(count "$REPO/internal/telegram/rich.go" '\"blocks\":  blocks')"
+check_ge "I-envelope" 1 "$(count "$REPO/internal/telegram/rich.go" '\"rich_message\": map\[string\]any{')"
+check_ge "I-html" 1 "$(count "$REPO/internal/telegram/rich.go" '\"html\": html,')"
+# The old wire key must be GONE: if it ever comes back, every rich message is empty again.
+check_eq "I-no-toplevel-blocks" 0 "$(count "$REPO/internal/telegram/rich.go" '\"blocks\":  blocks')"
 
 # K. Dispatcher wire-up: HandleCommand returns (string, []RichBlock).
 # This is the B186.1 change that threads the rich-message

@@ -97,7 +97,7 @@ func exitNodesHealthReply(env BotEnv) string {
 				if ago < 0 {
 					ago = 0
 				}
-				seen = formatAgo(ago)
+				seen = formatAgo(lang, ago)
 			}
 			checked := "—"
 			if !h.LastCheckAt.IsZero() {
@@ -107,7 +107,7 @@ func exitNodesHealthReply(env BotEnv) string {
 				h.Hostname, b.state, seen, checked))
 		}
 	}
-	return trimForTelegram(sb.String())
+	return trimForTelegram(env.Lang, sb.String())
 }
 
 // formatAgo is a small helper for "Xm ago" / "Xh ago" / "Xd ago"
@@ -115,16 +115,19 @@ func exitNodesHealthReply(env BotEnv) string {
 // existing unixToShort is absolute (no relative) and we want
 // the relative form here ("3m ago" reads faster than
 // "2026-07-15 12:34" when the operator is triaging).
-func formatAgo(d time.Duration) string {
+//
+// B389: the suffixes were hardcoded English, so a Russian chat showed
+// "3m ago" next to Russian labels. The four unit strings are i18n keys.
+func formatAgo(lang string, d time.Duration) string {
 	if d < time.Minute {
-		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+		return i18n.Tf(lang, "bot.ago.seconds", int(d.Seconds()))
 	}
 	if d < time.Hour {
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+		return i18n.Tf(lang, "bot.ago.minutes", int(d.Minutes()))
 	}
 	if d < 24*time.Hour {
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
+		return i18n.Tf(lang, "bot.ago.hours", int(d.Hours()))
 	}
 	days := int(d.Hours()) / 24
-	return fmt.Sprintf("%dd ago", days)
+	return i18n.Tf(lang, "bot.ago.days", days)
 }

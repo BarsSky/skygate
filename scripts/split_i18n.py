@@ -21,7 +21,7 @@ Splits the monolithic internal/i18n/catalog.go (3782 keys,
 Each per-feature file declares its own `ruXxx` and `enXxx`
 maps (package-level vars in the i18n package). The glue
 file (the new catalog.go) merges them in New(). The
-TestCatalogsParity + TestPlaceholderOrder + TestHTMLSafeCatalog
+TestCatalogsParity + TestPlaceholderOrder + TestBotCatalogHasNoBakedInEscaping
 tests are updated to read from New() instead of the raw
 maps, so they keep working unchanged.
 
@@ -221,7 +221,7 @@ package i18n
 // into 12 per-feature files for navigability. The
 // translation contract (T(lang, key) → string) is unchanged.
 // Tests that previously read ruCatalog / enCatalog directly
-// (TestCatalogsParity, TestPlaceholderOrder, TestHTMLSafeCatalog)
+// (TestCatalogsParity, TestPlaceholderOrder, TestBotCatalogHasNoBakedInEscaping)
 // now build the catalog via New() and inspect the merged
 // result — the tests work the same way, but the source
 // data is split by feature.
