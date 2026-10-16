@@ -249,7 +249,12 @@ GQ_PAT='grep[[:space:]]+-[A-Za-z]*q'
 # Resolve this file's own path robustly (the script may have cd'd to the repo root).
 SELF_FILE="$0"
 [ -r "$SELF_FILE" ] || SELF_FILE="scripts/check_b387_post_deploy_truth.sh"
-SELF_HITS=$(grep -nE "$PIPE_TOKEN[[:space:]]*$GQ_PAT" <<< "$(code_only "$SELF_FILE")" || true)
+# The producer is captured into a variable FIRST: a herestring whose content is itself a
+# quoted command substitution (`<<< "$(code_only "$f")"`) is a legitimate form, but B386's
+# contract A4 cannot parse nested quotes and reports the herestring as sitting between
+# operands — and that contract is right to be strict, so this side stays simple instead.
+SELF_CODE="$(code_only "$SELF_FILE")"
+SELF_HITS=$(grep -nE "$PIPE_TOKEN[[:space:]]*$GQ_PAT" <<< "$SELF_CODE" || true)
 SELF_PIPES=$(printf '%s' "$SELF_HITS" | grep -c . || true)
 if [ "${SELF_PIPES:-0}" -eq 0 ]; then
   ok "A14: this check never pipes a producer into grep -q (the SIGPIPE class that failed its first CI run)"
