@@ -1,4 +1,4 @@
-﻿{{define "body-user-notifications"}}
+{{define "body-user-notifications"}}
 {{/* 2026-08-31 (TD-18.1): added 'What are these notifications?'
      hint block + All/Unread filter explainer. Pre-TD-18.1 the
      page had 0 hints and the type icons (preauth_expiring /
@@ -35,7 +35,23 @@
   <a href="/my/notifications?filter=unread" class="notif-pill{{if eq .Filter "unread"}} active{{end}}">
     <i class="fa-solid fa-bell"></i> {{t "notif.filter_unread"}}{{if gt .UnreadCount 0}} ({{.UnreadCount}}){{end}}
   </a>
+  {{/* B392: severity filter. The colours on the page already distinguished
+       info/warn/danger, but there was no way to show only one of them. */}}
+  <span class="notif-pill" style="pointer-events:none;background:transparent;border-color:transparent">{{t "notif.severity_label"}}:</span>
+  <a href="/my/notifications?filter={{.Filter}}" class="notif-pill{{if eq .Severity ""}} active{{end}}">{{t "notif.severity_any"}}</a>
+  <a href="/my/notifications?filter={{.Filter}}&severity=info" class="notif-pill{{if eq .Severity "info"}} active{{end}}"><i class="fa-solid fa-circle-info notif-icon-info"></i> info</a>
+  <a href="/my/notifications?filter={{.Filter}}&severity=warn" class="notif-pill{{if eq .Severity "warn"}} active{{end}}"><i class="fa-solid fa-triangle-exclamation notif-icon-warn"></i> warn</a>
+  <a href="/my/notifications?filter={{.Filter}}&severity=danger" class="notif-pill{{if eq .Severity "danger"}} active{{end}}"><i class="fa-solid fa-circle-exclamation notif-icon-danger"></i> danger</a>
 </div>
+
+{{if .LoadError}}
+{{/* B392: a failed read renders the page with a named banner instead of replacing
+     it with a text/plain error page, and the total below is marked unknown. */}}
+<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> {{.LoadError}}</div>
+{{end}}
+{{if .OutOfRange}}
+<div class="alert alert-warn"><i class="fa-solid fa-circle-info"></i> {{tf "notif.page_out_of_range" .LastPage .LastPage}}</div>
+{{end}}
 
 {{if .Rows}}
 <div class="card">
@@ -76,9 +92,13 @@
   </table>
   {{if or .HasPrev .HasNext}}
   <div class="notif-pagination">
-    {{if .HasPrev}}<a href="/my/notifications?filter={{.Filter}}&page={{.PrevPage}}" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i></a>{{end}}
-    <span style="color:var(--text-muted);font-size:13px">{{.TotalCount}} total</span>
-    {{if .HasNext}}<a href="/my/notifications?filter={{.Filter}}&page={{.NextPage}}" class="btn btn-secondary"><i class="fa-solid fa-arrow-right"></i></a>{{end}}
+    {{if .HasPrev}}<a href="/my/notifications?filter={{.Filter}}{{if .Severity}}&severity={{.Severity}}{{end}}&page={{.PrevPage}}" class="btn btn-secondary"><i class="fa-solid fa-arrow-left"></i></a>{{end}}
+    <span style="color:var(--text-muted);font-size:13px">{{tf "notif.shown_of" .ShownCount .TotalCount}}</span>
+    {{if .HasNext}}<a href="/my/notifications?filter={{.Filter}}{{if .Severity}}&severity={{.Severity}}{{end}}&page={{.NextPage}}" class="btn btn-secondary"><i class="fa-solid fa-arrow-right"></i></a>{{end}}
+  </div>
+  {{else}}
+  <div class="notif-pagination">
+    <span style="color:var(--text-muted);font-size:13px">{{tf "notif.shown_of" .ShownCount .TotalCount}}</span>
   </div>
   {{end}}
 </div>
@@ -86,7 +106,10 @@
 <div class="card">
   <div class="notif-empty-page">
     <i class="fa-solid fa-bell-slash"></i>
-    <p>{{t "notif.empty_page"}}</p>
+    {{/* B392: "you have no notifications" was ALSO shown when a filter simply
+         matched nothing, which reads as "the system is empty" instead of
+         "this filter is empty". */}}
+    {{if or (gt .TotalCount 0) .Severity}}<p>{{t "notif.empty_filtered"}}</p>{{else}}<p>{{t "notif.empty_page"}}</p>{{end}}
   </div>
 </div>
 {{end}}

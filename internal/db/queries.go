@@ -699,13 +699,26 @@ const (
 	qInsertNotification            = `INSERT INTO notifications (user_id, type, severity, title, body, link, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`
 	qListNotificationsByUser       = `SELECT id, user_id, type, severity, title, body, link, created_at, read_at FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`
 	qListUnreadNotificationsByUser = `SELECT id, user_id, type, severity, title, body, link, created_at, read_at FROM notifications WHERE user_id = $1 AND read_at = 0 ORDER BY created_at DESC LIMIT $2`
-	qCountUnreadNotifications      = `SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND read_at = 0`
-	qMarkNotificationRead          = `UPDATE notifications SET read_at = $1 WHERE id = $2 AND user_id = $3 AND read_at = 0`
-	qMarkAllNotificationsRead      = `UPDATE notifications SET read_at = $1 WHERE user_id = $2 AND read_at = 0`
-	qDeleteNotificationsForUser    = `DELETE FROM notifications WHERE user_id = $1`
-	qUpdatePreauthExpires          = `UPDATE preauth_keys SET expires_at = $1 WHERE id = $2 AND user_id = $3`
-	qMarkPreauthUsed               = `UPDATE preauth_keys SET used = 1 WHERE headscale_preauth_id = $1 AND used = 0`
-	qDeletePreauthByUser           = `DELETE FROM preauth_keys WHERE user_id = $1`
+	// B392 (2026-10-16): the /my/notifications page paginates in SQL. Pre-B392 the handler loaded
+	// a fixed number of rows into memory and sliced them, and the two db helpers silently rewrote
+	// any limit > 100 to 50, so "N total" was wrong as soon as the table held more than that and
+	// every page past the second rendered the "you have no notifications" empty state while the
+	// rows were still in the table.
+	//
+	// Both filters are optional and live in SQL: $2 = 0 means "all rows" (1 = unread only), $3 =
+	// '' means "any severity". They are optional conditions rather than separate queries so the
+	// page, the total and the "has next" decision can never disagree, and each $N appears twice
+	// at most — legal on both drivers because pgx keys on the HIGHEST placeholder number and
+	// modernc.org/sqlite binds $N by ordinal (see internal/db/placeholders.go).
+	qListNotificationsFiltered  = `SELECT id, user_id, type, severity, title, body, link, created_at, read_at FROM notifications WHERE user_id = $1 AND ($2 = 0 OR read_at = 0) AND ($3 = '' OR severity = $3) ORDER BY created_at DESC, id DESC LIMIT $4 OFFSET $5`
+	qCountNotificationsFiltered = `SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND ($2 = 0 OR read_at = 0) AND ($3 = '' OR severity = $3)`
+	qCountUnreadNotifications   = `SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND read_at = 0`
+	qMarkNotificationRead       = `UPDATE notifications SET read_at = $1 WHERE id = $2 AND user_id = $3 AND read_at = 0`
+	qMarkAllNotificationsRead   = `UPDATE notifications SET read_at = $1 WHERE user_id = $2 AND read_at = 0`
+	qDeleteNotificationsForUser = `DELETE FROM notifications WHERE user_id = $1`
+	qUpdatePreauthExpires       = `UPDATE preauth_keys SET expires_at = $1 WHERE id = $2 AND user_id = $3`
+	qMarkPreauthUsed            = `UPDATE preauth_keys SET used = 1 WHERE headscale_preauth_id = $1 AND used = 0`
+	qDeletePreauthByUser        = `DELETE FROM preauth_keys WHERE user_id = $1`
 	// B159 (v1.5.0): bulk-cleanup helper. Removes
 	// every (used=0, expires_at>0, expires_at<=now)
 	// row for one user. Used keys are NEVER deleted

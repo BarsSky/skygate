@@ -12,6 +12,84 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.131 — the notification panel reads, scales and is reachable (B392)
+
+**Date:** 2026-10-16 · **Base:** `v1.5.130` → this tag · **Compatibility:** panel-only. No migration,
+no route removal, no config change. Two new pages-behaviours (the notification list is now linkable
+from the sidebar and carries a severity filter) and one CSS file pair that must stay identical.
+
+### The report, and what reading the code actually found
+
+Operator report: *«с оповещением в панели вопросы так как там по отображению проблемы с наплывом и
+также не удобно отслеживать если сообщений будет больше и как их все там увидеть и прочитать и
+особенно чтобы они не перекрывались вкладкой — сейчас при нажатии всплывающее окно перекрывается
+вкладкой»*. That reads like one z-index bug. It is **six separate defects**:
+
+**1. The dropdown was CLIPPED, not mis-stacked.** `.sidebar` carried `overflow:hidden`
+(`themes.css:227`) and the bell panel is an **absolutely-positioned child**, so its clip box cut the
+panel at the sidebar's own width: the panel asks for up to 340px, starts ~8px in, and the content
+column begins exactly at 220px — **~38 % of it was clipped** (in the 52px collapsed state only a
+~44px sliver survived). The `z-index` was **already the highest in the sidebar** (200), which is
+exactly why "raise the z-index" would not have helped. A second, quieter bug hid behind it:
+`.theme-picker-sb .menu` (specificity 0,2,0) overrode `.notif-menu` (0,1,0), so the declared
+`min-width:280px` never applied and the real floor was **140px**.
+*Fixed:* the sidebar no longer clips — nothing depended on it (the nav has its own scroller, and the
+collapsed state hides elements with `display:none`/`width:0` rather than clipping) — and the panel
+has a scoped rule with viewport-clamped width (`min(…, 100vw - 24px)`) and height (`min(480px, 60vh)`)
+so its top edge cannot end up outside the viewport. The clamp matters because the old fixed 480px
+could exceed a short window and the clipped ancestor was **not a scroller**, so the hidden part
+could not be scrolled back into view.
+
+**2. The full list was unreachable.** `/my/notifications` has existed since B157.1 but had **no entry
+in the sidebar** and no link from the bell; the dropdown carried at most 50 rows with no hint that
+more existed; and the badge counted every unread row. A user with 300 unread therefore saw "300" and
+could read 50 of them. The sidebar links to the page now (with the unread badge), the bell says
+"…and N more unread" and offers "All notifications (N)", and each dropdown row carries its own
+timestamp (the full page had one; the dropdown had none at all).
+
+**3. The page lied about its own size.** The handler loaded a capped slice into memory and sliced it,
+while the db helpers **silently rewrote any limit > 100 to 50** — so the page asked for 200 rows and
+received 50, "N total" could never exceed 50, and **every page past the second rendered the "you have
+no notifications" empty state while the rows were still in the table**.
+*Fixed:* pagination, the real total and a severity filter are SQL conditions — written as **optional
+predicates** (`$2 = 0` = all rows, `$3 = ''` = any severity) rather than one query per combination,
+so the page, the count and the "has next" decision cannot disagree. The silent limit rewrite is gone
+in favour of named bounds (`defaultNotificationLimit`, `maxNotificationLimit`), the empty state now
+distinguishes "no notifications at all" from "this filter matches nothing", and a failed read renders
+the page with a **named banner** instead of replacing it with a `text/plain` error page (the
+error-leak ratchet stays at its baseline).
+
+**4. The admin inbox had no badge.** `CountOpenMonitorEventsNotLowerThan` existed in the db layer
+with a doc comment saying it was *"the number the nav badge shows"* — and **was never called from
+production code**. Open alerts were invisible until the operator opened `/admin/monitor`. The sidebar
+renders the count now (WARNING and above, ranked through `monitorinbox` so the two cannot drift).
+
+**5. Time was English-only.** `notifications.TimeAgo` hardcoded "2 h ago" while the `notif.time_*`
+keys sat **unused** in both catalogues. It takes the language now, and the missing week/month units
+were added (the old strings went as far as "wk"/"mo" in English only).
+
+**6. There are TWO `themes.css` files, and they had drifted 65 lines apart.** The runtime serves the
+**embedded** `internal/staticfs/static/css/themes.css`, while **every Go CSS test and four shell
+contracts** (`B105`, `B106`, `B107`, `B157`) read the **root mirror** `static/css/themes.css`. A fix
+applied to only one of them leaves the gate **green** and the panel **broken** — the exact shape of a
+fix nobody can trust. The mirror is synced, and B392 fails if the two ever diverge again.
+
+### Files
+
+Changed: `internal/staticfs/static/css/themes.css` (+ the synced mirror `static/css/themes.css`),
+`internal/handlers/templates/layout.html`, `internal/handlers/templates/user/notifications.html`,
+`internal/handlers/handlers.go`, `internal/feature/my/notifications.go`, `internal/db/queries.go`,
+`internal/db/notifications.go`, `internal/notifications/notifications.go` (+ its test),
+`internal/i18n/catalog_my.go`, `AGENTS.md`, `docs/ROADMAP.md` (+ the RU mirror), `docs/LESSONS.md`,
+`scripts/verify_pre_deploy.sh`.
+New: `internal/db/notifications_b392_test.go`, `scripts/check_b392_notifications_panel.sh`.
+
+### Not in this release
+
+The wizard block (B394) and the diagnostics work on `/admin/system_tests` (B393) follow, in that
+order — see the plan recorded in `docs/ROADMAP.md` (TD-33/TD-34 for the bot-truth and notification
+i18n debts, plus the onboarding plan).
+
 ## v1.5.130 — the rich message reaches the wire, and every reply survives it (B389)
 
 **Date:** 2026-10-16 · **Base:** `v1.5.128`/`v1.5.129` → this tag · **Compatibility:** application

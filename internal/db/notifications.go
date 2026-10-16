@@ -34,6 +34,40 @@ import (
 	"time"
 )
 
+// NotificationFilter selects which rows a page or a count covers.
+// B392: the /my/notifications page previously filtered in memory after
+// fetching a capped slice, which made both the total and the page count
+// wrong once a user had more rows than the cap.
+type NotificationFilter string
+
+const (
+	// NotificationFilterAll covers read and unread rows.
+	NotificationFilterAll NotificationFilter = "all"
+	// NotificationFilterUnread covers rows with read_at = 0.
+	NotificationFilterUnread NotificationFilter = "unread"
+)
+
+// NotificationLimits bound every list helper. defaultNotificationLimit is
+// what an unset/negative limit means; maxNotificationLimit is the hard ceiling
+// a caller cannot exceed. B392 replaced the old `limit > 100 → 50` rule, which
+// silently returned FEWER rows than asked for (the page asked for 200 and got
+// 50), i.e. a caller could not tell a clamped read from a complete one.
+const (
+	defaultNotificationLimit = 50
+	maxNotificationLimit     = 500
+)
+
+// clampNotificationLimit normalises a caller's limit.
+func clampNotificationLimit(limit int) int {
+	if limit <= 0 {
+		return defaultNotificationLimit
+	}
+	if limit > maxNotificationLimit {
+		return maxNotificationLimit
+	}
+	return limit
+}
+
 // dbInsertNotification writes a new notifications row.
 // Package-private; called by InsertNotification in
 // the notifications package.
@@ -52,43 +86,61 @@ func dbInsertNotification(d *sql.DB, n Notification) (int64, error) {
 // dbListNotificationsByUser returns every
 // notification for userID, newest first.
 func dbListNotificationsByUser(d *sql.DB, userID int64, limit int) ([]Notification, error) {
-	if limit <= 0 || limit > 100 {
-		limit = 50
-	}
-	rows, err := d.Query(qListNotificationsByUser, userID, limit)
+	rows, err := d.Query(qListNotificationsByUser, userID, clampNotificationLimit(limit))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []Notification{}
-	for rows.Next() {
-		var n Notification
-		var createdSec, readSec int64
-		if err := rows.Scan(&n.ID, &n.UserID, &n.Type, &n.Severity, &n.Title, &n.Body, &n.Link, &createdSec, &readSec); err != nil {
-			return nil, err
-		}
-		if createdSec > 0 {
-			n.CreatedAt = time.Unix(createdSec, 0)
-		}
-		if readSec > 0 {
-			n.ReadAt = time.Unix(readSec, 0)
-		}
-		out = append(out, n)
-	}
-	return out, rows.Err()
+	return scanNotificationRows(rows)
 }
 
 // dbListUnreadNotificationsByUser returns just the
 // unread notifications for the bell's dropdown.
 func dbListUnreadNotificationsByUser(d *sql.DB, userID int64, limit int) ([]Notification, error) {
-	if limit <= 0 || limit > 100 {
-		limit = 50
-	}
-	rows, err := d.Query(qListUnreadNotificationsByUser, userID, limit)
+	rows, err := d.Query(qListUnreadNotificationsByUser, userID, clampNotificationLimit(limit))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanNotificationRows(rows)
+}
+
+// dbListNotificationsByUserPage returns one page of notifications for userID,
+// newest first, using SQL LIMIT/OFFSET (B392). filter selects all or unread;
+// severity, when non-empty, narrows to one level — both conditions are applied in
+// SQL so the page and the total always agree.
+func dbListNotificationsByUserPage(d *sql.DB, userID int64, filter NotificationFilter, severity string, limit, offset int) ([]Notification, error) {
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := d.Query(qListNotificationsFiltered,
+		userID, unreadFlag(filter), severity, clampNotificationLimit(limit), offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanNotificationRows(rows)
+}
+
+// dbCountNotificationsByUser returns how many notifications the filter covers —
+// the real total, not the size of a capped slice (B392).
+func dbCountNotificationsByUser(d *sql.DB, userID int64, filter NotificationFilter, severity string) (int, error) {
+	var n int
+	err := d.QueryRow(qCountNotificationsFiltered, userID, unreadFlag(filter), severity).Scan(&n)
+	return n, err
+}
+
+// unreadFlag turns the filter into the integer the SQL predicate expects
+// (1 = unread only, 0 = every row).
+func unreadFlag(filter NotificationFilter) int {
+	if filter == NotificationFilterUnread {
+		return 1
+	}
+	return 0
+}
+
+// scanNotificationRows materialises a notifications result set.
+func scanNotificationRows(rows *sql.Rows) ([]Notification, error) {
 	out := []Notification{}
 	for rows.Next() {
 		var n Notification
@@ -177,6 +229,18 @@ func ListUnreadNotificationsByUser(d *sql.DB, userID int64, limit int) ([]Notifi
 // unread notifications for userID.
 func CountUnreadNotifications(d *sql.DB, userID int64) (int, error) {
 	return dbCountUnreadNotifications(d, userID)
+}
+
+// ListNotificationsByUserPage returns one page of the notifications the filter
+// covers, newest first (B392). Use it with CountNotificationsByUser so the page
+// can show a real total and a real "has next". severity may be empty.
+func ListNotificationsByUserPage(d *sql.DB, userID int64, filter NotificationFilter, severity string, limit, offset int) ([]Notification, error) {
+	return dbListNotificationsByUserPage(d, userID, filter, severity, limit, offset)
+}
+
+// CountNotificationsByUser returns how many rows the filter covers (B392).
+func CountNotificationsByUser(d *sql.DB, userID int64, filter NotificationFilter, severity string) (int, error) {
+	return dbCountNotificationsByUser(d, userID, filter, severity)
 }
 
 // MarkNotificationRead sets read_at = now for the

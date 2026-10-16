@@ -18,10 +18,11 @@ package notifications
 
 import (
 	"database/sql"
-	"fmt"
+	"strings"
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 )
 
 // Severity is the urgency level of a notification.
@@ -77,6 +78,72 @@ func ListUnreadByUser(d *sql.DB, userID int64, limit int) ([]db.Notification, er
 	return db.ListUnreadNotificationsByUser(d, userID, limit)
 }
 
+// ListPageByFilter returns one page of notifications for the /my/notifications
+// page, newest first, paginated IN SQL (B392). filter is "all" or "unread",
+// severity is one of the severity constants or "" for any.
+func ListPageByFilter(d *sql.DB, userID int64, filter, severity string, limit, offset int) ([]db.Notification, error) {
+	return db.ListNotificationsByUserPage(d, userID, NotificationFilterFor(filter), SeverityFor(severity), limit, offset)
+}
+
+// CountByFilter returns how many rows the filter covers — the real total, not
+// the size of a capped slice (B392).
+func CountByFilter(d *sql.DB, userID int64, filter, severity string) (int, error) {
+	return db.CountNotificationsByUser(d, userID, NotificationFilterFor(filter), SeverityFor(severity))
+}
+
+// SeverityFor normalises a user-supplied severity value. Anything unknown means
+// "any severity", so a bad query string can never hide rows.
+func SeverityFor(severity string) string {
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case SeverityInfo:
+		return SeverityInfo
+	case SeverityWarn:
+		return SeverityWarn
+	case SeverityDanger:
+		return SeverityDanger
+	}
+	return ""
+}
+
+// NotificationFilterFor normalises a user-supplied filter value. Anything that
+// is not "unread" means "all", so an unknown value can never hide rows.
+func NotificationFilterFor(filter string) db.NotificationFilter {
+	if filter == string(db.NotificationFilterUnread) {
+		return db.NotificationFilterUnread
+	}
+	return db.NotificationFilterAll
+}
+
+// View is one bell-dropdown row: the stored notification plus the two
+// presentation fields the template needs. B392 added it because the dropdown
+// used to render the raw row, which meant the item had no timestamp at all
+// (only the full page had one) and the icons were computed in the page handler.
+type View struct {
+	db.Notification
+	// TimeAgo is the localised "5 min ago" line.
+	TimeAgo string
+	// Icon is the FontAwesome class for the row's type.
+	Icon string
+}
+
+// NewView builds the presentation view for one notification.
+func NewView(lang string, n db.Notification, ref time.Time) View {
+	return View{
+		Notification: n,
+		TimeAgo:      TimeAgo(lang, n.CreatedAt, ref),
+		Icon:         TypeIcon(n.Type),
+	}
+}
+
+// NewViews builds the presentation views for a list, preserving the order.
+func NewViews(lang string, list []db.Notification, ref time.Time) []View {
+	out := make([]View, 0, len(list))
+	for _, n := range list {
+		out = append(out, NewView(lang, n, ref))
+	}
+	return out
+}
+
 // CountUnread returns the number of unread
 // notifications for userID. The bell's badge
 // shows this number; the layout's hot path
@@ -110,29 +177,27 @@ func DeleteForUser(d *sql.DB, userID int64) (int64, error) {
 
 // --- B157.1 pure-function helpers ---
 
-// TimeAgo returns a human-friendly "ago" string
-// for a notification's CreatedAt timestamp. The
-// result is English-only for now; the i18n keys
-// (notif.time_ago_*) are pre-declared in
-// catalog_my.go so a future B157.1.1 can branch
-// on lang without a schema change.
+// TimeAgo returns a human-friendly "ago" string for a notification's CreatedAt
+// timestamp, in the caller's language.
 //
-// Examples (ref=now):
+// 2026-10-16 (B392): this was English-only ("2 h ago" inside a Russian panel)
+// even though the notif.time_* keys existed in both catalogues and were simply
+// never used. The language is now a parameter, like trimForTelegram's.
+//
+// Examples (ref=now, lang=en):
 //
 //	30 seconds ago → "just now"
 //	5 minutes ago  → "5 min ago"
 //	2 hours ago    → "2 h ago"
 //	1 day ago      → "1 d ago"
 //	3 days ago     → "3 d ago"
-//	2 months ago    → "2 mo ago"
+//	2 months ago   → "2 mo ago"
 //	older          → "YYYY-MM-DD" (raw date)
 //
-// The thresholds are tuned for the B156 keynotify
-// scheduler's daily 9 AM run: most notifications
-// are "today" / "yesterday" / "this week", so the
-// verbose raw date only kicks in for old items
-// (the user scrolled deep into the list).
-func TimeAgo(t time.Time, ref time.Time) string {
+// The thresholds are tuned for the B156 keynotify scheduler's daily 9 AM run:
+// most notifications are "today" / "yesterday" / "this week", so the verbose raw
+// date only kicks in for old items (the user scrolled deep into the list).
+func TimeAgo(lang string, t time.Time, ref time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
@@ -146,24 +211,24 @@ func TimeAgo(t time.Time, ref time.Time) string {
 	secs := int(delta.Seconds())
 	switch {
 	case secs < 45:
-		return "just now"
+		return i18n.T(lang, "notif.time_just_now")
 	case secs < 90:
-		return "1 min ago"
+		return i18n.Tf(lang, "notif.time_min_ago", 1)
 	case secs < 60*60:
-		return fmt.Sprintf("%d min ago", secs/60)
+		return i18n.Tf(lang, "notif.time_min_ago", secs/60)
 	case secs < 2*60*60:
-		return "1 h ago"
+		return i18n.Tf(lang, "notif.time_h_ago", 1)
 	case secs < 24*60*60:
-		return fmt.Sprintf("%d h ago", secs/(60*60))
+		return i18n.Tf(lang, "notif.time_h_ago", secs/(60*60))
 	case secs < 2*24*60*60:
-		return "1 d ago"
+		return i18n.Tf(lang, "notif.time_d_ago", 1)
 	case secs < 30*24*60*60:
-		return fmt.Sprintf("%d d ago", secs/(24*60*60))
+		return i18n.Tf(lang, "notif.time_d_ago", secs/(24*60*60))
 	case secs < 60*24*60*60:
 		// 1-2 months — show as weeks.
-		return fmt.Sprintf("%d wk ago", secs/(7*24*60*60))
+		return i18n.Tf(lang, "notif.time_wk_ago", secs/(7*24*60*60))
 	case secs < 365*24*60*60:
-		return fmt.Sprintf("%d mo ago", secs/(30*24*60*60))
+		return i18n.Tf(lang, "notif.time_mo_ago", secs/(30*24*60*60))
 	}
 	// Older than 1 year — show raw date so
 	// the user has a precise reference.

@@ -19,6 +19,7 @@ import (
 	"skygate/internal/headscale_version"
 	"skygate/internal/httputil"
 	"skygate/internal/i18n"
+	"skygate/internal/monitorinbox"
 	"skygate/internal/notifications"
 	"skygate/internal/ratelimit"
 	"skygate/internal/release"
@@ -761,6 +762,28 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data a
 	}
 }
 
+// B392: how many unread rows the sidebar bell carries in its dropdown, and the
+// severity floor for the admin inbox badge. Declared here (next to the injection)
+// so the handler, the template and the contract agree on one number.
+const notificationBellLimit = 50
+
+// monitorBadgeRanks / monitorBadgeMinRank drive the admin inbox badge: WARNING and
+// above, ranked with monitorinbox's own ordering (CountOpenMonitorEventsNotLowerThan
+// ranks in Go because SQL cannot order the four severity names).
+var (
+	monitorBadgeRanks   = severityRanksForBadge()
+	monitorBadgeMinRank = monitorinbox.SeverityRank(monitorinbox.SeverityWarning)
+)
+
+// severityRanksForBadge maps every severity monitorinbox knows to its rank.
+func severityRanksForBadge() map[string]int {
+	out := map[string]int{}
+	for _, s := range monitorinbox.AllLevels() {
+		out[string(s)] = monitorinbox.SeverityRank(s)
+	}
+	return out
+}
+
 // renderWithLayout wraps a fragment template in the layout. data is merged into
 // the wrapper, so handlers can add per-page fields (Nodes, Users, Entries, ...).
 // IsAdmin and Page are auto-derived from c (the JWT claims) so admin nav stays visible.
@@ -828,10 +851,35 @@ func (a *App) renderWithLayout(w http.ResponseWriter, r *http.Request, name stri
 		} else {
 			data["UnreadCount"] = 0
 		}
-		if list, lerr := notifications.ListUnreadByUser(a.DB.Current(), c.UserID, 50); lerr == nil {
-			data["UnreadNotifications"] = list
+		// B392: the dropdown carries the presentation view (localised "ago" +
+		// type icon) and the honest remainder, so the bell can say "…and N more"
+		// instead of silently showing 50 of 300 unread rows.
+		//
+		// BOTH keys are initialised to 0 FIRST. html/template's `gt` fails the whole
+		// page render ("invalid type for comparison") when its argument is missing,
+		// not merely when it is false — and the bell lives in the LAYOUT, so a user
+		// with nothing unread would get a truncated page with no body at all. Found
+		// by the local end-to-end run, not by the unit tests.
+		data["UnreadMore"] = 0
+		if list, lerr := notifications.ListUnreadByUser(a.DB.Current(), c.UserID, notificationBellLimit); lerr == nil {
+			data["UnreadNotifications"] = notifications.NewViews(lang, list, time.Now())
+			if n, _ := data["UnreadCount"].(int); n > len(list) {
+				data["UnreadMore"] = n - len(list)
+			}
 		} else {
-			data["UnreadNotifications"] = []db.Notification{}
+			data["UnreadNotifications"] = []notifications.View{}
+		}
+		// B392: the admin inbox (/admin/monitor) had no badge anywhere in the panel,
+		// so an open alert was invisible until the operator opened the page. The
+		// counter helper already existed (its own doc comment said "the number the
+		// nav badge shows") and had never been wired. The badge counts WARNING and
+		// above, using monitorinbox's own ordering so the two cannot drift. Zero is
+		// set unconditionally for the same `gt` reason as above.
+		data["OpenAlerts"] = 0
+		if c.IsAdmin {
+			if open, oerr := db.CountOpenMonitorEventsNotLowerThan(a.DB.Current(), monitorBadgeMinRank, monitorBadgeRanks); oerr == nil {
+				data["OpenAlerts"] = open
+			}
 		}
 	}
 	data["Version"] = a.Version
@@ -948,6 +996,12 @@ func pageFromName(name string) string {
 	}
 	if name == "user/exit_nodes" {
 		return "my/exit-nodes"
+	}
+	// B392: /my/notifications gained a sidebar entry, so it needs a .Page value the
+	// sidebar can compare against (the handler's own data["Page"] is overwritten
+	// here by design — this function is the single source of truth for .Page).
+	if name == "user/notifications" {
+		return "my/notifications"
 	}
 	if strings.HasPrefix(name, "admin/") {
 		// 2026-08-13: 3 admin pages have a URL-vs-template

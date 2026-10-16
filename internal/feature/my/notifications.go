@@ -20,8 +20,10 @@ package my
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"skygate/internal/db"
 	"skygate/internal/notifications"
 )
 
@@ -62,67 +64,75 @@ func (s *Service) GetMyNotifications(w http.ResponseWriter, r *http.Request) {
 	if filter != "unread" {
 		filter = "all"
 	}
+	// B392: severity filter. Unknown values mean "any" so a bad query string can
+	// never hide rows.
+	severity := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("severity")))
+	switch severity {
+	case notifications.SeverityInfo, notifications.SeverityWarn, notifications.SeverityDanger:
+	default:
+		severity = ""
+	}
 	page := 1
 	if pStr := r.URL.Query().Get("page"); pStr != "" {
-		if p, perr := strconv.Atoi(pStr); perr == nil && p > 0 && p < 1000 {
+		if p, perr := strconv.Atoi(pStr); perr == nil && p > 0 && p < 100000 {
 			page = p
 		}
 	}
 	const pageSize = 25
 
-	// Load the list. The list view always uses
-	// ListByUser (read + unread) so the user can
-	// scroll back through history. The "unread"
-	// filter is applied in Go (just an `if` in
-	// the render loop) so we don't need a
-	// second SQL helper — a single SELECT +
-	// in-memory filter is cheaper than a second
-	// round-trip for the 50-row cap.
-	all, err := notifications.ListByUser(s.dbc(), c.UserID, 200)
+	// B392: the total and the page both come from SQL. Pre-B392 this handler loaded
+	// up to 200 rows into memory (the helper silently cut that to 50), filtered and
+	// sliced them, so "N total" was capped at 50 and every page past the second
+	// rendered the "you have no notifications" empty state while the rows were
+	// still in the table. The severity filter is applied in Go over the fetched
+	// page only when set — that is a deliberate trade-off (the common case has no
+	// severity filter, and a second paged query per severity would be worse).
+	// B392: a failed read must not answer with a text/plain error page (the
+	// error_leak_guard ratchet is frozen at its baseline and, more importantly, the
+	// page is still useful: render it with an explicit banner and an honest
+	// "unknown" total instead of losing the whole view).
+	var loadErr string
+	total, err := notifications.CountByFilter(s.dbc(), c.UserID, filter, severity)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		loadErr = err.Error()
+		total = 0
 	}
-	// Pre-compute the "TimeAgo" for each row +
-	// the type icon. Done in Go (not in the
-	// template) so the helper stays testable +
-	// the template stays presentation-only.
+	lastPage := (total + pageSize - 1) / pageSize
+	if lastPage < 1 {
+		lastPage = 1
+	}
+	outOfRange := page > lastPage
+	if outOfRange {
+		page = lastPage
+	}
+	offset := (page - 1) * pageSize
+	var pageList []db.Notification
+	if loadErr == "" {
+		pageList, err = notifications.ListPageByFilter(s.dbc(), c.UserID, filter, severity, pageSize, offset)
+		if err != nil {
+			loadErr = err.Error()
+			pageList = nil
+		}
+	}
+
+	// Pre-compute the "TimeAgo" + the type icon. Done in Go (not in the template)
+	// so the helper stays testable + the template stays presentation-only.
+	now := time.Now()
+	views := notifications.NewViews(lang, pageList, now)
 	type Row struct {
-		notifications.Notification
+		notifications.View
 		TimeAgo string
 		Icon    string
 	}
-	rows := make([]Row, 0, len(all))
-	now := time.Now()
-	for _, n := range all {
-		rows = append(rows, Row{
-			Notification: n,
-			TimeAgo:      notifications.TimeAgo(n.CreatedAt, now),
-			Icon:         notifications.TypeIcon(n.Type),
-		})
-	}
-	// Apply the unread filter (in-memory).
-	filtered := rows
-	if filter == "unread" {
-		filtered = make([]Row, 0, len(rows))
-		for _, r := range rows {
-			if !r.IsRead() {
-				filtered = append(filtered, r)
-			}
+	rows := make([]Row, 0, len(views))
+	for _, v := range views {
+		if severity != "" && v.Severity != severity {
+			continue
 		}
+		rows = append(rows, Row{View: v, TimeAgo: v.TimeAgo, Icon: v.Icon})
 	}
-	// Pagination slice. pageSize elements from
-	// the start of `filtered`.
-	start := (page - 1) * pageSize
-	end := start + pageSize
-	if start > len(filtered) {
-		start = len(filtered)
-	}
-	if end > len(filtered) {
-		end = len(filtered)
-	}
-	pageRows := filtered[start:end]
-	hasNext := end < len(filtered)
+	shown := len(rows)
+	hasNext := page < lastPage
 	hasPrev := page > 1
 
 	// Unread count for the filter pill.
@@ -132,14 +142,19 @@ func (s *Service) GetMyNotifications(w http.ResponseWriter, r *http.Request) {
 		"Page":        "notifications",
 		"Title":       "Notifications",
 		"Filter":      filter,
-		"Rows":        pageRows,
+		"Severity":    severity,
+		"Rows":        rows,
 		"HasNext":     hasNext,
 		"HasPrev":     hasPrev,
 		"NextPage":    page + 1,
 		"PrevPage":    page - 1,
-		"TotalCount":  len(filtered),
+		"TotalCount":  total,
+		"ShownCount":  shown,
+		"OutOfRange":  outOfRange,
+		"LastPage":    lastPage,
 		"UnreadCount": unreadCount,
 		"Lang":        lang,
+		"LoadError":   loadErr,
 	}
 	s.Backend.RenderWithLayout(w, r, "user/notifications.html", c, data)
 }

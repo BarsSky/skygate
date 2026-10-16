@@ -2,14 +2,27 @@
 // helpers: TimeAgo (humanize relative time) +
 // TypeIcon (per-type FontAwesome class) +
 // TypeSeverityColor (per-severity CSS class suffix).
+//
+// 2026-10-16 (B392): TimeAgo is localised now, so these tests run against the
+// installed catalogue and pin BOTH languages. TestMain installs the catalogue —
+// without it i18n.T returns the raw key and every assertion here would compare
+// against "notif.time_just_now".
 
 package notifications
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"skygate/internal/i18n"
 )
+
+func TestMain(m *testing.M) {
+	i18n.SetGlobal(i18n.New())
+	os.Exit(m.Run())
+}
 
 func TestTimeAgo(t *testing.T) {
 	// 2026-08-20 12:00:00 UTC is the reference.
@@ -52,11 +65,61 @@ func TestTimeAgo(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := TimeAgo(c.at, ref)
+			got := TimeAgo(i18n.LangEN, c.at, ref)
 			if got != c.want {
-				t.Errorf("TimeAgo(%v, %v) = %q, want %q", c.at, ref, got, c.want)
+				t.Errorf("TimeAgo(en, %v, %v) = %q, want %q", c.at, ref, got, c.want)
 			}
 		})
+	}
+}
+
+// TestTimeAgo_RussianIsRussian — B392: the value used to be hardcoded English,
+// so a Russian panel said "2 h ago" next to Russian labels while the RU keys sat
+// unused in the catalogue. Every unit must now come from the catalogue, and no
+// English word may survive.
+func TestTimeAgo_RussianIsRussian(t *testing.T) {
+	ref := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		at   time.Time
+		want string
+	}{
+		{"just now", ref.Add(-10 * time.Second), "только что"},
+		{"minutes", ref.Add(-5 * time.Minute), "5 мин назад"},
+		{"hours", ref.Add(-3 * time.Hour), "3 ч назад"},
+		{"days", ref.Add(-3 * 24 * time.Hour), "3 дн назад"},
+		{"weeks", ref.Add(-30 * 24 * time.Hour), "4 нед назад"},
+		{"months", ref.Add(-60 * 24 * time.Hour), "2 мес назад"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := TimeAgo(i18n.LangRU, c.at, ref)
+			if got != c.want {
+				t.Errorf("TimeAgo(ru, %v) = %q, want %q", c.at, got, c.want)
+			}
+			for _, en := range []string{"ago", "min", "hour", "day"} {
+				if strings.Contains(got, en) {
+					t.Errorf("TimeAgo(ru, %v) = %q still contains the English word %q", c.at, got, en)
+				}
+			}
+		})
+	}
+}
+
+// TestNotificationFilterFor — an unknown filter value must mean "all", never a
+// silently empty list (B392).
+func TestNotificationFilterFor(t *testing.T) {
+	cases := map[string]string{
+		"unread":     "unread",
+		"all":        "all",
+		"":           "all",
+		"severity=x": "all",
+		"UNREAD":     "all",
+	}
+	for in, want := range cases {
+		if got := string(NotificationFilterFor(in)); got != want {
+			t.Errorf("NotificationFilterFor(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
