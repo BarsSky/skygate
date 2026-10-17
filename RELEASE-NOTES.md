@@ -12,6 +12,78 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.133 — system tests became a diagnostic tool (B394)
+
+**Date:** 2026-10-17 · **Base:** `v1.5.132` → this tag · **Compatibility:** no migration, no route
+removal, no config change. One new route (`GET /admin/system_tests/run.json`), one new optional form
+field (`test=<name>`), and two new history-pruning constants. The panel renders identically when no
+run is in progress.
+
+### The false «ОТКЛЮЧЕНО», and why it happened
+
+`GetAdminSystemTests` built the page map with `DNSAutoUpdateEnabled`, `PrefReconcileEnabled`,
+`DNSResolveInterval*`, `Tab`, `Window`, `History` and `LastRun*`. `PostAdminSystemTestsRun` built its
+**own**, much smaller map and rendered the same template. `html/template` reads a missing map key as
+`nil`, and `nil` is falsy — so right after every run the page reported the DNS auto-updater and the
+preferred-exit reconciler as **disabled** while both were enabled. Nothing failed; no check went red;
+the operator was simply told the product was off.
+
+One builder (`systemTestsPageData`) now feeds both handlers, and the contract fails if a second
+inline page map appears.
+
+### Everything else the block adds
+
+* **Severity** (`critical` / `warning` / `info`) on every test, from one annotation table with
+  **per-category floors**, so a test nobody annotated still gets a sane rank. A Go test walks
+  `AllTests()` and fails on any gap.
+* **«Что делать»** — an i18n remediation key per test (RU + EN, 42 keys `st.fix.*` added) plus a
+  link to the page that owns the subsystem; rendered only on failing rows.
+* **Asynchronous run with progress**: `StartSystemRun` returns immediately, the page follows
+  `?run=<id>` and polls `GET /admin/system_tests/run.json` (progress bar + the test currently
+  running). A concurrent start answers **409** naming the running test.
+* **Run one test from its row** (`?test=<name>`): reports to the monitoring inbox, writes **no**
+  history row.
+* **History retention**: `PruneSystemTestRuns` runs after every successful catalogue run — newest
+  **200** runs always kept, anything older than **90 days** and beyond that window deleted (ANDed),
+  audited as `system_tests_prune`. Before this the table was never pruned.
+* **UI**: per-row anchors (`#t-<name>`), «только упавшие» + category filters (browser-side, no round
+  trip), «скопировать упавшие» (name + output as one paste-ready block), severity badges.
+
+### The eleven new tests
+
+`headscale.exit_routes_approved` · `headscale.tags_drift` · `headscale.policy_current` ·
+`prefix_owner.consistency` · `db.writable_primary` · `db.schema_tables` · `disk.free_space` ·
+`derp.reachable` · `build.ready` · `exit_rules.domain_prefix` · `backup.verify`.
+
+Each returns **SKIP with a reason** when its live dependency is absent (rule 1) and never mutates
+state: the write probe runs inside a transaction that is rolled back, the disk probe is `statfs`
+(`_unix`/`_windows` split), and the domain check is bounded to 3 s.
+
+### Files
+
+* `internal/feature/admin/system_tests_diagnostics_b394.go` — severity type, annotation table,
+  `annotateTest`.
+* `internal/feature/admin/system_tests_b394_new.go` — the eleven tests (+ `init()` appending them).
+* `internal/feature/admin/system_tests_run_state_b394.go` — `SystemRunState`, `StartSystemRun`,
+  the async runner.
+* `internal/feature/admin/system_tests_handlers.go` — one page builder, async POST, `run.json`.
+* `internal/feature/admin/system_tests_runs.go` — `PruneSystemTestRuns` + named policy constants.
+* `internal/feature/admin/system_tests.go`, `_modules_b306.go` — the new fields; annotation in
+  `AllTests()`.
+* `internal/handlers/templates/admin/system_tests.html` — severity, remediation, filters, anchors,
+  copy-failed, per-test run, progress poller.
+* `internal/i18n/catalog_common.go` — 42 `st.fix.*` + 13 `system_tests.*` keys, RU and EN.
+* `cmd/skygate/routes.go` — `GET /admin/system_tests/run.json`.
+* Tests: `system_tests_b394_test.go`, `system_tests_b394_run_test.go`, and the render test's stub.
+* Contract: `scripts/check_b394_system_tests_diagnostics.sh` (33 contracts, sections A–H).
+
+### Verification
+
+* `internal/feature/admin` suite green (31 s), `internal/i18n` parity green, `internal/handlers`
+  render tests green (the stub had to learn the new fields — a missing field is a render panic).
+* The contract's A4 fails if a handler ever builds its own map again; D2 fails if the pruner loses
+  its caller; E1/E2 fail if a new test is declared but not registered.
+* Procedure and the per-test "what it proves" table: `docs/operations.md` §18.
 ## v1.5.132 — a self-update must prove it swapped, and the helper must see the same /data (B393)
 
 **Date:** 2026-10-17 · **Base:** `v1.5.131` → this tag · **Compatibility:** no migration, no route or

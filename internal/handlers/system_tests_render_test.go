@@ -51,6 +51,12 @@ type stubSystemTest struct {
 	Name        string
 	Category    string
 	Description string
+	// B394 — the template renders severity + remediation + doc link for every
+	// row, so the stub must carry them (a missing field is a render PANIC in
+	// html/template, not a blank cell).
+	Severity    string
+	Remediation string
+	DocLink     string
 }
 
 // loadSystemTestsBody parses the system_tests.html body template

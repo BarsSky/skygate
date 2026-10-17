@@ -2237,5 +2237,62 @@ B354 (the cluster row bootstrap), B359 (the predicate and the per-row reasons), 
 join and the four other blockers behind this block) and B365 (the heartbeat step, the loud empty
 `dsn_template`, and the join that adopts the row discovery created).
 
+## 18. What a system-test failure means (and what to do) — B394
 
+`/admin/system_tests` is a **diagnostic** page, not a scoreboard. Every row carries a
+**severity**, and every failure carries **what to do** (and, where it helps, a link to the page
+that owns the subsystem).
 
+### 18.1 Severity
+
+| severity | meaning | act |
+|---|---|---|
+| **critical** | the installation cannot do its job: no egress, a broken ACL, a database that is not writable, an unapproved exit route, a tag the portal thinks it set but headscale does not have | now |
+| **warning** | degraded or drifting, and it will become critical if nobody looks: disk filling, a stale backup, an unreachable DERP, a process still booting, stale domain prefixes | today |
+| **info** | an observation with no action implied (journal mode, integration inventory, mesh summary) | when convenient |
+
+Critical rows sort first. A test that has never been annotated inherits its **category's** floor,
+so a newly added test can never render as "info" by accident.
+
+### 18.2 The false "disabled" state after a run (the bug this block fixed)
+
+Before B394 the GET and POST handlers built **separate** page maps. The POST map was much smaller,
+so after every run the template read a missing key (`{{if .DNSAutoUpdateEnabled}}` → nil → falsy)
+and the page claimed the DNS auto-updater and the preferred-exit reconciler were **off** while both
+were on. Both handlers now render through one builder (`systemTestsPageData`), and the contract
+fails if a second inline page map ever appears.
+
+### 18.3 Running
+
+* **Run all** starts the catalogue asynchronously and redirects to `?run=<id>`; the page polls
+  `/admin/system_tests/run.json` and shows a progress bar with the test currently executing.
+* **Run this one** on a row runs exactly that test. It updates the monitoring inbox (a failure
+  opens/updates its event, a pass resolves it) but writes **no history row** — a history of
+  one-test runs would bury the real runs.
+* Only one run at a time: a second request answers 409 and names the test that is running.
+
+### 18.4 History retention
+
+A whole-catalogue run is persisted to `system_tests_runs`. The table is pruned after every
+successful run: runs beyond the newest **200** and older than **90 days** are deleted (the two
+conditions are ANDed, so a quiet installation keeps everything). A deletion is audited as
+`system_tests_prune`.
+
+### 18.5 The eleven checks added by B394, and the failure each one catches
+
+| test | what it proves | typical cause |
+|---|---|---|
+| `headscale.exit_routes_approved` | an exit node advertising `0.0.0.0/0` / `::/0` has it approved | a relay that is online and carries nothing (B273) |
+| `headscale.tags_drift` | each tag `node_owner_map` records is on the node in headscale | per-device rules silently matching nothing (B272) |
+| `headscale.policy_current` | the live policy equals the generated one | ACL drift after a rule/prefix change (B276) |
+| `prefix_owner.consistency` | one advertising relay per prefix, and the owner advertises it | a prefix served twice or not at all (B274/B275) |
+| `db.writable_primary` | the database accepts writes (rolled-back probe) | connected to a replica / `default_transaction_read_only` |
+| `db.schema_tables` | the required tables exist | a binary newer than the schema |
+| `disk.free_space` | the data filesystem has headroom (fail <5 %, warn <15 %) | Docker build cache, old backups, `/var/log` |
+| `derp.reachable` | the own DERP relay completes a TLS handshake | firewall, DNS, certificate |
+| `build.ready` | the process serves the real routes and reports a build label | a process still in its boot phases (B269) |
+| `exit_rules.domain_prefix` | a domain rule's stored `/32` rows match today's DNS | the auto-updater is off or throttle-limited |
+| `backup.verify` | the last backup ran, succeeded and is under 48 h old | schedule/destination broken |
+
+Each returns **SKIP with a reason** when its live dependency is absent (no headscale client, no
+relay configured, no domain rule) — never FAIL (rule 1).

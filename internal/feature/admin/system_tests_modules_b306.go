@@ -221,10 +221,18 @@ func sortedInfoKeys(info map[string]string) []string {
 
 // AllTests is the catalogue the page and the runner use: the static registry plus
 // the module tests generated from the live Manager.
+//
+// B394: every entry is annotated here (severity + remediation + doc link) so the
+// page always has something to say about a failure — a test whose name the
+// annotation table does not know inherits its CATEGORY's floor rather than
+// rendering a bare pass/fail cell.
 func (s *Service) AllTests() []SystemTestDef {
 	out := make([]SystemTestDef, 0, len(TestRegistry)+4)
 	out = append(out, TestRegistry...)
 	out = append(out, s.ModuleTests()...)
+	for i := range out {
+		annotateTest(&out[i])
+	}
 	return out
 }
 

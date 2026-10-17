@@ -898,6 +898,9 @@ func registerRoutes(
 	// the result inline. History in system_tests_runs.
 	mux.Handle("GET /admin/system_tests", authMW(http.HandlerFunc(adminSvc.GetAdminSystemTests)))
 	mux.Handle("POST /admin/system_tests/run", authMW(http.HandlerFunc(adminSvc.PostAdminSystemTestsRun)))
+	// B394 - the run is asynchronous and reports progress, so the page needs a
+	// poller endpoint; ?test=<name> on the POST re-runs exactly one test.
+	mux.Handle("GET /admin/system_tests/run.json", authMW(http.HandlerFunc(adminSvc.GetAdminSystemTestsRunJSON)))
 	// B305 (v1.5.70) — the monitoring inbox: one list for every monitoring
 	// signal skygate records (system tests, tag reconciliation, exit-node
 	// health, database health, …) with severities, dedup, ack/resolve and the

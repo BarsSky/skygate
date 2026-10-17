@@ -162,3 +162,48 @@ func (s *Service) ListLastRunWithResults(ctx context.Context) (*LastRunWithResul
 // test additions (e.g. "headscale.exit_node_health").
 var _ = (*headscale.Client)(nil)
 var _ sql.IsolationLevel = 0
+
+// ---------------------------------------------------------------------------
+// B394 — retention. system_tests_runs had NO pruning: every run stores the whole
+// results JSON, so an installation that runs the catalogue daily accumulates a row
+// per day forever and the history tab parses all of them.
+// ---------------------------------------------------------------------------
+
+const (
+	// SystemTestRunsKeep is how many runs are always kept regardless of age.
+	SystemTestRunsKeep = 200
+	// SystemTestRunsMaxAge is the oldest run kept (beyond the newest Keep).
+	SystemTestRunsMaxAge = 90 * 24 * time.Hour
+)
+
+// PruneSystemTestRuns deletes runs that are BOTH older than maxAge AND outside the
+// newest keep rows. Returns how many rows were removed.
+//
+// The two conditions are deliberately an AND: a quiet installation keeps its whole
+// history (it never exceeds keep), and a chatty one keeps the recent window even if
+// it runs thousands of times.
+func (s *Service) PruneSystemTestRuns(ctx context.Context, keep int, maxAge time.Duration) (int64, error) {
+	if s == nil || s.dbc() == nil {
+		return 0, errors.New("DB not available")
+	}
+	if keep <= 0 {
+		keep = SystemTestRunsKeep
+	}
+	if maxAge <= 0 {
+		maxAge = SystemTestRunsMaxAge
+	}
+	cutoff := time.Now().UTC().Add(-maxAge).Unix()
+	// $N is the UNIVERSAL placeholder form (internal/db/placeholders.go): SQLite
+	// binds $NNN by Go argument ordinal, so the same SQL text works on both
+	// drivers. A comma-joined PlaceholdersList(2) cannot express "LIMIT $1 plus a
+	// predicate on $2".
+	res, err := s.dbc().ExecContext(ctx, `
+		DELETE FROM system_tests_runs
+		 WHERE id NOT IN (SELECT id FROM system_tests_runs ORDER BY id DESC LIMIT $1)
+		   AND started_at < $2`, keep, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}

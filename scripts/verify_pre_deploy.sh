@@ -6206,6 +6206,30 @@ run_check "B392" "THE NOTIFICATION PANEL MUST READ, SCALE AND BE REACHABLE. Oper
 # resolves the verdict at boot and declares the job failed with the swap log tail
 # once the grace period passes with no evidence. 40 contracts in
 # scripts/check_b393_swap_helper_handoff.sh.
+
+# ---------------------------------------------------------------------------
+# B394 — /admin/system_tests must be a DIAGNOSTIC tool, not a grid of colours
+#        (v1.5.133, 2026-10-17)
+# ---------------------------------------------------------------------------
+# THE FALSE «ОТКЛЮЧЕНО», measured in the code: GET built a page map with
+# DNSAutoUpdateEnabled / PrefReconcileEnabled / DNSResolveInterval* / Tab / Window /
+# History / LastRun*, while the POST built its OWN, much smaller map and rendered the
+# same template with it — so right after every run {{if .DNSAutoUpdateEnabled}} read a
+# missing key (nil -> falsy) and the card claimed the DNS auto-updater was OFF while
+# it was ON. One builder now feeds both handlers.
+#
+# The rest of the block makes the page DIAGNOSTIC: every test carries a severity, an
+# i18n remediation key and a doc link (one annotation table with per-category floors,
+# so a new test is never unannotated); the run is asynchronous with an in-memory
+# snapshot the page polls (run.json), a single test can be re-run from its row, the
+# history is pruned (200 runs / 90 days, named policy) and eleven tests were added for
+# the failures this project has actually had: unapproved exit-node routes, tag drift,
+# live-vs-generated policy, prefix ownership vs what the relays advertise, a read-only
+# database, a half-migrated schema, a filling disk, an unreachable DERP, a process
+# still booting, stale domain /32s and a backup that stopped running.
+# 33 contracts in scripts/check_b394_system_tests_diagnostics.sh.
+run_check "B394" "SYSTEM TESTS MUST BE A DIAGNOSTIC TOOL, NOT A GRID OF PASS/FAIL CELLS. Operator ask: severity, what to do, context, run progress, the false disabled state after POST, filters anchors copy-failed, eleven new tests and history retention. The false state was measured in the code: the GET handler built a page map with the DNS and preferred-reconciler flags while the POST handler built its own smaller map and rendered the same template, so after every run the toggles read a missing key and the page claimed both background workers were off; one shared builder now feeds both handlers. Every test now carries a severity, an i18n remediation key and a doc link, applied by one annotation table with per-category floors so a newly added test can never render unannotated; the run is asynchronous with a snapshot the page polls, one test can be re-run from its row, and the history is pruned by a named policy. Eleven new tests cover the failures this project has actually had: unapproved exit-node routes, tag drift between the portal and headscale, a live policy that differs from the generated one, prefix ownership that disagrees with what the relays advertise, a read-only database, a half-migrated schema, a filling disk, an unreachable DERP relay, a process still booting, stale domain prefixes and a backup that stopped running." \
+  'test -f scripts/check_b394_system_tests_diagnostics.sh && bash scripts/check_b394_system_tests_diagnostics.sh'
 run_check "B393" "THE SELF-UPDATE MUST PROVE IT SWAPPED, AND THE HELPER MUST SEE THE SAME /data THE ORCHESTRATOR WROTE TO. On the live host /admin/update reported phase=done with no error while the panel kept serving the previous build, and two releases in a row only became live because the container was recreated by hand; the swap log said, twice, that the helper could not open the swap helper script at data, meaning it was handed a different filesystem than the one the orchestrator wrote to. Two independent defects: both swap scripts mounted the literal legacy volume skygate-data, which is empty on a bind mounted install, and nothing verified that a swap had happened at all — the in-container poll accepted any 200 with status ok, and the admin page did the same from every render before completing the job, while the OLD container answers exactly that 200. The fix has one resolver that reads the live container own data mount and renders it into both scripts, a pre-flight that proves the helper can see its script before it is spawned and writes a FAILED marker naming the mount when it cannot, a build-aware verdict in both probes that also rejects a still booting process and uses the recreated container id as a second witness, a boot-time resolver that declares an unfinished swap failed with the swap log tail, and a swap-log failure marker that resolves the job at once. Contracts A to H in scripts/check_b393_swap_helper_handoff.sh, including a detector proof and a live section that skips when docker is unavailable." \
   'test -f scripts/check_b393_swap_helper_handoff.sh && bash scripts/check_b393_swap_helper_handoff.sh'
 

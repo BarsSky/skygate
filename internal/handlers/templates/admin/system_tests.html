@@ -330,11 +330,47 @@
         {{tf "system_tests.tests_summary_help" (len .Tests)}}
       </p>
     </div>
-    <form method="post" action="/admin/system_tests/run" style="display:inline">
+    <form method="post" action="/admin/system_tests/run" style="display:inline" id="st-run-form">
       <button type="submit" class="btn btn-primary">
         <i class="fa-solid fa-play"></i> {{t "system_tests.run_all_btn"}}
       </button>
     </form>
+  </div>
+
+  {{/* B394 — the run is asynchronous now: the POST answers 303 to ?run=<id> and
+       this page follows that id. The bar is hidden until there is something to
+       report, so a quiet page stays quiet. */}}
+  <div id="st-progress" class="st-progress" data-run="{{.RunID}}" hidden>
+    <div class="st-progress-head">
+      <span id="st-progress-text">{{t "system_tests.progress_starting"}}</span>
+      <span id="st-progress-count"></span>
+    </div>
+    <div class="st-progress-track"><div class="st-progress-fill" id="st-progress-fill"></div></div>
+  </div>
+
+  {{/* B394 — filters + the copy-failed action. Filtering happens in the browser
+       (a click must not cost a round trip); ?status=/?category= preselect it so a
+       link from somewhere else can deep-link into a filtered view. */}}
+  <div class="st-toolbar">
+    <label class="st-filter">
+      <input type="checkbox" id="st-only-failed" {{if eq .FilterStatus "fail"}}checked{{end}}>
+      {{t "system_tests.only_failed"}}
+    </label>
+    <label class="st-filter" for="st-category">
+      {{t "system_tests.filter_category"}}
+      {{/* B326/B3 counts an unlabelled dropdown element. The visible text sits in the
+           wrapping label, but a grep-based contract cannot see that, and an explicit
+           aria-label is the a11y truth anyway. (Do NOT spell the tag out in this
+           comment: the contract scans every line that mentions it, comments included.) */}}
+      <select id="st-category" aria-label="{{t "system_tests.filter_category"}}" data-selected="{{.FilterCategory}}">
+        <option value="">{{t "system_tests.filter_category_all"}}</option>
+        {{range .Tests}}<option value="{{.Category}}">{{.Category}}</option>{{end}}
+      </select>
+    </label>
+    <button type="button" class="btn btn-sm" id="st-copy-failed">
+      <i class="fa-solid fa-copy"></i> {{t "system_tests.copy_failed"}}
+    </button>
+    <span id="st-filter-count" class="st-filter-count"></span>
   </div>
 
   {{if .LiveResults}}
@@ -404,7 +440,9 @@
       {{$src := $.LastResults}}
       {{if $.LiveResults}}{{$src = $.LiveResults}}{{end}}
       {{$rowStatus := indexResultByName $src $testName}}
-      <tr{{if and (not $.LiveResults) $.LastResults}}{{if eq $rowStatus "fail"}} class="row-fail"{{end}}{{end}}>
+      {{/* B394: every row is an anchor (t-<name>) so a failure can be linked to
+           directly, and carries the data the browser-side filter needs. */}}
+      <tr id="t-{{.Name}}" data-test="{{.Name}}" data-status="{{$rowStatus}}" data-category="{{.Category}}"{{if and (not $.LiveResults) $.LastResults}}{{if eq $rowStatus "fail"}} class="row-fail"{{end}}{{end}}>
         <td>
           {{if eq $rowStatus "pass"}}<i class="fa-solid fa-circle-check" style="color:#198754" title="{{t "system_tests.status_pass_title"}}"></i>
           {{else if eq $rowStatus "fail"}}<i class="fa-solid fa-circle-xmark" style="color:#dc3545" title="{{t "system_tests.status_fail_title"}}"></i>
@@ -413,7 +451,28 @@
         </td>
         <td><code>{{.Name}}</code></td>
         <td><span class="badge badge-category">{{.Category}}</span></td>
-        <td>{{.Description}}</td>
+        <td>
+          {{/* B394: severity first — a missing journal mode and a black-holed
+               exit node used to look equally red. */}}
+          {{if .Severity}}<span class="badge st-sev st-sev-{{.Severity}}">{{t "system_tests.severity_label"}} {{.Severity}}</span> {{end}}
+          {{.Description}}
+          {{if eq $rowStatus "fail"}}{{if .Remediation}}
+          <div class="st-fix">
+            <i class="fa-solid fa-screwdriver-wrench"></i>
+            <b>{{t "system_tests.remediation_label"}}</b>
+            {{t .Remediation}}
+            {{if .DocLink}}<a href="{{.DocLink}}">{{t "system_tests.remediation_link"}} →</a>{{end}}
+          </div>
+          {{end}}{{end}}
+          {{/* B394: run exactly this test. Same CSRF-carrying form shape as the
+               catalogue button, so the layout's token handling is unchanged. */}}
+          <form method="post" action="/admin/system_tests/run" class="st-run-one">
+            <input type="hidden" name="test" value="{{.Name}}">
+            <button type="submit" class="btn btn-sm btn-ghost" title="{{t "system_tests.run_one"}}">
+              <i class="fa-solid fa-play"></i> {{t "system_tests.run_one"}}
+            </button>
+          </form>
+        </td>
         <td>
           {{if $src}}
             {{range $src}}
@@ -488,6 +547,38 @@
 {{end}}
 
 <style>
+  /* B394 — severity badges, the remediation block, the toolbar and the progress
+     bar. Colours come from the theme variables where possible so a theme change
+     does not leave these elements unreadable. */
+  .st-sev { font-size: 11px; margin-right: 6px; }
+  .st-sev-critical { background:#dc3545; color:#fff; }
+  .st-sev-warning  { background:#fd7e14; color:#fff; }
+  .st-sev-info     { background:var(--bg-elev); color:var(--text-muted); border:1px solid var(--border); }
+  .st-fix {
+    margin-top: 6px; padding: 6px 8px; border-left: 3px solid #fd7e14;
+    background: var(--bg-elev); font-size: 12px;
+  }
+  .st-fix a { margin-left: 6px; white-space: nowrap; }
+  .st-run-one { margin-top: 6px; }
+  .st-toolbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+    margin: 16px 0 4px 0; font-size: 13px;
+  }
+  .st-filter { display: inline-flex; align-items: center; gap: 6px; }
+  .st-filter select { padding: 2px 6px; }
+  .st-filter-count { color: var(--text-muted); font-size: 12px; }
+  .st-progress { margin: 16px 0 4px 0; }
+  .st-progress-head {
+    display: flex; justify-content: space-between; font-size: 12px;
+    color: var(--text-muted); margin-bottom: 4px;
+  }
+  .st-progress-track {
+    height: 8px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden;
+  }
+  .st-progress-fill {
+    height: 100%; width: 0; background: var(--accent, #0d6efd);
+    transition: width .25s ease;
+  }
   .tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--bg-secondary); }
   .tab {
     padding: 10px 20px;
@@ -605,5 +696,112 @@ function copySystemTestOutput(btn) {
     document.body.removeChild(ta);
   }
 }
+
+/* ---------------------------------------------------------------------------
+   B394 — filters, copy-failed, and the progress poller.
+   Everything here is progressive enhancement: with JS off the table still shows
+   every row and "Run all" still works (it just rotates the page once).
+   --------------------------------------------------------------------------- */
+(function() {
+  var onlyFailed = document.getElementById('st-only-failed');
+  var category = document.getElementById('st-category');
+  var rows = Array.prototype.slice.call(document.querySelectorAll('tr[data-test]'));
+  var count = document.getElementById('st-filter-count');
+
+  function applyFilters() {
+    var wantFail = onlyFailed && onlyFailed.checked;
+    var wantCat = category ? category.value : '';
+    var shown = 0;
+    rows.forEach(function(tr) {
+      var ok = true;
+      if (wantFail && tr.getAttribute('data-status') !== 'fail') ok = false;
+      if (wantCat && tr.getAttribute('data-category') !== wantCat) ok = false;
+      tr.hidden = !ok;
+      if (ok) shown++;
+    });
+    if (count) {
+      count.textContent = shown + ' / ' + rows.length;
+    }
+  }
+  if (category && category.getAttribute('data-selected')) {
+    category.value = category.getAttribute('data-selected');
+  }
+  if (onlyFailed) onlyFailed.addEventListener('change', applyFilters);
+  if (category) category.addEventListener('change', applyFilters);
+  applyFilters();
+
+  // Copy every failing test (name + output) as one paste-ready block — what the
+  // operator puts into a support message or a Telegram chat.
+  var copyBtn = document.getElementById('st-copy-failed');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', function() {
+      var parts = [];
+      rows.forEach(function(tr) {
+        if (tr.getAttribute('data-status') !== 'fail') return;
+        var name = tr.getAttribute('data-test');
+        var pre = tr.querySelector('pre');
+        parts.push('=== ' + name + ' ===\n' + (pre ? (pre.textContent || '') : ''));
+      });
+      if (!parts.length) parts.push({{t "system_tests.copy_failed_none" | safeJSON}});
+      var text = parts.join('\n\n');
+      var flash = function() {
+        var orig = copyBtn.innerHTML;
+        copyBtn.innerHTML = '<i class="fa-solid fa-check"></i> ' + {{t "system_tests.copy_ok_label" | safeJSON}};
+        setTimeout(function() { copyBtn.innerHTML = orig; }, 1500);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(flash, flash);
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+        document.body.removeChild(ta);
+        flash();
+      }
+    });
+  }
+
+  // Progress: follow ?run=<id> (the POST redirects there) until it is done, then
+  // reload once so the page shows the persisted run and its history.
+  var box = document.getElementById('st-progress');
+  var runID = box ? box.getAttribute('data-run') : '';
+  if (!box || !runID) return;
+  box.hidden = false;
+  var text = document.getElementById('st-progress-text');
+  var cnt = document.getElementById('st-progress-count');
+  var fill = document.getElementById('st-progress-fill');
+  var labelRunning = {{t "system_tests.progress_running" | safeJSON}};
+  var labelDone = {{t "system_tests.progress_done" | safeJSON}};
+
+  function poll() {
+    fetch('/admin/system_tests/run.json?run=' + encodeURIComponent(runID), {headers: {'Accept': 'application/json'}})
+      .then(function(r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+      .then(function(st) {
+        var total = st.total || 0;
+        var done = st.completed || 0;
+        var pct = total ? Math.round(done * 100 / total) : 0;
+        if (fill) fill.style.width = pct + '%';
+        if (cnt) cnt.textContent = done + ' / ' + total;
+        if (text) {
+          text.textContent = st.done
+            ? labelDone
+            : (labelRunning + (st.current ? ': ' + st.current : ''));
+        }
+        if (st.done) {
+          // One reload to render the finished run exactly like a normal GET.
+          window.location = '/admin/system_tests';
+          return;
+        }
+        setTimeout(poll, 700);
+      })
+      .catch(function() {
+        // The snapshot is in memory: a restart mid-run loses it. Say so instead
+        // of spinning forever.
+        if (text) text.textContent = {{t "system_tests.progress_lost" | safeJSON}};
+      });
+  }
+  poll();
+})();
 </script>
 {{end}}

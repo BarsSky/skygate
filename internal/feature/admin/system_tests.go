@@ -56,6 +56,18 @@ type SystemTestDef struct {
 	Category    string // "network", "db", "headscale", "disk", "wal-g", "replication", "integrations", "backup"
 	Description string
 	Run         func(ctx context.Context) (SystemTestStatus, string)
+
+	// B394 — the diagnostics. A FAIL that does not say how bad it is or what to
+	// do next is a number, not a diagnosis. The values are filled from the
+	// annotation table (system_tests_diagnostics_b394.go) unless the definition
+	// sets them itself.
+	//
+	// Severity orders the page (critical first) and colours the row.
+	Severity TestSeverity
+	// Remediation is an i18n KEY whose value is the operator's next step.
+	Remediation string
+	// DocLink is the in-panel page that explains the subsystem ("" = none).
+	DocLink string
 }
 
 // TestRegistry is the full list of in-process tests. The
