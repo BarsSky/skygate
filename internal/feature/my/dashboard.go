@@ -264,9 +264,20 @@ func (s *Service) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	if !c.IsAdmin && hsUserName != "" {
 		scope = hsUserName
 	}
-	s.Backend.RenderWithLayout(w, r, "dashboard.html", c, map[string]any{
+	data := map[string]any{
 		"TailnetMetrics": s.computeTailnetMetrics(scope, c.UserID, hs),
-	})
+	}
+	// B395: the first-run wizard. The ADMIN branch answers "is headscale even
+	// there, and what should I do next?" with four named states and an honest
+	// unknown; the USER branch answers a different question ("is MY device
+	// connected?"), because a user cannot install a control plane.
+	if c.IsAdmin {
+		data["Wizard"] = s.setupWizardReport(r.Context())
+	}
+	if nodes, err := listNodesForWizard(hs); err == nil {
+		data["UserWizard"] = s.userWizardReport(r.Context(), c, nodes)
+	}
+	s.Backend.RenderWithLayout(w, r, "dashboard.html", c, data)
 }
 
 // countMyPreAuthKeys classifies every preauth key the user has been
@@ -325,4 +336,14 @@ func (s *Service) countMyPreAuthKeys(myUserID int64, nodes []headscale.NodeView)
 		}
 	}
 	return st
+}
+
+// listNodesForWizard lists the nodes the wizard classifies. A failure is not fatal:
+// the dashboard still renders metrics, and the user branch simply does not appear
+// (an absent wizard is better than a wizard that guesses).
+func listNodesForWizard(hs *headscale.Client) ([]headscale.NodeView, error) {
+	if hs == nil {
+		return nil, nil
+	}
+	return hs.ListAllNodes()
 }

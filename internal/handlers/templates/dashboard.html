@@ -1,10 +1,137 @@
-﻿{{define "body-dashboard"}}
+{{define "body-dashboard"}}
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-hand-sparkles"></i>{{tf "dashboard.welcome" .Username}}</h2>
     <div class="sub">{{if .IsAdmin}}{{t "dashboard.admin_sub"}}{{else}}{{t "dashboard.user_sub"}}{{end}}</div>
   </div>
 </div>
+
+{{/* B395 — the first-run wizard. It comes FIRST because the numbers below are
+     meaningless until the control plane exists: the same "0 devices" is shown when
+     headscale is absent, down and genuinely empty, and the operator needs the
+     difference before anything else. The admin branch answers "is headscale there
+     and what do I do next"; the user branch answers "is MY device connected". */}}
+{{with .Wizard}}
+{{$w := .}}
+<div class="card wiz-card wiz-{{$w.StateName}}">
+  <div class="wiz-head">
+    <div>
+      <h3><i class="fa-solid fa-wand-magic-sparkles"></i>{{t "wizard.title"}}</h3>
+      <div class="wiz-state">
+        {{t "wizard.state_label"}}
+        <b>{{t (printf "wizard.state_%s" $w.StateName)}}</b>
+        {{if $w.Reason}}<span class="wiz-reason">{{$w.Reason}}</span>{{end}}
+      </div>
+    </div>
+    <div class="wiz-counts">
+      {{/* An unknown count renders «неизвестно», never 0 — the point of the block. */}}
+      <span class="wiz-count">
+        <span class="k">{{t "wizard.count_review"}}</span>
+        {{if $w.PendingReview.Known}}<b>{{$w.PendingReview.Value}}</b>{{else}}<b class="wiz-unknown">{{t "wizard.unknown"}}</b>{{end}}
+      </span>
+      <span class="wiz-count">
+        <span class="k">{{t "wizard.count_infra"}}</span>
+        {{if $w.InfraNodes.Known}}<b>{{$w.InfraNodes.Value}}</b>{{else}}<b class="wiz-unknown">{{t "wizard.unknown"}}</b>{{end}}
+      </span>
+    </div>
+  </div>
+
+  {{if $w.Steps}}
+  <ol class="wiz-steps">
+    {{range $w.Steps}}
+    <li class="wiz-step wiz-step-{{.State}}">
+      <span class="wiz-step-icon">
+        {{if eq .State "done"}}<i class="fa-solid fa-circle-check"></i>
+        {{else if eq .State "blocked"}}<i class="fa-solid fa-circle-pause"></i>
+        {{else}}<i class="fa-regular fa-circle"></i>{{end}}
+      </span>
+      <span class="wiz-step-title">{{t .Title}}</span>
+      {{if .Why}}<span class="wiz-step-why">{{.Why}}</span>{{end}}
+      {{if .Link}}<a class="wiz-step-link" href="{{.Link}}">{{t "wizard.open"}} →</a>{{end}}
+    </li>
+    {{end}}
+  </ol>
+  {{end}}
+
+  {{if eq $w.StateName "absent"}}
+  {{/* The wizard never rewrites the operator's docker-compose.yml: it prints a
+       ready-made script and explains where it goes. */}}
+  <details class="wiz-install">
+    <summary>{{t "wizard.install_show"}}</summary>
+    <p class="wiz-hint">{{t "wizard.install_hint"}}</p>
+    <div class="wiz-code-label">{{t "wizard.install_docker"}}</div>
+    <pre class="wiz-code">{{t "wizard.install_docker_script"}}</pre>
+    <div class="wiz-code-label">{{t "wizard.install_systemd"}}</div>
+    <pre class="wiz-code">{{t "wizard.install_systemd_script"}}</pre>
+  </details>
+  {{end}}
+
+  {{if $w.Nodes}}
+  <details class="wiz-import">
+    <summary>{{tf "wizard.import_show" (len $w.Nodes)}}</summary>
+    <table class="table table-sm wiz-table">
+      <thead>
+        <tr>
+          <th>{{t "wizard.col_node"}}</th>
+          <th>{{t "wizard.col_user"}}</th>
+          <th>{{t "wizard.col_state"}}</th>
+          <th>{{t "wizard.col_tags"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range $w.Nodes}}
+        <tr>
+          <td><code>{{.Hostname}}</code>{{if .Online}} <i class="fa-solid fa-circle" style="font-size:6px;color:#198754"></i>{{end}}</td>
+          <td>{{.Username}}</td>
+          <td>
+            {{if .Infra}}<span class="badge st-sev-info">{{t "wizard.node_infra"}}</span>
+            {{else if .NeedsReview}}<span class="badge st-sev-warning">{{t "wizard.node_review"}}</span>
+            {{else}}<span class="badge st-sev-critical">{{t "wizard.node_owned"}}</span>{{end}}
+            {{if .Ambiguity}}<span class="wiz-ambiguity">{{t "wizard.ambiguous"}}</span>{{end}}
+          </td>
+          <td>{{range .Tags}}<code>{{.}}</code> {{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </details>
+  {{end}}
+
+  {{if $w.ACLLocked}}
+  <div class="wiz-acl">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <b>{{t "wizard.acl_warning"}}</b>
+    {{t "wizard.acl_warning_body"}}
+    <a href="/admin/headscale/acl">{{t "wizard.acl_link"}} →</a>
+    {{if $w.SnapshotID}}<span class="wiz-snapshot">{{tf "wizard.acl_snapshot" $w.SnapshotID}}</span>{{end}}
+  </div>
+  {{end}}
+
+  {{if eq $w.StateName "populated"}}
+  <div class="wiz-ai">
+    <i class="fa-solid fa-robot"></i>
+    {{t "wizard.ai_hint"}}
+    <a href="/my/exit-rules/agent">{{t "wizard.ai_link"}} →</a>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{with .UserWizard}}
+<div class="card wiz-card wiz-user">
+  <h3><i class="fa-solid fa-wand-magic-sparkles"></i>{{t "wizard.user_title"}}</h3>
+  <p class="wiz-hint">{{t "wizard.user_hint"}}</p>
+  <ol class="wiz-steps">
+    {{range .Steps}}
+    <li class="wiz-step {{if .Done}}wiz-step-done{{else}}wiz-step-todo{{end}}">
+      <span class="wiz-step-icon">{{if .Done}}<i class="fa-solid fa-circle-check"></i>{{else}}<i class="fa-regular fa-circle"></i>{{end}}</span>
+      <span class="wiz-step-title">{{t .Title}}</span>
+      {{if .Link}}<a class="wiz-step-link" href="{{.Link}}">{{t "wizard.open"}} →</a>{{end}}
+    </li>
+    {{end}}
+  </ol>
+</div>
+{{end}}
 
 {{if .TailnetMetrics}}
 <div class="section-title"><i class="fa-solid fa-chart-line"></i>{{if .IsAdmin}}{{t "dashboard.admin_section"}}{{else}}{{t "dashboard.user_section"}}{{end}}</div>

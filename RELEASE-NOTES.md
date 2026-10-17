@@ -12,6 +12,116 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.134 — the first-run wizard on the dashboard (B395)
+
+**Date:** 2026-10-17 · **Base:** `v1.5.133` → this tag · **Compatibility:** no
+migration, no removed route, no config change. One new admin route
+(`POST /admin/setup/acl-ack`) and one new `global_settings` key
+(`setup.acl_ack_snapshot`). The dashboard renders identically for an installation
+that is already set up.
+
+### Why
+
+A fresh panel shows "0 devices / 0 exit nodes" for **three** very different
+situations: headscale is not configured, headscale does not answer, headscale is
+genuinely empty. An operator whose control plane was down read the page as "the
+tailnet is empty". The wizard names the state and the next action instead.
+
+### What ships
+
+* **`internal/setupstate`** — `absent` / `unreachable` / `empty` / `populated`
+  (plus `unknown`), determined in that order (a missing client is not a network
+  failure), with **`Count{Value, Known}`**: an unmeasured count renders
+  «неизвестно», never `0`. The measured reason (the raw dial error, a rejected API
+  key) is kept and shown. `Report.StateName()` exists because `html/template`'s `eq`
+  cannot compare a typed enum with a string — it aborts the whole render.
+* **Import table** — every node classified as *infrastructure* (owned by the
+  technical `infra` user), *owned* by a panel user, or *awaiting review* (never
+  auto-attributed), with duplicate headscale usernames flagged **ambiguous**.
+* **Two branches** — the admin report is computed only under `if c.IsAdmin` (the
+  split lives in the data, not the template); a user gets a 4-step card (connect →
+  exit node → rules → notifications). Cached 30 s per headscale client.
+* **Recoverable ACL warning** — `POST /admin/setup/acl-ack` snapshots the live
+  policy into `acl_snapshots`, records the id, audits `setup_acl_ack`, and is
+  idempotent (the first snapshot is the pre-apply one). Acknowledging is **not**
+  applying.
+* **Install instructions as text** — ready-made docker and systemd scripts, with the
+  explicit statement that the wizard never edits the operator's `docker-compose.yml`.
+  The wizard performs no file write and no exec.
+* **AI helper** — in the populated state the wizard links to the tokenised
+  `/my/exit-rules/agent` package.
+
+### What the three local docker scenarios found (and forced me to fix)
+
+The scenarios were built to CHECK the wizard; they ended up finding three defects that
+neither the unit tests nor the contract could see — the wizard was confidently telling
+the operator the wrong thing in all three cases.
+
+1. **`absent` was unreachable.** `main.go` always constructs a `*headscale.Client`
+   (`headscale.New(cfg.HeadscaleURL, …)`), so "the client object is nil" never happens.
+   The wizard therefore reported **«не отвечает»** for an installation where nothing had
+   been configured. Fix: `Client.ReportedBaseURL()` plus the raw environment —
+   `HEADSCALE_URL` unset means `absent`, whatever the client's default says.
+2. **The built-in default URL is a placeholder, not an address.** `HEADSCALE_URL`
+   defaults to `http://headscale:50444`, so even with nothing configured the client has a
+   non-empty base URL and the probe fails with `lookup headscale on 127.0.0.11:53: no
+   such host` — a DNS error that reads like a network problem. The reason string now
+   names the placeholder explicitly, so the operator is not sent to check DNS.
+3. **A brand-new headscale looked "populated".** skygate creates the bootstrap admin
+   and the technical `infra` user at boot, so an untouched control plane ALWAYS has
+   users; the wizard said «есть данные» with 1 user and 0 devices. Fix: only a device,
+   or a control-plane user the panel did **not** create (`Config.PortalOwn`, with the
+   primary admin read from `portal_users.is_primary`), counts as importable data.
+
+Verified live after the fixes (image built from this tree, source bind-mounted at
+`/app`; the stack lives in `_skygate-e2e/wizard/`, outside the repo per rule 12):
+
+| scenario | rendered state |
+|---|---|
+| 1 — no headscale | «Headscale: **не настроен**» + «HEADSCALE_URL is not set (the built-in default "http://headscale:50444" is a placeholder, not a control plane)», and the docker/systemd install block is shown |
+| 2 — empty headscale | «Headscale: **пуст**» + «no device is registered yet (2 control-plane user(s), all created by the portal itself)» |
+| 3 — headscale with two users | «Headscale: **есть данные**», 3 done + 5 todo steps |
+
+Node registration is not scriptable against headscale 0.29 without a real tailscale
+client (`debug create-node --key` wants an `hskey-authreq-…` request key, and the image
+has no shell), so the "populated" scenario is seeded with control-plane USERS — which is
+exactly the migration case the import flow exists for.
+### Files
+
+`internal/setupstate/{setupstate.go,time.go}` + `model_b395_test.go`;
+`internal/feature/my/dashboard_wizard_b395.go` + the `GetDashboard` wiring;
+`internal/feature/admin/setup_acl_b395.go`; `cmd/skygate/routes.go`
+(`POST /admin/setup/acl-ack`); `internal/handlers/templates/dashboard.html`;
+`internal/i18n/catalog_my.go` (51 `wizard.*` keys, RU + EN);
+`internal/handlers/dashboard_wizard_render_b395_test.go`;
+`scripts/check_b395_setup_wizard.sh` (29 contracts); docs: `docs/INSTALL.md` §10.1
+(+RU), `docs/ROADMAP.md` (+RU), `docs/LESSONS.md` L-73.
+
+### Verification
+
+* `internal/setupstate` (9 predicate tests), `internal/handlers` (5 render tests),
+  `internal/feature/my`, `internal/feature/admin`, `internal/i18n` — green.
+* The contract asserts the four states and `Count{Known}`, that the page gates every
+  count on `Known` and renders the localised unknown marker, that the admin report is
+  permission-gated in the handler, that the install scripts are text with no
+  file-write/exec in the surface, that the ACL acknowledgement snapshots and its
+  route is registered, the AI-helper link, and every wizard key in RU + EN.
+* **The gate caught the one defect no test did, and it is worth naming.** The
+  acknowledged snapshot id was supposed to come back onto the page; the helper existed,
+  the contract asserted that the helper existed (and went green), and **nothing called
+  it** — so the id lived in `global_settings` and nowhere the operator could see it.
+  `staticcheck`'s `U1000` (`func ackSnapshotIDForWizard is unused`) was the only thing
+  that fired. Fixed by wiring the id into the report on every dashboard visit, and the
+  contract's `E4` now asserts the **call site** (on the comment-stripped surface)
+  rather than the symbol, because "the symbol exists" is exactly what dead code
+  satisfies. Recorded as L-73's sixth rule.
+* The three local docker scenarios (no headscale / empty / with data) live in
+  `_skygate-e2e/wizard/` (outside the repo, per rule 12): scenario 1 boots the panel
+  with no headscale at all, 2 against an empty one, and 3 against one with two
+  registered users (`alice`, `bob`) — the import case. A *node* cannot be registered
+  from a script on headscale 0.29 (see the block above), so scenario 3 seeds users,
+  which is exactly what the wizard has to classify.
+
 ## v1.5.133 — system tests became a diagnostic tool (B394)
 
 **Date:** 2026-10-17 · **Base:** `v1.5.132` → this tag · **Compatibility:** no migration, no route

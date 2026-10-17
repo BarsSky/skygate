@@ -269,6 +269,48 @@ reachable over the network (`HEADSCALE_URL` cannot be a container name).
    OIDC login (`docs/oidc.md`), public HTTPS (`docs/https.md`), own DERP relay
    (`docs/derp.md` + `deploy/derp-init.sh`), HA/cluster (`docs/ha.md`).
 
+## 10.1 First-run wizard — what the dashboard tells you before anything else (B395)
+
+A fresh installation shows the same "0 devices / 0 exit nodes" whether headscale is
+**absent**, **unreachable** or genuinely **empty** — and the three need completely
+different actions. The wizard on `/dashboard` names the state instead:
+
+| state | what the page says | what you do |
+|---|---|---|
+| `absent` | «не настроен» + the reason | run the ready-made docker **or** systemd script the wizard shows (it never edits your `docker-compose.yml`), then reload |
+| `unreachable` | «не отвечает» + the **raw** error (`connection refused`, TLS, 401 …) | fix `HEADSCALE_URL` / the API key on `/admin/headscale` |
+| `empty` | «пуст» | register the first device, then add an exit node |
+| `populated` | «есть данные» | review the import table, acknowledge the ACL warning, set up rules |
+
+The counts next to the state («ждут проверки», «технические узлы») print
+**«неизвестно»** when they could not be measured — never a zero. That is the whole
+point: a zero is a claim.
+
+> **Measured on a live docker stack (2026-10-17).** Three behaviours are easy to get
+> wrong and are pinned by the wizard now: (1) with `HEADSCALE_URL` unset the panel says
+> «не настроен» — the built-in default `http://headscale:50444` is a placeholder, not an
+> address, so a probe against it is NOT a network problem; (2) a control plane whose only
+> users are the ones skygate created itself (the bootstrap admin and `infra`) is reported
+> as «пуст», because there is nothing to import; (3) the import flow counts a control-plane
+> **user the panel did not create** as data, which is the migration case.
+**Import table.** Every headscale node is classified as *infrastructure* (owned by the
+technical `infra` user — not an end-user device), *owned* (a panel user already owns
+it) or *awaiting review* (nobody owns it yet — the wizard never auto-attributes).
+Duplicate headscale usernames are flagged **ambiguous** rather than silently picked.
+
+**The ACL warning is recoverable.** If your existing policy contains tag-based rules,
+skygate will replace it with the policy it generates. Before you accept that, press
+«Сохранить снапшот» — it stores the live policy in `acl_snapshots` (visible on
+`/admin/headscale/acl`, downloadable) and the dashboard then shows the snapshot id.
+Acknowledging is **not** applying; nothing is written to headscale by that button.
+
+**AI helper.** In the populated state the wizard links to `/my/exit-rules/agent` — a
+self-contained package (credentials, API contract, constraints, live state) an AI
+assistant can read from one tokenised URL.
+
+**Users** get a different card: connect your device → choose an exit node → add rules
+→ set up notifications. A user cannot install a control plane, so the page does not
+pretend otherwise.
 ## 11. Updating
 
 See [`docs/UPDATE.md`](UPDATE.md) for every path (compose rebuild, image pull,

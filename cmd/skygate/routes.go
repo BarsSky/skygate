@@ -50,7 +50,10 @@ func registerRoutes(
 	// (after mySvc construction) so the closure can reference
 	// the mySvc variable.
 	mux.Handle("GET /dashboard", authMW(http.HandlerFunc(mySvc.GetDashboard)))
-	// refactor-v0.30 Phase B step 6e (2026-07-29):
+
+	// B395 - the setup wizard's ACL acknowledgement: it snapshots the live policy before
+	// the operator accepts that skygate will replace it (acknowledging is not applying).
+	mux.Handle("POST /admin/setup/acl-ack", authMW(http.HandlerFunc(adminSvc.PostAdminSetupACLAck))) // refactor-v0.30 Phase B step 6e (2026-07-29):
 	// /settings/theme moved to feature/my/settings.go
 	// (mySvc.PostSettingsTheme). Same handler for GET
 	// and POST (the picker is a GET form; the form

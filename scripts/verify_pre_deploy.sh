@@ -6228,8 +6228,35 @@ run_check "B392" "THE NOTIFICATION PANEL MUST READ, SCALE AND BE REACHABLE. Oper
 # database, a half-migrated schema, a filling disk, an unreachable DERP, a process
 # still booting, stale domain /32s and a backup that stopped running.
 # 33 contracts in scripts/check_b394_system_tests_diagnostics.sh.
+
+# ---------------------------------------------------------------------------
 run_check "B394" "SYSTEM TESTS MUST BE A DIAGNOSTIC TOOL, NOT A GRID OF PASS/FAIL CELLS. Operator ask: severity, what to do, context, run progress, the false disabled state after POST, filters anchors copy-failed, eleven new tests and history retention. The false state was measured in the code: the GET handler built a page map with the DNS and preferred-reconciler flags while the POST handler built its own smaller map and rendered the same template, so after every run the toggles read a missing key and the page claimed both background workers were off; one shared builder now feeds both handlers. Every test now carries a severity, an i18n remediation key and a doc link, applied by one annotation table with per-category floors so a newly added test can never render unannotated; the run is asynchronous with a snapshot the page polls, one test can be re-run from its row, and the history is pruned by a named policy. Eleven new tests cover the failures this project has actually had: unapproved exit-node routes, tag drift between the portal and headscale, a live policy that differs from the generated one, prefix ownership that disagrees with what the relays advertise, a read-only database, a half-migrated schema, a filling disk, an unreachable DERP relay, a process still booting, stale domain prefixes and a backup that stopped running." \
   'test -f scripts/check_b394_system_tests_diagnostics.sh && bash scripts/check_b394_system_tests_diagnostics.sh'
+
+# B395 — the first-run wizard on the dashboard (v1.5.134, 2026-10-17)
+# ---------------------------------------------------------------------------
+# THE DEFECT THIS PREVENTS: a naive wizard answers "0 devices, 0 exit nodes" for
+# every situation — headscale absent, unreachable and genuinely empty all look the
+# same — so an operator whose headscale is DOWN is told the tailnet is empty and
+# starts creating users that go nowhere. The four named states plus Count{Known}
+# («неизвестно», never 0) are the whole point.
+#
+# What the block ships: internal/setupstate (absent / unreachable / empty /
+# populated, honest-unknown counts, infra-vs-review classification, ambiguity
+# detection, snapshot-before-apply); the dashboard card with SEPARATE admin and user
+# branches (the admin report is only computed under `if c.IsAdmin`, so the template
+# cannot leak it); ready-made headscale install scripts for docker and systemd as
+# TEXT — the wizard performs no file write and no exec, because the operator's
+# docker-compose.yml is theirs (rule 7); a recoverable ACL warning (POST
+# /admin/setup/acl-ack snapshots the live policy into acl_snapshots and the dashboard
+# shows the snapshot id) and the tokenised AI-helper link.
+#
+# One template defect was caught by the render test and is worth remembering:
+# {{eq $w.State "absent"}} fails the WHOLE render when State is a typed enum
+# ("incompatible types for comparison"), so Report.StateName() exists for the page.
+# 29 contracts in scripts/check_b395_setup_wizard.sh.
+run_check "B395" "THE FIRST-RUN WIZARD MUST NAME THE STATE, NEVER GUESS IT, AND MUST NOT TOUCH WHAT IT DOES NOT OWN. Operator ask: an interactive first-run wizard on the main page with separate admin and user branches, a clean setupstate with an honest unknown instead of zeros, the four scenarios (no headscale, unreachable, empty, has data), an import table for users and nodes over an existing headscale with ambiguities surfaced, an ACL rewrite warning with a snapshot and a link to the tokenised AI helper, headscale install instructions for docker and systemd as ready-made scripts without editing the operator compose file, and a permission split. The defect it prevents: 0 devices is rendered for a headscale that is absent, down or genuinely empty, so an operator whose control plane is down is told the tailnet is empty. The four states and Count{Known}, which renders the unknown marker instead of a zero, are asserted by the contract; the install instructions are text only and the wizard performs no file write and no exec; the ACL acknowledgement snapshots the live policy so the warning is recoverable; StateName exists because comparing a typed enum with a string in html/template fails the whole render. Contracts A to H in scripts/check_b395_setup_wizard.sh, plus the render tests in internal/handlers/dashboard_wizard_render_b395_test.go and the predicate tests in internal/setupstate." \
+  'test -f scripts/check_b395_setup_wizard.sh && bash scripts/check_b395_setup_wizard.sh'
 run_check "B393" "THE SELF-UPDATE MUST PROVE IT SWAPPED, AND THE HELPER MUST SEE THE SAME /data THE ORCHESTRATOR WROTE TO. On the live host /admin/update reported phase=done with no error while the panel kept serving the previous build, and two releases in a row only became live because the container was recreated by hand; the swap log said, twice, that the helper could not open the swap helper script at data, meaning it was handed a different filesystem than the one the orchestrator wrote to. Two independent defects: both swap scripts mounted the literal legacy volume skygate-data, which is empty on a bind mounted install, and nothing verified that a swap had happened at all — the in-container poll accepted any 200 with status ok, and the admin page did the same from every render before completing the job, while the OLD container answers exactly that 200. The fix has one resolver that reads the live container own data mount and renders it into both scripts, a pre-flight that proves the helper can see its script before it is spawned and writes a FAILED marker naming the mount when it cannot, a build-aware verdict in both probes that also rejects a still booting process and uses the recreated container id as a second witness, a boot-time resolver that declares an unfinished swap failed with the swap log tail, and a swap-log failure marker that resolves the job at once. Contracts A to H in scripts/check_b393_swap_helper_handoff.sh, including a detector proof and a live section that skips when docker is unavailable." \
   'test -f scripts/check_b393_swap_helper_handoff.sh && bash scripts/check_b393_swap_helper_handoff.sh'
 

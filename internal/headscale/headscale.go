@@ -239,3 +239,13 @@ func (c *Client) SetCacheTTL(d time.Duration) {
 	c.cacheTTL = d
 	c.cacheMu.Unlock()
 }
+
+// ReportedBaseURL exposes the configured control-plane URL to read-only consumers
+// that must distinguish "headscale is not configured" from "headscale is down"
+// (B395: main.go always constructs a client, so its existence proves nothing).
+func (c *Client) ReportedBaseURL() string {
+	if c == nil {
+		return ""
+	}
+	return c.BaseURL
+}

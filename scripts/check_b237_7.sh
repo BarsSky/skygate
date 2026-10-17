@@ -125,13 +125,27 @@ else
 fi
 
 # C.2 B237.7 unit tests pass
+#
+# B395 repair (2026-10-18), two measured defects in the previous two lines:
+#   * `go test … | grep -q '^ok'` is AGENTS trap #9 verbatim — under this script's
+#     `set -o pipefail` grep -q exits at the first match, the still-writing go test
+#     dies of SIGPIPE and the PIPELINE fails on a suite that passed. Capture first,
+#     then look at the command's OWN status (trap #15 as well).
+#   * `-timeout 180s` was a guess, not a measurement. The full exit_rules package in
+#     -short mode measured **275 s** on the reference workstation (2026-10-18, an
+#     idle box, `go test -short -count=1`, 278.8 s wall) — so C.3 could only pass on
+#     a fast day: it answered "regression!" (181 s panic) for a healthy tree, which is
+#     exactly the class B386 exists to stop. The package budget is now 600 s, while
+#     the catalog's own per-check wall clock (SKYGATE_CHECK_TIMEOUT) stays the ceiling.
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
+    C2_OUT="$(CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
         -run 'PlanDevicePrefChange|PreferredExitReconcilerLive' \
-        ./internal/feature/exit_rules/... 2>/dev/null | grep -q '^ok'; then
+        ./internal/feature/exit_rules/... 2>&1)"
+    if [ $? -eq 0 ]; then
         ok "C.2 B237.7 unit tests pass (PlanDevicePrefChange + PreferredExitReconcilerLive)"
     else
         bad "C.2 B237.7 unit tests failed"
+        printf '%s\n' "$C2_OUT" | tail -12 | sed 's/^/        /'
     fi
 else
     echo "  SKIP  C.2 B237.7 unit tests (no go in PATH)"
@@ -139,11 +153,13 @@ fi
 
 # C.3 all exit_rules package tests pass (full coverage)
 if command -v go >/dev/null 2>&1; then
-    if CGO_ENABLED=0 go test -short -count=1 -timeout 180s \
-        ./internal/feature/exit_rules/... 2>/dev/null | grep -q '^ok'; then
+    C3_OUT="$(CGO_ENABLED=0 go test -short -count=1 -timeout 600s \
+        ./internal/feature/exit_rules/... 2>&1)"
+    if [ $? -eq 0 ]; then
         ok "C.3 full exit_rules test suite passes (B229 + B237.7 + B188.2 + B178 + B182 + B184)"
     else
         bad "C.3 full exit_rules test suite failed (regression)"
+        printf '%s\n' "$C3_OUT" | tail -15 | sed 's/^/        /'
     fi
 else
     echo "  SKIP  C.3 exit_rules test suite (no go in PATH)"
