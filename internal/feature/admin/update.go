@@ -22,11 +22,9 @@ package admin
 // onto the admin Service as fields (no more global singleton).
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -217,18 +215,21 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 	// phase=rolled_back (left by failWithRollback — same
 	// pattern, the rollback spawns its own subprocess to
 	// do `docker compose up` and has no time to confirm),
-	// we poll /healthz and promote to phase=done on
-	// success. The 5s auto-refresh on /admin/update will
-	// pick up the new phase without a manual reload.
+	// we resolve the verdict (B393: evidence-based, not
+	// "any 200") and promote the phase accordingly.
 	store := s.UpdateState
 	if st := store.Get(); st != nil {
 		phaseStr := string(st.Phase)
-		store.Log(update.LogInfo, fmt.Sprintf("renderUpdatePage: phase=%s", phaseStr))
+		// A page render happens every ~5 s while the operator watches an
+		// update; logging the terminal phases at info level would bury the
+		// job's own log lines under render noise (B393).
 		if st.Phase == update.PhaseBuildDone || st.Phase == update.PhaseRolledBack {
-			store.Log(update.LogInfo, fmt.Sprintf("renderUpdatePage: phase=%s detected, calling confirmPendingSwap", st.Phase))
+			store.Log(update.LogInfo, fmt.Sprintf("renderUpdatePage: phase=%s detected, resolving the swap verdict", phaseStr))
 			s.confirmPendingSwap(ctx, st, store)
 			// Re-fetch state after confirmPendingSwap may
 			// have promoted it to phase=done.
+		} else {
+			store.Log(update.LogDebug, fmt.Sprintf("renderUpdatePage: phase=%s", phaseStr))
 		}
 	}
 	// v1.5.9 (§12.15): native (systemd / bare) jobs are finalized from
@@ -1022,46 +1023,39 @@ func (s *Service) PostAdminUpdateDismiss(w http.ResponseWriter, r *http.Request)
 	http.Redirect(w, r, "/admin/update", http.StatusSeeOther)
 }
 
-// confirmPendingSwap is the v0.29.3 hook called by
-// renderUpdatePage on the NEW orchestrator's first page
-// load after a swap. The state file is left at
-// phase=build_done (success path) or phase=rolled_back
-// (rollback path) by the old orchestrator's spawn; the
-// swap subprocess (in the old container's PID namespace)
-// is killed when the old container is removed and has no
-// time to do healthz polling or update the state file.
-// So the new orchestrator takes over here:
+// confirmPendingSwap resolves an update job that stopped at `build_done`
+// (success path) or `rolled_back` (rollback path). It is called from
+// renderUpdatePage on every /admin/update render.
 //
-//  1. The new skygate container is recreated by the
-//     subprocess. Sometimes compose's recreate leaves the
-//     new container in `Created` (not `Started`) — the
-//     v0.29.2 race that `container_name: skygate` removal
-//     only mostly fixed. The new orchestrator can see the
-//     new container via the docker.sock bind-mount and
-//     start it if it's stuck. We do this BEFORE the
-//     healthz poll.
-//  2. Polls /healthz (the new container is bound to
-//     :8080) for up to 30s, with a 2s per-request
-//     timeout. The new skygate's entrypoint runs `go
-//     build` before serving, so this can take 5-30s on
-//     first boot.
-//  3. On 200 response: store.Complete() — phase=build_done
-//     or rolled_back → phase=done.
-//  4. On timeout: leave at the current phase. The next
-//     page load (5s auto-refresh) will retry.
+// B393 — what changed and why
+// ---------------------------
+// Before this, the function polled /healthz for up to 30 s and called
+// store.Complete() on the first 200 with `"status":"ok"`. The OLD container
+// answers exactly that, so every page view of a job whose swap step never
+// ran promoted it to `done` (live host, 2026-10-16, twice: the swap helper
+// was handed an empty volume and died, and the panel reported success).
 //
-// The poll is bounded — 30s is the worst case for the
-// entrypoint's `go build` (typically <10s on a clean cache
-// with a recent commit). 60s would be too long for a page
-// load; the page is already inside the request's 8s
-// timeout, so we use a separate background context.
+// The verdict now asks update.ResolvePendingSwap, which needs evidence:
+// the serving build label must be the job target, or the serving container
+// must no longer be the one that requested the swap. It also:
+//
+//   - fails the job immediately when the swap script wrote a FAILED/FATAL
+//     line into the swap log (no point waiting out the grace period),
+//   - declares `failed` with a diagnostic (and the log tail) once
+//     update.SwapGracePeriod has passed without a swap, instead of leaving
+//     the job at `build_done` forever,
+//   - un-sticks a container left in `Created` (unchanged behaviour).
+//
+// The in-render wait is deliberately short (confirmSwapBudget): the verdict
+// is cheap and a page render must not block for long. The page auto-refreshes
+// every 5 s, so an unresolved job is retried by the next render.
 func (s *Service) confirmPendingSwap(parentCtx context.Context, st *update.State, store *update.StateStore) {
 	if st == nil || store == nil {
 		return
 	}
 	bgCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	_ = parentCtx // intentionally ignored — the poll runs in the background
+	_ = parentCtx // intentionally ignored — the work runs on its own context
 
 	// Step 1: ensure the new container is running. The
 	// skygate container has /var/run/docker.sock bind-
@@ -1072,32 +1066,17 @@ func (s *Service) confirmPendingSwap(parentCtx context.Context, st *update.State
 	// helper used).
 	s.startStuckSkygateContainer(bgCtx, store)
 
-	// Step 2: poll /healthz on the new container (which
-	// is US — we're in it). The new entrypoint runs
-	// `go build` first, so this can take 5-30s on first
-	// boot.
-	healthURL := "http://localhost:8080/healthz"
-	client := &http.Client{Timeout: 2 * time.Second}
-	deadline := time.Now().Add(30 * time.Second)
-	attempt := 0
-	for time.Now().Before(deadline) {
-		attempt++
-		select {
-		case <-bgCtx.Done():
+	// Step 2: ask for the verdict until it is decided. The entrypoint's
+	// `go build` delays the new container's first response, so a single
+	// call right after the swap can legitimately come back "not yet".
+	deadline := time.Now().Add(confirmSwapBudget)
+	for {
+		if update.ResolvePendingSwap(bgCtx, store, s.BuildVersion) {
 			return
-		default:
 		}
-		req, _ := http.NewRequestWithContext(bgCtx, "GET", healthURL, nil)
-		resp, err := client.Do(req)
-		if err == nil {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if resp.StatusCode == 200 && bytes.Contains(body, []byte(`"status":"ok"`)) {
-				// Success — promote phase → done.
-				store.Log(update.LogInfo, fmt.Sprintf("new orchestrator confirmed swap via /healthz (attempt %d)", attempt))
-				store.Complete()
-				return
-			}
+		if time.Now().After(deadline) {
+			store.Log(update.LogWarn, "confirmPendingSwap: the swap is not confirmed yet; the next page refresh retries (a job that never swaps is declared failed after "+update.SwapGracePeriod.String()+")")
+			return
 		}
 		select {
 		case <-bgCtx.Done():
@@ -1105,10 +1084,10 @@ func (s *Service) confirmPendingSwap(parentCtx context.Context, st *update.State
 		case <-time.After(2 * time.Second):
 		}
 	}
-	// Timeout — leave at current phase. Operator can
-	// dismiss the page or refresh later.
-	store.Log(update.LogWarn, fmt.Sprintf("confirmPendingSwap timed out after %d attempts; phase stays at %s (operator may need to dismiss)", attempt, st.Phase))
 }
+
+// confirmSwapBudget bounds how long one page render waits for the verdict.
+const confirmSwapBudget = 10 * time.Second
 
 // startStuckSkygateContainer is the v0.29.3 final-mile
 // helper called by confirmPendingSwap on the new

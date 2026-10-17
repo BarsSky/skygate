@@ -856,6 +856,25 @@ func main() {
 	// /healthz, the panel footer, `skygate version` and the version a JOIN
 	// registers cannot drift apart.
 	app.BuildVersion = buildVersionString()
+	// 2026-10-17 (B393): resolve a Docker update job that the panel could not
+	// finish. The swap subprocess is killed when the old container is
+	// removed, so the FIRST process able to witness "did the swap really
+	// happen?" is the new one — us. Doing it here (not only on an
+	// /admin/update render) means the verdict lands even if nobody logs in:
+	// the state file the operator cats, the Telegram alert path and the page
+	// all see the same thing.
+	//
+	// Before B393 the answer came from "does /healthz answer 200?", which the
+	// OLD container also answers — so a job whose swap never ran was reported
+	// as done. ResolvePendingSwap compares the serving build with the job
+	// target and the serving container with the one that requested the swap,
+	// and declares `failed` (with the swap log tail) once the grace period
+	// has passed with no evidence. No-op for native jobs and terminal states.
+	if update.ResolvePendingSwap(context.Background(), updateStore, app.BuildVersion) {
+		if st := updateStore.Get(); st != nil {
+			log.Printf("update: pending swap resolved at boot — phase=%s (build %s)", st.Phase, app.BuildVersion)
+		}
+	}
 	log.Printf("🌐 Skygate %s (commit %s, built %s)", version, commit, buildTime)
 
 	startup.Enter("routes")

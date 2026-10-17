@@ -150,6 +150,21 @@ type State struct {
 
 	// VerifyAfter is the post-success sanity check.
 	VerifyAfter string `json:"verify_after,omitempty"`
+
+	// SwapFromContainerID (B393) is the id of the skygate container that
+	// requested the swap — i.e. the container the operator is running
+	// BEFORE `docker compose up --force-recreate`. It is the only
+	// unambiguous witness that the swap actually happened: a recreate
+	// always yields a NEW container id, so "the serving container is
+	// still this id" proves the swap never ran.
+	//
+	// Why it is needed: on 2026-10-17 the panel reported
+	// `phase=done, error=null` while `/healthz` still served the previous
+	// build, because the verdict only asked "does /healthz answer 200?" —
+	// a question the OLD container answers perfectly well. Empty for jobs
+	// started before this field existed and when docker introspection is
+	// unavailable; in that case the build label is the only witness.
+	SwapFromContainerID string `json:"swap_from_container_id,omitempty"`
 }
 
 // LogEntry is one line in the rolling log buffer.
@@ -339,6 +354,20 @@ func (s *StateStore) SetManualStep(kind, cmd string) {
 	}
 	s.state.ManualSwap = cmd
 	s.state.Log = appendLog(s.state.Log, LogInfo, "manual step ("+kind+"): "+cmd)
+	_ = s.persistLocked()
+}
+
+// SetSwapFromContainer records the id of the container that is about to
+// be recreated (B393). Must be called BEFORE the swap subprocess is
+// spawned and persisted immediately: the process that later reads it back
+// is the NEW container, which only knows what the file says.
+func (s *StateStore) SetSwapFromContainer(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil {
+		return
+	}
+	s.state.SwapFromContainerID = id
 	_ = s.persistLocked()
 }
 

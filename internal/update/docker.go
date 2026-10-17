@@ -37,6 +37,7 @@ package update
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -372,7 +373,7 @@ func (u *DockerUpgrader) Run(ctx context.Context, target string) {
 	// phase without a reload.
 	u.State.SetPhase(PhaseBuildDone, "image rebuilt, spawning detached swap subprocess")
 	u.State.Log(LogInfo, "build done — spawning detached swap subprocess")
-	if err := u.spawnSwapSubprocess(); err != nil {
+	if err := u.spawnSwapSubprocess(ctx); err != nil {
 		u.State.Log(LogError, "spawn swap subprocess: "+err.Error())
 		u.State.Fail(fmt.Errorf("spawn swap subprocess: %w", err))
 		return
@@ -390,8 +391,16 @@ func (u *DockerUpgrader) Run(ctx context.Context, target string) {
 	// Phase 5: verify. Poll /healthz for up to 60s. If
 	// the new binary boots and the DB is reachable, the
 	// /healthz returns 200 with the new build label.
+	//
+	// B393: this poll runs in the OLD container, which is
+	// usually killed before it can finish — the verdict that
+	// matters is resolved by the NEW process (ResolvePendingSwap
+	// at boot, confirmPendingSwap on the page). It is kept
+	// because a swap that does not recreate the container at
+	// all (e.g. compose up rc=0 but no recreate) leaves this
+	// process alive to report it.
 	u.State.SetPhase(PhaseVerify, "polling /healthz for the new build")
-	if err := u.pollHealthz(ctx, 60*time.Second); err != nil {
+	if err := u.pollHealthz(ctx, 60*time.Second, target); err != nil {
 		u.failWithRollback(ctx, fmt.Errorf("healthz: %w", err), backupTag)
 		return
 	}
@@ -475,39 +484,14 @@ func (u *DockerUpgrader) failWithRollback(ctx context.Context, cause error, back
 	// so the rollback path is self-contained even if the
 	// Go-level writeSwapHelperScript was somehow skipped
 	// (e.g. if failWithRollback is called before spawnSwapSubprocess).
-	rollbackScript := `#!/bin/sh
-STATE=/data/skygate-update-status.json
-LOG=/data/skygate-update-swap.log
-COMPOSE_PROJECT=skygate
-
-log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ROLLBACK $*" >> "$LOG"; }
-
-log "rollback swap subprocess started (pid=$$) — spawning helper container"
-
-# Helper script — same body as the success path. Inline
-# here so the rollback works even if the Go-level
-# writeSwapHelperScript never ran.
-cat > /data/skygate-swap-helper.sh << 'HELPER_EOF'
-` + swapHelperScript + `HELPER_EOF
-chmod +x /data/skygate-swap-helper.sh
-
-SKYGATE_HOST_REPO_PATH="${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}"
-log "spawning helper container"
-docker run --rm \
-  --pid=host \
-  --net=host \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$SKYGATE_HOST_REPO_PATH:/host_repo:ro" \
-  -v skygate-data:/data \
-  -e SKYGATE_HOST_REPO_PATH="$SKYGATE_HOST_REPO_PATH" \
-  --name skygate-rollback-helper \
-  alpine:3.20 \
-  /bin/sh /data/skygate-swap-helper.sh >> "$LOG" 2>&1 &
-HELPER_PID=$!
-disown $HELPER_PID 2>/dev/null || true
-log "helper container spawned (pid=$HELPER_PID), parent script exiting"
-exit 0
-`
+	//
+	// B393: the body is a package-level constant now, rendered with the
+	// SAME resolved /data mount as the success path — the two scripts used
+	// to carry separate hardcoded mounts, which is how the wrong volume
+	// survived in both of them.
+	rollbackDataMount, rollbackMountKind := u.resolveDataMount(context.Background())
+	rollbackScript := renderSwapScript(rollbackSwapScriptTemplate, rollbackDataMount)
+	u.State.Log(LogInfo, fmt.Sprintf("rollback: /data mount = %s (%s)", rollbackDataMount, rollbackMountKind))
 	rollbackScriptPath := "/data/skygate-rollback-swap.sh"
 	if err := os.WriteFile(rollbackScriptPath, []byte(rollbackScript), 0755); err != nil {
 		u.State.Log(LogError, "write rollback swap script: "+err.Error())
@@ -797,10 +781,12 @@ func (u *DockerUpgrader) runShellCapture(ctx context.Context, name string, args 
 //     no process group shared with the orchestrator), so
 //     SIGTERM to skygate's process group does NOT reach
 //     the subprocess.
-//   - The subprocess inherits the orchestrator's CWD (/app)
-//     and the /data named volume (skygate-data) bind-mount,
-//     so it can read/write /data/skygate-update-status.json
-//     and exec `docker compose` against /app/docker-compose.yml.
+//   - The subprocess inherits the orchestrator's CWD (/app) and the
+//     orchestrator's own /data mount, so it can read/write
+//     /data/skygate-update-status.json and exec `docker compose` against
+//     /app/docker-compose.yml. (B393: the /data that the HELPER container
+//     then mounts is resolved from this container's own mount by
+//     resolveDataMount — it is not assumed to be a named volume.)
 //   - The subprocess is fire-and-forget: the orchestrator
 //     returns immediately after Start() returns. Any error
 //     in the subprocess is reflected in
@@ -870,27 +856,32 @@ func (u *DockerUpgrader) runShellDetached(ctx context.Context, name string, args
 	return nil
 }
 
-// pollHealthz polls the post-deploy skygate /healthz endpoint
-// until it returns 200 (or the timeout fires). The "build" field
-// in the response should match the new build label — the
-// caller passes that as `expectedBuild` to assert it's not
-// just the old container still running. For the simple
-// "is the new image up" check, we accept any 200 (the
-// caller can read the build from the State if it needs the
-// strict check; we don't have a label here in DockerUpgrader).
+// pollHealthz polls the post-deploy skygate /healthz endpoint until the
+// build that answers is the build the job asked for (or the timeout fires).
+//
+// B393: the `expectedBuild` parameter is new and is the whole point. Before
+// it, the poll accepted any 200 with `"status":"ok"` — which the OLD
+// container answers perfectly well, so an update whose swap never ran was
+// verified as successful. Two things are now required:
+//
+//   - the label's version part equals the job target (BuildSatisfiesTarget),
+//   - the body is not a still-booting process: /healthz carries
+//     `"ready":false` while a boot phase is unfinished (B269), and a
+//     booting process happens to serve the NEW build string, so it must not
+//     be mistaken for a finished one.
 //
 // 2026-07-30 (v0.34 cleanup): the v0.29.0
 // `ensureComposeServiceRunning` helper that used to gate
 // this poll on `docker ps` state is gone — the v0.29.2
 // `container_name:` fix made the race a non-issue. /healthz
 // alone is the canonical liveness signal.
-func (u *DockerUpgrader) pollHealthz(ctx context.Context, timeout time.Duration) error {
+func (u *DockerUpgrader) pollHealthz(ctx context.Context, timeout time.Duration, expectedBuild string) error {
 	deadline := time.Now().Add(timeout)
 	attempt := 0
 	for {
 		attempt++
 		if time.Now().After(deadline) {
-			return fmt.Errorf("healthz did not return 200 within %s (%d attempts)", timeout, attempt-1)
+			return fmt.Errorf("healthz did not report the expected build %q within %s (%d attempts)", expectedBuild, timeout, attempt-1)
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -912,15 +903,23 @@ func (u *DockerUpgrader) pollHealthz(ctx context.Context, timeout time.Duration)
 		req, _ := http.NewRequestWithContext(ctx, "GET", "http://localhost:8080/healthz", nil)
 		resp, httpErr := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 		if httpErr == nil {
-			defer resp.Body.Close()
 			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
 			body := string(bodyBytes)
-			// 200 + body contains "status":"ok" → healthy.
-			if resp.StatusCode == 200 && strings.Contains(body, `"status":"ok"`) {
-				u.State.Log(LogInfo, fmt.Sprintf("healthz 200 (attempt %d)", attempt))
+			build := healthzBuild(body)
+			switch {
+			case resp.StatusCode != 200:
+				u.State.Log(LogDebug, fmt.Sprintf("healthz status %d (attempt %d): %s", resp.StatusCode, attempt, body))
+			case !strings.Contains(body, `"status":"ok"`):
+				u.State.Log(LogDebug, fmt.Sprintf("healthz not ok yet (attempt %d): %s", attempt, body))
+			case healthzBootInProgress(body):
+				u.State.Log(LogInfo, fmt.Sprintf("healthz 200 but the process is still booting (attempt %d)", attempt))
+			case !BuildSatisfiesTarget(build, expectedBuild, u.CurrentVersion):
+				u.State.Log(LogInfo, fmt.Sprintf("healthz 200 from build %q, the job targets %q — the swap has not happened yet (attempt %d)", build, expectedBuild, attempt))
+			default:
+				u.State.Log(LogInfo, fmt.Sprintf("healthz 200 with the expected build %s (attempt %d)", build, attempt))
 				return nil
 			}
-			u.State.Log(LogDebug, fmt.Sprintf("healthz body (attempt %d, status %d): %s", attempt, resp.StatusCode, body))
 		} else {
 			// Connection refused / timeout. Expected
 			// during the recreate window. Log only on
@@ -939,6 +938,37 @@ func (u *DockerUpgrader) pollHealthz(ctx context.Context, timeout time.Duration)
 		case <-time.After(5 * time.Second):
 		}
 	}
+}
+
+// healthzBuild extracts the `build` field from a /healthz body. Returns ""
+// when the field is absent or the body is not JSON — the verdict treats an
+// empty build as "no proof", never as a match.
+func healthzBuild(body string) string {
+	var probe struct {
+		Build string `json:"build"`
+	}
+	if err := json.Unmarshal([]byte(body), &probe); err != nil {
+		return ""
+	}
+	return probe.Build
+}
+
+// healthzBootInProgress reports whether the body is the provisional /healthz
+// of a process that has not finished booting yet (B269 ships `ready:false`
+// plus the current phase). A booting process serves the NEW build string, so
+// without this check it would be accepted as a completed swap.
+func healthzBootInProgress(body string) bool {
+	var probe struct {
+		Ready *bool  `json:"ready"`
+		Phase string `json:"phase"`
+	}
+	if err := json.Unmarshal([]byte(body), &probe); err != nil {
+		return false
+	}
+	if probe.Ready != nil && !*probe.Ready {
+		return true
+	}
+	return probe.Phase != ""
 }
 
 // GitRefForBuildLabel converts a build label / display
@@ -1335,21 +1365,37 @@ cat > /data/skygate-swap-helper.sh << 'HELPER_EOF'
 ` + swapHelperScript + `HELPER_EOF
 chmod +x /data/skygate-swap-helper.sh
 
+# B393: the helper MUST mount the same /data this script just wrote to.
+# Go resolves it from the live container's own /data mount (a named volume
+# -> the volume name, a bind -> the absolute host path) and substitutes it
+# for the placeholder below. Before B393 this line was the literal
+# "skygate-data", a legacy volume that is empty on a bind-mounted install:
+# the helper mounted the wrong filesystem, could not read the script, and
+# the failure stayed buried in this log while the panel reported success.
+DATA_MOUNT=__SKYGATE_DATA_MOUNT__
+HELPER_IMAGE="${SKYGATE_SWAP_HELPER_IMAGE:-alpine:3.20}"
+log "resolved data mount: $DATA_MOUNT (helper image $HELPER_IMAGE)"
+
+# Pre-flight (B393 F2/F5): prove the helper can SEE the script through the
+# resolved mount BEFORE spawning it. A wrong mount is now a loud, immediate
+# failure with the mount value named, not a silent 127 two seconds later.
+if ! docker image inspect "$HELPER_IMAGE" > /dev/null 2>&1; then
+  log "helper image $HELPER_IMAGE not present locally — pulling"
+  docker pull "$HELPER_IMAGE" >> "$LOG" 2>&1 || log "WARN: docker pull $HELPER_IMAGE failed; the spawn below will retry"
+fi
+if ! docker run --rm -v "$DATA_MOUNT:/data:ro" "$HELPER_IMAGE" /bin/sh -c 'test -s /data/skygate-swap-helper.sh' >> "$LOG" 2>&1; then
+  log "FAILED: the helper cannot see /data/skygate-swap-helper.sh through the resolved mount '$DATA_MOUNT' — nothing was swapped and the panel is still running the old build"
+  log "FAILED: fix the /data mount (or set SKYGATE_DATA_MOUNT) and apply the update again; break-glass on the host: docker compose up -d --force-recreate --no-deps skygate"
+  exit 1
+fi
+log "pre-flight ok: the helper sees the script through $DATA_MOUNT"
+
 # Spawn helper container in HOST PID namespace. Uses
 # --net=host so localhost:8080 inside the helper IS
 # the new skygate container's healthz. Uses bind-mount
 # for the swap helper script + state file. Uses
 # --rm so it self-cleans. Runs in background (we exit
 # immediately, helper keeps going).
-#
-# v0.29.3.1.1: mount the *named volume* 'skygate-data'
-# (NOT the host path /data — the host /data is empty,
-# the real volume mountpoint is
-# /var/lib/docker/volumes/skygate-data/_data). The
-# OLD skygate container mounts the same named volume
-# to /data, so the helper sees the same files the
-# swap script just wrote (helper script + state file
-# + log).
 SKYGATE_HOST_REPO_PATH="${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}"
 log "spawning helper container"
 docker run --rm \
@@ -1357,10 +1403,10 @@ docker run --rm \
   --net=host \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$SKYGATE_HOST_REPO_PATH:/host_repo:ro" \
-  -v skygate-data:/data \
+  -v "$DATA_MOUNT:/data" \
   -e SKYGATE_HOST_REPO_PATH="$SKYGATE_HOST_REPO_PATH" \
   --name skygate-swap-helper \
-  alpine:3.20 \
+  "$HELPER_IMAGE" \
   /bin/sh /data/skygate-swap-helper.sh >> "$LOG" 2>&1 &
 HELPER_PID=$!
 disown $HELPER_PID 2>/dev/null || true
@@ -1368,16 +1414,87 @@ log "helper container spawned (pid=$HELPER_PID), parent script exiting"
 exit 0
 `
 
-// spawnSwapSubprocess writes the swap script to
-// /data/skygate-swap.sh, marks it executable, and launches
-// it via runShellDetached. The subprocess runs the swap
-// and verify (see swapSubprocessScript) and updates the
-// state file accordingly. The orchestrator returns
-// immediately after Start() — its goroutine is done, the
-// subprocess continues independently.
-func (u *DockerUpgrader) spawnSwapSubprocess() error {
+// rollbackSwapScriptTemplate is the rollback sibling of
+// swapSubprocessScript: same helper container, same resolved /data mount
+// (B393), different log prefix and helper name.
+//
+// The mount is the placeholder __SKYGATE_DATA_MOUNT__, substituted by
+// renderSwapScript() from the live container's own /data mount — the two
+// scripts deliberately share one resolver so a future change cannot fix one
+// path and leave the other mounting the wrong filesystem.
+const rollbackSwapScriptTemplate = `#!/bin/sh
+STATE=/data/skygate-update-status.json
+LOG=/data/skygate-update-swap.log
+COMPOSE_PROJECT=skygate
+
+log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ROLLBACK $*" >> "$LOG"; }
+
+log "rollback swap subprocess started (pid=$$) — spawning helper container"
+
+# Helper script — same body as the success path. Inline
+# here so the rollback works even if the Go-level
+# writeSwapHelperScript never ran.
+cat > /data/skygate-swap-helper.sh << 'HELPER_EOF'
+` + swapHelperScript + `HELPER_EOF
+chmod +x /data/skygate-swap-helper.sh
+
+DATA_MOUNT=__SKYGATE_DATA_MOUNT__
+HELPER_IMAGE="${SKYGATE_SWAP_HELPER_IMAGE:-alpine:3.20}"
+log "resolved data mount: $DATA_MOUNT (helper image $HELPER_IMAGE)"
+
+# Same pre-flight as the success path (B393 F2/F5): a rollback that cannot
+# even start the helper must say so, because the operator is by definition
+# already in a bad state.
+if ! docker image inspect "$HELPER_IMAGE" > /dev/null 2>&1; then
+  log "helper image $HELPER_IMAGE not present locally — pulling"
+  docker pull "$HELPER_IMAGE" >> "$LOG" 2>&1 || log "WARN: docker pull $HELPER_IMAGE failed; the spawn below will retry"
+fi
+if ! docker run --rm -v "$DATA_MOUNT:/data:ro" "$HELPER_IMAGE" /bin/sh -c 'test -s /data/skygate-swap-helper.sh' >> "$LOG" 2>&1; then
+  log "FAILED: the rollback helper cannot see /data/skygate-swap-helper.sh through the resolved mount '$DATA_MOUNT' — the previous build was NOT restored"
+  log "FAILED: restore it by hand on the host: git checkout skygate-pre-update-<sha> && docker compose up -d --force-recreate --no-deps skygate"
+  exit 1
+fi
+log "pre-flight ok: the helper sees the script through $DATA_MOUNT"
+
+SKYGATE_HOST_REPO_PATH="${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}"
+log "spawning helper container"
+docker run --rm \
+  --pid=host \
+  --net=host \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$SKYGATE_HOST_REPO_PATH:/host_repo:ro" \
+  -v "$DATA_MOUNT:/data" \
+  -e SKYGATE_HOST_REPO_PATH="$SKYGATE_HOST_REPO_PATH" \
+  --name skygate-rollback-helper \
+  "$HELPER_IMAGE" \
+  /bin/sh /data/skygate-swap-helper.sh >> "$LOG" 2>&1 &
+HELPER_PID=$!
+disown $HELPER_PID 2>/dev/null || true
+log "helper container spawned (pid=$HELPER_PID), parent script exiting"
+exit 0
+`
+
+// spawnSwapSubprocess writes the swap script to /data/skygate-swap.sh, marks
+// it executable, and launches it via runShellDetached. The subprocess runs the
+// swap and verify (see swapSubprocessScript) and updates the state file
+// accordingly. The orchestrator returns immediately after Start() — its
+// goroutine is done, the subprocess continues independently.
+//
+// B393: the script is rendered with the /data mount resolved from the live
+// container (resolveDataMount), and the id of the container that is about to
+// be recreated is persisted first — the new process needs it to prove that a
+// swap actually happened.
+func (u *DockerUpgrader) spawnSwapSubprocess(ctx context.Context) error {
 	scriptPath := "/data/skygate-swap.sh"
-	if err := os.WriteFile(scriptPath, []byte(swapSubprocessScript), 0755); err != nil {
+	dataMount, mountKind := u.resolveDataMount(ctx)
+	u.State.Log(LogInfo, fmt.Sprintf("swap: /data mount = %s (%s)", dataMount, mountKind))
+	if prev := CurrentContainerID(ctx); prev != "" {
+		u.State.SetSwapFromContainer(prev)
+		u.State.Log(LogInfo, "swap: pre-update container id = "+shortID(prev))
+	} else {
+		u.State.Log(LogWarn, "swap: could not record the pre-update container id (docker unavailable) — the build label will be the only witness")
+	}
+	if err := os.WriteFile(scriptPath, []byte(renderSwapScript(swapSubprocessScript, dataMount)), 0755); err != nil {
 		return fmt.Errorf("write swap script: %w", err)
 	}
 	u.State.Log(LogDebug, "wrote swap script to "+scriptPath)

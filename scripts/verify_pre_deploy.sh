@@ -6177,6 +6177,39 @@ run_check "B392" "THE NOTIFICATION PANEL MUST READ, SCALE AND BE REACHABLE. Oper
   'test -f scripts/check_b392_notifications_panel.sh && bash scripts/check_b392_notifications_panel.sh'
 
 # ---------------------------------------------------------------------------
+# B393 — the update path must prove it swapped and must hand the helper the
+#        same /data the orchestrator wrote to (v1.5.132, 2026-10-17)
+# ---------------------------------------------------------------------------
+# MEASURED ON THE LIVE HOST. /admin/update reported phase=done, error=null while
+# the panel kept serving the previous build; v1.5.130 and v1.5.131 only became
+# live because the container was recreated BY HAND. data/skygate-update-swap.log
+# carried, twice, verbatim:
+#   /bin/sh: can't open '/data/skygate-swap-helper.sh': No such file or directory
+# Two independent defects produced that one sentence:
+#   1. BOTH swap scripts mounted the literal volume skygate-data. That volume is a
+#      legacy leftover (created 20:08:31Z, EMPTY); the app /data is the checkout
+#      ./data BIND mount, which is where the script was written — so the helper
+#      mounted the wrong filesystem and never saw its own script. v1.5.130 only
+#      "worked" because a stale pre-v1.3.1 helper happened to survive in it.
+#   2. NOTHING checked that the swap happened. pollHealthz accepted any 200 with
+#      status:ok and confirmPendingSwap (admin) did the same from every
+#      /admin/update page render before calling store.Complete(). The OLD
+#      container answers that 200 perfectly well, so the job was promoted to done
+#      within one page view.
+# The fix resolves the mount from the live container own /data mount (volume name
+# for a volume, absolute host path for a bind, documented fallback) and renders it
+# into BOTH scripts through one resolver; a pre-flight proves the helper can read
+# its script BEFORE spawning it and writes a FAILED marker naming the mount when it
+# cannot; both probes compare the served build with the job target (a still-booting
+# process is rejected too, because it serves the new build string early); the
+# recreated container id is the second witness for branch targets; the new process
+# resolves the verdict at boot and declares the job failed with the swap log tail
+# once the grace period passes with no evidence. 40 contracts in
+# scripts/check_b393_swap_helper_handoff.sh.
+run_check "B393" "THE SELF-UPDATE MUST PROVE IT SWAPPED, AND THE HELPER MUST SEE THE SAME /data THE ORCHESTRATOR WROTE TO. On the live host /admin/update reported phase=done with no error while the panel kept serving the previous build, and two releases in a row only became live because the container was recreated by hand; the swap log said, twice, that the helper could not open the swap helper script at data, meaning it was handed a different filesystem than the one the orchestrator wrote to. Two independent defects: both swap scripts mounted the literal legacy volume skygate-data, which is empty on a bind mounted install, and nothing verified that a swap had happened at all — the in-container poll accepted any 200 with status ok, and the admin page did the same from every render before completing the job, while the OLD container answers exactly that 200. The fix has one resolver that reads the live container own data mount and renders it into both scripts, a pre-flight that proves the helper can see its script before it is spawned and writes a FAILED marker naming the mount when it cannot, a build-aware verdict in both probes that also rejects a still booting process and uses the recreated container id as a second witness, a boot-time resolver that declares an unfinished swap failed with the swap log tail, and a swap-log failure marker that resolves the job at once. Contracts A to H in scripts/check_b393_swap_helper_handoff.sh, including a detector proof and a live section that skips when docker is unavailable." \
+  'test -f scripts/check_b393_swap_helper_handoff.sh && bash scripts/check_b393_swap_helper_handoff.sh'
+
+# ---------------------------------------------------------------------------
 # THE GATE'S VERDICT (TD-22 / B335)
 # ---------------------------------------------------------------------------
 # Pre-TD-22 this script maintained RESULTS_PASS/RESULTS_FAIL and never read them,

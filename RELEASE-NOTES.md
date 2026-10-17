@@ -12,6 +12,119 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.132 — a self-update must prove it swapped, and the helper must see the same /data (B393)
+
+**Date:** 2026-10-17 · **Base:** `v1.5.131` → this tag · **Compatibility:** no migration, no route or
+config change. Two new optional environment knobs (`SKYGATE_DATA_MOUNT`, `SKYGATE_SWAP_HELPER_IMAGE`)
+and one additive JSON field in the update state file (`swap_from_container_id`). The update path is
+the only behaviour that changes; the panel renders identically when no job is running.
+
+### What was measured
+
+Verifying the applied v1.5.131 on the docker-compose host: `/admin/update` reported
+`phase=done, error=null` while `/healthz` still served `v1.5.130+aae95368`. **Two releases in a row**
+(v1.5.130 and v1.5.131) only became live because the container was recreated **by hand**:
+
+```bash
+docker compose up -d --force-recreate --no-deps skygate
+```
+
+The operator-readable `data/skygate-update-swap.log` had said why — twice, verbatim:
+
+```
+[2026-10-16T20:08:31Z] helper container spawned (pid=58666), parent script exiting
+/bin/sh: can't open '/data/skygate-swap-helper.sh': No such file or directory
+[2026-10-16T20:34:45Z] helper container spawned (pid=60172), parent script exiting
+/bin/sh: can't open '/data/skygate-swap-helper.sh': No such file or directory
+```
+
+### Root cause 1 — the helper mounted a different filesystem than the orchestrator wrote to
+
+Both swap scripts (`swapSubprocessScript` and the rollback script) carried the literal
+`-v skygate-data:/data`. Inside the app container `/data` is the checkout's **`./data` bind mount**,
+which is exactly where the orchestrator writes `skygate-swap-helper.sh`; in the helper that literal
+named a **legacy volume** that had been created empty during an unrelated compose change. So the
+script existed and was invisible at the same time, and the helper exited 127 before doing anything.
+The pre-v1.3.1 helper that happened to survive inside that volume was the only reason the swap had
+ever appeared to work.
+
+**Fix:** one resolver, `resolveDataMount` (`internal/update/swapmount.go`), reads the **live
+container's own `/data` mount** and both scripts are rendered with it (`renderSwapScript`):
+
+| Live `/data` mount | Value passed as `-v <value>:/data` |
+|---|---|
+| named volume | the volume **name** |
+| bind | the absolute **host path** |
+| neither (no docker socket / native) | `${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}/data` |
+
+`SKYGATE_DATA_MOUNT` overrides the resolution, `SKYGATE_SWAP_HELPER_IMAGE` pins the helper image
+(default `alpine:3.20`, pulled when missing — an offline host needs it in the local image cache).
+A **pre-flight** now starts the helper image with the resolved mount and asserts it can read
+`/data/skygate-swap-helper.sh`; when it cannot, the job fails within seconds with a `FAILED:` line
+naming the mount and the break-glass command, instead of a 127 buried in the log.
+
+### Root cause 2 — nothing verified that a swap had happened
+
+Two producers answered "is the update done?" with *"does `/healthz` return 200 with status:ok?"* —
+and the **old** container answers that perfectly well:
+
+* `DockerUpgrader.pollHealthz` accepted any 200 with `"status":"ok"`. Its own doc comment promised an
+  `expectedBuild` parameter **that did not exist in the signature**.
+* `Service.confirmPendingSwap` (`internal/feature/admin/update.go`) did the same from **every**
+  `/admin/update` page render, then called `store.Complete()` — so a job whose swap never ran was
+  promoted to `done` within one page view.
+
+**Fix:** `phase=done` now means "the build answering `/healthz` is the build the job targeted", from
+evidence (`internal/update/swapverify.go`):
+
+* `BuildSatisfiesTarget` — the served label's version part equals the job target
+  (`v1.5.132+b9b22468` satisfies `v1.5.132`). For a branch/`HEAD` target, where `git describe` output
+  cannot be predicted, the label must at least have changed. **One** comparison serves the whole
+  release path.
+* **or** the container serving the panel is no longer the one that requested the swap — a recreate
+  always yields a **new container id**, and `State.SwapFromContainerID` is persisted before the
+  spawn precisely so the *new* process can compare it. This is the witness that also covers branch
+  targets.
+* A **still-booting** process is rejected even though it already answers with the new build string
+  (`"ready":false` / a boot `"phase"`, B269).
+* `ResolvePendingSwap` runs at **boot** (`cmd/skygate/main.go`) as well as on the page, so the
+  verdict lands even if nobody opens the panel. A `FAILED:`/`FATAL:` marker in the swap log resolves
+  the job immediately; after `SwapGracePeriod` (4 min — `apk add` + recreate + a cold `go build`)
+  with no evidence the job is declared `failed` with the swap log tail folded into its log and the
+  copy-pasteable break-glass command.
+
+### Files
+
+* `internal/update/swapmount.go` (new) — `resolveDataMount`, `parseDataMountInspect`, `shQuote`,
+  `renderSwapScript`.
+* `internal/update/swapverify.go` (new) — `ContainerFingerprint`, `BuildSatisfiesTarget`,
+  `EvaluateSwap`, `ResolvePendingSwap`, swap-log marker/tail readers, `SwapGracePeriod`.
+* `internal/update/docker.go` — both scripts rendered with the resolved mount, pre-flight in both,
+  the rollback body lifted to `rollbackSwapScriptTemplate`, `pollHealthz(ctx, timeout, expectedBuild)`,
+  the pre-swap container id recorded before spawning.
+* `internal/update/state.go` — `SwapFromContainerID` + `SetSwapFromContainer`.
+* `internal/feature/admin/update.go` — `confirmPendingSwap` delegates to the shared verdict; the
+  per-render log line is debug-level for terminal phases.
+* `cmd/skygate/main.go` — the boot-time verdict.
+* Tests: `internal/update/docker_b393_test.go`, `internal/feature/admin/update_b393_test.go`.
+* Contract: `scripts/check_b393_swap_helper_handoff.sh` (sections A–H, including a plant-the-bug
+  detector proof and a live section that SKIPs without docker).
+* Docs: `docs/UPDATE.md` §4.3.1 + `docs/ru/UPDATE.md` §4.3.1, `docs/LESSONS.md` L-71,
+  `docs/ROADMAP.md` (+ RU).
+
+### Verification
+
+* Unit/behavioural: the B393 suites green (`internal/update`, `internal/feature/admin`, `cmd/skygate`).
+* Contract A/B/C/G fail if the literal volume returns, if either script loses its pre-flight, if
+  either probe stops comparing the build, or if the boot-time caller disappears.
+* Live: after this release, `/admin/update` → Apply must reach `done` only once `/healthz` reports
+  the new tag, and `data/skygate-update-swap.log` must contain `resolved data mount: …` +
+  `pre-flight ok: the helper sees the script through …`.
+* The break-glass procedure (preserve `docker-compose.yml`, `go.mod`, `go.sum`; `git checkout <tag>`;
+  `docker compose up -d --force-recreate --no-deps skygate`; confirm the build label) is documented in
+  `docs/UPDATE.md` §4.3.1 — that is how v1.5.131 itself was applied, with the compose file preserved
+  by sha256 and the old tag kept as a rollback path.
+
 ## v1.5.131 — the notification panel reads, scales and is reachable (B392)
 
 **Date:** 2026-10-16 · **Base:** `v1.5.130` → this tag · **Compatibility:** panel-only. No migration,

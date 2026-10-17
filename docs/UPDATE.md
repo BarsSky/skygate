@@ -244,6 +244,66 @@ Environment defaults for the above (the page can override the schedule at runtim
 | `SKYGATE_UPDATE_SCHEDULE_TIME` | `03:00` | Local time, 24-hour `HH:MM` |
 | `SKYGATE_GITHUB_TOKEN` | *(unset)* | Optional; raises the GitHub API rate limit from 60/h to 5000/h |
 
+### 4.3.1 What `phase=done` means now, and how the swap finds `/data` (B393)
+
+`/admin/update` used to answer "is the update done?" with a single question: *does
+`/healthz` answer 200 with `status:ok`?* The **old** container answers exactly that, so
+on 2026-10-17 the page reported `phase=done, error=null` while the panel kept serving
+the previous build — and two releases in a row only became live because the container
+was recreated by hand. The operator-readable swap log said why, twice and verbatim:
+
+```
+/bin/sh: can't open '/data/skygate-swap-helper.sh': No such file or directory
+```
+
+**Root cause 1 — the helper mounted the wrong `/data`.** Both swap scripts mounted the
+literal volume `skygate-data`. That volume is a legacy leftover from an older compose
+file (created empty), while the app's `/data` is the checkout's `./data` **bind** — which
+is exactly where the orchestrator wrote the helper script. Fix: `resolveDataMount` reads
+the **live container's own `/data` mount** and renders it into both scripts, so the
+orchestrator and the helper can no longer disagree:
+
+| Live `/data` mount | Value passed as `-v <value>:/data` |
+|---|---|
+| named volume | the volume **name** |
+| bind | the absolute **host path** |
+| neither (no docker socket, native) | `${SKYGATE_HOST_REPO_PATH:-/home/admin/skygate}/data` |
+
+`SKYGATE_DATA_MOUNT` overrides the resolution entirely, and `SKYGATE_SWAP_HELPER_IMAGE`
+pins the helper image (default `alpine:3.20`, pulled if missing — an offline host needs
+it in the local image cache). Either way a **pre-flight** now runs first: the outer
+script starts the helper image with the resolved mount and asserts it can read
+`/data/skygate-swap-helper.sh`. When it cannot, the job fails within seconds with a log
+line naming the mount, instead of a 127 buried in the log.
+
+**Root cause 2 — nothing verified a swap.** `phase=done` now means "the build that
+answers `/healthz` is the build the job targeted", and it is decided from evidence:
+
+* the served `build` label's version part equals the job target (`v1.5.132+b9b22468`
+  satisfies `v1.5.132`); for a branch/`HEAD` target — where the label cannot be
+  predicted — the label must at least have changed;
+* **or** the container serving the panel is no longer the one that requested the swap
+  (a recreate always yields a new container id), which also covers the branch case;
+* a still-booting process is rejected even though it already answers with the new
+  build string (`"ready":false` / a boot `"phase"`, see B269).
+
+The verdict is reached by the **new** process at boot (so it lands even if nobody opens
+the page) and by the page render. If the swap script wrote a `FAILED:`/`FATAL:` marker,
+the job fails immediately; if four minutes pass with no evidence at all, the job is
+declared `failed` with the swap log tail folded into its log and the copy-pasteable
+break-glass command.
+
+**If you ever see that failure anyway**, the break-glass on the host is unchanged:
+
+```bash
+cd /path/to/skygate
+docker compose up -d --force-recreate --no-deps skygate   # the step the swap automates
+curl -sS http://127.0.0.1:8080/healthz                    # confirm the build label
+```
+
+Preserve `docker-compose.yml`, `go.mod` and `go.sum` across any `git checkout`
+(rule 7) — on the reference host the compose file legitimately carries local edits.
+
 ### 4.4 Scheduled auto-update (Docker only)
 
 With `SKYGATE_UPDATE_SCHEDULE_ENABLED=true` (or the checkbox on the page) the
