@@ -112,29 +112,29 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 	if s.Cfg != nil {
 		defaultKeyPath = s.Cfg.SSHKeyPath
 	}
-	for node, routes := range exitRoutes {
-		syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, OwnedPrefixes(node, routes, owners), result)
-	}
-	// B279 (v1.5.46): sync the relays the ASSIGNMENT TABLE names even
-	// when no rule mentions them.
+	// B397 (2026-10-18): ONE pass per relay, over the UNION of the relays any rule
+	// names and the relays the assignment table names, each advertising exactly the
+	// prefixes it owns (table ∪ its own rule candidates).
 	//
-	// The loop above iterates `exitRoutes`, which is keyed by
-	// device_rules.exit_node_id — but B275 made `prefix_owner` the
-	// authority on who serves a prefix, and the two disagree whenever
-	// the engine moves a prefix (its rule's relay went unhealthy, or an
-	// operator pinned it). Before this, such a prefix was advertised by
-	// NOBODY: the only relay that had it in its candidate list was
-	// filtered down to "prefixes I own" (none) while its true owner was
-	// never visited at all. The log said it plainly — "node drops 19
-	// claimed prefix(es) owned by another relay" — while `prefix_owner`
-	// pointed all 19 at `exit-node-vps`.
-	for _, node := range relaysFromAssignment(owners, exitRoutes) {
-		owned := OwnedPrefixesForRelay(node, owners)
-		if len(owned) == 0 {
-			continue
-		}
-		log.Printf("prefix-ownership: syncing %s from the assignment table (%d prefix(es) owned, no rule names this relay)",
-			node, len(owned))
+	// WHY THIS REPLACED TWO LOOPS. B279 added a second loop "for the relays the table
+	// names even when no rule mentions them", but it skipped any relay that a rule
+	// already named (`relaysFromAssignment`'s `already` guard) — and the FIRST loop
+	// could only advertise prefixes that appeared in THAT relay's own rule candidates.
+	// A prefix the engine had given a relay by AUTO assignment (a rule with an empty
+	// exit_node_id claims the prefix but names no relay, so `exitRoutes` never lists
+	// it) was therefore advertised by nobody:
+	//
+	//	live 2026-10-18: prefix_owner hands emilia 64.233.162.91/32 + .136/32 and
+	//	sharlotta .93/32 + .190/32 (source=auto, claims=1 each from cyborg's 16
+	//	relay-less Google rules). emilia WAS visited — her bases were applied,
+	//	"advertising 2 unique routes, ssh=ok" — but her two table-owned /32s were
+	//	never in the set, and the B279 loop skipped her because a rule named her.
+	//	Result: those 4 prefixes were served by NOBODY, every device pinned to them
+	//	black-holed, and only the system test noticed.
+	relays := relaysToSync(owners, exitRoutes)
+	for _, node := range relays {
+		owned := mergedOwnedPrefixes(node, exitRoutes[node], owners)
+		log.Printf("prefix-ownership: syncing %s with %d owned prefix(es) (+ the base routes)", node, len(owned))
 		syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, owned, result)
 	}
 	// B352 (2026-10-05): a relay that owns NOTHING any more must still be visited, or
@@ -143,7 +143,8 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 	// skips it, and headscale keeps serving those prefixes from a relay the assignment
 	// table no longer points at (live: emilia advertised 29 prefixes that had moved to
 	// karolina, and every device pinned to karolina lost those 29 destinations). The
-	// B279 loop above cannot cover them: it `continue`s on an empty owned set.
+	// union loop above cannot cover them: such a relay is in neither `exitRoutes` nor
+	// `owners`, so only its apply record knows it was ever configured.
 	{
 		covered := map[string]bool{}
 		for node := range exitRoutes {
@@ -165,24 +166,58 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 	return result
 }
 
-// relaysFromAssignment returns the relay hostnames the assignment table
-// hands at least one prefix to and that the caller's per-rule map does
-// not already cover, sorted for a stable log/order.
+// relaysToSync returns every relay that must be visited in one pass: the relays a
+// rule names (`exitRoutes` keys) UNION every relay the assignment table hands at least
+// one prefix to, sorted so the log and the apply order are stable.
 //
-// 2026-09-22: B279 (v1.5.46).
-func relaysFromAssignment(owners map[string]string, already map[string][]string) []string {
+// B397: the predecessor (relaysFromAssignment) took the `already` map and SKIPPED any
+// relay a rule named, which left the union unvisited exactly when it mattered — a relay
+// that some rule names for one prefix but that the table also gives another prefix.
+// The `already` parameter is gone on purpose: a relay's advertisement is the UNION of
+// both sources, so visiting it twice would just apply the same set twice.
+func relaysToSync(owners map[string]string, exitRoutes map[string][]string) []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, owner := range owners {
-		if owner == "" || seen[owner] {
+	for node := range exitRoutes {
+		if node == "" || seen[node] {
 			continue
 		}
-		if _, covered := already[owner]; covered {
+		seen[node] = true
+		out = append(out, node)
+	}
+	for _, owner := range owners {
+		if owner == "" || seen[owner] {
 			continue
 		}
 		seen[owner] = true
 		out = append(out, owner)
 	}
+	sort.Strings(out)
+	return out
+}
+
+// mergedOwnedPrefixes is the advertise set for ONE relay: the prefixes its own rules
+// name that it owns, UNION everything the assignment table hands it.
+//
+// BOTH HALVES MATTER (B397). The table is the authority on who serves a prefix (B275),
+// but a prefix whose rule exists and whose table row has not been written yet (the very
+// first pass, before a reconcile) must not be dropped either. The base routes
+// (0.0.0.0/0, ::/0) are added by syncOneExitNode, not here — `tailscale set
+// --advertise-routes=` REPLACES the whole set, so they are prepended at the last moment.
+func mergedOwnedPrefixes(node string, ruleCandidates []string, owners map[string]string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(ruleCandidates)+len(owners)/4+4)
+	add := func(list []string) {
+		for _, p := range list {
+			if p == "" || seen[p] {
+				continue
+			}
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	add(OwnedPrefixes(node, ruleCandidates, owners))
+	add(OwnedPrefixesForRelay(node, owners))
 	sort.Strings(out)
 	return out
 }

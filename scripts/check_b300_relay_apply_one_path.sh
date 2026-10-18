@@ -160,7 +160,12 @@ fi
 weak=""
 grep -q 'func syncOneExitNode' "$SYNC" || weak="$weak syncOneExitNode-gone"
 grep -q 'DetectRelayPlacement(' "$SYNC" || weak="$weak b293-grep"
-grep -q 'syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, OwnedPrefixes(node, routes, owners), result)' "$SYNC" || weak="$weak b274-b2"
+# B397 (2026-10-18): the pinned call changed shape — the loop now passes
+# `mergedOwnedPrefixes(node, exitRoutes[node], owners)` (B274's ownership filter UNION
+# the assignment table). The property this pins is "one apply path", not one argument
+# list, so accept both the pre- and post-B397 forms.
+grep -q 'owned := mergedOwnedPrefixes(node, exitRoutes\[node\], owners)' "$SYNC" || \
+  grep -q 'syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, OwnedPrefixes(node, routes, owners), result)' "$SYNC" || weak="$weak b274-b2"
 grep -q 'func (c \*Client) ApplyRoutesLocally(' internal/headscale/local_apply_b293.go || weak="$weak apply-routes-locally"
 if [ -z "$weak" ]; then
   ok "D1: the entry points the B132/B274/B293 contracts pin are all still in place"

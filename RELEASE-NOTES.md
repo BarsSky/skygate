@@ -12,6 +12,76 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.140 — every relay must advertise what the assignment table gave it (B397)
+
+**Date:** 2026-10-18 · **Base:** `v1.5.139` → this tag · **Compatibility:** no migration,
+no route change, no config change.
+
+### Why
+
+The system test reported it first, in the words B396 taught it to use:
+
+```
+prefix_owner.consistency -> fail
+  4 prefix(es) are NOT SERVED as recorded: 64.233.162.91/32 is owned by emilia, but
+  emilia does not advertise it; 64.233.162.136/32 is owned by emilia, …
+```
+
+The database said exactly why:
+
+```
+prefix_owner:      karolina | explicit | 215    emilia | auto | 2    sharlotta | auto | 2
+the four:          .91/32 + .136/32 → emilia,  .93/32 + .190/32 → sharlotta
+claims:            1 each, from cyborg's 16 Google rules — ALL with an empty exit_node_id
+```
+
+A rule with an empty `exit_node_id` **claims** a prefix but **names no relay**, so it never
+appears in the sync's per-rule map; the engine auto-assigned those four "for load". The
+sync then visited emilia (another rule named her), and applied her **base routes only** —
+because the per-rule loop can only advertise prefixes that appear in that relay's own
+candidate list. The loop that exists to cover "relays the table names even when no rule
+mentions them" (B279) **skipped her**, because a rule already named her
+(`relaysFromAssignment`'s `already` guard). Nobody advertised the four prefixes, every
+device pinned to them black-holed, and only the diagnostic noticed.
+
+### Fix
+
+One pass per relay, over the **union**:
+
+* `relaysToSync(owners, exitRoutes)` = relays the rules name **∪** relays the assignment
+  table hands at least one prefix to — no relay is skipped for being named by a rule;
+* `mergedOwnedPrefixes(node, ruleCandidates, owners)` = `OwnedPrefixes` (the relay's own
+  candidates it owns) **∪** `OwnedPrefixesForRelay` (everything the table gives it), so a
+  table-owned prefix can no longer be dropped **and** a not-yet-recorded rule candidate is
+  not lost either.
+
+Unchanged on purpose: the base routes are still prepended at the apply boundary
+(`syncOneExitNode`), so a table-only set can never unmake an exit node; B352's prune loop
+still paints a relay that owns nothing down to the bases; and the zero-claim release
+already existed (`Prune` keeps `source='manual'` pins) — **the missing half was the
+advertisement, not the table.**
+
+### Tests and contracts
+
+* `internal/feature/exit_rules/sync_routes_b397_test.go` — the live shape, as a property:
+  `relaysToSync` returns `{emilia, karolina, sharlotta}` (emilia is both rule-named and a
+  table owner, and must appear once); `mergedOwnedPrefixes(emilia, basesOnly, owners)`
+  contains her two `/32`s **and** the bases; a prefix owned by another relay is **not**
+  given to her (single-advertiser integrity); empty names never reach the apply loop.
+* `scripts/check_b397_route_union.sh` — **12 contracts** (A: the union is iterated and
+  applied, both halves unioned; B: the `already` skip is gone for good; C: the base routes
+  are still prepended; D: the B352 prune and `Prune`'s manual-pin guarantee; E: the tests,
+  registration and documentation).
+
+### Verification
+
+* `go test ./internal/feature/exit_rules/ -run 'Owned|Prefix|Sync|Relay|B279|B352|B274|B275'`
+  — green; the full package runs in the gate.
+* On the live installation the next sync pass visits emilia and sharlotta with their
+  table-owned prefixes, so `prefix_owner.consistency` stops failing once the routes are
+  applied and approved (the per-relay apply and approve are logged as
+  `prefix-ownership: syncing <relay> with N owned prefix(es)`).
+
 ## v1.5.139 — the diagnostics must not lie about themselves (B396)
 
 **Date:** 2026-10-18 · **Base:** `v1.5.138` → this tag · **Compatibility:** no migration,

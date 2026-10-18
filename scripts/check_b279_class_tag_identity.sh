@@ -247,7 +247,17 @@ if grep -q 'func OwnedPrefixesForRelay' "$PO"; then
 else
   bad "H1: OwnedPrefixesForRelay is missing — table-owned prefixes can be advertised by nobody"
 fi
-if grep -q 'relaysFromAssignment(owners, exitRoutes)' "$SYNC"; then
+# H2 — RENEGOTIATED BY B397 (2026-10-18). The property this contract exists for is
+# "the relays the assignment table names are synced, not only the ones a rule names",
+# and it is now STRONGER: the loop calls `relaysToSync(owners, exitRoutes)` — the relay
+# union — because `relaysFromAssignment(owners, exitRoutes)` SKIPPED any relay a rule
+# named, which is exactly how emilia owned two prefixes from the table and was never
+# visited with them (the four unserved prefixes, v1.5.140). The old assertion pinned an
+# exact call site whose behaviour was the bug; both shapes are accepted here so a tree
+# that predates B397 still satisfies the contract.
+if grep -q 'relaysToSync(owners, exitRoutes)' "$SYNC"; then
+  ok "H2: the sync loop visits the relay UNION (rules ∪ assignment table) — B397 removed the skip"
+elif grep -q 'relaysFromAssignment(owners, exitRoutes)' "$SYNC"; then
   ok "H2: the sync loop adds the relays the assignment table names"
 else
   bad "H2: the sync loop still iterates only device_rules.exit_node_id"

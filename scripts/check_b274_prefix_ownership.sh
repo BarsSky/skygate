@@ -97,17 +97,28 @@ if grep -q 'owners := PrefixOwnership(claims)' "$SYNC"; then
 else
   bad "B.1 SyncAdvertisedRoutes must compute PrefixOwnership"
 fi
-if grep -q 'syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, OwnedPrefixes(node, routes, owners), result)' "$SYNC"; then
-  ok "B.2 the all-nodes path advertises only the owned prefixes"
+# B.2/B.4 RENEGOTIATED BY B397 (2026-10-18): the all-nodes loop no longer passes
+# OwnedPrefixes(...) directly. It passes `mergedOwnedPrefixes(node, exitRoutes[node],
+# owners)`, which is OwnedPrefixes (the ownership filter this contract is about) UNION
+# OwnedPrefixesForRelay (the assignment table) — the union exists because a relay the
+# table names was SKIPPED for being rule-named and four prefixes were advertised by
+# nobody (v1.5.140). The property asserted here is unchanged: the advertise set is the
+# OWNERSHIP-FILTERED one, never the raw candidate list.
+b274_owned_call() {
+  grep -q 'owned := mergedOwnedPrefixes(node, exitRoutes\[node\], owners)' "$SYNC" && \
+    grep -q 'syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, owned, result)' "$SYNC"
+}
+if b274_owned_call || grep -q 'syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, OwnedPrefixes(node, routes, owners), result)' "$SYNC"; then
+  ok "B.2 the all-nodes path advertises only the owned prefixes (union since B397)"
 else
-  bad "B.2 SyncAdvertisedRoutes must pass OwnedPrefixes(...) to syncOneExitNode"
+  bad "B.2 SyncAdvertisedRoutes must pass the ownership-filtered set to syncOneExitNode"
 fi
 if grep -q 'owned := OwnedPrefixes(n.name, routeList, owners)' "$SYNC"; then
   ok "B.3 the staggered path advertises only the owned prefixes"
 else
   bad "B.3 StaggeredSync must filter routeList through OwnedPrefixes"
 fi
-if grep -q 'syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, OwnedPrefixes(node, routes, owners), result)' "$SYNC" && \
+if { b274_owned_call || grep -q 'syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, OwnedPrefixes(node, routes, owners), result)' "$SYNC"; } && \
    grep -q 'allClaims = append(allClaims, PrefixClaim{Node: n2, Prefix: p2})' "$SYNC"; then
   ok "B.4 the per-node Re-sync button uses the same global ownership map"
 else
