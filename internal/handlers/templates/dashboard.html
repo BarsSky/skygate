@@ -82,6 +82,44 @@
   </details>
   {{end}}
 
+  {{/* B395.4 — the USERS half of the import table. The objective asks for a table of
+       "users and nodes over an existing headscale": Report.Users was collected from the
+       first version but never rendered, so a control plane whose users exist and whose
+       nodes do not showed nothing to transfer at all (measured in docker scenario 3). */}}
+  {{if $w.Users}}
+  <details class="wiz-users">
+    <summary>
+      {{tf "wizard.users_show" (len $w.Users)}}
+      {{if $w.PendingUsers.Known}} — {{tf "wizard.users_unmapped" $w.PendingUsers.Value}}{{end}}
+    </summary>
+    <table class="table table-sm wiz-table">
+      <thead>
+        <tr>
+          <th>{{t "wizard.col_hs_user"}}</th>
+          <th>{{t "wizard.col_portal_user"}}</th>
+          <th>{{t "wizard.col_state"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range $w.Users}}
+        <tr>
+          <td><code>{{.Username}}</code></td>
+          <td>
+            {{if .PortalName}}{{.PortalName}}
+            {{else}}<span class="badge st-sev-warning">{{t "wizard.user_unmapped"}}</span>{{end}}
+          </td>
+          <td>
+            {{if .Ambiguity}}<span class="wiz-ambiguity">{{t "wizard.ambiguous"}}</span> <code>{{.Ambiguity}}</code>
+            {{else if .PortalUserID}}<span class="badge st-sev-info">{{t "wizard.user_mapped"}}</span>
+            {{else}}<span class="badge st-sev-warning">{{t "wizard.node_review"}}</span>{{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </details>
+  {{end}}
+
   {{if $w.Nodes}}
   <details class="wiz-import">
     <summary>{{tf "wizard.import_show" (len $w.Nodes)}}</summary>

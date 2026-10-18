@@ -12,6 +12,55 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.138 — the users half of the import table (B395.4)
+
+**Date:** 2026-10-18 · **Base:** `v1.5.137` → this tag · **Compatibility:** no migration,
+no route change, no config change.
+
+### Why
+
+The objective for the wizard asks for *"a table of users **and** nodes over an existing
+headscale, with the ambiguities"*. Nodes shipped in v1.5.134; `Report.Users` was
+collected from the first version and **rendered nowhere**. Nothing noticed, because every
+place the block had been looked at (the operator's tailnet, the live host) has **nodes**,
+so the node table covered the page — and the one installation shape that has users
+without nodes is a control plane that was just taken over: exactly the "transfer these
+people to the panel" case the table exists for.
+
+The three local docker scenarios found it: scenario 3 seeds control-plane **users**
+(node registration is not scriptable on headscale 0.29 without a real tailscale client),
+and the page showed «Headscale: есть данные» with no table at all.
+
+### What ships
+
+* `Report.PendingUsers Count` — control-plane users the panel has no row for, or whose
+  username is ambiguous (the same honesty as `PendingReview` for nodes: `Known`, so an
+  unmeasured number is «неизвестно», never 0).
+* The card renders a **users table** (`wiz-users`): headscale user, panel user (or the
+  localised «не привязан»), and the state — «привязан» / «ждёт проверки» / the
+  ambiguity code. Its summary line carries the totals
+  (`wizard.users_show`, `wizard.users_unmapped`, RU + EN).
+* Nodes keep their own table; the two are independent, so a control plane with users and
+  no nodes (scenario 3) now shows what to transfer instead of nothing.
+
+### Verification (the objective's three scenarios, re-run against this tree)
+
+```
+scenario 1  no headscale        -> state 'absent'    PASS (install block, no user card: no nodes can be listed)
+scenario 2  headscale, empty    -> state 'empty'     PASS (user card rendered)
+scenario 3  headscale with data -> state 'populated' PASS (USERS table + count line, ACL ack form, AI link)
+```
+
+* **Contract** `I11` (40 total in `scripts/check_b395_setup_wizard.sh`): the users table,
+  its count line and `PendingUsers` exist — a `Report.Users` that is collected but not
+  rendered fails.
+* **Render test** `TestDashboardWizard_UsersTableIsRendered`: a mapped user, an unmapped
+  one and an ambiguous one, plus the counted summary line.
+* The harness itself was repaired on the way: `scenario.sh` aborted the whole run when a
+  scenario legitimately lacked one of its printed markers (`grep -o` returning 1 under
+  `set -e` + `pipefail` — AGENTS trap #9 inside the harness). `probe_state.sh` now asserts
+  the expected state per scenario instead of printing counts.
+
 ## v1.5.137 — the click must say something (B395.3)
 
 **Date:** 2026-10-18 · **Base:** `v1.5.136` → this tag · **Compatibility:** no migration,

@@ -137,6 +137,11 @@ type Report struct {
 	Users []UserRow
 	Nodes []NodeRow
 
+	// PendingUsers counts control-plane users the panel has no row for (or whose
+	// username is ambiguous) — the "transfer these to the panel" half of the import
+	// table, which B395 rendered for nodes only until B395.4.
+	PendingUsers Count
+
 	// InfraNodes counts public nodes owned by the technical user.
 	InfraNodes Count
 	// PendingReview counts nodes no panel user owns yet.
@@ -245,6 +250,16 @@ func Detect(ctx context.Context, hs Client, cfg Config) Report {
 	rep.InfraNodes.Known = true
 	rep.PendingReview.Known = true
 	rep.Users = buildUserRows(users, cfg)
+	// B395.4: the users table needs the same honesty the nodes table has. A user the
+	// panel has no row for is exactly the "transfer to the panel" case the wizard exists
+	// for, and it was collected but never counted or rendered.
+	unmapped := 0
+	for _, u := range rep.Users {
+		if u.PortalUserID == 0 || u.Ambiguity != "" {
+			unmapped++
+		}
+	}
+	rep.PendingUsers = Count{Value: unmapped, Known: true}
 	rep.Nodes = buildNodeRows(nodes, cfg, &rep)
 	// "Empty" means NOTHING TO IMPORT. Two things count as importable data:
 	//   - any DEVICE (a node), and

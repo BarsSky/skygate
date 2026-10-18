@@ -282,6 +282,38 @@ func TestDashboardWizard_AcknowledgementFlash(t *testing.T) {
 	}
 }
 
+// TestDashboardWizard_UsersTableIsRendered pins B395.4: the objective asks for a table
+// of "users AND nodes over an existing headscale", Report.Users was collected from the
+// first version and NEVER rendered — so a control plane whose users exist and whose
+// nodes do not (docker scenario 3) showed nothing to transfer at all.
+func TestDashboardWizard_UsersTableIsRendered(t *testing.T) {
+	rep := &setupstate.Report{
+		State:         setupstate.StatePopulated,
+		InfraNodes:    setupstate.Count{Known: true},
+		PendingReview: setupstate.Count{Known: true},
+		PendingUsers:  setupstate.Count{Value: 2, Known: true},
+		Users: []setupstate.UserRow{
+			{HSUserID: "1", Username: "alice", PortalUserID: 7, PortalName: "alice"},
+			{HSUserID: "2", Username: "bob"},
+			{HSUserID: "3", Username: "dup", Ambiguity: "duplicate_username"},
+		},
+	}
+	body := renderDashboard(t, map[string]any{"Username": "admin", "IsAdmin": true, "Wizard": rep})
+	for _, marker := range []string{
+		"wiz-users", "wizard.users_show", "wizard.users_unmapped",
+		"wizard.col_hs_user", "wizard.col_portal_user",
+		"alice", "bob", "dup", "duplicate_username",
+		"wizard.user_mapped", "wizard.user_unmapped",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Errorf("the users table is missing %q", marker)
+		}
+	}
+	if !strings.Contains(body, "[TF:wizard.users_unmapped ") || !strings.Contains(body, "2") {
+		t.Error("the unmapped users count is not rendered with its number")
+	}
+}
+
 // TestDashboardWizard_AbsentShowsInstallScripts pins that the "no headscale" state
 // ships ready-made commands as TEXT — the wizard never rewrites the operator's
 // docker-compose.yml, so the script is the deliverable.

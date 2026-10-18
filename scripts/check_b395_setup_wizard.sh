@@ -381,6 +381,15 @@ if has 'wizardFlashFromQuery(r)' "$SURF_CODE" && has 'setupWizardReportCached(' 
 else
   bad "I10: the flash is not wired, or the acknowledged id is only applied inside the 30 s cache"
 fi
+# I11 — THE USERS HALF OF THE IMPORT TABLE (B395.4). The objective asks for a table of
+# "users AND nodes over an existing headscale with the ambiguities"; Report.Users was
+# collected from the first version and never rendered, so a control plane whose users
+# exist and whose nodes do not (docker scenario 3) showed NOTHING to transfer.
+if has '$w.Users' "$TPL_SRC" && has 'wizard.users_show' "$TPL_SRC" && has 'PendingUsers' "$SURF_CODE"; then
+  ok "I11: the users table is rendered with its unmapped count (users are listed, not just collected)"
+else
+  bad "I11: Report.Users is collected but never rendered — the import table is nodes-only"
+fi
 
 printf '\n\033[1mB395: %d PASS / %d FAIL / %d SKIP\033[0m\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ]
