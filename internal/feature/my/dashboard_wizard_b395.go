@@ -23,6 +23,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -54,11 +55,66 @@ var (
 	wizardCache = map[string]wizardCacheEntry{}
 )
 
-// setupWizardReport returns the admin wizard state, cached for wizardCacheTTL.
+// WizardFlash is what the acknowledgement redirect carries back to the page.
+//
+// B395.3: POST /admin/setup/acl-ack answers with a 303 to
+// `/dashboard?wizard=acl_acked&snapshot=N` or `…&wizard=acl_ack_failed&why=…`, and
+// nothing read those parameters — a failed click (measured live: the PostgreSQL
+// `invalid input syntax for type integer` error) was completely silent on the page.
+type WizardFlash struct {
+	// OK is true for a recorded acknowledgement, false for a refusal.
+	OK bool
+	// SnapshotID is the acl_snapshots row the acknowledgement created.
+	SnapshotID int64
+	// Why is the named reason a refusal carries (raw diagnostic text, like Report.Reason).
+	Why string
+}
+
+// wizardFlashFromQuery translates the redirect's query parameters into the page's
+// flash. Unknown or absent parameters mean "nothing to say" (nil, not an empty flash).
+func wizardFlashFromQuery(r *http.Request) *WizardFlash {
+	if r == nil {
+		return nil
+	}
+	q := r.URL.Query()
+	switch q.Get("wizard") {
+	case "acl_acked":
+		id, _ := strconv.ParseInt(strings.TrimSpace(q.Get("snapshot")), 10, 64)
+		return &WizardFlash{OK: true, SnapshotID: id}
+	case "acl_ack_failed":
+		why := strings.TrimSpace(q.Get("why"))
+		if why == "" {
+			why = "the acknowledgement was refused without a recorded reason"
+		}
+		return &WizardFlash{Why: why}
+	}
+	return nil
+}
+
+// setupWizardReport returns the admin wizard state, cached for wizardCacheTTL, with
+// the ACKNOWLEDGED snapshot id applied on EVERY call.
+//
+// B395.3 — why the wrapper: the acknowledgement is a POST that redirects to the
+// dashboard, and the 30 s cache meant the operator's own click appeared to do nothing
+// for up to half a minute (and a FAILED click said nothing at all, because the redirect
+// carries `wizard=acl_ack_failed&why=…` and nothing rendered it). The acknowledged id
+// lives in `global_settings` — one small read — so it is applied outside the cache and
+// the page reflects the click immediately, whatever the cache holds.
+func (s *Service) setupWizardReport(ctx context.Context) *setupstate.Report {
+	rep := s.setupWizardReportCached(ctx)
+	if id := ackSnapshotIDForWizard(s); id > 0 && rep != nil && rep.SnapshotID != id {
+		out := *rep
+		out.SnapshotID = id
+		return &out
+	}
+	return rep
+}
+
+// setupWizardReportCached is the headscale round trip, cached for wizardCacheTTL.
 //
 // The cache key includes the headscale client pointer so a control-plane switch (a
 // per-user plane, or a reconfigured global client) is never served a stale report.
-func (s *Service) setupWizardReport(ctx context.Context) *setupstate.Report {
+func (s *Service) setupWizardReportCached(ctx context.Context) *setupstate.Report {
 	hs := s.Backend.HSGlobalFn()
 	key := fmt.Sprintf("%p", hs)
 	wizardMu.Lock()
@@ -100,17 +156,10 @@ func (s *Service) setupWizardReport(ctx context.Context) *setupstate.Report {
 	defer cancel()
 	rep := setupstate.Detect(dctx, client, cfg)
 
-	// The pre-apply snapshot is taken by the ACKNOWLEDGE action (POST
-	// /admin/setup/acl-ack), never by this read path, so on a dashboard visit the id
-	// has to be read back from the settings table — otherwise the "you have a copy"
-	// half of the warning is visible only in the redirect that follows the click, and
-	// the operator who comes back tomorrow sees a warning with no evidence.
-	// (Staticcheck's U1000 is what a half-wired feature looks like: ackSnapshotIDForWizard
-	// existed and nothing called it — the dashboard never showed the id it promises.)
-	if rep.SnapshotID == 0 {
-		rep.SnapshotID = ackSnapshotIDForWizard(s)
-	}
-
+	// The acknowledged snapshot id is NOT applied here: it lives in global_settings and
+	// changes without the headscale state changing, so applying it inside the cached
+	// value would make the operator's own click invisible for up to wizardCacheTTL.
+	// setupWizardReport (the wrapper above) reads it on every call instead.
 	wizardMu.Lock()
 	wizardCache[key] = wizardCacheEntry{at: time.Now(), report: &rep}
 	wizardMu.Unlock()

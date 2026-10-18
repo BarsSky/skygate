@@ -12,6 +12,53 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.137 — the click must say something (B395.3)
+
+**Date:** 2026-10-18 · **Base:** `v1.5.136` → this tag · **Compatibility:** no migration,
+no route change, no config change.
+
+### Why
+
+v1.5.136 made the acknowledgement work on PostgreSQL, and the live click then answered
+`?wizard=acl_acked&snapshot=147738` — a correct result the page said **nothing** about:
+
+* `POST /admin/setup/acl-ack` redirects with `?wizard=acl_acked&snapshot=N` or
+  `?wizard=acl_ack_failed&why=…`, and **no code read those parameters**. A successful
+  click looked like nothing happened until the 30 s wizard cache expired, and a
+  **refused** click (the very `invalid input syntax for type integer` sentence v1.5.136
+  fixed) lived only in the URL — the operator saw an unchanged page.
+* The acknowledged id was applied **inside** the cached report, so it could not appear
+  before the cache expired even when it was recorded.
+
+### What ships
+
+* `setupWizardReport` is now a thin wrapper over `setupWizardReportCached`: the
+  acknowledged id (`global_settings['setup.acl_ack_snapshot']`, one small read) is
+  applied on **every** call, so the button disappears and «снапшот №N сохранён» appears
+  the moment the redirect lands.
+* `wizardFlashFromQuery` turns the redirect's parameters into `WizardFlash` (success with
+  the id, or the measured refusal reason), and the card renders one line for it —
+  `wizard.ack_ok` / `wizard.ack_failed_label` in RU + EN. A refusal is now a **visible**
+  sentence with the raw DB/headscale error, not a silent no-op.
+
+### Contracts and tests
+
+`scripts/check_b395_setup_wizard.sh` is at **39**: `I9` (the outcome is rendered, both
+branches) and `I10` (the flash is wired and the acknowledged id is applied outside the
+30 s cache). `TestDashboardWizard_AcknowledgementFlash` renders all three cases
+(success / refusal / no flash) and fails if a plain visit shows a flash. Two existing
+contracts were **renegotiated**, not weakened: `E4` asserts the CALL
+(`ackSnapshotIDForWizard(s)`) rather than the exact assignment line the wrapper moved,
+and `I2` now names the step marker (`wiz-step-why">{{.Why}}`) because the flash renders
+its own `Why` — a raw diagnostic by design — so a generic `>{{.Why}}<` scan would forbid
+the fix it just shipped.
+
+### Verification
+
+Live after this tag: press the button → the card shows «снапшот №N сохранён — применение
+ACL теперь можно откатить» and the form is gone; a refusal shows
+«Не удалось сохранить снапшот: <reason>». The wrong-token path (v1.5.135) still refuses.
+
 ## v1.5.136 — the button that answered "invalid input syntax for type integer" (B395.2)
 
 **Date:** 2026-10-18 · **Base:** `v1.5.135` → this tag · **Compatibility:** no migration,

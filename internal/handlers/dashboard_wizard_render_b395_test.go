@@ -36,6 +36,13 @@ type UserWizardStepStub struct {
 	Link  string
 }
 
+// WizardFlashStub mirrors my.WizardFlash's field names (B395.3).
+type WizardFlashStub struct {
+	OK         bool
+	SnapshotID int64
+	Why        string
+}
+
 // loadDashboardBody parses dashboard.html with the same funcmap shape the render
 // tests use. `t`/`tf` WRAP the key ("[T:wizard.x]") instead of echoing it, so a
 // substring assertion still works — and a value that reached the page WITHOUT going
@@ -233,6 +240,45 @@ func TestDashboardWizard_AclAcknowledgementIsReachable(t *testing.T) {
 	}
 	if !strings.Contains(acked, "wizard.acl_snapshot") {
 		t.Error("the recorded snapshot id is not shown after acknowledging")
+	}
+}
+
+// TestDashboardWizard_AcknowledgementFlash pins B395.3: the acknowledgement redirect
+// answers with `?wizard=acl_acked&snapshot=N` or `?wizard=acl_ack_failed&why=…`, and
+// NOTHING rendered those parameters — a refused click (measured live: the PostgreSQL
+// `invalid input syntax for type integer` error) was completely silent on the page.
+func TestDashboardWizard_AcknowledgementFlash(t *testing.T) {
+	rep := &setupstate.Report{
+		State:         setupstate.StatePopulated,
+		InfraNodes:    setupstate.Count{Known: true},
+		PendingReview: setupstate.Count{Known: true},
+		ACLLocked:     true,
+	}
+
+	ok := renderDashboard(t, map[string]any{
+		"Username": "admin", "IsAdmin": true, "CSRF": "tok", "Wizard": rep,
+		"WizardFlash": &WizardFlashStub{OK: true, SnapshotID: 147738},
+	})
+	if !strings.Contains(ok, "[TF:wizard.ack_ok ") || !strings.Contains(ok, "147738") {
+		t.Error("a successful acknowledgement renders no confirmation")
+	}
+
+	bad := renderDashboard(t, map[string]any{
+		"Username": "admin", "IsAdmin": true, "CSRF": "tok", "Wizard": rep,
+		"WizardFlash": &WizardFlashStub{Why: "invalid input syntax for type integer"},
+	})
+	if !strings.Contains(bad, "wizard.ack_failed_label") {
+		t.Error("a refused acknowledgement renders no label")
+	}
+	if !strings.Contains(bad, "invalid input syntax for type integer") {
+		t.Error("a refused acknowledgement does not show the measured reason")
+	}
+
+	none := renderDashboard(t, map[string]any{
+		"Username": "admin", "IsAdmin": true, "CSRF": "tok", "Wizard": rep,
+	})
+	if strings.Contains(none, "wizard.ack_ok") || strings.Contains(none, "wizard.ack_failed_label") {
+		t.Error("a plain dashboard visit renders an acknowledgement flash")
 	}
 }
 

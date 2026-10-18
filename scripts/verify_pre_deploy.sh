@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # scripts/verify_pre_deploy.sh — build-time guarantees for skygate.
 #
 # Runs BEFORE `docker build` / `git push` / `docker compose up -d`.
@@ -6254,7 +6254,7 @@ run_check "B394" "SYSTEM TESTS MUST BE A DIAGNOSTIC TOOL, NOT A GRID OF PASS/FAI
 # One template defect was caught by the render test and is worth remembering:
 # {{eq $w.State "absent"}} fails the WHOLE render when State is a typed enum
 # ("incompatible types for comparison"), so Report.StateName() exists for the page.
-# 37 contracts in scripts/check_b395_setup_wizard.sh. Section I exists because the
+# 39 contracts in scripts/check_b395_setup_wizard.sh. Section I exists because the
 # LIVE install (v1.5.134, ten minutes after the release) showed what A-H could not:
 # the page printed the raw i18n key «wizard.why_acl_will_be_rewritten», a Russian card
 # carried an English Sprintf'd sentence, and the acknowledgement route had NO form on

@@ -14,6 +14,16 @@
 {{with .Wizard}}
 {{$w := .}}
 <div class="card wiz-card wiz-{{$w.StateName}}">
+  {{/* B395.3 — the acknowledgement redirect lands here with ?wizard=acl_acked&snapshot=N
+       or ?wizard=acl_ack_failed&why=… and NOTHING used to render it, so a failed click
+       was completely silent (the operator pressed the button, the page looked unchanged,
+       and the PostgreSQL error lived only in the URL). One line, both outcomes. */}}
+  {{with $.WizardFlash}}
+  <p class="wiz-hint wiz-flash {{if .OK}}wiz-flash-ok{{else}}wiz-flash-err{{end}}">
+    {{if .OK}}<i class="fa-solid fa-camera-retro"></i> <b>{{tf "wizard.ack_ok" .SnapshotID}}</b>
+    {{else}}<i class="fa-solid fa-triangle-exclamation"></i> <b>{{t "wizard.ack_failed_label"}}</b> <code>{{.Why}}</code>{{end}}
+  </p>
+  {{end}}
   <div class="wiz-head">
     <div>
       <h3><i class="fa-solid fa-wand-magic-sparkles"></i>{{t "wizard.title"}}</h3>

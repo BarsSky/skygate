@@ -214,11 +214,12 @@ fi
 # contract: a helper nothing calls satisfies it while the page still shows nothing, which
 # is exactly how this shipped into a gate run — staticcheck's U1000 (func
 # ackSnapshotIDForWizard is unused) caught it and this contract did not. So E4 asserts
-# BOTH the helper and the CALL, because the call is the only thing that puts the id on
-# the page; SURF_CODE is the comment-stripped surface, so a comment that merely mentions
-# the assignment cannot satisfy the second half.
-if has 'ackSnapshotIDForWizard' "$SURF_SRC" && has 'rep.SnapshotID = ackSnapshotIDForWizard(s)' "$SURF_CODE"; then
-  ok "E4: the acknowledged snapshot id is read back AND called into the report (defined-but-uncalled is a half-wired feature)"
+# the CALL (on the comment-stripped surface), because the call is the only thing that
+# puts the id on the page. B395.3 moved the call into a wrapper (setupWizardReport)
+# rather than into the cached body — the ASSERTION is about the call, not the variable
+# name, so the contract follows the behaviour instead of the line that used to carry it.
+if has 'ackSnapshotIDForWizard(s)' "$SURF_CODE"; then
+  ok "E4: the acknowledged snapshot id is read back and called into the report (defined-but-uncalled is a half-wired feature)"
 else
   bad "E4: the acknowledged snapshot never reaches the page (a helper that is only DEFINED is dead code — the shape staticcheck U1000 caught here)"
 fi
@@ -319,10 +320,13 @@ if has '{{t .Why}}' "$TPL_SRC" && has '{{tf .Why .WhyCount}}' "$TPL_SRC"; then
 else
   bad "I1: the step reason is printed raw — a key would reach the page as «wizard.…»"
 fi
-if has '>{{.Why}}<' "$TPL_SRC"; then
-  bad "I2: the raw {{.Why}} render is still present"
+# I2 — the STEP render specifically. A generic `>{{.Why}}<` scan is wrong here: the
+# acknowledgement flash renders its OWN Why, which is a raw diagnostic by design (the
+# measured refusal reason), so the pattern has to name the step marker.
+if has 'wiz-step-why">{{.Why}}' "$TPL_SRC"; then
+  bad "I2: the step reason is still rendered raw — a key would reach the page as «wizard.…»"
 else
-  ok "I2: no raw {{.Why}} render is left"
+  ok "I2: the STEP reason is rendered through the translator (the acknowledgement flash renders its own raw diagnostic Why on purpose)"
 fi
 if has 'wizard.why_pending_review' "$SURF_CODE" && ! has 'fmt.Sprintf("%d node(s)' "$SURF_CODE"; then
   ok "I3: a counted step reason is an i18n key + WhyCount, not a Sprintf'd English sentence"
@@ -360,6 +364,22 @@ if has '"setup-wizard"' "$SURF_CODE" || has 'LastInsertId' "$SURF_CODE"; then
   bad "I8: the snapshot still writes the literal \"setup-wizard\" version or calls LastInsertId"
 else
   ok "I8: no string version and no LastInsertId in the snapshot path"
+fi
+# I9/I10 — THE CLICK MUST SAY SOMETHING (B395.3). POST /admin/setup/acl-ack redirects to
+# `?wizard=acl_acked&snapshot=N` / `?wizard=acl_ack_failed&why=…`, and nothing read those
+# parameters: the operator pressed the button, the page looked unchanged for up to the
+# 30 s cache TTL, and a REFUSED click (measured live: the PostgreSQL error) was silent.
+# The flash is rendered, and the acknowledged id is applied OUTSIDE the cached report so
+# the click is visible immediately.
+if has '$.WizardFlash' "$TPL_SRC" && has 'wizard.ack_ok' "$TPL_SRC" && has 'wizard.ack_failed_label' "$TPL_SRC"; then
+  ok "I9: the page renders the acknowledgement outcome (success line + the measured refusal reason)"
+else
+  bad "I9: the acknowledgement redirect's parameters are rendered nowhere — a failed click would be silent"
+fi
+if has 'wizardFlashFromQuery(r)' "$SURF_CODE" && has 'setupWizardReportCached(' "$SURF_CODE" && has 'ackSnapshotIDForWizard(s)' "$SURF_CODE"; then
+  ok "I10: the flash is wired and the acknowledged id is applied outside the cached report (the click is visible at once)"
+else
+  bad "I10: the flash is not wired, or the acknowledged id is only applied inside the 30 s cache"
 fi
 
 printf '\n\033[1mB395: %d PASS / %d FAIL / %d SKIP\033[0m\n' "$PASS" "$FAIL" "$SKIP"

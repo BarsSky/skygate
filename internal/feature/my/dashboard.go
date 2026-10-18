@@ -273,6 +273,12 @@ func (s *Service) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	// connected?"), because a user cannot install a control plane.
 	if c.IsAdmin {
 		data["Wizard"] = s.setupWizardReport(r.Context())
+		// B395.3: the acknowledgement redirect carries its outcome in the query string
+		// (?wizard=acl_acked&snapshot=N / ?wizard=acl_ack_failed&why=…). One line, so a
+		// refused click can never again look like a click that did nothing.
+		if wf := wizardFlashFromQuery(r); wf != nil {
+			data["WizardFlash"] = wf
+		}
 		// B395.1: the ACL warning's acknowledgement is a POST, so the admin dashboard
 		// mints a per-page CSRF token — the /my/telegram pattern (HttpOnly +
 		// SameSite=Lax cookie, 10 min, compared in constant time). Measured live on
