@@ -273,6 +273,26 @@ func (s *Service) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	// connected?"), because a user cannot install a control plane.
 	if c.IsAdmin {
 		data["Wizard"] = s.setupWizardReport(r.Context())
+		// B395.1: the ACL warning's acknowledgement is a POST, so the admin dashboard
+		// mints a per-page CSRF token — the /my/telegram pattern (HttpOnly +
+		// SameSite=Lax cookie, 10 min, compared in constant time). Measured live on
+		// v1.5.134: the route existed, the template had NO form posting to it and the
+		// handler checked no token, so the "recoverable snapshot" half of the warning
+		// could not be reached from the page at all. The cookie path covers the POST
+		// target (/admin/setup/acl-ack), not the page that embeds the token.
+		if csrf, cerr := db.RandomConfirmationToken(8); cerr == nil {
+			http.SetCookie(w, &http.Cookie{
+				Name:     "skygate_dashboard_csrf",
+				Value:    csrf,
+				Path:     "/admin/setup",
+				MaxAge:   600,
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			})
+			data["CSRF"] = csrf
+		} else {
+			log.Printf("dashboard: csrf generation failed: %v", cerr)
+		}
 	}
 	if nodes, err := listNodesForWizard(hs); err == nil {
 		data["UserWizard"] = s.userWizardReport(r.Context(), c, nodes)

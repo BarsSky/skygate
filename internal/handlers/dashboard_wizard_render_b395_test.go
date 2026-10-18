@@ -37,8 +37,12 @@ type UserWizardStepStub struct {
 }
 
 // loadDashboardBody parses dashboard.html with the same funcmap shape the render
-// tests use: the template functions echo their keys, so a marker assertion is about
-// which KEY reached the page, not about the Russian text.
+// tests use. `t`/`tf` WRAP the key ("[T:wizard.x]") instead of echoing it, so a
+// substring assertion still works — and a value that reached the page WITHOUT going
+// through the translator no longer looks the same as one that did. That distinction
+// is the whole point: v1.5.134 printed the literal «wizard.why_acl_will_be_rewritten»
+// on the live page because the template rendered the key RAW, and a key-echoing stub
+// could not tell the two apart (B395.1).
 func loadDashboardBody(t *testing.T) *template.Template {
 	t.Helper()
 	data, err := templatesFS.ReadFile("templates/dashboard.html")
@@ -46,8 +50,8 @@ func loadDashboardBody(t *testing.T) *template.Template {
 		t.Fatalf("read dashboard.html: %v", err)
 	}
 	tpl, err := template.New("test").Funcs(template.FuncMap{
-		"t":                  func(key string) string { return key },
-		"tf":                 func(key string, args ...any) string { return fmt.Sprint(key, " ", args) },
+		"t":                  func(key string) string { return "[T:" + key + "]" },
+		"tf":                 func(key string, args ...any) string { return fmt.Sprint("[TF:", key, " ", args, "]") },
 		"safeHTML":           func(s string) template.HTML { return template.HTML(s) },
 		"safeJS":             func(s string) template.JS { return template.JS(s) },
 		"safeJSON":           func(v any) template.JS { b, _ := json.Marshal(v); return template.JS(b) },
@@ -166,6 +170,69 @@ func TestDashboardWizard_AclWarningAndAiLink(t *testing.T) {
 	}
 	if !strings.Contains(body, "/my/exit-rules/agent") {
 		t.Error("the AI-helper link is missing")
+	}
+}
+
+// TestDashboardWizard_StepWhyGoesThroughTheTranslator is the B395.1 regression for the
+// defect the live installation showed: Step.Why is an i18n KEY, the template printed
+// it RAW, and the operator read «wizard.why_acl_will_be_rewritten» in place of the
+// sentence — in BOTH languages, on the busiest page. The wrapping stub (see
+// loadDashboardBody) makes "went through the translator" observable.
+func TestDashboardWizard_StepWhyGoesThroughTheTranslator(t *testing.T) {
+	rep := &setupstate.Report{
+		State:         setupstate.StatePopulated,
+		InfraNodes:    setupstate.Count{Known: true},
+		PendingReview: setupstate.Count{Value: 14, Known: true},
+		Steps: []setupstate.Step{
+			{ID: "acl", Title: "wizard.step_acl_rewrite", State: setupstate.StepTodo,
+				Why: "wizard.why_acl_will_be_rewritten", Link: "/admin/headscale/acl"},
+			{ID: "review", Title: "wizard.step_review_import", State: setupstate.StepTodo,
+				Why: "wizard.why_pending_review", WhyCount: 14, Link: "/admin/devices"},
+		},
+	}
+	body := renderDashboard(t, map[string]any{"Username": "admin", "IsAdmin": true, "Wizard": rep})
+	if !strings.Contains(body, "[T:wizard.why_acl_will_be_rewritten]") {
+		t.Error("the ACL step reason did not go through the translator — the raw key would be printed on the page")
+	}
+	if !strings.Contains(body, "[TF:wizard.why_pending_review ") || !strings.Contains(body, "14") {
+		t.Error("the pending-review reason is not rendered with its count through tf — a Sprintf'd English sentence would appear in a Russian card")
+	}
+	if strings.Contains(body, ">wizard.why_acl_will_be_rewritten<") {
+		t.Error("the raw i18n key is rendered verbatim")
+	}
+}
+
+// TestDashboardWizard_AclAcknowledgementIsReachable is the second B395.1 regression:
+// the acknowledge route existed and the page carried no form posting to it, so the
+// "recoverable snapshot" promise had no button. The form is rendered until an
+// acknowledgement exists (a snapshot id then replaces it) and carries the CSRF token
+// the handler compares.
+func TestDashboardWizard_AclAcknowledgementIsReachable(t *testing.T) {
+	base := func(snapshotID int64) *setupstate.Report {
+		return &setupstate.Report{
+			State:         setupstate.StatePopulated,
+			InfraNodes:    setupstate.Count{Known: true},
+			PendingReview: setupstate.Count{Known: true},
+			ACLLocked:     true,
+			SnapshotID:    snapshotID,
+		}
+	}
+	body := renderDashboard(t, map[string]any{
+		"Username": "admin", "IsAdmin": true, "CSRF": "tok-abc", "Wizard": base(0),
+	})
+	for _, marker := range []string{`action="/admin/setup/acl-ack"`, `name="csrf"`, `value="tok-abc"`, "wizard.acl_ack_button"} {
+		if !strings.Contains(body, marker) {
+			t.Errorf("the acknowledgement form is missing %q — the button cannot be pressed", marker)
+		}
+	}
+	acked := renderDashboard(t, map[string]any{
+		"Username": "admin", "IsAdmin": true, "CSRF": "tok-abc", "Wizard": base(42),
+	})
+	if strings.Contains(acked, `action="/admin/setup/acl-ack"`) {
+		t.Error("the acknowledgement form is still offered after the snapshot exists")
+	}
+	if !strings.Contains(acked, "wizard.acl_snapshot") {
+		t.Error("the recorded snapshot id is not shown after acknowledging")
 	}
 }
 

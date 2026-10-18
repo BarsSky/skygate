@@ -117,8 +117,16 @@ type Step struct {
 	ID    string
 	Title string // i18n key
 	State StepState
-	Why   string // free text: the measured reason (empty when done)
-	Link  string // the page that performs it ("" = nothing to click)
+	// Why is an i18n KEY for localised text ("wizard.why_*") and a RAW measured
+	// sentence for a diagnostic (rep.Reason). The template always renders it through
+	// the translator, which returns an unknown key unchanged — so both shapes are
+	// correct. Text that needs a NUMBER must go through WhyCount instead of Sprintf:
+	// measured live on v1.5.134, a Sprintf'd English sentence appeared inside the
+	// Russian card ("14 node(s) have no panel owner yet"), which is rule 10 in spirit
+	// and invisible to a contract that only compares catalogue KEY SETS.
+	Why      string
+	WhyCount int    // when > 0 the template renders tf(Why, WhyCount)
+	Link     string // the page that performs it ("" = nothing to click)
 }
 
 // Report is everything the dashboard needs to render the wizard.
@@ -363,7 +371,10 @@ func stepsFor(rep Report) []Step {
 		}
 		if rep.PendingReview.Known && rep.PendingReview.Value > 0 {
 			steps[0].State = StepTodo
-			steps[0].Why = fmt.Sprintf("%d node(s) have no panel owner yet", rep.PendingReview.Value)
+			// A KEY plus the number, not a Sprintf'd sentence: the page is rendered in
+			// the operator's language (see the WhyCount comment on Step).
+			steps[0].Why = "wizard.why_pending_review"
+			steps[0].WhyCount = rep.PendingReview.Value
 		} else {
 			steps[0].State = StepDone
 		}

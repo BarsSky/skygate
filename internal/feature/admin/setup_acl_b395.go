@@ -12,6 +12,7 @@ package admin
 // copy" half of the two-step apply the operator asked for.
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"log"
 	"net/http"
@@ -35,6 +36,25 @@ func (s *Service) PostAdminSetupACLAck(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	// B395.1: CSRF (the /my/telegram pattern — token minted by GetDashboard into an
+	// HttpOnly cookie whose path covers this route, compared in constant time). The
+	// action only snapshots a policy, but it IS a state change and it is reachable by
+	// a plain form: without this, any page could make an admin create snapshot rows.
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/dashboard?wizard=acl_ack_failed&why="+url.QueryEscape("bad form"), http.StatusSeeOther)
+		return
+	}
+	ck, cerr := r.Cookie("skygate_dashboard_csrf")
+	if cerr != nil || ck.Value == "" ||
+		subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(ck.Value)) != 1 {
+		if s.Backend != nil {
+			s.Backend.Audit(c.UserID, c.Username, "setup_acl_ack_csrf_fail",
+				fmt.Sprintf("ip=%s", r.RemoteAddr))
+		}
+		http.Redirect(w, r, "/dashboard?wizard=acl_ack_failed&why="+
+			url.QueryEscape("the form token is missing or stale — reload the dashboard and press the button again"), http.StatusSeeOther)
 		return
 	}
 	if existing := ackSnapshotID(s); existing > 0 {

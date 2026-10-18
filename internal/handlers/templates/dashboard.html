@@ -46,7 +46,13 @@
         {{else}}<i class="fa-regular fa-circle"></i>{{end}}
       </span>
       <span class="wiz-step-title">{{t .Title}}</span>
-      {{if .Why}}<span class="wiz-step-why">{{.Why}}</span>{{end}}
+      {{/* B395.1: Why carries an i18n KEY for localised text and a raw measured
+           sentence for a diagnostic, so it always goes through the translator
+           (an unknown key comes back unchanged). It used to be printed RAW, which
+           put the literal «wizard.why_acl_will_be_rewritten» on the page in both
+           languages — measured live on v1.5.134. A step whose text needs a number
+           carries WhyCount and is rendered by tf. */}}
+      {{if .Why}}<span class="wiz-step-why">{{if .WhyCount}}{{tf .Why .WhyCount}}{{else}}{{t .Why}}{{end}}</span>{{end}}
       {{if .Link}}<a class="wiz-step-link" href="{{.Link}}">{{t "wizard.open"}} →</a>{{end}}
     </li>
     {{end}}
@@ -102,6 +108,20 @@
     <i class="fa-solid fa-triangle-exclamation"></i>
     <b>{{t "wizard.acl_warning"}}</b>
     {{t "wizard.acl_warning_body"}}
+    {{/* B395.1: the acknowledgement is what makes the warning recoverable — it takes a
+         snapshot of the live policy BEFORE anything is applied. v1.5.134 registered the
+         route and rendered no form, so the button could not be pressed (measured live).
+         The token comes from GetDashboard's skygate_dashboard_csrf cookie; the form is
+         shown until an acknowledgement exists, and the id it produced is then displayed
+         instead. */}}
+    {{if not $w.SnapshotID}}
+    <form method="post" action="/admin/setup/acl-ack" class="wiz-ack">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <button type="submit" class="btn btn-sm btn-outline-warning">
+        <i class="fa-solid fa-camera-retro"></i> {{t "wizard.acl_ack_button"}}
+      </button>
+    </form>
+    {{end}}
     <a href="/admin/headscale/acl">{{t "wizard.acl_link"}} →</a>
     {{if $w.SnapshotID}}<span class="wiz-snapshot">{{tf "wizard.acl_snapshot" $w.SnapshotID}}</span>{{end}}
   </div>

@@ -28,6 +28,7 @@
 #   F. the AI-helper link is offered with a token-based package
 #   G. i18n: every wizard string exists in RU and EN
 #   H. registered, tracked, documented
+#   I. what the LIVE page showed (B395.1): translated step text + a real ack form
 #
 # Scratch under mktemp -d (AGENTS trap #13); no `producer | grep -q` (trap #9/B386).
 
@@ -295,6 +296,53 @@ if [ -f _skygate-e2e/wizard/scenario.sh ] || [ -f scripts/wizard_scenarios.sh ];
   ok "H6: the three local docker scenarios are scripted"
 else
   skip "H6: the three docker scenarios live outside the repo (_skygate-e2e/wizard) — recorded in the release notes"
+fi
+
+# ---------------------------------------------------------------------------
+# I. what the LIVE page showed and no test did (B395.1, measured on v1.5.134)
+# ---------------------------------------------------------------------------
+# Both defects were found by logging into the real installation the moment v1.5.134
+# went live, and neither was visible to the 29 contracts above nor to the 14 tests:
+#   * Step.Why is an i18n KEY, and the template printed it RAW — the operator read
+#     «wizard.why_acl_will_be_rewritten» on the busiest page, in BOTH languages;
+#   * Step.text carried a Sprintf'd ENGLISH sentence ("14 node(s) have no panel owner
+#     yet") inside a Russian card;
+#   * POST /admin/setup/acl-ack was registered and the page carried NO form posting to
+#     it, so the "recoverable snapshot" promise had no button (E3 only proved the
+#     ROUTE existed — the same half-wired shape as E4 above).
+# These contracts are the missing half: they assert the RENDER path and the FORM, not
+# the existence of a symbol.
+hdr "I — the live page: translated text, and a button that exists"
+
+if has '{{t .Why}}' "$TPL_SRC" && has '{{tf .Why .WhyCount}}' "$TPL_SRC"; then
+  ok "I1: the step reason goes through the translator (a key translates, a raw diagnostic passes through)"
+else
+  bad "I1: the step reason is printed raw — a key would reach the page as «wizard.…»"
+fi
+if has '>{{.Why}}<' "$TPL_SRC"; then
+  bad "I2: the raw {{.Why}} render is still present"
+else
+  ok "I2: no raw {{.Why}} render is left"
+fi
+if has 'wizard.why_pending_review' "$SURF_CODE" && ! has 'fmt.Sprintf("%d node(s)' "$SURF_CODE"; then
+  ok "I3: a counted step reason is an i18n key + WhyCount, not a Sprintf'd English sentence"
+else
+  bad "I3: a counted step reason is still built as an English sentence in Go"
+fi
+if has 'action="/admin/setup/acl-ack"' "$TPL_SRC" && has 'name="csrf"' "$TPL_SRC"; then
+  ok "I4: the page carries the acknowledgement FORM (route + CSRF token), not just a link"
+else
+  bad "I4: the acknowledgement route has no form on the page — the button cannot be pressed"
+fi
+if has 'skygate_dashboard_csrf' "$SURF_CODE" && has 'subtle.ConstantTimeCompare' "$SURF_CODE"; then
+  ok "I5: the token is minted on GET and compared in constant time on POST"
+else
+  bad "I5: the acknowledgement POST is not CSRF-protected (or the cookie that carries the token is missing)"
+fi
+if has 'setup_acl_ack_csrf_fail' "$SURF_CODE"; then
+  ok "I6: a rejected token is audited, not silently ignored"
+else
+  bad "I6: a rejected token leaves no audit trail"
 fi
 
 printf '\n\033[1mB395: %d PASS / %d FAIL / %d SKIP\033[0m\n' "$PASS" "$FAIL" "$SKIP"

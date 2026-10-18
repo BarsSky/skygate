@@ -12,6 +12,84 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.135 — what the live install showed that no test did (B395.1)
+
+**Date:** 2026-10-18 · **Base:** `v1.5.134` → this tag · **Compatibility:** no
+migration, no route change, no config change. The dashboard renders identically for a
+user; for an admin whose ACL warning is still unacknowledged it now grows a **button**.
+
+### Why
+
+v1.5.134 was verified against three local docker scenarios and 14 tests, and the
+first ten minutes on the operator's real installation found **three** things none of
+them could see — because all three live in the difference between "the symbol exists"
+and "the operator can read or press it".
+
+1. **The page printed a raw i18n key.** `Step.Why` is an i18n key
+   (`wizard.why_acl_will_be_rewritten`), and the template rendered it **raw**
+   (`{{.Why}}`) instead of through the translator. The operator read
+   «wizard.why_acl_will_be_rewritten» on the busiest page, in **both** languages.
+   Fixed with `{{t .Why}}`: a key translates and a raw diagnostic sentence (the
+   measured `Reason` from `Detect`) passes through unchanged, so both shapes the field
+   legitimately carries are now correct.
+2. **A counted sentence was English inside a Russian card.** `stepsFor` built the
+   pending-review reason with `fmt.Sprintf("%d node(s) have no panel owner yet")`, so
+   a Russian page showed «14 node(s) have no panel owner yet». `Step` now carries
+   `WhyCount`; the reason is the key `wizard.why_pending_review` rendered by `tf`, and
+   the existing RU/EN pair covers it.
+3. **The acknowledgement could not be reached.** `POST /admin/setup/acl-ack` was
+   registered, audited, idempotent and covered by contract E3 — and **no form on the
+   page posted to it**, so the "recoverable snapshot" half of the ACL warning had no
+   button. The dashboard now renders the form (until an acknowledgement exists, after
+   which the saved snapshot id replaces it) and mints a per-page CSRF token
+   (`skygate_dashboard_csrf`: HttpOnly, SameSite=Lax, 10 min, path `/admin/setup`, the
+   `/my/telegram` pattern); the handler compares it in constant time and audits a
+   rejection as `setup_acl_ack_csrf_fail` instead of silently accepting the POST.
+
+### Contracts
+
+`scripts/check_b395_setup_wizard.sh` grows from 29 to **35** contracts. The new
+section **I** exists because the first 29 were satisfied by the broken page: E4 proved
+the helper *existed* (and staticcheck's `U1000` was what caught that it was never
+called, fixed in v1.5.134's own push), and E3 proved the *route* existed while the
+page carried no form. Section I asserts the render path instead:
+
+* `I1`/`I2` — the step reason goes through `t`/`tf` and no raw `{{.Why}}` render is left;
+* `I3` — a counted reason is a key + `WhyCount`, not a `Sprintf`'d English sentence;
+* `I4` — the page carries the acknowledgement **form** with its CSRF field;
+* `I5`/`I6` — the token is minted on GET, compared with
+  `subtle.ConstantTimeCompare` on POST, and a rejection is audited.
+
+Three render tests back the same two defects (`TestDashboardWizard_StepWhyGoesThroughTheTranslator`,
+`TestDashboardWizard_AclAcknowledgementIsReachable`), and their stub now **wraps** the
+key (`[T:wizard.x]`) instead of echoing it — with a key-echoing stub the broken and the
+fixed template produced the same string, which is precisely why the defect shipped.
+
+### Also corrected (documentation, not behaviour)
+
+* `RELEASE-NOTES.md` for v1.5.134 carried its "three local docker scenarios" block
+  **68 times** (a bulk insert ran without `-First`), which is why this file grew by
+  2 345 unintended lines; the section is now a single copy. The docs also said 7
+  predicate tests (9 exist) and 12 total (14 exist).
+* `B237.7` contract `C.3` reported "regression!" for a healthy tree during this
+  release's gate: `go test … | grep -q '^ok'` is trap #9 verbatim under `pipefail`,
+  and its `-timeout 180s` was a guess — the `exit_rules` package measures **275 s** in
+  `-short` mode on the reference workstation. It now captures the output, takes the
+  command's own exit status, prints the tail on failure and carries a 600 s budget.
+  B237.7 is 13/0.
+
+### Verification
+
+* Live, on the reference host at `v1.5.134+224d957a` before the fix: the card rendered
+  «Первичная настройка / Headscale: есть данные / Ждут проверки: 14», the import table
+  classified 14 nodes as awaiting review, the ACL warning carried
+  «wizard.why_acl_will_be_rewritten», and `grep -c 'setup/acl-ack'` on the page was
+  **0**. This tag ships the translated reason, the acknowledgement form and the CSRF
+  field; the same probe (login → `/dashboard` → count `setup/acl-ack`, read the step
+  text) is what re-verifies it on the host after the apply.
+* `internal/setupstate` (9), `internal/handlers` (7 render tests), `internal/feature/my`,
+  `internal/feature/admin`, `internal/i18n` — green; `staticcheck` and `gofmt` clean.
+
 ## v1.5.134 — the first-run wizard on the dashboard (B395)
 
 **Date:** 2026-10-17 · **Base:** `v1.5.133` → this tag · **Compatibility:** no
