@@ -759,8 +759,39 @@ var TestRegistry = []SystemTestDef{
 		// `bind: /home/skyadmin/skygate → /app` mount).
 		Name:        "backup.recent",
 		Category:    "backup",
-		Description: "A backup file is present in the backup dir and is < 7 days old",
+		Description: "A backup ran and is < 7 days old (reads the same record the backup.verify test does)",
 		Run: func(ctx context.Context) (SystemTestStatus, string) {
+			// B396: THIS TEST AND backup.verify USED TO DISAGREE, and the live
+			// installation showed it: backup.verify read the run records
+			// (global_settings backup.last_run/last_archive — destination-agnostic)
+			// and PASSED with an S3 archive 20 h old, while this test scanned a
+			// LOCAL directory and FAILED on an 819 h old file left there before the
+			// destination moved to S3. Two tests, one question, two sources: the
+			// copy that reads the wrong source is the lie. So the run records win
+			// whenever they exist (the backup itself writes them, whatever the
+			// destination), and the local-directory scan below stays only for a
+			// legacy installation that has archives but has never recorded a run.
+			if s := getTestService(); s != nil && s.dbc() != nil {
+				get := func(key string) string {
+					v, _ := db.GetGlobalSetting(s.dbc(), key, "")
+					return strings.TrimSpace(v)
+				}
+				lastRun, archive := get("backup.last_run"), get("backup.last_archive")
+				if lastRun != "" {
+					var ts int64
+					if _, err := fmt.Sscanf(lastRun, "%d", &ts); err == nil && ts > 0 {
+						age := time.Since(time.Unix(ts, 0))
+						if age > 7*24*time.Hour {
+							return SystemTestFail, fmt.Sprintf("the last recorded backup run is %s old (under 7 d expected): %s — the destination may have stopped accepting archives",
+								age.Round(time.Hour), archive)
+						}
+						return SystemTestPass, fmt.Sprintf("last recorded backup %s ago: %s (read from the run records, so the destination does not matter)",
+							age.Round(time.Minute), archive)
+					}
+				}
+			}
+			// Legacy path: no run has ever been recorded — fall back to the local
+			// archive directory, which is what this test always did.
 			// 2026-08-13: read the status JSON first. The
 			// in-app backup stores its `backup_dir` in
 			// `~/.skygate-backup-status.json` (set by

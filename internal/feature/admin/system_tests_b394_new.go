@@ -44,6 +44,7 @@ import (
 	"skygate/internal/acl"
 	"skygate/internal/db"
 	"skygate/internal/derphealth"
+	"skygate/internal/feature/exit_rules"
 	"skygate/internal/headscale"
 	"skygate/internal/prefixowner"
 	"skygate/internal/startup"
@@ -193,9 +194,11 @@ var b394Tests = []SystemTestDef{
 				hostByTag[strings.ToLower(tag)] = host
 			}
 			routesByHost, tagByHost := map[string][]string{}, map[string]string{}
+			approvedByHost := map[string][]string{}
 			for _, n := range nodes {
 				host := strings.ToLower(n.GivenName)
 				routesByHost[host] = n.AvailableRoutes
+				approvedByHost[host] = n.ApprovedRoutes
 				for _, t := range n.Tags {
 					if strings.HasPrefix(t, "tag:dev-infra-") {
 						tagByHost[host] = t
@@ -203,6 +206,11 @@ var b394Tests = []SystemTestDef{
 				}
 			}
 			problems := []string{}
+			// B396: "advertised" and "approved" are different facts (B273's lesson, in
+			// this test's own vocabulary). A relay that advertises a prefix the operator
+			// never approved serves nothing, and a message that only says "does not
+			// advertise" sends them to the wrong button.
+			unapproved := []string{}
 			for prefix, tag := range ownerByPrefix {
 				host := strings.ToLower(hostByTag[strings.ToLower(tag)])
 				if host == "" {
@@ -211,6 +219,11 @@ var b394Tests = []SystemTestDef{
 				}
 				if !containsStr(routesByHost[host], prefix) {
 					problems = append(problems, fmt.Sprintf("%s is owned by %s, but %s does not advertise it", prefix, host, host))
+					continue
+				}
+				// Only meaningful when headscale reports the approved set at all.
+				if len(approvedByHost[host]) > 0 && !containsStr(approvedByHost[host], prefix) {
+					unapproved = append(unapproved, fmt.Sprintf("%s is advertised by %s but not APPROVED there", prefix, host))
 				}
 			}
 			// A prefix advertised by two relays makes headscale's primary flip.
@@ -232,9 +245,20 @@ var b394Tests = []SystemTestDef{
 					dupes++
 				}
 			}
-			if len(problems) > 0 || dupes > 0 {
-				return SystemTestFail, fmt.Sprintf("%d prefix(es) are not served as recorded and %d prefix(es) are advertised by more than one relay. First: %s. Re-sync on /admin/exit-nodes.",
-					len(problems), dupes, strings.Join(problems[:min(3, len(problems))], "; "))
+			if len(problems) > 0 || dupes > 0 || len(unapproved) > 0 {
+				parts := []string{}
+				if len(problems) > 0 {
+					parts = append(parts, fmt.Sprintf("%d prefix(es) are NOT SERVED as recorded: %s",
+						len(problems), strings.Join(problems[:min(3, len(problems))], "; ")))
+				}
+				if len(unapproved) > 0 {
+					parts = append(parts, fmt.Sprintf("%d prefix(es) are advertised but NOT APPROVED (clients ignore unapproved routes — approve them on /admin/exit-nodes): %s",
+						len(unapproved), strings.Join(unapproved[:min(3, len(unapproved))], "; ")))
+				}
+				if dupes > 0 {
+					parts = append(parts, fmt.Sprintf("%d prefix(es) are advertised by MORE THAN ONE relay (headscale's primary will flip between them)", dupes))
+				}
+				return SystemTestFail, strings.Join(parts, " | ")
 			}
 			return SystemTestPass, fmt.Sprintf("%d prefixes, each served by exactly one advertising relay", len(ownerByPrefix))
 		},
@@ -351,6 +375,20 @@ var b394Tests = []SystemTestDef{
 			}
 			dctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			defer cancel()
+			// B396: name the loopback case BEFORE dialling. Measured live: the
+			// operator's relay name resolved to 127.0.0.1 INSIDE the container, so
+			// the panel dialled its own loopback and the message said "check the
+			// firewall/DNS" — true, but not actionable. A host that resolves its own
+			// public name to 127.0.0.1 leaks into containers through /etc/hosts or a
+			// compose extra_hosts entry (AGENTS trap #2); the container can never
+			// reach the relay that way and no firewall rule will change it.
+			rctx, rcancel := context.WithTimeout(ctx, 2*time.Second)
+			addrs, rerr := net.DefaultResolver.LookupHost(rctx, host)
+			rcancel()
+			if rerr == nil && len(addrs) > 0 && b396AllLoopback(addrs) {
+				return SystemTestFail, fmt.Sprintf("%q resolves to %s INSIDE this container: the panel is dialling its own loopback and can never reach the relay. The host resolves its own public name to 127.0.0.1 and that leaks into the container (AGENTS trap #2) — fix the compose extra_hosts entry so %s maps to the host's real address, then re-run this test.",
+					host, strings.Join(addrs, ", "), host)
+			}
 			start := time.Now()
 			dialer := &net.Dialer{}
 			conn, derr := tls.DialWithDialer(dialer, "tcp", net.JoinHostPort(host, port), &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
@@ -447,8 +485,19 @@ var b394Tests = []SystemTestDef{
 				}
 			}
 			if len(stale) > 0 {
-				return SystemTestFail, fmt.Sprintf("%d of %d address(es) are stale or missing: %s. The domain auto-updater rewrites them on its interval — check /admin/system_tests → DNS auto-update, or press Re-sync on the rule.",
-					len(stale), checked, strings.Join(stale[:min(3, len(stale))], "; "))
+				// B396: say whether ANYTHING will fix this by itself. "Press Re-sync"
+				// and "the auto-updater will do it on its interval" are different
+				// instructions, and the live page could not tell which one applies
+				// (the auto-updater can be OFF, and then the rows rot forever).
+				autoOn := db.GetGlobalSettingBool(s.dbc(), globalSettingsKeyDNSAutoUpdate,
+					s.Cfg != nil && s.Cfg.DNSAutoUpdateEnabled)
+				rawInterval, _ := db.GetGlobalSetting(s.dbc(), exit_rules.SettingDomainResolveIntervalSec, "")
+				hv := "DNS auto-update is OFF: nothing will rewrite these rows until you enable it on /admin/system_tests (or press Re-sync on the rule)"
+				if autoOn {
+					hv = fmt.Sprintf("DNS auto-update is ON (every %s) and will rewrite them on its next pass", exit_rules.ParseDomainResolveInterval(rawInterval))
+				}
+				return SystemTestFail, fmt.Sprintf("%d of %d address(es) are stale or missing: %s. %s.",
+					len(stale), checked, strings.Join(stale[:min(3, len(stale))], "; "), hv)
 			}
 			return SystemTestPass, fmt.Sprintf("%d address(es) across %d domain rule(s) match today's DNS", checked, len(rules))
 		},
@@ -489,6 +538,23 @@ var b394Tests = []SystemTestDef{
 			return SystemTestPass, fmt.Sprintf("last backup %s ago: %s", age.Round(time.Minute), archive)
 		},
 	},
+}
+
+// b396AllLoopback reports whether EVERY resolved address is a loopback address.
+// Split out so the classification can be unit-tested without a network
+// (system_tests_b396_test.go): a host that resolves its own public name to
+// 127.0.0.1 is the failure this exists to name.
+func b396AllLoopback(addrs []string) bool {
+	if len(addrs) == 0 {
+		return false
+	}
+	for _, a := range addrs {
+		ip := net.ParseIP(strings.TrimSpace(a))
+		if ip == nil || !ip.IsLoopback() {
+			return false
+		}
+	}
+	return true
 }
 
 // b394Headscale resolves the headscale client the same way the existing tests do,

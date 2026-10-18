@@ -12,6 +12,73 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.139 — the diagnostics must not lie about themselves (B396)
+
+**Date:** 2026-10-18 · **Base:** `v1.5.138` → this tag · **Compatibility:** no migration,
+no route change, no config change.
+
+### Why
+
+The B394 catalogue was run on the reference installation and four of its failures turned
+out to be about the **tests**, not the product:
+
+1. **`backup.recent` FAIL** — *"newest backup skygate-full-20260913_205723.tar.gz is
+   819h39m0s old (>7d)"* — **`backup.verify` PASS** — *"last backup 20h38m0s ago:
+   s3://skygate-backups/portal/…20261017_040030.tar.gz"*. One question, **two sources**:
+   the destination had moved to S3 and the local directory still held an archive from
+   before the move. The copy that read the wrong source was the lie, and only the
+   operator could tell which was which.
+2. **`derp.reachable` FAIL** — `dial tcp 127.0.0.1:443: connect: connection refused`,
+   reported as *"check the firewall/DNS"*. The relay **name resolved to 127.0.0.1 inside
+   the container**: a host that resolves its own public name to loopback leaks into
+   containers through `/etc/hosts` or a compose `extra_hosts` entry (trap #2). No
+   firewall rule changes that, and the message sent the operator looking for one.
+3. **`prefix_owner.consistency` FAIL** — *"2 prefix(es) are not served as recorded"*
+   merged **"the owner does not advertise it"** (→ press Re-sync) with **"it advertises
+   but nobody APPROVED it"** (→ press Approve; clients ignore unapproved routes, B273's
+   lesson). Two faults, two buttons, one sentence.
+4. **`exit_rules.domain_prefix` FAIL** — *"the domain auto-updater rewrites them on its
+   interval"* — which is **false when the auto-updater is switched off**, exactly the
+   case where those rows rot forever.
+
+### Fixes
+
+* **The backup pair reads one source.** `backup.recent` now reads the run records
+  (`backup.last_run` / `backup.last_archive`, written by the backup itself whatever the
+  destination) whenever they exist; the local-directory scan stays only for a legacy
+  installation that has archives but has never recorded a run. Both tests therefore
+  describe the same backup.
+* **`derp.reachable` resolves before it dials and names the loopback case:** an
+  all-loopback answer is reported as *"resolves to … INSIDE this container: the panel is
+  dialling its own loopback … fix the compose extra_hosts entry"* (the mechanism and the
+  fix, not "check DNS"). The classifier is a pure function (`b396AllLoopback`) and is
+  unit-tested.
+* **`prefix_owner.consistency` reports three named classes:** not served (the owner does
+  not advertise), advertised-but-**unapproved** (approve it on `/admin/exit-nodes`), and
+  advertised by **more than one** relay (headscale's primary will flip) — with the count
+  of each.
+* **`exit_rules.domain_prefix` reports the real auto-update state** — the effective
+  switch (`dns_autoupdate_enabled`, UI row over env) and the interval the updater itself
+  parses — and says that `OFF` means nothing will rewrite the rows until the operator
+  acts.
+
+### Tests and contracts
+
+* `internal/feature/admin/system_tests_b396_test.go` — **behavioural**, on a migrated
+  SQLite DB: a fresh run record with **no** local archive must PASS `backup.recent` (the
+  regression), and an **819 h** old record must FAIL **both** backup tests (the pair
+  agrees on the source), plus the loopback classifier table.
+* `scripts/check_b396_diagnostic_honesty.sh` — **13 contracts** (A: the pair reads one
+  source and the classifier exists and is called; B: the loopback cause, the mechanism
+  and the fix are named; C: the three prefix classes and `ApprovedRoutes`; D: the
+  auto-update state, both branches; E: registered/tracked/documented).
+
+### Verification
+
+* `go test ./internal/feature/admin/` — green (the three B396 tests included).
+* The four live findings that motivated the block are documented with their measured
+  text in the contract header and the block index, so the next reader can compare.
+
 ## v1.5.138 — the users half of the import table (B395.4)
 
 **Date:** 2026-10-18 · **Base:** `v1.5.137` → this tag · **Compatibility:** no migration,
