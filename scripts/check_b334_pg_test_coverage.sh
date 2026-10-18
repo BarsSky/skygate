@@ -255,9 +255,14 @@ DISCOVERED="$(printf '%s\n' $DISCOVERED | sort | tr '\n' ' ' | sed 's/ *$//')"
 # so the regression tests that call the REAL functions now gate on the DSN there
 # too — the discovery below is what forced this list to be updated, exactly as
 # this contract intends.
-DOCUMENTED="$(printf '%s\n' cmd/skygate internal/acl internal/backup internal/cluster internal/db internal/feature/admin internal/headscale internal/invite internal/monitoring | sort | tr '\n' ' ' | sed 's/ *$//')"
+# B395.2 (2026-10-18): internal/setupstate joined it, and this tripwire is the
+# reason the CI comment and docs/operations.md §15 were updated in the SAME commit.
+# The ACL acknowledgement wrote a string into an INTEGER column (acl_snapshots.version),
+# which SQLite accepts and PostgreSQL rejects with SQLSTATE 22P02 — a live click on the
+# operator's install found it, and the regression test has to run where the bug lives.
+DOCUMENTED="$(printf '%s\n' cmd/skygate internal/acl internal/backup internal/cluster internal/db internal/feature/admin internal/headscale internal/invite internal/monitoring internal/setupstate | sort | tr '\n' ' ' | sed 's/ *$//')"
 if [ "$DISCOVERED" = "$DOCUMENTED" ]; then
-  ok "D1b: the PG-gated package set matches the documented one (9 packages: $DISCOVERED)"
+  ok "D1b: the PG-gated package set matches the documented one (10 packages: $DISCOVERED)"
 else
   bad "D1b: the PG-gated package set CHANGED. discovered: '$DISCOVERED' documented: '$DOCUMENTED'. Update this check, the CI comment in .github/workflows/ci.yml and docs/operations.md §15 together — a measured set that is narrower than reality is how internal/monitoring and internal/invite lost their coverage (B338)."
 fi

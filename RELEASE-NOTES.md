@@ -12,6 +12,76 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.136 — the button that answered "invalid input syntax for type integer" (B395.2)
+
+**Date:** 2026-10-18 · **Base:** `v1.5.135` → this tag · **Compatibility:** no migration,
+no route change, no config change.
+
+### Why
+
+v1.5.135 shipped the acknowledgement **button** and the deploy verification confirmed it
+was on the page (`grep -c 'setup/acl-ack'` = 1) and that a **wrong** form token was
+refused with a named reason. Then the button was actually **pressed** on the operator's
+host, which runs **PostgreSQL**:
+
+```
+snapshot: ERROR: invalid input syntax for type integer: "setup-wizard" (SQLSTATE 22P02)
+```
+
+`SnapshotForACL` wrote the literal string `"setup-wizard"` into
+`acl_snapshots.version`, which is `INTEGER NOT NULL` in **both** migration chains.
+SQLite accepts a string in an INTEGER column (dynamic typing), and PostgreSQL rejects
+the whole statement — so the action "worked" in every local docker scenario and never
+once on the backend the operator runs. The same function had a second defect of the same
+class: it returned `Result.LastInsertId()`, which **pgx does not support**, so even a
+correct insert would have created the row and lost its id.
+
+### Fix
+
+* The version is read exactly as `db.NextACLVersion` does it
+  (`SELECT COALESCE(MAX(version),0)`) and written as `MAX(version)+1`.
+* The id comes from `RETURNING id` inside the INSERT — the project's dialect-safe
+  pattern (`db.qInsertPortalUser`), which works on pgx **and** on `modernc.org/sqlite`.
+* `applied_success` stays `0`: this is the **pre-apply** copy, not an applied policy.
+
+### Tests (both dialects, on purpose)
+
+`internal/setupstate/snapshot_b395_2_pg_test.go` carries two legs:
+
+* **PostgreSQL** (`SKYGATE_TEST_PG_DSN`; SKIPs without it — AGENTS rule 1, and CI's
+  `test-pg` job sets it): creates the PG table, snapshots twice, asserts non-zero
+  increasing ids, **consecutive integer versions** and `applied_success = 0`. Verified
+  locally against a throwaway `postgres:16-alpine` before the push, not only in CI.
+* **SQLite**: the same behaviour through `RETURNING id` on the modernc driver, so the
+  fix cannot trade one dialect's bug for the other's.
+
+### Contracts
+
+`scripts/check_b395_setup_wizard.sh` grows from 35 to **37**: `I7` pins the
+dialect-safe shape (`COALESCE(MAX(version),0)` + `RETURNING id`), `I8` fails if the
+literal `"setup-wizard"` version or `LastInsertId` ever returns.
+
+### Verification
+
+* Live, on the reference host, after the click: `snapshot: ERROR: invalid input syntax
+  for type integer: "setup-wizard" (SQLSTATE 22P02)` — the exact sentence above.
+* Locally, against a real PostgreSQL 16: `TestSnapshotForACL_PostgresIsIntegerVersion_B395_2`
+  PASS (it fails with the old query), and the SQLite leg PASS.
+* The wrong-token path already verified in v1.5.135 (`acl_ack_failed&why=the form token
+  is missing or stale`) — unchanged.
+
+### The tripwire this tripped (and why that is the system working)
+
+`internal/setupstate` joining the PostgreSQL-gated set made **B334 contract D1b** fail
+on the first gate run of this tag — it derives the set from the three markers
+(`OpenTestPG`, `OpenForTest`, a raw DSN read) and refuses a set that is wider than the
+one the CI comment and `docs/operations.md` §15 document, because a measured set
+narrower than reality is exactly how `internal/monitoring` and `internal/invite` lost
+their coverage (B338). The set is **ten** packages now, and all three places were
+updated in this same commit. The PG leg also goes through `db.OpenTestPG` rather than a
+hand-written table, so it runs against the **real migration chain** in a throwaway
+schema — the shape the operator's database actually has.
+
 ## v1.5.135 — what the live install showed that no test did (B395.1)
 
 **Date:** 2026-10-18 · **Base:** `v1.5.134` → this tag · **Compatibility:** no

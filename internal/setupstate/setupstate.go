@@ -391,6 +391,23 @@ func stepsFor(rep Report) []Step {
 // SnapshotForACL records a policy snapshot before the wizard offers the first apply.
 // A nil DB or a read failure is reported, never ignored: the warning exists to make
 // "we are about to rewrite your ACL" recoverable.
+//
+// B395.2 — TWO DEFECTS MEASURED ON THE LIVE POSTGRES INSTALLATION. Neither was
+// visible to the SQLite scenarios or to any unit test, which is why the button
+// "worked" locally and answered
+// `snapshot: ERROR: invalid input syntax for type integer: "setup-wizard" (SQLSTATE 22P02)`
+// the first time it was pressed on the operator's host:
+//
+//  1. `acl_snapshots.version` is `INTEGER NOT NULL` in BOTH chains, and this insert
+//     wrote the literal string "setup-wizard" into it. SQLite accepts a string in an
+//     INTEGER column (dynamic typing); PostgreSQL rejects the statement.
+//  2. `Result.LastInsertId()` is unsupported by pgx — the row would have been created
+//     and its id lost. The project's dialect-safe pattern is `RETURNING id` inside the
+//     query (see db.qInsertPortalUser), which works on both.
+//
+// The version is read exactly as db.NextACLVersion does it, and the id comes back from
+// the INSERT itself. The PostgreSQL leg is pinned by snapshot_b395_2_pg_test.go, which
+// SKIPs without SKYGATE_TEST_PG_DSN (AGENTS rule 1) and is what CI's test-pg job runs.
 func SnapshotForACL(ctx context.Context, d *sql.DB, policy, createdBy string) (int64, error) {
 	if d == nil {
 		return 0, fmt.Errorf("no database")
@@ -398,12 +415,17 @@ func SnapshotForACL(ctx context.Context, d *sql.DB, policy, createdBy string) (i
 	if strings.TrimSpace(policy) == "" {
 		return 0, fmt.Errorf("refusing to snapshot an empty policy")
 	}
-	res, err := d.ExecContext(ctx,
+	var maxVer int
+	if err := d.QueryRowContext(ctx, `SELECT COALESCE(MAX(version),0) FROM acl_snapshots`).Scan(&maxVer); err != nil {
+		return 0, fmt.Errorf("read the current snapshot version: %w", err)
+	}
+	var id int64
+	err := d.QueryRowContext(ctx,
 		`INSERT INTO acl_snapshots (version, config, created_by, applied_success, error_msg, created_at)
-		 VALUES ($1,$2,$3,0,'',$4)`,
-		"setup-wizard", policy, createdBy, nowUnix())
+		 VALUES ($1,$2,$3,0,'',$4) RETURNING id`,
+		maxVer+1, policy, createdBy, nowUnix()).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	return id, nil
 }

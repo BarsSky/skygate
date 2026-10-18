@@ -344,6 +344,23 @@ if has 'setup_acl_ack_csrf_fail' "$SURF_CODE"; then
 else
   bad "I6: a rejected token leaves no audit trail"
 fi
+# I7 — THE POSTGRESQL HALF (B395.2), measured by pressing the button on the live
+# installation: `acl_snapshots.version` is INTEGER NOT NULL in BOTH chains, the insert
+# wrote the literal string "setup-wizard" into it, and PostgreSQL answered
+# `invalid input syntax for type integer: "setup-wizard" (SQLSTATE 22P02)` while SQLite
+# accepted it silently — which is why every local scenario and unit test passed.
+# `Result.LastInsertId()` was the same class: unsupported by pgx, so the row would have
+# been created and its id lost. The contract pins the dialect-safe shape.
+if has 'COALESCE(MAX(version),0)' "$SURF_CODE" && has 'RETURNING id' "$SURF_CODE"; then
+  ok "I7: the snapshot writes an INTEGER version (MAX(version)+1) and takes its id from RETURNING id"
+else
+  bad "I7: the snapshot insert is not dialect-safe — a string version and/or LastInsertId would fail on PostgreSQL"
+fi
+if has '"setup-wizard"' "$SURF_CODE" || has 'LastInsertId' "$SURF_CODE"; then
+  bad "I8: the snapshot still writes the literal \"setup-wizard\" version or calls LastInsertId"
+else
+  ok "I8: no string version and no LastInsertId in the snapshot path"
+fi
 
 printf '\n\033[1mB395: %d PASS / %d FAIL / %d SKIP\033[0m\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ]
