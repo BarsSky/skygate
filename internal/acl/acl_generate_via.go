@@ -110,6 +110,26 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	// owner — and headscale refuses the WHOLE policy that references it
 	// ("tag not found"): in file mode the daemon then will not start at all.
 	tagsByHost := prefixowner.TagsByHost(d)
+	// B398 (2026-10-18) — A DERIVED PREFERENCE MUST NOT BECOME A FILTER.
+	//
+	// Measured live: `device_exit_node_prefs` held `cyborg → tag:dev-infra-karolina`
+	// with `set_by_user_id=0` — written by the auto-reconciler, not by a human — and
+	// this loop turned it into
+	//
+	//	{ "src": ["tag:dev-skyadmin-cyborg"], "dst": ["autogroup:internet"],
+	//	  "ip": ["*"], "via": ["tag:dev-infra-karolina"] }
+	//
+	// `via` on an `autogroup:internet` grant is a FILTER, not a preference: selecting
+	// any OTHER exit node in the Tailscale client makes the grant unmatched and
+	// headscale drops ALL of that device's exit-node traffic. The operator reported
+	// exactly that — «если выставить emilia, то нет доступа ни к чему; karolina — всё
+	// грузится» — and clearing the row from the panel restored access to emilia.
+	//
+	// Only an explicit operator pin (`set_by_user_id > 0`) may narrow what the client
+	// is allowed to use; skygate's own guess must never do it. The derived row still
+	// feeds the prefix ASSIGNMENT (prefixowner.LoadClaims votes with it), which is where
+	// a hint belongs.
+	derivedNotPinned := 0
 	for _, dp := range devicePrefs {
 		// 2026-07-25: v0.28.5 — only emit per-device
 		// grants for devices that have via_enabled=1.
@@ -121,6 +141,12 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		if dp.Username == "" || dp.DeviceHostname == "" || dp.ExitNodeTag == "" || !dp.ViaEnabled {
 			continue
 		}
+		// B398: a DERIVED preference (`set_by_user_id = 0`) is skygate's guess, not the
+		// operator's decision — it must not become a permission filter.
+		if dp.SetByUserID <= 0 {
+			derivedNotPinned++
+			continue
+		}
 		// B284: node_owner_map.tag for this device; skip the pref when the node
 		// has no tag, because an invented tag cannot be declared anywhere.
 		devTag := strings.TrimSpace(tagsByHost[strings.ToLower(strings.TrimSpace(dp.DeviceHostname))])
@@ -128,6 +154,9 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 			continue
 		}
 		viaByDevice[devTag] = dp.ExitNodeTag
+	}
+	if derivedNotPinned > 0 {
+		log.Printf("acl: %d auto-derived device exit-node preference(s) left UNPINNED (B398): a derived preference must not forbid choosing another exit node in the client (set it explicitly on the device to pin it)", derivedNotPinned)
 	}
 	// B275: prefix → owning relay tag, from the assignment table. Used
 	// below to pin a per-CIDR grant to the relay that can actually serve

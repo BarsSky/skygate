@@ -503,6 +503,74 @@ var b394Tests = []SystemTestDef{
 		},
 	},
 	{
+		Name:        "exit_rules.exit_node_pin",
+		Category:    "exit_rules",
+		Description: "no device is silently pinned to one exit node (a via pin is a FILTER on the exit-node choice, not a preference)",
+		Run: func(ctx context.Context) (SystemTestStatus, string) {
+			s := getTestService()
+			if s == nil || s.dbc() == nil {
+				return SystemTestSkip, "service or DB not initialised"
+			}
+			// B398 (2026-10-18) — THE REPORT THIS EXISTS TO PREVENT.
+			//
+			// On the live installation `device_exit_node_prefs` held
+			// `cyborg → tag:dev-infra-karolina` with set_by_user_id=0, and the ACL wrote
+			//     { "src": ["tag:dev-skyadmin-cyborg"], "dst": ["autogroup:internet"],
+			//       "via": ["tag:dev-infra-karolina"] }
+			// `via` there is a filter: choosing emilia in the client made the grant
+			// unmatched and EVERY page stopped loading ("с karolina — всё грузится").
+			// Nothing on any page said the device was restricted; the operator had to
+			// find it by symptom. A human pin is legitimate, so this test PASSES, but it
+			// NAMES the pin and its consequence.
+			rows, err := s.dbc().QueryContext(ctx, `SELECT COALESCE(device_hostname,''), COALESCE(exit_node_tag,''),
+			       COALESCE(set_by_user_id,0), COALESCE(via_enabled,0)
+			  FROM device_exit_node_prefs ORDER BY device_hostname`)
+			if err != nil {
+				return SystemTestSkip, "read the device exit-node preferences: " + err.Error()
+			}
+			defer rows.Close()
+			pinned, derived := []string{}, []string{}
+			for rows.Next() {
+				var host, tag string
+				var setBy, via int
+				if err := rows.Scan(&host, &tag, &setBy, &via); err != nil {
+					continue
+				}
+				if host == "" || tag == "" || via == 0 {
+					continue
+				}
+				if setBy > 0 {
+					// B279.1: never derive a hostname from a tag by hand — the shared
+					// helper knows which tags are CLASSES (a class tag has no hostname
+					// and renders as ""), which is the bug B279 paid for.
+					relay := exit_rules.TagToHostname(tag)
+					if relay == "" {
+						relay = tag
+					}
+					pinned = append(pinned, fmt.Sprintf("%s → %s", host, relay))
+				} else {
+					derived = append(derived, host)
+				}
+			}
+			if err := rows.Err(); err != nil {
+				return SystemTestSkip, "read the device exit-node preferences: " + err.Error()
+			}
+			if len(pinned) == 0 {
+				if len(derived) > 0 {
+					return SystemTestPass, fmt.Sprintf("no device is PINNED to one exit node; %d derived preference(s) are not enforced since B398 (%s), so any exit node chosen in the client works",
+						len(derived), strings.Join(derived, ", "))
+				}
+				return SystemTestPass, "no device is pinned to a single exit node — every device may choose any exit node in its own client"
+			}
+			msg := fmt.Sprintf("%d device(s) are PINNED to one exit node: %s. `via` is a FILTER, so choosing another exit node in the Tailscale client blocks ALL internet traffic of that device — press ✕ in the «Exit node» column on /admin/devices (the owner does the same on /my/devices), or set it to the node you actually use, to allow free choice.",
+				len(pinned), strings.Join(pinned, "; "))
+			if len(derived) > 0 {
+				msg += fmt.Sprintf(" (%d derived preference(s) are no longer enforced: %s)", len(derived), strings.Join(derived, ", "))
+			}
+			return SystemTestPass, msg
+		},
+	},
+	{
 		Name:        "backup.verify",
 		Category:    "backup",
 		Description: "the last backup ran, succeeded, and is recent (under 48 h)",

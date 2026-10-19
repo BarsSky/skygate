@@ -201,7 +201,10 @@ func TestB361_DeviceWithRulesWhoseRelayOwnsNoneOfThem(t *testing.T) {
 	// The device's rules claim the OTHER two prefixes, all of them relay-2's.
 	seedB361Rule(t, d, 102, "workpc", "172.217.0.0/16")
 	seedB361Rule(t, d, 102, "workpc", "104.16.0.0/12")
-	seedB361Pref(t, d, "workpc", "tag:dev-infra-relay-1", 0)
+	// setBy = 1 (a HUMAN pin) on purpose since B398: a DERIVED row (set_by_user_id = 0)
+	// is skipped before ownership is ever consulted, so seeding 0 here would make this
+	// test pass for the wrong reason and stop asserting B361's property at all.
+	seedB361Pref(t, d, "workpc", "tag:dev-infra-relay-1", 1)
 
 	policy := b361Policy(t, d)
 	pinned := countGrantsText(t, policy, "tag:dev-skyadmin-workpc", `"autogroup:internet"`, true)
@@ -220,7 +223,9 @@ func TestB361_DeviceWithRulesWhoseRelayOwnsOneOfThem(t *testing.T) {
 	seedB361Health(t, d, "relay-1", "online", true)
 	seedB361Rule(t, d, 102, "workpc", "172.217.0.0/16")
 	seedB361Rule(t, d, 102, "workpc", "104.16.0.0/12")
-	seedB361Pref(t, d, "workpc", "tag:dev-infra-relay-1", 0)
+	// setBy = 1 for the same B398 reason as test (C): provenance is decided first, and
+	// this test is about OWNERSHIP keeping an operator's pin.
+	seedB361Pref(t, d, "workpc", "tag:dev-infra-relay-1", 1)
 
 	policy := b361Policy(t, d)
 	if pinned := countGrantsText(t, policy, "tag:dev-skyadmin-workpc", `"autogroup:internet"`, true); pinned != 1 {

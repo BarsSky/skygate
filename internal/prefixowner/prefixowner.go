@@ -317,7 +317,61 @@ func LoadClaims(d *sql.DB) ([]Claim, error) {
 		}
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// B398 (2026-10-18) — A DEVICE'S OWN EXIT-NODE CHOICE MUST BE A CLAIM, NOT A SILENT
+	// ABSENTEE.
+	//
+	// A rule with an empty `exit_node_id` means "the engine decides" (B277.3), and this
+	// loader used to return that rule with `ExitNode == ""` — which `Assign` cannot count
+	// for any relay. Live consequence on the operator's installation: cyborg's 16 Google
+	// rules named no relay, so not one of them voted; the engine spread those prefixes
+	// "for load" over emilia and sharlotta, whose relays then had to be told to advertise
+	// them (B397), and the per-CIDR ACL pin pointed at relays the device never chose.
+	//
+	// A device that has a recorded exit-node preference HAS made a choice. Here it votes
+	// for the prefixes its own relay-less rules claim, so the assignment follows the
+	// device instead of overruling it. The preference is only a HINT for the assignment:
+	// since B398 it no longer becomes an ACL `via` filter unless a human pinned it.
+	//
+	// UNITS MATTER: `device_exit_node_prefs.exit_node_tag` stores a TAG
+	// (`tag:dev-infra-karolina`) while every other table here — `prefix_owner.exit_node_id`,
+	// the `healthy` list, `Existing.ExitNode` — stores the relay HOSTNAME (`karolina`).
+	// The join through node_owner_map converts one to the other; without it the claim
+	// named a relay that `Assign` could never match as healthy, and the prefix fell back
+	// to the engine's spread (measured while writing this block).
+	prefRows, perr := d.Query(`
+		SELECT r.target_value, lower(n.hostname), COALESCE(r.device_id,0)
+		  FROM device_rules r
+		  JOIN device_exit_node_prefs p
+		    ON lower(p.device_hostname) = lower(r.device_hostname)
+		  JOIN node_owner_map n
+		    ON lower(n.tag) = lower(p.exit_node_tag)
+		 WHERE r.enabled = 1 AND r.target_type IN ('ip','subnet')
+		   AND (r.exit_node_id IS NULL OR r.exit_node_id = '')
+		   AND COALESCE(p.exit_node_tag,'') <> ''
+		   AND COALESCE(n.hostname,'') <> ''
+		 GROUP BY r.target_value, lower(n.hostname), COALESCE(r.device_id,0)`)
+	if perr != nil {
+		// An installation older than the preference table must not lose its assignment
+		// pass over a missing-hint read.
+		log.Printf("prefix-owner: device-preference claims unavailable (rules still vote): %v", perr)
+		return out, nil
+	}
+	defer prefRows.Close()
+	for prefRows.Next() {
+		var c Claim
+		if err := prefRows.Scan(&c.Prefix, &c.ExitNode, &c.DeviceID); err != nil {
+			continue
+		}
+		if c.ExitNode == "" || c.Prefix == "" {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, prefRows.Err()
 }
 
 // LoadExisting reads the current table, including the B360 reservation columns.

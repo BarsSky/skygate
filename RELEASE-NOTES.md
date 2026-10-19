@@ -12,6 +12,117 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.141 — a preference is not a permission, and a device's own choice is a claim (B398)
+
+**Date:** 2026-10-18 · **Base:** `v1.5.140` → this tag · **Compatibility:** no migration,
+no route change, no config change. One behaviour changes: a device exit-node preference
+that NOBODY set by hand stops constraining the client.
+
+### Why
+
+The operator reported it as a symptom with a reproducible pattern:
+
+> «если выставить emilia, то нет доступа ни к чему … если выбрать karolina, то всё загружается»
+
+The database showed the cause, and that no human had asked for it:
+
+```
+device_exit_node_prefs:  cyborg -> tag:dev-infra-karolina   via_enabled=1
+                         set_by_user_id = 0            <-- written by the auto-reconciler
+device_rules (cyborg):   16 rows, ALL with exit_node_id = ''   <-- the engine decides
+user_exit_node_prefs:    user 1 (skyadmin) -> emilia           <-- a human choice, inert for a tagged device
+```
+
+and the applied policy carried it as a **grant**:
+
+```json
+{ "src": ["tag:dev-skyadmin-cyborg"], "dst": ["autogroup:internet"],
+  "ip": ["*"], "via": ["tag:dev-infra-karolina"] }
+```
+
+**`via` on an `autogroup:internet` grant is a SELECTOR, not a preference.** Selecting
+emilia in the Tailscale client made that grant *unmatched*, headscale therefore dropped
+**all** of the device's exit-node traffic — not "preferred karolina", but "allowed only
+through karolina, and the device is not using karolina, so nothing". Clearing the row from
+the panel restored access immediately, which is what confirmed the diagnosis. Nothing on
+any page said the device was restricted.
+
+The mirror-image defect sat in the assignment: every one of cyborg's 16 Google rules has an
+**empty** `exit_node_id`, so the rules **claimed** those four prefixes but named **no
+relay**; `prefixowner` therefore spread them over emilia and sharlotta by auto assignment —
+relays the device never chose. B397 had to teach the sync to advertise them; nobody had yet
+asked why a device's chosen relay was not the one it claimed.
+
+### Fix
+
+Two halves of one decision, in step:
+
+* **Only a HUMAN pin becomes a filter.** `internal/acl/acl_generate_via.go` skips a
+  preference with `SetByUserID <= 0` and logs
+  `acl: N auto-derived device exit-node preference(s) left UNPINNED (B398) — …`, so the
+  derived row still feeds the assignment while it no longer constrains the client. An
+  explicit preference (a human, from the panel) still pins exactly as before.
+* **A device's own choice is a CLAIM.** `prefixowner.LoadClaims` now counts the recorded
+  preference as a claim for the prefixes covered by the device's own **relay-less** rules
+  (`exit_node_id` empty), joining `node_owner_map` to convert the preference's **tag** into
+  the assignment table's **hostname**. The units differ, and without the join the claim
+  named a relay `Assign` could never match as healthy — measured: it still picked emilia
+  until the join was added.
+
+### The constraint is now visible
+
+New system test `exit_rules.exit_node_pin` on `/admin/system_tests`, severity **warning**,
+remediation `st.fix.exit_node_pin` (RU + EN): it lists every device whose exit node is
+pinned and states the consequence — *choosing another exit node in the client blocks all of
+that device's traffic* — instead of leaving the operator to find it by symptom.
+
+### What skygate cannot do (and therefore documents)
+
+`tailscale set --exit-node` and `--accept-routes` are **client-local**: skygate can neither
+read nor set them, only the relay side (`exit_servers.accept_routes`). The behaviour matrix:
+
+| Client state | Result |
+|---|---|
+| exit node selected + `--accept-routes=false` | full tunnel through the exit node |
+| exit node selected + `--accept-routes=true` | accepted prefixes via their own relays, everything else via the exit node |
+| no exit node + `--accept-routes=true` | per-prefix routing only |
+
+Full tunnel **and** per-prefix routing for the same destination is not expressible in
+Tailscale; that is a design limit, not a skygate defect.
+
+### Tests and contracts
+
+* `internal/acl/acl_b398_test.go` — a derived preference produces **zero** pinned internet
+  grants and one loose grant; an explicit one produces exactly one pinned grant and no
+  loose one.
+* `internal/prefixowner/prefixowner_b398_test.go` — a device preference votes for its own
+  relay-less rules and the assignment follows it (`ExitNode == "karolina"`); a device
+  without a preference stays engine-decided.
+* `scripts/check_b398_exit_node_pin.sh` — **18 contracts** (A: only a human pin filters,
+  and the skip is counted in the journal; B: the claim is built, the tag→hostname
+  conversion is explicit, an old schema degrades; C: the diagnostic names the pin and its
+  consequence, annotated and translated; D: the Go tests, git tracking, registration and
+  documentation).
+
+**One test fixture renegotiated, not weakened:** `internal/acl/acl_b361_test.go` tests (C)
+and (D) seeded the device preference with `set_by_user_id = 0` — a DERIVED row — while
+asserting that B361's **ownership** predicate decides the pin. B398 decides provenance
+first, so with `0` those two tests would have passed for the wrong reason (skipped before
+ownership was ever consulted). They now seed `1`, which is what their own prose describes
+(*"a relay that serves something keeps the operator's pin"*), so they still assert B361's
+property — and the new B398 tests own the derived case.
+
+### Operator action
+
+1. Update, then open `/admin/system_tests` and read `exit_rules.exit_node_pin` — it names
+   every device that is still pinned, and whether that pin was a human decision.
+2. If a device must be free to choose, open `/admin/devices` and press ✕ in that device's
+   «Exit node» column (the owner does the same on `/my/devices`) — that is the action that
+   restored access during this diagnosis; the assignment keeps working from the rules, and
+   the device keeps a free choice.
+3. Decide the mode for the affected client: full tunnel (`--accept-routes=false` + exit
+   node) or per-prefix routing (accept-routes, no exit node) — see the matrix above.
+
 ## v1.5.140 — every relay must advertise what the assignment table gave it (B397)
 
 **Date:** 2026-10-18 · **Base:** `v1.5.139` → this tag · **Compatibility:** no migration,

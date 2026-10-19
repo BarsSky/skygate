@@ -120,6 +120,9 @@ var testAnnotations = map[string]testAnnotation{
 	"mesh.active_meshes":              {Severity: SeverityInfo, Remediation: "st.fix.mesh", DocLink: "/admin/meshes"},
 	"exit_rules.all_in_headscale_acl": {Severity: SeverityWarning, Remediation: "st.fix.rules_not_in_acl", DocLink: "/admin/exit-rules"},
 	"exit_rules.domain_prefix":        {Severity: SeverityWarning, Remediation: "st.fix.domain_prefix", DocLink: "/admin/exit-rules"},
+	// B398: a pin is not a fault, but it is a CONSTRAINT the operator must know about —
+	// the live report ("emilia → ничего не грузится") is what this key exists to prevent.
+	"exit_rules.exit_node_pin": {Severity: SeverityWarning, Remediation: "st.fix.exit_node_pin", DocLink: "/admin/exit-nodes"},
 }
 
 // annotateTest fills Severity/Remediation/DocLink from the tables. Values already
