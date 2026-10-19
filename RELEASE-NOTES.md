@@ -12,6 +12,103 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.142 — an operator's «no» must survive the next tick (B399)
+
+**Date:** 2026-10-19 · **Base:** `v1.5.141` → this tag · **Compatibility:** V080 adds one
+additive column (`device_exit_node_prefs.opted_out`, default `0`) in **both** migration
+chains; an existing installation behaves exactly as before until somebody clears a
+preference by hand.
+
+### Why
+
+The operator reported a loop, not a bug report:
+
+> «теперь несмотря на то что для skyworker я отключаю strict mode по karolina он ставиться обратно»
+
+The audit log on his installation made it a measurement. Twice in six hours:
+
+```
+19:08:56  skyadmin  my_device_preferred_exit_set   hostname=skyworker tag=
+18:17:12  system    preferred_exit_reconciled      CREATE pref hostname=skyworker
+          tag=tag:dev-infra-karolina via=1 reason=missing-pref-unanimous rules=269
+17:30:39  skyadmin  my_device_preferred_exit_set   hostname=skyworker tag=
+13:17:12  system    preferred_exit_reconciled      CREATE pref hostname=skyworker
+          tag=tag:dev-infra-karolina via=1 reason=missing-pref-unanimous rules=224
+```
+
+Clearing a preference **deleted the row**. The B229 preferred-exit reconciler then saw
+*"a device with rules and no preference"* and did the only thing it exists to do — it
+created one, with `via_enabled = 1`. Since `via` on an `autogroup:internet` grant is a
+FILTER (B398), restoring the pin restored the restriction: the operator un-pinned the
+device, and up to an hour later the engine pinned it again, forever.
+
+The second half sat in the same pass: the reconciler's UPDATE wrote
+`via_enabled = true` unconditionally, so the first time a relay moved, a strict pin the
+operator had deliberately switched off came back on.
+
+### Fix
+
+Four places that must stay in step:
+
+* **The schema remembers the decision.** V080 adds
+  `device_exit_node_prefs.opted_out` (both chains, additive, default `0`). A derived row
+  is still the engine's to manage; an opted-out row is nobody's but the operator's.
+* **Clearing RECORDS instead of deleting.** The row is kept with an empty
+  `exit_node_tag`, `via_enabled = 0`, `opted_out = 1` and the human's id in
+  `set_by_user_id`. An explicit set clears the flag again — choosing a node always beats
+  an older "no".
+* **The planner refuses such a row first**, before every create branch, and reports the
+  named skip `operator-opted-out`, so the journal and the audit show *that the engine
+  wanted to act and did not*.
+* **Every UPDATE carries the existing `via_enabled` forward** instead of writing `true`,
+  so re-pointing a device is not permission to re-pin it.
+
+The state is visible where the decision is made: `/admin/devices` and `/my/devices` show
+**«авто-подбор выключен»** on such a device, with the reason, instead of an unexplained
+empty cell.
+
+### The local network, and the exit node
+
+The same report had a second half:
+
+> «если включен exit node то локальная сеть не видится, только локальная сеть tailnet, а обычная нет»
+
+That is Tailscale's documented behaviour, not a skygate defect: selecting an exit node
+sends **all** of the device's traffic through the relay — including its own LAN. The
+client keeps LAN access only with `--exit-node-allow-lan-access`, a **client-local** flag
+skygate can neither read nor set (the same boundary B398 documented for `--exit-node`
+and `--accept-routes`). `/admin/exit-nodes` now carries a collapsible explanation (RU +
+EN) that names that switch, and the other answer for a LAN **behind** the relay: a
+**subnet router** advertised into the tailnet, approved on that page, and
+`--accept-routes` on the client.
+
+### Tests and contracts
+
+* `internal/db/exit_node_prefs_b399_test.go` (real SQLite migration chain): the column
+  exists and defaults to 0; a clear records the decision instead of deleting the row; a
+  set clears the flag; a clear of a **missing** row still records it; both list readers
+  carry the flag.
+* `internal/feature/exit_rules/reconciler_b399_test.go`: an opted-out device is never
+  re-created through **any** of the three derivation paths (unanimous tag, owner-derived,
+  owner-overrides-rule); a derived row is still managed and still defaults to strict; an
+  UPDATE preserves the flag in both positions; B356's "never rewrite a human's relay"
+  guard still holds.
+* `scripts/check_b399_pref_optout.sh` — **33 contracts** (A: the schema in both chains;
+  B: clear records, set clears, readers carry it; C: the guard runs first and is named,
+  the flag is carried forward; D: both pages + the exit-node explanation; E: the tests,
+  registration and documentation).
+
+### Operator action
+
+1. Update. Existing preferences keep working — this release only stops the engine from
+   overruling a **human** clear.
+2. To un-pin a device: `/admin/devices` → ✕ in the «Exit node» column. It now stays
+   un-pinned, and the row says so.
+3. If a LAN must stay reachable while an exit node is selected: on that device run
+   `tailscale set --exit-node-allow-lan-access=true` (or enable "Allow local network
+   access" in the client). If the LAN is behind the relay, advertise it as a subnet route
+   instead.
+
 ## v1.5.141 — a preference is not a permission, and a device's own choice is a claim (B398)
 
 **Date:** 2026-10-18 · **Base:** `v1.5.140` → this tag · **Compatibility:** no migration,

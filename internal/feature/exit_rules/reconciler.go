@@ -122,8 +122,21 @@ type ReconcilerChange struct {
 	// "stale-pref-owner-is-pref-relay" (cannot decide — visible skips), and
 	// "stale-pref-human-pinned" / "stale-pref-human-non-owner" (a HUMAN's choice
 	// that the engine refuses to rewrite and instead surfaces).
+	//
+	// B399 (2026-10-19) adds "operator-opted-out": the operator removed this
+	// device's preference (or its strict pin) BY HAND, and the engine must not
+	// re-create it — the exact loop the operator reported («отключаю strict mode …
+	// он ставиться обратно»). It is a SKIP, logged and audited, never a write.
 	SetByUserID int64  // B356: provenance of the existing row (0 = derived by the engine)
 	RelayState  string // B356: the B273 state of the relay the existing preference names
+	// ViaEnabled is the strict-pin flag this change WRITES. Create defaults to true
+	// (the pre-B399 behaviour for a derived row); an UPDATE carries the existing
+	// row's flag forward (B399): re-pointing a device must not silently re-enable a
+	// pin somebody switched off — that was the second half of the same report.
+	ViaEnabled bool
+	// OptedOut is set on the "operator-opted-out" skip so the caller can say WHY
+	// nothing happened without re-reading the row.
+	OptedOut bool
 }
 
 // DevicePrefState is the in-memory shape of one
@@ -222,6 +235,23 @@ type DevicePrefState struct {
 	// monitor has never measured. Without this, the first reconcile on a fresh
 	// install would report every pinned device as owning nothing.
 	PrefRelayOwnershipKnown bool
+
+	// B399 (2026-10-19) — THE OPERATOR SAID NO, AND THAT MUST SURVIVE THE NEXT TICK.
+	//
+	// Measured live, verbatim: «несмотря на то что для skyworker я отключаю strict
+	// mode по karolina он ставиться обратно». The audit log over six hours:
+	//
+	//	19:08:56  skyadmin  my_device_preferred_exit_set  hostname=skyworker tag=
+	//	18:17:12  system    preferred_exit_reconciled     CREATE … via=1 reason=missing-pref-unanimous
+	//	17:30:39  skyadmin  my_device_preferred_exit_set  hostname=skyworker tag=
+	//	13:17:12  system    preferred_exit_reconciled     CREATE … via=1 reason=missing-pref-unanimous
+	//
+	// Clearing a preference DELETED the row, so the next pass saw "a device with
+	// rules and no preference" and created one — with `via_enabled = 1`, i.e. it
+	// restored the exact filter the operator had just removed. ExistingPrefOptedOut
+	// is that decision made visible (V080): the row is kept, empty, and flagged, and
+	// no automatic change may touch it.
+	ExistingPrefOptedOut bool
 }
 
 // PlanDevicePrefChange is the pure decision function —
@@ -239,6 +269,31 @@ type DevicePrefState struct {
 //
 // 2026-09-03: v1.5.2 (B229).
 func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
+	// B399 (2026-10-19) — THE OPERATOR'S "NO" COMES FIRST.
+	//
+	// A row that exists with `opted_out = 1` is not "missing": it is the record of a
+	// human removing this device's preference (or its strict pin). Before B399 the
+	// clear path DELETED the row and this function could not tell the two apart, so
+	// the create branches below re-created the preference on the next tick with
+	// `via_enabled = 1`. Measured live, twice in six hours:
+	//
+	//	19:08:56  skyadmin  my_device_preferred_exit_set  hostname=skyworker tag=
+	//	18:17:12  system    preferred_exit_reconciled     CREATE … via=1 reason=missing-pref-unanimous
+	//
+	// Reporting it as a skip (not a silent no-op) is deliberate: the operator can see
+	// that the engine wanted to act and did not.
+	if s.ExistingPrefOptedOut {
+		return &ReconcilerChange{
+			Action:         "skip",
+			UserID:         s.UserID,
+			Username:       s.Username,
+			DeviceHostname: s.DeviceHostname,
+			RuleCount:      s.TotalRules,
+			NewTag:         s.CanonicalTag,
+			Reason:         "operator-opted-out",
+			OptedOut:       true,
+		}, true
+	}
 	// Case 1: no existing pref. We need a unanimous
 	// exit_node to auto-derive; otherwise the
 	// operator's intent is split (some rules at
@@ -296,6 +351,7 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 				RuleCount:      s.TotalRules,
 				NewTag:         s.OwnerCanonicalTag,
 				Reason:         "missing-pref-owner-derived",
+				ViaEnabled:     true,
 			}, true
 		}
 		if s.CanonicalTag == "" {
@@ -371,6 +427,7 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 				NewTag:         s.OwnerCanonicalTag,
 				RuleCount:      s.TotalRules,
 				Reason:         "owner-overrides-rule-relay",
+				ViaEnabled:     true,
 			}, true
 		}
 		// Unanimous → CREATE.
@@ -382,6 +439,7 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 			NewTag:         s.CanonicalTag,
 			RuleCount:      s.TotalRules,
 			Reason:         "missing-pref-unanimous",
+			ViaEnabled:     true,
 		}, true
 	}
 	// Case 2: existing pref. We may need to UPDATE (stale tag)
@@ -516,6 +574,7 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 			RuleCount:      s.TotalRules,
 			Reason:         "stale-pref-relay-unusable",
 			RelayState:     s.PrefRelayState,
+			ViaEnabled:     s.ExistingPrefVia,
 		}, true
 	}
 	if s.OwnerDistinct == 1 && s.OwnerCanonicalTag != "" && s.OwnerCanonicalTag != s.ExistingPrefTag {
@@ -551,6 +610,7 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 			NewTag:         s.OwnerCanonicalTag,
 			RuleCount:      s.TotalRules,
 			Reason:         "owner-overrides-rule-relay",
+			ViaEnabled:     s.ExistingPrefVia,
 		}, true
 	}
 	if s.CanonicalTag == "" {
@@ -632,6 +692,7 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 		OldTag:         s.ExistingPrefTag,
 		NewTag:         s.CanonicalTag,
 		Reason:         "stale-tag",
+		ViaEnabled:     s.ExistingPrefVia,
 	}, true
 }
 
@@ -1050,6 +1111,9 @@ func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, user
 	existing, _ := db.GetDeviceExitNodePref(s.dbc(), userID, hostname)
 	state.ExistingPrefTag = existing.ExitNodeTag
 	state.ExistingPrefVia = existing.ViaEnabled
+	// B399: a row the operator removed BY HAND (kept, empty, flagged) is a decision,
+	// not an absence — `PlanDevicePrefChange` refuses to re-create it.
+	state.ExistingPrefOptedOut = existing.OptedOut
 	// B356: the provenance of that row, and whether the relay it names can serve
 	// anything right now. `set_by_user_id = 0` is "the engine derived this";
 	// anything else is a human decision the engine must not rewrite.
@@ -1251,11 +1315,11 @@ func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChang
 	if !live {
 		switch ch.Action {
 		case "create":
-			log.Printf("preferred-reconciler: DRY-RUN would CREATE %s/%s → %s (via_enabled=true) (%d rules)",
-				ch.Username, ch.DeviceHostname, ch.NewTag, ch.RuleCount)
+			log.Printf("preferred-reconciler: DRY-RUN would CREATE %s/%s → %s (via_enabled=%t) (%d rules)",
+				ch.Username, ch.DeviceHostname, ch.NewTag, ch.ViaEnabled, ch.RuleCount)
 		case "update":
-			log.Printf("preferred-reconciler: DRY-RUN would UPDATE %s/%s: %s → %s (%s)",
-				ch.Username, ch.DeviceHostname, ch.OldTag, ch.NewTag, ch.Reason)
+			log.Printf("preferred-reconciler: DRY-RUN would UPDATE %s/%s: %s → %s (via_enabled=%t) (%s)",
+				ch.Username, ch.DeviceHostname, ch.OldTag, ch.NewTag, ch.ViaEnabled, ch.Reason)
 		case "clear":
 			log.Printf("preferred-reconciler: DRY-RUN would CLEAR %s/%s: drops the class-tag preference %s (%s)",
 				ch.Username, ch.DeviceHostname, ch.OldTag, ch.Reason)
@@ -1265,24 +1329,30 @@ func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChang
 	// Live mode: write + audit + alert.
 	switch ch.Action {
 	case "create":
-		if err := db.SetDeviceExitNodePref(s.dbc(), ch.UserID, ch.DeviceHostname, ch.NewTag, 0, true); err != nil {
+		// B399: the flag comes from the plan (true for a derived create), not from a
+		// literal here, so a future decision has one place to change.
+		if err := db.SetDeviceExitNodePref(s.dbc(), ch.UserID, ch.DeviceHostname, ch.NewTag, 0, ch.ViaEnabled); err != nil {
 			log.Printf("preferred-reconciler: CREATE %s/%s → %s FAILED: %v", ch.Username, ch.DeviceHostname, ch.NewTag, err)
 			return
 		}
 		_ = db.AppendAuditLogWithTarget(s.dbc(), 0, "system",
 			"preferred_exit_reconciled",
-			fmt.Sprintf("CREATE pref hostname=%s user=%s tag=%s via=1 reason=%s rules=%d",
-				ch.DeviceHostname, ch.Username, ch.NewTag, ch.Reason, ch.RuleCount),
+			fmt.Sprintf("CREATE pref hostname=%s user=%s tag=%s via=%d reason=%s rules=%d",
+				ch.DeviceHostname, ch.Username, ch.NewTag, viaIntOf(ch.ViaEnabled), ch.Reason, ch.RuleCount),
 			"headscale_node", ch.DeviceHostname)
-		log.Printf("preferred-reconciler: CREATE %s/%s → %s (via_enabled=true, %d rules)",
-			ch.Username, ch.DeviceHostname, ch.NewTag, ch.RuleCount)
+		log.Printf("preferred-reconciler: CREATE %s/%s → %s (via_enabled=%t, %d rules)",
+			ch.Username, ch.DeviceHostname, ch.NewTag, ch.ViaEnabled, ch.RuleCount)
 		if shouldAlert(ch.DeviceHostname, "create", time.Now()) {
-			n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B229)\nCREATE hostname=%s user=%s tag=%s via=1\nreason: %s (%d device_rules pointed at this exit-node)\nlive-mode is ON; rollback via SQL: DELETE FROM device_exit_node_prefs WHERE user_id=%d AND device_hostname=%s",
-				ch.DeviceHostname, ch.Username, ch.NewTag, ch.Reason, ch.RuleCount, ch.UserID, ch.DeviceHostname))
+			n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B229)\nCREATE hostname=%s user=%s tag=%s via=%d\nreason: %s (%d device_rules pointed at this exit-node)\nlive-mode is ON; rollback via SQL: DELETE FROM device_exit_node_prefs WHERE user_id=%d AND device_hostname=%s",
+				ch.DeviceHostname, ch.Username, ch.NewTag, viaIntOf(ch.ViaEnabled), ch.Reason, ch.RuleCount, ch.UserID, ch.DeviceHostname))
 		}
 		s.reapplyACLAfterPrefWrite("create", ch)
 	case "update":
-		if err := db.SetDeviceExitNodePref(s.dbc(), ch.UserID, ch.DeviceHostname, ch.NewTag, 0, true); err != nil {
+		// B399: `ch.ViaEnabled` carries the EXISTING row's strict flag forward. This
+		// used to hardcode `true`, so re-pointing a device silently re-enabled a pin
+		// the operator had switched off — «отключаю strict mode … он ставиться
+		// обратно». Re-pointing a relay is not permission to change that flag.
+		if err := db.SetDeviceExitNodePref(s.dbc(), ch.UserID, ch.DeviceHostname, ch.NewTag, 0, ch.ViaEnabled); err != nil {
 			log.Printf("preferred-reconciler: UPDATE %s/%s: %s → %s FAILED: %v",
 				ch.Username, ch.DeviceHostname, ch.OldTag, ch.NewTag, err)
 			return
@@ -1333,6 +1403,17 @@ func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChang
 		}
 		s.reapplyACLAfterPrefWrite("clear", ch)
 	}
+}
+
+// viaIntOf renders the strict-pin flag the way the audit row and the Telegram alert
+// have always carried it (`via=1` / `via=0`), so an operator grepping the journal for
+// the old shape keeps working after B399 made the flag a carried value instead of a
+// literal.
+func viaIntOf(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 // reapplyACLAfterPrefWrite is the B361 propagation trigger for a preference the

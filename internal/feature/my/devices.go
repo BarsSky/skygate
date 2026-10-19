@@ -206,6 +206,11 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 		// per-device grant is skipped. 2026-07-25:
 		// v0.28.5.
 		DeviceExitViaEnabled bool
+		// DeviceExitOptedOut is B399's record of a human decision: the operator
+		// removed this device's preference by hand (the row is kept, empty and
+		// flagged), so the preferred-exit reconciler will NOT derive one again. The
+		// page says so instead of showing an unexplained empty cell.
+		DeviceExitOptedOut bool
 		// OS is the device's operating system marker
 		// ("windows" / "android" / "linux" / ...), shown
 		// in /my/devices next to the hostname so the
@@ -318,11 +323,15 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 	// can look it up in O(1).
 	devicePrefByHost := map[string]string{}
 	deviceViaEnabledByHost := map[string]bool{}
+	deviceOptedOutByHost := map[string]bool{}
 	devicePrefs, _ := db.ListDeviceExitNodePrefsForUser(s.dbc(), c.UserID)
 	for _, dp := range devicePrefs {
 		if dp.DeviceHostname != "" {
 			devicePrefByHost[strings.ToLower(dp.DeviceHostname)] = dp.ExitNodeTag
 			deviceViaEnabledByHost[strings.ToLower(dp.DeviceHostname)] = dp.ViaEnabled
+			if dp.OptedOut {
+				deviceOptedOutByHost[strings.ToLower(dp.DeviceHostname)] = true
+			}
 		}
 	}
 	// 2026-07-29: per-device OS + device_type prefetch.
@@ -422,6 +431,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				HostnameLower:        strings.ToLower(n.Hostname),
 				DeviceExitPref:       devicePrefByHost[strings.ToLower(n.Hostname)],
 				DeviceExitViaEnabled: deviceViaEnabledByHost[strings.ToLower(n.Hostname)],
+				DeviceExitOptedOut:   deviceOptedOutByHost[strings.ToLower(n.Hostname)],
 				OS:                   osByHost[strings.ToLower(n.Hostname)],
 				DeviceType:           typeByHost[strings.ToLower(n.Hostname)],
 				Expiry:               n.Expiry,
@@ -492,6 +502,7 @@ func (s *Service) GetMyDevices(w http.ResponseWriter, r *http.Request) {
 				HostnameLower:        strings.ToLower(n.Hostname),
 				DeviceExitPref:       devicePrefByHost[strings.ToLower(n.Hostname)],
 				DeviceExitViaEnabled: deviceViaEnabledByHost[strings.ToLower(n.Hostname)],
+				DeviceExitOptedOut:   deviceOptedOutByHost[strings.ToLower(n.Hostname)],
 				OS:                   osByHost[strings.ToLower(n.Hostname)],
 				DeviceType:           typeByHost[strings.ToLower(n.Hostname)],
 				Expiry:               n.Expiry,

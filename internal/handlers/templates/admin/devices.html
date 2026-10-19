@@ -334,6 +334,13 @@
           {{$prefKey := printf "%d:%s" $skygateUID $lowerHost}}
           {{$pref := index $.DeviceExitPrefMap $prefKey}}
           {{$viaEnabled := index $.DeviceExitViaMap $prefKey}}
+          {{/* B399: the operator removed this device's preference BY HAND, so the
+               preferred-exit reconciler will not derive one again. Saying so is the
+               difference between "an empty cell" and "a decision". */}}
+          {{$optedOut := index $.DeviceExitOptedOutMap $prefKey}}
+          {{if $optedOut}}
+            <span class="tag tag-info" title="{{t "devices.device_exit_opted_out_help"}}" style="font-size:10px"><i class="fa-solid fa-circle-pause"></i>{{t "devices.device_exit_opted_out"}}</span>
+          {{end}}
           {{if $pref}}
             <span class="tag tag-info" title="{{t "devices.device_exit_pref_pinned_help"}}" style="font-size:10px"><i class="fa-solid fa-bullseye"></i><code style="font-size:10px;background:transparent">{{$pref}}</code></span>
             {{if $viaEnabled}}

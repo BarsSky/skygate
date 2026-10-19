@@ -113,6 +113,7 @@ var sqliteMigrations = []MigrationEntry{
 	{77, "v0.77 (B312): exit_servers location — where a relay actually sits (shown on /admin/exit-nodes, used to prefer a nearby relay when an owner is unreachable)", "migrations_v0_77_exit_location.go", migrateV077SQLite},
 	{78, "v0.78 (B360): prefix_owner failover reservation — a prefix taken from an unhealthy relay remembers where to return", "migrations_v0_78_prefix_reservation.go", migrateV078SQLite},
 	{79, "v0.79 (B380): device_rules.group_label — the operator's own name for a group of rules, so the page can be read by «Игры» instead of by domain", "migrations_v0_79_rule_group.go", migrateV079SQLite},
+	{80, "v0.80 (B399): device_exit_node_prefs.opted_out — a pref the operator removed BY HAND must not be re-created by the auto-reconciler on the next tick", "migrations_v0_80_pref_optout.go", migrateV080SQLite},
 }
 
 // SQLiteMigrations returns the list of migrations the current

@@ -447,6 +447,9 @@
           {{end}}
         </td>
         <td>
+          {{if .DeviceExitOptedOut}}
+            <span class="tag tag-info" title="{{t "devices.device_exit_opted_out_help"}}" style="font-size:10px"><i class="fa-solid fa-circle-pause"></i>{{t "devices.device_exit_opted_out"}}</span>
+          {{end}}
           {{if .DeviceExitPref}}
             <span class="tag tag-info" title="{{t "devices.device_exit_pref_pinned_help"}}" style="font-size:10px"><i class="fa-solid fa-bullseye"></i><code style="font-size:10px;background:transparent">{{.DeviceExitPref}}</code></span>
             {{if .DeviceExitViaEnabled}}

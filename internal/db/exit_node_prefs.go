@@ -40,6 +40,12 @@ type DeviceExitNodePref struct {
 	UpdatedAt      int64
 	SetByUserID    int64
 	ViaEnabled     bool
+	// OptedOut is B399's memory of an explicit human decision: the operator removed
+	// this device's preference (or its strict pin) BY HAND, so the preferred-exit
+	// reconciler must not re-create or rewrite the row. A row with OptedOut=true
+	// normally also has an EMPTY ExitNodeTag — it is kept precisely so the human's
+	// "no" survives deletion.
+	OptedOut bool
 }
 
 // GetUserExitNodePref returns the user's preferred exit-node
@@ -150,19 +156,20 @@ func ListAllUserExitNodePrefs(d *sql.DB) ([]ExitNodePref, error) {
 // 2026-07-25: v0.28.5 — also returns ViaEnabled.
 func GetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname string) (DeviceExitNodePref, error) {
 	var p DeviceExitNodePref
-	var viaEnabled int
+	var viaEnabled, optedOut int
 	err := d.QueryRow(`
-		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled
+		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled, COALESCE(p.opted_out,0)
 		  FROM device_exit_node_prefs p
 		  JOIN portal_users pu ON pu.id = p.user_id
 		 WHERE p.user_id = `+PlaceholderAt(2, 0)+` AND p.device_hostname = `+PlaceholderAt(2, 1),
 		userID, deviceHostname,
-	).Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled)
+	).Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled, &optedOut)
 	if err == sql.ErrNoRows {
 		return p, nil
 	}
 	if err == nil {
 		p.ViaEnabled = viaEnabled != 0
+		p.OptedOut = optedOut != 0
 	}
 	return p, err
 }
@@ -174,23 +181,58 @@ func GetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname string) (Devi
 // (user_id, device_hostname) instead of (user_id).
 func SetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname, exitNodeTag string, setByUserID int64, viaEnabled bool) error {
 	if exitNodeTag == "" {
-		_, err := d.Exec(`DELETE FROM device_exit_node_prefs WHERE user_id = `+PlaceholderAt(2, 0)+` AND device_hostname = `+PlaceholderAt(2, 1),
-			userID, deviceHostname)
-		return err
+		// B399: an empty tag is a HUMAN decision ("this device takes any exit
+		// node"), not an absence to be re-derived. Clearing therefore records the
+		// decision instead of deleting the row — see ClearDeviceExitNodePref.
+		return ClearDeviceExitNodePref(d, userID, deviceHostname, setByUserID)
 	}
 	viaInt := 0
 	if viaEnabled {
 		viaInt = 1
 	}
 	_, err := d.Exec(`
-		INSERT INTO device_exit_node_prefs (user_id, device_hostname, exit_node_tag, set_by_user_id, updated_at, via_enabled)
-		VALUES (`+PlaceholdersRange(1, 4)+`, `+NowUnixSQL()+`, `+PlaceholdersRange(5, 5)+`)
+		INSERT INTO device_exit_node_prefs (user_id, device_hostname, exit_node_tag, set_by_user_id, updated_at, via_enabled, opted_out)
+		VALUES (`+PlaceholdersRange(1, 4)+`, `+NowUnixSQL()+`, `+PlaceholdersRange(5, 5)+`, 0)
 		ON CONFLICT(user_id, device_hostname) DO UPDATE SET
 			exit_node_tag = excluded.exit_node_tag,
 			set_by_user_id = excluded.set_by_user_id,
 			updated_at = excluded.updated_at,
-			via_enabled = excluded.via_enabled`,
+			via_enabled = excluded.via_enabled,
+			opted_out = 0`,
 		userID, deviceHostname, exitNodeTag, setByUserID, viaInt)
+	return err
+}
+
+// ClearDeviceExitNodePref records that a HUMAN removed this device's preference.
+//
+// B399 (2026-10-19) — WHY THE ROW IS KEPT. The old clear path DELETEd the row, and
+// the preferred-exit reconciler (B229) then saw "a device with rules and no
+// preference" and created one again on its next tick — with `via_enabled = 1`.
+// Measured live, three times in six hours:
+//
+//	19:08:56  skyadmin  my_device_preferred_exit_set  hostname=skyworker tag=
+//	18:17:12  system    preferred_exit_reconciled     CREATE … via=1 reason=missing-pref-unanimous
+//
+// so the operator could not un-pin a device at all. A kept row with an EMPTY
+// `exit_node_tag` and `opted_out = 1` means exactly what the human meant, and the
+// reconciler refuses to touch it. `setByUserID` is recorded as the author.
+//
+// Deleting is still available for the cases that genuinely want it (a device that
+// no longer exists) — it is simply no longer what a person's "clear" does.
+func ClearDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname string, setByUserID int64) error {
+	if deviceHostname == "" {
+		return fmt.Errorf("clear device exit-node preference: empty hostname")
+	}
+	_, err := d.Exec(`
+		INSERT INTO device_exit_node_prefs (user_id, device_hostname, exit_node_tag, set_by_user_id, updated_at, via_enabled, opted_out)
+		VALUES (`+PlaceholderAt(3, 0)+`, `+PlaceholderAt(3, 1)+`, '', `+PlaceholderAt(3, 2)+`, `+NowUnixSQL()+`, 0, 1)
+		ON CONFLICT(user_id, device_hostname) DO UPDATE SET
+			exit_node_tag = '',
+			set_by_user_id = excluded.set_by_user_id,
+			updated_at = excluded.updated_at,
+			via_enabled = 0,
+			opted_out = 1`,
+		userID, deviceHostname, setByUserID)
 	return err
 }
 
@@ -202,7 +244,7 @@ func SetDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname, exitNodeTag 
 // explicitly pinned) so we don't worry about pagination.
 func ListAllDeviceExitNodePrefs(d *sql.DB) ([]DeviceExitNodePref, error) {
 	rows, err := d.Query(`
-		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled
+		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled, COALESCE(p.opted_out,0)
 		  FROM device_exit_node_prefs p
 		  JOIN portal_users pu ON pu.id = p.user_id
 		 ORDER BY pu.username, p.device_hostname`)
@@ -213,11 +255,12 @@ func ListAllDeviceExitNodePrefs(d *sql.DB) ([]DeviceExitNodePref, error) {
 	var out []DeviceExitNodePref
 	for rows.Next() {
 		var p DeviceExitNodePref
-		var viaEnabled int
-		if err := rows.Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled); err != nil {
+		var viaEnabled, optedOut int
+		if err := rows.Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled, &optedOut); err != nil {
 			return nil, err
 		}
 		p.ViaEnabled = viaEnabled != 0
+		p.OptedOut = optedOut != 0
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -246,7 +289,7 @@ func DeleteDeviceExitNodePref(d *sql.DB, userID int64, deviceHostname string) er
 // the user has no per-device prefs.
 func ListDeviceExitNodePrefsForUser(d *sql.DB, userID int64) ([]DeviceExitNodePref, error) {
 	rows, err := d.Query(`
-		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled
+		SELECT p.user_id, pu.username, p.device_hostname, p.exit_node_tag, p.updated_at, p.set_by_user_id, p.via_enabled, COALESCE(p.opted_out,0)
 		  FROM device_exit_node_prefs p
 		  JOIN portal_users pu ON pu.id = p.user_id
 		 WHERE p.user_id = `+PlaceholdersList(1)+`
@@ -258,11 +301,12 @@ func ListDeviceExitNodePrefsForUser(d *sql.DB, userID int64) ([]DeviceExitNodePr
 	var out []DeviceExitNodePref
 	for rows.Next() {
 		var p DeviceExitNodePref
-		var viaEnabled int
-		if err := rows.Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled); err != nil {
+		var viaEnabled, optedOut int
+		if err := rows.Scan(&p.UserID, &p.Username, &p.DeviceHostname, &p.ExitNodeTag, &p.UpdatedAt, &p.SetByUserID, &viaEnabled, &optedOut); err != nil {
 			return nil, err
 		}
 		p.ViaEnabled = viaEnabled != 0
+		p.OptedOut = optedOut != 0
 		out = append(out, p)
 	}
 	return out, rows.Err()

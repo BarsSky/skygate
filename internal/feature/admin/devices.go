@@ -96,6 +96,7 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	deviceExitPrefs, _ := db.ListAllDeviceExitNodePrefs(s.dbc())
 	deviceExitPrefMap := make(map[string]string, len(deviceExitPrefs))
 	deviceExitViaMap := make(map[string]bool, len(deviceExitPrefs))
+	deviceExitOptedOutMap := make(map[string]bool, len(deviceExitPrefs))
 	skygateUserByName := make(map[string]int64, len(users))
 	for _, u := range users {
 		if u.Name != "" {
@@ -133,6 +134,12 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		key := strconv.FormatInt(dp.UserID, 10) + ":" + strings.ToLower(dp.DeviceHostname)
 		deviceExitPrefMap[key] = dp.ExitNodeTag
 		deviceExitViaMap[key] = dp.ViaEnabled
+		// B399: the operator removed this device's preference BY HAND, so the engine
+		// will not re-derive it. The page has to SAY that, or the empty cell looks
+		// like a bug rather than like the decision it is.
+		if dp.OptedOut {
+			deviceExitOptedOutMap[key] = true
+		}
 	}
 	exits, _ := s.HSGlobalFn().ListExitNodes()
 	// 2026-08-26: v1.5.2 (B188) — stamp each exit-node
@@ -303,10 +310,13 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		"DevTagMap":         devTagMap,
 		"DeviceExitPrefMap": deviceExitPrefMap,
 		"DeviceExitViaMap":  deviceExitViaMap,
-		"AvailableExits":    exits,
-		"UserExitPrefMap":   userExitPrefMap,
-		"SkygateUserByName": skygateUserByName,
-		"SkygateUserByHost": skygateUserByHost,
+		// B399: per (user, hostname) "the operator removed this preference by hand",
+		// so the page can say why the cell is empty instead of looking broken.
+		"DeviceExitOptedOutMap": deviceExitOptedOutMap,
+		"AvailableExits":        exits,
+		"UserExitPrefMap":       userExitPrefMap,
+		"SkygateUserByName":     skygateUserByName,
+		"SkygateUserByHost":     skygateUserByHost,
 		// 2026-08-09: v0.33.1.20 — list of portal user
 		// names for the per-row "Transfer" dropdown. The
 		// handler PostAdminDeviceTransfer takes a portal

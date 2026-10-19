@@ -17,6 +17,23 @@
      NO verdict ("unknown"), and rendering "Нет рабочих
      exit-узлов!" for "we could not ask" is exactly the false
      alarm this block removes. */}}
+{{/* B399 (2026-10-19) — WHAT AN EXIT NODE DOES TO THE CLIENT, said where the
+     operator chooses one. Report, verbatim: «если включен exit node то локальная
+     сеть не видится, только локальная сеть tailnet, а обычная нет». That is
+     Tailscale's documented behaviour, not a skygate defect: selecting an exit node
+     sends ALL traffic — including the client's own LAN — through the relay, and the
+     client keeps LAN access only with `--exit-node-allow-lan-access`. Both halves
+     are CLIENT-LOCAL flags skygate can neither read nor set, so the page states them
+     instead of pretending to fix them (the B398 lesson: a hidden constraint is a
+     defect report waiting to happen). It is a <details> so it does not add noise to
+     a page the operator opens to see health. */}}
+<details class="card" style="margin-bottom:16px;padding:10px 14px">
+  <summary style="cursor:pointer;font-weight:600"><i class="fa-solid fa-circle-info"></i> {{t "exit_nodes.client_routing.title"}}</summary>
+  <div style="margin-top:10px;font-size:13px;line-height:1.5">
+    {{t "exit_nodes.client_routing.body" | safeHTML}}
+  </div>
+</details>
+
 {{if and .ScoredCount (eq .HealthyCount 0)}}
 <div class="alert alert-danger" style="margin-bottom:16px">
   <i class="fa-solid fa-triangle-exclamation"></i>

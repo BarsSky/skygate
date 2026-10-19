@@ -100,12 +100,17 @@ func (s *Service) PostMyDevicePreferredExit(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// B399: clearing is a DECISION, not an absence. `SetDeviceExitNodePref` with an
+	// empty tag used to DELETE the row, and the preferred-exit reconciler re-created
+	// it on its next tick (`missing-pref-unanimous`, via=1) — the loop the operator
+	// reported as «отключаю strict mode … он ставиться обратно». The clear path now
+	// writes a kept, empty, flagged row that no automatic pass may touch.
 	if err := db.SetDeviceExitNodePref(s.dbc(), c.UserID, hostname, tag, c.UserID, viaEnabled); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "my_device_preferred_exit_set",
-		"hostname="+hostname+" tag="+tag+" via="+strconv.FormatBool(viaEnabled))
+		"hostname="+hostname+" tag="+tag+" via="+strconv.FormatBool(viaEnabled)+" opted_out="+strconv.FormatBool(tag == ""))
 	// B361 (2026-10-07): a stored preference is the INPUT to the per-device
 	// `autogroup:internet` pin, so changing it must reach headscale promptly and
 	// through the shared path — measured live: without this trigger the ACL waited
@@ -193,7 +198,7 @@ func (s *Service) PostAdminDevicePreferredExit(w http.ResponseWriter, r *http.Re
 		return
 	}
 	s.Backend.Audit(c.UserID, c.Username, "admin_device_preferred_exit_set",
-		"target_user_id="+itoa64(userID)+" hostname="+hostname+" tag="+tag+" via="+strconv.FormatBool(viaEnabled))
+		"target_user_id="+itoa64(userID)+" hostname="+hostname+" tag="+tag+" via="+strconv.FormatBool(viaEnabled)+" opted_out="+strconv.FormatBool(tag == ""))
 	// B361: same prompt re-apply as the self-service path above, through the same
 	// shared budget — this is the endpoint the live repair of `a71` used, and the
 	// reason it took ~65 minutes to take effect elsewhere.

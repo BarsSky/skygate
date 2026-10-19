@@ -59,17 +59,33 @@ func TestSQLiteSchemaComplete(t *testing.T) {
 		t.Fatalf("ApplyMigrations(SQLite): %v", err)
 	}
 
-	t.Run("chain reaches V079 like PostgreSQL", func(t *testing.T) {
+	t.Run("chain reaches V080 like PostgreSQL", func(t *testing.T) {
 		var maxV int
 		if err := sqlDB.QueryRow(
 			`SELECT COALESCE(MAX(version), 0) FROM applied_migrations`).Scan(&maxV); err != nil {
 			t.Fatalf("read max(version): %v", err)
 		}
-		// PostgreSQL's chain ends at 79 (v0.79 = device_rules.group_label, B380). If
+		// PostgreSQL's chain ends at 80 (v0.80 = device_exit_node_prefs.opted_out,
+		// B399: a preference the operator removed by hand must not be re-created). If
 		// SQLite lags behind, every table/column added by the missing tail is absent.
-		if maxV != 79 {
-			t.Errorf("SQLite migration chain ends at V%d, want V79 — the PG and SQLite "+
+		if maxV != 80 {
+			t.Errorf("SQLite migration chain ends at V%d, want V80 — the PG and SQLite "+
 				"chains have diverged again (see driver_sqlite.go sqliteMigrations)", maxV)
+		}
+	})
+
+	t.Run("opted_out exists (V080, B399)", func(t *testing.T) {
+		// V080 is B399's memory of a human decision: without the column the
+		// preferred-exit reconciler cannot tell "nobody decided" from "the operator
+		// said no", and it re-creates the preference on its next tick — the loop the
+		// operator reported as «отключаю strict mode … он ставиться обратно».
+		var n int
+		if err := sqlDB.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('device_exit_node_prefs') WHERE name = 'opted_out'`).Scan(&n); err != nil {
+			t.Fatalf("pragma_table_info: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("device_exit_node_prefs.opted_out is missing on SQLite — the v0.80 migration did not run")
 		}
 	})
 
