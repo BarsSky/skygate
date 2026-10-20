@@ -1184,6 +1184,11 @@ func postHeartbeat(ctx context.Context, st *clusterState) error {
 	body, err := json.Marshal(cluster.HeartbeatRequest{
 		NodeID: st.NodeID,
 		Token:  st.Token,
+		// B402: the build this node runs, on every heartbeat. Without it the hub's
+		// cluster_node.skygate_version could only ever hold what the JOIN wrote, so a
+		// standby upgraded to the current release and one still on v1.5.108 looked
+		// identical (live: the operator's row said v1.5.108 while the hub ran v1.5.142).
+		Version: selfVersion(),
 	})
 	if err != nil {
 		return fmt.Errorf("heartbeat: marshal request: %w", err)

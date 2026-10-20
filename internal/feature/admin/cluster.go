@@ -93,6 +93,19 @@ type clusterNodeRow struct {
 	ReasonKey    string
 	ActionKey    string
 	HealthReason string
+	// HeartbeatAlive is B402's contradiction made visible: the row says `failed` (the
+	// elector's verdict when heartbeats stopped) while `last_seen_at` is CURRENT, so the
+	// state is stale rather than the node being dead. Measured live on the operator's
+	// installation: state=failed since 2026-10-09, last_seen = the current minute.
+	//
+	// The page renders a named reason plus a "Mark Ready" button for exactly this
+	// combination; the heartbeat path now fixes it by itself, and this field is what
+	// tells the operator which of the two happened.
+	HeartbeatAlive bool
+	// VersionDrift is true when this node reports a build different from the hub's.
+	// Before B402 the column could never change after the join, so the drift was
+	// invisible even when it was three months old (v1.5.108 vs v1.5.142 live).
+	VersionDrift bool
 	OwnedBy      string // node_owner_map.username when a row exists — the panel-only path must record ownership
 	OwnedTag     string // node_owner_map.tag for that row
 	ForeignRow   bool   // true when the hostname/IP belongs to a relay (exit_servers / tag:exit-node): the row is not a skygate host
@@ -326,6 +339,17 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 			isRelayRow := relayIndex.IsRelay(n.Hostname, n.TailscaleIP) || own.tag == "tag:exit-node"
 			n.ForeignRow = isRelayRow
 			n.HealthReason = healthReasons[n.ID]
+			// B402: a heartbeat newer than the staleness window contradicts `failed`.
+			// OnlineThresholdSec is the same 90 s the elector uses (30 s interval × 3
+			// missed), so the page applies the elector's own rule instead of inventing a
+			// second number.
+			if n.State == cluster.NodeStateFailed && lastSeenAt.Valid &&
+				now-lastSeenAt.Time.Unix() <= OnlineThresholdSec {
+				n.HeartbeatAlive = true
+			}
+			if hub := strings.TrimSpace(s.BuildVersion); hub != "" && strings.TrimSpace(n.SkygateVer) != "" && !sameBuild(n.SkygateVer, hub) {
+				n.VersionDrift = true
+			}
 			n.ReasonKey, n.ActionKey = clusterNodeReasonAndNext(n, isRelayRow, own.username)
 			// B216: online/offline count. "Stale" means
 			// state=ready but last_seen beyond the
@@ -644,12 +668,31 @@ func clusterNodeReasonAndNext(n clusterNodeRow, isRelayRow bool, ownedBy string)
 	case "draining":
 		return "cluster.reason_draining", "cluster.action_draining"
 	case "failed":
+		if n.HeartbeatAlive {
+			// B402: the state and the heartbeat disagree, and the heartbeat is the
+			// fresher fact. Say so, and point at the button that settles it.
+			return "cluster.reason_failed_heartbeat_alive", "cluster.action_failed_heartbeat_alive"
+		}
 		if n.HealthReason != "" {
 			return "cluster.reason_failed", "cluster.action_failed"
 		}
 		return "cluster.reason_failed_unknown", "cluster.action_failed"
 	}
 	return "cluster.reason_unknown", "cluster.action_unknown"
+}
+
+// sameBuild reports whether a node's reported build equals the hub's.
+//
+// Compared verbatim on purpose: the "+<commit>" suffix is part of the identity, so a
+// standby running the same release from a different commit is drift too. An empty side
+// means "not measured" and is never reported as drift (a node that has not heartbeated
+// since B402 cannot have reported one yet).
+func sameBuild(nodeBuild, hubBuild string) bool {
+	a, b := strings.TrimSpace(nodeBuild), strings.TrimSpace(hubBuild)
+	if a == "" || b == "" {
+		return true
+	}
+	return strings.EqualFold(a, b)
 }
 
 // parsePGTextArray parses a postgres TEXT[] literal of the
@@ -994,6 +1037,55 @@ func (s *Service) PostAdminClusterNodeDrain(w http.ResponseWriter, r *http.Reque
 		fmt.Sprintf("hostname=%s reason=%q", hostname, reason),
 		"cluster_node", hostname)
 	clusterRedirect(w, r, "Drained "+hostname+".", "")
+}
+
+// ---------- POST /admin/cluster/node/rejoin (B402) ---------
+
+// PostAdminClusterNodeRejoin is the operator's own "Mark Ready".
+//
+// B402 (2026-10-20) — WHY THE BUTTON HAS TO EXIST. `cluster.RejoinNode` moves a row
+// from `failed` (or `draining`) back to `ready`, and until now it was called from
+// exactly ONE place: the rolling-upgrade orchestrator. Measured on the operator's
+// installation: `svyatoslava` had been `state=failed` since 2026-10-09 17:40 — the HA
+// elector's verdict when its heartbeats stopped — and then kept heartbeating every
+// minute, and the row still said failed, because nothing but an upgrade run could
+// reverse it. The page showed a dead standby that was demonstrably alive, and the only
+// way out was hand-written SQL.
+//
+// The heartbeat path now reverses `failed → ready` by itself (a fresh authenticated
+// heartbeat falsifies "no heartbeat for 3 intervals"), so this button covers the other
+// two cases: a state that is stale for any other reason, and a `draining` node the
+// operator wants back without a full upgrade.
+func (s *Service) PostAdminClusterNodeRejoin(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		clusterRedirect(w, r, "", "Form parse error: "+err.Error())
+		return
+	}
+	clusterID := cluster.DefaultClusterID
+	hostname := strings.TrimSpace(r.FormValue("hostname"))
+	if hostname == "" {
+		clusterRedirect(w, r, "", "hostname is required")
+		return
+	}
+	if hostname == s.SelfHostname {
+		// The self row is the primary: marking it ready bypasses the elector's own
+		// judgement about the hub, which is what /admin/ha is for.
+		clusterRedirect(w, r, "", "the self row ("+s.SelfHostname+") is the primary — use /admin/ha")
+		return
+	}
+	if err := cluster.RejoinNode(s.dbc(), clusterID, hostname, c.Username); err != nil {
+		clusterRedirect(w, r, "", "mark ready: "+err.Error())
+		return
+	}
+	_ = db.AppendAuditLogWithTarget(s.dbc(), c.UserID, c.Username, "cluster.node.rejoin",
+		fmt.Sprintf("hostname=%s (marked ready by hand)", hostname),
+		"cluster_node", hostname)
+	clusterRedirect(w, r, "Marked "+hostname+" ready.", "")
 }
 
 // ---------- POST /admin/cluster/node/drain-remove (B217) ---------

@@ -12,6 +12,74 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.145 — a heartbeat that arrives must beat a state that says it did not (B402)
+
+**Date:** 2026-10-20 · **Base:** `v1.5.144` → this tag · **Compatibility:** no migration, no
+route change, no config change. The cluster tables are read and written as before; one
+state transition is new and one HTTP route is added.
+
+### Why
+
+The operator asked how clusters actually work. The measurement answered with two freezes:
+
+```
+cluster_node : svyatoslava | {skygate-standby} | state=failed | v1.5.108
+               joined 2026-10-09 09:45 | last_seen_at = 2026-10-20 07:45   ← NOW
+cluster_audit: 2026-10-09 17:40 node_health {"to":"failed","from":"ready",
+               "actor":"elector","reason":"last_seen 17m43s ago (3+ …"}
+```
+
+**1. `failed` was terminal for the heartbeat.** `Heartbeat()` moved only `pending → ready`,
+while the HA elector marks a node `failed` when heartbeats stop. Nothing moved it back —
+`RejoinNode` had exactly **one** caller, the rolling-upgrade orchestrator — so a node that
+kept heartbeating every 30 seconds stayed "dead" for **eleven days**, and the only way out
+was hand-written SQL. `/admin/cluster` showed a dead standby that was demonstrably alive.
+
+**2. The version could never change.** `HeartbeatRequest` carried `node_id` + `token`
+only, so `cluster_node.skygate_version` could only ever hold what the **join** wrote: a
+standby on v1.5.108 and one on the current build were indistinguishable, and the drift
+question had no data behind it at all.
+
+### Fix
+
+* **The heartbeat is the fresher fact.** An authenticated heartbeat reverses
+  `failed → ready` — the failed verdict's premise ("no heartbeat for 3 intervals") is
+  falsified by the heartbeat itself. The reversal is **audited** as `node_health` with
+  `actor=heartbeat`, the reason and the reported build, so nothing resurrects silently.
+  `draining` is **never** touched: that is the operator's decision, not the network's.
+* **The build travels with every heartbeat.** `HeartbeatRequest.Version`, sent by the
+  daemon through `selfVersion()` — the same string `/healthz` and the panel footer use —
+  written as `CASE WHEN version <> '' THEN version ELSE skygate_version END`, so an agent
+  built before this block cannot erase what the join recorded.
+* **The page names the contradiction.** `HeartbeatAlive` is derived from the elector's own
+  90 s window (`OnlineThresholdSec` = 30 s × 3), and a `failed` row with a fresh heartbeat
+  gets its own reason and next action instead of letting «failed» mean both *dead* and
+  *stale*.
+* **Mark Ready is reachable by hand.** `POST /admin/cluster/node/rejoin` calls
+  `cluster.RejoinNode` — previously only the upgrade orchestrator could — and the button is
+  rendered exactly where the state contradicts the heartbeat.
+* **Version drift is visible.** `sameBuild` treats the `+commit` suffix as part of the
+  identity (live: `v1.5.108+59fbad7` vs `v1.5.142+9de732f0`), and the row shows a «build
+  differs from the hub» badge.
+
+### Tests and contracts
+
+* `internal/cluster/heartbeat_b402_test.go` — a real invite token: `failed → ready`,
+  `draining` survives a heartbeat, an empty version does not erase, and the reversal is
+  audited.
+* `internal/feature/admin/cluster_b402_test.go` — the named reason pair, the drift
+  comparison table (including the hex-case and the empty sides), and the collector deriving
+  `HeartbeatAlive` from the row it reads.
+* `scripts/check_b402_cluster_truth.sh` — **28 contracts** (the reversal and its audit, the
+  version round-trip, the page's contradiction and button, the drift, registration and
+  documentation).
+
+### Operator action
+
+Nothing. The next heartbeat from the standby clears `failed` on its own and records the
+build it is running; if a row stays stale for any other reason, «Mark Ready» is now on
+`/admin/cluster`. `cluster_database` is still empty on this installation — DB-HA is simply
+not configured yet, which is a separate decision, not a defect.
 ## v1.5.144 — the relay list must say what each row is (B401)
 
 **Date:** 2026-10-20 · **Base:** `v1.5.142` → this tag · **Compatibility:** no migration, no

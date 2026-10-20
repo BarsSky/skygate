@@ -541,6 +541,10 @@ func registerRoutes(
 	// 1+2 in one transaction).
 	mux.Handle("POST /admin/cluster/node/approve", authMW(http.HandlerFunc(adminSvc.PostAdminClusterNodeApprove)))
 	mux.Handle("POST /admin/cluster/node/drain", authMW(http.HandlerFunc(adminSvc.PostAdminClusterNodeDrain)))
+	// B402 — the operator's own "Mark Ready": RejoinNode used to be reachable only from
+	// the rolling-upgrade orchestrator, so a row the elector had marked failed stayed
+	// failed even while its heartbeats kept arriving.
+	mux.Handle("POST /admin/cluster/node/rejoin", authMW(http.HandlerFunc(adminSvc.PostAdminClusterNodeRejoin)))
 	mux.Handle("POST /admin/cluster/node/drain-remove", authMW(http.HandlerFunc(adminSvc.PostAdminClusterNodeDrainRemove)))
 	mux.Handle("POST /admin/cluster/invite/generate", authMW(http.HandlerFunc(adminSvc.PostAdminClusterInviteGenerate)))
 	mux.Handle("POST /admin/cluster/invite/revoke", authMW(http.HandlerFunc(adminSvc.PostAdminClusterInviteRevoke)))

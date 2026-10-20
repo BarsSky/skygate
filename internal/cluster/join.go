@@ -46,6 +46,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -379,6 +380,20 @@ func markInviteUsed(d *sql.DB, inviteID, nodeID string) {
 type HeartbeatRequest struct {
 	NodeID string `json:"node_id"`
 	Token  string `json:"token"`
+	// Version is the build the sender runs ("v1.5.144+1847ff75"), carried on EVERY
+	// heartbeat.
+	//
+	// B402 (2026-10-20) — WHY IT IS HERE. Measured on the operator's installation:
+	// cluster_node.skygate_version said `v1.5.108` while the hub ran v1.5.142, and it
+	// could never change, because the version was written once at JOIN time and the
+	// heartbeat carried only node_id + token. A standby that was upgraded — or one that
+	// never was — was indistinguishable from a current one, so "version drift" had no
+	// data behind it at all.
+	//
+	// Empty means "an older agent that does not send it": the stored value is then left
+	// alone instead of being overwritten with "", so an old node cannot erase what the
+	// join recorded.
+	Version string `json:"version,omitempty"`
 }
 
 // HeartbeatResponse is what /api/cluster/heartbeat
@@ -440,12 +455,34 @@ func Heartbeat(d *sql.DB, secret string, req *HeartbeatRequest) (*HeartbeatRespo
 		return nil, fmt.Errorf("token's invite is bound to node %q, not %q", invite.UsedByNodeID, req.NodeID)
 	}
 
-	// 3. Update last_seen_at + auto-transition state
-	// pending → ready on the first heartbeat.
-	// (We don't transition ready → failed here; the
-	// HA elector handles failed based on missed
-	// heartbeats. Phase 3.)
+	// 3. Update last_seen_at + auto-transition state.
+	//
+	// B402 (2026-10-20) — A HEARTBEAT FALSIFIES "failed". The state machine used to
+	// move only pending → ready, while the HA elector marks a node `failed` when its
+	// last heartbeat is too old. Nothing ever moved it back: `RejoinNode` is called by
+	// the rolling-upgrade orchestrator and NOWHERE else, so a node that was declared
+	// failed and then kept heartbeating stayed `failed` forever.
+	//
+	// Measured on the operator's installation: `svyatoslava` had `state=failed` since
+	// 2026-10-09 17:40 (the elector's verdict) while `last_seen_at` was the CURRENT
+	// minute — the page showed a dead standby that was demonstrably alive, and the only
+	// way out was an upgrade run or a hand-written SQL update.
+	//
+	// The transition is honest on both sides: the row is `failed` because "no heartbeat
+	// for 3 intervals", and an authenticated heartbeat proves that no longer holds. It
+	// is audited (`node_health`) so the reversal is visible, and `draining` is NEVER
+	// touched here — that is the operator's own decision, not the network's.
 	now := time.Now().UTC()
+	// The OLD state and the node's cluster, read first: RETURNING gives the new state,
+	// and the audit must say what the elector's verdict was before the heartbeat
+	// contradicted it (cluster_audit is keyed by cluster, B215).
+	var prevState, nodeClusterID string
+	if perr := d.QueryRow(`SELECT state, COALESCE(cluster_id,'') FROM cluster_node WHERE id = $1`, req.NodeID).Scan(&prevState, &nodeClusterID); perr != nil && perr != sql.ErrNoRows {
+		return nil, fmt.Errorf("read node state: %w", perr)
+	}
+	if nodeClusterID == "" {
+		nodeClusterID = DefaultClusterID
+	}
 	var state string
 	// B291: last_seen_at round-trips through the driver, so read it
 	// as `any` and decode it — SQLite hands back a TEXT/INTEGER value
@@ -456,18 +493,30 @@ func Heartbeat(d *sql.DB, secret string, req *HeartbeatRequest) (*HeartbeatRespo
 	err = d.QueryRow(`
 		UPDATE cluster_node
 		   SET last_seen_at = $1,
+		       skygate_version = CASE WHEN $3 <> '' THEN $3 ELSE skygate_version END,
 		       state = CASE
 		           WHEN state = 'pending' THEN 'ready'
+		           WHEN state = 'failed'  THEN 'ready'
 		           ELSE state
 		       END
 		 WHERE id = $2
 		RETURNING state, last_seen_at
-	`, db.ActiveDialect().TimeValue(now), req.NodeID).Scan(&state, &lastSeenRaw)
+	`, db.ActiveDialect().TimeValue(now), req.NodeID, strings.TrimSpace(req.Version)).Scan(&state, &lastSeenRaw)
 	if err == sql.ErrNoRows {
 		return nil, ErrHeartbeatNodeNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("update node: %w", err)
+	}
+	// The reverse transition is recorded where the elector records its own verdict, so
+	// the audit trail reads "failed → ready (heartbeat resumed)" instead of showing a
+	// resurrection nobody can explain.
+	if prevState == NodeStateFailed && state == NodeStateReady {
+		if _, aerr := db.InsertClusterAudit(d, nodeClusterID, db.NodeHealth, req.NodeID, "heartbeat",
+			fmt.Sprintf(`{"to":"ready","from":"failed","actor":"heartbeat","reason":"authenticated heartbeat resumed — the elector had marked the node failed for missed heartbeats","version":%q}`,
+				strings.TrimSpace(req.Version))); aerr != nil {
+			log.Printf("cluster heartbeat: audit node_health failed→ready for %s: %v", req.NodeID, aerr)
+		}
 	}
 	lastSeen, _ := db.ParseDBTime(lastSeenRaw)
 	if lastSeen.IsZero() {

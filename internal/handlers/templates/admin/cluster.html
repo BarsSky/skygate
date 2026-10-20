@@ -129,7 +129,12 @@
           {{else}}<span class="tag">{{.State}}</span>
           {{end}}
         </td>
-        <td>{{if .SkygateVer}}<code style="font-size:0.85em">{{.SkygateVer}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td>{{if .SkygateVer}}<code style="font-size:0.85em">{{.SkygateVer}}</code>{{else}}<span class="muted">—</span>{{end}}
+          {{/* B402: the build arrives with every heartbeat now, so a difference from
+               the hub is a CURRENT fact — before this, the column could only ever hold
+               what the join wrote (live: v1.5.108 while the hub ran v1.5.142). */}}
+          {{if .VersionDrift}}<div><span class="tag tag-warning" title="{{t "cluster.version_drift_help"}}">{{t "cluster.version_drift"}}</span></div>{{end}}
+        </td>
         <td><span class="muted" title="{{.JoinedAt}}">{{.JoinedAt}}</span></td>
         <td><span class="muted" title="{{.LastSeenAt}}">{{.LastSeenAt}}</span></td>
         {{/* B359: the NAMED reason this row is in its state + the next action.
@@ -188,6 +193,15 @@
                   itself — see cluster.upgrade_self_refused).
             */}}
             <div style="display:flex;gap:4px;flex-wrap:wrap">
+              {{/* B402: "Mark Ready" — the operator's own RejoinNode. Shown exactly
+                   where the row's state contradicts its heartbeat, and on a draining
+                   row (undo a drain without waiting for an upgrade run). */}}
+              {{if .HeartbeatAlive}}
+              <form method="POST" action="/admin/cluster/node/rejoin" style="display:inline" onsubmit="return confirm('{{tf "cluster.node_rejoin_confirm" .Hostname | js}}')">
+                <input type="hidden" name="hostname" value="{{.Hostname}}">
+                <button type="submit" class="btn btn-success btn-sm" title="{{t "cluster.node_rejoin_help"}}"><i class="fa-solid fa-heart-pulse"></i> {{t "cluster.node_rejoin_btn"}}</button>
+              </form>
+              {{end}}
               {{if eq .State "pending"}}
               <form method="POST" action="/admin/cluster/node/approve" style="display:inline" onsubmit="return confirm('{{tf "cluster.node_approve_confirm" .Hostname | js}}')">
                 <input type="hidden" name="hostname" value="{{.Hostname}}">
