@@ -53,6 +53,16 @@
           {{else}}
             <span class="tag tag-danger"><i class="fa-solid fa-circle-xmark"></i> {{t "derp.relays_map_skipped"}}</span>
           {{end}}
+          {{/* B401: WHAT this row is. Two of the operator's three rows were not relays
+               at all (a derpmap document and the same host on the LAN port), and the
+               list called both of them "skipped" without saying why they exist. */}}
+          {{if eq (printf "%s" .Kind) "derpmap"}}
+            <span class="tag tag-warning" title="{{t "derp.relays_kind_derpmap_help"}}">{{t "derp.relays_kind_derpmap"}}</span>
+          {{else if eq (printf "%s" .Kind) "other_path"}}
+            <span class="tag tag-warning" title="{{.KindNote}}">{{t "derp.relays_kind_other"}}</span>
+          {{else if .AltPort}}
+            <span class="tag tag-info" title="{{tf "derp.relays_kind_altport_help" .AltPortOf}}">{{tf "derp.relays_kind_altport" .AltPortOf}}</span>
+          {{end}}
         </td>
         <td style="padding:6px;font-size:12px;color:var(--text-muted)">
           {{if .Published}}{{tf "derp.relays_map_via" .Via}}{{else}}{{.Reason}}{{end}}

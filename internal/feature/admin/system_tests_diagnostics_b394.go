@@ -127,6 +127,9 @@ var testAnnotations = map[string]testAnnotation{
 	// «all my devices» rules and the preference reconciler, which is why it is a
 	// warning the operator can act on rather than a red critical.
 	"ownership.attribution": {Severity: SeverityWarning, Remediation: "st.fix.ownership_attribution", DocLink: "/admin/devices"},
+	// B401: a row that is not a relay is not an outage — it is junk in the list that
+	// made the operator ask what it was. Warning, with the delete/disable instruction.
+	"derp.relay_rows": {Severity: SeverityWarning, Remediation: "st.fix.derp_relay_rows", DocLink: "/admin/derp/relays"},
 }
 
 // annotateTest fills Severity/Remediation/DocLink from the tables. Values already

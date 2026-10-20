@@ -387,7 +387,11 @@ var b394Tests = []SystemTestDef{
 			addrs, rerr := net.DefaultResolver.LookupHost(rctx, host)
 			rcancel()
 			if rerr == nil && len(addrs) > 0 && b396AllLoopback(addrs) {
-				return SystemTestFail, fmt.Sprintf("%q resolves to %s INSIDE this container: the panel is dialling its own loopback and can never reach the relay. The host resolves its own public name to 127.0.0.1 and that leaks into the container (AGENTS trap #2) — fix the compose extra_hosts entry so %s maps to the host's real address, then re-run this test.",
+				// B401: name BOTH fixes, in the order that costs least. The operator's
+				// live report was exactly this state, and the previous sentence stopped
+				// at "fix extra_hosts", which needs a compose edit and a container
+				// recreate — while the panel already has a knob that does not.
+				return SystemTestFail, fmt.Sprintf("%q resolves to %s INSIDE this container: the panel is dialling its own loopback and can never reach the relay. The host resolves its own public name to 127.0.0.1 and that leaks into the container (AGENTS trap #2). TWO fixes, both without touching skygate: (1) the cheapest — set the probe address on /admin/derp/relays (derp.probe_host, B296) to the relay's real public or LAN address; the probes keep speaking the hostname as TLS SNI, so the certificate still matches; (2) the root cause — add an extra_hosts entry for %s with the host's real IP in docker-compose.yml and run `docker compose up -d --force-recreate skygate` (a plain `restart` keeps the frozen /etc/hosts, trap #3).",
 					host, strings.Join(addrs, ", "), host)
 			}
 			start := time.Now()
@@ -404,6 +408,84 @@ var b394Tests = []SystemTestDef{
 			}
 			_ = conn.Close()
 			return SystemTestPass, fmt.Sprintf("%s answered a TLS handshake in %s", net.JoinHostPort(host, port), time.Since(start).Round(time.Millisecond))
+		},
+	},
+	{
+		Name:        "derp.relay_rows",
+		Category:    "derp",
+		Description: "every stored relay row is a real DERP node — no derpmap catalogue rows and no duplicate host entries presented as separate relays",
+		Run: func(ctx context.Context) (SystemTestStatus, string) {
+			s := getTestService()
+			if s == nil || s.dbc() == nil {
+				return SystemTestSkip, "service or DB not initialised"
+			}
+			// B401 (2026-10-20) — WHAT THE OPERATOR'S LIST ACTUALLY HELD.
+			//
+			// His `derp_relays` table had three rows and only ONE is a relay:
+			//
+			//	https://derp.skynas.ru:443                          the relay (healthy, 5 ms)
+			//	https://derp.skynas.ru:8443                         the LAN-direct HTTP port
+			//	https://controlplane.tailscale.com/derpmap/default  a DERP MAP DOCUMENT
+			//
+			// The last one is not a relay at all — AutoMigrateDerpRelays copied it from
+			// the legacy `derp.external_urls` key (B265) — and nothing on the page said
+			// so, which is why he asked «в релеи висят ещё два не рабочих derp — что
+			// это и к чему». The page now labels them (B401); this test is the guard
+			// that keeps such rows from coming back, and it names the fix (delete or
+			// disable the row — neither has any effect on a working relay).
+			rows, err := s.dbc().QueryContext(ctx, `SELECT hostname, COALESCE(url,''), COALESCE(enabled,0)
+			                                       FROM derp_relays ORDER BY region_id, sort_order`)
+			if err != nil {
+				return SystemTestSkip, "read derp_relays: " + err.Error()
+			}
+			defer rows.Close()
+			type relayRow struct {
+				host, url string
+				enabled   bool
+			}
+			var all []relayRow
+			for rows.Next() {
+				var r relayRow
+				var en int
+				if err := rows.Scan(&r.host, &r.url, &en); err != nil {
+					continue
+				}
+				r.enabled = en == 1
+				all = append(all, r)
+			}
+			var notRelays, dupPorts []string
+			for i, r := range all {
+				kind, why := derphealth.ClassifyRelayURL(r.url)
+				if kind != derphealth.RelayKindNode {
+					notRelays = append(notRelays, fmt.Sprintf("%s (%s: %s)", r.host, r.url, why))
+					continue
+				}
+				if !r.enabled {
+					continue
+				}
+				others := make([]string, 0, len(all))
+				for j, o := range all {
+					if j != i && o.enabled {
+						others = append(others, o.url)
+					}
+				}
+				if alt := derphealth.ClassifyAltPort(r.url, others); alt.IsAltPort {
+					dupPorts = append(dupPorts, fmt.Sprintf("%s (%s — the same host already has a row on port %d)", r.host, r.url, alt.OtherPort))
+				}
+			}
+			switch {
+			case len(notRelays) == 0 && len(dupPorts) == 0:
+				return SystemTestPass, fmt.Sprintf("all %d relay row(s) are real DERP nodes and no host is listed twice on different ports", len(all))
+			case len(notRelays) > 0 && len(dupPorts) > 0:
+				return SystemTestFail, fmt.Sprintf("%d row(s) are NOT relay nodes: %s; and %d row(s) duplicate a host on another port: %s. Delete or disable them on /admin/derp/relays — neither affects a working relay (the derpmap catalogue is merged by headscale itself, and the extra port is a LAN-only entry point).",
+					len(notRelays), strings.Join(notRelays, "; "), len(dupPorts), strings.Join(dupPorts, "; "))
+			case len(notRelays) > 0:
+				return SystemTestFail, fmt.Sprintf("%d row(s) are NOT relay nodes: %s. Delete or disable them on /admin/derp/relays — the public derpmap catalogue is merged by headscale itself, so such a row can never become a relay.",
+					len(notRelays), strings.Join(notRelays, "; "))
+			default:
+				return SystemTestFail, fmt.Sprintf("%d row(s) duplicate a host that already has a conventional-port row: %s. This is not a second relay — it is a LAN/alternative entry point; disable it if you do not use it.",
+					len(dupPorts), strings.Join(dupPorts, "; "))
+			}
 		},
 	},
 	{

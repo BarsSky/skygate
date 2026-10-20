@@ -172,6 +172,11 @@ var ruDerp = map[string]string{
 	"derp.relays_map_col_detail":          "Проверено / причина",
 	"derp.relays_map_published":           "публикуется",
 	"derp.relays_map_skipped":             "пропущен",
+	"derp.relays_kind_derpmap":            "каталог derpmap, не релей",
+	"derp.relays_kind_derpmap_help":       "Это URL КАТАЛОГА DERP-серверов (…/derpmap/…), а не один узел. headscale подмешивает публичный каталог сам, поэтому такая строка никогда не станет релеем: её нельзя ни опросить как узел, ни анонсировать. Она попала сюда авто-миграцией из старого ключа derp.external_urls (B265). Удалите или отключите её — на работу релеев она не влияет.",
+	"derp.relays_kind_other":              "путь не для DERP, не релей",
+	"derp.relays_kind_altport":            "тот же хост, порт %d",
+	"derp.relays_kind_altport_help":       "Это ВТОРАЯ запись того же хоста на другом порту (например LAN-порт 8443, который derper публикует для клиентов внутри локальной сети). Это не отдельный релей: клиенты в интернете идут через порт %d. Строку можно выключить, если локальный вход не нужен.",
 	"derp.relays_map_via":                 "достижим через %s",
 	// B296 — карточка «адрес проверки релея». Значение применяется сразу
 	// (резолвится при каждой проверке, БД важнее .env), поэтому пересоздавать
@@ -492,6 +497,11 @@ var enDerp = map[string]string{
 	"derp.relays_map_col_detail":          "Probed / reason",
 	"derp.relays_map_published":           "published",
 	"derp.relays_map_skipped":             "skipped",
+	"derp.relays_kind_derpmap":            "derpmap catalogue, not a relay",
+	"derp.relays_kind_derpmap_help":       "This URL points at the DERP SERVER CATALOGUE (…/derpmap/…), not at one node. headscale merges the public catalogue itself, so this row can never become a relay: it can neither be probed as a node nor advertised. It arrived here through the auto-migration of the legacy derp.external_urls key (B265). Delete or disable it — it has no effect on your relays.",
+	"derp.relays_kind_other":              "path is not DERP, not a relay",
+	"derp.relays_kind_altport":            "same host, port %d",
+	"derp.relays_kind_altport_help":       "This is a SECOND row for the same host on another port (for example the LAN port 8443 that derper publishes for clients inside the local network). It is not a separate relay: clients on the internet go through port %d. Disable the row if you do not need the local entry point.",
 	"derp.relays_map_via":                 "reachable via %s",
 	// B296 — the "relay probe address" card. The saved value is resolved on
 	// every probe (DB beats .env), so nothing has to be recreated.

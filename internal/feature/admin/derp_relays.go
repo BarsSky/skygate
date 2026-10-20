@@ -39,6 +39,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/derpcfg"
+	"skygate/internal/derphealth"
 )
 
 // ---------- GET /admin/derp/relays ----------
@@ -98,6 +99,13 @@ type RelayMapStatus struct {
 	Published bool
 	Via       string // address that answered the reachability probe
 	Reason    string // why it is NOT published
+	// B401 — WHAT this row is. The page must be able to say "this is a map document,
+	// not a relay" and "this is the same host on another port", because the operator's
+	// own list held one of each and nothing on the page explained either.
+	Kind      derphealth.RelayKind
+	KindNote  string // human-readable reason for a non-node row
+	AltPort   bool   // same host as another row, different port
+	AltPortOf int    // the other row's port
 }
 
 var (
@@ -143,11 +151,17 @@ func (s *Service) derpRelayMapStatuses() []RelayMapStatus {
 			continue
 		}
 		st.Bundled, st.Enabled = bundled == 1, enabled == 1
+		// B401: name the row's kind first, so a map document or an alternative port is
+		// explained even when it is disabled (the old reason only existed for enabled
+		// rows, which is why two dead entries could sit in the list unlabelled).
+		st.Kind, st.KindNote = derphealth.ClassifyRelayURL(st.URL)
 		switch {
 		case !st.Enabled:
 			st.Reason = "row is disabled"
-		case isDerpMapURL(st.URL):
+		case st.Kind == derphealth.RelayKindDerpMap:
 			st.Reason = "url is a derpmap document, not a relay node (headscale merges the public map itself)"
+		case st.Kind == derphealth.RelayKindOtherPath:
+			st.Reason = st.KindNote
 		default:
 			port := publicDERPPortFromURL(st.URL)
 			candidates := derpReachabilityCandidates(s.dbc(), st.Host, probeHost)
@@ -162,6 +176,22 @@ func (s *Service) derpRelayMapStatuses() []RelayMapStatus {
 			}
 		}
 		out = append(out, st)
+	}
+	// Second pass: the `:8443` shape needs EVERY row to answer "do I duplicate a host?".
+	// The badge is rendered separately from Reason, so a row can be BOTH "unreachable"
+	// and "the alternative port of a host that has a 443 entry" — which is exactly the
+	// live case (the LAN port is unreachable from the container and that is fine).
+	for i := range out {
+		others := make([]string, 0, len(out)-1)
+		for j, o := range out {
+			if j != i {
+				others = append(others, o.URL)
+			}
+		}
+		if alt := derphealth.ClassifyAltPort(out[i].URL, others); alt.IsAltPort {
+			out[i].AltPort = true
+			out[i].AltPortOf = alt.OtherPort
+		}
 	}
 	mapStatusMu.Lock()
 	mapStatusCached, mapStatusAt = out, time.Now()
@@ -197,6 +227,15 @@ func (s *Service) PostAdminDerpRelaysAdd(w http.ResponseWriter, r *http.Request)
 	}
 	if row.URL == "" {
 		http.Redirect(w, r, "/admin/derp/relays?err=url_required",
+			http.StatusFound)
+		return
+	}
+	// B401: a DERP MAP DOCUMENT is not a relay. AutoMigrateDerpRelays copied one in
+	// from the legacy `derp.external_urls` (B265) and it then sat in the list looking
+	// like a broken node — the operator's «висят ещё два не рабочих derp» included it.
+	// Refusing it here is what keeps the row from coming back by hand.
+	if kind, why := derphealth.ClassifyRelayURL(row.URL); kind != derphealth.RelayKindNode {
+		http.Redirect(w, r, "/admin/derp/relays?err="+urlMsg(fmt.Errorf("%s", why)),
 			http.StatusFound)
 		return
 	}
@@ -248,6 +287,14 @@ func (s *Service) PostAdminDerpRelaysEdit(w http.ResponseWriter, r *http.Request
 	}
 	if row.URL == "" {
 		http.Redirect(w, r, "/admin/derp/relays?err=url_required",
+			http.StatusFound)
+		return
+	}
+	// B401: same refusal on EDIT — correcting a row must not be a way to store a map
+	// document as a relay node. A legacy row that is already such a document can still
+	// be deleted or disabled; only saving it AS a relay is refused.
+	if kind, why := derphealth.ClassifyRelayURL(row.URL); kind != derphealth.RelayKindNode {
+		http.Redirect(w, r, "/admin/derp/relays?err="+urlMsg(fmt.Errorf("%s", why)),
 			http.StatusFound)
 		return
 	}

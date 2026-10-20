@@ -12,6 +12,92 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.144 — the relay list must say what each row is (B401)
+
+**Date:** 2026-10-20 · **Base:** `v1.5.143` → this tag · **Compatibility:** no migration, no
+route change, no config change. Two rows may simply be deleted or disabled after reading
+what they are.
+
+### Why
+
+The operator asked two precise questions:
+
+> «derp в форме пишет что не может skygate воспринимать его информацию нужен debug mode,
+> также в релеи висят еще два не рабочих derp что это и к чему»
+
+His `derp_relays` table held **three rows and only one is a relay**:
+
+```
+https://derp.skynas.ru:443                          the relay — healthy, 5 ms
+https://derp.skynas.ru:8443                         the LAN-direct HTTP port (B260.2 adds it)
+https://controlplane.tailscale.com/derpmap/default  a DERP MAP DOCUMENT (B265 migrated it
+                                                    from the legacy derp.external_urls key)
+```
+
+The page called the last two «skipped» and said nothing else — and **three** places had
+their own opinion about what counts as a relay (the map publisher's `isDerpMapURL`, the
+prober's `urlIsRelayNode`, and the page's own reason string), written at three different
+times.
+
+The second question is the metrics bridge: `derper` serves `/debug/vars` to loopback and
+tailnet sources only (upstream `tsweb.AllowDebugAccess`), so the container gets
+`403 debug access denied` and the traffic tiles read «—». The panel already ships the
+answer as a card (B315) with the exact command and a Test button; it was simply never
+configured on this host.
+
+And `derp.reachable` failed for a reason worth naming precisely: `derp.skynas.ru` resolved
+to `127.0.0.1` **inside the container** because the host's own `/etc/hosts` maps the relay
+name to loopback (trap #2) and Docker's resolver forwards that. The panel was dialling
+itself.
+
+### Fix
+
+* **One classifier** in `internal/derphealth`: `ClassifyRelayURL` → `node` | `derpmap` |
+  `other_path`, plus `ClassifyAltPort` for the same-host/other-port shape, decided from
+  the **data** and never from the notes text. Used by the relay page, the map status and
+  a new system test.
+* **The table now says what each row is**: a badge for a derpmap catalogue, for a non-DERP
+  path, and for an alternative port of the same host, each with RU+EN help explaining that
+  the catalogue is merged by headscale itself and the extra port is a LAN-only entry point
+  — **neither is a broken relay**, and disabling either changes nothing about a working one.
+* **The add and edit forms refuse a non-node URL** with the reason, so the live junk row
+  cannot be re-created by hand.
+* **`derp.reachable` names the cheap fix first**: `derp.probe_host` (a panel field, B296 —
+  the probes still speak the hostname as TLS SNI, so the certificate matches) and only then
+  the `extra_hosts` path, with the explicit `docker compose up -d --force-recreate skygate`
+  (a plain `restart` keeps the frozen `/etc/hosts`, trap #3).
+
+### The metrics bridge (what «debug mode» actually needs)
+
+`/admin/derp` → «Метрики релея» now reports whether the bridge is reachable, and the card
+carries the one-line command:
+
+```
+docker run -d --name skygate-derp-metrics --network host \
+  ghcr.io/barssky/skygate:v1.5.144 derp-metrics-proxy \
+  --listen 172.18.0.1:8767 --upstream 127.0.0.1:443 \
+  --server-name derp.skynas.ru --insecure
+```
+
+then put `http://172.18.0.1:8767` into the field and press Test.
+
+### Tests and contracts
+
+* `internal/derphealth/relaykind_b401_test.go` — the exact live URLs, port/host parsing,
+  the alternative-port shape, and the real relay that must **never** be flagged.
+* New system test `derp.relay_rows` (warning, `st.fix.derp_relay_rows`) — names every
+  non-node row and every duplicated host, and says to delete or disable them.
+* `scripts/check_b401_derp_truth.sh` — **27 contracts** (one classifier; the page labels
+  both shapes; both forms refuse; the loopback message names probe_host + `--force-recreate`;
+  the guard, the annotation, RU+EN remediation, registration and documentation).
+
+### Operator action
+
+1. `/admin/derp/relays` — delete or disable the two non-relay rows. Nothing else changes.
+2. Start the metrics bridge (command above) and press Test to get real traffic numbers.
+3. `derp.reachable` will keep failing until the container resolves the relay to a real
+   address: set the probe address on the same page (fastest), or add `extra_hosts` and
+   recreate the container.
 ## v1.5.143 — the ownership question must be asked where the answer lives (B400)
 
 **Date:** 2026-10-20 · **Base:** `v1.5.142` → this tag · **Compatibility:** no migration, no
