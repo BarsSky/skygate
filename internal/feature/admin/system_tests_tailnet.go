@@ -237,15 +237,16 @@ var tailnetProbePorts = []string{"22", "18022"}
 // 18022 is open we report that. The threshold logic
 // (60% for reachability, 40% for split) is unchanged.
 func probeTailnetNode(ctx context.Context, host string) (time.Duration, string, error) {
-	var lastErr error
-	for _, port := range tailnetProbePorts {
-		latency, err := probeExitNodeConnect(ctx, host, port)
-		if err == nil {
-			return latency, port, nil
-		}
-		lastErr = err
+	verdict, latency, port, err := probeTailnetNodeVerdict(ctx, host)
+	// B403: a REFUSAL proves the tailnet path works — the peer answered. Reporting it as
+	// "unreachable" is what turned three devices without sshd into «LIKELY TAILNET
+	// SPLIT» on the operator's installation. The caller prints this case as
+	// "path-ok (no sshd)" instead of a latency, so nothing claims a measurement it did
+	// not make. A FILTERED verdict is the only one that may be blamed on the tunnel.
+	if verdict.Reachable() {
+		return latency, port, nil
 	}
-	return 0, "", lastErr
+	return 0, "", err
 }
 
 // allNodesReachabilityTest is a TestRegistry entry. For
@@ -299,12 +300,22 @@ var allNodesReachabilityTest = SystemTestDef{
 		}
 		var probes []probe
 		var skipped []string
+		var devices []string
 		for _, n := range nodes {
 			if !n.Online {
 				continue
 			}
 			if skip[n.GivenName] {
 				skipped = append(skipped, n.GivenName)
+				continue
+			}
+			// B403: SSH is skygate's own contract only for the hosts it MANAGAGES
+			// (tag:dev-infra-*). A phone, a laptop or a Windows box never runs sshd, so
+			// probing one measures nothing about the tailnet — that is how three
+			// devices became a «LIKELY TAILNET SPLIT». They are counted and named, not
+			// failed.
+			if !tailnetNodeIsInfra(n) {
+				devices = append(devices, n.GivenName)
 				continue
 			}
 			ip := tailscaleIPFromNode(n.IPAddresses)
@@ -324,6 +335,13 @@ var allNodesReachabilityTest = SystemTestDef{
 			})
 		}
 		if len(probes) == 0 {
+			// B403: name the reason. "no probable Tailscale nodes" reads as "the tailnet
+			// is empty" even when it is full of devices that are simply not asked.
+			if len(devices) > 0 {
+				return SystemTestSkip, fmt.Sprintf(
+					"no managed host (tag:dev-infra-*) to probe (skipped %d: %v) — %d device(s) are online and are NOT asked: SSH is not part of a device's contract (%v)",
+					len(skipped), skipped, len(devices), devices)
+			}
 			return SystemTestSkip, fmt.Sprintf("no probable Tailscale nodes (skipped %d: %v)", len(skipped), skipped)
 		}
 		// Sort by hostname for stable output.
@@ -336,6 +354,13 @@ var allNodesReachabilityTest = SystemTestDef{
 		for _, p := range probes {
 			if p.err == nil {
 				available++
+				if p.latency == 0 {
+					// B403: the peer REFUSED the port. The path is proven; there is no
+					// latency to report and claiming "0s" would be a false measurement.
+					lines = append(lines, fmt.Sprintf("  %-15s %-20s path-ok (no sshd) :%s",
+						p.ip, p.hostname, p.port))
+					continue
+				}
 				lines = append(lines, fmt.Sprintf("  %-15s %-20s %s :%s",
 					p.ip, p.hostname, p.latency.Round(time.Millisecond), p.port))
 			} else {
@@ -352,6 +377,11 @@ var allNodesReachabilityTest = SystemTestDef{
 		if len(skipped) > 0 {
 			sort.Strings(skipped)
 			buf.WriteString(fmt.Sprintf("  (skipped %d non-probable nodes: %v)\n", len(skipped), skipped))
+		}
+		if len(devices) > 0 {
+			sort.Strings(devices)
+			buf.WriteString(fmt.Sprintf("  (not probed: %d device(s) online in the control plane — SSH is not part of a device's contract: %v)\n",
+				len(devices), devices))
 		}
 		for _, l := range lines {
 			buf.WriteString(l)
@@ -437,8 +467,16 @@ var vpsToVPSLatencyTest = SystemTestDef{
 			if ip == "" {
 				continue
 			}
-			// v1.3.15: 22 + 18022 fallback
-			latency, port, err := probeTailnetNode(ctx, ip)
+			// v1.3.15: 22 + 18022 fallback.
+			//
+			// B403: this test compares LATENCY, so it needs an actual connect — a
+			// refusal proves the path but yields no measurement, and treating its
+			// zero as a latency would make the host with no sshd look like the
+			// fastest node in the fleet. Ask the verdict, not just the error.
+			verdict, latency, port, err := probeTailnetNodeVerdict(ctx, ip)
+			if verdict != TailnetProbeOpen && err == nil {
+				err = fmt.Errorf("no latency measured (%s: %s)", verdict, "path answered but no SSH handshake")
+			}
 			probes = append(probes, probe{
 				ip:       ip,
 				hostname: n.GivenName,
@@ -543,6 +581,7 @@ var splitSuspectedTest = SystemTestDef{
 			return SystemTestFail, "list nodes: " + err.Error()
 		}
 		var online, reachable, unreachable []string
+		var devices []string
 		// v1.3.16: skip self + home-LAN-without-SSH
 		skip := tailnetSkipHostnames()
 		for _, n := range nodes {
@@ -550,6 +589,12 @@ var splitSuspectedTest = SystemTestDef{
 				continue
 			}
 			if skip[n.GivenName] {
+				continue
+			}
+			// B403: a device without sshd is not evidence of a split — only the hosts
+			// skygate manages over SSH can be asked this question.
+			if !tailnetNodeIsInfra(n) {
+				devices = append(devices, n.GivenName)
 				continue
 			}
 			ip := tailscaleIPFromNode(n.IPAddresses)
@@ -566,12 +611,27 @@ var splitSuspectedTest = SystemTestDef{
 			}
 		}
 		if len(online) == 0 {
+			// B403: "no online nodes" would be a lie when the tailnet has devices
+			// online and only the MANAGED hosts are missing — and it is the exact
+			// conflation this block removes. Say which fact holds.
+			if len(devices) > 0 {
+				return SystemTestSkip, fmt.Sprintf(
+					"no managed host (tag:dev-infra-*) online — %d device(s) are online and are NOT asked: SSH is not part of a device's contract (%v)",
+					len(devices), devices)
+			}
 			return SystemTestSkip, "no online Tailscale nodes"
 		}
 		pct := (len(reachable) * 100) / len(online)
 		var buf strings.Builder
-		buf.WriteString(fmt.Sprintf("%d online / %d reachable (%d%%) from skygate-host-1\n",
+		buf.WriteString(fmt.Sprintf("%d managed host(s) online / %d reachable (%d%%) from skygate-host-1\n",
 			len(online), len(reachable), pct))
+		// B403: only say it when there is something to say — an empty "[]"
+		// list reads like a failure of the test rather than a fact about the
+		// tailnet.
+		if len(devices) > 0 {
+			buf.WriteString(fmt.Sprintf("  (not asked: %d device(s) online in the control plane — SSH is not part of a device's contract: %v)\n",
+				len(devices), devices))
+		}
 		if len(unreachable) > 0 {
 			buf.WriteString("\nUNREACHABLE (headscale says online, TCP probe failed):\n")
 			for _, u := range unreachable {

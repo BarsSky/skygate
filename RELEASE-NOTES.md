@@ -12,6 +12,70 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.146 — a probe must say what it measured (B403)
+
+**Date:** 2026-10-20 · **Base:** `v1.5.145` → this tag · **Compatibility:** no migration,
+no route change, no config change. Two system tests report different (and correct)
+numbers.
+
+### Why
+
+The operator asked what needs attention; the catalogue answered with a false alarm:
+
+```
+tailnet.all_nodes_reachability :: 3/6 probable Tailscale nodes reachable (50%)
+  100.64.0.7  cyborg          dial tcp 100.64.0.7:18022: i/o timeout
+  100.64.0.8  skybars-secure  dial tcp 100.64.0.8:18022: i/o timeout
+  100.64.0.20 svyatoslava     dial tcp 100.64.0.20:18022: i/o timeout
+
+tailnet.split_suspected :: 6 online / 3 reachable (50%) → «LIKELY TAILNET SPLIT»
+```
+
+**None of that was about the tailnet.** Two semantic defects:
+
+1. **A refused connection proves the path works** — the peer answered. Only a timeout or
+   "no route" leaves the path unproven, and only that may be blamed on the tunnel. Every
+   error was reported as "unreachable", so a host with the port closed was
+   indistinguishable from a host behind a broken tunnel.
+2. **SSH is not a tailnet primitive.** skygate's SSH contract exists for the hosts it
+   **manages** — relays and gateway hosts carrying `tag:dev-infra-*` (it sets their
+   advertised routes over SSH). A phone, a laptop or a Windows box never runs sshd, so
+   probing one measures nothing about the tailnet. Two of the three "unreachable" nodes
+   are exactly such devices; the third (`svyatoslava`) answers its cluster heartbeat
+   every 30 seconds — a fact about sshd on that host, not about the tunnel.
+
+### Fix
+
+The probe now answers three questions and says which one it answered:
+
+| verdict | meaning |
+|---|---|
+| `open` | a connect completed — SSH is listening |
+| `closed` | the peer **answered and refused** — the PATH IS PROVEN, no service there |
+| `filtered` | timeout / no route / unreadable — **the only verdict that may be blamed on the tunnel** |
+
+`Reachable()` is `open|closed` — the single rule. A refusal on any candidate port is
+accepted as a proven path and printed as **«path-ok (no sshd)»** instead of inventing a
+`0s` latency. `tailnetProbeTargets` splits the online nodes into **managed hosts**
+(probed) and **devices** (counted, named, never failed); both tailnet tests consult it, so
+the split detector's denominator is what it can actually ask, and its output names the
+devices it did not ask — with the reason.
+
+### Tests and contracts
+
+* `internal/feature/admin/system_tests_tailnet_b403_test.go` — a refused connection is a
+  proven path; a timeout is the only blameable class; the three live devices produce
+  **zero** probe targets; the pre-existing skip list stays a third class.
+* `scripts/check_b403_probe_truth.sh` — **24 contracts** (one classifier; only managed
+  hosts probed; the path-ok case reported honestly; the split output names who was not
+  asked; registration and documentation).
+
+### Operator action
+
+The next run of `/admin/system_tests` will report the managed hosts (relays + gateway)
+instead of every device, and `tailnet.split_suspected` will stop calling three devices a
+split. `svyatoslava` will still be named — but now as what it is: `sshd` is not answering
+on that host while its control-plane heartbeat is fine.
 ## v1.5.145 — a heartbeat that arrives must beat a state that says it did not (B402)
 
 **Date:** 2026-10-20 · **Base:** `v1.5.144` → this tag · **Compatibility:** no migration, no

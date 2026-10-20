@@ -30,6 +30,14 @@ import (
 	"time"
 )
 
+// b403InfraTags marks a fixture node as a host skygate MANAGES over SSH.
+//
+// B403: only such hosts are probed by the tailnet tests, because a phone, a laptop or a
+// Windows box never runs sshd and its silence says nothing about the tunnel. A fixture
+// that expects a probe therefore has to say the host is managed — the tag is the same
+// signal the live installation carries on its relays and gateway hosts.
+var b403InfraTags = []string{"tag:dev-infra-relay"}
+
 // setUpTailnetSelfOverride pins tailnetSelfHostname to a
 // test-controlled value (otherwise it would call
 // `tailscale status --json` which doesn't exist in the
@@ -102,9 +110,9 @@ func TestAllNodesReachabilityTest_NoNodes_Skips(t *testing.T) {
 
 func TestAllNodesReachabilityTest_AllReachable_Passes(t *testing.T) {
 	url, _ := fakeHS(t, []fakeHSNode{
-		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
-		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
-		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
+		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true, Tags: b403InfraTags},
+		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true, Tags: b403InfraTags},
+		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true, Tags: b403InfraTags},
 	})
 	setUpServiceWithFakeHS(t, url)
 	setUpProbe(t, map[string]fakeProbeResult{
@@ -135,12 +143,12 @@ func TestAllNodesReachabilityTest_SplitScenario_FailsBelow60(t *testing.T) {
 	// meant to be probed).
 	setUpTailnetSelfOverride(t, "skygate-host-1")
 	url, _ := fakeHS(t, []fakeHSNode{
-		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
-		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
-		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
-		{ID: "4", GivenName: "<polygon-vm-hostname>", IPAddresses: []string{"100.64.0.15"}, Online: true},
-		{ID: "5", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true},
-		{ID: "6", GivenName: "relay-2", IPAddresses: []string{"100.64.0.8"}, Online: true},
+		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true, Tags: b403InfraTags},
+		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true, Tags: b403InfraTags},
+		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true, Tags: b403InfraTags},
+		{ID: "4", GivenName: "<polygon-vm-hostname>", IPAddresses: []string{"100.64.0.15"}, Online: true, Tags: b403InfraTags},
+		{ID: "5", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true, Tags: b403InfraTags},
+		{ID: "6", GivenName: "relay-2", IPAddresses: []string{"100.64.0.8"}, Online: true, Tags: b403InfraTags},
 		// home-LAN — these should be SKIPPED, not probed.
 		// We include them in the setup to verify the skip
 		// filter works.
@@ -188,11 +196,11 @@ func TestAllNodesReachabilityTest_OneUnreachable_Passes(t *testing.T) {
 	// = 80% > 60% → PASS, but unreachable node listed.
 	setUpTailnetSelfOverride(t, "skygate-host-1")
 	url, _ := fakeHS(t, []fakeHSNode{
-		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
-		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
-		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
-		{ID: "4", GivenName: "<polygon-vm-hostname>", IPAddresses: []string{"100.64.0.15"}, Online: true},
-		{ID: "5", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true},
+		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true, Tags: b403InfraTags},
+		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true, Tags: b403InfraTags},
+		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true, Tags: b403InfraTags},
+		{ID: "4", GivenName: "<polygon-vm-hostname>", IPAddresses: []string{"100.64.0.15"}, Online: true, Tags: b403InfraTags},
+		{ID: "5", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true, Tags: b403InfraTags},
 		// home-LAN — skipped
 		{ID: "6", GivenName: "skygate-host-1", IPAddresses: []string{"100.64.0.18"}, Online: true},
 		{ID: "7", GivenName: "skybars", IPAddresses: []string{"100.64.0.5"}, Online: true},
@@ -223,7 +231,7 @@ func TestAllNodesReachabilityTest_Offline_Ignored(t *testing.T) {
 	// An offline node is not probed — we only care about
 	// online nodes (matching the B98 pattern).
 	url, _ := fakeHS(t, []fakeHSNode{
-		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
+		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true, Tags: b403InfraTags},
 		{ID: "2", GivenName: "cyborg-offline", IPAddresses: []string{"100.64.0.13"}, Online: false},
 	})
 	setUpServiceWithFakeHS(t, url)
@@ -259,9 +267,9 @@ func TestAllNodesReachabilityTest_NoTailscaleIP_Skipped(t *testing.T) {
 
 func TestVpsToVPSLatencyTest_AllFast_Passes(t *testing.T) {
 	url, _ := fakeHS(t, []fakeHSNode{
-		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
-		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
-		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
+		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true, Tags: b403InfraTags},
+		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true, Tags: b403InfraTags},
+		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true, Tags: b403InfraTags},
 		{ID: "4", GivenName: "skybars", IPAddresses: []string{"100.64.0.5"}, Online: true}, // home — should be filtered
 	})
 	setUpServiceWithFakeHS(t, url)
@@ -287,9 +295,9 @@ func TestVpsToVPSLatencyTest_AllFast_Passes(t *testing.T) {
 func TestVpsToVPSLatencyTest_OneSlow_PassesWithWarning(t *testing.T) {
 	// slowThreshold = 1s. relay-3 at 1.5s is slow but not failed.
 	url, _ := fakeHS(t, []fakeHSNode{
-		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
-		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
-		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
+		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true, Tags: b403InfraTags},
+		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true, Tags: b403InfraTags},
+		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true, Tags: b403InfraTags},
 	})
 	setUpServiceWithFakeHS(t, url)
 	setUpProbe(t, map[string]fakeProbeResult{
@@ -309,8 +317,8 @@ func TestVpsToVPSLatencyTest_OneSlow_PassesWithWarning(t *testing.T) {
 
 func TestVpsToVPSLatencyTest_OneFailed_Fails(t *testing.T) {
 	url, _ := fakeHS(t, []fakeHSNode{
-		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
-		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
+		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true, Tags: b403InfraTags},
+		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true, Tags: b403InfraTags},
 	})
 	setUpServiceWithFakeHS(t, url)
 	setUpProbe(t, map[string]fakeProbeResult{
@@ -329,7 +337,7 @@ func TestVpsToVPSLatencyTest_OneFailed_Fails(t *testing.T) {
 
 func TestVpsToVPSLatencyTest_LessThanTwoVPS_Skips(t *testing.T) {
 	url, _ := fakeHS(t, []fakeHSNode{
-		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
+		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true, Tags: b403InfraTags},
 		{ID: "2", GivenName: "skybars", IPAddresses: []string{"100.64.0.5"}, Online: true},
 	})
 	setUpServiceWithFakeHS(t, url)
@@ -369,9 +377,9 @@ func TestSplitSuspectedTest_NoNodes_Skips(t *testing.T) {
 
 func TestSplitSuspectedTest_AllReachable_Passes(t *testing.T) {
 	url, _ := fakeHS(t, []fakeHSNode{
-		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
-		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
-		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
+		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true, Tags: b403InfraTags},
+		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true, Tags: b403InfraTags},
+		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true, Tags: b403InfraTags},
 	})
 	setUpServiceWithFakeHS(t, url)
 	setUpProbe(t, map[string]fakeProbeResult{
@@ -384,8 +392,11 @@ func TestSplitSuspectedTest_AllReachable_Passes(t *testing.T) {
 	if status != SystemTestPass {
 		t.Errorf("status = %v, want PASS (output: %s)", status, out)
 	}
-	if !strings.Contains(out, "3 online / 3 reachable (100%)") {
-		t.Errorf("output missing 3/3 summary:\n%s", out)
+	// B403 renegotiation: the denominator is "managed hosts" (the nodes whose SSH
+	// skygate owns), not every node in the tailnet — the old string counted devices
+	// that are never probed.
+	if !strings.Contains(out, "3 managed host(s) online / 3 reachable (100%)") {
+		t.Errorf("output missing the 3/3 managed-host summary:\n%s", out)
 	}
 }
 
@@ -400,10 +411,10 @@ func TestSplitSuspectedTest_OneUnreachable_Passes(t *testing.T) {
 	// "1 unreachable is OK" branch.
 	setUpTailnetSelfOverride(t, "skygate-host-1")
 	url, _ := fakeHS(t, []fakeHSNode{
-		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
-		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
-		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
-		{ID: "4", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true},
+		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true, Tags: b403InfraTags},
+		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true, Tags: b403InfraTags},
+		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true, Tags: b403InfraTags},
+		{ID: "4", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true, Tags: b403InfraTags},
 		// self + home-LAN — should be SKIPPED
 		{ID: "5", GivenName: "skygate-host-1", IPAddresses: []string{"100.64.0.18"}, Online: true},
 		{ID: "6", GivenName: "skybars", IPAddresses: []string{"100.64.0.5"}, Online: true},
@@ -436,12 +447,12 @@ func TestSplitSuspectedTest_ManyUnreachable_Fails(t *testing.T) {
 	// < 90% threshold + 3 unreachable ≥ 2 → FAIL.
 	setUpTailnetSelfOverride(t, "skygate-host-1")
 	url, _ := fakeHS(t, []fakeHSNode{
-		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true},
-		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true},
-		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true},
-		{ID: "4", GivenName: "<polygon-vm-hostname>", IPAddresses: []string{"100.64.0.15"}, Online: true},
-		{ID: "5", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true},
-		{ID: "6", GivenName: "relay-2", IPAddresses: []string{"100.64.0.8"}, Online: true},
+		{ID: "1", GivenName: "emilia", IPAddresses: []string{"100.64.0.3"}, Online: true, Tags: b403InfraTags},
+		{ID: "2", GivenName: "karolina", IPAddresses: []string{"100.64.0.2"}, Online: true, Tags: b403InfraTags},
+		{ID: "3", GivenName: "sharlotta", IPAddresses: []string{"100.64.0.4"}, Online: true, Tags: b403InfraTags},
+		{ID: "4", GivenName: "<polygon-vm-hostname>", IPAddresses: []string{"100.64.0.15"}, Online: true, Tags: b403InfraTags},
+		{ID: "5", GivenName: "relay-1", IPAddresses: []string{"100.64.0.7"}, Online: true, Tags: b403InfraTags},
+		{ID: "6", GivenName: "relay-2", IPAddresses: []string{"100.64.0.8"}, Online: true, Tags: b403InfraTags},
 		// home-LAN — should be SKIPPED
 		{ID: "7", GivenName: "skygate-host-1", IPAddresses: []string{"100.64.0.18"}, Online: true},
 		{ID: "8", GivenName: "skybars", IPAddresses: []string{"100.64.0.5"}, Online: true},
