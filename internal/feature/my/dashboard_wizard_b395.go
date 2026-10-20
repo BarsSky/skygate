@@ -147,6 +147,14 @@ func (s *Service) setupWizardReportCached(ctx context.Context) *setupstate.Repor
 		InfraUsername:    infraUsername,
 		PortalByUsername: s.portalUsersByName(ctx),
 		PortalOwn:        s.portalOwnUsernames(),
+		// B400 (2026-10-20) — WHERE THE OWNER ACTUALLY LIVES. On a tagged tailnet
+		// headscale books every device under the built-in `tagged-devices` user, so a
+		// wizard that asks headscale's user field can never see an owner: measured on
+		// the operator's installation, 14 devices with a correct node_owner_map row
+		// each, all reported as «не закреплены за пользователем панели». node_owner_map
+		// is the table the ACL, /my/*, the preference reconciler and «all my devices»
+		// read, so it is the one the wizard must ask first.
+		OwnerByNodeID: s.nodeOwnersByNodeID(),
 	}
 	var client setupstate.Client
 	if hs != nil {
@@ -189,6 +197,36 @@ func (s *Service) portalUsersByName(ctx context.Context) map[string]setupstate.P
 			out[strings.ToLower(strings.TrimSpace(name.String))] = setupstate.PortalUser{
 				ID: id.Int64, Name: name.String,
 			}
+		}
+	}
+	return out
+}
+
+// nodeOwnersByNodeID reads skygate's own attribution table, keyed by the headscale
+// node id — the same table `db.ListAllNodeOwners` feeds to the ACL, /my/* pages and
+// the preference reconciler. B400: the wizard asks THIS first, because on a tagged
+// tailnet headscale's own user column says `tagged-devices` for every device.
+//
+// A read failure is logged and yields an empty map, which makes the wizard fall back
+// to the headscale-user rule (the pre-B400 behaviour) instead of failing the page.
+func (s *Service) nodeOwnersByNodeID() map[string]setupstate.NodeOwner {
+	out := map[string]setupstate.NodeOwner{}
+	if s.dbc() == nil {
+		return out
+	}
+	owners, err := db.ListAllNodeOwners(s.dbc())
+	if err != nil {
+		log.Printf("setup-wizard: node_owner_map read: %v", err)
+		return out
+	}
+	for _, o := range owners {
+		id := strings.TrimSpace(o.NodeID)
+		if id == "" {
+			continue
+		}
+		out[id] = setupstate.NodeOwner{
+			Username: strings.TrimSpace(o.Username),
+			Tag:      strings.TrimSpace(o.Tag),
 		}
 	}
 	return out

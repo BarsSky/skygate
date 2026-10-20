@@ -32,6 +32,7 @@ package admin
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"fmt"
 	"net"
 	"net/url"
@@ -568,6 +569,83 @@ var b394Tests = []SystemTestDef{
 				msg += fmt.Sprintf(" (%d derived preference(s) are no longer enforced: %s)", len(derived), strings.Join(derived, ", "))
 			}
 			return SystemTestPass, msg
+		},
+	},
+	{
+		Name:        "ownership.attribution",
+		Category:    "ownership",
+		Description: "every device has a panel owner in node_owner_map (headscale's own user column says tagged-devices for a tagged node and is not an answer)",
+		Run: func(ctx context.Context) (SystemTestStatus, string) {
+			s := getTestService()
+			if s == nil || s.dbc() == nil {
+				return SystemTestSkip, "service or DB not initialised"
+			}
+			// B400 (2026-10-20) — THE QUESTION IS MEASURED WHERE THE RUNTIME ASKS IT.
+			//
+			// Measured on the operator's installation: all 14 devices carry a tag, so
+			// headscale books every one of them under the built-in user
+			// `tagged-devices`; the dashboard wizard compared that string with the
+			// panel's user list and therefore reported «14 node(s) have no panel owner
+			// yet» for nine months of a perfectly attributed tailnet. node_owner_map
+			// held a correct owner for all 14 the whole time.
+			//
+			// This test asks the same question the ACL, /my/*, the preference
+			// reconciler and «all my devices» ask — node_owner_map — so the panel can
+			// no longer report one thing here and behave as if it were another.
+			owners, err := db.ListAllNodeOwners(s.dbc())
+			if err != nil {
+				return SystemTestSkip, "read node_owner_map: " + err.Error()
+			}
+			byID := make(map[string]db.NodeOwner, len(owners))
+			for _, o := range owners {
+				if id := strings.TrimSpace(o.NodeID); id != "" {
+					byID[id] = o
+				}
+			}
+			portalByName := map[string]bool{}
+			if rows, perr := s.dbc().QueryContext(ctx, `SELECT lower(username) FROM portal_users`); perr == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var n sql.NullString
+					if err := rows.Scan(&n); err == nil && n.Valid {
+						portalByName[strings.TrimSpace(n.String)] = true
+					}
+				}
+			}
+			nodes, herr := s.HSGlobalFn().ListAllNodes()
+			if herr != nil {
+				return SystemTestSkip, "headscale did not answer: " + herr.Error()
+			}
+			unattributed := []string{}
+			unknownOwner := []string{}
+			for _, n := range nodes {
+				host := strings.TrimSpace(n.GivenName)
+				if host == "" {
+					host = strings.TrimSpace(n.ID)
+				}
+				o, ok := byID[strings.TrimSpace(n.ID)]
+				name := strings.ToLower(strings.TrimSpace(o.Username))
+				switch {
+				case !ok || name == "":
+					unattributed = append(unattributed, host)
+				case !portalByName[name]:
+					unknownOwner = append(unknownOwner,
+						fmt.Sprintf("%s → %q", host, o.Username))
+				}
+			}
+			switch {
+			case len(unattributed) == 0 && len(unknownOwner) == 0:
+				return SystemTestPass, fmt.Sprintf("all %d device(s) have a panel owner in node_owner_map (headscale's User column reads tagged-devices for tagged nodes — expected, and not used as the answer)", len(nodes))
+			case len(unattributed) > 0 && len(unknownOwner) > 0:
+				return SystemTestFail, fmt.Sprintf("%d device(s) have NO panel owner: %s; and %d name a panel user that does not exist: %s. Adopt them on /admin/devices (or /admin/users → «Adopt as skygate user»); unattributed devices are invisible to /my/* pages, «all my devices» rules and the preference reconciler.",
+					len(unattributed), strings.Join(unattributed, ", "), len(unknownOwner), strings.Join(unknownOwner, ", "))
+			case len(unattributed) > 0:
+				return SystemTestFail, fmt.Sprintf("%d device(s) have NO panel owner: %s. Adopt them on /admin/devices (or /admin/users → «Adopt as skygate user»); unattributed devices are invisible to /my/* pages, «all my devices» rules and the preference reconciler.",
+					len(unattributed), strings.Join(unattributed, ", "))
+			default:
+				return SystemTestFail, fmt.Sprintf("%d device(s) name a panel user that does not exist: %s. The runtime cannot honour that attribution — fix the username or re-adopt the device on /admin/devices.",
+					len(unknownOwner), strings.Join(unknownOwner, ", "))
+			}
 		},
 	},
 	{

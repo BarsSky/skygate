@@ -12,12 +12,101 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.143 — the ownership question must be asked where the answer lives (B400)
+
+**Date:** 2026-10-20 · **Base:** `v1.5.142` → this tag · **Compatibility:** no migration, no
+route change, no config change. One number changes: the dashboard's "devices without a
+panel owner" is now measured from the table that actually decides ownership.
+
+### Why
+
+The operator asked the right question, and the measurement answered it:
+
+> «сейчас все устройства принадлежат ему [tagged-devices] и различие идёт только строго
+> по тегам … в начальных настройках указывается что 14 устройств не определены за
+> пользователем … должен ли быть явный пользователь у устройств или они остаются за
+> tagged device?»
+
+```
+skygate node_owner_map : 14 rows, 0 unattributed   (skyadmin 6 · infra 5 · michail 3)
+headscale nodes list   : all 14 nodes → User = tagged-devices
+dashboard wizard       : «14 node(s) have no panel owner yet»
+```
+
+The wizard's rule was *"does headscale's `node.User` match a panel username?"*. A tagged
+node is **always** `tagged-devices` there — that is what tagging does — so the comparison
+could never succeed and the counter could never reach zero. It measured headscale's
+bookkeeping instead of the presence of an owner, while `node_owner_map` — the table the
+ACL, the `/my/*` pages, «all my devices» and the preference reconciler read — knew every
+device.
+
+**The answer to the question: both layers, and they are not interchangeable.**
+
+* **headscale's `tagged-devices` stays.** It is what a tag *does*. Dropping a tag to "get
+  the user back" breaks every per-device ACL rule (whose `src` is the tag), every `via`
+  pin and prefix ownership (B265/B272/B275), and the tag reconciler would put the tag
+  back on its next tick anyway.
+* **The explicit owner lives in `node_owner_map`,** and it was already complete here:
+  14 of 14 devices attributed.
+
+So this block fixes the *reader*, not the ownership model.
+
+### Fix
+
+The wizard now asks the sources in the order that reflects reality:
+
+1. **infrastructure** — a node carrying `tag:dev-infra-*`, recognised from **the tags the
+   node carries** (a relay tagged before `node_owner_map` caught up is still a relay);
+2. **`node_owner_map` by headscale node id** — the runtime's own answer, accepted only
+   when the panel still has that user, and otherwise surfaced as review rather than
+   silently accepted (an attribution the runtime cannot honour is not an attribution);
+3. **headscale's user** — **only** for a node that carries no tag, which keeps a
+   pre-tagging installation read correctly;
+4. otherwise the device genuinely awaits review — the case the counter exists for.
+
+The answer is visible where the decision is made: every node row carries `OwnerSource`
+and the table renders it as a **panel** / **headscale user** badge whose tooltip says a
+tagged node's `User` column is bookkeeping. The step text was corrected from «not attached
+to a panel user» to «attached to neither a panel user nor a headscale user».
+
+### The runtime reports the same question
+
+New system test `ownership.attribution` (severity **warning**, remediation
+`st.fix.ownership_attribution`, RU + EN) reads `node_owner_map` — not a second definition
+of "owner" — and names **both** classes the panel could previously hide: devices with no
+attribution at all, and attributions naming a panel user that does not exist.
+
+### Tests and contracts
+
+* `internal/setupstate/setupstate_b400_test.go` — eight shapes: the panel owner is the
+  answer even when headscale says `tagged-devices`; a tagged device without a row is
+  review; infra is recognised by tag; an untagged node falls back to headscale's user; an
+  attribution naming an unknown panel user is review; a nil map keeps the old rule; the
+  corrected count through `Detect`; and the step carries the measured number.
+* `internal/handlers/dashboard_wizard_render_b395_test.go` — the `OwnerSource` render
+  case, asserting the badges reach the **page** (B395.1's lesson: a field nobody renders
+  is not a fix).
+* `scripts/check_b400_attribution.sh` — **25 contracts** (A: the sources and their order;
+  B: the four shapes; C: infra by tag; D: visible labels + step text + render; E: the
+  system test, the annotation, RU+EN remediation, registration, documentation).
+
+### Operator action
+
+Nothing to change on your side. On `/admin/system_tests` the new `ownership.attribution`
+will report **all 14 devices attributed**; the dashboard step will stop claiming 14 are
+missing, and if a device ever really loses its owner the wizard and the test will name it
+— which is what the number was supposed to mean all along.
+
 ## v1.5.142 — an operator's «no» must survive the next tick (B399)
 
-**Date:** 2026-10-19 · **Base:** `v1.5.141` → this tag · **Compatibility:** V080 adds one
+**Date:** 2026-10-19 · **Base:** `v1.5.140` → this tag · **Compatibility:** V080 adds one
 additive column (`device_exit_node_prefs.opted_out`, default `0`) in **both** migration
 chains; an existing installation behaves exactly as before until somebody clears a
 preference by hand.
+
+**This release also ships B398** (documented in the section below): both blocks were
+pushed as one branch and CI verifies the head commit, so there is no separately tagged
+`v1.5.141` — its content is part of this tag.
 
 ### Why
 

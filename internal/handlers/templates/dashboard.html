@@ -136,7 +136,14 @@
         {{range $w.Nodes}}
         <tr>
           <td><code>{{.Hostname}}</code>{{if .Online}} <i class="fa-solid fa-circle" style="font-size:6px;color:#198754"></i>{{end}}</td>
-          <td>{{.Username}}</td>
+          <td>
+            {{if .Username}}{{.Username}}{{else}}<span class="text-muted">—</span>{{end}}
+            {{/* B400: say WHERE the owner came from. On a tagged tailnet headscale's
+                 own user column is `tagged-devices` for every device, so "no owner"
+                 and "owner in the panel" looked identical before. */}}
+            {{if eq .OwnerSource "panel"}}<span class="badge st-sev-info" title="{{t "wizard.owner_panel_help"}}">{{t "wizard.owner_panel"}}</span>
+            {{else if eq .OwnerSource "headscale"}}<span class="badge st-sev-warning" title="{{t "wizard.owner_headscale_help"}}">{{t "wizard.owner_headscale"}}</span>{{end}}
+          </td>
           <td>
             {{if .Infra}}<span class="badge st-sev-info">{{t "wizard.node_infra"}}</span>
             {{else if .NeedsReview}}<span class="badge st-sev-warning">{{t "wizard.node_review"}}</span>

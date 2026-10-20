@@ -123,6 +123,10 @@ var testAnnotations = map[string]testAnnotation{
 	// B398: a pin is not a fault, but it is a CONSTRAINT the operator must know about —
 	// the live report ("emilia → ничего не грузится") is what this key exists to prevent.
 	"exit_rules.exit_node_pin": {Severity: SeverityWarning, Remediation: "st.fix.exit_node_pin", DocLink: "/admin/exit-nodes"},
+	// B400: an unattributed device is not a crash — it is invisible to /my/* pages,
+	// «all my devices» rules and the preference reconciler, which is why it is a
+	// warning the operator can act on rather than a red critical.
+	"ownership.attribution": {Severity: SeverityWarning, Remediation: "st.fix.ownership_attribution", DocLink: "/admin/devices"},
 }
 
 // annotateTest fills Severity/Remediation/DocLink from the tables. Values already

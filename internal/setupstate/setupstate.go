@@ -92,16 +92,44 @@ type UserRow struct {
 type NodeRow struct {
 	NodeID   string
 	Hostname string
+	// Username is the HUMAN owner: the panel user this device is attributed to, or
+	// the headscale user for a node that has no tag yet (legacy). It is never
+	// headscale's `tagged-devices`, which owns every tagged node and says nothing
+	// about the person (B400).
 	Username string
 	Online   bool
 	Tags     []string
+	// OwnerSource names WHERE the owner came from, so the table can say it instead of
+	// leaving the operator to guess: OwnerSourcePanel (node_owner_map — the table the
+	// runtime actually uses), OwnerSourceHeadscale (the node carries no tag yet, so
+	// headscale's user field is still meaningful), or "" (nobody).
+	OwnerSource string
 	// Infra is true for a public node owned by the technical user: it is not an
 	// end-user device and the wizard must not offer to attribute it.
 	Infra bool
-	// NeedsReview is true when no panel user owns this node yet.
+	// NeedsReview is true when NO source names a panel user for this node — neither
+	// node_owner_map nor a still-meaningful headscale user. A tagged device with a
+	// node_owner_map row is NOT awaiting review, no matter what headscale's user
+	// column says (B400: the old rule read only that column, so on a fully tagged
+	// tailnet every device was permanently "unattributed" even with a perfect map).
 	NeedsReview bool
 	Ambiguity   string
 }
+
+// OwnerSource values for NodeRow.OwnerSource.
+const (
+	// OwnerSourcePanel — the attribution came from node_owner_map, i.e. the same row
+	// the ACL, /my/* pages and the preference reconciler read. This is the answer.
+	OwnerSourcePanel = "panel"
+	// OwnerSourceHeadscale — the node carries no tag, so headscale's user field is
+	// still the owner; kept so a pre-tagging installation reads correctly.
+	OwnerSourceHeadscale = "headscale"
+)
+
+// taggedDevicesUser is headscale's built-in owner of every TAGGED node. It is a
+// bookkeeping value, never a person: comparing it to panel usernames is precisely the
+// B400 defect (it can never match, so every device looked unattributed forever).
+const taggedDevicesUser = "tagged-devices"
 
 // StepState is the wizard's per-step verdict.
 type StepState string
@@ -184,6 +212,25 @@ type Config struct {
 	// this, every fresh installation looks populated because the panel created an
 	// admin user at boot.
 	PortalOwn []string
+	// OwnerByNodeID is skygate's own attribution table (`node_owner_map`), keyed by the
+	// headscale node id. It is where the answer lives — the ACL, /my/* pages, the
+	// preference reconciler and «all my devices» all read it — so the wizard must ask
+	// it FIRST and only fall back to headscale's user field for a node that carries no
+	// tag yet (B400).
+	//
+	// Nil is safe and means "no panel attribution available": every node then falls
+	// back to the headscale-user rule, i.e. the pre-B400 behaviour.
+	OwnerByNodeID map[string]NodeOwner
+}
+
+// NodeOwner is one row of node_owner_map as the wizard needs it.
+type NodeOwner struct {
+	// Username is the portal username the device is attributed to ("" = the row names
+	// nobody the panel knows).
+	Username string
+	// Tag is the tag skygate applied to the node (`tag:dev-<user>-<host>` or
+	// `tag:dev-infra-<host>`), used to recognise infrastructure devices.
+	Tag string
 }
 
 // isPortalOwn reports whether the control-plane user was created by skygate itself
@@ -323,6 +370,26 @@ func buildUserRows(users []headscale.HSUser, cfg Config) []UserRow {
 
 // buildNodeRows classifies every node: infrastructure (owned by the technical
 // user), owned by a panel user, or awaiting review. The counts land in rep.
+//
+// B400 (2026-10-20) — THE QUESTION IS ASKED IN THE RIGHT PLACE.
+//
+// The old rule was "does headscale's `node.User` match a panel username?". On a
+// tailnet where every device carries a tag (which is what makes per-device ACL rules,
+// `via` pins and prefix ownership work at all) headscale books ALL of them under the
+// built-in user `tagged-devices`, so that comparison could never succeed: the wizard
+// reported the operator's 14 fully-attributed devices as "not attached to a panel
+// user" forever, while `node_owner_map` held a correct owner for every one of them.
+//
+// The order is therefore:
+//  1. infrastructure — a `tag:dev-infra-*` device, or one the technical user owns;
+//  2. node_owner_map by node id — the SAME table the runtime consults. A row that
+//     names a portal user settles the question ("panel");
+//  3. headscale's user — ONLY for a node that carries no tag, where that field is
+//     still the truth ("headscale", the pre-tagging installation);
+//  4. otherwise it genuinely awaits review.
+//
+// A row that names a user the panel does not have is NOT silently accepted: it
+// awaits review, because that is an attribution the runtime cannot honour either.
 func buildNodeRows(nodes []headscale.NodeView, cfg Config, rep *Report) []NodeRow {
 	infra := strings.ToLower(strings.TrimSpace(cfg.InfraUsername))
 	out := make([]NodeRow, 0, len(nodes))
@@ -337,15 +404,45 @@ func buildNodeRows(nodes []headscale.NodeView, cfg Config, rep *Report) []NodeRo
 			Tags:     append([]string(nil), n.Tags...),
 		}
 		userLower := strings.ToLower(strings.TrimSpace(n.UserName))
+		owner, hasOwner := cfg.OwnerByNodeID[strings.TrimSpace(n.ID)]
+		ownerLower := strings.ToLower(strings.TrimSpace(owner.Username))
+		// Infrastructure is decided by the TAG THE NODE ACTUALLY CARRIES, not only by
+		// the panel row: a relay that was tagged before node_owner_map caught up is
+		// still a relay, and the wizard must not offer to attribute it.
+		infraTag := strings.HasPrefix(strings.ToLower(strings.TrimSpace(owner.Tag)), "tag:dev-infra-")
+		if !infraTag {
+			for _, tg := range n.Tags {
+				if strings.HasPrefix(strings.ToLower(strings.TrimSpace(tg)), "tag:dev-infra-") {
+					infraTag = true
+					break
+				}
+			}
+		}
 		switch {
-		case infra != "" && userLower == infra:
+		case infraTag || (infra != "" && (userLower == infra || ownerLower == infra)):
 			row.Infra = true
 			infraCount++
+		case hasOwner && ownerLower != "":
+			// node_owner_map is the runtime's answer; accept it only when the panel
+			// still knows that user.
+			if pu, ok := cfg.PortalByUsername[ownerLower]; ok && pu.ID != 0 {
+				row.Username = pu.Name
+				row.OwnerSource = OwnerSourcePanel
+			} else {
+				row.NeedsReview = true
+				pending++
+			}
+		case userLower == taggedDevicesUser:
+			// A tagged node with no node_owner_map row: headscale cannot name the
+			// person, so this is a real "review" — the case the counter exists for.
+			row.NeedsReview = true
+			pending++
 		default:
-			// Owned when the panel knows this headscale user; otherwise the
-			// operator must decide (never auto-attributed).
+			// Owned when the panel knows this headscale user; otherwise the operator
+			// must decide (never auto-attributed).
 			if pu, ok := cfg.PortalByUsername[userLower]; ok && pu.ID != 0 {
 				row.Username = pu.Name
+				row.OwnerSource = OwnerSourceHeadscale
 			} else {
 				row.NeedsReview = true
 				pending++

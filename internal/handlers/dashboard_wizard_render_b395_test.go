@@ -158,6 +158,39 @@ func TestDashboardWizard_ImportTableClassifiesNodes(t *testing.T) {
 	}
 }
 
+// TestDashboardWizard_OwnerSourceIsRendered pins B400 on the RENDER path, which is the
+// lesson B395.1 paid for: "the field exists" is satisfied by a page nobody can read.
+// A device attributed in the panel and one attributed by a still-untagged headscale
+// user must be distinguishable on the page, and the panel one must be labelled as such
+// even though headscale calls it `tagged-devices`.
+func TestDashboardWizard_OwnerSourceIsRendered(t *testing.T) {
+	rep := &setupstate.Report{
+		State:         setupstate.StatePopulated,
+		InfraNodes:    setupstate.Count{Value: 1, Known: true},
+		PendingReview: setupstate.Count{Value: 0, Known: true},
+		Nodes: []setupstate.NodeRow{
+			{NodeID: "9", Hostname: "skyworker", Username: "skyadmin", OwnerSource: setupstate.OwnerSourcePanel},
+			{NodeID: "42", Hostname: "old-phone", Username: "michail", OwnerSource: setupstate.OwnerSourceHeadscale},
+			{NodeID: "17", Hostname: "stray", NeedsReview: true},
+		},
+	}
+	body := renderDashboard(t, map[string]any{"Username": "admin", "IsAdmin": true, "Wizard": rep})
+	for _, marker := range []string{
+		"wizard.owner_panel",
+		"wizard.owner_headscale",
+		"skyadmin",
+		"michail",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Errorf("the node table is missing %q — the owner source is not visible", marker)
+		}
+	}
+	// The badge must reach the page through the translator, not as a raw key.
+	if strings.Contains(body, "wizard.owner_panel_help\"") && !strings.Contains(body, "[T:wizard.owner_panel_help]") {
+		t.Error("the owner-source tooltip did not go through the translator")
+	}
+}
+
 // TestDashboardWizard_AclWarningAndAiLink pins the two hints the operator asked for
 // by name: the ACL rewrite warning (with the snapshot) and the AI-helper link.
 func TestDashboardWizard_AclWarningAndAiLink(t *testing.T) {
