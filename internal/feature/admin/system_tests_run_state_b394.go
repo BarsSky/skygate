@@ -66,10 +66,23 @@ var (
 func (s *Service) CurrentSystemRun() *SystemRunState {
 	systemRunMu.Lock()
 	defer systemRunMu.Unlock()
-	return copySystemRun(systemRun)
+	return copySystemRunLocked(systemRun)
 }
 
-func copySystemRun(in *SystemRunState) *SystemRunState {
+// copySystemRunLocked copies the snapshot. THE CALLER MUST HOLD systemRunMu.
+//
+// B400.1 (2026-10-20) — the name says so because CI's `-race` run proved the rule the
+// hard way: StartSystemRun spawned `runTestsAsync` and then copied the state it had
+// just handed to that goroutine, so the copy raced the first write.
+//
+//	WARNING: DATA RACE
+//	Read at 0x00c00052c0d8 by goroutine 759   (copySystemRun)
+//	Previous write at 0x00c00052c0d8 by goroutine 761  (runTestsAsync)
+//
+// The read was harmless in practice (an empty Results slice) and invisible to every
+// non-race run — which is exactly why the copy now happens BEFORE the goroutine is
+// started, under the same lock that publishes the run.
+func copySystemRunLocked(in *SystemRunState) *SystemRunState {
 	if in == nil {
 		return nil
 	}
@@ -112,10 +125,14 @@ func (s *Service) StartSystemRun(userID int64, username, only string) (*SystemRu
 		Results: make([]SystemTestResult, 0, len(tests)),
 	}
 	systemRun = state
+	// B400.1: copy BEFORE the goroutine exists. The old order (spawn, then copy) was
+	// the data race `-race` caught: goroutine 761 writes the run it was handed while
+	// this goroutine reads it.
+	snap := copySystemRunLocked(state)
 	systemRunMu.Unlock()
 
 	go s.runTestsAsync(context.Background(), state.ID, tests, userID, username, only)
-	return copySystemRun(state), nil
+	return snap, nil
 }
 
 // testsForRun is the subset StartSystemRun will execute, in registry order.

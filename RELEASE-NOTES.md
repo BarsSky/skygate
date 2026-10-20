@@ -14,9 +14,16 @@
 
 ## v1.5.144 — the relay list must say what each row is (B401)
 
-**Date:** 2026-10-20 · **Base:** `v1.5.143` → this tag · **Compatibility:** no migration, no
+**Date:** 2026-10-20 · **Base:** `v1.5.142` → this tag · **Compatibility:** no migration, no
 route change, no config change. Two rows may simply be deleted or disabled after reading
 what they are.
+
+**This release also ships B400** (the ownership question, documented below as v1.5.143) and a
+race fix in the system-test runner (`B400.1`): `StartSystemRun` spawned the async runner and
+then copied the state it had just handed that goroutine, so CI's `-race` job reported
+`WARNING: DATA RACE` between `copySystemRun` and `runTestsAsync`. The snapshot is now taken
+**before** the goroutine starts, under the same mutex that publishes the run — the copy helper
+is `copySystemRunLocked` and its contract says the caller holds the lock.
 
 ### Why
 
