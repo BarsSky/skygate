@@ -59,6 +59,32 @@
   <h3><i class="fa-solid fa-cloud-arrow-up"></i> {{t "backup.config_title"}}</h3>
   <div class="sub" style="margin-bottom:0.75rem">{{t "backup.config_subtitle"}}.</div>
 
+  {{/* B404: say WHICH secret exists and HOW it is stored. Before
+       this block the page showed nothing at all about either, so
+       "configured" and "configured in plaintext" looked identical. */}}
+  {{if .Config.SecretError}}
+  <div class="alert alert-danger" style="font-size:12px">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <strong>{{t "backup.secret_unreadable_title"}}:</strong> {{.Config.SecretError}}.
+    {{t "backup.secret_unreadable_help"}}
+  </div>
+  {{end}}
+  {{if eq .Config.SecretsAtRest "plaintext"}}
+  <div class="alert" style="font-size:12px">
+    <i class="fa-solid fa-lock-open"></i>
+    {{t "backup.secret_plaintext_help" | safeHTML}}
+  </div>
+  {{else if eq .Config.SecretsAtRest "mixed"}}
+  <div class="alert" style="font-size:12px">
+    <i class="fa-solid fa-lock-open"></i>
+    {{t "backup.secret_mixed_help" | safeHTML}}
+  </div>
+  {{else if eq .Config.SecretsAtRest "encrypted"}}
+  <div class="sub" style="font-size:12px;margin-bottom:0.75rem">
+    <i class="fa-solid fa-lock"></i> {{t "backup.secret_encrypted_note"}}
+  </div>
+  {{end}}
+
   <form action="/admin/backup/config" method="POST" id="backup-config-form">
     <div class="form-grid">
       <div class="form-group">
@@ -96,11 +122,26 @@
                placeholder="backup_user">
       </div>
 
+      {{/* B404: the SMB password is WRITE-ONLY. Until v1.5.147
+           this input carried the stored password in its value
+           attribute, so every page load shipped the decrypted
+           password to the browser (a screenshot, a shared screen or
+           the browser's own form history was enough to leak it).
+           Only a fingerprint is shown now; an empty field keeps the
+           stored value. */}}
       <div class="form-group" data-show-for="smb">
         <label>{{t "backup.password"}}</label>
         <input type="password" name="password" class="form-control"
-               value="{{.Config.Password}}"
-               autocomplete="new-password">
+               value=""
+               autocomplete="new-password"
+               placeholder="{{if .SecretPasswordFP}}{{t "backup.secret_saved_prefix"}} {{.SecretPasswordFP}} — {{t "backup.secret_keep_hint"}}{{else}}{{t "backup.secret_not_set"}}{{end}}">
+        {{if .SecretPasswordFP}}
+        <div class="form-hint">{{t "backup.secret_fingerprint_help"}}</div>
+        <label class="form-check" style="font-weight:400;margin-top:0.35rem">
+          <input type="checkbox" name="clear_password" value="1">
+          {{t "backup.secret_clear"}}
+        </label>
+        {{end}}
       </div>
 
       <div class="form-group" data-show-for="sftp">
@@ -160,11 +201,22 @@
                placeholder="AKIA..." autocomplete="off">
       </div>
 
+      {{/* B404: same write-only contract as the SMB password above —
+           the S3 Secret Access Key must never be the value of an
+           input the browser can read back. */}}
       <div class="form-group" data-show-for="s3">
         <label>{{t "backup.s3_secret_key"}}</label>
         <input type="password" name="s3_secret_key" class="form-control"
-               value="{{.Config.S3SecretKey}}"
-               placeholder="••••••••" autocomplete="new-password">
+               value=""
+               autocomplete="new-password"
+               placeholder="{{if .SecretS3FP}}{{t "backup.secret_saved_prefix"}} {{.SecretS3FP}} — {{t "backup.secret_keep_hint"}}{{else}}{{t "backup.secret_not_set"}}{{end}}">
+        {{if .SecretS3FP}}
+        <div class="form-hint">{{t "backup.secret_fingerprint_help"}}</div>
+        <label class="form-check" style="font-weight:400;margin-top:0.35rem">
+          <input type="checkbox" name="clear_s3_secret_key" value="1">
+          {{t "backup.secret_clear"}}
+        </label>
+        {{end}}
       </div>
 
       <div class="form-group" data-show-for="s3">

@@ -2128,9 +2128,9 @@ func main() {
 	// 2026-07-14: Этап 14 v6 — in-app backup scheduler. Started
 	// after the DB is wired so Load() can read the config.
 	// Wire the config loader first so Unmount (called by
-	// RunBackup on its way out) can re-read the mountpoint.
+	// RunBackup on its way out) can re-read the mountpoint; LoadWithKey (B404) decrypts.
 	backup.SetConfigLoader(func() (*backup.Config, error) {
-		return backup.Load(d.DB)
+		return backup.LoadWithKey(d.DB, cfg.SecretKeyHex)
 	})
 	backupSched := &backup.Scheduler{
 		DB:       d,

@@ -12,6 +12,86 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.147 — a stored secret must not travel to the browser (B404)
+
+**Date:** 2026-10-21 · **Base:** `v1.5.146` → this tag · **Compatibility:** no migration,
+no config change, no route change. Existing backup credentials keep working unchanged;
+when `SKYGATE_SECRET_KEY` is set they become ciphertext on the next form save.
+
+### Why
+
+`/admin/backup` rendered **both** backup credentials as ordinary input values:
+
+```html
+<input type="password" name="password"      value="{{.Config.Password}}">
+<input type="password" name="s3_secret_key" value="{{.Config.S3SecretKey}}">
+```
+
+`type="password"` masks the **glyphs**, not the value: it sits in the DOM of every page
+load, so a screenshot, a shared screen, the browser's own form history or a password
+manager's «save this login?» prompt was enough to lift an SMB password or an S3 Secret
+Access Key off the panel. The same two values were also stored **verbatim** in
+`global_settings`, while the rest of the codebase already encrypts this class of value
+(`ha.dns.password_enc`, `portal_users.headscale_api_key_enc`, the OIDC client secret —
+all `db.EncryptForColumn`).
+
+**Removing the echo alone would have been worse than the bug:** the form is the write
+path, so an unchanged save would have silently **erased** both credentials. The block is
+therefore three contracts that only make sense together.
+
+### What changed
+
+1. **Write-only rendering.** The password and the S3 secret are never sent to the
+   browser. The page shows a **fingerprint** (`••••••••abcd` — the last four characters,
+   fully masked for short values) plus an explicit «Delete the saved secret» checkbox,
+   `autocomplete="new-password"`, and a placeholder that says «saved — leave empty to
+   keep». The detector scans the **whole** template tree, so the pattern cannot return
+   with a copied form.
+2. **Keep / replace / delete, one decision point.** `mergeSubmittedSecret`: an empty
+   field **keeps** the stored value, a ticked box deletes it, a typed value replaces it.
+   The «Test» button merges the stored secret too — otherwise every Test click after
+   this change would have reported a false authentication failure.
+3. **Encrypted at rest.** Values are written as `enc:v1:<base64>` (AES-256-GCM via
+   `internal/db`) when `SKYGATE_SECRET_KEY` is set:
+   * a **legacy plaintext** row keeps working and is upgraded on the next save — no
+     migration, no re-entry;
+   * the page **reports** how the secrets are stored, because plaintext storage must be a
+     warning and not a silent default;
+   * a ciphertext row read **without** the key is named and cleared instead of being
+     handed to `mount.cifs` as a password that would blame the NAS;
+   * a save **without** the key refuses to overwrite ciphertext rather than downgrading
+     it.
+
+Every panel and CLI path now goes through `LoadWithKey` / `SaveWithKey` — `backup-run`,
+`backup-show-config`, «Run now», the in-app scheduler toggle, the S3 download and the
+certificate-sync S3 config — so a cron-driven backup can no longer disagree with a
+panel-driven one about the same credential. `backup-show-config` additionally prints
+`secret_storage=` and `secret_error=`, and `backup-run` fails loudly with a named reason
+instead of mounting with an empty password.
+
+### Files
+
+`internal/backup/secrets_b404.go` (new), `internal/backup/config.go`
+(`LoadWithKey`/`SaveWithKey`, `writeSecretPairs`, `SecretsAtRest`, `SecretError`),
+`internal/feature/admin/backup_config.go` (`mergeSubmittedSecret`, key-aware paths),
+`internal/feature/admin/backup.go`, `internal/handlers/templates/admin/backup.html`,
+`internal/i18n/catalog_backup.go` (10 keys RU+EN), `cmd/skygate/main_subcommands.go`,
+`cmd/skygate/main_helpers.go`, `cmd/skygate/main.go`.
+
+**Tests:** `internal/backup/secrets_b404_test.go` (7 cases, real SQLite round trip) +
+`internal/feature/admin/backup_config_b404_test.go` (8 keep/replace/delete cases).
+**Contract:** `scripts/check_b404_secret_write_only.sh` — 42 assertions.
+
+### Live verify
+
+1. `/admin/backup` — the SMB password and S3 secret fields are **empty** with a
+   «saved: ••••••••XXXX» placeholder; viewing the page source shows no secret.
+2. Save the form unchanged → `sqlite3`/`psql` shows the credential still present.
+3. With `SKYGATE_SECRET_KEY` set, save again → the row reads `enc:v1:…` and the page says
+   the secrets are stored encrypted.
+4. Tick «Delete the saved secret» → the row is empty and the field says «not set».
+5. `skygate backup-show-config` prints `secret_storage=encrypted` (or `plaintext`).
+
 ## v1.5.146 — a probe must say what it measured (B403)
 
 **Date:** 2026-10-20 · **Base:** `v1.5.145` → this tag · **Compatibility:** no migration,
@@ -66,7 +146,7 @@ devices it did not ask — with the reason.
 * `internal/feature/admin/system_tests_tailnet_b403_test.go` — a refused connection is a
   proven path; a timeout is the only blameable class; the three live devices produce
   **zero** probe targets; the pre-existing skip list stays a third class.
-* `scripts/check_b403_probe_truth.sh` — **24 contracts** (one classifier; only managed
+* `scripts/check_b403_probe_truth.sh` — **25 contracts** (one classifier; only managed
   hosts probed; the path-ok case reported honestly; the split output names who was not
   asked; registration and documentation).
 
@@ -8985,7 +9065,7 @@ the "0 FAIL" contract of AGENTS §1.1):
 B281 adds `scripts/check_b281_ci_catalog_truth.sh` (33 contracts, registered as
 B281 and indexed in `AGENTS.md`), which is what makes "the catalog is green"
 a claim CI can no longer make without meaning it. Also renegotiated in the same
-pass: `check_b112.sh`'s three B38 assertions (only the first had been converted
+pass: `check_b112.sh`'s three B42 assertions (only the first had been converted
 to a marker window, so the other two pinned `verify_pre_deploy.sh` line numbers
 and reported a false `FAIL B112` as soon as `run_check` grew), `check_b268.sh`'s
 behavioural half (the applier chowns to root:root, so it now stubs `install` and

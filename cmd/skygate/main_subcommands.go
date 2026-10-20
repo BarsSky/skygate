@@ -71,16 +71,29 @@ func runBackupSubcommand() error {
 	// Wire the loader (same as the web server does) so
 	// the runner's Unmount path can re-read the
 	// mountpoint.
+	//
+	// B404: the CLI path must decrypt the credentials exactly
+	// like the web path does — a cron-driven `skygate backup-run`
+	// that loaded the raw ciphertext would fail every mount with
+	// an authentication error while the same config worked from
+	// the panel.
 	backup.SetConfigLoader(func() (*backup.Config, error) {
-		return backup.Load(d)
+		return backup.LoadWithKey(d, cfg.SecretKeyHex)
 	})
-	bc, err := backup.Load(d)
+	bc, err := backup.LoadWithKey(d, cfg.SecretKeyHex)
 	if err != nil {
 		return fmt.Errorf("load backup config: %w", err)
 	}
 	if !bc.Enabled {
 		log.Printf("backup-run: backup.enabled = false in DB; skipping (return 0 so cron doesn't alert)")
 		return nil
+	}
+	// B404: a credential that exists on disk but cannot be
+	// decrypted would otherwise reach the mount as an empty
+	// password and surface as "authentication failed" — a message
+	// that blames the NAS for a missing SKYGATE_SECRET_KEY.
+	if bc.SecretError != "" {
+		return fmt.Errorf("backup-run: stored credential is unreadable: %s (set SKYGATE_SECRET_KEY to the key the credential was saved with, or re-enter it on /admin/backup)", bc.SecretError)
 	}
 	log.Printf("backup-run: starting (protocol=%s, destination=%s, keep=%d)", bc.Protocol, bc.Destination, bc.KeepCount)
 	res, err := backup.RunBackup(d, bc)
@@ -124,7 +137,12 @@ func runBackupShowConfig() error {
 		return fmt.Errorf("db open: %w", err)
 	}
 	defer d.Close()
-	bc, err := backup.Load(d)
+	// B404: show-config prints only non-secret fields, but the
+	// load still goes through the key-aware path and reports an
+	// unreadable credential as its own line — this command is the
+	// operator's first stop when "backups stopped working", so it
+	// must not stay silent about the one thing that breaks them.
+	bc, err := backup.LoadWithKey(d, cfg.SecretKeyHex)
 	if err != nil {
 		return fmt.Errorf("load backup config: %w", err)
 	}
@@ -133,6 +151,10 @@ func runBackupShowConfig() error {
 	fmt.Printf("enabled=%t\n", bc.Enabled)
 	fmt.Printf("last_status=%s\n", bc.LastStatus)
 	fmt.Printf("last_archive=%s\n", bc.LastArchive)
+	fmt.Printf("secret_storage=%s\n", bc.SecretsAtRest)
+	if bc.SecretError != "" {
+		fmt.Printf("secret_error=%s\n", bc.SecretError)
+	}
 	return nil
 }
 

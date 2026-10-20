@@ -221,11 +221,23 @@ func isTailscaleRunningInContainer() bool {
 // destination bucket), and only the transport settings are shared.
 func certSyncS3Config(d *sql.DB, cfg *config.Config) (*backup.Config, error) {
 	out := &backup.Config{S3UseSSL: true}
+	keyHex := ""
 	if cfg != nil {
 		out.S3Bucket = strings.TrimSpace(cfg.CertSyncBucket)
+		keyHex = cfg.SecretKeyHex
 	}
 	if d != nil {
-		if dbc, err := backup.Load(d); err == nil && dbc != nil {
+		// B404: a stored S3 secret may be encrypted; ask for the
+		// decrypted form. An unreadable secret is returned as an
+		// error instead of being silently replaced by the env
+		// fallback below, because "the panel's credentials don't
+		// work" is a fact the operator must be told, not masked by
+		// a different credential that happens to exist.
+		dbc, err := backup.LoadWithKey(d, keyHex)
+		if err != nil {
+			return nil, fmt.Errorf("certsync: read backup S3 config: %w", err)
+		}
+		if dbc != nil {
 			out.S3Endpoint = strings.TrimSpace(dbc.S3Endpoint)
 			out.S3Region = strings.TrimSpace(dbc.S3Region)
 			out.S3AccessKey = dbc.S3AccessKey

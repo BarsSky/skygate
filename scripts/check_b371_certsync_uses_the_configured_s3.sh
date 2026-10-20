@@ -86,8 +86,16 @@ if grep -q 'func certSyncS3Config(d \*sql.DB, cfg \*config.Config)' "$HELPERS"; 
 else
   bad "A1: certSyncS3Config is gone or no longer receives the DB — certsync would read the environment alone again"
 fi
-if grep -q 'backup.Load(d)' "$HELPERS"; then
-  ok "A2: it reads the same global_settings the backup subsystem does (backup.Load)"
+# 2026-10-21 (B404): the panel's S3 secret key is stored ENCRYPTED
+# ("enc:v1:…") when SKYGATE_SECRET_KEY is set, so certsync must read it
+# through the key-aware loader — a plain backup.Load would hand an
+# "enc:v1:…" blob to the S3 client and fail every upload with an
+# authentication error. The contract is therefore "reads the panel's
+# stored settings through the loader that can decrypt them".
+if grep -q 'backup.LoadWithKey(d, keyHex)' "$HELPERS"; then
+  ok "A2: it reads the same global_settings the backup subsystem does (LoadWithKey — the S3 secret is encrypted at rest since B404)"
+elif grep -q 'backup.Load(d)' "$HELPERS"; then
+  bad "A2: certsync reads the panel's settings with the key-LESS loader — an encrypted S3 secret would be used as a raw enc:v1: blob (B404)"
 else
   bad "A2: the panel's S3 settings are not read — this is exactly the stale B147 premise"
 fi

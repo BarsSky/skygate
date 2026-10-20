@@ -248,6 +248,23 @@ type Config struct {
 	LastVerifyStatus  string // "ok" / "fail" / "" (empty = never run)
 	LastVerifyError   string // last verify failure message
 	LastVerifyArchive string // archive that was last verified
+
+	// --- B404 (v1.5.147): how the two secrets are stored. ---
+
+	// SecretsAtRest is one of SecretsAtRest{Empty,Plaintext,
+	// Encrypted,Mixed}: the form the two credential rows
+	// currently have on disk. Computed by LoadWithKey from the
+	// RAW values, never persisted, and rendered by the admin
+	// page — "configured" and "configured safely" are different
+	// facts and the operator is entitled to know which one holds.
+	SecretsAtRest string
+
+	// SecretError is non-empty when a stored secret exists but
+	// could not be decrypted (no SKYGATE_SECRET_KEY, or the key
+	// rotated). The affected fields are cleared so a form save
+	// cannot write the ciphertext back as plaintext; the page
+	// shows this and asks for the credential again.
+	SecretError string
 }
 
 // storage keys (kept as constants so the schema name is in
@@ -355,12 +372,29 @@ func Default() *Config {
 	}
 }
 
-// Load reads the config from global_settings. Missing keys
-// fall back to Default() values. The function never returns
-// nil — a Config with default values is returned on first
-// deploy (before the admin saves anything) so callers don't
-// need a nil check.
+// Load reads the config from global_settings and returns the two
+// secret fields exactly as they are STORED (possibly ciphertext).
+// Callers that need the usable credentials must use LoadWithKey —
+// in this tree that is every caller, because a raw "enc:v1:…"
+// blob fed to mount.cifs is not a password. Load stays for the
+// contract tests and for a caller with no master key configured;
+// it is LoadWithKey(d, "").
 func Load(d *sql.DB) (*Config, error) {
+	return LoadWithKey(d, "")
+}
+
+// LoadWithKey reads the config and decrypts the two persisted
+// secrets with SKYGATE_SECRET_KEY (keyHex; empty = no key).
+//
+// A value that cannot be decrypted is NOT returned as an empty
+// secret: the field is cleared so a form save cannot write the
+// ciphertext back as plaintext, Config.SecretError carries the
+// reason for the page, and the operator is told to re-enter the
+// credential. Config.SecretsAtRest reports how the values were
+// stored on disk (empty / plaintext / encrypted / mixed) so the
+// UI can warn about plaintext storage instead of implying that a
+// configured backup is necessarily an encrypted one.
+func LoadWithKey(d *sql.DB, keyHex string) (*Config, error) {
 	c := Default()
 	rows, err := d.Query(`SELECT key, value FROM global_settings WHERE key LIKE 'backup.%'`)
 	if err != nil {
@@ -462,6 +496,25 @@ func Load(d *sql.DB) (*Config, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	// B404: classify + decrypt the two secrets. The classification
+	// reads the values BEFORE decryption (that is the only place
+	// the storage form is still visible), and a decrypt failure is
+	// recorded, never swallowed.
+	c.SecretsAtRest = secretsAtRest(c.Password, c.S3SecretKey)
+	var secretErrs []string
+	if plain, err := decryptSecretField("backup.password", c.Password, keyHex); err != nil {
+		c.Password = ""
+		secretErrs = append(secretErrs, err.Error())
+	} else {
+		c.Password = plain
+	}
+	if plain, err := decryptSecretField("backup.s3_secret_key", c.S3SecretKey, keyHex); err != nil {
+		c.S3SecretKey = ""
+		secretErrs = append(secretErrs, err.Error())
+	} else {
+		c.S3SecretKey = plain
+	}
+	c.SecretError = strings.Join(secretErrs, "; ")
 	// Auto-detect protocol from the destination URL if the
 	// stored Protocol is empty (or invalid → already cleared
 	// above). Saves the admin a click when they paste a URL
@@ -472,11 +525,40 @@ func Load(d *sql.DB) (*Config, error) {
 	return c, nil
 }
 
+// decryptSecretField decrypts one stored secret and names the key
+// in the error message, so a failure says WHICH credential is
+// unusable instead of "decrypt failed".
+func decryptSecretField(settingKey, stored, keyHex string) (string, error) {
+	plain, err := DecryptSecret(stored, keyHex)
+	if err == nil {
+		return plain, nil
+	}
+	return "", fmt.Errorf("%s: %w", settingKey, err)
+}
+
 // Save writes the mutable fields to global_settings. Status
 // fields (LastRun, LastStatus, LastError, LastArchive) are
 // preserved as-is — the caller is expected to reload and
 // update them via SetStatus.
+//
+// Save does NOT encrypt; use SaveWithKey (which Save delegates to
+// with an empty key) so the two secrets reach the DB in the form
+// the process can actually read back.
 func Save(d *sql.DB, c *Config) error {
+	return SaveWithKey(d, c, "")
+}
+
+// SaveWithKey writes the mutable fields, encrypting the two
+// persisted secrets with SKYGATE_SECRET_KEY (keyHex; empty = no
+// master key, values stay plaintext).
+//
+// It refuses to DOWNGRADE: if a stored secret is ciphertext and
+// this process has no key, writing the (necessarily empty) field
+// would either wipe the credential or replace ciphertext with
+// plaintext. Both are silent data loss on a host that merely
+// forgot to export SKYGATE_SECRET_KEY, so the save fails with an
+// error naming the key and leaves the stored value untouched.
+func SaveWithKey(d *sql.DB, c *Config, keyHex string) error {
 	if c == nil {
 		return errors.New("nil config")
 	}
@@ -525,6 +607,13 @@ func Save(d *sql.DB, c *Config) error {
 		return err
 	}
 	defer tx.Rollback()
+	// B404: the two secrets are written encrypted (and refuse a
+	// silent downgrade). Done inside the same transaction as the
+	// rest of the config so a refused downgrade cannot leave the
+	// form half-saved.
+	if err := writeSecretPairs(tx, pairs, c, keyHex); err != nil {
+		return err
+	}
 	// 2026-08-05 v0.33.1.12: dispatch the 2 "?" placeholders
 	// (SQLite → pgx PG) and swap strftime for the per-backend
 	// nowUnixSQL() helper (SQLite has strftime; PG has the
@@ -543,6 +632,47 @@ func Save(d *sql.DB, c *Config) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// writeSecretPairs replaces the two plaintext secret entries in
+// pairs with their STORED form — ciphertext when a master key is
+// configured, plaintext otherwise — and refuses a silent
+// downgrade of an already-encrypted row.
+func writeSecretPairs(tx *sql.Tx, pairs map[string]string, c *Config, keyHex string) error {
+	fields := []struct {
+		key   string
+		plain string
+	}{
+		{keyPassword, c.Password},
+		{keyS3SecretKey, c.S3SecretKey},
+	}
+	var blocked []string
+	for _, f := range fields {
+		var stored string
+		err := tx.QueryRow(
+			`SELECT value FROM global_settings WHERE key = `+db.PlaceholdersList(1), f.key,
+		).Scan(&stored)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read %s: %w", f.key, err)
+		}
+		// No master key + a ciphertext row: this process cannot
+		// read the value it is about to overwrite, so it must not
+		// overwrite it. The caller gets a named error and the
+		// transaction rolls back.
+		if keyHex == "" && IsCiphertextSecret(stored) {
+			blocked = append(blocked, f.key)
+			continue
+		}
+		enc, err := EncryptSecretOptional(f.plain, keyHex)
+		if err != nil {
+			return fmt.Errorf("encrypt %s: %w", f.key, err)
+		}
+		pairs[f.key] = enc
+	}
+	if len(blocked) > 0 {
+		return fmt.Errorf("%w (refusing to overwrite %s)", ErrSecretKeyMissing, strings.Join(blocked, ", "))
+	}
+	return nil
 }
 
 // SetStatus updates only the last_run / last_status /

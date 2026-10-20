@@ -43,6 +43,27 @@ func backupConfigRedirect(w http.ResponseWriter, r *http.Request, okMsg, errMsg 
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
+// mergeSubmittedSecret implements the write-only contract for one
+// credential field (B404):
+//
+//	non-empty submitted value      → replace
+//	empty + clearField ticked "1"  → delete
+//	empty + no clear flag          → keep the stored value
+//
+// The third case is the one that matters: the form no longer
+// prefills the secret, so a plain "Save" must not be read as
+// "erase the password". An empty clearField name means the caller
+// has no clear box (the Test path) and can never delete.
+func mergeSubmittedSecret(r *http.Request, field, clearField, stored string) string {
+	if v := r.FormValue(field); v != "" {
+		return v
+	}
+	if clearField != "" && r.FormValue(clearField) == "1" {
+		return ""
+	}
+	return stored
+}
+
 // GetAdminBackupConfig serves the page. The config
 // fields are passed to the template via the same
 // "Backups" + new "Config" + "TestResult" keys so the
@@ -58,18 +79,24 @@ func (s *Service) GetAdminBackupConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	cfg, err := backup.Load(s.dbc())
+	// B404: the two credentials are loaded decrypted and rendered
+	// ONLY as fingerprints — the template no longer puts a
+	// password into a value="" attribute, so a screenshot or a
+	// "save this login?" prompt cannot capture it.
+	cfg, err := backup.LoadWithKey(s.dbc(), s.SecretKeyHex)
 	if err != nil {
 		http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	lang := s.I18n.LangFromRequest(r)
 	data := map[string]any{
-		"Page":         "admin/backup",
-		"Config":       cfg,
-		"Protocols":    backup.AllProtocols,
-		"FlashSuccess": r.URL.Query().Get("ok"),
-		"FlashError":   r.URL.Query().Get("err"),
+		"Page":             "admin/backup",
+		"Config":           cfg,
+		"Protocols":        backup.AllProtocols,
+		"SecretPasswordFP": backup.SecretFingerprint(cfg.Password),
+		"SecretS3FP":       backup.SecretFingerprint(cfg.S3SecretKey),
+		"FlashSuccess":     r.URL.Query().Get("ok"),
+		"FlashError":       r.URL.Query().Get("err"),
 	}
 	_ = lang
 	// Reuse the same page template. The destination &
@@ -149,6 +176,19 @@ func (s *Service) PostAdminBackupConfig(w http.ResponseWriter, r *http.Request) 
 	// backup creation, or vice versa.
 	cfg.InAppVerifyEnabled = r.FormValue("in_app_verify_enabled") == "1"
 
+	// B404: the password + S3 secret are WRITE-ONLY in the form
+	// (the page cannot prefill them any more), so an empty field
+	// means "keep what is stored" unless the operator ticked the
+	// matching "clear" box. Without this the first save after the
+	// template change would silently erase both credentials.
+	stored, storedErr := backup.LoadWithKey(s.dbc(), s.SecretKeyHex)
+	if storedErr != nil {
+		backupConfigRedirect(w, r, "", "Load config: "+storedErr.Error())
+		return
+	}
+	cfg.Password = mergeSubmittedSecret(r, "password", "clear_password", stored.Password)
+	cfg.S3SecretKey = mergeSubmittedSecret(r, "s3_secret_key", "clear_s3_secret_key", stored.S3SecretKey)
+
 	// Keep count.
 	kcStr := strings.TrimSpace(r.FormValue("keep_count"))
 	if kcStr != "" {
@@ -179,7 +219,7 @@ func (s *Service) PostAdminBackupConfig(w http.ResponseWriter, r *http.Request) 
 		backupConfigRedirect(w, r, "", i18n.Tf(lang, "backup.test_failed", err.Error()))
 		return
 	}
-	if err := backup.Save(s.dbc(), cfg); err != nil {
+	if err := backup.SaveWithKey(s.dbc(), cfg, s.SecretKeyHex); err != nil {
 		backupConfigRedirect(w, r, "", "Save failed: "+err.Error())
 		return
 	}
@@ -202,11 +242,24 @@ func (s *Service) PostAdminBackupTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := s.I18n.LangFromRequest(r)
+	// B404: the test path probes with what the operator just
+	// typed, falling back to the STORED credential for the
+	// fields the write-only form leaves empty (a "Test" click on
+	// an unchanged form would otherwise test with an empty
+	// password and report a misleading auth failure). Best-effort
+	// on purpose: a load error must not block a test of the
+	// values the operator can see.
+	var storedPassword, storedS3Secret string
+	if stored, serr := backup.LoadWithKey(s.dbc(), s.SecretKeyHex); serr == nil && stored != nil {
+		storedPassword = stored.Password
+		storedS3Secret = stored.S3SecretKey
+	}
 	cfg := &backup.Config{
 		Destination: strings.TrimSpace(r.FormValue("destination")),
 		Protocol:    backup.Protocol(strings.TrimSpace(r.FormValue("protocol"))),
 		Mountpoint:  strings.TrimSpace(r.FormValue("mountpoint")),
 		Username:    strings.TrimSpace(r.FormValue("username")),
+		Password:    mergeSubmittedSecret(r, "password", "", storedPassword),
 		SSHKeyPath:  strings.TrimSpace(r.FormValue("ssh_key_path")),
 		// 2026-08-12 v1.3.8: S3 fields on
 		// the test path. We copy them
@@ -216,7 +269,7 @@ func (s *Service) PostAdminBackupTest(w http.ResponseWriter, r *http.Request) {
 		S3Endpoint:  strings.TrimSpace(r.FormValue("s3_endpoint")),
 		S3Region:    strings.TrimSpace(r.FormValue("s3_region")),
 		S3AccessKey: strings.TrimSpace(r.FormValue("s3_access_key")),
-		S3SecretKey: r.FormValue("s3_secret_key"),
+		S3SecretKey: mergeSubmittedSecret(r, "s3_secret_key", "", storedS3Secret),
 		S3Bucket:    strings.TrimSpace(r.FormValue("s3_bucket")),
 		S3Prefix:    strings.TrimSpace(r.FormValue("s3_prefix")),
 		S3UseSSL:    r.FormValue("s3_use_ssl") == "1",
@@ -262,9 +315,17 @@ func (s *Service) PostAdminBackupRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	cfg, err := backup.Load(s.dbc())
+	// B404: "Run now" uses the STORED credentials (that is the
+	// whole point of the button — prove the saved config works),
+	// so it must decrypt them. An unreadable secret is reported
+	// before the run starts, not as a mount authentication error.
+	cfg, err := backup.LoadWithKey(s.dbc(), s.SecretKeyHex)
 	if err != nil {
 		backupConfigRedirect(w, r, "", "Load config: "+err.Error())
+		return
+	}
+	if cfg.SecretError != "" {
+		backupConfigRedirect(w, r, "", "Stored credential is unreadable: "+cfg.SecretError)
 		return
 	}
 	lang := s.I18n.LangFromRequest(r)
@@ -390,13 +451,17 @@ func (s *Service) PostAdminBackupToggle(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	lang := s.I18n.LangFromRequest(r)
-	cfg, err := backup.Load(s.dbc())
+	// B404: this write-back path re-saves the WHOLE config, so it
+	// must decrypt before it encrypts — a raw ciphertext loaded
+	// here would be re-written as the "password" of an encrypted
+	// value, and the credential would be lost.
+	cfg, err := backup.LoadWithKey(s.dbc(), s.SecretKeyHex)
 	if err != nil {
 		backupConfigRedirect(w, r, "", "Load config: "+err.Error())
 		return
 	}
 	cfg.InAppEnabled = r.FormValue("enabled") == "1"
-	if err := backup.Save(s.dbc(), cfg); err != nil {
+	if err := backup.SaveWithKey(s.dbc(), cfg, s.SecretKeyHex); err != nil {
 		backupConfigRedirect(w, r, "", "Save failed: "+err.Error())
 		return
 	}

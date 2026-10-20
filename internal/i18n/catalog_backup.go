@@ -48,20 +48,32 @@ var ruBackup = map[string]string{
 	// shows these when the protocol dropdown
 	// is set to "s3" (driven by the JS
 	// data-show-for="s3" on each .form-group).
-	"backup.s3_endpoint":         "URL эндпоинта S3",
-	"backup.s3_endpoint_help":    "Например: https://s3.amazonaws.com, https://storage.yandexcloud.net, http://minio.local:9000. Пусто = AWS по умолчанию",
-	"backup.s3_region":           "Регион",
-	"backup.s3_region_help":      "Например us-east-1, ru-central1. Для MinIO — любое непустое значение",
-	"backup.s3_access_key":       "Ключ доступа (Access Key ID)",
-	"backup.s3_secret_key":       "Секретный ключ (Secret Access Key)",
-	"backup.s3_bucket":           "Bucket (имя корзины)",
-	"backup.s3_bucket_help":      "Корзина должна существовать. Скрипт не создаёт её",
-	"backup.s3_prefix":           "Префикс (опц.)",
-	"backup.s3_prefix_help":      "Например backups/skygate-prod/. Пусто = корень корзины",
-	"backup.s3_staging_dir":      "Локальная staging-папка",
-	"backup.s3_staging_dir_help": "Куда skygate пишет tar.gz перед загрузкой в S3. По умолчанию /var/lib/skygate/backup-staging",
-	"backup.s3_use_ssl":          "Использовать HTTPS",
-	"backup.s3_test_ok":          "S3 доступен: %s · корзина: %s · регион: %s",
+	"backup.s3_endpoint":      "URL эндпоинта S3",
+	"backup.s3_endpoint_help": "Например: https://s3.amazonaws.com, https://storage.yandexcloud.net, http://minio.local:9000. Пусто = AWS по умолчанию",
+	"backup.s3_region":        "Регион",
+	"backup.s3_region_help":   "Например us-east-1, ru-central1. Для MinIO — любое непустое значение",
+	"backup.s3_access_key":    "Ключ доступа (Access Key ID)",
+	"backup.s3_secret_key":    "Секретный ключ (Secret Access Key)",
+	// B404 (v1.5.147): the two credentials are write-only in the
+	// form and (when SKYGATE_SECRET_KEY is set) encrypted at rest.
+	"backup.secret_saved_prefix":     "Сохранён:",
+	"backup.secret_keep_hint":        "оставьте поле пустым, чтобы не менять",
+	"backup.secret_not_set":          "не задан — введите значение",
+	"backup.secret_fingerprint_help": "Показаны только последние 4 символа сохранённого значения — сам секрет в браузер не отправляется.",
+	"backup.secret_clear":            "Удалить сохранённый секрет",
+	"backup.secret_unreadable_title": "Сохранённый секрет не читается",
+	"backup.secret_unreadable_help":  "Укажите SKYGATE_SECRET_KEY, которым секрет был сохранён, либо введите секрет заново.",
+	"backup.secret_plaintext_help":   "Секрет хранится в базе <strong>открытым текстом</strong>. Задайте SKYGATE_SECRET_KEY — при следующем сохранении формы он будет записан зашифрованным (AES-256-GCM).",
+	"backup.secret_mixed_help":       "Один из секретов хранится зашифрованным, другой — <strong>открытым текстом</strong>. Задайте SKYGATE_SECRET_KEY и сохраните форму, чтобы зашифровать оба.",
+	"backup.secret_encrypted_note":   "Секреты хранятся зашифрованными (AES-256-GCM, ключ SKYGATE_SECRET_KEY).",
+	"backup.s3_bucket":               "Bucket (имя корзины)",
+	"backup.s3_bucket_help":          "Корзина должна существовать. Скрипт не создаёт её",
+	"backup.s3_prefix":               "Префикс (опц.)",
+	"backup.s3_prefix_help":          "Например backups/skygate-prod/. Пусто = корень корзины",
+	"backup.s3_staging_dir":          "Локальная staging-папка",
+	"backup.s3_staging_dir_help":     "Куда skygate пишет tar.gz перед загрузкой в S3. По умолчанию /var/lib/skygate/backup-staging",
+	"backup.s3_use_ssl":              "Использовать HTTPS",
+	"backup.s3_test_ok":              "S3 доступен: %s · корзина: %s · регион: %s",
 	// 2026-08-12 v1.3.8 (BL-18): the in-app
 	// /admin/backup/download-s3 button + its
 	// audit log row.
@@ -167,20 +179,32 @@ var enBackup = map[string]string{
 	// shows these when the protocol dropdown
 	// is set to "s3" (driven by the JS
 	// data-show-for="s3" on each .form-group).
-	"backup.s3_endpoint":         "S3 endpoint URL",
-	"backup.s3_endpoint_help":    "e.g. https://s3.amazonaws.com, https://storage.yandexcloud.net, http://minio.local:9000. Empty = AWS default",
-	"backup.s3_region":           "Region",
-	"backup.s3_region_help":      "e.g. us-east-1, ru-central1. MinIO accepts any non-empty value",
-	"backup.s3_access_key":       "Access Key ID",
-	"backup.s3_secret_key":       "Secret Access Key",
-	"backup.s3_bucket":           "Bucket (name)",
-	"backup.s3_bucket_help":      "The bucket must already exist. The script does not create it",
-	"backup.s3_prefix":           "Prefix (optional)",
-	"backup.s3_prefix_help":      "e.g. backups/skygate-prod/. Empty = root of the bucket",
-	"backup.s3_staging_dir":      "Local staging dir",
-	"backup.s3_staging_dir_help": "Where skygate writes the tarball before uploading to S3. Default /var/lib/skygate/backup-staging",
-	"backup.s3_use_ssl":          "Use HTTPS",
-	"backup.s3_test_ok":          "S3 reachable: %s · bucket: %s · region: %s",
+	"backup.s3_endpoint":      "S3 endpoint URL",
+	"backup.s3_endpoint_help": "e.g. https://s3.amazonaws.com, https://storage.yandexcloud.net, http://minio.local:9000. Empty = AWS default",
+	"backup.s3_region":        "Region",
+	"backup.s3_region_help":   "e.g. us-east-1, ru-central1. MinIO accepts any non-empty value",
+	"backup.s3_access_key":    "Access Key ID",
+	"backup.s3_secret_key":    "Secret Access Key",
+	// B404 (v1.5.147): the two credentials are write-only in the
+	// form and (when SKYGATE_SECRET_KEY is set) encrypted at rest.
+	"backup.secret_saved_prefix":     "Saved:",
+	"backup.secret_keep_hint":        "leave the field empty to keep it",
+	"backup.secret_not_set":          "not set — enter a value",
+	"backup.secret_fingerprint_help": "Only the last 4 characters of the saved value are shown — the secret itself is never sent to the browser.",
+	"backup.secret_clear":            "Delete the saved secret",
+	"backup.secret_unreadable_title": "The saved secret cannot be read",
+	"backup.secret_unreadable_help":  "Set SKYGATE_SECRET_KEY to the key the secret was saved with, or enter the secret again.",
+	"backup.secret_plaintext_help":   "The secret is stored in the database as <strong>plaintext</strong>. Set SKYGATE_SECRET_KEY and the next form save will store it encrypted (AES-256-GCM).",
+	"backup.secret_mixed_help":       "One secret is stored encrypted and the other as <strong>plaintext</strong>. Set SKYGATE_SECRET_KEY and save the form to encrypt both.",
+	"backup.secret_encrypted_note":   "The secrets are stored encrypted (AES-256-GCM, SKYGATE_SECRET_KEY).",
+	"backup.s3_bucket":               "Bucket (name)",
+	"backup.s3_bucket_help":          "The bucket must already exist. The script does not create it",
+	"backup.s3_prefix":               "Prefix (optional)",
+	"backup.s3_prefix_help":          "e.g. backups/skygate-prod/. Empty = root of the bucket",
+	"backup.s3_staging_dir":          "Local staging dir",
+	"backup.s3_staging_dir_help":     "Where skygate writes the tarball before uploading to S3. Default /var/lib/skygate/backup-staging",
+	"backup.s3_use_ssl":              "Use HTTPS",
+	"backup.s3_test_ok":              "S3 reachable: %s · bucket: %s · region: %s",
 	// 2026-08-12 v1.3.8 (BL-18): the in-app
 	// /admin/backup/download-s3 button + its
 	// audit log row.

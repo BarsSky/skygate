@@ -209,9 +209,19 @@ func (s *Service) GetAdminBackup(w http.ResponseWriter, r *http.Request) {
 	// template). We do this here so the legacy
 	// /admin/backup URL keeps working — admins can
 	// bookmark either.
-	if cfg, err := backup.Load(s.dbc()); err == nil {
+	// B404: load the config through the key-aware path — the
+	// template renders a fingerprint of the stored secrets, never
+	// the secrets themselves, and it can only do that if it has
+	// the decrypted values. A load error is rendered (the page
+	// still works without the card) instead of being swallowed
+	// into a missing "Destination & schedule" section.
+	if cfg, err := backup.LoadWithKey(s.dbc(), s.SecretKeyHex); err == nil {
 		data["Config"] = cfg
 		data["Protocols"] = backup.AllProtocols
+		data["SecretPasswordFP"] = backup.SecretFingerprint(cfg.Password)
+		data["SecretS3FP"] = backup.SecretFingerprint(cfg.S3SecretKey)
+	} else {
+		data["ConfigError"] = err.Error()
 	}
 
 	// List existing backups
@@ -496,7 +506,11 @@ func (s *Service) GetAdminBackupDownloadS3(w http.ResponseWriter, r *http.Reques
 	// the form value, so a crafted `archive` param
 	// can't trick us into fetching from a different
 	// bucket.
-	cfg, err := backup.Load(s.dbc())
+	//
+	// B404: the secret is encrypted at rest, so this read needs
+	// the master key — an unreadable secret is a hard error here
+	// (the download cannot proceed with an empty credential).
+	cfg, err := backup.LoadWithKey(s.dbc(), s.SecretKeyHex)
 	if err != nil {
 		http.Error(w, "load backup config: "+err.Error(), http.StatusInternalServerError)
 		return
