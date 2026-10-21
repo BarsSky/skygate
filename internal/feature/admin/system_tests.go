@@ -593,7 +593,14 @@ var TestRegistry = []SystemTestDef{
 				}
 			}
 			if configured == 0 {
-				return SystemTestFail, "no integration keys configured (DERP / headplane / telegram all empty)"
+				// B405: an installation that uses none of these is a
+				// CORRECT installation — "I never turned DERP/Headplane/
+				// Telegram on" is not a failure, and a red row for it
+				// teaches the operator to ignore red rows.
+				return systemTestNotConfigured(
+					"the optional integrations (DERP config / headplane / Telegram)",
+					"all four global_settings keys are empty: "+strings.Join(missing, ", "),
+					"configure any of them in /admin/derp, /admin/headplane or /admin/telegram")
 			}
 			if len(missing) == 0 {
 				return SystemTestPass, "all 4 integration keys configured"
@@ -812,7 +819,13 @@ var TestRegistry = []SystemTestDef{
 				dir = ResolveBackupDir()
 			}
 			if dir == "" {
-				return SystemTestFail, "backup dir not configured (set SKYGATE_BACKUP_DIR or DEPLOY_BACKUP_DIR, or run /admin/backup Run-now once)"
+				// B405: "no destination configured" is a configuration
+				// fact, not a broken backup — this row used to be red on
+				// every installation that does backups some other way.
+				return systemTestNotConfigured(
+					"the in-app backup destination",
+					"neither /admin/backup's Destination nor SKYGATE_BACKUP_DIR / DEPLOY_BACKUP_DIR is set, and no backup has written a status file yet",
+					"save a destination on /admin/backup (or run Run-now once) — backups taken by an external cron are invisible to this row by design")
 			}
 			// If the literal path doesn't exist (container
 			// view vs host view mismatch), try the most

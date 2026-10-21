@@ -12,6 +12,71 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.148 — «not configured» is not «broken» (B405)
+
+**Date:** 2026-10-21 · **Base:** `v1.5.147` → this tag · **Compatibility:** no migration,
+no config change. Two catalogue rows change colour, one new row appears.
+
+### Why
+
+`/admin/system_tests` answered configuration questions with a **failure** verdict:
+
+```
+integrations.configured :: FAIL  "no integration keys configured (DERP / headplane / telegram all empty)"
+backup.recent           :: FAIL  "backup dir not configured (set SKYGATE_BACKUP_DIR …)"
+```
+
+An installation that uses neither Telegram nor Headplane nor S3 backups is a **correct**
+installation. A red row for it is not a cosmetic problem: the catalogue's entire value is
+that red means *this is broken*, so a red row that means *I never turned this on* teaches
+the operator to ignore red rows — and the next real failure is then invisible.
+
+A row about an **optional** subsystem has **three** answers, not two:
+
+| verdict | meaning |
+|---|---|
+| `PASS` | configured, and it works |
+| `FAIL` | configured, and it is broken |
+| `SKIP` | never configured: **nothing was verified and nothing is wrong** |
+
+### What changed
+
+1. **One constructor for the third verdict.** `systemTestNotConfigured(feature, missing,
+   fix)` returns `SKIP` and names (a) the feature, (b) exactly what is missing, (c) one
+   line on how to configure it. A bare «not configured» would leave the operator as stuck
+   as the false red row did.
+2. **`integrations.configured`** now reports `SKIP` when all four keys are empty, naming
+   them and pointing at `/admin/derp`, `/admin/headplane`, `/admin/telegram`. A partial
+   installation still passes with the missing list.
+3. **`backup.recent`** now reports `SKIP` when no destination is configured, and says
+   plainly that backups taken by an external cron are invisible to this row **by design**.
+4. **`FAIL` for «not configured» is reserved for core dependencies** — the database and
+   the headscale client, without which nothing in the process works. The contract scans
+   every remaining site, so an optional feature cannot drift back one call site at a time.
+5. **New row `integrations.oidc`.** The catalogue had **no OIDC row at all**, so an
+   operator who enabled the provider had nothing to diagnose. It reports `SKIP` when there
+   is no `oidc_settings` row (or the row is disabled) and `FAIL` — naming the missing
+   `client_id` / `redirect_uris` / `key_dir` — when OIDC **is** enabled, because an
+   enabled-but-incomplete provider means logins fail with nothing on the page saying why.
+
+### Files
+
+`internal/feature/admin/system_tests_notconfigured_b405.go` (new),
+`internal/feature/admin/system_tests.go` (two verdicts).
+
+**Tests:** `internal/feature/admin/system_tests_notconfigured_b405_test.go` — 6 cases
+against a real in-memory SQLite DB (the skip names the fix; an empty fix leaves no dangling
+hint; no row skips; a disabled row skips; enabled-but-incomplete fails and names all three
+gaps; complete passes and reports the issuer).
+**Contract:** `scripts/check_b405_not_configured.sh` — 29 assertions.
+
+### Live verify
+
+`/admin/system_tests` → the `integrations.*` and `backup.recent` rows render **grey
+(pause icon)** with a sentence naming what is missing, instead of red. On an installation
+with OIDC configured, `integrations.oidc` turns red only if `client_id`, `redirect_uris` or
+`key_dir` is empty.
+
 ## v1.5.147 — a stored secret must not travel to the browser (B404)
 
 **Date:** 2026-10-21 · **Base:** `v1.5.146` → this tag · **Compatibility:** no migration,
