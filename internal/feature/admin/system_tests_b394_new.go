@@ -35,6 +35,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -542,6 +543,7 @@ var b394Tests = []SystemTestDef{
 			}
 			stale := []string{}
 			checked := 0
+			readErr := ""
 			for _, r := range rules {
 				lctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 				ips, lerr := net.DefaultResolver.LookupHost(lctx, r.domain)
@@ -550,22 +552,36 @@ var b394Tests = []SystemTestDef{
 					stale = append(stale, fmt.Sprintf("%s no longer resolves (%v)", r.domain, lerr))
 					continue
 				}
+				// B406: the ACL asks "does any enabled row of this device CONTAIN the
+				// address", not "is there a row that is exactly ip/32". The CDN path
+				// writes the provider's RANGE (104.16.0.0/12 for Cloudflare), so the
+				// exact-/32 question answered "stale" for every healthy CDN-expanded
+				// domain — 8 of 12 on the operator's installation, while the resolver
+				// was writing rows that same day.
+				prefixes, perr := b406DevicePrefixes(ctx, s.dbc(), r.deviceID)
+				if perr != nil {
+					readErr = perr.Error()
+					continue
+				}
 				for _, ip := range ips {
 					parsed := net.ParseIP(ip)
 					if parsed == nil || parsed.To4() == nil {
 						continue // IPv6 /128 rows are out of scope for this check
 					}
-					checked++
-					var n int
-					if err := s.dbc().QueryRowContext(ctx,
-						`SELECT COUNT(*) FROM device_rules WHERE device_id = $1 AND target_value = $2 AND enabled = 1`,
-						r.deviceID, ip+"/32").Scan(&n); err != nil {
+					addr, aerr := netip.ParseAddr(ip)
+					if aerr != nil {
 						continue
 					}
-					if n == 0 {
-						stale = append(stale, fmt.Sprintf("%s → %s has no rule row", r.domain, ip))
+					checked++
+					if !b406Covers(prefixes, addr) {
+						stale = append(stale, fmt.Sprintf("%s → %s is in no enabled row", r.domain, ip))
 					}
 				}
+			}
+			if readErr != "" {
+				// A read failure is a fact about the CHECK, never about the rows
+				// (AGENTS trap #15): say so instead of reporting every address stale.
+				return SystemTestFail, "could not read the device's derived rows: " + readErr
 			}
 			if len(stale) > 0 {
 				// B396: say whether ANYTHING will fix this by itself. "Press Re-sync"

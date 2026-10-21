@@ -12,6 +12,61 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.151 — a derived row is a prefix, not a /32 (B406)
+
+**Date:** 2026-10-21 · **Base:** 1.5.150 → this tag · **Compatibility:** no migration,
+no config change. One system test answers a different (and correct) question.
+
+### Why
+
+`/admin/system_tests` reported:
+
+```
+exit_rules.domain_prefix :: FAIL "8 of 12 address(es) are stale or missing"
+```
+
+while the **same tree** wrote **215** derived subnet rows that day and its
+`domain_resolve_at:*` keys had been refreshed minutes earlier. Both facts were true
+because the **writer** and the **reader** disagreed about what a derived row IS:
+
+* the CDN path (B183/B274/B298) writes the provider's **RANGE** —
+  `cdn:cloudflare:registry.npmjs.org` → `104.16.0.0/12`, 15 rows per domain;
+* the plain path writes the resolved address as `/32`.
+
+The test asked for a row whose `target_value` is **exactly** `ip/32` — false for every
+range-covered domain — so healthy rules looked rotten, and the operator's only remedy would
+have been pressing Re-sync forever. The real staleness was buried in the same sentence.
+
+### What changed
+
+1. **The question is containment.** `b406Covers` answers «does any enabled row of THIS
+   device contain the address», on parsed `netip.Prefix` values; `b406Prefixes` masks
+   host bits so a sloppy legacy row cannot widen the answer.
+2. **The loader is shared and narrow**: `b406DevicePrefixes` reads only this device's
+   **enabled** subnet rows, so a disabled row or another device's row never charges an
+   address.
+3. **A read failure is a fact about the check**, not about the rows: «could not read the
+   device's derived rows» is reported instead of every address being called stale
+   (AGENTS trap #15).
+4. **A genuine gap names the address** — «is in no enabled row» — instead of an
+   exact-row mismatch.
+
+### Files
+
+`internal/feature/admin/system_tests_domain_rows_b406.go` (new),
+`internal/feature/admin/system_tests_b394_new.go` (the test body).
+
+**Tests:** `internal/feature/admin/system_tests_domain_rows_b406_test.go` — 5 cases
+against a real in-memory SQLite DB (a `/12` covers an address inside it and not one
+outside; a `/32` covers only itself; non-CIDR values are ignored; an invalid address is
+never covered; disabled rows and another device's rows never charge an address).
+**Contract:** `scripts/check_b406_domain_rows.sh` — 18 assertions.
+
+### Live verify
+
+`/admin/system_tests` → `exit_rules.domain_prefix` passes for CDN-expanded domains
+(their range covers today's address), and a domain whose address has genuinely left its row
+set is named individually.
 ## v1.5.150 — the gate now catches what GitHub catches (B407.1)
 
 **Date:** 2026-10-21 · **Base:** `v1.5.149` → this tag · **Compatibility:** no code
