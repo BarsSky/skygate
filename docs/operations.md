@@ -2297,3 +2297,60 @@ conditions are ANDed, so a quiet installation keeps everything). A deletion is a
 
 Each returns **SKIP with a reason** when its live dependency is absent (no headscale client, no
 relay configured, no domain rule) — never FAIL (rule 1).
+
+**A row about an OPTIONAL subsystem skips, it does not fail (B405).** «I never turned Telegram
+on» is not a defect: `integrations.*` and `backup.recent` report **SKIP** with the feature's
+name, what is missing and one line on how to configure it. `FAIL` is reserved for a subsystem
+the operator DID configure that is not working, and for the dependencies without which nothing
+runs at all (the database, the headscale client).
+
+---
+
+## 19. GitHub secret scanning — what to do with an alert (B407)
+
+GitHub scans the **whole history** for provider key patterns and cannot tell a test fixture from
+a leaked credential. This repository has produced one class of false positive (v0.33 – v1.3):
+
+| alert | value | status |
+|---|---|---|
+| `internal/feature/admin/admin_tailscale_test.go:34` | `tskey-auth-deadbeef-…-abcdef` | **history only** — the test was replaced by a `t.Skip` stub in v1.3.0 |
+| `…admin_tailscale_test.go:231` | `tskey-supersecret-…-aaaa` | history only |
+| `…admin_tailscale_test.go:310` | `tskey-auto-generated-…` | history only |
+| `internal/module/tailscale/tailscale_test.go:155` | `tskey-auth-test-placeholder` | **composed** since B407 — no literal remains |
+
+A real Tailscale key is `tskey-auth-k` + ~43 random characters (~57 chars); every value above is
+27–35 characters and contains dictionary words, so none could ever have been issued.
+
+### 19.1 Triage an alert (2 minutes)
+
+1. Open Security → **Secret scanning** → the alert.
+2. Compare the value with the table above. A **fixture** contains a word (`test`, `fake`,
+   `deadbeef`, `placeholder`, `supersecret`, `auto-generated`) and is shorter than ~50 chars.
+3. Search for it in the history: `git log --all --oneline -S '<value>' -- .`. If every hit is a
+   commit whose file no longer contains it, the code is gone and **no edit can clear the alert**.
+4. If the value is REAL (high entropy, and the console shows such a key): revoke it at the
+   provider first, then dismiss as `revoked`, and rotate anything that used it.
+
+### 19.2 Dismiss (the only way to close a history alert)
+
+GitHub UI: alert → **Dismiss** → reason **«Used in tests»**.
+API (what the operator can run, one call per alert):
+
+```bash
+gh api -X PATCH "/repos/<owner>/<repo>/secret-scanning/alerts/<number>" \
+  -f state=resolved -f resolution=used_in_tests
+```
+
+`resolution` must be one of `false_positive`, `wont_fix`, `revoked`, `used_in_tests`. Use
+`used_in_tests` for a fixture — it keeps the number of `wont_fix` dismissals at zero, which is
+what makes the remaining alerts meaningful.
+
+### 19.3 Do NOT silence the scanner by path
+
+Do **not** add `**/*_test.go` to `.github/secret_scanning.yml` → `paths-ignore`: a real key
+pasted into a test is exactly the case that must be caught. Prefer removing the literal
+(compose the value) — `scripts/check_b407_no_key_literals.sh` now fails the gate on any
+provider-shaped credential in the tree, so the class cannot come back.
+
+Test PEMs (`internal/derphealth/testcert_test.go`) are fine: no provider pattern matches them,
+and the contract only forbids key **material** in non-test code.

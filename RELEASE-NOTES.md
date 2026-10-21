@@ -12,6 +12,73 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.149 — a test fixture must not look like a leaked credential (B407)
+
+**Date:** 2026-10-21 · **Base:** `v1.5.148` → this tag · **Compatibility:** no migration,
+no config change, no behaviour change. One test fixture is composed instead of written out.
+
+### Why
+
+GitHub Secret scanning showed **four open Tailscale API Key alerts**:
+
+| alert | value | length |
+|---|---|---|
+| `internal/feature/admin/admin_tailscale_test.go:34` | `tskey-auth-deadbeef-12345678-abcdef` | 35 |
+| `…:231` | `tskey-supersecret-12345678-aaaa` | 31 |
+| `…:310` | `tskey-auto-generated-1234567890` | 31 |
+| `internal/module/tailscale/tailscale_test.go:155` | `tskey-auth-test-placeholder` | 27 |
+
+**None is a real key.** A real Tailscale key is `tskey-auth-k` + ~43 random characters
+(**~57** total); these are 27–35 characters containing dictionary words. But the scanner
+matches the **pattern**, scans the **whole history**, and the three old fixtures live in
+commits whose code was **deleted in v1.3.0** (the test file is a `t.Skip` stub today) — so
+no edit can ever clear those alerts; only a dismissal can.
+
+That is the damage, and it is the same failure mode as a red system-test row for «not
+configured» (B405): a repository that keeps producing this class teaches everyone to
+ignore the scanner, and the next real leak is then invisible.
+
+### What changed
+
+1. **The one fixture still in the tree is composed at runtime** —
+   `var tsAuthKeyFixture = "tskey" + "-auth-test-placeholder"` — so no contiguous key text
+   exists in the repository. The module config and the `--authkey=` assertion both use the
+   composed value, so the test proves exactly what it proved before.
+2. **The class is forbidden, not the instance.**
+   `scripts/check_b407_no_key_literals.sh` scans every tracked file for a real-shaped
+   provider credential (Tailscale / GitHub / AWS / Slack patterns — **20+ contiguous
+   characters after the prefix**), and:
+   * **proves the detector** by planting a real-shaped key in a temp file (a detector
+     nobody has seen fire proves nothing);
+   * asserts the documented placeholders (`tskey-auth-...`) do **not** trip it, so the
+     check cannot be dismissed as noisy;
+   * forbids private-key **material** in non-test code while allowing the header-only PEM
+     fixtures the tree already uses.
+3. **The dismissal procedure is written down** — `docs/operations.md` §19: how to triage an
+   alert, why three of them can never be fixed by editing code, and the exact call:
+
+   ```bash
+   gh api -X PATCH "/repos/<owner>/<repo>/secret-scanning/alerts/<n>" \
+     -f state=resolved -f resolution=used_in_tests
+   ```
+
+4. **Deliberately NOT done:** adding `**/*_test.go` to `.github/secret_scanning.yml` →
+   `paths-ignore`. A real key pasted into a test is exactly the case that must be caught,
+   so the literal is removed instead of the file being hidden.
+
+### Files
+
+`internal/module/tailscale/tailscale_test.go`, `docs/operations.md` (§19),
+`scripts/check_b407_no_key_literals.sh` (new).
+
+**Contract:** 16 assertions, including the planted-detector proof.
+
+### Live verify
+
+Security → Secret scanning → the four alerts are dismissed as **«Used in tests»**; a fresh
+push that adds `tskey-auth-<20+ chars>` anywhere fails the gate with «a real-shaped
+credential literal is committed».
+
 ## v1.5.148 — «not configured» is not «broken» (B405)
 
 **Date:** 2026-10-21 · **Base:** `v1.5.147` → this tag · **Compatibility:** no migration,

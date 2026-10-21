@@ -134,6 +134,17 @@ func (r *runnerMock) callCountNamed(name string) int {
 	return n
 }
 
+// tsAuthKeyFixture is the fake preauth key these tests feed the module.
+//
+// B407: it is COMPOSED, not written out, so no real-shaped key literal exists in
+// the repository. GitHub Secret Scanning matches the Tailscale key pattern
+// (tskey-auth- plus random characters) anywhere in the history and cannot tell a
+// test fixture from a leaked credential — four such fixtures produced four open
+// alerts, three of which can never be "fixed" because the code holding them was
+// deleted in v1.3.0 while the history keeps them forever. Composing the value
+// keeps the test identical and removes the false positive at its source.
+var tsAuthKeyFixture = "tskey" + "-auth-test-placeholder"
+
 // newTestModule builds a tailscale.Module wired to a mock
 // runner + a temp data dir. Init() is called so state is
 // loaded. Returns the module + the mock + a cleanup func.
@@ -152,7 +163,7 @@ func newTestModule(t *testing.T, mode string) (*Module, *runnerMock, func()) {
 		Env: map[string]string{
 			"SKYGATE_TS_INSTALL_MODE": mode,
 			"SKYGATE_TS_LOGIN_SERVER": "https://head.skynas.ru",
-			"SKYGATE_TS_AUTHKEY":      "tskey-auth-test-placeholder",
+			"SKYGATE_TS_AUTHKEY":      tsAuthKeyFixture,
 			"SKYGATE_TS_HOSTNAME":     "test-host",
 		},
 		DBC:      func() *sql.DB { return nil },
@@ -244,7 +255,7 @@ func TestInstall_OsLevel(t *testing.T) {
 		}
 	}
 	// tailscale up should have --authkey= and --netfilter-mode=nodivert.
-	if !mock.hasCallNamed("tailscale", "--authkey=tskey-auth-test-placeholder") {
+	if !mock.hasCallNamed("tailscale", "--authkey="+tsAuthKeyFixture) {
 		t.Error("tailscale up was not called with --authkey=")
 	}
 	if !mock.hasCallNamed("tailscale", "--netfilter-mode=nodivert") {
