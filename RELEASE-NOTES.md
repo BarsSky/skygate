@@ -12,6 +12,65 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.152 — a test must not blame a host for its own deadline (B408)
+
+**Date:** 2026-10-21 · **Base:** `v1.5.151` → this tag · **Compatibility:** no migration,
+no config change. Two tests stop being cut off mid-sweep; their verdicts change.
+
+### Why
+
+With the build that **already contains B403**, the operator's page showed:
+
+```
+tailnet.all_nodes_reachability :: FAIL   duration 5.000534369s
+tailnet.split_suspected        :: FAIL   duration 5.000250288s
+  100.64.0.7 cyborg         ERROR dial tcp 100.64.0.7:18022: i/o timeout
+  100.64.0.3 emilia         76ms :22
+  100.64.0.2 karolina       132ms :22
+  100.64.0.4 sharlotta      134ms :22
+```
+
+Three hosts answered in ~100 ms, then **every** remaining host "timed out", and the
+duration was **exactly** 5 s — the harness ceiling (`context.WithTimeout(ctx, 5s)` per
+test), not a network timeout. The probes were cancelled mid-sweep, so the page declared
+**LIKELY TAILNET SPLIT** on the strength of probes that never ran. B403 could not fix
+this: the deadline arrives from **outside** the probe.
+
+### What changed
+
+1. **`SystemTestDef.Timeout`** — a test declares what it needs; `systemTestBudget` sizes
+   the rest **by category**: an in-process check keeps **5 s**, the network / headscale /
+   derp sweeps get **75 s**. The ordinary budget was deliberately **not** raised.
+2. **An exhausted budget is said out loud.** After the test returns, the runner checks
+   `budgetExhausted(testCtx)`; when the harness stopped it, the output gains:
+   *«TEST BUDGET EXHAUSTED: this test was stopped by its own 75s budget after 5s — any
+   host without an answer above was NOT measured (a host nobody asked is not a host that
+   refused).»*
+3. **A cut-off run can never be PASS.**
+
+### Files
+
+`internal/feature/admin/system_tests_budget_b408.go` (new),
+`internal/feature/admin/system_tests.go` (`Timeout`),
+`internal/feature/admin/system_tests_run_state_b394.go` (budget + note).
+
+**Tests:** `internal/feature/admin/system_tests_budget_b408_test.go` — 4 cases.
+**Contract:** `scripts/check_b408_verdict_budget.sh` — 18 assertions.
+
+### Known issue this release does NOT fix
+
+A **single-test** run («прогнать этот») is still not persisted (`only == ""` guard in
+`runTestsAsync`), so after a page reload the row falls back to the last whole-catalogue
+run — which is why a re-run appeared to change nothing on 2026-10-21. Persisting a
+single-test run needs an `only_test` column in both migration chains and a history
+filter; that is the next block (B408.1).
+
+### Live verify
+
+`/admin/system_tests` → «прогнать все» → the tailnet rows run for longer than 5 s and
+report **managed hosts** rather than a split; if the budget is ever exhausted, the row
+says so instead of listing silent hosts.
+
 ## v1.5.151 — a derived row is a prefix, not a /32 (B406)
 
 **Date:** 2026-10-21 · **Base:** 1.5.150 → this tag · **Compatibility:** no migration,

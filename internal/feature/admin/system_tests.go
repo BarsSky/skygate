@@ -68,6 +68,13 @@ type SystemTestDef struct {
 	Remediation string
 	// DocLink is the in-panel page that explains the subsystem ("" = none).
 	DocLink string
+
+	// Timeout is how long THIS test may take. Zero means "the default for its
+	// category" (see systemTestBudget): an in-process check gets 5 s, a fleet
+	// sweep gets 75 s. B408: the old single 5 s ceiling cut the tailnet probes
+	// off mid-sweep and their per-host "i/o timeout" lines were the harness
+	// cancelling them, not the hosts staying silent.
+	Timeout time.Duration
 }
 
 // TestRegistry is the full list of in-process tests. The

@@ -161,10 +161,21 @@ func (s *Service) runTestsAsync(ctx context.Context, id string, tests []SystemTe
 		}
 		systemRunMu.Unlock()
 
-		testCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		budget := systemTestBudget(t)
+		testCtx, cancel := context.WithTimeout(ctx, budget)
 		start := time.Now()
 		status, output := t.Run(testCtx)
+		exhausted := budgetExhausted(testCtx)
 		cancel()
+		elapsed := time.Since(start)
+		if exhausted {
+			// B408: the harness stopped this test — say it, and do not let the
+			// partial output masquerade as a measured fleet.
+			output += budgetNote(budget, elapsed)
+			if status == SystemTestPass {
+				status = SystemTestFail
+			}
+		}
 		res := SystemTestResult{
 			Name:     t.Name,
 			Category: t.Category,
