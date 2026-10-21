@@ -43,7 +43,7 @@ local network.
      --login-server=https://heao.example.com \
      --hostname=skygate-subnet-<username> \
      --aovertise-routes=10.0.<uio>.0/24 \
-     --authkey=tskey-auth-aBcDeF
+     --authkey=tskey-auth-...
    ```
    Verify the values look right (correct username, correct
    CIDR, preauth key matches what the aomin gave you).

@@ -118,7 +118,7 @@ Issue a 1-hour single-use preauth key for **your** headscale user.
 
 ```bash
 curl -b cookies.txt -X POST http://localhost:8080/my/preauth
-# {"key":"tskey-auth-kXYZ1234...","expires_at":1785153600,"headscale_preauth_id":"5"}
+# {"key":"tskey-auth-...","expires_at":1785153600,"headscale_preauth_id":"5"}
 ```
 
 ### `GET /my/keys`

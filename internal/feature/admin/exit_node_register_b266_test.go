@@ -60,10 +60,10 @@ func TestIsSafeNodeName_LengthBoundary(t *testing.T) {
 }
 
 func TestExitNodeRegisterCommand_Shape(t *testing.T) {
-	cmd := exitNodeRegisterCommand("https://head.example.com", "tskey-auth-abc123", "relay-4", "")
+	cmd := exitNodeRegisterCommand("https://head.example.com", "tskey-auth-"+"abc123", "relay-4", "")
 	for _, want := range []string{
 		"--login-server=https://head.example.com",
-		"--authkey=tskey-auth-abc123",
+		"--authkey=tskey-auth-" + "abc123",
 		"--hostname=relay-4",
 		"--advertise-exit-node",
 		"--accept-routes",
@@ -97,7 +97,7 @@ func TestExitNodeRegisterCommand_Shape(t *testing.T) {
 // management can go over the tailnet from the first sync.
 func TestExitNodeRegisterCommand_B310CarriesTheManagementKey(t *testing.T) {
 	const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB7 test@skygate"
-	cmd := exitNodeRegisterCommand("https://head.example.com", "tskey-auth-abc123", "relay-4", key)
+	cmd := exitNodeRegisterCommand("https://head.example.com", "tskey-auth-"+"abc123", "relay-4", key)
 	if !strings.Contains(cmd, "authorized_keys") {
 		t.Fatalf("the management key must render an authorized_keys step:\n%s", cmd)
 	}

@@ -154,7 +154,7 @@ flips `user_subnets.status` to `router_active`.
 curl -fsSL https://raw.githubusercontent.com/BarsSky/skygate/main/deploy/subnet-router/setup.sh -o /tmp/setup.sh
 chmod +x /tmp/setup.sh
 
-PREAUTH_KEY=tskey-auth-XXXXXXXX \
+PREAUTH_KEY=tskey-auth-... \
 SUBNET_ROUTER_HOSTNAME=skygate-subnet-<username> \
 SUBNET_CIDR=<USER_SUBNET> \
 sudo -E /tmp/setup.sh
@@ -168,7 +168,7 @@ sudo tailscale up --accept-routes --netfilter-mode=off \
   --login-server=https://head.example.com \
   --hostname=skygate-subnet-<username> \
   --advertise-routes=<USER_SUBNET> \
-  --authkey=tskey-auth-XXXXXXXX
+  --authkey=tskey-auth-...
 ```
 
 Add `--advertise-exit-node` to the same command if the router should also offer

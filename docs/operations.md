@@ -2313,12 +2313,12 @@ a leaked credential. This repository has produced one class of false positive (v
 
 | alert | value | status |
 |---|---|---|
-| `internal/feature/admin/admin_tailscale_test.go:34` | `tskey-auth-deadbeef-…-abcdef` | **history only** — the test was replaced by a `t.Skip` stub in v1.3.0 |
-| `…admin_tailscale_test.go:231` | `tskey-supersecret-…-aaaa` | history only |
-| `…admin_tailscale_test.go:310` | `tskey-auto-generated-…` | history only |
-| `internal/module/tailscale/tailscale_test.go:155` | `tskey-auth-test-placeholder` | **composed** since B407 — no literal remains |
+| `internal/feature/admin/admin_tailscale_test.go:34` | `tskey-…` ending `deadbeef` | **history only** — the test was replaced by a `t.Skip` stub in v1.3.0 |
+| `…admin_tailscale_test.go:231` | `tskey-…` starting `supersecret` | history only |
+| `…admin_tailscale_test.go:310` | `tskey-…` starting `auto-generated` | history only |
+| `internal/module/tailscale/tailscale_test.go:155` | `tskey-…` then `auth-test-placeholder` | **composed** since B407 — no literal remains |
 
-A real Tailscale key is `tskey-auth-k` + ~43 random characters (~57 chars); every value above is
+A real Tailscale key is `tskey-…` with the `auth` type and a `k` prefix + ~43 random characters (~57 chars); every value above is
 27–35 characters and contains dictionary words, so none could ever have been issued.
 
 ### 19.1 Triage an alert (2 minutes)

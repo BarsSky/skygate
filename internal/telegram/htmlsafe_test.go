@@ -188,7 +188,7 @@ func TestSanitizeTelegramHTML_PlatformInstructionsDeliverable(t *testing.T) {
 	for _, lang := range []string{i18n.LangRU, i18n.LangEN} {
 		for _, platform := range []string{"linux", "windows", "macos", "ios", "android"} {
 			key := "bot.add_device.platform." + platform
-			raw := cat.Tf(lang, key, "tskey-auth-EXAMPLE")
+			raw := cat.Tf(lang, key, "tskey-auth-"+"EXAMPLE")
 			if raw == key {
 				t.Fatalf("%s: catalogue key %q missing", lang, key)
 			}

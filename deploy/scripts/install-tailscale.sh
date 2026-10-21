@@ -44,11 +44,11 @@
 #
 # Usage:
 #   sudo bash install-tailscale.sh --mode=os_level \
-#       --authkey=tskey-auth-XXXXX \
+#       --authkey=tskey-auth-... \
 #       --login-server=https://head.skynas.ru \
 #       --hostname=skygate-host-1-1
 #   sudo bash install-tailscale.sh --mode=in_container \
-#       --authkey=tskey-auth-XXXXX \
+#       --authkey=tskey-auth-... \
 #       --container-name=skygate-tailscale
 #   sudo bash install-tailscale.sh --mode=attach
 #   sudo bash install-tailscale.sh --mode=none

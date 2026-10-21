@@ -164,7 +164,7 @@ func TestB373_UsableAuthKeyFileRejectsTheSentinelAndEmptyFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	good := filepath.Join(dir, "authkey")
-	if err := os.WriteFile(good, []byte("tskey-auth-abc123\n"), 0600); err != nil {
+	if err := os.WriteFile(good, []byte("tskey-auth-"+"abc123\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {

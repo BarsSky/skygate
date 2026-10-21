@@ -27,7 +27,7 @@
 #   sudo bash deploy/scripts/bootstrap_standby.sh \
 #       --primary=skyadmin@skygate-primary-host \
 #       --standby-hostname=skygate-host-1-2 \
-#       --ts-authkey=tskey-auth-XXX \
+#       --ts-authkey=tskey-auth-... \
 #       --login-server=https://head.skynas.ru
 #
 # Env-var defaults (in case --primary is omitted):

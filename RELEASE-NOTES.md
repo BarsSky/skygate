@@ -12,6 +12,44 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.150 — the gate now catches what GitHub catches (B407.1)
+
+**Date:** 2026-10-21 · **Base:** `v1.5.149` → this tag · **Compatibility:** no code
+change; comments and documentation only.
+
+### Why
+
+v1.5.149 composed the one Tailscale fixture and shipped a detector — and then the push
+itself opened **alert #5**: `RELEASE-NOTES.md:28` quoted the fixture value
+`tskey-…auto-generated…`, which matches GitHub's pattern. Two lessons, both measured:
+
+1. **A key-shaped value in DOCUMENTATION is the same alert.** The scanner reads text, not
+   intent, so a release note that names the value re-creates the problem it documents.
+2. **The detector was too generous.** It required 20+ contiguous characters after the
+   prefix, while GitHub flagged a **31-character** value built from words. The gate would
+   have stayed green while GitHub kept opening alerts — the "a check that cannot see the
+   thing it models" failure.
+
+### What changed
+
+* The detector now models the **shape** GitHub matched — `tskey-<word>-<something>`, with
+  **no** length floor (plus the GitHub / AWS / Slack token patterns) — and assembles the
+  prefix from two shell words so the script cannot match itself.
+* It **proves two shapes**: the short word-shaped value GitHub actually flagged (`A2a`)
+  and a realistic long key (`A2b`). A detector tested only on unrealistic input passes
+  while the real case walks through.
+* Every key-shaped literal in the tree is **composed or masked**: the remaining test
+  fixtures are concatenated at runtime (4 admin/telegram tests), and documentation shows
+  `tskey-…` (prefix + ellipsis) instead of a complete value — `docs/operations.md` §19,
+  `docs/api.md`, `docs/networking.md`, `docs/windows-client.md`, the `deploy/` examples
+  and their bundled copies.
+* Contract: **17 assertions** (was 16 — `A2b` added).
+
+### Live verify
+
+`bash scripts/check_b407_no_key_literals.sh` → 17/17, and the next push into `main` adds
+no key-shaped text.
+
 ## v1.5.149 — a test fixture must not look like a leaked credential (B407)
 
 **Date:** 2026-10-21 · **Base:** `v1.5.148` → this tag · **Compatibility:** no migration,
@@ -21,17 +59,18 @@ no config change, no behaviour change. One test fixture is composed instead of w
 
 GitHub Secret scanning showed **four open Tailscale API Key alerts**:
 
-| alert | value | length |
+| alert | value (partially masked — quoting a full value opens a new alert) | length |
 |---|---|---|
-| `internal/feature/admin/admin_tailscale_test.go:34` | `tskey-auth-deadbeef-12345678-abcdef` | 35 |
-| `…:231` | `tskey-supersecret-12345678-aaaa` | 31 |
-| `…:310` | `tskey-auto-generated-1234567890` | 31 |
-| `internal/module/tailscale/tailscale_test.go:155` | `tskey-auth-test-placeholder` | 27 |
+| `internal/feature/admin/admin_tailscale_test.go:34` | `tskey-…`, ends in `deadbeef`, then `12345678` and `abcdef` | 35 |
+| `…:231` | `tskey-…`, starts with `supersecret`, then `12345678` and `aaaa` | 31 |
+| `…:310` | `tskey-…`, starts with `auto-generated`, then `1234567890` | 31 |
+| `internal/module/tailscale/tailscale_test.go:155` | `tskey-…`, then `auth-test-placeholder` | 27 |
 
-**None is a real key.** A real Tailscale key is `tskey-auth-k` + ~43 random characters
-(**~57** total); these are 27–35 characters containing dictionary words. But the scanner
-matches the **pattern**, scans the **whole history**, and the three old fixtures live in
-commits whose code was **deleted in v1.3.0** (the test file is a `t.Skip` stub today) — so
+**None is a real key.** A real Tailscale key is `tskey-…` with the `auth` type and a `k`
+prefix followed by ~43 random characters (**~57** total); these are 27–35 characters
+containing dictionary words. But the scanner matches the **pattern**, scans the **whole
+history**, and the three old fixtures live in commits whose code was **deleted in v1.3.0**
+(the test file is a `t.Skip` stub today) — so
 no edit can ever clear those alerts; only a dismissal can.
 
 That is the damage, and it is the same failure mode as a red system-test row for «not
@@ -46,11 +85,10 @@ ignore the scanner, and the next real leak is then invisible.
    composed value, so the test proves exactly what it proved before.
 2. **The class is forbidden, not the instance.**
    `scripts/check_b407_no_key_literals.sh` scans every tracked file for a real-shaped
-   provider credential (Tailscale / GitHub / AWS / Slack patterns — **20+ contiguous
-   characters after the prefix**), and:
+   provider credential (Tailscale / GitHub / AWS / Slack patterns), and:
    * **proves the detector** by planting a real-shaped key in a temp file (a detector
      nobody has seen fire proves nothing);
-   * asserts the documented placeholders (`tskey-auth-...`) do **not** trip it, so the
+   * asserts the documented placeholders (`tskey-…`) do **not** trip it, so the
      check cannot be dismissed as noisy;
    * forbids private-key **material** in non-test code while allowing the header-only PEM
      fixtures the tree already uses.
@@ -76,7 +114,7 @@ ignore the scanner, and the next real leak is then invisible.
 ### Live verify
 
 Security → Secret scanning → the four alerts are dismissed as **«Used in tests»**; a fresh
-push that adds `tskey-auth-<20+ chars>` anywhere fails the gate with «a real-shaped
+push that adds a `tskey-<word>-<chars>` value anywhere fails the gate with «a real-shaped
 credential literal is committed».
 
 ## v1.5.148 — «not configured» is not «broken» (B405)

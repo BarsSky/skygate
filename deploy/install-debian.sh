@@ -169,7 +169,7 @@ print_next_steps "$SKYGATE_PORT" "skygate"
 # delegates to install-tailscale.sh for the Tailscale
 # install. This is the "single command" flow operators
 # want — `curl install.sh | sudo SKYGATE_TS_INSTALL_MODE=attach
-# SKYGATE_TS_AUTHKEY=tskey-auth-XXX bash`.
+# SKYGATE_TS_AUTHKEY=tskey-auth-... bash`.
 #
 # The script is opt-in: if no SKYGATE_TS_* env vars are
 # set, this step is a no-op (the operator can run

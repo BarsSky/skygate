@@ -23,7 +23,7 @@
 #   2. The user SSHes to the subnet-router host and runs that
 #      command. OR runs this script with the key as an env var:
 #
-#        PREAUTH_KEY=tskey-auth-xxxxx \
+#        PREAUTH_KEY=tskey-auth-... \
 #        SUBNET_ROUTER_HOSTNAME=skygate-subnet-user1 \
 #        SUBNET_CIDR=10.0.6.0/24 \
 #        sudo -E ./deploy/subnet-router/setup.sh

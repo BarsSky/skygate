@@ -99,7 +99,7 @@ func TestTailscaleAuthKeyMissingForStart_FileExistsEmpty(t *testing.T) {
 func TestTailscaleAuthKeyMissingForStart_FileExistsWithContent(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "authkey")
-	if err := os.WriteFile(path, []byte("tskey-auth-fake"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("tskey-auth-"+"fake"), 0600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	s := &Service{TailscaleAuthKeyPath: path}

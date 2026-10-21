@@ -39,7 +39,7 @@ func newB321DB(t *testing.T) *skygatedb.FixedDBSource {
 func writeB321KeyFile(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "authkey")
-	if err := os.WriteFile(path, []byte("tskey-test-1234567890\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("tskey-test-"+"1234567890\n"), 0o600); err != nil {
 		t.Fatalf("write key file: %v", err)
 	}
 	return path

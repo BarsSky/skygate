@@ -58,7 +58,7 @@ Run from **PowerShell** (admin or user — Tailscale runs in user context by def
 ```powershell
 tailscale up `
   --login-server=https://head.example.com `
-  --authkey=tskey-auth-XXXXXXXXXXXXXXXX `
+  --authkey=tskey-auth-... `
   --accept-routes `
   --accept-dns=true `
   --hostname=my-windows-pc
@@ -77,7 +77,7 @@ tailscale up `
 If you paste the command into a `.ps1` file, escape the `$` correctly. The authkey has no `$` so plain `tailscale up --authkey=tskey-auth-...` works without escaping. If you store the key in a variable:
 
 ```powershell
-$key = "tskey-auth-XXXXXXXXXXXXXXXX"
+$key = "tskey-auth-..."
 tailscale up --login-server=https://head.example.com --authkey=$key --accept-routes --accept-dns=true
 ```
 

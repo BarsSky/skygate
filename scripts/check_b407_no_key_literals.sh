@@ -5,12 +5,12 @@
 #
 # WHY (the operator's GitHub Secret scanning page)
 #   Four "Tailscale API Key" alerts were open, all from test fixtures:
-#     internal/module/tailscale/tailscale_test.go:155   tskey-auth-test-placeholder
-#     internal/feature/admin/admin_tailscale_test.go:34 tskey-auth-deadbeef-…-abcdef
-#     …:231                                             tskey-supersecret-…-aaaa
-#     …:310                                             tskey-auto-generated-…
+#     internal/module/tailscale/tailscale_test.go:155   tskey-… then auth-test-placeholder
+#     internal/feature/admin/admin_tailscale_test.go:34 tskey-… ending deadbeef
+#     …:231                                             tskey-… starting supersecret
+#     …:310                                             tskey-… starting auto-generated
 #
-#   None is a real key (a real one is tskey-auth-k + ~43 random characters ≈ 57
+#   None is a real key (a real one is the auth type + ~43 random characters ≈ 57
 #   chars; these are 27–35 and contain dictionary words), but the scanner cannot
 #   tell: it matches the PATTERN, scans the WHOLE history, and the three old
 #   fixtures live in commits whose code was deleted in v1.3.0 — so no edit can
@@ -67,12 +67,15 @@ hdr "B407 — a test fixture must not look like a leaked credential"
 # ---------------------------------------------------------------------------
 hdr "A — the tree carries no real-shaped credential"
 
-# The detector matches what a REAL key looks like: the provider prefix followed by
-# 20+ contiguous characters. Every placeholder this repository uses (tskey-auth-…,
-# tskey-test-fake, «tskey-auth-...») breaks the run with a dot or a dash, so the
-# detector has no false positives on documentation — and no self-match, because
-# this file writes the prefix with the regex metacharacters in between.
-REAL_PAT='tskey-(auth|api)-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}'
+# The detector models what GitHub itself matched, which is NARROWER than "a key of
+# realistic length": GitHub flagged a 31-character value that GitHub itself matched,
+# a word where a key would have random data — so its rule is the SHAPE
+# `tskey-<word>-<something>` with no length floor. Every placeholder this repository
+# uses breaks that shape right after the type (`tskey-auth-...`, `tskey-…`), so the
+# detector has no false positive on documentation, and it has no self-match because
+# this file assembles the prefix from two shell words.
+TS_PREFIX='tsk''ey-'
+REAL_PAT="${TS_PREFIX}[A-Za-z0-9]+-[A-Za-z0-9]+|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}"
 HITS="$SKY_TMP/hits.txt"
 : > "$HITS"
 git ls-files -- '*.go' '*.sh' '*.md' '*.yml' '*.yaml' '*.json' '*.html' '*.txt' 2>/dev/null \
@@ -81,20 +84,28 @@ git ls-files -- '*.go' '*.sh' '*.md' '*.yml' '*.yaml' '*.json' '*.html' '*.txt' 
       grep -nE "$REAL_PAT" "$f" 2>/dev/null | sed "s|^|$f:|"
     done > "$HITS"
 if [ -s "$HITS" ]; then
-  bad "A1: a real-shaped credential literal is committed: $(head -3 "$HITS" | tr '\n' ' ')"
+  bad "A1: a key-shaped literal is committed (GitHub would open an alert): $(head -3 "$HITS" | tr '\n' ' ')"
 else
-  ok "A1: no provider-shaped credential in any tracked file"
+  ok "A1: no key-shaped literal in any tracked file"
 fi
 
-# The detector must be able to SEE a real key, otherwise A1 is vacuous (the
-# B340 lesson: prove the detector works by planting a violation).
-printf 'x = "tskey-auth-%s"\n' "$(printf 'k%.0s' $(seq 1 43))" > "$SKY_TMP/planted.go"
+# The detector must be able to SEE the shape GitHub saw, otherwise A1 is vacuous
+# (the B340 lesson: prove the detector works by planting a violation). The planted
+# value is the SHORT, word-shaped one GitHub actually flagged — not a 57-character
+# key — so the detector cannot pass this test by only catching unrealistic input.
+printf 'x = "tsk%s%s"\n' 'ey-' 'auto-generated-1234567890' > "$SKY_TMP/planted.go"
 if grep -qE "$REAL_PAT" "$SKY_TMP/planted.go"; then
-  ok "A2: the detector catches a real-shaped key (planted proof)"
+  ok "A2a: the detector catches the SHORT word-shaped value GitHub flagged (planted proof)"
 else
-  bad "A2: the detector cannot see a real key — A1 proves nothing"
+  bad "A2a: the detector cannot see the value GitHub saw — A1 proves nothing"
 fi
-printf 'placeholder: tskey-auth-... and tskey-auth-test-placeholder\n' > "$SKY_TMP/allowed.txt"
+printf 'x = "tsk%s%s"\n' 'ey-' "auth-$(printf 'k%.0s' $(seq 1 43))" > "$SKY_TMP/planted_real.go"
+if grep -qE "$REAL_PAT" "$SKY_TMP/planted_real.go"; then
+  ok "A2b: it also catches a realistic key (long, random)"
+else
+  bad "A2b: a realistic key slips through"
+fi
+printf 'placeholder: tskey-auth-... and tskey-… (the documented forms)\n' > "$SKY_TMP/allowed.txt"
 if grep -qE "$REAL_PAT" "$SKY_TMP/allowed.txt"; then
   bad "A3: the detector flags the documented placeholders — it would be turned off"
 else
@@ -121,7 +132,8 @@ if has '--authkey="+tsAuthKeyFixture' "$TS_SRC"; then
 else
   bad "B3: the assertion lost the composed fixture"
 fi
-if grep -q 'tskey-auth-test-placeholder' "$TS_TEST" 2>/dev/null; then
+OLD_FIXTURE='tsk''ey-auth-test-placeholder'
+if grep -q "$OLD_FIXTURE" "$TS_TEST" 2>/dev/null; then
   bad "B4: the old literal is still in the file"
 else
   ok "B4: the old literal is gone from the head"
