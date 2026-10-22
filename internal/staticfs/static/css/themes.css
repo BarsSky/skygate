@@ -419,27 +419,41 @@ header h1 .ver{opacity:.5;font-size:10px;font-weight:500;margin-left:2px;font-fa
 .theme-picker-sb .menu a.active{background:var(--accent-soft);color:var(--accent)}
 .sidebar.collapsed .sidebar-user .user-name{display:none}
 .sidebar.collapsed .sidebar-user .sidebar-actions{justify-content:center}
-main .shell{margin-left:220px;transition:margin-left .25s}
-.sidebar.collapsed ~ main .shell{margin-left:52px}
-.sidebar.collapsed ~ header{margin-left:52px}
+/* B411 (2026-10-22) — THE OFFSET BELONGS TO <main>, NOT TO .shell.
+   The operator reported «большинство страниц на широких экранах оставляет
+   справа много свободного места». Measured: .shell carries
+   `max-width:1180px; margin:0 auto`, and this rule then overrode ONLY the left
+   margin to 220px — so `margin-right:auto` swallowed every pixel of slack and
+   the content stayed pinned to the sidebar's edge while the free space piled up
+   on the right: 1366px viewport → 0px empty, 1920px → 520px, 2560px → 1160px,
+   3440px → 2040px. The shell was never centred; it was left-aligned inside a
+   centred 1180px box.
+
+   Fix: the sidebar reservation moves to <main> (one column, both sides of the
+   layout agree), and .shell keeps its own `margin:0 auto` — so it now centres
+   inside the space that is actually available. Nothing about the 1180px reading
+   width changes below 1440px, which is what the layout was tuned for. */
+main{margin-left:220px;transition:margin-left .25s}
+.sidebar.collapsed ~ main{margin-left:52px}
 .sidebar.collapsed ~ header{margin-left:52px}
 /* 2026-08-17: v1.3.19.2 follow-up (B120) — admin-breadcrumb offset.
    Pre-fix, the .admin-breadcrumb element (rendered in
    layout.html as a SIBLING of .shell, both inside <main>) had
    no margin-left, so its left edge sat at 0px and the
    position:fixed sidebar (left:0, width:220px) covered its
-   leftmost 220px. The "Админ › Devices & Nodes › Devices"
+   leftmost 220px. The "Админ › Devices › Nodes › Devices"
    text was hidden under the sidebar — only the rightmost
    text fragments were visible.
 
-   Fix: mirror the .shell margin-left pattern for .admin-
-   breadcrumb. The width:calc(...) keeps the breadcrumb's
-   background-card spanning the visible area instead of
-   just the text width. The ~ selector mirrors the .shell
-   rule so collapsing the sidebar (52px) also shifts the
-   breadcrumb correctly. */
-main .admin-breadcrumb{margin-left:220px;width:calc(100% - 220px);transition:margin-left .25s, width .25s}
-.sidebar.collapsed ~ main .admin-breadcrumb{margin-left:52px;width:calc(100% - 52px)}
+   B120 fixed that by MIRRORING the .shell offset onto the
+   breadcrumb. B411 (2026-10-22) removed the need to mirror it:
+   the reservation now lives on <main> itself, so BOTH the
+   breadcrumb and .shell inherit the same left edge by being
+   inside it. The mirror is therefore gone — and it must stay
+   gone, because a 220px margin here would now be applied twice
+   (once by <main>, once by this rule) and push the breadcrumb
+   into the middle of the page. */
+main .admin-breadcrumb{margin-left:0;width:100%}
 
 header .user-area button i{font-size:11px}
 
@@ -459,6 +473,14 @@ header .user-area button i{font-size:11px}
 
 main{padding:32px 0 64px;min-height:calc(100vh - var(--header-h))}
 .shell{max-width:1180px;margin:0 auto;padding:0 24px;min-width:0}
+/* B411 — wide screens get more room, not more empty band. 1180px stays the
+   reading width up to 1600px (where the old layout already ran out of room);
+   above that the shell grows in two steps so data-heavy admin pages — the
+   9-column history table, /admin/database, /admin/cluster — use the display
+   they were given instead of leaving 500-2000px blank on the right. The
+   selector is `main .shell` (specificity 0,1,1) so it wins over `.shell`. */
+@media (min-width:1600px){main .shell{max-width:1400px}}
+@media (min-width:2200px){main .shell{max-width:1600px}}
 
 /* PAGE TITLE */
 .title-row{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;gap:16px;flex-wrap:wrap}
@@ -886,8 +908,10 @@ footer a:hover{color:var(--accent)}
     z-index:90;cursor:pointer;
   }
   /* Reset the desktop's fixed 220px content offset — on mobile
-     the sidebar is overlay, not a column. */
-  main .shell{margin-left:0 !important}
+     the sidebar is overlay, not a column. B411 moved that offset
+     from .shell to <main>, so the reset follows it: resetting
+     .shell alone would leave the whole page shifted 220px right. */
+  main{margin-left:0 !important}
   /* 2026-08-17: v1.3.19.2 (B120) — reset the breadcrumb's
      desktop margin-left:220px to 0 on mobile (the breadcrumb
      fills the viewport on mobile, the sidebar is a drawer).

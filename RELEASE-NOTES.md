@@ -1,5 +1,97 @@
 # Skygate release notes
 
+## v1.5.155 — the shell is centred, and a rotating CDN is not a broken mechanism (B411)
+
+**Date:** 2026-10-22 · **Base:** `v1.5.154` → this tag · **Compatibility:** no migration,
+no config change. Pure CSS geometry plus a diagnostic verdict; nothing in the data plane
+moves.
+
+### Why (1) — the page column never used the display
+
+Operator: «в целом большинство страниц на широких экранах не оставляет справа много
+свободного места, но для этого надо делать глобальный рефактор и проверку инструментами по
+каждой странице».
+
+Measured with the responsive audit and the `skygate-web-ui-audit` method: `.shell` carries
+`max-width:1180px; margin:0 auto`, and a later rule overrode **only** its left margin to
+220px. A single auto margin absorbs **all** leftover space, so every spare pixel went to the
+right and the content stayed pinned to the sidebar's edge:
+
+| viewport | 1366 | 1440 | 1920 | 2560 | 3440 |
+|---|---|---|---|---|---|
+| empty band on the right | 0 | 40 | **520** | **1160** | **2040** px |
+
+The shell was never centred — it was left-aligned inside a centred 1180px box.
+
+### What changed (1)
+
+1. **The sidebar reservation moved to `<main>`** (220px, 52px collapsed, 0 on mobile), so
+   `.shell` centres inside the space that actually exists.
+2. **Wide screens get more room, not more band:** two media steps, 1400px at ≥1600px and
+   1600px at ≥2200px. The 1180px reading width below 1600px is unchanged.
+3. **The breadcrumb inherits the offset** (it is a sibling inside `<main>`), so B120's
+   mirrored 220/52px margins are **gone** — a second offset would double the shift. B120's
+   intent, «never under the sidebar», is re-pinned, not dropped.
+4. **A per-page ratchet, not a promise** (the operator asked for «проверку инструментами по
+   каждой странице»): no template may force an inline `min-width` ≥ 300px (the thing that
+   overflows a 360px phone; zero today), and inline container widths ≥ 600px are frozen at
+   **5** in `scripts/b411_inline_width_allowlist.txt` and may only fall.
+
+### Why (2) — a diagnostic that is red on a healthy host
+
+`exit_rules.domain_prefix` reported, minutes apart on the same healthy installation:
+
+```
+6 of 13 address(es) are stale or missing: agent.minimax.io → 62.115.253.64 …
+DNS auto-update is ON (every 6h0m0s) and will rewrite them on its next pass.
+```
+
+Then the next pass ran (forced by clearing its markers): the 5 published Akamai **ranges**
+untouched, **8** obsolete `/32` rows removed, and `62.115.253.65/32` written as a gap — the
+mechanism worked exactly as designed. The assertion was the defect: it compared **today's
+DNS** with the stored rows, which a rotating provider (Akamai `62.115.x`, AWS registry
+edges) can never satisfy while B308 re-resolves every six hours. Between two passes the
+difference is *guaranteed*.
+
+### What changed (2)
+
+The verdict is now about the mechanism, decided by the pure
+`exit_rules.DomainRowsVerdictFor` from the **same** per-domain resolve stamp the
+auto-updater writes:
+
+* **covered** — every current answer is inside a stored row;
+* **pending-next-pass** — the answers moved *after* the last resolve, so the interval
+  covers them: **PASS**, and the panel says so ("1h20m ago; the next pass in 4h40m");
+* **stale** — a pass was due and did not cover them, the rule was never resolved, or
+  auto-update is OFF so nothing will ever run: **FAIL**, with the interval state spelled out.
+
+The pre-B409 defect class ("rows rot forever") is now the only failing one.
+
+### Files
+
+`internal/staticfs/static/css/themes.css` + `static/css/themes.css` (identical — B392),
+`internal/feature/exit_rules/domain_rows_verdict_b411.go` (new),
+`internal/feature/admin/system_tests_domain_verdict_b411.go` (new),
+`internal/feature/admin/system_tests_b394_new.go` (the test body),
+`internal/handlers/layout_v1_3_19_2_test.go` (B120's assertions, renegotiated),
+`scripts/check_b120.sh` (renegotiated), `scripts/check_b411_layout.sh` (new),
+`scripts/b411_inline_width_allowlist.txt` (new).
+
+**Tests:** `domain_rows_verdict_b411_test.go` — 8 groups (covered wins regardless of timing;
+rotation after the last resolve is pending; an elapsed interval with uncovered answers is
+stale; never-resolved is stale; a disabled gate is pending; a backwards clock is not the
+rows' fault; both boundaries; the duration renderer). `TestB411_*` — 5 layout contracts.
+
+**Contract:** `scripts/check_b411_layout.sh` — 21 assertions.
+
+### Live verify
+
+`/admin/system_tests` → «прогнать все»: `exit_rules.domain_prefix` now answers PASS when the
+rules are one rotation behind (naming the age and the next pass) and FAIL only when a rule
+will not heal — with the auto-updater OFF it escalates a benign rotation to stale, which is
+the honest answer. On a 1920px-wide browser the content column is centred with equal margins
+and the right-hand band is gone; a 3440px display gets 1600px of content instead of 1180px.
+
 > **Single canonical file.** All release detail (root cause + fix + files +
 > live-verify) lives here for every shipped tag, regardless of when the entry was
 > written. The per-version `RELEASE-NOTES-vX.Y.Z.md` pattern is **deprecated** — if

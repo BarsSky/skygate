@@ -1,0 +1,28 @@
+# B411 — frozen budget of inline CONTAINER widths (>= 600px) in templates.
+#
+# WHY THIS EXISTS
+#   The operator asked for «проверку инструментами по каждой странице» rather than a
+#   one-off fix, so the layout contract has a ratchet: the page column must come
+#   from .shell (which is centred in <main> since B411), not from a template that
+#   hard-codes its own width and then leaves a band beside it.
+#
+# WHAT COUNTS
+#   `style="…max-width:600px-or-more"` on a <div>/<section>/<form>/<main>: five
+#   occurrences exist today and each one is legitimate CONTENT sizing, not a page
+#   column:
+#     * admin/cluster.html ×3 — a 720px reading width for the three cluster forms
+#       (a form 1400px wide is unreadable);
+#     * admin/derp.html       — a 640px probe/instructions block;
+#     * admin/user_subnet.html — a 680px form.
+#   The budget may only SHRINK: adding an inline container width fails B411 B2, and
+#   a file listed here that drops its width should be removed from this file in the
+#   same change (the B337 ratchet pattern).
+#
+# NOT COUNTED (deliberately): table column widths (th/td 100-300px), form control
+# widths (input/select 110-240px) and any min-width below 300px — those size
+# content inside the column and are what the panel needs.
+admin/cluster.html
+admin/cluster.html
+admin/cluster.html
+admin/derp.html
+admin/user_subnet.html

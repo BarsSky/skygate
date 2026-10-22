@@ -541,7 +541,35 @@ var b394Tests = []SystemTestDef{
 			if len(rules) == 0 {
 				return SystemTestSkip, "no domain rule to re-resolve"
 			}
-			stale := []string{}
+			// B411 (2026-10-22) — THE VERDICT IS ABOUT THE MECHANISM, NOT ABOUT
+			// CATCHING DNS MID-ROTATION.
+			//
+			// This test used to call any answer the stored rows did not contain
+			// "stale". Measured live on a healthy panel, minutes apart: 6 of 13
+			// addresses "stale", then after the next pass ran — 5 published ranges
+			// untouched, 8 obsolete /32 rows removed, the new answer written as a
+			// gap. The mechanism was right both times; the assertion was the
+			// problem, because a rotating provider (Akamai 62.115.x, AWS registry
+			// edges) answers with new addresses every few minutes while B308's
+			// re-resolve interval is six hours. Between two passes the difference is
+			// GUARANTEED, so the test could never be green for such a domain.
+			//
+			// What is decided per rule now (exit_rules.DomainRowsVerdictFor):
+			//   covered           — nothing to do;
+			//   pending-next-pass — the answers moved AFTER the last resolve, so the
+			//                       interval covers them: PASS, but said out loud;
+			//   stale             — a pass was due and did not cover the answers, or
+			//                       the rule was never resolved at all, or nothing is
+			//                       scheduled to run: FAIL. This is the pre-B409 defect
+			//                       class, and the only failing one.
+			autoOn := db.GetGlobalSettingBool(s.dbc(), globalSettingsKeyDNSAutoUpdate,
+				s.Cfg != nil && s.Cfg.DNSAutoUpdateEnabled)
+			rawInterval, _ := db.GetGlobalSetting(s.dbc(), exit_rules.SettingDomainResolveIntervalSec, "")
+			interval := exit_rules.ParseDomainResolveInterval(rawInterval)
+			now := time.Now().Unix()
+
+			staleDomains := []string{}
+			pendingDomains := []string{}
 			checked := 0
 			readErr := ""
 			for _, r := range rules {
@@ -549,7 +577,9 @@ var b394Tests = []SystemTestDef{
 				ips, lerr := net.DefaultResolver.LookupHost(lctx, r.domain)
 				cancel()
 				if lerr != nil {
-					stale = append(stale, fmt.Sprintf("%s no longer resolves (%v)", r.domain, lerr))
+					// A resolver failure is NOT a product verdict, and it is not a
+					// rotation either: name it separately and never mark the domain.
+					staleDomains = append(staleDomains, fmt.Sprintf("%s does not resolve right now (%v)", r.domain, lerr))
 					continue
 				}
 				// B406: the ACL asks "does any enabled row of this device CONTAIN the
@@ -563,6 +593,8 @@ var b394Tests = []SystemTestDef{
 					readErr = perr.Error()
 					continue
 				}
+				uncovered := 0
+				examples := []string{}
 				for _, ip := range ips {
 					parsed := net.ParseIP(ip)
 					if parsed == nil || parsed.To4() == nil {
@@ -574,8 +606,31 @@ var b394Tests = []SystemTestDef{
 					}
 					checked++
 					if !b406Covers(prefixes, addr) {
-						stale = append(stale, fmt.Sprintf("%s → %s is in no enabled row", r.domain, ip))
+						uncovered++
+						if len(examples) < 2 {
+							examples = append(examples, ip)
+						}
 					}
+				}
+				last := b411LastResolve(s, r.domain)
+				verdict := exit_rules.DomainRowsVerdictFor(uncovered, last, now, interval)
+				if !autoOn && verdict == exit_rules.DomainRowsPendingNextPass {
+					// Nothing is scheduled, so "the next pass will fix it" is false:
+					// rotation becomes permanent rot.
+					verdict = exit_rules.DomainRowsStale
+				}
+				switch verdict {
+				case exit_rules.DomainRowsPendingNextPass:
+					pendingDomains = append(pendingDomains, fmt.Sprintf("%s: %d address(es) newer than the last resolve [%s] — %s",
+						r.domain, uncovered, strings.Join(examples, ", "),
+						exit_rules.DomainRowsVerdictNote(verdict, uncovered, last, now, interval)))
+				case exit_rules.DomainRowsStale:
+					reason := exit_rules.DomainRowsVerdictNote(verdict, uncovered, last, now, interval)
+					if !autoOn {
+						reason = "DNS auto-update is OFF, so nothing will rewrite these rows"
+					}
+					staleDomains = append(staleDomains, fmt.Sprintf("%s: %d address(es) in no enabled row [%s] — %s",
+						r.domain, uncovered, strings.Join(examples, ", "), reason))
 				}
 			}
 			if readErr != "" {
@@ -583,22 +638,16 @@ var b394Tests = []SystemTestDef{
 				// (AGENTS trap #15): say so instead of reporting every address stale.
 				return SystemTestFail, "could not read the device's derived rows: " + readErr
 			}
-			if len(stale) > 0 {
-				// B396: say whether ANYTHING will fix this by itself. "Press Re-sync"
-				// and "the auto-updater will do it on its interval" are different
-				// instructions, and the live page could not tell which one applies
-				// (the auto-updater can be OFF, and then the rows rot forever).
-				autoOn := db.GetGlobalSettingBool(s.dbc(), globalSettingsKeyDNSAutoUpdate,
-					s.Cfg != nil && s.Cfg.DNSAutoUpdateEnabled)
-				rawInterval, _ := db.GetGlobalSetting(s.dbc(), exit_rules.SettingDomainResolveIntervalSec, "")
-				hv := "DNS auto-update is OFF: nothing will rewrite these rows until you enable it on /admin/system_tests (or press Re-sync on the rule)"
-				if autoOn {
-					hv = fmt.Sprintf("DNS auto-update is ON (every %s) and will rewrite them on its next pass", exit_rules.ParseDomainResolveInterval(rawInterval))
-				}
-				return SystemTestFail, fmt.Sprintf("%d of %d address(es) are stale or missing: %s. %s.",
-					len(stale), checked, strings.Join(stale[:min(3, len(stale))], "; "), hv)
+			if len(staleDomains) > 0 {
+				return SystemTestFail, fmt.Sprintf("%d domain rule(s) will NOT heal by themselves: %s. %s.",
+					len(staleDomains), strings.Join(staleDomains[:min(3, len(staleDomains))], "; "),
+					b411FixHint(autoOn, interval))
 			}
-			return SystemTestPass, fmt.Sprintf("%d address(es) across %d domain rule(s) match today's DNS", checked, len(rules))
+			if len(pendingDomains) > 0 {
+				return SystemTestPass, fmt.Sprintf("%d address(es) checked, none of them stuck: %s. The mechanism is working — these rows are simply one rotation behind.",
+					checked, strings.Join(pendingDomains[:min(2, len(pendingDomains))], "; "))
+			}
+			return SystemTestPass, fmt.Sprintf("%d address(es) across %d domain rule(s) are inside a stored row and no answer has moved since the last resolve", checked, len(rules))
 		},
 	},
 	{
