@@ -141,6 +141,15 @@ check_ge "I" 7 "$(count "$REPO/internal/feature/exit_rules/form_admin_b184_test.
 # J. go test ./internal/feature/exit_rules/... passes
 # B281 (2026-09-22): `command -v go` first — the runner's /usr/local/go is the
 # image's Go 1.24.13 with GOTOOLCHAIN=local, and go.mod requires >= 1.25.
+#
+# 2026-10-22 (B411.1): "[J] expected=ok got=FAIL" with NO test name was useless —
+# a gate run reported it on a tree where the same command passes standalone, so
+# there was nothing to act on. Two changes, both from AGENTS trap #9/#15:
+#   * capture the output FIRST and match afterwards, instead of piping a
+#     still-writing producer into `grep -q` (which exits on the first match, so a
+#     SIGPIPE on the producer can become a failed pipeline under pipefail);
+#   * on failure, PRINT the failing test lines, so the next reader sees a test
+#     name (a product fact) or an empty read (a fact about the host).
 GO_BIN=""
 for cand in "$(command -v go 2>/dev/null)" /usr/local/go/bin/go /usr/bin/go /opt/go/bin/go; do
   if [ -n "$cand" ] && [ -x "$cand" ]; then
@@ -149,11 +158,43 @@ for cand in "$(command -v go 2>/dev/null)" /usr/local/go/bin/go /usr/bin/go /opt
   fi
 done
 if [ -n "$GO_BIN" ]; then
-  if (cd "$REPO" && "$GO_BIN" test -count=1 ./internal/feature/exit_rules/... 2>&1) | grep -q '^ok\s'; then
+  J_BODY="$( (cd "$REPO" && "$GO_BIN" test -count=1 ./internal/feature/exit_rules/... 2>&1); echo "J_RC=$?" )"
+  J_RC="${J_BODY##*J_RC=}"
+  J_BODY="${J_BODY%J_RC=*}"
+  case "$J_BODY" in
+    *"ok "*) J_OK=1 ;;
+    *)       J_OK=0 ;;
+  esac
+  if [ "$J_OK" -eq 0 ]; then
+    # AGENTS trap #15: this package is ~250 database-backed tests that each create
+    # their own SQLite file, so a single hostile transient (a file lock, an AV
+    # scanner, a full temp dir) can fail ONE arbitrary test without the product
+    # being broken. A host transient must not become a verdict, so the failing run
+    # is reported verbatim and then asked once more; a clean second run is a WARN
+    # naming the test that flapped, not a FAIL. A real regression fails both.
+    echo "      first run FAILED (exit ${J_RC}); naming the tests and re-running once:"
+    printf '%s\n' "$J_BODY" | grep -E '^(--- FAIL|FAIL|# )|\.go:[0-9]+:' | head -8 | sed 's/^/      /'
+    if ! printf '%s' "$J_BODY" | grep -q '[^[:space:]]'; then
+      echo "      (the go test read was EMPTY — a fact about the host, not a regression)"
+    fi
+    J_RETRY="$( (cd "$REPO" && "$GO_BIN" test -count=1 ./internal/feature/exit_rules/... 2>&1); echo "J_RC2=$?" )"
+    J_RC2="${J_RETRY##*J_RC2=}"
+    case "$J_RETRY" in
+      *"ok "*) J_OK=2 ;;
+      *)       J_OK=0 ;;
+    esac
+    if [ "$J_OK" -eq 2 ]; then
+      echo "      the re-run PASSED (exit ${J_RC2}) — the first verdict was a host transient, not a regression"
+    fi
+  fi
+  if [ "${J_OK:-0}" -ne 0 ]; then
     check_eq "J" "ok" "ok"
   else
     check_eq "J" "ok" "FAIL"
+    echo "      both runs failed — this IS a regression:"
+    printf '%s\n' "${J_RETRY:-}" | grep -E '^(--- FAIL|FAIL|# )|\.go:[0-9]+:' | head -8 | sed 's/^/      /'
   fi
+  unset J_BODY J_RC J_OK J_RETRY J_RC2
 else
   echo "  SKIP [J] go not available in PATH"
 fi
