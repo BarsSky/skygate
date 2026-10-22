@@ -205,27 +205,29 @@ func (s *Service) runTestsAsync(ctx context.Context, id string, tests []SystemTe
 	summary.TotalCount = len(results)
 
 	persisted := false
-	if only == "" {
-		// A whole-catalogue run is history; a single-test run is not (it would
-		// bury the real runs and confuse the history tab's rates).
-		if _, err := s.PersistRun(ctx, results, summary, userID); err != nil {
-			systemRunMu.Lock()
-			if systemRun != nil && systemRun.ID == id {
-				systemRun.Error = "persist: " + err.Error()
-			}
-			systemRunMu.Unlock()
-		} else {
-			persisted = true
-			// B394 retention: keep the newest N and drop anything older than the
-			// window, so the history tab cannot grow forever.
-			if deleted, err := s.PruneSystemTestRuns(ctx, SystemTestRunsKeep, SystemTestRunsMaxAge); err == nil && deleted > 0 {
-				if s.Backend != nil {
-					s.Backend.Audit(userID, username,
-						"system_tests_prune", fmt.Sprintf("deleted %d run(s) older than %s", deleted, SystemTestRunsMaxAge))
-				}
+	// B408.1: a single-test re-run is persisted TOO. Before this the result of
+	// «прогнать этот» was thrown away, so after a page reload the row fell back to
+	// the last FULL run — three days old on the operator's installation — and the
+	// honest conclusion was «the re-run does not work». The scope (only_test) is
+	// what keeps the history tab's rates comparable.
+	if _, err := s.PersistRunScoped(ctx, results, summary, userID, only); err != nil {
+		systemRunMu.Lock()
+		if systemRun != nil && systemRun.ID == id {
+			systemRun.Error = "persist: " + err.Error()
+		}
+		systemRunMu.Unlock()
+	} else {
+		persisted = true
+		// B394 retention: keep the newest N and drop anything older than the
+		// window, so the history tab cannot grow forever.
+		if deleted, err := s.PruneSystemTestRuns(ctx, SystemTestRunsKeep, SystemTestRunsMaxAge); err == nil && deleted > 0 {
+			if s.Backend != nil {
+				s.Backend.Audit(userID, username,
+					"system_tests_prune", fmt.Sprintf("deleted %d run(s) older than %s", deleted, SystemTestRunsMaxAge))
 			}
 		}
-	} else {
+	}
+	if only != "" {
 		// Still report the single test to the monitoring inbox: an operator who
 		// ran one failing test must see that failure land where every other
 		// monitoring signal lives (and a PASS must resolve it).

@@ -12,6 +12,65 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.153 — «прогнать этот» must leave a trace (B408.1)
+
+**Date:** 2026-10-22 · **Base:** `v1.5.152` → this tag · **Compatibility:** one additive
+migration (`system_tests_runs.only_test`), no config change.
+
+### Why
+
+With v1.5.151 live the operator re-ran one failing test twice. The audit proves both
+starts:
+
+```
+20:41:35  skyadmin  system_tests_run  started test exit_rules.domain_prefix (run f2203374b438)
+20:42:17  skyadmin  system_tests_run  started test exit_rules.domain_prefix (run 8be1d4df586d)
+```
+
+…and `system_tests_runs` gained **nothing**, because the runner persisted only
+whole-catalogue runs:
+
+```go
+persisted := false
+if only == "" { s.PersistRun(...) }
+```
+
+So after the reload the row fell back to the last FULL run — **three days old** — and
+the only reasonable conclusion was «the re-run does not work, the test still fails».
+**The button worked; its result was discarded.**
+
+### What changed
+
+1. **V081** adds `system_tests_runs.only_test TEXT NOT NULL DEFAULT ''` in **both**
+   migration chains; `PersistRunScoped` writes the run's scope and the runner calls it
+   for **every** run.
+2. **The page reads the newest verdict PER TEST**, not the newest run:
+   `ListLastResultsPerTest` scans the last 50 runs in Go and keeps the first result per
+   test (a window function would fork the SQL dialect). Without this, persisting a
+   single-test run would blank the other 25 rows — trading one bug for a worse one.
+3. **History rates stay comparable**: `ListRecentRuns` excludes `only_test <> ''`.
+4. **The B394 contract was renegotiated, not left contradicting the code**: its test
+   asserted «a single-test run must not write a history row»; it now asserts the run IS
+   stored, carries its scope, adds exactly one row, and does **not** enter the rates.
+
+### Files
+
+`internal/db/migrations_v0_81_system_test_only.go` (new), `internal/db/driver_postgres.go`,
+`internal/db/driver_sqlite.go`, `internal/feature/admin/system_tests_runtime.go`
+(`PersistRunScoped`), `internal/feature/admin/system_tests_run_state_b394.go`,
+`internal/feature/admin/system_tests_runs.go` (`ListLastResultsPerTest`, rates filter),
+`internal/feature/admin/system_tests_handlers.go`.
+
+**Contract:** `scripts/check_b408_1_single_run_persisted.sh` — 16 assertions, including
+«the guard is back» detection and the renegotiated test.
+
+### Live verify
+
+Press **«прогнать этот»** on a failing row, then reload: the row keeps the fresh verdict
+AND the other rows keep theirs. `psql -c "select id, only_test, pass_count, fail_count
+from system_tests_runs order by id desc limit 3"` shows the single-test run with its
+scope; the history tab's rates ignore it.
+
 ## v1.5.152 — a test must not blame a host for its own deadline (B408)
 
 **Date:** 2026-10-21 · **Base:** `v1.5.151` → this tag · **Compatibility:** no migration,

@@ -92,11 +92,31 @@ func TestSingleTestRunDoesNotPolluteHistory_B394(t *testing.T) {
 	if len(done.Results) != 1 || done.Results[0].Name != "db.schema_tables" {
 		t.Fatalf("expected exactly one result for db.schema_tables, got %+v", done.Results)
 	}
-	if done.Persisted {
-		t.Error("a single-test run must not write a history row")
+	// B408.1 RENEGOTIATES this contract. B394 required that a single-test run write
+	// NO row at all — which is exactly why the operator's «прогнать этот» produced
+	// an audit line, no row, and a page that kept showing the last FULL run from
+	// three days earlier. Now the run IS stored, tagged with its scope, so the row
+	// can reflect what was just measured; what must NOT happen is that it enters the
+	// history RATES, which is what ListRecentRuns filters out.
+	if !done.Persisted {
+		t.Error("a single-test run must be persisted (B408.1) — otherwise the re-run is thrown away")
 	}
-	if after := b394CountRuns(t, svc); after != before {
-		t.Errorf("history grew from %d to %d rows on a single-test run", before, after)
+	if after := b394CountRuns(t, svc); after != before+1 {
+		t.Errorf("stored runs went %d -> %d, want exactly one new row", before, after)
+	}
+	var only string
+	if err := svc.dbc().QueryRow(`SELECT only_test FROM system_tests_runs ORDER BY id DESC LIMIT 1`).Scan(&only); err != nil {
+		t.Fatalf("read only_test: %v", err)
+	}
+	if only != "db.schema_tables" {
+		t.Errorf("only_test = %q, want the test name — the scope is what keeps rates comparable", only)
+	}
+	if hist, err := svc.ListRecentRuns(t.Context(), 20); err == nil {
+		for _, h := range hist {
+			if h.TotalCount == 1 {
+				t.Errorf("the single-test run leaked into the history rates: %+v", h)
+			}
+		}
 	}
 	if done.Summary == nil || done.Summary.TotalCount != 1 {
 		t.Errorf("summary = %+v, want one test", done.Summary)

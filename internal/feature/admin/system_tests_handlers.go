@@ -131,7 +131,15 @@ func (s *Service) systemTestsPageData(
 	}
 	if last != nil {
 		data["LastRunID"] = last.RunID
-		data["LastResults"] = last.Results
+		// B408.1: the row's verdict comes from the NEWEST run that contains it, not
+		// from the newest run overall — a single-test re-run is persisted now, and
+		// reading only that row would blank the other rows.
+		if perTest, err := s.ListLastResultsPerTest(r.Context(), 50); err == nil && len(perTest) > 0 {
+			data["LastResults"] = perTest
+			data["LastResultsPerTest"] = true
+		} else {
+			data["LastResults"] = last.Results
+		}
 		data["LastSummary"] = last.Summary
 		data["LastRunStartedAt"] = last.StartedAt
 		data["LastRunFinishedAt"] = last.FinishedAt

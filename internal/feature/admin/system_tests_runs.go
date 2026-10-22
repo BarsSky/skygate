@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"skygate/internal/db"
@@ -37,6 +38,7 @@ func (s *Service) ListRecentRuns(ctx context.Context, limit int) ([]SystemRunSum
 		SELECT id, started_at, finished_at, duration_ms,
 		       pass_count, fail_count, skip_count
 		FROM system_tests_runs
+		WHERE only_test = ''
 		ORDER BY id DESC LIMIT `+db.PlaceholdersList(1)+`
 	`, limit)
 	if err != nil {
@@ -151,6 +153,75 @@ func (s *Service) ListLastRunWithResults(ctx context.Context) (*LastRunWithResul
 		return out, fmt.Errorf("parse results_json (run #%d): %w", id, err)
 	}
 	out.Results = results
+	return out, nil
+}
+
+// ListLastResultsPerTest returns the NEWEST result of every test across the last
+// `scan` runs (B408.1).
+//
+// Why not just "the newest run": since a single-test re-run is persisted too, the
+// newest row may contain exactly ONE test. Reading only that row would wipe the
+// other 25 rows' verdicts from the page — trading the operator's original problem
+// for a worse one. So the page reads the newest verdict PER TEST, which is what it
+// always meant: "when did I last learn something about this row?".
+//
+// Implemented in Go over the last N rows rather than with a window function: the
+// same code has to work on SQLite and PostgreSQL, and the row count is bounded by
+// the retention constant.
+func (s *Service) ListLastResultsPerTest(ctx context.Context, scan int) ([]SystemTestResult, error) {
+	if s == nil || s.dbc() == nil {
+		return nil, errors.New("DB not configured")
+	}
+	if scan <= 0 {
+		scan = 50
+	}
+	rows, err := s.dbc().QueryContext(ctx,
+		`SELECT results_json FROM system_tests_runs ORDER BY id DESC LIMIT `+db.PlaceholdersList(1), scan)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	out := make([]SystemTestResult, 0, 32)
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			continue
+		}
+		if raw == "" || raw == "{}" {
+			continue
+		}
+		var batch []SystemTestResult
+		if err := json.Unmarshal([]byte(raw), &batch); err != nil {
+			continue // a malformed historical row must not hide the rest
+		}
+		for _, r := range batch {
+			if r.Name == "" || seen[r.Name] {
+				continue
+			}
+			seen[r.Name] = true
+			out = append(out, r)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Registry order, so the template's lookups stay stable across reloads.
+	order := map[string]int{}
+	for i, t := range s.AllTests() {
+		order[t.Name] = i
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		oi, okI := order[out[i].Name]
+		oj, okJ := order[out[j].Name]
+		if okI && okJ {
+			return oi < oj
+		}
+		if okI != okJ {
+			return okI
+		}
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
 }
 

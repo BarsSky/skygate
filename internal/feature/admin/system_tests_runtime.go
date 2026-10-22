@@ -108,6 +108,14 @@ func (s *Service) RunAllTests(ctx context.Context) ([]SystemTestResult, *SystemR
 // "Run all" click. The dispatch uses the same build-tag
 // pattern as db.SetGlobalSetting + db.nowUnixSQL.
 func (s *Service) PersistRun(ctx context.Context, results []SystemTestResult, summary *SystemRunSummary, userID int64) (int64, error) {
+	return s.PersistRunScoped(ctx, results, summary, userID, "")
+}
+
+// PersistRunScoped is PersistRun with the run's SCOPE (B408.1): onlyTest is the
+// test name for a single-test re-run and "" for a whole-catalogue run. The scope
+// is stored so the row's last verdict can come from whichever run is newest while
+// the history RATES keep comparing like with like.
+func (s *Service) PersistRunScoped(ctx context.Context, results []SystemTestResult, summary *SystemRunSummary, userID int64, onlyTest string) (int64, error) {
 	if s == nil || s.dbc() == nil {
 		return 0, errors.New("DB not available")
 	}
@@ -116,14 +124,14 @@ func (s *Service) PersistRun(ctx context.Context, results []SystemTestResult, su
 		return 0, err
 	}
 	durationMs := summary.FinishedAt.Sub(summary.StartedAt).Milliseconds()
-	ph := db.PlaceholdersList(8)
+	ph := db.PlaceholdersList(9)
 	res, err := s.dbc().ExecContext(ctx, `
 		INSERT INTO system_tests_runs
 			(started_at, finished_at, duration_ms, results_json,
-			 pass_count, fail_count, skip_count, triggered_by_user_id)
+			 pass_count, fail_count, skip_count, triggered_by_user_id, only_test)
 		VALUES (`+ph+`)
 	`, summary.StartedAt.Unix(), summary.FinishedAt.Unix(), durationMs,
-		string(resultsJSON), summary.Pass, summary.Fail, summary.Skip, userID)
+		string(resultsJSON), summary.Pass, summary.Fail, summary.Skip, userID, onlyTest)
 	if err != nil {
 		return 0, err
 	}

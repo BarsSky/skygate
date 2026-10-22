@@ -65,11 +65,11 @@ func TestSQLiteSchemaComplete(t *testing.T) {
 			`SELECT COALESCE(MAX(version), 0) FROM applied_migrations`).Scan(&maxV); err != nil {
 			t.Fatalf("read max(version): %v", err)
 		}
-		// PostgreSQL's chain ends at 80 (v0.80 = device_exit_node_prefs.opted_out,
+		// PostgreSQL's chain ends at 81 (v0.81 = system_tests_runs.only_test; v0.80 = device_exit_node_prefs.opted_out,
 		// B399: a preference the operator removed by hand must not be re-created). If
 		// SQLite lags behind, every table/column added by the missing tail is absent.
-		if maxV != 80 {
-			t.Errorf("SQLite migration chain ends at V%d, want V80 — the PG and SQLite "+
+		if maxV != 81 {
+			t.Errorf("SQLite migration chain ends at V%d, want V81 — the PG and SQLite "+
 				"chains have diverged again (see driver_sqlite.go sqliteMigrations)", maxV)
 		}
 	})
