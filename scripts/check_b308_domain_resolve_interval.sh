@@ -110,10 +110,32 @@ if grep -q 'resolveInterval := s.DomainResolveInterval()' "$SYNC" \
 else
   bad "C1: the updater still resolves every domain on every tick"
 fi
-if [ "$(grep -c 's.markDomainResolved(d.domain, nowUnix)' "$SYNC")" -eq 2 ]; then
-  ok "C2: both resolution paths (CDN + per-IP) mark the domain resolved"
+# C2 COUNT RENEGOTIATED 2 → 3 on 2026-10-22, and the reason is a fix, not drift.
+#
+# Pre-B409 there were two resolution paths (published CDN ranges, per-IP) and the
+# CDN-MARKER branch had nothing to mark: it ran `continue` before any DNS lookup, so
+# it never resolved anything. B409 deleted that `continue` — a marked domain is now
+# resolved on every DUE pass, because a CDN's range set grows and a domain's answers
+# move between its edges (live: agent.minimax.io / cdn-registry-1.docker.io). A path
+# that resolves must ALSO mark, or the domain it handles would be re-resolved on
+# every single tick — B308's churn returning through the door B409 opened. So the
+# count is 3 and every one of the three is load-bearing:
+#   * published CDN ranges      (pre-B308)
+#   * CDN-marker gap reconcile  (B409 — asserted again below by C2b)
+#   * per-IP addresses          (pre-B308)
+MARKS=$(grep -c 's.markDomainResolved(d.domain, nowUnix)' "$SYNC" 2>/dev/null || true)
+if [ "${MARKS:-0}" -eq 3 ]; then
+  ok "C2: all three resolution paths mark the domain (CDN ranges, CDN-marker gaps, per-IP)"
 else
-  bad "C2: a resolution path does not mark the domain (it would re-resolve forever)"
+  bad "C2: ${MARKS:-0} mark site(s), expected 3 — a resolution path that does not mark re-resolves forever"
+fi
+# C2b is what keeps the number honest: it fails if the B409 path resolves WITHOUT
+# marking, which a bare count could not tell apart from "somebody deleted another
+# path's mark and added an unrelated one".
+if grep -A8 'b409ReconcileGaps(' "$SYNC" 2>/dev/null | grep -q 's.markDomainResolved(d.domain, nowUnix)'; then
+  ok "C2b: the CDN-marker path (B409) marks the domain right after reconciling its gaps"
+else
+  bad "C2b: the CDN-marker path resolves the domain but never marks it — it would resolve on every tick"
 fi
 if grep -q 'domain(s) skipped (re-resolve interval' "$SYNC"; then
   ok "C3: the skip is logged with the effective interval (visible in the journal)"
