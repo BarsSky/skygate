@@ -1,0 +1,39 @@
+# scripts/b410_unwrapped_tables_allowlist.txt
+#
+# B410 — FROZEN BUDGET of templates whose <table> is not inside .table-wrap.
+#
+# The contract (scripts/check_b410_table_overflow.sh) fails when a file is ADDED
+# here and when a file listed here is already fixed — so the list can only shrink.
+# Fix a page by wrapping its table: <div class="table-wrap"> … </div>.
+#
+admin/acls.html
+admin/backup.html
+admin/certificates.html
+admin/control_planes.html
+admin/database.html
+admin/deploy.html
+admin/derp.html
+admin/derp_config.html
+admin/derp_dashboard.html
+admin/exit_nodes.html
+admin/exit_rules.html
+admin/exit_rules_cleanup.html
+admin/ha.html
+admin/headscale_acl.html
+admin/migrate_run.html
+admin/oidc_settings.html
+admin/oidc_sync.html
+admin/tailscale.html
+admin/telegram.html
+admin/user_subnet.html
+admin/users.html
+dashboard.html
+exit_rules.html
+exit_rules_help.html
+help.html
+my_tokens.html
+user/exit_nodes.html
+user/keys.html
+user/meshes.html
+user/notifications.html
+user/telegram.html
