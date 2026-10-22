@@ -142,10 +142,10 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			// untouched (no churn); only the answers they do not contain become /32
 			// rows under the same marker.
 			b409OwnerName, b409OwnerHost := owners.get(d.userID, d.deviceID)
-			addedN, removedN := s.b409ReconcileGaps(b409Rule{
-				id: d.id, userID: d.userID, deviceID: d.deviceID, exitNode: d.exitNode,
-				domain: d.domain, action: d.action, deviceIP: d.deviceIP,
-			}, existingMarker, b409OwnerName, b409OwnerHost)
+			// b409Rule carries exactly domainRule's fields (domainRule is
+			// function-local, so it cannot appear in another file's signature):
+			// convert rather than re-listing them.
+			addedN, removedN := s.b409ReconcileGaps(b409Rule(d), existingMarker, b409OwnerName, b409OwnerHost)
 			if addedN > 0 || removedN > 0 {
 				added += addedN
 				removed += removedN
