@@ -12,6 +12,69 @@
 > after v1.5.9; v1.5.3's full entry sits near the bottom of the file (it was
 > appended after the historical sections). Nothing older was rewritten.
 
+## v1.5.154 — a CDN marker must not end the conversation (B409)
+
+**Date:** 2026-10-22 · **Base:** `v1.5.153` → this tag · **Compatibility:** no migration,
+no config change. The resolver starts covering answers it previously ignored.
+
+### Why
+
+A live run **as the operator** on v1.5.153 answered:
+
+```
+exit_rules.domain_prefix :: 5 of 12 address(es) are stale or missing:
+  agent.minimax.io         → 62.115.253.59  is in no enabled row
+  cdn-registry-1.docker.io → 54.157.162.28  is in no enabled row
+  cdn-registry-1.docker.io → 100.60.245.70  is in no enabled row
+```
+
+The rows were **fresh** (5 Akamai ranges for one domain, 6 rows for the other) and the
+resolver had run that day — yet today's answers were covered by **nothing**. Root cause,
+read out of `sync_domain.go`:
+
+```go
+existingMarker := … parent_domain LIKE 'cdn:%:<domain>' …
+if isCDNMarker(existingMarker) {
+    continue            // ← "already handled", BEFORE any DNS lookup
+}
+```
+
+Once a domain got a CDN marker it was **never resolved again**: the marker was treated
+as the whole answer. But a CDN's published set grows and a domain's answers move to
+other edges — so an **enabled** rule sat in the panel with rows in the database and no
+traffic routed.
+
+### What changed
+
+1. **The marker branch resolves.** It now resolves the domain on every due pass and
+   calls the new `b409ReconcileGaps`, which writes a `/32` for every answer **no stored
+   range contains** and removes gap rows whose address is no longer an answer.
+2. **The range rows are untouched** — the published set is still written once and never
+   rewritten (no churn), and the gap query reads only `/32` rows, so a range can never be
+   mistaken for a gap.
+3. **Gap rows live under the SAME marker** (`cdn:<name>:<domain>`), so the B298
+   dedup partition keeps them instead of deleting them on the next tick.
+4. **A resolver failure is not a verdict**: the rows are left alone and the next tick
+   retries (the domain is not marked as resolved on a failed lookup).
+
+### Files
+
+`internal/feature/exit_rules/sync_domain_cdn_gap_b409.go` (new),
+`internal/feature/exit_rules/sync_domain.go` (the marker branch).
+
+**Tests:** `sync_domain_cdn_gap_b409_test.go` — 5 cases (an answer inside a range stays
+covered; answers outside it become gaps; no stored ranges means every answer is a gap;
+IPv6 and unparsable values never become `/32`; the gap list is stably sorted).
+**Contract:** `scripts/check_b409_cdn_gap_coverage.sh` — 21 assertions.
+
+### Live verify
+
+`/admin/system_tests` → «прогнать все» → `exit_rules.domain_prefix` no longer names
+addresses that a CDN's published range covers, and every remaining name is an address
+the resolver failed to cover in the last pass. On the database:
+`SELECT parent_domain, target_value FROM device_rules WHERE target_value LIKE '%/32' AND parent_domain LIKE 'cdn:%'`
+now shows the previously-uncovered answers.
+
 ## v1.5.153 — «прогнать этот» must leave a trace (B408.1)
 
 **Date:** 2026-10-22 · **Base:** `v1.5.152` → this tag · **Compatibility:** one additive

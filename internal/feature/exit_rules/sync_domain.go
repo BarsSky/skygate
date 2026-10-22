@@ -133,8 +133,26 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			d.userID, d.deviceID, d.exitNode, cdnParentMarkerGuess(d.domain),
 		).Scan(&existingMarker)
 		if isCDNMarker(existingMarker) {
-			// Already have a CDN range rule for this domain.
-			// Nothing to do.
+			// B409: a CDN marker must NOT end the conversation. This used to be a
+			// bare `continue` BEFORE any DNS lookup, so a domain whose answers moved
+			// outside its (frozen) range set was never resolved again — measured on
+			// the operator's installation: agent.minimax.io → 62.115.253.59 and
+			// cdn-registry-1.docker.io → 54.157.162.28/100.60.245.70 were covered by
+			// NO enabled row while the resolver had run that day. The range rows stay
+			// untouched (no churn); only the answers they do not contain become /32
+			// rows under the same marker.
+			b409OwnerName, b409OwnerHost := owners.get(d.userID, d.deviceID)
+			addedN, removedN := s.b409ReconcileGaps(b409Rule{
+				id: d.id, userID: d.userID, deviceID: d.deviceID, exitNode: d.exitNode,
+				domain: d.domain, action: d.action, deviceIP: d.deviceIP,
+			}, existingMarker, b409OwnerName, b409OwnerHost)
+			if addedN > 0 || removedN > 0 {
+				added += addedN
+				removed += removedN
+				s.logAutoUpdate(d.id, d.domain, addedN, removedN,
+					"CDN marker kept; answered outside its ranges → "+strconv.Itoa(addedN)+" gap /32 row(s)")
+			}
+			s.markDomainResolved(d.domain, nowUnix)
 			continue
 		}
 
