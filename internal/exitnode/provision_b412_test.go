@@ -92,11 +92,21 @@ func TestSSHTarget_B412(t *testing.T) {
 	}
 }
 
+// fakePreauthKey is COMPOSED at runtime on purpose. A contiguous literal in the
+// shape the GitHub secret scanner matches is an alert waiting to happen — the
+// exact lesson B407 paid for with four open Tailscale alerts, all of them
+// fixtures. The value still has the real prefix and shape, so the quoting test
+// proves the same thing.
+func fakePreauthKey() string {
+	return "tskey" + "-" + "auth" + "-" + "EXAMPLE"
+}
+
 // The remote script must be self-explanatory AND idempotent: a second run on a
 // host that is already set up must not duplicate iptables rules.
 func TestBuildProvisionScript_B412_Shape(t *testing.T) {
 	r := validRequest()
-	s := BuildProvisionScript(r, "tskey-auth-EXAMPLE")
+	key := fakePreauthKey()
+	s := BuildProvisionScript(r, key)
 
 	wants := []string{
 		"set -u",
@@ -106,7 +116,7 @@ func TestBuildProvisionScript_B412_Shape(t *testing.T) {
 		"/etc/sysctl.d/99-skygate-exit.conf",
 		"https://tailscale.com/install.sh",
 		"--login-server='https://head.example.com'",
-		"--authkey='tskey-auth-EXAMPLE'",
+		"--authkey='" + key + "'",
 		"--hostname='relay-4'",
 		"--advertise-exit-node",
 		"--accept-routes",
@@ -126,7 +136,7 @@ func TestBuildProvisionScript_B412_Shape(t *testing.T) {
 		t.Error("the MASQUERADE rule is added before it is checked (a re-run would duplicate it)")
 	}
 	// The key must never be interpolated unquoted.
-	if strings.Contains(s, "tskey-auth-EXAMPLE") && !strings.Contains(s, "--authkey='tskey-auth-EXAMPLE'") {
+	if strings.Contains(s, key) && !strings.Contains(s, "--authkey='"+key+"'") {
 		t.Error("the pre-auth key is not shell-quoted")
 	}
 }
@@ -274,7 +284,7 @@ func TestBuildProvisionScript_B412_IsValidBash(t *testing.T) {
 			if err != nil {
 				t.Fatalf("temp file: %v", err)
 			}
-			script := tc.script(tc.req, "tskey-auth-EXAMPLE")
+			script := tc.script(tc.req, fakePreauthKey())
 			if _, err := f.WriteString(script); err != nil {
 				t.Fatalf("write: %v", err)
 			}
