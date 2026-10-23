@@ -353,6 +353,23 @@
   </ul>
 </div>
 
+{{/* B412 (2026-10-23): the admin hint the operator asked for — «не забыть про
+     подсказки на главной странице по формированию нового для администратора».
+     It is a how-to with the ONE link that starts the flow, so the answer to
+     "как добавить exit node" is on the page the admin opens first. */}}
+<div class="card">
+  <h3><i class="fa-solid fa-plug-circle-plus"></i>{{t "dashboard.new_exit_node_title"}}</h3>
+  <p style="color:var(--text-muted);margin-bottom:12px">{{t "dashboard.new_exit_node_sub"}}</p>
+  <ol class="plain">
+    <li>{{t "dashboard.new_exit_node_step1" | safeHTML}}</li>
+    <li>{{t "dashboard.new_exit_node_step2" | safeHTML}}</li>
+    <li>{{t "dashboard.new_exit_node_step3" | safeHTML}}</li>
+  </ol>
+  <div class="btn-row">
+    <a href="/admin/exit-nodes#new-exit-node" class="btn btn-primary"><i class="fa-solid fa-arrow-right"></i>{{t "dashboard.new_exit_node_cta"}}</a>
+  </div>
+</div>
+
 <div class="card">
   <h3><i class="fa-solid fa-link"></i>{{t "dashboard.quickref"}}</h3>
   <ul class="plain">

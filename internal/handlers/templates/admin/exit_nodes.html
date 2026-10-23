@@ -117,6 +117,106 @@
 <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
 {{end}}
 
+{{/* B412 (2026-10-23) — THE ONE-BUTTON PATH. The operator asked for exactly this:
+     «просто указав необходимые параметры нового vps и нажать кнопку
+     зарегистрировать новый exit node». Everything below in this card is done by the
+     handler: key preflight → minted tagged pre-auth key → remote setup over SSH →
+     wait for the node in headscale → exit_servers row → base-route approval.
+     The card renders the values it will ACTUALLY use (key path per install kind,
+     login server) instead of asking the operator to guess them. */}}
+<div class="card" id="new-exit-node" style="margin-bottom:24px">
+  <h3><i class="fa-solid fa-wand-magic-sparkles"></i> {{t "exit_nodes.provision.title"}}</h3>
+  <p class="sub">{{t "exit_nodes.provision.subtitle" | safeHTML}}</p>
+
+  {{if .Provision.Blocked}}
+  <div class="alert alert-warning" style="margin-bottom:12px">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <b>{{t "exit_nodes.provision.blocked"}}</b> {{.Provision.Blocked}}
+    {{if .Provision.KeyFixHint}}
+    <div style="margin-top:6px;font-size:13px">{{.Provision.KeyFixHint}}</div>
+    {{end}}
+  </div>
+  {{end}}
+
+  <form method="post" action="/admin/exit-nodes/provision">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px 18px;align-items:start;margin-bottom:14px">
+      <div>
+        <label for="prov_host" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.host"}}</label>
+        <input name="host" id="prov_host" value="{{.Provision.Host}}" placeholder="203.0.113.10" required style="width:100%">
+        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.provision.host_help" | safeHTML}}</div>
+      </div>
+      <div>
+        <label for="prov_port" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.ssh_port"}}</label>
+        <input name="ssh_port" id="prov_port" value="{{.Provision.SSHPort}}" placeholder="22" style="width:100%">
+      </div>
+      <div>
+        <label for="prov_user" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.ssh_user"}}</label>
+        <input name="ssh_user" id="prov_user" value="{{.Provision.SSHUser}}" placeholder="root" style="width:100%">
+        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.provision.ssh_user_help"}}</div>
+      </div>
+      <div>
+        <label for="prov_name" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.node_name"}}</label>
+        <input name="node_name" id="prov_name" value="{{.Provision.NodeName}}" placeholder="relay-4" required style="width:100%">
+        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.provision.node_name_help"}}</div>
+      </div>
+      <div>
+        <label for="prov_key" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.ssh_key"}}</label>
+        <input name="ssh_key_path" id="prov_key" value="{{.Provision.SSHKeyPath}}" style="width:100%">
+        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{tf "exit_nodes.provision.key_help" .Provision.InstallKind | safeHTML}}</div>
+      </div>
+      <div>
+        <label for="prov_accept" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.accept_routes"}}</label>
+        <select name="accept_routes" id="prov_accept" style="width:100%" aria-label="{{t "exit_nodes.provision.accept_routes"}}">
+          <option value="">{{t "exit_nodes.form_accept_routes_default_long"}}</option>
+          <option value="false">{{t "exit_nodes.form_accept_routes_false_long"}}</option>
+          <option value="true">{{t "exit_nodes.form_accept_routes_true_long"}}</option>
+        </select>
+        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.provision.accept_routes_help" | safeHTML}}</div>
+      </div>
+      <div>
+        <label for="prov_desc" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.description"}}</label>
+        <input name="description" id="prov_desc" value="{{.Provision.Description}}" placeholder="VPS · Germany" style="width:100%">
+      </div>
+    </div>
+
+    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;margin-bottom:14px;font-size:13px">
+      <label style="display:inline-flex;gap:6px;align-items:center;cursor:pointer">
+        <input type="checkbox" name="install_tailscale" checked>
+        <span>{{t "exit_nodes.provision.install_tailscale"}}</span>
+      </label>
+      <label style="display:inline-flex;gap:6px;align-items:center;cursor:pointer">
+        <input type="checkbox" name="setup_nat" checked>
+        <span>{{t "exit_nodes.provision.setup_nat"}}</span>
+      </label>
+      <label style="display:inline-flex;gap:6px;align-items:center;cursor:pointer">
+        <input type="checkbox" name="dry_run">
+        <span>{{t "exit_nodes.provision.dry_run"}}</span>
+      </label>
+    </div>
+
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plug-circle-plus"></i> {{t "exit_nodes.provision.submit"}}</button>
+    <span class="muted" style="font-size:12px;margin-left:10px">{{tf "exit_nodes.provision.timeout" .Provision.TimeoutSeconds}}</span>
+  </form>
+
+  <details style="margin-top:14px">
+    <summary style="cursor:pointer;font-size:13px;font-weight:600">{{t "exit_nodes.provision.what_title"}}</summary>
+    <ol style="margin:10px 0 0 18px;font-size:13px;color:var(--text-muted);line-height:1.6">
+      <li>{{t "exit_nodes.provision.what_1" | safeHTML}}</li>
+      <li>{{t "exit_nodes.provision.what_2" | safeHTML}}</li>
+      <li>{{t "exit_nodes.provision.what_3" | safeHTML}}</li>
+      <li>{{t "exit_nodes.provision.what_4" | safeHTML}}</li>
+      <li>{{t "exit_nodes.provision.what_5" | safeHTML}}</li>
+      <li>{{t "exit_nodes.provision.what_6" | safeHTML}}</li>
+    </ol>
+    <p style="font-size:12px;color:var(--text-muted);margin-top:10px">
+      {{tf "exit_nodes.provision.install_kind" .Provision.InstallKind | safeHTML}}
+    </p>
+    <p style="font-size:12px;color:var(--text-muted);margin-top:6px">
+      {{tf "exit_nodes.provision.login_server" .Provision.LoginServer}}
+    </p>
+  </details>
+</div>
+
 <div class="card" style="margin-bottom:24px">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:12px">
     <div>
@@ -779,7 +879,8 @@
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-plus"></i> {{t "exit_nodes.add"}}</h3>
+  <h3><i class="fa-solid fa-screwdriver-wrench"></i> {{t "exit_nodes.manual_title"}}</h3>
+  <p class="sub">{{t "exit_nodes.add_flow_hint"}}</p>
 
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
     <h4 style="margin:0 0 8px 0">{{t "exit_nodes.tutorial_step1_h4"}}</h4>
@@ -798,6 +899,67 @@ sudo iptables -A FORWARD -i "$EXT_IF" -o tailscale0 -m state --state RELATED,EST
 sudo mkdir -p /etc/iptables && sudo iptables-save | sudo tee /etc/iptables/rules.v4</pre>
   </div>
 
+  {{/* B266 (2026-09-19): preauth-ключ для новой машины.
+       Раньше этот блок стоял ПОСЛЕ формы шага 5, то есть ниже, чем нужно:
+       `tailscale up` (шаг 3) без ключа не выполнить, а оператор видел две
+       похожие «регистрации» в неверном порядке. Теперь это шаг 2 — строго
+       между подготовкой хоста и подключением к headscale.
+       Панель выдаёт preauth-ключ с тегом tag:exit-node под техническим
+       пользователем infra (владелец тега — infra@<baseDomain>) и показывает
+       готовую команду для новой машины. Приватный SSH-ключ панель НЕ
+       принимает и НЕ хранит — это отдельный блок (V073). */}}
+  <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
+    <h4 style="margin:0 0 8px 0"><i class="fa-solid fa-key"></i> {{t "exit_nodes.register_title"}}</h4>
+    <p style="color:var(--text-muted);margin-bottom:8px">{{t "exit_nodes.register_subtitle" | safeHTML}}</p>
+
+    {{if .RegisterKey}}
+    <div class="alert alert-success" style="margin-bottom:10px">
+      <i class="fa-solid fa-circle-check"></i>
+      {{tf "exit_nodes.register_ok" .RegisterKey.Hostname}}
+    </div>
+    {{if .RegisterKey.Warnings}}
+    <div class="alert alert-warn" style="margin-bottom:10px">
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      <b>{{t "exit_nodes.register_warnings"}}</b>
+      <ul style="margin:6px 0 0 18px">
+        {{range .RegisterKey.Warnings}}<li>{{.}}</li>{{end}}
+      </ul>
+    </div>
+    {{end}}
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:4px">
+      {{t "exit_nodes.register_key_once"}}
+    </p>
+    <pre style="white-space:pre-wrap;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px">{{.RegisterKey.Command}}</pre>
+    {{/* B310: the management key is what makes the new relay manageable over the
+         tailnet from the first sync. Say which key was embedded, or say that none
+         could be read (then the operator copies it by hand — a placeholder in the
+         command would grant nothing). */}}
+    {{if .RegisterKey.MgmtKey}}
+    <p style="font-size:12px;color:var(--text-muted);margin-top:6px">
+      {{tf "exit_nodes.register_mgmt_key" .RegisterKey.MgmtKey}}
+    </p>
+    {{else}}
+    <p style="font-size:12px;color:var(--text-muted);margin-top:6px">{{t "exit_nodes.register_mgmt_key_missing"}}</p>
+    {{end}}
+    {{else}}
+    <form method="post" action="/admin/exit-nodes/register" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px 16px;align-items:start">
+      <div>
+        <label for="reg_hostname" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.register_hostname"}}</label>
+        <input name="hostname" id="reg_hostname" placeholder="relay-4" style="width:100%" required>
+        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.register_hostname_help"}}</div>
+      </div>
+      <div>
+        <label for="reg_ttl" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.register_ttl"}}</label>
+        <input name="ttl" id="reg_ttl" value="1h" style="width:100%">
+        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.register_ttl_help"}}</div>
+      </div>
+      <div style="align-self:end">
+        <button type="submit" class="btn btn-primary" style="width:100%"><i class="fa-solid fa-key"></i> {{t "exit_nodes.register_btn"}}</button>
+      </div>
+    </form>
+    {{end}}
+  </div>
+
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
     <h4 style="margin:0 0 8px 0">{{t "exit_nodes.tutorial_step2_h4"}}</h4>
     <p style="color:var(--text-muted);margin-bottom:8px">{{t "exit_nodes.tutorial_step2_run" | safeHTML}}</p>
@@ -805,7 +967,7 @@ sudo mkdir -p /etc/iptables && sudo iptables-save | sudo tee /etc/iptables/rules
     <p style="color:var(--text-muted);margin-top:4px;font-size:12px">
       {{t "exit_nodes.tutorial_step2_ssh_help" | safeHTML}}
     </p>
-    {{/* B266: рекомендуемый путь — ключ из панели (см. блок ниже). Тогда
+    {{/* B266: рекомендуемый путь — ключ из панели (шаг 2 выше). Тогда
          тег tag:exit-node приезжает вместе с ключом, и headscale не
          отклоняет его: владелец тега в ACL — infra@<домен>. */}}
     <p style="color:var(--text-muted);margin-top:6px;font-size:12px">
@@ -835,102 +997,55 @@ ssh-keygen -t ed25519 -f ~/.ssh/skygate_sync -N "" -C "skygate-sync"
 ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
   </div>
 
-  <h4 style="margin:0 0 8px 0">{{t "exit_nodes.tutorial_step5_h4"}}</h4>
-  <p style="color:var(--text-muted);margin:0 0 8px;font-size:12px">
-    {{t "exit_nodes.tutorial_step5_intro" | safeHTML}}
-  </p>
-  <form method="post" action="/admin/exit-nodes/add" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-    <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{t "exit_nodes.form_label_node_id"}}</label>
-      <input name="node_id" placeholder="2" style="width:80px" required>
-    </div>
-    <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{t "exit_nodes.form_hostname"}}</label>
-      <input name="hostname" placeholder="relay-3" style="width:140px" required>
-    </div>
-    <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{t "exit_nodes.form_ssh_target"}}</label>
-      <input name="ssh_target" placeholder="{{t "exit_nodes.form_ssh_target_placeholder"}}" style="width:240px">
-      <div class="form-hint" style="font-size:11px;color:var(--text-muted);max-width:240px">{{t "exit_nodes.form_ssh_target_help" | safeHTML}}</div>
-    </div>
-    <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{t "exit_nodes.form_ssh_key"}}</label>
-      <input name="ssh_key_path" value="{{.SSHKeyPath}}" style="width:260px">
-    </div>
-    <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{t "exit_nodes.form_ssh_port"}}</label>
-      <input name="ssh_port" value="{{.SSHPort}}" placeholder="22" style="width:80px">
-      <div class="form-hint" style="font-size:11px;color:var(--text-muted);max-width:240px">{{t "exit_nodes.form_ssh_port_help" | safeHTML}}</div>
-    </div>
-    <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{t "exit_nodes.form_accept_routes"}}</label>
-      <select name="accept_routes" style="width:160px" aria-label="{{t "exit_nodes.form_accept_routes"}}">
-        <option value="">{{t "exit_nodes.form_accept_routes_default_long"}}</option>
-        <option value="false">{{t "exit_nodes.form_accept_routes_false_long"}}</option>
-        <option value="true">{{t "exit_nodes.form_accept_routes_true_long"}}</option>
-      </select>
-    </div>
-    <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{t "exit_nodes.form_desc"}}</label>
-      <input name="description" placeholder="VPS in Europe" style="width:150px">
-    </div>
-    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{t "common.add"}}</button>
-  </form>
-</div>
-
-{{/* B266 (2026-09-19): первый шаг онбординга relay из панели.
-     Панель выдаёт preauth-ключ с тегом tag:exit-node под техническим
-     пользователем infra (владелец тега — infra@<baseDomain>) и показывает
-     готовую команду для новой машины. Приватный SSH-ключ панель НЕ
-     принимает и НЕ хранит — это отдельный блок (V073). */}}
-<div class="card" style="margin-top:12px">
-  <h3><i class="fa-solid fa-key"></i> {{t "exit_nodes.register_title"}}</h3>
-  <p class="sub">{{t "exit_nodes.register_subtitle" | safeHTML}}</p>
-
-  {{if .RegisterKey}}
-  <div class="alert alert-success" style="margin-bottom:10px">
-    <i class="fa-solid fa-circle-check"></i>
-    {{tf "exit_nodes.register_ok" .RegisterKey.Hostname}}
+  {{/* Шаг 6 — единственная форма, которой нода попадает в exit_servers.
+       Поля идут ровно в том порядке, в котором их заполняют (grid, а не
+       flex-wrap: раньше «Порт SSH» уезжал в первую строку рядом с
+       SSH target, и порядок чтения не совпадал с порядком ввода). */}}
+  <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
+    <h4 style="margin:0 0 8px 0">{{t "exit_nodes.tutorial_step5_h4"}}</h4>
+    <p style="color:var(--text-muted);margin:0 0 12px;font-size:12px">
+      {{t "exit_nodes.tutorial_step5_intro" | safeHTML}}
+    </p>
+    <form method="post" action="/admin/exit-nodes/add">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px 18px;align-items:start;margin-bottom:14px">
+        <div>
+          <label for="add_node_id" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.form_label_node_id"}}</label>
+          <input name="node_id" id="add_node_id" placeholder="2" style="width:100%" required>
+        </div>
+        <div>
+          <label for="add_hostname" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.form_hostname"}}</label>
+          <input name="hostname" id="add_hostname" placeholder="relay-3" style="width:100%" required>
+        </div>
+        <div>
+          <label for="add_ssh_target" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.form_ssh_target"}}</label>
+          <input name="ssh_target" id="add_ssh_target" placeholder="{{t "exit_nodes.form_ssh_target_placeholder"}}" style="width:100%">
+          <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.form_ssh_target_help" | safeHTML}}</div>
+        </div>
+        <div>
+          <label for="add_ssh_port" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.form_ssh_port"}}</label>
+          <input name="ssh_port" id="add_ssh_port" value="{{.SSHPort}}" placeholder="22" style="width:100%">
+          <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.form_ssh_port_help" | safeHTML}}</div>
+        </div>
+        <div>
+          <label for="add_ssh_key_path" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.form_ssh_key"}}</label>
+          <input name="ssh_key_path" id="add_ssh_key_path" value="{{.SSHKeyPath}}" style="width:100%">
+        </div>
+        <div>
+          <label for="add_accept_routes" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.form_accept_routes"}}</label>
+          <select name="accept_routes" id="add_accept_routes" style="width:100%" aria-label="{{t "exit_nodes.form_accept_routes"}}">
+            <option value="">{{t "exit_nodes.form_accept_routes_default_long"}}</option>
+            <option value="false">{{t "exit_nodes.form_accept_routes_false_long"}}</option>
+            <option value="true">{{t "exit_nodes.form_accept_routes_true_long"}}</option>
+          </select>
+        </div>
+        <div>
+          <label for="add_description" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.form_desc"}}</label>
+          <input name="description" id="add_description" placeholder="VPS in Europe" style="width:100%">
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{t "common.add"}}</button>
+    </form>
   </div>
-  {{if .RegisterKey.Warnings}}
-  <div class="alert alert-warn" style="margin-bottom:10px">
-    <i class="fa-solid fa-triangle-exclamation"></i>
-    <b>{{t "exit_nodes.register_warnings"}}</b>
-    <ul style="margin:6px 0 0 18px">
-      {{range .RegisterKey.Warnings}}<li>{{.}}</li>{{end}}
-    </ul>
-  </div>
-  {{end}}
-  <p style="font-size:12px;color:var(--text-muted);margin-bottom:4px">
-    {{t "exit_nodes.register_key_once"}}
-  </p>
-  <pre style="white-space:pre-wrap;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px">{{.RegisterKey.Command}}</pre>
-  {{/* B310: the management key is what makes the new relay manageable over the
-       tailnet from the first sync. Say which key was embedded, or say that none
-       could be read (then the operator copies it by hand — a placeholder in the
-       command would grant nothing). */}}
-  {{if .RegisterKey.MgmtKey}}
-  <p style="font-size:12px;color:var(--text-muted);margin-top:6px">
-    {{tf "exit_nodes.register_mgmt_key" .RegisterKey.MgmtKey}}
-  </p>
-  {{else}}
-  <p style="font-size:12px;color:var(--text-muted);margin-top:6px">{{t "exit_nodes.register_mgmt_key_missing"}}</p>
-  {{end}}
-  {{else}}
-  <form method="post" action="/admin/exit-nodes/register" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-    <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{t "exit_nodes.register_hostname"}}</label>
-      <input name="hostname" placeholder="relay-4" style="width:160px" required>
-      <div class="form-hint" style="font-size:11px;color:var(--text-muted);max-width:260px">{{t "exit_nodes.register_hostname_help"}}</div>
-    </div>
-    <div>
-      <label style="font-size:12px;color:var(--text-muted)">{{t "exit_nodes.register_ttl"}}</label>
-      <input name="ttl" value="1h" style="width:80px">
-    </div>
-    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-key"></i> {{t "exit_nodes.register_btn"}}</button>
-    <span class="muted" style="font-size:11px">{{t "exit_nodes.register_ttl_help"}}</span>
-  </form>
-  {{end}}
 </div>
 
 <script>

@@ -1036,6 +1036,12 @@ func registerRoutes(
 	// the panel (previously no page issued a key carrying tag:exit-node,
 	// whose tagOwners owner is infra@<baseDomain>).
 	mux.Handle("POST /admin/exit-nodes/register", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeRegister)))
+	// B412 (2026-10-23): the ONE-BUTTON path the operator asked for — give the
+	// panel the new VPS (address, ssh port/user, node name) and it does the rest
+	// itself over SSH: mint the tagged key, prepare the host, wait for the node in
+	// headscale, write the exit_servers row and approve 0.0.0.0/0 + ::/0. B266
+	// (the block above) stays as the manual half for hosts skygate cannot reach.
+	mux.Handle("POST /admin/exit-nodes/provision", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeProvision)))
 	// B312 (v1.5.77): where a relay sits — shown on the page and used to prefer a
 	// nearby relay when an owner becomes unreachable.
 	mux.Handle("POST /admin/exit-nodes/location", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeLocation)))

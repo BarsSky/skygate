@@ -396,17 +396,32 @@ RTO < 1 минута, RPO = 0 (Patroni async replication).
 
 ### 7.2. Добавить exit-ноду
 
+**Быстрый путь (B412) — одна кнопка:** `/admin/exit-nodes` → карточка
+«Новый exit node: укажите VPS». Заполнить адрес VPS, SSH-порт,
+пользователя (`root`), имя узла в tailnet и нажать «Проверить и подключить».
+Панель сама: проверит SSH-ключ, выпустит pre-auth ключ с `tag:exit-node`
+от `infra`, включит форвардинг и NAT, поставит Tailscale (если нужно),
+поднимет узел, дождётся его в headscale, создаст строку в `exit_servers`
+и одобрит `0.0.0.0/0` + `::/0`. Чекбокс «только проверить» ничего не меняет.
+В карточке видно, в каком виде запущен skygate (docker / native) и какой путь
+к SSH-ключу будет использован — от этого зависит только доступность VPS из
+сети процесса.
+
+**Ручной путь** (если SSH из skygate до VPS недоступен) — карточка ниже на той
+же странице:
+
 1. На сервере, который будет exit-нодой:
    - Установить Tailscale: `curl -fsSL https://tailscale.com/install.sh | sh`.
    - Залогиниться в headscale: `sudo tailscale up --login-server=https://head.example.com --hostname=exit-1 --advertise-exit-node`.
    - Сгенерировать SSH-ключ: `ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519`.
    - Добавить pubkey в `/root/.ssh/authorized_keys`.
-2. В Skygate: `/admin/exit-nodes` → "Add".
+2. В Skygate: `/admin/exit-nodes` → «Ручной режим» → выдать ключ и выполнить показанную команду.
 3. Заполнить `node_id` (= headscale numeric id), `hostname`, `ssh_target`
    (`root@exit-1.example.com:22` или `root@100.64.0.5` если через Tailscale),
    `ssh_key_path` (`/root/.ssh/id_ed25519`).
 4. Нажать "Use Tailscale IP" (если хотите через Tailscale).
-5. Approve routes в headscale: `headscale nodes approve-routes -i <node-id>`.
+5. Approve routes в headscale: `headscale nodes approve-routes -i <node-id>`
+   (или «Re-sync» в строке узла).
 6. На `/admin/exit-rules` создать правила "user → exit-1".
 
 ### 7.3. Добавить DERP-сервер на новом хосте (B164)

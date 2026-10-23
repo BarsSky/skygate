@@ -397,6 +397,10 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		// URL) and consumed here, so it renders exactly once.
 		"RegisterKey": s.consumeExitNodeRegisterKey(r.URL.Query().Get("registered")),
 		"ControlURL":  s.controlURL(),
+		// B412 (2026-10-23): the provisioning card's state — the SSH key this
+		// process will actually use (per install kind), its preflight verdict,
+		// the install kind itself and the headscale URL the new node will dial.
+		"Provision": s.exitNodeProvisionView(r),
 		// banner. The template renders a coloured
 		// "newer headscale available" hint above the
 		// exit-node table when a release newer than the

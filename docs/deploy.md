@@ -120,6 +120,37 @@ in the generated ACL is `infra@<baseDomain>`, so a key issued for anyone else is
 rejected by headscale) and shows a copy-paste command for the new machine. The
 key is displayed once and never stored.
 
+**Adding a new VPS with one button** (B412): the card at the top of
+`/admin/exit-nodes` takes the VPS parameters and does the whole onboarding
+itself over SSH — no console session, no pasted commands:
+
+| Field | What to put there |
+|---|---|
+| IP or name | the VPS address (`82.26.94.56`, `vps.example.com`) — no `ssh://`, no slash |
+| SSH port | `22` unless sshd listens elsewhere |
+| SSH user | `root` (the script refuses to half-configure a host under a non-root user) |
+| Node name | unique tailnet name (`relay-4`); a taken name is refused because headscale would register `relay-4-1` |
+| SSH key | the path **this process** uses — pre-filled from `SKYGATE_EXIT_SSH_KEY`, and the card states the detected install kind next to it |
+| Accept routes | `false` for a node that also runs another VPN (Amnezia/WireGuard) |
+| checkboxes | install Tailscale when missing; configure NAT; **dry run** (probe only) |
+
+What happens on submit: key preflight → tagged pre-auth key minted as `infra` →
+one idempotent script over SSH (`ip_forward` + persistence, optional Tailscale
+install, `tailscale up --authkey … --advertise-exit-node --accept-routes --ssh`,
+`MASQUERADE`/`FORWARD` rules added only when absent) → wait for the node to
+appear in headscale → `exit_servers` row written (`ssh_target`, key, port,
+accept-routes) → the per-node sync advertises the base routes and approves
+`0.0.0.0/0` + `::/0`. A real run is bounded by a 3-minute timeout and audited
+(host, node, stages; the pre-auth key is never logged).
+
+**Install kind decides two things** and the card says both: in `docker` the SSH
+key is the one bind-mounted into the container (`/ssh-sync/...`) and the VPS must
+be reachable from the container's network; on a native/systemd/bare host the key
+lives in `<data_dir>/ssh/id_ed25519` and the process reaches the VPS from the
+host itself. The manual path below the one-button card (mint key + command, then
+the `exit_servers` form) stays available for a VPS that skygate cannot reach —
+e.g. one only reachable from a different network.
+
 ### DERP relay (optional)
 
 | Var | Default | What it does |

@@ -1,5 +1,100 @@
 # Skygate release notes
 
+## v1.5.156 — one button adds the exit node, and the page stops offering two registrations (B412)
+
+**Date:** 2026-10-23 · **Base:** `v1.5.155` → this tag · **Compatibility:** no migration, no
+config change. One admin-only POST surface plus a rebuilt section of `/admin/exit-nodes`;
+nothing in the data plane moves, and every existing relay row keeps working untouched.
+
+### Why — the panel could talk about a new node, but not add one
+
+Operator, verbatim:
+
+> «на странице много разных мест по регистрации и непонятно какое из них корректное также
+> поля непонятно указаны в перемешку и скачату по строкам что неудобно воспринимать»
+
+> «как фича в возможностях skygate должна была быть указана настройка exit node через
+> вебинтерфейс skygate вот ее я и хочу проверить - по сути просто указав необходимые
+> параметры нового vps и нажать кнопку зарегистрировать новый exit node … необходимо
+> сделать удобную форму и не забыть про подсказки на главной странице по формированию
+> нового для администратора. Также при регистрации стоит учитывать в каком виде будет
+> запущен сервис - нативно или в докере»
+
+He was describing a feature that did not exist, and the page explained why nobody noticed:
+
+| what the page had | what it actually did |
+|---|---|
+| «Зарегистрировать новый exit node» (B266) | minted a `tag:exit-node` pre-auth key as `infra` and **printed a command** — it never touched the machine |
+| «Добавить exit node» (B20-era form) | stored `ssh_target` for a node that **must already exist in headscale** — a fresh VPS has no `node_id` to type in |
+| their order on the page | the key block sat **below** the form that needs the key, so the flow read backwards |
+| their layout | `flex-wrap` rows: «Порт SSH» landed next to «SSH target», labels and hints drifted between columns |
+| install kind | never mentioned, although the SSH key path differs between `docker` and a native/systemd host |
+
+So the two halves of one onboarding never met: a VPS could be keyed but never entered, or
+entered but never keyed.
+
+### What changed
+
+1. **One card, first on the page** (`/admin/exit-nodes#new-exit-node`): IP or name of the
+   VPS, SSH port, SSH user, tailnet node name, SSH key path, accept-routes, description,
+   plus three checkboxes — install Tailscale when missing, configure NAT, and **dry run**
+   (probe only). Every field is a grid cell in the order it is filled, with its hint under
+   it, and the card prints the values it will really use: the key path **this process**
+   reads and the headscale URL the node will dial.
+2. **The handler does the whole onboarding** (`POST /admin/exit-nodes/provision`,
+   admin-only, audited): key preflight (B292) → node-name uniqueness (headscale would
+   otherwise create `relay-4-1`) → a `tag:exit-node` pre-auth key minted as `infra` → one
+   idempotent script over SSH → wait for the node to appear in headscale → the
+   `exit_servers` row → base-route advertisement and approval through the **same**
+   `SyncRoutesForNode` path as «Пере-синхронизировать», so a provisioned relay and a
+   re-synced one cannot drift apart.
+3. **The remote script** (new package `internal/exitnode`): a root gate that refuses to
+   half-configure a host, `ip_forward` + persistence in `/etc/sysctl.d`, Tailscale installed
+   only when missing and only when allowed, `tailscale up --authkey=… --advertise-exit-node
+   --accept-routes --ssh`, then `MASQUERADE`/`FORWARD` rules with `iptables -C` **before**
+   `-A` so a second run adds no duplicates — and a marker per stage, so the flash names the
+   step that failed instead of "ssh error".
+4. **Security contract:** the pre-auth key travels on **stdin only** (never argv, never a
+   URL, never the audit row); every value is shape-validated before an `ssh` process is
+   spawned and shell-quoted in the script; the `ssh` argv carries `--` before the host,
+   `BatchMode`, `IdentitiesOnly` and accept-new host keys; runs are serialised (`TryLock`),
+   because two concurrent runs on one VPS race on the same iptables state. The run is not
+   tied to the browser request — closing the tab cannot leave a host half-configured.
+5. **Install kind is detected, not assumed** (`update.DetectInstallKind`): the card states
+   `docker` / `systemd` / `openrc` / `kubernetes` / `binary` next to the key path, so a
+   native host is never told about `/ssh-sync`, and a container operator is told that the
+   VPS must be reachable from the container's network.
+6. **The manual half stays** — renamed «Ручной режим» and kept below, because a host
+   skygate cannot reach over SSH still needs the key-plus-command path and the
+   hand-written `exit_servers` row (it also remains the way to fix an existing row).
+7. **The admin dashboard carries the hint** the operator asked for: a card with the three
+   steps and a button straight to `#new-exit-node`, rendered only inside the admin branch.
+
+### What it deliberately does not do
+
+* It does not accept or store a private key. The key must already exist at the path the
+  card shows (the B292 preflight names the exact fix when it does not).
+* It does not provision a host where the SSH user is not root — the script stops at the
+  first stage and says so, instead of leaving forwarding or NAT half-configured.
+* It does not claim NAT rules are permanent: if `netfilter-persistent` is absent the stage
+  reports `not-persisted`, which is the fact the operator needs.
+* It does not run two provisions at once, and it bounds a run at three minutes.
+
+### Verification
+
+* `internal/exitnode/provision_b412_test.go` — validators (including the injection shapes),
+  shell quoting, **idempotency order** (`-C` before `-A`), the marker parser, the ssh argv,
+  and a real `bash -n` of every generated script (skipped, never faked, when no POSIX bash
+  is reachable).
+* `internal/feature/admin/exit_nodes_provision_b412_test.go` — the card reports the install
+  kind, the key verdict and the typed values; a missing key **blocks** the flow.
+* `scripts/check_b412_exit_node_provision.sh` — **67 contracts**: package surface, handler
+  and route, admin gate, no key in any URL/flash/audit surface, minted-as-infra-with-tag,
+  single-run lock, script shape, `exit_servers` write, the headscale wait, the shared sync
+  tail, both audit rows, install-kind detection, every form field, the one-button card
+  **above** the manual path, RU+EN i18n pairs, the dashboard hint inside the admin branch,
+  plus `go build` / `go vet` / focused `go test`.
+
 ## v1.5.155 — the shell is centred, and a rotating CDN is not a broken mechanism (B411)
 
 **Date:** 2026-10-22 · **Base:** `v1.5.154` → this tag · **Compatibility:** no migration,
