@@ -66,10 +66,23 @@ else
 fi
 # The history rows are the wide ones: nine columns. Make sure the wrapper really
 # surrounds THAT table and not only the small ones.
-if awk '/eq \.Tab "history"/,0' "$TPL" | grep -q 'div class="table-wrap"'; then
+#
+# 2026-10-23 (B410.1): the first version was `awk '/eq \.Tab "history"/,0' | grep -q
+# ...` and it PASSED on Windows while FAILING on the CI runner — a range pattern
+# with a bare `,0` end is not portable (mawk/busybox treat `0` as a regex `/0/`, so
+# the range can stop at some unrelated line), and piping awk into `grep -q` is the
+# shape B386/B388 forbid. Now a single awk pass decides it: from the History marker,
+# find the FIRST <table> and answer whether a .table-wrap came before it. No range
+# pattern, no pipe, no platform-dependent behaviour.
+A2_VERDICT="$(awk '
+  /eq \.Tab "history"/   { seen = 1 }
+  seen && /table-wrap/   { wrapped = 1 }
+  seen && /<table/       { print (wrapped ? "yes" : "no"); exit }
+' "$TPL" 2>/dev/null)"
+if [ "${A2_VERDICT:-}" = "yes" ]; then
   ok "A2: the History tab's own table is wrapped"
 else
-  bad "A2: the History tab's table is still unwrapped"
+  bad "A2: the History tab's table is still unwrapped (verdict: ${A2_VERDICT:-no table found after the History marker})"
 fi
 
 # ---------------------------------------------------------------------------
