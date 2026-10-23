@@ -114,8 +114,13 @@ else
   bad "A6: the mobile block does not reset <main> — on a phone the whole page stays shifted 220px right"
 fi
 BC_BODY="$(awk '/^main \.admin-breadcrumb\{/{i=1} i{buf=buf $0} i&&/\}/{print buf; exit}' "$CSS")"
-if [ -n "$BC_BODY" ] && ! printf '%s' "$BC_BODY" | grep -qE 'margin-left:(220|52)px' \
-   && printf '%s' "$BC_BODY" | grep -q 'margin-left:0'; then
+# Shell builtins only: `printf "$VAR" | grep -q` is forbidden by B386/B388 (the
+# pipeline's status is not the producer's — a host transient becomes a verdict).
+BC_HAS_220=0
+case "$BC_BODY" in *"margin-left:220px"*|*"margin-left:52px"*) BC_HAS_220=1 ;; esac
+BC_HAS_0=0
+case "$BC_BODY" in *"margin-left:0"*) BC_HAS_0=1 ;; esac
+if [ -n "$BC_BODY" ] && [ "$BC_HAS_220" -eq 0 ] && [ "$BC_HAS_0" -eq 1 ]; then
   ok "A7: the breadcrumb has no offset of its own — <main> provides it once"
 else
   bad "A7: the breadcrumb carries its own offset (${BC_BODY}) — <main> already offsets it, so it would be applied twice"
@@ -217,7 +222,12 @@ else
 fi
 if [ -f "$TESTGO" ] && command -v go >/dev/null 2>&1; then
   OUT="$(go test -count=1 ./internal/feature/exit_rules/ -run 'TestB411_' 2>&1)"
-  if printf '%s\n' "$OUT" | grep -q '^ok'; then
+  # Shell builtin, not `printf "$VAR" | grep -q` (B386/B388, AGENTS trap #9).
+  case "$OUT" in
+    "ok "[[:space:]]*|*$'\n'"ok "[[:space:]]*) V_OK=1 ;;
+    *) V_OK=0 ;;
+  esac
+  if [ "$V_OK" -eq 1 ]; then
     ok "C6: the pure decision function is covered (covered / pending / stale / never-resolved / disabled gate / backwards clock / boundaries)"
   else
     bad "C6: the B411 verdict tests do not pass: $(printf '%s\n' "$OUT" | tail -3 | tr '\n' ' ')"

@@ -174,9 +174,12 @@ if [ -n "$GO_BIN" ]; then
     # naming the test that flapped, not a FAIL. A real regression fails both.
     echo "      first run FAILED (exit ${J_RC}); naming the tests and re-running once:"
     printf '%s\n' "$J_BODY" | grep -E '^(--- FAIL|FAIL|# )|\.go:[0-9]+:' | head -8 | sed 's/^/      /'
-    if ! printf '%s' "$J_BODY" | grep -q '[^[:space:]]'; then
-      echo "      (the go test read was EMPTY — a fact about the host, not a regression)"
-    fi
+    # An EMPTY read is a fact about the host, never a regression (trap #15). Match
+    # with a shell builtin — `printf "$VAR" | grep -q` is what B386/B388 forbid.
+    case "$J_BODY" in
+      *[![:space:]]*) : ;;
+      *) echo "      (the go test read was EMPTY — a fact about the host, not a regression)" ;;
+    esac
     J_RETRY="$( (cd "$REPO" && "$GO_BIN" test -count=1 ./internal/feature/exit_rules/... 2>&1); echo "J_RC2=$?" )"
     J_RC2="${J_RETRY##*J_RC2=}"
     case "$J_RETRY" in

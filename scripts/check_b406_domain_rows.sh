@@ -142,8 +142,15 @@ if has 'could not read the device' "$ST_SRC"; then
 else
   bad "D2: the message does not distinguish them"
 fi
-if has 'is in no enabled row' "$ST_SRC"; then
-  ok "D3: a genuine gap names the address and the rule"
+# 2026-10-22 (B411): the sentence was reworded, the promise was not. B411 made the
+# verdict about the MECHANISM, so a stale rule is now reported as
+# "<domain>: N address(es) in no enabled row [examples] — <why it will not heal>"
+# instead of one "X → ip is in no enabled row" line per address: the count and the
+# reason are what the operator acts on, and with a rotating provider the old shape
+# filled the row with addresses that were merely newer than the last resolve. What
+# this contract pins is that a genuine gap still SAYS SO in those words.
+if has 'in no enabled row' "$ST_SRC"; then
+  ok "D3: a genuine gap says the address is in no enabled row"
 else
   bad "D3: a genuine gap is still described as an exact-row mismatch"
 fi

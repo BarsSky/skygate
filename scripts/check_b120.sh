@@ -166,7 +166,14 @@ if [ -f "internal/handlers/layout_v1_3_19_2_test.go" ]; then
     if command -v go >/dev/null 2>&1; then
         OUT="$(go test -count=1 -short ./internal/handlers/ -run 'TestB411_' 2>&1)"
         rc=$?
-        if printf '%s\n' "${OUT}" | grep -q '^ok'; then
+        # Match with a shell builtin, never `printf "$VAR" | grep -q` (B386/B388:
+        # the pipeline's status is not the producer's, so a host transient becomes a
+        # product verdict — AGENTS trap #9/#15).
+        case "$OUT" in
+          "ok "[[:space:]]*|*$'\n'"ok "[[:space:]]*) T_OK=1 ;;
+          *) T_OK=0 ;;
+        esac
+        if [ "$T_OK" -eq 1 ]; then
             ok "TestB411_* Go unit tests pass (pinned at source-code level)"
         elif [ "${rc}" -ne 0 ]; then
             bad "TestB411_* Go unit tests failed — re-run with -v to see which contract regressed"
