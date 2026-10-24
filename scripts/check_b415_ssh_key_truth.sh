@@ -32,7 +32,7 @@
 # the authorise command must run as, and classify the ssh failure into auth / keyfile
 # / network / hostkey with the commands that settle each one.
 #
-# CONTRACTS (23)
+# CONTRACTS (26)
 #   A  the failure surface: noise filtered, cause kept, classified, and the advice
 #      names the user + fingerprint + the three checks (adaptive to each kind)
 #   B  the key the card shows is the key the panel uses: derivation first, stale

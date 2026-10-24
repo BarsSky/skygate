@@ -75,7 +75,7 @@ Then press «Проверить и подключить» again: the message now
 ### Verification
 
 * `scripts/check_b415_ssh_key_truth.sh` — 26/0.
-* 16 unit tests: the real stderr shape from the screenshot (banner + `Permission denied`) must
+* 14 unit tests (11 sub-cases): the real stderr shape from the screenshot (banner + `Permission denied`) must
   report the cause and not the banner; the four diagnosis kinds; the advice names user,
   fingerprint and the checks; `PublicKeyFingerprint` equals `ssh-keygen -lf` for a real fixture
   and refuses a non-key; the card's resolution prefers the private key, flags a stale `.pub`
