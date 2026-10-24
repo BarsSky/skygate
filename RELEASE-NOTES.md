@@ -1,5 +1,88 @@
 # Skygate release notes
 
+## v1.5.157 — the operator gets the key to copy, and the gate stops being folklore (B412.1, B413)
+
+**Date:** 2026-10-24 · **Base:** `v1.5.156` → this tag · **Compatibility:** no migration, no
+config change. One admin page block plus harness scripts and documentation; nothing in the
+data plane moves.
+
+### Why (1) — a path is not a key
+
+Operator, verbatim:
+
+> «вопрос про ключ ssh есть указание на путь к файлу но для пользователя это не удобно если
+> планируется единый ключ для всех exit-node администратор должен иметь возможность его
+> скопировать и применить по инструкции что есть рядом чтобы добавить в vps этот ключ»
+
+The provisioning card asked for the SSH key **path** — which is useless on the machine you
+are about to authorise. One key serves every exit node, so the card now hands the operator
+the key itself.
+
+### What changed (1)
+
+Under the form, the card renders:
+
+* the **public half** of the key this process will really use, in a selectable `<pre>` with
+  a «Скопировать ключ» button (clipboard API, with a select-and-copy fallback — a plain-http
+  LAN panel has no `navigator.clipboard`);
+* the **one-line command** that authorises it on the VPS —
+  `mkdir -p ~/.ssh … grep -qF '<key>' … >> ~/.ssh/authorized_keys` — deliberately
+  user-relative (`~`), because the form allows a non-root SSH user and `/root/.ssh` would
+  silently write to the wrong home — with its own copy button;
+* **where the `.pub` was read from**, and the note that one key serves every relay;
+* when no `.pub` sibling exists: the exact command that derives it
+  (`ssh-keygen -y -f <key> > <key>.pub`) instead of an empty box.
+
+The private half never leaves skygate's filesystem: the view carries a sanitised OpenSSH
+public-key line (the same `sanitizeSSHPublicKey`/`isSSHPublicKey` gates the B266
+registration flow uses) and the rendered command. 16 new contracts (G4–G10) in
+`scripts/check_b412_exit_node_provision.sh` pin the surface, the absence of private-key
+material, the user-relative command and the three tests behind it.
+
+### Why (2) — «очень долго осуществляется прогон гейт»
+
+Operator: «есть ли способ распараллелить выполнение его и тем самым ускорить?»
+
+A full parallel runner was **built and measured**, then removed:
+
+| mode (reference 8-core Windows workstation, ~460 checks) | wall clock | verdict |
+|---|---|---|
+| sequential (the default, and what CI runs) | 93 / 115 / 138 min (three runs) | 459/0 |
+| 6 workers, file queue, atomic pickup, same isolation | 119 min | **a red check on a healthy tree** |
+
+The per-check timings explain it: 182 checks cost ≥ 10 s and together spend **88 %** of the
+catalog's CPU, and they are `check_b*.sh` contracts that themselves run `go test` — six
+concurrent workers oversubscribe the box instead of finishing sooner, and a go-test check
+eventually blows its budget and reports a product failure that is really a scheduling
+artefact (the class AGENTS trap #15 forbids). Parallelism does not create CPU.
+
+### What changed (2)
+
+* **Per-check timings.** The summary prints the wall clock and the eight slowest checks
+  (measured: `B322 334 s`, `B237.22 108 s`, `B407 97 s`, `B237.7 97 s`, `B232 92 s`,
+  `B132 91 s`, `TD-18 89 s`, `TD-16 86 s`), and `SKYGATE_GATE_TIMINGS_OUT=<file>` dumps every
+  check's milliseconds as TSV — so the next optimisation targets what actually costs.
+* **`SKYGATE_GATE_ONLY=<id,…>`** — the catalog runs the named checks and prints `SKIP` for
+  the rest (a SKIP never affects the verdict; the summary names the scope).
+* **`scripts/gate_affected.sh`** — maps a diff to the catalog entries whose registration text
+  names a changed path (or its basename), always adds the harness/meta set (B1 B2 B3 B4 B7
+  B10 B325 B330 B337 B340 B413, plus B281 B299 B322 B335 when the catalog itself moved),
+  prints the changed paths **no check owns**, refuses an unresolvable `--base` with exit 2,
+  and answers a clean tree plainly. For the author's own 8-file change it selected 70 of 460
+  checks (a change confined to one package selects that package's checks).
+
+The full catalog stays the release gate and what CI runs; the diff-scoped run is the
+everyday loop. 26 contracts in `scripts/check_b413_fast_gate.sh`, including a behavioural
+filtered run (selected check PASSes, the rest SKIP, verdict green), the TSV dump, the
+bad-base refusal and a guard that no worker pool returns without a new measurement.
+
+### Verification
+
+* `scripts/check_b413_fast_gate.sh` — 26/0; `scripts/check_b412_exit_node_provision.sh` — 83/0.
+* Full catalog — 460 checks, 459 PASS / 1 FAIL, and the single FAIL is the documented
+  Git-Bash locale artefact `B144` (`grep -P`), which passes 6/0 under `LC_ALL=C.UTF-8`
+  (AGENTS trap #10). No product regression.
+
 ## v1.5.156 — one button adds the exit node, and the page stops offering two registrations (B412)
 
 **Date:** 2026-10-23 · **Base:** `v1.5.155` → this tag · **Compatibility:** no migration, no
