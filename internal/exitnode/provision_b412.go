@@ -101,6 +101,10 @@ type Request struct {
 	SetupNAT bool
 	// NATSourceCIDR overrides DefaultNATSourceCIDR (validated as a CIDR).
 	NATSourceCIDR string
+	// KeyFingerprint is the OpenSSH fingerprint ("SHA256:…") of KeyPath's public
+	// half, as the panel showed it to the operator (B415). It is only used to
+	// name the key in a failure message — never for authentication.
+	KeyFingerprint string
 }
 
 // Stage is one line of the remote script's progress report.
@@ -440,7 +444,23 @@ func Run(ctx context.Context, r Request, script string) (Result, error) {
 	if err != nil && res.FailedStage == "" {
 		// The remote shell never reached a fail() marker: ssh itself refused
 		// (auth, DNS, timeout) or the connection died mid-script.
-		return res, fmt.Errorf("ssh %s: %w: %s", r.SSHTarget(), err, firstLine(string(out)))
+		//
+		// B415: ssh's FIRST stderr line is always a harmless banner ("Permanently
+		// added … to the list of known hosts"), so reporting it alone hid every
+		// authentication failure — the operator's «не получилось подключить ssh
+		// ключ» arrived with no cause at all. Classify the failure, keep the
+		// diagnostic lines, and name the key the panel uses.
+		advice := SSHFailureAdvice(ParseSSHDiagnosis(string(out)), r.SSHTarget(), r.KeyFingerprint)
+		detail := strings.Join(SignificantSSHLines(string(out)), " | ")
+		if detail == "" {
+			// Nothing diagnostic survived the filter: fall back to ssh's own
+			// first line so the message is never empty about what happened.
+			detail = firstLine(string(out))
+		}
+		if detail == "" {
+			return res, fmt.Errorf("ssh %s: %w — %s", r.SSHTarget(), err, advice)
+		}
+		return res, fmt.Errorf("ssh %s: %w — %s [%s]", r.SSHTarget(), err, advice, detail)
 	}
 	return res, nil
 }
@@ -450,8 +470,9 @@ func Probe(ctx context.Context, r Request) (Result, error) {
 	return Run(ctx, r, BuildProbeScript())
 }
 
-// firstLine keeps ssh's own one-line diagnosis (the full banner is noise in a
-// flash message; RawOutput keeps everything for the audit row).
+// firstLine keeps ssh's own one-line diagnosis. B415 superseded it in Run (it
+// returned the harmless known-hosts banner for every authentication failure), but
+// the bounded shape is still what a caller may want for a one-line banner.
 func firstLine(s string) string {
 	for _, line := range strings.Split(s, "\n") {
 		if line = strings.TrimSpace(line); line != "" {

@@ -416,6 +416,45 @@ clause and every preferred-exit setting is decorative. Keep
 [`networking.md`](networking.md)). Never override headscale's `Online` with a
 `last_seen` heuristic.
 
+### SSH is refused when adding a new exit node (B415)
+
+**Symptom.** The «Проверить и подключить» button on `/admin/exit-nodes#new-exit-node`
+answers red with `ssh root@<host>: exit status 255: Warning: Permanently added <host>
+(ED25519) to the list of known hosts.` — the operator has already put the displayed
+key into `authorized_keys` on the VPS.
+
+**What it means.** That banner is ssh's *first* stderr line and it is always present:
+the host key was exchanged, so TCP and the port are fine, and the failure is further
+down. Before v1.5.159 the panel printed only that line, which is why an authentication
+failure looked like a successful connection. The panel now says which kind of failure
+it is (`auth` = key rejected, `keyfile` = the panel cannot use its own private key,
+`network`, `hostkey`) and names the account + the key's fingerprint.
+
+**The three causes, in the order they happen.** Compare the fingerprint the card shows
+(`SHA256:…`) with what the VPS really has — as the SSH user from the form (default
+`root`):
+
+```bash
+ssh-keygen -lf ~/.ssh/authorized_keys      # must list the card's SHA256:…
+ls -ld ~ / .ssh; stat -c '%a %U %n' ~/.ssh/authorized_keys
+grep -c $'\r' ~/.ssh/authorized_keys       # 0 — a CRLF-mangled line is not a key
+```
+
+1. **The key landed in the wrong home.** The command in the card uses `~` on purpose
+   (the form allows a non-root user), so running it as your own sudo account writes
+   `/home/<you>/.ssh/authorized_keys` while ssh authenticates as `root`. Run it as the
+   account named in the card's «Команду выполните под пользователем:» line.
+2. **The wrong key was authorised.** A `.pub` sibling left over from an older private
+   key does not match it; authorising that file fails with `Permission denied
+   (publickey)` and nothing else. The card derives the public half from the **private**
+   key and prints its fingerprint; when a stale `.pub` is detected it says so instead
+   of offering it, together with the `ssh-keygen -y -f <key> > <key>.pub` command.
+3. **`root` login by key is disabled** (`PermitRootLogin without-password` is fine,
+   `no` is not) or `authorized_keys`/`~/.ssh` are group-writable (sshd refuses them).
+
+A key under a passphrase cannot work either: the panel runs ssh with `BatchMode=yes`,
+so nothing can type the passphrase; `ssh-keygen -y -f <key>` asking for one is the tell.
+
 ---
 
 ## 5. DERP relay not used / high latency / relay reports stopped while running

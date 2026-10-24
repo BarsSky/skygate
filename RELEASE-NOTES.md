@@ -1,5 +1,93 @@
 # Skygate release notes
 
+## v1.5.159 — the failure names its cause, and the card shows the key the panel uses (B415)
+
+**Date:** 2026-10-24 · **Base:** `v1.5.158` → this tag · **Compatibility:** no migration, no
+config change. The exit-node provisioning card, the ssh failure message and the troubleshooting
+guide; the data plane and the ACL are untouched.
+
+### Why
+
+Operator, with a screenshot of the provisioning card:
+
+> «не получилось подключить ssh ключ в файл добавил на vps»
+
+and the red banner said:
+
+> `SSH не отработала: ssh root@<host>: exit status 255: Warning: Permanently added <host>
+> (ED25519) to the list of known hosts.`
+
+That sentence cannot be acted on, and it was **our** bug, not the operator's: ssh's stderr
+always begins with that harmless banner, while the line that names the cause —
+`Permission denied (publickey).` — comes after it. `Run` kept only the **first** non-empty
+line, so every authentication failure was reported as a successful host-key exchange. "The key
+was never added", "it was added to the wrong user's `authorized_keys`" and "CRLF broke the
+line" were indistinguishable.
+
+The second defect surfaced while fixing the first: `sshPublicKeyFor` built the card's key from
+a `.pub` **sibling** and stopped there, probing a list of candidate paths. A `.pub` left over
+from an older private key therefore looked exactly like the real thing, was rendered with a
+copy button, and the command under it authorised **a key that can never authenticate** — the
+operator's screenshot, from the other side.
+
+### What changed
+
+* **The failure is classified and explained.** `internal/exitnode/ssh_diag_b415.go` filters
+  ssh's banners, keeps the diagnostic lines, classifies the failure (`auth` = the key was
+  refused, `keyfile` = the panel cannot use its own private key, `network`, `hostkey`) and
+  prints the sentence that settles it: the account, the key **fingerprint**, and the three
+  checks (`ssh-keygen -lf ~/.ssh/authorized_keys`, `chmod 700`/`600`, the `$'\r'` CRLF count),
+  plus `PermitRootLogin` and the passphrase case (the panel runs ssh with `BatchMode=yes`, so
+  nothing can type a passphrase).
+* **The fingerprint is on the card.** `SHA256:…` in exactly the form `ssh-keygen -lf` prints
+  on the VPS, so "did the right key land there" stops being a guess. It travels into the run
+  (`Request.KeyFingerprint`), so a failure names the key that was refused.
+* **The public half is derived from the private key** (`ssh-keygen -y -f`, bounded to 2 s so a
+  passphrase-protected key cannot hang a page render); the `.pub` sibling is only a fallback,
+  and when it **disagrees** the card says so, shows the sibling's path and the command that
+  recreates it instead of offering the wrong key.
+* **The command says which account to run it as.** It uses `~` on purpose (the form allows a
+  non-root user), so `~` is decided by the account that runs it; the card mirrors the
+  «SSH-пользователь» field live instead of always saying `root`.
+* **New troubleshooting section** — `docs/troubleshooting.md` §4 "SSH is refused when adding a
+  new exit node": the three causes in the order they happen, with the commands that separate
+  them.
+
+### If you are the operator reading this: check these three things on the VPS
+
+As the SSH user from the form (default `root`), compare the card's `SHA256:…` with what the
+VPS really has:
+
+```bash
+ssh-keygen -lf ~/.ssh/authorized_keys      # must list the card's SHA256:…
+stat -c '%a %U %n' ~/.ssh ~/.ssh/authorized_keys
+grep -c $'\r' ~/.ssh/authorized_keys       # 0 — a CRLF-mangled line is not a key
+```
+
+1. **Wrong home** — running the card's command as your own sudo account writes
+   `/home/<you>/.ssh/authorized_keys`, while ssh authenticates as **root**.
+2. **Wrong key** — a stale `.pub` authorised instead of the derived one (the card now flags it).
+3. **`root` login by key disabled**, or `~/.ssh` / `authorized_keys` group-writable (sshd
+   refuses those).
+
+Then press «Проверить и подключить» again: the message now says which of the three it is.
+
+### Verification
+
+* `scripts/check_b415_ssh_key_truth.sh` — 26/0.
+* 16 unit tests: the real stderr shape from the screenshot (banner + `Permission denied`) must
+  report the cause and not the banner; the four diagnosis kinds; the advice names user,
+  fingerprint and the checks; `PublicKeyFingerprint` equals `ssh-keygen -lf` for a real fixture
+  and refuses a non-key; the card's resolution prefers the private key, flags a stale `.pub`
+  and falls back with `Derived=false`.
+* `scripts/check_b412_exit_node_provision.sh` — 83/0, `scripts/check_b292_exit_ssh_truth.sh` —
+  40/0 (the provisioning and key preflight contracts are unaffected).
+
+### What you do
+
+`/admin/update` → v1.5.159, then reload the panel. No migration, no restart of headscale or
+the relays.
+
 ## v1.5.158 — no element may blend into the background (B414)
 
 **Date:** 2026-10-24 · **Base:** `v1.5.157` → this tag · **Compatibility:** no migration, no

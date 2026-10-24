@@ -209,14 +209,41 @@
     <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">{{t "exit_nodes.provision.key_subtitle" | safeHTML}}</p>
     {{if .Provision.PubKey}}
     <pre id="prov-pubkey" style="white-space:pre-wrap;overflow-wrap:break-word;user-select:all;background:var(--bg-elev);color:var(--text);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">{{.Provision.PubKey}}</pre>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
       <button type="button" class="btn btn-sm" onclick="copyProvisionKey('prov-pubkey','prov-pubkey-ok')">
         <i class="fa-regular fa-copy"></i> {{t "exit_nodes.provision.key_copy"}}
       </button>
       <span id="prov-pubkey-ok" class="muted" style="font-size:12px"></span>
+      {{if .Provision.PubKeyDerived}}
+      <span style="font-size:11px;color:var(--text-muted">{{t "exit_nodes.provision.key_derived_note"}}</span>
+      {{else}}
       <span style="font-size:11px;color:var(--text-muted">{{tf "exit_nodes.provision.key_source" .Provision.PubKeySource}}</span>
+      {{end}}
     </div>
+    {{/* B415: the fingerprint is the ONLY way for the operator to compare the panel's
+         key with what is really in authorized_keys on the VPS — «в файл добавил» with
+         no way to tell WHICH line landed there is how a stale .pub gets authorised. */}}
+    {{if .Provision.PubKeyFingerprint}}
+    <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px">
+      {{t "exit_nodes.provision.key_fingerprint"}}:
+      <code id="prov-key-fp" style="user-select:all">{{.Provision.PubKeyFingerprint}}</code>
+      <span style="display:block;margin-top:2px">{{t "exit_nodes.provision.key_fingerprint_help" | safeHTML}}</span>
+    </p>
+    {{end}}
+    {{if .Provision.PubKeyStale}}
+    {{/* A .pub that does not match the private key: authorising it fails auth with no
+         other symptom, so the card refuses to present it as "the key". */}}
+    <div style="margin:0 0 10px;padding:10px 12px;border-radius:6px;background:var(--warning-bg);border:1px solid var(--warning);font-size:12px;color:var(--text)">
+      <b><i class="fa-solid fa-triangle-exclamation"></i> {{t "exit_nodes.provision.key_stale_title"}}</b>
+      <div style="margin-top:4px">{{t "exit_nodes.provision.key_stale_body"}}</div>
+      <code style="display:block;margin-top:4px;user-select:all">{{.Provision.PubKeyStale}}</code>
+      <pre style="white-space:pre-wrap;overflow-wrap:break-word;background:var(--bg-elev);color:var(--text);padding:8px;border-radius:6px;font-size:12px;margin:6px 0 0">ssh-keygen -y -f {{.Provision.SSHKeyPath}} &gt; {{.Provision.SSHKeyPath}}.pub</pre>
+    </div>
+    {{end}}
     <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px"><b>{{t "exit_nodes.provision.key_command_title" | safeHTML}}</b></p>
+    <p style="font-size:11px;color:var(--text-muted);margin:0 0 6px">
+      {{t "exit_nodes.provision.key_run_as"}} <code id="prov-run-as" style="user-select:all">{{.Provision.SSHUserHint}}</code>
+    </p>
     <pre id="prov-keycmd" style="white-space:pre-wrap;overflow-wrap:break-word;user-select:all;background:var(--bg-elev);color:var(--text);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">{{.Provision.PubKeyCommand}}</pre>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <button type="button" class="btn btn-sm" onclick="copyProvisionKey('prov-keycmd','prov-keycmd-ok')">
@@ -259,6 +286,22 @@
       done();
     } catch (e) { /* the text is selected, so the operator can press Ctrl+C */ }
   }
+  /* B415: the authorise command uses ~ on purpose (the form allows a non-root user),
+     so WHICH home it writes to is decided by the account the operator runs it as.
+     Reflect the SSH-user field live — the card must not say "root" while the field
+     says something else, that is how a key lands in the wrong authorized_keys. */
+  (function () {
+    var inp = document.getElementById('prov_user');
+    var out = document.getElementById('prov-run-as');
+    if (!inp || !out) return;
+    var sync = function () {
+      var v = (inp.value || '').trim();
+      out.textContent = v === '' ? 'root' : v;
+    };
+    inp.addEventListener('input', sync);
+    inp.addEventListener('change', sync);
+    sync();
+  })();
   </script>
 
   <details style="margin-top:14px">

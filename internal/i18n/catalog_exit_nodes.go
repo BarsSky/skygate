@@ -305,6 +305,16 @@ var ruExitNodes = map[string]string{
 	"exit_nodes.provision.key_missing_help":   "Эта команда создаёт файл <code>&lt;ключ&gt;.pub</code> рядом с приватным ключом; сам приватный ключ не копируется и не показывается.",
 	"exit_nodes.provision.key_same_for_all":   "Ключ один для всех exit-нод: добавив его на машину один раз, к этому шагу вы больше не возвращаетесь. Приватная часть остаётся в файловой системе skygate и никогда не отдаётся в браузер.",
 
+	// 2026-10-24 (B415) — «добавил ключ на VPS, а подключение всё равно не работает».
+	// Отпечаток, признак выведенного из приватного ключа, предупреждение об устаревшем
+	// .pub и напоминание, ПОД КАКИМ пользователем выполнять команду (в ней `~`).
+	"exit_nodes.provision.key_fingerprint":      "Отпечаток ключа",
+	"exit_nodes.provision.key_fingerprint_help": "Сравните его на VPS: <code>ssh-keygen -lf ~/.ssh/authorized_keys</code> должен показать эту же строку. Если отпечатки разные — добавлен другой ключ, и ssh откажет.",
+	"exit_nodes.provision.key_derived_note":     "ключ выведен из приватного (значит, именно его и предложит ssh)",
+	"exit_nodes.provision.key_run_as":           "Команду выполните под пользователем:",
+	"exit_nodes.provision.key_stale_title":      "Рядом лежит .pub, который НЕ соответствует приватному ключу",
+	"exit_nodes.provision.key_stale_body":       "Ключ выше выведен из приватного ключа и верный. Файл ниже остался от прежнего ключа: если добавить на VPS его, ssh ответит «Permission denied (publickey)». Пересоздайте файл командой:",
+
 	// 2026-08-18 (B132): per-row "Re-sync" button + better
 	// explainer for the mismatch tag. The operator reported
 	// "не понятно что с этим делать администратор не имеет
@@ -656,6 +666,14 @@ var enExitNodes = map[string]string{
 	"exit_nodes.provision.key_missing":        "No public half found next to the private key. Derive it from the private key and reload — or point the form at another key:",
 	"exit_nodes.provision.key_missing_help":   "This command writes <code>&lt;key&gt;.pub</code> next to the private key; the private half is never copied and never rendered.",
 	"exit_nodes.provision.key_same_for_all":   "One key serves every exit node: authorise it once and this step is behind you. The private half stays in skygate's filesystem and is never sent to the browser.",
+
+	// 2026-10-24 (B415) — «I added the key on the VPS and it still does not connect».
+	"exit_nodes.provision.key_fingerprint":      "Key fingerprint",
+	"exit_nodes.provision.key_fingerprint_help": "Compare it on the VPS: <code>ssh-keygen -lf ~/.ssh/authorized_keys</code> must print the same line. A different fingerprint means a different key was authorised, and ssh will refuse it.",
+	"exit_nodes.provision.key_derived_note":     "derived from the private key — this is the one ssh will offer",
+	"exit_nodes.provision.key_run_as":           "Run the command as the user:",
+	"exit_nodes.provision.key_stale_title":      "A .pub next to the key does NOT match the private key",
+	"exit_nodes.provision.key_stale_body":       "The key above is derived from the private key and is correct. The file below is left over from an older key: authorising it makes ssh answer «Permission denied (publickey)». Recreate it with:",
 
 	// 2026-08-18 (B132): per-row "Re-sync" button + better
 	// explainer for the mismatch tag. The operator reported

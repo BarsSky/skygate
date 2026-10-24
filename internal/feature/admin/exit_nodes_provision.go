@@ -66,6 +66,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,6 +77,39 @@ import (
 	"skygate/internal/headscale"
 	"skygate/internal/update"
 )
+
+// derivePublicKeyTimeout bounds `ssh-keygen -y -f` on a page render. A key under a
+// passphrase makes ssh-keygen ask for it; with no terminal it must fail fast, and
+// the card then falls back to the .pub sibling (with the mismatch warning).
+const derivePublicKeyTimeout = 2 * time.Second
+
+// derivePublicKeyExec is the injectable edge: tests replace it to assert the argv
+// and to simulate a passphrase-protected (failing) key.
+var derivePublicKeyExec = func(ctx context.Context, path string) ([]byte, error) {
+	return exec.CommandContext(ctx, "ssh-keygen", "-y", "-f", path).Output()
+}
+
+// derivePublicKey asks the PRIVATE key for its public half (B415). This is the
+// authoritative answer to "which key will ssh actually offer": a `.pub` sibling can
+// be stale after the private key was regenerated, and authorising a stale key on the
+// VPS produces exactly the operator's «добавил ключ, а всё равно Permission denied».
+func derivePublicKey(path string) (string, bool) {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), derivePublicKeyTimeout)
+	defer cancel()
+	out, err := derivePublicKeyExec(ctx, p)
+	if err != nil {
+		return "", false
+	}
+	k := sanitizeSSHPublicKey(string(out))
+	if k == "" || !isSSHPublicKey(k) {
+		return "", false
+	}
+	return k, true
+}
 
 // provisionMu serialises provisioning runs inside this process. A second click
 // (or a second admin tab) gets a named refusal instead of two ssh sessions
@@ -116,6 +150,20 @@ type ExitNodeProvisionView struct {
 	// PubKeyMissing is true when no .pub sibling exists next to the private key —
 	// the card then shows how to derive it instead of an empty box.
 	PubKeyMissing bool
+	// PubKeyFingerprint is "SHA256:…" of the key above, exactly what
+	// `ssh-keygen -lf ~/.ssh/authorized_keys` prints on the VPS (B415), so "did the
+	// right key land there" stops being a guess.
+	PubKeyFingerprint string
+	// PubKeyDerived reports that the key was derived from the PRIVATE key rather
+	// than read from a .pub file — i.e. it is provably the key ssh will offer.
+	PubKeyDerived bool
+	// PubKeyStale is the path of a .pub sibling that is NOT the key above (a
+	// regenerated private key leaves such a file behind, and authorising it fails
+	// authentication with no other hint).
+	PubKeyStale string
+	// SSHUserHint is the account the authorise command must be run as ("root" by
+	// default), so `~` in the command cannot silently mean the wrong home.
+	SSHUserHint string
 	// TimeoutSeconds is how long a real run may take (the button says it).
 	TimeoutSeconds int
 	// Blocked is a non-empty sentence when the flow cannot work at all right now
@@ -123,15 +171,42 @@ type ExitNodeProvisionView struct {
 	Blocked string
 }
 
+// provisionKey is what the card knows about the key this process will use.
+type provisionKey struct {
+	// Key is the OpenSSH public-key LINE the operator must authorise ("" when
+	// it cannot be determined).
+	Key string
+	// Source is the file the line came from ("" when Key is determined by
+	// DERIVING it from the private key rather than read from a file).
+	Source string
+	// Derived reports that the line was derived from the PRIVATE key with
+	// `ssh-keygen -y -f`, which is the authoritative answer.
+	Derived bool
+	// StalePub is the `.pub` sibling path when it exists but does NOT match the
+	// private key. Authorising that file is the classic "I added the key and it
+	// still says Permission denied" (B415): the panel used to print it happily.
+	StalePub string
+	// Fingerprint is "SHA256:…" of Key, the same string ssh-keygen -lf prints,
+	// so the operator can compare it on the VPS.
+	Fingerprint string
+}
+
 // sshPublicKeyFor resolves the PUBLIC half of the key the card will use.
 //
-// The operator's ask was practical: the form names a PATH, and a path is useless on
-// the new VPS — they need the key itself to paste. The probe order mirrors the
-// handler's own resolution (the form's path first, then the wired default), and
-// every candidate is validated with the same sanitize/isSSHPublicKey gates the B266
-// registration flow uses, so nothing but an OpenSSH public-key line can ever be
-// rendered into a page that the operator copies into a root shell.
-func (s *Service) sshPublicKeyFor(keyPath string) (source, key string) {
+// B415 rewrote the precedence. It used to read a `.pub` SIBLING and stop there,
+// probing a list of candidate paths — so the page could show a key that belongs to
+// a DIFFERENT file than the one `ssh -i` will use, and a stale `.pub` (regenerated
+// private key) was indistinguishable from a correct one. Now the private key is
+// asked directly (`ssh-keygen -y -f`, the same command the card already offers as
+// a fix hint), the `.pub` sibling is only a fallback, and when the two DISAGREE the
+// view says so instead of showing the wrong key with a copy button.
+func (s *Service) sshPublicKeyFor(keyPath string) provisionKey {
+	derived, derivedOK := derivePublicKey(keyPath)
+	var pk provisionKey
+	if derivedOK {
+		pk.Key, pk.Derived, pk.Fingerprint = derived, true, exitnode.PublicKeyFingerprint(derived)
+	}
+	// Every `.pub` candidate the card has ever shown, in the same order as before.
 	var cands []string
 	addCand := func(base string) {
 		base = strings.TrimSpace(base)
@@ -157,11 +232,24 @@ func (s *Service) sshPublicKeyFor(keyPath string) (source, key string) {
 		if err != nil {
 			continue
 		}
-		if k := sanitizeSSHPublicKey(string(b)); k != "" && isSSHPublicKey(k) {
-			return p, k
+		k := sanitizeSSHPublicKey(string(b))
+		if k == "" || !isSSHPublicKey(k) {
+			continue
 		}
+		if derivedOK {
+			// The private key is the source of truth: anything else is either
+			// the same key (harmless) or a STALE file the operator must not use.
+			if exitnode.PublicKeyFingerprint(k) != pk.Fingerprint {
+				if pk.StalePub == "" {
+					pk.StalePub = p
+				}
+			}
+			continue
+		}
+		pk.Key, pk.Source, pk.Fingerprint = k, p, exitnode.PublicKeyFingerprint(k)
+		break
 	}
-	return "", ""
+	return pk
 }
 
 // authorizedKeysCommand renders the one-liner that adds `key` to the CURRENT SSH
@@ -202,25 +290,29 @@ func (s *Service) exitNodeProvisionView(r *http.Request) *ExitNodeProvisionView 
 		port = "22"
 	}
 	problem := headscale.SSHKeyProblem(keyPath)
-	pubSource, pubKey := s.sshPublicKeyFor(keyPath)
+	pk := s.sshPublicKeyFor(keyPath)
 	v := &ExitNodeProvisionView{
-		Host:           strings.TrimSpace(r.URL.Query().Get("host")),
-		NodeName:       strings.TrimSpace(r.URL.Query().Get("node")),
-		SSHUser:        user,
-		SSHPort:        port,
-		SSHKeyPath:     keyPath,
-		Description:    strings.TrimSpace(r.URL.Query().Get("desc")),
-		InstallKind:    kind,
-		InContainer:    kind == "docker",
-		KeyState:       headscale.SSHKeyState(keyPath),
-		KeyProblem:     problem,
-		KeyFixHint:     headscale.SSHKeyFixHint(keyPath),
-		LoginServer:    s.controlURL(),
-		PubKey:         pubKey,
-		PubKeySource:   pubSource,
-		PubKeyCommand:  authorizedKeysCommand(pubKey),
-		PubKeyMissing:  pubKey == "",
-		TimeoutSeconds: int(exitnode.Timeout.Seconds()),
+		Host:              strings.TrimSpace(r.URL.Query().Get("host")),
+		NodeName:          strings.TrimSpace(r.URL.Query().Get("node")),
+		SSHUser:           user,
+		SSHPort:           port,
+		SSHKeyPath:        keyPath,
+		Description:       strings.TrimSpace(r.URL.Query().Get("desc")),
+		InstallKind:       kind,
+		InContainer:       kind == "docker",
+		KeyState:          headscale.SSHKeyState(keyPath),
+		KeyProblem:        problem,
+		KeyFixHint:        headscale.SSHKeyFixHint(keyPath),
+		LoginServer:       s.controlURL(),
+		PubKey:            pk.Key,
+		PubKeySource:      pk.Source,
+		PubKeyCommand:     authorizedKeysCommand(pk.Key),
+		PubKeyMissing:     pk.Key == "",
+		PubKeyFingerprint: pk.Fingerprint,
+		PubKeyDerived:     pk.Derived,
+		PubKeyStale:       pk.StalePub,
+		SSHUserHint:       user,
+		TimeoutSeconds:    int(exitnode.Timeout.Seconds()),
 	}
 	switch {
 	case s.HSGlobalFn == nil || s.HSGlobalFn() == nil:
@@ -286,6 +378,10 @@ func (s *Service) PostAdminExitNodeProvision(w http.ResponseWriter, r *http.Requ
 		InstallTailscale: installTS,
 		SetupNAT:         setupNAT,
 		NATSourceCIDR:    exitnode.DefaultNATSourceCIDR,
+		// B415: the fingerprint the card showed travels with the request, so a
+		// failed run can say WHICH key the server rejected instead of printing
+		// ssh's harmless known-hosts banner.
+		KeyFingerprint: s.sshPublicKeyFor(keyPath).Fingerprint,
 	}
 	back := func(msg string) {
 		s.redirectProvisionFlash(w, r, false, host, nodeName, user, portStr, msg)
