@@ -246,6 +246,14 @@ if grep -qF 'gate_timing_total_ms' "$GATE" && grep -qF 'gate_slowest 8' "$GATE";
 else
   bad "E5: the summary has no timing surface — nobody could tell whether the knob helped"
 fi
+# Measured during the first real parallel run: a worker subshell inherits the
+# catalog's EXIT trap, so the first worker to finish DELETED the queue directory
+# while its siblings were still reading their job files ("sed: can't read …/work/4.job").
+if grep -qF 'trap - EXIT' "$LIB"; then
+  ok "E6: workers clear the inherited EXIT trap (otherwise one worker deletes the queue under the others)"
+else
+  bad "E6: gate_worker does not clear the EXIT trap — a finishing worker would remove the queue mid-run"
+fi
 
 # --- F: registered, indexed, documented --------------------------------------
 if grep -q 'run_check "B413"' "$GATE"; then

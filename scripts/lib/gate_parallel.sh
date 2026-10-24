@@ -296,6 +296,11 @@ gate_cleanup() {
 # the parent's counters.
 gate_worker() {
   local w="$1" cand claimed srcbase job
+  # The EXIT trap belongs to the CATALOG, not to a worker: without this, the first
+  # worker to finish removes the whole queue directory while its siblings are still
+  # reading their job files (measured: "sed: can't read …/work/4.job" during the
+  # first real parallel run).
+  trap - EXIT
   while :; do
     claimed=""
     srcbase=""

@@ -208,7 +208,7 @@
     <h4 style="margin:0 0 6px 0;font-size:14px"><i class="fa-solid fa-key"></i> {{t "exit_nodes.provision.key_title"}}</h4>
     <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">{{t "exit_nodes.provision.key_subtitle" | safeHTML}}</p>
     {{if .Provision.PubKey}}
-    <pre id="prov-pubkey" style="white-space:pre-wrap;word-break:break-all;user-select:all;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">{{.Provision.PubKey}}</pre>
+    <pre id="prov-pubkey" style="white-space:pre-wrap;overflow-wrap:break-word;user-select:all;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">{{.Provision.PubKey}}</pre>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
       <button type="button" class="btn btn-sm" onclick="copyProvisionKey('prov-pubkey','prov-pubkey-ok')">
         <i class="fa-regular fa-copy"></i> {{t "exit_nodes.provision.key_copy"}}
@@ -217,7 +217,7 @@
       <span style="font-size:11px;color:var(--text-muted">{{tf "exit_nodes.provision.key_source" .Provision.PubKeySource}}</span>
     </div>
     <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px"><b>{{t "exit_nodes.provision.key_command_title" | safeHTML}}</b></p>
-    <pre id="prov-keycmd" style="white-space:pre-wrap;word-break:break-all;user-select:all;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">{{.Provision.PubKeyCommand}}</pre>
+    <pre id="prov-keycmd" style="white-space:pre-wrap;overflow-wrap:break-word;user-select:all;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">{{.Provision.PubKeyCommand}}</pre>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <button type="button" class="btn btn-sm" onclick="copyProvisionKey('prov-keycmd','prov-keycmd-ok')">
         <i class="fa-regular fa-copy"></i> {{t "exit_nodes.provision.key_copy_command"}}
@@ -226,7 +226,7 @@
     </div>
     {{else}}
     <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px">{{t "exit_nodes.provision.key_missing" | safeHTML}}</p>
-    <pre style="white-space:pre-wrap;word-break:break-all;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">ssh-keygen -y -f {{.Provision.SSHKeyPath}} &gt; {{.Provision.SSHKeyPath}}.pub</pre>
+    <pre style="white-space:pre-wrap;overflow-wrap:break-word;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">ssh-keygen -y -f {{.Provision.SSHKeyPath}} &gt; {{.Provision.SSHKeyPath}}.pub</pre>
     <p style="font-size:11px;color:var(--text-muted);margin:0">{{t "exit_nodes.provision.key_missing_help" | safeHTML}}</p>
     {{end}}
     <p style="font-size:11px;color:var(--text-muted);margin:10px 0 0">{{t "exit_nodes.provision.key_same_for_all" | safeHTML}}</p>
