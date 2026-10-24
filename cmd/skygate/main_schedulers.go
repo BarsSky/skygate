@@ -210,4 +210,12 @@ func wireOptionalSchedulers(ctx context.Context, d *db.ResettableDB, app *handle
 	// auto-approver moved earlier so the RealNotifier
 	// can pick up the same manager via SetSidecar().
 	// (See "Telegram bot" block above.")
+
+	// B417 (2026-10-24): keep the BASE routes of skygate-registered relays approved.
+	// Scope, decided by the operator: only 0.0.0.0/0 and ::/0, and only for nodes with
+	// a row in exit_servers — a relay skygate itself registered. Subnet routes and
+	// nodes skygate did not register are never auto-approved. It lives here (not in
+	// main.go) because it IS an optional background scheduler and main.go's line
+	// ceiling (B372) only ever falls.
+	go adminSvc.StartBaseRouteReconciler(ctx)
 }

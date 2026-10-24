@@ -47,8 +47,8 @@ and a button.
 
 ### What changed (B417) — skygate finishes what it started
 
-A **two-minute** pass (`internal/feature/admin/exit_nodes_reconcile_b417.go`, started from
-`main`) approves the missing base routes for relays that skygate registered. Scope, decided
+A **two-minute** pass (`internal/feature/admin/exit_nodes_reconcile_b417.go`, started from the
+schedulers phase of the boot sequence, beside the other five background schedulers) approves the missing base routes for relays that skygate registered. Scope, decided
 by the operator in this conversation:
 
 * **only** `0.0.0.0/0` and `::/0` — never a subnet route;

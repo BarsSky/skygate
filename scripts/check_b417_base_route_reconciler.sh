@@ -37,12 +37,23 @@ SKY_TMP="$(mktemp -d "${TMPDIR:-/tmp}/skygate-b417.XXXXXX")" || exit 1
 trap 'rm -rf "$SKY_TMP"' EXIT
 
 REC=internal/feature/admin/exit_nodes_reconcile_b417.go
-MAIN=cmd/skygate/main.go
 GATE=scripts/verify_pre_deploy.sh
 
-for f in "$REC" "$MAIN" "$GATE"; do
+for f in "$REC" "$GATE"; do
   [ -f "$f" ] || { bad "missing source file: $f"; exit 1; }
 done
+
+# 2026-10-24 (B339, refactor Phase D): the start call is read from the cmd/skygate
+# PACKAGE surface, not from main.go — the reconciler is an optional background
+# scheduler, so it belongs in main_schedulers.go beside the other five, and pinning a
+# single file would turn that move (or any future split) into a false FAIL.
+ROOT="$(pwd)"
+# shellcheck source=scripts/lib/gosurface.sh
+. "$ROOT/scripts/lib/gosurface.sh"
+if ! gosurface CMD_GO "$ROOT"/cmd/skygate/*.go; then
+  bad "could not build the cmd/skygate surface (scripts/lib/gosurface.sh)"
+  exit 1
+fi
 
 # --- A: the scope -----------------------------------------------------------
 hdr "A. the auto-repair may approve ONLY the base routes of skygate's own relays"
@@ -99,8 +110,8 @@ fi
 
 # --- C: it runs by itself ---------------------------------------------------
 hdr "C. it runs without anyone pressing anything"
-if grep -q 'StartBaseRouteReconciler' "$MAIN"; then
-  ok "C1: main starts the reconciler"
+if grep -q 'StartBaseRouteReconciler' "$CMD_GO"; then
+  ok "C1: the cmd/skygate surface starts the reconciler (main_schedulers.go, beside the other schedulers)"
 else
   bad "C1: nothing starts the reconciler — the pass would never run"
 fi

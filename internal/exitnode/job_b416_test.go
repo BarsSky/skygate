@@ -8,7 +8,7 @@ import (
 
 // TestStepHint_CoversEveryStep is the operator-facing half of B416: a failed run must
 // arrive with a cause and a next action, in Russian, not only with a step id.
-func TestStepHint_CoversEveryStep(t *testing.T) {
+func TestStepHint_B416_CoversEveryStep(t *testing.T) {
 	for _, step := range append([]string{JobStepSSHKey, JobStepRemote, JobStepWaitNode, JobStepExitRow, JobStepRoutes}, JobSteps...) {
 		h := StepHint(step)
 		if strings.TrimSpace(h) == "" {
@@ -29,7 +29,7 @@ func TestStepHint_CoversEveryStep(t *testing.T) {
 	}
 }
 
-func TestJob_Elapsed(t *testing.T) {
+func TestJob_B416_Elapsed(t *testing.T) {
 	start := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 	j := Job{Status: JobRunning, StartedAt: start}
 	if got := j.ElapsedSeconds(start.Add(42 * time.Second)); got != 42 {
@@ -45,7 +45,7 @@ func TestJob_Elapsed(t *testing.T) {
 	}
 }
 
-func TestJob_RunningAndRequest(t *testing.T) {
+func TestJob_B416_RunningAndRequest(t *testing.T) {
 	j := Job{Host: "192.0.2.10", NodeName: "aisha", SSHUser: "root", SSHPort: 2222,
 		KeyPath: "/ssh-sync/skygate_sync", Accept: 1, InstallTS: true, SetupNAT: true, Desc: "d"}
 	if j.Running() {
@@ -69,7 +69,7 @@ func TestJob_RunningAndRequest(t *testing.T) {
 
 // TestJobStatuses_AreDistinct pins the wire values the page compares and the
 // contract greps.
-func TestJobStatuses_AreDistinct(t *testing.T) {
+func TestJobStatuses_B416_AreDistinct(t *testing.T) {
 	if JobRunning == JobOK || JobOK == JobFailed || JobRunning == JobFailed {
 		t.Fatal("job statuses must be distinct strings")
 	}
