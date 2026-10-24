@@ -1,0 +1,6 @@
+# B414 — token references that are DOCUMENTED rather than used.
+#
+# One entry per line: <token>#<why it may stay>. The contract ignores these names and
+# fails on any OTHER undefined token, so the file can only be a record of a comment,
+# never a way to hide a real defect.
+--xxx#admin/update.html documents in a template comment WHY var(--xxx) prints ZgotmplZ; a comment paints nothing

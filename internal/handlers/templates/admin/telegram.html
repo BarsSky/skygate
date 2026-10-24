@@ -241,7 +241,7 @@
     {{if not .State.Container.Available}}
       <div class="alert alert-warn"><i class="fa-solid fa-triangle-exclamation"></i>
         {{t "telegram.container_unavailable"}}
-        {{if .State.Container.RawStderr}}<pre style="margin:.4rem 0 0;font-size:.8em;color:#666">{{.State.Container.RawStderr}}</pre>{{end}}
+        {{if .State.Container.RawStderr}}<pre style="margin:.4rem 0 0;font-size:.8em;color:var(--text-muted)">{{.State.Container.RawStderr}}</pre>{{end}}
       </div>
     {{else}}
       <table class="kv" style="font-size:.92em;line-height:1.5">

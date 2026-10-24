@@ -109,7 +109,7 @@
         <td><code>{{.Hostname}}</code>
           {{if .Online}}<span class="badge badge-success">{{t "common.online"}}</span>
           {{else}}<span class="badge badge-secondary">{{t "common.offline"}}</span>{{end}}
-          <div class="sub" style="font-family:monospace;font-size:.8em;color:#888">id={{.ID}}</div>
+          <div class="sub" style="font-family:monospace;font-size:.8em;color:var(--text-muted)">id={{.ID}}</div>
           {{/* B303 (v1.5.68): an ownerless node. headscale reports either no
                user at all or only its synthetic `tagged-devices` user, so there
                is no portal user to pre-select. Pre-B303 these rows were dropped
@@ -117,7 +117,7 @@
                answered a raw 400 page because the node had no node_owner_map
                row — the two halves of one deadlock. */}}
           {{if .NeedsOwnerPick}}
-          <div class="sub" style="font-size:.8em;color:var(--warning,#b45309)" title="{{t "devices.adoption_ownerless_hint"}}">
+          <div class="sub" style="font-size:.8em;color:var(--warning)" title="{{t "devices.adoption_ownerless_hint"}}">
             <i class="fa-solid fa-triangle-exclamation"></i> {{t "devices.adoption_no_owner"}}
             {{if .UserName}}<code style="font-size:.95em">{{.UserName}}</code>{{end}}
           </div>
@@ -453,7 +453,7 @@
              a real device with one misclick. */}}
           <form method="post" action="/admin/devices/{{.ID}}/delete" style="margin-top:4px;display:inline"
                 onsubmit="return confirm('{{t "devices.delete_admin_confirm" | safeJS}}')">
-            <button type="submit" class="btn btn-sm" style="font-size:11px;padding:2px 8px;background:var(--danger);color:#fff;border-color:var(--danger)" title="{{t "devices.delete_admin_help"}}">
+            <button type="submit" class="btn btn-sm" style="font-size:11px;padding:2px 8px;background:var(--danger);color:var(--accent-fg);border-color:var(--danger)" title="{{t "devices.delete_admin_help"}}">
               <i class="fa-solid fa-trash-can"></i> {{t "devices.delete_admin_btn"}}
             </button>
           </form>

@@ -274,9 +274,9 @@
         <td>{{.Hostname}}</td>
         <td><code>{{.RolesStr}}</code></td>
         <td>
-          {{if eq .State "ready"}}<span class="tag" style="background:var(--accent-success);color:#fff">ready</span>
-          {{else if eq .State "failed"}}<span class="tag" style="background:var(--accent-danger);color:#fff">failed</span>
-          {{else if eq .State "draining"}}<span class="tag" style="background:var(--accent-warning);color:#000">draining</span>
+          {{if eq .State "ready"}}<span class="tag" style="background:var(--accent-success);color:var(--accent-fg)">ready</span>
+          {{else if eq .State "failed"}}<span class="tag" style="background:var(--accent-danger);color:var(--accent-fg)">failed</span>
+          {{else if eq .State "draining"}}<span class="tag" style="background:var(--accent-warning);color:var(--accent-fg)">draining</span>
           {{else}}<span class="tag">{{.State}}</span>{{end}}
         </td>
         <td>{{if .LastSeenUnix}}{{.LastSeenAgo}}{{else}}<em>never</em>{{end}}</td>
@@ -332,7 +332,7 @@
         <td><span style="color:var(--text-muted);font-family:var(--font-mono)">{{.WhenUnix}}</span></td>
         <td>
           {{if eq .Source "cluster_audit"}}
-            <span class="tag" style="background:var(--accent);color:#000;padding:1px 6px;border-radius:4px;font-size:10px">cluster_audit</span>
+            <span class="tag" style="background:var(--accent);color:var(--accent-fg);padding:1px 6px;border-radius:4px;font-size:10px">cluster_audit</span>
           {{else}}
             <span class="tag" style="background:var(--bg-muted);color:var(--text-muted);padding:1px 6px;border-radius:4px;font-size:10px">audit_log</span>
           {{end}}

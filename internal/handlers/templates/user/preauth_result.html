@@ -34,7 +34,7 @@
   {{/* 2026-09-18: was {{.PreauthKey}} — no handler ever set that name
        (they all pass "Key"), so the banner printed
        `tailscale up --authkey=<no value>`. */}}
-  <div style="margin-top:6px;font-family:monospace;font-size:13px;background:#f5f5f5;padding:6px 10px;border-radius:4px">tailscale up --authkey={{.Key}}</div>
+  <div style="margin-top:6px;font-family:monospace;font-size:13px;background:var(--bg-elev);color:var(--text);padding:6px 10px;border-radius:4px">tailscale up --authkey={{.Key}}</div>
 </div>
 {{end}}
 

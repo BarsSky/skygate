@@ -315,7 +315,7 @@
   </div>
 
   {{/* Last run status — populated by RunBackup via SetStatus. */}}
-  <div style="margin-top:1rem; padding-top:0.75rem; border-top:1px solid var(--border, #2a2f3a)">
+  <div style="margin-top:1rem; padding-top:0.75rem; border-top:1px solid var(--border)">
     <strong>{{t "backup.last_run"}}:</strong>
     {{if gt .Config.LastRun 0}}
       <code>{{datetimeformat .Config.LastRun}}</code>
@@ -367,7 +367,7 @@
        (which only system-cron could send). B142 surfaces it next to
        the Last run panel so backup health and backup-verify health
        are visible in one place. */}}
-  <div style="margin-top:0.75rem; padding-top:0.75rem; border-top:1px solid var(--border, #2a2f3a)">
+  <div style="margin-top:0.75rem; padding-top:0.75rem; border-top:1px solid var(--border)">
     <strong>{{t "backup.last_verify"}}:</strong>
     {{if gt .Config.LastVerifyAt 0}}
       <code>{{datetimeformat .Config.LastVerifyAt}}</code>

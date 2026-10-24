@@ -1,5 +1,118 @@
 # Skygate release notes
 
+## v1.5.158 — no element may blend into the background (B414)
+
+**Date:** 2026-10-24 · **Base:** `v1.5.157` → this tag · **Compatibility:** no migration, no
+config change, no API change. One stylesheet (both copies), the templates' colour usage and
+the gate's selection filter; the data plane is untouched. After updating, reload the panel
+once (`Ctrl+F5`) — `themes.css` is served with an immutable cache header.
+
+### Why — «в новых добавленных полях не видно текст»
+
+Operator, verbatim:
+
+> «Проблема с цветом отображения текста в новых добавленных полях и в целом проверить что
+> нет смешения стилей тем и на всех страницах по всем темам видно все элементы страницы —
+> что они не сливаются с фоном»
+
+Measured cause, on the very card v1.5.156 added: its SSH-key blocks were painted with
+`background:var(--bg-subtle,#111)`, and **`--bg-subtle` never existed in `themes.css`**. The
+fallback therefore applied in *every* theme: a near-black slab whose inherited text colour
+stays dark on the two **light** themes (`vercel`, `mint`) — an unreadable key on the page
+whose whole purpose is copying that key. The fallback is what turned a typo into an
+invisible panel instead of a visible error.
+
+The sweep that followed found the same class elsewhere:
+
+| class | measured before | after |
+|---|---|---|
+| `var(--token)` referencing a token `themes.css` never defines | 57 references, 21 distinct tokens | 0 |
+| hardcoded text colours chosen for a light page (`#dc3545`, `#198754`, `#6c757d`, `#e0f2fe` …) | 47 | 0 outside a 3-key allowlist |
+| hardcoded `var(--token,#colour)` **fallbacks** in templates | 20 (incl. `var(--danger,#dc3545)`) | 0 |
+| hardcoded tinted info/warn card palettes (`#0a2a3a`, `#3a2a00`, light-text overrides) | 4 files | 0 |
+| `--text-subtle` below 4.5:1 on its own page/card surface | 4 themes on `--bg`, 2 more on `--bg-card` | 0 |
+
+### What changed
+
+* **The missing tokens exist.** A semantic alias block in `:root` maps every name the
+  templates had been calling for years (`--bg-subtle`, `--bg-muted`, `--bg-secondary`,
+  `--bg-input`, `--card-bg`, `--card-elevated`, `--fg`, `--font-mono`, `--error`,
+  `--warning-fg`, `--accent-success|danger|warning`) onto a real token, so old markup keeps
+  working **in all five themes** instead of painting a fallback.
+* **The palettes clear the floor on both surfaces.** Contrast is measured on `--bg-card` as
+  well as `--bg` now, which is the lighter of the two in the dark themes:
+
+  | theme | token | before | after |
+  |---|---|---|---|
+  | `linear` | `--text-subtle` | `#6f7480` — 4.15:1 on `--bg`, **3.57:1 on the card** | `#8a8f9f` — 6.02 / 4.69 |
+  | `vercel` | `--text-subtle` | `#a1a1aa` — 2.56:1 | `#71717a` — 4.83 / 4.63 |
+  | `nvidia` | `--text-subtle` | `#666` — 3.45:1 | `#808080` — 5.01 / 4.66 |
+  | `mint` | `--text-subtle` | `#8a938f` — 2.93:1 | `#67716b` — 4.70 / 5.06 |
+  | `sentry` | `--text-subtle` | `#8a8198` — **4.12:1 on the card** | `#948b9d` — 5.27 / 4.67 |
+  | `mint` | `--accent-fg` on `--accent` | `#ffffff` — **2.54:1** | `#0a0a0a` — 7.80:1 |
+  | `mint` | `--success` / `--warning` / `--info` | 2.36 / 3.19 / 2.98 | 4.96 / 5.04 / 4.98 |
+  | `vercel` | `--success` / `--warning` | 3.30 / 3.19 | 5.02 / 5.02 |
+  | `sentry` | `--info` | 3.50 | 8.13 |
+
+* **Templates paint with tokens only.** 28 inline rules and 23 `<style>` blocks were
+  rewritten (`#dc3545` → `var(--danger)`, `#fff`/`#000` on a token fill → `var(--accent-fg)`,
+  `#f5f5f5` → `var(--bg-elev)` + `var(--text)`, `#e0f2fe` info islands →
+  `var(--info-bg)`/`var(--info)`/`var(--text)`), the nine tinted alert boxes of
+  `/admin/exit-nodes` and `/my/exit-nodes` became `var(--danger-bg)`/`var(--warning-bg)`, and
+  every `var()` fallback was deleted so a wrong token name now **fails the gate**.
+* **B250 was renegotiated, because it pinned the defect.** `/admin/acls`' info card was
+  forced to a hand-picked dark palette with light-text overrides (`--text:#e0f2fe`,
+  `--text-muted:#bae6fd`, `--text-subtle:#7dd3fc`) — unreadable on the light themes, i.e. the
+  same class the operator reported. Worse, its three contracts were **inert**: written as
+  `check "desc" grep -A1 … file | grep -q …`, the `check` helper's own PASS row went down the
+  pipe, the row was swallowed and the summary reported `5 pass / 0 fail` while all three
+  assertions were false (AGENTS trap #9 in another shape). The card now uses
+  `var(--info-bg)`/`var(--info)`/`var(--text)`, and the contracts extract the card once and
+  match with a shell builtin — 9 contracts that can actually fail.
+
+### The gate's own filter lied, and that is why this release took longer
+
+While verifying, `scripts/gate_affected.sh` ran 117 checks and the catalog answered
+`GATE PASSED: 0 check(s) green, 0 failed`. Cause: the selector emitted its ids
+**space**-separated, and `verify_pre_deploy.sh` built its filter with `${VAR// /}` — it
+*deleted* spaces instead of treating them as separators, so nothing matched and every entry
+printed `SKIP`. A green run that verified nothing is the worst failure a gate can have, so:
+
+* either separator now works, and the parsed scope is printed as commas;
+* a scope that matches **no** catalog entry **fails**, naming the ids (`selected: 0 of 1
+  requested id(s) matched a catalog entry`);
+* an unknown id is listed (`id(s) not found in the catalog: ZZ999`) instead of being
+  silently dropped;
+* `gate_affected.sh` prints its scope in the parseable form, and `check_b413_fast_gate.sh`
+  grew contracts **C3–C6** (space-separated scope runs, bogus scope fails, unknown id named,
+  emitted scope parseable) — the old ones only ever passed a single id, which is how a
+  one-character bug survived.
+
+### Guards
+
+`scripts/check_b414_theme_visibility.sh` — 22 contracts: every token used by the panel is
+defined by `themes.css`; the aliases the old templates rely on exist; no template and no
+stylesheet `var()` carries a hardcoded fallback; **75** (foreground, surface) pairs across all
+five themes are contrast-checked from the stylesheet itself (text ≥ 7:1, muted/subtle/
+semantic ≥ 4.5:1 on `--bg` **and** `--bg-card`, `--accent-fg` on `--accent` ≥ 4.5:1) and the
+checker is proven able to fail by feeding it an unreadable palette; remaining literals are
+frozen in `scripts/b414_hardcoded_bg_allowlist.txt` (**12** — only the colour-swatch picker of
+`/my/account`, which paints the colour it offers) and `scripts/b414_hardcoded_fg_allowlist.txt`
+(3), both of which may only shrink — a fixed page that stays listed **fails** (C2); the two
+`themes.css` copies stay byte-identical (B392/B411).
+
+### Verification
+
+* `scripts/check_b414_theme_visibility.sh` — 22/0.
+* `scripts/check_b250.sh` — 9/0 (renegotiated, and for the first time able to fail).
+* `scripts/check_b121.sh` — 19/0 (its mint pin renegotiated: `--accent-fg` `#ffffff` → `#0a0a0a`).
+* `scripts/check_b413_fast_gate.sh` — 31/0 (C3–C6 new).
+
+### What you do
+
+Nothing beyond the usual `/admin/update` → the panel reloads with the new stylesheet. No
+migration runs, no configuration changes, no restart of headscale or the relays.
+
 ## v1.5.157 — the operator gets the key to copy, and the gate stops being folklore (B412.1, B413)
 
 **Date:** 2026-10-24 · **Base:** `v1.5.156` → this tag · **Compatibility:** no migration, no

@@ -62,7 +62,7 @@
            trip, not by derper's /debug/vars counter (which the
            container cannot read — 403 debug access denied). Show
            WHY it is red instead of a bare "closed". */}}
-      {{if and .DerpStatus.STUNBlocked .DerpStatus.STUNErr}}<div class="sub" style="color:var(--danger,#dc3545);font-size:11px" title="{{.DerpStatus.STUNErr}}">{{t "derp.stun_unreachable"}}</div>{{end}}
+      {{if and .DerpStatus.STUNBlocked .DerpStatus.STUNErr}}<div class="sub" style="color:var(--danger);font-size:11px" title="{{.DerpStatus.STUNErr}}">{{t "derp.stun_unreachable"}}</div>{{end}}
       {{if .DerpStatus.STUNReflex}}<div class="sub" style="font-size:11px" title="{{t "derp.stun_reflex_help"}}">{{t "derp.stun_reflex"}}: <code>{{.DerpStatus.STUNReflex}}</code></div>{{end}}
       {{/* B315: the reply arrived from an address other than the one dialled — a
            NAT/DNAT on the container's path to the relay. Reported because it is
@@ -345,7 +345,7 @@
            page as "он заявляет адрес локальной машины вместо публичного". */}}
       <tr><td style="color:var(--text-muted)">{{t "derp.field_public_ip"}}</td><td>
         {{if .DerpStatus.WhiteIPFallback}}
-          <span style="color:var(--danger,#dc3545)">{{t "derp.field_public_ip_unknown"}}</span>
+          <span style="color:var(--danger)">{{t "derp.field_public_ip_unknown"}}</span>
           <div class="muted" style="font-size:11px;max-width:640px">{{tf "derp.field_public_ip_egress" .DerpStatus.WhiteIP | safeHTML}}</div>
         {{else if .DerpStatus.WhiteIP}}
           <code>{{.DerpStatus.WhiteIP}}</code>
@@ -456,9 +456,9 @@
           </td>
           <td style="padding:6px 8px">
             {{if .LastError}}
-            <span style="color:var(--danger, #dc3545)">{{t "derp.cert_sync_err"}}: {{.LastError}}</span>
+            <span style="color:var(--danger)">{{t "derp.cert_sync_err"}}: {{.LastError}}</span>
             {{else}}
-            <span style="color:var(--success, #198754)">{{t "derp.cert_sync_ok"}}</span>
+            <span style="color:var(--success)">{{t "derp.cert_sync_ok"}}</span>
             {{end}}
           </td>
           <td style="padding:6px 8px;text-align:right">

@@ -316,7 +316,7 @@
       </div>
       <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> {{t "tailscale.save"}}</button>
     </form>
-    <div style="margin-top:1rem;padding-top:.9rem;border-top:1px solid var(--border,#e5e7eb)">
+    <div style="margin-top:1rem;padding-top:.9rem;border-top:1px solid var(--border)">
       <p class="sub" style="margin-bottom:.4rem">{{tf "tailscale.generate_help" .State.Hostname | safeHTML}}</p>
       <form action="/admin/tailscale" method="POST">
         <input type="hidden" name="csrf" value="{{.CSRF}}">

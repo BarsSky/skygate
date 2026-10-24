@@ -135,7 +135,7 @@
       <tbody>
         {{range $w.Nodes}}
         <tr>
-          <td><code>{{.Hostname}}</code>{{if .Online}} <i class="fa-solid fa-circle" style="font-size:6px;color:#198754"></i>{{end}}</td>
+          <td><code>{{.Hostname}}</code>{{if .Online}} <i class="fa-solid fa-circle" style="font-size:6px;color:var(--success)"></i>{{end}}</td>
           <td>
             {{if .Username}}{{.Username}}{{else}}<span class="text-muted">—</span>{{end}}
             {{/* B400: say WHERE the owner came from. On a tagged tailnet headscale's

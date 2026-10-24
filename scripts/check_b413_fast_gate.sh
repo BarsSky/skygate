@@ -152,6 +152,55 @@ else
   bad "C2: a filtered run does not say it was filtered"
 fi
 
+# --- C3-C6: the separator and the EMPTY selection (measured 2026-10-24) -------
+# The first shipped filter deleted spaces — `${SKYGATE_GATE_ONLY// /}` — instead of
+# treating them as separators, while scripts/gate_affected.sh emitted exactly that
+# space-separated form. A 117-check diff-scoped run therefore matched NOTHING: every
+# check printed SKIP and the catalog ended "GATE PASSED: 0 check(s) green, 0 failed".
+# A green gate that verified nothing is the worst failure this file exists to prevent,
+# so both halves are pinned: the separator must not matter, and an empty selection
+# must be a FAILURE that names itself.
+if SKYGATE_GATE_ONLY="B250 B414" bash "$GATE" >"$TMPD/space.log" 2>&1; then
+  SPACE_PASS="$(grep -cE '^  .*PASS' "$TMPD/space.log" || true)"
+  if [ "${SPACE_PASS:-0}" -ge 2 ]; then
+    ok "C3: a SPACE-separated scope is honoured (${SPACE_PASS} PASS rows) — the separator must not decide the verdict"
+  else
+    bad "C3: a space-separated scope ran almost nothing (${SPACE_PASS:-0} PASS rows)"
+  fi
+else
+  bad "C3: a space-separated scope failed the run (the operator did not mistype anything)"
+fi
+if SKYGATE_GATE_ONLY="B99999" bash "$GATE" >"$TMPD/bogus.log" 2>&1; then
+  bad "C4: a scope matching NO catalog entry reported PASS — a green run that verified nothing"
+else
+  if grep -q 'selected NO catalog entry' "$TMPD/bogus.log"; then
+    ok "C4: a scope that matches nothing FAILS and says why, instead of reporting a green run"
+  else
+    bad "C4: an empty selection exits non-zero but does not explain itself"
+  fi
+fi
+if SKYGATE_GATE_ONLY="B250 ZZ999" bash "$GATE" >"$TMPD/mixed.log" 2>&1 &&
+   grep -q 'id(s) not found in the catalog: ZZ999' "$TMPD/mixed.log"; then
+  ok "C5: an unknown id is named (a typo in a scope cannot silently drop a check)"
+else
+  bad "C5: an unknown id in the scope is not reported"
+fi
+if grep -q 'scope (SKYGATE_GATE_ONLY form): ' "$TMPD/sel.log"; then
+  SEL_SCOPE="$(sed -n 's/^gate-affected: scope (SKYGATE_GATE_ONLY form): //p' "$TMPD/sel.log" | head -1)"
+  case "$SEL_SCOPE" in
+    "")
+      bad "C6: gate_affected.sh printed an empty scope" ;;
+    *" "*|*",,"*|*",|,"*|",")
+      bad "C6: gate_affected.sh emits the scope in a form the catalog cannot parse: '$SEL_SCOPE'" ;;
+    *,*)
+      ok "C6: gate_affected.sh emits a COMMA-separated scope the catalog parses ($(printf '%s' "$SEL_SCOPE" | tr ',' '\n' | wc -l | tr -d ' ') ids)" ;;
+    *)
+      bad "C6: gate_affected.sh emitted a single id with no separator: '$SEL_SCOPE'" ;;
+  esac
+else
+  bad "C6: gate_affected.sh does not print the scope it will run — a reviewer cannot reproduce it"
+fi
+
 # --- D: the timing surface ----------------------------------------------------
 SKYGATE_GATE_ONLY="B9" SKYGATE_GATE_TIMINGS_OUT="$TMPD/timings.tsv" bash "$GATE" >"$TMPD/timed.log" 2>&1
 if grep -q 'slowest checks' "$TMPD/timed.log"; then

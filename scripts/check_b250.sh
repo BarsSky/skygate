@@ -6,17 +6,30 @@
 #   2. The "v0.17.0: TAG-SUBNET-ROUTER" info card had dark text on
 #      a dark background (invisible).
 #
-# The fix has two parts:
-#   - JSON pretty-print in GetAdminACLs (json.Indent with 2-space).
-#   - Force light text on dark info cards by overriding the
-#     --text + --text-muted + --text-subtle CSS variables on the
-#     card itself (cascades to children via CSS variable resolution).
+# The original fix prettified the JSON and forced the info card to a
+# hand-picked dark palette with light text overrides
+# (--text:#e0f2fe, --text-muted:#bae6fd, --text-subtle:#7dd3fc).
+#
+# 2026-10-24 CONTRACT RENEGOTIATION (B414). Two reasons.
+#   (a) Those hardcoded light colours were themselves a theme-mixing defect: the
+#       card's own surface follows the theme, so on the LIGHT themes (#ffffff
+#       page) #e0f2fe text on a light tint is unreadable — the same class the
+#       operator reported as «цвет текста в новых добавленных полях». The card now
+#       paints its surface and its text from tokens (var(--info-bg) / var(--info) /
+#       var(--text)), which is readable in all five themes; B414 measures the ratios.
+#   (b) Contracts B1-B3 were INERT: they were written as
+#       `check "desc" grep -A1 … file | grep -q …`, so the pipeline fed the check's
+#       own "PASS" line into the second grep, the row was swallowed, and the
+#       summary counted only the rows that survived (5 pass / 0 fail on a tree
+#       where all three assertions were false). Trap #9 in another shape: a
+#       pipeline must never be the verdict, and a check must never pipe its own
+#       output. They now extract the card once and match with a shell builtin.
 #
 # This script pins:
 #   - The handler calls json.Indent on the policy string.
-#   - The dark info card declares the CSS variable overrides.
-#   - No other dark-card templates use the OLD pattern (dark bg
-#     without light text override).
+#   - The info card paints surface + text from theme tokens and reintroduces no
+#     hardcoded colour.
+#   - The B250-era colour literals are gone from every template.
 #
 # Usage: bash scripts/check_b250.sh
 
@@ -51,51 +64,51 @@ check "internal/handlers/templates/admin/acls.html wraps raw JSON in <pre> (Poli
   grep -qE '<pre[^>]*>({{.*PolicyView.RawJSON|.Policy}})' internal/handlers/templates/admin/acls.html
 
 echo ""
-echo "=== B. Dark info card text contrast (acls.html) ==="
+echo "=== B. Info card text contrast (acls.html) ==="
 
-# B1. The dark card has color:#e0f2fe on the card itself.
-check "v0.17.0 info card declares light text color" \
-  grep -A1 'v0_17_0_note_title' internal/handlers/templates/admin/acls.html | grep -q 'color:#e0f2fe'
+# Extract the card: the div line immediately before the title it belongs to.
+ACLS_CARD="$(awk '{ prev = cur; cur = $0 } /v0_17_0_note_title/ { print prev; print cur; exit }' \
+  internal/handlers/templates/admin/acls.html)"
 
-# B2. The card overrides --text-muted (so children using var(--text-muted)
-# inherit the light value via CSS variable cascade).
-check "v0.17.0 info card declares --text-muted override" \
-  grep 'v0_17_0_note_title' -B3 internal/handlers/templates/admin/acls.html | grep -q -- '--text-muted:#bae6fd'
+case "$ACLS_CARD" in
+  *'background:var(--info-bg)'*)
+    ok "v0.17.0 info card paints its surface from a theme token" ;;
+  *)
+    bad "v0.17.0 info card surface is not var(--info-bg) — it cannot follow the theme" ;;
+esac
 
-# B3. The card overrides --text-subtle too (used by some sub-text).
-check "v0.17.0 info card declares --text-subtle override" \
-  grep 'v0_17_0_note_title' -B3 internal/handlers/templates/admin/acls.html | grep -q -- '--text-subtle:#7dd3fc'
+case "$ACLS_CARD" in
+  *'color:var(--text)'*)
+    ok "v0.17.0 info card text is var(--text) (inherits the theme)" ;;
+  *)
+    bad "v0.17.0 info card text is not var(--text) — a fixed colour is invisible on another theme" ;;
+esac
+
+case "$ACLS_CARD" in
+  *'color:var(--info)'*)
+    ok "v0.17.0 info card title uses var(--info)" ;;
+  *)
+    bad "v0.17.0 info card title does not use var(--info)" ;;
+esac
+
+# The exact regression: any hardcoded hex in the card, or the pre-B414 light overrides.
+case "$ACLS_CARD" in
+  *'#'*)
+    bad "v0.17.0 info card carries a hardcoded colour: $(printf '%s' "$ACLS_CARD" | grep -o '#[0-9a-fA-F]\{3,8\}' | head -3 | tr '\n' ' ')" ;;
+  *)
+    ok "v0.17.0 info card carries no hardcoded colour" ;;
+esac
 
 echo ""
-echo "=== C. Other dark info cards follow the same pattern ==="
+echo "=== C. The B250-era colour literals are gone from every template ==="
 
-# C1. Other dark cards (user_subnet, subnets, user_control_plane) — we
-# don't fix them all in B250, but we want the contracts to surface them
-# so future work can address them one by one. The check lists how many
-# remain WITHOUT the light-text fix.
-remaining_dark_cards=$(grep -l 'background:var(--bg-info' \
-  internal/handlers/templates/admin/*.html \
-  internal/handlers/templates/user/*.html 2>/dev/null | wc -l)
-
-# C2. Each file with the dark-card pattern should have a parallel
-# light-text fix in at least one card. Document the remainder.
-files_with_dark_card_no_fix=""
-for f in $(grep -l 'background:var(--bg-info' \
-            internal/handlers/templates/admin/*.html \
-            internal/handlers/templates/user/*.html 2>/dev/null); do
-  if ! grep -q -- '--text-muted:#bae6fd' "$f"; then
-    files_with_dark_card_no_fix="$files_with_dark_card_no_fix $f"
-  fi
-done
-
-if [ -z "$files_with_dark_card_no_fix" ]; then
-  ok "all dark-info-card files declare --text-muted override"
+B250_LITERALS="$(grep -rlE 'var\(--bg-info,#|var\(--bg-warn,#|#0a2a3a|#3a2a00|#e0f2fe|#bae6fd|#7dd3fc' \
+  internal/handlers/templates --include='*.html' 2>/dev/null || true)"
+if [ -z "$B250_LITERALS" ]; then
+  ok "no template paints an info/warn card with a fixed dark palette or light-text override"
 else
-  echo -e "  ${C_GREEN}PASS${C_RESET}  $remaining_dark_cards dark-info-card files found"
-  for f in $files_with_dark_card_no_fix; do
-    echo "    note: $f still has dark cards without light-text override (B-followup)"
-  done
-  PASS=$((PASS + 1))
+  bad "B250-era hardcoded card palette is back:"
+  printf '%s\n' "$B250_LITERALS" | sed 's/^/       /'
 fi
 
 echo ""

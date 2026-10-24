@@ -208,7 +208,7 @@
     <h4 style="margin:0 0 6px 0;font-size:14px"><i class="fa-solid fa-key"></i> {{t "exit_nodes.provision.key_title"}}</h4>
     <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">{{t "exit_nodes.provision.key_subtitle" | safeHTML}}</p>
     {{if .Provision.PubKey}}
-    <pre id="prov-pubkey" style="white-space:pre-wrap;overflow-wrap:break-word;user-select:all;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">{{.Provision.PubKey}}</pre>
+    <pre id="prov-pubkey" style="white-space:pre-wrap;overflow-wrap:break-word;user-select:all;background:var(--bg-elev);color:var(--text);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">{{.Provision.PubKey}}</pre>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
       <button type="button" class="btn btn-sm" onclick="copyProvisionKey('prov-pubkey','prov-pubkey-ok')">
         <i class="fa-regular fa-copy"></i> {{t "exit_nodes.provision.key_copy"}}
@@ -217,7 +217,7 @@
       <span style="font-size:11px;color:var(--text-muted">{{tf "exit_nodes.provision.key_source" .Provision.PubKeySource}}</span>
     </div>
     <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px"><b>{{t "exit_nodes.provision.key_command_title" | safeHTML}}</b></p>
-    <pre id="prov-keycmd" style="white-space:pre-wrap;overflow-wrap:break-word;user-select:all;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">{{.Provision.PubKeyCommand}}</pre>
+    <pre id="prov-keycmd" style="white-space:pre-wrap;overflow-wrap:break-word;user-select:all;background:var(--bg-elev);color:var(--text);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">{{.Provision.PubKeyCommand}}</pre>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <button type="button" class="btn btn-sm" onclick="copyProvisionKey('prov-keycmd','prov-keycmd-ok')">
         <i class="fa-regular fa-copy"></i> {{t "exit_nodes.provision.key_copy_command"}}
@@ -226,7 +226,7 @@
     </div>
     {{else}}
     <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px">{{t "exit_nodes.provision.key_missing" | safeHTML}}</p>
-    <pre style="white-space:pre-wrap;overflow-wrap:break-word;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">ssh-keygen -y -f {{.Provision.SSHKeyPath}} &gt; {{.Provision.SSHKeyPath}}.pub</pre>
+    <pre style="white-space:pre-wrap;overflow-wrap:break-word;background:var(--bg-elev);color:var(--text);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">ssh-keygen -y -f {{.Provision.SSHKeyPath}} &gt; {{.Provision.SSHKeyPath}}.pub</pre>
     <p style="font-size:11px;color:var(--text-muted);margin:0">{{t "exit_nodes.provision.key_missing_help" | safeHTML}}</p>
     {{end}}
     <p style="font-size:11px;color:var(--text-muted);margin:10px 0 0">{{t "exit_nodes.provision.key_same_for_all" | safeHTML}}</p>
@@ -574,7 +574,7 @@
        the reconciler; a row a HUMAN set is never rewritten and must be visible
        here instead. */}}
   {{with .StalePrefs}}
-  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.4)">
+  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:var(--danger-bg);border:1px solid var(--danger)">
     <b>{{t "exit_nodes.prefix_owner.stale_pref_title"}} ({{len .}}{{if gt $.StalePrefsHuman 0}}, {{$.StalePrefsHuman}} {{t "exit_nodes.prefix_owner.stale_pref_human"}}{{end}})</b>
     <div style="font-size:13px;margin-top:4px">{{t "exit_nodes.prefix_owner.stale_pref_help" | safeHTML}}</div>
     <table style="width:100%;margin-top:8px;font-size:13px;border-collapse:collapse">
@@ -655,7 +655,7 @@
       {{if .PolicyVia}}<span style="font-size:12px;color:var(--text-muted);margin-left:6px">{{.PolicyVia}}</span>{{end}}
     </p>
     {{else}}
-    <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.4)">
+    <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:var(--danger-bg);border:1px solid var(--danger)">
       <b>{{t "exit_nodes.prefix_owner.policy_stale"}}</b>
       <div style="font-size:13px;margin-top:4px">{{t "exit_nodes.prefix_owner.policy_stale_help"}}</div>
       <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.prefix_owner.policy_sizes"}} {{.PolicyBytes}} / {{.PolicyLiveByte}}</div>
@@ -679,7 +679,7 @@
        whose headscale API was simply unreachable (live `aro`: dial tcp
        127.0.0.1:8081: connect: connection refused). */}}
   {{if .LiveReadErr}}
-  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:rgba(255,193,7,.12);border:1px solid rgba(255,193,7,.45)">
+  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:var(--warning-bg);border:1px solid var(--warning)">
     <b>{{t "exit_nodes.prefix_owner.live_read_failed"}}</b>
     <div style="font-size:13px;margin-top:4px"><code>{{.LiveReadErr}}</code></div>
     {{if .LiveReadHint}}<div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{.LiveReadHint}}</div>{{end}}
@@ -695,7 +695,7 @@
     <span class="tag tag-success" title="{{.TailnetReason}}">{{t "exit_nodes.prefix_owner.tailnet_ok"}}{{if .TailnetIP}} {{.TailnetIP}}{{end}}</span>
   </p>
   {{else}}
-  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:rgba(255,193,7,.12);border:1px solid rgba(255,193,7,.45)">
+  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:var(--warning-bg);border:1px solid var(--warning)">
     <b>{{t "exit_nodes.prefix_owner.tailnet_missing"}}</b>
     <div style="font-size:13px;margin-top:4px">{{.TailnetReason}}</div>
     <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.prefix_owner.tailnet_missing_help" | safeHTML}}</div>
@@ -714,7 +714,7 @@
        look like an ACL problem — they are not: no ACL write can configure a
        relay skygate cannot reach, and the re-sync button cannot either. */}}
   {{if .TransportFailed}}
-  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.4)">
+  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:var(--danger-bg);border:1px solid var(--danger)">
     <b>{{t "exit_nodes.prefix_owner.transport_failed"}}</b>
     <ul style="margin:6px 0 0 0;padding-left:18px;font-size:13px">
       {{range .TransportFailed}}
@@ -730,7 +730,7 @@
        relay was excluded; this one names the consequence, which is the fact the
        2026-10-09 outage was missing on every page. */}}
   {{if .StaleAdvertisements}}
-  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.4)">
+  <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:var(--danger-bg);border:1px solid var(--danger)">
     <b>{{t "exit_nodes.prefix_owner.stale_advertise"}}</b>
     <ul style="margin:6px 0 0 0;padding-left:18px;font-size:13px">
       {{range .StaleAdvertisements}}
@@ -992,7 +992,7 @@ sudo mkdir -p /etc/iptables && sudo iptables-save | sudo tee /etc/iptables/rules
     <p style="font-size:12px;color:var(--text-muted);margin-bottom:4px">
       {{t "exit_nodes.register_key_once"}}
     </p>
-    <pre style="white-space:pre-wrap;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px">{{.RegisterKey.Command}}</pre>
+    <pre style="white-space:pre-wrap;background:var(--bg-elev);color:var(--text);padding:10px;border-radius:6px;font-size:12px">{{.RegisterKey.Command}}</pre>
     {{/* B310: the management key is what makes the new relay manageable over the
          tailnet from the first sync. Say which key was embedded, or say that none
          could be read (then the operator copies it by hand — a placeholder in the

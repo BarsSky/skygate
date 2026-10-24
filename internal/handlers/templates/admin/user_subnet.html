@@ -20,7 +20,7 @@
 {{end}}
 
 {{if not .Subnet}}
-<div class="card" style="background:var(--bg-warn,#3a2a00);border-left:4px solid #d97706">
+<div class="card" style="background:var(--warning-bg);border-left:4px solid var(--warning)">
   <h3><i class="fa-solid fa-triangle-exclamation"></i> {{t "user_subnet.no_subnet_title"}}</h3>
   <div style="margin-top:6px">{{t "user_subnet.no_subnet_body" | safeHTML}}</div>
   <form method="POST" action="/admin/users/{{.User.ID}}/subnet/allocate" style="margin-top:12px">
@@ -88,7 +88,7 @@
   </div>
 
   {{if .FlashMessage}}
-  <div class="flash flash-success" style="margin:12px 0;padding:10px 14px;border-radius:6px;background:#0d3320;border:1px solid #1c6b3f;color:#7ee2a8">
+  <div class="flash flash-success" style="margin:12px 0;padding:10px 14px;border-radius:6px;background:var(--success-bg);border:1px solid var(--success);color:var(--success)">
     <i class="fa-solid fa-check-circle"></i> {{t .FlashMessage}}
   </div>
   {{end}}
@@ -199,7 +199,7 @@
 {{end}}
 
 {{if .FlashPreauth}}
-<div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
+<div class="card" style="background:var(--info-bg);border-left:4px solid var(--info)">
   <h3><i class="fa-solid fa-key"></i> {{t "user_subnet.preauth_title"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
     {{t "user_subnet.preauth_help" | safeHTML}}
@@ -225,7 +225,7 @@ sudo tailscale up \
 </div>
 {{end}}
 
-<div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
+<div class="card" style="background:var(--info-bg);border-left:4px solid var(--info)">
   <h3><i class="fa-solid fa-circle-info"></i> {{t "user_subnet.v0_16_0_note_title"}}</h3>
   <div style="margin-top:6px">{{t "user_subnet.v0_16_0_note_body" | safeHTML}}</div>
 </div>

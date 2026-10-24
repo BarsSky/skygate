@@ -160,11 +160,11 @@
             title="{{if le .LatencyMs 50}}{{t "derp_dashboard.latency_good_help"}}{{else if le .LatencyMs 150}}{{t "derp_dashboard.latency_ok_help"}}{{else}}{{t "derp_dashboard.latency_bad_help"}}{{end}}">
           {{if .LatencyMs}}
             {{if le .LatencyMs 50}}
-              <span style="color: #2ecc71; font-weight: 600">{{.LatencyMs}} ms</span>
+              <span style="color:var(--success); font-weight: 600">{{.LatencyMs}} ms</span>
             {{else if le .LatencyMs 150}}
-              <span style="color: #f39c12">{{.LatencyMs}} ms</span>
+              <span style="color:var(--warning)">{{.LatencyMs}} ms</span>
             {{else}}
-              <span style="color: #e74c3c; font-weight: 600">{{.LatencyMs}} ms</span>
+              <span style="color:var(--danger); font-weight: 600">{{.LatencyMs}} ms</span>
             {{end}}
           {{else}}
             <span style="color: var(--text-subtle)">—</span>
@@ -185,7 +185,7 @@
         <td style="padding:0.3rem 0.6rem; text-align: right; font-variant-numeric: tabular-nums">
           {{.ProbesTotal}}
           {{if gt .ProbesFailed 0}}
-            <span style="color: #e74c3c">({{.ProbesFailed}})</span>
+            <span style="color:var(--danger)">({{.ProbesFailed}})</span>
           {{end}}
         </td>
       </tr>
@@ -197,7 +197,7 @@
                or haven't been probed. Surface a clear message + a one-
                click escape hatch to the full view. */}}
           <div style="margin-bottom: 0.6rem">
-            <i class="fa-solid fa-circle-exclamation" style="color: #f39c12"></i>
+            <i class="fa-solid fa-circle-exclamation" style="color:var(--warning)"></i>
             {{t "derp_dashboard.all_degraded"}}
           </div>
           <a href="/admin/derp/dashboard?show_unavailable=1" class="btn btn-secondary" style="font-size: 0.85em">

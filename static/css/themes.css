@@ -81,7 +81,7 @@
 :root{
   --bg:#0c0d10;--bg-card:#23262e;--bg-elev:#2d3038;--bg-hover:#363941;
   --border:#555a64;--border-strong:#6b707b;
-  --text:#f5f5f5;--text-muted:#a8acb5;--text-subtle:#6f7480;
+  --text:#f5f5f5;--text-muted:#a8acb5;--text-subtle:#8a8f9f;
   --accent:#7c7aff;--accent-fg:#0a0a0a;--accent-hover:#9b9aff;--accent-soft:rgba(124,122,255,0.22);
   --success:#4ade80;--success-bg:rgba(74,222,128,0.22);
   --warning:#fbbf24;--warning-bg:rgba(251,191,36,0.22);
@@ -94,16 +94,31 @@
   --font:'Manrope',system-ui,-apple-system,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,monospace;
   --header-h:56px;
+/* B414 (2026-10-24) — SEMANTIC ALIASES, and why they exist.
+   Templates have been calling these names for years (57 references, measured) while
+   themes.css never defined them. The visible consequence was `var(--bg-subtle,#111)`:
+   the fallback painted a near-black block in EVERY theme, so on the light themes the
+   block's inherited dark text sat on #111 and vanished — the operator's «в новых
+   полях не видно текст» report. One alias per name keeps every template's intent
+   working in every theme, and B414 fails the gate if a template references a token
+   this file does not define. */
+--bg-subtle:var(--bg-elev);--bg-muted:var(--bg-elev);--bg-secondary:var(--bg-card);
+--bg-input:var(--bg);--bg-info:var(--info-bg);--bg-warn:var(--warning-bg);
+--bg-2:var(--bg-elev);--bg2:var(--bg-elev);--card-bg:var(--bg-card);--card-elevated:var(--bg-elev);
+--fg:var(--text);--font-mono:var(--mono);--error:var(--danger);--warning-fg:var(--text);
+--green:var(--success);--red:var(--danger);--warn:var(--warning);
+--accent-success:var(--success);--accent-danger:var(--danger);--accent-warning:var(--warning);
+
 }
 
 /* Vercel (light) */
 [data-theme="vercel"]{
   --bg:#ffffff;--bg-card:#fafafa;--bg-elev:#f4f4f5;--bg-hover:#e4e4e7;
   --border:#e4e4e7;--border-strong:#d4d4d8;
-  --text:#0a0a0a;--text-muted:#52525b;--text-subtle:#a1a1aa;
+  --text:#0a0a0a;--text-muted:#52525b;--text-subtle:#71717a;
   --accent:#0a0a0a;--accent-fg:#ffffff;--accent-hover:#27272a;--accent-soft:rgba(10,10,10,0.06);
-  --success:#16a34a;--success-bg:rgba(22,163,74,0.08);
-  --warning:#d97706;--warning-bg:rgba(217,119,6,0.08);
+  --success:#15803d;--success-bg:rgba(22,163,74,0.08);
+  --warning:#b45309;--warning-bg:rgba(217,119,6,0.08);
   --danger:#dc2626;--danger-bg:rgba(220,38,38,0.08);
   --info:#2563eb;--info-bg:rgba(37,99,235,0.08);
   --header-bg:#ffffff;--header-fg:#0a0a0a;
@@ -116,12 +131,12 @@
 [data-theme="sentry"]{
   --bg:#1f1633;--bg-card:#2a1f44;--bg-elev:#362d59;--bg-hover:#3d3361;
   --border:#3a2f5e;--border-strong:#4d3f7a;
-  --text:#ffffff;--text-muted:#b8b0c8;--text-subtle:#8a8198;
+  --text:#ffffff;--text-muted:#b8b0c8;--text-subtle:#948b9d;
   --accent:#c2ef4e;--accent-fg:#1f1633;--accent-hover:#d4f77a;--accent-soft:rgba(194,239,78,0.15);
   --success:#4ade80;--success-bg:rgba(74,222,128,0.12);
   --warning:#fbbf24;--warning-bg:rgba(251,191,36,0.12);
   --danger:#fa7faa;--danger-bg:rgba(250,127,170,0.12);
-  --info:#79628c;--info-bg:rgba(121,98,140,0.18);
+  --info:#b6a3d0;--info-bg:rgba(121,98,140,0.18);
   --header-bg:#150f23;--header-fg:#ffffff;
   --shadow:0 1px 0 rgba(255,255,255,0.04) inset, 0 4px 12px rgba(0,0,0,0.3);
   --shadow-lg:0 12px 32px rgba(22,15,36,0.6);
@@ -132,7 +147,7 @@
 [data-theme="nvidia"]{
   --bg:#0a0a0a;--bg-card:#141414;--bg-elev:#1a1a1a;--bg-hover:#222;
   --border:#2a2a2a;--border-strong:#3d3d3d;
-  --text:#e0e0e0;--text-muted:#999;--text-subtle:#666;
+  --text:#e0e0e0;--text-muted:#999;--text-subtle:#808080;
   --accent:#76b900;--accent-fg:#0a0a0a;--accent-hover:#8cd600;--accent-soft:rgba(118,185,0,0.12);
   --success:#76b900;--success-bg:rgba(118,185,0,0.12);
   --warning:#f5a623;--warning-bg:rgba(245,166,35,0.1);
@@ -164,12 +179,12 @@
 [data-theme="mint"]{
   --bg:#f5f7f6;--bg-card:#ffffff;--bg-elev:#eef1ef;--bg-hover:#e0e6e3;
   --border:#d4dad6;--border-strong:#a8b3ad;
-  --text:#1a2520;--text-muted:#5e6a64;--text-subtle:#8a938f;
-  --accent:#10b981;--accent-fg:#ffffff;--accent-hover:#059669;--accent-soft:rgba(16,185,129,0.1);
-  --success:#10b981;--success-bg:rgba(16,185,129,0.1);
-  --warning:#d97706;--warning-bg:rgba(217,119,6,0.08);
-  --danger:#dc2626;--danger-bg:rgba(220,38,38,0.08);
-  --info:#0891b2;--info-bg:rgba(8,145,178,0.08);
+  --text:#1a2520;--text-muted:#5e6a64;--text-subtle:#67716b;
+  --accent:#10b981;--accent-fg:#0a0a0a;--accent-hover:#059669;--accent-soft:rgba(16,185,129,0.1);
+  --success:#0a7a57;--success-bg:rgba(16,185,129,0.1);
+  --warning:#9a5b00;--warning-bg:rgba(217,119,6,0.08);
+  --danger:#b91c1c;--danger-bg:rgba(220,38,38,0.08);
+  --info:#0e7490;--info-bg:rgba(8,145,178,0.08);
   --header-bg:#f5f7f6;--header-fg:#1a2520;
   --shadow:0 1px 2px rgba(0,0,0,0.04),0 0 0 1px rgba(0,0,0,0.04);
   --shadow-lg:0 8px 24px rgba(0,0,0,0.08);

@@ -149,6 +149,13 @@ for p in $CHANGED; do
 done
 
 N="$(printf '%s' "$SELECTED" | wc -w | tr -d ' ')"
+# COMMA-SEPARATED, and this is not cosmetic: the catalog's filter is a `case` over a
+# comma-delimited list, so the space-separated form this script used to emit matched
+# NOTHING — every check printed SKIP and the catalog reported "GATE PASSED: 0 check(s)
+# green", a green run that verified nothing (found 2026-10-24 while releasing v1.5.158;
+# the catalog now also normalises and refuses a scope that selects nothing, and
+# scripts/check_b413_fast_gate.sh pins both halves).
+SCOPE="$(printf '%s\n' $SELECTED | sed '/^$/d' | awk 'NR==1{printf "%s",$0; next}{printf ",%s",$0}')"
 echo "gate-affected: base=$BASE, changed files: $(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ')"
 echo "gate-affected: selected $N check(s) of the full catalog:$(printf '\n%s' "$REASONS" | sed 's/^$//')"
 if [ -n "$UNMATCHED" ]; then
@@ -157,6 +164,10 @@ if [ -n "$UNMATCHED" ]; then
 fi
 
 if [ "$DRY" = 1 ]; then
+  # The scope is printed in the DELIMITER the catalog parses (commas), so a reviewer can
+  # copy it straight into SKYGATE_GATE_ONLY and so the B413 contract can assert the form
+  # without executing 100+ checks.
+  echo "gate-affected: scope (SKYGATE_GATE_ONLY form): $SCOPE"
   echo "gate-affected: --dry-run, nothing executed."
   exit 0
 fi
@@ -164,4 +175,4 @@ fi
 # --- run ---------------------------------------------------------------------
 # The catalog keeps its own counters, summary and verdict; this script only decides
 # WHICH entries are allowed to run.
-SKYGATE_GATE_ONLY="$SELECTED" bash "$GATE"
+SKYGATE_GATE_ONLY="$SCOPE" bash "$GATE"

@@ -251,6 +251,16 @@ or tag a commit whose run completed.
    ever claiming more than it verified. The summary now names the scope and the eight
    slowest checks.
 
+   **Two rules about the selector, learned the hard way on 2026-10-24** (v1.5.158,
+   AGENTS trap #16): the scope accepts **commas or spaces** — it used to delete
+   spaces, so `gate_affected.sh`'s space-separated list matched nothing and a
+   117-check run finished `GATE PASSED: 0 check(s) green, 0 failed` — and a scope
+   that matches **no** catalog entry is a FAILURE that names the ids it was given,
+   never a pass. The summary prints `selected: N of M requested id(s) matched a
+   catalog entry` and lists `id(s) not found in the catalog`, so a typo cannot
+   silently drop a check. `gate_affected.sh` prints its scope in the parseable
+   comma-separated form — copy it straight into `SKYGATE_GATE_ONLY`.
+
    **A fast run is not a release gate.** Pushes, tags and CI run the FULL catalog
    with no filter; use the diff-scoped run while working, and the full run before
    pushing a branch you intend to release.

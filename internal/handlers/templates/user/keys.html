@@ -133,7 +133,7 @@
           {{else if and (gt .ExpiresAt 0) (le .ExpiresAt $.Now)}}
             <span class="tag" style="color:var(--text-subtle)">{{t "keys.expired"}}</span>
           {{else}}
-            <span class="tag" style="color:var(--info,#075985);background:var(--info-bg,#f0f9ff);padding:2px 7px;border-radius:3px">{{t "devices.status"}}: ok</span>
+            <span class="tag" style="color:var(--info);background:var(--info-bg);padding:2px 7px;border-radius:3px">{{t "devices.status"}}: ok</span>
           {{end}}
         </td>
         {{/* B159: Device column. Shows the headscale

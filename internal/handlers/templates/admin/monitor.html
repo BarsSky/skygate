@@ -85,14 +85,14 @@
           {{else if eq (printf "%s" .Severity) "warning"}}<span class="tag tag-warning">⚠️ warning</span>
           {{else}}<span class="tag">ℹ️ info</span>{{end}}
         </td>
-        <td><code style="font-size:11px">{{.Event.Source}}</code><div class="sub" style="font-size:11px;color:#888">{{.Event.Subject}}</div></td>
+        <td><code style="font-size:11px">{{.Event.Source}}</code><div class="sub" style="font-size:11px;color:var(--text-muted)">{{.Event.Subject}}</div></td>
         <td>
           <b>{{.Event.Title}}</b>
           {{if .Event.Body}}<div class="sub" style="font-size:12px;color:var(--text-muted);white-space:pre-wrap">{{.Event.Body}}</div>{{end}}
           {{if .Event.Link}}<div style="font-size:12px"><a href="{{.Event.Link}}">{{t "monitor.open_page"}}</a></div>{{end}}
           {{/* The fingerprint is the dedup identity: showing it lets the operator
                correlate the page with the log lines and the Telegram message. */}}
-          <div class="sub" style="font-size:10px;color:#888;font-family:monospace">{{.Event.Fingerprint}}</div>
+          <div class="sub" style="font-size:10px;color:var(--text-muted);font-family:monospace">{{.Event.Fingerprint}}</div>
         </td>
         <td style="font-size:12px;color:var(--text-muted)">
           {{t "monitor.first_seen"}}: {{datetimeformat .Event.FirstSeen}}<br>

@@ -66,7 +66,16 @@ else
 fi
 # Extract the [data-theme="mint"]{...} block and check palette
 mint_block=$(awk '/\[data-theme="mint"\]/{flag=1} flag{print} /^}/{if(flag){flag=0; exit}}' "${THEMES_CSS}")
-for kv in "--bg:#f5f7f6" "--bg-card:#ffffff" "--accent:#10b981" "--accent-fg:#ffffff" "--accent-hover:#059669"; do
+# 2026-10-24 CONTRACT RENEGOTIATION (B414). This pin used to require
+# --accent-fg:#ffffff. B414 computes the WCAG ratio of every (foreground,
+# surface) pair in all five themes from themes.css itself and measured white on
+# the mint accent #10b981 at 2.54:1 — below the 4.5:1 floor for button text, so
+# the mint theme's primary buttons were the least readable control in the panel.
+# The fix (B414) is --accent-fg:#0a0a0a, measured 7.80:1 on the same accent;
+# the aesthetic intent (a filled mint accent button) is unchanged, only the
+# label colour moved. Do not "restore" #ffffff here: B414 contract B1 would
+# then fail with the measured ratio.
+for kv in "--bg:#f5f7f6" "--bg-card:#ffffff" "--accent:#10b981" "--accent-fg:#0a0a0a" "--accent-hover:#059669"; do
     key="${kv%%:*}"
     val="${kv##*:}"
     # Use `grep -e` so `--` in the key (e.g. `--bg`) isn't

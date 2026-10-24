@@ -1,0 +1,23 @@
+# B414 — hardcoded backgrounds that sit behind INHERITED text (frozen, may only shrink).
+#
+# One entry per line, exactly as the contract's detector prints it: <path>:<line>:<row>.
+# A row belongs here only when the element owns its own foreground or paints no text at
+# all, so the theme cannot make it invisible. Everything else must use a token. The
+# contract fails on any row NOT listed here and on a listed row that no longer exists,
+# so the list is a record of the remaining work, never a way to silence a new defect.
+#
+# 2026-10-24: the nine tinted alert boxes of /admin/exit-nodes and /my/exit-nodes were
+# converted to var(--danger-bg)/var(--danger) and var(--warning-bg)/var(--warning); what
+# remains is the colour-swatch picker of /my/account, which paints the colour it offers.
+internal/handlers/templates/user/account.html:113:        <button type="button" class="color-swatch" data-color="#ffcc00" style="background:#ffcc00" title="#ffcc00" aria-label="#ffcc00"></button>
+internal/handlers/templates/user/account.html:114:        <button type="button" class="color-swatch" data-color="#ff6b6b" style="background:#ff6b6b" title="#ff6b6b" aria-label="#ff6b6b"></button>
+internal/handlers/templates/user/account.html:115:        <button type="button" class="color-swatch" data-color="#4ecdc4" style="background:#4ecdc4" title="#4ecdc4" aria-label="#4ecdc4"></button>
+internal/handlers/templates/user/account.html:116:        <button type="button" class="color-swatch" data-color="#95e1d3" style="background:#95e1d3" title="#95e1d3" aria-label="#95e1d3"></button>
+internal/handlers/templates/user/account.html:117:        <button type="button" class="color-swatch" data-color="#a8e6cf" style="background:#a8e6cf" title="#a8e6cf" aria-label="#a8e6cf"></button>
+internal/handlers/templates/user/account.html:118:        <button type="button" class="color-swatch" data-color="#ffd93d" style="background:#ffd93d" title="#ffd93d" aria-label="#ffd93d"></button>
+internal/handlers/templates/user/account.html:119:        <button type="button" class="color-swatch" data-color="#fcbad3" style="background:#fcbad3" title="#fcbad3" aria-label="#fcbad3"></button>
+internal/handlers/templates/user/account.html:120:        <button type="button" class="color-swatch" data-color="#c9cbff" style="background:#c9cbff" title="#c9cbff" aria-label="#c9cbff"></button>
+internal/handlers/templates/user/account.html:121:        <button type="button" class="color-swatch" data-color="#aa96da" style="background:#aa96da" title="#aa96da" aria-label="#aa96da"></button>
+internal/handlers/templates/user/account.html:122:        <button type="button" class="color-swatch" data-color="#ff9aa2" style="background:#ff9aa2" title="#ff9aa2" aria-label="#ff9aa2"></button>
+internal/handlers/templates/user/account.html:123:        <button type="button" class="color-swatch" data-color="#6c5ce7" style="background:#6c5ce7" title="#6c5ce7" aria-label="#6c5ce7"></button>
+internal/handlers/templates/user/account.html:124:        <button type="button" class="color-swatch" data-color="#fdcb6e" style="background:#fdcb6e" title="#fdcb6e" aria-label="#fdcb6e"></button>

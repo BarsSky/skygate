@@ -454,6 +454,36 @@ entry whose description states what is pinned and how many contracts the script 
 unregistered script is invisible to the gate; a registered script missing from disk fails
 the gate.
 
+**Theme tokens — no page may paint its own colours** (B414). The panel ships five themes
+(`linear` default, `vercel`, `sentry`, `nvidia`, `mint`) selected by a `data-theme`
+attribute on the root element, so every colour a template needs must be a CSS custom
+property resolved at render time. Templates therefore use **only** `var(--…)` tokens:
+`--text` / `--text-muted` / `--text-subtle` for text, `--bg` / `--bg-card` /
+`--bg-elev` for surfaces, `--border`, and the semantic `--success` / `--warning` /
+`--danger` / `--info` plus their `-bg` fills. A literal `color:#dc3545` or
+`background:#f5f5f5` is invisible to the theme switch: it reads acceptably on the dark
+`:root` page and lands on `mint`/`vercel` as unreadable text or a white slab. The B412
+exit-node card measured that failure exactly — it used `var(--bg-subtle, #111)` and
+`--bg-subtle` **never existed**, so the fallback made the SSH-key panel dark in both
+light themes. Two consequences worth stating: a hardcoded **fallback** in `var()` hides
+a missing token (never add one — B414 contract A3), and a token added to `:root` alone
+is undefined in the four `[data-theme=…]` blocks that re-declare the palette. Guards:
+`scripts/check_b414_theme_visibility.sh` requires every token used by the panel to be
+defined in `themes.css`, forbids a hardcoded colour as a `var()` **fallback** in a
+template (20 were removed; the stylesheet's own fallbacks are checked against the token
+set too) and **computes** WCAG contrast for 75 (foreground, surface) pairs across all
+five themes from the stylesheet itself (text ≥ 7:1, muted/subtle/semantic ≥ 4.5:1 on
+both `--bg` and `--bg-card`, `--accent-fg` on `--accent` ≥ 4.5:1) and proves the checker
+can fail, and freezes the remaining literals in
+`scripts/b414_hardcoded_bg_allowlist.txt` (12 colour-swatch rules that paint the colour
+they offer) and `scripts/b414_hardcoded_fg_allowlist.txt` (3 keys) — both may only
+shrink. `themes.css` exists twice (`internal/staticfs/static/css/` is served, the root
+`static/css/` mirror is what the Go CSS tests read) and `cmp -s` equality is enforced
+(B392/B411). One consequence for palette work: a colour must clear the floor on
+`--bg-card` as well, which is a *lighter* surface than `--bg` in the dark themes — that
+is what moved `--text-subtle` from `#767b87` to `#8a8f9f` in `linear` (3.57:1 → 4.69:1
+on the card) and from `#8a8198` to `#948b9d` in `sentry`.
+
 **Secrets and hostnames.** `<VM_HOST>` is the placeholder for the operator's VM address.
 `.githooks/pre-commit` blocks the operator's private LAN IP, the `skyadmin@…` literal, the
 historical admin password and the default DB password in the staged diff; its header

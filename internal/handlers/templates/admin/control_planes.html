@@ -25,7 +25,7 @@
 {{if .FlashInfo}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashInfo | safeHTML}}</div>{{end}}
 
 {{if not .HasSecret}}
-<div class="card" style="background:var(--bg-warn,#3a2a00);border-left:4px solid #d97706">
+<div class="card" style="background:var(--warning-bg);border-left:4px solid var(--warning)">
   <h3><i class="fa-solid fa-triangle-exclamation"></i> {{t "control_planes.secret_missing_title"}}</h3>
   <div style="margin-top:6px">{{t "control_planes.secret_missing_body" | safeHTML}}</div>
 </div>

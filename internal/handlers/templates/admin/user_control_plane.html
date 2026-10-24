@@ -13,7 +13,7 @@
 {{if .FlashInfo}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.FlashInfo}}</div>{{end}}
 
 {{if .SecretMissing}}
-<div class="card" style="background:var(--bg-warn,#3a2a00);border-left:4px solid #d97706">
+<div class="card" style="background:var(--warning-bg);border-left:4px solid var(--warning)">
   <h3><i class="fa-solid fa-triangle-exclamation"></i> {{t "control_planes.secret_missing_title"}}</h3>
   <div style="margin-top:6px">{{t "control_planes.secret_missing_body" | safeHTML}}</div>
 </div>
@@ -53,13 +53,13 @@
 </form>
 
 {{if not .CurrentURL}}
-<div class="card" style="background:var(--bg-warn,#3a2a00);border-left:4px solid #d97706">
+<div class="card" style="background:var(--warning-bg);border-left:4px solid var(--warning)">
   <h3><i class="fa-solid fa-triangle-exclamation"></i> {{t "control_planes.provision_warning_title"}}</h3>
   <div style="color:var(--text-muted);font-size:13px;margin-top:6px">
     {{t "control_planes.provision_warning_body" | safeHTML}}
   </div>
 </div>
-<div class="card" style="background:var(--bg-info,#0a2a3a);border-left:4px solid #38bdf8">
+<div class="card" style="background:var(--info-bg);border-left:4px solid var(--info)">
   <h3><i class="fa-solid fa-rocket"></i> {{t "control_planes.provision_title"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
     {{t "control_planes.provision_help" | safeHTML}}
@@ -70,7 +70,7 @@
   </form>
 </div>
 {{else}}
-<div class="card" style="background:var(--bg-warn,#3a2a00);border-left:4px solid #d97706">
+<div class="card" style="background:var(--warning-bg);border-left:4px solid var(--warning)">
   <h3><i class="fa-solid fa-trash-can"></i> {{t "control_planes.decommission_title"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
     {{t "control_planes.decommission_help" | safeHTML}}

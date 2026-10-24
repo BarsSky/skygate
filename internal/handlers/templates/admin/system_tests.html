@@ -136,18 +136,18 @@
           {{if eq (.TotalRuns) 0}}
             <small style="color:var(--text-muted)">—</small>
           {{else if ge $rate 95}}
-            <strong style="color:#198754">{{$rate}}%</strong>
+            <strong style="color:var(--success)">{{$rate}}%</strong>
           {{else if ge $rate 50}}
-            <strong style="color:#f0ad4e">{{$rate}}%</strong>
+            <strong style="color:var(--warning)">{{$rate}}%</strong>
           {{else}}
-            <strong style="color:#dc3545">{{$rate}}%</strong>
+            <strong style="color:var(--danger)">{{$rate}}%</strong>
           {{end}}
         </td>
         <td style="text-align:right">
-          {{if eq .LastStatus "pass"}}<i class="fa-solid fa-circle-check" style="color:#198754" title="{{t "system_tests.status_pass_title"}}"></i>
-          {{else if eq .LastStatus "fail"}}<i class="fa-solid fa-circle-xmark" style="color:#dc3545" title="{{t "system_tests.status_fail_title"}}"></i>
-          {{else if eq .LastStatus "skip"}}<i class="fa-solid fa-circle-pause" style="color:#6c757d" title="{{t "system_tests.status_skip_title"}}"></i>
-          {{else}}<i class="fa-solid fa-circle" style="color:#6c757d" title="{{t "system_tests.status_never_title"}}"></i>{{end}}
+          {{if eq .LastStatus "pass"}}<i class="fa-solid fa-circle-check" style="color:var(--success)" title="{{t "system_tests.status_pass_title"}}"></i>
+          {{else if eq .LastStatus "fail"}}<i class="fa-solid fa-circle-xmark" style="color:var(--danger)" title="{{t "system_tests.status_fail_title"}}"></i>
+          {{else if eq .LastStatus "skip"}}<i class="fa-solid fa-circle-pause" style="color:var(--text-muted)" title="{{t "system_tests.status_skip_title"}}"></i>
+          {{else}}<i class="fa-solid fa-circle" style="color:var(--text-muted)" title="{{t "system_tests.status_never_title"}}"></i>{{end}}
         </td>
         <td style="text-align:right">
           {{if .LastRunAt}}
@@ -166,8 +166,8 @@
                made the History table unreadable. */}}
             <details class="system-test-output" open>
               <summary>
-                <i class="fa-solid fa-triangle-exclamation" style="color:#dc3545"></i>
-                <span style="color:#dc3545">{{t "system_tests.output_fail_label"}}</span>
+                <i class="fa-solid fa-triangle-exclamation" style="color:var(--danger)"></i>
+                <span style="color:var(--danger)">{{t "system_tests.output_fail_label"}}</span>
               </summary>
               <pre style="margin:4px 0 0 0;padding:6px 8px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:11px;line-height:1.4;white-space:pre-wrap;word-wrap:break-word;max-height:180px;overflow-y:auto">{{.LastError}}</pre>
             </details>
@@ -420,16 +420,16 @@
       </tr>
       {{range .ModuleRows}}
       <tr>
-        <td>{{if eq .State "running"}}{{if .Healthy}}<i class="fa-solid fa-circle-check" style="color:#198754"></i>{{else}}<i class="fa-solid fa-circle-xmark" style="color:#dc3545"></i>{{end}}
-            {{else if eq .State "not_installed"}}<i class="fa-solid fa-circle-pause" style="color:#6c757d"></i>
-            {{else}}<i class="fa-solid fa-circle" style="color:#6c757d"></i>{{end}}
+        <td>{{if eq .State "running"}}{{if .Healthy}}<i class="fa-solid fa-circle-check" style="color:var(--success)"></i>{{else}}<i class="fa-solid fa-circle-xmark" style="color:var(--danger)"></i>{{end}}
+            {{else if eq .State "not_installed"}}<i class="fa-solid fa-circle-pause" style="color:var(--text-muted)"></i>
+            {{else}}<i class="fa-solid fa-circle" style="color:var(--text-muted)"></i>{{end}}
         </td>
         <td><code>{{.TestName}}</code></td>
         <td><span class="badge badge-category">{{t "system_tests.category_modules"}}</span></td>
         <td>
           <a href="{{.Link}}"><code>{{.Name}}</code></a>
           {{t "system_tests.module_state_label"}} <b>{{.State}}</b>{{if .Enabled}}{{t "system_tests.module_enabled_suffix"}}{{else}}{{t "system_tests.module_disabled_suffix"}}{{end}}
-          {{if .LastError}}<div style="color:#dc3545;font-size:12px">{{.LastError}}</div>{{end}}
+          {{if .LastError}}<div style="color:var(--danger);font-size:12px">{{.LastError}}</div>{{end}}
         </td>
         <td colspan="2">
           {{/* The POST lives on the module's detail page, which already carries
@@ -449,10 +449,10 @@
            directly, and carries the data the browser-side filter needs. */}}
       <tr id="t-{{.Name}}" data-test="{{.Name}}" data-status="{{$rowStatus}}" data-category="{{.Category}}"{{if and (not $.LiveResults) $.LastResults}}{{if eq $rowStatus "fail"}} class="row-fail"{{end}}{{end}}>
         <td>
-          {{if eq $rowStatus "pass"}}<i class="fa-solid fa-circle-check" style="color:#198754" title="{{t "system_tests.status_pass_title"}}"></i>
-          {{else if eq $rowStatus "fail"}}<i class="fa-solid fa-circle-xmark" style="color:#dc3545" title="{{t "system_tests.status_fail_title"}}"></i>
-          {{else if eq $rowStatus "skip"}}<i class="fa-solid fa-circle-pause" style="color:#6c757d" title="{{t "system_tests.status_skip_title"}}"></i>
-          {{else}}<i class="fa-solid fa-circle" style="color:#6c757d" title="{{t "system_tests.status_no_data_title"}}"></i>{{end}}
+          {{if eq $rowStatus "pass"}}<i class="fa-solid fa-circle-check" style="color:var(--success)" title="{{t "system_tests.status_pass_title"}}"></i>
+          {{else if eq $rowStatus "fail"}}<i class="fa-solid fa-circle-xmark" style="color:var(--danger)" title="{{t "system_tests.status_fail_title"}}"></i>
+          {{else if eq $rowStatus "skip"}}<i class="fa-solid fa-circle-pause" style="color:var(--text-muted)" title="{{t "system_tests.status_skip_title"}}"></i>
+          {{else}}<i class="fa-solid fa-circle" style="color:var(--text-muted)" title="{{t "system_tests.status_no_data_title"}}"></i>{{end}}
         </td>
         <td><code>{{.Name}}</code></td>
         <td><span class="badge badge-category">{{.Category}}</span></td>
@@ -513,17 +513,17 @@
                 <details class="system-test-output" {{if eq $rowStatus "fail"}}open{{end}}>
                   <summary>
                     {{if eq $rowStatus "fail"}}
-                      <i class="fa-solid fa-triangle-exclamation" style="color:#dc3545"></i>
-                      <span style="color:#dc3545">{{t "system_tests.output_fail_label"}}</span>
+                      <i class="fa-solid fa-triangle-exclamation" style="color:var(--danger)"></i>
+                      <span style="color:var(--danger)">{{t "system_tests.output_fail_label"}}</span>
                     {{else if eq $rowStatus "pass"}}
-                      <i class="fa-solid fa-circle-check" style="color:#198754"></i>
-                      <span style="color:#198754">{{t "system_tests.output_pass_label"}}</span>
+                      <i class="fa-solid fa-circle-check" style="color:var(--success)"></i>
+                      <span style="color:var(--success)">{{t "system_tests.output_pass_label"}}</span>
                     {{else if eq $rowStatus "skip"}}
-                      <i class="fa-solid fa-circle-pause" style="color:#6c757d"></i>
-                      <span style="color:#6c757d">{{t "system_tests.output_skip_label"}}</span>
+                      <i class="fa-solid fa-circle-pause" style="color:var(--text-muted)"></i>
+                      <span style="color:var(--text-muted)">{{t "system_tests.output_skip_label"}}</span>
                     {{else}}
-                      <i class="fa-solid fa-circle" style="color:#6c757d"></i>
-                      <span style="color:#6c757d">{{t "system_tests.output_empty_label"}}</span>
+                      <i class="fa-solid fa-circle" style="color:var(--text-muted)"></i>
+                      <span style="color:var(--text-muted)">{{t "system_tests.output_empty_label"}}</span>
                     {{end}}
                     <button type="button" class="btn btn-ghost" style="font-size:10px;padding:1px 6px;margin-left:8px" onclick="copySystemTestOutput(this)" title="{{t "system_tests.output_copy_title"}}">
                       <i class="fa-solid fa-copy"></i> {{t "system_tests.output_copy_btn"}}
@@ -582,7 +582,7 @@
     height: 8px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden;
   }
   .st-progress-fill {
-    height: 100%; width: 0; background: var(--accent, #0d6efd);
+    height: 100%; width: 0; background: var(--accent);
     transition: width .25s ease;
   }
   .tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--bg-secondary); }
@@ -599,7 +599,7 @@
   .tab:hover { color: var(--text); background: var(--bg-secondary); }
   .tab-active {
     color: var(--text);
-    border-bottom-color: var(--accent, #0d6efd);
+    border-bottom-color: var(--accent);
     background: transparent;
   }
   .badge-pass { background: #198754; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.85em; }
@@ -612,9 +612,9 @@
      inline-color text in the header summary. */
   tr.row-fail { background: rgba(220, 53, 69, 0.08); }
   tr.row-fail td { border-left: 3px solid #dc3545; }
-  .text-pass { color: #198754; font-weight: 600; }
-  .text-fail { color: #dc3545; font-weight: 600; }
-  .text-skip { color: #6c757d; font-weight: 500; }
+  .text-pass { color: var(--success); font-weight: 600; }
+  .text-fail { color: var(--danger); font-weight: 600; }
+  .text-skip { color: var(--text-muted); font-weight: 500; }
   /* B163 (v1.5.1): collapsible FAIL output.
      The `<details>` is rendered with `open` for FAIL
      rows (operator sees the reason immediately),

@@ -52,12 +52,21 @@ func TestB121_MintThemeInThemesCSS(t *testing.T) {
 	// The mint palette has these expected values. Each
 	// verification is a separate sub-check so a future
 	// palette tweak doesn't fail the whole test.
+	//
+	// 2026-10-24 CONTRACT RENEGOTIATION (B414): --accent-fg was #ffffff. B414
+	// measures the WCAG ratio of every (foreground, surface) pair in all five
+	// themes from themes.css itself, and white on the mint accent #10b981 is
+	// 2.54:1 — below the 4.5:1 floor for button text, so this theme's primary
+	// buttons were the least readable control in the panel. #0a0a0a measures
+	// 7.80:1 on the same accent. The intent (a filled mint accent button) is
+	// unchanged; only the label colour moved. Restoring #ffffff makes B414
+	// contract B1 fail with the measured ratio.
 	wantPalette := map[string]string{
 		"--bg":           "#f5f7f6", // silver with subtle mint tint
 		"--bg-card":      "#ffffff", // pure white for card lift
 		"--border":       "#d4dad6", // soft silver border
 		"--accent":       "#10b981", // mint/emerald accent
-		"--accent-fg":    "#ffffff", // white text on mint
+		"--accent-fg":    "#0a0a0a", // near-black text on mint: 7.80:1
 		"--accent-hover": "#059669", // deeper mint
 	}
 	// Extract the [data-theme="mint"]{...} block.
