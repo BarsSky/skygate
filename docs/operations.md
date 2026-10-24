@@ -218,36 +218,47 @@ or tag a commit whose run completed.
    tracked as **TD-19** in `docs/ROADMAP.md`. For any single FAIL, re-run that
    check standalone before believing it.
 
-   **Speeding the catalog up (B413).** The full run is sequential by default — that
-   is what CI and every procedure above use, and it must stay that way. On a
-   developer box it is worth parallelising, because most of the wall clock is
-   hundreds of independent `go test` invocations: measured on the reference Windows
-   workstation, ~50 minutes for 459 checks, against ~24 minutes for the SAME catalog
-   on GitHub's Linux runner.
+   **Making the everyday loop fast (B413).** The catalog is ~50 minutes on the
+   reference Windows workstation and ~24 on GitHub's Linux runner, and it **cannot be
+   made faster by running it in parallel** — that was measured, not assumed:
+
+   | mode | wall clock | verdict |
+   |---|---|---|
+   | sequential (the default, and what CI runs) | ~50 min | 459/0 |
+   | 6 parallel workers | ~119 min | **4 red checks on a healthy tree** |
+
+   88 % of the CPU sits in 182 checks costing ≥ 10 s each (19 of them multi-minute);
+   they are `check_b*.sh` contracts that themselves run `go test`, so concurrency just
+   oversubscribes the box and eventually makes a go-test check blow its budget — a
+   scheduling artefact reported as a product failure (AGENTS trap #15). The worker
+   pool was therefore removed. What shipped instead:
 
    ```bash
-   SKYGATE_GATE_JOBS=6 bash scripts/verify_pre_deploy.sh   # opt-in, default 1
-   SKYGATE_GATE_TIMINGS_OUT=/tmp/gate.tsv \               # every check's ms, TSV
-     SKYGATE_GATE_JOBS=6 bash scripts/verify_pre_deploy.sh
+   bash scripts/gate_affected.sh              # only the checks this diff can break
+   bash scripts/gate_affected.sh --dry-run    # print the selection, run nothing
+   SKYGATE_GATE_ONLY=B412,B325 bash scripts/verify_pre_deploy.sh   # explicit subset
+   SKYGATE_GATE_TIMINGS_OUT=/tmp/gate.tsv bash scripts/verify_pre_deploy.sh
    ```
 
-   Only **provably read-only** checks are queued (`go test`/`go vet`/`go version`,
-   `grep`/`awk`/`sed`/`test`, read-only `git`); anything that touches the machine
-   (docker, psql, ssh, systemctl), builds a binary into the tree, or runs a
-   `bash scripts/check_*.sh` contract stays serial, and the deny list wins. The
-   verdict is unchanged: queued checks run under the same `SKYGATE_CHECK_TIMEOUT`
-   with the same `setsid`/killable-deadline isolation, and their results are folded
-   into the same counters **before** the summary, so `0 FAIL` means the same thing in
-   both modes. Implementation and the full safety argument:
-   `scripts/lib/gate_parallel.sh`; contracts: `scripts/check_b413_parallel_gate.sh`.
+   `gate_affected.sh` reads `git diff --name-only <base>` (default `origin/main`),
+   maps each changed path to the catalog entries whose registration text names that
+   path or its basename, always adds the harness/meta checks (B1, B2, B3, B4, B7, B10,
+   B325, B330, B337, B340, B413 — plus B281/B299/B322/B335 when the catalog itself
+   moved), prints the changed paths **no check owns**, and refuses an unresolvable
+   `--base` with exit 2 rather than silently selecting nothing. Unselected checks
+   print `SKIP` and a SKIP never affects the verdict, so the run is short without
+   ever claiming more than it verified. The summary now names the scope and the eight
+   slowest checks.
 
-   The summary now ends with the wall clock and the eight slowest checks, which is
-   the data to decide whether the knob helps on this host. **Known host transient:**
-   `internal/feature/exit_rules` is the slowest package (~190 s standalone on the
-   Windows box) and can exceed `go test`'s default 10-minute timeout when the gate
-   runs under load — that FAIL is the harness, not the product (AGENTS trap #15);
-   re-run it standalone with `go test ./internal/feature/exit_rules/ -count=1
-   -timeout 40m` before believing it.
+   **A fast run is not a release gate.** Pushes, tags and CI run the FULL catalog
+   with no filter; use the diff-scoped run while working, and the full run before
+   pushing a branch you intend to release.
+
+   **Known host transient:** `internal/feature/exit_rules` is the slowest package
+   (~190 s standalone on the Windows box) and can exceed `go test`'s default
+   10-minute timeout when the machine is loaded — that FAIL is the harness, not the
+   product (AGENTS trap #15); re-run it standalone with
+   `go test ./internal/feature/exit_rules/ -count=1 -timeout 40m` before believing it.
 3. `staticcheck ./...` → 0 issues; `go build ./...` and `go vet ./...` clean; the
    focused test set (`./internal/update/... ./internal/db/
    ./internal/feature/admin/... ./internal/i18n/...`) green.
