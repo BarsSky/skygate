@@ -1697,6 +1697,12 @@ func main() {
 	// the all-nodes sync (extracted to syncOneExitNode so
 	// the two paths share the code).
 	adminSvc.SyncRoutesForNode = exitRulesSvc.SyncAdvertisedRoutesForNode
+	// B417 (2026-10-24): keep the BASE routes of skygate-registered relays approved.
+	// Scope, decided by the operator: only 0.0.0.0/0 and ::/0, and only for nodes with
+	// a row in exit_servers — a relay skygate itself registered. Subnet routes and
+	// nodes skygate did not register are never approved here.
+	stopBaseRouteReconciler := adminSvc.StartBaseRouteReconciler(context.Background())
+	defer stopBaseRouteReconciler()
 	// B361 (2026-10-07): wire the ACL trigger the preference-writing surfaces use.
 	// `my.PostMyDevicePreferredExit` / `my.PostAdminDevicePreferredExit` (the page
 	// an operator uses to re-point a device) and the B356 reconciler all call

@@ -505,6 +505,23 @@ modes`, `Invalid user`, `ROOT LOGIN REFUSED`.
 A key under a passphrase cannot work either: the panel runs ssh with `BatchMode=yes`,
 so nothing can type the passphrase; `ssh-keygen -y -f <key>` asking for one is the tell.
 
+#### The run finishes itself now (B416/B417)
+
+Since v1.5.160 the button no longer owns the run. The POST answers immediately, the
+run becomes a **job** recorded in the database before anything is sent, and the card
+renders its state (running with auto-refresh, «остановился на шаге N» with the
+reason, or done) plus a **«Повторить»** button that repeats it from the stored form
+values with a fresh pre-auth key. A `502 Bad Gateway` from a reverse proxy — the
+normal outcome when the proxy's 60 s read timeout is shorter than the install — can
+no longer lose the result: reload the page and the job is there.
+
+The last step (approving `0.0.0.0/0` and `::/0`) is also repaired on its own: every
+two minutes skygate approves those two base routes for any relay that has a row in
+`exit_servers` (i.e. one skygate registered), is online, advertises them and has not
+had them approved, then writes an `exit_node_base_route_autorepair` audit row and
+announces it through the notifier. Subnet routes and relays skygate did not register
+are **never** auto-approved.
+
 ---
 
 ## 5. DERP relay not used / high latency / relay reports stopped while running

@@ -138,6 +138,40 @@
   </div>
   {{end}}
 
+  {{/* B416 (2026-10-24) — the run is a JOB, not the form's response. Measured:
+       a fresh VPS produced 502 Bad Gateway because the POST held the connection for
+       the whole run; the node appeared, the flash (with the route-approval result)
+       was lost, and the page could only show a red «маршрут не одобрен» banner. The
+       state below survives that 502, a reload and a skygate restart. */}}
+  {{with .Provision.Job}}
+  {{if .Running}}
+  <div style="margin:0 0 14px;padding:12px 14px;border-radius:var(--radius);border:1px solid var(--info);background:var(--info-bg);color:var(--text)">
+    <b><i class="fa-solid fa-spinner fa-spin"></i> {{t "exit_nodes.provision.job_running"}}</b>
+    <span class="muted" style="font-size:12px">— {{tf "exit_nodes.provision.job_meta" .NodeName .Host .Attempt}}</span>
+    <div style="margin-top:6px;font-size:13px">{{t "exit_nodes.provision.job_step"}}: <code>{{.Step}}</code> · {{tf "exit_nodes.provision.job_elapsed" .ElapsedInt}}</div>
+    <div class="muted" style="margin-top:4px;font-size:12px">{{t "exit_nodes.provision.job_running_help"}}</div>
+  </div>
+  <script>setTimeout(function () { location.replace('/admin/exit-nodes#new-exit-node'); }, 8000);</script>
+  {{else}}
+  <div style="margin:0 0 14px;padding:12px 14px;border-radius:var(--radius);border:1px solid {{if eq .Status "ok"}}var(--success){{else}}var(--danger){{end}};background:{{if eq .Status "ok"}}var(--success-bg){{else}}var(--danger-bg){{end}};color:var(--text)">
+    <b>
+      {{if eq .Status "ok"}}<i class="fa-solid fa-circle-check"></i> {{t "exit_nodes.provision.job_ok"}}
+      {{else}}<i class="fa-solid fa-circle-exclamation"></i> {{t "exit_nodes.provision.job_failed"}}{{end}}
+    </b>
+    <span class="muted" style="font-size:12px">— {{tf "exit_nodes.provision.job_meta" .NodeName .Host .Attempt}}</span>
+    <div style="margin-top:6px;font-size:13px">
+      {{if eq .Status "ok"}}{{t "exit_nodes.provision.job_done_step"}}{{else}}{{t "exit_nodes.provision.job_at_step"}}: <code>{{.Step}}</code>{{end}}
+      · {{tf "exit_nodes.provision.job_elapsed" .ElapsedInt}}
+    </div>
+    {{if .Message}}<div style="margin-top:6px;font-size:13px">{{.Message}}</div>{{end}}
+    <form method="post" action="/admin/exit-nodes/provision/retry" style="margin-top:10px">
+      <button type="submit" class="btn btn-sm"><i class="fa-solid fa-rotate-right"></i> {{t "exit_nodes.provision.job_retry"}}</button>
+      <span class="muted" style="font-size:12px;margin-left:8px">{{t "exit_nodes.provision.job_retry_help"}}</span>
+    </form>
+  </div>
+  {{end}}
+  {{end}}
+
   <form method="post" action="/admin/exit-nodes/provision">
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px 18px;align-items:start;margin-bottom:14px">
       <div>

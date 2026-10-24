@@ -315,6 +315,20 @@ var ruExitNodes = map[string]string{
 	"exit_nodes.provision.key_stale_title":      "Рядом лежит .pub, который НЕ соответствует приватному ключу",
 	"exit_nodes.provision.key_stale_body":       "Ключ выше выведен из приватного ключа и верный. Файл ниже остался от прежнего ключа: если добавить на VPS его, ssh ответит «Permission denied (publickey)». Пересоздайте файл командой:",
 
+	// 2026-10-24 (B416) — прогон как задание: состояние видно на странице, а не
+	// только во flash, который уничтожает 502 от reverse-proxy.
+	"exit_nodes.provision.job_running":      "Провижининг выполняется",
+	"exit_nodes.provision.job_ok":           "Провижининг завершён",
+	"exit_nodes.provision.job_failed":       "Провижининг остановлен",
+	"exit_nodes.provision.job_meta":         "узел %s, VPS %s, попытка %d",
+	"exit_nodes.provision.job_step":         "Шаг",
+	"exit_nodes.provision.job_elapsed":      "%d с",
+	"exit_nodes.provision.job_at_step":      "Остановился на шаге",
+	"exit_nodes.provision.job_done_step":    "Все шаги пройдены",
+	"exit_nodes.provision.job_running_help": "Прогон идёт в фоне — страница обновляется сама. Если браузер закроется, результат останется здесь.",
+	"exit_nodes.provision.job_retry":        "Повторить прогон",
+	"exit_nodes.provision.job_retry_help":   "повторит с теми же параметрами и новым preauth-ключом; безопасно, скрипт идемпотентен",
+
 	// 2026-08-18 (B132): per-row "Re-sync" button + better
 	// explainer for the mismatch tag. The operator reported
 	// "не понятно что с этим делать администратор не имеет
@@ -674,6 +688,20 @@ var enExitNodes = map[string]string{
 	"exit_nodes.provision.key_run_as":           "Run the command as the user:",
 	"exit_nodes.provision.key_stale_title":      "A .pub next to the key does NOT match the private key",
 	"exit_nodes.provision.key_stale_body":       "The key above is derived from the private key and is correct. The file below is left over from an older key: authorising it makes ssh answer «Permission denied (publickey)». Recreate it with:",
+
+	// 2026-10-24 (B416) — the run as a job: its state is on the page, not only in a
+	// flash that a reverse-proxy 502 destroys.
+	"exit_nodes.provision.job_running":      "Provisioning is running",
+	"exit_nodes.provision.job_ok":           "Provisioning finished",
+	"exit_nodes.provision.job_failed":       "Provisioning stopped",
+	"exit_nodes.provision.job_meta":         "node %s, VPS %s, attempt %d",
+	"exit_nodes.provision.job_step":         "Step",
+	"exit_nodes.provision.job_elapsed":      "%d s",
+	"exit_nodes.provision.job_at_step":      "Stopped at step",
+	"exit_nodes.provision.job_done_step":    "Every step completed",
+	"exit_nodes.provision.job_running_help": "The run continues in the background and the page refreshes itself. Closing the browser does not lose the result — it stays here.",
+	"exit_nodes.provision.job_retry":        "Retry the run",
+	"exit_nodes.provision.job_retry_help":   "repeats with the same parameters and a fresh preauth key; safe, the script is idempotent",
 
 	// 2026-08-18 (B132): per-row "Re-sync" button + better
 	// explainer for the mismatch tag. The operator reported

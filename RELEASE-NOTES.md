@@ -1,5 +1,82 @@
 # Skygate release notes
 
+## v1.5.160 — the exit-node run finishes itself (B416, B417)
+
+**Date:** 2026-10-24 · **Base:** `v1.5.159` → this tag · **Compatibility:** no migration, no
+config change. The provisioning card, its background job and one new background pass; the
+data plane is untouched.
+
+### Why
+
+Two operator reports, in order:
+
+> «страница provision выдала 502 bad gateway но после обновления пришла такая ошибка»
+> (с красным баннером «Exit-узлов с неодобренными маршрутами: 1»)
+
+> «Нажимать не буду надо отработать механизм полностью от и до … формирование из vps
+> exit node за skygate и процесс должен быть отлажен без ошибок … если происходит не
+> штатное поведение то уведомить пользователя»
+
+Measured: the node **was** created, the SSH key worked, and the relay was registered in
+headscale — but the run lived **inside the HTTP request**. The POST held the connection for
+the whole install + `up` + wait (up to three minutes), the reverse proxy gave up at ~60 s
+with **502**, the node wait was a **fixed 45 s** that ended a run whose ssh half had already
+succeeded, and the only record of the outcome was a one-shot flash that the 502 destroyed.
+So the operator was left with an unapproved route, no statement of which step had finished,
+and a button.
+
+### What changed (B416) — a run is a job, not a request
+
+* **Durable state.** `internal/exitnode/job_b416.go` defines the job (status
+  `running`/`ok`/`failed`, the five named steps `ssh-key → remote-setup →
+  headscale-node → exit-server-row → approve-routes`, the form values, `attempt`,
+  `actor`) and `StepHint` — the per-step «что проверить» that turns a step id into an
+  action.
+* **The POST answers immediately.** The record is written to `global_settings` before
+  the redirect (no migration — one run at a time is already `provisionMu`'s rule), the
+  pipeline runs in a goroutine that owns the mutex, and each step is recorded **before**
+  it runs, so a crash or a restart leaves the last attempted step visible.
+* **The node wait is retried in rounds until 150 s**, not one 45 s budget — the exact
+  cause of "the node appeared but nothing was saved".
+* **The page is the source of truth**: running (with auto-refresh), «остановился на
+  шаге N» with the reason and the hint, or done; plus **«Повторить»**
+  (`POST /admin/exit-nodes/provision/retry`) which repeats from the stored values with a
+  fresh pre-auth key. A 502, a reload or a restarted process cannot hide where it stands.
+* **The operator is notified**: every finished run writes its audit row and, on success
+  and on failure (naming the step), sends a message through the configured notifier.
+
+### What changed (B417) — skygate finishes what it started
+
+A **two-minute** pass (`internal/feature/admin/exit_nodes_reconcile_b417.go`, started from
+`main`) approves the missing base routes for relays that skygate registered. Scope, decided
+by the operator in this conversation:
+
+* **only** `0.0.0.0/0` and `::/0` — never a subnet route;
+* **only** nodes with a row in `exit_servers` (relays skygate was told to register);
+* **only** when the node is online, advertises a base route and headscale has not approved it;
+* the same `ApproveRoutesForNodeID` the manual button uses, an
+  `exit_node_base_route_autorepair` audit row, and a notification — a silent auto-action
+  cannot happen;
+* failure logging is rate-limited to once per relay per 30 minutes.
+
+The decision is a pure function with its own tests, so "which node may be touched" is
+asserted rather than assumed.
+
+### Verification
+
+* `scripts/check_b416_provision_job.sh` — 24/0; `scripts/check_b417_base_route_reconciler.sh` — 15/0.
+* 14 unit tests: every step has a hint, statuses distinct, `Job.Request` still validates, the
+  job JSON round-trips, and the repair decision refuses an offline / foreign / unregistered /
+  subnet-only / already-approved node while accepting a half-approved one.
+* `scripts/check_b412_exit_node_provision.sh` 83/0 and `scripts/check_b415_ssh_key_truth.sh`
+  26/0 stay green: the form, the key preflight and the failure wording are unchanged.
+
+### What you do
+
+`/admin/update` → v1.5.160 and reload the panel. The card then shows the run's state; if a
+run is already in flight from an older version, start it once more from the card — from this
+version on it is the job that finishes it.
+
 ## v1.5.159 — the failure names its cause, and the card shows the key the panel uses (B415)
 
 **Date:** 2026-10-24 · **Base:** `v1.5.158` → this tag · **Compatibility:** no migration, no

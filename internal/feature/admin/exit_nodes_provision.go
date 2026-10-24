@@ -164,6 +164,9 @@ type ExitNodeProvisionView struct {
 	// SSHUserHint is the account the authorise command must be run as ("root" by
 	// default), so `~` in the command cannot silently mean the wrong home.
 	SSHUserHint string
+	// Job is the durable provisioning run (B416): nil when nothing was ever run,
+	// otherwise its state is rendered instead of a one-shot flash that a 502 eats.
+	Job *exitnode.Job
 	// TimeoutSeconds is how long a real run may take (the button says it).
 	TimeoutSeconds int
 	// Blocked is a non-empty sentence when the flow cannot work at all right now
@@ -320,6 +323,11 @@ func (s *Service) exitNodeProvisionView(r *http.Request) *ExitNodeProvisionView 
 	case problem != "":
 		v.Blocked = problem
 	}
+	// B416: the last (or current) run travels with the page, so a 502, a reload or a
+	// restarted process cannot hide where the provisioning stopped.
+	if job, ok := s.loadProvisionJob(); ok {
+		v.Job = &job
+	}
 	return v
 }
 
@@ -430,109 +438,28 @@ func (s *Service) PostAdminExitNodeProvision(w http.ResponseWriter, r *http.Requ
 		back("провижининг уже идёт — дождитесь его завершения (одна машина за раз: два ssh-прогона по одному VPS гоняются за одни и те же iptables-правила)")
 		return
 	}
-	defer provisionMu.Unlock()
 
-	// Dry run: probe only. Nothing on the target changes.
-	if dryRun {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		defer cancel()
-		res, err := exitnode.Probe(ctx, req)
-		if err != nil {
-			s.Backend.Audit(c.UserID, c.Username, "exit_node_provision_probe",
-				fmt.Sprintf("host=%s node=%s err=%v", host, nodeName, err))
-			back("SSH-проба не прошла: " + err.Error())
-			return
-		}
-		s.Backend.Audit(c.UserID, c.Username, "exit_node_provision_probe",
-			fmt.Sprintf("host=%s node=%s uid=%s tailscale=%v", host, nodeName, res.Probed.UID, res.Probed.TailscaleFound))
-		backOK(fmt.Sprintf("SSH есть: uid=%s, ядро %s, uplink %s, tailscale %s. Реальных изменений не вносилось (dry-run).",
-			nonEmpty(res.Probed.UID, "?"), nonEmpty(res.Probed.Kernel, "?"),
-			nonEmpty(res.Probed.DefaultIface, "не найден"),
-			map[bool]string{true: "уже установлен", false: "НЕ установлен — при реальном запуске будет поставлен"}[res.Probed.TailscaleFound]))
-		return
-	}
-
-	infraID, err := s.infraHeadscaleUserID(r.Context())
-	if err != nil {
-		back("пользователь infra не найден в headscale — сначала выполните ensureInfraUser (перезапуск skygate): " + err.Error())
-		return
-	}
-	pk, err := hs.CreatePreauthKeyWithTags(infraID, exitnode.PreauthTTL.String(), false, []string{"tag:exit-node"})
-	if err != nil {
-		s.Backend.Audit(c.UserID, c.Username, "exit_node_provision",
-			fmt.Sprintf("host=%s node=%s err=preauth %v", host, nodeName, err))
-		back("не удалось выдать preauth-ключ: " + err.Error())
-		return
-	}
-
-	// The remote run is deliberately NOT tied to the browser request: a closed
-	// tab must not leave a host half-configured between `tailscale up` and the
-	// NAT rules. Timeout is the whole budget (3 min), announced on the card.
-	ctx, cancel := context.WithTimeout(context.Background(), exitnode.Timeout)
-	defer cancel()
-	res, runErr := exitnode.Run(ctx, req, exitnode.BuildProvisionScript(req, pk.Key))
-	if runErr != nil {
-		s.Backend.Audit(c.UserID, c.Username, "exit_node_provision",
-			fmt.Sprintf("host=%s node=%s stage=%s err=%v", host, nodeName, res.FailedStage, runErr))
-		back("SSH не отработал: " + runErr.Error())
-		return
-	}
-	if !res.OK {
-		s.Backend.Audit(c.UserID, c.Username, "exit_node_provision",
-			fmt.Sprintf("host=%s node=%s stage=%s reason=%s", host, nodeName, res.FailedStage, res.FailReason))
-		back(fmt.Sprintf("шаг %s: %s", nonEmpty(res.FailedStage, "setup"), nonEmpty(res.FailReason, "скрипт остановился без описания — смотрите журнал")))
-		return
-	}
-
-	// The node reaches headscale a few seconds after `tailscale up` returns.
-	node, waitErr := waitForTailnetNode(hs, nodeName, 45*time.Second)
-	if waitErr != nil {
-		s.Backend.Audit(c.UserID, c.Username, "exit_node_provision",
-			fmt.Sprintf("host=%s node=%s err=node_absent %v", host, nodeName, waitErr))
-		back("машина настроена, но узел не появился в headscale: " + waitErr.Error() +
-			" — проверьте на VPS `tailscale status` и что --login-server указывает на ваш headscale")
-		return
-	}
-
-	// exit_servers row: the per-row SSH config the sync will use from now on.
-	sshPortCol := ""
-	if port != 22 {
-		sshPortCol = strconv.Itoa(port)
-	}
-	if err := db.UpsertExitServer(s.dbc(), node.ID, nodeName, req.SSHTarget(), keyPath, desc, sshPortCol, acceptRoutes); err != nil {
-		s.Backend.Audit(c.UserID, c.Username, "exit_node_provision",
-			fmt.Sprintf("host=%s node=%s node_id=%s err=exit_server_row %v", host, nodeName, node.ID, err))
-		back("узел подключён, но строку exit_servers сохранить не удалось: " + err.Error())
-		return
-	}
-	hs.InvalidateCache()
-
-	// Final step: let the EXISTING sync path advertise the base routes and approve
-	// 0.0.0.0/0 + ::/0 — the same code the per-row "Re-sync" button runs, so a
-	// provisioned relay and a re-synced one cannot drift apart.
-	syncMsg := "маршруты не применены (sync не подключён — нажмите «Пере-синхронизировать»)"
-	if s.SyncRoutesForNode != nil {
-		for k, v := range s.SyncRoutesForNode(nodeName) {
-			if k == "info" {
-				syncMsg = v
-				continue
-			}
-			syncMsg = k + ": " + v
-		}
-	}
-
-	ip := firstIPv4(node.IPAddresses)
-	if ip == "" {
-		ip = res.TailscaleIPv4
-	}
-	if ip == "" {
-		ip = "не сообщён"
-	}
-	s.Backend.Audit(c.UserID, c.Username, "exit_node_provision",
-		fmt.Sprintf("host=%s node=%s node_id=%s ip=%s ssh_target=%s key=%s sync=%q (preauth key not logged)",
-			host, nodeName, node.ID, ip, req.SSHTarget(), keyPath, syncMsg))
-	backOK(fmt.Sprintf("%s подключён как exit-узел: node_id=%s, tailnet IP %s, SSH %s. %s",
-		nodeName, node.ID, ip, req.SSHTarget(), syncMsg))
+	// B416: the long part is a JOB, not this request. Measured: the synchronous form
+	// held the connection for up to three minutes, the reverse proxy answered 502 at
+	// ~60 s, and the result — including the route approval — was lost with the flash.
+	// The record is written before the redirect, the runner owns provisionMu (it
+	// unlocks it), and the page renders the job's state after any reload.
+	s.startProvisionJob(exitnode.Job{
+		Host:      host,
+		NodeName:  nodeName,
+		SSHUser:   user,
+		SSHPort:   port,
+		KeyPath:   keyPath,
+		Desc:      desc,
+		Accept:    acceptRoutes,
+		InstallTS: installTS,
+		SetupNAT:  setupNAT,
+		DryRun:    dryRun,
+		Actor:     c.Username,
+		ActorID:   c.UserID,
+		Attempt:   1,
+	})
+	backOK("провижининг запущен: прогон идёт в фоне (до 3 минут), страница обновится автоматически — результат останется на ней, даже если браузер отвалится")
 }
 
 // waitForTailnetNode polls headscale until a node with this name appears. `tailscale up`
