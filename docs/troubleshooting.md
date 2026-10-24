@@ -452,6 +452,56 @@ grep -c $'\r' ~/.ssh/authorized_keys       # 0 — a CRLF-mangled line is not a 
 3. **`root` login by key is disabled** (`PermitRootLogin without-password` is fine,
    `no` is not) or `authorized_keys`/`~/.ssh` are group-writable (sshd refuses them).
 
+#### If `ssh-keygen -lf` answers «is not a public key file»
+
+That sentence is about the FILE, not about sshd or the panel: ssh-keygen could not
+parse **one** valid key line in it. Measured on the operator's VPS 2026-10-24, right
+after «в файл добавил». Four commands name the state:
+
+```bash
+sudo ls -l /root/.ssh/authorized_keys
+sudo wc -c -l /root/.ssh/authorized_keys
+sudo cat -A /root/.ssh/authorized_keys | head -3   # ^M$ = CRLF, M-... = not text
+sudo file /root/.ssh/authorized_keys               # UTF-16/BOM or "data" is the answer
+```
+
+| what you see | what happened | fix |
+|---|---|---|
+| `0 /root/.ssh/authorized_keys` (0 bytes) | the append never ran **on this machine** — the card's command was pasted into a local PowerShell/cmd window, or under another account | run it in an SSH session **as root** (see below) |
+| lines end with `^M$`, or `file` says *CRLF* | the file was edited on Windows; sshd reads the `\r` as part of the key | `sudo sed -i 's/\r$//' /root/.ssh/authorized_keys && sudo chmod 600 /root/.ssh/authorized_keys` |
+| `file` says *UTF-16* / *with BOM* | a PowerShell `>>` or a Windows editor wrote UTF-16 | recreate the file (the `install` recipe below) |
+| `-----BEGIN OPENSSH PRIVATE KEY-----` | the **private** key was pasted in | remove it, treat that key as compromised, generate a new pair, and authorise only the `.pub` |
+| valid `ssh-ed25519 AAAA…` lines but the error persists | a junk/partial line **before** the first key (a pasted prompt, a comment without `#`) | keep only the key lines (the `install` recipe below) |
+
+**Deterministic repair, as root on the VPS** — keeps every well-formed key, drops the
+damage, fixes the modes, and prints the fingerprints it ended up with (replace
+`<ПУБЛИЧНЫЙ_КЛЮЧ_ИЗ_КАРТОЧКИ>` with the card's key line):
+
+```bash
+sudo bash -c 'set -e
+  mkdir -p /root/.ssh && chmod 700 /root/.ssh
+  f=/root/.ssh/authorized_keys
+  t="$(mktemp)"
+  [ -f "$f" ] && tr -d "\r" <"$f" | grep -E "^(ssh-|ecdsa-|sk-)" >>"$t" || true
+  echo "<ПУБЛИЧНЫЙ_КЛЮЧ_ИЗ_КАРТОЧКИ>" >>"$t"
+  install -m 600 -o root -g root "$t" "$f"
+  rm -f "$t"
+  ssh-keygen -lf "$f"'
+```
+
+The last command must print `… SHA256:<отпечаток из карточки>`. Then prove it the way
+the panel does, from the **skygate host**:
+
+```bash
+docker exec skygate ssh -i /ssh-sync/skygate_sync -o BatchMode=yes -o IdentitiesOnly=yes \
+  -o StrictHostKeyChecking=accept-new root@<EXIT_HOST> 'id -u'
+```
+
+`0` means the key is accepted and only the file was wrong. `Permission denied` means the
+server still refuses, and `sudo tail -20 /var/log/auth.log` (or
+`journalctl -u ssh -n 20`) now names it: `Authentication refused: bad ownership or
+modes`, `Invalid user`, `ROOT LOGIN REFUSED`.
+
 A key under a passphrase cannot work either: the panel runs ssh with `BatchMode=yes`,
 so nothing can type the passphrase; `ssh-keygen -y -f <key>` asking for one is the tell.
 
