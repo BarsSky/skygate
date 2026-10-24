@@ -224,7 +224,7 @@ or tag a commit whose run completed.
 
    | mode | wall clock | verdict |
    |---|---|---|
-   | sequential (the default, and what CI runs) | 93 / 115 min (two days) | 459/0 |
+   | sequential (the default, and what CI runs) | 93 / 115 / 138 min (three runs) | 459/0 |
    | 6 parallel workers | 119 min | **a red check on a healthy tree** |
 
    88 % of the CPU sits in 182 checks costing ≥ 10 s each; they are `check_b*.sh`

@@ -81,7 +81,7 @@ QUICK=0
 # The parallel pool was built, measured and REMOVED. Numbers from the reference
 # 8-core Windows workstation running the full ~460-check catalog:
 #
-#   sequential (default)   93 and 115 min on two different days  (459/0)
+#   sequential (default)   93, 115 and 138 min on three different runs  (459/0)
 #   6 parallel workers    119 min  AND one check red on a healthy tree
 #
 # So the pool bought nothing, and it cost something real: a go-test check that
