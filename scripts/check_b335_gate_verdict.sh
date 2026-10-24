@@ -155,28 +155,56 @@ rm -f "$VERDICT" "$VERDICT.run" 2>/dev/null
 # ---------------------------------------------------------------------------
 hdr "C. the counters the verdict reads are maintained"
 # ---------------------------------------------------------------------------
-if grep -qE 'RESULTS_FAIL=\$\(\(RESULTS_FAIL \+ 1\)\)' "$GATE"; then
-  n=$(grep -cE 'RESULTS_FAIL=\$\(\(RESULTS_FAIL \+ 1\)\)' "$GATE")
+# B413 (2026-10-23) — CONTRACT RENEGOTIATED, property unchanged.
+#
+# The row formatting and the four increments moved into scripts/lib/gate_parallel.sh
+# when the catalog gained its optional parallel runner: the serial path and the pool
+# must report through ONE implementation, or a PASS could be counted differently
+# depending on which mode produced it. The property this section asserts is the same
+# one it always asserted — "the counters the verdict reads are maintained in the
+# harness" — so it now reads the harness SURFACE (catalog + library) instead of one
+# file. `$GATE` alone would turn a legitimate refactor into a false FAIL, which is
+# the B339 lesson.
+COUNTER_SURFACE="$GATE scripts/lib/gate_parallel.sh"
+surface_grep() {  # $1 = ERE → 0 when any surface file matches
+  local f
+  for f in $COUNTER_SURFACE; do
+    [ -f "$f" ] || continue
+    grep -qE "$1" "$f" 2>/dev/null && return 0
+  done
+  return 1
+}
+surface_count() {  # $1 = ERE → total matching lines across the surface
+  local f total=0 n
+  for f in $COUNTER_SURFACE; do
+    [ -f "$f" ] || continue
+    n=$(grep -cE "$1" "$f" 2>/dev/null || echo 0)
+    total=$((total + n))
+  done
+  echo "$total"
+}
+if surface_grep 'RESULTS_FAIL=\$\(\(RESULTS_FAIL \+ 1\)\)'; then
+  n=$(surface_count 'RESULTS_FAIL=\$\(\(RESULTS_FAIL \+ 1\)\)')
   ok "C1: RESULTS_FAIL is incremented on failure ($n sites)"
 else
   bad "C1: RESULTS_FAIL is never incremented — the verdict would always see 0"
 fi
-if grep -qE 'RESULTS_TIMEOUT=\$\(\(RESULTS_TIMEOUT \+ 1\)\)' "$GATE"; then
+if surface_grep 'RESULTS_TIMEOUT=\$\(\(RESULTS_TIMEOUT \+ 1\)\)'; then
   ok "C2: RESULTS_TIMEOUT is incremented on a killed check"
 else
   bad "C2: RESULTS_TIMEOUT is never incremented"
 fi
-if grep -qE 'RESULTS_FAILNAMES="\$RESULTS_FAILNAMES \$name"' "$GATE"; then
+if surface_grep 'RESULTS_FAILNAMES="\$RESULTS_FAILNAMES \$name"'; then
   ok "C3: the failing check NAMES are collected, so the summary can list them instead of making the operator scroll"
 else
   bad "C3: the failing check names are not collected — the summary cannot say WHICH checks failed"
 fi
-if grep -qE 'RESULTS_SKIP=\$\(\(RESULTS_SKIP \+ 1\)\)' "$GATE"; then
+if surface_grep 'RESULTS_SKIP=\$\(\(RESULTS_SKIP \+ 1\)\)'; then
   ok "C4: RESULTS_SKIP is maintained (the --quick path reports SKIP, not a silent omission)"
 else
   bad "C4: RESULTS_SKIP is never incremented"
 fi
-if grep -qE 'RESULTS_SKIP_ROWS=\$\(\(RESULTS_SKIP_ROWS' "$GATE"; then
+if surface_grep 'RESULTS_SKIP_ROWS=\$\(\(RESULTS_SKIP_ROWS'; then
   ok "C5: sub-contract SKIP rows are counted, so 'verified' can be told apart from 'had nothing to verify'"
 else
   bad "C5: sub-contract SKIP rows are not counted — the summary cannot distinguish an inspected contract from an unexercised one"

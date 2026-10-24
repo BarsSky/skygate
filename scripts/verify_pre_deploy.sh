@@ -73,6 +73,24 @@ fi
 QUICK=0
 [ "${1:-}" = "--quick" ] && QUICK=1
 
+# B413 (2026-10-23): OPTIONAL PARALLEL RUNNER.
+#
+# Operator: «очень долго осуществляется прогон гейт есть ли способ распараллелить
+# выполнение его и тем самым ускорить?» — measured at ~50 min for 459 checks on the
+# reference Windows workstation vs ~24 min for the SAME catalog on GitHub's Linux
+# runner. The runner is opt-in (`SKYGATE_GATE_JOBS=<N>`, default 1 = the historical
+# sequential behaviour CI keeps using) and it only ever runs checks whose command is
+# provably read-only: the Go toolchain's own test/vet commands, plain text tools and
+# git reads. Anything that touches the machine, installs, builds a binary into the
+# tree, or runs a `check_*.sh` contract stays serial, in place.
+#
+# The verdict is untouched: queued checks still run under SKYGATE_CHECK_TIMEOUT with
+# the same setsid/timeout isolation, their results are folded into the SAME
+# RESULTS_* counters before the summary, and a FAIL/TIMEOUT from the pool is a
+# FAIL/TIMEOUT of the gate. See scripts/lib/gate_parallel.sh for the full argument.
+. "$SCRIPT_DIR/lib/gate_parallel.sh" # shellcheck disable=SC1091
+trap 'gate_cleanup' EXIT
+
 # 2026-09-18: cap Go compile parallelism for the catalog run. The gate executes
 # hundreds of checks back to back, many of which compile a whole package
 # (`go build ./...`, `go test ./internal/...`); on a loaded host those steps
@@ -197,50 +215,25 @@ run_check() {
   # printed PASS B260 and then sat silent for 22 minutes until GitHub cancelled
   # it, with an orphaned `grep` in the process list.
   local budget="${SKYGATE_CHECK_TIMEOUT:-900}"
-  if command -v timeout >/dev/null 2>&1; then
-    if command -v setsid >/dev/null 2>&1 && setsid --help >/dev/null 2>&1; then
-      out=$(setsid --wait timeout -k 10 "$budget" bash -c "$cmd" "$@" < /dev/null 2>&1)
-      rc=$?
-    else
-      # No util-linux setsid (Windows Git Bash, macOS): `-k` still bounds a
-      # TERM-ignoring check, but a password prompt CAN stop the group here — so
-      # every check in this catalog that needs root uses `sudo -n` (B299).
-      out=$(timeout -k 10 "$budget" bash -c "$cmd" "$@" < /dev/null 2>&1)
-      rc=$?
-    fi
-  else
-    out=$(bash -c "$cmd" "$@" < /dev/null 2>&1)
-    rc=$?
+  # B413: a provably read-only check is handed to the parallel pool; its row is
+  # printed by gate_drain() in registry order before the summary. Everything else
+  # runs here, inline, exactly where it ran before.
+  if gate_jobs_mode && gate_cmd_is_parallel_safe "$cmd"; then
+    gate_enqueue "$name" "$desc" "$label" "$cmd"
+    return 0
   fi
-  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
-    echo "  ${RED}TIMEOUT${NC}  $name  $desc  (no result within ${budget}s)"
-    [ -n "$out" ] && echo "$out" | sed 's/^/        /' | head -20
-    RESULTS_TIMEOUT=$((RESULTS_TIMEOUT + 1))
-    RESULTS_FAILNAMES="$RESULTS_FAILNAMES $name"
-    return
-  fi
-  if [ "$rc" -eq 0 ]; then
-    echo "  ${GRN}PASS${NC}  $name  $label"
-    RESULTS_PASS=$((RESULTS_PASS + 1))
-  else
-    echo "  ${RED}FAIL${NC}  $name  $desc"
-    if [ -n "$out" ]; then
-      # B322 (2026-09-25): the check's OWN failing lines come FIRST. The catalog's
-      # contracts print tens of PASS rows before the FAIL that matters, so the previous
-      # `head -20` showed a bare red row with zero evidence for exactly the late
-      # behavioural sections (B315 G7/H1/I2, B317 I2/I3, B273 F-J, B276 D-F, B288 E-H …).
-      printf '%s\n' "$out" | grep -aE 'FAIL|SKY-FAIL|TIMEOUT' | head -12 | sed 's/^/        /'
-      echo "$out" | sed 's/^/        /' | head -20
-    fi
-    RESULTS_FAIL=$((RESULTS_FAIL + 1))
-    RESULTS_FAILNAMES="$RESULTS_FAILNAMES $name"
-  fi
-  # Sub-contract SKIP rows inside a check's output. Informational: a check whose
-  # live dependency is absent is SUPPOSED to PASS with SKIP rows (AGENTS rule 1),
-  # so this never affects the verdict — but it is the difference between "this
-  # contract was verified" and "this contract had nothing to verify", and the
-  # catalog should say which it was (TD-22).
-  RESULTS_SKIP_ROWS=$((RESULTS_SKIP_ROWS + $(printf '%s\n' "$out" | grep -acE '(^|[[:space:]])SKIP([[:space:]]|$)')))
+  local t0 t1
+  t0="$(gate_now_ms)"
+  # ONE implementation of the isolation the catalog paid for — budget, no
+  # controlling terminal (B299), a killable deadline, stdin from /dev/null —
+  # lives in gate_exec, so the serial and the parallel path cannot drift.
+  gate_exec "$cmd" "$@"
+  out="$OUT"
+  rc="$RC"
+  t1="$(gate_now_ms)"
+  # The row formatting and the counters live in gate_report, so a check executed by
+  # the pool and a check executed here are reported by the SAME code.
+  gate_report "$name" "$desc" "$label" "$rc" "$out" "$((t1 - t0))" "$budget"
 }
 
 # Async backgrounded check, ignored in --quick mode.
@@ -6340,6 +6333,9 @@ run_check "B411" "THE SHELL MUST BE CENTRED IN THE SPACE THAT EXISTS, AND A ROTA
 # scripts/check_b412_exit_node_provision.sh.
 run_check "B412" "ONE BUTTON MUST ACTUALLY ADD THE NODE — and the page must stop offering two look-alike registrations. Operator: «настройка exit node через вебинтерфейс skygate … по сути просто указав необходимые параметры нового vps и нажать кнопку зарегистрировать новый exit node … необходимо сделать удобную форму и не забыть про подсказки на главной странице … при регистрации стоит учитывать в каком виде будет запущен сервис - нативно или в докере». Measured: B266 minted a tag:exit-node preauth key and only PRINTED a command (never touched the machine), while the «Добавить exit node» form required a node_id for a node that must already exist — so a fresh VPS could not be added from the panel at all; and the key block rendered BELOW the form that needs it, which is the operator's «непонятно какое из них корректное». B412 closes the loop with new package internal/exitnode (provision_b412.go): Validate (host/user/port/node-name/login-server/CIDR shapes, then the composed target through headscale.IsSafeSSHTarget), BuildProvisionScript (ONE idempotent bash script: a root gate that refuses to half-configure a host, ip_forward plus /etc/sysctl.d persistence, tailscale install only when missing and only when allowed, tailscale up with the minted tagged key, MASQUERADE/FORWARD with iptables -C BEFORE -A, marker-based progress) and Run/Probe over the same hardened ssh argv the route sync uses (-- before the host, BatchMode, IdentitiesOnly, accept-new) with the pre-auth key travelling on STDIN only — never argv, never a URL, never the audit row. PostAdminExitNodeProvision (internal/feature/admin/exit_nodes_provision.go, POST /admin/exit-nodes/provision) is admin-only, validates, preflights the key with the B292 SSHKeyProblem/SSHKeyFixHint, refuses a node name that already exists (headscale would create relay-4-1), serialises runs (provisionMu.TryLock), mints the key as infra WITH tag:exit-node, waits for the node to appear (approving earlier is the race that reads as 'настроилось, но маршруты не одобрились'), writes the exit_servers row and finishes through the SAME SyncRoutesForNode path as «Пере-синхронизировать»; the dry-run checkbox only PROBES (uid, tailscale presence, uplink) and changes nothing. The install kind is DETECTED (update.DetectInstallKind) and rendered next to the key path the process will actually use, so a native host is never told about /ssh-sync. The page leads with the one-button card (#new-exit-node) and keeps the B266/manual half below as «Ручной режим» for a host skygate cannot reach; the ADMIN dashboard carries the how-to hint (dashboard.new_exit_node_*). 67 contracts in scripts/check_b412_exit_node_provision.sh + internal/exitnode/provision_b412_test.go (validators, shell quoting, idempotency ORDER, marker parser, argv, and a real bash -n of the generated script)." \
   'test -f scripts/check_b412_exit_node_provision.sh && bash scripts/check_b412_exit_node_provision.sh'
+# scripts/check_b413_parallel_gate.sh.
+run_check "B413" "THE CATALOG MUST BE PARALELISABLE WITHOUT BECOMING SKIPPABLE. Operator: «очень долго осуществляется прогон гейт есть ли способ распараллелить выполнение его и тем самым ускорить?» — measured at ~50 min for 459 checks on the reference Windows workstation vs ~24 min for the SAME catalog on GitHub's Linux runner; the catalog was sequential because run_check executed every contract inline, and the bulk of the wall clock is hundreds of independent go test invocations that share a build cache. New scripts/lib/gate_parallel.sh provides an OPT-IN pool: SKYGATE_GATE_JOBS=N (default 1 = the historical sequential behaviour, which CI keeps; clamped to 1..16, garbage falls back to 1) starts N workers over a file queue whose pickup is an atomic mv, so no check can run twice. Only PROVABLY read-only commands are queued — the Go toolchain's test/vet/version/list/env, plain grep/awk/sed/test, read-only git reads, with a leading ! still treated as the read it negates — while anything naming docker/psql/ssh/systemctl/kubectl/curl/apt, anything that builds a BINARY (go build ./cmd, -o), and EVERY bash scripts/check_*.sh contract (a script can do anything) stays serial in place; the deny list wins over the allow list. The verdict is untouched: a queued check runs under the SAME SKYGATE_CHECK_TIMEOUT, with the SAME setsid/killable-deadline isolation (now ONE implementation, gate_exec, shared by both paths so they cannot drift), its output is folded by the SAME gate_report, and gate_drain runs BEFORE the summary so the RESULTS_* counters the verdict reads include every check; the exit status is still the summary's own. Behavioural contracts prove the pool really overlaps (wall clock vs the sum of the check budgets), that rows are folded in REGISTRY order regardless of completion order, and that a queued FAIL/TIMEOUT reaches the counters — a parallel run cannot report differently from a serial one. The summary now prints the mode, the wall clock and the eight slowest checks (SKYGATE_GATE_TIMINGS_OUT=<file> dumps every check's ms as TSV), which is what makes the knob measurable instead of folklore. B335 contracts C1-C5 were RENEGOTIATED to read the harness SURFACE (catalog + library) because the reporting implementation moved there; the property they assert is unchanged. 45 contracts in scripts/check_b413_parallel_gate.sh." \
+  'test -f scripts/check_b413_parallel_gate.sh && bash scripts/check_b413_parallel_gate.sh'
 run_check "B393" "THE SELF-UPDATE MUST PROVE IT SWAPPED, AND THE HELPER MUST SEE THE SAME /data THE ORCHESTRATOR WROTE TO. On the live host /admin/update reported phase=done with no error while the panel kept serving the previous build, and two releases in a row only became live because the container was recreated by hand; the swap log said, twice, that the helper could not open the swap helper script at data, meaning it was handed a different filesystem than the one the orchestrator wrote to. Two independent defects: both swap scripts mounted the literal legacy volume skygate-data, which is empty on a bind mounted install, and nothing verified that a swap had happened at all — the in-container poll accepted any 200 with status ok, and the admin page did the same from every render before completing the job, while the OLD container answers exactly that 200. The fix has one resolver that reads the live container own data mount and renders it into both scripts, a pre-flight that proves the helper can see its script before it is spawned and writes a FAILED marker naming the mount when it cannot, a build-aware verdict in both probes that also rejects a still booting process and uses the recreated container id as a second witness, a boot-time resolver that declares an unfinished swap failed with the swap log tail, and a swap-log failure marker that resolves the job at once. Contracts A to H in scripts/check_b393_swap_helper_handoff.sh, including a detector proof and a live section that skips when docker is unavailable." \
   'test -f scripts/check_b393_swap_helper_handoff.sh && bash scripts/check_b393_swap_helper_handoff.sh'
 
@@ -6358,6 +6354,9 @@ run_check "B393" "THE SELF-UPDATE MUST PROVE IT SWAPPED, AND THE HELPER MUST SEE
 # A SKIP never counts as a failure: AGENTS rule 1 is explicit that a check whose
 # live dependency is absent must SKIP, and the sub-contract SKIP count is printed
 # so "verified" can still be told apart from "had nothing to verify".
+# B413: fold the pool's results into the counters FIRST. The summary below — and the
+# verdict after it — must see every check, whether it ran inline or in the pool.
+gate_drain
 echo
 echo "=== summary ==="
 printf '  PASS    : %d\n' "$RESULTS_PASS"
@@ -6367,6 +6366,20 @@ printf '  SKIP    : %d\n' "$RESULTS_SKIP"
 printf '  checks  : %d\n' "$((RESULTS_PASS + RESULTS_FAIL + RESULTS_TIMEOUT + RESULTS_SKIP))"
 printf '  sub-contract SKIP rows: %d  (informational — a check with nothing live to inspect passes with SKIP rows)\n' "$RESULTS_SKIP_ROWS"
 printf '  PostgreSQL coverage: %s\n' "$([ -n "${SKYGATE_TEST_PG_DSN:-}" ] && echo enabled || echo 'SQLite only (SKYGATE_TEST_PG_DSN unset — docs/operations.md §15)')"
+if gate_jobs_mode; then
+  printf '  mode    : parallel (SKYGATE_GATE_JOBS=%s)\n' "$GATE_JOBS"
+else
+  printf '  mode    : sequential (set SKYGATE_GATE_JOBS=<N> to parallelise read-only checks)\n'
+fi
+printf '  wall clock: %ss  (sum of check budgets used: %sms)\n' "$SECONDS" "$(gate_timing_total_ms)"
+gate_timing_dump
+SLOWEST_CHECKS="$(gate_slowest 8)"
+if [ -n "$SLOWEST_CHECKS" ]; then
+  echo "  slowest checks:"
+  printf '%s\n' "$SLOWEST_CHECKS" | while IFS="$(printf '\t')" read -r ms name; do
+    printf '    %6ss  %s\n' "$(awk -v m="$ms" 'BEGIN { printf "%.1f", m / 1000 }')" "$name"
+  done
+fi
 
 if [ "$RESULTS_FAIL" -gt 0 ] || [ "$RESULTS_TIMEOUT" -gt 0 ]; then
   echo
