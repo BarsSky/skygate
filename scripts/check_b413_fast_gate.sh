@@ -76,14 +76,16 @@ else
 fi
 
 # --- B ------------------------------------------------------------------------
-# A base that ALWAYS has a diff (HEAD~1), so the selection assertions do not depend
-# on whether the working tree happens to be dirty when the gate runs.
-bash "$SEL" --base HEAD~1 --dry-run >"$TMPD/sel.log" 2>&1
+# A synthetic change list, NOT a git range: CI checks the repository out with
+# `fetch-depth: 1`, so `HEAD~1` does not exist there and a contract that depended on
+# it turned red on a healthy tree (measured in run 40099861619). `--paths` asks the
+# same question — "what would this change run" — with no history at all.
+bash "$SEL" --paths "docs/deploy.md,internal/feature/exit_rules/sync.go" --dry-run >"$TMPD/sel.log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && grep -q 'selected .* check(s)' "$TMPD/sel.log"; then
   ok "B1: --dry-run reports the selection size and runs nothing"
 else
-  bad "B1: --dry-run failed (rc=$rc) — see $TMPD/sel.log"
+  bad "B1: --dry-run failed (rc=$rc) — see the log above"
 fi
 for m in "B1 <- always" "B325 <- always" "B413 <- always"; do
   if grep -qF "$m" "$TMPD/sel.log"; then
@@ -92,6 +94,15 @@ for m in "B1 <- always" "B325 <- always" "B413 <- always"; do
     bad "B2: the meta check set is missing '$m' — a diff-scoped run could skip the harness guards"
   fi
 done
+# The mapping itself must work: a path the catalog NAMES pulls its own checks in.
+# (`internal/handlers/templates/admin/exit_nodes.html` is named by the exit-node
+# checks; asserting a specific id would go stale the moment that surface moves.)
+bash "$SEL" --paths "internal/handlers/templates/admin/exit_nodes.html" --dry-run >"$TMPD/map.log" 2>&1
+if grep -qE '^  [A-Za-z0-9._-]+ <- mentions internal/handlers/templates/admin/exit_nodes\.html' "$TMPD/map.log"; then
+  ok "B2a: a named path pulls its own checks in, with the reason printed ($(grep -cE ' <- mentions ' "$TMPD/map.log") matched)"
+else
+  bad "B2a: the path→check mapping selected nothing for a path the catalog names"
+fi
 # A CLEAN tree must be answered plainly, not with an empty selection that looks
 # like a successful check of everything (the whole point of the fast path).
 CLEAN_LOG="$TMPD/clean.log"
@@ -102,13 +113,13 @@ if [ "$rc" -eq 0 ] && { grep -q 'no changes against' "$CLEAN_LOG" || grep -q 'se
 else
   bad "B2b: --base HEAD produced neither a selection nor the 'no changes' answer (rc=$rc)"
 fi
-# Determinism: the same diff must select the same ids.
-bash "$SEL" --base HEAD~1 --dry-run 2>&1 | grep -oE '^  [A-Za-z0-9._-]+ <- ' | sort >"$TMPD/sel1.ids"
-bash "$SEL" --base HEAD~1 --dry-run 2>&1 | grep -oE '^  [A-Za-z0-9._-]+ <- ' | sort >"$TMPD/sel2.ids"
+# Determinism: the same change list must select the same ids.
+bash "$SEL" --paths "docs/deploy.md,internal/feature/exit_rules/sync.go" --dry-run 2>&1 | grep -oE '^  [A-Za-z0-9._-]+ <- ' | sort >"$TMPD/sel1.ids"
+bash "$SEL" --paths "docs/deploy.md,internal/feature/exit_rules/sync.go" --dry-run 2>&1 | grep -oE '^  [A-Za-z0-9._-]+ <- ' | sort >"$TMPD/sel2.ids"
 if cmp -s "$TMPD/sel1.ids" "$TMPD/sel2.ids"; then
-  ok "B3: the selection is deterministic ($(wc -l <"$TMPD/sel1.ids" | tr -d ' ') ids for the same diff)"
+  ok "B3: the selection is deterministic ($(wc -l <"$TMPD/sel1.ids" | tr -d ' ') ids for the same change)"
 else
-  bad "B3: two runs over the SAME diff selected different checks"
+  bad "B3: two runs over the SAME change selected different checks"
 fi
 if grep -q 'NOT covered by any single check' "$TMPD/sel.log"; then
   ok "B4: unowned changed paths are reported instead of being silently ignored"

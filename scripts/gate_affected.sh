@@ -31,9 +31,11 @@ cd "$(dirname "$0")/.." || exit 1
 GATE="scripts/verify_pre_deploy.sh"
 BASE="origin/main"
 DRY=0
+PATHS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --base)   BASE="${2:-}"; shift 2 ;;
+    --paths)  PATHS="${2:-}"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --include-untracked) INCLUDE_UNTRACKED=1; shift ;;
     --full)   exec bash "$GATE" ;;
@@ -43,14 +45,25 @@ while [ $# -gt 0 ]; do
 done
 
 # --- the diff ----------------------------------------------------------------
-# A base that does not resolve is a refusal, not a silently empty selection: an
-# empty selection would make "nothing to check" indistinguishable from "the base
-# was mistyped" (the B413 lesson: a fast path must never be able to lie).
-if ! git rev-parse --verify --quiet "$BASE" >/dev/null 2>&1; then
-  echo "gate-affected: base '$BASE' does not resolve (try --base HEAD~1 or fetch origin)" >&2
-  exit 2
+# `--paths a,b,c` answers "what WOULD this change run" with no git history at all:
+# the B413 contract uses it (a shallow CI checkout has no HEAD~1) and a reviewer can
+# ask the same question about a hypothetical change.
+if [ -n "$PATHS" ]; then
+  CHANGED="$(printf '%s\n' "$PATHS" | tr ',' '\n' | sed '/^[[:space:]]*$/d')"
+  if [ -z "$CHANGED" ]; then
+    echo "gate-affected: --paths contained no path — nothing to select." >&2
+    exit 2
+  fi
+else
+  # A base that does not resolve is a refusal, not a silently empty selection: an
+  # empty selection would make "nothing to check" indistinguishable from "the base
+  # was mistyped" (the B413 lesson: a fast path must never be able to lie).
+  if ! git rev-parse --verify --quiet "$BASE" >/dev/null 2>&1; then
+    echo "gate-affected: base '$BASE' does not resolve (try --base HEAD~1 or fetch origin)" >&2
+    exit 2
+  fi
+  CHANGED="$( { git diff --name-only "$BASE" --; if [ "${INCLUDE_UNTRACKED:-0}" = "1" ]; then git ls-files --others --exclude-standard; fi; } | sort -u | sed '/^$/d')"
 fi
-CHANGED="$( { git diff --name-only "$BASE" --; if [ "${INCLUDE_UNTRACKED:-0}" = "1" ]; then git ls-files --others --exclude-standard; fi; } | sort -u | sed '/^$/d')"
 if [ -z "$CHANGED" ]; then
   echo "gate-affected: no changes against $BASE — nothing to select."
   echo "              (use --full to run the whole catalog anyway)"

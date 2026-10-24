@@ -236,6 +236,7 @@ or tag a commit whose run completed.
    ```bash
    bash scripts/gate_affected.sh              # only the checks this diff can break
    bash scripts/gate_affected.sh --dry-run    # print the selection, run nothing
+   bash scripts/gate_affected.sh --paths a.go,b.md --dry-run   # "what would this change run"
    SKYGATE_GATE_ONLY=B412,B325 bash scripts/verify_pre_deploy.sh   # explicit subset
    SKYGATE_GATE_TIMINGS_OUT=/tmp/gate.tsv bash scripts/verify_pre_deploy.sh
    ```
