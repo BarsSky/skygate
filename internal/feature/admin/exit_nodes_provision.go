@@ -65,6 +65,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,11 +103,78 @@ type ExitNodeProvisionView struct {
 	KeyFixHint string
 	// LoginServer is the URL the new node will dial.
 	LoginServer string
+	// PubKey is the PUBLIC half of the SSH key this process will use, rendered so
+	// the operator can copy it onto the new VPS by hand. Operator: «для пользователя
+	// это не удобно … администратор должен иметь возможность его скопировать и
+	// применить по инструкции». ONE key serves every exit node.
+	PubKey string
+	// PubKeySource names the file the public key was read from ("" when missing).
+	PubKeySource string
+	// PubKeyCommand is a ready-to-paste command that adds that key to the VPS's
+	// authorized_keys for the SSH user configured in the form.
+	PubKeyCommand string
+	// PubKeyMissing is true when no .pub sibling exists next to the private key —
+	// the card then shows how to derive it instead of an empty box.
+	PubKeyMissing bool
 	// TimeoutSeconds is how long a real run may take (the button says it).
 	TimeoutSeconds int
 	// Blocked is a non-empty sentence when the flow cannot work at all right now
 	// (no headscale client, no infra user, one run already in flight).
 	Blocked string
+}
+
+// sshPublicKeyFor resolves the PUBLIC half of the key the card will use.
+//
+// The operator's ask was practical: the form names a PATH, and a path is useless on
+// the new VPS — they need the key itself to paste. The probe order mirrors the
+// handler's own resolution (the form's path first, then the wired default), and
+// every candidate is validated with the same sanitize/isSSHPublicKey gates the B266
+// registration flow uses, so nothing but an OpenSSH public-key line can ever be
+// rendered into a page that the operator copies into a root shell.
+func (s *Service) sshPublicKeyFor(keyPath string) (source, key string) {
+	var cands []string
+	addCand := func(base string) {
+		base = strings.TrimSpace(base)
+		if base == "" {
+			return
+		}
+		p := base + ".pub"
+		for _, existing := range cands {
+			if existing == p {
+				return
+			}
+		}
+		cands = append(cands, p)
+	}
+	addCand(keyPath)
+	addCand(s.SSHKeyPath)
+	if s.Cfg != nil {
+		addCand(s.Cfg.SSHKeyPath)
+	}
+	cands = append(cands, headscale.ContainerDefaultSSHKey+".pub", "/ssh-sync/id_ed25519.pub", "/ssh-sync/skygate_sync.pub")
+	for _, p := range cands {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		if k := sanitizeSSHPublicKey(string(b)); k != "" && isSSHPublicKey(k) {
+			return p, k
+		}
+	}
+	return "", ""
+}
+
+// authorizedKeysCommand renders the one-liner that adds `key` to the CURRENT SSH
+// user's authorized_keys. `~` is used on purpose: the form lets the operator pick a
+// non-root user, and a hardcoded /root/.ssh would silently write to the wrong home.
+func authorizedKeysCommand(key string) string {
+	k := sanitizeSSHPublicKey(key)
+	if k == "" || !isSSHPublicKey(k) {
+		return ""
+	}
+	return "mkdir -p ~/.ssh && chmod 700 ~/.ssh && " +
+		"grep -qF '" + k + "' ~/.ssh/authorized_keys 2>/dev/null || echo '" + k + "' >> ~/.ssh/authorized_keys; " +
+		"chmod 600 ~/.ssh/authorized_keys"
 }
 
 // exitNodeProvisionView builds the card state. Values from a failed submit are
@@ -134,6 +202,7 @@ func (s *Service) exitNodeProvisionView(r *http.Request) *ExitNodeProvisionView 
 		port = "22"
 	}
 	problem := headscale.SSHKeyProblem(keyPath)
+	pubSource, pubKey := s.sshPublicKeyFor(keyPath)
 	v := &ExitNodeProvisionView{
 		Host:           strings.TrimSpace(r.URL.Query().Get("host")),
 		NodeName:       strings.TrimSpace(r.URL.Query().Get("node")),
@@ -147,6 +216,10 @@ func (s *Service) exitNodeProvisionView(r *http.Request) *ExitNodeProvisionView 
 		KeyProblem:     problem,
 		KeyFixHint:     headscale.SSHKeyFixHint(keyPath),
 		LoginServer:    s.controlURL(),
+		PubKey:         pubKey,
+		PubKeySource:   pubSource,
+		PubKeyCommand:  authorizedKeysCommand(pubKey),
+		PubKeyMissing:  pubKey == "",
 		TimeoutSeconds: int(exitnode.Timeout.Seconds()),
 	}
 	switch {

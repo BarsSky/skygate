@@ -198,6 +198,69 @@
     <span class="muted" style="font-size:12px;margin-left:10px">{{tf "exit_nodes.provision.timeout" .Provision.TimeoutSeconds}}</span>
   </form>
 
+  {{/* B412 (2026-10-23) — the key itself, not just its path. Operator: «есть указание
+       на путь к файлу но для пользователя это не удобно … администратор должен иметь
+       возможность его скопировать и применить по инструкции что есть рядом чтобы
+       добавить в vps этот ключ». ONE key serves every exit node, so the card shows the
+       PUBLIC half (never the private one) and the exact command that authorises it on
+       the VPS for the SSH user configured above. */}}
+  <div style="margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg)">
+    <h4 style="margin:0 0 6px 0;font-size:14px"><i class="fa-solid fa-key"></i> {{t "exit_nodes.provision.key_title"}}</h4>
+    <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">{{t "exit_nodes.provision.key_subtitle" | safeHTML}}</p>
+    {{if .Provision.PubKey}}
+    <pre id="prov-pubkey" style="white-space:pre-wrap;word-break:break-all;user-select:all;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">{{.Provision.PubKey}}</pre>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <button type="button" class="btn btn-sm" onclick="copyProvisionKey('prov-pubkey','prov-pubkey-ok')">
+        <i class="fa-regular fa-copy"></i> {{t "exit_nodes.provision.key_copy"}}
+      </button>
+      <span id="prov-pubkey-ok" class="muted" style="font-size:12px"></span>
+      <span style="font-size:11px;color:var(--text-muted">{{tf "exit_nodes.provision.key_source" .Provision.PubKeySource}}</span>
+    </div>
+    <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px"><b>{{t "exit_nodes.provision.key_command_title" | safeHTML}}</b></p>
+    <pre id="prov-keycmd" style="white-space:pre-wrap;word-break:break-all;user-select:all;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">{{.Provision.PubKeyCommand}}</pre>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button type="button" class="btn btn-sm" onclick="copyProvisionKey('prov-keycmd','prov-keycmd-ok')">
+        <i class="fa-regular fa-copy"></i> {{t "exit_nodes.provision.key_copy_command"}}
+      </button>
+      <span id="prov-keycmd-ok" class="muted" style="font-size:12px"></span>
+    </div>
+    {{else}}
+    <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px">{{t "exit_nodes.provision.key_missing" | safeHTML}}</p>
+    <pre style="white-space:pre-wrap;word-break:break-all;background:var(--bg-subtle,#111);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">ssh-keygen -y -f {{.Provision.SSHKeyPath}} &gt; {{.Provision.SSHKeyPath}}.pub</pre>
+    <p style="font-size:11px;color:var(--text-muted);margin:0">{{t "exit_nodes.provision.key_missing_help" | safeHTML}}</p>
+    {{end}}
+    <p style="font-size:11px;color:var(--text-muted);margin:10px 0 0">{{t "exit_nodes.provision.key_same_for_all" | safeHTML}}</p>
+  </div>
+
+  <script>
+  /* B412: copy a <pre> block with one click, and say so next to the button. Falls
+     back to selecting the text when the clipboard API is unavailable (a plain-http
+     panel on a LAN address does not get navigator.clipboard). */
+  function copyProvisionKey(id, statusId) {
+    var el = document.getElementById(id);
+    var st = document.getElementById(statusId);
+    if (!el) return;
+    var text = el.textContent || '';
+    var done = function () { if (st) { st.textContent = {{t "exit_nodes.provision.key_copied" | safeJSON}}; setTimeout(function(){ st.textContent = ''; }, 2000); } };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function(){ selectProvisionKey(el, done); });
+    } else {
+      selectProvisionKey(el, done);
+    }
+  }
+  function selectProvisionKey(el, done) {
+    try {
+      var r = document.createRange();
+      r.selectNodeContents(el);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+      document.execCommand('copy');
+      done();
+    } catch (e) { /* the text is selected, so the operator can press Ctrl+C */ }
+  }
+  </script>
+
   <details style="margin-top:14px">
     <summary style="cursor:pointer;font-size:13px;font-weight:600">{{t "exit_nodes.provision.what_title"}}</summary>
     <ol style="margin:10px 0 0 18px;font-size:13px;color:var(--text-muted);line-height:1.6">

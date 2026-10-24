@@ -278,6 +278,63 @@ else
   bad "G3: the hint is outside {{if .IsAdmin}} — every user would see an admin instruction"
 fi
 
+# --- G3b: the SSH KEY ITSELF, not just its path ------------------------------
+# Operator, verbatim: «есть указание на путь к файлу но для пользователя это не удобно
+# … администратор должен иметь возможность его скопировать и применить по инструкции
+# что есть рядом чтобы добавить в vps этот ключ».
+if grep -qF 'func (s *Service) sshPublicKeyFor(' "$HANDLER" \
+   && grep -qF 'func authorizedKeysCommand(' "$HANDLER"; then
+  ok "G4: the handler resolves the PUBLIC half and renders the authorising command"
+else
+  bad "G4: no public-key surface — the operator still gets only a file path"
+fi
+if grep -qF '{{.Provision.PubKey}}' "$TPL" \
+   && grep -qF '{{.Provision.PubKeyCommand}}' "$TPL" \
+   && grep -qF 'copyProvisionKey(' "$TPL"; then
+  ok "G5: the card shows the key + the ready command, each with a copy button"
+else
+  bad "G5: the template does not render a copyable key/command"
+fi
+# The PRIVATE half must never reach the browser: the view carries a public key and a
+# shell one-liner, nothing else.
+if grep -qF 'PRIVATE KEY' "$TPL" || grep -qF 'PRIVATE KEY' "$HANDLER"; then
+  bad "G6: private-key material is referenced where the page/browser could see it"
+else
+  ok "G6: no private-key material anywhere in the card or the handler"
+fi
+# A hardcoded /root/.ssh would silently write to the wrong home for a non-root user.
+if grep -qF 'authorized_keys' "$HANDLER" && grep -qF '~/.ssh/authorized_keys' "$HANDLER" \
+   && ! grep -qF '/root/.ssh/authorized_keys' "$HANDLER"; then
+  ok "G7: the authorising command is user-relative (~/.ssh), so a non-root SSH user works"
+else
+  bad "G7: the command hardcodes a home directory (breaks the SSH user field)"
+fi
+if grep -qF 'PubKeyMissing' "$HANDLER" && grep -qF 'ssh-keygen -y -f' "$TPL"; then
+  ok "G8: a missing .pub is explained with the exact command that recreates it"
+else
+  bad "G8: a missing public key would render as an empty box with no next step"
+fi
+for k in exit_nodes.provision.key_title exit_nodes.provision.key_subtitle \
+         exit_nodes.provision.key_copy exit_nodes.provision.key_copy_command \
+         exit_nodes.provision.key_source exit_nodes.provision.key_missing \
+         exit_nodes.provision.key_same_for_all exit_nodes.provision.key_copied; do
+  n=$(grep -c "\"$k\" *:" "$I18N")
+  if [ "$n" -ge 2 ]; then
+    ok "G9: i18n $k in both catalogues"
+  else
+    bad "G9: i18n $k defined $n time(s) — RU and EN must both have it"
+  fi
+done
+for tn in TestExitNodeProvisionView_B412_ShowsCopyablePublicKey \
+          TestExitNodeProvisionView_B412_MissingPublicKeyIsExplained \
+          TestAuthorizedKeysCommand_B412_RefusesNonPublicKey; do
+  if grep -qF "func $tn(" internal/feature/admin/exit_nodes_provision_b412_test.go 2>/dev/null; then
+    ok "G10: $tn pins the public-key surface"
+  else
+    bad "G10: $tn is missing — the copyable key would be untested"
+  fi
+done
+
 # --- H: build / vet / focused tests -----------------------------------------
 if command -v go >/dev/null 2>&1; then
   if go build ./... >/dev/null 2>&1; then ok "H: go build ./... clean"; else bad "H: go build failed"; fi

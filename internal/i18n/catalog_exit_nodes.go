@@ -294,6 +294,16 @@ var ruExitNodes = map[string]string{
 	"exit_nodes.provision.what_6":             "строка в <code>exit_servers</code> (ssh_target, ключ, порт) и одобрение <code>0.0.0.0/0</code> + <code>::/0</code> — после этого узел виден в таблице выше.",
 	"exit_nodes.provision.install_kind":       "Режим запуска skygate: <b>%s</b> — от него зависит путь к SSH-ключу и то, какая сеть должна видеть VPS.",
 	"exit_nodes.provision.login_server":       "Новая машина подключится к <code>%s</code>",
+	"exit_nodes.provision.key_title":          "SSH-ключ: один на все exit-ноды",
+	"exit_nodes.provision.key_subtitle":       "Панель подключается к каждой exit-ноде этим ключом. Скопируйте публичную часть и добавьте её на VPS — или выполните команду ниже на самой машине, под тем пользователем, которого указали в поле «SSH-пользователь».",
+	"exit_nodes.provision.key_copy":           "Скопировать ключ",
+	"exit_nodes.provision.key_copy_command":   "Скопировать команду",
+	"exit_nodes.provision.key_copied":         "скопировано",
+	"exit_nodes.provision.key_source":         "публичный ключ прочитан из %s",
+	"exit_nodes.provision.key_command_title":  "Добавить этот ключ на VPS:",
+	"exit_nodes.provision.key_missing":        "Публичная часть не найдена рядом с приватным ключом. Сгенерируйте её из приватного и повторите — или укажите другой путь:",
+	"exit_nodes.provision.key_missing_help":   "Эта команда создаёт файл <code>&lt;ключ&gt;.pub</code> рядом с приватным ключом; сам приватный ключ не копируется и не показывается.",
+	"exit_nodes.provision.key_same_for_all":   "Ключ один для всех exit-нод: добавив его на машину один раз, к этому шагу вы больше не возвращаетесь. Приватная часть остаётся в файловой системе skygate и никогда не отдаётся в браузер.",
 
 	// 2026-08-18 (B132): per-row "Re-sync" button + better
 	// explainer for the mismatch tag. The operator reported
@@ -636,6 +646,16 @@ var enExitNodes = map[string]string{
 	"exit_nodes.provision.what_6":             "the <code>exit_servers</code> row (ssh_target, key, port) and approval of <code>0.0.0.0/0</code> + <code>::/0</code> — the node then shows up in the table above.",
 	"exit_nodes.provision.install_kind":       "skygate runs as <b>%s</b> — that decides the SSH key path and which network must be able to reach the VPS.",
 	"exit_nodes.provision.login_server":       "The new machine will dial <code>%s</code>",
+	"exit_nodes.provision.key_title":          "SSH key: one for every exit node",
+	"exit_nodes.provision.key_subtitle":       "The panel reaches every exit node with this key. Copy the public half onto the VPS — or run the command below on the machine itself, as the user you typed into «SSH user».",
+	"exit_nodes.provision.key_copy":           "Copy the key",
+	"exit_nodes.provision.key_copy_command":   "Copy the command",
+	"exit_nodes.provision.key_copied":         "copied",
+	"exit_nodes.provision.key_source":         "public key read from %s",
+	"exit_nodes.provision.key_command_title":  "Authorise this key on the VPS:",
+	"exit_nodes.provision.key_missing":        "No public half found next to the private key. Derive it from the private key and reload — or point the form at another key:",
+	"exit_nodes.provision.key_missing_help":   "This command writes <code>&lt;key&gt;.pub</code> next to the private key; the private half is never copied and never rendered.",
+	"exit_nodes.provision.key_same_for_all":   "One key serves every exit node: authorise it once and this step is behind you. The private half stays in skygate's filesystem and is never sent to the browser.",
 
 	// 2026-08-18 (B132): per-row "Re-sync" button + better
 	// explainer for the mismatch tag. The operator reported

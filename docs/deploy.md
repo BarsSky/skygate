@@ -134,6 +134,14 @@ itself over SSH — no console session, no pasted commands:
 | Accept routes | `false` for a node that also runs another VPN (Amnezia/WireGuard) |
 | checkboxes | install Tailscale when missing; configure NAT; **dry run** (probe only) |
 
+Under the form the card renders the **public half of that key** with a «Скопировать
+ключ» button and the one-line command that authorises it on the VPS
+(`mkdir -p ~/.ssh … grep -qF '<key>' … >> ~/.ssh/authorized_keys`, user-relative so a
+non-root SSH user works). One key serves every exit node, and the private half never
+leaves skygate's filesystem. When no `.pub` sibling exists the card names the exact
+command that derives it (`ssh-keygen -y -f <key> > <key>.pub`) instead of showing an
+empty box.
+
 What happens on submit: key preflight → tagged pre-auth key minted as `infra` →
 one idempotent script over SSH (`ip_forward` + persistence, optional Tailscale
 install, `tailscale up --authkey … --advertise-exit-node --accept-routes --ssh`,
