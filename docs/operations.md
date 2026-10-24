@@ -218,20 +218,20 @@ or tag a commit whose run completed.
    tracked as **TD-19** in `docs/ROADMAP.md`. For any single FAIL, re-run that
    check standalone before believing it.
 
-   **Making the everyday loop fast (B413).** The catalog is ~50 minutes on the
-   reference Windows workstation and ~24 on GitHub's Linux runner, and it **cannot be
+   **Making the everyday loop fast (B413).** The catalog takes 93–115 minutes on the
+   reference Windows workstation (~24 on GitHub's Linux runner), and it **cannot be
    made faster by running it in parallel** — that was measured, not assumed:
 
    | mode | wall clock | verdict |
    |---|---|---|
-   | sequential (the default, and what CI runs) | ~50 min | 459/0 |
-   | 6 parallel workers | ~119 min | **4 red checks on a healthy tree** |
+   | sequential (the default, and what CI runs) | 93 / 115 min (two days) | 459/0 |
+   | 6 parallel workers | 119 min | **a red check on a healthy tree** |
 
-   88 % of the CPU sits in 182 checks costing ≥ 10 s each (19 of them multi-minute);
-   they are `check_b*.sh` contracts that themselves run `go test`, so concurrency just
-   oversubscribes the box and eventually makes a go-test check blow its budget — a
-   scheduling artefact reported as a product failure (AGENTS trap #15). The worker
-   pool was therefore removed. What shipped instead:
+   88 % of the CPU sits in 182 checks costing ≥ 10 s each; they are `check_b*.sh`
+   contracts that themselves run `go test`, so concurrency just oversubscribes the
+   box and eventually makes a go-test check blow its budget — a scheduling artefact
+   reported as a product failure (AGENTS trap #15). The worker pool was therefore
+   removed. What shipped instead:
 
    ```bash
    bash scripts/gate_affected.sh              # only the checks this diff can break

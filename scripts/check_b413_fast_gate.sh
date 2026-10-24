@@ -76,14 +76,14 @@ else
 fi
 
 # --- B ------------------------------------------------------------------------
-# A tiny synthetic diff: one file that the catalog names, one that it does not.
-printf '#!/usr/bin/env bash\ntrue\n' >"$TMPD/touch.sh"
-bash "$SEL" --base HEAD --dry-run >"$TMPD/sel.log" 2>&1
+# A base that ALWAYS has a diff (HEAD~1), so the selection assertions do not depend
+# on whether the working tree happens to be dirty when the gate runs.
+bash "$SEL" --base HEAD~1 --dry-run >"$TMPD/sel.log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && grep -q 'selected .* check(s)' "$TMPD/sel.log"; then
   ok "B1: --dry-run reports the selection size and runs nothing"
 else
-  bad "B1: --dry-run failed (rc=$rc)"
+  bad "B1: --dry-run failed (rc=$rc) — see $TMPD/sel.log"
 fi
 for m in "B1 <- always" "B325 <- always" "B413 <- always"; do
   if grep -qF "$m" "$TMPD/sel.log"; then
@@ -92,9 +92,19 @@ for m in "B1 <- always" "B325 <- always" "B413 <- always"; do
     bad "B2: the meta check set is missing '$m' — a diff-scoped run could skip the harness guards"
   fi
 done
+# A CLEAN tree must be answered plainly, not with an empty selection that looks
+# like a successful check of everything (the whole point of the fast path).
+CLEAN_LOG="$TMPD/clean.log"
+bash "$SEL" --base HEAD --dry-run >"$CLEAN_LOG" 2>&1
+rc=$?
+if [ "$rc" -eq 0 ] && { grep -q 'no changes against' "$CLEAN_LOG" || grep -q 'selected .* check(s)' "$CLEAN_LOG"; }; then
+  ok "B2b: a clean tree (or a dirty one) is answered plainly, exit 0 — never a silent empty pass"
+else
+  bad "B2b: --base HEAD produced neither a selection nor the 'no changes' answer (rc=$rc)"
+fi
 # Determinism: the same diff must select the same ids.
-bash "$SEL" --base HEAD --dry-run 2>&1 | grep -oE '^  [A-Za-z0-9._-]+ <- ' | sort >"$TMPD/sel1.ids"
-bash "$SEL" --base HEAD --dry-run 2>&1 | grep -oE '^  [A-Za-z0-9._-]+ <- ' | sort >"$TMPD/sel2.ids"
+bash "$SEL" --base HEAD~1 --dry-run 2>&1 | grep -oE '^  [A-Za-z0-9._-]+ <- ' | sort >"$TMPD/sel1.ids"
+bash "$SEL" --base HEAD~1 --dry-run 2>&1 | grep -oE '^  [A-Za-z0-9._-]+ <- ' | sort >"$TMPD/sel2.ids"
 if cmp -s "$TMPD/sel1.ids" "$TMPD/sel2.ids"; then
   ok "B3: the selection is deterministic ($(wc -l <"$TMPD/sel1.ids" | tr -d ' ') ids for the same diff)"
 else
