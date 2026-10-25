@@ -308,7 +308,9 @@ That is **all** this block does. `.user-form-grid` (3 columns, `themes.css:967-9
 | 835 | `.sidebar-toggle-input:checked ~ .sidebar-toggle{left:auto;right:12px}` | close button moves |
 | 836-839 | `.sidebar{transform:translateX(-100%);transition:transform .25s;width:280px !important;box-shadow:…}` | fixed sidebar becomes an off-canvas drawer |
 | 840-842 | `.sidebar-toggle-input:checked ~ .sidebar{transform:translateX(0)}` | checkbox-hack drawer open |
-| 849-852 | `.sidebar-toggle-input:checked ~ main::before{content:"";position:fixed;inset:0;…}` | dim backdrop |
+| — | ~~`.sidebar-toggle-input:checked ~ main::before{content:"";position:fixed;inset:0;…}`~~ | **removed by B418** — a pseudo-element of `<main>` cannot close the drawer and leaves the sibling `<footer>` reachable; replaced by the row below |
+| — | `.sidebar-backdrop{display:none;position:fixed;inset:0;…}` + `.sidebar-toggle-input:checked ~ .sidebar-backdrop{display:block}` | dim backdrop, a **real** `<label for="sidebar-toggle">` emitted by `layout.html` between the drawer and `<main>`, so it covers the footer and a tap closes the drawer (B418) |
+| — | `body:has(.sidebar-toggle-input:checked){overflow:hidden}` | no page scroll behind the open drawer (B418; unsupported browsers simply ignore it) |
 | 855 | `main .shell{margin-left:0 !important}` | clears the desktop 220px column offset |
 | 864 | `main .admin-breadcrumb{margin-left:0 !important;width:100% !important}` | breadcrumb full width |
 | 865 | `header{margin-left:0 !important}` | header full width |
@@ -325,6 +327,16 @@ That is **all** this block does. `.user-form-grid` (3 columns, `themes.css:967-9
 | 942 | **`.table-wrap{margin:0 -14px;padding:0 14px}`** | lets an *already wrapped* table bleed to the viewport edges — **it does not create a scroller and does not help unwrapped tables** |
 | 944-945 | `.btn{padding:10px 16px;font-size:14px;min-height:40px}`, `.btn-sm{…min-height:32px}` | tap targets |
 | 963 | `.sidebar .toggle{display:none}` | hides the desktop collapse button |
+| — | `.sidebar{top:0;bottom:0;height:auto;max-height:100dvh;padding-bottom:env(safe-area-inset-bottom,0px)}` | **B418** — the drawer is the *visible* viewport, not `100vh` (which on a phone is the large viewport), so theme / language / logout can no longer be painted below the edge. It deliberately does **not** clip: `overflow:hidden` would cut the bell / theme / language popovers at the 280px edge (the B392 defect) |
+| — | `.sidebar nav{min-height:0}` | **B418** — the nav is the only scroller; without `min-height:0` a flex item refuses to shrink and pushes `.sidebar-user` out |
+
+> **B418 (2026-10-25) — the drawer must be the visible viewport, and it must own the footer.**
+> The line numbers in this section are from the audit snapshot; `themes.css` has moved on since.
+> Two measured defects are now pinned by `scripts/check_b418_mobile_drawer.sh` (20 contracts)
+> and `internal/handlers/mobile_drawer_b418_test.go` (4 pins): the drawer's `height:100vh`
+> (large-viewport unit → the bottom block off-screen until the URL bar collapsed) and the
+> `main::before` dim layer (a child of `<main>`, so the sibling `<footer>` stayed reachable
+> and the dim area could not close the drawer).
 
 ### 4c. Relevant global (non-media) rules
 | line | rule |

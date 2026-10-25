@@ -1,5 +1,64 @@
 # Skygate release notes
 
+## v1.5.162 — the mobile drawer is the visible viewport (B418)
+
+**Date:** 2026-10-25 · **Base:** `v1.5.161` → this tag · **Compatibility:** no migration, no
+config change, no Go API change — one stylesheet and one `<label>` in the layout.
+
+### What the operator saw
+
+«На экране смартфона меню в раскрытом состоянии перекрывает футтер, и также на смартфоне
+кнопки в меню в самом низу (смена темы, языка, выход из системы) появляются только если
+пролистать страницу в самый низ.»
+
+Two defects, both inside the mobile `@media (max-width:768px)` block.
+
+### 1. The drawer was sized in the wrong viewport unit
+
+`.sidebar` kept `height:100vh`. On a phone `100vh` is the **large** viewport — the height the
+page would have if the browser UI were hidden — so on a device with a visible URL bar the
+drawer's last block, `.sidebar-user` (theme / language / logout), was painted **below the
+visible edge**. Because the drawer is `position:fixed`, scrolling the page could not lift it:
+only collapsing the URL bar changed what `100vh` meant, which is exactly "only when I scroll to
+the very bottom".
+
+The drawer is now anchored to the real viewport: `top:0;bottom:0;height:auto`, capped with
+`max-height:100dvh`, and padded with `env(safe-area-inset-bottom,0px)` so the buttons clear
+the home indicator. It deliberately does **not** clip (`overflow:hidden` would cut the bell /
+theme / language popovers, which hang past its 280px edge — the B392 defect measured at ~38 %
+of the panel): containment comes from the flex chain instead. The nav is the only scroller
+(`flex:1` + **`min-height:0`** — without it a flex item refuses to shrink below its content and
+pushes the bottom block out anyway), and `.sidebar-user` stays `flex-shrink:0`.
+
+### 2. The dim layer could not cover the footer, or close the drawer
+
+The overlay was `main::before` — a pseudo-element of `<main>` — while `<footer>` is a **sibling**
+of `<main>`. So with the menu open the footer stayed under the finger: «меню перекрывает
+футтер», and tapping the dim area did nothing.
+
+`internal/handlers/templates/layout.html` now emits a real
+`<label for="sidebar-toggle" class="sidebar-backdrop">` between the drawer and `<main>`.
+`.sidebar-backdrop` is `position:fixed;inset:0;z-index:90`, shown by the same checkbox that
+opens the drawer (`:checked ~ .sidebar-backdrop`), so it dims the whole viewport **including the
+footer**, closes the drawer on tap (a `<label for>` toggles the checkbox for free) and blocks
+what is underneath. `body:has(.sidebar-toggle-input:checked){overflow:hidden}` stops the page
+behind the open drawer from scrolling; browsers without `:has()` simply ignore that one line.
+
+### Verification
+
+* `scripts/check_b418_mobile_drawer.sh` — **20 contracts** (A: anchored / `dvh` /
+  **must not clip** (the B392 bell panel) / safe-area; B: `min-height:0`, nav is the only
+  scroller, shrink-proof bottom block; C: the backdrop is a real element, checkbox-driven, the
+  old `main::before` is **gone**, scroll lock, the label is shipped and precedes `<main>`;
+  D: the two stylesheet copies are byte-identical and the Go pins exist; E: registered in the
+  catalog, indexed in `AGENTS.md`, tracked by git).
+* `internal/handlers/mobile_drawer_b418_test.go` — 4 pins that read the **real** stylesheet and
+  the **real** layout template, so a rule that brings back `height:100vh` on the drawer, lets
+  the bottom block be pushed out, clips the drawer's own popovers, puts the dim layer back on
+  `main::before` or stacks it under the content fails the gate instead of the operator's phone.
+* `static/css/themes.css` and `internal/staticfs/static/css/themes.css` are byte-identical
+  (the served copy and the one the Go tests read — the B392/B411 rule).
+
 ## v1.5.161 — the run resumes itself, and "approved" stops meaning "working" (B416.1, B417.1)
 
 **Date:** 2026-10-24 · **Base:** `v1.5.160` → this tag · **Compatibility:** no migration, no

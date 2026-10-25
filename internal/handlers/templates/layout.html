@@ -285,6 +285,11 @@
     </div>
   </div>
 </aside>
+{{/* B418 (2026-10-25) — the drawer's dim layer is a real element: it covers the whole
+     viewport INCLUDING the footer (a sibling of <main>, not a child), closes the drawer
+     when tapped, and blocks the footer underneath. It replaces `main::before`, which
+     dimmed the page but could not close the drawer and left the footer reachable. */}}
+<label for="sidebar-toggle" class="sidebar-backdrop" aria-hidden="true"></label>
 <main>
 {{/* 2026-08-12: v1.1.5 — breadcrumb "вы здесь" for admin pages.
      Renders a small text trail above the page content:

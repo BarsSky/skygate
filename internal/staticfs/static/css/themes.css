@@ -908,20 +908,41 @@ footer a:hover{color:var(--accent)}
   .sidebar{
     transform:translateX(-100%);transition:transform .25s;
     width:280px !important;box-shadow:var(--shadow-lg);
+    /* B418 (2026-10-25) — THE DRAWER MUST BE THE VISIBLE VIEWPORT, NOT 100vh.
+       On a phone `100vh` is the LARGE viewport (browser UI hidden), so the drawer's
+       last block — theme / language / logout — was painted BELOW the visible edge;
+       and because the drawer is position:fixed, scrolling the page could not bring it
+       into view until the URL bar collapsed (the operator: «кнопки в меню в самом низу
+       появляются только если пролистать страницу в самый низ»). Anchor it instead:
+       top:0 + bottom:0 with height:auto makes it exactly the visible viewport, and
+       max-height:100dvh caps it where the dynamic unit is supported. */
+    top:0;bottom:0;height:auto;max-height:100dvh;
+    /* B418: and it must NOT clip. `overflow:hidden` would cut the bell / theme /
+       language popovers, which are absolutely-positioned children of `.sidebar-actions`
+       and hang PAST the 280px edge — B392 measured that cut at ~38 % of the panel and
+       the operator saw it as «перекрывается вкладкой». Nothing can spill anyway now
+       that the box is anchored to the viewport, the nav is the only scroller
+       (flex:1 + min-height:0) and `.sidebar-user` is flex-shrink:0. */
+    padding-bottom:env(safe-area-inset-bottom,0px);
   }
   .sidebar-toggle-input:checked ~ .sidebar{
     transform:translateX(0);
   }
-  /* When the drawer is open, dim the main content. We use
-     a body class via the checkbox's :checked sibling selector
-     (the body has to be a sibling, not main, because <main>
-     is a sibling of <input>, not of <body>). The label is
-     clickable from anywhere in the viewport — the body class
-     is what gives the visual feedback. */
-  .sidebar-toggle-input:checked ~ main::before{
-    content:"";position:fixed;inset:0;background:rgba(0,0,0,0.4);
-    z-index:90;cursor:pointer;
-  }
+  /* B418: the drawer's dim layer is a REAL element (a label for the same checkbox),
+     not `main::before`. The pseudo-element covered the viewport visually but could not
+     close the drawer, and the footer — a SIBLING of <main>, not its child — was still
+     reachable by a tap while the menu was open (the operator: «меню перекрывает
+     футтер»). A label gives the same dimming, closes the drawer on tap, and blocks the
+     footer underneath it. */
+  .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:90;cursor:pointer}
+  .sidebar-toggle-input:checked ~ .sidebar-backdrop{display:block}
+  /* While the drawer is open the page behind must not scroll: on a phone that scroll is
+     what used to reveal the drawer's own bottom block. `:has()` is unsupported on old
+     browsers, where this simply does not apply (nothing breaks). */
+  body:has(.sidebar-toggle-input:checked){overflow:hidden}
+  /* The nav is the only scroller inside a flex column; without min-height:0 a flex item
+     refuses to shrink below its content and the bottom block is pushed out of view. */
+  .sidebar nav{min-height:0}
   /* Reset the desktop's fixed 220px content offset — on mobile
      the sidebar is overlay, not a column. B411 moved that offset
      from .shell to <main>, so the reset follows it: resetting
