@@ -47,21 +47,42 @@ func TestB419_FastHandleCarriesThePragmas(t *testing.T) {
 	}
 }
 
-// TestB419_FastHandleIsCheaperThanTheDefault is the relative cost guard.
-func TestB419_FastHandleIsCheaperThanTheDefault(t *testing.T) {
-	// Two default chains are ~1-2 s here and three fast ones ~0.2 s, so the test stays
-	// bounded even on a slow host.
+// TestB419_FastHandleIsNotSlowerThanTheDefault is the cost guard.
+//
+// WHY IT DOES NOT DEMAND A MULTIPLIER (measured on the CI runner, 2026-10-25): with
+// `-race` on a tmpfs-backed runner the default chain costs 1.99 s and the fast one
+// 1.44 s — only 1.4x, because a tmpfs commit does not pay a real fsync. On the
+// workstation (disk-backed) the same pair is 880 ms vs 53 ms. An assertion of "at least
+// 2x cheaper" therefore passes on a developer's disk and FAILS on the runner: the verdict
+// would be decided by the FILESYSTEM, which is the trap-#15 class ("a host transient must
+// never decide a check's verdict") wearing new clothes.
+//
+// The contract is therefore the property that holds on every host: the fast handle must
+// never be SLOWER than the default one (a tolerance absorbs noise). That still catches
+// the measured trap — `journal_mode(memory)` alone is 1151 ms against 561 ms default —
+// while the pragmas themselves are pinned behaviourally by the test above, which is what
+// a future refactor would break first.
+func TestB419_FastHandleIsNotSlowerThanTheDefault(t *testing.T) {
+	// Two default chains are ~1-4 s here and three fast ones a fraction of that, so the
+	// test stays bounded even on a slow host.
 	slow := timeChains(t, 2, false)
 	fast := timeChains(t, 3, true)
 	if slow == 0 || fast == 0 {
 		t.Skip("sqlite dialect unavailable in this build")
 	}
-	if fast*2 > slow {
-		t.Errorf("B419: the fast handle is not cheaper (default %v for 2 chains, fast %v for 3) — "+
-			"the per-test migration cost TD-30 measured is back", slow, fast)
+	perSlow := slow / 2
+	perFast := fast / 3
+	t.Logf("B419: default chain %v, fast chain %v (%.1fx)", perSlow, perFast, float64(perSlow)/float64(perFast))
+	if perFast > perSlow+perSlow/8 {
+		t.Errorf("B419: the fast handle is SLOWER than the default one (default %v, fast %v per chain) — "+
+			"that is the journal_mode(memory)-alone shape (1151 ms vs 561 ms), not the fast handle", perSlow, perFast)
 	}
-	t.Logf("B419: default chain %v, fast chain %v (%.1fx faster)",
-		slow/2, fast/3, float64(slow*3)/float64(fast*2))
+	if perSlow < 150*time.Millisecond {
+		// Informational: this filesystem does not make fsync expensive, so the pragmas
+		// have nothing to save. The pragma assertion above is the real guard.
+		t.Logf("B419: this filesystem does not pay for fsync (default chain %v) — the speedup is "+
+			"invisible here, which is why the guard asserts pragmas and not a multiplier", perSlow)
+	}
 }
 
 // timeChains times `rounds` full migration chains through the chosen handle.

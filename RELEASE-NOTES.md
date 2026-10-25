@@ -38,13 +38,15 @@ run, on the block that used to make a host stall look like a 10-minute timeout.
 ### Verification
 
 `scripts/check_b419_fast_test_db.sh` — **11 contracts**, and the guards are behavioural and
-**relative**:
+**same-binary**:
 
 * one test reads `PRAGMA synchronous` / `journal_mode` back **from the live connection**
   (a string match on the DSN would pass on a DSN the driver ignores);
 * the other times both handles **in the same test binary** and requires the fast one to be
-  at least twice as cheap — so a slow CI host cannot turn a performance guard into a flake
-  (AGENTS trap #15).
+  **never slower** than the default. The first CI run is why this is not a multiplier: with
+  `-race` on a tmpfs-backed runner the same pair measures **1.4×** (a tmpfs commit pays no
+  real fsync), while on a disk it measures 16× — a required ratio would have let the
+  FILESYSTEM decide the verdict, which is trap #15 applied to the guard itself.
 
 The contract also holds a **ratchet at zero**: no per-test database may open through the
 default path again, the tests must still call `MigrateSQLite` (no hand-written schema), and

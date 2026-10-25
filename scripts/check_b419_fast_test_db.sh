@@ -24,8 +24,8 @@
 #   B  no per-test database opens the DEFAULT way any more (a ratchet at zero), and the
 #      schema still comes from the real migration chain
 #   C  the fast handle is used only from tests — never from production code
-#   D  the behavioural guards pass (the pragmas are live; the fast handle is cheaper,
-#      measured relatively in the same test binary so a slow host cannot decide it)
+#   D  the behavioural guards pass (the pragmas are live; the fast handle is never SLOWER,
+#      measured in the same test binary so a slow host cannot decide it)
 #   E  registered, indexed, tracked
 
 set -uo pipefail
@@ -108,7 +108,7 @@ fi
 hdr "D. the guards"
 
 if OUT="$(go test ./internal/db/ -run B419 -count=1 2>&1)"; then
-  ok "D1: the fast handle carries both pragmas AND is cheaper than the default one (relative measurement)"
+  ok "D1: the fast handle carries both pragmas AND is not slower than the default one (same-binary measurement)"
 else
   bad "D1: go test -run B419 failed: $(printf '%s' "$OUT" | tail -4 | tr '\n' ' ')"
 fi
