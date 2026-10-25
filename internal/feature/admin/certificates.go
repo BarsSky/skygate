@@ -63,12 +63,14 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
 	"skygate/internal/certsync"
+	"skygate/internal/db"
 )
 
 // certificatesPageData is the shape the certificates.html
@@ -246,11 +248,13 @@ func (s *Service) PostAdminCertificateUpload(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Audit log row.
+	// Audit log row. B420: created_at is an INTEGER epoch column in
+	// both chains, so `now()` failed on PostgreSQL (type mismatch) and
+	// on SQLite (unknown function) — the row was silently dropped.
 	if s.dbc() != nil {
 		_, _ = s.dbc().ExecContext(r.Context(),
 			`INSERT INTO audit_log (user_id, username, action, detail, created_at)
-			 VALUES ($1, $2, 'certsync.upload', $3, now())`,
+			 VALUES ($1, $2, 'certsync.upload', $3, `+db.NowUnixSQL()+`)`,
 			c.UserID, c.Username, fmt.Sprintf("sha256=%s size=%d", newSHA, len(certBytes)))
 	}
 
@@ -281,9 +285,12 @@ func (s *Service) PostAdminCertificateToggleDNS01(w http.ResponseWriter, r *http
 		if enabled {
 			v = "1"
 		}
+		// B420: global_settings.updated_at is INTEGER in both chains —
+		// `now()` here made the toggle fail with "Save toggle: …" on
+		// PostgreSQL and on SQLite alike.
 		_, err := s.dbc().ExecContext(r.Context(),
 			`INSERT INTO global_settings (key, value, updated_at)
-			 VALUES ($1, $2, now())
+			 VALUES ($1, $2, `+db.NowUnixSQL()+`)
 			 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
 			dns01EnabledKey, v)
 		if err != nil {
@@ -291,11 +298,11 @@ func (s *Service) PostAdminCertificateToggleDNS01(w http.ResponseWriter, r *http
 			return
 		}
 	}
-	// Audit log row.
+	// Audit log row. B420: same INTEGER epoch fix as the upload path.
 	if s.dbc() != nil {
 		_, _ = s.dbc().ExecContext(r.Context(),
 			`INSERT INTO audit_log (user_id, username, action, detail, created_at)
-			 VALUES ($1, $2, 'certs.dns01_toggle', $3, now())`,
+			 VALUES ($1, $2, 'certs.dns01_toggle', $3, `+db.NowUnixSQL()+`)`,
 			c.UserID, c.Username, fmt.Sprintf("enabled=%t", enabled))
 	}
 	msg := "LE DNS-01 disabled (cert will be renewed manually via the Upload form)."
@@ -387,19 +394,30 @@ func certChainStrings(cert *x509.Certificate) []string {
 	return []string{cert.Issuer.String()}
 }
 
+// qCertAuditEvents is the audit query behind the "Recent cert events"
+// table. B420: created_at is ALREADY an INTEGER epoch column in both
+// migration chains, so the pre-fix `EXTRACT(EPOCH FROM created_at)::bigint`
+// was a type error on PostgreSQL and a syntax error on SQLite — the table
+// rendered empty on every backend, and because the error was dropped the
+// page looked healthy. Select the column as-is instead.
+//
+// Kept as a package-level const (not inlined) so the B420 behaviour test
+// can execute the real statement against a real SQLite database.
+const qCertAuditEvents = `SELECT created_at, COALESCE(username, ''),
+		        action, COALESCE(detail, '')
+		 FROM audit_log
+		 WHERE action LIKE 'certsync.%' OR action LIKE 'certs.%'
+		 ORDER BY created_at DESC
+		 LIMIT $1`
+
 // queryCertAuditEvents returns the most recent N
 // audit_log rows whose action starts with `certsync.`
 // or `certs.`. Order is most-recent-first. Pure DB
 // read — no caching.
 func (s *Service) queryCertAuditEvents(limit int) []certAuditEvent {
-	rows, err := s.dbc().Query(
-		`SELECT EXTRACT(EPOCH FROM created_at)::bigint, COALESCE(username, ''),
-		        action, COALESCE(detail, '')
-		 FROM audit_log
-		 WHERE action LIKE 'certsync.%' OR action LIKE 'certs.%'
-		 ORDER BY created_at DESC
-		 LIMIT $1`, limit)
+	rows, err := s.dbc().Query(qCertAuditEvents, limit)
 	if err != nil {
+		log.Printf("admin.certificates: audit query: %v", err)
 		return nil
 	}
 	defer rows.Close()

@@ -36,6 +36,13 @@
 
 package steps
 
+// dialect:postgres-only — Restore runs pg_restore and terminates target
+// sessions via pg_stat_activity. Both ends of a dbmigrate run are
+// PostgreSQL, so none of this file's SQL can ever meet SQLite. The
+// marker is required by, and pinned in,
+// internal/db/dialect_leak_guard_test.go — that test fails if the marker
+// and the pin ever disagree.
+
 import (
 	"bufio"
 	"context"

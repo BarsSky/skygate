@@ -47,6 +47,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	skygatedb "skygate/internal/db"
 )
 
 // RunPush uploads the local skygate binary + meta.json to
@@ -190,9 +192,12 @@ func writeDeployAudit(ctx context.Context, db *sql.DB, action, target string, me
 		// commit / size without a JOIN.
 		detail = fmt.Sprintf(`{"target":%q,"meta":%s}`, target, string(b))
 	}
+	// B420: audit_log.created_at is INTEGER in both chains, so the
+	// PostgreSQL now() this used to splice in failed on BOTH backends
+	// and every deploy-push audit row was lost.
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO audit_log (user_id, username, action, detail, created_at)
-		 VALUES (0, 'skygate-operator', $1, $2, now())`,
+		 VALUES (0, 'skygate-operator', $1, $2, `+skygatedb.NowUnixSQL()+`)`,
 		action, detail)
 	return err
 }

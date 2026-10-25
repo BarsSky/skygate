@@ -39,6 +39,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	skygatedb "skygate/internal/db"
 )
 
 // ApplyActiveRoleKey is the global_settings row that the
@@ -165,10 +167,18 @@ func HAReclaim(ctx context.Context, d *Deps) error {
 // writeApplyActiveRole sets global_settings.ha_apply_active_role
 // = target. Uses the same UPSERT pattern the rest of skygate
 // uses for global_settings (INSERT ON CONFLICT UPDATE).
+//
+// B420: global_settings.updated_at is an INTEGER epoch column in BOTH
+// migration chains, so the `now()` this used to splice in was rejected by
+// PostgreSQL ("column updated_at is of type integer but expression is of
+// type timestamp with time zone") and by SQLite ("no such function:
+// now") — which means `skygate ha promote` always returned an error and
+// the requested apply role was never recorded. db.NowUnixSQL() emits the
+// dialect-correct epoch expression.
 func writeApplyActiveRole(ctx context.Context, db *sql.DB, target string) error {
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO global_settings (key, value, updated_at)
-		 VALUES ($1, $2, now())
+		 VALUES ($1, $2, `+skygatedb.NowUnixSQL()+`)
 		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
 		ApplyActiveRoleKey, target)
 	return err
@@ -179,10 +189,12 @@ func writeApplyActiveRole(ctx context.Context, db *sql.DB, target string) error 
 // is unchanged — the elector's SQL query is a single
 // SELECT, and an empty value semantically means "no
 // override, use the chain's P1".
+//
+// B420: same timestamp fix as writeApplyActiveRole above.
 func clearApplyActiveRole(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO global_settings (key, value, updated_at)
-		 VALUES ($1, '', now())
+		 VALUES ($1, '', `+skygatedb.NowUnixSQL()+`)
 		 ON CONFLICT (key) DO UPDATE SET value = '', updated_at = EXCLUDED.updated_at`,
 		ApplyActiveRoleKey)
 	return err
@@ -269,9 +281,11 @@ func writeHAAudit(ctx context.Context, db *sql.DB, action, target, detail string
 	if target != "" {
 		detail = fmt.Sprintf(`%s {"target":%q}`, detail, target)
 	}
+	// B420: created_at is INTEGER in both chains — see
+	// writeApplyActiveRole for why now() had to go.
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO audit_log (user_id, username, action, detail, created_at)
-		 VALUES (0, 'skygate-operator', $1, $2, now())`,
+		 VALUES (0, 'skygate-operator', $1, $2, `+skygatedb.NowUnixSQL()+`)`,
 		action, detail)
 	return err
 }

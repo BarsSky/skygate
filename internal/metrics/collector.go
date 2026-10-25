@@ -170,8 +170,34 @@ func boolToFloat(b bool) float64 {
 	return 0
 }
 
+// dbFileSizeBytes answers "how many bytes is this database?" in the
+// dialect the process is actually connected to.
+//
+// B420: both size probes used to run `SELECT
+// pg_database_size(current_database())` unconditionally. On a SQLite
+// deployment that is "no such function: pg_database_size", the error was
+// swallowed, and skygate_db_size_bytes stayed at 0 forever — an
+// operator-visible metric that silently lied. PostgreSQL keeps its native
+// function; SQLite is sized the way SQLite sizes itself, page_count ×
+// page_size (the same pair the B271 /db/health sampler uses).
+func dbFileSizeBytes(ctx context.Context, conn *sql.DB) (int64, error) {
+	if skygatedb.ActiveDialect() == skygatedb.DialectSQLite {
+		var pageCount, pageSize int64
+		if err := conn.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err != nil {
+			return 0, err
+		}
+		if err := conn.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
+			return 0, err
+		}
+		return pageCount * pageSize, nil
+	}
+	var size int64
+	err := conn.QueryRowContext(ctx, `SELECT pg_database_size(current_database())`).Scan(&size)
+	return size, err
+}
+
 // queryDBSizeBytes is a one-off helper that
-// reads pg_database_size for the skygate DB
+// reads the database size for the skygate DB
 // and returns it in bytes. Returns (0, false)
 // on any error (the B226 collector logs +
 // skips the update on failure).
@@ -186,15 +212,13 @@ func queryDBSizeBytes(ctx context.Context, src SourceProvider) (float64, bool) {
 		}
 		return float64(size), true
 	}
-	// Fallback: query pg_database_size via the
-	// pool (works for DBPoolSource).
+	// Fallback: ask the pool directly (works for DBPoolSource).
 	if p, ok := src.(*DBPoolSource); ok {
 		conn := p.DB.Current()
 		if conn == nil {
 			return 0, false
 		}
-		var size int64
-		err := conn.QueryRowContext(ctx, `SELECT pg_database_size(current_database())`).Scan(&size)
+		size, err := dbFileSizeBytes(ctx, conn)
 		if err != nil {
 			return 0, false
 		}
@@ -422,17 +446,17 @@ func (s *DBPoolSource) DBPoolStats() sql.DBStats {
 	return conn.Stats()
 }
 
-// DBSizeBytes returns pg_database_size for the
-// current database. B226 uses this for the
+// DBSizeBytes returns the size of the current
+// database in bytes (pg_database_size on PostgreSQL,
+// page_count × page_size on SQLite — see
+// dbFileSizeBytes). B226 uses this for the
 // skygate_db_size_bytes gauge.
 func (s *DBPoolSource) DBSizeBytes(ctx context.Context) (int64, error) {
 	conn := s.DB.Current()
 	if conn == nil {
 		return 0, fmt.Errorf("nil pool")
 	}
-	var size int64
-	err := conn.QueryRowContext(ctx, `SELECT pg_database_size(current_database())`).Scan(&size)
-	return size, err
+	return dbFileSizeBytes(ctx, conn)
 }
 
 func sumValues(m map[string]int) int {

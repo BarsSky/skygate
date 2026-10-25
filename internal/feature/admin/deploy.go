@@ -41,6 +41,7 @@ package admin
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -149,19 +150,30 @@ func (s *Service) collectDeployPageData(r *http.Request) *deployPageData {
 	return data
 }
 
+// qDeployAuditEvents is the audit query behind the "Recent events" table
+// on /admin/deploy. B420: created_at is ALREADY an INTEGER epoch column
+// in both migration chains, so the pre-fix
+// `EXTRACT(EPOCH FROM created_at)::bigint` was a type error on PostgreSQL
+// and a syntax error on SQLite — the table rendered empty on every
+// backend. Select the column as-is instead.
+//
+// Kept as a package-level const (not inlined) so the B420 behaviour test
+// can execute the real statement against a real SQLite database.
+const qDeployAuditEvents = `SELECT created_at, COALESCE(username, ''),
+		        action, COALESCE(detail, '')
+		 FROM audit_log
+		 WHERE action LIKE 'ha.%' OR action LIKE 'deploy.%'
+		 ORDER BY created_at DESC
+		 LIMIT $1`
+
 // queryDeployAuditEvents returns the most recent N
 // audit_log rows whose action starts with "ha." or
 // "deploy.". Order is most-recent-first. Pure DB read —
 // no caching.
 func (s *Service) queryDeployAuditEvents(limit int) []deployAuditEvent {
-	rows, err := s.dbc().Query(
-		`SELECT EXTRACT(EPOCH FROM created_at)::bigint, COALESCE(username, ''),
-		        action, COALESCE(detail, '')
-		 FROM audit_log
-		 WHERE action LIKE 'ha.%' OR action LIKE 'deploy.%'
-		 ORDER BY created_at DESC
-		 LIMIT $1`, limit)
+	rows, err := s.dbc().Query(qDeployAuditEvents, limit)
 	if err != nil {
+		log.Printf("admin.deploy: audit query: %v", err)
 		return nil
 	}
 	defer rows.Close()

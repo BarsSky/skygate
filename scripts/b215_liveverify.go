@@ -1,6 +1,12 @@
 //go:build ignore
 // +build ignore
 
+// dialect:postgres-only — this helper takes SKYGATE_TEST_PG_DSN and
+// inspects cluster_audit with PostgreSQL casts (l::text). It is a
+// //go:build ignore script, never part of the binary, and it only ever
+// talks to PostgreSQL. The marker is required by, and pinned in,
+// internal/db/dialect_leak_guard_test.go.
+//
 // B215 live-verify helper — exercises the four B215 audit
 // emissions in the production code paths and verifies each
 // fires a row in cluster_audit. Run on the agent after a

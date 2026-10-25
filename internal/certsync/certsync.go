@@ -109,6 +109,7 @@ import (
 	"time"
 
 	"skygate/internal/backup"
+	"skygate/internal/db"
 )
 
 // CertSync is the long-lived scheduler that polls S3 for
@@ -513,13 +514,20 @@ func (c *CertSync) writeLocalCerts(dir string, cert, key []byte) error {
 // writeAudit inserts a row into audit_log. Best-effort
 // (audit failure is not fatal — the pull itself already
 // succeeded).
+//
+// B420: created_at is an INTEGER epoch column in BOTH chains, so the
+// PostgreSQL `now()` this used to splice in was a type error there
+// ("column created_at is of type integer but expression is of type
+// timestamp with time zone") and an unknown function on SQLite — every
+// certsync audit row was lost on both backends. db.NowUnixSQL() is the
+// dialect-correct epoch expression.
 func (c *CertSync) writeAudit(ctx context.Context, deps CertSyncDeps, action, detail string) {
 	if deps.DB == nil {
 		return
 	}
 	_, err := deps.DB.ExecContext(ctx,
 		`INSERT INTO audit_log (user_id, username, action, detail, created_at)
-		 VALUES (0, 'certsync', $1, $2, now())`,
+		 VALUES (0, 'certsync', $1, $2, `+db.NowUnixSQL()+`)`,
 		action, detail)
 	if err != nil {
 		log.Printf("certsync: audit log insert: %v", err)

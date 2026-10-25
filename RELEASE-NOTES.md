@@ -1,5 +1,101 @@
 # Skygate release notes
 
+## v1.5.166 — the dialect leak guard sees the whole statement, and the leaks it could not see are fixed (B420, TD-27)
+
+**Date:** 2026-10-25 · **Base:** `v1.5.165` → this tag · **Compatibility:** none — no
+schema change, no configuration change. Existing installations need nothing beyond the
+update itself; the behaviour they gain is that several surfaces which had been silently
+broken start working.
+
+### What was measured
+
+The static guard against one-backend SQL had been written on 2026-09-18 for exactly the
+class that had just broken SQLite writes. It had two blind spots:
+
+1. it inspected only lines that **literally contained a backtick** — and every statement
+   in this repository is a **multi-line** backtick literal whose backticks sit on the
+   first and last line only, so every token in between was never read;
+2. it knew exactly **two** tokens (`EXTRACT(EPOCH FROM now())` and its lowercase
+   spelling) and skipped all of `internal/db/migrations_*` wholesale.
+
+Widened to read whole string literals (a small Go lexer that also strips comments) it
+scanned **548 shared files + 23 migration files** and found **11 real leaks in 7 shared
+files**, plus **2** statements in the PostgreSQL migration chain that leaned on the
+`strftime()` compatibility shim.
+
+| where | what it carried | what it did |
+|---|---|---|
+| `internal/feature/admin/certificates.go` | `EXTRACT(EPOCH FROM created_at)::bigint` | empty "Recent cert events" table |
+| `internal/feature/admin/deploy.go` | `EXTRACT(EPOCH FROM created_at)::bigint` | empty "Recent events" table |
+| `internal/feature/admin/certificates.go` | `now()` ×3 | upload + DNS-01 toggle audit rows lost; the toggle failed with an error |
+| `internal/feature/admin/derp_relays_auto.go` | `EXTRACT(epoch FROM now())::bigint` | DERP relay settings could not be persisted on SQLite |
+| `internal/certsync/certsync.go` | `now()` | cert-sync audit rows lost |
+| `internal/deploy/ha.go` | `now()` ×3 | `skygate ha promote`/`demote`/`reclaim` failed on **both** backends |
+| `internal/deploy/push.go` | `now()` | deploy-push audit rows lost |
+| `internal/metrics/collector.go` | `pg_database_size(current_database())` ×2 | `skygate_db_size_bytes` = **0** on SQLite |
+| `internal/db/migrations_pg.go` | `strftime('%s','now')` | PostgreSQL chain depended on its own compat shim |
+
+### Why these were worse than "PostgreSQL-only"
+
+`audit_log.created_at` and `global_settings.updated_at` are **INTEGER epoch** columns in
+**both** migration chains. So:
+
+* `now()` returns `timestamptz` — PostgreSQL answers *column "created_at" is of type
+  integer but expression is of type timestamp with time zone*; SQLite answers *no such
+  function: now*. **Broken on both.**
+* `EXTRACT(EPOCH FROM created_at)::bigint` over a column that is **already** an epoch is
+  a type error on PostgreSQL and a syntax error on SQLite. **Broken on both**, and it was
+  the query behind two admin tables.
+
+Every caller dropped the error, so the product showed an empty list, a missing audit row
+or a zero gauge instead of a failure — which is why they survived.
+
+### What changed
+
+* `db.NowUnixSQL()` (the dialect-aware epoch expression) now backs all 7 epoch writes.
+* The two audit readers select the epoch column as it is, and **log** a failure instead of
+  silently returning `nil` (that silence is what made an empty table look healthy).
+* The DB-size probe branches on the dialect: `pg_database_size(current_database())` on
+  PostgreSQL, `page_count × page_size` on SQLite (the pair B271 already uses).
+* The two PostgreSQL migration defaults use `EXTRACT(EPOCH FROM now())::bigint` instead of
+  the `strftime()` shim. Both statements are `CREATE TABLE IF NOT EXISTS`, so an existing
+  database is unaffected.
+* The guard now enforces **16 PostgreSQL-only + 13 SQLite-only** tokens, requires a file to
+  branch on the dialect before it may carry one-dialect SQL, and classifies every migration
+  literal by the chain function that owns it (**hard zero**, no blanket skip).
+
+### Deliberately not flagged — measured, not assumed
+
+SQLite accepts **arbitrary type names**, so `TEXT[]`, `jsonb`, `timestamptz` and even
+`SERIAL PRIMARY KEY` all create successfully. The difference in severity decides the token
+list, and `internal/db/dialect_type_name_b420_test.go` measures it: `TEXT[]` stores and
+returns a JSON array unchanged (harmless → not a leak), while `SERIAL PRIMARY KEY` is
+accepted but **inert** — an INSERT leaves the id `NULL` (a silently broken row → still a
+leak).
+
+### One escape hatch, pinned
+
+Three files are PostgreSQL-only by construction (`internal/dbmigrate/steps/cleanup.go`,
+`restore.go`, `scripts/b215_liveverify.go` — the SQLite→PG migration tool and a
+`//go:build ignore` live-verify helper). They are listed with their reason, and each must
+carry `// dialect:postgres-only` in its own header; a pin without a marker, or a marker
+naming a deleted file, fails the build.
+
+### Verification
+
+31 contracts in `scripts/check_b420_dialect_leaks.sh`, with behaviour tests that run the
+**real** statements against a **real** SQLite database built by the **real** migration
+chain — and that additionally pin that the **old** shapes still fail there, so the
+rationale cannot rot into folklore. The guard's own detector is proven by planting a
+multi-line violation, and proven quiet for a dialect-aware file and for prose.
+
+### What to check on your install
+
+* `/admin/certificates` → "Recent cert events" and `/admin/deploy` → "Recent events": they
+  now list rows instead of showing an empty table.
+* `/metrics` → `skygate_db_size_bytes` is non-zero on a SQLite install.
+* `skygate ha promote <host>` now records the requested role instead of returning an error.
+
 ## v1.5.165 — the test suite stops paying for durability it does not need (B419, TD-30)
 
 **Date:** 2026-10-25 · **Base:** `v1.5.164` → this tag · **Compatibility:** none — test

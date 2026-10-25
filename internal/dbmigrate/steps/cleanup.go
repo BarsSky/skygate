@@ -29,6 +29,13 @@
 
 package steps
 
+// dialect:postgres-only — Cleanup terminates sessions with
+// pg_terminate_backend and issues DROP DATABASE. Both ends of a dbmigrate
+// run are PostgreSQL (SSHDumpTransport/pg_dump → pg_restore), so none of
+// this file's SQL can ever meet SQLite. The marker is required by, and
+// pinned in, internal/db/dialect_leak_guard_test.go — that test fails if
+// the marker and the pin ever disagree.
+
 import (
 	"context"
 	"database/sql"

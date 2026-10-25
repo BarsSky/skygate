@@ -37,6 +37,8 @@ import (
 	"log"
 	"os"
 	"time"
+
+	"skygate/internal/db"
 )
 
 // Default paths + port used by EnsureBundledDerpRelay. Override via
@@ -183,10 +185,16 @@ func loadGlobalSetting(d *sql.DB, key string) string {
 // writeGlobalSetting inserts or updates a global_settings row. The
 // global_settings table has a UNIQUE(key) constraint, so we use
 // ON CONFLICT to handle the insert-or-update case.
+//
+// B420: this carried a raw `EXTRACT(epoch FROM now())::bigint`, which is
+// correct on PostgreSQL (updated_at is an INTEGER epoch) but a hard
+// syntax error on SQLite — so persisting the DERP relay settings failed
+// on every SQLite deployment. db.NowUnixSQL() is the dialect-correct
+// expression, the same one the sibling write paths use.
 func writeGlobalSetting(d *sql.DB, key, value string) error {
 	_, err := d.Exec(`
 		INSERT INTO global_settings (key, value, updated_at)
-		VALUES ($1, $2, EXTRACT(epoch FROM now())::bigint)
+		VALUES ($1, $2, `+db.NowUnixSQL()+`)
 		ON CONFLICT (key) DO UPDATE
 		SET value = EXCLUDED.value,
 		    updated_at = EXCLUDED.updated_at

@@ -972,7 +972,7 @@ func migrateV050PG(d *sql.DB) error {
 			rule_json           TEXT    NOT NULL,
 			fingerprint         TEXT    NOT NULL,
 			label               TEXT    NOT NULL DEFAULT '',
-			created_at          BIGINT  NOT NULL DEFAULT (strftime('%s', 'now')::bigint),
+			created_at          BIGINT  NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
 			created_by_user_id  INTEGER NOT NULL DEFAULT 0,
 			enabled             INTEGER NOT NULL DEFAULT 1,
 			UNIQUE(fingerprint, enabled)
@@ -1003,7 +1003,7 @@ func migrateV051PG(d *sql.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS system_tests_runs (
 			id                     BIGSERIAL PRIMARY KEY,
-			started_at             BIGINT  NOT NULL DEFAULT (strftime('%s', 'now')::bigint),
+			started_at             BIGINT  NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
 			finished_at            BIGINT  NOT NULL DEFAULT 0,
 			duration_ms            BIGINT  NOT NULL DEFAULT 0,
 			results_json           TEXT    NOT NULL DEFAULT '{}',
