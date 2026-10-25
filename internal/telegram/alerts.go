@@ -78,26 +78,53 @@ func (n *RealNotifier) SendAlertHTML(htmlBody, plain string) int64 {
 // SendAlertEvent is the fully-featured entry point: it composes the alert, honours its
 // dedup key and sends it. Returns 0 when the bot is not configured OR the alert was
 // suppressed as a repeat inside its dedup window (the caller can distinguish the two
-// only by Configured(), which is what the disk monitor does).
+// only by AlertDeliverySnapshot, which is what the disk monitor and the admin page do).
 func (n *RealNotifier) SendAlertEvent(a Alert) int64 {
 	if n == nil {
 		return 0
 	}
 	if a.DedupKey != "" {
 		if suppressed, count := shouldSuppressAlert(a.DedupKey, a.DedupTTL); suppressed {
-			log.Printf("telegram: alert suppressed (dedup key %q, %d repeat(s) in the window)", a.DedupKey, count)
+			// B421: a suppression is a DECISION about an alert, so it belongs in
+			// the ledger too — "the operator has already read this event" must
+			// be distinguishable from "nothing was ever produced".
+			recordAlertOutcome(time.Now(), AlertSuppressed,
+				fmt.Sprintf("dedup key %q, %d repeat(s) in the window", a.DedupKey, count),
+				0, "", "", "")
 			return 0
 		}
 	}
 	return n.sendAlert(a.Severity, ComposeAlert(a), ComposeAlertPlain(a), a.DedupKey, a.DedupTTL)
 }
 
-// sendAlert is the one implementation: bookkeeping row → number → HTML send.
+// sendAlert is the one implementation: resolve target → bookkeeping row → number →
+// HTML send, with EVERY outcome recorded in the B421 ledger.
+//
+// B421 (2026-10-25): this function used to start with
+//
+//	if err != nil || !ok { return 0 }
+//
+// against db.LoadTelegramSendTarget — i.e. it required global_settings.telegram.chat_id
+// and, when the operator had configured the bot by BINDING a chat instead (which is what
+// /start + [Bind] does, and what “Send test” itself falls back to), it dropped every
+// alert with no log line, no counter and no audit row. The bot answered commands, the
+// test said “sent”, and notifications never arrived. resolveAlertTarget now applies ONE
+// rule (global chat → ADMIN binding → nothing, named) and the ledger makes the result
+// visible on /admin/telegram and in the journal.
+//
+// Returns the /ack alert id when the message was ACCEPTED by the Bot API, and 0 when it
+// was not delivered for any reason — the ledger says which.
 func (n *RealNotifier) sendAlert(sev Severity, htmlBody, plainBody, dedupKey string, _ time.Duration) int64 {
-	_, _, ok, err := db.LoadTelegramSendTarget(n.db)
-	if err != nil || !ok {
+	if n == nil {
 		return 0
 	}
+	tgt, outcome, reason := resolveAlertTarget(n.db)
+	if outcome != AlertSent {
+		recordAlertOutcome(time.Now(), outcome, reason, 0, "", tgt.source, maskChatID(tgt.chatID))
+		return 0
+	}
+	masked := maskChatID(tgt.chatID)
+
 	if plainBody == "" {
 		plainBody = htmlBody
 	}
@@ -109,9 +136,16 @@ func (n *RealNotifier) sendAlert(sev Severity, htmlBody, plainBody, dedupKey str
 	} else {
 		htmlBody = fmt.Sprintf("[#%d] %s", id, htmlBody)
 	}
-	if err := n.sendHTMLToChat(htmlBody); err != nil {
+	// The resolved TARGET is passed to the transport, which no longer re-reads
+	// global_settings: re-reading here was the defect (the reply path had a
+	// bound-chat fallback and this one did not, so the two disagreed exactly when a
+	// notification mattered).
+	if err := n.sendHTMLToChatTarget(tgt.token, tgt.chatID, htmlBody); err != nil {
+		recordAlertOutcome(time.Now(), AlertSendFailed, RedactToken(err.Error(), tgt.token), 0, "", tgt.source, masked)
 		log.Printf("telegram: alert send failed (severity=%s): %v", sev, err)
+		return 0
 	}
+	recordAlertOutcome(time.Now(), AlertSent, "", id, alertTransportPath(n.EgressSnapshot()), tgt.source, masked)
 	// Fire-and-forget prune. Failure here is harmless; the next
 	// SendAlert will try again.
 	go pruneAlerts(n.db, alertsKeep)

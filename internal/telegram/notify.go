@@ -746,25 +746,25 @@ func (n *RealNotifier) postMessageErr(token string, chatID int64, text, parseMod
 	return nil
 }
 
-// sendHTMLToChat delivers an ALREADY composed HTML body to the configured chat.
+// sendHTMLToChatTarget delivers an ALREADY composed HTML body to an ALREADY resolved
+// target.
 //
 // B391 (2026-10-25, TD-34): this is the transport the alert path uses — parse_mode=HTML
 // and no ``` fence. It exists as its own function so the difference between "a reply"
 // (plain, fenced) and "an alert" (HTML, structured) is one call, not a comment.
-func (n *RealNotifier) sendHTMLToChat(htmlBody string) error {
+//
+// B421 (2026-10-25): the target is now an ARGUMENT instead of being re-read from
+// global_settings here. Re-reading was not a detail — it was the bug: the alert path
+// resolved its recipient one way (this function: token + chat_id from settings only) and
+// the reply path another (with a bound-chat fallback), so an installation configured by
+// binding delivered replies and silently dropped alerts. One resolution
+// (resolveAlertTarget) now decides, and the transport carries the decision out.
+func (n *RealNotifier) sendHTMLToChatTarget(token string, chatID int64, htmlBody string) error {
 	if n == nil {
 		return ErrTelegramNotConfigured
 	}
-	token, chatIDStr, ok, err := db.LoadTelegramSendTarget(n.db)
-	if err != nil {
-		return fmt.Errorf("telegram: read settings: %w", err)
-	}
-	if !ok {
+	if token == "" || chatID == 0 {
 		return fmt.Errorf("telegram: no token and chat_id configured")
-	}
-	chatID, perr := strconv.ParseInt(chatIDStr, 10, 64)
-	if perr != nil || chatID == 0 {
-		return fmt.Errorf("telegram: chat_id %q is not a valid int64: %v", chatIDStr, perr)
 	}
 	return n.postMessageErr(token, chatID, htmlBody, "HTML")
 }

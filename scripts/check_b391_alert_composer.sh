@@ -103,16 +103,33 @@ hdr "B. alerts go out as HTML, never as a fenced block"
 
 strip_go_comments "$ALERTS" > "$SKY_TMP/alerts.go"
 strip_go_comments "$NOTIFY" > "$SKY_TMP/notify.go"
-if grep -qF 'sendHTMLToChat(' "$SKY_TMP/alerts.go"; then
+# B421 RENEGOTIATED THIS CONTRACT'S NAME, not its intent. The transport used to be
+# sendHTMLToChat(htmlBody), which re-read global_settings.telegram.chat_id itself —
+# and that re-read WAS the defect B421 fixed: the alert path resolved its recipient one
+# way and the reply path another, so an install configured by binding chat delivered
+# replies and silently dropped alerts. The function is now
+# sendHTMLToChatTarget(token, chatID, htmlBody): one resolution (resolveAlertTarget)
+# decides, and the transport carries the decision out. The requirement is unchanged —
+# the alert path must use its OWN HTML transport, that transport must set
+# parse_mode=HTML, and no alert may go through the fenced reply path.
+if grep -qF 'sendHTMLToChatTarget(' "$SKY_TMP/alerts.go"; then
   ok "B1: the alert path uses its own HTML transport"
 else
   bad "B1: the alert path does not use an HTML transport"
 fi
-if grep -qF 'sendHTMLToChat(' "$SKY_TMP/notify.go" &&
+if grep -qF 'func (n *RealNotifier) sendHTMLToChatTarget(' "$SKY_TMP/notify.go" &&
    grep -qF 'postMessageErr(token, chatID, htmlBody, "HTML")' "$SKY_TMP/notify.go"; then
   ok "B2: that transport sets parse_mode=HTML (the pre-B391 path set no parse mode at all)"
 else
   bad "B2: the alert transport does not set parse_mode=HTML"
+fi
+# B421: the transport must not resolve the target itself any more — a second resolution
+# is how the two paths diverged.
+if awk '/func \(n \*RealNotifier\) sendHTMLToChatTarget\(/,/^}/' "$SKY_TMP/notify.go" \
+   | grep -qF 'LoadTelegramSendTarget('; then
+  bad "B2b: sendHTMLToChatTarget re-resolves the recipient — one resolution rule is the whole point of B421"
+else
+  ok "B2b: the transport takes the resolved target as an argument (one resolution rule)"
 fi
 if grep -q 'n\.SendTelegram(' "$SKY_TMP/alerts.go"; then
   bad "B3: an alert is still sent through the reply transport (triple-backtick fence, no parse_mode)"

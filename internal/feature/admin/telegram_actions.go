@@ -14,6 +14,7 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 	"skygate/internal/telegram"
 )
 
@@ -135,6 +136,68 @@ func (s *Service) handleTelegramTest(w http.ResponseWriter, r *http.Request, c *
 
 	flash := testFlashMessage(outcome)
 	writeFlashRedirect(w, r, flash)
+}
+
+// handleTelegramAlertTest sends a TEST ALERT through the REAL alert path.
+//
+// B421 (2026-10-25). «Send test» above sends a REPLY: SendTelegramErr, which — like
+// every reply — falls back to a chat bound with /start + [Bind] when
+// global_settings.telegram.chat_id is empty. Notifications do NOT take that path: they
+// go through SendAlertEvent → resolveAlertTarget → postMessageErr(…, "HTML"). So on an
+// install configured only by a binding, the old button said «Сообщение отправлено» while
+// every alert was dropped — the operator's report, exactly.
+//
+// This handler therefore exercises the alert path and reports what the ledger recorded:
+// the outcome, the reason, the target it resolved to and the transport (direct or a
+// relay tunnel). A tester that cannot fail is worse than none (B390), and a tester that
+// tests a DIFFERENT path than the product is worse than both.
+func (s *Service) handleTelegramAlertTest(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	if s.Notifier == nil {
+		s.redirectWithFlash(w, r, "", "Notifier не инициализирован — перезапустите skygate")
+		return
+	}
+	if _, isNoop := s.Notifier.(telegram.NoopNotifier); isNoop {
+		s.redirectWithFlash(w, r, "", "Бот не сконфигурирован — Notifier в no-op режиме")
+		return
+	}
+	lang := s.I18n.LangFromRequest(r)
+	if lang == "" {
+		lang = "ru"
+	}
+	// No DedupKey on purpose: a test must always attempt a real send, otherwise the
+	// second press inside the window would report «suppressed» and prove nothing.
+	id := s.Notifier.SendAlertEvent(telegram.Alert{
+		Severity: telegram.SeverityInfo,
+		TitleKey: "telegram.alert_test_title",
+		Facts: []telegram.AlertFact{
+			{Label: i18n.T(lang, "telegram.alert_test_fact_source"), Value: r.Host},
+			{Label: i18n.T(lang, "telegram.alert_test_fact_path"), Value: "SendAlertEvent"},
+		},
+		Lang: lang,
+	})
+	stats := telegram.AlertDeliverySnapshot()
+	s.Backend.Audit(c.UserID, c.Username, "telegram_alert_test",
+		fmt.Sprintf("outcome=%s target=%s alert_id=%d path=%s", stats.LastOutcome, stats.TargetSource, id, stats.LastPath))
+	writeFlashRedirect(w, r, alertTestFlash(id, stats))
+}
+
+// alertTestFlash is the operator-facing sentence for an alert test. Split out so the
+// decision "what does the operator read" is testable without HTTP (the B390 lesson).
+func alertTestFlash(id int64, stats telegram.AlertDeliveryStats) string {
+	switch stats.LastOutcome {
+	case telegram.AlertSent:
+		path := stats.LastPath
+		if path == "" {
+			path = "direct"
+		}
+		return fmt.Sprintf("Уведомление доставлено: #%d, получатель %s (%s), транспорт %s. Это тот же путь, которым идут настоящие уведомления.",
+			id, stats.TargetSource, stats.TargetMasked, path)
+	case telegram.AlertSuppressed:
+		return "Уведомление подавлено окном дедупликации — это не ошибка, но тест должен отправляться всегда; повторите."
+	default:
+		return fmt.Sprintf("Уведомление НЕ доставлено: %s. Причина: %s. Получатель: %s. Укажите токен и «ID чата» на этой странице.",
+			string(stats.LastOutcome), stats.LastReason, stats.TargetSource)
+	}
 }
 
 // testSendOutcome is what "Send test" really did: the targets that accepted the

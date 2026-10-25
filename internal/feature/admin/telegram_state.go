@@ -14,6 +14,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/telegram"
 )
 
 // telegramUIState is the shape the template consumes.
@@ -25,6 +26,14 @@ type telegramUIState struct {
 	StrictMode    bool
 	LoginTokenTTL int
 	Probe         TelegramProbeResult
+	// AlertDelivery (B421) is the alert path's own truth: how many alerts were
+	// delivered / suppressed / not configured / failed since boot, the last outcome
+	// with its reason, the target it resolved to and the transport that carried the
+	// last delivery. Rendered as its own card, because "the bot answers" and
+	// "notifications arrive" are two different facts — the operator's report
+	// («уведомления не приходили») was the second one while every surface showed the
+	// first.
+	AlertDelivery telegram.AlertDeliveryStats
 	// Egress carries the v0.33.1.8 "which relay runs
 	// Telegram-CIDR" selector. SelectedNodeID is the headscale
 	// node_id of the currently chosen exit-node ("" when none).
@@ -120,6 +129,11 @@ func (s *Service) loadTelegramUIState() telegramUIState {
 		LoginTokenTTL: db.LoadTelegramLoginTokenTTL(s.dbc()),
 		StrictMode:    db.LoadTelegramStrictMode(s.dbc()),
 	}
+	// B421: the alert path's ledger is read UNCONDITIONALLY, before the
+	// token early-return. "No alerts were delivered because there is no token"
+	// and "no alerts were delivered although the bot answers" are different
+	// facts, and the second one is the operator's report.
+	state.AlertDelivery = telegram.AlertDeliverySnapshot()
 	// v0.33.1.8: load the egress selector BEFORE the early
 	// return. The operator may want to pre-configure which
 	// relay terminates api.telegram.org traffic BEFORE the

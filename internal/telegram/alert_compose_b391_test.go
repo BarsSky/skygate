@@ -214,9 +214,26 @@ func TestB391_DedupSuppressesRepeatsInsideTheWindow(t *testing.T) {
 func TestB391_AlertTransportReportsRefusal(t *testing.T) {
 	d := b391DB(t)
 	n, _ := b391CapturingNotifier(t, d, 400, `{"ok":false,"description":"chat not found"}`)
-	// The alert path must not panic and must log the refusal; the id is still
-	// returned because the ROW exists (that is the /ack numbering contract).
-	if id := n.SendAlert("boom"); id == 0 {
-		t.Error("B391: a refused send must still return the alert id (the row exists)")
+	// CONTRACT RENEGOTIATED BY B421: this used to require the alert id even when the
+	// Bot API REFUSED the message, on the grounds that the /ack row exists. Both
+	// halves still matter, but the return value is the caller's only evidence that the
+	// operator was actually notified — and the disk monitor (B391) reads id == 0 as
+	// "not sent, try again", while returning the row id told it the opposite. So: the
+	// ROW still exists (the /ack numbering contract) and the RETURN is 0 (the truth
+	// about delivery), with the ledger naming the outcome.
+	ResetAlertDeliveryForTest()
+	t.Cleanup(ResetAlertDeliveryForTest)
+	if id := n.SendAlert("boom"); id != 0 {
+		t.Errorf("B421: a refused send returned id=%d, want 0 (the caller would believe it was delivered)", id)
+	}
+	var rows int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM telegram_alerts`).Scan(&rows); err != nil {
+		t.Fatalf("count alerts: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("B391: the /ack row must still exist for a refused send: rows = %d, want 1", rows)
+	}
+	if got := AlertDeliverySnapshot(); got.LastOutcome != AlertSendFailed {
+		t.Errorf("B421: last outcome = %q, want %q", got.LastOutcome, AlertSendFailed)
 	}
 }

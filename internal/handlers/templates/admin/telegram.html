@@ -172,6 +172,36 @@
     </form>
   </div>
 
+  {{/* B421: alerts take a DIFFERENT path from a reply, so "the bot answers" and
+       "notifications arrive" are two facts. This card is the second one, and the
+       button below walks the alert path (composer + recipient lookup + transport)
+       rather than the reply path the form above exercises. */}}
+  <div class="card">
+    <h3><i class="fa-solid fa-bell"></i> {{t "telegram.alert_delivery_title"}}</h3>
+    <p class="sub">{{t "telegram.alert_delivery_help"}}</p>
+    <table class="table">
+      <tr><td>{{t "telegram.alert_delivery_sent"}}</td><td><strong>{{.State.AlertDelivery.Sent}}</strong></td></tr>
+      <tr><td>{{t "telegram.alert_delivery_suppressed"}}</td><td>{{.State.AlertDelivery.Suppressed}}</td></tr>
+      <tr><td>{{t "telegram.alert_delivery_not_configured"}}</td><td>{{.State.AlertDelivery.NotConfigured}}</td></tr>
+      <tr><td>{{t "telegram.alert_delivery_failed"}}</td><td>{{.State.AlertDelivery.Failed}}</td></tr>
+    </table>
+    {{if .State.AlertDelivery.LastOutcome}}
+    <p class="sub">
+      <strong>{{t "telegram.alert_delivery_last"}}:</strong> {{.State.AlertDelivery.LastOutcome}}{{if .State.AlertDelivery.LastReason}} — {{.State.AlertDelivery.LastReason}}{{end}}
+      {{if .State.AlertDelivery.TargetSource}} · {{t "telegram.alert_delivery_target"}}: {{.State.AlertDelivery.TargetSource}} {{.State.AlertDelivery.TargetMasked}}{{end}}
+      {{if .State.AlertDelivery.LastPath}} · {{t "telegram.alert_delivery_path"}}: {{.State.AlertDelivery.LastPath}}{{end}}
+    </p>
+    {{else}}
+    <p class="sub">{{t "telegram.alert_delivery_never"}}</p>
+    {{end}}
+    <p class="sub">{{t "telegram.alert_test_help"}}</p>
+    <form action="/admin/telegram" method="POST">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="alert_test">
+      <button type="submit" class="btn"><i class="fa-solid fa-bell"></i> {{t "telegram.alert_test_button"}}</button>
+    </form>
+  </div>
+
   <div class="card">
     <h3><i class="fa-solid fa-list"></i> {{t "telegram.refresh_menu_title"}}</h3>
     <p class="sub">{{t "telegram.refresh_menu_help"}}</p>

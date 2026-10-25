@@ -1,5 +1,93 @@
 # Skygate release notes
 
+## v1.5.167 — a notification must either arrive or name the reason it did not (B421)
+
+**Date:** 2026-10-25 · **Base:** `v1.5.166` → this tag · **Compatibility:** none — no
+schema change, no configuration change. Nothing to do after the update; the page gains a
+card that answers the question you just asked.
+
+### The report and what it turned out to be
+
+«Если уже должны были прийти в телеграмм уведомления, то они не приходили.»
+
+This was a real defect, and a silent one: **alerts and replies resolved their recipient
+differently.**
+
+* `/admin/telegram` → «Отправить тест» sends a **reply** (`SendTelegramErr`). The reply
+  path deliberately falls back to a chat bound with `/start` + `[Bind]` when
+  `global_settings.telegram.chat_id` is empty.
+* Notifications went through `sendAlert`, which required **both**
+  `telegram.bot_token` and `telegram.chat_id`, and when the pair was incomplete it did:
+
+  ```go
+  if err != nil || !ok { return 0 }
+  ```
+
+  — no log line, no counter, no audit row.
+
+So on an installation where the bot was configured by **binding** a chat (or where only
+the token was saved), the bot answered commands, the test button said
+«Сообщение отправлено», and **every alert was dropped**. A test that exercises a different
+path than the product proves the wrong thing.
+
+### What changed
+
+**One recipient rule** (`internal/telegram/alert_ledger.go`, `resolveAlertTarget`):
+
+1. `telegram.bot_token` + `telegram.chat_id` from `global_settings` — as before;
+2. otherwise an **ADMIN** binding from `telegram_bindings` (lowest chat id, so two ticks
+   cannot disagree);
+3. otherwise nothing — and the reason is **named**.
+
+A **non-admin** binding is never used: an alert names hostnames, IPs and certificate
+subjects, and most bound chats belong to members, so that fallback would be a leak rather
+than a convenience. Pinned by `TestB421_MemberBindingIsNeverUsedForAlerts`.
+
+**A ledger of named outcomes**, with a counter for each:
+
+| Outcome | Meaning |
+|---|---|
+| `sent` | Bot API accepted it (an `#id` exists for `/ack`) |
+| `suppressed_dedup` | the same event was already delivered inside its window — not an error |
+| `not_configured_no_token` | no `telegram.bot_token` — there is no bot |
+| `not_configured_no_chat` | token present, no recipient: `chat_id` empty **and** no admin binding |
+| `chat_id_invalid` | the stored `chat_id` is not a number |
+| `send_failed` | recipient found, the API call failed (network, 4xx, parse) |
+
+Plus the last outcome with its reason, the **masked** recipient and the transport that
+carried the last delivery (`direct` or `relay:<host>`). Logging is rate-limited: the first
+occurrence always logs, repeats at most once per 10 minutes per outcome+reason — so a
+crashing producer cannot flood the journal while the counters keep counting.
+
+**The page says it.** `/admin/telegram` gains a «Доставка уведомлений» card with the
+counters, the last outcome and reason, the recipient and the transport, plus a button
+**«Отправить тестовое уведомление»** that walks the **alert** path
+(`SendAlertEvent` → recipient resolution → HTML transport), never sets a `DedupKey` and
+reports the outcome in the flash and in the audit (`telegram_alert_test`). The reply test
+above it stays — it tests the bot, not the alerts — and is now honestly a different thing.
+
+### What to check yourself
+
+1. `/admin/telegram` → «Доставка уведомлений». If it says **«не отправлено: нет
+   получателя»**, fill in «ID чата» (or `/start` + `[Bind]` from an admin account) —
+   that is the defect the page used to hide.
+2. Press «Отправить тестовое уведомление». Either the message arrives, or the flash names
+   the outcome and the reason.
+3. If the outcome is `send_failed` with a timeout, `api.telegram.org` is blocked from this
+   host (see `docs/TELEGRAM.md` §8 on the egress relay) — the alert was lost by the
+   network, and now that fact is visible instead of invisible.
+4. Zero in **all** counters means no trigger fired at all — a different state from
+   "dropped", and now distinguishable.
+
+`docs/TELEGRAM.md` §11 carries the outcome vocabulary and the list of events that MUST
+notify (disk, exit-node health, DB health, tag drift, update rollback, backup, certificate
+expiry, release, watchdog, HA).
+
+38 contracts in `scripts/check_b421_alert_delivery.sh`, with behaviour tests driving the
+real `sendAlert` against a fake Bot API: delivery, a 400 recorded as a failure with the
+token redacted, the admin-binding fallback end to end, and the legacy **70** call-site path
+reaching the same transport.
+
 ## v1.5.166 — the dialect leak guard sees the whole statement, and the leaks it could not see are fixed (B420, TD-27)
 
 **Date:** 2026-10-25 · **Base:** `v1.5.165` → this tag · **Compatibility:** none — no

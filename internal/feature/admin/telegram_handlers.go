@@ -197,6 +197,12 @@ func (s *Service) AdminTelegramPost(w http.ResponseWriter, r *http.Request) {
 		s.handleTelegramSave(w, r, c)
 	case "test":
 		s.handleTelegramTest(w, r, c)
+	case "alert_test":
+		// B421: a test that exercises the ALERT path (composer + the SAME target
+		// resolution + the SAME transport real notifications use), because «Send
+		// test» above tests a REPLY and the two used to resolve their target
+		// differently — a green reply test could coexist with every alert dropped.
+		s.handleTelegramAlertTest(w, r, c)
 	case "rotate":
 		s.handleTelegramRotate(w, r, c)
 	case "disable":

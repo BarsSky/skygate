@@ -30,6 +30,7 @@ import (
 	"skygate/internal/handlers"
 	"skygate/internal/keynotify"
 	"skygate/internal/mesh"
+	"skygate/internal/telegram"
 	"skygate/internal/tokenrotate"
 )
 
@@ -235,6 +236,13 @@ func wireOptionalSchedulers(ctx context.Context, d *db.ResettableDB, app *handle
 		Interval: envOrDefaultDuration("SKYGATE_DISK_MONITOR_INTERVAL_SEC", 10*time.Minute, time.Second),
 		Lang:     "", // i18n falls back to RU when the language is unknown
 	}).Start(ctx)
+
+	// B421 (2026-10-25): say, in the journal, WHICH recipient real notifications will use
+	// — or that there is none. The pre-fix code discovered "not configured" only at send
+	// time and then discarded the alert without a log line, so an install could answer
+	// bot commands for weeks while every notification vanished; this one line puts the
+	// answer in the first screenful of the journal, next to the disk monitor it affects.
+	telegram.LogAlertTargetAtBoot(db.DBCurrent(d))
 
 	// B417 (2026-10-24): keep the BASE routes of skygate-registered relays approved.	// Scope, decided by the operator: only 0.0.0.0/0 and ::/0, and only for nodes with
 	// a row in exit_servers — a relay skygate itself registered. Subnet routes and
