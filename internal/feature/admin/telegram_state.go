@@ -34,6 +34,11 @@ type telegramUIState struct {
 	// («уведомления не приходили») was the second one while every surface showed the
 	// first.
 	AlertDelivery telegram.AlertDeliveryStats
+	// AlertAdoptable (B422) is the ADMIN chat id that alerts are already using as a
+	// fallback while telegram.chat_id is empty — 0 when there is nothing to adopt.
+	// The page offers to persist it, so delivery stops depending on the fallback.
+	AlertAdoptable       int64
+	AlertAdoptableMasked string
 	// Egress carries the v0.33.1.8 "which relay runs
 	// Telegram-CIDR" selector. SelectedNodeID is the headscale
 	// node_id of the currently chosen exit-node ("" when none).
@@ -134,6 +139,12 @@ func (s *Service) loadTelegramUIState() telegramUIState {
 	// and "no alerts were delivered although the bot answers" are different
 	// facts, and the second one is the operator's report.
 	state.AlertDelivery = telegram.AlertDeliverySnapshot()
+	// B422: if alerts are currently riding an ADMIN binding because chat_id is empty, the
+	// page offers to make that binding explicit (one click, no typing of a numeric id).
+	if adoptable := telegram.AdoptableAdminChat(s.dbc()); adoptable != 0 {
+		state.AlertAdoptable = adoptable
+		state.AlertAdoptableMasked = telegram.MaskChatIDForDisplay(adoptable)
+	}
 	// v0.33.1.8: load the egress selector BEFORE the early
 	// return. The operator may want to pre-configure which
 	// relay terminates api.telegram.org traffic BEFORE the

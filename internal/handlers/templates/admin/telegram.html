@@ -200,6 +200,20 @@
       <input type="hidden" name="action" value="alert_test">
       <button type="submit" class="btn"><i class="fa-solid fa-bell"></i> {{t "telegram.alert_test_button"}}</button>
     </form>
+    {{/* B422: alerts are already riding an ADMIN binding because «ID чата» is empty. One
+         click writes that chat into the setting, so delivery stops depending on the
+         fallback (and on somebody remembering the second field). */}}
+    {{if .State.AlertAdoptable}}
+    <div class="alert alert-warn" style="margin-top:.75rem">
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      {{t "telegram.alert_adopt_hint"}} <strong>{{.State.AlertAdoptableMasked}}</strong>
+      <form action="/admin/telegram" method="POST" style="margin-top:.4rem">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <input type="hidden" name="action" value="adopt_chat">
+        <button type="submit" class="btn"><i class="fa-solid fa-thumbtack"></i> {{t "telegram.alert_adopt_button"}}</button>
+      </form>
+    </div>
+    {{end}}
   </div>
 
   <div class="card">

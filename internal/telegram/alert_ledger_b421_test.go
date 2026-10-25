@@ -370,8 +370,13 @@ func TestB421_MaskChatID(t *testing.T) {
 	if got := maskChatID(1234567890); got != "12******90" {
 		t.Fatalf("maskChatID = %q", got)
 	}
-	if got := maskChatID(42); got != "42" {
-		t.Fatalf("maskChatID(short) = %q, want the value unchanged", got)
+	// B422 tightened the short case: a four-digit id identifies a person just as well as a
+	// ten-digit one, so it must not be printed whole.
+	if got := maskChatID(42); got != "*2" {
+		t.Fatalf("maskChatID(42) = %q, want *2", got)
+	}
+	if got := maskChatID(4242); got != "***2" {
+		t.Fatalf("maskChatID(4242) = %q, want ***2", got)
 	}
 }
 

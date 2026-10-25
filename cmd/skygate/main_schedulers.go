@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"skygate/internal/alertcanary"
 	"skygate/internal/config"
 	"skygate/internal/db"
 	"skygate/internal/diskmon"
@@ -41,6 +42,13 @@ import (
 // enabled, so the journal still answers "what is running?" the way it did when
 // this code lived inside main().
 func wireOptionalSchedulers(ctx context.Context, d *db.ResettableDB, app *handlers.App, adminSvc *adminsvc.Service, cfg *config.Config) {
+	// B421/B422 (2026-10-25): FIRST, say in the journal which recipient real notifications
+	// will use — or that there is none. It is the first statement on purpose: it must not
+	// depend on any scheduler below having started, because the 2026-10-25 investigation
+	// found an install that had answered bot commands for months while every alert was
+	// dropped for want of a recipient, and nothing in the log said so.
+	telegram.LogAlertTargetAtBoot(db.DBCurrent(d))
+
 	// 2026-08-18 (B143, v1.4.3): in-app smoke-mesh
 	// cleanup scheduler. Mirrors the B142
 	// backup-verify-scheduler wire-up above. When
@@ -237,12 +245,20 @@ func wireOptionalSchedulers(ctx context.Context, d *db.ResettableDB, app *handle
 		Lang:     "", // i18n falls back to RU when the language is unknown
 	}).Start(ctx)
 
-	// B421 (2026-10-25): say, in the journal, WHICH recipient real notifications will use
-	// — or that there is none. The pre-fix code discovered "not configured" only at send
-	// time and then discarded the alert without a log line, so an install could answer
-	// bot commands for weeks while every notification vanished; this one line puts the
-	// answer in the first screenful of the journal, next to the disk monitor it affects.
-	telegram.LogAlertTargetAtBoot(db.DBCurrent(d))
+	// B421: the boot line now runs FIRST (see the top of this function) so it cannot depend
+	// on anything below; this comment stays as the pointer to why it exists at all.
+
+	// B422 (2026-10-25): the weekly "channel is alive" canary. A channel that never speaks
+	// looks exactly like a broken one — that is the whole finding of the 2026-10-25
+	// investigation — so once per interval the SAME alert path reports that it is alive and
+	// what it did (delivered / failed / recipient). It is a pure decision over a persisted
+	// timestamp, the first message waits firstDelay after boot (a restart is not a canary),
+	// and SKYGATE_ALERT_CANARY_HOURS=0 switches it off.
+	alertcanary.New(alertcanary.Config{
+		DB:       db.DBCurrent(d),
+		Sender:   app.Notifier,
+		Interval: envOrDefaultDuration("SKYGATE_ALERT_CANARY_HOURS", alertcanary.DefaultInterval, time.Hour),
+	}).Start(ctx)
 
 	// B417 (2026-10-24): keep the BASE routes of skygate-registered relays approved.	// Scope, decided by the operator: only 0.0.0.0/0 and ::/0, and only for nodes with
 	// a row in exit_servers — a relay skygate itself registered. Subnet routes and

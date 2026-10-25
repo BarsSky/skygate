@@ -201,6 +201,47 @@ func ResetAlertDeliveryForTest() {
 	alertLedgerMu.Unlock()
 }
 
+// AlertTargetAvailability answers "would an alert have a recipient right now?" plus a
+// human-readable, secret-free description of that recipient ("global_chat_id 42****42").
+//
+// B422 uses it from the canary scheduler: sending a "channel is alive" message through a
+// path that has no recipient would be a second silent failure dressed as a signal.
+func AlertTargetAvailability(d *sql.DB) (ok bool, desc string) {
+	tgt, outcome, reason := resolveAlertTarget(d)
+	if outcome != AlertSent {
+		return false, string(outcome) + ": " + reason
+	}
+	return true, tgt.source + " " + maskChatID(tgt.chatID)
+}
+
+// MaskChatIDForDisplay exposes the same masking the ledger uses, for a page that wants to
+// show WHICH chat is involved without printing a personal identifier.
+func MaskChatIDForDisplay(id int64) string { return maskChatID(id) }
+
+// AdoptableAdminChat returns the chat id that COULD become telegram.chat_id, or 0.
+//
+// B422: alerts already fall back to an ADMIN binding when telegram.chat_id is empty (B421),
+// which fixes delivery — but it leaves the configuration in a state nobody wrote down, so
+// the next person reading the page sees "chat_id: absent" while messages arrive. This
+// helper is the adoption half: 0 means "nothing to adopt" (chat_id already set, or no admin
+// binding), a non-zero id is the single admin chat the page offers to persist.
+func AdoptableAdminChat(d *sql.DB) int64 {
+	if d == nil {
+		return 0
+	}
+	if _, chatIDStr, ok, err := db.LoadTelegramSendTarget(d); err != nil || ok {
+		// Either a chat_id is already configured (nothing to adopt) or the settings
+		// could not be read (do not guess).
+		_ = chatIDStr
+		return 0
+	}
+	tgt, outcome, _ := resolveAlertTarget(d)
+	if outcome != AlertSent || tgt.source != TargetAdminBind {
+		return 0
+	}
+	return tgt.chatID
+}
+
 // LogAlertTargetAtBoot resolves the alert recipient ONCE at startup and says what it
 // found — in the journal, not only on a page nobody has open during an incident.
 //
@@ -354,13 +395,20 @@ func parseChatID(s string) (int64, error) {
 }
 
 // maskChatID keeps a chat id readable for support without printing it whole: a private
-// chat id is a personal identifier.
+// chat id is a personal identifier. Short ids are masked too (B422) — "4242" is not a
+// secret because it is short, it is a secret because it identifies a person.
 func maskChatID(id int64) string {
 	s := fmt.Sprintf("%d", id)
-	if len(s) <= 4 {
-		return s
+	switch {
+	case len(s) == 0:
+		return ""
+	case len(s) == 1:
+		return "*"
+	case len(s) <= 4:
+		return strings.Repeat("*", len(s)-1) + s[len(s)-1:]
+	default:
+		return s[:2] + strings.Repeat("*", len(s)-4) + s[len(s)-2:]
 	}
-	return s[:2] + strings.Repeat("*", len(s)-4) + s[len(s)-2:]
 }
 
 // alertTransportPath names the path that carried the last delivery, from the egress

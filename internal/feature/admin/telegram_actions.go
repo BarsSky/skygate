@@ -200,6 +200,43 @@ func alertTestFlash(id int64, stats telegram.AlertDeliveryStats) string {
 	}
 }
 
+// handleTelegramAdoptChat persists the ALERT recipient that was already being used.
+//
+// B422 (2026-10-25). The 2026-10-25 investigation of the operator's install found the
+// root of months of silence: `telegram.chat_id` was EMPTY, the bot had been configured by
+// binding a chat, and alerts (unlike replies and the "Send test" button) required
+// chat_id — so every alert was dropped, silently, in the pre-B421 code. B421 made an
+// ADMIN binding an acceptable recipient; this handler closes the remaining gap: the page
+// says "alerts are going to <chat>" and offers ONE CLICK to write that chat into
+// `telegram.chat_id`, so the configuration stops depending on the operator remembering a
+// second field.
+//
+// Guards, deliberately: only an ADMIN binding is ever adopted (never a member's chat), and
+// only when `chat_id` is currently empty — this must not overwrite an operator's choice.
+func (s *Service) handleTelegramAdoptChat(w http.ResponseWriter, r *http.Request, c *auth.Claims) {
+	adoptable := telegram.AdoptableAdminChat(s.dbc())
+	if adoptable == 0 {
+		s.redirectWithFlash(w, r, "", "Нечего переносить: либо chat_id уже задан, либо нет привязки администратора.")
+		return
+	}
+	token, _, _, err := db.LoadTelegramToken(s.dbc())
+	if err != nil || strings.TrimSpace(token) == "" {
+		s.redirectWithFlash(w, r, "", "Сначала сохраните токен бота.")
+		return
+	}
+	chat := fmt.Sprintf("%d", adoptable)
+	if err := db.SaveTelegramToken(s.dbc(), token, chat); err != nil {
+		s.redirectWithFlash(w, r, "", "Не удалось сохранить chat_id: "+err.Error())
+		return
+	}
+	s.Backend.Audit(c.UserID, c.Username, "telegram_chat_id_adopted",
+		fmt.Sprintf("chat=%s source=admin_binding", redactChatID(chat, token, c)))
+	s.invalidateTelegramProbe()
+	writeFlashRedirect(w, r, fmt.Sprintf(
+		"Получатель уведомлений закреплён: chat_id=%s (из привязки администратора). "+
+			"Теперь уведомления не зависят от того, помнит ли кто-то второе поле.", chat))
+}
+
 // testSendOutcome is what "Send test" really did: the targets that accepted the
 // message, and the ones that did not with the reason Telegram (or the loader)
 // gave.

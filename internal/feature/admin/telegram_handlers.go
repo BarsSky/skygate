@@ -203,6 +203,11 @@ func (s *Service) AdminTelegramPost(w http.ResponseWriter, r *http.Request) {
 		// test» above tests a REPLY and the two used to resolve their target
 		// differently — a green reply test could coexist with every alert dropped.
 		s.handleTelegramAlertTest(w, r, c)
+	case "adopt_chat":
+		// B422: persist the admin chat that alerts are ALREADY using as
+		// telegram.chat_id, so delivery stops depending on the fallback (and on
+		// somebody remembering the second field).
+		s.handleTelegramAdoptChat(w, r, c)
 	case "rotate":
 		s.handleTelegramRotate(w, r, c)
 	case "disable":

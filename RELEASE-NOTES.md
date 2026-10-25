@@ -1,5 +1,72 @@
 # Skygate release notes
 
+## v1.5.168 — the recipient must not depend on memory, and a silent channel must be distinguishable from a broken one (B422)
+
+**Date:** 2026-10-25 · **Base:** `v1.5.167` → this tag · **Compatibility:** none — no
+schema change, no configuration change.
+
+### The measurement that started this block
+
+The 2026-10-25 investigation of the reference installation, run with the new
+`scripts/diagnose_alerts.sh`, produced a verdict no surface had shown for months:
+
+| | |
+|---|---|
+| `telegram.bot_token` | present (46 chars) |
+| `telegram.chat_id` | **ABSENT** |
+| bound chats | 1 — and it is an **ADMIN** binding (user 1, lang ru) |
+| `telegram_alerts` | 1 row |
+| `tag.autoupdate_failed` | **3082** audit rows |
+| `exit_node_provision` (failed runs) | 5 |
+| disk / certs / backup failures | none (so silence was CORRECT there) |
+
+Alerts required `telegram.chat_id`; the bot had been configured by **binding** a chat; the
+manual test uses the binding and therefore arrived. So 3082 tag failures produced alerts
+that were dropped — silently, because the pre-B421 code returned 0 with no log line. The
+application even said so at every boot: «Telegram bot token set (no chat_id yet —
+receive-only)».
+
+### What changed
+
+1. **One-click adoption.** `/admin/telegram` → «Доставка уведомлений» now shows the admin
+   chat alerts are *already* using and offers **«Закрепить этот чат»**
+   (`action=adopt_chat`), which writes it into `telegram.chat_id`. Guarded by tests: only an
+   **admin** binding is ever proposed (alerts name hostnames, IPs and certificate subjects),
+   and never when a recipient is already configured. Audited as
+   `telegram_chat_id_adopted`.
+2. **A weekly canary** (`internal/alertcanary`): one short message per interval through the
+   **same** alert path — «канал уведомлений жив · доставлено N · ошибок M · получатель X».
+   The policy is a pure function (no recipient / firstDelay after boot / interval elapsed /
+   disabled); the last send is persisted (`global_settings.alerts.canary.last_at`) so a
+   restart does not repeat it; the first message waits 10 minutes after boot so a restart is
+   not a canary; a **failed** send is not recorded and is retried on the next tick (one
+   network blip must not silence a whole interval). Default: one week.
+   `SKYGATE_ALERT_CANARY_HOURS=0` switches it off.
+3. **The boot line** that names the alert recipient is now the **first statement** of the
+   scheduler wiring instead of a line after half a dozen schedulers — on the live install the
+   previous placement was present in the binary (`grep` finds the strings, `/app/skygate` is
+   the running build) yet absent from the container's journal. A claim in release notes must
+   be something you have seen.
+4. **`scripts/diagnose_alerts.sh`** — the investigation itself, repeatable in one command:
+   read-only, docker and native, PostgreSQL and SQLite, no secret printed. It answers: what
+   runs (and which build), who the alert recipient is, what was actually delivered, and
+   which alert-worthy events happened — then prints a verdict.
+
+### What to check yourself
+
+1. `/admin/telegram` → «Доставка уведомлений»: if the banner offers a chat, press
+   **«Закрепить этот чат»** — that is the setting that was empty.
+2. Within 10 minutes (first canary) and then weekly you should receive one message that says
+   the channel is alive. If it does not arrive, the ledger on the same card says why.
+3. Any future silence is now interpretable: zero counters = no events; a named outcome =
+   a delivery problem with its reason.
+
+39 contracts in `scripts/check_b422_alert_coverage.sh`; behaviour tests cover the canary
+policy table, the real tick (send-once, persist, retry after a failure), the adoption guards
+and the masked recipient description. **Recorded follow-up, not silently dropped:** threshold
+alerts for `cluster.discovery.error` (13310 rows on the reference install) and `login_fail`
+bursts are NOT part of this block.
+
 ## v1.5.167 — a notification must either arrive or name the reason it did not (B421)
 
 **Date:** 2026-10-25 · **Base:** `v1.5.166` → this tag · **Compatibility:** none — no
