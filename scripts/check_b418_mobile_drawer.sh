@@ -29,12 +29,12 @@
 # and hang past the 280px edge — B392 measured the cut at ~38 % of the panel. Containment
 # comes from the flex chain (B1-B3), not from a clip box.
 #
-# CONTRACTS (20)
+# CONTRACTS (21)
 #   A  the drawer is the visible viewport: anchored, dvh-capped, must NOT clip (B392), safe-area
 #   B  the bottom block cannot be pushed out: nav is the only scroller + shrink-proof block
 #   C  the backdrop owns the footer: real label in layout.html, checkbox-driven, old
 #      `main::before` overlay gone, page scroll locked
-#   D  both stylesheet copies agree (B392/B411 rule) and the Go pins are real
+#   D  both stylesheet copies agree (B392/B411 rule), the Go pins are real, and the URL is versioned
 #   E  registered in the catalog, indexed in AGENTS.md, tracked by git
 
 set -uo pipefail
@@ -180,6 +180,17 @@ if grep -q 'func TestB418_' "$GO_TEST"; then
   ok "D2: the Go pins live in $GO_TEST"
 else
   bad "D2: no TestB418_* in the Go test file"
+fi
+# D3: the fix must be ABLE TO ARRIVE. `themes.css` is served with max-age=86400 and has
+# no content hash in its path, so an unversioned URL lets a phone reuse the previous
+# release's stylesheet for a day — the operator updates, opens the phone, sees the old
+# layout and reports «не исправилось». The query is ignored by StaticHandler (it keys on
+# r.URL.Path), so the version is a cache key and nothing else.
+if grep -qF 'href="/static/css/themes.css?v={{.Version}}"' "$LAYOUT" &&
+   ! grep -qF 'href="/static/css/themes.css"' "$LAYOUT"; then
+  ok "D3: the stylesheet URL carries the build version (a UI fix can actually reach a cached browser)"
+else
+  bad "D3: themes.css is linked without ?v={{.Version}} — a browser may serve a day-old copy of the file this release changed"
 fi
 
 # --- E: registration --------------------------------------------------------

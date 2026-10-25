@@ -44,18 +44,29 @@ footer**, closes the drawer on tap (a `<label for>` toggles the checkbox for fre
 what is underneath. `body:has(.sidebar-toggle-input:checked){overflow:hidden}` stops the page
 behind the open drawer from scrolling; browsers without `:has()` simply ignore that one line.
 
+### 3. The fix could not reach the phone
+
+The static handler serves `themes.css` with `Cache-Control: public, max-age=86400,
+must-revalidate` and the path carries no content hash — so a phone may reuse a **day-old
+copy of the very file every UI release edits**. A correct fix would then look like it did
+nothing. The stylesheet is now linked as `/static/css/themes.css?v={{.Version}}`: the
+static handler keys on `r.URL.Path`, so the query changes only the cache key, and every
+release fetches its own stylesheet. (`font-awesome.min.css` keeps the plain URL — a
+vendored file that changes only when it is replaced.)
+
 ### Verification
 
-* `scripts/check_b418_mobile_drawer.sh` — **20 contracts** (A: anchored / `dvh` /
+* `scripts/check_b418_mobile_drawer.sh` — **21 contracts** (A: anchored / `dvh` /
   **must not clip** (the B392 bell panel) / safe-area; B: `min-height:0`, nav is the only
   scroller, shrink-proof bottom block; C: the backdrop is a real element, checkbox-driven, the
   old `main::before` is **gone**, scroll lock, the label is shipped and precedes `<main>`;
-  D: the two stylesheet copies are byte-identical and the Go pins exist; E: registered in the
-  catalog, indexed in `AGENTS.md`, tracked by git).
-* `internal/handlers/mobile_drawer_b418_test.go` — 4 pins that read the **real** stylesheet and
+  D: the two stylesheet copies are byte-identical, the Go pins exist and the URL carries the
+  build version; E: registered in the catalog, indexed in `AGENTS.md`, tracked by git).
+* `internal/handlers/mobile_drawer_b418_test.go` — 5 pins that read the **real** stylesheet and
   the **real** layout template, so a rule that brings back `height:100vh` on the drawer, lets
-  the bottom block be pushed out, clips the drawer's own popovers, puts the dim layer back on
-  `main::before` or stacks it under the content fails the gate instead of the operator's phone.
+  the bottom block be pushed out, clips the drawer's own popovers, drops the versioned
+  stylesheet URL, puts the dim layer back on `main::before` or stacks it under the content
+  fails the gate instead of the operator's phone.
 * `static/css/themes.css` and `internal/staticfs/static/css/themes.css` are byte-identical
   (the served copy and the one the Go tests read — the B392/B411 rule).
 

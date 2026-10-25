@@ -19,7 +19,15 @@
      with the system fallback, then swaps to the webfont
      when loaded. No more external <link>s. */}}
 <link rel="stylesheet" href="/static/css/font-awesome.min.css">
-<link rel="stylesheet" href="/static/css/themes.css">
+{{/* B418 (2026-10-25) — the stylesheet URL carries the BUILD version, so a UI fix is
+     actually seen after an update. The static handler serves themes.css with
+     `Cache-Control: public, max-age=86400, must-revalidate` and the path carries no
+     content hash, so a browser may reuse a day-old copy of the very file every UI
+     release edits — the operator would update, open the phone, and see the OLD layout
+     ("не исправилось"). The query string is ignored by StaticHandler (it keys on
+     r.URL.Path), so this changes nothing but the cache key. font-awesome.min.css is a
+     vendored file that only changes when it is replaced, so it keeps the plain URL. */}}
+<link rel="stylesheet" href="/static/css/themes.css?v={{.Version}}">
 {{/* B136: per-user display overrides. :root --font wins over
      themes.css because this <style> is loaded AFTER it. The
      font-size calc(15px + Npx) applies the per-user scale

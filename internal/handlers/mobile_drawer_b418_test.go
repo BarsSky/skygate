@@ -154,6 +154,21 @@ func TestB418_BackdropOwnsTheFooter(t *testing.T) {
 	}
 }
 
+// TestB418_StylesheetURLIsVersioned pins the reason a fix can look like it did not
+// land: the served stylesheet has no content hash and is cacheable for a day, so an
+// unversioned URL means a phone may render the PREVIOUS release's CSS after an update.
+func TestB418_StylesheetURLIsVersioned(t *testing.T) {
+	layout := readLayout(t)
+	want := `href="/static/css/themes.css?v={{.Version}}"`
+	if !strings.Contains(layout, want) {
+		t.Error("B418 FAIL: the themes.css link lost the build version — a phone can reuse a " +
+			"day-old copy of the file every UI release edits, so the update looks like it did nothing")
+	}
+	if strings.Contains(layout, `href="/static/css/themes.css"`) {
+		t.Error("B418 FAIL: the unversioned themes.css URL is back")
+	}
+}
+
 // TestB418_DrawerStaysAboveContent pins the stacking order the operator described as
 // «меню перекрывает футтер»: the drawer above the backdrop, the backdrop above the page.
 func TestB418_DrawerStaysAboveContent(t *testing.T) {
