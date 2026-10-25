@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"fmt"
-	"skygate/internal/db"
 	"skygate/internal/i18n"
 	"strconv"
 )
@@ -21,7 +20,7 @@ func myStatusReply(env BotEnv) string {
 	if env.Username == "" {
 		return i18n.T(lang, "bot.my_status.no_username")
 	}
-	var ruleCount, deviceCount int64
+	var ruleCount int64
 	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = $1`, env.PortalUserID).Scan(&ruleCount); err != nil {
 		return i18n.Tf(lang, "bot.my_status.db_error", err)
 	}
@@ -30,8 +29,19 @@ func myStatusReply(env BotEnv) string {
 	// (rather than a separate COUNT query) so the helper stays a
 	// single source of truth; the slice is tiny (a user's devices)
 	// so the cost is negligible.
-	owned, _ := db.ListNodeOwnersByUsername(env.DB, env.Username)
-	deviceCount = int64(len(owned))
+	//
+	// B390 (TD-33 H2): the error used to be discarded, so a failed read
+	// printed "devices: 0" — a number that had never been measured. The
+	// count is now either a measured number or an explicit "н/д" plus the
+	// reason, and the reason is on the same line the user reads.
+	deviceS := ""
+	var devicesErr error
+	if n, err := deviceCountForUser(env.DB, env.Username); err != nil {
+		devicesErr = err
+		deviceS = i18n.T(lang, "bot.my_status.value_unavailable")
+	} else {
+		deviceS = fmt.Sprintf("%d", n)
+	}
 	var lastACL int64
 	_ = env.DB.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM acl_snapshots WHERE applied_success = 1`).Scan(&lastACL)
 
@@ -49,12 +59,15 @@ func myStatusReply(env BotEnv) string {
 	// looks tabbed against the label.
 	rulesLine := fmt.Sprintf("%d / %s", ruleCount, capStr)
 	lastACLS := fmt.Sprintf("#%d", lastACL)
-	deviceS := fmt.Sprintf("%d", deviceCount)
-	return i18n.Tf(lang, "bot.my_status.header", env.Username) + "\n\n" +
+	out := i18n.Tf(lang, "bot.my_status.header", env.Username) + "\n\n" +
 		Section(i18n.T(lang, "bot.my_status.section_summary")) + "\n" +
 		Field(i18n.T(lang, "bot.my_status.label_rules"), rulesLine) + "\n" +
 		Field(i18n.T(lang, "bot.my_status.label_devices"), deviceS) + "\n" +
 		Field(i18n.T(lang, "bot.my_status.label_last_acl"), lastACLS)
+	if devicesErr != nil {
+		out += "\n" + i18n.Tf(lang, "bot.my_status.devices_unavailable", devicesErr)
+	}
+	return out
 }
 
 // myStatusBlocks is the Bot API 10.1 Rich Message variant of

@@ -53,7 +53,7 @@ func myStatusBlocks(env BotEnv) ([]RichBlock, error) {
 	if env.Username == "" {
 		return nil, fmt.Errorf("no username")
 	}
-	var ruleCount, deviceCount int64
+	var ruleCount int64
 	if err := env.DB.QueryRow(`SELECT COUNT(*) FROM device_rules WHERE user_id = $1`, env.PortalUserID).Scan(&ruleCount); err != nil {
 		return nil, err
 	}
@@ -65,8 +65,16 @@ func myStatusBlocks(env BotEnv) ([]RichBlock, error) {
 	// at line 75; the rich path must too. Live
 	// reproduction: 2026-08-25 screenshot showed
 	// skyadmin (7 devices) → "устройств 0".
-	if owned, derr := db.ListNodeOwnersByUsername(env.DB, env.Username); derr == nil {
-		deviceCount = int64(len(owned))
+	//
+	// B390 (TD-33 H2): and a FAILED read is not a zero either — the
+	// dispatch above deliberately falls back to the legacy body on an
+	// error, but that body used to print "0" too. Both paths now share
+	// deviceCountForUser and both say "н/д" with the reason.
+	deviceS := ""
+	if n, err := deviceCountForUser(env.DB, env.Username); err != nil {
+		deviceS = i18n.T(lang, "bot.my_status.value_unavailable")
+	} else {
+		deviceS = fmt.Sprintf("%d", n)
 	}
 	cap := env.MaxFor(env.Username)
 	capStr := "∞"
@@ -85,7 +93,6 @@ func myStatusBlocks(env BotEnv) ([]RichBlock, error) {
 	//   <i>footer</i>                              (footer)
 	rulesLine := fmt.Sprintf("%d / %s", ruleCount, capStr)
 	lastACLS := fmt.Sprintf("#%d", lastACL)
-	deviceS := fmt.Sprintf("%d", deviceCount)
 	header := i18n.Tf(lang, "bot.my_status.header", env.Username)
 	section := i18n.T(lang, "bot.my_status.section_summary")
 
@@ -99,7 +106,6 @@ func myStatusBlocks(env BotEnv) ([]RichBlock, error) {
 		Footer(i18n.T(lang, "bot.my_status.subheader")),
 	}
 	_ = section // keep var used (linter satisfaction; section shows up in the legacy HTML render)
-	_ = deviceS // kept for the same linter satisfaction; the real value is in the table cell below
 	return blocks, nil
 }
 
@@ -697,6 +703,15 @@ func mySubnetShareReply(env BotEnv, args []string) string {
 	if !res.Applied {
 		log.Printf("subnet_share: ACL reapply failed user=%d -> %d: %v (share is in DB; click 'Re-apply ACL' to push)",
 			env.PortalUserID, granteeID, res.Err)
+		// B390 (TD-33 H4): the reply used to say «ACL пере-применён» regardless —
+		// the failure existed only in this log line, so the user's next /mysubnet
+		// looked right while the shared subnet was still unreachable. The share
+		// row IS in the database, so the message says exactly that and names the
+		// remedy; it never claims the policy was pushed.
+		_ = db.AppendAuditLog(env.DB, env.PortalUserID, env.Username, "subnet_share",
+			fmt.Sprintf("via bot: share %s -> %s written, ACL re-apply FAILED: %v", env.Username, granteeName, res.Err))
+		return i18n.Tf(lang, "bot.mysubnet.share_ok_acl_failed",
+			env.Username, granteeName, res.Err)
 	}
 	return i18n.Tf(lang, "bot.mysubnet.share_ok",
 		env.Username, granteeName)
@@ -746,6 +761,12 @@ func mySubnetRevokeReply(env BotEnv, args []string) string {
 	if !res.Applied {
 		log.Printf("subnet_revoke: ACL reapply failed user=%d -> %d: %v (revoke is in DB; click 'Re-apply ACL' to push)",
 			env.PortalUserID, granteeID, res.Err)
+		// B390 (TD-33 H4): symmetric to share — the revoke row is gone from the
+		// database, the policy still allows the subnet, and only the log knew.
+		_ = db.AppendAuditLog(env.DB, env.PortalUserID, env.Username, "subnet_revoke",
+			fmt.Sprintf("via bot: revoke %s -> %s written, ACL re-apply FAILED: %v", env.Username, granteeName, res.Err))
+		return i18n.Tf(lang, "bot.mysubnet.revoke_ok_acl_failed",
+			env.Username, granteeName, res.Err)
 	}
 	return i18n.Tf(lang, "bot.mysubnet.revoke_ok",
 		env.Username, granteeName)

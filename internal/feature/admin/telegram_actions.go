@@ -82,12 +82,20 @@ func (s *Service) handleTelegramTest(w http.ResponseWriter, r *http.Request, c *
 		s.redirectWithFlash(w, r, "", "Ошибка чтения chat_id из БД: "+err.Error())
 		return
 	}
-	sentCount := 0
-	sentTargets := []string{}
+	// B390 (TD-33 H5): the sends below now report whether they worked. The old
+	// handler called the fire-and-forget SendTelegram/SendTelegramToChat and then
+	// counted its own LOOP ITERATIONS, so "Send test" answered «Сообщение
+	// отправлено (N шт.)» for a missing token, an unparseable chat_id and an
+	// `{"ok":false,"description":"chat not found"}` answer alike — a test button
+	// that cannot fail. A tester that cannot fail is worse than none: it tells
+	// the operator the channel works while the alert that matters is dropped.
+	type target struct {
+		label string
+		chat  int64 // 0 = global chat_id from settings
+	}
+	var targets []target
 	if hasGlobal && globalChatID != "" {
-		s.Notifier.SendTelegram(text)
-		sentCount = 1
-		sentTargets = append(sentTargets, "global chat_id="+globalChatID)
+		targets = append(targets, target{label: "global chat_id=" + globalChatID})
 	} else {
 		bindings, lerr := db.ListTelegramBindings(s.dbc())
 		if lerr != nil {
@@ -101,18 +109,73 @@ func (s *Service) handleTelegramTest(w http.ResponseWriter, r *http.Request, c *
 			return
 		}
 		for _, b := range bindings {
-			s.Notifier.SendTelegramToChat(text, b.ChatID)
-			sentCount++
-			sentTargets = append(sentTargets, fmt.Sprintf("binding chat_id=%d", b.ChatID))
+			targets = append(targets, target{
+				label: fmt.Sprintf("binding chat_id=%d", b.ChatID),
+				chat:  b.ChatID,
+			})
 		}
 	}
+	outcome := sendTestMessages(len(targets), func(i int) error {
+		if targets[i].chat == 0 {
+			return s.Notifier.SendTelegramErr(text)
+		}
+		return s.Notifier.SendTelegramToChatErr(text, targets[i].chat)
+	}, func(i int) string { return targets[i].label })
+
+	// The audit row carries BOTH halves, so the operator's own record of a
+	// failed test survives the flash message.
 	auditDetail := subject
-	if len(sentTargets) > 0 {
-		auditDetail = fmt.Sprintf("%s [%s]", subject, strings.Join(sentTargets, ", "))
+	if len(outcome.sent) > 0 {
+		auditDetail = fmt.Sprintf("%s [sent: %s]", subject, strings.Join(outcome.sent, ", "))
+	}
+	if len(outcome.failed) > 0 {
+		auditDetail = fmt.Sprintf("%s [failed: %s]", auditDetail, strings.Join(outcome.failed, "; "))
 	}
 	s.Backend.Audit(c.UserID, c.Username, "telegram_test_sent", auditDetail)
-	flash := fmt.Sprintf("Сообщение отправлено (%d шт.). Проверьте Telegram: %s.", sentCount, strings.Join(sentTargets, ", "))
+
+	flash := testFlashMessage(outcome)
 	writeFlashRedirect(w, r, flash)
+}
+
+// testSendOutcome is what "Send test" really did: the targets that accepted the
+// message, and the ones that did not with the reason Telegram (or the loader)
+// gave.
+type testSendOutcome struct {
+	sent   []string
+	failed []string
+}
+
+// sendTestMessages performs the sends and classifies them.
+//
+// Split out of the handler so it can be exercised without HTTP: it is the half
+// that decides what the operator is told, and the B390 defect lived exactly here
+// (a reply that assumed success instead of asking).
+func sendTestMessages(n int, send func(i int) error, label func(i int) string) testSendOutcome {
+	var out testSendOutcome
+	for i := 0; i < n; i++ {
+		if err := send(i); err != nil {
+			out.failed = append(out.failed, fmt.Sprintf("%s: %v", label(i), err))
+			continue
+		}
+		out.sent = append(out.sent, label(i))
+	}
+	return out
+}
+
+// testFlashMessage is the operator-facing sentence: a success only when every
+// target accepted the message, and the reasons otherwise.
+func testFlashMessage(o testSendOutcome) string {
+	if len(o.failed) == 0 {
+		return fmt.Sprintf("Сообщение отправлено (%d шт.). Проверьте Telegram: %s.",
+			len(o.sent), strings.Join(o.sent, ", "))
+	}
+	if len(o.sent) == 0 {
+		return fmt.Sprintf("НЕ отправлено ни одного сообщения (%d попыток). Причина: %s. "+
+			"Проверьте токен, chat_id и доступность api.telegram.org из контейнера.",
+			len(o.failed), strings.Join(o.failed, "; "))
+	}
+	return fmt.Sprintf("Отправлено %d, НЕ отправлено %d. Успешно: %s. Ошибки: %s.",
+		len(o.sent), len(o.failed), strings.Join(o.sent, ", "), strings.Join(o.failed, "; "))
 }
 
 func (s *Service) handleTelegramRotate(w http.ResponseWriter, r *http.Request, c *auth.Claims) {

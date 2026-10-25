@@ -1,5 +1,88 @@
 # Skygate release notes
 
+## v1.5.163 — the bot stops stating values it does not have (B390, TD-33)
+
+**Date:** 2026-10-25 · **Base:** `v1.5.162` → this tag · **Compatibility:** no migration,
+no config change. Telegram replies, one admin handler, one i18n pair set.
+
+### What was measured
+
+An audit of every Telegram surface (40 commands, 5 inline callbacks, 4 gate replies,
+61 notification triggers) found **six replies answering with a value nobody had
+measured**, and one language defect. None of them crashed; all of them told the
+operator something that was not true.
+
+1. **`/exit_nodes` and `/myexitnodes` called every relay `offline`.** Both read
+   `SELECT … FROM devices`, and that table has **no writer anywhere in the
+   repository** — its only `INSERT` was a test fixture removed in v1.3.0 — so the
+   query always returned zero rows, `online == 0` was read as "not online", and a
+   relay carrying live traffic was reported dead. This is the B273 incident class, on
+   the two commands B273 did not touch.
+2. **`/my_status` printed `devices: 0` when the read failed** — the error was
+   discarded in both the legacy and the rich path (B186.3 had only pinned that the
+   call existed, not that its result decided the number).
+3. **`/version` printed a hand-maintained constant `dbSchemaVersion = "v0.32"`**
+   against a live **v0.81** schema — 49 migrations of silence — and `/help`
+   recommended it as the post-deploy check.
+4. **`/mysubnet share|revoke` answered «ACL пере-применён»** while a failed re-apply
+   existed only in the log. Worse, a **nil headscale client** (read-only deploy,
+   corrupt per-plane key) made `acl.ApplyGeneratedPolicy` **panic** on the nil
+   receiver instead of refusing.
+5. **`/admin/telegram` → «Send test» always reported «Сообщение отправлено (N шт.)»** —
+   `SendTelegram` returns nothing, so the handler counted its own loop iterations.
+   A tester that cannot fail is worse than none.
+6. **`/delrule` and `/clearrules` counted iterations, not deletions** (`deleted++`
+   outside any error check), so a failed `DELETE`, an already-gone rule and somebody
+   else's rule were all reported — and audited — as deleted.
+7. **`/help <cmd>` was a 150-line switch of hardcoded English** while 23
+   `bot.help_detail.*` translations sat unused in both catalogues.
+
+### What changed
+
+* `internal/telegram/exit_node_truth_b390.go` — one snapshot loader and one ladder
+  mapper. The state comes from `exit_node_health` (the monitor snapshot
+  `/admin/exit-nodes` renders) and B273's **whole** ladder is shown: *online /
+  untagged / degraded / offline*. A relay the snapshot does not describe says
+  **«нет данных»** — an absent value is not a measured zero — and an unreadable
+  snapshot is reported as a fact about the **read**, never as a status per node.
+* `deviceCountForUser` — both `/my_status` paths share one counter and render
+  «н/д» **plus the reason** on failure.
+* `schemaLevelLabel` — `/version` reads `MAX(version)` from `applied_migrations`
+  (`db.LatestAppliedMigrationVersion`), with "no migration applied yet" and
+  "n/a (reason)" as the honest fallbacks. The constant is gone.
+* `/mysubnet share|revoke` have distinct replies for an unapplied ACL (plus an
+  audit row), and `acl.ApplyGeneratedPolicy` now refuses a nil client the way
+  `ApplyACLForAllPlanes` already did.
+* The `Notifier` interface gained `SendTelegramErr` / `SendTelegramToChatErr`;
+  `NoopNotifier` refuses with `ErrTelegramNotConfigured`, `postToChatErr` carries
+  Telegram's own `description`, and «Send test» counts **deliveries** and says
+  «НЕ отправлено …» with the reason when nothing arrived.
+* `db.DeleteRuleForUserRows` reports rows affected and one shared `deleteRuleJobs`
+  counts real work: a zero-row `DELETE` is "nothing happened", the cascade can no
+  longer go negative, and both replies (and their audit rows) name what was **not**
+  deleted.
+* `/help <cmd>` reads `bot.help_detail.<command>` in the caller's language; the two
+  commands that had no key (`exit_nodes_health`, `sync_nodes`) were added, and the
+  `exit_nodes` / `myexitnodes` texts now describe the health snapshot instead of the
+  writerless `devices` table.
+
+### Verification
+
+`scripts/check_b390_bot_truth.sh` — **27 contracts** in three kinds:
+
+* source pins (no reply may query `devices`; no hardcoded schema constant; the delete
+  paths carry no unconditional counter; the ladder maps every rung) with Go comments
+  stripped first, so a banner that names the defect cannot satisfy the check;
+* **behavioural tests** run inside the contract — `internal/telegram/bot_truth_b390_test.go`
+  (9), `notify_truth_b390_test.go` (4), `internal/feature/admin/telegram_actions_b390_test.go` (3)
+  — all against a **real migrated SQLite database**. The H1 fixtures make the two
+  sources **disagree on purpose** (`devices` says online, the snapshot says offline),
+  so a reply that goes back to the writerless table flips the answer and the test
+  fails; H2 drops the table the count reads; H3 records a migration version the
+  retired constant could never have been; H4 runs with a nil client; H5 feeds the
+  sender a fake Bot API answering `{"ok":false,"description":"chat not found"}`;
+* registration (catalog, this index, git-tracked script).
+
 ## v1.5.162 — the mobile drawer is the visible viewport (B418)
 
 **Date:** 2026-10-25 · **Base:** `v1.5.161` → this tag · **Compatibility:** no migration, no

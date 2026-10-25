@@ -272,6 +272,33 @@ type MigrationRecord struct {
 	FirstSeen  string
 }
 
+// LatestAppliedMigrationVersion answers "what schema level is this
+// database at?" from the database itself — the highest version that
+// actually ran.
+//
+// B390 (2026-10-25): this exists because /version in the bot printed a
+// HAND-MAINTAINED CONSTANT ("v0.32") against a live v0.81 schema. A
+// number a human must remember to bump is not a fact about the
+// deployment; a constant that disagreed with the database for 49
+// migrations was reported to the operator — and recommended by /help —
+// as the post-deploy check. Read it, do not assert it.
+//
+// Returns (0, nil) for a database where no migration was recorded yet
+// (a fresh install before the first chain run): "none applied" is a
+// fact, not an error. A real read failure is returned as an error so
+// the caller can say "unknown" instead of inventing a number.
+func LatestAppliedMigrationVersion(d *sql.DB) (int, error) {
+	if d == nil {
+		return 0, fmt.Errorf("no database handle")
+	}
+	var v int
+	err := d.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM applied_migrations`).Scan(&v)
+	if err != nil {
+		return 0, fmt.Errorf("read applied_migrations: %w", err)
+	}
+	return v, nil
+}
+
 // IsIntegrityHard reports whether the current mode is HARD
 // (for tests + the env-var override in cmd/skygate/main.go).
 func IsIntegrityHard() bool {

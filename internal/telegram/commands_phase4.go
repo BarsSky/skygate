@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"fmt"
 	"math/big"
 	"os"
@@ -32,11 +33,33 @@ import (
 // /help <command> — detailed help for a single command. The plain
 // /help still shows the short list (backward compatible).
 
-// dbSchemaVersion is the most recent migration level. Bump this
-// when a new migrations_v*.go is added. The version string is the
-// number of the highest migration in cmd/skygate's migrate() chain
-// (see internal/db/db.go).
-const dbSchemaVersion = "v0.32"
+// schemaLevelLabel answers "what schema level is this database at?" from the
+// database itself.
+//
+// B390 (TD-33 H3): this replaced a hand-maintained constant
+//
+//	const dbSchemaVersion = "v0.32"
+//
+// which had disagreed with the live database for 49 migrations — the bot reported
+// v0.32 against a v0.81 schema, and /help recommended /version as the post-deploy
+// check. A number a human must remember to bump is not a fact about the deployment
+// (the same class as "0 devices" and "every relay offline": a value that CAN be
+// right, is not measured, and is therefore wrong in silence).
+//
+// The label is the migration's own version number, formatted the way the migration
+// registry names it (version 81 → "v0.81"), so it is comparable with
+// `applied_migrations` and with the registry in internal/db.
+func schemaLevelLabel(lang string, d *sql.DB) string {
+	v, err := db.LatestAppliedMigrationVersion(d)
+	if err != nil {
+		return i18n.Tf(lang, "bot.version.schema_unavailable", err)
+	}
+	if v == 0 {
+		// A database where no migration ran yet: say that, do not invent a level.
+		return i18n.T(lang, "bot.version.schema_none")
+	}
+	return fmt.Sprintf("v0.%d", v)
+}
 
 // restartTTL is how long a freshly-issued /restart token is valid.
 // 30s is enough for a human to type the 6-char token in a follow-up
@@ -122,7 +145,7 @@ func versionReply(env BotEnv) string {
 	return i18n.T(env.Lang, "bot.version.title") + "\n\n" +
 		Field(i18n.T(env.Lang, "bot.version.label_build"), v) + "\n" +
 		Field(i18n.T(env.Lang, "bot.version.label_go"), runtime.Version()) + "\n" +
-		Field(i18n.T(env.Lang, "bot.version.label_schema"), dbSchemaVersion)
+		Field(i18n.T(env.Lang, "bot.version.label_schema"), schemaLevelLabel(env.Lang, env.DB))
 }
 
 // versionBlocks is the B186 rich-message variant of
@@ -146,7 +169,7 @@ func versionBlocks(env BotEnv) []RichBlock {
 		KeyValueTableLang(env.Lang, []KVRow{
 			{Label: i18n.T(env.Lang, "bot.version.label_build"), Value: v},
 			{Label: i18n.T(env.Lang, "bot.version.label_go"), Value: runtime.Version()},
-			{Label: i18n.T(env.Lang, "bot.version.label_schema"), Value: dbSchemaVersion},
+			{Label: i18n.T(env.Lang, "bot.version.label_schema"), Value: schemaLevelLabel(env.Lang, env.DB)},
 		}),
 	}
 }
@@ -234,167 +257,26 @@ func mintRestartToken() (string, error) {
 }
 
 // helpDetailReply returns long-form help for a single command.
-// Unknown commands return a hint pointing the operator back at /help.
-// The short /help (no arg) still calls the legacy helpReply in
-// commands.go so existing operators don't lose the overview.
 //
-// env is currently unused but kept in the signature so the help
-// text can be tailored (e.g. omit admin commands for non-admin
-// callers) in a future change without a separate API.
+// B390 (TD-33, the last item): the 23 reference texts already lived in BOTH
+// catalogues as `bot.help_detail.<command>`, and this function ignored them —
+// it was a 150-line switch of hardcoded ENGLISH strings, so a Russian-speaking
+// operator who asked /help exit_nodes got English back while the translation sat
+// unused in the runtime catalogue. The lookup below IS the reference: the
+// catalogue is the single source, and a command without an entry says so
+// (in the caller's language) instead of falling through to an English default.
+//
+// The short /help (no argument) still calls helpReply in commands.go.
 func helpDetailReply(cmd string, env BotEnv) string {
-	_ = env
-	cmd = strings.ToLower(strings.TrimPrefix(cmd, "/"))
-	switch cmd {
-	case "status":
-		return "/status — quick system summary (admin only).\n" +
-			"Shows: total exit-rules, total portal users, last applied ACL snapshot version.\n" +
-			"Use /my_status for your own summary instead.\n" +
-			"Example: /status"
-	case "nodes":
-		return "/nodes — list all tailnet devices grouped by tag (admin only).\n" +
-			"Reads node_owner_map (the portal's snapshot of headscale's tag layout).\n" +
-			"Tags: tag:private (per-user), tag:public (shared), tag:exit-node (egress), tag:untagged.\n" +
-			"Use /my_nodes to see only your own devices.\n" +
-			"Example: /nodes"
-	case "exit_nodes":
-		return "/exit_nodes — list ONLY nodes tagged as exit-nodes, with last-seen (admin only).\n" +
-			"Use this when /nodes is too noisy and you want to check egress health.\n" +
-			"offline = devices.last_seen is null (headscale hasn't reported it recently).\n" +
-			"Example: /exit_nodes"
-	case "exit_nodes_health":
-		// 2026-07-15: v0.13.0 — help for the new
-		// health-monitor command. Distinct from /exit_nodes
-		// (which is per-user device list) and /nodes (which
-		// is every device): this is the background
-		// monitor's view (state = online | offline |
-		// degraded, last_check timestamp).
-		return "/exit_nodes_health — show exit-node health from the background monitor (admin only).\n" +
-			"One row per node: state (online/offline/degraded), last_seen relative, last_check.\n" +
-			"Output is grouped by state (offline first, then degraded, then online).\n" +
-			"Use this when /exit_nodes shows 'offline' and you want to know if the monitor agrees.\n" +
-			"Example: /exit_nodes_health"
-	case "sync_nodes":
-		// 2026-07-15: v0.14.0 — re-populate node_owner_map
-		// from headscale. Use after tagging a device
-		// directly in headscale (the bot's /exit_nodes
-		// then reports 'no nodes' until this runs).
-		return "/sync_nodes — re-read every node from headscale and rebuild node_owner_map (admin only).\n" +
-			"Inserts missing rows and updates drifted tags. Returns the count.\n" +
-			"Equivalent to the 'Sync from headscale' button on /admin/devices.\n" +
-			"Use this when the bot's /exit_nodes shows fewer nodes than headscale has.\n" +
-			"Example: /sync_nodes"
-	case "rules":
-		return "/rules — show the 25 most recent exit-rules across all users (admin only).\n" +
-			"Each row: id, user, exit-node, target_type/value, action (accept/deny).\n" +
-			"Use /my_rules to see only your own.\n" +
-			"Example: /rules"
-	case "quota":
-		return "/quota — per-user rule count vs per-user cap (admin only).\n" +
-			"Includes a progress bar. '∞' / '[no limit]' means no cap is configured.\n" +
-			"Use /my_quota to see only your own.\n" +
-			"Example: /quota"
-	case "audit":
-		return "/audit — last 20 audit_log entries (admin only).\n" +
-			"Shows admin actions: user_create, password_reset, telegram_save/disable, ACL_*.\n" +
-			"Example: /audit"
-	case "ack":
-		return "/ack <id> — mark a previously-sent alert as acknowledged (admin only).\n" +
-			"The id is the [#N] prefix on every alert message.\n" +
-			"Idempotent: re-acking returns 'already acked' and writes no extra audit row.\n" +
-			"Example: /ack 7"
-	case "version":
-		return "/version — show Skygate build label, Go runtime, DB schema level.\n" +
-			"Use to confirm what's running after a deploy.\n" +
-			"Example: /version"
-	case "restart":
-		return "/restart [confirm <token>] — graceful container restart (admin only).\n" +
-			"First call mints a 6-char token (valid 30s).\n" +
-			"Second call (with the token) sends SIGTERM to this process; the\n" +
-			"container's `restart: unless-stopped` policy brings it back up, and\n" +
-			"entrypoint.sh re-builds the binary from the bind-mounted source.\n" +
-			"Example: /restart → /restart K7M2P9"
-	case "bind":
-		return "/bind <chat_id> <username> — bind a Telegram chat to a portal user (admin only).\n" +
-			"The user supplies their chat_id (a positive integer for a DM, negative for a group)\n" +
-			"and the admin pastes the command. Once bound, the chat can use /my_* commands\n" +
-			"and write rules for the bound user.\n" +
-			"Example: /bind 123456789 user1"
-	case "unbind":
-		return "/unbind <chat_id> — remove a chat binding (admin only).\n" +
-			"Example: /unbind 123456789"
-	case "my_status":
-		return "/my_status — your own summary (rules count / cap, device count, last ACL).\n" +
-			"Example: /my_status"
-	case "my_nodes":
-		return "/my_nodes — list only your own devices.\n" +
-			"Filtered by telegram_bindings.portal_user_id. Admin uses this to see their own devices.\n" +
-			"Example: /my_nodes"
-	case "my_rules":
-		return "/my_rules — list only your own exit-rules, newest first (max 25).\n" +
-			"Use /delrule <id> to remove one.\n" +
-			"Example: /my_rules"
-	case "my_quota":
-		return "/my_quota — your own rule count vs your per-user cap.\n" +
-			"Same bar format as /quota, but only one row.\n" +
-			"Example: /my_quota"
-	case "myexitnodes":
-		return "/myexitnodes — list every enabled exit-node you can route through.\n" +
-			"Same data as admin /exit_nodes (hostname, online, last_seen) but\n" +
-			"filtered to enabled=1 and tagged with ✓ for the exit-node\n" +
-			"your /setexitnode is currently pointing at.\n" +
-			"Workflow: /myexitnodes -> /setexitnode <node_id> -> /add_rule <target>\n" +
-			"Example: /myexitnodes"
-	case "add_device":
-		return "/add_device [username] — issue a 1h single-use preauth key.\n" +
-			"Default: a key for yourself. With a username arg (admin only), for that user.\n" +
-			"Bot calls headscale.CreatePreauthKey directly (same code path as /my/preauth).\n" +
-			"Reply includes the key in a fenced code block — copy and paste into the device.\n" +
-			"Read-only deploys (HS == nil) get a clear hint, not a panic.\n" +
-			"Examples:\n" +
-			"  /add_device             (self)\n" +
-			"  /add_device user1     (admin → user1)"
-	case "add_rule":
-		return "/add_rule <target> [deny]  — add a new exit-rule.\n" +
-			"      /add_rule <username> <target> [deny]  (admin only)\n" +
-			"target: domain (e.g. telegram.org), ip (1.2.3.4), or subnet (10.0.0.0/8).\n" +
-			"Mirrors /my/exit-rules POST: uses your /setdefaultdevice + /setexitnode,\n" +
-			"resolves domains to /32, inserts, then triggers ACL sync (GenerateACL → SetPolicy).\n" +
-			"On SetPolicy failure you get a ⚠️ warning in the reply AND an async Telegram alert.\n" +
-			"Examples:\n" +
-			"  /add_rule telegram.org\n" +
-			"  /add_rule 1.2.3.4 deny\n" +
-			"  /add_rule user1 telegram.org"
-	case "delrule":
-		return "/delrule <id> [id2 ...] — remove one or more of your own rules.\n" +
-			"/delrule <username> <id> ... — admin only: delete for another user.\n" +
-			"Domain rules cascade to their /32 siblings (one delete covers the whole domain).\n" +
-			"Multi-id: space-separated. Skipped ids are reported in the reply, not failed.\n" +
-			"Triggers an ACL sync (same as /add_rule).\n" +
-			"Examples:\n" +
-			"  /delrule 7\n" +
-			"  /delrule 7 8 9\n" +
-			"  /delrule alice 5 6    (admin → alice)"
-	case "clearrules":
-		return "/clearrules [username] — wipe ALL exit-rules for you (admin: another user).\n" +
-			"Two-phase: first call counts + samples the rules, second call (within 30s) confirms.\n" +
-			"Domain rules cascade to /32 siblings (same as /delrule).\n" +
-			"Triggers an ACL sync.\n" +
-			"Use /delrule if you want to keep some rules; /clearrules is the nuclear option.\n" +
-			"Examples:\n" +
-			"  /clearrules\n" +
-			"  /clearrules confirm          (within 30s)\n" +
-			"  /clearrules alice            (admin → alice)\n" +
-			"  /clearrules alice confirm    (admin confirms)"
-	case "delete_rule":
-		return "/delete_rule <id> — DEPRECATED alias of /delrule.\n" +
-			"Use /delrule instead. The command still works for back-compat.\n" +
-			"Example: /delete_rule 7   (use /delrule 7)"
-	case "help":
-		return "/help [command] — list all commands, or show detailed help for one.\n" +
-			"Examples:\n" +
-			"  /help         (short list of every command)\n" +
-			"  /help ack     (full reference for /ack with examples)"
-	default:
-		return fmt.Sprintf("No detailed help for %q. Try /help for the full list.", cmd)
+	cmd = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(cmd), "/"))
+	if cmd == "" {
+		return i18n.T(env.Lang, "bot.help_detail.missing")
 	}
+	key := "bot.help_detail." + cmd
+	if text := i18n.T(env.Lang, key); text != key {
+		return text
+	}
+	// i18n.T returns the KEY when the catalogue has no entry (its documented
+	// fallback), so reaching here means "no detailed reference for this command".
+	return i18n.Tf(env.Lang, "bot.help_detail.missing", cmd)
 }

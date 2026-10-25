@@ -30,38 +30,37 @@ import (
 // (UPDATE only matches acked_at=0).
 
 // exitNodesReply lists the nodes currently tagged as exit-nodes.
-// Output is grouped by user, with last_seen (from devices table)
-// when available — exit-nodes without a last_seen are likely offline.
+// Output is grouped by user, with the health monitor's state and
+// last_seen for each node.
+//
+// B390 (TD-33 H1): the status comes from `exit_node_health` (the
+// snapshot the monitor refreshes; the same source /admin/exit-nodes
+// renders). It used to come from `SELECT … FROM devices`, a table with
+// no writer anywhere in the repository, so the query always returned
+// zero rows and EVERY node was labelled "offline" — including a healthy
+// relay that clients were routing through at that moment. A node the
+// snapshot does not describe is now reported as "no data", which is the
+// only true thing to say about it.
 func exitNodesReply(env BotEnv) string {
 	lang := env.Lang
 	d := env.DB
-	// 2026-07-12: Этап 10 part 4 — node_owner_map rows for exit-nodes
-	// come from db.ListExitNodeOwners. The devices-table LEFT JOIN for
-	// last_seen/online stays in the bot (presentation concern), so we
-	// build a small id→{last_seen,online} map and merge.
 	owners, err := db.ListExitNodeOwners(d)
 	if err != nil {
 		return i18n.Tf(lang, "bot.exit_nodes.db_error", err)
 	}
-	type devState struct {
-		lastSeen int64
-		online   int
-	}
-	devMap := map[string]devState{}
-	if rows, derr := d.Query(`SELECT node_id, COALESCE(last_seen, 0), COALESCE(online, 0) FROM devices`); derr == nil {
-		for rows.Next() {
-			var nid string
-			var st devState
-			if err := rows.Scan(&nid, &st.lastSeen, &st.online); err == nil {
-				devMap[nid] = st
-			}
-		}
-		rows.Close()
+	// A failure here is a fact about the READ; it is reported as such and
+	// never translated into a per-node status (B390 — the old code could
+	// not tell "no rows" from "not measured", and answered "offline").
+	health, herr := exitNodeHealthIndex(d)
+	healthNote := ""
+	if herr != nil {
+		healthNote = "\n" + i18n.Tf(lang, "bot.exit_nodes.health_unavailable", herr)
+		health = map[string]db.ExitNodeHealth{}
 	}
 	type row struct {
 		user, nodeID string
+		status       string
 		lastSeen     int64
-		online       int
 	}
 	var byUser []row
 	for _, n := range owners {
@@ -69,8 +68,12 @@ func exitNodesReply(env BotEnv) string {
 		if user == "" {
 			user = "?"
 		}
-		st := devMap[n.NodeID]
-		byUser = append(byUser, row{user: user, nodeID: n.NodeID, lastSeen: st.lastSeen, online: st.online})
+		status, h := exitNodeStatusFor(lang, health, n.NodeID)
+		var seen int64
+		if !h.LastSeenParsed.IsZero() {
+			seen = h.LastSeenParsed.Unix()
+		}
+		byUser = append(byUser, row{user: user, nodeID: n.NodeID, status: status, lastSeen: seen})
 	}
 	if len(byUser) == 0 {
 		return i18n.T(lang, "bot.exit_nodes.empty")
@@ -78,17 +81,14 @@ func exitNodesReply(env BotEnv) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s\n\n", i18n.Tf(lang, "bot.exit_nodes.header", len(byUser)))
 	for _, r := range byUser {
-		// B389: "offline"/"online" were hardcoded English and showed up
-		// verbatim in a Russian chat (/myexitnodes had the same pair).
-		status := i18n.T(lang, "bot.exit_nodes.status_offline")
-		if r.online == 1 {
-			status = i18n.T(lang, "bot.exit_nodes.status_online")
-		}
 		var seen string
 		if r.lastSeen > 0 {
 			seen = i18n.Tf(lang, "bot.exit_nodes.last_seen", unixToShort(r.lastSeen))
 		}
-		fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.exit_nodes.row", r.nodeID, r.user, status, seen))
+		fmt.Fprintf(&sb, "%s\n", i18n.Tf(lang, "bot.exit_nodes.row", r.nodeID, r.user, r.status, seen))
+	}
+	if healthNote != "" {
+		sb.WriteString(healthNote)
 	}
 	return trimForTelegram(env.Lang, sb.String())
 }

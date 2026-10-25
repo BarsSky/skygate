@@ -296,21 +296,23 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 		return i18n.T(lang, "bot.clearrules.empty_at_confirm")
 	}
 
-	// Delete each rule with cascade for domain rules. Cascade
-	// count = rows_affected - 1 (the "extra" /32s beyond the
-	// row we asked to delete).
-	deleted := 0
-	totalCascade := 0
+	// Delete each rule with cascade for domain rules, counting REAL deletions.
+	//
+	// B390 (TD-33 H6): `deleted++` ran unconditionally, so a failed delete or a
+	// row somebody else had already removed was reported (and audited) as cleared.
+	// deleteRuleJobs counts rows removed and keeps the ids that removed nothing.
+	jobs := make([]ruleDeleteJob, 0, len(rules))
 	for _, r := range rules {
-		if r.targetType == "domain" && r.parentDomain != "" {
-			n, err := db.DeleteRuleOrCascadeByParentDomain(env.DB, target.ID, r.id, r.parentDomain)
-			if err == nil {
-				totalCascade += int(n) - 1
-			}
-		} else {
-			_ = db.DeleteRuleForUser(env.DB, r.id, target.ID)
-		}
-		deleted++
+		jobs = append(jobs, ruleDeleteJob(r))
+	}
+	outcome := deleteRuleJobs(env.DB, target.ID, jobs)
+	deleted := len(outcome.deleted)
+	totalCascade := outcome.cascade
+	notDeleted := failedSuffix(outcome.failed)
+	if deleted == 0 {
+		_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rules_cleared",
+			fmt.Sprintf("via bot: cleared 0 rule(s); nothing matched: %s", notDeleted))
+		return i18n.Tf(lang, "bot.clearrules.nothing_deleted", target.Username, notDeleted)
 	}
 
 	// ACL pipeline. Read-only deploys (userHS() == nil) skip
@@ -323,8 +325,15 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 	if env.userHS() == nil {
 		auditDetail := fmt.Sprintf("via bot: cleared all %d rule(s) for %s (cascade: %d) — ACL sync skipped (read-only mode)",
 			deleted, target.Username, totalCascade)
+		if notDeleted != "" {
+			auditDetail += fmt.Sprintf("; not deleted: %s", notDeleted)
+		}
 		_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rules_cleared", auditDetail)
-		return i18n.Tf(lang, "bot.clearrules.read_only_ok", deleted, target.Username, totalCascade)
+		reply := i18n.Tf(lang, "bot.clearrules.read_only_ok", deleted, target.Username, totalCascade)
+		if notDeleted != "" {
+			reply += i18n.Tf(lang, "bot.clearrules.not_deleted_suffix", notDeleted)
+		}
+		return reply
 	}
 
 	// Internal log details stay in English — operator audit
@@ -337,6 +346,9 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 	// written in the mint phase).
 	auditDetail := fmt.Sprintf("via bot: cleared all %d rule(s) for %s (cascade: %d)",
 		deleted, target.Username, totalCascade)
+	if notDeleted != "" {
+		auditDetail += fmt.Sprintf("; not deleted: %s", notDeleted)
+	}
 	_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rules_cleared", auditDetail)
 
 	// Reply. Success: list count + cascade + ACL version.
@@ -346,7 +358,11 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 	// operator wakes up even if the user doesn't notice the
 	// warning in the bot reply.
 	if pipe.Applied {
-		return i18n.Tf(lang, "bot.clearrules.applied_ok", deleted, target.Username, totalCascade, pipe.Version)
+		reply := i18n.Tf(lang, "bot.clearrules.applied_ok", deleted, target.Username, totalCascade, pipe.Version)
+		if notDeleted != "" {
+			reply += i18n.Tf(lang, "bot.clearrules.not_deleted_suffix", notDeleted)
+		}
+		return reply
 	}
 	if env.Notifier != nil {
 		// Alert text stays in English — it's operator-only

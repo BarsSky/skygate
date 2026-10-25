@@ -165,6 +165,19 @@ func ApplyACLPipelineForPlane(d *sql.DB, hs *headscale.Client, planeURL string, 
 // line are the signal; a Telegram message per ownership flip would be noise).
 func ApplyGeneratedPolicy(d *sql.DB, hs *headscale.Client, acl, username, detailForLog string, alerter Alerter) ApplyResult {
 	ver := SaveACLSnapshot(d, acl, username, alerter)
+	// B390 (2026-10-25): a nil client is a legitimate state — a read-only deploy
+	// has no headscale, and a corrupt per-plane key makes the closure return nil —
+	// and this function dereferenced it (`hs.SetPolicy` panicked on the nil
+	// receiver). The bot's /mysubnet share|revoke reach here with exactly that
+	// value, so instead of "ACL пере-применён" the operator got a dead poller. The
+	// sibling ApplyACLForAllPlanes already refuses this way; the same refusal now
+	// lives in the shared tail so every caller sees it.
+	if hs == nil {
+		err := fmt.Errorf("no headscale client — the policy was generated and saved as snapshot #%d but NOT pushed", ver)
+		db.MarkACLFail(d, ver, err.Error())
+		db.AppendExitRuleLog(d, ver, db.ExitRuleActionApplyFail, detailForLog+": "+err.Error())
+		return ApplyResult{Version: ver, Applied: false, Err: err}
+	}
 	if setErr := hs.SetPolicy(acl); setErr != nil {
 		db.MarkACLFail(d, ver, setErr.Error())
 		db.AppendExitRuleLog(d, ver, db.ExitRuleActionApplyFail, detailForLog+": "+setErr.Error())

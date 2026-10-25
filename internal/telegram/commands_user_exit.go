@@ -34,26 +34,16 @@ func myExitNodesReply(env BotEnv) string {
 	if len(enabled) == 0 {
 		return i18n.T(lang, "bot.myexitnodes.empty")
 	}
-	// Build a node_id → {last_seen, online} map from the devices
-	// table so the reply shows the same health info as admin
-	// /exit_nodes. Best-effort: a headscale unreachable won't
-	// hide the menu, the row just shows "offline".
-	devMap := map[string]struct {
-		lastSeen int64
-		online   int
-	}{}
-	if rows, derr := env.DB.Query(`SELECT node_id, COALESCE(last_seen, 0), COALESCE(online, 0) FROM devices`); derr == nil {
-		for rows.Next() {
-			var nid string
-			var st struct {
-				lastSeen int64
-				online   int
-			}
-			if err := rows.Scan(&nid, &st.lastSeen, &st.online); err == nil {
-				devMap[nid] = st
-			}
-		}
-		rows.Close()
+	// B390 (TD-33 H1): the status column comes from `exit_node_health` — the
+	// monitor's snapshot, the same source the admin page renders. The previous code
+	// read `SELECT … FROM devices`, a table nothing in the repository ever writes, so
+	// every relay was shown as "offline" while a healthy one was carrying traffic.
+	// A relay the snapshot does not describe is reported as "no data".
+	health, herr := exitNodeHealthIndex(env.DB)
+	healthNote := ""
+	if herr != nil {
+		healthNote = i18n.Tf(lang, "bot.exit_nodes.health_unavailable", herr)
+		health = map[string]db.ExitNodeHealth{}
 	}
 	// Look up the user's current default (if any) to mark the
 	// matching row with ✓. Failures are non-fatal: the reply
@@ -103,13 +93,10 @@ func myExitNodesReply(env BotEnv) string {
 	var lines []string
 	lines = append(lines, header, "<i>"+ruleLine+"</i>")
 	for _, s := range enabled {
-		st := devMap[s.NodeID]
-		// B389: shared with /exit_nodes — the pair used to be hardcoded
-		// English in both replies.
-		status := i18n.T(lang, "bot.exit_nodes.status_offline")
-		if st.online == 1 {
-			status = i18n.T(lang, "bot.exit_nodes.status_online")
-		}
+		// B390: the state ladder is the monitor's (online / untagged /
+		// degraded / offline); a node with no snapshot row says "no data"
+		// instead of being guessed at.
+		status, _ := exitNodeStatusFor(lang, health, s.NodeID)
 		m := ""
 		if s.NodeID == defaultNodeID {
 			m = marker
@@ -149,8 +136,13 @@ func myExitNodesReply(env BotEnv) string {
 	reply := i18n.Tf(lang, "bot.myexitnodes.header", env.Username, len(enabled)) + "\n" +
 		Section(i18n.T(lang, "bot.myexitnodes.section_menu")) + "\n" +
 		Field(i18n.T(lang, "bot.myexitnodes.label_count"), strconv.Itoa(len(enabled))) + "\n" +
-		PreLinesRaw(lines...) + "\n" +
-		i18n.T(lang, "bot.myexitnodes.cta_tap")
+		PreLinesRaw(lines...) + "\n"
+	if healthNote != "" {
+		// B390: say WHY the status column has no data instead of letting an
+		// unreadable snapshot look like a set of offline relays.
+		reply += healthNote + "\n"
+	}
+	reply += i18n.T(lang, "bot.myexitnodes.cta_tap")
 	// 2026-07-16: v0.16.2 — preserve the ParseMode=HTML
 	// that markHTMLReply() set at the top of this function.
 	// The previous `&PendingReply{InlineKeyboard: btnRows}`

@@ -41,6 +41,15 @@ func (r *recordingNotifier) SendTelegram(text string) {}
 func (r *recordingNotifier) SendTelegramToChat(text string, chatID int64) {
 	// unused
 }
+
+// B390: the Notifier grew error-reporting variants so "Send test" can tell a
+// delivered message from a refused one. This fake is not used by that handler,
+// so it reports success — the point of the interface change is that a caller
+// must ASK, not that every implementation must be able to fail.
+func (r *recordingNotifier) SendTelegramErr(text string) error { return nil }
+func (r *recordingNotifier) SendTelegramToChatErr(text string, chatID int64) error {
+	return nil
+}
 func (r *recordingNotifier) SendAlert(text string) int64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()

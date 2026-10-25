@@ -21,6 +21,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -52,6 +53,18 @@ type Notifier interface {
 	// want the handler to no-op just because the global chat_id
 	// is empty.
 	SendTelegramToChat(text string, chatID int64)
+	// SendTelegramErr / SendTelegramToChatErr are the variants that
+	// TELL YOU WHETHER IT WORKED.
+	//
+	// B390 (TD-33 H5): the two methods above return nothing, so
+	// /admin/telegram's "Send test" reported «Сообщение отправлено (N шт.)»
+	// for every press — including the ones where the token was missing, the
+	// chat_id did not parse, or api.telegram.org answered `{"ok":false,…}`.
+	// A test button that cannot fail is not a test. The plain methods stay
+	// (they are used on paths where nobody can act on a return value);
+	// these are what a caller that CLAIMS delivery must use.
+	SendTelegramErr(text string) error
+	SendTelegramToChatErr(text string, chatID int64) error
 	// SendAlert posts text as a numbered alert (for /ack). Returns
 	// the alert id, or 0 when the bot is not configured.
 	SendAlert(text string) int64
@@ -65,6 +78,12 @@ type Notifier interface {
 	BotUsernameCached() string
 }
 
+// ErrTelegramNotConfigured is what the no-op notifier returns from the
+// error-reporting send methods: "there is no bot to send anything to" is a
+// different answer from "the API refused", and the caller has to be able to
+// say which one happened (B390).
+var ErrTelegramNotConfigured = errors.New("telegram: bot is not configured (no token)")
+
 // NoopNotifier discards all messages. Used when no token is configured.
 // SendAlert and SendTelegram* live in alerts.go (the SendAlert
 // impl is owned by the alerts package; keeping it there avoids a
@@ -75,6 +94,12 @@ type NoopNotifier struct{}
 func (NoopNotifier) SendTelegram(string)              {}
 func (NoopNotifier) SendTelegramToChat(string, int64) {}
 func (NoopNotifier) BotUsernameCached() string        { return "" }
+
+// The no-op sender reports the reason instead of silently succeeding: a caller
+// that shows the operator "sent" must not get a nil error from a bot that does
+// not exist (B390).
+func (NoopNotifier) SendTelegramErr(string) error              { return ErrTelegramNotConfigured }
+func (NoopNotifier) SendTelegramToChatErr(string, int64) error { return ErrTelegramNotConfigured }
 
 // RealNotifier holds the per-process Telegram configuration. The
 // configured flag is consulted at SendTelegram time so a hot-swap
@@ -582,13 +607,28 @@ func (n *RealNotifier) envForMessage(chatID int64, langCode string) (BotEnv, boo
 // for a token-only config and SendTelegram would proceed with
 // chatID="" → Telegram API returns http.StatusBadRequest.
 func (n *RealNotifier) SendTelegram(text string) {
+	if err := n.SendTelegramErr(text); err != nil {
+		log.Printf("telegram: send failed: %v", err)
+	}
+}
+
+// SendTelegramErr is SendTelegram with the outcome.
+//
+// B390 (TD-33 H5): every "skip" on this path used to be a bare log line, so
+// callers that render a success message ("Сообщение отправлено") could not tell
+// a delivered message from a missing token. The reasons are distinct on purpose:
+// unreadable settings, no token+chat pair, a chat_id that does not parse, and
+// whatever the API answered.
+func (n *RealNotifier) SendTelegramErr(text string) error {
 	if n == nil {
-		return
+		return ErrTelegramNotConfigured
 	}
 	token, chatIDStr, ok, err := db.LoadTelegramSendTarget(n.db)
-	if err != nil || !ok {
-		log.Printf("telegram: skip send: load err=%v ok=%v (need both token AND chat_id)", err, ok)
-		return
+	if err != nil {
+		return fmt.Errorf("telegram: read settings: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("telegram: no token and chat_id configured")
 	}
 	// chat_id is stored as a string in global_settings (so it can
 	// hold either a plain user id "12345" or a -100… supergroup id);
@@ -596,10 +636,9 @@ func (n *RealNotifier) SendTelegram(text string) {
 	// Telegram's API type.
 	chatID, perr := strconv.ParseInt(chatIDStr, 10, 64)
 	if perr != nil || chatID == 0 {
-		log.Printf("telegram: skip send: chat_id %q is not a valid int64: %v", chatIDStr, perr)
-		return
+		return fmt.Errorf("telegram: chat_id %q is not a valid int64: %v", chatIDStr, perr)
 	}
-	n.postToChat(token, chatID, text)
+	return n.postToChatErr(token, chatID, text)
 }
 
 // SendTelegramToChat sends text to an explicit chat_id. It does NOT
@@ -621,34 +660,42 @@ func (n *RealNotifier) SendTelegram(text string) {
 // — this matches the existing SendTelegram fire-and-forget style
 // and keeps the test handler's audit/log shape simple.
 func (n *RealNotifier) SendTelegramToChat(text string, chatID int64) {
+	if err := n.SendTelegramToChatErr(text, chatID); err != nil {
+		log.Printf("telegram: SendTelegramToChat failed: %v", err)
+	}
+}
+
+// SendTelegramToChatErr is SendTelegramToChat with the outcome (B390 — see
+// SendTelegramErr; the "Send test" handler needs to know whether the message
+// actually reached Telegram).
+func (n *RealNotifier) SendTelegramToChatErr(text string, chatID int64) error {
 	if n == nil {
-		return
+		return ErrTelegramNotConfigured
 	}
 	if chatID == 0 {
 		// Defensive: 0 is the zero value for int64, and Telegram
 		// returns http.StatusBadRequest for chat_id=0. Bail rather than POST a
 		// malformed request.
-		log.Printf("telegram: SendTelegramToChat called with chatID=0; skipping")
-		return
+		return fmt.Errorf("telegram: chat_id=0 cannot be a target")
 	}
 	token, _, ok, err := db.LoadTelegramToken(n.db)
-	if err != nil || !ok {
-		log.Printf("telegram: SendTelegramToChat skip: load err=%v ok=%v (token not configured)", err, ok)
-		return
+	if err != nil {
+		return fmt.Errorf("telegram: read token: %w", err)
 	}
-	n.postToChat(token, chatID, text)
+	if !ok {
+		return ErrTelegramNotConfigured
+	}
+	return n.postToChatErr(token, chatID, text)
 }
 
-// postToChat is the shared sendMessage implementation. Both
-// SendTelegram and SendTelegramToChat funnel through here so the
-// HTTP shape, error logging, and ``` wrapping stay in one place.
-// Kept private — callers go through the public methods.
+// postToChatErr is the shared sendMessage implementation. SendTelegram and
+// SendTelegramToChat funnel through here so the HTTP shape, error reporting and
+// ``` wrapping stay in one place. Kept private — callers go through the public
+// methods.
 //
-// chatID is taken as int64 (matching Telegram's chat_id type) and
-// stringified inside via fmt.Sprintf. Using string here would force
-// every caller to convert, and SendTelegramToChat already has the
-// int64 from telegram_bindings.ChatID.
-func (n *RealNotifier) postToChat(token string, chatID int64, text string) {
+// chatID is taken as int64 (matching Telegram's chat_id type) and stringified
+// inside via the JSON payload.
+func (n *RealNotifier) postToChatErr(token string, chatID int64, text string) error {
 	if !strings.HasPrefix(text, "```") {
 		// Wrap plain text in a small fence so replies render monospaced.
 		text = "```\n" + text + "\n```"
@@ -663,14 +710,19 @@ func (n *RealNotifier) postToChat(token string, chatID int64, text string) {
 	resp, err := n.client.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
 		// B356.1: endpoint AND err both embed the bot token.
-		log.Printf("telegram: POST %s failed: %v", RedactToken(endpoint, token), redactError(err, token))
-		return
+		return fmt.Errorf("telegram: POST %s failed: %v",
+			RedactToken(endpoint, token), redactError(err, token))
 	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(rb), `"ok":true`) {
-		log.Printf("telegram: non-ok response: %s", string(rb))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !strings.Contains(string(rb), `"ok":true`) {
+		// The body is Telegram's own explanation ("chat not found",
+		// "bot was blocked by the user", "Unauthorized"); it is what
+		// makes the failure actionable, so it travels in the error.
+		return fmt.Errorf("telegram: API refused the message (HTTP %d): %s",
+			resp.StatusCode, redactError(fmt.Errorf("%s", strings.TrimSpace(string(rb))), token))
 	}
+	return nil
 }
 
 // Configured returns true if the bot token is present in the database.

@@ -1096,8 +1096,24 @@ func DeleteRulesByDeviceID(d *sql.DB, deviceID int) (int64, error) {
 // userID, zero rows are deleted (the call still returns nil —
 // the DELETE is idempotent).
 func DeleteRuleForUser(d *sql.DB, id int, userID int64) error {
-	_, err := d.Exec(qDeleteRulesByIDAndUser, id, userID)
+	_, err := DeleteRuleForUserRows(d, id, userID)
 	return err
+}
+
+// DeleteRuleForUserRows is DeleteRuleForUser with the number of rows it
+// actually removed.
+//
+// B390 (2026-10-25): the bot's /delrule and /clearrules counted their own
+// LOOP ITERATIONS and told the operator "deleted N rule(s)" even when the
+// DELETE had failed or matched nothing (a rule that was already gone, or
+// belonged to somebody else, is a zero-row success). A reply that reports
+// work must count the work: zero rows here means nothing was deleted.
+func DeleteRuleForUserRows(d *sql.DB, id int, userID int64) (int64, error) {
+	res, err := d.Exec(qDeleteRulesByIDAndUser, id, userID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // DeleteRuleOrCascadeByParentDomain removes a rule by id, OR — if

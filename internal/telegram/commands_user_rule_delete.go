@@ -81,22 +81,34 @@ func deleteRuleReply(env BotEnv, arg string) string {
 		return i18n.Tf(lang, "bot.delrule.no_valid_ids", strings.Join(skipped, ", "))
 	}
 
-	// Delete each rule. Domain rules cascade to /32 siblings
-	// (the autoupdater-derived entries with the same parent_domain).
-	// The cascade count = rows_affected - 1 (the "extra" /32s beyond
-	// the row we asked to delete).
-	var deletedIDs []int
-	totalCascade := 0
+	// Delete each rule and COUNT WHAT WAS ACTUALLY DELETED.
+	//
+	// B390 (TD-33 H6): this loop used to append every parsed id to `deletedIDs`
+	// and increment the count regardless of the DELETE's result, so a failed
+	// query, a rule that was already gone and a rule owned by somebody else were
+	// all reported as deleted — to the user AND in the audit row. The helper
+	// counts rows removed, keeps the cascade non-negative, and names the ids that
+	// removed nothing.
+	jobs2 := make([]ruleDeleteJob, 0, len(jobs))
 	for _, j := range jobs {
-		if j.targetType == "domain" && j.parentDomain != "" {
-			n, err := db.DeleteRuleOrCascadeByParentDomain(env.DB, target.ID, j.id, j.parentDomain)
-			if err == nil {
-				totalCascade += int(n) - 1
-			}
-		} else {
-			_ = db.DeleteRuleForUser(env.DB, j.id, target.ID)
+		jobs2 = append(jobs2, ruleDeleteJob(j))
+	}
+	outcome := deleteRuleJobs(env.DB, target.ID, jobs2)
+	deletedIDs := outcome.deleted
+	totalCascade := outcome.cascade
+	notDeleted := failedSuffix(outcome.failed)
+	if len(skipped) > 0 {
+		if notDeleted != "" {
+			notDeleted += ", "
 		}
-		deletedIDs = append(deletedIDs, j.id)
+		notDeleted += strings.Join(skipped, ", ")
+	}
+	if len(deletedIDs) == 0 {
+		// Nothing was removed: say so and stop before the ACL pipeline runs on a
+		// database that did not change.
+		_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rule_deleted",
+			fmt.Sprintf("via bot: deleted 0 rule(s) for %s; nothing matched: %s", target.Username, notDeleted))
+		return i18n.Tf(lang, "bot.delrule.nothing_deleted", target.Username, notDeleted)
 	}
 
 	// ACL pipeline. Read-only deploys (userHS() == nil) skip
@@ -108,11 +120,15 @@ func deleteRuleReply(env BotEnv, arg string) string {
 	if env.userHS() == nil {
 		auditDetail := fmt.Sprintf("via bot: deleted %d rule(s) for %s (cascade: %d, ids=%v) — ACL sync skipped (read-only mode)",
 			len(deletedIDs), target.Username, totalCascade, deletedIDs)
-		if len(skipped) > 0 {
-			auditDetail += fmt.Sprintf("; skipped: %s", strings.Join(skipped, ", "))
+		if notDeleted != "" {
+			auditDetail += fmt.Sprintf("; not deleted: %s", notDeleted)
 		}
 		_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rule_deleted", auditDetail)
-		return i18n.Tf(lang, "bot.delrule.read_only_ok", len(deletedIDs), target.Username, totalCascade)
+		reply := i18n.Tf(lang, "bot.delrule.read_only_ok", len(deletedIDs), target.Username, totalCascade)
+		if notDeleted != "" {
+			reply += i18n.Tf(lang, "bot.delrule.not_deleted_suffix", notDeleted)
+		}
+		return reply
 	}
 
 	detailForLog := fmt.Sprintf("user %s deleted %d rule(s) (cascade: %d) for %s via bot",
@@ -124,8 +140,8 @@ func deleteRuleReply(env BotEnv, arg string) string {
 	// (so an operator scanning audit_log sees the full picture).
 	auditDetail := fmt.Sprintf("via bot: deleted %d rule(s) for %s (cascade: %d, ids=%v)",
 		len(deletedIDs), target.Username, totalCascade, deletedIDs)
-	if len(skipped) > 0 {
-		auditDetail += fmt.Sprintf("; skipped: %s", strings.Join(skipped, ", "))
+	if notDeleted != "" {
+		auditDetail += fmt.Sprintf("; not deleted: %s", notDeleted)
 	}
 	_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rule_deleted", auditDetail)
 
@@ -136,8 +152,8 @@ func deleteRuleReply(env BotEnv, arg string) string {
 	// user doesn't notice the warning in the bot reply.
 	if pipe.Applied {
 		reply := i18n.Tf(lang, "bot.delrule.applied_ok", len(deletedIDs), target.Username, totalCascade, deletedIDs, pipe.Version)
-		if len(skipped) > 0 {
-			reply += i18n.Tf(lang, "bot.delrule.skipped_suffix", strings.Join(skipped, ", "))
+		if notDeleted != "" {
+			reply += i18n.Tf(lang, "bot.delrule.not_deleted_suffix", notDeleted)
 		}
 		return reply
 	}
