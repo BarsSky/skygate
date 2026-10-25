@@ -49,7 +49,7 @@ func (b *b379Backend) Audit(userID int64, username, action, detail string) {
 
 func newB379DB(t *testing.T) *sql.DB {
 	t.Helper()
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b379.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b379.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable in this build: %v", err)
 	}

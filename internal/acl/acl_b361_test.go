@@ -48,7 +48,7 @@ func b361ACLDB(t *testing.T) *sql.DB {
 	t.Helper()
 	t.Setenv("SKYGATE_BASE_DOMAIN", "ts.example.com")
 	t.Setenv("SKYGATE_ADMIN_USER", "admin")
-	_, sqlDB, err := db.OpenWithDialect("sqlite:" + t.TempDir() + "/b361acl.db")
+	sqlDB, err := db.OpenFastSQLiteForTest(t.TempDir() + "/b361acl.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

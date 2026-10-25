@@ -14,7 +14,7 @@ import (
 )
 
 func TestDevicesWithoutExitNodePref_B343(t *testing.T) {
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b343.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b343.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

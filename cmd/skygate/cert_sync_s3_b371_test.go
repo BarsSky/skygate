@@ -37,7 +37,7 @@ import (
 // /admin/backup writes them (backup.Load reads `backup.%` keys).
 func b371DB(t *testing.T, kv map[string]string) *sql.DB {
 	t.Helper()
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b371.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b371.db")
 	if err != nil {
 		t.Fatalf("OpenWithDialect: %v", err)
 	}

@@ -27,7 +27,7 @@ import (
 
 func b391DB(t *testing.T) *sql.DB {
 	t.Helper()
-	_, d, err := db.OpenWithDialect("sqlite:" + t.TempDir() + "/b391.db")
+	d, err := db.OpenFastSQLiteForTest(t.TempDir() + "/b391.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

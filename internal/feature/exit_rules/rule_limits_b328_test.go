@@ -26,7 +26,7 @@ import (
 // unavailable in this build (same guard as the B276.1 fixture).
 func newB328DB(t *testing.T) *sql.DB {
 	t.Helper()
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b328.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b328.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable in this build: %v", err)
 	}

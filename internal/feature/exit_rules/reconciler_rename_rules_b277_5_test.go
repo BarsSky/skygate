@@ -29,7 +29,7 @@ import (
 // from all_devices_b276_1_test.go.
 func newRenameRulesDB(t *testing.T) *sql.DB {
 	t.Helper()
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b277_5.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b277_5.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable in this build: %v", err)
 	}

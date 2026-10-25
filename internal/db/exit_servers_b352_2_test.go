@@ -16,7 +16,7 @@ import (
 )
 
 func TestTailscaleSSHTargetFor_IgnoresTheOperatorTarget_B352_2(t *testing.T) {
-	_, d, err := OpenWithDialect("sqlite:" + t.TempDir() + "/b352_2.db")
+	d, err := OpenFastSQLiteForTest(t.TempDir() + "/b352_2.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

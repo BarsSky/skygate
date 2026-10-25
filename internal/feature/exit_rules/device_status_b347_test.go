@@ -21,7 +21,7 @@ import (
 )
 
 func TestDeviceStatusRows_B347(t *testing.T) {
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b347.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b347.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestDeviceStatusRows_B347(t *testing.T) {
 // silent and the strip's red marker carries the message), and "" for an empty
 // hostname rather than a query that could match a pre-rename row.
 func TestAssignedRelayFor_B347(t *testing.T) {
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b347b.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b347b.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

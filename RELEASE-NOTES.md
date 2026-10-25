@@ -1,5 +1,55 @@
 # Skygate release notes
 
+## v1.5.165 — the test suite stops paying for durability it does not need (B419, TD-30)
+
+**Date:** 2026-10-25 · **Base:** `v1.5.164` → this tag · **Compatibility:** none — test
+infrastructure only. No product code path changes.
+
+### What was measured
+
+TD-30 carried `go test ./internal/feature/exit_rules/` at **214 s** on the reference VM
+(72 s on this workstation) and blamed the per-test migration chain. That was measured
+instead of assumed:
+
+| pragmas on the throwaway database | one full migration chain |
+|---|---|
+| default | **536–880 ms** |
+| `synchronous(0)` alone | 561 ms |
+| `journal_mode(memory)` alone | 1151 ms |
+| **both** | **53 ms** |
+
+The cost is **fsync**: the chain is hundreds of tiny DDL commits, so neither pragma helps
+on its own (each commit still fsyncs once) and together they remove both fsyncs.
+
+### What changed
+
+`db.OpenFastSQLiteForTest` (`internal/db/testhelpers.go`) opens a throwaway SQLite
+database with `synchronous(0)` + `journal_mode(memory)`, and every per-test database in
+the tree now goes through it (33 sites across 26 test files). The **schema still comes
+from `MigrateSQLite`** — the same chain production runs, never a hand-written one — so the
+speed costs no coverage: a throwaway test database simply does not need a guaranteed
+fsync, and production keeps `OpenWithDialect` where durability IS the point.
+
+Measured effect on this workstation: **`internal/feature/exit_rules` 72 s → 8.6 s**, and
+`internal/db` / `acl` / `prefixowner` / `update` / `cluster` / `diskmon` / `telegram`
+re-measured green after the switch. This is time off every local gate run and every CI
+run, on the block that used to make a host stall look like a 10-minute timeout.
+
+### Verification
+
+`scripts/check_b419_fast_test_db.sh` — **11 contracts**, and the guards are behavioural and
+**relative**:
+
+* one test reads `PRAGMA synchronous` / `journal_mode` back **from the live connection**
+  (a string match on the DSN would pass on a DSN the driver ignores);
+* the other times both handles **in the same test binary** and requires the fast one to be
+  at least twice as cheap — so a slow CI host cannot turn a performance guard into a flake
+  (AGENTS trap #15).
+
+The contract also holds a **ratchet at zero**: no per-test database may open through the
+default path again, the tests must still call `MigrateSQLite` (no hand-written schema), and
+the helper must never be referenced from production code.
+
 ## v1.5.164 — alerts that arrive readable, and a disk check that can actually deliver (B391, TD-34)
 
 **Date:** 2026-10-25 · **Base:** `v1.5.163` → this tag · **Compatibility:** no migration,

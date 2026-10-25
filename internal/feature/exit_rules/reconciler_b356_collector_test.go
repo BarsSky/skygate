@@ -33,7 +33,7 @@ import (
 // b356DB opens a migrated SQLite database private to this test.
 func b356DB(t *testing.T) *sql.DB {
 	t.Helper()
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b356.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b356.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

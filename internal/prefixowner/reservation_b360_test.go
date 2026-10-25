@@ -28,7 +28,7 @@ const b360Prefix = "104.16.0.0/12"
 
 func b360Open(t *testing.T) *sql.DB {
 	t.Helper()
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b360.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b360.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

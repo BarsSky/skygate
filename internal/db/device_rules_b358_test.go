@@ -29,7 +29,7 @@ import (
 // b358Seed migrates a fresh SQLite database and returns the seed helper.
 func b358Seed(t *testing.T, name string) (*sql.DB, func(string, ...interface{})) {
 	t.Helper()
-	_, d, err := OpenWithDialect("sqlite:" + t.TempDir() + "/" + name + ".db")
+	d, err := OpenFastSQLiteForTest(t.TempDir() + "/" + name + ".db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

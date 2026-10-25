@@ -28,7 +28,7 @@ import (
 // cluster + one standby row in the given state.
 func b402OpenDB(t *testing.T, state, version string) *sql.DB {
 	t.Helper()
-	_, d, err := db.OpenWithDialect("sqlite:" + t.TempDir() + "/b402.db")
+	d, err := db.OpenFastSQLiteForTest(t.TempDir() + "/b402.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

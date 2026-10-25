@@ -32,7 +32,7 @@ import (
 // plain TEXT, so nothing here depends on PostgreSQL.
 func b370DB(t *testing.T) *sql.DB {
 	t.Helper()
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b370.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b370.db")
 	if err != nil {
 		t.Fatalf("OpenWithDialect: %v", err)
 	}

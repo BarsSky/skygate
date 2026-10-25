@@ -17,7 +17,7 @@ import (
 // b351Exec fails the test on a seed error so a broken fixture cannot read as a
 // product regression.
 func TestAdminRuleCounters_B351(t *testing.T) {
-	_, d, err := OpenWithDialect("sqlite:" + t.TempDir() + "/b351.db")
+	d, err := OpenFastSQLiteForTest(t.TempDir() + "/b351.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestAdminRuleCounters_B351(t *testing.T) {
 // can answer, leaves a row whose owner is gone alone, and is idempotent (the second
 // run must touch nothing — it runs on every five-minute tick).
 func TestBackfillDeviceRuleUserNames_B351(t *testing.T) {
-	_, d, err := OpenWithDialect("sqlite:" + t.TempDir() + "/b351bf.db")
+	d, err := OpenFastSQLiteForTest(t.TempDir() + "/b351bf.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

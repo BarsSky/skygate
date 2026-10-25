@@ -33,7 +33,7 @@ import (
 
 func b3411DB(t *testing.T) *sql.DB {
 	t.Helper()
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b3411.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b3411.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

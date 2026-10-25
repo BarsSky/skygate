@@ -22,7 +22,7 @@ import (
 // production path always opens that way, so the test must too.
 func openB277DB(t *testing.T) *sql.DB {
 	t.Helper()
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b277.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b277.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

@@ -29,7 +29,7 @@ import (
 // the portal user the preference queries join on.
 func b399OpenDB(t *testing.T) *sql.DB {
 	t.Helper()
-	_, d, err := OpenWithDialect("sqlite:" + t.TempDir() + "/b399.db")
+	d, err := OpenFastSQLiteForTest(t.TempDir() + "/b399.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

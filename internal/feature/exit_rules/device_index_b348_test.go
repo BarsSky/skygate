@@ -14,7 +14,7 @@ import (
 )
 
 func TestDeviceRuleCounts_B348(t *testing.T) {
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b348.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b348.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

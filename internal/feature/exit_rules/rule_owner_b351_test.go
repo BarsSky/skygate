@@ -15,7 +15,7 @@ import (
 )
 
 func TestDeviceRuleCountsForAdmin_MergesBlankOwner_B351(t *testing.T) {
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b351idx.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b351idx.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestDeviceRuleCountsForAdmin_MergesBlankOwner_B351(t *testing.T) {
 }
 
 func TestRuleOwnerLookup_B351(t *testing.T) {
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b351owner.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b351owner.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

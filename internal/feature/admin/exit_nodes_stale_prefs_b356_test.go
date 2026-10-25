@@ -24,7 +24,7 @@ import (
 
 func b356AdminDB(t *testing.T) *sql.DB {
 	t.Helper()
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b356admin.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b356admin.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable: %v", err)
 	}

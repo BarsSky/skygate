@@ -49,7 +49,7 @@ import (
 // the next query and the test would "pass" by finding nothing (the B276 lesson).
 func b375DB(t *testing.T) *sql.DB {
 	t.Helper()
-	_, d, err := skygatedb.OpenWithDialect("sqlite:" + t.TempDir() + "/b375.db")
+	d, err := skygatedb.OpenFastSQLiteForTest(t.TempDir() + "/b375.db")
 	if err != nil {
 		t.Skipf("sqlite dialect unavailable in this build: %v", err)
 	}
