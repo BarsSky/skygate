@@ -30,8 +30,8 @@
 #       `bot.help_detail.*` translations sat unused in both catalogues.
 #
 # CONTRACTS (27)
-#   A  H1: no reply reads the writerless `devices` table; the state comes from the
-#      snapshot and an unmeasured relay is "no data"
+#   A  H1: nothing in the telegram surface reads the writerless `devices` table; both
+#      replies take the state from the snapshot and answer "no data" when unmeasured
 #   B  H2 + H3: no fabricated count, no hardcoded schema constant
 #   C  H4: the subnet replies report a failed ACL, and the pipeline refuses a nil client
 #   D  H5: the notifier has error-reporting sends, the no-op refuses, "Send test" counts
@@ -40,9 +40,17 @@
 #   F  the help reference comes from the catalogue, in the caller's language
 #   G  the behavioural Go tests pass (both packages)
 #   H  registered in the catalog, indexed in AGENTS.md, tracked by git
+#
+# READS A SURFACE, NOT A FILE (B339). `internal/telegram/commands_user.go` was split
+# into nine files by refactor Phase D, and a contract that greps one path turns a pure
+# code MOVE into a false FAIL — so the source assertions below read the whole
+# `internal/telegram` package surface through scripts/lib/gosurface.sh and locate a
+# reply by its FUNCTION NAME (awk on `func <name>(`), which survives any file move.
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=lib/gosurface.sh
+. scripts/lib/gosurface.sh
 
 PASS=0; FAIL=0; SKIP=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
@@ -52,15 +60,7 @@ hdr() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 SKY_TMP="$(mktemp -d "${TMPDIR:-/tmp}/skygate-b390.XXXXXX")" || exit 1
 trap 'rm -rf "$SKY_TMP"' EXIT
 
-EXIT_REPLY_ADMIN=internal/telegram/commands_phase3.go
-EXIT_REPLY_USER=internal/telegram/commands_user_exit.go
 HEALTH=internal/telegram/exit_node_truth_b390.go
-STATUS=internal/telegram/commands_user_status.go
-STATUS_RICH=internal/telegram/commands_user.go
-VERSION=internal/telegram/commands_phase4.go
-SUBNET=internal/telegram/commands_user.go
-DELRULE=internal/telegram/commands_user_rule_delete.go
-CLEAR=internal/telegram/commands_clear.go
 DELHELPER=internal/telegram/rule_delete_truth_b390.go
 NOTIFY=internal/telegram/notify.go
 ADMIN_ACTIONS=internal/feature/admin/telegram_actions.go
@@ -70,9 +70,8 @@ DB_TRACK=internal/db/migration_tracking.go
 CATALOG=internal/i18n/catalog_bot.go
 GATE=scripts/verify_pre_deploy.sh
 
-for f in "$EXIT_REPLY_ADMIN" "$EXIT_REPLY_USER" "$HEALTH" "$STATUS" "$STATUS_RICH" \
-         "$VERSION" "$SUBNET" "$DELRULE" "$CLEAR" "$DELHELPER" "$NOTIFY" \
-         "$ADMIN_ACTIONS" "$ACL_APPLY" "$DB_RULES" "$DB_TRACK" "$CATALOG" "$GATE"; do
+for f in "$HEALTH" "$DELHELPER" "$NOTIFY" "$ADMIN_ACTIONS" "$ACL_APPLY" \
+         "$DB_RULES" "$DB_TRACK" "$CATALOG" "$GATE"; do
   [ -f "$f" ] || { bad "missing source file: $f"; exit 1; }
 done
 
@@ -91,26 +90,54 @@ strip_go_comments() {
          print out }' "$1"
 }
 
+# fn_body writes ONE function body (by name) from the surface to $2. A reply that moved
+# to another file in the package is still found; a reply that was RENAMED is reported
+# as missing rather than silently passing.
+fn_body() {
+  awk -v name="$1" '
+    $0 ~ ("^func " name "\\(") { f=1 }
+    f { print }
+    f && /^}/ { exit }' "$TG" > "$2"
+}
+
+gosurface TG_SURFACE internal/telegram/*.go
+TG="$SKY_TMP/telegram_surface.go"
+strip_go_comments "$TG_SURFACE" > "$TG"
+
 # --- A: H1 — the writerless `devices` table --------------------------------
 hdr "A. exit-node state comes from the health snapshot, not from \`devices\`"
 
-strip_go_comments "$EXIT_REPLY_ADMIN" > "$SKY_TMP/a_admin.go"
-strip_go_comments "$EXIT_REPLY_USER"  > "$SKY_TMP/a_user.go"
-if grep -q 'FROM devices' "$SKY_TMP/a_admin.go" "$SKY_TMP/a_user.go"; then
-  bad "A1: an exit-node reply still queries the \`devices\` table — it has NO WRITER in the repository, so every relay reads as 'offline' (TD-33 H1)"
+if grep -q 'FROM devices' "$TG"; then
+  bad "A1: the telegram surface still queries the \`devices\` table — it has NO WRITER in the repository, so every relay reads as 'offline' (TD-33 H1)"
 else
-  ok "A1: neither /exit_nodes nor /myexitnodes reads the writerless \`devices\` table"
+  ok "A1: nothing in the telegram surface reads the writerless \`devices\` table"
 fi
-if grep -qF 'exitNodeHealthIndex(' "$SKY_TMP/a_admin.go" && grep -qF 'exitNodeHealthIndex(' "$SKY_TMP/a_user.go"; then
-  ok "A2: both replies read the monitor's snapshot (exitNodeHealthIndex)"
+
+fn_body exitNodesReply "$SKY_TMP/fn_admin_exit.go"
+fn_body myExitNodesReply "$SKY_TMP/fn_user_exit.go"
+if [ -s "$SKY_TMP/fn_admin_exit.go" ] && [ -s "$SKY_TMP/fn_user_exit.go" ]; then
+  if grep -qF 'exitNodeHealthIndex(' "$SKY_TMP/fn_admin_exit.go" &&
+     grep -qF 'exitNodeHealthIndex(' "$SKY_TMP/fn_user_exit.go"; then
+    ok "A2: both replies read the monitor's snapshot (exitNodeHealthIndex)"
+  else
+    bad "A2: a reply does not use the shared snapshot loader"
+  fi
+  if grep -qF 'exitNodeStatusFor(' "$SKY_TMP/fn_admin_exit.go" &&
+     grep -qF 'exitNodeStatusFor(' "$SKY_TMP/fn_user_exit.go"; then
+    ok "A3: both replies map the snapshot state through the shared ladder"
+  else
+    bad "A3: a reply does not use exitNodeStatusFor — the state could be guessed again"
+  fi
+  if grep -qF 'bot.exit_nodes.health_unavailable' "$SKY_TMP/fn_admin_exit.go" &&
+     grep -qF 'bot.exit_nodes.health_unavailable' "$SKY_TMP/fn_user_exit.go"; then
+    ok "A5: an unreadable snapshot is reported as a fact about the READ, not as a per-node status"
+  else
+    bad "A5: a failed snapshot read is silent — the user cannot tell 'no data' from 'offline'"
+  fi
 else
-  bad "A2: a reply does not use the shared snapshot loader"
+  bad "A2: could not locate exitNodesReply / myExitNodesReply in the telegram surface"
 fi
-if grep -qF 'exitNodeStatusFor(' "$SKY_TMP/a_admin.go" && grep -qF 'exitNodeStatusFor(' "$SKY_TMP/a_user.go"; then
-  ok "A3: both replies map the snapshot state through the shared ladder"
-else
-  bad "A3: a reply does not use exitNodeStatusFor — the state could be guessed again"
-fi
+
 ladder_missing=0
 for k in status_online status_untagged status_degraded status_offline status_no_data; do
   if ! grep -qF "\"bot.exit_nodes.$k\"" "$HEALTH"; then
@@ -119,34 +146,31 @@ for k in status_online status_untagged status_degraded status_offline status_no_
   fi
 done
 [ "$ladder_missing" -eq 0 ] && ok "A4: the ladder maps all four monitor states plus 'no data'"
-if grep -qF 'bot.exit_nodes.health_unavailable' "$SKY_TMP/a_admin.go" "$SKY_TMP/a_user.go"; then
-  ok "A5: an unreadable snapshot is reported as a fact about the READ, not as a per-node status"
-else
-  bad "A5: a failed snapshot read is silent — the user cannot tell 'no data' from 'offline'"
-fi
 
 # --- B: H2 + H3 — no fabricated numbers ------------------------------------
 hdr "B. no fabricated count, no hardcoded schema level"
 
-strip_go_comments "$STATUS" > "$SKY_TMP/b_status.go"
-strip_go_comments "$STATUS_RICH" > "$SKY_TMP/b_rich.go"
-strip_go_comments "$VERSION" > "$SKY_TMP/b_version.go"
-if grep -q 'deviceCountForUser' "$SKY_TMP/b_status.go" && grep -q 'deviceCountForUser' "$SKY_TMP/b_rich.go"; then
+fn_body myStatusReply "$SKY_TMP/fn_status.go"
+fn_body myStatusBlocks "$SKY_TMP/fn_status_rich.go"
+if grep -qF 'deviceCountForUser' "$SKY_TMP/fn_status.go" &&
+   grep -qF 'deviceCountForUser' "$SKY_TMP/fn_status_rich.go"; then
   ok "B1: both /my_status paths share deviceCountForUser (one source for the number)"
 else
   bad "B1: a /my_status path does not use the shared device counter"
 fi
-if grep -q 'bot.my_status.value_unavailable' "$SKY_TMP/b_status.go" "$SKY_TMP/b_rich.go"; then
+if grep -qF 'bot.my_status.value_unavailable' "$SKY_TMP/fn_status.go" &&
+   grep -qF 'bot.my_status.value_unavailable' "$SKY_TMP/fn_status_rich.go"; then
   ok "B2: a failed device count renders the unavailable marker instead of 0"
 else
   bad "B2: a failed device count would still print a number"
 fi
-if grep -q 'dbSchemaVersion' "$SKY_TMP/b_version.go"; then
+if grep -q 'dbSchemaVersion' "$TG"; then
   bad "B3: the hardcoded \`dbSchemaVersion\` constant is back — it disagreed with the database for 49 migrations (TD-33 H3)"
 else
   ok "B3: the hardcoded schema constant is gone"
 fi
-if grep -qF 'db.LatestAppliedMigrationVersion(' "$SKY_TMP/b_version.go"; then
+fn_body schemaLevelLabel "$SKY_TMP/fn_schema.go"
+if grep -qF 'db.LatestAppliedMigrationVersion(' "$SKY_TMP/fn_schema.go"; then
   ok "B4: /version reads the level from applied_migrations"
 else
   bad "B4: /version does not read the schema level from the database"
@@ -155,14 +179,15 @@ fi
 # --- C: H4 — a failed ACL is reported --------------------------------------
 hdr "C. a failed ACL re-apply is reported, and a nil client does not panic"
 
-strip_go_comments "$SUBNET" > "$SKY_TMP/c_subnet.go"
-if grep -qF 'bot.mysubnet.share_ok_acl_failed' "$SKY_TMP/c_subnet.go" &&
-   grep -qF 'bot.mysubnet.revoke_ok_acl_failed' "$SKY_TMP/c_subnet.go"; then
+fn_body mySubnetShareReply "$SKY_TMP/fn_share.go"
+fn_body mySubnetRevokeReply "$SKY_TMP/fn_revoke.go"
+if grep -qF 'bot.mysubnet.share_ok_acl_failed' "$SKY_TMP/fn_share.go" &&
+   grep -qF 'bot.mysubnet.revoke_ok_acl_failed' "$SKY_TMP/fn_revoke.go"; then
   ok "C1: /mysubnet share|revoke have a distinct reply for an unapplied ACL"
 else
   bad "C1: the subnet replies have no failure wording — they still answer «ACL пере-применён»"
 fi
-if grep -qF 'subnet_share' "$SKY_TMP/c_subnet.go" && grep -qF 'AppendAuditLog' "$SKY_TMP/c_subnet.go"; then
+if grep -qF 'AppendAuditLog' "$SKY_TMP/fn_share.go" && grep -qF 'AppendAuditLog' "$SKY_TMP/fn_revoke.go"; then
   ok "C2: a failed re-apply also writes an audit row"
 else
   bad "C2: a failed re-apply leaves no audit trail"
@@ -209,19 +234,20 @@ if grep -qF 'func DeleteRuleForUserRows(' "$DB_RULES"; then
 else
   bad "E1: no rows-affected delete helper — a caller can only count its own loop"
 fi
-strip_go_comments "$DELRULE" > "$SKY_TMP/e_delrule.go"
-strip_go_comments "$CLEAR" > "$SKY_TMP/e_clear.go"
-strip_go_comments "$DELHELPER" > "$SKY_TMP/e_helper.go"
-if grep -qF 'deleteRuleJobs(' "$SKY_TMP/e_delrule.go" && grep -qF 'deleteRuleJobs(' "$SKY_TMP/e_clear.go"; then
+fn_body deleteRuleReply "$SKY_TMP/fn_delrule.go"
+fn_body confirmClearRules "$SKY_TMP/fn_clear.go"
+if grep -qF 'deleteRuleJobs(' "$SKY_TMP/fn_delrule.go" &&
+   grep -qF 'deleteRuleJobs(' "$SKY_TMP/fn_clear.go"; then
   ok "E2: both /delrule and /clearrules count through the shared helper"
 else
   bad "E2: a delete reply still counts loop iterations"
 fi
-if grep -q 'deleted++' "$SKY_TMP/e_delrule.go" "$SKY_TMP/e_clear.go"; then
+if grep -q 'deleted++' "$SKY_TMP/fn_delrule.go" "$SKY_TMP/fn_clear.go"; then
   bad "E3: an unconditional \`deleted++\` is back — it counts attempts, not deletions"
 else
   ok "E3: no unconditional counter remains in the delete paths"
 fi
+strip_go_comments "$DELHELPER" > "$SKY_TMP/e_helper.go"
 if grep -qF 'RowsAffected' "$DB_RULES" && grep -qF 'n <= 0' "$SKY_TMP/e_helper.go"; then
   ok "E4: a DELETE that matched nothing is reported as a failure, not as a deletion"
 else
@@ -231,12 +257,13 @@ fi
 # --- F: the help reference comes from the catalogue ------------------------
 hdr "F. /help <cmd> answers in the caller's language"
 
-if grep -qF 'No detailed help for' "$SKY_TMP/b_version.go"; then
+if grep -qF 'No detailed help for' "$TG"; then
   bad "F1: the hardcoded English help switch is back"
 else
   ok "F1: no hardcoded English help text remains"
 fi
-if grep -qF '"bot.help_detail." + cmd' "$SKY_TMP/b_version.go"; then
+fn_body helpDetailReply "$SKY_TMP/fn_help.go"
+if grep -qF '"bot.help_detail." + cmd' "$SKY_TMP/fn_help.go"; then
   ok "F2: helpDetailReply looks the reference up in the catalogue"
 else
   bad "F2: helpDetailReply does not use bot.help_detail.<command>"

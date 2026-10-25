@@ -710,8 +710,7 @@ func (n *RealNotifier) postToChatErr(token string, chatID int64, text string) er
 	resp, err := n.client.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
 		// B356.1: endpoint AND err both embed the bot token.
-		return fmt.Errorf("telegram: POST %s failed: %v",
-			RedactToken(endpoint, token), redactError(err, token))
+		return fmt.Errorf("telegram: POST %s failed: %v", RedactToken(endpoint, token), redactError(err, token))
 	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
