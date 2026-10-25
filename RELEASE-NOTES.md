@@ -1,5 +1,94 @@
 # Skygate release notes
 
+## v1.5.164 — alerts that arrive readable, and a disk check that can actually deliver (B391, TD-34)
+
+**Date:** 2026-10-25 · **Base:** `v1.5.163` → this tag · **Compatibility:** no migration,
+no config change. One composer, one transport, one scheduler; `scripts/monitor_disk.sh`
+becomes a diagnostic.
+
+### What was measured
+
+All **61** outgoing triggers built their message with `fmt.Sprintf` at the call site, in
+English only, and sent it through the **reply** transport, which:
+
+* sets **no `parse_mode`** — the body arrives as literal text, so any formatting the
+  author wrote shows up as characters;
+* wraps the body in a literal ``` fence "so it renders monospaced" — an alert that quotes
+  a command (`sudo docker system prune -a -f`) therefore arrives with the backticks
+  visible;
+* has **no length policy** — Telegram rejects a body above 4096 characters, so a long
+  alert was refused and **lost** (only a log line remained).
+
+And the around-the-clock disk check was a **host cron** (`scripts/monitor_disk.sh`),
+which could not do the one thing it existed for: it dispatched Telegram only when the bot
+token and the chat_id were in the **cron** environment (they live in the database), and
+the host cannot reach `api.telegram.org` at all. The container sees the very same
+filesystem and *has* the relay tunnel.
+
+### What changed
+
+**One composer** — `internal/telegram/alert_compose.go`:
+
+* a severity vocabulary, `info` / `warn` / `critical` / `recovery`, one glyph each
+  (ℹ️ ⚠️ ❌ ✅), so a critical alert looks different from a routine one;
+* the **title comes from the catalogue** (`alert.*`, RU+EN) instead of an English
+  sentence baked into a handler;
+* facts are label/value pairs and are **escaped** — a hostname or an error string
+  containing `<` can no longer make the API reject the message;
+* details go into `<pre>` and are trimmed **first**, with an explicit marker saying how
+  much was dropped;
+* a hard body budget, and `DedupKey`/`DedupTTL` so a flapping component cannot flood the
+  chat (default window 10 minutes).
+
+**One transport** — `postMessageErr(…, "HTML")`: `parse_mode=HTML`, no fence, sanitised at
+the wire by the same helper B389 added for replies. The alert path never uses the fenced
+reply transport again. The `Notifier` interface gained `SendAlertHTML` and
+`SendAlertEvent` (and `NoopNotifier` implements them); the legacy
+`SendAlert("English sentence")` path keeps working and now gets HTML, escaping and the
+length policy for free. `/ack` still lists the **plain** rendering, so the ack list stays
+readable.
+
+**The disk signal moved into the process that can deliver it** — `internal/diskmon`:
+
+* every 10 minutes, the filesystem holding the **database** (the one whose exhaustion
+  corrupts it), `statfs` with `Bavail` (the root reserve excluded — the number that
+  predicts the next failed write);
+* the same thresholds the cron used (85 % / 95 %), now tunable:
+  `SKYGATE_DISK_WARN_PCT`, `SKYGATE_DISK_CRIT_PCT`,
+  `SKYGATE_DISK_MONITOR_INTERVAL_SEC`;
+* an alert **only on a state transition** (ok→warn, warn→critical, *→ok recovery) plus a
+  bounded repeat (once per 6 h) while a level holds — the cron re-sent the same sentence
+  every six hours regardless of change, which is how an operator learns to ignore alerts;
+* the level and the last alert time persisted in `global_settings`
+  (`monitor.disk.level`, `monitor.disk.last_alert_at`), so a restart does not re-announce
+  what the operator already knows;
+* the decision half is pure (`ClassifyDisk` / `nextDiskAction`), `statfs` is unix-only
+  with a **windows stub that reports a named limitation** instead of a fabricated
+  percentage, and a **read failure is reported as a fact about the check**, never as
+  "disk ok".
+
+**`scripts/monitor_disk.sh` is now a diagnostic.** It prints the reading and the level and
+sends nothing unless you set `SKYGATE_LEGACY_DISK_ALERT=1` (for a host that runs skygate
+nowhere else). It also parses `df` by **shape**: the old column index printed
+`39385708%` on MSYS. If you added the cron, remove it:
+`crontab -l | grep -v skygate-monitor-disk | crontab -`.
+
+### The remaining translation debt is a ratchet
+
+34 alert sites still build an English sentence inline. They are correct now (HTML,
+escaped, bounded) but not yet translated, and `scripts/check_b391_alert_composer.sh`
+freezes that number: it may only go down. The composer is what makes burning it down
+possible without touching 34 handlers in one release.
+
+### Verification
+
+`scripts/check_b391_alert_composer.sh` — **27 contracts**, with the behavioural tests
+inside it: `internal/telegram/alert_compose_b391_test.go` (severity glyph, escaping,
+truncation-with-marker, catalogue title in RU vs EN, `parse_mode=HTML` on the wire, no
+fence, `[#id]` numbering, plain body stored for `/ack`, dedup window, refusal handling)
+and `internal/diskmon/disk_monitor_b391_test.go` (classification, the transition table,
+announce-once, escalation, recovery, restart persistence, read-failure wording).
+
 ## v1.5.163 — the bot stops stating values it does not have (B390, TD-33)
 
 **Date:** 2026-10-25 · **Base:** `v1.5.162` → this tag · **Compatibility:** no migration,

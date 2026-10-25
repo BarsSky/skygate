@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"skygate/internal/telegram"
 )
 
 // recordingNotifier satisfies telegram.Notifier for the
@@ -50,6 +52,12 @@ func (r *recordingNotifier) SendTelegramErr(text string) error { return nil }
 func (r *recordingNotifier) SendTelegramToChatErr(text string, chatID int64) error {
 	return nil
 }
+
+// B391: the composed-alert entry points. This fake records legacy alerts only; the
+// composed path is exercised by the telegram package's own tests and by the disk
+// monitor's, so returning zero here keeps B225's assertions about SendAlert intact.
+func (r *recordingNotifier) SendAlertHTML(htmlBody, plain string) int64 { return 0 }
+func (r *recordingNotifier) SendAlertEvent(a telegram.Alert) int64      { return 0 }
 func (r *recordingNotifier) SendAlert(text string) int64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()

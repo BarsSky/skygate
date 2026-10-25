@@ -18,10 +18,12 @@ import (
 	"context"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"skygate/internal/config"
 	"skygate/internal/db"
+	"skygate/internal/diskmon"
 	"skygate/internal/dns"
 	adminsvc "skygate/internal/feature/admin"
 	"skygate/internal/ha"
@@ -211,8 +213,30 @@ func wireOptionalSchedulers(ctx context.Context, d *db.ResettableDB, app *handle
 	// can pick up the same manager via SetSidecar().
 	// (See "Telegram bot" block above.")
 
-	// B417 (2026-10-24): keep the BASE routes of skygate-registered relays approved.
-	// Scope, decided by the operator: only 0.0.0.0/0 and ::/0, and only for nodes with
+	// B391 (2026-10-25, TD-34): the around-the-clock disk check lives HERE, not in a
+	// host cron. The retired `scripts/monitor_disk.sh` read the same filesystem but
+	// could not deliver: it needed the bot token in the CRON environment (the token
+	// lives in the DB) and the host cannot reach api.telegram.org at all, while this
+	// process has the notifier and its relay tunnel. The measured path is the
+	// filesystem holding the DATABASE, because that is the one whose exhaustion
+	// corrupts it — the incident that created the cron in the first place.
+	diskPath := "/"
+	if dir := filepath.Dir(cfg.DBPath); dir != "" && dir != "." && dir != "/" {
+		if _, statErr := os.Stat(dir); statErr == nil {
+			diskPath = dir
+		}
+	}
+	diskmon.NewDiskMonitor(diskmon.DiskMonitorConfig{
+		DB:       d,
+		Sender:   app.Notifier,
+		Path:     diskPath,
+		WarnPct:  envInt("SKYGATE_DISK_WARN_PCT", 85),
+		CritPct:  envInt("SKYGATE_DISK_CRIT_PCT", 95),
+		Interval: envOrDefaultDuration("SKYGATE_DISK_MONITOR_INTERVAL_SEC", 10*time.Minute, time.Second),
+		Lang:     "", // i18n falls back to RU when the language is unknown
+	}).Start(ctx)
+
+	// B417 (2026-10-24): keep the BASE routes of skygate-registered relays approved.	// Scope, decided by the operator: only 0.0.0.0/0 and ::/0, and only for nodes with
 	// a row in exit_servers — a relay skygate itself registered. Subnet routes and
 	// nodes skygate did not register are never auto-approved. It lives here (not in
 	// main.go) because it IS an optional background scheduler and main.go's line

@@ -25,6 +25,7 @@ import (
 	"skygate/internal/keynotify"
 	"skygate/internal/telegram"
 	"skygate/internal/update"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -692,4 +693,20 @@ func collectModuleEnv(_ *config.Config) map[string]string {
 		}
 	}
 	return out
+}
+
+// envInt reads an integer env var with a default, used by the disk monitor's
+// thresholds (B391). An unparseable value falls back to the default and is logged —
+// a typo must not silently disable the warning.
+func envInt(key string, def int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 || n > 100 {
+		log.Printf("env: %s=%q is not a percentage in 1..100 — using %d", key, raw, def)
+		return def
+	}
+	return n
 }

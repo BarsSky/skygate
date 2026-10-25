@@ -67,7 +67,14 @@ type Notifier interface {
 	SendTelegramToChatErr(text string, chatID int64) error
 	// SendAlert posts text as a numbered alert (for /ack). Returns
 	// the alert id, or 0 when the bot is not configured.
+	//
+	// B391: SendAlertHTML and SendAlertEvent are the COMPOSED path — an escaped,
+	// severity-tagged, length-bounded HTML body instead of a raw string. A sink that
+	// only knows SendAlert (a scheduler) still works; a sink that knows the HTML
+	// variant gets the readable alert.
 	SendAlert(text string) int64
+	SendAlertHTML(htmlBody, plain string) int64
+	SendAlertEvent(a Alert) int64
 	// BotUsernameCached returns the bot's @username, refreshing
 	// from getMe at most once per botUsernameCacheTTL. Returns ""
 	// if the token isn't configured yet. Used by the
@@ -688,23 +695,38 @@ func (n *RealNotifier) SendTelegramToChatErr(text string, chatID int64) error {
 	return n.postToChatErr(token, chatID, text)
 }
 
-// postToChatErr is the shared sendMessage implementation. SendTelegram and
-// SendTelegramToChat funnel through here so the HTTP shape, error reporting and
-// ``` wrapping stay in one place. Kept private — callers go through the public
-// methods.
-//
-// chatID is taken as int64 (matching Telegram's chat_id type) and stringified
-// inside via the JSON payload.
+// postToChatErr is the legacy sendMessage path (replies and the plain-text helpers):
+// no parse_mode, and a ``` fence around the body so it renders monospaced.
 func (n *RealNotifier) postToChatErr(token string, chatID int64, text string) error {
 	if !strings.HasPrefix(text, "```") {
 		// Wrap plain text in a small fence so replies render monospaced.
 		text = "```\n" + text + "\n```"
+	}
+	return n.postMessageErr(token, chatID, text, "")
+}
+
+// postMessageErr is the one sendMessage implementation.
+//
+// B391 (2026-10-25, TD-34): it takes an explicit parseMode because the alert path
+// needs parse_mode=HTML — the pre-B391 alert transport used the reply path, which sets
+// no parse_mode and wraps the body in a ``` fence, so an alert that quoted a command
+// (`sudo docker system prune -a -f`) arrived with the backticks showing and any author
+// formatting as literal characters. An HTML body is sanitised HERE, the last point
+// before the wire, with the same helper B389 introduced for replies: a hostname in a
+// message can then never make Telegram answer 400 "can't parse entities" (which would
+// silently drop the alert).
+func (n *RealNotifier) postMessageErr(token string, chatID int64, text, parseMode string) error {
+	if parseMode == "HTML" {
+		text = sanitizeTelegramHTML(text)
 	}
 	endpoint := n.apiBase + "/bot" + url.PathEscape(token) + "/sendMessage"
 	payload := map[string]any{
 		"chat_id":                  chatID,
 		"text":                     text,
 		"disable_web_page_preview": true,
+	}
+	if parseMode != "" {
+		payload["parse_mode"] = parseMode
 	}
 	body, _ := json.Marshal(payload)
 	resp, err := n.client.Post(endpoint, "application/json", bytes.NewReader(body))
@@ -722,6 +744,29 @@ func (n *RealNotifier) postToChatErr(token string, chatID int64, text string) er
 			resp.StatusCode, redactError(fmt.Errorf("%s", strings.TrimSpace(string(rb))), token))
 	}
 	return nil
+}
+
+// sendHTMLToChat delivers an ALREADY composed HTML body to the configured chat.
+//
+// B391 (2026-10-25, TD-34): this is the transport the alert path uses — parse_mode=HTML
+// and no ``` fence. It exists as its own function so the difference between "a reply"
+// (plain, fenced) and "an alert" (HTML, structured) is one call, not a comment.
+func (n *RealNotifier) sendHTMLToChat(htmlBody string) error {
+	if n == nil {
+		return ErrTelegramNotConfigured
+	}
+	token, chatIDStr, ok, err := db.LoadTelegramSendTarget(n.db)
+	if err != nil {
+		return fmt.Errorf("telegram: read settings: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("telegram: no token and chat_id configured")
+	}
+	chatID, perr := strconv.ParseInt(chatIDStr, 10, 64)
+	if perr != nil || chatID == 0 {
+		return fmt.Errorf("telegram: chat_id %q is not a valid int64: %v", chatIDStr, perr)
+	}
+	return n.postMessageErr(token, chatID, htmlBody, "HTML")
 }
 
 // Configured returns true if the bot token is present in the database.
