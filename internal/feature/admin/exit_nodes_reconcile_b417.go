@@ -161,7 +161,13 @@ func (s *Service) StartBaseRouteReconciler(ctx context.Context) func() {
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				// B416.1: a run interrupted by a restart claims to be running forever.
+				// Checked on the same tick, before the base-route pass, because a resumed
+				// run is what registers the exit_servers row that pass needs.
+				s.ResumeInterruptedProvisionJob(time.Now())
 				s.RunBaseRouteReconcile()
+				// B417.1: approval is not egress — probe the relays themselves, slowly.
+				s.runHealthCheckIfDue(ctx)
 			}
 		}
 	}()

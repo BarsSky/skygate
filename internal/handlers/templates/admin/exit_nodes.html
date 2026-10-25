@@ -124,6 +124,32 @@
      wait for the node in headscale → exit_servers row → base-route approval.
      The card renders the values it will ACTUALLY use (key path per install kind,
      login server) instead of asking the operator to guess them. */}}
+<div class="card" id="relay-health" style="margin-bottom:24px">
+  <h3><i class="fa-solid fa-stethoscope"></i> {{t "exit_nodes.health.title"}}</h3>
+  <p class="sub">{{t "exit_nodes.health.subtitle"}}</p>
+  {{if .Provision.Health}}
+    {{if gt .Provision.HealthBroken 0}}
+    <div style="margin:0 0 12px;padding:10px 12px;border-radius:6px;background:var(--danger-bg);border:1px solid var(--danger);color:var(--text);font-size:13px">
+      <b><i class="fa-solid fa-triangle-exclamation"></i> {{tf "exit_nodes.health.broken" .Provision.HealthBroken}}</b>
+      <ul style="margin:8px 0 0 18px">
+        {{range .Provision.Health}}{{if not .OK}}<li><code>{{.Host}}</code> — {{.Problem}}</li>{{end}}{{end}}
+      </ul>
+    </div>
+    {{else}}
+    <div style="margin:0 0 12px;padding:10px 12px;border-radius:6px;background:var(--success-bg);border:1px solid var(--success);color:var(--text);font-size:13px">
+      <i class="fa-solid fa-circle-check"></i> {{t "exit_nodes.health.ok"}}
+    </div>
+    {{end}}
+    <p class="sub" style="font-size:11px">{{tf "exit_nodes.health.at" .Provision.HealthAt}}</p>
+  {{else}}
+    <p class="sub" style="font-size:12px">{{t "exit_nodes.health.never"}}</p>
+  {{end}}
+  <form method="post" action="/admin/exit-nodes/health-check">
+    <button type="submit" class="btn btn-sm"><i class="fa-solid fa-play"></i> {{t "exit_nodes.health.check"}}</button>
+    <span class="muted" style="font-size:12px;margin-left:8px">{{t "exit_nodes.health.check_help"}}</span>
+  </form>
+</div>
+
 <div class="card" id="new-exit-node" style="margin-bottom:24px">
   <h3><i class="fa-solid fa-wand-magic-sparkles"></i> {{t "exit_nodes.provision.title"}}</h3>
   <p class="sub">{{t "exit_nodes.provision.subtitle" | safeHTML}}</p>

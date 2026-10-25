@@ -218,4 +218,8 @@ func wireOptionalSchedulers(ctx context.Context, d *db.ResettableDB, app *handle
 	// main.go) because it IS an optional background scheduler and main.go's line
 	// ceiling (B372) only ever falls.
 	go adminSvc.StartBaseRouteReconciler(ctx)
+	// B416.1: a provisioning run interrupted by THIS restart must not claim to be
+	// running forever — detect it at boot (the ticker would also catch it later, but the
+	// operator restarting skygate is exactly when they expect the run to be resumed).
+	adminSvc.ResumeInterruptedProvisionJob(time.Now())
 }

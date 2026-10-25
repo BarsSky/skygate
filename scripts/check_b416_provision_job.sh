@@ -140,6 +140,45 @@ else
   bad "C4: keys missing from one catalogue:$missing"
 fi
 
+# --- C2: B416.1 — an interrupted run must not look busy forever --------------
+# The durable record survives a restart, the GOROUTINE does not: the stored job keeps
+# saying "running", the retry refuses with «прогон уже идёт», and nothing ever finishes
+# it. The predicate below is pure, so "when may skygate resume by itself" is asserted
+# rather than assumed.
+hdr "C2. B416.1 — an interrupted run is detected and resumed"
+if grep -q 'func provisionJobStale' "$JOB" && grep -q 'func (s \*Service) ResumeInterruptedProvisionJob' "$JOB"; then
+  ok "C5: the stale predicate and the resume entry point exist"
+else
+  bad "C5: nothing detects a job whose runner died"
+fi
+if grep -q 'provisionJobStale(j, now, processStartedAt' "$JOB" && grep -q 'boot.After(j.StartedAt)' "$JOB"; then
+  ok "C6: a job started before THIS process booted is recognised as orphaned"
+else
+  bad "C6: a restart would leave the job 'running' forever"
+fi
+if grep -q 'provisionJobMaxAttempts' "$JOB" && grep -q 'j.Attempt >= provisionJobMaxAttempts' "$JOB"; then
+  ok "C7: automatic resumption is bounded, then the operator decides"
+else
+  bad "C7: auto-resume would retry without a limit"
+fi
+if grep -q 'ResumeInterruptedProvisionJob' cmd/skygate/main_schedulers.go && grep -q 'ResumeInterruptedProvisionJob' internal/feature/admin/exit_nodes_reconcile_b417.go; then
+  ok "C8: checked at boot AND on every reconcile tick"
+else
+  bad "C8: the resume check is not wired (boot or ticker missing)"
+fi
+if grep -q 'exit_node_provision_resume' "$JOB"; then
+  ok "C9: every automatic resumption leaves an audit row"
+else
+  bad "C9: an automatic retry would be silent"
+fi
+OUT="$(go test ./internal/feature/admin/ -run 'B416_1' -count=1 2>&1)"
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  ok "C10: the staleness decision is unit-tested (fresh / after-restart / hung / finished / no-start)"
+else
+  bad "C10: go test on the staleness decision failed (rc=$rc): $(printf '%s' "$OUT" | tail -3 | tr '\n' ' ')"
+fi
+
 # --- D: registration --------------------------------------------------------
 hdr "D. registration"
 if grep -q 'run_check "B416"' "$GATE"; then

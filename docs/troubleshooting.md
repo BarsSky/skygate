@@ -521,6 +521,19 @@ two minutes skygate approves those two base routes for any relay that has a row 
 had them approved, then writes an `exit_node_base_route_autorepair` audit row and
 announces it through the notifier. Subnet routes and relays skygate did not register
 are **never** auto-approved.
+Two follow-ups make that loop honest about its own limits:
+
+* **A run interrupted by a restart resumes itself** (B416.1). The job record survives a
+  restart, the goroutine does not — the stored job would keep saying `running`, the retry
+  would refuse with «прогон уже идёт» and nothing would ever finish it. A job whose runner
+  cannot exist any more (this process booted after the run began) or that has hung past
+  its whole budget is marked failed with the step it died on and **resumed automatically**,
+  up to three attempts, each one audited.
+* **"Approved" is not "egress"** (B417.1). The card now also probes the relay itself,
+  read-only, every 15 minutes or on «Проверить выход»: `ip_forward`, a `MASQUERADE` rule in
+  `nat/POSTROUTING`, an `ACCEPT` in `FORWARD`, and whether `tailscale status` answers. A
+  missing piece is named on the page and announced once when the relay breaks or recovers —
+  skygate does **not** rewrite a firewall on its own.
 
 ---
 

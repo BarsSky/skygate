@@ -29,6 +29,87 @@ import (
 // provisionJobKey is the global_settings key holding the last (or current) job.
 const provisionJobKey = "provision.job"
 
+// B416.1 (2026-10-24) — A JOB WHOSE PROCESS DIED MUST NOT LOOK BUSY FOREVER.
+//
+// The durable record survives a skygate restart, but the GOROUTINE that was running it
+// does not: after a restart the stored job still says `running`, the retry button
+// refuses with «прогон уже идёт», and nothing will ever finish it. The same happens if
+// the runner goroutine is killed by a panic outside the recover or simply hangs.
+//
+// The decision is a pure function so it can be asserted: a job is stale when it claims
+// to be running and either the CURRENT process started after the job did (its runner
+// cannot exist) or it has been running longer than the whole budget plus slack.
+//
+// Resume policy: bounded (`provisionJobMaxAttempts`), once per stale detection, and only
+// through the SAME idempotent pipeline — `BuildProvisionScript` refuses to half-configure
+// a host and re-running it is safe by design. Each resumption is audited and announced,
+// so an automatic retry is never silent.
+
+// processStartedAt is this process's boot time, used to tell "my runner is alive" from
+// "the runner belonged to a previous process".
+var processStartedAt = time.Now()
+
+// provisionJobMaxAttempts bounds automatic resumption: three tries, then the job stays
+// failed with its step named and the operator decides.
+const provisionJobMaxAttempts = 3
+
+// provisionJobStale is pure: the job claims to be running but nothing can be.
+func provisionJobStale(j exitnode.Job, now, boot time.Time, budget time.Duration) bool {
+	if !j.Running() {
+		return false
+	}
+	if j.StartedAt.IsZero() {
+		return true
+	}
+	// The runner is a goroutine of the process that started the job. If this process
+	// booted AFTER the job began, that goroutine does not exist any more.
+	if boot.After(j.StartedAt) {
+		return true
+	}
+	// A hung goroutine: the whole pipeline is bounded by `budget`, plus slack for the
+	// last audit/notify.
+	return now.Sub(j.StartedAt) > budget+90*time.Second
+}
+
+// ResumeInterruptedProvisionJob detects a stale job and respawns it (bounded) or marks
+// it failed with the step it died on. Called at boot and from the B417 tick, so a run
+// interrupted by a restart finishes on its own.
+func (s *Service) ResumeInterruptedProvisionJob(now time.Time) {
+	j, ok := s.loadProvisionJob()
+	if !ok || !provisionJobStale(j, now, processStartedAt, exitnode.Timeout) {
+		return
+	}
+	step := j.Step
+	if step == "" {
+		step = exitnode.JobStepSSHKey
+	}
+	j.Status = exitnode.JobFailed
+	j.Message = "прогон прерван (перезапуск skygate или зависший исполнитель) на шаге " + step + " — " + exitnode.StepHint(step)
+	j.FinishedAt = now
+	_ = s.saveProvisionJob(j)
+	s.auditProvisionRun(j, "err=interrupted at step "+step)
+
+	if j.Attempt >= provisionJobMaxAttempts {
+		j.Message += fmt.Sprintf(" ; автоматические попытки исчерпаны (%d) — нажмите «Повторить», если хотите ещё раз", j.Attempt)
+		_ = s.saveProvisionJob(j)
+		s.notifyProvisionRun(j)
+		return
+	}
+	if !provisionMu.TryLock() {
+		// Another run holds the mutex: leave the failed record, the next tick retries.
+		s.notifyProvisionRun(j)
+		return
+	}
+	j.Attempt++
+	j.Actor = "skygate (авто-возобновление)"
+	j.ActorID = 0
+	// startProvisionJob expects the caller to hold provisionMu (it hands it to the
+	// goroutine); the finish of that run sends its own notification.
+	s.startProvisionJob(j)
+	s.Backend.Audit(0, "skygate", "exit_node_provision_resume",
+		fmt.Sprintf("node=%s host=%s step=%s attempt=%d (interrupted run resumed automatically)", j.NodeName, j.Host, step, j.Attempt))
+}
+
 // loadProvisionJob reads the stored job. A missing or unparsable value is "no job",
 // never an error the page has to handle.
 func (s *Service) loadProvisionJob() (exitnode.Job, bool) {

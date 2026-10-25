@@ -167,6 +167,10 @@ type ExitNodeProvisionView struct {
 	// Job is the durable provisioning run (B416): nil when nothing was ever run,
 	// otherwise its state is rendered instead of a one-shot flash that a 502 eats.
 	Job *exitnode.Job
+	// Health is the last relay health snapshot (B417.1): approval is not egress.
+	Health       []exitnode.HealthLine
+	HealthAt     string
+	HealthBroken int
 	// TimeoutSeconds is how long a real run may take (the button says it).
 	TimeoutSeconds int
 	// Blocked is a non-empty sentence when the flow cannot work at all right now
@@ -327,6 +331,19 @@ func (s *Service) exitNodeProvisionView(r *http.Request) *ExitNodeProvisionView 
 	// restarted process cannot hide where the provisioning stopped.
 	if job, ok := s.loadProvisionJob(); ok {
 		v.Job = &job
+	}
+	// B417.1: the last relay health snapshot, so the page can say "approved but not
+	// forwarding" instead of calling the relay healthy.
+	if st := s.loadExitNodeHealth(); len(st.Lines) > 0 {
+		v.Health = st.Lines
+		if !st.At.IsZero() {
+			v.HealthAt = st.At.Format("2006-01-02 15:04")
+		}
+		for _, l := range st.Lines {
+			if !l.OK {
+				v.HealthBroken++
+			}
+		}
 	}
 	return v
 }

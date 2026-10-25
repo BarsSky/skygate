@@ -3,10 +3,45 @@ package admin
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"skygate/internal/exitnode"
 	"skygate/internal/headscale"
 )
+
+// TestProvisionJobStale_B416_1 is the resume safety contract: a job that CLAIMS to be
+// running must be resumed only when its runner cannot exist any more.
+func TestProvisionJobStale_B416_1(t *testing.T) {
+	base := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	boot := base.Add(-10 * time.Minute)
+	budget := 3 * time.Minute
+
+	running := exitnode.Job{Status: exitnode.JobRunning, StartedAt: base}
+	if provisionJobStale(running, base.Add(30*time.Second), boot, budget) {
+		t.Fatal("a fresh run of THIS process must not be considered stale")
+	}
+	// The process restarted after the run began: its goroutine is gone.
+	if !provisionJobStale(running, base.Add(time.Minute), base.Add(time.Minute), budget) {
+		t.Fatal("a run started before this process booted must be stale")
+	}
+	// A hung runner: far past the whole budget plus slack.
+	if !provisionJobStale(running, base.Add(budget+2*time.Minute), boot, budget) {
+		t.Fatal("a run older than budget+90s must be stale")
+	}
+	// A finished job is never stale, however old.
+	done := running
+	done.Status = exitnode.JobOK
+	if provisionJobStale(done, base.Add(time.Hour), base.Add(time.Hour), budget) {
+		t.Fatal("a finished job must never be resumed")
+	}
+	// A record with no start time cannot be reasoned about: treat it as stale.
+	if !provisionJobStale(exitnode.Job{Status: exitnode.JobRunning}, base, boot, budget) {
+		t.Fatal("a running job without StartedAt must be treated as stale")
+	}
+	if provisionJobMaxAttempts < 2 {
+		t.Fatal("automatic resumption must be bounded but must allow at least one retry")
+	}
+}
 
 // TestBaseRouteRepairDecision_B417 is the safety contract of the auto-repair: it may
 // approve ONLY a node that (a) has a row in exit_servers — i.e. skygate registered it,

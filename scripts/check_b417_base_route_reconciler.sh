@@ -126,6 +126,53 @@ else
   bad "C3: no ticker"
 fi
 
+# --- E: B417.1 — approved is not egress -------------------------------------
+# The approval pass made the panel say "approved", which is true and still not the same
+# as "clients get out". Forwarding/NAT live on the VPS and can vanish (iptables flush,
+# reboot before persistence, a docker FORWARD rewrite) while headscale stays happy.
+hdr "E. B417.1 — the relay itself is probed, read-only"
+HEALTH=internal/exitnode/health_b417_1.go
+HADMIN=internal/feature/admin/exit_nodes_health_b417_1.go
+if [ -f "$HEALTH" ] && [ -f "$HADMIN" ]; then
+  ok "E1: the read-only probe and its admin runner exist"
+else
+  bad "E1: no relay health probe (approved would still mean 'working')"
+fi
+for fact in 'net.ipv4.ip_forward' 'iptables -t nat -S POSTROUTING' 'iptables -S FORWARD' 'tailscale status'; do
+  if grep -qF -- "$fact" "$HEALTH"; then
+    ok "E2: the probe reads '$fact'"
+  else
+    bad "E2: the probe does not read '$fact'"
+  fi
+done
+if grep -q 'func HealthVerdict' "$HEALTH" && grep -q 'func ParseHealth' "$HEALTH"; then
+  ok "E3: the verdict and the parser are pure functions the tests can drive"
+else
+  bad "E3: the probe result is not parsed/classified by a pure function"
+fi
+if grep -q 'SendAlert' "$HADMIN" && grep -q 'announceHealthTransitions' "$HADMIN"; then
+  ok "E4: a transition ok→broken is announced once (not on every pass)"
+else
+  bad "E4: a relay that stops forwarding would be silent"
+fi
+if grep -q 'runHealthCheckIfDue' internal/feature/admin/exit_nodes_reconcile_b417.go; then
+  ok "E5: the slow pass is driven by the same ticker as the approval pass"
+else
+  bad "E5: the health pass is not wired to a ticker"
+fi
+if grep -q 'exit-nodes/health-check' cmd/skygate/routes.go; then
+  ok "E6: the operator can re-run the probe from the page"
+else
+  bad "E6: no on-demand health check route"
+fi
+OUT="$(go test ./internal/exitnode/ -run 'B417_1' -count=1 2>&1)"
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  ok "E7: parse / verdict / read-only / ordering are unit-tested"
+else
+  bad "E7: go test on the health probe failed (rc=$rc): $(printf '%s' "$OUT" | tail -3 | tr '\n' ' ')"
+fi
+
 # --- D: registration --------------------------------------------------------
 hdr "D. registration"
 if grep -q 'run_check "B417"' "$GATE"; then

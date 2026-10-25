@@ -309,7 +309,7 @@ var ruExitNodes = map[string]string{
 	// Отпечаток, признак выведенного из приватного ключа, предупреждение об устаревшем
 	// .pub и напоминание, ПОД КАКИМ пользователем выполнять команду (в ней `~`).
 	"exit_nodes.provision.key_fingerprint":      "Отпечаток ключа",
-	"exit_nodes.provision.key_fingerprint_help": "Сравните его на VPS: <code>ssh-keygen -lf ~/.ssh/authorized_keys</code> должен показать эту же строку. Если отпечатки разные — добавлен другой ключ, и ssh откажет.",
+	"exit_nodes.provision.key_fingerprint_help": "Сравните его на VPS: <code>ssh-keygen -lf ~/.ssh/authorized_keys</code> должен показать эту же строку. Если отпечатки разные — добавлен другой ключ, и ssh откажет. Если ssh-keygen отвечает «is not a public key file» — в файле нет ни одной корректной строки ключа: пусто, CRLF/UTF-16 из редактора Windows, или вставлен приватный ключ.",
 	"exit_nodes.provision.key_derived_note":     "ключ выведен из приватного (значит, именно его и предложит ssh)",
 	"exit_nodes.provision.key_run_as":           "Команду выполните под пользователем:",
 	"exit_nodes.provision.key_stale_title":      "Рядом лежит .pub, который НЕ соответствует приватному ключу",
@@ -328,6 +328,16 @@ var ruExitNodes = map[string]string{
 	"exit_nodes.provision.job_running_help": "Прогон идёт в фоне — страница обновляется сама. Если браузер закроется, результат останется здесь.",
 	"exit_nodes.provision.job_retry":        "Повторить прогон",
 	"exit_nodes.provision.job_retry_help":   "повторит с теми же параметрами и новым preauth-ключом; безопасно, скрипт идемпотентен",
+
+	// 2026-10-24 (B417.1) — «одобрено» не значит «работает»: проверка самих релеев.
+	"exit_nodes.health.title":      "Проверка выхода через релеи",
+	"exit_nodes.health.subtitle":   "Одобренный в headscale маршрут ещё не значит, что трафик выходит: skygate читает на самом VPS ip_forward, правила MASQUERADE и FORWARD и состояние tailscaled. Ничего не меняет — только сообщает.",
+	"exit_nodes.health.broken":     "Проблем у релеев: %d",
+	"exit_nodes.health.ok":         "Все релеи форвардят трафик: ip_forward включён, NAT и FORWARD на месте",
+	"exit_nodes.health.at":         "последняя проверка: %s",
+	"exit_nodes.health.never":      "Проверка ещё не запускалась — она идёт автоматически раз в 15 минут или по кнопке ниже.",
+	"exit_nodes.health.check":      "Проверить выход",
+	"exit_nodes.health.check_help": "SSH-проба по каждому релею, только чтение (до 45 с на релей)",
 
 	// 2026-08-18 (B132): per-row "Re-sync" button + better
 	// explainer for the mismatch tag. The operator reported
@@ -683,7 +693,7 @@ var enExitNodes = map[string]string{
 
 	// 2026-10-24 (B415) — «I added the key on the VPS and it still does not connect».
 	"exit_nodes.provision.key_fingerprint":      "Key fingerprint",
-	"exit_nodes.provision.key_fingerprint_help": "Compare it on the VPS: <code>ssh-keygen -lf ~/.ssh/authorized_keys</code> must print the same line. A different fingerprint means a different key was authorised, and ssh will refuse it.",
+	"exit_nodes.provision.key_fingerprint_help": "Compare it on the VPS: <code>ssh-keygen -lf ~/.ssh/authorized_keys</code> must print the same line. A different fingerprint means a different key was authorised, and ssh will refuse it. If ssh-keygen answers «is not a public key file», the file holds no valid key line at all: empty, CRLF/UTF-16 from a Windows editor, or a private key pasted in.",
 	"exit_nodes.provision.key_derived_note":     "derived from the private key — this is the one ssh will offer",
 	"exit_nodes.provision.key_run_as":           "Run the command as the user:",
 	"exit_nodes.provision.key_stale_title":      "A .pub next to the key does NOT match the private key",
@@ -702,6 +712,16 @@ var enExitNodes = map[string]string{
 	"exit_nodes.provision.job_running_help": "The run continues in the background and the page refreshes itself. Closing the browser does not lose the result — it stays here.",
 	"exit_nodes.provision.job_retry":        "Retry the run",
 	"exit_nodes.provision.job_retry_help":   "repeats with the same parameters and a fresh preauth key; safe, the script is idempotent",
+
+	// 2026-10-24 (B417.1) — "approved" is not "working": probe the relays themselves.
+	"exit_nodes.health.title":      "Egress check through the relays",
+	"exit_nodes.health.subtitle":   "A route approved in headscale is not proof that traffic leaves: skygate reads ip_forward, the MASQUERADE and FORWARD rules and the tailscaled state ON the VPS. It changes nothing — it only reports.",
+	"exit_nodes.health.broken":     "Relays with a problem: %d",
+	"exit_nodes.health.ok":         "Every relay forwards: ip_forward is on, NAT and FORWARD are in place",
+	"exit_nodes.health.at":         "last check: %s",
+	"exit_nodes.health.never":      "No check has run yet — it runs every 15 minutes by itself, or use the button below.",
+	"exit_nodes.health.check":      "Check egress",
+	"exit_nodes.health.check_help": "read-only SSH probe per relay (up to 45 s each)",
 
 	// 2026-08-18 (B132): per-row "Re-sync" button + better
 	// explainer for the mismatch tag. The operator reported

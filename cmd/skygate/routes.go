@@ -1045,6 +1045,8 @@ func registerRoutes(
 	// B416: retry the stored provisioning job (fresh preauth key, same form values),
 	// so a run that stopped at a named step is one click from continuing.
 	mux.Handle("POST /admin/exit-nodes/provision/retry", authMW(http.HandlerFunc(adminSvc.RetryAdminExitNodeProvision)))
+	// B417.1: approval is not egress — probe ip_forward / NAT / tailscaled on the relays.
+	mux.Handle("POST /admin/exit-nodes/health-check", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeHealthCheck)))
 	// B312 (v1.5.77): where a relay sits — shown on the page and used to prefer a
 	// nearby relay when an owner becomes unreachable.
 	mux.Handle("POST /admin/exit-nodes/location", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeLocation)))

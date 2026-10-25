@@ -1,5 +1,56 @@
 # Skygate release notes
 
+## v1.5.161 — the run resumes itself, and "approved" stops meaning "working" (B416.1, B417.1)
+
+**Date:** 2026-10-24 · **Base:** `v1.5.160` → this tag · **Compatibility:** no migration, no
+config change. The provisioning job, a read-only relay health probe and one card hint.
+
+### B416.1 — a run interrupted by a restart resumes itself
+
+The job record survives a restart; the goroutine running it does not. Until now that left the
+stored job saying `running` forever: the retry refused with «прогон уже идёт» and nothing
+would ever finish it. The predicate is pure and unit-tested: a job is stale when it claims to
+be running and either **this process booted after the run began** (its runner cannot exist) or
+it has hung **past its whole budget plus 90 s**. A stale job is marked failed with the step it
+died on, audited, and **resumed automatically** — bounded to three attempts, each resumption
+audited as `exit_node_provision_resume`. It is checked at boot and on every reconcile tick, so
+an interrupted onboarding finishes without a button.
+
+### B417.1 — approved routes are not proof of egress
+
+B417 made the panel call a relay "approved", which is true and still not the same as "clients
+get out": forwarding and NAT live on the VPS and can vanish (an iptables flush, a reboot
+before persistence, a docker FORWARD rewrite) while headscale stays perfectly happy. The card
+now probes the relay itself, **read-only**, every 15 minutes or on demand («Проверить выход»):
+
+* `sysctl -n net.ipv4.ip_forward`, a `MASQUERADE` rule in `nat/POSTROUTING`, an `ACCEPT` in
+  `FORWARD`, and whether `tailscale status` answers;
+* the first missing piece is named in the operator's words (forwarding off → no NAT → no
+  FORWARD accept → tailscaled down), shown on the page and **announced once** when a relay
+  breaks or recovers;
+* skygate **never** rewrites a firewall on its own — the probe reports, the operator decides.
+
+### The `is not a public key file` branch reached the card
+
+The hint under the key fingerprint now also covers the state the operator hit with
+`ssh-keygen -lf`: no valid key line in the file at all (empty, CRLF/UTF-16 from a Windows
+editor, or a private key pasted in) — previously only in `docs/troubleshooting.md` §4.
+
+### Verification
+
+* `scripts/check_b416_provision_job.sh` — **30/0** (C5–C10 are the resume contracts);
+  `scripts/check_b417_base_route_reconciler.sh` — **25/0** (E1–E7 are the health contracts).
+* New unit tests: the staleness predicate (fresh / after-restart / hung / finished / no
+  start), the probe parser, the verdict order, the read-only guarantee (no
+  `iptables -A/-I/-D/-F`, no `sysctl -w`, no `tailscale up/set`, redirects only to
+  `/dev/null`) and the row ordering.
+* The full catalog is CI's job: the tag is created only from a green run.
+
+### What you do
+
+`/admin/update` → v1.5.161. On `/admin/exit-nodes` the new card **«Проверка выхода через
+релеи»** answers after one probe (up to 45 s per relay) or by itself within 15 minutes.
+
 ## v1.5.160 — the exit-node run finishes itself (B416, B417)
 
 **Date:** 2026-10-24 · **Base:** `v1.5.159` → this tag · **Compatibility:** no migration, no
