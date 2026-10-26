@@ -6534,5 +6534,8 @@ if [ "$RESULTS_FAIL" -gt 0 ] || [ "$RESULTS_TIMEOUT" -gt 0 ]; then
 fi
 
 echo
+run_check "B424" "«НЕ ОТРАБАТЫВАЕТ ОБНОВЛЕНИЕ ПО РАСПИСАНИЮ» И «ПРОЧЕРК ВМЕСТО ПОСЛЕДНЕГО РЕЛИЗА» — ОДИН ДЕФЕКТ. Замер на живой установке 2026-10-25: расписание включено (08:00), update_schedule_last_run=2026-10-13 (13 дней), при этом release-monitor слал алерты про v1.5.168/169, GitHub из контейнера отвечал 200, а аудит показывал update_page_view каждые ~6 секунд. Причина: страница /admin/update создавала НОВЫЙ update.Checker на каждый рендер, поэтому его кэши (6 ч успех / 15 мин backoff) не работали — один запрос к GitHub API на рендер, ~600 в час против анонимного лимита 60/час. Квота выгорала за минуты, GitHub отвечал 403, Check возвращал Result с ПУСТЫМ Latest (прочерк на странице, а поле Error не выводилось), и слот планировщика натыкался на тот же отказ и молчал. Исправлено: (1) ОДИН Checker на процесс (updateCheckerFor, ключ = owner|repo|channel|build|наличие токена) — кэши применяются, открытая вкладка стоит ~4 запроса в час вместо 600; (2) провал проверки ВИДЕН — шаблон печатает причину (update.check_failed) и отдельное состояние «ещё не проверялось» вместо прочерка; (3) планировщик называет причину пропуска в слоте: нет новее (с обеими версиями) / проверка не удалась (с подсказкой про SKYGATE_GITHUB_TOKEN) / нет чекера / нет тега. 13 контрактов в scripts/check_b424_update_check_quota.sh." \
+  'test -f scripts/check_b424_update_check_quota.sh && bash scripts/check_b424_update_check_quota.sh'
+
 echo "${GRN}GATE PASSED${NC}: ${RESULTS_PASS} check(s) green, 0 failed, ${RESULTS_TIMEOUT} timed out."
 exit 0

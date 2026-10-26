@@ -209,7 +209,15 @@
             </a>
           {{end}}
         {{else}}
-          <span style="color:var(--text-muted)">—</span>
+          {{/* B424: the bare dash here WAS the operator's second symptom — the GitHub
+               check had failed (quota exhausted by the page's own auto-refresh) and the
+               page said nothing at all. "не удалось проверить: причина" is actionable; a
+               dash is not. */}}
+          {{if .Error}}
+            <span style="color:var(--danger,#e5484d);font-size:13px">{{t "update.check_failed"}}: {{.Error}}</span>
+          {{else}}
+            <span style="color:var(--text-muted)">{{t "update.check_never"}}</span>
+          {{end}}
         {{end}}
       </div>
       {{if .CheckedAt}}

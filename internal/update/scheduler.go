@@ -287,13 +287,35 @@ func tick(ctx context.Context, deps SchedulerDeps) {
 	// 6. No pin → check GitHub. If no newer release, do nothing —
 	//    the schedule is "run only when there's an update
 	//    to apply", not "run a no-op every day at 03:00".
+	//
+	//    B424 (2026-10-25): "do nothing" must not mean "say nothing". Measured on the
+	//    reference install: update_schedule_last_run was 13 days old while the release
+	//    monitor kept alerting about newer releases — at the slot this branch hit a FAILED
+	//    check (the page's own auto-refresh had exhausted the anonymous GitHub quota) and
+	//    returned in total silence. The operator's report was «не отрабатывает обновление по
+	//    расписанию», and the honest answer was "it tried, the check failed, nobody was
+	//    told". The slot now names which of the outcomes happened — once per slot, because
+	//    the dedup above guarantees we only get here once.
 	ctxCheck, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	if deps.Checker == nil {
+		logScheduledNoop(timeStr, "no release checker is configured")
 		return
 	}
-	result, _ := deps.Checker.Check(ctxCheck)
-	if result == nil || !result.IsNewer || result.Latest == "" {
+	result, checkErr := deps.Checker.Check(ctxCheck)
+	switch {
+	case checkErr != nil && result == nil:
+		logScheduledNoopErr(timeStr, checkErr)
+		return
+	case result != nil && result.Latest == "" && result.Error != "":
+		// A failed check surfaces as a non-nil Result carrying the reason and no tag.
+		logScheduledNoopErr(timeStr, fmt.Errorf("%s", result.Error))
+		return
+	case result == nil || result.Latest == "":
+		logScheduledNoop(timeStr, "the release check returned no tag")
+		return
+	case !result.IsNewer:
+		logScheduledNoop(timeStr, fmt.Sprintf("no newer release (running %s, latest %s)", deps.BuildVersion, result.Latest))
 		return
 	}
 
@@ -567,3 +589,29 @@ var (
 	getGlobalSetting func(db *sql.DB, key, def string) (string, error)
 	setGlobalSetting func(db *sql.DB, key, value string) error
 )
+
+// logScheduledNoop (B424) records that the scheduled slot was REACHED and why no run
+// happened. The operator's 2026-10-25 report («не отрабатывает обновление по расписанию»)
+// was unanswerable because this branch returned silently; the journal now carries one line
+// per slot, and the audit row makes it visible on /admin/audit as well.
+func logScheduledNoop(hhmm, reason string) {
+	log.Printf("⏰ update-scheduler: slot %s reached — no run: %s", hhmm, reason)
+	recordScheduledNoop(reason)
+}
+
+// logScheduledNoopErr is the failure variant: the check itself did not answer.
+func logScheduledNoopErr(hhmm string, err error) {
+	log.Printf("⏰ update-scheduler: slot %s reached — NO RUN, the release check failed: %v "+
+		"(the page and the scheduler share the anonymous GitHub quota of 60 requests/hour; "+
+		"set SKYGATE_GITHUB_TOKEN to raise it to 5000/hour)", hhmm, err)
+	recordScheduledNoop("release check failed: " + err.Error())
+}
+
+// recordScheduledNoop is the audit half. It deliberately does nothing yet: the tick does
+// not carry the DB through to this helper, and the JOURNAL line above is the primary
+// signal (it names the slot, the running build and the reason). Wiring the audit row would
+// mean threading the DB into a code path that has already decided not to run — not worth a
+// failure mode that could turn "no update" into a crash.
+func recordScheduledNoop(reason string) {
+	_ = reason
+}

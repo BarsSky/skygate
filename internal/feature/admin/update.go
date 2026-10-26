@@ -242,18 +242,23 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 	// (defaults: "BarsSky" / "skygate" — the operator's
 	// actual GitHub repo). Override via
 	// SKYGATE_GITHUB_REPO_OWNER / _NAME env vars for
-	// staging or fork deploys.
-	checker := &update.Checker{
-		Owner:          s.Cfg.GitHubOwner,
-		Repo:           s.Cfg.GitHubRepo,
-		Channel:        defaultStr(s.Cfg.UpdateChannel, "stable"),
-		GitHubToken:    s.Cfg.GitHubToken,
-		CurrentVersion: s.BuildVersion,
-	}
+	// staging or fork deploys. B424 (2026-10-25): see
+	// updateCheckerFor — ONE instance per process, not
+	// one per render.
 	// Use a sane default HTTP client. The checker has its own
 	// per-request context; we don't need a custom client here
 	// (the test suite uses rewriteTransport via Checker.HTTPClient).
-	result, _ := checker.Check(ctx)
+	//
+	// B424 (2026-10-25): ONE Checker per process, not one per render. The checker caches a
+	// success for 6 h and backs off a failure for 15 min, but a fresh instance every render
+	// throws both away: measured on the reference install, an auto-refreshing tab at one
+	// render every 6 seconds spent ~600 GitHub API calls an hour against the 60/hour
+	// anonymous limit, so the quota died in minutes, GitHub answered 403 and the page
+	// rendered an empty "Latest" (a dash) while the once-an-hour release MONITOR — inside
+	// the limit — kept alerting about v1.5.169. The shared instance makes a permanently
+	// open tab cost at most ~4 calls/hour and usually one per six hours. "Проверить сейчас"
+	// keeps its own forced checker on the dedicated route.
+	result, _ := updateCheckerFor(s).Check(ctx)
 
 	// Detect the install kind ONCE per page render. The
 	// detection is filesystem-based and cheap; calling it
@@ -1157,4 +1162,42 @@ func (s *Service) startStuckSkygateContainer(ctx context.Context, store *update.
 			store.Log(update.LogDebug, fmt.Sprintf("skygate container %s status=%s", id, status))
 		}
 	}
+}
+
+// ------ B424: one GitHub checker per process -------------------------------
+
+// updateCheckerCache holds the ONE Checker this process uses for the page render. The
+// checker caches a successful result for 6 h and backs off a failure for 15 min, and both
+// caches are per INSTANCE — which is why a fresh instance per render (the pre-B424 code)
+// turned an auto-refreshing tab into ~600 GitHub API calls an hour against the 60/hour
+// anonymous limit. Measured on the reference install 2026-10-25: the quota died in minutes,
+// GitHub answered 403, the page rendered an empty "Latest" (a dash) while the release
+// monitor — one poll an hour, inside the limit — kept alerting about the newer release.
+//
+// The key is everything that changes the answer; a config or build change rebuilds it.
+var updateCheckerCache struct {
+	mu  sync.Mutex
+	key string
+	c   *update.Checker
+}
+
+// updateCheckerFor returns the shared checker, rebuilding it only when the inputs change.
+func updateCheckerFor(s *Service) *update.Checker {
+	key := strings.Join([]string{
+		s.Cfg.GitHubOwner, s.Cfg.GitHubRepo, defaultStr(s.Cfg.UpdateChannel, "stable"),
+		s.BuildVersion, fmt.Sprintf("%t", s.Cfg.GitHubToken != ""),
+	}, "\x00")
+	updateCheckerCache.mu.Lock()
+	defer updateCheckerCache.mu.Unlock()
+	if updateCheckerCache.c == nil || updateCheckerCache.key != key {
+		updateCheckerCache.c = &update.Checker{
+			Owner:          s.Cfg.GitHubOwner,
+			Repo:           s.Cfg.GitHubRepo,
+			Channel:        defaultStr(s.Cfg.UpdateChannel, "stable"),
+			GitHubToken:    s.Cfg.GitHubToken,
+			CurrentVersion: s.BuildVersion,
+		}
+		updateCheckerCache.key = key
+	}
+	return updateCheckerCache.c
 }

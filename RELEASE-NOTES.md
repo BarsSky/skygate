@@ -1,5 +1,67 @@
 # Skygate release notes
 
+## v1.5.170 — the scheduled update never ran and the last release became a dash: ONE defect (B424)
+
+**Date:** 2026-10-26 · **Base:** `v1.5.169` → this tag · **Compatibility:** none.
+
+### Measured on the reference installation
+
+| | |
+|---|---|
+| schedule | enabled, 08:00, `tick=30s`, catch-up window **10 min** |
+| `update_schedule_last_run` | **2026-10-13T08:00:04Z** — 13 days old |
+| `release-monitor` | `alert sent for v1.5.169 (running v1.5.167)` — the monitor SAW the release |
+| GitHub from the container | `api.github.com/repos/BarsSky/skygate/releases/latest` → **200 OK** |
+| `update_page_view` audit rows | one every **~6 seconds** — an auto-refreshing tab |
+
+### Root cause
+
+`/admin/update` built a **new `update.Checker` on every render**, so the checker's own caches
+(6 h for a success, 15 min backoff after a failure) never applied: one GitHub API call per
+render, **~600 per hour** against the **60/hour anonymous limit**. The quota died in minutes,
+GitHub answered `403`, `Check` returned a Result with an **empty `Latest`** — the page drew a
+dash and discarded the `Error` — and the scheduler's 08:00 slot hit the same failure and
+returned in **total silence**. The release monitor, which polls once an hour, stayed inside the
+limit and kept alerting: the product contradicted itself on two screens.
+
+### Fixed
+
+1. **One checker per process** (`updateCheckerFor`, keyed by owner|repo|channel|build|token
+   presence). A permanently open tab now costs ~4 calls/hour and usually one per six hours.
+   «Проверить сейчас» keeps its own forced check.
+2. **A failed check is visible**: the page renders the reason (`update.check_failed: …`) or a
+   distinct «ещё не проверялось» — never a bare dash.
+3. **The scheduler names why it did not run** at the slot: `no newer release (running X,
+   latest Y)`, or `the release check failed: … (set SKYGATE_GITHUB_TOKEN to raise the quota
+   from 60/h to 5000/h)`, or "no checker" / "no tag". One line per slot, in the journal.
+
+### About the GitHub token
+
+Used in exactly one place — `update.Checker` → `Authorization: Bearer …` on
+`GET /repos/BarsSky/skygate/releases/latest`. It affects **nothing else** (not the updater's
+`git fetch`, not Telegram, not headscale). A **classic PAT with no scopes** (or fine-grained
+"Public repositories — read only") is enough; it only raises the limit 60/h → 5000/h. `.env`
+variable: `SKYGATE_GITHUB_TOKEN`, read at start. **After this release it is optional**:
+consumption drops to ≤45 requests/day.
+
+14 contracts in `scripts/check_b424_update_check_quota.sh`.
+
+## v1.5.169 — the two chronic conditions the investigation found never reached Telegram (B423)
+
+**Date:** 2026-10-26 · **Base:** `v1.5.168` → that tag · **Compatibility:** none.
+
+The same investigation counted **13 310** `cluster.discovery.error` audit rows and **1 802**
+`login_fail` rows on the reference install, and neither ever produced a notification: both are
+"a persistent condition, not an event", and the product had no vocabulary for that.
+
+`internal/watchalert` adds two guards with **pure** decisions: (1) discovery alerts on the
+**onset** (first failure after a success), escalates at most once per window (default **6 h**,
+`SKYGATE_DISCOVERY_ALERT_HOURS`) and announces **recovery** once — the journal may record
+every hour, the operator's phone must not; (2) login bursts are counted in a **sliding window**
+(default **10 min**), alert **once per cooldown** (default **1 h**) when the count crosses the
+threshold (default **10**), carrying the count and the distinct sources with the port stripped
+— never a credential, never a username list. Both go through the composed alert path, so they
+appear in the ledger and in `/ack`. 23 contracts in `scripts/check_b423_threshold_alerts.sh`.
 ## v1.5.168 — the recipient must not depend on memory, and a silent channel must be distinguishable from a broken one (B422)
 
 **Date:** 2026-10-25 · **Base:** `v1.5.167` → this tag · **Compatibility:** none — no
