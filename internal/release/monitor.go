@@ -68,10 +68,13 @@ type Release struct {
 // or staging deploy can point the monitor at a different
 // repo via SKYGATE_GITHUB_REPO_OWNER / _NAME.
 type Client struct {
-	HTTP  *http.Client
-	Owner string // GitHub owner (user or org); defaults to "BarsSky" via Config
-	Repo  string // GitHub repo name; defaults to "skygate" via Config
-	Last  string // last seen tag (so the scheduler can dedup)
+	// BaseURL (B425) overrides the GitHub API host. Empty means https://api.github.com;
+	// tests use it, and an air-gapped mirror could too.
+	BaseURL string
+	HTTP    *http.Client
+	Owner   string // GitHub owner (user or org); defaults to "BarsSky" via Config
+	Repo    string // GitHub repo name; defaults to "skygate" via Config
+	Last    string // last seen tag (so the scheduler can dedup)
 }
 
 // NewClient returns a Client with sensible timeouts. Owner
@@ -96,7 +99,11 @@ func (c *Client) Latest(ctx context.Context) (*Release, error) {
 	if repo == "" {
 		repo = "skygate"
 	}
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+	base := c.BaseURL
+	if base == "" {
+		base = "https://api.github.com"
+	}
+	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", strings.TrimRight(base, "/"), owner, repo)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -111,9 +118,11 @@ func (c *Client) Latest(ctx context.Context) (*Release, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusForbidden {
-		// Rate limited. The caller should back off and
-		// retry on the next tick — we don't surface this
-		// as a hard error to the operator.
+		// Rate limited (B425): GitHub sends X-RateLimit-Reset (unix seconds) on this answer.
+		// It used to be dropped, which is why a delayed notification could not be explained.
+		if reset := resp.Header.Get("X-RateLimit-Reset"); reset != "" {
+			return nil, fmt.Errorf("%w (resets at unix %s)", ErrRateLimited, reset)
+		}
 		return nil, ErrRateLimited
 	}
 	if resp.StatusCode != http.StatusOK {

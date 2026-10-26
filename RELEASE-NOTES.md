@@ -1,5 +1,42 @@
 # Skygate release notes
 
+## v1.5.171 — the update-available alert arrived ~4 hours late (B425)
+
+**Date:** 2026-10-26 · **Base:** `v1.5.170` → this tag · **Compatibility:** none.
+
+### Measured
+
+The release monitor alerted at `23:06` and `05:06` (an exact hourly grid) for releases
+published at `22:50` and `04:39` — the monitor worked when GitHub answered and went mute when
+it did not. Two causes stacked:
+
+1. **The FIRST check waited a full `CheckEvery` interval** (1 h) after boot, deliberately
+   «so a restart does not spam admins». But every update restarts the container, so the channel
+   went quiet for an hour exactly when the operator was watching, and a restart loop could
+   postpone a notification indefinitely.
+2. **A rate-limited poll was the one error treated as silence**:
+   `if err != ErrRateLimited { log.Printf… }` — no log line, no explanation. The 403 came from
+   the same anonymous GitHub quota the `/admin/update` page was spending (fixed in B424).
+
+### Fixed
+
+* **First check two minutes after boot** (`DefaultFirstDelay`), then the hourly cadence.
+* **The last announced tag is persisted** in `global_settings.release.notified_tag` and
+  consulted **before** the alert — a restart neither repeats an announcement nor goes blind;
+  `ResetNotified` clears it (after an upgrade or a downgrade it must not suppress).
+* **Rate limits are logged** with the `X-RateLimit-Reset` GitHub sent and the
+  `SKYGATE_GITHUB_TOKEN` hint; `errors.Is(err, ErrRateLimited)` keeps working because the
+  error is wrapped rather than replaced.
+* **A latent panic fixed**: `tick` wrote to a nil `Notified` map when a `Monitor` was built
+  without `Start` (found by the new test).
+* `Client.BaseURL` lets the polls be pointed at a test server (and, later, a mirror).
+
+### What to expect
+
+A new release is reported within ~1 hour even if the container restarted a minute earlier; a
+rate-limited poll now says so in the journal instead of delaying the alert invisibly.
+
+18 contracts in `scripts/check_b425_release_notify_latency.sh`.
 ## v1.5.170 — the scheduled update never ran and the last release became a dash: ONE defect (B424)
 
 **Date:** 2026-10-26 · **Base:** `v1.5.169` → this tag · **Compatibility:** none.

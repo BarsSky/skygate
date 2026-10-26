@@ -19,10 +19,14 @@ package release
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"log"
 	"net/http"
 	"sync"
 	"time"
+
+	"skygate/internal/db"
 )
 
 // NotifierSink is the subset of the telegram.Notifier
@@ -46,8 +50,18 @@ type Monitor struct {
 	Notified   map[string]bool // dedup: tags we've already sent an alert for
 	Notifier   NotifierSink    // alert sink
 	CheckEvery time.Duration   // 1h default
-	Owner      string          // GitHub owner (user or org) for the Releases API
-	Repo       string          // GitHub repo name for the Releases API
+	// FirstDelay (B425) is how long after boot the FIRST check runs. Zero means
+	// DefaultFirstDelay (2 min). Kept as a field so tests can drive it.
+	FirstDelay time.Duration
+	// DB (B425) is optional: when set, the last ANNOUNCED tag is persisted in
+	// global_settings (release.notified_tag) so a restart neither repeats an alert nor
+	// waits a whole interval before looking.
+	DB *sql.DB
+	// APIBase (B425) overrides the GitHub API host for the polls (tests; an air-gapped
+	// mirror). Empty means api.github.com.
+	APIBase string
+	Owner   string // GitHub owner (user or org) for the Releases API
+	Repo    string // GitHub repo name for the Releases API
 
 	mu sync.Mutex // protects Notified + Latest + LastCheckedAt
 
@@ -75,10 +89,19 @@ func (m *Monitor) Snapshot() (latest Release, updateAvailable bool, checkedAt ti
 	return m.Latest, m.UpdateAvailable, m.CheckedAt
 }
 
-// Start launches the background loop. The first tick fires
-// after one CheckEvery interval (so a fresh start doesn't
-// spam admins with "what's available now" alerts on every
-// restart). Returns immediately; cancel ctx to stop.
+// Start launches the background loop.
+//
+// B425 (2026-10-26): the FIRST check now runs shortly after boot instead of after a full
+// CheckEvery interval. Measured: the operator received an update-available alert ~4 hours
+// after the release was published, and two causes stacked. (1) The old code deliberately
+// waited one whole interval "so a fresh start doesn't spam admins on every restart" — but a
+// container is restarted by every update, so the channel went quiet for an hour exactly when
+// the operator was watching, and a restart loop could postpone it indefinitely. (2) The poll
+// it eventually made could be answered with 403 because /admin/update was spending the same
+// anonymous GitHub quota (fixed in B424), and this file then stayed silent. The anti-spam
+// purpose moved where it belongs: the last ANNOUNCED tag is persisted
+// (`release.notified_tag`), so a restart re-reads it, sees the tag was already announced and
+// stays quiet — while a genuinely newer release is reported within minutes.
 func (m *Monitor) Start(ctx context.Context) {
 	if m.HTTP == nil {
 		m.HTTP = &http.Client{Timeout: 10 * time.Second}
@@ -89,7 +112,21 @@ func (m *Monitor) Start(ctx context.Context) {
 	if m.CheckEvery == 0 {
 		m.CheckEvery = 1 * time.Hour
 	}
+	delay := m.FirstDelay
+	if delay <= 0 {
+		delay = DefaultFirstDelay
+	}
 	go func() {
+		// One prompt check after boot…
+		first := time.NewTimer(delay)
+		defer first.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-first.C:
+			m.tick(ctx)
+		}
+		// …then the regular cadence.
 		t := time.NewTicker(m.CheckEvery)
 		defer t.Stop()
 		for {
@@ -113,15 +150,20 @@ func (m *Monitor) Start(ctx context.Context) {
 // hardcoded value http.StatusNotFound'd because the operator's actual
 // repo name differed from the assumed placeholder.
 func (m *Monitor) tick(ctx context.Context) {
-	c := &Client{HTTP: m.HTTP, Owner: m.Owner, Repo: m.Repo}
+	c := &Client{HTTP: m.HTTP, Owner: m.Owner, Repo: m.Repo, BaseURL: m.APIBase}
 	r, err := c.Latest(ctx)
 	if err != nil {
-		// Rate-limited: stay quiet, retry next tick.
-		// Other errors: log so the operator can see it
-		// in the container log but don't spam alerts.
-		if err != ErrRateLimited {
-			log.Printf("release-monitor: poll failed: %v", err)
+		// B425: a rate-limited poll is NOT silence-worthy any more. Before this it was the
+		// one error that produced no log line at all — and it is the error that delays a
+		// notification by hours (the operator's measured case: an alert ~4h late while
+		// /admin/update was spending the same 60/h anonymous quota). The message carries the
+		// reset time when GitHub sent one, plus the way out.
+		if errors.Is(err, ErrRateLimited) {
+			log.Printf("release-monitor: GitHub rate limit hit — the next check is in ≤%s; "+
+				"set SKYGATE_GITHUB_TOKEN to raise 60 requests/hour to 5000 (%v)", m.CheckEvery, err)
+			return
 		}
+		log.Printf("release-monitor: poll failed: %v", err)
 		return
 	}
 	// 2026-07-15: v0.14.0 — update the snapshot regardless
@@ -150,8 +192,16 @@ func (m *Monitor) tick(ctx context.Context) {
 		// a release). Don't alert.
 		return
 	}
-	// Dedup.
+	// Dedup — in memory AND persisted (B425). The persisted tag is what lets the first
+	// check run two minutes after boot instead of an hour: a restart must not re-announce a
+	// release the operator has already been told about, and it must not go blind either.
+	if m.notifiedTag() == r.TagName {
+		return
+	}
 	m.mu.Lock()
+	if m.Notified == nil { // B425: a Monitor built without Start (tests, one-off callers)
+		m.Notified = make(map[string]bool)
+	}
 	already := m.Notified[r.TagName]
 	m.Notified[r.TagName] = true
 	m.mu.Unlock()
@@ -164,7 +214,39 @@ func (m *Monitor) tick(ctx context.Context) {
 	current := &Release{TagName: m.Current}
 	alert := FormatAlert(current, r)
 	id := m.Notifier.SendAlert(alert)
+	m.persistNotifiedTag(r.TagName)
 	log.Printf("release-monitor: alert sent for %s (running %s), alert_id=%d", r.TagName, m.Current, id)
+}
+
+// notifiedTagKey is the global_settings row that survives a restart (B425).
+const notifiedTagKey = "release.notified_tag"
+
+// DefaultFirstDelay is how long after boot the monitor makes its FIRST check (B425). Long
+// enough that a crash loop cannot hammer GitHub, short enough that an operator who has just
+// restarted the container sees a pending release within minutes.
+const DefaultFirstDelay = 2 * time.Minute
+
+// notifiedTag returns the last tag this installation announced, or "".
+func (m *Monitor) notifiedTag() string {
+	if m.DB == nil {
+		return ""
+	}
+	v, err := db.GetGlobalSetting(m.DB, notifiedTagKey, "")
+	if err != nil {
+		return ""
+	}
+	return v
+}
+
+// persistNotifiedTag records the tag. Best-effort: losing it costs one duplicate alert after
+// a restart, not a lost one.
+func (m *Monitor) persistNotifiedTag(tag string) {
+	if m.DB == nil {
+		return
+	}
+	if err := db.SetGlobalSetting(m.DB, notifiedTagKey, tag); err != nil {
+		log.Printf("release-monitor: could not persist the announced tag (%v) — a restart may repeat it", err)
+	}
 }
 
 // ResetNotified wipes the dedup map. Call after a successful
@@ -178,4 +260,7 @@ func (m *Monitor) ResetNotified() {
 	m.Notified = make(map[string]bool)
 	m.UpdateAvailable = false
 	m.mu.Unlock()
+	// B425: the persisted tag must go too, otherwise the next restart stays quiet about a
+	// release the operator has already installed (and, after a DOWNGRADE, about an older one).
+	m.persistNotifiedTag("")
 }

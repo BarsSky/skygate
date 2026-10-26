@@ -2149,12 +2149,12 @@ func main() {
 	// from cfg (defaults to "BarsSky"/"skygate" — the
 	// operator's actual GitHub repo; the previous
 	// "skygate-operator/skygate" hardcode http.StatusNotFound'd).
-	releaseMon := &release.Monitor{
-		HTTP:       &http.Client{Timeout: 10 * time.Second},
+	releaseMon := &release.Monitor{ // HTTP nil: Start installs the same 10s-timeout client (B425)
 		Current:    version,
 		Notified:   make(map[string]bool),
 		Notifier:   app.Notifier,
 		CheckEvery: 1 * time.Hour,
+		DB:         d.DB, // B425: prompt first check + the announced tag survives restarts
 		Owner:      cfg.GitHubOwner,
 		Repo:       cfg.GitHubRepo,
 	}
