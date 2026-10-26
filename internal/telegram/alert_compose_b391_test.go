@@ -191,11 +191,21 @@ func TestB391_ComposedAlertKeepsItsMarkupAndNumbersTheRow(t *testing.T) {
 }
 
 func TestB391_DedupSuppressesRepeatsInsideTheWindow(t *testing.T) {
+	// B426.1: the dedup table is process-local and keyed by a FIXED key here, so without
+	// this reset the test is correct only on the first run in a process — `-count=2` failed
+	// deterministically. Own the state you depend on.
+	ResetAlertDedupForTest()
+	t.Cleanup(ResetAlertDedupForTest)
 	d := b391DB(t)
 	n, payloads := b391CapturingNotifier(t, d, 200, `{"ok":true,"result":{"message_id":1}}`)
 	a := Alert{Severity: SeverityWarn, Title: "flap", DedupKey: "test-flap", DedupTTL: 10 * time.Minute, Lang: "en"}
 	if id := n.SendAlertEvent(a); id == 0 {
-		t.Fatal("B391: the first alert of a key must be sent")
+		// B426.1: "must be sent" was useless in CI — say WHY. A 0 here means either the
+		// dedup window fired (state leak) or the send/insert failed (the ledger names it,
+		// and an insert failure returns 0 for a message that WAS delivered).
+		st := AlertDeliverySnapshot()
+		t.Fatalf("B391: the first alert of a key must be sent (last outcome=%s reason=%q last_id=%d)",
+			st.LastOutcome, st.LastReason, st.LastAlertID)
 	}
 	if id := n.SendAlertEvent(a); id != 0 {
 		t.Errorf("B391: a repeat inside the dedup window was sent again (id=%d)", id)
@@ -207,7 +217,8 @@ func TestB391_DedupSuppressesRepeatsInsideTheWindow(t *testing.T) {
 	other := a
 	other.DedupKey = "test-flap-2"
 	if id := n.SendAlertEvent(other); id == 0 {
-		t.Error("B391: a different dedup key was suppressed")
+		st := AlertDeliverySnapshot()
+		t.Errorf("B391: a different dedup key was suppressed (last outcome=%s reason=%q)", st.LastOutcome, st.LastReason)
 	}
 }
 

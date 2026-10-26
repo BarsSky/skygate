@@ -203,12 +203,21 @@ func TestB421_LedgerCountsAndKeepsTheLastOutcome(t *testing.T) {
 // TestB421_SuppressedAlertIsCountedNotLost: a dedup suppression is a decision, not a
 // failure — and it must be visible as its own number.
 func TestB421_SuppressedAlertIsCountedNotLost(t *testing.T) {
+	// B426.1: both the ledger and the dedup table are PROCESS-GLOBAL, and this test asserts
+	// exact counters and a fixed DedupKey — so under `-count=2` it failed on its own state
+	// from the previous run (Sent/Suppressed already non-zero, the first send suppressed).
+	// Reset what it depends on, in both directions.
+	ResetAlertDeliveryForTest()
+	ResetAlertDedupForTest()
+	t.Cleanup(ResetAlertDeliveryForTest)
+	t.Cleanup(ResetAlertDedupForTest)
 	d := b421DB(t)
 	b421Seeder(t, d)
 	notifier, _ := b391CapturingNotifier(t, d, 200, `{"ok":true,"result":{"message_id":1}}`)
 	alert := Alert{Severity: SeverityInfo, Title: "same event", DedupKey: "b421-test-dedup", DedupTTL: time.Minute}
 	if id := notifier.SendAlertEvent(alert); id == 0 {
-		t.Fatal("the first alert was not delivered")
+		st := AlertDeliverySnapshot()
+		t.Fatalf("the first alert was not delivered (last outcome=%s reason=%q)", st.LastOutcome, st.LastReason)
 	}
 	if id := notifier.SendAlertEvent(alert); id != 0 {
 		t.Fatalf("the repeat returned %d, want 0 (suppressed)", id)

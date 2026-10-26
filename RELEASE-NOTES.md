@@ -56,6 +56,41 @@ away at the URL the message carries.
 
 18 contracts in `scripts/check_b426_alert_markup.sh`.
 
+### Also fixed here: CI went red on a tree that was green twice (B426.1)
+
+The CI run of this very change failed `B1 go test ./...` on a test nobody had touched —
+`TestB391_DedupSuppressesRepeatsInsideTheWindow` — which passed 5/5 when run alone. Two
+pieces of **process-global** state were involved:
+
+1. The alert dedup table is keyed by a **fixed** key in that test, so the first send was
+   suppressed on the second run in a process: `go test ./internal/telegram -count=2` failed
+   **40 of 40** times after the first. A test whose verdict depends on how many times the
+   binary ran is not evidence.
+2. The per-test SQLite handle had **no `busy_timeout`**. `openSQLiteWith` appends
+   `foreign_keys(1)` + `journal_mode(WAL)` + `busy_timeout(2000)` to a file DSN but trusts a
+   DSN that already carries `_pragma=`, and B419's fast test pragmas supplied their own — so
+   the whole production set was replaced. The alert transport writes from **two** goroutines
+   by design (`insertAlert` on the send path, `go pruneAlerts` on every send). Measured,
+   4 goroutines × 100 insert+prune rounds:
+
+   | pragmas | inserts | **lost** |
+   | --- | --- | --- |
+   | without `busy_timeout` | 163 | **237** |
+   | `busy_timeout(2000)` | 400 | **0** |
+
+   A lost insert is not a lost message — the send still happens — but `insertAlert` returns
+   no id, so `SendAlertEvent` answers **0** for an alert the operator did receive, and 0 is
+   exactly what callers read as «не доставлено» (the B391 disk monitor retries on it).
+
+Fixed: `busy_timeout(2000)` in the fast test handle, `ResetAlertDedupForTest()` plus a reset
+in both tests, an insert-failure log that names the consequence, and two behavioural guards —
+200 concurrent writes lose nothing, and the `-count=2` run that used to fail now passes.
+11 contracts in `scripts/check_b426_1_test_state.sh`.
+
+**Still open (TD-35):** the same replacement drops `foreign_keys(1)`, so a per-test SQLite
+database enforces no foreign keys. Restoring it changes what every fixture may insert, so it
+is a separate block rather than a silent change here.
+
 ## v1.5.171 — the update-available alert arrived ~4 hours late (B425)
 
 **Date:** 2026-10-26 · **Base:** `v1.5.170` → this tag · **Compatibility:** none.

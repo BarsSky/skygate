@@ -25,6 +25,20 @@ import (
 // Alert.DedupKey; see shouldSuppressAlert.
 var alertDedup sync.Map
 
+// ResetAlertDedupForTest empties the dedup table. Tests only — the table is process-local
+// on purpose (one process per install), but that also means a test which uses a FIXED
+// DedupKey is correct only on the first run: `go test ./internal/telegram -count=2` failed
+// deterministically on TestB391_DedupSuppressesRepeatsInsideTheWindow with "the first alert
+// of a key must be sent", because the entry from the previous run suppressed it. A test
+// whose verdict depends on how many times the binary ran is not evidence, so the state it
+// depends on is now resettable and reset (B426.1).
+func ResetAlertDedupForTest() {
+	alertDedup.Range(func(k, _ any) bool {
+		alertDedup.Delete(k)
+		return true
+	})
+}
+
 // alertsKeep is the cap on telegram_alerts rows. We prune older rows
 // on every insert; exact bound is not important — once an alert is
 // acked (or stale) it has no value, and http.StatusInternalServerError rows covers weeks of
@@ -130,7 +144,13 @@ func (n *RealNotifier) sendAlert(sev Severity, htmlBody, plainBody, dedupKey str
 	}
 	id, err := insertAlert(n.db, plainBody)
 	if err != nil {
-		log.Printf("telegram: alert insert failed: %v", err)
+		// B426.1: name the CONSEQUENCE, not just the error. The message is still sent, so
+		// this line is the only trace of why the caller got id=0 for a delivered alert —
+		// and id=0 is what callers read as "not delivered" (the B391 disk monitor retries
+		// on it). On SQLite the usual cause is a concurrent writer without a busy_timeout:
+		// the send path inserts while `go pruneAlerts` deletes, measured at 237 of 400
+		// concurrent writes lost before the timeout was added.
+		log.Printf("telegram: alert insert failed: %v — the message is still sent, but it has no id, so the caller sees 0 (\"not delivered\")", err)
 		// fall through and send the un-prefixed message so the
 		// operator still gets the signal (just without an id).
 	} else {

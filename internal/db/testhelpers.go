@@ -30,13 +30,38 @@
 // passes here exercises the real chain, not a hand-written schema. Only the pragmas on
 // the connection differ, and they are read-only with respect to the product: production
 // opens through OpenWithDialect with its own DSN.
+//
+// THE BUSY_TIMEOUT THAT WAS MISSING (B426.1, 2026-10-26)
+// -----------------------------------------------------
+// openSQLiteWith appends foreign_keys(1) + journal_mode(WAL) + busy_timeout(2000) to a
+// file DSN — but it TRUSTS a DSN that already carries `_pragma=`, so the two fast pragmas
+// above silently replaced the whole production set. Without busy_timeout, a second writer
+// on the same file gets SQLITE_BUSY IMMEDIATELY instead of waiting, and the alert
+// transport writes from two goroutines by design (insertAlert on the send path,
+// `go pruneAlerts` on every SendAlert). Measured on this workstation: 4 goroutines x 100
+// insert+prune rounds on a fast per-test DB —
+//
+//	without busy_timeout   inserts_ok=163  busy=237   ← 59% of the writes LOST
+//	with busy_timeout(2000) inserts_ok=400  busy=0
+//
+// A lost insert is not a lost message — the send still happens — but insertAlert returns
+// no id, so SendAlertEvent returns 0 while the operator WAS notified, which is exactly the
+// "0 means not delivered" contract callers (and the B391 disk monitor) act on. That is how
+// CI went red on a green tree: TestB391_DedupSuppressesRepeatsInsideTheWindow failed with
+// "the first alert of a key must be sent" and passed 5/5 standalone.
+//
+// STILL OPEN (TD-35): the same replacement drops foreign_keys(1), so a per-test SQLite
+// database enforces NO foreign keys. Restoring it is a separate block because it changes
+// what every per-test fixture may insert; the gap is recorded rather than silently fixed.
 package db
 
 import "database/sql"
 
 // sqliteFastTestPragmas is the connection suffix that makes a throwaway SQLite database
-// cheap to migrate. Both pragmas are needed — see the measurement above.
-const sqliteFastTestPragmas = "?_pragma=synchronous(0)&_pragma=journal_mode(memory)"
+// cheap to migrate. The first two pragmas are the B419 measurement; busy_timeout(2000) is
+// B426.1 and matches the value production uses, because a per-test DB is written from more
+// than one goroutine too (see the header).
+const sqliteFastTestPragmas = "?_pragma=synchronous(0)&_pragma=journal_mode(memory)&_pragma=busy_timeout(2000)"
 
 // OpenFastSQLiteForTest opens a throwaway SQLite database whose commits are not fsynced
 // and whose rollback journal lives in memory.
