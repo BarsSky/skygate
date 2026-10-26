@@ -25,6 +25,7 @@
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
+. "$(dirname "$0")/lib/gosurface.sh"
 PASS=0; FAIL=0; SKIP=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
@@ -32,9 +33,10 @@ hdr() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 RUN=internal/release/monitor_runner.go
 MON=internal/release/monitor.go
-MAIN=cmd/skygate/main.go
+SKY_MAIN=""
+gosurface SKY_MAIN cmd/skygate/*.go 2>/dev/null || true
 GATE=scripts/verify_pre_deploy.sh
-for f in "$RUN" "$MON" "$MAIN" "$GATE"; do
+for f in "$RUN" "$MON" "$GATE"; do
   [ -f "$f" ] || { bad "missing source file: $f"; exit 1; }
 done
 
@@ -87,7 +89,7 @@ if OUT="$(go test ./internal/release/ -run B425 -count=1 2>&1)"; then
 else
   bad "D1: go test ./internal/release -run B425: $(printf '%s' "$OUT" | tail -3 | tr '\n' ' ')"
 fi
-grep -qE 'DB:[[:space:]]+d\.DB,' "$MAIN" && ok "D2: the running binary passes the database (persistence is wired, not theoretical)" || bad "D2: main.go does not pass the DB"
+grep -qE 'DB:[[:space:]]+d\.DB,' "$SKY_MAIN" 2>/dev/null && ok "D2: the running binary passes the database (persistence is wired, not theoretical)" || bad "D2: main.go does not pass the DB"
 grep -q 'run_check "B425"' "$GATE" && ok "D3: registered in the catalog" || bad "D3: not registered"
 grep -q '\*\*B425\*\*' AGENTS.md && ok "D4: AGENTS.md block index carries B425" || bad "D4: no AGENTS entry"
 git ls-files --error-unmatch scripts/check_b425_release_notify_latency.sh >/dev/null 2>&1 && ok "D5: this script is tracked by git (trap 11)" || bad "D5: not tracked"
