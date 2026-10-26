@@ -214,7 +214,7 @@
                page said nothing at all. "не удалось проверить: причина" is actionable; a
                dash is not. */}}
           {{if .Error}}
-            <span style="color:var(--danger,#e5484d);font-size:13px">{{t "update.check_failed"}}: {{.Error}}</span>
+            <span class="sub">{{t "update.check_failed"}}: {{.Error}}</span>
           {{else}}
             <span style="color:var(--text-muted)">{{t "update.check_never"}}</span>
           {{end}}
