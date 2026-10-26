@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/telegram"
 )
 
 // NotifierSink is the subset of the telegram.Notifier
@@ -212,9 +213,17 @@ func (m *Monitor) tick(ctx context.Context) {
 		return
 	}
 	current := &Release{TagName: m.Current}
-	alert := FormatAlert(current, r)
-	id := m.Notifier.SendAlert(alert)
-	m.persistNotifiedTag(r.TagName)
+	// B426: a COMPOSED alert (i18n title + facts + a cleaned excerpt) when the sink supports
+	// it; the legacy plain sentence stays as the fallback for sinks that only know SendAlert
+	// (the Noop notifier and the existing tests). Before this the composed path did not exist
+	// and the Markdown release body reached the phone verbatim — «## v1.5.171 — …».
+	var id int64
+	if s, ok := m.Notifier.(updateAlertSender); ok {
+		id = s.SendAlertEvent(BuildUpdateAlert(m.Current, r, ""))
+	} else {
+		id = m.Notifier.SendAlert(FormatAlert(current, r))
+	}
+	id = m.recordAnnouncement(id, r.TagName)
 	log.Printf("release-monitor: alert sent for %s (running %s), alert_id=%d", r.TagName, m.Current, id)
 }
 
@@ -263,4 +272,18 @@ func (m *Monitor) ResetNotified() {
 	// B425: the persisted tag must go too, otherwise the next restart stays quiet about a
 	// release the operator has already installed (and, after a DOWNGRADE, about an older one).
 	m.persistNotifiedTag("")
+}
+
+// updateAlertSender is the composer entry point. A sink that implements it gets a readable,
+// structured notification (B426); one that does not keeps the legacy plain sentence.
+type updateAlertSender interface {
+	SendAlertEvent(a telegram.Alert) int64
+}
+
+// recordAnnouncement persists the announced tag after a send attempt and returns the id
+// unchanged. B425: persistence is what lets the first check run minutes after boot without
+// re-announcing a release the operator already read.
+func (m *Monitor) recordAnnouncement(id int64, tag string) int64 {
+	m.persistNotifiedTag(tag)
+	return id
 }

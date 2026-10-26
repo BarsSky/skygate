@@ -249,5 +249,49 @@ else
   bad "E7: AGENTS.md has no B413 entry"
 fi
 
+# --- F: a registration appended AFTER the verdict cannot fail it ---------------
+# Measured 2026-10-26 while shipping B426: three registrations (B424, B425, B426) had
+# been appended to the END of the catalog, i.e. after the summary and after the
+# `exit 1` that implements the verdict. The gate therefore printed, in one and the
+# same run:
+#
+#   FAIL  B425  … / FAIL B4: nothing is persisted after an alert
+#   GATE PASSED: 15 check(s) green, 0 failed
+#   note    : id(s) not found in the catalog: B424 B425 B426
+#
+# Every one of those checks ran and printed its rows, so the output LOOKED complete;
+# the verdict had already been computed from the results of the checks above it, and
+# the id was even reported as unknown to the filter because `GATE_ONLY_MATCHED` is
+# consulted at the summary, before those lines are reached. This is the same class as
+# C4 — a gate that reports green while something it claims to have verified did not
+# count — so it is pinned the same way: a source-order contract, plus proof that the
+# detector fires on a planted violation.
+late_ids() {
+  awk '
+    /^echo "=== summary ==="/ { seen = 1 }
+    /^run_check "/ && seen {
+      line = $0
+      sub(/^run_check "/, "", line)
+      sub(/".*/, "", line)
+      print line
+    }
+  ' "$1"
+}
+LATE="$(late_ids "$GATE" | tr '\n' ' ')"
+if [ -z "${LATE// /}" ]; then
+  ok "F1: every run_check precedes the verdict block (a check appended after the summary can never fail the run)"
+else
+  bad "F1: registration(s) AFTER the verdict — they run but cannot fail it: $LATE"
+fi
+cp "$GATE" "$TMPD/late_plant.sh" 2>/dev/null
+printf '\nrun_check "BF99" "planted after the verdict" "true"\n' >>"$TMPD/late_plant.sh"
+PLANTED="$(late_ids "$TMPD/late_plant.sh" | tr '\n' ' ')"
+case "$PLANTED" in
+  *BF99*)
+    ok "F2: the detector fires on a planted post-verdict registration (BF99)" ;;
+  *)
+    bad "F2: the detector found nothing in a catalog with a deliberately appended registration (saw: '${PLANTED}')" ;;
+esac
+
 printf '\n\033[1mB413 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ]

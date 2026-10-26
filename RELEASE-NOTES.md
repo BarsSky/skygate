@@ -1,5 +1,61 @@
 # Skygate release notes
 
+## v1.5.172 — the alert printed raw Markdown (B426)
+
+**Date:** 2026-10-26 · **Base:** `v1.5.171` → this tag · **Compatibility:** none.
+
+### Measured
+
+The operator's phone showed the update notification as:
+
+```
+[#5] 🔔 Skygate update available
+Running: v1.5.170
+Latest:  v1.5.171
+Released: 2026-10-26T16:33:11Z
+
+## v1.5.171 — the update-available alert arrived ~4 hours late (B425)
+```
+
+The `##` is the release body's own Markdown heading, shown **literally**. Two changes collided:
+
+1. `FormatAlert` was written when alerts went out as a **fenced plain-text** block, where `##`
+   at least reads as text.
+2. B421 moved the alert transport to `parse_mode=HTML`, where Markdown is **not markup at all** —
+   so it survives verbatim. The same alert also dumped the entire release body into the message
+   and printed the timestamp in RFC 3339.
+
+### Fixed
+
+* The update notification is now a **composed alert** (the B391 composer): an i18n title, the
+  three facts an operator acts on, and the release body as details.
+
+| fact | value |
+| --- | --- |
+| запущена / running | `v1.5.170` |
+| последняя / latest | `v1.5.171` |
+| опубликована / released | `2026-10-26 16:33 UTC` |
+
+* `cleanReleaseNotes` reduces the body before it reaches a phone: ATX headings lose the hashes
+  but keep the text, `**bold**` / `__bold__` / backticks lose their markers, fenced code blocks
+  are **dropped** (they are commands, not news), `[text](url)` becomes `text (url)` so the link
+  stays followable, blank runs collapse, and the excerpt is capped at **12 lines / 700 chars**.
+  It is a pure function with a table test — «strip Markdown» is exactly the regex that quietly
+  eats code fences and URLs.
+* A per-tag dedup key (`release.update_available.<tag>`, TTL 24 h) replaces the ad-hoc one, so a
+  repeated announcement of the same tag is suppressible through the same path as every other
+  alert.
+* A sink that only implements `SendAlert` (`Noop`, tests) still gets the old sentence — nothing
+  is lost, and the composed path is an **optional capability** the monitor type-asserts.
+
+### What to expect
+
+The next update notification reads as a title, three facts and a short excerpt with a link, with
+no `##`, no `**` and no backticks. The excerpt is deliberately short: the full notes are one tap
+away at the URL the message carries.
+
+18 contracts in `scripts/check_b426_alert_markup.sh`.
+
 ## v1.5.171 — the update-available alert arrived ~4 hours late (B425)
 
 **Date:** 2026-10-26 · **Base:** `v1.5.170` → this tag · **Compatibility:** none.

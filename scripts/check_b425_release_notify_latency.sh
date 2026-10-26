@@ -62,10 +62,24 @@ if awk '/^func \(m \*Monitor\) tick\(/,/^}/' "$RUN" | grep -qF 'if m.notifiedTag
 else
   bad "B3: the persisted tag is not consulted before alerting"
 fi
-if awk '/^func \(m \*Monitor\) tick\(/,/^}/' "$RUN" | grep -qF 'm.persistNotifiedTag(r.TagName)'; then
-  ok "B4: the announced tag is persisted right after the send"
+TICK_SRC="$(awk '/^func \(m \*Monitor\) tick\(/,/^}/' "$RUN")"
+REC_SRC="$(awk '/^func \(m \*Monitor\) recordAnnouncement\(/,/^}/' "$RUN")"
+if [ -z "$TICK_SRC" ]; then
+  bad "B4: tick() could not be read (a fact about this check, not the product)"
 else
-  bad "B4: nothing is persisted after an alert"
+  # B426 moved the persistence behind one recorder so BOTH the composed and the legacy
+  # alert path persist the tag; the contract follows the behaviour, not the call site.
+  case "$TICK_SRC" in
+    *"m.recordAnnouncement(id, r.TagName)"*)
+      case "$REC_SRC" in
+        *"m.persistNotifiedTag(tag)"*)
+          ok "B4: the announced tag is persisted after the send — through ONE recorder, so both alert paths persist it" ;;
+        *)
+          bad "B4: the recorder does not persist the tag" ;;
+      esac ;;
+    *)
+      bad "B4: nothing is persisted after an alert" ;;
+  esac
 fi
 if awk '/^func \(m \*Monitor\) ResetNotified\(/,/^}/' "$RUN" | grep -qF 'm.persistNotifiedTag("")'; then
   ok "B5: ResetNotified clears the persisted tag too (an upgrade must not leave it stale)"
