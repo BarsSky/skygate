@@ -33,6 +33,7 @@ import (
 	"skygate/internal/mesh"
 	"skygate/internal/telegram"
 	"skygate/internal/tokenrotate"
+	"skygate/internal/watchalert"
 )
 
 // wireOptionalSchedulers starts the opt-in background schedulers at the end of
@@ -259,6 +260,19 @@ func wireOptionalSchedulers(ctx context.Context, d *db.ResettableDB, app *handle
 		Sender:   app.Notifier,
 		Interval: envOrDefaultDuration("SKYGATE_ALERT_CANARY_HOURS", alertcanary.DefaultInterval, time.Hour),
 	}).Start(ctx)
+
+	// B423 (2026-10-25): the two CHRONIC conditions the 2026-10-25 investigation found —
+	// 13 310 cluster.discovery.error rows and 1802 login_fail rows — never reached Telegram,
+	// because both are "a persistent condition, not an event". The guards alert on the ONSET
+	// (first failure after a success / the threshold crossing), escalate at most once per
+	// window (6 h for discovery, 1 h cooldown for login bursts) and announce recovery.
+	watchalert.Configure(watchalert.Config{
+		Sender:            app.Notifier,
+		DiscoveryInterval: envOrDefaultDuration("SKYGATE_DISCOVERY_ALERT_HOURS", watchalert.DefaultDiscoveryEscalation, time.Hour),
+		LoginThreshold:    envInt("SKYGATE_LOGIN_ALERT_THRESHOLD", watchalert.DefaultLoginThreshold),
+		LoginWindow:       envOrDefaultDuration("SKYGATE_LOGIN_ALERT_WINDOW_MIN", watchalert.DefaultLoginWindow, time.Minute),
+		LoginCooldown:     envOrDefaultDuration("SKYGATE_LOGIN_ALERT_COOLDOWN_MIN", watchalert.DefaultLoginCooldown, time.Minute),
+	})
 
 	// B417 (2026-10-24): keep the BASE routes of skygate-registered relays approved.	// Scope, decided by the operator: only 0.0.0.0/0 and ::/0, and only for nodes with
 	// a row in exit_servers — a relay skygate itself registered. Subnet routes and

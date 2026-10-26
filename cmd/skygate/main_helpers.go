@@ -25,6 +25,7 @@ import (
 	"skygate/internal/keynotify"
 	"skygate/internal/telegram"
 	"skygate/internal/update"
+	"skygate/internal/watchalert"
 	"strconv"
 	"strings"
 	"sync"
@@ -484,9 +485,15 @@ func runOneDiscoveryTick(ctx context.Context, d *sql.DB, tagFilter string, notif
 		} else {
 			log.Printf("🔎 discovery-ticker: discover still failing (same error within the last hour, not re-audited)")
 		}
+		// B423: the journal/audit throttle above is an HOUR; the operator's phone has its own,
+		// longer escalation window (default 6 h) plus an immediate alert on the first failure
+		// after a success. Measured on the reference install: 13 310 audit rows for this very
+		// condition and not one Telegram message.
+		watchalert.DiscoveryFailure(err.Error())
 		return
 	}
 	discoveryErrorCleared()
+	watchalert.DiscoverySuccess()
 	discovered := 0
 	var ensureErrs []string
 	for _, p := range report.ToAdopt {

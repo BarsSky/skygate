@@ -33,6 +33,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/db"
 	"skygate/internal/i18n"
+	"skygate/internal/watchalert"
 )
 
 // Backend is the minimum surface the auth feature needs from the
@@ -171,6 +172,12 @@ func (s *Service) PostLogin(w http.ResponseWriter, r *http.Request) {
 	id, hash, isAdmin, err := db.GetUserCredentials(s.dbc(), u)
 	if err != nil || !auth.CheckPassword(hash, p) {
 		s.Backend.Audit(id, u, "login_fail", "")
+		// B423: a failed login is audited per attempt and was never aggregated, so 1802 of
+		// them on the reference install looked like nothing from the outside. The guard
+		// counts them in a sliding window and alerts ONCE per cooldown when the count
+		// crosses the threshold: a brute force, a stale password in a script and one
+		// forgetful operator all become visible, without a message per attempt.
+		watchalert.LoginFailure(r.RemoteAddr)
 		baseData["Error"] = s.I18n.T(lang, "login.invalid_credentials")
 		s.Backend.Render(w, r, "login.html", baseData)
 		return
