@@ -28,6 +28,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/headscale"
 	"skygate/internal/i18n"
+	"skygate/internal/localtime"
 	"skygate/internal/subnet"
 	"strconv"
 	"strings"
@@ -635,7 +636,7 @@ func mySubnetProvisionReply(env BotEnv) string {
 		Field(i18n.T(lang, "bot.mysubnet.provision_routes_label"),
 			"<code>"+info.Routes+"</code>") + "\n" +
 		Field(i18n.T(lang, "bot.mysubnet.provision_expires_label"),
-			"<code>"+info.ExpiresAt.Format("2006-01-02 15:04 MST")+"</code>") + "\n\n" +
+			"<code>"+localtime.Format(info.ExpiresAt)+"</code>") + "\n\n" +
 		"<i>" + i18n.T(lang, "bot.mysubnet.provision_help") + "</i>\n\n" +
 		"<b>" + i18n.T(lang, "bot.mysubnet.provision_command_label") + "</b>\n" +
 		"<pre>sudo tailscale up \\\n" +

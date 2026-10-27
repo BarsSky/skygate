@@ -40,6 +40,7 @@ import (
 	"testing"
 
 	"skygate/internal/feature/admin"
+	"skygate/internal/localtime"
 )
 
 // stubSystemTest mimics admin.SystemTestDef (Name / Category /
@@ -88,6 +89,14 @@ func loadSystemTestsBody(t *testing.T) *template.Template {
 		// lookup the production funcmap does, so the
 		// test exercises the actual logic, not a stub.
 		"humanizeAgeSeconds": func(secs int64) string { return "" },
+		// B429: the zone-aware timestamp helpers the admin templates now use
+		// instead of calling .Format inline. They delegate to internal/localtime
+		// (not stubs) so this test also exercises the real formatting path.
+		"dt":      localtime.Format,
+		"dts":     localtime.FormatSeconds,
+		"dtd":     localtime.FormatDate,
+		"dtclock": localtime.FormatClock,
+		"dtz":     func() string { return localtime.Name() },
 		"indexResultByName": func(results any, name string) string {
 			rs, ok := results.([]admin.SystemTestResult)
 			if !ok {

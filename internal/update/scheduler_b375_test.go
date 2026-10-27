@@ -39,6 +39,7 @@ import (
 	"time"
 
 	skygatedb "skygate/internal/db"
+	"skygate/internal/localtime"
 )
 
 // b375DB is a real SQLite database with the real migrations applied — the same
@@ -229,7 +230,10 @@ func b375ForceDocker(t *testing.T) {
 // real wall clock — no clock injection exists in the product, and inventing one
 // for a test would pin a shape production does not have.
 func b375NowMinute(now time.Time) string {
-	return now.Format("15:04")
+	// B429: the scheduler reads the schedule in the INSTALL'S zone
+	// (localtime.Now()), so a test that computed this minute from the
+	// workstation's local clock was asserting about a different calendar.
+	return localtime.In(now).Format("15:04")
 }
 
 // ---------------------------------------------------------------------------
@@ -244,7 +248,7 @@ func b375NowMinute(now time.Time) string {
 func TestB375_TickDoesNothingWhenTheDBToggleIsOff(t *testing.T) {
 	b375ForceDocker(t)
 	d := b375DB(t)
-	now := time.Now()
+	now := localtime.Now()
 	b375SetSchedule(t, d, false, b375NowMinute(now))
 
 	deps := b375Deps(t, d, "v1.0.0")
@@ -264,7 +268,7 @@ func TestB375_TickDoesNothingWhenTheDBToggleIsOff(t *testing.T) {
 func TestB375_TickRunsAtTheExactConfiguredMinute(t *testing.T) {
 	b375ForceDocker(t)
 	d := b375DB(t)
-	b375SetSchedule(t, d, true, b375NowMinute(time.Now()))
+	b375SetSchedule(t, d, true, b375NowMinute(localtime.Now()))
 
 	deps := b375Deps(t, d, "v1.0.0")
 	tick(context.Background(), deps)
@@ -349,7 +353,7 @@ func TestB375_AlreadyRanForThisSlotTodayIsNotRepeated(t *testing.T) {
 func TestB375_YesterdaysRunDoesNotBlockToday(t *testing.T) {
 	b375ForceDocker(t)
 	d := b375DB(t)
-	now := time.Now()
+	now := localtime.Now()
 	yesterday := now.AddDate(0, 0, -1)
 	b375SetSchedule(t, d, true, b375NowMinute(now))
 	if err := skygatedb.SetGlobalSetting(d, "update_schedule_last_run",
@@ -659,7 +663,7 @@ func TestB375_ArmedStateIsReadableAndRaceSafe(t *testing.T) {
 func TestB375_NonDockerSkipIsLogged(t *testing.T) {
 	t.Setenv("SKYGATE_INSTALL_KIND", "systemd")
 	d := b375DB(t)
-	b375SetSchedule(t, d, true, b375NowMinute(time.Now()))
+	b375SetSchedule(t, d, true, b375NowMinute(localtime.Now()))
 
 	logPath := t.TempDir() + "/b375.log"
 	f, err := os.Create(logPath)

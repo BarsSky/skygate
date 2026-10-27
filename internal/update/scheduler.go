@@ -75,6 +75,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"skygate/internal/localtime"
 )
 
 // SchedulerDeps groups the dependencies a Scheduler needs.
@@ -224,7 +226,15 @@ func tick(ctx context.Context, deps SchedulerDeps) {
 	//    equality: `now` at or after the configured HH:MM and strictly before
 	//    HH:MM + CatchUpWindow. A schedule set to a time already past today
 	//    still fires — once — and the dedup below is what stops the repeat.
-	now := time.Now()
+	//
+	//    B429: `now` is the INSTALL'S clock, not the container's. Measured on the
+	//    reference install: the panel stores "08:00", the container ran with
+	//    /etc/localtime → Etc/UTC, and the operator (who reads a Moscow clock)
+	//    saw the update fire at 11:00 — the arithmetic was right and the clock was
+	//    wrong. Every comparison below therefore stays inside one zone
+	//    (scheduledRunDue uses now.Location(); ranTodayAt gets lastRun converted
+	//    to it), so a DST shift or a leap second is the zone's problem, not ours.
+	now := localtime.Now()
 	due, late := scheduledRunDue(now, timeStr)
 	if !due {
 		return
@@ -234,7 +244,7 @@ func tick(ctx context.Context, deps SchedulerDeps) {
 	//    means the run happened (or was refused as a duplicate), so a
 	//    catch-up window cannot fire once per tick.
 	lastRun, _ := readLastRun(deps.DB)
-	if ranTodayAt(timeStr, lastRun, now) {
+	if ranTodayAt(timeStr, localtime.In(lastRun), now) {
 		return
 	}
 	// 4. Is an update already in progress (manual or
@@ -489,13 +499,15 @@ func logScheduledTrigger(now time.Time, late time.Duration, hhmm, target string,
 	if pinned {
 		source = "pinned release"
 	}
+	// B429: the zone is part of the line — "firing at 08:00" was ambiguous before,
+	// because the process clock and the operator's clock were both called "now".
 	if late >= time.Minute {
-		log.Printf("⏰ update-scheduler: firing at %s for the %s slot (late by %s, inside the %s catch-up window) — target=%s (%s)",
-			now.Format("15:04:05"), hhmm, late.Round(time.Minute), CatchUpWindow, target, source)
+		log.Printf("⏰ update-scheduler: firing at %s %s for the %s slot (late by %s, inside the %s catch-up window) — target=%s (%s)",
+			localtime.FormatClock(now), localtime.Name(), hhmm, late.Round(time.Minute), CatchUpWindow, target, source)
 		return
 	}
-	log.Printf("⏰ update-scheduler: firing at %s for the %s slot (on time) — target=%s (%s)",
-		now.Format("15:04:05"), hhmm, target, source)
+	log.Printf("⏰ update-scheduler: firing at %s %s for the %s slot (on time) — target=%s (%s)",
+		localtime.FormatClock(now), localtime.Name(), hhmm, target, source)
 }
 
 // sameMinute returns true if a and b are in the same

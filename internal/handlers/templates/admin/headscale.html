@@ -56,7 +56,7 @@
       </div>
       <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
         {{if .CheckedAt}}
-          {{t "headscale_admin.checked_at"}}: {{.CheckedAt.Format "2006-01-02 15:04:05 MST"}}
+          {{t "headscale_admin.checked_at"}}: {{dts .CheckedAt}}
         {{end}}
       </div>
     </div>
@@ -99,7 +99,7 @@
       <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
         {{if .Version.Detected}}
           {{t "headscale_admin.version_via"}}: <code>{{.Version.Via}}</code><br>
-          {{.Version.DetectedAt.Format "2006-01-02 15:04:05 MST"}}
+          {{dts .Version.DetectedAt}}
         {{else}}
           {{t "headscale_admin.version_unknown_help"}}
         {{end}}
@@ -138,10 +138,10 @@
     <tr>
       <td><code>{{.Version}}</code></td>
       <td>
-        {{if .PublishedAt.IsZero}}—{{else}}{{.PublishedAt.Format "2006-01-02"}}{{end}}
+        {{if .PublishedAt.IsZero}}—{{else}}{{dtd .PublishedAt}}{{end}}
       </td>
       <td>
-        {{if .FirstSeenAt.IsZero}}—{{else}}{{.FirstSeenAt.Format "2006-01-02 15:04"}}{{end}}
+        {{if .FirstSeenAt.IsZero}}—{{else}}{{dt .FirstSeenAt}}{{end}}
       </td>
       <td>
         {{if .IsBreaking}}

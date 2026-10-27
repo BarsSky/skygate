@@ -12,10 +12,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"skygate/internal/auth"
 	"skygate/internal/db"
+	"skygate/internal/localtime"
 )
 
 // findEnabledExitServer scans exit_servers for an
@@ -99,7 +99,7 @@ func looksLikeTelegramChatID(s string) bool {
 
 func formatTelegramMessage(host, subject, body string) string {
 	return fmt.Sprintf("[%s] %s\n%s\n—\n%s",
-		host, subject, time.Now().UTC().Format("2006-01-02T15:04:05Z"), body)
+		host, subject, localtime.FormatSeconds(localtime.Now()), body)
 }
 
 func (s *Service) redirectWithFlash(w http.ResponseWriter, r *http.Request, okMsg, errMsg string) {

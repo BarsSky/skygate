@@ -41,6 +41,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/i18n"
 	"skygate/internal/invite"
+	"skygate/internal/localtime"
 )
 
 // inviteReply handles /invite <username>.
@@ -85,7 +86,7 @@ func inviteReply(env BotEnv, args []string) string {
 		}
 	}
 
-	expiryStr := inv.ExpiresAt.UTC().Format("2006-01-02 15:04 UTC")
+	expiryStr := localtime.Format(inv.ExpiresAt)
 	body := i18n.Tf(lang, "bot.invite.generated",
 		grantee, inv.Code, expiryStr, count)
 	return body
@@ -209,7 +210,7 @@ func invitesListReply(env BotEnv) string {
 			inv := outstanding[i]
 			b.WriteString(i18n.Tf(lang, "bot.invite.list_row_outstanding",
 				inv.GranteeUsername, inv.Code, statusLabel(lang, inv.Status),
-				inv.ExpiresAt.UTC().Format("2006-01-02")))
+				localtime.FormatDate(inv.ExpiresAt)))
 		}
 	}
 	if len(incoming) > 0 {
@@ -228,7 +229,7 @@ func invitesListReply(env BotEnv) string {
 			}
 			b.WriteString(i18n.Tf(lang, "bot.invite.list_row_incoming",
 				grantorName, inv.Code, statusLabel(lang, inv.Status),
-				inv.CreatedAt.UTC().Format("2006-01-02")))
+				localtime.FormatDate(inv.CreatedAt)))
 		}
 	}
 	return b.String()

@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"skygate/internal/localtime"
 	"time"
 )
 
@@ -120,5 +121,5 @@ func ExitRuleLogTime(unixSec int64) string {
 	if unixSec <= 0 {
 		return ""
 	}
-	return time.Unix(unixSec, 0).Format("2006-01-02 15:04:05")
+	return localtime.FormatSeconds(time.Unix(unixSec, 0))
 }

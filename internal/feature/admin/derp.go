@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"skygate/internal/derpcfg"
+	"skygate/internal/localtime"
 )
 
 // ---------- HTTP entry points ----------
@@ -927,7 +928,7 @@ func parseDerperVars(st *DerpStatus, body []byte) bool {
 	st.STUNNotSTUN = v.STUN.CounterRequests.NotSTUN
 	// Derive started-at from process_start_unix_time
 	if v.ProcessStartUnixTime > 0 {
-		st.StartedAt = time.Unix(int64(v.ProcessStartUnixTime), 0).Format("2006-01-02 15:04:05 MST")
+		st.StartedAt = localtime.FormatSeconds(time.Unix(int64(v.ProcessStartUnixTime), 0))
 		// Recompute uptime if we got it from vars
 		d := time.Since(time.Unix(int64(v.ProcessStartUnixTime), 0)).Round(time.Second)
 		if st.UpTime == "" || st.UpTime == "n/a" {

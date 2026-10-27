@@ -451,7 +451,7 @@
             <td><code>{{.Operator}}</code></td>
             <td><code style="overflow-wrap:break-word;font-size:0.85em">{{.SourceDSN}}</code></td>
             <td><code style="overflow-wrap:break-word;font-size:0.85em">{{.TargetDSN}}</code></td>
-            <td><small>{{.StartedAt.Format "2006-01-02 15:04:05"}}</small></td>
+            <td><small>{{dts .StartedAt}}</small></td>
           </tr>
           {{end}}
         </tbody>

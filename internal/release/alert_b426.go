@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"skygate/internal/i18n"
+	"skygate/internal/localtime"
 	"skygate/internal/telegram"
 )
 
@@ -147,16 +148,21 @@ func replaceMarkdownLinks(s string) string {
 	return b.String()
 }
 
-// formatReleased renders the release timestamp for a human. GitHub sends RFC 3339 in the
-// JSON (Release.PublishedAt is a string); an unparseable value is shown as-is rather than
-// swallowed, because a date the operator cannot read is still better than a dash.
+// formatReleased renders the release timestamp for a human, in the INSTALL'S zone
+// (B429). GitHub sends RFC 3339 in the JSON (Release.PublishedAt is a string).
+//
+// It used to hardcode UTC — which is how a release published at 08:12 Moscow reached the
+// operator as «05:12 UTC» and produced the «не учитывается локализация времени» report: the
+// arithmetic was right, the clock was the server's. The zone name is part of the value now,
+// so a timestamp can never be ambiguous again; an unparseable value is shown as-is rather
+// than swallowed, because a date the operator cannot read is still better than a dash.
 func formatReleased(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "—"
 	}
 	if ts, err := time.Parse(time.RFC3339, raw); err == nil {
-		return ts.UTC().Format("2006-01-02 15:04 UTC")
+		return localtime.Format(ts)
 	}
 	return raw
 }

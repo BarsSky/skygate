@@ -31,6 +31,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/localtime"
 )
 
 // 2026-08-25 (B178): AdminRule is now a package-level type
@@ -384,7 +385,7 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 			TargetValue:  r.TargetValue,
 			Action:       r.Action,
 			ParentDomain: r.ParentDomain,
-			CreatedAt:    time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"),
+			CreatedAt:    localtime.Format(time.Unix(r.CreatedAt, 0)),
 			AllDevices:   r.AllDevices,
 		})
 	}

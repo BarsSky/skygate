@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"skygate/internal/i18n"
+	"skygate/internal/localtime"
 	"skygate/internal/sidecar"
 	"skygate/internal/subnet"
 )
@@ -145,7 +146,7 @@ func (s *Service) sidecarLastSync() string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format("2006-01-02 15:04:05 MST")
+	return localtime.FormatSeconds(t)
 }
 
 // sidecarLastStats returns the last sync stats as a human-readable

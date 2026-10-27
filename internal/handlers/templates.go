@@ -10,10 +10,10 @@ import (
 	"io/fs"
 	"path"
 	"strings"
-	"time"
 
 	"skygate/internal/feature/admin"
 	"skygate/internal/i18n"
+	"skygate/internal/localtime"
 )
 
 //go:embed templates/*.html templates/*/*.html
@@ -87,12 +87,22 @@ func LoadTemplates() *Templates {
 			}
 			return "success"
 		},
-		"datetimeformat": func(unix int64) string {
-			if unix <= 0 {
-				return "—"
-			}
-			return time.Unix(unix, 0).UTC().Format("2006-01-02 15:04")
-		},
+		// datetimeformat renders unix seconds in the INSTALL'S zone (B429) and
+		// always carries the zone name, so a screenshot cannot be misread: the
+		// pre-B429 helper hardcoded UTC, which is how a release made at 08:12
+		// Moscow reached the operator as "05:12 UTC".
+		"datetimeformat": localtime.FormatUnix,
+		// dt / dts / dtd are the time.Time equivalents the templates use instead
+		// of calling .Format inline (a raw .Format renders in the server's zone —
+		// the whole defect this block closes). dts adds seconds, dtd is date-only.
+		"dt":  localtime.Format,
+		"dts": localtime.FormatSeconds,
+		"dtd": localtime.FormatDate,
+		// dtclock is the time-of-day only (job logs, step timings) — still in the
+		// install's zone, because a log line rendered in the server's clock is the
+		// same defect one level down.
+		"dtclock": localtime.FormatClock,
+		"dtz":     func() string { return localtime.Name() },
 		"bytesfmt": func(n int64) string {
 			const k = 1024
 			if n >= 1024*1024 {

@@ -78,7 +78,7 @@
         <td>
           {{range .Rule.Dst}}<code class="acl-cell">{{.}}</code><br>{{end}}
         </td>
-        <td><small>{{.CreatedAt.Format "2006-01-02 15:04"}}</small></td>
+        <td><small>{{dt .CreatedAt}}</small></td>
         <td>
           <form method="post" action="/admin/headscale/acl/remove" style="display:inline"
                 onsubmit="return confirm('{{tf "acl.remove_confirm" .Label | js}}');">

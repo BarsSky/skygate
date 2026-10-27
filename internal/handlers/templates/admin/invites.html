@@ -46,8 +46,8 @@
         <span class="tag tag-danger">{{t "admin_invites.status_revoked"}}</span>
       {{end}}
     </td>
-    <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
-    <td>{{.ExpiresAt.Format "2006-01-02 15:04"}}</td>
+    <td>{{dt .CreatedAt}}</td>
+    <td>{{dt .ExpiresAt}}</td>
     <td>
       {{if .ConsumerName}}{{.ConsumerName}}{{else}}<span style="color:var(--text-muted)">—</span>{{end}}
     </td>

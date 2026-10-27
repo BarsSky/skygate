@@ -1,4 +1,4 @@
-﻿{{define "body-admin-settings"}}
+{{define "body-admin-settings"}}
 {{/* 2026-07-15: v0.12.0.2 — full RU translation. Every visible
      string goes through {{t "..."}} / {{tf "..."}}. The previous
      version mixed Russian and English; the English holdouts were
@@ -79,6 +79,26 @@
       <div class="sub">
         <b>{{t "settings.exit_policy_allow_all"}}</b>: {{t "settings.exit_policy_allow_all_help"}}<br>
         <b>{{t "settings.exit_policy_deny_all"}}</b>: {{t "settings.exit_policy_deny_all_help"}}.
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem">
+    <h3><i class="fa-solid fa-clock"></i> {{t "settings.section_timezone"}}</h3>
+    <div class="form-group">
+      <label for="timezone">{{t "settings.timezone"}}</label>
+      {{/* B429: a datalist, not a closed select — the curated zones are suggestions and
+           ANY IANA name is accepted, with the server refusing an unknown one by name. */}}
+      <input type="text" id="timezone" name="timezone" value="{{.TimezoneSetting}}" class="form-control"
+             list="timezone-choices" placeholder="auto" autocomplete="off">
+      <datalist id="timezone-choices">
+        {{range .TimezoneChoices}}<option value="{{.}}"></option>{{end}}
+      </datalist>
+      <div class="sub">
+        {{t "settings.timezone_help"}}<br>
+        {{t "settings.timezone_resolved"}}: <code>{{.TimezoneResolved}}</code>
+        · {{t "settings.timezone_detected"}}: <code>{{.TimezoneDetected}}</code>
+        · {{t "settings.timezone_now"}}: <code>{{.TimezoneNow}}</code>
       </div>
     </div>
   </div>

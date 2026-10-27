@@ -53,6 +53,7 @@ import (
 
 	"skygate/internal/cluster"
 	"skygate/internal/db"
+	"skygate/internal/localtime"
 )
 
 // ---------- GET /admin/cluster (the page) -----------------------------
@@ -315,13 +316,13 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 			// "{role1,role2}" literal. Parse the braces.
 			n.Roles = parsePGTextArray(rolesStr)
 			if joinedAt.Valid {
-				n.JoinedAt = joinedAt.Time.UTC().Format("2006-01-02 15:04:05 UTC")
+				n.JoinedAt = localtime.FormatSeconds(joinedAt.Time)
 				n.JoinedAgoSec = now - joinedAt.Time.Unix()
 			} else {
 				n.JoinedAt = "—"
 			}
 			if lastSeenAt.Valid {
-				n.LastSeenAt = lastSeenAt.Time.UTC().Format("2006-01-02 15:04:05 UTC")
+				n.LastSeenAt = localtime.FormatSeconds(lastSeenAt.Time)
 				n.LastSeenAgoSec = now - lastSeenAt.Time.Unix()
 			} else {
 				n.LastSeenAt = "—"
@@ -449,11 +450,11 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 				continue
 			}
 			if iok {
-				inv.IssuedAt = issuedAt.UTC().Format("2006-01-02 15:04:05 UTC")
+				inv.IssuedAt = localtime.FormatSeconds(issuedAt)
 				inv.IssuedAgoSec = int64(now.Sub(issuedAt).Seconds())
 			}
 			if eok {
-				inv.ExpiresAt = expiresAt.UTC().Format("2006-01-02 15:04:05 UTC")
+				inv.ExpiresAt = localtime.FormatSeconds(expiresAt)
 				inv.ExpiresInSec = int64(expiresAt.Sub(now).Seconds())
 			}
 			data.Invites = append(data.Invites, inv)
@@ -1494,7 +1495,7 @@ func (s *Service) PostAdminClusterInviteGenerate(w http.ResponseWriter, r *http.
 	// full token is shown in the rendered flash (one-time
 	// view).
 	msg := fmt.Sprintf("Invite generated for %s. Token (shown once, expires %s):\n\n%s\n\nSave it now — it cannot be re-displayed.",
-		target, expiresAt.UTC().Format("2006-01-02 15:04 UTC"), token)
+		target, localtime.Format(expiresAt), token)
 	clusterRedirect(w, r, msg, "")
 }
 

@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"skygate/internal/localtime"
 	"strings"
 	"time"
 )
@@ -202,7 +203,7 @@ func (s State) Explain() string {
 		staleTun := s.TunPresent && mentionsTun(line)
 		when := ""
 		if !s.LastDaemonErrorAt.IsZero() {
-			when = " (" + s.LastDaemonErrorAt.UTC().Format("2006-01-02 15:04:05 MST") + ")"
+			when = " (" + localtime.FormatSeconds(s.LastDaemonErrorAt) + ")"
 		}
 		switch {
 		case staleTun:

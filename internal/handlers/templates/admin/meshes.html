@@ -44,17 +44,17 @@
         <div style="margin-top:6px">
           {{t "admin_meshes.members_header" | safeHTML}}
           {{range .MemberList}}
-          <div>{{tf "admin_meshes.member_row" .Username (.JoinedAt.Format "2006-01-02 15:04") | safeHTML}}</div>
+          <div>{{tf "admin_meshes.member_row" .Username (dt .JoinedAt) | safeHTML}}</div>
           {{end}}
         </div>
       </details>
     </td>
-    <td>{{.Mesh.CreatedAt.Format "2006-01-02 15:04"}}</td>
+    <td>{{dt .Mesh.CreatedAt}}</td>
     <td>
       {{if .Mesh.DissolvedAt.IsZero}}
         <span style="color:var(--text-muted)">—</span>
       {{else}}
-        {{.Mesh.DissolvedAt.Format "2006-01-02 15:04"}}
+        {{dt .Mesh.DissolvedAt}}
       {{end}}
     </td>
   </tr>

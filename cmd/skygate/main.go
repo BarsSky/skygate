@@ -778,11 +778,9 @@ func main() {
 	// exported func). It's now constructed inline here
 	// and wired into adminSvc.UpdateState below.
 	updateStore := update.NewStateStore(cfg.UpdateStatePath)
-	if _, err := updateStore.Load(); err != nil {
-		// Load failure is non-fatal: the next apply
-		// will overwrite the file with a fresh state.
-		_ = err
-	}
+	_, _ = updateStore.Load() // failure is non-fatal: the next apply rewrites the file
+	// B429: install the panel's clock before any renderer or scheduler runs.
+	installPanelTimezone(d, cfg)
 	// 2026-09-18 (B261 / plan §12.15): reconcile a native (systemd /
 	// bare) self-update that finished while we were down. The
 	// privileged helper writes its verdict to <update_dir>/result.*

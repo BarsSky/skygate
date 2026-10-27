@@ -8,6 +8,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/i18n"
+	"skygate/internal/localtime"
 )
 
 // Phase 3 commands: /exit_nodes, /quota, /ack <id>.
@@ -234,5 +235,5 @@ func safePct(pct int) int {
 // unixToShort formats a unix-second timestamp as YYYY-MM-DD HH:MMZ.
 // Output is compact enough to keep /exit_nodes one line per node.
 func unixToShort(ts int64) string {
-	return time.Unix(ts, 0).UTC().Format("2006-01-02 15:04Z")
+	return localtime.Format(time.Unix(ts, 0))
 }

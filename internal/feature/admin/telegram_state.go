@@ -14,6 +14,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/localtime"
 	"skygate/internal/telegram"
 )
 
@@ -221,7 +222,7 @@ func (s *Service) loadTelegramUIState() telegramUIState {
 	row := s.dbc().QueryRow(`SELECT MAX(updated_at) FROM global_settings WHERE key IN ($1, $2)`,
 		"telegram.bot_token", "telegram.chat_id")
 	if err := row.Scan(&ts); err == nil && ts > 0 {
-		state.UpdatedAt = time.Unix(ts, 0).UTC().Format("2006-01-02 15:04:05 UTC")
+		state.UpdatedAt = localtime.FormatSeconds(time.Unix(ts, 0))
 	}
 	// 2026-09-16 (B255): the container's tailscaled
 	// state used to be read here via

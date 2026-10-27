@@ -7,6 +7,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/i18n"
+	"skygate/internal/localtime"
 )
 
 // Phase 2 commands: /nodes, /rules, /audit.
@@ -245,7 +246,7 @@ func auditReply(env BotEnv) string {
 	var lines []string
 	lines = append(lines, header, "<i>"+rule+"</i>")
 	for _, e := range entries {
-		when := time.Unix(e.ts, 0).UTC().Format("2006-01-02 15:04")
+		when := localtime.Format(time.Unix(e.ts, 0))
 		who := e.username
 		if who == "" || who == "?" {
 			who = "—"

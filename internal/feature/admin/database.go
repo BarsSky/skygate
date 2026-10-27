@@ -52,6 +52,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/db"
 	"skygate/internal/dbmigrate"
+	"skygate/internal/localtime"
 )
 
 // ---------- GET /admin/database (the page) --------------------------------
@@ -250,7 +251,7 @@ func (s *Service) collectDatabasePageData(r *http.Request) *databasePageData {
 		data.DesiredDBName = desired.DBName
 		data.DesiredUsername = desired.Username
 		data.DesiredSSLMode = desired.SSLMode
-		data.DesiredUpdatedAt = desired.UpdatedAt.UTC().Format("2006-01-02 15:04:05 UTC")
+		data.DesiredUpdatedAt = localtime.FormatSeconds(desired.UpdatedAt)
 		data.DesiredUpdatedBy = desired.UpdatedBy
 	} else if err != nil && err != db.ErrClusterDatabaseNotFound {
 		data.FlashError = "load desired DSN: " + err.Error()

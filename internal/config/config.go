@@ -312,6 +312,14 @@ type Config struct {
 	UpdateCheckEnabled  bool
 	UpdateCheckInterval time.Duration
 	UpdateChannel       string
+	// Timezone is the zone every timestamp in the panel and in the Telegram
+	// alerts is rendered in, and the zone the update schedule is read in
+	// (B429, 2026-10-27). SKYGATE_TIMEZONE; the admin setting on
+	// /admin/settings WINS over it, and an empty value means "detect from the
+	// system" — which is what the reference install needed, because both the
+	// host and the container ran with /etc/localtime → Etc/UTC while the
+	// operator reads a Moscow clock.
+	Timezone string
 	// 2026-07-30: v0.32.3 — AutoUpdateEnabled gates the
 	// banner-driven "Apply" button on /admin/update. When
 	// false (the default), the page shows a separate manual
@@ -663,6 +671,7 @@ func Load() (*Config, error) {
 		UpdateCheckEnabled:  getenv("SKYGATE_UPDATE_CHECK", "true") == "true",
 		UpdateCheckInterval: getDuration("SKYGATE_UPDATE_CHECK_INTERVAL", 24*time.Hour),
 		UpdateChannel:       getenv("SKYGATE_UPDATE_CHANNEL", "stable"),
+		Timezone:            getenv("SKYGATE_TIMEZONE", ""),
 		// 2026-08-17 (B124): dev-build marker. Default false
 		// (treated as a regular release build).
 		DevBuild:    getenv("SKYGATE_DEV_BUILD", "false") == "true",

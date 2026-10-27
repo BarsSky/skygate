@@ -110,6 +110,7 @@ import (
 
 	"skygate/internal/backup"
 	"skygate/internal/db"
+	"skygate/internal/localtime"
 )
 
 // Storage key constants. Centralised here (not in the
@@ -581,7 +582,7 @@ func formatTelegramSummary(r AutoRotateResult) string {
 		if len(labels) > 0 {
 			labels += ", "
 		}
-		labels += fmt.Sprintf("%s (→ %s)", t.Label, t.NewExpiry.Format("2006-01-02"))
+		labels += fmt.Sprintf("%s (→ %s)", t.Label, localtime.FormatDate(t.NewExpiry))
 		listed++
 	}
 	if r.Extended > maxListed {

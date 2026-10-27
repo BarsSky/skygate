@@ -12,6 +12,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/exitnode"
+	"skygate/internal/localtime"
 )
 
 // B417.1 (2026-10-24) — the panel must not call a relay healthy because headscale
@@ -63,7 +64,7 @@ func (s *Service) RunExitNodeHealthCheck(ctx context.Context) []exitnode.HealthL
 	if err != nil {
 		return nil
 	}
-	now := time.Now().Format("2006-01-02 15:04")
+	now := localtime.Format(localtime.Now())
 	out := make([]exitnode.HealthLine, 0, len(rows))
 	for _, row := range rows {
 		line := exitnode.HealthLine{Host: row.Hostname, At: now}

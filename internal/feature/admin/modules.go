@@ -30,6 +30,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/db"
 	"skygate/internal/i18n"
+	"skygate/internal/localtime"
 	"skygate/internal/module"
 )
 
@@ -161,7 +162,7 @@ func (s *Service) AdminModuleDetail(w http.ResponseWriter, r *http.Request) {
 		view.HealthChecks = health.Checks
 		view.HealthLastError = health.LastError
 		if !health.LastCheck.IsZero() {
-			view.HealthLastCheck = health.LastCheck.UTC().Format("2006-01-02 15:04:05 UTC")
+			view.HealthLastCheck = localtime.FormatSeconds(health.LastCheck)
 		}
 	}
 	title := s.I18nT(c, "modules.detail_title", name)
@@ -366,10 +367,10 @@ func (s *Service) buildModuleRow(c *auth.Claims, name string, mod module.Module)
 		HasSubFeat:  len(mod.SubFeatures()) > 0,
 	}
 	if !status.InstalledAt.IsZero() {
-		row.InstalledAt = status.InstalledAt.UTC().Format("2006-01-02 15:04 MST")
+		row.InstalledAt = localtime.Format(status.InstalledAt)
 	}
 	if !status.StartedAt.IsZero() {
-		row.StartedAt = status.StartedAt.UTC().Format("2006-01-02 15:04 MST")
+		row.StartedAt = localtime.Format(status.StartedAt)
 	}
 	return row
 }
@@ -533,7 +534,7 @@ func (s *Service) loadModuleAudit(c *auth.Claims, name string, limit int) []Audi
 			continue
 		}
 		out = append(out, AuditRow{
-			When:   time.Unix(ts, 0).UTC().Format("2006-01-02 15:04:05"),
+			When:   localtime.FormatSeconds(time.Unix(ts, 0)),
 			Action: action,
 			Detail: detail.String,
 			By:     byUser.String,

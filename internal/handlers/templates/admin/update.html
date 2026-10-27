@@ -76,7 +76,7 @@
       </summary>
       <pre id="update-log" style="white-space:pre-wrap;font-family:monospace;font-size:11px;line-height:1.4;margin:8px 0 0;max-height:400px;overflow:auto;background:var(--bg-secondary);padding:8px;border-radius:4px">{{range $st.Log}}{{/* 2026-08-04 (v0.33.1.7): replace inline color interpolation with a static class
            (log-line-{level}) — Go's html/template refuses to interpolate
-           var(--xxx) into CSS context and prints "ZgotmplZ". */}}{{$lineClass := "log-line-info"}}{{if eq .Level "error"}}{{$lineClass = "log-line-error"}}{{end}}{{if eq .Level "warn"}}{{$lineClass = "log-line-warn"}}{{end}}<span class="{{$lineClass}}">{{.At.Format "15:04:05"}} [{{.Level}}] {{.Msg}}</span>
+           var(--xxx) into CSS context and prints "ZgotmplZ". */}}{{$lineClass := "log-line-info"}}{{if eq .Level "error"}}{{$lineClass = "log-line-error"}}{{end}}{{if eq .Level "warn"}}{{$lineClass = "log-line-warn"}}{{end}}<span class="{{$lineClass}}">{{dtclock .At}} [{{.Level}}] {{.Msg}}</span>
 {{end}}</pre>
     </details>
     {{end}}
@@ -222,7 +222,7 @@
       </div>
       {{if .CheckedAt}}
       <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
-        {{t "update.checked_at"}}: {{.CheckedAt.Format "2006-01-02 15:04:05 MST"}}
+        {{t "update.checked_at"}}: {{dts .CheckedAt}}
       </div>
       {{end}}
     </div>

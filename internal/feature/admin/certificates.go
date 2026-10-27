@@ -71,6 +71,7 @@ import (
 
 	"skygate/internal/certsync"
 	"skygate/internal/db"
+	"skygate/internal/localtime"
 )
 
 // certificatesPageData is the shape the certificates.html
@@ -336,8 +337,8 @@ func readLocalCertInfo(path string) (*certDisplayInfo, error) {
 	return &certDisplayInfo{
 		Subject:     cert.Subject.String(),
 		Issuer:      cert.Issuer.String(),
-		NotBefore:   cert.NotBefore.Format("2006-01-02 15:04 MST"),
-		NotAfter:    cert.NotAfter.Format("2006-01-02 15:04 MST"),
+		NotBefore:   localtime.Format(cert.NotBefore),
+		NotAfter:    localtime.Format(cert.NotAfter),
 		DaysLeft:    int(time.Until(cert.NotAfter).Hours() / 24),
 		SHA256:      hex.EncodeToString(h[:]),
 		DNSNames:    cert.DNSNames,

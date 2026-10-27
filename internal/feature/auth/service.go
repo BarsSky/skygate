@@ -33,6 +33,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/db"
 	"skygate/internal/i18n"
+	"skygate/internal/localtime"
 	"skygate/internal/watchalert"
 )
 
@@ -445,7 +446,7 @@ func (s *Service) GetMyTokens(w http.ResponseWriter, r *http.Request) {
 	for _, t := range tokens {
 		last := "—"
 		if !t.LastUsed.IsZero() {
-			last = t.LastUsed.Format("2006-01-02 15:04")
+			last = localtime.Format(t.LastUsed)
 		}
 		exp := "—"
 		warn := ""
@@ -453,7 +454,7 @@ func (s *Service) GetMyTokens(w http.ResponseWriter, r *http.Request) {
 		inWords := ""
 		renewable := false
 		if !t.ExpiresAt.IsZero() {
-			exp = t.ExpiresAt.Format("2006-01-02 15:04")
+			exp = localtime.Format(t.ExpiresAt)
 			delta := t.ExpiresAt.Sub(now)
 			days := int(delta / (24 * time.Hour))
 			hours := int(delta / time.Hour)
@@ -498,7 +499,7 @@ func (s *Service) GetMyTokens(w http.ResponseWriter, r *http.Request) {
 			"ID":             fmt.Sprintf("%d", t.ID),
 			"Label":          t.Label,
 			"LastUsed":       last,
-			"Created":        t.CreatedAt.Format("2006-01-02 15:04"),
+			"Created":        localtime.Format(t.CreatedAt),
 			"Expires":        exp,
 			"ExpiresWarn":    warn,
 			"ExpiresBadge":   badge,
@@ -526,7 +527,7 @@ func (s *Service) GetMyTokens(w http.ResponseWriter, r *http.Request) {
 		if tStr := r.URL.Query().Get("t"); tStr != "" {
 			if tUnix, err := strconv.ParseInt(tStr, 10, 64); err == nil {
 				if tUnix > 0 {
-					data["renewedAt"] = time.Unix(tUnix, 0).Format("2006-01-02 15:04")
+					data["renewedAt"] = localtime.Format(time.Unix(tUnix, 0))
 				} else {
 					// never expires
 					data["renewedAt"] = s.I18n.T(s.I18n.LangFromRequest(r), "tokens.ttl_never")

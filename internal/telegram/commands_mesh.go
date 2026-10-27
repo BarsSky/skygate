@@ -43,6 +43,7 @@ import (
 
 	"skygate/internal/acl"
 	"skygate/internal/i18n"
+	"skygate/internal/localtime"
 	"skygate/internal/mesh"
 )
 
@@ -220,7 +221,7 @@ func meshesListReply(env BotEnv) string {
 		members, _ := mesh.ListMembers(env.DB, m.ID)
 		b.WriteString(i18n.Tf(lang, "bot.mesh.list_row",
 			m.Name, m.Code, len(members),
-			m.CreatedAt.UTC().Format("2006-01-02")))
+			localtime.FormatDate(m.CreatedAt)))
 	}
 	return b.String()
 }

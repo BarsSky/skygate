@@ -449,10 +449,10 @@
           <td style="padding:6px 8px"><code>{{.Hostname}}</code></td>
           <td style="padding:6px 8px">{{.Mode}}</td>
           <td style="padding:6px 8px">
-            {{if not .LastSyncedAt.IsZero}}{{.LastSyncedAt.Format "2006-01-02 15:04"}}{{else}}{{t "derp.cert_sync_pending"}}{{end}}
+            {{if not .LastSyncedAt.IsZero}}{{dt .LastSyncedAt}}{{else}}{{t "derp.cert_sync_pending"}}{{end}}
           </td>
           <td style="padding:6px 8px">
-            {{if not .ExpiryWarnAt.IsZero}}{{.ExpiryWarnAt.Format "2006-01-02"}}{{else}}—{{end}}
+            {{if not .ExpiryWarnAt.IsZero}}{{dtd .ExpiryWarnAt}}{{else}}—{{end}}
           </td>
           <td style="padding:6px 8px">
             {{if .LastError}}

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"skygate/internal/headscale"
+	"skygate/internal/localtime"
 )
 
 // Service is the deployrun feature module. One Service
@@ -108,7 +109,7 @@ func (s *Service) GetAdminDeploys(w http.ResponseWriter, r *http.Request) {
 	for _, run := range runs {
 		finished := "—"
 		if !run.FinishedAt.IsZero() {
-			finished = run.FinishedAt.Format("2006-01-02 15:04:05")
+			finished = localtime.FormatSeconds(run.FinishedAt)
 		}
 		errCell := ""
 		if run.Error != "" {
@@ -116,7 +117,7 @@ func (s *Service) GetAdminDeploys(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprintf(w, `<tr><td><a href="/admin/deploys/%d">%d</a></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
 			run.ID, run.ID, run.Type, run.Hostname, run.Status,
-			run.StartedAt.Format("2006-01-02 15:04:05"), finished, errCell)
+			localtime.FormatSeconds(run.StartedAt), finished, errCell)
 	}
 	fmt.Fprintf(w, `</table>`)
 	fmt.Fprintf(w, `</body></html>`)
@@ -182,7 +183,7 @@ func (s *Service) GetAdminDeployRun(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<h1>Deploy Run #%d</h1>`, run.ID)
 	fmt.Fprintf(w, `<p>Status: <b>%s</b> Type: %s Hostname: <code>%s</code> Operator: %s Started: %s</p>`,
 		run.Status, run.Type, run.Hostname, run.Operator,
-		run.StartedAt.Format("2006-01-02 15:04:05"))
+		localtime.FormatSeconds(run.StartedAt))
 	if run.Error != "" {
 		fmt.Fprintf(w, `<p style="color:red"><b>Error:</b> %s</p>`, run.Error)
 	}

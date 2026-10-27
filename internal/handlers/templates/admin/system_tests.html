@@ -81,7 +81,7 @@
       <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase">{{t "system_tests.stat_window"}}</div>
       <div style="font-size:14px;font-weight:500">{{.History.WindowLabel}}</div>
       {{if .History.OldestRun}}
-      <div style="font-size:11px;color:var(--text-muted)">{{.History.OldestRun.Format "2006-01-02"}} → {{.History.NewestRun.Format "2006-01-02"}}</div>
+      <div style="font-size:11px;color:var(--text-muted)">{{dtd .History.OldestRun}} → {{dtd .History.NewestRun}}</div>
       {{end}}
     </div>
     <div>
@@ -151,7 +151,7 @@
         </td>
         <td style="text-align:right">
           {{if .LastRunAt}}
-            <small>{{.LastRunAt.Format "2006-01-02 15:04"}}</small>
+            <small>{{dt .LastRunAt}}</small>
           {{else}}
             <small style="color:var(--text-muted)">{{t "system_tests.never"}}</small>
           {{end}}
@@ -201,7 +201,7 @@
     <tbody>
       {{range .RecentRuns}}
       <tr>
-        <td><small>{{.StartedAt.Format "2006-01-02 15:04:05"}} UTC</small></td>
+        <td><small>{{dts .StartedAt}}</small></td>
         <td><small>{{.Duration}}</small></td>
         <td><span class="badge-pass">{{.Pass}}</span></td>
         <td>{{if gt .Fail 0}}<span class="badge-fail">{{.Fail}}</span>{{else}}<span class="badge-pass">0</span>{{end}}</td>

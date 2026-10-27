@@ -110,6 +110,7 @@ import (
 
 	"skygate/internal/backup"
 	"skygate/internal/db"
+	"skygate/internal/localtime"
 )
 
 // CertSync is the long-lived scheduler that polls S3 for
@@ -479,7 +480,7 @@ func (c *CertSync) checkExpiry(ctx context.Context, deps CertSyncDeps) {
 		return
 	}
 	msg := fmt.Sprintf("cert expires in %d days (%s); renew + upload to S3",
-		daysLeft, cert.NotAfter.Format("2006-01-02"))
+		daysLeft, localtime.FormatDate(cert.NotAfter))
 	log.Printf("certsync: WARN %s", msg)
 	if deps.Notifier != nil {
 		_ = deps.Notifier.SendAlert("[certsync.expiry_warning] " + msg)

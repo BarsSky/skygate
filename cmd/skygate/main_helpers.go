@@ -6,6 +6,10 @@
 // update/keynotify/ha schedulers send Telegram messages without importing
 // internal/telegram (the cycle those sinks exist to break). Moved verbatim out
 // of cmd/skygate/main.go during refactor Phase D (2026-10-02).
+//
+// B429 added installPanelTimezone here rather than inline in main(): the boot
+// sequence has a hard line ceiling (B372, 2400 lines) and this file is where
+// boot sub-steps live.
 
 package main
 
@@ -23,6 +27,7 @@ import (
 	"skygate/internal/config"
 	"skygate/internal/db"
 	"skygate/internal/keynotify"
+	"skygate/internal/localtime"
 	"skygate/internal/telegram"
 	"skygate/internal/update"
 	"skygate/internal/watchalert"
@@ -31,6 +36,41 @@ import (
 	"sync"
 	"time"
 )
+
+// installPanelTimezone decides which clock the whole process means (B429).
+//
+// Priority: the admin setting on /admin/settings → SKYGATE_TIMEZONE → whatever
+// the system reports. Measured on the reference install 2026-10-27: host AND
+// container ran with /etc/localtime → Etc/UTC and SKYGATE_TZ did not exist, so
+// every surface rendered UTC to an operator who reads a Moscow clock — the
+// release made at 08:12 Moscow was announced as 05:12 UTC, and the operator's
+// 08:00 update schedule meant 11:00 Moscow. Nothing was miscalculated; the
+// install simply had no way to say which clock it should speak.
+//
+// A typo in the setting is REPORTED and leaves the previous zone in place; only
+// an unusable value falls back to the detected zone, and that fallback says so.
+func installPanelTimezone(d *db.ResettableDB, cfg *config.Config) {
+	setting := cfg.Timezone
+	if d != nil && d.Current() != nil {
+		if v, err := db.GetGlobalSetting(d.Current(), localtime.SettingKey, cfg.Timezone); err == nil {
+			setting = v
+		} else {
+			log.Printf("⏰ timezone: could not read the admin setting (%v) — using %q", err, cfg.Timezone)
+		}
+	}
+	resolved, err := localtime.Set(setting)
+	if err != nil {
+		log.Printf("⏰ timezone: %v", err)
+		resolved = localtime.MustSet(localtime.Auto)
+		log.Printf("⏰ timezone: using %s (detected; the system reports %s)", resolved, localtime.Detected())
+		return
+	}
+	source := "admin setting"
+	if strings.TrimSpace(setting) == "" || strings.EqualFold(strings.TrimSpace(setting), localtime.Auto) {
+		source = "auto-detected"
+	}
+	log.Printf("⏰ timezone: %s (%s) — panel timestamps and the update schedule use this clock; change it on /admin/settings", resolved, source)
+}
 
 // tailscaleEnvOr is a tiny "env var with default" helper used
 // when wiring the v0.33.1.9 /admin/tailscale Service fields.

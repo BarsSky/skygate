@@ -26,8 +26,8 @@
         {{t "db.migrate_run_status"}}: <span class="badge bg-{{if eq .Data.Run.Status "success"}}success{{else if eq .Data.Run.Status "failed"}}danger{{else if eq .Data.Run.Status "running"}}warning{{else if eq .Data.Run.Status "cancelled"}}secondary{{else}}secondary{{end}}">{{.Data.Run.Status}}</span>
       </span>
       <small class="text-muted">
-        {{.Data.Run.StartedAt.Format "2006-01-02 15:04:05 UTC"}}
-        {{if .Data.Run.FinishedAt}}— {{.Data.Run.FinishedAt.Format "2006-01-02 15:04:05 UTC"}}{{end}}
+        {{dts .Data.Run.StartedAt}}
+        {{if .Data.Run.FinishedAt}}— {{dts .Data.Run.FinishedAt}}{{end}}
       </small>
     </div>
     <div class="card-body">
@@ -95,7 +95,7 @@
             </td>
             <td>{{if .DurationMs}}{{.DurationMs}}ms{{else}}—{{end}}</td>
             <td>
-              {{if .StartedAt}}{{.StartedAt.Format "15:04:05"}}{{else}}—{{end}}
+              {{if .StartedAt}}{{dtclock .StartedAt}}{{else}}—{{end}}
             </td>
           </tr>
           {{end}}

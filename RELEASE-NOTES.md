@@ -1,5 +1,64 @@
 # Skygate release notes
 
+## v1.5.175 — one clock for the whole panel: you choose the zone, everything follows (B429)
+
+**Date:** 2026-10-27 · **Base:** `v1.5.174` → this tag · **Compatibility:** none; the
+default is «auto», which is what every install did before.
+
+### What you reported
+
+> «есть подозрение что не учитывается в проекте локализация времени — так релиз был
+> сделан около 8 утра по Московскому времени, а в уведомлении указано что в 5 утра по
+> Гринвичу … и почему не отрабатывает в назначенное время обновление»
+
+### Measured on your installation
+
+| fact | value |
+| --- | --- |
+| host + container | `/etc/localtime → Etc/UTC`, `SKYGATE_TZ` absent |
+| `/admin/update` | «Проверено: 2026-10-27 06:48:21 **UTC**» |
+| `update_schedule_time` | `08:00` — compared against **UTC**, i.e. 11:00 Moscow |
+| Telegram alert | «опубликована: 2026-10-27 **05:12 UTC**» for a release published 08:12 Moscow |
+
+Your diagnosis was right in effect, though the arithmetic was never wrong: the install
+had **no way to say which clock you read**. Both consequences were real — the message was
+unreadable, and the 08:00 schedule actually fired at 11:00.
+
+### Fixed
+
+* **One clock for the whole process** (`internal/localtime`). Priority: the admin setting
+  on `/admin/settings` → `SKYGATE_TIMEZONE` → auto-detection (`TZ` → `/etc/localtime` →
+  `/etc/timezone`). A typo in the zone name is an **error that names the value**, never a
+  silent UTC, and the page shows `auto`, what the system reports, and the current time.
+* **The update schedule is read in that clock** — `08:00` now means 08:00 where you live.
+  The last-run stamp is converted into the same zone before the day comparison, and the
+  log line names the zone («firing at 08:00 Europe/Moscow»).
+* **Every timestamp in the panel** now renders in it: the unix formatter that most pages
+  use no longer hardcodes UTC, **all 27** hand-formatted template sites (13 templates)
+  were converted to the new `dt`/`dts`/`dtd`/`dtclock` helpers, and **45** Go sites whose
+  output you read (bot replies, notifications, admin pages) go through the same clock.
+  The update notification now prints «опубликована: 2026-10-27 08:12 MSK» — in your zone,
+  **with the zone name**, so a screenshot can never be misread again.
+* **Machine formats are deliberately not localised** — an audit row's RFC3339 timestamp,
+  an SSE event's timestamp and an export filename must not move with your clock. They are
+  the three named exceptions in the contract.
+* **The admin chooses it** at `/admin/settings` → «Часовой пояс и время» (a datalist with
+  curated IANA zones; any valid name is accepted). It takes effect in the running process
+  immediately, a refusal is shown with the reason and the zone actually in force, and the
+  change is audited as `settings.timezone`.
+
+### What to do after updating
+
+Open `/admin/settings` → «Часовой пояс и время» → type `Europe/Moscow` (or `auto` to
+follow the system). From then on the panel, the notifications **and** the update schedule
+all speak that clock; the journal says which zone was chosen and why at every boot.
+
+Guards: 31 contracts in `scripts/check_b429_timezone.sh` — including «no template formats
+a time by hand any more (0 of 27)» and a ratchet on raw Go formatting — plus 5
+behavioural tests in `internal/localtime/localtime_b429_test.go` (explicit zone wins and
+carries its name, a typo is refused by name, `auto` follows the system, DST is the zone's
+problem, the unix/zero contract).
+
 ## v1.5.174 — «окно появляется, обновление не начинается, ошибок нет»: the panel's own refresh was cancelling your click (B428)
 
 **Date:** 2026-10-27 · **Base:** `v1.5.173` → this tag · **Compatibility:** none.

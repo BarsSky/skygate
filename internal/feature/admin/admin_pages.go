@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/localtime"
 )
 
 // AuditSource* constants identify which table an audit
@@ -148,7 +149,7 @@ func (s *Service) GetAdminAudit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if ts, ok := db.ParseDBTime(tsRaw); ok {
-			e.Time = ts.UTC().Format("2006-01-02 15:04:05")
+			e.Time = localtime.FormatSeconds(ts)
 		}
 		entries = append(entries, e)
 	}

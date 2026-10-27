@@ -180,7 +180,7 @@
           {{end}}
         </td>
         <td style="padding:0.3rem 0.6rem; color: var(--text-muted); font-size: 0.85em">
-          {{if .LastCheck.IsZero}}—{{else}}{{.LastCheck.Format "2006-01-02 15:04:05 UTC"}}{{end}}
+          {{if .LastCheck.IsZero}}—{{else}}{{dts .LastCheck}}{{end}}
         </td>
         <td style="padding:0.3rem 0.6rem; text-align: right; font-variant-numeric: tabular-nums">
           {{.ProbesTotal}}

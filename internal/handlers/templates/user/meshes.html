@@ -86,7 +86,7 @@
             </div>
           </details>
         </td>
-        <td style="color:var(--text-muted);font-size:12px">{{$row.Mesh.CreatedAt.Format "2006-01-02 15:04"}}</td>
+        <td style="color:var(--text-muted);font-size:12px">{{dt $row.Mesh.CreatedAt}}</td>
         <td>
           <form method="post" action="/my/meshes/leave" style="display:inline;margin:0"
                 onsubmit="return confirm('{{tf "my_meshes.leave_confirm" $row.Mesh.Name}}');">

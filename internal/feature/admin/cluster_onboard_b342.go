@@ -53,6 +53,7 @@ import (
 
 	"skygate/internal/cluster"
 	"skygate/internal/db"
+	"skygate/internal/localtime"
 )
 
 // clusterOnboardSettingPrefix parks one boot payload per minted token.
@@ -466,7 +467,7 @@ func (s *Service) PostAdminClusterOnboard(w http.ResponseWriter, r *http.Request
 	payload := clusterOnboardPayload{
 		Hostname:   hostname,
 		InviteTok:  inviteToken,
-		ExpiresAt:  expiresAt.UTC().Format("2006-01-02 15:04 UTC"),
+		ExpiresAt:  localtime.Format(expiresAt),
 		APIURL:     apiURL,
 		TSKey:      tsKey,
 		ControlURL: s.controlURL(),

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/localtime"
 )
 
 // GetAdminNodesLoad renders the admin "Node Load"
@@ -95,7 +96,7 @@ func (s *Service) GetAdminNodesLoad(w http.ResponseWriter, r *http.Request) {
 		// Last sync: find most recent log
 		ts, _ := db.LastSyncForExitNode(s.dbc(), name)
 		if ts > 0 {
-			nl.LastSync = time.Unix(ts, 0).Format("2006-01-02 15:04:05")
+			nl.LastSync = localtime.FormatSeconds(time.Unix(ts, 0))
 		} else {
 			nl.LastSync = "никогда"
 		}

@@ -75,6 +75,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/exitnode"
 	"skygate/internal/headscale"
+	"skygate/internal/localtime"
 	"skygate/internal/update"
 )
 
@@ -337,7 +338,7 @@ func (s *Service) exitNodeProvisionView(r *http.Request) *ExitNodeProvisionView 
 	if st := s.loadExitNodeHealth(); len(st.Lines) > 0 {
 		v.Health = st.Lines
 		if !st.At.IsZero() {
-			v.HealthAt = st.At.Format("2006-01-02 15:04")
+			v.HealthAt = localtime.Format(st.At)
 		}
 		for _, l := range st.Lines {
 			if !l.OK {

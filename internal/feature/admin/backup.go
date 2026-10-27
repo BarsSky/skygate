@@ -17,6 +17,7 @@ package admin
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -32,6 +33,7 @@ import (
 
 	"skygate/internal/backup"
 	"skygate/internal/db"
+	"skygate/internal/localtime"
 
 	"github.com/minio/minio-go/v7"
 )
@@ -633,6 +635,16 @@ func (s *Service) GetAdminSettings(w http.ResponseWriter, r *http.Request) {
 		"PublicDomain":    s.ControlURL,
 		"JWTSecretMask":   maskSecret(s.JWTSecret),
 		"HeadscaleAPIKey": maskSecret(s.HeadscaleKey),
+		// B429: the panel's clock. TimezoneSetting is what the admin SAVED (empty
+		// or "auto" = follow the system), TimezoneResolved is the zone actually in
+		// force, TimezoneDetected is what the host/container reports — so "Auto" is
+		// never a mystery and a wrong system zone is visible before it causes a
+		// surprise.
+		"TimezoneSetting":  storedTimezone(s.dbc()),
+		"TimezoneResolved": localtime.Name(),
+		"TimezoneDetected": localtime.Detected(),
+		"TimezoneNow":      localtime.Format(localtime.Now()),
+		"TimezoneChoices":  localtime.Choices(),
 	}
 	if succ := r.URL.Query().Get("success"); succ != "" {
 		data["FlashSuccess"] = succ
@@ -672,6 +684,31 @@ func (s *Service) PostAdminSettings(w http.ResponseWriter, r *http.Request) {
 	_ = r.FormValue("public_domain")
 	_ = r.FormValue("admin_password")
 
+	// B429 — the panel's clock. Saved to global_settings and installed in the
+	// process IMMEDIATELY, because the schedule the operator is looking at is read
+	// in that zone on the very next tick. An unknown zone is refused with the value
+	// named (a typo must never silently move every timestamp), and the refusal is
+	// reported before the .env half runs, so a bad zone cannot look "saved".
+	if raw, ok := r.Form["timezone"]; ok {
+		value := strings.TrimSpace(raw[0])
+		resolved, err := localtime.Set(value)
+		if err != nil {
+			if werr := db.SetGlobalSetting(s.dbc(), localtime.SettingKey, value); werr != nil {
+				log.Printf("settings: could not persist the timezone %q: %v", value, werr)
+			}
+			// The setting is stored as typed so the operator can correct it, but the
+			// process keeps the previous zone and says so on the page.
+			http.Redirect(w, r, "/admin/settings?error="+urlSafe("time zone refused: "+err.Error())+" (the panel is still on "+localtime.Name()+")", http.StatusFound)
+			return
+		}
+		if err := db.SetGlobalSetting(s.dbc(), localtime.SettingKey, value); err != nil {
+			http.Redirect(w, r, "/admin/settings?error="+urlSafe("could not save the time zone: "+err.Error()), http.StatusFound)
+			return
+		}
+		s.Backend.Audit(c.UserID, c.Username, "settings.timezone", value+" → "+resolved)
+		log.Printf("⏰ timezone: admin set %q (%s) — panel timestamps and the update schedule now use this clock", value, resolved)
+	}
+
 	// Read .env and update
 	envPath := "/home/admin/skygate/.env"
 	if _, err := os.Stat(envPath); err != nil {
@@ -696,6 +733,21 @@ func (s *Service) PostAdminSettings(w http.ResponseWriter, r *http.Request) {
 // ("••••••••abcd") so the admin can confirm a value
 // is set without exposing it. Strings of 8 chars or
 // fewer are fully masked.
+// storedTimezone reads the admin's saved clock setting ("" = never set / auto).
+// It lives here rather than in internal/localtime because that package must not
+// import internal/db: internal/db renders timestamps through localtime, and the
+// reverse edge would be an import cycle (measured: go build refuses it).
+func storedTimezone(d *sql.DB) string {
+	if d == nil {
+		return ""
+	}
+	v, err := db.GetGlobalSetting(d, localtime.SettingKey, "")
+	if err != nil {
+		return ""
+	}
+	return v
+}
+
 func maskSecret(s string) string {
 	if len(s) <= 8 {
 		return "••••••••"

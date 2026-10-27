@@ -21,6 +21,7 @@ import (
 
 	"skygate/internal/headscale_version"
 	"skygate/internal/i18n"
+	"skygate/internal/localtime"
 )
 
 // headscaleReply is the formatter for /headscale.
@@ -91,7 +92,7 @@ func headscaleReply(env BotEnv) string {
 	if !checkedAt.IsZero() {
 		fmt.Fprintf(out, "<b>%s</b> %s\n",
 			i18n.T(lang, "bot.headscale.checked_label"),
-			checkedAt.UTC().Format("2006-01-02 15:04 UTC"))
+			localtime.Format(checkedAt))
 	}
 	if latest.HTMLURL != "" {
 		fmt.Fprintf(out, "<b>%s</b> %s\n",
@@ -116,7 +117,7 @@ func headscaleReply(env BotEnv) string {
 			}
 			pub := "—"
 			if !r.PublishedAt.IsZero() {
-				pub = r.PublishedAt.Format("2006-01-02")
+				pub = localtime.FormatDate(r.PublishedAt)
 			}
 			notified := ""
 			if r.Notified {

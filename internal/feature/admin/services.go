@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"skygate/internal/feature/healthz"
+	"skygate/internal/localtime"
 )
 
 // servicesView is the per-integration row passed to the template.
@@ -152,7 +153,7 @@ func formatLastChecked(t time.Time) string {
 	if t.IsZero() {
 		return "(never)"
 	}
-	return t.Format("2006-01-02 15:04:05 UTC")
+	return localtime.FormatSeconds(t)
 }
 
 // formatLatency renders the millisecond count as "23 ms" or

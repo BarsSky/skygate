@@ -49,6 +49,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/localtime"
 )
 
 // NotifierSink is the subset of telegram.Notifier the monitor
@@ -670,7 +671,7 @@ func isCalmModeAlert(from, to string) bool {
 // API messages cap at 4096 chars and a row from a single
 // transition is well under that.
 func formatAlert(sc db.ExitNodeStateChange) string {
-	ts := sc.DetectedAt.UTC().Format("2006-01-02 15:04Z")
+	ts := localtime.Format(sc.DetectedAt)
 	if sc.Note != "" {
 		return fmt.Sprintf("🛰️ exit-node %s: %s → %s (%s, %s)", sc.Hostname, sc.FromState, sc.ToState, sc.Note, ts)
 	}

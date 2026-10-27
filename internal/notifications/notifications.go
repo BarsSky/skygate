@@ -23,6 +23,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/i18n"
+	"skygate/internal/localtime"
 )
 
 // Severity is the urgency level of a notification.
@@ -232,7 +233,7 @@ func TimeAgo(lang string, t time.Time, ref time.Time) string {
 	}
 	// Older than 1 year — show raw date so
 	// the user has a precise reference.
-	return t.Format("2006-01-02")
+	return localtime.FormatDate(t)
 }
 
 // TypeIcon returns the FontAwesome 5/6 icon class
