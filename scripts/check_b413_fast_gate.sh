@@ -293,5 +293,53 @@ case "$PLANTED" in
     bad "F2: the detector found nothing in a catalog with a deliberately appended registration (saw: '${PLANTED}')" ;;
 esac
 
+# --- G: a stray line cannot be executed as a command ---------------------------
+# Measured 2026-10-27 while shipping v1.5.178. Moving B430's registration above the
+# verdict (F1) was done by copying its two-line run_check block into the new place, and
+# the copy left a SECOND body line behind — `  'test -f scripts/check_b430_prefix_failover.sh
+# && bash scripts/check_b430_prefix_failover.sh'` standing on its own after the
+# registration. bash does not read that as an argument to anything: it is one
+# single-quoted WORD, i.e. a command name, so every full gate run printed
+#
+#   scripts/verify_pre_deploy.sh: line 6483: test -f scripts/check_b430_prefix_failover.sh
+#   && bash scripts/check_b430_prefix_failover.sh: No such file or directory
+#
+# and the run still ended `GATE PASSED: 79 check(s) green, 0 failed` — the error went to
+# stderr, never became a FAIL row, and a stray line's status is not the script's last
+# statement. That is the F1 class one step earlier: a line that LOOKS like a
+# registration, is not one, verifies nothing, and cannot fail the run. It shipped in
+# v1.5.177 and was only found by reading a green run's stderr.
+#
+# The detector is structural, not a name list: a run_check body is an indented
+# single-quoted string, and a correct one is always the CONTINUATION of the line above
+# it (which therefore ends with a backslash). A body-shaped line whose predecessor does
+# not end in a backslash stands alone and is a stray.
+stray_body_lines() {
+  awk -v q="'" '
+    {
+      if (substr($0, 1, 3) == "  " q && substr($0, length($0), 1) == q) {
+        if (prev !~ /\\$/) printf "%d: %s\n", NR, substr($0, 1, 70)
+      }
+      prev = $0
+    }
+  ' "$1"
+}
+STRAY="$(stray_body_lines "$GATE")"
+if [ -z "$STRAY" ]; then
+  ok "G1: no run_check body line stands on its own (every one continues its registration)"
+else
+  bad "G1: stray body line(s) — bash runs them as COMMANDS, so they verify nothing and cannot fail the run:"
+  printf '%s\n' "$STRAY" | sed 's/^/       /' >&2
+fi
+cp "$GATE" "$TMPD/stray_plant.sh" 2>/dev/null
+printf "\n  'test -f scripts/check_b413_no_such_check.sh && bash scripts/check_b413_no_such_check.sh'\n" >>"$TMPD/stray_plant.sh"
+PLANTED_STRAY="$(stray_body_lines "$TMPD/stray_plant.sh")"
+case "$PLANTED_STRAY" in
+  *b413_no_such_check*)
+    ok "G2: the detector fires on a planted stray body line (check_b413_no_such_check)" ;;
+  *)
+    bad "G2: the detector found nothing in a catalog with a deliberately planted stray line (saw: '${PLANTED_STRAY}')" ;;
+esac
+
 printf '\n\033[1mB413 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ]
