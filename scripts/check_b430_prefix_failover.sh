@@ -98,7 +98,7 @@ done
 [ "$pairs" -eq 2 ] && ok "C6: both new keys exist in RU and EN"
 
 hdr "D. the reconcile pass produces it"
-if grep -qF 'before := prefixowner.OwnerByPrefix(s.dbc())' "$SYNC" && grep -qF 'prefixowner.DescribeFailover(before, prefixowner.OwnerByPrefix(s.dbc()), healthy)' "$SYNC"; then
+if grep -qF 'before := prefixowner.OwnerByPrefix(s.dbc())' "$SYNC" && grep -qF 'prefixowner.DescribeFailover(before, prefixowner.OwnerByPrefix(s.dbc()), healthyExitRelaysForAssignment(s.dbc()))' "$SYNC"; then
   ok "D1: the table is snapshotted BEFORE the pass and compared after it (that comparison is the only place the reason exists)"
 else
   bad "D1: the reconcile pass does not compare before/after owners"
