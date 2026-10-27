@@ -125,9 +125,10 @@ func (s *Service) notifyPrefixFailover(moves []prefixowner.PrefixMove) {
 		}
 		return
 	}
-	// Legacy sink: one plain sentence, still naming the route and the count.
+	// Legacy sink: one plain sentence from the CATALOGUE (the B391 ratchet counts raw
+	// English alert text, and a translated sentence is also the honest thing to send).
 	from, to := moves[0].From, moves[0].To
-	if id := s.Notifier.SendAlert(fmt.Sprintf("skygate: %d prefix(es) moved off unhealthy relay %s → %s", len(moves), from, to)); id > 0 {
+	if id := s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.prefix_failover.plain", len(moves), from, to)); id > 0 {
 		log.Printf("prefix-failover: notified %d prefix move(s) off %s (plain transport, alert_id=%d)", len(moves), from, id)
 	}
 }

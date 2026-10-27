@@ -196,14 +196,15 @@ func (s *Service) reconcilePrefixOwnership() (int, int, error) {
 	//
 	// B430: keep the table as it was BEFORE the pass, so a move caused by a dead relay
 	// can be turned into one operator notification (see prefix_failover_b430.go)
-	// instead of a silent rewrite that devices discover by timing out.
+	// instead of a silent rewrite that devices discover by timing out. The call shape
+	// below is deliberately unchanged (B275 C.3 / B309 C1 / B312 E4 pin it): the
+	// health set and the location preference must stay visible at the call site.
 	before := prefixowner.OwnerByPrefix(s.dbc())
-	healthy := healthyExitRelaysForAssignment(s.dbc())
-	ins, chg, err := prefixowner.ReconcileWithPreference(s.dbc(), healthy, s.nearestRelayPreference())
+	ins, chg, err := prefixowner.ReconcileWithPreference(s.dbc(), healthyExitRelaysForAssignment(s.dbc()), s.nearestRelayPreference())
 	if err != nil {
 		return ins, chg, err
 	}
-	if moves := prefixowner.DescribeFailover(before, prefixowner.OwnerByPrefix(s.dbc()), healthy); len(moves) > 0 {
+	if moves := prefixowner.DescribeFailover(before, prefixowner.OwnerByPrefix(s.dbc()), healthyExitRelaysForAssignment(s.dbc())); len(moves) > 0 {
 		log.Printf("prefix-failover: %d prefix(es) moved off an unhealthy relay in this pass", len(moves))
 		s.notifyPrefixFailover(moves)
 	}
