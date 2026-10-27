@@ -374,13 +374,20 @@ func TestB375_YesterdaysRunDoesNotBlockToday(t *testing.T) {
 	b375AwaitTerminal(t, deps.State)
 	// And the new stamp must belong to TODAY, in the local calendar the
 	// predicate reads.
+	//
+	// B433 (2026-10-27): this compared `stamp.Local()` — the HOST's zone — against `now`
+	// from the CONFIGURED clock (localtime). On this workstation the two are three hours
+	// apart, so between 21:00 and 24:00 UTC the stamp landed on the next calendar day and
+	// the test failed: a verdict decided by the wall clock, not by the code (the shape
+	// B386 forbids). Convert through the same clock the scheduler reads.
 	stamp, err := time.Parse(time.RFC3339, got)
 	if err != nil {
 		t.Fatalf("the scheduler wrote an unparsable timestamp %q: %v", got, err)
 	}
-	local := stamp.Local()
+	local := localtime.In(stamp)
 	if local.Year() != now.Year() || local.Month() != now.Month() || local.Day() != now.Day() {
-		t.Errorf("the new timestamp %q is not today (%s) in local time", got, now.Format("2006-01-02"))
+		t.Errorf("the new timestamp %q is not today (%s) in the configured clock %q — it is %s there",
+			got, now.Format("2006-01-02"), localtime.Current(), local.Format(time.RFC3339))
 	}
 }
 

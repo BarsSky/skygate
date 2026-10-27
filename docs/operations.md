@@ -1953,17 +1953,24 @@ PG_C=$(sudo docker ps --filter name=skygate-pg-local --format '{{.Names}}' | hea
 PG_IP=$(sudo docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$PG_C")
 PG_USER=$(sudo docker exec "$PG_C" printenv POSTGRES_USER)
 PG_PASS=$(sudo docker exec "$PG_C" printenv POSTGRES_PASSWORD)
-export SKYGATE_TEST_PG_DSN="postgres://${PG_USER}:${PG_PASS}@${PG_IP}:5432/postgres?sslmode=disable"
+export SKYGATE_TEST_PG_DSN="postgres://${PG_USER}:${PG_PASS}@${PG_IP}:5432/skygate_pgtest?sslmode=disable"
 
-# sanity check: the DSN must be able to create a schema.
-# Do NOT name the probe schema pg_* — the prefix pg_ is RESERVED by
-# PostgreSQL ("unacceptable schema name ... The prefix \"pg_\" is reserved
-# for system schemas"), so a probe named pg_gate_probe fails for a reason
-# that has nothing to do with permissions. Measured on PostgreSQL 18.4,
-# 2026-10-01: this recipe used to say pg_gate_probe and therefore always
-# reported a permission problem on a correctly configured server.
+# B433 (2026-10-27): prefer the wrapper. It refuses a database that is not obviously a
+# throwaway (the suite creates and drops schemas, so `skygate_staging` must be
+# unrepresentable), proves the CREATE SCHEMA prerequisite, exports the variable and names
+# the database it used. --check-only does the guards and the probe without the long run.
+bash scripts/gate_with_pg.sh --check-only
+bash scripts/gate_with_pg.sh
+
+# What the wrapper checks, by hand — the probe schema must NOT start with pg_:
+# that prefix is RESERVED by PostgreSQL ("unacceptable schema name ... The prefix "pg_" is
+# reserved for system schemas"), so a probe named pg_gate_probe fails for a reason that has
+# nothing to do with permissions. Measured on PostgreSQL 18.4, 2026-10-01: this recipe used
+# to say pg_gate_probe and therefore always reported a permission problem on a correctly
+# configured server.
 psql "$SKYGATE_TEST_PG_DSN" -c 'CREATE SCHEMA gate_probe' -c 'DROP SCHEMA gate_probe'
 
+# The pre-wrapper form, kept for reference:
 sudo env PATH="$HOME/go/bin:$PATH" GOFLAGS=-p=2 \
   SKYGATE_TEST_PG_DSN="$SKYGATE_TEST_PG_DSN" \
   bash scripts/verify_pre_deploy.sh

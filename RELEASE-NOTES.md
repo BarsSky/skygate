@@ -1,5 +1,70 @@
 # Skygate release notes
 
+## v1.5.183 — the gate can finally check the database you actually run (B433, TD-24)
+
+**Date:** 2026-10-27 · **Base:** `v1.5.182` → this tag · **Compatibility:** none.
+
+### What was wrong with "the gate is green"
+
+Every gate run on the reference machine printed
+
+```
+PostgreSQL coverage: SQLite only — SKYGATE_TEST_PG_DSN is not set, so every PG-gated test SKIPs
+```
+
+and then PASSed. Ten packages gate real tests on that variable, and your install runs
+**PostgreSQL** — so the checks were verifying the dialect you do not use, while the one you
+do use was verified only in CI. That is TD-24.
+
+### What this release adds
+
+* **`scripts/gate_with_pg.sh`** — the sanctioned way to run the catalog against real
+  PostgreSQL. It takes the DSN, refuses a database whose name is not obviously a throwaway
+  *before anything connects* (the suite creates and drops schemas, so `skygate_staging` must
+  be unrepresentable), refuses a name that does not look like scratch at all, proves the
+  `CREATE SCHEMA`/`DROP SCHEMA` prerequisite, exports the variable for the checks and prints
+  which database it used. `--check-only` does the guards and the probe without the long run.
+* **`docs/operations.md` §15** now leads with the wrapper, keeps the manual probe (and the
+  reason the probe must not be named `pg_*` — that prefix is reserved by PostgreSQL, a trap
+  that once made the sanity check report a permissions problem on a correct server), and
+  keeps the pre-wrapper form for reference.
+
+### Measured on the reference VM, 2026-10-27
+
+| What | Result |
+|---|---|
+| `go test ./...` with `SKYGATE_TEST_PG_DSN` (`skygate_pgtest`) | **61 packages `ok`, 0 `FAIL`** |
+| wrapper `--check-only` against the live server | `database=skygate_pgtest`, `CREATE SCHEMA/DROP SCHEMA ok` |
+| wrapper negative control (`skygate_staging`) | refused, danger named |
+| **full catalog** with the DSN | **479 PASS / 4 FAIL / 0 SKIP** of 483 checks, banner **`PostgreSQL coverage: enabled`** |
+| `B1 go test ./...` inside that run | **PASS** in 278 s — the PG half really executed |
+
+### The four failures are not this block — and they are real
+
+They fail **identically without the DSN**, so they have nothing to do with PostgreSQL
+coverage; they are live-state contracts on this install, checked standalone to prove it:
+
+* **B118** — the policy carries six `tag:dev-infra-*` tags where the contract froze four
+  (`tag:dev-infra-aisha`, `tag:dev-infra-svyatoslava` appeared after the contract was
+  written);
+* **B243-node-owner-map-orphans** — one stale `headscale_user_id` row in `node_owner_map`;
+* **B188.2 S/V/W** (and **B188.3 J**, which runs it) — the per-CIDR `via=` assertions still
+  describe the pre-B275 world, where the pin followed the rule's own relay; since B275/B276
+  the pin follows the `prefix_owner` assignment table, and one of those contracts was already
+  renegotiated for this reason in October.
+
+They are queued as the next block: re-derive those contracts from the architecture that
+exists (and let you decide what to do with the orphan row), rather than leaving four red
+rows that teach you to ignore the color.
+
+### Also fixed — a test decided by the wall clock
+
+`TestB375_YesterdaysRunDoesNotBlockToday` compared the scheduler's stamp through
+`time.Local` (the host zone) against `now` from the **configured** clock. On a workstation
+three hours east of UTC the two disagree between 21:00 and 24:00 UTC, so the test failed by
+time of day and passed in CI (UTC). It now converts through `localtime.In` — the same clock
+the scheduler reads — and the failure message names the configured zone.
+
 ## v1.5.182 — the alert channel is fully your language now (B391.3)
 
 **Date:** 2026-10-27 · **Base:** `v1.5.181` → this tag · **Compatibility:** none.
