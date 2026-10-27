@@ -518,6 +518,18 @@ SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN=${SKYGATE_IMPORT_EXISTING_ON_FIRST_RUN:-}
 # Set TS_AUTHKEY_FILE to /etc/skygate/ts_authkey (after writing
 # the authkey file) to enable in-container tailscaled. Default:
 # Tailscale is OFF (skygate uses direct internet).
+# === Clock / time zone (B429) ===
+# The zone every timestamp in the panel and in the Telegram notifications is
+# rendered in, AND the zone the update schedule on /admin/update is read in
+# (08:00 means 08:00 HERE, not 08:00 UTC). Leave empty (or set to "auto") to
+# detect from the system (TZ → /etc/localtime). A native host that is set to
+# UTC reports UTC, so an operator who reads a Moscow clock must name it:
+#   SKYGATE_TIMEZONE=Europe/Moscow
+# A value passed to the installer (SKYGATE_TIMEZONE=Europe/Moscow sudo
+# ./install.sh) is carried into this file. The admin setting on
+# /admin/settings WINS over this line, so changing it later there is enough.
+SKYGATE_TIMEZONE=${SKYGATE_TIMEZONE:-}
+
 TS_AUTHKEY_FILE=
 EOF
 

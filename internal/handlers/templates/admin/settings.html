@@ -94,6 +94,12 @@
       <datalist id="timezone-choices">
         {{range .TimezoneChoices}}<option value="{{.}}"></option>{{end}}
       </datalist>
+      {{/* B429.1: on a first deployment the container reports UTC, so the operator
+           would have to KNOW their IANA name. The browser already knows it. */}}
+      <button type="button" class="btn btn-sm" style="margin-top:8px" onclick="skygateUseDeviceZone()">
+        <i class="fa-solid fa-location-crosshairs"></i> {{t "settings.timezone_use_device"}}
+      </button>
+      <span id="timezone-hint" class="sub" style="margin-left:8px"></span>
       <div class="sub">
         {{t "settings.timezone_help"}}<br>
         {{t "settings.timezone_resolved"}}: <code>{{.TimezoneResolved}}</code>
@@ -121,4 +127,27 @@
     </div>
   </div>
 </form>
+
+<script>
+// B429.1 — first-deployment convenience: the browser already knows the operator's
+// zone, and a container almost always reports UTC. One click fills the field with
+// the device's IANA name; nothing is saved until the operator presses Save.
+function skygateUseDeviceZone() {
+  var field = document.getElementById('timezone');
+  var hint = document.getElementById('timezone-hint');
+  if (!field) return;
+  var zone = '';
+  try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { zone = ''; }
+  if (!zone) {
+    if (hint) hint.textContent = '{{t "settings.timezone_use_device_unavailable"}}';
+    return;
+  }
+  field.value = zone;
+  var now = '';
+  try {
+    now = new Intl.DateTimeFormat(undefined, {dateStyle: 'short', timeStyle: 'short'}).format(new Date());
+  } catch (e) { now = ''; }
+  if (hint) hint.textContent = '{{t "settings.timezone_use_device_filled"}} ' + zone + (now ? ' · ' + now : '');
+}
+</script>
 {{end}}

@@ -265,7 +265,18 @@ reachable over the network (`HEADSCALE_URL` cannot be a container name).
    * on native installs it should say the update helper is installed. If it
      says "not installed", re-run the installer (idempotent, preserves
      `skygate.env`).
-6. **Optional:** Tailscale module (`deploy/scripts/install-tailscale.sh`),
+6. **Set the clock (B429).** `SKYGATE_TIMEZONE=<IANA name>` (e.g.
+   `Europe/Moscow`) is the zone every page, every Telegram notification **and the
+   update schedule** use — `08:00` on `/admin/update` means 08:00 *there*. Leave it
+   empty (or `auto`) to follow the system: `TZ` → `/etc/localtime` → `/etc/timezone`.
+   A container almost always reports **UTC**, so an operator who reads a Moscow
+   clock should set the name explicitly — either in `.env` / `skygate.env` before
+   the first start, or later on `/admin/settings` → «Часовой пояс и время», where an
+   unknown value is refused by name and a saved value **wins over the env line**
+   (so a re-deploy never moves your clock back). Hardware independent; the journal
+   says which zone was chosen and why at every boot
+   (`⏰ timezone: Europe/Moscow (admin setting) — …`).
+7. **Optional:** Tailscale module (`deploy/scripts/install-tailscale.sh`),
    OIDC login (`docs/oidc.md`), public HTTPS (`docs/https.md`), own DERP relay
    (`docs/derp.md` + `deploy/derp-init.sh`), HA/cluster (`docs/ha.md`).
 

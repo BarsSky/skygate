@@ -21,7 +21,7 @@
 # The fix is one clock for the whole panel, chosen by the admin, auto-detected by
 # default, and used by every surface that renders or compares a time.
 #
-# CONTRACTS (31)
+# CONTRACTS (35)
 #   A  internal/localtime is the ONE clock: explicit > env > system, typo refused
 #   B  the process installs it at boot (admin setting → SKYGATE_TIMEZONE → auto)
 #   C  the update SCHEDULE is read in that clock (the operator's complaint #2)
@@ -198,13 +198,39 @@ else
   bad "F2: the rendered format does not carry the zone"
 fi
 
-hdr "G. registration / index / tracked"
-grep -q 'run_check "B429"' "$GATE" && ok "G1: registered in the catalog" || bad "G1: not registered"
-grep -q '\*\*B429\*\*' AGENTS.md && ok "G2: AGENTS.md block index carries B429" || bad "G2: no AGENTS entry"
-if git ls-files --error-unmatch scripts/check_b429_timezone.sh >/dev/null 2>&1; then
-  ok "G3: this script is tracked by git (trap 11)"
+hdr "G. first deployment: the zone can be pre-set, and the browser can fill it in"
+# B429.1 — «при развёртывании в первый раз как учитывается time zone? Может добавить
+# в env полем чтобы можно было предустановить?» A container reports UTC, so "auto"
+# means UTC on a first deploy; the env line and the one-click button are what make
+# the first boot land on the operator's clock instead of three hours off.
+if grep -qF 'SKYGATE_TIMEZONE=' .env.example && grep -qF 'docs/INSTALL.md' .env.example; then
+  ok "G1: .env.example documents SKYGATE_TIMEZONE (the docker path passes it through env_file, so this line is the pre-set)"
 else
-  bad "G3: this script is not tracked by git yet — a check nobody can run is not a check"
+  bad "G1: .env.example does not pre-set the zone"
+fi
+if grep -qF 'SKYGATE_TIMEZONE=' deploy/install-common.sh && grep -qF 'SKYGATE_TIMEZONE=${SKYGATE_TIMEZONE:-}' deploy/install-common.sh; then
+  ok "G2: the native env template carries SKYGATE_TIMEZONE (SKYGATE_TIMEZONE=Europe/Moscow sudo ./install.sh pre-sets it)"
+else
+  bad "G2: the native installer does not write the zone"
+fi
+if grep -qF 'SKYGATE_TIMEZONE' docs/INSTALL.md && grep -qF 'SKYGATE_TIMEZONE' docs/ru/INSTALL.md; then
+  ok "G3: the install guide teaches it in both languages (env line, /admin/settings, and that the saved setting wins)"
+else
+  bad "G3: the install guide does not document the clock"
+fi
+if grep -qF 'skygateUseDeviceZone' "$SETTINGS_TPL" && grep -qF 'Intl.DateTimeFormat().resolvedOptions().timeZone' "$SETTINGS_TPL"; then
+  ok "G4: /admin/settings offers «use this device's zone» — the browser knows what a UTC container cannot"
+else
+  bad "G4: the settings page has no one-click way to fill the zone"
+fi
+
+hdr "H. registration / index / tracked"
+grep -q 'run_check "B429"' "$GATE" && ok "H1: registered in the catalog" || bad "H1: not registered"
+grep -q '\*\*B429\*\*' AGENTS.md && ok "H2: AGENTS.md block index carries B429" || bad "H2: no AGENTS entry"
+if git ls-files --error-unmatch scripts/check_b429_timezone.sh >/dev/null 2>&1; then
+  ok "H3: this script is tracked by git (trap 11)"
+else
+  bad "H3: this script is not tracked by git yet — a check nobody can run is not a check"
 fi
 
 printf '\n\033[1mB429 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
