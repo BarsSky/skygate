@@ -1,5 +1,71 @@
 # Skygate release notes
 
+## v1.5.174 — «окно появляется, обновление не начинается, ошибок нет»: the panel's own refresh was cancelling your click (B428)
+
+**Date:** 2026-10-27 · **Base:** `v1.5.173` → this tag · **Compatibility:** none.
+
+### What you reported
+
+> «С версии 1.5.70 не могу обновить через панель обновления, окно появляется но
+> обновление не начинается и не показывает никаких ошибок»
+
+### What the live install showed
+
+| fact | measured |
+| --- | --- |
+| `/healthz` | `build=v1.5.170+4ec90a26` |
+| last `update_apply` audit row | **2026-10-26 07:40:12** (job `bf263082`, target v1.5.170) |
+| `/data/skygate-update-status.json` | `phase="verify"`, `finished_at=0001-01-01` — never finished |
+| `update_page_view` audit rows | **~150 an hour, for 22 hours** (one every ~6 s) |
+| `update_apply` rows after that | **none**, although the clicks continued |
+
+So the update of 2026-10-26 **worked** (v1.5.170 is live) — and the panel never said
+so. Two defects held each other up.
+
+### Defect 1 — a job that died at `verify` was never resolved
+
+`resolvePendingSwap` admitted **only** `build_done` and `rolled_back`. `verify` is not
+an exotic state: the swap **recreates the container**, so the goroutine polling
+`/healthz` dies with the old process, which means **every** successful Docker update
+can leave its job parked at `verify` forever. That is exactly what happened: the job
+ran out at `verify` for 22 hours while the build it had installed was already serving.
+
+### Defect 2 — the page refreshed every 5 s, and that refresh ate your click
+
+The template carried its **own** hardcoded list of "finished" phases —
+`done`, `failed`, `rolled_back`, `pending` — that omitted `verify` (so the stale job
+kept arming `location.reload()` every 5 seconds: the ~150 renders an hour) and wrongly
+included `pending` (so a job that had just started never refreshed at all). And the
+reload was fatal to your action: clicking «Обновить» opens a `confirm()` dialog, which
+**pauses** the timer — the moment you pressed OK, the queued reload fired first and
+**cancelled the form submission**. No POST reached the server (there is literally no
+audit row), and nothing reported an error.
+
+### Fixed
+
+* the swap verdict judges **every** phase except the two genuinely finished ones
+  (`done`, `failed`); `rolled_back` deliberately stays — a rollback spawns its own swap
+  subprocess and nothing else can confirm it;
+* the grace period now matches the work the phase still has to do: **4 minutes** after
+  the swap (waiting for the new container to answer) and **10 minutes** for the phases
+  that still fetch and build (the orchestrator's own budget) — a healthy cold build is
+  no longer declared dead — and the failure message names the phase the job died in;
+* the panel takes the live/finished decision **from the server**
+  (`update.Phase.IsTerminal`) — no phase list in JavaScript — its refresh never runs
+  once a form submission has started, and a background tab stops reloading;
+* the render path resolves a stale job only when no updater is running in **this**
+  process (`updaterInFlight()`): the goroutine is per-process, the state file is not.
+
+### Unblocked immediately
+
+The stuck job was cleared on the live installation with the page's «Скрыть»
+(`update_dismiss`), so the panel accepts an update again **now** — this release makes
+that state impossible to get stuck in.
+
+Guards: 20 contracts in `scripts/check_b428_update_panel_submit.sh` and 4 behavioural
+tests in `internal/update/verify_phase_b428_test.go` (the phase matrix, both grace
+periods, and the exact 22-hour case).
+
 ## v1.5.173 — the schema's foreign keys were never enforced in tests — and one of them was broken (B427, TD-35)
 
 **Date:** 2026-10-26 · **Base:** `v1.5.172` → this tag · **Compatibility:** none for an

@@ -73,6 +73,26 @@ const (
 	PhaseRolledBack Phase = "rolled_back"
 )
 
+// IsTerminal reports whether a job in this phase will never move again on its
+// own: the orchestrator process is gone and nothing is polling the state.
+//
+// B428 — THE bug this method exists to prevent: the panel's auto-refresh used a
+// HARDCODED list of "finished" phases that drifted from this set (it omitted
+// `verify` and wrongly included `pending`), so a job left at `verify` by a
+// container swap kept the page reloading every 5 s forever, and a job that had
+// just started never refreshed at all. Both edges are now derived from one
+// definition instead of a copy of it.
+//
+// `build_done` is deliberately NOT terminal: a Docker job stops there and waits
+// for the swap verdict (ResolvePendingSwap), which needs a later process.
+func (p Phase) IsTerminal() bool {
+	switch p {
+	case PhaseDone, PhaseFailed, PhaseRolledBack:
+		return true
+	}
+	return false
+}
+
 // LogLevel is the severity of a single log line. The UI
 // renders Error lines in red, Warn in amber, Info in
 // default color. Debug is hidden unless `verbose=true` is

@@ -223,12 +223,29 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		// A page render happens every ~5 s while the operator watches an
 		// update; logging the terminal phases at info level would bury the
 		// job's own log lines under render noise (B393).
-		if st.Phase == update.PhaseBuildDone || st.Phase == update.PhaseRolledBack {
+		//
+		// B428 (measured on the reference install 2026-10-26): this used to
+		// resolve ONLY build_done/rolled_back, so a job whose orchestrator died at
+		// `verify` — the normal outcome of a swap that recreates the container,
+		// because the polling goroutine goes with the old process — was never
+		// resolved. It sat at `verify` for 22 hours and its state file grew to
+		// 67 KB of render noise, and the template (which had its own hardcoded
+		// list of "finished" phases, missing `verify`) reloaded the page every
+		// 5 seconds, which swallowed the operator's «Обновить» submission — the
+		// panel looked alive and did nothing, with no error anywhere. Every
+		// non-terminal phase is now offered to the verdict; while an update is
+		// genuinely running in THIS process its own goroutine owns the state, so
+		// the in-flight job is skipped rather than second-guessed.
+		switch {
+		case st.Phase == update.PhaseBuildDone || st.Phase == update.PhaseRolledBack:
 			store.Log(update.LogInfo, fmt.Sprintf("renderUpdatePage: phase=%s detected, resolving the swap verdict", phaseStr))
 			s.confirmPendingSwap(ctx, st, store)
 			// Re-fetch state after confirmPendingSwap may
 			// have promoted it to phase=done.
-		} else {
+		case !st.Phase.IsTerminal() && !updaterInFlight():
+			store.Log(update.LogDebug, fmt.Sprintf("renderUpdatePage: phase=%s is stale with no updater in this process, resolving it", phaseStr))
+			s.confirmPendingSwap(ctx, st, store)
+		default:
 			store.Log(update.LogDebug, fmt.Sprintf("renderUpdatePage: phase=%s", phaseStr))
 		}
 	}
@@ -491,6 +508,17 @@ var stateStoreMu sync.Mutex
 // nil between jobs. Set by PostAdminUpdateApply, cleared
 // when the goroutine exits (via defer).
 var inFlightUpdater *runningUpdater
+
+// updaterInFlight reports whether an update goroutine is running in THIS
+// process (B428). The state file is shared by every process that has ever run
+// the panel; the goroutine is not. A job whose orchestrator lives here must be
+// left alone, while a job left behind by a container that has since been
+// replaced must be resolved — that distinction is what the render path needs.
+func updaterInFlight() bool {
+	stateStoreMu.Lock()
+	defer stateStoreMu.Unlock()
+	return inFlightUpdater != nil
+}
 
 // PostAdminUpdateApply kicks off the auto-updater in a
 // background goroutine and returns http.StatusSeeOther to the page. The

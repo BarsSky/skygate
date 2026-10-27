@@ -29,7 +29,7 @@
   <div class="card {{$phaseClass}}" style="margin-bottom:24px">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
       <div>
-        <h3 data-update-phase="{{$st.Phase}}" style="margin:0">
+        <h3 data-update-phase="{{$st.Phase}}"{{if not $st.Phase.IsTerminal}} data-update-live="1"{{end}} style="margin:0">
           {{if eq $st.Phase "done"}}<i class="fa-solid fa-circle-check"></i>{{end}}
           {{if eq $st.Phase "failed"}}<i class="fa-solid fa-circle-xmark"></i>{{end}}
           {{if eq $st.Phase "rolled_back"}}<i class="fa-solid fa-rotate-left"></i>{{end}}
@@ -463,12 +463,36 @@ function copyManualSteps() {
   });
 }
 (function() {
-  var phaseEl = document.querySelector('[data-update-phase]');
-  if (!phaseEl) return;
-  var phase = phaseEl.getAttribute('data-update-phase');
-  var done = ['done', 'failed', 'rolled_back', 'pending'];
-  if (done.indexOf(phase) !== -1) return;
-  setTimeout(function() { location.reload(); }, 5000);
+  // B428 — this timer used to be the reason «Обновить» did nothing.
+  //
+  // The pre-B428 code read the phase from a HARDCODED list of "finished" phases
+  // (`done`, `failed`, `rolled_back`, `pending`) and, for anything else, armed
+  // `location.reload()` 5 s after load. Two edges were wrong. (1) `verify` was
+  // not in the list, so a job left at `verify` by a container swap reloaded the
+  // page every 5 seconds — forever (measured on the reference install: 22 hours,
+  // ~150 renders an hour, 67 KB of render noise in the state file). (2) `pending`
+  // WAS in the list, so a job that had just started never refreshed at all.
+  // And the reload itself was fatal to the operator's own action: the click on
+  // «Обновить» opens a confirm() dialog, which PAUSES the timer; the moment the
+  // dialog closes the queued reload fires first, cancelling the form submission —
+  // the page came back unchanged, no POST reached the server (no `update_apply`
+  // audit row at all), and nothing reported an error.
+  //
+  // The live/finished decision is now the SERVER's (update.Phase.IsTerminal),
+  // and the timer refuses to fight a submission.
+  var live = document.querySelector('[data-update-live]');
+  if (!live) return;
+  var submitting = false;
+  document.addEventListener('submit', function() { submitting = true; }, true);
+  function tick() {
+    if (submitting) return;             // the operator's POST is on its way
+    if (document.hidden) {              // don't burn renders in a background tab
+      setTimeout(tick, 5000);
+      return;
+    }
+    location.reload();
+  }
+  setTimeout(tick, 5000);
 })();
 </script>
 {{end}}

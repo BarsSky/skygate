@@ -432,12 +432,32 @@ func resolvePendingSwap(ctx context.Context, store *StateStore, runningBuild str
 	if st.InstallKind != InstallDocker.String() {
 		return false
 	}
-	if st.Phase != PhaseBuildDone && st.Phase != PhaseRolledBack {
+	// B428 (measured on the reference install 2026-10-26): this gate used to admit
+	// ONLY `build_done` and `rolled_back`. A job whose orchestrator died at
+	// `verify` — which is exactly what happens when the swap recreates the
+	// container, because the polling goroutine goes with the old process — was
+	// therefore NEVER resolved: it sat at `verify` for 22 hours, the panel kept
+	// showing it, and (because `verify` was missing from the template's hardcoded
+	// "finished" list) the page reloaded every 5 seconds, which then swallowed the
+	// operator's own «Обновить» submission. Every phase except the two genuinely
+	// finished ones (done, failed) is now judged by the same evidence; the grace
+	// period differs because a pre-swap phase has real work still to do (git fetch
+	// + docker build), while a post-swap phase is only waiting for the new
+	// container to answer.
+	//
+	// `rolled_back` is deliberately NOT skipped even though Phase.IsTerminal()
+	// reports true for it (the UI has nothing left to refresh): a rollback spawns
+	// its own swap subprocess and the process that started it is gone before the
+	// subtree can write the verdict, so this function is the only thing that can
+	// confirm it.
+	switch st.Phase {
+	case PhaseDone, PhaseFailed:
 		return false
 	}
 	if ctx.Err() != nil {
 		return false
 	}
+	grace := stalledJobGrace(st.Phase)
 
 	var fp *ContainerFingerprint
 	if fingerprint != nil {
@@ -461,11 +481,14 @@ func resolvePendingSwap(ctx context.Context, store *StateStore, runningBuild str
 	v := EvaluateSwap(st, runningBuild, fp)
 	if v.OK {
 		store.Log(LogInfo, "swap verdict: "+v.Reason)
-		switch st.Phase {
-		case PhaseBuildDone:
-			store.Complete()
-		case PhaseRolledBack:
+		// B428: the verdict is about EVIDENCE, not about which phase asked for it.
+		// A job found at `verify`/`swap` whose serving build is already the target
+		// has plainly completed — the phase string only says where the old process
+		// was standing when it died.
+		if st.Phase == PhaseRolledBack {
 			markRolledBack(store, st.Error)
+		} else {
+			store.Complete()
 		}
 		return true
 	}
@@ -475,13 +498,36 @@ func resolvePendingSwap(ctx context.Context, store *StateStore, runningBuild str
 	logSwapVerdictIfStale(store, "swap verdict: "+v.Reason, swapVerdictLogInterval)
 
 	age := now.Sub(st.StartedAt)
-	if st.StartedAt.IsZero() || age > SwapGracePeriod {
-		store.Fail(errors.New(unfinishedSwapMessage(st, age, v)))
+	if st.StartedAt.IsZero() || age > grace {
+		store.Fail(errors.New(unfinishedSwapMessage(st, age, grace, v)))
 		appendSwapLogTail(store, logPath)
 		return true
 	}
 	return false
 }
+
+// stalledJobGrace returns how long a job may sit in a phase before the verdict
+// declares it dead.
+//
+// The post-swap phases only wait for the new container to answer, so B393's
+// SwapGracePeriod (4 minutes, which covers the helper's `apk add docker-cli`,
+// the compose recreate and the entrypoint's cold `go build`) is the right bound.
+// The PRE-swap phases still have real work to do — `git fetch`, `docker build`,
+// migrations — and the orchestrator that owns them has a 10-minute context
+// budget (PostAdminUpdateApply), so a shorter grace would declare a slow but
+// perfectly healthy build failed. B428.
+func stalledJobGrace(p Phase) time.Duration {
+	switch p {
+	case PhaseSwap, PhaseVerify, PhaseBuildDone, PhaseRolledBack:
+		return SwapGracePeriod
+	}
+	return PreSwapGracePeriod
+}
+
+// PreSwapGracePeriod is the grace for the phases that still have real work to do
+// (see stalledJobGrace). It matches the orchestrator's own context budget, so a
+// job is never declared dead while its goroutine could still be working.
+const PreSwapGracePeriod = 10 * time.Minute
 
 // swapVerdictLogInterval is how often an unresolved verdict may repeat itself.
 const swapVerdictLogInterval = 45 * time.Second
@@ -507,17 +553,20 @@ func logSwapVerdictIfStale(store *StateStore, msg string, interval time.Duration
 }
 
 // unfinishedSwapMessage is the operator-facing explanation of a job that ran
-// out of grace. It names how long it waited, the evidence that contradicted the
-// swap, and the commands that produce the diagnostics, because the alternative
-// is a support round trip.
-func unfinishedSwapMessage(st *State, age time.Duration, v SwapVerdict) string {
-	waited := SwapGracePeriod
+// out of grace. It names the phase the job died in, how long it waited, the
+// evidence that contradicted the swap, and the commands that produce the
+// diagnostics, because the alternative is a support round trip.
+func unfinishedSwapMessage(st *State, age, grace time.Duration, v SwapVerdict) string {
+	waited := grace
 	if !st.StartedAt.IsZero() && age > 0 && age < waited {
 		waited = age
 	}
-	return fmt.Sprintf("the update never swapped the container after %s: %s. Nothing was changed on the host, so the panel is still running %s (the job targeted %s). "+
+	// B428: a job killed at `pull_build` never reached the swap at all, so saying
+	// "the update never swapped the container" hides the useful fact — it is the
+	// PHASE that says where the orchestrator died.
+	return fmt.Sprintf("the update stopped in phase %s and never swapped the container after %s: %s. Nothing was changed on the host, so the panel is still running %s (the job targeted %s). "+
 		"The swap script's log is %s — check the last lines for a HELPER/FATAL entry, then run `docker compose up -d --force-recreate --no-deps skygate` on the host or re-run the update once the cause is fixed.",
-		waited.Round(time.Second), v.Reason, orNone(v.Build), orNone(v.Expected), SwapLogFile)
+		st.Phase, waited.Round(time.Second), v.Reason, orNone(v.Build), orNone(v.Expected), SwapLogFile)
 }
 
 func orNone(s string) string {
