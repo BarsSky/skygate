@@ -18,6 +18,7 @@ import (
 	"strconv"
 
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 )
 
 // GetExitRulesAPI returns all rules for the current user as JSON.
@@ -204,7 +205,7 @@ func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 					fmt.Sprintf("user %s added %d rules via API", c.Username, added))
 				// 2026-07-11: same operator-channel as the form path.
 				if s.Notifier != nil {
-					go s.Notifier.SendAlert(fmt.Sprintf("📥 Bulk add by %s: %d rules (api)", c.Username, added))
+					go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.rules.bulk_added_api", c.Username, added))
 				}
 				// Trigger a sync of advertised-routes to all
 				// exit-nodes (same as the form path).
@@ -214,8 +215,7 @@ func (s *Service) PostExitRulesAPI(w http.ResponseWriter, r *http.Request) {
 			} else {
 				db.MarkACLFail(s.dbc(), ver, err.Error())
 				if s.Notifier != nil {
-					go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL bulk-apply failed (by %s, %d rules)\n  err: %v",
-						c.Username, added, err))
+					go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.bulk_apply_failed", c.Username, added, err))
 				}
 			}
 		}

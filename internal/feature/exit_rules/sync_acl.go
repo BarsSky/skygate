@@ -17,6 +17,7 @@ import (
 
 	"skygate/internal/acl"
 	"skygate/internal/headscale"
+	"skygate/internal/i18n"
 	"skygate/internal/prefixowner"
 
 	"skygate/internal/db"
@@ -443,7 +444,7 @@ func (s *Service) applyACLIfDriftedThrottled(actor, detail string, logNoop bool,
 	if res.Err != nil {
 		log.Printf("acl-drift: re-apply FAILED (%v) — the live policy stays stale; the next pass retries", res.Err)
 		if s.Notifier != nil {
-			go s.Notifier.SendAlert(fmt.Sprintf("❌ the headscale policy is stale but the re-apply failed\n  %s\n  err: %v", detail, res.Err))
+			go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.stale_reapply_failed", detail, res.Err))
 		}
 		return res
 	}

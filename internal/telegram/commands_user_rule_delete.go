@@ -158,8 +158,7 @@ func deleteRuleReply(env BotEnv, arg string) string {
 		return reply
 	}
 	if env.Notifier != nil {
-		go env.Notifier.SendAlert(fmt.Sprintf("❌ ACL apply failed (delete by %s)\n  ids=%v\n  err: %v",
-			target.Username, deletedIDs, pipe.Err))
+		go env.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.apply_failed_delete_ids", target.Username, deletedIDs, pipe.Err))
 	}
 	return i18n.Tf(lang, "bot.delrule.applied_failed", target.Username, deletedIDs, pipe.Version, pipe.Err)
 }

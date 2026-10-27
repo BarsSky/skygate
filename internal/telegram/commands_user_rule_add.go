@@ -285,8 +285,7 @@ func addRuleReply(env BotEnv, args []string) string {
 	// Notifier that /ack uses. Async so the bot reply
 	// isn't blocked on the Telegram API call.
 	if env.Notifier != nil {
-		go env.Notifier.SendAlert(fmt.Sprintf("❌ ACL apply failed (rule by %s)\n  target: %s %s\n  err: %v",
-			target.Username, typeToInsert, rawTarget, pipe.Err))
+		go env.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.apply_failed_rule", target.Username, typeToInsert, rawTarget, pipe.Err))
 	}
 	return i18n.Tf(lang, "bot.add_rule.applied_failed", target.Username, typeToInsert, rawTarget, insertedIDs, pipe.Version, pipe.Err)
 }

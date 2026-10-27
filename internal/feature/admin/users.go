@@ -23,6 +23,7 @@ import (
 	"skygate/internal/auth"
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/i18n"
 	"skygate/internal/subnet"
 )
 
@@ -661,7 +662,7 @@ func (s *Service) PostAdminUserResetPassword(w http.ResponseWriter, r *http.Requ
 	}
 	s.Backend.Audit(c.UserID, c.Username, "user_password_reset", fmt.Sprintf("id=%d %s", id, username))
 	if s.Notifier != nil {
-		go s.Notifier.SendAlert(fmt.Sprintf("🔑 Password reset by %s\nuser: %s (id=%d)", c.Username, username, id))
+		go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.admin.password_reset", c.Username, username, id))
 	}
 	http.Redirect(w, r, "/admin/users?reset=1", http.StatusFound)
 }

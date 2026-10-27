@@ -367,8 +367,7 @@ func confirmClearRules(env BotEnv, expectedUsername string) string {
 	if env.Notifier != nil {
 		// Alert text stays in English — it's operator-only
 		// and not part of the user's reply.
-		go env.Notifier.SendAlert(fmt.Sprintf("❌ ACL apply failed (clearrules by %s)\n  cleared=%d (cascade=%d)\n  err: %v",
-			target.Username, deleted, totalCascade, pipe.Err))
+		go env.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.apply_failed_clear", target.Username, deleted, totalCascade, pipe.Err))
 	}
 	return i18n.Tf(lang, "bot.clearrules.applied_failed", deleted, target.Username, totalCascade, pipe.Version, pipe.Err)
 }

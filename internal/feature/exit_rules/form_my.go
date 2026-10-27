@@ -33,6 +33,7 @@ import (
 	"strings"
 
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 )
 
 // isValidIPOrCIDR returns true if s is a valid IPv4/IPv6
@@ -311,8 +312,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		// the operator wants to wake up to. Telegram goes
 		// first, the log row is the audit trail.
 		if s.Notifier != nil {
-			go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL apply failed (rule by %s)\n  target: %s %s\n  err: %v",
-				c.Username, typeToInsert, targetValue, res.Err))
+			go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.apply_failed_rule", c.Username, typeToInsert, targetValue, res.Err))
 		}
 	case res.Applied:
 		db.MarkACLApplied(s.dbc(), res.Version)
@@ -321,8 +321,7 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 		// notify the operator that a new exit-rule landed
 		// (security audit trail). Sent async so the redirect isn't blocked.
 		if s.Notifier != nil {
-			go s.Notifier.SendAlert(fmt.Sprintf("📥 New rule #%d by %s\n  %s %s → %s\n  exit-node: %s",
-				res.Version, c.Username, typeToInsert, targetValue, action, exitNode))
+			go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.rules.added", res.Version, c.Username, typeToInsert, targetValue, action, exitNode))
 		}
 		// Sync advertised routes на exit-nodes. SetPolicy()
 		// обновляет ACL в Headscale, но advertised-routes
@@ -509,8 +508,7 @@ func (s *Service) PostDeleteExitRule(w http.ResponseWriter, r *http.Request) {
 		db.AppendExitRuleLog(s.dbc(), res.Version, db.ExitRuleActionDeleteFail,
 			fmt.Sprintf("user %s: %v", c.Username, res.Err))
 		if s.Notifier != nil {
-			go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL delete failed (by %s, %d rules)\n  err: %v",
-				c.Username, len(infos), res.Err))
+			go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.apply_failed_delete", c.Username, len(infos), res.Err))
 		}
 	case res.Applied:
 		db.MarkACLApplied(s.dbc(), res.Version)

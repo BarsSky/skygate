@@ -28,6 +28,7 @@ import (
 
 	"skygate/internal/acl"
 	"skygate/internal/headscale"
+	"skygate/internal/i18n"
 )
 
 // PostAdminACLReapply regenerates the headscale policy
@@ -89,15 +90,14 @@ func (s *Service) PostAdminACLReapply(w http.ResponseWriter, r *http.Request) {
 	for _, r := range results {
 		if r.Err != nil {
 			if s.Notifier != nil {
-				go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL reapply failed (by %s)\n  err: %v",
-					c.Username, r.Err))
+				go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.reapply_failed", c.Username, r.Err))
 			}
 			http.Error(w, "set policy: "+r.Err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 	if s.Notifier != nil {
-		go s.Notifier.SendAlert(fmt.Sprintf("🔄 ACL reapply by %s → %d plane(s)", c.Username, len(results)))
+		go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.reapply_ok", c.Username, len(results)))
 	}
 	http.Redirect(w, r, "/admin/exit-rules?reapplied=1", http.StatusSeeOther)
 }

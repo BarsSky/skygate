@@ -21,6 +21,7 @@ import (
 	"skygate/internal/acl"
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/i18n"
 )
 
 // GetAdminACLsExport returns the policy that the apply pipeline would
@@ -168,7 +169,7 @@ func (s *Service) PostAdminACLsImportApply(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if s.Notifier != nil {
-		go s.Notifier.SendAlert(fmt.Sprintf("📥 ACL imported by %s → %d plane(s)", c.Username, len(results)))
+		go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.imported", c.Username, len(results)))
 	}
 	http.Redirect(w, r, "/admin/acls?imported=1", http.StatusSeeOther)
 }

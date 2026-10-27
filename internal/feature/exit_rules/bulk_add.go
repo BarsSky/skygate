@@ -50,6 +50,7 @@ import (
 	"strings"
 
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 )
 
 // maxBulkPayloadBytes bounds an uploaded rule file. A rule list is text; 1 MiB
@@ -583,14 +584,14 @@ func (s *Service) PostMyExitRulesBulk(w http.ResponseWriter, r *http.Request) {
 			db.AppendExitRuleLog(s.dbc(), res.Version, db.ExitRuleActionApplyFail,
 				fmt.Sprintf("user %s: bulk add, %v", c.Username, res.Err))
 			if s.Notifier != nil {
-				go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL apply failed (bulk add by %s, %d rules)\n  err: %v", c.Username, out.Added, res.Err))
+				go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.apply_failed_bulk", c.Username, out.Added, res.Err))
 			}
 		case res.Applied:
 			db.MarkACLApplied(s.dbc(), res.Version)
 			db.AppendExitRuleLog(s.dbc(), res.Version, db.ExitRuleActionApply,
 				fmt.Sprintf("user %s added %d rule(s) in a batch for %d device(s)", c.Username, out.Added, maxInt(out.Devices, 1)))
 			if s.Notifier != nil {
-				go s.Notifier.SendAlert(fmt.Sprintf("📥 Bulk add by %s: %d rules on %d device(s)", c.Username, out.Added, maxInt(out.Devices, 1)))
+				go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.rules.bulk_added", c.Username, out.Added, maxInt(out.Devices, 1)))
 			}
 			if s.SyncRoutes != nil {
 				if sync := s.SyncRoutes(); sync != nil {

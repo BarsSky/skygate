@@ -16,6 +16,7 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/headscale"
+	"skygate/internal/i18n"
 )
 
 // SaveACLSnapshot inserts one row into acl_snapshots and returns
@@ -31,7 +32,7 @@ func SaveACLSnapshot(d *sql.DB, config, username string, alerter Alerter) int {
 	if alerter != nil {
 		// Async to avoid blocking the caller on a Telegram API
 		// round-trip. Mirrors the previous (a *App) behaviour.
-		go alerter.SendAlert(fmt.Sprintf("🛡️ ACL #%d by %s\nLength: %d bytes", ver, username, len(config)))
+		go alerter.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.applied", ver, username, len(config)))
 	}
 	return ver
 }

@@ -1,5 +1,42 @@
 # Skygate release notes
 
+## v1.5.179 — every ACL and rule notice now speaks your language too (B391.2)
+
+**Date:** 2026-10-27 · **Base:** `v1.5.178` → this tag · **Compatibility:** none.
+
+### The gap
+
+v1.5.178 translated the eight update notifications and left the ratchet at 26. Eighteen
+of those remaining sites were the notices the operator reads on **every rule change**:
+what landed (ACL applied, imported, re-applied, rolled back, a new rule, a bulk add),
+what failed (apply, bulk-apply, delete, clear-rules, re-apply, rollback, the stale-policy
+re-apply), and the password reset. They were literal English at the call site, so the
+channel mixed languages sentence by sentence — a Russian «Обновление» next to an English
+`❌ ACL apply failed (rule by michail)`.
+
+### Fixed
+
+* All **18** sites now take their text from the catalogue: `alert.acl.*` (13 keys),
+  `alert.rules.*` (3) and `alert.admin.password_reset` — 17 keys, RU + EN.
+* The guarantee is mechanical, not careful typing: the conversion took the **argument
+  list out of the original call** and handed it to `i18n.Tf` unchanged, so a version, a
+  username, a target, an error or a rule count cannot drift while the text moves house.
+  Nothing about *when* a message is sent, to whom, or on which path changed.
+* Failures still name the same facts (which user, which target, how many rules, the
+  error), and the reads now say «ошибка:» where they said `err:`.
+* The ratchet is **8** (was 26). It may only go down, and a new
+  `SendAlert(fmt.Sprintf(…))` fails `scripts/check_b391_alert_composer.sh` H1.
+
+### What is left — 8 sites, and why they are a different job
+
+The 7 preferred-exit reconciler notices (`♻️ preferred-exit reconciled` CREATE / UPDATE /
+CLEAR / MIGRATE / AMBIGUOUS / ORPHAN, and `⚠️ exit-node preference is stale`) and the
+Tailscale auto-discovery notice are **tick-driven**: they can fire repeatedly and they
+carry multi-line context plus SQL hints. Translating them without changing their shape
+would make a repeating English->Russian wall of text, so they get the composer treatment
+first — a dedup key, a bounded fact table, the SQL hint as details — and that is the next
+slice (B391.3), not this one.
+
 ## v1.5.178 — the alerts you actually read now speak your language (B391.1)
 
 **Date:** 2026-10-27 · **Base:** `v1.5.177` → this tag · **Compatibility:** none.

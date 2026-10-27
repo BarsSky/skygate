@@ -13,6 +13,7 @@ import (
 	"strconv"
 
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 )
 
 // PostAdminRollbackACL is the POST handler for the
@@ -40,8 +41,7 @@ func (s *Service) PostAdminRollbackACL(w http.ResponseWriter, r *http.Request) {
 		// 2026-07-11: rollback failure is loud — admin tried to restore
 		// a known-good policy and the headscale API rejected it. Pager time.
 		if s.Notifier != nil {
-			go s.Notifier.SendAlert(fmt.Sprintf("❌ ACL rollback failed (by %s, target v%d)\n  err: %v",
-				c.Username, ver, err))
+			go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.rollback_failed", c.Username, ver, err))
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -49,7 +49,7 @@ func (s *Service) PostAdminRollbackACL(w http.ResponseWriter, r *http.Request) {
 	s.saveACLSnapshot(config, c.Username)
 	db.AppendExitRuleLog(s.dbc(), ver, db.ExitRuleActionRollback, fmt.Sprintf("rolled back by %s", c.Username))
 	if s.Notifier != nil {
-		go s.Notifier.SendAlert(fmt.Sprintf("⏪ ACL rollback by %s → v%d", c.Username, ver))
+		go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.rollback_ok", c.Username, ver))
 	}
 	http.Redirect(w, r, "/admin/exit-rules?rolled=1", http.StatusFound)
 }

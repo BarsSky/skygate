@@ -255,7 +255,16 @@ hdr "H. the English-only alert sites may only decrease"
 # B391.1 (2026-10-27) lowered it 34 → 26: the eight update/apply/push/image-pull and
 # scheduled-update alerts the operator reads most often now come from the catalogue
 # (alert.update.*, RU+EN) instead of literal English at the call site. Only ever down.
-RATCHET=26
+#
+# B391.2 (2026-10-27) lowered it 26 → 8: every ACL/rule/admin notice is translated too —
+# what lands (ACL applied / imported / reapplied / rolled back / new rule / bulk add), what
+# fails (apply, bulk-apply, delete, clearrules, reapply, rollback, stale-policy re-apply)
+# and the password reset — as alert.acl.* / alert.rules.* / alert.admin.password_reset.
+# Offsets are zero-sum: the argument list is taken from the call site verbatim, so only the
+# text's home changed. What is left is the 7 preferred-exit reconciler notices and the
+# Tailscale-discovery notice — the tick-driven ones, which need a shape (dedup key, bounded
+# details) and not only a translation, so they are the next slice and not part of this one.
+RATCHET=8
 sites=$(grep -rho 'SendAlert(fmt\.Sprint[a-z]*(' --include='*.go' internal cmd 2>/dev/null \
         | wc -l | tr -d ' ')
 if [ "$sites" -le "$RATCHET" ]; then
