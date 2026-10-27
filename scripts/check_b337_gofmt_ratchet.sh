@@ -365,6 +365,44 @@ else
   fi
 
   # ---------------------------------------------------------------------------
+  hdr "C2. a NEW file is held to the rule before git knows about it"
+  # ---------------------------------------------------------------------------
+  # Measured while shipping v1.5.182: a new test file was created, the file-scoped
+  # "changed in this tree" check could not see it (it was not in the diff), C1 could not
+  # see it either (`git ls-files` does not list untracked files), the diff-scoped local
+  # gate reported 0 FAIL — and CI failed B337 with all 424 other checks green, taking B378
+  # D3 down with it (that contract plants a CRLF copy and expects C1 to stay green, so a
+  # real C1 failure reddens it as a consequence). The file you are about to add is exactly
+  # the file most likely to be unformatted, so the ratchet has to look at it.
+  UNTRACKED="$(git ls-files --others --exclude-standard '*.go' 2>/dev/null || true)"
+  UNTRACKED_DIRTY=""
+  if [ -n "$UNTRACKED" ]; then
+    UNTRACKED_DIRTY="$(printf '%s\n' "$UNTRACKED" | xargs "$GOFMT" -l 2>/dev/null | sort -u || true)"
+  fi
+  UN=0
+  [ -n "$UNTRACKED_DIRTY" ] && UN="$(printf '%s\n' "$UNTRACKED_DIRTY" | grep -c .)"
+  if [ "$UN" -eq 0 ]; then
+    ok "C2: every untracked (about-to-be-added) .go file is gofmt-clean"
+  else
+    bad "C2: $UN untracked .go file(s) are not gofmt-clean — C1 cannot see them because git does not track them yet:"
+    printf '%s\n' "$UNTRACKED_DIRTY" | head -10 | sed 's/^/        /' >&2
+  fi
+  # Proof the detector can fail: plant an untracked, NON-ignored file, count, remove.
+  PROBE="zz_b337_untracked_probe.go"
+  if [ ! -e "$PROBE" ] && [ ! -e "tmp/$PROBE" ]; then
+    printf 'package main\nfunc  main( ){ }\n' > "$PROBE"
+    PROBE_DIRTY="$(git ls-files --others --exclude-standard '*.go' 2>/dev/null | xargs "$GOFMT" -l 2>/dev/null | grep -c . || true)"
+    rm -f "$PROBE"
+    if [ "${PROBE_DIRTY:-0}" -ge 1 ]; then
+      ok "C3: the untracked detector fires on a planted unformatted file ($PROBE)"
+    else
+      bad "C3: a planted unformatted untracked file was NOT detected — C2 would pass for any new file"
+    fi
+  else
+    skip "C3: a file named $PROBE already exists — cannot plant the detector proof"
+  fi
+
+  # ---------------------------------------------------------------------------
   hdr "D. the ratchet's teeth: a fixed file must leave the list"
   # ---------------------------------------------------------------------------
   FIXED="$(printf '%s\n' "$ENTRIES" | while read -r f; do

@@ -2,11 +2,11 @@
 //
 // The two properties that matter, and that a translation alone would not give:
 //
-//	1. every variant carries the SAME five facts (action, device, user, pin, reason) plus
-//	   the one fact specific to it — so the operator reads one shape, not seven;
-//	2. the text is Russian and the dedup key identifies the INCIDENT (action + device +
-//	   pin), so a state that persists across ticks is one alert per window, not one per
-//	   pass.
+//  1. every variant carries the SAME five facts (action, device, user, pin, reason) plus
+//     the one fact specific to it — so the operator reads one shape, not seven;
+//  2. the text is Russian and the dedup key identifies the INCIDENT (action + device +
+//     pin), so a state that persists across ticks is one alert per window, not one per
+//     pass.
 package exit_rules
 
 import (
