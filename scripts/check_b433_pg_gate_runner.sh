@@ -149,11 +149,34 @@ case "$OUT" in
     ;;
 esac
 case "$OUT" in
-  *"CREATE SCHEMA"*|*"psql is not on this host"*)
+  *"CREATE SCHEMA"*|*"psql is not on this host"*|*"cannot create a schema"*)
     ok "E3: the prerequisite check runs BEFORE the catalog (no silent 25-minute failure)"
     ;;
   *)
     bad "E3: the prerequisite is not checked before the run"
+    ;;
+esac
+# E4 (2026-10-27, found by THIS contract failing in CI): the third prerequisite outcome is
+# "psql exists but cannot reach a server" — the CI catalog job has psql and no PostgreSQL,
+# so the runner stops with "cannot create a schema … connection refused". The first version
+# of E3 accepted only two of the three messages and went red on CI while the runner was
+# behaving correctly. Plant a psql that fails and assert the message is named, so all three
+# paths are proven on every host.
+STUB="$(mktemp -d "${TMPDIR:-/tmp}/b433stub.XXXXXX")"
+printf '#!/bin/sh\necho "psql: error: connection to server at \\"127.0.0.1\\", port 5432 failed: Connection refused" >&2\nexit 2\n' > "$STUB/psql"
+chmod +x "$STUB/psql"
+OUT="$(PATH="$STUB:$PATH" SKYGATE_TEST_PG_DSN='postgres://u:p@127.0.0.1:5432/skygate_pgtest?sslmode=disable' bash "$RUNNER" --check-only 2>&1)"; RC=$?
+rm -rf "$STUB"
+case "$OUT" in
+  *"cannot create a schema"*)
+    if [ "$RC" -ne 0 ]; then
+      ok "E4: psql present but no server → the runner stops on the prerequisite and names it"
+    else
+      bad "E4: the unreachable-server path exited 0"
+    fi
+    ;;
+  *)
+    bad "E4: with a failing psql the runner did not name the schema prerequisite (rc=$RC, out=$(printf '%s' "$OUT" | head -3 | tr '\n' ' '))"
     ;;
 esac
 
