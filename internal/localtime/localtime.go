@@ -57,9 +57,6 @@ var (
 	mu      sync.RWMutex
 	current = time.UTC
 	name    = fallback
-	// detected records what the system said, so the panel can show "you are
-	// currently on Auto and the system reports Europe/Moscow".
-	detected string
 )
 
 // DetectSystem reports the zone the host/container would use by itself, in the
@@ -122,7 +119,6 @@ func Set(value string) (string, error) {
 	mu.Lock()
 	current = loc
 	name = resolved
-	detected = DetectSystem()
 	mu.Unlock()
 	return resolved, nil
 }
@@ -233,12 +229,10 @@ func Choices() []string {
 	}
 }
 
-// ResetForTest restores the process default (UTC) and clears the detected value.
-// Tests only.
+// ResetForTest restores the process default (UTC). Tests only.
 func ResetForTest() {
 	mu.Lock()
 	current = time.UTC
 	name = fallback
-	detected = ""
 	mu.Unlock()
 }
