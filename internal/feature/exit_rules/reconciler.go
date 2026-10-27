@@ -1343,8 +1343,11 @@ func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChang
 		log.Printf("preferred-reconciler: CREATE %s/%s → %s (via_enabled=%t, %d rules)",
 			ch.Username, ch.DeviceHostname, ch.NewTag, ch.ViaEnabled, ch.RuleCount)
 		if shouldAlert(ch.DeviceHostname, "create", time.Now()) {
-			n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B229)\nCREATE hostname=%s user=%s tag=%s via=%d\nreason: %s (%d device_rules pointed at this exit-node)\nlive-mode is ON; rollback via SQL: DELETE FROM device_exit_node_prefs WHERE user_id=%d AND device_hostname=%s",
-				ch.DeviceHostname, ch.Username, ch.NewTag, viaIntOf(ch.ViaEnabled), ch.Reason, ch.RuleCount, ch.UserID, ch.DeviceHostname))
+			sendPreferredExitAlert(n, PreferredExitAlertInput{
+				Action: PrefActionCreate, Hostname: ch.DeviceHostname, Username: ch.Username,
+				NewTag: ch.NewTag, Reason: ch.Reason, Rules: int64(ch.RuleCount),
+				UserID: ch.UserID, ViaEnabled: ch.ViaEnabled,
+			})
 		}
 		s.reapplyACLAfterPrefWrite("create", ch)
 	case "update":
@@ -1375,8 +1378,11 @@ func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChang
 			reasonKey = ch.Reason
 		}
 		if shouldAlert(ch.DeviceHostname, reasonKey, time.Now()) {
-			n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B229)\nUPDATE hostname=%s user=%s\ntag: %s → %s\nreason: %s\nrollback via SQL: DELETE FROM device_exit_node_prefs WHERE user_id=%d AND device_hostname=%s",
-				ch.DeviceHostname, ch.Username, ch.OldTag, ch.NewTag, ch.Reason, ch.UserID, ch.DeviceHostname))
+			sendPreferredExitAlert(n, PreferredExitAlertInput{
+				Action: PrefActionUpdate, Hostname: ch.DeviceHostname, Username: ch.Username,
+				OldTag: ch.OldTag, NewTag: ch.NewTag, Reason: ch.Reason,
+				UserID: ch.UserID, ViaEnabled: ch.ViaEnabled,
+			})
 		}
 		s.reapplyACLAfterPrefWrite("update", ch)
 	case "clear":
@@ -1398,8 +1404,10 @@ func (s *Service) applyReconcilerChange(ctx context.Context, ch *ReconcilerChang
 		log.Printf("preferred-reconciler: CLEAR %s/%s — dropped the class-tag preference %s (%s)",
 			ch.Username, ch.DeviceHostname, ch.OldTag, ch.Reason)
 		if shouldAlert(ch.DeviceHostname, "clear", time.Now()) {
-			n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B229)\nCLEAR hostname=%s user=%s\nremoved preference: %s\nreason: %s — a class tag names a role, not a node, and any hostname derived from it never matched a real relay. The device now uses any healthy exit-node (or set a per-node tag:dev-infra-<host> on the relay and pick it again).",
-				ch.DeviceHostname, ch.Username, ch.OldTag, ch.Reason))
+			sendPreferredExitAlert(n, PreferredExitAlertInput{
+				Action: PrefActionClear, Hostname: ch.DeviceHostname, Username: ch.Username,
+				OldTag: ch.OldTag, Reason: ch.Reason, UserID: ch.UserID,
+			})
 		}
 		s.reapplyACLAfterPrefWrite("clear", ch)
 	}
@@ -1469,12 +1477,12 @@ func (s *Service) reportStalePref(ch *ReconcilerChange, live bool, n ReconcilerN
 			"preferred_exit_reconciled", detail, "headscale_node", ch.DeviceHostname)
 	}
 	log.Printf("preferred-reconciler: %s (%s) %s", mode, ch.Reason, detail)
-	human := ""
-	if ch.SetByUserID != 0 {
-		human = fmt.Sprintf("\nThis preference was set by a HUMAN (set_by_user_id=%d), so the engine will NOT rewrite it.", ch.SetByUserID)
-	}
-	n.SendAlert(fmt.Sprintf("⚠️ exit-node preference is stale (%s)\nhostname=%s user=%s\nstored preference: %s%s\nrelay state: %s\nreason: %s\ncandidate relay: %s\nFix it on /admin/exit-nodes (device preferences) — until then the device is pinned by `via` and loses the destinations that relay cannot serve.",
-		ch.Reason, ch.DeviceHostname, ch.Username, ch.OldTag, human, ch.RelayState, ch.Reason, ch.NewTag))
+	sendPreferredExitAlert(n, PreferredExitAlertInput{
+		Action: PrefActionStale, Hostname: ch.DeviceHostname, Username: ch.Username,
+		OldTag: ch.OldTag, NewTag: ch.NewTag, Reason: ch.Reason,
+		RelayState: ch.RelayState, Rules: int64(ch.RuleCount),
+		UserID: ch.UserID, SetByUserID: ch.SetByUserID,
+	})
 }
 
 // DistinctExitNodesOrZero returns DistinctExitNodes

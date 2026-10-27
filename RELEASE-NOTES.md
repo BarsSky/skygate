@@ -1,5 +1,45 @@
 # Skygate release notes
 
+## v1.5.182 — the alert channel is fully your language now (B391.3)
+
+**Date:** 2026-10-27 · **Base:** `v1.5.181` → this tag · **Compatibility:** none.
+
+### What closed
+
+The localisation debt that B391 froze at **34** English-only alert sites is now **0**:
+26 after v1.5.178, 8 after v1.5.179, and the last eight here. Those eight were the seven
+`preferred-exit` notices (a preference created, re-pointed, removed, migrated on a hostname
+rename, ambiguous, orphaned, or stale) and the Tailscale auto-discovery notice. From now on
+a new `SendAlert(fmt.Sprintf(…))` is not "debt to pay later" — it **fails the gate**.
+
+### Why these eight were not just a translation
+
+They are the only alerts built from state that **recurs**: the reconciler runs every tick,
+and an ORPHAN or AMBIGUOUS preference persists until somebody resolves it. Translating the
+sentences verbatim would have produced a repeating multi-line Russian wall with an SQL
+snippet buried in the middle of it. So each one became a **composed** alert:
+
+* **title** — three families: *changed*, *stale*, *needs a manual decision*;
+* **facts** — the five fields every one of them carries (action, device, user, pin, reason)
+  plus its own fact (relay state, candidates, rule count); the MIGRATE notice shows the
+  rename as `old → new`, because that pair *is* the incident;
+* **details** — the actionable part only: the rollback or cleanup SQL with the row filled
+  in, or where to go and fix it;
+* **dedup** — `preferred_exit.<action>.<device>[.<pin>]` for an hour, so a state that lives
+  for days is **one incident per window**, even across a restart. (The in-memory throttle
+  that already existed dies with the process and says nothing to the transport.)
+
+The builders are pure functions (`BuildPreferredExitAlert`, `BuildDiscoveryAlert`), so the
+tests assert the message you will actually read — including that every RU value carries
+Cyrillic, which is the hole a key-set parity test cannot see.
+
+### Also worth knowing
+
+* The strict/loose pin mode (B399) is now a **fact** on the change alerts, so a rollback
+  decision does not require reading the SQL block to find out what mode was in force.
+* Delivery still degrades: a sink that can only `SendAlert` gets one translated sentence
+  with the same device and pin, never silence.
+
 ## v1.5.181 — there is always a control that can install a version (B432)
 
 **Date:** 2026-10-27 · **Base:** `v1.5.180` → this tag · **Compatibility:** none.

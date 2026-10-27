@@ -74,6 +74,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"skygate/internal/db"
@@ -257,8 +258,11 @@ func (s *Service) MigrateRenamedDevicePrefs(ctx context.Context, n ReconcilerNot
 				log.Printf("preferred-reconciler: MIGRATE pref user=%s old=%s new=%s tag=%s rules_cascaded=%d",
 					username, p.hostname, newHost, p.exitNodeTag, rulesAffected)
 				if shouldAlert(p.hostname, "rename", now) {
-					n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B231 + B-rename-rules)\nMIGRATE user=%s old_hostname=%s new_hostname=%s tag=%s\nrules_cascaded=%d (device_rules.exit_node_id + device_hostname updated in the same tx)\nreason: hostname-rename detected\nrollback via SQL: re-INSERT the old (user, hostname) row manually if you need to undo",
-						username, p.hostname, newHost, p.exitNodeTag, rulesAffected))
+					sendPreferredExitAlert(n, PreferredExitAlertInput{
+						Action: PrefActionMigrate, Hostname: p.hostname, NewHostname: newHost,
+						Username: username, NewTag: p.exitNodeTag,
+						Reason: "hostname-rename", Rules: rulesAffected, UserID: p.userID,
+					})
 				}
 			}
 			changes = append(changes, m)
@@ -283,8 +287,11 @@ func (s *Service) MigrateRenamedDevicePrefs(ctx context.Context, n ReconcilerNot
 			log.Printf("preferred-reconciler: AMBIGUOUS pref user=%s hostname=%s tag=%s candidates=%v — needs manual review",
 				username, p.hostname, p.exitNodeTag, cand.CandidatesForRename)
 			if shouldAlert(p.hostname, "ambiguous", now) {
-				n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B231)\nAMBIGUOUS pref user=%s hostname=%s tag=%s\ncandidates: %v\nreason: multiple devices have the same preferred tag. B231 cannot auto-pick. Resolve on /my/devices or via SQL UPDATE.\nnoop (audit row written)",
-					username, p.hostname, p.exitNodeTag, cand.CandidatesForRename))
+				sendPreferredExitAlert(n, PreferredExitAlertInput{
+					Action: PrefActionAmbiguous, Hostname: p.hostname, Username: username,
+					NewTag: p.exitNodeTag, Reason: "multiple devices share the preferred tag",
+					Candidates: strings.Join(cand.CandidatesForRename, ", "), UserID: p.userID,
+				})
 			}
 			changes = append(changes, m)
 		case ClassificationOrphan:
@@ -306,8 +313,11 @@ func (s *Service) MigrateRenamedDevicePrefs(ctx context.Context, n ReconcilerNot
 			log.Printf("preferred-reconciler: ORPHAN pref user=%s hostname=%s tag=%s — manual cleanup required",
 				username, p.hostname, p.exitNodeTag)
 			if shouldAlert(p.hostname, "orphan", now) {
-				n.SendAlert(fmt.Sprintf("♻️ preferred-exit reconciled (B231)\nORPHAN pref user=%s hostname=%s tag=%s\nreason: device with this hostname is not in headscale and no tag match found. The device was likely permanently deleted.\nManual cleanup: DELETE FROM device_exit_node_prefs WHERE user_id=%d AND device_hostname='%s'\nIf the device will be re-registered with the same tag, leave the row in place; B229 will pick it up on the next tick.",
-					username, p.hostname, p.exitNodeTag, p.userID, p.hostname))
+				sendPreferredExitAlert(n, PreferredExitAlertInput{
+					Action: PrefActionOrphan, Hostname: p.hostname, Username: username,
+					NewTag: p.exitNodeTag, Reason: "device is not in headscale and no tag matched",
+					UserID: p.userID,
+				})
 			}
 			changes = append(changes, m)
 		}

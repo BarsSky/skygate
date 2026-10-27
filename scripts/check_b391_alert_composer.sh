@@ -264,7 +264,16 @@ hdr "H. the English-only alert sites may only decrease"
 # text's home changed. What is left is the 7 preferred-exit reconciler notices and the
 # Tailscale-discovery notice — the tick-driven ones, which need a shape (dedup key, bounded
 # details) and not only a translation, so they are the next slice and not part of this one.
-RATCHET=8
+#
+# B391.3 (2026-10-27) lowered it 8 → 0, i.e. THE DEBT IS PAID. Those eight are now composed
+# alerts built by pure functions (BuildPreferredExitAlert / BuildDiscoveryAlert): a title
+# whose language is the operator's, the five facts every one of them carries, the
+# actionable part (rollback/cleanup SQL, where to fix it) as details, and a dedup key on
+# the INCIDENT — which is what these notices needed and a translation could not give, since
+# an ORPHAN or AMBIGUOUS preference persists and would otherwise read as a repeating wall.
+# From here the ratchet is a prohibition: a new `SendAlert(fmt.Sprintf(…))` fails the gate
+# outright, and the only way to add a notification is through the composer.
+RATCHET=0
 sites=$(grep -rho 'SendAlert(fmt\.Sprint[a-z]*(' --include='*.go' internal cmd 2>/dev/null \
         | wc -l | tr -d ' ')
 if [ "$sites" -le "$RATCHET" ]; then

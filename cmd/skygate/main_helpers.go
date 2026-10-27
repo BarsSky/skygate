@@ -26,6 +26,7 @@ import (
 	"skygate/internal/cluster"
 	"skygate/internal/config"
 	"skygate/internal/db"
+	"skygate/internal/feature/exit_rules"
 	"skygate/internal/keynotify"
 	"skygate/internal/localtime"
 	"skygate/internal/telegram"
@@ -608,7 +609,18 @@ func runOneDiscoveryTick(ctx context.Context, d *sql.DB, tagFilter string, notif
 	if discovered > 0 {
 		log.Printf("🔎 discovery-ticker: discovered %d new node(s) from Tailscale (tag_filter=%q)", discovered, tagFilter)
 		if notifier != nil {
-			notifier.SendAlert(fmt.Sprintf("Tailscale auto-discovery found %d new node(s) (tag_filter=%q). See /admin/cluster → Approve.", discovered, tagFilter))
+			// B391.3: the last English-only alert in the tree was this one. It is a
+			// composed alert now (title, facts, a bounded hint), deduplicated on the
+			// event so a restart does not re-send the same tally; a sink that can only
+			// SendAlert still gets one sentence instead of nothing.
+			a := exit_rules.BuildDiscoveryAlert(discovered, tagFilter)
+			if sink, ok := notifier.(interface {
+				SendAlertEvent(telegram.Alert) int64
+			}); ok {
+				sink.SendAlertEvent(a)
+			} else {
+				notifier.SendAlert(telegram.ComposeAlertPlain(a))
+			}
 		}
 	}
 }
