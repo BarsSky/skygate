@@ -113,6 +113,19 @@ func GetClusterDatabase(d *sql.DB, id string) (*ClusterDatabase, error) {
 //
 // Phase 1.2 will wire it to /admin/database/edit.
 func SetClusterDatabase(d *sql.DB, cd *ClusterDatabase) error {
+	// B427 (TD-35): primary_node_id is this row's ONLY nullable column
+	// (REFERENCES cluster_node(id) ON DELETE SET NULL) and GetClusterDatabase already
+	// COALESCEs it back to "". Writing "" instead of NULL is not "no primary chosen yet":
+	// it is a FOREIGN KEY pointing at a node whose id is empty. PostgreSQL rejects that
+	// outright, and SQLite rejects it as soon as foreign_keys is ON — which it is in
+	// production and (since B427) in every per-test database too. Nothing caught it
+	// before, because the per-test databases ran with foreign keys OFF, so this statement
+	// was only ever exercised against a schema with the constraint disabled. The empty
+	// string therefore becomes NULL, which is what the reader expects.
+	var primary any
+	if cd.PrimaryNodeID != "" {
+		primary = cd.PrimaryNodeID
+	}
 	_, err := d.Exec(`
 		INSERT INTO cluster_database (
 			id, cluster_id, primary_node_id, replica_node_ids,
@@ -130,7 +143,7 @@ func SetClusterDatabase(d *sql.DB, cd *ClusterDatabase) error {
 			current_dsn = EXCLUDED.current_dsn,
 			updated_by = EXCLUDED.updated_by,
 			updated_at = `+ActiveDialect().NowExpr()+`
-	`, cd.ID, cd.ClusterID, cd.PrimaryNodeID, cd.ReplicaNodeIDs,
+	`, cd.ID, cd.ClusterID, primary, cd.ReplicaNodeIDs,
 		cd.DSNTemplate, cd.DBName, cd.Username, cd.SSLMode, cd.CurrentDSN,
 		cd.UpdatedBy)
 	return err

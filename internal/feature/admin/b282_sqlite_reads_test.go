@@ -186,6 +186,14 @@ func TestAuditQueryRunsOnSQLiteB282(t *testing.T) {
 func TestPreferredMismatchQueryRunsOnSQLiteB282(t *testing.T) {
 	dbc := b282SQLiteDB(t)
 
+	// B427 (TD-35): device_rules.user_id is a FOREIGN KEY into portal_users, and until
+	// B427 every per-test database ran with foreign keys OFF — so this fixture inserted
+	// rules for a user that does not exist, a state production refuses (the FK is enforced
+	// on a file DSN). Seed the owner the rules belong to.
+	if _, err := dbc.db.Exec(
+		`INSERT INTO portal_users (id, username, password_hash) VALUES (1, 'daniil', 'x')`); err != nil {
+		t.Fatalf("seed portal_users: %v", err)
+	}
 	if _, err := dbc.db.Exec(
 		`INSERT INTO node_owner_map (node_id, headscale_user_id, username, tag, hostname)
 		 VALUES ('1', 86, 'daniil', 'tag:dev-daniil-workpc', 'workpc')`); err != nil {

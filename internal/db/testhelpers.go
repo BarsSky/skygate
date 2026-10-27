@@ -58,10 +58,10 @@ package db
 import "database/sql"
 
 // sqliteFastTestPragmas is the connection suffix that makes a throwaway SQLite database
-// cheap to migrate. The first two pragmas are the B419 measurement; busy_timeout(2000) is
-// B426.1 and matches the value production uses, because a per-test DB is written from more
-// than one goroutine too (see the header).
-const sqliteFastTestPragmas = "?_pragma=synchronous(0)&_pragma=journal_mode(memory)&_pragma=busy_timeout(2000)"
+// cheap to migrate. synchronous(0) + journal_mode(memory) are the B419 measurement;
+// busy_timeout(2000) is B426.1; foreign_keys(1) is B427 (TD-35) — without it a per-test
+// database enforced NO foreign key, so every FK clause in the schema was lint.
+const sqliteFastTestPragmas = "?_pragma=synchronous(0)&_pragma=journal_mode(memory)&_pragma=busy_timeout(2000)&_pragma=foreign_keys(1)"
 
 // OpenFastSQLiteForTest opens a throwaway SQLite database whose commits are not fsynced
 // and whose rollback journal lives in memory.

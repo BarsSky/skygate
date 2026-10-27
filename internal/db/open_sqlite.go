@@ -85,8 +85,25 @@ func openSQLiteWith(dsn string, register bool) (*sql.DB, error) {
 		// In-memory DSN — modernc.org accepts ":memory:" directly
 		// OR "file::memory:?cache=shared". The bare ":memory:" form
 		// gives a private in-memory DB per *sql.DB (no shared cache).
+		//
+		// B427 (TD-35): the in-memory branch used to pass the DSN through
+		// UNCHANGED, so it got NONE of the pragmas the file branch installs —
+		// `PRAGMA foreign_keys` answered 0 and `PRAGMA busy_timeout` answered 0,
+		// measured. That made every test built on :memory: a schema without
+		// foreign keys: an orphan row inserted happily, so every
+		// `FOREIGN KEY … ON DELETE CASCADE` clause in the schema was lint rather
+		// than a constraint for the majority of the suite, and a cascade defect
+		// could not fail a test.
+		//
+		// journal_mode(WAL) is deliberately NOT added here: an in-memory database
+		// has no file to log to, WAL is meaningless for it, and the two pragmas
+		// that do carry meaning are the ones added. MEASURED that the driver
+		// accepts query parameters on `:memory:` itself (fk=1, busy_timeout=2000),
+		// so no "file::memory:?cache=shared" switch is needed — that form would
+		// additionally SHARE one database between connections, which changes what
+		// a test isolates (a hazard, not a fix).
 		var err error
-		db, err = sql.Open("sqlite", ":memory:")
+		db, err = sql.Open("sqlite", ":memory:?_pragma=foreign_keys(1)&_pragma=busy_timeout(2000)")
 		if err != nil {
 			return nil, fmt.Errorf("sqlite open :memory:: %w", err)
 		}

@@ -1,5 +1,55 @@
 # Skygate release notes
 
+## v1.5.173 — the schema's foreign keys were never enforced in tests — and one of them was broken (B427, TD-35)
+
+**Date:** 2026-10-26 · **Base:** `v1.5.172` → this tag · **Compatibility:** none for an
+upgrade; the SQLite/pg schema is unchanged.
+
+### Measured
+
+`openSQLiteWith` gives a production file DSN three pragmas — `foreign_keys(1)`,
+`journal_mode(WAL)`, `busy_timeout(2000)` — but it **trusts** any DSN that already carries
+`_pragma=`, and the fast per-test handle (B419) supplied its own. The same replacement that
+B426.1 found for `busy_timeout` had silently dropped `foreign_keys`, and the `:memory:`
+branch got **no** pragmas at all:
+
+| handle | `PRAGMA foreign_keys` | `PRAGMA busy_timeout` |
+| --- | --- | --- |
+| fast per-test DB (before) | **0** | 0 (fixed in v1.5.172) |
+| `:memory:` (before) | **0** | **0** |
+| both (now) | **1** | 2000 |
+
+So since v1.5.165 **every** per-test database ran against a schema in which the roughly
+forty `FOREIGN KEY … ON DELETE CASCADE` clauses were **lint instead of a constraint**: an
+orphan row inserted happily, and a cascade defect could not fail a test.
+
+### Fixed
+
+* `foreign_keys(1)` is back in the fast per-test pragmas **and** in the `:memory:` branch
+  (`journal_mode(WAL)` is deliberately not added there — an in-memory database has no file
+  to log to). A contract forbids a return to a bare `sql.Open("sqlite", ":memory:")`.
+* Three fixtures inserted orphans and now seed the parent the live install always has: a
+  `device_rules` row always has an owner, and `cluster_database` always has its `cluster`
+  row (boot creates it).
+* **A real product defect the constraint exposed:** `SetClusterDatabase` wrote an **empty
+  string** into `primary_node_id` — the row's only nullable foreign-key column. That is not
+  «no primary chosen yet»; it is a foreign key pointing at a node whose id is empty.
+  **PostgreSQL refuses it outright**, so `/admin/database` → «Применить» would have failed
+  on a PG install, and SQLite refuses it as soon as the constraint is on. The empty string
+  is now bound as **NULL** (which the reader already `COALESCE`s back to an empty string),
+  and a primary node that does not exist is still refused.
+
+### What to expect
+
+Nothing changes on upgrade — the schema and every write path already behaved this way on a
+production file DSN. What changes is the evidence: a future change that breaks a cascade, an
+`ON DELETE SET NULL`, or a reference to a missing row now fails `go test` instead of passing.
+
+Guards: four behavioural tests (`internal/db/sqlite_foreign_keys_b427_test.go`) that read the
+pragma back **from the live connection**, try the two inserts a real schema distinguishes, and
+include a **detector proof** — a handle opened without the pragma accepts the orphan, so the
+guard can fail. 12 contracts in `scripts/check_b427_test_foreign_keys.sh`.
+
 ## v1.5.172 — the alert printed raw Markdown (B426)
 
 **Date:** 2026-10-26 · **Base:** `v1.5.171` → this tag · **Compatibility:** none.

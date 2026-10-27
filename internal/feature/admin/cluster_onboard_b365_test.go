@@ -31,6 +31,15 @@ import (
 func b365Service(t *testing.T) (*Service, *sql.DB) {
 	t.Helper()
 	src := b282SQLiteDB(t)
+	// B427 (TD-35): seed the cluster row BOOT creates (cluster.DefaultClusterID is
+	// auto-created by the B200 provisioning path), because cluster_database.cluster_id is a
+	// FOREIGN KEY into cluster. Until B427 every per-test database ran with foreign keys
+	// OFF, so a fixture could write an orphan row and pass on a schema production would
+	// refuse — the fixture was modelling a state the live install cannot be in.
+	if _, err := src.db.Exec(
+		`INSERT INTO cluster (id, name, chain) VALUES ('skygate-staging', 'skygate-staging', '[]')`); err != nil {
+		t.Fatalf("seed the default cluster row (boot creates it): %v", err)
+	}
 	return &Service{DB: src}, src.db
 }
 
