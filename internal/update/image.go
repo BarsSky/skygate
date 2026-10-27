@@ -173,11 +173,7 @@ func (s *ImagePullStrategy) Run(ctx context.Context) error {
 		return fmt.Errorf("pre-flight: %w", err)
 	}
 	if !s.imageIsFromRegistry(runningImage) {
-		// NB: no trailing period — staticcheck ST1005 ("error strings
-		// should not end with punctuation"), pinned at zero by B237.20.
-		return fmt.Errorf("pre-flight: running container image %q is not from a registry "+
-			"(locally-built). Switch to docker-compose.ghcr.yml and set SKYGATE_IMAGE in .env first. "+
-			"See internal/update/image.go header comment for the migration path", runningImage)
+		return imagePullPreflightRefusal(runningImage)
 	}
 	previousTag := imageTag(runningImage)
 	if previousTag == s.Tag {
@@ -285,6 +281,30 @@ func (s *ImagePullStrategy) imageIsFromRegistry(image string) bool {
 	}
 	return strings.Contains(firstPart, ".") || strings.Contains(firstPart, ":") ||
 		firstPart == "localhost"
+}
+
+// imagePullPreflightRefusal is the pre-flight verdict for an install that does not run a
+// registry image, i.e. a source-built ("locally-built") container whose compose file has a
+// `build:` section.
+//
+// B432 (measured through the operator's screenshot 2026-10-27): the old text named ONLY the
+// registry migration — «Switch to docker-compose.ghcr.yml and set SKYGATE_IMAGE in .env
+// first» — so a source-built install was told to change its install kind in order to get a
+// version bump, while the route that actually works for it (the git+build updater behind
+// «Обновить») was never mentioned. The operator read the refusal, tried nothing else, and
+// reported the update as impossible. The working route is named FIRST now; switching to
+// registry images stays documented as the alternative it is.
+//
+// No trailing period — staticcheck ST1005 ("error strings should not end with
+// punctuation"), pinned at zero by B237.20.
+func imagePullPreflightRefusal(runningImage string) error {
+	return fmt.Errorf("pre-flight: running container image %q is not from a registry "+
+		"(locally-built), so it cannot be replaced by a pulled image in place. Use «Обновить» "+
+		"on /admin/update for this install — the git+build updater rebuilds from this checkout "+
+		"and is the path a source-built container takes; if the version field there is stale, "+
+		"type the tag into «Установить конкретную версию». Switching to registry images is a "+
+		"separate migration: docker-compose.ghcr.yml + SKYGATE_IMAGE in .env (see the header "+
+		"comment of this file)", runningImage)
 }
 
 // imageTag extracts the tag portion of an image reference

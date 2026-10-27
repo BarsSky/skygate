@@ -1,5 +1,58 @@
 # Skygate release notes
 
+## v1.5.181 — there is always a control that can install a version (B432)
+
+**Date:** 2026-10-27 · **Base:** `v1.5.180` → this tag · **Compatibility:** none.
+
+### What you hit
+
+You tried the image-pull form with `v1.5.179` and got:
+
+```
+pre-flight: running container image "skygate-skygate" is not from a registry
+(locally-built). Switch to docker-compose.ghcr.yml and set SKYGATE_IMAGE in .env first.
+```
+
+The refusal is **correct**: your container is built from source, so a pulled image would
+be replaced by a rebuild on the next `docker compose up` — mixing the two install kinds is
+what the pre-flight exists to prevent. What was wrong is everything around it.
+
+* The message named only *switching install kind* — «change your install» — and never the
+  route that actually works for you: «Обновить» (the git+build updater).
+* And «Обновить» itself only renders when a **newer** release is known — which comes from
+  the GitHub check that v1.5.180 has just widened a hole in (a stale check → no button).
+  So on a source-built install with a stale check there was, for a while, **no control on
+  the page at all** that could install a version you named. That is the defect.
+
+### Fixed
+
+* New card **«Установить конкретную версию»** on `/admin/update`: a free-text target
+  (pre-filled with the version the page would use) and a button. It renders **always**
+  (except on a dev build), posts the same `/admin/update/apply` endpoint the primary
+  button does, and is deliberately **not** gated on the cached GitHub answer — so a stale
+  check can never again be the reason an install cannot be updated. It is the git+build
+  path, i.e. the one a source-built container takes.
+* The image-pull refusal now names the working route **first** («используйте «Обновить»…
+  если поле версии устарело — впишите тег в «Установить конкретную версию»») and presents
+  the registry migration as the alternative it is. The wording lives in a named helper
+  (`imagePullPreflightRefusal`) instead of an inline `fmt.Errorf`, and a test pins the
+  **order** of the two routes — order is the fix, because a refusal is read only until the
+  first sentence that looks actionable.
+
+### How to get to this build today
+
+Your page is running v1.5.178, so it does not have this card yet. Two ways, both from
+`/admin/update`:
+
+1. **«Закрепить релиз» → `v1.5.181` → Сохранить.** A pin is a target the page trusts
+   without asking GitHub, so the «Обновить» button appears (the page reports drift) —
+   press it. Clear the pin afterwards if you want to follow the latest release again.
+2. Wait for the cached check to expire (v1.5.178 caches for 6 hours), then «Обновить»
+   targets the newest release by itself.
+
+After that, v1.5.180's 10-minute window and this card together mean the page can always
+name — and install — the release that exists.
+
 ## v1.5.180 — the update page can see a new release again (B431)
 
 **Date:** 2026-10-27 · **Base:** `v1.5.179` → this tag · **Compatibility:** none.

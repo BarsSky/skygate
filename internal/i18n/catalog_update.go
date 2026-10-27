@@ -33,6 +33,12 @@ var ruUpdate = map[string]string{
 	"update.check_now_none":           "GitHub проверен заново: релизов не найдено",
 	"update.check_now_failed":         "GitHub проверен заново — не удалось: %s",
 	"update.check_now_failed_unknown": "GitHub проверен заново — ответа нет",
+	// B432: the operator could not name a version. The primary CTA only renders when a
+	// NEWER release is known (from the cached check), and the image-pull path refuses on a
+	// locally-built install — so a stale check left the page with no working control at all.
+	"update.apply_manual_title":  "Установить конкретную версию",
+	"update.apply_manual_hint":   "Работает и тогда, когда проверка GitHub устарела: впишите тег (например v1.5.180). Это тот же путь, что у кнопки «Обновить» — пересборка из этого каталога, поэтому он подходит установкам «из исходников». Пустое поле = закреплённый релиз или последняя известная версия.",
+	"update.apply_manual_button": "Обновить до этой версии",
 	// v1.5.9 (§12.15 item 3): the /admin/update page now shows the
 	// platform it is running ON (OS/arch, container marker, whether
 	// systemctl/docker exist) and, for native installs, whether the
@@ -160,6 +166,9 @@ var enUpdate = map[string]string{
 	"update.check_now_none":           "GitHub re-checked: no releases found",
 	"update.check_now_failed":         "GitHub re-checked — failed: %s",
 	"update.check_now_failed_unknown": "GitHub re-checked — no answer",
+	"update.apply_manual_title":       "Install a specific version",
+	"update.apply_manual_hint":        "Works even when the GitHub check is stale: type a tag (for example v1.5.180). This is the same path the «Update now» button takes — a rebuild from this checkout — so it suits source-built installs. Empty = the pinned release, or the last version the panel knows.",
+	"update.apply_manual_button":      "Update to this version",
 	// v1.5.9 (§12.15 item 3): platform + privileged-helper status,
 	// see the RU map for the rationale.
 	"update.platform":              "Platform",

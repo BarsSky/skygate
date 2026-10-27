@@ -173,6 +173,28 @@
           <i class="fa-solid fa-cloud-arrow-up"></i> {{t "update.push"}}
         </button>
       </form>
+      {{/* B432 (2026-10-27, operator report): the primary CTA above only exists
+           when a NEWER release is known (or the host drifted from a pin), and
+           "known" comes from the GitHub check, which is cached. Measured on the
+           live install: v1.5.180 was published while the page still spoke of
+           v1.5.178, so the CTA was absent — and the image-pull path refused
+           because the install builds locally. The operator had no way to name
+           the version they wanted from the UI at all. This card is that way: it
+           always renders (except on a dev build) and it posts the same
+           /admin/update/apply endpoint the CTA does, so a stale check can never
+           again be the reason an install cannot be updated. */}}
+      {{if not .DevBuild}}
+      <div class="card" style="margin-top:16px;padding:16px;border:1px solid var(--border)">
+        <h4 style="margin:0"><i class="fa-solid fa-keyboard"></i> {{t "update.apply_manual_title"}}</h4>
+        <p class="sub" style="margin:6px 0 0">{{t "update.apply_manual_hint"}}</p>
+        <form method="post" action="/admin/update/apply" style="margin-top:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap" onsubmit="return confirm('{{t "update.apply_confirm"}}')">
+          <input type="text" name="target" value="{{.Target}}" placeholder="v1.5.180" style="font-size:14px;padding:6px 8px;width:160px;font-family:ui-monospace,monospace">
+          <button type="submit" class="btn btn-sm">
+            <i class="fa-solid fa-rocket"></i> {{t "update.apply_manual_button"}}
+          </button>
+        </form>
+      </div>
+      {{end}}
       {{/* B249 (v1.5.4): the image-pull update button. Faster than
            the git+build "Push update" above (~5-30s vs ~60-120s)
            but requires the operator to have migrated to
