@@ -76,6 +76,7 @@ import (
 	"sync"
 	"time"
 
+	"skygate/internal/i18n"
 	"skygate/internal/localtime"
 )
 
@@ -359,7 +360,7 @@ func runScheduled(ctx context.Context, deps SchedulerDeps, target string, trigge
 	deps.State.Log(LogInfo, fmt.Sprintf("scheduled run by B130 scheduler (target=%s, current=%s)", target, current))
 
 	if deps.Notifier != nil {
-		deps.Notifier.SendAlert(fmt.Sprintf("⏰ Scheduled skygate update starting: %s → %s (job %s)", current, target, jobID))
+		deps.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.update.scheduled_starting", current, target, jobID))
 	}
 
 	// Write last-run BEFORE the goroutine so the page
@@ -380,10 +381,10 @@ func runScheduled(ctx context.Context, deps SchedulerDeps, target string, trigge
 		finalState := deps.State.Get()
 		if deps.Notifier != nil && finalState != nil {
 			if finalState.Phase == PhaseDone {
-				deps.Notifier.SendAlert(fmt.Sprintf("✅ Scheduled skygate update %s → %s succeeded (took %s)",
+				deps.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.update.scheduled_ok",
 					current, target, time.Since(finalState.StartedAt).Round(time.Second)))
 			} else if finalState.Phase == PhaseFailed {
-				deps.Notifier.SendAlert(fmt.Sprintf("❌ Scheduled skygate update %s → %s FAILED: %s\nManual steps: see /admin/update",
+				deps.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.update.scheduled_failed",
 					current, target, finalState.Error))
 			}
 		}

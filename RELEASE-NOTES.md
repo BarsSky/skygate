@@ -1,5 +1,69 @@
 # Skygate release notes
 
+## v1.5.178 — the alerts you actually read now speak your language (B391.1)
+
+**Date:** 2026-10-27 · **Base:** `v1.5.177` → this tag · **Compatibility:** none.
+
+### The gap
+
+B391 gave skygate a single composer for operator alerts — title, a table of facts, a
+collapsible detail section, dedup, HTML — but every notification that had not been
+composed still carried its text as a **literal English string at the call site**. That
+was frozen debt on purpose: 34 `SendAlert(fmt.Sprintf(…))` sites, held by a ratchet in
+the contract so the number could fall without rewriting all 34 handlers in one release
+and could never grow unnoticed. The eight alerts the operator sees most often — every
+single update — were among them, so the panel said «Обновление» while Telegram said
+`✅ skygate update v1.5.176 → v1.5.177 succeeded`.
+
+### Fixed
+
+* Eight alerts now take their text from the catalogue (`alert.update.*`, RU + EN)
+  instead of a literal at the call site: update apply succeeded / failed, push succeeded
+  / failed, image pull, and a scheduled update starting / succeeded / failed. They live
+  in `internal/feature/admin/update.go` (5) and `internal/update/scheduler.go` (3), i.e.
+  exactly the messages that fire around every release.
+* The arguments are unchanged — the two versions, the job id, the phase it died in, the
+  error, the duration — so nothing observable moved except the language: a Russian
+  operator finally reads Russian, and the English half of every key exists as well
+  (catalogue parity is a key-set contract, so a key that exists only in RU fails the
+  build).
+* The ratchet is now **26** (was 34), and it may only go down: a new
+  `SendAlert(fmt.Sprintf(…))` fails `scripts/check_b391_alert_composer.sh` H1, so this
+  debt stays visible instead of being silently re-accumulated.
+
+### Also corrected — a gate line that could not fail
+
+While preparing this release the diff-scoped gate printed one line above its verdict:
+
+```
+scripts/verify_pre_deploy.sh: line 6483: test -f scripts/check_b430_prefix_failover.sh
+&& bash scripts/check_b430_prefix_failover.sh: No such file or directory
+```
+
+That is B430's body argument **copied and left standing on its own** when its
+registration was moved above the verdict (B413 F1) in v1.5.177 — a second copy of the
+line, with no `run_check` attached. bash does not read such a line as an argument: it
+is one single-quoted *word*, i.e. a command name, so it was executed and failed on every
+single gate run since — and the run still ended `GATE PASSED`, because the error went to
+stderr, never became a `FAIL` row, and a stray line's status is not the script's last
+statement. It verified nothing and no contract could see it.
+
+The line is gone, and **B413 gained G1/G2**: a run_check body is an indented
+single-quoted string whose predecessor must end with a backslash (that is what makes it
+a continuation), so a body-shaped line that stands alone is detected structurally — plus
+the usual planted-violation proof that the detector can fail. A green gate now also means
+nothing was *attempted* outside a registration.
+
+### What is still English — and why it is a slice, not a line
+
+The remaining 26 sites are the ACL/rule plumbing (apply, rollback, reapply, import, new
+rule, delete, bulk add and clear-rules, reached from the web forms, the API and the bot
+commands), the preferred-exit reconciler (6), the password reset and Tailscale
+auto-discovery. Each of those needs more than a translation: a title, the facts that
+matter, a bounded detail section and a dedup key — the work B426 did for the release
+alert. They are recorded as counted debt in the contract and in the roadmap, and the
+next slice continues from there.
+
 ## v1.5.177 — a failing relay no longer moves your prefixes in silence (B430)
 
 **Date:** 2026-10-27 · **Base:** `v1.5.176` → this tag · **Compatibility:** none.

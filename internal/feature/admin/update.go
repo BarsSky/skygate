@@ -33,6 +33,7 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 	"skygate/internal/update"
 )
 
@@ -677,10 +678,10 @@ func (s *Service) PostAdminUpdateApply(w http.ResponseWriter, r *http.Request) {
 		finalState := store.Get()
 		if s.Notifier != nil && finalState != nil {
 			if finalState.Phase == update.PhaseDone {
-				s.Notifier.SendAlert(fmt.Sprintf("✅ skygate update %s → %s succeeded (job %s, took %s)",
+				s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.update.applied_ok",
 					current, target, finalState.JobID, time.Since(finalState.StartedAt).Round(time.Second)))
 			} else if finalState.Phase == update.PhaseFailed {
-				s.Notifier.SendAlert(fmt.Sprintf("❌ skygate update %s → %s FAILED at %s (job %s): %s\nManual steps: see /admin/update",
+				s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.update.apply_failed",
 					current, target, finalState.Phase, finalState.JobID, finalState.Error))
 			}
 		}
@@ -839,10 +840,10 @@ func (s *Service) PostAdminUpdatePush(w http.ResponseWriter, r *http.Request) {
 		finalState := store.Get()
 		if s.Notifier != nil && finalState != nil {
 			if finalState.Phase == update.PhaseDone {
-				s.Notifier.SendAlert(fmt.Sprintf("✅ skygate push %s → %s succeeded (job %s, took %s)",
+				s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.update.pushed_ok",
 					current, target, finalState.JobID, time.Since(finalState.StartedAt).Round(time.Second)))
 			} else if finalState.Phase == update.PhaseFailed {
-				s.Notifier.SendAlert(fmt.Sprintf("❌ skygate push %s → %s FAILED at %s (job %s): %s\nManual steps: see /admin/update",
+				s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.update.push_failed",
 					current, target, finalState.Phase, finalState.JobID, finalState.Error))
 			}
 		}
@@ -1032,7 +1033,7 @@ func (s *Service) PostAdminUpdatePullImage(w http.ResponseWriter, r *http.Reques
 		if s.Notifier != nil {
 			finalState := store.Get()
 			if finalState != nil {
-				s.Notifier.SendAlert(fmt.Sprintf("✅ skygate image-pull %s:%s succeeded (job %s)",
+				s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.update.image_pulled_ok",
 					image, tag, finalState.JobID))
 			}
 		}

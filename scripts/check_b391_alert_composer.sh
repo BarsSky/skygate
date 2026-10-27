@@ -251,7 +251,11 @@ hdr "H. the English-only alert sites may only decrease"
 # B391 froze the debt at the number measured when the composer landed. The composer
 # exists so that number can fall without touching 34 handlers in one release; the
 # ratchet is what makes "we will do it later" visible instead of forgotten.
-RATCHET=34
+#
+# B391.1 (2026-10-27) lowered it 34 → 26: the eight update/apply/push/image-pull and
+# scheduled-update alerts the operator reads most often now come from the catalogue
+# (alert.update.*, RU+EN) instead of literal English at the call site. Only ever down.
+RATCHET=26
 sites=$(grep -rho 'SendAlert(fmt\.Sprint[a-z]*(' --include='*.go' internal cmd 2>/dev/null \
         | wc -l | tr -d ' ')
 if [ "$sites" -le "$RATCHET" ]; then
