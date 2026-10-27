@@ -1,5 +1,61 @@
 # Skygate release notes
 
+## v1.5.180 — the update page can see a new release again (B431)
+
+**Date:** 2026-10-27 · **Base:** `v1.5.179` → this tag · **Compatibility:** none.
+
+### What was measured
+
+On the live install, minutes after v1.5.179 was published: the running build was
+**v1.5.178**, the process-wide checker had cached that answer at **14:46**, the release
+was published at **15:51**, and `/admin/update` still showed «последняя: v1.5.178» at
+**16:10** and **16:20**. Nothing else was broken: GitHub was reachable from the container
+(56 of the 60 anonymous calls left), the release monitor had already announced v1.5.178
+normally, and a normal update through the panel had completed 25 minutes earlier. The page
+alone was blind — and «Проверить сейчас», the one control that exists for exactly this
+moment, changed nothing.
+
+### Two defects, one symptom
+
+* **The success cache was six hours long.** B424 correctly made the GitHub checker
+  process-wide (a per-render checker burned the anonymous 60/hour quota in minutes and
+  turned the page into a dash), but it kept the six-hour success window — so after **every**
+  release the page told the truth only once the window expired.
+* **«Проверить сейчас» was a no-op.** The handler called the same cached render path. Before
+  B424 that was accidentally a bypass (every render built its own `Checker`, so no cache
+  survived a request); B424 removed the accident and left a button that could not remedy
+  anything — while its own comment claimed it *"bypasses the 6h success / 15m failure
+  cache"*. It also said nothing and audited nothing, so a press was indistinguishable from
+  a dead button.
+
+### Fixed
+
+* A successful check is cached for **10 minutes**, not six hours. That is fresh enough to
+  be true and cheap enough to be safe: a tab reloading every 6 seconds costs at most 6 calls
+  an hour, a tenth of the anonymous limit. The render path stays cached on purpose — a
+  re-check on every page load is the quota bug B424 fixed.
+* New `Checker.CheckFresh` bypasses **both** windows and stores its answer in the cache, so
+  the page rendered right after the click shows the release that exists rather than the one
+  it knew. That is what the button now calls.
+* The click reports what it found («GitHub проверен заново: последний релиз — vX», or the
+  failure reason) and writes an `update_check_now` audit row — a press you can see in the
+  log is a press you can trust.
+* The checker has the **mutex its own documentation has promised since B424 made it
+  process-wide**: without it the cache fields were read and written from concurrent page
+  renders — a data race, not a theoretical one, now that the instance is shared.
+* A neighbouring test was vacuous and is repaired: the redirect transport in
+  `checker_test.go` never worked (`dial tcp: lookup ://127.0.0.1`), so
+  `TestChecker_Fetch_Success` logged *"we need a real rewrite transport"* and asserted
+  nothing at all. It now redirects through `net/url` and asserts the parsed release.
+
+### If you are still on an older build
+
+The page's stale answer is what you are looking at, so it cannot show you the build that
+fixes it. On `/admin/update` use the **image pull** form (`ghcr.io/barssky/skygate`, tag
+`v1.5.180`) — it does not depend on the GitHub release check — or the manual steps block.
+Once you are on v1.5.180 the page refreshes itself within 10 minutes and «Проверить сейчас»
+really checks.
+
 ## v1.5.179 — every ACL and rule notice now speaks your language too (B391.2)
 
 **Date:** 2026-10-27 · **Base:** `v1.5.178` → this tag · **Compatibility:** none.

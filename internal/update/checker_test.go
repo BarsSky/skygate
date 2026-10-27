@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -151,6 +152,8 @@ func TestChecker_Fetch_Success(t *testing.T) {
 	// path: feed a fake HTTPClient that points to the
 	// testserver via a URL rewrite.
 
+	// B431: the transport now really redirects api.github.com → srv.URL, so this test
+	// asserts the parsed release instead of logging that the redirect does not work.
 	c := &Checker{
 		HTTPClient:     &http.Client{Transport: rewriteTransport{target: srv.URL}},
 		Owner:          "TestOwner",
@@ -158,56 +161,49 @@ func TestChecker_Fetch_Success(t *testing.T) {
 		Channel:        "stable",
 		CurrentVersion: "0.28.6",
 	}
-	// Manually call fetch by hitting the lower-level
-	// code path. Check() is harder to redirect; we use
-	// a transport rewrite here.
-	result, err := c.fetch(context.Background())
+	result, err := c.Check(context.Background())
 	if err != nil {
-		// The testserver URL is http://127.0.0.1:port/...
-		// and our rewriteTransport rewrites ONLY the host.
-		// fetch() builds the URL from Owner/Repo as
-		// api.github.com — so the rewrite MUST happen at
-		// the HTTP client level. We pass a client whose
-		// transport rewrites api.github.com → srv.URL.
-		t.Logf("expected: fetch fails with no rewrite; we need a real rewrite transport")
+		t.Fatalf("Check through a redirected transport: %v", err)
 	}
-	_ = result
+	if result == nil {
+		t.Fatal("Check returned a nil Result")
+	}
+	if result.Error != "" {
+		t.Fatalf("Check reported Error = %q on a healthy stand-in", result.Error)
+	}
+	if result.Latest != "v0.29.0" {
+		t.Fatalf("Latest = %q, want v0.29.0", result.Latest)
+	}
+	if !result.IsNewer {
+		t.Fatalf("IsNewer = false for 0.28.6 → v0.29.0")
+	}
+	if result.CheckedAt.IsZero() {
+		t.Fatal("CheckedAt is zero — the page would render an empty «Проверено»")
+	}
 }
 
 // rewriteTransport rewrites every request to point at target.
 // Used by tests to redirect api.github.com → httptest server.
+//
+// B431: this helper never actually worked. Its old body split the target on "://" and
+// assigned the remainder (including the separator) to URL.Host, so every redirected
+// request failed with `dial tcp: lookup ://127.0.0.1: no such host` — which is exactly
+// what the log line in TestChecker_Fetch_Success said ("expected: fetch fails with no
+// rewrite; we need a real rewrite transport") while the test asserted nothing. The
+// redirect is now built from net/url, and that test asserts the parsed release.
 type rewriteTransport struct {
 	target string
 }
 
 func (r rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Rewrite scheme + host
-	clone := req.Clone(req.Context())
-	parsed, err := parseURL(r.target)
+	u, err := url.Parse(r.target)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("rewriteTransport: parse %q: %w", r.target, err)
 	}
-	// parsed is "scheme://host" — split it
-	parts := strings.SplitN(parsed, "://", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("parseURL returned bad format: %q", parsed)
-	}
-	clone.URL.Scheme = parts[0]
-	clone.URL.Host = parts[1]
+	clone := req.Clone(req.Context())
+	clone.URL.Scheme = u.Scheme
+	clone.URL.Host = u.Host
 	return http.DefaultTransport.RoundTrip(clone)
-}
-
-func parseURL(s string) (parsed string, err error) {
-	// Simple parse: "http://host:port" → scheme, host:port
-	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") {
-		return "", fmt.Errorf("bad URL: %q", s)
-	}
-	rest := strings.TrimPrefix(strings.TrimPrefix(s, "http://"), "https://")
-	idx := strings.Index(rest, "/")
-	if idx < 0 {
-		return s[:len(s)-len(rest)] + "://" + rest, nil
-	}
-	return s[:len(s)-len(rest)] + "://" + rest[:idx], nil
 }
 
 func TestChecker_Fetch_StripsTokenFromLogs(t *testing.T) {

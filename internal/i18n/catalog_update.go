@@ -25,6 +25,14 @@ var ruUpdate = map[string]string{
 	"update.install_label":  "Установка",
 	"update.channel":        "Канал",
 	"update.checked_at":     "Проверено",
+	// B431: «Проверить сейчас» now reports what it found. Before it rendered the same
+	// cached page with no flash, so a click that changed nothing looked identical to a
+	// button that does nothing — the operator could not tell whether GitHub had been
+	// asked at all.
+	"update.check_now_ok":             "GitHub проверен заново: последний релиз — %s",
+	"update.check_now_none":           "GitHub проверен заново: релизов не найдено",
+	"update.check_now_failed":         "GitHub проверен заново — не удалось: %s",
+	"update.check_now_failed_unknown": "GitHub проверен заново — ответа нет",
 	// v1.5.9 (§12.15 item 3): the /admin/update page now shows the
 	// platform it is running ON (OS/arch, container marker, whether
 	// systemctl/docker exist) and, for native installs, whether the
@@ -135,19 +143,23 @@ var ruUpdate = map[string]string{
 }
 
 var enUpdate = map[string]string{
-	"update.banner_title":   "Update available",
-	"update.banner_body":    "Running %s, GitHub has %s.",
-	"update.banner_checked": "checked: %s",
-	"update.banner_open":    "Open release",
-	"update.subtitle":       "Background service polls GitHub Releases every 24h. Shows the latest available version and the copy-pasteable commands for a safe upgrade.",
-	"update.check_now":      "Check now",
-	"update.check_failed":   "could not check GitHub",
-	"update.check_never":    "not checked yet",
-	"update.current_label":  "Current",
-	"update.latest_label":   "Latest",
-	"update.install_label":  "Install",
-	"update.channel":        "channel",
-	"update.checked_at":     "Checked",
+	"update.banner_title":             "Update available",
+	"update.banner_body":              "Running %s, GitHub has %s.",
+	"update.banner_checked":           "checked: %s",
+	"update.banner_open":              "Open release",
+	"update.subtitle":                 "Background service polls GitHub Releases every 24h. Shows the latest available version and the copy-pasteable commands for a safe upgrade.",
+	"update.check_now":                "Check now",
+	"update.check_failed":             "could not check GitHub",
+	"update.check_never":              "not checked yet",
+	"update.current_label":            "Current",
+	"update.latest_label":             "Latest",
+	"update.install_label":            "Install",
+	"update.channel":                  "channel",
+	"update.checked_at":               "Checked",
+	"update.check_now_ok":             "GitHub re-checked: latest release is %s",
+	"update.check_now_none":           "GitHub re-checked: no releases found",
+	"update.check_now_failed":         "GitHub re-checked — failed: %s",
+	"update.check_now_failed_unknown": "GitHub re-checked — no answer",
 	// v1.5.9 (§12.15 item 3): platform + privileged-helper status,
 	// see the RU map for the rationale.
 	"update.platform":              "Platform",

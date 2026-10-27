@@ -186,16 +186,54 @@ func (s *Service) GetAdminUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 // PostAdminUpdateCheck forces an immediate GitHub check (bypasses
-// the 6h success / 15m failure cache). Wired to the "Check now"
-// button on /admin/update. Returns the operator to the same
-// page with the fresh Result inline.
+// both the success and the failure cache) and returns the operator to the same
+// page with the fresh Result inline plus a flash that says what the check found.
+// Wired to the "Check now" button on /admin/update.
+//
+// B431 (measured on the live install 2026-10-27): this handler used to call the plain
+// CACHED render path, so the button was a no-op whenever the cache was warm — the
+// operator released v1.5.179 at 15:51, the page had cached v1.5.178 at 14:46, and
+// «Проверить сейчас» changed nothing for hours. It now asks GitHub explicitly
+// (Checker.CheckFresh), which also stores the answer in the shared cache, so the render
+// that follows this handler shows the release that exists rather than the one it knew.
+// The flash and the audit row exist because the other half of the report was silence:
+// a click that neither changes the page nor says anything is indistinguishable from a
+// dead button.
 func (s *Service) PostAdminUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	s.renderUpdatePage(w, r, c, "")
+	if !s.Cfg.UpdateCheckEnabled {
+		http.Error(w, "update checker disabled (SKYGATE_UPDATE_CHECK=false)", http.StatusBadRequest)
+		return
+	}
+	// One GitHub round trip, with the same budget the cached render uses for its request.
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	result, _ := updateCheckerFor(s).CheckFresh(ctx)
+
+	// The checker reports failures INSIDE the Result (it always returns a renderable
+	// answer, so an error return would be ignored by every caller anyway) — read it, do
+	// not assume a nil error means success.
+	var flash, auditDetail string
+	switch {
+	case result == nil:
+		flash = i18n.T(i18n.LangRU, "update.check_now_failed_unknown")
+		auditDetail = "no result"
+	case result.Error != "":
+		flash = i18n.Tf(i18n.LangRU, "update.check_now_failed", result.Error)
+		auditDetail = "failed: " + result.Error
+	case result.Latest != "":
+		flash = i18n.Tf(i18n.LangRU, "update.check_now_ok", result.Latest)
+		auditDetail = "latest=" + result.Latest
+	default:
+		flash = i18n.T(i18n.LangRU, "update.check_now_none")
+		auditDetail = "no releases"
+	}
+	s.Backend.Audit(c.UserID, c.Username, "update_check_now", auditDetail)
+	s.renderUpdatePage(w, r, c, flash)
 }
 
 // renderUpdatePage is the shared page-rendering path for both
@@ -268,14 +306,16 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 	// (the test suite uses rewriteTransport via Checker.HTTPClient).
 	//
 	// B424 (2026-10-25): ONE Checker per process, not one per render. The checker caches a
-	// success for 6 h and backs off a failure for 15 min, but a fresh instance every render
-	// throws both away: measured on the reference install, an auto-refreshing tab at one
-	// render every 6 seconds spent ~600 GitHub API calls an hour against the 60/hour
+	// success for 10 min and backs off a failure for 15 min, but a fresh instance every
+	// render throws both away: measured on the reference install, an auto-refreshing tab at
+	// one render every 6 seconds spent ~600 GitHub API calls an hour against the 60/hour
 	// anonymous limit, so the quota died in minutes, GitHub answered 403 and the page
 	// rendered an empty "Latest" (a dash) while the once-an-hour release MONITOR — inside
 	// the limit — kept alerting about v1.5.169. The shared instance makes a permanently
-	// open tab cost at most ~4 calls/hour and usually one per six hours. "Проверить сейчас"
-	// keeps its own forced checker on the dedicated route.
+	// open tab cost at most ~6 calls/hour. B431 shortened the success window from 6 h to
+	// 10 min (a release could hide for hours) and gave «Проверить сейчас» its own forced
+	// path: this render stays CACHED on purpose, because a page that re-checks on every
+	// load is exactly the quota bug B424 fixed.
 	result, _ := updateCheckerFor(s).Check(ctx)
 
 	// Detect the install kind ONCE per page render. The

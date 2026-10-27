@@ -27,21 +27,32 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
 // Checker queries the GitHub Releases API for the latest skygate
 // release and compares it to the running BuildVersion.
 //
-// The result is cached in-process for 6h (configurable via
-// cfg.UpdateCheckInterval). On error, the cache holds the
-// previous good result for 15m (configurable via
-// checkFailureCache) so a transient GitHub blip doesn't trigger
-// a "new version available" alert every page load.
+// Three cache windows, and each exists for a measured reason:
 //
-// Concurrency: Checker is safe for concurrent calls. The
-// in-flight request is deduplicated via a singleflight-style
-// mutex — only one HTTP call at a time, all callers wait.
+//   - a SUCCESS is cached for 10 minutes (checkSuccessCache). B424 made the checker
+//     process-wide, which is what keeps an auto-refreshing tab from burning the anonymous
+//     60/hour quota — but its first value, 6 hours, meant the page was BLIND for up to six
+//     hours after every release: the operator shipped v1.5.179 at 15:51, opened
+//     /admin/update at 16:10 and read «последняя: v1.5.178» (measured 2026-10-27). Ten
+//     minutes is fresh enough to be true and cheap enough to be safe: a tab reloading
+//     every 6 s costs at most 6 calls an hour, a tenth of the anonymous limit.
+//   - a FAILURE is cached for 15 minutes (checkFailureCache), so a GitHub blip does not
+//     turn every page render into another failing call.
+//   - NEITHER window applies to CheckFresh, which is what the page's «Проверить сейчас»
+//     button calls: the operator asking explicitly must always reach GitHub.
+//
+// Concurrency: Checker is safe for concurrent calls — one mutex serialises the cache and
+// the HTTP round trip, so concurrent renders do not issue concurrent requests and the
+// cached fields are never read while being written. (This paragraph was true of the
+// singleflight design before B431 added the mutex; until then the sentence described a
+// lock that did not exist while the instance was process-wide, i.e. a race.)
 type Checker struct {
 	// HTTPClient is the HTTP client used for the GitHub API.
 	// Exposed for tests (httptest.NewServer).
@@ -62,6 +73,11 @@ type Checker struct {
 	// "0.28.6+abc1234" or "v0.28.7". Compared against the
 	// latest GitHub release tag (e.g. "v0.29.0").
 	CurrentVersion string
+
+	// mu serialises the cache fields below AND the HTTP round trip, so two concurrent
+	// page renders cannot both hit GitHub and cannot read a half-written cache (see the
+	// type doc; the lock is the promise that used to be only a comment).
+	mu sync.Mutex
 
 	// lastResult caches the most recent successful Result.
 	lastResult   *Result
@@ -106,9 +122,13 @@ type Result struct {
 // MaxBodyLen caps the release notes body in the UI.
 const MaxBodyLen = 4000
 
-// checkSuccessCache is the duration a successful result is
-// cached. After this, the next Check() call hits GitHub.
-const checkSuccessCache = 6 * time.Hour
+// checkSuccessCache is how long a successful result is served from memory before the
+// next Check() asks GitHub again. Measured 2026-10-27: at 6 h the page hid a published
+// release for hours (see the Checker doc), and 10 min costs at most 6 calls/hour from a
+// tab that reloads every 6 s — a tenth of the 60/hour anonymous quota this cache exists
+// to protect. The contract B431 pins the ceiling at 15 min so the window cannot drift
+// back up without an argument.
+const checkSuccessCache = 10 * time.Minute
 
 // checkFailureCache is the duration to back off after a
 // failed call. Prevents hammering GitHub on every page load
@@ -117,12 +137,35 @@ const checkFailureCache = 15 * time.Minute
 
 // Check returns the most recent result, fetching a new one
 // from GitHub if the cache is stale. The fetch respects the
-// 6h success / 15m failure cache windows.
+// success / failure cache windows.
 //
 // On error, returns the last good cached Result (if any) with
 // Result.Error set to the new error message. This lets the
 // UI show "no new version (last check 2h ago failed: ...)".
 func (c *Checker) Check(ctx context.Context) (*Result, error) {
+	return c.check(ctx, false)
+}
+
+// CheckFresh is Check with BOTH cache windows bypassed: it always asks GitHub, and on
+// success it stores the answer in the same cache, so the page rendered right after it
+// shows the fresh value instead of the one it just replaced.
+//
+// WHY IT EXISTS (B431, measured on the live install 2026-10-27): «Проверить сейчас» was
+// wired to PostAdminUpdateCheck, which called the CACHED render path — so the button was
+// a no-op for up to six hours. The comment on the handler said it "bypasses the 6h
+// success / 15m failure cache", and before B424 that was accidentally true (every render
+// built its own Checker, so no cache ever survived a request); B424 made the checker
+// process-wide for a good reason and took the accident away, leaving a remedy that could
+// not remedy anything. The operator pressed it, the page kept showing the previous
+// release, and the report was «опять не видит новое обновление».
+func (c *Checker) CheckFresh(ctx context.Context) (*Result, error) {
+	return c.check(ctx, true)
+}
+
+func (c *Checker) check(ctx context.Context, force bool) (*Result, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.HTTPClient == nil {
 		c.HTTPClient = http.DefaultClient
 	}
@@ -136,16 +179,18 @@ func (c *Checker) Check(ctx context.Context) (*Result, error) {
 		c.Channel = "stable"
 	}
 	now := time.Now()
-	// Return cached success if fresh
-	if c.lastResult != nil && now.Sub(c.lastResultAt) < checkSuccessCache && c.lastResult.Error == "" {
-		return c.lastResult, nil
-	}
-	// Back off after a failure (don't hammer GitHub)
-	if !c.lastErrorAt.IsZero() && now.Sub(c.lastErrorAt) < checkFailureCache && c.lastResult == nil {
-		return &Result{
-			CheckedAt: now,
-			Error:     fmt.Sprintf("backing off until %s (last check failed)", c.lastErrorAt.Add(checkFailureCache).Format(time.RFC3339)),
-		}, nil
+	if !force {
+		// Return cached success if fresh
+		if c.lastResult != nil && now.Sub(c.lastResultAt) < checkSuccessCache && c.lastResult.Error == "" {
+			return c.lastResult, nil
+		}
+		// Back off after a failure (don't hammer GitHub)
+		if !c.lastErrorAt.IsZero() && now.Sub(c.lastErrorAt) < checkFailureCache && c.lastResult == nil {
+			return &Result{
+				CheckedAt: now,
+				Error:     fmt.Sprintf("backing off until %s (last check failed)", c.lastErrorAt.Add(checkFailureCache).Format(time.RFC3339)),
+			}, nil
+		}
 	}
 
 	result, err := c.fetch(ctx)
