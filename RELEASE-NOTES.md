@@ -1,5 +1,50 @@
 # Skygate release notes
 
+## v1.5.176 — pre-set the clock at first deployment (B429.1)
+
+**Date:** 2026-10-27 · **Base:** `v1.5.175` → this tag · **Compatibility:** none.
+
+### Your question
+
+> «при развертывании в первый раз как учитывается time zone? Может добавить в env
+> полем чтобы можно было предустановить?»
+
+Fair point: v1.5.175 shipped the `SKYGATE_TIMEZONE` env knob, but nothing told a
+**first** deployment about it — and a container reports **UTC**, so `auto` on a fresh
+install means UTC. That is exactly the three-hour surprise the previous release removed
+for existing installs.
+
+### Added
+
+* **`.env.example`** documents `SKYGATE_TIMEZONE` next to `SKYGATE_PORT`, with the
+  container/UTC warning and the note that the saved admin setting wins. The compose file
+  passes `.env` through `env_file`, so this line is the pre-set for a docker install.
+* **Native installers** write `SKYGATE_TIMEZONE=${SKYGATE_TIMEZONE:-}` into
+  `/etc/skygate/skygate.env`, so
+  `SKYGATE_TIMEZONE=Europe/Moscow sudo ./install.sh` pre-sets a first boot (re-installing
+  still preserves the operator's existing env file).
+* **`docs/INSTALL.md` §10 step 6** (and `docs/ru/INSTALL.md`) teach both routes — the
+  env line before the first start, and `/admin/settings` afterwards — and state that the
+  saved setting wins, so a re-deploy never moves the clock back.
+* **`/admin/settings` → «Взять пояс этого устройства»**: the browser already knows the
+  operator's IANA zone (`Intl.DateTimeFormat().resolvedOptions().timeZone`); one click
+  fills the field (nothing is saved until Save). A UTC container cannot know this, the
+  browser can.
+
+### The rule, in one table
+
+| where | priority |
+| --- | --- |
+| `/admin/settings` → «Часовой пояс и время» (stored in the DB) | **wins** |
+| `SKYGATE_TIMEZONE` in `.env` / `skygate.env` / container env | second |
+| auto-detection: `TZ` → `/etc/localtime` → `/etc/timezone` | default |
+
+An unknown name is still refused **with the value named** and the zone actually in force
+shown next to it, and every boot logs which zone was chosen and from where.
+
+Guards: four new contracts in `scripts/check_b429_timezone.sh` (section G — the env
+example, the installer template, both install guides, the browser button); 35 total.
+
 ## v1.5.175 — one clock for the whole panel: you choose the zone, everything follows (B429)
 
 **Date:** 2026-10-27 · **Base:** `v1.5.174` → this tag · **Compatibility:** none; the
