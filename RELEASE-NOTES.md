@@ -1,5 +1,48 @@
 # Skygate release notes
 
+## v1.5.177 — a failing relay no longer moves your prefixes in silence (B430)
+
+**Date:** 2026-10-27 · **Base:** `v1.5.176` → this tag · **Compatibility:** none.
+
+### The gap
+
+When an exit node stops advertising, skygate does the right thing: every prefix that
+relay owned is reassigned to a healthy one and the per-CIDR `via=` pins are rewritten,
+so devices keep reaching those destinations **through another relay**. What you saw was
+the opposite symptom — destinations that suddenly stopped working — with **no alert, no
+audit row**, and `/admin/exit-nodes` showing the new owner as if it had always been
+there. The only trace was a log line nobody reads.
+
+### Fixed
+
+* The reconcile pass now produces **one** short notification through the same alert path
+  as every other operator signal: what moved, from which relay, to which relay, and how
+  many prefixes are affected.
+* The decision is a pure function, so the message can be tested without a database:
+  **only a move off an unhealthy relay is news.** A rebalance between two healthy relays
+  is bookkeeping and stays quiet; a **missing** health measurement (headscale
+  unreachable) is not an outage and never pages; a first assignment of a prefix (a
+  rebuilt table, a restore) is not an outage either.
+* The message is bounded (8 lines) and says how many prefixes it dropped — a dead relay
+  typically owns dozens, and an unbounded message is a flood, not a signal.
+* Deduplicated on the **route** (`from>to`) with a 30-minute window, so a relay flapping
+  within one maintenance window is one incident, while a second genuine outage an hour
+  later is news again.
+* Delivery is best-effort: the reconcile pass — which has already made the table and the
+  ACL correct by then — can never fail because a message could not be sent.
+
+### Also corrected
+
+The roadmap still listed «an admin page for per-prefix re-assignment» as open (B275.1).
+It has existed since B277/B360 — `POST /admin/exit-nodes/prefix-owner` (pin one prefix or
+hand it back to the engine), `-bulk` and `-multi` (a whole group at once), `-force` (a
+global override), each re-applying the ACL immediately. Only the failover signal was
+missing, and it is what this release adds. Per-relay load weights remain a future block.
+
+Guards: 15 contracts in `scripts/check_b430_prefix_failover.sh`, plus behavioural tests in
+`internal/prefixowner/failover_b430_test.go` and
+`internal/feature/exit_rules/prefix_failover_b430_test.go`.
+
 ## v1.5.176 — pre-set the clock at first deployment (B429.1)
 
 **Date:** 2026-10-27 · **Base:** `v1.5.175` → this tag · **Compatibility:** none.

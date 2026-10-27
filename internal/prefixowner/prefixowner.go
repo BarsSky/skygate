@@ -512,6 +512,59 @@ func OwnerByPrefix(d *sql.DB) map[string]string {
 	return out
 }
 
+// PrefixMove is one prefix whose owner changed in a reconcile pass.
+type PrefixMove struct {
+	Prefix string
+	From   string
+	To     string
+	// Forced is true when the move happened because the PREVIOUS owner is not in
+	// the healthy set — i.e. traffic had to leave a relay that is down. That is the
+	// case worth waking the operator for; an engine rebalance of two healthy relays
+	// is bookkeeping, not an incident.
+	Forced bool
+}
+
+// DescribeFailover answers "which prefixes had to leave an UNHEALTHY relay in this
+// pass?" — the operator-facing half of prefix ownership (B430).
+//
+// WHY THIS EXISTS (measured on the reference install): when a relay drops, the
+// engine moves every prefix it owned and the per-CIDR `via=` pins with it. The
+// move is correct and completely silent: the devices simply stop reaching those
+// destinations, and the only trace is a log line nobody watches. This function
+// turns that pass into a short, named list (prefix, from, to) so the alert can say
+// what changed and why. It is pure — previous owners, the new assignments and the
+// healthy set arrive as arguments — which is what makes the regression testable
+// without a database.
+func DescribeFailover(prev, next map[string]string, healthy []string) []PrefixMove {
+	if len(prev) == 0 || len(next) == 0 {
+		return nil
+	}
+	healthySet := make(map[string]bool, len(healthy))
+	for _, h := range healthy {
+		if h != "" {
+			healthySet[h] = true
+		}
+	}
+	// An EMPTY healthy set means "headscale could not tell us", not "everything is
+	// down": the engine then falls back to the relays the rules named, so a move in
+	// that pass is not evidence of a failure and must not page anyone.
+	if len(healthySet) == 0 {
+		return nil
+	}
+	var out []PrefixMove
+	for prefix, to := range next {
+		from, had := prev[prefix]
+		if !had || from == "" || from == to {
+			continue
+		}
+		if healthySet[from] {
+			continue // both relays are alive: an ordinary, healthy rebalance
+		}
+		out = append(out, PrefixMove{Prefix: prefix, From: from, To: to, Forced: true})
+	}
+	return out
+}
+
 // ViaForPrefix returns the `via` tag for a CIDR rule target when the
 // assignment table knows the owner. B275: the per-CIDR ACL pin must name
 // the relay that CAN serve the prefix, not the relay the rule happens to

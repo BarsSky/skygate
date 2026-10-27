@@ -193,9 +193,19 @@ func (s *Service) reconcilePrefixOwnership() (int, int, error) {
 	// B312: and when a prefix's owner is unreachable, hand it to the CLOSEST healthy
 	// relay (same city → same country → shorter distance) instead of whichever relay
 	// the engine visits first — the operator's «приоритет по сходному расположению».
-	ins, chg, err := prefixowner.ReconcileWithPreference(s.dbc(), healthyExitRelaysForAssignment(s.dbc()), s.nearestRelayPreference())
+	//
+	// B430: keep the table as it was BEFORE the pass, so a move caused by a dead relay
+	// can be turned into one operator notification (see prefix_failover_b430.go)
+	// instead of a silent rewrite that devices discover by timing out.
+	before := prefixowner.OwnerByPrefix(s.dbc())
+	healthy := healthyExitRelaysForAssignment(s.dbc())
+	ins, chg, err := prefixowner.ReconcileWithPreference(s.dbc(), healthy, s.nearestRelayPreference())
 	if err != nil {
 		return ins, chg, err
+	}
+	if moves := prefixowner.DescribeFailover(before, prefixowner.OwnerByPrefix(s.dbc()), healthy); len(moves) > 0 {
+		log.Printf("prefix-failover: %d prefix(es) moved off an unhealthy relay in this pass", len(moves))
+		s.notifyPrefixFailover(moves)
 	}
 	// B352 (2026-10-05): an INSERT is a decision too. This used to re-apply the ACL
 	// only when a prefix CHANGED owner, so a first-time assignment (the table was
