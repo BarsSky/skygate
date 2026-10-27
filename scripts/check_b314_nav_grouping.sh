@@ -139,8 +139,11 @@ else
 fi
 
 # --- G: «Сервисы» + cross-links ----------------------------------------------------
-if grep -q '"integrations.title":                      "Сервисы"' "$ADMINI18N" \
-   && grep -q '"integrations.title":                      "Services"' "$ADMINI18N"; then
+# B429.1: the alignment after the key is gofmt's business, not the contract's — adding a
+# longer key elsewhere in the same map realigns EVERY line in it, and an exact-space match
+# then fails on a translation that is perfectly present. Match the key and the value.
+if grep -qE '"integrations\.title": +"Сервисы"' "$ADMINI18N" \
+   && grep -qE '"integrations\.title": +"Services"' "$ADMINI18N"; then
   ok "G1: the Integrations page is titled «Сервисы» / Services (RU+EN)"
 else
   bad "G1: the Integrations page was not renamed"
