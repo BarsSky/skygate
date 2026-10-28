@@ -93,13 +93,35 @@ set -uo pipefail
 
 PASS=0
 FAIL=0
-[ -d /home/skyadmin/skygate ] && REPO=/home/skyadmin/skygate || REPO="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+# B437 (2026-10-28) — the checkout is OVERRIDABLE. The old line hardcoded the
+# reference host's /home/skyadmin/skygate, so on any other host (or from a scratch
+# clone) these contracts read ANOTHER tree than the one under test — measured on
+# 2026-10-28, when B188.3 J ran the operator's v1.5.184 scripts while the tree under
+# test was a fresh clone, and reported a failure of code it never looked at.
+if [ -n "${SKYGATE_REPO:-}" ]; then REPO="$SKYGATE_REPO"
+elif [ -d /home/skyadmin/skygate ]; then REPO=/home/skyadmin/skygate
+else REPO="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+fi
 # The admin ACL SURFACE, not one file: internal/acl/acl.go was split into
 # seven on 2026-10-01 (refactor Phase D) and a contract that greps one path turns
 # a pure code move into a false FAIL — and is the weaker contract even while it
 # is green. See scripts/lib/gosurface.sh and B339.
 . scripts/lib/gosurface.sh
 gosurface ACL internal/acl/acl.go internal/acl/acl_apply.go internal/acl/acl_generate.go internal/acl/acl_generate_via.go internal/acl/acl_ownership.go internal/acl/acl_set.go internal/acl/acl_tags.go
+
+# B437 (2026-10-28) — the pin expectations are DERIVED from the generator's own rule
+# (scripts/lib/acl_pin_expectation.sh) instead of being frozen numbers. S and V used
+# to say "exactly one pinned catch-all" for a named device; W compared the live total
+# with a count of `via_enabled` rows. All three froze a rule that changed twice
+# underneath them — B398 (a DERIVED preference must not become a filter) and B356 (a
+# preferred relay must be usable) — so on a healthy tailnet they demanded a grant the
+# generator is REQUIRED not to emit. Measured live 2026-10-28: `basic` has
+# `via_enabled=1` with `set_by_user_id=0` (skygate's own reconciler wrote it), so 0
+# pinned catch-alls is the CORRECT answer and the old expectation of 1 was red for a
+# working system. The property B188.2 exists for is unchanged: a device whose
+# preference is a real operator pin (and whose relay can serve) carries exactly one
+# pinned catch-all, and nobody else does.
+. "$(dirname "$0")/lib/acl_pin_expectation.sh"
 
 check_eq() {
   local label="$1" expected="$2" actual="$3"
@@ -241,15 +263,21 @@ for g in pol.get("grants", []):
         n += 1
 print(n)
 ' 2>/dev/null)
-    # B265 (2026-09-19): basic (michail) HAS a per-device preference with
-    # via_enabled=1, so exactly ONE pinned catch-all is now expected — and it
-    # must be pinned to basic's own preference, never to somebody else's exit
-    # node. Pre-B265 this asserted 0 (B188.2 removed the pin because it was
-    # UNCONDITIONAL, which defeated selective routing); post-B265 the pin is
-    # conditional on the device's pref, and headscale honours `via` for
-    # exit-node selection ONLY when dst contains autogroup:internet — so
-    # without this grant a tagged device had no enforced preferred exit node.
-    check_eq "S-per-device-autogroup-pinned-once" "1" "${S:-<err>}"
+    # B265 (2026-09-19): basic (michail) HAS a per-device preference, so exactly ONE
+    # pinned catch-all is expected WHEN that preference is an operator pin whose relay
+    # can serve — and none otherwise. Pre-B265 this asserted 0 (B188.2 removed the pin
+    # because it was UNCONDITIONAL, which defeated selective routing); post-B265 the pin
+    # is conditional on the device's pref, and headscale honours `via` for exit-node
+    # selection ONLY when dst contains autogroup:internet — so without this grant a
+    # tagged device had no enforced preferred exit node.
+    #
+    # B437 (2026-10-28) — the number is DERIVED, not frozen: see the helper above.
+    if ! skygate_live_db_probe; then
+      echo "  SKIP [S-per-device-autogroup-pin-matches-the-generator-rule] $(skygate_live_db_reason)"
+    else
+      S_EXPECT="$(skygate_pin_expectation_for_tag "tag:dev-michail-basic")"
+      check_eq "S-per-device-autogroup-pin-matches-the-generator-rule" "$S_EXPECT" "${S:-<err>}"
+    fi
 
     # T. Live: basic's per-CIDR (h-rule-*) grants must be pinned to the relay that
     #    OWNS that prefix in the assignment table.
@@ -410,10 +438,19 @@ for g in pol.get("grants", []):
         n += 1
 print(n)
 ' 2>/dev/null)
-    # B265: a71 has a per-device pref (emilia, via_enabled=1) but NO
-    # matching per-CIDR rules, so the ONLY via-bearing grant is the
-    # conditional per-device autogroup:internet pin. Exactly one.
-    check_eq "V-a71-single-pinned-catchall" "1" "${V:-<err>}"
+    # V. Live: a71's pinned catch-all count must match the generator's rule too.
+    #
+    # B265 wrote this as "exactly one": a71 had a per-device pref and no matching
+    # per-CIDR rules, so the conditional catch-all was its only via-bearing grant.
+    # B437 derives it instead — a71 has NO `device_exit_node_prefs` row at all on the
+    # reference deployment today, so the correct count is 0, and the moment an operator
+    # pins a71 the same helper answers 1 without a code change.
+    if ! skygate_live_db_probe; then
+      echo "  SKIP [V-a71-pin-matches-the-generator-rule] $(skygate_live_db_reason)"
+    else
+      V_EXPECT="$(skygate_pin_expectation_for_tag "tag:dev-skyadmin-a71")"
+      check_eq "V-a71-pin-matches-the-generator-rule" "$V_EXPECT" "${V:-<err>}"
+    fi
 
     # W. Live: total per-device autogroup:internet grants with via
     # across ALL devices == number of devices with via_enabled=1.
@@ -437,41 +474,29 @@ for g in pol.get("grants", []):
 print(n)
 ' 2>/dev/null)
     if skygate_live_db_probe; then
-      # RENEGOTIATED 2026-10-07 (B356). The old expectation counted EVERY
-      # `device_exit_node_prefs` row with `via_enabled=1`, because the pin was
-      # conditional on the preference ALONE. B356 makes it conditional on the relay
-      # being USABLE too (the B273 predicate: `online` | `untagged`): with
-      # `via` acting as a permission FILTER, pinning a device to an offline relay
-      # filters its egress into a black hole, so the generator now emits the
-      # UNPINNED grant for that device instead — measured live on 2026-10-07, when
-      # `karolina` went down and two devices stayed pinned to it.
+      # RENEGOTIATED 2026-10-07 (B356) and again 2026-10-28 (B437).
       #
-      # The property this contract was written for is UNCHANGED: exactly the devices
-      # whose preferred relay can serve them carry a pin, and nobody else does. What
-      # changed is only the definition of "can serve them" — it now includes the
-      # relay's health, which is what the B265 comment above always assumed.
+      # B356 made the pin conditional on the relay being USABLE too (the B273
+      # predicate: `online` | `untagged`), because with `via` acting as a permission
+      # FILTER, pinning a device to an offline relay filters its egress into a black
+      # hole — measured live 2026-10-07, when `karolina` went down and two devices
+      # stayed pinned to it.
       #
-      # A relay with NO `exit_node_health` row counts as pinnable: "never measured"
-      # is not "broken", and the generator keeps the pin (absence of evidence must not
-      # rewrite a policy). A device whose tag resolves to no `node_owner_map` row
-      # cannot be pinned at all — the generator needs the tag headscale carries — so
-      # it is excluded here, exactly as the generator excludes it.
-      W_EXPECT=$(skygate_live_db_query \
-        "SELECT COUNT(*) FROM device_exit_node_prefs p
-           JOIN node_owner_map dn ON LOWER(dn.hostname) = LOWER(p.device_hostname)
-           LEFT JOIN node_owner_map rn ON rn.tag = p.exit_node_tag
-          WHERE p.via_enabled = 1 AND COALESCE(p.exit_node_tag,'') <> ''
-            AND NOT EXISTS (
-              SELECT 1 FROM exit_node_health h
-               WHERE LOWER(h.hostname) = LOWER(rn.hostname)
-                 AND h.state NOT IN ('online','untagged'))")
-      if [ -n "$W_EXPECT" ]; then
-        check_eq "W-tagged-device-pins-equal-enabled-prefs" "$W_EXPECT" "${W:-<err>}"
-      else
-        echo "  SKIP [W-tagged-device-pins-equal-enabled-prefs] the query returned nothing although the probe succeeded"
-      fi
+      # B437 moved the whole definition into scripts/lib/acl_pin_expectation.sh, which
+      # states the generator's rule ONCE. The version of this query that lived here was
+      # nearly the same and yet still wrong: it was missing B398's `set_by_user_id > 0`
+      # (a DERIVED preference must not become a filter), so on a healthy tailnet it kept
+      # demanding a pin the generator is required NOT to emit — measured live
+      # 2026-10-28: `basic` has via_enabled=1 with set_by_user_id=0, i.e. exactly the
+      # case B398 exists for, and this contract called the correct policy a failure.
+      #
+      # A relay with NO `exit_node_health` row counts as pinnable: "never measured" is
+      # not "broken". A device whose tag resolves to no `node_owner_map` row cannot be
+      # pinned at all — the generator needs the tag headscale carries.
+      W_EXPECT="$(skygate_pinned_catchall_total)"
+      check_eq "W-tagged-device-pins-equal-the-generator-rule" "$W_EXPECT" "${W:-<err>}"
     else
-      echo "  SKIP [W-tagged-device-pins-equal-enabled-prefs] $(skygate_live_db_reason)"
+      echo "  SKIP [W-tagged-device-pins-equal-the-generator-rule] $(skygate_live_db_reason)"
     fi
 
     # X. Live: every `via` on basic's h-rule grants must name a relay the

@@ -439,6 +439,36 @@ func BackfillInfra(dbConn db.DBSource, nodes []headscale.NodeView) {
 	if matched > 0 {
 		log.Printf("infra-backfill: %d node(s) matched isInfraNode, %d re-attributed from user-portal to infra", matched, reattributed)
 	}
+	// B437 (2026-10-28) — RE-ASSERT THE INFRA USER ID ON THE ROWS THIS PASS OWNS.
+	//
+	// Measured live: `node_owner_map` had `svyatoslava | tag:dev-infra-svyatoslava |
+	// infra | headscale_user_id=2147455555` while every sibling infra row carried the
+	// infra user's real id (85). 2147455555 is not an overflow and not random: it is the
+	// id headscale reports as the user of EVERY node (`tagged-devices`, its pseudo-user
+	// for tag-owned nodes — verified with `headscale nodes list -o json`, where all 15
+	// nodes answer that id). So some earlier attribution path stored the node's REPORTED
+	// user instead of the resolved `infra` user, and the UPDATE above could never repair
+	// it: that statement only touches rows still in a user-portal bucket
+	// (`username != 'infra'`), and this row was already attributed to infra.
+	//
+	// Why it matters: the ACL generator resolves a rule's owner through
+	// `node_owner_map.headscale_user_id`; an id that matches no headscale user makes the
+	// row unresolvable, so the node's per-device rules silently do not apply — the exact
+	// "silent" class B243 exists to report (it did, every gate run).
+	//
+	// The repair is deliberately narrow: a row whose username is ALREADY 'infra' can only
+	// ever mean the infra user, so re-asserting that id is correcting a derived field,
+	// not moving an operator's decision. Any other owner is left untouched.
+	if res, err := dbConn.Current().Exec(
+		`UPDATE node_owner_map
+		    SET headscale_user_id = $1
+		  WHERE username = 'infra'
+		    AND headscale_user_id <> $1`, infraHSID.Int64,
+	); err != nil {
+		log.Printf("infra-backfill: repair infra headscale_user_id: %v", err)
+	} else if rows, _ := res.RowsAffected(); rows > 0 {
+		log.Printf("infra-backfill: repaired headscale_user_id=%d on %d row(s) already attributed to infra (B437)", infraHSID.Int64, rows)
+	}
 }
 
 // ErrNoStrategyMatch is reported when a headscale node could not be

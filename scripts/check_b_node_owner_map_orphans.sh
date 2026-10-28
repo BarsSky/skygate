@@ -89,11 +89,35 @@ echo "$ORPHAN_ROWS" | head -20 | while IFS='|' read -r node_id hs_id username ta
     echo "    row node_id=$node_id hs_id=$hs_id username=$username tag=$tag"
 done
 echo
-echo "  These rows reference headscale users that don't exist (or have"
-echo "  impossible IDs like 2147455555 — see T240 / overflow bug)."
-echo "  The ACL generator silently skips them, so the rules attached to"
-echo "  these nodes don't apply."
+echo "  These rows reference headscale users that don't exist (deleted owner, or"
+echo "  a user id that was never a headscale user at all). The ACL generator"
+echo "  resolves a rule's owner through node_owner_map.headscale_user_id, so the"
+echo "  rules attached to these nodes silently do not apply."
 echo
+# B437 (2026-10-28) — THE SENTINEL IS NOT AN OVERFLOW, AND THE FIX IS KNOWN.
+#
+# The old hint called 2147455555 "an impossible / overflowed id (T240)". It is
+# neither: it is the id headscale reports as the user of EVERY tag-owned node (its
+# `tagged-devices` pseudo-user) — verified with `headscale nodes list -o json`, where
+# all 15 nodes of the reference tailnet answer exactly that id. Some attribution path
+# stored the node's REPORTED user instead of the resolved `infra` user, which is why
+# the row sits at an id no portal account can match.
+#
+# B437 makes BackfillInfra re-assert the infra user's id on every row it already owns
+# (`username = 'infra'`), so after an update to v1.5.188 the next reconcile tick
+# repairs this by itself. The hint below says so instead of sending the operator to a
+# hand-written DELETE that would throw away the tag attribution with the id.
+case "$ORPHAN_ROWS" in
+  *2147455555*) HAS_SENTINEL=1 ;;
+  *)            HAS_SENTINEL=0 ;;
+esac
+if [ "$HAS_SENTINEL" = 1 ]; then
+    echo "  NOTE: 2147455555 is headscale's tagged-devices id — the value it reports for"
+    echo "  every tag-owned node. A node_owner_map row must NOT store it: it must store the"
+    echo "  id of the portal/headscale user that owns the node. Since v1.5.188 the infra"
+    echo "  backfill rewrites exactly that on its next tick (B437), with no operator action."
+    echo
+fi
 echo "  Remediation options:"
 if [ -n "$ORPHAN_NODE_ID" ]; then
     echo "    (a) DELETE the row if the node is truly dead:"

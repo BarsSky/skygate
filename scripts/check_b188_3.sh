@@ -36,7 +36,15 @@ set -uo pipefail
 
 PASS=0
 FAIL=0
-[ -d /home/skyadmin/skygate ] && REPO=/home/skyadmin/skygate || REPO="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+# B437 (2026-10-28) — the checkout is OVERRIDABLE. The old line hardcoded the
+# reference host's /home/skyadmin/skygate, so on any other host (or from a scratch
+# clone) these contracts read ANOTHER tree than the one under test — measured on
+# 2026-10-28, when B188.3 J ran the operator's v1.5.184 scripts while the tree under
+# test was a fresh clone, and reported a failure of code it never looked at.
+if [ -n "${SKYGATE_REPO:-}" ]; then REPO="$SKYGATE_REPO"
+elif [ -d /home/skyadmin/skygate ]; then REPO=/home/skyadmin/skygate
+else REPO="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+fi
 # The admin ACL SURFACE, not one file: internal/acl/acl.go was split into
 # seven on 2026-10-01 (refactor Phase D) and a contract that greps one path turns
 # a pure code move into a false FAIL — and is the weaker contract even while it

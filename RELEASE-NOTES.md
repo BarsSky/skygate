@@ -1,5 +1,67 @@
 # Skygate release notes
 
+## v1.5.188 — four red rows a healthy installation kept producing (B437)
+
+**Date:** 2026-10-28 · **Base:** `v1.5.187` → this tag · **Compatibility:** none.
+
+A gate that cries wolf teaches the operator to ignore the colour. Four live-state contracts had
+been red on the reference installation for days, and every one of them described **one tailnet on
+one afternoon** instead of the architecture. All four were re-measured on the VM and re-derived.
+
+### 1. B118 — the sanctioned relays were frozen at four
+
+The check carried the four relay names of this deployment plus "exactly 4" counters. Two more real
+relays (`aisha`, `svyatoslava`) had since joined, all six are genuine infra nodes owned by
+`infra@`, so four rows fired on a healthy system.
+
+Now the sanctioned set is **derived from headscale's live node list**: a `tag:dev-infra-<host>` is
+sanctioned iff its node exists. The counters became an **agreement between the two writers** — the
+applied policy and `node_owner_map` must list the same relays — and a `-legacy`/`-mirror`/`-retired`
+marker is always a red row. Measured: **22 pass / 0 fail**, six relays.
+
+### 2. B188.2 S/V/W — "exactly one pin" for two named devices
+
+The generator's rule changed twice underneath these numbers: B356 requires the preferred relay to be
+**usable**, B398 forbids turning a **derived** preference into a permission filter. Live, `basic`
+has `via_enabled=1` with `set_by_user_id=0` — exactly the case B398 exists for — so **zero** pins is
+the correct policy and the contract was calling a working system broken.
+
+All three now ask one shared helper, `scripts/lib/acl_pin_expectation.sh`, which states the
+generator's rule **once**, in SQL: opt-in, the tag from `node_owner_map` (B284), `set_by_user_id`
+(B398), relay health (B356). A contract that restates the rule in its own words drifts from it.
+Measured: **20 pass / 0 fail**.
+
+### 3. B188.3 J — red as a consequence, and reading the wrong tree
+
+J runs B188.2, so it was red only because S/V/W were. It also hardcoded `/home/skyadmin/skygate`,
+which meant it could inspect a **different checkout** than the one under test (measured: it ran the
+operator's v1.5.184 scripts while the tree under test was a fresh clone). Both scripts now honour
+`$SKYGATE_REPO`. Measured: **12 pass / 0 fail**.
+
+### 4. B243 — the "overflowed id" was headscale's own sentinel, and nothing repaired it
+
+One `node_owner_map` row (`node_id=158`, `svyatoslava`) carried `headscale_user_id=2147455555`, filed
+for years as "an impossible / overflowed id (T240)". It is neither: 2147455555 is the id headscale
+reports as the user of **every** tag-owned node — its `tagged-devices` pseudo-user, verified with
+`headscale nodes list -o json` (all 15 nodes answer it). The row is still wrong (it must carry the
+`infra` user's id), and nothing repaired it: `BackfillInfra`'s UPDATE only touched rows still sitting
+in a user-portal bucket, and this row was already attributed to `infra`.
+
+Fixed **in the product** (`internal/nodeownership/auto.go`): the pass now re-asserts the infra
+user's id on the rows it owns — a single column, so an operator's ownership decision never moves —
+with a test proven red before the fix. The live row clears on the first reconcile tick after the
+update; the hint in the check now says so instead of sending the operator to a hand-written DELETE
+that would take the tag attribution with it.
+
+### Contracts
+
+`scripts/check_b437_live_contracts.sh` — **20** checks: the shared pin helper parses, is tracked and
+encodes all four generator conditions; the frozen numbers are gone from S/V/W; B118 derives its
+sanctioned set and keeps the drift + marker rules; the infra-id repair is present, one column wide
+and pinned by a test; a **planted pre-B437 shape** does not satisfy the repair rule; S/V/W/J still
+exist as their own assertions; both scripts honour `$SKYGATE_REPO`; and the block is registered,
+indexed and free of the TD-15 backtick.
+
 ## v1.5.187 — the layout that no test could see (B436)
 
 **Date:** 2026-10-28 · **Base:** `v1.5.186` → this tag · **Compatibility:** none.

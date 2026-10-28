@@ -138,3 +138,49 @@ func assertNodeOwnerRows(t *testing.T, d *sql.DB, want int) {
 		t.Errorf("node_owner_map rows = %d, want %d (a database with no LINKED infra user must write nothing)", got, want)
 	}
 }
+
+// TestB437_BackfillInfraRepairsAStrayInfraUserID — the live defect this block
+// closes. Measured on the reference deployment: one row was ALREADY attributed to
+// 'infra' but carried `headscale_user_id = 2147455555`, the id headscale reports
+// as the user of every tag-owned node (its `tagged-devices` pseudo-user — verified
+// with `headscale nodes list -o json`: all 15 nodes answer it). The old pass could
+// never repair it: its UPDATE restricted itself to rows still sitting in a
+// user-portal bucket (`username != 'infra'`), so a stray id on an infra row
+// survived every tick, and the ACL generator — which resolves a rule's owner
+// through this column — silently dropped that node's rules.
+//
+// The repair must be NARROW: only rows already owned by 'infra', never a row an
+// operator pointed at somebody else.
+func TestB437_BackfillInfraRepairsAStrayInfraUserID(t *testing.T) {
+	src := newAutoTestDB(t)
+	if _, err := src.DB.Exec(
+		`UPDATE portal_users SET headscale_user_id = 9 WHERE username = 'infra'`); err != nil {
+		t.Fatalf("link the infra user: %v", err)
+	}
+	seedAutoTestUser(t, src.DB, "skyadmin", 1)
+	// Two rows already attributed to infra: one with the sentinel headscale writes
+	// for a tag-owned node, one correct. Plus a row owned by somebody else, which
+	// the repair must NOT touch.
+	seedAutoTestOwner(t, src.DB, "158", 2147455555, "infra", "tag:dev-infra-svyatoslava", "svyatoslava")
+	seedAutoTestOwner(t, src.DB, "3", 9, "infra", "tag:dev-infra-emilia", "emilia")
+	seedAutoTestOwner(t, src.DB, "10", 1, "skyadmin", "tag:dev-skyadmin-laptop", "laptop")
+
+	// No nodes are passed: the repair is about the rows this pass already owns, not
+	// about what headscale answers right now.
+	BackfillInfra(src, nil)
+
+	want := map[string]int64{"158": 9, "3": 9, "10": 1}
+	for nodeID, wantID := range want {
+		var got int64
+		if err := src.DB.QueryRow(
+			`SELECT headscale_user_id FROM node_owner_map WHERE node_id = $1`, nodeID).
+			Scan(&got); err != nil {
+			t.Fatalf("node_owner_map has no row for %s: %v", nodeID, err)
+		}
+		if got != wantID {
+			t.Errorf("node %s headscale_user_id = %d, want %d "+
+				"(an infra row must carry the infra user's id; any other owner must be left alone)",
+				nodeID, got, wantID)
+		}
+	}
+}
