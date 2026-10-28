@@ -288,7 +288,20 @@ func TestB375_TickRunsAtTheExactConfiguredMinute(t *testing.T) {
 func TestB375_TickCatchesUpFiveMinutesLate(t *testing.T) {
 	b375ForceDocker(t)
 	d := b375DB(t)
-	slot := time.Now().Add(-5 * time.Minute)
+	// B433: same clock as the scheduler (localtime), not time.Now — and the slot must sit
+	// on TODAY's calendar day, because the dedup is per slot per DAY. A run that starts
+	// between 00:00 and 00:05 puts the "5 minutes late" slot on YESTERDAY, which is a
+	// different (real, but separate) question — a catch-up window straddling midnight.
+	// Measured on CI 2026-10-28T00:00:22Z: this test failed there for exactly that reason
+	// while the same tree passed at 23:39. A verdict decided by the wall clock is a host
+	// artefact, so the near-midnight run SKIPS with the reason; the window arithmetic
+	// itself stays pinned by TestB375_ScheduledRunDueWindow.
+	now := localtime.Now()
+	slot := now.Add(-5 * time.Minute)
+	if slot.Year() != now.Year() || slot.Month() != now.Month() || slot.Day() != now.Day() {
+		t.Skipf("the 5-minute-late slot %s is on the previous calendar day (now %s): the catch-up window crossing midnight is a separate question, and this verdict would be decided by the wall clock",
+			slot.Format(time.RFC3339), now.Format(time.RFC3339))
+	}
 	b375SetSchedule(t, d, true, b375NowMinute(slot))
 
 	deps := b375Deps(t, d, "v1.0.0")

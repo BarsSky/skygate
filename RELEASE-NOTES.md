@@ -65,6 +65,14 @@ three hours east of UTC the two disagree between 21:00 and 24:00 UTC, so the tes
 time of day and passed in CI (UTC). It now converts through `localtime.In` — the same clock
 the scheduler reads — and the failure message names the configured zone.
 
+`TestB375_TickCatchesUpFiveMinutesLate` had the second half of the same problem, found when
+CI itself ran at 00:00:22 UTC: "five minutes late" put the slot on the **previous** calendar
+day, where the per-day dedup legitimately says "not today". Near midnight it now SKIPS with
+the reason (a verdict decided by the wall clock is a host artefact, not a product fact) —
+and that exposes a real, separate question that is **now recorded rather than hidden**: a
+catch-up window that straddles midnight (slot 23:58, tick 00:03) is not covered by a test,
+because it needs a deliberate decision about which calendar day owns the run.
+
 ## v1.5.182 — the alert channel is fully your language now (B391.3)
 
 **Date:** 2026-10-27 · **Base:** `v1.5.181` → this tag · **Compatibility:** none.
