@@ -49,7 +49,11 @@
       </div>
 
     </div>
-  </div>
+{{/* B436 (2026-10-28) — a STRAY CLOSING DIV sat HERE, closing .card right after the host block.
+     The SSH and ports grids, the warning and the submit row were therefore rendered OUTSIDE
+     the card (bare on the page background), and the real close at the bottom of the form
+     became a stray tag — the operator's «компоновка сбивается» on /admin/derp/relays/init.
+     The .card must stay open until the form ends: nothing closes here. */}}
 
   <h3 style="margin-top:24px"><i class="fa-solid fa-key"></i>{{t "derp_init.section_ssh"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">{{t "derp_init.help_ssh" | safeHTML}}</p>

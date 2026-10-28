@@ -1,5 +1,47 @@
 # Skygate release notes
 
+## v1.5.187 — the layout that no test could see (B436)
+
+**Date:** 2026-10-28 · **Base:** `v1.5.186` → this tag · **Compatibility:** none.
+
+### Why a passing page can still be broken
+
+`html/template` **parses** a template and the render tests assert the HTTP result — but nothing
+checked the markup a template *emits*. A page with one extra closing tag therefore answers `200`,
+passes every test, and lays out wrong: everything after the imbalance is nested inside the wrong
+box. That is the half of «сбивается компоновка элементов и часть из них наплывают друг на друга»
+no existing contract could see.
+
+`scripts/audit_html_balance.py` closes it: it walks all 59 templates (and every `{{define}}` block
+separately) and requires each document's tracked elements to be closed by their own end tags, in
+order. It uses Python's `html.parser`, **not** a regular expression — `/my/telegram` carries
+markup-looking text inside an `onclick` attribute, and a regex scanner counts it as a real element
+and then reports the closing `button` as stray. A checker that cries wolf is worse than none, so
+that exact shape is one of the contracts (it must PASS).
+
+### Three live defects, all on operator pages
+
+| page | what was wrong | what the operator saw |
+|---|---|---|
+| `/admin/telegram` | the container card was opened **twice** with a single closing tag | every card after it nested inside that one; `.card-grid` stopped being a grid |
+| `/admin/derp/relays/init` | a stray closing tag ended `.card` right after the host block | the SSH and ports grids, the warning and the submit button rendered **outside** the card |
+| `/admin/derp/relays` | the per-row edit form was opened in the **first** table cell and closed in the **last** | a form cannot cross a cell boundary, so the Save button belonged to no form at all |
+
+The third one is fixed with the HTML5 `form` attribute: one empty form element per row, and every
+control (all nine of them, plus the Save button) names it through `form="relay-edit-<id>"`. The
+contract asserts that all four row actions — edit / toggle / test / delete — and the named controls
+are still there, so the fix cannot quietly become "delete the fields".
+
+### Contracts
+
+`scripts/check_b436_html_balance.sh` — **20** checks: the audit compiles, is tracked and takes
+`--root`; the tree balances and the scan names at least 55 templates (an empty walk cannot look
+green); the three repaired pages balance on their own; a planted extra closing tag and a planted
+form-across-cells both **FAIL**; markup inside an attribute value must **PASS**; the scratch tree
+stays under `tmp/`; the per-row form holds its nine controls and four actions; the submit row is
+inside the card on `/admin/derp/relays/init`; every fixed page's div count balances independently of
+the audit; and the block is registered, indexed and free of the TD-15 backtick.
+
 ## v1.5.186 — every page at 360 px: measured and pinned (B435.1)
 
 **Date:** 2026-10-28 · **Base:** `v1.5.185` → this tag · **Compatibility:** none.

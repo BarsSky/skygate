@@ -130,33 +130,39 @@
     </thead>
     <tbody>
       {{range .Relays}}
+      {{/* B436 (2026-10-28) — THE ROW'S EDIT FORM USED TO SPAN SIX TABLE CELLS. It was opened
+           inside the first <td> and closed inside the last one, with the fields and the Save
+           button in between: a <form> cannot cross a cell boundary, so a strict parser ends it
+           at the first </td> and the Save button then belongs to NO form (the operator: «кнопка
+           сохранения ничего не делает»). The fix uses the HTML5 `form` attribute: one real
+           (empty) form element per row lives in the first cell and every control names it, so
+           the markup is valid and the row still submits as one form. */}}
       <tr>
         <td style="padding:6px">
-          <form method="POST" action="/admin/derp/relays/edit" style="display:inline">
-            <input type="hidden" name="id" value="{{.ID}}">
-            <input type="text" name="hostname" value="{{.Hostname}}" style="width:140px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
+          <form id="relay-edit-{{.ID}}" method="POST" action="/admin/derp/relays/edit"></form>
+            <input form="relay-edit-{{.ID}}" type="hidden" name="id" value="{{.ID}}">
+            <input form="relay-edit-{{.ID}}" type="text" name="hostname" value="{{.Hostname}}" style="width:140px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
         </td>
         <td style="padding:6px">
-            <input type="text" name="url" value="{{.URL}}" style="width:240px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px;font-family:var(--mono)">
+            <input form="relay-edit-{{.ID}}" type="text" name="url" value="{{.URL}}" style="width:240px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px;font-family:var(--mono)">
         </td>
         <td style="padding:6px">
-            <input type="number" name="region_id" value="{{.RegionID}}" min="0" max="9999" style="width:60px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
-            <input type="text" name="region_code" value="{{.RegionCode}}" placeholder="mow" maxlength="8" style="width:60px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
-            <input type="text" name="region_name" value="{{.RegionName}}" placeholder="Moscow" style="width:120px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
+            <input form="relay-edit-{{.ID}}" type="number" name="region_id" value="{{.RegionID}}" min="0" max="9999" style="width:60px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
+            <input form="relay-edit-{{.ID}}" type="text" name="region_code" value="{{.RegionCode}}" placeholder="mow" maxlength="8" style="width:60px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
+            <input form="relay-edit-{{.ID}}" type="text" name="region_name" value="{{.RegionName}}" placeholder="Moscow" style="width:120px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
         </td>
         <td style="padding:6px">
             {{if .IsBundled}}<span class="tag tag-info" title="{{t "derp.relays_bundled_help"}}"><i class="fa-solid fa-cube"></i> {{t "derp.relays_status_bundled"}}</span>{{end}}
             <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;margin-left:6px">
-              <input type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}>
+              <input form="relay-edit-{{.ID}}" type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}>
               <span style="color:{{if .Enabled}}var(--accent){{else}}var(--text-muted){{end}}">{{if .Enabled}}{{t "derp.relays_status_enabled"}}{{else}}{{t "derp.relays_status_disabled"}}{{end}}</span>
             </label>
         </td>
         <td style="padding:6px">
-            <input type="number" name="sort_order" value="{{.SortOrder}}" min="0" max="9999" style="width:60px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
+            <input form="relay-edit-{{.ID}}" type="number" name="sort_order" value="{{.SortOrder}}" min="0" max="9999" style="width:60px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;font-size:13px">
         </td>
         <td style="padding:6px;white-space:nowrap">
-            <button type="submit" class="btn btn-secondary" style="padding:4px 10px;font-size:12px" title="{{t "derp.relays_action_save_help"}}"><i class="fa-solid fa-floppy-disk"></i></button>
-          </form>
+            <button form="relay-edit-{{.ID}}" type="submit" class="btn btn-secondary" style="padding:4px 10px;font-size:12px" title="{{t "derp.relays_action_save_help"}}"><i class="fa-solid fa-floppy-disk"></i></button>
             <form method="POST" action="/admin/derp/relays/toggle" style="display:inline">
               <input type="hidden" name="id" value="{{.ID}}">
               <button type="submit" class="btn btn-secondary" style="padding:4px 10px;font-size:12px" title="{{t "derp.relays_action_toggle_help"}}"><i class="fa-solid fa-power-off"></i></button>

@@ -277,7 +277,12 @@
     </form>
   </div>
 
-  <div class="card" style="grid-column:1 / -1">
+  {{/* B436 (2026-10-28) — this card's opening tag was written TWICE. Only one closing div
+       existed, so from here to the end of the page every card was nested inside THIS one: the
+       .card-grid lost its grid items (measured: the container / egress / probe cards
+       stacked inside a single cell) and the operator read it as «сбивается компоновка
+       элементов, часть из них наплывают друг на друга». The balance audit
+       (scripts/audit_html_balance.py, contract B436) reports exactly this shape. */}}
   <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-server"></i> {{t "telegram.container_title"}}</h3>
     <p class="sub">{{t "telegram.container_subtitle" | safeHTML}}</p>

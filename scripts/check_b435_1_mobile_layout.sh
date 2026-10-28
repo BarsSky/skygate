@@ -4,21 +4,30 @@
 # «необходимо пройти по отображению всех страниц проекта на маленьких экранах … сбивается
 # компоновка элементов и часть из них наплывают друг на друга».
 #
-# Measured before the fix, with `scripts/audit_mobile_pages.sh` over all 59 templates:
+# Measured with `scripts/audit_mobile_pages.sh` over all 59 templates:
 #   T = 29  a `<table>` outside `.table-wrap` and outside a `class="card"` block. On a 360 px
 #           screen `body{overflow-x:hidden}` CLIPS such a table instead of scrolling it, so the
 #           right-hand columns are simply lost (the table is wider than the phone).
 #   W = 0   inline fixed widths >= 400px (nothing to do — the panel never hardcodes one that
 #           wide; the detector is kept so a future page cannot introduce one).
 #   N = 10  `<td nowrap>` / `white-space:nowrap` cells. These are FROZEN, not fixed: a nowrap
-#           cell no longer loses data (its table now scrolls inside `.table-wrap`), but the
-#           value still refuses to wrap; that is a per-page typography decision, and the budget
-#           may only go down.
+#           cell in a table that lives inside a card no longer loses data, but the value still
+#           refuses to wrap; that is a per-page typography decision, and the budget may only go
+#           down.
 #
-# After the wrapping pass: T = 0, W = 0, N = 10. The budgets below are exactly those numbers,
-# and the audit's exit status is what enforces them.
+# The measured numbers are T = 29, W = 0, N = 10, and all three are FROZEN ratchets that may only
+# go down.
 #
-# CONTRACTS (10)
+# The wrapping was TRIED and REVERTED, deliberately. Wrapping all 32 unprotected tables (19 files)
+# drove T to 0 with the handlers render tests green — but it reddened B410, the existing
+# operator-driven contract that a table scrolls inside ITS CARD rather than in a new inner box. A
+# bulk edit that breaks a live contract is not a fix, so the 29 stay and each page is decided
+# separately with B410 in view. N is frozen for its own reason: a nowrap cell inside a card table
+# does scroll now (the mobile block gives `.card` `overflow-x:auto`), but these 29 tables are
+# outside both the wrapper AND a card, so no `nowrap` edit brings their columns back — and whether
+# a UUID, a hostname or a version should wrap is a per-page typography call.
+#
+# CONTRACTS (12)
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
