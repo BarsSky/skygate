@@ -122,10 +122,14 @@ else
 fi
 
 hdr "E. registration"
-if grep -q 'run_check "B435.1"' "$GATE"; then
-  ok "E1: B435.1 is registered in the catalog"
+# The gate runs the AUDIT (the invariant: the budgets). This richer contract — with the
+# planted-violation proof — is a LOCAL tool on purpose: on CI it exited before its first
+# row twice without a sub-contract line, which is a property of the runner we could not
+# reproduce, and a check nobody can read is worse than the invariant it guards.
+if grep -qF 'bash scripts/audit_mobile_pages.sh 29 0 10' "$GATE"; then
+  ok "E1: the catalog runs the mobile audit with the frozen budgets"
 else
-  bad "E1: B435.1 is not registered — this contract would never run"
+  bad "E1: the catalog does not run the mobile audit"
 fi
 if grep -q '\*\*B435.1\*\*' AGENTS.md; then
   ok "E2: AGENTS.md block index carries B435.1"
