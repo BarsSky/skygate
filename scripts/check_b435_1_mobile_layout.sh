@@ -34,6 +34,11 @@ for f in "$AUDIT" "$CSS" "$GATE"; do
   [ -f "$f" ] || { bad "missing source file: $f"; exit 1; }
 done
 
+# Always printed FIRST: if this check ever dies before its first row, the CI log must
+# still say it started and with what inputs (measured 2026-10-28: the gate showed the FAIL
+# row with no sub-contracts, i.e. an early exit, and nothing named the cause).
+printf '  DIAG B435.1: audit=%s css=%s tpl=%s pwd=%s\n' "$AUDIT" "$CSS" "${TPL_ROOT:-internal/handlers/templates}" "$PWD"
+
 hdr "A. the audit is a tool, not a paragraph"
 if bash -n "$AUDIT" 2>/dev/null; then
   ok "A1: the audit parses"
@@ -70,7 +75,10 @@ else
 fi
 
 hdr "C. the detector still fires (a zero budget nothing can trip is not a contract)"
-TMPD="$(mktemp -d "${TMPDIR:-/tmp}/b4351.XXXXXX")" || exit 2
+# Absolute, inside the repo (gitignored tmp/), never ${TMPDIR}: the audit cds to the repo
+# root before it reads TPL_ROOT, so a relative path would resolve against the wrong dir.
+mkdir -p "$PWD/tmp" || exit 2
+TMPD="$(mktemp -d "$PWD/tmp/b4351.XXXXXX")" || exit 2
 trap 'rm -rf "$TMPD"' EXIT
 cat > "$TMPD/bad.html" <<'EOF'
 <div>
