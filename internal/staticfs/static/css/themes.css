@@ -889,7 +889,13 @@ ul.plain li{margin-bottom:4px}
 .tabs a.active{background:var(--bg-card);color:var(--text);box-shadow:var(--shadow)}
 .tabs a i{font-size:12px}
 
-footer{margin-top:48px;padding:24px 0;border-top:1px solid var(--border);text-align:center;font-size:12px;color:var(--text-subtle);font-family:var(--mono)}
+/* B435 (2026-10-28) — THE FOOTER MUST CARRY THE SAME 220px OFFSET AS <main>.
+   `<footer>` is a SIBLING of <main> (layout.html), not its child, so the desktop rule
+   `main{margin-left:220px}` never applied to it: the footer's left half was painted UNDER
+   the fixed 220px sidebar, and the operator read that as «меню и футтер наплывают друг на
+   друга». The same offset is applied here (the mobile @media block below resets it to 0,
+   where the sidebar is an overlay drawer rather than a column). */
+footer{margin-left:220px;margin-top:48px;padding:24px 0;border-top:1px solid var(--border);text-align:center;font-size:12px;color:var(--text-subtle);font-family:var(--mono)}
 footer a{color:var(--text-muted);text-decoration:none;margin:0 6px}
 footer a:hover{color:var(--accent)}
 
@@ -958,6 +964,9 @@ footer a:hover{color:var(--accent)}
      already has padding-left:40px, so 60px overrides it. */
   main .admin-breadcrumb{margin-left:0 !important;width:100% !important}
   header{margin-left:0 !important}
+  /* B435: the footer is <main>'s sibling, so it needs the same reset the desktop rule above
+     demands — otherwise the 220px offset added for desktop would clip it on a phone. */
+  footer{margin-left:0 !important;padding-left:14px !important;padding-right:14px !important}
   /* 2026-08-13: if the user previously toggled the sidebar to
      collapsed (e.g. on a tablet and then resized to mobile),
      the `collapsed` class persists in the DOM via JS

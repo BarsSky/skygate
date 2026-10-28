@@ -4,9 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}} — Skygate</title>
+{{/* B435 (2026-10-28): the panel shipped ONE icon, an SVG, and pointed BOTH the tab icon and
+     `apple-touch-icon` at it. Desktop browsers render an SVG favicon; iOS Safari and the
+     Android start-screen do not accept one for the touch icon, and `/favicon.ico` was not
+     served at all — on a phone the page therefore had NO icon (the operator: «в мобильных
+     версиях не отображается иконка страницы»). The same artwork is now also published as
+     PNG (180/192/32) and as a real ICO (FaviconICOHandler). Order matters: SVG first for the
+     browsers that prefer it, then the PNGs, then the ICO for the ones that only fetch it. */}}
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/favicon-192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
-<link rel="apple-touch-icon" href="/favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/favicon-180.png">
 {{/* B158 (v1.5.0): all 4 user-pickable body fonts (Manrope /
      Inter / Geist / Sora) + 2 monospace fonts (Geist Mono /
      JetBrains Mono) are now self-hosted from

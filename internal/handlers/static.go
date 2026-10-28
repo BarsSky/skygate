@@ -94,18 +94,22 @@ func (a *App) StaticHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, clean, stat.ModTime(), rc)
 }
 
-// FaviconHandler serves the site favicon from the embedded static/favicon.svg.
-// Same Content-Type + Cache-Control as the pre-B-mod-static-embed version.
-// Uses the same Open-then-ServeContent pattern as StaticHandler — see the
-// long comment there for why we don't use http.ServeFileFS.
-func (a *App) FaviconHandler(w http.ResponseWriter, r *http.Request) {
-	f, err := staticfs.FS.Open("static/favicon.svg")
+// faviconFile serves one embedded icon file with its own Content-Type.
+//
+// B435 (2026-10-28): the panel shipped ONE asset, static/favicon.svg, and linked it as
+// `icon` and as `apple-touch-icon`. Desktop browsers render an SVG favicon; iOS Safari and
+// the Android start-screen do not accept one for the touch icon, and `/favicon.ico` was not
+// served at all — so on a phone the page had NO icon (the operator: «в мобильных версиях не
+// отображается иконка страницы»). The same artwork is now also published as PNG (180/192/32)
+// and as a real ICO, generated from the SVG rather than redrawn.
+func (a *App) faviconFile(w http.ResponseWriter, r *http.Request, name, contentType string) {
+	f, err := staticfs.FS.Open("static/" + name)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	defer f.Close()
-	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=86400, must-revalidate")
 	rc, ok := f.(io.ReadSeeker)
 	if !ok {
@@ -113,7 +117,22 @@ func (a *App) FaviconHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stat, _ := f.Stat()
-	http.ServeContent(w, r, "favicon.svg", stat.ModTime(), rc)
+	http.ServeContent(w, r, name, stat.ModTime(), rc)
+}
+
+// FaviconHandler serves the site favicon from the embedded static/favicon.svg.
+// Same Content-Type + Cache-Control as the pre-B-mod-static-embed version.
+// Uses the same Open-then-ServeContent pattern as StaticHandler — see the
+// long comment there for why we don't use http.ServeFileFS.
+func (a *App) FaviconHandler(w http.ResponseWriter, r *http.Request) {
+	a.faviconFile(w, r, "favicon.svg", "image/svg+xml")
+}
+
+// FaviconICOHandler is the /favicon.ico route (B435). Browsers that get no <link> icon — and
+// every browser's default request — ask for it, so serving a real ICO replaces a 404 per
+// page load with the brand mark.
+func (a *App) FaviconICOHandler(w http.ResponseWriter, r *http.Request) {
+	a.faviconFile(w, r, "favicon.ico", "image/x-icon")
 }
 
 // setStaticCacheControl writes the Cache-Control header based on whether

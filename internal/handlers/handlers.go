@@ -1182,6 +1182,77 @@ func pageTitle(name string) string {
 		return "title.help"
 	case "exit_rules.html":
 		return "title.exit_rules"
+	case "admin/acls_import.html":
+		return "title.admin_acls_import"
+	case "admin/certificates.html":
+		return "title.admin_certificates"
+	case "admin/control_planes.html":
+		return "title.admin_control_planes"
+	case "admin/deploy.html":
+		return "title.admin_deploy"
+	case "admin/derp_config.html":
+		return "title.admin_derp_config"
+	case "admin/derp_dashboard.html":
+		return "title.admin_derp_dashboard"
+	case "admin/derp_relays.html":
+		return "title.admin_derp_relays"
+	case "admin/derp_relays_init.html":
+		return "title.admin_derp_relays_init"
+	case "admin/ha.html":
+		return "title.admin_ha"
+	case "admin/headplane.html":
+		return "title.admin_headplane"
+	case "admin/headscale.html":
+		return "title.admin_headscale"
+	case "admin/headscale_acl.html":
+		return "title.admin_headscale_acl"
+	case "admin/integrations.html":
+		return "title.admin_integrations"
+	case "admin/invites.html":
+		return "title.admin_invites"
+	case "admin/meshes.html":
+		return "title.admin_meshes"
+	case "admin/migrate_run.html":
+		return "title.admin_migrate_run"
+	case "admin/module_detail.html":
+		return "title.admin_module_detail"
+	case "admin/modules.html":
+		return "title.admin_modules"
+	case "admin/monitor.html":
+		return "title.admin_monitor"
+	case "admin/oidc_settings.html":
+		return "title.admin_oidc"
+	case "admin/oidc_sync.html":
+		return "title.admin_oidc_sync"
+	case "admin/services.html":
+		return "title.admin_services"
+	case "admin/subnets.html":
+		return "title.admin_subnets"
+	case "admin/system_tests.html":
+		return "title.admin_system_tests"
+	case "admin/tailscale.html":
+		return "title.admin_tailscale"
+	case "admin/update.html":
+		return "title.admin_update"
+	case "admin/user_control_plane.html":
+		return "title.admin_user_control_plane"
+	case "admin/user_subnet.html":
+		return "title.admin_user_subnet"
+	// B435: the two files whose case was skipped by the bulk mapping because their key is a
+	// PREFIX of another one in the same switch (title.exit_rules_help contains
+	// title.exit_rules), or because they share a key with a sibling page
+	// (my_token_created.html shows the token it just minted, so it uses title.my_tokens).
+	case "exit_rules_help.html":
+		return "title.exit_rules_help"
+	case "my_token_created.html":
+		return "title.my_tokens"
+	case "user/meshes.html":
+		return "title.user_meshes"
+	case "user/notifications.html":
+		return "title.user_notifications"
+	case "user/telegram.html":
+		return "title.user_telegram"
+
 	default:
 		return "title.skygate"
 	}

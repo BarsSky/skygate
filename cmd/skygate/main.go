@@ -1081,7 +1081,9 @@ func main() {
 	mux.HandleFunc("POST /lang", authSvc.PostLang)
 	mux.Handle("POST /login", loginMW(http.HandlerFunc(authSvc.PostLogin)))
 	mux.HandleFunc("POST /logout", authSvc.PostLogout)
-	mux.HandleFunc("/favicon.ico", app.FaviconHandler)
+	// B435: /favicon.ico answered with the SVG (image/svg+xml), which a browser asking for
+	// an ICO will not render as an icon — one of the two reasons a phone showed none.
+	mux.HandleFunc("/favicon.ico", app.FaviconICOHandler)
 	// v0.26.0 — liveness + readiness probes (HA-ready).
 	// Both are UNAUTHENTICATED. /healthz is always 200
 	// if the process is alive (K8s livenessProbe pattern).

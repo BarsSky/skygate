@@ -1,5 +1,50 @@
 # Skygate release notes
 
+## v1.5.185 — the tab says the page name, the phone shows the icon, the footer clears the menu (B435)
+
+**Date:** 2026-10-28 · **Base:** `v1.5.184` → this tag · **Compatibility:** none.
+
+### 1. `title.*` in the browser tab
+
+Two defects, measured:
+
+* `pageTitle` **returned** `title.admin_cluster`, which was defined in **neither**
+  catalogue — so `/admin/cluster` put the raw key in the tab.
+* **34 of 59** templates had no `pageTitle` case at all, so their tab said the generic
+  "Skygate" instead of the page name (`/admin/update`, `/admin/tailscale`,
+  `/admin/integrations`, `/my/notifications`, `/my/telegram`, …).
+
+Fixed: 25 new `title.*` keys (RU + EN), every template mapped, and a **behavioural test**
+that walks the embedded templates and asserts the result — not the switch: each file must
+map to a non-generic key that resolves in both languages.
+
+### 2. No icon on a phone
+
+The panel shipped **one** icon, `favicon.svg`, and served `/favicon.ico` with
+`Content-Type: image/svg+xml` — a browser that asks for the ICO (every mobile browser does)
+received a document it will not render as an icon, and `apple-touch-icon` pointed at an SVG,
+which iOS does not accept. The page therefore had no icon on a phone.
+
+Fixed: the same artwork is now also published as real **PNG 180/192/32** and as a real
+**ICO** (rasterised from the existing SVG, not redrawn — no new logo was invented), served
+by `FaviconICOHandler` on `/favicon.ico`; the layout links them in the order that matters
+(SVG → PNG → ICO).
+
+### 3. The menu and the footer overlapped
+
+`<footer>` is a **sibling** of `<main>`, so the desktop rule `main{margin-left:220px}` never
+applied to it: the footer's left half was painted **under** the fixed 220 px sidebar. The
+footer now carries the same offset, and the mobile block resets it (on a phone the sidebar is
+an overlay drawer, not a column).
+
+### What is still open — and measured
+
+The full per-page sweep at 360–390 px is **not** done in this release. Measured so far:
+46 template files contain `<table>` (99 tables), and the ones without `.table-wrap` are saved
+on mobile only by the blanket `.card{overflow-x:auto}`; several pages also carry fixed
+pixel widths inline. That is the next block (B435.1), and it will get its own budgets and
+contracts rather than a one-off pass.
+
 ## v1.5.184 — the scheduled update can actually run (B434)
 
 **Date:** 2026-10-28 · **Base:** `v1.5.183` → this tag · **Compatibility:** none.
