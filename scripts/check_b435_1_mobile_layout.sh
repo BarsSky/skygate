@@ -61,7 +61,9 @@ if [ "$RC" -eq 0 ]; then
 else
   bad "B1: the mobile audit is over budget (rc=$RC): $(printf '%s' "$OUT" | grep -E 'tables outside|inline fixed|nowrap cells' | tr '\n' ' ')"
 fi
-if printf '%s' "$OUT" | grep -q 'T=.*' || [ "$T" -eq 0 ]; then
+# B386: the numeric value decides, never a `printf | grep -q` pipeline (a host fault in
+# such a pipeline would become a verdict about the product).
+if [ "$T" -eq 0 ]; then
   ok "B2: no table is left unprotected (T=$T) — a wide table scrolls instead of being clipped"
 else
   bad "B2: $T table(s) have no scroll wrapper"
