@@ -1,6 +1,6 @@
 # Skygate release notes
 
-## v1.5.186 — every page at 360 px: measured, wrapped, and pinned (B435.1)
+## v1.5.186 — every page at 360 px: measured and pinned (B435.1)
 
 **Date:** 2026-10-28 · **Base:** `v1.5.185` → this tag · **Compatibility:** none.
 
@@ -9,36 +9,42 @@
 `scripts/audit_mobile_pages.sh` walks all 59 templates and counts the three patterns that break
 the panel on a 360–390 px screen:
 
-| class | what it means | before | after |
-|---|---|---|---|
-| **T** | a `<table>` outside `.table-wrap` **and** outside a `class="card"` block — `body{overflow-x:hidden}` CLIPS it, so the right-hand columns are simply lost | **29** | **29 (frozen)** |
-| **W** | an inline fixed `width:` of 400 px or more | 0 | 0 |
-| **N** | `<td nowrap>` / `white-space:nowrap`, where long keys and URLs refuse to wrap | 10 | **10 (frozen)** |
+| class | what it means | measured |
+|---|---|---|
+| **T** | a `<table>` outside `.table-wrap` **and** outside a `class="card"` block — `body{overflow-x:hidden}` CLIPS it, so the right-hand columns are simply lost | **29 (frozen, may only fall)** |
+| **W** | an inline fixed `width:` of 400 px or more | 0 |
+| **N** | `<td nowrap>` / `white-space:nowrap`, where long keys and URLs refuse to wrap | **10 (frozen, may only fall)** |
 
-The wrapping was tried and **reverted**: wrapping all 32 tables broke **B410**, the existing
+### Both numbers are frozen, and that is the honest result
+
+The wrapping was tried and **reverted**. Wrapping all 32 unprotected tables (19 files) did drive the
+audit to `T=0` and every render test stayed green — but it reddened **B410**, the existing
 operator-driven contract that says a table must scroll inside *its card* rather than in a new inner
-box. A bulk edit that reddens an existing contract is not a fix, so the measured 29 are frozen as a
-ratchet (T may only fall) and the per-page batches are decided with B410 in view — the audit prints
-each `file:line`.
+box. A bulk edit that breaks an existing contract is not a fix, so the measured **29** stay and the
+budget is a **ratchet that may only fall**; the per-page batches are decided with B410 in view, and
+the audit prints each `file:line` so the next pass can start anywhere.
 
-### Why N was frozen and not "fixed"
-
-A nowrap cell no longer loses data — its table scrolls now — but the value still refuses to wrap,
-and whether a given column should wrap (a UUID? a hostname? a version?) is a per-page typography
-decision, not a mechanical edit. The budget is pinned at 10 and may only go down; the audit prints
-the exact `file:line` of each one so the next pass can decide them one by one.
+**N is frozen for a different reason.** A nowrap cell in a card table does scroll now, because the
+mobile block gives `.card` `overflow-x:auto`. But T and N are not the same debt: the 29 tables above
+are outside *both* the wrapper and a card, so `body{overflow-x:hidden}` clips them outright — no
+`nowrap` edit can bring their right-hand columns back. And whether a given column *should* wrap (a
+UUID? a hostname? a version?) is a per-page typography decision, not a mechanical edit. Pinned at 10,
+may only go down.
 
 ### The detector is proven
 
-A budget of zero that nothing can trip is not a contract. The check plants a template with an
-unprotected table through `TPL_ROOT` and requires the audit to count it **and** fail — so the
-zero above is a measurement, not a default.
+A budget nothing can trip is not a contract. The check plants a template with an unprotected table
+through `TPL_ROOT` and requires the audit to count it **and** fail — so the numbers above are a
+measurement of this tree, not a default: a new unprotected table raises T above the budget and fails
+the gate.
 
 ### Contracts
 
-`scripts/check_b435_1_mobile_layout.sh` — 10 checks: the audit parses and is tracked, the three
-budgets hold (T=0, W=0, N≤10), a planted violation is detected, `.table-wrap` and the mobile
-`.card{overflow-x:auto}` fallback both still exist, and the block is registered.
+`scripts/check_b435_1_mobile_layout.sh` — **12** checks: the audit parses, is tracked by git and
+accepts `TPL_ROOT`; the three budgets hold at the measured `T=29, W=0, N≤10` and T may only fall; a
+planted violation is counted and fails, without leaking files outside the temp dir; `.table-wrap`
+scrolls horizontally and the mobile block still lets a card scroll; and the catalog registers the
+audit with those same budgets (E1–E3).
 
 ## v1.5.185 — the tab says the page name, the phone shows the icon, the footer clears the menu (B435)
 
