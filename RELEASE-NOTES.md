@@ -1,5 +1,35 @@
 # Skygate release notes
 
+## v1.5.189 — the whole catalog, from the shipped tag, against real PostgreSQL (B437.1)
+
+**Date:** 2026-10-28 · **Base:** `v1.5.188` → this tag · **Compatibility:** none.
+
+`gate_with_pg.sh` refused to guess a database, proved `CREATE SCHEMA` on a throwaway one
+(`skygate_pgtest`), and the **full** guarantee catalog ran on the reference VM from a clone of the
+shipped tag: **489 checks, 487 PASS / 2 FAIL, 0 SKIP**, `PostgreSQL coverage: enabled`, 4904 s.
+
+That re-measures B433's 2026-10-27 baseline (483 checks, 479 PASS / 4 FAIL): three of the four red
+rows are gone. The two survivors are both explained.
+
+### B243 — the row is real, the repair needs the new build
+
+Still one `node_owner_map` row whose `headscale_user_id` is headscale's `tagged-devices` sentinel.
+The repair shipped in v1.5.188, but the process that runs it is still the operator's v1.5.184
+build, so the row clears on the first reconcile tick after an update — nothing else to fix.
+
+### B188.3 — a NEW red row, found only by running the whole catalog
+
+Contract J re-runs B188.2 *from `$REPO`*, and v1.5.188 still preferred `/home/skyadmin/skygate`
+whenever that directory existed. On the reference host a run from a clone at the tag therefore
+inspected the operator's **older** tree and reported a failure of code it had never looked at.
+
+A contract must inspect the checkout it **lives in**: `REPO` is now `$(dirname $0)/..`,
+`$SKYGATE_REPO` still overrides, and the `/home/skyadmin/skygate` heuristic is gone. Verified on
+the VM from the clone with the operator's tree present: B188.2 **20 / 0**, B188.3 **12 / 0**.
+
+**The lesson is the process, not the fix:** an isolated re-run of the failing contract passes
+(that is exactly how the defect survived the block) — a check has to run in its real context.
+
 ## v1.5.188 — four red rows a healthy installation kept producing (B437)
 
 **Date:** 2026-10-28 · **Base:** `v1.5.187` → this tag · **Compatibility:** none.

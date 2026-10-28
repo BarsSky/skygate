@@ -41,9 +41,16 @@ FAIL=0
 # clone) these contracts read ANOTHER tree than the one under test — measured on
 # 2026-10-28, when B188.3 J ran the operator's v1.5.184 scripts while the tree under
 # test was a fresh clone, and reported a failure of code it never looked at.
+# The checkout under test is the one this script LIVES IN. The old fallback preferred
+# /home/skyadmin/skygate whenever it existed, which defeated the point: on the reference
+# host a run from a scratch clone at the shipped tag still inspected the operator's older
+# tree — measured twice on 2026-10-28 (J reported a failure of code it never looked at,
+# and the full catalog run from a v1.5.188 clone went red on scripts from v1.5.184).
 if [ -n "${SKYGATE_REPO:-}" ]; then REPO="$SKYGATE_REPO"
-elif [ -d /home/skyadmin/skygate ]; then REPO=/home/skyadmin/skygate
-else REPO="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+else REPO="$(cd "$(dirname "$0")/.." && pwd)"
+fi
+if [ ! -f "$REPO/scripts/verify_pre_deploy.sh" ]; then
+  REPO="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO")"
 fi
 # The admin ACL SURFACE, not one file: internal/acl/acl.go was split into
 # seven on 2026-10-01 (refactor Phase D) and a contract that greps one path turns
