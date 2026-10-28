@@ -29,11 +29,13 @@ CAT=internal/i18n/catalog_common.go
 LAYOUT=internal/handlers/templates/layout.html
 CSS=internal/staticfs/static/css/themes.css
 STATIC=internal/handlers/static.go
-MAIN=cmd/skygate/main.go
 GATE=scripts/verify_pre_deploy.sh
-for f in "$HANDLERS" "$CAT" "$LAYOUT" "$CSS" "$STATIC" "$MAIN" "$GATE"; do
+for f in "$HANDLERS" "$CAT" "$LAYOUT" "$CSS" "$STATIC" "$GATE"; do
   [ -f "$f" ] || { bad "missing source file: $f"; exit 1; }
 done
+# B339: the cmd/skygate route is read as a SURFACE (the whole package) so a refactor that
+# moves the wiring cannot turn this contract into a false failure.
+SKY_SRC="$(cat cmd/skygate/*.go 2>/dev/null)"
 
 hdr "A. the tab title names the page, in both languages"
 if OUT="$(go test ./internal/handlers/ -run B435 -count=1 2>&1)"; then
@@ -80,11 +82,14 @@ if [ "$(head -c 4 internal/staticfs/static/favicon.ico | od -An -tx1 | tr -d ' \
 else
   bad "B3: favicon.ico is not an ICO"
 fi
-if grep -qF 'mux.HandleFunc("/favicon.ico", app.FaviconICOHandler)' "$MAIN"; then
-  ok "B4: /favicon.ico is served as an ICO, not as the SVG with an svg content type"
-else
-  bad "B4: /favicon.ico still points at FaviconHandler (the SVG) — a browser asking for an ICO gets a document it will not render"
-fi
+case "$SKY_SRC" in
+  *'mux.HandleFunc("/favicon.ico", app.FaviconICOHandler)'*)
+    ok "B4: /favicon.ico is served as an ICO, not as the SVG with an svg content type"
+    ;;
+  *)
+    bad "B4: /favicon.ico still points at FaviconHandler (the SVG) — a browser asking for an ICO gets a document it will not render"
+    ;;
+esac
 if grep -qF 'rel="apple-touch-icon" sizes="180x180" href="/static/favicon-180.png"' "$LAYOUT"; then
   ok "B5: apple-touch-icon points at a PNG (iOS ignores an SVG there)"
 else
