@@ -680,7 +680,7 @@
   <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:var(--danger-bg);border:1px solid var(--danger)">
     <b>{{t "exit_nodes.prefix_owner.stale_pref_title"}} ({{len .}}{{if gt $.StalePrefsHuman 0}}, {{$.StalePrefsHuman}} {{t "exit_nodes.prefix_owner.stale_pref_human"}}{{end}})</b>
     <div style="font-size:13px;margin-top:4px">{{t "exit_nodes.prefix_owner.stale_pref_help" | safeHTML}}</div>
-    <table style="width:100%;margin-top:8px;font-size:13px;border-collapse:collapse">
+    <div class="table-wrap"><table style="width:100%;margin-top:8px;font-size:13px;border-collapse:collapse">
       <thead>
         <tr style="text-align:left;color:var(--text-muted)">
           <th>{{t "exit_nodes.prefix_owner.stale_pref_col_device"}}</th>
@@ -740,7 +740,7 @@
         </tr>
         {{end}}
       </tbody>
-    </table>
+    </table></div>
     <div style="font-size:12px;color:var(--text-muted);margin-top:6px">{{t "exit_nodes.prefix_owner.stale_pref_consequence" | safeHTML}}</div>
   </div>
   {{end}}

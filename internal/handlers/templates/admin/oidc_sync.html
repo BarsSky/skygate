@@ -65,7 +65,7 @@
       <span style="color:var(--text-muted)">{{t "oidc_sync.nothing_configured_help" | safeHTML}}</span>
     {{end}}
   </p>
-  <table>
+  <div class="table-wrap"><table>
     <tr>
       <th style="width:240px"><code>SKYGATE_OIDC_ISSUER</code></th>
       <td><code>{{.Issuer}}</code> <span class="tag" style="font-size:10px">{{index .Source "issuer"}}</span></td>
@@ -98,7 +98,7 @@
         {{end}}
       </td>
     </tr>
-  </table>
+  </table></div>
 </div>
 
 <div class="card">

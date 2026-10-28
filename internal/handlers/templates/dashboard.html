@@ -92,7 +92,7 @@
       {{tf "wizard.users_show" (len $w.Users)}}
       {{if $w.PendingUsers.Known}} — {{tf "wizard.users_unmapped" $w.PendingUsers.Value}}{{end}}
     </summary>
-    <table class="table table-sm wiz-table">
+    <div class="table-wrap"><table class="table table-sm wiz-table">
       <thead>
         <tr>
           <th>{{t "wizard.col_hs_user"}}</th>
@@ -116,14 +116,14 @@
         </tr>
         {{end}}
       </tbody>
-    </table>
+    </table></div>
   </details>
   {{end}}
 
   {{if $w.Nodes}}
   <details class="wiz-import">
     <summary>{{tf "wizard.import_show" (len $w.Nodes)}}</summary>
-    <table class="table table-sm wiz-table">
+    <div class="table-wrap"><table class="table table-sm wiz-table">
       <thead>
         <tr>
           <th>{{t "wizard.col_node"}}</th>
@@ -154,7 +154,7 @@
         </tr>
         {{end}}
       </tbody>
-    </table>
+    </table></div>
   </details>
   {{end}}
 

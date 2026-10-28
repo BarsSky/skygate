@@ -1,5 +1,43 @@
 # Skygate release notes
 
+## v1.5.186 — every page at 360 px: measured, wrapped, and pinned (B435.1)
+
+**Date:** 2026-10-28 · **Base:** `v1.5.185` → this tag · **Compatibility:** none.
+
+### What was measured
+
+`scripts/audit_mobile_pages.sh` walks all 59 templates and counts the three patterns that break
+the panel on a 360–390 px screen:
+
+| class | what it means | before | after |
+|---|---|---|---|
+| **T** | a `<table>` outside `.table-wrap` **and** outside a `class="card"` block — `body{overflow-x:hidden}` CLIPS it, so the right-hand columns are simply lost | **29** | **0** |
+| **W** | an inline fixed `width:` of 400 px or more | 0 | 0 |
+| **N** | `<td nowrap>` / `white-space:nowrap`, where long keys and URLs refuse to wrap | 10 | **10 (frozen)** |
+
+All **32** unprotected tables (across 19 files) are now wrapped in `.table-wrap`, so a wide table
+scrolls inside its own box instead of being cut off. The render tests in `internal/handlers` stay
+green, which is what proves the markup is still valid for every page.
+
+### Why N was frozen and not "fixed"
+
+A nowrap cell no longer loses data — its table scrolls now — but the value still refuses to wrap,
+and whether a given column should wrap (a UUID? a hostname? a version?) is a per-page typography
+decision, not a mechanical edit. The budget is pinned at 10 and may only go down; the audit prints
+the exact `file:line` of each one so the next pass can decide them one by one.
+
+### The detector is proven
+
+A budget of zero that nothing can trip is not a contract. The check plants a template with an
+unprotected table through `TPL_ROOT` and requires the audit to count it **and** fail — so the
+zero above is a measurement, not a default.
+
+### Contracts
+
+`scripts/check_b435_1_mobile_layout.sh` — 10 checks: the audit parses and is tracked, the three
+budgets hold (T=0, W=0, N≤10), a planted violation is detected, `.table-wrap` and the mobile
+`.card{overflow-x:auto}` fallback both still exist, and the block is registered.
+
 ## v1.5.185 — the tab says the page name, the phone shows the icon, the footer clears the menu (B435)
 
 **Date:** 2026-10-28 · **Base:** `v1.5.184` → this tag · **Compatibility:** none.

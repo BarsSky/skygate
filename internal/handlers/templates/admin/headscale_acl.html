@@ -56,7 +56,7 @@
   {{if .View}}
   {{if .View.SkygateACLs}}
   <h4 style="margin-top:24px">{{t "acl.skygate_managed_label"}}</h4>
-  <table class="table table-sm" style="margin-top:8px">
+  <div class="table-wrap"><table class="table table-sm" style="margin-top:8px">
     <thead>
       <tr>
         <th>{{t "acl.label_label"}}</th>
@@ -91,7 +91,7 @@
       </tr>
       {{end}}
     </tbody>
-  </table>
+  </table></div>
   {{end}}
 
   {{if .View.ExternalACLs}}
@@ -99,7 +99,7 @@
   <p style="color:var(--text-muted);font-size:0.9em">
     {{t "acl.external_help" | safeHTML}}
   </p>
-  <table class="table table-sm" style="margin-top:8px">
+  <div class="table-wrap"><table class="table table-sm" style="margin-top:8px">
     <thead>
       <tr>
         <th>{{t "acl.table_action"}}</th>
@@ -120,7 +120,7 @@
       </tr>
       {{end}}
     </tbody>
-  </table>
+  </table></div>
   {{end}}
 
   {{if and (not .View.SkygateACLs) (not .View.ExternalACLs)}}

@@ -68,7 +68,7 @@
       <span class="ufg-chip" style="font-size:11px">{{len $cat.Grants}}</span>
     </summary>
 
-    <table style="width:100%;margin-top:10px;font-size:12px;border-collapse:collapse">
+    <div class="table-wrap"><table style="width:100%;margin-top:10px;font-size:12px;border-collapse:collapse">
       <thead>
         <tr style="color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border)">
           <th style="padding:4px 8px;font-weight:500">{{t "acls.col.src"}}</th>
@@ -95,7 +95,7 @@
         </tr>
         {{end}}
       </tbody>
-    </table>
+    </table></div>
   </details>
   {{end}}
 
@@ -107,7 +107,7 @@
       {{t "acls.ssh_title"}}
       <span class="ufg-chip" style="font-size:11px">{{len .PolicyView.SSH}}</span>
     </summary>
-    <table style="width:100%;margin-top:10px;font-size:12px;border-collapse:collapse">
+    <div class="table-wrap"><table style="width:100%;margin-top:10px;font-size:12px;border-collapse:collapse">
       <thead>
         <tr style="color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border)">
           <th style="padding:4px 8px;font-weight:500">{{t "acls.col.src"}}</th>
@@ -130,7 +130,7 @@
         </tr>
         {{end}}
       </tbody>
-    </table>
+    </table></div>
   </details>
   {{end}}
 
@@ -142,7 +142,7 @@
       {{t "acls.tagOwners_title"}}
       <span class="ufg-chip" style="font-size:11px">{{len .PolicyView.TagOwners}}</span>
     </summary>
-    <table style="width:100%;margin-top:10px;font-size:12px;border-collapse:collapse">
+    <div class="table-wrap"><table style="width:100%;margin-top:10px;font-size:12px;border-collapse:collapse">
       <thead>
         <tr style="color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border)">
           <th style="padding:4px 8px;font-weight:500">{{t "acls.col.tag"}}</th>
@@ -161,7 +161,7 @@
         {{end}}
         {{end}}
       </tbody>
-    </table>
+    </table></div>
   </details>
   {{end}}
 

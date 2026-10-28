@@ -314,7 +314,7 @@
           {{if .Verified}}{{t "db.convert_report_verified"}}{{else}}{{t "db.convert_report_unverified"}}{{end}}
         </span>
       </h6>
-      <table class="table table-sm table-striped">
+      <div class="table-wrap"><table class="table table-sm table-striped">
         <thead>
           <tr>
             <th>{{t "db.convert_col_table"}}</th>
@@ -338,7 +338,7 @@
           </tr>
           {{end}}
         </tbody>
-      </table>
+      </table></div>
       <p class="small text-muted mb-1">
         {{t "db.convert_from_to"}}: <code>{{.FromKind}}</code> → <code>{{.ToKind}}</code> ·
         {{t "db.convert_copied_total"}}: <code>{{.CopiedRows}}</code>
