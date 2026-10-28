@@ -237,10 +237,20 @@ if grep -v '^[[:space:]]*#' scripts/check_b118.sh | grep -qE "ILIKE '%<[a-z-]+>'
 else
   ok "D2: check_b118.sh no longer searches for a placeholder hostname in SQL"
 fi
-if grep -q 'SANCTIONED=' scripts/check_b118.sh; then
-  ok "D3: check_b118.sh asserts against the SANCTIONED relay set instead, which can actually fail"
+# D3 RENEGOTIATED 2026-10-28 (B437). It used to require the literal `SANCTIONED=`
+# variable, i.e. the frozen four-name relay list that replaced the vacuous placeholder
+# search. That list was itself the defect B437 closed: two real relays joined the
+# tailnet and the gate went red on a healthy system (measured on the VM: four FAIL
+# rows). What D3 protects is unchanged — B118 must have a sanctioned-set contract
+# that CAN fail — so it now asserts the mechanism that replaced the literal: the set
+# is derived from headscale's live node list, and a deleted or legacy-marked relay is
+# still a red row.
+if grep -q 'nodes list -o json' scripts/check_b118.sh \
+   && grep -q 'tag:dev-infra-%' scripts/check_b118.sh \
+   && grep -q -- '-legacy' scripts/check_b118.sh; then
+  ok "D3: check_b118.sh derives the sanctioned relay set from headscale's live nodes and still fails a legacy/retired relay (B437)"
 else
-  bad "D3: check_b118.sh has no sanctioned-set contract to replace the vacuous placeholder search"
+  bad "D3: check_b118.sh has no sanctioned-set contract to replace the vacuous placeholder search (nor the B437 derivation of it)"
 fi
 
 # A check must not build to a FIXED path under /tmp. Measured 2026-10-01: three
