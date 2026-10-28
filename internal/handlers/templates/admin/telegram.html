@@ -288,7 +288,7 @@
         {{if .State.Container.RawStderr}}<pre style="margin:.4rem 0 0;font-size:.8em;color:var(--text-muted)">{{.State.Container.RawStderr}}</pre>{{end}}
       </div>
     {{else}}
-      <div class="table-wrap"><table class="kv" style="font-size:.92em;line-height:1.5">
+      <table class="kv" style="font-size:.92em;line-height:1.5">
         <tr><th style="text-align:left;width:14em">{{t "telegram.container_hostname"}}</th><td><code>{{.State.Container.Hostname}}</code></td></tr>
         <tr><th style="text-align:left">{{t "telegram.container_backend"}}</th>
             <td><code>{{.State.Container.BackendState}}</code>
@@ -313,7 +313,7 @@
               {{if .State.Container.ExitNodeID}}<code>{{.State.Container.ExitNodeID}}</code>
               {{else}}<span class="muted">{{t "telegram.container_no_exit_node"}}</span>{{end}}
             </td></tr>
-      </table></div>
+      </table>
       {{if .State.Container.HasAcceptIssue}}
       <div class="alert alert-warn" style="margin-top:.5rem"><i class="fa-solid fa-triangle-exclamation"></i>
         {{t "telegram.container_issue_help"}}

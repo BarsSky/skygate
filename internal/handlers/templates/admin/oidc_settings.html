@@ -150,7 +150,7 @@
   {{else}}
     <p style="font-size:13px"><span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "oidc.keydir_ok"}}</span></p>
   {{end}}
-  <div class="table-wrap"><table>
+  <table>
     <tr><th style="width:280px">{{t "oidc.keydir_resolved"}}</th><td><code>{{.KeyDirState.Path}}</code></td></tr>
     {{if .KeyDirState.Exists}}
     <tr><th>{{t "oidc.keydir_owner"}}</th><td><code>{{.KeyDirState.Owner}}</code>{{if .KeyDirState.Mode}} · mode <code>{{.KeyDirState.Mode}}</code>{{end}}</td></tr>
@@ -160,7 +160,7 @@
     <tr><th>{{t "oidc.keydir_serving"}}</th>
         <td>{{if .KeyDirState.KID}}<span class="tag tag-success">kid <code>{{.KeyDirState.KID}}</code></span>{{else}}<span class="tag tag-danger">{{t "oidc.keydir_no_key"}}</span>{{end}}</td></tr>
     {{if .KeyDirLive}}<tr><th>{{t "oidc.keydir_live"}}</th><td><code>{{.KeyDirLive}}</code></td></tr>{{end}}
-  </table></div>
+  </table>
   {{if not .KeyDirAppliable}}<p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{t "oidc.keydir_not_wired"}}</p>{{end}}
 </div>
 

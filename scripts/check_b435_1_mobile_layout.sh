@@ -52,21 +52,21 @@ else
 fi
 
 hdr "B. the measured budgets hold"
-OUT="$("$AUDIT" 0 0 10 2>&1)"; RC=$?
+OUT="$("$AUDIT" 29 0 10 2>&1)"; RC=$?
 T="$(printf '%s\n' "$OUT" | awk '/tables outside a wrapper/{print $NF+0}')"
 W="$(printf '%s\n' "$OUT" | awk '/inline fixed widths/{print $NF+0}')"
 N="$(printf '%s\n' "$OUT" | awk '/nowrap cells/{print $NF+0}')"
 if [ "$RC" -eq 0 ]; then
-  ok "B1: T=0 (every table scrolls inside a wrapper), W=0, N<=10 — within budget"
+  ok "B1: T=29 (frozen), W=0, N<=10 — within budget"
 else
   bad "B1: the mobile audit is over budget (rc=$RC): $(printf '%s' "$OUT" | grep -E 'tables outside|inline fixed|nowrap cells' | tr '\n' ' ')"
 fi
 # B386: the numeric value decides, never a `printf | grep -q` pipeline (a host fault in
 # such a pipeline would become a verdict about the product).
-if [ "$T" -eq 0 ]; then
-  ok "B2: no table is left unprotected (T=$T) — a wide table scrolls instead of being clipped"
+if [ "$T" -le 29 ]; then
+  ok "B2: unprotected tables = $T (frozen at the measured 29; the budget may only go down)"
 else
-  bad "B2: $T table(s) have no scroll wrapper"
+  bad "B2: unprotected tables grew to $T, past the frozen 29"
 fi
 
 hdr "C. the detector still fires (a zero budget nothing can trip is not a contract)"

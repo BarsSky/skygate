@@ -473,7 +473,7 @@
                     <span style="color:var(--text-muted)">{{tf "exit_rules.cdn_group_count" $item.Count}}</span>
                     <span style="margin-left:auto;font-size:10px;color:var(--text-muted)">▼</span>
                   </summary>
-                  <div class="table-wrap"><table style="margin:0">
+                  <table style="margin:0">
                     <tr><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_preferred"}}</th><th>{{t "exit_rules_admin.col_created"}}</th><th></th></tr>
                     {{range $item.Rules}}<tr>
                       <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
@@ -497,11 +497,11 @@
                         </form>
                       </td>
                     </tr>{{end}}
-                  </table></div>
+                  </table>
                 </details>
               {{else}}
                 {{/* Ungrouped-rules tail: flat table, no header. */}}
-                <div class="table-wrap"><table>
+                <table>
                   <tr><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_preferred"}}</th><th>{{t "exit_rules_admin.col_created"}}</th><th></th></tr>
                   {{range $item.Rules}}<tr>
                     <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
@@ -525,7 +525,7 @@
                       </form>
                     </td>
                   </tr>{{end}}
-                </table></div>
+                </table>
               {{end}}
             {{end}}
           </div>

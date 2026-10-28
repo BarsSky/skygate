@@ -174,14 +174,14 @@
     <div>
       <h4 style="font-size:13px;margin-bottom:6px;color:var(--text-muted)">{{t "user_subnet.sharing_shared_with"}}</h4>
       {{if .SharedWith}}
-      <div class="table-wrap"><table>
+      <table>
         {{range .SharedWith}}
         <tr>
           <td><code>{{.GrantorUsername}}</code></td>
           <td style="font-size:11px;color:var(--text-subtle)">{{dt .CreatedAt}}</td>
         </tr>
         {{end}}
-      </table></div>
+      </table>
       {{else}}
       <div style="color:var(--text-subtle);font-size:12px;font-style:italic">{{t "user_subnet.sharing_none_with"}}</div>
       {{end}}

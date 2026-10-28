@@ -11,13 +11,15 @@ the panel on a 360–390 px screen:
 
 | class | what it means | before | after |
 |---|---|---|---|
-| **T** | a `<table>` outside `.table-wrap` **and** outside a `class="card"` block — `body{overflow-x:hidden}` CLIPS it, so the right-hand columns are simply lost | **29** | **0** |
+| **T** | a `<table>` outside `.table-wrap` **and** outside a `class="card"` block — `body{overflow-x:hidden}` CLIPS it, so the right-hand columns are simply lost | **29** | **29 (frozen)** |
 | **W** | an inline fixed `width:` of 400 px or more | 0 | 0 |
 | **N** | `<td nowrap>` / `white-space:nowrap`, where long keys and URLs refuse to wrap | 10 | **10 (frozen)** |
 
-All **32** unprotected tables (across 19 files) are now wrapped in `.table-wrap`, so a wide table
-scrolls inside its own box instead of being cut off. The render tests in `internal/handlers` stay
-green, which is what proves the markup is still valid for every page.
+The wrapping was tried and **reverted**: wrapping all 32 tables broke **B410**, the existing
+operator-driven contract that says a table must scroll inside *its card* rather than in a new inner
+box. A bulk edit that reddens an existing contract is not a fix, so the measured 29 are frozen as a
+ratchet (T may only fall) and the per-page batches are decided with B410 in view — the audit prints
+each `file:line`.
 
 ### Why N was frozen and not "fixed"
 

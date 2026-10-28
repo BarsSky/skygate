@@ -614,7 +614,7 @@
                     <span style="color:var(--text-muted)">{{tf "exit_rules.cdn_group_count" $item.Count}}</span>
                     <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▼</span>
                   </summary>
-                  <div class="table-wrap"><table style="margin:0">
+                  <table style="margin:0">
                     <tr><th class="col-check"></th><th>{{t "exit_rules.col_action"}}</th><th>{{t "exit_rules.col_target"}}</th><th>{{t "exit_rules.preferred_col"}}</th><th></th></tr>
                     {{range $item.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                       <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
@@ -660,11 +660,11 @@
                       <input type="hidden" name="target_value" value="{{.TargetValue}}">
                     </form>
                     {{end}}
-                  </table></div>
+                  </table>
                 </details>
               {{else}}
                 {{/* Ungrouped-rules tail: flat table, no header. */}}
-                <div class="table-wrap"><table>
+                <table>
                   <tr><th class="col-check"></th><th>{{t "exit_rules.col_action"}}</th><th>{{t "exit_rules.col_target"}}</th><th>{{t "exit_rules.preferred_col"}}</th><th></th></tr>
                   {{range $item.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                     <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
@@ -704,7 +704,7 @@
                     <input type="hidden" name="target_value" value="{{.TargetValue}}">
                   </form>
                   {{end}}
-                </table></div>
+                </table>
               {{end}}
             {{end}}
           </div>
@@ -747,7 +747,7 @@
                     {{if gt $item.FanOutCount 0}}<span class="tag tag-success" title="{{t "exit_rules.all_devices_fanout_tip"}}"><i class="fa-solid fa-users"></i> {{tf "exit_rules.all_devices_fanout_badge" $item.FanOutCount}}</span>{{end}}
                     <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▼</span>
                   </summary>
-                  <div class="table-wrap"><table style="margin:0">
+                  <table style="margin:0">
                     <tr><th class="col-check"></th><th>{{t "exit_rules.col_action"}}</th><th>{{t "exit_rules.col_target"}}</th><th>{{t "exit_rules.preferred_col"}}</th><th></th></tr>
                     {{range $item.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                       <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
@@ -785,10 +785,10 @@
                       <input type="hidden" name="target_value" value="{{.TargetValue}}">
                     </form>
                     {{end}}
-                  </table></div>
+                  </table>
                 </details>
               {{else}}
-                <div class="table-wrap"><table>
+                <table>
                   <tr><th class="col-check"></th><th>{{t "exit_rules.col_action"}}</th><th>{{t "exit_rules.col_target"}}</th><th>{{t "exit_rules.preferred_col"}}</th><th></th></tr>
                   {{range $item.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                     <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
@@ -824,7 +824,7 @@
                     <input type="hidden" name="target_value" value="{{.TargetValue}}">
                   </form>
                   {{end}}
-                </table></div>
+                </table>
               {{end}}
             {{end}}
             </div>
