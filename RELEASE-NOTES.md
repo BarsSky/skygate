@@ -1,5 +1,64 @@
 # Skygate release notes
 
+## v1.5.184 — the scheduled update can actually run (B434)
+
+**Date:** 2026-10-28 · **Base:** `v1.5.183` → this tag · **Compatibility:** none.
+
+### What you saw
+
+Two Telegram messages, one minute apart at 08:00:
+
+```
+⏰ Плановое обновление skygate начинается: v1.5.181+6aea3673 → v1.5.183 (job 150c20bc)
+❌ Плановое обновление skygate v1.5.181+6aea3673 → v1.5.183 НЕ УДАЛОСЬ:
+   backup tag: context canceled
+```
+
+The alert was honest; the failure was ours.
+
+### Why it happened
+
+The scheduled path built a 10-minute context, deferred its `cancel()`, and **then** started
+the goroutine that uses that context. `defer` runs when the function returns — one
+instruction after the goroutine is spawned — so the upgrader began with an **already
+cancelled** context. The first cancellable step is `git tag -f skygate-pre-update-<sha>`,
+which is why the error names the backup tag. The manual «Обновить» button kept working on
+the very same build because *its* `cancel()` has always been deferred **inside** its
+goroutine.
+
+### Why no test caught it
+
+The scheduler's tests assert that a job was **created** — `last_run` written, a state row
+carrying the offered version. A job that fails instantly satisfies both, so the suite was
+green while the feature could never work. The missing assertion was about the **context**
+the goroutine is handed.
+
+### Fixed
+
+* The `cancel()` belongs to the goroutine now, so it lives exactly as long as the upgrade.
+* `SchedulerDeps.NewUpgrader` exists so a test can *observe* that context (nil = the real
+  Docker upgrader). `TestB434_ScheduledRunHandsALiveContextToTheUpgrader` asserts
+  `ctx.Err() == nil` at the moment the upgrader starts and that the job reaches `done` —
+  and it was verified to **fail** with the old code before the fix landed (bug
+  re-introduced deliberately, test red, then green), so it is a guard, not a comment.
+* The contract (`scripts/check_b434_scheduled_context.sh`, 12 checks) pins the ordering of
+  spawn and cancel in `runScheduled`, proves its detector fires on a planted buggy
+  snippet, requires the seam and the context assertion, and guards the manual path too.
+
+### What to do now
+
+Today's 08:00 slot was consumed (`update_schedule_last_run` is stamped) — press
+**«Обновить»** on `/admin/update` to move to this build now (the manual path was never
+affected). Once you are on v1.5.184, the next scheduled slot runs the upgrade itself. If
+the failed job card is still on the page, «Скрыть» clears it.
+
+### Recorded, not hidden
+
+A catch-up window that straddles midnight (slot 23:58, tick 00:03) is still untested: it
+needs a decision about which calendar day owns the run. The test that would have covered
+it currently skips near midnight with that reason (see v1.5.183) instead of failing on the
+clock.
+
 ## v1.5.183 — the gate can finally check the database you actually run (B433, TD-24)
 
 **Date:** 2026-10-27 · **Base:** `v1.5.182` → this tag · **Compatibility:** none.

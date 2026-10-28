@@ -115,6 +115,24 @@ type SchedulerDeps struct {
 	// as fallback when global_settings doesn't have a row
 	// yet (first start).
 	Cfg SchedulerCfg
+	// NewUpgrader (optional) overrides the Docker upgrader runScheduled drives. It exists
+	// so a test can OBSERVE the context the goroutine is handed — which is exactly how the
+	// B434 defect (a cancel() that fired before the goroutine ran) becomes a failing test
+	// rather than a live discovery. Nil means the real Docker upgrader.
+	NewUpgrader func(repoPath string, st *StateStore, current string) ScheduledUpgrader
+}
+
+// ScheduledUpgrader is the one method runScheduled needs from the Docker upgrader.
+type ScheduledUpgrader interface {
+	Run(ctx context.Context, target string)
+}
+
+// newUpgrader returns the injected upgrader or the real one.
+func (d SchedulerDeps) newUpgrader(repoPath, current string) ScheduledUpgrader {
+	if d.NewUpgrader != nil {
+		return d.NewUpgrader(repoPath, d.State, current)
+	}
+	return NewDockerUpgrader(repoPath, d.State, current)
 }
 
 // SchedulerCfg is the subset of config.Config the scheduler
@@ -370,12 +388,21 @@ func runScheduled(ctx context.Context, deps SchedulerDeps, target string, trigge
 	_ = writeLastRun(deps.DB, triggeredAt)
 
 	ctxRun, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
 
 	scheduledRunWG.Add(1)
 	go func() {
 		defer scheduledRunWG.Done()
-		u := NewDockerUpgrader(deps.RepoPath, deps.State, current)
+		// B434 (2026-10-28, live): the cancel belongs to the GOROUTINE, not to
+		// runScheduled. Until it moved here, `defer cancel()` fired the moment this
+		// function returned — one instruction after the goroutine was spawned — so every
+		// cancellable step of the upgrade began with a DEAD context. The first such step is
+		// the backup tag, which is why the reference install's very first scheduled update
+		// failed with «backup tag: context canceled» (08:00 MSK, job 150c20bc) while the
+		// manual «Обновить» path — whose cancel() has always been deferred INSIDE its
+		// goroutine — worked on the same tree. The unit tests could not see it because they
+		// assert that a job was created, not that it was allowed to run.
+		defer cancel()
+		u := deps.newUpgrader(deps.RepoPath, current)
 		u.Run(ctxRun, target)
 
 		finalState := deps.State.Get()
