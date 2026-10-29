@@ -1,5 +1,50 @@
 # Skygate release notes
 
+## v1.5.190 — the exit-rules table lines up, and the device filter stops reloading (B438)
+
+**Date:** 2026-10-29 · **Base:** `v1.5.189` → this tag · **Compatibility:** none.
+
+Two operator reports, both measured on the templates — and neither was what it looked like.
+
+### 1. «Проблема с компоновкой таблиц в exit правилах»
+
+The column counts were fine: no `th`/`td` mismatch in any table of either template, and `colspan`
+did not appear at all. The defect was **nesting** — the range table (five columns on
+`/my/exit-rules`, six on `/admin/exit-rules`) lived inside the **fourth cell** of a four-column
+table. `.table-wrap` has zero intrinsic width, so the browser's auto layout gave that column almost
+nothing, and the inner header could not line up with any column above it: that is the
+«Действие | Цель | Preferred» over empty space, with everything squeezed into the right-hand sliver.
+
+The expander is now **its own row** with `colspan=4` — exactly the outer header's column count.
+The per-rule forms moved out of the table as well (the parser was hoisting them out anyway, via
+foster parenting). No new wrapper and no inline width, so the frozen **B410** and **B435.1**
+budgets do not move.
+
+### 2. «При выборе фильтра по устройствам перезагружается вся страница, и снятие тоже»
+
+There was no client-side device filter at all. The only way to narrow the list was the `?device=…`
+**link** — a full page navigation on select *and* on «показать все» — and the drill-down also
+disables pagination, so coming back reset the window and every expanded row.
+
+Added `#filter-device` with `onchange` (no form, no submit), `data-device` on the rule rows and on
+the group containers, and a device predicate inside the existing `applyFilter()`. The `?device=`
+links stay: they are the no-JS path and contract **B348 B6**, which the new contract re-runs
+behaviourally.
+
+### Also
+
+The heading «Устройства и назначенный exit-узел» was printed **twice** on one page — the second
+time over tiles that carry no relay field at all. The device index now uses its own label.
+
+### Contracts
+
+`scripts/check_b438_exit_rules_table_and_filter.sh` — **17** checks: no table nested in the outer
+cell, `colspan=4` in both templates, the detail row is a real row, the per-rule forms sit outside
+the table, the filter exists once and calls `applyFilter()`, the JS reads it, rows carry
+`data-device`, no reload path was added, B348 stays green (behaviourally), the duplicated heading
+is gone, both new keys come in RU+EN pairs, and the markup balance plus the B410/B435.1 ratchets
+are untouched.
+
 ## v1.5.189 — the whole catalog, from the shipped tag, against real PostgreSQL (B437.1)
 
 **Date:** 2026-10-28 · **Base:** `v1.5.188` → this tag · **Compatibility:** none.

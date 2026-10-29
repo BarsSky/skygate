@@ -347,6 +347,10 @@
             <option value="subnet">{{t "exit_rules.filter_subnet"}}</option>
             <option value="ip">{{t "exit_rules.filter_ip"}}</option>
           </select>
+          <select class="filter-target" id="filter-device" onchange="applyFilter()" aria-label="{{t "exit_rules.filter_device"}}">
+            <option value="">{{t "exit_rules.filter_device_all"}}</option>
+            {{range .DeviceIndex}}<option value="{{.Hostname}}"{{if eq .Hostname $.DeviceFilter}} selected{{end}}>{{.Hostname}} ({{.Rules}})</option>{{end}}
+          </select>
           <input type="text" class="search" id="search-input" placeholder="{{t "exit_rules.search_ph"}}" oninput="applyFilter()">
           <span class="spacer"></span>
           <span style="font-size:11px;color:var(--text-muted)" title="{{t "exit_rules.cascade_hint_title"}}">
@@ -409,7 +413,7 @@
            own view. Rendered only when there is more than one device to choose
            from (with a single device the list below IS that device). */}}
       <div class="card" id="my-device-index" style="margin-bottom:10px;padding:8px 12px">
-        <span style="color:var(--text-muted);font-size:12px">{{t "exit_rules.device_status_title"}}:</span>
+        <span style="color:var(--text-muted);font-size:12px">{{t "exit_rules_admin.device_index_title"}}:</span>
         {{range .DeviceIndex}}
         <a href="/my/exit-rules?device={{.Hostname}}" class="btn btn-sm" style="margin:2px 4px;font-size:12px">{{.Hostname}} <span class="tag">{{.Rules}}</span></a>
         {{end}}
@@ -447,7 +451,7 @@
             <th class="col-delete">{{t "exit_rules.target_col_rules"}}</th>
           </tr>
           {{range $row := .TargetRows}}
-          <tr class="rule-row" data-type="{{$row.TargetType}}" data-target="{{$row.TargetValue}} {{range $row.Rules}}{{.TargetValue}} {{end}}">
+          <tr class="rule-row" data-type="{{$row.TargetType}}" data-target="{{$row.TargetValue}} {{range $row.Rules}}{{.TargetValue}} {{end}}" data-device="{{range $row.Devices}}{{.DeviceName}} {{end}}">
             <td class="col-action">{{if eq $row.Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
             <td class="col-target">
               <code>{{$row.TargetValue}}</code>
@@ -465,9 +469,21 @@
               </span>
               {{end}}
             </td>
-            <td class="col-delete">
+            <td class="col-delete"><span class="tag">{{tf "exit_rules.target_show_rules" $row.Count}}</span></td>
+          </tr>
+          {{/* B438 (2026-10-29) — THE EXPANDER IS ITS OWN FULL-WIDTH ROW.
+               It used to live INSIDE the fourth <td>, so a five-column table was
+               nested inside one column of a four-column table: `.table-wrap` has
+               zero intrinsic width, so the auto table layout gave that column
+               almost nothing, the inner header («Действие | Цель | Preferred»)
+               could not line up with anything, and the whole block was squeezed
+               into the right-hand sliver — the operator's «проблема с компоновкой
+               таблиц». colspan matches the outer header exactly; no new wrapper,
+               no inline width, so the B410/B435.1 counters do not move. */}}
+          <tr class="rule-detail" data-device="{{range $row.Devices}}{{.DeviceName}} {{end}}">
+            <td colspan="4">
               <details>
-                <summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">{{tf "exit_rules.target_show_rules" $row.Count}}</summary>
+                <summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">{{t "exit_rules.device_status_open"}}</summary>
                 <div class="table-wrap" style="margin-top:6px">
                   <table style="margin:0">
                     <tr><th class="col-check"></th><th>{{t "exit_rules.col_action"}}</th><th>{{t "exit_rules.col_target"}}</th><th>{{t "exit_rules.preferred_col"}}</th><th></th></tr>
@@ -497,17 +513,24 @@
                         <button type="submit" class="btn btn-danger btn-sm" form="single-delete-{{.ID}}" title="{{t "common.delete"}}" onclick="return confirm('{{t "exit_rules.confirm_single_delete"}}')"><i class="fa-solid fa-trash"></i></button>
                       </td>
                     </tr>
-                    <form id="single-delete-{{.ID}}" method="post" action="/my/exit-rules/delete" style="display:none">
-                      <input type="hidden" name="id" value="{{.ID}}">
-                    </form>
-                    <form id="spread-{{.ID}}" method="post" action="/my/exit-rules/spread" style="display:none">
-                      <input type="hidden" name="exit_node" value="{{.ExitNode}}">
-                      <input type="hidden" name="target_type" value="{{.TargetType}}">
-                      <input type="hidden" name="target_value" value="{{.TargetValue}}">
-                    </form>
                     {{end}}
                   </table>
                 </div>
+                {{/* B438: the per-rule forms must not sit inside a table element but
+                     outside a cell — the HTML parser hoists them out of the table
+                     (foster parenting) and may synthesise an anonymous row. They are
+                     `display:none` and referenced by form="…", so moving them
+                     behind the closing table tag changes nothing a user sees. */}}
+                {{range $row.Rules}}
+                <form id="single-delete-{{.ID}}" method="post" action="/my/exit-rules/delete" style="display:none">
+                  <input type="hidden" name="id" value="{{.ID}}">
+                </form>
+                <form id="spread-{{.ID}}" method="post" action="/my/exit-rules/spread" style="display:none">
+                  <input type="hidden" name="exit_node" value="{{.ExitNode}}">
+                  <input type="hidden" name="target_type" value="{{.TargetType}}">
+                  <input type="hidden" name="target_value" value="{{.TargetValue}}">
+                </form>
+                {{end}}
               </details>
             </td>
           </tr>
@@ -551,7 +574,7 @@
               <th>{{t "exit_rules.target_col_devices"}}</th>
             </tr>
             {{range $r := $g.Rules}}
-            <tr class="rule-row" id="rule-{{$r.ID}}" data-type="{{$r.TargetType}}" data-target="{{$r.TargetValue}}">
+            <tr class="rule-row" id="rule-{{$r.ID}}" data-type="{{$r.TargetType}}" data-target="{{$r.TargetValue}}" data-device="{{$r.DeviceName}}">
               <td class="col-action">{{if eq $r.Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
               <td class="col-target"><code>{{$r.TargetValue}}</code> <span class="tag">{{$r.TargetType}}</span></td>
               <td class="col-devices">
@@ -576,7 +599,7 @@
            red badge for a device that is not. `PreferredExitNode` is the same
            per-(user, device) preference the rule rows use. */}}
       {{$active := ""}}{{range $di := $.DeviceInfos}}{{if eq $di.Hostname $host}}{{$active = $di.PreferredExitNode}}{{end}}{{end}}
-      <details open style="margin-bottom:8px">
+      <details open style="margin-bottom:8px" data-device="{{$host}}">
         <summary style="cursor:pointer;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-weight:600;display:flex;align-items:center;gap:8px">
           <i class="fa-solid fa-laptop"></i>
           <span>{{$host}}</span>
@@ -720,7 +743,7 @@
            устройств(ам)" badge. The per-host loop above is filtered to
            exclude them so the user does not see N copies per device. */}}
       {{if .AllDevicesByExitNodeCDN}}
-      <details open style="margin-top:18px">
+      <details open style="margin-top:18px" data-device="*">
         <summary style="cursor:pointer;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-weight:600;display:flex;align-items:center;gap:8px">
           <i class="fa-solid fa-users"></i>
           <span>{{t "exit_rules.all_devices_section_title"}}</span>
@@ -948,12 +971,30 @@
       window.applyFilter = function(){
         var t = document.getElementById('filter-type').value;
         var q = (document.getElementById('search-input').value || '').toLowerCase();
-        document.querySelectorAll('.rule-row').forEach(function(r){
+        // B438 (2026-10-29): the device dimension is filtered ON THE CLIENT.
+        // Before it, the only way to narrow by device was the `?device=` LINK,
+        // i.e. a full page navigation on select AND on «показать все» — the
+        // operator's «перезагружается вся страница». The links stay (they are
+        // the no-JS path and the contract B348 B6), the select is the fast path.
+        var devEl = document.getElementById('filter-device');
+        var dev = (devEl && devEl.value) ? devEl.value.toLowerCase() : '';
+        document.querySelectorAll('.rule-row, .rule-detail').forEach(function(r){
+          var isDetail = r.classList.contains('rule-detail');
           var type = r.getAttribute('data-type') || '';
           var target = (r.getAttribute('data-target') || '').toLowerCase();
-          var ok = (!t || type===t) && (!q || target.indexOf(q)>=0);
+          // A row inside an expanded device group carries the device on its
+          // enclosing <details data-device="…">; a top-level row carries its own.
+          var owner = r.getAttribute('data-device');
+          if (owner === null) {
+            var host = r.closest('[data-device]');
+            owner = host ? host.getAttribute('data-device') : '';
+          }
+          owner = (owner || '').toLowerCase();
+          var devOK = !dev || owner === '*' || (' ' + owner + ' ').indexOf(' ' + dev + ' ') >= 0;
+          var ok = devOK && (isDetail || ((!t || type===t) && (!q || target.indexOf(q)>=0)));
           if(ok) r.classList.remove('hidden'); else r.classList.add('hidden');
         });
+        // The device drill-down links keep working; the select only hides rows.
         syncCount();
       };
       // Per-device usage hint — translated strings come from data-* attributes

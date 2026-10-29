@@ -387,9 +387,16 @@
           </span>
           {{end}}
         </td>
-        <td class="col-delete">
+        <td class="col-delete"><span class="tag">{{tf "exit_rules.target_show_rules" $row.Count}}</span></td>
+      </tr>
+      {{/* B438 (2026-10-29) — same defect as the user page: the SIX-column range
+           table was nested inside the fourth cell of a FOUR-column table, so its
+           header could not line up with anything and the block was squeezed into
+           one column. Full-width row instead; colspan matches the outer header. */}}
+      <tr class="rule-detail" style="background:var(--bg-elev)">
+        <td colspan="4">
           <details>
-            <summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">{{tf "exit_rules.target_show_rules" $row.Count}}</summary>
+            <summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">{{t "exit_rules.device_status_open"}}</summary>
             <div class="table-wrap" style="margin-top:6px">
               <table style="margin:0">
                 <tr><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_preferred"}}</th><th>{{t "exit_rules_admin.col_created"}}</th></tr>
