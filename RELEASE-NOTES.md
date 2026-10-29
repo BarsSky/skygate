@@ -39,7 +39,7 @@ query in the project already makes.
 
 ### Contracts
 
-`scripts/check_b442_address_truth.sh` — **14** checks — plus 4 named `TestB442_*` tests (split, partial
+`scripts/check_b442_address_truth.sh` — **15** checks — plus 4 named `TestB442_*` tests (split, partial
 answer, failed lookup, deny claims). The `prefixowner` test fixtures gained the `action` column the real
 schema has had since v0.31.
 

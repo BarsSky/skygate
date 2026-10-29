@@ -18,7 +18,7 @@
 #      SERVES that prefix — while grants[] cannot express deny at all (B265). A refused
 #      destination could move a prefix onto a relay and steal it from an accept rule.
 #
-# CONTRACTS: 14.
+# CONTRACTS: 15.
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
