@@ -570,6 +570,113 @@
   </div>
 </div>
 
+{{/* B440 (2026-10-29) — the operator's half of the exit-node request channel:
+     the queue (with the cross-user truth: an approval moves the prefix for EVERYONE
+     who has rules on those addresses), the decided tail, and the policy — global
+     plus per user, because «от такого то пользователя всегда разрешать, от такого то
+     нет» was the literal instruction. */}}
+{{$rc := .RelayCard}}
+<div class="card">
+  <h3><i class="fa-solid fa-right-left"></i> {{t "exit_rules_admin.relay_request_title"}}</h3>
+  {{if $rc.FlashOK}}<div class="alert alert-success" style="margin-bottom:10px"><i class="fa-solid fa-check"></i> {{$rc.FlashOK}}</div>{{end}}
+  {{if $rc.FlashErr}}<div class="alert alert-danger" style="margin-bottom:10px"><i class="fa-solid fa-triangle-exclamation"></i> {{$rc.FlashErr}}</div>{{end}}
+  <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px 0">{{t "exit_rules_admin.relay_request_help"}}</p>
+  {{if $rc.Pending}}
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>{{t "exit_rules_admin.relay_request_col_user"}}</th>
+        <th>{{t "exit_rules_admin.relay_request_col_device"}}</th>
+        <th>{{t "exit_rules_admin.relay_request_col_from"}}</th>
+        <th>{{t "exit_rules_admin.relay_request_col_to"}}</th>
+        <th>{{t "exit_rules_admin.relay_request_col_prefixes"}}</th>
+        <th>{{t "exit_rules_admin.relay_request_col_affected"}}</th>
+        <th>{{t "exit_rules_admin.relay_request_col_note"}}</th>
+        <th>{{t "exit_rules_admin.relay_request_col_actions"}}</th>
+      </tr>
+      {{range $q := $rc.Pending}}
+      <tr>
+        <td><span class="tag">{{$q.Username}}</span></td>
+        <td>{{if $q.DeviceHostname}}<code>{{$q.DeviceHostname}}</code>{{else}}<span style="color:var(--text-muted)">—</span>{{end}}</td>
+        <td>{{if $q.FromRelay}}<code>{{$q.FromRelay}}</code>{{else}}<span style="color:var(--text-muted)">—</span>{{end}}</td>
+        <td><code>{{$q.ToRelay}}</code></td>
+        <td style="font-size:11px" title="{{range $q.Prefixes}}{{.}} {{end}}">{{len $q.Prefixes}}</td>
+        <td style="font-size:11px">{{if $q.AffectedLabel}}<span class="tag tag-warning" title="{{$q.AffectedLabel}}"><i class="fa-solid fa-users"></i> {{$q.AffectedLabel}}</span>{{else}}<span style="color:var(--text-muted)">{{t "exit_rules_admin.relay_request_affected_none"}}</span>{{end}}</td>
+        <td style="font-size:11px">{{$q.Note}}</td>
+        <td style="text-align:right">
+          <form method="post" action="/admin/exit-rules/relay-request" style="display:inline-flex;gap:4px;align-items:center">
+            <input type="hidden" name="id" value="{{$q.ID}}">
+            <input type="text" name="note" maxlength="300" placeholder="{{t "exit_rules_admin.relay_request_col_note"}}" style="font-size:11px;padding:3px 6px;width:120px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
+            <button type="submit" name="decision" value="approve" class="btn btn-sm"><i class="fa-solid fa-check"></i> {{t "exit_rules_admin.relay_request_approve"}}</button>
+            <button type="submit" name="decision" value="reject" class="btn btn-danger btn-sm"><i class="fa-solid fa-xmark"></i> {{t "exit_rules_admin.relay_request_reject"}}</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </table>
+  </div>
+  {{else}}
+  <p style="font-size:12px;color:var(--text-muted);margin:0">{{t "exit_rules_admin.relay_request_empty"}}</p>
+  {{end}}
+
+  <h4 style="font-size:13px;margin:16px 0 6px 0">{{t "exit_rules_admin.relay_policy_title"}}</h4>
+  <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px 0">{{t "exit_rules_admin.relay_policy_help"}}</p>
+  <p style="font-size:12px;margin:0 0 8px 0"><i class="fa-solid fa-gavel"></i> {{tf "exit_rules_admin.relay_policy_effective" $rc.GlobalMode}}</p>
+  <form method="post" action="/admin/exit-rules/relay-policy" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:12px">
+      {{t "exit_rules_admin.relay_policy_scope"}}
+      <select name="username" style="font-size:12px;padding:5px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
+        <option value="">{{t "exit_rules_admin.relay_policy_global"}}</option>
+        {{range $u := $rc.Users}}<option value="{{$u}}">{{$u}}</option>{{end}}
+      </select>
+    </label>
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:12px">
+      {{t "exit_rules_admin.relay_policy_mode"}}
+      <select name="mode" style="font-size:12px;padding:5px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
+        <option value="require_approval">{{t "exit_rules_admin.relay_policy_mode_require_approval"}}</option>
+        <option value="auto_approve">{{t "exit_rules_admin.relay_policy_mode_auto_approve"}}</option>
+        <option value="deny">{{t "exit_rules_admin.relay_policy_mode_deny"}}</option>
+        <option value="inherit">{{t "exit_rules_admin.relay_policy_clear"}}</option>
+      </select>
+    </label>
+    <button type="submit" class="btn btn-sm"><i class="fa-solid fa-floppy-disk"></i> {{t "exit_rules_admin.relay_policy_save"}}</button>
+  </form>
+  {{if $rc.Policies}}
+  <div class="table-wrap" style="margin-top:8px">
+    <table>
+      <tr><th>{{t "exit_rules_admin.relay_policy_scope"}}</th><th>{{t "exit_rules_admin.relay_policy_mode"}}</th></tr>
+      {{range $p := $rc.Policies}}<tr><td><code>{{$p.Scope}}</code></td><td><span class="tag">{{$p.Mode}}</span></td></tr>{{end}}
+    </table>
+  </div>
+  {{end}}
+
+  {{if $rc.Recent}}
+  <h4 style="font-size:13px;margin:16px 0 6px 0">{{t "exit_rules_admin.relay_request_decided"}}</h4>
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>{{t "exit_rules_admin.relay_request_col_user"}}</th>
+        <th>{{t "exit_rules.relay_request_col_status"}}</th>
+        <th>{{t "exit_rules_admin.relay_request_col_from"}}</th>
+        <th>{{t "exit_rules_admin.relay_request_col_to"}}</th>
+        <th>{{t "exit_rules.relay_request_col_prefixes"}}</th>
+        <th>{{t "exit_rules_admin.relay_request_col_note"}}</th>
+      </tr>
+      {{range $q := $rc.Recent}}
+      <tr>
+        <td><span class="tag">{{$q.Username}}</span></td>
+        <td><span class="tag {{if eq $q.Status "rejected"}}tag-danger{{else if eq $q.Status "pending"}}tag-warning{{else}}tag-success{{end}}">{{$q.StatusLabel}}</span></td>
+        <td>{{if $q.FromRelay}}<code>{{$q.FromRelay}}</code>{{else}}<span style="color:var(--text-muted)">—</span>{{end}}</td>
+        <td><code>{{$q.ToRelay}}</code></td>
+        <td style="font-size:11px">{{len $q.Prefixes}}</td>
+        <td style="font-size:11px">{{$q.Note}}</td>
+      </tr>
+      {{end}}
+    </table>
+  </div>
+  {{end}}
+</div>
+
 <div class="card">
   <h3><i class="fa-solid fa-clock-rotate-left"></i> {{t "exit_rules_admin.acl_history"}}</h3>
   {{if .Logs}}

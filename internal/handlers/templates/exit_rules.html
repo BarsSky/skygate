@@ -949,6 +949,7 @@
       </form>
     </div>
 
+
     <script>
     (function(){
       function syncCount(){
@@ -1055,6 +1056,83 @@
     })();
     </script>
     {{end}}
+
+    {{/* B440 (2026-10-29) — «запрос на смену exit node для правила». The operator's
+         words, and the honest model behind the form: headscale serves an address from
+         ONE relay, so a request is «make this relay the owner», not «route my packets
+         elsewhere». One card, one form: the rule, the wanted relay, a comment. What
+         happens next is decided by the administrator's policy — and the card SAYS which
+         one is in force, because a form that does not tell you whether the button
+         applies anything is the reason people stop trusting such forms. */}}
+    {{$rc := .RelayCard}}
+    <div class="card" style="margin-top:16px">
+      <h3><i class="fa-solid fa-right-left"></i> {{t "exit_rules.relay_request_title"}}</h3>
+      {{if $rc.FlashOK}}<div class="alert alert-success" style="margin-bottom:10px"><i class="fa-solid fa-check"></i> {{$rc.FlashOK}}</div>{{end}}
+      {{if $rc.FlashErr}}<div class="alert alert-danger" style="margin-bottom:10px"><i class="fa-solid fa-triangle-exclamation"></i> {{$rc.FlashErr}}</div>{{end}}
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px 0">{{t "exit_rules.relay_request_help"}}</p>
+      {{if eq $rc.PolicyMode "deny"}}
+        <div class="alert alert-warning" style="margin:0"><i class="fa-solid fa-ban"></i> {{t "exit_rules.relay_request_policy_deny"}}</div>
+      {{else if not $rc.Relays}}
+        <div class="alert alert-warning" style="margin:0"><i class="fa-solid fa-plug-circle-xmark"></i> {{t "exit_rules.relay_request_no_relays"}}</div>
+      {{else if not $rc.Rules}}
+        <div class="alert" style="margin:0"><i class="fa-solid fa-circle-info"></i> {{t "exit_rules.relay_request_no_rules"}}</div>
+      {{else}}
+        <p style="font-size:12px;margin:0 0 10px 0">
+          {{if eq $rc.PolicyMode "auto_approve"}}<span class="tag tag-warning"><i class="fa-solid fa-bolt"></i></span> {{t "exit_rules.relay_request_policy_auto"}}
+          {{else}}<span class="tag tag-info"><i class="fa-solid fa-clock"></i></span> {{t "exit_rules.relay_request_policy_ask"}}{{end}}
+        </p>
+        <form method="post" action="/my/exit-rules/relay-request" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;flex:1 1 260px;min-width:0">
+            {{t "exit_rules.relay_request_rule"}}
+            <select name="rule_id" style="font-size:12px;padding:5px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px;max-width:100%">
+              {{range $r := $rc.Rules}}<option value="{{$r.ID}}">{{$r.Label}}</option>{{end}}
+            </select>
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;flex:0 1 200px">
+            {{t "exit_rules.relay_request_relay"}}
+            <select name="to_relay" style="font-size:12px;padding:5px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
+              {{range $relay := $rc.Relays}}<option value="{{$relay}}">{{$relay}}</option>{{end}}
+            </select>
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;flex:1 1 220px;min-width:0">
+            {{t "exit_rules.relay_request_note"}}
+            <input type="text" name="note" maxlength="300" style="font-size:12px;padding:5px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
+          </label>
+          <button type="submit" class="btn btn-sm"><i class="fa-solid fa-paper-plane"></i> {{t "exit_rules.relay_request_submit"}}</button>
+        </form>
+      {{end}}
+      <h4 style="font-size:13px;margin:16px 0 6px 0">{{t "exit_rules.relay_request_mine_title"}}</h4>
+      {{if $rc.Mine}}
+      <div class="table-wrap">
+        <table>
+          <tr>
+            <th>{{t "exit_rules.relay_request_col_status"}}</th>
+            <th>{{t "exit_rules.relay_request_col_from"}}</th>
+            <th>{{t "exit_rules.relay_request_col_to"}}</th>
+            <th>{{t "exit_rules.relay_request_col_prefixes"}}</th>
+            <th>{{t "exit_rules.relay_request_col_note"}}</th>
+          </tr>
+          {{range $q := $rc.Mine}}
+          <tr>
+            <td>
+              {{if eq $q.Status "pending"}}<span class="tag tag-warning"><i class="fa-solid fa-clock"></i> {{t "exit_rules.relay_request_status_pending"}}</span>
+              {{else if eq $q.Status "approved"}}<span class="tag tag-success"><i class="fa-solid fa-check"></i> {{t "exit_rules.relay_request_status_approved"}}</span>
+              {{else if eq $q.Status "auto_approved"}}<span class="tag tag-info"><i class="fa-solid fa-bolt"></i> {{t "exit_rules.relay_request_status_auto_approved"}}</span>
+              {{else if eq $q.Status "rejected"}}<span class="tag tag-danger"><i class="fa-solid fa-xmark"></i> {{t "exit_rules.relay_request_status_rejected"}}</span>
+              {{else}}<span class="tag">{{t "exit_rules.relay_request_status_withdrawn"}}</span>{{end}}
+            </td>
+            <td>{{if $q.FromRelay}}<code>{{$q.FromRelay}}</code>{{else}}<span style="color:var(--text-muted)">—</span>{{end}}</td>
+            <td><code>{{$q.ToRelay}}</code></td>
+            <td style="font-size:11px">{{len $q.Prefixes}}{{if $q.AffectedLabel}}<div style="color:var(--text-muted)">{{tf "exit_rules.relay_request_shared" $q.AffectedLabel}}</div>{{end}}</td>
+            <td style="font-size:11px">{{$q.Note}}</td>
+          </tr>
+          {{end}}
+        </table>
+      </div>
+      {{else}}
+      <p style="font-size:12px;color:var(--text-muted);margin:0">{{t "exit_rules.relay_request_none"}}</p>
+      {{end}}
+    </div>
 
     <div class="card">
       <h3><i class="fa-solid fa-info-circle"></i> {{t "exit_rules.how_title"}}</h3>

@@ -161,6 +161,20 @@ func SetRelayPolicy(d *sql.DB, username, mode, by string) error {
 	return err
 }
 
+// DeleteRelayPolicy removes one scope, which is how the operator hands a user back to
+// the global policy instead of freezing today's global value on them.
+func DeleteRelayPolicy(d *sql.DB, username string) error {
+	if d == nil {
+		return errors.New("relay policy: no database")
+	}
+	scope := relayPolicyGlobal
+	if strings.TrimSpace(username) != "" {
+		scope = relayUserPrefix + strings.ToLower(strings.TrimSpace(username))
+	}
+	_, err := d.Exec(`DELETE FROM exit_relay_policies WHERE scope = ?`, scope)
+	return err
+}
+
 // ListRelayPolicies returns every stored policy row: scope → mode.
 func ListRelayPolicies(d *sql.DB) (map[string]string, error) {
 	out := map[string]string{}
@@ -282,6 +296,37 @@ func CreateRelayRequest(env RelayRequestEnv, in RelayRequestInput) (RelayRequest
 		}
 	}
 	return out, nil
+}
+
+// ListRelayRequestsByUser returns ONE user's requests, newest first — the user page's
+// history. A separate query rather than a filter over the full list: the page must not
+// lose its own rows to somebody else's traffic once the table grows.
+func ListRelayRequestsByUser(d *sql.DB, userID int64, limit int) ([]RelayRequest, error) {
+	if d == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := d.Query(`SELECT id, user_id, username, device_hostname, from_relay, to_relay, prefixes, status, note,
+	                             decided_by, decided_at, created_at, updated_at FROM exit_relay_requests
+	                       WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []RelayRequest{}
+	for rows.Next() {
+		var r RelayRequest
+		var prefixes string
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Username, &r.DeviceHostname, &r.FromRelay, &r.ToRelay,
+			&prefixes, &r.Status, &r.Note, &r.DecidedBy, &r.DecidedAt, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		r.Prefixes = cleanPrefixes(strings.Split(prefixes, " "))
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // ListRelayRequests returns requests in one status ("" = every row), newest first.

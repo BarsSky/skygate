@@ -1015,5 +1015,11 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// B380: which group the operator just filed rules under, so the page can
 		// open that group instead of leaving them to find it.
 		"group_saved": NormaliseGroupLabel(r.URL.Query().Get("group_saved")),
+		// B440 (2026-10-29): «пользователь может делать запрос на смену exit node для
+		// правила». One card carries the whole channel for this user: what the policy
+		// allows them, the rules they may ask about, the relays to ask for, and the
+		// history of their own asks — so the answer to "did anything happen" is on the
+		// page instead of in a notification that already scrolled away.
+		"RelayCard": s.myRelayRequestCard(c, r),
 	})
 }

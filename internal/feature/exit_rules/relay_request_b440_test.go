@@ -234,3 +234,65 @@ func TestB440_SetRelayPolicyRejectsAnUnknownMode(t *testing.T) {
 		t.Errorf("a refused write must not store anything: %v", policies)
 	}
 }
+
+// TestB440_UserHistoryIsScopedToTheUser pins the query the USER page reads: a user must
+// see their own requests even when somebody else submitted a hundred, and must never see
+// another user's. A filter applied after “ListRelayRequests(d, "", 200)“ would lose the
+// user's own rows to the table's growth — which is why the query is separate.
+func TestB440_UserHistoryIsScopedToTheUser(t *testing.T) {
+	env, _ := newB440Env(t)
+	for i := 0; i < 3; i++ {
+		if _, err := CreateRelayRequest(env, RelayRequestInput{
+			UserID: 7, Username: "michail", DeviceHostname: "basic",
+			FromRelay: "emilia", ToRelay: "karolina", Prefixes: []string{"198.51.100.0/24"},
+		}); err != nil {
+			t.Fatalf("create for michail: %v", err)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := CreateRelayRequest(env, RelayRequestInput{
+			UserID: 6, Username: "skyadmin", DeviceHostname: "skyworker",
+			FromRelay: "emilia", ToRelay: "karolina", Prefixes: []string{"203.0.113.0/24"},
+		}); err != nil {
+			t.Fatalf("create for skyadmin: %v", err)
+		}
+	}
+	mine, err := ListRelayRequestsByUser(env.DB, 7, 50)
+	if err != nil {
+		t.Fatalf("ListRelayRequestsByUser: %v", err)
+	}
+	if len(mine) != 3 {
+		t.Fatalf("michail must see exactly his 3 rows, got %d", len(mine))
+	}
+	for _, r := range mine {
+		if r.UserID != 7 {
+			t.Errorf("another user's request leaked into the history: id=%d user=%d", r.ID, r.UserID)
+		}
+	}
+}
+
+// TestB440_DeleteRelayPolicyHandsTheUserBackToTheGlobalPolicy: “inherit“ must REMOVE the
+// scope row rather than freeze today's global value on the user — otherwise changing the
+// global policy later would silently not apply to them.
+func TestB440_DeleteRelayPolicyHandsTheUserBackToTheGlobalPolicy(t *testing.T) {
+	env, _ := newB440Env(t)
+	if err := SetRelayPolicy(env.DB, "", RelayPolicyAutoApprove, "skyadmin"); err != nil {
+		t.Fatalf("global: %v", err)
+	}
+	if err := SetRelayPolicy(env.DB, "michail", RelayPolicyDeny, "skyadmin"); err != nil {
+		t.Fatalf("per user: %v", err)
+	}
+	if got, _ := GetRelayPolicy(env.DB, "michail"); got != RelayPolicyDeny {
+		t.Fatalf("the user row must win, got %q", got)
+	}
+	if err := DeleteRelayPolicy(env.DB, "michail"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if got, _ := GetRelayPolicy(env.DB, "michail"); got != RelayPolicyAutoApprove {
+		t.Errorf("after clearing the user row the GLOBAL policy must apply, got %q", got)
+	}
+	policies, _ := ListRelayPolicies(env.DB)
+	if _, ok := policies["user:michail"]; ok {
+		t.Errorf("the scope row survived the clear: %v", policies)
+	}
+}

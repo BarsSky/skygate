@@ -859,6 +859,9 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		"TargetRowsAdmin":    targetRowsAdmin,
 		"TargetDevicesAdmin": TargetRowAdminDeviceCount(targetRowsAdmin),
 		"ViewMode":           viewMode,
+		// B440 (2026-10-29): the request queue, the decided tail and the policy card —
+		// the operator's half of the exit-node request channel.
+		"RelayCard": s.adminRelayRequestCard(r),
 	})
 }
 

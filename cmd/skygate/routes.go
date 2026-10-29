@@ -863,6 +863,12 @@ func registerRoutes(
 	// user. The handler does its own IsAdmin check (defense-in-depth), exactly
 	// like PostAdminExitRule above.
 	mux.Handle("POST /admin/exit-rules/bulk", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRulesBulk)))
+	// B440 (2026-10-29): the exit-node REQUEST channel. A user asks for another relay
+	// for one of their rules; the operator answers per user / globally, and an approval
+	// is exactly the manual prefix pin + ACL re-apply the exit-nodes page performs.
+	mux.Handle("POST /my/exit-rules/relay-request", authMW(http.HandlerFunc(exitRulesSvc.PostMyRelayRequest)))
+	mux.Handle("POST /admin/exit-rules/relay-request", authMW(http.HandlerFunc(exitRulesSvc.PostAdminRelayRequestDecide)))
+	mux.Handle("POST /admin/exit-rules/relay-policy", authMW(http.HandlerFunc(exitRulesSvc.PostAdminRelayPolicy)))
 	mux.Handle("POST /admin/exit-rules/rollback", authMW(http.HandlerFunc(exitRulesSvc.PostAdminRollbackACL)))
 	// B328: the rule caps (per-device / per-user / system) were env-only, and under
 	// docker the container environment is frozen at creation — so changing a number

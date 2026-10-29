@@ -1,5 +1,62 @@
 # Skygate release notes
 
+## v1.5.192 — the user can ASK for another exit node, and the operator sets the policy (B440)
+
+**Date:** 2026-10-29 · **Base:** `v1.5.191` → this tag · **Compatibility:** additive (V082 adds two tables, nothing is rewritten).
+
+Operator instruction: «необходимо чтобы пользователь мог делать запрос на смену exit node для правила и у
+администратора имелась возможность выставить политику поведения на такие запросы — к примеру от такого то
+пользователя всегда разрешать запрос на другой нод от такого то нет и общая политика и оповещать о таких
+запросах администратора в уведомлениях и телеграмме».
+
+### What a request can and cannot mean
+
+Headscale serves a prefix from **exactly one** relay (B274/B275), so «route my packets through that node
+instead» is not a thing the data plane can express. A request is therefore: **make THIS relay the owner of
+these addresses.** Everything below follows from that sentence, and the page says it instead of implying a
+private per-user route.
+
+### The channel
+
+* **The user** asks from `/my/exit-rules`: pick one of *their own* enabled rules, pick the relay they want,
+  add a comment. The card names the policy that is in force, so the user knows whether the button applies
+  anything at all. Their own request history (status, was → requested, address count, comment) lives under
+  the form.
+* **The policy** is a stored row per scope: `user:<name>` wins over `global`, and with neither the answer is
+  `require_approval` — nothing is ever applied on an install where nobody said otherwise. Three modes:
+  `auto_approve`, `require_approval`, `deny`. `deny` records **no row**; it refuses.
+* **The operator** decides on `/admin/exit-rules`: a queue with the user, the device, the relay that serves
+  the addresses now, the requested one, the address count, the comment, and — deliberately — **the other
+  users** an approval would move the prefix for. An approval is the operator's own manual pin
+  (`prefixowner.SetManual`) plus the same throttled ACL re-apply the exit-nodes page runs, so an approved
+  request is durable and shows up in the assignment table like any other pin. A pin that fails leaves the
+  request **pending** and says so; it never looks decided.
+* **Notifications**: every ask writes a panel notification for **every** admin row (`is_admin = 1`,
+  delegated admins included — B264) and sends the same text through the admin Telegram channel; the asking
+  user is told about every decision (approve / auto-approve / reject with the operator's comment).
+
+### Schema
+
+V082 in **both** chains: `exit_relay_requests` (the queue and its decision) and `exit_relay_policies`
+(scope → mode, upsert per scope). SQLite goes through `execSQLiteDDL` with one statement per element.
+
+### Contracts
+
+`scripts/check_b440_relay_requests.sh` — **32** checks: gofmt, the policy precedence and the
+`require_approval` default, the deny-without-a-row pin, the green unit suite, V082 registered in both
+chains with `execSQLiteDDL`, all three routes, the role re-check on both admin actions, the ownership scope
+on the user's rule lookup, the pin going through `SetManual` **with the hostname** plus
+`ReapplyACLIfDrifted`, the tag requirement (B284), panel + Telegram notifications, both cards (and that
+`deny` hides the form), the RU+EN pairs, the render tests, markup balance (B436) and the mobile budgets
+(B435.1). Plus 11 `TestB440_*` unit tests and 4 render tests in
+`internal/handlers/relay_request_b440_render_test.go`.
+
+### Honest limits
+
+An approved request moves the prefix for **everyone** who has rules on those addresses — that is the data
+plane's arithmetic, not a policy choice, which is why the queue lists those users next to the approve
+button. A relay without a per-node tag cannot be pinned (B284) and is not offered.
+
 ## v1.5.191 — the row says which relay actually carries it (B439)
 
 **Date:** 2026-10-29 · **Base:** `v1.5.190` → this tag · **Compatibility:** none.
