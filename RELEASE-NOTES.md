@@ -1,5 +1,54 @@
 # Skygate release notes
 
+## v1.5.196 — the latest version no longer hides behind one rate-limited door (B445)
+
+**Date:** 2026-10-29 · **Base:** `v1.5.195` → this tag · **Compatibility:** none.
+
+Report: «на странице обновлений снова не отображается последняя версия доступная для установки».
+
+### What was actually wrong (measured, not guessed)
+
+On the reference install, from inside the app container:
+
+* `https://api.github.com/rate_limit` → `core: limit 60, remaining 0, used 60`;
+* the journal had carried `release-monitor: GitHub rate limit hit — the next check is in ≤1h0m0s; set
+  SKYGATE_GITHUB_TOKEN…` **every hour for two days**;
+* `/healthz` → `v1.5.189+9196748d`, while v1.5.190 … v1.5.195 were published.
+
+So the install was six releases behind for one reason: every version question went through
+`GET /repos/…/releases/latest`, that door answered **403**, and the page had no answer to show.
+Worse, the **scheduled** update refused to act as well — an empty `Latest` means "nothing to do" for
+it — so the 08:00 run never installed anything either. The page's only remedy was an environment
+variable, i.e. work for the operator.
+
+### 1. A second door that needs no API quota
+
+`git ls-remote --tags` lists the repository's tags over the same git transport the updater already
+uses — no GitHub API, no quota. The checker now falls back to it:
+
+* the highest **semver** tag wins (`HighestSemverTag`): annotated-tag duplicates (`^{}`), hand-made
+  non-version tags and — on the `stable` channel — prereleases are skipped;
+* the answer carries `Source=git-tags` and `NotesUnavailable`, and the page says so: the **version is
+  exact, the release notes were not fetched**, with the API failure as the reason;
+* the fallback result is cached like a success (a flag, not an `Error`), because an error bypasses the
+  success cache and every page load would run `git ls-remote` — the same quota-burning shape B424
+  fixed for the API;
+* the fallback honours the configured git mirror (`SKYGATE_UPDATE_GIT_URL` /
+  `SKYGATE_UPDATE_GIT_MIRROR` / DB `update.git_url`), so a mirror-only host works too.
+
+Because the scheduled updater reads the same `Latest`, this also unblocks the 08:00 run.
+
+### 2. When neither door answers, the failure is actionable
+
+The rate-limit error now names the reset time **in words** (`2026-10-29T21:00:00Z (unix …)`) and the
+remedy (`SKYGATE_GITHUB_TOKEN` → 5000 requests/hour) instead of `reset at unix 1793306619`.
+
+### Contracts
+
+`scripts/check_b445_update_truth.sh` — **18** checks — plus five `TestB445_*` tests: the tag choice
+against a real `ls-remote` shape, junk tags, the rate-limited fallback end to end (403 → v1.5.195 from
+tags, `IsNewer`, no `Error`), the no-door case naming the remedy, and the cache behaviour.
+
 ## v1.5.195 — the panel can finally name the destinations nobody serves (B444)
 
 **Date:** 2026-10-29 · **Base:** `v1.5.194` → this tag · **Compatibility:** none (no schema change).

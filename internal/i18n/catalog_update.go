@@ -25,6 +25,10 @@ var ruUpdate = map[string]string{
 	"update.install_label":  "Установка",
 	"update.channel":        "Канал",
 	"update.checked_at":     "Проверено",
+	// B445: the version can come from the repository's tags when the GitHub API is
+	// rate-limited. The number is exact, the release notes are not — say which.
+	"update.from_git_tags":     "Версия прочитана из git-тегов репозитория (GitHub API недоступен), заметки к релизу не загружены.",
+	"update.notes_unavailable": "Причина",
 	// B431: «Проверить сейчас» now reports what it found. Before it rendered the same
 	// cached page with no flash, so a click that changed nothing looked identical to a
 	// button that does nothing — the operator could not tell whether GitHub had been
@@ -162,6 +166,8 @@ var enUpdate = map[string]string{
 	"update.install_label":            "Install",
 	"update.channel":                  "channel",
 	"update.checked_at":               "Checked",
+	"update.from_git_tags":            "Version read from the repository's git tags (the GitHub API is unavailable); the release notes were not fetched.",
+	"update.notes_unavailable":        "Reason",
 	"update.check_now_ok":             "GitHub re-checked: latest release is %s",
 	"update.check_now_none":           "GitHub re-checked: no releases found",
 	"update.check_now_failed":         "GitHub re-checked — failed: %s",

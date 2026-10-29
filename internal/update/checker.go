@@ -24,8 +24,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +75,14 @@ type Checker struct {
 	// "0.28.6+abc1234" or "v0.28.7". Compared against the
 	// latest GitHub release tag (e.g. "v0.29.0").
 	CurrentVersion string
+	// TagLister is the SECOND door to the same answer (B445): when the GitHub API is
+	// unusable — rate limited, api.github.com unreachable, a mirror-only host — the
+	// version can still be read from the repository's tags, which needs no API quota.
+	// Nil disables the fallback (tests that only exercise the API path).
+	TagLister func(ctx context.Context) ([]string, error)
+	// ReleaseURLTemplate builds the release page URL for a tag when the fallback answered
+	// (the API would have returned html_url). Optional.
+	ReleaseURLTemplate func(tag string) string
 
 	// mu serialises the cache fields below AND the HTTP round trip, so two concurrent
 	// page renders cannot both hit GitHub and cannot read a half-written cache (see the
@@ -113,6 +123,19 @@ type Result struct {
 	// SourceURL is the GitHub API URL the result came from,
 	// for debugging in the UI.
 	SourceURL string
+	// Source is WHERE the answer came from: SourceAPI when the GitHub Releases API
+	// answered, SourceGitTags when the API was unusable and the version was read from the
+	// repository's tags (B445). The page renders it, so a version read from git cannot be
+	// presented with the authority of release notes that were never fetched.
+	Source string
+	// NotesUnavailable is true when the version is exact but the release NOTES are missing
+	// (the git-tags fallback). It is deliberately NOT `Error`: an error bypasses the success
+	// cache and would make every page load re-run `git ls-remote` — the same quota-burning
+	// shape B424 fixed for the API.
+	NotesUnavailable bool
+	// NotesReason explains why the notes are missing (the API failure that triggered the
+	// fallback), in words the operator can act on.
+	NotesReason string
 	// Error is the most recent error message (network, parse,
 	// rate limit). Empty on success. The result MAY still be
 	// cached from a previous successful call.
@@ -216,8 +239,61 @@ func (c *Checker) check(ctx context.Context, force bool) (*Result, error) {
 	return result, nil
 }
 
-// fetch hits the GitHub API and returns a fresh Result.
+// fetch returns a fresh Result: from the GitHub Releases API when it answers, and from the
+// repository's TAGS when it does not (B445).
+//
+// WHY THE FALLBACK EXISTS. Measured on the reference install 2026-10-29: the host's
+// anonymous GitHub quota was exhausted (core limit 60 / remaining 0) for two days, so every
+// `/releases/latest` call answered 403. The page then had no version to show — six published
+// releases were invisible and the SCHEDULED update refused to act, because it treats an empty
+// `Latest` as "nothing to do". A single rate-limited door must not be able to freeze an
+// installation: the tags are readable over git with no API quota at all, and the updater's own
+// git already knows how. The release NOTES stay unavailable, and the Result says so instead of
+// pretending otherwise.
 func (c *Checker) fetch(ctx context.Context) (*Result, error) {
+	apiResult, apiErr := c.fetchFromAPI(ctx)
+	if apiErr == nil {
+		return apiResult, nil
+	}
+	if tagRes, ok := c.fetchFromTags(ctx, apiErr); ok {
+		return tagRes, nil
+	}
+	return nil, apiErr
+}
+
+// fetchFromTags is the fallback door: the highest semver tag of the repository.
+func (c *Checker) fetchFromTags(ctx context.Context, apiErr error) (*Result, bool) {
+	if c.TagLister == nil {
+		return nil, false
+	}
+	refs, err := c.TagLister(ctx)
+	if err != nil {
+		log.Printf("update-checker: git-tags fallback failed after the API error (%v): %v", apiErr, err)
+		return nil, false
+	}
+	tag, version, ok := HighestSemverTag(refs, c.Channel)
+	if !ok {
+		log.Printf("update-checker: git-tags fallback found no usable semver tag (%d ref(s)) after the API error: %v", len(refs), apiErr)
+		return nil, false
+	}
+	releaseURL := ""
+	if c.ReleaseURLTemplate != nil {
+		releaseURL = c.ReleaseURLTemplate(tag)
+	}
+	log.Printf("update-checker: GitHub API unusable (%v) — answered from git tags: %s", apiErr, tag)
+	return &Result{
+		Latest:           tag,
+		LatestVersion:    version,
+		IsNewer:          compareSemver(version, c.CurrentVersion) > 0,
+		ReleaseURL:       releaseURL,
+		Source:           SourceGitTags,
+		NotesUnavailable: true,
+		NotesReason:      apiErr.Error(),
+	}, true
+}
+
+// fetchFromAPI is the primary door: GET /repos/{owner}/{repo}/releases/latest.
+func (c *Checker) fetchFromAPI(ctx context.Context) (*Result, error) {
 	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", c.Owner, c.Repo)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
@@ -234,10 +310,22 @@ func (c *Checker) fetch(ctx context.Context) (*Result, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusForbidden {
-		// Likely rate-limited. Read the body for the X-RateLimit-Reset
-		// header so the operator knows when to retry.
-		retryAfter := resp.Header.Get("X-RateLimit-Reset")
-		return nil, fmt.Errorf("checker: GitHub API rate limited (reset at unix %s)", retryAfter)
+		// Likely rate-limited. The reset time is reported in WORDS as well as unix
+		// seconds (B445): a raw "reset at unix 1793306619" tells the operator nothing
+		// about how long the page will stay blind.
+		reset := strings.TrimSpace(resp.Header.Get("X-RateLimit-Reset"))
+		when := ""
+		if reset != "" {
+			if secs, aerr := strconv.ParseInt(reset, 10, 64); aerr == nil && secs > 0 {
+				when = time.Unix(secs, 0).UTC().Format(time.RFC3339) + " (unix " + reset + ")"
+			} else {
+				when = "unix " + reset
+			}
+		}
+		if when == "" {
+			return nil, fmt.Errorf("checker: GitHub API rate limited")
+		}
+		return nil, fmt.Errorf("checker: GitHub API rate limited — resets at %s; set SKYGATE_GITHUB_TOKEN to raise 60 requests/hour to 5000", when)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -268,6 +356,7 @@ func (c *Checker) fetch(ctx context.Context) (*Result, error) {
 			Body:          truncate(gh.Body, MaxBodyLen),
 			PublishedAt:   gh.PublishedAt,
 			SourceURL:     apiURL,
+			Source:        SourceAPI,
 			Error:         fmt.Sprintf("latest is prerelease (%s) but channel is 'stable' — set SKYGATE_UPDATE_CHANNEL=all to see it", gh.TagName),
 		}, nil
 	}
@@ -279,6 +368,7 @@ func (c *Checker) fetch(ctx context.Context) (*Result, error) {
 		Body:          truncate(gh.Body, MaxBodyLen),
 		PublishedAt:   gh.PublishedAt,
 		SourceURL:     apiURL,
+		Source:        SourceAPI,
 	}, nil
 }
 

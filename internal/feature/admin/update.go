@@ -26,6 +26,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -396,8 +397,16 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		"CheckedAt":    result.CheckedAt,
 		"Error":        result.Error,
 		"SourceURL":    result.SourceURL,
-		"InstallKind":  installKind.String(),
-		"InstallLabel": installLabel(installKind),
+		// B445 (2026-10-29): WHERE the version came from, and what is missing because of
+		// it. When the GitHub API is rate-limited the answer is read from the repository's
+		// tags: the version is exact, the release NOTES are not. The page must say that
+		// instead of presenting a bare "v1.5.195" as if the notes had been fetched — and it
+		// must never read like "you are up to date" when the truth is "the API is blind".
+		"LatestSource":     result.Source,
+		"NotesUnavailable": result.NotesUnavailable,
+		"NotesReason":      result.NotesReason,
+		"InstallKind":      installKind.String(),
+		"InstallLabel":     installLabel(installKind),
 		// v1.5.9 (§12.15 item 3): the platform the updater would
 		// actually touch (OS/arch of the running binary, container
 		// marker, systemctl/docker presence, and for native installs
@@ -1254,7 +1263,7 @@ var updateCheckerCache struct {
 func updateCheckerFor(s *Service) *update.Checker {
 	key := strings.Join([]string{
 		s.Cfg.GitHubOwner, s.Cfg.GitHubRepo, defaultStr(s.Cfg.UpdateChannel, "stable"),
-		s.BuildVersion, fmt.Sprintf("%t", s.Cfg.GitHubToken != ""),
+		s.BuildVersion, fmt.Sprintf("%t", s.Cfg.GitHubToken != ""), s.Cfg.RepoPath,
 	}, "\x00")
 	updateCheckerCache.mu.Lock()
 	defer updateCheckerCache.mu.Unlock()
@@ -1265,8 +1274,41 @@ func updateCheckerFor(s *Service) *update.Checker {
 			Channel:        defaultStr(s.Cfg.UpdateChannel, "stable"),
 			GitHubToken:    s.Cfg.GitHubToken,
 			CurrentVersion: s.BuildVersion,
+			// B445: the SECOND door. A rate-limited (or api.github.com-unreachable) host
+			// still gets the right version, read from the repository's tags over git —
+			// which is how the updater itself fetches, so no API quota is involved.
+			TagLister: func(ctx context.Context) ([]string, error) {
+				return update.GitLsRemoteTags(ctx, s.Cfg.RepoPath, updateGitRemoteFor(s))
+			},
+			ReleaseURLTemplate: func(tag string) string {
+				return fmt.Sprintf("https://github.com/%s/%s/releases/tag/%s", s.Cfg.GitHubOwner, s.Cfg.GitHubRepo, tag)
+			},
 		}
 		updateCheckerCache.key = key
 	}
 	return updateCheckerCache.c
+}
+
+// updateGitRemoteFor names the remote the tag fallback should ask: the configured MIRROR
+// first (an offline host has no route to github.com but does have its mirror), then the DB
+// setting the operator can edit from the panel, then plain `origin`.
+//
+// The order is the one `DockerUpgrader.fetchTarget` already uses (B272.5), and it is
+// repeated here on purpose: the checker is created from the ADMIN service, which has no
+// upgrader instance, and duplicating the ORDER is cheaper than wiring the upgrader into a
+// getter — but if that order ever changes, this is the second place to look.
+func updateGitRemoteFor(s *Service) string {
+	for _, key := range []string{"SKYGATE_UPDATE_GIT_URL", "SKYGATE_UPDATE_GIT_MIRROR"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	if s.dbc() != nil {
+		if v, err := db.GetGlobalSetting(s.dbc(), "update.git_url", ""); err == nil {
+			if v = strings.TrimSpace(v); v != "" {
+				return v
+			}
+		}
+	}
+	return "origin"
 }

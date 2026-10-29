@@ -247,6 +247,17 @@
         {{t "update.checked_at"}}: {{dts .CheckedAt}}
       </div>
       {{end}}
+      {{/* B445 (2026-10-29): the VERSION may come from the repository's tags when the GitHub
+           Releases API is unusable (rate limit, no route to api.github.com). The number is
+           exact; the release NOTES were not fetched — and the operator must see which of the
+           two they are looking at. Presenting the number as if the API had answered is how
+           «нет доступной версии» became indistinguishable from «API ослеп». */}}
+      {{if .NotesUnavailable}}
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.4">
+        <i class="fa-solid fa-circle-info"></i> {{t "update.from_git_tags"}}
+        {{if .NotesReason}}<div style="margin-top:2px">{{t "update.notes_unavailable"}}: <code>{{.NotesReason}}</code></div>{{end}}
+      </div>
+      {{end}}
     </div>
     <div>
       <div style="color:var(--text-muted);font-size:12px">{{t "update.install_label"}}</div>
