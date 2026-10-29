@@ -65,7 +65,7 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 	// node literally named "" and the sync reported it as
 	// `"": ssh=err=no usable transport is configured for this relay` on every pass
 	// (live: skyadmin's 22 youtube CDN rows), which reads like a broken relay.
-	rows, err := s.dbc().Query("SELECT DISTINCT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND exit_node_id <> '' AND (target_type = 'ip' OR target_type = 'subnet') ORDER BY exit_node_id")
+	rows, err := s.dbc().Query("SELECT DISTINCT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND exit_node_id <> '' AND (target_type = 'ip' OR target_type = 'subnet') AND COALESCE(action,'accept') <> 'deny' ORDER BY exit_node_id")
 	if err != nil {
 		result["error"] = err.Error()
 		return result
@@ -254,7 +254,7 @@ func (s *Service) SyncAdvertisedRoutesForNode(node string) map[string]string {
 	}
 	// B352: `exit_node_id <> ''` — see SyncAdvertisedRoutes: an empty relay is "engine
 	// auto", not a node to configure.
-	rows, err := s.dbc().Query("SELECT target_value FROM device_rules WHERE enabled = 1 AND exit_node_id = $1 AND exit_node_id <> '' AND (target_type = 'ip' OR target_type = 'subnet') ORDER BY target_value", node)
+	rows, err := s.dbc().Query("SELECT target_value FROM device_rules WHERE enabled = 1 AND exit_node_id = $1 AND exit_node_id <> '' AND (target_type = 'ip' OR target_type = 'subnet') AND COALESCE(action,'accept') <> 'deny' ORDER BY target_value", node)
 	if err != nil {
 		result["error"] = err.Error()
 		return result
@@ -299,7 +299,7 @@ func (s *Service) SyncAdvertisedRoutesForNode(node string) map[string]string {
 	// another relay claims more strongly is left to that relay so
 	// headscale's primary cannot flap. The single-node path uses the
 	// same global ownership map as the all-nodes path.
-	nodeClaims, _ := s.dbc().Query("SELECT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND (target_type = 'ip' OR target_type = 'subnet')")
+	nodeClaims, _ := s.dbc().Query("SELECT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND (target_type = 'ip' OR target_type = 'subnet') AND COALESCE(action,'accept') <> 'deny'")
 	var allClaims []PrefixClaim
 	if nodeClaims != nil {
 		for nodeClaims.Next() {
@@ -800,7 +800,7 @@ func (s *Service) StaggeredSync() {
 		// against the table — counting duplicate derived rows would let the
 		// auto-updater's churn decide the fallback owner, and (before the table
 		// exists) the first applied pins.
-		claimRows, cerr := s.dbc().Query("SELECT DISTINCT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND exit_node_id != '' AND target_type IN ('subnet', 'ip')")
+		claimRows, cerr := s.dbc().Query("SELECT DISTINCT exit_node_id, target_value FROM device_rules WHERE enabled = 1 AND exit_node_id != '' AND target_type IN ('subnet', 'ip') AND COALESCE(action,'accept') <> 'deny'")
 		var claims []PrefixClaim
 		if cerr == nil && claimRows != nil {
 			for claimRows.Next() {
@@ -853,7 +853,7 @@ func (s *Service) StaggeredSync() {
 			}
 		}
 		for _, n := range nodes {
-			rules, _ := s.dbc().Query("SELECT target_value FROM device_rules WHERE enabled=1 AND exit_node_id=$1 AND target_type IN ('subnet', 'ip')", n.name)
+			rules, _ := s.dbc().Query("SELECT target_value FROM device_rules WHERE enabled=1 AND exit_node_id=$1 AND target_type IN ('subnet', 'ip') AND COALESCE(action,'accept') <> 'deny'", n.name)
 			if rules == nil {
 				continue
 			}

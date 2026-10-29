@@ -303,7 +303,7 @@ func AssignWithReservations(claims []Claim, healthy []string, existing []Existin
 // for that prefix, so the vote must be per DEVICE.
 func LoadClaims(d *sql.DB) ([]Claim, error) {
 	rows, err := d.Query(`SELECT target_value, COALESCE(exit_node_id,''), COALESCE(device_id,0)
-	                     FROM device_rules WHERE enabled = 1 AND target_type IN ('ip','subnet')
+	                     FROM device_rules WHERE enabled = 1 AND target_type IN ('ip','subnet') AND COALESCE(action,'accept') <> 'deny'
 	                     GROUP BY target_value, COALESCE(exit_node_id,''), COALESCE(device_id,0)`)
 	if err != nil {
 		return nil, err
@@ -349,7 +349,7 @@ func LoadClaims(d *sql.DB) ([]Claim, error) {
 		    ON lower(p.device_hostname) = lower(r.device_hostname)
 		  JOIN node_owner_map n
 		    ON lower(n.tag) = lower(p.exit_node_tag)
-		 WHERE r.enabled = 1 AND r.target_type IN ('ip','subnet')
+		 WHERE r.enabled = 1 AND r.target_type IN ('ip','subnet') AND COALESCE(r.action,'accept') <> 'deny'
 		   AND (r.exit_node_id IS NULL OR r.exit_node_id = '')
 		   AND COALESCE(p.exit_node_tag,'') <> ''
 		   AND COALESCE(n.hostname,'') <> ''

@@ -1,5 +1,55 @@
 # Skygate release notes
 
+## v1.5.193 — the resolver tells the truth about what it found (B442)
+
+**Date:** 2026-10-29 · **Base:** `v1.5.192` → this tag · **Compatibility:** none (no schema change).
+
+Operator instruction: «корректность инструмента что проверяет конечный адрес и собирает
+необходимую информацию о том какие подсети и адреса необходимо также добавить в список на
+маршрутизацию».
+
+Three things the resolver said that were not true.
+
+### 1. An IPv6 answer was thrown away
+
+`for _, addr := range addrs { if strings.Contains(addr, ":") { continue } }` — a domain that answers
+**only** over IPv6 therefore resolved to an **empty** set, every row of it was deleted, and neither the
+log nor the page said why. The answers are now split (`SplitAnswers`), an IPv6-only destination deletes
+**nothing**, and the fact is reported: one audit row for that domain plus one summary line per pass. The
+destination is still not covered — exit routing for IPv6 is not implemented, and now the panel says so
+instead of silently pretending the domain has no addresses.
+
+### 2. One partial DNS answer deleted live rows
+
+A resolver returns partial sets all the time (round-robin rotation, one name failing transiently, a CDN
+moving a single address). The prune step treated a single answer as the whole truth, so the missing
+addresses were deleted — and with a /32 row go its **ACL grant and its advertised route**, until the next
+tick re-added them. Now the addresses the first answer did not contain are looked up a **second** time and
+a row is removed only when neither answer has it; a **failed** second lookup removes nothing, because "no
+data" is not "a negative answer" (that distinction is an explicit argument, not an empty map).
+
+### 3. A deny rule voted on who serves a prefix
+
+`grants[]` cannot express `deny` at all (B265 logs how many are skipped), yet a deny rule claimed its
+prefix exactly like an accept rule — so a **refused** destination could move a prefix onto a relay and
+steal its ownership from the accept rule that needed it. `sync_routes.go` and `prefixowner.LoadClaims`
+(including the B398 device-preference half) now exclude deny rules from the claim set through one named
+predicate, `DenyClaimsPrefix`, where an empty action counts as `accept` — the same assumption every other
+query in the project already makes.
+
+### Contracts
+
+`scripts/check_b442_address_truth.sh` — **14** checks — plus 4 named `TestB442_*` tests (split, partial
+answer, failed lookup, deny claims). The `prefixowner` test fixtures gained the `action` column the real
+schema has had since v0.31.
+
+### What is still open (named, not hidden)
+
+The CDN detector is all-or-nothing (a domain whose answers are *partly* inside a CDN's published ranges
+gets no CDN ranges at all) and the published ranges are never re-detected once a `cdn:` marker exists
+(B409 only reconciles the answers that fall outside them). Both are the next block; this release is about
+not lying about the addresses that WERE resolved.
+
 ## v1.5.192 — the user can ASK for another exit node, and the operator sets the policy (B440)
 
 **Date:** 2026-10-29 · **Base:** `v1.5.191` → this tag · **Compatibility:** additive (V082 adds two tables, nothing is rewritten).

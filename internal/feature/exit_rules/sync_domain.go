@@ -93,6 +93,9 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 	resolveInterval := s.DomainResolveInterval()
 	nowUnix := time.Now().Unix()
 	skipped := 0
+	// B442: how many AAAA answers this pass could not act on — reported once at the end,
+	// so an IPv6-covered destination is a visible fact instead of a silent hole.
+	ipv6Seen := 0
 	// B351 (2026-10-05): both INSERTs below are raw (they need DO NOTHING +
 	// RowsAffected to count what was newly added, which the canonical
 	// qInsertDeviceRule cannot express), and until this block they listed neither
@@ -161,12 +164,25 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 			s.logAutoUpdate(d.id, d.domain, 0, 0, "lookup failed: "+lerr.Error())
 			continue
 		}
+		// B442 (2026-10-29): the AAAA half is separated instead of silently skipped. An
+		// IPv6-only domain used to resolve to an EMPTY set, so every resolved row of it
+		// was deleted while nothing said why; a mixed domain now has its v6 answers
+		// COUNTED, so the log says how much of the destination is not covered.
+		v4, v6 := SplitAnswers(addrs)
 		currentIPs := map[string]bool{}
-		for _, addr := range addrs {
-			if strings.Contains(addr, ":") {
-				continue // skip IPv6
-			}
+		for _, addr := range v4 {
 			currentIPs[addr] = true
+		}
+		if len(v6) > 0 {
+			ipv6Seen += len(v6)
+			if len(currentIPs) == 0 {
+				// Nothing to reconcile and nothing to delete: report the reason once and
+				// leave the rows alone until an A record appears.
+				s.logAutoUpdate(d.id, d.domain, 0, 0,
+					"only IPv6 (AAAA) answers ("+strconv.Itoa(len(v6))+") — exit routing for IPv6 is not implemented, nothing was added or removed")
+				s.markDomainResolved(d.domain, nowUnix)
+				continue
+			}
 		}
 		if extraIPs := s.resolveDomainSubdomains(d.domain); extraIPs != nil {
 			for ip := range extraIPs {
@@ -341,13 +357,42 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 				added++
 			}
 		}
-		// Remove old IPs
-		for ip, rid := range all32 {
-			if currentIPs[ip] {
-				continue
+		// Remove old IPs.
+		//
+		// B442 (2026-10-29): a SINGLE answer is not evidence that an address stopped
+		// existing. Resolvers return partial sets (round-robin rotation, one name failing
+		// transiently, a CDN moving a single address), and deleting a /32 also deletes its
+		// ACL grant and its advertised route — the destination goes dark until the next
+		// tick re-adds it. So the addresses the first answer did not contain are looked up
+		// a SECOND time, and a row is removed only when neither answer has it.
+		if len(all32) > len(currentIPs) {
+			missing := make([]string, 0, len(all32))
+			for ip := range all32 {
+				if !currentIPs[ip] {
+					missing = append(missing, ip)
+				}
 			}
-			if _, derr := s.dbc().Exec("DELETE FROM device_rules WHERE id=$1", rid); derr == nil {
-				removed++
+			second := map[string]bool{}
+			secondAnswered := false
+			if again, lerr := net.LookupHost(d.domain); lerr == nil {
+				secondAnswered = true
+				for _, addr := range again {
+					second[addr] = true
+				}
+			} else {
+				log.Printf("auto-updater: %s: second lookup before pruning derived rows failed (%v) — keeping %d row(s) this tick",
+					d.domain, lerr, len(missing))
+			}
+			drop, kept := ConfirmDeletions(missing, currentIPs, second, secondAnswered)
+			if len(kept) > 0 {
+				log.Printf("auto-updater: %s: %d address(es) were missing from one answer but present in the second — kept", d.domain, len(kept))
+			}
+			for _, ip := range drop {
+				if rid, ok := all32[ip]; ok {
+					if _, derr := s.dbc().Exec("DELETE FROM device_rules WHERE id=$1", rid); derr == nil {
+						removed++
+					}
+				}
 			}
 		}
 
@@ -363,6 +408,10 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 	if skipped > 0 {
 		log.Printf("auto-updater: %d domain(s) skipped (re-resolve interval %s; the derived rows and the ACL stay put until then)",
 			skipped, DomainResolveIntervalLabel(resolveInterval))
+	}
+	if ipv6Seen > 0 {
+		log.Printf("auto-updater: %d IPv6 (AAAA) answer(s) this pass — exit routing for IPv6 is not implemented, so those destinations are NOT covered (reported, never silently dropped)",
+			ipv6Seen)
 	}
 
 	// B276: the rule set just changed (or did not — the derived rows are rewritten

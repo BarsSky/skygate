@@ -34,7 +34,8 @@ func openB276ClaimsDB(t *testing.T) *sql.DB {
 		exit_node_id TEXT DEFAULT '',
 		target_type TEXT DEFAULT '',
 		target_value TEXT DEFAULT '',
-		enabled INTEGER DEFAULT 1
+		enabled INTEGER DEFAULT 1,
+		action TEXT NOT NULL DEFAULT 'accept'
 	)`); err != nil {
 		t.Fatalf("create device_rules: %v", err)
 	}
