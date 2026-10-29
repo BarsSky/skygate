@@ -27,6 +27,10 @@
 # outside both the wrapper AND a card, so no `nowrap` edit brings their columns back — and whether
 # a UUID, a hostname or a version should wrap is a per-page typography call.
 #
+# B438 (2026-10-29): the audit is invoked through `bash` everywhere ON PURPOSE.
+# It is mode 100644 in the index, so a direct `"$AUDIT"` is rc 126 on Linux
+# ("cannot execute") while Git Bash on Windows runs it anyway — a CI-only failure
+# that B438's nesting exposed. The catalog body already called it as `bash …`.
 # CONTRACTS (12)
 
 set -uo pipefail
@@ -66,7 +70,7 @@ else
 fi
 
 hdr "B. the measured budgets hold"
-OUT="$("$AUDIT" 29 0 10 2>&1)"; RC=$?
+OUT="$(bash "$AUDIT" 29 0 10 2>&1)"; RC=$?
 T="$(printf '%s\n' "$OUT" | awk '/tables outside a wrapper/{print $NF+0}')"
 W="$(printf '%s\n' "$OUT" | awk '/inline fixed widths/{print $NF+0}')"
 N="$(printf '%s\n' "$OUT" | awk '/nowrap cells/{print $NF+0}')"
@@ -94,7 +98,7 @@ cat > "$TMPD/bad.html" <<'EOF'
 <table><tr><td>a long row that is wider than a phone</td></tr></table>
 </div>
 EOF
-OUT="$(TPL_ROOT="$TMPD" "$AUDIT" 0 0 0 2>&1)"; RC=$?
+OUT="$(TPL_ROOT="$TMPD" bash "$AUDIT" 0 0 0 2>&1)"; RC=$?
 case "$OUT" in
   *"tables outside a wrapper (T)          1"*|*"tables outside a wrapper (T)"*"1 "*)
     if [ "$RC" -ne 0 ]; then
@@ -112,10 +116,10 @@ cat > "$TMPD/wide.html" <<'EOF'
 <table><tr><td>ok</td></tr></table>
 </div>
 EOF
-OUT="$(TPL_ROOT="$TMPD" "$AUDIT" 0 0 0 2>&1)" || true
+OUT="$(TPL_ROOT="$TMPD" bash "$AUDIT" 0 0 0 2>&1)" || true
 # bad.html is still in the temp dir; only the *wide* class matters here: this asserts the
 # wrapper/card detection accepts a table that IS inside a card.
-TPL_ROOT="$TMPD" "$AUDIT" 0 0 0 >/dev/null 2>&1 || true
+TPL_ROOT="$TMPD" bash "$AUDIT" 0 0 0 >/dev/null 2>&1 || true
 ok "C2: the planted-violation path runs without leaking files outside the temp dir"
 
 hdr "D. the wrapper the fix relies on exists, and the mobile block keeps it honest"
