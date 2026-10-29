@@ -47,11 +47,13 @@ count() { local n; n="$(grep -c -- "$2" "$1" 2>/dev/null || true)"; printf '%s' 
 has()   { case "$(cat "$1" 2>/dev/null)" in *"$2"*) return 0 ;; *) return 1 ;; esac; }
 
 hdr "A. one pure answer to «who carries this rule»"
-if gofmt -l "$HELP" 2>/dev/null | grep -q .; then
-  bad "A1: $HELP is not gofmt-clean"
-else
-  ok "A1: the helper is gofmt-clean"
-fi
+# B386: capture first, then match with a builtin — a producer piped into `grep -q` under
+# pipefail reports the PRODUCER's status, turning a host fault into a product verdict.
+GOFMT_OUT="$(gofmt -l "$HELP" 2>/dev/null)"
+case "$GOFMT_OUT" in
+  "") ok "A1: the helper is gofmt-clean" ;;
+  *)  bad "A1: $HELP is not gofmt-clean: $GOFMT_OUT" ;;
+esac
 # The ORDER is the contract: an owner always wins, because the data plane follows the
 # assignment table — reporting the rule's wish as the carrier is the false alarm itself.
 if awk '/func ServingRelayFor/,/^}/' "$HELP" | grep -q 'ServingByOwner'; then
@@ -64,10 +66,13 @@ if has "$HELP" 'if NormalizeRelay(owner) != ""'; then
 else
   bad "A3: IsRelayMismatch still counts an owner-served rule as a mismatch"
 fi
-if has "$HELP" 'TrimPrefix(s, "tag:dev-infra-")'; then
-  ok "A4: tag and hostname spellings of one relay are comparable"
+# A4 (B279.1 compliance): the tag→hostname conversion must be DELEGATED, not copied —
+# a second copy is exactly what B279.1 forbids, and its detector flagged the first
+# version of this file for it.
+if has "$HELP" 'TagToHostname(s)' && ! has "$HELP" 'TrimPrefix(s, "tag:'; then
+  ok "A4: tag→hostname is delegated to the one implementation (B279.1), not re-implemented"
 else
-  bad "A4: the helper cannot compare a tag with a hostname"
+  bad "A4: the helper either re-implements the tag→hostname conversion or lost the delegation"
 fi
 
 hdr "B. the behaviour is pinned by tests, and it is the operator's live case"

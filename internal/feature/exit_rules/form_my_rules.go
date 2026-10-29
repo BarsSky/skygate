@@ -698,9 +698,12 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	//     a user-level preferred existed — the banner would miss
 	//     genuine drift between the rule's empty exit_node and
 	//     the user's preferred.
-	statusByRuleID := map[int]string{}
 	// B439: the relay that carries each rule, for the row's tooltip ("обслуживает X").
+	// Declared BEFORE the status map on purpose: B277.4 locates the status block by the
+	// status-map declaration line and walks braces from there, so a second one-line map
+	// literal above it would end that range on the next line.
 	servedByRuleID := map[int]string{}
+	statusByRuleID := map[int]string{}
 	for _, r := range rules {
 		hn := deviceNames[r.DeviceID]
 		// Effective preferred: per-device overrides user-level,

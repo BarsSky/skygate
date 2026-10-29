@@ -49,7 +49,13 @@ type Serving struct {
 // spaces have bitten comparisons before.
 func NormalizeRelay(s string) string {
 	s = strings.TrimSpace(strings.ToLower(s))
-	s = strings.TrimPrefix(s, "tag:dev-infra-")
+	// B279.1 (2026-10-29): the tag→hostname conversion is NOT re-implemented here —
+	// a second copy is exactly what that contract forbids, and its detector named this
+	// file. Delegate to TagToHostname, the one implementation (which also refuses a
+	// CLASS tag: a role is not an identity).
+	if strings.HasPrefix(s, "tag:") {
+		s = strings.ToLower(TagToHostname(s))
+	}
 	s = strings.TrimSuffix(s, ".")
 	return s
 }
