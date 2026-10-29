@@ -115,6 +115,7 @@ var sqliteMigrations = []MigrationEntry{
 	{79, "v0.79 (B380): device_rules.group_label — the operator's own name for a group of rules, so the page can be read by «Игры» instead of by domain", "migrations_v0_79_rule_group.go", migrateV079SQLite},
 	{80, "v0.80 (B399): device_exit_node_prefs.opted_out — a pref the operator removed BY HAND must not be re-created by the auto-reconciler on the next tick", "migrations_v0_80_pref_optout.go", migrateV080SQLite},
 	{81, "v0.81 (B408.1): system_tests_runs.only_test — a single-test re-run must leave a trace instead of being thrown away", "migrations_v0_81_system_test_only.go", migrateV081SQLite},
+	{82, "v0.82 (B440): exit_relay_requests + exit_relay_policies — a user may ASK for another exit node, the operator decides per user and globally, and the ask is a row with its own decision", "migrations_v0_82_relay_requests.go", migrateV082SQLite},
 }
 
 // SQLiteMigrations returns the list of migrations the current
