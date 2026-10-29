@@ -1,5 +1,47 @@
 # Skygate release notes
 
+## v1.5.194 — the rules belong to the device's owner (B443)
+
+**Date:** 2026-10-29 · **Base:** `v1.5.193` → this tag · **Compatibility:** none (no schema change).
+
+The operator asked for one thing to be CONFIRMED: «правила завязаны на пользователей и между
+пользователями нет гонки внутри exit-nodes». Three things stood in the way.
+
+### 1. A device transfer rewrote the owner but not the rules
+
+`/admin/devices` → Transfer (and the adoption of an ownerless node) updated `node_owner_map` only.
+The **previous** owner therefore kept every rule of a device he no longer controls — he could still
+decide where that device's traffic goes — while the **new** owner saw a device with no rules although
+it was demonstrably routed. A transferred rule carrying the `all_devices` marker was worse: it would
+have been re-materialised by `propagateAllDeviceRules` onto the **new** owner's devices.
+
+The rules now move with the device (`db.ReassignDeviceRules`), the two markers that are statements
+about the OLD owner's device set are cleared (`all_devices`, `group_label`), and the count is
+reported — `rules_moved=` in the audit row and a sentence in the operator's flash. A failed
+reassignment is audited (`device_transfer_rules_failed`) instead of being swallowed: a device owned by
+one user and configured by another must never be a silent state.
+
+### 2. A class tag could become a rule's `src`
+
+`deviceTagForRule` returned whatever `node_owner_map` held. A **class** tag (`tag:exit-node`,
+`tag:private`, `tag:server`, `tag:untagged`, a bare `tag:dev-infra-`) names a ROLE and matches every
+device carrying it, so one user's rule could grant access on **other users' devices** — the exact
+cross-user leak per-user rules exist to prevent. Only a per-node tag may be a rule's `src` now
+(`db.IsPerNodeTag`), with the value still coming from `node_owner_map` so the policy names the tag the
+node really carries (B284).
+
+### 3. The no-race claim is now CONFIRMED, not asserted
+
+The owner assignment is a pure function of the claim set, so it cannot depend on the row order, on who
+submitted first, or on a re-run. Three tests pin exactly that: every permutation of the same claims
+produces the same owner, the two arrival orders of the same claims agree, and a second pass over
+unchanged input moves nothing (so two users' pages cannot show different owners seconds apart).
+
+### Contracts
+
+`scripts/check_b443_cross_user.sh` — **16** checks — plus five `TestB443_*` tests across
+`internal/db`, `internal/acl` and `internal/prefixowner`.
+
 ## v1.5.193 — the resolver tells the truth about what it found (B442)
 
 **Date:** 2026-10-29 · **Base:** `v1.5.192` → this tag · **Compatibility:** none (no schema change).

@@ -214,9 +214,17 @@ func resolveNodeOwners(d *sql.DB) map[int]deviceOwner {
 // When node_owner_map has no tag for the device we return "" and the caller
 // falls back to the device_ip src — a weaker selector, but one that always
 // matches, instead of a policy the daemon refuses to load.
+//
+// B443 (2026-10-29): only a PER-NODE tag may be a rule's src. A CLASS tag
+// (`tag:exit-node`, `tag:private`, `tag:server`, …) is a role, not an identity: it
+// matches every device that carries it, so a rule owned by one user would grant access
+// on OTHER USERS' devices — the exact cross-user leak per-user rules exist to prevent.
+// node_owner_map.tag can hold a class tag (an operator can set one by hand, and the
+// infra backfill has written sentinels), so the shape is checked here rather than
+// assumed.
 func deviceTagForRule(e db.ACLEntry, owners map[int]deviceOwner) string {
 	if o, ok := owners[e.DeviceID]; ok {
-		if tag := strings.TrimSpace(o.Tag); tag != "" {
+		if tag := strings.TrimSpace(o.Tag); tag != "" && db.IsPerNodeTag(tag) {
 			return tag
 		}
 	}

@@ -989,6 +989,24 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 	if _, herr := db.SetNodeOwnerHostnameIfEmpty(s.dbc(), nodeIDStr, liveHostname); herr != nil {
 		log.Printf("web.admin.device-transfer: SetNodeOwnerHostnameIfEmpty node=%s hostname=%q: %v", nodeIDStr, liveHostname, herr)
 	}
+	// 1b) B443 (2026-10-29): the RULES follow the device.
+	//
+	// The transfer used to rewrite node_owner_map only, so the PREVIOUS owner kept every
+	// rule of a device he no longer controls — he could still decide where that device's
+	// traffic goes — while the new owner saw a device with no rules although it was
+	// demonstrably routed. A transferred rule's `all_devices` marker is cleared as well
+	// ("all MY devices" is a statement about the previous owner's device set, and
+	// propagateAllDeviceRules would otherwise re-materialise the rule onto the NEW owner's
+	// devices), and so is the `group_label` (the previous owner's own naming). Every number
+	// is reported — silently rewriting somebody else's rules is how this class of defect
+	// stays invisible.
+	rulesMoved, rerr := db.ReassignDeviceRules(s.dbc(), nodeID, target.ID, targetUsername)
+	if rerr != nil {
+		// The ownership itself is already correct; the rules not following it MUST be loud.
+		log.Printf("web.admin.device-transfer: ReassignDeviceRules node=%d to=%s: %v", nodeID, targetUsername, rerr)
+		s.Backend.Audit(c.UserID, c.Username, "device_transfer_rules_failed",
+			fmt.Sprintf("node=%d to=%s err=%v", nodeID, targetUsername, rerr))
+	}
 	// 2) UntagNode the OLD dev-tag (if any) so headscale
 	//    doesn't accumulate both old+new. Skip when the
 	//    old tag was the same as the new one (same
@@ -1026,14 +1044,29 @@ func (s *Service) PostAdminDeviceTransfer(w http.ResponseWriter, r *http.Request
 		from = "(none — node had no node_owner_map row)"
 	}
 	s.Backend.Audit(c.UserID, c.Username, action,
-		fmt.Sprintf("node=%d from=%s to=%s new_tag=%s", nodeID, from, targetUsername, newDevTag))
+		fmt.Sprintf("node=%d from=%s to=%s new_tag=%s rules_moved=%d groups_cleared=%d all_devices_cleared=%d",
+			nodeID, from, targetUsername, newDevTag, rulesMoved.Moved, rulesMoved.GroupsCleared, rulesMoved.AllDevicesCleared))
 	verb := "transferred to"
 	if ownerless {
 		verb = "adopted by (it had no owner before)"
 	}
+	// B443: the moved-rule count is part of the sentence, not a footnote — the operator
+	// just changed somebody else's routing configuration and must see how much.
+	rulesNote := ""
+	if rulesMoved.Moved > 0 {
+		rulesNote = fmt.Sprintf(" %d rule(s) moved to the new owner", rulesMoved.Moved)
+		if rulesMoved.AllDevicesCleared > 0 {
+			rulesNote += fmt.Sprintf(", %d all-devices marker(s) cleared", rulesMoved.AllDevicesCleared)
+		}
+		if rulesMoved.GroupsCleared > 0 {
+			rulesNote += fmt.Sprintf(", %d group label(s) cleared", rulesMoved.GroupsCleared)
+		}
+		rulesNote += "."
+	}
 	http.Redirect(w, r, fmt.Sprintf(
 		"/admin/devices?ok=%s", url.QueryEscape(
-			fmt.Sprintf("Node %d (%s) %s %s (tag=%s). Click 'Re-apply ACL' on /admin/exit-rules to push the new tagOwners.", nodeID, liveHostname, verb, targetUsername, newDevTag))), http.StatusSeeOther)
+			fmt.Sprintf("Node %d (%s) %s %s (tag=%s).%s Click 'Re-apply ACL' on /admin/exit-rules to push the new tagOwners.",
+				nodeID, liveHostname, verb, targetUsername, newDevTag, rulesNote))), http.StatusSeeOther)
 }
 
 // PostAdminDeviceDelete (B169, v1.5.2) deletes a node from
