@@ -107,7 +107,10 @@ grep -qE 'execSQLiteDDL\(' "$MIG" \
 # about admin delegation had changed. The number belongs in ONE place
 # (migrations_sqlite_schema_test.go, which is the actual parity guard); here we
 # only assert that the chain head is pinned there at all.
-grep -qE 'maxV != [0-9]+' "$SCHEMA_TEST" \
+# B440 (2026-10-29): the schema test now compares the two CHAINS (`maxV != pgHead`) and
+# reports a divergence with both heads named — a stronger guard than a frozen number, and
+# the one the comment above B264 has been asking for. Accept either shape.
+grep -qE 'maxV != ([0-9]+|pgHead)' "$SCHEMA_TEST" \
   && pass "  └ SQLite chain-end assertion present (head pinned in migrations_sqlite_schema_test.go)" \
   || fail "  └ no maxV chain-end assertion in migrations_sqlite_schema_test.go"
 grep -qE 'SKYGATE_ADMIN_USER' "$MIG" \

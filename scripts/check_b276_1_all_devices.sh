@@ -81,7 +81,11 @@ fi
 # name and the chain assertion by MEANING — `maxV != <n>` with n >= 74 — not by
 # a bare `maxV != ` prefix (which any number would satisfy) and not by the
 # literal 74 (which V076 would break again).
-if grep -q 'all_devices exists (V074' "$SCHEMA_TEST" && grep -qE 'maxV != (7[4-9]|[89][0-9])' "$SCHEMA_TEST"; then
+# B440 (2026-10-29): the head may also be asserted by comparing the two chains
+# (`maxV != pgHead`), which is what the test does now — the floor (>= V074) is implied by
+# "both chains agree" plus the V074 column assertion right here.
+if grep -q 'all_devices exists (V074' "$SCHEMA_TEST" \
+   && { grep -qE 'maxV != (7[4-9]|[89][0-9])' "$SCHEMA_TEST" || grep -q 'maxV != pgHead' "$SCHEMA_TEST"; }; then
   ok "A4: the SQLite schema test asserts the column and that the chain reaches V074 or later"
 else
   bad "A4: the schema test would not notice a missing V074 on SQLite (or no longer asserts the chain head)"
