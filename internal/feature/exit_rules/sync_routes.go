@@ -163,6 +163,11 @@ func (s *Service) SyncAdvertisedRoutes() map[string]string {
 	if len(exitRoutes) == 0 {
 		result["info"] = "no IP/subnet rules configured"
 	}
+	// B444: publish what this pass achieved, so the question «какие адреса не попали в
+	// маршрутизацию» is answered continuously by a metric and not only by a system test the
+	// operator has to remember to run. The gauges describe THIS pass (owned / not applied);
+	// the live truth about APPROVED routes belongs to exit_rules.prefix_serving.
+	publishPrefixServingMetrics(owners, result)
 	return result
 }
 

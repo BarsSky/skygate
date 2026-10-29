@@ -1,5 +1,58 @@
 # Skygate release notes
 
+## v1.5.195 — the panel can finally name the destinations nobody serves (B444)
+
+**Date:** 2026-10-29 · **Base:** `v1.5.194` → this tag · **Compatibility:** none (no schema change).
+
+The last piece of the operator's sentence: «собирает необходимую информацию о том какие подсети и
+адреса необходимо также добавить в список на маршрутизацию». The information existed in three
+places; the ANSWER did not.
+
+### 1. A diagnostic that names the black hole
+
+The assignment table (B275) decides who serves a prefix and the relays advertise what the table
+gives them (B441). When the two disagree, the destination is unreachable for every client pinned
+to that prefix — and the only signals were a log line and a system test that sampled **three**
+domain rules.
+
+New `exit_rules.prefix_serving` (in `/admin/system_tests`) compares the table with headscale's
+**approved** routes per relay — the client-visible truth, not our intention — and names every
+unserved prefix with its owner and a reason the operator can act on:
+
+* the owner relay is **not in headscale** (deleted, renamed, never registered),
+* the owner relay **does not advertise** this prefix,
+* the prefix has **no owner** in the table.
+
+One subtlety is load-bearing: `0.0.0.0/0` and `::/0` are advertised by every exit node and
+technically "contain" every prefix, so counting them as coverage would make the whole diagnostic
+vacuous — "everything is served" on an install where nothing is. The base exit routes are
+excluded from covering, and the block's own test caught exactly that mistake before it shipped.
+
+### 2. Metrics, so the question is answered continuously
+
+Two gauges are published at the end of every sync pass:
+
+* `skygate_exit_rules_prefixes_owned` — prefixes the table assigns,
+* `skygate_exit_rules_prefixes_not_applied` — owned prefixes whose relay did not accept its
+  routes in that pass.
+
+Their help says which question they answer (the last pass), because a gauge that poses as the live
+approved set is how a dashboard starts lying. The live truth stays with the system test.
+
+### 3. The sample was silent — and tiny
+
+The domain diagnostic read `LIMIT 3` from the database and answered PASS: an install with forty
+domain rules was judged on three of them, chosen by row order, so a broken rule outside that window
+was invisible. It now reads every rule, checks up to a named sample cap **before the per-test
+deadline**, and the verdict says «Sampled N of M domain rule(s)» — a PASS can no longer be mistaken
+for "all of them were checked".
+
+### Contracts
+
+`scripts/check_b444_diagnostics.sh` — **19** checks — plus nine `TestB444_*` tests (covering,
+unserved, missing relay, unowned, empty table, the label reading, and that the gauges are actually
+published and reset).
+
 ## v1.5.194 — the rules belong to the device's owner (B443)
 
 **Date:** 2026-10-29 · **Base:** `v1.5.193` → this tag · **Compatibility:** none (no schema change).

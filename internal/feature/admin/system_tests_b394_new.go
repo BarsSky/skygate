@@ -52,6 +52,24 @@ import (
 	"skygate/internal/startup"
 )
 
+// B444 — how much of the domain-rule set one diagnostic pass can look at, and how that is
+// said out loud. Each iteration resolves a name (3 s timeout) and reads a device's prefixes
+// while the runner's per-test deadline is 5 s, so the sample is bounded; the note makes the
+// bound VISIBLE, because a PASS that silently covered 3 of 40 rules is how a broken rule
+// stays invisible.
+const b444DomainSampleCap = 8
+
+func b444SampleNote(sampled, total int) string {
+	if total <= 0 {
+		return "no domain rules to sample."
+	}
+	if sampled >= total {
+		return fmt.Sprintf("All %d domain rule(s) were checked.", total)
+	}
+	return fmt.Sprintf("Sampled %d of %d domain rule(s) (the per-test deadline bounds the work) — the rest were not looked at in this run.",
+		sampled, total)
+}
+
 func init() {
 	TestRegistry = append(TestRegistry, b394Tests...)
 }
@@ -519,9 +537,16 @@ var b394Tests = []SystemTestDef{
 			if s == nil || s.dbc() == nil {
 				return SystemTestSkip, "service or DB not initialised"
 			}
+			// B444 (2026-10-29): the sample is BOUNDED but no longer silent, and no longer
+			// three. `LIMIT 3` meant an install with forty domain rules was diagnosed from
+			// three of them — and those three were whatever the DB returned first, so a
+			// broken rule outside that window was invisible while the panel said PASS. The
+			// query now reads all of them, the loop takes up to b444DomainSampleCap (each
+			// iteration does a DNS lookup under a 3 s timeout, and the runner's deadline is
+			// 5 s), and the verdict SAYS how many of how many were looked at.
 			rows, err := s.dbc().QueryContext(ctx, `SELECT device_id, target_value FROM device_rules
 				WHERE enabled = 1 AND target_type = 'domain' AND target_value NOT LIKE '%.%/%'
-				GROUP BY device_id, target_value ORDER BY device_id LIMIT 3`)
+				GROUP BY device_id, target_value ORDER BY device_id, target_value`)
 			if err != nil {
 				return SystemTestFail, "read domain rules: " + err.Error()
 			}
@@ -541,6 +566,16 @@ var b394Tests = []SystemTestDef{
 			if len(rules) == 0 {
 				return SystemTestSkip, "no domain rule to re-resolve"
 			}
+			// B444: bounded work, honest coverage. Each iteration resolves a name (3 s
+			// timeout) and reads the device's prefixes, and the runner's per-test deadline is
+			// 5 s — so the loop stops when the sample cap or the deadline is reached, and the
+			// final message says "sampled X of Y" so a PASS can never be mistaken for "all
+			// rules were checked".
+			totalRules := len(rules)
+			if len(rules) > b444DomainSampleCap {
+				rules = rules[:b444DomainSampleCap]
+			}
+			sampled := 0
 			// B411 (2026-10-22) — THE VERDICT IS ABOUT THE MECHANISM, NOT ABOUT
 			// CATCHING DNS MID-ROTATION.
 			//
@@ -573,6 +608,12 @@ var b394Tests = []SystemTestDef{
 			checked := 0
 			readErr := ""
 			for _, r := range rules {
+				// B444: stop before the runner's deadline instead of being cut off by it —
+				// a truncated run must still produce a verdict that says how far it got.
+				if ctx.Err() != nil {
+					break
+				}
+				sampled++
 				lctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 				ips, lerr := net.DefaultResolver.LookupHost(lctx, r.domain)
 				cancel()
@@ -638,16 +679,18 @@ var b394Tests = []SystemTestDef{
 				// (AGENTS trap #15): say so instead of reporting every address stale.
 				return SystemTestFail, "could not read the device's derived rows: " + readErr
 			}
+			sampleNote := b444SampleNote(sampled, totalRules)
 			if len(staleDomains) > 0 {
-				return SystemTestFail, fmt.Sprintf("%d domain rule(s) will NOT heal by themselves: %s. %s.",
+				return SystemTestFail, fmt.Sprintf("%d domain rule(s) will NOT heal by themselves: %s. %s. %s",
 					len(staleDomains), strings.Join(staleDomains[:min(3, len(staleDomains))], "; "),
-					b411FixHint(autoOn, interval))
+					b411FixHint(autoOn, interval), sampleNote)
 			}
 			if len(pendingDomains) > 0 {
-				return SystemTestPass, fmt.Sprintf("%d address(es) checked, none of them stuck: %s. The mechanism is working — these rows are simply one rotation behind.",
-					checked, strings.Join(pendingDomains[:min(2, len(pendingDomains))], "; "))
+				return SystemTestPass, fmt.Sprintf("%d address(es) checked, none of them stuck: %s. The mechanism is working — these rows are simply one rotation behind. %s",
+					checked, strings.Join(pendingDomains[:min(2, len(pendingDomains))], "; "), sampleNote)
 			}
-			return SystemTestPass, fmt.Sprintf("%d address(es) across %d domain rule(s) are inside a stored row and no answer has moved since the last resolve", checked, len(rules))
+			return SystemTestPass, fmt.Sprintf("%d address(es) across %d domain rule(s) are inside a stored row and no answer has moved since the last resolve. %s",
+				checked, sampled, sampleNote)
 		},
 	},
 	{
