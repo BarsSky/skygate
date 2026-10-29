@@ -170,6 +170,20 @@ func (s *Service) applyRelayPin(actor string, prefixes []string, relayHost strin
 		}
 	}
 	s.ReapplyACLIfDrifted(actor, fmt.Sprintf("relay request approved: %d prefix(es) → %s", len(clean), host))
+	// B441 (2026-10-29): the ACL is only the CONTROL plane. `via` tells a client which
+	// relay it MAY use; the prefix still has to be advertised by that relay, and a relay
+	// whose rules do not name these prefixes only starts advertising them after a sync
+	// pass that reads the assignment table. Without this push an approved request moved
+	// the permission and left the route where it was — the client would be pinned to a
+	// relay that is not serving the prefix yet. In a goroutine because the sync applies
+	// routes over SSH, one relay at a time, and an HTTP handler must not wait for that.
+	if s.SyncRoutes != nil {
+		go func() {
+			res := s.SyncRoutes()
+			log.Printf("[relay-request] route sync after pinning %d prefix(es) to %s: %d relay(s) touched",
+				len(clean), host, len(res))
+		}()
+	}
 	return nil
 }
 

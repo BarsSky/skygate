@@ -625,14 +625,14 @@
   <form method="post" action="/admin/exit-rules/relay-policy" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
     <label style="display:flex;flex-direction:column;gap:4px;font-size:12px">
       {{t "exit_rules_admin.relay_policy_scope"}}
-      <select name="username" style="font-size:12px;padding:5px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
+      <select name="username" aria-label="{{t "exit_rules_admin.relay_policy_scope"}}" style="font-size:12px;padding:5px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
         <option value="">{{t "exit_rules_admin.relay_policy_global"}}</option>
         {{range $u := $rc.Users}}<option value="{{$u}}">{{$u}}</option>{{end}}
       </select>
     </label>
     <label style="display:flex;flex-direction:column;gap:4px;font-size:12px">
       {{t "exit_rules_admin.relay_policy_mode"}}
-      <select name="mode" style="font-size:12px;padding:5px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
+      <select name="mode" aria-label="{{t "exit_rules_admin.relay_policy_mode"}}" style="font-size:12px;padding:5px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
         <option value="require_approval">{{t "exit_rules_admin.relay_policy_mode_require_approval"}}</option>
         <option value="auto_approve">{{t "exit_rules_admin.relay_policy_mode_auto_approve"}}</option>
         <option value="deny">{{t "exit_rules_admin.relay_policy_mode_deny"}}</option>

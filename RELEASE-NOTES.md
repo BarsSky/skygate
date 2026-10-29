@@ -40,6 +40,34 @@ private per-user route.
 V082 in **both** chains: `exit_relay_requests` (the queue and its decision) and `exit_relay_policies`
 (scope → mode, upsert per scope). SQLite goes through `execSQLiteDDL` with one statement per element.
 
+### The advertisement follows the assignment table (B441, same release)
+
+Shipping the request channel exposed an older hole in the same decision: the **assignment
+table** decides who serves a prefix (B275), but `tailscale set --advertise-routes=` was still
+built from the **rules**. A prefix the table had handed to a relay that no rule names — an
+operator pin (B277), an auto assignment of a relay-less rule, or an approved request from
+this release — was announced by **nobody**, while the ACL pinned clients to that relay: a
+black hole. B397 fixed the non-staggered path; the **staggered** one is what a default
+install runs, and it kept the rule-only set.
+
+The second half of the same defect was in the union helper itself: it *said* it keeps a rule
+candidate whose table row has not been written yet, but delegated to `OwnedPrefixes`, which
+drops everything absent from the map — so on an empty table (fresh install, or a pass after a
+failed reconcile) the union returned **nothing** and a brand-new rule's prefix was advertised
+by no one for a pass.
+
+Fixed in `internal/feature/exit_rules/sync_routes.go`:
+
+* the advertise set is the **table ∪ the relay's own rules** (a prefix with no table opinion
+  is kept; the table wins the moment it has one; duplicates are removed);
+* the staggered pass **visits** the relays only the table names, and logs how many
+  table-owned prefixes it added;
+* the per-row «Re-sync» button reads the table instead of deciding from the rules;
+* an approved request now also pushes a route sync (in a goroutine — the sync applies routes
+  over SSH, one relay at a time), so an approval moves the route and not only the permission.
+
+`scripts/check_b441_route_truth.sh` — **16** checks — plus 5 named `TestB441_*` tests.
+
 ### Contracts
 
 `scripts/check_b440_relay_requests.sh` — **32** checks: gofmt, the policy precedence and the

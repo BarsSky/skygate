@@ -204,20 +204,31 @@ func relaysToSync(owners map[string]string, exitRoutes map[string][]string) []st
 // first pass, before a reconcile) must not be dropped either. The base routes
 // (0.0.0.0/0, ::/0) are added by syncOneExitNode, not here — `tailscale set
 // --advertise-routes=` REPLACES the whole set, so they are prepended at the last moment.
+//
+// B441 (2026-10-29): the second half was a LIE until now. It delegated to OwnedPrefixes,
+// which keeps a candidate only when `owners[p] == node` — so with an empty table (a fresh
+// install, or the first pass after a reconcile failed) the union returned NOTHING, and a
+// brand-new rule's prefix was advertised by nobody for a pass. The rule's own candidate
+// is now kept whenever the table has NO opinion about that prefix; the table still wins
+// the moment it has one.
 func mergedOwnedPrefixes(node string, ruleCandidates []string, owners map[string]string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(ruleCandidates)+len(owners)/4+4)
-	add := func(list []string) {
-		for _, p := range list {
-			if p == "" || seen[p] {
-				continue
-			}
-			seen[p] = true
-			out = append(out, p)
+	add := func(p string) {
+		if p == "" || seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	for _, p := range ruleCandidates {
+		if owners[p] == "" || owners[p] == node {
+			add(p)
 		}
 	}
-	add(OwnedPrefixes(node, ruleCandidates, owners))
-	add(OwnedPrefixesForRelay(node, owners))
+	for _, p := range OwnedPrefixesForRelay(node, owners) {
+		add(p)
+	}
 	sort.Strings(out)
 	return out
 }
@@ -300,7 +311,16 @@ func (s *Service) SyncAdvertisedRoutesForNode(node string) map[string]string {
 		nodeClaims.Close()
 	}
 	owners := PrefixOwnership(allClaims)
-	syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, OwnedPrefixes(node, routes, owners), result)
+	// B441 (2026-10-29): the assignment TABLE is the decision (B275) — a pin made on the
+	// prefix page, by the reconciler, or by an approved B440 relay request never touches
+	// `device_rules.exit_node_id`, so an in-memory owner map built from the rules alone
+	// reported the WISH again and the per-row "Re-sync" button re-advertised the old set.
+	// The in-memory map stays as the first-pass fallback, exactly like every other sync
+	// path.
+	if tbl := prefixowner.OwnerByPrefix(s.dbc()); len(tbl) > 0 {
+		owners = tbl
+	}
+	syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, mergedOwnedPrefixes(node, routes, owners), result)
 	return result
 }
 
@@ -811,6 +831,27 @@ func (s *Service) StaggeredSync() {
 		if tbl := prefixowner.OwnerByPrefix(s.dbc()); len(tbl) > 0 {
 			owners = tbl
 		}
+		// B441 (2026-10-29): the STAGGERED path is the one that runs on a default
+		// install, and it must visit the same relays as SyncAdvertisedRoutes — the ones a
+		// rule names UNION the ones the ASSIGNMENT TABLE names. B397 fixed only the
+		// non-staggered path; here a relay that the table hands a prefix to but that no
+		// rule names (an operator pin, an auto assignment of a relay-less rule, or an
+		// approved B440 relay request) was never visited, so the prefix it had just been
+		// given was advertised by NOBODY while the ACL pinned clients to it.
+		{
+			seen := map[string]bool{}
+			for _, n := range nodes {
+				seen[n.name] = true
+			}
+			for _, extra := range relaysToSync(owners, nil) {
+				if extra == "" || seen[extra] {
+					continue
+				}
+				seen[extra] = true
+				nodes = append(nodes, nodeRules{name: extra, count: 0})
+				log.Printf("staggeredSync(aggregated): %s has no rule naming it, but the assignment table hands it prefix(es) — visiting it", extra)
+			}
+		}
 		for _, n := range nodes {
 			rules, _ := s.dbc().Query("SELECT target_value FROM device_rules WHERE enabled=1 AND exit_node_id=$1 AND target_type IN ('subnet', 'ip')", n.name)
 			if rules == nil {
@@ -825,10 +866,24 @@ func (s *Service) StaggeredSync() {
 			}
 			rules.Close()
 			// B274: drop the prefixes this relay does not own.
-			owned := OwnedPrefixes(n.name, routeList, owners)
-			droppedCount := len(routeList) - (len(owned))
+			// B441: and ADD the prefixes the assignment table owns that no rule of this
+			// relay names — the table is the decision (B275), so the advertisement must be
+			// its union with the rule candidates, exactly as the non-staggered path
+			// computes it through mergedOwnedPrefixes. Before this, a pin (B277/B440) moved
+			// the ACL `via` but the data plane kept the old advertisement, and the prefix
+			// ended up served by nobody.
+			owned := mergedOwnedPrefixes(n.name, routeList, owners)
+			droppedCount := 0
+			for _, p := range routeList {
+				if owners[p] != "" && owners[p] != n.name {
+					droppedCount++
+				}
+			}
 			if droppedCount > 0 {
 				log.Printf("prefix-ownership(staggeredSync): %s drops %d claimed prefix(es) owned by another relay", n.name, droppedCount)
+			}
+			if extra := len(owned) - len(OwnedPrefixes(n.name, routeList, owners)); extra > 0 {
+				log.Printf("prefix-ownership(staggeredSync): %s advertises %d table-owned prefix(es) that no rule of it names", n.name, extra)
 			}
 			routeList = owned
 			// Always include base exit-node routes.

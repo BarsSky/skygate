@@ -1084,13 +1084,13 @@
         <form method="post" action="/my/exit-rules/relay-request" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
           <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;flex:1 1 260px;min-width:0">
             {{t "exit_rules.relay_request_rule"}}
-            <select name="rule_id" style="font-size:12px;padding:5px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px;max-width:100%">
+            <select name="rule_id" aria-label="{{t "exit_rules.relay_request_rule"}}" style="font-size:12px;padding:5px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px;max-width:100%">
               {{range $r := $rc.Rules}}<option value="{{$r.ID}}">{{$r.Label}}</option>{{end}}
             </select>
           </label>
           <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;flex:0 1 200px">
             {{t "exit_rules.relay_request_relay"}}
-            <select name="to_relay" style="font-size:12px;padding:5px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
+            <select name="to_relay" aria-label="{{t "exit_rules.relay_request_relay"}}" style="font-size:12px;padding:5px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
               {{range $relay := $rc.Relays}}<option value="{{$relay}}">{{$relay}}</option>{{end}}
             </select>
           </label>
