@@ -119,15 +119,23 @@ fi
 # move between its edges (live: agent.minimax.io / cdn-registry-1.docker.io). A path
 # that resolves must ALSO mark, or the domain it handles would be re-resolved on
 # every single tick — B308's churn returning through the door B409 opened. So the
-# count is 3 and every one of the three is load-bearing:
+# count was 3.
+#
+# C2 COUNT RENEGOTIATED 3 → 4 on 2026-10-29 (B442), and the reason is again a fix. The
+# resolver used to DROP an AAAA answer and then fall through with an empty address set,
+# which deleted every resolved row of an IPv6-only domain on every pass. B442 makes that
+# its own path: nothing is added, nothing is removed, and the domain is MARKED so the
+# interval applies to it like any other resolution. Every one of the four is
+# load-bearing:
 #   * published CDN ranges      (pre-B308)
 #   * CDN-marker gap reconcile  (B409 — asserted again below by C2b)
 #   * per-IP addresses          (pre-B308)
+#   * IPv6-only answers         (B442 — asserted again below by C2c)
 MARKS=$(grep -c 's.markDomainResolved(d.domain, nowUnix)' "$SYNC" 2>/dev/null || true)
-if [ "${MARKS:-0}" -eq 3 ]; then
-  ok "C2: all three resolution paths mark the domain (CDN ranges, CDN-marker gaps, per-IP)"
+if [ "${MARKS:-0}" -eq 4 ]; then
+  ok "C2: all four resolution paths mark the domain (CDN ranges, CDN-marker gaps, per-IP, IPv6-only)"
 else
-  bad "C2: ${MARKS:-0} mark site(s), expected 3 — a resolution path that does not mark re-resolves forever"
+  bad "C2: ${MARKS:-0} mark site(s), expected 4 — a resolution path that does not mark re-resolves forever"
 fi
 # C2b is what keeps the number honest: it fails if the B409 path resolves WITHOUT
 # marking, which a bare count could not tell apart from "somebody deleted another
@@ -136,6 +144,13 @@ if grep -A8 'b409ReconcileGaps(' "$SYNC" 2>/dev/null | grep -q 's.markDomainReso
   ok "C2b: the CDN-marker path (B409) marks the domain right after reconciling its gaps"
 else
   bad "C2b: the CDN-marker path resolves the domain but never marks it — it would resolve on every tick"
+fi
+# C2c is the same guard for the fourth path: an IPv6-only destination must be marked too,
+# otherwise the "nothing was added or removed" branch would re-resolve it every tick.
+if grep -A6 'exit routing for IPv6 is not implemented' "$SYNC" 2>/dev/null | grep -q 's.markDomainResolved(d.domain, nowUnix)'; then
+  ok "C2c: the IPv6-only path (B442) marks the domain right after reporting it"
+else
+  bad "C2c: the IPv6-only path reports the destination but never marks it — it would resolve on every tick"
 fi
 if grep -q 'domain(s) skipped (re-resolve interval' "$SYNC"; then
   ok "C3: the skip is logged with the effective interval (visible in the journal)"
