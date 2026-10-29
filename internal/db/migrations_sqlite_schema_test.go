@@ -59,18 +59,35 @@ func TestSQLiteSchemaComplete(t *testing.T) {
 		t.Fatalf("ApplyMigrations(SQLite): %v", err)
 	}
 
-	t.Run("chain reaches V080 like PostgreSQL", func(t *testing.T) {
+	t.Run("chain reaches the same head as PostgreSQL", func(t *testing.T) {
 		var maxV int
 		if err := sqlDB.QueryRow(
 			`SELECT COALESCE(MAX(version), 0) FROM applied_migrations`).Scan(&maxV); err != nil {
 			t.Fatalf("read max(version): %v", err)
 		}
-		// PostgreSQL's chain ends at 81 (v0.81 = system_tests_runs.only_test; v0.80 = device_exit_node_prefs.opted_out,
-		// B399: a preference the operator removed by hand must not be re-created). If
-		// SQLite lags behind, every table/column added by the missing tail is absent.
-		if maxV != 81 {
-			t.Errorf("SQLite migration chain ends at V%d, want V81 — the PG and SQLite "+
-				"chains have diverged again (see driver_sqlite.go sqliteMigrations)", maxV)
+		// B440 (2026-10-29): compare the CHAINS, not a frozen number. The literal 81
+		// pinned the head of the day and had to be edited by every migration — while
+		// what this contract is FOR (its own message) is that the two chains do not
+		// diverge: if SQLite lags behind PG, every table/column in the missing tail is
+		// absent, and if it runs ahead, PostgreSQL installs miss it.
+		pgHead, sqHead := 0, 0
+		for _, e := range PGMigrations() {
+			if e.Version > pgHead {
+				pgHead = e.Version
+			}
+		}
+		for _, e := range SQLiteMigrations() {
+			if e.Version > sqHead {
+				sqHead = e.Version
+			}
+		}
+		if sqHead != pgHead {
+			t.Fatalf("the chains have diverged: PostgreSQL ends at V%d, SQLite at V%d "+
+				"(see driver_sqlite.go sqliteMigrations)", pgHead, sqHead)
+		}
+		if maxV != pgHead {
+			t.Errorf("the migrated database ends at V%d but the chains end at V%d — "+
+				"ApplyMigrations did not run the tail", maxV, pgHead)
 		}
 	})
 
