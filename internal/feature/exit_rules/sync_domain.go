@@ -363,34 +363,41 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 		// existing. Resolvers return partial sets (round-robin rotation, one name failing
 		// transiently, a CDN moving a single address), and deleting a /32 also deletes its
 		// ACL grant and its advertised route — the destination goes dark until the next
-		// tick re-adds it. So the addresses the first answer did not contain are looked up
-		// a SECOND time, and a row is removed only when neither answer has it.
-		if len(all32) > len(currentIPs) {
+		// tick re-adds them. So the addresses the first answer did not contain are looked
+		// up a SECOND time, and a row is removed only when neither answer has it.
+		//
+		// The gate is "are there any missing addresses", NOT a count comparison: two equal
+		// counts can still be different SETS (one address left, another arrived), and a
+		// count comparison would then leave the departed row in place forever, granting an
+		// address the domain no longer resolves to.
+		{
 			missing := make([]string, 0, len(all32))
 			for ip := range all32 {
 				if !currentIPs[ip] {
 					missing = append(missing, ip)
 				}
 			}
-			second := map[string]bool{}
-			secondAnswered := false
-			if again, lerr := net.LookupHost(d.domain); lerr == nil {
-				secondAnswered = true
-				for _, addr := range again {
-					second[addr] = true
+			if len(missing) > 0 {
+				second := map[string]bool{}
+				secondAnswered := false
+				if again, lerr := net.LookupHost(d.domain); lerr == nil {
+					secondAnswered = true
+					for _, addr := range again {
+						second[addr] = true
+					}
+				} else {
+					log.Printf("auto-updater: %s: second lookup before pruning derived rows failed (%v) — keeping %d row(s) this tick",
+						d.domain, lerr, len(missing))
 				}
-			} else {
-				log.Printf("auto-updater: %s: second lookup before pruning derived rows failed (%v) — keeping %d row(s) this tick",
-					d.domain, lerr, len(missing))
-			}
-			drop, kept := ConfirmDeletions(missing, currentIPs, second, secondAnswered)
-			if len(kept) > 0 {
-				log.Printf("auto-updater: %s: %d address(es) were missing from one answer but present in the second — kept", d.domain, len(kept))
-			}
-			for _, ip := range drop {
-				if rid, ok := all32[ip]; ok {
-					if _, derr := s.dbc().Exec("DELETE FROM device_rules WHERE id=$1", rid); derr == nil {
-						removed++
+				drop, kept := ConfirmDeletions(missing, currentIPs, second, secondAnswered)
+				if len(kept) > 0 {
+					log.Printf("auto-updater: %s: %d address(es) were missing from one answer but present in the second — kept", d.domain, len(kept))
+				}
+				for _, ip := range drop {
+					if rid, ok := all32[ip]; ok {
+						if _, derr := s.dbc().Exec("DELETE FROM device_rules WHERE id=$1", rid); derr == nil {
+							removed++
+						}
 					}
 				}
 			}
