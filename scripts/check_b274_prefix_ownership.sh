@@ -113,10 +113,19 @@ if b274_owned_call || grep -q 'syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRout
 else
   bad "B.2 SyncAdvertisedRoutes must pass the ownership-filtered set to syncOneExitNode"
 fi
-if grep -q 'owned := OwnedPrefixes(n.name, routeList, owners)' "$SYNC"; then
-  ok "B.3 the staggered path advertises only the owned prefixes"
+# B.3 RENEGOTIATED by B441 (2026-10-29). This asserted the LITERAL
+#   owned := OwnedPrefixes(n.name, routeList, owners)
+# and B441 replaced it with the union (table ∪ the relay's own rules), because a prefix the
+# ASSIGNMENT TABLE hands a relay that no rule names was advertised by nobody while the ACL
+# pinned clients to it — the very hole this block exists to prevent, one level up. The
+# INTENT is unchanged and now stronger: the staggered path must still advertise an
+# ownership-filtered set, so either form passes and neither is allowed to reach
+# applyRoutesToRelay with the raw rule list.
+if grep -q 'owned := mergedOwnedPrefixes(n.name, routeList, owners)' "$SYNC" || \
+   grep -q 'owned := OwnedPrefixes(n.name, routeList, owners)' "$SYNC"; then
+  ok "B.3 the staggered path advertises only the owned prefixes (union since B441)"
 else
-  bad "B.3 StaggeredSync must filter routeList through OwnedPrefixes"
+  bad "B.3 StaggeredSync must filter routeList through the ownership set"
 fi
 if { b274_owned_call || grep -q 'syncOneExitNode(s.HS, s.dbc(), s.lookupAcceptRoutes, defaultKeyPath, node, OwnedPrefixes(node, routes, owners), result)' "$SYNC"; } && \
    grep -q 'allClaims = append(allClaims, PrefixClaim{Node: n2, Prefix: p2})' "$SYNC"; then

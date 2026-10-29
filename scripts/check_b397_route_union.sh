@@ -82,8 +82,17 @@ if has 'mergedOwnedPrefixes(node, exitRoutes[node], owners)' "$SURF_SRC" && has 
 else
   bad "A2: a relay's advertise set is not the union — a table-owned prefix can still be dropped"
 fi
-if has 'add(OwnedPrefixes(node, ruleCandidates, owners))' "$SURF_SRC" && has 'add(OwnedPrefixesForRelay(node, owners))' "$SURF_SRC"; then
-  ok "A3: both halves are explicitly unioned (the table is the authority, the rules are not dropped)"
+# A3 RENEGOTIATED by B441 (2026-10-29). It asserted the two literal `add(...)` calls, and
+# B441 found that the FIRST of them — OwnedPrefixes(node, ruleCandidates, owners) — silently
+# dropped a rule candidate whose table row had not been written yet (OwnedPrefixes keeps a
+# prefix only when owners[p] == node), so on an empty table the union returned NOTHING. The
+# halves are now written out: a candidate is kept when the table has no opinion about it,
+# and the table's own rows are added after. Both halves must still be present, which is what
+# this contract is about.
+if has 'owners[p] == "" || owners[p] == node' "$SURF_SRC" && has 'OwnedPrefixesForRelay(node, owners)' "$SURF_SRC"; then
+  ok "A3: both halves are explicitly unioned (the rules when the table has no opinion, then the table's own rows)"
+elif has 'add(OwnedPrefixes(node, ruleCandidates, owners))' "$SURF_SRC" && has 'add(OwnedPrefixesForRelay(node, owners))' "$SURF_SRC"; then
+  ok "A3: both halves are explicitly unioned (the pre-B441 form)"
 else
   bad "A3: mergedOwnedPrefixes does not union both halves"
 fi
