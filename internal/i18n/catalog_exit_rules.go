@@ -72,12 +72,14 @@ var ruExitRules = map[string]string{
 	"exit_rules.device_status_rules_suffix": " правил (включая подсети и /32)",
 	// B348: переход к правилам одного устройства (иначе его строки могут целиком
 	// оказаться вне текущей страницы — измерено: страница 1 была вся skyworker).
-	"exit_rules.device_status_open": "показать правила",
-	"exit_rules.assigned_now":       "Правило сохранено. Это устройство выходит через:",
-	"exit_rules.duplicate_parent":   "Источник:",
-	"exit_rules.duplicate_view":     "→ перейти к правилу #%d",
-	"exit_rules.dns_pending":        "Домен добавлен, но DNS пока не отвечает: %s. Autoupdater попробует при следующем цикле (до 5 минут).",
-	"exit_rules.deleted":            "Правило удалено",
+	"exit_rules.device_status_open":    "показать правила",
+	"exit_rules.served_by_owner":       "обслуживает %s",
+	"exit_rules.served_by_owner_title": "Маршрут объявляет и одобряет %s. Узел, указанный в самом правиле, с B275 — только пожелание: трафик идёт через владельца префикса, и это нормальное состояние.",
+	"exit_rules.assigned_now":          "Правило сохранено. Это устройство выходит через:",
+	"exit_rules.duplicate_parent":      "Источник:",
+	"exit_rules.duplicate_view":        "→ перейти к правилу #%d",
+	"exit_rules.dns_pending":           "Домен добавлен, но DNS пока не отвечает: %s. Autoupdater попробует при следующем цикле (до 5 минут).",
+	"exit_rules.deleted":               "Правило удалено",
 	// 2026-08-06: preferred-mismatch cross-check (v0.33.1.16
 	// Cloudflare CIDR debug). Surfaces the count of rules
 	// that point at a non-preferred exit-node — those rules
@@ -521,12 +523,14 @@ var enExitRules = map[string]string{
 	"exit_rules.device_status_rules_suffix": " rules (incl. subnets and /32)",
 	// B348: jump to one device's rules (otherwise its rows can fall entirely
 	// outside the current page — measured: page 1 was all skyworker).
-	"exit_rules.device_status_open": "show rules",
-	"exit_rules.assigned_now":       "Rule saved. This device now exits through:",
-	"exit_rules.duplicate_parent":   "Source:",
-	"exit_rules.duplicate_view":     "→ jump to rule #%d",
-	"exit_rules.dns_pending":        "Domain added, but DNS is not responding yet: %s. Autoupdater will retry on the next cycle (up to 5 minutes).",
-	"exit_rules.deleted":            "Rule deleted",
+	"exit_rules.device_status_open":    "show rules",
+	"exit_rules.served_by_owner":       "served by %s",
+	"exit_rules.served_by_owner_title": "This route is advertised and approved by %s. The relay named in the rule itself is only a wish since B275 — the prefix owner carries the traffic, which is the normal state.",
+	"exit_rules.assigned_now":          "Rule saved. This device now exits through:",
+	"exit_rules.duplicate_parent":      "Source:",
+	"exit_rules.duplicate_view":        "→ jump to rule #%d",
+	"exit_rules.dns_pending":           "Domain added, but DNS is not responding yet: %s. Autoupdater will retry on the next cycle (up to 5 minutes).",
+	"exit_rules.deleted":               "Rule deleted",
 	// 2026-08-06: preferred-mismatch cross-check (mirror of the
 	// RU keys above).
 	"exit_rules.preferred_mismatch_banner": "%d rules reference an exit-node that the device does not use. The rules are saved, but Tailscale ignores them.",

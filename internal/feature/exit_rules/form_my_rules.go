@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"skygate/internal/db"
+	"skygate/internal/prefixowner"
 )
 
 // GetMyExitRules serves the user-facing /my/exit-rules
@@ -669,6 +670,15 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	} else {
 		resolvedByDomain = rbd
 	}
+	// B439 (2026-10-29) — THE ROW MUST NAME THE RELAY THAT CARRIES IT, NOT THE WISH.
+	//
+	// Since B275 the carrier is decided by prefix_owner, while device_rules.exit_node_id
+	// is only the operator's wish. Every status below used to be computed from the wish,
+	// so a rule whose prefix had been assigned to another relay showed "wrong"/"pending"
+	// although its traffic flowed (live: 25 ranges owned by karolina, rule named emilia).
+	// `serving` is now the single source of truth for "which relay carries this rule".
+	ownerByPrefix := prefixowner.OwnerByPrefix(s.dbc())
+
 	// statusByRuleID maps rule.ID → "approved" | "pending"
 	// | "wrong" | "auto_pending" | "no_preferred". The template reads this to
 	// render the ✅/⏳/⚠️ badge. DOMAIN rules (B184) are "approved"
@@ -689,6 +699,8 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	//     genuine drift between the rule's empty exit_node and
 	//     the user's preferred.
 	statusByRuleID := map[int]string{}
+	// B439: the relay that carries each rule, for the row's tooltip ("обслуживает X").
+	servedByRuleID := map[int]string{}
 	for _, r := range rules {
 		hn := deviceNames[r.DeviceID]
 		// Effective preferred: per-device overrides user-level,
@@ -697,6 +709,22 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		if pref == "" {
 			pref = userPreferredHost
 		}
+		// B439: who carries it. A SUBNET/IP rule names its own prefix; a DOMAIN rule is
+		// carried by one relay only when every resolved range is (OwnerOfResolved), and
+		// otherwise the answer is "no single owner" rather than a guess.
+		owner := ""
+		switch r.TargetType {
+		case "subnet", "ip":
+			owner = ownerByPrefix[r.TargetValue]
+		case "domain":
+			owner = OwnerOfResolved(
+				LookupResolvedForDomain(resolvedByDomain, int64(r.UserID), int64(r.DeviceID), r.ExitNodeID, r.TargetValue),
+				ownerByPrefix)
+		}
+		serving := ServingRelayFor(r.ExitNodeID, owner)
+		if serving.Source == ServingByOwner {
+			servedByRuleID[r.ID] = serving.Host
+		}
 		if pref == "" {
 			statusByRuleID[r.ID] = "no_preferred"
 			continue
@@ -704,19 +732,26 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// Auto rules (exit_node_id="") defer to the engine; the
 		// engine is preferred-aware (B275) so it'll route through
 		// `pref` if it's healthy. NOT counted as a mismatch.
-		if r.ExitNodeID == "" {
+		if r.ExitNodeID == "" && serving.Source == ServingByAuto {
 			statusByRuleID[r.ID] = "auto_pending"
 			continue
 		}
-		if !IsRuleApplicable(r.ExitNodeID, pref) {
+		// B439: a mismatch is REAL only when nothing owns the prefix (so the rule's own
+		// relay is the live intent) and it disagrees with the device's preference. An
+		// owner-served rule is never "wrong" — its traffic flows.
+		if IsRelayMismatch(r.ExitNodeID, pref, owner) {
 			statusByRuleID[r.ID] = "wrong"
 			mismatchCount++
 			continue
 		}
-		// Applicable — check headscale state.
+		// Applicable — check headscale state against the SERVING relay (B439: the
+		// owner's approved routes are what the client gets; checking the wish made a
+		// correctly served rule look unapproved forever).
 		if r.TargetType == "subnet" || r.TargetType == "ip" {
-			if approved, ok := approvedByExitNode[r.ExitNodeID]; ok && approved[r.TargetValue] {
+			if approved, ok := approvedByExitNode[serving.Host]; ok && approved[r.TargetValue] {
 				statusByRuleID[r.ID] = "approved"
+			} else if serving.Source == ServingByOwner {
+				statusByRuleID[r.ID] = "served_by_owner"
 			} else {
 				statusByRuleID[r.ID] = "pending"
 			}
@@ -734,7 +769,8 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 			if len(resolved) == 0 {
 				statusByRuleID[r.ID] = "pending"
 			} else {
-				approved, aok := approvedByExitNode[r.ExitNodeID]
+				// B439: the CARRIER's approved routes decide, not the wish's.
+				approved, aok := approvedByExitNode[serving.Host]
 				if !aok {
 					statusByRuleID[r.ID] = "pending"
 				} else {
@@ -745,9 +781,14 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 							break
 						}
 					}
-					if approvedViaDomain {
+					switch {
+					case approvedViaDomain:
 						statusByRuleID[r.ID] = "approved"
-					} else {
+					case serving.Source == ServingByOwner:
+						// Served by the table, but its route is not approved yet:
+						// say WHO carries it instead of a bare pending.
+						statusByRuleID[r.ID] = "served_by_owner"
+					default:
 						statusByRuleID[r.ID] = "pending"
 					}
 				}
@@ -872,7 +913,11 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// 2026-08-25 (B182): per-rule headscale-state status
 		// for the three-state ✅/⏳/⚠️ badge. See the
 		// for-loop above for the four possible values.
-		"StatusByRuleID":  statusByRuleID,
+		"StatusByRuleID": statusByRuleID,
+		// B439 (2026-10-29): rule.ID → relay hostname that CARRIES the rule (from
+		// prefix_owner). Rendered as "обслуживает X" so a rule served by another relay
+		// explains itself instead of showing a red mismatch.
+		"ServedByRuleID":  servedByRuleID,
 		"TotalRules":      totalRules,
 		"MaxTotalRules":   maxTotal,
 		"LoadPct":         loadPct,

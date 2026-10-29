@@ -32,6 +32,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/headscale"
 	"skygate/internal/localtime"
+	"skygate/internal/prefixowner"
 )
 
 // 2026-08-25 (B178): AdminRule is now a package-level type
@@ -71,6 +72,11 @@ type AdminRule struct {
 	// Same semantics as IsRuleApplicable(ExitNode,
 	// PreferredHost). Template can use it directly.
 	Applicable bool
+	// B439 (2026-10-29): the relay that CARRIES this rule (prefix_owner's answer),
+	// empty when nothing owns the prefix and the rule's own relay is still the intent.
+	// The template renders it as "обслуживает X" so an owner-served rule explains
+	// itself instead of looking like a mismatch.
+	ServedBy string
 	// 2026-08-25 (B184): true iff the rule's target CIDR is
 	// actually APPROVED in headscale for this rule's
 	// ExitNode. B178's Applicable was a LOGICAL check
@@ -82,7 +88,7 @@ type AdminRule struct {
 	// not in headscale) was a gap in the B178 check.
 	//
 	// Set by annotateRulesWithPrefs from
-	// approvedByExitNode[rule.ExitNode] which is built in
+	// approvedByExitNode[<serving relay>] which is built in
 	// the handler from headscale's ListAllNodes.ApprovedRoutes
 	// (one set per exit-node hostname). For SUBNET/IP
 	// rules: direct check. For DOMAIN rules (B184): at
@@ -150,7 +156,7 @@ func adminGroupIsOversized(rows int) bool {
 // headscale-state from a domain's resolved subnets UP to
 // the parent domain rule. A DOMAIN rule is approved iff at
 // least one of its resolved subnets is in
-// approvedByExitNode[rule.ExitNode]. See LoadResolvedByDomain
+// approvedByExitNode[<serving relay from B439>]. See LoadResolvedByDomain
 // (resolved_by_domain.go) for the producer. See
 // ruleApprovedInHeadscale for the consumer.
 //
@@ -168,7 +174,12 @@ func adminGroupIsOversized(rows int) bool {
 //	                    (rule's target not in headscale yet)
 //	⚠️ wrong-node   — Applicable=false (rule's ExitNode differs
 //	                    from the device's preferred exit-node)
-func annotateRulesWithPrefs(rr []AdminRule, prefFn func(userID int64, hostname string) string, approvedByExitNode map[string]map[string]bool, resolvedByDomain map[string]map[string]bool) int {
+//
+// B439 (2026-10-29): ownerByPrefix is prefix_owner's relay per prefix. It is what
+// decides the carrier since B275, so both "Applicable" and "ApprovedInHeadscale" are
+// judged against the SERVING relay — the previous code compared the rule's own relay
+// with the device preference and reported a healthy rule as a mismatch.
+func annotateRulesWithPrefs(rr []AdminRule, prefFn func(userID int64, hostname string) string, approvedByExitNode map[string]map[string]bool, resolvedByDomain map[string]map[string]bool, ownerByPrefix map[string]string) int {
 	// Batch by (userID, hostname) — one lookup per unique
 	// (user, device), not per rule. For 324 rules covering
 	// 3 unique (user, host) pairs, that's 3 lookups instead
@@ -193,7 +204,23 @@ func annotateRulesWithPrefs(rr []AdminRule, prefFn func(userID int64, hostname s
 			pref = prefByUserHost[strconv.FormatInt(int64(rr[i].UserID), 10)+":"+hn]
 		}
 		rr[i].PreferredHost = pref
-		rr[i].Applicable = IsRuleApplicable(rr[i].ExitNode, pref)
+		// B439: the carrier, then the two answers built on it. A rule served by the
+		// assignment table is applicable no matter which relay it names; only an
+		// unowned prefix keeps the old (real) mismatch. See serving_relay_b439.go.
+		owner := ""
+		switch rr[i].TargetType {
+		case "subnet", "ip":
+			owner = ownerByPrefix[rr[i].TargetValue]
+		case "domain":
+			owner = OwnerOfResolved(
+				LookupResolvedForDomain(resolvedByDomain, int64(rr[i].UserID), int64(rr[i].DeviceID), rr[i].ExitNode, rr[i].TargetValue),
+				ownerByPrefix)
+		}
+		serving := ServingRelayFor(rr[i].ExitNode, owner)
+		if serving.Source == ServingByOwner {
+			rr[i].ServedBy = serving.Host
+		}
+		rr[i].Applicable = !IsRelayMismatch(rr[i].ExitNode, pref, owner)
 		// 2026-08-25 (B182+B184): real headscale-state check, not
 		// just a logical match. Looks up the rule's target
 		// CIDR in the per-exit-node set of headscale
@@ -203,7 +230,7 @@ func annotateRulesWithPrefs(rr []AdminRule, prefFn func(userID int64, hostname s
 		// DOMAIN rule to be "approved". Empty ExitNode
 		// (unusual but possible) is also treated as
 		// not-approved.
-		rr[i].ApprovedInHeadscale = ruleApprovedInHeadscale(rr[i], approvedByExitNode, resolvedByDomain)
+		rr[i].ApprovedInHeadscale = ruleApprovedInHeadscale(rr[i], serving.Host, approvedByExitNode, resolvedByDomain)
 		if !rr[i].Applicable {
 			mismatch++
 		}
@@ -214,7 +241,8 @@ func annotateRulesWithPrefs(rr []AdminRule, prefFn func(userID int64, hostname s
 // 2026-08-25 (B184): ruleApprovedInHeadscale returns true iff
 // the rule's TargetType is "subnet" or "ip" AND its
 // TargetValue appears in headscale.ApprovedRoutes for the
-// rule's ExitNode, OR the rule's TargetType is "domain" AND
+// SERVING relay (B439: prefix_owner's owner, else the rule's relay), OR the
+// rule's TargetType is "domain" AND
 // at least one of its resolved subnets (rows with
 // parent_domain = rule.TargetValue, same (user, device, exit)
 // triple) is in headscale.ApprovedRoutes for the rule's
@@ -225,7 +253,7 @@ func annotateRulesWithPrefs(rr []AdminRule, prefFn func(userID int64, hostname s
 // "userID:deviceID:exitNode:parent_domain" (built by
 // ResolvedKeyForTuple); the value is the set of resolved
 // CIDRs. The function returns true iff at least one of
-// those CIDRs is in approvedByExitNode[rule.ExitNode].
+// those CIDRs is in approvedByExitNode[<serving relay from B439>].
 //
 // 2026-08-25 (B182): SUBNET/IP rules return false if the
 // rule's ExitNode is empty or unknown to headscale. The
@@ -236,27 +264,29 @@ func annotateRulesWithPrefs(rr []AdminRule, prefFn func(userID int64, hostname s
 // returns false (matching the pre-B184 behaviour for all
 // rules, plus the new B184 DOMAIN case where there's
 // nothing to propagate from).
-func ruleApprovedInHeadscale(rule AdminRule, approvedByExitNode map[string]map[string]bool, resolvedByDomain map[string]map[string]bool) bool {
+// B439: `servingHost` is the relay that CARRIES the rule (prefix_owner's answer, or
+// the rule's own relay when nothing owns the prefix) — never the wish.
+func ruleApprovedInHeadscale(rule AdminRule, servingHost string, approvedByExitNode map[string]map[string]bool, resolvedByDomain map[string]map[string]bool) bool {
 	if rule.TargetType == "subnet" || rule.TargetType == "ip" {
-		if rule.ExitNode == "" || rule.TargetValue == "" {
+		if servingHost == "" || rule.TargetValue == "" {
 			return false
 		}
-		approved, ok := approvedByExitNode[rule.ExitNode]
+		approved, ok := approvedByExitNode[servingHost]
 		if !ok {
 			return false // unknown exit-node hostname
 		}
 		return approved[rule.TargetValue]
 	}
 	// DOMAIN rule — B184 propagate from resolved subnets.
-	if rule.ExitNode == "" || rule.TargetValue == "" {
+	if servingHost == "" || rule.TargetValue == "" {
 		return false
 	}
 	resolved := LookupResolvedForDomain(resolvedByDomain,
-		int64(rule.UserID), int64(rule.DeviceID), rule.ExitNode, rule.TargetValue)
+		int64(rule.UserID), int64(rule.DeviceID), servingHost, rule.TargetValue)
 	if len(resolved) == 0 {
 		return false // autoupdater hasn't resolved yet
 	}
-	approved, ok := approvedByExitNode[rule.ExitNode]
+	approved, ok := approvedByExitNode[servingHost]
 	if !ok {
 		return false // unknown exit-node hostname
 	}
@@ -570,10 +600,12 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	} else {
 		resolvedByDomain = rbd
 	}
+	// B439: the carrier comes from the assignment table, exactly like the user page.
+	ownerByPrefix := prefixowner.OwnerByPrefix(s.dbc())
 	totalMismatch := annotateRulesWithPrefs(rr, func(uid int64, hn string) string {
 		pref, _ := PreferredExitNodeForRule(s.dbc(), uid, hn)
 		return pref
-	}, approvedByExitNode, resolvedByDomain)
+	}, approvedByExitNode, resolvedByDomain, ownerByPrefix)
 
 	groupedByUser := map[string]userGroup{}
 	// B351: the system-load badge quotes the DATABASE, not the page (it used to be

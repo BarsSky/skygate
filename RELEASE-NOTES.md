@@ -1,5 +1,50 @@
 # Skygate release notes
 
+## v1.5.191 — the row says which relay actually carries it (B439)
+
+**Date:** 2026-10-29 · **Base:** `v1.5.190` → this tag · **Compatibility:** none.
+
+Operator report: «несмотря на политику авто-выбора доступного exit-node, в таблице висят пометки о
+расхождении в предпочтении устройства».
+
+### Why they hung
+
+Since **B275** the relay that carries a prefix is decided by the `prefix_owner` assignment table, and
+`device_rules.exit_node_id` became the operator's **wish**. Four answers were still computed from the
+wish:
+
+* the per-rule status badge,
+* the «N rules reference an exit-node the device does not use» banner,
+* the admin page's `Applicable` / `ApprovedInHeadscale` pair,
+* the system test that counts the same mismatch.
+
+Live case: 25 ranges of a domain were carried by `karolina` while the rule named `emilia`. The traffic
+flowed — and the row reported «not approved» and «Tailscale will ignore this rule».
+
+### One rule now answers «who carries it»
+
+`internal/feature/exit_rules/serving_relay_b439.go` (pure, no DB): the assignment table's owner
+first, then the rule's own relay, then `auto`, with tag↔hostname normalisation. Two consequences:
+
+* **`approved` is decided by the carrier's** approved routes — the owner's, not the wish's;
+* **a mismatch is counted only when nothing owns the prefix**, i.e. when the rule's own relay really
+  is the live intent. An owner-served rule is never red: it renders as «обслуживает X», with a
+  tooltip explaining that the relay named in the rule is advisory by design.
+
+For a **DOMAIN** rule the carrier is derived only when *all* of its resolved ranges share one owner —
+two carriers for one domain are not invented. The admin page makes the same judgement and gained a
+`ServedBy` field.
+
+### Contracts
+
+`scripts/check_b439_serving_relay.sh` — **15** checks: the helper is gofmt-clean and prefers the
+owner before the wish, `IsRelayMismatch` short-circuits to false whenever a prefix has an owner, tag
+and hostname compare equal, `TestB439` is green (owner wins; the real mismatch is kept; a domain
+carried by two relays has no single owner), `/my/exit-rules` loads `prefix_owner` and indexes
+approved routes by the serving host, the admin annotator takes the table and checks the serving host,
+the `served_by_owner` branch names the relay, both i18n keys come in RU+EN pairs, the templates still
+render and the markup is still balanced.
+
 ## v1.5.190 — the exit-rules table lines up, and the device filter stops reloading (B438)
 
 **Date:** 2026-10-29 · **Base:** `v1.5.189` → this tag · **Compatibility:** none.

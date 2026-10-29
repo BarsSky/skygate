@@ -35,7 +35,7 @@ func TestRuleApprovedInHeadscale_B184_DomainResolvedApproved(t *testing.T) {
 	approvedByExitNode := map[string]map[string]bool{
 		"emilia": {"1.1.1.1/32": true, "0.0.0.0/0": true, "::/0": true},
 	}
-	if !ruleApprovedInHeadscale(rule, approvedByExitNode, resolved) {
+	if !ruleApprovedInHeadscale(rule, rule.ExitNode, approvedByExitNode, resolved) {
 		t.Error("t.me should be approved — its resolved 1.1.1.1/32 is in headscale for emilia")
 	}
 }
@@ -57,7 +57,7 @@ func TestRuleApprovedInHeadscale_B184_DomainResolvedNoneInHeadscale(t *testing.T
 	approvedByExitNode := map[string]map[string]bool{
 		"emilia": {"1.1.1.1/32": true}, // different IP — discord's IP is NOT in headscale
 	}
-	if ruleApprovedInHeadscale(rule, approvedByExitNode, resolved) {
+	if ruleApprovedInHeadscale(rule, rule.ExitNode, approvedByExitNode, resolved) {
 		t.Error("discord.com should be pending — its only resolved IP is not in headscale yet")
 	}
 }
@@ -79,7 +79,7 @@ func TestRuleApprovedInHeadscale_B184_DomainNoResolved(t *testing.T) {
 	approvedByExitNode := map[string]map[string]bool{
 		"emilia": {"0.0.0.0/0": true, "::/0": true},
 	}
-	if ruleApprovedInHeadscale(rule, approvedByExitNode, resolved) {
+	if ruleApprovedInHeadscale(rule, rule.ExitNode, approvedByExitNode, resolved) {
 		t.Error("rutracker.org should be pending — no resolved subnets in DB")
 	}
 }
@@ -104,7 +104,7 @@ func TestRuleApprovedInHeadscale_B184_CrossTupleIsolation(t *testing.T) {
 		"karolina": {"8.8.8.0/24": true},              // karolina has 8.8.8.0/24
 		"emilia":   {"0.0.0.0/0": true, "::/0": true}, // emilia has no 8.8.8.0/24
 	}
-	if ruleApprovedInHeadscale(rule, approvedByExitNode, resolved) {
+	if ruleApprovedInHeadscale(rule, rule.ExitNode, approvedByExitNode, resolved) {
 		t.Error("basic/youtube.com should be pending — the resolved 8.8.8.0/24 belongs to skyworker, not basic")
 	}
 }
@@ -120,7 +120,7 @@ func TestRuleApprovedInHeadscale_B184_EmptyParentDomain(t *testing.T) {
 	approvedByExitNode := map[string]map[string]bool{
 		"emilia": {"1.1.1.1/32": true},
 	}
-	if ruleApprovedInHeadscale(rule, approvedByExitNode, map[string]map[string]bool{}) {
+	if ruleApprovedInHeadscale(rule, rule.ExitNode, approvedByExitNode, map[string]map[string]bool{}) {
 		t.Error("empty resolvedByDomain should propagate nothing — DOMAIN rule must stay pending")
 	}
 }
@@ -142,7 +142,7 @@ func TestRuleApprovedInHeadscale_B184_UnknownExitNode(t *testing.T) {
 	approvedByExitNode := map[string]map[string]bool{
 		"emilia": {"1.1.1.1/32": true},
 	}
-	if ruleApprovedInHeadscale(rule, approvedByExitNode, resolved) {
+	if ruleApprovedInHeadscale(rule, rule.ExitNode, approvedByExitNode, resolved) {
 		t.Error("DOMAIN rule with unknown exit-node should be pending, not approved")
 	}
 }
