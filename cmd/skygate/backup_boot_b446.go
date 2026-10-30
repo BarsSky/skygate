@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"skygate/internal/backup"
+	"skygate/internal/localtime"
 )
 
 // logBackupSchedulerStartup prints what the in-app backup scheduler will actually do:
@@ -30,9 +31,9 @@ func logBackupSchedulerStartup(d *sql.DB, secretKeyHex string) {
 	}
 	last := "never"
 	if bcfg.LastRun > 0 {
-		last = time.Unix(bcfg.LastRun, 0).UTC().Format(time.RFC3339)
+		last = localtime.FormatUnix(bcfg.LastRun)
 	}
 	log.Printf("backup-scheduler: started (enabled=%t, in_app=%t, schedule=%q, last_run=%s, next_slot=%s)",
 		bcfg.Enabled, bcfg.InAppEnabled, bcfg.Schedule, last,
-		bsch.Next(time.Now()).UTC().Format(time.RFC3339))
+		localtime.Format(bsch.Next(time.Now())))
 }

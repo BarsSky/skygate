@@ -29,6 +29,7 @@ import (
 
 	"skygate/internal/backup"
 	"skygate/internal/db"
+	"skygate/internal/localtime"
 )
 
 // backupStaleCause explains a stale backup, or returns "" when there is nothing to explain.
@@ -59,7 +60,7 @@ func backupStaleCause(s *Service, lastRun int64) string {
 	if !inApp {
 		detail := "the in-app scheduler is OFF (backup.in_app_enabled=0), so a backup can only come from a system-cron entry for scripts/backup_cron.sh — the panel cannot see one, and nothing has run since"
 		if lastRun > 0 {
-			return fmt.Sprintf("%s %s. Either enable the in-app scheduler on /admin/backup or install the cron entry, then press «Запустить сейчас».", detail, time.Unix(lastRun, 0).UTC().Format("2006-01-02 15:04 UTC"))
+			return fmt.Sprintf("%s %s. Either enable the in-app scheduler on /admin/backup or install the cron entry, then press «Запустить сейчас».", detail, localtime.FormatUnix(lastRun))
 		}
 		return detail + " this installation has ever run a backup."
 	}

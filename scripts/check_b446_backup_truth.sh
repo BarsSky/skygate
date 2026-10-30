@@ -41,6 +41,9 @@ bad() { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
 skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; }
 hdr() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
+# B339: read the cmd/skygate PACKAGE surface, not main.go alone.
+. scripts/lib/gosurface.sh
+
 TRUTH=internal/backup/schedule_truth_b446.go
 TRUTH_T=internal/backup/schedule_truth_b446_test.go
 CAUSE=internal/feature/admin/backup_stale_cause_b446.go
@@ -48,11 +51,13 @@ CAUSE_T=internal/feature/admin/backup_stale_cause_b446_test.go
 SCHED=internal/backup/scheduler.go
 SYST=internal/feature/admin/system_tests.go
 SYST2=internal/feature/admin/system_tests_b394_new.go
-MAIN=cmd/skygate/main.go
+MAINPKG=cmd/skygate          # the whole package: a contract must read a SURFACE (B339), not
+                             # main.go alone — that is the file B372 caps and B446 shrinks
 BOOT=cmd/skygate/backup_boot_b446.go
 PYLIB=scripts/lib/python_audit.sh
 GATE=scripts/verify_pre_deploy.sh
-for f in "$TRUTH" "$TRUTH_T" "$CAUSE" "$CAUSE_T" "$SCHED" "$SYST" "$SYST2" "$MAIN" "$BOOT" "$PYLIB" "$GATE"; do
+GOSURFACE=scripts/lib/gosurface.sh
+for f in "$TRUTH" "$TRUTH_T" "$CAUSE" "$CAUSE_T" "$SCHED" "$SYST" "$SYST2" "$BOOT" "$PYLIB" "$GOSURFACE" "$GATE"; do
   [ -f "$f" ] || { bad "missing source file: $f"; exit 1; }
 done
 printf '  DIAG B446: truth=%s cause=%s python=%s\n' "$TRUTH" "$CAUSE" "$PYLIB"
@@ -134,18 +139,20 @@ if has "$BOOT" 'backup-scheduler: started'; then
 else
   bad "C1: the scheduler still starts silently — the reason this took nine days to notice"
 fi
-if has "$MAIN" 'logBackupSchedulerStartup('; then
+gosurface MAIN_SURFACE "$MAINPKG"/*.go
+if has "$MAIN_SURFACE" 'logBackupSchedulerStartup('; then
   ok "C2: the startup line is wired into the entrypoint"
 else
   bad "C2: the helper exists but is never called"
 fi
-if has "$MAIN" 'Pre-B142 system-cron verify_backup.sh continues to run'; then
+if has "$MAIN_SURFACE" 'Pre-B142 system-cron verify_backup.sh continues to run'; then
   bad "C3: the verify banner still claims a system cron «continues to run»"
 else
   ok "C3: the verify banner no longer credits a cron the panel cannot see"
 fi
 # B372 caps main.go; the diagnostic had to move into its own file rather than grow the entrypoint.
-LINES="$(wc -l < "$MAIN" 2>/dev/null | tr -d ' ')"
+MAIN_FILE="$(ls cmd/skygate/main*.go 2>/dev/null | head -1)"
+LINES="$(wc -l < "$MAIN_FILE" 2>/dev/null | tr -d ' ')"
 if [ "${LINES:-0}" -le 2400 ]; then
   ok "C4: main.go stays within the B372 cap (${LINES} lines)"
 else
