@@ -298,7 +298,17 @@
 {{end}}
 
 <div class="card">
-  <h3><i class="fa-solid fa-list"></i> {{tf "exit_rules_admin.all_rules" .TotalRules}}</h3>
+  {{/* B449 (2026-10-30) — «не хватает у Все правила возможности свернуть этот блок, так как он
+       слишком большой и долго прокручивать в самый низ». The tree inside can be collapsed group
+       by group (B376/B448), but the CARD ITSELF had no fold: with 291 rules the page is a wall
+       and the controls that matter (add form, explanation, other cards) are above it. The whole
+       block is now a <details> whose summary is the heading; the choice is remembered per
+       browser, so a page that was folded stays folded across reloads and pagination. */}}
+  <details id="admin-all-rules-fold">
+    <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px">
+      <h3 style="display:inline;margin:0"><i class="fa-solid fa-list"></i> {{tf "exit_rules_admin.all_rules" .TotalRules}}</h3>
+      <span style="font-size:11px;color:var(--text-muted)">{{t "exit_rules_admin.fold_hint"}}</span>
+    </summary>
   {{/* B351: the heading count is the DATABASE total (the page used to print its
        50-row window next to a pagination line saying "всего 349 правил"). When
        this page shows fewer rows than the table holds, say so explicitly. */}}
@@ -564,6 +574,7 @@
     <button type="button" class="btn btn-sm" onclick="skyToggleAllDetails(false)" title="{{t "exit_rules.collapse_all_title"}}"><i class="fa-solid fa-angles-up"></i> {{t "exit_rules.collapse_all"}}</button>
   </div>
   </div>
+  </details>
 </div>
 
 <div class="card">
@@ -792,6 +803,22 @@ function skyToggleAllDetails(open){
     var open = saved === '1';
     root.querySelectorAll('details').forEach(function(d){ d.open = open; });
   } catch (e) {}
+})();
+
+// B449: the «Все правила» card folds as a WHOLE, and the choice is remembered — the tree
+// controls collapse groups one by one, which still leaves a 291-rule page above the cards
+// the operator wants to reach. Default is open, so nothing changes until it is used.
+(function(){
+  var fold = document.getElementById('admin-all-rules-fold');
+  if (!fold) return;
+  var KEY = 'skygate.admin.exit_rules.all_open';
+  try {
+    var saved = localStorage.getItem(KEY);
+    if (saved !== null) fold.open = saved === '1';
+  } catch (e) {}
+  fold.addEventListener('toggle', function(){
+    try { localStorage.setItem(KEY, fold.open ? '1' : '0'); } catch (e) {}
+  });
 })();
 // B376: the bulk form's device checkboxes belong to the selected user. Devices
 // of other users are hidden (and unchecked, so a hidden box can never be

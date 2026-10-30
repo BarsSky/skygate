@@ -1,5 +1,86 @@
 # Skygate release notes
 
+## v1.5.201 — the relay probe reads the row it is given, and the panel stops blaming the database (B449)
+
+**Date:** 2026-10-30 · **Base:** `v1.5.200` → this tag · **Compatibility:** none (no schema change).
+
+### A. «Почему проблемы на двух релеях — что по сути exit node?»
+
+Because the probe could not read the row. `exit_servers` stores the connection as ONE string
+(`ssh_target`) plus an optional port column, and on the reference install **karolina carries the
+port in both**: `root@100.64.0.2:18022` with `ssh_port=18022`. The probe took everything after the
+`@` as the **host**, and the ssh word builder bracketed anything containing a colon (the IPv6 rule),
+so it asked for
+
+```
+ssh root@[100.64.0.2:18022] → Could not resolve hostname [100.64.0.2:18022]
+```
+
+aisha's row has an **empty** `ssh_target` and got the same unexplained sentence. Both are working
+exit nodes: this probe is skygate's **management SSH** (it reads `ip_forward`, `iptables`, `tailscale
+status`), not egress.
+
+* `exitnode.ParseSSHTarget` is now the single parser (`[user@]host[:port]`, bracketed IPv6, bare
+  IPv6, an explicit port in the string wins over the column) and it returns the **reason** when it
+  refuses — an empty field is a hole in the row, a non-numeric port is a typo.
+* `SSHHostWord` brackets **only** a real IPv6 literal (`netip.ParseAddr`). The same rule is used by
+  the provisioning/apply path, so the two cannot disagree.
+* The page now says the probe is a setting and that egress does not depend on it.
+
+### B. The relay-request rule picker was always empty
+
+Three queries in `relay_request_handlers_b440.go` used the **SQLite** placeholder `?` against
+PostgreSQL. The journal carried, on every page load:
+
+```
+[relay-request] list the user's rules: ERROR: syntax error at or near "AND" (SQLSTATE 42601)
+```
+
+and the select listed nothing. All three use `$n` now.
+
+### C. «Применить подстановку» blamed the database for a duplicate
+
+Moving a rule to the preferred relay collides with a rule the user already has for the same
+(device, destination, parent) — routine after a CDN expansion:
+
+```
+[exit-rules] apply-preferred SetExitNode(730532, emilia): ERROR: duplicate key value violates
+unique constraint "device_rules_natural_key_uniq" (SQLSTATE 23505)
+```
+
+The loop **returned on the first error**, so the rules before the conflict had already moved, the
+rest stayed where they were, and the operator saw «Не удалось добавить правило: Ошибка базы данных.
+Попробуйте позже» — the wrong action, and a cause no amount of waiting could fix.
+
+* Every rule is attempted; conflicts are counted and the batch no longer aborts half-way.
+* The reason names the real conflict and the fix («у устройства X уже есть правило для Y на Z»).
+* The outcome arrives in its **own** warning banner (`exit_rules.pref_apply_result`, RU + EN), not
+  through the «Не удалось добавить правило» key.
+
+### D. «Все правила» folds as a whole
+
+The tree collapses group by group, but the card had no fold — with 291 rules the page is a wall
+between the operator and the cards below it. The card is a `<details>` whose summary is the
+heading, and the choice is remembered (`localStorage`).
+
+### Verification
+
+`go build`, `go vet`, `staticcheck`, `gofmt` clean; `exitnode`, `exit_rules`, `admin`, `handlers`,
+`i18n` green. 6 new tests (target parser, skip reason, two render tests executing the real
+templates). `scripts/check_b449_panel_truth.sh` — 20 contracts.
+
+### Open, measured, next
+
+The **117 «проблемных» prefixes are real**, and they are not a leftover warning: on the box
+`prefix_owner` assigns **135 prefixes to emilia**, while `headscale nodes list` shows emilia
+advertising **2** routes (`0.0.0.0/0`, `::/0`) and karolina **223**. The per-CIDR `via=emilia` pins
+therefore name a relay that does not carry the prefix; traffic still works because the loose
+(no-pin) path is what actually serves it. The route apply itself claims success
+(`relay_apply_state:emilia = ok`, `route-converge` at 13:25 said «applying through the shared
+path»), so the next block verifies the advertisement on the node after the apply and reports the
+mismatch instead of `ok`. Until then «Re-sync all» on `/admin/exit-nodes` is the honest workaround
+to try, and its result string is the thing to read.
+
 ## v1.5.200 — HOTFIX: /admin/derp/relays rendered a template error (B448.1)
 
 **Date:** 2026-10-30 · **Base:** `v1.5.199` → this tag · **Compatibility:** none (no schema change).

@@ -676,6 +676,22 @@ func (s *Service) PostMyExitRulesApplyPreferred(w http.ResponseWriter, r *http.R
 
 	updated := 0
 	affectedIDs := []int64{}
+	// B449 (2026-10-30) — ONE CONFLICTING RULE MUST NOT ABORT THE BATCH.
+	//
+	// Live: «Не удалось добавить правило: Ошибка базы данных. Попробуйте позже или обратитесь к
+	// администратору» appeared after «применить подстановку», while the journal said
+	//
+	//	[exit-rules] apply-preferred SetExitNode(730532, emilia): ERROR: duplicate key value
+	//	violates unique constraint "device_rules_natural_key_uniq" (SQLSTATE 23505)
+	//
+	// Moving rule 730532 to emilia collides with a rule the user already has for the same
+	// (device, destination, parent) on emilia — routine after a CDN expansion. The old loop
+	// returned on the FIRST error: the rules before it had already been moved, the rest were
+	// silently left behind, and the operator was told «Ошибка базы данных, попробуйте позже»,
+	// which is both unexplained and wrong (trying later cannot help). Now every rule is
+	// attempted, the collisions are COUNTED, and the banner names the outcome and the reason.
+	skipped := 0
+	var firstSkipReason string
 	for _, rule := range rules {
 		hn := rule.DeviceName
 		if hn == "" {
@@ -689,11 +705,12 @@ func (s *Service) PostMyExitRulesApplyPreferred(w http.ResponseWriter, r *http.R
 			continue
 		}
 		if err := db.UpdateDeviceRuleExitNode(s.dbc(), rule.ID, preferred); err != nil {
-			log.Printf("[exit-rules] apply-preferred SetExitNode(%d, %s): %v", rule.ID, preferred, err)
-			http.Redirect(w, r, "/my/exit-rules?err="+url.QueryEscape(
-				s.I18n.T(s.I18n.LangFromRequest(r), "error.db"),
-			), http.StatusSeeOther)
-			return
+			log.Printf("[exit-rules] apply-preferred SetDeviceRuleExitNode(%d, %s): %v", rule.ID, preferred, err)
+			skipped++
+			if firstSkipReason == "" {
+				firstSkipReason = preferredSkipReason(rule, preferred, err)
+			}
+			continue
 		}
 		updated++
 		affectedIDs = append(affectedIDs, int64(rule.ID))
@@ -701,13 +718,48 @@ func (s *Service) PostMyExitRulesApplyPreferred(w http.ResponseWriter, r *http.R
 
 	s.Backend.Audit(c.UserID, c.Username,
 		"my_exit_rules_apply_preferred",
-		fmt.Sprintf("preferred=%s updated=%d ids=%v", userPreferredHost, updated, affectedIDs))
+		fmt.Sprintf("preferred=%s updated=%d skipped=%d ids=%v", userPreferredHost, updated, skipped, affectedIDs))
 
 	msg := fmt.Sprintf("%d правил обновлено → %s", updated, userPreferredHost)
-	if updated == 0 {
+	if updated == 0 && skipped == 0 {
 		msg = "правил для обновления не найдено — все уже на preferred exit-node"
 	}
+	if skipped > 0 {
+		// A partial move is neither success nor failure, and saying only «обновлено N» would
+		// report it as complete (the same rule the B379 delete banner follows). It also must
+		// NOT travel as `err=`: that banner is rendered as «Не удалось добавить правило: …»,
+		// which names the wrong action — the pre-B449 redirect did exactly that.
+		msg = fmt.Sprintf("обновлено %d, пропущено %d — %s", updated, skipped, firstSkipReason)
+		http.Redirect(w, r, "/my/exit-rules?pref="+url.QueryEscape(msg), http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, "/my/exit-rules?ok="+url.QueryEscape(msg), http.StatusSeeOther)
+}
+
+// preferredSkipReason explains WHY one rule could not be moved to the preferred relay.
+//
+// B449: the live cause was `duplicate key value violates unique constraint
+// "device_rules_natural_key_uniq"` — the user already has a rule for the same
+// (device, destination, parent domain) on that relay, which is routine after a CDN
+// expansion has produced parallel rows. Saying «Ошибка базы данных, попробуйте позже» for
+// that is both unexplained and untrue — waiting cannot fix a duplicate.
+func preferredSkipReason(rule db.DeviceRule, preferred string, err error) string {
+	msg := strings.ToLower(err.Error())
+	dup := strings.Contains(msg, "duplicate key") || strings.Contains(msg, "unique constraint") ||
+		strings.Contains(msg, "unique constraint failed") || strings.Contains(msg, "23505")
+	if dup {
+		return fmt.Sprintf("у устройства %s уже есть правило для %s на %s — два одинаковых правила база не принимает; удалите лишнее и повторите",
+			ruleLabel(rule), rule.TargetValue, preferred)
+	}
+	return fmt.Sprintf("правило %s → %s: %v", rule.TargetValue, preferred, err)
+}
+
+// ruleLabel names a rule's device for a message, falling back to its numeric id.
+func ruleLabel(rule db.DeviceRule) string {
+	if strings.TrimSpace(rule.DeviceName) != "" {
+		return rule.DeviceName
+	}
+	return fmt.Sprintf("#%d", rule.DeviceID)
 }
 
 // buildFormErrorRedirectURL is the B237.19 contract for the

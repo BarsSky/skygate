@@ -102,6 +102,11 @@
   {{if gt .existing_id 0}}<br><a href="#rule-{{.existing_id}}" class="alert-link">{{tf "exit_rules.duplicate_view" .existing_id}}</a>{{end}}
 </div>{{end}}
 {{if .warn}}<div class="alert alert-warn"><i class="fa-solid fa-circle-exclamation"></i> {{tf "exit_rules.dns_pending" .warn}}</div>{{end}}
+{{/* B449: the preferred-substitution outcome. It is reported in its OWN banner because the
+     red one above is literally «Не удалось добавить правило: …» — an operator who pressed
+     «применить подстановку» must not be told that adding a rule failed. A partial move is a
+     warning, not an error: some rules moved, the rest were skipped for a named reason. */}}
+{{if .pref_msg}}<div class="alert alert-warn" id="pref-apply-banner"><i class="fa-solid fa-arrows-rotate"></i> {{tf "exit_rules.pref_apply_result" .pref_msg}}</div>{{end}}
 {{if .deleted}}<div class="alert alert-warn"><i class="fa-solid fa-check"></i> {{t "exit_rules.deleted"}}</div>{{end}}
 {{/* B376: the «набросить группой» result. Before this block a batch had no
      answer at all (the form did not exist), and the single-rule flash could not

@@ -171,16 +171,12 @@ func (r Request) SSHTarget() string {
 // `-p`). The user is ALWAYS spelled out: inside the skygate container the local
 // account is `skygate`, so an omitted user would silently try skygate@<vps> and
 // fail with "Permission denied (publickey)".
+//
+// B449: only a real IPv6 literal is bracketed (SSHHostWord). The old rule — "contains a
+// colon → bracket" — turned the row `root@100.64.0.2:18022` into `[100.64.0.2:18022]`,
+// an unresolvable hostname, because a colon means "port" far more often than "IPv6".
 func (r Request) sshHost() string {
-	host := strings.TrimSpace(r.Host)
-	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
-		host = "[" + host + "]"
-	}
-	u := strings.TrimSpace(r.User)
-	if u == "" {
-		return host
-	}
-	return u + "@" + host
+	return SSHHostWord(r.User, r.Host)
 }
 
 // Validate refuses a request before anything is spawned. Every message names

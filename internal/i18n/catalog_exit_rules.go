@@ -31,7 +31,9 @@ var ruExitRules = map[string]string{
 	// handler redirects back with ?err= and the template
 	// shows the message here so the user can fix + retry
 	// without losing their form values.
-	"exit_rules.form_error": "Не удалось добавить правило: %s",
+	"exit_rules.form_error":        "Не удалось добавить правило: %s",
+	"exit_rules.pref_apply_result": "Подстановка preferred exit-node: %s",
+	"exit_rules_admin.fold_hint":   "свернуть/развернуть (запоминается)",
 	// 2026-09-07 (B237.19): the previous wording
 	// ("Правило для X уже существует — не дублируем. Удалите
 	//  существующее, если нужно обновить.") sounded like an
@@ -578,7 +580,9 @@ var enExitRules = map[string]string{
 	// 2026-09-07 (B237.19): form-error flash banner
 	// shown above the form when the form's POST handler
 	// rejects the values. EN copy.
-	"exit_rules.form_error": "Could not add rule: %s",
+	"exit_rules.form_error":        "Could not add rule: %s",
+	"exit_rules.pref_apply_result": "Preferred exit-node substitution: %s",
+	"exit_rules_admin.fold_hint":   "collapse/expand (remembered)",
 	// 2026-09-07 (B237.19): the previous wording
 	// ("A rule for X already exists — not duplicating. Remove
 	//  the existing one to update.") sounded like an error

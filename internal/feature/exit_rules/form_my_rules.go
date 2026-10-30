@@ -943,8 +943,11 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 			// the friction the flash-banner UX (B237.19) removed.
 			"group_label": formGroupLabel,
 		},
-		"duplicate":     duplicate,
-		"warn":          r.URL.Query().Get("warn"),
+		"duplicate": duplicate,
+		"warn":      r.URL.Query().Get("warn"),
+		// B449: the preferred-substitution outcome (moved / skipped) has its own banner —
+		// it is neither a success nor the «Не удалось добавить правило» failure above.
+		"pref_msg":      r.URL.Query().Get("pref"),
 		"err":           errMsg,
 		"target":        target,
 		"existing_id":   existingIDInt,

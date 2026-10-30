@@ -234,7 +234,7 @@ func (s *Service) relayRequestPrefixes(userID, deviceID int64, exitNode, targetT
 		}
 		if len(out) == 0 {
 			rows, err := s.dbc().Query(`SELECT target_value FROM device_rules
-			                              WHERE user_id = ? AND parent_domain = ? AND enabled = 1
+			                              WHERE user_id = $1 AND parent_domain = $2 AND enabled = 1
 			                                AND target_type IN ('subnet','ip')`, userID, target)
 			if err == nil {
 				for rows.Next() {
@@ -252,10 +252,19 @@ func (s *Service) relayRequestPrefixes(userID, deviceID int64, exitNode, targetT
 
 // relayRequestRules lists the viewer's requestable rules. Only rules the user owns are
 // listed: asking to move somebody else's destination is the admin's call, not theirs.
+//
+// B449 (2026-10-30) — THE PLACEHOLDER WAS SQLITE'S. The query was written with `?`, which is
+// SQLite syntax; PostgreSQL parses it as an operator and answers
+//
+//	ERROR: syntax error at or near "AND" (SQLSTATE 42601)
+//
+// so the request form listed NO rules for any user while the journal carried that line on
+// every page load. Every other query in this project uses `$n` (the dialect helpers rewrite
+// nothing), and this file now matches them.
 func (s *Service) relayRequestRules(userID int64) []RelayRuleChoice {
 	out := []RelayRuleChoice{}
 	rows, err := s.dbc().Query(`SELECT id, device_hostname, target_type, target_value FROM device_rules
-	                              WHERE user_id = ? AND enabled = 1
+	                              WHERE user_id = $1 AND enabled = 1
 	                              ORDER BY device_hostname, target_value, id LIMIT 300`, userID)
 	if err != nil {
 		log.Printf("[relay-request] list the user's rules: %v", err)
@@ -422,7 +431,7 @@ func (s *Service) PostMyRelayRequest(w http.ResponseWriter, r *http.Request) {
 	var deviceHost, target, kind, ruleRelay string
 	var deviceID int64
 	if err := s.dbc().QueryRow(`SELECT device_hostname, target_value, target_type, COALESCE(device_id,0), exit_node_id
-	                              FROM device_rules WHERE id = ? AND user_id = ? AND enabled = 1`, ruleID, c.UserID).
+	                              FROM device_rules WHERE id = $1 AND user_id = $2 AND enabled = 1`, ruleID, c.UserID).
 		Scan(&deviceHost, &target, &kind, &deviceID, &ruleRelay); err != nil {
 		http.Redirect(w, r, back+"?relay_err="+url.QueryEscape(s.I18n.T(lang, "exit_rules.relay_request_not_yours")), http.StatusSeeOther)
 		return

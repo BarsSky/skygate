@@ -68,9 +68,12 @@ func (s *Service) RunExitNodeHealthCheck(ctx context.Context) []exitnode.HealthL
 	out := make([]exitnode.HealthLine, 0, len(rows))
 	for _, row := range rows {
 		line := exitnode.HealthLine{Host: row.Hostname, At: now}
-		req, ok := s.healthRequestFor(row.SSHTarget, row.SSHKeyPath, row.SSHPort)
-		if !ok {
-			line.Problem = "ssh_target/порт релея не разобрать — проверьте поля строки"
+		req, reason := s.healthRequestFor(row.SSHTarget, row.SSHKeyPath, row.SSHPort)
+		if req.Host == "" {
+			// B449: the reason names the FIELD and the shape, because «не разобрать» alone
+			// told the operator nothing about whether the row was empty or mistyped — and
+			// neither says the relay cannot carry traffic.
+			line.Problem = reason + " — это настройка строки релея (SSH для проверки), доступ через релей от неё не зависит"
 			out = append(out, line)
 			continue
 		}
@@ -91,30 +94,38 @@ func (s *Service) RunExitNodeHealthCheck(ctx context.Context) []exitnode.HealthL
 }
 
 // healthRequestFor builds the ssh request for one exit_servers row. It refuses a row it
-// cannot parse rather than probing the wrong host.
-func (s *Service) healthRequestFor(target, keyPath, port string) (exitnode.Request, bool) {
-	t := strings.TrimSpace(target)
-	user, host := "", t
-	if i := strings.Index(t, "@"); i >= 0 {
-		user, host = t[:i], t[i+1:]
+// cannot parse rather than probing the wrong host, and it says WHICH field is wrong.
+//
+// B449: the parse lives in exitnode.ParseSSHTarget so the probe and the route apply read
+// the same string the same way. The port can arrive twice — inside `ssh_target`
+// (`root@100.64.0.2:18022`) and in the `ssh_port` column — and the explicit port in the
+// string wins, because it is the more specific statement about THIS row.
+func (s *Service) healthRequestFor(target, keyPath, port string) (exitnode.Request, string) {
+	spec, reason, ok := exitnode.ParseSSHTarget(target)
+	if !ok {
+		return exitnode.Request{}, reason
 	}
-	if user == "" {
-		user = "root"
-	}
-	p := 22
-	if port != "" {
+	p := spec.Port
+	if p == 0 {
 		if n, err := strconv.Atoi(strings.TrimSpace(port)); err == nil && n > 0 {
 			p = n
 		}
+	}
+	if p == 0 {
+		p = 22
+	}
+	user := spec.User
+	if user == "" {
+		user = "root"
 	}
 	key := strings.TrimSpace(keyPath)
 	if key == "" {
 		key = s.effectiveExitSSHKeyPath("")
 	}
-	if host == "" || key == "" {
-		return exitnode.Request{}, false
+	if key == "" {
+		return exitnode.Request{}, "не задан SSH-ключ (ssh_key_path строки и SKYGATE_EXIT_SSH_KEY пусты)"
 	}
-	return exitnode.Request{Host: host, User: user, Port: p, NodeName: host, KeyPath: key}, true
+	return exitnode.Request{Host: spec.Host, User: user, Port: p, NodeName: spec.Host, KeyPath: key}, ""
 }
 
 // runHealthCheckIfDue is the ticker entry: it never blocks a tick for long and never
