@@ -133,6 +133,18 @@ func adminGroupIsOversized(rows int) bool {
 	return rows > db.AdminOversizedGroupRows
 }
 
+// adminNodeGroupOpens reports whether an exit-node group renders OPEN.
+//
+// B448 (2026-10-30) — «группировка получилась по одной строчке и нельзя свернуть всю
+// таблицу». The admin tree is user → device → exit node → rules, and the exit-node level was
+// always closed, so a device whose rules all go through ONE relay hid its only child behind a
+// header reading «1»: one click to reveal one line. A group that is the only group of its
+// device has nothing to choose between, so it opens; two or more stay closed, because there
+// the header IS the choice.
+func adminNodeGroupOpens(nodeGroups int) bool {
+	return nodeGroups == 1
+}
+
 // 2026-08-25 (B178): annotateRulesWithPrefs fills in the
 // PreferredHost + Applicable fields for every rule in rr,
 // in place, and returns the total number of "dead rules"
@@ -506,7 +518,15 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		// the rows were fetched with the rest of the group (no second query, no new
 		// JS state), this flag only decides whether the <details> starts open.
 		Oversized bool
-		Nodes     map[string][]AdminRule
+		// B448 (2026-10-30) — «группировка получилась по одной строчке». The tree has
+		// FOUR levels (user → device → exit node → rules), and the exit-node level was
+		// always CLOSED. A device with a single exit-node group therefore hid its only
+		// child behind a header with the count "1": the operator had to click through
+		// one-row headers to see one row. A group that holds the ONLY group of its
+		// parent has nothing to choose between, so it opens immediately — the rule is
+		// never behind a click that reveals a single line.
+		SingleNode bool
+		Nodes      map[string][]AdminRule
 		// 2026-09-07: B237.22 / TD-11 (Approach G) —
 		// parallel CDN-grouped view. Same (exitNode) keys
 		// as Nodes, but the value is a CDNDisplayViewAdmin
@@ -698,6 +718,10 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 					RealTotalCount: realExit,
 				}
 			}
+			// B448: a device with exactly ONE exit-node group hides nothing, so that group
+			// starts open — the flat case (one device, one relay, one rule) must not cost a
+			// click to reveal a single line.
+			dg.SingleNode = adminNodeGroupOpens(len(dg.Nodes))
 			ug.Devices[devID] = dg
 		}
 		groupedByUser[userName] = ug

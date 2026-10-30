@@ -180,13 +180,17 @@
               <button type="submit" class="btn btn-secondary" style="padding:4px 10px;font-size:12px" title="{{t "derp.relays_action_test_help"}}"><i class="fa-solid fa-stethoscope"></i></button>
             </form>
             {{end}}
-            {{if not .IsBundled}}
+            {{/* B448: the button follows the RULE, not a proxy — a bundled row is deletable
+                 while another bundled row remains (the reference install holds two: the public
+                 relay and the LAN entry point), and only the LAST bundled row is refused,
+                 because that row is the on/off switch for the derper container. */}}
+            {{if .Deletable}}
             <form method="POST" action="/admin/derp/relays/delete" style="display:inline" onsubmit="return confirm('{{t "derp.relays_action_delete_confirm"}}')">
               <input type="hidden" name="id" value="{{.ID}}">
               <button type="submit" class="btn btn-secondary" style="padding:4px 10px;font-size:12px;color:var(--danger)" title="{{t "derp.relays_action_delete_help"}}"><i class="fa-solid fa-trash"></i></button>
             </form>
-            {{else}}
-            <span class="tag" title="{{t "derp.relays_bundled_no_delete_help"}}" style="font-size:11px"><i class="fa-solid fa-lock"></i> {{t "derp.relays_bundled_no_delete"}}</span>
+            {{else if .IsBundled}}
+            <span class="tag" title="{{t "derp.relays_last_bundled_no_delete_help"}}" style="font-size:11px"><i class="fa-solid fa-lock"></i> {{t "derp.relays_last_bundled_no_delete"}}</span>
             {{end}}
         </td>
       </tr>

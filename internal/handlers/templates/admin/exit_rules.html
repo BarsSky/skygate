@@ -341,7 +341,15 @@
        stays the place where a single rule is managed; the by-target list answers
        «кто ещё ходит через этот адрес и через какой узел», which on this page
        spans users. */}}
-  <div class="multi-bar" id="admin-view-controls">
+  {{/* B448 (2026-10-30) — «нельзя свернуть всю таблицу чтобы дойти до самого низа».
+       The controls existed since B376 but lived at the TOP of a page whose expanded tree is
+       thousands of pixels tall: to collapse it you had to scroll back up, and after collapsing
+       you lost your place. Three changes, all local to this bar:
+         · it is STICKY, so it is reachable at any scroll depth;
+         · the same two buttons are repeated at the BOTTOM of the tree;
+         · the choice is REMEMBERED (localStorage), so paging to the next 50 rules does not
+           re-expand the whole tree again. */}}
+  <div class="multi-bar" id="admin-view-controls" style="position:sticky;top:8px;z-index:20;background:var(--bg-card);border:1px solid var(--border);border-radius:6px">
     <span style="font-size:12px;color:var(--text-muted)">{{t "exit_rules.view_label"}}</span>
     <a class="btn btn-sm {{if eq .ViewMode "target"}}btn-primary{{end}}" id="admin-view-target-link" href="/admin/exit-rules?view=target">{{t "exit_rules.view_target"}}</a>
     <a class="btn btn-sm {{if eq .ViewMode "device"}}btn-primary{{end}}" id="admin-view-device-link" href="/admin/exit-rules?view=device">{{t "exit_rules.view_device"}}</a>
@@ -455,7 +463,11 @@
         </summary>
 
         {{range $exitNode, $rules := $devData.Nodes}}
-        <details style="margin:4px 0 4px 24px">
+        {{/* B448: a group that is the ONLY group of its device starts OPEN. The tree hides
+             every exit-node level, so a device with one relay per rule meant a click on a
+             «(1)» header to see a single line — the operator's «группировка получилась по
+             одной строчке». Nothing here hides a single child any more. */}}
+        <details{{if $devData.SingleNode}} open{{end}} style="margin:4px 0 4px 24px">
           <summary style="cursor:pointer;padding:3px 6px;background:var(--bg);border-radius:3px;display:flex;align-items:center;gap:6px;font-size:12px">
             <i class="fa-solid fa-route"></i>
             <span class="tag tag-info">{{$exitNode}}</span>
@@ -544,6 +556,13 @@
     {{end}}
   {{else}}<p style="color:var(--text-muted)">{{t "exit_rules_admin.no_rules"}}</p>{{end}}
   {{end}}
+  {{/* B448: the second copy of the controls, at the BOTTOM of the tree — the end of a long
+       expanded list is exactly where the operator is when they decide they want it all
+       collapsed, and scrolling back to the top just to find the button is the defect. */}}
+  <div class="multi-bar" id="admin-view-controls-bottom" style="justify-content:flex-end">
+    <button type="button" class="btn btn-sm" onclick="skyToggleAllDetails(true)" title="{{t "exit_rules.expand_all_title"}}"><i class="fa-solid fa-angles-down"></i> {{t "exit_rules.expand_all"}}</button>
+    <button type="button" class="btn btn-sm" onclick="skyToggleAllDetails(false)" title="{{t "exit_rules.collapse_all_title"}}"><i class="fa-solid fa-angles-up"></i> {{t "exit_rules.collapse_all"}}</button>
+  </div>
   </div>
 </div>
 
@@ -750,11 +769,30 @@ async function syncRoutes() {
 
 <script>
 // B376: drive every <details> of the cross-user tree together.
+//
+// B448: and REMEMBER the choice. The admin list is paginated (50 rows per page) and every
+// page load re-expanded everything, so an operator who collapsed the tree to reach the
+// bottom had to collapse it again on page 2, page 3, … The preference is the operator's,
+// not the request's, so it lives in localStorage and is applied on load.
+var SKY_TREE_STATE_KEY = 'skygate.admin.exit_rules.tree_open';
 function skyToggleAllDetails(open){
   var root = document.getElementById('admin-rules-view');
   if (!root) return;
   root.querySelectorAll('details').forEach(function(d){ d.open = !!open; });
+  try { localStorage.setItem(SKY_TREE_STATE_KEY, open ? '1' : '0'); } catch (e) {}
 }
+// Applied once the tree is in the DOM; a page with no stored preference keeps the
+// server's own default (single groups open, oversized groups closed).
+(function(){
+  try {
+    var saved = localStorage.getItem(SKY_TREE_STATE_KEY);
+    if (saved === null) return;
+    var root = document.getElementById('admin-rules-view');
+    if (!root) return;
+    var open = saved === '1';
+    root.querySelectorAll('details').forEach(function(d){ d.open = open; });
+  } catch (e) {}
+})();
 // B376: the bulk form's device checkboxes belong to the selected user. Devices
 // of other users are hidden (and unchecked, so a hidden box can never be
 // submitted). Runs on load too, so the initial state matches the select instead

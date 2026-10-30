@@ -229,18 +229,35 @@ func ToggleDerpRelayEnabled(d *sql.DB, id int64) (DerpRelay, error) {
 	return GetDerpRelay(d, id)
 }
 
-// DeleteDerpRelay removes the row. Refuses to delete the
-// bundled row (ErrDerpRelayBundledUndeletable) — the
-// operator should toggle its enabled flag instead.
+// DeleteDerpRelay removes the row.
+//
+// B448 (2026-10-30) — «нет возможности удалить релей что выключен». The old rule refused
+// EVERY row with is_bundled=1, and the reference install legitimately holds TWO of them
+// (the public :443 relay and the LAN :8443 entry point, both auto-registered), so the
+// operator was left with a disabled row the panel would never let go of — the only way
+// out was SQL on the live database.
+//
+// The protection that matters is not "bundled" but "the LAST bundled row": that single
+// row is the on/off switch for the bundled derper container (IsBundledDerpRelayEnabled),
+// so deleting it would silently remove the only control over a container that may still
+// be running, and nothing would say so. A DUPLICATE bundled row carries no such duty, so
+// it is deletable.
 func DeleteDerpRelay(d *sql.DB, id int64) error {
-	// Look up first so we can reject the bundled case
+	// Look up first so we can reject the last-bundled case
 	// with a clear error rather than a silent no-op.
 	row, err := GetDerpRelay(d, id)
 	if err != nil {
 		return err
 	}
 	if row.IsBundled {
-		return ErrDerpRelayBundledUndeletable
+		var bundled int
+		if qErr := d.QueryRow(
+			`SELECT count(*) FROM derp_relays WHERE is_bundled = 1`).Scan(&bundled); qErr != nil {
+			return fmt.Errorf("count bundled derp_relays: %w", qErr)
+		}
+		if bundled <= 1 {
+			return ErrDerpRelayBundledUndeletable
+		}
 	}
 	res, err := d.Exec(`DELETE FROM derp_relays WHERE id = $1`, id)
 	if err != nil {
@@ -282,21 +299,26 @@ func ListEnabledDerpRelayURLs(d *sql.DB) ([]string, error) {
 	return out, rows.Err()
 }
 
-// IsBundledDerpRelayEnabled returns true if the bundled
-// row exists and is enabled. Used by applyBundledDERP
-// to decide whether to start / stop the derper container.
+// IsBundledDerpRelayEnabled returns true if at least one bundled row exists and is
+// enabled. Used by applyBundledDERP to decide whether to start / stop the derper
+// container.
+//
+// B448: the pre-fix query was `SELECT enabled … WHERE is_bundled = 1 LIMIT 1` — with no
+// ORDER BY. AddDerpRelay rejects a SECOND bundled row, but the reference install holds
+// two anyway (auto-registration paths insert them), and with one enabled and one disabled
+// the answer was a coin flip: the operator turned the container "on" and the panel could
+// still read 0 from the disabled duplicate. The question is "did the operator leave the
+// bundled relay switched on", so the answer is "any enabled bundled row", not "the first
+// row the planner happened to return".
 func IsBundledDerpRelayEnabled(d *sql.DB) (bool, error) {
 	var enabled int
 	err := d.QueryRow(`
-		SELECT enabled FROM derp_relays WHERE is_bundled = 1 LIMIT 1
+		SELECT count(*) FROM derp_relays WHERE is_bundled = 1 AND enabled = 1
 	`).Scan(&enabled)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil // no bundled row at all
-	}
 	if err != nil {
 		return false, fmt.Errorf("is bundled enabled: %w", err)
 	}
-	return enabled != 0, nil
+	return enabled > 0, nil
 }
 
 // AutoMigrateDerpRelays is the one-shot backward-compat

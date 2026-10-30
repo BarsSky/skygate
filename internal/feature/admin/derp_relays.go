@@ -118,6 +118,13 @@ type RelayMapStatus struct {
 	// Probe is the row's own verdict in one sentence, for BOTH outcomes ("OK (524 ms, …)" and the
 	// failure), so the working row and the broken one read differently on the same line.
 	Probe string
+	// B448 (2026-10-30) — «нет возможности удалить релей что выключен». The page hid the delete
+	// button for EVERY row with is_bundled=1, and the reference install holds two of them (the
+	// public :443 relay and the LAN :8443 entry point), so a disabled duplicate could never be
+	// removed from the panel at all. Deletable is the SAME predicate db.DeleteDerpRelay enforces:
+	// a non-bundled row always, a bundled row while another bundled row remains. The button must
+	// follow the rule, not a simpler proxy for it.
+	Deletable bool
 }
 
 var (
@@ -207,6 +214,18 @@ func (s *Service) derpRelayMapStatuses() []RelayMapStatus {
 			}
 		}
 		out = append(out, st)
+	}
+	// B448: the delete button follows the rule db.DeleteDerpRelay enforces, computed here from the
+	// SAME rows, so the page can never offer an action the handler refuses (or hide one it allows —
+	// which is what «нет возможности удалить релей что выключен» was).
+	bundledCount := 0
+	for _, st := range out {
+		if st.Bundled {
+			bundledCount++
+		}
+	}
+	for i := range out {
+		out[i].Deletable = !out[i].Bundled || bundledCount > 1
 	}
 	// Second pass: the `:8443` shape needs EVERY row to answer "do I duplicate a host?".
 	// The badge is rendered separately from Reason, so a row can be BOTH "unreachable"

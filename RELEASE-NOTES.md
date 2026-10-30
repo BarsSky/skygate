@@ -1,5 +1,70 @@
 # Skygate release notes
 
+## v1.5.199 — the disabled relay can be deleted, and the rules tree stops hiding its own rows (B448)
+
+**Date:** 2026-10-30 · **Base:** `v1.5.198` → this tag · **Compatibility:** none (no schema change).
+
+Report: «нет возможности удалить релей что выключен и также проблема с админской таблицей правил
+группировка получилась по одной строчке и нельзя свернуть всю таблицу чтобы дойти до самого низа».
+
+### A. The disabled relay had no delete button at all
+
+Measured on the reference install:
+
+```
+derp_relays  2 | derp.skynas.ru | https://derp.skynas.ru:443   | 900 | is_bundled=1 | enabled=1
+             3 | derp.skynas.ru | https://derp.skynas.ru:8443  | 900 | is_bundled=1 | enabled=0
+```
+
+**Both** rows carry `is_bundled=1` — the public relay and the LAN-direct entry point, both
+auto-registered — and `db.DeleteDerpRelay` refused **every** bundled row. The page hid the button
+on both, so the only way to remove the disabled one was SQL on the live database.
+
+The protection that matters is not the flag but **the last bundled row**: that row is the on/off
+switch for the bundled derper container (`IsBundledDerpRelayEnabled`), so deleting it would
+silently remove the only control over a container that may still be running. A duplicate bundled
+row carries no such duty and is deletable now.
+
+* `DeleteDerpRelay` counts the bundled rows and refuses only when this is the last one.
+* `RelayMapStatus.Deletable` is computed from **the same predicate**, so the page cannot offer an
+  action the handler refuses, nor hide one it allows. The refused case renders a named lock
+  («последний bundled») with a tooltip that says why.
+* The flash message stopped claiming that *all* bundled relays are undeletable.
+
+The same duplicated pair exposed a second defect: `IsBundledDerpRelayEnabled` ran
+`SELECT enabled … WHERE is_bundled = 1 LIMIT 1` with **no ORDER BY**, so with one row enabled and
+one disabled the container switch was a coin flip — the operator could switch the relay on and the
+panel still read 0. It asks “is at least one bundled relay switched on” now.
+
+### B. The rules tree hid a single row behind a single-row header
+
+`/admin/exit-rules` nests **user → device → exit node → rules**, and the exit-node level was always
+closed. A device whose rules all go through one relay therefore hid its only child behind a header
+reading «1» — one click to reveal one line, which is exactly «группировка получилась по одной
+строчке».
+
+* A group that is **the only group of its device** now starts **open** (`adminNodeGroupOpens`, with
+  a test). Two or more stay closed: there the header **is** the choice.
+* The collapse/expand controls (B376) became reachable from where the operator actually is: the bar
+  is **sticky**, and a second copy of the two buttons sits at the **bottom** of the tree.
+* The choice is **remembered** (`localStorage`), so paging through 50-rule windows no longer
+  re-expands everything on every page load. `skyToggleAllDetails` still reaches every nesting level.
+
+### Verification
+
+* `go build ./...`, `go vet`, `staticcheck`, `gofmt` clean; `internal/db`, `internal/handlers`,
+  `internal/feature/exit_rules`, `internal/feature/admin`, `internal/i18n` green.
+* 5 `TestB448_*`: three of them execute the **real template** (single-group opens, multi-group stays
+  closed, and the sticky/bottom/remembered controls are actually in the page), one pins the group
+  rule, one pins the relay delete rule and the container switch on PostgreSQL (CI).
+* `scripts/check_b448_relay_delete_and_rules_tree.sh` — 25 contracts, registered in the gate.
+
+### Operator note
+
+After installing, the disabled `:8443` row shows a **trash** button on `/admin/derp/relays` and can
+be removed from the panel. The **last** bundled row keeps its lock on purpose — it is the switch for
+the derper container; disable it instead of deleting it.
+
 ## v1.5.198 — two rows of one relay are told apart, and each one is probed (B447)
 
 **Date:** 2026-10-30 · **Base:** `v1.5.197` → this tag · **Compatibility:** none (no schema change).
