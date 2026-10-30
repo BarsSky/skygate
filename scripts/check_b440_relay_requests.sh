@@ -137,10 +137,22 @@ if [ "${n_guard:-0}" -ge 2 ]; then
 else
   bad "C3: an admin action trusts the route guard (found ${n_guard:-0} role checks)"
 fi
-if has "$HTTP" 'WHERE id = ? AND user_id = ? AND enabled = 1'; then
-  ok "C4: a user can only ask about THEIR enabled rule"
+# B449 (2026-10-30) — CONTRACT RENEGOTIATED, THE PROMISE UNCHANGED. The assertion used to
+# pin the SQLite placeholder form `WHERE id = ? AND user_id = ?`, i.e. the DIALECT, not the
+# promise. Those three queries were the reason the relay-request rule picker listed nothing
+# on PostgreSQL (`syntax error at or near "AND"`, SQLSTATE 42601): they were written with the
+# SQLite placeholder in a PostgreSQL deployment. The promise is the SCOPE — a user can only
+# ask about a rule that is THEIRS and ENABLED — so the check now looks for that scope in the
+# `$n` form, which is what the rest of the project uses.
+if has "$HTTP" 'WHERE id = $1 AND user_id = $2 AND enabled = 1'; then
+  ok "C4: a user can only ask about THEIR enabled rule (scope present, dialect-correct placeholders)"
 else
   bad "C4: the user handler does not scope the rule lookup to the caller"
+fi
+if has "$HTTP" 'WHERE id = ? AND user_id = ? AND enabled = 1'; then
+  bad "C4b: a SQLite placeholder came back — PostgreSQL answers syntax error at or near AND"
+else
+  ok "C4b: no SQLite placeholder left in the relay-request rule lookup"
 fi
 
 hdr "D. an approval is the operator's own pin — one apply path, not a second one"
