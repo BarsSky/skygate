@@ -1,5 +1,61 @@
 # Skygate release notes
 
+## v1.5.203 — the route apply now proves itself on the node (B451)
+
+**Date:** 2026-10-30 · **Base:** `v1.5.202` → this tag · **Compatibility:** none (no schema change).
+
+Report: «что за проблемные статусы 117 штук — при этом правила работают … никакие действия с панелью
+не снимают их из проблемных … все правила перешли на karolina?»
+
+### What was measured on the install
+
+| | |
+|---|---|
+| `prefix_owner` | emilia owns **135** prefixes |
+| `headscale nodes list` | emilia advertises **2** routes (`0.0.0.0/0`, `::/0`); karolina advertises **223** |
+| `relay_apply_state:emilia` | `<ts>|ok` — the apply claimed **success** |
+| journal | `route-converge: emilia differs from its owned set (owned=137 advertised=2) — applying through the shared path` |
+
+So neither of the operator's two readings was the case: the prefixes were **not** all moved to
+karolina, and the table's assignment was not a leftover. The assignment moved, the apply reported
+success, and the node never advertised what it was told — which is exactly why **no panel action could
+clear the problem rows**: every action took that same "successful" path.
+
+### Why the apply lied
+
+`tailscale set --advertise-routes=…` returning 0 over SSH is a statement about the **ssh command**,
+not about the node. Nothing ever read the node back, so a `set` that the node ignored (or that ran
+against a `tailscaled` that refused it) was indistinguishable from a working one.
+
+### The fix
+
+The apply verifies itself **on the node**: after the `set` succeeds, the same transport (same host,
+port, key and jump hop) runs a read-only probe — `tailscale debug prefs` — and compares the node's
+own `AdvertiseRoutes` with the requested set.
+
+* a mismatch is an **error** that names both sides — `requested N`, `the node reports M`,
+  `missing=…`, `extra=…` (five addresses plus a count, so 137 prefixes cannot become a 3 KB log
+  line);
+* the expected set is built by the **same** functions that compose the command
+  (`BuildTailscaleSetRoutes`), base exit-node routes included, so the verification cannot demand
+  something other than what was sent;
+* "the result could not be read back" is reported as **itself**, never as a wrong advertisement;
+* `relay_apply_state` therefore stops saying `ok`, and the exit-nodes/prefix pages inherit a reason
+  the operator can act on.
+
+### Verification
+
+`go build`, `go vet`, `staticcheck`, `gofmt` clean; `internal/headscale` green. 4 new tests, one of
+which pins the **live shape** as a required failure: a node advertising 2 routes when 137 were asked
+for must be rejected. `scripts/check_b451_route_apply_verified.sh` — 14 contracts.
+
+### What to expect after the update
+
+The next route pass will either succeed *and prove it* (emilia advertising its 137 prefixes), or
+report the failure with the missing addresses named — and that message is the thing to send on if it
+fails. The problem rows on `/admin/exit-nodes` should then clear on their own, because the
+advertisement will actually match the assignment table.
+
 ## v1.5.202 — the page title is a translation again, and no page can put a key in the tab (B450)
 
 **Date:** 2026-10-30 · **Base:** `v1.5.201` → this tag · **Compatibility:** none (no schema change).

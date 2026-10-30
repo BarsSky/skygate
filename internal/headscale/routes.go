@@ -442,6 +442,18 @@ func (c *Client) SetAdvertisedRoutes(nodeHostname string, routes []string, accep
 	sshCmd := exec.Command("ssh", sshArgs...)
 	out, err := sshCmd.CombinedOutput()
 	if err == nil {
+		// B451: THE APPLY IS NOT EVIDENCE UNTIL THE NODE SAYS SO.
+		//
+		// `tailscale set --advertise-routes=…` returning 0 over SSH is a statement about the ssh
+		// command, not about the node: on the reference install emilia's apply reported
+		// `relay_apply_state = ok` on every pass while headscale kept showing her advertising two
+		// routes out of 137, so «проблемные префиксы» could not be cleared by any panel action —
+		// every action took this "successful" path. The same transport now reads the node's own
+		// preferences and compares them with what was requested; a mismatch fails the apply with
+		// BOTH sides named, which is what turns `ok` into a reason the operator can act on.
+		if verr := verifyRoutesOnNode(keyPath, host, port, jumpTarget, nodeHostname, routes, acceptRoutes); verr != nil {
+			return "", verr
+		}
 		return strings.TrimSpace(string(out)), nil
 	}
 	// B292: name where the target came from. "Could not resolve hostname <node>"
