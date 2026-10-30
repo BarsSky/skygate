@@ -106,6 +106,18 @@ type RelayMapStatus struct {
 	KindNote  string // human-readable reason for a non-node row
 	AltPort   bool   // same host as another row, different port
 	AltPortOf int    // the other row's port
+	// B447 (2026-10-30) — THE TWO ROWS OF ONE MACHINE MUST BE TELLABLE APART.
+	//
+	// Operator report: «два релея почему то одинаковых висят но один рабочий второй с ошибкой по
+	// таблице ниже не понять какой из них с ошибкой». The table named BOTH rows by HOSTNAME only
+	// (`derp.skynas.ru`), so the :443 relay and the :8443 LAN entry point were two identical
+	// lines; the verdict lived in a separate column and only for the failed one.
+	//
+	// Endpoint is the row's host:PORT — the identity the operator asked for.
+	Endpoint string
+	// Probe is the row's own verdict in one sentence, for BOTH outcomes ("OK (524 ms, …)" and the
+	// failure), so the working row and the broken one read differently on the same line.
+	Probe string
 }
 
 var (
@@ -155,6 +167,12 @@ func (s *Service) derpRelayMapStatuses() []RelayMapStatus {
 		// explained even when it is disabled (the old reason only existed for enabled
 		// rows, which is why two dead entries could sit in the list unlabelled).
 		st.Kind, st.KindNote = derphealth.ClassifyRelayURL(st.URL)
+		// B447: the row's identity is host:PORT. Two rows of one machine used to render as two
+		// identical lines (`derp.skynas.ru`, `derp.skynas.ru`), and the verdict lived in a
+		// separate column, so «какой из них с ошибкой» had no answer on the page.
+		if st.URL != "" {
+			st.Endpoint = fmt.Sprintf("%s:%d", derphealth.RelayHost(st.URL), derphealth.RelayPort(st.URL))
+		}
 		switch {
 		case !st.Enabled:
 			st.Reason = "row is disabled"
@@ -171,8 +189,21 @@ func (s *Service) derpRelayMapStatuses() []RelayMapStatus {
 			if reach.Reachable {
 				st.Published = true
 				st.Via = via
+				st.Probe = fmt.Sprintf("OK — the probe answered via %s", via)
 			} else {
 				st.Reason = fmt.Sprintf("unreachable (probed %s): %s", strings.Join(candidates, ", "), reach.Err)
+				st.Probe = fmt.Sprintf("FAIL — %s", reach.Err)
+			}
+		}
+		// B447: a row that was not dialled still says WHY, on the same line as the ones that were.
+		if st.Probe == "" {
+			switch {
+			case !st.Enabled:
+				st.Probe = "not probed — the row is disabled"
+			case st.Kind != derphealth.RelayKindNode:
+				st.Probe = "not probed — " + st.KindNote
+			default:
+				st.Probe = "not probed"
 			}
 		}
 		out = append(out, st)

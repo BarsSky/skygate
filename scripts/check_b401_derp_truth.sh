@@ -53,6 +53,11 @@ T_KIND=internal/derphealth/relaykind_b401_test.go
 REL=internal/feature/admin/derp_relays.go
 T_TPL=internal/handlers/templates/admin/derp_relays.html
 ST=internal/feature/admin/system_tests_b394_new.go
+# B447 moved the two relay system tests out of the file above into their own, because a second
+# definition must not shadow the first: the tests are now per ROW (derp.reachable probes every
+# row, derp.relay_rows only fails on a non-relay row or a true host:port duplicate). The surface
+# this check reads is therefore BOTH files — the assertions below moved, the promises did not.
+ST2=internal/feature/admin/system_tests_derp_rows_b447.go
 ANN=internal/feature/admin/system_tests_diagnostics_b394.go
 CAT=internal/i18n/catalog_derp.go
 CATC=internal/i18n/catalog_common.go
@@ -61,7 +66,7 @@ has() { case "$2" in *"$1"*) return 0 ;; *) return 1 ;; esac; }
 src() { cat "$1" 2>/dev/null || true; }
 
 KIND_SRC="$(src "$KIND")"; TKIND_SRC="$(src "$T_KIND")"; REL_SRC="$(src "$REL")"
-TPL_SRC="$(src "$T_TPL")"; ST_SRC="$(src "$ST")"; ANN_SRC="$(src "$ANN")"
+TPL_SRC="$(src "$T_TPL")"; ST_SRC="$(src "$ST")$(src "$ST2")"; ANN_SRC="$(src "$ANN")"
 CAT_SRC="$(src "$CAT")"; CATC_SRC="$(src "$CATC")"
 
 hdr "B401 — the relay list must say what each row is"
@@ -166,7 +171,7 @@ if has 'Name:        "derp.relay_rows"' "$ST_SRC"; then
 else
   bad "E1: nothing stops such a row from coming back"
 fi
-if has 'derphealth.ClassifyRelayURL' "$ST_SRC" && has 'derphealth.ClassifyAltPort' "$ST_SRC"; then
+if has 'derphealth.ClassifyRelayURL' "$ST_SRC" && { has 'derphealth.ClassifyAltPort' "$ST_SRC" || { has 'derphealth.RelayHost' "$ST_SRC" && has 'derphealth.RelayPort' "$ST_SRC"; }; }; then
   ok "E2: the test asks the SAME classifier (no second definition of \"relay\")"
 else
   bad "E2: the test measures something else"

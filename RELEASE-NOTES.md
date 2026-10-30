@@ -1,5 +1,82 @@
 # Skygate release notes
 
+## v1.5.198 — two rows of one relay are told apart, and each one is probed (B447)
+
+**Date:** 2026-10-30 · **Base:** `v1.5.197` → this tag · **Compatibility:** none (no schema change).
+
+Report: «по derp тесты все еще не проходят при этом два релея почему то одинаковых висят но один
+рабочий второй с ошибкой по таблице ниже не понять какой из них с ошибкой».
+
+### What the install actually held
+
+Two rows for **one machine**, and one verdict for **both**:
+
+```
+derp_relays   id=2  https://derp.skynas.ru:443     ← the relay
+              id=3  https://derp.skynas.ru:8443    ← the LAN-direct entry point (B260.2)
+
+derp_health   900 | 1 | derp.skynas.ru | https://derp.skynas.ru:443 | 524ms | healthy | 12938 probes
+```
+
+`derp_health` is keyed by **region**, not by row, so it can never answer a per-row question. The
+relays table printed the same hostname and the same verdict twice, and the failing row was
+indistinguishable from the working one — the operator's report is exactly right.
+
+### 1. The table names the row's identity — `host:port`
+
+The first column rendered `Host`. Two rows of one machine have the same `Host`, so the column
+carried no identity at all. `RelayMapStatus.Endpoint` now carries `host:port` (`RelayHost` +
+`RelayPort`, the same helpers the rest of the DERP code uses) and the template renders it, falling
+back to the host for a row that has no port. New i18n key `derp.relays_col_endpoint` in **both**
+catalogues: «Адрес (хост:порт)» / “Endpoint (host:port)”.
+
+### 2. `derp.reachable` probes EVERY row, on its own port, with its own budget
+
+The old test took `infos[0]` — the **first** own relay — so with two rows it judged one and said
+nothing about the other. That silence *is* the reported bug. New `internal/derphealth/relay_probe_b447.go`:
+
+* `ProbeTargets(urls, probeHost)` — one target per enabled row, keeping the port **its own URL**
+  declares (`RelayPort`), so the 8443 row is not dialled on 443;
+* `ProbeRelay(ctx, target, timeout)` — TCP + TLS with the row's **hostname as SNI** (B289.1: the
+  certificate is issued for the name, not the address), a **per-row** timeout so one dead row cannot
+  swallow another's budget, and two different diagnoses — «nothing accepts a TCP connection on …»
+  versus «TCP connects … but the TLS handshake fails», because the operator's fix differs;
+* `ProbeRelayRows` — sequential, bounded, one verdict per row;
+* rows that are not relays, or are disabled, come back with `Skipped` **and a reason**, never with a
+  borrowed verdict.
+
+The relays page renders that per-row text (`Probe`) for **both** outcomes — “OK — the probe answered
+via …” and “FAIL — …”, plus “not probed — …” for a row that was not dialled. `derp.reachable` now
+fails naming each broken URL with its own error, and points at `derp.probe_host` (a panel field, no
+recreate) before the `extra_hosts` route.
+
+### 3. The LAN port is a second entry point, not a broken relay
+
+`derp.relay_rows` failed on “same host, another port”. That pair is the documented LAN + public
+layout (B260.2 / B401), so the test was reporting the intended configuration as a defect. It now
+fails only on a row that is **not** a DERP endpoint, or a **true** duplicate (same host *and* same
+port), and reports the multi-port machine as two entry points, pointing at `derp.reachable` for the
+per-row answer.
+
+### Verification
+
+* `go build ./...`, `go vet`, `gofmt` clean; `internal/derphealth`, `internal/feature/admin`,
+  `internal/handlers`, `internal/i18n` green.
+* 6 `TestB447_*` tests: every row is its own target, non-relay rows are skipped with a reason,
+  `probe_host` replaces the dial address but keeps the SNI, one dead row does not eat another's
+  budget, disabled rows are never dialled, and the loopback pre-check actually fires.
+* `scripts/check_b447_derp_rows.sh` — 28 contracts, registered in the gate; **B401** renegotiated
+  (D1–E2) because the two relay system tests moved into their own file — the promises did not
+  change, the file they are read from did.
+
+### Operator note
+
+Two rows of one machine are legitimate. If a row fails, the row now says which one and why. When
+the failing row is the *loopback* case (the container resolves its own public name to 127.0.0.1),
+set `derp.probe_host` on `/admin/derp/relays` — probes then dial the real address while still
+speaking the hostname as SNI.
+
+
 ## v1.5.197 — a missed minute no longer costs a day of backups (B446)
 
 **Date:** 2026-10-30 · **Base:** `v1.5.196` → this tag · **Compatibility:** none (no schema change).
