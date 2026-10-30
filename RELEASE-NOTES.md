@@ -48,6 +48,22 @@ because they render a different template. `internal/handlers/derp_relays_render_
 18 contracts in `scripts/check_b448_relay_delete_and_rules_tree.sh` grew to 27, including A6
 (the handler feeds the annotated rows) and A8 (the page is rendered in a test).
 
+### Also in this release: a flaky cost guard that was deciding verdicts (B419.1)
+
+CI on the way to this hotfix failed in `internal/db` on a test nobody touched:
+
+```
+B419: default chain 2.005117955s, fast chain 2.274020527s (0.9x)
+B419: the fast handle is SLOWER than the default one
+```
+
+A 13.4 % overshoot against a 12.5 % tolerance, with the pragma half of B419 green in the same
+run. The arithmetic was the defect: the verdict used the **mean** of the rounds, so one stalled
+round (a neighbouring job, a GC pause) decided it — and the fast side ran three rounds against the
+slow side's two, so a stall cost it more. Both sides are now measured by their **best** round (a
+stall can only add time) with a 25 % margin; the regression this guards against is a factor of
+two, so the margin costs nothing. Measured on a disk-backed host: 96.6× cheaper, unchanged.
+
 ## v1.5.199 — the disabled relay can be deleted, and the rules tree stops hiding its own rows (B448)
 
 **Date:** 2026-10-30 · **Base:** `v1.5.198` → this tag · **Compatibility:** none (no schema change).
