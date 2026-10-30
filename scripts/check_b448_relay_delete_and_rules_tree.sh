@@ -32,7 +32,7 @@
 # copy sits at the BOTTOM of the tree, and the choice is remembered in localStorage so paging
 # through 50-rule windows does not re-expand everything.
 #
-# CONTRACTS: 25.
+# CONTRACTS: 27.
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -91,39 +91,55 @@ case "$DEL_SRC" in
     ok "A4: the container switch is 'any enabled bundled row', so a disabled duplicate cannot mask it" ;;
   *) bad "A4: the container switch no longer answers 'is a bundled relay switched on'" ;;
 esac
-if has "$RL" 'Deletable bool' && has "$RL" 'out[i].Deletable = !out[i].Bundled || bundledCount > 1'; then
-  ok "A5: the page computes the SAME predicate the handler enforces"
+if has "$RL" 'type DerpRelayRow struct {' && has "$RL" 'DerpRelay: r, Deletable: !r.IsBundled || bundled > 1'; then
+  ok "A5: the row model carries the SAME predicate the handler enforces"
 else
-  bad "A5: the page has no Deletable flag — the button and the rule can disagree again"
+  bad "A5: no row model with the delete rule — the button and the handler can disagree again"
+fi
+# v1.5.199 shipped the flag on RelayMapStatus while the actions cell iterates the RELAYS table, so
+# /admin/derp/relays died with "can't evaluate field Deletable in type db.DerpRelay". The wiring is
+# the whole point: the page must FEED the model its template reads.
+if has "$RL" '"Relays":       DerpRelayRows(relays),'; then
+  ok "A6: the handler feeds the page the annotated rows (not the raw db rows)"
+else
+  bad "A6: the page is given rows without the delete decision — that is the v1.5.199 dead page"
 fi
 if has "$TPL" '{{if .Deletable}}' && has "$TPL" 'derp.relays_last_bundled_no_delete_help'; then
-  ok "A6: the delete button follows Deletable, and the refused case names WHY"
+  ok "A7: the delete button follows Deletable, and the refused case names WHY"
 else
-  bad "A6: the template still keys the button on .IsBundled (the pre-fix behaviour)"
+  bad "A7: the template still keys the button on .IsBundled (the pre-fix behaviour)"
+fi
+# The guard that was missing: an EXECUTING render test for THIS page. The exit-rules render tests
+# could not catch the dead page because they render a different template.
+if has internal/handlers/derp_relays_render_b448_test.go 'body-admin-derp_relays' \
+   && has internal/handlers/derp_relays_render_b448_test.go 'TestDerpRelaysPageRejectsTheRawRowModel_B448'; then
+  ok "A8: the relays page is rendered in a test, and feeding it the RAW row model must fail"
+else
+  bad "A8: nothing executes the relays template — the v1.5.199 dead page can ship again"
 fi
 I18N_SRC="$(cat "$I18N" 2>/dev/null)"
 case "$I18N_SRC" in
   *'"derp.relays_last_bundled_no_delete"'*'"derp.relays_last_bundled_no_delete_help"'*)
-    ok "A7: the new lock label + tooltip exist" ;;
+    ok "A9: the new lock label + tooltip exist" ;;
   *) bad "A7: derp.relays_last_bundled_no_delete(_help) is missing" ;;
 esac
 RU_CNT="$(printf '%s' "$I18N_SRC" | grep -c 'derp.relays_last_bundled_no_delete_help' || true)"
 if [ "${RU_CNT:-0}" -ge 2 ]; then
-  ok "A8: defined in BOTH catalogues (RU + EN)"
+  ok "A10: defined in BOTH catalogues (RU + EN)"
 else
-  bad "A8: only ${RU_CNT:-0} definition(s) — the parity test wants RU and EN"
+  bad "A10: only ${RU_CNT:-0} definition(s) — the parity test wants RU and EN"
 fi
 case "$I18N_SRC" in
   *'Bundled релеи нельзя удалять'*|*'Bundled relays are not deletable'*)
-    bad "A9: the flash still claims bundled relays are undeletable" ;;
+    bad "A11: the flash still claims bundled relays are undeletable" ;;
   *'Последний bundled-релей'*|*'The LAST bundled relay'*)
-    ok "A9: the flash names the LAST-bundled rule instead of banning the flag" ;;
-  *) bad "A9: the undeletable flash does not explain the new rule" ;;
+    ok "A11: the flash names the LAST-bundled rule instead of banning the flag" ;;
+  *) bad "A11: the undeletable flash does not explain the new rule" ;;
 esac
 if has "$DEL_T" 'TestB448_BundledDuplicateIsDeletable' && has "$DEL_T" 'TestB448_BundledSwitch'; then
-  ok "A10: both halves are pinned by db tests (delete + the switch)"
+  ok "A12: both halves are pinned by db tests (delete + the switch)"
 else
-  bad "A10: no behavioural test for the delete rule / the switch"
+  bad "A12: no behavioural test for the delete rule / the switch"
 fi
 
 hdr "B. the rules tree never hides a single row, and can be collapsed from the bottom"

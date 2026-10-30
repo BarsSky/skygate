@@ -1,5 +1,53 @@
 # Skygate release notes
 
+## v1.5.200 — HOTFIX: /admin/derp/relays rendered a template error (B448.1)
+
+**Date:** 2026-10-30 · **Base:** `v1.5.199` → this tag · **Compatibility:** none (no schema change).
+
+**v1.5.199 broke one page. Do not stay on it — this release fixes it.** Everything v1.5.199
+promised (the deletable duplicate relay, the rules tree) is here and working.
+
+### What the operator saw
+
+```
+render: template: layout.html:364:2: executing "layout" at : error calling renderBody:
+template: derp_relays.html:187:17: executing "body-admin-derp_relays" at <.Deletable>:
+can't evaluate field Deletable in type db.DerpRelay
+```
+
+`/admin/derp/relays` rendered a raw template error instead of the relay table.
+
+### Why
+
+The delete decision was added to `RelayMapStatus` — the model of the **map-status** table — but
+the actions cell with the trash button lives in `{{range .Relays}}`, which iterates
+**`[]db.DerpRelay`**. A struct without that field. Go templates resolve fields by name at render
+time, so the handler compiled, the tests passed and the page died on the operator's screen.
+
+### Fix
+
+* New `admin.DerpRelayRow` — the stored row (embedded, so `.ID`, `.IsBundled`, … keep working)
+  plus the one decision the template reads, built by `admin.DerpRelayRows(relays)` with the same
+  predicate `db.DeleteDerpRelay` enforces. The page is fed THAT type.
+* `RelayMapStatus.Deletable` is gone: the map-status table has no action cell, so the field had no
+  consumer — a flag nothing reads is how the mistake happened in the first place.
+
+### The guard that was missing, and is now in place
+
+An **executing** render test for this page. The exit-rules render tests could not catch this
+because they render a different template. `internal/handlers/derp_relays_render_b448_test.go`:
+
+* renders `templates/admin/derp_relays.html` with both view models (a field the page reads but the
+  handler does not pass fails HERE, not on a release);
+* asserts the delete rule **on the rendered buttons** (two bundled rows → two trash buttons; one
+  bundled row → that one is locked as «последний bundled»);
+* and makes the detector prove itself: feeding the page the raw `[]db.DerpRelay` must FAIL with
+  the same `Deletable` error — so the test cannot quietly pass on a template that stopped reading
+  the field.
+
+18 contracts in `scripts/check_b448_relay_delete_and_rules_tree.sh` grew to 27, including A6
+(the handler feeds the annotated rows) and A8 (the page is rendered in a test).
+
 ## v1.5.199 — the disabled relay can be deleted, and the rules tree stops hiding its own rows (B448)
 
 **Date:** 2026-10-30 · **Base:** `v1.5.198` → this tag · **Compatibility:** none (no schema change).

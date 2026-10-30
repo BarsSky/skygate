@@ -75,7 +75,7 @@ func (s *Service) GetAdminDerpRelays(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Backend.RenderWithLayout(w, r, "admin/derp_relays.html", c, map[string]any{
-		"Relays":       relays,
+		"Relays":       DerpRelayRows(relays),
 		"MapStatus":    s.derpRelayMapStatuses(),
 		"FlashSuccess": r.URL.Query().Get("ok"),
 		"FlashError":   r.URL.Query().Get("err"),
@@ -86,6 +86,47 @@ func (s *Service) GetAdminDerpRelays(w http.ResponseWriter, r *http.Request) {
 		"ProbeHostSaved": r.URL.Query().Get("pok") == "1",
 		"ProbeHostErr":   r.URL.Query().Get("perr"),
 	})
+}
+
+// DerpRelayRow is one stored row AS THE RELAYS PAGE RENDERS IT: the row itself plus the single
+// decision the template needs. Embedding keeps every existing field reachable (`.ID`,
+// `.IsBundled`, …), so the table markup did not have to change.
+//
+// B448 (2026-10-30) — WHY THIS TYPE EXISTS AT ALL. The delete rule moved to the page as a bare
+// `.Deletable` read, but the actions cell lives in `{{range .Relays}}`, which iterated
+// `[]db.DerpRelay` — a struct with no such field. The result was not a missing button but a DEAD
+// PAGE, on a release:
+//
+//	render: template: layout.html:364:2: executing "layout" at : error calling renderBody:
+//	template: derp_relays.html:187:17: executing "body-admin-derp_relays" at <.Deletable>:
+//	can't evaluate field Deletable in type db.DerpRelay
+//
+// The flag belongs where the template reads it, and the render test
+// (internal/handlers/derp_relays_render_b448_test.go) executes the REAL template so a field the
+// page reads but the handler does not pass can never ship again.
+type DerpRelayRow struct {
+	db.DerpRelay
+	Deletable bool
+}
+
+// DerpRelayRows annotates the stored rows with the delete decision. Exported because the render
+//
+// The rule is the one db.DeleteDerpRelay enforces: a non-bundled row is always deletable, and a
+// bundled row is deletable while ANOTHER bundled row remains — the LAST bundled row is the on/off
+// switch for the bundled derper container, so it is not. Computed from the same slice the page
+// prints, so the button and the handler cannot disagree.
+func DerpRelayRows(relays []db.DerpRelay) []DerpRelayRow {
+	bundled := 0
+	for _, r := range relays {
+		if r.IsBundled {
+			bundled++
+		}
+	}
+	out := make([]DerpRelayRow, 0, len(relays))
+	for _, r := range relays {
+		out = append(out, DerpRelayRow{DerpRelay: r, Deletable: !r.IsBundled || bundled > 1})
+	}
+	return out
 }
 
 // RelayMapStatus is one relay row's outcome in the map headscale fetches
@@ -118,13 +159,6 @@ type RelayMapStatus struct {
 	// Probe is the row's own verdict in one sentence, for BOTH outcomes ("OK (524 ms, …)" and the
 	// failure), so the working row and the broken one read differently on the same line.
 	Probe string
-	// B448 (2026-10-30) — «нет возможности удалить релей что выключен». The page hid the delete
-	// button for EVERY row with is_bundled=1, and the reference install holds two of them (the
-	// public :443 relay and the LAN :8443 entry point), so a disabled duplicate could never be
-	// removed from the panel at all. Deletable is the SAME predicate db.DeleteDerpRelay enforces:
-	// a non-bundled row always, a bundled row while another bundled row remains. The button must
-	// follow the rule, not a simpler proxy for it.
-	Deletable bool
 }
 
 var (
@@ -214,18 +248,6 @@ func (s *Service) derpRelayMapStatuses() []RelayMapStatus {
 			}
 		}
 		out = append(out, st)
-	}
-	// B448: the delete button follows the rule db.DeleteDerpRelay enforces, computed here from the
-	// SAME rows, so the page can never offer an action the handler refuses (or hide one it allows —
-	// which is what «нет возможности удалить релей что выключен» was).
-	bundledCount := 0
-	for _, st := range out {
-		if st.Bundled {
-			bundledCount++
-		}
-	}
-	for i := range out {
-		out[i].Deletable = !out[i].Bundled || bundledCount > 1
 	}
 	// Second pass: the `:8443` shape needs EVERY row to answer "do I duplicate a host?".
 	// The badge is rendered separately from Reason, so a row can be BOTH "unreachable"
