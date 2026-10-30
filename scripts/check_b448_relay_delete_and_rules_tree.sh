@@ -120,7 +120,7 @@ case "$I18N_SRC" in
     ok "A9: the flash names the LAST-bundled rule instead of banning the flag" ;;
   *) bad "A9: the undeletable flash does not explain the new rule" ;;
 esac
-if has "$DEL_T" 'TestB448_BundledDuplicateIsDeletable' && has "$DEL_T" 'TestB448_BundledEnabledIsAnyEnabledRow'; then
+if has "$DEL_T" 'TestB448_BundledDuplicateIsDeletable' && has "$DEL_T" 'TestB448_BundledSwitch'; then
   ok "A10: both halves are pinned by db tests (delete + the switch)"
 else
   bad "A10: no behavioural test for the delete rule / the switch"

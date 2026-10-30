@@ -87,20 +87,20 @@ func TestB448_DeleteOrdinaryRowStillWorks(t *testing.T) {
 	}
 }
 
-// TestB448_BundledEnabledIsAnyEnabledRow is the second half: with a duplicated pair the
+// TestB448_BundledSwitch is the second half: with a duplicated pair the
 // container switch must read the operator's choice regardless of which row the planner
 // returns first.
-func TestB448_BundledEnabledIsAnyEnabledRow(t *testing.T) {
+func TestB448_BundledSwitch(t *testing.T) {
 	cases := []struct {
 		name          string
 		first, second bool
 		want          bool
 		why           string
 	}{
-		{"public on, LAN off", true, false, true, "the live shape: the disabled duplicate must not mask the enabled relay"},
-		{"public off, LAN on", false, true, true, "symmetry: the other row is just as much a bundled row"},
-		{"both off", false, false, false, "the operator switched every bundled relay off — the container must be off"},
-		{"both on", true, true, true, "trivially on"},
+		{"on_off", true, false, true, "the live shape: the disabled duplicate must not mask the enabled relay"},
+		{"off_on", false, true, true, "symmetry: the other row is just as much a bundled row"},
+		{"both_off", false, false, false, "the operator switched every bundled relay off — the container must be off"},
+		{"both_on", true, true, true, "trivially on"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
