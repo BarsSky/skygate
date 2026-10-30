@@ -1,5 +1,47 @@
 # Skygate release notes
 
+## v1.5.206 — the relay probe resolves its target like the sync does, and what Discord actually needs (B454)
+
+**Date:** 2026-10-30 · **Base:** `v1.5.205` → this tag · **Compatibility:** none (no schema change).
+
+### B454 — «Почему проблемы на двух релеях», the second half
+
+B449 fixed the **parsing** of `ssh_target`. What was still wrong is the **resolution**: the health
+probe read `exit_servers.ssh_target` directly and, on an empty value, answered «поле ssh_target
+пустое» (live example: `aisha`) — although skygate already knew where that relay is
+(`exit_servers.tailscale_ip`) and the **route apply** path has used that fallback since B292
+(`db.LookupExitServerSSHTarget`: operator override → `root@<tailnet IP>` → none).
+
+Two resolvers for one question is how a panel and a sync come to disagree: the apply reaches the relay
+over the tailnet while the probe declares the row unreadable. The probe now resolves through the SAME
+helper, so an empty `ssh_target` is an operator omission the panel fills in — not a broken relay.
+
+`scripts/check_b454_health_target_fallback.sh` — 8 contracts.
+
+### Discord: what is actually missing (measured, not guessed)
+
+I pulled the live rules table and the container's own DNS view:
+
+* **58** enabled rules mention discord (`discord.com`, `discord.gg`, `discordapp.com`,
+  `discord.media`, `discord.tools`, `stable.dl2.discordapp.net`, `discord.com/app`), **45** of them
+  are CDN-expanded rows;
+* **178** enabled ip/subnet prefixes in total;
+* every address that Discord's domains resolve to — `162.159.128.233 … 162.159.138.234` on
+  `discord.com`/`ptb`/`canary`, `162.159.129-135.233` on `cdn.discordapp.com`/`discordapp.com`,
+  `162.159.128-134.232` on `media.discordapp.net`, `162.159.130-136.234` on
+  `discord.gg`/`gateway.discord.gg` — **is already covered**, by `162.158.0.0/15`;
+* **`66.22.192.0/18` is NOT in the table — and that is Discord's VOICE/MEDIA range.** Discord hands
+  a client a voice server as `IP:port` from that range over the gateway; there is no DNS name to add a
+  domain rule for, so **voice/созвоны cannot be covered by any current rule** while chat and
+  attachments work. That is the shape of «не все покрыто»: the HTTP side is complete, the RTC side is
+  absent.
+
+So the answer to «каких адресов не хватает» is concrete: **`66.22.192.0/18` (Discord voice)**. It is a
+16 384-address block, so adding it is a real routing decision (one relay will announce it) — it gets its
+own block rather than being slipped into a bugfix: the plan is a **service-ranges registry** (the
+`cdn:` expansion already exists for Cloudflare/Akamai/Fastly/Google) with Discord's voice block, so a
+`discord.*` rule covers voice as well, and the panel states that a voice rule is a CIDR rule.
+
 ## v1.5.205 — relay weights for the prefix spread (B453)
 
 **Date:** 2026-10-30 · **Base:** `v1.5.204` → this tag · **Compatibility:** none (no schema change, no new required setting).

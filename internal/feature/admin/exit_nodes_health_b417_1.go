@@ -68,7 +68,18 @@ func (s *Service) RunExitNodeHealthCheck(ctx context.Context) []exitnode.HealthL
 	out := make([]exitnode.HealthLine, 0, len(rows))
 	for _, row := range rows {
 		line := exitnode.HealthLine{Host: row.Hostname, At: now}
-		req, reason := s.healthRequestFor(row.SSHTarget, row.SSHKeyPath, row.SSHPort)
+		// B454: the probe resolves the target the SAME way the route apply does. A row whose
+		// ssh_target is empty (live: `aisha`) used to answer «поле ssh_target пустое» even though
+		// skygate itself already knew where that relay is — `exit_servers.tailscale_ip` — and the
+		// apply path has used that fallback since B292. Two resolvers for one question is how the
+		// panel and the sync come to disagree.
+		target := row.SSHTarget
+		if strings.TrimSpace(target) == "" {
+			if resolved, rerr := db.LookupExitServerSSHTarget(s.dbc(), row.Hostname); rerr == nil && strings.TrimSpace(resolved) != "" {
+				target = resolved
+			}
+		}
+		req, reason := s.healthRequestFor(target, row.SSHKeyPath, row.SSHPort)
 		if req.Host == "" {
 			// B449: the reason names the FIELD and the shape, because «не разобрать» alone
 			// told the operator nothing about whether the row was empty or mistyped — and
