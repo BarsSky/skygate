@@ -1,5 +1,44 @@
 # Skygate release notes
 
+## v1.5.204 — the rest of the page titles are translated, in one place (B452)
+
+**Date:** 2026-10-30 · **Base:** `v1.5.203` → this tag · **Compatibility:** none (no schema change).
+
+Follow-up to v1.5.202, which closed the page title that carried a **catalogue key**. What remained —
+listed there as debt — were the titles written as **English literals** in fifteen handlers across
+six packages: `Exit Nodes`, `Integration status`, `Service control`, `Tailscale`, `Telegram`,
+`Account`, `API Tokens`, `Exit Rules`, `Node Load`, `Notifications`, «Мониторинг». A Russian operator
+read them in English in the browser tab.
+
+### Why one resolver instead of fifteen edits
+
+Each of those handlers reaches the language its own way (`auth.Service`, `exit_rules.Service`, the
+handler struct, a bare `claims` value). Fifteen call sites would have been fifteen chances to get the
+language wrong — and the **next** page would still write a literal.
+
+The layout is the single place that renders the title, so the translation lives there:
+`<title>{{pt .Title}} — Skygate</title>`. The resolver:
+
+1. translates a **catalogue key** — the v1.5.202 shape, now also fixed at render time if a future
+   handler forgets again;
+2. translates a **known literal** from a closed table (`pageTitleLiteralKeys`);
+3. leaves everything else **unchanged** — a title that is *data* (a module name, a user name) is not
+   ours to translate, and guessing would be worse than leaving it.
+
+### New keys (RU + EN)
+
+`title.admin_service_control` · `title.my_exit_rules` · `title.node_load` · `title.notifications`
+
+`/my/exit-rules` also stopped passing the **admin's** title literal, so one key could not serve two
+different pages.
+
+### Verification
+
+`go build`, `go vet`, `staticcheck`, `gofmt` clean; `internal/handlers` and `internal/i18n` green.
+5 new tests: literals become Russian, a key-shaped title is translated, **data is left alone**, every
+table entry maps to a key present in both catalogues, and the layout is asserted to call the resolver
+(a helper nobody calls is not a fix). `scripts/check_b452_page_title_literals.sh` — 12 contracts.
+
 ## v1.5.203 — the route apply now proves itself on the node (B451)
 
 **Date:** 2026-10-30 · **Base:** `v1.5.202` → this tag · **Compatibility:** none (no schema change).

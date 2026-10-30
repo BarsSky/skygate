@@ -884,7 +884,7 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 	groupNames := GroupNamesForSuggestions(ruleRows)
 	s.Backend.RenderWithLayout(w, r, "exit_rules.html", c, map[string]any{
 		"Page":              "exit-rules",
-		"Title":             "Exit Rules",
+		"Title":             "My exit rules",
 		"Rules":             rules,
 		"Devices":           devices,
 		"DeviceInfos":       deviceInfos,

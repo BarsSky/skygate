@@ -40,7 +40,10 @@ import (
 func loadLayout(t *testing.T) *template.Template {
 	t.Helper()
 	tpl, err := template.New("test").Funcs(template.FuncMap{
-		"t":        func(key string) string { return key },
+		"t": func(key string) string { return key },
+		// B452: the layout resolves .Title through `pt`; this test funcmap mirrors the real one
+		// (templates.go), which is the rule this file already follows for every helper.
+		"pt":       resolvePageTitle,
 		"tf":       func(key string, args ...any) string { return key },
 		"safeJS":   func(s string) template.JS { return template.JS(s) },
 		"safeHTML": func(s string) template.HTML { return template.HTML(s) },

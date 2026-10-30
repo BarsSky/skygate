@@ -45,6 +45,10 @@ func LoadTemplates() *Templates {
 			lang, _ := i18n.GlobalLang.Load().(string)
 			return i18n.GlobalCatalog.Tf(lang, key, args...)
 		},
+		// B452: the page-data Title is resolved here, in ONE place, because every
+		// handler writes it itself. Handled: a catalogue key (the B450 defect), a
+		// known English literal (the pre-B452 debt), anything else verbatim.
+		"pt":       resolvePageTitle,
 		"safeJS":   func(s string) template.JS { return template.JS(s) },
 		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
 		"dividefloat": func(a, b float64) float64 {

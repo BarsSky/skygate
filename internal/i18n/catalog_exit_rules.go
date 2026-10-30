@@ -33,6 +33,10 @@ var ruExitRules = map[string]string{
 	// without losing their form values.
 	"exit_rules.form_error":        "Не удалось добавить правило: %s",
 	"exit_rules.pref_apply_result": "Подстановка preferred exit-node: %s",
+	"title.admin_service_control":  "Управление сервисом",
+	"title.my_exit_rules":          "Мои правила выхода",
+	"title.node_load":              "Нагрузка узлов",
+	"title.notifications":          "Уведомления",
 	"exit_rules_admin.fold_hint":   "свернуть/развернуть (запоминается)",
 	// 2026-09-07 (B237.19): the previous wording
 	// ("Правило для X уже существует — не дублируем. Удалите
@@ -582,6 +586,10 @@ var enExitRules = map[string]string{
 	// rejects the values. EN copy.
 	"exit_rules.form_error":        "Could not add rule: %s",
 	"exit_rules.pref_apply_result": "Preferred exit-node substitution: %s",
+	"title.admin_service_control":  "Service control",
+	"title.my_exit_rules":          "My exit rules",
+	"title.node_load":              "Node load",
+	"title.notifications":          "Notifications",
 	"exit_rules_admin.fold_hint":   "collapse/expand (remembered)",
 	// 2026-09-07 (B237.19): the previous wording
 	// ("A rule for X already exists — not duplicating. Remove
