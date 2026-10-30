@@ -2125,10 +2125,8 @@ func main() {
 		log.Printf("node-discovery: SKYGATE_NODE_DISCOVERY_INTERVAL=%v, skipping startup goroutine (set to a positive duration to re-enable)", cfg.NodeDiscoveryInterval)
 	}
 
-	// 2026-07-14: Этап 14 v6 — in-app backup scheduler. Started
-	// after the DB is wired so Load() can read the config.
-	// Wire the config loader first so Unmount (called by
-	// RunBackup on its way out) can re-read the mountpoint; LoadWithKey (B404) decrypts.
+	// In-app backup scheduler: the config loader must be wired FIRST so Unmount (called by
+	// RunBackup on its way out) re-reads the mountpoint; LoadWithKey (B404) decrypts.
 	backup.SetConfigLoader(func() (*backup.Config, error) {
 		return backup.LoadWithKey(d.DB, cfg.SecretKeyHex)
 	})
@@ -2136,6 +2134,7 @@ func main() {
 		DB:       d,
 		Notifier: schedulerNotifierSink(app.Notifier),
 	}
+	logBackupSchedulerStartup(d.DB, cfg.SecretKeyHex) // B446: says enabled/schedule/last_run at boot
 	backupSched.Start(ctx)
 
 	// 2026-07-14: Этап 14 v8 — release-monitor goroutine.
@@ -2328,7 +2327,7 @@ func main() {
 		})
 		log.Printf("🔍 backup-verify-scheduler: enabled (env-var default schedule=%q; /admin/backup page can override)", cfg.BackupVerifySchedule)
 	} else {
-		log.Printf("🔍 backup-verify-scheduler: disabled (SKYGATE_BACKUP_VERIFY_IN_APP_ENABLED=false; /admin/backup page can enable). Pre-B142 system-cron verify_backup.sh continues to run.")
+		log.Printf("🔍 backup-verify-scheduler: disabled (SKYGATE_BACKUP_VERIFY_IN_APP_ENABLED=false; /admin/backup page can enable). NOTHING else is assumed: verify then runs ONLY if you wired scripts/verify_backup.sh into the host cron, and the panel cannot see that — backup.last_verify_* stays empty until it runs (B446: the pre-B446 banner claimed system cron «continues to run» on an install that had no such entry at all).")
 	}
 
 	// 2026-08-19: v1.5.0 (B147) — in-app certsync.

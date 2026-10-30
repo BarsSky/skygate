@@ -796,6 +796,13 @@ var TestRegistry = []SystemTestDef{
 					if _, err := fmt.Sscanf(lastRun, "%d", &ts); err == nil && ts > 0 {
 						age := time.Since(time.Unix(ts, 0))
 						if age > 7*24*time.Hour {
+							// B446 (2026-10-30): the cause comes from the settings the SCHEDULER
+							// reads, not from a guess about the destination. The live case blamed
+							// S3 while nothing had even TRIED to run for nine days.
+							if cause := backupStaleCause(getTestService(), ts); cause != "" {
+								return SystemTestFail, fmt.Sprintf("the last recorded backup run is %s old (under 7 d expected): %s. Cause: %s",
+									age.Round(time.Hour), archive, cause)
+							}
 							return SystemTestFail, fmt.Sprintf("the last recorded backup run is %s old (under 7 d expected): %s — the destination may have stopped accepting archives",
 								age.Round(time.Hour), archive)
 						}

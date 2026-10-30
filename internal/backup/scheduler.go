@@ -144,15 +144,12 @@ func (s *Scheduler) tick(ctx context.Context) {
 	}
 	now := time.Now()
 	next := sched.Next(now)
-	// We check whether the current minute matches the
-	// schedule's next-fire time. Because Next rounds DOWN
-	// to the minute, a match means the schedule fired
-	// sometime in the last 60s — i.e. right now.
-	//
-	// Without this check the scheduler would fire on
-	// every tick when schedule=EveryMinute. With it,
-	// each minute is fired at most once.
-	if !isDueThisTick(sched, now) {
+	// B446 (2026-10-30): the decision moved into ScheduleDue, which also CATCHES UP a slot that
+	// passed while the process was restarting. Live case: schedule "0 4 * * *", the container
+	// booted at 04:02:37 that morning, and the old exact-minute rule skipped NINE consecutive
+	// days while the panel blamed the S3 destination.
+	due := ScheduleDue(sched, now, cfg.LastRun, cfg.LastStatus)
+	if !due.Due {
 		return
 	}
 	// Defensive: don't run if RunBackup would loop on a
@@ -161,7 +158,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 		log.Printf("backup: scheduler config invalid: %v", err)
 		return
 	}
-	log.Printf("backup: scheduler firing (schedule=%q, now=%s, next=%s)", cfg.Schedule, now.Format(time.RFC3339), next.Format(time.RFC3339))
+	log.Printf("backup: scheduler firing (%s; schedule=%q, now=%s, next=%s)", due.Reason, cfg.Schedule, now.Format(time.RFC3339), next.Format(time.RFC3339))
 	res, err := RunBackup(s.DB.Current(), cfg)
 	if err != nil {
 		log.Printf("backup: scheduler run failed: %v (see DB status)", err)
@@ -175,31 +172,6 @@ func (s *Scheduler) tick(ctx context.Context) {
 		return
 	}
 	log.Printf("backup: scheduler run ok (archive=%s, bytes=%d, dur=%s)", res.Archive, res.Bytes, res.FinishedAt.Sub(res.StartedAt))
-}
-
-// isDueThisTick returns true when the schedule should
-// fire within the current minute. We use a 30s grace
-// window on either side of the schedule boundary so
-// that a slow tick (GC pause, network blip) doesn't
-// miss the fire. The alternative — exact match —
-// would skip the run on the unlucky tick that landed
-// at 02:59:59.999 and the next tick at 03:00:01.
-func isDueThisTick(s *Schedule, now time.Time) bool {
-	if s.EveryMinute {
-		return true
-	}
-	// Match (hour, minute). The 30s grace is on each side
-	// of the target minute, so a tick at 02:59:31 still
-	// fires a 03:00 schedule. (60s is one tick interval.)
-	nowH, nowM, _ := now.Clock()
-	if nowH != s.Hour {
-		return false
-	}
-	if nowM != s.Minute {
-		return false
-	}
-	// We're in the right minute. Fire.
-	return true
 }
 
 // sendSchedulerAlert is the B225 (Phase 4.4) helper

@@ -27,6 +27,7 @@ cd "$(dirname "$0")/.." || exit 1
 PASS=0; FAIL=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
+skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; }
 hdr() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 MY=internal/handlers/templates/exit_rules.html
@@ -151,7 +152,11 @@ else
 fi
 
 hdr "E. the markup stays valid and the frozen ratchets do not move"
-if python scripts/audit_html_balance.py >"$WORK/bal.log" 2>&1; then
+. scripts/lib/python_audit.sh   # B446: python3 OR python, and never a FAIL for a missing tool
+PY="$(skygate_python)"
+if [ -z "$PY" ]; then
+  skip "E1: no python interpreter (python3/python) on PATH — the markup balance audit cannot run here"
+elif "$PY" scripts/audit_html_balance.py >"$WORK/bal.log" 2>&1; then
   ok "E1: every template is still balanced (B436 audit)"
 else
   bad "E1: the markup is imbalanced after the restructure: $(tail -1 "$WORK/bal.log")"

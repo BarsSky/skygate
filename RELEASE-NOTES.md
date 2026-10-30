@@ -1,5 +1,82 @@
 # Skygate release notes
 
+## v1.5.197 — a missed minute no longer costs a day of backups (B446)
+
+**Date:** 2026-10-30 · **Base:** `v1.5.196` → this tag · **Compatibility:** none (no schema change).
+
+Report: «По прогону тестов 4 упало, приоритет с теми что по бекапам. Надо наконец разобрать что не так».
+
+### What the run actually said
+
+The in-app system tests on the reference install: **30 total, 25 pass, 4 fail, 1 skip**. The two
+backup failures were
+
+* `backup.recent` — «the last recorded backup run is 216h0m0s old … **the destination may have
+  stopped accepting archives**»,
+* `backup.verify` — «the last successful backup is 216h0m0s old (under 48 h expected)».
+
+Both blamed **S3**. Measured in the same container minutes later:
+
+```
+backup.enabled=1   backup.in_app_enabled=1   backup.schedule="0 4 * * *"
+backup.last_status=ok   backup.last_error=""          ← the destination never failed
+journal: the app BOOTED at 04:02:37 UTC that morning
+```
+
+The process kept being recreated **across the scheduled 04:00 minute**, and the scheduler fired
+only *inside* that exact minute. Nine days without a backup, with `last_status=ok`, because nothing
+ever tried — and the panel sent the operator to the storage system.
+
+### 1. One run per period, not one run per exact minute
+
+`internal/backup/schedule_truth_b446.go`: `ScheduleDue` fires on the scheduled minute **or** catches
+up a slot that has already passed without a run — never twice inside one period, never while a run
+is in flight (`last_status="running"`), and it returns the reason so the journal distinguishes a
+scheduled run from a catch-up. `previousSlot` is the period reference (one run per period).
+
+### 2. The diagnostic names the cause
+
+`internal/feature/admin/backup_stale_cause_b446.go` answers the actual question from the settings the
+scheduler itself reads:
+
+* backups **disabled** → «nothing will create one until you enable them»;
+* in-app scheduler **OFF** → the only other door is a system-cron entry the panel cannot see (the
+  pre-B446 text credited it: «system-cron verify_backup.sh continues to run» — on this host there was
+  no such entry);
+* **missed slot** → named as a missed slot, and said to be caught up on the next tick;
+* the run **FAILED** → the stored error is quoted, and only then is the destination the suspect.
+
+Both `backup.recent` and `backup.verify` use it, so the two tests can no longer tell two stories.
+
+### 3. The journal says what the scheduler will do
+
+One line at boot — `backup-scheduler: started (enabled=…, in_app=…, schedule=…, last_run=…,
+next_slot=…)` — written from `cmd/skygate/backup_boot_b446.go` (main.go stays under the B372 cap of
+2400 lines). A non-due tick stays silent, and container journals do not reach back a week, so this
+line is the only thing that would have made nine days visible on day one.
+
+### 4. A missing tool is not a product regression
+
+The same gate run was red on `B438 E1` and `B439 E5` with
+`python: command not found` — the host has `python3`, not `python`. One resolver,
+`scripts/lib/python_audit.sh` (`skygate_python`), now serves every audit and the check **SKIPs**
+when no interpreter exists. Two failures that had nothing to do with the tree under test.
+
+### The other two failures of that run (operator-side, no code change)
+
+* `derp.reachable` — `derp.skynas.ru` resolves to `127.0.0.1` **inside** the container (AGENTS trap
+  #2). Fix: set the probe address on `/admin/derp/relays` (`derp.probe_host`, B296), or add an
+  `extra_hosts` entry with the host's real IP and `docker compose up -d --force-recreate skygate`.
+* `derp.relay_rows` — leftover rows: the `controlplane.tailscale.com` derpmap **document** (copied
+  from the legacy `derp.external_urls` by B265's auto-migration) and the same host on two ports.
+  Delete or disable them on `/admin/derp/relays`; neither affects a working relay.
+
+### Contracts
+
+`scripts/check_b446_backup_truth.sh` — **26** checks — plus seven `TestB446_*` tests (catch-up, no
+double run, no run over a running one, first-ever run, every-minute schedules, the period
+arithmetic, and the four causes plus the healthy case).
+
 ## v1.5.196 — the latest version no longer hides behind one rate-limited door (B445)
 
 **Date:** 2026-10-29 · **Base:** `v1.5.195` → this tag · **Compatibility:** none.

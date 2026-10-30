@@ -24,6 +24,7 @@ cd "$(dirname "$0")/.." || exit 1
 PASS=0; FAIL=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
+skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; }
 hdr() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 HELP=internal/feature/exit_rules/serving_relay_b439.go
@@ -153,7 +154,11 @@ if go test ./internal/handlers -run 'TestLoadTemplates|TestExitRules' -count=1 >
 else
   bad "E4: handler render tests failed — $(tail -3 "$WORK/h.log" | tr '\n' ' ')"
 fi
-if python scripts/audit_html_balance.py >"$WORK/b.log" 2>&1; then
+. scripts/lib/python_audit.sh   # B446: python3 OR python, and never a FAIL for a missing tool
+PY="$(skygate_python)"
+if [ -z "$PY" ]; then
+  skip "E5: no python interpreter (python3/python) on PATH — the markup balance audit cannot run here"
+elif "$PY" scripts/audit_html_balance.py >"$WORK/b.log" 2>&1; then
   ok "E5: markup still balanced (B436)"
 else
   bad "E5: markup became imbalanced — $(tail -1 "$WORK/b.log")"

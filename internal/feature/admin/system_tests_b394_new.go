@@ -866,6 +866,13 @@ var b394Tests = []SystemTestDef{
 			}
 			age := time.Since(time.Unix(ts, 0))
 			if age > 48*time.Hour {
+				// B446: WHY, from the settings the scheduler itself reads. The live case reported
+				// "216 h old" and left the operator to guess, while the answer was «the process
+				// restarted across the 04:00 minute on every one of those days».
+				if cause := backupStaleCause(s, ts); cause != "" {
+					return SystemTestFail, fmt.Sprintf("the last successful backup is %s old (under 48 h expected): %s. Cause: %s",
+						age.Round(time.Hour), archive, cause)
+				}
 				return SystemTestFail, fmt.Sprintf("the last successful backup is %s old (under 48 h expected): %s", age.Round(time.Hour), archive)
 			}
 			if archive == "" {

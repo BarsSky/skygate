@@ -228,9 +228,10 @@ elif go test ./internal/handlers -run 'TestB440|TestLoadTemplates|TestExitRules'
 else
   bad "F6: render tests failed — $(tail -3 "$WORK/h.log" | tr '\n' ' ')"
 fi
-if ! command -v python >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
-  skip "F7: no python on PATH — cannot run the markup balance audit here"
-elif python scripts/audit_html_balance.py >"$WORK/b.log" 2>&1 || python3 scripts/audit_html_balance.py >"$WORK/b.log" 2>&1; then
+. scripts/lib/python_audit.sh   # B446: python3 OR python, one resolver for every audit
+if [ -z "$(skygate_python)" ]; then
+  skip "F7: no python interpreter (python3/python) on PATH — cannot run the markup balance audit here"
+elif "$(skygate_python)" scripts/audit_html_balance.py >"$WORK/b.log" 2>&1; then
   ok "F7: markup still balanced (B436)"
 else
   bad "F7: markup became imbalanced — $(tail -1 "$WORK/b.log")"
