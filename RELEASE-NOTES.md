@@ -1,5 +1,56 @@
 # Skygate release notes
 
+## v1.5.202 — the page title is a translation again, and no page can put a key in the tab (B450)
+
+**Date:** 2026-10-30 · **Base:** `v1.5.201` → this tag · **Compatibility:** none (no schema change).
+
+Report: «не вся локализация покрыта — в строке состояния страницы висит переменная а не значение»
+(with a screenshot of the browser tab reading «title.»).
+
+### The title slot carried a catalogue key
+
+`internal/feature/admin/update.go` passed
+
+```go
+"Title": "title.admin_update",
+```
+
+into the page data, and `layout.html` renders `<title>{{.Title}} — Skygate</title>` **verbatim** — so
+`/admin/update` put the KEY in the tab (a narrow tab truncates it to «title.»). Anyone who visited
+the page while checking for an update saw it.
+
+### Why nothing caught it
+
+* `TestCatalogsParity` compares **key sets** — the key exists and is translated in RU and EN;
+* the B325 ratchet hunts **hardcoded English** in templates — this was a key, not English;
+* every render test supplies **its own** `Title`, so the real handler's value was never rendered.
+
+### What changed
+
+* the slot is translated (`s.I18nT(c, "title.admin_update")`);
+* the guard is **tree-wide**, not per page: `internal/i18n/title_keys_b450_test.go` walks `internal/`
+  for a `"Title": "<literal>"` whose literal **is an existing catalogue key** — that is a slot that
+  forgot to translate, whatever page it lives on — and it reads the REAL catalogues, so a key added
+  tomorrow is covered too;
+* the generic renderer's `pageTitle` map is checked as well: a key it maps to must exist, or the
+  fallback title would be the key;
+* the detector proves itself: reintroducing the one-line defect makes the test fail, and the
+  contract repeats that on a copy (`B2`).
+
+### Verification
+
+`go build`, `go vet`, `staticcheck`, `gofmt` clean; `internal/i18n` green (2 new tests);
+`scripts/check_b450_page_title_i18n.sh` — 12 contracts, registered in the gate.
+
+### Still on the localization list (next block, listed, not hidden)
+
+About a dozen page titles are plain **English literals** rather than keys — `Exit Nodes`,
+`Integration status`, `Service control`, `Tailscale`, `Telegram`, `Account`, `API Tokens`,
+`Cleanup exit rules`, `Exit Rules`, `Node Load`, `Notifications`. They are not key-shaped, so the
+new guard does not flag them, and they are a separate debt: each needs a `title.*` pair in RU and EN
+and the handler switched to it. That is mechanical and will be done as its own block rather than
+mixed into this fix.
+
 ## v1.5.201 — the relay probe reads the row it is given, and the panel stops blaming the database (B449)
 
 **Date:** 2026-10-30 · **Base:** `v1.5.200` → this tag · **Compatibility:** none (no schema change).

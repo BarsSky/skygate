@@ -385,7 +385,7 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 	// canonical "vX.Y.Z+commit" form).
 	s.Backend.RenderWithLayout(w, r, "admin/update.html", c, map[string]any{
 		"Page":         "admin/update",
-		"Title":        "title.admin_update",
+		"Title":        s.I18nT(c, "title.admin_update"),
 		"Current":      currentDisplay,
 		"CurrentBuild": buildSubtitle,
 		"BuildVersion": s.BuildVersion,
