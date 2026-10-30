@@ -109,11 +109,28 @@ func AssignWithPreference(claims []Claim, healthy []string, existing []Existing,
 	return AssignWithReservations(claims, healthy, existing, prefer, nowUnix(), DefaultReservationConfig())
 }
 
+// AssignWithReservations is AssignWithPreference with the B360 reservation config and an explicit
+// clock (kept as the name every existing caller and test uses).
+func AssignWithReservations(claims []Claim, healthy []string, existing []Existing, prefer PreferFunc, now int64, cfg ReservationConfig) []Assignment {
+	return AssignWithReservationsAndWeights(claims, healthy, existing, prefer, now, cfg, nil)
+}
+
+// AssignWithWeights is Assign with B453 relay weights and no clock/reservation overrides.
+func AssignWithWeights(claims []Claim, healthy []string, existing []Existing, w Weights) []Assignment {
+	return AssignWithReservationsAndWeights(claims, healthy, existing, nil, nowUnix(), DefaultReservationConfig(), w)
+}
+
 // AssignWithReservations is AssignWithPreference with the B360 reservation config
 // and an explicit clock, so a caller (and a test) can drive a scripted timeline
 // deterministically. `now` is unix seconds.
-func AssignWithReservations(claims []Claim, healthy []string, existing []Existing, prefer PreferFunc, now int64, cfg ReservationConfig) []Assignment {
+// AssignWithReservationsAndWeights is AssignWithReservations with B453 relay weights. `w` may be
+// nil: every relay then weighs DefaultWeight and the behaviour is exactly the even spread this
+// engine has always done, so no existing caller changes.
+func AssignWithReservationsAndWeights(claims []Claim, healthy []string, existing []Existing, prefer PreferFunc, now int64, cfg ReservationConfig, w Weights) []Assignment {
 	healthySet := map[string]bool{}
+	if w == nil {
+		w = Weights{}
+	}
 	// healthyLower is the same set for the B360 reservation lookups, which compare
 	// hostnames case-insensitively (headscale's spelling of a relay varies). It is
 	// kept SEPARATE on purpose: `healthySet` is also the source of the auto-pass
@@ -269,11 +286,11 @@ func AssignWithReservations(claims []Claim, healthy []string, existing []Existin
 				continue
 			}
 		}
-		best := candidates[0]
-		for _, c := range candidates {
-			if load[c] < load[best] {
-				best = c
-			}
+		// B453: least load RELATIVE to the relay's weight (an even split when nobody set one).
+		// Sticky prefixes never reach this line, so a weight change cannot migrate live traffic.
+		best := pickLeastRelative(candidates, load, w)
+		if best == "" {
+			best = candidates[0]
 		}
 		out = append(out, Assignment{Prefix: p, ExitNode: best, Source: "auto", Claims: g.total, Devices: len(g.devices)})
 		load[best]++
@@ -648,7 +665,14 @@ func ReconcileReportAt(d *sql.DB, healthyRelays []string, prefer PreferFunc, cfg
 	if err != nil {
 		return rep, err
 	}
-	as := AssignWithReservations(claims, healthyRelays, existing, prefer, now, cfg)
+	// B453: the operator's relay weights, read from global_settings on every pass (a panel change
+	// must not need a restart). An unparseable entry is logged with its text, because a typo that
+	// silently falls back to an even split would look like the weights were ignored.
+	w, rejected := LoadWeights(d)
+	if len(rejected) > 0 {
+		log.Printf("prefix-owner: prefix_owner.weights: ignoring unparseable entry/entries %v (expected relay=weight)", rejected)
+	}
+	as := AssignWithReservationsAndWeights(claims, healthyRelays, existing, prefer, now, cfg, w)
 
 	// B277: the global "everything through one relay" switch, and the manual pins
 	// that deliberately survive it. Order of authority: manual (the operator picked

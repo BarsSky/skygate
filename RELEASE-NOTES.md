@@ -1,5 +1,44 @@
 # Skygate release notes
 
+## v1.5.205 — relay weights for the prefix spread (B453)
+
+**Date:** 2026-10-30 · **Base:** `v1.5.204` → this tag · **Compatibility:** none (no schema change, no new required setting).
+
+The last open item of B275.1: «веса нагрузки на relay». The assignment engine spread unclaimed
+prefixes over the healthy relays by **least load** — an **even** split. That is right for identical
+relays and wrong for a real tailnet, where a small VPS and a big box should not each carry half of
+200 prefixes.
+
+### What changed
+
+* `internal/prefixowner` accepts a **weight per relay** and prefers the least load **relative** to
+  it; the ratio comparison is cross-multiplied in integers, so equal ratios cannot oscillate between
+  passes (ties break by name).
+* The setting is `global_settings[/]prefix_owner.weights` in the form
+  `relay=weight,relay=weight`, read on **every** pass — a panel change needs no restart.
+* Two properties are deliberate, because both protect live traffic:
+  1. **sticky still wins** — a prefix with a healthy owner stays; weights only decide where the
+     *next* prefixes land, so changing a weight never migrates traffic;
+  2. **an empty or invalid weight is 1** — every existing install behaves exactly as before until
+     somebody sets a weight, and a zero / negative / garbage entry is **rejected and logged with its
+     text**, because a typo that silently became an even split would look like the weights were
+     ignored (and the engine must never divide by zero or starve a relay the healthy set says must
+     be usable).
+
+### Verification
+
+`go build`, `go vet`, `staticcheck`, `gofmt` clean; `internal/prefixowner` and
+`internal/feature/exit_rules` green. 5 tests, including the one that matters for traffic: a sticky
+prefix does **not** move when a weight changes, while a reassignment after a dead owner **does**
+follow the weight and still records its failover source. `scripts/check_b453_relay_weights.sh` —
+12 contracts.
+
+### Still open (next block)
+
+The **editor** for the weights on `/admin/exit-nodes` plus showing the weight in the prefix table —
+the engine and the setting are in place, the panel field is not yet. Until then the value is set with
+one SQL statement (or the setting API) and takes effect on the next pass.
+
 ## v1.5.204 — the rest of the page titles are translated, in one place (B452)
 
 **Date:** 2026-10-30 · **Base:** `v1.5.203` → this tag · **Compatibility:** none (no schema change).
