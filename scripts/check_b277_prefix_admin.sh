@@ -75,10 +75,19 @@ if grep -q 'func Prune(d \*sql.DB, claimed map\[string\]bool) (int, error)' "$PK
 else
   bad "A1: the table still keeps every prefix it has ever seen"
 fi
-if grep -q "COALESCE(source,'auto') <> 'manual'" "$PKG"; then
-  ok "A2: a manual pin survives the prune (an intent may predate the rule that uses it)"
+# RENEGOTIATED BY B458 (2026-10-31): the guard used to be the literal
+#   COALESCE(source,'auto') <> 'manual'
+# i.e. exactly one protected source. The prune now protects TWO — the operator pin AND an
+# infrastructure prefix (a DNS resolver the tailnet must carry, B458) — because a system row
+# has no rule claiming it by definition, and letting the prune take it every pass would delete
+# and re-insert the row (and flap the advertised route) on a five-minute cycle. The property
+# this block owns is unchanged: a row whose source is an INTENT survives the prune, and the
+# DELETE is guarded by the same set so a manual row can never be removed by a stale list.
+if grep -q "COALESCE(source,'auto') NOT IN ('manual'," "$PKG" \
+   && grep -q 'source == "manual" || source == SystemSource' "$PKG"; then
+  ok "A2: an operator pin — and, since B458, an infrastructure prefix — survives the prune"
 else
-  bad "A2: the prune would delete operator pins"
+  bad "A2: the prune would delete operator pins or infrastructure prefixes"
 fi
 if grep -q 'Prune(d, claimedPrefixes(claims))' "$PKG"; then
   ok "A3: the prune runs inside Reconcile, on the claims it just read (one source of truth)"

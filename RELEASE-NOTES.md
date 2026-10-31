@@ -1,5 +1,68 @@
 # Skygate release notes
 
+## v1.5.210 — DNS must ride by design: the tailnet now carries the resolvers it hands out (B458)
+
+**Date:** 2026-10-31 · **Base:** `v1.5.209` → this tag · **Compatibility:** none (no schema change, no configuration change).
+
+### B458 — measured: half of your DNS was leaving the tailnet
+
+While taking stock of what was left in the plan (B350.1, «DNS must be carried by design, not by
+accident»), I measured the live install instead of trusting the note:
+
+* headscale hands every client `dns.nameservers.global: [1.1.1.1, 8.8.8.8]`;
+* the assignment table carried `8.8.8.0/24` + `8.8.4.0/24` — **because a user rule happens to claim
+  `8.8.8.8`**;
+* `1.1.1.1` was carried by **nobody**, so half of every client's DNS left the tailnet (and on a
+  filtered network it did not leave at all).
+
+A system setting carried by a data-plane coincidence is a trap: deleting that one rule would take DNS
+away from the whole tailnet.
+
+The fix has three halves, and all three are needed — a route without a permission is worse than no
+route, because the device accepts the prefix into its routing table, tailscaled refuses the
+destination, and DNS that used to leave through the uplink now fails outright.
+
+1. **Measured.** The resolver set is read from headscale's own config (both the block-list and the
+   inline spelling, no YAML dependency), with `SKYGATE_TAILNET_DNS_RESOLVERS` as an explicit
+   override for a config skygate cannot see. An unreadable set is reported as **unknown with a
+   reason**, never as an empty healthy list.
+2. **Carried.** Each resolver becomes a `/32` (the address clients query — not the resolver's whole
+   /24) stored in the **same** assignment table as `source=system`, so the route, the ACL pin and
+   the page all see one decision. A manual pin and a user rule still win; the only place a system
+   row dies is «this resolver is no longer configured» (letting `Prune` take it every pass would
+   flap the advertised route on a five-minute cycle).
+3. **Permitted.** Each system prefix gets a host alias (headscale refuses a CIDR in `dst`) and one
+   grant with a wildcard source, in the same style as the B111 exit catch-all, **without `via`** —
+   `via` on a CIDR grant is a permission *filter*, and pinning a resolver to one relay would deny it
+   to every device pinned elsewhere.
+
+`/admin/exit-nodes` gained the «DNS внутри tailnet» card: each configured resolver with its prefix,
+its relay and whether it is actually advertised, plus a named warning when one is not. The card sits
+**outside** the `{{with .PrefixAdmin}}` block — a render test caught it rendering nothing inside,
+which is the same class of failure B448 paid for.
+
+### Plan register brought back in line with reality
+
+The roadmap still listed as open several things that had already been paid:
+
+* **TD-34** (notifications bypass i18n) — the ratchet went 34 → 26 → 8 → **0** (B391.1/.2/.3). The
+  register said «34 remaining».
+* **TD-30 / §4 item 7** (`exit_rules` suite is fsync-heavy) — **closed** by B419 (72 s → 8.6 s); the
+  section still asked for the expensive half.
+* **B350.1** — closed by this release.
+* «Empty-exit-node rules» (was 22 inert rules) — measured **1** remaining row.
+
+`scripts/check_b458_tailnet_dns_by_design.sh` — 16 contracts, plus 4 parser tests in
+`internal/headscale`, 4 system-prefix tests in `internal/prefixowner`, 2 ACL tests and 3 render
+tests.
+
+### Upgrading
+
+Nothing to configure. On the first maintenance tick skygate reads the resolver set and adds the
+missing prefixes (the journal names them); the ACL follows in the same pass, so devices that were
+leaking DNS begin resolving through the tailnet. `SKYGATE_TAILNET_DNS_RESOLVERS` exists for a host
+whose headscale config skygate cannot read.
+
 ## v1.5.209 — a relay is not a region: the DERP health table now holds one row per relay (B457)
 
 **Date:** 2026-10-31 · **Base:** `v1.5.208` → this tag · **Compatibility:** one automatic migration (v0.83) in both database chains; no configuration change.

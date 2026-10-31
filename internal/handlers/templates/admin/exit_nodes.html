@@ -670,6 +670,46 @@
   <h3><i class="fa-solid fa-diagram-project"></i> {{t "exit_nodes.prefix_owner.title"}}</h3>
   <p style="color:var(--text-muted);margin:8px 0 0 0;font-size:13px">{{t "exit_nodes.prefix_owner.help" | safeHTML}}</p>
 
+  {{/* B458: the tailnet's own DNS resolvers. headscale hands every client
+       dns.nameservers.global; the tailnet only carries an address if some relay advertises
+       it AND the ACL permits it. Both halves are shown, because «half of every client's DNS
+       leaves the tailnet» was invisible before this card. */}}
+  {{with .TailnetDNS}}
+  <div id="tailnet-dns" style="margin-top:14px;padding:12px;border-radius:6px;background:var(--bg-elev);border:1px solid var(--border)">
+    <b>{{t "exit_nodes.tailnet_dns.title"}}</b>
+    <div style="font-size:13px;color:var(--text-muted);margin:4px 0 8px 0">{{t "exit_nodes.tailnet_dns.help" | safeHTML}}</div>
+    {{if not .Known}}
+    <p style="margin:0"><span class="tag tag-warning">{{t "exit_nodes.tailnet_dns.unknown"}}</span></p>
+    {{else}}
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">{{t "exit_nodes.tailnet_dns.configured"}}: {{range $i, $r := .Resolvers}}{{if $i}}, {{end}}<code>{{$r}}</code>{{end}}{{if .Source}} <span style="color:var(--text-subtle)">— {{.Source}}</span>{{end}}</div>
+    {{if .Skipped}}<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">{{t "exit_nodes.tailnet_dns.skipped"}}: <code>{{range $i, $s := .Skipped}}{{if $i}}, {{end}}{{$s}}{{end}}</code></div>{{end}}
+    <div class="table-wrap">
+    <table>
+      <tr>
+        <th>{{t "exit_nodes.tailnet_dns.col_prefix"}}</th>
+        <th>{{t "exit_nodes.tailnet_dns.col_owner"}}</th>
+        <th>{{t "exit_nodes.tailnet_dns.col_state"}}</th>
+      </tr>
+      {{range .Rows}}
+      <tr>
+        <td><code>{{.Prefix}}</code></td>
+        <td>{{if .Owner}}<b>{{.Owner}}</b>{{else}}<span style="color:var(--text-muted)">{{t "exit_nodes.tailnet_dns.no_owner"}}</span>{{end}}</td>
+        <td>
+          {{if .Advertised}}<span class="tag tag-success">{{t "exit_nodes.tailnet_dns.state_carried"}}</span>
+          {{else if .Carried}}<span class="tag tag-danger" title="{{t "exit_nodes.tailnet_dns.not_advertised_tip"}}">{{t "exit_nodes.tailnet_dns.state_not_advertised"}}</span>
+          {{else}}<span class="tag tag-danger">{{t "exit_nodes.tailnet_dns.state_missing"}}</span>{{end}}
+        </td>
+      </tr>
+      {{end}}
+    </table>
+    </div>
+    {{if .NotCarried}}<div style="font-size:12px;color:var(--danger);margin-top:6px">{{t "exit_nodes.tailnet_dns.leak"}}</div>{{end}}
+    {{end}}
+    {{if .Note}}<div style="font-size:11px;color:var(--text-muted);margin-top:6px">{{.Note}}</div>{{end}}
+  </div>
+  {{end}}
+
+
   {{/* B356: the DEVICE half of the same decision. A stored preference is a
        permission FILTER on the per-device autogroup:internet grant (B265), so a
        preference naming a relay that cannot serve turns "the device has its own
@@ -994,6 +1034,7 @@
         <td><b>{{.ExitNode}}</b>{{if gt .Weight 1}} <span class="tag tag-info" title="{{t "exit_nodes.prefix_owner.weight_tip"}}">×{{.Weight}}</span>{{end}}</td>
         <td>
           {{if eq .Source "manual"}}<span class="tag tag-success" title="{{t "exit_nodes.prefix_owner.source_manual_tip"}}">{{t "exit_nodes.prefix_owner.source_manual"}}</span>
+          {{else if eq .Source "system"}}<span class="tag tag-info" title="{{t "exit_nodes.prefix_owner.source_system_tip"}}">{{t "exit_nodes.prefix_owner.source_system"}}</span>
           {{else if eq .Source "global"}}<span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.source_global_tip"}}">{{t "exit_nodes.prefix_owner.source_global"}}</span>
           {{else if eq .Source "explicit"}}<span class="tag tag-info" title="{{t "exit_nodes.prefix_owner.source_explicit_tip"}}">{{t "exit_nodes.prefix_owner.source_explicit"}}</span>
           {{else}}<span class="tag" style="background:var(--bg-hover)" title="{{t "exit_nodes.prefix_owner.source_auto_tip"}}">{{t "exit_nodes.prefix_owner.source_auto"}}</span>{{end}}

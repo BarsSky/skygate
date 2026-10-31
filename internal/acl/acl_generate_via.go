@@ -318,6 +318,24 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		addHost(ruleAlias, e.TargetValue)
 	}
 
+	// B458 (2026-10-31): the tailnet's own DNS resolvers must be reachable THROUGH the
+	// tailnet, not only through the uplink. headscale hands every client
+	// `dns.nameservers.global`; unless the address is advertised AND permitted, half of
+	// every client's DNS leaves the tailnet (or dies on a filtered network). The prefixes
+	// come from the assignment table (source='system'), i.e. from exactly the rows the
+	// route side advertised — one decision, two planes, as everywhere else in this file.
+	//
+	// No `via` on these grants, deliberately: `via` on a CIDR grant is a permission
+	// FILTER (B265), not a routing hint, and pinning a resolver to one relay would deny it
+	// to every device whose pin names another. Whichever relay advertises the prefix can
+	// carry it; the ACL's job here is only "this destination is allowed".
+	dnsAliases := map[string]string{} // prefix -> alias
+	for _, prefix := range prefixowner.SystemRows(d) {
+		alias := "h-dns-" + strings.NewReplacer(".", "-", "/", "-", ":", "_").Replace(prefix)
+		addHost(alias, prefix)
+		dnsAliases[prefix] = alias
+	}
+
 	var sb strings.Builder
 	sb.WriteString("{\n  \"hosts\": {\n")
 	// Emit the hosts block. headscale accepts an
@@ -347,6 +365,21 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	sb.WriteString("\n  },\n")
 
 	sb.WriteString("  \"grants\": [\n")
+
+	// B458: one grant per infrastructure prefix, `src: ["*"]` in the same style as the
+	// B111 catch-all below (every tailnet device may ask the resolver the control plane
+	// already handed it; the destination is a DNS resolver, not an origin). Sorted so the
+	// generated policy is byte-stable and `PolicyEquivalent` does not see churn.
+	if len(dnsAliases) > 0 {
+		names := make([]string, 0, len(dnsAliases))
+		for _, alias := range dnsAliases {
+			names = append(names, alias)
+		}
+		sort.Strings(names)
+		for _, alias := range names {
+			sb.WriteString("\n    { \"src\": [\"*\"], \"dst\": [\"" + alias + "\"], \"ip\": [\"*\"] },")
+		}
+	}
 
 	// v1.5.2 (B188.2): REMOVED the per-device
 	// autogroup:internet grant with via=[exit_node_tag]

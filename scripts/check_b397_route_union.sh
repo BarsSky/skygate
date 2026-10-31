@@ -134,10 +134,15 @@ if has 'relaysToKeepSynced(covered)' "$SURF_SRC"; then
 else
   bad "D1: the B352 prune loop is gone — a stale advertisement would survive forever"
 fi
-if has 'func Prune(' "$SURF_SRC" && has 'source == "manual" || claimed[prefix]' "$SURF_SRC"; then
-  ok "D2: Prune still releases unclaimed auto rows and keeps operator pins (this half already existed)"
+# RENEGOTIATED BY B458 (2026-10-31): the guard's shape changed because a SECOND protected
+# source exists now — an infrastructure prefix (the tailnet's DNS resolver) has no rule
+# claiming it, so the prune must keep source='system' as it keeps 'manual'. What this block
+# owns is unchanged: the zero-claim release still fires for rows that carry no intent.
+if has 'func Prune(' "$SURF_SRC" \
+   && has 'source == "manual" || source == SystemSource || claimed[prefix]' "$SURF_SRC"; then
+  ok "D2: Prune still releases unclaimed auto rows and keeps both intents (operator pin, infrastructure prefix)"
 else
-  bad "D2: the zero-claim release no longer keeps manual pins"
+  bad "D2: the zero-claim release no longer keeps manual pins (or drops an infrastructure prefix)"
 fi
 
 # ---------------------------------------------------------------------------

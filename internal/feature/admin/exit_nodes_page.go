@@ -384,9 +384,14 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		// B276: the view returns the drifted/pinned rows (not all ~1500) plus the
 		// summary the page needs to say whether the LIVE policy still pins the old
 		// relay — the failure that used to be invisible.
-		"PrefixRows":   prefixRows,
-		"PrefixStats":  prefixStats,
-		"PrefixAdmin":  prefixAdmin,
+		"PrefixRows":  prefixRows,
+		"PrefixStats": prefixStats,
+		"PrefixAdmin": prefixAdmin,
+		// B458: the resolver set the control plane hands out, and whether the tailnet
+		// actually carries it. A DNS setting carried by a user rule's side effect is the
+		// accident this block removes, so the page has to be able to say «1.1.1.1 is handed
+		// to every client and advertised by nobody».
+		"TailnetDNS":   s.loadTailnetDNSStatus(),
 		"RelayChoices": relayChoicesFor(nodes),
 		// B456: the weights editor lives in the prefix card (same decision: which relay carries
 		// what). It is built with the rows, so its "prefixes now" column and the table above it

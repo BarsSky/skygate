@@ -785,7 +785,12 @@ func Prune(d *sql.DB, claimed map[string]bool) (int, error) {
 		if err := rows.Scan(&prefix, &source); err != nil {
 			continue
 		}
-		if source == "manual" || claimed[prefix] {
+		// B458: a system row (an infrastructure prefix such as a DNS resolver) has no
+		// rule claiming it by definition, so it must be kept here — its own reason is
+		// checked by EnsureSystemPrefixes, which is the ONLY place a system row is
+		// removed. Letting Prune take it every pass would delete and re-insert the row
+		// on a five-minute cycle and flap the advertised route with it.
+		if source == "manual" || source == SystemSource || claimed[prefix] {
 			continue
 		}
 		stale = append(stale, prefix)
@@ -796,7 +801,7 @@ func Prune(d *sql.DB, claimed map[string]bool) (int, error) {
 	}
 	deleted := 0
 	for _, prefix := range stale {
-		res, derr := d.Exec(`DELETE FROM prefix_owner WHERE prefix = $1 AND COALESCE(source,'auto') <> 'manual'`, prefix)
+		res, derr := d.Exec(`DELETE FROM prefix_owner WHERE prefix = $1 AND COALESCE(source,'auto') NOT IN ('manual', $2)`, prefix, SystemSource)
 		if derr != nil {
 			return deleted, derr
 		}

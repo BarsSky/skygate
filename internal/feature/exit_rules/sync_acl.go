@@ -201,6 +201,21 @@ func (s *Service) reconcilePrefixOwnership() (int, int, error) {
 	// below is deliberately unchanged (B275 C.3 / B309 C1 / B312 E4 pin it): the
 	// health set and the location preference must stay visible at the call site.
 	before := prefixowner.OwnerByPrefix(s.dbc())
+	// B458 (2026-10-31): the tailnet's DNS resolvers must be carried BY DESIGN.
+	//
+	// headscale hands every client `dns.nameservers.global`, and those addresses are only
+	// usable through the tailnet if some relay advertises them AND the ACL permits them.
+	// Measured on the reference install: `[1.1.1.1, 8.8.8.8]` configured, but the table
+	// carried only 8.8.8.0/24 + 8.8.4.0/24 — and only because a USER RULE happens to claim
+	// 8.8.8.8. Deleting that rule would take DNS away from the whole tailnet, and 1.1.1.1
+	// was never carried at all, so half of every client's DNS left the tailnet (or died on
+	// a filtered network). The resolvers are therefore measured from headscale's own config
+	// and ensured as system-owned prefixes BEFORE the assignment pass, so the engine's
+	// price (load, stickiness) and the ACL's pins see them like any other prefix.
+	//
+	// A resolver set that cannot be read is reported, never guessed: an empty list here
+	// must not read as "DNS is fine".
+	s.ensureTailnetDNSPrefixes()
 	ins, chg, err := prefixowner.ReconcileWithPreference(s.dbc(), healthyExitRelaysForAssignment(s.dbc()), s.nearestRelayPreference())
 	if err != nil {
 		return ins, chg, err
