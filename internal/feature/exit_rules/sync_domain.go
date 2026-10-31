@@ -196,6 +196,20 @@ func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
 		// stable, so the autoupdater doesn't churn for these
 		// domains.
 		if cdnName, cdnCIDRs, isCDN := detectCDN(currentIPs); isCDN {
+			// B455: a service may need ranges that NO DNS name can point at. Discord's voice
+			// servers are handed to the client as IP:port from 66.22.192.0/18 by the gateway, so a
+			// discord.* rule covered chat and attachments and left voice/созвоны outside the exit
+			// node. The registry adds them to the derived set, and from there the normal
+			// prefix-owner path announces them, so the operator still sees who carries the range.
+			if svcName, extra, _ := ServiceExtraRanges(d.domain); len(extra) > 0 {
+				// Copy first: detectCDN hands back the package-level knownCDNs list, and
+				// appending into its spare capacity would write into a shared array.
+				merged := make([]string, 0, len(cdnCIDRs)+len(extra))
+				merged = append(merged, cdnCIDRs...)
+				cdnCIDRs = append(merged, extra...)
+				log.Printf("[exit-rules] %s: %s also needs %d range(s) that DNS cannot name (%s) — adding them to the derived set",
+					d.domain, svcName, len(extra), strings.Join(extra, ","))
+			}
 			marker := cdnParentMarker(cdnName, d.domain)
 			// Insert each CDN range. The marker lets the next
 			// tick short-circuit (see the existingMarker check

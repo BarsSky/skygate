@@ -1,5 +1,58 @@
 # Skygate release notes
 
+## v1.5.207 — what DNS cannot name: a closed registry of measured service ranges, starting with Discord voice (B455)
+
+**Date:** 2026-10-30 · **Base:** `v1.5.206` → this tag · **Compatibility:** none (no schema change).
+
+### B455 — the gap the Discord question exposed
+
+v1.5.206 answered «каких адресов не хватает для discord» with a measurement. The measurement showed
+that the missing piece is **not a missing rule** — it is a CLASS of endpoint that skygate cannot name:
+
+* the **web/gateway** side was already covered. `discord.com`/`ptb`/`canary` resolve to
+  `162.159.128-138.232/233`, `discord.gg`/`gateway.discord.gg` to `162.159.130-136.234`,
+  `cdn.discordapp.com` to `162.159.129-135.233`, `media.discordapp.net` to `162.159.128-134.232` —
+  every one of them inside the existing `162.158.0.0/15` row;
+* **voice** is not. For RTC, Discord's gateway hands the client a voice server as `IP:port` from
+  **`66.22.192.0/18`**. There is no DNS name to write a rule against, and a domain rule is expanded
+  from DNS — so no domain rule can ever reach it. Chat and attachments worked; voice did not.
+
+A range like that cannot be derived, only **measured and written down**, so it now lives in a closed
+registry next to the CDN one: `internal/feature/exit_rules/service_ranges_b455.go` —
+`ServiceRanges{Name, Domains, Prefixes, Why}`, with the reason recorded beside the range instead of
+in somebody's memory.
+
+Rules of the registry, each pinned by a contract:
+
+* **closed list.** A range added here is announced by a relay and can move prefixes, so it must be
+  justified by a measurement. Telegram's call ranges are the next candidate and are deliberately
+  **not** in the registry yet — contract A8 fails the check if an unmeasured service is added
+  without this same measurement.
+* **dot-boundary suffix match.** `mydiscord.com` and `discord.com.evil.example` do not announce
+  16 384 addresses for somebody else's site.
+* **copy on return.** Editing the rules of one domain cannot leak into the registry.
+* **the journal says so.** `[exit-rules] discord.com: Discord also needs 1 range(s) that DNS cannot
+  name (66.22.192.0/18) — adding them to the derived set` — a silent 16k-address addition would be
+  worse than the bug.
+* **it still goes through prefix-owner**, so the range is announced by exactly one relay and the
+  operator keeps seeing who carries it on `/admin/exit-nodes`.
+
+`scripts/check_b455_service_ranges.sh` — 11 contracts, plus 4 `TestB455_*` tests (matching, the
+over-reach case, CIDR validity, and that the returned slice is a copy).
+
+### Docs
+
+`AGENTS.md` had lost 29 characters across ten block-index lines to PowerShell escape sequences (a
+backtick followed by a letter becomes a control character: `` `a `` → BEL, `` `t `` → TAB,
+`` `r `` → CR), which mangled the text of several already-released blocks. All of them are
+restored to their intended backticks; `B455` is indexed.
+
+### Upgrading
+
+Nothing to configure. After the upgrade, the first sync of a `discord.*` domain rule appends
+`66.22.192.0/18` to the derived set and logs the line above; the prefix then goes through the normal
+prefix-owner assignment, so `/admin/exit-nodes` shows which relay owns it.
+
 ## v1.5.206 — the relay probe resolves its target like the sync does, and what Discord actually needs (B454)
 
 **Date:** 2026-10-30 · **Base:** `v1.5.205` → this tag · **Compatibility:** none (no schema change).
