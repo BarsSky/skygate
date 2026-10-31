@@ -85,10 +85,19 @@ if grep -q 'if c.Healthy != cur.Healthy {' "$PROBE" && grep -q 'return c.Latency
 else
   bad "A2: the ranking does not prefer healthy-then-fastest"
 fi
-if grep -q 'for _, best := range BestPerRegion(results) {' "$PROBE"; then
-  ok "A3: ProbeAll persists the best row per region (derp_health is keyed by region_id)"
+# RENEGOTIATED BY B457 (2026-10-31): this contract used to require
+#   for _, best := range BestPerRegion(results) { persist(...) }
+# i.e. ONE stored verdict per region, because derp_health was keyed by region_id. That
+# collapse made a second relay of a region UNREPRESENTABLE ("один рабочий, второй с
+# ошибкой — по таблице не понять какой"), so v0.83 moved the key to (region_id, url)
+# and the prober now stores every relay. The property this block still owns is that the
+# RECOMMENDATION collapses a region to one row; the property that changed is where the
+# verdicts are stored. Both halves are asserted so neither can regress silently.
+if grep -q 'for _, r := range results {' "$PROBE" \
+   && grep -q 'func BestPerRegion(results \[\]ProbeResult) \[\]ProbeResult' "$PROBE"; then
+  ok "A3: every relay's verdict is stored (B457 moved the key to (region_id, url)) and the recommendation still collapses a region"
 else
-  bad "A3: ProbeAll still persists per row, so the last writer owns the region"
+  bad "A3: the store/recommendation split is missing"
 fi
 if grep -q 'if persist != nil {' "$PROBE" && ! grep -q '_ = persist(ctx, d, lat, healthy, err)' "$PROBE"; then
   ok "A4: the per-goroutine persist is gone (no more write race inside a region)"
@@ -98,13 +107,17 @@ fi
 # A5/A6 — a region that leaves the map must not keep a verdict on the page. The
 # region-901 derpmap row is the live example: no longer probed, but its last
 # "public, healthy, 117 ms" would sit in derp_health for ever.
-if grep -q 'func PruneMissingRegions(ctx context.Context, d \*sql.DB, derps \[\]DERPInfo) (int, error)' internal/derphealth/prune.go; then
-  ok "A5: PruneMissingRegions exists"
+# RENEGOTIATED BY B457: the prune identifies a relay by (region_id, url) now, because a
+# region-level delete would remove the relay it simply did not see (the live pair was
+# one hostname on two ports) — that is the whole reason the function is renamed.
+if grep -q 'func PruneMissingRelays(ctx context.Context, d \*sql.DB, derps \[\]DERPInfo) (int, error)' internal/derphealth/prune.go \
+   && grep -q 'lower(url) = lower(' internal/derphealth/prune.go; then
+  ok "A5: PruneMissingRelays exists and keys the delete by (region_id, url)"
 else
-  bad "A5: PruneMissingRegions is missing"
+  bad "A5: PruneMissingRelays is missing or still deletes by region"
 fi
-if grep -q 'PruneMissingRegions(ctx, db, derps)' internal/derphealth/cron.go \
-   && [ "$(grep -c 'PruneMissingRegions(ctx, db, derps)' internal/derphealth/cron.go)" -ge 2 ]; then
+if grep -q 'PruneMissingRelays(ctx, db, derps)' internal/derphealth/cron.go \
+   && [ "$(grep -c 'PruneMissingRelays(ctx, db, derps)' internal/derphealth/cron.go)" -ge 2 ]; then
   ok "A6: both the cron tick and the manual re-probe prune the table"
 else
   bad "A6: the prune is not wired into runOnce + RunOnceNow"
@@ -219,10 +232,15 @@ else
 fi
 
 # --- G: the CLI explains the multi-row region --------------------------------------
-if grep -q 'derphealth.BestPerRegion(results)' "$CLI" && grep -q 'has %d rows; the dashboard keeps the best one' "$CLI"; then
-  ok "G1: derp-probe says which verdict a multi-row region kept"
+# RENEGOTIATED BY B457: the note used to say "the dashboard keeps the best one", which
+# was true while derp_health held ONE row per region. The table holds one row per relay
+# now, so the note must say the opposite thing — each row keeps its own verdict, and the
+# recommendation (the only place a region still collapses) uses the best of them.
+if grep -q 'derphealth.BestPerRegion(results)' "$CLI" \
+   && grep -q 'each keeps its own verdict' "$CLI"; then
+  ok "G1: derp-probe names the recommended relay of a multi-row region and says the rest keep their own verdicts"
 else
-  bad "G1: the CLI still hides the difference between its table and the dashboard"
+  bad "G1: the CLI note still describes the pre-B457 one-verdict-per-region store"
 fi
 
 # --- H: i18n parity ----------------------------------------------------------------

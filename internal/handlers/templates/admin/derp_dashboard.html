@@ -63,12 +63,13 @@
 {{end}}
 {{end}}
 
-{{/* B317: several ENABLED rows for one region. derp_health keeps ONE row per
-     region (derp_health_pkey), so such rows compete for the same verdict — a stale
-     row pointing at a dead port is what hid this host's own relay and made the
-     banner recommend a public one. The prober now measures every row and records
-     the best, so this is not an alarm; it is the explanation, and disabling the
-     row is the operator's call. */}}
+{{/* B317, renegotiated by B457: several ENABLED derp_relays rows for one region.
+     That USED to be ambiguous — derp_health kept ONE row per region, so the rows
+     competed for a single verdict and a stale row pointing at a dead port is what
+     hid this host's own relay. The table is keyed per RELAY now, so each of those
+     rows has its own line and its own error in the table below; this banner is the
+     inventory of the region's configured relays, and removing the stale row is the
+     operator's call. */}}
 {{if .DuplicateRegions}}
 <div class="alert alert-warning" style="margin-bottom:12px">
   <i class="fa-solid fa-triangle-exclamation"></i>
@@ -88,12 +89,16 @@
 {{if .Recommended}}
 <div class="alert alert-success">
   <i class="fa-solid fa-bolt"></i>
-  {{/* B286: never `index` a slice that may be empty — an unguarded
-       `index .DERPs 0` panics the whole page (`reflect: slice index out of
-       range`). */}}
+  {{/* B286: never take the first element of a slice that may be empty — an
+       unguarded first-element access panics the whole page (`reflect: slice index
+       out of range`). B457 removed the need here entirely: the banner names the
+       recommended row's own endpoint, computed by the handler. */}}
   {{/* B317: the region id is an int; the catalogue entry used %s, which rendered
        the banner as "region_id %!s(int=901)" in the operator's screenshot. */}}
-  {{with .DERPs}}{{if index . 0}}{{tf "derp_dashboard.recommended" $.Recommended (index . 0).Host | safeHTML}}{{end}}{{end}}
+  {{/* B457: and the ENDPOINT is the recommended row's endpoint, not DERP[0]'s — with
+       two relays in one region the first visible row is no longer the recommendation,
+       and the endpoint (host:port) is what tells the two apart. */}}
+  {{tf "derp_dashboard.recommended" $.Recommended $.RecommendedEndpoint | safeHTML}}
 </div>
 {{end}}
 
@@ -138,7 +143,7 @@
     </thead>
     <tbody>
       {{range .DERPs}}
-      <tr style="{{if eq .RegionID $.Recommended}}background: rgba(46, 204, 113, 0.12); font-weight: 600{{end}}">
+      <tr style="{{if and (eq .RegionID $.Recommended) (eq .URL $.RecommendedURL)}}background: rgba(46, 204, 113, 0.12); font-weight: 600{{end}}">
         <td style="padding:0.3rem 0.6rem"><code title="{{t "derp_dashboard.col_id_help"}}" style="cursor: help; border-bottom: 1px dotted var(--text-muted)">{{.RegionID}}</code></td>
         <td style="padding:0.3rem 0.6rem">
           {{if .IsOwn}}
@@ -154,6 +159,10 @@
         </td>
         <td style="padding:0.3rem 0.6rem; font-family: monospace; font-size: 0.9em">
           <code>{{.Host}}</code>
+          {{/* B457: two relays of one region can share a HOSTNAME and differ only by
+               port (the live case: derp.skynas.ru:443 next to a stale :8443), so the
+               endpoint is shown whenever it says something the hostname does not. */}}
+          {{if and .Endpoint (ne .Endpoint .Host)}}<span class="pill" style="margin-left:0.4rem; font-family: var(--font-mono); font-size:0.85em" title="{{t "derp_dashboard.endpoint_help"}}">{{.Endpoint}}</span>{{end}}
           {{if .Name}}<span class="pill" style="margin-left: 0.4rem; font-family: var(--font-mono); font-size: 0.85em" title="Tailscale short label">.Name={{.Name}}</span>{{end}}
         </td>
         <td style="padding:0.3rem 0.6rem; text-align: right; font-variant-numeric: tabular-nums"

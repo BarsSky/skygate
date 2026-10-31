@@ -1,5 +1,67 @@
 # Skygate release notes
 
+## v1.5.209 — a relay is not a region: the DERP health table now holds one row per relay (B457)
+
+**Date:** 2026-10-31 · **Base:** `v1.5.208` → this tag · **Compatibility:** one automatic migration (v0.83) in both database chains; no configuration change.
+
+### B457 — «два релея … один рабочий, второй с ошибкой — по таблице не понять какой»
+
+The operator's report was about the table, but the defect was in the table's **primary key**.
+
+`derp_health` was created in v0.62 with `region_id INTEGER PRIMARY KEY` — one verdict per
+**region**, and a region is not a relay. The reference host ran two enabled rows for region 900
+(`derp.skynas.ru:443` and a stale `:8443`), so the two relays fought over one storage slot and the
+one written **last** won. B317 mitigated it by probing every row and persisting only the **best** one
+per region: a correct recommendation, and a dashboard that could not represent the second relay at
+all. That is why "one of the two is broken" had no answer on any page.
+
+The key is now **(region_id, url)** — deliberately the URL, not the hostname: the live pair differed
+by **port** on one machine, so a host-based key would have reproduced the bug for exactly the case
+that caused it.
+
+What changed:
+
+* **every measurement is stored.** A relay that does not answer keeps **its own** error, so the
+  dashboard can name which of two relays is down instead of showing a region-level "degraded".
+* **the recommendation is still one per region.** That decision did not change — a region gets one
+  "best", chosen among its relays — but the banner names the **endpoint** now, and the highlighted
+  row is the recommended (region, url) pair rather than every row of that region.
+* **the endpoint is shown when it says more than the host.** Two relays of one hostname differ only
+  by port; without that column the page would still render two identical lines.
+* **the prune keys on the pair.** A region-level delete would remove the relay it simply did not see —
+  the working neighbour of a stale row.
+* the banner about several rows per region is no longer an explanation of a lie; it is an inventory of
+  what is configured, and the table below it shows each relay with its own verdict.
+
+### Migration v0.83
+
+Both chains move the key, and **both are guarded**: a rebuild that runs twice on an already-migrated
+table would drop the live verdicts, so SQLite inspects `PRAGMA table_info` and PostgreSQL inspects
+`pg_constraint` before touching anything, and a schema without the table is a no-op rather than a
+failed boot. Existing rows are copied unchanged.
+
+SQLite cannot alter a primary key in place, so its half is a **three-phase copy** (copy the rows
+aside → swap the table → copy them back), and it is **resumable**: a run that dies between two
+statements leaves its staging table behind, and the next boot recognises which phase it is in and
+finishes the work instead of either starting over or answering "already migrated" while the
+measurements sit in the staging table. At the end the migration **verifies its own effect** — a
+rebuild that somehow kept the old key fails the boot instead of letting every later write of a second
+relay be swallowed by it. No `RENAME` is used, so the "no destructive DDL in migrations" contract
+(B11) keeps meaning what it says.
+
+B317's contracts A3, A5, A6 and G1 were **renegotiated** together with their Go tests, because they
+pinned the workaround this block removes; the property they still own (a region collapses to one
+recommendation) is asserted alongside the new one (every relay keeps its own verdict).
+
+`scripts/check_b457_derp_health_per_relay.sh` — 14 contracts, plus 4 `TestB457_*` tests in
+`internal/derphealth` against a real migrated SQLite database and 2 migration tests in `internal/db`.
+
+### Upgrading
+
+The migration runs on the next start (docker: the entrypoint migrates; native: the service's own
+startup). Nothing else to do. After the upgrade, the dashboard shows one line per configured relay —
+turn on «показать недоступные» to see a relay that is not answering, with its own error.
+
 ## v1.5.208 — the weight editor: the setting became a control (B456)
 
 **Date:** 2026-10-31 · **Base:** `v1.5.207` → this tag · **Compatibility:** none (no schema change, no behaviour change until a weight is set).

@@ -60,6 +60,12 @@ type HealthRow struct {
 	LastError    string    `json:"last_error"`
 	ProbesTotal  int       `json:"probes_total"`
 	ProbesFailed int       `json:"probes_failed"`
+	// Endpoint is the host:port this relay is probed at, derived from URL (B457).
+	// Two relays of one region can share a HOSTNAME and differ only by port — the
+	// live case was derp.skynas.ru:443 next to a stale :8443 — so a page that names
+	// only the hostname cannot tell the operator which of them is broken. Empty when
+	// the URL carries no host; the template renders it only when it adds information.
+	Endpoint string `json:"endpoint,omitempty"`
 }
 
 // probeTimeout is the per-DERP TLS-handshake deadline. 3s
@@ -69,10 +75,17 @@ type HealthRow struct {
 const probeTimeout = 3 * time.Second
 
 // UpsertQuery inserts/updates one row in derp_health. The
-// ON CONFLICT (region_id) DO UPDATE means re-probing just
-// refreshes the latency / health / counter columns; the
-// metadata (host, region_code, region_name, name, etc.)
-// is left alone once the row exists.
+// ON CONFLICT (region_id, host) DO UPDATE means re-probing just
+// refreshes the latency / health / counter columns; the metadata (region_code,
+// region_name, etc.) is left alone once the row exists.
+//
+// B457 (2026-10-31): the key is (region_id, URL). It used to be region_id alone,
+// i.e. one verdict per REGION — and a region is not a relay. The reference host ran
+// two enabled rows for region 900 (derp.skynas.ru:443 and a stale :8443), so the two
+// relays fought over one storage slot and the LAST probe won; B317 made the prober
+// persist only the BEST row per region, which is a correct recommendation and a
+// dashboard that cannot represent the second relay at all. With the per-relay key
+// every measurement is stored and `/admin/derp/dashboard` shows one line per relay.
 //
 // B235.3: now writes the `name` column (Tailscale short
 // label like "1f", "22w") for public DERP rows. The
@@ -85,9 +98,8 @@ INSERT INTO derp_health
    last_error, probes_total, probes_failed)
 VALUES
   ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-ON CONFLICT (region_id) DO UPDATE SET
+ON CONFLICT (region_id, url) DO UPDATE SET
   is_own        = EXCLUDED.is_own,
-  host          = EXCLUDED.host,
   url           = EXCLUDED.url,
   name          = EXCLUDED.name,
   region_code   = EXCLUDED.region_code,

@@ -70,7 +70,7 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 		       locality, country, latency_ms, last_check, healthy,
 		       last_error, probes_total, probes_failed
 		  FROM derp_health
-		 ORDER BY is_own DESC, region_id ASC
+		 ORDER BY is_own DESC, region_id ASC, host ASC
 	`)
 	if err != nil {
 		log.Printf("derp dashboard: query: %v", err)
@@ -95,6 +95,8 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 		}
 		r.IsOwn = isOwn == 1
 		r.Healthy = healthy == 1
+		// B457: the endpoint (host:port) is what distinguishes two relays of one region.
+		r.Endpoint = derphealth.EndpointFromURL(r.URL)
 		if latency.Valid {
 			r.LatencyMs = int(latency.Int64)
 		}
@@ -185,15 +187,22 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 	// is empty — operator still sees "here's the best, but
 	// it's currently degraded"). First healthy+probed, own
 	// first (the pre-B228 behaviour).
+	//
+	// B457: the recommendation is a (region, URL) pair now, not a region id. derp_health
+	// holds one row per RELAY, so a region with two relays renders two lines and a
+	// region-id-only highlight would light up both of them — including the broken one,
+	// which is the "не понять какой" the operator reported. The URL (not the host) is the
+	// identity here because the live pair differed by PORT on one hostname.
 	var recommendedID int
+	var recommendedURL string
 	for _, r := range all {
 		if r.Healthy && r.LatencyMs > 0 {
 			if r.IsOwn {
-				recommendedID = r.RegionID
+				recommendedID, recommendedURL = r.RegionID, r.URL
 				break
 			}
 			if recommendedID == 0 {
-				recommendedID = r.RegionID
+				recommendedID, recommendedURL = r.RegionID, r.URL
 			}
 		}
 	}
@@ -213,10 +222,18 @@ func (s *Service) GetAdminDerpDashboard(w http.ResponseWriter, r *http.Request) 
 			"VisibleCount":    len(visible),
 			"ShowUnavailable": showUnavailable,
 			"Recommended":     recommendedID,
-			// B317: regions with more than one ENABLED derp_relays row. derp_health
-			// is keyed by region_id, so such rows compete for one verdict; the prober
-			// now keeps the best measured one, but a stale row is still a trap the
-			// operator should be told about (it is what hid the local relay here).
+			// B457: the recommended RELAY, because two relays of one region are two
+			// rows now and the highlight must land on the measured one. The URL is the
+			// key (see above) and the endpoint is what the banner names.
+			"RecommendedURL":      recommendedURL,
+			"RecommendedEndpoint": derphealth.EndpointFromURL(recommendedURL),
+			// B317 — renegotiated by B457: regions with more than one ENABLED
+			// derp_relays row used to compete for a single derp_health verdict,
+			// which is what hid the operator's own relay behind a stale :8443 row.
+			// The table is keyed per relay now, so each of those rows has its own
+			// line and its own error; the banner stays because only the operator can
+			// decide whether the stale row should be deleted, but it is no longer an
+			// explanation of a lie — it is an inventory.
 			"DuplicateRegions": duplicateRegions,
 			"Refreshed":        time.Now().UTC(),
 			// B272.2: policy-file permissions. Tag application (and therefore
@@ -341,15 +358,16 @@ func publicDERPPortFromURL(rawURL string) int {
 // region_id — but only the regions that have MORE THAN ONE row, because those are
 // the ambiguous ones.
 //
-// B317. `derp_health` is keyed by region_id (derp_health_pkey), so several enabled
-// rows for one region compete for a single verdict. The reference host had exactly
-// that: region 900 with `https://derp.skynas.ru:443` and a stale
-// `https://derp.skynas.ru:8443`, and the dead row owned the region's health row —
+// B317, renegotiated by B457 (2026-10-31). `derp_health` USED to be keyed by region
+// alone, so several enabled rows for one region competed for a single verdict. The
+// reference host had exactly that: region 900 with `https://derp.skynas.ru:443` and a
+// stale `https://derp.skynas.ru:8443`, and the dead row owned the region's health row —
 // the dashboard therefore hid the operator's own relay and recommended a public one
-// ~100 ms away. The prober now measures every row and keeps the best
-// (derphealth.BestPerRegion), which makes a stale row harmless; telling the
-// operator it exists is still the honest half, because only they can decide whether
-// to disable it.
+// ~100 ms away. The table now holds one row per RELAY (region_id, host), so both rows
+// are measured and displayed side by side and the stale one shows its own error. The
+// banner is kept because it is the inventory of a region's configured relays — only the
+// operator can decide whether the stale row should be removed — but it no longer
+// explains a lie.
 //
 // The URLs are returned sorted, so the banner is stable across renders.
 func enabledRelayRowsByRegion(db *sql.DB) (map[int][]string, error) {

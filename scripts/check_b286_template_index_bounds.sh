@@ -73,10 +73,19 @@ if grep -q '{{with .IPAddresses}}{{index . 0}}{{end}}' "$TPL/user/exit_nodes.htm
 else
   bad "B1: an address cell is not guarded"
 fi
-if grep -q '{{with .DERPs}}' "$TPL/admin/derp_dashboard.html"; then
+# RENEGOTIATED BY B457 (2026-10-31): this contract used to require a `{{with .DERPs}}`
+# guard around the recommendation, which read `(index . 0).Host`. The recommendation no
+# longer reads the slice at all — a region can hold several relays, so the banner names
+# the recommended row's own endpoint computed by the handler. "No index at all" is the
+# stronger property this block has always wanted, and the weaker guard-only form is
+# accepted too so a future template that legitimately needs the first row cannot fail
+# here just for being guarded.
+if ! grep -q 'index .DERPs' "$TPL/admin/derp_dashboard.html"; then
+  ok "B2: the DERP recommendation block does not index .DERPs at all (B457 moved it to the handler)"
+elif grep -q '{{with .DERPs}}{{index . 0}}' "$TPL/admin/derp_dashboard.html"; then
   ok "B2: the DERP recommendation block guards .DERPs"
 else
-  bad "B2: admin/derp_dashboard.html still indexes .DERPs unguarded"
+  bad "B2: admin/derp_dashboard.html indexes .DERPs without a guard"
 fi
 if grep -q '{{$pref := ""}}' "$TPL/exit_rules.html"; then
   ok "B3: the Exit Rules preferred-exit fallback is a plain string, not index 0"

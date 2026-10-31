@@ -91,10 +91,14 @@ func TestProbeOne_HandshakeOK(t *testing.T) {
 }
 
 func TestProbeAll_PersistCount(t *testing.T) {
+	// B457: the store is keyed by (region_id, url), and every row the prober sees in
+	// production carries a URL (FetchOwnDERPs skips rows that do not name an endpoint).
+	// The fixture therefore carries them too — a row without one is reported in the
+	// journal instead of being stored under an empty key.
 	derps := []DERPInfo{
-		{RegionID: 1, RegionCode: "ok1", Host: "127.0.0.1:1"},
-		{RegionID: 2, RegionCode: "ok2", Host: "127.0.0.1:2"},
-		{RegionID: 3, RegionCode: "ok3", Host: "127.0.0.1:3"},
+		{RegionID: 1, RegionCode: "ok1", Host: "127.0.0.1:1", URL: "https://127.0.0.1:1"},
+		{RegionID: 2, RegionCode: "ok2", Host: "127.0.0.1:2", URL: "https://127.0.0.1:2"},
+		{RegionID: 3, RegionCode: "ok3", Host: "127.0.0.1:3", URL: "https://127.0.0.1:3"},
 	}
 	persistCalls := atomic.Int64{}
 	persist := func(ctx context.Context, d DERPInfo, lat int, healthy bool, err error) error {

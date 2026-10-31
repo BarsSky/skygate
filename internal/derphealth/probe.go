@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -197,26 +198,26 @@ type ProbeResult struct {
 	Err       error
 }
 
-// ProbeAll probes every DERP in `derps` in parallel and persists ONE row per
-// REGION via `persist`. Bounded by ProbeAllTimeout so a slow set of DERPs doesn't
+// ProbeAll probes every DERP in `derps` in parallel and persists ONE row per RELAY
+// via `persist`. Bounded by probeTimeout per probe, so a slow set of DERPs doesn't
 // block the cron forever.
 //
 // `derps` is the list from FetchAllDERPs. `persist` is a callback the caller wires
 // to write the result into derp_health; decoupling lets unit tests use a fake
 // without standing up a *sql.DB.
 //
-// B317 — WHY NOT ONE PERSIST PER ROW. derp_health is keyed by region_id (one row
-// per region, enforced by derp_health_pkey), so persisting per row means the LAST
-// writer owns the region's verdict. The live consequence on the operator's host:
-// region 900 has two enabled rows (`derp.skynas.ru:443` and a stale `:8443`), the
-// dead one was persisted last, and the dashboard showed the local relay as
-// unreachable for hours while `skygate derp-probe` — which iterates the rows in a
-// different order — wrote 20 ms and made the banner flip. Two views of the same
-// table disagreed, and neither was wrong about its own probe.
-//
-// So: every row is still PROBED (the CLI and the journals want that), but the
-// region's row records the BEST outcome — a region is healthy when any of its
-// endpoints works, and among working endpoints the fastest wins.
+// B457 (2026-10-31) — WHY EVERY ROW IS PERSISTED NOW. derp_health is keyed by
+// (region_id, url), so each relay owns its own verdict. Before the key change it was
+// keyed by region_id alone and B317 had to persist only the BEST row per region,
+// because otherwise the last writer owned the region's verdict: on the reference host
+// region 900 held `derp.skynas.ru:443` and a stale `:8443`, the dead one was persisted
+// last, and the dashboard showed the operator's own relay as unreachable for hours
+// while `skygate derp-probe` (a different iteration order) wrote 20 ms and made the
+// banner flip. The collapse made the page self-consistent but UNANSWERABLE: with two
+// relays in one region, "which of them is broken" had no representation anywhere. The
+// schema now holds every relay, so the honest fix is to store every measurement and
+// keep BestPerRegion for the one place that genuinely needs a single answer — the
+// "recommended DERP" banner.
 func ProbeAll(ctx context.Context, derps []DERPInfo, httpClient *http.Client,
 	persist func(context.Context, DERPInfo, int, bool, error) error) []ProbeResult {
 	if httpClient == nil {
@@ -236,8 +237,18 @@ func ProbeAll(ctx context.Context, derps []DERPInfo, httpClient *http.Client,
 	}
 	wg.Wait()
 	if persist != nil {
-		for _, best := range BestPerRegion(results) {
-			_ = persist(ctx, best.Info, best.LatencyMs, best.Healthy, best.Err)
+		for _, r := range results {
+			if strings.TrimSpace(r.Info.URL) == "" {
+				// B457: the store is keyed by (region_id, url), so a row without a URL
+				// has no identity to store under — two such rows of one region would
+				// overwrite each other, which is the defect this block removes. It is
+				// not a probeable relay either (FetchOwnDERPs already skips rows whose
+				// URL is not an endpoint). Say so rather than dropping it silently: the
+				// dashboard will not show this measurement and the journal must say why.
+				log.Printf("derphealth: not storing region %d row %q — it has no URL, and the health table is keyed by (region_id, url)", r.Info.RegionID, r.Info.Host)
+				continue
+			}
+			_ = persist(ctx, r.Info, r.LatencyMs, r.Healthy, r.Err)
 		}
 	}
 	return results

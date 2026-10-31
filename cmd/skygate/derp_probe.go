@@ -102,11 +102,12 @@ func runDerpProbe(args []string) error {
 			r.Info.RegionID, typ, r.Info.RegionCode, r.Info.Host, lat, status)
 	}
 
-	// B317: say which verdict each region kept when a region has several rows.
-	// derp_health stores ONE row per region, so this table can show two rows for
-	// region 900 while the dashboard shows the single best of them — the difference
-	// between the two views used to look like a bug in the dashboard, and on the
-	// reference host it was: the dead `:8443` row was the one that got persisted.
+	// B317, renegotiated by B457: a region with several relays is no longer a
+	// discrepancy between this table and the dashboard. derp_health is keyed by
+	// (region_id, host) and stores EVERY relay's verdict, so the dashboard shows the
+	// same rows this table prints. What is still worth saying out loud is the
+	// recommendation: one region gets one "best", and the operator should know which
+	// relay that is when a region has more than one.
 	perRegion := map[int]int{}
 	for _, r := range results {
 		perRegion[r.Info.RegionID]++
@@ -120,7 +121,7 @@ func runDerpProbe(args []string) error {
 			verdict = fmt.Sprintf("%dms ok", best.LatencyMs)
 		}
 		fmt.Fprintf(os.Stdout,
-			"note: region %d has %d rows; the dashboard keeps the best one (%s @ %s)\n",
+			"note: region %d has %d rows; each keeps its own verdict, and the recommendation uses the best one (%s @ %s)\n",
 			best.Info.RegionID, perRegion[best.Info.RegionID], verdict, best.Info.URL)
 	}
 	return nil
