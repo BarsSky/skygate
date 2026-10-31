@@ -893,6 +893,54 @@
     </form>
   </div>
 
+  {{/* B456: the relay weights. B453 gave the engine a weight per relay and left the only way to set
+       it in SQL (global_settings prefix_owner.weights); this is the form. Numbers per relay, not one
+       text field, so a typo becomes a named refusal instead of an entry the parser throws away. The
+       two right-hand columns are the honest half: what each relay carries NOW (a weight never moves
+       a prefix that already has a healthy owner — B453's sticky rule) and the share of the next few
+       incoming prefixes, computed by the engine's own distribution function. */}}
+  {{with .Weights}}
+  <div id="relay-weights" style="margin-top:14px;padding:12px;border-radius:6px;background:var(--bg-elev);border:1px solid var(--border)">
+    <b>{{t "exit_nodes.weights.title"}}</b>
+    <div style="font-size:13px;color:var(--text-muted);margin:4px 0 8px 0">{{t "exit_nodes.weights.help" | safeHTML}}</div>
+    {{if .Rejected}}
+    <p style="margin:0 0 8px 0"><span class="tag tag-danger">{{t "exit_nodes.weights.rejected_badge"}}</span> <code>{{range $i, $r := .Rejected}}{{if $i}}, {{end}}{{$r}}{{end}}</code></p>
+    {{end}}
+    <form method="post" action="/admin/exit-nodes/relay-weights">
+      <div class="table-wrap">
+      <table>
+        <tr>
+          <th>{{t "exit_nodes.weights.col_relay"}}</th>
+          <th>{{t "exit_nodes.weights.col_weight"}}</th>
+          <th>{{t "exit_nodes.weights.col_load"}}</th>
+          <th>{{t "exit_nodes.weights.col_share"}} ({{.Target}})</th>
+        </tr>
+        {{range .Rows}}
+        <tr>
+          <td><code>{{.Relay}}</code>
+            {{if .Stored}}<span class="tag tag-info">{{t "exit_nodes.weights.stored"}}</span>
+            {{else}}<span class="tag" style="background:var(--bg-hover)" title="{{t "exit_nodes.weights.default_tip"}}">{{t "exit_nodes.weights.default"}}</span>{{end}}
+          </td>
+          <td><input type="number" name="w_{{.Relay}}" value="{{.Weight}}" min="1" max="99" step="1" style="width:80px" aria-label="{{t "exit_nodes.weights.col_weight"}}: {{.Relay}}"></td>
+          <td>{{.Load}}</td>
+          <td>{{.Share}}</td>
+        </tr>
+        {{end}}
+      </table>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button type="submit" class="btn btn-sm">{{t "exit_nodes.weights.save"}}</button>
+        <span style="font-size:11px;color:var(--text-muted)">{{t "exit_nodes.weights.save_hint"}}</span>
+      </div>
+    </form>
+    <form method="post" action="/admin/exit-nodes/relay-weights" style="margin-top:6px">
+      <input type="hidden" name="reset" value="1">
+      <button type="submit" class="btn btn-sm btn-secondary">{{t "exit_nodes.weights.reset"}}</button>
+    </form>
+    {{if .Raw}}<div style="font-size:11px;color:var(--text-muted);margin-top:6px">{{t "exit_nodes.weights.raw"}} <code>{{.Raw}}</code></div>{{end}}
+  </div>
+  {{end}}
+
   {{if .Groups}}
   {{range .Groups}}
   {{/* B277 follow-up: each group is a <details>/<summary> block (collapsible, open by
@@ -943,7 +991,7 @@
       <tr>
         <td class="col-check"><input type="checkbox" class="prefix-check" name="ids" value="{{.Prefix}}" form="multi-pin-form" onclick="updateMultiCount()"></td>
         <td><code>{{.Prefix}}</code></td>
-        <td><b>{{.ExitNode}}</b></td>
+        <td><b>{{.ExitNode}}</b>{{if gt .Weight 1}} <span class="tag tag-info" title="{{t "exit_nodes.prefix_owner.weight_tip"}}">×{{.Weight}}</span>{{end}}</td>
         <td>
           {{if eq .Source "manual"}}<span class="tag tag-success" title="{{t "exit_nodes.prefix_owner.source_manual_tip"}}">{{t "exit_nodes.prefix_owner.source_manual"}}</span>
           {{else if eq .Source "global"}}<span class="tag tag-warning" title="{{t "exit_nodes.prefix_owner.source_global_tip"}}">{{t "exit_nodes.prefix_owner.source_global"}}</span>

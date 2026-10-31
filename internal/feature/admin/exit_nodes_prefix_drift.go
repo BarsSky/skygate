@@ -71,6 +71,11 @@ type PrefixOwnerRow struct {
 	// B276: Unserved is true when NO relay advertises the prefix: the rule is
 	// dead weight (the ACL may grant it, but no route exists to carry it).
 	Unserved bool
+	// B456: the weight the owner relay is configured with (1 = default). It is
+	// shown next to the owner so a relay that is meant to carry twice the share
+	// is visible in the table it actually affects — and so "why does that one
+	// have more prefixes" has an answer on screen.
+	Weight int
 }
 
 // PrefixDriftStats is the B276 "why is this prefix not working" summary the exit
@@ -285,6 +290,12 @@ func (s *Service) loadPrefixOwnerRows() ([]PrefixOwnerRow, PrefixDriftStats) {
 		}
 	}
 	stats.Shown = len(out)
+	// B456: one read of the operator's weights for the whole table. The engine's own accessor is
+	// used so the number beside a relay is the number the reconcile pass will act on.
+	w, _ := prefixowner.LoadWeights(s.dbc())
+	for i := range out {
+		out[i].Weight = w.Of(strings.TrimSpace(out[i].ExitNode))
+	}
 	s.fillPolicyDrift(&stats)
 	s.fillTransportState(&stats, all)
 	return out, stats

@@ -66,6 +66,11 @@ type PrefixAdminView struct {
 	// ActivePrefixes is how many rows the table holds after the prune — the number
 	// the operator's actions actually cover.
 	ActivePrefixes int
+	// B456: the relay weights editor, rendered inside the same card because it is
+	// the same decision ("which relay carries what"). It is built from the FULL row
+	// set, not from what the drift filter left visible: the load column must
+	// describe the network even when the operator is looking at the problems only.
+	Weights RelayWeightsView
 }
 
 // prefixClaimInfo is what the grouping needs to know about one prefix: which domains
@@ -293,6 +298,9 @@ func (s *Service) loadPrefixAdminView(groupBy string, onlyDrift bool) PrefixAdmi
 		view.GroupBy = "owner"
 	}
 	view.ActivePrefixes = len(rows)
+	// B456: the weights card is built BEFORE the drift filter trims `rows`, so its
+	// "prefixes now" column counts the whole table.
+	view.Weights = s.loadRelayWeightsView(rows)
 	if onlyDrift {
 		drifted := make([]PrefixOwnerRow, 0, len(rows))
 		for _, r := range rows {

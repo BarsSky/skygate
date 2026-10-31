@@ -1084,4 +1084,8 @@ func registerRoutes(
 	// current assignment table (the sync paths do this automatically on an
 	// ownership change; the button covers a manual pin or a failed sync).
 	mux.Handle("POST /admin/exit-nodes/acl-resync", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeACLResync)))
+	// B456: the weight editor B453 left open. The weights were settable only through SQL
+	// (global_settings key prefix_owner.weights); this route is the form that writes them,
+	// refusing the whole submit when one cell is not a weight.
+	mux.Handle("POST /admin/exit-nodes/relay-weights", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeRelayWeights)))
 }

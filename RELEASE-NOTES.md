@@ -1,5 +1,50 @@
 # Skygate release notes
 
+## v1.5.208 — the weight editor: the setting became a control (B456)
+
+**Date:** 2026-10-31 · **Base:** `v1.5.207` → this tag · **Compatibility:** none (no schema change, no behaviour change until a weight is set).
+
+### B456 — «веса нагрузки на relay», the last open item of B275.1
+
+B453 taught the assignment engine to prefer the least load **relative to a relay's weight**, read
+from `global_settings` key `prefix_owner.weights` (`relay=weight,relay=weight`). The only way to set
+that value was SQL — and a setting nobody can change is a setting that does not exist. The editor is
+the missing half.
+
+It is a **form of numbers, one per relay**, not one text field: the stored string stays the same, but
+the operator never has to remember the syntax, and a typo becomes a named refusal instead of an entry
+the parser quietly drops.
+
+Three properties are the point:
+
+* **A refusal saves nothing.** One bad cell (`0`, `-2`, `много`, `100`) rejects the WHOLE submit and
+  names the relay and the value. Saving the good half would leave you believing a weight is in force
+  when it is not — the same class as a check that reports success while verifying nothing.
+* **The form says what it does not do.** A weight does **not** move prefixes that already have a
+  healthy owner (B453's sticky rule): it only decides where the **next** prefixes land. The card shows
+  both halves side by side — how many prefixes each relay carries **now** and what share of the next
+  10 it would take — and the confirmation repeats it after saving, so "I raised emilia and nothing
+  moved" is answered before it is asked. The share is computed by the engine's own
+  `prefixowner.WeightDistribution`, so the screen cannot drift from the engine.
+* **The engine reads the write back.** After `db.SetGlobalSetting` the handler re-reads the value
+  through `prefixowner.LoadWeights` — the parser the reconcile pass uses — and refuses to claim
+  success on a mismatch. A write the engine did not read is not a write.
+
+Also on the card: an explicit **reset** (even split again, one click instead of typing `1` everywhere),
+and the entry the parser **rejected** is displayed rather than replaced by the default — a rejected
+line means a relay is running at weight 1 while somebody believes otherwise. In the prefix table the
+owner now carries its effective weight (`×2`) and only when it is not 1.
+
+`scripts/check_b456_relay_weights_editor.sh` — 12 contracts; `internal/feature/admin` payload tests
+(even split, weighted share, the refusal table, a round trip through the engine's parser) and three
+render tests in `internal/handlers` that execute the real `exit_nodes.html` (card present with the
+numbers, absent without a view, rejected entry visible).
+
+### Upgrading
+
+Nothing to configure and nothing changes until you set a weight: a missing setting is the even split,
+exactly as before. After the upgrade open `/admin/exit-nodes` → «Веса нагрузки на релеи».
+
 ## v1.5.207 — what DNS cannot name: a closed registry of measured service ranges, starting with Discord voice (B455)
 
 **Date:** 2026-10-30 · **Base:** `v1.5.206` → this tag · **Compatibility:** none (no schema change).

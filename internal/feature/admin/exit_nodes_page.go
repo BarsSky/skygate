@@ -384,10 +384,14 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		// B276: the view returns the drifted/pinned rows (not all ~1500) plus the
 		// summary the page needs to say whether the LIVE policy still pins the old
 		// relay — the failure that used to be invisible.
-		"PrefixRows":     prefixRows,
-		"PrefixStats":    prefixStats,
-		"PrefixAdmin":    prefixAdmin,
-		"RelayChoices":   relayChoicesFor(nodes),
+		"PrefixRows":   prefixRows,
+		"PrefixStats":  prefixStats,
+		"PrefixAdmin":  prefixAdmin,
+		"RelayChoices": relayChoicesFor(nodes),
+		// B456: the weights editor lives in the prefix card (same decision: which relay carries
+		// what). It is built with the rows, so its "prefixes now" column and the table above it
+		// are one snapshot.
+		"Weights":        prefixAdmin.Weights,
 		"MonitorRunning": s.ExitNodeMonitor != nil,
 		"FlashSuccess":   r.URL.Query().Get("ok"),
 		"FlashError":     firstNonEmptyStr(r.URL.Query().Get("err"), listErrMsg), // 2026-07-20: v0.20.0 — headscale-update-monitor
