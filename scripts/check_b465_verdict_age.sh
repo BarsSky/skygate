@@ -201,10 +201,10 @@ if has "$CMD" 'installNotifierUnlessReadOnly' && has "$CMD" 'Telegram notifier N
 else
   bad "F2: a copy still gets a live notifier"
 fi
-if has "$SCHED" 'if config.ReadOnlyCopy() {' && has "$SCHED" 'every background scheduler is SKIPPED'; then
-  ok "F3: a read-only copy starts no scheduler at all (the single choke point)"
+if has "$SCHED" 'if config.ReadOnlyCopy() {' && has "$SCHED" 'every scheduler wired HERE is SKIPPED'; then
+  ok "F3: a read-only copy starts nothing in the scheduler-wiring function, and the line says only that"
 else
-  bad "F3: a copy still runs the periodic passes"
+  bad "F3: a copy still runs the passes wired there, or the line over-claims again"
 fi
 # F2b (measured on the live restored copy, 2026-11-12 21:09): the startup message promised
 # "starting getUpdates loop" while the guard below it skipped rn.Run, so the log said the fix
@@ -228,6 +228,44 @@ if [ -n "$_e_guard" ] && [ -n "$_e_dns" ] && [ -n "$_e_pref" ] \
   ok "F3b: the two loops that start BEFORE the choke point sit inside the same read-only gate"
 else
   bad "F3b: a copy still starts the DNS autoupdater / the preferred-exit reconciler"
+fi
+# F4 (the same live measurement, one step further): a LIST OF CALL SITES IS NOT A CHOKE POINT.
+# After F3b was in place the copy still started, on both sides of the guarded functions,
+# `reconcile: cron enabled` (writes portal_users↔headscale links), `update-scheduler: ARMED`
+# (follows the COPIED database's schedule and could update this replica) and
+# `backup-scheduler: started` (dumps the copy's DB into the operator's bucket). The decision
+# therefore moved onto the CONFIGURATION, which every start site already consults:
+# Config.ApplyReadOnlyCopy() clears every writer switch, main() calls it right after
+# config.Load(), and the two DB-driven schedulers (update, backup) have their own guards
+# because they do not consult a cfg switch to decide whether to ACT.
+if [ "$(grep -c 'func (c \*Config) ApplyReadOnlyCopy' "$CFG")" -ge 1 ] \
+   && [ "$(grep -c 'cfg.ApplyReadOnlyCopy()' "$CMD")" -ge 1 ]; then
+  ok "F4: one early decision on the CONFIGURATION covers the start sites scattered across main()"
+else
+  bad "F4: the read-only gate still depends on remembering every call site"
+fi
+_f4_switch=0
+for _w in DNSAutoUpdateEnabled PrefReconcileInterval NodeDiscoveryInterval ExitNodeCheckInterval \
+          HeadscalePollInterval ReconcileHeadscaleUsers ExpireWatchEnabled UpdateScheduleEnabled \
+          BackupVerifyInAppEnabled CleanupSmokeMeshInAppEnabled CertSyncEnabled \
+          TokenAutoRotateEnabled KeyNotifyEnabled HAEnabled; do
+  grep -q "c\.$_w" "$CFG" || _f4_switch=1
+done
+if [ "$_f4_switch" -eq 0 ]; then
+  ok "F4b: every writer switch that gates a background pass is named in the disabled set"
+else
+  bad "F4b: a writer switch is missing from ApplyReadOnlyCopy"
+fi
+if has internal/config/readonly_b465_test.go 'func TestB465_ApplyReadOnlyCopyDisablesEveryWriter' \
+   && has internal/config/readonly_b465_test.go 'func TestB465_ApplyReadOnlyCopyIsANoOpOnAnActingHost'; then
+  ok "F4c: the decision is pinned by tests in both directions (copy = all off, acting host = untouched)"
+else
+  bad "F4c: nothing pins ApplyReadOnlyCopy"
+fi
+if has "$CMD" 'update-scheduler NOT armed' && has "$CMD" 'backup-scheduler NOT started'; then
+  ok "F4d: the two schedulers that decide from the DATABASE have their own guard"
+else
+  bad "F4d: a database-driven scheduler still fires on a copy"
 fi
 
 # --- G: the tailscale probe speaks for native installs too --------------------

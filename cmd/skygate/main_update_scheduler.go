@@ -50,6 +50,18 @@ import (
 // scheduler unconditionally, so the only thing left that decides whether an
 // update happens is the database (plus the release check inside the tick).
 func wireUpdateScheduler(ctx context.Context, d *db.ResettableDB, app *handlers.App, cfg *config.Config) {
+	// B465: a read-only copy must not arm this one even though it is "armed
+	// unconditionally" — the DATABASE decides whether it fires, and a copy carries the
+	// primary's database, so the answer would be "yes, update yourself at 08:00". Measured
+	// on the live restored copy: the switch was OFF in that copy's settings, so nothing
+	// happened, and that is luck rather than a guarantee. The configuration gate
+	// (config.ApplyReadOnlyCopy) already clears cfg.UpdateScheduleEnabled, but this
+	// scheduler does not consult that field to decide whether to ACT, so the guard is here.
+	if config.ReadOnlyCopy() {
+		log.Printf("🛑 READ-ONLY COPY: update-scheduler NOT armed (an armed scheduler follows the COPIED database's schedule, so this replica could update itself at the primary's time)")
+		update.SetSchedulerArmed(false, "read-only copy")
+		return
+	}
 	schedChecker := &update.Checker{
 		Owner:          cfg.GitHubOwner,
 		Repo:           cfg.GitHubRepo,

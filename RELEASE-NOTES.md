@@ -46,13 +46,15 @@ were wrong at once:
    (`UpsertExitServer`), so a malformed string used to be written back into the table for good. The live shape
    is pinned with a detector for the exact malformation.
 5. **`SKYGATE_READONLY_COPY=1` makes a replica silent.** The panel and the API keep working; the process stops
-   writing to the world: no Telegram notifier, no bot loop, and **no background scheduler at all** (relay
-   health, exit-node sync, DNS auto-update, discovery, self-update, backups, certsync). Each suppressed layer
-   is named in the boot log. Without it, a restored copy inherits the primary's token, admin binding and DNS
-   credentials and starts acting for it — which is exactly what produced screenshot 2.
+   writing to the world: no Telegram notifier, no bot loop, and no background pass that writes — relay health,
+   exit-node sync, DNS auto-update, discovery, the preferred-exit reconciler, self-update, backups, certsync,
+   token rotation, key-expiry notices, the HA chain and the UI-triggered passes behind them. Every suppressed
+   pass is named in the boot log (one line, with the count). Without it, a restored copy inherits the primary's
+   token, admin binding and DNS credentials and starts acting for it — which is exactly what produced
+   screenshot 2.
 
    The flag was then measured on the real restored copy (a second host, the v1.5.212 binary, 2026-11-12
-   21:09 UTC), which found two defects in the fix itself:
+   21:09 UTC), which found **three** defects in the fix itself:
 
    * a log line still *promised* the loop — «🤖 Telegram bot token set … starting getUpdates loop», printed
      unconditionally just above the guard that skips `rn.Run`. The code was right and the **log lied**, which
@@ -61,13 +63,23 @@ were wrong at once:
    * eleven milliseconds later the same process logged `autoupdater: starting (interval=5m0s)` and
      `preferred-reconciler: starting (interval=1h0m0s, live=true)` — right after printing «every background
      scheduler is SKIPPED». Both were started from `main()` **above** `wireOptionalSchedulers`, so that
-     function's early return was not the choke point the block claimed: on that copy the DNS auto-update run
-     was skipped only because `dns.autoupdate_enabled` happened to be `false`, and the reconciler pass
-     repaired nothing by luck (`created=0 updated=0`). With the flag on, a rehearsal copy would have rewritten
-     the operator's DNS records every five minutes; a reconciler pass that found work would have written
-     `device_exit_node_prefs` **and** pushed the regenerated policy into its own headscale. Both loops now live
-     in `wireEarlySchedulers()` (`cmd/skygate/main_schedulers.go`), whose first statement is the same gate —
-     and which shrank `main.go` by 42 lines.
+     function's early return was not the choke point the block claimed. They now live in
+     `wireEarlySchedulers()`, whose first statement is the same gate (which also shrank `main.go` by 42 lines);
+   * and the choke point was still fictitious, because a list of call sites is not a gate: the copy also started
+     `reconcile: cron enabled` (writes `portal_users`↔headscale links), `update-scheduler: ARMED` and
+     `backup-scheduler: started`. Both of the last two decide from the **copied database**, so on that copy they
+     were idle only because the copied rows said so — with them enabled, a rehearsal copy would have updated
+     itself at the primary's time and uploaded a dump of its own DB into the operator's backup bucket. The
+     decision therefore moved onto the **configuration**, which every start site already consults:
+     `Config.ApplyReadOnlyCopy()` clears every writer switch in one place and returns the names for the boot
+     log, `main()` calls it immediately after `config.Load()`, and the two database-driven schedulers have their
+     own guard because they do not consult a switch to decide whether to act.
+
+   What a copy still runs on purpose: the db-health sampler, the dbmigrate watchdog, the release monitor (a
+   GitHub GET that keeps the panel honest) and the DERP certificate synchroniser (reads the operator's S3,
+   writes only this copy's settings). Everything else about the flag is now pinned by tests:
+   `TestB465_ApplyReadOnlyCopyDisablesEveryWriter`, `…IsANoOpOnAnActingHost`, `…IsIdempotent` and the four
+   `…ReadOnlyCopyAcceptsTheDocumentedSpellings` cases.
 
 Also fixed here: the `/readyz` tailscale probe no longer starts with a container-only guard, so a **native**
 install reports `BackendState=Running` instead of the permanent

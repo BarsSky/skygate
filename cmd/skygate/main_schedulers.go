@@ -135,21 +135,26 @@ func wireOptionalSchedulers(ctx context.Context, d *db.ResettableDB, app *handle
 	// difference is written down (B422's whole point).
 	telegram.LogAlertTargetAtBoot(db.DBCurrent(d))
 
-	// B465 — A READ-ONLY COPY STARTS NO SCHEDULER AT ALL.
+	// B465 — A READ-ONLY COPY STARTS NOTHING THAT WRITES.
 	//
 	// Measured live (2026-11-12): a skygate restored from the primary's database, brought up
 	// only to rehearse a failover, posted REAL Telegram alerts into the operator's chat
 	// within the hour («пин на exit-узел застарел … состояние узла: offline» about a relay
 	// that was online — its copy of the tailnet never connects to it). Silencing one path
-	// was not enough and the list of paths keeps growing, so the switch is HERE: the process
-	// still serves the PANEL (which is what an operator wants to inspect on a copy) and
-	// contributes nothing to the world.
+	// was not enough and the list of paths keeps growing, so the process still serves the
+	// PANEL (which is what an operator wants to inspect on a copy) and contributes nothing
+	// to the world.
 	//
-	// This is the single choke point for the periodic passes: relay health, exit-node sync,
-	// DNS re-resolution, discovery, the update scheduler, backups, certsync. The notifier is
-	// silenced separately in main.go (app.Notifier stays the no-op).
+	// This is the choke point for the passes wired INSIDE this function (mesh cleanup, token
+	// rotation, key-expiry notify, discovery, the HA chain). It is NOT the choke point for the
+	// rest of the boot: the users reconcile cron, the DNS auto-updater, the preferred-exit
+	// reconciler, the exit-node/headscale monitors, the update scheduler, the backup schedulers
+	// and certsync are started elsewhere in main(), and on the live restored copy they ran for
+	// exactly that reason. The one early decision that covers them all is
+	// config.ApplyReadOnlyCopy() in main() — this return is the second line of defence for the
+	// passes that live here, and the wording below says only what this function can promise.
 	if config.ReadOnlyCopy() {
-		log.Printf("🛑 READ-ONLY COPY: every background scheduler is SKIPPED (health, exit-node sync, DNS, discovery, update, backup, certsync). The panel is live; this process writes nothing. Unset SKYGATE_READONLY_COPY on the host that is supposed to act.")
+		log.Printf("🛑 READ-ONLY COPY: every scheduler wired HERE is SKIPPED (mesh cleanup, token rotation, key-expiry notify, discovery, the HA chain). The panel is live and this function starts nothing; the configuration switches are already off too (see the READ-ONLY COPY line at boot).")
 		return
 	}
 

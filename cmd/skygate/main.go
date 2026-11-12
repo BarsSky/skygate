@@ -447,6 +447,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
+	// B465 — the ONE early decision of a read-only copy. Called here, before any service or
+	// scheduler is constructed, because the start sites are scattered across this whole
+	// function: the users reconcile cron, the DNS auto-updater, the preferred-exit reconciler,
+	// the exit-node and headscale monitors, the update scheduler, the backup schedulers,
+	// certsync and the HA chain all sit at different points of it, and the first shape of this
+	// fix (a check inside the two scheduler-wiring functions at the END) provably missed most of
+	// them on the live restored copy. See config.ApplyReadOnlyCopy for the measurement.
+	if off := cfg.ApplyReadOnlyCopy(); off != nil {
+		log.Printf("🛑 READ-ONLY COPY: %d writer pass(es) DISABLED in the configuration: %s — this process serves the panel and nothing else", len(off), strings.Join(off, ", "))
+	}
 	// B269: phase tracking for the whole startup sequence. A native install
 	// runs config → DB → migrations → services → routes → handover; any
 	// block in that window produced a process that systemd calls "active"
@@ -2078,15 +2088,26 @@ func main() {
 
 	// In-app backup scheduler: the config loader must be wired FIRST so Unmount (called by
 	// RunBackup on its way out) re-reads the mountpoint; LoadWithKey (B404) decrypts.
-	backup.SetConfigLoader(func() (*backup.Config, error) {
-		return backup.LoadWithKey(d.DB, cfg.SecretKeyHex)
-	})
-	backupSched := &backup.Scheduler{
-		DB:       d,
-		Notifier: schedulerNotifierSink(app.Notifier),
+	//
+	// B465: NOT on a read-only copy. The scheduler reads its schedule from the DATABASE
+	// (backup.LoadWithKey), so it follows the COPIED settings, not this host's — live case:
+	// the restored copy booted with `backup-scheduler: started (enabled=false, …)` only
+	// because the copied row said disabled. With it enabled there, the copy would dump its
+	// own database and upload it into the primary's S3 prefix. The configuration gate cannot
+	// help here (the decision lives in the DB), so the guard is at the start site.
+	if config.ReadOnlyCopy() {
+		log.Printf("🛑 READ-ONLY COPY: backup-scheduler NOT started (its schedule comes from the COPIED database, so it would dump this copy's DB into the operator's backup bucket)")
+	} else {
+		backup.SetConfigLoader(func() (*backup.Config, error) {
+			return backup.LoadWithKey(d.DB, cfg.SecretKeyHex)
+		})
+		backupSched := &backup.Scheduler{
+			DB:       d,
+			Notifier: schedulerNotifierSink(app.Notifier),
+		}
+		logBackupSchedulerStartup(d.DB, cfg.SecretKeyHex) // B446: says enabled/schedule/last_run at boot
+		backupSched.Start(ctx)
 	}
-	logBackupSchedulerStartup(d.DB, cfg.SecretKeyHex) // B446: says enabled/schedule/last_run at boot
-	backupSched.Start(ctx)
 
 	// 2026-07-14: Этап 14 v8 — release-monitor goroutine.
 	// Polls GitHub Releases once an hour and emits a

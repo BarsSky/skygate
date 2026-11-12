@@ -1078,10 +1078,11 @@ func getDuration(key string, def time.Duration) time.Duration {
 // live on 2026-11-12, when a restored copy announced a "stale pin" for a relay that was
 // online, because the copy's tailnet never connects to it.
 //
-// What it suppresses is decided by the callers, and they are two: the notifier/bot wiring
-// in cmd/skygate/main.go and every background scheduler in
-// cmd/skygate/main_schedulers.go. The panel keeps working on purpose — inspecting the copy
-// is the reason it is running at all.
+// What it suppresses is decided by the callers: the notifier/bot wiring in
+// cmd/skygate/main.go, the two loops in main_schedulers.go (the early ones and the tail), and
+// — the real choke point — Config.ApplyReadOnlyCopy, which switches off every writer in the
+// loaded configuration so the start sites that were already written cannot fire either. The
+// panel keeps working on purpose — inspecting the copy is the reason it is running at all.
 //
 // Read from the environment on every call (not once into Config) so a test can set it, and
 // so the answer cannot drift from what the operator exported.
@@ -1091,6 +1092,60 @@ func ReadOnlyCopy() bool {
 		return true
 	}
 	return false
+}
+
+// ApplyReadOnlyCopy switches every WRITER off in the loaded configuration and reports the
+// names of the passes it disabled, so a RESTORED COPY cannot act even though the start sites
+// were written long before anybody thought of a read-only mode (B465 follow-up, 2026-11-12).
+//
+// WHY HERE AND NOT AT EACH START SITE. The first shape of B465 put the check inside the two
+// scheduler-wiring functions at the END of main(). A live restored copy then proved the claim
+// wrong within a minute: the guarded line «every background scheduler is SKIPPED (…, update,
+// backup, certsync)» was printed and, on both sides of it, the process started
+//
+//	reconcile: cron enabled (interval=1h0m0s, …)        — writes portal_users↔headscale links
+//	autoupdater: starting (interval=5m0s)               — writes the operator's DNS
+//	preferred-reconciler: starting (…, live=true)       — writes prefs + the ACL policy
+//	update-scheduler: ARMED                             — may self-update the process
+//	backup-scheduler: started (enabled=false, …)        — dumps the DB and uploads it to S3
+//
+// because main() is one long linear function and each of those lives ABOVE or BELOW the
+// function that carried the guard. A list of call sites is not a choke point; the CONFIGURATION
+// is, because every start site already consults it. So a copy is configured as if the operator
+// had switched every writer off — in one place, with one test.
+//
+// The passes deliberately left running are the ones that only READ this copy: the db-health
+// sampler, the dbmigrate watchdog, the release monitor (a GitHub GET that keeps the panel's
+// "update available" banner honest) and the DERP certificate synchroniser (it reads the
+// operator's S3 bucket and writes only this copy's own settings).
+func (c *Config) ApplyReadOnlyCopy() []string {
+	if c == nil || !ReadOnlyCopy() {
+		return nil
+	}
+	var off []string
+	disable := func(name string, isSet bool, unset func()) {
+		if isSet {
+			unset()
+			off = append(off, name)
+		}
+	}
+	disable("dns-autoupdate", c.DNSAutoUpdateEnabled, func() { c.DNSAutoUpdateEnabled = false })
+	disable("preferred-reconciler", c.PrefReconcileInterval > 0, func() { c.PrefReconcileInterval = 0 })
+	disable("node-discovery", c.NodeDiscoveryInterval > 0, func() { c.NodeDiscoveryInterval = 0 })
+	disable("domain-route-sync", c.StaggerInterval > 0, func() { c.StaggerInterval = 0 })
+	disable("exit-node-monitor", c.ExitNodeCheckInterval > 0, func() { c.ExitNodeCheckInterval = 0 })
+	disable("headscale-update-monitor", c.HeadscalePollInterval > 0, func() { c.HeadscalePollInterval = 0 })
+	disable("reconcile-headscale-users", c.ReconcileHeadscaleUsers, func() { c.ReconcileHeadscaleUsers = false })
+	disable("expire-watch", c.ExpireWatchEnabled, func() { c.ExpireWatchEnabled = false; c.ExpireWatchInterval = 0 })
+	disable("update-check", c.UpdateCheckEnabled, func() { c.UpdateCheckEnabled = false })
+	disable("update-scheduler", c.UpdateScheduleEnabled, func() { c.UpdateScheduleEnabled = false })
+	disable("backup-verify", c.BackupVerifyInAppEnabled, func() { c.BackupVerifyInAppEnabled = false })
+	disable("smoke-mesh-cleanup", c.CleanupSmokeMeshInAppEnabled, func() { c.CleanupSmokeMeshInAppEnabled = false })
+	disable("certsync", c.CertSyncEnabled, func() { c.CertSyncEnabled = false; c.CertSyncInterval = 0 })
+	disable("token-rotate", c.TokenAutoRotateEnabled, func() { c.TokenAutoRotateEnabled = false })
+	disable("key-expiry-notify", c.KeyNotifyEnabled, func() { c.KeyNotifyEnabled = false })
+	disable("ha-chain", c.HAEnabled, func() { c.HAEnabled = false })
+	return off
 }
 
 // 2026-08-18: v1.5.0 (B145) — HA chain + elector + DNS
