@@ -51,14 +51,34 @@ were wrong at once:
    is named in the boot log. Without it, a restored copy inherits the primary's token, admin binding and DNS
    credentials and starts acting for it — which is exactly what produced screenshot 2.
 
+   The flag was then measured on the real restored copy (a second host, the v1.5.212 binary, 2026-11-12
+   21:09 UTC), which found two defects in the fix itself:
+
+   * a log line still *promised* the loop — «🤖 Telegram bot token set … starting getUpdates loop», printed
+     unconditionally just above the guard that skips `rn.Run`. The code was right and the **log lied**, which
+     is how an operator concludes «the fix is not deployed». `logTelegramStartup()` now puts the read-only
+     branch first and says «Telegram bot loop NOT started»;
+   * eleven milliseconds later the same process logged `autoupdater: starting (interval=5m0s)` and
+     `preferred-reconciler: starting (interval=1h0m0s, live=true)` — right after printing «every background
+     scheduler is SKIPPED». Both were started from `main()` **above** `wireOptionalSchedulers`, so that
+     function's early return was not the choke point the block claimed: on that copy the DNS auto-update run
+     was skipped only because `dns.autoupdate_enabled` happened to be `false`, and the reconciler pass
+     repaired nothing by luck (`created=0 updated=0`). With the flag on, a rehearsal copy would have rewritten
+     the operator's DNS records every five minutes; a reconciler pass that found work would have written
+     `device_exit_node_prefs` **and** pushed the regenerated policy into its own headscale. Both loops now live
+     in `wireEarlySchedulers()` (`cmd/skygate/main_schedulers.go`), whose first statement is the same gate —
+     and which shrank `main.go` by 42 lines.
+
 Also fixed here: the `/readyz` tailscale probe no longer starts with a container-only guard, so a **native**
 install reports `BackendState=Running` instead of the permanent
 `tailscaled not running in container (non-RF mode)` and a `dependencies_healthy=false` on a correct host; a
 host with no Tailscale client at all is `skipped`, not broken.
 
 **Contract renegotiations, not weakenings:** B356's fixture now has to say *when* the relay was measured
-("measured unusable" became "measured unusable AND recently"), and B412's `SSHTarget()` expectations are
-unchanged — the block pins that the *input* may carry the port, not that the output may hide it.
+("measured unusable" became "measured unusable AND recently"), B412's `SSHTarget()` expectations are
+unchanged — the block pins that the *input* may carry the port, not that the output may hide it — and
+B229's contract E now reads the `cmd/skygate` **surface** (the wiring moved to `main_schedulers.go`; the
+property it asserts did not change).
 
 ### Upgrade notes
 

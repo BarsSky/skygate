@@ -12,9 +12,11 @@
 package main
 
 import (
+	"database/sql"
 	"log"
 
 	"skygate/internal/config"
+	"skygate/internal/db"
 	"skygate/internal/handlers"
 	"skygate/internal/telegram"
 )
@@ -33,4 +35,32 @@ func installNotifierUnlessReadOnly(app *handlers.App, rn *telegram.RealNotifier)
 	}
 	app.Notifier = rn
 	return false
+}
+
+// logTelegramStartup announces what the bot will actually do in THIS process.
+//
+// B465 follow-up, measured on the live restored copy (svyatoslava, 2026-11-12 21:09):
+// the old unconditional three-branch message printed
+// «🤖 Telegram bot token set (no chat_id yet — receive-only); starting getUpdates loop»
+// while the very next statement skipped `rn.Run` because the process was read-only — a
+// log line promising the one thing the fix exists to prevent. Nothing polled (no getUpdates
+// traffic appeared afterwards), so the CODE was right and the LOG lied: that is the same
+// defect class as the stale relay verdict, one level up, and it is what an operator would
+// have concluded "the fix is not deployed" from.
+//
+// So the read-only branch comes FIRST and says what is true; the configured/unconfigured
+// split keeps its original wording on a normal host (B391/B422's alert-path contracts read
+// the ledger, not this line).
+func logTelegramStartup(d *sql.DB, readOnlyCopy bool) {
+	if readOnlyCopy {
+		log.Printf("🛑 READ-ONLY COPY: Telegram bot loop NOT started (no command is answered by this replica; the stored token is left untouched)")
+		return
+	}
+	if _, _, ok, _ := db.LoadTelegramSendTarget(d); ok {
+		log.Printf("🤖 Telegram bot fully configured (token + chat_id); starting getUpdates loop")
+	} else if _, _, ok, _ := db.LoadTelegramToken(d); ok {
+		log.Printf("🤖 Telegram bot token set (no chat_id yet — receive-only); starting getUpdates loop. Use the 'Send test' button on /admin/telegram to populate chat_id.")
+	} else {
+		log.Printf("🤖 Telegram bot not configured; hot-swap armed (will re-check DB on every send/poll)")
+	}
 }

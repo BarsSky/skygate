@@ -1995,13 +1995,11 @@ func main() {
 	// admin saves the token (chat_id is needed only
 	// for outgoing notifications, not for receiving
 	// commands).
-	if _, _, ok, _ := db.LoadTelegramSendTarget(d.DB); ok {
-		log.Printf("🤖 Telegram bot fully configured (token + chat_id); starting getUpdates loop")
-	} else if _, _, ok, _ := db.LoadTelegramToken(d.DB); ok {
-		log.Printf("🤖 Telegram bot token set (no chat_id yet — receive-only); starting getUpdates loop. Use the 'Send test' button on /admin/telegram to populate chat_id.")
-	} else {
-		log.Printf("🤖 Telegram bot not configured; hot-swap armed (will re-check DB on every send/poll)")
-	}
+	//
+	// B465: the message moved into logTelegramStartup (readonly_b465.go) because on a
+	// read-only copy it promised a loop this process does not start. It is also where the
+	// B372 size ceiling wants it: main.go only ever shrinks.
+	logTelegramStartup(d.DB, readOnlyCopy)
 	// B465: on a read-only copy the bot loop is not started at all (a copy that polls
 	// getUpdates answers the operator's commands from the WRONG installation). The reasoning
 	// and the live measurement live in readonly_b465.go.
@@ -2039,56 +2037,14 @@ func main() {
 		}
 	}()
 
-	// 2026-07-07: issue #6 — start domain auto-updater goroutine.
-	// 2026-07-31: v0.32.13 — gated on cfg.AutoUpdateEnabled
-	// (env SKYGATE_AUTO_UPDATE_ENABLED). Pre-fix the goroutine
-	// launched unconditionally and its synchronous initial
-	// `DomainAutoUpdater()` call held the SQLite WAL write
-	// lock for 30+ seconds, which wedged every other query
-	// with `context deadline exceeded` (the same root cause
-	// as the http.StatusGatewayTimeout-on-https postmortem — see RELEASE-NOTES.md
-	// v0.32.13). The /admin/update button still works for
-	// manual deploys regardless of this gate.
-	//
-	// 2026-08-06 v0.33.1.18 — fix: cfg.AutoUpdateEnabled is the
-	// flag for the skygate SELF-UPDATE banner on /admin/update,
-	// not for the DNS-resolve autoupdater. The two were
-	// conflated in v0.32.13, which meant any operator who
-	// turned off skygate self-updates (a sane default for
-	// production) accidentally also turned off DNS-resolution
-	// of their domain rules → /32 entries rotted and the
-	// operator's rules silently stopped matching the IPs
-	// Cloudflare (or any CDN) rotated to. SKYGATE_DNS_AUTOUPDATE_ENABLED
-	// is the new gate; default true (preserves the v0.32.13+
-	// behaviour of "DNS autoupdater ON by default"). The
-	// /admin/system_tests page exposes a DB-backed toggle
-	// for this flag (overrides env on next skygate start
-	// AND on the next autoupdate tick).
-	if cfg.DNSAutoUpdateEnabled {
-		go app.RunDomainAutoUpdater(ctx, cfg.DNSAutoCheck)
-	} else {
-		log.Printf("autoupdater: SKYGATE_DNS_AUTOUPDATE_ENABLED=false, skipping startup goroutine (set true to re-enable)")
-	}
-
-	// 2026-09-03: v1.5.2 (B229) — preferred-exit
-	// auto-reconciler. Runs the per-(user, device)
-	// reconciliation logic on a 1h ticker so that
-	// `device_rules` rows paired with a missing or stale
-	// `device_exit_node_prefs` row get the missing
-	// `via:` clause attached to the per-CIDR ACL
-	// grants. Without this, the operator's "cyborg →
-	// emilia → youtube" rule was ALLOWED but not PINNED
-	// (Tailscale routed through the default exit, not
-	// emilia). Default behavior: read-only / dry-run
-	// (logs what would change without writing). Flip
-	// SKYGATE_PREFERRED_RECONCILER_LIVE=true to enable
-	// writes. The flag is checked on every tick so the
-	// operator can flip it without a redeploy.
-	if cfg.PrefReconcileInterval > 0 {
-		go app.RunPreferredExitReconciler(ctx, app.Notifier, cfg.PrefReconcileInterval)
-	} else {
-		log.Printf("preferred-reconciler: SKYGATE_PREFERRED_RECONCILE_INTERVAL=0, skipping startup goroutine (set to a positive duration to re-enable)")
-	}
+	// B465 follow-up: the DNS auto-updater and the preferred-exit reconciler used to be
+	// started right here — ABOVE wireOptionalSchedulers, so that function's read-only early
+	// return did not cover them (measured: `autoupdater: starting` and
+	// `preferred-reconciler: starting (live=true)` on a copy that had just logged «every
+	// background scheduler is SKIPPED»). Both blocks moved into wireEarlySchedulers
+	// (main_schedulers.go), whose first statement is the read-only gate; the rationale and
+	// the measurement live there.
+	wireEarlySchedulers(ctx, app, cfg)
 
 	// 2026-08-09: v0.33.1.25 (B77) — node-discovery
 	// autoupdater. Runs nodeownership.Backfill against

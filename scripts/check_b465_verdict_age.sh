@@ -25,7 +25,9 @@
 #   C. a standing condition is ONE incident (dedup window by KIND)
 #   D. the panel calls an old snapshot history, not the current state
 #   E. the ssh target cannot be rendered as `[host:port]:port`
-#   F. SKYGATE_READONLY_COPY silences the copy (alerts, bot, every scheduler)
+#   F. SKYGATE_READONLY_COPY silences the copy (alerts, bot, every scheduler) —
+#      and the log must describe that state truthfully: no promised bot loop, and no
+#      scheduler started above the choke point
 #   G. /readyz's tailscale probe answers for a NATIVE install too
 #   H. the detector discriminates the pre-B465 shape
 # ============================================================================
@@ -203,6 +205,29 @@ if has "$SCHED" 'if config.ReadOnlyCopy() {' && has "$SCHED" 'every background s
   ok "F3: a read-only copy starts no scheduler at all (the single choke point)"
 else
   bad "F3: a copy still runs the periodic passes"
+fi
+# F2b (measured on the live restored copy, 2026-11-12 21:09): the startup message promised
+# "starting getUpdates loop" while the guard below it skipped rn.Run, so the log said the fix
+# was not running while it was. A read-only branch must come FIRST and name the truth.
+if has "$CMD" 'READ-ONLY COPY: Telegram bot loop NOT started'; then
+  ok "F2b: a read-only copy says the bot loop is NOT started instead of promising it"
+else
+  bad "F2b: the startup log still promises a bot loop a read-only copy never starts"
+fi
+# F3b (same measurement, eleven milliseconds later): «every background scheduler is SKIPPED»
+# was printed and then `autoupdater: starting (interval=5m0s)` and
+# `preferred-reconciler: starting (interval=1h0m0s, live=true)` followed, because main() started
+# both ABOVE wireOptionalSchedulers — whose early return was therefore not the choke point the
+# block claimed. They now live in wireEarlySchedulers, whose FIRST statement is the same gate.
+EARLY_BODY="$(awk '/^func wireEarlySchedulers\(/,/^}/' "$SCHED")"
+_e_guard="$(printf '%s\n' "$EARLY_BODY" | grep -n 'config.ReadOnlyCopy()' | head -1 | cut -d: -f1)"
+_e_dns="$(printf '%s\n' "$EARLY_BODY" | grep -n 'RunDomainAutoUpdater(' | head -1 | cut -d: -f1)"
+_e_pref="$(printf '%s\n' "$EARLY_BODY" | grep -n 'RunPreferredExitReconciler(' | head -1 | cut -d: -f1)"
+if [ -n "$_e_guard" ] && [ -n "$_e_dns" ] && [ -n "$_e_pref" ] \
+   && [ "$_e_guard" -lt "$_e_dns" ] && [ "$_e_guard" -lt "$_e_pref" ]; then
+  ok "F3b: the two loops that start BEFORE the choke point sit inside the same read-only gate"
+else
+  bad "F3b: a copy still starts the DNS autoupdater / the preferred-exit reconciler"
 fi
 
 # --- G: the tailscale probe speaks for native installs too --------------------

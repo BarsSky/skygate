@@ -36,6 +36,87 @@ import (
 	"skygate/internal/watchalert"
 )
 
+// wireEarlySchedulers starts the two outbound loops that main() wires BEFORE the
+// optional-scheduler choke point below: the DNS auto-updater (issue #6, v0.32.13) and the
+// preferred-exit auto-reconciler (B229). They were moved here by B465's live follow-up so
+// that the read-only gate covers them too.
+//
+// WHY THIS EXISTS (measured on the restored copy, 2026-11-12 21:09, second host):
+// `SKYGATE_READONLY_COPY=1` printed
+//
+//	🛑 READ-ONLY COPY: every background scheduler is SKIPPED … this process writes nothing
+//
+// and then, eleven milliseconds later,
+//
+//	autoupdater: starting (interval=5m0s)
+//	preferred-reconciler: starting (interval=1h0m0s, live=true)
+//
+// because both were started from main() ABOVE wireOptionalSchedulers, whose early return
+// was therefore not the choke point the block claimed it was. On that copy the initial
+// auto-update run was skipped only because `dns.autoupdate_enabled` happened to be false
+// and the reconciler pass happened to repair nothing (`created=0 updated=0`) — with the
+// flag on, a rehearsal copy would have rewritten the operator's DNS records every five
+// minutes, and a reconciler pass that found work would have written `device_exit_node_prefs`
+// AND pushed the regenerated policy into its own headscale (live=true means writes are on).
+// A guard that names a rule the code does not follow is the defect this block is about.
+func wireEarlySchedulers(ctx context.Context, app *handlers.App, cfg *config.Config) {
+	if config.ReadOnlyCopy() {
+		log.Printf("🛑 READ-ONLY COPY: DNS autoupdater and the preferred-exit reconciler are NOT started (they write to the operator's DNS provider, to device_exit_node_prefs and to the ACL policy). The panel is live; this process writes nothing.")
+		return
+	}
+
+	// 2026-07-07: issue #6 — start domain auto-updater goroutine.
+	// 2026-07-31: v0.32.13 — gated on cfg.AutoUpdateEnabled
+	// (env SKYGATE_AUTO_UPDATE_ENABLED). Pre-fix the goroutine
+	// launched unconditionally and its synchronous initial
+	// `DomainAutoUpdater()` call held the SQLite WAL write
+	// lock for 30+ seconds, which wedged every other query
+	// with `context deadline exceeded` (the same root cause
+	// as the http.StatusGatewayTimeout-on-https postmortem — see RELEASE-NOTES.md
+	// v0.32.13). The /admin/update button still works for
+	// manual deploys regardless of this gate.
+	//
+	// 2026-08-06 v0.33.1.18 — fix: cfg.AutoUpdateEnabled is the
+	// flag for the skygate SELF-UPDATE banner on /admin/update,
+	// not for the DNS-resolve autoupdater. The two were
+	// conflated in v0.32.13, which meant any operator who
+	// turned off skygate self-updates (a sane default for
+	// production) accidentally also turned off DNS-resolution
+	// of their domain rules → /32 entries rotted and the
+	// operator's rules silently stopped matching the IPs
+	// Cloudflare (or any CDN) rotated to. SKYGATE_DNS_AUTOUPDATE_ENABLED
+	// is the new gate; default true (preserves the v0.32.13+
+	// behaviour of "DNS autoupdater ON by default"). The
+	// /admin/system_tests page exposes a DB-backed toggle
+	// for this flag (overrides env on next skygate start
+	// AND on the next autoupdate tick).
+	if cfg.DNSAutoUpdateEnabled {
+		go app.RunDomainAutoUpdater(ctx, cfg.DNSAutoCheck)
+	} else {
+		log.Printf("autoupdater: SKYGATE_DNS_AUTOUPDATE_ENABLED=false, skipping startup goroutine (set true to re-enable)")
+	}
+
+	// 2026-09-03: v1.5.2 (B229) — preferred-exit
+	// auto-reconciler. Runs the per-(user, device)
+	// reconciliation logic on a 1h ticker so that
+	// `device_rules` rows paired with a missing or stale
+	// `device_exit_node_prefs` row get the missing
+	// `via:` clause attached to the per-CIDR ACL
+	// grants. Without this, the operator's "cyborg →
+	// emilia → youtube" rule was ALLOWED but not PINNED
+	// (Tailscale routed through the default exit, not
+	// emilia). Default behavior: read-only / dry-run
+	// (logs what would change without writing). Flip
+	// SKYGATE_PREFERRED_RECONCILER_LIVE=true to enable
+	// writes. The flag is checked on every tick so the
+	// operator can flip it without a redeploy.
+	if cfg.PrefReconcileInterval > 0 {
+		go app.RunPreferredExitReconciler(ctx, app.Notifier, cfg.PrefReconcileInterval)
+	} else {
+		log.Printf("preferred-reconciler: SKYGATE_PREFERRED_RECONCILE_INTERVAL=0, skipping startup goroutine (set to a positive duration to re-enable)")
+	}
+}
+
 // wireOptionalSchedulers starts the opt-in background schedulers at the end of
 // the boot sequence: the smoke-mesh cleanup (B143), the Tailscale auto-discovery
 // poller (B223), the personal-token auto-rotate (B154), the preauth-key expiry

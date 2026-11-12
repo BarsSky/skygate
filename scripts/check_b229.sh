@@ -25,10 +25,13 @@
 #         pins the pure decision function + the env
 #         reader + the rate-limit helper. 14 Test
 #         functions cover all 4 outcomes + env variants.
-#   E:    cmd/skygate/main.go wires
+#   E:    the cmd/skygate SURFACE wires
 #         go app.RunPreferredExitReconciler(ctx, app.Notifier,
 #         cfg.PrefReconcileInterval) gated on
-#         cfg.PrefReconcileInterval > 0.
+#         cfg.PrefReconcileInterval > 0. Since B465 it lives in
+#         wireEarlySchedulers (cmd/skygate/main_schedulers.go), so
+#         that a read-only copy starts it too; the surface is the
+#         subject, not the file.
 #   F:    internal/handlers/handlers.go has
 #         RunPreferredExitReconciler wrapper.
 #   G:    internal/handlers/handlers.go's
@@ -137,12 +140,12 @@ else
   fail "D: B229 test file $TEST missing"
 fi
 
-# --- E: main.go wires RunPreferredExitReconciler ---
+# --- E: the cmd/skygate surface wires RunPreferredExitReconciler (B465: main_schedulers.go) ---
 if hasf "$MAIN" "go app.RunPreferredExitReconciler(" && \
    hasf "$MAIN" "cfg.PrefReconcileInterval"; then
-  ok "E: cmd/skygate/main.go wires go app.RunPreferredExitReconciler gated on cfg.PrefReconcileInterval"
+  ok "E: the cmd/skygate surface wires go app.RunPreferredExitReconciler gated on cfg.PrefReconcileInterval (B465: wireEarlySchedulers, so a read-only copy starts it too)"
 else
-  fail "E: cmd/skygate/main.go missing RunPreferredExitReconciler wiring"
+  fail "E: the cmd/skygate surface is missing RunPreferredExitReconciler wiring"
 fi
 
 # --- F: handlers.go has RunPreferredExitReconciler wrapper ---
