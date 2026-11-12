@@ -15,10 +15,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	"skygate/internal/acl"
+	"skygate/internal/auth"
 	"skygate/internal/db"
 	"skygate/internal/headscale"
 	"skygate/internal/i18n"
@@ -101,13 +103,46 @@ func (s *Service) PostAdminACLsImport(w http.ResponseWriter, r *http.Request) {
 	currentPolicy, _ := acl.GenerateACLLiveFormat(s.dbc())
 	hCur := sha256.Sum256([]byte(currentPolicy))
 	hImp := sha256.Sum256([]byte(policy))
-	s.Backend.RenderWithLayout(w, r, "admin/acls_import.html", c, map[string]any{
+	s.renderImportDryRun(w, r, c, policy, map[string]any{
 		"CurrentPolicy":  currentPolicy,
 		"ImportedPolicy": policy,
 		"SameAsCurrent":  hCur == hImp,
 		"CurrentHash":    hex.EncodeToString(hCur[:8]),
 		"ImportedHash":   hex.EncodeToString(hImp[:8]),
 	})
+}
+
+// renderImportDryRun renders admin/acls_import.html with the per-plane view (B460)
+// merged in, so the dry-run, the retry-after-failure and any future caller all
+// show the same plane table instead of only the ones that remembered to add it.
+func (s *Service) renderImportDryRun(w http.ResponseWriter, r *http.Request, c *auth.Claims, policy string, data map[string]any) {
+	for k, v := range s.importPlaneContext() {
+		data[k] = v
+	}
+	s.Backend.RenderWithLayout(w, r, "admin/acls_import.html", c, data)
+}
+
+// importPlaneContext builds the "which planes am I pushing to" view (B460).
+//
+// A failure to LIST the planes is reported as a row with a reason rather than as
+// an empty table: an empty table reads as "no planes, nothing to worry about",
+// which is the same shape of lie as an empty version.
+func (s *Service) importPlaneContext() map[string]any {
+	planes, err := db.ListControlPlanes(s.dbc())
+	if err != nil {
+		return map[string]any{
+			"PlaneVersions": []PlaneVersion{{
+				Reason: "cannot list the control planes, so their versions are unknown: " + err.Error(),
+			}},
+			"PlaneUnknown": 1,
+		}
+	}
+	rows := planeVersionRows(planes, s.PlaneVersionFn)
+	return map[string]any{
+		"PlaneVersions": rows,
+		"PlaneMismatch": versionMismatch(rows),
+		"PlaneUnknown":  unknownPlanes(rows),
+	}
 }
 
 // PostAdminACLsImportApply pushes the imported policy to every
@@ -162,11 +197,30 @@ func (s *Service) PostAdminACLsImportApply(w http.ResponseWriter, r *http.Reques
 		fmt.Sprintf("ACL import by %s (per-plane)", c.Username),
 		policy,
 	)
-	for _, r := range results {
-		if r.Err != nil {
-			http.Error(w, "set policy: "+r.Err.Error(), http.StatusInternalServerError)
-			return
-		}
+	// B460 — report EVERY plane, never just the first failure. Pre-B460 this loop
+	// answered `http.Error(w, ...); return` on the first non-nil Err, although the
+	// planes BEFORE it had already been changed by SetPolicy and are never rolled
+	// back. The operator saw one plane's error and had no way to tell that the run
+	// was half-applied — the worst of both worlds: a partial change with no record
+	// of its extent on the page.
+	report := applyReportRows(results)
+	okCount, failCount := applyReportCounts(report)
+	if failCount > 0 {
+		currentPolicy, _ := acl.GenerateACLLiveFormat(s.dbc())
+		hCur := sha256.Sum256([]byte(currentPolicy))
+		hImp := sha256.Sum256([]byte(policy))
+		s.renderImportDryRun(w, r, c, policy, map[string]any{
+			"CurrentPolicy":  currentPolicy,
+			"ImportedPolicy": policy,
+			"SameAsCurrent":  hCur == hImp,
+			"CurrentHash":    hex.EncodeToString(hCur[:8]),
+			"ImportedHash":   hex.EncodeToString(hImp[:8]),
+			"ApplyReport":    report,
+			"ApplyOK":        okCount,
+			"ApplyFailed":    failCount,
+			"ApplyAttempted": len(report),
+		})
+		return
 	}
 	if s.Notifier != nil {
 		go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.imported", c.Username, len(results)))
@@ -193,6 +247,58 @@ func validateImportedACL(policy string) error {
 	for _, key := range []string{"acls", "tagOwners", "groups", "ssh"} {
 		if _, ok := shape[key]; !ok {
 			return fmt.Errorf("missing top-level key %q (headscale 0.29 requires acls, tagOwners, groups, ssh)", key)
+		}
+	}
+	// B459 — the shape check above lets a WILDCARD through, and headscale 0.29
+	// resolves every identity reference literally: a tagOwners entry such as
+	// "tag:dev-user-*" makes the apply fail with "src=tag not found", i.e. the
+	// operator sees a green dry-run and a failed apply, with nothing pointing at
+	// the tag. internal/acl/acl_generate.go:326-333 records the same finding
+	// from the generation side ("Earlier design (reverted) tried
+	// src=tag:dev-<user>-* (wildcard). headscale 0.29.2 rejects wildcards in
+	// tagOwners with \"src=tag not found\""). Refuse it here, naming the tag and
+	// the owner.
+	if err := wildcardTagOwnerProblem(shape); err != nil {
+		return err
+	}
+	return nil
+}
+
+// wildcardTagOwnerProblem reports the first wildcard in tagOwners, or nil.
+// Keys are visited in sorted order so the message is stable across runs.
+func wildcardTagOwnerProblem(shape map[string]any) error {
+	raw, ok := shape["tagOwners"]
+	if !ok || raw == nil {
+		return nil
+	}
+	owners, ok := raw.(map[string]any)
+	if !ok {
+		return fmt.Errorf("tagOwners must be an object of tag -> [owners]")
+	}
+	keys := make([]string, 0, len(owners))
+	for k := range owners {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, tag := range keys {
+		if strings.Contains(tag, "*") {
+			return fmt.Errorf("tagOwners key %q contains a wildcard: headscale 0.29 matches "+
+				"identities literally, so the tag would never resolve — list the concrete tags", tag)
+		}
+		list, ok := owners[tag].([]any)
+		if !ok {
+			if owners[tag] == nil {
+				continue
+			}
+			return fmt.Errorf("tagOwners[%q] must be a list of owners", tag)
+		}
+		for _, o := range list {
+			s, _ := o.(string)
+			if strings.Contains(s, "*") {
+				return fmt.Errorf("tagOwners[%q] lists the wildcard owner %q: headscale 0.29 answers "+
+					"\"src=tag not found\" for it, so the whole policy apply fails — spell out the "+
+					"concrete tags", tag, s)
+			}
 		}
 	}
 	return nil

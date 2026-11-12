@@ -163,15 +163,25 @@ grep -A150 '^func runClusterFailover' "cmd/skygate/cluster.go" | grep -q "tx\.Co
     || check "runClusterFailover uses a transaction" fail
 
 # 9. runClusterHeartbeatDaemon
+# B464: these used to be grep -A40 windows after the func line. The daemon gained a
+# readiness probe, two flags and a credential warning, so the call moved past line 40
+# and the contract broke — a fact about the WINDOW, not about the product (it does
+# call postHeartbeat). The whole function body is extracted instead, so the contract
+# can no longer be defeated by adding a comment.
+b205_daemon_body() {
+  awk '/^func runClusterHeartbeatDaemon/,/^}$/' "cmd/skygate/cluster.go"
+}
 grep_q '^func runClusterHeartbeatDaemon' "cmd/skygate/cluster.go" \
     && check "runClusterHeartbeatDaemon defined" ok \
     || check "runClusterHeartbeatDaemon defined" fail
-grep -A40 '^func runClusterHeartbeatDaemon' "cmd/skygate/cluster.go" | grep -q "SIGINT" \
-    && check "runClusterHeartbeatDaemon handles SIGINT" ok \
-    || check "runClusterHeartbeatDaemon handles SIGINT" fail
-grep -A40 '^func runClusterHeartbeatDaemon' "cmd/skygate/cluster.go" | grep -q "postHeartbeat" \
-    && check "runClusterHeartbeatDaemon calls postHeartbeat" ok \
-    || check "runClusterHeartbeatDaemon calls postHeartbeat" fail
+case "$(b205_daemon_body)" in *SIGINT*)
+    check "runClusterHeartbeatDaemon handles SIGINT" ok ;;
+  *) check "runClusterHeartbeatDaemon handles SIGINT" fail ;;
+esac
+case "$(b205_daemon_body)" in *postHeartbeat*)
+    check "runClusterHeartbeatDaemon calls postHeartbeat" ok ;;
+  *) check "runClusterHeartbeatDaemon calls postHeartbeat" fail ;;
+esac
 
 # 10. clusterRolesToSlice
 grep_q '^func clusterRolesToSlice' "cmd/skygate/cluster.go" \

@@ -252,7 +252,13 @@ func (o *UpgradeOrchestrator) UpgradeNode(ctx context.Context, d *sql.DB, cluste
 // the operator's existing drain is still in flight.
 // Nodes with state=failed ARE included — the B222
 // "upgrade" path also recovers failed nodes (the
-// rejoin is from_state=failed in that case). The
+// rejoin is from_state=failed in that case).
+// Nodes with state=degraded are included too (B464): an
+// upgrade is the most likely FIX for one (version drift or a
+// service that will not start on the build it runs), and
+// skipping them would leave the operator's broken host out of
+// the only procedure that repairs it.
+// The
 // orchestrating node is skipped (self-upgrade
 // guard). Stops on the first error and returns the
 // error from UpgradeNode (the rest of the nodes
@@ -263,7 +269,7 @@ func (o *UpgradeOrchestrator) UpgradeAll(ctx context.Context, d *sql.DB, cluster
 		SELECT hostname
 		  FROM cluster_node
 		 WHERE cluster_id = $1
-		   AND state IN ('ready', 'failed')
+		   AND state IN ('ready', 'failed', 'degraded')
 		 ORDER BY hostname
 	`, clusterID)
 	if err != nil {

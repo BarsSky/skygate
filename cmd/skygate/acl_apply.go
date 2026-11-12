@@ -41,7 +41,6 @@ import (
 
 	"skygate/internal/acl"
 	"skygate/internal/config"
-	"skygate/internal/db"
 	"skygate/internal/headscale"
 )
 
@@ -56,7 +55,7 @@ func runAclApply(args []string) error {
 	if err != nil {
 		return fmt.Errorf("acl-apply: config load: %w", err)
 	}
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("acl-apply: open db: %w", err)
 	}

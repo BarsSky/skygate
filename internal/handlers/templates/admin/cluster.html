@@ -126,6 +126,7 @@
           {{else if eq .State "pending"}}<span class="tag tag-warning">{{t "cluster.state_pending"}}</span>
           {{else if eq .State "draining"}}<span class="tag">{{t "cluster.state_draining"}}</span>
           {{else if eq .State "failed"}}<span class="tag tag-danger">{{t "cluster.state_failed"}}</span>
+          {{else if eq .State "degraded"}}<span class="tag tag-warning" title="{{t "cluster.state_degraded_help"}}">{{t "cluster.state_degraded"}}</span>
           {{else}}<span class="tag">{{.State}}</span>
           {{end}}
         </td>
@@ -134,6 +135,10 @@
                the hub is a CURRENT fact — before this, the column could only ever hold
                what the join wrote (live: v1.5.108 while the hub ran v1.5.142). */}}
           {{if .VersionDrift}}<div><span class="tag tag-warning" title="{{t "cluster.version_drift_help"}}">{{t "cluster.version_drift"}}</span></div>{{end}}
+          {{/* B464: the node credential is the invite it joined with, and that invite's
+               expiry has passed for a live node. Reported, not enforced — see the help
+               text for why rejecting the heartbeat would 401 every standby. */}}
+          {{if .CredentialExpired}}<div><span class="tag tag-warning" title="{{t "cluster.cred_expired_help"}}">{{tf "cluster.cred_expired" .CredentialAgeDays}}</span></div>{{end}}
         </td>
         <td><span class="muted" title="{{.JoinedAt}}">{{.JoinedAt}}</span></td>
         <td><span class="muted" title="{{.LastSeenAt}}">{{.LastSeenAt}}</span></td>
@@ -152,6 +157,11 @@
             <span class="tag tag-danger">{{t "cluster.reason_foreign_relay"}}</span>
           {{else if eq .ReasonKey "cluster.reason_failed"}}
             {{tf "cluster.reason_failed" .HealthReason}}
+          {{else if eq .ReasonKey "cluster.reason_degraded"}}
+            {{/* B464: the sentence the AGENT measured on its own host ("no web server
+                 answered…", "…reports itself NOT READY — db: …"). It is a value, not a
+                 key, exactly like cluster.reason_failed's HealthReason. */}}
+            {{tf "cluster.reason_degraded" .HealthReason}}
           {{else if eq .ReasonKey "cluster.reason_ready"}}
             {{tf "cluster.reason_ready" .OwnedBy}}
           {{else if eq .ReasonKey "cluster.reason_unknown"}}
@@ -208,7 +218,7 @@
                 <button type="submit" class="btn btn-success btn-sm"><i class="fa-solid fa-circle-check"></i> {{t "cluster.node_approve"}}</button>
               </form>
               {{end}}
-              {{if or (eq .State "ready") (eq .State "failed")}}
+              {{if or (eq .State "ready") (eq .State "failed") (eq .State "degraded")}}
               <form method="POST" action="/admin/cluster/node/drain" style="display:inline" onsubmit="return confirm('{{tf "cluster.node_drain_confirm" .Hostname | js}}')">
                 <input type="hidden" name="hostname" value="{{.Hostname}}">
                 <button type="submit" class="btn btn-warning btn-sm"><i class="fa-solid fa-faucet"></i> {{t "cluster.node_drain_btn"}}</button>
@@ -260,7 +270,7 @@
        above. Only render the button when there's
        at least one upgradeable non-self node. */}}
   {{$hasUpgradeable := false}}
-  {{range .Data.Nodes}}{{if and (not .IsSelf) (or (eq .State "ready") (eq .State "failed"))}}{{$hasUpgradeable = true}}{{end}}{{end}}
+  {{range .Data.Nodes}}{{if and (not .IsSelf) (or (eq .State "ready") (eq .State "failed") (eq .State "degraded"))}}{{$hasUpgradeable = true}}{{end}}{{end}}
   {{if $hasUpgradeable}}
   <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
     <form method="POST" action="/admin/cluster/upgrade" style="display:inline" onsubmit="return confirm('{{t "cluster.upgrade_all_confirm" | js}}')">

@@ -131,13 +131,39 @@ fi
 # THE NEGATIVE PROPERTY, checked against the COMMAND the step renders (the body
 # of the builder). The fix's own explanatory comment quotes the old command, so a
 # whole-file grep would fire on the documentation — measure the emitted text.
+#
+# B464 RENEGOTIATED this contract. It used to forbid ANY `healthz`/`curl` mention,
+# which was right while a standby had no web service (the probe could only fail).
+# B464 makes those two probes the INPUT of the hub's readiness verdict, so the
+# property to guard is no longer "do not ask" but "do not CLAIM":
+#   A5  — a `skygate` unit is still never promised (none exists on a bare host);
+#   A5b — the probes ARE asked, both of them, and their failure is named as
+#         `state=degraded` rather than as a broken block;
+#   A5c — every probe is guarded by `|| echo`, so it can never decide the block's
+#         success (a host with no skygate yet is `degraded`, which is correct).
 STEP_BODY="$(fn_body "$ONBOARD" "func heartbeatDaemonStepCommand(")"
 if [ -z "$STEP_BODY" ]; then
   bad "A5: heartbeatDaemonStepCommand() is gone — the step no longer names what it enables"
-elif [ -z "$(printf '%s\n' "$STEP_BODY" | grep -E 'healthz|curl |enable --now skygate |is-active skygate')" ]; then
-  ok "A5: the rendered step no longer promises a skygate web service (no healthz probe, no bare skygate unit)"
+elif [ -z "$(printf '%s\n' "$STEP_BODY" | grep -E 'enable --now skygate |is-active skygate')" ]; then
+  ok "A5: the rendered step never promises a skygate web service (no bare skygate unit)"
 else
   bad "A5: the rendered step still tells the operator to enable/verify a skygate web service a standby does not have"
+fi
+# B386/B388: match a VARIABLE with a shell builtin, never `printf … | grep -q`. The
+# pipeline's status is not the command's own (SIGPIPE from the producer under
+# pipefail), so a host transient would be reported as a product verdict — the exact
+# class this catalogue already paid for once.
+a5_has() { case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac; }
+if a5_has "$STEP_BODY" '/healthz' && a5_has "$STEP_BODY" '/readyz' && a5_has "$STEP_BODY" 'state=degraded'; then
+  ok "A5b: the step asks the hub's own two readiness questions and names the degraded verdict (B464)"
+else
+  bad "A5b: the step does not show what the hub's readiness verdict is made of"
+fi
+UNGUARDED="$(printf '%s\n' "$STEP_BODY" | grep 'curl ' | grep -v '|| echo' || true)"
+if [ -z "$UNGUARDED" ]; then
+  ok "A5c: every readiness probe is a diagnostic (guarded by '|| echo'), never a requirement"
+else
+  bad "A5c: a readiness probe is presented as a requirement: $UNGUARDED"
 fi
 # The CLI's own next-steps message pointed at deploy/heartbeat-daemon.service,
 # which the repo does not contain — and DOES NOT EXIST anywhere in the tree.

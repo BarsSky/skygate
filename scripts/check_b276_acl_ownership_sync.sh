@@ -268,11 +268,34 @@ if [ -n "$PSQL" ]; then
   # guards is unchanged — no row may lack an owner or carry a source the engine never
   # produces — so the list now names the fourth value, with the code line as evidence.
   # If the engine gains a fifth value, this contract must learn it the same way.
-  BADSRC="$($PSQL "SELECT COUNT(*) FROM prefix_owner WHERE exit_node_id = '' OR source NOT IN ('explicit','manual','auto','global')" 2>/dev/null | tr -d '[:space:]')"
+  #
+  # CONTRACT RENEGOTIATION #2 (2026-11-12) — the fifth value arrived, exactly as the
+  # paragraph above predicted, and this check went RED on the reference host for twelve
+  # days because of it. Measured: 2 of 223 rows carry source='system', owner
+  # `sharlotta`, claims=0, devices=0 —
+  #
+  #	1.1.1.1/32 | sharlotta | system | 0 | 0 | 2026-11-01T05:00:55
+  #	8.8.8.8/32 | sharlotta | system | 0 | 0 | 2026-11-01T05:00:55
+  #
+  # They are not junk: `system` is B458's own source (v1.5.210,
+  # internal/prefixowner/system_prefixes_b458.go:37) — the DNS resolvers the tailnet
+  # HANDS OUT (`dns.nameservers.global`) are prefixes the infrastructure requires, and
+  # they are stored in this same table so they are assigned, advertised and pinned by
+  # the same machinery (no second source of truth). A prefix no user rule claims is
+  # exactly why claims=0 here; the alternative — deleting the rows — takes DNS away
+  # from the whole tailnet, which is the defect B458 fixed.
+  #
+  # Note ALSO that the failure message now NAMES the offending source values. The
+  # pre-B464 text reported only a count ("2 assignment row(s) have no owner or an
+  # unknown source"), so the operator could not tell a stale allow-list from real
+  # corruption — and neither could this check. The sixth value must arrive with its
+  # name already in the message.
+  BADSRC="$($PSQL "SELECT COUNT(*) FROM prefix_owner WHERE exit_node_id = '' OR source NOT IN ('explicit','manual','auto','global','system')" 2>/dev/null | tr -d '[:space:]')"
   if [ "${BADSRC:-1}" = "0" ]; then
     ok "E1: every assignment row has an owner and a known source ($($PSQL 'SELECT COUNT(*) FROM prefix_owner' 2>/dev/null | tr -d '[:space:]') rows)"
   else
-    bad "E1: $BADSRC assignment row(s) have no owner or an unknown source"
+    BADDETAIL="$($PSQL "SELECT COALESCE(NULLIF(source,''),'<empty>') || '=' || COUNT(*) FROM prefix_owner WHERE exit_node_id = '' OR source NOT IN ('explicit','manual','auto','global','system') GROUP BY 1" 2>/dev/null | tr '\n' ' ' | tr -d '[:space:]')"
+    bad "E1: $BADSRC assignment row(s) have no owner or an unknown source (${BADDETAIL:-sources unreadable}) — a value the engine does not write means corruption, a value it DOES write means this allow-list is stale (add it to the list with its code line, as B458's 'system' was)"
   fi
   # How many pins name a relay that does not serve the prefix (the live failure).
   OWNERS="$($PSQL "SELECT prefix || '|' || exit_node_id FROM prefix_owner" 2>/dev/null)"

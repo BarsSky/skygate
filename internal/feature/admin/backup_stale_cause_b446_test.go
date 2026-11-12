@@ -105,6 +105,12 @@ func TestB446_FailedRunNamesItsOwnError(t *testing.T) {
 
 // TestB446_HealthyInstallHasNoExcuse: a fresh run must not produce a sentence at all, or every
 // healthy install would render a scary explanation under a passing test.
+//
+// B464: the clock is PINNED. `backupStaleCause` asks the wall clock "is a slot due since
+// lastRun?", so calling it with lastRun = now−2 h answers "yes" for the two hours after the
+// 04:00 slot — and this test failed exactly there (on the reference host at 05:37 UTC), taking
+// B1, B132 and B176 down with it. The assertion is about the code, so the moment must be one in
+// which a fresh run really is fresh: 22:00 on a day whose 04:00 slot is 18 h behind.
 func TestB446_HealthyInstallHasNoExcuse(t *testing.T) {
 	b446Primed(t, map[string]string{
 		"backup.enabled":        "1",
@@ -112,7 +118,26 @@ func TestB446_HealthyInstallHasNoExcuse(t *testing.T) {
 		"backup.schedule":       "0 4 * * *",
 		"backup.last_status":    "ok",
 	})
-	if cause := backupStaleCause(getTestService(), time.Now().Add(-2*time.Hour).Unix()); cause != "" {
+	now := time.Date(2026, 11, 12, 22, 0, 0, 0, time.UTC)
+	if cause := backupStaleCauseAt(getTestService(), now.Add(-2*time.Hour).Unix(), now); cause != "" {
 		t.Fatalf("a fresh run produced an excuse: %q", cause)
+	}
+}
+
+// TestB446_MissedSlotIsExplainedGuaranteed — the OTHER side of the same clock: the catch-up
+// sentence must still be produced when the slot really was missed, so pinning the "no excuse"
+// case cannot have been achieved by disabling the branch.
+func TestB446_MissedSlotIsExplainedGuaranteed(t *testing.T) {
+	b446Primed(t, map[string]string{
+		"backup.enabled":        "1",
+		"backup.in_app_enabled": "1",
+		"backup.schedule":       "0 4 * * *",
+		"backup.last_status":    "ok",
+	})
+	// 05:37 on the same day: the 04:00 slot lies between the last run and now.
+	now := time.Date(2026, 11, 12, 5, 37, 0, 0, time.UTC)
+	cause := backupStaleCauseAt(getTestService(), now.Add(-2*time.Hour).Unix(), now)
+	if !strings.Contains(cause, "next tick will catch up") {
+		t.Fatalf("a missed slot produced %q, want the catch-up sentence", cause)
 	}
 }

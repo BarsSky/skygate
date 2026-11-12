@@ -31,6 +31,12 @@ const (
 	NodeStateReady    = "ready"    // heartbeat observed by the agent
 	NodeStateDraining = "draining" // admin marked for removal
 	NodeStateFailed   = "failed"   // last heartbeat too old; auto-promote candidate
+	// B464: the agent is alive and authenticating, but the host it runs on
+	// reported that it cannot serve (no web server answering, or its database
+	// unreachable). Distinct from `failed` ("no heartbeat") on purpose — see
+	// readiness_b464.go, which also documents why the failover query, the online
+	// count and ApproveNode all treat it correctly without extra code.
+	NodeStateDegraded = "degraded"
 )
 
 // NodeRole values are free-form strings (cluster_node.roles

@@ -32,19 +32,42 @@ case "${_KERNEL}" in
 esac
 
 # ── Load .env ───────────────────────────────────────────────────────────────
+# B463 — THE NATIVE INSTALL'S CONFIG LIVES SOMEWHERE ELSE.
+#
+# A native (systemd/OpenRC) install keeps its configuration in
+# /etc/skygate/skygate.env — the unit's EnvironmentFile — not in the checkout.
+# Before B463 this list only knew the checkout, so every deploy/* script started
+# from a container-relative default (`SKYGATE_DB=/data/skygate.db`) and, on a
+# native host, either failed at the required-variable check below or silently
+# worked on the wrong database. The native path is SECOND (an explicit
+# SKYGATE_ENV still wins) and BEFORE the checkout, because on a native host the
+# checkout's .env is not what the service reads.
 _LOADED=false
-for _CANDIDATE in "${SKYGATE_ENV:-}" "${DEPLOY_SKYGATE_DIR:-${_DEFAULT_HOME}/skygate}/.env" .env ../.env ../../.env; do
+SKYGATE_ENV_FILE_USED=""
+for _CANDIDATE in "${SKYGATE_ENV:-}" /etc/skygate/skygate.env \
+                  "${DEPLOY_SKYGATE_DIR:-${_DEFAULT_HOME}/skygate}/.env" .env ../.env ../../.env; do
     if [ -f "${_CANDIDATE}" ]; then
         set -a; source "${_CANDIDATE}"; set +a
-        _LOADED=true; break
+        _LOADED=true
+        SKYGATE_ENV_FILE_USED="${_CANDIDATE}"
+        break
     fi
 done
 if [ "${_LOADED}" != "true" ]; then
-    echo "ERROR: .env not found. Copy .env.example -> .env and fill in values." >&2
+    echo "ERROR: .env not found (looked at SKYGATE_ENV, /etc/skygate/skygate.env, ${DEPLOY_SKYGATE_DIR:-${_DEFAULT_HOME}/skygate}/.env, .env, ../.env, ../../.env). Copy .env.example -> .env and fill in values." >&2
     exit 1
 fi
 
 # ── Required variables ──────────────────────────────────────────────────────
+# B463 — these are the DOCKER STACK's variables (headplane, the compose services).
+# A script that only needs the database and the paths (deploy/backup.sh) sets
+# SKYGATE_ENV_SKIP_REQUIRED=1: on a native install a perfectly valid
+# /etc/skygate/skygate.env carries none of the HEADPLANE_* keys, and the check
+# would kill the script before it did any work. The default is unchanged, so
+# deploy.sh and validate.sh keep validating exactly as before.
+if [ "${SKYGATE_ENV_SKIP_REQUIRED:-0}" = "1" ]; then
+    :
+else
 _required_vars=(SKYGATE_JWT_SECRET SKYGATE_ADMIN_PASS HEADSCALE_API_KEY
     HEADSCALE_SERVER_URL HEADPLANE_HEADSCALE__API_KEY HEADPLANE_SERVER__COOKIE_SECRET)
 _missing=()
@@ -58,6 +81,7 @@ if [ ${#_missing[@]} -gt 0 ]; then
 ' "${_v}" >&2; done
     echo "Edit .env and fill in real values, then re-run." >&2
     exit 1
+fi
 fi
 
 # ── Derived defaults ────────────────────────────────────────────────────────

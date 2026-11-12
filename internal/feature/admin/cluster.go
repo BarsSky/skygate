@@ -107,9 +107,19 @@ type clusterNodeRow struct {
 	// Before B402 the column could never change after the join, so the drift was
 	// invisible even when it was three months old (v1.5.108 vs v1.5.142 live).
 	VersionDrift bool
-	OwnedBy      string // node_owner_map.username when a row exists — the panel-only path must record ownership
-	OwnedTag     string // node_owner_map.tag for that row
-	ForeignRow   bool   // true when the hostname/IP belongs to a relay (exit_servers / tag:exit-node): the row is not a skygate host
+	// B464 — the node credential is the invite token it joined with, and it has an
+	// expiry (`cluster_invite.expires_at`). That expiry bounds the JOIN, not the
+	// heartbeat (see internal/cluster join.go step 2b for why enforcing it on the
+	// heartbeat would 401 every standby 24 h after it joined), so a live node can
+	// carry a token that expired weeks ago. Live case: the standby's token expired
+	// 2026-10-10 and it was still heartbeating on 2026-11-12. The fact is reported
+	// instead of being either silently tolerated or silently enforced.
+	CredentialInviteID string
+	CredentialExpired  bool
+	CredentialAgeDays  int64
+	OwnedBy            string // node_owner_map.username when a row exists — the panel-only path must record ownership
+	OwnedTag           string // node_owner_map.tag for that row
+	ForeignRow         bool   // true when the hostname/IP belongs to a relay (exit_servers / tag:exit-node): the row is not a skygate host
 }
 
 // clusterInviteRow is one cluster_invite row (Phase 2.2 will
@@ -280,6 +290,9 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 	relayIndex := loadClusterRelayIndex(s.dbc())
 	healthReasons := loadClusterHealthReasons(s.dbc(), clusterID)
 	ownedByHost := loadClusterOwnership(s.dbc(), clusterID)
+	// B464: one batched query for the node credentials (see clusterNodeRow's
+	// CredentialExpired). Small: one row per join/rotation, not per heartbeat.
+	credentials := loadClusterCredentials(s.dbc(), clusterID)
 	rows, err := s.dbc().QueryContext(r.Context(), `
 		SELECT id, cluster_id, hostname, COALESCE(tailscale_ip, ''),
 		       roles, state, COALESCE(skygate_version, ''),
@@ -350,6 +363,15 @@ func (s *Service) collectClusterPageData(r *http.Request) *clusterPageData {
 			}
 			if hub := strings.TrimSpace(s.BuildVersion); hub != "" && strings.TrimSpace(n.SkygateVer) != "" && !sameBuild(n.SkygateVer, hub) {
 				n.VersionDrift = true
+			}
+			// B464: the credential's age. Only the fact, never a state change — the
+			// heartbeat keeps working, and the operator decides when to rotate.
+			if cred, ok := credentials[n.ID]; ok {
+				n.CredentialInviteID = cred.inviteID
+				if !cred.expiresAt.IsZero() && cred.expiresAt.Before(time.Unix(now, 0)) {
+					n.CredentialExpired = true
+					n.CredentialAgeDays = int64(time.Unix(now, 0).Sub(cred.expiresAt).Hours() / 24)
+				}
 			}
 			n.ReasonKey, n.ActionKey = clusterNodeReasonAndNext(n, isRelayRow, own.username)
 			// B216: online/offline count. "Stale" means
@@ -603,6 +625,56 @@ func extractAuditReason(detail string) string {
 	return rest[:j]
 }
 
+// clusterCredential is the invite row a cluster_node's heartbeat token came from.
+// The token IS the node credential (internal/cluster invite.go), so the invite's
+// expiry is the credential's expiry — see clusterNodeRow.CredentialExpired.
+type clusterCredential struct {
+	inviteID  string
+	expiresAt time.Time
+}
+
+// loadClusterCredentials maps cluster_node.id → the invite that node joined with,
+// picking the NEWEST expiry per node because a rotation (fresh invite + re-join)
+// binds a second invite to the same node id and leaves the first one in place.
+//
+// Ordering is done in Go, not in SQL, for the same reason B291 gives everywhere
+// else: cluster_invite.expires_at is TIMESTAMPTZ on PostgreSQL and INTEGER/TEXT on
+// SQLite, and a mixed-type ORDER BY on SQLite sorts by storage class, not by time.
+func loadClusterCredentials(d *sql.DB, clusterID string) map[string]clusterCredential {
+	out := map[string]clusterCredential{}
+	if d == nil {
+		return out
+	}
+	rows, err := d.Query(`
+		SELECT id, used_by_node_id, expires_at
+		  FROM cluster_invite
+		 WHERE cluster_id = $1
+		   AND used_at IS NOT NULL
+		   AND used_by_node_id IS NOT NULL
+		   AND used_by_node_id <> ''
+	`, clusterID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, nodeID string
+		var expiresRaw any
+		if scanErr := rows.Scan(&id, &nodeID, &expiresRaw); scanErr != nil {
+			continue
+		}
+		exp, ok := db.ParseDBTime(expiresRaw)
+		if !ok {
+			continue
+		}
+		if prev, seen := out[nodeID]; seen && !exp.After(prev.expiresAt) {
+			continue
+		}
+		out[nodeID] = clusterCredential{inviteID: id, expiresAt: exp}
+	}
+	return out
+}
+
 // loadClusterOwnership maps lowercased hostname → the node_owner_map row for
 // that hostname. Keyed by hostname, not node_id, because cluster_node rows
 // created by discovery have a synthetic id ("node-disc-<host>") that only
@@ -678,6 +750,16 @@ func clusterNodeReasonAndNext(n clusterNodeRow, isRelayRow bool, ownedBy string)
 			return "cluster.reason_failed", "cluster.action_failed"
 		}
 		return "cluster.reason_failed_unknown", "cluster.action_failed"
+	case "degraded":
+		// B464: the agent is alive and authenticating, but it reported that its host
+		// cannot serve (no web server answering, or the instance says its database is
+		// unreachable). The measured sentence is the whole value of this state — a
+		// degraded row whose reason says nothing would be indistinguishable from the
+		// "ready" lie it replaced, so both branches are explicit.
+		if n.HealthReason != "" {
+			return "cluster.reason_degraded", "cluster.action_degraded"
+		}
+		return "cluster.reason_degraded_unknown", "cluster.action_degraded"
 	}
 	return "cluster.reason_unknown", "cluster.action_unknown"
 }

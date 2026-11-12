@@ -106,6 +106,14 @@ esac
 
 # A2: the 15 sites that were measured dangerous carry the wrapper. Pinned BY NAME so a later
 # edit cannot quietly remove one of them.
+#
+# RENEGOTIATED by B459 (2026-10-29) for ONE of the fifteen — scripts/verify_backup.sh. That
+# site used to be `( set +o pipefail; find "$TMPDIR" -name 'skygate.db' -type f | grep -q . )`;
+# B459 needed the VALUE of the first match, not just existence, so it became a lookup via
+# `-print -quit`, which makes find stop ITSELF: there is no producer whose status could be
+# lost, which is strictly stronger than wrapping the pipeline. The pin below therefore
+# asserts the pipeline-free form, so a later edit cannot quietly put a pipe back. Every other
+# entry is unchanged.
 MISSING=""
 while IFS=: read -r f pat; do
   [ -n "$f" ] || continue
@@ -127,7 +135,7 @@ scripts/check_b360_prefix_reservation.sh:( set +o pipefail; grep -rn 'DeleteGlob
 scripts/check_b378_push_gate_and_host_artefacts.sh:if ! ( set +o pipefail; gofmt -l "$f" 2>/dev/null | grep -q .
 scripts/check_b95.sh:( set +o pipefail; git ls-remote origin 'refs/heads/feature/telegram-bot-ux' 2>/dev/null | grep -q .
 scripts/check_b95.sh:( set +o pipefail; git ls-remote origin 'refs/heads/feat/postgres-migration' 2>/dev/null | grep -q .
-scripts/verify_backup.sh:( set +o pipefail; find "$TMPDIR" -name 'skygate.db' -type f | grep -q .
+scripts/verify_backup.sh:find "$TMPDIR" -name 'skygate.db' -type f -print -quit
 SITES
 if [ -z "$MISSING" ]; then
   ok "A2: all 15 measured-dangerous sites carry '( set +o pipefail; … )' (pinned by name)"

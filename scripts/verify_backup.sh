@@ -39,7 +39,15 @@ set -e
 # env the in-app Notifier uses). Fall back to the DB if the
 # env is empty (the Notifier does this too).
 SKYGATE_DIR="${SKYGATE_DIR:-/home/skyadmin/skygate}"
-DEST="$("$SKYGATE_DIR/skygate" backup-show-config 2>/dev/null | grep '^destination=' | cut -d= -f2)"
+# B459 — honour an EXPLICIT destination argument (first positional). Pre-B459
+# the script read only global_settings, so `verify_backup.sh /path/to/backups`
+# — the form the docs and the operator use — silently ignored its argument and
+# printed "nothing to verify", exit 0: a verifier that reports green about an
+# archive it never opened.
+DEST="${1:-}"
+if [ -z "$DEST" ]; then
+    DEST="$("$SKYGATE_DIR/skygate" backup-show-config 2>/dev/null | grep '^destination=' | cut -d= -f2)"
+fi
 if [ -z "$DEST" ]; then
     echo "verify_backup: backup.destination is empty in global_settings — nothing to verify"
     exit 0
@@ -76,21 +84,65 @@ fi
 # Older v0.33.x SQLite-era archives wrote skygate.db under backup/.
 # We refuse to verify the SQLite era — the operator should
 # re-run backup.sh post-v1.3.1 to get a fresh PG dump.
-DUMP_FILE=$(find "$TMPDIR" -name 'skygate-pg.sql' -type f | head -1)
+DUMP_FILE=$(find "$TMPDIR" -name 'skygate-pg.sql' -type f -print -quit 2>/dev/null)
 if [ -z "$DUMP_FILE" ]; then
-    # SQLite-era archive? Detect skygate.db and bail with a clear
-    # error pointing to the upgrade path.
-    # B388: `find | grep -q .` is an output-presence test, and `find` exits non-zero on a
-    # permission error while still printing matches — under `set -o pipefail` that non-zero
-    # decided the pipeline and the archive was misclassified. The wrapper makes grep the judge.
-    if ( set +o pipefail; find "$TMPDIR" -name 'skygate.db' -type f | grep -q . ); then
-        echo "verify_backup: ERROR — $LATEST is a v0.33.x SQLite-era archive"
-        echo "  v1.3.0+ requires PG backups. Re-run scripts/backup.sh after upgrading."
-        "$SKYGATE_DIR/skygate" backup-verify-fail "$LATEST" "sqlite-era archive (pre-v1.3.1)" 2>/dev/null || true
-        exit 1
+    # B459 — a SQLite archive is NOT a stale pre-v1.3.1 relic any more.
+    # v1.5.4 made SQLite the DEFAULT backend, so scripts/backup.sh writes
+    # skygate.db again. Pre-B459 this branch classified every such archive as
+    # "v0.33.x SQLite-era" and FAILED the verify, which would have marked the
+    # backups of every SQLite install unhealthy forever — a verifier that lies
+    # about a good backup is worse than no verifier.
+    # B388 renegotiated this one pin: it used to be
+    #   ( set +o pipefail; find … -name 'skygate.db' -type f | grep -q . )
+    # and B459 replaced it with a value-returning lookup. `-print -quit` ends the
+    # find ITSELF, so there is no producer/consumer pair left to lose a status —
+    # strictly stronger than wrapping the pipeline, and the pin below now asserts
+    # the pipeline-free form so a later edit cannot quietly put a pipe back.
+    SQLITE_FILE=$(find "$TMPDIR" -name 'skygate.db' -type f -print -quit 2>/dev/null)
+    if [ -n "$SQLITE_FILE" ]; then
+        echo "verify_backup: SQLite archive detected (B459)"
+        if [ ! -s "$SQLITE_FILE" ]; then
+            echo "verify_backup: FAIL — skygate.db in the archive is empty"
+            "$SKYGATE_DIR/skygate" backup-verify-fail "$LATEST" "empty skygate.db" 2>/dev/null || true
+            exit 1
+        fi
+        if [ "$(head -c 15 "$SQLITE_FILE")" != "SQLite format 3" ]; then
+            echo "verify_backup: FAIL — skygate.db does not carry the SQLite header"
+            "$SKYGATE_DIR/skygate" backup-verify-fail "$LATEST" "not a SQLite database" 2>/dev/null || true
+            exit 1
+        fi
+        if command -v sqlite3 >/dev/null 2>&1; then
+            PRAGMA_ANSWER=$(sqlite3 "$SQLITE_FILE" 'PRAGMA integrity_check' 2>&1 | head -1)
+            if [ "$PRAGMA_ANSWER" != "ok" ]; then
+                echo "verify_backup: FAIL — PRAGMA integrity_check = $PRAGMA_ANSWER"
+                "$SKYGATE_DIR/skygate" backup-verify-fail "$LATEST" "integrity_check: $PRAGMA_ANSWER" 2>/dev/null || true
+                exit 1
+            fi
+            SQLITE_TABLES=$(sqlite3 "$SQLITE_FILE" \
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'" 2>/dev/null | tr -d '[:space:]')
+            if [ -z "$SQLITE_TABLES" ] || [ "$SQLITE_TABLES" -lt 20 ]; then
+                echo "verify_backup: FAIL — SQLite archive has ${SQLITE_TABLES:-?} tables (expected >=20)"
+                "$SKYGATE_DIR/skygate" backup-verify-fail "$LATEST" "sqlite table count too low (${SQLITE_TABLES:-?})" 2>/dev/null || true
+                exit 1
+            fi
+            for table in portal_users device_rules acl_snapshots applied_migrations; do
+                present=$(sqlite3 "$SQLITE_FILE" \
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='${table}'" 2>/dev/null | tr -d '[:space:]')
+                if [ "$present" != "1" ]; then
+                    echo "verify_backup: FAIL — SQLite archive is missing critical table '${table}'"
+                    "$SKYGATE_DIR/skygate" backup-verify-fail "$LATEST" "missing table: ${table}" 2>/dev/null || true
+                    exit 1
+                fi
+            done
+            echo "verify_backup: OK — $LATEST is healthy (SQLite integrity_check=ok, ${SQLITE_TABLES} tables, critical tables present)"
+        else
+            echo "verify_backup: OK — $LATEST carries a valid SQLite database (header + size verified; sqlite3 is not installed, so PRAGMA integrity_check was skipped)"
+        fi
+        "$SKYGATE_DIR/skygate" backup-verify-ok "$LATEST" 2>/dev/null || true
+        exit 0
     fi
-    echo "verify_backup: ERROR — $LATEST did not contain skygate-pg.sql (and not SQLite-era either)"
-    "$SKYGATE_DIR/skygate" backup-verify-fail "$LATEST" "missing skygate-pg.sql" 2>/dev/null || true
+    echo "verify_backup: ERROR — $LATEST did not contain skygate-pg.sql or skygate.db"
+    "$SKYGATE_DIR/skygate" backup-verify-fail "$LATEST" "missing skygate-pg.sql/skygate.db" 2>/dev/null || true
     exit 1
 fi
 

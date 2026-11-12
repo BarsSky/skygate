@@ -210,9 +210,9 @@ if [ -n "$DB_DSN" ] && command -v psql >/dev/null 2>&1; then
                     'redirect_uris', '$REDIRECT_URIS',
                     'client_id', '$CLIENT_ID',
                     'initiated_by', 'setup-skygate-public.sh',
-                    'initiated_at', strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                    'initiated_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
                 )::text,
-                strftime('%s','now')
+                EXTRACT(EPOCH FROM now())::bigint
             );" 2>&1 | tail -1 || warn "  audit row insert failed (operator can add it manually via /admin/audit)"
 else
     warn "  SKYGATE_DB_DSN or psql missing — skipping audit row"

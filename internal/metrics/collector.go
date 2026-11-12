@@ -237,7 +237,8 @@ const clusterLabel = "cluster"
 // ClusterNodesGauge is the number of cluster_node
 // rows by state. Labels: cluster (always
 // "skygate-staging" for v1), state (pending|ready|
-// draining|failed).
+// draining|failed|degraded — `degraded` added by B464:
+// the agent is alive, the host reported it cannot serve).
 var ClusterNodesGauge = NewGaugeVec("skygate_cluster_nodes",
 	"Number of cluster_node rows, by state.",
 	[]string{clusterLabel, "state"})

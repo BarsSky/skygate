@@ -110,6 +110,24 @@ type Service struct {
 	Sidecar                *sidecar.Manager
 	I18n                   *i18n.Catalog
 
+	// PlaneVersionFn reports the headscale version of ONE control plane, so the
+	// ACL import dry-run can tell the operator what each plane it is about to
+	// push to actually runs (B460).
+	//
+	// It exists because headscale 0.29.x is NOT uniform: approve_routes left REST
+	// at 0.29.1, the REST expire path broke at 0.29.2, grants[] replaced acls[] at
+	// 0.29.0-beta.4, and 0.29.2 is the release that rejects wildcards in
+	// tagOwners (internal/headscale/version_b297.go says all of this out loud).
+	// The import pushes the SAME policy to every plane, so a version difference
+	// between planes is a fact the operator must see BEFORE pressing Apply — but
+	// it is deliberately NOT a gate: every one of those differences is handled by
+	// a capability ladder elsewhere, and refusing a policy because of a version
+	// number would block work that would have succeeded.
+	//
+	// nil = nothing is known in this build, and the page says exactly that rather
+	// than showing an empty version as if it were fine.
+	PlaneVersionFn func(planeURL string) (version, via string, err error)
+
 	// SecretKeyHex is the SKYGATE_SECRET_KEY hex value used
 	// to encrypt per-user control-plane API keys at rest.
 	// Phase B step 3b.4 (2026-07-29): added for

@@ -45,6 +45,43 @@
 <div class="card" style="margin-top:1.5rem">
   <h3><i class="fa-solid fa-magnifying-glass-chart"></i> {{t "acls.import_dry_run_title"}}</h3>
 
+  {{if .ApplyReport}}
+  {{/* B460 — the post-apply report. Pre-B460 a failure answered with http.Error
+       on the FIRST plane and the page never said which planes had already been
+       changed. Partial apply is NOT rolled back, so the operator must see every
+       plane, not one message. */}}
+  <div class="alert alert-danger" style="margin-top:0">
+    <i class="fa-solid fa-circle-exclamation"></i>
+    {{t "acls.import_report_banner"}} — {{.ApplyOK}}/{{.ApplyAttempted}}
+  </div>
+  <p class="sub" style="margin-top:0">{{t "acls.import_report_hint"}}</p>
+  <div class="table-wrap">
+  <table class="table" style="font-size:13px">
+    <thead>
+      <tr>
+        <th>{{t "acls.import_planes_url"}}</th>
+        <th>{{t "acls.import_report_status"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .ApplyReport}}
+      <tr>
+        <td><code>{{.URL}}</code></td>
+        {{if .OK}}
+        <td><span class="badge badge-success">{{t "acls.import_report_ok"}}</span></td>
+        {{else}}
+        <td>
+          <span class="badge badge-danger">{{t "acls.import_report_fail"}}</span>
+          <span class="sub" style="margin-left:6px">{{.Detail}}</span>
+        </td>
+        {{end}}
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{end}}
+
   {{if .SameAsCurrent}}
   <div class="alert alert-info" style="margin-top:0">
     <i class="fa-solid fa-circle-info"></i> {{t "acls.import_dry_run_same"}}
@@ -52,6 +89,57 @@
   {{else}}
   <div class="alert alert-warning" style="margin-top:0">
     <i class="fa-solid fa-triangle-exclamation"></i> {{t "acls.import_dry_run_diff"}}
+  </div>
+  {{end}}
+
+  {{if .PlaneVersions}}
+  {{/* B460 — WHICH planes this policy will be pushed to, and what each of them
+       runs. headscale 0.29.x is not uniform (approve_routes left REST at 0.29.1,
+       REST expire broke at 0.29.2, grants[] replaced acls[] at 0.29.0-beta.4,
+       0.29.2 rejects wildcards in tagOwners), and the import pushes the SAME
+       policy to every plane. This table INFORMS and never blocks: every one of
+       those differences is handled by a capability ladder, so refusing on a
+       version number would block work that would have succeeded. */}}
+  <div style="margin-top:1rem">
+    <h4 style="margin:0 0 6px 0;font-size:13px">
+      <i class="fa-solid fa-server"></i> {{t "acls.import_planes_title"}}
+    </h4>
+    <p class="sub" style="margin:0 0 8px 0">{{t "acls.import_planes_help"}}</p>
+    {{if .PlaneMismatch}}
+    <div class="alert alert-warning" style="margin-top:0">
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      {{t "acls.import_planes_mismatch"}}
+      <div class="mono" style="margin-top:4px">{{.PlaneMismatch}}</div>
+    </div>
+    {{end}}
+    <div class="table-wrap">
+    <table class="table" style="font-size:13px">
+      <thead>
+        <tr>
+          <th>{{t "acls.import_planes_url"}}</th>
+          <th>{{t "acls.import_planes_version"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .PlaneVersions}}
+        <tr>
+          <td><code>{{if .URL}}{{.URL}}{{else}}{{t "acls.import_planes_primary"}}{{end}}</code></td>
+          {{if .Known}}
+          <td>
+            <code>{{.Version}}</code>
+            {{if .Via}}<span class="sub" style="margin-left:6px">{{.Via}}</span>{{end}}
+          </td>
+          {{else}}
+          <td><span class="sub">{{t "acls.import_planes_unknown"}}: {{.Reason}}</span></td>
+          {{end}}
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    </div>
+    {{if .PlaneUnknown}}
+    <p class="sub" style="margin:6px 0 0 0">{{t "acls.import_planes_unknown_hint"}}</p>
+    {{end}}
   </div>
   {{end}}
 

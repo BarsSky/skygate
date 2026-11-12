@@ -7,6 +7,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# B463 — this script needs the database and the paths, NOT the docker stack's
+# HEADPLANE_*/HEADSCALE_SERVER_URL (which a native install's
+# /etc/skygate/skygate.env does not carry). Without this the required-variable
+# check in lib/env.sh exits before the script does any work on a native host.
+SKYGATE_ENV_SKIP_REQUIRED=1
 source "${SCRIPT_DIR}/lib/env.sh"
 source "${SCRIPT_DIR}/lib/docker.sh"
 
@@ -18,6 +23,75 @@ BACKUP_PATH="${OUTPUT_DIR}/${BACKUP_NAME}"
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log()  { echo -e "${GREEN}[OK]${NC} $1"; }
 warn() { echo -e "${YELLOW}[!!]${NC} $1"; }
+die()  { echo -e "${RED}[XX]${NC} $1" >&2; exit 1; }
+
+# ── B459: the SQLite database is a FILE on a native install ──────────────────
+# SKYGATE_DB may be sqlite:/abs/path, file:/abs/path or a bare path. env.sh
+# defaults it to /data/skygate.db, which is a CONTAINER path that does not
+# exist on a native host — so this resolver prints nothing there (and the
+# docker-volume copy below is the fallback) instead of handing back a path
+# that cannot be copied.
+sqlite_db_path() {
+    local v="${SKYGATE_DB:-}"
+    case "$v" in
+        sqlite:*) v="${v#sqlite:}" ;;
+        file:*)   v="${v#file:}" ;;
+        postgres:*|postgresql:*) return 0 ;;
+    esac
+    v="${v%%\?*}"
+    case "$v" in
+        /*) [ -f "$v" ] && printf '%s\n' "$v" ;;
+    esac
+}
+
+# ── B463: where headscale keeps its SQLite database on a NATIVE install ──────
+# This is a DELIBERATE third copy of the resolver in scripts/backup.sh and
+# scripts/restore.sh: the three scripts are shipped and run independently and
+# none sources a shared library. scripts/check_b463_deploy_backup_native.sh
+# extracts the function from ALL THREE files and fails on any textual drift, so
+# "duplicate" cannot become "diverged".
+#
+#   1. SKYGATE_HEADSCALE_DB_PATH — explicit override;
+#   2. the `path:` under `database:` → `sqlite:` in headscale's own config, using
+#      the SAME candidate list the OIDC and policy appliers use;
+#   3. the documented default /var/lib/headscale/db.sqlite, when it exists.
+headscale_db_path() {
+  local v="${SKYGATE_HEADSCALE_DB_PATH:-}" cfg
+  if [ -n "${v}" ]; then
+    [ -f "${v}" ] && printf '%s\n' "${v}"
+    return 0
+  fi
+  for cfg in "${SKYGATE_HEADSCALE_CONFIG:-}" \
+             /etc/headscale/config.yaml /etc/headscale/config.yml \
+             /etc/headscale/config.hujson /var/lib/headscale/config.yaml; do
+    [ -r "${cfg}" ] || continue
+    v=$(awk '
+      /^[[:space:]]*database:[[:space:]]*$/ { indb = 1; next }
+      indb && /^[^[:space:]]/             { indb = 0 }
+      indb && /sqlite:[[:space:]]*$/      { insql = 1; next }
+      indb && /sqlite:[[:space:]]*[^[:space:]]/ {
+        line = $0
+        sub(/.*sqlite:[[:space:]]*/, "", line)
+        gsub(/["\047]/, "", line)
+        if (line != "") { print line; exit }
+        insql = 1; next
+      }
+      insql && /^[[:space:]]*path:[[:space:]]*/ {
+        line = $0
+        sub(/^[[:space:]]*path:[[:space:]]*/, "", line)
+        gsub(/["\047]/, "", line)
+        print line
+        exit
+      }
+    ' "${cfg}" 2>/dev/null || true)
+    [ -n "${v}" ] && break
+  done
+  if [ -z "${v}" ] && [ -f /var/lib/headscale/db.sqlite ]; then
+    v=/var/lib/headscale/db.sqlite
+  fi
+  [ -n "${v}" ] && [ -f "${v}" ] && printf '%s\n' "${v}"
+  return 0
+}
 
 echo "=============================================="
 echo "  Skygate Full Backup — ${DATE_TAG}"
@@ -27,8 +101,32 @@ echo "=============================================="
 rm -rf "${BACKUP_PATH}"; mkdir -p "${BACKUP_PATH}"
 
 # ── 1. .env ──
+# B463 — copy the env file lib/env.sh actually LOADED, which on a native install
+# is /etc/skygate/skygate.env and not the checkout's. Copying `${PROJECT_DIR}/.env`
+# unconditionally archived a file the service never reads (or nothing at all).
 log "Backing up .env..."
-[ -f "${PROJECT_DIR}/.env" ] && cp "${PROJECT_DIR}/.env" "${BACKUP_PATH}/.env" && log "  .env -> backup" || warn "  .env not found"
+ENV_SRC="${SKYGATE_ENV_FILE_USED:-${PROJECT_DIR}/.env}"
+if [ -f "${ENV_SRC}" ]; then
+    cp "${ENV_SRC}" "${BACKUP_PATH}/.env"
+    chmod 600 "${BACKUP_PATH}/.env" 2>/dev/null || true
+    log "  .env -> backup (from ${ENV_SRC})"
+else
+    warn "  .env not found"
+fi
+
+# ── 1b. B463 — the rest of /etc/skygate on a native install ──
+# cluster-state.json carries the node identity the cluster API uses; dbs.env the
+# DB credentials the helper scripts read. Losing them is not recoverable by
+# re-installing.
+if [ -d /etc/skygate ]; then
+    mkdir -p "${BACKUP_PATH}/etc-skygate"
+    for _f in cluster-state.json dbs.env; do
+        [ -f "/etc/skygate/${_f}" ] && cp -p "/etc/skygate/${_f}" "${BACKUP_PATH}/etc-skygate/${_f}"
+    done
+    [ -n "$(ls -A "${BACKUP_PATH}/etc-skygate" 2>/dev/null)" ] \
+        && log "  /etc/skygate (cluster-state.json, dbs.env)" \
+        || rmdir "${BACKUP_PATH}/etc-skygate" 2>/dev/null || true
+fi
 
 # ── 2. Skygate source ──
 log "Backing up Skygate source..."
@@ -39,8 +137,12 @@ else warn "  No .git directory — source not backed up"; fi
 
 # ── 3. SQLite WAL checkpoint ──
 log "Running SQLite WAL checkpoints..."
-sqlite_checkpoint skygate-data skygate.db || true
-sqlite_checkpoint headscale_headscale_data db.sqlite || true
+if command -v docker >/dev/null 2>&1; then
+    sqlite_checkpoint skygate-data skygate.db || true
+    sqlite_checkpoint headscale_headscale_data db.sqlite || true
+else
+    log "  (docker not available — the native database is checkpointed in step 4)"
+fi
 
 # ── 4. Skygate DB ──
 # 2026-09-12 (Issue #2 follow-up): backup.sh previously assumed
@@ -88,7 +190,36 @@ fi
 
 case "${DB_TARGET}" in
     sqlite)
-        ${DOCKER_CMD} run --rm -v skygate-data:/data -v "${BACKUP_PATH}:/backup" alpine sh -c "cp /data/skygate.db /backup/skygate.db 2>/dev/null" &&     log "  skygate.db -> $(du -h "${BACKUP_PATH}/skygate.db" | cut -f1)" || warn "  skygate.db copy failed (SQLite path)"
+        # B459 — on a NATIVE install the database is a file on this filesystem
+        # and there is no docker to copy a named volume with. Pre-B459 this
+        # branch ran `docker run -v skygate-data:/data`, which failed with a
+        # WARN on every native host — and the script then finished
+        # "successfully" with an archive that contained every file EXCEPT the
+        # database. A backup without the database is not a backup, so a failed
+        # capture is now fatal instead of advisory.
+        SQLITE_FILE="$(sqlite_db_path || true)"
+        if [ -n "${SQLITE_FILE}" ]; then
+            if command -v sqlite3 >/dev/null 2>&1; then
+                sqlite3 "${SQLITE_FILE}" 'PRAGMA wal_checkpoint(TRUNCATE)' >/dev/null 2>&1 \
+                    && log "  WAL checkpoint: ${SQLITE_FILE}" \
+                    || warn "  WAL checkpoint failed — copying -wal/-shm as-is"
+            else
+                warn "  sqlite3 not installed — copying -wal/-shm instead of checkpointing"
+            fi
+            cp -p "${SQLITE_FILE}" "${BACKUP_PATH}/skygate.db" \
+                || die "  skygate.db copy failed (${SQLITE_FILE})"
+            for _sfx in -wal -shm; do
+                [ -f "${SQLITE_FILE}${_sfx}" ] && cp -p "${SQLITE_FILE}${_sfx}" "${BACKUP_PATH}/skygate.db${_sfx}"
+            done
+            [ -s "${BACKUP_PATH}/skygate.db" ] \
+                || die "  skygate.db copy is empty — refusing to write an archive without the database"
+            log "  skygate.db -> $(du -h "${BACKUP_PATH}/skygate.db" | cut -f1)"
+        else
+            ${DOCKER_CMD} run --rm -v skygate-data:/data -v "${BACKUP_PATH}:/backup" alpine \
+                sh -c "cp /data/skygate.db /backup/skygate.db 2>/dev/null" \
+                || die "  skygate.db copy failed: SKYGATE_DB='${SKYGATE_DB:-}' is not a readable file on this host and the docker volume copy failed — a backup without the database is not a backup"
+            log "  skygate.db -> $(du -h "${BACKUP_PATH}/skygate.db" | cut -f1)"
+        fi
         ;;
     postgres)
         # PG mode: pg_dump the live DSN.
@@ -151,16 +282,44 @@ case "${DB_TARGET}" in
 esac
 
 # ── 5. Headscale DB ──
-log "Backing up Headscale database..."
-${DOCKER_CMD} run --rm -v headscale_headscale_data:/data -v "${BACKUP_PATH}:/backup" alpine sh -c "cp /data/db.sqlite /backup/headscale-db.sqlite 2>/dev/null" &&     log "  headscale-db.sqlite -> $(du -h "${BACKUP_PATH}/headscale-db.sqlite" | cut -f1)" || warn "  headscale DB copy failed"
+# B463 — the NATIVE file first. Pre-B463 this step was docker-volume-only, so a
+# native host (where headscale keeps everything in /var/lib/headscale) shipped an
+# archive without headscale's state at all — silently.
+HS_DB_NATIVE="$(headscale_db_path || true)"
+if [ -n "${HS_DB_NATIVE}" ]; then
+    log "Backing up Headscale database (native file: ${HS_DB_NATIVE})..."
+    if cp -p "${HS_DB_NATIVE}" "${BACKUP_PATH}/headscale-db.sqlite" 2>/dev/null; then
+        for _sfx in -wal -shm; do
+            [ -f "${HS_DB_NATIVE}${_sfx}" ] && cp -p "${HS_DB_NATIVE}${_sfx}" "${BACKUP_PATH}/headscale-db.sqlite${_sfx}"
+        done
+        log "  headscale-db.sqlite -> $(du -h "${BACKUP_PATH}/headscale-db.sqlite" | cut -f1)"
+    else
+        warn "  headscale DB copy failed (${HS_DB_NATIVE}) — headscale state is NOT in this archive"
+    fi
+elif command -v docker >/dev/null 2>&1; then
+    log "Backing up Headscale database (docker volume)..."
+    ${DOCKER_CMD} run --rm -v headscale_headscale_data:/data -v "${BACKUP_PATH}:/backup" alpine sh -c "cp /data/db.sqlite /backup/headscale-db.sqlite 2>/dev/null" &&     log "  headscale-db.sqlite -> $(du -h "${BACKUP_PATH}/headscale-db.sqlite" | cut -f1)" || warn "  headscale DB copy failed"
+else
+    warn "  headscale database NOT captured: no native path resolved (checked SKYGATE_HEADSCALE_DB_PATH, /etc/headscale/config.*, /var/lib/headscale/db.sqlite) and docker is unavailable."
+    warn "  If headscale runs on PostgreSQL there is no file to copy — dump it separately."
+fi
 
 # ── 6. Headscale config ──
+# B463 — /etc/headscale on a native install, the bind mount on a docker one.
 log "Backing up Headscale config..."
-if [ -d "${DEPLOY_HEADSCALE_DIR}/config" ]; then
+HS_CONFIG_SRC=""
+for _d in /etc/headscale "${DEPLOY_HEADSCALE_DIR}/config" /home/admin/headscale/config; do
+    [ -d "${_d}" ] || continue
     mkdir -p "${BACKUP_PATH}/headscale-config"
-    cp -r "${DEPLOY_HEADSCALE_DIR}/config/"* "${BACKUP_PATH}/headscale-config/" 2>/dev/null
-    log "  Headscale config -> $(ls "${BACKUP_PATH}/headscale-config/" | wc -l) files"
-else warn "  config not found"; fi
+    cp -r "${_d}/." "${BACKUP_PATH}/headscale-config/" 2>/dev/null || true
+    HS_CONFIG_SRC="${_d}"
+    break
+done
+if [ -n "${HS_CONFIG_SRC}" ]; then
+    log "  Headscale config -> $(ls "${BACKUP_PATH}/headscale-config/" | wc -l) files (from ${HS_CONFIG_SRC})"
+else
+    warn "  config not found (/etc/headscale, ${DEPLOY_HEADSCALE_DIR}/config)"
+fi
 
 # ── 7. Headplane config ──
 # 2026-07-14: Этап 14 v11 — Headplane is an optional module.
@@ -205,12 +364,20 @@ if [ "${HEADPLANE_ENABLED}" != "false" ] && [ -z "${HEADPLANE_EXTERNAL_URL}" ]; 
 fi
 
 # ── 12. Inventory ──
+# B463 — the manifest must name what was really produced and WHERE it came from: a
+# native archive carries .env from /etc/skygate/skygate.env, etc-skygate/ and a
+# headscale file from a native path (or none at all), and an inventory that hides
+# that is the same "artifact that looks complete" defect the rest of this block is
+# about.
 cat > "${BACKUP_PATH}/inventory.txt" << INVEOF
 Skygate Full Backup — ${DATE_TAG} (OS: ${SKYGATE_OS})
 ==================================
   .env . skygate-repo.bundle . skygate.db|skygate-pg.sql . headscale-db.sqlite
-  headscale-config/ . headplane-config.yaml . headplane-data/
+  etc-skygate/ . headscale-config/ . headplane-config.yaml . headplane-data/
   ssh/ . skygate-image.tar . headscale-image.tar . headplane-image.tar
+ENV_SOURCE=${ENV_SRC:-<none>}
+HEADSCALE_CONFIG_SOURCE=${HS_CONFIG_SRC:-<none>}
+HEADSCALE_DB_SOURCE=${HS_DB_NATIVE:-<docker volume or none>}
 HEADPLANE_ENABLED=${HEADPLANE_ENABLED:-true}
 HEADPLANE_IMAGE=${HEADPLANE_IMAGE:-ghcr.io/tale/headplane:0.6.3}
 HEADPLANE_EXTERNAL_URL=${HEADPLANE_EXTERNAL_URL:-}

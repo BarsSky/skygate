@@ -254,6 +254,14 @@ fi
 # container writes its own audit rows; we use a minimal
 # SQL INSERT to record the bootstrap event (skygate's audit_log
 # table is the source of truth for all admin actions).
+# B459 — this INSERT runs through psql, i.e. against PostgreSQL, but it was
+# written with SQLite's strftime(). The PostgreSQL chain does install a
+# strftime(format text, ts text) shim (internal/db/migrations_pg.go:967), so the
+# row did land — but that shim IGNORES its format argument and always returns
+# EXTRACT(EPOCH FROM now())::bigint, which means `initiated_at` was a raw epoch
+# number in an ISO-shaped field. Worse, the whole INSERT depended on a
+# compatibility shim the project is actively retiring (B420). Native PostgreSQL
+# expressions remove both problems.
 log "[6.5/6] write ha.bootstrap audit row"
 DB_DSN=$(getenv "SKYGATE_DB_DSN" "")
 if [ -n "$DB_DSN" ] && command -v psql >/dev/null 2>&1; then
@@ -267,9 +275,9 @@ if [ -n "$DB_DSN" ] && command -v psql >/dev/null 2>&1; then
                     'role', '$SKYGATE_ROLE',
                     's3_bucket', '$S3_BUCKET',
                     'initiated_by', 'bootstrap_standby.sh',
-                    'initiated_at', strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                    'initiated_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
                 )::text,
-                strftime('%s','now')
+                EXTRACT(EPOCH FROM now())::bigint
             );" 2>&1 | tail -2 || warn "  audit row insert failed (operator can add it manually via /admin/audit)"
     log "  wrote ha.bootstrap row (action=ha.bootstrap, detail.hostname=$HOSTNAME)"
 else

@@ -47,6 +47,14 @@ type ApplyResult struct {
 	Version int
 	Applied bool
 	Err     error
+	// PlaneURL names the control plane this result belongs to (B460).
+	//
+	// The multi-plane callers (ApplyACLForAllPlanes / SetACLForAllPlanes) used to
+	// return a bare []ApplyResult, so a caller that had to report a failure could
+	// not say WHICH plane failed — and /admin/acls/import/apply answered with the
+	// FIRST error and dropped the rest, even though the earlier planes had already
+	// been changed. Empty for the single-plane callers that predate it.
+	PlaneURL string
 }
 
 // ApplyACLPipeline runs the standard "rules changed, sync to
@@ -267,10 +275,13 @@ func ApplyACLForAllPlanes(d *sql.DB, hsForPlane func(planeURL string) *headscale
 			// No client for this plane (e.g. SKYGATE_SECRET_KEY
 			// is missing or the per-plane key is corrupt).
 			// Skip — single-plane deploys never hit this branch.
-			out = append(out, ApplyResult{Version: 0, Applied: false, Err: fmt.Errorf("no headscale client for plane %q", p.URL)})
+			out = append(out, ApplyResult{Version: 0, Applied: false, PlaneURL: p.URL, Err: fmt.Errorf("no headscale client for plane %q", p.URL)})
 			continue
 		}
 		r := ApplyACLPipelineForPlane(d, hs, p.URL, alerter, username, detailForLog, useVia)
+		// B460: carry the plane so a caller can report every plane it walked
+		// instead of only the first failure.
+		r.PlaneURL = p.URL
 		out = append(out, r)
 	}
 	return out

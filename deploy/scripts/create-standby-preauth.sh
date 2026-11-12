@@ -170,9 +170,9 @@ if [ -f "$PROJECT_DIR/.env" ]; then
                     'headscale_user_id', $USER_ID,
                     'expiration', '$EXPIRATION',
                     'tags', '$ACLS',
-                    'created_at', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                    'created_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
                 )::text,
-                strftime('%s', 'now')
+                EXTRACT(EPOCH FROM now())::bigint
             );" >/dev/null 2>&1 || true
     fi
 fi

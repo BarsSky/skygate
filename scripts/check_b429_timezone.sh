@@ -41,6 +41,9 @@ gosurface SKY_MAIN cmd/skygate/*.go
 PASS=0; FAIL=0; SKIP=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
+# B459 — a missing TOOL is an environment fact, not a product regression
+# (AGENTS rule 1: SKIP, never FAIL, when the dependency is unavailable).
+skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 TZ_PKG=internal/localtime/localtime.go
@@ -70,7 +73,17 @@ if grep -qF 'os.Getenv("TZ")' "$TZ_PKG" && grep -qF '/etc/localtime' "$TZ_PKG"; 
 else
   bad "A3: the system zone is not detected"
 fi
-if OUT="$(go test ./internal/localtime/ -count=1 2>&1)"; then
+if ! command -v go >/dev/null 2>&1; then
+  # B459 — no `go` on PATH is a fact about the ENVIRONMENT, not about the product.
+  # Measured 2026-10-29: this contract reported `A4: internal/localtime tests
+  # failed:` with an EMPTY detail on a shell whose PATH had no Go (AGENTS trap
+  # #8), while `go test ./internal/localtime/` passed standalone and the whole
+  # check is 35/0/0 with the Go bin dir on PATH. The empty message is the tell:
+  # the failure grep looks for `--- FAIL` / `FAIL`, and the real output was
+  # `go: command not found`. Report SKIP (never FAIL) when the tool is missing —
+  # the same shape check_b218 already uses.
+  skip "A4: go is not on PATH — cannot run internal/localtime tests (environment, not a regression)"
+elif OUT="$(go test ./internal/localtime/ -count=1 2>&1)"; then
   ok "A4: the behavioural tests pass (explicit zone wins and carries its name, typo refused, auto follows the system, DST is the zone's problem, unix/zero contract)"
 else
   bad "A4: internal/localtime tests failed: $(printf '%s' "$OUT" | grep -E '^(---|FAIL)' | head -3 | tr '\n' ' ')"

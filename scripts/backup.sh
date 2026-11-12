@@ -43,6 +43,89 @@ log()  { echo -e "${GREEN}[✓]${NC} $1"; }
 warn() { echo -e "${YELLOW}[!]${NC} $1"; }
 err()  { echo -e "${RED}[✗]${NC} $1"; }
 
+# ---------------------------------------------------------------------------
+# B459 — THE BACKUP MUST SPEAK THE DATABASE'S DIALECT.
+#
+# v1.3.1 removed SQLite from this script when PostgreSQL became the only
+# backend ("Phase 2 of SQLite removal"). v1.5.4 made SQLite the DEFAULT
+# backend again, so that removal went stale: on a SQLite install `load_dsn`
+# answers "SKYGATE_DB_DSN is not set" and NOTHING was backed up — the
+# operator's users, settings, exit rules and audit trail were simply absent
+# from an archive the runner reported as created. A backup that captures
+# every file EXCEPT the database is the failure class this project keeps
+# paying for: an artifact that looks complete.
+#
+# The branch below follows the SAME precedence config.Load uses:
+#   SKYGATE_DB=sqlite:/abs/path.db | file:/abs/path.db | /abs/path.db
+#     -> SQLite file (v1.5.4+ default)
+#   SKYGATE_DB=postgres://... | SKYGATE_DB_DSN=...      -> PostgreSQL
+# ---------------------------------------------------------------------------
+
+# B462 — WHERE THE CONFIGURATION ACTUALLY LIVES.
+#
+# On a native (systemd/OpenRC) install the service reads its configuration from
+# `/etc/skygate/skygate.env` (the unit's EnvironmentFile), NOT from the checkout's
+# `.env`. Before B462 this script only looked at `${SKYGATE_DIR}/.env`, so on a
+# native host it captured NOTHING when the operator's file lived in /etc — the
+# archive then carried the database but no DSN and no secrets, which is a restore
+# that cannot start, and a by-hand run could not even find the database.
+#
+# The order below is "what the running service reads" first: an explicit override,
+# then the native etc dir, then the checkout.
+skygate_env_file() {
+  local f
+  for f in "${SKYGATE_UPDATE_ENV_FILE:-}" "${SKYGATE_ENV_FILE:-}" \
+           "/etc/skygate/skygate.env" "${SKYGATE_DIR}/.env"; do
+    [ -n "${f}" ] || continue
+    [ -r "${f}" ] || continue
+    printf '%s\n' "${f}"
+    return 0
+  done
+  return 0
+}
+
+# skygate_db_value echoes the configured backend spec: the process env
+# first, then the value written in the env file the service uses (the in-app
+# runner inherits the process env; an operator running this by hand often has
+# only the file).
+skygate_db_value() {
+  local v="${SKYGATE_DB:-}" f
+  if [[ -z "${v}" ]]; then
+    f="$(skygate_env_file || true)"
+    if [[ -n "${f}" ]]; then
+      v=$(grep -E '^SKYGATE_DB=' "${f}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'" || true)
+    fi
+  fi
+  printf '%s\n' "${v}"
+}
+
+# backup_dialect echoes "sqlite" or "postgres" for the configured backend.
+backup_dialect() {
+  local db; db=$(skygate_db_value)
+  case "${db}" in
+    sqlite:*|file:*) echo sqlite; return 0 ;;
+    postgres:*|postgresql:*) echo postgres; return 0 ;;
+  esac
+  if [[ -n "${db}" ]]; then echo sqlite; return 0; fi   # a bare path is a SQLite file
+  echo postgres
+}
+
+# sqlite_db_path resolves the SQLite database FILE path, or prints nothing
+# when the value is not a local path (e.g. the container-relative default
+# /data/skygate.db that does not exist on a native install).
+sqlite_db_path() {
+  local db; db=$(skygate_db_value)
+  case "${db}" in
+    sqlite:*) db="${db#sqlite:}" ;;
+    file:*)   db="${db#file:}" ;;
+  esac
+  db="${db%%\?*}"
+  case "${db}" in
+    ""|postgres:*|postgresql:*) return 0 ;;
+  esac
+  printf '%s\n' "${db}"
+}
+
 # 2026-08-12: v1.3.1 — parse SKYGATE_DB_DSN (libpq URL form) into the
 # parts we need. The DSN is the source of truth for the operator's
 # skygate→PG connection; we extract host/port/user/db/password from
@@ -57,18 +140,23 @@ err()  { echo -e "${RED}[✗]${NC} $1"; }
 # URL-escaped chars (%xx); we don't decode them here because
 # PGPASSWORD= is passed to psql as-is (libpq does the decoding).
 load_dsn() {
-  local dsn="${SKYGATE_DB_DSN:-}"
-  if [[ -z "${dsn}" ]] && [[ -f "${SKYGATE_DIR}/.env" ]]; then
-    # 2026-08-12: v1.3.1 — read SKYGATE_DB_DSN from .env if not in
-    # the script's env. The deploy.sh template writes a literal
+  local dsn="${SKYGATE_DB_DSN:-}" f
+  if [[ -z "${dsn}" ]]; then
+    # 2026-08-12: v1.3.1 — read SKYGATE_DB_DSN from the env file if not in
+    # the script's env. B462: that is the file the SERVICE reads
+    # (/etc/skygate/skygate.env on a native install), not just the checkout's.
+    # The deploy.sh template writes a literal
     # `SKYGATE_DB_DSN=postgres://...` line; we use grep + cut rather
     # than `set -a; source .env; set +a` to avoid pulling in the
     # full .env into the script's env (HEADSCALE_API_KEY, etc).
-    dsn=$(grep -E '^SKYGATE_DB_DSN=' "${SKYGATE_DIR}/.env" 2>/dev/null | head -1 | cut -d= -f2-)
+    f="$(skygate_env_file || true)"
+    if [[ -n "${f}" ]]; then
+      dsn=$(grep -E '^SKYGATE_DB_DSN=' "${f}" 2>/dev/null | head -1 | cut -d= -f2- || true)
+    fi
   fi
   if [[ -z "${dsn}" ]]; then
-    err "SKYGATE_DB_DSN is not set in the script env or .env"
-    err "  add SKYGATE_DB_DSN=postgres://skygate:<password>@postgres:5432/skygate?sslmode=disable to .env"
+    err "SKYGATE_DB_DSN is not set in the script env or in the env file (/etc/skygate/skygate.env, ${SKYGATE_DIR}/.env)"
+    err "  add SKYGATE_DB_DSN=postgres://skygate:<password>@postgres:5432/skygate?sslmode=disable to that file"
     return 1
   fi
   # Strip postgres:// prefix and any ?params
@@ -271,52 +359,190 @@ git -C "${SKYGATE_DIR}" bundle create "${BACKUP_PATH}/skygate-repo.bundle" --all
 git -C "${SKYGATE_DIR}" log --oneline -5 > "${BACKUP_PATH}/skygate-git-log.txt"
 [[ -s "${BACKUP_PATH}/skygate-repo.bundle" ]] || { err "git bundle empty"; false; }
 
-# 2. Skygate .env
+# 2. Skygate env file (B462: the one the SERVICE reads, which on a native install
+# is /etc/skygate/skygate.env — not the checkout's .env).
 STEP="env-copy"
-if [ -f "${SKYGATE_DIR}/.env" ]; then
-    cp "${SKYGATE_DIR}/.env" "${BACKUP_PATH}/skygate.env"
+SKYGATE_ENV_SOURCE="$(skygate_env_file || true)"
+if [ -n "${SKYGATE_ENV_SOURCE}" ]; then
+    cp "${SKYGATE_ENV_SOURCE}" "${BACKUP_PATH}/skygate.env"
     chmod 600 "${BACKUP_PATH}/skygate.env"
-    log "  .env copied (mode 600)"
+    log "  env copied from ${SKYGATE_ENV_SOURCE} (mode 600)"
+else
+    warn "  NO env file found (looked at /etc/skygate/skygate.env and ${SKYGATE_DIR}/.env) — the archive will carry no DSN and no secrets"
 fi
 
-# 3. Skygate PG database (v1.3.1 — was SQLite file in v0.32.x).
-# Replaces the pre-v1.3.0 line:
-#   docker run --rm -v skygate-data:/data -v "${BACKUP_PATH}:/backup" alpine \
-#       sh -c "cp /data/skygate.db /backup/skygate.db && chmod 644 /backup/skygate.db"
-# The new flow:
+# 2b. B462 — the rest of /etc/skygate on a native install. These are small and
+# losing them is not recoverable by re-installing: cluster-state.json carries the
+# node identity the cluster API uses, dbs.env the DB credentials the helper
+# scripts read.
+if [ -d /etc/skygate ]; then
+    mkdir -p "${BACKUP_PATH}/etc-skygate"
+    for _f in cluster-state.json dbs.env; do
+        [ -f "/etc/skygate/${_f}" ] && cp -p "/etc/skygate/${_f}" "${BACKUP_PATH}/etc-skygate/${_f}"
+    done
+    [ -n "$(ls -A "${BACKUP_PATH}/etc-skygate" 2>/dev/null)" ] \
+        && log "  /etc/skygate (cluster-state.json, dbs.env)" \
+        || rmdir "${BACKUP_PATH}/etc-skygate" 2>/dev/null || true
+fi
+
+# 3. Skygate database — DIALECT-AWARE (B459).
+#
+# PostgreSQL (the v1.3.1 flow):
 #   1. parse SKYGATE_DB_DSN (host/port/user/db/password)
 #   2. `pg_dump -Fp --clean --if-exists` via throwaway postgres:18-alpine
 #      container on the docker bridge so the dump picks up the live
 #      server version and is replayable on any PG 15+ cluster.
 #   3. the resulting .sql dump is replayable with `psql -f skygate-pg.sql`
 #      on a fresh database.
+# SQLite (v1.5.4+ default, B459):
+#   1. resolve the database FILE from SKYGATE_DB (sqlite:/path, file:/path
+#      or a bare path) — the process env first, then .env
+#   2. WAL-checkpoint through sqlite3 when it is installed, then copy the
+#      file AND its -wal/-shm siblings (a copy taken while the WAL holds
+#      the last transactions is a database that is silently behind)
+#   3. prove the copy really is a SQLite database (header magic + size)
+DB_DIALECT=$(backup_dialect)
 STEP="skygate-db"
-log "Backing up Skygate database (PG)..."
-load_dsn
-pg_dump_run "${BACKUP_PATH}/skygate-pg.sql"
-[[ -s "${BACKUP_PATH}/skygate-pg.sql" ]] || { err "pg_dump output is empty"; false; }
-chmod 600 "${BACKUP_PATH}/skygate-pg.sql"
-log "  PG dump written (size=$(du -h "${BACKUP_PATH}/skygate-pg.sql" | cut -f1))"
+case "${DB_DIALECT}" in
+  sqlite)
+    log "Backing up Skygate database (SQLite)..."
+    SQLITE_DB=$(sqlite_db_path)
+    if [[ -z "${SQLITE_DB}" ]]; then
+      err "SKYGATE_DB does not name a SQLite file (got: '$(skygate_db_value)')"
+      err "  set SKYGATE_DB=sqlite:/abs/path/skygate.db in the environment or .env"
+      false
+    fi
+    if [[ ! -f "${SQLITE_DB}" ]]; then
+      err "SQLite database not found: ${SQLITE_DB}"
+      false
+    fi
+    if command -v sqlite3 >/dev/null 2>&1; then
+      sqlite3 "${SQLITE_DB}" 'PRAGMA wal_checkpoint(TRUNCATE)' >/dev/null 2>&1 \
+        && log "  WAL checkpoint: ${SQLITE_DB}" \
+        || warn "  WAL checkpoint failed — copying -wal/-shm as-is"
+    else
+      warn "  sqlite3 not installed — copying -wal/-shm instead of checkpointing"
+    fi
+    cp -p "${SQLITE_DB}" "${BACKUP_PATH}/skygate.db" || { err "copy failed: ${SQLITE_DB}"; false; }
+    for _suffix in -wal -shm; do
+      [[ -f "${SQLITE_DB}${_suffix}" ]] && cp -p "${SQLITE_DB}${_suffix}" "${BACKUP_PATH}/skygate.db${_suffix}"
+    done
+    chmod 600 "${BACKUP_PATH}/skygate.db"
+    # An empty file or a non-SQLite file is NOT a backup: fail the run here
+    # instead of shipping an archive whose database is a husk.
+    [[ -s "${BACKUP_PATH}/skygate.db" ]] || { err "skygate.db copy is empty"; false; }
+    if [[ "$(head -c 15 "${BACKUP_PATH}/skygate.db" 2>/dev/null)" != "SQLite format 3" ]]; then
+      err "skygate.db copy does not carry the SQLite header — refusing to ship it"
+      false
+    fi
+    log "  skygate.db copied (size=$(du -h "${BACKUP_PATH}/skygate.db" | cut -f1))"
+    ;;
+  postgres)
+    log "Backing up Skygate database (PG)..."
+    load_dsn
+    pg_dump_run "${BACKUP_PATH}/skygate-pg.sql"
+    [[ -s "${BACKUP_PATH}/skygate-pg.sql" ]] || { err "pg_dump output is empty"; false; }
+    chmod 600 "${BACKUP_PATH}/skygate-pg.sql"
+    log "  PG dump written (size=$(du -h "${BACKUP_PATH}/skygate-pg.sql" | cut -f1))"
+    ;;
+esac
+
+# B462 — where headscale keeps its SQLite database on a NATIVE install.
+#
+#   1. SKYGATE_HEADSCALE_DB_PATH — explicit override;
+#   2. the `path:` under `database:` → `sqlite:` in headscale's own config, using
+#      the SAME candidate list the OIDC and policy appliers already use
+#      (deploy/skygate-apply-oidc.sh, deploy/skygate-apply-policy.sh) rather than
+#      a fourth invented one;
+#   3. the documented default /var/lib/headscale/db.sqlite, when it exists.
+#
+# Prints nothing when no file was found — the caller then says WHY instead of
+# silently shipping an archive without headscale's state (which is what this
+# script did before B462: the step was docker-volume-only).
+headscale_db_path() {
+  local v="${SKYGATE_HEADSCALE_DB_PATH:-}" cfg
+  if [ -n "${v}" ]; then
+    [ -f "${v}" ] && printf '%s\n' "${v}"
+    return 0
+  fi
+  for cfg in "${SKYGATE_HEADSCALE_CONFIG:-}" \
+             /etc/headscale/config.yaml /etc/headscale/config.yml \
+             /etc/headscale/config.hujson /var/lib/headscale/config.yaml; do
+    [ -r "${cfg}" ] || continue
+    v=$(awk '
+      /^[[:space:]]*database:[[:space:]]*$/ { indb = 1; next }
+      indb && /^[^[:space:]]/             { indb = 0 }
+      indb && /sqlite:[[:space:]]*$/      { insql = 1; next }
+      indb && /sqlite:[[:space:]]*[^[:space:]]/ {
+        line = $0
+        sub(/.*sqlite:[[:space:]]*/, "", line)
+        gsub(/["\047]/, "", line)
+        if (line != "") { print line; exit }
+        insql = 1; next
+      }
+      insql && /^[[:space:]]*path:[[:space:]]*/ {
+        line = $0
+        sub(/^[[:space:]]*path:[[:space:]]*/, "", line)
+        gsub(/["\047]/, "", line)
+        print line
+        exit
+      }
+    ' "${cfg}" 2>/dev/null || true)
+    [ -n "${v}" ] && break
+  done
+  if [ -z "${v}" ] && [ -f /var/lib/headscale/db.sqlite ]; then
+    v=/var/lib/headscale/db.sqlite
+  fi
+  [ -n "${v}" ] && [ -f "${v}" ] && printf '%s\n' "${v}"
+  return 0
+}
 
 # 4. Headscale config
+# B462 — the config lives in /etc/headscale on a NATIVE install and in
+# /home/admin/headscale/config on the docker one (bind mount). Pre-B462 only the
+# docker path was captured, so a native restore had no headscale config at all.
 STEP="headscale-config"
-if [ -d /home/admin/headscale/config ]; then
+HS_CONFIG_SOURCE=""
+for _d in /etc/headscale /home/admin/headscale/config; do
+    [ -d "${_d}" ] || continue
     mkdir -p "${BACKUP_PATH}/headscale-config"
-    cp -r /home/admin/headscale/config/* "${BACKUP_PATH}/headscale-config/" 2>/dev/null
-    log "  Headscale config backed up"
+    cp -r "${_d}/." "${BACKUP_PATH}/headscale-config/" 2>/dev/null || true
+    HS_CONFIG_SOURCE="${_d}"
+    break
+done
+if [ -n "${HS_CONFIG_SOURCE}" ]; then
+    log "  Headscale config backed up from ${HS_CONFIG_SOURCE}"
+else
+    warn "  no headscale config dir found (/etc/headscale, /home/admin/headscale/config)"
 fi
 
-# 5. Headscale DB
+# 5. Headscale DB — the NATIVE file first (B462), the docker volume as fallback.
 STEP="headscale-db"
-log "Backing up Headscale database..."
-docker run --rm -v headscale_headscale_data:/data -v "${BACKUP_PATH}:/backup" alpine \
-    sh -c "find /data -name '*.db' -exec cp {} /backup/ \; 2>/dev/null; ls -la /backup/*.db 2>/dev/null" || \
-    warn "Failed to copy headscale.db"
+HS_DB_NATIVE="$(headscale_db_path || true)"
+if [ -n "${HS_DB_NATIVE}" ]; then
+    log "Backing up Headscale database (native file: ${HS_DB_NATIVE})..."
+    if cp -p "${HS_DB_NATIVE}" "${BACKUP_PATH}/headscale.db" 2>/dev/null; then
+        for _sfx in -wal -shm; do
+            [ -f "${HS_DB_NATIVE}${_sfx}" ] && cp -p "${HS_DB_NATIVE}${_sfx}" "${BACKUP_PATH}/headscale.db${_sfx}"
+        done
+        log "  headscale.db ($(du -h "${BACKUP_PATH}/headscale.db" | cut -f1))"
+    else
+        warn "  headscale.db copy failed (${HS_DB_NATIVE}) — headscale state is NOT in this archive"
+    fi
+elif command -v docker >/dev/null 2>&1; then
+    log "Backing up Headscale database (docker volume)..."
+    docker run --rm -v headscale_headscale_data:/data -v "${BACKUP_PATH}:/backup" alpine \
+        sh -c "find /data -name '*.db' -exec cp {} /backup/ \; 2>/dev/null; ls -la /backup/*.db 2>/dev/null" || \
+        warn "Failed to copy headscale.db"
 
-# 6. Headplane data
-docker run --rm -v headscale_headplane_data:/data -v "${BACKUP_PATH}:/backup" alpine \
-    sh -c "cp -r /data /backup/headplane-data 2>/dev/null; echo done" 2>/dev/null || \
-    warn "Failed to copy headplane data"
+    # 6. Headplane data (a docker sidecar — it does not exist on a native install)
+    docker run --rm -v headscale_headplane_data:/data -v "${BACKUP_PATH}:/backup" alpine \
+        sh -c "cp -r /data /backup/headplane-data 2>/dev/null; echo done" 2>/dev/null || \
+        warn "Failed to copy headplane data"
+else
+    warn "  headscale database NOT captured: no native path resolved (checked SKYGATE_HEADSCALE_DB_PATH, /etc/headscale/config.*, /var/lib/headscale/db.sqlite) and docker is unavailable."
+    warn "  If headscale runs on PostgreSQL there is no file to copy — dump it separately."
+fi
 
 # 7. DERP config
 if [ -f /var/lib/derper/derper.conf ]; then
@@ -331,15 +557,25 @@ cp "${SKYGATE_DIR}/docker-compose.yml" "${BACKUP_PATH}/docker-compose.yml" 2>/de
 cp "${SKYGATE_DIR}/Dockerfile" "${BACKUP_PATH}/Dockerfile" 2>/dev/null || true
 
 # 9. Inventory
+# B459 — the inventory must name the artifact that was actually produced. A
+# SQLite archive that advertises skygate-pg.sql sends the operator (and
+# scripts/restore.sh) looking for a file that is not in the archive.
+if [[ "${DB_DIALECT}" == "sqlite" ]]; then
+  DB_ARTIFACT_LINE="- skygate.db               SQLite database (copy, WAL-checkpointed)"
+else
+  DB_ARTIFACT_LINE="- skygate-pg.sql           PostgreSQL dump (text format, --clean --if-exists)"
+fi
 cat > "${BACKUP_PATH}/inventory.txt" <<INVEOF
 Skygate Full Backup — ${DATE_TAG}
 ==================================
 - skygate-repo.bundle      Git repository (full)
-- skygate.env              Environment variables (secrets!)
-- skygate-pg.sql           PostgreSQL dump (text format, --clean --if-exists)
-- headscale-config/        Headscale YAML + ACL configs
-- headscale.db             Headscale SQLite database (if available)
-- headplane-data/          Headplane state
+- skygate.env              Environment variables (secrets!) — copied from ${SKYGATE_ENV_SOURCE:-<none found>}
+- etc-skygate/             Native-only: cluster-state.json, dbs.env (when present)
+${DB_ARTIFACT_LINE}
+- SKYGATE_DB_DIALECT=${DB_DIALECT}
+- headscale-config/        Headscale YAML + ACL configs — copied from ${HS_CONFIG_SOURCE:-<none found>}
+- headscale.db             Headscale SQLite database (native file, else docker volume, if available)
+- headplane-data/          Headplane state (docker sidecar only)
 - derper.conf              DERP relay config
 - derpmap.json             DERP map config
 - docker-compose.yml       Skygate compose file
@@ -362,7 +598,31 @@ log "Inventory created"
 # We do (a) and (b) here, and (c) on a separate throwaway DB so the
 # live DB isn't disturbed.
 STEP="integrity-check"
-if docker info >/dev/null 2>&1; then
+if [[ "${DB_DIALECT}" == "sqlite" ]]; then
+  # B459 — the SQLite half of the integrity check. Pre-B459 the check was
+  # gated on `docker info` alone, so a native SQLite install reported
+  # "integrity skipped" about an archive nobody had looked inside.
+  log "Running SQLite integrity check..."
+  if command -v sqlite3 >/dev/null 2>&1; then
+    PRAGMA_ANSWER=$(sqlite3 "${BACKUP_PATH}/skygate.db" 'PRAGMA integrity_check' 2>&1 | head -1)
+    if [[ "${PRAGMA_ANSWER}" == "ok" ]]; then
+      SQLITE_TABLES=$(sqlite3 "${BACKUP_PATH}/skygate.db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'" 2>/dev/null | tr -d '[:space:]')
+      log "  ✓ PRAGMA integrity_check = ok, tables = ${SQLITE_TABLES:-?}"
+      INTEGRITY="ok"
+      sqlite3 "${BACKUP_PATH}/skygate.db" \
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name" \
+        > "${BACKUP_PATH}/skygate-schema.txt" 2>/dev/null || true
+    else
+      INTEGRITY="fail"
+      err "  ✗ PRAGMA integrity_check = ${PRAGMA_ANSWER}"
+      FAIL_REASON="sqlite integrity_check: ${PRAGMA_ANSWER}"
+      exit 2
+    fi
+  else
+    INTEGRITY="skip"
+    warn "  (sqlite3 not installed — SQLite header verified, PRAGMA integrity_check skipped)"
+  fi
+elif docker info >/dev/null 2>&1; then
   log "Running PG connectivity + table count checks..."
   # (a) SELECT 1
   if ! psql_run "SELECT 1" >/dev/null 2>&1; then

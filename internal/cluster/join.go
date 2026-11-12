@@ -394,6 +394,11 @@ type HeartbeatRequest struct {
 	// alone instead of being overwritten with "", so an old node cannot erase what the
 	// join recorded.
 	Version string `json:"version,omitempty"`
+	// Readiness is the B464 capability block: what the agent measured on its own host
+	// (is a web server answering, is that instance's database reachable). Nil means "an
+	// agent that does not report it" and keeps the pre-B464 state machine unchanged —
+	// see readiness_b464.go for why an absent block must never demote a node.
+	Readiness *Readiness `json:"readiness,omitempty"`
 }
 
 // HeartbeatResponse is what /api/cluster/heartbeat
@@ -405,6 +410,13 @@ type HeartbeatResponse struct {
 	LastSeenAt           int64  `json:"last_seen_unix"`
 	NextHeartbeatSeconds int    `json:"next_heartbeat_seconds"`
 	HeartbeatsUntilStale int    `json:"heartbeats_until_stale"`
+	// B464: the verdict the hub recorded, so the AGENT can say it too. Without this
+	// the host that is the reason for `degraded` is the only participant that cannot
+	// see the verdict — the operator would have to open the panel to learn that its
+	// own box is not serving, while the daemon's journal (the one log an on-host
+	// operator reads) stayed silent.
+	Degraded bool   `json:"degraded,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // ErrNodeNotFound is returned by Heartbeat when the
@@ -455,7 +467,29 @@ func Heartbeat(d *sql.DB, secret string, req *HeartbeatRequest) (*HeartbeatRespo
 		return nil, fmt.Errorf("token's invite is bound to node %q, not %q", invite.UsedByNodeID, req.NodeID)
 	}
 
-	// 3. Update last_seen_at + auto-transition state.
+	// 2b. THE INVITE TOKEN IS ALSO THE NODE CREDENTIAL — and it is deliberately NOT
+	// subject to cluster_invite.expires_at here.
+	//
+	// The trap this comment prevents (measured on the operator's installation,
+	// 2026-11-11): the standby's token carries `exp = 1791625519` (2026-10-10) and its
+	// heartbeats are still accepted on 2026-11-12, 33 days after it expired. Read on
+	// its own that looks like a missing expiry check. It is not: the sgn1 token is the
+	// ONLY credential a joined node ever receives (invite.go's package doc: "The token
+	// is reused for every heartbeat"), `cluster_invite.expires_at` bounds the JOIN
+	// window, and enforcing it here would 401 every standby in the world 24 h after it
+	// joined — a security fix that breaks the cluster it protects.
+	//
+	// So the contract, stated once and enforced by B464's contracts:
+	//   - `Join` enforces expires_at (an expired invitation cannot join) — correct;
+	//   - `Heartbeat` enforces the HMAC, the invite's existence and the
+	//     used_by_node_id binding, and NOT its expiry — correct, because the token is
+	//     a credential by then;
+	//   - the fact that a node's credential is older than its invitation is therefore
+	//     made VISIBLE instead of silently rejected: /admin/cluster reports the
+	//     credential's expiry per node (B464), and the supported rotation is a fresh
+	//     invite + a re-join, which adopts the existing row.
+
+	// 3. Update last_seen_at + transition state.
 	//
 	// B402 (2026-10-20) — A HEARTBEAT FALSIFIES "failed". The state machine used to
 	// move only pending → ready, while the HA elector marks a node `failed` when its
@@ -472,6 +506,19 @@ func Heartbeat(d *sql.DB, secret string, req *HeartbeatRequest) (*HeartbeatRespo
 	// for 3 intervals", and an authenticated heartbeat proves that no longer holds. It
 	// is audited (`node_health`) so the reversal is visible, and `draining` is NEVER
 	// touched here — that is the operator's own decision, not the network's.
+	//
+	// B464 (2026-11-11) — AND A HEARTBEAT MUST NOT FALSIFY "READY" EITHER. The same
+	// argument, mirrored: a heartbeat proved "the agent can reach the hub", and the
+	// state machine promoted the row to `ready` on that alone. Measured live on the
+	// same installation: `cluster_node` said ready while the host had no web server, no
+	// headscale and no database at all. So the agent now reports what it measured on
+	// its own host (readiness_b464.go) and the verdict decides the state:
+	//
+	//	payload absent         → B402 behaviour unchanged (old agent)
+	//	serving + db reachable → ready
+	//	anything else          → degraded, with the measured sentence
+	//
+	// `draining` still wins over everything: a verdict must not undo a drain.
 	now := time.Now().UTC()
 	// The OLD state and the node's cluster, read first: RETURNING gives the new state,
 	// and the audit must say what the elector's verdict was before the heartbeat
@@ -483,7 +530,22 @@ func Heartbeat(d *sql.DB, secret string, req *HeartbeatRequest) (*HeartbeatRespo
 	if nodeClusterID == "" {
 		nodeClusterID = DefaultClusterID
 	}
-	var state string
+	// verdictState is "" when the agent reported no capability block.
+	verdictState, verdictReason := readinessVerdict(req.Readiness)
+	state := prevState
+	switch {
+	case prevState == NodeStateDraining:
+		// The operator's own decision, not the network's and not the agent's.
+	case verdictState == "":
+		// Pre-B464 agent: exactly the B402 rule.
+		if prevState == NodeStatePending || prevState == NodeStateFailed {
+			state = NodeStateReady
+		}
+	default:
+		// A row in any other state — including one that does not exist yet, where the
+		// UPDATE below answers ErrHeartbeatNodeNotFound.
+		state = verdictState
+	}
 	// B291: last_seen_at round-trips through the driver, so read it
 	// as `any` and decode it — SQLite hands back a TEXT/INTEGER value
 	// that cannot scan into *time.Time. Write it through
@@ -494,28 +556,44 @@ func Heartbeat(d *sql.DB, secret string, req *HeartbeatRequest) (*HeartbeatRespo
 		UPDATE cluster_node
 		   SET last_seen_at = $1,
 		       skygate_version = CASE WHEN $3 <> '' THEN $3 ELSE skygate_version END,
-		       state = CASE
-		           WHEN state = 'pending' THEN 'ready'
-		           WHEN state = 'failed'  THEN 'ready'
-		           ELSE state
-		       END
+		       state = $4
 		 WHERE id = $2
 		RETURNING state, last_seen_at
-	`, db.ActiveDialect().TimeValue(now), req.NodeID, strings.TrimSpace(req.Version)).Scan(&state, &lastSeenRaw)
+	`, db.ActiveDialect().TimeValue(now), req.NodeID, strings.TrimSpace(req.Version), state).Scan(&state, &lastSeenRaw)
 	if err == sql.ErrNoRows {
 		return nil, ErrHeartbeatNodeNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("update node: %w", err)
 	}
-	// The reverse transition is recorded where the elector records its own verdict, so
-	// the audit trail reads "failed → ready (heartbeat resumed)" instead of showing a
-	// resurrection nobody can explain.
-	if prevState == NodeStateFailed && state == NodeStateReady {
+	// Every state change caused by a heartbeat is recorded where the elector records
+	// its own verdict, so the audit trail reads "failed → ready (heartbeat resumed)" or
+	// "ready → degraded (no web server)" instead of showing a change nobody can explain.
+	//
+	// One row per TRANSITION, not per heartbeat: the daemon beats every 30 s and a
+	// standing condition must not fill cluster_audit. The sentence therefore describes
+	// the moment the state changed; a condition that persists without changing the state
+	// keeps its original sentence, which is the fact the operator needs ("when did this
+	// box stop serving") rather than a moving timestamp.
+	if state != prevState {
+		// An old agent sends no measured sentence, but "no sentence" must not become
+		// "nothing to say": the difference between `ready` from a B464 agent (it
+		// measured a serving instance) and `ready` from an older one (it only proved
+		// liveness) is exactly what the operator needs to know before trusting it.
+		auditReason := verdictReason
+		if auditReason == "" {
+			if state == NodeStateReady {
+				auditReason = "an authenticated heartbeat resumed; this agent does not report host readiness (a pre-B464 build), so 'ready' here means 'alive', not 'serving'"
+			} else {
+				auditReason = "state changed by an authenticated heartbeat (the agent reports no host readiness)"
+			}
+			auditReason = sanitizeAuditReason(auditReason)
+		}
 		if _, aerr := db.InsertClusterAudit(d, nodeClusterID, db.NodeHealth, req.NodeID, "heartbeat",
-			fmt.Sprintf(`{"to":"ready","from":"failed","actor":"heartbeat","reason":"authenticated heartbeat resumed — the elector had marked the node failed for missed heartbeats","version":%q}`,
-				strings.TrimSpace(req.Version))); aerr != nil {
-			log.Printf("cluster heartbeat: audit node_health failed→ready for %s: %v", req.NodeID, aerr)
+			fmt.Sprintf(`{"to":%q,"from":%q,"actor":"heartbeat","reason":%q,"version":%q,"degraded":%t,"readiness":%s}`,
+				state, prevState, auditReason, strings.TrimSpace(req.Version), state == NodeStateDegraded,
+				readinessAuditJSON(req.Readiness))); aerr != nil {
+			log.Printf("cluster heartbeat: audit node_health %s→%s for %s: %v", prevState, state, req.NodeID, aerr)
 		}
 	}
 	lastSeen, _ := db.ParseDBTime(lastSeenRaw)
@@ -528,6 +606,8 @@ func Heartbeat(d *sql.DB, secret string, req *HeartbeatRequest) (*HeartbeatRespo
 		LastSeenAt:           lastSeen.Unix(),
 		NextHeartbeatSeconds: 30,
 		HeartbeatsUntilStale: 3, // 3 missed → failed (HA elector)
+		Degraded:             state == NodeStateDegraded,
+		Reason:               verdictReason,
 	}, nil
 }
 

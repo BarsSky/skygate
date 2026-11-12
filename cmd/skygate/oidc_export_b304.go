@@ -49,6 +49,13 @@ func runOIDCExportSubcommand(args []string) error {
 	wantHeadscale := false
 	noSecret := false
 	wantJSON := false
+	// B459: --env is the EXPLICIT form of the default (.env block). It was
+	// advertised in RELEASE-NOTES.md and rejected here with "unknown flag", so
+	// an operator who copied the documented invocation got an error instead of
+	// output — and no contract noticed, because check_b304 only pins that the
+	// subcommand is DISPATCHED.
+	wantEnv := false
+	fromEnv := false
 	for _, a := range args {
 		switch a {
 		case "--secret":
@@ -59,6 +66,14 @@ func runOIDCExportSubcommand(args []string) error {
 			noSecret = true
 		case "--json":
 			wantJSON = true
+		case "--env":
+			wantEnv = true
+		case "--from-env":
+			// B459: an env-only install (OIDC configured in .env, no database
+			// row) is a legitimate configuration. It is NOT the same thing as
+			// "the database could not be opened", which is what this flag
+			// separates: without it an unreadable database is now fatal.
+			fromEnv = true
 		case "help", "--help", "-h":
 			fmt.Print(oidcExportHelp())
 			return nil
@@ -91,15 +106,37 @@ func runOIDCExportSubcommand(args []string) error {
 
 	// The DB row wins where it carries a value — this is the whole point of the
 	// command: whatever the panel shows is what headscale must be configured with.
-	if d, oerr := db.OpenDSN(cfg.DBDSN); oerr == nil {
+	//
+	// B459: an UNREADABLE database is now a hard error instead of a stderr
+	// warning followed by exit 0. Pre-B459 the command exported the env values
+	// and reported success, so a caller (deploy/skygate-apply-oidc.sh, or an
+	// operator's copy-paste) received a *successful* export of a configuration
+	// the panel does not have — the wrong client_secret written into headscale,
+	// with nothing in the transcript saying so. --from-env is the explicit way
+	// to say "this install really is env-only".
+	if d, oerr := openCLIDB(cfg); oerr == nil {
 		if row, rerr := db.GetOIDCSettingsDecrypted(d, cfg.SecretKeyHex); rerr == nil {
 			applyOIDCExportRow(&vals, row)
 		} else if rerr != db.ErrOIDCSettingsNotFound {
-			fmt.Fprintf(os.Stderr, "oidc-export: warning: reading oidc_settings failed: %v (using env values)\n", rerr)
+			// B459: this branch used to WARN and continue with the env values,
+			// so a database whose oidc_settings row could not be read produced
+			// a "successful" export of a configuration the panel does not have
+			// — measured live on a SQLite stand: `no such table: oidc_settings`
+			// on stderr, the env block on stdout, exit 0.
+			if !fromEnv {
+				return fmt.Errorf("oidc-export: reading oidc_settings failed (%w) — refusing to print env values as if "+
+					"they were the configured ones; fix the database/SKYGATE_DB, or pass --from-env if this install "+
+					"really is configured from .env alone", rerr)
+			}
+			fmt.Fprintf(os.Stderr, "oidc-export: warning: reading oidc_settings failed: %v (--from-env given, using env values)\n", rerr)
 		}
 		_ = d.Close()
+	} else if !fromEnv {
+		return fmt.Errorf("oidc-export: database unavailable (%w) — refusing to print env values as if they were "+
+			"the configured ones; fix the database/SKYGATE_DB, or pass --from-env if this install really is "+
+			"configured from .env alone", oerr)
 	} else {
-		fmt.Fprintf(os.Stderr, "oidc-export: warning: database unavailable: %v (using env values)\n", oerr)
+		fmt.Fprintf(os.Stderr, "oidc-export: warning: database unavailable (%v) — --from-env given, using env values\n", oerr)
 	}
 
 	vals.SecretSet = vals.ClientSecret != ""
@@ -118,6 +155,10 @@ func runOIDCExportSubcommand(args []string) error {
 		return enc.Encode(vals)
 	case wantHeadscale:
 		fmt.Print(renderHeadscaleOIDCBlock(vals, !noSecret && wantSecret))
+	case wantEnv:
+		// The explicit form of the default block (B459 — the flag
+		// RELEASE-NOTES.md documented and this parser used to reject).
+		fmt.Print(renderOIDCEnvBlock(vals, wantSecret))
 	default:
 		fmt.Print(renderOIDCEnvBlock(vals, wantSecret))
 	}
@@ -212,10 +253,17 @@ Usage:
   skygate oidc-export [flags]
 
 Flags:
+  --env           print the .env block (the default; kept explicit because
+                  RELEASE-NOTES.md documented it and this parser rejected it — B459)
   --secret        include the stored client_secret in the .env block
   --headscale     print the headscale oidc: block instead of the .env block
   --no-secret     with --headscale: keep the secret as a placeholder
   --json          machine-readable output (never includes the secret)
+  --from-env      export the env values even when the database cannot be read
+                  or its oidc_settings row is unreadable. WITHOUT this flag an
+                  unreadable database is an ERROR (B459): printing env values as
+                  if they were the configured ones is how a wrong client_secret
+                  reaches headscale.
 
 Values come from the same precedence the admin panel uses: the oidc_settings row
 saved on /admin/oidc wins, the SKYGATE_OIDC_* env vars are the fallback.

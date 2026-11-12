@@ -75,6 +75,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -87,6 +88,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -174,7 +176,7 @@ func runClusterInvite(args []string) error {
 	// helper directly (it has no auth requirement, but
 	// it requires a DB connection — same trust model as
 	// the rest of the CLI subcommands).
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("cluster invite: open db: %w", err)
 	}
@@ -219,6 +221,10 @@ type joinOpts struct {
 	WriteDSNTo      string // optional path to write SKYGATE_DB_DSN=<DSN> env file (B212: DSN bootstrap)
 	DSNKey          string // env key name to use (default: SKYGATE_DB_DSN)
 	NoHeartbeatHint bool   // suppress "start heartbeat-daemon" hint at the end
+	// AllowNoDSN (B464) turns "the primary returned no DSN" from a FAILED join into a
+	// conscious choice: this node keeps its OWN database (the standalone-SQLite
+	// topology) and is therefore not a database mirror of the primary.
+	AllowNoDSN bool
 }
 
 // runClusterJoin is the canonical "join this node to
@@ -390,6 +396,33 @@ func runClusterJoin(args []string) error {
 			clusterHeartbeatUnit, clusterHeartbeatUnit)
 		fmt.Fprintf(os.Stderr, "  2. Watch the new node appear on /admin/cluster as state=pending → state=ready (after the first heartbeat)\n")
 	}
+	// 7. B464 — A JOIN THAT PRODUCED A NODE WITH NO DATABASE IS NOT A SUCCESS.
+	//
+	// Measured on the operator's standby (2026-11-11): `skygate cluster join` printed a
+	// hint, wrote /etc/skygate/dbs.env containing the literal line
+	//
+	//	# SKYGATE_DB_DSN=<unset — primary returned no DSN; set this manually …>
+	//
+	// and exited 0. Everything downstream believed the standby was provisioned while it
+	// had no database at all, which is half of why the hub recorded it as `ready`. An
+	// exit code is the one signal a script (and a human) cannot overlook.
+	//
+	// The failure is raised HERE, after the local writes, on purpose: the invite is
+	// already consumed on the primary at this point (Join refuses a used one with 409),
+	// so discarding the result would cost the operator a fresh invite and lose the
+	// node_id the heartbeat daemon needs. What is written stays valid — what changes is
+	// that the command no longer claims to have succeeded.
+	//
+	// The override exists because "no DSN" is a legitimate topology: a node that keeps
+	// its own local SQLite database is a cluster member and a panel, but it is NOT a
+	// database mirror of the primary, and the operator has to say so out loud.
+	if jr.DSN == "" && !opts.AllowNoDSN {
+		return fmt.Errorf("cluster join: joined cluster %q as node %q, but the primary returned NO DATABASE (cluster_database.dsn_template is empty for this cluster) — this node cannot serve as a mirror and must not be failed over to.\n"+
+			"cluster join: the local files were written (state file + %q), so do NOT re-run the join — the invite is already used.\n"+
+			"cluster join: FIX: set dsn_template on the primary (/admin/database → DSN template → «Заполнить из моего DSN»), put the password into %q, then restart skygate here.\n"+
+			"cluster join: OR, if this node is meant to keep its OWN local database (standalone SQLite, no replication), re-run with --allow-no-dsn to record that choice",
+			jr.ClusterID, jr.NodeID, opts.WriteDSNTo, opts.WriteDSNTo)
+	}
 	return nil
 }
 
@@ -440,6 +473,7 @@ func parseJoinArgs(args []string) (*joinOpts, string, error) {
 	writeDSNTo := fs.String("write-dsn-to", "", "if set, write a single-line KEY=VALUE env file with SKYGATE_DB_DSN=<DSN> (B212: DSN bootstrap)")
 	dsnKey := fs.String("dsn-key", "SKYGATE_DB_DSN", "env key name to use with --write-dsn-to (default: SKYGATE_DB_DSN)")
 	noHeartbeatHint := fs.Bool("no-heartbeat-hint", false, "suppress the 'next steps' message at the end (scriptable use)")
+	allowNoDSN := fs.Bool("allow-no-dsn", false, "B464: accept a join where the primary returned no DSN (this node keeps its OWN local database — standalone SQLite, not a mirror of the primary)")
 	if err := fs.Parse(flagArgs); err != nil {
 		return nil, "", err
 	}
@@ -450,6 +484,7 @@ func parseJoinArgs(args []string) (*joinOpts, string, error) {
 		WriteDSNTo:      *writeDSNTo,
 		DSNKey:          *dsnKey,
 		NoHeartbeatHint: *noHeartbeatHint,
+		AllowNoDSN:      *allowNoDSN,
 	}, token, nil
 }
 
@@ -544,7 +579,7 @@ func runClusterNodes(args []string) error {
 	if err != nil {
 		return fmt.Errorf("cluster nodes: config load: %w", err)
 	}
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("cluster nodes: open db: %w", err)
 	}
@@ -620,7 +655,7 @@ func runClusterDbs(args []string) error {
 	if err != nil {
 		return fmt.Errorf("cluster dbs: config load: %w", err)
 	}
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("cluster dbs: open db: %w", err)
 	}
@@ -704,7 +739,7 @@ func runClusterAudit(args []string) error {
 	if err != nil {
 		return fmt.Errorf("cluster audit: config load: %w", err)
 	}
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("cluster audit: open db: %w", err)
 	}
@@ -784,7 +819,7 @@ func runClusterFailover(args []string) error {
 	if err != nil {
 		return fmt.Errorf("cluster failover: config load: %w", err)
 	}
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("cluster failover: open db: %w", err)
 	}
@@ -946,7 +981,7 @@ func runClusterFailoverDrill(args []string) error {
 	if err != nil {
 		return fmt.Errorf("cluster failover-drill: config load: %w", err)
 	}
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("cluster failover-drill: open db: %w", err)
 	}
@@ -1130,6 +1165,9 @@ func runClusterUpgrade(args []string) error {
 func runClusterHeartbeatDaemon(args []string) error {
 	fs := flag.NewFlagSet("cluster heartbeat-daemon", flag.ContinueOnError)
 	stateFile := fs.String("state-file", StateFilePath, "state file (written by 'skygate cluster join')")
+	// B464: what the daemon reports about its own host.
+	healthURL := fs.String("health-url", "", "local /healthz to probe before each heartbeat (default: $SKYGATE_HEALTH_URL, else http://127.0.0.1:$SKYGATE_PORT/healthz, else :8080)")
+	noReadiness := fs.Bool("no-readiness", false, "do not report this host's readiness (pre-B464 behaviour: the hub records the node as alive, not as servable)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1140,6 +1178,19 @@ func runClusterHeartbeatDaemon(args []string) error {
 	interval := time.Duration(st.HeartbeatSeconds) * time.Second
 	if interval <= 0 {
 		interval = 30 * time.Second
+	}
+	// B464: this host's own credential has an expiry (the invite it joined with), and the
+	// hub keeps accepting it on purpose (see internal/cluster join.go step 2b). The host's
+	// journal is where an on-host operator looks, so the fact belongs here as well as on
+	// /admin/cluster — otherwise "the credential is 33 days past its expiry" is a fact only
+	// the OTHER machine knows.
+	warnIfCredentialExpired(st.Token)
+	var prober *readinessProber
+	if !*noReadiness {
+		prober = newReadinessProber(resolveHealthURL(*healthURL))
+		log.Printf("cluster heartbeat-daemon: readiness probe enabled (%s) — the hub will record this node as degraded, not ready, when it does not answer or its database is unreachable", prober.healthURL)
+	} else {
+		log.Printf("cluster heartbeat-daemon: readiness probe DISABLED (--no-readiness) — the hub cannot tell a serving host from a silent one")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1152,7 +1203,7 @@ func runClusterHeartbeatDaemon(args []string) error {
 		cancel()
 	}()
 	// Initial heartbeat: 1s after start, then every interval.
-	if err := postHeartbeat(ctx, st); err != nil {
+	if err := postHeartbeat(ctx, st, prober); err != nil {
 		log.Printf("cluster heartbeat-daemon: initial heartbeat failed: %v", err)
 	}
 	t := time.NewTicker(interval)
@@ -1163,11 +1214,68 @@ func runClusterHeartbeatDaemon(args []string) error {
 			log.Printf("cluster heartbeat-daemon: stopped")
 			return nil
 		case <-t.C:
-			if err := postHeartbeat(ctx, st); err != nil {
+			if err := postHeartbeat(ctx, st, prober); err != nil {
 				log.Printf("cluster heartbeat-daemon: heartbeat failed: %v", err)
 			}
 		}
 	}
+}
+
+// legacyHubSeen is set once the hub has answered `unknown field` to a capability
+// heartbeat, i.e. the primary is older than this agent. From then on the daemon
+// sends the pre-B464 body without retrying the new one — one wasted round trip in
+// the whole process lifetime instead of one every 30 s.
+var legacyHubSeen atomic.Bool
+
+// tokenExpiryUnix decodes the `exp` claim out of an sgn1 token WITHOUT the signing
+// secret.
+//
+// This is not verification and must never be used as one: VerifyToken (which needs
+// SKYGATE_SECRET_KEY) is the hub's job and the only thing that decides whether a
+// token is genuine. Here the daemon reads the expiry of ITS OWN token, purely to be
+// able to SAY that it is old — a base64 decode of a value the process already holds,
+// so no secret is needed and none is trusted.
+func tokenExpiryUnix(token string) (int64, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 || parts[0] != "sgn1" {
+		return 0, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return 0, false
+	}
+	var p struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil || p.Exp == 0 {
+		return 0, false
+	}
+	return p.Exp, true
+}
+
+// warnIfCredentialExpired writes ONE journal line at daemon start when this node's
+// credential is older than its expiry.
+//
+// Why warn and not refuse (B464, measured live): the standby's token expired
+// 2026-10-10 and its heartbeats were still accepted on 2026-11-12, 33 days later.
+// The token IS the node's only credential, so refusing it would disconnect every
+// standby 24 h after it joined — the "fix" would break the cluster. The expiry
+// therefore bounds the JOIN, and the operator needs to know the credential is old
+// so they can rotate it (fresh invite + re-join, which adopts the node row).
+func warnIfCredentialExpired(token string) {
+	exp, ok := tokenExpiryUnix(token)
+	if !ok {
+		return
+	}
+	expAt := time.Unix(exp, 0).UTC()
+	now := time.Now().UTC()
+	if !now.After(expAt) {
+		return
+	}
+	log.Printf("cluster heartbeat-daemon: WARNING: this node's credential (the invite token) expired %d day(s) ago, at %s. "+
+		"Heartbeats keep working because that token IS the node credential and its expiry bounds the JOIN window only. "+
+		"To rotate it: issue a fresh invite on the primary (/admin/cluster) and re-run 'skygate cluster join' on this host — the node row is adopted, not duplicated.",
+		int(now.Sub(expAt).Hours()/24), expAt.Format(time.RFC3339))
 }
 
 // postHeartbeat POSTs the node_id + token to the configured
@@ -1180,8 +1288,17 @@ func runClusterHeartbeatDaemon(args []string) error {
 // used form-encoded data (the same bug as the join
 // path). Same fix: marshal a HeartbeatRequest and
 // POST it as application/json.
-func postHeartbeat(ctx context.Context, st *clusterState) error {
-	body, err := json.Marshal(cluster.HeartbeatRequest{
+//
+// B464: the body now carries what this host measured about itself, and the hub's
+// verdict comes back in the response. Two compatibility directions are handled
+// here, because a mixed-version chain is normal for one upgrade window:
+//
+//	new agent → old hub: the hub's strict decoder answers 400 `unknown field`. That
+//	  must NOT cost the node its state (3 missed beats ⇒ `failed`), so the request
+//	  is retried ONCE with the pre-B464 body and the fact is logged.
+//	new hub → old agent: nothing to do — `readiness` is optional.
+func postHeartbeat(ctx context.Context, st *clusterState, prober *readinessProber) error {
+	req := cluster.HeartbeatRequest{
 		NodeID: st.NodeID,
 		Token:  st.Token,
 		// B402: the build this node runs, on every heartbeat. Without it the hub's
@@ -1189,24 +1306,55 @@ func postHeartbeat(ctx context.Context, st *clusterState) error {
 		// standby upgraded to the current release and one still on v1.5.108 looked
 		// identical (live: the operator's row said v1.5.108 while the hub ran v1.5.142).
 		Version: selfVersion(),
-	})
-	if err != nil {
-		return fmt.Errorf("heartbeat: marshal request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", st.APIURL+"/api/cluster/heartbeat", bytes.NewReader(body))
-	if err != nil {
-		return err
+	if prober != nil && !legacyHubSeen.Load() {
+		req.Readiness = prober.measure(ctx)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	status, body, err := doHeartbeat(ctx, st.APIURL, req)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("server returned %s", resp.Status)
+	if status == http.StatusBadRequest && req.Readiness != nil && strings.Contains(string(body), "unknown field") {
+		// The hub is older than this agent. Say so ONCE, then speak its language.
+		legacyHubSeen.Store(true)
+		log.Printf("cluster heartbeat-daemon: primary %s is older than this agent (it rejects the B464 readiness block) — reporting liveness only; upgrade the primary to get 'degraded' verdicts", st.APIURL)
+		req.Readiness = nil
+		status, body, err = doHeartbeat(ctx, st.APIURL, req)
+		if err != nil {
+			return err
+		}
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("server returned HTTP %d: %s", status, redactProbeDetail(strings.TrimSpace(string(body))))
+	}
+	// B464: close the loop on the host itself. The daemon's journal is the log an
+	// on-host operator actually reads, so the hub's verdict about this box belongs
+	// there — not only on the panel of another machine.
+	var hr cluster.HeartbeatResponse
+	if jerr := json.Unmarshal(body, &hr); jerr == nil && hr.Degraded {
+		log.Printf("cluster heartbeat-daemon: the hub recorded this node as DEGRADED — %s", hr.Reason)
 	}
 	return nil
+}
+
+// doHeartbeat marshals req, POSTs it and returns (status, body, transport error).
+func doHeartbeat(ctx context.Context, apiURL string, req cluster.HeartbeatRequest) (int, []byte, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("heartbeat: marshal request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL+"/api/cluster/heartbeat", bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	return resp.StatusCode, respBody, nil
 }
 
 // clusterState is the on-disk shape of the per-node

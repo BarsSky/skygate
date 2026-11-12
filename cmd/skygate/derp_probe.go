@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"skygate/internal/config"
-	"skygate/internal/db"
 	"skygate/internal/derphealth"
 )
 
@@ -42,7 +41,7 @@ func runDerpProbe(args []string) error {
 	if err != nil {
 		return fmt.Errorf("config load: %w", err)
 	}
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("db open: %w", err)
 	}

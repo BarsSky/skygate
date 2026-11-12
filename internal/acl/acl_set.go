@@ -33,7 +33,7 @@ func SetACLForAllPlanes(d *sql.DB, hsForPlane func(planeURL string) *headscale.C
 	for _, p := range planes {
 		hs := hsForPlane(p.URL)
 		if hs == nil {
-			out = append(out, ApplyResult{Version: 0, Applied: false, Err: fmt.Errorf("no headscale client for plane %q", p.URL)})
+			out = append(out, ApplyResult{Version: 0, Applied: false, PlaneURL: p.URL, Err: fmt.Errorf("no headscale client for plane %q", p.URL)})
 			continue
 		}
 		// Save snapshot (always, so the operator can roll
@@ -42,12 +42,12 @@ func SetACLForAllPlanes(d *sql.DB, hsForPlane func(planeURL string) *headscale.C
 		if setErr := hs.SetPolicy(policy); setErr != nil {
 			db.MarkACLFail(d, ver, setErr.Error())
 			db.AppendExitRuleLog(d, ver, db.ExitRuleActionApplyFail, detailForLog+": "+setErr.Error())
-			out = append(out, ApplyResult{Version: ver, Applied: false, Err: setErr})
+			out = append(out, ApplyResult{Version: ver, Applied: false, PlaneURL: p.URL, Err: setErr})
 			continue
 		}
 		db.MarkACLApplied(d, ver)
 		db.AppendExitRuleLog(d, ver, db.ExitRuleActionApply, detailForLog)
-		out = append(out, ApplyResult{Version: ver, Applied: true, Err: nil})
+		out = append(out, ApplyResult{Version: ver, Applied: true, PlaneURL: p.URL, Err: nil})
 	}
 	return out
 }

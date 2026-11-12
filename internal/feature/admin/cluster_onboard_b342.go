@@ -83,6 +83,26 @@ const clusterOnboardHeartbeatUnit = "skygate-heartbeat"
 // `$` need no escaping at the shell layer; `<hostname>` inside `%H` is resolved
 // by systemd, not by the shell. `tee` REPLACES the file rather than appending,
 // which is what makes re-pasting the block idempotent.
+//
+// B464 (2026-11-12) — TWO changes, both consequences of the readiness verdict.
+//
+//  1. `EnvironmentFile=-/etc/skygate/skygate.env`. The daemon now probes the LOCAL
+//     instance before every heartbeat (`GET /healthz` + `/readyz`) and derives the
+//     address from `SKYGATE_PORT`; without this line the unit passes no environment
+//     at all, so a standby serving on :8082 (the B270 shape — the panel said 8080,
+//     the service ran 8082) would be probed at :8080, answered by nothing, and
+//     recorded `degraded` while it was perfectly healthy. That is the same class of
+//     false negative B270 fixed in the updater, so it must not be reintroduced by a
+//     unit the panel itself writes. The `-` prefix keeps the unit valid on a host
+//     where the file does not exist yet (the block is also used before skygate is
+//     installed there), and the daemon's own default (:8080) still applies.
+//
+//  2. The verification now ASKS the same two questions the hub asks, so the
+//     operator can see the verdict's input instead of reading a state they cannot
+//     explain: `/healthz` (is a web server answering?) and `/readyz` (does it say
+//     its database is reachable?). Neither failure is an error in the block — a
+//     host with no skygate yet IS `degraded`, correctly — so the text says what the
+//     panel will show rather than pretending something is broken.
 func heartbeatDaemonStepCommand(stateFile string) string {
 	if strings.TrimSpace(stateFile) == "" {
 		stateFile = clusterOnboardHeartbeatStateFile
@@ -96,6 +116,8 @@ func heartbeatDaemonStepCommand(stateFile string) string {
 		"",
 		"[Service]",
 		"Type=simple",
+		// B464: the probe must measure the port the SERVICE uses, not a guess.
+		"EnvironmentFile=-/etc/skygate/skygate.env",
 		"ExecStart=/usr/local/bin/skygate cluster heartbeat-daemon --state-file=" + stateFile,
 		"Restart=always",
 		"RestartSec=10",
@@ -111,6 +133,12 @@ func heartbeatDaemonStepCommand(stateFile string) string {
 		"systemctl is-active --quiet " + clusterOnboardHeartbeatUnit +
 			" && echo '" + clusterOnboardHeartbeatUnit + ": active' && sudo journalctl -u " +
 			clusterOnboardHeartbeatUnit + " -n 5 --no-pager",
+		// B464: the two questions the hub's verdict is made of. Read the port from the
+		// env file the unit sources (root-owned), then ask the local instance.
+		"PORT=$(sudo sed -n 's/^SKYGATE_PORT=//p' /etc/skygate/skygate.env 2>/dev/null | tail -1); PORT=${PORT:-8080}",
+		"curl -fsS -m 3 \"http://127.0.0.1:$PORT/healthz\" && echo ' -> serving' || echo ' -> nothing answers /healthz on this host'",
+		"curl -fsS -m 3 \"http://127.0.0.1:$PORT/readyz\" && echo ' -> readyz healthy' || echo ' -> /readyz is not healthy (its database is unreachable)'",
+		"echo 'NOTE: the hub records state=ready only when BOTH answer above; otherwise the node is state=degraded (alive, but not a failover candidate). That is a fact about this host, not an error in the block.'",
 	}, "\n")
 }
 

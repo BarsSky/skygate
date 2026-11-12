@@ -73,12 +73,21 @@ hdr "B402 — a heartbeat that arrives must beat a state that says it did not"
 # ---------------------------------------------------------------------------
 hdr "A — the heartbeat is the fresher fact"
 
-if has "WHEN state = 'failed'  THEN 'ready'" "$JOIN_SRC"; then
-  ok "A1: an authenticated heartbeat moves failed → ready"
+# B464 (2026-11-11) — CONTRACT RENEGOTIATED. The pre-B464 heartbeat decided the new
+# state inside the UPDATE, with a SQL CASE (`WHEN state = 'failed' THEN 'ready'`).
+# B464 moved that decision into Go, because the state also depends on what the agent
+# measured about its own host (ready | degraded), so the literal CASE markers are gone
+# while the BEHAVIOUR they pinned is unchanged. The contracts below therefore assert
+# the new shape — the same two transitions, now explicit — and the behaviour itself is
+# pinned by TestB402_HeartbeatClearsFailed plus TestB464_OldAgentKeepsB402 (an agent
+# that reports no readiness must still get exactly the B402 rule).
+if has "if prevState == NodeStatePending || prevState == NodeStateFailed {" "$JOIN_SRC" \
+   && has "state = NodeStateReady" "$JOIN_SRC"; then
+  ok "A1: an authenticated heartbeat moves failed → ready (the legacy verdict branch)"
 else
   bad "A1: failed is still terminal for the heartbeat — the live eleven-day loop is intact"
 fi
-if has "WHEN state = 'pending' THEN 'ready'" "$JOIN_SRC"; then
+if has "prevState == NodeStatePending" "$JOIN_SRC"; then
   ok "A2: pending → ready is unchanged"
 else
   bad "A2: the first-heartbeat transition was lost"
@@ -88,15 +97,19 @@ if has 'db.NodeHealth' "$JOIN_SRC" && has 'authenticated heartbeat resumed' "$JO
 else
   bad "A3: failed → ready would leave no audit trail"
 fi
-if has 'prevState == NodeStateFailed && state == NodeStateReady' "$JOIN_SRC"; then
-  ok "A4: the audit fires only on a real reversal, not on every heartbeat"
+# B464: the condition is now `state != prevState`, i.e. EVERY real transition is
+# audited (including ready → degraded). That is a superset of B402's "on a real
+# reversal", and it still cannot fire on an unchanged heartbeat — which is what this
+# contract exists to prevent (a 30 s daemon must not fill cluster_audit).
+if has 'if state != prevState {' "$JOIN_SRC"; then
+  ok "A4: the audit fires on a real state change, not on every heartbeat"
 else
   bad "A4: the audit condition is wrong"
 fi
-if has "WHEN state = 'draining'" "$JOIN_SRC"; then
-  bad "A5: draining is now cleared by a heartbeat — that is the operator's decision, not the network's"
-else
+if has "case prevState == NodeStateDraining:" "$JOIN_SRC"; then
   ok "A5: draining is never touched by a heartbeat"
+else
+  bad "A5: draining is now cleared by a heartbeat — that is the operator's decision, not the network's"
 fi
 
 # ---------------------------------------------------------------------------

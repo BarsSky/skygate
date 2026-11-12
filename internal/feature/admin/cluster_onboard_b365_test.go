@@ -99,16 +99,40 @@ func TestB365_HeartbeatStepStartsTheDaemon(t *testing.T) {
 	if !strings.Contains(cmd, "journalctl -u skygate-heartbeat") {
 		t.Errorf("heartbeat step must show the first heartbeats in the daemon's journal:\n%s", cmd)
 	}
-	// (e) the NEGATIVE property: nothing here may tell the operator to enable a
-	// `skygate` service or to probe a local HTTP port. The pre-B365 command was
-	// exactly that, and it could only fail.
+	// (e) B464 RENEGOTIATED this negative property, and the distinction is the whole
+	// point. Pre-B464 the list forbade ANY mention of healthz/curl because a standby had
+	// no web service and a probe could only fail. B464 gives those probes a meaning —
+	// they are the input of the hub's readiness verdict — so what must stay forbidden is
+	// the CLAIM (a `skygate` unit that does not exist), not the QUESTION.
+	//
+	// The four entries below are the claim: enabling or checking a `skygate` service on a
+	// host that has only the binary. They stay forbidden forever.
 	for _, bad := range []string{
 		"enable --now skygate ", "is-active skygate", "enable --now skygate &&",
-		"healthz", "curl", "http://127.0.0.1", "systemctl is-active skygate",
+		"systemctl is-active skygate",
 	} {
 		if strings.Contains(cmd, bad) {
 			t.Errorf("heartbeat step still promises a skygate web service (%q):\n%s", bad, cmd)
 		}
+	}
+	// The probes must be present AND must be the hub's own two questions.
+	for _, want := range []string{"/healthz", "/readyz", "state=degraded"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("heartbeat step must ask the readiness questions the hub asks (%q missing):\n%s", want, cmd)
+		}
+	}
+	// …and they must be DIAGNOSTIC, never a requirement: every curl line is guarded by
+	// `|| echo`, so a host with no skygate yet (which is `degraded`, correctly) cannot
+	// make the block look like a failure. A bare `curl … && …` would do exactly that.
+	for _, line := range strings.Split(cmd, "\n") {
+		if strings.Contains(line, "curl ") && !strings.Contains(line, "|| echo") {
+			t.Errorf("a readiness probe is presented as a requirement, not a diagnostic: %q", line)
+		}
+	}
+	// The unit must carry the service's environment, or the probe guesses the port
+	// (the B270 shape: the panel said 8080, the service ran 8082).
+	if !strings.Contains(cmd, "EnvironmentFile=-/etc/skygate/skygate.env") {
+		t.Errorf("heartbeat unit must source the service env so the probe follows SKYGATE_PORT:\n%s", cmd)
 	}
 	// The state file the daemon reads must be the one step 3 wrote.
 	if !strings.Contains(steps[2].Command, "--state-file="+clusterOnboardHeartbeatStateFile) {

@@ -263,7 +263,7 @@ func runMigrateStatus(args []string) error {
 	if err != nil {
 		return fmt.Errorf("migrate status: config load: %w", err)
 	}
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("migrate status: open db: %w", err)
 	}

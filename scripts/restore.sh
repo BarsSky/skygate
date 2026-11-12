@@ -86,7 +86,7 @@ echo "  2) Skygate .env (configuration with secrets)"
 if [ "${HAS_PG_DUMP}" = "yes" ]; then
     echo "  3) Skygate database (skygate-pg.sql → psql replay, v1.3.0+)"
 elif [ "${HAS_SQLITE_DB}" = "yes" ]; then
-    echo "  3) Skygate database (skygate.db → Docker volume, v0.32.x)"
+    echo "  3) Skygate database (skygate.db → native SKYGATE_DB path, else Docker volume)"
 else
     echo "  3) Skygate database (no DB file in archive — skipped)"
 fi
@@ -116,11 +116,55 @@ do_skygate_code() {
     fi
 }
 
+# B462 — the env must go where the SERVICE reads it.
+#
+# On a native install that is /etc/skygate/skygate.env (the unit's EnvironmentFile).
+# Writing it into the checkout's `.env` — the pre-B462 behaviour — restores nothing
+# for the running service, so a "successful" restore left skygate pointing at the
+# old database.
+skygate_env_target() {
+    local f
+    for f in "${SKYGATE_UPDATE_ENV_FILE:-}" "${SKYGATE_ENV_FILE:-}" /etc/skygate/skygate.env; do
+        [ -n "${f}" ] || continue
+        [ -d "$(dirname "${f}")" ] || continue
+        printf '%s\n' "${f}"
+        return 0
+    done
+    printf '%s\n' "${TARGET_DIR}/.env"
+}
+
 do_env() {
     if [ -f skygate.env ]; then
-        log "Restoring .env..."
-        cp skygate.env "${TARGET_DIR}/.env"
-        log "  .env restored (contains secrets!)"
+        local dest
+        dest="$(skygate_env_target)"
+        if [ -f "${dest}" ]; then
+            cp -p "${dest}" "${dest}.pre-restore-$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+        fi
+        mkdir -p "$(dirname "${dest}")" 2>/dev/null || true
+        cp skygate.env "${dest}" || err "  cannot write the env file to ${dest}"
+        chmod 600 "${dest}" 2>/dev/null || true
+        log "  env restored to ${dest} (contains secrets!)"
+        if [ "${dest}" != "${TARGET_DIR}/.env" ]; then
+            warn "  that is the RUNTIME config file — restart skygate so the new values are used"
+        fi
+    fi
+
+    # B462 — the native-only files. cluster-state.json carries the node identity the
+    # cluster API uses; losing it on a restore means re-joining the node by hand.
+    if [ -d etc-skygate ]; then
+        local _f
+        for _f in cluster-state.json dbs.env; do
+            [ -f "etc-skygate/${_f}" ] || continue
+            sudo mkdir -p /etc/skygate 2>/dev/null || true
+            if [ -f "/etc/skygate/${_f}" ]; then
+                sudo cp -p "/etc/skygate/${_f}" "/etc/skygate/${_f}.pre-restore-$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+            fi
+            if sudo cp -p "etc-skygate/${_f}" "/etc/skygate/${_f}" 2>/dev/null; then
+                log "  /etc/skygate/${_f} restored"
+            else
+                warn "  could not write /etc/skygate/${_f} (needs root) — copy it by hand from etc-skygate/"
+            fi
+        done
     fi
 }
 
@@ -224,16 +268,99 @@ do_pg_restore() {
 # SQLite based on which file is in the archive. Both
 # paths are no-ops if the corresponding file is missing
 # (so a partial archive doesn't break the restore).
+# B461 — THE RESTORE MUST SPEAK THE DATABASE'S DIALECT TOO.
+#
+# B459 gave scripts/backup.sh a SQLite branch, so a native SQLite install can now
+# produce an archive whose database is `skygate.db` — and that same script tells
+# the operator to run `./scripts/restore.sh <archive>` as the next step. The
+# restore half was still docker-only: `do_skygate_db()` copied the file into the
+# docker named volume `skygate-data` and called it "v0.32.x legacy", so on a
+# native install (no docker, the database at an absolute path) the documented
+# command could not put the database back at all. A backup you cannot restore is
+# not a backup.
+#
+# sqlite_target_path resolves the database FILE the install uses. The SOURCES are
+# walked explicitly — the process env, then the restored target .env, then the
+# archive's own skygate.env — because an earlier version of this function tried to
+# guess "value vs file path" from the SHAPE of the string (`/*` meant "a value"),
+# and `${TARGET_DIR}/.env` is an absolute path that does not exist: it was taken as
+# the database path and the restore wrote `skygate.db` OVER it. Caught by the B461
+# behavioural leg (E6), which is why that leg exists.
+#
+# Prints nothing when the install is not SQLite or the value is not a local
+# absolute path.
+sqlite_target_path() {
+    local v="" f
+    if [ -n "${SKYGATE_DB:-}" ]; then
+        v="${SKYGATE_DB}"
+    else
+        for f in "${TARGET_DIR:-}/.env" "skygate.env"; do
+            [ -n "${f}" ] || continue
+            [ -f "${f}" ] || continue
+            v=$(grep -E '^SKYGATE_DB=' "${f}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'" || true)
+            [ -n "${v}" ] && break
+        done
+    fi
+    case "${v}" in
+        sqlite:*) v="${v#sqlite:}" ;;
+        file:*)   v="${v#file:}" ;;
+        postgres:*|postgresql:*|"") return 0 ;;
+    esac
+    v="${v%%\?*}"
+    case "${v}" in
+        /*) printf '%s\n' "${v}" ;;
+    esac
+}
+
+# do_skygate_db_sqlite puts `skygate.db` back where the install expects it.
+#
+# The archive file is validated BEFORE anything is touched: copying an empty or
+# non-SQLite file over a live database is worse than not restoring at all.
+do_skygate_db_sqlite() {
+    [ -s skygate.db ] || err "  skygate.db in the archive is empty — refusing to touch the live database"
+    if [ "$(head -c 15 skygate.db 2>/dev/null)" != "SQLite format 3" ]; then
+        err "  skygate.db in the archive does not carry the SQLite header — refusing to restore it"
+    fi
+
+    local target backup
+    target="$(sqlite_target_path || true)"
+    if [ -n "${target}" ]; then
+        # A directory here means the resolver handed back something that cannot be
+        # a database file — refuse rather than write into it.
+        [ -d "${target}" ] && err "  the resolved SKYGATE_DB path is a directory (${target}) — refusing to restore into it"
+        log "Restoring Skygate SQLite database (native file: ${target})..."
+        if [ -f "${target}" ]; then
+            backup="${target}.pre-restore-$(date +%Y%m%d_%H%M%S)"
+            cp -p "${target}" "${backup}" \
+                && log "  previous database kept at ${backup}" \
+                || err "  cannot back up the live database (${target}) — refusing to overwrite it"
+        fi
+        mkdir -p "$(dirname "${target}")"
+        cp -p skygate.db "${target}" || err "  copy to ${target} failed"
+        # The WAL/SHM of the OLD database must not survive next to the NEW file:
+        # SQLite would replay a log that belongs to different data.
+        rm -f "${target}-wal" "${target}-shm"
+        [ -s "${target}" ] || err "  ${target} is empty after the copy"
+        chmod 600 "${target}" 2>/dev/null || true
+        log "  skygate.db restored to ${target}"
+        warn "  Restart skygate so it opens the restored database"
+        return 0
+    fi
+
+    # No resolvable native path: this is a docker install, so the named volume is
+    # the target — the pre-B461 behaviour.
+    log "Restoring Skygate SQLite database (docker volume skygate-data)..."
+    docker run --rm -v skygate-data:/data -v "$(pwd):/restore" alpine \
+        sh -c "cp /restore/skygate.db /data/skygate.db && chown -R 1000:1000 /data" 2>/dev/null \
+        && log "  skygate.db restored to the Docker volume" \
+        || err "  the database was NOT restored: no native SKYGATE_DB path was resolvable and the docker volume copy failed. Place skygate.db at the path in SKYGATE_DB (or start the containers) and re-run."
+}
+
 do_skygate_db() {
     if [ -f skygate-pg.sql ]; then
         do_pg_restore
     elif [ -f skygate.db ]; then
-        # v0.32.x legacy path — kept for old archives.
-        log "Restoring Skygate SQLite database (skygate.db, v0.32.x legacy)..."
-        docker run --rm -v skygate-data:/data -v "$(pwd):/restore" alpine \
-            sh -c "cp /restore/skygate.db /data/skygate.db && chown -R 1000:1000 /data" 2>/dev/null && \
-            log "  skygate.db restored to Docker volume" || \
-            warn "  DB restore failed (is container running?)"
+        do_skygate_db_sqlite
     else
         warn "No skygate-pg.sql or skygate.db in archive — DB step skipped"
     fi
@@ -255,11 +382,76 @@ do_headscale_config() {
         # dir. Adding sudo here covers both paths — it's a
         # no-op when running as root (sudo NOPASSWD is set
         # for skyadmin, verified 2026-08-17).
-        sudo mkdir -p /home/admin/headscale/config
-        sudo cp -r headscale-config/* /home/admin/headscale/config/
-        log "  Headscale config restored"
-        warn "  Restart headscale: sudo docker restart headscale"
+        #
+        # B462 — WHICH directory: /etc/headscale on a native install (the
+        # documented location of headscale's config), /home/admin/headscale/config
+        # for the docker bind mount. Pre-B462 only the docker path was restored, so
+        # a native restore put nothing where headscale reads.
+        local dest=""
+        if [ -d /etc/headscale ]; then
+            dest=/etc/headscale
+        elif [ -d /home/admin/headscale/config ]; then
+            dest=/home/admin/headscale/config
+        else
+            dest=/etc/headscale
+            warn "  neither /etc/headscale nor /home/admin/headscale/config exists — creating the native path"
+        fi
+        sudo mkdir -p "${dest}"
+        if [ -n "$(ls -A "${dest}" 2>/dev/null)" ]; then
+            sudo cp -r "${dest}" "${dest}.pre-restore-$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+        fi
+        sudo cp -r headscale-config/. "${dest}/"
+        log "  Headscale config restored to ${dest}"
+        warn "  Restart headscale so it reads the restored config"
     fi
+}
+
+# B462 — where headscale keeps its SQLite database on a NATIVE install. This is a
+# DELIBERATE duplicate of the resolver in scripts/backup.sh: the two scripts are
+# shipped and run independently on operator hosts, and neither sources a shared
+# lib today. The B462 contract extracts this function from BOTH files and fails on
+# any textual drift, so "duplicate" cannot become "diverged".
+#
+#   1. SKYGATE_HEADSCALE_DB_PATH — explicit override;
+#   2. the `path:` under `database:` → `sqlite:` in headscale's own config, using
+#      the SAME candidate list the OIDC and policy appliers use;
+#   3. the documented default /var/lib/headscale/db.sqlite, when it exists.
+headscale_db_path() {
+  local v="${SKYGATE_HEADSCALE_DB_PATH:-}" cfg
+  if [ -n "${v}" ]; then
+    [ -f "${v}" ] && printf '%s\n' "${v}"
+    return 0
+  fi
+  for cfg in "${SKYGATE_HEADSCALE_CONFIG:-}" \
+             /etc/headscale/config.yaml /etc/headscale/config.yml \
+             /etc/headscale/config.hujson /var/lib/headscale/config.yaml; do
+    [ -r "${cfg}" ] || continue
+    v=$(awk '
+      /^[[:space:]]*database:[[:space:]]*$/ { indb = 1; next }
+      indb && /^[^[:space:]]/             { indb = 0 }
+      indb && /sqlite:[[:space:]]*$/      { insql = 1; next }
+      indb && /sqlite:[[:space:]]*[^[:space:]]/ {
+        line = $0
+        sub(/.*sqlite:[[:space:]]*/, "", line)
+        gsub(/["\047]/, "", line)
+        if (line != "") { print line; exit }
+        insql = 1; next
+      }
+      insql && /^[[:space:]]*path:[[:space:]]*/ {
+        line = $0
+        sub(/^[[:space:]]*path:[[:space:]]*/, "", line)
+        gsub(/["\047]/, "", line)
+        print line
+        exit
+      }
+    ' "${cfg}" 2>/dev/null || true)
+    [ -n "${v}" ] && break
+  done
+  if [ -z "${v}" ] && [ -f /var/lib/headscale/db.sqlite ]; then
+    v=/var/lib/headscale/db.sqlite
+  fi
+  [ -n "${v}" ] && [ -f "${v}" ] && printf '%s\n' "${v}"
+  return 0
 }
 
 do_headscale_db() {
@@ -278,7 +470,25 @@ do_headscale_db() {
         fi
     done
     if [ -n "${DB_FILE}" ]; then
-        log "Restoring Headscale database..."
+        # B462 — put it back where headscale reads it. A native install keeps the
+        # file at the `path:` in its own config (default /var/lib/headscale/db.sqlite);
+        # the pre-B462 code could only write into the docker named volume, so a
+        # native restore silently left the OLD headscale database in place.
+        local hs_target
+        hs_target="$(headscale_db_path || true)"
+        if [ -n "${hs_target}" ]; then
+            log "Restoring Headscale database (native file: ${hs_target})..."
+            [ -f "${hs_target}" ] && sudo cp -p "${hs_target}" \
+                "${hs_target}.pre-restore-$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+            sudo cp -p "${DB_FILE}" "${hs_target}" \
+                && log "  Headscale DB restored to ${hs_target}" \
+                || err "  cannot write ${hs_target} — the headscale database was NOT restored"
+            # A surviving -wal/-shm belongs to the OLD database.
+            sudo rm -f "${hs_target}-wal" "${hs_target}-shm"
+            warn "  Restart headscale so it opens the restored database"
+            return 0
+        fi
+        log "Restoring Headscale database (docker volume)..."
         # Copy via temporary container. The headscale_headscale_data
         # volume is owned by root (headscale container creates it),
         # so we use sudo to create the temp container.

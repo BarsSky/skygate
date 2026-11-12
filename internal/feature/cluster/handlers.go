@@ -18,13 +18,20 @@
 //     410 (invite expired or revoked), 500 (db).
 //
 //   POST /api/cluster/heartbeat
-//     Request  : JSON {node_id, token}
+//     Request  : JSON {node_id, token, version?, readiness?}
 //     Response 200: JSON {node_id, state, last_seen_unix,
 //                         next_heartbeat_seconds,
-//                         heartbeats_until_stale}
+//                         heartbeats_until_stale,
+//                         degraded?, reason?}
 //     Errors: 400 (bad JSON), 401 (bad token or
 //     token/node mismatch), 404 (node not found),
 //     500 (db).
+//
+// B464: `readiness` is the agent's own measurement of its host (web server
+// answering? database reachable?) and it decides whether the node is recorded as
+// ready or degraded — see internal/cluster/readiness_b464.go. The field is
+// optional so an older agent keeps working, and this endpoint (alone) tolerates
+// unknown fields so a NEWER agent is never failed by an older hub.
 //
 // Both endpoints are JSON in / JSON out (NOT HTML).
 // The error response shape is always
@@ -82,6 +89,11 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 
 // decodeJSON reads + decodes a JSON request body.
 // Returns a 400 on parse failure.
+//
+// Strict on purpose: an unknown field means the caller and the server disagree
+// about the contract, and a machine endpoint that silently ignores half a request
+// is how a typo becomes a mystery. The ONE caller that must not use it is the
+// heartbeat — see decodeJSONForwardCompatible.
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if r.Body == nil {
 		writeError(w, http.StatusBadRequest, "empty request body")
@@ -90,6 +102,30 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return false
+	}
+	return true
+}
+
+// decodeJSONForwardCompatible accepts and IGNORES unknown fields.
+//
+// B464 — WHY THE HEARTBEAT NEEDS THIS AND /join DOES NOT. The heartbeat is the
+// only request whose body grows over time: B402 added `version`, B464 added
+// `readiness`, and each addition arrives from an agent that may be NEWER than the
+// hub it talks to (a standby upgraded first). With DisallowUnknownFields that
+// agent gets `400 invalid JSON: unknown field "readiness"` on every beat, the hub
+// records no heartbeat, and after 3 intervals the elector flips a perfectly
+// healthy node to `failed` — i.e. a NEWER agent would be declared dead by an older
+// hub for a field the hub could simply ignore. The endpoint is machine-to-machine
+// and authenticated by the token, so there is no operator typo to protect here;
+// forward compatibility is the correct trade.
+func decodeJSONForwardCompatible(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if r.Body == nil {
+		writeError(w, http.StatusBadRequest, "empty request body")
+		return false
+	}
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return false
 	}
@@ -157,7 +193,7 @@ func (s *Service) PostAPIClusterHeartbeat(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req cluster.HeartbeatRequest
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSONForwardCompatible(w, r, &req) {
 		return
 	}
 	resp, err := cluster.Heartbeat(s.dbc(), s.InviteSecret, &req)

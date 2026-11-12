@@ -38,6 +38,26 @@ import (
 // purpose: "disabled", "nothing schedules it", "scheduled but the slot was missed" and "the run
 // failed" have four different remedies.
 func backupStaleCause(s *Service, lastRun int64) string {
+	return backupStaleCauseAt(s, lastRun, time.Now())
+}
+
+// backupStaleCauseAt is backupStaleCause with an injected clock (B464).
+//
+// WHY THE SEAM EXISTS — measured on the reference host, 2026-11-12 05:37 UTC: `go test
+// ./...` failed in this package with "a fresh run produced an excuse: «the scheduler is
+// enabled (schedule \"0 4 * * *\") and the next tick will catch up the missed slot …»".
+// Nothing was wrong with the product and nothing was wrong with the tree: the test asks
+// "does a FRESH run produce an excuse?", passes lastRun = now−2 h, and the answer depends on
+// the WALL CLOCK — within two hours after 04:00 the 04:00 slot does fall between lastRun and
+// now, so the catch-up sentence is correct and the test's premise ("a fresh run") no longer
+// holds. The gate therefore failed for two hours a day, on B1, B132 and B176 at once, and the
+// verdict looked like a product regression (AGENTS trap #15: a host fact must never be
+// reported as a product defect).
+//
+// The fix is the seam, not a different assertion: production keeps `time.Now()`, and the test
+// pins a moment in which no slot is due, so the assertion is about the CODE and not about the
+// hour the gate happened to run.
+func backupStaleCauseAt(s *Service, lastRun int64, now time.Time) string {
 	if s == nil || s.dbc() == nil {
 		return ""
 	}
@@ -72,7 +92,6 @@ func backupStaleCause(s *Service, lastRun int64) string {
 	if err != nil {
 		return fmt.Sprintf("the schedule %q cannot be parsed (%v), so the in-app scheduler never fires", schedule, err)
 	}
-	now := time.Now()
 	if sched.EveryMinute {
 		return "" // every-minute schedules cannot be "stale" in this sense
 	}

@@ -241,7 +241,7 @@ func runInitBootstrap(args []string) error {
 	if err != nil {
 		return fmt.Errorf("init: config load: %w", err)
 	}
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("init: open db: %w", err)
 	}
@@ -421,7 +421,17 @@ func runInitStatus(args []string) error {
 	if err != nil {
 		return fmt.Errorf("init status: config load: %w", err)
 	}
-	d, err := db.OpenDSN(cfg.DBDSN)
+	// B459 — open through the DIALECT-AWARE opener. db.OpenDSN is the
+	// PostgreSQL-only path (it hands the DSN straight to pgx), so on a SQLite
+	// install this subcommand failed with
+	//
+	//	init status: open db: cannot parse `sqlite:/srv/…/skygate.db`:
+	//	failed to parse as keyword/value (invalid keyword/value)
+	//
+	// while `migrate-only` opened the same database fine — measured live on
+	// the standby host (native, SQLite) on 2026-10-29. The dialect leak was
+	// invisible on PostgreSQL installs, which is why it survived.
+	_, d, err := db.OpenWithDialect(cfg.DBDSN)
 	if err != nil {
 		return fmt.Errorf("init status: open db: %w", err)
 	}
@@ -580,7 +590,7 @@ func runInitStandbyInvite(args []string) error {
 	if err != nil {
 		return fmt.Errorf("init standby-invite: config load: %w", err)
 	}
-	d, err := db.OpenDSN(cfg.DBDSN)
+	d, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("init standby-invite: open db: %w", err)
 	}

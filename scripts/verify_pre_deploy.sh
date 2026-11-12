@@ -4459,8 +4459,6 @@ run_check "B237.24.1" "fix ghcr.io/BarsSky/skygate mixed-case docker tag bug (B2
 # B-check contracts in scripts/check_b235.sh.
 run_check "B235" "DERP HostName fix + main-page ping. The pre-B189 /admin/derp/dashboard showed 28/28 public DERP as degraded because FetchPublicDERPs stored n.Name ('1f') as Host. B235 pins n.HostName (FQDN) as Host, preserves n.Name as separate Name field, adds 5 unit tests in map_b235_test.go. /dashboard hero now uses bestHealthyDERP() (same derp_health source as admin) — ActiveDERPLatencyMs + ActiveDERPRegionID rendered alongside ActiveDERP, replacing the hardcoded 'waw' placeholder. /admin/derp/dashboard ID column gets a col_id_help tooltip (RU+EN) explaining the Tailscale region_id semantics; .Name pill rendered on the Host cell. PublicMapURL const->var for test override. 19 B-check contracts in scripts/check_b235.sh." \
   'test -f scripts/check_b235.sh && bash scripts/check_b235.sh'
-run_check "B202.5" "Closes the  the DB via scp + pg_restore on the agent' gap that was implicit in the B198/B202 work — pre-B202.5 the dbmigrate framework's Dump step only ran pg_dump on the local host, which works for the live svi→agent move because the agent reaches svi's PG via the 172.17.0.1:5433 bridge, but the bridge requires svi to expose its PG port to the agent network. B202.5 adds a transport that runs 'ssh svi \"pg_dump ...\"' and streams the bytes back, so the operator can flip the DSN + restart the agent without depending on direct PG-port reachability between svi and agent. SSHDumpTransport struct with 5 fields (SSHHost/SSHUser/SSHKeyPath/SSHPort/PgDumpPath + optional SSHOptions), Name()='ssh', Dump(ctx, sourceDSN, destPath, onLog) (int64, error) implements the DumpTransport interface. NewSSHDumpTransportFromEnv() reads 5 SKYGATE_DBMIGRATE_SSH_* env vars and returns nil if HOST or USER is empty (caller falls back to Local). quoteForRemoteShell() POSIX-shell-escapes the DSN for 'ssh host cmd' (close-quote/literal/reopen idiom for embedded single quotes). framework.go default-fallback: SKYGATE_DBMIGRATE_TRANSPORT=ssh + valid SSH config -> SSHDumpTransport, else LocalDumpTransport. 5 unit tests in internal/dbmigrate/ssh_transport_test.go: QuoteForRemoteShell (4 sub-cases incl. embedded single quote + multiple quotes), NewFromEnv_RequiresHostAndUser (returns nil on empty HOST or USER), NewFromEnv_PortParsing (22022, bad-port -> 0 silent fallback), Dump_FakeSsh round-trip (Unix only; SKIP on Windows because exec.LookPath does not find a bare 'ssh' there), Dump_Validation (empty sourceDSN, empty destPath, empty SSHHost, empty SSHUser all return error), Name()=='ssh' pinned. Compile-time interface assertion: 'var _ DumpTransport = SSHDumpTransport{}'. 14 B-check contracts in scripts/check_b202_5.sh. Live-verify dry-run (scripts/b202_5_verify.sh) on the agent: ssh to localhost + pg_dump of a temp test DB -> local file, validates PGD-N magic bytes, verifies pg_restore --list shows the test table. Does NOT touch headscale/headplane on agent, does NOT touch the live skygate_staging DB on svi. The real svi->agent move is a one-time operator action (set 4 env vars + ssh-copy-id)." \
-  'test -f scripts/check_b202_5.sh && bash scripts/check_b202_5.sh'
 # --- B209: end-to-end HA failover test orchestrator (Phase 3) ---
 run_check "B209" "end-to-end HA failover test orchestrator (Phase 3 of cluster-management.md). Closes the 'no automated test exercises the full failure-detection + auto-recommendation + recovery + dedup cycle against a live cluster_node table' gap — pre-B209 the B204 HA elector had been ticking every 5s on the agent since v1.5.0, but the B-check + live verify scripts were unit-test-shaped (nextState, roleContains) and ad-hoc SQL probes. B209 ships scripts/b209_e2e.sh — a 7-phase SQL orchestrator against the live DB: (Phase 0) setup b209-primary+standby rows, (Phase 1) pre-check no-op, (Phase 2) backdate last_seen_at to simulate failure, (Phase 3) wait 7s + assert node_health ready->failed + a NEW failover_recommend row with to_node_id=b209-standby, (Phase 4) simulate recovery via state=ready+last_seen_at=NOW (the B201 Heartbeat() path; B204 elector does NOT do failed->ready), (Phase 5) wait + assert elector quiet (no growth in audit count), (Phase 6) re-fail + assert 5-min dedup window suppresses the second recommend, (Phase 7) cleanup via DELETE FROM cluster_node + cluster_audit WHERE LIKE 'b209-%' (also wired into EXIT trap; --keep flag for manual inspection). Code side: Config.Now func() time.Time hook on the elector (default time.Now, nil-safe in NewElector) so the unit tests can fast-forward through the 90s staleness window without sleeping. 4 new unit tests: TestDefaultConfig_NowSet + TestNewElector_NowFallback + TestElector_NowUsesFakeClock + TestNextState_AtFakeClockBoundary (3 sub-cases at 89s/90s/91s pinning the strict-< boundary). 16 B-check contracts in scripts/check_b209.sh: e2e exists + bash -n passes + 8 phases + cleanup_b209+EXIT trap + cleanup removes from BOTH tables + exit 0/1 + summary, elector Config.Now declared + DefaultConfig sets Now=time.Now + NewElector restores nil Now + evaluate() reads e.now() + e.now() helper, 4 new unit tests present, build+vet+elector tests pass, AGENTS.md mention, verify_pre_deploy has B209. Live-verified 2026-09-02 12/12 pass on agent." \
   'test -f scripts/check_b209.sh && bash scripts/check_b209.sh'
@@ -5697,7 +5695,7 @@ run_check "B200" "B200 (v1.5.0+) — /admin/cluster Phase 2.2 action surface." \
   'test -f scripts/check_b200.sh && bash scripts/check_b200.sh'
 run_check "B201" "B201 (v1.5.0+) — /api/cluster/join + /api/cluster/heartbeat" \
   'test -f scripts/check_b201.sh && bash scripts/check_b201.sh'
-run_check "B202" "B202 (v1.5.0+) — real dump/restore/cleanup in the" \
+run_check "B202" "B202 (v1.5.0+) — real dump/restore/cleanup in the dbmigrate framework (Phase 1.4 STUBs to real). This is the DATABASE MIGRATION tool (PostgreSQL dump + restore + source cleanup, driven from /admin/database), NOT a settings/config export: 24 contracts in scripts/check_b202.sh pin internal/dbmigrate/transport.go + the DumpTransport interface + LocalDumpTransport (Name=local), framework.go defaulting Transport to Local, no STUB left in steps/dump|restore|cleanup.go, pg_dump/pg_restore through exec.CommandContext with --no-owner --no-acl, the pg_try_advisory_lock(42) advisory lock in dump.go with its unlock in Rollback (so a second migration cannot run against the same source), pg_terminate_backend in restore.go, pg_restore -c --if-exists, the SKYGATE_MIGRATE_DROP_SOURCE env gate + DROP DATABASE in cleanup.go, verify.go doing a PER-TABLE diff rather than a total, precheck.go probing exec.LookPath for pg_dump and pg_restore, the Transport/DumpBytes/DumpDurationMs/SourceLockHeld/Warning fields on MigrationContext, the DBMigrator interface with BeginTx, sse.go EmitStepLog, the unit tests (parseLibpqDSN, quoteIdent, keyTables, readFirstBytes) and build/vet/tests." \
   'test -f scripts/check_b202.sh && bash scripts/check_b202.sh'
 run_check "B238" "scripts/check_b238.sh — B238 portal_users AFTER UPDATE audit trigger." \
   'test -f scripts/check_b238.sh && bash scripts/check_b238.sh'
@@ -6569,6 +6567,141 @@ run_check "B457" "«два релея почему то одинаковых в�
 
 run_check "B458" "«DNS внутри tailnet должен ехать по проекту, а не случайно» — нашёл при разборе остатка планов (B350.1) и измерил: headscale отдаёт каждому клиенту dns.nameservers.global = [1.1.1.1, 8.8.8.8], а таблица назначений несла только 8.8.8.0/24 и 8.8.4.0/24 — и только потому, что ПОЛЬЗОВАТЕЛЬСКОЕ ПРАВИЛО случайно требует 8.8.8.8. 1.1.1.1 не нёс никто, поэтому половина DNS каждого клиента уходила мимо tailnet (а в фильтрованной сети не уходила вообще), а удаление того одного правила забрало бы DNS у всего tailnet: системная настройка, которая держится совпадением в плоскости данных. Исправлено тремя половинами. (1) ИЗМЕРЕНО: набор резолверов читается из конфигурации самого headscale (block list и inline форма, без YAML-зависимости), с явным переопределением SKYGATE_TAILNET_DNS_RESOLVERS; нечитаемый набор возвращается как НЕИЗВЕСТНЫЙ с причиной, потому что пустой список, выглядящий здоровым, это и есть дефект. (2) ПРОНЕСЕНО: адреса (по /32 — именно те, которые клиенты спрашивают, а не /24 соседей) живут в ТОЙ ЖЕ таблице назначений как строки source=system, поэтому маршрут, ACL-пин и страница видят одно решение; ручное закрепление и пользовательское правило по-прежнему сильнее, а единственное место, где системная строка умирает, — «резолвер больше не настроен» (если бы её удалял Prune каждый проход, маршрут удалялся и возвращался бы на пятиминутном цикле и мигал в сети). (3) РАЗРЕШЕНО: на каждый системный префикс генерируется host-alias (headscale не принимает CIDR в dst) и грант с wildcard-источником в том же стиле, что catch-all B111, БЕЗ via — потому что via на CIDR-гранте это ФИЛЬТР прав, а не маршрут, и пин резолвера на один релей запретил бы его всем устройствам с другим пином. Маршрут без гранта хуже отсутствия маршрута: устройство принимает префикс в таблицу, tailscaled отказывает в назначении, и DNS, который раньше уходил через аплинк, ломается совсем. Плюс страница /admin/exit-nodes получила карточку «DNS внутри tailnet» с состоянием каждого резолвера и НАЗВАННОЙ утечкой, когда резолвер настроен, но не объявлен никем; карточка стоит ВНЕ блока with .PrefixAdmin, потому что внутри него .TailnetDNS резолвится против PrefixAdmin и карточка рендерится пустой — это поймал рендер-тест, исполняющий реальный шаблон. 16 контрактов в scripts/check_b458_tailnet_dns_by_design.sh + 4 теста парсера в internal/headscale, 4 теста системных префиксов в internal/prefixowner, 2 теста ACL и 3 рендер-теста." \
    'test -f scripts/check_b458_tailnet_dns_by_design.sh && bash scripts/check_b458_tailnet_dns_by_design.sh'
+
+# --- B459: the backup must speak the database's dialect ----------------------
+# Measured 2026-10-29 on the standby host (native, no docker, SQLite — the
+# v1.5.4+ DEFAULT backend): scripts/backup.sh, the script
+# internal/backup/runner.go invokes for the in-app «Создать сейчас», had NO
+# SQLite path. Step 3 called load_dsn(), which answers "SKYGATE_DB_DSN is not
+# set" on a SQLite install, so the run failed and nothing was exported; the
+# run could not even reach a copy because v1.3.1 deleted the SQLite branch
+# ("Phase 2 of SQLite removal") — a removal v1.5.4 made stale by making SQLite
+# the default again. A backup that captures every file EXCEPT the database is
+# the failure class this project keeps paying for: an artifact that looks
+# complete. Step 3 now dispatches on the dialect the product uses
+# (SKYGATE_DB=sqlite:/file:/bare path -> the FILE; postgres:// or
+# SKYGATE_DB_DSN -> pg_dump), WAL-checkpoints through sqlite3 when present and
+# carries -wal/-shm otherwise, REFUSES to ship an archive whose database copy
+# is empty or does not carry the SQLite header, verifies the copy with PRAGMA
+# integrity_check instead of skipping the whole check when docker is absent,
+# and names the artifact it actually produced in inventory.txt. 24 contracts
+# in scripts/check_b459_sqlite_backup_native.sh, including a BEHAVIOURAL leg
+# that extracts backup_dialect/sqlite_db_path from the real script and runs
+# them against 7 inputs.
+run_check "B459" "the backup must speak the database's dialect: on a native SQLite install scripts/backup.sh captured NOTHING (load_dsn answers 'SKYGATE_DB_DSN is not set'), because v1.3.1 deleted the SQLite branch in the era when PostgreSQL was the only backend and v1.5.4 made SQLite the DEFAULT again. Step 3 now dispatches on SKYGATE_DB (sqlite:file:bare path -> the FILE; postgres -> pg_dump), WAL-checkpoints via sqlite3 or carries -wal/-shm, refuses to ship an empty or non-SQLite copy, runs PRAGMA integrity_check instead of skipping when docker is absent, and records the dialect in inventory.txt. 24 contracts incl. 7 behavioural ones on the extracted helpers." \
+   'test -f scripts/check_b459_sqlite_backup_native.sh && bash scripts/check_b459_sqlite_backup_native.sh'
+
+# --- B460: the ACL import must say what it is pushing to ---------------------
+# Two defects in one page, both measured 2026-10-29. (1) The dry-run compared the
+# imported policy with the current one and stopped there: it never named the
+# PLANES the apply pushes to (acl.SetACLForAllPlanes walks every distinct control
+# plane), let alone what each of them RUNS — while headscale 0.29.x is not
+# uniform across releases (approve_routes left REST at 0.29.1, the REST expire
+# path broke at 0.29.2, grants[] replaced acls[] at 0.29.0-beta.4, 0.29.2 rejects
+# wildcards in tagOwners — internal/headscale/version_b297.go states all of it).
+# (2) PostAdminACLsImportApply answered http.Error on the FIRST failing plane,
+# although the planes before it had ALREADY been changed by SetPolicy and are
+# never rolled back — the operator saw one error and no sign the run was
+# half-applied. Now acl.ApplyResult carries PlaneURL, the handlers pass a
+# per-plane view (version from the update monitor's CACHE, so rendering a page
+# performs no headscale probe, with the declared pin as the documented fallback),
+# the dry-run renders a plane table with a mismatch warning, and a failed apply
+# renders EVERY plane it walked plus the fact that the change was not rolled
+# back. This INFORMS and never gates: every capability difference is handled by a
+# ladder in the client, so a version number must never block an apply that would
+# have succeeded. 20 contracts in scripts/check_b460_acl_plane_truth.sh (incl. 3
+# that prove the detectors fire on planted violations), 6 pure tests + 4 render
+# tests.
+run_check "B460" "the ACL import must name the planes it pushes to and report ALL of them: the dry-run said nothing about which control planes receive the policy or what they run (headscale 0.29.x differs across releases: approve_routes left REST at 0.29.1, REST expire broke at 0.29.2, grants[] replaced acls[] at 0.29.0-beta.4, 0.29.2 rejects wildcards in tagOwners), and a failed apply answered http.Error on the FIRST plane although earlier planes had already been changed and are never rolled back. ApplyResult now carries PlaneURL; the dry-run renders a plane table (version read from the update monitor CACHE, pin as the documented fallback, a named reason when neither answers) plus a mismatch warning; a failed apply renders a per-plane report and states that the change was not rolled back. Information, never a gate — capability differences are handled by ladders, so a version must not block a working apply. 20 contracts + 10 tests." \
+   'test -f scripts/check_b460_acl_plane_truth.sh && bash scripts/check_b460_acl_plane_truth.sh'
+
+# --- B461: the restore must speak the database's dialect too -----------------
+# B459 gave scripts/backup.sh a SQLite branch, so a native SQLite install now
+# produces an archive whose database is `skygate.db` — and the same script prints
+# `./scripts/restore.sh <archive>` as the next step. The restore half was still
+# docker-only: do_skygate_db() copied the file into the docker named volume
+# `skygate-data` and labelled it "v0.32.x legacy", so on a native install (no
+# docker, the database at an absolute path) the documented command could not put
+# the database back at all — a backup you cannot restore is not a backup. Now the
+# SQLite branch resolves the target file (process env -> the restored .env -> the
+# archive's own skygate.env), KEEPS the previous database as
+# `<db>.pre-restore-<ts>` before overwriting, removes a stale -wal/-shm (which
+# would otherwise be replayed against different data), REFUSES an empty or
+# non-SQLite archive file before touching anything, falls back to the docker
+# volume only when no native path is resolvable, and turns that fallback's failure
+# into a named ERROR instead of a warning. 21 contracts in
+# scripts/check_b461_restore_sqlite_native.sh, of which 9 run the REAL extracted
+# functions against real files — and one of them (E6) is why the resolver is
+# correct: its first version guessed "value vs file path" from the shape of the
+# string and took the non-existent `${TARGET_DIR}/.env` as the database path,
+# which would have written skygate.db OVER that .env. E7/E8 pin both halves.
+run_check "B461" "the restore must speak the database's dialect: scripts/restore.sh's SQLite branch was docker-volume-only and called a current archive 'v0.32.x legacy', so the documented ./scripts/restore.sh could not put skygate.db back on a native install (no docker, DB at an absolute path) — while backup.sh (B459) produces exactly that archive and prints that command. Now the target file is resolved (env -> TARGET_DIR/.env -> the archive's skygate.env), the previous database is kept as <db>.pre-restore-<ts>, a stale -wal/-shm is removed, an empty or non-SQLite archive file is refused before anything is touched, the docker volume is a fallback only, and its failure is a named ERROR. 21 contracts incl. 9 behavioural on the extracted functions." \
+   'test -f scripts/check_b461_restore_sqlite_native.sh && bash scripts/check_b461_restore_sqlite_native.sh'
+
+# --- B462: nothing lost on a NATIVE (systemd/OpenRC) install -----------------
+# Measured 2026-10-29 by comparing what the native installer CREATES with what
+# backup.sh captures and restore.sh puts back. Four of five artefacts were lost:
+# the config (DSN + secrets) lives in /etc/skygate/skygate.env — the unit's
+# EnvironmentFile, NOT the checkout's .env — and the env step silently "succeeded"
+# on the checkout file, so a restore could carry the database but no DSN and no
+# secrets; headscale's config (/etc/headscale) and database
+# (/var/lib/headscale/db.sqlite) were docker-volume-only steps that a native host
+# skips; and /etc/skygate/{cluster-state.json,dbs.env} were not captured at all
+# (cluster-state.json carries the node identity). Now one resolver answers "which
+# env file does the SERVICE read" and is used by the env copy, the PG DSN lookup
+# and the SQLite lookup; headscale_db_path resolves the native file from
+# SKYGATE_HEADSCALE_DB_PATH, the `path:` under `database:`→`sqlite:` in headscale's
+# own config (same candidate list as the OIDC/policy appliers) or the documented
+# default, and says WHY when there is none; restore writes the env to the runtime
+# location (keeping a .pre-restore copy and telling the operator to restart), and
+# puts headscale's config and database back at their native paths with a stale
+# -wal/-shm removed. 26 contracts in scripts/check_b462_native_artifacts.sh, of
+# which 7 run the extracted resolvers against real files, plus E1 which fails if
+# the deliberately duplicated resolver ever drifts between the two scripts.
+run_check "B462" "nothing lost on a NATIVE install: the config (DSN + secrets) lives in /etc/skygate/skygate.env (the unit EnvironmentFile, not the checkout .env) and the env step silently captured the wrong file, so a restore could carry the database with no DSN and no secrets; headscale config (/etc/headscale) and database (/var/lib/headscale/db.sqlite) were docker-volume-only; /etc/skygate/{cluster-state.json,dbs.env} were not captured at all. Now one resolver answers which env file the SERVICE reads and drives the env copy + PG DSN + SQLite lookups; headscale_db_path resolves the native file (explicit knob, then headscale's own database->sqlite->path, then the documented default) and names why when absent; restore writes the env to the runtime location with a .pre-restore copy and restores headscale at its native paths. Verified live on a native stand: the archive carried skygate.env from /etc/skygate/skygate.env, etc-skygate/, and named reasons for the absent headscale artefacts. 26 contracts incl. 7 behavioural." \
+   'test -f scripts/check_b462_native_artifacts.sh && bash scripts/check_b462_native_artifacts.sh'
+
+# --- B463: the DOCUMENTED backup script must speak native too -----------------
+# B462 fixed scripts/backup.sh + scripts/restore.sh — the ROUTINE path (cron 03:00
+# → scripts/backup_cron.sh → skygate backup-run → internal/backup.RunBackup →
+# scripts/backup.sh). A SECOND script, deploy/backup.sh, is what docs/deploy.md
+# §Backup, docs/derp.md and docs/disaster-recovery.md tell the operator to run, and
+# it was left native-blind: deploy/lib/env.sh did not know /etc/skygate/skygate.env
+# (so SKYGATE_DB fell back to the container path /data/skygate.db), env.sh REQUIRES
+# the docker stack's HEADPLANE_*/HEADSCALE_SERVER_URL and exits 1 without them (a
+# valid native env file has none, so the script died before doing any work), the env
+# copy archived the checkout's .env which the service never reads, and headscale's
+# database/config were docker-only. Now env.sh knows the native file, records which
+# one it loaded, and its docker-era validation has an explicit opt-out that ONLY
+# deploy/backup.sh sets (deploy.sh/stalidate keep validating); the env copy uses the
+# file that was actually loaded; /etc/skygate is captured; and headscale's config and
+# database resolve natively with a named reason when absent. 19 contracts in
+# scripts/check_b463_deploy_backup_native.sh, of which 6 are behavioural and one
+# fails if the deliberately triplicated headscale_db_path drifts between
+# scripts/backup.sh, scripts/restore.sh and deploy/backup.sh.
+run_check "B463" "the DOCUMENTED backup script must speak native too: deploy/backup.sh (the script docs/deploy.md, docs/derp.md and docs/disaster-recovery.md tell the operator to run) was left native-blind by B459/B462 — lib/env.sh did not know /etc/skygate/skygate.env, required the docker stack HEADPLANE_* variables and exited 1 on a valid native env file, archived the checkout .env the service never reads, and captured headscale only from docker. Now env.sh knows the native file and records which one it loaded, its validation has an explicit opt-out that only this script sets (deploy.sh keeps validating), the env copy uses the loaded file, /etc/skygate is captured, and headscale's config/database resolve natively with a named reason. Verified live: on a native stand deploy/backup.sh exits 0 (it used to abort), archives .env FROM /etc/skygate/skygate.env (marker proven in the archive), etc-skygate/ and skygate.db. 19 contracts incl. 6 behavioural + a drift pin on the triplicated resolver." \
+   'test -f scripts/check_b463_deploy_backup_native.sh && bash scripts/check_b463_deploy_backup_native.sh'
+
+# --- B464: ready must mean the host can serve ---------------------------------
+# Measured live on the operator's standby (2026-11-11): cluster_node said
+# state=ready | roles={skygate-standby} | last_seen 24 s, while that host had no
+# skygate web server (nothing on 80/443/8080/8082), no headscale, no database, no
+# docker and 16 KB in /var/lib/skygate; cluster_database had 0 rows and
+# /etc/skygate/dbs.env literally read "# SKYGATE_DB_DSN=<unset — primary returned
+# no DSN …>". The state was decided by the only signal that existed — "the agent
+# reached POST /api/cluster/heartbeat" — which answers "can the agent reach the
+# hub?" and nothing else, so the HA chain offered a non-serving, data-less host as
+# a READY standby. Now the agent attaches what it measured on its OWN host to every
+# heartbeat (GET /healthz + GET /readyz, the project's own two endpoints), and the
+# hub records `degraded` with the measured sentence instead of `ready` unless both
+# answer positively. Also fixed here: the same join wrote a dbs.env saying "no DSN"
+# and exited 0; a heartbeat is never required to satisfy cluster_invite.expires_at
+# (the token IS the node credential — enforcing it would 401 every standby 24 h
+# after it joined) so the expired credential is disclosed on /admin/cluster
+# instead; and the heartbeat endpoint now tolerates unknown fields while /join stays
+# strict, so a newer agent is never declared failed by an older hub.
+run_check "B464" "ready must mean THIS HOST CAN SERVE: measured on the operator's standby, cluster_node held state=ready | roles={skygate-standby} | last_seen 24 s for a host with no skygate web server (nothing listening on 80/443/8080/8082), no headscale, no database and 16 KB in /var/lib/skygate — the state came from 'the agent reached /api/cluster/heartbeat', which says nothing about serving, so failing DNS over to it would have been an outage. The agent now measures its own host (GET /healthz + GET /readyz) and the hub records degraded (with that sentence, audited as node_health) unless the web server answers AND its database is reachable; an absent payload keeps B402 behaviour so no old agent is demoted, draining outranks any verdict, the failover candidate query still selects only state=ready while an upgrade now includes degraded, the elector flips a silent degraded node to failed, and the verdict is echoed in the response so the host's own journal names it. Plus: cluster join with no DSN now FAILS instead of exiting 0 (--allow-no-dsn for the standalone-local-DB topology), the agent retries once with the pre-B464 body when the hub is older, the heartbeat decoder tolerates unknown fields (/join stays strict), and an expired node credential is disclosed on /admin/cluster rather than silently enforced." \
+   'test -f scripts/check_b464_readiness_truth.sh && bash scripts/check_b464_readiness_truth.sh'
 
 # ---------------------------------------------------------------------------
 # THE GATE'S VERDICT (TD-22 / B335)

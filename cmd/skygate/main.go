@@ -1306,6 +1306,7 @@ func main() {
 		Cfg:                    app.Config(),
 		Notifier:               app.Notifier,
 		HeadscaleUpdateMonitor: app.HeadscaleUpdateMonitor,
+		PlaneVersionFn:         planeVersionFn(app, cfg), // B460: plane_version_b460.go
 		Sidecar:                app.Sidecar,
 		I18n:                   app.I18n,
 		// B323 (2026-09-25): the /admin/service page reports the uptime of THIS

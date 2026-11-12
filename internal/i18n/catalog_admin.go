@@ -116,6 +116,19 @@ var ruAdmin = map[string]string{
 	"acls.import_apply_hint":            "Политика будет отправлена в headscale на каждой плоскости и сохранена в acl_snapshots",
 	"acls.import_apply_confirm":         "Применить импортированную ACL ко всем плоскостям? Это перезапишет текущую политику на каждой headscale.",
 	"acls.import_btn_short":             "Импорт",
+	"acls.import_planes_title":          "Плоскости, в которые уйдёт политика",
+	"acls.import_planes_help":           "Политика одна, а плоскостей может быть несколько, и headscale 0.29.x не одинаков между релизами (approve_routes ушёл из REST в 0.29.1, REST-путь expire сломан в 0.29.2, grants[] заменил acls[] в 0.29.0-beta.4, 0.29.2 отвергает wildcard в tagOwners). Таблица показывает, что реально запущено на каждой плоскости. Это справка, а не запрет: различия обрабатываются лестницей возможностей, поэтому импорт не блокируется.",
+	"acls.import_planes_url":            "Плоскость (headscale URL)",
+	"acls.import_planes_version":        "Версия",
+	"acls.import_planes_primary":        "основная плоскость (глобальный клиент)",
+	"acls.import_planes_unknown":        "версия не определена",
+	"acls.import_planes_unknown_hint":   "Если версия не определена — это не ошибка импорта: обработчик не опрашивает headscale сам, он берёт значение из монитора обновлений (SKYGATE_HEADSCALE_POLL_INTERVAL) либо из SKYGATE_HEADSCALE_VERSION_PIN.",
+	"acls.import_planes_mismatch":       "Плоскости работают на разных версиях headscale — поведение может отличаться:",
+	"acls.import_report_banner":         "Применение не удалось на части плоскостей",
+	"acls.import_report_hint":           "Показаны ВСЕ плоскости, которые обошёл обработчик. Уже применённые плоскости НЕ откатываются автоматически — предыдущая политика сохранена в снимке (acl_snapshots), откат делается со страницы /admin/acls.",
+	"acls.import_report_status":         "Результат",
+	"acls.import_report_ok":             "применено",
+	"acls.import_report_fail":           "ошибка",
 	"acls.v0_17_0_note_title":           "v0.17.0: tag:subnet-router",
 	"acls.v0_17_0_note_body":            "В <code>tagOwners</code> добавлен тег <code>tag:subnet-router</code> (owned by every portal user) — его использует <a href=\"/admin/subnets\">sidecar</a> per-user subnet (v0.16.7+). Также per-user правила для юзеров с подсетью расширены: <code>dst: [\"&lt;user&gt;:*\", \"10.0.&lt;uid&gt;.0/24:*\"]</code>. Exit-node mesh (<code>* → tag:exit-node:*</code>) не сломан — релеи по-прежнему видны всем.",
 	"acls.empty":                        "ACL пуст",
@@ -1022,6 +1035,11 @@ var ruAdmin = map[string]string{
 	"cluster.state_pending":       "pending",
 	"cluster.state_draining":      "draining",
 	"cluster.state_failed":        "failed",
+	// B464 — «агент жив, но хост не может обслуживать». Отдельное состояние от
+	// failed: failed — это «нет heartbeat» (вердикт elector'а о сети), degraded —
+	// вердикт самого heartbeat'а о хосте, с доказательством в руках.
+	"cluster.state_degraded":      "degraded",
+	"cluster.state_degraded_help": "Агент на этом хосте шлёт heartbeat, но сам сообщил, что хост не может обслуживать: локальный skygate не отвечает на /healthz, либо его /readyz говорит, что база недоступна. Такую ноду нельзя повышать — DNS/трафик на неё не переключайте.",
 	"cluster.self_label":          "эта нода",
 
 	// B359 (2026-10-07) — /admin/cluster must name the reason a candidate is in
@@ -1058,6 +1076,16 @@ var ruAdmin = map[string]string{
 	"cluster.reason_unknown":                "Состояние «%s» не описано правилами страницы.",
 	"cluster.action_unknown":                "Проверьте строку в cluster_node и события в cluster_audit вручную.",
 	"cluster.owned_by":                      "владелец:",
+
+	// B464 (2026-11-11) — degraded: агент жив, хост не обслуживает.
+	// Причина — предложение, которое ИЗМЕРИЛ агент на своём хосте (значение, а не
+	// ключ, как cluster.reason_failed), поэтому обе формы обязаны существовать:
+	// с предложением и без него.
+	"cluster.reason_degraded":         "Агент сообщает, что хост не может обслуживать: %s",
+	"cluster.reason_degraded_unknown": "Состояние degraded, но события node_health с замером в cluster_audit нет — проверьте журнал агента на этом хосте.",
+	"cluster.action_degraded":         "Проверьте на этом хосте: <code>systemctl status skygate</code>, <code>ss -ltnp | grep -E \":(8080|8082)\"</code> и <code>curl -s 127.0.0.1:8080/readyz</code>. Пока состояние degraded — не переключайте на него DNS и не повышайте его. Кнопка «Обновить» ниже уместна, если хост отстаёт по сборке.",
+	"cluster.cred_expired":            "учётные данные узла (invite-токен) истекли %d дн. назад",
+	"cluster.cred_expired_help":       "Токен, которым узел подключился, — это его учётные данные на все heartbeat'ы, и срок его жизни определяет окно ПОДКЛЮЧЕНИЯ, а не срок работы. Поэтому истёкший токен принимается: если его отклонять, каждая standby-нода умрёт через сутки после join. Чтобы сменить учётные данные: выпустите новый invite на /admin/cluster и перезапустите join на этом хосте (строка узла при этом сохраняется).",
 
 	"cluster.no_cluster":        "Кластер ещё не настроен.",
 	"cluster.no_cluster_help":   "Создайте запись в <code>cluster</code> через прямой SQL или дождитесь Phase 2.2 (B200.x), где появится форма. Пока что страница показывает только то, что есть в БД.",
@@ -1175,12 +1203,12 @@ var ruAdmin = map[string]string{
 	"cluster.onboard_note_tailnet":         "<code>--netfilter-mode=nodivert</code> обязателен (не <code>off</code>: он пересоздаёт iptables-ловушку; <code>nodir</code> клиент отвергает целиком). Первая строка ставит имя хоста — оно должно совпадать с именем в приглашении, иначе сервер ответит 403 hostname does not match token target. Ключ — preauth для пользователя infra, поэтому нода не попадает в синтетический tagged-devices. Блок СОЗНАТЕЛЬНО не передаёт <code>--accept-routes</code>: этот флаг ставит в таблицу маршрутизации 52 все префиксы, которые анонсируют relay-и, а ядро смотрит в неё раньше основной таблицы — и если адрес управления оператора попадает внутрь любого анонсированного префикса, хост начинает отвечать оператору через tailnet и SSH-сессия рвётся (измерено 2026-10-09: собственный /32 оператора был одной из 220 принятых записей). Стендбай — это сервер: ему нужен tailnet, а не подсети relay-ев. Добавляйте флаг сами только если этому хосту действительно нужны обслуживаемые relay-ями назначения, и тогда держите второй путь для входа.",
 	"cluster.onboard_note_install":         "Скачивание из GitHub Releases этой версии + проверка SHA256 перед установкой.",
 	"cluster.onboard_note_join":            "<code>--write-dsn-to</code> записывает DSN праймари в <code>/etc/skygate/dbs.env</code>; состояние join — в <code>/etc/skygate/cluster-state.json</code> (его читает heartbeat-демон).",
-	"cluster.onboard_note_heartbeat":       "Блок сам пишет <code>/etc/systemd/system/skygate-heartbeat.service</code> (юнита skygate на стендбае нет — там только бинарник), затем <code>daemon-reload</code>, <code>enable --now</code> и проверяет, что работает именно демон: <code>systemctl is-active --quiet skygate-heartbeat</code> плюс первые строки журнала. Веб-службы skygate у стендбая нет, поэтому <code>curl /healthz</code> здесь не проверяется. После этого нода появится в таблице нод выше в состоянии <code>pending</code>.",
+	"cluster.onboard_note_heartbeat":       "Блок сам пишет <code>/etc/systemd/system/skygate-heartbeat.service</code> (юнита skygate на стендбае нет — там только бинарник), затем <code>daemon-reload</code>, <code>enable --now</code> и проверяет, что работает именно демон: <code>systemctl is-active --quiet skygate-heartbeat</code> плюс первые строки журнала. Юнит содержит <code>EnvironmentFile=-/etc/skygate/skygate.env</code>, поэтому демон берёт <code>SKYGATE_PORT</code> от самой службы, а не угадывает порт. С B464 демон перед каждым heartbeat спрашивает свой хост теми же двумя эндпоинтами, что и балансировщик — <code>/healthz</code> (отвечает ли веб-сервер skygate) и <code>/readyz</code> (считает ли тот инстанс свою БД доступной), — и прикладывает ответ к heartbeat. Поэтому ниже в блоке стоят два <code>curl</code>: <strong>оба ответили</strong> → нода станет <code>ready</code>; <strong>любой не ответил</strong> → <code>degraded</code>, то есть «агент жив, но хост не обслуживает» — это факт о хосте, а не ошибка блока, и такую ноду нельзя повышать. Веб-службы skygate на этом хосте пока нет, поэтому сразу после установки демона состояние будет <code>degraded</code> — так и должно быть.",
 	"cluster.onboard_dsn_missing_title":    "cluster_database.dsn_template пуст — стендбай останется без DSN",
 	"cluster.onboard_dsn_missing_help":     "Заполните <code>cluster_database.dsn_template</code> на этом праймари — быстрее всего кнопкой ниже (она собирает шаблон из DSN этого процесса), либо на странице <code>/admin/database</code>, либо upsert-ом <code>INSERT … ON CONFLICT (id) DO UPDATE</code>: строки <code>cluster_database</code> может не быть вовсе (измерено на живом праймари 2026-10-08 — 0 строк, если страницу никогда не открывали), и тогда голый <code>UPDATE</code> молча меняет 0 строк. <code>%s</code> — плейсхолдер <strong>ХОСТА</strong>: при <code>skygate join</code> в него подставляется hostname праймари. Пароль здесь не хранится (эта строка видна на странице, попадает в audit-log и в бэкапы) — стендбай дописывает его в свой DSN. Без шаблона <code>skygate join</code> сообщит «no DSN bootstrap from primary», и хост останется в кластере без возможности стать зеркалом.",
 	"cluster.onboard_dsn_apply_btn":        "Заполнить шаблон из моего DSN",
 	"cluster.onboard_dsn_apply_help":       "Заполняет шаблон из DSN этого процесса и возвращает вас на эту страницу.",
-	"cluster.onboard_note_approve":         "Нажмите «Одобрить» в строке новой ноды — это последний шаг, и он уже в панели.",
+	"cluster.onboard_note_approve":         "Нажмите «Одобрить» в строке новой ноды — это последний шаг, и он уже в панели. Учтите: с B464 первый же heartbeat ставит состояние сам (<code>ready</code>, если оба <code>curl</code> из шага 4 ответили, иначе <code>degraded</code>), а кнопка «Одобрить» показывается только для <code>pending</code> — поэтому если строка уже перешла в <code>ready</code>, одобрять нечего, а если в <code>degraded</code>, то одобрять нечего тем более.",
 	"cluster.onboard_ok":                   "Блок подключения выпущен. Скопируйте его сейчас — повторно он не показывается.",
 	"cluster.onboard_err_form":             "Ошибка разбора формы",
 	"cluster.onboard_err_hostname":         "hostname обязателен",
@@ -1446,6 +1474,19 @@ var enAdmin = map[string]string{
 	"acls.import_apply_hint":                   "The policy will be sent to headscale on every plane and written to acl_snapshots",
 	"acls.import_apply_confirm":                "Apply the imported ACL to every plane? This will overwrite the current policy on each headscale.",
 	"acls.import_btn_short":                    "Import",
+	"acls.import_planes_title":                 "Planes this policy will be pushed to",
+	"acls.import_planes_help":                  "There is one policy but possibly several planes, and headscale 0.29.x is not uniform across releases (approve_routes left REST at 0.29.1, the REST expire path broke at 0.29.2, grants[] replaced acls[] at 0.29.0-beta.4, 0.29.2 rejects wildcards in tagOwners). This table shows what each plane actually runs. It is information, not a gate: those differences are handled by a capability ladder, so the import is never blocked on a version number.",
+	"acls.import_planes_url":                   "Plane (headscale URL)",
+	"acls.import_planes_version":               "Version",
+	"acls.import_planes_primary":               "primary plane (the global client)",
+	"acls.import_planes_unknown":               "version not determined",
+	"acls.import_planes_unknown_hint":          "An undetermined version is not an import error: this handler never calls headscale for a version, it reads the update monitor (SKYGATE_HEADSCALE_POLL_INTERVAL) or the declared SKYGATE_HEADSCALE_VERSION_PIN.",
+	"acls.import_planes_mismatch":              "The planes run different headscale versions, so behaviour may differ:",
+	"acls.import_report_banner":                "The apply failed on some planes",
+	"acls.import_report_hint":                  "Every plane the handler walked is listed. Planes that were already applied are NOT rolled back automatically — the previous policy is kept in a snapshot (acl_snapshots) and the rollback lives on /admin/acls.",
+	"acls.import_report_status":                "Result",
+	"acls.import_report_ok":                    "applied",
+	"acls.import_report_fail":                  "failed",
 	"acls.v0_17_0_note_title":                  "v0.17.0: tag:subnet-router",
 	"acls.v0_17_0_note_body":                   "<code>tagOwners</code> now lists <code>tag:subnet-router</code> (owned by every portal user) — used by the <a href=\"/admin/subnets\">per-user sidecar</a> (v0.16.7+). Per-user rules for users with an allocated subnet are also extended: <code>dst: [\"&lt;user&gt;:*\", \"10.0.&lt;uid&gt;.0/24:*\"]</code>. The exit-node mesh (<code>* → tag:exit-node:*</code>) is preserved — relays are still reachable from any user.",
 	"headplane.config_title":                   "Headplane configuration",
@@ -2297,6 +2338,11 @@ var enAdmin = map[string]string{
 	"cluster.state_pending":       "pending",
 	"cluster.state_draining":      "draining",
 	"cluster.state_failed":        "failed",
+	// B464 — the agent is alive, the host cannot serve. Distinct from failed ("no
+	// heartbeat", the elector's verdict about the NETWORK): degraded is the
+	// heartbeat's own verdict about the HOST, and it arrives with proof.
+	"cluster.state_degraded":      "degraded",
+	"cluster.state_degraded_help": "The agent on this host is heartbeating, but it reported that the host cannot serve: the local skygate does not answer /healthz, or its /readyz says the database is unreachable. Do not promote this node and do not point DNS/traffic at it.",
 	"cluster.self_label":          "this node",
 
 	// B359 (2026-10-07) — /admin/cluster must name the reason a candidate is in
@@ -2333,6 +2379,15 @@ var enAdmin = map[string]string{
 	"cluster.reason_unknown":                "State %s is not covered by the page's rules.",
 	"cluster.action_unknown":                "Inspect the cluster_node row and the cluster_audit events by hand.",
 	"cluster.owned_by":                      "owner:",
+
+	// B464 (2026-11-11) — degraded: the agent is alive, the host does not serve.
+	// The reason is a sentence the AGENT measured on its own host (a value, not a
+	// key, like cluster.reason_failed), so the sentence-less form must exist too.
+	"cluster.reason_degraded":         "The agent reports that the host cannot serve: %s",
+	"cluster.reason_degraded_unknown": "State is degraded, but there is no node_health event carrying a measurement — check that host's agent journal.",
+	"cluster.action_degraded":         "On that host check <code>systemctl status skygate</code>, <code>ss -ltnp | grep -E \":(8080|8082)\"</code> and <code>curl -s 127.0.0.1:8080/readyz</code>. While it is degraded, do not point DNS at it and do not promote it. The Upgrade button below is appropriate when the host is behind on its build.",
+	"cluster.cred_expired":            "the node credential (invite token) expired %d day(s) ago",
+	"cluster.cred_expired_help":       "The token a node joined with IS its credential for every heartbeat, and that token's lifetime bounds the JOIN, not the runtime. So an expired token is accepted: rejecting it would kill every standby 24 hours after it joined. To rotate: issue a fresh invite on /admin/cluster and re-run the join on that host (the node row is kept).",
 
 	"cluster.no_cluster":        "Cluster is not configured yet.",
 	"cluster.no_cluster_help":   "Create a row in <code>cluster</code> via direct SQL, or wait for Phase 2.2 (B200.x) which will add a form. For now the page shows only what is in the DB.",
@@ -2440,12 +2495,12 @@ var enAdmin = map[string]string{
 	"cluster.onboard_note_tailnet":         "<code>--netfilter-mode=nodivert</code> is required (not <code>off</code>, which re-creates the iptables trap, and not <code>nodir</code>, which the client rejects outright). The first line sets the hostname — it must match the name in the invite, or the server answers 403 hostname does not match token target. The key is an infra-user preauth, so the node does not land in the synthetic tagged-devices user. The block deliberately does NOT pass <code>--accept-routes</code>: that flag installs every prefix the relays advertise into routing table 52, which the kernel consults before the main table, so a host whose own management address falls inside any advertised prefix starts answering the operator over the tailnet and the SSH session dies (measured 2026-10-09: the operator's own /32 was one of 220 accepted entries). A standby is a server — it needs the tailnet, not the relays' subnets. Add the flag yourself only if this host genuinely must reach relay-served destinations, and then keep a second way in.",
 	"cluster.onboard_note_install":         "Downloads this version from GitHub Releases and verifies SHA256 before installing.",
 	"cluster.onboard_note_join":            "<code>--write-dsn-to</code> writes the primary's DSN to <code>/etc/skygate/dbs.env</code>; the join state goes to <code>/etc/skygate/cluster-state.json</code>, which the heartbeat daemon reads.",
-	"cluster.onboard_note_heartbeat":       "The block writes <code>/etc/systemd/system/skygate-heartbeat.service</code> itself (a standby has only the binary — no skygate unit is ever installed there), then runs <code>daemon-reload</code>, <code>enable --now</code> and verifies that what runs is the DAEMON: <code>systemctl is-active --quiet skygate-heartbeat</code> plus the first journal lines. A standby has no skygate web service, so no <code>curl /healthz</code> is promised here. The node then appears in the node table above with state <code>pending</code>.",
+	"cluster.onboard_note_heartbeat":       "The block writes <code>/etc/systemd/system/skygate-heartbeat.service</code> itself (a standby has only the binary — no skygate unit is ever installed there), then runs <code>daemon-reload</code>, <code>enable --now</code> and verifies that what runs is the DAEMON: <code>systemctl is-active --quiet skygate-heartbeat</code> plus the first journal lines. The unit carries <code>EnvironmentFile=-/etc/skygate/skygate.env</code>, so the daemon takes <code>SKYGATE_PORT</code> from the service itself instead of guessing a port. Since B464 the daemon asks its own host the two questions a load balancer would — <code>/healthz</code> (is a skygate web server answering?) and <code>/readyz</code> (does that instance consider its database reachable?) — and attaches the answer to every heartbeat, which is why the block now ends with two <code>curl</code> calls: <strong>both answered</strong> → the node becomes <code>ready</code>; <strong>either failed</strong> → <code>degraded</code>, i.e. \"the agent is alive, the host cannot serve\" — a fact about the host, not an error in the block, and such a node must not be promoted. There is no skygate web service on this host yet, so right after installing the daemon the state will be <code>degraded</code>. That is correct.",
 	"cluster.onboard_dsn_missing_title":    "cluster_database.dsn_template is empty — the standby will get no DSN",
 	"cluster.onboard_dsn_missing_help":     "Fill <code>cluster_database.dsn_template</code> on this primary — fastest with the button below (it composes the template from this process's own DSN), or on <code>/admin/database</code>, or with an upsert <code>INSERT … ON CONFLICT (id) DO UPDATE</code>: the <code>cluster_database</code> row can be absent entirely (measured on the live primary 2026-10-08 — 0 rows on a deployment that never opened that page), and a bare <code>UPDATE</code> then silently changes 0 rows. <code>%s</code> is the <strong>HOST</strong> placeholder: <code>skygate join</code> substitutes the primary's hostname into it. The password is not stored here (the row is rendered on the page, written to the audit log and copied by backups) — the standby adds it to its own DSN. Without a template <code>skygate join</code> reports \"no DSN bootstrap from primary\" and the host stays a cluster member that can never serve as a mirror.",
 	"cluster.onboard_dsn_apply_btn":        "Fill the template from my DSN",
 	"cluster.onboard_dsn_apply_help":       "Composes the template from this process's DSN and returns you to this page.",
-	"cluster.onboard_note_approve":         "Press Approve on the new node's row — the last step is already in the panel.",
+	"cluster.onboard_note_approve":         "Press Approve on the new node's row — the last step is already in the panel. Note: since B464 the first heartbeat sets the state by itself (<code>ready</code> when both <code>curl</code> calls in step 4 answered, otherwise <code>degraded</code>), and the Approve button is only rendered for <code>pending</code> — so if the row already moved to <code>ready</code> there is nothing to approve, and if it moved to <code>degraded</code> there is even less.",
 	"cluster.onboard_ok":                   "Onboarding block minted. Copy it now — it is not shown again.",
 	"cluster.onboard_err_form":             "Form parse error",
 	"cluster.onboard_err_hostname":         "hostname is required",

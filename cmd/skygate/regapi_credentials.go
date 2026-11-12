@@ -47,7 +47,6 @@ import (
 	"strings"
 
 	"skygate/internal/config"
-	"skygate/internal/db"
 	extcreds "skygate/internal/ha/dnsexternal"
 )
 
@@ -138,7 +137,7 @@ func runRegAPICredsSet(args []string) error {
 	if cfg.SecretKeyHex == "" {
 		return errors.New("regapi-credentials set: SKYGATE_SECRET_KEY is empty in .env (set it first; see .env.example for `openssl rand -hex 32`)")
 	}
-	pool, err := db.OpenDSN(cfg.DBDSN)
+	pool, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("regapi-credentials set: db open: %w", err)
 	}
@@ -204,7 +203,7 @@ func runRegAPICredsShow(args []string) error {
 	if cfg.SecretKeyHex == "" {
 		return errors.New("regapi-credentials show: SKYGATE_SECRET_KEY is empty in .env (the creds are encrypted with it; without it we can't decrypt for display)")
 	}
-	pool, err := db.OpenDSN(cfg.DBDSN)
+	pool, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("regapi-credentials show: db open: %w", err)
 	}
@@ -258,7 +257,7 @@ func runRegAPICredsTest(args []string) error {
 	if cfg.SecretKeyHex == "" {
 		return errors.New("regapi-credentials test: SKYGATE_SECRET_KEY is empty in .env")
 	}
-	pool, err := db.OpenDSN(cfg.DBDSN)
+	pool, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("regapi-credentials test: db open: %w", err)
 	}
@@ -311,7 +310,7 @@ func runRegAPICredsDelete(args []string) error {
 	if err != nil {
 		return fmt.Errorf("regapi-credentials delete: config: %w", err)
 	}
-	pool, err := db.OpenDSN(cfg.DBDSN)
+	pool, err := openCLIDB(cfg)
 	if err != nil {
 		return fmt.Errorf("regapi-credentials delete: db open: %w", err)
 	}

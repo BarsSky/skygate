@@ -355,6 +355,8 @@ type nodeRow struct {
 //	pending + last_seen is NULL + joined_at < cutoff → failed (never heartbeated)
 //	pending + last_seen     < cutoff               → failed (heartbeat stopped in pending)
 //	ready   + last_seen     < cutoff               → failed (3+ missed heartbeats)
+//	degraded + last_seen    < cutoff               → failed (B464: silence is silence,
+//	                                                 whatever the last verdict said)
 //	other                                      → no-op
 //
 // Note: a "pending" row that has a non-NULL last_seen is
@@ -376,7 +378,13 @@ func nextState(state string, lastSeen, joinedAt sql.NullTime, cutoff time.Time) 
 			return "failed", fmt.Sprintf("last_seen %s ago (3+ missed heartbeats)", time.Since(lastSeen.Time).Round(time.Second))
 		}
 		return state, ""
-	case "ready":
+	// B464: `degraded` (the agent is beating but reports the host cannot serve)
+	// obeys the SAME staleness rule as `ready`. It must, because `degraded` claims
+	// "this node is alive"; a node that stops beating stops being alive whatever it
+	// last said about itself, and only this branch turns that silence into `failed`.
+	// (The reverse — a `failed` node beating again — is the heartbeat's own B402
+	// transition, not the elector's.)
+	case "ready", "degraded":
 		if lastSeen.Valid && lastSeen.Time.Before(cutoff) {
 			return "failed", fmt.Sprintf("last_seen %s ago (3+ missed heartbeats)", time.Since(lastSeen.Time).Round(time.Second))
 		}
