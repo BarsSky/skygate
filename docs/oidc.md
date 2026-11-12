@@ -244,6 +244,35 @@ kubectl rollout restart deploy/headscale -n headscale
 kubectl logs -n headscale deploy/headscale --tail=50
 ```
 
+**The CLI when you need the values on the host: `skygate oidc-export`.** The panel
+deliberately never echoes a stored secret over HTTP, so the one thing an operator
+sometimes needs — the exact `client_secret` headscale must hold — is printed by a
+host-side command instead. It reads the same precedence the panel does (the
+`oidc_settings` row saved on `/admin/oidc` wins, the `SKYGATE_OIDC_*` env vars are
+the fallback) and must be run as the skygate service user, because it opens the
+database:
+
+```bash
+sudo -u skygate skygate oidc-export --headscale --secret   # what headscale needs
+sudo -u skygate skygate oidc-export                        # .env block, secret as a note
+sudo -u skygate skygate oidc-export --json                 # machine-readable, no secret
+```
+
+| Flag | What it prints |
+|---|---|
+| *(none)* or `--env` | the `.env` block for skygate, with the secret replaced by a note pointing at `--secret` |
+| `--secret` | the same block **with** the real `client_secret` |
+| `--headscale` (alias `--headscale-config`) | headscale's `oidc:` block, **with** the secret |
+| `--headscale --no-secret` | the same block with a placeholder, for docs and diffs |
+| `--json` | machine-readable; never includes the secret |
+| `--from-env` | **(B459)** export the env values even when the database cannot be opened, or its `oidc_settings` row cannot be read. Without it that situation is an **error**: printing the env values as if they were the configured ones is how a wrong `client_secret` reaches headscale |
+| `--help` | the flag list |
+
+The headscale block is rendered by `internal/oidc.RenderHeadscaleBlock` — the same
+function the panel's Apply button uses — so the CLI output and the button cannot
+drift (B313). `deploy/skygate-apply-oidc.sh` runs this command on the host for the
+same reason: the script it prints carries **no** secret.
+
 **Restart modes** selectable in the sync form / `--mode` flag:
 
 | Mode | What it does |

@@ -75,7 +75,17 @@ backup restoration is rehearsed.
 
 ## What's backed up, and what isn't
 
-### Backed up by `deploy/backup.sh` (cron daily at 03:00)
+### Backed up by the backup scripts (cron daily at 03:00)
+
+**Which script (B463):** the cron and the in-app «Создать сейчас» run
+`scripts/backup_cron.sh` → `skygate backup-run` → `internal/backup.RunBackup` →
+**`scripts/backup.sh`**. `deploy/backup.sh` is the manual / stack-level path and
+captures the same essential pieces. Both are install-kind aware — on a native host
+the configuration is `/etc/skygate/skygate.env` (not `/home/admin/skygate/.env`),
+`/etc/skygate/{cluster-state.json,dbs.env}` are captured, and headscale's database
+comes from the `path:` in headscale's own config (default
+`/var/lib/headscale/db.sqlite`). A piece that is genuinely absent is reported with a
+**reason**, never silently omitted.
 
 | Path | Contents | Size | Notes |
 |---|---|---|---|

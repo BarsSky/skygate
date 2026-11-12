@@ -26,9 +26,10 @@ Each section has:
 |-------------------------------|-----------------------------------------|----------------|
 | `skygate-repo.bundle`         | `git bundle create --all`               | ~13 MB         |
 | `skygate.env`                 | `skygate/.env` (DB DSN, API keys, etc.) | ~3.5 KB        |
-| `skygate-pg.sql`              | `pg_dump -Fp --clean --if-exists`        | ~45 MB         |
+| `skygate-pg.sql`              | `pg_dump -Fp --clean --if-exists` (PostgreSQL installs only) | ~45 MB |
+| `skygate.db`                  | the SQLite database **file** (v1.5.4+ default; WAL-checkpointed, `-wal`/`-shm` carried) | ~600 KB |
 | `skygate-git-log.txt`         | last 5 commits                          | ~400 B         |
-| `skygate-schema.txt`          | `pg_tables WHERE schemaname='public'`   | ~200 B         |
+| `skygate-schema.txt`          | `pg_tables …` (PG) or `sqlite_master …` (SQLite) | ~200 B |
 | `headscale-config/`           | `/home/admin/headscale/config/*`        | ~50 KB         |
 | `headscale.db`                | headscale SQLite (when present)         | ~200 KB        |
 | `headplane-data/`             | `headscale_headplane_data` volume       | ~10 MB         |
@@ -37,13 +38,46 @@ Each section has:
 | `Dockerfile`                  | skygate Dockerfile                       | ~4 KB          |
 | `inventory.txt`               | hand-written manifest                   | ~650 B         |
 
+An archive carries **exactly one** of `skygate-pg.sql` / `skygate.db` — whichever the
+configured backend produces — and `inventory.txt` names it, together with a
+`SKYGATE_DB_DIALECT=sqlite|postgres` line (B459). Before B459 the SQLite half did not
+exist at all: `scripts/backup.sh` — the script the in-app «Создать сейчас» runs — was
+PostgreSQL-only, so on a SQLite install it failed at `load_dsn()` and exported
+nothing, while `deploy/backup.sh` copied a docker **named volume** and only warned on
+a native host (an archive with every file except the database, reported as created).
+
 The 5 most critical files for a restore are:
-1. `skygate-pg.sql` — the entire skygate DB (users, devices, ACL, audit)
+1. `skygate-pg.sql` **or** `skygate.db` — the entire skygate DB (users, devices, ACL, audit)
 2. `skygate.env` — connection strings + secrets (DB DSN, headscale API key, JWT secret)
 3. `headscale-config/` — headscale YAML, ACL, DNS config
 4. `headplane-data/` — headplane state (web UI settings)
 5. `skygate-repo.bundle` — the source code itself (so the new host can
    rebuild the same commit)
+
+### Native (systemd / OpenRC) installs: nothing is left behind (B462)
+
+A container install keeps everything in docker volumes, so a backup that only knew
+volumes still captured the state. A **native** install keeps the same state in plain
+paths, and four of the five artefacts used to be missed:
+
+| Artefact | Native location | Before B462 | Now |
+|---|---|---|---|
+| Config (DSN + secrets) | `/etc/skygate/skygate.env` — the unit's `EnvironmentFile` | the env step only read the **checkout's** `.env`, and silently "succeeded" when it was absent — an archive with the database but no DSN | one resolver answers *which env file the SERVICE reads* (`SKYGATE_UPDATE_ENV_FILE`/`SKYGATE_ENV_FILE` → `/etc/skygate/skygate.env` → the checkout) and drives the env copy **and** the DB/DSN lookups; the archive's `inventory.txt` names the source |
+| skygate database | `/var/lib/skygate/skygate.db` | **B459** (dialect-aware capture) | captured, WAL-checkpointed |
+| headscale config | `/etc/headscale` | docker bind path only (`/home/admin/headscale/config`) | both are captured, the source is named |
+| headscale database | `/var/lib/headscale/db.sqlite` (or the `path:` under `database:`→`sqlite:` in headscale's own config) | docker volume only — a native host skipped it | resolved from `SKYGATE_HEADSCALE_DB_PATH` → headscale's config (`SKYGATE_HEADSCALE_CONFIG`, then the same candidates the OIDC/policy appliers use) → the documented default; when none exists the run **says why** (including "headscale runs on PostgreSQL, there is no file") |
+| `/etc/skygate/cluster-state.json`, `dbs.env` | `/etc/skygate` | not captured at all — `cluster-state.json` carries the node identity the cluster API uses | captured as `etc-skygate/` and restored |
+
+On the restore side, `do_env()` now writes to the **runtime** file (keeping a
+`.pre-restore-<ts>` copy and telling the operator to restart skygate), and both
+headscale artefacts go back to their native paths with a stale `-wal`/`-shm` removed.
+`headplane-data/` remains docker-only on purpose: headplane *is* a docker sidecar and
+does not exist on a native install.
+
+**What is still not in the archive** (deliberately, and this is what an operator must
+handle): the installed binary at `/usr/local/bin/skygate` (the archive carries the
+repo bundle and the build instructions — the release asset is the documented source),
+and anything headscale keeps in PostgreSQL when it does not use SQLite.
 
 ### Protocols (v1.3.0+)
 
@@ -138,16 +172,24 @@ test backup):
     (data drift between backup time and now — expected)
   - The `skyadmin` user is present with `is_admin=1`
 
-### Why `scripts/restore.sh` doesn't do the PG replay yet
+### What `scripts/restore.sh` replays automatically — and what it still cannot
 
-The script was written for the v0.32.x SQLite era and its
-`do_skygate_db()` copies `skygate.db` from the archive. The
-v1.3.0+ archive has `skygate-pg.sql` instead. The script needs
-to be updated (see `docs/TODO.md` BL-15 — "restore.sh for PG
-dump"). The PG replay works fine when the operator runs the
-`psql -f` command above manually, so the data is safe; the
-script is just a convenience wrapper that's currently out of
-sync with the new format.
+This section used to be titled "Why `scripts/restore.sh` doesn't do the PG replay
+yet" and claimed the script was stuck in the v0.32.x SQLite era. That is no longer
+true for PostgreSQL: `do_skygate_db()` now branches —
+
+* archive has `skygate-pg.sql` → **`do_pg_restore`** replays it (BL-15 shipped);
+* archive has `skygate.db` → the SQLite branch copies it **into the docker named
+  volume `skygate-data`**.
+
+**Still open (and this is the real gap, not the PG replay):** that SQLite branch is
+both *docker-only* and labelled "v0.32.x legacy". On a **native** install (no
+docker, the database at an absolute path — the shape `SKYGATE_DB=sqlite:/…` creates)
+the documented command `scripts/restore.sh <archive>` cannot put the database back,
+even though `scripts/backup.sh` now produces exactly that archive and prints that
+command as the next step. Until it is fixed, a native SQLite restore is: extract the
+archive and place `skygate.db` at the path in `SKYGATE_DB` yourself, then start
+skygate. The backup half of this round trip is B459; the restore half is not done.
 
 ---
 

@@ -44,6 +44,7 @@ a different repair recipe than the English one.
 | See the **localization** state of the panel (what was untranslated, and the ratchet that keeps it at zero) | [`i18n-audit.md`](i18n-audit.md) |
 | See the **responsive / mobile** audit of the panel (what was clipped off-screen, and the fix) | [`responsive-audit.md`](responsive-audit.md) |
 | Get **AI-agent instructions / conventions** | [`../AGENTS.md`](../AGENTS.md) |
+| Hand a **review/audit task to another agent** (how to verify claims in this repo without inventing them, what is already fixed, what is still open) | [`balancer-brief.md`](balancer-brief.md) |
 
 ---
 

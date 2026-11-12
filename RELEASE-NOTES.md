@@ -1,5 +1,145 @@
 # Skygate release notes
 
+## v1.5.211 — «ready» must mean «this host can serve», and a backup must be restorable on the host that made it (B464 + B459–B463)
+
+**Date:** 2026-11-12 · **Base:** `v1.5.210` → this tag · **Compatibility:** additive (one new `cluster_node.state` value, `degraded`; no schema change, no configuration change, no migration). An older agent keeps working against a new hub and a new agent against an older hub — both directions are handled explicitly.
+
+### B464 — measured: a «ready» standby that could serve nothing
+
+The HA chain listed a standby as **ready** while, on that host:
+
+* **no** skygate web server (nothing listening on 80/443/8080/8082), no headscale, no database, no docker;
+* `/var/lib/skygate` = 16 KB, i.e. no data at all;
+* `cluster_database` = **0 rows**, and `/etc/skygate/dbs.env` literally said
+  `# SKYGATE_DB_DSN=<unset — primary returned no DSN; set this manually …>`;
+* the row still read `state=ready | roles={skygate-standby} | last_seen_at = 24 s ago`.
+
+The state was decided by the only signal that existed — «a process on that host reached
+`POST /api/cluster/heartbeat`», which answers «can the agent reach the hub?» and says nothing about
+serving. Switching DNS to it would have been an outage, not a failover.
+
+**The agent now measures its own host** with the project's own two endpoints — the same two a load
+balancer would use — and attaches the answer to every heartbeat: `GET /healthz` (is a web server
+answering, and which build) and `GET /readyz` (does that instance consider its database reachable,
+the D5 verdict). The probe talks to `127.0.0.1` (`--health-url` → `SKYGATE_HEALTH_URL` →
+`127.0.0.1:$SKYGATE_PORT`, default 8080), because a public name can resolve to a proxy; a `2xx` that
+is not skygate's payload is **not** «serving», otherwise any proxy on the port would make a dead
+standby look healthy; and the strings from `/readyz` are redacted before they leave the host (a DSN
+must not travel into another database and into `cluster_audit`).
+
+**The hub decides from it:**
+
+| `state` | Meaning | Decided by |
+|---|---|---|
+| `ready` | a web server answers **and** its instance reports the database reachable | heartbeat |
+| `degraded` *(new)* | the agent is alive and authenticated, but the host cannot serve — with the measured sentence | heartbeat |
+| `failed` | no heartbeat for 3 intervals (90 s) | the B204 elector |
+| `draining` | the operator removed it; no verdict and no heartbeat changes this | the operator |
+
+`degraded` is deliberately **not** `failed`: `failed` is a fact about the **network** (the box stopped
+talking), `degraded` is a fact about the **host** (it talks, and says it cannot serve). Only
+`state='ready'` is ever a failover candidate, so a degraded node can never be promoted; `/admin/cluster`
+names the reason and the next action for it, and an upgrade run **includes** it (an upgrade is usually
+the fix). The verdict is echoed in the heartbeat response, so the host's own journal says the same
+thing the panel does.
+
+Three compatibility rules make the fix safe to roll out in any order: an **absent** payload keeps the
+pre-B464 behaviour exactly (an older agent is never demoted for a field it cannot send); the heartbeat
+endpoint now **ignores unknown fields** (`/api/cluster/join` stays strict), and a newer agent that gets
+a `400 unknown field` from an older hub retries once with the legacy body — otherwise a newer agent
+would be declared dead by an older hub after three beats.
+
+### B464 — the other two traps found in the same measurement
+
+1. **`skygate cluster join` reported success with no database.** It wrote `dbs.env` containing
+   `<unset — primary returned no DSN>` and exited **0**. It now exits non-zero and names the fix
+   (the invite is already consumed at that point, so the state file is written first and the message
+   says «do not re-run»). The standalone-local-database topology — a node that keeps its **own**
+   SQLite file and is not a mirror — is a real choice, so it has an explicit `--allow-no-dsn` rather
+   than happening by accident.
+2. **An expired node credential was accepted and invisible.** The standby's invite token expired
+   2026-10-10 and its heartbeats were still accepted on 2026-11-12. That is **by design** and now
+   documented as such: the `sgn1` token is the node's *only* credential, so enforcing
+   `cluster_invite.expires_at` on the heartbeat would 401 every standby 24 h after it joined —
+   a security fix that breaks the cluster it protects. Instead the expiry is **disclosed**: a badge on
+   `/admin/cluster` per node, and one line in the host's own journal at daemon start, both naming the
+   rotation (a fresh invite + a re-join, which adopts the node row).
+
+The panel's onboarding block changed with the verdict it now produces: the generated
+`skygate-heartbeat.service` carries `EnvironmentFile=-/etc/skygate/skygate.env` (so the probe follows
+the service's `SKYGATE_PORT` instead of guessing — the B270 8080/8082 trap), and the block ends by
+asking `/healthz` and `/readyz` and saying in words that a host with no web service is `degraded`
+**by design**. The B365 contract was renegotiated rather than deleted: the *claim* (a `skygate` unit
+that does not exist) is still forbidden, the *question* is now required and every probe is guarded by
+`|| echo` so it can never decide the block's success.
+
+### B459–B463 — a backup must be restorable on the host that made it
+
+The migration/HA readiness pass over «export and import settings» and «bring the cluster up» found the
+data-migration path blind to the SQLite (native) install kind, in five places, each fixed with its own
+contract:
+
+* **B459** — `skygate oidc-export`, `skygate init status` and the whole `skygate cluster …` family
+  opened the database with the PostgreSQL-only opener, so on a SQLite install they died with
+  `cannot parse 'sqlite:/…'` (and `oidc-export` treated it as a *warning*, exporting a configuration
+  the panel does not have). One dialect-aware opener for every operator-on-the-box subcommand.
+  `scripts/backup.sh` gained the SQLite branch.
+* **B460** — ACL import reported one plane and stopped: the dry run did not name the control planes
+  it would write to (nor what runs on each), and a failure on the *first* plane answered `http.Error`
+  while the planes before it had already been changed and are not rolled back. Now: a per-plane
+  report with the version banner, and an apply that reports every plane it walked instead of hiding
+  a partial write.
+* **B461** — `scripts/restore.sh` could only put the database back into a docker volume, so on a
+  native host the documented restore could not work at all («a backup that cannot be restored is not
+  a backup»). The SQLite branch resolves the target from the sources, keeps a `.pre-restore-<ts>`
+  copy **before** overwriting, removes stale `-wal`/`-shm`, and refuses an empty or non-SQLite
+  archive before touching anything.
+* **B462** — on a native install four of the five artefacts were lost: the config (DSN + secrets)
+  lives in `/etc/skygate/skygate.env` (the unit's `EnvironmentFile`, not the checkout's `.env`),
+  headscale's config (`/etc/headscale`) and database (`/var/lib/headscale/db.sqlite`) were
+  docker-volume-only, and `/etc/skygate/{cluster-state.json,dbs.env}` were not captured at all.
+  One resolver answers «which env file does the SERVICE read», and restore writes everything back to
+  its runtime location.
+* **B463** — `deploy/backup.sh`, the script the docs tell the operator to run, was still native-blind:
+  `deploy/lib/env.sh` did not know the native env file, **required** the docker stack's `HEADPLANE_*`
+  variables and exited 1 on a valid native file, archived the checkout's `.env` (which the service
+  never reads) and captured headscale only from docker. Now it knows the file, records which one it
+  loaded, has an explicit opt-out from the docker-era validation that only this script sets, and
+  resolves headscale natively with a named reason when neither shape exists.
+
+Verified live on a native stand: `deploy/backup.sh` exits 0 (it used to abort), the archive carries
+`.env` **from** `/etc/skygate/skygate.env` (marker proven inside the archive), `etc-skygate/` and
+`skygate.db`; a restore drill restored the database, verified integrity, kept a `.pre-restore` copy on
+a second run, and wrote the env back to its runtime location.
+
+### Also fixed here
+
+* **A gate that failed twice a day.** `TestB446_HealthyInstallHasNoExcuse` reads `time.Now()` inside
+  the code under test and asks «is a backup slot due since now−2 h?», which is **true** for the two
+  hours after the `0 4 * * *` slot — measured on the reference host at 05:37 UTC, where it took B1,
+  B132, B176, B208, B210.1, B231, B236, B237.10, B264, `Phase_3_4` and `TD-18.2` down with it
+  (eleven «product» failures, twice a day). The diagnostic gained an injected clock
+  (`backupStaleCauseAt`), production passes the real one, and the test pins the moment.
+* **B276's `prefix_owner` allow-list was one value behind**, and had been red on the reference host
+  for twelve days: two rows carry `source='system'` — B458's own value for the DNS resolvers the
+  tailnet hands out (`internal/prefixowner/system_prefixes_b458.go`), which are prefixes the
+  infrastructure requires. The list learned the fifth value, and the failure message now **names** the
+  offending sources, so the sixth value arrives with its name already in the report.
+* Contracts renegotiated, not weakened: **B402** A1/A2/A4/A5 now pin the state machine where it moved
+  (into Go, because the verdict is not expressible in a SQL `CASE`), **B205** extracts the whole
+  daemon function instead of a 40-line window that a comment could defeat, and **B365** A5/A5b/A5c
+  separate the forbidden claim from the required question.
+
+### Upgrade notes
+
+* Nothing to migrate; the new state appears on its own as soon as the new agent heartbeats.
+* A standby that does not run a skygate web server will now show **`degraded`** instead of `ready`.
+  That is the point of the release, not a fault: it was never able to take the traffic.
+* If your standby serves on a non-default port, put `SKYGATE_PORT` in `/etc/skygate/skygate.env`
+  (the generated unit already sources it) or pass `--health-url` to the daemon.
+* `skygate cluster join` now fails when the primary returns no DSN. If that node is meant to keep its
+  own local database, re-join with `--allow-no-dsn` to record that choice.
+
 ## v1.5.210 — DNS must ride by design: the tailnet now carries the resolvers it hands out (B458)
 
 **Date:** 2026-10-31 · **Base:** `v1.5.209` → this tag · **Compatibility:** none (no schema change, no configuration change).

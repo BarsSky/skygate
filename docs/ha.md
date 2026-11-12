@@ -120,6 +120,30 @@ headscale's API is not built for concurrent writers, and a household tailnet
 (~4–20 users) gains nothing. Exactly one writer (active-router semantics) is the
 right primitive here.
 
+#### 1.4.1 What a second host can be — and what it cannot
+
+There are exactly **three** supported shapes. Only the first two are failover
+candidates; the third is a separate installation that merely appears on the same
+panel.
+
+| Shape | Database | Failover candidate | How it is set up |
+|---|---|---|---|
+| **A. HA standby (Tier 1)** | **The primary's** PG — the standby is a *client*, there is no second database | Yes | `skygate cluster join` returns a DSN → `/etc/skygate/dbs.env` |
+| **B. Standalone (Tier 0)** | Its **own** SQLite file | No | `skygate cluster join … --allow-no-dsn`, then its own `SKYGATE_DB` |
+| **C. Split brain** | Two databases, both "live" | **Never** — not supported | — |
+
+**Shape A is the recommended one for a weak VM.** Skygate on a 1 vCPU / 2 GB host is
+an HTTP client of a database that lives elsewhere; PostgreSQL itself is what needs
+the RAM, and it is not on that host. Nothing is replicated between databases because
+there is only one.
+
+**Shape B has no synchronisation with anything.** The project deliberately does not
+sync SQLite ↔ PostgreSQL: `db-migrate` is a **one-shot** conversion (single
+transaction, FK order, row-count comparison) run in a maintenance window, and the
+backup/restore pair is the other bridge. `docs/backup-restore-and-migration.md`
+covers both. Anything that claims to keep two databases in step in real time is
+shape C.
+
 ---
 
 ## 2. Cluster management
@@ -333,6 +357,59 @@ Since D5 `healthy` is **DB-only**: a headscale outage no longer 503s the
 instance (skygate serves independently of headscale — the B91 principle).
 `dependencies_healthy` keeps the strict AND-of-all view; `skipped*` counts as
 healthy.
+
+#### 2.5.1 What `cluster_node.state` means (B464)
+
+`/healthz` and `/readyz` above answer for **one process**. The HA chain needs the
+same answer about a **whole host**, because failing over to a standby that cannot
+serve is an outage, not a failover. Since B464 the heartbeat daemon on each standby
+asks its own instance those two questions and attaches the result to every
+heartbeat, and the hub decides the state from it:
+
+| `state` | Meaning | Who decides |
+|---|---|---|
+| `pending` | Row exists, no verdict yet (new node awaiting approval) | join / admin |
+| `ready` | The agent reports a web server answering **and** that instance's database reachable | heartbeat (B464) |
+| `degraded` | The agent is alive and authenticated, but its host **cannot serve**: nothing answers `/healthz`, or `/readyz` reports the DB unreachable | heartbeat (B464) |
+| `failed` | No heartbeat for 3 intervals (90 s) | `internal/elector` (B204) |
+| `draining` | The operator removed it from the chain; no verdict and no heartbeat changes this | admin |
+
+`degraded` is **not** "worse than failed" and the two are deliberately different
+questions: `failed` is a fact about the **network** (the box stopped talking),
+`degraded` is a fact about the **host** (it is talking, and reports that it cannot
+serve). Only `ready` is ever a failover candidate, and an upgrade run includes
+`degraded` because an upgrade is usually the fix.
+
+Two more rules, both measured on a live standby:
+
+* **An absent payload keeps the pre-B464 behaviour** (pending/failed → ready), so an
+  agent older than the hub is never demoted for a field it cannot send — and the
+  heartbeat endpoint ignores unknown fields for the same reason. `/api/cluster/join`
+  stays strict.
+* **The invite token is also the node credential.** `cluster_invite.expires_at`
+  bounds the **join** window, and `Heartbeat` deliberately does **not** enforce it —
+  doing so would reject every standby 24 h after it joined (live: a token that
+  expired 2026-10-10 was still heartbeating on 2026-11-12). `/admin/cluster` reports
+  the credential's expiry instead, and the rotation is a fresh invite + a re-join
+  (the node row is adopted, not duplicated).
+
+Verifying a standby by hand — `systemctl is-active` is **not** enough (B269: a live
+process with nothing listening):
+
+```bash
+systemctl status skygate --no-pager | head -5
+ss -ltnp | grep -E ':(8080|8082)\b'                 # must print a listener
+curl -s http://127.0.0.1:8080/healthz               # {"build":"vX.Y.Z+<sha>",…}
+curl -s http://127.0.0.1:8080/readyz                # healthy:true (DB reachable)
+skygate cluster nodes                               # this node's state must be ready
+systemctl status skygate-heartbeat --no-pager | head -5
+```
+
+On the primary, `cluster nodes` (or `SELECT hostname,state,skygate_version,
+last_seen_at FROM cluster_node`) is the authoritative view: a standby whose row is
+`ready` but whose `skygate_version` differs from the hub's is not ready for a DNS
+switch, and `cluster_database` must hold the DSN (`0` rows means no standby can be a
+database mirror).
 
 ### 2.6 Split-brain rules
 
@@ -988,7 +1065,7 @@ Always use `--netfilter-mode=nodivert` going forward (the bootstrap script does)
 | G8 | **Prometheus exporter** | **DONE (v1.5.0+, B226)** | `/metrics` textfmt registered, unauthenticated, same exposure as `/healthz` |
 | G9 | **Formal review/approval of the Phase 0.3/0.4 design** (API contracts, bootstrap state machine) | **DONE (v1.5.0, B200–B225) / doc-review OPEN** | The contracts and the state machine shipped; the "reviewed and approved" checkbox was never ticked before the doc was retired — this file replaces it |
 | G10 | **S3 IAM scope is broader than the HA prefix** | **OPEN** | Scope the reused backup credentials to `s3://<S3_BUCKET>/ha/*`; not enforced by code |
-| G11 | **`bootstrap_standby.sh` writes its `ha.bootstrap` row with SQLite date functions** (`strftime('%s','now')`) | **OPEN** | On a PG-backed cluster the INSERT fails and the script only warns (`audit row insert failed`), so the event can be missing from `audit_log`; step 6's "registers itself in the chain on startup" comment is also inaccurate (membership is operator-edited) |
+| G11 | **`bootstrap_standby.sh` wrote its `ha.bootstrap` row with SQLite date functions** (`strftime(...)`) | **FIXED (B459, 2026-10-29)** — and the gap was **not** what this row said | The row did **not** fail on PostgreSQL: the PG chain installs a `strftime(format text, ts text)` shim (`internal/db/migrations_pg.go:967`), which is exactly why the gap stayed invisible. But that shim **ignores its format argument** and always returns `EXTRACT(EPOCH FROM now())::bigint`, so `initiated_at` — an ISO-shaped field — received a number, and the INSERT depended on a shim the project is retiring (B420). The three scripts (`scripts/bootstrap_standby.sh`, `deploy/scripts/setup-skygate-public.sh`, `deploy/scripts/create-standby-preauth.sh`) now use `EXTRACT(EPOCH FROM now())::bigint` + `to_char(now() AT TIME ZONE 'UTC', …)`; the J1 detector is proved on a planted `strftime()` copy. **Still open, and a separate thing:** step 6's "registers itself in the chain on startup" comment is inaccurate (membership is operator-edited) |
 | G12 | **No second DNS provider and no automated manual fallback** | **OPEN** | If the provider API is unusable, moving the A-record is manual; only provider support can clear the "10 identical wrong requests" lockout |
 | G13 | **`init-headplane.sh` external mode needs the operator to paste URL + key** | **DONE (v1.5.0, B151)** | Bundled mode auto-mints (`docker exec headscale apikeys create -e 365d`); external mode prompts on first boot; idempotent (`NEEDS_KEY` gate) |
 | G14 | **Standby host viability** — the spare VM was intermittently unreachable (hoster NAT, plus the Tailscale iptables trap) | **OPEN (environmental)** | The pair works over Tailscale; the standby need not be publicly reachable — only the active node holds the DNS record |

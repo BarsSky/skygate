@@ -359,6 +359,19 @@ systemctl is-active skygate-update.path           # the trigger must be armed
 Default output: `${DEPLOY_BACKUP_DIR}/skygate-full-YYYYMMDD_HHMMSS/`,
 packaged as `.tar.gz` (with SHA256).
 
+**Which script runs when, and what a `native` install gives them (B463).** The
+**routine** path — the 03:00 cron and the in-app «Создать сейчас» — is
+`scripts/backup_cron.sh` → `skygate backup-run` → `internal/backup.RunBackup` →
+`scripts/backup.sh`. `deploy/backup.sh` (this one) is the manual / stack-level path.
+Both are install-kind aware: on a **native** (systemd/OpenRC) host they read the
+configuration from `/etc/skygate/skygate.env` — the unit's `EnvironmentFile`, **not**
+the checkout's `.env` — capture `/etc/skygate` (`cluster-state.json`, `dbs.env`), take
+the SQLite database from `SKYGATE_DB`, and take headscale's config from
+`/etc/headscale` and its database from the `path:` in headscale's own config (default
+`/var/lib/headscale/db.sqlite`). When a piece genuinely is not there the run says
+**why**; it never ships an archive that only looks complete. `inventory.txt` names
+the source of the env file, of the headscale config and of the headscale database.
+
 What's in the archive (v1.3.0+):
 
 | Item | Source | Why |
