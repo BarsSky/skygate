@@ -2820,11 +2820,11 @@ run_check "B89" "B77 follow-up: Backfill Strategy D (tag fallback) + rotate_ts_a
 #     as the surrounding code), and it's positioned right
 #     after the assignment to app.Notifier
 #   - Comment header mentions v0.33.1.38 + the bug context
-run_check "B90" "Notifier order bug fix: adminSvc.Notifier re-bound after app.Notifier = rn (v0.33.1.38). B336: the build output moved from the FIXED path /tmp/x to mktemp — a stale root-owned /tmp/x (left by any earlier run under another user) made this check fail with 'open /tmp/x: permission denied', i.e. for a reason that says nothing about the notifier order it tests." \
+run_check "B90" "Notifier order bug fix: adminSvc.Notifier re-bound after the app.Notifier installation (v0.33.1.38). B336: the build output moved from the FIXED path /tmp/x to mktemp — a stale root-owned /tmp/x (left by any earlier run under another user) made this check fail with 'open /tmp/x: permission denied', i.e. for a reason that says nothing about the notifier order it tests. B465: the installation moved into installNotifierUnlessReadOnly (readonly_b465.go), because a restored copy must not get a live notifier; the property is unchanged, so the ORDER is now asserted against the call site (the surface concatenates files in glob order, so comparing the two line numbers across files would compare filenames, not boot order)." \
   'f=$(mktemp); out=$(mktemp); printf "%s" "    . scripts/lib/gosurface.sh; gosurface MAIN cmd/skygate/*.go;
     grep -qF \"app.Notifier = rn\" \"\$MAIN\" &&
     grep -qF \"adminSvc.Notifier = app.Notifier\" \"\$MAIN\" &&
-    awk '\''/app\\.Notifier = rn/{a=NR} /adminSvc\\.Notifier = app\\.Notifier/{b=NR} END{exit !(a&&b&&b>a)}'\'' \"\$MAIN\" &&
+    awk '\''/installNotifierUnlessReadOnly\\(app, rn\\)/{a=NR} /adminSvc\\.Notifier = app\\.Notifier/{b=NR} END{exit !(a&&b&&b>a)}'\'' \"\$MAIN\" &&
     '\'"$GO"\'' build -o $out ./cmd/skygate
   " > "$f" && bash "$f"; rc=$?; rm -f "$f" "$out"; exit $rc'
 
@@ -6702,6 +6702,26 @@ run_check "B463" "the DOCUMENTED backup script must speak native too: deploy/bac
 # strict, so a newer agent is never declared failed by an older hub.
 run_check "B464" "ready must mean THIS HOST CAN SERVE: measured on the operator's standby, cluster_node held state=ready | roles={skygate-standby} | last_seen 24 s for a host with no skygate web server (nothing listening on 80/443/8080/8082), no headscale, no database and 16 KB in /var/lib/skygate — the state came from 'the agent reached /api/cluster/heartbeat', which says nothing about serving, so failing DNS over to it would have been an outage. The agent now measures its own host (GET /healthz + GET /readyz) and the hub records degraded (with that sentence, audited as node_health) unless the web server answers AND its database is reachable; an absent payload keeps B402 behaviour so no old agent is demoted, draining outranks any verdict, the failover candidate query still selects only state=ready while an upgrade now includes degraded, the elector flips a silent degraded node to failed, and the verdict is echoed in the response so the host's own journal names it. Plus: cluster join with no DSN now FAILS instead of exiting 0 (--allow-no-dsn for the standalone-local-DB topology), the agent retries once with the pre-B464 body when the hub is older, the heartbeat decoder tolerates unknown fields (/join stays strict), and an expired node credential is disclosed on /admin/cluster rather than silently enforced." \
    'test -f scripts/check_b464_readiness_truth.sh && bash scripts/check_b464_readiness_truth.sh'
+
+# --- B465: a verdict must carry its age ---------------------------------------
+# Two screenshots, one installation, one day. (1) /admin/exit-nodes rendered
+# «Проблему релеев: 2» over a snapshot dated 2026-10-30 — thirteen days old — and the
+# stored text was the pre-B449 `ssh root@[100.64.0.2:18022]:18022 … Could not resolve
+# hostname`. (2) The operator's Telegram got `#46 ⚠️ пин на exit-узел устарел … состояние
+# узла: offline` for a relay that was ONLINE at that moment and had never left online that
+# day: the exit_node_health row behind it was hours old (it came from a restored copy whose
+# tailnet never connects to it), and #45 had said the same thing an hour earlier. The block
+# makes a verdict carry its age and stops a copy from acting: an unfresh "unusable" is
+# reported as stale-pref-relay-unmeasured (its own alert kind, «не измерено», with the
+# measurement time) instead of calling the pin stale; standing conditions dedup for 12 h
+# instead of 1 h; a snapshot older than two missed background passes is labelled history
+# and the pass gets its own goroutine/ticker plus a logged silent path; SSHTarget() can no
+# longer render [host:port]:port (it is also what writes exit_servers.ssh_target);
+# SKYGATE_READONLY_COPY silences a replica completely (no notifier, no bot loop, no
+# scheduler); and /readyz's tailscale probe answers for a native install instead of failing
+# it with a container-only message.
+run_check "B465" "a verdict must carry its age, and a copy must not act: /admin/exit-nodes presented a thirteen-day-old relay snapshot as the current state (the stored text was the pre-B449 bracketed host:port), while a restored copy of the database posted hourly Telegram alerts calling a device pin stale for a relay that was online at that moment. Now an unfresh 'unusable' health row is reported as stale-pref-relay-unmeasured — its own alert kind, with the measurement time and the words «не измерено» — instead of claiming the pin is wrong; standing conditions dedup for twelve hours rather than one; a snapshot older than two missed background passes is labelled history and re-labels its count, the health pass runs in its own goroutine with its silent path logged; SSHTarget() splits a host that already carries a port so the target cannot be rendered as [host:port]:port (it also writes exit_servers.ssh_target); SKYGATE_READONLY_COPY suppresses the notifier, the bot loop and every background scheduler; and the /readyz tailscale probe treats an absent client as skipped rather than as a broken native install." \
+   'test -f scripts/check_b465_verdict_age.sh && bash scripts/check_b465_verdict_age.sh'
 
 # ---------------------------------------------------------------------------
 # THE GATE'S VERDICT (TD-22 / B335)

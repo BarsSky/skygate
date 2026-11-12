@@ -151,6 +151,13 @@ func (s *Service) notifyBaseRouteRepair(host string, approved int) {
 
 // StartBaseRouteReconciler runs the pass in the background until ctx is cancelled.
 // It returns the stop function so main can shut it down with the process.
+//
+// B465 — THE TWO PASSES NO LONGER SHARE A TICK. They used to run back to back inside one
+// goroutine (approve routes, THEN probe the relays), and `RunBaseRouteReconcile` talks to
+// headscale with no deadline of its own: a slow or hung `ListAllNodes`/`ApproveRoutesForNodeID`
+// would silently swallow every health pass behind it, which is exactly the shape of
+// «снимок не обновлялся 13 дней при живом процессе». A relay probe must not depend on the
+// approval pass finishing, so it gets its own ticker (and therefore its own goroutine).
 func (s *Service) StartBaseRouteReconciler(ctx context.Context) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	go func() {
@@ -166,7 +173,19 @@ func (s *Service) StartBaseRouteReconciler(ctx context.Context) func() {
 				// run is what registers the exit_servers row that pass needs.
 				s.ResumeInterruptedProvisionJob(time.Now())
 				s.RunBaseRouteReconcile()
-				// B417.1: approval is not egress — probe the relays themselves, slowly.
+			}
+		}
+	}()
+	// B465: the relay health pass, on its own clock. `runHealthCheckIfDue` keeps its own
+	// interval gate, so this ticker only decides how often the gate is consulted.
+	go func() {
+		t := time.NewTicker(BaseRouteReconcileInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
 				s.runHealthCheckIfDue(ctx)
 			}
 		}

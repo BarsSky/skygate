@@ -1067,6 +1067,32 @@ func getDuration(key string, def time.Duration) time.Duration {
 	return def
 }
 
+// ReadOnlyCopy reports whether this process is a REPLICA of another installation and must
+// therefore not act on the outside world (B465).
+//
+// It exists because a copy is a normal thing to build and a dangerous thing to forget:
+// `SKYGATE_READONLY_COPY=1` is set on a host whose database was restored from another
+// skygate (a failover rehearsal, a staging clone, a migration dry run). Without it, that
+// copy still owns the same Telegram token, the same admin binding and the same DNS
+// credentials, so it starts posting real alerts and can repoint real records — measured
+// live on 2026-11-12, when a restored copy announced a "stale pin" for a relay that was
+// online, because the copy's tailnet never connects to it.
+//
+// What it suppresses is decided by the callers, and they are two: the notifier/bot wiring
+// in cmd/skygate/main.go and every background scheduler in
+// cmd/skygate/main_schedulers.go. The panel keeps working on purpose — inspecting the copy
+// is the reason it is running at all.
+//
+// Read from the environment on every call (not once into Config) so a test can set it, and
+// so the answer cannot drift from what the operator exported.
+func ReadOnlyCopy() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SKYGATE_READONLY_COPY"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
 // 2026-08-18: v1.5.0 (B145) — HA chain + elector + DNS
 // provider config. These are the env-var-tunable knobs for
 // the active-passive chain documented in

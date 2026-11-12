@@ -50,6 +50,7 @@ canonical template is `.env.example`. Required variables are marked
 | `SKYGATE_STAGGER_BATCH_SIZE` | `20` | Rules per batch |
 | `SKYGATE_STAGGER_INTERVAL` | `30s` | Delay between batches |
 | `SKYGATE_USER_MAX_RULES` | (empty) | Per-user caps. Format: `user1:N1,user2:N2`. Example: `admin:2000,alice:500` |
+| `SKYGATE_READONLY_COPY` | (unset) | **B465 — set to `1` on a host whose database was RESTORED from another skygate** (a failover rehearsal, a staging clone, a migration dry run). The panel and the API keep working; the process stops touching the outside world: no Telegram notifier and no bot loop, and **no background scheduler at all** (relay health, exit-node sync, DNS auto-update, discovery, self-update, backups, certsync). Without it, a copy inherits the primary's Telegram token, admin binding and DNS credentials and starts acting for it — measured on 2026-11-12, when a restored copy posted hourly «пин на exit-узел устарел … состояние узла: offline» alerts about a relay that was online, because that copy's tailnet never connects to it. The boot log prints one `🛑 READ-ONLY COPY` line per suppressed layer. |
 
 ### Headscale (only used by `deploy.sh` to render config)
 

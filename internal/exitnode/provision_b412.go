@@ -155,14 +155,36 @@ var loginServerRe = regexp.MustCompile(`^https?://[A-Za-z0-9._-]+(:[0-9]{1,5})?(
 
 // SSHTarget renders the `[user@]host[:port]` value stored in
 // exit_servers.ssh_target and validated by headscale.IsSafeSSHTarget.
+//
+// B465 — THE VALUE MAY ARRIVE WITH THE PORT ALREADY IN IT, AND IT MUST NOT LEAVE WITH TWO.
+// Measured on the operator's installation (2026-11-12): a warning read
+//
+//	ssh root@[100.64.0.2:18022]:18022: exit status 255 …
+//	Could not resolve hostname [100.64.0.2:18022]
+//
+// — the host was bracketed as if a colon meant "IPv6" and then the port was appended a
+// second time. B449 fixed the word ssh receives (`sshHost`), but this function is what
+// the ERROR MESSAGE, the failure advice and `UpsertExitServer` (the row!) use, so the same
+// malformed string could still be shown to the operator and written back into the table.
+// Splitting it here means the shape is `[user@]host[:port]` exactly once, whatever came in.
 func (r Request) SSHTarget() string {
 	host := strings.TrimSpace(r.Host)
+	port := r.Port
+	// Split a `host:port` that arrived as the host (a stored ssh_target fed back into the
+	// form, or an operator typing it). No user part here: this field is the HOST.
+	if spec, _, ok := ParseSSHTarget(host); ok && !strings.Contains(host, "@") && spec.Host != host {
+		host = spec.Host
+		if port == 0 {
+			port = spec.Port
+		}
+	}
+	// Only a bare IPv6 literal is bracketed (the brackets are how a port attaches to one).
 	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
 		host = "[" + host + "]"
 	}
 	t := strings.TrimSpace(r.User) + "@" + host
-	if r.Port > 0 && r.Port != 22 {
-		t += ":" + strconv.Itoa(r.Port)
+	if port > 0 && port != 22 {
+		t += ":" + strconv.Itoa(port)
 	}
 	return t
 }

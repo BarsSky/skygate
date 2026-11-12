@@ -172,6 +172,16 @@ type ExitNodeProvisionView struct {
 	Health       []exitnode.HealthLine
 	HealthAt     string
 	HealthBroken int
+	// B465 — HOW OLD is that snapshot, and is it still a statement about now?
+	//
+	// Measured on the operator's installation (2026-11-12): the block announced
+	// «Проблему релеев: 2» and the small print said «последняя проверка: 2026-10-30 16:14»
+	// — thirteen days earlier. The verdict was true when it was taken and irrelevant by
+	// the time it was read; the heading presented it as the current state of the relays.
+	// HealthStale is that fact, computed from the snapshot's own timestamp, so the page
+	// can say "this is history" instead of "this is broken".
+	HealthAgeSec int64
+	HealthStale  bool
 	// TimeoutSeconds is how long a real run may take (the button says it).
 	TimeoutSeconds int
 	// Blocked is a non-empty sentence when the flow cannot work at all right now
@@ -339,6 +349,17 @@ func (s *Service) exitNodeProvisionView(r *http.Request) *ExitNodeProvisionView 
 		v.Health = st.Lines
 		if !st.At.IsZero() {
 			v.HealthAt = localtime.Format(st.At)
+			// B465: the snapshot carries its own age, and after two missed background
+			// passes it stops being a statement about the present. The threshold is twice
+			// exitNodeHealthInterval, so one skipped tick is not enough to cry "stale".
+			v.HealthAgeSec = int64(time.Since(st.At).Seconds())
+			if v.HealthAgeSec < 0 {
+				v.HealthAgeSec = 0
+			}
+			v.HealthStale = time.Since(st.At) > 2*exitNodeHealthInterval
+		} else {
+			// No timestamp at all is the worst case: nothing can be said about when.
+			v.HealthStale = true
 		}
 		for _, l := range st.Lines {
 			if !l.OK {

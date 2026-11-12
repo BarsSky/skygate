@@ -48,7 +48,29 @@ func wireOptionalSchedulers(ctx context.Context, d *db.ResettableDB, app *handle
 	// depend on any scheduler below having started, because the 2026-10-25 investigation
 	// found an install that had answered bot commands for months while every alert was
 	// dropped for want of a recipient, and nothing in the log said so.
+	//
+	// B465 keeps it first on a READ-ONLY COPY too: "silent because the operator asked" and
+	// "silent because nobody is configured" are different facts, and this line is where the
+	// difference is written down (B422's whole point).
 	telegram.LogAlertTargetAtBoot(db.DBCurrent(d))
+
+	// B465 — A READ-ONLY COPY STARTS NO SCHEDULER AT ALL.
+	//
+	// Measured live (2026-11-12): a skygate restored from the primary's database, brought up
+	// only to rehearse a failover, posted REAL Telegram alerts into the operator's chat
+	// within the hour («пин на exit-узел застарел … состояние узла: offline» about a relay
+	// that was online — its copy of the tailnet never connects to it). Silencing one path
+	// was not enough and the list of paths keeps growing, so the switch is HERE: the process
+	// still serves the PANEL (which is what an operator wants to inspect on a copy) and
+	// contributes nothing to the world.
+	//
+	// This is the single choke point for the periodic passes: relay health, exit-node sync,
+	// DNS re-resolution, discovery, the update scheduler, backups, certsync. The notifier is
+	// silenced separately in main.go (app.Notifier stays the no-op).
+	if config.ReadOnlyCopy() {
+		log.Printf("🛑 READ-ONLY COPY: every background scheduler is SKIPPED (health, exit-node sync, DNS, discovery, update, backup, certsync). The panel is live; this process writes nothing. Unset SKYGATE_READONLY_COPY on the host that is supposed to act.")
+		return
+	}
 
 	// 2026-08-18 (B143, v1.4.3): in-app smoke-mesh
 	// cleanup scheduler. Mirrors the B142

@@ -46,13 +46,31 @@ const (
 	PrefActionAmbiguous = "ambiguous"
 	PrefActionOrphan    = "orphan"
 	PrefActionStale     = "stale"
+	// B465 — "we do not know": the stored preference names a relay whose health row is
+	// TOO OLD to conclude anything from. It is deliberately NOT `stale`: that word says
+	// the pin is wrong, and an expired measurement cannot say that.
+	PrefActionUnmeasured = "unmeasured"
 )
 
-// preferredExitDedupTTL matches the in-memory `shouldAlert` window (one hour per
-// device+reason). The two layers guard different things: the memory window stops a
-// per-tick repeat inside one process, and the transport dedup key stops the repeat that
-// survives a restart — which is exactly what a state that persists for days does.
-const preferredExitDedupTTL = time.Hour
+// preferredExitDedupTTL is the transport-layer dedup window (the in-memory
+// `shouldAlert` window is the other layer, per device+reason).
+//
+// B465 — THE WINDOW IS PER KIND OF MESSAGE, because the two kinds age differently.
+// Measured on the operator's installation (2026-11-12): the same `stale-pref-owner-split`
+// notice arrived as #45 at 16:09 and #46 at 17:09 — exactly one hour apart, because the
+// dedup window was one hour and the reconciler ticks hourly, so a standing condition
+// produced one identical message every hour, forever. A condition that persists is ONE
+// incident until something changes; only an EVENT (a repair the engine just made) is a
+// fresh fact worth repeating.
+const (
+	// preferredExitEventTTL — repairs (create/update/clear/migrate): one hour is right,
+	// because a second one means something happened again.
+	preferredExitEventTTL = time.Hour
+	// preferredExitConditionTTL — standing conditions (stale/unmeasured/ambiguous/orphan):
+	// twelve hours. The operator still gets a reminder twice a day; the chat stops being
+	// a ticker.
+	preferredExitConditionTTL = 12 * time.Hour
+)
 
 // PreferredExitAlertInput carries what the reconciler knows at the moment it changes, or
 // refuses to change, one device's stored exit-node preference. Every field is copied from
@@ -73,6 +91,13 @@ type PreferredExitAlertInput struct {
 	Reason string
 	// RelayState is what the B273 monitor last said about the relay (stale alerts).
 	RelayState string
+	// RelayMeasuredAgo is how old that verdict was when the decision was made (a
+	// humanized duration, e.g. "13m"). B465: without it the message presents an
+	// expired measurement as a current fact — measured live, «состояние узла: offline»
+	// about a relay that was online at that moment.
+	RelayMeasuredAgo string
+	// RelayMeasuredAt is the same instant in full, for the "the data is old" sentence.
+	RelayMeasuredAt string
 	// Candidates names the devices that made an AMBIGUOUS decision possible.
 	Candidates string
 	// Rules is how many device_rules pointed at the relay (CREATE / MIGRATE). The
@@ -104,7 +129,7 @@ func BuildPreferredExitAlert(in PreferredExitAlertInput) telegram.Alert {
 		Severity: preferredExitSeverity(action),
 		TitleKey: preferredExitTitleKey(action),
 		DedupKey: preferredExitDedupKey(action, in.Hostname, in.NewTag),
-		DedupTTL: preferredExitDedupTTL,
+		DedupTTL: preferredExitDedupTTL(action),
 		Lang:     lang,
 	}
 
@@ -127,11 +152,24 @@ func BuildPreferredExitAlert(in PreferredExitAlertInput) telegram.Alert {
 		if in.RelayState != "" {
 			a.Facts = append(a.Facts, telegram.AlertFact{
 				Label: i18n.T(lang, "alert.preferred_exit.fact_relay"),
-				Value: in.RelayState,
+				Value: preferredExitRelayValue(lang, in),
 			})
 		}
 		a.Details = strings.TrimSpace(strings.Join([]string{
 			i18n.Tf(lang, "alert.preferred_exit.detail_fix", emptyDash(in.Hostname)),
+			preferredExitHumanNote(lang, in.SetByUserID),
+		}, "\n"))
+	case PrefActionUnmeasured:
+		// B465: the pin is NOT called stale. The message says what is actually known —
+		// the last measurement and its age — and what to do about it.
+		if in.RelayState != "" {
+			a.Facts = append(a.Facts, telegram.AlertFact{
+				Label: i18n.T(lang, "alert.preferred_exit.fact_relay"),
+				Value: preferredExitRelayValue(lang, in),
+			})
+		}
+		a.Details = strings.TrimSpace(strings.Join([]string{
+			i18n.Tf(lang, "alert.preferred_exit.detail_unmeasured", emptyDash(in.Hostname), emptyDash(in.RelayMeasuredAt)),
 			preferredExitHumanNote(lang, in.SetByUserID),
 		}, "\n"))
 	case PrefActionAmbiguous:
@@ -168,12 +206,12 @@ func BuildPreferredExitAlert(in PreferredExitAlertInput) telegram.Alert {
 	return a
 }
 
-// preferredExitSeverity: the three "needs a human" states warn; the four that describe a
+// preferredExitSeverity: the "needs a human" states warn; the four that describe a
 // change the engine already made are informational. A warning that fires for bookkeeping
 // is how an operator learns to ignore warnings.
 func preferredExitSeverity(action string) telegram.Severity {
 	switch action {
-	case PrefActionStale, PrefActionAmbiguous, PrefActionOrphan:
+	case PrefActionStale, PrefActionUnmeasured, PrefActionAmbiguous, PrefActionOrphan:
 		return telegram.SeverityWarn
 	}
 	return telegram.SeverityInfo
@@ -183,10 +221,23 @@ func preferredExitTitleKey(action string) string {
 	switch action {
 	case PrefActionStale:
 		return "alert.preferred_exit.title_stale"
+	case PrefActionUnmeasured:
+		// B465: the relay's verdict is too old to act on — say that, not "the pin is
+		// stale". The two lead the operator to different actions.
+		return "alert.preferred_exit.title_unmeasured"
 	case PrefActionAmbiguous, PrefActionOrphan:
 		return "alert.preferred_exit.title_review"
 	}
 	return "alert.preferred_exit.title"
+}
+
+// preferredExitDedupTTL picks the window by KIND of message (see the consts above).
+func preferredExitDedupTTL(action string) time.Duration {
+	switch action {
+	case PrefActionStale, PrefActionUnmeasured, PrefActionAmbiguous, PrefActionOrphan:
+		return preferredExitConditionTTL
+	}
+	return preferredExitEventTTL
 }
 
 // preferredExitDedupKey identifies the INCIDENT: the action, the device and (when there
@@ -198,6 +249,18 @@ func preferredExitDedupKey(action, hostname, newTag string) string {
 		key += "." + strings.ToLower(strings.TrimSpace(newTag))
 	}
 	return key
+}
+
+// preferredExitRelayValue renders the relay fact WITH the age of the measurement.
+//
+// B465 — "offline" alone is a claim about NOW, and the row behind this fact may be hours
+// old (measured live: an `offline` row from a restored copy announcing a stale pin for a
+// relay that was online). The age turns the claim into what it is.
+func preferredExitRelayValue(lang string, in PreferredExitAlertInput) string {
+	if strings.TrimSpace(in.RelayMeasuredAgo) == "" {
+		return in.RelayState
+	}
+	return i18n.Tf(lang, "alert.preferred_exit.relay_state_aged", in.RelayState, in.RelayMeasuredAgo)
 }
 
 // preferredExitPin renders the stored → resolved transition as one readable value.

@@ -361,14 +361,19 @@ var ruExitNodes = map[string]string{
 	"exit_nodes.provision.job_retry_help":   "повторит с теми же параметрами и новым preauth-ключом; безопасно, скрипт идемпотентен",
 
 	// 2026-10-24 (B417.1) — «одобрено» не значит «работает»: проверка самих релеев.
-	"exit_nodes.health.title":      "Проверка выхода через релеи",
-	"exit_nodes.health.subtitle":   "Одобренный в headscale маршрут ещё не значит, что трафик выходит: skygate читает на самом VPS ip_forward, правила MASQUERADE и FORWARD и состояние tailscaled. Ничего не меняет — только сообщает.",
-	"exit_nodes.health.broken":     "Проблем у релеев: %d",
-	"exit_nodes.health.ok":         "Все релеи форвардят трафик: ip_forward включён, NAT и FORWARD на месте",
-	"exit_nodes.health.at":         "последняя проверка: %s",
-	"exit_nodes.health.never":      "Проверка ещё не запускалась — она идёт автоматически раз в 15 минут или по кнопке ниже.",
-	"exit_nodes.health.check":      "Проверить выход",
-	"exit_nodes.health.check_help": "SSH-проба по каждому релею, только чтение (до 45 с на релей)",
+	"exit_nodes.health.title":    "Проверка выхода через релеи",
+	"exit_nodes.health.subtitle": "Одобренный в headscale маршрут ещё не значит, что трафик выходит: skygate читает на самом VPS ip_forward, правила MASQUERADE и FORWARD и состояние tailscaled. Ничего не меняет — только сообщает.",
+	"exit_nodes.health.broken":   "Проблем у релеев: %d",
+	// B465 — старый снимок это ИСТОРИЯ, а не текущее состояние: заголовок обязан это
+	// говорить, иначе «Проблем у релеев: 2» читается как сегодняшняя поломка.
+	"exit_nodes.health.stale_title":  "Данные о релеях устарели — это история, а не текущее состояние",
+	"exit_nodes.health.stale_help":   "Последняя проверка была %s, и с тех пор фоновая проверка не отрабатывала (две пропущенные итерации). Список ниже — то, что было измерено ТОГДА. Нажмите «Проверить выход», чтобы получить актуальный вердикт, и посмотрите журнал на предмет пропусков.",
+	"exit_nodes.health.broken_stale": "Проблем у релеев на момент той проверки: %d",
+	"exit_nodes.health.ok":           "Все релеи форвардят трафик: ip_forward включён, NAT и FORWARD на месте",
+	"exit_nodes.health.at":           "последняя проверка: %s",
+	"exit_nodes.health.never":        "Проверка ещё не запускалась — она идёт автоматически раз в 15 минут или по кнопке ниже.",
+	"exit_nodes.health.check":        "Проверить выход",
+	"exit_nodes.health.check_help":   "SSH-проба по каждому релею, только чтение (до 45 с на релей)",
 
 	// 2026-08-18 (B132): per-row "Re-sync" button + better
 	// explainer for the mismatch tag. The operator reported
@@ -776,14 +781,17 @@ var enExitNodes = map[string]string{
 	"exit_nodes.provision.job_retry_help":   "repeats with the same parameters and a fresh preauth key; safe, the script is idempotent",
 
 	// 2026-10-24 (B417.1) — "approved" is not "working": probe the relays themselves.
-	"exit_nodes.health.title":      "Egress check through the relays",
-	"exit_nodes.health.subtitle":   "A route approved in headscale is not proof that traffic leaves: skygate reads ip_forward, the MASQUERADE and FORWARD rules and the tailscaled state ON the VPS. It changes nothing — it only reports.",
-	"exit_nodes.health.broken":     "Relays with a problem: %d",
-	"exit_nodes.health.ok":         "Every relay forwards: ip_forward is on, NAT and FORWARD are in place",
-	"exit_nodes.health.at":         "last check: %s",
-	"exit_nodes.health.never":      "No check has run yet — it runs every 15 minutes by itself, or use the button below.",
-	"exit_nodes.health.check":      "Check egress",
-	"exit_nodes.health.check_help": "read-only SSH probe per relay (up to 45 s each)",
+	"exit_nodes.health.title":        "Egress check through the relays",
+	"exit_nodes.health.subtitle":     "A route approved in headscale is not proof that traffic leaves: skygate reads ip_forward, the MASQUERADE and FORWARD rules and the tailscaled state ON the VPS. It changes nothing — it only reports.",
+	"exit_nodes.health.broken":       "Relays with a problem: %d",
+	"exit_nodes.health.stale_title":  "The relay data is outdated — this is history, not the current state",
+	"exit_nodes.health.stale_help":   "The last check ran at %s and the background pass has not completed since (two missed iterations). The list below is what was measured BACK THEN. Press «Check egress» for a current verdict, and look at the journal for skipped passes.",
+	"exit_nodes.health.broken_stale": "Relays with a problem as of that check: %d",
+	"exit_nodes.health.ok":           "Every relay forwards: ip_forward is on, NAT and FORWARD are in place",
+	"exit_nodes.health.at":           "last check: %s",
+	"exit_nodes.health.never":        "No check has run yet — it runs every 15 minutes by itself, or use the button below.",
+	"exit_nodes.health.check":        "Check egress",
+	"exit_nodes.health.check_help":   "read-only SSH probe per relay (up to 45 s each)",
 
 	// 2026-08-18 (B132): per-row "Re-sync" button + better
 	// explainer for the mismatch tag. The operator reported

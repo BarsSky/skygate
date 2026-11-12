@@ -153,6 +153,12 @@ func (s *Service) runHealthCheckIfDue(ctx context.Context) {
 	prev := s.loadExitNodeHealth()
 	lines := s.RunExitNodeHealthCheck(ctx)
 	if len(lines) == 0 {
+		// B465 — THE SILENT PATH. RunExitNodeHealthCheck answers nil when `exit_servers`
+		// cannot be read, and the old code simply returned: no snapshot, no log line, and
+		// the page kept rendering a verdict from days ago with nothing anywhere saying the
+		// pass had stopped. "I could not measure" must be as visible as "I measured".
+		log.Printf("exit-node-health: pass produced no rows (exit_servers unreadable or empty) — the page keeps the previous snapshot from %s and will mark it stale once it is old enough",
+			prev.At.Format(time.RFC3339))
 		return
 	}
 	b, _ := json.Marshal(exitNodeHealthState{At: time.Now(), Lines: lines})

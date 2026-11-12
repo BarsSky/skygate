@@ -1140,23 +1140,7 @@ func main() {
 		// showed "tailscaled running" with the node actually
 		// offline. The /admin/services page now shows the real
 		// BackendState as the detail string.
-		func() (online bool, detail string) {
-			if !isTailscaleRunningInContainer() {
-				return false, "tailscaled not running in container (non-RF mode)"
-			}
-			state, ok := tailscaleBackendState()
-			if !ok {
-				// tailscale status --json failed (binary
-				// missing, control socket down, JSON parse
-				// error). Fall back to the state-file
-				// presence: tailscaled was up at some point
-				// AND the state file still exists, so the
-				// tailnet connection is at least partially
-				// functional. This is the pre-D8 behavior.
-				return true, "tailscaled running (state-file fallback — tailscale status --json failed)"
-			}
-			return ok, "BackendState=" + state
-		},
+		tailscaleReadinessProbe,
 	)
 	availabilityChecker.Start(context.Background())
 	defer availabilityChecker.Stop()
@@ -1985,7 +1969,10 @@ func main() {
 	// PostMyExitRule checks. Zero = no cap (same convention
 	// as SetLimits above).
 	rn.SetRuleCaps(cfg.MaxRulesPerDevice, cfg.MaxTotalRules)
-	app.Notifier = rn
+	// B465: on a READ-ONLY COPY the real notifier is never installed, so every app.Notifier
+	// consumer keeps the no-op from handlers.New (and the bot loop below is skipped). The
+	// reasoning and the live measurement live in readonly_b465.go — main.go only shrinks.
+	readOnlyCopy := installNotifierUnlessReadOnly(app, rn)
 	// 2026-08-10: v0.33.1.38 — Notifier order bug fix.
 	// adminSvc was constructed at line 413 (way before
 	// rn was even created), so adminSvc.Notifier captured
@@ -2015,18 +2002,25 @@ func main() {
 	} else {
 		log.Printf("🤖 Telegram bot not configured; hot-swap armed (will re-check DB on every send/poll)")
 	}
-	go rn.Run(ctx)
+	// B465: on a read-only copy the bot loop is not started at all (a copy that polls
+	// getUpdates answers the operator's commands from the WRONG installation). The reasoning
+	// and the live measurement live in readonly_b465.go.
+	if !readOnlyCopy {
+		go rn.Run(ctx)
+	}
 	// 2026-07-15: Этап 14 v13 — register the per-language
 	// command menu. Best-effort: a Telegram-side failure
 	// is logged inside SetMyCommandsAll and the bot
 	// keeps running without a menu. The user can still
 	// type commands from memory; the menu is a
 	// convenience, not a gate.
-	go func() {
-		if err := rn.SetMyCommandsAll(context.Background(), telegram.DefaultMyCommandsSpec); err != nil {
-			log.Printf("🤖 setMyCommandsAll: %v", err)
-		}
-	}()
+	if !readOnlyCopy {
+		go func() {
+			if err := rn.SetMyCommandsAll(context.Background(), telegram.DefaultMyCommandsSpec); err != nil {
+				log.Printf("🤖 setMyCommandsAll: %v", err)
+			}
+		}()
+	}
 	defer stop()
 
 	go func() {

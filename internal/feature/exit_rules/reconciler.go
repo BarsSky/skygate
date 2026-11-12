@@ -81,11 +81,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/localtime"
 	"skygate/internal/monitoring"
 	"skygate/internal/prefixowner"
 )
@@ -129,6 +131,10 @@ type ReconcilerChange struct {
 	// он ставиться обратно»). It is a SKIP, logged and audited, never a write.
 	SetByUserID int64  // B356: provenance of the existing row (0 = derived by the engine)
 	RelayState  string // B356: the B273 state of the relay the existing preference names
+	// B465: when that state was measured. Carried so the operator-facing message and the
+	// audit row can say HOW OLD the verdict is — a `skip` that quotes an expired
+	// measurement as a current fact sent the operator hunting a healthy relay.
+	RelayCheckedAt time.Time
 	// ViaEnabled is the strict-pin flag this change WRITES. Create defaults to true
 	// (the pre-B399 behaviour for a derived row); an UPDATE carries the existing
 	// row's flag forward (B399): re-pointing a device must not silently re-enable a
@@ -207,6 +213,17 @@ type DevicePrefState struct {
 	// `offline`), carried so the log line and the audit row can name what the
 	// monitor actually said instead of only "not usable".
 	PrefRelayState string
+	// B465 — WHEN was that state measured, and is it recent enough to decide anything?
+	//
+	// measured on the operator's installation (2026-11-12): a payload announced
+	// «пин на exit-узел устарел … состояние узла: offline» for a relay that was
+	// ONLINE at that moment and had never left `online` that day. The row behind it
+	// came from a restored copy whose relays never connect to it, so the verdict was
+	// hours old — and the message presented it as a fact about the operator's device.
+	// PrefRelayFresh is that separate question; the zero value (false) means "not
+	// known to be fresh" and makes the planner REPORT the age instead of acting.
+	PrefRelayFresh   bool
+	PrefRelayChecked time.Time
 
 	// B361 (2026-10-07) — THE DEVICE THAT HAS NO RULES AT ALL.
 	//
@@ -527,6 +544,24 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 		}, true
 	}
 	if s.PrefRelayKnown && !s.PrefRelayUsable {
+		// B465 — A STALE MEASUREMENT IS NOT A VERDICT. Before any branch below may say
+		// "your pin is stale", the health row has to be recent enough to describe the
+		// relay NOW. Measured live: an alert announced «пин на exit-узел устарел …
+		// состояние узла: offline» for `karolina` while headscale and the monitor both
+		// had it online (the row had been restored hours earlier and never refreshed).
+		// The dangerous direction is the same as B356's: the engine acts on the
+		// preference, so acting on an old reading is acting on nothing.
+		//
+		// Reported as its own reason — never silently ignored, never rewritten.
+		if !s.PrefRelayFresh {
+			// Name the relay the operator has to look at: the pref's own hostname when the
+			// collector filled it, else the tag's hostname, so the message is never blank.
+			unmeasured := s.PrefRelayHostname
+			if unmeasured == "" {
+				unmeasured = strings.ToLower(strings.TrimSpace(TagToHostname(s.ExistingPrefTag)))
+			}
+			return stalePrefSkip(s, "stale-pref-relay-unmeasured", unmeasured)
+		}
 		if s.ExistingPrefSetByUserID != 0 {
 			return &ReconcilerChange{
 				Action:         "skip",
@@ -740,6 +775,7 @@ func stalePrefSkip(s DevicePrefState, reason, newTag string) (*ReconcilerChange,
 		Reason:         reason,
 		SetByUserID:    s.ExistingPrefSetByUserID,
 		RelayState:     s.PrefRelayState,
+		RelayCheckedAt: s.PrefRelayChecked,
 	}, true
 }
 
@@ -848,11 +884,29 @@ func (noopNotifier) SendAlert(string) int64 { return 0 }
 // Known is false when `exit_node_health` has no row for the relay: "we have never
 // measured this relay" is NOT "it is broken", and the difference decides whether the
 // engine may rewrite a stored preference.
+//
+// B465 — AND "MEASURED" IS NOT "MEASURED NOW". A row can be hours old (a stalled
+// monitor, a restored copy whose relays never connect to it, a paused host) while it
+// still says `offline`; acting on it turns an old measurement into a current verdict
+// about the operator's device. `Fresh` therefore answers a separate question — "is
+// this verdict recent enough to draw a conclusion from?" — and PlanDevicePrefChange
+// refuses to call a pin stale on the strength of a stale row (it reports
+// `stale-pref-relay-unmeasured` instead, and says how old the measurement is).
 type relayHealth struct {
-	Known  bool
-	Usable bool // monitoring.ExitNodeUsable(state)
-	State  string
+	Known     bool
+	Usable    bool // monitoring.ExitNodeUsable(state)
+	State     string
+	CheckedAt time.Time // exit_node_health.last_check_at
+	Fresh     bool      // CheckedAt is within relayVerdictFreshFor of now
 }
+
+// relayVerdictFreshFor is how old a health row may be and still decide anything about a
+// device. It is deliberately larger than the monitor's own interval
+// (SKYGATE_EXIT_NODE_CHECK_INTERVAL, 5 min by default; 15 min is the admin page's
+// re-probe floor) so a single skipped tick is not treated as staleness, and small
+// enough that a row left over from a previous life of the process cannot masquerade as
+// a measurement.
+const relayVerdictFreshFor = 30 * time.Minute
 
 // loadRelayHealth reads the health snapshot ONCE per reconcile pass, keyed by the
 // lowercased relay hostname (the case the assignment table and node_owner_map use).
@@ -869,13 +923,19 @@ func loadRelayHealth(d *sql.DB) map[string]relayHealth {
 		log.Printf("preferred-reconciler: cannot read exit_node_health (%v) — the stale-preference repair is SKIPPED this pass; the ACL pin fallback still protects the devices", err)
 		return nil
 	}
+	now := time.Now()
 	out := make(map[string]relayHealth, len(rows))
 	for _, h := range rows {
 		host := strings.ToLower(strings.TrimSpace(h.Hostname))
 		if host == "" {
 			continue
 		}
-		out[host] = relayHealth{Known: true, Usable: monitoring.ExitNodeUsable(h.State), State: h.State}
+		rv := relayHealth{Known: true, Usable: monitoring.ExitNodeUsable(h.State), State: h.State, CheckedAt: h.LastCheckAt}
+		// A zero LastCheckAt is "the row exists but carries no measurement": not fresh.
+		if !h.LastCheckAt.IsZero() && now.Sub(h.LastCheckAt) <= relayVerdictFreshFor {
+			rv.Fresh = true
+		}
+		out[host] = rv
 	}
 	return out
 }
@@ -1126,6 +1186,8 @@ func (s *Service) collectDevicePrefState(ctx context.Context, userID int64, user
 				state.PrefRelayKnown = true
 				state.PrefRelayUsable = h.Usable
 				state.PrefRelayState = h.State
+				state.PrefRelayFresh = h.Fresh
+				state.PrefRelayChecked = h.CheckedAt
 			}
 			// B361: and how many prefixes that relay serves to ANYBODY. Zero is the
 			// a71 case (the relay owns none of the 120 rows in the assignment table)
@@ -1477,12 +1539,45 @@ func (s *Service) reportStalePref(ch *ReconcilerChange, live bool, n ReconcilerN
 			"preferred_exit_reconciled", detail, "headscale_node", ch.DeviceHostname)
 	}
 	log.Printf("preferred-reconciler: %s (%s) %s", mode, ch.Reason, detail)
+	// B465: the message kind follows the REASON. A row we could not trust says "not
+	// measured", never "your pin is stale" — the two send the operator to different
+	// places (the relay vs the monitor).
+	action := PrefActionStale
+	if ch.Reason == "stale-pref-relay-unmeasured" {
+		action = PrefActionUnmeasured
+	}
+	measuredAgo, measuredAt := "", ""
+	if !ch.RelayCheckedAt.IsZero() {
+		measuredAgo = humanDuration(time.Since(ch.RelayCheckedAt))
+		// B429: a timestamp an operator reads goes through the ONE localizer — the
+		// machine's zone is not the operator's (the release that shipped at 08:00 MSK was
+		// announced as 05:00 UTC).
+		measuredAt = localtime.FormatSeconds(ch.RelayCheckedAt)
+	}
 	sendPreferredExitAlert(n, PreferredExitAlertInput{
-		Action: PrefActionStale, Hostname: ch.DeviceHostname, Username: ch.Username,
+		Action: action, Hostname: ch.DeviceHostname, Username: ch.Username,
 		OldTag: ch.OldTag, NewTag: ch.NewTag, Reason: ch.Reason,
-		RelayState: ch.RelayState, Rules: int64(ch.RuleCount),
+		RelayState: ch.RelayState, RelayMeasuredAgo: measuredAgo, RelayMeasuredAt: measuredAt,
+		Rules:  int64(ch.RuleCount),
 		UserID: ch.UserID, SetByUserID: ch.SetByUserID,
 	})
+}
+
+// humanDuration renders an age the way an operator reads it in a chat message: minutes
+// under two hours, hours under two days, days beyond that.
+func humanDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case d < 90*time.Second:
+		return strconv.Itoa(int(d.Seconds())) + "s"
+	case d < 90*time.Minute:
+		return strconv.Itoa(int(d.Minutes())) + "m"
+	case d < 48*time.Hour:
+		return strconv.Itoa(int(d.Hours())) + "h"
+	}
+	return strconv.Itoa(int(d.Hours()/24)) + "d"
 }
 
 // DistinctExitNodesOrZero returns DistinctExitNodes

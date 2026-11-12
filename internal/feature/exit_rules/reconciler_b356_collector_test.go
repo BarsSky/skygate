@@ -26,6 +26,7 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+	"time"
 
 	skygatedb "skygate/internal/db"
 )
@@ -79,6 +80,11 @@ func seedB356(t *testing.T, d *sql.DB, prefTag string, setByUserID int64) {
 }
 
 // seedRelayHealth writes one exit_node_health row (the monitor's snapshot).
+//
+// B465: the row carries `last_check_at = now` as well, because "the monitor measured this
+// relay" is now a two-part statement — what it said AND when. A seed without the stamp is
+// an expired reading, and the planner treats it as "not measured" by design (the whole
+// point of the block); a fixture that means "measured" must say so.
 func seedRelayHealth(t *testing.T, d *sql.DB, host, state string, healthy bool) {
 	t.Helper()
 	if err := skygatedb.UpsertExitNodeHealth(d, skygatedb.ExitNodeHealth{
@@ -87,6 +93,7 @@ func seedRelayHealth(t *testing.T, d *sql.DB, host, state string, healthy bool) 
 		State:              state,
 		Healthy:            healthy,
 		AdvertisedRoutesOK: healthy,
+		LastCheckAt:        time.Now(),
 	}); err != nil {
 		t.Fatalf("seed exit_node_health %s: %v", host, err)
 	}

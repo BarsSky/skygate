@@ -1,5 +1,73 @@
 # Skygate release notes
 
+## v1.5.212 — a verdict must carry its age, and a restored copy must not act for the original (B465)
+
+**Date:** 2026-11-12 · **Base:** `v1.5.211` → this tag · **Compatibility:** additive (one new alert kind, `unmeasured`; no schema change, no configuration change, no migration).
+
+### B465 — measured: two verdicts that were true once and were read as true now
+
+Both screenshots came from the same installation, an hour apart.
+
+**1. `/admin/exit-nodes` said «Проблему релеев: 2» over a thirteen-day-old snapshot.** The small print under
+the block read «последняя проверка: 2026-10-30 16:14», and the stored text was the *pre-B449* sentence
+
+```
+ssh root@[100.64.0.2:18022]:18022: exit status 255 … Could not resolve hostname [100.64.0.2:18022]
+```
+
+The relay was online the whole time. The snapshot simply had not been rewritten since — the background pass
+runs after `RunBaseRouteReconcile`, which has no deadline of its own, so a slow headscale call would swallow
+every health pass behind it **silently** (`RunExitNodeHealthCheck` answers nil when `exit_servers` cannot be
+read, and the old code returned without a log line).
+
+**2. Telegram received the same «pin is stale» alert every hour, for a relay that was online.** Two things
+were wrong at once:
+
+* the verdict behind it (`exit_node_health.state = offline`) was **hours old** — it came from a restored copy
+  whose tailnet never connects to it — and the message presented it as a fact about the operator's device
+  («состояние узла: offline»), with no age anywhere;
+* `stale-pref-owner-split` is a **standing condition**, and the dedup window was one hour while the reconciler
+  ticks hourly, so «#45» at 16:09 was followed by «#46» at 17:09 — the same sentence, forever.
+
+**The rule now, in five places:**
+
+1. **A verdict carries its age.** `relayHealth` gained `CheckedAt`/`Fresh` (`relayVerdictFreshFor = 30m`), and
+   an unfresh "unusable" no longer makes a pin stale: it is reported as **`stale-pref-relay-unmeasured`** — its
+   own alert kind with the title «данные о релее устарели — пин не переписан», the action «не измерено», the
+   measurement time in the details and the age next to the state («offline, замер 6h назад»). The pin is not
+   touched, and the operator is sent to the relay and the monitor instead of to the binding.
+2. **A standing condition is one incident.** Dedup is chosen by kind: 12 h for
+   stale/unmeasured/ambiguous/orphan, 1 h for an actual repair (create/update/clear/migrate).
+3. **The panel calls an old snapshot history.** After two missed background passes the block says so, in its
+   own banner, and re-labels the count («на момент той проверки»). The health pass got its **own goroutine and
+   ticker** (it can no longer be starved by the approval pass), and the empty-result path is logged.
+4. **`SSHTarget()` cannot render `[host:port]:port`.** It splits a host that already carries a port before
+   bracketing — the same value builds the error text, the failure advice **and** `exit_servers.ssh_target`
+   (`UpsertExitServer`), so a malformed string used to be written back into the table for good. The live shape
+   is pinned with a detector for the exact malformation.
+5. **`SKYGATE_READONLY_COPY=1` makes a replica silent.** The panel and the API keep working; the process stops
+   writing to the world: no Telegram notifier, no bot loop, and **no background scheduler at all** (relay
+   health, exit-node sync, DNS auto-update, discovery, self-update, backups, certsync). Each suppressed layer
+   is named in the boot log. Without it, a restored copy inherits the primary's token, admin binding and DNS
+   credentials and starts acting for it — which is exactly what produced screenshot 2.
+
+Also fixed here: the `/readyz` tailscale probe no longer starts with a container-only guard, so a **native**
+install reports `BackendState=Running` instead of the permanent
+`tailscaled not running in container (non-RF mode)` and a `dependencies_healthy=false` on a correct host; a
+host with no Tailscale client at all is `skipped`, not broken.
+
+**Contract renegotiations, not weakenings:** B356's fixture now has to say *when* the relay was measured
+("measured unusable" became "measured unusable AND recently"), and B412's `SSHTarget()` expectations are
+unchanged — the block pins that the *input* may carry the port, not that the output may hide it.
+
+### Upgrade notes
+
+* Nothing to migrate. The new alert kind appears by itself.
+* If you run a **copy** of any installation (failover rehearsal, staging clone, restored backup), set
+  `SKYGATE_READONLY_COPY=1` in its env file before starting it.
+* A relay whose `exit_node_health` row has not been refreshed for 30 minutes will now be reported as «not
+  measured» rather than «stale pin» — the fix for a stale monitor, not a workaround for it.
+
 ## v1.5.211 — «ready» must mean «this host can serve», and a backup must be restorable on the host that made it (B464 + B459–B463)
 
 **Date:** 2026-11-12 · **Base:** `v1.5.210` → this tag · **Compatibility:** additive (one new `cluster_node.state` value, `degraded`; no schema change, no configuration change, no migration). An older agent keeps working against a new hub and a new agent against an older hub — both directions are handled explicitly.

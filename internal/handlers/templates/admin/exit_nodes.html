@@ -128,14 +128,25 @@
   <h3><i class="fa-solid fa-stethoscope"></i> {{t "exit_nodes.health.title"}}</h3>
   <p class="sub">{{t "exit_nodes.health.subtitle"}}</p>
   {{if .Provision.Health}}
+    {{/* B465: a snapshot that has not been refreshed for two missed background passes is
+         HISTORY, and must not be presented as the current state of the relays. Measured
+         live: «Проблему релеев: 2» over a verdict dated thirteen days earlier, where the
+         relay was online the whole time. The age comes first; the list follows only as
+         what it is — the last thing we measured. */}}
+    {{if .Provision.HealthStale}}
+    <div style="margin:0 0 12px;padding:10px 12px;border-radius:6px;background:var(--warning-bg);border:1px solid var(--warning);color:var(--text);font-size:13px">
+      <b><i class="fa-solid fa-clock-rotate-left"></i> {{t "exit_nodes.health.stale_title"}}</b>
+      <p style="margin:6px 0 0 0;font-size:13px">{{tf "exit_nodes.health.stale_help" .Provision.HealthAt}}</p>
+    </div>
+    {{end}}
     {{if gt .Provision.HealthBroken 0}}
     <div style="margin:0 0 12px;padding:10px 12px;border-radius:6px;background:var(--danger-bg);border:1px solid var(--danger);color:var(--text);font-size:13px">
-      <b><i class="fa-solid fa-triangle-exclamation"></i> {{tf "exit_nodes.health.broken" .Provision.HealthBroken}}</b>
+      <b><i class="fa-solid fa-triangle-exclamation"></i> {{if .Provision.HealthStale}}{{tf "exit_nodes.health.broken_stale" .Provision.HealthBroken}}{{else}}{{tf "exit_nodes.health.broken" .Provision.HealthBroken}}{{end}}</b>
       <ul style="margin:8px 0 0 18px">
         {{range .Provision.Health}}{{if not .OK}}<li><code>{{.Host}}</code> — {{.Problem}}</li>{{end}}{{end}}
       </ul>
     </div>
-    {{else}}
+    {{else if not .Provision.HealthStale}}
     <div style="margin:0 0 12px;padding:10px 12px;border-radius:6px;background:var(--success-bg);border:1px solid var(--success);color:var(--text);font-size:13px">
       <i class="fa-solid fa-circle-check"></i> {{t "exit_nodes.health.ok"}}
     </div>

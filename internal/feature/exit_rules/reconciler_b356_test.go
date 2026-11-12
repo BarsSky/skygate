@@ -28,6 +28,12 @@ import "testing"
 // b356State is the live shape: the stored preference names `karolina`, the data plane
 // put every one of the device's prefixes on `emilia` (and emilia carries a per-node
 // tag), and the monitor measured karolina as NOT usable.
+//
+// B465 RENEGOTIATED THIS FIXTURE, deliberately: the state is now "measured unusable AND
+// the measurement is recent". The pre-B465 fixture meant the first half only, and the
+// planner acted on it — which is how a relay that was online at that moment got called
+// offline because its health row came from hours earlier. `PrefRelayFresh` is the second
+// half; TestB465_* pins the unfresh path.
 func b356State() DevicePrefState {
 	return DevicePrefState{
 		UserID:                  1,
@@ -39,6 +45,7 @@ func b356State() DevicePrefState {
 		PrefRelayKnown:          true,
 		PrefRelayUsable:         false,
 		PrefRelayState:          "offline",
+		PrefRelayFresh:          true,
 		TotalRules:              21,
 		DistinctExitNodes:       1,
 		DominantExitHostname:    "karolina",
