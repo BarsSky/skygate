@@ -414,6 +414,19 @@ type Config struct {
 	ACMEDirectory       string
 	ACMEAccountKeyPath  string
 	ACMEChallengePolicy string
+
+	// ACMERenewEnabled starts the renewal loop (B469). Opt-in: a background loop that asks a
+	// rate-limited CA for certificates must be chosen, not discovered.
+	ACMERenewEnabled bool
+	// ACMERenewBefore is the window in which a renewal is due (default 30 days on a 90-day cert).
+	ACMERenewBefore time.Duration
+	// ACMERenewInterval is how often the loop looks (default 12h). The decision itself is a file
+	// read and a date comparison, so this is cheap; the interval also bounds how often a failed
+	// attempt is retried against the CA.
+	ACMERenewInterval time.Duration
+	// ACMEStaging makes the RENEWAL use the staging CA (the panel's button has its own checkbox).
+	// A staging certificate is untrusted: only for a drill.
+	ACMEStaging bool
 	// 2026-08-20: v1.5.0 (B154) — in-app auto-rotate
 	// scheduler for personal API tokens with
 	// auto_rotate=1. When enabled, runs a 3 AM
@@ -747,6 +760,10 @@ func Load() (*Config, error) {
 		ACMEEmail:          getenv("SKYGATE_ACME_EMAIL", ""),
 		ACMEDirectory:      getenv("SKYGATE_ACME_DIRECTORY", ""),
 		ACMEAccountKeyPath: getenv("SKYGATE_ACME_ACCOUNT_KEY", "/var/lib/skygate/acme-account.key"),
+		ACMERenewEnabled:   getenv("SKYGATE_ACME_RENEW_ENABLED", "false") == "true",
+		ACMERenewBefore:    getDuration("SKYGATE_ACME_RENEW_BEFORE", 30*24*time.Hour),
+		ACMERenewInterval:  getDuration("SKYGATE_ACME_RENEW_INTERVAL", 12*time.Hour),
+		ACMEStaging:        getenv("SKYGATE_ACME_STAGING", "false") == "true",
 		// 2026-08-20 (B154): in-app auto-rotate
 		// scheduler env-var defaults. The /my/tokens
 		// page (post-B154.1) can override the
@@ -1165,6 +1182,7 @@ func (c *Config) ApplyReadOnlyCopy() []string {
 	disable("backup-verify", c.BackupVerifyInAppEnabled, func() { c.BackupVerifyInAppEnabled = false })
 	disable("smoke-mesh-cleanup", c.CleanupSmokeMeshInAppEnabled, func() { c.CleanupSmokeMeshInAppEnabled = false })
 	disable("certsync", c.CertSyncEnabled, func() { c.CertSyncEnabled = false; c.CertSyncInterval = 0 })
+	disable("acme-renew", c.ACMERenewEnabled, func() { c.ACMERenewEnabled = false })
 	disable("token-rotate", c.TokenAutoRotateEnabled, func() { c.TokenAutoRotateEnabled = false })
 	disable("key-expiry-notify", c.KeyNotifyEnabled, func() { c.KeyNotifyEnabled = false })
 	disable("ha-chain", c.HAEnabled, func() { c.HAEnabled = false })

@@ -104,16 +104,41 @@ identity of an installation.
 
 ---
 
-## 4. What is NOT automated yet
+## 4. Renewal
 
-**Renewal is manual.** Let's Encrypt certificates live 90 days and the panel shows the days left,
-but nothing re-runs the order on a schedule. The renewal loop is the next block: it will reuse
-this exact flow (the same `Issue`, the same `Publish`, the same precondition), so the manual
-button and the future scheduler cannot drift apart. Until then: put a calendar reminder on day 60,
-or drive `POST /admin/certificates/issue` from your own cron with an admin session.
+A 90-day certificate with no renewal is a scheduled outage, so the loop is built in (B469). It
+renews the certificate that is **already being served** — the names come from that certificate's
+SANs, so a renewal can only continue what was issued, never invent a domain list — and it uses the
+same issuer and the same publisher as the button, so the two paths cannot drift apart.
 
-**DNS-01 (wildcards, no reachable port 80)** needs TXT support in `internal/dnsexternal`, which
-does not exist yet.
+| Variable | Default | Meaning |
+|---|---|---|
+| `SKYGATE_ACME_RENEW_ENABLED` | `false` | **opt-in** — a background loop that talks to a rate-limited CA is started only when you ask |
+| `SKYGATE_ACME_RENEW_BEFORE` | `720h` (30 days) | the window in which a renewal is due; it must be shorter than the certificate's lifetime |
+| `SKYGATE_ACME_RENEW_INTERVAL` | `12h` | how often the decision is re-taken (also bounds how often a failed attempt is retried) |
+| `SKYGATE_ACME_STAGING` | `false` | make the RENEWAL use the staging CA (the button has its own checkbox); a staging certificate is untrusted — drill only |
+
+What the journal says, per check:
+
+```
+acme-renew: enabled (window=720h0m0s, check every 12h0m0s, directory=https://acme-v02.api.letsencrypt.org/directory, cert=/var/lib/skygate/certs/cert.pem)
+acme-renew: no attempt — reason=fresh days_left=44 not_after=… domains=[skygate.example.com]
+acme-renew: renewing [skygate.example.com] (reason=due days_left=12 …) via https://…
+acme-renew: renewed [skygate.example.com] — written to /var/lib/skygate/certs/cert.pem (s3=false version=0, reloaded=true, took 3.2s)
+```
+
+Each attempt writes one audit row: `certs.renew`, `certs.renew_failed` (the CA refused) or
+`certs.renew_publish_failed` (issued, but the pair could not be written). A **restored copy never
+renews** — `SKYGATE_READONLY_COPY=1` disables the loop together with every other writer.
+
+"If it never renews": check three things in this order — `SKYGATE_ACME_RENEW_ENABLED=true` in the
+unit's env (and a restart after changing it), `days_left` in the `no attempt` line (is it really
+inside the window?), and whether a certificate exists at all (with none, the loop says
+`nothing to renew` and points at the button).
+
+**Still not automated: DNS-01 (wildcards, or a host with no reachable port 80).** That needs TXT
+support in `internal/dnsexternal`, which does not exist yet — the form refuses a wildcard for that
+reason.
 
 ---
 

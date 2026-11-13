@@ -374,16 +374,20 @@ run_check "B6" "ACL: per-device grant ordering + via opt-in + tagged-device loos
 run_check "B7" "templates: all embed.FS templates parse" \
   "'$GO' test ./internal/handlers/ -run TestLoadTemplates -count=1 2>&1"
 
-# --- B8: smoke (VM only — skipped on this host) ---
-if [ -f /home/admin/skygate/.env ] || [ -d /home/admin/skygate ]; then
-  if [ -t 0 ] || [ "${VERIFY_RUN_SMOKE:-0}" = 1 ]; then
-    run_check_slow "B8" "smoke RU+EN 83/83 each" \
-      bash -c "make test 2>&1"
-  else
-    echo "  ${YLW}SKIP${NC}  B8  smoke RU+EN 83/83 each  (set VERIFY_RUN_SMOKE=1 to run)"
-  fi
+# --- B8: smoke (needs a RUNNING instance + headscale creds; opt-in) ---
+# B469 (2026-11-14): this block used to decide "am I on the VM?" by testing the path
+# /home/admin/skygate — the pre-migration home. After the reference VM moved to /home/skyadmin the
+# test never matched, so B8 printed "Windows host — runs on VM" ON THE VM and the smoke suite has
+# not run there since. The decision now asks what it actually needs: a Linux host (the smoke drives
+# a live instance), and either a .env beside the compose file, a tty, or VERIFY_RUN_SMOKE=1. Each
+# SKIP names its own true reason, so the next reader can act on it instead of decoding a lie.
+if [ "$(uname -s 2>/dev/null)" != "Linux" ]; then
+  echo "  ${YLW}SKIP${NC}  B8  smoke RU+EN 83/83 each  (not a Linux host — the smoke drives a running instance)"
+elif [ -f .env ] || [ -t 0 ] || [ "${VERIFY_RUN_SMOKE:-0}" = 1 ]; then
+  run_check_slow "B8" "smoke RU+EN 83/83 each" \
+    bash -c "make test 2>&1"
 else
-  echo "  ${YLW}SKIP${NC}  B8  smoke RU+EN 83/83 each  (Windows host — runs on VM)"
+  echo "  ${YLW}SKIP${NC}  B8  smoke RU+EN 83/83 each  (no .env beside the compose file — set VERIFY_RUN_SMOKE=1 to run it against the live instance)"
 fi
 
 # --- B9: release notes ---
@@ -6731,6 +6735,9 @@ run_check "B467" "the certificate page must obtain and write a certificate, and 
 
 run_check "B468" "the DNS half of a manual switch must actually reach the registrar: measured 2026-11-13 while preparing the manual A-to-B switch — the operator had provisioned reg.ru API credentials and skygate could not use them, for three independent reasons. (1) The shipped client pointed at a PLACEHOLDER host (https://api.<your-domain>/api/<provider-v2-path>/zone/...) and the shell live-test built https://api.\/api/regru2, i.e. it interpolated the ZONE into the HOST; neither could ever reach api.reg.ru. (2) The record parsing looked for name/type while the registrar sends subname/rectype, so a present A record read as not-found. (3) The credential store REQUIRED a client certificate (mTLS), which is not how that API authenticates, so every login+password pair was rejected before any call. The result: test-credentials reported a failure for credentials that may have been perfect, and a manual switch had no way to move the public name. Now the base is https://api.reg.ru/api/regru2 (one constant, env-overridable, shared by the provider client and the store's TestConnection so they cannot drift), the request is form-encoded with username/password TOP-LEVEL and input_data JSON (the NO_AUTH trap the project already paid for), the record fields are the registrar's with the alternate spellings accepted, a refusal surfaces the registrar's own error code and text, and the client VERIFIES a write by reading the zone back instead of reporting that the API accepted it. The manual switch has two verbs: dns-records (read-only: the zone, the records, the A record a switch would move) and dns-set-a (--name list, --ip, --ttl, --dry-run; prints before/after, writes one dns.manual_switch audit row). The runbook (docs/ha.md 6.4, RU docs/ru/ha-manual-switch.md) states the two rules that make a switch safe — never two headscales with one noise key or two skygates with one Telegram token, so STOP A FIRST, and a DNS switch is bounded by the TTL, so lower it to 300 a day before — plus the rollback and the reasons each step exists. 30 contracts in scripts/check_b468_dns_switch.sh and 10 TestB468_* tests against a fake registrar that MUTATES its zone, so the read-back verification is exercised rather than assumed." \
    'test -f scripts/check_b468_dns_switch.sh && bash scripts/check_b468_dns_switch.sh'
+
+run_check "B469" "a 90-day certificate with no renewal loop is a scheduled outage: B467 gave the panel the ability to OBTAIN a certificate over HTTP-01 and said in its own release notes that renewal was still manual — a complete feature with a 90-day fuse. This block closes the loop for the certificate ALREADY being served, and stays narrow on purpose: the names come from that certificate's SANs (a renewal can only continue what the operator asked for, never invent a domain list), the decision is a named status computed from NotAfter with an INCLUSIVE window edge (a 90-day certificate renews when 30 days remain, not one tick later), missing / unreadable / disabled are three distinct outcomes so a corrupt file cannot silently postpone renewal forever (only 'due' asks the CA), and the loop is OPT-IN (SKYGATE_ACME_RENEW_ENABLED, window 720h, check every 12h, SKYGATE_ACME_STAGING for a drill) because a background loop against a rate-limited CA must be chosen rather than discovered. It is started from wireOptionalSchedulers — the read-only choke point — so a restored copy cannot renew the primary's names (B465; ApplyReadOnlyCopy also clears the flag), and it reuses issueCertFor/publishCertPair, the same issuer and the same writer as the button, because two writers eventually disagree about .version and the local cache. Every check writes one line (including 'no attempt — reason=fresh days_left=N', so a quiet loop is not mistaken for a dead one) and every attempt one audit row: certs.renew, certs.renew_failed or certs.renew_publish_failed. 21 contracts in scripts/check_b469_cert_renewal.sh and four TestB469_* tests (fresh/due/expired, missing vs unreadable vs disabled, boundary)." \
+   'test -f scripts/check_b469_cert_renewal.sh && bash scripts/check_b469_cert_renewal.sh'
 
 # ---------------------------------------------------------------------------
 # THE GATE'S VERDICT (TD-22 / B335)

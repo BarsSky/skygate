@@ -66,20 +66,26 @@ func wireCertIssue(adminSvc *adminsvc.Service, cfg *config.Config) {
 		return
 	}
 	adminSvc.CertIssue = func(ctx context.Context, domains []string, staging bool) (acmeissue.Result, error) {
-		key, err := acmeissue.LoadOrCreateAccountKey(cfg.ACMEAccountKeyPath)
-		if err != nil {
-			return acmeissue.Result{}, err
-		}
-		issuer := &acmeissue.Issuer{
-			DirectoryURL: acmeissue.ResolveDirectory(cfg.ACMEDirectory, staging),
-			Email:        strings.TrimSpace(cfg.ACMEEmail),
-			Key:          key,
-			Tokens:       certChallengeTokens,
-		}
-		return issuer.Issue(ctx, domains)
+		return issueCertFor(ctx, cfg, domains, staging)
 	}
 	log.Printf("🔐 acme: issuance wired (account key %s, directory %s, contact %q)",
 		cfg.ACMEAccountKeyPath, acmeissue.ResolveDirectory(cfg.ACMEDirectory, false), cfg.ACMEEmail)
+}
+
+// issueCertFor runs ONE HTTP-01 order. Extracted in B469 so the button and the renewal scheduler
+// cannot diverge: there is exactly one way this installation asks the CA for a certificate.
+func issueCertFor(ctx context.Context, cfg *config.Config, domains []string, staging bool) (acmeissue.Result, error) {
+	key, err := acmeissue.LoadOrCreateAccountKey(cfg.ACMEAccountKeyPath)
+	if err != nil {
+		return acmeissue.Result{}, err
+	}
+	issuer := &acmeissue.Issuer{
+		DirectoryURL: acmeissue.ResolveDirectory(cfg.ACMEDirectory, staging),
+		Email:        strings.TrimSpace(cfg.ACMEEmail),
+		Key:          key,
+		Tokens:       certChallengeTokens,
+	}
+	return issuer.Issue(ctx, domains)
 }
 
 // wireCertPublish installs the publish callback on the admin service.
@@ -92,43 +98,49 @@ func wireCertPublish(adminSvc *adminsvc.Service, d *db.ResettableDB, cfg *config
 	if adminSvc == nil || cfg == nil {
 		return
 	}
-	localDir := cfg.CertSyncLocalDir
-
 	adminSvc.CertUploadToS3 = func(ctx context.Context, certPEM, keyPEM []byte, sha string) (certsync.PublishResult, error) {
-		deps := certsync.PublishDeps{
-			LocalDir:    localDir,
-			CaddyReload: reloadProxyForCerts(ctx),
-		}
-
-		// S3 is optional AND best-effort at the configuration level: a missing or broken
-		// config is a note in the result, never a reason to skip the local write.
-		var note string
-		if cfg.CertSyncBucket == "" {
-			note = "no certsync bucket configured"
-		} else if d == nil || d.DB == nil {
-			note = "no database handle to read the S3 credentials from"
-		} else if bcfg, err := certSyncS3Config(d.DB, cfg); err != nil {
-			note = "S3 config: " + err.Error()
-		} else if s3, err := backup.NewS3ClientForConfig(bcfg); err != nil {
-			note = "S3 client: " + err.Error()
-		} else if adapter, err := certsync.NewMinioS3Client(s3); err != nil {
-			note = "S3 adapter: " + err.Error()
-		} else {
-			deps.S3Client = adapter
-			deps.S3Bucket = cfg.CertSyncBucket
-		}
-		if note != "" {
-			// Say it once, in the journal, in the operator's words — the publish result
-			// carries the same sentence to the page.
-			log.Printf("🔐 cert-publish: S3 not used (%s) — the certificate is written locally to %s", note, localDir)
-		}
-
-		res, err := certsync.Publish(ctx, deps, certPEM, keyPEM)
-		if note != "" && !res.S3 && res.S3Note != "" {
-			res.S3Note = note
-		}
-		return res, err
+		return publishCertPair(ctx, d, cfg, certPEM, keyPEM)
 	}
+}
+
+// publishCertPair writes a validated pair where certsync reads it (B467) — extracted in B469 for the
+// same reason as issueCertFor: the upload form, the issue button and the renewal loop must share
+// one writer, or three code paths will eventually disagree about `.version` and the local cache.
+func publishCertPair(ctx context.Context, d *db.ResettableDB, cfg *config.Config, certPEM, keyPEM []byte) (certsync.PublishResult, error) {
+	localDir := cfg.CertSyncLocalDir
+	deps := certsync.PublishDeps{
+		LocalDir:    localDir,
+		CaddyReload: reloadProxyForCerts(ctx),
+	}
+
+	// S3 is optional AND best-effort at the configuration level: a missing or broken config is a
+	// note in the result, never a reason to skip the local write.
+	var note string
+	if cfg.CertSyncBucket == "" {
+		note = "no certsync bucket configured"
+	} else if d == nil || d.DB == nil {
+		note = "no database handle to read the S3 credentials from"
+	} else if bcfg, err := certSyncS3Config(d.DB, cfg); err != nil {
+		note = "S3 config: " + err.Error()
+	} else if s3, err := backup.NewS3ClientForConfig(bcfg); err != nil {
+		note = "S3 client: " + err.Error()
+	} else if adapter, err := certsync.NewMinioS3Client(s3); err != nil {
+		note = "S3 adapter: " + err.Error()
+	} else {
+		deps.S3Client = adapter
+		deps.S3Bucket = cfg.CertSyncBucket
+	}
+	if note != "" {
+		// Say it once, in the journal, in the operator's words — the publish result carries the
+		// same sentence to the page.
+		log.Printf("🔐 cert-publish: S3 not used (%s) — the certificate is written locally to %s", note, localDir)
+	}
+
+	res, err := certsync.Publish(ctx, deps, certPEM, keyPEM)
+	if note != "" && !res.S3 && res.S3Note != "" {
+		res.S3Note = note
+	}
+	return res, err
 }
 
 // reloadProxyForCerts returns the reload callback: it tells whatever terminates TLS to re-read

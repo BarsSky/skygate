@@ -1,5 +1,56 @@
 # Skygate release notes
 
+## v1.5.216 — a 90-day certificate with no renewal is a scheduled outage (B469)
+
+**Date:** 2026-11-14 · **Base:** `v1.5.215` → this tag · **Compatibility:** additive (four new
+`SKYGATE_ACME_RENEW_*` / `SKYGATE_ACME_STAGING` variables, renewal off by default; no schema change,
+no migration).
+
+### B469 — the loop B467's own release notes said was missing
+
+v1.5.214 gave the panel the ability to obtain a Let's Encrypt certificate over HTTP-01, and its notes
+said «renewal is still manual in this version»: a complete feature with a 90-day fuse. This block
+closes the loop for the certificate that is **already being served**, and stays narrow:
+
+* **the names come from that certificate's SANs** — a renewal can only continue what the operator
+  asked for, never invent a domain list. With no certificate (or no SANs) the loop says
+  `nothing to renew` and points at the button instead of guessing.
+* **the decision is a named status** computed from `NotAfter`, with an **inclusive** window edge: a
+  90-day certificate renews when 30 days remain, not one tick later. `fresh`, `due`, `no-cert`,
+  `unreadable` and `disabled` are five distinct outcomes, so a corrupt file cannot silently postpone
+  renewal forever — only `due` ever asks the CA.
+* **it is opt-in**: `SKYGATE_ACME_RENEW_ENABLED=true`, window `SKYGATE_ACME_RENEW_BEFORE` (default
+  720h), check every `SKYGATE_ACME_RENEW_INTERVAL` (default 12h), staging override for a drill. A
+  background loop that talks to a rate-limited CA must be chosen, not discovered.
+* **it runs behind the read-only gate**: started from `wireOptionalSchedulers`, and
+  `ApplyReadOnlyCopy` also clears the flag, so a restored copy can never renew the primary's names.
+* **it reuses the button's issuer and publisher** (`issueCertFor` / `publishCertPair`), because two
+  writers eventually disagree about `.version` and the local cache.
+* **every check writes one line**, including `no attempt — reason=fresh days_left=N` (a quiet loop
+  must not look like a dead one), and every attempt writes one audit row: `certs.renew`,
+  `certs.renew_failed` or `certs.renew_publish_failed` — "the CA issued it but it could not be
+  written" is its own outcome, not an issuance failure.
+
+Docs: `docs/certificates.md` §4 (RU `docs/ru/certificates.md`) now covers the variables, the journal
+lines, and the three-step check for «почему не продлевается». 21 contracts in
+`scripts/check_b469_cert_renewal.sh`, four `TestB469_*` tests for the decision.
+
+### Also fixed here — the smoke suite has not run on the reference VM since the migration
+
+`verify_pre_deploy.sh` decided "am I on the VM?" by testing the path `/home/admin/skygate`, the
+pre-migration home. After the reference VM moved to `/home/skyadmin`, the test never matched — so
+**B8 printed «Windows host — runs on VM» ON the VM**, and the smoke suite (`make test`) has not run
+there since. The condition now asks what the smoke actually needs (a Linux host, plus a `.env` beside
+the compose file / a tty / `VERIFY_RUN_SMOKE=1`), and **each SKIP names its own true reason**, so the
+next reader can act on it instead of decoding a lie.
+
+### Upgrade notes
+
+* Renewal is **off** by default. To enable it:
+  `SKYGATE_ACME_RENEW_ENABLED=true` in the unit's environment, then restart and watch for the
+  `acme-renew: enabled (…)` line. It renews only a certificate that already exists.
+* Nothing changes for installs that renew elsewhere (a proxy with its own ACME client, certbot).
+
 ## v1.5.215 — the DNS half of a manual switch must reach the registrar (B468)
 
 **Date:** 2026-11-14 · **Base:** `v1.5.214` → this tag · **Compatibility:** additive (two new CLI

@@ -57,6 +57,7 @@ func allWritersOn() *Config {
 		CertSyncInterval:             30 * 1e9,
 		TokenAutoRotateEnabled:       true,
 		KeyNotifyEnabled:             true,
+		ACMERenewEnabled:             true,
 		HAEnabled:                    true,
 	}
 }
@@ -68,14 +69,14 @@ func TestB465_ApplyReadOnlyCopyDisablesEveryWriter(t *testing.T) {
 	withReadOnlyEnv(t, "1")
 	c := allWritersOn()
 	off := c.ApplyReadOnlyCopy()
-	if len(off) != 16 {
-		t.Fatalf("expected 16 disabled passes, got %d: %v", len(off), off)
+	if len(off) != 17 {
+		t.Fatalf("expected 17 disabled passes, got %d: %v", len(off), off)
 	}
 	for _, name := range []string{
 		"dns-autoupdate", "preferred-reconciler", "node-discovery", "exit-node-monitor",
 		"headscale-update-monitor", "reconcile-headscale-users", "update-check",
 		"update-scheduler", "backup-verify", "smoke-mesh-cleanup", "certsync",
-		"token-rotate", "key-expiry-notify", "ha-chain",
+		"token-rotate", "key-expiry-notify", "ha-chain", "acme-renew",
 	} {
 		found := false
 		for _, got := range off {

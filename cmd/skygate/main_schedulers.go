@@ -392,4 +392,11 @@ func wireOptionalSchedulers(ctx context.Context, d *db.ResettableDB, app *handle
 	// running forever — detect it at boot (the ticker would also catch it later, but the
 	// operator restarting skygate is exactly when they expect the run to be resumed).
 	adminSvc.ResumeInterruptedProvisionJob(time.Now())
+
+	// B469 (2026-11-14): the certificate RENEWAL loop. A 90-day Let's Encrypt certificate with no
+	// renewal is a scheduled outage, and B467 gave the panel the ability to obtain one — this closes
+	// the loop for the certificate that is already served (its SANs, its window). It is started HERE
+	// rather than in main.go because that is the read-only choke point: a restored copy must not ask
+	// the CA for the primary's names (B465).
+	wireCertRenewal(ctx, cfg, d)
 }
