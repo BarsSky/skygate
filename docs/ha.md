@@ -1043,12 +1043,24 @@ refuses to report success if the registrar still answers a different one.
 The provider is reg.ru's API (B468): a login, the account's **alternative password** created in
 the API section of the account (not the account password), and the zone.
 
+**Source the unit's environment first.** The CLI verbs read the same variables the service gets from
+`EnvironmentFile=`; a bare shell does not have them, and the first symptom is a confusing
+`config: HEADSCALE_API_KEY is required`. Also check that file is plain UTF-8/LF — a BOM or CRLF
+endings (both were present on one host) make `set -a; . env` fail with "syntax error near unexpected
+token" / "$'\r': command not found" while the unit itself stays healthy.
+
 ```bash
+set -a; . /etc/skygate/skygate.env; set +a     # as root, or: sudo -i bash -c '…'
+# if the dot above fails: strip a BOM (`tail -c +4`) and CRs (`tr -d '\r'`), keep a backup
+
 skygate regapi-credentials set --login=<login> --password='<alt password>' --zone=<example.com>
 skygate regapi-credentials show        # masked
 skygate regapi-credentials test        # READ-ONLY: loads the zone, prints how many records it saw
 skygate dns-records --name=skygate     # what DNS answers right now
 ```
+
+Without credentials the verbs do not guess: they answer
+`credentials are incomplete (login=false password=false zone=false) — run skygate regapi-credentials set …`.
 
 `SKYGATE_DNS_REGAPI_LOGIN` / `_PASSWORD` / `_ZONE` are honoured instead of the stored rows, so a
 switch can be driven from a host that has no DB row for them. `SKYGATE_REGAPI_BASE_URL` points the

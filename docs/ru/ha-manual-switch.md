@@ -33,12 +33,24 @@ skygate dns-set-a --name=skygate,head,derp --ip=<ТЕКУЩИЙ публичны
 Провайдер — API reg.ru (B468): логин, **альтернативный пароль** из раздела API в аккаунте (не
 пароль аккаунта) и зона.
 
+**Сначала подхватите окружение юнита.** CLI-глаголы читают те же переменные, что сервис получает из
+`EnvironmentFile=`; в обычной оболочке их нет, и первый симптом — непонятное
+`config: HEADSCALE_API_KEY is required`. Проверьте заодно, что файл — чистый UTF-8/LF: BOM или CRLF
+(на одном хосте было и то, и другое) ломают `set -a; . env` сообщениями «syntax error near
+unexpected token» / «$'\r': command not found», хотя сам юнит при этом здоров.
+
 ```bash
+set -a; . /etc/skygate/skygate.env; set +a     # от root
+# если точка выше падает: убрать BOM (`tail -c +4`) и CR (`tr -d '\r'`), сохранив бэкап
+
 skygate regapi-credentials set --login=<логин> --password='<альт. пароль>' --zone=<example.com>
 skygate regapi-credentials show        # с маскированием
 skygate regapi-credentials test        # ТОЛЬКО ЧТЕНИЕ: читает зону, печатает число записей
 skygate dns-records --name=skygate     # что DNS отвечает прямо сейчас
 ```
+
+Без кредов глаголы не гадают, а отвечают
+`credentials are incomplete (login=false password=false zone=false) — run skygate regapi-credentials set …`.
 
 Вместо сохранённых строк работают `SKYGATE_DNS_REGAPI_LOGIN` / `_PASSWORD` / `_ZONE` — чтобы
 переключение можно было запустить с хоста, где этих строк в БД нет. `SKYGATE_REGAPI_BASE_URL`
