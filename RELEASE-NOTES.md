@@ -1,5 +1,87 @@
 # Skygate release notes
 
+## v1.5.217 — «не работает дискорд на basic»: две половины одного решения (B470)
+
+**Date:** 2026-11-14 · **Base:** `v1.5.216` → this tag · **Compatibility:** additive (one new CLI
+verb, no schema change, no migration; the legacy policy generator produces a VALID document where it
+used to produce one headscale rejects).
+
+### The report and what it actually was
+
+> «не отрабатывает корректно маршрутизация на basic для дискорда и не все покрывает»
+
+Measured read-only on the live tailnet, two independent things were wrong at once:
+
+1. **The two halves of one decision disagreed.** `basic` exits through **karolina**; `prefix_owner`
+   had the Cloudflare ranges (`104.16.0.0/12`, `162.158.0.0/15`, `172.64.0.0/13`, `172.217.0.0/16`,
+   `142.250.0.0/15` …) on **emilia** — a 1:1 claim TIE broken by the alphabetical hostname
+   tie-break, over rules that had drifted to emilia in the first place. Since B276 every per-CIDR
+   grant carries `via=[the prefix OWNER]`, and `via` is a permission **filter**: a device on the
+   other relay silently loses those prefixes. No log line, no banner — the client just times out.
+2. **The coverage itself was thin.** `discordapp.net` and `discord.tools` have **no A records**,
+   `discord.com` / `discord.gg` had expanded into 39 / 46 single `/32`s instead of the CDN ranges,
+   and `gateway.discord.gg`, `cdn.discordapp.com`, `media.discordapp.net` had **no rules at all**.
+
+### `skygate prefix-owner` — one auditable command instead of ~80 clicks
+
+The panel can do both halves one row at a time; a decision like «all Cloudflare ranges go to
+karolina» is 21 prefix pins and ~60 rule rows. The new verb reuses the panel's own primitives:
+
+```bash
+skygate prefix-owner --list [--relay=R] [--prefix=C1,C2]
+skygate prefix-owner --relay=karolina --prefix=C1,C2 [--apply] [--no-acl]
+skygate prefix-owner --rules-to=karolina --device=basic --target=C1,C2 [--apply]
+skygate prefix-owner --auto --prefix=C1 [--apply]          # hand it back to the engine
+```
+
+* a pin goes through `prefixowner.SetManual`, a rule move through `db.UpdateDeviceRuleExitNode` —
+  **the same calls the panel makes**, so the two surfaces cannot drift;
+* without `--apply` it only prints the plan;
+* both writes carry the panel's audit action names (`prefix_owner_pin`, `device_rule_relay_move`);
+* a pin run ends by **re-applying the ACL**, because `prefixowner.Assign` keeps a manual row it
+  finds, reports no change on the next pass, and would otherwise leave the pin sitting in the
+  database while headscale kept serving the old relay;
+* the row selection is portable (two `IN` lists from `db.PlaceholdersRange`; the shipped
+  `= ANY(array)` was PostgreSQL-only and would have died on the SQLite install).
+
+### Also fixed here — the default configuration could not apply ANY policy
+
+Running the command live exposed a defect that made the first one un-fixable. With
+`SKYGATE_ACL_VIA_ENABLED` unset (**the default**) the per-device mesh block wrote **bare tags** into
+the legacy `acls[]` schema, where headscale parses every `dst` entry as `host:ports`:
+
+```
+headscale PUT /api/v1/policy: 500 …
+cannot unmarshal JSON string into Go v2.AliasWithPorts
+within "/acls/5/dst/0": dst="tag:dev-skyadmin-cyborg":
+port range "dev-skyadmin-cyborg": invalid port range format
+```
+
+The whole document was refused, so on a default install **no policy could be applied at all**. The
+port suffix is now a property of the caller's schema (`:*` in `acls[]`, nothing in `grants[]` — the
+form the live 383 grants have always been applied with), and the CLI takes its schema from the
+**live** policy through `hs.GetACL` instead of from its own environment: a bare shell would
+otherwise have replaced a `grants[]`+`via` policy with a valid legacy one and dismantled every pin.
+
+The mesh writer therefore gained an argument, which the gate noticed: `B316 C2` pinned the whole
+call (`writePerDeviceGrants(&sb, usernames, meshTagsByUser)`), so a deliberate signature change read
+as a regression. The contract now matches the call **prefix** and keeps the invariant it exists for
+— both generators must hand the writer the RESOLVED map, not the raw `tagsByUser` — instead of a
+full argument list.
+
+Docs: `docs/acl-rules-reference.md` §4 (the `dst` rule) and §7 («One site stops opening on ONE
+device» — diagnosis, the three commands, the three rules), plus the RU runbook
+`docs/ru/exit-relay-prefix.md`. 27 contracts in `scripts/check_b470_prefix_relay.sh`, three
+`TestB470_*` generator tests, two `TestB470_*` schema-detection tests.
+
+### Live result
+
+15 skyworker Cloudflare-range rules moved emilia → karolina, 21 prefixes pinned to karolina, policy
+re-applied (`383 grants, 338 with via`): the Cloudflare ranges now name **karolina** for both
+`basic` and `skyworker`, via distribution became emilia 222 / karolina 116, and karolina advertises
+and has **approved** all of them (emilia dropped them). Devices still exiting through **emilia** now
+lose those ranges — one prefix is served by one relay, always.
+
 ## v1.5.216 — a 90-day certificate with no renewal is a scheduled outage (B469)
 
 **Date:** 2026-11-14 · **Base:** `v1.5.215` → this tag · **Compatibility:** additive (four new

@@ -376,7 +376,10 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 		log.Printf("acl: %d device(s) cannot join the device mesh and get NO device-to-device grant: %s — adopt them on /admin/devices (or fix their tag) to restore it",
 			len(unattributed), strings.Join(names, "; "))
 	}
-	writePerDeviceGrants(&sb, usernames, meshTagsByUser)
+	// B470: ":*" — this generator writes the LEGACY `acls` schema, where every dst
+	// entry is parsed as host:ports (a bare tag is rejected with "invalid port range
+	// format", see writePerDeviceGrants).
+	writePerDeviceGrants(&sb, usernames, meshTagsByUser, ":*")
 
 	// 2026-08-13: v1.3.11 (B111) — public access to
 	// infra-owned exit nodes. The 'infra' user owns

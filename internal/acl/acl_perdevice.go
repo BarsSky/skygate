@@ -20,11 +20,12 @@ package acl
 // Format constraints (carried by the helper, not the call sites):
 //   - Each grant has shape:
 //     { "src": ["<tag:dev-<user>-<device>>"],
-//       "dst": ["<other-tag:dev-<user>-*>", ...],
-//       "ip":  ["*"] }
-//   - `ip: ["*"]` is mandatory: headscale 0.29.2 returns
-//     "ip and app can not both be empty" without it.
-//   - dst is bare tags (no `:*` suffix) — `ip: ["*"]` covers any port.
+//       "dst": ["<other-tag:dev-<user>-*><dstPortSuffix>", ...] }
+//   - dstPortSuffix is a PROPERTY OF THE SCHEMA, not of this block:
+//     the legacy `acls` generator passes ":*" because there every dst
+//     entry is parsed as host:ports, while the `grants` generator
+//     passes "" (bare aliases — the form the live grants policy has
+//     been applied with). See the B470 note at the write site.
 //   - Leading separator is always `,\n` (including the first grant
 //     in the block) — the per-user block above ends with `] }` and
 //     does NOT emit a trailing comma, so the first per-DEVICE grant
@@ -56,10 +57,13 @@ import (
 //   - tagsByUser: map from username to the ordered list of
 //     `tag:dev-<user>-<device>` strings registered by the
 //     v0.28.0 backfillNodeOwnership auto-tag
+//   - dstPortSuffix: "" (grants schema) or ":*" (legacy acls schema).
+//     The caller knows its own schema; this helper must not guess, and
+//     B470 was exactly the cost of guessing (see the write site).
 //
 // O(N) per user, N = len(tagsByUser[user]). Total grants =
 // sum over all users of len(tagsByUser[user]).
-func writePerDeviceGrants(sb *strings.Builder, usernames []string, tagsByUser map[string][]string) {
+func writePerDeviceGrants(sb *strings.Builder, usernames []string, tagsByUser map[string][]string, dstPortSuffix string) {
 	for _, uname := range usernames {
 		if uname == "" {
 			continue
@@ -93,13 +97,27 @@ func writePerDeviceGrants(sb *strings.Builder, usernames []string, tagsByUser ma
 				}
 				sb.WriteString("\"")
 				sb.WriteString(t)
+				// B470 (2026-11-14): in the LEGACY `acls` schema the port suffix is
+				// REQUIRED. headscale 0.29 parses every dst entry there as host:ports, so a
+				// bare `tag:dev-...` makes it answer
+				//
+				//   setting policy: json: cannot unmarshal JSON string into Go v2.AliasWithPorts
+				//   within "/acls/5/dst/0": dst="tag:dev-skyadmin-cyborg":
+				//   port range "dev-skyadmin-cyborg": invalid port range format
+				//
+				// and refuses the WHOLE document — measured while moving the Cloudflare
+				// ranges to karolina with SKYGATE_ACL_VIA_ENABLED unset, i.e. on the default
+				// configuration, where no policy could be applied at all. The `ip` field does
+				// not rescue it: it is a `grants`-schema field, and the other legacy rules in
+				// this generator already write `tag:public:*` for the same reason.
+				//
+				// In the `grants` schema the caller passes "" and the bare alias stays: that
+				// exact form is what 383 live grants were applied with on 2026-11-13, so the
+				// fix deliberately does not touch a path that is known to work.
+				sb.WriteString(dstPortSuffix)
 				sb.WriteString("\"")
 			}
-			// `ip: ["*"]` is required by headscale 0.29.2
-			// (otherwise it returns "ip and app can not
-			// both be empty"). The bare tag in dst
-			// (no :* suffix) means "this tag, any port".
-			sb.WriteString("], \"ip\": [\"*\"] }")
+			sb.WriteString("] }")
 		}
 	}
 }

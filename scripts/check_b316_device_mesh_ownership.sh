@@ -130,7 +130,14 @@ if [ "${n:-0}" -eq 2 ]; then
 else
   bad "C1: DeviceTagsForMesh appears ${n:-0} time(s) in acl.go, want 2"
 fi
-n=$(grep -c 'writePerDeviceGrants(&sb, usernames, meshTagsByUser)' "$ACL" || true)
+# B470 (2026-11-14) renegotiated this contract: the mesh writer gained a `dstPortSuffix` argument,
+# because the port suffix is a property of the SCHEMA (":*" in the legacy acls[] policy, nothing in
+# grants[]) and a bare tag in acls[] makes headscale refuse the whole document. The invariant C2
+# actually guards is unchanged — BOTH generators must hand the writer the RESOLVED mesh map
+# (meshTagsByUser) rather than the raw tagsByUser — so the match is on the call PREFIX and the
+# suffix argument is captured separately, instead of pinning the full argument list and turning a
+# deliberate signature change into a red gate.
+n=$(grep -c 'writePerDeviceGrants(&sb, usernames, meshTagsByUser,' "$ACL" || true)
 if [ "${n:-0}" -eq 2 ]; then
   ok "C2: both call sites pass the resolved map to the mesh writer"
 else

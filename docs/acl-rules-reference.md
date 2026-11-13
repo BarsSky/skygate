@@ -163,6 +163,32 @@ action. The rationale: the operator might be in the middle of
 re-creating the device, and the rule should re-activate
 automatically when the new device appears.
 
+### The legacy schema requires ports in every `dst` (B470)
+
+headscale parses every `dst` entry of the legacy `acls` schema as
+`host:ports`. A bare tag is therefore not "any port" — it is a
+malformed entry, and the WHOLE document is refused:
+
+```
+setting policy: parsing policy: json: cannot unmarshal JSON string into
+Go v2.AliasWithPorts within "/acls/5/dst/0":
+dst="tag:dev-alice-laptop": port range "alice-laptop": invalid port range format
+```
+
+Measured on 2026-11-14 while moving the Cloudflare ranges between
+relays: the per-device grant block wrote bare tags, so every
+installation running with `SKYGATE_ACL_VIA_ENABLED` unset (the
+default) could not apply a policy at all — the generator produced a
+document headscale rejects, and the `ip: ["*"]` field of the
+`grants` schema does not rescue it. The block now writes
+`tag:dev-alice-laptop:*` there, and keeps bare aliases in the
+`grants` schema (the form that schema has always been applied
+with).
+
+If you write policy JSON by hand for `acls[]`, the same rule
+applies: `dst` is `["tag:dev-x:22", "tag:dev-y:*"]`, never
+`["tag:dev-x"]`.
+
 ---
 
 ## 5. Working with /admin/acls
@@ -299,6 +325,70 @@ Fix: pre-tag new nodes with `tag:dev-<USER>-<DEVICE>` AND make
 sure the matching `tagOwners` entry exists. The auto-tagger does
 this for new nodes, but legacy un-tagged nodes need a manual
 `headscale nodes tag --force` once.
+
+### "One site stops opening on ONE device (and only there)"
+
+This is the **`via` filter**, not DNS and not the site. Since B276 a
+per-CIDR grant carries `via=[<the relay that owns that prefix>]`,
+and `via` is a permission filter: a device whose traffic exits
+through a DIFFERENT relay is not allowed to use that prefix at all,
+even though the prefix is routed and the relay is healthy. Nothing
+logs this — the client just times out.
+
+The two halves have to agree, and they are stored in two places:
+
+| Question | Answer lives in |
+|---|---|
+| Which relay serves `104.16.0.0/12`? | `prefix_owner` (the assignment table) |
+| Which relay does MY device exit through? | the device's exit-node setting, and `device_rules` for per-destination rules |
+
+Diagnose in three commands (read-only, no `--apply` needed):
+
+```bash
+# 1. who owns the prefix, and was it a manual pin?
+skygate prefix-owner --list --prefix 104.16.0.0/12,162.158.0.0/15
+
+# 2. which relay do this device's rules name?
+skygate prefix-owner --list --relay emilia
+
+# 3. the device's own rules (panel view)
+#    /admin/exit-rules?device=<hostname>
+```
+
+Then decide both halves, and re-apply the ACL in the same run — a
+pin that is only written to the database does NOT move the policy
+(`prefixowner.Assign` keeps the manual row it finds, so the next
+sync reports no change and nothing is pushed):
+
+```bash
+# pin the prefixes to the relay the device actually uses
+skygate prefix-owner --relay=karolina --prefix=104.16.0.0/12,162.158.0.0/15 --apply
+
+# and/or move the RULES that claim the prefix (the device's declared intent)
+skygate prefix-owner --rules-to=karolina --device=basic \
+        --target=104.16.0.0/12,162.158.0.0/15 --apply
+```
+
+Both verbs are dry runs without `--apply`, both write the same audit
+rows the panel writes (`prefix_owner_pin`, `device_rule_relay_move`),
+and the pin run finishes by pushing the policy — in **the schema
+headscale is actually serving** (B470), so the CLI started from a
+bare shell cannot silently replace a `grants[]`+`via` policy with a
+legacy one.
+
+Three things to know before you run it:
+
+1. **One prefix, one relay.** headscale serves a subnet prefix from
+   exactly one relay at a time, so a device on the other relay loses
+   that prefix. There is no "both".
+2. **Moving a prefix affects every device.** If the other relay's
+   devices need the same destination, they now need the pinned
+   relay — check `/admin/exit-nodes` → "preferred" per device before
+   pinning a whole CDN range.
+3. **`manual` survives.** A prefix you pin stays yours until you
+   hand it back (`--auto`, or the panel's "return to engine"), but an
+   owner that goes DOWN still loses its prefixes (a dead relay cannot
+   carry traffic).
 
 ### "ACL is huge, takes forever to render on /admin/acls"
 

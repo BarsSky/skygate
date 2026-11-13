@@ -62,6 +62,9 @@ docs/
 │   ├── README.md                    RU front page
 │   ├── INSTALL.md                   RU install guide
 │   ├── UPDATE.md                    RU update guide
+│   ├── exit-relay-prefix.md         RU: prefix ↔ relay ↔ device (B470)
+│   ├── ha-manual-switch.md          RU: manual A→B switch runbook
+│   ├── certificates.md              RU: certificates
 │   └── ROADMAP.md                   RU roadmap
 │
 ├── INSTALL.md                       every install method (10 paths)

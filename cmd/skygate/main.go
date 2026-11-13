@@ -296,10 +296,10 @@ func main() {
 				os.Exit(2)
 			}
 			return
-		case "dns-records", "dns-set-a":
-			// B468 — the manual switch's DNS half (read the zone / point one A record). The
-			// switch is a human decision; the flip must be reproducible and print the answer.
-			if err := runDNSCLI(os.Args[1], os.Args[2:]); err != nil {
+		case "dns-records", "dns-set-a", "prefix-owner":
+			// B468/B470 — operator CLI verbs that act on the LIVE installation with the same code
+			// paths the panel uses (DNS A-record flip; prefix ownership pins + rule relay moves).
+			if err := runOpsCLI(os.Args[1], os.Args[2:]); err != nil {
 				fmt.Fprintf(os.Stderr, "%s failed: %v\n", os.Args[1], err)
 				os.Exit(1)
 			}
@@ -439,6 +439,7 @@ func main() {
 			fmt.Println("  regapi-credentials     External DNS provider creds: set / show / test / delete (B237.21)")
 			fmt.Println("  dns-records            print the zone's records and the A record a switch would move (B468)")
 			fmt.Println("  dns-set-a              point one A record at a host, verify it, audit it (--dry-run available) (B468)")
+			fmt.Println("  prefix-owner           which relay serves a prefix: list / pin / move the rules that claim it (B470)")
 			fmt.Println("  oidc-export            Print the OIDC config headscale needs (env block or headscale block) (B304)")
 			fmt.Println("  init [verb]             cluster bootstrap CLI: bootstrap / status / standby-invite (B211)")
 			fmt.Println("  join [verb]             cluster join CLI: <token> / status (B212 — DSN bootstrap + next-steps)")

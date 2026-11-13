@@ -545,7 +545,9 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 		log.Printf("acl: %d device(s) cannot join the device mesh and get NO device-to-device grant: %s — adopt them on /admin/devices (or fix their tag) to restore it",
 			len(unattributed), strings.Join(names, "; "))
 	}
-	writePerDeviceGrants(&sb, usernames, meshTagsByUser)
+	// B470: "" — the `grants` schema takes bare aliases in dst (this is the form the live
+	// grants policy is applied with); only the legacy `acls` generator needs ":*".
+	writePerDeviceGrants(&sb, usernames, meshTagsByUser, "")
 
 	// 2026-08-13: v1.3.11 (B111) — public access to
 	// infra-owned exit nodes (mirrors the same block in
