@@ -56,6 +56,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -111,10 +112,36 @@ type DBHealthConfig struct {
 	// cached snapshot drifts far from reality.
 	Interval time.Duration
 
-	// QueryTimeout is the per-query deadline for each
-	// of the sampler queries. Default 3s — generous for
-	// a healthy DB, fails fast on a degraded one.
+	// QueryTimeout is the deadline for ONE sampler query.
+	// Default 3s — generous for a healthy DB, fails fast
+	// on a degraded one.
+	//
+	// B466 (2026-11-13): this really is per QUERY now. Until B466 the
+	// sampler created one context around the whole collect(), so a single
+	// slow statement consumed the budget for every statement after it —
+	// measured on a SQLite copy (121 MB file, 1 vCPU): `PRAGMA quick_check`
+	// ate the 3 s and the two statements behind it failed instantly with
+	// "context deadline exceeded", so a perfectly healthy database reported
+	// `db_health: tick: db_health: 2 query error(s)` every 30 seconds.
 	QueryTimeout time.Duration
+
+	// IntegrityTimeout bounds ONE integrity probe (SQLite's
+	// `PRAGMA quick_check`). Default 2m.
+	//
+	// B466: integrity is a DIFFERENT question from "is the database
+	// answering" — a full-file consistency scan is O(database size) and on a
+	// small or loaded host it legitimately takes longer than any sensible
+	// per-query budget. It therefore gets its own budget, its own schedule
+	// (IntegrityInterval) and its own three-state verdict: ok / unmeasured /
+	// failed. An UNMEASURED check is not a failure and must never degrade the
+	// badge — that is exactly the "a verdict must carry its age" rule of B465,
+	// applied to the DB-health sampler.
+	IntegrityTimeout time.Duration
+
+	// IntegrityInterval is how often the integrity probe runs. Default 15m.
+	// The result is cached between runs and reported with its age, so a
+	// 15-minute-old "ok" is visible as such rather than implied fresh.
+	IntegrityInterval time.Duration
 
 	// Logger receives sampler events. If nil, the
 	// package-level log.Printf is used.
@@ -167,12 +194,14 @@ type DBHealthConfig struct {
 // DefaultDBHealthConfig returns the recommended settings.
 func DefaultDBHealthConfig() DBHealthConfig {
 	return DBHealthConfig{
-		Interval:     30 * time.Second,
-		QueryTimeout: 3 * time.Second,
-		Logger:       log.Printf,
-		Notifier:     NoopAlertSink{},
-		ClusterID:    "skygate-staging",
-		Dialect:      "postgres",
+		Interval:          30 * time.Second,
+		QueryTimeout:      3 * time.Second,
+		IntegrityTimeout:  2 * time.Minute,
+		IntegrityInterval: 15 * time.Minute,
+		Logger:            log.Printf,
+		Notifier:          NoopAlertSink{},
+		ClusterID:         "skygate-staging",
+		Dialect:           "postgres",
 	}
 }
 
@@ -238,6 +267,18 @@ type DBHealthSample struct {
 	// SampledAt is when the snapshot was taken.
 	SampledAt time.Time `json:"sampled_at"`
 
+	// Integrity (B466) is the last consistency probe, cached across samples
+	// because it runs on its own, much slower schedule (IntegrityInterval).
+	// Status is "ok" / "unmeasured" / "failed"; empty means "never run".
+	// Only "failed" is a real finding — "unmeasured" says the probe did not
+	// finish in its budget, which is a fact about the PROBE, not the database.
+	Integrity struct {
+		Status    string     `json:"status,omitempty"`
+		Detail    string     `json:"detail,omitempty"`
+		CheckedAt *time.Time `json:"checked_at,omitempty"`
+		AgeSec    int64      `json:"age_seconds,omitempty"`
+	} `json:"integrity"`
+
 	// SampleError is non-empty if the last sample failed
 	// (one of the queries errored). The handler still
 	// returns whatever fields WERE populated; the
@@ -290,6 +331,12 @@ type DBHealthResponse struct {
 	SampledAt             time.Time `json:"sampled_at"`
 	SampleError           string    `json:"sample_error,omitempty"`
 	SampleIntervalSeconds int       `json:"sample_interval_seconds"`
+
+	// Integrity (B466, SQLite) — the last consistency probe and its age.
+	IntegrityStatus     string     `json:"integrity_status,omitempty"`
+	IntegrityDetail     string     `json:"integrity_detail,omitempty"`
+	IntegrityCheckedAt  *time.Time `json:"integrity_checked_at,omitempty"`
+	IntegrityAgeSeconds int64      `json:"integrity_age_seconds,omitempty"`
 }
 
 // Sampler runs the background loop that populates the
@@ -336,6 +383,30 @@ type Sampler struct {
 	// tick, every ok→degraded or degraded→ok
 	// edge fires an alert.
 	hasFirstSample bool
+
+	// integrityMu guards the cached integrity probe (B466). The probe runs on
+	// its own schedule, which is much slower than the tick, so its result has
+	// to outlive a single sample.
+	integrityMu     sync.Mutex
+	integrityStatus string    // "ok" | "unmeasured" | "failed" | "" (never run)
+	integrityDetail string    //
+	integrityAt     time.Time //
+	integrityNext   time.Time //
+}
+
+// qctx bounds ONE query (B466). See DBHealthConfig.QueryTimeout for the
+// measurement that made the old whole-sample budget untenable.
+func (s *Sampler) qctx(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, s.cfg.QueryTimeout)
+}
+
+// rowScan runs a single-row query under its own deadline. All sampler queries
+// are literal statements with no parameters, so this stays a two-field helper
+// instead of a general query builder.
+func (s *Sampler) rowScan(ctx context.Context, db *sql.DB, query string, dest ...any) error {
+	qc, cancel := s.qctx(ctx)
+	defer cancel()
+	return db.QueryRowContext(qc, query).Scan(dest...)
 }
 
 // NewDBHealthSampler constructs a sampler. The DBSource
@@ -347,6 +418,12 @@ func NewDBHealthSampler(cfg DBHealthConfig, src DBSource) *Sampler {
 	}
 	if cfg.QueryTimeout <= 0 {
 		cfg.QueryTimeout = 3 * time.Second
+	}
+	if cfg.IntegrityTimeout <= 0 {
+		cfg.IntegrityTimeout = 2 * time.Minute
+	}
+	if cfg.IntegrityInterval <= 0 {
+		cfg.IntegrityInterval = 15 * time.Minute
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = log.Printf
@@ -447,7 +524,13 @@ func (s *Sampler) tick() {
 	sample := DBHealthSample{
 		SampledAt: time.Now().UTC(),
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.QueryTimeout)
+	// B466: the tick hands out a context with NO deadline of its own. Every
+	// statement derives its own budget from it (rowScan → qctx), which is what
+	// the QueryTimeout documentation always claimed. Before B466 this line was
+	// `context.WithTimeout(context.Background(), s.cfg.QueryTimeout)` — one
+	// deadline for the whole sample, so the slowest statement decided whether the
+	// cheap ones behind it succeeded.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := s.collect(ctx, db, &sample); err != nil {
 		// Preserve any partial data we collected before
@@ -548,17 +631,17 @@ func (s *Sampler) collect(ctx context.Context, db *sql.DB, out *DBHealthSample) 
 	// 1. Server identity: is_replica + version + started_at.
 	// pg_is_in_recovery() returns true on a hot standby
 	// replica, false on a primary.
-	if err := db.QueryRowContext(ctx,
+	if err := s.rowScan(ctx, db,
 		`SELECT pg_is_in_recovery(), version(), pg_postmaster_start_time()`,
-	).Scan(&out.Server.IsReplica, &out.Server.Version, &out.Server.StartedAt); err != nil {
+		&out.Server.IsReplica, &out.Server.Version, &out.Server.StartedAt); err != nil {
 		errs = append(errs, fmt.Sprintf("server: %v", err))
 	}
 
 	// 2. Database size: pg_database_size returns bytes.
 	// Always populated regardless of replica state.
-	if err := db.QueryRowContext(ctx,
+	if err := s.rowScan(ctx, db,
 		`SELECT pg_database_size(current_database())`,
-	).Scan(&out.Database.SizeBytes); err != nil {
+		&out.Database.SizeBytes); err != nil {
 		errs = append(errs, fmt.Sprintf("database.size: %v", err))
 	} else {
 		out.Database.SizeHuman = humanBytes(out.Database.SizeBytes)
@@ -574,9 +657,9 @@ func (s *Sampler) collect(ctx context.Context, db *sql.DB, out *DBHealthSample) 
 			receiveLSN string
 			replayTime sql.NullTime
 		)
-		if err := db.QueryRowContext(ctx,
+		if err := s.rowScan(ctx, db,
 			`SELECT pg_last_wal_replay_lsn(), pg_last_wal_receive_lsn(), pg_last_xact_replay_timestamp()`,
-		).Scan(&replayLSN, &receiveLSN, &replayTime); err != nil {
+			&replayLSN, &receiveLSN, &replayTime); err != nil {
 			errs = append(errs, fmt.Sprintf("replication: %v", err))
 		} else {
 			out.Replication.ReplayLSN = replayLSN
@@ -618,7 +701,7 @@ func (s *Sampler) collect(ctx context.Context, db *sql.DB, out *DBHealthSample) 
 	// anywhere in this DB". SUM(n_dead_tup) is a
 	// proxy for "how much bloat the autovacuum has to
 	// clean up".
-	if err := db.QueryRowContext(ctx,
+	if err := s.rowScan(ctx, db,
 		`SELECT
 			MAX(last_vacuum),
 			MAX(last_autovacuum),
@@ -626,7 +709,6 @@ func (s *Sampler) collect(ctx context.Context, db *sql.DB, out *DBHealthSample) 
 			MAX(last_autoanalyze),
 			COALESCE(SUM(n_dead_tup), 0)
 		 FROM pg_stat_user_tables`,
-	).Scan(
 		&out.Maintenance.LastVacuumAt,
 		&out.Maintenance.LastAutovacuumAt,
 		&out.Maintenance.LastAnalyzeAt,
@@ -641,15 +723,15 @@ func (s *Sampler) collect(ctx context.Context, db *sql.DB, out *DBHealthSample) 
 	// the last-replayed LSN (replication progress).
 	// Either way, the field is populated.
 	if out.Server.IsReplica {
-		if err := db.QueryRowContext(ctx,
+		if err := s.rowScan(ctx, db,
 			`SELECT pg_last_wal_replay_lsn()`,
-		).Scan(&out.XLog.Location); err != nil {
+			&out.XLog.Location); err != nil {
 			errs = append(errs, fmt.Sprintf("xlog.replay: %v", err))
 		}
 	} else {
-		if err := db.QueryRowContext(ctx,
+		if err := s.rowScan(ctx, db,
 			`SELECT pg_current_wal_lsn()`,
-		).Scan(&out.XLog.Location); err != nil {
+			&out.XLog.Location); err != nil {
 			errs = append(errs, fmt.Sprintf("xlog.current: %v", err))
 		}
 	}
@@ -676,9 +758,9 @@ func (s *Sampler) collectSQLite(ctx context.Context, db *sql.DB, out *DBHealthSa
 	// page_size must be read AFTER page_count on the same connection; both
 	// are cheap pragmas.
 	var pageCount, pageSize int64
-	if err := db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err != nil {
+	if err := s.rowScan(ctx, db, `PRAGMA page_count`, &pageCount); err != nil {
 		errs = append(errs, fmt.Sprintf("database.page_count: %v", err))
-	} else if err := db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
+	} else if err := s.rowScan(ctx, db, `PRAGMA page_size`, &pageSize); err != nil {
 		errs = append(errs, fmt.Sprintf("database.page_size: %v", err))
 	} else {
 		out.Database.SizeBytes = pageCount * pageSize
@@ -687,29 +769,40 @@ func (s *Sampler) collectSQLite(ctx context.Context, db *sql.DB, out *DBHealthSa
 
 	// 2. Version is what `SELECT sqlite_version()` reports; SQLite has no
 	// "postmaster start time", so StartedAt stays zero.
-	if err := db.QueryRowContext(ctx, `SELECT sqlite_version()`).Scan(&out.Server.Version); err != nil {
+	if err := s.rowScan(ctx, db, `SELECT sqlite_version()`, &out.Server.Version); err != nil {
 		errs = append(errs, fmt.Sprintf("server: %v", err))
 	}
 	// A file-backed SQLite database is never a replica.
 	out.Server.IsReplica = false
 	out.Replication.IsReplica = false
 
-	// 3. Integrity: the same check the R30 guard uses. A non-"ok" answer is
-	// the single most important DB signal on a SQLite install, so surfacing
-	// it here (as a query error → SampleError) is intentional.
-	var integrity string
-	if err := db.QueryRowContext(ctx, `PRAGMA quick_check`).Scan(&integrity); err != nil {
-		errs = append(errs, fmt.Sprintf("db.integrity_check: %v", err))
-	} else if integrity != "ok" {
-		errs = append(errs, fmt.Sprintf("db.integrity_check: %s", integrity))
-	}
+	// 3. Integrity (B466): its own schedule, its own budget, its own verdict.
+	//
+	// B271 ran `PRAGMA quick_check` on EVERY 30-second tick with the ordinary
+	// 3-second budget, and treated a timeout as a query error. Measured on a
+	// 121 MB SQLite file on a 1-vCPU host (the restored copy, 2026-11-13): the
+	// scan does not finish in 3 s, so every tick logged
+	//
+	//	db_health: tick: db_health: 2 query error(s): [db.integrity_check:
+	//	context deadline exceeded db.journal_mode: context deadline exceeded]
+	//
+	// — "2 query errors" on a perfectly healthy database, and a degraded badge
+	// that would never clear. A full-file scan is O(size) and slow on purpose;
+	// it belongs on IntegrityInterval with IntegrityTimeout, and its outcome
+	// has three states, only one of which is a finding:
+	//
+	//	ok         the database answered "ok"
+	//	unmeasured the probe did not finish (or failed to run) — a fact about
+	//	           the PROBE, never reported as a database error
+	//	failed     the database answered something other than "ok"
+	s.applyIntegrityProbe(ctx, db, out)
 
 	// 4. Journal mode (wal vs delete) — the operator-visible answer to
 	// "am I in WAL mode", and cheap. Reported through the log only: the
 	// response shape has no field for it, and inventing one here would
 	// change the /db/health contract.
 	var journalMode string
-	if err := db.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+	if err := s.rowScan(ctx, db, `PRAGMA journal_mode`, &journalMode); err != nil {
 		errs = append(errs, fmt.Sprintf("db.journal_mode: %v", err))
 	} else if s.cfg.Logger != nil {
 		s.cfg.Logger("db_health: sqlite journal_mode=%s size=%s", journalMode, out.Database.SizeHuman)
@@ -719,6 +812,85 @@ func (s *Sampler) collectSQLite(ctx context.Context, db *sql.DB, out *DBHealthSa
 		return fmt.Errorf("db_health: %d query error(s): %v", len(errs), errs)
 	}
 	return nil
+}
+
+// applyIntegrityProbe runs `PRAGMA quick_check` at most once per
+// IntegrityInterval and copies the CACHED verdict into the sample with its age.
+// A cached "ok" that is 14 minutes old is reported as such — the sample carries
+// CheckedAt/AgeSec, so the page cannot present it as a fresh measurement.
+func (s *Sampler) applyIntegrityProbe(ctx context.Context, db *sql.DB, out *DBHealthSample) {
+	now := time.Now().UTC()
+	s.integrityMu.Lock()
+	due := (!now.Before(s.integrityNext) || s.integrityStatus == "")
+	if due {
+		// Claim the slot BEFORE starting: the probe runs in its own goroutine
+		// (a full-file scan must never delay a health sample, and the ticker
+		// would otherwise block for up to IntegrityTimeout at boot) and two
+		// overlapping probes would both write a verdict.
+		s.integrityNext = now.Add(s.cfg.IntegrityInterval)
+	}
+	s.integrityMu.Unlock()
+
+	if due {
+		go s.runIntegrityProbe(db)
+	}
+
+	s.integrityMu.Lock()
+	status, detail, at := s.integrityStatus, s.integrityDetail, s.integrityAt
+	s.integrityMu.Unlock()
+	out.Integrity.Status = status
+	out.Integrity.Detail = detail
+	if !at.IsZero() {
+		t := at
+		out.Integrity.CheckedAt = &t
+		out.Integrity.AgeSec = int64(time.Since(at).Seconds())
+	}
+	// Only an ANSWERED "not ok" is a finding; an unfinished probe never is.
+	if status == "failed" {
+		out.SampleError = strings.TrimSpace(out.SampleError + " db.integrity_check: " + detail)
+	}
+}
+
+// runIntegrityProbe performs ONE `PRAGMA quick_check` under IntegrityTimeout and
+// records the three-state verdict. It is also the entry point the tests drive
+// synchronously, which is why it takes no context: the budget comes from the
+// configuration, so the test can pin it to a millisecond.
+func (s *Sampler) runIntegrityProbe(db *sql.DB) {
+	started := time.Now()
+	qc, cancel := context.WithTimeout(context.Background(), s.cfg.IntegrityTimeout)
+	defer cancel()
+	var answer string
+	err := db.QueryRowContext(qc, `PRAGMA quick_check`).Scan(&answer)
+
+	status, detail := "ok", ""
+	switch {
+	case err != nil:
+		// Not a finding about the database: the probe could not finish.
+		status = "unmeasured"
+		detail = fmt.Sprintf("%v (budget %s)", err, s.cfg.IntegrityTimeout)
+	case answer != "ok":
+		// This one IS a finding: the engine answered and said the file is not clean.
+		status = "failed"
+		detail = answer
+	}
+
+	s.integrityMu.Lock()
+	s.integrityStatus = status
+	s.integrityDetail = detail
+	s.integrityAt = time.Now().UTC()
+	s.integrityMu.Unlock()
+
+	if s.cfg.Logger == nil {
+		return
+	}
+	switch status {
+	case "ok":
+		s.cfg.Logger("db_health: sqlite integrity ok (probe took %s; next in %s)", time.Since(started).Round(time.Millisecond), s.cfg.IntegrityInterval)
+	case "unmeasured":
+		s.cfg.Logger("db_health: sqlite integrity UNMEASURED — the probe did not finish: %s. This is NOT a database error (a full-file scan on a small host can exceed its budget); the check runs again in %s", detail, s.cfg.IntegrityInterval)
+	default:
+		s.cfg.Logger("db_health: sqlite integrity FAILED — the engine answered %q", detail)
+	}
 }
 
 // humanBytes returns a human-readable byte count
@@ -789,6 +961,12 @@ func (s *Service) GetDBHealth(w http.ResponseWriter, r *http.Request) {
 			resp.XLogLocation = sample.XLog.Location
 			resp.SampledAt = sample.SampledAt
 			resp.SampleError = sample.SampleError
+			// B466: the integrity verdict travels with its age, so a cached
+			// "ok" cannot be read as a fresh measurement.
+			resp.IntegrityStatus = sample.Integrity.Status
+			resp.IntegrityDetail = sample.Integrity.Detail
+			resp.IntegrityCheckedAt = sample.Integrity.CheckedAt
+			resp.IntegrityAgeSeconds = sample.Integrity.AgeSec
 			resp.SampleIntervalSeconds = s.DBHealthSampler.IntervalSeconds()
 		}
 	}

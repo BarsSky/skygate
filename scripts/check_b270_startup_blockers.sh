@@ -279,7 +279,11 @@ if grep -q 'Dialect string' "$HEALTHZ_GO" \
 else
   bad "F: the sampler is still PostgreSQL-only (SQLite installs log 5 query errors per tick)"
 fi
-if grep -q 'Dialect:      "postgres"' "$HEALTHZ_GO"; then
+# F2 — the property is "the DEFAULT dialect is postgres", not "the struct literal has six
+# spaces before the value". B466 added IntegrityTimeout/IntegrityInterval to the same literal,
+# gofmt re-aligned the whole block, and this contract went red while the default was unchanged
+# — the formatting coupling this project has already paid for in B339. Matched tolerantly now.
+if grep -qE 'Dialect:[[:space:]]+"postgres"' "$HEALTHZ_GO"; then
   ok "F2: the default dialect stays postgres (no caller changes behaviour by omission)"
 else
   bad "F2: the zero/default dialect is not pinned to postgres"

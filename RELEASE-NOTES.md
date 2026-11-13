@@ -1,5 +1,63 @@
 # Skygate release notes
 
+## v1.5.213 — a slow probe is not a sick database (B466)
+
+**Date:** 2026-11-13 · **Base:** `v1.5.212` → this tag · **Compatibility:** additive (two new
+`/db/health` JSON fields `integrity_*`; no schema change, no configuration change, no migration).
+
+### B466 — measured: two errors per tick on a perfectly healthy database
+
+Found while verifying B465 on the restored SQLite copy (121 MB file, **1 vCPU**, the published
+`v1.5.212` binary). Every 30 seconds the journal carried
+
+```
+db_health: tick: db_health: 2 query error(s): [db.integrity_check: context deadline exceeded
+db.journal_mode: context deadline exceeded]
+```
+
+on a database with no problem at all — which also means a DB-health badge that is permanently
+"degraded", and a `db.health.degraded` transition the alerting path can never leave.
+
+Two independent defects, both of the class this project keeps paying for:
+
+1. **A documented per-query budget was really one budget for the whole sample.**
+   `DBHealthConfig.QueryTimeout` says "the per-query deadline for each of the sampler
+   queries", and the sampler built a single `context.WithTimeout` around the whole
+   `collect()`. `PRAGMA quick_check` costs O(database size); on that host it ate the 3 s, so
+   `PRAGMA journal_mode` — a microsecond pragma — failed instantly with the *same* deadline.
+   One slow statement therefore became an outage of the entire sample. Every statement now
+   runs under its own deadline (`rowScan` → `qctx`), and the tick hands out a **deadline-free**
+   parent so nothing can be inherited.
+2. **An unfinished check was reported as a failed one.** A full-file consistency scan is not
+   the question "is the database answering": it ran on every tick, was budgeted like a cheap
+   pragma, and its **timeout** became `db.integrity_check` — i.e. "unmeasured" presented as
+   "broken". That is exactly the rule B465 established for relay verdicts, applied to the
+   DB-health sampler. The probe now has its own budget (`IntegrityTimeout`, default **2m**),
+   its own schedule (`IntegrityInterval`, default **15m**), its own goroutine (a full-file scan
+   never delays a sample), and a three-state verdict:
+
+   | status | meaning | effect |
+   |---|---|---|
+   | `ok` | the engine answered "ok" | healthy |
+   | `unmeasured` | the probe did not finish (or could not run) | **no effect** — a fact about the probe, logged as `«NOT a database error»` |
+   | `failed` | the engine answered something other than "ok" | the only state that reaches `SampleError` |
+
+   And, per the B465 rule, the verdict travels **with its age**: `integrity_status`,
+   `integrity_detail`, `integrity_checked_at` and `integrity_age_seconds` are part of the
+   sample and of the `/db/health` response, so a cached "ok" from 14 minutes ago cannot be read
+   as a fresh measurement.
+
+### Upgrade notes
+
+* Nothing to migrate and nothing to configure. On a small or busy host the log will now say
+  `db_health: sqlite integrity ok (probe took …)` once per 15 minutes instead of two query
+  errors every 30 seconds; on a host where the scan cannot finish it says
+  `sqlite integrity UNMEASURED — … This is NOT a database error` and the badge stays healthy.
+* PostgreSQL installs are unaffected behaviourally (the PG path has no integrity probe); they
+  inherit the per-query deadline fix, which is a strict improvement there too.
+* Both defaults are settable through `DBHealthConfig` for embedded users; `0` is replaced by
+  the default, never by a zero (a zero budget would be an instantly expired context).
+
 ## v1.5.212 — a verdict must carry its age, and a restored copy must not act for the original (B465)
 
 **Date:** 2026-11-12 · **Base:** `v1.5.211` → this tag · **Compatibility:** additive (one new alert kind, `unmeasured`; no schema change, no configuration change, no migration).
