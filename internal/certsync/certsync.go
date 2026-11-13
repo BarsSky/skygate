@@ -654,7 +654,13 @@ func loadLocalVersionCache(dir string) (int64, string, error) {
 	if _, err := fmt.Sscanf(lines[0], "%d", &v); err != nil {
 		return 0, "", fmt.Errorf("parse version: %w", err)
 	}
-	return v, lines[1], nil
+	// B467: the file ends with a newline, and SplitN(…, 2) leaves it on lines[1] — so the
+	// SHA this function returned never equalled a real (64-character) SHA. Start() seeds
+	// lastLocalSHA from here, tick() then compared remote.SHA256 against "<sha>\n" and always
+	// decided "the bytes differ", so EVERY process start re-pulled the pair it already had:
+	// an S3 GET of cert+key, two file rewrites, an audit row and a proxy reload for a
+	// certificate that had not changed. Writing and reading must agree on the exact value.
+	return v, strings.TrimSpace(lines[1]), nil
 }
 
 // saveLocalVersionCache writes the version + SHA pair to

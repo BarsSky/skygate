@@ -175,18 +175,27 @@ type Service struct {
 	// service runs in a read-only / no-headscale mode).
 	AvailabilityChecker *healthz.Checker
 
-	// 2026-08-19: v1.5.0 / B148 — CertUploadToS3 is the
-	// S3-upload hook the /admin/certificates handler
-	// calls after a successful cert validation.
-	// Wired by main.go at boot (same path the
-	// certsync scheduler uses). Nil = the page
-	// still works, but the operator gets a
-	// "queued for upload" flash instead of a
-	// "S3 upload succeeded" flash. The
-	// certsync scheduler picks up the upload
-	// on its next tick regardless (the operator
-	// can also run the renew script manually).
-	CertUploadToS3 CertUploadFn
+	// 2026-08-19: v1.5.0 / B148 — CertUploadToS3 publishes one
+	// certificate+key pair, and reports every place it went.
+	//
+	// B467 (2026-11-13): the contract of this field CHANGED, because the old one could not be
+	// kept honestly. It used to return only `error`, and the handler's flash said "Cert
+	// uploaded … the certsync scheduler will pull within 30s" whether or not anything was
+	// written — while nothing in cmd/skygate ever assigned the field, so on every install the
+	// page's one action was a no-op that reported success. The callback now returns the
+	// publish result (paths, version, whether S3 was used, whether the proxy reloaded) and the
+	// flash is built FROM that result. Nil still means "no publisher wired", and the handler
+	// then refuses with an error instead of claiming an upload.
+	CertUploadToS3 CertPublishFn
+
+	// 2026-11-13: B467 — CertIssue obtains a certificate from the CA (Let's Encrypt over
+	// HTTP-01) and returns the pair; the handler then publishes it through CertUploadToS3.
+	//
+	// Split from the publisher on purpose: obtaining and installing are different failures
+	// ("the CA could not reach the challenge" vs "the file could not be written"), and a single
+	// callback would have to report both through one error string. Nil = the panel says the
+	// button is not wired for this installation instead of pretending it ran.
+	CertIssue CertIssueFn
 
 	// refactor-v0.30 Phase B step 3b.3 (2026-07-29): moved
 	// from *App. SSHKeyPath is the default path shown in

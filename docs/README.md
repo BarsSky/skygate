@@ -28,6 +28,7 @@ a different repair recipe than the English one.
 | **Run a release**, deploy, migrate PostgreSQL, bootstrap a host | [`operations.md`](operations.md) |
 | Set up **high availability** (active/passive, failover, clustering) | [`ha.md`](ha.md) |
 | Put Skygate behind **HTTPS / a reverse proxy** | [`https.md`](https.md) |
+| **Obtain / publish / roll back a TLS certificate** (Let's Encrypt HTTP-01, the panel button) | [`certificates.md`](certificates.md), [RU](ru/certificates.md) |
 | Wire **OIDC** between headscale and Skygate | [`oidc.md`](oidc.md) |
 | Work on **subnet routers, exit nodes, DERP** | [`networking.md`](networking.md), [`derp.md`](derp.md) |
 | **Diagnose a live problem** (devices offline, 404s, stuck tags, slow exit node) | [`troubleshooting.md`](troubleshooting.md) |
@@ -80,6 +81,7 @@ docs/
 ├── internals.md                     package map, invariants, B-check system
 ├── ha.md                            HA topology, failover, open questions
 ├── https.md                         TLS, reverse proxies, certificates
+├── certificates.md                  obtain/publish/roll back a certificate (B467)
 ├── oidc.md                          OIDC: skygate ⇄ headscale
 ├── networking.md                    subnet routers, exit nodes, DERP
 ├── troubleshooting.md               symptom-driven diagnostics

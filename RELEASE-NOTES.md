@@ -1,5 +1,75 @@
 # Skygate release notes
 
+## v1.5.214 — the certificate button must obtain and write a certificate (B467)
+
+**Date:** 2026-11-13 · **Base:** `v1.5.213` → this tag · **Compatibility:** additive (three new
+`SKYGATE_ACME_*` environment variables, all optional; a new `/admin/certificates` card and a new
+public route `/.well-known/acme-challenge/`; no schema change, no migration). The publish hook
+`Service.CertUploadToS3` changed its Go signature — it is wired by `cmd/skygate`, not by operators.
+
+### B467 — measured: the one button on the certificate page wrote nothing, and there was no way to obtain a certificate at all
+
+The operator asked whether skygate itself has a convenient certificate process — «по кнопке
+сформировать сертификат … через Let's Encrypt». The honest answer on v1.5.212 was no, twice over:
+
+1. **There was no ACME client.** `go.mod` carried no acme dependency, `docs/ha.md` Phase 4 said
+   «LE acquisition DEFERRED (G4)», and `internal/dnsexternal` is an A-record placeholder without
+   TXT support, so DNS-01 could not work either.
+2. **The one button that existed was a no-op that reported success.** «Загрузить» validated the
+   pair and called `Service.uploadCertToS3`, a stub that returned `nil` when
+   `Service.CertUploadToS3` was unset — and nothing in `cmd/skygate` ever set it. The handler has
+   no write of its own (its only `os.*` call reads the cert for display), so a submit printed
+   «Cert uploaded. SHA-256=… The certsync scheduler will pull within 30s», wrote no file, and
+   `/var/lib/skygate/certs/` stayed empty. Same defect class as B465's stale verdict and B466's
+   slow probe: the message and the measurement disagreed.
+
+**What the page does now.**
+
+* **It obtains.** «Получить сертификат у Let's Encrypt» runs a real HTTP-01 order
+  (`golang.org/x/crypto/acme`): the CA account is keyed to a `0600` file in the data directory
+  (created once — it is the installation's identity at the CA), one order covers the whole SAN
+  list, each key authorization is served from the public
+  `/.well-known/acme-challenge/<token>` route (one path segment only, so it cannot become a
+  catch-all), and the CSR is posted to the order's **finalize** URL. Names are validated *before*
+  the CA is called: no scheme, no port, no IP literal, and **no wildcard** — that needs DNS-01,
+  which this installation cannot do, and the form says so instead of letting the CA say it later.
+  A staging checkbox drills the whole flow against the untrusted test CA without touching the
+  production rate limits.
+* **It writes.** `certsync.Publish` is now the single function that puts a pair where `certsync`
+  reads it: the pair is validated (the same `x509` + key-match rule the pull path uses), written
+  by atomic rename, the previous pair is kept as `cert.pem.prev`/`key.pem.prev`, S3 (when a bucket
+  is configured) receives `cert.pem`, `key.pem` and **then** `.version` — in that order, so a
+  reader never sees a version advertising objects that are not uploaded — and the local version
+  cache is updated so the next `certsync` tick cannot revert the certificate that was just
+  published. A failed S3 upload says the **local pair is already live**; a failed proxy reload is
+  a note, not a failed publish.
+* **It reports only what happened.** The flash is built from the publish result: the file path,
+  the SHA-256, the S3 outcome with its version (or the reason it was skipped), and the reload
+  outcome (or why it was skipped). An unwired publisher or issuer is an **error**, never a
+  success.
+
+### Also fixed here (found by the tests for the above)
+
+`loadLocalVersionCache` returned the stored SHA **with its trailing newline** — the writer ends the
+file with `\n` and the reader split on it. The value seeded into the scheduler therefore never
+equalled a real 64-character SHA, so on **every process start** `certsync` decided "the bytes
+differ", re-downloaded the pair from S3, rewrote both files, wrote an `certsync.pull` audit row and
+ran the proxy reload — for a certificate that had not changed. Pinned by
+`TestB467_VersionCacheRoundTrips`.
+
+### Upgrade notes
+
+* Nothing to migrate. Without `SKYGATE_ACME_EMAIL` the account is registered without a contact
+  (allowed; you just will not get the CA's expiry warning).
+* **HTTP-01 needs a route, not just the button**: `http://<domain>/.well-known/acme-challenge/…`
+  must reach skygate itself. If a proxy terminates TLS in front, add a location rule for that path
+  → `http://<skygate host>:8080` and make sure it does not redirect. Procedure, file layout and
+  rollback: `docs/certificates.md` (RU: `docs/ru/certificates.md`).
+* Renewal is still manual in this version (the page shows days left). The renewal loop is the next
+  block and will reuse this exact `Issue`/`Publish` path.
+* `SKYGATE_READONLY_COPY=1` also stops this: a restored copy must not obtain certificates or
+  overwrite the live pair.
+
 ## v1.5.213 — a slow probe is not a sick database (B466)
 
 **Date:** 2026-11-13 · **Base:** `v1.5.212` → this tag · **Compatibility:** additive (two new

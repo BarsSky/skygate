@@ -125,6 +125,31 @@
   </form>
 </div>
 
+{{/* ===================== Section 2b: obtain from Let's Encrypt (B467) ===================== */}}
+<div class="card">
+  <h3><i class="fa-solid fa-key"></i>{{t "cert.issue_title"}}</h3>
+  <p style="color:var(--text-muted);font-size:13px">{{t "cert.issue_help"}}</p>
+
+  <form method="POST" action="/admin/certificates/issue">
+    <div style="display:grid;grid-template-columns:1fr auto;gap:16px;align-items:end">
+      <div>
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">{{t "cert.issue_domains"}}</label>
+        {{/* value defaults to the domain the operator typed last time only through the browser's
+             own autofill: no server-side state to drift. */}}
+        <input type="text" name="domains" placeholder="skygate.example.com, head.example.com" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-muted)">
+      </div>
+      <div>
+        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-key"></i> {{t "cert.issue_submit"}}</button>
+      </div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:12px;font-size:13px">
+      <input type="checkbox" name="staging" value="1" style="width:18px;height:18px">
+      <span>{{t "cert.issue_staging"}}</span>
+    </label>
+    <p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{t "cert.issue_note"}}</p>
+  </form>
+</div>
+
 {{/* ===================== Section 3: DNS-01 toggle ===================== */}}
 <div class="card">
   <h3><i class="fa-solid fa-arrows-rotate"></i>{{t "cert_dns01_title"}}</h3>

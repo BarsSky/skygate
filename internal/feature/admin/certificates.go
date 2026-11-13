@@ -71,6 +71,7 @@ import (
 
 	"skygate/internal/certsync"
 	"skygate/internal/db"
+	"skygate/internal/i18n"
 	"skygate/internal/localtime"
 )
 
@@ -241,11 +242,20 @@ func (s *Service) PostAdminCertificateUpload(w http.ResponseWriter, r *http.Requ
 	h := sha256.Sum256(certBytes)
 	newSHA := hex.EncodeToString(h[:])
 
-	// Upload to S3. The S3 client is wired in
-	// main.go (same as B147); here we just call
-	// into the certsync package's adapter.
-	if err := s.uploadCertToS3(r.Context(), certBytes, keyBytes, newSHA); err != nil {
-		certRedirect(w, r, "", "S3 upload: "+err.Error())
+	// Publish the pair (B467). Before B467 this called a callback that was never wired and
+	// reported success anyway; now a nil callback is an ERROR (nothing was written) and a
+	// real result says exactly where the pair went.
+	lang := s.I18n.LangFromRequest(r)
+	if s.CertUploadToS3 == nil {
+		certRedirect(w, r, "", i18n.T(lang, "cert.publish_no_writer"))
+		return
+	}
+	res, err := s.CertUploadToS3(r.Context(), certBytes, keyBytes, newSHA)
+	if err != nil {
+		// The two halves fail independently: if the local write succeeded and only the
+		// shared copy failed, the host is ALREADY serving the new certificate and the
+		// operator must not be told otherwise.
+		certRedirect(w, r, "", i18n.T(lang, "cert.publish_failed")+": "+err.Error())
 		return
 	}
 
@@ -256,10 +266,21 @@ func (s *Service) PostAdminCertificateUpload(w http.ResponseWriter, r *http.Requ
 		_, _ = s.dbc().ExecContext(r.Context(),
 			`INSERT INTO audit_log (user_id, username, action, detail, created_at)
 			 VALUES ($1, $2, 'certsync.upload', $3, `+db.NowUnixSQL()+`)`,
-			c.UserID, c.Username, fmt.Sprintf("sha256=%s size=%d", newSHA, len(certBytes)))
+			c.UserID, c.Username, fmt.Sprintf("sha256=%s size=%d path=%s s3=%t version=%d reloaded=%t",
+				res.SHA256, res.CertBytes, res.CertPath, res.S3, res.Version, res.Reloaded))
 	}
 
-	certRedirect(w, r, fmt.Sprintf("Cert uploaded. SHA-256=%s. The certsync scheduler will pull within %s.", newSHA, s.certsyncInterval()), "")
+	// The flash is the RESULT, not a promise: where the pair is, whether S3 has it, whether
+	// the proxy was reloaded, and the reason for each "no".
+	s3 := i18n.T(lang, "cert.publish_s3_local_only") + ": " + res.S3Note
+	if res.S3 {
+		s3 = fmt.Sprintf("%s (version %d)", i18n.T(lang, "cert.publish_s3_ok"), res.Version)
+	}
+	reload := i18n.T(lang, "cert.publish_reload_ok")
+	if !res.Reloaded {
+		reload = i18n.T(lang, "cert.publish_reload_skipped") + ": " + res.ReloadNote
+	}
+	certRedirect(w, r, fmt.Sprintf(i18n.T(lang, "cert.publish_ok"), res.CertPath, res.SHA256, s3, reload), "")
 }
 
 // PostAdminCertificateToggleDNS01 handles the
@@ -449,77 +470,17 @@ func (s *Service) readGlobalSetting(key string) (string, error) {
 	return v, nil
 }
 
-// certsyncInterval returns the certsync tick
-// interval. Used in the success flash message ("the
-// certsync scheduler will pull within %s"). Reads
-// from the config the certsync was started with;
-// falls back to 30s if the config doesn't expose it
-// (e.g. a test-only Service).
-func (s *Service) certsyncInterval() time.Duration {
-	// The certsync tick interval is the same as
-	// the pre-B148 /admin/backup Config field —
-	// the operator reads SKYGATE_BACKUP_INTERVAL
-	// (or its B142 equivalent) to override. We
-	// don't store it on the Service (avoids a
-	// feature-env coupling); the page just shows
-	// the documented default.
-	return 30 * time.Second
-}
-
-// uploadCertToS3 is the B148 surface that writes the
-// uploaded cert+key to S3. Wraps the B147 certsync
-// package's S3 client (the same S3Client interface
-// the certsync scheduler uses) + the VersionFile
-// JSON struct the .version check reads.
+// CertPublishFn is the publish hook main.go wires at boot (B467). Unlike the pre-B467
+// `CertUploadFn` it returns what actually happened, because the page's flash is built from the
+// result instead of from an assumption: which local files were written, whether S3 was used and
+// with which version, whether the proxy was reloaded, and the reason for each thing that did NOT
+// happen.
 //
-// We bump the version number by reading the current
-// .version file (if it exists), incrementing by 1,
-// writing the new pair + the bumped .version. This
-// is a 3-roundtrip flow (GetObject .version → if
-// exists parse version, then PutObject cert + key +
-// .version). The certsync scheduler picks it up on
-// its next tick because the .version's SHA-256 field
-// no longer matches the local cert.
-func (s *Service) uploadCertToS3(ctx context.Context, cert, key []byte, newSHA string) error {
-	// Delegate to the S3 upload helper that's wired
-	// in main.go. We can't import the helper
-	// directly (it lives in main.go's
-	// buildBackupConfigForCertSync path) — instead
-	// we expose it through a callback set on the
-	// Service at boot time. For v1.5.0 we keep
-	// the surface minimal and the certsync
-	// scheduler does the actual S3 write
-	// indirectly: we put a NEW VersionFile
-	// pointing at the operator's SHA, and the
-	// scheduler's NEXT tick reads the new cert.
-	//
-	// (This is the same "operator uploads to
-	// S3, scheduler picks it up" flow the B147
-	// live-verify checklist describes. The
-	// /admin/certificates upload is a thin
-	// HTTP wrapper around that.)
-	//
-	// For the v1.5.0 minimal surface: the handler
-	// writes the new version locally; the
-	// operator's own cert-renew script (or a
-	// future v1.5.x helper) does the S3 upload.
-	// The B148 surface guarantees the
-	// "operator sees the upload succeed" + the
-	// audit log row, even though the S3 write
-	// itself is operator-driven for now.
-	if s.CertUploadToS3 == nil {
-		return nil // silent — surface still works
-	}
-	return s.CertUploadToS3(ctx, cert, key, newSHA)
-}
-
-// CertUploadToS3 is the callback main.go wires at
-// boot. It writes the cert+key+version to the S3
-// bucket the certsync scheduler reads. The callback
-// is optional (nil = the page still works, the
-// operator just sees a "queued for upload" flash
-// instead of a "S3 upload succeeded" flash).
-type CertUploadFn func(ctx context.Context, cert, key []byte, newSHA string) error
+// The old `uploadCertToS3` method that stood here was a stub: it returned nil when the callback
+// was unset (which was ALWAYS, since nothing assigned it) and its comment described a
+// "3-roundtrip flow" that no code performed. It is gone; the flow now lives in
+// certsync.Publish, next to the layout and the version file it has to keep consistent.
+type CertPublishFn func(ctx context.Context, cert, key []byte, newSHA string) (certsync.PublishResult, error)
 
 // CertRedirect is the standard "POST → flash +
 // redirect to GET" pattern. Same shape as the

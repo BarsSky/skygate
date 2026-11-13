@@ -22,8 +22,7 @@ fresh install), [`derp.md`](derp.md) (relay configuration),
    - [3.1 DNS records](#31-dns-records)
    - [3.2 Inbound ports](#32-inbound-ports)
    - [3.3 Certificate renewal](#33-certificate-renewal)
-   - [3.4 DERP certificate sync path](#34-derp-certificate-sync-path)
-4. [Verification and failure modes](#4-verification-and-failure-modes)
+   - [3.4 DERP certificate sync path](#34-derp-certificate-sync-path)4. [Verification and failure modes](#4-verification-and-failure-modes)
    - [4.1 Verification commands](#41-verification-commands)
    - [4.2 Failure modes: symptom → cause → fix](#42-failure-modes-symptom--cause--fix)
 5. [Rollback](#5-rollback)
@@ -558,6 +557,12 @@ ss -tlnp | grep -E ':(80|443)\b' | grep -v caddy
 ```
 
 ### 3.3 Certificate renewal
+
+> **Obtaining a certificate from skygate itself (B467, v1.5.214):** `/admin/certificates` now has
+> «Получить сертификат у Let's Encrypt» (HTTP-01) and the upload form finally writes the pair.
+> The procedure, the routing precondition, the file layout and the rollback are in
+> [`certificates.md`](certificates.md) ([RU](ru/certificates.md)). The table below covers the
+> terminators that renew on their own.
 
 | Terminator | Who renews | What to check |
 |---|---|---|

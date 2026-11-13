@@ -2355,6 +2355,21 @@ func main() {
 		log.Printf("🔐 certsync: disabled (SKYGATE_CERTSYNC_ENABLED=false). Pre-B147 system-cron cert-renew.sh continues to run.")
 	}
 
+	// B467: give /admin/certificates a real publisher. The page's one action called a callback
+	// that was never assigned, so it validated the pair, wrote nothing and said "Cert uploaded";
+	// the wiring (local pair + .prev + optional S3 with a bumped .version + proxy reload) lives
+	// in cert_publish_b467.go with the reasoning. Deliberately OUTSIDE the certsync block above:
+	// a native install without S3 must still be able to install a certificate.
+	wireCertPublish(adminSvc, d, cfg)
+	// B467: and the ability to OBTAIN one (Let's Encrypt over HTTP-01). The public challenge
+	// route is registered on the same mux as everything else, so it works without a second
+	// listener; wireCertIssue installs the issuance callback.
+	registerCertChallengeRoute(mux)
+	wireCertIssue(adminSvc, cfg)
+	// B467: POST /admin/certificates/issue — the button. Kept out of the route table in this
+	// file because main.go only ever shrinks (B372).
+	registerCertIssueRoute(mux, adminSvc)
+
 	// B372 (2026-10-09): the optional background schedulers (smoke-mesh cleanup,
 	// Tailscale discovery, token auto-rotate, preauth-key notify, HA chain) live
 	// in main_schedulers.go. They are the tail of the boot sequence and were the

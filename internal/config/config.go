@@ -397,6 +397,23 @@ type Config struct {
 	CertSyncBucket   string
 	CertSyncLocalDir string
 	CertSyncInterval time.Duration
+
+	// 2026-11-13: B467 — Let's Encrypt over HTTP-01, from the panel.
+	//
+	// ACMEEmail is the account contact the CA uses to warn about an expiring certificate. It
+	// is optional (an account without a contact still issues) but recommended.
+	//
+	// ACMEDirectory overrides the CA endpoint (default: Let's Encrypt production). The
+	// staging endpoint is offered as a checkbox on the page instead of a config edit, because
+	// a first drill should not require a restart.
+	//
+	// ACMEAccountKeyPath is where the account key lives (0600, created on first use). It
+	// identifies THIS installation to the CA for the host's lifetime: losing it means a new
+	// account and its rate-limit history, so it lives in the data directory, never /tmp.
+	ACMEEmail           string
+	ACMEDirectory       string
+	ACMEAccountKeyPath  string
+	ACMEChallengePolicy string
 	// 2026-08-20: v1.5.0 (B154) — in-app auto-rotate
 	// scheduler for personal API tokens with
 	// auto_rotate=1. When enabled, runs a 3 AM
@@ -724,6 +741,12 @@ func Load() (*Config, error) {
 		CertSyncBucket:   getenv("SKYGATE_CERTSYNC_S3_BUCKET", "skygate-backups"),
 		CertSyncLocalDir: getenv("SKYGATE_CERTSYNC_LOCAL_DIR", "/var/lib/skygate/certs"),
 		CertSyncInterval: getDuration("SKYGATE_CERTSYNC_INTERVAL", 30*time.Second),
+		// B467 — Let's Encrypt over HTTP-01 (the panel's "obtain a certificate" button).
+		// The account key defaults NEXT TO the data, not in /tmp: it is the identity of this
+		// installation at the CA.
+		ACMEEmail:          getenv("SKYGATE_ACME_EMAIL", ""),
+		ACMEDirectory:      getenv("SKYGATE_ACME_DIRECTORY", ""),
+		ACMEAccountKeyPath: getenv("SKYGATE_ACME_ACCOUNT_KEY", "/var/lib/skygate/acme-account.key"),
 		// 2026-08-20 (B154): in-app auto-rotate
 		// scheduler env-var defaults. The /my/tokens
 		// page (post-B154.1) can override the
