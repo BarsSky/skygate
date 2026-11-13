@@ -1,5 +1,81 @@
 # Skygate release notes
 
+## v1.5.215 — the DNS half of a manual switch must reach the registrar (B468)
+
+**Date:** 2026-11-14 · **Base:** `v1.5.214` → this tag · **Compatibility:** additive (two new CLI
+verbs; `SKYGATE_DNS_PROVIDER` now accepts `regru`; a saved credential no longer requires a client
+certificate; no schema change, no migration).
+
+### B468 — measured: the operator had reg.ru API credentials, and skygate could not use them at all
+
+Preparing the manual A→B switch (`docs/ha.md` §6.4) surfaced three independent defects, each enough
+on its own to make the DNS half impossible:
+
+1. **The client pointed at a placeholder.** The shipped API base was literally
+   `https://api.<your-domain>/api/<provider-v2-path>/zone/…`, and the shell live-test built
+   `https://api.${SKYGATE_DNS_REGAPI_ZONE}/api/regru2` — it interpolated the DNS **zone** into the
+   **host**. Neither could ever reach the registrar.
+2. **The record parsing looked for the wrong fields.** The client read `name`/`type`; the registrar
+   sends `subname`/`rectype`. A record that was right there read as "not found".
+3. **The credential store required a client certificate (mTLS).** That API authenticates with a
+   login and an **alternative password**, so every login/password pair was rejected by
+   `Validate()` before any call was made — which is why "test credentials" reported a failure for
+   credentials that may have been perfect.
+
+**What works now.**
+
+* The base is `https://api.reg.ru/api/regru2` — one constant, overridable with
+  `SKYGATE_REGAPI_BASE_URL`, shared by the provider client and the credential store's
+  `TestConnection` so the two cannot drift apart again (the drift is what shipped).
+* The request is form-encoded with `username`/`password` **top-level** and JSON in `input_data`
+  (credentials inside `input_data` is the NO_AUTH trap this project already paid for), the record
+  fields are the registrar's (with the alternate spellings accepted), and a refusal surfaces the
+  registrar's **own** error code and text.
+* A write is **verified by reading the zone back**: "the API accepted it" and "DNS answers the new
+  address" are no longer the same claim. If the read-back disagrees, the error says which value is
+  still served rather than reporting success.
+* The credential validation accepts login + password + zone, still rejects a malformed certificate
+  if one is supplied, and `skygate regapi-credentials test` performs a **read-only** zone load.
+
+**The manual switch now has a DNS half.**
+
+```bash
+skygate dns-records  --name=skygate                          # read-only: the zone and the A record
+skygate dns-set-a    --name=skygate,head,derp --ip=<new IP>  # flip, verify, audit
+skygate dns-set-a    --name=skygate --ip=<current IP> --ttl=300   # lower the TTL a day before
+```
+
+`dns-set-a` prints `before`/`after`, supports `--dry-run`, accepts a list of names (a switch usually
+moves the gateway, headscale and DERP names together), keeps the existing TTL unless `--ttl` is
+given, and writes one `dns.manual_switch` audit row.
+
+**The runbook** (`docs/ha.md` §6.4, RU `docs/ru/ha-manual-switch.md`) states the two rules that make
+a switch safe and the reason for each step:
+
+* **never two headscales with one noise key, and never two skygates with one Telegram token** —
+  so the order is *stop A, then start B*, never the reverse;
+* **a DNS switch is bounded by the TTL, not by the API call** — lower the record to `300` a day
+  before, or clients keep the old address for up to 24 h;
+* plus the preflight (`/healthz` build, `/readyz`, and the `READ-ONLY COPY` line that must be **gone**
+  on the host taking over), the verification from outside the host, the rollback, and what the
+  procedure deliberately does not do (copy data, stop the old headscale's nodes from reconnecting,
+  touch the proxy).
+
+### Also fixed here
+
+`scripts/b146_regapi_live.sh` built its API base from the zone; it now uses the real endpoint (or
+`SKYGATE_REGAPI_BASE_URL`). `scripts/check_b145.sh` contract D still greps its two NO_AUTH phrases —
+the test file kept the same intent, rewritten against the protocol the registrar actually speaks.
+
+### Upgrade notes
+
+* `SKYGATE_DNS_PROVIDER=regru` (or the legacy `external`) plus
+  `skygate regapi-credentials set --login=… --password='<alternative password>' --zone=…`.
+  The alternative password is created in the API section of the reg.ru account, not the account
+  password.
+* A client certificate is no longer required and is simply unused when absent.
+* Nothing changes for installs that do not use the DNS failover path.
+
 ## v1.5.214 — the certificate button must obtain and write a certificate (B467)
 
 **Date:** 2026-11-13 · **Base:** `v1.5.213` → this tag · **Compatibility:** additive (three new

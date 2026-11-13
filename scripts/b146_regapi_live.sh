@@ -92,7 +92,7 @@ RECORD_NAME="${SKYGATE_DNS_REGAPI_RECORD:-skygate}"
 #   https://api.<your-domain>/api/<provider-v2-path>/zone/get_resource_records
 # We use the generic "regru2" path (the operator's
 # domain) — see B161.4 status log for the URL shape.
-API_BASE="https://api.${SKYGATE_DNS_REGAPI_ZONE}/api/regru2"
+API_BASE="${SKYGATE_REGAPI_BASE_URL:-https://api.reg.ru/api/regru2}"
 API_PATH="/zone/get_resource_records"
 
 # JSON body (input_data) is the domain list with

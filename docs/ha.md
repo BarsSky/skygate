@@ -291,7 +291,7 @@ matching peer`) and the subnet routes.
 > up` hangs. A first `tailscale up` can take 60+ min on slow NAT (use 24 h
 > preauth keys). headscale may need a restart after `nodes tag`.
 > `--netfilter-mode=off` does not clean up a previous session's iptables rules
-> (§6.4). With headscale 0.29.1 + grants, **untagged** user-owned nodes do not
+> (§6.5). With headscale 0.29.1 + grants, **untagged** user-owned nodes do not
 > appear in other nodes' netmaps even when a grant allows the traffic.
 
 **Phase 7 — provision the standby.** Mint the preauth key on the primary so the
@@ -442,7 +442,7 @@ Two different electors — do not confuse them:
 | **Phase 1** | HA chain + elector (`internal/ha/{chain,storage,elector}.go`, B145) | **DONE (v1.5.0)** |
 | **Phase 2** | reg.ru DNS client + failover (`internal/dns*`, B146) | **DONE (v1.5.0)**; live test 2026-09-07 — §3.10 |
 | **Phase 3** | Certsync S3 ↔ local (`internal/certsync`, B147) | **DONE (v1.5.0)** |
-| **Phase 4** | `/admin/certificates` upload + DNS-01 toggle (B148) | **DONE (v1.5.0)**; LE acquisition DEFERRED (G4) |
+| **Phase 4** | `/admin/certificates` upload + DNS-01 toggle (B148); **LE acquisition over HTTP-01 (B467)** | **DONE** — the upload form now really writes the pair and the panel obtains certificates; DNS-01/wildcards still blocked on TXT support |
 | **Phase 5** | `/admin/ha` chain editor + failover controls (B149); **5.1** admin-managed credentials | **DONE (v1.5.0)** |
 | **Phase 6** | `skygate deploy {push,pull,sync,status}` + `/admin/deploy` (B150) | **DONE (v1.5.0)** |
 | **Phase 7** | Standby bootstrap (`scripts/bootstrap_standby.sh` B152 + `create-standby-preauth.sh`); runner `scripts/ha-phase7.sh` | **DONE** (scripts); running it on a new host is an operator step |
@@ -1009,7 +1009,113 @@ second — one transaction with two `cluster_audit` rows (`node_drain`,
 > compose …`) or pass `--env-file`, or `${VAR:-default}` silently resolves to the
 > default.
 
-### 6.4 Recovering a host whose Tailscale iptables rules ate the network
+### 6.4 Manual switch between two copies (planned, not a failure)
+
+This is the *deliberate* version of a failover: the operator decides that host B takes over,
+stops host A, starts B, and moves the public names. It is not the elector's path (that one runs
+on its own when a heartbeat is missed); it is the rehearsed move, and every step below has a
+reason.
+
+**Two rules that make the rest safe.**
+
+1. **Never two headscales with the same noise key at once, and never two skygates with the same
+   Telegram token at once.** They fight: the bot's `getUpdates` returns `409 Conflict` from both
+   sides alternately, and the tailnet has two servers with one identity. So the order is
+   *stop A first, then start B* — never the other way round.
+2. **A DNS switch is bounded by the TTL, not by the API call.** If the A record is cached for
+   24 h (`86400`), clients that resolved it before the flip keep the OLD address for up to a day.
+   Lower the TTL to `300` **a day before** the switch (§6.4.0), then flip.
+
+#### 6.4.0 The day before — lower the TTL
+
+```bash
+# On a host that has the registrar credentials (see §6.4.1). --dry-run first: it prints the
+# before/after pair and writes nothing.
+skygate dns-set-a --name=skygate,head,derp --ip=<CURRENT public IP> --ttl=300 --dry-run
+skygate dns-set-a --name=skygate,head,derp --ip=<CURRENT public IP> --ttl=300
+```
+
+The command keeps the address and only rewrites the TTL; it verifies the address afterwards and
+refuses to report success if the registrar still answers a different one.
+
+#### 6.4.1 Credentials for the DNS half
+
+The provider is reg.ru's API (B468): a login, the account's **alternative password** created in
+the API section of the account (not the account password), and the zone.
+
+```bash
+skygate regapi-credentials set --login=<login> --password='<alt password>' --zone=<example.com>
+skygate regapi-credentials show        # masked
+skygate regapi-credentials test        # READ-ONLY: loads the zone, prints how many records it saw
+skygate dns-records --name=skygate     # what DNS answers right now
+```
+
+`SKYGATE_DNS_REGAPI_LOGIN` / `_PASSWORD` / `_ZONE` are honoured instead of the stored rows, so a
+switch can be driven from a host that has no DB row for them. `SKYGATE_REGAPI_BASE_URL` points the
+client at a different endpoint (a test CA or a proxy); the shipped base is
+`https://api.reg.ru/api/regru2`.
+
+#### 6.4.2 The switch
+
+```bash
+# 0. Preflight on B — the host being brought up -------------------------------
+curl -fsS http://127.0.0.1:8080/healthz            # {"build":"vX.Y.Z+<sha>"} — same release as A
+curl -fsS http://127.0.0.1:8080/readyz | grep -o '"healthy":[a-z]*'   # healthy:true
+journalctl -u skygate -n 40 --no-pager | grep 'READ-ONLY COPY'        # MUST be empty on B:
+#   a copy runs with SKYGATE_READONLY_COPY=1 and does not publish, alert or switch DNS.
+#   Unset it in /etc/skygate/skygate.env BEFORE the switch (and restart), or B serves the panel
+#   and nothing else.
+
+# 1. STOP A first (the two rules above) --------------------------------------
+#    native:  systemctl stop skygate ; systemctl stop headscale
+#    docker:  cd /home/<user>/skygate && docker compose stop skygate headscale
+ssh <A> 'systemctl stop skygate headscale'
+ssh <A> 'systemctl is-active skygate headscale'     # both must read "inactive"
+
+# 2. START B ----------------------------------------------------------------
+ssh <B> 'systemctl start skygate headscale'
+ssh <B> 'curl -fsS http://127.0.0.1:8080/healthz && curl -fsS http://127.0.0.1:8080/readyz'
+
+# 3. FLIP the public names to B's address -----------------------------------
+skygate dns-set-a --name=skygate,head,derp --ip=<B public IP> --dry-run   # review
+skygate dns-set-a --name=skygate,head,derp --ip=<B public IP>
+#   prints: before ... / after ... / "written and verified by reading the zone back"
+#   writes one audit row: dns.manual_switch (zone, names, to, ttl, when)
+
+# 4. VERIFY from outside (through the terminator, not from the host) --------
+dig +short skygate.example.com                        # B's IP
+curl -fsS https://skygate.example.com/healthz         # the build B is running
+curl -fsS https://head.example.com/health             # headscale answers
+
+# 5. Decide what A is now ---------------------------------------------------
+#   Keep it STOPPED as the rollback target. Starting it again while B serves the tailnet means
+#   two headscales with one key — do not, unless you are rolling back.
+```
+
+#### 6.4.3 Rollback
+
+```bash
+# 1. stop B, 2. start A, 3. flip DNS back, 4. re-verify (same commands, reversed)
+ssh <B> 'systemctl stop skygate headscale'
+ssh <A> 'systemctl start skygate headscale'
+skygate dns-set-a --name=skygate,head,derp --ip=<A public IP>
+dig +short skygate.example.com
+```
+
+The TTL you lowered in §6.4.0 applies here too: the rollback is visible as fast as the TTL allows,
+which is why it was lowered before the first move.
+
+#### 6.4.4 What this procedure deliberately does NOT do
+
+* It does not copy data: A and B must share the database (PG streaming) or B must be a snapshot
+  the operator has decided is current. A **restored copy** served the panel from its own file —
+  the data on it does not advance, and the read-only flag is what keeps it honest (B465).
+* It does not stop the *old* headscale's nodes from reconnecting: when A comes back with the same
+  noise key, its nodes reconnect to it. That is why A stays stopped after the switch.
+* It does not touch the proxy. If the terminator routes by IP (an `upstream` line), the proxy
+  configuration moves with the DNS record — see [https.md](https.md) §2.2.
+
+### 6.5 Recovering a host whose Tailscale iptables rules ate the network
 
 Symptom: the host is up (headscale may even show it `online=true` with a stale
 `last_seen`) but SSH/ICMP time out, and the console is the only way in after a
@@ -1057,7 +1163,7 @@ Always use `--netfilter-mode=nodivert` going forward (the bootstrap script does)
 |---|---|---|---|
 | G1 | **Phase 0 runner requires `python3`** (parses `tailscale status --json`) | **OPEN** | Without python3, steps 3–4 (`verify_routes_advertised`, `verify_routes_approved`) fail; a `jq` fallback is future work |
 | G2 | **etcd has no quorum** (single node) | **OPEN** | No 3rd VM; losing it freezes Patroni (the primary keeps serving, no new leader) |
-| G3 | **Providers beyond external/`regapi`** (`cloudflare`, `route53`, `rfc2136`) | **DEFERRED (v1.5.x)** | Interface, factory and reserved names exist; the clients are not written |
+| G3 | **Providers beyond reg.ru** (`cloudflare`, `route53`, `rfc2136`) | **DEFERRED (v1.5.x)** — the reg.ru client is real since B468 (real endpoint, real field names); | Interface, factory and reserved names exist; the clients are not written |
 | G4 | **Let's Encrypt automatic issuance via DNS-01** | **DEFERRED (v1.5.x)** | The toggle and `dns01_enabled` row store intent only; upload certs manually until it ships |
 | G5 | **Full auto-rollback after a failed promotion** | **DEFERRED** | B220 ships one-click operator rollback; automatic rollback was left out so a flapping node cannot fight the operator |
 | G6 | **Tier 0.5 Litestream active-router** (`SKYGATE_HA_ROLE=active|passive` middleware, passive banner, POST-503 gating) | **DEFERRED** | Superseded by the PG-based Tier 1; do not look for a passive-mode banner |
@@ -1101,8 +1207,8 @@ Always use `--netfilter-mode=nodivert` going forward (the bootstrap script does)
 | Rolling upgrade stuck in `draining`, or Approve refused for a `failed`/`draining` node | New build never appeared on `/healthz` within 5 min; Approve only accepts `pending` | Push the binary and rejoin, or re-run `skygate init` | Push the binary before the upgrade; use **Drain** for maintenance |
 | `cluster join` returns 410 / 403 | Invite expired (24 h) / hostname mismatch | Issue a new token for the correct hostname | Keep the TTL short; don't rename hosts |
 | New standby invisible to other tailnet nodes | Untagged node + headscale grants (0.29.1 omits untagged nodes from peers' netmaps) | Tag the node (`headscale nodes tag … --force`); restart headscale | Mint keys with `create-standby-preauth.sh` |
-| New standby lost SSH / all non-Tailscale traffic | `--netfilter-mode=off` left a `ts-input` REJECT chain | Console recovery (§6.4) | Always use `--netfilter-mode=nodivert` |
-| `tailscale up` hangs | Old `tailscaled` without `--socket`, or a stale machine key | Kill the old pid / wipe `/var/lib/tailscale` state (§6.4) | Use the systemd unit; delete stale nodes |
+| New standby lost SSH / all non-Tailscale traffic | `--netfilter-mode=off` left a `ts-input` REJECT chain | Console recovery (§6.5) | Always use `--netfilter-mode=nodivert` |
+| `tailscale up` hangs | Old `tailscaled` without `--socket`, or a stale machine key | Kill the old pid / wipe `/var/lib/tailscale` state (§6.5) | Use the systemd unit; delete stale nodes |
 | WAL archive failing, disk filling | Object store down / network blip | Restore connectivity; watch the primary's disk | Monitor `wal-g backup-list`; alert on disk > 85 % (`R31`) |
 | No `dbmigrate-watchdog: pool swapped…` after a DSN change | Watchdog disabled, or the row was deleted | Edit the DSN again / recreate the row | Keep `cluster_database.current_dsn` the single knob |
 | `check_pg_health.sh` exits 2 / 1 | No primary / no replicas / etcd down; or replication lag > 10 s | §4.2 or §4.3; restart etcd if frozen; investigate lag | 3-node etcd quorum (G2); tune `maximum_lag_on_failover` |

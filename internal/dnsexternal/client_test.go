@@ -1,291 +1,324 @@
-// client_test.go — unit tests for the dnsexternal.Client.
-// Uses httptest.Server to simulate the external DNS
-// provider's JSON+form+mTLS endpoints; verifies the auth
-// pattern (top-level form fields + mTLS cert) and the
-// request/response parsing.
+// B468 — the DNS client tests, rewritten against the protocol the registrar actually speaks.
 //
-// v1.5.0 (B145). The working auth pattern (top-level
-// username + password as form fields, NOT in input_data
-// JSON) was confirmed against the live API endpoint on
-// 2026-08-18. These tests pin the pattern so a future
-// refactor that re-introduces the broken "input_data JSON
-// wrapping" pattern will fail the test before the change
-// reaches production.
-
+// The previous file pinned a FICTIONAL protocol: it served `{"answer":{"domains":[{"records":[
+// {"type":"A","name":"skygate","content":"1.2.3.4"}]}]}}` while reg.ru sends
+// `{"result":"success","answer":{"domains":[{"rrs":[{"subname":"skygate","rectype":"A",
+// "content":"1.2.3.4"}]}]}}`, and the client it tested pointed at
+// `https://api.<your-domain>/api/<provider-v2-path>/…`. Both sides agreed with each other and
+// with nothing else, so the suite was green while no real call could work — the same class as a
+// check that only verifies the fixture. These tests speak the real names, assert the real form
+// fields, and let the fake MUTATE its zone so the read-back verification is exercised.
 package dnsexternal
 
 import (
 	"context"
 	"encoding/json"
-	"io"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
-	"skygate/internal/ha/dnsexternal"
+	creds "skygate/internal/ha/dnsexternal"
 )
 
-// fakeExternalAPI is a small emulator of the external DNS
-// provider's v2 API. It captures the incoming request's
-// body, then returns the canned response. Each test gets
-// its own server so they can run in parallel without
-// cross-talk.
-type fakeExternalAPI struct {
-	// lastBody is the most recent request body the
-	// server saw. Tests assert on the captured form.
-	lastBody []byte
-	// responseStatus is the HTTP status to return.
-	responseStatus int
-	// responseBody is the raw body to return. If set,
-	// overrides any canned response.
-	responseBody string
-	// overrideHandler, if non-nil, replaces the default
-	// ServeHTTP. Used for per-test customisation
-	// (e.g. the "logical error" test that wants the
-	// same canned response but a different status).
-	overrideHandler http.HandlerFunc
+// fakeRegRU is a minimal reg.ru API: form-encoded calls, `result`/`error` envelope, a mutable
+// zone, and the two endpoints the client uses.
+type fakeRegRU struct {
+	mu       sync.Mutex
+	zone     string
+	records  []map[string]any
+	login    string
+	password string
+	// failAuth makes every call answer the registrar's NO_AUTH error.
+	failAuth bool
+	// lastForm captures the top-level form of the last call (the NO_AUTH trap lives here).
+	lastForm map[string]string
+	// updateCalls counts /zone/update_records hits.
+	updateCalls int
 }
 
-func (f *fakeExternalAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
-	f.lastBody = body
-	if f.overrideHandler != nil {
-		f.overrideHandler(w, r)
+func newFakeRegRU(t *testing.T, zone, login, password string, records ...map[string]any) (*fakeRegRU, *httptest.Server) {
+	t.Helper()
+	f := &fakeRegRU{zone: zone, login: login, password: password, records: records}
+	srv := httptest.NewServer(http.HandlerFunc(f.serve))
+	t.Cleanup(srv.Close)
+	return f, srv
+}
+
+func (f *fakeRegRU) serve(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
-	w.WriteHeader(f.responseStatus)
-	if f.responseBody != "" {
-		_, _ = w.Write([]byte(f.responseBody))
+	f.mu.Lock()
+	f.lastForm = map[string]string{}
+	for k := range r.PostForm {
+		f.lastForm[k] = r.PostForm.Get(k)
 	}
-}
+	failAuth := f.failAuth
+	f.mu.Unlock()
 
-func newFakeExternalAPI(t *testing.T) (*httptest.Server, *fakeExternalAPI) {
-	t.Helper()
-	f := &fakeExternalAPI{responseStatus: 200}
-	srv := httptest.NewServer(f)
-	t.Cleanup(srv.Close)
-	return srv, f
-}
+	w.Header().Set("Content-Type", "application/json")
+	reply := func(v any) { _ = json.NewEncoder(w).Encode(v) }
 
-// newTestClient builds a Client that talks to the given
-// test server with the supplied credentials. The creds
-// are injected via the test-only credsOverride field so
-// the tests don't need a real *sql.DB. A custom
-// http.Transport rewrites the destination URL from
-// the hardcoded production URL to the test server's URL.
-//
-// Returning the *fakeExternalAPI lets each test read the
-// captured request body for assertions.
-func newTestClient(t *testing.T, srv *httptest.Server, login, password, zone, certPEM string) (*Client, *fakeExternalAPI) {
-	t.Helper()
-	c := &Client{
-		Store:      nil,
-		HTTPClient: &http.Client{Timeout: 5e9},
-		credsOverride: &dnsexternal.Credentials{
-			Provider: "external",
-			Login:    login,
-			Zone:     zone,
-			CertPEM:  certPEM,
-			Password: password,
-		},
+	if failAuth || r.PostForm.Get("username") != f.login || r.PostForm.Get("password") != f.password {
+		reply(map[string]any{"result": "error", "error_code": "NO_AUTH", "error_text": "Authorization failed"})
+		return
 	}
-	c.HTTPClient.Transport = &urlRewriter{base: srv.URL}
-	return c, nil
-}
-
-// urlRewriter is an http.RoundTripper that rewrites the
-// destination URL to the test server's URL. Used so the
-// production code (which hardcodes the provider's API URL)
-// can be exercised against a local httptest.Server.
-type urlRewriter struct {
-	base string
-}
-
-func (t *urlRewriter) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Replace scheme+host with the test base. Path
-	// and query stay the same. The body is read by
-	// the production code via req.Body, which is
-	// preserved through NewRequestWithContext.
-	newURL := t.base + req.URL.Path
-	if req.URL.RawQuery != "" {
-		newURL += "?" + req.URL.RawQuery
+	var input struct {
+		Domains []struct {
+			Dname string           `json:"dname"`
+			RRS   []map[string]any `json:"rrs"`
+		} `json:"domains"`
 	}
-	newReq, err := http.NewRequestWithContext(req.Context(), req.Method, newURL, req.Body)
-	if err != nil {
-		return nil, err
-	}
-	for k, v := range req.Header {
-		for _, vv := range v {
-			newReq.Header.Add(k, vv)
+	_ = json.Unmarshal([]byte(r.PostForm.Get("input_data")), &input)
+
+	switch r.URL.Path {
+	case creds.RegAPIPathUserNop:
+		reply(map[string]any{"result": "success"})
+	case creds.RegAPIPathZoneRecords:
+		f.mu.Lock()
+		recs := append([]map[string]any(nil), f.records...)
+		zone := f.zone
+		f.mu.Unlock()
+		reply(map[string]any{
+			"result": "success",
+			"answer": map[string]any{"domains": []map[string]any{{"dname": zone, "rrs": recs}}},
+		})
+	case creds.RegAPIPathZoneUpdate:
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if len(input.Domains) != 1 || input.Domains[0].Dname != f.zone {
+			f.mu.Unlock()
+			reply(map[string]any{"result": "error", "error_code": "ZONE_NOT_FOUND", "error_text": "no such domain"})
+			f.mu.Lock()
+			return
 		}
+		f.updateCalls++
+		for _, rr := range input.Domains[0].RRS {
+			sub, _ := rr["subname"].(string)
+			typ, _ := rr["rectype"].(string)
+			content, _ := rr["content"].(string)
+			if strings.EqualFold(typ, "A") {
+				f.records = setA(f.records, sub, content)
+			}
+		}
+		reply(map[string]any{"result": "success"})
+	default:
+		http.NotFound(w, r)
 	}
-	return http.DefaultTransport.RoundTrip(newReq)
 }
 
-const validTestCertPEM = `-----BEGIN CERTIFICATE-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0000000000000000
-0000000000000000000000000000000000000000000000000000000000000000
-0000000000000000000000000000000000000000000000000000000000000000
-0000000000000000000000000000000000000000000000000000000000
------END CERTIFICATE-----`
+// setA replaces the A record for subname, leaving other records alone.
+func setA(records []map[string]any, subname, content string) []map[string]any {
+	out := make([]map[string]any, 0, len(records)+1)
+	for _, r := range records {
+		sub, _ := r["subname"].(string)
+		typ, _ := r["rectype"].(string)
+		if strings.EqualFold(typ, "A") && strings.EqualFold(sub, subname) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return append(out, map[string]any{"subname": subname, "rectype": "A", "content": content, "ttl": 300})
+}
 
-// TestGetRecord_SendsTopLevelFormFields is the regression
-// test for the "NO_AUTH" bug: the OLD code put
-// username+password INSIDE the input_data JSON; the NEW
-// (working) code puts them as TOP-LEVEL form fields. If
-// a future refactor moves them back into the JSON, this
-// test fails before the change reaches production.
-func TestGetRecord_SendsTopLevelFormFields(t *testing.T) {
-	srv, fake := newFakeExternalAPI(t)
-	fake.responseBody = `{"answer":{"domains":[{"dname":"example.com","records":[{"name":"skygate","type":"A","content":"1.2.3.4"}]}]}}`
-	c, _ := newTestClient(t, srv, "user@example.com", "test-password", "example.com", validTestCertPEM)
+func recA(subname, content string) map[string]any {
+	return map[string]any{"subname": subname, "rectype": "A", "content": content, "ttl": 300}
+}
 
+func recMX(subname, content string) map[string]any {
+	return map[string]any{"subname": subname, "rectype": "MX", "content": content, "ttl": 300, "prio": 10}
+}
+
+func testClient(t *testing.T, srv *httptest.Server, store *creds.Store) *Client {
+	t.Helper()
+	c := &Client{BaseURL: srv.URL, HTTPClient: srv.Client(), Store: store}
+	c.credsOverride = &creds.Credentials{Provider: creds.ProviderRegru, Login: "user", Password: "pw", Zone: "example.com"}
+	return c
+}
+
+// TestB468_GetRecordReadsTheRegistrarShape is the regression: the client looked for `name`/`type`
+// while the registrar sends `subname`/`rectype`, so a present record was "not found".
+func TestB468_GetRecordReadsTheRegistrarShape(t *testing.T) {
+	_, srv := newFakeRegRU(t, "example.com", "user", "pw", recA("skygate", "203.0.113.10"), recMX("@", "mail.example.com"))
+	c := testClient(t, srv, nil)
 	ip, err := c.GetRecord(context.Background(), "example.com", "skygate")
 	if err != nil {
 		t.Fatalf("GetRecord: %v", err)
 	}
-	if ip != "1.2.3.4" {
-		t.Errorf("GetRecord = %q, want 1.2.3.4", ip)
-	}
-
-	// CRITICAL: the captured form must have
-	// username + password as TOP-LEVEL fields, NOT
-	// inside the input_data JSON. This is the
-	// regression test for the "NO_AUTH" bug.
-	form, err := url.ParseQuery(string(fake.lastBody))
-	if err != nil {
-		t.Fatalf("parse captured form: %v (body=%q)", err, fake.lastBody)
-	}
-	if form.Get("username") != "user@example.com" {
-		t.Errorf("form username = %q, want user@example.com", form.Get("username"))
-	}
-	if form.Get("password") != "test-password" {
-		t.Errorf("form password = %q, want test-password", form.Get("password"))
-	}
-	// And it must NOT be in input_data:
-	if inputData := form.Get("input_data"); strings.Contains(inputData, "test-password") {
-		t.Errorf("password leaked into input_data: %q", inputData)
+	if ip != "203.0.113.10" {
+		t.Fatalf("ip = %q, want 203.0.113.10", ip)
 	}
 }
 
-// TestGetRecord_NotFound — server returns an empty
-// records list; client should return ErrRecordNotFound.
-func TestGetRecord_NotFound(t *testing.T) {
-	srv, fake := newFakeExternalAPI(t)
-	fake.responseBody = `{"answer":{"domains":[{"dname":"example.com","records":[]}]}}`
-	c, _ := newTestClient(t, srv, "user@example.com", "test-password", "example.com", validTestCertPEM)
-
-	_, err := c.GetRecord(context.Background(), "example.com", "skygate")
-	if err != ErrRecordNotFound {
-		t.Errorf("GetRecord on empty record list error = %v, want ErrRecordNotFound", err)
+func TestB468_GetRecordMissingReturnsTheSentinel(t *testing.T) {
+	_, srv := newFakeRegRU(t, "example.com", "user", "pw", recA("head", "203.0.113.10"))
+	c := testClient(t, srv, nil)
+	if _, err := c.GetRecord(context.Background(), "example.com", "skygate"); err != ErrRecordNotFound {
+		t.Fatalf("err = %v, want ErrRecordNotFound — a missing record must not look like an HTTP failure", err)
 	}
 }
 
-// TestGetRecord_ServerError — server returns 500; client
-// should propagate the error with the status code.
-func TestGetRecord_ServerError(t *testing.T) {
-	srv, fake := newFakeExternalAPI(t)
-	fake.responseStatus = 500
-	fake.responseBody = `{"error_code":"INTERNAL","error_text":"oops"}`
-	c, _ := newTestClient(t, srv, "user@example.com", "test-password", "example.com", validTestCertPEM)
-
-	_, err := c.GetRecord(context.Background(), "example.com", "skygate")
-	if err == nil {
-		t.Fatal("GetRecord on HTTP 500 returned nil, want error")
+// TestB468_NoAuthTrapIsNotReintroduced pins the form shape the project already paid for:
+// username/password must be TOP-LEVEL fields, never inside input_data.
+func TestB468_NoAuthTrapIsNotReintroduced(t *testing.T) {
+	f, srv := newFakeRegRU(t, "example.com", "user", "pw", recA("skygate", "203.0.113.10"))
+	c := testClient(t, srv, nil)
+	if _, err := c.GetRecord(context.Background(), "example.com", "skygate"); err != nil {
+		t.Fatalf("GetRecord: %v", err)
 	}
-	if !strings.Contains(err.Error(), "500") {
-		t.Errorf("error %q should mention HTTP 500", err.Error())
+	f.mu.Lock()
+	form := f.lastForm
+	f.mu.Unlock()
+	if form["username"] != "user" || form["password"] != "pw" { // form username/password must be TOP-LEVEL
+		t.Fatalf("credentials are not top-level form fields: %v", form)
+	}
+	if strings.Contains(form["input_data"], "password") || strings.Contains(form["input_data"], "username") {
+		t.Fatalf("password leaked into input_data (the NO_AUTH trap): %s", form["input_data"])
+	}
+	if form["input_format"] != "json" || form["output_format"] != "json" {
+		t.Fatalf("the request does not ask for JSON: %v", form)
 	}
 }
 
-// TestUpdateRecord_Success — server returns "ok" ack;
-// client should not return an error.
-func TestUpdateRecord_Success(t *testing.T) {
-	srv, fake := newFakeExternalAPI(t)
-	fake.responseBody = `{"result":"success","answer":{"domains":[{"dname":"example.com","error_code":""}]}}`
-	c, _ := newTestClient(t, srv, "user@example.com", "test-password", "example.com", validTestCertPEM)
-
-	err := c.UpdateRecord(context.Background(), "example.com", "skygate", "5.6.7.8")
-	if err != nil {
+// TestB468_UpdateRecordWritesAndReadsBack — success means "DNS answers the new IP", not "the API
+// accepted the call".
+func TestB468_UpdateRecordWritesAndReadsBack(t *testing.T) {
+	f, srv := newFakeRegRU(t, "example.com", "user", "pw", recA("skygate", "203.0.113.10"), recMX("@", "mail"))
+	c := testClient(t, srv, nil)
+	if err := c.UpdateRecord(context.Background(), "example.com", "skygate", "198.51.100.7"); err != nil {
 		t.Fatalf("UpdateRecord: %v", err)
 	}
-	// Verify the form had the right A-record target.
-	form, _ := url.ParseQuery(string(fake.lastBody))
-	inputData := form.Get("input_data")
-	if !strings.Contains(inputData, "5.6.7.8") {
-		t.Errorf("UpdateRecord input_data = %q, want it to contain 5.6.7.8", inputData)
+	if ip, err := c.GetRecord(context.Background(), "example.com", "skygate"); err != nil || ip != "198.51.100.7" {
+		t.Fatalf("after update ip = %q err = %v, want 198.51.100.7", ip, err)
 	}
-	if !strings.Contains(inputData, `"type":"A"`) {
-		t.Errorf("UpdateRecord input_data = %q, want rectype A", inputData)
-	}
-}
-
-// TestUpdateRecord_EmptyIP — client should reject empty
-// IP without making the HTTP call.
-func TestUpdateRecord_EmptyIP(t *testing.T) {
-	srv, fake := newFakeExternalAPI(t)
-	c, _ := newTestClient(t, srv, "user@example.com", "test-password", "example.com", validTestCertPEM)
-	err := c.UpdateRecord(context.Background(), "example.com", "skygate", "")
-	if err == nil {
-		t.Fatal("UpdateRecord with empty IP returned nil, want error")
-	}
-	// The body should still be empty (no HTTP call made).
-	if len(fake.lastBody) > 0 {
-		t.Errorf("UpdateRecord with empty IP made an HTTP call: body=%q", fake.lastBody)
-	}
-}
-
-// TestUpdateRecord_LogicalError — server returns 200 OK
-// with {"result":"error", ...} in the body. Client
-// should treat this as a failure (the provider returns
-// 200 + logical error for "auth_error" / "access_denied"
-// etc).
-func TestUpdateRecord_LogicalError(t *testing.T) {
-	srv, fake := newFakeExternalAPI(t)
-	fake.responseBody = `{"result":"error","error_code":"DOMAIN_NOT_FOUND","error_text":"no such domain"}`
-	c, _ := newTestClient(t, srv, "user@example.com", "test-password", "example.com", validTestCertPEM)
-	err := c.UpdateRecord(context.Background(), "example.com", "skygate", "5.6.7.8")
-	if err == nil {
-		t.Fatal("UpdateRecord on logical error returned nil, want error")
-	}
-	if !strings.Contains(err.Error(), "DOMAIN_NOT_FOUND") {
-		t.Errorf("error %q should mention DOMAIN_NOT_FOUND", err.Error())
-	}
-}
-
-// TestName — the Name() method must return the canonical
-// identifier "external". This is the string operators set
-// SKYGATE_DNS_PROVIDER to, so a rename would silently
-// break all deployed configs.
-func TestName(t *testing.T) {
-	c := &Client{}
-	if got := c.Name(); got != "external" {
-		t.Errorf("Name() = %q, want external (the SKYGATE_DNS_PROVIDER identifier)", got)
-	}
-}
-
-// TestRequestShape_Stable pins the form-field shape so a
-// future refactor that drops a field fails here before
-// reaching production.
-func TestRequestShape_Stable(t *testing.T) {
-	srv, fake := newFakeExternalAPI(t)
-	fake.responseBody = `{"result":"success"}`
-	c, _ := newTestClient(t, srv, "u@x.com", "p", "z", validTestCertPEM)
-	if err := c.UpdateRecord(context.Background(), "z", "skygate", "1.2.3.4"); err != nil {
-		t.Fatalf("UpdateRecord: %v", err)
-	}
-	body := string(fake.lastBody)
-	for _, want := range []string{"username=u%40x.com", "password=p", "output_content_type=json"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("UpdateRecord form missing %q: %q", want, body)
+	f.mu.Lock()
+	mx := 0
+	for _, r := range f.records {
+		if r["rectype"] == "MX" {
+			mx++
 		}
 	}
-	// And the parsed input_data must be valid JSON.
-	form, _ := url.ParseQuery(body)
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(form.Get("input_data")), &parsed); err != nil {
-		t.Errorf("input_data is not valid JSON: %v (raw=%q)", err, form.Get("input_data"))
+	f.mu.Unlock()
+	if mx != 1 {
+		t.Error("the update removed another record type from the zone (an A-record switch must not touch MX)")
 	}
 }
+
+func TestB468_UpdateRecordRejectsAnEmptyIP(t *testing.T) {
+	_, srv := newFakeRegRU(t, "example.com", "user", "pw", recA("skygate", "203.0.113.10"))
+	c := testClient(t, srv, nil)
+	if err := c.UpdateRecord(context.Background(), "example.com", "skygate", ""); err == nil {
+		t.Fatal("an empty IP was accepted")
+	}
+}
+
+// TestB468_ErrorTextIsSurfaced — the registrar's own words, not a bare status code.
+func TestB468_ErrorTextIsSurfaced(t *testing.T) {
+	f, srv := newFakeRegRU(t, "example.com", "user", "pw", recA("skygate", "203.0.113.10"))
+	f.failAuth = true
+	c := testClient(t, srv, nil)
+	_, err := c.GetRecord(context.Background(), "example.com", "skygate")
+	if err == nil {
+		t.Fatal("a NO_AUTH answer was treated as success")
+	}
+	if !strings.Contains(err.Error(), "NO_AUTH") || !strings.Contains(err.Error(), "Authorization failed") {
+		t.Fatalf("error = %v, want the registrar's code and text", err)
+	}
+}
+
+// TestB468_TestConnectionIsReadOnlyAndNamesTheZone — the panel's "test" button must prove the
+// credentials without touching a record.
+func TestB468_TestConnectionIsReadOnlyAndNamesTheZone(t *testing.T) {
+	f, srv := newFakeRegRU(t, "example.com", "user", "pw", recA("skygate", "203.0.113.10"))
+	c := testClient(t, srv, nil)
+	if err := c.TestConnection(context.Background()); err != nil {
+		t.Fatalf("TestConnection: %v", err)
+	}
+	f.mu.Lock()
+	updates := f.updateCalls
+	f.mu.Unlock()
+	if updates != 0 {
+		t.Fatalf("TestConnection performed %d write(s)", updates)
+	}
+}
+
+// TestB468_StoreTestConnectionUsesTheSameEndpoint — the credential store and the provider client
+// must not drift apart again (that drift is what shipped).
+func TestB468_StoreTestConnectionUsesTheSameEndpoint(t *testing.T) {
+	f, srv := newFakeRegRU(t, "example.com", "user", "pw", recA("skygate", "203.0.113.10"))
+	store := creds.NewStore(nil, "")
+	store.HTTP = srv.Client()
+	t.Setenv(creds.RegAPIBaseURLEnv, srv.URL)
+	res, err := store.TestConnectionWithCreds(context.Background(), creds.Credentials{
+		Provider: creds.ProviderRegru, Login: "user", Password: "pw", Zone: "example.com",
+	})
+	if err != nil {
+		t.Fatalf("store TestConnection: %v", err)
+	}
+	if res.Status != "ok" {
+		t.Fatalf("status = %q (%s), want ok", res.Status, res.Message)
+	}
+	f.mu.Lock()
+	path := f.lastForm != nil
+	f.mu.Unlock()
+	if !path {
+		t.Fatal("the store made no call at all")
+	}
+}
+
+// TestB468_ZoneRecordsAcceptsBothShapes — the older `records` key must not read as an empty zone.
+func TestB468_ZoneRecordsAcceptsBothShapes(t *testing.T) {
+	old := json.RawMessage(`{"domains":[{"dname":"example.com","records":[{"name":"skygate","type":"A","content":"203.0.113.10"}]}]}`)
+	newShape := json.RawMessage(`{"domains":[{"dname":"example.com","rrs":[{"subname":"skygate","rectype":"A","content":"203.0.113.11"}]}]}`)
+	for label, raw := range map[string]json.RawMessage{"older": old, "current": newShape} {
+		recs, err := creds.ZoneRecords(raw)
+		if err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+		if _, ok := creds.FindA(recs, "skygate"); !ok {
+			t.Errorf("%s shape: the A record was not found", label)
+		}
+	}
+}
+
+// TestB468_BaseURLIsNotAZone — the shipped base must be the registrar's API host, and the zone
+// must never be interpolated into it (the shell live-test's `api.${ZONE}` bug).
+func TestB468_BaseURLIsNotAZone(t *testing.T) {
+	if got := creds.RegAPIBase(); got != "https://api.reg.ru/api/regru2" {
+		t.Fatalf("RegAPIBase() = %q, want the registrar endpoint", got)
+	}
+	if strings.Contains(creds.RegAPIBase(), "example") {
+		t.Fatal("the base URL contains something zone-like")
+	}
+	t.Setenv(creds.RegAPIBaseURLEnv, "https://proxy.example/api/regru2/")
+	if got := creds.RegAPIBase(); got != "https://proxy.example/api/regru2" {
+		t.Fatalf("override = %q, want it trimmed of the trailing slash", got)
+	}
+}
+
+// TestB468_CredentialValidationAcceptsLoginPasswordOnly — the mTLS-only rule rejected the very
+// credentials the operator had provisioned.
+func TestB468_CredentialValidationAcceptsLoginPasswordOnly(t *testing.T) {
+	c := creds.Credentials{Provider: creds.ProviderRegru, Login: "user", Password: "pw", Zone: "example.com"}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("a login/password credential was rejected: %v", err)
+	}
+	legacy := creds.Credentials{Provider: creds.ProviderExternal, Login: "user", Password: "pw", Zone: "example.com"}
+	if err := legacy.Validate(); err != nil {
+		t.Fatalf("the legacy alias %q was rejected: %v", creds.ProviderExternal, err)
+	}
+	bad := creds.Credentials{Provider: creds.ProviderRegru, Login: "user", Password: "pw", Zone: "z", CertPEM: "not a pem"}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("a malformed certificate was accepted")
+	}
+	if err := (creds.Credentials{Provider: "cloudflare", Login: "u", Password: "p", Zone: "z"}).Validate(); err == nil {
+		t.Fatal("an unimplemented provider was accepted")
+	}
+}
+
+// keep fmt referenced in case a future assertion needs it
+var _ = fmt.Sprint

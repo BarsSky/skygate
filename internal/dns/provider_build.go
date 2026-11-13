@@ -59,14 +59,18 @@ func BuildProvider(name string, deps BuildDeps) (Provider, error) {
 		// button and the HA failover logs "no DNS
 		// provider configured" once at startup.
 		return nil, nil
-	case "external":
+	case "regru", "external":
+		// B468 (2026-11-13): "regru" is the honest name for the shipped provider — the client
+		// speaks https://api.reg.ru/api/regru2 with a login + ALTERNATIVE password + zone.
+		// "external" stays accepted as a historical alias so an install whose SKYGATE_DNS_PROVIDER
+		// (or saved credential row) says "external" keeps building the same object.
 		if deps.DB == nil {
-			return nil, fmt.Errorf("dns: external provider requires a non-nil DB")
+			return nil, fmt.Errorf("dns: the %q provider requires a non-nil DB", name)
 		}
 		store := extcreds.NewStore(deps.DB, deps.SecretKey)
 		// Wrap the dnsexternal.Client in a thin adapter
 		// that translates dnsexternal's internal sentinel
-		// (errRecordNotFound) into dns.ErrRecordNotFound.
+		// (ErrRecordNotFound) into dns.ErrRecordNotFound.
 		// We need this translation because dnsexternal
 		// can't import internal/dns (would create a
 		// cycle — see dnsexternal/client.go package doc).
@@ -75,7 +79,7 @@ func BuildProvider(name string, deps BuildDeps) (Provider, error) {
 		// Reserved for future B-checks. The
 		// error message is intentionally specific so
 		// the operator knows which B-check to read.
-		return nil, fmt.Errorf("dns: provider %q is not implemented yet (see docs/ha.md — only 'external' is shipped in v1.5.0 B145)", name)
+		return nil, fmt.Errorf("dns: provider %q is not implemented yet (see docs/ha.md — the shipped implementation is 'regru' / its alias 'external', B145 + B468)", name)
 	default:
 		return nil, ErrUnknownProvider{Name: name}
 	}

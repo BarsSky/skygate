@@ -296,6 +296,14 @@ func main() {
 				os.Exit(2)
 			}
 			return
+		case "dns-records", "dns-set-a":
+			// B468 — the manual switch's DNS half (read the zone / point one A record). The
+			// switch is a human decision; the flip must be reproducible and print the answer.
+			if err := runDNSCLI(os.Args[1], os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "%s failed: %v\n", os.Args[1], err)
+				os.Exit(1)
+			}
+			return
 		case "regapi-credentials":
 			// B237.21 (v1.5.2+) — CLI mirror of the
 			// /admin/ha "External DNS" form. Pre-B237.21
@@ -429,6 +437,8 @@ func main() {
 			fmt.Println("  derp-metrics-proxy      serve derper's loopback-only /debug endpoints to the container (B315)")
 			fmt.Println("  cluster <verb>          cluster CLI: invite / join / nodes / dbs / audit / failover / heartbeat-daemon (B205)")
 			fmt.Println("  regapi-credentials     External DNS provider creds: set / show / test / delete (B237.21)")
+			fmt.Println("  dns-records            print the zone's records and the A record a switch would move (B468)")
+			fmt.Println("  dns-set-a              point one A record at a host, verify it, audit it (--dry-run available) (B468)")
 			fmt.Println("  oidc-export            Print the OIDC config headscale needs (env block or headscale block) (B304)")
 			fmt.Println("  init [verb]             cluster bootstrap CLI: bootstrap / status / standby-invite (B211)")
 			fmt.Println("  join [verb]             cluster join CLI: <token> / status (B212 — DSN bootstrap + next-steps)")

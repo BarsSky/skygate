@@ -37,7 +37,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -62,6 +61,10 @@ const (
 // identifier. Operators set SKYGATE_DNS_PROVIDER=external
 // to opt in. Other values are reserved for future B-checks.
 const ProviderExternal = "external"
+
+// ProviderRegru is the implemented provider: the reg.ru API (login + alternative password + zone).
+// "external" stays accepted as a historical alias so credentials saved before B468 keep working.
+const ProviderRegru = "regru"
 
 // Credentials is the decrypted form of the stored
 // credentials. CertPEM and Password are the actual secret
@@ -89,12 +92,18 @@ func (c Credentials) IsZero() bool {
 // Validate checks the credentials are well-formed before
 // the caller tries to write them. We do not validate the
 // PEM against a CA — that's done lazily on first use.
+//
+// B468 (2026-11-13): the client CERTIFICATE is optional. It was mandatory while the only
+// documented provider used mTLS, and that requirement rejected every plain login+password pair —
+// including the reg.ru API credential the operator had provisioned, which is how a working
+// credential turned into a "validation failed" with no way forward. A provider that does need a
+// certificate (the historical "external" mTLS shape) still gets it validated when present.
 func (c Credentials) Validate() error {
 	if c.Provider == "" {
-		return errors.New("dnsexternal: provider is required (e.g. \"external\")")
+		return errors.New("dnsexternal: provider is required (\"regru\", or the legacy alias \"external\")")
 	}
-	if c.Provider != ProviderExternal {
-		return fmt.Errorf("dnsexternal: unsupported provider %q (only %q is implemented in v1.5.0)", c.Provider, ProviderExternal)
+	if c.Provider != ProviderExternal && c.Provider != ProviderRegru {
+		return fmt.Errorf("dnsexternal: unsupported provider %q (implemented: %q and its legacy alias %q)", c.Provider, ProviderRegru, ProviderExternal)
 	}
 	if c.Login == "" {
 		return errors.New("dnsexternal: login is required")
@@ -102,14 +111,11 @@ func (c Credentials) Validate() error {
 	if c.Zone == "" {
 		return errors.New("dnsexternal: zone is required")
 	}
-	if c.CertPEM == "" {
-		return errors.New("dnsexternal: cert_pem is required")
-	}
-	if !strings.Contains(c.CertPEM, "BEGIN CERTIFICATE") {
-		return errors.New("dnsexternal: cert_pem does not look like a PEM (no BEGIN CERTIFICATE marker)")
+	if c.CertPEM != "" && !strings.Contains(c.CertPEM, "BEGIN CERTIFICATE") {
+		return errors.New("dnsexternal: cert_pem does not look like a PEM (no BEGIN CERTIFICATE marker) — leave it empty for a login/password provider")
 	}
 	if c.Password == "" {
-		return errors.New("dnsexternal: password is required")
+		return errors.New("dnsexternal: password is required (for reg.ru this is the ALTERNATIVE password created in the account's API section, not the account password)")
 	}
 	return nil
 }
@@ -253,7 +259,7 @@ func (s *Store) IsConfigured() bool {
 	if err != nil {
 		return false
 	}
-	return c.CertPEM != "" && c.Password != "" && c.Zone != ""
+	return c.Login != "" && c.Password != "" && c.Zone != ""
 }
 
 // TestConnectionResult is the structured outcome of a
@@ -288,47 +294,63 @@ func (s *Store) TestConnection(ctx context.Context) (TestConnectionResult, error
 	if err != nil {
 		return TestConnectionResult{Status: "auth_error", Message: err.Error()}, err
 	}
-	if c.CertPEM == "" || c.Password == "" || c.Zone == "" {
-		return TestConnectionResult{Status: "not_configured", Message: "credentials not fully configured"}, nil
+	if c.Login == "" || c.Password == "" || c.Zone == "" {
+		return TestConnectionResult{Status: "not_configured", Message: "credentials not fully configured (login, password and zone are required; a client certificate is optional)"}, nil
 	}
 	return s.testConnectionWithCreds(ctx, c)
 }
 
-// testConnectionWithCreds is the inner loop of
-// TestConnection; split out so unit tests can drive it
-// against an httptest.Server without going through
-// global_settings.
-func (s *Store) testConnectionWithCreds(ctx context.Context, c Credentials) (TestConnectionResult, error) {
-	form := url.Values{}
-	form.Set("username", c.Login)
-	form.Set("password", c.Password)
-	form.Set("output_content_type", "plain")
-	form.Set("dname", c.Zone)
-	// The provider's API URL is configured per-deployment
-	// (via the cert's embedded issuer + the test path the
-	// operator's runbook uses). The hardcoded URL here is
-	// the v1.5.0 default; deployments with a custom API
-	// gateway should override via the SKYGATE_DNS_API_URL
-	// env var (set in /etc/skygate.env).
-	apiURL := "https://api.<your-domain>/api/<provider-v2-path>/zone/get_zone"
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return TestConnectionResult{Status: "network_error", Message: err.Error()}, err
+// TestConnectionWithCreds runs the read-only credential check against an explicit Credentials
+// value (B468). It exists so the "test my credentials" path can be exercised — and so the
+// operator can prove a login/password/zone triple BEFORE saving it — without writing to
+// global_settings first.
+func (s *Store) TestConnectionWithCreds(ctx context.Context, c Credentials) (TestConnectionResult, error) {
+	if c.Login == "" || c.Password == "" || c.Zone == "" {
+		return TestConnectionResult{Status: "not_configured", Message: "login, password and zone are required"}, nil
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return s.testConnectionWithCreds(ctx, c)
+}
+
+// testConnectionWithCreds is the inner loop of TestConnection; split out so unit tests can drive
+// it against an httptest.Server without going through global_settings.
+//
+// B468 (2026-11-13): this used to POST to `https://api.<your-domain>/api/<provider-v2-path>/zone/get_zone`
+// — a PLACEHOLDER host — with a form the registrar does not accept. Every "test credentials"
+// press therefore reported a network/auth failure for credentials that may have been perfectly
+// good, and the operator had no way to tell the two apart. It now goes through the SAME helper
+// the provider client uses (regru_api.go), against the real /zone/get_resource_records, and it
+// reports the REGISTRAR's own words when it refuses.
+func (s *Store) testConnectionWithCreds(ctx context.Context, c Credentials) (TestConnectionResult, error) {
+	zone := strings.TrimSpace(c.Zone)
+	input := fmt.Sprintf(`{"domains":[{"dname":%q}]}`, zone)
 	start := time.Now()
-	resp, err := s.HTTP.Do(req)
+	resp, err := PostRegAPI(ctx, s.HTTP, RegAPIPathZoneRecords, c.Login, c.Password, input)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		return TestConnectionResult{Status: "network_error", Message: err.Error(), LatencyMS: latency}, err
+		// A transport failure is a different fact from a refusal: say which.
+		return TestConnectionResult{Status: "network_error", Message: err.Error(), LatencyMS: latency}, nil
 	}
-	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case 200:
-		return TestConnectionResult{Status: "ok", Message: "credentials verified", HTTPStatus: resp.StatusCode, LatencyMS: latency}, nil
-	case 401, 403:
-		return TestConnectionResult{Status: "auth_error", Message: fmt.Sprintf("provider returned %d (check login + password + cert)", resp.StatusCode), HTTPStatus: resp.StatusCode, LatencyMS: latency}, nil
-	default:
-		return TestConnectionResult{Status: "auth_error", Message: fmt.Sprintf("provider returned %d", resp.StatusCode), HTTPStatus: resp.StatusCode, LatencyMS: latency}, nil
+	if !resp.OK() {
+		return TestConnectionResult{
+			Status:    "auth_error",
+			Message:   resp.Err("the registrar refused the credentials").Error(),
+			LatencyMS: latency,
+		}, nil
 	}
+	records, perr := ZoneRecords(resp.Answer)
+	if perr != nil {
+		return TestConnectionResult{Status: "auth_error", Message: perr.Error(), LatencyMS: latency}, nil
+	}
+	if len(records) == 0 {
+		return TestConnectionResult{
+			Status:    "auth_error",
+			Message:   fmt.Sprintf("the API answered, but zone %q returned no records — does the credential's account own that zone?", zone),
+			LatencyMS: latency,
+		}, nil
+	}
+	return TestConnectionResult{
+		Status:    "ok",
+		Message:   fmt.Sprintf("zone %q: %d record(s) readable", zone, len(records)),
+		LatencyMS: latency,
+	}, nil
 }
