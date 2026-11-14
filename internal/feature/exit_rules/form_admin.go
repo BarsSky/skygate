@@ -885,7 +885,11 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		"ViewMode":           viewMode,
 		// B440 (2026-10-29): the request queue, the decided tail and the policy card —
 		// the operator's half of the exit-node request channel.
+		// B471 (2026-11-14): add "BulkRelay" — move a SELECTION of rules to another relay.
+		// Its form lives above the rule tree, and the tree's checkboxes reference it by id
+		// (`form="bulk-relay-form"`), so no JavaScript is involved.
 		"RelayCard": s.adminRelayRequestCard(r),
+		"BulkRelay": s.adminBulkRelayCard(r),
 	})
 }
 

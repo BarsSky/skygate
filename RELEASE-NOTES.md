@@ -1,5 +1,71 @@
 # Skygate release notes
 
+## v1.5.218 — перенос группы правил и заявки, которые действительно работают (B471)
+
+**Date:** 2026-11-14 · **Base:** `v1.5.217` → this tag · **Compatibility:** additive (one new admin
+form + one new route; the user's request form becomes multi-select; no schema change, no migration).
+
+### The operator asked three questions, and only one had an answer
+
+> «если захотим поменять в skygate группу правил на другой exit node — всё ли пройдёт штатно и есть
+> ли возможность делать переход сразу группой выбранных правил, и может ли пользователь
+> не администратор подать заявку на перенос»
+
+1. **A group move did not exist.** The page could add rules in a batch and delete them one by one,
+   but not change a rule's relay. That gap is not cosmetic: a rule's natural key **includes its
+   relay**, so the obvious workaround (delete + add) creates a SECOND row for the same destination —
+   two claims on one prefix, with the hostname tie-break deciding the owner instead of the operator.
+2. **"Штатно" needs three steps, not one.** The rows, then the manual **pin** (a prefix pinned by
+   hand does not follow a rule rewrite, B275), then the ACL re-apply plus the route sync (the new
+   relay must advertise the prefix and headscale must approve it, B441).
+3. **The request channel existed (B440) but was unusable in two ways**: it moved ONE rule per ask,
+   and on PostgreSQL — the live install — it did not work **at all**, because its queries used `?`
+   placeholders. PostgreSQL parses `?` as an operator and answers `SQLSTATE 42601`, so every policy
+   read failed, the request card silently fell back to `require_approval`, and every decision
+   answered "no such pending request".
+
+### What this release adds
+
+**«Перенести выбранные правила»** (`POST /admin/exit-rules/bulk-relay`) — a card above the rule
+tree with checkboxes in the tree itself. The checkboxes carry `form="bulk-relay-form"`, so one form
+covers rows the template renders in three different groups, **without JavaScript**.
+
+* rules are rewritten **in place** through the same `db.UpdateDeviceRuleExitNode` the panel and the
+  CLI use — ids, group labels and fan-out markers survive;
+* a selection that is already on the target relay is reported as `unchanged` (re-submitting is a
+  no-op, not audit noise);
+* a row that cannot be written is reported and **does not abort** the rest (B449's rule); a
+  selection is capped at 200 rows;
+* the target must be a **tagged exit node** — the same list the request form offers (B284);
+* the whole move writes one `admin_bulk_relay_move` audit row, then re-applies the ACL if drifted
+  and syncs routes in the background.
+
+**The manual pin is a separate decision, and the form says so.** Checked:
+pins that hold these prefixes **on the relay the rules named** move too. Unchecked (default): they
+stay, and the flash counts them. A pin held by a **third** relay is never taken — it is reported
+with the relay it names, because moving it would be a different decision.
+
+**A non-admin can file ONE ask for a group.** The rule picker on `/my/exit-rules` is now a
+multi-select; the handler reads every `rule_id`, unions the resolved prefixes and files a single
+request (the stored row keeps the union, the audit row counts rules and addresses). A single
+`rule_id` still works — same field, so an old form is unchanged.
+
+**The decision card shows what an approval overwrites.** Each pending request now carries the manual
+pins among its prefixes with the relay holding them, because `SetManual` *is* the manual pin: an
+approval replaces it, and "одобрил, а часть адресов осталась" must never be a surprise.
+
+### Fixed alongside — the request channel was dead on PostgreSQL
+
+All `?` placeholders in `relay_request_b440.go` / `relay_request_handlers_b440.go` are gone, replaced
+by position-numbered `$n` (the dynamic `IN` list goes through `db.PlaceholdersList`). The contract
+that keeps them from coming back reads the SQL literals, ignores the comments that explain the bug,
+and was proven against a planted violation.
+
+Docs: `docs/acl-rules-reference.md` §7 («How do I move a GROUP of rules to another relay?») and the
+RU runbook `docs/ru/exit-relay-prefix.md`. 30 contracts in `scripts/check_b471_relay_group_move.sh`,
+six behaviour tests (pure plan, in-place write, pin classification, batch survival, label) and three
+RENDER tests that execute the real templates.
+
 ## v1.5.217 — «не работает дискорд на basic»: две половины одного решения (B470)
 
 **Date:** 2026-11-14 · **Base:** `v1.5.216` → this tag · **Compatibility:** additive (one new CLI

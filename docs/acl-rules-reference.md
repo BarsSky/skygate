@@ -390,6 +390,51 @@ Three things to know before you run it:
    owner that goes DOWN still loses its prefixes (a dead relay cannot
    carry traffic).
 
+### "How do I move a GROUP of rules to another relay?"
+
+Three doors, and they are not interchangeable:
+
+| Who | How | What moves |
+|---|---|---|
+| Admin, one rule | the tree on `/admin/exit-rules` | the row itself (edit in place is a batch verb, see below) |
+| Admin, a selection | **«Move the selected rules»** card on `/admin/exit-rules` (`POST /admin/exit-rules/bulk-relay`) | every ticked rule, in place, plus the manual pins when asked |
+| The CLI | `skygate prefix-owner --rules-to=… --device=… --target=… --apply` | the same rows, for scripted/audited runs |
+| A user | `/my/exit-rules` → «Request another exit node» | an ASK; the admin's policy decides |
+
+**Why "delete + add" is not a move.** The natural key of a rule includes
+its relay (B123/B183). Re-adding the same destination with another
+relay therefore creates a SECOND row: the prefix then has two claims,
+and the owner is decided by the hostname tie-break — not by you. The
+group move rewrites the existing rows instead, so the ids, the group
+labels and the fan-out markers survive.
+
+**What "штатно" requires, and the card does all three.** After the rows
+are written: the ACL is re-applied when it drifted from the assignment
+table (the per-CIDR `via` pins must name the new owner, B276), and the
+routes are synced — the new relay has to *advertise* the prefixes and
+headscale has to *approve* them (B441). Both happen automatically; the
+only thing that can still fail is the SSH leg to the relay, and
+`/admin/exit-nodes` shows that per relay.
+
+**The manual pin is a separate decision.** A prefix whose
+`prefix_owner.source = 'manual'` stays where it was pinned (B275) — a
+rule rewrite does not move it. The card therefore has its own checkbox:
+- ticked → pins that hold these prefixes **on the relay the rules
+  named** are moved to the target;
+- unticked (default) → pins stay, and the flash says how many;
+- a pin held by a **third** relay is never taken: it is reported, with
+  the relay it names, because moving it would be a different decision.
+
+**Requests (B440) and groups (B471).** A non-admin files an ask from
+`/my/exit-rules`; the admin answers per user or globally
+(`require_approval` by default, `auto_approve`, `deny`). Since B471 the
+user's rule picker is a multi-select: one ask can carry several rules,
+and they travel as ONE decision (the stored row keeps the union of their
+addresses, and the audit row counts both). The admin card also shows,
+per pending request, which of its addresses are pinned by hand and to
+which relay — an approval **overwrites** such a pin, and that has to be
+visible before the button is pressed.
+
 ### "ACL is huge, takes forever to render on /admin/acls"
 
 The hujson is re-generated and re-rendered on every page load (it's

@@ -224,6 +224,37 @@
   </form>
 </div>
 
+{{/* B471 (2026-11-14): ПЕРЕНОС выбранных правил на другой exit-узел.
+     Pre-B471 the page could add rules in a batch (B376) and delete them one by one, but
+     it could not CHANGE a rule's relay at all: the natural key of a rule includes its
+     relay (B123/B183), so delete+re-add produces a SECOND row and lets the hostname
+     tie-break pick the prefix owner. This form is the missing verb. The checkboxes live in
+     the rule tree below and reference this form by id (`form="bulk-relay-form"`), so no
+     JavaScript is involved and one form covers rows the template renders in three
+     different groups. `move_pins` is a SEPARATE decision: a prefix pinned by hand stays
+     where the operator put it (B275), and this form says so instead of silently ignoring
+     it. */}}
+<div class="card" id="admin-bulk-relay-card">
+  <h3><i class="fa-solid fa-shuffle"></i> {{t "exit_rules_admin.bulk_relay_title"}}</h3>
+  <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px 0">{{t "exit_rules_admin.bulk_relay_help"}}</p>
+  {{if .BulkRelay.FlashOK}}<div class="alert alert-success" style="margin-bottom:10px"><i class="fa-solid fa-check"></i> {{.BulkRelay.FlashOK}}</div>{{end}}
+  {{if .BulkRelay.FlashErr}}<div class="alert alert-danger" style="margin-bottom:10px"><i class="fa-solid fa-triangle-exclamation"></i> {{.BulkRelay.FlashErr}}</div>{{end}}
+  <form method="post" action="/admin/exit-rules/bulk-relay" id="bulk-relay-form">
+    <div class="field">
+      <label for="bulk-relay-target">{{t "exit_rules_admin.bulk_relay_to"}}</label>
+      <select id="bulk-relay-target" name="to_relay" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg)" aria-label="{{t "exit_rules_admin.bulk_relay_to"}}">
+        {{range $relay := .BulkRelay.Relays}}<option value="{{$relay}}">{{$relay}}</option>{{else}}<option value="">{{t "exit_rules_admin.bulk_relay_no_relays"}}</option>{{end}}
+      </select>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:10px 0 4px 0">
+      <input type="checkbox" name="move_pins" value="1">
+      <span>{{t "exit_rules_admin.bulk_relay_pins"}}</span>
+    </label>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">{{t "exit_rules_admin.bulk_relay_hint"}}</div>
+    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-route"></i> {{t "exit_rules_admin.bulk_relay_submit"}}</button>
+  </form>
+</div>
+
 {{/* 2026-08-06: preferred-mismatch banner. Surfaces the count of
      rules whose exit_node_id doesn't match the device's preferred
      exit-node. Tells the admin "your rules are configured but
@@ -503,8 +534,9 @@
                     <span style="margin-left:auto;font-size:10px;color:var(--text-muted)">▼</span>
                   </summary>
                   <table style="margin:0">
-                    <tr><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_preferred"}}</th><th>{{t "exit_rules_admin.col_created"}}</th><th></th></tr>
+                    <tr><th>{{t "exit_rules_admin.bulk_relay_col"}}</th><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_preferred"}}</th><th>{{t "exit_rules_admin.col_created"}}</th><th></th></tr>
                     {{range $item.Rules}}<tr>
+                      <td><input type="checkbox" form="bulk-relay-form" name="rule_ids" value="{{.ID}}" aria-label="{{tf "exit_rules_admin.bulk_relay_check" .TargetValue}}"></td>
                       <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
                       <td><span class="tag">{{.TargetType}}</span></td>
                       <td class="col-target"><code>{{.TargetValue}}</code></td>
@@ -531,8 +563,9 @@
               {{else}}
                 {{/* Ungrouped-rules tail: flat table, no header. */}}
                 <table>
-                  <tr><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_preferred"}}</th><th>{{t "exit_rules_admin.col_created"}}</th><th></th></tr>
+                  <tr><th>{{t "exit_rules_admin.bulk_relay_col"}}</th><th>{{t "exit_rules_admin.col_action"}}</th><th>{{t "exit_rules_admin.col_type"}}</th><th>{{t "exit_rules_admin.col_resource"}}</th><th>{{t "exit_rules_admin.col_parent"}}</th><th>{{t "exit_rules_admin.col_preferred"}}</th><th>{{t "exit_rules_admin.col_created"}}</th><th></th></tr>
                   {{range $item.Rules}}<tr>
+                    <td><input type="checkbox" form="bulk-relay-form" name="rule_ids" value="{{.ID}}" aria-label="{{tf "exit_rules_admin.bulk_relay_check" .TargetValue}}"></td>
                     <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
                     <td><span class="tag">{{.TargetType}}</span></td>
                     <td class="col-target"><code>{{.TargetValue}}</code></td>
@@ -630,7 +663,7 @@
         <td>{{if $q.DeviceHostname}}<code>{{$q.DeviceHostname}}</code>{{else}}<span style="color:var(--text-muted)">—</span>{{end}}</td>
         <td>{{if $q.FromRelay}}<code>{{$q.FromRelay}}</code>{{else}}<span style="color:var(--text-muted)">—</span>{{end}}</td>
         <td><code>{{$q.ToRelay}}</code></td>
-        <td style="font-size:11px" title="{{range $q.Prefixes}}{{.}} {{end}}">{{len $q.Prefixes}}</td>
+        <td style="font-size:11px" title="{{range $q.Prefixes}}{{.}} {{end}}">{{len $q.Prefixes}}{{if $q.ManualLabel}}<div><span class="tag tag-warning" title="{{tf "exit_rules_admin.relay_request_manual_pins_title" $q.ManualLabel}}"><i class="fa-solid fa-lock"></i> {{tf "exit_rules_admin.relay_request_manual_pins" $q.ManualLabel}}</span></div>{{end}}</td>
         <td style="font-size:11px">{{if $q.AffectedLabel}}<span class="tag tag-warning" title="{{$q.AffectedLabel}}"><i class="fa-solid fa-users"></i> {{$q.AffectedLabel}}</span>{{else}}<span style="color:var(--text-muted)">{{t "exit_rules_admin.relay_request_affected_none"}}</span>{{end}}</td>
         <td style="font-size:11px">{{$q.Note}}</td>
         <td style="text-align:right">

@@ -121,7 +121,14 @@ func GetRelayPolicy(d *sql.DB, username string) (string, error) {
 	if d == nil {
 		return RelayPolicyRequireApproval, nil
 	}
-	rows, err := d.Query(`SELECT scope, mode FROM exit_relay_policies WHERE scope IN ('global', ?)`,
+	// B471: `$1`, never `?`. B449 fixed exactly this shape in one query of the same
+	// feature and the remaining sites were left behind — on PostgreSQL `scope IN
+	// ('global', ?)` is a SYNTAX ERROR (SQLSTATE 42601, `?` parses as an operator), so
+	// every policy read failed, which in turn made the request card fall back to
+	// "require_approval" and every decision answer "no such pending request" on the
+	// operator's PostgreSQL install. `$n` is the universal form (modernc/sqlite binds it
+	// by ordinal, pgx requires it) — see internal/db/placeholders.go.
+	rows, err := d.Query(`SELECT scope, mode FROM exit_relay_policies WHERE scope IN ('global', $1)`,
 		relayUserPrefix+strings.ToLower(strings.TrimSpace(username)))
 	if err != nil {
 		return RelayPolicyRequireApproval, err
@@ -155,7 +162,7 @@ func SetRelayPolicy(d *sql.DB, username, mode, by string) error {
 	if d == nil {
 		return errors.New("relay policy: no database")
 	}
-	_, err := d.Exec(`INSERT INTO exit_relay_policies (scope, mode, updated_by, updated_at) VALUES (?, ?, ?, ?)
+	_, err := d.Exec(`INSERT INTO exit_relay_policies (scope, mode, updated_by, updated_at) VALUES ($1, $2, $3, $4)
 	                  ON CONFLICT (scope) DO UPDATE SET mode = excluded.mode, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
 		scope, m, by, time.Now().Unix())
 	return err
@@ -171,7 +178,7 @@ func DeleteRelayPolicy(d *sql.DB, username string) error {
 	if strings.TrimSpace(username) != "" {
 		scope = relayUserPrefix + strings.ToLower(strings.TrimSpace(username))
 	}
-	_, err := d.Exec(`DELETE FROM exit_relay_policies WHERE scope = ?`, scope)
+	_, err := d.Exec(`DELETE FROM exit_relay_policies WHERE scope = $1`, scope)
 	return err
 }
 
@@ -262,7 +269,7 @@ func CreateRelayRequest(env RelayRequestEnv, in RelayRequestInput) (RelayRequest
 	}
 	res, err := env.DB.Exec(`INSERT INTO exit_relay_requests
 	    (user_id, username, device_hostname, from_relay, to_relay, prefixes, status, note, created_at, updated_at)
-	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		req.UserID, req.Username, req.DeviceHostname, req.FromRelay, req.ToRelay,
 		strings.Join(prefixes, " "), req.Status, req.Note, req.CreatedAt, req.UpdatedAt)
 	if err != nil {
@@ -310,7 +317,7 @@ func ListRelayRequestsByUser(d *sql.DB, userID int64, limit int) ([]RelayRequest
 	}
 	rows, err := d.Query(`SELECT id, user_id, username, device_hostname, from_relay, to_relay, prefixes, status, note,
 	                             decided_by, decided_at, created_at, updated_at FROM exit_relay_requests
-	                       WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, userID, limit)
+	                       WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2`, userID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -341,11 +348,15 @@ func ListRelayRequests(d *sql.DB, status string, limit int) ([]RelayRequest, err
 	             decided_by, decided_at, created_at, updated_at FROM exit_relay_requests`
 	args := []any{}
 	if strings.TrimSpace(status) != "" {
-		q += ` WHERE status = ?`
+		// B471: numbered by position, because the LIMIT placeholder must not reuse $1.
+		q += ` WHERE status = $1`
 		args = append(args, status)
+		q += ` ORDER BY created_at DESC, id DESC LIMIT $2`
+		args = append(args, limit)
+	} else {
+		q += ` ORDER BY created_at DESC, id DESC LIMIT $1`
+		args = append(args, limit)
 	}
-	q += ` ORDER BY created_at DESC, id DESC LIMIT ?`
-	args = append(args, limit)
 	rows, err := d.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -374,7 +385,7 @@ func DecideRelayRequest(env RelayRequestEnv, id int64, approve bool, admin, note
 	var r RelayRequest
 	var prefixes string
 	err := env.DB.QueryRow(`SELECT id, user_id, username, device_hostname, from_relay, to_relay, prefixes, status, note
-	                          FROM exit_relay_requests WHERE id = ?`, id).
+	                          FROM exit_relay_requests WHERE id = $1`, id).
 		Scan(&r.ID, &r.UserID, &r.Username, &r.DeviceHostname, &r.FromRelay, &r.ToRelay, &prefixes, &r.Status, &r.Note)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrRelayRequestNotFound
@@ -399,7 +410,7 @@ func DecideRelayRequest(env RelayRequestEnv, id int64, approve bool, admin, note
 		applied = true
 	}
 	if _, err := env.DB.Exec(`UPDATE exit_relay_requests
-	      SET status = ?, note = ?, decided_by = ?, decided_at = ?, updated_at = ? WHERE id = ?`,
+	      SET status = $1, note = $2, decided_by = $3, decided_at = $4, updated_at = $5 WHERE id = $6`,
 		status, note, admin, now, now, id); err != nil {
 		return r, err
 	}

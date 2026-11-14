@@ -863,6 +863,11 @@ func registerRoutes(
 	// user. The handler does its own IsAdmin check (defense-in-depth), exactly
 	// like PostAdminExitRule above.
 	mux.Handle("POST /admin/exit-rules/bulk", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRulesBulk)))
+	// B471 (2026-11-14): move a SELECTION of rules to another relay in one decision.
+	// Separate from /bulk (which ADDS rows): a rule's natural key includes its relay, so
+	// "delete + add" is not a move — it leaves two rows claiming the same prefix and lets
+	// the hostname tie-break decide the owner. The handler does its own IsAdmin check.
+	mux.Handle("POST /admin/exit-rules/bulk-relay", authMW(http.HandlerFunc(exitRulesSvc.PostAdminBulkRelayMove)))
 	// B440 (2026-10-29): the exit-node REQUEST channel. A user asks for another relay
 	// for one of their rules; the operator answers per user / globally, and an approval
 	// is exactly the manual prefix pin + ACL re-apply the exit-nodes page performs.

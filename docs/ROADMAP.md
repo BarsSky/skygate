@@ -6,20 +6,17 @@ blocked, and the technical-debt register. It replaces the pre-v1.6 set
 2026-09-18 documentation restructure — the full text of every removed plan stays
 in git history.
 
-**Last updated:** 2026-11-14 (v1.5.217 cycle — B470: the two halves of one routing
-decision disagreed and nothing said so. On the live tailnet `basic` exits through
-karolina while `prefix_owner` had the Cloudflare ranges on emilia (a 1:1 claim tie
-broken alphabetically, over rules that had drifted), and since `via` is a permission
-FILTER the device silently lost those prefixes; the coverage was thin as well
-(`discordapp.net`/`discord.tools` have no A records, `discord.com`/`discord.gg` were
-39/46 single `/32`s, three CDN hostnames had no rules). New `skygate prefix-owner`
-verb pins prefixes and moves the rules that claim them, reusing the panel's
-primitives, auditing with the panel's action names, and re-applying the ACL in the
-schema headscale is serving. Running it exposed that with `SKYGATE_ACL_VIA_ENABLED`
-unset — the DEFAULT — no policy could be applied at all: the per-device mesh block
-wrote bare tags into the legacy `acls[]` schema, where every `dst` entry is parsed as
-`host:ports`. The `Last updated` line itself is the drift detector B330 C4 asks for,
-so it moves with the release.)
+**Last updated:** 2026-11-14 (v1.5.218 cycle — B471: the operator asked whether a GROUP of rules can
+be moved to another exit node «штатно», and whether a non-admin can ask for it. Three answers became
+code: `POST /admin/exit-rules/bulk-relay` (checkboxes in the rule tree referencing one form by id, no
+JavaScript; rules rewritten IN PLACE — delete+add creates a second claim because the natural key
+includes the relay — with the manual PIN as a separate, explicitly ticked decision, and with the ACL
+re-apply + route sync so the new relay actually serves the prefixes); a multi-select on
+`/my/exit-rules` so one request can carry a group; and a decision card that names the hand-made pins
+an approval would overwrite. Along the way the B440 request channel turned out to be **dead on
+PostgreSQL** — its queries used `?` placeholders, which PostgreSQL answers with `SQLSTATE 42601`, so
+every policy read failed and every decision said "no such pending request". The `Last updated` line
+itself is the drift detector B330 C4 asks for, so it moves with the release.)
 
 > **This file was 85 releases behind.** Until 2026-10-01 it still described the
 > **v1.5.9** cycle (`Version line: v1.5.9`, "Last updated 2026-09-18"), so every

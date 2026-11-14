@@ -57,6 +57,11 @@ type RelayRequestRow struct {
 	// StatusLabel is the translated status, resolved here with the same globals the
 	// template funcmap's `t` reads: a template cannot call tf with a dynamic key.
 	StatusLabel string
+	// ManualLabel (B471) names the prefixes of this request that the operator pinned BY
+	// HAND, with the relay holding them. An approval OVERWRITES such a pin (SetManual IS
+	// the manual pin), so the operator must see it before deciding — otherwise "одобрил, а
+	// часть адресов осталась на месте" looks like a bug in the apply path.
+	ManualLabel string
 }
 
 // RelayPolicyRow is one stored policy row, ready to render.
@@ -294,14 +299,15 @@ func (s *Service) relayRequestAffectedUsers(prefixes []string) []string {
 	if len(prefixes) == 0 {
 		return nil
 	}
-	marks := make([]string, 0, len(prefixes))
 	args := make([]any, 0, len(prefixes))
+	// B471: `?` is SQLite's form and a PostgreSQL syntax error, so this cross-user list
+	// was silently EMPTY on every PostgreSQL install (an error that `return nil` hid).
+	// The shared helper emits `$1, $2, ...`, which both backends bind.
 	for _, p := range prefixes {
-		marks = append(marks, "?")
 		args = append(args, p)
 	}
 	q := `SELECT DISTINCT username FROM device_rules
-	       WHERE enabled = 1 AND target_value IN (` + strings.Join(marks, ",") + `)
+	       WHERE enabled = 1 AND target_value IN (` + db.PlaceholdersList(len(prefixes)) + `)
 	       ORDER BY username`
 	rows, err := s.dbc().Query(q, args...)
 	if err != nil {
@@ -321,6 +327,9 @@ func (s *Service) relayRequestAffectedUsers(prefixes []string) []string {
 // decorateRelayRequests attaches the cross-user list to each row.
 func (s *Service) decorateRelayRequests(in []RelayRequest) []RelayRequestRow {
 	out := make([]RelayRequestRow, 0, len(in))
+	// One pin snapshot for the whole queue (B471): the manual-pin label is per row, and a
+	// query per row would be a page-proportional cost for a string.
+	pins := s.pinsByPrefix()
 	for _, r := range in {
 		// The requester is not "affected by others": the list answers «кого ещё это
 		// заденет», and a row that names the asker would hide the cross-user fact.
@@ -333,6 +342,7 @@ func (s *Service) decorateRelayRequests(in []RelayRequest) []RelayRequestRow {
 		out = append(out, RelayRequestRow{
 			RelayRequest: r, AffectedUsers: affected, AffectedLabel: strings.Join(affected, ", "),
 			StatusLabel: relayStatusLabel(r.Status),
+			ManualLabel: manualPinsLabelFrom(pins, r.Prefixes),
 		})
 	}
 	return out
@@ -422,26 +432,55 @@ func (s *Service) PostMyRelayRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	lang := s.I18n.LangFromRequest(r)
 	back := "/my/exit-rules"
-	ruleID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("rule_id")), 10, 64)
+	// B471: the form can send SEVERAL rule ids (a group ask). `?rule_id=…` still works
+	// because it is the same field — parseRuleIDs reads every value, which is what a
+	// multi-select posts.
+	ruleIDs := parseRuleIDs(r.Form["rule_id"])
 	toRelay := strings.TrimSpace(r.FormValue("to_relay"))
-	if ruleID <= 0 || toRelay == "" {
+	if len(ruleIDs) == 0 || toRelay == "" {
 		http.Redirect(w, r, back+"?relay_err="+url.QueryEscape(s.I18n.T(lang, "exit_rules.relay_request_bad_form")), http.StatusSeeOther)
 		return
 	}
-	var deviceHost, target, kind, ruleRelay string
-	var deviceID int64
-	if err := s.dbc().QueryRow(`SELECT device_hostname, target_value, target_type, COALESCE(device_id,0), exit_node_id
-	                              FROM device_rules WHERE id = $1 AND user_id = $2 AND enabled = 1`, ruleID, c.UserID).
-		Scan(&deviceHost, &target, &kind, &deviceID, &ruleRelay); err != nil {
-		http.Redirect(w, r, back+"?relay_err="+url.QueryEscape(s.I18n.T(lang, "exit_rules.relay_request_not_yours")), http.StatusSeeOther)
-		return
+	// One ask, one decision: the prefixes of EVERY selected rule are unioned into a single
+	// request, because the operator would otherwise approve the same move N times — and the
+	// stored row (and its audit trail) must describe the decision that was actually made.
+	devices := []string{}
+	devSeen := map[string]bool{}
+	owners := []string{}
+	ownerSeen := map[string]bool{}
+	prefixes := []string{}
+	for _, ruleID := range ruleIDs {
+		var deviceHost, target, kind, ruleRelay string
+		var deviceID int64
+		if err := s.dbc().QueryRow(`SELECT device_hostname, target_value, target_type, COALESCE(device_id,0), exit_node_id
+		                              FROM device_rules WHERE id = $1 AND user_id = $2 AND enabled = 1`, ruleID, c.UserID).
+			Scan(&deviceHost, &target, &kind, &deviceID, &ruleRelay); err != nil {
+			http.Redirect(w, r, back+"?relay_err="+url.QueryEscape(s.I18n.T(lang, "exit_rules.relay_request_not_yours")), http.StatusSeeOther)
+			return
+		}
+		if !devSeen[deviceHost] {
+			devSeen[deviceHost] = true
+			devices = append(devices, deviceHost)
+		}
+		if relay := NormalizeRelay(ruleRelay); relay != "" && !ownerSeen[relay] {
+			ownerSeen[relay] = true
+			owners = append(owners, relay)
+		}
+		prefixes = append(prefixes, s.relayRequestPrefixes(c.UserID, deviceID, ruleRelay, kind, target)...)
 	}
-	prefixes := s.relayRequestPrefixes(c.UserID, deviceID, ruleRelay, kind, target)
+	prefixes = cleanPrefixes(prefixes)
 	if len(prefixes) == 0 {
 		http.Redirect(w, r, back+"?relay_err="+url.QueryEscape(s.I18n.T(lang, "exit_rules.relay_request_no_prefixes")), http.StatusSeeOther)
 		return
 	}
-	owner := NormalizeRelay(prefixowner.OwnerByPrefix(s.dbc())[prefixes[0]])
+	// A group ask can span rules that name DIFFERENT relays today; the request is "put all
+	// of these addresses on the target relay", so the "from" side is only informational —
+	// it is left empty when the selection is mixed instead of inventing one of them.
+	owner := ""
+	if len(owners) == 1 {
+		owner = owners[0]
+	}
+	deviceHost := strings.Join(devices, ", ")
 	out, err := CreateRelayRequest(s.relayRequestEnv(c.Username), RelayRequestInput{
 		UserID: c.UserID, Username: c.Username, DeviceHostname: deviceHost,
 		FromRelay: owner, ToRelay: toRelay, Prefixes: prefixes,
@@ -458,7 +497,7 @@ func (s *Service) PostMyRelayRequest(w http.ResponseWriter, r *http.Request) {
 			msg = s.I18n.T(lang, "exit_rules.relay_request_no_prefixes")
 		}
 		s.Backend.Audit(c.UserID, c.Username, "relay_request_refused",
-			fmt.Sprintf("rule=%d to=%s err=%v", ruleID, toRelay, err))
+			fmt.Sprintf("rules=%v to=%s err=%v", ruleIDs, toRelay, err))
 		http.Redirect(w, r, back+"?relay_err="+url.QueryEscape(msg), http.StatusSeeOther)
 		return
 	}
@@ -466,8 +505,12 @@ func (s *Service) PostMyRelayRequest(w http.ResponseWriter, r *http.Request) {
 	if out.Request.Status == RelayRequestAutoApproved {
 		action = "relay_request_auto_approved"
 	}
+	if owner == "" {
+		owner = "(mixed)"
+	}
 	s.Backend.Audit(c.UserID, c.Username, action,
-		fmt.Sprintf("request=%d device=%s from=%s to=%s prefixes=%d", out.Request.ID, deviceHost, owner, toRelay, len(prefixes)))
+		fmt.Sprintf("request=%d rules=%d device=%s from=%s to=%s prefixes=%d",
+			out.Request.ID, len(ruleIDs), deviceHost, owner, toRelay, len(prefixes)))
 	msg := s.I18n.T(lang, "exit_rules.relay_request_sent_flash")
 	if out.Request.Status == RelayRequestAutoApproved {
 		msg = s.I18n.Tf(lang, "exit_rules.relay_request_auto_flash", toRelay)
