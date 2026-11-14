@@ -609,6 +609,10 @@ func registerRoutes(
 	mux.Handle("POST /admin/ha/cluster/failover", authMW(http.HandlerFunc(adminSvc.PostAdminHAClusterFailover)))
 	mux.Handle("POST /admin/ha/dns/save", authMW(http.HandlerFunc(adminSvc.PostAdminHADNSCredsSave)))
 	mux.Handle("POST /admin/ha/dns/test", authMW(http.HandlerFunc(adminSvc.PostAdminHADNSCredsTest)))
+	// B472 (2026-11-14): the panel twin of the CLI's `dns-records` — read-only, so the
+	// operator can see the current A record from the page instead of a shell on the host that
+	// is about to be stopped.
+	mux.Handle("POST /admin/ha/dns/records", authMW(http.HandlerFunc(adminSvc.PostAdminHADNSRecords)))
 
 	// v1.5.0 / B194 — auto-deploy framework pages.
 	//

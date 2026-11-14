@@ -154,13 +154,20 @@
 </div>
 
 {{/* ===================== Section 4: External DNS (the configured DNS provider) ===================== */}}
+{{/* B472 (2026-11-14): this form must be USABLE. Pre-B472 the certificate field was `required`
+     (a leftover of the mTLS model B468 removed), so the browser refused to submit the one shape
+     the server wants — `Credentials.Validate()` accepts — and for reg.ru EXPECTS — an empty
+     certificate, and a stored one made the client try mTLS. The field is now a collapsed,
+     OPTIONAL detail with a hint that says so, the test button's result actually arrives (the
+     handler used to compute and drop it), and a read-only «Read the zone» button shows the
+     current A-record from the page instead of a shell on the host being stopped. */}}
 <div class="card">
   <h3><i class="fa-solid fa-globe"></i>{{t "ha.section_external_dns"}}</h3>
   <p style="color:var(--text-muted);font-size:13px">{{t "ha.dns_help" | safeHTML}}</p>
   {{if not .Data.DNSConfigured}}
     <div class="alert alert-warning"><i class="fa-solid fa-triangle-exclamation"></i> {{t "ha.dns_not_configured"}}</div>
   {{else}}
-    <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> the configured DNS provider credentials configured.</div>
+    <div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{t "ha.dns_configured_ok"}}</div>
   {{end}}
   <form method="POST" action="/admin/ha/dns/save" style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
     <div>
@@ -176,14 +183,16 @@
       <input type="text" name="login" placeholder="user@example.com" required style="width:100%">
     </div>
     <div style="grid-column:1/3">
-      <label style="font-size:12px;color:var(--text-muted)">{{t "ha.dns_cert"}}</label>
-      <textarea name="cert_pem" rows="5" required placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
-        style="width:100%;font-family:var(--font-mono);font-size:12px"></textarea>
-    </div>
-    <div style="grid-column:1/3">
       <label style="font-size:12px;color:var(--text-muted)">{{t "ha.dns_password"}}</label>
       <input type="password" name="password" required style="width:100%">
     </div>
+    <details style="grid-column:1/3;margin:2px 0 6px 0">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">{{t "ha.dns_cert_optional"}}</summary>
+      <div style="font-size:11px;color:var(--text-muted);margin:6px 0">{{t "ha.dns_cert_hint"}}</div>
+      <textarea name="cert_pem" rows="4" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+        aria-label="{{t "ha.dns_cert"}}"
+        style="width:100%;font-family:var(--font-mono);font-size:12px"></textarea>
+    </details>
     <div style="grid-column:1/3;display:flex;gap:8px">
       <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{t "ha.dns_save"}}</button>
       <button type="submit" form="dns-test" formaction="/admin/ha/dns/test" formmethod="post" class="btn btn-secondary">
@@ -192,6 +201,13 @@
     </div>
   </form>
   <form id="dns-test" method="POST" action="/admin/ha/dns/test" style="display:none"></form>
+  <form method="POST" action="/admin/ha/dns/records" style="margin-top:10px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;flex:1 1 240px;min-width:0">
+      {{t "ha.dns_records_names"}}
+      <input type="text" name="names" value="skygate" placeholder="skygate,head,derp" style="width:100%;font-size:13px">
+    </label>
+    <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-list"></i> {{t "ha.dns_records"}}</button>
+  </form>
 </div>
 
 {{/* ===================== Section 5: Force actions ===================== */}}

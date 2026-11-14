@@ -60,6 +60,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/ha"
 	extcreds "skygate/internal/ha/dnsexternal"
+	"skygate/internal/i18n"
 )
 
 // ---------- GET /admin/ha (the page) ---------------------------------
@@ -789,47 +790,34 @@ func (s *Service) PostAdminHADNSCredsSave(w http.ResponseWriter, r *http.Request
 
 // ---------- POST /admin/ha/extcreds/test -------------------------------
 
-// PostAdminHADNSCredsTest calls extcreds.Store.TestConnection
-// and renders the result inline (success / auth_error /
-// network_error / not_configured). Doesn't redirect — the
-// page shows the test badge on the next render.
+// PostAdminHADNSCredsTest calls extcreds.Store.TestConnection and FLASHES the result.
+//
+// B472 (2026-11-14) — THE BUTTON USED TO SAY NOTHING. The handler built a sentence, then threw it
+// away (`_ = ok`) and redirected with an EMPTY flash, while the four i18n keys for those very
+// sentences sat unused. A control that answers nothing is worse than no control: the operator
+// concludes the panel is broken instead of the credentials. The result now travels in the flash
+// (success → `?ok=`, every failure → `?err=`), and the wording lives in dnsTestMessage so all four
+// outcomes are testable.
 func (s *Service) PostAdminHADNSCredsTest(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+	lang := s.I18n.LangFromRequest(r)
 	if s.DNSCredsStore == nil {
-		haRedirect(w, r, "", "external store not configured on this skygate instance")
+		haRedirect(w, r, "", i18n.T(lang, "ha.dns_store_missing"))
 		return
 	}
 	res, err := s.DNSCredsStore.TestConnection(r.Context())
-	ok := "Test failed: " + err.Error()
-	if err == nil {
-		switch res.Status {
-		case "ok":
-			ok = fmt.Sprintf("Test OK (latency %dms, HTTP %d).", res.LatencyMS, res.HTTPStatus)
-		case "auth_error":
-			ok = "Test FAILED (auth): " + res.Message
-		case "network_error":
-			ok = "Test FAILED (network): " + res.Message
-		case "not_configured":
-			ok = "Test skipped: credentials not fully configured."
-		default:
-			ok = "Test result: " + res.Status + " — " + res.Message
-		}
+	msg, success := dnsTestMessage(lang, res, err)
+	s.Backend.Audit(c.UserID, c.Username, "ha.dns.creds.test",
+		fmt.Sprintf("status=%s http=%d latency_ms=%d", res.Status, res.HTTPStatus, res.LatencyMS))
+	if success {
+		haRedirect(w, r, msg, "")
+		return
 	}
-	// Render the result inline by passing it through the
-	// flash "info" param. The page re-renders with the badge
-	// text from the external page data — but the extcreds
-	// section's inline result is computed by the page GET.
-	// We cheat by appending the result to the info flash.
-	haRedirect(w, r, "", "")
-	_ = ok
-	// (The info-flash-as-result trick is documented in the
-	// template. A dedicated inline render would be cleaner
-	// but the redirect-after-POST pattern is what every
-	// other admin form uses; consistency wins.)
+	haRedirect(w, r, "", msg)
 }
 
 // ---------- Pure helpers (testable without DB) -------------------------

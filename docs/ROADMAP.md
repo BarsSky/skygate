@@ -6,17 +6,16 @@ blocked, and the technical-debt register. It replaces the pre-v1.6 set
 2026-09-18 documentation restructure — the full text of every removed plan stays
 in git history.
 
-**Last updated:** 2026-11-14 (v1.5.218 cycle — B471: the operator asked whether a GROUP of rules can
-be moved to another exit node «штатно», and whether a non-admin can ask for it. Three answers became
-code: `POST /admin/exit-rules/bulk-relay` (checkboxes in the rule tree referencing one form by id, no
-JavaScript; rules rewritten IN PLACE — delete+add creates a second claim because the natural key
-includes the relay — with the manual PIN as a separate, explicitly ticked decision, and with the ACL
-re-apply + route sync so the new relay actually serves the prefixes); a multi-select on
-`/my/exit-rules` so one request can carry a group; and a decision card that names the hand-made pins
-an approval would overwrite. Along the way the B440 request channel turned out to be **dead on
-PostgreSQL** — its queries used `?` placeholders, which PostgreSQL answers with `SQLSTATE 42601`, so
-every policy read failed and every decision said "no such pending request". The `Last updated` line
-itself is the drift detector B330 C4 asks for, so it moves with the release.)
+**Last updated:** 2026-11-14 (v1.5.219 cycle — B472: «по кредам куда задать на самом skygate есть
+поле ввода?» — the field existed on `/admin/ha` and could not be used. The certificate field was
+`required` (a leftover of the mTLS model B468 removed) while the server wanted it EMPTY for reg.ru,
+so the browser refused to submit; the test button computed a sentence and threw it away while four
+i18n keys for those sentences sat unused; and nothing on the page showed the current A-record, so the
+runbook's first question needed a shell on the host about to be stopped. Now the certificate is a
+collapsed optional detail with a «leave it empty for reg.ru» hint, the test outcome is worded once
+(pure `dnsTestMessage`, all six shapes, clipped to one line) and flashed, and a read-only «Read the
+zone» shows the A/AAAA records. The `Last updated` line itself is the drift detector B330 C4 asks
+for, so it moves with the release.)
 
 > **This file was 85 releases behind.** Until 2026-10-01 it still described the
 > **v1.5.9** cycle (`Version line: v1.5.9`, "Last updated 2026-09-18"), so every

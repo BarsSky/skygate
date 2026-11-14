@@ -1043,11 +1043,24 @@ refuses to report success if the registrar still answers a different one.
 The provider is reg.ru's API (B468): a login, the account's **alternative password** created in
 the API section of the account (not the account password), and the zone.
 
-**Source the unit's environment first.** The CLI verbs read the same variables the service gets from
-`EnvironmentFile=`; a bare shell does not have them, and the first symptom is a confusing
-`config: HEADSCALE_API_KEY is required`. Also check that file is plain UTF-8/LF — a BOM or CRLF
-endings (both were present on one host) make `set -a; . env` fail with "syntax error near unexpected
-token" / "$'\r': command not found" while the unit itself stays healthy.
+**Two ways in, one store.** The panel form on `/admin/ha` («External DNS (provider)») and the CLI
+below write the same encrypted rows, so either is enough — use the panel when you have a browser and
+the CLI when you are already on the host.
+
+*Panel:* `/admin/ha` → «External DNS (provider)» → fill **Zone** (`example.com`), **Login**, the
+**alternative password**, and press **Save**. The **«Read the zone»** button (read-only) prints the
+current A/AAAA record for the names you list, and **«Test connection»** reports the answer in the
+banner — `ok` with the latency, or the reason (auth / network / not configured).
+
+The **client certificate** field is for providers that use mTLS. **reg.ru does not** — leave it
+empty. A stored certificate makes the client present it on connect and the API rejects it, which is
+why the field is folded away as an optional detail.
+
+**Source the unit's environment first (CLI path).** The CLI verbs read the same variables the
+service gets from `EnvironmentFile=`; a bare shell does not have them, and the first symptom is a
+confusing `config: HEADSCALE_API_KEY is required`. Also check that file is plain UTF-8/LF — a BOM or
+CRLF endings (both were present on one host) make `set -a; . env` fail with "syntax error near
+unexpected token" / "$'\r': command not found" while the unit itself stays healthy.
 
 ```bash
 set -a; . /etc/skygate/skygate.env; set +a     # as root, or: sudo -i bash -c '…'
