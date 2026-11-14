@@ -94,7 +94,11 @@ for h in \
     "func (s *Service) PostAdminHAReclaim" \
     "func (s *Service) PostAdminHADNSCredsSave" \
     "func (s *Service) PostAdminHADNSCredsTest"; do
-    if grep -q -F "$h" internal/feature/admin/ha.go; then
+    # B473 renegotiation: the handler must exist in the admin package, not in ha.go specifically. The
+    # DNS credential save moved to ha_dns_form_b473.go when the card became schema-driven — the same
+    # package, the same http.Handler, a file whose name says which block owns it. Asserting the file was
+    # asserting the LAYOUT of a package, which is not a contract.
+    if grep -q -F "$h" internal/feature/admin/*.go; then
         ok "ha.go has handler: ${h##* }"
     else
         bad "ha.go missing handler: $h"
@@ -115,14 +119,20 @@ for t in \
     "TestParseHAChainEditForm_UpdatesPriorities" \
     "TestParseHAChainEditForm_MissingOldHostnames" \
     "TestParseHAChainEditForm_DuplicatePriorities" \
-    "TestParseHADNSCredsForm_OK" \
-    "TestParseHADNSCredsForm_TrimsWhitespace" \
-    "TestParseHADNSCredsForm_DelegatesToCredentialsValidate" \
+    "TestB473_StoredSecretIsNotPrefilled" \
+    "TestB473_EmptySubmissionKeepsStoredFields" \
+    "TestB473_UnknownSubmissionFieldsAreDropped" \
     "TestIsHAForceActionConfirmationCorrect" \
     "TestFormatHAChainForTemplate_EmptyChain" \
     "TestFormatHAChainForTemplate_ListsMembers" \
     "TestRegapiCredentialsValidate_FormAndLibraryAgree"; do
-    if grep -q "$t" internal/feature/admin/ha_test.go; then
+    # B473 renegotiation: the three TestParseHADNSCredsForm_* tests pinned a FLAT parser that could only
+    # express one provider's four fixed answers, and B473 deleted that parser (a second provider — B474 —
+    # cannot be written against it). The same behaviour is pinned by the schema-driven field policy in
+    # ha_dns_form_b473_test.go: an empty masked field keeps the stored secret, undeclared keys are
+    # dropped, a stored secret is never prefilled. The names below are what those tests are actually
+    # called; the grep looks them up in the same package.
+    if grep -rq "$t" internal/feature/admin/ha_test.go internal/feature/admin/ha_dns_form_b473_test.go; then
         ok "ha_test.go has test: $t"
     else
         bad "ha_test.go missing test: $t"
