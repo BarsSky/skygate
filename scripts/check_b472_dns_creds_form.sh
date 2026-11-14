@@ -86,6 +86,28 @@ if has "$CAT" 'leave it empty for reg.ru' || has "$CAT" 'оставьте пол
 else
   bad "A4: the stale «paste your SSL cert» instruction survives"
 fi
+# B472.1: the provider is a FACT posted as a hidden field, not a readonly input holding an internal
+# alias — a control the operator is denied teaches them nothing and looks broken.
+if has "$TPL" 'type="hidden" name="provider" value="external"'; then
+  ok "A5: the provider is posted as a hidden field"
+else
+  bad "A5: the provider is not posted — saving would store an empty provider"
+fi
+if grep -n -- 'name="provider"[^>]*readonly' "$TPL" >/dev/null 2>&1; then
+  bad "A5b: the provider is still a readonly input (reads as a control the operator is denied)"
+else
+  ok "A5b: no readonly provider input remains"
+fi
+if has "$TPL" 'ha.dns_zone_hint' && has "$CAT" 'Do NOT put the registrar'; then
+  ok "A5c: the zone carries a hint that names the mistake actually made (the registrar's own domain)"
+else
+  bad "A5c: the zone field is unexplained — `reg.ru` was typed into it live"
+fi
+if has "$HA" 'normalizeDNSZone(form.Get("zone"))'; then
+  ok "A5d: the zone is normalised before it reaches the registrar (URL/paste/case/trailing dot)"
+else
+  bad "A5d: the raw zone goes to the API"
+fi
 
 # --- B: the other fields stay required --------------------------------------------
 _b=0
@@ -188,13 +210,14 @@ fi
 # --- G: tests -----------------------------------------------------------------------
 _g=0
 for t in TestB472_TestMessageCoversEveryStatus TestB472_TestMessageKeepsOneLine \
-         TestB472_ParseDNSNames TestB472_RecordsSummary; do
+         TestB472_ParseDNSNames TestB472_RecordsSummary \
+         TestB472_1_ZoneIsNormalised TestB472_1_ProviderIsAFact; do
   has "$TESTS" "func $t(" && _g=$((_g+1))
 done
-if [ "$_g" -ge 4 ]; then
-  ok "G1: all four test outcomes, the one-line rule, the names field and the zone summary are pinned"
+if [ "$_g" -ge 6 ]; then
+  ok "G1: all four test outcomes, the one-line rule, the names field, the zone summary, the zone normaliser and the provider post are pinned"
 else
-  bad "G1: only $_g of 4 behaviour tests exist"
+  bad "G1: only $_g of 6 behaviour tests exist"
 fi
 _h=0
 for t in TestB472_CertificateIsOptional TestB472_CardOffersBothButtons TestB472_FlashRenders; do

@@ -97,6 +97,31 @@ func parseDNSNames(raw string) []string {
 	return out
 }
 
+// normalizeDNSZone makes the zone field tolerant of what people actually paste: a full URL, a
+// hostname with a trailing dot, capitals, stray spaces. What it does NOT do is guess which domain
+// the operator meant — the registrar answers "zone not found" for a domain the account does not
+// manage, and that is the honest error (the «Read the zone» button surfaces it verbatim).
+//
+// The live confusion it exists for: the field was filled with `reg.ru` — the REGISTRAR's own
+// domain — instead of the zone the account manages.
+func normalizeDNSZone(raw string) string {
+	z := strings.TrimSpace(raw)
+	if z == "" {
+		return ""
+	}
+	if i := strings.Index(z, "://"); i >= 0 {
+		z = z[i+3:]
+	}
+	if i := strings.IndexAny(z, "/?#"); i >= 0 {
+		z = z[:i]
+	}
+	// a zone is a name, never host:port
+	if i := strings.LastIndex(z, ":"); i > 0 && !strings.Contains(z[i:], "]") {
+		z = z[:i]
+	}
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(z), "."))
+}
+
 // dnsRecordsSummary renders "name: A [ttl]" lines from the zone answer. Only A/AAAA records are
 // interesting here (the switch moves an address); everything else is counted, not listed.
 func dnsRecordsSummary(lang string, names []string, perName map[string][]extcreds.RegRecord) string {

@@ -18,6 +18,7 @@ fresh install), [`derp.md`](derp.md) (relay configuration),
    - [2.2 External nginx / Nginx Proxy Manager](#22-external-nginx--nginx-proxy-manager)
    - [2.3 Direct, Tailscale TLS, native headscale TLS](#23-direct-tailscale-tls-native-headscale-tls)
    - [2.4 Forwarded-header contract](#24-forwarded-header-contract)
+   - [2.5 A host that terminates TLS itself (VPS / native install)](#25-a-host-that-terminates-tls-itself-vps--native-install)
 3. [DNS / ports checklist and certificate renewal](#3-dns--ports-checklist-and-certificate-renewal)
    - [3.1 DNS records](#31-dns-records)
    - [3.2 Inbound ports](#32-inbound-ports)
@@ -180,6 +181,13 @@ the shipped `Dockerfile.caddy` builds an image with the DNS plugin baked in.
 For `CADDY_DNS_PROVIDER=http` the stock image is fine.
 
 ### 2.2 External nginx / Nginx Proxy Manager
+
+> **Optional variant, not a requirement.** A proxy in front is the right shape when one already
+> exists (the reference agent VM uses NPM on a separate LAN host, and it is organised around that
+> VM). A host that must be self-sufficient — a VPS with its own public address, which is what the
+> standby/second skygate host is — should terminate TLS **itself**: see [§2.5](#25-a-host-that-
+> terminates-tls-itself-vps--native-install). Choosing this section means the DNS record keeps
+> pointing at the PROXY, not at skygate's host.
 
 Use this when an existing reverse proxy already terminates TLS in front of
 the skygate VM (NPM on a separate host is the most common case).
@@ -494,6 +502,92 @@ scheme from `X-Forwarded-Proto` — that is stale. Keep sending the headers
 (they are standard, and any future proxy-awareness or logging will want
 them), but treat `SKYGATE_OIDC_ISSUER` as the single source of truth for the
 issuer URL (see [§4.2](#42-failure-modes-symptom--cause--fix)).
+
+### 2.5 A host that terminates TLS itself (VPS / native install)
+
+Use this for a host with its own public address and no proxy in front of it — the **standby skygate**
+(VPS, native systemd unit, SQLite). The public name resolves straight at that host; nothing else has
+to exist on the path.
+
+**Shape.** `:443` is a TLS terminator (Caddy below) → `http://127.0.0.1:8080` is skygate. Skygate
+itself never listens on TLS: it is an HTTP application, and the terminator is one package with one
+config file.
+
+**1. Open the ports** (the VPS firewall allows only SSH and the tailnet by default):
+
+```bash
+sudo ufw allow 80/tcp   # ACME HTTP-01, and the redirect to https
+sudo ufw allow 443/tcp
+sudo ufw status numbered
+```
+
+**2. Caddy, which gets and renews the certificate by itself:**
+
+```bash
+sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt-get update && sudo apt-get install -y caddy
+```
+
+`/etc/caddy/Caddyfile` (replace the name; drop `staging` from `acme_ca` for production — run once
+with the staging CA before the switch if you want to rehearse):
+
+```
+{
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+    email <ADMIN EMAIL>
+}
+
+skygate.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8080 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        # /admin/oidc/sync pushes the config to headscale and waits for its
+        # health check: give it the same long timeouts the nginx snippet uses.
+        transport http {
+            read_timeout 130s
+            write_timeout 130s
+        }
+    }
+}
+```
+
+```bash
+sudo systemctl reload caddy && sudo systemctl status caddy --no-pager
+```
+
+Caddy stores the pair under `/var/lib/caddy/.local/share/caddy/certificates/` and renews it about a
+third of the way through its lifetime — no cron, no `.version` file, nothing to babysit. Skygate's own
+HTTP-01 issuer (B467/B469, see [certificates.md](certificates.md)) is the alternative when the
+certificate must live *inside* skygate's data dir (a proxy that reads a fixed path): point Caddy at
+`tls /var/lib/skygate/certs/cert.pem /var/lib/skygate/certs/key.pem` and let skygate own the renewal.
+
+**3. Database on this host.** SQLite is the default and the intended state here:
+`SKYGATE_DB=sqlite:/var/lib/skygate/skygate.db` (the file lives in the unit's data dir, WAL on). A
+PostgreSQL backend can be attached later by changing the DSN — see
+[backup-restore-and-migration.md](backup-restore-and-migration.md) — and nothing in the TLS shape
+depends on which one is live.
+
+**4. Verify BEFORE the DNS flip** (this is the point of the shape — the terminator can be proven
+while the public name still points at the old host):
+
+```bash
+# From outside the VPS: reach THIS host while DNS still answers the old address.
+curl -fsS --resolve skygate.example.com:443:<VPS PUBLIC IP> https://skygate.example.com/healthz
+# Same thing for the certificate: the chain and the name must match.
+echo | openssl s_client -connect <VPS PUBLIC IP>:443 -servername skygate.example.com 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -enddate
+```
+
+Caddy can only OBTAIN the production certificate once the name resolves to the VPS, so before the flip
+expect either a staging certificate or an issuance error in `journalctl -u caddy`. Two clean ways to
+rehearse the whole path first: point a throwaway name at the VPS (a `nip.io`/`sslip.io` address such
+as `<VPS IP>.nip.io` needs no registrar at all), or pre-stage the certificate the old host already
+serves. The switch itself is [ha.md §6.4](ha.md) — stop A first, then flip the record.
 
 ---
 

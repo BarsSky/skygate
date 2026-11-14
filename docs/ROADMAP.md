@@ -6,15 +6,19 @@ blocked, and the technical-debt register. It replaces the pre-v1.6 set
 2026-09-18 documentation restructure — the full text of every removed plan stays
 in git history.
 
-**Last updated:** 2026-11-14 (v1.5.219 cycle — B472: «по кредам куда задать на самом skygate есть
-поле ввода?» — the field existed on `/admin/ha` and could not be used. The certificate field was
-`required` (a leftover of the mTLS model B468 removed) while the server wanted it EMPTY for reg.ru,
-so the browser refused to submit; the test button computed a sentence and threw it away while four
-i18n keys for those sentences sat unused; and nothing on the page showed the current A-record, so the
-runbook's first question needed a shell on the host about to be stopped. Now the certificate is a
-collapsed optional detail with a «leave it empty for reg.ru» hint, the test outcome is worded once
-(pure `dnsTestMessage`, all six shapes, clipped to one line) and flashed, and a read-only «Read the
-zone» shows the A/AAAA records. The `Last updated` line itself is the drift detector B330 C4 asks
+**Last updated:** 2026-11-14 (v1.5.220 cycle — B472.1: the /admin/ha card was usable but still
+misleading. The provider control was a `readonly` input holding the internal alias `external`, which
+reads as «a field you are not allowed to change»; it is now a stated fact (`reg.ru (API regru2)`)
+posted as a hidden field, because reg.ru is the only implemented provider (B468) and there is nothing
+to choose. The zone field now says what it wants — the domain the registrar MANAGES, not the
+registrar's own site and not a host name — and is normalised on save (a pasted URL, capitals, a
+trailing dot, `host:port`); the live mistake was `reg.ru` typed into it. «Read the zone» explains it
+wants subnames (`skygate,derp,head`). Same release: the docs that make the second host
+self-sufficient — a TLS terminator of its own (`docs/https.md` §2.5, Caddy + ufw + SQLite now / PG
+later), the two legitimate terminator shapes and the ACL prerequisite for a second skygate host
+(`docs/ha.md` §6.4), and an opt-in LIVE STUN probe of a real relay
+(`SKYGATE_STUN_PROBE_ADDR`, the project's own client — the hand-rolled one omitted FINGERPRINT and
+made a healthy relay look dead). The `Last updated` line itself is the drift detector B330 C4 asks
 for, so it moves with the release.)
 
 > **This file was 85 releases behind.** Until 2026-10-01 it still described the

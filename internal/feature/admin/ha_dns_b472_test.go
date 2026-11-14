@@ -13,6 +13,7 @@ package admin
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -122,5 +123,43 @@ func TestB472_RecordsSummary(t *testing.T) {
 	}
 	if strings.Contains(got, "mail.example.com") {
 		t.Errorf("a non-address record leaked into the address list: %q", got)
+	}
+}
+
+// TestB472_1_ZoneIsNormalised — the field people paste into: a URL, capitals, a trailing dot, a
+// port. None of those should reach the registrar verbatim, and none should be silently "guessed" —
+// a domain the account does not manage must still fail at the API, not be rewritten into one.
+func TestB472_1_ZoneIsNormalised(t *testing.T) {
+	cases := map[string]string{
+		"  Example.COM. ":           "example.com",
+		"https://example.com/":      "example.com",
+		"https://example.com/x?y=1": "example.com",
+		"example.com:443":           "example.com",
+		"reg.ru":                    "reg.ru", // NOT corrected: the API says "no such zone", which is honest
+		"":                          "",
+	}
+	for in, want := range cases {
+		if got := normalizeDNSZone(in); got != want {
+			t.Errorf("normalizeDNSZone(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestB472_1_ProviderIsAFact — the provider is not a choice (reg.ru is the only implementation), so
+// it is posted as a hidden field and shown as a value. A readonly INPUT holding the internal alias
+// "external" read as "a field you may not change" and taught the operator nothing.
+func TestB472_1_ProviderIsAFact(t *testing.T) {
+	got := b472RenderHA(t, &haPageData{DNSConfigured: false})
+	if !strings.Contains(got, `type="hidden" name="provider" value="external"`) {
+		t.Error("the provider is not posted as a hidden field — saving would store an empty provider")
+	}
+	if regexp.MustCompile(`(?s)<input[^>]*name="provider"[^>]*readonly`).MatchString(got) {
+		t.Error("the provider is still a readonly INPUT: it looks like a control the operator is denied")
+	}
+	if !strings.Contains(got, "reg.ru (API regru2)") {
+		t.Error("the page does not name the provider it actually uses")
+	}
+	if !strings.Contains(got, "ha.dns_zone_hint") || !strings.Contains(got, "ha.dns_records_names_hint") {
+		t.Error("the zone/names hints are missing — that is exactly where `reg.ru` was typed instead of the zone")
 	}
 }

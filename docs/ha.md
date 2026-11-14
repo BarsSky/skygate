@@ -1052,6 +1052,15 @@ the CLI when you are already on the host.
 current A/AAAA record for the names you list, and **«Test connection»** reports the answer in the
 banner — `ok` with the latency, or the reason (auth / network / not configured).
 
+**The zone is the domain the registrar manages — not the registrar's own site and not a host name.**
+For `skygate.example.com` the zone is `example.com` (the field is normalised on save, so a pasted
+`https://example.com/` or `EXAMPLE.COM.` becomes `example.com`). Putting the registrar's own domain
+there (the live mistake was `reg.ru`) does not point at anything: the API answers that the account
+has no such zone, which the test button and «Read the zone» report verbatim. The **provider** field is
+not editable because reg.ru is the only implemented provider (B468); it is posted as a fixed value.
+
+**«Read the zone» wants subnames, not host names**: with the zone `example.com`, list `skygate,derp,head`.
+
 The **client certificate** field is for providers that use mTLS. **reg.ru does not** — leave it
 empty. A stored certificate makes the client present it on connect and the API rejects it, which is
 why the field is folded away as an optional detail.
@@ -1090,6 +1099,18 @@ journalctl -u skygate -n 40 --no-pager | grep 'READ-ONLY COPY'        # MUST be 
 #   a copy runs with SKYGATE_READONLY_COPY=1 and does not publish, alert or switch DNS.
 #   Unset it in /etc/skygate/skygate.env BEFORE the switch (and restart), or B serves the panel
 #   and nothing else.
+
+# 0.1 B must be allowed to SSH to the relays — the ACL decides, not sshd ----------
+#   skygate pushes `--advertise-routes` to every relay over Tailscale SSH, so the SSH rule's
+#   `src` has to name B's node tag. The generator includes every `tag:dev-infra-skygate*`
+#   (and deliberately excludes those from the exit-node catch-all), so a standby answers to a
+#   `skygate-*` hostname; a differently named node (e.g. a VPS called `vps2` with
+#   `tag:dev-infra-vps2`) is REFUSED by policy:
+#     tailscale: tailnet policy does not permit you to SSH to this node
+#   Either give B a `skygate-standby` identity (rename + let the infra backfill re-tag it), or
+#   add its tag to the ssh rule by hand. Prove it from B BEFORE the switch:
+sudo -u skygate ssh -i <key> -o BatchMode=yes -o ConnectTimeout=8 root@<relay tailnet IP> 'echo OK'
+#   and the same with -p <port> for a relay whose sshd is not on 22.
 
 # 1. STOP A first (the two rules above) --------------------------------------
 #    native:  systemctl stop skygate ; systemctl stop headscale
@@ -1137,8 +1158,17 @@ which is why it was lowered before the first move.
   the data on it does not advance, and the read-only flag is what keeps it honest (B465).
 * It does not stop the *old* headscale's nodes from reconnecting: when A comes back with the same
   noise key, its nodes reconnect to it. That is why A stays stopped after the switch.
-* It does not touch the proxy. If the terminator routes by IP (an `upstream` line), the proxy
-  configuration moves with the DNS record — see [https.md](https.md) §2.2.
+* It does not touch the proxy — and there are **two valid shapes**, so decide which one B is before
+  the switch:
+  * **B terminates TLS itself** (the shape the standby VPS uses: it owns a public address and needs
+    no proxy). Then the DNS record moves to B and the terminator is local — Caddy with automatic
+    Let's Encrypt, see [https.md](https.md) §2.5. Nothing else changes hands.
+  * **A keeps the external terminator** (the current agent VM's NPM on a separate LAN host, organised
+    around that VM). Then the DNS record may not move at all: only the proxy's `upstream` line
+    changes to B, see [https.md](https.md) §2.2. That is also the zero-downtime way to rehearse the
+    switch, because the certificate in front never changes.
+  Mixing the two leaves the public name pointing at a host that answers nothing, which is why §6.4.2
+  step 3 comes after step 2: the address the record will name must already be serving.
 
 ### 6.5 Recovering a host whose Tailscale iptables rules ate the network
 

@@ -916,7 +916,10 @@ func parseHADNSCredsForm(form url.Values) (extcreds.Credentials, error) {
 	c := extcreds.Credentials{
 		Provider: strings.TrimSpace(form.Get("provider")),
 		Login:    strings.TrimSpace(form.Get("login")),
-		Zone:     strings.TrimSpace(form.Get("zone")),
+		// B472.1: the zone is normalised (URL/paste/case/trailing dot) before it reaches the
+		// registrar. The live case was `reg.ru` typed into a field that wants the zone the
+		// ACCOUNT manages, and `https://<zone>/` pasted from a browser.
+		Zone:     normalizeDNSZone(form.Get("zone")),
 		CertPEM:  strings.TrimSpace(form.Get("cert_pem")),
 		Password: strings.TrimSpace(form.Get("password")),
 	}
