@@ -202,6 +202,7 @@ var pgMigrations = []MigrationEntry{
 	{81, "v0.81 (B408.1): system_tests_runs.only_test — a single-test re-run must leave a trace instead of being thrown away", "migrations_v0_81_system_test_only.go", migrateV081PG},
 	{82, "v0.82 (B440): exit_relay_requests + exit_relay_policies — a user may ASK for another exit node, the operator decides per user and globally, and the ask is a row with its own decision", "migrations_v0_82_relay_requests.go", migrateV082PG},
 	{83, "v0.83 (B457): derp_health keyed by (region_id, host) — one verdict per RELAY, so two relays in one region stay distinguishable", "migrations_v0_83_derp_health_per_relay.go", migrateV083PG},
+	{84, "v0.84 (B473): dns_provider_creds — credentials become ROWS (one per provider+zone), so a provider is an adapter plus a field schema instead of five fixed settings keys; the legacy ha.dns row is imported ONCE", "migrations_v0_84_dns_providers.go", migrateV084PG},
 }
 
 // PGMigrations returns the list of migrations the current

@@ -59,7 +59,6 @@ import (
 
 	"skygate/internal/db"
 	"skygate/internal/ha"
-	extcreds "skygate/internal/ha/dnsexternal"
 	"skygate/internal/i18n"
 )
 
@@ -75,7 +74,12 @@ type haPageData struct {
 	SelfHostname        string
 	SelfRole            string
 	DNSConfigured       bool
-	RecentEvents        []haAuditEvent
+	// B473: DNSCard is the schema-driven External-DNS card. The template renders the provider
+	// <select> from DNSCard.Specs and the credential inputs from DNSCard.ActiveSpec.Fields, so
+	// adding a provider to the registry adds it to the page — no template edit, no hardcoded
+	// reg.ru field list.
+	DNSCard      dnsCardView
+	RecentEvents []haAuditEvent
 	// ClusterNodes is the Section 5b "Cluster node failover"
 	// table (v1.5.0+ / Phase 3.4). One row per cluster_node,
 	// with the pre-computed Elig* flags so the template
@@ -175,6 +179,10 @@ func (s *Service) collectHAPageData(r *http.Request) *haPageData {
 	if s.DNSCredsStore != nil {
 		data.DNSConfigured = s.DNSCredsStore.IsConfigured()
 	}
+	// B473: the card's own data — the provider registry, one group of inputs per provider, the
+	// stored values that may be shown again, and the capability badges. It is built even when the
+	// store is nil, because the form must be renderable on a first-run install.
+	data.DNSCard = s.buildDNSCardView(s.I18n.LangFromRequest(r), r.URL.Query().Get("provider"))
 
 	// 4. Last 20 HA events. B208: UNION of audit_log +
 	// cluster_audit. The audit_log branch catches the
@@ -760,33 +768,6 @@ func (s *Service) forceAction(w http.ResponseWriter, r *http.Request, action str
 // the only writer; the autosave on first /admin/ha load
 // does NOT seed anything (a fresh deploy shows the "not
 // configured" badge until the operator pastes the cert).
-func (s *Service) PostAdminHADNSCredsSave(w http.ResponseWriter, r *http.Request) {
-	c := s.Backend.CurrentUser(r)
-	if c == nil || !c.IsAdmin {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
-	if s.DNSCredsStore == nil {
-		haRedirect(w, r, "", "external store not configured on this skygate instance")
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		haRedirect(w, r, "", "Form parse error: "+err.Error())
-		return
-	}
-	creds, err := parseHADNSCredsForm(r.Form)
-	if err != nil {
-		haRedirect(w, r, "", err.Error())
-		return
-	}
-	if err := s.DNSCredsStore.Save(creds); err != nil {
-		haRedirect(w, r, "", "Save credentials: "+err.Error())
-		return
-	}
-	s.Backend.Audit(c.UserID, c.Username, "ha.dns.creds.save",
-		fmt.Sprintf("provider=%s zone=%s login=%s", creds.Provider, creds.Zone, creds.Login))
-	haRedirect(w, r, "the DNS provider credentials saved. Click \"Test connection\" to verify.", "")
-}
 
 // ---------- POST /admin/ha/extcreds/test -------------------------------
 
@@ -908,26 +889,15 @@ func parseHAChainEditForm(form url.Values) (map[string]ha.HaMember, error) {
 	return updates, nil
 }
 
-// parseHADNSCredsForm turns the the DNS provider creds form into a
-// extcreds.Credentials. The validation is delegated to
-// extcreds.Credentials.Validate() so the form parser stays
-// pure-shape (no semantic checks duplicated).
-func parseHADNSCredsForm(form url.Values) (extcreds.Credentials, error) {
-	c := extcreds.Credentials{
-		Provider: strings.TrimSpace(form.Get("provider")),
-		Login:    strings.TrimSpace(form.Get("login")),
-		// B472.1: the zone is normalised (URL/paste/case/trailing dot) before it reaches the
-		// registrar. The live case was `reg.ru` typed into a field that wants the zone the
-		// ACCOUNT manages, and `https://<zone>/` pasted from a browser.
-		Zone:     normalizeDNSZone(form.Get("zone")),
-		CertPEM:  strings.TrimSpace(form.Get("cert_pem")),
-		Password: strings.TrimSpace(form.Get("password")),
-	}
-	if err := c.Validate(); err != nil {
-		return extcreds.Credentials{}, err
-	}
-	return c, nil
-}
+// B473 REMOVED the flat reg.ru-shaped credential parser that used to live here.
+//
+// It could only ever produce `extcreds.Credentials` — one provider's four fixed answers — which is the
+// second half of why the card could not be adapted to another provider (the first half was the storage,
+// which B473 moved to `dns_provider_creds` rows). The save path is now
+// `saveDNSCredentials` in ha_dns_form_b473.go: it looks the provider up in the `internal/dns` registry,
+// reads the fields that provider's schema declares, merges them over what is stored (an empty masked
+// field means "keep") and writes one ROW. `Credentials.Validate()` is unchanged and still guards the
+// programmatic callers — the panel simply no longer builds a Credentials value by hand.
 
 // isHAForceActionConfirmationCorrect checks the typed
 // confirmation against the expected value. The expected

@@ -51,6 +51,27 @@ type Provider interface {
 	// /etc/skygate.env configs depend on it.
 	Name() string
 
+	// Capabilities reports what this provider can actually do. B473: the panel and the runbook read it
+	// to say "this provider cannot change the TTL / has no TXT" instead of attempting the call and
+	// reporting a provider error that reads like a bug. A provider MUST answer ErrUnsupported from an
+	// operation it does not advertise here.
+	Capabilities() Capabilities
+
+	// SetTTL rewrites the TTL of the A record for `name` (the switch runbook lowers it a day before).
+	// Returns ErrUnsupported when !Capabilities().TTL.
+	SetTTL(ctx context.Context, zone, name string, ttl int) error
+
+	// ListRecords returns the zone's records (read-only) for the panel's «Read the zone». It is the
+	// WHOLE zone on purpose: the operator's question is "what is in DNS", and a call per name would
+	// multiply provider round trips.
+	ListRecords(ctx context.Context, zone string) ([]Record, error)
+
+	// CreateTXT / DeleteTXT are the DNS-01 half (a CA needs a TXT under _acme-challenge). Return
+	// ErrUnsupported when !Capabilities().TXT — which is the shipped reg.ru adapter's honest answer
+	// today, because that client implements A records only.
+	CreateTXT(ctx context.Context, zone, name, value string, ttl int) error
+	DeleteTXT(ctx context.Context, zone, name, value string) error
+
 	// GetRecord fetches the current A-record for `name`
 	// in `zone` and returns the IPv4 / IPv6 string.
 	// `name` is the bare record (e.g. "skygate", NOT

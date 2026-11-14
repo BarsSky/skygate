@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	dnsexternal "skygate/internal/dnsexternal"
 	extcreds "skygate/internal/ha/dnsexternal"
@@ -31,6 +32,12 @@ type BuildDeps struct {
 	// the skygate DB; ignored by providers that read
 	// credentials from elsewhere (env, file, K8s secret).
 	SecretKey string
+	// Row is the dns_provider_creds row to build the provider from (B473). Non-nil means "use THESE
+	// credentials": the panel and the CLI pass the active row, so a provider is selected by DATA and
+	// the five legacy settings keys stay history after the one-time import. Nil keeps the pre-B473
+	// behaviour (read the legacy row), which the schedulers still rely on for an install that has
+	// never been saved through the panel.
+	Row *extcreds.ProviderRow
 }
 
 // BuildProvider returns a Provider matching the given name
@@ -64,6 +71,13 @@ func BuildProvider(name string, deps BuildDeps) (Provider, error) {
 		// speaks https://api.reg.ru/api/regru2 with a login + ALTERNATIVE password + zone.
 		// "external" stays accepted as a historical alias so an install whose SKYGATE_DNS_PROVIDER
 		// (or saved credential row) says "external" keeps building the same object.
+		//
+		// B473: when the caller passes a dns_provider_creds ROW, the client is built from THAT row's
+		// fields and never reads the legacy settings keys — that is how a credential row (and later a
+		// second provider) reaches the same code path.
+		if deps.Row != nil {
+			return &externalAdapter{Client: dnsexternal.NewClientWithCreds(dnsexternal.CredentialsFromRow(*deps.Row))}, nil
+		}
 		if deps.DB == nil {
 			return nil, fmt.Errorf("dns: the %q provider requires a non-nil DB", name)
 		}
@@ -101,6 +115,52 @@ type externalAdapter struct {
 }
 
 func (a *externalAdapter) Name() string { return a.Client.Name() }
+
+// Capabilities — B473. reg.ru over our client does A records and TTL (both implemented in
+// internal/dnsexternal); AAAA and TXT are NOT implemented there, and saying so is the honest answer
+// the panel and the runbook read. Returning "everything true" would make the DNS-01 / AAAA paths
+// attempt a call that cannot work.
+func (a *externalAdapter) Capabilities() Capabilities { return regruSpec.Caps }
+
+// SetTTL lowers (or raises) the TTL of the A record — the switch runbook's "lower it a day before".
+func (a *externalAdapter) SetTTL(ctx context.Context, zone, name string, ttl int) error {
+	if !a.Capabilities().TTL {
+		return ErrUnsupported
+	}
+	return a.Client.SetTTL(ctx, zone, name, ttl)
+}
+
+// ListRecords is the panel's «Read the zone». It reuses the client's RecordsFor, which already
+// returns every record in the zone plus the A record a switch would move.
+func (a *externalAdapter) ListRecords(ctx context.Context, zone string) ([]Record, error) {
+	all, _, _, err := a.Client.RecordsFor(ctx, zone, "")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Record, 0, len(all))
+	for _, r := range all {
+		name := strings.TrimSpace(r.Subname)
+		if name == "" {
+			name = strings.TrimSpace(r.Name)
+		}
+		typ := strings.TrimSpace(r.Rectype)
+		if typ == "" {
+			typ = strings.TrimSpace(r.Type)
+		}
+		out = append(out, Record{Name: name, Type: typ, Content: strings.TrimSpace(r.Content), TTL: r.TTL})
+	}
+	return out, nil
+}
+
+// CreateTXT / DeleteTXT — not implemented by the shipped reg.ru client, and reported as such rather
+// than faked. A provider that CAN do DNS-01 (Cloudflare, RFC 2136) implements them for real.
+func (a *externalAdapter) CreateTXT(ctx context.Context, zone, name, value string, ttl int) error {
+	return ErrUnsupported
+}
+
+func (a *externalAdapter) DeleteTXT(ctx context.Context, zone, name, value string) error {
+	return ErrUnsupported
+}
 
 func (a *externalAdapter) GetRecord(ctx context.Context, zone, name string) (string, error) {
 	ip, err := a.Client.GetRecord(ctx, zone, name)

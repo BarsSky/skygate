@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"skygate/internal/dns"
 	extcreds "skygate/internal/ha/dnsexternal"
 	"skygate/internal/i18n"
 )
@@ -103,14 +104,14 @@ func TestB472_ParseDNSNames(t *testing.T) {
 // missing A record is SAID, not rendered as an empty gap.
 func TestB472_RecordsSummary(t *testing.T) {
 	lang := b472Catalog(t)
-	perName := map[string][]extcreds.RegRecord{
+	perName := map[string][]dns.Record{
 		"skygate": {
-			{Rectype: "A", Content: "45.152.198.217", TTL: 300},
-			{Rectype: "A", Content: "10.0.0.5", TTL: 300},
-			{Rectype: "MX", Content: "mail.example.com"},
+			{Name: "skygate", Type: "A", Content: "45.152.198.217", TTL: 300},
+			{Name: "skygate", Type: "A", Content: "10.0.0.5", TTL: 300},
+			{Name: "skygate", Type: "MX", Content: "mail.example.com"},
 		},
-		"head": {{Type: "A", Content: "192.0.2.10"}}, // the alternate spelling of the field names
-		"derp": nil,                                  // no record at all
+		"head": {{Name: "head", Type: "A", Content: "192.0.2.10"}},
+		"derp": nil, // no record at all
 	}
 	got := dnsRecordsSummary(lang, []string{"skygate", "head", "derp"}, perName)
 	for _, want := range []string{"skygate: 10.0.0.5, 45.152.198.217", "TTL 300", "192.0.2.10", "derp"} {
@@ -123,6 +124,37 @@ func TestB472_RecordsSummary(t *testing.T) {
 	}
 	if strings.Contains(got, "mail.example.com") {
 		t.Errorf("a non-address record leaked into the address list: %q", got)
+	}
+	// The count of non-address records is part of the contract: a name holding an MX says so, it is
+	// not silently "no A record" (which would hide that the zone DID answer for that name).
+	if !strings.Contains(got, "(+1") {
+		t.Errorf("the non-address record was not counted: %q", got)
+	}
+}
+
+// TestB473_RecordsSummaryIsProviderNeutral — B473 replaced the reg.ru record struct with
+// `dns.Record`, so the same sentence serves every provider. A provider that answers names with the
+// FQDN (Cloudflare) and one that answers bare subnames (reg.ru) must produce the SAME line, and a
+// name the zone does not hold must still be reported instead of vanishing.
+func TestB473_RecordsSummaryIsProviderNeutral(t *testing.T) {
+	lang := b472Catalog(t)
+	all := []dns.Record{
+		{Name: "skygate.skynas.ru", Type: "a", Content: "45.152.198.217", TTL: 600},
+		{Name: "HEAD", Type: "A", Content: "192.0.2.10"},
+		{Name: "other.skynas.ru", Type: "A", Content: "192.0.2.99"},
+	}
+	got := dnsRecordsSummaryByNames(lang, []string{"skygate", "head", "derp"}, all)
+	if !strings.Contains(got, "45.152.198.217") || !strings.Contains(got, "TTL 600") {
+		t.Errorf("the FQDN answer was not folded onto the asked name: %q", got)
+	}
+	if !strings.Contains(got, "192.0.2.10") {
+		t.Errorf("an upper-case record name was dropped: %q", got)
+	}
+	if strings.Contains(got, "192.0.2.99") {
+		t.Errorf("a name nobody asked about leaked into the summary: %q", got)
+	}
+	if !strings.Contains(got, "derp: ") {
+		t.Errorf("a name with no record must be named, not dropped: %q", got)
 	}
 }
 
@@ -145,16 +177,21 @@ func TestB472_1_ZoneIsNormalised(t *testing.T) {
 	}
 }
 
-// TestB472_1_ProviderIsAFact — the provider is not a choice (reg.ru is the only implementation), so
-// it is posted as a hidden field and shown as a value. A readonly INPUT holding the internal alias
-// "external" read as "a field you may not change" and taught the operator nothing.
+// TestB472_1_ProviderIsAFact — the provider used to be a FACT (reg.ru was the only implementation), so
+// B472.1 posted it as a hidden field and showed it as a value: the old readonly INPUT holding the
+// internal alias "external" read as "a control you may not change" and taught the operator nothing.
+//
+// B473 renegotiates exactly ONE half of that: the provider is a CHOICE now, driven by the registry — so
+// it is a <select> populated from dns.Specs(), not a hidden field. What must NOT come back is the
+// readonly-input shape (a control that looks disabled), and the page must still NAME the provider in
+// words a human recognises instead of showing the internal identifier.
 func TestB472_1_ProviderIsAFact(t *testing.T) {
 	got := b472RenderHA(t, &haPageData{DNSConfigured: false})
-	if !strings.Contains(got, `type="hidden" name="provider" value="external"`) {
-		t.Error("the provider is not posted as a hidden field — saving would store an empty provider")
+	if !regexp.MustCompile(`(?s)<select[^>]*name="provider"`).MatchString(got) {
+		t.Error("the provider is not a <select> — saving would store whatever was last hardcoded")
 	}
 	if regexp.MustCompile(`(?s)<input[^>]*name="provider"[^>]*readonly`).MatchString(got) {
-		t.Error("the provider is still a readonly INPUT: it looks like a control the operator is denied")
+		t.Error("the provider is a readonly INPUT: it looks like a control the operator is denied")
 	}
 	if !strings.Contains(got, "reg.ru (API regru2)") {
 		t.Error("the page does not name the provider it actually uses")

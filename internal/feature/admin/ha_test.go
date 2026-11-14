@@ -195,76 +195,18 @@ func TestParseHAChainEditForm_DuplicatePriorities(t *testing.T) {
 	}
 }
 
-// ---------- parseHADNSCredsForm ------------------------------------
-
-func TestParseHADNSCredsForm_OK(t *testing.T) {
-	form := url.Values{}
-	form.Set("provider", "external")
-	form.Set("login", "user@example.com")
-	form.Set("zone", "example.com")
-	form.Set("cert_pem", "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n")
-	form.Set("password", "alt-pass-2026")
-
-	got, err := parseHADNSCredsForm(form)
-	if err != nil {
-		t.Fatalf("expected nil, got %v", err)
-	}
-	if got.Provider != "external" || got.Login != "user@example.com" || got.Zone != "example.com" {
-		t.Errorf("basic fields wrong: %+v", got)
-	}
-	if !strings.Contains(got.CertPEM, "BEGIN CERTIFICATE") {
-		t.Errorf("CertPEM was not preserved: %q", got.CertPEM)
-	}
-	if got.Password != "alt-pass-2026" {
-		t.Errorf("Password = %q, want alt-pass-2026", got.Password)
-	}
-}
-
-func TestParseHADNSCredsForm_TrimsWhitespace(t *testing.T) {
-	form := url.Values{}
-	form.Set("provider", "  external  ")
-	form.Set("login", "  user@example.com  ")
-	form.Set("zone", "  example.com  ")
-	form.Set("cert_pem", "  -----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n  ")
-	form.Set("password", "  alt-pass-2026  ")
-
-	got, err := parseHADNSCredsForm(form)
-	if err != nil {
-		t.Fatalf("expected nil, got %v", err)
-	}
-	if got.Provider != "external" {
-		t.Errorf("Provider = %q, want external (whitespace not trimmed)", got.Provider)
-	}
-	if got.Zone != "example.com" {
-		t.Errorf("Zone = %q, want example.com (whitespace not trimmed)", got.Zone)
-	}
-}
-
-func TestParseHADNSCredsForm_DelegatesToCredentialsValidate(t *testing.T) {
-	// The form parser is intentionally thin — it does ONLY the
-	// string trimming + forwarding. The semantic checks
-	// (provider == "external", login non-empty, cert PEM format,
-	// etc.) live in extcreds.Credentials.Validate() so the same
-	// rules apply to programmatic callers (CLI, tests, future
-	// /admin/certificates). The form parser just returns
-	// whatever the user pasted + calls Validate.
-	form := url.Values{}
-	form.Set("provider", "external")
-	form.Set("login", "")
-	form.Set("zone", "example.com")
-	form.Set("cert_pem", "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n")
-	form.Set("password", "alt-pass-2026")
-
-	_, err := parseHADNSCredsForm(form)
-	if err == nil {
-		t.Fatal("expected error when login is empty (delegated Validate)")
-	}
-	// The error should mention "login is required" — comes from
-	// extcreds.Credentials.Validate(), not from the form parser.
-	if !strings.Contains(err.Error(), "login is required") {
-		t.Fatalf("expected 'login is required', got %q", err.Error())
-	}
-}
+// ---------- the DNS credential form ---------------------------------
+//
+// B473 REMOVED the flat `parseHADNSCredsForm` and the three tests that pinned it (OK / whitespace /
+// delegated validation): the parser could only express one provider's four fixed answers, which is
+// exactly what the schema-driven save path replaced. The behaviour those tests protected is pinned
+// where it now lives:
+//
+//   - `Credentials.Validate()` — internal/ha/dnsexternal (its own tests, unchanged);
+//   - the field policy (drop undeclared keys, empty masked field keeps the stored value, which fields
+//     are required) — TestB473_* in ha_dns_form_b473_test.go;
+//   - the rendered form (no `required` on the certificate, one group per provider, only the editing
+//     group submits) — TestB472_*/TestB473_* in ha_dns_render_b472_test.go.
 
 // ---------- isHAForceActionConfirmationCorrect -----------------------
 

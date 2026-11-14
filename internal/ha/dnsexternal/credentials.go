@@ -163,30 +163,19 @@ func (s *Store) Save(c Credentials) error {
 	if s.SecretKey == "" {
 		return db.ErrSecretKeyUnset
 	}
-	certEnc, err := db.EncryptForColumn(c.CertPEM, s.SecretKey)
+	// B473: credentials are ROWS now (one per provider+zone). The five legacy settings keys below are
+	// no longer the source of truth; they are kept readable for the one-time import
+	// (provider_store_b473.go) and for a downgrade, and this path stops writing them so the two
+	// stores cannot disagree about the password.
+	fields := map[string]string{"login": c.Login, "password": c.Password}
+	if c.CertPEM != "" {
+		fields["cert_pem"] = c.CertPEM
+	}
+	id, err := s.SaveProviderRow(c.Provider, c.Zone, fields)
 	if err != nil {
-		return fmt.Errorf("dnsexternal: encrypt cert: %w", err)
+		return err
 	}
-	pwEnc, err := db.EncryptForColumn(c.Password, s.SecretKey)
-	if err != nil {
-		return fmt.Errorf("dnsexternal: encrypt password: %w", err)
-	}
-	if err := db.SetGlobalSetting(s.DB, ProviderKey, c.Provider); err != nil {
-		return fmt.Errorf("dnsexternal: save provider: %w", err)
-	}
-	if err := db.SetGlobalSetting(s.DB, LoginKey, c.Login); err != nil {
-		return fmt.Errorf("dnsexternal: save login: %w", err)
-	}
-	if err := db.SetGlobalSetting(s.DB, ZoneKey, c.Zone); err != nil {
-		return fmt.Errorf("dnsexternal: save zone: %w", err)
-	}
-	if err := db.SetGlobalSetting(s.DB, CertPEMKey, certEnc); err != nil {
-		return fmt.Errorf("dnsexternal: save cert ciphertext: %w", err)
-	}
-	if err := db.SetGlobalSetting(s.DB, PasswordKey, pwEnc); err != nil {
-		return fmt.Errorf("dnsexternal: save password ciphertext: %w", err)
-	}
-	return nil
+	return s.SetActiveRow(id)
 }
 
 // Load reads the credentials back. If any row is missing,
@@ -195,6 +184,31 @@ func (s *Store) Save(c Credentials) error {
 // "not configured" badge and the operator pastes the cert
 // + password). Only DB / decrypt errors are surfaced.
 func (s *Store) Load() (Credentials, error) {
+	// B473: the ACTIVE credential row wins. The legacy keys are only the fallback for an install whose
+	// row has not been written yet — and the one-time import (provider_store_b473.go) normally fills it
+	// on the very first read.
+	if rows, rerr := s.ListProviderRows(); rerr == nil {
+		for _, row := range rows {
+			if row.Active && row.Enabled {
+				return Credentials{
+					Provider: row.Provider,
+					Login:    row.Field("login"),
+					Zone:     row.Zone,
+					Password: row.Secret("password"),
+					CertPEM:  row.Field("cert_pem"),
+				}, nil
+			}
+		}
+	}
+	return s.loadLegacy()
+}
+
+// loadLegacy reads the pre-B473 `ha.dns.*` settings keys.
+//
+// It is SEPARATE from Load() on purpose: the one-time import must read the legacy row WITHOUT going
+// through Load (which prefers the new table) and without recursing (Load → ListProviderRows →
+// ImportLegacyOnce → Load was an infinite recursion that overflowed the stack).
+func (s *Store) loadLegacy() (Credentials, error) {
 	provider, _ := db.GetGlobalSetting(s.DB, ProviderKey, "")
 	login, _ := db.GetGlobalSetting(s.DB, LoginKey, "")
 	zone, _ := db.GetGlobalSetting(s.DB, ZoneKey, "")
@@ -206,24 +220,30 @@ func (s *Store) Load() (Credentials, error) {
 	if err != nil {
 		return Credentials{}, fmt.Errorf("dnsexternal: load password ciphertext: %w", err)
 	}
-	if certEnc == "" || pwEnc == "" {
-		return Credentials{Provider: provider, Login: login, Zone: zone}, nil
+	// B473 — EACH SECRET IS DECRYPTED ON ITS OWN. Pre-fix this was one guard over BOTH ciphertexts
+	// (`if certEnc == "" || pwEnc == ""`), so a credential with a login + alternative password and NO
+	// certificate — which is exactly the correct reg.ru configuration (B468: that API has no mTLS) —
+	// came back with an EMPTY password. The first symptom is the panel's «Test» answering
+	// `auth_error` for correct credentials, and the CLI reporting `password=false` from
+	// `regapi-credentials show`; reporting it as "not configured" is at least honest, but it made the
+	// documented configuration impossible to use. The certificate is optional, so it is the
+	// certificate that may be absent — never a reason to drop the password.
+	out := Credentials{Provider: provider, Login: login, Zone: zone}
+	if certEnc != "" {
+		cert, derr := db.DecryptForColumn(certEnc, s.SecretKey)
+		if derr != nil {
+			return Credentials{}, fmt.Errorf("dnsexternal: decrypt cert: %w", derr)
+		}
+		out.CertPEM = cert
 	}
-	cert, err := db.DecryptForColumn(certEnc, s.SecretKey)
-	if err != nil {
-		return Credentials{}, fmt.Errorf("dnsexternal: decrypt cert: %w", err)
+	if pwEnc != "" {
+		pw, derr := db.DecryptForColumn(pwEnc, s.SecretKey)
+		if derr != nil {
+			return Credentials{}, fmt.Errorf("dnsexternal: decrypt password: %w", derr)
+		}
+		out.Password = pw
 	}
-	pw, err := db.DecryptForColumn(pwEnc, s.SecretKey)
-	if err != nil {
-		return Credentials{}, fmt.Errorf("dnsexternal: decrypt password: %w", err)
-	}
-	return Credentials{
-		Provider: provider,
-		Login:    login,
-		Zone:     zone,
-		CertPEM:  cert,
-		Password: pw,
-	}, nil
+	return out, nil
 }
 
 // Delete clears the 5 global_settings rows that hold
@@ -241,6 +261,16 @@ func (s *Store) Load() (Credentials, error) {
 // are orthogonal — see Save's comment for the same
 // reasoning).
 func (s *Store) Delete() error {
+	// B473: the rows are the live store, so a delete must remove them too — otherwise
+	// `regapi-credentials delete` would leave the provider configured and the operator would have no
+	// way to explain why "not configured" came back immediately after deleting.
+	if rows, err := s.ListProviderRows(); err == nil {
+		for _, row := range rows {
+			if derr := s.DeleteProviderRow(row.ID); derr != nil {
+				return derr
+			}
+		}
+	}
 	keys := []string{ProviderKey, LoginKey, ZoneKey, CertPEMKey, PasswordKey}
 	for _, k := range keys {
 		if err := db.DeleteGlobalSetting(s.DB, k); err != nil {

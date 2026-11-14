@@ -31,7 +31,7 @@ import (
 	"sort"
 	"strings"
 
-	dnsproviders "skygate/internal/dnsexternal"
+	"skygate/internal/dns"
 	extcreds "skygate/internal/ha/dnsexternal"
 	"skygate/internal/i18n"
 )
@@ -124,17 +124,17 @@ func normalizeDNSZone(raw string) string {
 
 // dnsRecordsSummary renders "name: A [ttl]" lines from the zone answer. Only A/AAAA records are
 // interesting here (the switch moves an address); everything else is counted, not listed.
-func dnsRecordsSummary(lang string, names []string, perName map[string][]extcreds.RegRecord) string {
+//
+// B473: it takes provider-neutral `dns.Record`s, so the same one-line summary serves every provider
+// instead of the reg.ru record struct.
+func dnsRecordsSummary(lang string, names []string, perName map[string][]dns.Record) string {
 	parts := make([]string, 0, len(names))
 	for _, name := range names {
 		addrs := []string{}
 		ttl := 0
 		others := 0
 		for _, r := range perName[name] {
-			typ := strings.ToUpper(strings.TrimSpace(r.Rectype))
-			if typ == "" {
-				typ = strings.ToUpper(strings.TrimSpace(r.Type))
-			}
+			typ := strings.ToUpper(strings.TrimSpace(r.Type))
 			switch typ {
 			case "A", "AAAA":
 				addrs = append(addrs, strings.TrimSpace(r.Content))
@@ -162,7 +162,9 @@ func dnsRecordsSummary(lang string, names []string, perName map[string][]extcred
 }
 
 // PostAdminHADNSRecords handles POST /admin/ha/dns/records — the panel twin of `dns-records`.
-// Read-only: it loads the zone and prints the A/AAAA records for the requested names.
+//
+// B473: it goes through the PROVIDER interface (`ListRecords`), built from the active credential ROW,
+// so it works for any provider the registry knows instead of importing the reg.ru client directly.
 func (s *Service) PostAdminHADNSRecords(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
@@ -179,25 +181,47 @@ func (s *Service) PostAdminHADNSRecords(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	names := parseDNSNames(r.FormValue("names"))
-	creds, err := s.DNSCredsStore.Load()
-	if err != nil || creds.Login == "" || creds.Password == "" || creds.Zone == "" {
+	provider, row, err := s.activeDNSProvider()
+	if err != nil {
 		haRedirect(w, r, "", i18n.T(lang, "ha.dns_test_not_configured"))
 		return
 	}
-	client := dnsproviders.NewClient(s.DNSCredsStore)
-	perName := make(map[string][]extcreds.RegRecord, len(names))
-	for _, name := range names {
-		recs, _, _, rerr := client.RecordsFor(r.Context(), creds.Zone, name)
-		if rerr != nil {
-			s.Backend.Audit(c.UserID, c.Username, "ha.dns.records_failed",
-				fmt.Sprintf("zone=%s names=%v err=%v", creds.Zone, names, rerr))
-			haRedirect(w, r, "", i18n.Tf(lang, "ha.dns_records_err", firstLineOf(rerr.Error())))
-			return
-		}
-		perName[name] = recs
+	recs, lerr := provider.ListRecords(r.Context(), row.Zone)
+	if lerr != nil {
+		s.Backend.Audit(c.UserID, c.Username, "ha.dns.records_failed",
+			fmt.Sprintf("provider=%s zone=%s err=%v", row.Provider, row.Zone, lerr))
+		haRedirect(w, r, "", i18n.Tf(lang, "ha.dns_records_err", firstLineOf(lerr.Error())))
+		return
 	}
-	summary := dnsRecordsSummary(lang, names, perName)
+	summary := dnsRecordsSummaryByNames(lang, names, recs)
 	s.Backend.Audit(c.UserID, c.Username, "ha.dns.records",
-		fmt.Sprintf("zone=%s names=%v result=%s", creds.Zone, names, summary))
-	haRedirect(w, r, i18n.Tf(lang, "ha.dns_records_ok", creds.Zone, summary), "")
+		fmt.Sprintf("provider=%s zone=%s names=%v result=%s", row.Provider, row.Zone, names, summary))
+	haRedirect(w, r, i18n.Tf(lang, "ha.dns_records_ok", row.Zone, summary), "")
+}
+
+// dnsRecordsSummaryByNames filters a whole-zone `ListRecords` answer down to the names the operator
+// asked about. Split from dnsRecordsSummary (which takes a per-name map) so the provider-agnostic
+// path needs no per-name round trips: one zone read, then the same one-line summary.
+func dnsRecordsSummaryByNames(lang string, names []string, all []dns.Record) string {
+	want := map[string]bool{}
+	for _, n := range names {
+		want[strings.ToLower(strings.TrimSpace(n))] = true
+	}
+	perName := map[string][]dns.Record{}
+	for _, rec := range all {
+		short := strings.ToLower(strings.TrimSpace(rec.Name))
+		// Providers may answer with the FQDN or the bare subname; accept both for the same zone.
+		if !want[short] {
+			base := short
+			if i := strings.IndexByte(short, '.'); i > 0 {
+				base = short[:i]
+			}
+			if !want[base] {
+				continue
+			}
+			short = base
+		}
+		perName[short] = append(perName[short], rec)
+	}
+	return dnsRecordsSummary(lang, names, perName)
 }

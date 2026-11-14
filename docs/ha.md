@@ -1040,30 +1040,53 @@ refuses to report success if the registrar still answers a different one.
 
 #### 6.4.1 Credentials for the DNS half
 
-The provider is reg.ru's API (B468): a login, the account's **alternative password** created in
+**The provider is a choice (B473).** The card on `/admin/ha` («External DNS (provider)») renders the
+provider's own field schema, so the shipped reg.ru adapter and a future Cloudflare (API token) or
+RFC 2136 (TSIG key) adapter are the same form: a `<select>` lists every provider the registry knows,
+and picking one reveals *its* fields. What each provider can do is shown as capability badges before
+you use it — a provider without TXT says so instead of failing during a DNS-01 attempt.
+
+Credentials are stored as **rows, one per `(provider, zone)`**, in the `dns_provider_creds` table
+(v0.84, both migration chains). The provider-specific fields live in one AES-256-GCM ciphertext
+(`fields_enc`, keyed by `SKYGATE_SECRET_KEY`), so adding a provider never needs a migration — only an
+adapter plus a field schema in `internal/dns/registry_b473.go`. The pre-B473 five-key `ha.dns.*` row is
+**imported once** into such a row (guarded by the `ha.dns.migrated` setting), so an upgrade keeps the
+credentials the install has been using and nothing is retyped. The active row is recorded in
+`dns.active_id`; with no pointer, the first enabled row is used.
+
+**Adding a provider** is three files and no configuration:
+
+1. an adapter implementing `dns.Provider` (`Capabilities`, `SetTTL`, `ListRecords`, `CreateTXT`,
+   `DeleteTXT`, plus get/update/test) — return `dns.ErrUnsupported` for what it genuinely cannot do;
+2. one `Spec` in the registry (name, label, `NeedsZone`, fields with `LabelKey`/`HelpKey`/`Kind`, and
+   `Caps`) — the labels are **i18n keys**, so they need an entry in both catalogues;
+3. one `case` in `dns.BuildProvider` that builds it from `BuildDeps.Row`.
+
+No migration, no template edit, no new settings key.
+
+The shipped provider is reg.ru's API (B468): a login, the account's **alternative password** created in
 the API section of the account (not the account password), and the zone.
 
-**Two ways in, one store.** The panel form on `/admin/ha` («External DNS (provider)») and the CLI
-below write the same encrypted rows, so either is enough — use the panel when you have a browser and
-the CLI when you are already on the host.
+**Two ways in, one store.** The panel form and the CLI below write the same encrypted rows, so either is
+enough — use the panel when you have a browser and the CLI when you are already on the host.
 
 *Panel:* `/admin/ha` → «External DNS (provider)» → fill **Zone** (`example.com`), **Login**, the
 **alternative password**, and press **Save**. The **«Read the zone»** button (read-only) prints the
 current A/AAAA record for the names you list, and **«Test connection»** reports the answer in the
-banner — `ok` with the latency, or the reason (auth / network / not configured).
+banner — `ok` with the latency, or the reason (auth / network / not configured). Both buttons act on the
+provider whose row is **active**, so saving reg.ru makes reg.ru the one they query.
 
 **The zone is the domain the registrar manages — not the registrar's own site and not a host name.**
 For `skygate.example.com` the zone is `example.com` (the field is normalised on save, so a pasted
 `https://example.com/` or `EXAMPLE.COM.` becomes `example.com`). Putting the registrar's own domain
 there (the live mistake was `reg.ru`) does not point at anything: the API answers that the account
-has no such zone, which the test button and «Read the zone» report verbatim. The **provider** field is
-not editable because reg.ru is the only implemented provider (B468); it is posted as a fixed value.
+has no such zone, which the test button and «Read the zone» report verbatim.
 
 **«Read the zone» wants subnames, not host names**: with the zone `example.com`, list `skygate,derp,head`.
 
 The **client certificate** field is for providers that use mTLS. **reg.ru does not** — leave it
-empty. A stored certificate makes the client present it on connect and the API rejects it, which is
-why the field is folded away as an optional detail.
+empty. A stored certificate makes the client present it on connect and the API rejects it. Because the
+field belongs to the provider's schema, a provider that *does* need mTLS simply declares it as required.
 
 **Source the unit's environment first (CLI path).** The CLI verbs read the same variables the
 service gets from `EnvironmentFile=`; a bare shell does not have them, and the first symptom is a

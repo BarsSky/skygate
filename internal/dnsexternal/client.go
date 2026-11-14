@@ -54,6 +54,33 @@ func NewClient(store *dnsexternal.Store) *Client {
 	return &Client{Store: store}
 }
 
+// NewClientWithCreds returns a Client that uses ALREADY DECRYPTED credentials for every call instead
+// of reading the store.
+//
+// B473: this is how a credential ROW (dns_provider_creds, one per provider+zone) reaches the provider
+// — the panel and the CLI build the row's provider, and the client must not go back to the five
+// legacy settings keys, which are history after the one-time import. It is also what a "test without
+// saving" would use.
+func NewClientWithCreds(c dnsexternal.Credentials) *Client {
+	return &Client{credsOverride: &c}
+}
+
+// CredentialsFromRow projects a dns_provider_creds row into the flat shape this client consumes. The
+// empty provider is normalised so the alias `external` cannot leak into a validation error.
+func CredentialsFromRow(row dnsexternal.ProviderRow) dnsexternal.Credentials {
+	provider := row.Provider
+	if provider == "" {
+		provider = dnsexternal.ProviderRegru
+	}
+	return dnsexternal.Credentials{
+		Provider: provider,
+		Login:    row.Field("login"),
+		Password: row.Secret("password"),
+		Zone:     row.Zone,
+		CertPEM:  row.Field("cert_pem"),
+	}
+}
+
 // Name reports the provider identifier this client implements. "regru" is the honest name; the
 // historical "external" value keeps working as an alias in the credential store.
 func (c *Client) Name() string { return "regru" }

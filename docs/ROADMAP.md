@@ -6,20 +6,19 @@ blocked, and the technical-debt register. It replaces the pre-v1.6 set
 2026-09-18 documentation restructure — the full text of every removed plan stays
 in git history.
 
-**Last updated:** 2026-11-14 (v1.5.220 cycle — B472.1: the /admin/ha card was usable but still
-misleading. The provider control was a `readonly` input holding the internal alias `external`, which
-reads as «a field you are not allowed to change»; it is now a stated fact (`reg.ru (API regru2)`)
-posted as a hidden field, because reg.ru is the only implemented provider (B468) and there is nothing
-to choose. The zone field now says what it wants — the domain the registrar MANAGES, not the
-registrar's own site and not a host name — and is normalised on save (a pasted URL, capitals, a
-trailing dot, `host:port`); the live mistake was `reg.ru` typed into it. «Read the zone» explains it
-wants subnames (`skygate,derp,head`). Same release: the docs that make the second host
-self-sufficient — a TLS terminator of its own (`docs/https.md` §2.5, Caddy + ufw + SQLite now / PG
-later), the two legitimate terminator shapes and the ACL prerequisite for a second skygate host
-(`docs/ha.md` §6.4), and an opt-in LIVE STUN probe of a real relay
-(`SKYGATE_STUN_PROBE_ADDR`, the project's own client — the hand-rolled one omitted FINGERPRINT and
-made a healthy relay look dead). The `Last updated` line itself is the drift detector B330 C4 asks
-for, so it moves with the release.)
+**Last updated:** 2026-11-14 (v1.5.221 cycle — B473: the DNS credential block was welded to one
+registrar, so «как адаптировать под разных провайдеров?» had no answer short of a rewrite. Three
+things moved at once: credentials are now ROWS in `dns_provider_creds` (v0.84, both chains, one set
+per `(provider, zone)`, provider fields as one AES-256-GCM ciphertext, the legacy `ha.dns.*` row
+imported exactly once behind `ha.dns.migrated`), `internal/dns.Provider` declares what it can do
+(`Capabilities` / `SetTTL` / `ListRecords` / `CreateTXT` / `DeleteTXT`, with the named
+`ErrUnsupported` for the honest refusal), and a provider REGISTRY owns each provider's fields, labels
+and capabilities while the `/admin/ha` card renders it — the provider is a `<select>`, one field group
+per provider, exactly one group enabled, capability badges shown before the switch. Adding Cloudflare
+(API token, B474) or RFC 2136 (TSIG, B475) is now an adapter + a spec + a `case`, with no migration
+and no template edit. Registered as contract `B473` (`scripts/check_b473_dns_providers.sh`, 44
+contracts); the B472 contract was renegotiated to the schema-driven shape without losing a guarantee.
+The `Last updated` line itself is the drift detector B330 C4 asks for, so it moves with the release.)
 
 > **This file was 85 releases behind.** Until 2026-10-01 it still described the
 > **v1.5.9** cycle (`Version line: v1.5.9`, "Last updated 2026-09-18"), so every
