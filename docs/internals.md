@@ -603,6 +603,26 @@ deliberately left out of the script and recorded as "live canary verified" in th
 instead — `check_b261_native_self_update.sh` (contracts A–I, with the root-only swap
 covered by a recorded canary run) is the reference example.
 
+**The second half of the rule — a live STACK, not just a live daemon (B479).** A reachable
+docker daemon does not mean the stack it inspects is running. Measured 2026-11-15 while
+releasing v1.5.222: the host had just been retired by a migration — the `skygate` and
+`headscale` containers were stopped deliberately, `docker info` answered fine, and the old
+derper container still ran — so six live-state contracts failed the whole gate
+(`B243-duplicate-users`, `B243-reconcile-audit`, `B243-node-owner-map-orphans`,
+`B-mod-tag-owners-coverage`, `B188.2`, `B188.3`) with `docker exec <stopped container>`.
+They failed identically on the base commit, i.e. nothing had regressed: the gate was
+answering "this host no longer serves a tailnet" as if it were a product finding.
+`scripts/lib/skip_if_no_live_stack.sh` is the guard every such check now sources first. It
+accepts exactly the SHAPE the checks can use — the `skygate-skygate-1` **and** `headscale`
+containers RUNNING — and exits 0 with a `SKIP:` line otherwise; `SKYGATE_SKIP_LIVE_GATE=1`
+forces it off. The docker shape is deliberate: on a NATIVE host these six checks cannot
+answer their question at all (they shell out to `docker exec`), and a host that merely
+*forwards* `/healthz` and headscale's `/health` (measured: the retired host still did, over
+the cutover SSH tunnel) is not a host these checks can run against. The guard is sourced
+BEFORE the first `docker`/`psql`/`sqlite3`/`skygate_db_password` call, and
+`scripts/check_b479_live_skip.sh` pins both the behaviour (with no docker and no curl on
+PATH it must SKIP and exit 0) and that ordering.
+
 ---
 
 ## 8. Where to look when…

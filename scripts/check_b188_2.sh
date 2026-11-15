@@ -1,4 +1,8 @@
 #!/bin/bash
+# B479: the live sections of this contract need a RUNNING skygate+headscale pair;
+# skip (never FAIL) when the host has none — a retired host keeps its DB file and
+# its container names, so its rows describe a tailnet nobody is serving.
+. "$(dirname "$0")/lib/skip_if_no_live_stack.sh"
 . "$(dirname "$0")/lib/db_credentials.sh"
 SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # B188.2 — per-CIDR exit-node pin (instead of catch-all pin).

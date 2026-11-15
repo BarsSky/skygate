@@ -343,6 +343,8 @@ own detector on planted violations**.
 
 ### 4.1 Recorded 2026-11-15 — the migration's two live findings
 
+**SHIPPED in v1.5.224:** B479 — the six live-state contracts that made a healthy tree look red on the retired host now SKIP (they are docker-shaped and the host no longer runs the pair), and a reachable docker daemon is no longer mistaken for a running stack.
+
 **SHIPPED in v1.5.223:** item 1 (B477 — tags survive re-authentication) and the
 probe half of the DERP story (B478 — the liveness probe speaks `Upgrade: DERP` over
 HTTP/1.1 and honours the pinned address; the migration host also had its

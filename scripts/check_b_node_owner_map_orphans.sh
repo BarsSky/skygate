@@ -2,6 +2,9 @@
 
 # Live-state check: skip (do not fail) when the docker daemon is unreachable.
 . "$(dirname "$0")/lib/skip_if_no_docker.sh"
+# B479: skip when the STACK is not running (docker may be up while the containers
+# are stopped, e.g. on a host retired by a migration).
+. "$(dirname "$0")/lib/skip_if_no_live_stack.sh"
 # check_b_node_owner_map_orphans.sh — verify node_owner_map integrity:
 # every (node_id) row points at a real headscale user (or is
 # deliberately orphaned with a valid reason).

@@ -2,6 +2,9 @@
 
 # Live-state check: skip (do not fail) when the docker daemon is unreachable.
 . "$(dirname "$0")/lib/skip_if_no_docker.sh"
+# B479: docker being reachable does not mean the STACK is running (a retired host
+# keeps the daemon and the container names). Skip when there is no live pair.
+. "$(dirname "$0")/lib/skip_if_no_live_stack.sh"
 # check_b_duplicate_users.sh — verify headscale has exactly one user per name.
 #
 # 2026-09-12 (B243 follow-up): direct regression test for the live

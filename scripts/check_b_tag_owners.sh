@@ -2,6 +2,9 @@
 
 # Live-state check: skip (do not fail) when the docker daemon is unreachable.
 . "$(dirname "$0")/lib/skip_if_no_docker.sh"
+# B479: skip when the STACK is not running (docker may be up while the containers
+# are stopped, e.g. on a host retired by a migration).
+. "$(dirname "$0")/lib/skip_if_no_live_stack.sh"
 # check_b_tag_owners.sh — verify ACL policy tagOwners coverage
 #
 # Phase 7 of [auto-deploy-test-plan.md](../auto-deploy-test-plan.md)

@@ -378,6 +378,7 @@ go test -tags postgres -count=1 -v -run "TestPG" ./internal/db/
 | **Правила ACL не применяются: `ip and app can not both be empty`** | [`docs/ru/acl-grants-ip.md`](acl-grants-ip.md) |
 | **Устройство потеряло теги после перерегистрации** | [`docs/ru/tag-loss-after-reregistration.md`](tag-loss-after-reregistration.md) |
 | **`DERPER SERVICE stopped` на живом релее** | [`docs/ru/derp-status-stopped.md`](derp-status-stopped.md) |
+| **Гейт красный на хосте без живого стенда** | [`docs/ru/gate-live-skip.md`](gate-live-skip.md) |
 | **Планы, техдолг, что дальше** | [`docs/ru/ROADMAP.md`](ROADMAP.md) |
 | Эксплуатация: релиз, деплой, переезд PG, bootstrap | [`docs/operations.md`](../operations.md) |
 | HA: топология, failover, открытые вопросы | [`docs/ha.md`](../ha.md) |
