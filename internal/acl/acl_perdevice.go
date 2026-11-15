@@ -20,7 +20,11 @@ package acl
 // Format constraints (carried by the helper, not the call sites):
 //   - Each grant has shape:
 //     { "src": ["<tag:dev-<user>-<device>>"],
-//       "dst": ["<other-tag:dev-<user>-*><dstPortSuffix>", ...] }
+//       "dst": ["<other-tag:dev-<user>-*><dstPortSuffix>", ...]
+//       [, "ip": ["*"]] }
+//   - `ip` is ALSO a property of the schema (ipField): required by the
+//     `grants` parser, rejected as an unknown field by the legacy `acls`
+//     parser. B476 records what dropping it cost (see the parameter doc).
 //   - dstPortSuffix is a PROPERTY OF THE SCHEMA, not of this block:
 //     the legacy `acls` generator passes ":*" because there every dst
 //     entry is parsed as host:ports, while the `grants` generator
@@ -48,27 +52,62 @@ import (
 // to sb. See the file-level comment above for the format contract.
 //
 // Parameters:
+//
 //   - sb: the policy string builder (must already contain the
 //     opening "{\n  \"acls\": [\n" and the per-user grant block)
+//
 //   - usernames: ordered list of bare usernames (without the
 //     "@<baseDomain>" suffix); same slice used by the per-user
 //     loop in the caller. Empty entries are skipped (defensive —
 //     shouldn't occur in practice)
+//
 //   - tagsByUser: map from username to the ordered list of
 //     `tag:dev-<user>-<device>` strings registered by the
 //     v0.28.0 backfillNodeOwnership auto-tag
+//
 //   - dstPortSuffix: "" (grants schema) or ":*" (legacy acls schema).
 //     The caller knows its own schema; this helper must not guess, and
 //     B470 was exactly the cost of guessing (see the write site).
 //
+//   - ipField: true for the `grants` schema, false for the legacy `acls`
+//     schema. headscale 0.29.3 requires every `grants` entry to carry a
+//     non-empty `ip` (or `app`) and rejects the WHOLE document otherwise:
+//
+//     setting policy: parsing policy: multiple errors:
+//     ip and app can not both be empty
+//
+//     B476 (2026-11-15) is the cost of losing this flag: B470 changed the
+//     dst shape for the legacy schema and dropped `ip` from BOTH schemas,
+//     so every per-DEVICE mesh grant in the grants document came out with
+//     neither `ip` nor `app`. On the live tailnet (16 devices) the drift
+//     pass then failed with 16 such lines and the applied policy stayed
+//     frozen at the last good version for as long as the bug lived — no
+//     rule change reached headscale at all. The legacy `acls` parser, by
+//     contrast, is `AliasWithPorts` and REJECTS unknown fields (B265,
+//     B470), so the flag is per schema, not a constant.
+//
 // O(N) per user, N = len(tagsByUser[user]). Total grants =
 // sum over all users of len(tagsByUser[user]).
-func writePerDeviceGrants(sb *strings.Builder, usernames []string, tagsByUser map[string][]string, dstPortSuffix string) {
+func writePerDeviceGrants(sb *strings.Builder, usernames []string, tagsByUser map[string][]string, dstPortSuffix string, ipField bool) {
 	for _, uname := range usernames {
 		if uname == "" {
 			continue
 		}
-		userTags := tagsByUser[uname]
+		// B476: de-duplicate before the length test. A repeated tag (the
+		// ownership JOIN returns one row per node_owner_map row, and a
+		// re-registered device can leave two rows with the same hostname)
+		// used to pass `len(userTags) >= 2` and then produce a grant whose
+		// dst list is EMPTY after the self-exclusion below — invalid in
+		// both schemas and invisible in the policy diff.
+		seen := make(map[string]bool, len(tagsByUser[uname]))
+		userTags := make([]string, 0, len(tagsByUser[uname]))
+		for _, t := range tagsByUser[uname] {
+			if t == "" || seen[t] {
+				continue
+			}
+			seen[t] = true
+			userTags = append(userTags, t)
+		}
 		if len(userTags) < 2 {
 			// Need at least 2 devices for inter-device
 			// traffic. With 0 or 1, there's nothing to
@@ -77,12 +116,7 @@ func writePerDeviceGrants(sb *strings.Builder, usernames []string, tagsByUser ma
 		}
 		// For each device, emit one grant with dst =
 		// all OTHER devices of the same user.
-		//
-		// Separator pattern: ALWAYS write ",\n" before
-		// each grant (including the first). See file
-		// comment for the full HuJSON rationale.
 		for _, srcTag := range userTags {
-			sb.WriteString(",\n")
 			// Build dst = all OTHER tags of the same user
 			dstTags := make([]string, 0, len(userTags)-1)
 			for _, otherTag := range userTags {
@@ -90,6 +124,15 @@ func writePerDeviceGrants(sb *strings.Builder, usernames []string, tagsByUser ma
 					dstTags = append(dstTags, otherTag)
 				}
 			}
+			// B476: never emit a grant with an empty dst. It is invalid in
+			// both schemas (and `ip`/`app` cannot rescue it).
+			if len(dstTags) == 0 {
+				continue
+			}
+			// Separator pattern: ALWAYS write ",\n" before
+			// each grant (including the first). See file
+			// comment for the full HuJSON rationale.
+			sb.WriteString(",\n")
 			sb.WriteString("    { \"src\": [\"" + srcTag + "\"], \"dst\": [")
 			for j, t := range dstTags {
 				if j > 0 {
@@ -117,7 +160,13 @@ func writePerDeviceGrants(sb *strings.Builder, usernames []string, tagsByUser ma
 				sb.WriteString(dstPortSuffix)
 				sb.WriteString("\"")
 			}
-			sb.WriteString("] }")
+			sb.WriteString("]")
+			// B476: the `grants` schema requires `ip` (or `app`) on every
+			// entry; the legacy `acls` schema rejects the unknown field.
+			if ipField {
+				sb.WriteString(", \"ip\": [\"*\"]")
+			}
+			sb.WriteString(" }")
 		}
 	}
 }

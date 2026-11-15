@@ -375,6 +375,7 @@ go test -tags postgres -count=1 -v -run "TestPG" ./internal/db/
 | **Установить Skygate (все способы)** | [`docs/ru/INSTALL.md`](INSTALL.md) |
 | **Обновить Skygate (все способы)** | [`docs/ru/UPDATE.md`](UPDATE.md) |
 | **Одна площадка не открывается только на одном устройстве** | [`docs/ru/exit-relay-prefix.md`](exit-relay-prefix.md) |
+| **Правила ACL не применяются: `ip and app can not both be empty`** | [`docs/ru/acl-grants-ip.md`](acl-grants-ip.md) |
 | **Планы, техдолг, что дальше** | [`docs/ru/ROADMAP.md`](ROADMAP.md) |
 | Эксплуатация: релиз, деплой, переезд PG, bootstrap | [`docs/operations.md`](../operations.md) |
 | HA: топология, failover, открытые вопросы | [`docs/ha.md`](../ha.md) |

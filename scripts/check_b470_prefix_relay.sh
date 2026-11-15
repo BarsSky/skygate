@@ -162,15 +162,23 @@ if has "$PERDEV" 'sb.WriteString(dstPortSuffix)'; then
 else
   bad "E1: the per-device block hardcodes one schema's dst shape"
 fi
-if has "$GEN" 'writePerDeviceGrants(&sb, usernames, meshTagsByUser, ":*")'; then
-  ok "E2: the legacy acls[] generator passes the REQUIRED :* suffix"
+if has "$GEN" 'writePerDeviceGrants(&sb, usernames, meshTagsByUser, ":*", false)'; then
+  ok "E2: the legacy acls[] generator passes the REQUIRED :* suffix (and no ip field)"
 else
-  bad "E2: the legacy acls[] generator writes bare tags — headscale rejects the whole policy"
+  bad "E2: the legacy acls[] generator writes bare tags or an ip field — headscale rejects the whole policy"
 fi
-if has "$GENVIA" 'writePerDeviceGrants(&sb, usernames, meshTagsByUser, "")'; then
-  ok "E3: the grants[] generator keeps bare aliases (the form the live policy uses)"
+# B476 (2026-11-15) RENEGOTIATED: this assertion used to pin the four-argument call
+# `writePerDeviceGrants(&sb, usernames, meshTagsByUser, "")` as "the form the live
+# policy uses" — but that shape was the B470 regression itself: the grants parser has
+# no port suffixes, so with `""` and no `ip` field every per-device mesh grant came out
+# with neither `ip` nor `app` and headscale 0.29.3 refused the WHOLE document
+# ("ip and app can not both be empty", 16 lines = one per device), which froze the
+# applied policy. The contract now demands the ip flag too; the "bare alias" half is
+# unchanged, and scripts/check_b476_grant_truth.sh pins the field itself.
+if has "$GENVIA" 'writePerDeviceGrants(&sb, usernames, meshTagsByUser, "", true)'; then
+  ok "E3: the grants[] generator keeps bare aliases AND asks for the mandatory ip field"
 else
-  bad "E3: the grants[] schema dst shape was changed without evidence"
+  bad "E3: the grants[] generator would emit a grant with neither ip nor app — headscale refuses the document"
 fi
 # The measured failure text is quoted where the next reader will hit it.
 if has "$PERDEV" 'invalid port range format'; then
@@ -248,8 +256,8 @@ done
 for _m in 'sb.WriteString(dstPortSuffix)' 'invalid port range format'; do
   has "$PERDEV" "$_m" || discriminates=0
 done
-has "$GEN" 'meshTagsByUser, ":*"' || discriminates=0
-has "$GENVIA" 'meshTagsByUser, "")' || discriminates=0
+has "$GEN" 'meshTagsByUser, ":*", false)' || discriminates=0
+has "$GENVIA" 'meshTagsByUser, "", true)' || discriminates=0
 for _m in 'livePolicyUsesVia(' 'prefix_owner_pin' 'PlaceholdersRange(' 'dstPortSuffix'; do
   has "$SKY_TMP/old.go" "$_m" && discriminates=0
 done

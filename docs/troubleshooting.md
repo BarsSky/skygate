@@ -45,6 +45,7 @@ syntax lives in [`acl-rules-reference.md`](acl-rules-reference.md).
    * [8.0.7 `git fetch` cannot reach github.com — point the updater at a mirror (B272.5)](#807-git-fetch-cannot-reach-githubcom--point-the-updater-at-a-mirror-b2725)
 9. [Telegram relay silently not delivering](#9-telegram-relay-silently-not-delivering)
 10. [General diagnostics kit](#10-general-diagnostics-kit)
+11. [ACL re-apply fails: `ip and app can not both be empty` (B476)](#11-acl-re-apply-fails-ip-and-app-can-not-both-be-empty-b476)
 
 ---
 
@@ -1775,3 +1776,68 @@ SQL для проверки:
 Логи: `prefix-owner: assignment table updated (inserted=N changed=N)`, `prefix-ownership(staggeredSync): <узел> drops N claimed prefix(es) owned by another relay`.
 
 **Что важно помнить.** Префикс не может обслуживаться двумя узлами одновременно — это ограничение headscale, а не skygate. Если конкретная сеть обязана идти через конкретный узел (например, Telegram только через karolina), закрепите её вручную: движок перестанет её переназначать. Windows/Linux получают сети через `accept-routes` и настраивать на них ничего не нужно; Android/iOS выбирают exit-узел сами в приложении.
+
+---
+
+## 11. ACL re-apply fails: `ip and app can not both be empty` (B476)
+
+### Symptom
+
+The tailnet keeps working, but **rule changes never land**. Every few minutes the
+skygate journal repeats:
+
+```
+acl-drift: re-apply FAILED (headscale PUT /api/v1/policy: 500
+  {"code":2,"message":"setting policy: parsing policy: multiple errors:
+   ip and app can not both be empty
+   …"}) — the live policy stays stale; the next pass retries
+```
+
+The number of `ip and app can not both be empty` lines equals the number of devices in
+the tailnet: they are the per-DEVICE mesh grants (`src=tag:dev-<user>-<device>`, `dst` =
+the same user's other devices). Panels and `/healthz` look healthy while headscale keeps
+the last successfully applied policy — so **every rule, tag, exit-node and route change is
+silently not applied**.
+
+### What it actually means
+
+headscale 0.29.3 requires every `grants[]` entry to carry a non-empty `ip` **or** `app`.
+B470 (v1.5.217) taught the shared per-device writer
+(`internal/acl/acl_perdevice.go`, `writePerDeviceGrants`) to emit the legacy `acls[]`
+port suffix `":*"` — and dropped `ip` from both schemas on the way. That is correct for
+`acls[]` (its parser is `AliasWithPorts`, `dst` is host:ports, and `ip` is an unknown
+field), but the `grants[]` generator passes `""` for the suffix, so its mesh grants ended
+up with neither `ip` nor `app`, and headscale rejected the whole document.
+
+Fixed in B476 (v1.5.222): the helper takes an `ipField` schema flag, the `grants[]`
+generator asks for `ip: ["*"]` and the `acls[]` one does not. Two adjacent holes are
+closed at the same time: a duplicated device tag no longer produces a grant with an empty
+`dst`, and an empty `dst` is never written.
+
+### Confirm it
+
+```bash
+# 1. Is the apply failing?
+journalctl -u skygate --since -30min | grep -a 'acl-drift'
+# 2. Dump the document the drift pass wants to push and look for grants without "ip":
+curl -s -b "$COOKIE" http://127.0.0.1:8080/admin/acls/export | grep '{ "src"' | grep -v '"ip"'
+# 3. What headscale is actually running:
+headscale policy get | head -40
+```
+
+An empty result for (2) means the document is correct. Otherwise those are the mesh
+grants; their `src` shows whose devices fell out of the mesh.
+
+### Fix
+
+Upgrade to the release that carries B476 and verify the next drift pass succeeds — the
+policy in headscale then catches up on its own (the drift check runs every 30 minutes;
+`POST`ing a rule change from the panel also triggers an apply).
+
+### Why it was not caught
+
+`TestB470_ViaSchemaIsUntouched` only asserted that `dst` carries no `:*` and never that
+`ip` is non-empty, so it was green on the broken tree, and the B470 contract E3 pinned the
+broken four-argument call as the correct shape (renegotiated by B476). The user-facing
+gap that remains is that no panel page says "the applied policy lags the generated one" —
+candidate for a separate block.

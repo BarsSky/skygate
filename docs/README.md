@@ -63,6 +63,7 @@ docs/
 │   ├── INSTALL.md                   RU install guide
 │   ├── UPDATE.md                    RU update guide
 │   ├── exit-relay-prefix.md         RU: prefix ↔ relay ↔ device (B470)
+│   ├── acl-grants-ip.md             RU: «ACL не применяется: ip and app …» (B476)
 │   ├── ha-manual-switch.md          RU: manual A→B switch runbook
 │   ├── certificates.md              RU: certificates
 │   └── ROADMAP.md                   RU roadmap

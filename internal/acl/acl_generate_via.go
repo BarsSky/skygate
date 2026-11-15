@@ -547,7 +547,10 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	}
 	// B470: "" — the `grants` schema takes bare aliases in dst (this is the form the live
 	// grants policy is applied with); only the legacy `acls` generator needs ":*".
-	writePerDeviceGrants(&sb, usernames, meshTagsByUser, "")
+	// B476: true — headscale 0.29.3 requires every `grants` entry to carry `ip` (or
+	// `app`) and rejects the WHOLE document with "ip and app can not both be empty"
+	// otherwise, which froze the applied policy for a day (see writePerDeviceGrants).
+	writePerDeviceGrants(&sb, usernames, meshTagsByUser, "", true)
 
 	// 2026-08-13: v1.3.11 (B111) — public access to
 	// infra-owned exit nodes (mirrors the same block in

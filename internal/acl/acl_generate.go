@@ -379,7 +379,10 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// B470: ":*" — this generator writes the LEGACY `acls` schema, where every dst
 	// entry is parsed as host:ports (a bare tag is rejected with "invalid port range
 	// format", see writePerDeviceGrants).
-	writePerDeviceGrants(&sb, usernames, meshTagsByUser, ":*")
+	// B476: false — that schema's parser is AliasWithPorts and rejects the `ip`
+	// field, so the mesh grants stay ip-less here (the `grants` generator, not
+	// this one, is the document headscale requires `ip` on).
+	writePerDeviceGrants(&sb, usernames, meshTagsByUser, ":*", false)
 
 	// 2026-08-13: v1.3.11 (B111) — public access to
 	// infra-owned exit nodes. The 'infra' user owns
