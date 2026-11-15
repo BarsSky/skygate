@@ -172,12 +172,12 @@
   <form method="POST" action="/admin/ha/dns/save" style="margin-top:12px">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <div>
-        <label style="font-size:12px;color:var(--text-muted)">{{t "ha.dns_provider"}}</label>
+        <label for="dns-provider-select" style="font-size:12px;color:var(--text-muted)">{{t "ha.dns_provider"}}</label>
         {{/* B473: the provider is a CHOICE now, taken from the registry in internal/dns. Changing it
              reveals that provider's OWN fields (a Cloudflare API token, an RFC 2136 TSIG key …) —
              pre-B473 the form could only ever ask for reg.ru's login/password/cert, which is why the
              block could not be adapted to another provider without editing this template. */}}
-        <select name="provider" data-dns-provider-select style="width:100%">
+        <select name="provider" id="dns-provider-select" data-dns-provider-select style="width:100%">
           {{range .Data.DNSCard.Groups}}
           <option value="{{.Name}}" {{if .IsEditing}}selected{{end}}>{{.Label}}</option>
           {{end}}

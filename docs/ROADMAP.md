@@ -6,26 +6,30 @@ blocked, and the technical-debt register. It replaces the pre-v1.6 set
 2026-09-18 documentation restructure — the full text of every removed plan stays
 in git history.
 
-**Last updated:** 2026-11-14 (v1.5.222 cycle — the seam from B473 now has two more providers, shipped
-together because CI cancels the previous `main` run on each new commit, so an intermediate commit between
-two tags cannot be verified on its own. B474 shipped Cloudflare over an API token — the seam's first real
-test, since one adapter, one registry entry and one `case` were enough and no schema or template changed.
-B475 completes it with the case that has no HTTP API at all: RFC 2136 dynamic DNS UPDATE over TCP
-authenticated by TSIG. The project has no DNS library and adding one would touch go.mod/go.sum, which
-operators keep as operator-managed files, so the adapter speaks the wire itself with `net` +
-`crypto/hmac`, and the contract pins the three things that make such an adapter correct — the TSIG digest
-covers the message BEFORE the TSIG RR exists (ARCOUNT without it, `+1` only on the wire; the fake
-re-computes the digest from the received bytes and the test requires the rule to hold in BOTH
-directions), RFC 2136 has no "set" operation so replacing an address is delete-RRset + add in ONE message
-while deleting one TXT is class NONE with the exact RDATA, and a dynamic-update server cannot enumerate a
-zone, so `ListRecords` answers a NAMED refusal (AXFR is a different permission) while «Test connection»
-queries the SOA — proving server, zone, key and clocks without writing, treating NOERROR-without-SOA as a
-failure and clock skew as a clock problem rather than a wrong secret. Previous cycle: B473 replaced the
-five fixed `ha.dns.*` keys with `dns_provider_creds` rows (v0.84, both chains, one set per
-`(provider, zone)`, AES-256-GCM fields, one-time legacy import), extended `dns.Provider` with
+**Last updated:** 2026-11-14 (v1.5.221 cycle — the DNS provider seam, shipped as one release for a
+process reason: CI cancels the previous `main` run on every new commit (`concurrency: ci-${github.ref}`,
+`cancel-in-progress: true`), so a commit sitting BETWEEN two tags can never have its own green run and
+`scripts/ci_gate.sh` correctly refuses to tag it. Three blocks, each with its own contract, tests and
+EN+RU docs, verified by one full gate run on the final tree. B473 replaced the five fixed `ha.dns.*` keys
+with `dns_provider_creds` rows (v0.84, both chains, one set per `(provider, zone)`, AES-256-GCM fields,
+one-time legacy import), extended `dns.Provider` with
 `Capabilities`/`SetTTL`/`ListRecords`/`CreateTXT`/`DeleteTXT` plus the named `ErrUnsupported`, and made
-the `/admin/ha` card render the provider REGISTRY. Contracts `B473` (44), `B474` (38), `B475` (43). The
-`Last updated` line is the drift detector B330 C4 asks for, so it moves with the release.)
+the `/admin/ha` card render a provider REGISTRY (a `<select>`, one field group per provider, exactly one
+group enabled, capability badges before the switch, `?provider=<id>` for the no-JS path). B474 shipped
+Cloudflare over an API token — the seam's first real test: one adapter, one registry entry and one `case`
+were enough, with no schema and no template change. B475 completed it with the case that has no HTTP API
+at all: RFC 2136 dynamic DNS UPDATE over TCP authenticated by TSIG. The project has no DNS library and
+adding one would touch go.mod/go.sum, which operators keep as operator-managed files, so the adapter
+speaks the wire itself with `net` + `crypto/hmac`, and the contract pins the three things that make such
+an adapter correct — the TSIG digest covers the message BEFORE the TSIG RR exists (ARCOUNT without it,
+`+1` only on the wire; the fake re-computes the digest from the received bytes and the test requires the
+rule to hold in BOTH directions), RFC 2136 has no "set" operation so replacing an address is
+delete-RRset + add in ONE message while deleting one TXT is class NONE with the exact RDATA, and a
+dynamic-update server cannot enumerate a zone, so `ListRecords` answers a NAMED refusal (AXFR is a
+different permission) while «Test connection» queries the SOA — proving server, zone, key and clocks
+without writing, treating NOERROR-without-SOA as a failure and clock skew as a clock problem rather than
+a wrong secret. Contracts `B473` (44), `B474` (38), `B475` (43). The `Last updated` line is the drift
+detector B330 C4 asks for, so it moves with the release.)
 
 > **This file was 85 releases behind.** Until 2026-10-01 it still described the
 > **v1.5.9** cycle (`Version line: v1.5.9`, "Last updated 2026-09-18"), so every

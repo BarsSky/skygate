@@ -111,7 +111,9 @@ if [ "$_cf_pairs" -eq 2 ]; then
 else
   bad "B4: only $_cf_pairs of 2 catalogue keys are paired"
 fi
-if has "$REG" 'providerSpecs = []Spec{regruSpec, cloudflareSpec}'; then
+# B475 appended its own spec to the same list, so this asserts MEMBERSHIP rather than the exact literal:
+# what matters is that Cloudflare is in the display order, not that it is the last entry forever.
+if grep -q 'providerSpecs = \[\]Spec{.*cloudflareSpec' "$REG"; then
   ok "B5: the registry lists it, so the select, the groups and the badges all pick it up"
 else
   bad "B5: the spec is declared but not listed — nothing would render it"
