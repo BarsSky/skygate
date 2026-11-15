@@ -189,6 +189,9 @@ type hsNodeList struct {
 // ListAllNodes returns every node in the tailnet (admin). Result is cached
 // for cacheTTL to absorb the ~50ms cost of headscale's gRPC-to-HTTP gateway
 // on every page render.
+//
+// B477: the cache is a PAGE-RENDERING optimisation only. A tag write must never
+// read it — see ListAllNodesFresh.
 func (c *Client) ListAllNodes() ([]NodeView, error) {
 	c.cacheMu.RLock()
 	if c.cacheAll != nil && time.Since(c.cacheAllAt) < c.cacheTTL {
@@ -204,6 +207,42 @@ func (c *Client) ListAllNodes() ([]NodeView, error) {
 	if c.cacheAll != nil && time.Since(c.cacheAllAt) < c.cacheTTL {
 		return c.cacheAll, nil
 	}
+	out, err := c.fetchAllNodes()
+	if err != nil {
+		return nil, err
+	}
+	c.cacheAll = out
+	c.cacheAllAt = time.Now()
+	return out, nil
+}
+
+// ListAllNodesFresh is ListAllNodes with the read cache BYPASSED, and it refreshes
+// the cache with what it read.
+//
+// B477 (2026-11-15): a tag mutation is a READ-MODIFY-WRITE of the whole tag set,
+// because headscale's tag API REPLACES the set. Reading the cached snapshot means
+// writing a snapshot taken before the other writer ran. Measured live on the
+// migration host: node `SkyBars` lost `tag:private` because infra-backfill's
+// `AddTag(tag:private)` and tag-reconcile's `AddTag(tag:dev-skyadmin-skybars)` ran
+// in the same tick, each read the same 5-second-old list, and the second write
+// erased the first tag. It also matches what the node's users see: for 2.5 minutes
+// the node matched no per-device ACL rule at all.
+func (c *Client) ListAllNodesFresh() ([]NodeView, error) {
+	out, err := c.fetchAllNodes()
+	if err != nil {
+		return nil, err
+	}
+	c.cacheMu.Lock()
+	c.cacheAll = out
+	c.cacheAllAt = time.Now()
+	c.cacheMu.Unlock()
+	return out, nil
+}
+
+// fetchAllNodes is the uncached HTTP read. Kept separate from ListAllNodes so the
+// cache policy (which differs between a page render and a tag write) is decided by
+// the caller instead of hidden in one shared function.
+func (c *Client) fetchAllNodes() ([]NodeView, error) {
 
 	// 2026-07-31: v0.32.12 — wrap the HTTP call in a goroutine
 	// + select with a 4s hard timeout. The http.Client.Timeout
@@ -242,8 +281,6 @@ func (c *Client) ListAllNodes() ([]NodeView, error) {
 	for _, n := range raw.Nodes {
 		out = append(out, n.toView())
 	}
-	c.cacheAll = out
-	c.cacheAllAt = time.Now()
 	return out, nil
 }
 

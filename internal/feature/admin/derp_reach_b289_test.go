@@ -69,11 +69,14 @@ func TestB289_ProbeHostIsTriedFirstWhenTheNameIsLeaked(t *testing.T) {
 		t.Errorf("candidates = %v, want the relay name as the fallback", got)
 	}
 
-	// The opposite order when the name resolves properly: the name clients use
-	// is the most meaningful probe.
+	// B478.1 RENEGOTIATED: the operator's probe host now comes FIRST in every case,
+	// not only when the relay name resolves to loopback. A relay on the same host as
+	// skygate announces a PUBLIC name (that is what clients dial), so with the old
+	// ordering the pin was never tried and the page measured the public hairpin —
+	// live 185-221 ms for a loopback handshake of 10-40 ms.
 	got = derpReachabilityCandidates(nil, "192.0.2.10", "192.0.2.69")
-	if len(got) < 2 || got[0] != "192.0.2.10" || got[1] != "192.0.2.69" {
-		t.Errorf("candidates = %v, want [relay host, probe host] when the relay name resolves normally", got)
+	if len(got) < 2 || got[0] != "192.0.2.69" || got[1] != "192.0.2.10" {
+		t.Errorf("candidates = %v, want [probe host, relay host] — an explicit pin is an instruction, not a suggestion (B478.1)", got)
 	}
 
 	// No probe host configured: just the relay name (and never a panic).

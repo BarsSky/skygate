@@ -117,7 +117,13 @@ func (c *Client) UntagNode(nodeID int64, tag string) error {
 	// B321 started calling UntagNode automatically after a name reclaim. Now: a failed
 	// read, a node that is not in the list, and an absent tag each end the call without
 	// writing anything.
-	nodes, err := c.ListAllNodes()
+	//
+	// B477: same rule as AddTag — a removal is also a read-modify-write of the whole
+	// set, so it reads FRESH under tagMu; a cached snapshot here would re-add a tag
+	// another writer has just removed (or drop one it has just added).
+	c.tagMu.Lock()
+	defer c.tagMu.Unlock()
+	nodes, err := c.ListAllNodesFresh()
 	if err != nil {
 		return fmt.Errorf("untag: read the tags of node %d: %w (nothing written)", nodeID, err)
 	}
@@ -153,6 +159,8 @@ func (c *Client) UntagNode(nodeID int64, tag string) error {
 	if err := c.TagNode(nodeID, filtered...); err != nil {
 		return fmt.Errorf("untag: %w", err)
 	}
+	// B477: make the removal visible to the next page render immediately.
+	c.InvalidateCache()
 	return nil
 }
 
@@ -188,11 +196,20 @@ func (c *Client) UntagNode(nodeID int64, tag string) error {
 // existing per-user dev-tags even on the unhappy path".
 // The new contract: on read error, AddTag returns
 // (read-err) and does NOT call the inner TagNode.
+//
+// B477 (2026-11-15): the read is now FRESH and the whole mutation holds tagMu.
+// The 5-second ListAllNodes cache made two writers in one tick each write the
+// set they had read before the other ran; live on the migration host the node
+// `SkyBars` lost `tag:private` that way (infra-backfill added it, tag-reconcile
+// then wrote only the dev tag from the stale snapshot) and matched no per-device
+// ACL rule for 2.5 minutes. A tag set is not a cache-friendly read-modify-write.
 func (c *Client) AddTag(nodeID int64, want string) error {
 	if c.ExecContainer == "" {
 		return fmt.Errorf("no ExecContainer configured")
 	}
-	nodes, err := c.ListAllNodes()
+	c.tagMu.Lock()
+	defer c.tagMu.Unlock()
+	nodes, err := c.ListAllNodesFresh()
 	if err != nil {
 		return fmt.Errorf("add-tag: read current tags: %w", err)
 	}
@@ -209,7 +226,13 @@ func (c *Client) AddTag(nodeID int64, want string) error {
 		}
 	}
 	current = append(current, want)
-	return c.TagNode(nodeID, current...)
+	if err := c.TagNode(nodeID, current...); err != nil {
+		return err
+	}
+	// B477: the page renderers read ListAllNodes; a successful write must be
+	// visible immediately, not one cache TTL later.
+	c.InvalidateCache()
+	return nil
 }
 
 // EnsureTagOwner is the B245 (v1.5.2+) fix for the "tag not in

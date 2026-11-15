@@ -57,30 +57,18 @@ func TestB289_1_DialTargetKeepsTheNameAndTakesTheAddress(t *testing.T) {
 		t.Errorf("port = %q, want 443", port)
 	}
 
-	// A name that resolves normally is NOT rewritten by the hint.
+	// B478.1 RENEGOTIATED: a name that resolves normally IS rewritten by an
+	// explicit hint. B296 applied the hint only when the name resolved to loopback,
+	// which never fired for a relay whose public name is announced to clients (it
+	// resolves to the public IP) — live: `derp.probe_host=127.0.0.1` was ignored and
+	// the health row read 221 ms while loopback measured 10-40 ms.
 	t.Setenv("SKYGATE_DERP_PROBE_HOST", "192.0.2.69")
 	addr, sni, _ = dialTargetFor(DERPInfo{Host: "192.0.2.10", URL: "https://192.0.2.10:443"})
-	if addr != "192.0.2.10" || sni != "192.0.2.10" {
-		t.Errorf("dialTargetFor = (%q,%q), want the row's own address when no leak is detected", addr, sni)
+	if addr != "192.0.2.69" {
+		t.Errorf("addr = %q, want the explicit hint even though the row's name resolves normally (B478.1)", addr)
 	}
-}
-
-func TestB289_1_LoopbackDetection(t *testing.T) {
-	cases := []struct {
-		host string
-		want bool
-	}{
-		{"", true},
-		{"127.0.0.1", true},
-		{"::1", true},
-		{"0.0.0.0", true},
-		{"localhost", true},
-		{"192.0.2.10", false},
-	}
-	for _, c := range cases {
-		if got := nameResolvesToLoopback(c.host); got != c.want {
-			t.Errorf("nameResolvesToLoopback(%q) = %v, want %v", c.host, got, c.want)
-		}
+	if sni != "192.0.2.10" {
+		t.Errorf("sni = %q, want the row's own name (the hint is only an address)", sni)
 	}
 }
 

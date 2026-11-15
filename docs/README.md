@@ -64,6 +64,8 @@ docs/
 │   ├── UPDATE.md                    RU update guide
 │   ├── exit-relay-prefix.md         RU: prefix ↔ relay ↔ device (B470)
 │   ├── acl-grants-ip.md             RU: «ACL не применяется: ip and app …» (B476)
+│   ├── tag-loss-after-reregistration.md  RU: устройство потеряло теги (B477)
+│   ├── derp-status-stopped.md       RU: ложное «DERPER stopped» (B478)
 │   ├── ha-manual-switch.md          RU: manual A→B switch runbook
 │   ├── certificates.md              RU: certificates
 │   └── ROADMAP.md                   RU roadmap

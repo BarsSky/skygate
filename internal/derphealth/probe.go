@@ -80,35 +80,28 @@ func dialTargetFor(d DERPInfo) (addr, serverName, port string) {
 	// B296: the hint travels on the row (resolved by FetchOwnDERPs via
 	// internal/derpcfg: DB override > .env > none). The os.Getenv fallback
 	// keeps callers that build a DERPInfo by hand (CLI, tests) working.
+	//
+	// B478.1 (2026-11-15): an EXPLICIT hint wins UNCONDITIONALLY.
+	//
+	// B296 used to apply it only when the row's name resolved to loopback, which
+	// made the pin useless in exactly the case it exists for: a relay on the SAME
+	// host as skygate announces its public name (that is what clients must dial),
+	// so the name resolves to the public address and the condition never fired.
+	// Measured on the migration host: `derp.probe_host=127.0.0.1` was set, and the
+	// health row still read 221 ms because the probe went out to the public IP and
+	// hairpinned back — while the same TLS handshake on loopback took 10-40 ms. The
+	// operator asked «почему такая большая задержка для DERP на той же машине».
+	//
+	// The rule an operator can predict is "I said dial THIS address, so dial it";
+	// the loopback sniffing stays out of that decision.
 	hint := strings.TrimSpace(d.ProbeHost)
 	if hint == "" {
 		hint = derpcfg.EnvHost()
 	}
-	if hint != "" && nameResolvesToLoopback(host) {
+	if hint != "" {
 		addr = hint
 	}
 	return addr, serverName, port
-}
-
-// nameResolvesToLoopback reports whether `host` resolves, from THIS process, only
-// to loopback/unspecified addresses.
-func nameResolvesToLoopback(host string) bool {
-	if host == "" {
-		return true
-	}
-	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
-		return ip.IsLoopback() || ip.IsUnspecified()
-	}
-	ips, err := net.LookupIP(host)
-	if err != nil || len(ips) == 0 {
-		return false
-	}
-	for _, ip := range ips {
-		if !ip.IsLoopback() && !ip.IsUnspecified() {
-			return false
-		}
-	}
-	return true
 }
 
 func ProbeOne(ctx context.Context, d DERPInfo, httpClient *http.Client) (int, error) {

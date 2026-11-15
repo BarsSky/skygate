@@ -343,6 +343,13 @@ own detector on planted violations**.
 
 ### 4.1 Recorded 2026-11-15 — the migration's two live findings
 
+**SHIPPED in v1.5.223:** item 1 (B477 — tags survive re-authentication) and the
+probe half of the DERP story (B478 — the liveness probe speaks `Upgrade: DERP` over
+HTTP/1.1 and honours the pinned address; the migration host also had its
+`derp.probe_host`/`derp_relays.url` corrected, which is what the 136 ms came from).
+What remains from this section is the MEASUREMENT of the relayed connection's
+stability under the corrected topology — done against v1.5.223, not before it.
+
 Both were paid for during the skygate/headscale move off the old host; the first
 is the next block, the second is measured only after the first two releases land.
 

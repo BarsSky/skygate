@@ -74,6 +74,12 @@ type Client struct {
 	cacheACL     string
 	cacheACLAt   time.Time
 	cacheTTL     time.Duration
+
+	// tagMu serialises tag mutations (B477). headscale's tag API REPLACES the
+	// whole tag set, so every mutation is a read-modify-write and two writers
+	// that interleave silently drop each other's tag — the live case was
+	// tag:private disappearing from a node right after a re-registration.
+	tagMu sync.Mutex
 }
 
 // New returns a Client configured for the given headscale URL and API

@@ -46,6 +46,8 @@ syntax lives in [`acl-rules-reference.md`](acl-rules-reference.md).
 9. [Telegram relay silently not delivering](#9-telegram-relay-silently-not-delivering)
 10. [General diagnostics kit](#10-general-diagnostics-kit)
 11. [ACL re-apply fails: `ip and app can not both be empty` (B476)](#11-acl-re-apply-fails-ip-and-app-can-not-both-be-empty-b476)
+12. [A device lost its tags and stopped matching any rule (B477)](#12-a-device-lost-its-tags-and-stopped-matching-any-rule-b477)
+13. [`DERPER SERVICE stopped` on a live relay — and a 136 ms latency on a local one (B478)](#13-derper-service-stopped-on-a-live-relay--and-a-136-ms-latency-on-a-local-one-b478)
 
 ---
 
@@ -1841,3 +1843,118 @@ policy in headscale then catches up on its own (the drift check runs every 30 mi
 broken four-argument call as the correct shape (renegotiated by B476). The user-facing
 gap that remains is that no panel page says "the applied policy lags the generated one" —
 candidate for a separate block.
+---
+
+## 12. A device lost its tags and stopped matching any rule (B477)
+
+### Symptom
+
+A device re-registered (OIDC login, app reset), shows `online` in headscale, but the
+panel no longer shows its usual `tag:dev-<user>-<device>` (and/or `tag:private`) and its
+ACL access is gone. The journal shows two tag writes a minute apart:
+
+```
+18:15:08 infra-backfill: AddTag called for node=55 (ensure tag:private)
+18:15:10 tag-reconcile: applied "tag:dev-skyadmin-skybars" to node 55 — database said it was
+         owned by "skyadmin", headscale had []
+```
+
+and the node ends up carrying only the dev tag: `tag:private`, which it had before, is
+gone, so no per-device rule matches it.
+
+### What it actually means
+
+headscale DROPS every tag when a node re-authenticates, and its tag API REPLACES the whole
+set — so each tag write is a read-modify-write. skygate has two writers (`infra-backfill`
+adding `tag:private`, `tag-reconcile` adding the dev tag) and both read the list through
+the 5-second `ListAllNodes` cache, so the second writer wrote the set it had read BEFORE
+the first write and erased the other tag.
+
+Fixed in B477 (v1.5.223): a tag mutation reads the set UNCACHED (`ListAllNodesFresh`) and
+holds the client-wide `tagMu` across read and write; a successful write invalidates the
+read cache so the panel shows reality; `UntagNode` follows the same rule.
+
+### Confirm and repair
+
+```bash
+headscale nodes list | grep -i <device>
+headscale nodes list -o json | jq '.nodes[] | select(.id==<id>) | .tags'
+# restore every tag that must remain — `tag` REPLACES the set:
+headscale nodes tag -i <id> -t tag:dev-<user>-<device> -t tag:private --force
+```
+
+### Why it was not caught
+
+`AddTag` documented the read-modify-write rule but read a cached snapshot, and two writers
+had never been shown to run in one tick until a device was re-registered during the
+migration. The tests now reproduce that exact sequence (`tags_b477_test.go`), and
+`scripts/check_b477_tag_survival.sh` pins the lock, the uncached read and the
+cache invalidation.
+---
+
+## 13. `DERPER SERVICE stopped` on a live relay — and a 136 ms latency on a local one (B478)
+
+### Symptom
+
+`/admin/derp` says **DERPER SERVICE: stopped** while the `DERP SOCKET` tile says the socket
+is listening, clients use the relay (`relay "mow"`), and STUN answers in 2 ms. The same
+relay's latency reads like an internet round trip (136 ms) even though derper runs on the
+same box as skygate and headscale.
+
+### What it actually means (measured 2026-11-15)
+
+Two independent defects in the liveness probe:
+
+1. **Wrong upgrade token.** The probe sent `Upgrade: websocket`. derper answers `101` to
+   that only when the request reaches it directly; with a proxy in front the PROXY answers:
+
+   ```
+   curl --http1.1 -H 'Upgrade: DERP'      https://derp.example.com/derp → 101
+   curl --http1.1 -H 'Upgrade: websocket' https://derp.example.com/derp → 200
+   curl --http2  -H 'Upgrade: DERP'       https://derp.example.com/derp → 426
+   ```
+
+   The probe requires exactly `101`, so through Caddy it always saw 200 (or 426 when the
+   client negotiated h2) and rendered "stopped".
+
+2. **Stale probe address.** `global_settings.derp.probe_host` still held the PREVIOUS
+   host's public IP, so both the panel probe and the health sweep dialled it — that is
+   where the 136 ms came from.
+
+### Fix
+
+Upgrade to the release carrying B478: the probe sends `Upgrade: DERP` over a forced
+HTTP/1.1 connection and only `101` counts as healthy. On a host that cannot upgrade yet:
+
+```sql
+update global_settings set value='127.0.0.1' where key='derp.probe_host';
+update derp_relays set url='https://derp.example.com:8443' where hostname='derp.example.com';
+```
+
+Restart headscale after changing the relay URL — it reads the derpmap only at startup.
+Verify with `curl -s http://127.0.0.1:8080/admin/derp/relays/derpmap.json` (the advertised
+DERPPort must match) and `tailscale netcheck` (your own region must show a latency).
+
+Serving the relay on its own port instead of behind the HTTPS proxy matters: DERP is an
+HTTP/1.1 upgrade, and a proxy that offers `h2` via ALPN makes any client that picks h2
+unable to upgrade (`426`) — which is why a relayed connection "flaps": it works on an
+HTTP/1.1 connection and dies on an HTTP/2 one.
+
+### Contracts
+
+`internal/feature/admin/derp_b478_test.go` (token, HTTP/1.1, 101-only, pinned dial
+address) and `scripts/check_b478_derp_probe_truth.sh`.
+### B478.1 — the pin was ignored, so the "local" relay still measured like the internet
+
+Measured on the same host after the first fix: `global_settings.derp.probe_host` was
+`127.0.0.1`, and the health row for region 900 still read **185-221 ms** while
+`openssl s_client -connect 127.0.0.1:8443` took 10-40 ms. Cause: the hint was applied
+only when the relay's own name resolved to loopback (the B296 container rule), and a
+relay that clients must reach announces a name that resolves to the PUBLIC address —
+so the pin never fired and the probe hairpinned out and back.
+
+Fixed: an EXPLICIT probe host (`derp.probe_host` / `SKYGATE_DERP_PROBE_HOST`) is
+dialled unconditionally, in both probes — the health sweep
+(`internal/derphealth/probe.go`) and the page's own reachability probe
+(`derpReachabilityCandidates`, where the pin now comes first in every case). With
+nothing pinned, behaviour is unchanged.

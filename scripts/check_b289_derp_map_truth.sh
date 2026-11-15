@@ -71,10 +71,19 @@ if grep -q 'derpReachabilityCandidates(s.dbc(), host, probeHost)' "$DASH" && \
 else
   bad "A3: the derpmap endpoint still probes the bare hostname (the live failure)"
 fi
-if grep -q 'if leaked {' "$DASH" && grep -q 'add(probeHost)' "$DASH"; then
-  ok "A4: the operator's probe host is tried FIRST when the relay name resolves to loopback"
+# B478.1 (2026-11-15) RENEGOTIATED: A4 used to demand `if leaked { add(probeHost) … }`,
+# i.e. the pin first ONLY for a loopback-resolving name. A relay on the same host as
+# skygate announces a PUBLIC name (that is what clients dial), so with that shape the
+# pin was never tried and the page measured the public hairpin — live 185-221 ms for a
+# loopback handshake of 10-40 ms. The contract now demands the pin FIRST in every case,
+# with the leaked-name branch only ordering the FALLBACK.
+L_PROBE="$(grep -n 'add(probeHost)' "$DASH" | head -1 | cut -d: -f1)"
+L_HOST="$(grep -n 'add(host)' "$DASH" | head -1 | cut -d: -f1)"
+if [ -n "$L_PROBE" ] && [ -n "$L_HOST" ] && [ "$L_PROBE" -lt "$L_HOST" ] \
+   && grep -q 'if hostResolvesToLoopback(host) {' "$DASH"; then
+  ok "A4: the operator's probe host is tried FIRST in every case (the loopback sniffing only orders the fallback)"
 else
-  bad "A4: the candidate order does not special-case a leaked name"
+  bad "A4: the candidate order still special-cases the leaked name before the pin (probe=${L_PROBE:-?} host=${L_HOST:-?})"
 fi
 if grep -q 'answered via %s' "$DASH"; then
   ok "A5: the journal names the address that answered (and points at extra_hosts)"

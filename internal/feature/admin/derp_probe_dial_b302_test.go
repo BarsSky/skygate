@@ -26,6 +26,12 @@ import (
 
 // b302UpgradeServer answers `GET /derp` with 101 Switching Protocols, the signal
 // derper sends for a live relay.
+//
+// B478 RENEGOTIATED the expected token: the probe used to send `Upgrade: websocket`,
+// which only a DIRECT connection to derper answers with 101 (a proxy answers 200 or
+// 426 instead). The probe now sends the real `Upgrade: DERP`, so this fixture answers
+// that — the B302 property it guards (pin the dial address, keep Host/SNI) is
+// unchanged.
 func b302UpgradeServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +39,7 @@ func b302UpgradeServer(t *testing.T) *httptest.Server {
 			http.NotFound(w, r)
 			return
 		}
-		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		if !strings.EqualFold(r.Header.Get("Upgrade"), "DERP") {
 			http.Error(w, "not an upgrade", http.StatusBadRequest)
 			return
 		}
@@ -47,7 +53,7 @@ func b302UpgradeServer(t *testing.T) *httptest.Server {
 			return
 		}
 		defer conn.Close()
-		_, _ = buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+		_, _ = buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: DERP\r\nConnection: Upgrade\r\n\r\n")
 		_ = buf.Flush()
 	}))
 	t.Cleanup(srv.Close)
@@ -129,8 +135,8 @@ func TestWebSocketProbe_KeepsHostAndUpgradeHeaders_B302(t *testing.T) {
 		if !strings.HasPrefix(got, "derp.skynas.ru") {
 			t.Errorf("Host header = %q, want the URL hostname (the certificate's name), not the dialled address", got)
 		}
-		if !strings.Contains(strings.ToLower(got), "websocket") {
-			t.Errorf("Upgrade header missing on the pinned path: %q", got)
+		if !strings.Contains(strings.ToUpper(got), "DERP") {
+			t.Errorf("Upgrade header missing or wrong on the pinned path: %q (B478: the probe must send the real DERP token)", got)
 		}
 	case <-time.After(3 * time.Second):
 		t.Error("the test server never saw a request")

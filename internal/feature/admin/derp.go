@@ -771,6 +771,13 @@ func httpGetViaStatus(url string, dialAddr string, timeout time.Duration) ([]byt
 // liveness check, it is a second opinion.
 //
 // dialAddr == "" keeps the historical behaviour (dial whatever the URL resolves to).
+//
+// B478 (2026-11-15): the probe sends `Upgrade: DERP` over a FORCED HTTP/1.1
+// connection. Pre-B478 it sent `Upgrade: websocket` and let the transport choose
+// HTTP/2; on the migration host Caddy answered 200 (websocket token) or 426 (h2)
+// and the page reported "DERPER SERVICE stopped" for a relay that answered 101 to
+// a real DERP upgrade in 10 ms. A liveness check whose answer depends on which
+// proxy sits in front is not a liveness check.
 func derperLivenessWebSocketProbe(rawURL, dialAddr string, timeout time.Duration) (bool, error) {
 	u, err := neturl.Parse(rawURL)
 	if err != nil {
@@ -787,16 +794,24 @@ func derperLivenessWebSocketProbe(rawURL, dialAddr string, timeout time.Duration
 		req.Host = hostnameOnly
 		req.Header.Set("Host", hostnameOnly)
 	}
-	// Minimal WebSocket upgrade headers — these are different from
-	// `Sec-WebSocket-Key` + `Sec-WebSocket-Version` required by RFC
-	// 6455, but derper doesn't actually complete a handshake — it
-	// just checks `Upgrade: websocket` and returns 101 Switching
-	// Protocols to signal "ready". We don't send frames so we
-	// never need the Sec-WebSocket-* headers.
-	req.Header.Set("Upgrade", "websocket")
+	// B478 (2026-11-15): the upgrade token must be the REAL one. derper answers 101
+	// to `Upgrade: DERP` (that is what Tailscale clients send); for
+	// `Upgrade: websocket` it answers 101 only when the request reaches derper
+	// directly — put a proxy in front and the proxy decides. Measured on the
+	// migration host: through Caddy the websocket-shaped probe got HTTP 200 (or 426
+	// when the client negotiated h2) and the page rendered "DERPER SERVICE stopped"
+	// for a perfectly healthy relay, while the very same curl with `Upgrade: DERP`
+	// got 101 in 10 ms.
+	req.Header.Set("Upgrade", "DERP")
 	req.Header.Set("Connection", "Upgrade")
 
 	tr := &http.Transport{}
+	// B478: DERP is an HTTP/1.1 upgrade protocol. An HTTP/2 connection cannot carry
+	// an upgrade at all (Caddy answers 426), and Go's transport negotiates h2 for
+	// https by default, so a probe that leaves this to chance reports the relay's
+	// health according to which ALPN the proxy picked. Force HTTP/1.1.
+	tr.ForceAttemptHTTP2 = false
+	tr.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
 	if dialAddr != "" {
 		port := u.Port()
 		if port == "" {

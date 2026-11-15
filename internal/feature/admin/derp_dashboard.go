@@ -542,16 +542,26 @@ func derpReachabilityCandidates(db *sql.DB, host string, probeHost string) []str
 		seen[h] = true
 		out = append(out, h)
 	}
-	leaked := hostResolvesToLoopback(host)
-	if leaked {
-		// The container cannot reach the relay by name; try the
-		// operator's hint before wasting the timeout on loopback.
-		add(probeHost)
+	// B478.1 (2026-11-15): an explicit probe host is an INSTRUCTION, so it comes
+	// FIRST in every case. B296 used to put it first only when the relay's name
+	// resolved to loopback — and a relay on the SAME host as skygate announces a
+	// PUBLIC name (that is what clients dial), so the name never resolved to
+	// loopback, the pin was never tried, and the page measured the public hairpin:
+	// live 185-221 ms for a relay whose loopback handshake takes 10-40 ms.
+	add(probeHost)
+	// The row's own name is a fallback. When it points at OUR loopback (a container
+	// inheriting the host's /etc/hosts — AGENTS trap #2) dialing it can only reach
+	// our own port, so the bundled names go first.
+	if hostResolvesToLoopback(host) {
+		// The other bundled hostnames may carry the one name that resolves
+		// (a stale :8443 row is a different URL, same host).
+		for _, h := range bundledDERPHostnamesFromDB(db) {
+			add(h)
+		}
 		add(host)
-	} else {
-		add(host)
-		add(probeHost)
+		return out
 	}
+	add(host)
 	// The other bundled hostnames may carry the one name that resolves
 	// (a stale :8443 row is a different URL, same host).
 	for _, h := range bundledDERPHostnamesFromDB(db) {
