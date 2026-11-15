@@ -1082,6 +1082,33 @@ create-then-patch, proxied refusal, TTL set, TXT round trip with idempotent dele
 pagination) — it has **not** been exercised against a live account, so the first real use should be the
 card's «Test connection» and «Read the zone».
 
+**RFC 2136 (B475)** is the third provider, and the first with no HTTP API at all: it sends dynamic DNS
+`UPDATE` messages over TCP to an authoritative server (BIND, Knot, PowerDNS, …) and authenticates them
+with **TSIG**. Four fields: the **server** (`host` or `host:port`, port 53 by default), the **key name**
+exactly as the server's configuration spells it, the **secret** in base64, and the **algorithm**
+(`hmac-sha256` by default, `hmac-sha1`, `hmac-sha512` — it must match the key on the server).
+
+On the server side the key needs permission to update the zone, e.g. in BIND:
+
+```
+key "skygate-key" { algorithm hmac-sha256; secret "<base64>"; };
+zone "example.com" { type master; file "..."; update-policy { grant "skygate-key" zonesub ANY; }; };
+```
+
+What it can do: `A`, `AAAA`, `TXT` and TTL changes (replacing an address is one `UPDATE` message that
+deletes the RRset and adds the new record, so a reader never sees both). **What it cannot do: list the
+zone.** RFC 2136 is a write protocol; enumerating a zone needs an `AXFR` transfer, which is a different
+permission and a different feature. So «Read the zone» answers a named error for this provider and asks
+for names instead, while «Test connection» queries the zone's `SOA` — one question that proves the server
+answers, the zone exists there, the key is accepted and the clocks agree (a TSIG signature outside the
+`fudge` window is reported as a **clock** problem, not as a wrong secret).
+
+For a CLI run before anything is saved there is no environment fallback: the four fields are the
+credential. The adapter is verified against a fake TSIG server that **re-computes the signature** from the
+received bytes (a signer that bumps `ARCOUNT` before hashing is rejected exactly as a real server would
+reject it) — it has **not** been exercised against a live server, so the first real use is the card's
+«Test connection», then «Read the zone» on a name and one address switch.
+
 The shipped default provider is reg.ru's API (B468): a login, the account's **alternative password**
 created in the API section of the account (not the account password), and the zone.
 

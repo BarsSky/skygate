@@ -112,11 +112,25 @@ func BuildProvider(name string, deps BuildDeps) (Provider, error) {
 			return nil, errCloudflareNoToken()
 		}
 		return newCloudflareProvider(token, deps.BaseURL, deps.HTTPClient), nil
-	case "route53", "rfc2136":
+	case "rfc2136":
+		// B475: dynamic DNS UPDATE with TSIG. Four credential fields, because a TSIG credential really
+		// has four parts — where to send the update, the key name, the key's algorithm and its secret.
+		// The zone comes from the row (TestConnection needs it and has no zone argument).
+		if deps.Row != nil {
+			p, err := newRFC2136Provider(deps.Row.Field("server"), deps.Row.Field("key_name"),
+				deps.Row.Secret("key_secret"), deps.Row.Field("key_algo"))
+			if err != nil {
+				return nil, err
+			}
+			p.setZoneHint(deps.Row.Zone)
+			return p, nil
+		}
+		return nil, fmt.Errorf("dns: the rfc2136 provider needs a credential row — save one on /admin/ha (provider «RFC 2136»)")
+	case "route53":
 		// Reserved for a future B-check. The
 		// error message is intentionally specific so
 		// the operator knows which B-check to read.
-		return nil, fmt.Errorf("dns: provider %q is not implemented yet (see docs/ha.md — the shipped implementations are 'regru' / its alias 'external' (B145 + B468) and 'cloudflare' (B474))", name)
+		return nil, fmt.Errorf("dns: provider %q is not implemented yet (see docs/ha.md — the shipped implementations are 'regru' / its alias 'external' (B145 + B468), 'cloudflare' (B474) and 'rfc2136' (B475))", name)
 	default:
 		return nil, ErrUnknownProvider{Name: name}
 	}

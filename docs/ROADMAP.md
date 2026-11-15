@@ -6,23 +6,24 @@ blocked, and the technical-debt register. It replaces the pre-v1.6 set
 2026-09-18 documentation restructure — the full text of every removed plan stays
 in git history.
 
-**Last updated:** 2026-11-14 (v1.5.222 cycle — B474: the seam B473 cut out of reg.ru is now proven by a
-provider that is NOT reg.ru. Cloudflare authenticates with an API token instead of a login/password pair
-and genuinely supports AAAA/TXT/TTL, so it needed ONE adapter, ONE registry entry, ONE `BuildProvider`
-case, one catalogue pair and one doc section — and no change to the credential table, the migrations, the
-save handler or the template. The adapter honours the API's envelope (`HTTP 200` with `success=false` is
-a failure), names the token's required permissions (`Zone:Read` + `Zone.DNS:Edit`), PATCHes an existing
-record instead of recreating it, REFUSES a proxied record (Cloudflare would answer with its own addresses,
-so a switch would have no visible effect), validates TTL against the set the API accepts, keeps DNS-01
-TXT deletes exact and idempotent, and is covered by eleven behavioural tests against a fake v4 API — the
-docs state it was not exercised against a live account. Previous cycle, still shipping in the same
-sequence: B473 replaced the five fixed `ha.dns.*` keys with `dns_provider_creds` rows (v0.84, both
-chains, one set per `(provider, zone)`, AES-256-GCM fields, one-time legacy import), extended
-`dns.Provider` with `Capabilities`/`SetTTL`/`ListRecords`/`CreateTXT`/`DeleteTXT` plus the named
-`ErrUnsupported`, and made the `/admin/ha` card render a provider REGISTRY — a `<select>`, one field group
-per provider, exactly one group enabled, capability badges before the switch. Contract `B473` (44
-contracts) and the B472 contract was renegotiated to the schema-driven shape. The `Last updated` line is
-the drift detector B330 C4 asks for, so it moves with the release.)
+**Last updated:** 2026-11-14 (v1.5.223 cycle — B475 completes the provider seam with the case that has no
+HTTP API at all: RFC 2136 dynamic DNS UPDATE over TCP, authenticated by TSIG. The project has no DNS
+library and adding one would touch go.mod/go.sum, which operators keep as operator-managed files, so the
+adapter speaks the wire itself with `net` + `crypto/hmac`, and the contract pins the three things that
+make such an adapter correct — the TSIG digest covers the message BEFORE the TSIG RR exists (ARCOUNT
+without it, `+1` only on the wire; the fake re-computes the digest from the received bytes and the test
+requires the rule to hold in BOTH directions), RFC 2136 has no "set" operation so replacing an address is
+delete-RRset + add in ONE message while deleting one TXT is class NONE with the exact RDATA, and a
+dynamic-update server cannot enumerate a zone, so `ListRecords` answers a NAMED refusal (AXFR is a
+different permission) while «Test connection» queries the SOA — proving server, zone, key and clocks
+without writing, treating NOERROR-without-SOA as a failure and clock skew as a clock problem rather than
+a wrong secret. Previous cycles in the same sequence: B474 shipped Cloudflare over an API token (the
+seam's first real test: one adapter, one registry entry, one `case`, no schema and no template change),
+and B473 replaced the five fixed `ha.dns.*` keys with `dns_provider_creds` rows (v0.84, both chains, one
+set per `(provider, zone)`, AES-256-GCM fields, one-time legacy import), extended `dns.Provider` with
+`Capabilities`/`SetTTL`/`ListRecords`/`CreateTXT`/`DeleteTXT` plus the named `ErrUnsupported`, and made
+the `/admin/ha` card render the provider REGISTRY. Contracts `B473` (44), `B474` (38), `B475` (43). The
+`Last updated` line is the drift detector B330 C4 asks for, so it moves with the release.)
 
 > **This file was 85 releases behind.** Until 2026-10-01 it still described the
 > **v1.5.9** cycle (`Version line: v1.5.9`, "Last updated 2026-09-18"), so every

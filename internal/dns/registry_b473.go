@@ -127,7 +127,7 @@ var cloudflareSpec = Spec{
 }
 
 // providerSpecs is the display order of the registry. The first entry is what a fresh install offers.
-var providerSpecs = []Spec{regruSpec, cloudflareSpec}
+var providerSpecs = []Spec{regruSpec, cloudflareSpec, rfc2136Spec}
 
 // Specs returns every known provider spec, in display order.
 func Specs() []Spec { return append([]Spec(nil), providerSpecs...) }
