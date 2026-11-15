@@ -164,13 +164,45 @@ func TestB473_OnlyTheEditingGroupSubmits(t *testing.T) {
 	if !strings.Contains(got, `data-dns-group="regru"`) {
 		t.Fatal("the reg.ru group is not marked for the switcher")
 	}
-	// The editing group is visible; with a single provider there is exactly one group, and it must be
-	// enabled — a card whose only group is disabled would be unsubmittable.
+	// The editing group is visible and enabled — a card whose only open group is disabled would be
+	// unsubmittable.
 	group := regexp.MustCompile(`(?s)data-dns-group="regru".*?</div>\s*</div>`).FindString(got)
 	if strings.Contains(group, "disabled") {
 		t.Errorf("the active provider's inputs are disabled — the form cannot be submitted:\n%s", group)
 	}
 	if !strings.Contains(group, "display:grid") {
 		t.Errorf("the active provider's group is hidden:\n%s", group)
+	}
+}
+
+// TestB474_CloudflareIsASecondGroupThatCannotSubmit — B474 added the second provider, and it arrived on
+// the page WITHOUT a template edit: the same loop renders its group, its one field and its badges. What
+// the markup must get right is the isolation — while reg.ru is the open group, Cloudflare's token input
+// must be hidden, `disabled` and NOT required, otherwise a stale token could be posted under reg.ru.
+func TestB474_CloudflareIsASecondGroupThatCannotSubmit(t *testing.T) {
+	got := b472RenderHA(t, &haPageData{})
+	if !strings.Contains(got, `value="cloudflare"`) {
+		t.Fatalf("the provider select does not offer Cloudflare:\n%s", got)
+	}
+	group := regexp.MustCompile(`(?s)data-dns-group="cloudflare".*?</div>\s*</div>`).FindString(got)
+	if group == "" {
+		t.Fatal("no Cloudflare field group was rendered — the page would ask reg.ru's fields for a token provider")
+	}
+	if !strings.Contains(group, "display:none") {
+		t.Error("the Cloudflare group is visible while reg.ru is the open provider")
+	}
+	if !strings.Contains(group, "disabled") {
+		t.Error("the Cloudflare token input is enabled while another provider is selected — it could be submitted")
+	}
+	if strings.Contains(group, "required") {
+		t.Error("the hidden group's field carries `required`: the browser would block a reg.ru save")
+	}
+	if !strings.Contains(group, "f_token") {
+		t.Errorf("the Cloudflare group does not render its token field:\n%s", group)
+	}
+	// The capability badges come from the registry: Cloudflare supports all four, so none of its chips
+	// may be struck through as unsupported.
+	if strings.Contains(group, "line-through") {
+		t.Error("a Cloudflare capability badge is drawn as unsupported")
 	}
 }

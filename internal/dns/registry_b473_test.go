@@ -68,13 +68,15 @@ func TestB473_LookupSpecAcceptsTheHistoricalAlias(t *testing.T) {
 	if a.Name != b.Name || a.Name != "regru" {
 		t.Errorf("alias resolved to %q, honest name to %q — they must be the same spec", a.Name, b.Name)
 	}
-	if _, ok := LookupSpec("cloudflare"); !ok {
-		// Not an error until B474 ships the adapter — but the registry must not silently claim it
-		// exists either. This branch documents the expected state at B473.
-		t.Log("cloudflare is not in the registry yet (B474 ships it) — expected at this block")
-	}
 	if _, ok := LookupSpec("no-such-provider"); ok {
 		t.Error("an unknown provider resolved to a spec — the save path would accept it")
+	}
+	// B474 shipped Cloudflare, which is what the seam was for: a provider that is NOT reg.ru resolves
+	// from the same registry and therefore renders on the same page.
+	if spec, ok := LookupSpec("cloudflare"); !ok {
+		t.Error("cloudflare is missing from the registry — B474's adapter would be unreachable from the panel")
+	} else if spec.Name != "cloudflare" || len(spec.Fields) == 0 {
+		t.Errorf("the cloudflare spec is incomplete: %+v", spec)
 	}
 }
 

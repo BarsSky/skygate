@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	dnsexternal "skygate/internal/dnsexternal"
@@ -38,6 +39,12 @@ type BuildDeps struct {
 	// behaviour (read the legacy row), which the schedulers still rely on for an install that has
 	// never been saved through the panel.
 	Row *extcreds.ProviderRow
+	// BaseURL overrides the provider's API endpoint (B474). Empty = the provider's production base.
+	// The tests point it at an httptest server; nobody else needs it, but a field is cheaper than an
+	// env var that only tests can set on the shipped binary.
+	BaseURL string
+	// HTTPClient overrides the HTTP client (B474). Nil = a bounded default (a 20s timeout).
+	HTTPClient *http.Client
 }
 
 // BuildProvider returns a Provider matching the given name
@@ -89,11 +96,27 @@ func BuildProvider(name string, deps BuildDeps) (Provider, error) {
 		// can't import internal/dns (would create a
 		// cycle — see dnsexternal/client.go package doc).
 		return &externalAdapter{Client: dnsexternal.NewClient(store)}, nil
-	case "cloudflare", "route53", "rfc2136":
-		// Reserved for future B-checks. The
+	case "cloudflare":
+		// B474: the SECOND provider, and the proof that the B473 seam is real — it authenticates with an
+		// API token instead of a login/password pair, and it can do AAAA/TXT/TTL where the reg.ru client
+		// cannot. The token comes from the credential ROW (the panel's path) or, for a CLI/bootstrap
+		// run before anything is stored, from SKYGATE_CLOUDFLARE_TOKEN.
+		var token string
+		if deps.Row != nil {
+			token = strings.TrimSpace(deps.Row.Secret("token"))
+		}
+		if token == "" {
+			token = cloudflareTokenFromEnv()
+		}
+		if token == "" {
+			return nil, errCloudflareNoToken()
+		}
+		return newCloudflareProvider(token, deps.BaseURL, deps.HTTPClient), nil
+	case "route53", "rfc2136":
+		// Reserved for a future B-check. The
 		// error message is intentionally specific so
 		// the operator knows which B-check to read.
-		return nil, fmt.Errorf("dns: provider %q is not implemented yet (see docs/ha.md — the shipped implementation is 'regru' / its alias 'external', B145 + B468)", name)
+		return nil, fmt.Errorf("dns: provider %q is not implemented yet (see docs/ha.md — the shipped implementations are 'regru' / its alias 'external' (B145 + B468) and 'cloudflare' (B474))", name)
 	default:
 		return nil, ErrUnknownProvider{Name: name}
 	}

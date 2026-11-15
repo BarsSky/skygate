@@ -6,19 +6,23 @@ blocked, and the technical-debt register. It replaces the pre-v1.6 set
 2026-09-18 documentation restructure — the full text of every removed plan stays
 in git history.
 
-**Last updated:** 2026-11-14 (v1.5.221 cycle — B473: the DNS credential block was welded to one
-registrar, so «как адаптировать под разных провайдеров?» had no answer short of a rewrite. Three
-things moved at once: credentials are now ROWS in `dns_provider_creds` (v0.84, both chains, one set
-per `(provider, zone)`, provider fields as one AES-256-GCM ciphertext, the legacy `ha.dns.*` row
-imported exactly once behind `ha.dns.migrated`), `internal/dns.Provider` declares what it can do
-(`Capabilities` / `SetTTL` / `ListRecords` / `CreateTXT` / `DeleteTXT`, with the named
-`ErrUnsupported` for the honest refusal), and a provider REGISTRY owns each provider's fields, labels
-and capabilities while the `/admin/ha` card renders it — the provider is a `<select>`, one field group
-per provider, exactly one group enabled, capability badges shown before the switch. Adding Cloudflare
-(API token, B474) or RFC 2136 (TSIG, B475) is now an adapter + a spec + a `case`, with no migration
-and no template edit. Registered as contract `B473` (`scripts/check_b473_dns_providers.sh`, 44
-contracts); the B472 contract was renegotiated to the schema-driven shape without losing a guarantee.
-The `Last updated` line itself is the drift detector B330 C4 asks for, so it moves with the release.)
+**Last updated:** 2026-11-14 (v1.5.222 cycle — B474: the seam B473 cut out of reg.ru is now proven by a
+provider that is NOT reg.ru. Cloudflare authenticates with an API token instead of a login/password pair
+and genuinely supports AAAA/TXT/TTL, so it needed ONE adapter, ONE registry entry, ONE `BuildProvider`
+case, one catalogue pair and one doc section — and no change to the credential table, the migrations, the
+save handler or the template. The adapter honours the API's envelope (`HTTP 200` with `success=false` is
+a failure), names the token's required permissions (`Zone:Read` + `Zone.DNS:Edit`), PATCHes an existing
+record instead of recreating it, REFUSES a proxied record (Cloudflare would answer with its own addresses,
+so a switch would have no visible effect), validates TTL against the set the API accepts, keeps DNS-01
+TXT deletes exact and idempotent, and is covered by eleven behavioural tests against a fake v4 API — the
+docs state it was not exercised against a live account. Previous cycle, still shipping in the same
+sequence: B473 replaced the five fixed `ha.dns.*` keys with `dns_provider_creds` rows (v0.84, both
+chains, one set per `(provider, zone)`, AES-256-GCM fields, one-time legacy import), extended
+`dns.Provider` with `Capabilities`/`SetTTL`/`ListRecords`/`CreateTXT`/`DeleteTXT` plus the named
+`ErrUnsupported`, and made the `/admin/ha` card render a provider REGISTRY — a `<select>`, one field group
+per provider, exactly one group enabled, capability badges before the switch. Contract `B473` (44
+contracts) and the B472 contract was renegotiated to the schema-driven shape. The `Last updated` line is
+the drift detector B330 C4 asks for, so it moves with the release.)
 
 > **This file was 85 releases behind.** Until 2026-10-01 it still described the
 > **v1.5.9** cycle (`Version line: v1.5.9`, "Last updated 2026-09-18"), so every

@@ -109,8 +109,25 @@ var regruSpec = Spec{
 	Caps: Capabilities{A: true, AAAA: false, TXT: false, TTL: true},
 }
 
+// cloudflareSpec is the second provider (B474) and the first one that is not reg.ru — which is what
+// makes the seam a seam instead of an extraction. One field, because that is all Cloudflare needs: an
+// API token scoped to the zone (the zone is its own column, so it is not repeated here). Its
+// capabilities are the full set, and unlike reg.ru they are genuinely implemented.
+var cloudflareSpec = Spec{
+	Name:      "cloudflare",
+	Label:     "Cloudflare (API token)",
+	NeedsZone: true,
+	Fields: []FieldSpec{
+		{
+			Name: "token", LabelKey: "ha.dns_field_cf_token", HelpKey: "ha.dns_field_cf_token_help",
+			Kind: FieldPassword, Required: true,
+		},
+	},
+	Caps: Capabilities{A: true, AAAA: true, TXT: true, TTL: true},
+}
+
 // providerSpecs is the display order of the registry. The first entry is what a fresh install offers.
-var providerSpecs = []Spec{regruSpec}
+var providerSpecs = []Spec{regruSpec, cloudflareSpec}
 
 // Specs returns every known provider spec, in display order.
 func Specs() []Spec { return append([]Spec(nil), providerSpecs...) }

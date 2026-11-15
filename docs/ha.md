@@ -1064,8 +1064,26 @@ credentials the install has been using and nothing is retyped. The active row is
 
 No migration, no template edit, no new settings key.
 
-The shipped provider is reg.ru's API (B468): a login, the account's **alternative password** created in
-the API section of the account (not the account password), and the zone.
+**Cloudflare (B474)** is the second shipped provider and the one that proves the seam: it is selected on
+the same card, its single field is an **API token** (My Profile → API Tokens) carrying **Zone:Read** and
+**Zone.DNS:Edit** for that zone — not the global API key and not the account password — and the zone is
+the domain on the Cloudflare account. What it can do is the full set (`A`, `AAAA`, `TXT`, `TTL`), so the
+DNS-01 route that reg.ru must refuse is available here. Two behaviours worth knowing before a switch:
+
+* a **proxied** (orange-cloud) A record is refused rather than rewritten — Cloudflare answers with its
+  own edge addresses, so pointing that record at a new origin would look like a switch that did nothing;
+* TTL values are validated against the set the API accepts (`1`, `60`, `120`, `300`, `600`, `900`,
+  `1800`, `3600`, `7200`, `10800`, `21600`, `43200`, `86400`), and a rejected value says so locally
+  instead of returning a provider error that reads like a bug.
+
+For a CLI run before anything is saved, `SKYGATE_CLOUDFLARE_TOKEN` supplies the token. The adapter is
+verified against a fake Cloudflare v4 API (token in the header, `success:false` reported as failure,
+create-then-patch, proxied refusal, TTL set, TXT round trip with idempotent delete, zone shortening,
+pagination) — it has **not** been exercised against a live account, so the first real use should be the
+card's «Test connection» and «Read the zone».
+
+The shipped default provider is reg.ru's API (B468): a login, the account's **alternative password**
+created in the API section of the account (not the account password), and the zone.
 
 **Two ways in, one store.** The panel form and the CLI below write the same encrypted rows, so either is
 enough — use the panel when you have a browser and the CLI when you are already on the host.
