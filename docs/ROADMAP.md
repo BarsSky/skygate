@@ -341,10 +341,37 @@ because `printf … | grep -q` under `pipefail` lets the producer's status decid
 haystacks before it was applied, and a contract now keeps the class at zero and proves its
 own detector on planted violations**.
 
+### 4.1 Recorded 2026-11-15 — the migration's two live findings
+
+Both were paid for during the skygate/headscale move off the old host; the first
+is the next block, the second is measured only after the first two releases land.
+
+1. **B477 — tags must survive re-authentication.** headscale drops **all** tags when
+   a node re-authenticates through OIDC, and skygate restored only the dev tag it
+   knew about: node `SkyBars` came back from registration with `[]`, got
+   `tag:dev-skyadmin-skybars` at the next reconcile tick, and permanently lost
+   `tag:private` — which it had carried before. For 2.5 minutes the node matched no
+   per-device rule at all, so its ACL access disappeared and looked like "the
+   migration broke the tailnet". Two writers race here (`infra-backfill`'s
+   `AddTag(tag:private)` and `tag-reconcile`'s dev tag), headscale's tag API
+   **replaces** the whole set, and `AddTag` reads the current set through a 5-second
+   cache — so the second writer wrote a stale set and wiped the first tag. Required:
+   every tag write sends the full intended set (current ∪ target) read WITHOUT the
+   cache, the two writers are serialised, and a dropped tag is reported; plus a
+   contract that re-registration keeps every tag a node had.
+2. **The exit-node-pinned connection flaps.** Operator report, same evening: the
+   connection that came back through the exit node is unstable and keeps jumping.
+   Not diagnosed yet — measure **after** v1.5.222 (ACL applies again) and B477,
+   because a frozen policy and lost tags can both produce exactly this symptom.
+   Check in this order: `tailscale netcheck` (our own DERP region shows no latency
+   while the public ones do — the relay itself answers `101 Switching Protocols`,
+   so the probe is the suspect), the exit-node health ladder (`/admin/exit-nodes`),
+   `prefix_owner` churn (does the owner move between passes?), and the per-device
+   `via` pin versus the relay that actually serves the prefix.
+
 ---
 
 ## 5. Blocked / needs operator action
-
 | Ref | Item | Blocked on |
 |---|---|---|
 | **BL-2** | ~~HA Tier 1 (active/passive with a priority chain, Patroni + etcd failover, DNS failover, certsync via S3)~~ — **SHIPPED, v1.5.0 (B200–B226)** | This row claimed it was blocked on external DNS-provider credentials and on answers to the **open HA questions**; [`docs/ha.md`](ha.md) §7.1 records **Q1 (credentials) and Q2 (IP whitelist) as DONE (v1.5.0)**, the topology / second host / etcd / `ha/` S3 prefix are in place, and the blocks shipped. What is genuinely still open lives in §7 of that file: **Q9** — the live DR drill on the production pair has never been run; **G2** — single-node etcd, so there is no quorum; **G10** — the reused S3 credentials are scoped wider than `s3://<bucket>/ha/*` |
