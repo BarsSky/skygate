@@ -19,6 +19,7 @@ package exit_rules
 
 import (
 	"errors"
+	"log"
 	"os"
 
 	"skygate/internal/acl"
@@ -81,6 +82,24 @@ func (s *Service) insertRuleUnique(userID int64, deviceID int, exitNode, targetT
 	// B380: normalise here too — this is the single low-level writer, so the stored
 	// value is the one the group view will compare and display.
 	groupLabel = NormaliseGroupLabel(groupLabel)
+	// B480: ONE RULE PER TARGET. If this device already has a rule for the same target
+	// under a DIFFERENT exit node, that is not a new rule — the target is already
+	// reserved, and re-adding it must open access through the reservation instead of
+	// writing a second row that competes for the same prefix. Measured on the live
+	// installation: `basic` and `skyworker` had rows for the same Discord /32s with
+	// different relays, and the ownership table flipped between them.
+	//
+	// Moving an existing rule to another relay is a request (`exit_relay_requests`,
+	// B440) or the operator's bulk move — never a side effect of adding a duplicate.
+	if id, otherRelay, err := db.FindDeviceRuleIDAnyRelay(s.dbc(), userID, deviceID, targetType, targetValue); err == nil {
+		if otherRelay != exitNode {
+			log.Printf("exit-rules: %s %s for device %d is already covered by relay %q — NOT adding a duplicate for relay %q (moving it is a request, see B440)",
+				targetType, targetValue, deviceID, otherRelay, exitNode)
+		}
+		return true, id
+	} else if !errors.Is(err, db.ErrNotFound) {
+		return false, 0
+	}
 	existingID, err := db.FindDeviceRuleID(s.dbc(), userID, deviceID, exitNode, targetType, targetValue)
 	if err == nil {
 		return true, existingID

@@ -48,6 +48,7 @@ syntax lives in [`acl-rules-reference.md`](acl-rules-reference.md).
 11. [ACL re-apply fails: `ip and app can not both be empty` (B476)](#11-acl-re-apply-fails-ip-and-app-can-not-both-be-empty-b476)
 12. [A device lost its tags and stopped matching any rule (B477)](#12-a-device-lost-its-tags-and-stopped-matching-any-rule-b477)
 13. [`DERPER SERVICE stopped` on a live relay — and a 136 ms latency on a local one (B478)](#13-derper-service-stopped-on-a-live-relay--and-a-136-ms-latency-on-a-local-one-b478)
+14. [One device cannot reach one service — the prefix was resolved to another relay (B480)](#14-one-device-cannot-reach-one-service--the-prefix-was-resolved-to-another-relay-b480)
 
 ---
 
@@ -1958,3 +1959,53 @@ dialled unconditionally, in both probes — the health sweep
 (`internal/derphealth/probe.go`) and the page's own reachability probe
 (`derpReachabilityCandidates`, where the pin now comes first in every case). With
 nothing pinned, behaviour is unchanged.
+---
+
+## 14. One device cannot reach one service — the prefix was resolved to another relay (B480)
+
+### Symptom
+
+A single service (live case: Discord) fails **only on one device**, while every other site
+works on it and the same service works on other devices. The panel's rules look right: all
+of that device's rules name the same exit node. Another device (often one that does not use
+an exit node at all) has rules for the same destinations pointing at a different relay.
+
+### What it actually means
+
+headscale serves a prefix from exactly ONE relay, and skygate's `prefix_owner` decides which.
+Before B480 the engine counted every claim equally, so a claim from a device whose exit-node
+preference is `opted_out` / empty could tie with the claim of the device that actually routes,
+and the alphabetical tie-break moved the prefix. The ACL then pinned `via=[the new owner]`,
+which is a permission FILTER: the device whose exit node is the old relay lost exactly those
+addresses.
+
+Two policy rules now apply, and they are the operator's own wording:
+
+1. **A reservation is accepted, not re-decided** — an existing owner that is healthy and still
+   has at least one voting claim keeps its prefix; another relay's claim accepts it.
+2. **An inert claim does not vote** — a device with no exit-node choice still gets access to
+   the prefix (it is counted as coverage), but it cannot move the reservation. A reservation
+   whose voters are all gone/inert IS re-decided, which is what hands a prefix back to the
+   device that needs it.
+3. **Acceptance by enclosing range** — a prefix nobody votes for (e.g. a CDN `/32`) is served
+   by the owner of the most specific range that already contains it, instead of being
+   auto-spread over another relay.
+
+### Moving a reservation is a request
+
+A user who needs another exit node for existing rules **selects those rules and submits a
+request** (`exit_relay_requests`, B440): policy `auto` / `require_approval` / `refuse`,
+approval = the operator's manual pin. Adding the same target again with a different relay no
+longer creates a second rule: the writer reports it as already covered
+(`exit-rules: … is already covered by relay "karolina"`) and opens access through the
+reservation.
+
+### Repairing rows created before this rule
+
+```bash
+bash scripts/b480_dup_rule_cleanup.sh            # report: targets with more than one row
+bash scripts/b480_dup_rule_cleanup.sh --apply    # keep the owner's row, drop the losing ones
+```
+
+The script never deletes the last row for a (user, device, target) triple and backs the
+database up before writing.

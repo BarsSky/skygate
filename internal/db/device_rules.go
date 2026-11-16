@@ -232,6 +232,27 @@ func FindDeviceRuleID(d *sql.DB, userID int64, deviceID int, exitNode, targetTyp
 	return id, err
 }
 
+// FindDeviceRuleIDAnyRelay is FindDeviceRuleID WITHOUT the relay in the key, and it
+// also returns the relay the existing rule names (B480).
+//
+// The operator's rule: one rule per TARGET. If the target is already covered by the
+// user's own rule, adding it again with a different exit node must NOT create a second
+// row that competes for the same prefix — the row already exists and the user is asking
+// for access through it. Moving an existing rule to another relay is an explicit request
+// (`exit_relay_requests`, B440), not a side effect of adding a duplicate.
+//
+// Returns ErrNotFound when the user's device has no rule for that target at all.
+func FindDeviceRuleIDAnyRelay(d *sql.DB, userID int64, deviceID int, targetType, targetValue string) (id int, exitNode string, err error) {
+	err = d.QueryRow(`SELECT id, COALESCE(exit_node_id,'') FROM device_rules
+	                   WHERE user_id = $1 AND device_id = $2 AND target_type = $3 AND target_value = $4
+	                   ORDER BY enabled DESC, id ASC LIMIT 1`,
+		userID, deviceID, targetType, targetValue).Scan(&id, &exitNode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", ErrNotFound
+	}
+	return id, exitNode, err
+}
+
 // FindDomainRuleID is the narrower dedup used by the form insert
 // path: same as FindDeviceRuleID but target_type is implicitly
 // 'domain'. Exists because the SQL string is shorter and the column

@@ -32,6 +32,7 @@ package prefixowner
 import (
 	"database/sql"
 	"log"
+	"net/netip"
 	"sort"
 	"strings"
 	"time"
@@ -39,11 +40,55 @@ import (
 	"skygate/internal/db"
 )
 
+// mostSpecificEnclosing returns the owner of the most specific prefix that STRICTLY
+// contains p, together with that parent prefix (B480). Empty when nothing encloses p.
+//
+// Why it matters: a CDN expansion writes a /32 for a host that resolves inside a range
+// the assignment table already covers (live: 142.251.150.4/32 inside Google's
+// 142.250.0.0/15, 162.159.128.233/32 inside Cloudflare's 162.158.0.0/15). When nothing
+// but inert claims speak for the /32, "acceptance" means: the enclosing range's owner
+// serves it too — instead of the engine spreading the /32 over some other relay, which
+// is how a device lost single Discord endpoints while the rest of the service worked.
+func mostSpecificEnclosing(p string, owners map[string]string) (owner, parent string) {
+	child, err := netip.ParsePrefix(p)
+	if err != nil {
+		return "", ""
+	}
+	bestBits := -1
+	for cand, o := range owners {
+		if cand == p || o == "" {
+			continue
+		}
+		par, perr := netip.ParsePrefix(cand)
+		if perr != nil || par.Addr().Is4() != child.Addr().Is4() {
+			continue
+		}
+		if par.Bits() >= child.Bits() || !par.Contains(child.Addr()) {
+			continue
+		}
+		if par.Bits() > bestBits {
+			bestBits, owner, parent = par.Bits(), o, cand
+		}
+	}
+	return owner, parent
+}
+
 // Claim is one "this device's rule asks for this prefix" statement.
 type Claim struct {
 	Prefix   string
 	ExitNode string // the rule's exit_node_id; "" = the user expressed no preference
 	DeviceID int
+	// Inert marks a claim from a device that did not choose an exit node at all
+	// (`device_exit_node_prefs.opted_out = 1`, or a row with an empty tag).
+	//
+	// B480 (2026-11-16): such a rule still needs ACCESS to the prefix, but it must not
+	// decide WHICH relay reserves it. Live case: `basic` (exit node karolina, all 164
+	// Discord rules naming karolina) and `skyworker` (opted OUT of the exit-node
+	// preference, rules naming emilia) claimed the same 17 Discord /32s. The votes tied
+	// 1:1, the alphabetical tie-break picked emilia, and `basic` — actually routed
+	// through karolina — lost exactly those addresses while the rest of Discord worked.
+	// A device that never uses a relay cannot be the reason a prefix moves.
+	Inert bool
 }
 
 // Existing is a row already stored in prefix_owner.
@@ -148,6 +193,11 @@ func AssignWithReservationsAndWeights(claims []Claim, healthy []string, existing
 		perNode map[string]int
 		devices map[int]bool
 		total   int
+		// votes counts only claims that actually speak for a device which USES an
+		// exit node (B480). `total`/`devices` stay the display counters, because a
+		// prefix covered for N devices must still show N — they just do not vote.
+		votes  int
+		prefix string
 	}
 	groups := map[string]*group{}
 	for _, c := range claims {
@@ -156,13 +206,14 @@ func AssignWithReservationsAndWeights(claims []Claim, healthy []string, existing
 		}
 		g := groups[c.Prefix]
 		if g == nil {
-			g = &group{perNode: map[string]int{}, devices: map[int]bool{}}
+			g = &group{perNode: map[string]int{}, devices: map[int]bool{}, prefix: c.Prefix}
 			groups[c.Prefix] = g
 		}
 		g.total++
 		g.devices[c.DeviceID] = true
-		if c.ExitNode != "" {
+		if c.ExitNode != "" && !c.Inert {
 			g.perNode[c.ExitNode]++
+			g.votes++
 		}
 	}
 	prev := map[string]Existing{}
@@ -217,7 +268,37 @@ func AssignWithReservationsAndWeights(claims []Claim, healthy []string, existing
 			decided[p] = true
 		}
 	}
-	// Pass 2 — explicit (majority of the rules that named a relay).
+	// Pass 2 — the RESERVATION (B480). An existing owner that is healthy and still has
+	// at least one VOTING claim keeps its prefix: another relay's claim ACCEPTS the
+	// reservation instead of re-deciding it. This is the operator's rule «если правило
+	// зарезервировано за exit node X, остальные принимают такую политику», and the live
+	// defect it closes was a reservation being moved by a claim from a device that does
+	// not even route through a relay (see Claim.Inert).
+	//
+	// An owner whose supporters have all gone (or are all inert) is NOT protected: it is
+	// re-decided below, which is what makes skyworker's inert emilia claims hand the
+	// Discord /32s back to the device that actually needs them.
+	for _, p := range prefixes {
+		if decided[p] {
+			continue
+		}
+		e, ok := prev[p]
+		if !ok || e.Source == "manual" || !healthySet[e.ExitNode] {
+			continue
+		}
+		g := groups[p]
+		if g.perNode[e.ExitNode] == 0 {
+			continue
+		}
+		src := e.Source
+		if src != "explicit" && src != "auto" && src != "global" {
+			src = "explicit"
+		}
+		out = append(out, Assignment{Prefix: p, ExitNode: e.ExitNode, Source: src, Claims: g.total, Devices: len(g.devices)})
+		load[e.ExitNode]++
+		decided[p] = true
+	}
+	// Pass 3 — explicit (majority of the rules that named a relay).
 	for _, p := range prefixes {
 		if decided[p] {
 			continue
@@ -263,6 +344,29 @@ func AssignWithReservationsAndWeights(claims []Claim, healthy []string, existing
 			continue
 		}
 		g := groups[p]
+		// B480 — ACCEPTANCE BY ENCLOSING RANGE: a prefix nobody VOTES for is served by
+		// the owner of the most specific range that already contains it, instead of being
+		// spread over the least loaded relay. Manual pins and prefixes with real votes
+		// never take this branch, so it cannot move a decision someone made.
+		//
+		// Only a RESERVATION (explicit/manual/global) is inherited from: an enclosing
+		// prefix that was itself merely auto-spread says nothing about this one — the
+		// engine keeps balancing those (B275's contract), which is also why
+		// TestAssign_AutoIsLoadBalancedAndSticky still sees one prefix per relay.
+		if g.votes == 0 {
+			owners := map[string]string{}
+			for _, a := range out {
+				if a.Source == "explicit" || a.Source == "manual" || a.Source == "global" {
+					owners[a.Prefix] = a.ExitNode
+				}
+			}
+			if owner, _ := mostSpecificEnclosing(p, owners); owner != "" && healthySet[owner] {
+				out = append(out, Assignment{Prefix: p, ExitNode: owner, Source: "auto", Claims: g.total, Devices: len(g.devices)})
+				load[owner]++
+				decided[p] = true
+				continue
+			}
+		}
 		// Sticky: keep the previous owner while it is healthy and its
 		// load is within one prefix of the least loaded relay.
 		if e, ok := prev[p]; ok && healthySet[e.ExitNode] {
@@ -304,6 +408,37 @@ func AssignWithReservationsAndWeights(claims []Claim, healthy []string, existing
 	return out
 }
 
+// loadInertDevices returns the ids of devices that did not choose an exit node at all —
+// `device_exit_node_prefs` says `opted_out = 1`, or carries an empty tag (B480).
+//
+// The read is deliberately isolated and tolerated: the caller treats an error as "nobody
+// is inert", so an older schema (no `opted_out` column) or a fixture without the table
+// keeps the pre-B480 behaviour instead of failing the whole assignment pass.
+func loadInertDevices(d *sql.DB) (map[int64]bool, error) {
+	rows, err := d.Query(`SELECT DISTINCT COALESCE(r.device_id,0)
+	                        FROM device_rules r
+	                        JOIN device_exit_node_prefs p
+	                          ON lower(p.device_hostname) = lower(r.device_hostname)
+	                       WHERE r.enabled = 1
+	                         AND r.target_type IN ('ip','subnet')
+	                         AND (p.opted_out = 1 OR COALESCE(p.exit_node_tag,'') = '')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		if id != 0 {
+			out[id] = true
+		}
+	}
+	return out, rows.Err()
+}
+
 // LoadClaims reads every enabled ip/subnet rule as a claim — ONE claim per
 // (prefix, relay, device) triple (B276).
 //
@@ -333,6 +468,19 @@ func LoadClaims(d *sql.DB) ([]Claim, error) {
 			continue
 		}
 		out = append(out, c)
+	}
+	// B480: mark the claims of devices that did not choose an exit node at all. Read in
+	// a SEPARATE, tolerated query so an installation whose preference table predates the
+	// `opted_out` column (or a test fixture without one) keeps working exactly as before:
+	// nobody is marked inert and every claim votes, which is the pre-B480 behaviour.
+	if inertDevices, ierr := loadInertDevices(d); ierr != nil {
+		log.Printf("prefix-owner: opted-out devices unavailable (every claim votes): %v", ierr)
+	} else if len(inertDevices) > 0 {
+		for i := range out {
+			if out[i].DeviceID != 0 && inertDevices[int64(out[i].DeviceID)] {
+				out[i].Inert = true
+			}
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

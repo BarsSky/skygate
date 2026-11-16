@@ -343,6 +343,8 @@ own detector on planted violations**.
 
 ### 4.1 Recorded 2026-11-15 — the migration's two live findings
 
+**SHIPPED in v1.5.225:** B480 — the reservation is accepted, not re-decided (an inert claim from a device that uses no exit node no longer moves a prefix, a nested /32 inherits the enclosing reservation, and one rule per target means adding a covered target opens access instead of writing a duplicate for another relay). Moving rules to a new exit node is the B440 request.
+
 **SHIPPED in v1.5.224:** B479 — the six live-state contracts that made a healthy tree look red on the retired host now SKIP (they are docker-shaped and the host no longer runs the pair), and a reachable docker daemon is no longer mistaken for a running stack.
 
 **SHIPPED in v1.5.223:** item 1 (B477 — tags survive re-authentication) and the
