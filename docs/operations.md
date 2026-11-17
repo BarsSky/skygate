@@ -1892,9 +1892,11 @@ SKYGATE_TEST_PG_DSN='postgres://user:pw@db-host:5432/skygate_pgtest?sslmode=disa
 
 `scripts/verify_pre_deploy.sh` never sets `SKYGATE_TEST_PG_DSN`, and it cannot invent one. So on a
 host where nobody exported it, `B1` (`go test ./...`) **SKIPs every PostgreSQL-gated test and still
-reports PASS** — the gate's database coverage is silently SQLite-only. CI is the exception:
-`.github/workflows/ci.yml`'s `test-pg` job starts a real `postgres:15` service and passes the DSN,
-but it is scoped to `./internal/db/...`, so most of the PG-gated tests never run anywhere.
+reports PASS** — the gate's database coverage is silently SQLite-only, and the banner on every run says
+so out loud (`PostgreSQL coverage: SQLite only`). Two CI jobs close that gap from different sides:
+`verify-pre-pg` runs the **catalog** with the DSN (B481, described above), and `test-pg` runs
+`go test ./... -count=1` with the DSN, so the whole tree — not just `./internal/db/...` — executes
+against real PostgreSQL on every push and pull request.
 
 Measured 2026-10-01 — the packages whose tests open a live PostgreSQL through
 `db.OpenTestPG`:
