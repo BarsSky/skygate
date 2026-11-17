@@ -618,7 +618,7 @@ func (s *Service) PostAdminMigrateStep(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := context.WithoutCancel(r.Context())
-	runErr := migrate.RunStep(ctx, migrate.Deps{DB: s.dbc(), Run: run, Secret: secret}, step)
+	runErr := migrate.RunStep(ctx, migrate.Deps{DB: s.dbc(), Run: run, Secret: secret, Internal: s.migrateInternalActions(run)}, step)
 
 	if runErr == nil {
 		s.Backend.Audit(c.UserID, c.Username, "migrate.step.run",

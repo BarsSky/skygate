@@ -335,3 +335,71 @@ func TestWriteAskpass_ScriptPrintsThePassword(t *testing.T) {
 		t.Fatal("an empty password must be refused")
 	}
 }
+
+// TestExecute_InternalUsesTheSuppliedAction — an internal step's name is resolved through Deps, and
+// the action's own report becomes the step's output.
+func TestExecute_InternalUsesTheSuppliedAction(t *testing.T) {
+	step := &db.HostMigrationStep{StepKey: "p6.nodes", Where: WhereInternal, Command: "internal_nodes_online"}
+	deps := Deps{Internal: map[string]InternalFunc{
+		"internal_nodes_online": func(context.Context) (string, error) { return "nodes=16 online=6", nil },
+	}}
+	out, err := execute(context.Background(), deps, step, step.Command)
+	if err != nil {
+		t.Fatalf("a supplied action must run: %v", err)
+	}
+	if !strings.Contains(out, "online=6") {
+		t.Fatalf("the action's report must be the output, got %q", out)
+	}
+}
+
+// TestExecute_InternalMissingActionIsPending — a name this build does not know is PENDING, never a
+// failure: "not implemented" and "the host refused" are different actions for the operator.
+func TestExecute_InternalMissingActionIsPending(t *testing.T) {
+	step := &db.HostMigrationStep{StepKey: "p6.routes", Where: WhereInternal, Command: "internal_routes_converged"}
+	_, err := execute(context.Background(), Deps{}, step, step.Command)
+	if !errors.Is(err, ErrExecutorPending) {
+		t.Fatalf("an unknown action must be pending, got %v", err)
+	}
+	var nilMap Deps
+	_, err = execute(context.Background(), nilMap, step, step.Command)
+	if !errors.Is(err, ErrExecutorPending) {
+		t.Fatalf("a nil map must not panic and must be pending, got %v", err)
+	}
+}
+
+// TestRunStep_InternalActionFailureFailsTheStep — the action's error is the step's verdict.
+func TestRunStep_InternalActionFailureFailsTheStep(t *testing.T) {
+	// A nil database would be refused before the action, so this test asserts the contract on the
+	// dispatcher itself: an action error surfaces as one.
+	step := &db.HostMigrationStep{StepKey: "p6.policy", Where: WhereInternal, Command: "internal_policy_equivalent"}
+	deps := Deps{Internal: map[string]InternalFunc{
+		"internal_policy_equivalent": func(context.Context) (string, error) {
+			return "differs", errors.New("live policy differs from the generated one")
+		},
+	}}
+	if _, err := execute(context.Background(), deps, step, step.Command); err == nil {
+		t.Fatal("an action error must be returned")
+	}
+}
+
+// TestExecute_InternalVerifyUsesTheSameMap — a verify name is resolved the same way as a command,
+// so an internal step can prove itself without a shell.
+func TestExecute_InternalVerifyUsesTheSameMap(t *testing.T) {
+	step := &db.HostMigrationStep{StepKey: "p4.relay_row", Where: WhereInternal,
+		Command: "internal_derp_relay_upsert", Verify: "external_derp_probe_101"}
+	calls := 0
+	deps := Deps{Internal: map[string]InternalFunc{
+		"internal_derp_relay_upsert": func(context.Context) (string, error) { calls++; return "row upserted", nil },
+		"external_derp_probe_101":    func(context.Context) (string, error) { calls++; return "101", nil },
+	}}
+	out, verify, err := runStepBody(context.Background(), deps, step)
+	if err != nil {
+		t.Fatalf("a wired internal step must pass: %v (out=%q verify=%q)", err, out, verify)
+	}
+	if calls != 2 {
+		t.Fatalf("both the action and its verify must run, got %d call(s)", calls)
+	}
+	if !strings.Contains(out, "101") {
+		t.Fatalf("the verify output must be appended, got %q", out)
+	}
+}

@@ -58,6 +58,11 @@ type Target struct {
 	KeyPath string
 }
 
+// InternalFunc is one panel action an internal step can name: a headscale API query, an ACL
+// comparison, a DERP probe, a DB row write. It returns a human-readable report (stored as the
+// step's output) and an error when the action's own verdict is negative.
+type InternalFunc func(ctx context.Context) (string, error)
+
 // Deps is everything RunStep needs.
 //
 // Secret carries the decrypted credential (a password or a private key, depending on the run's
@@ -72,6 +77,11 @@ type Deps struct {
 	// without touching a host — the executor's contract is the argv it builds, so this is the seam
 	// that makes the dangerous half testable.
 	Command func(ctx context.Context, name string, args []string, stdin string, env []string) (string, error)
+
+	// Internal resolves an internal step's action (or its Verify) by the name the plan carries,
+	// e.g. "internal_nodes_online". A missing entry is reported as ErrExecutorPending — that is
+	// what keeps "this build cannot do it yet" from looking like "the host refused".
+	Internal map[string]InternalFunc
 }
 
 func (d Deps) runner() func(context.Context, string, []string, string, []string) (string, error) {
@@ -111,12 +121,13 @@ func RunStep(ctx context.Context, deps Deps, step *db.HostMigrationStep) error {
 	if step.Kind == KindManual || step.Where == WhereManual {
 		return ErrManualStep
 	}
-	// An internal step is a panel action (a DB row, a headscale API call, an ACL push) rather than
-	// a shell command, and this build has no implementation for any of them yet: saying so is
-	// honest, and it keeps the row `pending` instead of recording a host failure that never
-	// happened.
+	// An internal step is a panel action (a DB row, a headscale API call, an ACL comparison) rather
+	// than a shell command. When this build has not wired the named action, saying so is honest and
+	// keeps the row `pending` instead of recording a host failure that never happened.
 	if step.Where == WhereInternal {
-		return ErrExecutorPending
+		if _, ok := deps.Internal[step.Command]; !ok {
+			return ErrExecutorPending
+		}
 	}
 	if deps.DB == nil {
 		return errors.New("migrate: RunStep: no database")
@@ -158,9 +169,7 @@ func runStepBody(ctx context.Context, deps Deps, step *db.HostMigrationStep) (ou
 	defer cancel()
 
 	switch step.Where {
-	case WhereLocal, WhereRemote, WhereCopy:
-	case WhereInternal:
-		return "", "", ErrExecutorPending
+	case WhereLocal, WhereRemote, WhereCopy, WhereInternal:
 	case WhereManual:
 		return "", "", ErrManualStep
 	default:
@@ -188,6 +197,14 @@ func execute(ctx context.Context, deps Deps, step *db.HostMigrationStep, command
 	switch step.Where {
 	case WhereLocal:
 		return deps.runner()(ctx, "bash", []string{"-lc", command}, "", nil)
+	case WhereInternal:
+		// A panel action has no shell: the plan carries its NAME, and the host supplies the
+		// implementation. A name this build does not know is pending, not failed.
+		fn, ok := deps.Internal[command]
+		if !ok {
+			return "", fmt.Errorf("%w: %s", ErrExecutorPending, command)
+		}
+		return fn(ctx)
 	case WhereRemote:
 		argv, env, cleanup, err := remoteInvocation(deps, "bash -s")
 		if err != nil {

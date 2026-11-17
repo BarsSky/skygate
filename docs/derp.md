@@ -478,3 +478,38 @@ unambiguous.
   deploy-time config into a web UI.
 - `docs/telegram-relay.md` — the use case: Tailscale clients
   reaching `api.telegram.org` through a custom DERP.
+
+## Certificate renewal on a hand-installed derper (B483, TD-38)
+
+A derper started with `--certmode=manual --certdir=…` resolves its certificate **by hostname** and
+**verifies the chain**. Two consequences that cost the 2026-11 cutover real time:
+
+1. the files must be named `<hostname>.crt` / `<hostname>.key` inside `--certdir`;
+2. a pair trimmed to "leaf + intermediate" fails verification with `unable to get local issuer
+   certificate` — the **full chain** is required.
+
+When a reverse proxy (Caddy, NPM) owns the ACME account, derper's copy has to be refreshed after
+every renewal. That used to be a hand-written script plus a systemd timer that lived only on the
+machine (TD-38); it is now in the repository:
+
+```bash
+# one-shot: copy the freshest pair, verify it matches, reload derper only if it changed
+sudo bash deploy/derper-cert-sync.sh
+
+# install the daily timer (04:17 ± 30m, Persistent=true) as well
+sudo bash deploy/derper-cert-sync.sh --install
+```
+
+Configuration is by environment (or a drop-in on the unit): `DERP_HOSTNAME`, `ACME_CERT`,
+`ACME_KEY`, `DERP_CERTDIR`, `DERP_UNIT`. A run with an unchanged certificate writes nothing and
+restarts nothing; a missing pair, a single-certificate file, or a certificate that does not match
+its key is refused **by name** instead of being copied.
+
+Verify the result from outside, not from the file:
+
+```bash
+echo | openssl s_client -connect <DERP_HOST>:8443 -servername <DERP_HOST> 2>/dev/null \
+  | grep 'Verify return code'     # must be 0
+curl -sS --http1.1 -H 'Upgrade: DERP' -o /dev/null -w '%{http_code}\n' https://<DERP_HOST>:8443/derp
+# 101 = the relay accepts a DERP upgrade; 426 = something in front negotiates HTTP/2
+```

@@ -377,16 +377,28 @@ func Plan(a Answers) []Step {
 			Command: `command -v derper >/dev/null || (command -v go >/dev/null && GO111MODULE=on go install tailscale.com/cmd/derper@latest); systemctl enable --now derper 2>/dev/null || true; systemctl is-active derper || true`,
 			Verify:  `ss -ltnp 2>/dev/null | grep -q ':8443'`})
 
+		// The three derp settings (probe host, debug URL, relay URL) belong to the panel's own page:
+		// they are installation-wide, not per-run, and /admin/derp already validates them. The wizard
+		// says so instead of writing global_settings behind the operator's back.
+		add(Step{Phase: "P4", Key: "p4.settings", TitleKey: "p4_settings", WhyKey: "why_derp_settings",
+			Kind: KindManual, Where: WhereManual, Required: false,
+			Command: "manual_derp_settings",
+			Note:    "note_derp_settings"})
+
 		add(Step{Phase: "P4", Key: "p4.cert", TitleKey: "p4_cert", WhyKey: "why_cert",
 			Kind: KindConfirm, Where: WhereRemote, Required: true,
 			Command: `bash /opt/skygate/deploy/derper-cert-sync.sh --install || true`,
 			Verify:  `systemctl list-timers --all 2>/dev/null | grep -q derper-cert-sync`,
 			Note:    "note_cert_chain"})
 
+		// Registering the relay is the existing B164 page: it owns the region id, the sort order and
+		// the reachability probe, and a wizard that invented those numbers would be how an
+		// installation ends up with a relay nobody can find. So the step is MANUAL and points there;
+		// the probe that proves it works is separate and automatic (p6.derp).
 		add(Step{Phase: "P4", Key: "p4.relay_row", TitleKey: "p4_relay_row", WhyKey: "why_relay_row",
-			Kind: KindAuto, Where: WhereInternal, Required: true,
-			Command: "internal_derp_relay_upsert",
-			Verify:  "external_derp_probe_101"})
+			Kind: KindManual, Where: WhereManual, Required: false,
+			Command: "manual_derp_relay_register",
+			Note:    "note_relay_register"})
 	}
 
 	// ---------------- P5: tags, ACL, DNS, ACME ----------------

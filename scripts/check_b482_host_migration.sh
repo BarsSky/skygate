@@ -280,7 +280,7 @@ missing_steps=0
 for key in p0_inventory p0_reach p0_host p0_ports p0_no_install p0_snapshot p1_base p1_user \
            p1_firewall p1_tailscale p1_skygate_install p2_headscale_stop p2_headscale_config \
            p2_headscale_db p2_noise_key p2_headscale_start p2_reregister p3_env p3_data \
-           p3_db_convert p3_start p3_migrate p3_readyz p4_derper p4_cert p4_relay_row p5_tags \
+           p3_db_convert p3_start p3_migrate p3_readyz p4_derper p4_settings p4_cert p4_relay_row p5_tags \
            p5_acl p5_dedupe p5_dns p5_dns_stub p5_dns_manual p5_acme p6_health p6_nodes \
            p6_routes p6_derp p6_verify p6_client p7_stop p7_decommission; do
   n="$(grep -c "migrate.step.$key.title" "$CATALOG" 2>/dev/null || true)"
