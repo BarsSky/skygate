@@ -1,5 +1,33 @@
 # Skygate release notes
 
+## v1.5.232 — мастер переезда больше не требует чекаута на новом хосте (B487)
+
+**Date:** 2026-11-17 · **Base:** `v1.5.231` → this tag · **Compatibility:** без миграций.
+
+### Долг, найденный при составлении реестра
+
+Шаги мастера (`/admin/migrate`) запускали на **новом** хосте `bash /opt/skygate/scripts/...` и
+`bash /opt/skygate/deploy/derper-cert-sync.sh`. Нативная (systemd) установка ставится из **релизного
+tarball** — чекаута там нет вовсе, поэтому `p4.cert`, `p5.dedupe` и `p6.verify` падали бы с
+«No such file or directory» ровно на той установке, для которой мастер и нужен.
+
+### Что сделано
+
+- Нужные скрипты **вшиты в бинарь панели** (`internal/migrate/assets_gen.go`, base64 — в них есть
+  backticks, кавычки и CRLF). Генератор — `scripts/gen_migrate_assets.sh`, так что источник правды
+  остаётся один: `deploy/derper-cert-sync.sh`, `scripts/verify_migration.sh`,
+  `scripts/b480_dup_rule_cleanup.sh`.
+- Новый тип шага `Where=script`: тело скрипта уходит на целевой хост по stdin как
+  `bash -s -- <аргументы>` в том же SSH-соединении — на хосте ничего устанавливать не нужно, и кавычки
+  в теле не участвуют в разборе команды.
+- Расхождение мирро́ра валит **тест** `TestB487_AssetsMatchTheirSources` — красный гейт вместо сюрприза
+  в рантайме; плюс `TestB487_PlanUsesNoCheckoutPath` следит, чтобы в плане не появился `/opt/skygate`.
+- Раздел 7 в `docs/host-migration.md` и `docs/ru/host-migration.md`.
+
+20 контрактов в `scripts/check_b487_wizard_needs_no_checkout.sh`.
+
+## v1.5.231 — проверка обновлений говорит, ЧТО случилось, и не наезжает на соседнюю колонку (B486)
+
 ## v1.5.231 — проверка обновлений говорит, ЧТО случилось, и не наезжает на соседнюю колонку (B486)
 
 **Date:** 2026-11-17 · **Base:** `v1.5.230` → this tag · **Compatibility:** без миграций.

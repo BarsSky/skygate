@@ -209,3 +209,19 @@ If P0.2/P0.3/P0.4 fail, the wizard **stops at the plan** and touches nothing.
   moved back, which is why the rollback window is bounded and stated in the plan.
 - If the migration **changed the engine**, rollback is impossible without the dump taken in step
   P3.4: the run report keeps the snapshot's path.
+
+## 7. The wizard and the checkout: why the helpers live inside the binary (B487)
+
+The wizard's steps used to run `bash /opt/skygate/scripts/...` on the **new** host — a path that a native
+(systemd) install does not have at all: it is installed from a release tarball, not from a git clone. On
+such a host three steps (`p4.cert`, `p5.dedupe`, `p6.verify`) failed with "No such file or directory" —
+i.e. on exactly the installation the wizard exists for.
+
+The helpers are now **embedded in the panel binary** (`internal/migrate/assets_gen.go`, base64) and a
+step runs as `bash -s -- <args>` over the same SSH session: the body arrives on stdin, nothing has to be
+installed on the target, and quotes inside the body never take part in command parsing.
+
+The only source of truth is the files themselves (`deploy/derper-cert-sync.sh`,
+`scripts/verify_migration.sh`, `scripts/b480_dup_rule_cleanup.sh`); the mirror is rebuilt with
+`bash scripts/gen_migrate_assets.sh`, and a drift is caught by `TestB487_AssetsMatchTheirSources` — a red
+gate rather than a runtime surprise.

@@ -169,7 +169,7 @@ func runStepBody(ctx context.Context, deps Deps, step *db.HostMigrationStep) (ou
 	defer cancel()
 
 	switch step.Where {
-	case WhereLocal, WhereRemote, WhereCopy, WhereInternal:
+	case WhereLocal, WhereRemote, WhereCopy, WhereInternal, WhereScript:
 	case WhereManual:
 		return "", "", ErrManualStep
 	default:
@@ -205,6 +205,28 @@ func execute(ctx context.Context, deps Deps, step *db.HostMigrationStep, command
 			return "", fmt.Errorf("%w: %s", ErrExecutorPending, command)
 		}
 		return fn(ctx)
+	case WhereScript:
+		// B487: an embedded helper travels IN THE BINARY and is streamed to the new host. Nothing has
+		// to be installed there (a release-tarball install has no /opt/skygate checkout), and the body
+		// never has to survive shell quoting — it arrives on stdin, like every other remote step.
+		name, args, serr := splitScriptCommand(step.Command)
+		if serr != nil {
+			return "", serr
+		}
+		body, serr := ScriptSource(name)
+		if serr != nil {
+			return "", serr
+		}
+		remote := "bash -s --"
+		for _, a := range args {
+			remote += " " + shellQuote(a)
+		}
+		argv, env, cleanup, err := remoteInvocation(deps, remote)
+		if err != nil {
+			return "", err
+		}
+		defer cleanup()
+		return deps.runner()(ctx, "ssh", argv, body, env)
 	case WhereRemote:
 		argv, env, cleanup, err := remoteInvocation(deps, "bash -s")
 		if err != nil {

@@ -39,6 +39,9 @@ const (
 	WhereCopy     = "copy"
 	WhereInternal = "internal"
 	WhereManual   = "manual"
+	// WhereScript runs an EMBEDDED helper on the new host (B487): the body travels in the binary and is
+	// streamed as "bash -s -- <args>", so a release-tarball install needs no checkout on either side.
+	WhereScript = "script"
 )
 
 // Kind of a step.
@@ -386,8 +389,8 @@ func Plan(a Answers) []Step {
 			Note:    "note_derp_settings"})
 
 		add(Step{Phase: "P4", Key: "p4.cert", TitleKey: "p4_cert", WhyKey: "why_cert",
-			Kind: KindConfirm, Where: WhereRemote, Required: true,
-			Command: `bash /opt/skygate/deploy/derper-cert-sync.sh --install || true`,
+			Kind: KindConfirm, Where: WhereScript, Required: true,
+			Command: `derper-cert-sync --install`,
 			Verify:  `systemctl list-timers --all 2>/dev/null | grep -q derper-cert-sync`,
 			Note:    "note_cert_chain"})
 
@@ -417,8 +420,8 @@ func Plan(a Answers) []Step {
 
 	if a.DedupeRules {
 		add(Step{Phase: "P5", Key: "p5.dedupe", TitleKey: "p5_dedupe", WhyKey: "why_dedupe",
-			Kind: KindAuto, Where: WhereRemote, Required: false,
-			Command: `bash /opt/skygate/scripts/b480_dup_rule_cleanup.sh`,
+			Kind: KindAuto, Where: WhereScript, Required: false,
+			Command: `b480-dup-cleanup`,
 			Verify:  `true`})
 	}
 
@@ -470,8 +473,8 @@ func Plan(a Answers) []Step {
 	}
 
 	add(Step{Phase: "P6", Key: "p6.verify", TitleKey: "p6_verify", WhyKey: "why_verify",
-		Kind: KindAuto, Where: WhereRemote, Required: false,
-		Command: `bash /opt/skygate/scripts/verify_migration.sh`,
+		Kind: KindAuto, Where: WhereScript, Required: false,
+		Command: `verify-migration`,
 		Verify:  `true`})
 
 	add(Step{Phase: "P6", Key: "p6.client", TitleKey: "p6_client", WhyKey: "why_client",
