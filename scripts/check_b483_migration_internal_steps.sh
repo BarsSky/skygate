@@ -47,6 +47,9 @@ fails=()
 ok()  { printf '  \033[32m\xe2\x9c\x93\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
 bad() { printf '  \033[31m\xe2\x9c\x97\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); fails+=("$1"); }
 has() { case "$(cat "$1" 2>/dev/null)" in *"$2"*) return 0;; *) return 1;; esac; }
+# has_sub keeps a VARIABLE out of a pipeline: printf | grep -q would hand the verdict to the producer
+# under pipefail (AGENTS trap 9 / B386), and this contract exists to be believed.
+has_sub() { case "$2" in *"$1"*) return 0;; *) return 1;; esac; }
 
 for f in "$ACT" "$HANDLER" "$ACT_TEST" "$PLAN" "$EXEC" "$EXEC_TEST" "$SYNC" "$DERPDOC" \
          "$MIGDOC" "$MIGDOCRU" "$VERIFY" "$AGENTS" "$NOTES"; do
@@ -157,7 +160,7 @@ if command -v openssl >/dev/null 2>&1; then
   else  OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" \
         ACME_CERT="$SKY_TMP/acme/one.crt" ACME_KEY="$SKY_TMP/acme/one.key" \
         bash "$SYNC" 2>&1)"; rc=$?
-  if [ "$rc" -ne 0 ] && printf '%s' "$OUT" | grep -q 'CHAIN'; then
+  if [ "$rc" -ne 0 ] && has_sub 'CHAIN' "$OUT"; then
     ok "F1: a single-certificate file is refused with the chain reason"
   else
     bad "F1: a single-certificate file was not refused (rc=$rc): $(printf '%s' "$OUT" | tail -1)"
@@ -168,7 +171,7 @@ if command -v openssl >/dev/null 2>&1; then
   OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" \
         ACME_CERT="$SKY_TMP/acme/chain.crt" ACME_KEY="$SKY_TMP/acme/two.key" \
         bash "$SYNC" 2>&1)"; rc=$?
-  if [ "$rc" -ne 0 ] && printf '%s' "$OUT" | grep -q 'do not match'; then
+  if [ "$rc" -ne 0 ] && has_sub 'do not match' "$OUT"; then
     ok "F2: a certificate paired with the wrong key is refused"
   else
     bad "F2: a mismatched pair was not refused (rc=$rc): $(printf '%s' "$OUT" | tail -1)"
@@ -187,7 +190,7 @@ if command -v openssl >/dev/null 2>&1; then
   OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" \
         ACME_CERT="$SKY_TMP/acme/chain2.crt" ACME_KEY="$SKY_TMP/acme/two.key" \
         bash "$SYNC" 2>&1)"; rc=$?
-  if [ "$rc" -eq 0 ] && printf '%s' "$OUT" | grep -q 'unchanged'; then
+  if [ "$rc" -eq 0 ] && has_sub 'unchanged' "$OUT"; then
     ok "F4: a second run reports unchanged (the timer cannot churn a relay every night)"
   else
     bad "F4: the second run was not idempotent (rc=$rc): $(printf '%s' "$OUT" | tail -1)"
