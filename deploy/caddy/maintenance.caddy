@@ -1,0 +1,45 @@
+# ============================================================================
+# deploy/caddy/maintenance.caddy — the panel's "updating, come back in a moment" page (B485)
+#
+# WHY THIS IS THE PROXY'S JOB
+#
+# A native (systemd) update stops the skygate unit to replace the binary. During that window
+# nothing listens on 127.0.0.1:8080, so the proxy has no upstream and answers a bare 502; the
+# browser renders its own "site cannot handle the request" page, which looks like a broken
+# installation rather than a five-second restart. The panel's own provisional page (B269) cannot
+# help here — the process is not running at all.
+#
+# HOW IT WORKS (measured on Caddy v2.11.9)
+#
+# handle_errors catches the 5xx its own proxy generates and proxies the request to a LOOPBACK STATIC
+# SERVER that Caddy itself runs from deploy/caddy/maintenance-server.caddy. Two things were measured
+# the hard way and are load-bearing:
+#
+#   1. file_server INSIDE handle_errors answers 5xx with an EMPTY body — the handler fails and the
+#      error status is re-rendered, which is exactly the blank page this block exists to replace.
+#      A plain reverse_proxy to the loopback server works.
+#   2. The path must be rewritten to / first, otherwise the static server looks for the original URI
+#      (/admin/update) and answers 404.
+#
+# The response is a 200 carrying the page: that is deliberate — a 200 with Retry-After and
+# X-Skygate-Maintenance is what makes the operator's browser render our explanation instead of its
+# own error page. The page polls /healthz (through this same proxy) and reloads into the panel the
+# moment the real panel answers JSON, so nothing has to be pressed.
+# ============================================================================
+
+handle_errors {
+	@unavailable expression {err.status_code} >= 500
+	handle @unavailable {
+		header Cache-Control "no-store, max-age=0"
+		header Retry-After "15"
+		header X-Skygate-Maintenance "1"
+		rewrite * /
+		reverse_proxy 127.0.0.1:8081 {
+			# The error handler reuses the ORIGINAL Host, which would match the panel site again
+			# (Caddy routes by Host, not by port) and answer an empty 200. Pin it to the static server.
+			header_up Host 127.0.0.1:8081
+		}
+	}
+	# Anything that is not a 5xx keeps Caddy's own answer (a 404 stays a 404).
+	respond "{err.status_code} {err.status_text}" {err.status_code}
+}

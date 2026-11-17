@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<!--
+  Skygate maintenance page (B485).
+
+  Served by the reverse proxy — NOT by skygate — while the panel is stopped or restarting.
+  That is the whole point: during a native (systemd) update the unit is stopped to replace the
+  binary, so nothing on :8080 can answer and the proxy has no upstream. Without this page the
+  operator's browser shows its own "site cannot handle the request" error (a bare 502), which
+  reads like a broken installation instead of a five-second restart.
+
+  The page reloads itself as soon as /healthz answers 2xx again, so the operator does not have to
+  guess when to press F5. It carries no secrets and no references to the panel's assets: it must
+  render while the panel is gone.
+-->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Skygate — обновление идёт · updating</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #0f1115; color: #e6e8ec;
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 440px; background: #161a21; border: 1px solid #232936;
+    border-radius: 14px; padding: 28px 26px; text-align: center;
+    box-shadow: 0 14px 40px rgba(0,0,0,.35);
+  }
+  .spinner {
+    width: 44px; height: 44px; margin: 4px auto 18px; border-radius: 50%;
+    border: 3px solid #2a3242; border-top-color: #4f8cff; animation: spin 900ms linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg) } }
+  h1 { font-size: 19px; margin: 0 0 8px; font-weight: 600; }
+  p  { margin: 0 0 14px; color: #a7b0c0; }
+  .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 4px; }
+  .pill {
+    font-variant-numeric: tabular-nums; background: #0f141c; border: 1px solid #232936;
+    border-radius: 999px; padding: 6px 12px; font-size: 13px; color: #cfd6e4;
+  }
+  .hint { font-size: 12px; color: #7c8798; margin-top: 16px; text-align: left; }
+  .hint code {
+    display: block; margin-top: 6px; padding: 8px 10px; background: #0f141c;
+    border: 1px solid #232936; border-radius: 8px; color: #cfd6e4; overflow-x: auto;
+    white-space: nowrap; font-size: 12px;
+  }
+  a { color: #7ea8ff; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner" id="spin" aria-hidden="true"></div>
+    <h1 id="title">Идёт обновление панели</h1>
+    <p id="sub">Страница вернётся сама, как только панель поднимется — закрывать вкладку не нужно.</p>
+    <div class="row">
+      <span class="pill">прошло: <span id="elapsed">0 с</span></span>
+      <span class="pill">проверяю каждые 3 с</span>
+    </div>
+    <div class="hint" id="slow">
+      Дольше минуты? Посмотрите журнал обновления:
+      <code>journalctl -u skygate -u skygate-update --since "-10 min"</code>
+    </div>
+    <div class="hint hidden" id="longer">
+      Больше трёх минут — обновление, похоже, не завершилось. Журнал:
+      <code>journalctl -u skygate -u skygate-update --since "-30 min"</code>
+      <p style="margin-top:8px"><a href="/" id="retry">Попробовать сейчас</a></p>
+    </div>
+  </div>
+<script>
+  // The page lives at the proxy, so it can talk to the SAME origin: while the panel is down
+  // /healthz answers 5xx (and this very page is rendered for it), once the panel is back it
+  // answers 200 and we reload into the real UI.
+  (function () {
+    var started = Date.now();
+    var reloading = false;
+
+    function tick() {
+      var s = Math.floor((Date.now() - started) / 1000);
+      document.getElementById("elapsed").textContent = s + " с";
+      if (s >= 60)  { document.getElementById("slow").classList.remove("hidden"); }
+      if (s >= 180) {
+        document.getElementById("slow").classList.add("hidden");
+        document.getElementById("longer").classList.remove("hidden");
+        document.getElementById("spin").style.animationPlayState = "paused";
+        document.getElementById("title").textContent = "Обновление занимает больше времени";
+        document.getElementById("sub").textContent =
+          "Страница продолжает проверять панель каждые 3 секунды и переключится автоматически.";
+      }
+    }
+
+    function ping() {
+      if (reloading) { return; }
+      var ctl = window.AbortController ? new AbortController() : null;
+      var timer = setTimeout(function () { if (ctl) { ctl.abort(); } }, 2500);
+      fetch("/healthz", { cache: "no-store", redirect: "follow", signal: ctl ? ctl.signal : undefined })
+        .then(function (r) {
+          clearTimeout(timer);
+          // A 502 from the proxy is served as THIS page with status 502: not ok → keep waiting.
+          // 200 with the real JSON body means the panel is up.
+          if (r.ok) {
+            var ct = (r.headers.get("content-type") || "");
+            if (ct.indexOf("application/json") !== -1) {
+              reloading = true;
+              location.replace("/");
+              return;
+            }
+          }
+          setTimeout(ping, 3000);
+        })
+        .catch(function () { clearTimeout(timer); setTimeout(ping, 3000); });
+    }
+
+    document.getElementById("retry").addEventListener("click", function (e) {
+      e.preventDefault();
+      reloading = false;
+      location.reload();
+    });
+
+    tick();
+    setInterval(tick, 1000);
+    setTimeout(ping, 1500);
+  })();
+</script>
+</body>
+</html>

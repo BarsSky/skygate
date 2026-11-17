@@ -887,3 +887,43 @@ the previous config file, reload it, and confirm the three probes from
 `/oidc/callback` 400 for a fake code). Because skygate and headscale both
 speak plain HTTP internally, the rollback never requires a database change —
 only the proxy config and the `.env` issuer value.
+
+## The maintenance page during an update (B485)
+
+A native (systemd) update stops the `skygate` unit to replace the binary. While it is stopped nothing
+listens on `127.0.0.1:8080`, so the reverse proxy has no upstream and answers a bare **502** — and the
+operator's browser renders its own "site cannot handle the request" page, which reads like a broken
+installation instead of a five-second restart. The panel's provisional boot page (B269) cannot help
+here: the process is not running at all.
+
+The page therefore belongs to the **proxy**:
+
+```bash
+# from the repository checkout, on the host that runs Caddy in front of the panel
+sudo bash deploy/install-maintenance-page.sh                       # install + wire it
+sudo bash deploy/install-maintenance-page.sh --dry-run             # show the change first
+sudo bash deploy/install-maintenance-page.sh --host skygate.example.com --caddyfile /etc/caddy/Caddyfile
+```
+
+It installs `index.html` and two snippets into `/etc/caddy/maintenance/`, adds ONE `import` line to
+the panel's site block (before `reverse_proxy`) and one at the top level for a loopback static server,
+validates the Caddyfile with `caddy validate` **before** reloading, and restores the backup if the
+patched file does not validate. Re-running it is a no-op.
+
+What the operator sees: «Идёт обновление панели», an elapsed timer, the journal command if it takes
+longer than a minute, and the panel itself as soon as `/healthz` answers JSON again — the page polls
+it every three seconds, so nobody has to guess when to press F5.
+
+Three measured traps (they cost a ninety-second outage on the live host while this was built, so they
+are pinned by contracts):
+
+1. the assets must NOT live under `/var/lib/skygate` — that directory is `0750 skygate:skygate` by
+   design, the `caddy` user cannot traverse it, and the failed `import` takes the WHOLE site down;
+2. `file_server` inside `handle_errors` answers 5xx with an **empty body** — a loopback
+   `reverse_proxy` is used instead;
+3. the proxied request keeps the original `Host`, so the loopback static server must be addressed with
+   `header_up Host` or it re-matches the panel site and answers an empty 200.
+
+The response is a 200 carrying the page (`X-Skygate-Maintenance: 1`, `Retry-After: 15`,
+`Cache-Control: no-store`) — a 200 is what makes the browser render the explanation instead of its own
+error page; only 5xx is replaced, so a genuine 404 stays a 404.
