@@ -145,6 +145,85 @@ jobs:
           fi
           echo "catalog clean: $(grep -cE '^  PASS  ' /tmp/verify-pre.plain) PASS, $(grep -cE '^  SKIP  ' /tmp/verify-pre.plain) SKIP, 0 FAIL"
 
+  verify-pre-pg:
+    name: guarantee catalog against a real PostgreSQL (TD-24 / B481, main only)
+    # B481 (2026-11-16). Two facts force this job to exist:
+    #   1. `verify_pre_deploy.sh` never sets SKYGATE_TEST_PG_DSN, so the catalog has
+    #      always been a SQLITE gate: ten packages gate real tests on that variable and
+    #      their PostgreSQL half ran only in the separate `test-pg` job, never inside the
+    #      catalog (TD-24's remaining half).
+    #   2. The reference VM that used to run a PG-enabled gate is RETIRED (the host the
+    #      2026-11-15 migration moved off), and the operator's instruction is explicit:
+    #      PostgreSQL must NOT be installed on the production panel host `svyatoslava` —
+    #      it is too heavy for that machine.
+    # So the PostgreSQL half of the gate runs HERE, on a scratch database owned by the
+    # service container, through the sanctioned runner. `scripts/gate_with_pg.sh` refuses
+    # a database whose name does not look like a throwaway BEFORE connecting, proves the
+    # DSN can CREATE SCHEMA, and exports the variable for the catalog.
+    #
+    # Main pushes only: a second ~30-40 minute catalog on every pull request would slow
+    # review latency for a dialect that only a release needs to certify. A release is
+    # tagged from `main`, and `ci_gate.sh` requires THIS run to be green on that commit.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    env:
+      CGO_ENABLED: 1
+      SKYGATE_TEST_PG_DSN: postgres://skygate:skygate@127.0.0.1:5432/skygate_test?sslmode=disable
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: skygate
+          POSTGRES_PASSWORD: skygate
+          POSTGRES_DB: skygate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Go 1.25
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Install staticcheck (B95 / B237.16)
+        # Pinned for the same reason as the SQLite catalog job: `@latest` resolves to a
+        # release that requires a newer Go than this job installs, and setup-go sets
+        # GOTOOLCHAIN=local, so `go install` dies before a single check runs.
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/staticcheck" -version
+
+      - name: Run the catalog through scripts/gate_with_pg.sh
+        # The runner propagates the catalog's own exit status and prints the database it
+        # used; the banner in its output must read `PostgreSQL test coverage: ENABLED`.
+        run: |
+          set -o pipefail
+          bash scripts/gate_with_pg.sh 2>&1 | tee /tmp/verify-pre-pg.log
+          sed -r 's/\x1B\[[0-9;]*[mK]//g' /tmp/verify-pre-pg.log > /tmp/verify-pre-pg.plain
+          FAIL_RE='^  (FAIL|TIMEOUT)  [^ ]'
+          if grep -qE "$FAIL_RE" /tmp/verify-pre-pg.plain; then
+            echo "::error::the PostgreSQL catalog reported $(grep -cE "$FAIL_RE" /tmp/verify-pre-pg.plain) FAIL/TIMEOUT line(s)"
+            grep -E "$FAIL_RE" /tmp/verify-pre-pg.plain | head -40
+            exit 1
+          fi
+          if ! grep -qF 'PostgreSQL test coverage: enabled' /tmp/verify-pre-pg.plain \
+             && ! grep -qF 'PostgreSQL coverage: enabled' /tmp/verify-pre-pg.plain; then
+            echo "::error::the catalog did not report PostgreSQL coverage as enabled — the DSN did not reach the checks, so this run proves nothing about the PG dialect"
+            grep -F 'PostgreSQL' /tmp/verify-pre-pg.plain | head -5
+            exit 1
+          fi
+          echo "postgres catalog clean: $(grep -cE '^  PASS  ' /tmp/verify-pre-pg.plain) PASS, $(grep -cE '^  SKIP  ' /tmp/verify-pre-pg.plain) SKIP, 0 FAIL"
+
   # 2026-09-22 (v1.5.45 follow-up): split verify-pre into fast (the
   # catalog) and slow (B8 smoke + any future VM-only checks). The
   # original job was cancelled by the 30 min cap before this

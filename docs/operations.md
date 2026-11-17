@@ -1868,6 +1868,28 @@ real catalog on the VM (AGENTS rule 4).
 
 ## 15. Running the guarantee catalog with PostgreSQL coverage
 
+**Where the PG catalog runs now (B481, 2026-11-16).** The reference VM that used to be able to run a
+PostgreSQL-enabled gate is retired — it is the host the 2026-11-15 migration moved off, and it is no
+longer reachable. **PostgreSQL must NOT be installed on the production panel host `svyatoslava`:** that
+machine is sized for the panel, headscale, the DERP relay and Caddy, and a database server would compete
+with them for memory and CPU. The operator's instruction is explicit, and this page assumes it: a gate
+run on the production host is a **SQLite** run, always.
+
+The PostgreSQL half therefore lives in CI, in the job `verify-pre-pg` (`main` pushes only, so pull
+requests do not pay for a second full catalog). It starts a `postgres:15` service, exports
+`SKYGATE_TEST_PG_DSN` pointing at the throwaway database `skygate_test`, and runs the **whole catalog**
+through `scripts/gate_with_pg.sh` — the same runner documented below, so the scratch-database guard
+applies. The job fails if the catalog's own banner does not read `PostgreSQL coverage: enabled`, which
+is what stops a silent fallback to SQLite from looking green.
+
+To run it locally against a database you own (anything reachable — it does not have to live on the gate
+host):
+
+```bash
+SKYGATE_TEST_PG_DSN='postgres://user:pw@db-host:5432/skygate_pgtest?sslmode=disable' \
+  bash scripts/gate_with_pg.sh
+```
+
 `scripts/verify_pre_deploy.sh` never sets `SKYGATE_TEST_PG_DSN`, and it cannot invent one. So on a
 host where nobody exported it, `B1` (`go test ./...`) **SKIPs every PostgreSQL-gated test and still
 reports PASS** — the gate's database coverage is silently SQLite-only. CI is the exception:
