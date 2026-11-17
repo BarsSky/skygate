@@ -163,7 +163,12 @@ func (s *Service) addRuleTarget(userID int64, devID int, deviceIP, exitNode, tar
 	// can track the domain (knownSubdomains, churn-free updates) — B184/B298
 	// read this row.
 	if targetType == "domain" {
-		if existingDomainID, _ := db.FindDomainRuleID(s.dbc(), userID, devID, exitNode, targetValue); existingDomainID == 0 {
+		// B484: the domain row is looked up WITHOUT the relay on purpose. The natural key
+		// includes exit_node_id, so a relay-scoped lookup happily wrote a second domain row
+		// when the same domain was added for another exit node — the cross-relay duplicate
+		// that B480 forbids for targets. One domain, one tracking row; the derived /32 rows
+		// are what carry the relay.
+		if existingDomainID, _, _ := db.FindDeviceRuleIDAnyRelay(s.dbc(), userID, devID, "domain", targetValue); existingDomainID == 0 {
 			_, _ = db.AppendDeviceRule(s.dbc(), userID, devID, exitNode, "domain", targetValue, action, deviceIP, targetValue, groupLabel, "", "")
 			res.DomainRowInserted = true
 			res.UserFacing++

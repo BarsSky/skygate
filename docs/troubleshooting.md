@@ -2009,3 +2009,38 @@ bash scripts/b480_dup_rule_cleanup.sh --apply    # keep the owner's row, drop th
 
 The script never deletes the last row for a (user, device, target) triple and backs the
 database up before writing.
+
+## 15. «The rules page shows duplicates» — three classes, one of which is not a duplicate (B484)
+
+`skygate` keeps one rule per (user, device, **relay**, target type, target value, parent domain) —
+that six-column unique index exists on purpose, and the consequences are easy to misread.
+
+**Class A — a real duplicate: one target and one domain on two relays.** The same destination
+reachable through two exit nodes, e.g. `140.82.113.22/32` for `ghcr.io` on both `karolina` and
+`emilia`. This is what `docs/ru/prefix-ownership-acceptance.md` (B480) forbids: the ownership table
+keeps ONE relay for the prefix, and because `via` on a CIDR grant is a permission **filter**, the
+device keeping the rule for the other relay silently loses that address. The writer refuses it now;
+existing rows are collapsed by `scripts/b480_dup_rule_cleanup.sh` (B484 retune), keeping the rule
+that names the prefix's current owner.
+
+**Class B — not a duplicate: one address, several domains.** `104.18.160.117/32` appears once for
+`discord.com` and once for `discord.gg`. Both rows are needed: the per-domain row is what the CDN
+short-circuit looks for and what the domain status reads. B298 measured the alternative — the
+collapse deleted them, the domain re-resolved on the next tick, re-inserted, and on a
+`policy.mode: file` host that was a headscale restart every five minutes. Do not "clean" these.
+
+**Class C — not a duplicate either: the owner is the wrong relay.** A prefix owned by a relay that
+no rule names, e.g. `sharlotta` owning an address whose rules say `karolina`. Deleting rules does
+not fix it; the ownership decision does. B484 makes the engine choose among the relays the rules
+actually **name** whenever the prefix has voting claims (and it no longer counts devices that do not
+use an exit node at all, which is why an earlier report claimed 157 broken prefixes when all of them
+belonged to the opted-out `skyworker`). If you still see one, re-pin from `/admin/exit-nodes` or
+`skygate prefix-owner --relay <relay> --prefix <cidr> --apply`.
+
+How to tell them apart on a live installation:
+
+```bash
+bash scripts/b480_dup_rule_cleanup.sh           # report only, always safe
+bash scripts/b480_dup_rule_cleanup.sh --apply   # delete class-A rows, keep the owner's
+#    --force also collapses a group whose owner names no row (oldest row wins)
+```

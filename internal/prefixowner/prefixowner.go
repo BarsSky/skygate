@@ -330,9 +330,9 @@ func AssignWithReservationsAndWeights(claims []Claim, healthy []string, existing
 		}
 		sort.Strings(candidates)
 	}
-	minLoad := func() int {
+	minLoadOf := func(set []string) int {
 		best := -1
-		for _, c := range candidates {
+		for _, c := range set {
 			if best < 0 || load[c] < best {
 				best = load[c]
 			}
@@ -344,6 +344,32 @@ func AssignWithReservationsAndWeights(claims []Claim, healthy []string, existing
 			continue
 		}
 		g := groups[p]
+		// B484 — AN OWNED PREFIX IS SERVED BY A RELAY THAT A RULE NAMES (when any rule
+		// names one at all). Measured on the live installation: `140.82.113.22/32` had
+		// rules for karolina and emilia, the ownership table said `sharlotta` (source
+		// `auto`), and since `via` on a CIDR grant is a permission FILTER the device
+		// keeping those rules lost the address while everything else worked — exactly
+		// the failure B480 fixed for proven reservations, surviving here because the
+		// tie between the two claiming relays fell through to "spread over the healthy
+		// set" and stickiness then kept a third relay that no rule mentions.
+		//
+		// The rule is therefore about the CANDIDATE SET, not about who wins: once a
+		// prefix has voting claims, only the claiming relays may serve it. A prefix
+		// nobody votes for keeps the old behaviour (even spread over the healthy set),
+		// which is what B275's load-balance contract asserts.
+		cands := candidates
+		if g.votes > 0 {
+			named := make([]string, 0, len(g.perNode))
+			for node, votes := range g.perNode {
+				if votes > 0 && healthySet[node] {
+					named = append(named, node)
+				}
+			}
+			if len(named) > 0 {
+				sort.Strings(named)
+				cands = named
+			}
+		}
 		// B480 — ACCEPTANCE BY ENCLOSING RANGE: a prefix nobody VOTES for is served by
 		// the owner of the most specific range that already contains it, instead of being
 		// spread over the least loaded relay. Manual pins and prefixes with real votes
@@ -369,14 +395,15 @@ func AssignWithReservationsAndWeights(claims []Claim, healthy []string, existing
 		}
 		// Sticky: keep the previous owner while it is healthy and its
 		// load is within one prefix of the least loaded relay.
-		if e, ok := prev[p]; ok && healthySet[e.ExitNode] {
-			if m := minLoad(); load[e.ExitNode] <= m+1 {
+		if e, ok := prev[p]; ok && healthySet[e.ExitNode] &&
+			(g.votes == 0 || g.perNode[e.ExitNode] > 0) {
+			if m := minLoadOf(cands); load[e.ExitNode] <= m+1 {
 				out = append(out, Assignment{Prefix: p, ExitNode: e.ExitNode, Source: "auto", Claims: g.total, Devices: len(g.devices)})
 				load[e.ExitNode]++
 				continue
 			}
 		}
-		if len(candidates) == 0 {
+		if len(cands) == 0 {
 			continue
 		}
 		// B312: when this prefix is being REASSIGNED (its previous owner is gone or
@@ -384,7 +411,7 @@ func AssignWithReservationsAndWeights(claims []Claim, healthy []string, existing
 		// is actually in the healthy set is honoured, so a preference can never pin a
 		// prefix to a relay that is down.
 		if e, ok := prev[p]; ok && e.ExitNode != "" && !healthySet[e.ExitNode] && prefer != nil {
-			if want := prefer(p, e.ExitNode, candidates); want != "" && healthySet[want] {
+			if want := prefer(p, e.ExitNode, cands); want != "" && healthySet[want] && containsRelay(cands, want) {
 				out = append(out, Assignment{Prefix: p, ExitNode: want, Source: "auto", Claims: g.total, Devices: len(g.devices)})
 				load[want]++
 				continue
@@ -392,9 +419,9 @@ func AssignWithReservationsAndWeights(claims []Claim, healthy []string, existing
 		}
 		// B453: least load RELATIVE to the relay's weight (an even split when nobody set one).
 		// Sticky prefixes never reach this line, so a weight change cannot migrate live traffic.
-		best := pickLeastRelative(candidates, load, w)
+		best := pickLeastRelative(cands, load, w)
 		if best == "" {
-			best = candidates[0]
+			best = cands[0]
 		}
 		out = append(out, Assignment{Prefix: p, ExitNode: best, Source: "auto", Claims: g.total, Devices: len(g.devices)})
 		load[best]++
@@ -958,4 +985,15 @@ func Prune(d *sql.DB, claimed map[string]bool) (int, error) {
 		}
 	}
 	return deleted, nil
+}
+
+// containsRelay reports whether a relay is in a candidate set. B484 uses it so a
+// caller-supplied preference cannot reintroduce a relay that no rule names.
+func containsRelay(set []string, relay string) bool {
+	for _, r := range set {
+		if r == relay {
+			return true
+		}
+	}
+	return false
 }

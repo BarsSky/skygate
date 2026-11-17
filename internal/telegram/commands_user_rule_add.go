@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"skygate/internal/acl"
 	"skygate/internal/db"
@@ -204,6 +205,9 @@ func addRuleReply(env BotEnv, args []string) string {
 	// dedup check for v1 (admin can clean up duplicates later
 	// via /admin/exit-rules/cleanup). One insert per IP.
 	var insertedIDs []int64
+	// B484: targets that were already covered. Reported to the user instead of silently
+	// "succeeding" with zero rows, and never inserted a second time.
+	var skipped []string
 	for _, ip := range ipsToInsert {
 		// v0.28.0: pass target.Username as userName. deviceHostname is
 		// empty here — the bot only has the deviceIP at this point —
@@ -217,6 +221,21 @@ func addRuleReply(env BotEnv, args []string) string {
 		// an optional label without inventing syntax), so its rules are inserted
 		// ungrouped — exactly what a rule added before v0.79 looked like. The user can
 		// file it afterwards from /my/exit-rules in one click.
+		// B484 — ONE RULE PER TARGET, ALSO FROM THE BOT. This path used to insert with NO
+		// dedup at all ("the bot skips the dedup check for v1, admin can clean up later"),
+		// which is how a target accumulated a second row under another exit node: the
+		// unique index is (user, device, relay, type, target, parent_domain), so the same
+		// target under two relays is legal and only a reader-side rule can catch it.
+		// A duplicate is not an error the user should have to understand: the target is
+		// already covered, which is what they asked for. Moving it is a request (B440).
+		if existingID, otherRelay, ferr := db.FindDeviceRuleIDAnyRelay(env.DB, target.ID, devID, typeToInsert, ip); ferr == nil && existingID > 0 {
+			if otherRelay != "" && otherRelay != exitNodeHostname {
+				log.Printf("telegram: rule %s %s for device %d already covered by relay %q — not adding a duplicate for %q (moving it is a request, B440)",
+					typeToInsert, ip, devID, otherRelay, exitNodeHostname)
+			}
+			skipped = append(skipped, ip)
+			continue
+		}
 		rowID, err := db.AppendDeviceRule(env.DB, target.ID, devID, exitNodeHostname, typeToInsert, ip, action, deviceIP, parentDomain, "", target.Username, "")
 		if err != nil {
 			return i18n.Tf(lang, "bot.add_rule.db_error", err)
@@ -248,6 +267,9 @@ func addRuleReply(env BotEnv, args []string) string {
 		}
 		_ = db.AppendAuditLog(env.DB, target.ID, target.Username, "rule_added", auditDetail)
 		reply := i18n.Tf(lang, "bot.add_rule.read_only_ok", len(insertedIDs), target.Username, insertedIDs)
+		if len(skipped) > 0 {
+			reply += "\n  " + i18n.Tf(lang, "bot.add_rule.already_covered", len(skipped), strings.Join(skipped, ", "))
+		}
 		if dnsWarning != "" {
 			reply += "\n  ⚠ " + dnsWarning
 		}
@@ -276,6 +298,9 @@ func addRuleReply(env BotEnv, args []string) string {
 	// the warning in the bot reply.
 	if pipe.Applied {
 		reply := i18n.Tf(lang, "bot.add_rule.applied_ok", len(insertedIDs), target.Username, typeToInsert, rawTarget, action, exitNodeHostname, insertedIDs, pipe.Version)
+		if len(skipped) > 0 {
+			reply += "\n  " + i18n.Tf(lang, "bot.add_rule.already_covered", len(skipped), strings.Join(skipped, ", "))
+		}
 		if dnsWarning != "" {
 			reply += "\n  ⚠ " + dnsWarning
 		}
