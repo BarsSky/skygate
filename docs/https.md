@@ -924,6 +924,8 @@ are pinned by contracts):
 3. the proxied request keeps the original `Host`, so the loopback static server must be addressed with
    `header_up Host` or it re-matches the panel site and answers an empty 200.
 
-The response is a 200 carrying the page (`X-Skygate-Maintenance: 1`, `Retry-After: 15`,
-`Cache-Control: no-store`) — a 200 is what makes the browser render the explanation instead of its own
-error page; only 5xx is replaced, so a genuine 404 stays a 404.
+The response is a **503** carrying the page (`X-Skygate-Maintenance: 1`, `Retry-After: 15`,
+`Cache-Control: no-store`). 503, not 200: browsers render a 503 body just like a 200 one, but a health
+checker or uptime monitor must see the outage — a 200 maintenance page is a lie to every one of them
+(the catalog's own B-prod-health parsed the HTML as "healthy"). Only the proxy's own 5xx is replaced,
+so a genuine 404 stays a 404.

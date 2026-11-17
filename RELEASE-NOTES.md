@@ -19,7 +19,7 @@
   нет): «Идёт обновление панели», счётчик времени, команда журнала через минуту, и автопереход в
   панель, как только `/healthz` отвечает JSON (опрос каждые 3 с).
 - `deploy/caddy/maintenance.caddy` — `handle_errors` подменяет только **5xx**, проксируя на
-  loopback-статик (`rewrite * /`, `header_up Host`), с `X-Skygate-Maintenance: 1` и `Retry-After: 15`.
+  loopback-статик (`rewrite * /`, `header_up Host`), с **503** (не 200 — браузер одинаково отрисует тело, но мониторинг обязан видеть простой), `X-Skygate-Maintenance: 1` и `Retry-After: 15`.
 - `deploy/caddy/maintenance-server.caddy` — сам статик на `127.0.0.1:8081`.
 - `deploy/install-maintenance-page.sh` — идемпотентная установка: файлы в `/etc/caddy/maintenance`,
   один `import` в блок сайта и один в корень Caddyfile, `caddy validate` **до** перезагрузки и откат

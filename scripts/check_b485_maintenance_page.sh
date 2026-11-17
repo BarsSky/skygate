@@ -89,8 +89,8 @@ if has "$SNIP" 'expression {err.status_code} >= 500'; then
 else
   bad "B5: every error would render the maintenance page"
 fi
-if has "$SRV" 'http://127.0.0.1:8081' && has "$SRV" 'root * /etc/caddy/maintenance'; then
-  ok "B6: the static server is loopback-only and reads /etc/caddy/maintenance"
+if has "$SRV" 'http://127.0.0.1:8081' && has "$SRV" 'root * /etc/caddy/maintenance' && has "$SRV" 'status 503'; then
+  ok "B6: the static server is loopback-only, reads /etc/caddy/maintenance, and answers 503 (a 200 maintenance page is a lie to every health checker)"
 else
   bad "B6: the static server shape is wrong"
 fi

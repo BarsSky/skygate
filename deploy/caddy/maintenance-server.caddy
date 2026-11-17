@@ -4,15 +4,23 @@
 #
 # Why a second listener instead of file_server inside handle_errors: measured on Caddy v2.11.9, a
 # file_server inside an error handler answers 5xx with an EMPTY body (the handler fails and the error
-# status is rendered again), while a plain reverse_proxy to this listener serves the page correctly.
+# status is rendered again), while a plain reverse_proxy to this listener serves the page.
 #
-# Bound to loopback only; it is not reachable from outside the host and carries no secrets.
-# The directory is /etc/caddy/maintenance on purpose: the panel's data dir /var/lib/skygate is
-# 0750 skygate:skygate BY DESIGN, and the caddy service user could not traverse into it — the first
-# install proved it by taking the site down with "Failed to import … permission denied".
+# STATUS 503, NOT 200. Measured the same day: a 200 maintenance page is a lie to every health checker
+# — the release catalog's own B-prod-health parsed the HTML as if the panel were healthy, and any
+# uptime monitor would have called a stopped panel "up". Browsers render a 503 body just fine (with
+# Retry-After), so the page keeps its explanation while monitoring sees the outage it is.
+#
+# Bound to loopback only; it carries no secrets. The directory is /etc/caddy/maintenance on purpose:
+# the panel's data dir /var/lib/skygate is 0750 skygate:skygate BY DESIGN, and the caddy service user
+# could not traverse into it — the first install proved it by taking the site down with
+# "Failed to import … permission denied".
 # ============================================================================
 
 http://127.0.0.1:8081 {
 	root * /etc/caddy/maintenance
-	file_server
+	rewrite * /index.html
+	file_server {
+		status 503
+	}
 }
