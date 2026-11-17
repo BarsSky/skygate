@@ -22,9 +22,11 @@ package update
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -190,7 +192,7 @@ func (c *Checker) check(ctx context.Context, force bool) (*Result, error) {
 	defer c.mu.Unlock()
 
 	if c.HTTPClient == nil {
-		c.HTTPClient = http.DefaultClient
+		c.HTTPClient = defaultCheckerClient()
 	}
 	if c.Owner == "" {
 		c.Owner = "skygate-operator"
@@ -223,13 +225,13 @@ func (c *Checker) check(ctx context.Context, force bool) (*Result, error) {
 		// the new error attached. Better than nothing.
 		if c.lastResult != nil {
 			cached := *c.lastResult
-			cached.Error = err.Error()
+			cached.Error = classifyCheckError(err)
 			cached.CheckedAt = now
 			return &cached, nil
 		}
 		return &Result{
 			CheckedAt: now,
-			Error:     err.Error(),
+			Error:     classifyCheckError(err),
 		}, nil
 	}
 	result.CheckedAt = now
@@ -237,6 +239,67 @@ func (c *Checker) check(ctx context.Context, force bool) (*Result, error) {
 	c.lastResultAt = now
 	c.lastErrorAt = time.Time{}
 	return result, nil
+}
+
+// defaultCheckerClient is the client the real installation uses. Two measured reasons it is not
+// http.DefaultClient:
+//
+//   - **IPv4 first.** This host has an IPv6 default route (`2a12:…`) that blackholes most v6
+//     destinations: the panel's own Telegram egress logged
+//     `dial tcp [2001:67c:4e8:f004::9]:443: i/o timeout` while the same host reached the API over
+//     IPv4 in 0.2 s. Go's dialer prefers AAAA when the name has one, so any service that publishes
+//     v6 can hang for the full context budget. The checker tries tcp4 first and falls back to tcp.
+//   - **A bounded round trip.** http.DefaultClient has NO timeout, so the only bound was the
+//     caller's context (15 s for the page, 8 s for Apply): a stalled connection burned the whole
+//     budget and the page reported `context deadline exceeded` with no way to tell "slow" from
+//     "blocked". The transport here gives up in 10 s, which is an order of magnitude above the
+//     0.2 s a working path costs and still leaves the context its headroom.
+func defaultCheckerClient() *http.Client {
+	dialer := &net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}
+	tr := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if network == "tcp" {
+				if conn, err := dialer.DialContext(ctx, "tcp4", addr); err == nil {
+					return conn, nil
+				}
+			}
+			return dialer.DialContext(ctx, network, addr)
+		},
+		TLSHandshakeTimeout:   8 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+		IdleConnTimeout:       60 * time.Second,
+		ForceAttemptHTTP2:     true,
+	}
+	return &http.Client{Transport: tr, Timeout: 20 * time.Second}
+}
+
+// classifyCheckError turns a transport error into something an operator can act on, and keeps the
+// raw text as the SECOND half of the sentence rather than the whole message. Measured on the live
+// host 2026-11-17: the page showed
+//
+//	«не удалось проверить GitHub: checker: GET https://api.github.com/…: context deadline exceeded»
+//
+// on three lines that overflowed into the install column — the operator could not tell whether the
+// panel, the network or GitHub was at fault, and the answer was "api.github.com stalls from this
+// host intermittently (DPI); a plain curl from the same user answers in 0.2 s".
+func classifyCheckError(err error) string {
+	if err == nil {
+		return ""
+	}
+	raw := err.Error()
+	switch {
+	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(raw, "context deadline exceeded") ||
+		strings.Contains(raw, "Client.Timeout") || strings.Contains(raw, "i/o timeout"):
+		return "api.github.com не ответил вовремя (сеть/DPI или блокировка) — повторите позже или проверьте вручную: " + raw
+	case strings.Contains(raw, "no such host"):
+		return "DNS не разрешает api.github.com — проверьте резолвер хоста: " + raw
+	case strings.Contains(raw, "connection refused") || strings.Contains(raw, "network is unreachable"):
+		return "нет маршрута к api.github.com — проверьте egress хоста: " + raw
+	default:
+		return raw
+	}
 }
 
 // fetch returns a fresh Result: from the GitHub Releases API when it answers, and from the

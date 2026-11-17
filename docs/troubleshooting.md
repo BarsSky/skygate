@@ -2044,3 +2044,33 @@ bash scripts/b480_dup_rule_cleanup.sh           # report only, always safe
 bash scripts/b480_dup_rule_cleanup.sh --apply   # delete class-A rows, keep the owner's
 #    --force also collapses a group whose owner names no row (oldest row wins)
 ```
+## 16. «Не удалось проверить GitHub» on `/admin/update` (B486)
+
+The panel's update check asks `api.github.com/repos/<owner>/<repo>/releases/latest`. On a host behind
+a DPI-throttled network that call can stall: measured on `svyatoslava` 2026-11-17 23:07 MSK, the page
+showed `context deadline exceeded` while a plain `curl` from the SAME service user answered in
+**0.2 s** a minute later, and the panel's own git-tags fallback failed in the same minute. So the
+message is about the NETWORK OF THAT MOMENT, not about a broken panel — and the panel now says which:
+
+| reason the panel shows | what it means | what to do |
+|---|---|---|
+| «api.github.com не ответил вовремя (сеть/DPI или блокировка)» | the round trip hit the transport timeout | wait and press «Проверить сейчас»; the scheduler will retry. A working path costs ~0.2 s, so a timeout is never "slow GitHub" |
+| «DNS не разрешает api.github.com» | the resolver cannot resolve it | check `/etc/resolv.conf` and `getent ahosts api.github.com` on the host |
+| «нет маршрута к api.github.com» | connect refused / network unreachable | check egress (`curl -4 https://api.github.com/`) |
+| `GitHub API rate limited — resets at …` | the anonymous 60/h quota is spent | set `SKYGATE_GITHUB_TOKEN` (5000/h) |
+
+Two implementation details that make this honest:
+
+* the checker no longer uses `http.DefaultClient` (which has **no** timeout); it dials **IPv4 first**
+  and bounds the response headers at 10 s, because this host has an IPv6 default route that blackholes
+  most v6 destinations (the panel's Telegram egress logged `dial tcp [2001:…]:443: i/o timeout` on the
+  same box);
+* when the Releases API is unusable the version still comes from the repository **tags** (B445) with no
+  API quota — the page marks that answer as «из git-тегов» and keeps the failure as a warning.
+
+**A failed check never blocks a manual update.** The «Установка вручную» block on the same page has
+the exact commands, and `skygate update --target vX.Y.Z` works with the value typed by hand.
+
+A long reason used to overflow into the «Установка» column (the reason contains a URL with no spaces
+and a `1fr` grid track may shrink below its content); the cells now carry `min-width:0` and the reason
+`overflow-wrap:anywhere`, with its own «Проверить сейчас» button.

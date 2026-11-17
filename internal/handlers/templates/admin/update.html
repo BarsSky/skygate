@@ -212,15 +212,19 @@
     </div>
   </div>
 
+  {{/* B486: the three status cells are a grid of 1fr tracks, and a 1fr track may shrink below its
+       content — so the GitHub failure, whose reason contains a URL with no spaces, ran UNDER the
+       neighbouring column and made «Последняя» and «Установка» unreadable (operator screenshot
+       2026-11-17). min-width:0 lets the track shrink, overflow-wrap:anywhere lets the URL break. */}}
   <div style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px">
-    <div>
+    <div style="min-width:0">
       <div style="color:var(--text-muted);font-size:12px">{{t "update.current_label"}}</div>
       <div style="font-size:18px;font-weight:600"><code>{{.Current}}</code></div>
       {{if .CurrentBuild}}
       <div style="color:var(--text-muted);font-size:11px;margin-top:4px">build: <code>{{.CurrentBuild}}</code></div>
       {{end}}
     </div>
-    <div>
+    <div style="min-width:0">
       <div style="color:var(--text-muted);font-size:12px">{{t "update.latest_label"}}</div>
       <div style="font-size:18px;font-weight:600">
         {{if .Latest}}
@@ -236,7 +240,18 @@
                page said nothing at all. "не удалось проверить: причина" is actionable; a
                dash is not. */}}
           {{if .Error}}
-            <span class="sub">{{t "update.check_failed"}}: {{.Error}}</span>
+            {{/* B486: a failure is shown as a WRAPPING block with the reason on its own line and a
+                 retry control, not as an inline sentence that overflows the cell. The raw text is
+                 still there (a code line) because «проверить не удалось» without the reason is the
+                 dash B424 already paid for. */}}
+            <div style="font-size:13px;font-weight:500;color:var(--text-muted)">
+              <i class="fa-solid fa-triangle-exclamation" style="color:#d97706"></i>
+              {{t "update.check_failed"}}
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px;overflow-wrap:anywhere;word-break:break-word;font-family:ui-monospace,monospace;line-height:1.45">{{.Error}}</div>
+            <form method="post" action="/admin/update/check-now" style="margin-top:6px">
+              <button type="submit" class="btn btn-sm"><i class="fa-solid fa-rotate"></i> {{t "update.check_now"}}</button>
+            </form>
           {{else}}
             <span style="color:var(--text-muted)">{{t "update.check_never"}}</span>
           {{end}}
@@ -259,7 +274,7 @@
       </div>
       {{end}}
     </div>
-    <div>
+    <div style="min-width:0">
       <div style="color:var(--text-muted);font-size:12px">{{t "update.install_label"}}</div>
       <div style="font-size:18px;font-weight:600">{{.InstallLabel}}</div>
       <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
