@@ -68,6 +68,7 @@ docs/
 │   ├── derp-status-stopped.md       RU: ложное «DERPER stopped» (B478)
 │   ├── gate-live-skip.md            RU: SKIP вместо FAIL без живого стенда (B479)
 │   ├── prefix-ownership-acceptance.md  RU: резерв префикса и «принятие» (B480)
+│   ├── host-migration.md            RU: переезд установки на новый хост (анализ + мастер)
 │   ├── ha-manual-switch.md          RU: manual A→B switch runbook
 │   ├── certificates.md              RU: certificates
 │   └── ROADMAP.md                   RU roadmap
@@ -77,6 +78,7 @@ docs/
 ├── ROADMAP.md                       current work / next / blocked / tech debt
 ├── LESSONS.md                       incidents, root causes, recurring traps
 ├── operations.md                    release + deploy + PG cutover + bootstrap
+├── host-migration.md                move an installation to a new host (analysis + wizard)
 ├── gate-regression-power.md        what the B-check catalog can and cannot catch
 ├── gate-audit-b001-b100.md      per-slice regression-detection audit
 ├── gate-audit-b101-b199.md      per-slice regression-detection audit

@@ -380,6 +380,7 @@ go test -tags postgres -count=1 -v -run "TestPG" ./internal/db/
 | **`DERPER SERVICE stopped` на живом релее** | [`docs/ru/derp-status-stopped.md`](derp-status-stopped.md) |
 | **Гейт красный на хосте без живого стенда** | [`docs/ru/gate-live-skip.md`](gate-live-skip.md) |
 | **Один сервис не работает только на одном устройстве** | [`docs/ru/prefix-ownership-acceptance.md`](prefix-ownership-acceptance.md) |
+| **Переезд установки на новый хост** (анализ + мастер) | [`docs/ru/host-migration.md`](host-migration.md) |
 | **Планы, техдолг, что дальше** | [`docs/ru/ROADMAP.md`](ROADMAP.md) |
 | Эксплуатация: релиз, деплой, переезд PG, bootstrap | [`docs/operations.md`](../operations.md) |
 | HA: топология, failover, открытые вопросы | [`docs/ha.md`](../ha.md) |

@@ -1,0 +1,186 @@
+{{define "body-admin-host_migration_run"}}
+<div class="title-row">
+  <h2><i class="fa-solid fa-truck-arrow-right"></i> {{t "migrate.run_title"}} <span class="tag">#{{.Data.Run.ID}}</span></h2>
+  <p class="sub">{{t "migrate.run_subtitle"}}</p>
+</div>
+
+{{if .Data.FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.Data.FlashError}}</div>{{end}}
+{{if .Data.FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>{{end}}
+
+{{if .Data.HasRunning}}
+<div class="alert alert-warn"><i class="fa-solid fa-spinner fa-spin"></i> {{t "migrate.run_auto_refresh"}}</div>
+<script>setTimeout(function () { location.replace('/admin/migrate/{{.Data.Run.ID}}'); }, 8000);</script>
+{{end}}
+
+<div class="card">
+  <h3><i class="fa-solid fa-circle-info"></i> {{t "migrate.run_answers_title"}}</h3>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px 18px">
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">{{t "migrate.run_state"}}</div>
+      <div><span class="tag">{{t .Data.StateKey}}</span></div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">{{t "migrate.run_target"}}</div>
+      <div><code>{{.Data.Target}}</code></div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">{{t "migrate.run_mode"}}</div>
+      <div>{{t .Data.ModeKey}}</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">{{t "migrate.run_auth"}}</div>
+      <div>
+        {{t .Data.AuthKey}}
+        {{if .Data.HasSSHSecret}}<span class="muted" style="font-size:12px">· {{t "backup.secret_saved_prefix"}} {{.Data.SSHSecretFP}}</span>{{end}}
+      </div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">{{t "migrate.run_db"}}</div>
+      <div>
+        {{t .Data.DBKey}}
+        {{if .Data.HasDSN}}<span class="muted" style="font-size:12px">· {{t "backup.secret_saved_prefix"}} {{.Data.DSNFP}}</span>{{end}}
+      </div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">{{t "migrate.run_install"}}</div>
+      <div>{{t .Data.InstallKey}}</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">{{t "migrate.run_hostname"}}</div>
+      <div>{{.Data.Answers.NewHostname}}</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">{{t "migrate.run_dns"}}</div>
+      <div>{{t .Data.DNSKey}}</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">{{t "migrate.run_old"}}</div>
+      <div>{{t .Data.OldKey}}</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">{{t "migrate.run_created_by"}}</div>
+      <div>{{.Data.Run.CreatedByName}}</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">{{t "migrate.run_created"}}</div>
+      <div>{{datetimeformat .Data.Run.CreatedAt}}</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">{{t "migrate.run_progress"}}</div>
+      <div>{{tf "migrate.run_counts" .Data.DoneSteps .Data.Total}}</div>
+    </div>
+  </div>
+  <div class="btn-row">
+    <a class="btn btn-secondary" href="/admin/migrate"><i class="fa-solid fa-arrow-left"></i> {{t "migrate.run_back"}}</a>
+    <a class="btn btn-secondary" href="/admin/migrate?run={{.Data.Run.ID}}"><i class="fa-solid fa-pen-to-square"></i> {{t "migrate.run_edit"}}</a>
+    {{if .Data.HasSteps}}
+    <form method="post" action="/admin/migrate/{{.Data.Run.ID}}/plan" style="display:inline"
+          onsubmit="return confirm('{{t "migrate.run_regenerate_confirm"}}')">
+      <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-arrows-rotate"></i> {{t "migrate.run_regenerate"}}</button>
+    </form>
+    {{else}}
+    <form method="post" action="/admin/migrate/{{.Data.Run.ID}}/plan" style="display:inline">
+      <button type="submit" class="btn"><i class="fa-solid fa-list-check"></i> {{t "migrate.run_generate"}}</button>
+    </form>
+    {{end}}
+  </div>
+  <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:8px">
+    {{if .Data.HasSteps}}{{t "migrate.run_regenerate_help"}}{{else}}{{t "migrate.run_generate_help"}}{{end}}
+  </div>
+</div>
+
+<div class="card">
+  <h3><i class="fa-solid fa-diagram-project"></i> {{t "migrate.run_plan_title"}}</h3>
+  {{if .Data.Preview}}
+  <div class="alert alert-warn">{{t "migrate.run_preview_note"}}</div>
+  {{else}}
+  <p style="font-size:13px;color:var(--text-muted);margin:0 0 12px 0">{{t "migrate.run_plan_help"}}</p>
+  {{end}}
+
+  {{range .Data.Phases}}
+  <details class="card" style="padding:12px 14px" {{if or (eq .Done 0) (lt .Done .Total)}}open{{end}}>
+    <summary style="cursor:pointer;font-weight:600">
+      {{t .TitleKey}}
+      <span class="tag" style="margin-left:8px">{{tf "migrate.run_phase_done" .Done .Total}}</span>
+    </summary>
+    <div class="table-wrap" style="margin-top:10px">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:38px">#</th>
+            <th>{{t "migrate.tbl_step"}}</th>
+            <th>{{t "migrate.tbl_kind"}}</th>
+            <th>{{t "migrate.tbl_status"}}</th>
+            <th>{{t "migrate.tbl_command"}}</th>
+            <th>{{t "migrate.tbl_output"}}</th>
+            <th>{{t "migrate.tbl_actions"}}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Steps}}
+          <tr>
+            <td>{{add .Ordinal 1}}</td>
+            <td>
+              <div>
+                {{if .TitleKey}}{{t .TitleKey}}{{else}}<code>{{.Key}}</code>{{end}}
+                {{if .Required}}<span class="tag tag-warning" title="{{t "migrate.run_required"}}">*</span>{{end}}
+                {{if .Downtime}}<span class="tag tag-danger">{{t "migrate.run_downtime"}}</span>{{end}}
+              </div>
+              {{if .WhyKey}}
+              <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "migrate.run_why_label"}}: {{t .WhyKey}}</div>
+              {{end}}
+              {{if .NoteKey}}
+              <div class="alert alert-warn" style="margin:8px 0 0 0;padding:8px 10px">{{t "migrate.run_note_label"}}: {{t .NoteKey}}</div>
+              {{end}}
+              {{if .Internal}}
+              <div class="alert alert-warn" style="margin:8px 0 0 0;padding:8px 10px">{{t "migrate.run_internal_note"}}</div>
+              {{end}}
+              {{if eq .Kind "confirm"}}
+              <div class="alert alert-warn" style="margin:8px 0 0 0;padding:8px 10px">{{t "migrate.run_confirm_hint"}}</div>
+              {{end}}
+              {{if eq .Kind "manual"}}
+              <div class="alert alert-warn" style="margin:8px 0 0 0;padding:8px 10px">
+                {{t "migrate.run_manual_hint"}}
+                {{if .ManualKey}}<div style="margin-top:6px">{{t .ManualKey}}</div>{{end}}
+              </div>
+              {{end}}
+              {{if .Verify}}
+              <div style="font-size:12px;color:var(--text-muted);margin-top:6px">{{t "migrate.run_verify_label"}}: <code>{{.Verify}}</code></div>
+              {{end}}
+            </td>
+            <td>
+              <div><span class="tag">{{t .KindKey}}</span></div>
+              <div style="margin-top:4px"><span class="tag">{{t .WhereKey}}</span></div>
+            </td>
+            <td><span class="tag">{{t .StatusKey}}</span></td>
+            <td><code style="font-size:12px;overflow-wrap:anywhere">{{.Command}}</code></td>
+            <td>
+              {{if .Output}}
+              <pre style="max-height:200px;overflow:auto;font-size:12px;margin:0">{{.Output}}</pre>
+              {{else}}
+              <span style="font-size:12px;color:var(--text-muted)">{{t "migrate.run_output_empty"}}</span>
+              {{end}}
+            </td>
+            <td>
+              {{if .CanRun}}
+              <form method="post" action="/admin/migrate/{{$.Data.Run.ID}}/step">
+                <input type="hidden" name="step_key" value="{{.Key}}">
+                {{if eq .Kind "manual"}}
+                <button type="submit" class="btn btn-sm btn-secondary"><i class="fa-solid fa-check"></i> {{t "migrate.run_btn_manual"}}</button>
+                {{else}}
+                <button type="submit" class="btn btn-sm"><i class="fa-solid fa-play"></i> {{t "migrate.run_btn"}}</button>
+                {{end}}
+              </form>
+              {{else}}
+              <span style="font-size:12px;color:var(--text-muted)">{{t "migrate.run_no_action"}}</span>
+              {{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {{end}}
+</div>
+{{end}}

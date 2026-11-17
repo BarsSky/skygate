@@ -781,6 +781,12 @@ A generalised HA-mirror bootstrap: provision an additional skygate host that can
 be promoted later. It is a **technical HA host**, not a traffic-routing exit
 node.
 
+**Moving an EXISTING installation to a new host is a different procedure** — the whole
+installation travels (panel, headscale with its noise key, DERP, the database and the names),
+and the order matters more than the speed. The analysis and the full step catalog are in
+[`host-migration.md`](host-migration.md); the in-panel wizard that asks the questions and
+applies the steps is `/admin/migrate` (B482).
+
 ### 4.1 Prerequisites
 
 | What | Where from | Example |

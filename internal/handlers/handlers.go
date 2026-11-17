@@ -1003,6 +1003,14 @@ func pageFromName(name string) string {
 	if name == "user/notifications" {
 		return "my/notifications"
 	}
+	// B482: the host-migration wizard (/admin/migrate). Both of its templates report the SAME
+	// .Page ("admin/migrate") so the sidebar entry stays highlighted on the run page and the
+	// breadcrumb names the section instead of the template file. Note the template stems are
+	// admin/host_migration*.html and NOT admin/migrate*.html: admin/migrate_run.html already
+	// belongs to the DB-migration page (/admin/database/migrate/{id}).
+	if name == "admin/host_migration" || name == "admin/host_migration_run" {
+		return "admin/migrate"
+	}
 	if strings.HasPrefix(name, "admin/") {
 		// 2026-08-13: 3 admin pages have a URL-vs-template
 		// mismatch — the URL uses hyphens (canonical:
@@ -1102,6 +1110,9 @@ func sectionPageSet(page string) map[string]bool {
 			// navigation. B96 checks this list against layout.html in
 			// both directions, so the two must move together.
 			"admin/database", "admin/backup", "admin/invites", "admin/control-planes",
+			// B482 — the host-migration wizard sits next to the backup that protects the data
+			// it moves. pageFromName maps both wizard templates to this one page value.
+			"admin/migrate",
 		},
 		"InSectionSettings": {
 			// B323 (2026-09-25): /admin/service sits in Settings next to
@@ -1214,6 +1225,12 @@ func pageTitle(name string) string {
 		return "title.admin_meshes"
 	case "admin/migrate_run.html":
 		return "title.admin_migrate_run"
+	// B482 — the host-migration wizard. admin/migrate_run.html above is the DB-migration run
+	// page; these two are the new cutover wizard (/admin/migrate).
+	case "admin/host_migration.html":
+		return "title.admin_host_migration"
+	case "admin/host_migration_run.html":
+		return "title.admin_host_migration_run"
 	case "admin/module_detail.html":
 		return "title.admin_module_detail"
 	case "admin/modules.html":
@@ -1280,7 +1297,7 @@ func sectionLabel(page string) string {
 		return "nav.section_integrations"
 	case page == "admin/database" ||
 		page == "admin/backup" || page == "admin/invites" ||
-		page == "admin/control-planes":
+		page == "admin/control-planes" || page == "admin/migrate":
 		return "nav.section_data"
 	case page == "admin/settings" || page == "admin/users" ||
 		page == "admin/update" || page == "admin/service":
@@ -1340,6 +1357,10 @@ func pageLabel(page string) string {
 		return "nav.invites"
 	case "admin/control-planes":
 		return "nav.control_planes"
+	// B482 — both wizard templates report .Page "admin/migrate" (see pageFromName), so one
+	// breadcrumb label covers the form and the run page.
+	case "admin/migrate":
+		return "nav.migrate"
 	case "admin/settings":
 		return "nav.settings"
 	case "admin/users":

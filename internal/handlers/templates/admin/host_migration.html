@@ -1,0 +1,351 @@
+{{define "body-admin-host_migration"}}
+<div class="title-row">
+  <h2><i class="fa-solid fa-truck-arrow-right"></i> {{t "migrate.title"}}</h2>
+  <p class="sub">{{t "migrate.subtitle"}}</p>
+</div>
+
+{{if .Data.FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.Data.FlashError}}</div>{{end}}
+{{if .Data.FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>{{end}}
+
+<div class="alert alert-warn">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <div>{{t "migrate.help"}}</div>
+</div>
+
+{{if .Data.SecretKeyMissing}}
+<div class="alert alert-danger">
+  <i class="fa-solid fa-key"></i>
+  <div>{{t "migrate.err_secret_key"}}</div>
+</div>
+{{end}}
+
+<form method="post" action="/admin/migrate/save" class="card">
+  <h3><i class="fa-solid fa-list-check"></i> {{t "migrate.wizard_title"}}</h3>
+  <input type="hidden" name="run_id" value="{{.Data.RunID}}">
+
+  {{/* Q1 — the new host. Three short fields on one grid row. */}}
+  <div class="field">
+    <label><span class="tag">1</span> {{t "migrate.q_host"}}</label>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px 18px;align-items:start">
+      <div>
+        <input type="text" name="host" value="{{.Data.Answers.Host}}" placeholder="198.51.100.10">
+        <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "migrate.q_host_help"}}</div>
+      </div>
+      <div>
+        <input type="number" name="ssh_port" min="1" max="65535" value="{{.Data.Answers.Port}}">
+        <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "migrate.q_port_help"}}</div>
+      </div>
+      <div>
+        <input type="text" name="ssh_user" value="{{.Data.Answers.User}}">
+        <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "migrate.q_user_help"}}</div>
+      </div>
+    </div>
+  </div>
+
+  {{/* Q2 — how to reach the new host's OS. The secret fields are WRITE-ONLY (B404): an empty
+       input keeps the stored credential, the fingerprint says one is stored, and the box forgets
+       it. Nothing here ever renders a decrypted value. */}}
+  <div class="field">
+    <label><span class="tag">2</span> {{t "migrate.q_access"}}</label>
+    <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin:0 0 10px 0">{{t "migrate.access_help"}}</div>
+
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px">
+      <input type="radio" name="auth" value="key_path" {{if eq .Data.Answers.Auth "key_path"}}checked{{end}} style="margin-top:3px">
+      <span>
+        <b>{{t "migrate.auth_key_path"}}</b>
+        <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.auth_key_path_help"}}</span>
+      </span>
+    </label>
+    <div class="field" data-visible-when="auth=key_path" style="margin:0 0 12px 26px">
+      <input type="text" name="key_path" value="{{.Data.Answers.KeyPath}}" placeholder="{{.Data.DefaultSSHKeyPath}}">
+      <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "migrate.auth_key_path_field_help"}}</div>
+    </div>
+
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px">
+      <input type="radio" name="auth" value="key_paste" {{if eq .Data.Answers.Auth "key_paste"}}checked{{end}} style="margin-top:3px">
+      <span>
+        <b>{{t "migrate.auth_key_paste"}}</b>
+        <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.auth_key_paste_help"}}</span>
+      </span>
+    </label>
+    <div class="field" data-visible-when="auth=key_paste" style="margin:0 0 12px 26px">
+      <textarea name="ssh_key" rows="6" autocomplete="off" spellcheck="false"
+                placeholder="{{if .Data.HasSSHSecret}}{{t "backup.secret_saved_prefix"}} {{.Data.SSHSecretFP}} — {{t "backup.secret_keep_hint"}}{{else}}{{t "backup.secret_not_set"}}{{end}}"></textarea>
+      {{if .Data.HasSSHSecret}}
+      <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "backup.secret_fingerprint_help"}}</div>
+      <label class="form-check" style="font-weight:400;margin-top:0.35rem">
+        <input type="checkbox" name="clear_ssh_secret" value="1">
+        {{t "backup.secret_clear"}}
+      </label>
+      {{end}}
+    </div>
+
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px">
+      <input type="radio" name="auth" value="password" {{if eq .Data.Answers.Auth "password"}}checked{{end}} style="margin-top:3px">
+      <span>
+        <b>{{t "migrate.auth_password"}}</b>
+        <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.auth_password_help"}}</span>
+      </span>
+    </label>
+    <div class="field" data-visible-when="auth=password" style="margin:0 0 12px 26px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px 18px;align-items:start">
+        <div>
+          <input type="text" name="login_user" value="{{.Data.Answers.User}}" autocomplete="off">
+          <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "migrate.auth_login"}}</div>
+        </div>
+        <div>
+          <input type="password" name="ssh_password" value="" autocomplete="new-password"
+                 placeholder="{{if .Data.HasSSHSecret}}{{t "backup.secret_saved_prefix"}} {{.Data.SSHSecretFP}} — {{t "backup.secret_keep_hint"}}{{else}}{{t "backup.secret_not_set"}}{{end}}">
+          <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "migrate.auth_password_field"}}</div>
+        </div>
+      </div>
+      {{if .Data.HasSSHSecret}}
+      <label class="form-check" style="font-weight:400;margin-top:0.35rem">
+        <input type="checkbox" name="clear_ssh_secret" value="1">
+        {{t "backup.secret_clear"}}
+      </label>
+      {{end}}
+    </div>
+  </div>
+
+  {{/* Q3 — what travels. */}}
+  <div class="field">
+    <label><span class="tag">3</span> {{t "migrate.q_mode"}}</label>
+    <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin:0 0 10px 0">{{t "migrate.q_mode_help"}}</div>
+
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px">
+      <input type="radio" name="mode" value="copy" {{if eq .Data.Answers.Mode "copy"}}checked{{end}} style="margin-top:3px">
+      <span>
+        <b>{{t "migrate.mode_copy"}}</b>
+        <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.mode_copy_help"}}</span>
+      </span>
+    </label>
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px">
+      <input type="radio" name="mode" value="fresh_db" {{if eq .Data.Answers.Mode "fresh_db"}}checked{{end}} style="margin-top:3px">
+      <span>
+        <b>{{t "migrate.mode_fresh_db"}}</b>
+        <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.mode_fresh_db_help"}}</span>
+      </span>
+    </label>
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px">
+      <input type="radio" name="mode" value="db_only" {{if eq .Data.Answers.Mode "db_only"}}checked{{end}} style="margin-top:3px">
+      <span>
+        <b>{{t "migrate.mode_db_only"}}</b>
+        <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.mode_db_only_help"}}</span>
+      </span>
+    </label>
+  </div>
+
+  {{/* Q4 — the database. The DSN is a secret: write-only, encrypted, never echoed. */}}
+  <div class="field">
+    <label><span class="tag">4</span> {{t "migrate.q_db"}}</label>
+    <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin:0 0 10px 0">{{t "migrate.q_db_help"}}</div>
+
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px">
+      <input type="radio" name="db_mode" value="same" {{if eq .Data.Answers.DBMode "same"}}checked{{end}} style="margin-top:3px">
+      <span>
+        <b>{{t "migrate.db_same"}}</b>
+        <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.db_same_help"}}</span>
+      </span>
+    </label>
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px">
+      <input type="radio" name="db_mode" value="postgres" {{if eq .Data.Answers.DBMode "postgres"}}checked{{end}} style="margin-top:3px">
+      <span>
+        <b>{{t "migrate.db_postgres"}}</b>
+        <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.db_postgres_help"}}</span>
+      </span>
+    </label>
+    <div class="field" data-visible-when="db_mode=postgres" style="margin:0 0 12px 26px">
+      <input type="password" name="db_dsn" value="" autocomplete="new-password" spellcheck="false"
+             placeholder="{{if .Data.HasDSN}}{{t "backup.secret_saved_prefix"}} {{.Data.DSNFP}} — {{t "backup.secret_keep_hint"}}{{else}}postgres://skygate@db.example.com:5432/skygate?sslmode=disable{{end}}">
+      <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "migrate.db_dsn_help"}}</div>
+    </div>
+    <div class="alert alert-warn" style="margin-bottom:0">{{t "migrate.db_warning"}}</div>
+  </div>
+
+  {{/* Q5 — how the panel is installed on the new host. */}}
+  <div class="field">
+    <label><span class="tag">5</span> {{t "migrate.q_install"}}</label>
+    <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin:0 0 10px 0">{{t "migrate.q_install_help"}}</div>
+    <label style="display:inline-flex;gap:8px;align-items:center;font-weight:400;margin-right:18px">
+      <input type="radio" name="install_kind" value="systemd" {{if eq .Data.Answers.InstallKind "systemd"}}checked{{end}}>
+      <span>{{t "migrate.install_systemd"}}</span>
+    </label>
+    <label style="display:inline-flex;gap:8px;align-items:center;font-weight:400">
+      <input type="radio" name="install_kind" value="docker" {{if eq .Data.Answers.InstallKind "docker"}}checked{{end}}>
+      <span>{{t "migrate.install_docker"}}</span>
+    </label>
+  </div>
+
+  {{/* Q6 — the tailnet name the new host will have, plus the optional preauth key. */}}
+  <div class="field">
+    <label><span class="tag">6</span> {{t "migrate.q_name"}}</label>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px 18px;align-items:start">
+      <div>
+        <input type="text" name="new_hostname" value="{{.Data.Answers.NewHostname}}">
+        <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "migrate.q_name_help"}}</div>
+      </div>
+      <div>
+        <input type="password" name="ts_authkey" value="" autocomplete="off" spellcheck="false" placeholder="tskey-auth-...">
+        <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "migrate.ts_key_help"}}</div>
+      </div>
+    </div>
+  </div>
+
+  {{/* Q7 — DNS. */}}
+  <div class="field">
+    <label><span class="tag">7</span> {{t "migrate.q_dns"}}</label>
+    <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin:0 0 10px 0">{{t "migrate.q_dns_help"}}</div>
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px">
+      <input type="radio" name="dns_mode" value="provider" {{if eq .Data.Answers.DNSMode "provider"}}checked{{end}} style="margin-top:3px">
+      <span>
+        <b>{{t "migrate.dns_provider"}}</b>
+        <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.dns_provider_help"}}</span>
+      </span>
+    </label>
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px">
+      <input type="radio" name="dns_mode" value="stub" {{if eq .Data.Answers.DNSMode "stub"}}checked{{end}} style="margin-top:3px">
+      <span>
+        <b>{{t "migrate.dns_stub"}}</b>
+        <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.dns_stub_help"}}</span>
+      </span>
+    </label>
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px">
+      <input type="radio" name="dns_mode" value="manual" {{if eq .Data.Answers.DNSMode "manual"}}checked{{end}} style="margin-top:3px">
+      <span>
+        <b>{{t "migrate.dns_manual"}}</b>
+        <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.dns_manual_help"}}</span>
+      </span>
+    </label>
+    <div class="field" data-visible-when="dns_mode=provider" style="margin:0 0 12px 26px">
+      <input type="number" name="dns_ttl" min="60" max="86400" value="{{.Data.Answers.DNSTTL}}">
+      <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "migrate.dns_ttl_help"}}</div>
+    </div>
+  </div>
+
+  {{/* Q8 — the old host. */}}
+  <div class="field">
+    <label><span class="tag">8</span> {{t "migrate.q_old"}}</label>
+    <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin:0 0 10px 0">{{t "migrate.q_old_help"}}</div>
+    <label style="display:inline-flex;gap:8px;align-items:center;font-weight:400;margin-right:18px">
+      <input type="radio" name="old_host" value="keep" {{if eq .Data.Answers.OldHost "keep"}}checked{{end}}>
+      <span>{{t "migrate.old_keep"}}</span>
+    </label>
+    <label style="display:inline-flex;gap:8px;align-items:center;font-weight:400;margin-right:18px">
+      <input type="radio" name="old_host" value="stop" {{if eq .Data.Answers.OldHost "stop"}}checked{{end}}>
+      <span>{{t "migrate.old_stop"}}</span>
+    </label>
+    <label style="display:inline-flex;gap:8px;align-items:center;font-weight:400">
+      <input type="radio" name="old_host" value="decommission" {{if eq .Data.Answers.OldHost "decommission"}}checked{{end}}>
+      <span>{{t "migrate.old_decommission"}}</span>
+    </label>
+  </div>
+
+  {{/* Q9 — the flags. */}}
+  <div class="field" style="margin-bottom:0">
+    <label><span class="tag">9</span> {{t "migrate.q_flags"}}</label>
+    <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin:0 0 10px 0">{{t "migrate.q_flags_help"}}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px 18px;align-items:start">
+      <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400">
+        <input type="checkbox" name="keep_noise_key" value="1" {{if .Data.Answers.KeepNoiseKey}}checked{{end}} style="margin-top:3px">
+        <span>
+          <b>{{t "migrate.flag_noise"}}</b>
+          <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.flag_noise_help"}}</span>
+        </span>
+      </label>
+      <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400">
+        <input type="checkbox" name="reapply_acl" value="1" {{if .Data.Answers.ReapplyACL}}checked{{end}} style="margin-top:3px">
+        <span>
+          <b>{{t "migrate.flag_acl"}}</b>
+          <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.flag_acl_help"}}</span>
+        </span>
+      </label>
+      <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400">
+        <input type="checkbox" name="dedupe_rules" value="1" {{if .Data.Answers.DedupeRules}}checked{{end}} style="margin-top:3px">
+        <span>
+          <b>{{t "migrate.flag_dedupe"}}</b>
+          <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.flag_dedupe_help"}}</span>
+        </span>
+      </label>
+      <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400">
+        <input type="checkbox" name="derp_move" value="1" {{if .Data.Answers.DerpMove}}checked{{end}} style="margin-top:3px">
+        <span>
+          <b>{{t "migrate.flag_derp"}}</b>
+          <span style="display:block;font-size:12px;color:var(--text-muted)">{{t "migrate.flag_derp_help"}}</span>
+        </span>
+      </label>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> {{t "migrate.save"}}</button>
+  </div>
+</form>
+
+{{/* The DSN field (and the two access sub-fields) exist only when their answer selects them.
+     A form that always shows every input cannot tell the operator which answer it is editing. */}}
+<script>
+(function () {
+  var targets = document.querySelectorAll('[data-visible-when]');
+  function sync() {
+    for (var i = 0; i < targets.length; i++) {
+      var el = targets[i];
+      var parts = el.getAttribute('data-visible-when').split('=');
+      var picked = document.querySelector('input[name="' + parts[0] + '"]:checked');
+      el.style.display = (picked && picked.value === parts[1]) ? '' : 'none';
+    }
+  }
+  var radios = document.querySelectorAll('input[type="radio"]');
+  for (var j = 0; j < radios.length; j++) { radios[j].addEventListener('change', sync); }
+  sync();
+})();
+</script>
+
+<div class="card">
+  <h3><i class="fa-solid fa-clock-rotate-left"></i> {{t "migrate.history_title"}}</h3>
+  <p style="font-size:13px;color:var(--text-muted);margin:0 0 12px 0">{{t "migrate.history_help"}}</p>
+  {{if .Data.Runs}}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>{{t "migrate.col_state"}}</th>
+          <th>{{t "migrate.col_mode"}}</th>
+          <th>{{t "migrate.col_target"}}</th>
+          <th>{{t "migrate.col_hostname"}}</th>
+          <th>{{t "migrate.col_author"}}</th>
+          <th>{{t "migrate.col_created"}}</th>
+          <th>{{t "migrate.col_actions"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Data.Runs}}
+        <tr>
+          <td>{{.ID}}</td>
+          <td><span class="tag">{{t .StateKey}}</span></td>
+          <td>{{t .ModeKey}}</td>
+          <td><code>{{.Target}}</code></td>
+          <td>{{.NewHostname}}</td>
+          <td>{{.Author}}</td>
+          <td>{{datetimeformat .CreatedAt}}</td>
+          <td>
+            <a class="btn btn-sm btn-secondary" href="/admin/migrate/{{.ID}}"><i class="fa-solid fa-folder-open"></i> {{t "migrate.open"}}</a>
+            {{if .CanDelete}}
+            <form method="post" action="/admin/migrate/{{.ID}}/delete" style="display:inline"
+                  onsubmit="return confirm('{{t "migrate.forget_confirm"}}')">
+              <button type="submit" class="btn btn-sm btn-danger"><i class="fa-solid fa-trash"></i> {{t "migrate.forget"}}</button>
+            </form>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <p style="font-size:13px;color:var(--text-muted);margin:0">{{t "migrate.no_runs"}}</p>
+  {{end}}
+  <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:10px">{{t "migrate.danger_note"}}</div>
+</div>
+{{end}}

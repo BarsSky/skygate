@@ -516,6 +516,23 @@ func registerRoutes(
 	mux.Handle("POST /admin/database/migrate/{id}/cancel", authMW(http.HandlerFunc(migrateSvc.PostAdminDatabaseMigrateCancel)))
 	mux.Handle("POST /admin/database/migrate/{id}/rollback", authMW(http.HandlerFunc(migrateSvc.PostAdminDatabaseMigrateRollback)))
 
+	// B482 — /admin/migrate: the HOST migration wizard (a different page from the
+	// /admin/database/migrate workflow above, which migrates a database between two
+	// PostgreSQL servers). This one answers nine questions about moving the whole
+	// installation to another machine (SSH access, what travels, which database, the
+	// new tailnet name, DNS, the old host), stores the answers as a host_migrations
+	// row, generates the step list from internal/migrate.Plan into
+	// host_migration_steps, and executes ONE stored step at a time through
+	// internal/migrate.RunStep. Templates: admin/host_migration.html (the form +
+	// history) and admin/host_migration_run.html (one run's plan). Handlers:
+	// internal/feature/admin/migrate.go. Rationale: docs/host-migration.md.
+	mux.Handle("GET /admin/migrate", authMW(http.HandlerFunc(adminSvc.GetAdminMigrate)))
+	mux.Handle("POST /admin/migrate/save", authMW(http.HandlerFunc(adminSvc.PostAdminMigrateSave)))
+	mux.Handle("GET /admin/migrate/{id}", authMW(http.HandlerFunc(adminSvc.GetAdminMigrateRun)))
+	mux.Handle("POST /admin/migrate/{id}/plan", authMW(http.HandlerFunc(adminSvc.PostAdminMigratePlan)))
+	mux.Handle("POST /admin/migrate/{id}/step", authMW(http.HandlerFunc(adminSvc.PostAdminMigrateStep)))
+	mux.Handle("POST /admin/migrate/{id}/delete", authMW(http.HandlerFunc(adminSvc.PostAdminMigrateDelete)))
+
 	// v1.5.0+ / B199 — /admin/cluster (cluster topology view,
 	// Phase 2.1 read-only). The page renders the cluster +
 	// cluster_node + cluster_database + cluster_invite +
