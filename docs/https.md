@@ -929,3 +929,42 @@ The response is a **503** carrying the page (`X-Skygate-Maintenance: 1`, `Retry-
 checker or uptime monitor must see the outage — a 200 maintenance page is a lie to every one of them
 (the catalog's own B-prod-health parsed the HTML as "healthy"). Only the proxy's own 5xx is replaced,
 so a genuine 404 stays a 404.
+## Rebuilding the reverse proxy of a native host (B490, TD-38)
+
+The reverse proxy of the production panel host was written **by hand** during the 2026-11-15
+migration: the panel site with its maintenance import, the headscale site in its HTTP/1.1 shape, and
+the DERP site with its own certificate name. Nothing in the repository could recreate it, so a
+rebuilt host would come up with no public entry point at all (TD-38).
+
+Two artifacts now cover it:
+
+```bash
+# render + validate + install (the maintenance page is installed first, because the
+# rendered Caddyfile IMPORTS it and a missing import takes the whole site down)
+sudo bash deploy/install-caddy-native.sh \
+    --panel-host panel.example.com \
+    --headscale-host head.example.com \
+    --derp-host derp.example.com \
+    --acme-email admin@example.com
+
+# see the result first — a dry run still runs the REAL `caddy validate`
+bash deploy/install-caddy-native.sh --panel-host panel.example.com \
+    --headscale-host head.example.com --dry-run
+
+# the ports the stack needs (nothing is changed without --apply)
+bash deploy/install-firewall.sh                 # the plan
+sudo bash deploy/install-firewall.sh --apply --ssh-port 22
+```
+
+What the installer guarantees, and why each guarantee exists:
+
+* the rendered file is validated with `caddy validate` **before** anything is written — including in
+  `--dry-run`, because a "check" that does not run the real parser confirms a file Caddy rejects;
+* a Caddyfile it did not write is **refused** without `--force` (the live file carries the
+  operator's own edits), and a backup is always kept;
+* an unresolved placeholder is a hard error — a rendered file with one would not load;
+* the DERP site is only emitted when `--derp-host` is given (an empty site block fails validation).
+
+The firewall script opens 80/tcp (ACME), 443/tcp, the DERP TLS port (8443/tcp) and STUN (3478/udp),
+plus SSH if you ask. It never opens 8080/50443/50444: those are loopback services behind Caddy, and
+exposing them bypasses TLS and the ACL boundary.
