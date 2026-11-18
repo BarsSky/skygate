@@ -693,8 +693,11 @@ curl -fsS http://127.0.0.1:8080/readyz    # db + headscale + headplane + tailsca
   so an operator following the bare path got a 404 on step 3.
 * **The Docker image is linux/amd64 only** by design; the Go tarballs cover
   linux/darwin × amd64/arm64 and windows-amd64.
-* **Native installs never auto-apply** — the scheduler is Docker-only, and
-  `SKYGATE_AUTO_UPDATE_ENABLED` only controls whether the in-app "Apply"
-  affordance is shown.
+* **Native installs DO auto-apply since v1.5.237 (B492)** — the scheduler drives Docker **and** the
+  native kinds (systemd / OpenRC / bare) through the same privileged applier the manual button uses,
+  and skips only an install kind it could not detect at all (that skip is logged). Before v1.5.237 this
+  line said the opposite and it was true, which is exactly how a stale promise survives: the guard was
+  Docker-only in two places. `SKYGATE_AUTO_UPDATE_ENABLED` still only controls whether the in-app
+  "Apply" affordance is shown.
 * **The registry rate-limits unauthenticated update checks**; set
   `SKYGATE_GITHUB_TOKEN` (5000/h) if you check frequently.
