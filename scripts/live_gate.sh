@@ -43,7 +43,7 @@ while [ $# -gt 0 ]; do
         --with-post-deploy) WITH_POST=1; shift ;;
         --only)             ONLY="${2:-}"; shift 2 ;;
         -h|--help)          sed -n '2,30p' "$HERE/live_gate.sh" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) echo "run_live_contracts: unknown flag: $1 (see --help)" >&2; exit 2 ;;
+        *) echo "live_gate: unknown flag: $1 (see --help)" >&2; exit 2 ;;
     esac
 done
 
@@ -62,14 +62,14 @@ if [ "$KIND" = "none" ]; then
     if [ "$JSON" -eq 1 ]; then
         printf '{"kind":"none","verdict":"no-installation","contracts":[]}\n'
     else
-        echo "run_live_contracts: no live installation on this host"
+        echo "live_gate: no live installation on this host"
         echo "  (no running skygate+headscale container pair and no /etc/skygate/skygate.env)"
         echo "  This runner inspects the host that SERVES the tailnet — run it there."
     fi
     exit 2
 fi
 
-SKY_TMP="$(mktemp -d "${TMPDIR:-/tmp}/skygate-live.XXXXXX")" || { echo "run_live_contracts: cannot create a scratch dir" >&2; exit 2; }
+SKY_TMP="$(mktemp -d "${TMPDIR:-/tmp}/skygate-live.XXXXXX")" || { echo "live_gate: cannot create a scratch dir" >&2; exit 2; }
 trap 'rm -rf "$SKY_TMP"' EXIT
 
 PASS_N=0
@@ -90,11 +90,11 @@ while IFS='	' read -r id script purpose; do
     [ -n "${id:-}" ] || continue
     wanted "$id" || continue
 
-    if [ "$id" = "b188.2" ] && [ ! -f internal/acl/acl.go ]; then
+    if [ "$id" = "b188.2" ] && [ ! -d internal/acl ]; then
         # its sections A..L grep the SOURCE, so outside a checkout it can only report missing files
         SKIP_N=$((SKIP_N + 1))
         ROWS="$ROWS$(printf '%-16s SKIP   %s' "$id" "$purpose")
-                        no checkout here (internal/acl/acl.go is absent) — run this one from the repository
+                        no checkout here (the ACL packages are absent) — run this one from the repository
 "
         JSON_ROWS="$JSON_ROWS${JSON_ROWS:+,}{\"id\":\"$id\",\"verdict\":\"skip\",\"reason\":\"no-checkout\"}"
         continue

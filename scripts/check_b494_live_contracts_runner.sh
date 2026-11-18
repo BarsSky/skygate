@@ -85,7 +85,7 @@ case "$missing" in
     *)  bad "C1: missing from the runner:$missing" ;;
 esac
 case "$(cat "$RUN")" in
-    *'internal/acl/acl.go'*) ok "C2: the checkout-only check is gated on the checkout being present" ;;
+    *'[ ! -d internal/acl ]'*) ok "C2: the checkout-only check is gated on the checkout being present (a package dir, never one file)" ;;
     *) bad "C2: the source-grepping check is not gated — outside a checkout it reports missing files as failures" ;;
 esac
 
@@ -121,7 +121,7 @@ case "$(cat "$RUN")" in
     *'mktemp -d'*) ok "F1: scratch files live under mktemp" ;;
     *) bad "F1: no mktemp — a fixed /tmp path would be unwritable for the next user (trap #13)" ;;
 esac
-if grep -qE '(/tmp/skygate-live\b|/tmp/run_live_contracts)' "$RUN" 2>/dev/null; then
+if grep -qE '/tmp/(skygate-live|live_gate)[^.]*$' "$RUN" 2>/dev/null; then
     bad "F2: it names a FIXED /tmp path"
 else
     ok "F2: no fixed /tmp path"
