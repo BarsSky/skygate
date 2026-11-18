@@ -25,6 +25,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -383,6 +384,22 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 	// Strip "v" from the user-visible labels (the page shows
 	// "v0.28.6" everywhere anyway; the BuildVersion is the
 	// canonical "vX.Y.Z+commit" form).
+	// B491 (TD-39): what the operator typed, what the check will ACTUALLY use, and whether the
+	// environment is overriding their choice — three different facts that a single field would blur.
+	chkURLRaw := ""
+	if d := s.dbc(); d != nil {
+		if v, err := db.GetGlobalSetting(d, globalSettingsKeyUpdateCheckURL, ""); err == nil {
+			chkURLRaw = v
+		}
+	}
+	chkEnvOverride := false
+	for _, key := range []string{"SKYGATE_UPDATE_CHECK_URL", "SKYGATE_UPDATE_CHECK_ENDPOINTS"} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			chkEnvOverride = true
+			break
+		}
+	}
+
 	s.Backend.RenderWithLayout(w, r, "admin/update.html", c, map[string]any{
 		"Page":         "admin/update",
 		"Title":        s.I18nT(c, "title.admin_update"),
@@ -424,7 +441,10 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		// the page can show "schedule was on / schedule was
 		// off" in the auto-update banner area (replaced by
 		// the new Schedule section). Kept for back-compat.
-		"AutoUpdateEnabled": db.GetGlobalSettingBool(s.dbc(), "auto_update_enabled", s.Cfg.AutoUpdateEnabled),
+		"AutoUpdateEnabled":      db.GetGlobalSettingBool(s.dbc(), "auto_update_enabled", s.Cfg.AutoUpdateEnabled),
+		"UpdateCheckURL":         chkURLRaw,
+		"UpdateCheckEndpoints":   updateCheckEndpointsFor(s),
+		"UpdateCheckEnvOverride": chkEnvOverride,
 		// 2026-08-18 (B129): the new scheduled auto-update
 		// state. The /admin/update page shows a "Schedule"
 		// section with a toggle + HH:MM input. Both values
@@ -1264,6 +1284,7 @@ func updateCheckerFor(s *Service) *update.Checker {
 	key := strings.Join([]string{
 		s.Cfg.GitHubOwner, s.Cfg.GitHubRepo, defaultStr(s.Cfg.UpdateChannel, "stable"),
 		s.BuildVersion, fmt.Sprintf("%t", s.Cfg.GitHubToken != ""), s.Cfg.RepoPath,
+		strings.Join(updateCheckEndpointsFor(s), ","),
 	}, "\x00")
 	updateCheckerCache.mu.Lock()
 	defer updateCheckerCache.mu.Unlock()
@@ -1274,6 +1295,7 @@ func updateCheckerFor(s *Service) *update.Checker {
 			Channel:        defaultStr(s.Cfg.UpdateChannel, "stable"),
 			GitHubToken:    s.Cfg.GitHubToken,
 			CurrentVersion: s.BuildVersion,
+			Endpoints:      updateCheckEndpointsFor(s),
 			// B445: the SECOND door. A rate-limited (or api.github.com-unreachable) host
 			// still gets the right version, read from the repository's tags over git —
 			// which is how the updater itself fetches, so no API quota is involved.
@@ -1297,6 +1319,33 @@ func updateCheckerFor(s *Service) *update.Checker {
 // repeated here on purpose: the checker is created from the ADMIN service, which has no
 // upgrader instance, and duplicating the ORDER is cheaper than wiring the upgrader into a
 // getter — but if that order ever changes, this is the second place to look.
+// updateCheckEndpointsFor resolves the ORDERED release-JSON endpoints for the update check (B491 /
+// TD-39). Same precedence as the git mirror below: the environment is the break-glass knob, the DB
+// setting is what the panel writes, and the default is GitHub's own endpoint. A malformed value is
+// logged and IGNORED rather than failing the page — a typo in a mirror URL must not take
+// /admin/update down; the check falls back to the default endpoint and the journal says why.
+func updateCheckEndpointsFor(s *Service) []string {
+	var envRaw string
+	for _, key := range []string{"SKYGATE_UPDATE_CHECK_URL", "SKYGATE_UPDATE_CHECK_ENDPOINTS"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			envRaw = v
+			break
+		}
+	}
+	var dbVal string
+	if d := s.dbc(); d != nil {
+		if v, err := db.GetGlobalSetting(d, "update.check_url", ""); err == nil {
+			dbVal = strings.TrimSpace(v)
+		}
+	}
+	eps, err := update.CheckEndpointsFor(envRaw, dbVal)
+	if err != nil {
+		log.Printf("update-checker: configured check endpoint rejected (%v) — falling back to %s", err, update.DefaultCheckEndpoint)
+		return []string{update.DefaultCheckEndpoint}
+	}
+	return eps
+}
+
 func updateGitRemoteFor(s *Service) string {
 	for _, key := range []string{"SKYGATE_UPDATE_GIT_URL", "SKYGATE_UPDATE_GIT_MIRROR"} {
 		if v := strings.TrimSpace(os.Getenv(key)); v != "" {

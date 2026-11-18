@@ -38,6 +38,8 @@ package main
 import (
 	"context"
 	"log"
+	"os"
+	"strings"
 
 	"skygate/internal/config"
 	"skygate/internal/db"
@@ -62,12 +64,19 @@ func wireUpdateScheduler(ctx context.Context, d *db.ResettableDB, app *handlers.
 		update.SetSchedulerArmed(false, "read-only copy")
 		return
 	}
+	// B491 (TD-39): the scheduler checks through the SAME endpoint list as the page, so a mirror the
+	// operator configured cannot make the page green while the nightly check keeps timing out.
+	schedEndpoints, schedEndpointsErr := schedCheckEndpoints(d, cfg)
+	if schedEndpointsErr != nil {
+		log.Printf("update-checker: configured check endpoint rejected (%v) — the scheduler uses %s", schedEndpointsErr, update.DefaultCheckEndpoint)
+	}
 	schedChecker := &update.Checker{
 		Owner:          cfg.GitHubOwner,
 		Repo:           cfg.GitHubRepo,
 		Channel:        cfg.UpdateChannel,
 		GitHubToken:    cfg.GitHubToken,
 		CurrentVersion: app.BuildVersion,
+		Endpoints:      schedEndpoints,
 	}
 	schedCfg := update.SchedulerCfg{
 		UpdateScheduleEnabled: cfg.UpdateScheduleEnabled,
@@ -94,4 +103,27 @@ func wireUpdateScheduler(ctx context.Context, d *db.ResettableDB, app *handlers.
 		log.Printf("⏰ update-scheduler: armed but idle — enabled=%v, time=%s (the schedule is switched on /admin/update)",
 			schedRead.Enabled, schedRead.Time)
 	}
+}
+
+// schedCheckEndpoints reads the configured release-JSON endpoints for the SCHEDULED check.
+//
+// The precedence matches /admin/update and the git mirror (B272.5): environment first, then the DB
+// setting the panel writes, then GitHub's own endpoint. It is a separate function only because this
+// side holds a DB handle instead of the admin Service.
+func schedCheckEndpoints(d *db.ResettableDB, cfg *config.Config) ([]string, error) {
+	_ = cfg // kept for symmetry with the call site; the coordinates live on the Checker
+	var envRaw string
+	for _, key := range []string{"SKYGATE_UPDATE_CHECK_URL", "SKYGATE_UPDATE_CHECK_ENDPOINTS"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			envRaw = v
+			break
+		}
+	}
+	var dbVal string
+	if d != nil && d.DB != nil {
+		if v, err := db.GetGlobalSetting(d.DB, "update.check_url", ""); err == nil {
+			dbVal = strings.TrimSpace(v)
+		}
+	}
+	return update.CheckEndpointsFor(envRaw, dbVal)
 }

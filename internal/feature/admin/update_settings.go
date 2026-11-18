@@ -22,9 +22,11 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"skygate/internal/db"
+	"skygate/internal/update"
 )
 
 // globalSettingsKeyUpdateScheduleEnabled is the B129+ key for
@@ -135,4 +137,51 @@ func (s *Service) PostAdminUpdateSchedule(w http.ResponseWriter, r *http.Request
 
 	_ = time.Now() // suppress unused import in some build configs
 	http.Redirect(w, r, "/admin/update?schedule_saved="+saved, http.StatusSeeOther)
+}
+
+// globalSettingsKeyUpdateCheckURL is the DB key for the ordered release-JSON endpoint list (B491).
+// It is read per check, so saving it takes effect on the next render without a restart — the same
+// property `update.git_url` has since B272.5.
+const globalSettingsKeyUpdateCheckURL = "update.check_url"
+
+// PostAdminUpdateCheckEndpoint saves the ORDERED check endpoints (B491 / TD-39).
+//
+// Why this exists: on the production host api.github.com intermittently times out (DPI) while a plain
+// curl answers in 0.2 s, so /admin/update kept saying "не удалось проверить GitHub" with no way to
+// point the check anywhere else. The GIT remote already has that knob (update.git_url); the version
+// CHECK did not.
+//
+// Validation is deliberately soft: a malformed URL is REJECTED with a flash and nothing is written
+// (the operator's previous value keeps working), while an EMPTY value is a legitimate reset to the
+// built-in endpoint. Only http(s) is accepted — a file:// endpoint would be a local file read dressed
+// as a version check.
+func (s *Service) PostAdminUpdateCheckEndpoint(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	raw := strings.TrimSpace(r.FormValue("check_url"))
+
+	eps, err := update.ParseCheckEndpoints(raw)
+	if err != nil {
+		s.Backend.Audit(c.UserID, c.Username, "update_check_url", "FAILED: "+err.Error())
+		http.Redirect(w, r, "/admin/update?check_url_saved=invalid", http.StatusSeeOther)
+		return
+	}
+	if err := db.SetGlobalSetting(s.dbc(), globalSettingsKeyUpdateCheckURL, raw); err != nil {
+		s.Backend.Audit(c.UserID, c.Username, "update_check_url", "FAILED: "+err.Error())
+		http.Error(w, "could not persist: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	detail := "default (cleared)"
+	if len(eps) > 0 {
+		detail = strings.Join(eps, ", ")
+	}
+	s.Backend.Audit(c.UserID, c.Username, "update_check_url", detail)
+	http.Redirect(w, r, "/admin/update?check_url_saved=ok", http.StatusSeeOther)
 }

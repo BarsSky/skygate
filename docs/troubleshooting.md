@@ -2068,6 +2068,28 @@ Two implementation details that make this honest:
 * when the Releases API is unusable the version still comes from the repository **tags** (B445) with no
   API quota — the page marks that answer as «из git-тегов» and keeps the failure as a warning.
 
+### Pointing the check somewhere else (B491, TD-39)
+
+If GitHub's API is unreachable from this host most of the time, the check does not have to use it.
+The endpoint is an **ordered list** — the first one that answers wins:
+
+```bash
+# the built-in behaviour (a template: {owner} and {repo} are substituted)
+https://api.github.com/repos/{owner}/{repo}/releases/latest
+
+# your own mirror: a proxy in front of the API, or a static file with the same release JSON
+https://mirror.example.com/skygate/latest.json
+
+# a fallback chain, tried in this order
+https://api.github.com/repos/{owner}/{repo}/releases/latest, https://mirror.example.com/skygate/latest.json
+```
+
+Set it on `/admin/update` («Откуда берётся версия»), in `global_settings` under `update.check_url`, or
+in the environment as `SKYGATE_UPDATE_CHECK_URL` (the environment wins — the page says so when it
+does). Only http(s) is accepted, the `git-tags` door stays last, and the GitHub token is never sent to
+a mirror. A mirror answer is labelled as such on the page, because a **stale** mirror is the failure
+mode that matters: it looks exactly like an up-to-date GitHub.
+
 **A failed check never blocks a manual update.** The «Установка вручную» block on the same page has
 the exact commands, and `skygate update --target vX.Y.Z` works with the value typed by hand.
 

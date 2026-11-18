@@ -307,6 +307,63 @@
   </div>
 </div>
 
+{{/* B491 (TD-39): WHERE THE VERSION IS READ FROM. Measured on the production host:
+     api.github.com intermittently times out (DPI) while a plain curl answers in 0.2 s, so
+     "не удалось проверить GitHub" was truthful but useless — the operator had no way to point
+     the check at a proxy/mirror. The GIT remote has had that knob since B272.5; the CHECK did
+     not. The card shows three separate facts on purpose: what was typed, what the check will
+     actually use (endpoint #1 = the one that answers first), and whether the environment is
+     overriding the field. */}}
+<div class="card" style="margin-bottom:24px">
+  <div>
+    <h4 style="margin:0"><i class="fa-solid fa-satellite-dish"></i> {{t "update.check_endpoint_title"}}</h4>
+    <p style="color:var(--text-muted);font-size:13px;margin:8px 0 0 0">
+      {{t "update.check_endpoint_subtitle"}}
+    </p>
+  </div>
+  <form method="post" action="/admin/update/check-url" style="margin-top:16px">
+    <label for="check-url-input" style="display:block;color:var(--text-muted);font-size:13px;margin-bottom:6px">
+      {{t "update.check_endpoint_label"}}
+    </label>
+    <textarea id="check-url-input" name="check_url" rows="2" spellcheck="false"
+              placeholder="https://api.github.com/repos/{owner}/{repo}/releases/latest"
+              style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text);font-family:monospace;font-size:12px;overflow-wrap:anywhere">{{.UpdateCheckURL}}</textarea>
+    <div style="margin-top:6px;color:var(--text-muted);font-size:12px;overflow-wrap:anywhere">
+      {{t "update.check_endpoint_hint"}}
+    </div>
+    <div style="margin-top:10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <button type="submit" class="btn btn-sm btn-primary">
+        <i class="fa-solid fa-save"></i> {{t "update.check_endpoint_save"}}
+      </button>
+      {{if eq .Flash "check_url_saved"}}
+      <span style="color:var(--success);font-size:12px">
+        <i class="fa-solid fa-circle-check"></i> {{t "update.check_endpoint_saved"}}
+      </span>
+      {{end}}
+      {{if eq .Flash "check_url_invalid"}}
+      <span style="color:var(--warning);font-size:12px">
+        <i class="fa-solid fa-circle-exclamation"></i> {{t "update.check_endpoint_invalid"}}
+      </span>
+      {{end}}
+    </div>
+  </form>
+  <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted)">
+    <div style="margin-bottom:4px">{{t "update.check_endpoint_effective"}}:</div>
+    <ol style="margin:0;padding-left:20px">
+      {{range .UpdateCheckEndpoints}}
+      <li><code style="overflow-wrap:anywhere">{{.}}</code></li>
+      {{else}}
+      <li><code>{{t "update.check_endpoint_none"}}</code></li>
+      {{end}}
+    </ol>
+    {{if .UpdateCheckEnvOverride}}
+    <div style="margin-top:8px;color:var(--warning)">
+      <i class="fa-solid fa-circle-exclamation"></i> {{t "update.check_endpoint_env_override"}}
+    </div>
+    {{end}}
+  </div>
+</div>
+
 {{/* 2026-08-18 (B129): the new "Schedule" section.
      Replaces the pre-B129 misleading auto-update banner.
      The schedule is a time-of-day HH:MM at which the

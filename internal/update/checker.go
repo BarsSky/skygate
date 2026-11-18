@@ -68,6 +68,13 @@ type Checker struct {
 	// repo or a fork).
 	Owner string
 	Repo  string
+	// Endpoints is the ORDERED list of release-JSON URLs to try (B491 / TD-39). Empty = the default
+	// GitHub releases endpoint. Each entry may contain {owner} and {repo}; the first answer wins and
+	// the git-tags door is only tried when ALL of them fail. The reason this exists is measured: on
+	// the production host api.github.com intermittently times out (DPI) while the same URL answers in
+	// 0.2 s from a plain curl, so the ENDPOINT has to be the operator's choice — a proxy, a mirror, a
+	// JSON file on their own webserver — not a constant in this file.
+	Endpoints []string
 	// Channel: "stable" = only non-prerelease tags; "all" =
 	// any tag (including v0.30.0-rc.1).
 	Channel string
@@ -314,14 +321,28 @@ func classifyCheckError(err error) string {
 // git already knows how. The release NOTES stay unavailable, and the Result says so instead of
 // pretending otherwise.
 func (c *Checker) fetch(ctx context.Context) (*Result, error) {
-	apiResult, apiErr := c.fetchFromAPI(ctx)
-	if apiErr == nil {
-		return apiResult, nil
+	// B491: several doors, tried in the operator's order. Every failure is logged with its URL so the
+	// journal names WHICH endpoint is unreachable — the B486 lesson was that a single opaque
+	// "deadline exceeded" told nobody whether the panel, the network or GitHub was at fault.
+	urls := c.endpointURLs()
+	var firstErr error
+	for i, u := range urls {
+		res, err := c.fetchFromEndpoint(ctx, u)
+		if err == nil {
+			if i > 0 {
+				log.Printf("update-checker: answered by configured endpoint #%d (%s) after %d failure(s)", i+1, SanitizeAPIURL(u), i)
+			}
+			return res, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+		log.Printf("update-checker: endpoint #%d (%s) failed: %v", i+1, SanitizeAPIURL(u), err)
 	}
-	if tagRes, ok := c.fetchFromTags(ctx, apiErr); ok {
+	if tagRes, ok := c.fetchFromTags(ctx, firstErr); ok {
 		return tagRes, nil
 	}
-	return nil, apiErr
+	return nil, firstErr
 }
 
 // fetchFromTags is the fallback door: the highest semver tag of the repository.
@@ -355,17 +376,22 @@ func (c *Checker) fetchFromTags(ctx context.Context, apiErr error) (*Result, boo
 	}, true
 }
 
-// fetchFromAPI is the primary door: GET /repos/{owner}/{repo}/releases/latest.
-func (c *Checker) fetchFromAPI(ctx context.Context) (*Result, error) {
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", c.Owner, c.Repo)
+// fetchFromEndpoint is ONE door of the primary path: GET a release-JSON URL.
+//
+// B491: the URL is a parameter because the endpoint is configurable. The GitHub-specific headers are
+// only sent to GitHub — a token sent to a MIRROR would hand the credential to a third party, and a
+// mirror may reject the version pin.
+func (c *Checker) fetchFromEndpoint(ctx context.Context, apiURL string) (*Result, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("checker: build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if c.GitHubToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.GitHubToken)
+	if isGitHubAPIHost(apiURL) {
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		if c.GitHubToken != "" {
+			req.Header.Set("Authorization", "Bearer "+c.GitHubToken)
+		}
 	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -386,20 +412,22 @@ func (c *Checker) fetchFromAPI(ctx context.Context) (*Result, error) {
 			}
 		}
 		if when == "" {
-			return nil, fmt.Errorf("checker: GitHub API rate limited")
+			return nil, fmt.Errorf("checker: GET %s: GitHub API rate limited", apiURL)
 		}
-		return nil, fmt.Errorf("checker: GitHub API rate limited — resets at %s; set SKYGATE_GITHUB_TOKEN to raise 60 requests/hour to 5000", when)
+		return nil, fmt.Errorf("checker: GET %s: GitHub API rate limited — resets at %s; set SKYGATE_GITHUB_TOKEN to raise 60 requests/hour to 5000", apiURL, when)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("checker: GitHub API returned %d: %s", resp.StatusCode, truncate(string(body), 200))
+		// B491: name the endpoint. With several configured doors the operator must know which one
+		// answered badly, and "GitHub API" is the wrong noun when it was a mirror.
+		return nil, fmt.Errorf("checker: GET %s returned %d: %s", apiURL, resp.StatusCode, truncate(string(body), 200))
 	}
 	var gh ghRelease
 	if err := json.NewDecoder(resp.Body).Decode(&gh); err != nil {
-		return nil, fmt.Errorf("checker: parse response: %w", err)
+		return nil, fmt.Errorf("checker: parse response from %s: %w", SanitizeAPIURL(apiURL), err)
 	}
 	if gh.TagName == "" {
-		return nil, fmt.Errorf("checker: GitHub release has empty tag_name")
+		return nil, fmt.Errorf("checker: release JSON from %s has empty tag_name", SanitizeAPIURL(apiURL))
 	}
 	// Honor channel: "stable" excludes prereleases (anything
 	// with a "-" suffix in the semver like "-rc.1" or "-beta").
@@ -419,7 +447,7 @@ func (c *Checker) fetchFromAPI(ctx context.Context) (*Result, error) {
 			Body:          truncate(gh.Body, MaxBodyLen),
 			PublishedAt:   gh.PublishedAt,
 			SourceURL:     apiURL,
-			Source:        SourceAPI,
+			Source:        endpointSource(apiURL),
 			Error:         fmt.Sprintf("latest is prerelease (%s) but channel is 'stable' — set SKYGATE_UPDATE_CHANNEL=all to see it", gh.TagName),
 		}, nil
 	}
@@ -431,7 +459,7 @@ func (c *Checker) fetchFromAPI(ctx context.Context) (*Result, error) {
 		Body:          truncate(gh.Body, MaxBodyLen),
 		PublishedAt:   gh.PublishedAt,
 		SourceURL:     apiURL,
-		Source:        SourceAPI,
+		Source:        endpointSource(apiURL),
 	}, nil
 }
 

@@ -1010,6 +1010,8 @@ func registerRoutes(
 	// (the form's hidden field) but writes to the B129+
 	// key (see PostAdminUpdateAutoToggle).
 	mux.Handle("POST /admin/update/schedule", authMW(http.HandlerFunc(adminSvc.PostAdminUpdateSchedule)))
+	// B491 (TD-39): the release-check endpoint is the operator's choice (proxy / mirror / static JSON).
+	mux.Handle("POST /admin/update/check-url", authMW(http.HandlerFunc(adminSvc.PostAdminUpdateCheckEndpoint)))
 	// B346 (2026-10-04): pin the release every instance orients on.
 	// Writes global_settings["update.pinned_release"] — read by this
 	// page's target, by the B130 scheduled updater and by the B342
