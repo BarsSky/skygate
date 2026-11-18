@@ -37,7 +37,7 @@ _skygate_pw_from_dsn() {
 # rotates on every container recreate) but is resolvable only INSIDE the
 # compose network. The host could not resolve it, the DNS error went to
 # /dev/null, and four checks announced that tables were missing, fixture rows
-# were present and counts were zero when the truth was "this check never
+# were present and counts were zero when the truth was "this check neve
 # reached the database". Measured on the VM 2026-10-01:
 #
 #     psql: error: could not translate host name "skygate-pg-local" to address
@@ -65,7 +65,7 @@ _skygate_pw_from_dsn() {
 # reached, so no caller can accidentally treat an unreachable database as a
 # zero row count.
 
-# skygate_db_dsn prints the first DSN it can find, in the same order
+# skygate_db_dsn prints the first DSN it can find, in the same orde
 # skygate_db_password uses, and nothing when there is none.
 skygate_db_dsn() {
     if [ -n "${SKYGATE_DB_DSN:-}" ]; then
@@ -129,6 +129,32 @@ skygate_live_db_probe() {
     SKYGATE_LIVE_DB_ERR=""
     SKYGATE_LIVE_DB_MODE=""
     local dsn host user port db
+
+    # B494 (TD-37 remainder): a NATIVE install keeps the panel database wherever SKYGATE_DB says —
+    # SQLite is the production shape since 2026-11-15. Ask lib/live_db.sh instead of parsing the DSN
+    # as if it were always PostgreSQL: the parser below turned `sqlite:/var/lib/skygate/skygate.db`
+    # into an empty host and a `psql -h -p 5432 -d skygate.db` that failed with a socket error, which
+    # every B188.2 live section then reported as "live database unreachable".
+    local _live_lib
+    _live_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/live_db.sh"
+    if [ -f "$_live_lib" ]; then
+        # shellcheck source=/dev/null
+        . "$_live_lib"
+        local _kind
+        _kind="$(live_kind)"
+        if [ "$_kind" = "native" ]; then
+            local _probe
+            _probe="$(live_db_sql "SELECT 1" 2>/dev/null)"
+            if [ "$(printf '%s' "$_probe" | tr -d '[:space:]')" = "1" ]; then
+                SKYGATE_LIVE_DB_MODE="native"
+                SKYGATE_LIVE_DB_DESC="live_db_sql (native install, $(live_db_dsn))"
+                return 0
+            fi
+            SKYGATE_LIVE_DB_ERR="native install ($(live_db_dsn)) did not answer SELECT 1 — check that sqlite3 (or psql for a postgres DSN) is installed and that the service user can read the database"
+            return 1
+        fi
+    fi
+
     dsn="$(skygate_db_dsn)"
     if [ -z "$dsn" ]; then
         SKYGATE_LIVE_DB_ERR="no SKYGATE_DB_DSN found (env, \$SKYGATE_ENV_FILE, /etc/skygate/skygate.env, <repo>/.env, /home/skyadmin/skygate/.env)"
@@ -206,6 +232,16 @@ skygate_live_db_query() {
     local out rc errf
     errf="$(mktemp 2>/dev/null || echo /tmp/skygate-liveq.$$)"
     case "${SKYGATE_LIVE_DB_MODE:-}" in
+        native)
+            # B494: one transport for the whole project (lib/live_db.sh), so the native SQLite and the
+            # container/postgres shapes cannot drift apart again.
+            if [ -n "$sep" ]; then
+                out="$(live_db_sql -F"$sep" "$sql" 2>"$errf")"
+            else
+                out="$(live_db_sql "$sql" 2>"$errf")"
+            fi
+            rc=$?
+            ;;
         docker)
             out="$(_skygate_docker exec "$SKYGATE_LIVE_DB_CONTAINER" \
                 psql -U "$SKYGATE_LIVE_DB_USER" -d "$SKYGATE_LIVE_DB_DB" -A -t "${f[@]}" -c "$sql" 2>"$errf")"

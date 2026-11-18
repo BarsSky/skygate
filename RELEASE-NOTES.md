@@ -1,5 +1,55 @@
 # Skygate release notes
 
+## v1.5.239 — живые контракты запускаются одной командой на нужном хосте (B494, TD-36)
+
+**Date:** 2026-11-18 · **Base:** `v1.5.238` → this tag · **Compatibility:** без миграций; новый скрипт и исправление общего помощника.
+
+### Зачем
+
+`verify_pre_deploy.sh` — каталог **времени сборки**: всё, чему нужна живая установка, отвечает там
+`SKIP`, а в CI развёртывания нет. Проверки реального состояния tailnet'а (повторы имён headscale,
+аудит reconcile, сироты `node_owner_map`, покрытие `tagOwners`, атрибуция узлов, живое чтение политики)
+приходилось запускать вручную по одной — и регулярно их не запускал никто.
+
+### Что добавлено
+
+`scripts/live_gate.sh` — одна команда, один вердикт:
+
+```bash
+bash scripts/live_gate.sh                 # сводка + вердикт
+bash scripts/live_gate.sh --json          # для монитора/бота
+bash scripts/live_gate.sh --strict        # SKIP = провал (ночное задание)
+bash scripts/live_gate.sh --only orphans  # одна проверка при разборе
+bash scripts/live_gate.sh --with-post-deploy
+```
+
+Коды возврата: **0** всё ответило и прошло, **1** есть FAIL (или SKIP при `--strict`), **2** на этом
+хосте **нет установки** — отказ, а не зелёная строка. В сборку гейта он не входит намеренно.
+
+### Три дефекта, найденные замером (а не чтением кода)
+
+| Что | Как выглядело | Исправлено |
+|---|---|---|
+| `check_b188_2.sh` вне чекаута | **15 FAIL** — все про отсутствующие ИСХОДНИКИ (`internal/acl/acl.go`, индекс блоков, каталог) | проверка включается только при наличии `internal/acl/acl.go`; иначе честный `SKIP — no checkout here` |
+| Вердикт по коду возврата | проверка, напечатавшая только `SKIP` и вышедшая с 0, считалась **PASS** | вердикт смотрит на напечатанные строки (`PASS` обязателен), rc остаётся властью над `FAIL` |
+| Общий помощник БД | `check_b188_2.sh` пропускал живые секции с `live database unreachable: psql -h  -p 5432` — `sqlite:`-DSN разбирался парсером PostgreSQL | вопрос формы задаёт `lib/live_db.sh`, у `skygate_live_db_probe` режим `native`, `skygate_live_db_query` ходит через `live_db_sql` |
+
+### Замер на боевом хосте
+
+```
+live contracts — installation kind: native
+dup-users        PASS
+reconcile-audit  SKIP   restart-based (честно: на нативной установке перезапустите systemctl сами)
+orphans          PASS   0 orphan rows из 15
+tag-owners       PASS
+attribution      PASS
+b188.2           SKIP   нужен чекаут
+verdict: pass   (4 passed, 0 failed, 2 skipped)
+--strict → 1     --json → разборчивый JSON
+```
+
+25 контрактов в `scripts/check_b494_live_contracts_runner.sh`; раздел `docs/operations.md` §15.1.
+
 ## v1.5.238 — расписание живёт по часам панели, а на LAN появляется PG-стенд (B493)
 
 **Date:** 2026-11-18 · **Base:** `v1.5.237` → this tag · **Compatibility:** без миграций и без изменений поведения.

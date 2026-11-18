@@ -206,7 +206,7 @@ run_check() {
   t0="$(gate_now_ms)"
   # B281 (2026-09-22): a PASS row is SHORT on purpose.
   #
-  # WHY. GitHub Actions turns any log line that looks like a Go compiler
+  # WHY. GitHub Actions turns any log line that looks like a Go compile
   # diagnostic — `something.go: <message>` — into a FAILURE-level annotation even
   # when the step and the job succeeded. The catalog's descriptions are essays and
   # 21 of them begin with exactly that shape (`headscale_acl.go: ListACL + …`,
@@ -253,7 +253,7 @@ run_check() {
   #
   # Two independent defects, both closed here:
   #
-  #   1. a check that wants a password must FAIL FAST, not park the gate. Under
+  #   1. a check that wants a password must FAIL FAST, not park the gate. Unde
   #      `setsid` there is no controlling terminal at all, so `sudo` (and every
   #      other reader of /dev/tty) answers immediately instead of stopping;
   #      `--wait` keeps the exit status flowing, and because `timeout` still
@@ -409,7 +409,7 @@ run_check "B10" "no .env / secret file in git tracked paths" \
 # operator override (SKYGATE_ALLOW_DESTRUCTIVE_MIGRATION=1) and is
 # the job of a separate, operator-approved release.
 #
-# This check is a static scan of the migration source files for
+# This check is a static scan of the migration source files fo
 # destructive patterns. The unit tests in internal/db/pgmigrate
 # pin the same contract; this check is the "no regression at the
 # source-tree level" guard.
@@ -417,10 +417,10 @@ run_check "B11" "migrations have no destructive DDL (DROP/RENAME/TRUNCATE; IF EX
   "bash -c \"'$GO' test ./internal/db/pgmigrate/... -run 'TestIsDestructive|TestIsDestructiveRefused' -count=1 >/dev/null 2>&1 && ! grep -rE --include='migrations_v*.go' --exclude='*_test.go' 'DROP[[:space:]]+(TABLE|COLUMN|INDEX)|RENAME[[:space:]]+(TO|COLUMN)|TRUNCATE[[:space:]]+(TABLE)?' internal/db/migrations_v*.go | grep -v '// ' | grep -v '^[[:space:]]*\\*' | grep -viE 'IF[[:space:]]+EXISTS'\""
 
 # --- B12: pgmigrate package is unit-tested (the helper contract) ---
-# B12 was originally "every CREATE INDEX uses CONCURRENTLY" (per
+# B12 was originally "every CREATE INDEX uses CONCURRENTLY" (pe
 # docs/ROADMAP.md). The current migrations on
 # main run on SQLite (which doesn't support CONCURRENTLY) and use
-# the standard CREATE INDEX IF NOT EXISTS. Until the PG driver
+# the standard CREATE INDEX IF NOT EXISTS. Until the PG drive
 # lands, a hard check on CONCURRENTLY would fail every build.
 # The soft variant: verify that the pgmigrate package has tests
 # pinning the per-driver SQL form (TestBuildCreateIndexStmt).
@@ -493,7 +493,7 @@ run_check "B15" "exit-rules parent_domain fix (insertRuleUnique accepts parentDo
 #   - Partial match is rejected (no false positives)
 #   - Marker format is stable (regression guard)
 #   - Short-circuit is per-DOMAIN, not per-(user, device, exit_node)
-#     (the v0.30.x bug where auth.docker.io's CDN marker
+#     (the v0.30.x bug where auth.docker.io's CDN marke
 #     short-circuited artstation.com — same tuple, different
 #     domain)
 #
@@ -516,7 +516,7 @@ run_check "B16" "exit-rules CDN detection helper (Cloudflare/Fastly/Google/Akama
 # tag:exit-node in headscale — set via direct headscale CLI,
 # no skygate audit row. Tailscale auto-failover then picked
 # "Base" as exit-node (0ms self-loop = lowest metric), and
-# all of workstation-8's internet traffic went to /dev/null. User
+# all of workstation-8's internet traffic went to /dev/null. Use
 # reported "пропал доступ в сеть" + "exit node не выбирается
 # корректно".
 #
@@ -609,7 +609,7 @@ run_check "B18" "PG foundation (v1.3.0+ — pgx is the only driver, build tag sy
 # 2026-10-01 (refactor Phase D): this contract read internal/acl/acl.go, which the
 # split turned into seven files — and it was ALREADY satisfied by the package doc
 # ("GenerateACL → SaveACLSnapshot → SetPolicy"), which is the "contract satisfied
-# by a comment" defect the gate audit (docs/gate-audit-b200-b262.md) recorded for
+# by a comment" defect the gate audit (docs/gate-audit-b200-b262.md) recorded fo
 # B236/B237.x. It now reads the whole internal/acl surface AND requires the
 # declaration (`func GenerateACL`), so a doc comment can no longer satisfy it.
 run_check "B19" "ACL perf + route correctness (v0.32.2 — B139 simplified from perf benchmark to code-level pin: the routes are wired in main.go and the ACL builder is exercised at runtime by the live /admin/acls flow. Perf benchmark itself (perf_test.go) stays as a t.Skip — needs PG + non-trivial setup, deferred to a perf-focused follow-up)" \
@@ -635,9 +635,9 @@ run_check "B20" "autoupdate git fetch uses --force (v0.32.6 stale-tag fix; 2026-
 
 # --- B21: /admin/exit-nodes excludes subnet-routers (v0.32.7) ---
 # 2026-07-31: pre-fix `ensureExitServers` matched any node that
-# advertised any routes, which incorrectly included per-user
+# advertised any routes, which incorrectly included per-use
 # subnet-routers (e.g. skygate-subnet-admin with
-# tag:subnet-router advertising 10.0.1.0/24). The subnet-router
+# tag:subnet-router advertising 10.0.1.0/24). The subnet-route
 # is a LAN bridge, not an exit-node — it doesn't route
 # traffic to the internet, doesn't have the tag:exit-* role,
 # and shouldn't appear on /admin/exit-nodes.
@@ -708,7 +708,7 @@ run_check "B22" "Dockerfile uses single-stage build, entrypoint.sh runs go build
 # `go mod download` because .github/workflows/ci.yml installed
 # Go 1.23 while go.mod required go 1.25.0. The toolchain
 # directive auto-downloads 1.25 in CI runners that have network
-# access, but pinning both sides explicitly is safer (the runner
+# access, but pinning both sides explicitly is safer (the runne
 # may have network restrictions, the go directive's required-
 # version check is more strict than the toolchain's auto-fetch).
 #
@@ -751,12 +751,12 @@ run_check "B24" "no dead per-version wrapper scripts at root (v0.32.9)" \
 
 # ─── B25 (v0.32.11) — Caddy is OFF by default ──────────────────────────
 # Background: 2026-07-31 the operator hit "ci green but
-# skygate.example.com unreachable" because the in-container
-# caddy was sitting on :80/:443 with a placeholder
+# skygate.example.com unreachable" because the in-containe
+# caddy was sitting on :80/:443 with a placeholde
 # `head.example.com` Caddyfile that couldn't issue certs.
 # The fix: flip the default to false in BOTH the deploy
 # script's shell test AND the .env.example, and gate the
-# caddy service in docker-compose.yml behind a Docker
+# caddy service in docker-compose.yml behind a Docke
 # profile so a plain `up -d` doesn't start it. B25 pins
 # the three contracts:
 #   (a) deploy.sh's CADDY_ENABLED default branch is
@@ -798,7 +798,7 @@ run_check "B25" "Caddy is OFF by default (v0.32.11)" \
 #       "C"` exists). The 24 MB binary is fully static — no musl,
 #       no libc, no libsqlite3.so to ship.
 #   (c) The postgres:15 image (added in v1.3.1 docker-compose.yml)
-#       is the only DB-related container; the skygate container
+#       is the only DB-related container; the skygate containe
 #       connects via SKYGATE_DB_DSN (libpq URL form).
 #
 # Why this matters: pre-v1.3.0 the runtime needed ~50 MB of CGO
@@ -881,7 +881,7 @@ run_check "B29" "expirewatch goroutine is gated on ExpireWatchEnabled (v0.32.13)
   '"
 
 # ─── B30 (v0.32.13) — sidecar goroutine gated on SidecarSyncPeriod ───
-# Background: same family of bugs as B28/B29. The sidecar
+# Background: same family of bugs as B28/B29. The sideca
 # (per-user subnet-router auto-approver) launches its
 # initial SyncOnce unconditionally if SidecarSyncPeriod > 0
 # (default 30s). The SyncOnce lists every node in headscale
@@ -911,13 +911,13 @@ run_check "B30" "sidecar goroutine is gated on SidecarSyncPeriod (v0.32.13)" \
 # cron HEAD requests) all hitting the DB in the same
 # second, the single connection was 100% busy and every
 # request blocked for the full busy_timeout=5000ms before
-# failing. Combined with synchronous=FULL (fsync per
+# failing. Combined with synchronous=FULL (fsync pe
 # commit), every commit cost an extra 10-30ms of disk I/O,
 # making the cascading lock worse.
 #
 # The fix (v0.32.14):
 #   - SetMaxOpenConns(15)  : 15 concurrent connections.
-#     WAL mode allows multiple readers AND one writer
+#     WAL mode allows multiple readers AND one write
 #     concurrently, so 15 connections give real parallelism
 #     for the read-heavy workload.
 #   - SetMaxIdleConns(5)   : keep 5 idle for warm pool, drop
@@ -1009,7 +1009,7 @@ run_check "B32" "Tailscale disabled by default in compose (v0.32.15 + v0.33.1.16
 # ─── B28 (v0.32.13) — domain auto-updater gated on AutoUpdateEnabled ───
 # Background: 2026-07-31 the v0.32.13 deploy on the live VM hit
 # the same "504 on /admin/exit-nodes" symptom as the CGO bug,
-# but with a different root cause: the DNS auto-updater
+# but with a different root cause: the DNS auto-update
 # goroutine (cmd/skygate/main.go `go app.RunDomainAutoUpdater`)
 # launched unconditionally and ran its synchronous
 # `DomainAutoUpdater()` initial call at startup. That call
@@ -1071,7 +1071,7 @@ run_check "B33" "headplane healthcheck override in compose template (v0.32.16)" 
 #
 # The original B34 always FAILed in verify-pre because it
 # queried the LIVE database (the pre-deploy cluster doesn't
-# have the production data yet) — it was the wrong tool for
+# have the production data yet) — it was the wrong tool fo
 # verify-pre in the first place. Repurposed to test the B125
 # schema invariant: the UNIQUE INDEX exists in migrations_pg.go.
 # This is a code-level (not data-level) check, so it belongs
@@ -1208,7 +1208,7 @@ run_check "B39" "headscale_acl routes: /admin/headscale/acl + /add + /remove (v0
 
 # ─── B40 (v0.33.0) — Admin Test Page: TestRegistry has ≥6 entries ───
 # Background: 2026-08-04 the v0.33.0 release added
-# /admin/system_tests — an in-process test suite the operator
+# /admin/system_tests — an in-process test suite the operato
 # can run from the web UI. The contract is that the registry
 # has at least 6 distinct tests (the bar for "is this useful?")
 # covering multiple categories. Categories must include
@@ -1728,7 +1728,7 @@ run_check "B59" "system_tests works on both backends (v0.33.1.11)" 'f=$(mktemp);
 # routescript_data, sidecar/manager, telegram/commands_clear,
 # device_exit_pref, headscale_version/monitor, invite/bridge,
 # telegram/alerts, telegram_login_tokens) and also adds a new
-# `db.OnConflictDoNothing(cols)` / `db.InsertIgnorePrefix()` pair
+# `db.OnConflictDoNothing(cols)` / `db.InsertIgnorePrefix()` pai
 # for cross-backend `INSERT OR IGNORE` dispatch.
 #
 # B60 pins:
@@ -1740,7 +1740,7 @@ run_check "B60" "comprehensive ? placeholder PG-unsafe sweep (v0.33.1.12)" 'f=$(
 
 # ─── B61 (v0.33.1.13) — verify_post_deploy.sh SSH_HOST CLI arg + --help ───
 # The 2026-08-05 review of verify_post_deploy.sh revealed the
-# legacy default "admin@192.0.2.1" was almost always wrong for
+# legacy default "admin@192.0.2.1" was almost always wrong fo
 # real deployments (the operator's VM is on 192.168.x.x, not the
 # 192.0.2.x documentation range). v0.33.1.13 added:
 #   1. A positional $1 (e.g. "skyadmin@<VM_HOST>") as the
@@ -1753,7 +1753,7 @@ run_check "B60" "comprehensive ? placeholder PG-unsafe sweep (v0.33.1.12)" 'f=$(
 # B61 pins:
 #   - the script accepts "skyadmin@<VM_HOST>" as $1 and
 #     SSH_HOST resolves to that (not the legacy default)
-#   - --help exits 0 after printing the catalog header
+#   - --help exits 0 after printing the catalog heade
 #   - an unknown flag exits non-zero with "unknown flag: ..."
 run_check "B61" "verify_post_deploy.sh accepts SSH_HOST as positional \$1 (v0.33.1.13)" 'f=$(mktemp); printf "%s" "set +e; out1=\$(bash scripts/verify_post_deploy.sh --help 2>&1); case \"\$out1\" in *\"runtime guarantees for skygate\"*) : ;; *) echo \"help text missing\"; exit 1;; esac; bash scripts/verify_post_deploy.sh --bad-flag >/dev/null 2>&1; rc2=\$?; [ \"\$rc2\" = 2 ] || { echo \"bad-flag rc=\$rc2 (want 2)\"; exit 1; }; out2=\$(bash scripts/verify_post_deploy.sh --bad-flag 2>&1); case \"\$out2\" in *\"unknown flag\"*) : ;; *) echo \"bad-flag path broken: \$out2\"; exit 1;; esac; out3=\$(bash -x scripts/verify_post_deploy.sh probeuser@192.0.2.9 --help 2>&1); case \"\$out3\" in *\"SSH_HOST=probeuser@192.0.2.9\"*) : ;; *) echo \"positional SSH_HOST not assigned\"; exit 1;; esac; grep -qF '\''SSH_HOST_SET=1'\'' scripts/verify_post_deploy.sh || { echo \"SSH_HOST_SET missing\"; exit 1; }; grep -qF '\''SSH_HOST=\"\${SSH_HOST:-admin@192.0.2.1}\"'\'' scripts/verify_post_deploy.sh || { echo \"SSH_HOST default fallback missing\"; exit 1; }" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
 
@@ -1761,7 +1761,7 @@ run_check "B61" "verify_post_deploy.sh accepts SSH_HOST as positional \$1 (v0.33
 # Before v0.33.1.13 the headscale URL was env-var only
 # (SKYGATE_TS_LOGIN_SERVER). v0.33.1.13 added a web-UI form
 # on /admin/tailscale that persists the value to
-# global_settings (key "tailscale.login_server"); the env var
+# global_settings (key "tailscale.login_server"); the env va
 # is now only consulted when the DB row is empty. After a
 # container restart / migration / VM clone, the saved DB
 # value is read on next start.
@@ -1847,7 +1847,7 @@ run_check "B64" "per-device exit_node_pref device tag in tagOwners (v0.33.1.15)"
 #   (b) add a "Restart skygate" button on /admin/tailscale
 #       that writes the current effective value to .env
 #       (atomic via .tmp + rename) and triggers
-#       `docker compose restart skygate` (or
+#       `docker compose restart skygate` (o
 #       `systemctl restart skygate` on a native host).
 #       The restart subprocess is setsid'd so it survives
 #       the SIGTERM that hits the parent.
@@ -1878,10 +1878,10 @@ run_check "B65" "SKYGATE_TS_LOGIN_SERVER from .env + restart-skgate button (v0.3
 #     exist in internal/feature/exit_rules/preferred_check.go
 #   - the system_tests registry has an "exit_rules.preferred_mismatch"
 #     test that counts device_rules with non-preferred exit_nodes
-#   - the /my/exit-rules template renders the warning banner
+#   - the /my/exit-rules template renders the warning banne
 #     + "Use device's preferred" button when MismatchCount > 0
 #   - the /admin/exit-rules template renders the per-row "Preferred"
-#     column + a top-of-page mismatch banner
+#     column + a top-of-page mismatch banne
 #   - the /admin/devices template renders a per-device dead-rule count
 #   - i18n keys (RU+EN) cover the banner, button, and column
 #   - pure-function unit tests cover IsRuleApplicable + TagToHostname
@@ -1909,11 +1909,11 @@ run_check "B67" "/admin/exit-rules?device=NAME drill-down (v0.33.1.18)" 'f=$(mkt
 # ─── B68 (v0.33.1.18) — DNS-autoupdater toggle + verification test ───
 # v0.32.13 conflated SKYGATE_AUTO_UPDATE_ENABLED (skygate self-update
 # banner) with the DNS-resolve autoupdater gate, so any operator who
-# turned off skygate self-update in .env was silently disabling their
+# turned off skygate self-update in .env was silently disabling thei
 # domain→/32 refresh → rules rotted as Cloudflare rotated IPs. The
 # 2026-08-06 operator incident ("3 new rules for skyworker don't
 # work") was the same root cause: the autoupdater was off since
-# 2026-07-31, the /32 children were stale, and the operator
+# 2026-07-31, the /32 children were stale, and the operato
 # assumed the form was broken when the policy was actually correct
 # but the IPs had rotated.
 #
@@ -1977,7 +1977,7 @@ run_check "B68a" "via_enabled INSERT column-order + v0.52 data-repair migration 
 #      a way to transfer a node from one portal user to
 #      another (with AddTag new + UntagNode old on the
 #      headscale side, plus row update in node_owner_map).
-#   3. The "rename never updates the tag" bug — when a user
+#   3. The "rename never updates the tag" bug — when a use
 #      renames their Tailscale hostname (e.g. desktop-cj8t9me
 #      → cyborg), the per-user backfill only does INSERT OR
 #      IGNORE, so node_owner_map kept the old hostname + old
@@ -2073,7 +2073,7 @@ run_check "B70" "auto-update orchestrator migrate step (bash→sh + container by
 # check 2 seconds later returned 200). v0.33.1.22 replaces
 # the curl call with Go's net/http (same approach v0.32.22
 # took for the other HTTP probes in the codebase) — no shell
-# dependency, no path surprises across host/container
+# dependency, no path surprises across host/containe
 # rebuilds, and no alpine-curl-not-installed surprise.
 #
 # B71 pins the contract:
@@ -2090,9 +2090,9 @@ run_check "B71" "orchestrator healthz poll uses net/http not curl (v0.33.1.22)" 
 #   {{tf "update.banner_body" .Version .UpdateLatest.TagName}}
 #   {{if .UpdateLatest.HTMLURL}}  <a href="{{.UpdateLatest.HTMLURL}}">
 #
-# assuming `UpdateLatest` was a release.Release struct. The auto-banner
+# assuming `UpdateLatest` was a release.Release struct. The auto-banne
 # path (handlers.go:456) set it as a struct, so the global banner worked
-# for /admin pages where `IsAdmin=true`. The /admin/update handler
+# for /admin pages where `IsAdmin=true`. The /admin/update handle
 # (update.go:188) set it as a *string* (`result.Latest`), so the
 # /admin/update page crashed at render time with
 # `can't evaluate field TagName in type interface {}` — no Apply
@@ -2106,7 +2106,7 @@ run_check "B71" "orchestrator healthz poll uses net/http not curl (v0.33.1.22)" 
 #   - The template reads them as scalars (no field access)
 #   - 5 source-level pins (2 in handlers.go, 2 in update.go, 1 in layout.html)
 #     + 4 test names in the new internal/handlers/layout_banner_test.go
-#   - The old broken shape (`UpdateLatest.TagName` or
+#   - The old broken shape (`UpdateLatest.TagName` o
 #     `UpdateLatest.HTMLURL`) is explicitly rejected so a future
 #     refactor can't silently regress.
 run_check "B72" "layout update-banner data shape pinned to string+string (v0.33.1.23)" 'f=$(mktemp); printf "%s" "grep -qF \"data[\\\"UpdateLatest\\\"] = latest.TagName\" internal/handlers/handlers.go && grep -qF \"data[\\\"UpdateLatestURL\\\"] = latest.HTMLURL\" internal/handlers/handlers.go && grep -qF \"\\\"UpdateLatest\\\":    result.Latest\" internal/feature/admin/update.go && grep -qF \"\\\"UpdateLatestURL\\\": result.ReleaseURL\" internal/feature/admin/update.go && grep -qF \"{{tf \\\"update.banner_body\\\" .Version .UpdateLatest}}\" internal/handlers/templates/layout.html && grep -qF \"{{if .UpdateLatestURL}}\" internal/handlers/templates/layout.html && grep -qF \"{{.UpdateLatestURL}}\" internal/handlers/templates/layout.html && ! grep -qF \".UpdateLatest.TagName\" internal/handlers/templates/layout.html && ! grep -qF \".UpdateLatest.HTMLURL\" internal/handlers/templates/layout.html && grep -qF TestLayoutBanner_UpdatePageDataShape internal/handlers/layout_banner_test.go && grep -qF TestLayoutBanner_AutoMonitorDataShape internal/handlers/layout_banner_test.go && grep -qF TestLayoutBanner_MissingLatestURLUsesFallback internal/handlers/layout_banner_test.go && grep -qF TestLayoutBanner_NoUpdateHidesBanner internal/handlers/layout_banner_test.go && '\'"$GO"\'' test -count=1 -run '\''TestLayoutBanner'\'' ./internal/handlers/" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
@@ -2161,7 +2161,7 @@ run_check "B73" "layout fallback URL uses injected GitHub coords (v0.33.1.24)" '
 # prepends "v" to plain semver like "0.33.1.24").
 #
 # B76 pins the contract:
-#   - internal/feature/admin/update.go: the helper
+#   - internal/feature/admin/update.go: the helpe
 #     `normalizeUpdateTarget` is defined + used by
 #     both PostAdminUpdateApply and PostAdminUpdatePush
 #   - the pre-fix `if !strings.HasPrefix(target, "v")`
@@ -2184,7 +2184,7 @@ run_check "B76" "orchestrator 'Push' target handles pre-update tags (v0.33.1.24)
 # uses to grant autogroup:internet access — without
 # it, the device had no internet access until one of:
 #
-#   - the owning user visited /my/devices (per-user
+#   - the owning user visited /my/devices (per-use
 #     Backfill on page load)
 #   - the admin clicked "Force backfill" on
 #     /admin/devices (PostAdminDevicesForceBackfillTags)
@@ -2194,7 +2194,7 @@ run_check "B76" "orchestrator 'Push' target handles pre-update tags (v0.33.1.24)
 # denied until the user noticed.
 #
 # v0.33.1.25 fixes it by running `nodeownership.Backfill`
-# against every portal user on a timer
+# against every portal user on a time
 # (SKYGATE_NODE_DISCOVERY_INTERVAL, default 5m). The
 # autoupdater is wired in cmd/skygate/main.go and
 # goroutine-spawned next to the existing DNS
@@ -2231,7 +2231,7 @@ run_check "B77" "node-discovery autoupdater: new devices auto-tag (v0.33.1.25)" 
 # per-test status to the template as LastResults. The
 # template renders the same per-row icons (green
 # check / red xmark / gray pause) on first load, and
-# FAIL rows get a red-tinted background + left border
+# FAIL rows get a red-tinted background + left borde
 # so the operator can see at a glance which tests are
 # broken.
 #
@@ -2252,7 +2252,7 @@ run_check "B77" "node-discovery autoupdater: new devices auto-tag (v0.33.1.25)" 
 #     the LastResults branch in the test-table loop
 #     (renders the per-row icon from LastResults when
 #     LiveResults is nil) + the row-fail class branch
-#     + the Last run results header
+#     + the Last run results heade
 #   - internal/handlers/templates.go: 2 new funcmap
 #     helpers (`humanizeAgeSeconds` + `indexResultByName`)
 #   - internal/i18n/catalog_common.go: 4 new keys
@@ -2334,7 +2334,7 @@ run_check "B79" "exit-node pref INSERT placeholder fix (v0.33.1.27, v1.3.1 PG-on
 # secrets sections below). The env_file (.env) value
 # wins when set; the default `/home/operator/skygate`
 # applies otherwise. No code change — pure compose
-# fix. The `internal/update/docker.go` swap helper
+# fix. The `internal/update/docker.go` swap helpe
 # script already uses `${SKYGATE_HOST_REPO_PATH:-...}`
 # so it picks up the corrected env var automatically.
 #
@@ -2430,7 +2430,7 @@ run_check "B81" "SSH target fallback to Tailscale IP (v0.33.1.29)" 'f=$(mktemp);
 # references), and the B21 cleanup pass silently removed
 # them on every page load.
 #
-# The fix: tag:dev-* + tag:exit-node now passes the filter
+# The fix: tag:dev-* + tag:exit-node now passes the filte
 # (the B82 override). tag:subnet-router is still ALWAYS
 # excluded (a LAN bridge is not an exit-node regardless
 # of other tags — this preserves the original v0.32.7
@@ -2450,7 +2450,7 @@ run_check "B81" "SSH target fallback to Tailscale IP (v0.33.1.29)" 'f=$(mktemp);
 # unit tests (TestShouldInclude_*) used newMemoryDB
 # (SQLite) which was removed by v1.3.0. exit_nodes_test.go
 # is now a t.Skip stub. The B82 contract is still real
-# in the production code (shouldIncludeAsExitServer
+# in the production code (shouldIncludeAsExitServe
 # excludes tag:subnet-router AND per-user devices
 # without tag:exit-node), exercised at runtime via
 # the live /admin/exit-nodes UI. Future work:
@@ -2461,7 +2461,7 @@ run_check "B82" "per-user device + tag:exit-node override (v0.33.1.30 — produc
 # B83 — v0.33.1.31: handlers.New() must assign sshKeyPath
 # parameter to App.SSHKeyPath.
 #
-# Pre-fix: handlers.New() accepted the sshKeyPath parameter
+# Pre-fix: handlers.New() accepted the sshKeyPath paramete
 # (line 335: `func New(d *sql.DB, hs *headscale.Client, headscaleKey,
 # secret, controlURL, sshKeyPath string, ...)`) but the App
 # struct initialization in the same function never assigned
@@ -2542,14 +2542,14 @@ run_check "B83" "handlers.New() assigns sshKeyPath to App.SSHKeyPath (v0.33.1.31
 # (SQLite) which was removed by v1.3.0. The
 # admin_telegram_egress_b84_test.go is now a t.Skip
 # stub. The B84 contract is still real: telegram.go
-# uses LookupExitServerSSHTarget (the B81 helper) for
+# uses LookupExitServerSSHTarget (the B81 helper) fo
 # the SSH target, not the legacy relay.Hostname
 # fallback. The live /admin/telegram "Set as egress
 # relay" button exercises this path.
 run_check "B84" "telegram egress uses B81 SSH-target chain (v0.33.1.32 — production path pinned, code-level grep, runtime coverage via /admin/telegram 'Set as egress relay' button)" \
   'grep -qF "LookupExitServerSSHTarget" internal/feature/admin/telegram*.go && grep -qF "LookupExitServerSSHTarget" internal/feature/exit_rules/sync_routes.go'
 
-# B85 — v0.33.1.33: per-row exit_servers.ssh_port column for
+# B85 — v0.33.1.33: per-row exit_servers.ssh_port column fo
 # the B81 auto-fallback chain. The B81 helper builds
 # "root@<tailscale_ip>" by default; B85 extends the chain to
 # "root@<tailscale_ip>:<port>" when the operator has set a
@@ -2616,7 +2616,7 @@ run_check "B85" "per-row exit_servers.ssh_port for B81 auto-fallback (v0.33.1.33
 # (so .env / env_file wins over a hardcoded value, per the
 # v0.33.1.16 B65 fix), but entrypoint.sh only reads
 # TS_LOGIN_SERVER. The pre-B86 entrypoint defaults
-# `LOGIN_SERVER` to `https://head.example.com` (a placeholder
+# `LOGIN_SERVER` to `https://head.example.com` (a placeholde
 # pointing at the Tailscale example domain) — `tailscale up`
 # against it silently fails (the 30s timeout + "WARNING"
 # swallows the error), the state file ends up with
@@ -2647,14 +2647,14 @@ run_check "B86" "entrypoint.sh accepts SKYGATE_TS_LOGIN_SERVER fallback (v0.33.1
 
 # B87 — v0.33.1.35: PostAdminExitNodeTagAsExitNode must use
 # hs.AddTag (read-modify-write) instead of hs.TagNode
-# (replace-whole-set), so the per-user device marker
-# `tag:dev-skyadmin-<name>` is preserved when the operator
+# (replace-whole-set), so the per-user device marke
+# `tag:dev-skyadmin-<name>` is preserved when the operato
 # tags a node as an exit-node.
 #
 # Pre-fix: headscale 0.29's `nodes tag` REPLACES the entire
 # tag set on a node. The pre-fix handler called
 # `hs.TagNode(nodeID, "tag:exit-node")` which silently wiped
-# every pre-existing tag (including the per-user
+# every pre-existing tag (including the per-use
 # `tag:dev-skyadmin-emilia` device marker from the B82
 # follow-up). The ACL grants in the live policy reference
 # the per-user dev-tag directly
@@ -2678,7 +2678,7 @@ run_check "B86" "entrypoint.sh accepts SKYGATE_TS_LOGIN_SERVER fallback (v0.33.1
 #     read-modify-write pattern; no change there.
 #
 # B87 pins the contract:
-#   - exit_nodes.go uses hs.AddTag (not hs.TagNode) for
+#   - exit_nodes.go uses hs.AddTag (not hs.TagNode) fo
 #     the tag-as-exit call site
 #   - AddTag is exercised by 3 unit tests in
 #     internal/headscale/tags_test.go:
@@ -2689,7 +2689,7 @@ run_check "B86" "entrypoint.sh accepts SKYGATE_TS_LOGIN_SERVER fallback (v0.33.1
 #     3. PreservesOnError — error propagation, no silent
 #        wipe when ListAllNodes fails
 #     4. TagNode_ReplacesEntireSet — documents the OLD
-#        contract (pre-fix TagNode) so a future refactor
+#        contract (pre-fix TagNode) so a future refacto
 #        that drops AddTag in favour of TagNode would
 #        fail the test
 run_check "B87" "PostAdminExitNodeTagAsExitNode uses AddTag read-modify (v0.33.1.35)" \
@@ -2719,7 +2719,7 @@ run_check "B87" "PostAdminExitNodeTagAsExitNode uses AddTag read-modify (v0.33.1
 #                                 (live headscale 0.29+ uses
 #                                 "grants", not "acls")
 #   - backup.recent               read host path from DEPLOY_BACKUP_DIR
-#                                 but the test runs in the container
+#                                 but the test runs in the containe
 #                                 (bind-mount at /app)
 #
 # B88 pins the contract:
@@ -2808,21 +2808,21 @@ run_check "B89" "B77 follow-up: Backfill Strategy D (tag fallback) + rotate_ts_a
 #
 # Background: adminSvc was constructed at line 413 (way before
 # rn was even created), so adminSvc.Notifier captured the initial
-# app.Notifier value (NoopNotifier{} from handlers.New). After
+# app.Notifier value (NoopNotifier{} from handlers.New). Afte
 # app.Notifier = rn the admin handlers (including the
 # /admin/telegram "Send test" handler) still saw the stale
 # NoopNotifier and returned "Бот не сконфигурирован — Notifier в
 # no-op режиме" even though the bot WAS configured. The fix:
-# re-bind adminSvc.Notifier = app.Notifier right after
+# re-bind adminSvc.Notifier = app.Notifier right afte
 # app.Notifier = rn.
 #
 # B90 pins the contract:
 #   - cmd/skygate/main.go: re-bind line
-#     `adminSvc.Notifier = app.Notifier` immediately after
+#     `adminSvc.Notifier = app.Notifier` immediately afte
 #     `app.Notifier = rn`
 #   - The re-bind line is INSIDE the rn block (same indent
 #     as the surrounding code), and it's positioned right
-#     after the assignment to app.Notifier
+#     after the assignment to app.Notifie
 #   - Comment header mentions v0.33.1.38 + the bug context
 run_check "B90" "Notifier order bug fix: adminSvc.Notifier re-bound after the app.Notifier installation (v0.33.1.38). B336: the build output moved from the FIXED path /tmp/x to mktemp — a stale root-owned /tmp/x (left by any earlier run under another user) made this check fail with 'open /tmp/x: permission denied', i.e. for a reason that says nothing about the notifier order it tests. B465: the installation moved into installNotifierUnlessReadOnly (readonly_b465.go), because a restored copy must not get a live notifier; the property is unchanged, so the ORDER is now asserted against the call site (the surface concatenates files in glob order, so comparing the two line numbers across files would compare filenames, not boot order)." \
   'f=$(mktemp); out=$(mktemp); printf "%s" "    . scripts/lib/gosurface.sh; gosurface MAIN cmd/skygate/*.go;
@@ -2850,7 +2850,7 @@ run_check "B90" "Notifier order bug fix: adminSvc.Notifier re-bound after the ap
 # front-end; headscale is the data-plane back-end. skygate
 # should NEVER have a hard `depends_on: headscale` block —
 # if it did, an admin with a wrong HEADSCALE_URL couldn't
-# even open /admin/headscale to fix it (skygate would never
+# even open /admin/headscale to fix it (skygate would neve
 # come up). The right design is:
 #   1. skygate comes up regardless of headscale state
 #   2. /readyz returns 503 until headscale is reachable
@@ -2858,7 +2858,7 @@ run_check "B90" "Notifier order bug fix: adminSvc.Notifier re-bound after the ap
 #   4. Once headscale is reachable, skygate recovers
 #
 # The B91 fix adds a 60s NON-BLOCKING pre-flight wait in
-# entrypoint.sh: it polls HEADSCALE_URL /health once per
+# entrypoint.sh: it polls HEADSCALE_URL /health once pe
 # second, logs a warning and continues if the URL is empty
 # or headscale doesn't come up in time. On a healthy
 # system headscale answers in 5-10s and skygate starts
@@ -2885,7 +2885,7 @@ run_check "B91" "skygate starts independently of headscale/headplane after VM re
 # B92 — v0.33.1.40: skygate verifies headscale/headplane
 # availability and shows the cached status on /admin/services.
 #
-# Background: a K8s readinessProbe or Prometheus blackbox-exporter
+# Background: a K8s readinessProbe or Prometheus blackbox-exporte
 # can scrape /readyz every 1-5s. Pinging headscale + headplane that
 # often would be wasted load on the control plane. B92 adds a
 # background goroutine (Availability Checker, every 30s) that
@@ -2895,14 +2895,14 @@ run_check "B91" "skygate starts independently of headscale/headplane after VM re
 #
 # B92 pins the contract:
 #   - internal/feature/healthz/availability.go exists with
-#     IntegrationKind enum, Availability struct, Checker
+#     IntegrationKind enum, Availability struct, Checke
 #     struct (NewCheckerFromEnv / Start / Stop / Snapshot),
 #     and runOnce() that probes headscale/headplane/tailscale
 #   - The Checker is wired in main.go (Start called with
 #     context.Background; Availability field set on both
 #     healthzSvc and adminSvc)
 #   - The /admin/services route is registered with the
-#     adminSvc.AdminServices handler
+#     adminSvc.AdminServices handle
 #   - The template at internal/handlers/templates/admin/services.html
 #     defines `body-admin-services` (matches the
 #     renderBody funcmap convention from templates.go)
@@ -2931,7 +2931,7 @@ run_check "B92" "skygate verifies headscale/headplane availability with 30s back
 #   - D5 (DB-only /readyz Healthy): the top-level `healthy`
 #     field is now DB-only; `dependencies_healthy` keeps
 #     the pre-D5 AND-of-all behavior.
-#   - D6 (sidebar): /admin/services is in the admin sidebar
+#   - D6 (sidebar): /admin/services is in the admin sideba
 #     (between /admin/system_tests and /admin/headplane).
 #   - D8 (Tailscale BackendState): the availability
 #     checker now shows the actual BackendState
@@ -2951,7 +2951,7 @@ run_check "B94" "v0.33.1.42 code debt: R34 cookie auth + R35 tailscale BackendSt
 #   - ensureInfraUser(d, hs) wired at startup in
 #     cmd/skygate/main.go (provisions the 'infra' headscale
 #     user and links it to the portal_users row)
-#   - BackfillInfra function in the B77 autoupdater
+#   - BackfillInfra function in the B77 autoupdate
 #     attributes skygate-host-* nodes (and any node with
 #     tag:dev-infra-*) to 'infra'
 #   - The ACL username query filters out portal users
@@ -2960,7 +2960,7 @@ run_check "B94" "v0.33.1.42 code debt: R34 cookie auth + R35 tailscale BackendSt
 #     when headscale is briefly down) would crash the
 #     first ACL apply
 #   - /admin/telegram SetEgress uses InfraAuditIdentity
-#     so the audit_log row records the action under
+#     so the audit_log row records the action unde
 #     'infra' (the BOT is infrastructure, not the admin
 #     who clicked the button)
 #   - 11 unit tests pass: 7x TestBackfillInfra_* +
@@ -2981,7 +2981,7 @@ run_check "B93" "Issue 4 infra user: V054 portal_users row + ensureInfraUser + B
 #     before nil check); both moved inside the guard
 #   - Zero ST1019 (duplicate import) in auto.go — the
 #     `dbpkg "skygate/internal/db"` alias was leftover from
-#     an interim refactor
+#     an interim refacto
 #   - Zero SA4010 (append result not used) in form_my.go —
 #     the dupIDs slice was built but never read; removed
 #   - .gitignore covers all the operator's recurring
@@ -3065,9 +3065,9 @@ run_check "B96" "v1.1.0 TD-1 admin sidebar refactor: 22 admin pages grouped into
 #     display:flex on mobile
 #   - The sidebar slides from translateX(-100%) to
 #     translateX(0) when toggled
-#   - Touch-friendly tap targets (min-height:44px per
+#   - Touch-friendly tap targets (min-height:44px pe
 #     Apple HIG / Material Design)
-#   - 2 Go unit tests pass: TestB97_ThemesCSSMobileDrawer
+#   - 2 Go unit tests pass: TestB97_ThemesCSSMobileDrawe
 #     and TestB97_StaticFilePresence
 run_check "B97" "v1.1.0 TD-3 mobile-responsive: sidebar becomes slide-in drawer <768px + hamburger button + 44px tap targets + 2 Go unit tests (B97)" \
   'test -f scripts/check_b97.sh && bash scripts/check_b97.sh'
@@ -3153,7 +3153,7 @@ run_check "B100" "S3 / S3-compatible backup destination: protocol + 8 fields + t
 # Background: 2026-08-12 — the operator's "давно висящая
 # ошибка" was partly the missing restore path. Pre-v1.3.8
 # restore.sh's do_skygate_db() only handled the v0.32.x
-# SQLite file (skygate.db) by copying it into a Docker
+# SQLite file (skygate.db) by copying it into a Docke
 # volume. v1.3.0+ archives contain skygate-pg.sql (text
 # pg_dump) instead — the SQLite dispatcher silently did
 # nothing for the PG archive (no skygate.db to copy, no
@@ -3186,7 +3186,7 @@ run_check "B102" "Dockerfile has cifs-utils + nfs-utils + sshfs; test_backup_pro
 
 # ─── B103 (v1.3.8) — in-app S3 download (BL-18) ───
 # Background: pre-v1.3.8, /admin/backup's Download link
-# only worked for files on the local BACKUP_DIR. For
+# only worked for files on the local BACKUP_DIR. Fo
 # S3 backups the file was in the bucket — operators
 # had to `aws s3 cp` then re-upload to /admin/backup
 # restore. BL-18 closes the loop with a new
@@ -3208,7 +3208,7 @@ run_check "B103" "in-app S3 download: handler + route + template button + hasPre
 # implementation of BL-17.
 
 # ─── B105 (v1.3.9) — mobile-friendly admin tables + title-row hamburger gap ───
-# Background: v1.1.0 (TD-3) added the .sidebar-toggle hamburger
+# Background: v1.1.0 (TD-3) added the .sidebar-toggle hamburge
 # (top:12px,left:12px,40×40px on mobile) + the .table-wrap
 # mobile scroll wrapper for /admin/devices. But:
 #   (a) 7 admin templates still had unwrapped <table>s that
@@ -3285,7 +3285,7 @@ run_check "B107" "admin breadcrumb + collapsed section icons: .admin-breadcrumb 
 #   1. <script> tag exists between </footer> and </body>
 #   2. Script queries getElementById('sidebar')
 #   3. Script iterates '.sidebar-section>summary' (6 sections)
-#   4. On click, removes 'collapsed' class from sidebar
+#   4. On click, removes 'collapsed' class from sideba
 #   5. Does NOT call preventDefault() — native <details> toggle must
 #      still happen so the section opens after the sidebar expands.
 run_check "B108" "section summary click in collapsed sidebar auto-expands + opens section: <script> in layout.html removes 'collapsed' class on click (B108, v1.3.9 mobile-friendly)" \
@@ -3427,7 +3427,7 @@ run_check "B113" "youtube.com/32 bug fix: form validates targetValue is IP/CIDR 
 # Background: after a cross-host restore + cutover (the migration
 # flow in docs/backup-restore-and-migration.md section 3), the
 # operator previously had to run 3 separate checks in order, each
-# in its own terminal. If they skipped step 2 (system tests) or
+# in its own terminal. If they skipped step 2 (system tests) o
 # step 3 (manual) they'd only find out about subtle issues when
 # a user complained.
 #
@@ -3437,7 +3437,7 @@ run_check "B113" "youtube.com/32 bug fix: form validates targetValue is IP/CIDR 
 #      via scp + docker cp because the skygate container's
 #      busybox wget doesn't support cookies)
 #   3. Manual checks (healthz, readyz, /admin/services) — printed
-#      as a copy-pasteable curl one-liner for the operator
+#      as a copy-pasteable curl one-liner for the operato
 #
 # Plus a PRE_BUILD pre-state capture that prints MIGRATION DETECTED
 # when the post-migration build label differs from the pre-migration
@@ -3811,7 +3811,7 @@ run_check "B226" "/admin/cluster Phase 4.5 — Prometheus exporter. Closes the '
 # tag:dev-skyadmin-skygate-host-1-1 and headscale ACL returns
 # InvalidArgument every 5 min since 14:10Z on 2026-09-03) was invisible
 # to the operator except by tailing skygate stderr. B227 ships three
-# signals on every AddTag failure: (1) Prometheus counter
+# signals on every AddTag failure: (1) Prometheus counte
 # skygate_tag_autoupdate_failures_total{node_id,hostname,reason} (B226
 # CounterVec in internal/metrics/collector.go), (2) audit_log row
 # action=tag.autoupdate_failed target_type=headscale_node target_id=nodeID
@@ -3836,7 +3836,7 @@ run_check "B226" "/admin/cluster Phase 4.5 — Prometheus exporter. Closes the '
 # audit-attempted, alert text format, audit detail format). Out of scope
 # for B227 (B228+ candidates): pre-checking headscale ACL permits the
 # auto-generated tag before AddTag (extra headscale API call per tick),
-# editing headscale policy to whitelist tag:dev-skyadmin-* (operator
+# editing headscale policy to whitelist tag:dev-skyadmin-* (operato
 # config, not skygate code).
 run_check "B227" "B77 tag-autoupdater observability (Phase 4.6 follow-up). Closes the 'B77 AddTag failure invisible to operator' gap (live case: skygate-host-1-1 ACL reject every 5 min since 2026-09-03 14:10Z). Three signals fire on every failure: skygate_tag_autoupdate_failures_total Prometheus counter, audit_log tag.autoupdate_failed row, rate-limited Telegram alert. 14 B-check contracts in scripts/check_b227.sh. 13 unit tests in internal/nodeownership/auto_b227_test.go." \
   'test -f scripts/check_b227.sh && bash scripts/check_b227.sh'
@@ -3848,7 +3848,7 @@ run_check "B227" "B77 tag-autoupdater observability (Phase 4.6 follow-up). Close
 # 99ms) and made the page useless. B228 adds ?show_unavailable=0|1
 # (default 0 = filter ON = show only healthy) + re-sort by LatencyMs
 # ASC (own DESC tiebreaker) on the filtered set + UI checkbox
-# "Показать недоступные" with auto-submit + shown-of-total counter
+# "Показать недоступные" with auto-submit + shown-of-total counte
 # "Показано X из Y DERP" + empty state "Все DERP недоступны" with
 # one-click Show All link. The pre-B228 sort (own-first + latency) is
 # preserved on the FULL slice so ?show_unavailable=1 is byte-identical
@@ -3947,7 +3947,7 @@ run_check "B233" "Source-level migration audit. Catches B232-class shape-drift b
 # real bugs to ship. 4 fixes:
 # (1) internal/dbmigrate/ssh_transport.go: pre-close removed
 #     (the io.Copy goroutine tried to write to a closed fd)
-# (2) internal/derphealth/derphealth_test.go: atomic.Int64 for
+# (2) internal/derphealth/derphealth_test.go: atomic.Int64 fo
 #     persistCalls counter (3 goroutines racing on int++)
 # (3) internal/feature/healthz/db_health_b206_test.go: sync.Mutex
 #     around the logged slice (sampler tick goroutine + test
@@ -3993,7 +3993,7 @@ run_check "B236" "Tailscale subnet-routes management on /admin/tailscale. Closes
 #     Tailscale derpmap, so headscale never knew about the
 #     operator's relay and never advertised it to clients.
 #  2. The /admin/derp/relays page had no button to push the
-#     derp_relays config into headscale — the operator
+#     derp_relays config into headscale — the operato
 #     had to SSH + edit headscale config + restart headscale
 #     by hand.
 #  3. No Tailscale-shaped derpmap.json endpoint served by
@@ -4017,7 +4017,7 @@ run_check "B236" "Tailscale subnet-routes management on /admin/tailscale. Closes
 #     - audit row derp_apply_headscale with config snippet
 #       + docker output.
 #  c) The /admin/derp/relays/add form (existing B116)
-#     already added the operator's own 900/mow row for
+#     already added the operator's own 900/mow row fo
 #     derp.example.com (manual one-time; future add/edit via
 #     the same form is operator-driven).
 # Pure helpers + idempotency + atomic writes are unit-tested:
@@ -4030,14 +4030,14 @@ run_check "B236" "Tailscale subnet-routes management on /admin/tailscale. Closes
 # returns 200 with a Tailscale-shaped JSON containing 2
 # regions (901 bundled + 900/mow); (2) POST /admin/derp/relays/apply-headscale
 # writes the new derp.urls to headscale config + restarts
-# headscale; (3) headscale's `nodes list --json` after
+# headscale; (3) headscale's `nodes list --json` afte
 # 60s shows the operator's own region in the `derp` map.
 # 28 B-check contracts in scripts/check_b237.sh.
 run_check "B237" "Own DERP через skygate. Closes the 'derp_relays row exists but headscale doesn't know about it' gap. New GET /admin/derp/relays/derpmap.json endpoint serves a Tailscale-shaped derpmap (no authMW, CORS, no-cache). New POST /admin/derp/relays/apply-headscale button rewrites headscale's config.yaml's 'derp.urls' block (idempotent, atomic write via tmp+mv) + 'docker restart headscale' (10s timeout) + audit row derp_apply_headscale. shortNameFromHostname + publicDERPPortFromURL + rewriteDerpURLs are pure functions with 7 unit tests across 2 files. 28 B-check contracts in scripts/check_b237.sh." \
   'test -f scripts/check_b237.sh && bash scripts/check_b237.sh'
 # --- B237.7: build-time contract for the preferred-exit auto-reconciler ---
 # Closes the B237.7 root cause: SKYGATE_PREFERRED_RECONCILER_LIVE
-# defaulted to false (DRY-RUN), so the B229 reconciler never
+# defaulted to false (DRY-RUN), so the B229 reconciler neve
 # WROTE device_exit_node_prefs in production — cyborg+basic
 # were without prefs for ~24h, the headscale `via:` clause
 # never reached the policy, and YouTube rules on those
@@ -4053,7 +4053,7 @@ run_check "B237" "Own DERP через skygate. Closes the 'derp_relays row exist
 #      - PlanDevicePrefChange_UpdatesStaleTag
 #      - PlanDevicePrefChange_ReEnablesViaFlag (V061 migration catch-up)
 #      - PlanDevicePrefChange_NoOpWhenAlreadyCorrect
-#      - PlanDevicePrefChange_OrphanUserID (regression guard for
+#      - PlanDevicePrefChange_OrphanUserID (regression guard fo
 #        the michail/basic case where user_id has no portal_users row)
 #      - PreferredExitReconcilerLive_DefaultTrue_B237_7
 #   3. Updated old B229 tests (reconciler_b229_test.go):
@@ -4067,7 +4067,7 @@ run_check "B237.7" "Build-time contract for the preferred-exit auto-reconciler. 
 # --- B237.2: correct Public IP on /admin/derp ---
 # Closes the operator's 2026-09-04 complaint that the
 # "Публичный IP" field on /admin/derp showed 172.18.0.3
-# (the skygate container's own egress IP via the docker
+# (the skygate container's own egress IP via the docke
 # bridge) instead of the public IP Tailscale clients
 # actually dial. The pre-B237.2 `detectEgressIP()` dials
 # a UDP discard socket and reads the local addr — that
@@ -4147,10 +4147,10 @@ run_check "B237.10" "Auto-update pathspec bug fix. Closes the 2026-09-04 live bu
 #     (docker-compose.ghcr.yml + docker-compose.lite.yml,
 #      pulls ghcr.io/BarsSky/skygate, no in-container build)
 #   V2: podman compose (doc-only section in README.md)
-#   V3 + V4: bare-metal systemd/OpenRC installer
+#   V3 + V4: bare-metal systemd/OpenRC installe
 #     (deploy/install.sh autodetects + dispatches to
 #      deploy/install-{debian,rh,alpine,bare}.sh)
-#   V6: Windows native installer
+#   V6: Windows native installe
 #     (deploy/Setup-Skygate-Win.ps1 uses New-Service)
 #   V8: release workflow (the prerequisite for all of the
 #      above — publishes the image + the tarballs on tag
@@ -4226,7 +4226,7 @@ run_check "B237.17" "TD-9 smoke-artifact daily cleanup. Closes the smoke.sh arti
 #     (env vars SKYGATE_RECONCILE_HEADSCALE_USERS_ENABLED
 #     + SKYGATE_RECONCILE_HEADSCALE_USERS_INTERVAL).
 #   - cmd/skygate/main.go — wires the cron after the
-#     headscale client is created + after
+#     headscale client is created + afte
 #     ensureHeadscaleUser (so the admin user is in
 #     headscale by the time the first tick runs).
 #   - internal/headscale/reconcile_test.go — 10 pure-Go
@@ -4240,9 +4240,9 @@ run_check "B237.18" "TD-10 headscale_user_id reconciliation. Closes the stale-he
 # B161.4 confirmed against the live reg.ru API on
 # 2026-08-18 (top-level form fields, mTLS cert,
 # password NOT inside input_data JSON). Pre-B146 the
-# pattern was a 5-line curl invocation the operator
+# pattern was a 5-line curl invocation the operato
 # ran by hand from the live VM; the integration was
-# never pinned as a repeatable test the operator
+# never pinned as a repeatable test the operato
 # could re-run after a cert/password rotation.
 # B146 fix:
 #   - scripts/b146_regapi_live.sh — bash script that
@@ -4305,8 +4305,8 @@ run_check "B237.19" "Exit-rules form-error flash + duplicate banner UX. Fixes 2 
 # contracts, 1 S1021 "merge variable + assignment" in
 # dbmigrate/ssh_transport.go:279). B237.20 fix:
 #   - 3 outright deletions: `queryReachable` in
-#     internal/feature/admin/database.go (U1000, never
-#     called), `mu sync.Mutex` field on the Elector
+#     internal/feature/admin/database.go (U1000, neve
+#     called), `mu sync.Mutex` field on the Electo
 #     (U1000, never used; + removed the now-unused
 #     `sync` import), `mu sync.Mutex` field on
 #     stubDriver in internal/db/swapdb_b203_test.go
@@ -4333,7 +4333,7 @@ run_check "B237.20" "TD-12 + TD-13 staticcheck-100%-clean. Removes the last 23 s
 # Closes the "only path to set reg.ru creds is the
 # /admin/ha form" gap. Pre-B237.21 the operator's
 # one-shot bootstrap flow (clone repo → start skygate →
-# set creds → run B146 live test) required a browser
+# set creds → run B146 live test) required a browse
 # session to log in to /admin/ha. B237.21 adds 4 CLI
 # verbs (set / show / test / delete) that mirror the
 # form's behavior end-to-end:
@@ -4417,11 +4417,11 @@ run_check "B237.23" "fix autoupdate ON CONFLICT code/index drift (B183 vs B232 r
 # tag + asked me to investigate, gh run view --log-failed surfaced
 # the lowercase error. The v1.5.2 tag was deleted (local + remote,
 # TWICE — once for the original CI failure on 218a02ac, once for the
-# B237.24 `format()` parse error) + the draft release cleaned up per
+# B237.24 `format()` parse error) + the draft release cleaned up pe
 # the operator's rule "delete the tag if CI failed". Re-tag happens
 # after the release workflow re-runs and passes. Permanent guard:
-# scripts/check_b237_24.sh (9 contracts: 4 tag lines use lower_owner
-# + 1 no-raw-BarsSky in tag paths + 1 meta step computes lower_owner
+# scripts/check_b237_24.sh (9 contracts: 4 tag lines use lower_owne
+# + 1 no-raw-BarsSky in tag paths + 1 meta step computes lower_owne
 # via tr + 1 lowercase documented in comments + 1 AGENTS.md mention
 # + 1 ROADMAP.md mention + 1 live v1.5.2 tag is absent + 1 live v1.5.2
 # release is absent + 2 go build/vet regression).
@@ -4453,7 +4453,7 @@ run_check "B237.24.1" "fix ghcr.io/BarsSky/skygate mixed-case docker tag bug (B2
 # a .Name pill when present (derp1f.tailscale.com + .Name=1f)
 # for Tailscale-style visual parity. New i18n keys in RU+EN
 # (dashboard.metric_active_derp_sub_with_id + col_id_help) +
-# the {{tf "..." .arg}} form for the %d placeholder
+# the {{tf "..." .arg}} form for the %d placeholde
 # (regression guard: {{t}} with args fails
 # TestTemplateArgsMatchCatalog). PublicMapURL is a `var` (not
 # const) so unit tests can override it via httptest.NewServer.
@@ -4574,7 +4574,7 @@ run_check "B-derper-cert" "derper systemd unit certmode/port trap. derper --help
 # Two false statements the page used to make, both confirmed live on the
 # reference VM 2026-09-19:
 #   (1) "STUN UDP :3478 closed" on a healthy relay. STUNListening was
-#       derived ONLY from derper's GET /debug/vars counter
+#       derived ONLY from derper's GET /debug/vars counte
 #       (stun.counter_requests.success). Upstream derper gates every
 #       /debug/* handler behind tsweb.AllowDebugAccess (loopback /
 #       Tailscale source IP / TS_ALLOW_DEBUG_IP / TS_DEBUG_KEY_PATH).
@@ -4586,7 +4586,7 @@ run_check "B-derper-cert" "derper systemd unit certmode/port trap. derper --help
 #       they were a false negative.
 #   (2) "Recommended DERP: region 901 (controlplane.tailscale.com)".
 #       internal/derphealth/map.go mapped ownership inverted
-#       (d.IsOwn = isBundled == 0), so the operator's OWN bundled derper
+#       (d.IsOwn = isBundled == 0), so the operator's OWN bundled derpe
 #       (region 900, is_bundled=1) was stored is_own=0 and the row
 #       AutoMigrateDerpRelays created from the legacy derp.external_urls
 #       DERPMAP url became is_own=1. Live derp_health before the fix:
@@ -4654,7 +4654,7 @@ run_check "B266" "exit-node registration from the admin panel + ssh_target optio
 # and nothing else. That sentence is equally true for "the unit is
 # masked", "the new binary crashes on startup", "the port is already
 # owned by another instance" and "the service listens elsewhere", so the
-# operator could not act on it. B268 makes the privileged applier
+# operator could not act on it. B268 makes the privileged applie
 # self-explaining: a PRE-SWAP `binary_smoke_test` (`--version`, bounded by
 # timeout) refuses to install an artifact that cannot execute on the host;
 # a pre-swap health baseline logs which build answers on the health URL
@@ -4677,7 +4677,7 @@ run_check "B268" "privileged update applier must explain a failed swap (2026-09-
 # Live case: a native/systemd install reported `systemctl is-active skygate`
 # = active while `ss -ltnp` showed NOTHING listening on the configured port;
 # the process was alive (its dbmigrate-watchdog and db_health samplers were
-# logging) but main() never reached ListenAndServe, and its own self-updater
+# logging) but main() never reached ListenAndServe, and its own self-update
 # could only report "healthz did not report build 'v1.5.11' within 90s
 # (last build: none)". The listener was created LAST, so any slow/fatal step
 # before it produced an active, portless, mute process, and no line anywhere
@@ -4714,8 +4714,8 @@ run_check "B269" "startup truth: the socket is bound first, every boot phase is 
 # B270: (1) a key-store failure is non-fatal — NewService returns a Service with
 # a nil key store, logs 'KEY STORE UNAVAILABLE (…)' naming the path and the fix,
 # every OIDC route answers 503 with the reason (KeyStore.Ready() is nil-safe),
-# and main.go only warns; (2) the default key dir is derived from the data dir
-# (defaultOIDCKeyDir + sqlitePathFromDSN: <dir of skygate.db>/oidc-keys, or
+# and main.go only warns; (2) the default key dir is derived from the data di
+# (defaultOIDCKeyDir + sqlitePathFromDSN: <dir of skygate.db>/oidc-keys, o
 # /var/lib/skygate/oidc-keys for PostgreSQL), so it is always absolute, and an
 # explicit SKYGATE_OIDC_KEY_DIR still wins; (3) install-common.sh +
 # install-alpine.sh create <data_dir>/oidc-keys 0700 owned by the service user;
@@ -4736,7 +4736,7 @@ run_check "B269" "startup truth: the socket is bound first, every boot phase is 
 # PostgreSQL catalog SQL (pg_is_in_recovery, pg_database_size,
 # pg_stat_user_tables, pg_current_wal_lsn) against SQLite every 30 s and logged
 # five "SQL logic error: no such function" entries per tick — a permanently
-# degraded DB-health badge on a healthy install (LESSONS L-16 class). The sampler
+# degraded DB-health badge on a healthy install (LESSONS L-16 class). The sample
 # now takes a Dialect ("postgres" default, "sqlite" collected with
 # PRAGMA page_count/page_size + sqlite_version() + quick_check), and main.go
 # passes the value it already computes with db.DetectDSN.
@@ -4791,21 +4791,21 @@ run_check "B272" "tags must actually reach headscale: file-mode policy writes, R
 # computeSnapshot required the literal tag and its ladder was
 # `case !online || !hasTag: state = "offline"` — filing a working,
 # route-approved, online relay as "offline", healthy=false, so the operator was
-# told egress was down while users were routing through the node. (1) The monitor
+# told egress was down while users were routing through the node. (1) The monito
 # now gates on NodeView.IsExitNode (the same predicate) and returns
 # (snapshot, ok), and a node that is not an exit node at all gets NO snapshot row
 # — its stale row is pruned — so the "N/M здоровых" denominator counts exit nodes
 # instead of every device in the tailnet (pre-B273 a 14-node tailnet carried 11
-# permanent offline rows and the bot listed every laptop). (2) New state ladder
+# permanent offline rows and the bot listed every laptop). (2) New state ladde
 # ordered by what stops a client from egressing: offline (not online) → degraded
 # (0.0.0.0/0 not APPROVED — pre-B273 this was computed from AvailableRoutes, i.e.
 # from what is merely advertised, so an unapproved relay counted as healthy: the
 # exact false positive the monitor exists to prevent) → untagged (approved and
 # online, only tag:exit-node missing: it WORKS, so it stays healthy and is
 # surfaced as its own state with the tag hint) → online. (3) exitNodeUsable()
-# (online|untagged) is the single source of truth for the Healthy flag AND for
+# (online|untagged) is the single source of truth for the Healthy flag AND fo
 # the Telegram alert boundary: isCalmModeAlert now fires on every crossing of it,
-# so losing/gaining route approval alerts (silent before) while tagging or
+# so losing/gaining route approval alerts (silent before) while tagging o
 # untagging a working relay stays quiet. (4) /admin/exit-nodes fills
 # ApprovedV4Default/ApprovedRoutesOK from the live node's ApprovedRoutes, flags
 # "не одобрено" next to the advertised route count, and renders two named warning
@@ -4871,7 +4871,7 @@ run_check "B274" "one advertising relay per prefix: prefix ownership is explicit
 # into skygate and makes it editable. (1) v0.73 creates prefix_owner(prefix PK,
 # exit_node_id, source, claims, devices, updated_at) in BOTH chains, SQLite through
 # execSQLiteDDL; (2) new internal/prefixowner: Assign (explicit rules win by
-# majority with a hostname tie-break, a source=manual operator pin is never
+# majority with a hostname tie-break, a source=manual operator pin is neve
 # overwritten while its relay is healthy, everything else is spread over the healthy
 # relays and STICKY so nothing migrates without a reason, an unhealthy owner loses
 # the prefix even if the rules named it, and an empty healthy set falls back to the
@@ -4974,9 +4974,9 @@ run_check "B272.7" "one tagOwners policy write per reconcile pass: N pending dev
 # CHANGED — regenerates the policy and pushes it via the shared
 # acl.ApplyGeneratedPolicy tail (snapshot + mark + audit), guarded by a 60s shared
 # throttle and a fresh live read with headscale.PolicyEquivalent so an already-applied
-# policy costs nothing; a failed apply is logged with its reason, alerted, and never
+# policy costs nothing; a failed apply is logged with its reason, alerted, and neve
 # fatal. (2) The ownership vote is per (device, prefix): LoadClaims GROUPs BY, because
-# a domain rule expands into one derived row per parent domain and the auto-updater
+# a domain rule expands into one derived row per parent domain and the auto-update
 # rewrote ~145 rows and re-deduplicated ~110 every five minutes — counting rows let
 # that churn decide the owner, and (since B275) each flip silently invalidates the pins
 # for the prefix. (3) The drift is visible instead of silent: /admin/exit-nodes shows
@@ -4998,7 +4998,7 @@ run_check "B276" "the per-CIDR ACL pin follows the assignment table: an ownershi
 # B276.1: /my/exit-rules has offered the option since B275.3, but the form only
 # materialised the rule for the devices that existed at that moment
 # (PostMyExitRule inserted one row per device and forgot why), so a laptop
-# registered a week later had no rule while the UI still described it as being for
+# registered a week later had no rule while the UI still described it as being fo
 # all of the user's devices. V074 adds device_rules.all_devices (both chains,
 # additive default 0 — pre-V074 rows stay single-device, because the fan-out copies
 # are indistinguishable from hand-made ones and guessing would silently start
@@ -5058,15 +5058,15 @@ run_check "B278" "launch_skigate.sh must not bake a docker bridge IP into the DS
 run_check "B279" "a class tag is not a node identity: one shared predicate + sentinel guard in TagToHostname/NormalizeExitNodeTag, class-tag prefs cleared, class tags never clobber a per-node tag in node_owner_map, bulk-apply validates its target against live exit nodes, assignment-table relays are synced, /my/exit-rules names the device. Live aro case: 23 rules rewritten to the phantom relay named node. 40 contracts in scripts/check_b279_class_tag_identity.sh." \
   'test -f scripts/check_b279_class_tag_identity.sh && bash scripts/check_b279_class_tag_identity.sh'
 
-# B279.1 (v1.5.46) — finish the deduplication B279 started. Four
+# B279.1 (v1.5.46) — finish the deduplication B279 started. Fou
 # implementations derived a hostname from a tag, and the live incident
 # happened in the copy with no class-tag guard (exit_rules.TagToHostname:
 # tag:exit-node -> "node"); the ACL copy was "safe" only because its callers
 # were documented to treat "node" as a non-match, which is not a mechanism.
 # B279.1 puts the class-tag knowledge in exactly one function (db.IsClassTag,
-# next to the new db.IsExitNodeTagForm) and deletes the rest: the acl helper
+# next to the new db.IsExitNodeTagForm) and deletes the rest: the acl helpe
 # guards on it before its bucket loop, db.isExitNodeTagForm delegates, the
-# admin system-test page drops its v1.3.18.1 inline switch for
+# admin system-test page drops its v1.3.18.1 inline switch fo
 # exit_rules.TagToHostname, and user_subnet.go stops re-writing the sentinel
 # literal by hand. New acl_b279_1_test.go pins the sentinel and carries an
 # anti-drift guard against db.IsClassTag. check_b119.sh contract H was
@@ -5079,7 +5079,7 @@ run_check "B279.1" "one tag-to-hostname implementation and one class-tag predica
 # B280 (v1.5.46) — a tag and a release are CI-gated: no tag and no release
 # from a commit whose CI is not green. The v1.5.41 → v1.5.45 cycle pushed
 # tags after `git push --no-verify`; CI caught two real regressions in that
-# window (v1.5.44 introduced an RU i18n parity break and a raw-http.Error
+# window (v1.5.44 introduced an RU i18n parity break and a raw-http.Erro
 # leak) and the releases shipped them anyway, because the tag already
 # existed and release.yml builds whatever the tag points at. Hooks are
 # per-clone and --no-verify skips them, so the rule now exists server-side
@@ -5116,7 +5116,7 @@ run_check "B280" "a tag and a release are CI-gated: scripts/ci_gate.sh is the si
 run_check "B281" "the CI catalog job terminates and green means 0 FAIL: each check runs under a wall-clock budget in scripts/verify_pre_deploy.sh (named TIMEOUT row instead of a silently cancelled job), ci.yml gives the job 60 minutes, installs staticcheck and enforces that no FAIL/TIMEOUT row appears in the (ANSI-stripped) catalog output — which is what makes B280's ci_gate.sh mean something; 36 check scripts no longer probe a hardcoded /usr/local/go/bin/go before command -v go, and 8 live-state contracts SKIP instead of FAIL when docker/headscale/tailscale are absent. Contracts in scripts/check_b281_ci_catalog_truth.sh." \
   'test -f scripts/check_b281_ci_catalog_truth.sh && bash scripts/check_b281_ci_catalog_truth.sh'
 
-# B282 (2026-09-22) — operator pages must read the database the operator
+# B282 (2026-09-22) — operator pages must read the database the operato
 # actually runs. Live on the native host `aro` (SQLite at
 # /var/lib/skygate/skygate.db) three surfaces were dead because the SQL was
 # written for PostgreSQL and never branched: /admin/audit answered 500
@@ -5175,7 +5175,7 @@ run_check "B283" "a policy write cannot take the control plane down: RequestPoli
 # python3 over the saved snapshots confirmed them as the ONLY undeclared tags —
 # while the policy that had been working named none. headscale refuses such a
 # document as a whole and, in file mode, will not START on it (crash-loop 248,
-# control plane down, every device gone from the portal). The rule→tag resolver
+# control plane down, every device gone from the portal). The rule→tag resolve
 # now returns node_owner_map.tag (the tag headscale carries and the one this
 # generator declares) and otherwise NOTHING — the caller falls back to the
 # device-IP selector, which is weaker than a tag but always matches; both
@@ -5191,7 +5191,7 @@ run_check "B284" "a device tag must be the tag the node carries: deviceTagForRul
 # set a policy that references 1 tag(s) missing from tagOwners:
 # tag:dev-daniil-workpc)`. The refusal came from B283's guard and it was CORRECT
 # (headscale rejects such a document as a whole and, in file mode, will not start
-# on it) — but it also meant the ACL could never apply. The grants take their
+# on it) — but it also meant the ACL could never apply. The grants take thei
 # device tag from node_owner_map.tag (B284) while the tagOwners block derives its
 # entries from GetPerUserDeviceTags, which needs a PORTAL-user row; on the live
 # host both node_owner_map rows are owned by headscale's synthetic
@@ -5243,7 +5243,7 @@ run_check "B287" "the per-device tag is an ownership record: internal/db/device_
 # generator emitted one grant per rule row), and the rest of the difference was
 # tag declarations. headscale treats grants as a SET, so the banner described no
 # behavioural difference; and because the healing check ran only when the
-# assignment table MOVED (B276 gated it on chg > 0), a stable host could never
+# assignment table MOVED (B276 gated it on chg > 0), a stable host could neve
 # converge. Four fixes: (1) PolicyEquivalent now compares normalised documents —
 # set-like arrays (grants, ssh, owner/member lists) are sorted and de-duplicated
 # while the order-sensitive legacy acls/rules list is left alone, and
@@ -5252,7 +5252,7 @@ run_check "B287" "the per-device tag is an ownership record: internal/db/device_
 # TAG names plus tagged-devices@) is used by the ACL generator, the ownership
 # backfill and the tag reconciler, which previously disagreed so every apply undid
 # the other writer's entry; (3) the generator declares every per-device tag
-# node_owner_map records (db.ListDevTagsFromOwnerMap), so an apply can no longer
+# node_owner_map records (db.ListDevTagsFromOwnerMap), so an apply can no longe
 # DELETE a declaration a node wears (live: tag:dev-daniil-homepc/laptop); (4)
 # reconcilePrefixOwnership consults the drift check on EVERY pass behind a 5-minute
 # throttle, so a pre-existing mismatch heals itself. Also fixed: the legacy
@@ -5314,7 +5314,7 @@ run_check "B290" "OIDC must be enableable from the UI: /admin/oidc now shows and
 # `'skygate' = ANY (roles)`, `roles || ARRAY['skygate']::text[]`,
 # `array_remove(roles, 'skygate')`, `array_to_string(roles, ',')`, `$N::jsonb`,
 # `detail->>'reason'`, `created_at > NOW() - INTERVAL '5 minutes'`,
-# `extract(epoch FROM …)::bigint` and `detail::text` — so cluster_node never
+# `extract(epoch FROM …)::bigint` and `detail::text` — so cluster_node neve
 # received a row, the elector's transitions and failover recommendations all
 # aborted, and the CLI `skygate cluster failover` could not promote anything. The
 # port routes every one of those through dialect helpers (internal/db/
@@ -5324,7 +5324,7 @@ run_check "B290" "OIDC must be enableable from the UI: /admin/oidc now shows and
 # the read side (a bound time.Time is stored in Go's String() form, which
 # sql.NullTime refuses, which is why rows silently vanished from the pages), and
 # fixes a bug that was broken on BOTH backends: the /admin/ha event union read
-# `unix_timestamp` and `actor` from audit_log, columns that exist in neither
+# `unix_timestamp` and `actor` from audit_log, columns that exist in neithe
 # schema. 50 contracts in scripts/check_b291_cluster_sqlite.sh.
 run_check "B291" "the cluster/HA tree must work on SQLite: new dialect helpers (internal/db/cluster_sql_b291.go) own every PostgreSQL spelling the tree needed — NowExpr, NowMinusExpr, CastJSON, JSONField, CastTextArray, RandomHexExpr, ForUpdateExpr (PostgreSQL only; SQLite has no FOR UPDATE, and a write transaction already locks the database), TimeValue (bind RFC3339 on SQLite instead of the undecodable Go String() form), TextArrayLiteral + RolesContain/RolesAdd/RolesRemove and FindClusterPrimary/NodeRoles/SetNodeRoles; no PostgreSQL-only SQL remains outside comments anywhere in the cluster/HA tree (discovery, cluster bootstrap, node CRUD, invites, join, failover, drill, cluster_audit, elector, /admin/cluster, /admin/ha, the skygate cluster failover CLI); every timestamp is decoded through db.ParseDBTime on read and bound through DialectKind.TimeValue on write, so all three shapes SQLite can hold render; the pending-invite expiry filter and the elector's 5-minute failover-recommendation dedup run in Go (SQLite has no NOW()/INTERVAL and no jsonb ->>); the /admin/ha audit_log branch selects the real columns (created_at + username, not the non-existent unix_timestamp/actor); the CLI promotes through the shared role helpers so unrelated roles survive; and the regression tests run the real entry points against a migrated in-memory SQLite database (discovery idempotency, node lifecycle, invites, failover/drill role surgery, elector tick + dedup, both admin page collectors). Contracts in scripts/check_b291_cluster_sqlite.sh." \
   'test -f scripts/check_b291_cluster_sqlite.sh && bash scripts/check_b291_cluster_sqlite.sh'
@@ -5334,7 +5334,7 @@ run_check "B291" "the cluster/HA tree must work on SQLite: new dialect helpers (
 # Re-sync answered, in the GREEN flash box,
 #
 #   Sync exit-node-vps: ssh=err=ssh exit-node-vps (key /ssh-sync/id_ed25519):
-#     Warning: Identity file /ssh-sync/id_ed25519 not accessible: No such file or
+#     Warning: Identity file /ssh-sync/id_ed25519 not accessible: No such file o
 #     directory. ssh: Could not resolve hostname exit-node-vps: Name or service
 #     not known approved=21
 #
@@ -5488,7 +5488,7 @@ run_check "B296" "the DERP probe address must be settable from the panel and app
 # `POST /api/v1/node/{id}/approve_routes` is gone from REST at 0.29.1, the REST
 # expire path broke at 0.29.2, `grants[]` replaced `acls[]` at 0.29.0-beta.4 and
 # 0.29.2 is the version that rejects wildcards in `tagOwners`. A stale pin
-# therefore (a) makes "a newer headscale is available" wrong in whichever
+# therefore (a) makes "a newer headscale is available" wrong in whicheve
 # direction it is wrong, (b) records patch releases as breaking (or the reverse)
 # in the headscale_releases history, and (c) is entirely silent on the one page
 # whose job is comparing versions. The probe is a LADDER — authenticated
@@ -5505,7 +5505,7 @@ run_check "B297" "the RUNNING headscale's version must be read, not assumed: SKY
 
 # --- B298: derived-rule churn must not restart the control plane ---------------
 # Live on the native host `aro`, every five minutes, forever:
-#   acl-drift: ACL re-applied (snapshot v483, generated=7331 bytes) — auto-updater
+#   acl-drift: ACL re-applied (snapshot v483, generated=7331 bytes) — auto-update
 #              tick changed 18 rule(s) (added=17 removed=1)
 #   auto-updater: dedup removed 16 redundant derived rule row(s)
 # The database proved the mechanism: 19 subnet rows, 19 distinct CIDRs, and
@@ -5606,7 +5606,7 @@ run_check "B302" "every /admin/derp probe must dial the ADDRESS that is reachabl
 run_check "B303" "an ownerless device must have a working admin path, and no action on /admin/devices may answer with a raw error page: the operator's report was a screenshot of a text/plain page whose whole body was 'node not in node_owner_map: db: node_owner_map: no row', opened by pressing Transfer on a device that turned out to belong to nobody, plus a device that could not be tagged by the admin at all (as if ignored by the scripts that should check and add devices). One deadlock, three pieces: (1) PostAdminDeviceTransfer read the current row first and refused when it was missing, so the one button that exists to give a node an owner demanded that it already had one; (2) PostAdminNodeTag recorded ownership only when headscale named a user, and its synthetic tagged-devices branch ran an UPDATE that matches no row — the tag landed in headscale while node_owner_map stayed empty, so every per-device ACL rule missed the device and the next Transfer click hit (1); (3) findAdoptionCandidates dropped ownerless nodes entirely, so the page offered no action for them. Now a missing row is the adoption (errors.Is(db.ErrNodeOwnerNotFound) becomes an empty current owner, audited as device_transfer_adopted_ownerless, and the new row is stamped with the live hostname via SetNodeOwnerHostnameIfEmpty), Tag always persists ownership (INSERT ... ON CONFLICT DO NOTHING with hostname when the node has no row, tag-bump UPDATE when it has one, audited as node_tag_owner_row_created), the live node read inside Tag is mandatory so the per-user-device exit-node guard can never run on an empty tag list, and every operator-facing refusal in both handlers is a 303 flash on /admin/devices carrying a named reason (the shared devicesFlashErr helper keeps the 403 for a non-admin caller as the only http.Error). The adoption card renders an explicit owner dropdown for the rows no portal user can be inferred for (NeedsOwnerPick, RU+EN labels). Renegotiated in place: check_b257 contracts F now pin the two former skip rules as owner-pick candidates. Contracts in scripts/check_b303_ownerless_device.sh; regression tests in internal/feature/admin/devices_b303_test.go drive the real handlers against SQLite plus a fake headscale REST server." \
   'test -f scripts/check_b303_ownerless_device.sh && bash scripts/check_b303_ownerless_device.sh'
 
-# B299 (2026-09-23) — the catalog must not be stoppable by a check that asks for
+# B299 (2026-09-23) — the catalog must not be stoppable by a check that asks fo
 # a password (or stops itself): the live 54-minute hang with everything in state T.
 run_check "B299" "the guarantee catalog must not be parked forever by a check that asks for a password: live incident (2026-09-23 16:18 → 17:12, WSL Ubuntu, launched through C:/WINDOWS/system32/bash.exe rather than Git Bash) — the gate reached scripts/check_b_admin_user_sync.sh, whose first live probe was a bare 'sudo docker info'. In that distro sudo requires a password ('sudo -n true' → 'interactive authentication is required'), so it opened /dev/tty, took SIGTTIN because the reader was not in the terminal's foreground process group, and the KERNEL STOPPED THE WHOLE GROUP: 'timeout 900 … T', 'bash scripts/check_b_admin_user_sync.sh T', 'sudo docker info T'. A stopped process never runs its SIGALRM handler, so the per-check budget could not fire — timeout was stopped along with its child — and the session that launched the run waited for a process that would never finish until the group was killed by hand. Two defects, both closed: (1) run_check now starts every check under 'setsid --wait timeout -k 10 BUDGET', i.e. with NO CONTROLLING TERMINAL (a password prompt fails fast instead of stopping the world; verified live: the same check that hung for 54 minutes now answers 'SKIP: docker daemon not reachable' in 0.1s inside that WSL distro) and with a deadline that can KILL, so a TERM-ignoring check cannot outlive its budget — rc 137 is reported as TIMEOUT so a killed check is NAMED; the -k/group-kill behaviour was measured, not assumed (no grandchildren survive, a self-stopping 'kill -STOP \$\$' still returns rc=124, and a tty read fails immediately); a host without util-linux setsid (Git Bash, macOS) falls back to a documented weaker runner. (2) every EXECUTED sudo in the gate is now 'sudo -n' (60 call sites across 11 check scripts), so a check that needs root either works or reports SKIP/FAIL at once instead of prompting; the contract's detector ignores comments, heredoc operator instructions and quoted message text, and self-tests itself against a planted violation so 'no violations' can never mean 'the detector broke'. Contracts in scripts/check_b299_catalog_cannot_hang.sh." \
   'test -f scripts/check_b299_catalog_cannot_hang.sh && bash scripts/check_b299_catalog_cannot_hang.sh'
@@ -6090,7 +6090,7 @@ run_check "B386" "A CHECK MUST NOT LET A HOST TRANSIENT BECOME A PRODUCT VERDICT
 # host's psql and passed the DSN hostname verbatim, and on a docker-compose install
 # that hostname is a COMPOSE SERVICE NAME the host cannot resolve; the error text then
 # became the check's answer, and INTEGRITY="${INTEGRITY:-fail}" reported every non-"ok"
-# value as corruption. R9, R10 and R-B351 inherited it, and R10 printed the psql error
+# value as corruption. R9, R10 and R-B351 inherited it, and R10 printed the psql erro
 # as the name of a missing grant. Two repo rules broke at once — AGENTS rule 1 (an
 # unavailable live dependency must SKIP, never FAIL) and trap #15 (a host transient must
 # never become a product verdict). B387 makes psql_vm a LADDER (the DSN host as a local
@@ -6155,7 +6155,7 @@ run_check "B387" "THE DATABASE DID NOT ANSWER IS NOT YOUR DATABASE IS CORRUPT. M
 # predicate is the property that matters) and its planted-violation selftest gained the new
 # shapes plus the '||' false positive. The equivalent H1-only remedy (drop -q, redirect grep's
 # stdout so it reads all input) is PROVED equivalent in the contract but was NOT applied
-# tree-wide: doing that mechanically needs a real shell parser, and the obvious tokenizer
+# tree-wide: doing that mechanically needs a real shell parser, and the obvious tokenize
 # mangled text inside quoted strings — `"$( … sed 's/…"[^"]*"…' … )"` is re-parsed by the shell,
 # which no naive tokenizer models — before the damage was caught by diffing against HEAD. The
 # wrapper needs no parsing at all. The contract is behavioural: it builds a deliberately broken
@@ -6240,9 +6240,9 @@ run_check "B389" "THE RICH MESSAGE MUST REACH THE WIRE AND EVERY REPLY MUST SURV
 #      were readable. The sidebar now links to it, the bell says "…and N more unread" and offers
 #      the full list.
 #   3. The page LIED about its own size: the handler loaded a capped slice into memory and sliced
-#      it, while the db helpers silently rewrote any limit > 100 to 50 — so "N total" could never
+#      it, while the db helpers silently rewrote any limit > 100 to 50 — so "N total" could neve
 #      exceed 50 and every page past the second rendered the "you have no notifications" empty
-#      state while the rows were still in the table. Pagination, the total and the severity filter
+#      state while the rows were still in the table. Pagination, the total and the severity filte
 #      are now SQL conditions (optional conditions rather than one query per combination, so the
 #      page, the count and "has next" cannot disagree), the silent limit rewrite is gone, and a
 #      failed read renders the page with a named banner instead of a text/plain error page.
@@ -6270,7 +6270,7 @@ run_check "B392" "THE NOTIFICATION PANEL MUST READ, SCALE AND BE REACHABLE. Oper
 # Two independent defects produced that one sentence:
 #   1. BOTH swap scripts mounted the literal volume skygate-data. That volume is a
 #      legacy leftover (created 20:08:31Z, EMPTY); the app /data is the checkout
-#      ./data BIND mount, which is where the script was written — so the helper
+#      ./data BIND mount, which is where the script was written — so the helpe
 #      mounted the wrong filesystem and never saw its own script. v1.5.130 only
 #      "worked" because a stale pre-v1.3.1 helper happened to survive in it.
 #   2. NOTHING checked that the swap happened. pollHealthz accepted any 200 with
@@ -6304,7 +6304,7 @@ run_check "B392" "THE NOTIFICATION PANEL MUST READ, SCALE AND BE REACHABLE. Oper
 # i18n remediation key and a doc link (one annotation table with per-category floors,
 # so a new test is never unannotated); the run is asynchronous with an in-memory
 # snapshot the page polls (run.json), a single test can be re-run from its row, the
-# history is pruned (200 runs / 90 days, named policy) and eleven tests were added for
+# history is pruned (200 runs / 90 days, named policy) and eleven tests were added fo
 # the failures this project has actually had: unapproved exit-node routes, tag drift,
 # live-vs-generated policy, prefix ownership vs what the relays advertise, a read-only
 # database, a half-migrated schema, a filling disk, an unreachable DERP, a process
@@ -6317,7 +6317,7 @@ run_check "B394" "SYSTEM TESTS MUST BE A DIAGNOSTIC TOOL, NOT A GRID OF PASS/FAI
 
 # B395 — the first-run wizard on the dashboard (v1.5.134, 2026-10-17)
 # ---------------------------------------------------------------------------
-# THE DEFECT THIS PREVENTS: a naive wizard answers "0 devices, 0 exit nodes" for
+# THE DEFECT THIS PREVENTS: a naive wizard answers "0 devices, 0 exit nodes" fo
 # every situation — headscale absent, unreachable and genuinely empty all look the
 # same — so an operator whose headscale is DOWN is told the tailnet is empty and
 # starts creating users that go nowhere. The four named states plus Count{Known}
@@ -6325,7 +6325,7 @@ run_check "B394" "SYSTEM TESTS MUST BE A DIAGNOSTIC TOOL, NOT A GRID OF PASS/FAI
 #
 # What the block ships: internal/setupstate (absent / unreachable / empty /
 # populated, honest-unknown counts, infra-vs-review classification, ambiguity
-# detection, snapshot-before-apply); the dashboard card with SEPARATE admin and user
+# detection, snapshot-before-apply); the dashboard card with SEPARATE admin and use
 # branches (the admin report is only computed under `if c.IsAdmin`, so the template
 # cannot leak it); ready-made headscale install scripts for docker and systemd as
 # TEXT — the wizard performs no file write and no exec, because the operator's
@@ -6348,7 +6348,7 @@ run_check "B395" "THE FIRST-RUN WIZARD MUST NAME THE STATE, NEVER GUESS IT, AND 
 # question from two sources (a local directory and the run records) and disagreed by
 # 800 hours; derp.reachable reported "check the firewall/DNS" for a name that resolved
 # to the container's OWN loopback; prefix_owner.consistency merged "not advertised" with
-# "advertised but never approved"; exit_rules.domain_prefix promised the auto-updater
+# "advertised but never approved"; exit_rules.domain_prefix promised the auto-update
 # would fix the rows whether or not it was switched on. 13 contracts in
 # scripts/check_b396_diagnostic_honesty.sh.
 run_check "B396" "THE DIAGNOSTIC CATALOGUE MUST NOT ANSWER ONE QUESTION FROM TWO SOURCES, AND IT MUST NAME THE CAUSE IT HAS ALREADY MEASURED. Found by running the B394 catalogue on the live installation on 2026-10-18 and reading the failures. (1) backup.recent FAILED on an 819 h old LOCAL archive while backup.verify PASSED with an S3 archive 20 h old: one question, two sources, and the copy that read the wrong source was the lie — the run records (backup.last_run/last_archive, written by the backup itself whatever the destination) now win whenever they exist, and the local-directory scan stays only for a legacy installation that has archives but has never recorded a run. (2) derp.reachable reported dial tcp 127.0.0.1:443 as unreachable with 'check the firewall/DNS', but the relay NAME resolved to the container's own loopback: a host that resolves its own public name to 127.0.0.1 leaks into containers through /etc/hosts or a compose extra_hosts entry (trap 2), so the test now resolves first, classifies an all-loopback answer, and names the mechanism and the fix. (3) prefix_owner.consistency merged two faults with two different buttons: a prefix the owner does not ADVERTISE (Re-sync) and one it advertises but nobody APPROVED (Approve — clients ignore unapproved routes, B273's lesson); each is now its own named class and the summary names both counts. (4) exit_rules.domain_prefix promised that 'the domain auto-updater rewrites them on its interval' whether or not the auto-updater was switched on, which is exactly the case where the rows rot forever; it now reports the effective switch and the interval the updater itself parses, and says OFF means nothing will rewrite them until the operator acts. Behaviourally pinned by internal/feature/admin/system_tests_b396_test.go: a fresh run record with no local archive must PASS backup.recent, and an 819 h old one must FAIL BOTH backup tests." \
@@ -6583,7 +6583,7 @@ run_check "B458" "«DNS внутри tailnet должен ехать по про
 # the default again. A backup that captures every file EXCEPT the database is
 # the failure class this project keeps paying for: an artifact that looks
 # complete. Step 3 now dispatches on the dialect the product uses
-# (SKYGATE_DB=sqlite:/file:/bare path -> the FILE; postgres:// or
+# (SKYGATE_DB=sqlite:/file:/bare path -> the FILE; postgres:// o
 # SKYGATE_DB_DSN -> pg_dump), WAL-checkpoints through sqlite3 when present and
 # carries -wal/-shm otherwise, REFUSES to ship an archive whose database copy
 # is empty or does not carry the SQLite header, verifies the copy with PRAGMA
@@ -6614,7 +6614,7 @@ run_check "B459" "the backup must speak the database's dialect: on a native SQLi
 # back. This INFORMS and never gates: every capability difference is handled by a
 # ladder in the client, so a version number must never block an apply that would
 # have succeeded. 20 contracts in scripts/check_b460_acl_plane_truth.sh (incl. 3
-# that prove the detectors fire on planted violations), 6 pure tests + 4 render
+# that prove the detectors fire on planted violations), 6 pure tests + 4 rende
 # tests.
 run_check "B460" "the ACL import must name the planes it pushes to and report ALL of them: the dry-run said nothing about which control planes receive the policy or what they run (headscale 0.29.x differs across releases: approve_routes left REST at 0.29.1, REST expire broke at 0.29.2, grants[] replaced acls[] at 0.29.0-beta.4, 0.29.2 rejects wildcards in tagOwners), and a failed apply answered http.Error on the FIRST plane although earlier planes had already been changed and are never rolled back. ApplyResult now carries PlaneURL; the dry-run renders a plane table (version read from the update monitor CACHE, pin as the documented fallback, a named reason when neither answers) plus a mismatch warning; a failed apply renders a per-plane report and states that the change was not rolled back. Information, never a gate — capability differences are handled by ladders, so a version must not block a working apply. 20 contracts + 10 tests." \
    'test -f scripts/check_b460_acl_plane_truth.sh && bash scripts/check_b460_acl_plane_truth.sh'
@@ -6630,8 +6630,8 @@ run_check "B460" "the ACL import must name the planes it pushes to and report AL
 # SQLite branch resolves the target file (process env -> the restored .env -> the
 # archive's own skygate.env), KEEPS the previous database as
 # `<db>.pre-restore-<ts>` before overwriting, removes a stale -wal/-shm (which
-# would otherwise be replayed against different data), REFUSES an empty or
-# non-SQLite archive file before touching anything, falls back to the docker
+# would otherwise be replayed against different data), REFUSES an empty o
+# non-SQLite archive file before touching anything, falls back to the docke
 # volume only when no native path is resolvable, and turns that fallback's failure
 # into a named ERROR instead of a warning. 21 contracts in
 # scripts/check_b461_restore_sqlite_native.sh, of which 9 run the REAL extracted
@@ -6701,7 +6701,7 @@ run_check "B463" "the DOCUMENTED backup script must speak native too: deploy/bac
 # answer positively. Also fixed here: the same join wrote a dbs.env saying "no DSN"
 # and exited 0; a heartbeat is never required to satisfy cluster_invite.expires_at
 # (the token IS the node credential — enforcing it would 401 every standby 24 h
-# after it joined) so the expired credential is disclosed on /admin/cluster
+# after it joined) so the expired credential is disclosed on /admin/cluste
 # instead; and the heartbeat endpoint now tolerates unknown fields while /join stays
 # strict, so a newer agent is never declared failed by an older hub.
 run_check "B464" "ready must mean THIS HOST CAN SERVE: measured on the operator's standby, cluster_node held state=ready | roles={skygate-standby} | last_seen 24 s for a host with no skygate web server (nothing listening on 80/443/8080/8082), no headscale, no database and 16 KB in /var/lib/skygate — the state came from 'the agent reached /api/cluster/heartbeat', which says nothing about serving, so failing DNS over to it would have been an outage. The agent now measures its own host (GET /healthz + GET /readyz) and the hub records degraded (with that sentence, audited as node_health) unless the web server answers AND its database is reachable; an absent payload keeps B402 behaviour so no old agent is demoted, draining outranks any verdict, the failover candidate query still selects only state=ready while an upgrade now includes degraded, the elector flips a silent degraded node to failed, and the verdict is echoed in the response so the host's own journal names it. Plus: cluster join with no DSN now FAILS instead of exiting 0 (--allow-no-dsn for the standalone-local-DB topology), the agent retries once with the pre-B464 body when the hub is older, the heartbeat decoder tolerates unknown fields (/join stays strict), and an expired node credential is disclosed on /admin/cluster rather than silently enforced." \
@@ -6796,11 +6796,13 @@ run_check "B492" "АВТООБНОВЛЕНИЕ ПО РАСПИСАНИЮ ДОЛ�
     'test -f scripts/check_b492_native_scheduled_update.sh && bash scripts/check_b492_native_scheduled_update.sh'
 run_check "B493" "РАСПИСАНИЕ СЧИТАЕТСЯ В ТАЙМЗОНЕ ПАНЕЛИ, А НЕ ХОСТА. Вопрос оператора 2026-11-18: он ставил 08:00 по МСК и отдельно «вводил учёт по таймзоне, где расположен хост». Замерено на боевом хосте: системные часы — Etc/UTC, а настройка панели global_settings.timezone — Europe/Moscow, и строки журнала 05:08 UTC на самом деле 08:08 MSK, то есть слот действительно считался по Москве. Это надо было закрепить, потому что две правдоподобные реализации (зона хоста и зона панели) на этом самом хосте расходятся на три часа, а «расписание смещено на час» незаметно до тех пор, пока обновление не приедет не в тот час. Сделано: тесты TestB493_ScheduleIsEvaluatedInThePanelTimezone (08:00 MSK = 05:00 UTC — due, а 08:00 UTC = 11:00 MSK — нет) и TestB493_LastRunDedupUsesThePanelTimezone (граница «уже запускалось сегодня» — это день ПАНЕЛИ, и случай, где день панели не совпадает с UTC-днём, различает реализации); контракт требует, чтобы планировщик брал now и сравнение с last run только из пакета localtime (ни одного time.Now()), а журнал печатал слот с именем зоны панели. Документация: docs/UPDATE.md §4.4 объясняет, чьи это часы и что перенос /etc/localtime слот НЕ двигает, а docs/operations.md §15 описывает решение оператора держать на LAN отдельный PostgreSQL-стенд для проверки поведения БД на PG (через SKYGATE_TEST_PG_DSN и staging-инстанс, без изменений в коде и без единого реального адреса в репозитории). 2 поведенческих теста + 19 контрактов в scripts/check_b493_schedule_timezone.sh; один контракт сначала был неверным сам — grep 'time.Now()' считал вхождение внутри localtime.Now(), и это исправлено, а не «подогнано»." \
     'test -f scripts/check_b493_schedule_timezone.sh && bash scripts/check_b493_schedule_timezone.sh'
+run_check "B494" "ЖИВЫЕ КОНТРАКТЫ ДОЛЖНЫ ЗАПУСКАТЬСЯ НА ХОСТЕ, КОТОРЫЙ ОБСЛУЖИВАЕТ TAILNET (TD-36). verify_pre_deploy.sh — это каталог ВРЕМЕНИ СБОРКИ: каждый контракт, которому нужна живая установка, отвечает там SKIP, а в CI развёртывания нет вообще, поэтому проверки реального состояния (повторы имён headscale, аудит reconcile, сироты node_owner_map, покрытие tagOwners, атрибуция узлов, живое чтение политики в B188.2) запускались вручную по одной команде и регулярно не запускались никем. scripts/run_live_contracts.sh — вторая половина: одна команда, один вердикт, код возврата 0/1/2 (2 = на этом хосте нет установки, и это никогда не зелёный результат), плюс --json, --strict (для ночного задания) и --only. Три дефекта найдены ЗАМЕРОМ на боевом хосте в момент написания: (1) запуск из каталога без чекаута давал 15 FAIL от check_b188_2.sh — все про отсутствующие ИСХОДНИКИ, поэтому эта проверка теперь включается только при наличии internal/acl/acl.go, а не превращает отсутствие чекаута в приговор продукту; (2) проверка, напечатавшая только SKIP и вышедшая с кодом 0, считалась PASS — «вышел чисто» и «ответил» это разные вещи, поэтому вердикт смотрит на напечатанные строки, а код возврата остаётся властью над FAIL; (3) check_b188_2.sh пропускал свои живые секции с «live database unreachable: psql -h -p 5432», потому что общий помощник разбирал DSN sqlite: парсером PostgreSQL — тот же класс, что B488/B489, вопрос формы теперь задаёт lib/live_db.sh и у помощника появился native-режим. Замер на боевом хосте: 4 PASS, 2 SKIP (restart-проверка честно говорит restart-based, B188.2 требует чекаут), verdict pass, --strict даёт 1, --json выдаёт разборчивый JSON." \
+    'test -f scripts/check_b494_live_contracts_runner.sh && bash scripts/check_b494_live_contracts_runner.sh'
 # ---------------------------------------------------------------------------
 # THE GATE'S VERDICT (TD-22 / B335)
 # ---------------------------------------------------------------------------
 # Pre-TD-22 this script maintained RESULTS_PASS/RESULTS_FAIL and never read them,
-# so its exit status was the status of its LAST statement: a run with any number
+# so its exit status was the status of its LAST statement: a run with any numbe
 # of FAIL rows exited 0. Measured on the reference VM 2026-10-01 — 368 PASS,
 # 10 FAIL, 1 SKIP, exit code 0. Consequences: `.githooks/pre-push` branches on
 # that status and therefore blocked nothing, and only CI's `grep '^  FAIL'`

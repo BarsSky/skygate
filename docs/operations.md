@@ -2098,6 +2098,39 @@ SKYGATE_TEST_PG_DSN='postgres://<user>:<pw>@127.0.0.1:55433/<owned-db>?sslmode=d
 
 ---
 
+## 15.1 The LIVE gate: contracts that need the deployment (TD-36 / B494)
+
+`scripts/verify_pre_deploy.sh` is the **build-time** catalog. Every contract there that needs a live
+installation answers `SKIP`, and CI has no deployment — which left the checks that verify the tailnet's
+real state (duplicate headscale users, the reconcile audit row, orphaned `node_owner_map` rows,
+`tagOwners` coverage, node attribution, and B188.2's live policy read) to be started by hand, one at a
+time, on the host that serves it.
+
+`scripts/live_gate.sh` is that second half:
+
+```bash
+# on the host that serves the tailnet (native or compose)
+bash scripts/live_gate.sh                  # human summary + verdict
+bash scripts/live_gate.sh --json           # for a monitor / chat bot
+bash scripts/live_gate.sh --strict         # a SKIP counts as a failure (nightly cron)
+bash scripts/live_gate.sh --only orphans   # one contract while debugging
+bash scripts/live_gate.sh --with-post-deploy   # also /healthz, /readyz, runtime probes
+```
+
+Exit codes: **0** everything answered and passed, **1** at least one FAIL (or a SKIP under `--strict`),
+**2** *this host has no installation to inspect* — it refuses rather than printing a green line, which
+is the whole point.
+
+**It is NOT part of the build gate**, deliberately: a build must not require a deployment, and a live
+run must not pretend to be one. Two facts it reports honestly instead of hiding:
+
+* `reconcile-audit` is restart-based and therefore docker-only — on a native host it says
+  `restart-based` and you run `systemctl restart skygate` yourself and watch `/healthz`;
+* `b188.2` also greps the SOURCE (`internal/acl/acl.go`, the block index, the catalog), so outside a
+  checkout it reports `SKIP — no checkout here` instead of 15 failures about missing files (measured).
+
+Measured on the production host 2026-11-18: 4 passed, 2 skipped, verdict `pass`.
+
 ## 16. Repairing a headscale user duplicated by OIDC
 
 ### Symptom
