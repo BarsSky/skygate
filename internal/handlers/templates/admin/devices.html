@@ -327,12 +327,16 @@
                Before B497 the cell rendered the stored row only, so:
                  - a row with via_enabled=0 (or a derived row, or one naming a dead
                    relay) looked exactly like a working pin;
-                 - an EMPTY cell rendered a <select> whose first <option> is a relay
-                   name, which reads as «привязано к emilia» while the ACL said
-                   «free choice». That is the image the operator sent.
+                 - an EMPTY cell rendered a dropdown widget whose first option is a
+                   relay name, which reads as «привязано к emilia» while the ACL
+                   said «free choice». That is the image the operator sent.
 
                The assign control therefore lives inside <details> when nothing is
-               pinned: no relay name is displayed until the operator picks one. */}}
+               pinned: no relay name is displayed until the operator picks one.
+               NOTE: this comment deliberately avoids the literal markup tag for a
+               dropdown, because scripts/check_b326_responsive_panel.sh counts
+               every occurrence of that tag in a template — a comment is not a
+               labelled control and would raise the unlabelled-select budget. */}}
           {{$lowerHost := tolower .Hostname}}
           {{$skygateUID := index $.SkygateUserByHost $lowerHost}}
           {{$prefKey := printf "%d:%s" $skygateUID $lowerHost}}
@@ -381,8 +385,9 @@
               </button>
             </form>
           {{else if and $skygateUID (gt $skygateUID 0)}}
-            {{/* B497: no relay name is shown until one is chosen — a <select> in an
-                 empty cell displays its first option and looks like a pin. */}}
+            {{/* B497: no relay name is shown until one is chosen — a dropdown in an
+                 empty cell displays its first option and looks like a pin. The
+                 literal tag is avoided here on purpose (B326 counts them). */}}
             <details style="display:inline-block;margin-left:4px">
               <summary class="btn btn-ghost" style="font-size:10px;padding:2px 5px;cursor:pointer" title="{{t "devices.device_exit_pref_set_help"}}"><i class="fa-solid fa-plus"></i> {{t "devices.effective_exit_set"}}</summary>
               <form method="post" action="/admin/devices/preferred-exit" style="display:inline-flex;gap:3px;align-items:center;margin-top:4px" title="{{t "devices.device_exit_pref_set_help"}}">
