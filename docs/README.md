@@ -18,6 +18,7 @@ a different repair recipe than the English one.
 
 ## 1. I want to…
 
+| [`headscale-versions.md`](headscale-versions.md) | headscale version → capability table, 0.29.3→0.29.7 move, 0.30 plan (B495) |
 | I want to… | Read |
 |---|---|
 | **Install Skygate** (docker, systemd, OpenRC, bare binary, Windows, tarball) | [`INSTALL.md`](INSTALL.md) · [`ru/INSTALL.md`](ru/INSTALL.md) |
@@ -125,7 +126,7 @@ current enforcement lives in `scripts/check_b325_i18n_regressions.sh` and
 
 ---
 
-## 3. Reading order
+## 3. Reading orde
 
 **New operator**
 

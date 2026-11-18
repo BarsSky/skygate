@@ -32,7 +32,8 @@ cd "$ROOT" || exit 1
 
 LIB="internal/headscale/compat_b495.go"
 TEST="internal/headscale/compat_b495_test.go"
-MAIN="cmd/skygate/main.go"
+# the BOOT WIRING lives in the cmd/skygate package; read the SURFACE (B339), never one file
+MAIN_GLOB="cmd/skygate/*.go"
 DOC="docs/headscale-versions.md"
 RM="docs/ROADMAP.md"
 
@@ -88,14 +89,20 @@ tout="$(go test ./internal/headscale/ -run 'B495' -count=1 2>&1)"; trc=$?
 if [ "$trc" -eq 0 ]; then ok "D3: the capability tests pass here"; else bad "D3: the capability tests fail: $(printf '%s' "$tout" | tail -2 | tr '\n' ' ')"; fi
 
 # ═══════════════ E. the boot log ═══════════════
-case "$(cat "$MAIN")" in
-    *'headscale-capabilities:'*) ok "E1: the boot log states the capabilities" ;;
-    *) bad "E1: the journal cannot answer 'can this daemon do X'" ;;
-esac
-case "$(cat "$MAIN")" in
-    *'CapabilitiesFor(hsVer.Version)'*) ok "E2: it is computed from the DETECTED version" ;;
-    *) bad "E2: the log does not use the detected version" ;;
-esac
+# shellcheck source=lib/gosurface.sh
+. "$(dirname "$0")/lib/gosurface.sh"
+gosurface BOOT_SURFACE $MAIN_GLOB
+MAIN_TS="${BOOT_SURFACE:-}"
+if [ -n "$MAIN_TS" ] && [ -f "$MAIN_TS" ] && grep -q 'headscale-capabilities:' "$MAIN_TS" 2>/dev/null; then
+    ok "E1: the boot log states the capabilities"
+else
+    bad "E1: the journal cannot answer 'can this daemon do X' (searched the cmd/skygate surface)"
+fi
+if [ -n "$MAIN_TS" ] && [ -f "$MAIN_TS" ] && grep -q 'CapabilitiesFor(hsVer.Version)' "$MAIN_TS" 2>/dev/null; then
+    ok "E2: it is computed from the DETECTED version"
+else
+    bad "E2: the log does not use the detected version"
+fi
 
 # ═══════════════ F/G. the docs ═══════════════
 if [ -f "$DOC" ]; then ok "F1: docs/headscale-versions.md exists"; else bad "F1: no headscale-versions guide"; fi
