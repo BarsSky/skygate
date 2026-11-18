@@ -2227,6 +2227,9 @@ func main() {
 	hsVer := hs.DetectServerVersion(ctx)
 	if hsVer.Found() {
 		log.Printf("headscale-version: running headscale is %s (via %s)", hsVer.Version, hsVer.Via)
+		// B495: the capability table, so the journal answers "can this daemon do X" without anybody
+		// re-deriving it from a version number. TD-5/RR-5 (per-user DNS) is gated on ExtraRecords.
+		log.Printf("headscale-capabilities: %s", headscale.CapabilitiesFor(hsVer.Version).Summary())
 		if cfg.HeadscaleVersionPin != "" &&
 			headscale_version.CompareSemver(hsVer.Version, cfg.HeadscaleVersionPin) != 0 {
 			log.Printf("headscale-version: MISMATCH — SKYGATE_HEADSCALE_VERSION_PIN says %q but the daemon answered %s; the DETECTED version is used for the update comparison (fix or clear the pin)",
