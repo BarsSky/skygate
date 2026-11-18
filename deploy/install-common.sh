@@ -1084,6 +1084,41 @@ enable_and_start_service() {
     else
         echo "WARN: service $service_name failed to start. Check: journalctl -u $service_name" >&2
     fi
+    # B490 (TD-38): the maintenance page is part of the INSTALL, not a hand-made
+    # fix on one host. The 2026-11-15 migration installed it by hand, so a rebuilt
+    # host would serve a bare 502 during every update instead of the page B485
+    # exists to show. Non-fatal on purpose: a panel without Caddy is a legitimate
+    # shape, and a maintenance page must never be a reason an install fails.
+    install_maintenance_page
+}
+
+# install_maintenance_page: install the B485 page when this host runs Caddy.
+#
+# WHERE THE FILES GO AND WHY (measured, B485): the page lives under
+# /etc/caddy/maintenance (0755) and NOT under the data directory — a Caddy
+# running as its own user could not read a 0750 skygate-owned directory, the
+# `import` failed and the WHOLE site went down for ~90 seconds.
+install_maintenance_page() {
+    local src_dir="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+    local installer="${src_dir}/install-maintenance-page.sh"
+    [ "${SKYGATE_INSTALL_MAINTENANCE_PAGE:-1}" = "1" ] || {
+        echo "[install] maintenance page: skipped (SKYGATE_INSTALL_MAINTENANCE_PAGE=0)"
+        return 0
+    }
+    if [ ! -f "$installer" ]; then
+        echo "[install] maintenance page: installer not found next to install-common.sh — skipped"
+        return 0
+    fi
+    if ! command -v caddy >/dev/null 2>&1 && [ ! -d /etc/caddy ]; then
+        echo "[install] maintenance page: no Caddy on this host — skipped (install it later with deploy/install-maintenance-page.sh)"
+        return 0
+    fi
+    if bash "$installer" --caddyfile /etc/caddy/Caddyfile --dest /etc/caddy/maintenance; then
+        echo "[install] maintenance page installed (/etc/caddy/maintenance, imported by the panel site)"
+    else
+        echo "WARN: maintenance page install failed — during an update the proxy will show its own error page" >&2
+    fi
+    return 0
 }
 
 # print_next_steps: tell the operator what to do after the

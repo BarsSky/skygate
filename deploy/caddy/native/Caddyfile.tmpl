@@ -1,0 +1,62 @@
+# ============================================================================
+# Caddyfile — NATIVE (systemd) Skygate install
+#
+# Rendered by deploy/install-caddy-native.sh from this template. It reproduces
+# the reverse-proxy shape the 2026-11-15 host migration created BY HAND on the
+# production panel host: after that host is rebuilt, nothing in the repository
+# could recreate it (TD-38).
+#
+# Placeholders are delimited by double at-signs on BOTH sides (so they cannot be
+# confused with Caddy's own {placeholders}, which this file uses a lot). The
+# installer refuses to write a file in which any placeholder survives, and it
+# checks comment lines too — which is why this paragraph never spells one out.
+#
+# MEASURED TRAPS — each one cost real time, do not "simplify" them away:
+#
+#  1. headscale 0.29.3 speaks HTTP/1.1 on its plain socket (the ts2021 control
+#     channel is HTTP/1.1 + Upgrade). `transport http { versions h2c }` makes
+#     Caddy answer 502 to EVERY request, so the headscale block stays a plain
+#     reverse_proxy with no transport block.
+#  2. headscale fetches its OIDC issuer AND the skygate derpmap URL at STARTUP
+#     and refuses to boot while either answers 5xx. The panel must therefore be
+#     reachable BEFORE headscale starts; on the migration host this deadlock
+#     stopped BOTH services for a while.
+#  3. The DERP relay has its OWN name and its own certificate (SNI must match
+#     derper's --hostname). Proxying /derp* under the panel's name breaks the
+#     relay, and the internal hop verifies against that same name, hence
+#     tls_server_name.
+#  4. The maintenance page (B485) is two files, not one:
+#      - maintenance.caddy      → imported INSIDE the panel site (handle_errors)
+#      - maintenance-server.caddy → a top-level loopback static server that the
+#        error handler reverse-proxies to. `file_server` used directly inside
+#        handle_errors answers an EMPTY body, and the proxied request keeps its
+#        Host unless `header_up Host` is pinned — both measured.
+# ============================================================================
+@@ACME_EMAIL_LINE@@
+@@PANEL_HOST@@ {
+	encode zstd gzip
+	import @@MAINTENANCE_DIR@@/maintenance.caddy
+	reverse_proxy 127.0.0.1:@@PANEL_PORT@@ {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+		transport http {
+			# The panel streams (SSE / long polls) and some admin actions take
+			# minutes; the default 30s read timeout cut them off mid-response.
+			read_timeout 130s
+			write_timeout 130s
+		}
+	}
+}
+
+# headscale: plain HTTP/1.1 to loopback — see trap 1.
+@@HEADSCALE_HOST@@ {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:@@HEADSCALE_PORT@@
+}
+@@DERP_SITE@@
+
+# Skygate maintenance page (B485): the loopback static server the panel's error
+# handler proxies to. Must stay LAST and top-level — see trap 4.
+import @@MAINTENANCE_DIR@@/maintenance-server.caddy
