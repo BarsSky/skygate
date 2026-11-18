@@ -31,7 +31,26 @@
 # Escape hatch: SKYGATE_SKIP_DOCKER_GATE=1 forces the gate off (run the check
 # even without docker — for debugging what the check itself does).
 
-if [ -z "${SKYGATE_SKIP_DOCKER_GATE:-}" ] && ! docker info >/dev/null 2>&1; then
+# B489 (2026-11-17): a NATIVE (systemd) install needs no docker daemon to answer its own live-state
+# questions, and the production host has been native since the 2026-11-15 migration. Measured on it
+# right after v1.5.233 shipped: the library answered kind=native and one check verified all 5 users,
+# while three siblings still printed this guard's SKIP line — the docker guard fired BEFORE the
+# live-stack guard could ask the real question. The shape question stays in ONE place (live_db.sh).
+_sidn_self="${BASH_SOURCE[0]:-$0}"
+case "$_sidn_self" in
+    */*) _sidn_dir="${_sidn_self%/*}" ;;
+    *)   _sidn_dir="." ;;
+esac
+_sidn_kind=""
+if [ -f "$_sidn_dir/live_db.sh" ]; then
+    # shellcheck source=/dev/null
+    . "$_sidn_dir/live_db.sh"
+    _sidn_kind="$(live_kind)"
+fi
+
+if [ "$_sidn_kind" != "native" ] \
+   && [ -z "${SKYGATE_SKIP_DOCKER_GATE:-}" ] \
+   && ! docker info >/dev/null 2>&1; then
     echo "SKIP: docker daemon not reachable — this check inspects the live docker stack; run it on the skygate VM (SKYGATE_SKIP_DOCKER_GATE=1 to override)"
     exit 0
 fi

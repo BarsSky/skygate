@@ -13,7 +13,7 @@
 # 2026-09-12 (B243 follow-up investigation): the live VM has 2 rows in
 # node_owner_map with headscale_user_id=2147455555 (overflow int).
 # The MAX valid headscale_user_id is 86 (int32 / int64 ceiling), so
-# 2147455555 is impossible — it must be a bug where some Go integer
+# 2147455555 is impossible — it must be a bug where some Go intege
 # (probably a sentinel / uninitialized value) overflowed. The portal
 # can't filter these rows out cleanly because their headscale_user_id
 # doesn't match any real headscale user, so ACL generation silently
@@ -29,7 +29,7 @@
 #   - Rows with headscale_user_id > 100000 or otherwise
 #     impossible / overflowed.
 #
-# This B-check does NOT clean up — it just reports. The operator
+# This B-check does NOT clean up — it just reports. The operato
 # must decide whether to delete the row (manual DELETE) or fix the
 # underlying bug that created it.
 #
@@ -47,15 +47,15 @@ CONTAINER="${SKYGATE_CONTAINER:-skygate-skygate-1}"
 PG_CONTAINER="${SKYGATE_PG_CONTAINER:-skygate-pg-local}"
 HEADSCALE_CONTAINER="${HEADSCALE_CONTAINER:-headscale}"
 
-for c in "$CONTAINER" "$PG_CONTAINER" "$HEADSCALE_CONTAINER"; do
-    if ! sudo -n docker inspect "$c" >/dev/null 2>&1; then
-        # B281 (2026-09-22): absent live dependency = SKIP, never FAIL
-        # (AGENTS.md §1.1). The old `exit 2` was read by the catalog as a
-        # failure on every CI run, where no stack exists at all.
-        echo "  SKIP  $c container not running (live check — run it on the skygate host)"
-        exit 0
-    fi
-done
+LIVE_KIND="$(live_kind)"
+if [ "$LIVE_KIND" = "none" ]; then
+    # B281 (2026-09-22): absent live dependency = SKIP, never FAIL (AGENTS.md §1.1).
+    # B489 (2026-11-17): the precondition is the INSTALLATION, not three docker containers. The old
+    # loop ran `docker inspect` three times, so a native (systemd) host answered SKIP here even though
+    # the DB read below works there — measured on the production host after v1.5.233.
+    echo "  SKIP  no live installation on this host (live check — run it on the host that serves the tailnet)"
+    exit 0
+fi
 
 # ── live headscale user IDs (string set, comma-joined for SQL) ──
 HS_IDS=$(live_headscale users list -o json 2>/dev/null \

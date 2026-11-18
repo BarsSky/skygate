@@ -7,7 +7,7 @@
 . "$(dirname "$0")/lib/skip_if_no_live_stack.sh"
 . "$(dirname "$0")/lib/live_db.sh"
 # check_b_reconcile_audit_writes.sh — verify the reconcile cron writes
-# audit_log rows that survive a subsequent SELECT (regression test for
+# audit_log rows that survive a subsequent SELECT (regression test fo
 # the B243 SQLSTATE 42601 bug).
 #
 # 2026-09-12 (B243): pre-B243, writeAudit + writeAuditRaw used
@@ -51,17 +51,23 @@ set -uo pipefail
 CONTAINER="${SKYGATE_CONTAINER:-skygate-skygate-1}"
 PG_CONTAINER="${SKYGATE_PG_CONTAINER:-skygate-pg-local}"
 
-# B281 (2026-09-22): no container = absent live dependency = SKIP, never FAIL
-# (AGENTS.md §1.1). This check RESTARTS skygate to fire the reconcile cron, so
-# it can only ever run on the operator's own host — on CI it must SKIP.
-if ! sudo -n docker inspect "$CONTAINER" >/dev/null 2>&1; then
-    echo "  SKIP  $CONTAINER container not running (live check — restart-based, run it on the skygate host)"
-    exit 0
-fi
-if ! sudo -n docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
-    echo "  SKIP  $PG_CONTAINER container not running (live check — run it on the skygate host)"
-    exit 0
-fi
+# B281 (2026-09-22): absent live dependency = SKIP, never FAIL (AGENTS.md §1.1). This check RESTARTS
+# skygate to fire the reconcile cron and then polls DOCKER's health view, so it can only run where the
+# panel is a container.
+# B489 (2026-11-17): say WHICH limitation is responsible. It used to answer "container not running",
+# which on a native (systemd) host is true but useless — the panel was running fine. The other fou
+# live checks read the installation through lib/live_db.sh and DO run natively.
+case "$(live_kind)" in
+    docker) : ;;
+    native)
+        echo "  SKIP  restart-based: this check restarts the panel CONTAINER and polls docker health; on this native (systemd) install run systemctl restart skygate yourself and watch /healthz (the DB/policy live checks do run natively)"
+        exit 0
+        ;;
+    *)
+        echo "  SKIP  no live installation on this host (live check — restart-based, needs the containerised panel)"
+        exit 0
+        ;;
+esac
 
 # ── detect backend ──
 LIVE_DB=$(live_db_dsn)

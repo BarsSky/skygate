@@ -59,15 +59,15 @@ ok()  { echo "  PASS  $*"; }
 bad() { echo "  FAIL  $*"; }
 warn(){ echo "  WARN  $*"; }
 
-for c in "$HEADSCALE_CONTAINER" "$PG_CONTAINER"; do
-    # B281 (2026-09-22): absent live dependency = SKIP, never FAIL
-    # (AGENTS.md §1.1) — on CI there is no headscale container, and the old
-    # `bad ...; exit 1` produced a red row that described the runner, not the code.
-    sudo -n docker inspect "$c" >/dev/null 2>&1 || {
-        echo "  SKIP  $c container not running (live check — run it on the skygate host)"
-        exit 0
-    }
-done
+# B281 (2026-09-22): absent live dependency = SKIP, never FAIL (AGENTS.md §1.1) — on CI there is no
+# headscale container, and the old `bad ...; exit 1` produced a red row that described the runner,
+# not the code.
+# B489 (2026-11-17): the dependency is the INSTALLATION, not two docker containers — the reads below
+# go through lib/live_db.sh, so a native (systemd) host can answer them.
+if [ "$(live_kind)" = "none" ]; then
+    echo "  SKIP  no live installation on this host (live check — run it on the host that serves the tailnet)"
+    exit 0
+fi
 
 # ── fetch live headscale state ──
 # Per-run scratch files (B340): a FIXED /tmp path is not writable by the next run
@@ -79,38 +79,54 @@ trap 'rm -rf "$SKY_TMP"' EXIT
 ATTR_USERS_JSON="${SKY_TMP}/attr_users.json"
 ATTR_NODES_JSON="${SKY_TMP}/attr_nodes.json"
 export ATTR_USERS_JSON ATTR_NODES_JSON
-sudo -n docker exec "$HEADSCALE_CONTAINER" headscale users list -o json 2>/dev/null > "$ATTR_USERS_JSON"
-sudo -n docker exec "$HEADSCALE_CONTAINER" headscale nodes list -o json 2>/dev/null > "$ATTR_NODES_JSON"
+live_headscale users list -o json 2>/dev/null > "$ATTR_USERS_JSON"
+live_headscale nodes list -o json 2>/dev/null > "$ATTR_NODES_JSON"
+# B489: which nodes skygate itself attributes to a portal user. Membership in headscale's
+# `tagged-devices` user is BY DESIGN for a tagged node (skygate tags every device it owns, B272),
+# so the question is never "is it in tagged-devices" but "does node_owner_map know this node".
+ATTR_MAPPED_IDS=$(live_db_sql "SELECT node_id FROM node_owner_map" 2>/dev/null | tr '\n' ',' )
+export ATTR_MAPPED_IDS
 
 echo "=== A. no node in sentinel user (id=2147455555) ==="
 SENTINEL_NODES=$(python3 << 'PYEOF'
 import json, os
 d = json.load(open(os.environ['ATTR_NODES_JSON']))
+mapped = {int(x) for x in os.environ.get('ATTR_MAPPED_IDS', '').split(',') if x.strip().isdigit()}
 n = 0
 for x in d:
     if x.get('user',{}).get('id') == 2147455555:
-        print(f"  {x['id']} {x.get('name','')} user=tagged-devices (sentinel)")
+        # B489: tagged nodes legitimately live in headscale's sentinel user (id 2147455555) and are
+        # absent from `users list`; the finding is a node nobody attributes, not the sentinel itself.
+        if int(x['id']) in mapped:
+            continue
+        print("  %s %s user=tagged-devices (sentinel) with no node_owner_map row"
+              % (x['id'], x.get('name','')))
         n += 1
-print(f"COUNT={n}")
+print("COUNT=%d" % n)
 PYEOF
 )
 echo "$SENTINEL_NODES" | grep -v "^COUNT=" | sed 's/^/  /'
 SENTINEL_COUNT=$(echo "$SENTINEL_NODES" | grep "^COUNT=" | cut -d= -f2)
 if [ "$SENTINEL_COUNT" = "0" ]; then
-    ok "no nodes in sentinel id=2147455555 (tagged-devices fallback)"
+    ok "every node in headscale's sentinel user is attributed by node_owner_map (tagged nodes live there by design)"
 else
-    bad "$SENTINEL_COUNT node(s) in sentinel user — these are NOT attributed to a real portal user"
+    bad "$SENTINEL_COUNT node(s) in the sentinel user with NO portal owner — these are NOT attributed to a real portal user"
 fi
 
+echo
 echo
 echo "=== B. no node with user.name='tagged-devices' ==="
 NAMED_NODES=$(python3 << 'PYEOF'
 import json, os
 d = json.load(open(os.environ['ATTR_NODES_JSON']))
+mapped = {int(x) for x in os.environ.get('ATTR_MAPPED_IDS', '').split(',') if x.strip().isdigit()}
 n = 0
 for x in d:
     if x.get('user',{}).get('name') == 'tagged-devices':
-        print(f"  {x['id']} {x.get('name','')} user.name=tagged-devices")
+        # B489: expected for a tagged node; a finding only when node_owner_map cannot attribute it
+        if int(x['id']) in mapped:
+            continue
+        print(f"  {x['id']} {x.get('name','')} user.name=tagged-devices (node_owner_map has no row)")
         n += 1
 print(f"COUNT={n}")
 PYEOF
@@ -118,11 +134,12 @@ PYEOF
 echo "$NAMED_NODES" | grep -v "^COUNT=" | sed 's/^/  /'
 NAMED_COUNT=$(echo "$NAMED_NODES" | grep "^COUNT=" | cut -d= -f2)
 if [ "$NAMED_COUNT" = "0" ]; then
-    ok "no nodes named 'tagged-devices'"
+    ok "every node in headscale's tagged-devices user is attributed by node_owner_map (tagged nodes belong to that user by design)"
 else
-    bad "$NAMED_COUNT node(s) named 'tagged-devices' (the fallback user — these should be re-registered under a real portal user)"
+    bad "$NAMED_COUNT node(s) sit in the tagged-devices fallback user with NO node_owner_map row — re-register them under a real portal user"
 fi
 
+echo
 echo
 echo "=== C. every node_owner_map row points at a live headscale user ==="
 HS_USER_IDS=$(python3 -c "
@@ -130,7 +147,7 @@ import json, os
 d = json.load(open(os.environ['ATTR_USERS_JSON']))
 print(','.join(str(u['id']) for u in d))
 ")
-NOM_ORPHANS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -F'|' -c "
+NOM_ORPHANS=$(live_db_sql -F'|' "
 SELECT node_id, headscale_user_id, username FROM node_owner_map
 WHERE headscale_user_id NOT IN ($HS_USER_IDS)
    OR headscale_user_id = 0
@@ -150,23 +167,29 @@ echo "=== D. every ONLINE node is attributed to a real portal user ==="
 ONLINE_UNATTRIBUTED=$(python3 << 'PYEOF'
 import json, os
 d = json.load(open(os.environ['ATTR_NODES_JSON']))
+mapped = {int(x) for x in os.environ.get('ATTR_MAPPED_IDS', '').split(',') if x.strip().isdigit()}
 n = 0
 for x in d:
     u = x.get('user', {})
     if not x.get('online'):
         continue
+    # B489: the sentinel user and the tagged-devices user are both fine as long as node_owner_map
+    # attributes the node; what matters is that SOME portal user owns it.
     if u.get('id') == 2147455555 or u.get('name') == 'tagged-devices':
-        print(f"  ONLINE node {x['id']} {x.get('name','')} has user={u.get('name','?')}(id={u.get('id','?')})")
+        if int(x['id']) in mapped:
+            continue
+        print("  ONLINE node %s %s has user=%s(id=%s) and no node_owner_map row"
+              % (x['id'], x.get('name',''), u.get('name','?'), u.get('id','?')))
         n += 1
-print(f"COUNT={n}")
+print("COUNT=%d" % n)
 PYEOF
 )
 echo "$ONLINE_UNATTRIBUTED" | grep -v "^COUNT=" | sed 's/^/  /'
 ONLINE_COUNT=$(echo "$ONLINE_UNATTRIBUTED" | grep "^COUNT=" | cut -d= -f2)
 if [ "$ONLINE_COUNT" = "0" ]; then
-    ok "every online headscale node is attributed to a real user"
+    ok "every online headscale node is attributed to a real portal user (via node_owner_map)"
 else
-    bad "$ONLINE_COUNT online node(s) attributed to the sentinel user — fix: re-register under skyadmin (or whichever portal user owns the tag)"
+    bad "$ONLINE_COUNT online node(s) with no portal owner — fix: re-register under skyadmin (or whichever portal user owns the tag)"
 fi
 
 echo

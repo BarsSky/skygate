@@ -45,16 +45,16 @@ PG_CONTAINER="${SKYGATE_PG_CONTAINER:-skygate-pg-local}"
 ok()  { echo "  PASS  $*"; }
 bad() { echo "  FAIL  $*"; exit 1; }
 
-# ── containers reachable ──
-for c in "$CONTAINER" "$HEADSCALE_CONTAINER" "$PG_CONTAINER"; do
-    # B281 (2026-09-22): absent live dependency = SKIP, never FAIL
-    # (AGENTS.md §1.1). Note `bad()` in this script exits 1, so the old form
-    # aborted the whole catalog entry with a failure on every CI run.
-    sudo -n docker inspect "$c" >/dev/null 2>&1 || {
-        echo "  SKIP  $c container not running (live check — run it on the skygate host)"
-        exit 0
-    }
-done
+# ── the installation reachable ──
+# B489 (2026-11-17): ask whether THIS host has an installation, not whether three named containers
+# exist. The old loop SKIPped on a native (systemd) host even though both reads below work there.
+LIVE_KIND="$(live_kind)"
+if [ "$LIVE_KIND" = "none" ]; then
+    # B281 (2026-09-22): absent live dependency = SKIP, never FAIL (AGENTS.md §1.1). Note `bad()`
+    # in this script exits 1, so a docker probe here aborted the catalog entry on every CI run.
+    echo "  SKIP  no live installation on this host (live check — run it on the host that serves the tailnet)"
+    exit 0
+fi
 
 # ── A. Standard tags present in live policy tagOwners ──
 # tag:public, tag:exit-node, tag:private, tag:subnet-router.
@@ -77,7 +77,7 @@ for tag in tag:public tag:exit-node tag:private tag:subnet-router; do
 done
 
 # ── B. Every tag in tagOwners maps to a real tag in use ──
-# Compare the set of tagOwners keys vs the set of tags that appear
+# Compare the set of tagOwners keys vs the set of tags that appea
 # in either node_owner_map OR device_rules (which is where
 # per-DEVICE rules store the tag they're bound to).
 #
@@ -134,7 +134,7 @@ if [ "$MISSING" = "0" ]; then
 fi
 
 # ── D. tagOwners ownership is sane ──
-# tag:dev-* tags MUST be owned by the user portion (skyadmin@ or
+# tag:dev-* tags MUST be owned by the user portion (skyadmin@ o
 # michail@ etc., NOT infra@) for per-user per-DEVICE grants.
 # B118 enforces this — re-pin here.
 echo
