@@ -143,7 +143,7 @@ var ruUpdate = map[string]string{
 	"update.scheduler_running":         "Планировщик запущен",
 	"update.scheduler_not_running":     "Планировщик НЕ запущен",
 	"update.scheduler_running_but_off": "расписание выключено — планировщик работает, но запускать ему нечего",
-	"update.scheduler_not_supported":   "Автоматическое обновление по расписанию поддерживается только для установок Docker: на этом хосте планировщик запущен, но обновиться сам не сможет — используйте ручные шаги ниже.",
+	"update.scheduler_not_supported":   "Автоматическое обновление по расписанию работает на Docker и на нативных установках (systemd, OpenRC, bare). На этом хосте тип установки не определён, поэтому планировщик запущен, но обновиться сам не сможет — используйте ручные шаги ниже.",
 	"update.scheduler_trap_title":      "Расписание включено, но планировщик не запущен.",
 	"update.scheduler_trap_body":       "Заданное время наступит, и ничего не произойдёт: настройка хранится в базе, а сам планировщик — это процесс, который сейчас не работает. Сохранение формы ещё раз не поможет — проверьте журнал контейнера (строки «update-scheduler:») и перезапустите skygate.",
 	// 2026-10-04 (B346): the PINNED RELEASE section. One tag every
@@ -276,7 +276,7 @@ var enUpdate = map[string]string{
 	"update.scheduler_running":         "Scheduler is running",
 	"update.scheduler_not_running":     "Scheduler is NOT running",
 	"update.scheduler_running_but_off": "the schedule is off — the scheduler runs, but has nothing to trigger",
-	"update.scheduler_not_supported":   "Scheduled auto-update is supported on Docker installs only: on this host the scheduler is running but cannot update by itself — use the manual steps below.",
+	"update.scheduler_not_supported":   "Scheduled auto-update works on Docker and on native installs (systemd, OpenRC, bare). This host's install kind could not be detected, so the scheduler is running but cannot update by itself — use the manual steps below.",
 	"update.scheduler_trap_title":      "The schedule is enabled but the scheduler is not running.",
 	"update.scheduler_trap_body":       "The configured time will arrive and nothing will happen: the setting lives in the database, while the scheduler is a process that is not running right now. Saving the form again will not help — check the container journal (lines starting with «update-scheduler:») and restart skygate.",
 	// 2026-10-04 (B346): the PINNED RELEASE section — see the RU map.

@@ -467,11 +467,13 @@ func (s *Service) renderUpdatePage(w http.ResponseWriter, r *http.Request, c *au
 		// been created, so nothing happened and no surface said why. The trap is
 		// exactly (schedule enabled && !scheduler armed) — the page must say so
 		// instead of implying that saving the form is enough.
-		"SchedulerArmed":        schedArmed,
-		"SchedulerArmedReason":  schedReason,
-		"SchedulerTrap":         update.SchedulerTrap(schedArmed, schedEnabled),
-		"SchedulerScheduleOff":  schedArmed && !schedEnabled,
-		"SchedulerNotSupported": installKind != update.InstallDocker,
+		"SchedulerArmed":       schedArmed,
+		"SchedulerArmedReason": schedReason,
+		"SchedulerTrap":        update.SchedulerTrap(schedArmed, schedEnabled),
+		"SchedulerScheduleOff": schedArmed && !schedEnabled,
+		// B492: the banner follows the SAME predicate as the scheduler itself (a native host is
+		// supported now; an UNDETECTED kind is the only case that still cannot self-update).
+		"SchedulerNotSupported": !update.SchedulerDrivesKind(installKind),
 		// B346 (2026-10-04): the pinned release — the ONE tag every
 		// instance orients on. PinnedRelease is "" when the operator
 		// follows the latest release (the pre-B346 behaviour), so the

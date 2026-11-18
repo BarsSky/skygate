@@ -20,9 +20,9 @@ Operations (backup, restore, disaster recovery, HA): [`docs/operations.md`](oper
 
 | Install kind (see `INSTALL.md`) | In-app `/admin/update` | Automated / scheduled | Manual fallback |
 |---|---|---|---|
-| Docker compose, built from source (A) | **Update**, **Push update** (git pull + rebuild + recreate) | ✅ scheduler (see [§4.4](#44-scheduled-auto-update-docker-only)) | [§6.1](#61-docker-compose-source-checkout) |
+| Docker compose, built from source (A) | **Update**, **Push update** (git pull + rebuild + recreate) | ✅ scheduler (see [§4.4](#44-scheduled-auto-update-docker-and-native)) | [§6.1](#61-docker-compose-source-checkout) |
 | Docker compose, prebuilt image (B/C/D) | **Pull image**, **Update** | ✅ scheduler | [§6.2](#62-docker-compose-prebuilt-image) |
-| Native systemd (E/F) | **Update** → privileged helper ([§5](#5-native-installs-systemd--openrc--bare)) | ❌ never automatic (scheduler skips native kinds) | [§6.3](#63-native-systemd) |
+| Native systemd (E/F) | **Update** → privileged helper ([§5](#5-native-installs-systemd--openrc--bare)) | ✅ scheduler since v1.5.237 (B492) → the same privileged helper | [§6.3](#63-native-systemd) |
 | Native OpenRC / Alpine (G) | **Update** → privileged helper | ❌ | [§6.4](#64-native-openrc-alpine) |
 | Bare binary (H/I) | **Update** → privileged helper | ❌ | [§6.5](#65-bare-binary) |
 | Windows service (J) | ❌ (no updater; the page shows `InstallUnknown`-style guidance) | ❌ | [§6.6](#66-windows) |
@@ -230,7 +230,7 @@ native installs.
 | **Pull image** | `POST /admin/update/pull-image` | Pulls a registry image + tag (`ghcr.io/barssky/skygate` by default) and recreates the container — much faster than the git+build path (~5–10 s warm) | Docker only |
 | **Rollback now** | `POST /admin/update/rollback` | Cancels the running job; on native installs it re-runs the helper with the **previous release tag** from the job state. A missing previous tag means "use the manual steps" | all kinds |
 | **Dismiss** | `POST /admin/update/dismiss` | Hides the update banner | all kinds |
-| **Auto-update schedule** | `POST /admin/update/schedule` | Time-of-day scheduler (HH:MM) + enable/disable, stored in the DB and re-read on every tick | Docker only (native kinds are skipped by the scheduler) |
+| **Auto-update schedule** | `POST /admin/update/schedule` | Time-of-day scheduler (HH:MM) + enable/disable, stored in the DB and re-read on every tick | Docker **and** native (systemd/OpenRC/bare); only an UNDETECTED install kind is skipped |
 
 Environment defaults for the above (the page can override the schedule at runtime):
 
@@ -304,12 +304,30 @@ curl -sS http://127.0.0.1:8080/healthz                    # confirm the build la
 Preserve `docker-compose.yml`, `go.mod` and `go.sum` across any `git checkout`
 (rule 7) — on the reference host the compose file legitimately carries local edits.
 
-### 4.4 Scheduled auto-update (Docker only)
+### 4.4 Scheduled auto-update (Docker and native)
 
 With `SKYGATE_UPDATE_SCHEDULE_ENABLED=true` (or the checkbox on the page) the
 scheduler applies the newest detected release at the configured `HH:MM`, guarded by
-the usual safety rails (a job already in flight, a failed detection, or a
-non-Docker install kind ⇒ the tick is skipped, not queued).
+the usual safety rails (a job already in flight, a failed detection, or an
+install kind that could not be detected at all ⇒ the tick is skipped, not queued).
+
+**Native installs (v1.5.237, B492).** The scheduler used to skip every non-Docker kind — on a
+systemd host that meant an armed schedule that did nothing and said so only in the journal. It now
+drives the **same privileged helper the manual button uses**: it stages `<data_dir>/update/request.props`
+with a release TAG, and the root-owned `skygate-apply-update.sh` (fired by `skygate-update.path`) owns
+stop → download → swap → restart → health check → rollback. Two consequences worth knowing:
+
+* the target must be a **release tag** (`v1.5.237`), because the helper downloads
+  `skygate-<tag>-linux-<arch>.tar.gz`. A git-describe label (`v1.5.8-36-g50d4c2d`) has nothing to
+  download, so the scheduler refuses it **before** staging anything, fails the job visibly and sends
+  the failure alert — an unattended run must not stop the panel and then 404;
+* a failed health check after the restart rolls back automatically (the helper keeps the previous
+  binary), so the worst case of an unattended update is the old version plus an alert, not a dead
+  panel.
+
+If `skygate-update.path` is not enabled on the host, a scheduled native run stages a request nobody
+applies — check `systemctl is-enabled skygate-update.path` and `systemctl is-active
+skygate-update.path`; the native installers enable it.
 
 **Native installs are never updated automatically** — systemd/OpenRC/bare require
 the explicit **Update** click, because the helper restarts the service.

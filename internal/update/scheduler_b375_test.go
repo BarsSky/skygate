@@ -676,12 +676,16 @@ func TestB375_ArmedStateIsReadableAndRaceSafe(t *testing.T) {
 // 5. the non-Docker skip is visible
 // ---------------------------------------------------------------------------
 
-// TestB375_NonDockerSkipIsLogged pins requirement (1)'s last line: the scheduled
-// path supports Docker only, and that has to be a JOURNAL FACT, not a silent
-// return. Pre-B375 the operator saw an armed, enabled schedule and an empty
-// journal.
+// TestB375_NonDockerSkipIsLogged pins requirement (1)'s last line: a kind the scheduled path cannot
+// drive has to be a JOURNAL FACT, not a silent return. Pre-B375 the operator saw an armed, enabled
+// schedule and an empty journal.
+//
+// CONTRACT RENEGOTIATED by B492 (2026-11-18): this test used to run with SKYGATE_INSTALL_KIND=systemd,
+// because the scheduler drove Docker only. Native kinds ARE driven now (that is B492's whole point),
+// so "not supported" is pinned on an UNDETECTED kind instead — the only case that still cannot
+// self-update. The positive direction lives in TestB492_NativeTickIsNotSkipped.
 func TestB375_NonDockerSkipIsLogged(t *testing.T) {
-	t.Setenv("SKYGATE_INSTALL_KIND", "systemd")
+	t.Setenv("SKYGATE_INSTALL_KIND", "not-a-known-install-kind")
 	d := b375DB(t)
 	b375SetSchedule(t, d, true, b375NowMinute(localtime.Now()))
 
@@ -706,10 +710,10 @@ func TestB375_NonDockerSkipIsLogged(t *testing.T) {
 	if !strings.Contains(out, "NOT SUPPORTED on install kind") {
 		t.Errorf("the scheduled path skipped a native install silently; log was:\n%s", out)
 	}
-	if !strings.Contains(out, "systemd") {
-		t.Errorf("the skip must NAME the detected install kind; log was:\n%s", out)
+	if !strings.Contains(out, "unknown") {
+		t.Errorf("the skip must NAME the detected install kind (an undetected one reports \"unknown\"); log was:\n%s", out)
 	}
 	if got := b375LastRunText(t, d); got != "" {
-		t.Errorf("a native install must not stamp a run: last_run=%q", got)
+		t.Errorf("an undriveable install kind must not stamp a run: last_run=%q", got)
 	}
 }

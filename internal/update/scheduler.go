@@ -120,6 +120,13 @@ type SchedulerDeps struct {
 	// B434 defect (a cancel() that fired before the goroutine ran) becomes a failing test
 	// rather than a live discovery. Nil means the real Docker upgrader.
 	NewUpgrader func(repoPath string, st *StateStore, current string) ScheduledUpgrader
+	// UpdateDir is the NATIVE staging directory — the privileged applier watches
+	// <UpdateDir>/request.props (B261/B272). Ignored on Docker. B492.
+	UpdateDir string
+	// NewNativeUpdater is the test seam for the native path. Nil means the real
+	// NativeUpgrader, which stages the request and lets the root-owned helper own
+	// stop → swap → restart → verify → rollback.
+	NewNativeUpdater func(kind InstallKind, updateDir string, st *StateStore, current string) ScheduledUpgrader
 }
 
 // ScheduledUpgrader is the one method runScheduled needs from the Docker upgrader.
@@ -134,6 +141,34 @@ func (d SchedulerDeps) newUpgrader(repoPath, current string) ScheduledUpgrader {
 	}
 	return NewDockerUpgrader(repoPath, d.State, current)
 }
+
+// newNativeUpdater returns the injected native updater or the real one (B492).
+//
+// The native path is deliberately the SAME component the manual button uses: it stages
+// <UpdateDir>/request.props and the root-owned applier does the swap. The scheduler adds no
+// privilege of its own — that is what makes an unattended update acceptable on a host where the
+// service user must not be able to rewrite its own binary.
+func (d SchedulerDeps) newNativeUpdater(kind InstallKind, current string) ScheduledUpgrader {
+	if d.NewNativeUpdater != nil {
+		return d.NewNativeUpdater(kind, d.UpdateDir, d.State, current)
+	}
+	return NewNativeUpgrader(kind, "", d.UpdateDir, "", "", d.State, current)
+}
+
+// schedulerDrivesKind reports whether the SCHEDULED path can drive this install kind (B492).
+//
+// Before this, only Docker could be updated unattended and every native host logged
+// "NOT SUPPORTED" once a slot — on the PRODUCTION host, whose install has been systemd since
+// 2026-11-15. The native kinds were never actually incapable: the manual path has staged them
+// through the privileged applier since B261; only the scheduler's guard said otherwise.
+func schedulerDrivesKind(kind InstallKind) bool {
+	return kind == InstallDocker || kind.IsNative()
+}
+
+// SchedulerDrivesKind is the exported form the PAGE uses for its warning banner (B492), so the
+// banner and the tick cannot disagree — the pre-B492 banner said "Docker only" while the guard
+// behind it also said "Docker only", and both were wrong together.
+func SchedulerDrivesKind(kind InstallKind) bool { return schedulerDrivesKind(kind) }
 
 // SchedulerCfg is the subset of config.Config the scheduler
 // needs. Defined as a struct (not the full config.Config) so
@@ -172,6 +207,12 @@ var (
 	// fixture cannot leak a writer into a directory it is about to delete.
 	scheduledRunWG sync.WaitGroup
 )
+
+// detectInstallKindFn is the injection seam for the scheduler's install-kind question (B492).
+// Production always uses DetectInstallKind; tests point it at a native kind so the SCHEDULED native
+// path can be exercised on a machine that is not itself a systemd host. A scheduler test that could
+// only ever run on the kind being tested would have missed this defect exactly as it did before.
+var detectInstallKindFn = DetectInstallKind
 
 // TickInterval is how often the scheduler checks the schedule.
 // 30s is a reasonable compromise: the operator-set HH:MM may
@@ -288,8 +329,8 @@ func tick(ctx context.Context, deps SchedulerDeps) {
 	//     scheduled path cannot drive, BEFORE the release check, so the reason
 	//     is in the journal even when GitHub is unreachable. Pre-B375 this
 	//     answer lived only inside runScheduled, which returned silently.
-	installKind := DetectInstallKind()
-	if installKind != InstallDocker {
+	installKind := detectInstallKindFn()
+	if !schedulerDrivesKind(installKind) {
 		logScheduledSkip(installKind)
 		return
 	}
@@ -359,12 +400,10 @@ func tick(ctx context.Context, deps SchedulerDeps) {
 // Telegram notification goes out on start + done/fail
 // (same pattern as the manual handlers).
 func runScheduled(ctx context.Context, deps SchedulerDeps, target string, triggeredAt time.Time) {
-	installKind := DetectInstallKind()
-	if installKind != InstallDocker {
-		// Systemd / bare / OpenRC are not yet supported by the scheduled path
-		// (same as the manual apply path). B375: this must be VISIBLE — the
-		// pre-B375 silent return left an operator with an armed, enabled
-		// schedule and no journal line explaining why nothing ran.
+	installKind := detectInstallKindFn()
+	if !schedulerDrivesKind(installKind) {
+		// B375: this must be VISIBLE — the pre-B375 silent return left an operator
+		// with an armed, enabled schedule and no journal line explaining why nothing ran.
 		logScheduledSkip(installKind)
 		return
 	}
@@ -387,6 +426,25 @@ func runScheduled(ctx context.Context, deps SchedulerDeps, target string, trigge
 	// "done" event.
 	_ = writeLastRun(deps.DB, triggeredAt)
 
+	// B492: a NATIVE install downloads the release TARBALL, so a git-describe label has nothing to
+	// download. The manual path refuses that with an actionable message BEFORE staging; the scheduler
+	// must do the same, otherwise the applier stops the service and then 404s — on an UNATTENDED run
+	// that means a panel that stays down until somebody notices. The check lives here, after the job
+	// exists, so the failure is visible on /admin/update instead of being written to nothing.
+	nativeTag := ""
+	if installKind.IsNative() {
+		nativeTag = NativeReleaseTagFor(target)
+		if nativeTag == "" {
+			msg := fmt.Sprintf("scheduled target %q has no release-tag form — the native updater downloads the release tarball (assets are published for tags like v1.5.236, not for git-describe labels or raw commits)", target)
+			deps.State.Log(LogError, msg)
+			deps.State.Fail(fmt.Errorf("scheduled target %q is not a release tag; the native updater downloads the release tarball", target))
+			if deps.Notifier != nil {
+				deps.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.update.scheduled_failed", current, target, "not a release tag"))
+			}
+			return
+		}
+	}
+
 	ctxRun, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 
 	scheduledRunWG.Add(1)
@@ -402,8 +460,14 @@ func runScheduled(ctx context.Context, deps SchedulerDeps, target string, trigge
 		// goroutine — worked on the same tree. The unit tests could not see it because they
 		// assert that a job was created, not that it was allowed to run.
 		defer cancel()
-		u := deps.newUpgrader(deps.RepoPath, current)
-		u.Run(ctxRun, target)
+		switch {
+		case installKind.IsNative():
+			// B492: stage the release tag for the privileged applier. The scheduler never
+			// runs the swap itself (no privilege), exactly like the manual native button.
+			deps.newNativeUpdater(installKind, nativeTag).Run(ctxRun, nativeTag)
+		default:
+			deps.newUpgrader(deps.RepoPath, current).Run(ctxRun, GitRefForBuildLabel(target))
+		}
 
 		finalState := deps.State.Get()
 		if deps.Notifier != nil && finalState != nil {
@@ -514,8 +578,8 @@ func ranTodayAt(hhmm string, lastRun, now time.Time) bool {
 // the scheduled path cannot drive this install kind, so an armed, enabled
 // schedule is a no-op here.
 func logScheduledSkip(kind InstallKind) {
-	log.Printf("⏰ update-scheduler: NOT SUPPORTED on install kind %q — the scheduled path runs only on Docker (%q); use /admin/update with the manual steps for this kind",
-		kind.String(), InstallDocker.String())
+	log.Printf("⏰ update-scheduler: NOT SUPPORTED on install kind %q — the scheduled path drives Docker and the native kinds (systemd/openrc/bare); this host was not detected as any of them, so use /admin/update with the manual steps",
+		kind.String())
 }
 
 // logScheduledTrigger records every firing, so the journal answers "did the

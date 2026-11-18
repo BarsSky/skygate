@@ -94,7 +94,10 @@ func wireUpdateScheduler(ctx context.Context, d *db.ResettableDB, app *handlers.
 		BuildVersion: app.BuildVersion,
 		Notifier:     schedulerNotifierSink(app.Notifier),
 		RepoPath:     cfg.RepoPath,
-		Cfg:          schedCfg,
+		// B492: the native staging directory the privileged applier watches, so a SCHEDULED
+		// update on systemd/openrc/bare stages exactly what the manual button stages.
+		UpdateDir: cfg.UpdateDir,
+		Cfg:       schedCfg,
 	})
 	if !schedActive {
 		// The scheduler exists but will not fire, because the database says so
