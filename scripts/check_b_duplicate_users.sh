@@ -5,6 +5,7 @@
 # B479: docker being reachable does not mean the STACK is running (a retired host
 # keeps the daemon and the container names). Skip when there is no live pair.
 . "$(dirname "$0")/lib/skip_if_no_live_stack.sh"
+. "$(dirname "$0")/lib/live_db.sh"
 # check_b_duplicate_users.sh — verify headscale has exactly one user per name.
 #
 # 2026-09-12 (B243 follow-up): direct regression test for the live
@@ -51,17 +52,14 @@ done
 CONTAINER="${SKYGATE_CONTAINER:-skygate-skygate-1}"
 HEADSCALE_CONTAINER="${HEADSCALE_CONTAINER:-headscale}"
 
-# ── containers reachable ──
-# B281 (2026-09-22): no container = absent live dependency = SKIP, never FAIL
-# (AGENTS.md §1.1). The header of this file already promised "skip (do not
-# fail) when the docker daemon is unreachable"; the container-level case was
-# still a FAIL, which is what fired on every CI run.
-if ! sudo -n docker inspect "$CONTAINER" >/dev/null 2>&1; then
-    echo "  SKIP  $CONTAINER container not running (live check — run it on the skygate host)"
-    exit 0
-fi
-if ! sudo -n docker inspect "$HEADSCALE_CONTAINER" >/dev/null 2>&1; then
-    echo "  SKIP  $HEADSCALE_CONTAINER container not running (live check — run it on the skygate host)"
+# ── the installation reachable ──
+# B281 (2026-09-22): no live dependency = SKIP, never FAIL (AGENTS.md §1.1).
+# B488 (TD-37): the question is now the one the check actually needs — "can THIS host answer?" — asked
+# through lib/live_db.sh, which knows the docker pair AND the native (systemd) install. The old form
+# inspected `docker inspect` twice, so a native host skipped this contract forever.
+LIVE_KIND="$(live_kind)"
+if [ "$LIVE_KIND" = "none" ]; then
+    echo "  SKIP  no running skygate+headscale docker pair and no /etc/skygate/skygate.env (live check — run it on the host that serves the tailnet)"
     exit 0
 fi
 
@@ -76,7 +74,7 @@ DUP_USERS_JSON="${SKY_TMP}/check_b_dup_users.json"
 DUP_RESULT_TXT="${SKY_TMP}/check_b_dup_result.txt"
 export DUP_USERS_JSON
 
-sudo -n docker exec "$HEADSCALE_CONTAINER" headscale users list -o json > "$DUP_USERS_JSON" 2>/dev/null
+live_headscale users list -o json > "$DUP_USERS_JSON" 2>/dev/null
 if [ ! -s "$DUP_USERS_JSON" ]; then
     echo "  FAIL  headscale users list returned empty (headscale unreachable or CLI errored)"
     exit 2
@@ -109,7 +107,7 @@ fi
 # Duplicates found — print detail + remediation hint.
 echo "  FAIL  A: headscale has duplicate user names (operator must delete the extras)"
 echo
-sed -n '2,$p' /tmp/check_b_dup_result.txt | while IFS= read -r line; do
+sed -n '2,$p' "$DUP_RESULT_TXT" | while IFS= read -r line; do
     case "$line" in
         NAME*)
             name=$(echo "$line" | awk '{print $2}')
@@ -120,9 +118,16 @@ sed -n '2,$p' /tmp/check_b_dup_result.txt | while IFS= read -r line; do
     esac
 done
 echo
-echo "  Remediation:"
-echo "    sudo docker exec $HEADSCALE_CONTAINER headscale users delete -i <duplicate-id> --force"
-echo "    (verify with: sudo docker exec $HEADSCALE_CONTAINER headscale users list)"
+echo "  Remediation: delete the extras with the headscale CLI of THIS install:"
+case "$LIVE_KIND" in
+    docker)
+        echo "    sudo docker exec $HEADSCALE_CONTAINER headscale users delete -i <duplicate-id> --force"
+        ;;
+    *)
+        echo "    sudo headscale users delete -i <duplicate-id> --force"
+        ;;
+esac
+echo "    (verify with: the same CLI, users list -o json)"
 echo
 echo "  After deleting, the B243 reconcile cron will auto-relink portal_users"
 echo "  on the next cycle (every 1h, or trigger manually via /admin/headscale/reconcile)."

@@ -20,18 +20,22 @@
 # which is exactly the failure mode rule 1 forbids: a red line must mean
 # "something regressed".
 #
-# WHY ONLY THE DOCKER SHAPE IS ACCEPTED
+# WHICH SHAPES ARE ACCEPTED
 #
-# All six checks are DOCKER-SHAPED: they shell out to `docker exec headscale …`,
-# `docker exec skygate-skygate-1 …` and read the PG container. On a NATIVE
-# (systemd) host they cannot answer their question at all, so "the stack is
-# reachable over HTTP" is NOT a sufficient condition — measured 2026-11-15 on the
-# retired host, which still forwarded `127.0.0.1:8080/healthz` and
+# B488 (TD-37) closed the docker-only assumption: the checks read the installation
+# through `lib/live_db.sh`, which knows BOTH the compose pair and the NATIVE
+# (systemd) install, so this guard asks THAT library (live_kind) instead of
+# inspecting docker itself. The library decides in ONE place, so the guard and the
+# checks cannot drift apart — drift shows up as a silent SKIP, which is the failure
+# mode rule 1 forbids.
+#
+# Why the decision is NOT taken over HTTP is unchanged and was measured 2026-11-15
+# on the retired host: it still forwarded `127.0.0.1:8080/healthz` and
 # `127.0.0.1:50444/health` through the cutover SSH tunnel to the NEW host while
-# having no containers: an HTTP probe called that a live pair and the checks went
-# on to fail on `docker exec`. The guard therefore accepts exactly the shape the
-# checks can use: the `skygate-skygate-1` AND `headscale` containers RUNNING.
-# Making the six checks install-kind aware is a separate task (docs/ru/gate-live-skip.md).
+# having no installation of its own — an HTTP probe called that a live pair and the
+# checks went on to fail on commands the host could not run. "Can this host's
+# headscale CLI and panel database answer" is the question, and only the library
+# asks it.
 #
 # USAGE (one line, right after the other lib include or the shebang):
 #
@@ -40,16 +44,28 @@
 # Escape hatch: SKYGATE_SKIP_LIVE_GATE=1 forces the guard off (run the check even
 # without a live pair — for debugging what the check itself does).
 
+# B488 (TD-37): the SHAPE question now lives in lib/live_db.sh, which also knows the NATIVE install
+# (systemd + /etc/skygate/skygate.env). The six checks that used to be docker-shaped now read the
+# installation through that library, so this guard must accept the shape they can actually use —
+# otherwise a native host keeps skipping the very contracts that verify its live state.
 _live_stack_up=0
 
-if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    if [ "$(docker inspect -f '{{.State.Running}}' skygate-skygate-1 2>/dev/null)" = "true" ] \
-       && [ "$(docker inspect -f '{{.State.Running}}' headscale 2>/dev/null)" = "true" ]; then
-        _live_stack_up=1
-    fi
+# Locate this file WITHOUT dirname: the guard is proved by a contract that runs it under a scratch
+# PATH holding no external tools, and spawning `dirname` there answered "command not found" while
+# the guard silently stopped asking (B479 A2 caught it). Parameter expansion needs no fork.
+_guard_self="${BASH_SOURCE[0]:-$0}"
+case "$_guard_self" in
+    */*) _guard_dir="${_guard_self%/*}" ;;
+    *)   _guard_dir="." ;;
+esac
+
+if [ -f "$_guard_dir/live_db.sh" ]; then
+    # shellcheck source=/dev/null
+    . "$_guard_dir/live_db.sh"
+    [ "$(live_kind)" != "none" ] && _live_stack_up=1
 fi
 
 if [ "$_live_stack_up" -eq 0 ] && [ -z "${SKYGATE_SKIP_LIVE_GATE:-}" ]; then
-    echo "SKIP: no RUNNING skygate-skygate-1 + headscale container pair on this host — this check is docker-shaped and inspects live state; run it on the host that serves the tailnet (SKYGATE_SKIP_LIVE_GATE=1 to override)"
+    echo "SKIP: no live installation on this host (no running skygate-skygate-1+headscale container pair and no /etc/skygate/skygate.env) — this check inspects live state; run it on the host that serves the tailnet (SKYGATE_SKIP_LIVE_GATE=1 to override)"
     exit 0
 fi

@@ -5,6 +5,7 @@
 # B479: skip when the STACK is not running (docker may be up while the containers
 # are stopped, e.g. on a host retired by a migration).
 . "$(dirname "$0")/lib/skip_if_no_live_stack.sh"
+. "$(dirname "$0")/lib/live_db.sh"
 # check_b_reconcile_audit_writes.sh — verify the reconcile cron writes
 # audit_log rows that survive a subsequent SELECT (regression test for
 # the B243 SQLSTATE 42601 bug).
@@ -63,7 +64,7 @@ if ! sudo -n docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
 fi
 
 # ── detect backend ──
-LIVE_DB=$(sudo -n docker exec "$CONTAINER" sh -c 'env | grep "^SKYGATE_DB=" | head -1 | cut -d= -f2-' 2>/dev/null)
+LIVE_DB=$(live_db_dsn)
 case "$LIVE_DB" in
     postgres://*|postgresql://*) BACKEND="pg" ;;
     sqlite:*|file:*|"")         BACKEND="sqlite" ;;
@@ -73,9 +74,9 @@ esac
 echo "backend=$BACKEND"
 
 # ── baseline count + most recent row timestamp ──
-BEFORE_COUNT=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+BEFORE_COUNT=$(live_db_sql \
   "SELECT COUNT(*) FROM audit_log WHERE action = 'headscale_user_reconcile'" 2>/dev/null)
-BEFORE_TS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+BEFORE_TS=$(live_db_sql \
   "SELECT COALESCE(EXTRACT(epoch FROM MAX(to_timestamp(created_at))), 0)::int FROM audit_log WHERE action = 'headscale_user_reconcile'" 2>/dev/null)
 echo "baseline: count=$BEFORE_COUNT most_recent_ts=$BEFORE_TS"
 
@@ -113,9 +114,9 @@ fi
 sleep 10
 
 # ── count again ──
-AFTER_COUNT=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+AFTER_COUNT=$(live_db_sql \
   "SELECT COUNT(*) FROM audit_log WHERE action = 'headscale_user_reconcile'" 2>/dev/null)
-AFTER_TS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+AFTER_TS=$(live_db_sql \
   "SELECT COALESCE(EXTRACT(epoch FROM MAX(to_timestamp(created_at))), 0)::int FROM audit_log WHERE action = 'headscale_user_reconcile'" 2>/dev/null)
 echo "after:    count=$AFTER_COUNT most_recent_ts=$AFTER_TS"
 
@@ -126,7 +127,7 @@ if [ "$NEW" -gt 0 ] && [ "$AFTER_TS" -gt "$BEFORE_TS" ]; then
 
     # Also check the new rows have the expected outcomes (the per-cycle
     # summary JSON should contain either "rows" or "duplicate_names").
-    HAS_VALID_DETAIL=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+    HAS_VALID_DETAIL=$(live_db_sql \
       "SELECT COUNT(*) FROM audit_log WHERE action = 'headscale_user_reconcile' AND created_at > $BEFORE_TS AND (detail LIKE '%\"rows\"%' OR detail LIKE '%\"outcome\"%' OR detail LIKE '%\"duplicate_names%')" 2>/dev/null)
     if [ "$HAS_VALID_DETAIL" -gt 0 ]; then
         echo "  PASS  B: $HAS_VALID_DETAIL new rows have valid detail JSON (rows/outcome/duplicate_names)"

@@ -5,6 +5,7 @@
 # B479: skip when the STACK is not running (docker may be up while the containers
 # are stopped, e.g. on a host retired by a migration).
 . "$(dirname "$0")/lib/skip_if_no_live_stack.sh"
+. "$(dirname "$0")/lib/live_db.sh"
 # check_b_node_owner_map_orphans.sh — verify node_owner_map integrity:
 # every (node_id) row points at a real headscale user (or is
 # deliberately orphaned with a valid reason).
@@ -57,7 +58,7 @@ for c in "$CONTAINER" "$PG_CONTAINER" "$HEADSCALE_CONTAINER"; do
 done
 
 # ── live headscale user IDs (string set, comma-joined for SQL) ──
-HS_IDS=$(sudo -n docker exec "$HEADSCALE_CONTAINER" headscale users list -o json 2>/dev/null \
+HS_IDS=$(live_headscale users list -o json 2>/dev/null \
   | python3 -c 'import json,sys; print(",".join(str(u["id"]) for u in json.load(sys.stdin)))')
 [ -n "$HS_IDS" ] || { echo "  FAIL  headscale returned no users"; exit 2; }
 echo "headscale live user IDs: $HS_IDS"
@@ -71,12 +72,12 @@ SQL="SELECT node_id, headscale_user_id, username, tag FROM node_owner_map
         OR headscale_user_id > 100000
      ORDER BY headscale_user_id, node_id"
 
-ORPHAN_ROWS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -F'|' -c "$SQL" 2>/dev/null)
+ORPHAN_ROWS=$(live_db_sql -F'|' "$SQL" 2>/dev/null)
 # ORPHAN_COUNT: strip trailing whitespace (psql -At adds \n even when empty).
 ORPHAN_COUNT=$(echo -n "$ORPHAN_ROWS" | grep -c '.' || true)
 
 if [ -z "$ORPHAN_COUNT" ] || [ "$ORPHAN_COUNT" = "0" ]; then
-    TOTAL=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+    TOTAL=$(live_db_sql \
       "SELECT COUNT(*) FROM node_owner_map" 2>/dev/null)
     echo "  PASS  A: 0 orphan rows in node_owner_map (all $TOTAL rows point at live headscale users)"
     exit 0

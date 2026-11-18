@@ -3,6 +3,7 @@
 # skip (never FAIL) when the host has none — a retired host keeps its DB file and
 # its container names, so its rows describe a tailnet nobody is serving.
 . "$(dirname "$0")/lib/skip_if_no_live_stack.sh"
+. "$(dirname "$0")/lib/live_db.sh"
 . "$(dirname "$0")/lib/db_credentials.sh"
 SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 # B188.2 — per-CIDR exit-node pin (instead of catch-all pin).
@@ -49,7 +50,7 @@ SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 #  D. Per-CIDR h-rule grants for tag:dev-michail-basic that
 #     have exit_node_id='emilia' in the DB have via=[emilia]
 #     in the policy
-#  E. Per-CIDR h-rule grants for tag:dev-skyadmin-skyworker
+#  E. Per-CIDR h-rule grants for tag:dev-skyadmin-skyworke
 #     that have exit_node_id='karolina' have via=[karolina]
 #  F. Per-CIDR h-rule grants for tag:dev-michail-basic that
 #     have exit_node_id='karolina' (if any) do NOT have
@@ -74,7 +75,7 @@ SKYGATE_DB_PASSWORD="${SKYGATE_DB_PASSWORD:-$(skygate_db_password)}"
 #  T. (VM-only) live: tag:dev-michail-basic has ≥1 per-CIDR
 #     (h-rule-*) grant pinned with via=[emilia]. (Before
 #     2026-09-18 this pinned one frozen CIDR — the youtube
-#     /32 as resolved at the time — which broke whenever
+#     /32 as resolved at the time — which broke wheneve
 #     DNS changed the resolved set.)
 #  U. (VM-only) live: skyworker h-rules have via=[karolina]
 #     (not via=[emilia] — correct per-device pref)
@@ -100,11 +101,11 @@ FAIL=0
 # B437 (2026-10-28) — the checkout is OVERRIDABLE. The old line hardcoded the
 # reference host's /home/skyadmin/skygate, so on any other host (or from a scratch
 # clone) these contracts read ANOTHER tree than the one under test — measured on
-# 2026-10-28, when B188.3 J ran the operator's v1.5.184 scripts while the tree under
+# 2026-10-28, when B188.3 J ran the operator's v1.5.184 scripts while the tree unde
 # test was a fresh clone, and reported a failure of code it never looked at.
 # The checkout under test is the one this script LIVES IN. The old fallback preferred
 # /home/skyadmin/skygate whenever it existed, which defeated the point: on the reference
-# host a run from a scratch clone at the shipped tag still inspected the operator's older
+# host a run from a scratch clone at the shipped tag still inspected the operator's olde
 # tree — measured twice on 2026-10-28 (J reported a failure of code it never looked at,
 # and the full catalog run from a v1.5.188 clone went red on scripts from v1.5.184).
 if [ -n "${SKYGATE_REPO:-}" ]; then REPO="$SKYGATE_REPO"
@@ -262,7 +263,7 @@ fi
 # does NOT have via=[emilia]. The B188 catch-all pin is gone.
 if [ -d /home/skyadmin/skygate ]; then
   if command -v docker >/dev/null 2>&1; then
-    S=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
+    S=$(live_headscale policy get -o json 2>/dev/null | python3 -c '
 import json, sys
 try:
     pol = json.load(sys.stdin)
@@ -299,7 +300,7 @@ print(n)
     # karolina was evicted by a single transient SSH timeout: the pins moved to
     # emilia/shardlotta and then back to karolina after its recovery, so a frozen relay
     # name fails on a perfectly healthy tailnet whenever the assignment legitimately
-    # moves (measured: T red on the 2026-10-05 gate run while the ACL was correct for
+    # moves (measured: T red on the 2026-10-05 gate run while the ACL was correct fo
     # the table it followed). What B188.2 really guarantees — and what catches the B276
     # bug class (a pin naming a relay that owns nothing) — is that the CONTROL plane
     # and the DATA plane agree: EVERY per-CIDR pin for the device names that prefix's
@@ -309,7 +310,7 @@ print(n)
       echo "  SKIP [T-per-cidr-pins-name-the-owner] $(skygate_live_db_reason)"
     else
       T_OWNERS=$(skygate_live_db_query "SELECT prefix || '|' || exit_node_id FROM prefix_owner" | tr -d '\r')
-      T=$(T_OWNERS="$T_OWNERS" docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
+      T=$(T_OWNERS="$T_OWNERS" live_headscale policy get -o json 2>/dev/null | python3 -c '
 import json, os, sys
 owners = {}
 for line in (os.environ.get("T_OWNERS") or "").splitlines():
@@ -380,7 +381,7 @@ print("good=%d bad=%s unexplained=%d" % (good, bad[:3], unexplained))
     U_RULES=$(skygate_live_db_query \
       "SELECT po.exit_node_id || '|' || count(*) FROM device_rules dr JOIN prefix_owner po ON po.prefix = dr.target_value WHERE dr.device_hostname = 'skyworker' AND dr.enabled = 1 AND dr.target_type IN ('subnet','ip') GROUP BY po.exit_node_id" \
       | tr -d ' \r' | sort)
-    U_GRANTS=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
+    U_GRANTS=$(live_headscale policy get -o json 2>/dev/null | python3 -c '
 import json, sys
 try:
     pol = json.load(sys.stdin)
@@ -437,7 +438,7 @@ except Exception:
     # V. Live: a71 (per-device pref=emilia, no matching per-CIDR
     # rules) has exactly one via-bearing grant — the conditional
     # B265 catch-all pin.
-    V=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
+    V=$(live_headscale policy get -o json 2>/dev/null | python3 -c '
 import json, sys
 try:
     pol = json.load(sys.stdin)
@@ -454,7 +455,7 @@ print(n)
     # B265 wrote this as "exactly one": a71 had a per-device pref and no matching
     # per-CIDR rules, so the conditional catch-all was its only via-bearing grant.
     # B437 derives it instead — a71 has NO `device_exit_node_prefs` row at all on the
-    # reference deployment today, so the correct count is 0, and the moment an operator
+    # reference deployment today, so the correct count is 0, and the moment an operato
     # pins a71 the same helper answers 1 without a code change.
     if ! skygate_live_db_probe; then
       echo "  SKIP [V-a71-pin-matches-the-generator-rule] $(skygate_live_db_reason)"
@@ -471,7 +472,7 @@ print(n)
     # invariant is now "exactly the devices that asked for a pin have
     # one" — that is what enforces the preferred exit node on tagged
     # devices while leaving everybody else free.
-    W=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
+    W=$(live_headscale policy get -o json 2>/dev/null | python3 -c '
 import json, sys
 try:
     pol = json.load(sys.stdin)
@@ -534,7 +535,7 @@ print(n)
     if skygate_live_db_probe; then
       X_RULE_COUNT=$(skygate_live_db_query \
         "SELECT COUNT(*) FROM device_rules WHERE user_id=6 AND device_id=29 AND exit_node_id='emilia' AND enabled=1 AND target_type IN ('subnet', 'ip')")
-      X_GRANTS=$(docker exec headscale headscale policy get -o json 2>/dev/null | python3 -c '
+      X_GRANTS=$(live_headscale policy get -o json 2>/dev/null | python3 -c '
 import json, sys
 try:
     pol = json.load(sys.stdin)

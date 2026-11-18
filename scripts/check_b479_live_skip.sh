@@ -69,7 +69,12 @@ fi
 # Behavioural: with no docker and no curl on PATH the guard must SKIP and exit 0.
 # A scratch PATH holding only the tools the guard itself uses (bash builtins do the
 # rest) keeps this honest without mocking the real environment.
-OUT="$(env PATH="$SKY_TMP/bin" /bin/bash -c '. ./scripts/lib/skip_if_no_live_stack.sh' 2>&1)"; rc=$?
+# B488 (TD-37) renegotiates these two cases: the guard now asks lib/live_db.sh, so "no live stack"
+# also means "no native install" — on the PRODUCTION host /etc/skygate/skygate.env exists and the
+# guard must NOT skip there. The override therefore pins the env file at a path that cannot exist,
+# which is what this contract has always meant by "no stack on this host".
+NOSTACK_ENV="$SKY_TMP/no-such.env"
+OUT="$(env PATH="$SKY_TMP/bin" SKYGATE_LIVE_ENV_FILE="$NOSTACK_ENV" /bin/bash -c '. ./scripts/lib/skip_if_no_live_stack.sh' 2>&1)"; rc=$?
 if [ "$rc" -eq 0 ] && case "$OUT" in SKIP:*) true;; *) false;; esac; then
   ok "A2: with no live stack the guard prints SKIP and exits 0"
 else
@@ -77,7 +82,7 @@ else
 fi
 
 # --- B: the escape hatch -----------------------------------------------------
-OUT="$(env PATH="$SKY_TMP/bin" SKYGATE_SKIP_LIVE_GATE=1 /bin/bash -c '. ./scripts/lib/skip_if_no_live_stack.sh'; echo "rc=$?")"; rc=$?
+OUT="$(env PATH="$SKY_TMP/bin" SKYGATE_LIVE_ENV_FILE="$NOSTACK_ENV" SKYGATE_SKIP_LIVE_GATE=1 /bin/bash -c '. ./scripts/lib/skip_if_no_live_stack.sh'; echo "rc=$?")"; rc=$?
 if case "$OUT" in SKIP:*) false;; *) true;; esac && case "$OUT" in *"rc=0"*) true;; *) false;; esac; then
   ok "B1: SKYGATE_SKIP_LIVE_GATE=1 lets the check run (the guard cannot hide a finding)"
 else

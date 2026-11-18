@@ -5,6 +5,7 @@
 # B479: skip when the STACK is not running (docker may be up while the containers
 # are stopped, e.g. on a host retired by a migration).
 . "$(dirname "$0")/lib/skip_if_no_live_stack.sh"
+. "$(dirname "$0")/lib/live_db.sh"
 # check_b_tag_owners.sh — verify ACL policy tagOwners coverage
 #
 # Phase 7 of [auto-deploy-test-plan.md](../auto-deploy-test-plan.md)
@@ -60,7 +61,7 @@ done
 # These are the standard B111 canonical tags. Missing = broken ACL.
 echo
 echo "=== A. standard tags in live policy tagOwners ==="
-TAGOWNERS=$(sudo -n docker exec "$HEADSCALE_CONTAINER" headscale policy get -o json 2>/dev/null \
+TAGOWNERS=$(live_headscale policy get -o json 2>/dev/null \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(d.get("tagOwners",{}).keys()))')
 for tag in tag:public tag:exit-node tag:private tag:subnet-router; do
     # B388: was `echo " $TAGOWNERS " | grep -q " $tag "` — an echo of a VARIABLE piped into
@@ -87,9 +88,9 @@ done
 #   - AND don't appear in node_owner_map or device_rules
 echo
 echo "=== B. tagOwners keys map to real tags (no orphans) ==="
-NOM_TAGS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+NOM_TAGS=$(live_db_sql \
   "SELECT DISTINCT tag FROM node_owner_map WHERE tag <> ''" 2>/dev/null)
-DEVICE_TAGS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+DEVICE_TAGS=$(live_db_sql \
   "SELECT DISTINCT target_tag FROM device_rules WHERE target_tag <> '' AND target_type='subnet'" 2>/dev/null)
 USED_TAGS="$NOM_TAGS
 $DEVICE_TAGS"
@@ -138,7 +139,7 @@ fi
 # B118 enforces this — re-pin here.
 echo
 echo "=== D. tag:dev-* ownership (skyadmin/michail/infra per B118) ==="
-OWNERS=$(sudo -n docker exec "$HEADSCALE_CONTAINER" headscale policy get -o json 2>/dev/null \
+OWNERS=$(live_headscale policy get -o json 2>/dev/null \
   | python3 -c '
 import json,sys
 d = json.load(sys.stdin)
@@ -151,7 +152,7 @@ for tag, owners in sorted(to.items()):
 if [ -z "$OWNERS" ]; then
     bad "no tag:dev-* entries in tagOwners"
 else
-    PSQL_USERS=$(sudo -n docker exec "$PG_CONTAINER" psql -U admin -d skygate_staging -At -c \
+    PSQL_USERS=$(live_db_sql \
         "SELECT username FROM portal_users WHERE username <> ''" 2>/dev/null | paste -sd'|' -)
     [ -n "$PSQL_USERS" ] || PSQL_USERS='skyadmin|michail|guest|daniil|infra'
     echo "$OWNERS" | while IFS=' ' read -r tag owner_json; do
