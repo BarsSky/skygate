@@ -325,6 +325,14 @@ stop → download → swap → restart → health check → rollback. Two conseq
   binary), so the worst case of an unattended update is the old version plus an alert, not a dead
   panel.
 
+**Which clock does `08:00` mean?** The PANEL's timezone, not the host's. It is the `timezone`
+setting (`global_settings.timezone`, shown and edited in the UI), and `00:00` in it is the boundary of
+the "already ran today" guard. Measured 2026-11-18 on the production host: the system clock is
+`Etc/UTC` while the panel's setting is `Europe/Moscow`, and the journal's 05:08 UTC skip lines were
+08:08 MSK — i.e. the 08:00 slot was being evaluated in Moscow time, exactly as the operator set it. If
+you ever want the slot to follow the host clock instead, change the panel's timezone setting — moving
+`/etc/localtime` changes nothing for the scheduler.
+
 If `skygate-update.path` is not enabled on the host, a scheduled native run stages a request nobody
 applies — check `systemctl is-enabled skygate-update.path` and `systemctl is-active
 skygate-update.path`; the native installers enable it.

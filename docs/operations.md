@@ -1888,6 +1888,29 @@ through `scripts/gate_with_pg.sh` — the same runner documented below, so the s
 applies. The job fails if the catalog's own banner does not read `PostgreSQL coverage: enabled`, which
 is what stops a silent fallback to SQLite from looking green.
 
+**A dedicated PostgreSQL test box on the LAN (operator's choice, 2026-11-18).** The operator keeps one
+LAN machine with PostgreSQL installed for exactly one purpose: to see how the panel behaves on PG
+without putting a database server on the production host. Nothing in production points at it. Two ways
+to use it, neither of which needs a code change:
+
+```bash
+# a) the tests + the catalog, against a THROWAWAY database on that box
+#    (gate_with_pg.sh refuses a database whose name does not look like a scratch one)
+SKYGATE_TEST_PG_DSN='postgres://skygate:pw@<LAN_HOST>:5432/skygate_pgtest?sslmode=disable' \
+  bash scripts/gate_with_pg.sh
+
+# b) a STAGING panel instance pointed at it end to end —
+#    a separate data dir + port, so the real one is untouched
+sudo -u skygate env SKYGATE_DB='postgres://skygate:pw@<LAN_HOST>:5432/skygate_staging?sslmode=disable' \
+  SKYGATE_PORT=8082 SKYGATE_DATA_DIR=/var/lib/skygate-staging /usr/local/bin/skygate
+```
+
+The panel applies BOTH migration chains on boot, so starting a staging instance against that database
+is the honest test of the PG chain: if a table, index or column is missing there, the instance fails to
+start instead of serving a half-migrated schema. Afterwards drop the throwaway database — never point
+the staging instance at a database you care about, because the migrations are not reversible (rule 11:
+no destructive DDL, but also no down-migrations).
+
 To run it locally against a database you own (anything reachable — it does not have to live on the gate
 host):
 
