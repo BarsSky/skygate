@@ -51,6 +51,7 @@ import (
 	"skygate/internal/db"
 	"skygate/internal/devicedelete"
 	"skygate/internal/devicemeta"
+	"skygate/internal/exitpin"
 	"skygate/internal/feature/exit_rules"
 	"skygate/internal/headscale"
 	"skygate/internal/nodeownership"
@@ -97,6 +98,10 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	deviceExitPrefMap := make(map[string]string, len(deviceExitPrefs))
 	deviceExitViaMap := make(map[string]bool, len(deviceExitPrefs))
 	deviceExitOptedOutMap := make(map[string]bool, len(deviceExitPrefs))
+	// B497: the ROW, not only its tag — the effective-pin computation needs
+	// `set_by_user_id` (B398: a derived preference must not become a filter), and
+	// it must be looked up for the device's OWN owner, never by hostname alone.
+	devicePrefRowByKey := make(map[string]db.DeviceExitNodePref, len(deviceExitPrefs))
 	skygateUserByName := make(map[string]int64, len(users))
 	for _, u := range users {
 		if u.Name != "" {
@@ -131,7 +136,8 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		if dp.DeviceHostname == "" {
 			continue
 		}
-		key := strconv.FormatInt(dp.UserID, 10) + ":" + strings.ToLower(dp.DeviceHostname)
+		key := b497PrefKey(dp.UserID, dp.DeviceHostname)
+		devicePrefRowByKey[key] = dp
 		deviceExitPrefMap[key] = dp.ExitNodeTag
 		deviceExitViaMap[key] = dp.ViaEnabled
 		// B399: the operator removed this device's preference BY HAND, so the engine
@@ -162,8 +168,20 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 
 	userExitPrefs, _ := db.ListAllUserExitNodePrefs(s.dbc())
 	userExitPrefMap := make(map[string]string, len(userExitPrefs))
+	userPrefRowByUID := make(map[int64]db.ExitNodePref, len(userExitPrefs))
 	for _, ep := range userExitPrefs {
 		userExitPrefMap[strconv.FormatInt(ep.UserID, 10)] = ep.ExitNodeTag
+		userPrefRowByUID[ep.UserID] = ep
+	}
+
+	// B497: the effective exit-node decision, from the SAME predicates the ACL
+	// generator applies (package exitpin), so the page stops showing a stored
+	// preference as if the policy used it. The relay states come from the
+	// exit-node monitor's snapshot — the same table and the same predicate the
+	// ACL reads (B356), so the badge and the policy answer with one measurement.
+	healthRows, healthErr := db.ListExitNodeHealth(s.dbc())
+	if healthErr != nil {
+		log.Printf("[devices] exit-node health lookup: %v (pins are rendered as unmeasured, exactly as the ACL treats them)", healthErr)
 	}
 
 	// 2026-07-29: per-device OS + device_type lookup
@@ -190,7 +208,18 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		headscale.NodeView
 		OS         string
 		DeviceType string
+		// B497: what the ACL will actually do with this device's default route,
+		// and where that decision comes from. Zero value renders as «—», which is
+		// honest for a node skygate cannot attribute to any portal user.
+		Pin      exitpin.Pin
+		PinRelay string
 	}
+	hostnameToUserID := map[string]int64{}
+	for hn, uid := range skygateUserByHost {
+		hostnameToUserID[strings.ToLower(hn)] = uid
+	}
+	nodePins := b497Pins(hostnameToUserID, adminTagByHost,
+		devicePrefRowByKey, userPrefRowByUID, exitpin.RelayStates(healthRows))
 	deviceRows := make([]adminDeviceRow, 0, len(allNodes))
 	for _, n := range allNodes {
 		os, typ := osByNodeID[n.ID], typeByNodeID[n.ID]
@@ -209,8 +238,10 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 			_ = db.UpdateDeviceMetaAutoDetect(s.dbc(), n.ID, detectedOS, detectedType)
 			os, typ = detectedOS, detectedType
 		}
+		pin := nodePins[strings.ToLower(n.Hostname)]
 		deviceRows = append(deviceRows, adminDeviceRow{
 			NodeView: n, OS: os, DeviceType: typ,
+			Pin: pin, PinRelay: exit_rules.TagToHostname(pin.Tag),
 		})
 	}
 
@@ -221,30 +252,10 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	// a per-row warning with the count and a link to the
 	// device's exit-rule subset.
 	//
-	// Build (hostname → preferred host) from the per-device +
-	// per-user pref maps. Per-device wins; per-user is the
-	// fallback for devices that have no override.
-	hostnameToUserID := map[string]int64{}
-	for hn, uid := range skygateUserByHost {
-		hostnameToUserID[strings.ToLower(hn)] = uid
-	}
-	prefByHostname := map[string]string{}
-	for _, dp := range deviceExitPrefs {
-		hn := strings.ToLower(dp.DeviceHostname)
-		if hn == "" {
-			continue
-		}
-		prefByHostname[hn] = exit_rules.TagToHostname(dp.ExitNodeTag)
-	}
-	for hn, uid := range hostnameToUserID {
-		if _, has := prefByHostname[hn]; has {
-			continue
-		}
-		prefKey := strconv.FormatInt(uid, 10)
-		if v, ok := userExitPrefMap[prefKey]; ok {
-			prefByHostname[hn] = exit_rules.TagToHostname(v)
-		}
-	}
+	// B497: the comparison value comes from the resolved-owner pin map above, not
+	// from a hostname-keyed merge of every user's preferences — the old shape let
+	// one user's preference for `laptop` decide another user's `laptop`.
+	prefByHostname := b497PrefByHostname(nodePins)
 	// Walk all enabled device_rules and count dead rules per
 	// hostname.
 	allRules, _ := db.GetAllRulesForAdmin(s.dbc())
@@ -313,10 +324,15 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		// B399: per (user, hostname) "the operator removed this preference by hand",
 		// so the page can say why the cell is empty instead of looking broken.
 		"DeviceExitOptedOutMap": deviceExitOptedOutMap,
-		"AvailableExits":        exits,
-		"UserExitPrefMap":       userExitPrefMap,
-		"SkygateUserByName":     skygateUserByName,
-		"SkygateUserByHost":     skygateUserByHost,
+		// B497: the effective pin per device (lowercased hostname → exitpin.Pin),
+		// carrying the SOURCE and whether the ACL actually applies it. A template
+		// that renders only the stored row cannot tell «pinned» from «stored but
+		// ignored», which is what the operator was reading as a bug.
+		"NodePins":          nodePins,
+		"AvailableExits":    exits,
+		"UserExitPrefMap":   userExitPrefMap,
+		"SkygateUserByName": skygateUserByName,
+		"SkygateUserByHost": skygateUserByHost,
 		// 2026-08-09: v0.33.1.20 — list of portal user
 		// names for the per-row "Transfer" dropdown. The
 		// handler PostAdminDeviceTransfer takes a portal

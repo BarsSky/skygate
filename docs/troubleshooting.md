@@ -2096,3 +2096,60 @@ the exact commands, and `skygate update --target vX.Y.Z` works with the value ty
 A long reason used to overflow into the «Установка» column (the reason contains a URL with no spaces
 and a `1fr` grid track may shrink below its content); the cells now carry `min-width:0` and the reason
 `overflow-wrap:anywhere`, with its own «Проверить сейчас» button.
+
+## 17. «The panel shows a relay, but the device goes somewhere else» (B497)
+
+The exit-node column on `/admin/devices` used to render the **stored** preference and nothing else, so
+three different situations looked identical:
+
+| what the page showed | what the ACL really emitted |
+|---|---|
+| a relay name | `via: [<relay>]` on `dst: autogroup:internet` — the pin is enforced |
+| a relay name with strict mode off (`via_enabled = 0`), or a row skygate derived itself (`set_by_user_id = 0`), or a row naming an unhealthy relay, or a node with no tag | the **loose**, unpinned grant — the device may use **any** relay |
+| an empty cell | a `<select>` whose **first** `<option>` is a relay name, i.e. «pinned to emilia» on screen and «free choice» in the policy |
+
+That last row is what the operator photographed on 2026-11-19 (`olesya`, A71). Since B497 the column
+shows the **effective** decision with its source, and `internal/exitpin` derives it from the same
+predicates the generator applies — so the page and the policy cannot disagree.
+
+### Why a per-user preference does not reach a phone
+
+Every skygate device carries `tag:dev-<user>-<device>`, and headscale resolves a tagged node through
+its **tag**, never through `user@domain` (measured in B265). The per-user preference
+(`user_exit_node_prefs`) therefore only pins the grant `src: [<user>@domain]`, which matches an
+**untagged** node — in a normal skygate tailnet, none of them.
+
+The fix for ONE device is a **per-device** preference with strict mode on:
+
+```
+/admin/devices → the «Фактический exit» column → «назначить» → pick the relay → 🔒
+```
+
+That writes `device_exit_node_prefs` with `via_enabled = 1` and `set_by_user_id = <the operator>`,
+which is the only combination the generator turns into `via`. The 🎯/green badge means «applied»; a
+yellow badge names the reason it is **not**:
+
+| reason on the page | meaning |
+|---|---|
+| `the device is tagged: headscale never matches it with a user preference` | a per-user row exists, the node is tagged — it cannot apply |
+| `strict mode is off` | `via_enabled = 0` (the Android-friendly default): stored, not pinned |
+| `derived automatically, not by a human` | `set_by_user_id = 0` (B398): skygate's guess must never filter a client's choice |
+| `this exit node is unhealthy right now` | B356/B361 withheld the pin so the device keeps egress through a working relay |
+| `the device carries no tag` | no per-device grant can be emitted at all (B284) |
+| `no pin — the device chooses its own exit node` | nothing is configured; the loose grant allows any relay |
+
+`via` on an `autogroup:internet` grant is a **filter**, not a preference: once a device IS pinned,
+choosing a different exit node in the Tailscale client makes that grant unmatched and the device loses
+that traffic (this is the «emilia — нет доступа ни к чему, karolina — всё грузится» case from B398).
+Clear the pin if the device must be free to choose.
+
+### What did NOT change
+
+B497 is display-only: no decision package (`internal/acl`, `internal/prefixowner`,
+`internal/feature/exit_rules`) imports `internal/exitpin`, and `scripts/check_b497_effective_exit_pin.sh`
+contract F fails if that ever happens. Pair it with the B496 snapshot when in doubt:
+
+```bash
+bash scripts/acl_inputs_snapshot.sh --save      # before applying anything
+bash scripts/acl_inputs_snapshot.sh --diff      # 0 == «ACL INPUTS UNCHANGED»
+```

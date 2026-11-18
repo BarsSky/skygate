@@ -193,11 +193,11 @@
         <th><i class="fa-solid fa-tag"></i> {{t "devices.hostname"}}</th>
         <th><i class="fa-solid fa-user"></i> {{t "devices.user"}}</th>
         <th><i class="fa-solid fa-network-wired"></i> {{t "devices.ip"}}</th>
-        <th><i class="fa-solid fa-circle-nodes"></i> Type</th>
+        <th><i class="fa-solid fa-circle-nodes"></i> {{t "devices.meta_type_label"}}</th>
         <th><i class="fa-brands fa-windows"></i> OS / {{t "devices.meta_type_label"}}</th>
         <th><i class="fa-solid fa-eye"></i> {{t "devices.tag"}}</th>
         <th><i class="fa-solid fa-fingerprint"></i> {{t "devices.dev_tag_label"}}</th>
-        <th><i class="fa-solid fa-bullseye"></i> {{t "devices.device_exit_pref"}}</th>
+        <th title="{{t "devices.effective_exit_help"}}"><i class="fa-solid fa-bullseye"></i> {{t "devices.effective_exit"}}</th>
         <th><i class="fa-solid fa-signal"></i> {{t "devices.status"}}</th>
         <th><i class="fa-solid fa-clock"></i> {{t "devices.last_seen"}}</th>
         <th><i class="fa-solid fa-gear"></i> {{t "common.actions"}}</th>
@@ -319,21 +319,27 @@
           {{end}}
         </td>
         <td>
-          {{/* v0.28.4: per-device exit-node pref. Keyed by
-               "<skygate_user_id>:<lowercased hostname>".
+          {{/* B497: THE CELL SHOWS WHAT THE ACL DOES, NOT WHAT A TABLE STORES.
+               $pin is computed by the handler from the same predicates the
+               generator applies, so it carries the SOURCE (device / user / none)
+               and whether the policy really emits `via` for this device.
 
-               skygateUserByHost is pre-built by the handler
-               from the per-device ACL tag (tag:dev-<user>-
-               <device>) so we don't have to parse the tag
-               in Go templates. The tag-derived owner
-               survives headscale's "tagged-devices"
-               reassignment, which is why we don't use
-               n.UserName directly. */}}
+               Before B497 the cell rendered the stored row only, so:
+                 - a row with via_enabled=0 (or a derived row, or one naming a dead
+                   relay) looked exactly like a working pin;
+                 - an EMPTY cell rendered a <select> whose first <option> is a relay
+                   name, which reads as «привязано к emilia» while the ACL said
+                   «free choice». That is the image the operator sent.
+
+               The assign control therefore lives inside <details> when nothing is
+               pinned: no relay name is displayed until the operator picks one. */}}
           {{$lowerHost := tolower .Hostname}}
           {{$skygateUID := index $.SkygateUserByHost $lowerHost}}
           {{$prefKey := printf "%d:%s" $skygateUID $lowerHost}}
           {{$pref := index $.DeviceExitPrefMap $prefKey}}
           {{$viaEnabled := index $.DeviceExitViaMap $prefKey}}
+          {{$pin := .Pin}}
+          {{$pinRelay := .PinRelay}}
           {{/* B399: the operator removed this device's preference BY HAND, so the
                preferred-exit reconciler will not derive one again. Saying so is the
                difference between "an empty cell" and "a decision". */}}
@@ -341,8 +347,17 @@
           {{if $optedOut}}
             <span class="tag tag-info" title="{{t "devices.device_exit_opted_out_help"}}" style="font-size:10px"><i class="fa-solid fa-circle-pause"></i>{{t "devices.device_exit_opted_out"}}</span>
           {{end}}
+          {{if $pin.Applied}}
+            <span class="tag tag-success" title="{{t $pin.SourceKey}}{{if $pinRelay}} — {{$pinRelay}}{{end}}" style="font-size:10px"><i class="fa-solid fa-bullseye"></i><code style="font-size:10px;background:transparent">{{or $pinRelay $pin.Tag}}</code></span>
+            <span style="color:var(--text-subtle);font-size:9px;margin-left:2px">{{t $pin.SourceKey}}</span>
+          {{else if $pin.Tag}}
+            <span class="tag tag-warning" title="{{t $pin.ReasonKey}}" style="font-size:10px"><i class="fa-solid fa-circle-exclamation"></i><code style="font-size:10px;background:transparent">{{or $pinRelay $pin.Tag}}</code></span>
+            <span style="color:var(--text-subtle);font-size:9px;margin-left:2px">{{t "devices.effective_exit"}}: {{t $pin.ReasonKey}}</span>
+          {{else}}
+            <span style="color:var(--text-subtle);font-size:11px" title="{{t $pin.ReasonKey}}">—</span>
+            <span style="color:var(--text-subtle);font-size:9px;margin-left:2px">{{t $pin.SourceKey}}</span>
+          {{end}}
           {{if $pref}}
-            <span class="tag tag-info" title="{{t "devices.device_exit_pref_pinned_help"}}" style="font-size:10px"><i class="fa-solid fa-bullseye"></i><code style="font-size:10px;background:transparent">{{$pref}}</code></span>
             {{if $viaEnabled}}
               <span class="tag tag-warning" style="font-size:9px;margin-left:2px" title="{{t "devices.device_exit_via_enabled_help"}}"><i class="fa-solid fa-lock"></i></span>
             {{else}}
@@ -366,22 +381,27 @@
               </button>
             </form>
           {{else if and $skygateUID (gt $skygateUID 0)}}
-            <form method="post" action="/admin/devices/preferred-exit" style="display:inline-flex;gap:3px;align-items:center" title="{{t "devices.device_exit_pref_set_help"}}">
-              <input type="hidden" name="user_id" value="{{$skygateUID}}">
-              <input type="hidden" name="hostname" value="{{.Hostname}}">
-              <input type="hidden" name="via" value="0">
-              <select name="tag" style="font-size:10px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px" aria-label="{{t "devices.device_exit_pref"}}">
-                {{range $.AvailableExits}}
-                  {{/* B188: read the canonical headscale tag
-                       from NodeView.DevTag. See the same
-                       pattern in user/devices.html for the
-                       per-user /my/devices dropdown. */}}
-                  {{$tag := or .DevTag (printf "tag:exit-%s" (tolower .Hostname))}}
-                  <option value="{{$tag}}">{{.Hostname}}</option>
-                {{end}}
-              </select>
-              <button type="submit" class="btn btn-ghost" style="font-size:10px;padding:2px 5px" title="{{t "devices.device_exit_pref_set_button_help"}}"><i class="fa-solid fa-bullseye"></i></button>
-            </form>
+            {{/* B497: no relay name is shown until one is chosen — a <select> in an
+                 empty cell displays its first option and looks like a pin. */}}
+            <details style="display:inline-block;margin-left:4px">
+              <summary class="btn btn-ghost" style="font-size:10px;padding:2px 5px;cursor:pointer" title="{{t "devices.device_exit_pref_set_help"}}"><i class="fa-solid fa-plus"></i> {{t "devices.effective_exit_set"}}</summary>
+              <form method="post" action="/admin/devices/preferred-exit" style="display:inline-flex;gap:3px;align-items:center;margin-top:4px" title="{{t "devices.device_exit_pref_set_help"}}">
+                <input type="hidden" name="user_id" value="{{$skygateUID}}">
+                <input type="hidden" name="hostname" value="{{.Hostname}}">
+                <input type="hidden" name="via" value="1">
+                <select name="tag" style="font-size:10px;padding:1px 3px;background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:3px" aria-label="{{t "devices.device_exit_pref"}}">
+                  {{range $.AvailableExits}}
+                    {{/* B188: read the canonical headscale tag
+                         from NodeView.DevTag. See the same
+                         pattern in user/devices.html for the
+                         per-user /my/devices dropdown. */}}
+                    {{$tag := or .DevTag (printf "tag:exit-%s" (tolower .Hostname))}}
+                    <option value="{{$tag}}">{{.Hostname}}</option>
+                  {{end}}
+                </select>
+                <button type="submit" class="btn btn-ghost" style="font-size:10px;padding:2px 5px" title="{{t "devices.effective_exit_pin_btn"}}"><i class="fa-solid fa-lock"></i></button>
+              </form>
+            </details>
           {{else}}
             <span style="color:var(--text-subtle);font-size:11px" title="{{t "devices.dev_tag_empty_help"}}">—</span>
           {{end}}
