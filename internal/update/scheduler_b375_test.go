@@ -685,7 +685,14 @@ func TestB375_ArmedStateIsReadableAndRaceSafe(t *testing.T) {
 // so "not supported" is pinned on an UNDETECTED kind instead — the only case that still cannot
 // self-update. The positive direction lives in TestB492_NativeTickIsNotSkipped.
 func TestB375_NonDockerSkipIsLogged(t *testing.T) {
-	t.Setenv("SKYGATE_INSTALL_KIND", "not-a-known-install-kind")
+	// The seam, NOT SKYGATE_INSTALL_KIND: an unknown env value falls through to FILESYSTEM detection,
+	// and a GitHub Ubuntu runner has systemd — measured 2026-11-18, the first CI run of B492 failed
+	// here because that host was detected as `systemd`, which B492 made drivable, while a Windows
+	// laptop (neither systemd nor docker) kept passing. A test whose subject is "an undriveable kind"
+	// must not depend on what the machine running it happens to have installed.
+	prevKind := detectInstallKindFn
+	detectInstallKindFn = func() InstallKind { return InstallUnknown }
+	t.Cleanup(func() { detectInstallKindFn = prevKind })
 	d := b375DB(t)
 	b375SetSchedule(t, d, true, b375NowMinute(localtime.Now()))
 
