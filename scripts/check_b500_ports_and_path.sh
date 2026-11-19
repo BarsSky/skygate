@@ -88,6 +88,22 @@ if grep -q 'lib/stun_probe.py' "$AUDIT" 2>/dev/null; then
 else
     bad "A8: the audit builds its own STUN packet again (two implementations, two answers)"
 fi
+# The product has TWO STUN implementations (Go, for /admin/derp; shell, for this audit) and
+# they must send the same shape. B265 fixed the Go one with the reason written in its
+# comment; the shell one repeated the bug months later, and that is the whole cost of this
+# block. A parity contract is the only thing that keeps them honest together.
+go_shape="$(grep -c 'stunSoftwareValue.*=.*"tailnode"' internal/feature/admin/derp_stun.go 2>/dev/null)"
+sh_shape="$(grep -c 'tailnode' scripts/lib/stun_probe.py 2>/dev/null)"
+if [ "${go_shape:-0}" -ge 1 ] && [ "${sh_shape:-0}" -ge 1 ]; then
+    ok "A9: both STUN implementations send SOFTWARE \"tailnode\" (Go since B265, shell now)"
+else
+    bad "A9: the two STUN implementations disagree (go=${go_shape:-0}, sh=${sh_shape:-0}) — one of them will report a healthy relay as closed"
+fi
+if grep -q 'ErrNoFingerprint' internal/feature/admin/derp_stun.go 2>/dev/null; then
+    ok "A10: the Go probe still records WHY the shape matters (ErrNoFingerprint)"
+else
+    bad "A10: the Go probe lost the explanation — the next implementation will repeat it"
+fi
 
 # ═══════════════ B. installer parity ═══════════════
 if grep -q '443/udp' "$FW" 2>/dev/null; then

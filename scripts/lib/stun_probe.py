@@ -3,9 +3,13 @@
 
 WHY THIS FILE EXISTS, AND WHY IT IS A CORRECTION.
 -----------------------------------------------
-The first version of the audit (and the first diagnosis handed to the operator) sent a
-bare 20-byte Binding Request and read the silence as «STUN is broken, the relay binary is
-at fault». That was WRONG, and the measurement below is what settled it — derper's own
+The first version of the shell audit (and the first diagnosis handed to the operator) sent
+a bare 20-byte Binding Request and read the silence as «STUN is broken, the relay binary is
+at fault». That was WRONG — and skygate's own Go probe in `internal/feature/admin/derp_stun.go`
+had already been fixed for exactly this in B265, with the reason written in its comment
+(`ErrNoFingerprint` → `not_stun`, «the tile showed STUN UDP :3478 closed on a relay whose
+STUN answers real clients»). Two implementations of one protocol in one product, and only
+the shell one repeated the bug. The measurement that settled it — derper's own
 `/debug/vars` counters plus a tcpdump of a real client:
 
     SOFTWARE "tailnode" + FINGERPRINT  -> reply 0x0101, counter `success`    +1   (3/3)

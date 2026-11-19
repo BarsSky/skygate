@@ -2240,9 +2240,14 @@ derper's own counters said otherwise:
 
 A `tailscale netcheck` on the same host moved `success` 608 → 616, and tcpdump showed the
 client's 40-byte request. **The relay was healthy the whole time**; Tailscale's STUN
-server answers its own client shape and counts everything else as `not_stun`. So the
-probe in `scripts/lib/stun_probe.py` now mimics a client on purpose, and a silence from
-it is a real finding rather than a statement about the prober.
+server answers its own client shape and counts everything else as `not_stun`.
+
+The humbling part: skygate's own Go probe (`internal/feature/admin/derp_stun.go`) has sent
+exactly that shape since **B265**, with `ErrNoFingerprint` named in its comment and the
+same "closed on a healthy relay" incident recorded. The shell audit was a SECOND
+implementation of one protocol, and it was the one that got it wrong — which is why
+`scripts/lib/stun_probe.py` exists as the only shell-side probe and why contract B500
+checks that both implementations agree.
 
 The audit exits `1` when a gap exists and `2` when no Skygate service is active (nothing
 inspected — never a green zero).
