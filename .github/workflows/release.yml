@@ -407,11 +407,44 @@ jobs:
     needs: [preflight, binaries]
     timeout-minutes: 5
     steps:
-      - name: Download all tarballs
+      # B504 (2026-11-20): download each tarball BY NAME, exactly as the release
+      # job below has done since B237.24.4 — this job was left on
+      # `merge-multiple: true`, which downloads ALL artifacts (including the
+      # docker buildx cache artifact `BarsSky~skygate~<hash>.dockerbuild`) and
+      # extracts them in PARALLEL, failing the whole job after 5 retries if any
+      # one of them is slow. Measured while publishing v1.5.247: three attempts,
+      # three failures, all `##[error]Unable to download artifact(s): Unable to
+      # download and extract artifact: Artifact download failed after 5 retries.`
+      # while every build job and every other release job was green. The tag was
+      # fine and the checksums job was the only casualty — a release blocker with
+      # no product defect behind it. The docker cache artifact is not needed for
+      # checksums at all, and sequential per-name downloads keep the retries
+      # independent.
+      - name: Download tarballs (linux amd64)
         uses: actions/download-artifact@v4
         with:
+          name: skygate-linux-amd64
           path: dist
-          merge-multiple: true
+      - name: Download tarballs (linux arm64)
+        uses: actions/download-artifact@v4
+        with:
+          name: skygate-linux-arm64
+          path: dist
+      - name: Download tarballs (darwin amd64)
+        uses: actions/download-artifact@v4
+        with:
+          name: skygate-darwin-amd64
+          path: dist
+      - name: Download tarballs (darwin arm64)
+        uses: actions/download-artifact@v4
+        with:
+          name: skygate-darwin-arm64
+          path: dist
+      - name: Download tarballs (windows amd64)
+        uses: actions/download-artifact@v4
+        with:
+          name: skygate-windows-amd64
+          path: dist
 
       - name: Generate SHA256SUMS
         shell: bash
@@ -423,6 +456,17 @@ jobs:
           # lists every archive + its hash, in a format that
           # `sha256sum -c` can verify against.
           rm -f skygate.exe.sha256 skygate.sha256 2>/dev/null || true
+          # B504: a missing archive must FAIL here, not produce a shorter
+          # checksums file that still verifies — the installers and the native
+          # self-updater treat SHA256SUMS as the integrity chain for a release
+          # that publishes no per-asset digest, and four rows instead of five is
+          # indistinguishable from a deliberate drop.
+          archives="$(ls -1 skygate-*.tar.gz skygate-*.zip 2>/dev/null | wc -l | tr -d ' ')"
+          if [ "${archives}" != "5" ]; then
+            echo "::error::expected 5 binary archives (linux/darwin x amd64/arm64 + windows-amd64), found ${archives}"
+            ls -la
+            exit 1
+          fi
           sha256sum skygate-* > SHA256SUMS
           cat SHA256SUMS
 
