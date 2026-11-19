@@ -44,6 +44,12 @@ HND="internal/feature/admin/exit_nodes_reconnect_b501.go"
 TPL="internal/handlers/templates/admin/exit_nodes.html"
 CAT="internal/i18n/catalog_exit_nodes.go"
 
+# B339: the boot wiring lives in the cmd/skygate PACKAGE (the assignment itself is
+# in exit_rules_wire_b501.go, extracted so main.go — capped by B372 — keeps
+# shrinking). Read the surface, never one file: a pure move must not go red.
+. scripts/lib/gosurface.sh
+gosurface MAIN_SURFACE cmd/skygate/*.go
+
 # ═══════════════ A. the command is fixed ═══════════════
 if [ -f "$EXEC" ]; then ok "A1: $EXEC exists"; else bad "A1: $EXEC is missing"; fi
 if grep -q 'const RelayReconnectCommand' "$EXEC" 2>/dev/null; then
@@ -74,11 +80,11 @@ if grep -q 'ReconnectRelayFn' internal/feature/admin/service.go 2>/dev/null; the
 else
     bad "B2: the hook is missing from the admin service"
 fi
-if grep -q 'adminSvc.ReconnectRelayFn = exitRulesSvc.ReconnectRelay' cmd/skygate/main.go 2>/dev/null; then
-    ok "B3: it is wired at boot"
-else
-    bad "B3: nothing wires the hook — the page would show a button that does nothing"
-fi
+case "$(cat "$MAIN_SURFACE" 2>/dev/null)" in
+    *'adminSvc.ReconnectRelayFn = exitRulesSvc.ReconnectRelay'*)
+        ok "B3: it is wired at boot" ;;
+    *)  bad "B3: nothing wires the hook — the page would show a button that does nothing" ;;
+esac
 if grep -q 'exit-nodes/{hostname}/reconnect' cmd/skygate/routes.go 2>/dev/null; then
     ok "B4: the route is registered"
 else

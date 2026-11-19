@@ -1692,21 +1692,11 @@ func main() {
 			// directly to a.Router.Global() / .ForUser(uid).)
 		},
 	}
-	// adminSvc.SyncRoutes is the "Sync now" button on
-	// /admin/exit-nodes. Re-point it to the new Service
-	// implementation (was: app.SyncAdvertisedRoutes; same
-	// behaviour because app.SyncAdvertisedRoutes wraps the
-	// Service, but this removes the indirect call).
-	adminSvc.SyncRoutes = exitRulesSvc.SyncAdvertisedRoutes
-	// 2026-08-18 (B132): per-row version for the
-	// "Re-sync" button. Uses the same per-node logic as
-	// the all-nodes sync (extracted to syncOneExitNode so
-	// the two paths share the code).
-	adminSvc.SyncRoutesForNode = exitRulesSvc.SyncAdvertisedRoutesForNode
-	// B501: the per-row reconnect action. Same ladder, one fixed command (see
-	// internal/headscale/relay_exec_b501.go) — the handler passes a hostname and
-	// nothing else, so no operator input ever reaches a shell.
-	adminSvc.ReconnectRelayFn = exitRulesSvc.ReconnectRelay
+	// The exit-node ACTIONS on /admin/exit-nodes — the "Sync now" button, the
+	// per-row "Re-sync" (B132) and the per-row reconnect (B501). Extracted to
+	// exit_rules_wire_b501.go so this entrypoint, capped by B372, does not grow
+	// with every new button.
+	wireExitRulesAdmin(adminSvc, exitRulesSvc)
 	// B361 (2026-10-07): wire the ACL trigger the preference-writing surfaces use.
 	// `my.PostMyDevicePreferredExit` / `my.PostAdminDevicePreferredExit` (the page
 	// an operator uses to re-point a device) and the B356 reconciler all call

@@ -70,7 +70,10 @@ trap 'rm -rf "$WORK"' EXIT
 has() { case "$(cat "$1" 2>/dev/null)" in *"$2"*) return 0 ;; *) return 1 ;; esac; }
 
 hdr "A. a missed minute no longer costs a day"
-GOFMT_OUT="$(gofmt -l "$TRUTH" "$TRUTH_T" "$CAUSE" "$CAUSE_T" "$SCHED" "$SYST" "$SYST2" "$MAIN" "$BOOT" 2>/dev/null)"
+# B339: the cmd/skygate package is read as a SURFACE — `$MAIN` used to be a single
+# file here and went unbound (set -u) the moment the package was widened, so the
+# gofmt list silently lost the entrypoint this block had just shrunk.
+GOFMT_OUT="$(gofmt -l "$TRUTH" "$TRUTH_T" "$CAUSE" "$CAUSE_T" "$SCHED" "$SYST" "$SYST2" "$MAINPKG"/*.go "$BOOT" 2>/dev/null)"
 case "$GOFMT_OUT" in
   "") ok "A1: the touched Go files are gofmt-clean" ;;
   *)  bad "A1: not gofmt-clean: $GOFMT_OUT" ;;
@@ -151,12 +154,18 @@ else
   ok "C3: the verify banner no longer credits a cron the panel cannot see"
 fi
 # B372 caps main.go; the diagnostic had to move into its own file rather than grow the entrypoint.
+# The cap is READ from B372 rather than copied here: two literals drifting apart is how a
+# contract keeps passing after the ratchet was tightened (B501 lowered 2400 -> 2394).
+B372=scripts/check_b372_main_is_not_one_giant_function.sh
+MAIN_CAP="$(sed -n 's/^MAIN_CEILING=\([0-9][0-9]*\)$/\1/p' "$B372" 2>/dev/null | head -1)"
 MAIN_FILE="$(ls cmd/skygate/main*.go 2>/dev/null | head -1)"
 LINES="$(wc -l < "$MAIN_FILE" 2>/dev/null | tr -d ' ')"
-if [ "${LINES:-0}" -le 2400 ]; then
-  ok "C4: main.go stays within the B372 cap (${LINES} lines)"
+if [ -z "$MAIN_CAP" ]; then
+  bad "C4: cannot read MAIN_CEILING from $B372 — the ratchet has one source, not two"
+elif [ "${LINES:-0}" -le "$MAIN_CAP" ]; then
+  ok "C4: main.go stays within the B372 cap (${LINES} of ${MAIN_CAP} lines)"
 else
-  bad "C4: main.go is ${LINES} lines — over the B372 cap of 2400"
+  bad "C4: main.go is ${LINES} lines — over the B372 cap of ${MAIN_CAP}"
 fi
 
 hdr "D. a missing interpreter is not a product regression"

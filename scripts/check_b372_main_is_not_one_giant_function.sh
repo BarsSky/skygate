@@ -77,7 +77,9 @@ fi
 
 # The ceiling is the whole point of the ratchet: it is the measured post-B372 size
 # and it may only fall. Raise it deliberately, never to "make the check pass".
-MAIN_CEILING=2400
+# 2400 -> 2394 in B501: the exit-node action wiring moved out of main() into
+# exit_rules_wire_b501.go, so the ratchet took the win instead of the new button.
+MAIN_CEILING=2394
 
 for f in "$MAIN_PATH" "$SCHED"; do
   [ -f "$f" ] || { bad "A0: missing $f"; echo "B372 summary: $PASS passed, $FAIL failed, $SKIP skipped"; exit 1; }
