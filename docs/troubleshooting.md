@@ -2112,12 +2112,27 @@ That last row is what the operator photographed on 2026-11-19 (`olesya`, A71). S
 shows the **effective** decision with its source, and `internal/exitpin` derives it from the same
 predicates the generator applies — so the page and the policy cannot disagree.
 
-### Why a per-user preference does not reach a phone
+### Why a per-user preference does not reach a phone (B498)
 
 Every skygate device carries `tag:dev-<user>-<device>`, and headscale resolves a tagged node through
 its **tag**, never through `user@domain` (measured in B265). The per-user preference
 (`user_exit_node_prefs`) therefore only pins the grant `src: [<user>@domain]`, which matches an
 **untagged** node — in a normal skygate tailnet, none of them.
+
+Since B498 the page says this ONCE, in a notice above the table («Настройки пользователей, которые ни
+на что не влияют»), naming the person, the relay and how many of that person's devices it fails to
+reach. The per-device cells do **not** repeat the user's relay name any more: a cell answers only what
+the ACL does with **that** device. Before B498 the name was printed in every cell, which read as «this
+phone is pinned to karolina» and is what produced the report «почему продолжает выставляться неверная
+настройка» — the row was never that device's setting.
+
+### Откуда берётся владелец устройства (B498)
+
+A device's owner is `node_owner_map.username` → `portal_users.id`. It used to be derived by cutting
+`tag:dev-<user>-<host>` at the LAST hyphen, which is wrong for every hostname that contains one
+(`nothing-phone-2`, `skybars-secure`, `s24-fe--ned` all resolved to nobody and rendered a dash, with no
+assign control). `tagged_by_user_id` is the fallback for a row whose username is headscale's synthetic
+`tagged-devices` (B287), and only while that id still names a portal user.
 
 The fix for ONE device is a **per-device** preference with strict mode on:
 
@@ -2131,12 +2146,13 @@ yellow badge names the reason it is **not**:
 
 | reason on the page | meaning |
 |---|---|
-| `the device is tagged: headscale never matches it with a user preference` | a per-user row exists, the node is tagged — it cannot apply |
 | `strict mode is off` | `via_enabled = 0` (the Android-friendly default): stored, not pinned |
 | `derived automatically, not by a human` | `set_by_user_id = 0` (B398): skygate's guess must never filter a client's choice |
 | `this exit node is unhealthy right now` | B356/B361 withheld the pin so the device keeps egress through a working relay |
 | `the device carries no tag` | no per-device grant can be emitted at all (B284) |
 | `no pin — the device chooses its own exit node` | nothing is configured; the loose grant allows any relay |
+
+(A user-level row no longer appears in this table: it is reported by the page-level notice instead.)
 
 `via` on an `autogroup:internet` grant is a **filter**, not a preference: once a device IS pinned,
 choosing a different exit node in the Tailscale client makes that grant unmatched and the device loses
@@ -2145,9 +2161,10 @@ Clear the pin if the device must be free to choose.
 
 ### What did NOT change
 
-B497 is display-only: no decision package (`internal/acl`, `internal/prefixowner`,
+B497/B498 are display-only: no decision package (`internal/acl`, `internal/prefixowner`,
 `internal/feature/exit_rules`) imports `internal/exitpin`, and `scripts/check_b497_effective_exit_pin.sh`
-contract F fails if that ever happens. Pair it with the B496 snapshot when in doubt:
+contract F plus `scripts/check_b498_device_owner_honesty.sh` contract E fail if that ever happens. Pair
+them with the B496 snapshot when in doubt:
 
 ```bash
 bash scripts/acl_inputs_snapshot.sh --save      # before applying anything

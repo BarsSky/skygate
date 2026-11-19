@@ -116,21 +116,58 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 			skygateUserByName[name] = id
 		}
 	}
-	skygateUserByHost := make(map[string]int64, len(devTags))
-	for _, dt := range devTags {
-		const prefix = "tag:dev-"
-		if !strings.HasPrefix(dt.Tag, prefix) {
+	// B498: the device's OWNER comes from node_owner_map — never from splitting the
+	// tag string.
+	//
+	// The old derivation took `tag:dev-<user>-<host>`, cut at the LAST hyphen and
+	// looked the left part up as a portal username. That is ambiguous the moment a
+	// hostname contains a hyphen, and live on 2026-11-19 it failed for three of the
+	// four phones the operator was comparing:
+	//
+	//	tag:dev-michail-olesya            -> michail                  ✔ uid 6
+	//	tag:dev-skyadmin-a71              -> skyadmin                 ✔ uid 1
+	//	tag:dev-michail-nothing-phone-2   -> michail-nothing-phone    (no such user)
+	//	tag:dev-skyadmin-skybars-secure   -> skyadmin-skybars         ✘ uid 0
+	//	tag:dev-skyadmin-s24-fe--ned      -> skyadmin-s24-fe-         ✘ uid 0
+	//
+	// So `olesya` and the A71 rendered a relay badge while `nothing-phone-2`,
+	// `skybars-secure` and `s24-fe--ned` rendered a dash — «olesya и a71
+	// отображаются по-другому, не так как другие телефоны» — and the dash ALSO hid
+	// the assign control, because a uid of 0 meant «no owner, nothing to pin».
+	//
+	// `node_owner_map.username` carries the attribution directly and is correct for
+	// every row. `tagged_by_user_id` is the fallback for a row whose username is
+	// headscale's synthetic `tagged-devices` (B287): it is the portal user of the
+	// human who applied the tag, i.e. the last attribution such a row still holds.
+	allNodeOwners, _ := db.ListAllNodeOwners(s.dbc())
+	portalUIDByName := make(map[string]int64, len(users))
+	portalNameByUID := make(map[int64]string, len(users))
+	if rows, qerr := s.dbc().Query(`SELECT id, username FROM portal_users`); qerr == nil {
+		for rows.Next() {
+			var id int64
+			var name string
+			if rows.Scan(&id, &name) == nil && id > 0 && name != "" {
+				portalUIDByName[strings.ToLower(strings.TrimSpace(name))] = id
+				portalNameByUID[id] = name
+			}
+		}
+		rows.Close()
+	} else {
+		log.Printf("[devices] portal_users lookup: %v (device owners are not resolved this load)", qerr)
+	}
+	skygateUserByHost := make(map[string]int64, len(allNodeOwners))
+	ownerNameByHost := make(map[string]string, len(allNodeOwners))
+	for _, o := range allNodeOwners {
+		host := strings.ToLower(strings.TrimSpace(o.Hostname))
+		if host == "" {
 			continue
 		}
-		rest := strings.TrimPrefix(dt.Tag, prefix)
-		idx := strings.LastIndex(rest, "-")
-		if idx < 0 {
+		uid, name := b498OwnerUID(o, portalUIDByName, portalNameByUID)
+		if uid == 0 {
 			continue
 		}
-		userName := rest[:idx]
-		if uid, ok := skygateUserByName[userName]; ok && uid > 0 {
-			skygateUserByHost[strings.ToLower(dt.Hostname)] = uid
-		}
+		skygateUserByHost[host] = uid
+		ownerNameByHost[host] = name
 	}
 	for _, dp := range deviceExitPrefs {
 		if dp.DeviceHostname == "" {
@@ -155,7 +192,9 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	// the legacy `tag:exit-<host>` form inline. The
 	// post-B118 tag convention is `tag:dev-infra-<host>`,
 	// and node_owner_map is the source of truth.
-	allNodeOwners, _ := db.ListAllNodeOwners(s.dbc())
+	//
+	// B498: `allNodeOwners` was already read above, for the OWNER resolution. Two
+	// reads of the same table would be two chances to disagree about it.
 	adminTagByHost := make(map[string]string, len(allNodeOwners))
 	for _, dn := range allNodeOwners {
 		if dn.Hostname != "" {
@@ -220,6 +259,20 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	nodePins := b497Pins(hostnameToUserID, adminTagByHost,
 		devicePrefRowByKey, userPrefRowByUID, exitpin.RelayStates(healthRows))
+
+	// B498: SAY THE USER-LEVEL FACT ONCE, WHERE IT BELONGS.
+	//
+	// A per-user preference with strict mode on would pin `src: user@domain`, and
+	// headscale never matches a TAGGED node with that selector (B265). Every
+	// skygate device is tagged, so such a row governs nothing — and printing its
+	// relay inside each device cell (the B497 behaviour) made the operator read it
+	// as «неверная настройка выставлена для olesya/a71», which was exactly wrong:
+	// the row is not any device's setting.
+	//
+	// The device cells now answer only "what does THIS device do" (a device pin or
+	// free choice), and this list explains the user-level row in one place, naming
+	// the person, the relay and the number of devices it fails to reach.
+	lostUserPrefs := b498LostUserPrefs(userExitPrefs, skygateUserByHost, adminTagByHost, portalNameByUID)
 	deviceRows := make([]adminDeviceRow, 0, len(allNodes))
 	for _, n := range allNodes {
 		os, typ := osByNodeID[n.ID], typeByNodeID[n.ID]
@@ -328,7 +381,10 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 		// carrying the SOURCE and whether the ACL actually applies it. A template
 		// that renders only the stored row cannot tell «pinned» from «stored but
 		// ignored», which is what the operator was reading as a bug.
-		"NodePins":          nodePins,
+		"NodePins": nodePins,
+		// B498: the per-user preferences that reach none of their owner's devices,
+		// stated once for the page instead of inside every device cell.
+		"LostUserPrefs":     lostUserPrefs,
 		"AvailableExits":    exits,
 		"UserExitPrefMap":   userExitPrefMap,
 		"SkygateUserByName": skygateUserByName,

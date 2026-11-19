@@ -19,6 +19,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"strings"
 	"testing"
@@ -52,13 +53,30 @@ type b497Row struct {
 
 func b497Render(t *testing.T, rows []b497Row, pins map[string]exitpin.Pin) string {
 	t.Helper()
+	return b498RenderWith(t, rows, pins, nil)
+}
+
+// b498Lost mimics admin.lostUserPref — the page-level statement about a per-user
+// preference that reaches none of that user's devices (B498).
+type b498Lost struct {
+	UserID   int64
+	Username string
+	Relay    string
+	Devices  int
+}
+
+func b498RenderWith(t *testing.T, rows []b497Row, pins map[string]exitpin.Pin, lost []b498Lost) string {
+	t.Helper()
 	raw, err := templatesFS.ReadFile("templates/admin/devices.html")
 	if err != nil {
 		t.Fatalf("read admin/devices.html: %v", err)
 	}
 	tpl, err := template.New("test").Funcs(template.FuncMap{
-		"t":        func(key string) string { return key },
-		"tf":       func(key string, args ...any) string { return key },
+		"t":  func(key string) string { return key },
+		"tf": func(key string, args ...any) string { return key + "(" + b498Args(args) + ")" },
+		// The production funcmap's name for the formatted call is `tf`; keeping the
+		// ARGUMENTS visible lets a test prove the template passes the right fields
+		// (a wrong field prints the right key and the wrong sentence).
 		"tolower":  strings.ToLower,
 		"toupper":  strings.ToUpper,
 		"safeJS":   func(s string) template.JS { return template.JS(s) },
@@ -80,6 +98,7 @@ func b497Render(t *testing.T, rows []b497Row, pins map[string]exitpin.Pin) strin
 		"DeviceExitViaMap":       map[string]bool{},
 		"DeviceExitOptedOutMap":  map[string]bool{},
 		"NodePins":               pins,
+		"LostUserPrefs":          lost,
 		"AvailableExits":         []any{},
 		"UserExitPrefMap":        map[string]string{},
 		"SkygateUserByName":      map[string]int64{"michail": 6},
@@ -96,9 +115,21 @@ func b497Render(t *testing.T, rows []b497Row, pins map[string]exitpin.Pin) strin
 	return buf.String()
 }
 
+// b498Args renders the tf arguments so a test can assert they were passed at all.
+func b498Args(args []any) string {
+	parts := make([]string, 0, len(args))
+	for _, a := range args {
+		parts = append(parts, fmt.Sprint(a))
+	}
+	return strings.Join(parts, "|")
+}
+
 func TestB497_DevicesPageDistinguishesTheThreeStates(t *testing.T) {
 	applied := exitpin.Pin{Source: exitpin.SourceDevice, Tag: "tag:dev-infra-karolina", Applies: true}
-	withheld := exitpin.Pin{Source: exitpin.SourceUser, Tag: "tag:dev-infra-karolina", Reason: exitpin.ReasonTaggedNoUser}
+	// B498: the yellow case is a DEVICE pin the policy ignores (strict mode off).
+	// A per-user row is not a per-device state any more — it moved to the page-level
+	// notice, because it never was that device's setting.
+	withheld := exitpin.Pin{Source: exitpin.SourceDevice, Tag: "tag:dev-infra-karolina", Reason: exitpin.ReasonViaOff}
 	free := exitpin.Pin{Source: exitpin.SourceNone, Reason: exitpin.ReasonFreeChoice}
 
 	rows := []b497Row{
@@ -117,10 +148,11 @@ func TestB497_DevicesPageDistinguishesTheThreeStates(t *testing.T) {
 	if !strings.Contains(body, "exitpin.source.device") {
 		t.Fatalf("the applied pin did not name its source (exitpin.source.device)")
 	}
-	// 2) A stored-but-ignored preference says WHY it is not applied — the whole
-	//    point of the block.
-	if !strings.Contains(body, "exitpin.reason.tagged_no_user_src") {
-		t.Fatalf("a per-user pin on a tagged device rendered without its reason")
+	// 2) A stored-but-ignored DEVICE preference says WHY it is not applied — the
+	//    whole point of B497. (B498: the per-user row no longer renders per device
+	//    at all; see TestB498_UserPrefIsStatedOnceOnThePage.)
+	if !strings.Contains(body, "exitpin.reason.via_off") {
+		t.Fatalf("a device pin that does not apply rendered without its reason")
 	}
 	// 3) A free choice renders the dash and the explicit «выбирает само».
 	if !strings.Contains(body, "exitpin.source.none") {
@@ -150,6 +182,37 @@ func TestB497_EmptyCellDoesNotShowARelayName(t *testing.T) {
 	}
 	if idx := strings.Index(cell, "<details"); idx < 0 || strings.Index(cell, "<select") < idx {
 		t.Fatalf("a <select> is rendered OUTSIDE <details> — its first option would look pinned: %s", cell)
+	}
+}
+
+// TestB498_UserPrefIsStatedOnceOnThePage — the operator's second complaint, as a
+// test. A per-user preference must appear ONCE, in the page-level notice, naming
+// the person, the relay and how many of that person's devices it fails to reach —
+// and it must NOT appear inside any device cell, where it read as «this phone is
+// pinned to karolina».
+func TestB498_UserPrefIsStatedOnceOnThePage(t *testing.T) {
+	free := exitpin.Pin{Source: exitpin.SourceNone, Reason: exitpin.ReasonFreeChoice}
+	rows := []b497Row{
+		{Hostname: "olesya", UserName: "michail", Pin: free},
+		{Hostname: "nothing-phone-2", UserName: "michail", Pin: free},
+	}
+	body := b498RenderWith(t, rows, map[string]exitpin.Pin{
+		"olesya": free, "nothing-phone-2": free,
+	}, []b498Lost{{UserID: 6, Username: "michail", Relay: "karolina", Devices: 3}})
+
+	// The notice exists and carries the three facts the sentence needs.
+	if !strings.Contains(body, "devices.lost_user_pref_title") {
+		t.Fatalf("the page-level notice is missing")
+	}
+	if !strings.Contains(body, "michail|karolina|3") {
+		t.Fatalf("the notice did not pass (username, relay, device count) into the sentence")
+	}
+	// …and no device cell repeats the relay name for a free-choice device.
+	for _, host := range []string{"olesya", "nothing-phone-2"} {
+		cell := b497ExitCell(body, host)
+		if strings.Contains(cell, "karolina") {
+			t.Fatalf("%s's cell rendered the user-level relay name: %s", host, cell)
+		}
 	}
 }
 

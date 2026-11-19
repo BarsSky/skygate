@@ -37,16 +37,19 @@ func TestB497_PinsResolveTheDevicesOwnOwner(t *testing.T) {
 		t.Fatalf("alice's laptop = %+v, want her own device pin", got)
 	}
 	// bob's phone is TAGGED, so his per-user preference is stored but never
-	// applied — the live olesya/A71 shape. It must NOT inherit alice's pin either.
+	// applied — the live olesya/A71 shape. It must NOT inherit alice's pin either,
+	// and (B498) it must not wear bob's relay name as if it were pinned to it:
+	// the device's answer is «free choice», and the user-level row is reported once
+	// by b498LostUserPrefs.
 	got := pins["phone"]
-	if got.Tag != "tag:dev-infra-karolina" {
-		t.Fatalf("bob's phone inherited another user's pin: %+v", got)
+	if got.Tag != "" {
+		t.Fatalf("bob's phone rendered a relay name: %+v (it is neither pinned nor inheriting)", got)
 	}
 	if got.Applies {
 		t.Fatalf("a per-user pin on a tagged device reported APPLIED: %+v", got)
 	}
-	if got.Source != exitpin.SourceUser || got.Reason != exitpin.ReasonTaggedNoUser {
-		t.Fatalf("bob's phone = %+v, want source=user reason=%s", got, exitpin.ReasonTaggedNoUser)
+	if got.Source != exitpin.SourceNone || got.Reason != exitpin.ReasonFreeChoice {
+		t.Fatalf("bob's phone = %+v, want source=none reason=%s", got, exitpin.ReasonFreeChoice)
 	}
 }
 

@@ -176,6 +176,26 @@
   </div>
 </div>
 
+{{/* B498: a per-user preference is NOT any device's setting.
+     It emits `via` on `src: user@domain`, and headscale never matches a TAGGED
+     node with that selector (B265) — every skygate device is tagged. B497 printed
+     the relay name inside each device cell, where it read as «это устройство
+     привязано к karolina»; the operator rightly objected. The fact is stated once
+     here, naming the person and the number of devices it fails to reach. */}}
+{{if .LostUserPrefs}}
+<div class="card" style="border-left:3px solid var(--warning)">
+  <div class="card-header"><i class="fa-solid fa-triangle-exclamation"></i> {{t "devices.lost_user_pref_title"}}</div>
+  <div style="padding:8px 12px;font-size:.92em;line-height:1.55">
+    <p style="margin:0 0 6px">{{t "devices.lost_user_pref_help"}}</p>
+    <ul style="margin:0;padding-left:18px">
+      {{range .LostUserPrefs}}
+      <li>{{tf "devices.lost_user_pref_row" .Username .Relay .Devices}}</li>
+      {{end}}
+    </ul>
+  </div>
+</div>
+{{end}}
+
 <div class="card">
   {{/* 2026-08-04: v0.33.1.7 — wrap the wide table in .table-wrap
        so on narrow screens the row scrolls horizontally instead

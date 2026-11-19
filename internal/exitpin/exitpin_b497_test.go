@@ -95,14 +95,19 @@ func TestB497_EffectivePinTable(t *testing.T) {
 			want: Pin{Source: SourceDevice, Tag: karolina.Tag, Reason: ReasonNoDeviceTag},
 		},
 		{
-			// THE LIVE CASE (olesya, A71): michail's per-user preference is real
-			// and saved, and the node is TAGGED, so headscale never matches it.
+			// THE LIVE CASE (olesya, A71) — B498 renegotiated the ANSWER. The
+			// per-user preference exists and is saved and the node is TAGGED, so it
+			// is not this device's setting at all: the ACL gives the device a free
+			// choice, and the page states the user-level fact once (LostUserPref)
+			// instead of printing the relay inside every device cell — the reading
+			// that made the operator ask «почему продолжает выставляться неверная
+			// настройка».
 			name: "user pin does not reach a tagged device",
 			in: Inputs{
 				User: b497Ptr(karolina), UserRelayState: "online",
 				DeviceTag: "tag:dev-michail-olesya", Tagged: true,
 			},
-			want: Pin{Source: SourceUser, Tag: karolina.Tag, Reason: ReasonTaggedNoUser},
+			want: Pin{Source: SourceNone, Reason: ReasonFreeChoice},
 		},
 		{
 			// The same preference DOES apply to an untagged node (a device
@@ -120,15 +125,27 @@ func TestB497_EffectivePinTable(t *testing.T) {
 				User:      b497Ptr(Pref{Tag: karolina.Tag, ViaEnabled: false, SetByUserID: b497Human}),
 				DeviceTag: "tag:dev-michail-basic", Tagged: true,
 			},
-			want: Pin{Source: SourceUser, Tag: karolina.Tag, Reason: ReasonViaOff},
+			want: Pin{Source: SourceNone, Reason: ReasonFreeChoice},
 		},
 		{
+			// Untagged + strict mode off: the row is stored, the ACL does not pin.
 			name: "user pin withheld when the relay is down",
 			in: Inputs{
 				User: b497Ptr(karolina), UserRelayState: "degraded",
-				DeviceTag: "tag:dev-michail-basic", Tagged: true,
+				DeviceTag: "", Tagged: false,
 			},
-			want: Pin{Source: SourceUser, Tag: karolina.Tag, Reason: ReasonTaggedNoUser},
+			want: Pin{Source: SourceUser, Tag: karolina.Tag, Reason: ReasonRelayDown},
+		},
+		{
+			// B498: the row that governs nothing is still reported as such, once,
+			// at the page level — the fact is not lost, only moved out of the
+			// device cell.
+			name: "an unreachable user preference is recognised",
+			in: Inputs{
+				User: b497Ptr(karolina), UserRelayState: "online",
+				DeviceTag: "tag:dev-michail-nothing-phone-2", Tagged: true,
+			},
+			want: Pin{Source: SourceNone, Reason: ReasonFreeChoice},
 		},
 		{
 			// No preference anywhere: the device chooses, and the ACL's loose
@@ -202,20 +219,33 @@ func TestB497_PinAccessors(t *testing.T) {
 		t.Fatalf("SourceKey = %q, want exitpin.source.device", applied.SourceKey())
 	}
 
+	// B498: a DEVICE pin that the policy ignores is the yellow case now — the
+	// per-user row no longer produces a per-device badge at all (see the table
+	// case above), because it is not this device's setting.
 	withheld := Effective(Inputs{
-		User: b497Ptr(Pref{Tag: "tag:dev-infra-karolina", ViaEnabled: true, SetByUserID: b497Human}),
-		// Tagged on purpose: this is the live shape, and the Reason token must be
-		// the one the i18n catalogues actually define.
-		Tagged: true, DeviceTag: "tag:dev-michail-olesya",
+		Device:    b497Ptr(Pref{Tag: "tag:dev-infra-karolina", ViaEnabled: false, SetByUserID: b497Human}),
+		DeviceTag: "tag:dev-michail-olesya",
 	})
 	if withheld.Applied() {
-		t.Fatalf("a per-user pin on a tagged node reported APPLIED: %+v", withheld)
+		t.Fatalf("a device row with strict mode off reported APPLIED: %+v", withheld)
 	}
-	if withheld.ReasonKey() != "exitpin.reason.tagged_no_user_src" {
-		t.Fatalf("ReasonKey = %q, want exitpin.reason.tagged_no_user_src", withheld.ReasonKey())
+	if withheld.ReasonKey() != "exitpin.reason.via_off" {
+		t.Fatalf("ReasonKey = %q, want exitpin.reason.via_off", withheld.ReasonKey())
 	}
-	if withheld.SourceKey() != "exitpin.source.user" {
-		t.Fatalf("SourceKey = %q, want exitpin.source.user", withheld.SourceKey())
+	if withheld.SourceKey() != "exitpin.source.device" {
+		t.Fatalf("SourceKey = %q, want exitpin.source.device", withheld.SourceKey())
+	}
+
+	// B498: the per-user row that can never apply is reported by LostUserPref, so
+	// the page can say it ONCE instead of once per device.
+	if !LostUserPref(b497Ptr(Pref{Tag: "tag:dev-infra-karolina", ViaEnabled: true})) {
+		t.Fatalf("LostUserPref missed a stored, strict-mode, relay-naming user row")
+	}
+	if LostUserPref(b497Ptr(Pref{Tag: "tag:dev-infra-karolina", ViaEnabled: false})) {
+		t.Fatalf("LostUserPref reported a row whose strict mode is off (it does not even try to pin)")
+	}
+	if LostUserPref(nil) {
+		t.Fatalf("LostUserPref(nil) must be false")
 	}
 
 	free := Effective(Inputs{DeviceTag: "tag:dev-michail-olesya", Tagged: true})

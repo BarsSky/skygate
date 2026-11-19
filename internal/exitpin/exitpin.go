@@ -136,18 +136,15 @@ func Effective(in Inputs) Pin {
 		}
 		return Pin{Source: SourceDevice, Tag: tag, Applies: true}
 	}
-	if p := in.User; p != nil && strings.TrimSpace(p.Tag) != "" {
+	if p := in.User; p != nil && strings.TrimSpace(p.Tag) != "" && !in.Tagged {
+		// ONLY an UNTAGGED node can match the per-user grant (`src: user@domain`).
+		// In this deployment every skygate device carries a tag, so this branch is
+		// the "should not happen" path — and it is still written down, because a
+		// rule that is right is right for a reason and B265 measured the reason.
 		tag := strings.TrimSpace(p.Tag)
 		switch {
 		case !p.ViaEnabled:
 			return Pin{Source: SourceUser, Tag: tag, Reason: ReasonViaOff}
-		case in.Tagged:
-			// The row is real and the operator meant it, but headscale resolves
-			// the grant's `src` — and a tagged node never matches `user@`.
-			return Pin{Source: SourceUser, Tag: tag, Reason: ReasonTaggedNoUser}
-		// NOTE: there is deliberately no `DeviceTag == ""` branch here. The
-		// per-user grant is `src: [user@domain]`, which an UNTAGGED node matches
-		// by definition — that is the one case where this table still works.
 		case relayUnusable(in.UserRelayState):
 			return Pin{Source: SourceUser, Tag: tag, Reason: ReasonRelayDown}
 		}
@@ -158,10 +155,27 @@ func Effective(in Inputs) Pin {
 		// decision, not an absence, and the page says so.
 		return Pin{Source: SourceNone, Reason: ReasonFreeChoice, Applies: false}
 	}
-	if in.Device != nil || in.User != nil {
+	if in.Device != nil {
 		return Pin{Source: SourceNone, Reason: ReasonNoRelay}
 	}
+	// B498: a per-user preference is NOT this device's setting. It exists, it is
+	// stored, and headscale never matches this tagged node with it (B265), so the
+	// honest answer for the DEVICE is «it chooses for itself». Rendering the user's
+	// relay name in every device cell is what made the operator ask «почему
+	// продолжает выставляться неверная настройка» — the setting was never that
+	// device's, and the page now says so once, at the page level (LostUserPref).
 	return Pin{Source: SourceNone, Reason: ReasonFreeChoice}
+}
+
+// LostUserPref reports that a per-user preference exists and can never take effect:
+// it is stored with strict mode on and names a relay, and the devices it would
+// govern carry tags. The page states this ONCE for the user instead of printing the
+// relay name inside every device cell, where it reads as a per-device setting.
+func LostUserPref(p *Pref) bool {
+	if p == nil {
+		return false
+	}
+	return strings.TrimSpace(p.Tag) != "" && p.ViaEnabled
 }
 
 // relayUnusable mirrors B356 exactly: a relay the monitor has MEASURED and found

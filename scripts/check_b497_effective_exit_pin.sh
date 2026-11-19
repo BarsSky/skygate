@@ -144,6 +144,14 @@ case "$(cat "$TPL" 2>/dev/null)" in
     *'$pin.ReasonKey'*) ok "C6: a stored-but-ignored preference renders its reason" ;;
     *) bad "C6: a withheld pin renders no reason — the operator sees a mystery again" ;;
 esac
+# B498 renegotiated one thing here: a per-user preference is NOT a per-device answer.
+# The pin for a tagged node that has only a user row is «free choice», and the
+# user-level fact belongs to the page-level notice (LostUserPrefs, check_b498_*).
+if grep -q 'SourceNone, Reason: ReasonFreeChoice' "$PKG" 2>/dev/null; then
+    ok "C7: a per-user preference is not a per-device answer (B498)"
+else
+    bad "C7: exitpin still turns a per-user row into a device badge"
+fi
 
 # ═══════════════ D. the screenshot's bug cannot come back ═══════════════
 # With nothing pinned the cell must be a dash, not a <select>; the assign control, if any, lives
