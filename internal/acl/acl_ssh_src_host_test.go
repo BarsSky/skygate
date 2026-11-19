@@ -112,9 +112,14 @@ func TestGetSkygateHostInfraTags(t *testing.T) {
 // TestSSHRuleSrc pins the composed src list: legacy pair first, then the
 // host tags — and the regression itself (the host tag MUST be present
 // when the host has an infra tag).
+//
+// B502 added the `panelTags` parameter: the host's identity is resolved from
+// node_owner_map (see acl_panel_host_b502_test.go). Passing nil keeps the exact
+// pre-B502 composition, which is what these two contracts pin; the third
+// argument shape is what the generators now pass.
 func TestSSHRuleSrc(t *testing.T) {
 	t.Run("no host tag — legacy pair unchanged", func(t *testing.T) {
-		got := sshRuleSrc(map[string][]string{"infra": {"tag:dev-infra-emilia"}}, "skyadmin", "tsnet.example.com")
+		got := sshRuleSrc(map[string][]string{"infra": {"tag:dev-infra-emilia"}}, "skyadmin", "tsnet.example.com", nil)
 		want := []string{"tag:private", "skyadmin@tsnet.example.com"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("sshRuleSrc() = %v, want %v", got, want)
@@ -122,10 +127,13 @@ func TestSSHRuleSrc(t *testing.T) {
 	})
 
 	t.Run("regression: host tag is present (2026-09-18 bug)", func(t *testing.T) {
-		got := sshRuleSrc(map[string][]string{"infra": {
+		byUser := map[string][]string{"infra": {
 			"tag:dev-infra-skygate-host",
 			"tag:dev-infra-emilia",
-		}}, "skyadmin", "tsnet.example.com")
+		}}
+		// The generator passes the RESOLVED panel tags; the legacy prefix is the
+		// resolver's own fallback, so composing the two here is what production does.
+		got := sshRuleSrc(byUser, "skyadmin", "tsnet.example.com", getSkygateHostInfraTags(byUser))
 
 		want := []string{
 			"tag:private",

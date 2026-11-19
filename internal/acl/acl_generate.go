@@ -699,8 +699,13 @@ func GenerateACLForPlane(d *sql.DB, planeURL string) (string, error) {
 	// identity were allowed, so skygate — which SSHes to the exit nodes
 	// from the host it runs on — was refused with "tailnet policy does
 	// not permit you to SSH to this node".
-	// See getSkygateHostInfraTags in acl_perdevice.go.
-	sb.WriteString("      \"src\": [" + strings.Join(quoteAll(sshRuleSrc(tagsByUser, envAdminIdentity(), baseDomain)), ", ") + "],\n")
+	// 2026-11-19 (B502): the host tag is RESOLVED, not guessed from the
+	// `skygate` name prefix — the reference host is `svyatoslava`, so the
+	// prefix matched nothing and every relay whose port 22 is tailscaled's
+	// refused skygate. See acl_panel_host_b502.go.
+	panelTags, panelSource := panelHostInfraTags(d, tagsByUser)
+	logPanelHostTags(panelTags, panelSource)
+	sb.WriteString("      \"src\": [" + strings.Join(quoteAll(sshRuleSrc(tagsByUser, envAdminIdentity(), baseDomain, panelTags)), ", ") + "],\n")
 	sb.WriteString("      \"dst\": [\"tag:exit-node\"],\n")
 	sb.WriteString("      \"users\": [\"root\"]\n")
 	sb.WriteString("    },\n")

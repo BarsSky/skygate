@@ -289,10 +289,17 @@ func getSkygateHostInfraTags(tagsByUser map[string][]string) []string {
 
 // sshRuleSrc builds the `src` list for the "accept SSH into exit
 // nodes" rule: the legacy pair (tag:private + the admin identity)
-// plus every infra tag of the skygate host itself. Deterministic
-// ordering keeps policy diffs stable across regenerations.
-func sshRuleSrc(tagsByUser map[string][]string, adminIdentity, baseDomain string) []string {
+// plus the panel host's own tag(s) — `panelTags` is what
+// panelHostInfraTags resolved (B502: the host's identity is read from
+// node_owner_map by hostname, because the old name-prefix guess missed
+// every host not literally called `skygate*`). Deterministic ordering
+// keeps policy diffs stable across regenerations.
+func sshRuleSrc(tagsByUser map[string][]string, adminIdentity, baseDomain string, panelTags []string) []string {
 	src := []string{"tag:private", adminIdentity + "@" + baseDomain}
-	src = append(src, getSkygateHostInfraTags(tagsByUser)...)
-	return src
+	if len(panelTags) == 0 {
+		// Pre-B502 behaviour, byte-identical: no resolvable host tag means no
+		// extra src entry (the caller logs why).
+		panelTags = getSkygateHostInfraTags(tagsByUser)
+	}
+	return append(src, panelTags...)
 }

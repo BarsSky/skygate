@@ -1022,7 +1022,12 @@ func GenerateACLWithViaForPlane(d *sql.DB, planeURL string) (string, error) {
 	sb.WriteString("    {\n")
 	sb.WriteString("      \"action\": \"accept\",\n")
 	// 2026-09-18: same skygate-host src fix as GenerateACLForPlane.
-	sb.WriteString("      \"src\": [" + strings.Join(quoteAll(sshRuleSrc(tagsByUser, envAdminIdentity(), baseDomain)), ", ") + "],\n")
+	// 2026-11-19 (B502): and the same RESOLVED host tag — the `grants` schema is
+	// what the reference deployment applies, so this is the copy that mattered:
+	// its host is `svyatoslava`, whose infra tag the old name-prefix guess dropped.
+	panelTags, panelSource := panelHostInfraTags(d, tagsByUser)
+	logPanelHostTags(panelTags, panelSource)
+	sb.WriteString("      \"src\": [" + strings.Join(quoteAll(sshRuleSrc(tagsByUser, envAdminIdentity(), baseDomain, panelTags)), ", ") + "],\n")
 	sb.WriteString("      \"dst\": [\"tag:exit-node\"],\n")
 	sb.WriteString("      \"users\": [\"root\"]\n")
 	sb.WriteString("    },\n")

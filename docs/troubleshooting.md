@@ -2251,3 +2251,86 @@ checks that both implementations agree.
 
 The audit exits `1` when a gap exists and `2` when no Skygate service is active (nothing
 inspected — never a green zero).
+
+---
+
+## 19. «Проблем у релеев: 3» — the SSH rule named the wrong identity (B502)
+
+The relay check on the exit-rules page reported three problems, all with the same text:
+
+```
+ssh root@100.64.0.9: exit status 255 — ssh завершился с ошибкой до выполнения сценария:
+[tailscale: tailnet policy does not permit you to SSH to this node |
+ Connection closed by 100.64.0.9 port 22]
+```
+
+`aisha`, `emilia` and `sharlotta` refused, while the transport ladder kept working for
+other relays — which is what hid the defect.
+
+### 19.1 Measured facts (read-only, 2026-11-19)
+
+| what | value |
+|---|---|
+| panel host's own identity (`tailscale status --json` → `Self.Tags`) | `tag:dev-infra-svyatoslava` |
+| the four relays' tags (`nodes.tags` in headscale) | `tag:dev-infra-<host>` **+ `tag:exit-node`** (+ `tag:private` on three) |
+| live `ssh` rule [0] | `src = [tag:private, skyadmin@<domain>]`, `dst = [tag:exit-node]`, `users = [root]` |
+| where the panel host's tag appears in the policy | only in `grants` (`ip: ["*"]`) — **never** in an `ssh` src |
+
+So the rule's `dst` matched and its `users` matched; its `src` could not match, because it
+never named the identity that opens the connection.
+
+**Why:** `internal/acl` built the ssh `src` from `tag:private`, the admin identity and every
+infra tag **whose prefix was literally `tag:dev-infra-skygate`**. Infra tags are minted as
+`tag:dev-infra-<hostname>` (the B111 infra-retag convention) and the reference host is
+`svyatoslava`, so the prefix filter dropped it.
+
+**Why only some relays failed:** Tailscale SSH is enforced by `tailscaled` on the
+destination from the policy's `ssh` section — the `ip: ["*"]` grants do **not** authorise
+it. That only matters on a relay whose port 22 is owned by `tailscaled`. `emilia` answered
+through a public sshd and `karolina` through a non-intercepting port (`18022`), so the
+ladder looked healthy for exactly the two paths that bypass the policy.
+
+### 19.2 The fix
+
+The identity is **resolved** instead of guessed from a name:
+
+```
+SKYGATE_HOST_TS / SKYGATE_HOSTNAME        (env first: in a container os.Hostname() is the id)
+        ↓
+os.Hostname()                              (correct on every native install)
+        ↓
+node_owner_map by hostname (case-insensitive; FQDN and its first label are one node)
+        ↓
+legacy `tag:dev-infra-skygate*` prefix     (a host genuinely named skygate-… keeps its policy)
+        ↓
+nothing — and the journal gets a line naming the candidates
+```
+
+Both generators (`acls` and `grants`) carry the same rule, so a host with `via` disabled is
+not left with the old bug. The log line is deliberate: a missing tag produces a perfectly
+valid policy and a refusal on a different page a minute later.
+
+```bash
+# which tag skygate thinks it carries (one line per change, at policy apply):
+journalctl -u skygate | grep 'acl:'
+#   acl: ssh rule src includes the panel host tag(s) tag:dev-infra-svyatoslava (node_owner_map hostname svyatoslava)
+#   acl: B502 — the ssh rule does NOT name this host (unresolved — …)   ← then set SKYGATE_HOST_TS
+```
+
+If the tag is named correctly and SSH is still refused, check the destination side:
+
+```bash
+# on the relay: is port 22 tailscaled's? (RunSSH = true means yes, and it enforces the policy)
+ssh root@<relay> 'tailscale debug prefs | grep -i ssh; ss -ltnp | grep ":22 "'
+```
+
+### 19.3 What was deliberately NOT changed
+
+`getInfraExitNodeTags` skips only the literal `tag:dev-infra-skygate` prefix, so a
+hostname-derived tag like `tag:dev-infra-svyatoslava` **stays** in the infra catch-all
+(`src: ["*"] → dst: [<panel tag>], ip: ["*"]`). On the reference deployment that grant is
+how devices reach the panel over the tailnet; removing it while fixing the ssh rule would
+be a silent access change dressed as a cleanup. The asymmetry is recorded here so the next
+reader does not "fix" it by accident — if it is ever narrowed, it needs its own block, its
+own measurement, and an explicit note that tailnet access to the panel changed.
+
