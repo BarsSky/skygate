@@ -2334,3 +2334,54 @@ be a silent access change dressed as a cleanup. The asymmetry is recorded here s
 reader does not "fix" it by accident — if it is ever narrowed, it needs its own block, its
 own measurement, and an explicit note that tailnet access to the panel changed.
 
+---
+
+## 20. «Получил при обновлении следующую страницу» — raw JSON instead of the panel (B503)
+
+Applying an update left the browser at `/admin/update` showing this:
+
+```json
+{"build":"v1.5.246","phase":"headscale-client","phase_ms":121,"ready":false,
+ "stage":"boot","startup_stage":"boot","status":"ok","uptime_ms":155}
+```
+
+**The update had succeeded** — `/healthz` reported `v1.5.246+<sha>` a few seconds later.
+What the operator saw was the boot window itself.
+
+### 20.1 Why JSON was there at all
+
+B269 deliberately binds the listening socket at the **top** of `main()`: a self-updater
+polling `/healthz` must be able to verify the build of a process that is still finishing its
+boot work, because an active-but-portless process is exactly what once made an update roll
+back on a healthy service. Until the real mux takes that listener over, the provisional
+handler serves the health snapshot — and it served it for **every** request, including a
+browser navigation, because it never looked at what the caller wanted.
+
+Honest for a machine, useless for a person: `uptime_ms: 155` means the answer arrived 155 ms
+into the boot, and a long phase (a migration, a slow headscale) looked like a dead panel
+rather than a busy one.
+
+### 20.2 What the page does now
+
+The provisional handler negotiates:
+
+| request | answer |
+|---|---|
+| browser navigation (`GET`/`HEAD`, `Accept: text/html`, not a machine path) | HTML page, self-refreshing every 2 s: current step, how long that step has lasted, total time, build |
+| `/healthz`, `/readyz`, `/metrics`, `/api/*`, `/oidc/*`, `/.well-known/*` | JSON — **even with `Accept: text/html`** |
+| any client that does not ask for HTML (`curl` sends `*/*`, the updater sends nothing) | JSON, byte-identical to before |
+| non-`GET`/`HEAD` | JSON |
+| a **fatal** startup error | `503`, page names the stored error and does **not** refresh (a loop over a permanent failure is a lie that never stops) |
+
+The machine paths are pinned by name rather than inferred, because the updater's rollback
+decision reads `/healthz`: a page-shaped answer there would be unparseable JSON.
+
+If the page stays on one step, that step is printed — it is the same `phase` the JSON
+carries, so the page and `/healthz` can never disagree:
+
+```bash
+curl -s localhost:8080/healthz | jq -r '.phase, .phase_ms'
+journalctl -u skygate -n 50
+```
+
+

@@ -137,6 +137,30 @@ gh workflow run tag-release.yml -f version=vX.Y.Z
 gh run watch
 ```
 
+**A release job that dies on a NETWORK transient is not a red commit — re-run it, never re-tag.**
+Measured 2026-11-19 while publishing v1.5.247: the `linux/arm64` tarball job failed with
+
+```
+modernc.org/sqlite@v1.34.5/rulimit.go:11:2: golang.org/x/sys@v0.44.0:
+  read "https://proxy.golang.org/golang.org/x/sys/@v/v0.44.0.zip":
+  stream error: stream ID 19; INTERNAL_ERROR; received from peer
+```
+
+`preflight` had already passed (the commit WAS green), the other five platforms built fine, and
+`SHA256SUMS` + the GitHub Release were skipped because one job of the matrix failed — a partial
+release would have been the worst outcome, and moving the tag would have re-run everything for a
+proxy hiccup. The sanctioned repair is to re-run the failed jobs of the SAME run:
+
+```bash
+gh run view <run-id> --json jobs --jq '.jobs[] | .conclusion + " " + .name'   # find the failure
+gh run rerun <run-id> --failed      # re-runs the failed job and its skipped dependents only
+```
+
+Re-tagging (or pushing a "fix" commit for a download error) is wrong on both counts: the tag must
+point at a commit whose CI is green, and the commit was never the problem. If a proxy error
+recurs, the repair is `GOFLAGS=-mod=mod go mod download` in a retry step or a module mirror — a
+separate decision, not something to improvise during a release.
+
 **B385 (v1.5.125): a refusal must name the reason, and the interpreter.** Three
 consecutive `CANNOT VERIFY` runs on the maintainer's workstation each named the wrong
 cause, and the real one was never printed at all:

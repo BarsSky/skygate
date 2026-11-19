@@ -203,8 +203,17 @@ func snapshot() map[string]any {
 // StageHandler is the provisional /healthz served from the moment the
 // socket is held (top of main) until the real mux takes over the same
 // listener.
+//
+// B503: a BROWSER NAVIGATION gets a self-refreshing HTML page naming the boot
+// phase instead of this JSON (the operator used to be shown the raw healthz
+// document after every update). Machine endpoints — /healthz, /readyz, /metrics,
+// /api/*, and anything that does not ask for HTML — keep the JSON byte-identical.
 func StageHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if WantsBootPage(r) {
+			serveBootPage(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(StatusCode())
