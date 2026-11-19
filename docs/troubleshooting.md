@@ -2179,3 +2179,58 @@ them with the B496 snapshot when in doubt:
 bash scripts/acl_inputs_snapshot.sh --save      # before applying anything
 bash scripts/acl_inputs_snapshot.sh --diff      # 0 == «ACL INPUTS UNCHANGED»
 ```
+
+## 18. «Online» is not «has a path», and a bound port is not a working service (B500)
+
+Two questions that looked identical on screen and were not.
+
+### 18.1 A device is online but passes no traffic
+
+Measured on `olesya` (iOS) on 2026-11-19: headscale reported the node **online** (a DERP
+session), the ACL allowed an unpinned `dst: autogroup:internet` grant (so any of the four
+relays), and 4/4 relays were healthy with an approved `0.0.0.0/0` — everything needed for
+an exit node. And the device answered nothing: `tailscale ping` timed out, the peer entry
+showed `rx=0` while `tx` grew, and `karolina` reported no path at all (`-`, 0/0).
+**Correct conclusion: the exit node was never the problem — the phone's tunnel was dead.**
+
+One command answers it, per layer:
+
+```bash
+bash scripts/device_connectivity.sh olesya      # add --json for scripts
+```
+
+| layer | what it asks | a failure means |
+|---|---|---|
+| `control` | headscale: online, `last_seen` age | the node is not registered / is offline |
+| `path` | the local netmap: `Relay`, `curAddr`, `rx`/`tx` | no transport to the peer at all |
+| `disco` | `tailscale ping` — does it answer? | the peer does not respond, so no traffic |
+| `acl` | the live policy: does an `autogroup:internet` grant name this tag? | the device may not use any exit node |
+| `relays` | `exit_node_health`: healthy + routes approved | no relay can carry it |
+
+Exit code `1` names the broken layer, `2` means it could not measure. On the phone the
+first thing to try is a Tailscale toggle (`off`/`on`) — iOS suspends the tunnel while the
+control session stays alive, which is exactly the shape above.
+
+### 18.2 The port is open but nothing answers
+
+`port_audit.sh` asks three different questions for every port the product serves
+(`80/tcp`, `443/tcp`, `443/udp`, `8443/tcp`, `3478/udp`):
+
+```bash
+bash scripts/port_audit.sh            # on the panel host; --json for scripts
+```
+
+* **listening?** — `ss -lnup` has the port;
+* **allowed?** — `ufw status` has the rule;
+* **does the service answer?** — for `3478/udp` a real RFC 5389 Binding Request to
+  `127.0.0.1` must come back.
+
+Measured on the reference host the same day: `443/udp` was **listening but not allowed**
+(Caddy's HTTP/3 — the installer did not plan it, so every rebuilt host recreates the gap),
+and `3478/udp` was **bound and allowed but STUN never answered** — not from the internet,
+not from loopback, while the `ufw` accept counter grew. The first is a firewall fix
+(`bash deploy/install-firewall.sh --apply` now includes `443/udp`, or `--no-http3` to opt
+out); the second is a derper problem that no firewall rule can fix.
+
+The audit exits `1` when a gap exists and `2` when no Skygate service is active (nothing
+inspected — never a green zero).

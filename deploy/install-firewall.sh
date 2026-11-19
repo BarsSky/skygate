@@ -13,6 +13,12 @@
 #
 #   80/tcp    ACME HTTP-01 (Caddy's certificate challenge)
 #   443/tcp   HTTPS — panel, headscale, DERP-over-443
+#   443/udp   HTTP/3 (QUIC) — Caddy listens on udp/443, and DERP-over-QUIC uses it.
+#             B500 (2026-11-19): this one was MISSING from the plan, and the reference
+#             host had it closed: `port_audit.sh` reported «listening, but ufw does NOT
+#             allow it». A browser on H3 and a phone using QUIC both fall back to TCP,
+#             so the symptom is not an outage — it is a slower/less reliable path that
+#             nobody can see. `--no-http3` skips it for hosts that pin HTTP/2.
 #   3478/udp  STUN for the bundled DERP relay
 #   8443/tcp  DERP's own TLS listener (derper --a=:8443)
 #
@@ -33,6 +39,7 @@
 #   --stun-port N    STUN UDP port (default 3478; 0 = skip)
 #   --extra SPEC     additional "port/proto" rule, repeatable (e.g. 51820/udp)
 #   --no-http        do not open 80/tcp (e.g. DNS-01 only, port 80 blocked upstream)
+#   --no-http3       do not open 443/udp (HTTP/3 disabled, e.g. an upstream that drops UDP)
 #   --dry-run        report only (the default; stated explicitly for scripts)
 #   --json           machine-readable summary
 #
@@ -52,6 +59,7 @@ SSH_PORT=""
 DERP_PORT=8443
 STUN_PORT=3478
 ENABLE_HTTP=1
+ENABLE_HTTP3=1
 EXTRA=()
 
 say()  { [ "$JSON" -eq 1 ] || echo "[firewall] $*"; }
@@ -68,6 +76,7 @@ while [ $# -gt 0 ]; do
         --stun-port)  STUN_PORT="${2:-}"; shift 2 ;;
         --extra)      EXTRA+=("${2:-}"); shift 2 ;;
         --no-http)    ENABLE_HTTP=0; shift ;;
+        --no-http3)   ENABLE_HTTP3=0; shift ;;
         -h|--help)    usage; exit 0 ;;
         *) die 1 "unknown flag: $1 (see --help)" ;;
     esac
@@ -86,6 +95,7 @@ fi
 PLAN=()
 [ "$ENABLE_HTTP" -eq 1 ] && PLAN+=("80/tcp:ACME HTTP-01")
 PLAN+=("443/tcp:HTTPS (panel + headscale + DERP-over-443)")
+[ "$ENABLE_HTTP3" -eq 1 ] && PLAN+=("443/udp:HTTP/3 (QUIC) — Caddy listens on udp/443")
 case "$STUN_PORT" in ''|0) : ;; *) PLAN+=("${STUN_PORT}/udp:STUN for the bundled DERP relay") ;; esac
 case "$DERP_PORT" in ''|0) : ;; *) PLAN+=("${DERP_PORT}/tcp:DERP TLS listener") ;; esac
 [ -n "$SSH_PORT" ] && PLAN+=("${SSH_PORT}/tcp:SSH (keep your own access)")
@@ -147,6 +157,10 @@ add_rule() { # add_rule <port>/<proto> <label>
 
 [ "$ENABLE_HTTP" -eq 1 ] && add_rule "80/tcp" "ACME HTTP-01"
 add_rule "443/tcp" "HTTPS"
+# B500: Caddy listens on udp/443 as well (HTTP/3), and DERP-over-QUIC uses it. Without
+# this rule the port is bound and the rule set simply never let it in — the exact gap
+# `scripts/port_audit.sh` reports as «listening, but ufw does NOT allow it».
+[ "$ENABLE_HTTP3" -eq 1 ] && add_rule "443/udp" "HTTP/3 (QUIC)"
 case "$STUN_PORT" in ''|0) : ;; *) add_rule "${STUN_PORT}/udp" "STUN" ;; esac
 case "$DERP_PORT" in ''|0) : ;; *) add_rule "${DERP_PORT}/tcp" "DERP TLS" ;; esac
 [ -n "$SSH_PORT" ] && add_rule "${SSH_PORT}/tcp" "SSH"
@@ -155,4 +169,4 @@ for spec in "${EXTRA[@]:-}"; do
 done
 
 [ "$fail" -eq 0 ] || die 3 "$fail rule(s) could not be added"
-say "done — verify from outside with: ss -ltnup | grep -E ':(80|443|3478|8443)'"
+say "done — verify from outside with: bash scripts/port_audit.sh (or ss -ltnup | grep -E ':(80|443|3478|8443)')"
