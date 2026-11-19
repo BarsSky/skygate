@@ -126,12 +126,12 @@ else
 fi
 # The placeholder may survive in a COMMENT that quotes the historical audit row (it
 # should — it is the evidence); what must not survive is a placeholder in the CODE that
-# builds the hint.
-if grep -v '^\s*//' "$REC" 2>/dev/null | grep -q '<oidc-id>'; then
-    bad "B6: the placeholder <oidc-id> is still in the audit text — that is why the row repeated for weeks"
-else
-    ok "B6: no <oidc-id> placeholder left in the generated hint"
-fi
+# builds the hint. Capture first (B386/B388), then match.
+rec_code="$(grep -v '^\s*//' "$REC" 2>/dev/null)"
+case "$rec_code" in
+    *'<oidc-id>'*) bad "B6: the placeholder <oidc-id> is still in the audit text — that is why the row repeated for weeks" ;;
+    *)             ok "B6: no <oidc-id> placeholder left in the generated hint" ;;
+esac
 if grep -q 'func countByName' "$REC" 2>/dev/null; then
     bad "B7: countByName survived — it could only ever answer 2"
 else
@@ -149,7 +149,10 @@ else
 fi
 
 # ═══════════════ D. neither half reaches the generator ═══════════════
-if grep -rn 'ViaEnabled' --include='*.go' internal/acl 2>/dev/null | grep -q .; then
+# B386/B388: capture FIRST, then match — a `producer | grep -q` pipeline lets the
+# producer's status (SIGPIPE under pipefail) decide the verdict.
+acl_mentions="$(grep -rn 'ViaEnabled' --include='*.go' internal/acl 2>/dev/null)"
+if [ -n "$acl_mentions" ]; then
     # the ACL legitimately READS the row; what must not change is that it learns a new
     # source of truth. Assert the generator still consults the stored row + B398.
     if grep -q 'SetByUserID' internal/acl/acl_generate_via.go 2>/dev/null; then

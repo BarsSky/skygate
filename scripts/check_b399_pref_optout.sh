@@ -170,9 +170,9 @@ else
   bad "C5: a write site still hardcodes true"
 fi
 if has 'ViaEnabled:     true' "$REC_SRC"; then
-  ok "C6: a derived CREATE still defaults to strict (the pre-B399 behaviour is preserved)"
+  bad "C6: a derived CREATE still defaults to strict — B499 renegotiated this: every derived row is written with via_enabled=0"
 else
-  bad "C6: a create no longer sets the flag"
+  ok "C6: a derived CREATE does not claim strict mode (B499; the pre-B499 value was true)"
 fi
 
 # ---------------------------------------------------------------------------
