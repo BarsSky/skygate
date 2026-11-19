@@ -145,6 +145,37 @@ if grep -q 'STUN' docs/troubleshooting.md 2>/dev/null; then
 else
     bad "D2: nothing explains a service that binds but does not answer"
 fi
+# The port must be documented where an operator provisions a host: the install guide
+# (both languages) and the Caddy template they read while configuring the proxy.
+for doc in docs/INSTALL.md docs/ru/INSTALL.md; do
+    if grep -q '443/udp\|443` | \*\*udp\*\*\|443.*udp' "$doc" 2>/dev/null; then
+        ok "D3: $doc lists UDP/443 next to TCP/443"
+    else
+        bad "D3: $doc never mentions UDP/443 — the exact pair that gets forgotten"
+    fi
+done
+if grep -q 'udp/443\|443/udp\|UDP/443' deploy/caddy/native/Caddyfile.tmpl 2>/dev/null; then
+    ok "D4: the Caddy template explains why UDP/443 matters (trap 5)"
+else
+    bad "D4: the Caddy template does not mention UDP/443"
+fi
+if grep -q '443/udp' deploy/install-caddy-native.sh 2>/dev/null; then
+    ok "D5: the Caddy installer prints the firewall requirement"
+else
+    bad "D5: the Caddy installer stays silent about the UDP rule"
+fi
+# Provenance + the half-broken relay: the derper installer must pin a version and
+# verify STUN, because a relay that binds 3478 and never answers looks healthy.
+if grep -q 'DERP_VERSION' deploy/derp-init.sh 2>/dev/null; then
+    ok "D6: the derper installer pins its version (no moving @latest)"
+else
+    bad "D6: the derper installer still builds @latest"
+fi
+if grep -q 'STUN probe' deploy/derp-init.sh 2>/dev/null; then
+    ok "D7: it verifies STUN after starting the relay, instead of trusting «listening»"
+else
+    bad "D7: a silent STUN would ship unnoticed"
+fi
 
 # ═══════════════ E. discoverability ═══════════════
 if grep -q 'check_b500_ports_and_path.sh' scripts/verify_pre_deploy.sh 2>/dev/null; then

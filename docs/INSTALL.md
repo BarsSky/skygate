@@ -42,6 +42,31 @@ deliberate decision — see `AGENTS.md`). ARM hosts use the Go binary tarballs
 * Network: outbound HTTPS to GitHub if you want the update checker /
   self-update to work (air-gapped hosts use a mirror — see `UPDATE.md`).
 * Ports: `8080` (web UI), `50444` (headscale API, if you run headscale here).
+* **Inbound ports on a PUBLIC host** (the panel behind Caddy, plus the bundled DERP
+  relay). Open exactly these — and note that two of them are UDP, which is the pair
+  that gets forgotten:
+
+  | port | proto | why |
+  |---|---|---|
+  | `80` | tcp | ACME HTTP-01 challenge (Caddy) |
+  | `443` | tcp | HTTPS: panel, headscale control channel, DERP-over-443 |
+  | `443` | **udp** | HTTP/3 (QUIC) — **Caddy listens on UDP/443**, and DERP-over-QUIC uses it |
+  | `8443` | tcp | derper's own TLS listener (`derper --a=:8443`) |
+  | `3478` | **udp** | STUN for the bundled DERP relay (NAT traversal) |
+
+  Do **not** open `8080`, `50443` or `50444`: they are loopback services behind Caddy,
+  and exposing them bypasses TLS and the ACL boundary.
+
+  ```bash
+  sudo bash deploy/install-firewall.sh --apply    # ufw plan above, idempotent
+  bash scripts/port_audit.sh                      # per port: listening / allowed / ANSWERS
+  ```
+
+  `port_audit.sh` asks three separate questions, because they fail separately: B500
+  measured the reference host with `443/udp` **listening but not allowed** (HTTP/3 and
+  DERP-over-QUIC silently fell back to TCP) and with `3478/udp` **bound but never
+  answering** (a derper problem no firewall rule can fix). Caddy enables HTTP/3 on its
+  own; the port still has to be allowed.
 
 Env-var reference (name, default, meaning): [`docs/deploy.md` §1](deploy.md#1-environment).
 

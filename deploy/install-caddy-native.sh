@@ -246,3 +246,11 @@ if [ "$DO_RELOAD" -eq 1 ]; then
 fi
 
 say "done: panel=${PANEL_HOST} headscale=${HEADSCALE_HOST} derp=${DERP_HOST:-none}"
+
+# B500 (2026-11-19): Caddy serves TCP/443 AND UDP/443, and the second one is easy to
+# forget — the reference host had udp/443 listening while ufw never allowed it, so
+# HTTP/3 (browsers) and DERP-over-QUIC (phones) silently fell back to TCP. Say it at
+# the end, where the operator is looking, and point at the two commands that answer it.
+say "firewall: allow 443/tcp AND 443/udp — see trap 5 in the template"
+say "  bash deploy/install-firewall.sh --apply   # plans 80/tcp, 443/tcp, 443/udp, 3478/udp, 8443/tcp"
+say "  bash scripts/port_audit.sh                # reports «listening but not allowed» per port"

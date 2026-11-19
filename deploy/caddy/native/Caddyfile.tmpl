@@ -31,6 +31,16 @@
 #        error handler reverse-proxies to. `file_server` used directly inside
 #        handle_errors answers an EMPTY body, and the proxied request keeps its
 #        Host unless `header_up Host` is pinned — both measured.
+#  5. Caddy listens on UDP/443 AS WELL as TCP/443, and that is not optional
+#     decoration: HTTP/3 rides UDP/443, and DERP-over-QUIC (the DERP site below)
+#     uses the same port. B500 measured the reference host with the port
+#     listening but NOT allowed by ufw — browsers and phones silently fell back
+#     to TCP, so nothing broke loudly and nothing was fast either. The firewall
+#     must therefore allow `443/udp` next to `443/tcp`:
+#         bash deploy/install-firewall.sh --apply     (plans 443/udp)
+#         bash scripts/port_audit.sh                  (says so when it is missing)
+#     A host that pins HTTP/2 on purpose can skip it (`--no-http3` in the
+#     firewall installer); nothing else in this file changes.
 # ============================================================================
 @@ACME_EMAIL_LINE@@
 @@PANEL_HOST@@ {

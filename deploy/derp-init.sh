@@ -89,15 +89,36 @@ fi
 # 2. Build + install derper. `go install` puts the binary
 # in /root/go/bin/derper (or $GOPATH/bin). The Go install
 # takes ~30-45s on a small VPS.
-echo "[2/7] go install tailscale.com/cmd/derper@latest (this takes ~30-45s)" >&2
-RCMD "export PATH=\$PATH:/usr/local/go/bin:/root/go/bin && go install tailscale.com/cmd/cmd/derper@latest" 2>&1 | tail -3 || {
-    # The module path moved in tailscale repo — try both.
-    echo "[2/7] retry with the canonical module path" >&2
-    RCMD "export PATH=\$PATH:/usr/local/go/bin:/root/go/bin && go install tailscale.com/cmd/derper@latest" 2>&1 | tail -3
+#
+# B500 (2026-11-19) — WHAT "UNOFFICIAL BUILD" ACTUALLY MEANS HERE.
+#
+# Tailscale's static release tarballs do NOT ship `derper` (measured: the
+# 1.104.7 amd64 tarball contains only `tailscale` and `tailscaled`), so building
+# from source is not a shortcut — it is the only path that exists for a native
+# install. The result is UNMODIFIED upstream source, not a fork: skygate patches
+# nothing inside derper, and everything skygate adds lives OUTSIDE the binary
+# (the systemd unit below, `derper-cert-sync.sh`, the /admin/derp probes, the
+# generated derpmap). Replacing this binary therefore loses no skygate feature.
+#
+# Two consequences worth knowing:
+#   * `derper --version` prints `X.Y.Z-ERR-BuildInfo` for ANY `go install` build:
+#     the version string needs VCS/buildinfo stamping, which a module build
+#     outside the repo does not have. It is cosmetic, but it does mean the
+#     binary's provenance is the module version, nothing else.
+#   * `@latest` moves under the installer's feet. It is pinned here so two hosts
+#     installed a month apart get the same relay, and an upgrade is a decision.
+#     Override with DERP_VERSION=<tag> when a specific release is wanted.
+DERP_VERSION="${DERP_VERSION:-1.104.7}"
+echo "[2/7] go install tailscale.com/cmd/derper@v${DERP_VERSION} (this takes ~30-45s)" >&2
+RCMD "export PATH=\$PATH:/usr/local/go/bin:/root/go/bin && go install tailscale.com/cmd/derper@v${DERP_VERSION}" 2>&1 | tail -3 || {
+    # The module path moved in the tailscale repo — the old form is kept for
+    # hosts whose Go proxy cache still resolves it.
+    echo "[2/7] retry with the historical module path" >&2
+    RCMD "export PATH=\$PATH:/usr/local/go/bin:/root/go/bin && go install tailscale.com/cmd/cmd/derper@v${DERP_VERSION}" 2>&1 | tail -3
 }
 RCMD "test -x /root/go/bin/derper || sudo install -m 0755 /root/go/bin/derper /usr/local/bin/derper"
 DERP_BIN=$(RCMD 'command -v derper || command -v /usr/local/bin/derper || command -v /root/go/bin/derper' 2>/dev/null)
-echo "[2/7] derper binary: $DERP_BIN" >&2
+echo "[2/7] derper binary: $DERP_BIN ($(RCMD "\"$DERP_BIN\" --version 2>&1 | head -1" 2>/dev/null))" >&2
 
 # 3. Generate self-signed cert + key. derper refuses to
 # start without --certmode=letsencrypt without a real cert,
@@ -147,19 +168,47 @@ else echo 'no firewall tool found, skipping' >&2; fi" 2>&1 | tail -3
 echo "[6/7] start derper" >&2
 RCMD "sudo systemctl restart derper && sleep 2 && sudo systemctl is-active derper" 2>&1 | tail -3
 
-# 7. Probe the HTTPS endpoint. derper responds 200 on
-# / for the bootstrap page; we just confirm the port
-# is open + the TLS handshake completes.
-echo "[7/7] probe HTTPS endpoint" >&2
+# 7. Probe BOTH listeners. derper answers 200 on / (the bootstrap page) for TLS,
+# and a STUN Binding Request on stun_port — and those are two different facts:
+# measured 2026-11-19 on the reference host, the TLS probe returned 200 while STUN
+# had not answered a single request for three days (the port was bound, ufw
+# accepted the packets, the log said "STUN server listening", and every client
+# still fell back to a foreign DERP region). A relay that silently lost STUN is
+# exactly the kind of half-broken that no page reported, so the installer checks it.
+echo "[7/7] probe HTTPS + STUN" >&2
 sleep 2
 PROBE_OUT=$(RCMD "curl -sk --max-time 5 -o /dev/null -w '%{http_code}' https://127.0.0.1:$DERP_PORT/ 2>&1" || echo "fail")
-echo "[7/7] probe result: $PROBE_OUT (200 = OK)" >&2
+echo "[7/7] HTTPS probe: $PROBE_OUT (200 = OK)" >&2
 if [ "$PROBE_OUT" != "200" ]; then
     echo "WARN: derper did not return 200 on the probe (got $PROBE_OUT). Check 'journalctl -u derper' on the remote host." >&2
     # We don't fail the whole script — the cert
     # generation + systemd start may have succeeded
     # even if the probe took a few extra seconds. The
     # operator can re-probe from /admin/derp/relays.
+fi
+STUN_OUT=$(RCMD "python3 - <<'PY'
+import os, socket, struct
+tid = os.urandom(12)
+pkt = struct.pack('!HHI', 0x0001, 0, 0x2112A442) + tid
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(4)
+try:
+    s.sendto(pkt, ('127.0.0.1', $STUN_PORT))
+    d, a = s.recvfrom(2048)
+    print('ok' if len(d) >= 20 and struct.unpack('!H', d[:2])[0] == 0x0101 else 'bad-reply')
+except socket.timeout:
+    print('no-answer')
+except Exception as e:
+    print('error:%s' % e)
+finally:
+    s.close()
+PY" 2>&1 | tail -1)
+if [ "$STUN_OUT" = "ok" ]; then
+    echo "[7/7] STUN probe: ok" >&2
+else
+    echo "WARN: STUN on 127.0.0.1:$STUN_PORT answered '$STUN_OUT' — the port is bound but the relay is not answering." >&2
+    echo "WARN: clients that cannot measure this region prefer a foreign DERP, and NAT traversal loses this server." >&2
+    echo "WARN: this is a derper/build problem, NOT a firewall one. Check 'journalctl -u derper | grep -i stun'." >&2
+    echo "WARN: re-run the check any time with: bash scripts/port_audit.sh" >&2
 fi
 
 # Compute the public URL.
