@@ -74,8 +74,10 @@ func TestReconcileOutcome_DuplicateNameStringPinsValue(t *testing.T) {
 // portal.admin points at the OIDC user with 0 devices, 7 real
 // devices on id=1 are orphaned from skygate's view.
 //
-// Post-B243 behavior: duplicates["skyadmin"]=true; reconcileOne
-// refuses to relink, returns outcome=duplicate_name.
+// Post-B243 behavior: duplicates["skyadmin"]=true; reconcileOne refuses to relink
+// SILENTLY. B499 then made the healthy case exact: portal→1 is valid, so the row is
+// «ok» and the cycle reports the duplicate in its summary row instead of deadlocking on
+// it. The unsafe case — a STALE link with an undecidable duplicate — still refuses.
 func TestReconcileOne_DuplicateName_RefusesSilentRelink(t *testing.T) {
 	byName := map[string]HSUser{
 		"skyadmin": {ID: "86", Name: "skyadmin"}, // last write wins (live bug)
@@ -84,19 +86,37 @@ func TestReconcileOne_DuplicateName_RefusesSilentRelink(t *testing.T) {
 		"skyadmin": true, // 2 headscale users named skyadmin
 	}
 
-	outcome, _, errStr := reconcileOne(
+	outcome, newID, errStr := reconcileOne(
 		context.Background(),
 		nil, // db unused — we refuse before UPDATE
 		nil, // hs unused — pure decision only
 		byName,
 		duplicates,
+		// B499: the full candidate list + which ids a portal row references.
+		// The live state was portal→1 with headscale ids {1, 86}: the link is VALID,
+		// so the correct answer is «ok, and the cycle reports the duplicate», not
+		// «refuse». See TestB499_* for the stale and ambiguous shapes.
+		map[string][]HSUser{"skyadmin": {{ID: "1", Name: "skyadmin"}, {ID: "86", Name: "skyadmin"}}},
+		map[int64]bool{1: true},
 		1, "skyadmin", 1, // portal.id=1, oldHSID=1 (bootstrap admin)
 	)
-	if outcome != ReconcileDuplicateName {
-		t.Errorf("outcome = %v, want ReconcileDuplicateName (refuse silent relink to duplicate headscale user)", outcome)
+	// B499 RENEGOTIATED THE EXPECTATION, not the intent. With the full candidate list
+	// available, portal→1 is a VALID link (id 1 is one of the two users), so there is
+	// nothing to relink and nothing to refuse: the correct answer is «ok», and the
+	// duplicate is surfaced by the cycle's summary audit row. Pre-B499 the "is the
+	// link still valid?" test scanned only the deduplicated byName map, which is why a
+	// healthy row could be reported as a duplicate for weeks.
+	//
+	// The stale and ambiguous shapes (where a decision or a refusal is genuinely
+	// needed) are pinned in reconcile_b499_test.go.
+	if outcome != ReconcileOK {
+		t.Errorf("outcome = %v, want ReconcileOK — portal→1 is a valid link; the duplicate goes to the summary row", outcome)
 	}
-	if errStr == "" {
-		t.Errorf("errStr is empty; want a descriptive message so the audit row explains WHY we refused")
+	if newID != 1 {
+		t.Errorf("newID = %d, want 1 (unchanged)", newID)
+	}
+	if errStr != "" {
+		t.Errorf("errStr = %q, want empty", errStr)
 	}
 }
 
@@ -126,6 +146,8 @@ func TestReconcileOne_DuplicateName_NoRelinkWhenLinkedToDuplicate(t *testing.T) 
 		nil, nil,
 		byName,
 		duplicates,
+		map[string][]HSUser{"skyadmin": {{ID: "1", Name: "skyadmin"}, {ID: "86", Name: "skyadmin"}}},
+		map[int64]bool{86: true},
 		1, "skyadmin", 86,
 	)
 	if outcome != ReconcileOK {
@@ -158,6 +180,8 @@ func TestReconcileOne_NoDuplicates_DoesNotRefuse(t *testing.T) {
 		nil, nil,
 		byName,
 		duplicates,
+		map[string][]HSUser{"skyadmin": {{ID: "1", Name: "skyadmin"}}},
+		map[int64]bool{1: true},
 		1, "skyadmin", 1,
 	)
 	if outcome != ReconcileOK {
@@ -177,6 +201,7 @@ func TestReconcileOne_EmptyUsername_Errors(t *testing.T) {
 		nil, nil,
 		map[string]HSUser{},
 		map[string]bool{},
+		nil, nil,
 		1, "", 0,
 	)
 	if outcome != ReconcileError {

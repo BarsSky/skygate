@@ -368,7 +368,7 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 				RuleCount:      s.TotalRules,
 				NewTag:         s.OwnerCanonicalTag,
 				Reason:         "missing-pref-owner-derived",
-				ViaEnabled:     true,
+				ViaEnabled:     false, // B499: a derived row must not CLAIM strict mode
 			}, true
 		}
 		if s.CanonicalTag == "" {
@@ -444,7 +444,7 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 				NewTag:         s.OwnerCanonicalTag,
 				RuleCount:      s.TotalRules,
 				Reason:         "owner-overrides-rule-relay",
-				ViaEnabled:     true,
+				ViaEnabled:     false, // B499: a derived row must not CLAIM strict mode
 			}, true
 		}
 		// Unanimous → CREATE.
@@ -456,7 +456,7 @@ func PlanDevicePrefChange(s DevicePrefState) (*ReconcilerChange, bool) {
 			NewTag:         s.CanonicalTag,
 			RuleCount:      s.TotalRules,
 			Reason:         "missing-pref-unanimous",
-			ViaEnabled:     true,
+			ViaEnabled:     false, // B499: a derived row must not CLAIM strict mode
 		}, true
 	}
 	// Case 2: existing pref. We may need to UPDATE (stale tag)

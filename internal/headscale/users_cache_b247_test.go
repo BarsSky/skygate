@@ -143,9 +143,11 @@ func TestCreateUser_CacheInvalidationOnSuccess(t *testing.T) {
 	if _, err := c.ListUsers(); err != nil {
 		t.Fatalf("ListUsers post-create: %v", err)
 	}
-	// hits should be 3 (1 GET prime + 1 POST + 1 GET post-create).
-	if got := atomic.LoadInt32(&hits); got != 3 {
-		t.Errorf("after ListUsers post-create: hits = %d, want 3 (cache invalidated → fresh GET)", got)
+	// B499 added a find-before-create pre-flight, so the sequence is now
+	// GET prime + GET pre-flight + POST + GET post-create = 4. The property this test
+	// exists for — the cache is invalidated by a real create — is still the last one.
+	if got := atomic.LoadInt32(&hits); got != 4 {
+		t.Errorf("after ListUsers post-create: hits = %d, want 4 (GET prime, GET pre-flight, POST, fresh GET)", got)
 	}
 }
 
@@ -167,11 +169,21 @@ func TestCreateUser_ListUsersFreshOnFallback(t *testing.T) {
 	// Track GET /api/v1/user calls separately from POST calls so
 	// we can prove the fallback issued a FRESH GET (cache bypass).
 	var getHits, postHits int32
+	var created atomic.Bool // B499: the user exists only after the POST
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/user":
 			if r.Method == http.MethodGet {
 				atomic.AddInt32(&getHits, 1)
+				// B499: the pre-flight GET comes FIRST, so «infra» must not exist yet —
+				// otherwise CreateUser correctly returns the existing user and never
+				// reaches the fallback this test is about. The user appears only after
+				// the POST (the `created` flag), which is exactly the live sequence.
+				if !created.Load() {
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"users":[]}`))
+					return
+				}
 				// Each GET returns the user list with
 				// "infra" — but only on the SECOND+ call.
 				// The first GET returns empty (simulating the
@@ -190,6 +202,7 @@ func TestCreateUser_ListUsersFreshOnFallback(t *testing.T) {
 			}
 			if r.Method == http.MethodPost {
 				atomic.AddInt32(&postHits, 1)
+				created.Store(true) // B499: from now on the list contains the user
 				// Empty id — forces fallback path.
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`{"id":"","name":"infra","createdAt":""}`))

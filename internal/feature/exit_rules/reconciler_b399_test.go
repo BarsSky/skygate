@@ -86,6 +86,13 @@ func TestB399_OptedOutBeatsEveryDerivationPath(t *testing.T) {
 // TestB399_DerivedRowIsStillManaged — the flag must not freeze the engine's own rows:
 // a device nobody has touched keeps being derived and re-pointed, which is what the
 // reconciler exists for.
+//
+// B499 RENEGOTIATED THE STRICT HALF of this test. It used to assert
+// `via_enabled = true`, i.e. the engine's own guess was written as a STRICT pin, and
+// only B398's "derived rows never become a filter" filter kept that pin out of the
+// policy. The flag was therefore a lie the whole product depended on another layer to
+// neutralise: on the live host `basic` sat at `via=1, set_by_user_id=0` and every page
+// that read the column showed a strict pin that did not exist.
 func TestB399_DerivedRowIsStillManaged(t *testing.T) {
 	ch, ok := PlanDevicePrefChange(DevicePrefState{
 		UserID: 1, Username: "skyadmin", DeviceHostname: "basic",
@@ -94,8 +101,8 @@ func TestB399_DerivedRowIsStillManaged(t *testing.T) {
 	if !ok || ch.Action != "create" {
 		t.Fatalf("plan = %+v, want a create — a derived device must still be managed", ch)
 	}
-	if !ch.ViaEnabled {
-		t.Error("a CREATE must default to via_enabled=true (the pre-B399 behaviour)")
+	if ch.ViaEnabled {
+		t.Error("B499: a CREATE must write via_enabled=false — a derived row must not claim strict mode (B398 is a filter, not a licence to write a wrong flag)")
 	}
 }
 

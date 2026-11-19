@@ -394,6 +394,13 @@ plus a rate-limited alert (1 per `(hostname, reason)` per hour). The reconciler 
 **Idempotency**: case 6 is a strict no-op, so repeated ticks do not grow the audit
 log; cases 1/4/5 converge to case 6 after one write.
 
+**B499 — a derived row never claims strict mode.** Every CREATE above writes
+`via_enabled = 0`. The engine's own preference is a *derivation*, and B398 already
+refuses to turn a derived row into a permission filter; writing `via_enabled = 1`
+on it was a flag nobody could act on, while every page that renders the column
+showed a strict pin that did not exist. Only a human's explicit pin may be strict,
+and an UPDATE always carries the stored flag forward — including `true`.
+
 **Failure modes**: live mode off (`… live=false`) logs every change but writes
 none — the silent-footgun class; no canonical tag (case 3) leaves the pref stale by
 design; split exit nodes (case 2) yields no pref because the reconciler cannot

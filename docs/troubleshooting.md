@@ -2154,6 +2154,15 @@ yellow badge names the reason it is **not**:
 
 (A user-level row no longer appears in this table: it is reported by the page-level notice instead.)
 
+**A `via_enabled = 1` row with `set_by_user_id = 0` is pre-B499 residue.** Every CREATE
+of the preference reconciler used to write `via_enabled = true`, so the engine's own
+derivation claimed a strict pin that B398 then refused to honour. Since B499 a derived
+row is written with `via_enabled = 0`; existing rows are deliberately **not** rewritten
+(the reconciler never touches what it does not need to change), so `basic` on the
+reference host keeps `via=1` until something changes it. Unlock it on `/admin/exit-nodes`
+(or `UPDATE device_exit_node_prefs SET via_enabled = 0 WHERE set_by_user_id = 0`) if the
+lying flag bothers the page — it does not change any grant either way.
+
 `via` on an `autogroup:internet` grant is a **filter**, not a preference: once a device IS pinned,
 choosing a different exit node in the Tailscale client makes that grant unmatched and the device loses
 that traffic (this is the «emilia — нет доступа ни к чему, karolina — всё грузится» case from B398).

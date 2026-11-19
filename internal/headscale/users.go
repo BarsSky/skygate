@@ -8,6 +8,7 @@ package headscale
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/url"
 	"os/exec"
 	"strconv"
@@ -89,10 +90,9 @@ func (c *Client) ListUsersFresh() ([]HSUser, error) {
 	return c.ListUsers()
 }
 
-// CreateUser creates a new headscale user, or returns the existing one
-// if the API call fails with a duplicate-name error. The headscale
-// admin API does not consistently return the created user, so on
-// failure we list users and look up by name as a best-effort fallback.
+// CreateUser returns the headscale user with this name, creating it only when no such
+// user exists. The headscale admin API does not consistently return the created user,
+// so on a failed POST we list users and look up by name as a best-effort fallback.
 //
 // B247 (2026-09-15): on the success path the user-list cache is
 // invalidated so the next ListUsers() sees the new user. On the
@@ -102,7 +102,30 @@ func (c *Client) ListUsersFresh() ([]HSUser, error) {
 // user we just created). The "response shape may have changed" warning
 // in cmd/skygate/main.go ensureInfraUser was caused by this stale
 // cache + missing user.
+//
+// B499 (2026-11-19): FIND BEFORE CREATE. This function used to POST
+// unconditionally and only look for an existing user on the FAILURE path, so every
+// caller could mint a second headscale user with a name that already existed — which
+// is exactly how `skyadmin` ended up duplicated (ids 1, 88, 90) after OIDC logins, and
+// why the reconciler spent weeks printing `operator_must_pick`. The lookup is
+// case-insensitive and tolerates surrounding spaces, because headscale's names and
+// skygate's `portal_users.username` do not always agree on case.
 func (c *Client) CreateUser(name string) (*HSUser, error) {
+	want := strings.ToLower(strings.TrimSpace(name))
+	if want == "" {
+		return nil, fmt.Errorf("CreateUser: empty name")
+	}
+	if users, lerr := c.ListUsersFresh(); lerr == nil {
+		for i := range users {
+			if strings.ToLower(strings.TrimSpace(users[i].Name)) == want {
+				// Already there — return it and write nothing. Logged because a caller
+				// that EXPECTED a creation is itself a signal worth seeing.
+				log.Printf("headscale: CreateUser(%q) found the existing user id=%s — not creating a duplicate", name, users[i].ID)
+				return &users[i], nil
+			}
+		}
+	}
+
 	var u HSUser
 	err := c.do("POST", "/api/v1/user", map[string]string{"name": name}, &u)
 	if err == nil && u.ID != "" {
@@ -124,7 +147,7 @@ func (c *Client) CreateUser(name string) (*HSUser, error) {
 		return nil, lerr
 	}
 	for i := range users {
-		if users[i].Name == name {
+		if strings.EqualFold(strings.TrimSpace(users[i].Name), strings.TrimSpace(name)) {
 			return &users[i], nil
 		}
 	}
