@@ -70,10 +70,23 @@ if grep -q 'listening_on' "$AUDIT" 2>/dev/null && grep -q 'ufw_allows' "$AUDIT" 
 else
     bad "A5: the audit conflates listening with allowed"
 fi
-if grep -q 'STUN DOES NOT ANSWER' "$AUDIT" 2>/dev/null; then
+if grep -q 'a port that listens is not a service that answers\|STUN answers' "$AUDIT" 2>/dev/null; then
     ok "A6: it also asks «does STUN answer?» — a bound port is not a working service"
 else
     bad "A6: nothing distinguishes a bound port from an answering one"
+fi
+# B500's own hard lesson: a prober that does not mimic a real client measures itself.
+# derper answers SOFTWARE "tailnode" + FINGERPRINT and counts everything else as
+# `not_stun` (measured 3/3 both ways), so the shared helper must send that shape.
+if [ -f scripts/lib/stun_probe.py ] && grep -q 'tailnode' scripts/lib/stun_probe.py 2>/dev/null; then
+    ok "A7: the STUN prober sends the client shape (SOFTWARE tailnode + FINGERPRINT)"
+else
+    bad "A7: the STUN prober does not mimic a client — a silence would say nothing about the relay"
+fi
+if grep -q 'lib/stun_probe.py' "$AUDIT" 2>/dev/null; then
+    ok "A8: the audit reuses that one helper instead of inlining a packet"
+else
+    bad "A8: the audit builds its own STUN packet again (two implementations, two answers)"
 fi
 
 # ═══════════════ B. installer parity ═══════════════
@@ -140,10 +153,10 @@ if grep -q 'port_audit' docs/troubleshooting.md 2>/dev/null; then
 else
     bad "D1: the operator's guide does not mention the audit"
 fi
-if grep -q 'STUN' docs/troubleshooting.md 2>/dev/null; then
-    ok "D2: troubleshooting records the «bound but silent» class"
+if grep -q 'not_stun' docs/troubleshooting.md 2>/dev/null; then
+    ok "D2: troubleshooting records the prober's own failure mode (the not_stun rule)"
 else
-    bad "D2: nothing explains a service that binds but does not answer"
+    bad "D2: nothing explains why a silent probe may be the prober's fault"
 fi
 # The port must be documented where an operator provisions a host: the install guide
 # (both languages) and the Caddy template they read while configuring the proxy.

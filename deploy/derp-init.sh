@@ -187,9 +187,15 @@ if [ "$PROBE_OUT" != "200" ]; then
     # operator can re-probe from /admin/derp/relays.
 fi
 STUN_OUT=$(RCMD "python3 - <<'PY'
-import os, socket, struct
-tid = os.urandom(12)
-pkt = struct.pack('!HHI', 0x0001, 0, 0x2112A442) + tid
+import binascii, os, socket, struct
+MAGIC = 0x2112A442
+sw = b'tailnode'                 # the value a real client sends; see the note below
+pad = (4 - len(sw) % 4) % 4
+attrs = struct.pack('!HH', 0x8022, len(sw)) + sw + b'\x00' * pad
+hdr = struct.pack('!HHI', 0x0001, len(attrs) + 8, MAGIC) + os.urandom(12)
+pre = hdr + attrs
+crc = (binascii.crc32(pre) & 0xFFFFFFFF) ^ 0x5354554E
+pkt = pre + struct.pack('!HH', 0x8028, 4) + struct.pack('!I', crc)
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(4)
 try:
     s.sendto(pkt, ('127.0.0.1', $STUN_PORT))
@@ -207,8 +213,11 @@ if [ "$STUN_OUT" = "ok" ]; then
 else
     echo "WARN: STUN on 127.0.0.1:$STUN_PORT answered '$STUN_OUT' — the port is bound but the relay is not answering." >&2
     echo "WARN: clients that cannot measure this region prefer a foreign DERP, and NAT traversal loses this server." >&2
-    echo "WARN: this is a derper/build problem, NOT a firewall one. Check 'journalctl -u derper | grep -i stun'." >&2
+    echo "WARN: check 'journalctl -u derper | grep -i stun' and the counters in http://127.0.0.1:<http-port>/debug/vars." >&2
     echo "WARN: re-run the check any time with: bash scripts/port_audit.sh" >&2
+    echo "WARN: the probe mimics a REAL client (SOFTWARE \"tailnode\" + FINGERPRINT) on purpose:" >&2
+    echo "WARN: derper counts any other packet as 'not_stun' and stays silent, so a bare" >&2
+    echo "WARN: Binding Request measures the prober, not the relay." >&2
 fi
 
 # Compute the public URL.

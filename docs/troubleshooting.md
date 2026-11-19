@@ -2211,7 +2211,7 @@ Exit code `1` names the broken layer, `2` means it could not measure. On the pho
 first thing to try is a Tailscale toggle (`off`/`on`) — iOS suspends the tunnel while the
 control session stays alive, which is exactly the shape above.
 
-### 18.2 The port is open but nothing answers
+### 18.2 The port is open but nothing answers — including the prober's own mistake
 
 `port_audit.sh` asks three different questions for every port the product serves
 (`80/tcp`, `443/tcp`, `443/udp`, `8443/tcp`, `3478/udp`):
@@ -2222,15 +2222,27 @@ bash scripts/port_audit.sh            # on the panel host; --json for scripts
 
 * **listening?** — `ss -lnup` has the port;
 * **allowed?** — `ufw status` has the rule;
-* **does the service answer?** — for `3478/udp` a real RFC 5389 Binding Request to
-  `127.0.0.1` must come back.
+* **does the service answer?** — for `3478/udp` a real STUN Binding Request must come back.
 
-Measured on the reference host the same day: `443/udp` was **listening but not allowed**
-(Caddy's HTTP/3 — the installer did not plan it, so every rebuilt host recreates the gap),
-and `3478/udp` was **bound and allowed but STUN never answered** — not from the internet,
-not from loopback, while the `ufw` accept counter grew. The first is a firewall fix
-(`bash deploy/install-firewall.sh --apply` now includes `443/udp`, or `--no-http3` to opt
-out); the second is a derper problem that no firewall rule can fix.
+Measured on the reference host: `443/udp` was **listening but not allowed** (Caddy's
+HTTP/3 — the installer did not plan it, so every rebuilt host recreates the gap; the
+firewall plan now includes it, `--no-http3` to opt out).
+
+**The STUN half is a lesson in measuring the prober.** The first version of this audit
+sent a bare 20-byte Binding Request, got silence and concluded «the relay is broken».
+derper's own counters said otherwise:
+
+| what was sent | reply | derper's counter |
+|---|---|---|
+| `SOFTWARE "tailnode"` + `FINGERPRINT` (a real client's shape) | **Binding Success** | `success` +1 |
+| `SOFTWARE "skygate"` + `FINGERPRINT` | silence | `not_stun` +1 |
+| bare 20-byte Binding Request | silence | `not_stun` +1 |
+
+A `tailscale netcheck` on the same host moved `success` 608 → 616, and tcpdump showed the
+client's 40-byte request. **The relay was healthy the whole time**; Tailscale's STUN
+server answers its own client shape and counts everything else as `not_stun`. So the
+probe in `scripts/lib/stun_probe.py` now mimics a client on purpose, and a silence from
+it is a real finding rather than a statement about the prober.
 
 The audit exits `1` when a gap exists and `2` when no Skygate service is active (nothing
 inspected — never a green zero).

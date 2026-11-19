@@ -1,25 +1,31 @@
 #!/usr/bin/env bash
-# B500 (2026-11-19) — «ПОРТЫ ОТКРЫТЫ?» И «ЭТО УСТРОЙСТВО ДОХОДИТ ДО EXIT-УЗЛА?» — ДВЕ ПРОВЕРКИ, А НЕ ДВЕ ДОГАДКИ.
+# B500 (2026-11-19) — «ПОРТЫ ОТКРЫТЫ?» — ПРОВЕРКА, А НЕ ДОГАДКА.
 #
 # Эталонный хост, 2026-11-19. Оператор: «посмотри может сама svyatoslava не открыла
-# порты нужные». На фактах оказалось ДВЕ разные вещи, и обе выглядели одинаково —
-# «не работает»:
+# порты нужные». На фактах нашлось ровно две вещи, и обе выглядят одинаково — «не
+# работает»:
 #
 #   1. ufw разрешал 443/tcp, 3478/udp и 8443/tcp, но НЕ 443/udp, хотя Caddy слушает
-#      udp/443 (HTTP/3 — им же ходит DERP-over-QUIC). То есть один порт из трёх был
-#      закрыт, и в плане установщика (`deploy/install-firewall.sh`) его тоже не было.
-#   2. STUN на 3478 НЕ ОТВЕЧАЛ ВООБЩЕ — ни с публичного адреса, ни с 127.0.0.1, хотя
-#      derper связал сокет и ufw принимал пакеты (счётчик `udp dport 3478 accept`
-#      рос). Значит виноват не брандмауэр, а сам процесс, и «порт открыт» — не то же
-#      самое, что «сервис отвечает».
+#      udp/443 (HTTP/3 — им же ходит DERP-over-QUIC). Порт был закрыт, и в плане
+#      установщика (`deploy/install-firewall.sh`) его тоже не было. Исправлено в обоих
+#      местах: правило добавлено, установщик планирует порт.
+#   2. «Слушается» ≠ «разрешён» ≠ «отвечает». Первая версия этой проверки отправляла
+#      «голый» 20-байтный Binding Request, получала тишину и объявляла relay сломанным —
+#      И ЭТО БЫЛО ОШИБКОЙ ПРОВЕРКИ, а не продукта. Счётчики самого derper
+#      (`/debug/vars`) показали: запрос формы реального клиента (`SOFTWARE "tailnode"` +
+#      `FINGERPRINT`) получает Binding Success и увеличивает `success`, а любая другая
+#      форма считается `not_stun` и остаётся без ответа. Поэтому STUN-проба теперь живёт
+#      в `scripts/lib/stun_probe.py` и воспроизводит форму клиента: молчание такой пробы
+#      означает настоящую поломку, а не свойство пробника.
 #
 # Отсюда и проверки: этот скрипт сверяет ОЖИДАЕМЫЙ список портов с тем, что реально
-# слушает, с тем, что разрешено, и — отдельно — отвечает ли STUN. Только чтение.
+# слушает, с тем, что разрешено, и — отдельно — отвечает ли сервис. Только чтение.
 #
 # Usage:
 #   bash scripts/port_audit.sh [--json] [--host <hostname>]
-# Exit: 0 — всё сходится; 1 — есть разрыв (порт не слушается/не разрешён/STUN молчит);
-#       2 — проверить нельзя (нет ss, нет ufw, не на хосте).
+# Exit: 0 — всё сходится; 1 — есть разрыв (не слушается / не разрешён / не отвечает);
+#       2 — проверить нельзя (нет ss, или ни один сервис Skygate здесь не активен:
+#           «осмотрено 0 портов» — не зелёный результат, урок B494).
 set -uo pipefail
 
 JSON=0
@@ -132,34 +138,21 @@ done
 STUN_VERDICT="skip"
 STUN_DETAIL="derper is not active on this host"
 if unit_active derper; then
-    if command -v python3 >/dev/null 2>&1; then
-        STUN_DETAIL="$(python3 - <<'PY'
-import os, socket, struct
-def probe(dst, port=3478, timeout=4.0):
-    tid = os.urandom(12)
-    pkt = struct.pack('!HHI', 0x0001, 0, 0x2112A442) + tid
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(timeout)
-    try:
-        s.sendto(pkt, (dst, port))
-        d, a = s.recvfrom(2048)
-        if len(d) >= 20 and struct.unpack('!H', d[:2])[0] == 0x0101:
-            return "STUN answers on 127.0.0.1:%d (%d bytes)" % (port, len(d))
-        return "a reply came back but it is not a STUN Binding Success (%d bytes)" % len(d)
-    except socket.timeout:
-        return "STUN DOES NOT ANSWER on 127.0.0.1:%d — the port is bound but the service is silent (firewall is not the cause)" % port
-    except Exception as e:
-        return "STUN probe failed: %s" % e
-    finally:
-        s.close()
-print(probe("127.0.0.1"))
-PY
-)"
-        case "$STUN_DETAIL" in
-            *"DOES NOT ANSWER"*|*"not a STUN"*) STUN_VERDICT="fail"; GAPS=$((GAPS + 1)) ;;
-            *) STUN_VERDICT="ok" ;;
+    HELPER="$(dirname "$0")/lib/stun_probe.py"
+    if [ -f "$HELPER" ] && command -v python3 >/dev/null 2>&1; then
+        STUN_DETAIL="$(python3 "$HELPER" 127.0.0.1 3478 2>&1)"; stun_rc=$?
+        case "$stun_rc" in
+            0) STUN_VERDICT="ok" ;;
+            1) STUN_VERDICT="fail" ;;
+            # No reply is NOT proof of a broken relay: derper counts a packet it does not
+            # accept as its own `not_stun` counter and stays silent. The helper mimics a
+            # real client (SOFTWARE "tailnode" + FINGERPRINT), which is what the server
+            # answers; anything else measures the prober, not the service.
+            *) STUN_VERDICT="fail" ;;
         esac
+        [ "$STUN_VERDICT" = "fail" ] && GAPS=$((GAPS + 1))
     else
-        STUN_DETAIL="python3 is not installed — STUN liveness was not tested"
+        STUN_DETAIL="python3 or $HELPER is missing — STUN liveness was not tested"
     fi
 fi
 
