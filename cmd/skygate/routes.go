@@ -1045,6 +1045,9 @@ func registerRoutes(
 	// carries the hostname; the handler returns a single-
 	// entry JSON map with the result for just this node.
 	mux.Handle("POST /admin/exit-nodes/{hostname}/sync", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeSync)))
+	// B501: restart the relay's tailscaled (a stale DERP map is what put karolina on
+	// «New York City» while the operator's own region answered). Admin-only, audited.
+	mux.Handle("POST /admin/exit-nodes/{hostname}/reconnect", authMW(http.HandlerFunc(adminSvc.PostAdminExitNodeReconnect)))
 	// 2026-07-15: v0.13.0 — "Run health check now" button on
 	// /admin/exit-nodes. Admin-only. Triggers the background
 	// monitor's CheckNow synchronously and redirects back to

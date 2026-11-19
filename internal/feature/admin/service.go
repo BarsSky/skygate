@@ -20,6 +20,7 @@ import (
 
 	"skygate/internal/auth"
 	"skygate/internal/config"
+	"skygate/internal/feature/exit_rules"
 	"skygate/internal/feature/healthz"
 	extcreds "skygate/internal/ha/dnsexternal"
 	"skygate/internal/headscale"
@@ -241,6 +242,12 @@ type Service struct {
 	// on every node, masking the actual mismatch with
 	// the per-node SSH error).
 	SyncRoutesForNode func(node string) map[string]string
+
+	// B501 (2026-11-19): per-row "Переподключить" on /admin/exit-nodes. It restarts the
+	// relay's tailscaled over the same transport ladder the route apply uses and reports
+	// the DERP region it came back on. Wired once at boot to
+	// exit_rules.Service.ReconnectRelay; nil here means the page shows no button.
+	ReconnectRelayFn func(node string) exit_rules.RelayReconnectResult
 
 	// refactor-v0.30 Phase B step 6a (2026-07-29): moved
 	// from *App. /admin/derp's collectDerpStatus seeds

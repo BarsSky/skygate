@@ -2500,3 +2500,33 @@ provider-shaped credential in the tree, so the class cannot come back.
 
 Test PEMs (`internal/derphealth/testcert_test.go`) are fine: no provider pattern matches them,
 and the contract only forbids key **material** in non-test code.
+
+## 17. Reconnecting one relay from the panel (B501)
+
+A relay can answer headscale and still be unusable: measured 2026-11-19, `karolina`
+reported `Nearest DERP: New York City` while the operator's own region 900 (`mow`)
+answered from the same host, because its `tailscaled` held a stale DERP map. Anything it
+relayed took the long way, and nothing on any page said so.
+
+`/admin/exit-nodes` now has a per-row **«Переподключить»** button:
+
+* it restarts `tailscaled` on THAT relay over the same transport ladder the route apply
+  uses (`tailnet` → `public` → `name` → a jump through a reachable peer relay), so a
+  transport that works for routes works here;
+* the command is a fixed constant in `internal/headscale/relay_exec_b501.go`
+  (`systemctl restart tailscaled` → `rc-service tailscaled restart` → `tailscale down &&
+  tailscale up`), then `tailscale status --json`. No operator input reaches a shell;
+* the flash reports the **state it produced** — transport, DERP region and `online` — not
+  an exit code: a daemon that comes back broken also exits 0;
+* it is admin-only, audited as `exit_relay_reconnected` (with the region), and sits behind
+  a confirm because the relay is offline for a few seconds.
+
+**What it will NOT do.** A phone cannot be reconnected from the panel: skygate never
+reaches a client's daemon, so the page shows no such button on device rows. When a device
+is the problem, the answer is `bash scripts/device_connectivity.sh <host>` — it names the
+broken layer (`control` / `path` / `disco` / `acl` / `relays`) — and the reconnect happens
+on the device itself.
+
+**Refused case.** If the chosen hostname IS the panel host, the action refuses: skygate
+runs unprivileged and does not restart the daemon it shares a machine with. Restart
+`tailscaled` there directly.

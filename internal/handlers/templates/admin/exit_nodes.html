@@ -637,6 +637,13 @@
           <form method="post" action="/admin/exit-nodes/{{.Hostname}}/sync" style="display:inline;margin-left:4px" title="{{t "exit_nodes.resync_help"}}">
             <button type="submit" class="btn btn-sm" style="background:var(--warning-bg);color:var(--warning);border:1px solid var(--warning)"><i class="fa-solid fa-arrows-rotate"></i> {{t "exit_nodes.resync_button"}}</button>
           </form>
+          {{/* B501: restart this relay's tailscaled — the action for a stale DERP map (the
+               live case: karolina held «New York City» while region 900 (mow) answered) and
+               for a relay that answers but is unusable. The confirm is mandatory: the relay
+               is offline for a few seconds and whatever it relays drops with it. */}}
+          <form method="post" action="/admin/exit-nodes/{{.Hostname}}/reconnect" style="display:inline;margin-left:4px" title="{{t "exit_nodes.reconnect_help"}}" onsubmit="return confirm('{{t "exit_nodes.reconnect_confirm"}}')">
+            <button type="submit" class="btn btn-sm" style="background:var(--info-bg);color:var(--info);border:1px solid var(--info)"><i class="fa-solid fa-plug-circle-bolt"></i> {{t "exit_nodes.reconnect_button"}}</button>
+          </form>
         {{end}}
         {{/*
           2026-08-18 (v1.4.0 B140): per-row accept_routes toggle.

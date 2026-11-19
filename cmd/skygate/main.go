@@ -1703,6 +1703,10 @@ func main() {
 	// the all-nodes sync (extracted to syncOneExitNode so
 	// the two paths share the code).
 	adminSvc.SyncRoutesForNode = exitRulesSvc.SyncAdvertisedRoutesForNode
+	// B501: the per-row reconnect action. Same ladder, one fixed command (see
+	// internal/headscale/relay_exec_b501.go) — the handler passes a hostname and
+	// nothing else, so no operator input ever reaches a shell.
+	adminSvc.ReconnectRelayFn = exitRulesSvc.ReconnectRelay
 	// B361 (2026-10-07): wire the ACL trigger the preference-writing surfaces use.
 	// `my.PostMyDevicePreferredExit` / `my.PostAdminDevicePreferredExit` (the page
 	// an operator uses to re-point a device) and the B356 reconciler all call

@@ -381,7 +381,13 @@ var ruExitNodes = map[string]string{
 	// никакого инструмента для исправления этих рассхождений".
 	// The per-row button + the explainer tooltip on the
 	// mismatch tag are the two operator-facing fixes.
-	"exit_nodes.resync_button":          "Пере-синхронизировать",
+	"exit_nodes.resync_button": "Пере-синхронизировать",
+	// B501: перезапуск tailscaled на relay — действие для устаревшей карты DERP и
+	// «отвечает, но непригоден». Телефон так переподключить нельзя: tailscaled там
+	// недоступен, и страница этой кнопки у устройств не показывает.
+	"exit_nodes.reconnect_button":       "Переподключить",
+	"exit_nodes.reconnect_help":         "Перезапустить tailscaled на этом relay и показать, в каком регионе DERP он поднялся. Помогает, когда relay держит устаревшую карту DERP (например, сидит на чужом регионе, хотя ваш доступен) или когда он отвечает, но маршруты не применяются.",
+	"exit_nodes.reconnect_confirm":      "Перезапустить tailscaled на этом relay? Он будет недоступен несколько секунд, и всё, что через него идёт, на это время прервётся.",
 	"exit_nodes.resync_help":            "Протолкнуть правила skygate → только в этот узел. Mismatch значит, что headscale показывает другой набор advertised routes, чем skygate ожидает по device_rules. Если результат ssh=err..., значит operator-override ssh_target недоступен (например, файрвол блокирует public IP) — нажмите иконку ссылки, чтобы переключиться на Tailscale IP.",
 	"exit_nodes.mismatch_help":          "kare N = сколько routes сейчас advertised на headscale; want M = сколько routes skygate ожидает по своим device_rules. Разрыв значит, что device_rule добавили/удалили без sync, или operator вручную менял routes на релее.",
 	"exit_nodes.last_sync":              "последний sync",
@@ -799,7 +805,13 @@ var enExitNodes = map[string]string{
 	// никакого инструмента для исправления этих рассхождений".
 	// The per-row button + the explainer tooltip on the
 	// mismatch tag are the two operator-facing fixes.
-	"exit_nodes.resync_button":          "Re-sync",
+	"exit_nodes.resync_button": "Re-sync",
+	// B501: restart tailscaled on a relay — the action for a stale DERP map and for
+	// «answers but is unusable». A phone cannot be reconnected this way: skygate never
+	// reaches a client daemon, and the page does not offer the button on device rows.
+	"exit_nodes.reconnect_button":       "Reconnect",
+	"exit_nodes.reconnect_help":         "Restart tailscaled on this relay and report the DERP region it came back on. Useful when the relay holds a stale DERP map (it sits on a foreign region while your own answers) or when it answers but cannot apply routes.",
+	"exit_nodes.reconnect_confirm":      "Restart tailscaled on this relay? It will be unavailable for a few seconds and whatever it relays will drop for that time.",
 	"exit_nodes.resync_help":            "Push skygate rules → this node only. The mismatch means the headscale-side advertised routes don't match skygate's device_rules. Re-sync pushes the right set. If the result shows ssh=err..., the operator-override ssh_target is unreachable (e.g. firewalled public IP) — click the link icon to switch to the Tailscale IP.",
 	"exit_nodes.mismatch_help":          "kare N = routes currently advertised on headscale; want M = routes skygate's device_rules say it should advertise. The gap means either a device_rule was added/removed without syncing, or the operator manually edited routes on the relay.",
 	"exit_nodes.last_sync":              "last sync",
