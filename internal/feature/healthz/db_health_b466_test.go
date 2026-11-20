@@ -83,8 +83,19 @@ func TestB466_QueryTimeoutBudgetIsObserved(t *testing.T) {
 
 // TestB466_UnmeasuredIntegrityIsNotAFailure — an unfinished probe is a fact
 // about the probe. It must not degrade the sample, and the status must say so.
+//
+// B506 (2026-11-20): the seam is injected on purpose. The old shape pinned
+// IntegrityTimeout to 1 ns and ASSUMED that forces a timeout — measured false on
+// the maintainer's Windows tree (an in-memory `PRAGMA quick_check` answered before
+// the deadline was enforced), where this test failed on a clean checkout while CI
+// passed. Modelling "the probe could not finish" directly is what the contract
+// actually says, and it holds on every host.
 func TestB466_UnmeasuredIntegrityIsNotAFailure(t *testing.T) {
 	s, _ := b466Sampler(t, time.Nanosecond)
+	s.integrityProbe = func(ctx context.Context, _ *sql.DB) (string, error) {
+		<-ctx.Done() // the probe never gets an answer inside its budget
+		return "", ctx.Err()
+	}
 
 	sample := &DBHealthSample{}
 	if err := s.collect(context.Background(), s.src.Current(), sample); err != nil {

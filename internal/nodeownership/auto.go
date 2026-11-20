@@ -264,7 +264,44 @@ func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertSin
 	} else {
 		ReconcileTags(dbConn, hs, nodes, rows, os.Getenv("SKYGATE_BASE_DOMAIN"), alertSink)
 	}
+	// B505 (2026-11-20): refresh the `devices` PROJECTION from exactly the two
+	// sources just maintained above — liveness from headscale, attribution from
+	// node_owner_map — and say what it did. Measured live before this block:
+	// `SELECT count(*) FROM devices` = 0 while headscale carried 15 live nodes and
+	// node_owner_map a row for each, i.e. a schema table that looked authoritative
+	// and described nothing. It stays a projection: nothing may read it as the
+	// source of truth (node_owner_map owns attribution, headscale owns liveness).
+	if proj, perr := db.SyncDeviceProjection(conn, deviceStatesFromNodes(nodes)); perr != nil {
+		log.Printf("device-projection: %v (the devices table stays as it was)", perr)
+	} else {
+		log.Printf("device-projection: written=%d removed=%d unattributed=%d (live nodes=%d)",
+			proj.Written, proj.Removed, proj.Unattributed, len(nodes))
+	}
 	log.Printf("node-discovery: tick complete (users=%d nodes=%d)", processed, len(nodes))
+}
+
+// deviceStatesFromNodes turns the headscale node list into the liveness half of the
+// `devices` projection. LastSeen is an RFC3339 string on the wire and an epoch
+// integer in the table; an unparseable timestamp becomes 0 rather than a bogus
+// date, because a wrong last_seen is worse than a missing one.
+func deviceStatesFromNodes(nodes []headscale.NodeView) []db.DeviceState {
+	out := make([]db.DeviceState, 0, len(nodes))
+	for _, n := range nodes {
+		var seen int64
+		if t, err := time.Parse(time.RFC3339, strings.TrimSpace(n.LastSeen)); err == nil {
+			seen = t.Unix()
+		} else if t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(n.LastSeen)); err == nil {
+			seen = t.Unix()
+		}
+		out = append(out, db.DeviceState{
+			NodeID:   n.ID,
+			Hostname: n.Hostname,
+			IPs:      strings.Join(n.IPAddresses, ","),
+			LastSeen: seen,
+			Online:   n.Online,
+		})
+	}
+	return out
 }
 
 // BackfillInfra — v0.33.1.41 — Issue 4 infra user.

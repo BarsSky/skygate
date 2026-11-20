@@ -330,11 +330,14 @@ const qSelectOtherHSUserIDs = `SELECT headscale_user_id FROM portal_users WHERE 
 // ---------------------------------------------------------------
 
 const (
-	// QSelectUserDevices is the user-scoped device list. Exported
-	// (uppercase Q) so handlers can still use the raw constant
-	// when they need the underlying *sql.Rows for App-level
-	// enrichment (e.g. fall back to headscale.NodeList when the
-	// devices table is empty).
+	// QSelectUserDevices is the user-scoped device list over the `devices`
+	// table. Since B505 (2026-11-20) that table is a maintained PROJECTION of
+	// the live tailnet (liveness from headscale, owner + platform marker from
+	// node_owner_map), refreshed on every node-discovery tick — before that it
+	// was created by the schema and written by nothing, so it answered zero rows
+	// on a tailnet with fifteen live nodes. It is still not authoritative: when a
+	// caller needs the CURRENT state, read headscale, exactly as the pages do.
+	// Kept exported because a handler may want the *sql.Rows for enrichment.
 	QSelectUserDevices = `SELECT id, hostname, last_seen FROM devices WHERE user_id = $1 ORDER BY hostname`
 )
 

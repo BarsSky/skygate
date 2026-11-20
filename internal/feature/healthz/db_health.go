@@ -392,6 +392,30 @@ type Sampler struct {
 	integrityDetail string    //
 	integrityAt     time.Time //
 	integrityNext   time.Time //
+
+	// integrityProbe runs the integrity statement; nil means the real
+	// `PRAGMA quick_check` (see probeIntegrityDefault).
+	//
+	// B506 (2026-11-20): why this is injectable. The budget path ("the probe did
+	// not finish, so the verdict is unmeasured") used to be exercised by pinning
+	// IntegrityTimeout to 1 ns — and that does NOT force a timeout on every
+	// platform: measured on the maintainer's Windows tree, `PRAGMA quick_check`
+	// against an in-memory database answered before the deadline was enforced, so
+	// TestB466_UnmeasuredIntegrityIsNotAFailure failed on a CLEAN checkout while
+	// CI's ubuntu passed it. A verdict that depends on the host's scheduler is not
+	// a contract; the seam lets the test model "the probe could not finish"
+	// exactly, while production keeps the real statement.
+	integrityProbe func(ctx context.Context, d *sql.DB) (answer string, err error)
+}
+
+// probeIntegrityDefault is the production integrity statement: ONE
+// `PRAGMA quick_check`, bounded by the context the caller derived from
+// IntegrityTimeout. Only an ANSWERED "not ok" is a finding about the database —
+// see runIntegrityProbe.
+func probeIntegrityDefault(ctx context.Context, d *sql.DB) (string, error) {
+	var answer string
+	err := d.QueryRowContext(ctx, `PRAGMA quick_check`).Scan(&answer)
+	return answer, err
 }
 
 // qctx bounds ONE query (B466). See DBHealthConfig.QueryTimeout for the
@@ -859,8 +883,11 @@ func (s *Sampler) runIntegrityProbe(db *sql.DB) {
 	started := time.Now()
 	qc, cancel := context.WithTimeout(context.Background(), s.cfg.IntegrityTimeout)
 	defer cancel()
-	var answer string
-	err := db.QueryRowContext(qc, `PRAGMA quick_check`).Scan(&answer)
+	probe := s.integrityProbe
+	if probe == nil {
+		probe = probeIntegrityDefault
+	}
+	answer, err := probe(qc, db)
 
 	status, detail := "ok", ""
 	switch {
