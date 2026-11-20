@@ -184,23 +184,27 @@ func (s *Service) addRuleTarget(userID int64, devID int, deviceIP, exitNode, tar
 	}
 
 	for _, ip := range ipsToInsert {
-		ok, existingID := s.insertRuleUnique(userID, devID, exitNode, res.TypeInserted, ip, action, deviceIP, res.SubnetParent, groupLabel)
-		if !ok {
+		// B507: the writer now reports WHAT it did (created / existing /
+		// other-relay / failed) instead of a bool. This path treats everything but
+		// a database error as "our row is there", exactly as before — the operator's
+		// page does not need the distinction the API needs.
+		ins := s.insertRuleUnique(userID, devID, exitNode, res.TypeInserted, ip, action, deviceIP, res.SubnetParent, groupLabel)
+		if ins.Outcome == ruleInsertFailed {
 			res.Err = "db error"
 			return res
 		}
 		res.ValuesInserted = append(res.ValuesInserted, ip)
-		if existingID > 0 {
+		if ins.Outcome != ruleInsertCreated && ins.ID > 0 {
 			// A row we would have written is already there. Two cases, both a
 			// duplicate for the operator's purposes: our own parent_domain
 			// (or a manual rule), and a /32 owned by a DIFFERENT domain that
 			// resolves to the same anycast address — the second one is left
 			// alone so the other domain keeps its route.
-			existingParent, _ := db.GetParentDomain(s.dbc(), existingID)
+			existingParent, _ := db.GetParentDomain(s.dbc(), ins.ID)
 			_ = existingParent
 			res.Duplicates++
 			if res.FirstExistingID == 0 {
-				res.FirstExistingID = existingID
+				res.FirstExistingID = ins.ID
 				res.FirstBlockingIP = ip
 				res.FirstParentDomain = existingParent
 			}

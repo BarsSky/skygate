@@ -354,8 +354,12 @@ func (s *Service) PostMyExitRule(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			for _, ip := range ipsToInsert {
-				ok, _ := s.insertRuleUnique(c.UserID, otherID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent, groupLabel)
-				if ok {
+				// B507: the writer returns an OUTCOME, not a bool. This path counts
+				// "our row is there", which includes the idempotent and the
+				// other-relay cases — the page reports how many devices a rule
+				// covers, not how many rows were newly written.
+				ins := s.insertRuleUnique(c.UserID, otherID, exitNode, typeToInsert, ip, action, deviceIP, subnetParent, groupLabel)
+				if ins.Outcome != ruleInsertFailed {
 					fannedOut++
 				}
 			}

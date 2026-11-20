@@ -156,8 +156,10 @@ func TestB380_AddRuleTargetWritesTheLabelOnTheDomainAndItsDerivedRows(t *testing
 	}
 
 	// The derived /32 writer is the same insertRuleUnique the DNS-resolve path calls.
-	ok, _ := s.insertRuleUnique(7, 42, "emilia", "subnet", "192.0.2.7/32", "accept", "100.64.0.20", "b380-label.invalid", "Игры")
-	if !ok {
+	// B507: it now returns an outcome; a created/existing row is success, a database
+	// error is not.
+	insRes := s.insertRuleUnique(7, 42, "emilia", "subnet", "192.0.2.7/32", "accept", "100.64.0.20", "b380-label.invalid", "Игры")
+	if insRes.Outcome == ruleInsertFailed {
 		t.Fatalf("insertRuleUnique refused the derived row")
 	}
 	if err := d.QueryRow(`SELECT group_label FROM device_rules WHERE target_type = 'subnet'`).Scan(&label); err != nil {

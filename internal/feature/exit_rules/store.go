@@ -78,7 +78,7 @@ type apiRule struct {
 // B380: groupLabel is the operator's own group name ("" = ungrouped). It rides along
 // with parentDomain because both describe the row for the PAGE rather than for the
 // routing decision, and both are inherited by derived rows.
-func (s *Service) insertRuleUnique(userID int64, deviceID int, exitNode, targetType, targetValue, action, deviceIP, parentDomain, groupLabel string) (bool, int) {
+func (s *Service) insertRuleUnique(userID int64, deviceID int, exitNode, targetType, targetValue, action, deviceIP, parentDomain, groupLabel string) ruleInsertResult {
 	// B380: normalise here too — this is the single low-level writer, so the stored
 	// value is the one the group view will compare and display.
 	groupLabel = NormaliseGroupLabel(groupLabel)
@@ -91,29 +91,35 @@ func (s *Service) insertRuleUnique(userID int64, deviceID int, exitNode, targetT
 	//
 	// Moving an existing rule to another relay is a request (`exit_relay_requests`,
 	// B440) or the operator's bulk move — never a side effect of adding a duplicate.
+	//
+	// B507: this branch returns its OWN outcome. Before it returned `(true, id)`,
+	// which every caller read as "written" — so the API reported a rule pinned to a
+	// relay it had not touched, and the operator had no way to learn the truth.
 	if id, otherRelay, err := db.FindDeviceRuleIDAnyRelay(s.dbc(), userID, deviceID, targetType, targetValue); err == nil {
 		if otherRelay != exitNode {
 			log.Printf("exit-rules: %s %s for device %d is already covered by relay %q — NOT adding a duplicate for relay %q (moving it is a request, see B440)",
 				targetType, targetValue, deviceID, otherRelay, exitNode)
+			return ruleInsertResult{Outcome: ruleInsertOtherRelay, ID: id, OtherRelay: otherRelay}
 		}
-		return true, id
+		// Same relay, same target: an idempotent re-send. Nothing written.
+		return ruleInsertResult{Outcome: ruleInsertExisting, ID: id}
 	} else if !errors.Is(err, db.ErrNotFound) {
-		return false, 0
+		return ruleInsertResult{Outcome: ruleInsertFailed}
 	}
 	existingID, err := db.FindDeviceRuleID(s.dbc(), userID, deviceID, exitNode, targetType, targetValue)
 	if err == nil {
-		return true, existingID
+		return ruleInsertResult{Outcome: ruleInsertExisting, ID: existingID}
 	}
 	if !errors.Is(err, db.ErrNotFound) {
-		return false, 0
+		return ruleInsertResult{Outcome: ruleInsertFailed}
 	}
 	// not found → insert. parentDomain is caller-supplied; the
 	// form passes the original domain for DNS-resolved /32 rules.
 	newID, err := db.AppendDeviceRule(s.dbc(), userID, deviceID, exitNode, targetType, targetValue, action, deviceIP, parentDomain, groupLabel, "", "")
 	if err != nil {
-		return false, 0
+		return ruleInsertResult{Outcome: ruleInsertFailed}
 	}
-	return true, int(newID)
+	return ruleInsertResult{Outcome: ruleInsertCreated, ID: int(newID)}
 }
 
 // getDeviceRules returns the user's rules with the

@@ -142,7 +142,8 @@ func BuildAgentBriefMarkdown(s AgentSnapshot) string {
 	b.WriteString("- `target_type` is `ip`, `subnet` or `domain`; `action` is `accept` (default) or `deny`. `device_id` (int) and `target_value` are required; `exit_node` is the relay hostname, empty = let skygate assign one.\n")
 	b.WriteString("- `device_id`, **not** the device name, is what the API takes — the table in section 4 gives both.\n")
 	b.WriteString("- **One relay per prefix.** headscale serves a subnet prefix from exactly ONE relay: if device A asks for `104.16.0.0/12` via relay X and device B asks for the same prefix via relay Y, one of them silently loses the route. Prefer the SAME relay for the same destination across devices unless the human asks otherwise.\n")
-	b.WriteString("- A rule that already exists is a **no-op, not an error**: the response counts it in `duplicates`. Do not \"fix\" that by deleting and re-adding.\n")
+	b.WriteString("- A rule that already exists is a **no-op, not an error**: the response counts it in `existing` (and the legacy `duplicates`) and answers `created:0` for a pure retry. Do not \"fix\" that by deleting and re-adding.\n")
+	b.WriteString("- A target that is already pinned to a DIFFERENT relay is an **error naming that relay** (B480): nothing is written, so the traffic keeps using the old relay. Do not re-send it hoping it lands; ask the human, or open a relay move request.\n")
 	b.WriteString("- Adding a rule for a device with **no exit node selected** does nothing by itself: the panel marks those devices and the reconciler assigns a relay on its next pass (a few minutes). If the human wants it now, pass `exit_node` explicitly.\n")
 	b.WriteString("- `domain` rules are re-resolved periodically, so an IP that rotates is handled; a **versioned hostname** (e.g. `prod.v11.2.1.main.vendor-backend.net`) is NOT — it changes when the vendor ships, and the rule must be updated then. Say so when you use one.\n")
 	b.WriteString("- A rule for a whole CDN (e.g. a `*.cloudflare` destination) expands into that CDN's published prefixes — that can be an entire `/11` shared with unrelated sites. For a game or a specific service, prefer the vendor's own prefixes over a CDN domain.\n")
@@ -267,7 +268,12 @@ func BuildAgentBriefMarkdown(s AgentSnapshot) string {
 		b.WriteString("\n  /* no devices are attributed to this account — the human must register/adopt one first */")
 	}
 	b.WriteString("\n]}\n```\n\n")
-	b.WriteString("Response: `{\"added\":N,\"duplicates\":M,\"errors\":[…],\"ids\":[…]}`. Read `errors` — a non-empty list is a partial success, not a failure.\n\n")
+	b.WriteString("Response: `{\"ok\":true,\"added\":N,\"created\":C,\"existing\":E,\"duplicates\":E,\"errors\":[…],\"ids\":[…],\"results\":[{\"index\":i,\"id\":…,\"status\":\"created|existing|error\",\"reason\":…}],\"acl\":{\"applied\":bool,\"version\":V,\"status\":\"applied|not_needed|failed\",\"error\":…}}`.\n\n")
+	b.WriteString("- `created` counts rows that were WRITTEN; `existing` counts rules that were already there. A retry of the same batch answers `created:0` — that is idempotency, not a failure, and it is why re-sending a plan is safe.\n")
+	b.WriteString("- `results` has one entry per rule you sent, in the same order, so a partial success can be matched back to your plan. Read `reason` for every `status:\"error\"`.\n")
+	b.WriteString("- **`acl.applied:false` means the rules are stored but NOT in force.** Re-read `acl.error`, tell the human plainly, and do not describe the rules as active. The HTTP status is 502 in that case (the write happened; the policy did not).\n")
+	b.WriteString("- A rule whose target is already pinned to a DIFFERENT relay comes back as `status:\"error\"` naming that relay: nothing was written and the traffic will keep using the old one. Moving it is a request, not a duplicate.\n")
+	b.WriteString("- `target_type` must be `ip`, `subnet` or `domain`; a subnet needs a prefix (`/32` for one host); `exit_node` must be a relay that exists (the error lists the ones that do). A refused rule is refused BEFORE it reaches the database, so `errors` names a fixable mistake instead of an inert row.\n\n")
 
 	b.WriteString("## 6. What to reply to the human\n\n")
 	b.WriteString("- Answer in the human's language, briefly: the plan as a table, then the result (`added` / `duplicates`).\n")

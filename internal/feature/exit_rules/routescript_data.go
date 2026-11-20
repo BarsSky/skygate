@@ -90,7 +90,16 @@ func (s *Service) loadRoutesForScriptGroups(userID int, deviceID int) ([]ScriptR
 	query := "SELECT target_type, target_value, COALESCE(exit_node_id,'') FROM device_rules WHERE enabled = 1 AND user_id = " + db.PlaceholdersList(1)
 	args := []any{userID}
 	if deviceID > 0 {
-		query += " AND (device_id = " + db.PlaceholdersList(1) + " OR all_devices = 1)"
+		// B507: this was `db.PlaceholdersList(1)` for BOTH filters — i.e. `$1`
+		// twice — while TWO arguments were passed. On SQLite `$1` binds by ordinal,
+		// so `device_id = $1` compared the device id against the USER id (0 rows on
+		// the reference install) and the second argument was silently unused; on
+		// PostgreSQL pgx rejects the whole query on the argument count. Either way
+		// the last step of the documented workflow — "give me the script for THIS
+		// device" — answered `# No IP/subnet exit rules configured` for a device with
+		// rules: measured, 368 routes without `device_id`, empty with `device_id=9`.
+		// The placeholder must be the SECOND one, because userID already took $1.
+		query += " AND (device_id = " + db.PlaceholdersRange(2, 2) + " OR all_devices = 1)"
 		args = append(args, deviceID)
 	}
 	query += " ORDER BY id"

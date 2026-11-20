@@ -80,9 +80,11 @@ func (s *Service) propagateAllDeviceRules() (int, error) {
 			}
 			// B380: the copy carries the owner's group label, so a rule filed under
 			// «Игры» is not ungrouped on every device except the one it was typed on.
-			ok, _ := s.insertRuleUnique(g.UserID, devID, g.ExitNode, g.TargetType, g.TargetValue,
+			// B507: an outcome instead of a bool; only a database error stops this
+			// pass, exactly as `!ok` did before.
+			ins := s.insertRuleUnique(g.UserID, devID, g.ExitNode, g.TargetType, g.TargetValue,
 				g.Action, g.DeviceIP, g.ParentDomain, g.GroupLabel)
-			if !ok {
+			if ins.Outcome == ruleInsertFailed {
 				continue
 			}
 			// Keep the intent on the row we just created: the next pass must see
