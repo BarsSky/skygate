@@ -221,7 +221,7 @@ grep -q 'pitfall_client_dns' "$TPL_HELP" \
   || F_MISS="${F_MISS}pitfall_client_dns is defined but never rendered (help page)"$'\n'
 # A pitfall value carries <b>/<code>: rendered without safeHTML it prints the
 # tags literally, which is how the four older pitfalls looked.
-grep -q 'pitfall_dns_fail" | safeHTML' "$TPL_HELP" \
+{ grep -q 'pitfall_dns_fail" | safeHTML' "$TPL_HELP" || grep -q 'th "help.exit_rules_help.pitfall_dns_fail"' "$TPL_HELP"; } \
   || F_MISS="${F_MISS}the pitfalls list renders HTML without safeHTML (literal <code> on the page)"$'\n'
 if [ -z "$F_MISS" ]; then
   ok "F1: the DNS warning is defined in both languages, rendered, and HTML-rendered safely"

@@ -191,7 +191,7 @@ else
   bad "E2: ai_base_url still contains a template action inside a catalogue value (it prints literally)"
 fi
 
-if grep -q 'tf "help.exit_rules_help.ai_base_url" .BaseURL' "$HELP_TPL"; then
+if grep -qE '\b(tf|th) "help.exit_rules_help.ai_base_url" .BaseURL' "$HELP_TPL"; then
   ok "E3: the template formats it with the request origin"
 else
   bad "E3: the template does not pass .BaseURL to the formatted key"

@@ -89,12 +89,12 @@ else
   bad "C3: the native env-apply path is not explained"
 fi
 
-if grep -q 'oidc.disabled_warn" | safeHTML' "$TPL"; then
+if grep -q 'oidc.disabled_warn" | safeHTML' "$TPL" || grep -q 'th "oidc.disabled_warn"' "$TPL"; then
   ok "D1: the template renders the banner as HTML (the example stays readable)"
 else
   bad "D1: the banner is not rendered with safeHTML — the example would show as escaped markup"
 fi
-if grep -q '{{t "oidc.disabled_warn"' "$TPL"; then
+if grep -qE '\{\{(t|tf|th) "oidc.disabled_warn"' "$TPL"; then
   ok "D2: the banner comes from the catalogue, not from hardcoded text in the template"
 else
   bad "D2: the banner is not an i18n key"

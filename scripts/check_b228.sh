@@ -103,7 +103,7 @@ else
 fi
 
 # --- F: shown-of-total counter (VisibleCount / TotalCount) ---
-if hasf "$TEMPLATE" 'tf "derp_dashboard.shown_of_total" .VisibleCount .TotalCount'; then
+if hasf "$TEMPLATE" '"derp_dashboard.shown_of_total" .VisibleCount .TotalCount'; then
   ok "F: template renders shown-of-total counter (VisibleCount / TotalCount)"
 else
   fail "F: template missing shown-of-total counter"

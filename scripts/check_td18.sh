@@ -70,20 +70,20 @@ fi
 # ---------------------------------------------------------------------------
 # C. admin/headscale_acl.html has hint block + i18n table headers
 # ---------------------------------------------------------------------------
-if grep -q 't "acl.what_is_body"' internal/handlers/templates/admin/headscale_acl.html; then
+if grep -qE '\b(t|tf|th) "acl.what_is_body"' internal/handlers/templates/admin/headscale_acl.html; then
     ok "contract C1: headscale_acl.html references acl.what_is_body hint"
 else
     bad "contract C1: headscale_acl.html missing acl.what_is_body hint"
 fi
-if grep -q 't "acl.skygate_managed_label"' internal/handlers/templates/admin/headscale_acl.html \
-    && grep -q 't "acl.external_label"' internal/handlers/templates/admin/headscale_acl.html; then
+if grep -qE '\b(t|tf|th) "acl.skygate_managed_label"' internal/handlers/templates/admin/headscale_acl.html \
+    && grep -qE '\b(t|tf|th) "acl.external_label"' internal/handlers/templates/admin/headscale_acl.html; then
     ok "contract C2: headscale_acl.html i18n-wraps the Skygate/External section labels"
 else
     bad "contract C2: headscale_acl.html missing i18n section labels"
 fi
-if grep -q 't "acl.src_help"' internal/handlers/templates/admin/headscale_acl.html \
-    && grep -q 't "acl.dst_help"' internal/handlers/templates/admin/headscale_acl.html \
-    && grep -q 't "acl.label_help"' internal/handlers/templates/admin/headscale_acl.html; then
+if grep -qE '\b(t|tf|th) "acl.src_help"' internal/handlers/templates/admin/headscale_acl.html \
+    && grep -qE '\b(t|tf|th) "acl.dst_help"' internal/handlers/templates/admin/headscale_acl.html \
+    && grep -qE '\b(t|tf|th) "acl.label_help"' internal/handlers/templates/admin/headscale_acl.html; then
     ok "contract C3: headscale_acl.html has per-field hints (src/dst/label_help)"
 else
     bad "contract C3: headscale_acl.html missing per-field hints"
@@ -92,14 +92,14 @@ fi
 # ---------------------------------------------------------------------------
 # D. admin/services.html has the 2 hint blocks
 # ---------------------------------------------------------------------------
-if grep -qE '\{\{t "services.help_title"\}|\{\{tf "services.help_title"' internal/handlers/templates/admin/services.html \
-    && grep -qE '\{\{t "services.help_body"|\{\{tf "services.help_body"' internal/handlers/templates/admin/services.html; then
+if grep -qE '\{\{(t|tf|th) "services.help_title"' internal/handlers/templates/admin/services.html \
+    && grep -qE '\{\{(t|tf|th) "services.help_body"' internal/handlers/templates/admin/services.html; then
     ok "contract D1: services.html has 'What do the statuses mean?' hint block"
 else
     bad "contract D1: services.html missing 'What do the statuses mean?' hint"
 fi
-if grep -q 't "services.integrations_help_title"' internal/handlers/templates/admin/services.html \
-    && grep -q 't "services.integrations_help_body"' internal/handlers/templates/admin/services.html; then
+if grep -qE '\b(t|tf|th) "services.integrations_help_title"' internal/handlers/templates/admin/services.html \
+    && grep -qE '\b(t|tf|th) "services.integrations_help_body"' internal/handlers/templates/admin/services.html; then
     ok "contract D2: services.html has 'What are these integrations?' hint block"
 else
     bad "contract D2: services.html missing 'What are these integrations?' hint"
@@ -108,26 +108,26 @@ fi
 # ---------------------------------------------------------------------------
 # E. admin/derp_dashboard.html has full i18n wrap + About hint
 # ---------------------------------------------------------------------------
-if grep -q 't "derp_dashboard.title"' internal/handlers/templates/admin/derp_dashboard.html \
-    && grep -q 't "derp_dashboard.subtitle"' internal/handlers/templates/admin/derp_dashboard.html; then
+if grep -qE '\b(t|tf|th) "derp_dashboard.title"' internal/handlers/templates/admin/derp_dashboard.html \
+    && grep -qE '\b(t|tf|th) "derp_dashboard.subtitle"' internal/handlers/templates/admin/derp_dashboard.html; then
     ok "contract E1: derp_dashboard.html i18n-wraps title + subtitle (was 100% English pre-TD-18)"
 else
     bad "contract E1: derp_dashboard.html missing i18n title/subtitle"
 fi
-if grep -q 't "derp_dashboard.about_body"' internal/handlers/templates/admin/derp_dashboard.html; then
+if grep -qE '\b(t|tf|th) "derp_dashboard.about_body"' internal/handlers/templates/admin/derp_dashboard.html; then
     ok "contract E2: derp_dashboard.html has 'About the probes' hint block"
 else
     bad "contract E2: derp_dashboard.html missing 'About the probes' hint"
 fi
-if grep -q 't "derp_dashboard.latency_good_help"' internal/handlers/templates/admin/derp_dashboard.html \
-    && grep -q 't "derp_dashboard.latency_ok_help"' internal/handlers/templates/admin/derp_dashboard.html \
-    && grep -q 't "derp_dashboard.latency_bad_help"' internal/handlers/templates/admin/derp_dashboard.html; then
+if grep -qE '\b(t|tf|th) "derp_dashboard.latency_good_help"' internal/handlers/templates/admin/derp_dashboard.html \
+    && grep -qE '\b(t|tf|th) "derp_dashboard.latency_ok_help"' internal/handlers/templates/admin/derp_dashboard.html \
+    && grep -qE '\b(t|tf|th) "derp_dashboard.latency_bad_help"' internal/handlers/templates/admin/derp_dashboard.html; then
     ok "contract E3: derp_dashboard.html has latency color threshold tooltips (≤50 / ≤150 / >150 ms)"
 else
     bad "contract E3: derp_dashboard.html missing latency threshold tooltips"
 fi
-if grep -q 't "derp_dashboard.own_vs_public_help"' internal/handlers/templates/admin/derp_dashboard.html \
-    && grep -q 't "derp_dashboard.probes_help"' internal/handlers/templates/admin/derp_dashboard.html; then
+if grep -qE '\b(t|tf|th) "derp_dashboard.own_vs_public_help"' internal/handlers/templates/admin/derp_dashboard.html \
+    && grep -qE '\b(t|tf|th) "derp_dashboard.probes_help"' internal/handlers/templates/admin/derp_dashboard.html; then
     ok "contract E4: derp_dashboard.html has 'own vs public' + 'Probes counter' hints"
 else
     bad "contract E4: derp_dashboard.html missing own-vs-public or probes-counter hints"
@@ -182,8 +182,8 @@ fi
 # ---------------------------------------------------------------------------
 # J. admin/integrations.html has the 'What are integrations?' hint
 # ---------------------------------------------------------------------------
-if grep -q 't "integrations.help_title"' internal/handlers/templates/admin/integrations.html \
-    && grep -q 't "integrations.help_body"' internal/handlers/templates/admin/integrations.html; then
+if grep -qE '\b(t|tf|th) "integrations.help_title"' internal/handlers/templates/admin/integrations.html \
+    && grep -qE '\b(t|tf|th) "integrations.help_body"' internal/handlers/templates/admin/integrations.html; then
     ok "contract J: integrations.html has 'What are integrations?' hint block"
 else
     bad "contract J: integrations.html missing 'What are integrations?' hint"
@@ -192,8 +192,8 @@ fi
 # ---------------------------------------------------------------------------
 # K. admin/telegram.html has the 'What is this page?' hint
 # ---------------------------------------------------------------------------
-if grep -q 't "telegram.help_title"' internal/handlers/templates/admin/telegram.html \
-    && grep -q 't "telegram.help_body"' internal/handlers/templates/admin/telegram.html; then
+if grep -qE '\b(t|tf|th) "telegram.help_title"' internal/handlers/templates/admin/telegram.html \
+    && grep -qE '\b(t|tf|th) "telegram.help_body"' internal/handlers/templates/admin/telegram.html; then
     ok "contract K: telegram.html has 'What is this page?' hint block (8 sections overview)"
 else
     bad "contract K: telegram.html missing 'What is this page?' hint"
@@ -202,9 +202,9 @@ fi
 # ---------------------------------------------------------------------------
 # L. admin/derp.html has the 'What is DERP?' hint + per-tile metric help
 # ---------------------------------------------------------------------------
-if grep -q 't "derp.help_title"' internal/handlers/templates/admin/derp.html \
-    && grep -q 't "derp.help_body"' internal/handlers/templates/admin/derp.html \
-    && grep -q 't "derp.metric_help"' internal/handlers/templates/admin/derp.html; then
+if grep -qE '\b(t|tf|th) "derp.help_title"' internal/handlers/templates/admin/derp.html \
+    && grep -qE '\b(t|tf|th) "derp.help_body"' internal/handlers/templates/admin/derp.html \
+    && grep -qE '\b(t|tf|th) "derp.metric_help"' internal/handlers/templates/admin/derp.html; then
     ok "contract L: derp.html has 'What is DERP and what does this page show?' hint + per-tile help"
 else
     bad "contract L: derp.html missing DERP hint or metric_help"
@@ -213,9 +213,9 @@ fi
 # ---------------------------------------------------------------------------
 # M. admin/control_planes.html has the 'What is a control plane?' hint
 # ---------------------------------------------------------------------------
-if grep -q 't "control_planes.help_title"' internal/handlers/templates/admin/control_planes.html \
-    && grep -q 't "control_planes.help_body"' internal/handlers/templates/admin/control_planes.html \
-    && grep -q 't "control_planes.warning_help"' internal/handlers/templates/admin/control_planes.html; then
+if grep -qE '\b(t|tf|th) "control_planes.help_title"' internal/handlers/templates/admin/control_planes.html \
+    && grep -qE '\b(t|tf|th) "control_planes.help_body"' internal/handlers/templates/admin/control_planes.html \
+    && grep -qE '\b(t|tf|th) "control_planes.warning_help"' internal/handlers/templates/admin/control_planes.html; then
     ok "contract M: control_planes.html has 'What is a control plane?' hint + warning_help"
 else
     bad "contract M: control_planes.html missing control plane hint or warning_help"
@@ -224,9 +224,9 @@ fi
 # ---------------------------------------------------------------------------
 # N. admin/deploy.html has the 'What does this page do?' hint + audit_help
 # ---------------------------------------------------------------------------
-if grep -q 't "deploy.help_title"' internal/handlers/templates/admin/deploy.html \
-    && grep -q 't "deploy.help_body"' internal/handlers/templates/admin/deploy.html \
-    && grep -q 't "deploy.audit_help"' internal/handlers/templates/admin/deploy.html; then
+if grep -qE '\b(t|tf|th) "deploy.help_title"' internal/handlers/templates/admin/deploy.html \
+    && grep -qE '\b(t|tf|th) "deploy.help_body"' internal/handlers/templates/admin/deploy.html \
+    && grep -qE '\b(t|tf|th) "deploy.audit_help"' internal/handlers/templates/admin/deploy.html; then
     ok "contract N: deploy.html has 'What does this page do?' hint + audit event explainer"
 else
     bad "contract N: deploy.html missing deploy hint or audit_help"
@@ -235,9 +235,9 @@ fi
 # ---------------------------------------------------------------------------
 # O. admin/settings.html has the 'What is configured here?' hint + env warning
 # ---------------------------------------------------------------------------
-if grep -q 't "settings.help_title"' internal/handlers/templates/admin/settings.html \
-    && grep -q 't "settings.help_body"' internal/handlers/templates/admin/settings.html \
-    && grep -q 't "settings.env_warning"' internal/handlers/templates/admin/settings.html; then
+if grep -qE '\b(t|tf|th) "settings.help_title"' internal/handlers/templates/admin/settings.html \
+    && grep -qE '\b(t|tf|th) "settings.help_body"' internal/handlers/templates/admin/settings.html \
+    && grep -qE '\b(t|tf|th) "settings.env_warning"' internal/handlers/templates/admin/settings.html; then
     ok "contract O: settings.html has 'What is configured here?' hint + .env-vs-runtime warning"
 else
     bad "contract O: settings.html missing settings hint or env_warning"
@@ -246,9 +246,9 @@ fi
 # ---------------------------------------------------------------------------
 # P. user/notifications.html has the 'What are these notifications?' hint
 # ---------------------------------------------------------------------------
-if grep -q 't "notif.help_title"' internal/handlers/templates/user/notifications.html \
-    && grep -q 't "notif.help_body"' internal/handlers/templates/user/notifications.html \
-    && grep -q 't "notif.filter_help"' internal/handlers/templates/user/notifications.html; then
+if grep -qE '\b(t|tf|th) "notif.help_title"' internal/handlers/templates/user/notifications.html \
+    && grep -qE '\b(t|tf|th) "notif.help_body"' internal/handlers/templates/user/notifications.html \
+    && grep -qE '\b(t|tf|th) "notif.filter_help"' internal/handlers/templates/user/notifications.html; then
     ok "contract P: notifications.html has 'What are these notifications?' hint + filter help"
 else
     bad "contract P: notifications.html missing notif hint or filter_help"
