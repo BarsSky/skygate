@@ -150,7 +150,7 @@
 {{/* ---- recreate (docker only) ----------------------------------------- */}}
 <div class="card">
   <h3><i class="fa-solid fa-cube"></i> {{t "service_ctl.action_recreate_title"}}</h3>
-  <p style="color:var(--text-muted);font-size:13px;margin-bottom:10px">{{t "service_ctl.action_recreate_help" | safeHTML}}</p>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:10px">{{th "service_ctl.action_recreate_help"}}</p>
   {{if .State.CanRecreate}}
     <p style="font-size:12px;color:var(--text-muted);margin-bottom:6px">{{t "service_ctl.command_label"}}</p>
     <pre style="background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;padding:10px;overflow-x:auto;font-size:12px"><code>{{.State.RecreateCommand}}</code></pre>
@@ -174,7 +174,7 @@
 {{/* ---- when is a restart enough? -------------------------------------- */}}
 <div class="card">
   <h3><i class="fa-solid fa-circle-question"></i> {{t "service_ctl.hints_title"}}</h3>
-  <p style="color:var(--text-muted);font-size:13px;margin-bottom:10px">{{t "service_ctl.hints_help" | safeHTML}}</p>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:10px">{{th "service_ctl.hints_help"}}</p>
   <div class="table-wrap">
     <table>
       <tr>
@@ -184,22 +184,22 @@
       </tr>
       <tr>
         <th><code>{{t "service_ctl.kind_docker"}}</code></th>
-        <td>{{t "service_ctl.hints_docker_enough" | safeHTML}}</td>
-        <td>{{t "service_ctl.hints_docker_recreate" | safeHTML}}</td>
+        <td>{{th "service_ctl.hints_docker_enough"}}</td>
+        <td>{{th "service_ctl.hints_docker_recreate"}}</td>
       </tr>
       <tr>
         <th><code>{{t "service_ctl.kind_systemd"}}</code></th>
-        <td>{{t "service_ctl.hints_systemd" | safeHTML}}</td>
+        <td>{{th "service_ctl.hints_systemd"}}</td>
         <td><span style="color:var(--text-muted)">{{t "service_ctl.hints_not_applicable"}}</span></td>
       </tr>
       <tr>
         <th><code>{{t "service_ctl.kind_openrc"}}</code></th>
-        <td>{{t "service_ctl.hints_openrc" | safeHTML}}</td>
+        <td>{{th "service_ctl.hints_openrc"}}</td>
         <td><span style="color:var(--text-muted)">{{t "service_ctl.hints_not_applicable"}}</span></td>
       </tr>
       <tr>
         <th><code>{{t "service_ctl.kind_kubernetes"}}</code></th>
-        <td>{{t "service_ctl.hints_k8s" | safeHTML}}</td>
+        <td>{{th "service_ctl.hints_k8s"}}</td>
         <td><span style="color:var(--text-muted)">{{t "service_ctl.hints_not_applicable"}}</span></td>
       </tr>
       <tr>

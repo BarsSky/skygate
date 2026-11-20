@@ -42,9 +42,9 @@
       <details>
         <summary>{{.MemberCount}}</summary>
         <div style="margin-top:6px">
-          {{t "admin_meshes.members_header" | safeHTML}}
+          {{th "admin_meshes.members_header"}}
           {{range .MemberList}}
-          <div>{{tf "admin_meshes.member_row" .Username (dt .JoinedAt) | safeHTML}}</div>
+          <div>{{th "admin_meshes.member_row" .Username (dt .JoinedAt)}}</div>
           {{end}}
         </div>
       </details>
@@ -63,7 +63,7 @@
 </div>
 {{else}}
 <div class="card">
-  <p style="color:var(--text-muted);margin:0">{{t "admin_meshes.empty"}}</p>
+  <p style="color:var(--text-muted);margin:0">{{th "admin_meshes.empty"}}</p>
 </div>
 {{end}}
 

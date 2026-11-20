@@ -15,12 +15,12 @@
 {{if .SecretMissing}}
 <div class="card" style="background:var(--warning-bg);border-left:4px solid var(--warning)">
   <h3><i class="fa-solid fa-triangle-exclamation"></i> {{t "control_planes.secret_missing_title"}}</h3>
-  <div style="margin-top:6px">{{t "control_planes.secret_missing_body" | safeHTML}}</div>
+  <div style="margin-top:6px">{{th "control_planes.secret_missing_body"}}</div>
 </div>
 {{end}}
 
 {{if .CorruptKey}}
-<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{t "control_planes.corrupt_key" | safeHTML}}</div>
+<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{th "control_planes.corrupt_key"}}</div>
 {{end}}
 
 <form method="POST" action="/admin/users/{{.UserID}}/plane">
@@ -28,7 +28,7 @@
     <div class="form-row">
       <label for="url">{{t "control_planes.url_label"}}</label>
       <input type="text" id="url" name="url" value="{{.CurrentURL}}" placeholder="https://head-us.example.com">
-      <div class="form-hint">{{t "control_planes.url_help" | safeHTML}}</div>
+      <div class="form-hint">{{th "control_planes.url_help"}}</div>
     </div>
 
     <div class="form-row">
@@ -38,7 +38,7 @@
         {{if .HasKey}}
           {{t "control_planes.api_key_help_keep" | safeHTML}}
         {{else}}
-          {{t "control_planes.api_key_help_new" | safeHTML}}
+          {{th "control_planes.api_key_help_new"}}
         {{end}}
       </div>
     </div>
@@ -56,13 +56,13 @@
 <div class="card" style="background:var(--warning-bg);border-left:4px solid var(--warning)">
   <h3><i class="fa-solid fa-triangle-exclamation"></i> {{t "control_planes.provision_warning_title"}}</h3>
   <div style="color:var(--text-muted);font-size:13px;margin-top:6px">
-    {{t "control_planes.provision_warning_body" | safeHTML}}
+    {{th "control_planes.provision_warning_body"}}
   </div>
 </div>
 <div class="card" style="background:var(--info-bg);border-left:4px solid var(--info)">
   <h3><i class="fa-solid fa-rocket"></i> {{t "control_planes.provision_title"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
-    {{t "control_planes.provision_help" | safeHTML}}
+    {{th "control_planes.provision_help"}}
   </p>
   <form method="POST" action="/admin/users/{{.UserID}}/plane/provision" style="margin-top:12px"
         onsubmit="return confirm('{{t "control_planes.provision_confirm"}}')">
@@ -73,7 +73,7 @@
 <div class="card" style="background:var(--warning-bg);border-left:4px solid var(--warning)">
   <h3><i class="fa-solid fa-trash-can"></i> {{t "control_planes.decommission_title"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
-    {{t "control_planes.decommission_help" | safeHTML}}
+    {{th "control_planes.decommission_help"}}
   </p>
   <form method="POST" action="/admin/users/{{.UserID}}/plane/decommission" style="margin-top:12px"
         onsubmit="return confirm('{{t "control_planes.decommission_confirm"}}')">
@@ -83,6 +83,6 @@
 {{end}}
 
 <div class="card">
-  <div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> {{t "control_planes.help_body" | safeHTML}}</div>
+  <div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> {{th "control_planes.help_body"}}</div>
 </div>
 {{end}}

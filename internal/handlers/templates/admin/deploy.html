@@ -49,8 +49,8 @@
   <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
     <i class="fa-solid fa-circle-info"></i> {{t "deploy.help_title"}}
   </summary>
-  <div class="form-hint-strong" style="margin-top:8px">{{t "deploy.help_body" | safeHTML}}</div>
-  <div class="form-hint-strong" style="margin-top:6px">{{t "deploy.audit_help" | safeHTML}}</div>
+  <div class="form-hint-strong" style="margin-top:8px">{{th "deploy.help_body"}}</div>
+  <div class="form-hint-strong" style="margin-top:6px">{{th "deploy.audit_help"}}</div>
 </details>
 
 {{if .Data.FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>{{end}}

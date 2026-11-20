@@ -54,7 +54,7 @@
   {{else}}
     <div class="muted" style="padding:12px;background:var(--bg-muted);border-radius:4px;font-size:13px">
       <strong>{{t "cluster.no_cluster"}}</strong>
-      <div style="margin-top:6px">{{t "cluster.no_cluster_help"}}</div>
+      <div style="margin-top:6px">{{th "cluster.no_cluster_help"}}</div>
     </div>
   {{end}}
 </div>
@@ -85,7 +85,7 @@
       {{end}}
     {{end}}
   </h3>
-  <p class="muted" style="font-size:13px">{{t "cluster.nodes_help"}}</p>
+  <p class="muted" style="font-size:13px">{{th "cluster.nodes_help"}}</p>
 
   {{if .Data.Nodes}}
   {{/* B369: nine columns, one of them the long B359 reason and one the action
@@ -256,7 +256,7 @@
   </div><!-- /.table-wrap (B369) -->
   {{else}}
     <div class="muted" style="padding:12px;background:var(--bg-muted);border-radius:4px;font-size:13px">
-      {{t "cluster.no_nodes"}}
+      {{th "cluster.no_nodes"}}
     </div>
   {{end}}
 
@@ -298,7 +298,7 @@
     </form>
     <span class="muted" style="font-size:12px">
       <i class="fa-solid fa-circle-info"></i>
-      {{t "cluster.discover_help"}}
+      {{th "cluster.discover_help"}}
     </span>
   </div>
 
@@ -312,7 +312,7 @@
       <label style="font-size:12px;color:var(--text-muted)">skygate_version<input type="text" name="skygate_version" placeholder="{{t "cluster.node_add_version_ph"}}" style="width:100%"></label>
       <div style="grid-column:1 / -1"><button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-plus"></i> {{t "cluster.node_add_submit"}}</button></div>
     </form>
-    <p class="muted" style="font-size:12px;margin-top:6px">{{t "cluster.node_add_help"}}</p>
+    <p class="muted" style="font-size:12px;margin-top:6px">{{th "cluster.node_add_help"}}</p>
   </details>
 </div>
 
@@ -321,7 +321,7 @@
   <h3><i class="fa-solid fa-database"></i>{{t "cluster.section_database"}}</h3>
   {{if .Data.DBConfigured}}
     <p style="font-size:13px">
-      {{t "cluster.db_configured"}}
+      {{th "cluster.db_configured"}}
       {{if .Data.DBPrimary}}<br><strong>{{t "cluster.db_primary"}}</strong> <code>{{.Data.DBPrimary}}</code>{{end}}
       {{/* B216: replicas row. The plan's W5 monitor example
           shows "replicas: node-2 (lag=0s)" — for now we
@@ -348,7 +348,7 @@
     <a href="/admin/database" class="btn btn-secondary btn-sm"><i class="fa-solid fa-arrow-up-right-from-square"></i> {{t "cluster.db_open"}}</a>
   {{else}}
     <div class="muted" style="padding:12px;background:var(--bg-muted);border-radius:4px;font-size:13px">
-      {{t "cluster.db_not_configured"}}
+      {{th "cluster.db_not_configured"}}
       <div style="margin-top:6px"><a href="/admin/database" class="btn btn-primary btn-sm"><i class="fa-solid fa-arrow-up-right-from-square"></i> {{t "cluster.db_open"}}</a></div>
     </div>
   {{end}}
@@ -357,7 +357,7 @@
 {{/* ============ Section 3b: Onboard a second host (B342 / RR-15a) ============ */}}
 <div class="card">
   <h3><i class="fa-solid fa-rocket"></i>{{t "cluster.onboard_title"}}</h3>
-  <p class="muted" style="font-size:13px">{{t "cluster.onboard_help"}}</p>
+  <p class="muted" style="font-size:13px">{{th "cluster.onboard_help"}}</p>
 
   {{if .Data.Onboard}}
   <div style="padding:12px;background:var(--bg-muted);border-radius:4px;margin-bottom:12px">
@@ -369,7 +369,7 @@
     {{if not .Data.Onboard.DSNReady}}
     <div style="padding:8px;margin-bottom:10px;border-left:3px solid var(--danger);background:var(--bg);border-radius:4px;font-size:12px">
       <strong>{{t "cluster.onboard_dsn_missing_title"}}</strong><br>
-      {{t "cluster.onboard_dsn_missing_help" | safeHTML}}<br>
+      {{th "cluster.onboard_dsn_missing_help"}}<br>
       <code>INSERT INTO cluster_database (id, cluster_id, dsn_template) VALUES ('skygate-staging', 'skygate-staging', 'postgres://&lt;user&gt;@%s:5432/&lt;dbname&gt;?sslmode=disable') ON CONFLICT (id) DO UPDATE SET dsn_template = EXCLUDED.dsn_template;</code>
       {{/* B373: the same one-click default the /admin/database hint card offers,
            reached from the banner that reports the gap. %s is the HOST (that is
@@ -403,14 +403,14 @@
       <label style="font-size:12px;color:var(--text-muted)">ts_tag<input type="text" name="ts_tag" placeholder="{{t "cluster.onboard_ts_tag_ph"}}" style="width:100%"></label>
       <div style="grid-column:1 / -1"><button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-rocket"></i> {{t "cluster.onboard_btn"}}</button></div>
     </form>
-    <p class="muted" style="font-size:12px;margin-top:6px">{{t "cluster.onboard_form_help"}}</p>
+    <p class="muted" style="font-size:12px;margin-top:6px">{{th "cluster.onboard_form_help"}}</p>
   </details>
 </div>
 
 {{/* ===================== Section 4: Pending invites ===================== */}}
 <div class="card">
   <h3><i class="fa-solid fa-envelope-open-text"></i>{{t "cluster.section_invites"}} ({{.Data.InviteCount}})</h3>
-  <p class="muted" style="font-size:13px">{{t "cluster.invites_help"}}</p>
+  <p class="muted" style="font-size:13px">{{th "cluster.invites_help"}}</p>
   {{if .Data.Invites}}
   <div class="table-wrap">{{/* B369: same clipping rule as the nodes table */}}
   <table class="table" style="width:100%;font-size:13px">
@@ -431,7 +431,7 @@
         <td><span class="muted" title="{{.IssuedAt}}">{{.IssuedAt}}</span></td>
         <td><span class="muted" title="{{.ExpiresAt}}">{{.ExpiresAt}}</span></td>
         <td>
-          <form method="POST" action="/admin/cluster/invite/revoke" style="display:inline" onsubmit="return confirm('{{tf "cluster.invite_revoke_confirm" .ID | js}}')">
+          <form method="POST" action="/admin/cluster/invite/revoke" style="display:inline" onsubmit="return confirm('{{th "cluster.invite_revoke_confirm" .ID | js}}')">
             <input type="hidden" name="invite_id" value="{{.ID}}">
             <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-ban"></i> {{t "cluster.invite_revoke"}}</button>
           </form>
@@ -456,7 +456,7 @@
       <label style="font-size:12px;color:var(--text-muted)">ttl_hours<input type="number" name="ttl_hours" value="24" min="1" max="168" placeholder="{{t "cluster.invite_ttl_ph"}}" style="width:100%"></label>
       <div style="grid-column:1 / -1"><button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-key"></i> {{t "cluster.invite_generate_btn"}}</button></div>
     </form>
-    <p class="muted" style="font-size:12px;margin-top:6px">{{t "cluster.invite_generate_help"}}</p>
+    <p class="muted" style="font-size:12px;margin-top:6px">{{th "cluster.invite_generate_help"}}</p>
   </details>
 </div>
 
@@ -515,7 +515,7 @@
 {{/* ===================== Footer note ===================== */}}
 <div class="alert alert-info small mb-0">
   <i class="fa-solid fa-info-circle"></i>
-  {{t "cluster.phase_note"}}
+  {{th "cluster.phase_note"}}
 </div>
 
 {{end}}

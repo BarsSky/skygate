@@ -54,7 +54,7 @@
     <span class="tag tag-info" title="{{t "exit_rules.dns_autoupdate_title"}}">
       <i class="fa-solid fa-arrows-rotate"></i> {{t "exit_rules.dns_autoupdate"}}
     </span>
-    <a href="/docs/windows-client.md" target="_blank" rel="noopener" class="btn btn-sm" title="{{t "exit_rules.client_win_guide_title"}}"><i class="fa-solid fa-laptop"></i> {{t "exit_rules.client_win_guide"}}</a>
+    <a href="/my/exit-rules?script=1&amp;os=windows" class="btn btn-sm" title="{{t "exit_rules.client_win_guide_title"}}"><i class="fa-solid fa-laptop"></i> {{t "exit_rules.client_win_guide"}}</a>
     <a href="/my/exit-rules/help" class="btn btn-sm"><i class="fa-solid fa-book"></i> {{t "exit_rules.api_help_btn"}}</a>
   </div>
 </div>
@@ -1148,10 +1148,10 @@
     <div class="card">
       <h3><i class="fa-solid fa-info-circle"></i> {{t "exit_rules.how_title"}}</h3>
       <ol style="padding-left:20px;margin:0">
-        <li>{{t "exit_rules.how_li1" | safeHTML}}</li>
+        <li>{{th "exit_rules.how_li1"}}</li>
         <li>{{t "exit_rules.how_li2" | safeHTML}}</li>
-        <li>{{t "exit_rules.how_li3" | safeHTML}}</li>
-        <li>{{t "exit_rules.how_li4" | safeHTML}}</li>
+        <li>{{th "exit_rules.how_li3"}}</li>
+        <li>{{th "exit_rules.how_li4"}}</li>
         <li>{{t "exit_rules.how_li5" | safeHTML}}
           <ul>
             <li>{{t "exit_rules.how_li3_win" | safeHTML}}</li>
@@ -1181,8 +1181,8 @@
       <p><b>{{t "exit_rules.client_win_linux"}}</b></p>
       <p style="font-size:12px"><code>{{t "exit_rules.client_win_cmd"}}</code></p>
       <p style="font-size:11px"><code>{{t "exit_rules.client_win_cmd_after"}}</code></p>
-      <p style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.client_win_hint" | safeHTML}}</p>
-      <p style="font-size:11px;color:var(--text-muted);padding:8px;background:var(--bg-elev);border-radius:4px">{{t "exit_rules.client_dns_warn" | safeHTML}}</p>
+      <p style="font-size:11px;color:var(--text-muted)">{{th "exit_rules.client_win_hint"}}</p>
+      <p style="font-size:11px;color:var(--text-muted);padding:8px;background:var(--bg-elev);border-radius:4px">{{th "exit_rules.client_dns_warn"}}</p>
       <p style="margin-top:10px"><b>{{t "exit_rules.client_mobile"}}</b></p>
       <p><code>tailscale up --exit-node=&lt;name&gt;</code></p>
       <p style="font-size:11px;color:var(--text-muted)">{{t "exit_rules.client_full_hint" | safeHTML}}</p>
@@ -1191,12 +1191,12 @@
     <div class="help-card" style="border-left:3px solid var(--accent)">
       <h4><i class="fa-brands fa-windows"></i> {{t "exit_rules.win_flow_title"}}</h4>
       <ol style="margin-top:4px">
-        <li style="font-size:12px;line-height:1.5;color:var(--text)">{{t "exit_rules.win_flow_li1" | safeHTML}}</li>
+        <li style="font-size:12px;line-height:1.5;color:var(--text)">{{th "exit_rules.win_flow_li1"}}</li>
         <li style="font-size:12px;line-height:1.5;color:var(--text)">{{t "exit_rules.win_flow_li2" | safeHTML}}</li>
-        <li style="font-size:12px;line-height:1.5;color:var(--text)">{{t "exit_rules.win_flow_li3" | safeHTML}}</li>
+        <li style="font-size:12px;line-height:1.5;color:var(--text)">{{th "exit_rules.win_flow_li3"}}</li>
       </ol>
       <p style="font-size:11px;color:var(--text-muted);margin-top:8px;padding:8px;background:var(--bg-elev);border-radius:4px">
-        <i class="fa-solid fa-circle-info"></i> {{t "exit_rules.win_flow_no_scripts" | safeHTML}}
+        <i class="fa-solid fa-circle-info"></i> {{th "exit_rules.win_flow_no_scripts"}}
       </p>
     </div>
 

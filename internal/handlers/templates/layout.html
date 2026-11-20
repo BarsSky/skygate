@@ -83,7 +83,7 @@
     {{/* B392: /my/notifications existed since B157.1 but had NO entry point — the
          only way to reach the full list was to type the URL. */}}
     <a href="/my/notifications" {{if eq .Page "my/notifications"}}class="active"{{end}}><i class="fa-solid fa-bell"></i><span>{{t "notif.menu_label"}}</span>{{if gt .UnreadCount 0}}<span class="notif-badge">{{.UnreadCount}}</span>{{end}}</a>
-    <a href="/help" {{if eq .Page "help"}}class="active"{{end}}><i class="fa-solid fa-circle-question"></i><span>{{t "nav.help"}}</span></a>
+    <a href="/my/exit-rules/help" {{if eq .Page "exit_rules_help"}}class="active"{{end}}><i class="fa-solid fa-circle-question"></i><span>{{t "nav.help"}}</span></a>
     <a href="/my/tokens" {{if eq .Page "tokens"}}class="active"{{end}}><i class="fa-solid fa-key"></i><span>{{t "nav.tokens"}}</span></a>
     <a href="/my/exit-rules" {{if eq .Page "exit-rules"}}class="active"{{end}}><i class="fa-solid fa-route"></i><span>{{t "nav.exit_rules"}}</span></a>
     <a href="/my/account" {{if eq .Page "account"}}class="active"{{end}}><i class="fa-solid fa-user-gear"></i><span>{{t "nav.account"}}</span></a>
@@ -371,7 +371,7 @@
 </div>
 </main>
 <footer>
-  Skygate {{.Version}} · {{t "footer.powered_by"}} · <a href="https://github.com/tailscale/tailscale" target="_blank" rel="noopener">Tailscale</a> · <a href="https://headscale.net/" target="_blank" rel="noopener">Headscale</a> · <a href="/help">{{t "footer.docs"}}</a>
+  Skygate {{.Version}} · {{t "footer.powered_by"}} · <a href="https://github.com/tailscale/tailscale" target="_blank" rel="noopener">Tailscale</a> · <a href="https://headscale.net/" target="_blank" rel="noopener">Headscale</a> · <a href="/my/exit-rules/help">{{t "footer.docs"}}</a>
 </footer>
 {{/* 2026-08-13: v1.3.9 round 6 (B108) — section summary in collapsed
      sidebar auto-expands the sidebar. In the collapsed (52px, icons-only)

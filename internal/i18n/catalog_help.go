@@ -34,7 +34,7 @@ var ruHelp = map[string]string{
 	"help.exit_rules_help.users_hint_value":              "IP / подсеть / домен.",
 	"help.exit_rules_help.users_click_add":               "Нажмите <b>«Добавить»</b>. Правило применяется немедленно.",
 	"help.exit_rules_help.users_on_device_prefix":        "На устройстве:",
-	"help.exit_rules_help.users_on_device_windows_guide": "См. <a href=\"/docs/windows-client.md\" target=\"_blank\" rel=\"noopener\">гайд по Windows-клиенту</a>.",
+	"help.exit_rules_help.users_on_device_windows_guide": "Скрипт маршрутов для Windows и Linux собирается на <a href=\"/my/exit-rules?script=1&amp;os=windows\"><b>/my/exit-rules</b></a> — запускать от администратора.",
 	// DNS auto-update section
 	"help.exit_rules_help.dns_h3":          "Автообновление DNS (с июля 2026)",
 	"help.exit_rules_help.dns_intro":       "Для правил с <b>типом цели «domain»</b> Skygate каждые <b>5 минут</b> автоматически:",
@@ -373,7 +373,7 @@ var enHelp = map[string]string{
 	"help.exit_rules_help.users_hint_value":              "IP / subnet / domain.",
 	"help.exit_rules_help.users_click_add":               "Click <b>\"Add\"</b>. The rule is applied immediately.",
 	"help.exit_rules_help.users_on_device_prefix":        "On the device:",
-	"help.exit_rules_help.users_on_device_windows_guide": "See <a href=\"/docs/windows-client.md\" target=\"_blank\" rel=\"noopener\">Windows client guide</a>.",
+	"help.exit_rules_help.users_on_device_windows_guide": "The Windows/Linux route script is generated on <a href=\"/my/exit-rules?script=1&amp;os=windows\"><b>/my/exit-rules</b></a> — run it as administrator.",
 	// DNS auto-update section
 	"help.exit_rules_help.dns_h3":          "DNS auto-update (since July 2026)",
 	"help.exit_rules_help.dns_intro":       "For rules with <b>target type \"domain\"</b>, Skygate every <b>5 minutes</b> automatically:",

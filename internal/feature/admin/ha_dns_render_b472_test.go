@@ -50,6 +50,7 @@ func b472RenderHA(t *testing.T, data *haPageData) string {
 		"t":        func(key string) string { return key },
 		"tf":       func(key string, args ...any) string { return key },
 		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
+		"th":       func(key string, args ...any) template.HTML { return template.HTML(key) },
 	}).Parse(string(raw))
 	if err != nil {
 		t.Fatalf("parse the HA template: %v", err)

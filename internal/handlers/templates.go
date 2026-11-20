@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	htmlpkg "html"
 	"html/template"
 	"io"
 	"io/fs"
@@ -48,8 +49,29 @@ func LoadTemplates() *Templates {
 		// B452: the page-data Title is resolved here, in ONE place, because every
 		// handler writes it itself. Handled: a catalogue key (the B450 defect), a
 		// known English literal (the pre-B452 debt), anything else verbatim.
-		"pt":       resolvePageTitle,
-		"safeJS":   func(s string) template.JS { return template.JS(s) },
+		"pt":     resolvePageTitle,
+		"safeJS": func(s string) template.JS { return template.JS(s) },
+		// B508: `th` is the TRUSTED-MARKUP translate. Some catalogue strings carry
+		// formatting on purpose — the help page teaches with <b>, <code> and
+		// <a href> — and `t`/`tf` return a plain string, which html/template escapes,
+		// so those strings used to reach the browser as literal markup («в открытую
+		// висит html синтаксис»). `th` marks the CATALOGUE's own markup trusted while
+		// escaping every ARGUMENT: an argument can come from the request (BaseURL is
+		// built from the Host header), and the catalogue cannot.
+		//
+		// `t`/`tf` deliberately stay escaping — a plain-text page must not become a
+		// way to inject tags — so this is opt-in per usage, not a change of default.
+		"th": func(key string, args ...any) template.HTML {
+			lang, _ := i18n.GlobalLang.Load().(string)
+			if len(args) == 0 {
+				return template.HTML(i18n.GlobalCatalog.T(lang, key))
+			}
+			esc := make([]any, len(args))
+			for i, a := range args {
+				esc[i] = htmlpkg.EscapeString(fmt.Sprint(a))
+			}
+			return template.HTML(i18n.GlobalCatalog.Tf(lang, key, esc...))
+		},
 		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
 		"dividefloat": func(a, b float64) float64 {
 			if b == 0 {

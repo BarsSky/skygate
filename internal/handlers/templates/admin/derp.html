@@ -18,8 +18,8 @@
   <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
     <i class="fa-solid fa-circle-info"></i> {{t "derp.help_title"}}
   </summary>
-  <div class="form-hint-strong" style="margin-top:8px">{{t "derp.help_body" | safeHTML}}</div>
-  <div class="form-hint-strong" style="margin-top:6px">{{t "derp.metric_help" | safeHTML}}</div>
+  <div class="form-hint-strong" style="margin-top:8px">{{th "derp.help_body"}}</div>
+  <div class="form-hint-strong" style="margin-top:6px">{{th "derp.metric_help"}}</div>
 </details>
 
 {{if .DerpStatus}}
@@ -98,7 +98,7 @@
       <span class="tag tag-warning">{{t (printf "derp.metrics_err_%s" .DerpStatus.MetricsErrCode)}}</span>
     {{end}}
   </h3>
-  <p style="color:var(--text-muted);font-size:13px;margin:0 0 8px 0">{{t "derp.metrics_help" | safeHTML}}</p>
+  <p style="color:var(--text-muted);font-size:13px;margin:0 0 8px 0">{{th "derp.metrics_help"}}</p>
 
   {{if .MetricsSaved}}<div class="alert alert-success" style="font-size:13px">{{t (printf "derp.metrics_%s" .MetricsSaved)}}</div>{{end}}
   {{if .MetricsErr}}<div class="alert alert-danger" style="font-size:13px">{{t (printf "derp.metrics_err_%s" .MetricsErr)}}</div>{{end}}
@@ -120,7 +120,7 @@
   <div style="font-family:var(--mono);font-size:11px;color:var(--text-muted);background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:6px 8px;margin:0 0 8px 0;word-break:break-word">{{.DerpStatus.MetricsErrDetail}}</div>
   {{end}}
   {{if .DerpStatus.DebugAccessDenied}}
-  <div class="alert alert-warning" style="font-size:12px">{{t "derp.debug_access_denied" | safeHTML}}</div>
+  <div class="alert alert-warning" style="font-size:12px">{{th "derp.debug_access_denied"}}</div>
   {{end}}
 
   <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">
@@ -132,19 +132,19 @@
   <form method="post" action="/admin/derp/metrics-endpoint">
     <label for="metrics_endpoint" style="font-size:12px;color:var(--text-muted)">{{t "derp.metrics_field"}}</label>
     <input type="text" id="metrics_endpoint" name="metrics_endpoint" value="{{.DerpStatus.MetricsEndpoint}}" placeholder="http://172.18.0.1:8767" style="font-family:var(--mono);width:100%;max-width:420px">
-    <div class="form-hint">{{t "derp.metrics_field_help" | safeHTML}}</div>
+    <div class="form-hint">{{th "derp.metrics_field_help"}}</div>
     <div class="btn-row" style="margin-top:8px">
       <button type="submit" name="action" value="save" class="btn btn-primary btn-sm"><i class="fa-solid fa-floppy-disk"></i> {{t "derp.metrics_save"}}</button>
       <button type="submit" name="action" value="test" class="btn btn-secondary btn-sm"><i class="fa-solid fa-vial"></i> {{t "derp.metrics_test"}}</button>
       <button type="submit" name="action" value="clear" class="btn btn-secondary btn-sm"><i class="fa-solid fa-eraser"></i> {{t "derp.metrics_clear"}}</button>
     </div>
   </form>
-  {{if .DerpStatus.MetricsEndpointEnv}}<div style="color:var(--text-muted);font-size:12px;margin-top:8px">{{tf "derp.metrics_env" .DerpStatus.MetricsEndpointEnv | safeHTML}}</div>{{end}}
+  {{if .DerpStatus.MetricsEndpointEnv}}<div style="color:var(--text-muted);font-size:12px;margin-top:8px">{{th "derp.metrics_env" .DerpStatus.MetricsEndpointEnv}}</div>{{end}}
 
   {{if not .DerpStatus.MetricsAvailable}}
   <details style="margin-top:10px">
     <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px"><i class="fa-solid fa-terminal"></i> {{t "derp.metrics_setup_title"}}</summary>
-    <p style="color:var(--text-muted);font-size:12px;margin:8px 0">{{t "derp.metrics_setup_hint" | safeHTML}}</p>
+    <p style="color:var(--text-muted);font-size:12px;margin:8px 0">{{th "derp.metrics_setup_hint"}}</p>
     <div style="color:var(--text-muted);font-size:12px;margin:8px 0 4px">{{t "derp.metrics_setup_docker"}}</div>
     <pre style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;font-size:11px;overflow-x:auto;margin:0 0 8px 0">docker run -d --name skygate-derp-metrics --restart unless-stopped \
   --network host ghcr.io/barssky/skygate:{{.Version}} derp-metrics-proxy \
@@ -154,7 +154,7 @@
     <pre style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;font-size:11px;overflow-x:auto;margin:0 0 8px 0">skygate derp-metrics-proxy \
   --listen 172.18.0.1:8767 --upstream 127.0.0.1:443 \
   --server-name {{.DerpStatus.Hostname}} --insecure</pre>
-    <p style="color:var(--text-muted);font-size:12px;margin:0">{{t "derp.metrics_setup_after" | safeHTML}}</p>
+    <p style="color:var(--text-muted);font-size:12px;margin:0">{{th "derp.metrics_setup_after"}}</p>
   </details>
   {{end}}
 </div>
@@ -291,7 +291,7 @@
     </div>
   </div>
   <p style="color:var(--text-subtle);font-size:12px;margin:12px 0 0">
-    {{t "derp.source_conns" | safeHTML}}
+    {{th "derp.source_conns"}}
   </p>
 </div>
 {{end}}
@@ -325,7 +325,7 @@
     {{end}}
   </div>
   <p style="color:var(--text-subtle);font-size:12px;margin:12px 0 0">
-    {{t "derp.source_snapshot" | safeHTML}}
+    {{th "derp.source_snapshot"}}
   </p>
 </div>
 {{end}}
@@ -346,7 +346,7 @@
       <tr><td style="color:var(--text-muted)">{{t "derp.field_public_ip"}}</td><td>
         {{if .DerpStatus.WhiteIPFallback}}
           <span style="color:var(--danger)">{{t "derp.field_public_ip_unknown"}}</span>
-          <div class="muted" style="font-size:11px;max-width:640px">{{tf "derp.field_public_ip_egress" .DerpStatus.WhiteIP | safeHTML}}</div>
+          <div class="muted" style="font-size:11px;max-width:640px">{{th "derp.field_public_ip_egress" .DerpStatus.WhiteIP}}</div>
         {{else if .DerpStatus.WhiteIP}}
           <code>{{.DerpStatus.WhiteIP}}</code>
           {{if .DerpStatus.WhiteIPSource}}<span class="muted" style="font-size:11px;margin-left:6px" title="{{t (printf "derp.field_public_ip_source_help_%s" .DerpStatus.WhiteIPSource)}}">(<code>{{.DerpStatus.WhiteIPSource}}</code>)</span>{{end}}
@@ -379,11 +379,11 @@
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">
     <strong>{{t "derp.help_title"}}</strong>:
     <ul style="margin:6px 0 12px 0;padding-left:20px;font-size:13px;color:var(--text-muted)">
-      <li>{{t "derp.help_accepts" | safeHTML}}</li>
-      <li>{{t "derp.help_current_conns" | safeHTML}}</li>
-      <li>{{t "derp.help_home_conns" | safeHTML}}</li>
-      <li>{{t "derp.help_clients_total" | safeHTML}}</li>
-      <li>{{t "derp.help_bytes" | safeHTML}}</li>
+      <li>{{th "derp.help_accepts"}}</li>
+      <li>{{th "derp.help_current_conns"}}</li>
+      <li>{{th "derp.help_home_conns"}}</li>
+      <li>{{th "derp.help_clients_total"}}</li>
+      <li>{{th "derp.help_bytes"}}</li>
     </ul>
   </p>
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">
@@ -400,7 +400,7 @@
     <code style="color:var(--accent)">Settings → Connection → Use DERP → Moscow (mow:900)</code>
   </div>
   <p style="color:var(--text-muted);font-size:13px">
-    {{t "derp.full_docs" | safeHTML}}
+    {{th "derp.full_docs"}}
   </p>
 </div>
 {{else}}

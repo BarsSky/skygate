@@ -22,7 +22,7 @@
 {{if not .Subnet}}
 <div class="card" style="background:var(--warning-bg);border-left:4px solid var(--warning)">
   <h3><i class="fa-solid fa-triangle-exclamation"></i> {{t "user_subnet.no_subnet_title"}}</h3>
-  <div style="margin-top:6px">{{t "user_subnet.no_subnet_body" | safeHTML}}</div>
+  <div style="margin-top:6px">{{th "user_subnet.no_subnet_body"}}</div>
   <form method="POST" action="/admin/users/{{.User.ID}}/subnet/allocate" style="margin-top:12px">
     <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{t "user_subnet.allocate_button"}}</button>
   </form>
@@ -65,7 +65,7 @@
         <div style="margin-top:4px"><b>{{t "user_subnet.magicdns_short_label"}}</b>: <code>{{.MagicDNS.SidecarShort}}</code></div>
         <div style="margin-top:4px"><b>{{t "user_subnet.magicdns_wildcard_label"}}</b>: <code>{{.MagicDNS.UserWildcard}}</code></div>
         <div style="margin-top:8px;color:var(--text-muted);font-family:var(--font)">
-          <i class="fa-solid fa-info-circle"></i> {{t "user_subnet.magicdns_note" | safeHTML}}
+          <i class="fa-solid fa-info-circle"></i> {{th "user_subnet.magicdns_note"}}
         </div>
       </div>
     </details>
@@ -92,14 +92,14 @@
     <i class="fa-solid fa-check-circle"></i> {{t .FlashMessage}}
   </div>
   {{end}}
-  <p style="color:var(--text-muted);font-size:12px;margin-top:12px">{{t "user_subnet.status_explainer_v0_22_3" | safeHTML}}</p>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:12px">{{th "user_subnet.status_explainer_v0_22_3"}}</p>
 </div>
 
 {{if .Subnet}}
 <div class="card">
   <h3><i class="fa-solid fa-route"></i> {{t "user_subnet.preferred_exit_title"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
-    {{t "user_subnet.preferred_exit_help" | safeHTML}}
+    {{th "user_subnet.preferred_exit_help"}}
   </p>
   {{if .AvailableExitNodes}}
   <form method="POST" action="/admin/users/{{.User.ID}}/subnet/preferred-exit" style="margin-top:10px;display:flex;gap:8px;align-items:flex-end">
@@ -133,7 +133,7 @@
   {{end}}
   {{else}}
   <p style="color:var(--text-subtle);font-size:12px;margin-top:8px;font-style:italic">
-    <i class="fa-solid fa-info-circle"></i> {{t "user_subnet.no_exit_nodes"}}
+    <i class="fa-solid fa-info-circle"></i> {{th "user_subnet.no_exit_nodes"}}
   </p>
   {{end}}
 </div>
@@ -141,7 +141,7 @@
 <div class="card">
   <h3><i class="fa-solid fa-share-nodes"></i> {{t "user_subnet.sharing_title"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
-    {{t "user_subnet.sharing_help" | safeHTML}}
+    {{th "user_subnet.sharing_help"}}
   </p>
 
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
@@ -202,7 +202,7 @@
 <div class="card" style="background:var(--info-bg);border-left:4px solid var(--info)">
   <h3><i class="fa-solid fa-key"></i> {{t "user_subnet.preauth_title"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-top:6px">
-    {{t "user_subnet.preauth_help" | safeHTML}}
+    {{th "user_subnet.preauth_help"}}
   </p>
   <div style="margin-top:10px;display:grid;grid-template-columns:120px 1fr;gap:6px 12px;font-size:13px">
     <span style="color:var(--text-muted)">{{t "user_subnet.preauth_key"}}</span>
@@ -220,20 +220,20 @@ sudo tailscale up \
   --hostname={{.FlashPreauth.Hostname}} \
   --advertise-routes={{.FlashPreauth.Routes}}</pre>
   <p style="color:var(--text-subtle);font-size:12px;margin-top:8px">
-    <i class="fa-solid fa-info-circle"></i> {{t "user_subnet.preauth_note" | safeHTML}}
+    <i class="fa-solid fa-info-circle"></i> {{th "user_subnet.preauth_note"}}
   </p>
 </div>
 {{end}}
 
 <div class="card" style="background:var(--info-bg);border-left:4px solid var(--info)">
   <h3><i class="fa-solid fa-circle-info"></i> {{t "user_subnet.v0_16_0_note_title"}}</h3>
-  <div style="margin-top:6px">{{t "user_subnet.v0_16_0_note_body" | safeHTML}}</div>
+  <div style="margin-top:6px">{{th "user_subnet.v0_16_0_note_body"}}</div>
 </div>
 
 <div class="card">
   <h3><i class="fa-solid fa-circle-question"></i> {{t "user_subnet.use_cases_title"}}</h3>
   <div style="margin-top:8px;padding:10px 12px;background:var(--bg-elev);border-radius:4px;font-size:13px;line-height:1.55">
-    {{t "user_subnet.use_cases_body" | safeHTML}}
+    {{th "user_subnet.use_cases_body"}}
   </div>
   <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">
     <i class="fa-solid fa-book"></i>
@@ -247,9 +247,9 @@ sudo tailscale up \
 <div class="card">
   <h3><i class="fa-solid fa-list-check"></i> {{t "user_subnet.onboard_title"}}</h3>
   <ol style="margin:8px 0 0 18px;padding:0;font-size:13px;line-height:1.55">
-    <li style="margin-bottom:6px">{{t "user_subnet.onboard_step1" | safeHTML}}</li>
-    <li style="margin-bottom:6px">{{t "user_subnet.onboard_step2" | safeHTML}}</li>
-    <li style="margin-bottom:0">{{t "user_subnet.onboard_step3" | safeHTML}}</li>
+    <li style="margin-bottom:6px">{{th "user_subnet.onboard_step1"}}</li>
+    <li style="margin-bottom:6px">{{th "user_subnet.onboard_step2"}}</li>
+    <li style="margin-bottom:0">{{th "user_subnet.onboard_step3"}}</li>
   </ol>
 </div>
 {{end}}

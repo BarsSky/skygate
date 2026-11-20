@@ -40,7 +40,7 @@
 
 <div class="card">
   <h3><i class="fa-solid fa-key"></i>{{t "devices.preauth_key"}}</h3>
-  <p style="color:var(--text-muted);margin-bottom:12px">{{t "preauth.warning"}} {{tf "preauth.instructions_for" .OSLabel | safeHTML}}</p>
+  <p style="color:var(--text-muted);margin-bottom:12px">{{t "preauth.warning"}} {{th "preauth.instructions_for" .OSLabel}}</p>
   <div class="key-block"><code>{{.Key}}</code><button class="copy-btn" onclick="navigator.clipboard.writeText('{{.Key}}');this.textContent='{{t "common.copied"}}!';setTimeout(()=>{this.textContent='{{t "common.copy"}}'},1500)"><i class="fa-solid fa-copy"></i>{{t "common.copy"}}</button></div>
   <div class="alert alert-warn" style="margin-bottom:0">
     <i class="fa-solid fa-triangle-exclamation"></i>
@@ -62,7 +62,7 @@
     {{.ControlURL}}
   </div>
   <p style="color:var(--text-muted);font-size:13px">
-    {{tf "preauth.steps_intro" .OSLabel | safeHTML}}
+    {{th "preauth.steps_intro" .OSLabel}}
   </p>
 </div>
 
@@ -70,13 +70,13 @@
   <h3><i class="fa-solid fa-list-check"></i>{{tf "preauth.instructions_heading" .OSLabel}}</h3>
   {{if eq .OS "android"}}
   <ol class="plain">
-    <li>{{t "preauth.android_li_install" | safeHTML}}</li>
-    <li>{{t "preauth.android_li_open" | safeHTML}}</li>
+    <li>{{th "preauth.android_li_install"}}</li>
+    <li>{{th "preauth.android_li_open"}}</li>
     <li>{{t "preauth.android_li_paste_url" | safeHTML}} <code>{{.ControlURL}}</code></li>
-    <li>{{t "preauth.android_li_signin" | safeHTML}}</li>
-    <li>{{t "preauth.android_li_preauth" | safeHTML}}</li>
-    <li>{{t "preauth.android_li_continue" | safeHTML}}</li>
-    <li>{{t "preauth.android_li_done" | safeHTML}}</li>
+    <li>{{th "preauth.android_li_signin"}}</li>
+    <li>{{th "preauth.android_li_preauth"}}</li>
+    <li>{{th "preauth.android_li_continue"}}</li>
+    <li>{{th "preauth.android_li_done"}}</li>
   </ol>
   <div class="alert alert-warn" style="margin-top:12px">
     <i class="fa-solid fa-circle-info"></i>
@@ -85,13 +85,13 @@
 
   {{else if eq .OS "ios"}}
   <ol class="plain">
-    <li>{{t "preauth.ios_li_install" | safeHTML}}</li>
-    <li>{{t "preauth.ios_li_open" | safeHTML}}</li>
+    <li>{{th "preauth.ios_li_install"}}</li>
+    <li>{{th "preauth.ios_li_open"}}</li>
     <li>{{t "preauth.ios_li_paste_url" | safeHTML}} <code>{{.ControlURL}}</code></li>
-    <li>{{t "preauth.ios_li_signin" | safeHTML}}</li>
-    <li>{{t "preauth.ios_li_preauth" | safeHTML}}</li>
-    <li>{{t "preauth.ios_li_continue" | safeHTML}}</li>
-    <li>{{t "preauth.ios_li_done" | safeHTML}}</li>
+    <li>{{th "preauth.ios_li_signin"}}</li>
+    <li>{{th "preauth.ios_li_preauth"}}</li>
+    <li>{{th "preauth.ios_li_continue"}}</li>
+    <li>{{th "preauth.ios_li_done"}}</li>
   </ol>
   <div class="alert alert-warn" style="margin-top:12px">
     <i class="fa-solid fa-circle-info"></i>
@@ -104,42 +104,42 @@
 sudo tailscale up --login-server={{.ControlURL}} --authkey={{.Key}} --accept-routes --accept-dns=true</pre>
   <p style="color:var(--text-muted);margin-top:8px">
     <i class="fa-solid fa-circle-info"></i>
-    {{t "preauth.linux_accept_routes_hint" | safeHTML}}
-    {{t "preauth.linux_help_hint" | safeHTML}}
+    {{th "preauth.linux_accept_routes_hint"}}
+    {{th "preauth.linux_help_hint"}}
   </p>
-  <p>{{t "preauth.linux_done" | safeHTML}}</p>
+  <p>{{th "preauth.linux_done"}}</p>
 
   {{else if eq .OS "macos"}}
-  <p style="color:var(--text-muted);margin-bottom:12px">{{t "preauth.method_gui" | safeHTML}}</p>
+  <p style="color:var(--text-muted);margin-bottom:12px">{{th "preauth.method_gui"}}</p>
   <ol class="plain">
-    <li>{{t "preauth.macos_li_install" | safeHTML}}</li>
-    <li>{{t "preauth.macos_li_menu" | safeHTML}} <code>{{.ControlURL}}</code></li>
-    <li>{{t "preauth.macos_li_signin" | safeHTML}}</li>
-    <li>{{t "preauth.macos_li_preauth" | safeHTML}}</li>
+    <li>{{th "preauth.macos_li_install"}}</li>
+    <li>{{th "preauth.macos_li_menu"}} <code>{{.ControlURL}}</code></li>
+    <li>{{th "preauth.macos_li_signin"}}</li>
+    <li>{{th "preauth.macos_li_preauth"}}</li>
   </ol>
-  <p style="color:var(--text-muted);margin:12px 0 4px">{{t "preauth.method_cli" | safeHTML}}</p>
+  <p style="color:var(--text-muted);margin:12px 0 4px">{{th "preauth.method_cli"}}</p>
   <pre>brew install --cask tailscale-app
 open -a Tailscale
 /usr/local/bin/tailscale up --login-server={{.ControlURL}} --authkey={{.Key}} --accept-routes --accept-dns=true</pre>
-  <p>{{t "preauth.macos_done" | safeHTML}}</p>
+  <p>{{th "preauth.macos_done"}}</p>
 
   {{else if eq .OS "windows"}}
-  <p style="color:var(--text-muted);margin-bottom:12px">{{t "preauth.method_gui" | safeHTML}}</p>
+  <p style="color:var(--text-muted);margin-bottom:12px">{{th "preauth.method_gui"}}</p>
   <ol class="plain">
-    <li>{{t "preauth.windows_li_download" | safeHTML}}</li>
-    <li>{{t "preauth.windows_li_tray" | safeHTML}}</li>
-    <li>{{t "preauth.windows_li_preauth" | safeHTML}}</li>
+    <li>{{th "preauth.windows_li_download"}}</li>
+    <li>{{th "preauth.windows_li_tray"}}</li>
+    <li>{{th "preauth.windows_li_preauth"}}</li>
   </ol>
-  <p style="color:var(--text-muted);margin:12px 0 4px">{{t "preauth.method_powershell" | safeHTML}}</p>
+  <p style="color:var(--text-muted);margin:12px 0 4px">{{th "preauth.method_powershell"}}</p>
   <pre>Invoke-WebRequest https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe -OutFile $env:TEMP\ts.exe
 Start-Process $env:TEMP\ts.exe -ArgumentList "/quiet" -Wait
 &amp; "$env:ProgramFiles\Tailscale\tailscale.exe" up --login-server={{.ControlURL}} --authkey={{.Key}} --accept-routes --accept-dns=true</pre>
-  <p>{{t "preauth.windows_done" | safeHTML}}</p>
+  <p>{{th "preauth.windows_done"}}</p>
 
   {{else}}
   <div class="alert alert-danger">
     <i class="fa-solid fa-circle-exclamation"></i>
-    <div>{{tf "preauth.unknown_os" .OS | safeHTML}}</div>
+    <div>{{th "preauth.unknown_os" .OS}}</div>
   </div>
   {{end}}
 </div>
@@ -147,12 +147,12 @@ Start-Process $env:TEMP\ts.exe -ArgumentList "/quiet" -Wait
 <div class="card">
   <h3><i class="fa-solid fa-arrow-right-arrow-left"></i>{{t "preauth.different_account_heading"}}</h3>
   <p style="color:var(--text-muted);margin-bottom:8px">
-    {{tf "preauth.different_account_intro" .Username | safeHTML}}
+    {{th "preauth.different_account_intro" .Username}}
   </p>
   <pre>tailscale logout</pre>
   <p style="color:var(--text-muted);margin-top:8px">
     {{t "preauth.different_account_rerun"}} <code>tailscale up --login-server={{.ControlURL}} --authkey={{.Key}} --accept-routes --accept-dns=true</code>
-    {{t "preauth.different_account_mobile" | safeHTML}}
+    {{th "preauth.different_account_mobile"}}
   </p>
 </div>
 

@@ -139,7 +139,7 @@
       </td>
     </tr>
   </table>
-  <p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{t "my_devices.subnet_card_help" | safeHTML}}</p>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{th "my_devices.subnet_card_help"}}</p>
 
   {{if .SubnetCIDR}}
   <details style="margin-top:12px">
@@ -147,7 +147,7 @@
       <i class="fa-solid fa-circle-question"></i> {{t "my_devices.subnet_use_cases_title"}}
     </summary>
     <div style="margin-top:8px;padding:10px 12px;background:var(--bg-elev);border-radius:4px;font-size:13px;line-height:1.5">
-      {{t "my_devices.subnet_use_cases_body" | safeHTML}}
+      {{th "my_devices.subnet_use_cases_body"}}
     </div>
   </details>
 
@@ -157,11 +157,11 @@
     </summary>
     <div style="margin-top:8px;padding:10px 12px;background:var(--bg-elev);border-radius:4px;font-size:13px;line-height:1.55">
       {{if eq .SubnetStatus "router_active"}}
-        {{t "my_devices.subnet_howto_body_router_active" | safeHTML}}
+        {{th "my_devices.subnet_howto_body_router_active"}}
       {{else if eq .SubnetStatus "active"}}
-        {{t "my_devices.subnet_howto_body_active" | safeHTML}}
+        {{th "my_devices.subnet_howto_body_active"}}
       {{else}}
-        {{t "my_devices.subnet_howto_body_pending" | safeHTML}}
+        {{th "my_devices.subnet_howto_body_pending"}}
       {{end}}
       <p style="margin:10px 0 0 0;font-size:12px;color:var(--text-muted)">
         <i class="fa-solid fa-book"></i>
@@ -506,7 +506,7 @@
   </p>
   <p style="color:var(--text-muted);font-size:12px;margin-top:4px;display:flex;align-items:flex-start;gap:6px">
     <i class="fa-solid fa-circle-info" style="margin-top:2px"></i>
-    <span>{{t "devices.dev_tag_hint_v0_28_0" | safeHTML}}.</span>
+    <span>{{th "devices.dev_tag_hint_v0_28_0"}}.</span>
   </p>
   {{else}}
   <div class="alert alert-warn" style="margin-top:0">
@@ -634,13 +634,13 @@ sudo tailscale set --advertise-routes=192.168.1.0/24</code></pre>
       <p style="margin-top:12px"><b>{{t "reg.help_mobile_title"}}</b></p>
       <p style="color:var(--text-muted)">{{t "reg.help_mobile_intro" | safeHTML}}</p>
       <ol style="margin-top:6px;padding-left:20px">
-        <li>{{t "reg.help_mobile_step1" | safeHTML}}</li>
-        <li>{{t "reg.help_mobile_step2" | safeHTML}}</li>
-        <li>{{t "reg.help_mobile_step3" | safeHTML}}</li>
+        <li>{{th "reg.help_mobile_step1"}}</li>
+        <li>{{th "reg.help_mobile_step2"}}</li>
+        <li>{{th "reg.help_mobile_step3"}}</li>
       </ol>
 
       <p style="margin-top:12px"><b>{{t "reg.help_windows_title"}}</b></p>
-      <p style="color:var(--text-muted)">{{t "reg.help_windows_intro" | safeHTML}}</p>
+      <p style="color:var(--text-muted)">{{th "reg.help_windows_intro"}}</p>
       <pre><code>tailscale up --login-server={{.ControlURL}} --authkey=ВАШ_КЛЮЧ --accept-routes --accept-dns=true</code></pre>
 
     </div>

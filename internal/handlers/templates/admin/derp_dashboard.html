@@ -98,7 +98,7 @@
   {{/* B457: and the ENDPOINT is the recommended row's endpoint, not DERP[0]'s — with
        two relays in one region the first visible row is no longer the recommendation,
        and the endpoint (host:port) is what tells the two apart. */}}
-  {{tf "derp_dashboard.recommended" $.Recommended $.RecommendedEndpoint | safeHTML}}
+  {{th "derp_dashboard.recommended" $.Recommended $.RecommendedEndpoint}}
 </div>
 {{end}}
 
@@ -113,7 +113,7 @@
     {{t "derp_dashboard.show_unavailable"}}
   </label>
   <span class="form-hint" style="color: var(--text-muted); font-size: 0.85em">
-    {{tf "derp_dashboard.shown_of_total" .VisibleCount .TotalCount | safeHTML}}
+    {{th "derp_dashboard.shown_of_total" .VisibleCount .TotalCount}}
   </span>
 </form>
 
@@ -121,10 +121,10 @@
   <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
     <i class="fa-solid fa-circle-info"></i> {{t "derp_dashboard.about_title"}}
   </summary>
-  <div class="form-hint-strong" style="margin-top:8px">{{t "derp_dashboard.about_body" | safeHTML}}</div>
+  <div class="form-hint-strong" style="margin-top:8px">{{th "derp_dashboard.about_body"}}</div>
   <div class="form-hint-strong" style="margin-top:6px">{{t "derp_dashboard.probes_help" | safeHTML}}</div>
-  <div class="form-hint-strong" style="margin-top:6px">{{t "derp_dashboard.own_vs_public_help" | safeHTML}}</div>
-  <div class="form-hint-strong" style="margin-top:6px">{{t "derp_dashboard.status_help" | safeHTML}}</div>
+  <div class="form-hint-strong" style="margin-top:6px">{{th "derp_dashboard.own_vs_public_help"}}</div>
+  <div class="form-hint-strong" style="margin-top:6px">{{th "derp_dashboard.status_help"}}</div>
 </details>
 
 <div class="card">

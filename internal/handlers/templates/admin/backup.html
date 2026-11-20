@@ -72,12 +72,12 @@
   {{if eq .Config.SecretsAtRest "plaintext"}}
   <div class="alert" style="font-size:12px">
     <i class="fa-solid fa-lock-open"></i>
-    {{t "backup.secret_plaintext_help" | safeHTML}}
+    {{th "backup.secret_plaintext_help"}}
   </div>
   {{else if eq .Config.SecretsAtRest "mixed"}}
   <div class="alert" style="font-size:12px">
     <i class="fa-solid fa-lock-open"></i>
-    {{t "backup.secret_mixed_help" | safeHTML}}
+    {{th "backup.secret_mixed_help"}}
   </div>
   {{else if eq .Config.SecretsAtRest "encrypted"}}
   <div class="sub" style="font-size:12px;margin-bottom:0.75rem">
@@ -449,10 +449,10 @@
   <div class="alert alert-warning">
     <strong><i class="fa-solid fa-triangle-exclamation"></i> {{t "backup.migration_warning_intro"}}</strong>
     <ol style="margin:0.75rem 0 0 1.5rem">
-      <li>{{t "backup.migration_step1" | safeHTML}}</li>
+      <li>{{th "backup.migration_step1"}}</li>
       <li>{{t "backup.migration_step2" | safeHTML}}</li>
       <li>{{t "backup.migration_step3" | safeHTML}}</li>
-      <li>{{t "backup.migration_step4" | safeHTML}}</li>
+      <li>{{th "backup.migration_step4"}}</li>
       <li>{{t "backup.migration_step5" | safeHTML}}</li>
     </ol>
   </div>

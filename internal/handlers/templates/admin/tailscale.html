@@ -78,8 +78,8 @@
 <div class="card" style="margin-bottom:12px">
   <div class="card-header"><i class="fa-solid fa-wand-magic-sparkles"></i> {{t "tailscale.defaults_title"}}</div>
   <div class="card-body">
-    <p style="margin:0 0 .5rem 0;font-size:.95em">{{t "tailscale.defaults_what" | safeHTML}}</p>
-    <p class="form-hint" style="margin:0 0 .6rem 0">{{t "tailscale.defaults_why" | safeHTML}}</p>
+    <p style="margin:0 0 .5rem 0;font-size:.95em">{{th "tailscale.defaults_what"}}</p>
+    <p class="form-hint" style="margin:0 0 .6rem 0">{{th "tailscale.defaults_why"}}</p>
     <form action="/admin/tailscale" method="POST" style="display:inline">
       <input type="hidden" name="csrf" value="{{$.CSRF}}">
       <input type="hidden" name="action" value="apply_defaults">
@@ -110,7 +110,7 @@
     {{if .State.SelfName.EnvPinned}}<tr><td style="padding-right:.6rem">{{t "tailscale.name_conflict_env"}}</td>
         <td><code>SKYGATE_TS_HOSTNAME={{.State.SelfName.EnvPinned}}</code></td></tr>{{end}}
   </table>
-  <div>{{t "tailscale.name_conflict_help" | safeHTML}}</div>
+  <div>{{th "tailscale.name_conflict_help"}}</div>
   <div style="margin-top:.6rem;display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
     <form action="/admin/tailscale/reclaim-name" method="POST" style="display:inline"
           onsubmit="return confirm('{{t "tailscale.name_conflict_confirm" | js}}')">
@@ -125,7 +125,7 @@
 <div class="alert alert-info" style="margin-bottom:12px">
   <i class="fa-solid fa-circle-info"></i>
   <strong>{{t "tailscale.disabled_title"}}</strong>
-  {{t "tailscale.disabled_help" | safeHTML}}
+  {{th "tailscale.disabled_help"}}
   {{/* B259: "Enable in-container Tailscale" button — flips the
        DB-overridable path from /dev/null to /data/ts/authkey,
        generates a fresh preauth key via headscale, writes
@@ -155,7 +155,7 @@
 <div class="alert alert-warn" style="margin-bottom:12px">
   <i class="fa-solid fa-triangle-exclamation"></i>
   <strong>{{t "tailscale.missing_title"}}</strong>
-  {{t "tailscale.missing_help" | safeHTML}}
+  {{th "tailscale.missing_help"}}
 </div>
 {{else}}
 {{/* B318: CONFIGURED but NOT RUNNING. Pre-B318 this branch rendered only the
@@ -170,7 +170,7 @@
   <i class="fa-solid fa-triangle-exclamation"></i>
   <strong>{{t "tailscale.not_running_title"}}</strong>
   <div style="margin-top:.4rem">{{.State.NotRunningReason}}</div>
-  <div class="form-hint" style="margin-top:.4rem">{{t "tailscale.not_running_help" | safeHTML}}</div>
+  <div class="form-hint" style="margin-top:.4rem">{{th "tailscale.not_running_help"}}</div>
 </div>
 {{end}}
 {{/* B259: counterpart button when tailscale IS enabled in the
@@ -180,7 +180,7 @@
      host-level tailscale (or just turn it off temporarily). */}}
 <div class="card" style="grid-column:1 / -1">
   <h3><i class="fa-solid fa-power-off"></i> {{t "tailscale.disable_in_container_heading"}}</h3>
-  <p class="sub">{{t "tailscale.disable_in_container_help" | safeHTML}}</p>
+  <p class="sub">{{th "tailscale.disable_in_container_help"}}</p>
   <form action="/admin/tailscale" method="POST"
         onsubmit="return confirm('{{t "tailscale.disable_in_container_confirm" | js}}')">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
@@ -223,9 +223,9 @@
     </tr>
   </table>
   {{if .State.SelfName.Placeholder}}
-  <div class="alert alert-warn" style="margin:.5rem 0">{{t "tailscale.persist_placeholder" | safeHTML}}</div>
+  <div class="alert alert-warn" style="margin:.5rem 0">{{th "tailscale.persist_placeholder"}}</div>
   {{end}}
-  <div class="form-hint" style="margin:.4rem 0">{{t "tailscale.persist_help" | safeHTML}}</div>
+  <div class="form-hint" style="margin:.4rem 0">{{th "tailscale.persist_help"}}</div>
   <form action="/admin/tailscale" method="POST" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <input type="hidden" name="action" value="save_hostname">
@@ -291,7 +291,7 @@
          intentionally disabled — saving a key into /dev/null
          is a no-op and confusing. */}}
     {{if .State.AuthKeyDisabled}}
-    <p class="sub" style="font-style:italic">{{t "tailscale.disabled_auth_form_help" | safeHTML}}</p>
+    <p class="sub" style="font-style:italic">{{th "tailscale.disabled_auth_form_help"}}</p>
     {{else}}
     <p class="sub">
       {{if .State.AuthKeySet}}
@@ -305,7 +305,7 @@
       {{end}}
       <span class="muted"> · {{t "tailscale.auth_path_label"}}: in-container file (mode 0600)</span>
     </p>
-    <p class="sub">{{tf "tailscale.auth_help" .State.Hostname | safeHTML}}</p>
+    <p class="sub">{{th "tailscale.auth_help" .State.Hostname}}</p>
     <form action="/admin/tailscale" method="POST" autocomplete="off">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="save_key">
@@ -317,7 +317,7 @@
       <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> {{t "tailscale.save"}}</button>
     </form>
     <div style="margin-top:1rem;padding-top:.9rem;border-top:1px solid var(--border)">
-      <p class="sub" style="margin-bottom:.4rem">{{tf "tailscale.generate_help" .State.Hostname | safeHTML}}</p>
+      <p class="sub" style="margin-bottom:.4rem">{{th "tailscale.generate_help" .State.Hostname}}</p>
       <form action="/admin/tailscale" method="POST">
         <input type="hidden" name="csrf" value="{{.CSRF}}">
         <input type="hidden" name="action" value="generate_key">
@@ -329,7 +329,7 @@
 
   <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-globe"></i> {{t "tailscale.login_server_heading"}}</h3>
-    <p class="sub">{{t "tailscale.login_server_help" | safeHTML}}</p>
+    <p class="sub">{{th "tailscale.login_server_help"}}</p>
     <form action="/admin/tailscale" method="POST" autocomplete="off">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="save_login_server">
@@ -341,9 +341,9 @@
                pattern="https?://.*" required>
         <div class="sub" style="margin-top:.3rem">
           {{if eq .State.LoginServerSource "db"}}
-            <i class="fa-solid fa-database" style="color:var(--info)"></i> {{t "tailscale.login_server_source_db" | safeHTML}}
+            <i class="fa-solid fa-database" style="color:var(--info)"></i> {{th "tailscale.login_server_source_db"}}
           {{else}}
-            <i class="fa-solid fa-cube" style="color:var(--text-muted)"></i> {{t "tailscale.login_server_source_env" | safeHTML}}
+            <i class="fa-solid fa-cube" style="color:var(--text-muted)"></i> {{th "tailscale.login_server_source_env"}}
           {{end}}
         </div>
       </div>
@@ -354,7 +354,7 @@
   {{/* B236: subnet routes (advertise-routes) form. */}}
   <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-route"></i> {{t "tailscale.advertise_routes_heading"}}</h3>
-    <p class="sub">{{t "tailscale.advertise_routes_help" | safeHTML}}</p>
+    <p class="sub">{{th "tailscale.advertise_routes_help"}}</p>
     <form action="/admin/tailscale" method="POST" autocomplete="off"
           onsubmit="return confirm({{t "tailscale.advertise_routes_confirm" | safeJSON}});">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -366,7 +366,7 @@
         <input type="text" name="advertise_routes" class="form-control"
                value="{{range $i, $r := .State.AdvertisedRoutes}}{{if $i}},{{end}}{{$r}}{{end}}"
                placeholder="{{t "tailscale.advertise_routes_placeholder"}}">
-        <div class="sub" style="margin-top:.3rem">{{t "tailscale.advertise_routes_hint" | safeHTML}}</div>
+        <div class="sub" style="margin-top:.3rem">{{th "tailscale.advertise_routes_hint"}}</div>
       </div>
       <button type="submit" class="btn btn-warn"><i class="fa-solid fa-floppy-disk"></i> {{t "tailscale.advertise_routes_save"}}</button>
       <a href="/admin/tailscale?action=set_advertise_routes" class="btn btn-secondary" style="margin-left:.5rem"
@@ -398,7 +398,7 @@
 
   <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-arrows-rotate"></i> {{t "tailscale.restart_heading"}}</h3>
-    <p class="sub">{{t "tailscale.restart_help" | safeHTML}}</p>
+    <p class="sub">{{th "tailscale.restart_help"}}</p>
     {{/* B323 (2026-09-25): the restart control now has its own page. The legacy
          action keeps working (contracts reference `restart_skgate`), but the
          operator should not have to find it here — the link says where it moved
@@ -419,7 +419,7 @@
 
   <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-circle-question"></i> {{t "tailscale.help_heading"}}</h3>
-    <p class="sub">{{t "tailscale.help_body" | safeHTML}}</p>
+    <p class="sub">{{th "tailscale.help_body"}}</p>
     <p class="sub" style="font-style:italic;margin-top:.5rem">{{t "tailscale.legacy_docker_secret" | safeHTML}}</p>
   </div>
 </div>

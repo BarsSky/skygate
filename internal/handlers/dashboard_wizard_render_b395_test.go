@@ -60,6 +60,7 @@ func loadDashboardBody(t *testing.T) *template.Template {
 		"t":                  func(key string) string { return "[T:" + key + "]" },
 		"tf":                 func(key string, args ...any) string { return fmt.Sprint("[TF:", key, " ", args, "]") },
 		"safeHTML":           func(s string) template.HTML { return template.HTML(s) },
+		"th":                 func(key string, args ...any) template.HTML { return template.HTML(key) },
 		"safeJS":             func(s string) template.JS { return template.JS(s) },
 		"safeJSON":           func(v any) template.JS { b, _ := json.Marshal(v); return template.JS(b) },
 		"humanizeAgeSeconds": func(int64) string { return "1m" },

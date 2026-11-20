@@ -28,7 +28,7 @@
 {{if .EmptyWarning}}
 <div class="alert alert-warning" style="margin-bottom:16px">
   <i class="fa-solid fa-triangle-exclamation"></i>
-  {{t "acl.empty_warning" | safeHTML}}
+  {{th "acl.empty_warning"}}
 </div>
 {{end}}
 
@@ -50,7 +50,7 @@
     <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
       <i class="fa-solid fa-circle-info"></i> {{t "acl.what_is_title"}}
     </summary>
-    <div class="form-hint-strong" style="margin-top:8px">{{t "acl.what_is_body" | safeHTML}}</div>
+    <div class="form-hint-strong" style="margin-top:8px">{{th "acl.what_is_body"}}</div>
   </details>
 
   {{if .View}}
@@ -138,14 +138,14 @@
         <input type="text" name="src" id="src" class="form-control"
                placeholder="skyadmin@tsnet.<your-domain>, group:skyadmin"
                required>
-        <div class="form-hint-strong">{{t "acl.src_help" | safeHTML}}</div>
+        <div class="form-hint-strong">{{th "acl.src_help"}}</div>
       </div>
       <div>
         <label for="dst"><strong>{{t "acl.dst_label"}}</strong></label>
         <input type="text" name="dst" id="dst" class="form-control"
                placeholder="*:*, 100.64.0.10:*, tag:exit-node"
                required>
-        <div class="form-hint-strong">{{t "acl.dst_help" | safeHTML}}</div>
+        <div class="form-hint-strong">{{th "acl.dst_help"}}</div>
       </div>
     </div>
     <div style="margin-top:12px">

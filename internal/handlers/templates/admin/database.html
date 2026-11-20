@@ -4,7 +4,7 @@
 {{define "body-admin-database"}}
 <div class="container-fluid py-3">
   <h2 class="mb-3"><i class="fa fa-database me-2"></i>{{t "db.page_title"}}</h2>
-  <p class="text-muted">{{t "db.page_subtitle"}}</p>
+  <p class="text-muted">{{th "db.page_subtitle"}}</p>
 
   {{if .Data.FlashSuccess}}<div class="alert alert-success"><i class="fa-solid fa-circle-check"></i> {{.Data.FlashSuccess}}</div>{{end}}
   {{if .Data.FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.Data.FlashError}}</div>{{end}}
@@ -85,7 +85,7 @@
           <tr><th>{{t "db.full_dsn"}}</th><td><code style="overflow-wrap:break-word;font-size:0.85em">{{.Data.CurrentDSN}}</code></td></tr>
         </tbody>
       </table>
-      <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.current_dsn_help"}}</p>
+      <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{th "db.current_dsn_help"}}</p>
     </div>
   </div>
 
@@ -112,7 +112,7 @@
           </tbody>
         </table>
       {{else}}
-        <p class="text-muted mb-0">{{t "db.desired_empty"}}</p>
+        <p class="text-muted mb-0">{{th "db.desired_empty"}}</p>
       {{end}}
       <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.desired_dsn_help"}}</p>
     </div>
@@ -124,8 +124,8 @@
       <i class="fa fa-circle-question me-2"></i>{{t "db.tpl_title"}}
     </div>
     <div class="card-body">
-      <p class="mb-2" style="font-size:14px">{{t "db.tpl_what" | safeHTML}}</p>
-      <p class="text-muted small mb-2"><i class="fa fa-info-circle me-1"></i>{{t "db.tpl_why" | safeHTML}}</p>
+      <p class="mb-2" style="font-size:14px">{{th "db.tpl_what"}}</p>
+      <p class="text-muted small mb-2"><i class="fa fa-info-circle me-1"></i>{{th "db.tpl_why"}}</p>
       <p class="mb-3"><code style="overflow-wrap:break-word">postgres://&lt;user&gt;@%s:&lt;port&gt;/&lt;dbname&gt;?sslmode=&lt;mode&gt;</code></p>
       <form method="POST" action="/admin/database/apply-default">
         <button class="btn btn-sm btn-primary" type="submit">
@@ -178,7 +178,7 @@
 
       <form method="POST" action="/admin/database/edit" onsubmit="return confirm('{{t "db.edit_confirm"}}')">
         <button class="btn btn-sm btn-primary" type="submit"><i class="fa fa-save me-1"></i>{{t "db.save_btn"}}</button>
-        <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.edit_help"}}</p>
+        <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{th "db.edit_help"}}</p>
       </form>
     </div>
   </div>
@@ -189,7 +189,7 @@
       <i class="fa fa-exchange-alt me-2"></i>{{t "db.migrate_title"}}
     </div>
     <div class="card-body">
-      <p class="text-muted small">{{t "db.migrate_help"}}</p>
+      <p class="text-muted small">{{th "db.migrate_help"}}</p>
       <form method="POST" action="/admin/database/migrate" onsubmit="return confirm('{{t "db.migrate_confirm"}}')">
         <div class="row g-2 align-items-end">
           <div class="col-md-4">
@@ -221,7 +221,7 @@
             </select>
           </div>
         </div>
-        <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.migrate_steps_help"}}</p>
+        <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{th "db.migrate_steps_help"}}</p>
       </form>
     </div>
   </div>
@@ -303,7 +303,7 @@
         <button class="btn btn-sm btn-warning mt-3" type="submit">
           <i class="fa fa-right-left me-1"></i>{{t "db.convert_btn"}}
         </button>
-        <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.convert_steps_help"}}</p>
+        <p class="text-muted small mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{th "db.convert_steps_help"}}</p>
       </form>
 
       {{with .Data.ConvertReport}}
@@ -348,7 +348,7 @@
         {{range .Warnings}}<li>{{.}}</li>{{end}}
       </ul>
       {{end}}
-      <p class="small text-muted mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{t "db.convert_after_help"}}</p>
+      <p class="small text-muted mt-2 mb-0"><i class="fa fa-info-circle me-1"></i>{{th "db.convert_after_help"}}</p>
       {{end}}
     </div>
   </div>
@@ -463,7 +463,7 @@
   {{/* ---------- 6. D8 source-of-truth note ---------- */}}
   <div class="alert alert-info small mb-0">
     <i class="fa fa-info-circle me-1"></i>
-    {{t "db.d8_note"}}
+    {{th "db.d8_note"}}
   </div>
 </div>
 {{end}}

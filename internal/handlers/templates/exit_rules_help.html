@@ -2,71 +2,71 @@
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-book"></i> {{t "title.exit_rules_help"}}</h2>
-    <div class="sub">{{t "help.exit_rules_help.subtitle"}}</div>
+    <div class="sub">{{th "help.exit_rules_help.subtitle"}}</div>
   </div>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-user-gear"></i> {{t "help.exit_rules_help.users_h3"}}</h3>
+  <h3><i class="fa-solid fa-user-gear"></i> {{th "help.exit_rules_help.users_h3"}}</h3>
   <ol style="padding-left:20px;margin:0">
-    <li>{{t "help.exit_rules_help.users_li1"}}</li>
-    <li>{{t "help.exit_rules_help.users_form_intro"}}
+    <li>{{th "help.exit_rules_help.users_li1"}}</li>
+    <li>{{th "help.exit_rules_help.users_form_intro"}}
       <ul>
-        <li><b>{{t "help.exit_rules_help.users_label_device"}}</b> — {{t "help.exit_rules_help.users_hint_device"}}</li>
-        <li><b>{{t "help.exit_rules_help.users_label_exit_node"}}</b> — {{t "help.exit_rules_help.users_hint_exit_node"}}</li>
-        <li><b>{{t "help.exit_rules_help.users_label_action"}}</b> — {{t "help.exit_rules_help.users_hint_action"}}</li>
-        <li><b>{{t "help.exit_rules_help.users_label_target_type"}}</b> — {{t "help.exit_rules_help.users_hint_target_type"}}</li>
-        <li><b>{{t "help.exit_rules_help.users_label_value"}}</b> — {{t "help.exit_rules_help.users_hint_value"}}</li>
+        <li><b>{{th "help.exit_rules_help.users_label_device"}}</b> — {{th "help.exit_rules_help.users_hint_device"}}</li>
+        <li><b>{{th "help.exit_rules_help.users_label_exit_node"}}</b> — {{th "help.exit_rules_help.users_hint_exit_node"}}</li>
+        <li><b>{{th "help.exit_rules_help.users_label_action"}}</b> — {{th "help.exit_rules_help.users_hint_action"}}</li>
+        <li><b>{{th "help.exit_rules_help.users_label_target_type"}}</b> — {{th "help.exit_rules_help.users_hint_target_type"}}</li>
+        <li><b>{{th "help.exit_rules_help.users_label_value"}}</b> — {{th "help.exit_rules_help.users_hint_value"}}</li>
       </ul>
     </li>
-    <li>{{t "help.exit_rules_help.users_click_add"}}</li>
-    <li>{{t "help.exit_rules_help.users_on_device_prefix"}} <code>tailscale up --login-server=https://head.example.com --authkey=&lt;key&gt; --accept-routes --accept-dns=true</code> (Windows/Linux) or <code>tailscale up --exit-node=node-name</code> (Android/iOS). {{t "help.exit_rules_help.users_on_device_windows_guide"}}</li>
+    <li>{{th "help.exit_rules_help.users_click_add"}}</li>
+    <li>{{th "help.exit_rules_help.users_on_device_prefix"}} <code>tailscale up --login-server=https://head.example.com --authkey=&lt;key&gt; --accept-routes --accept-dns=true</code> (Windows/Linux) or <code>tailscale up --exit-node=node-name</code> (Android/iOS). {{th "help.exit_rules_help.users_on_device_windows_guide"}}</li>
   </ol>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-arrows-rotate"></i> {{t "help.exit_rules_help.dns_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.dns_intro"}}</p>
+  <h3><i class="fa-solid fa-arrows-rotate"></i> {{th "help.exit_rules_help.dns_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.dns_intro"}}</p>
   <ol style="padding-left:20px;margin:0">
-    <li>{{t "help.exit_rules_help.dns_step1"}}</li>
-    <li>{{t "help.exit_rules_help.dns_step2"}}</li>
-    <li>{{t "help.exit_rules_help.dns_step3"}}</li>
-    <li>{{t "help.exit_rules_help.dns_step4"}}</li>
+    <li>{{th "help.exit_rules_help.dns_step1"}}</li>
+    <li>{{th "help.exit_rules_help.dns_step2"}}</li>
+    <li>{{th "help.exit_rules_help.dns_step3"}}</li>
+    <li>{{th "help.exit_rules_help.dns_step4"}}</li>
   </ol>
-  <p style="margin-top:8px">{{t "help.exit_rules_help.dns_marked"}}</p>
-  <p>{{t "help.exit_rules_help.dns_parent"}}</p>
+  <p style="margin-top:8px">{{th "help.exit_rules_help.dns_marked"}}</p>
+  <p>{{th "help.exit_rules_help.dns_parent"}}</p>
   <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
-    {{t "help.exit_rules_help.dns_known_warn"}}
+    {{th "help.exit_rules_help.dns_known_warn"}}
   </p>
-  <p style="margin-top:4px">{{t "help.exit_rules_help.dns_known_label"}}</p>
+  <p style="margin-top:4px">{{th "help.exit_rules_help.dns_known_label"}}</p>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-shield-halved"></i> {{t "help.exit_rules_help.dedup_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.dedup_intro"}}</p>
+  <h3><i class="fa-solid fa-shield-halved"></i> {{th "help.exit_rules_help.dedup_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.dedup_intro"}}</p>
   <ul>
-    <li>✅ {{t "help.exit_rules_help.dedup_new"}}</li>
-    <li>🔁 {{t "help.exit_rules_help.dedup_dup"}}</li>
-    <li>⚠️ {{t "help.exit_rules_help.dedup_partial"}}</li>
-    <li>⚠️ {{t "help.exit_rules_help.dedup_dns_warn"}}</li>
+    <li>✅ {{th "help.exit_rules_help.dedup_new"}}</li>
+    <li>🔁 {{th "help.exit_rules_help.dedup_dup"}}</li>
+    <li>⚠️ {{th "help.exit_rules_help.dedup_partial"}}</li>
+    <li>⚠️ {{th "help.exit_rules_help.dedup_dns_warn"}}</li>
   </ul>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-key"></i> {{t "help.exit_rules_help.api_tokens_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.api_tokens_intro"}}</p>
+  <h3><i class="fa-solid fa-key"></i> {{th "help.exit_rules_help.api_tokens_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.api_tokens_intro"}}</p>
   <ol style="padding-left:20px;margin:0">
-    <li>{{t "help.exit_rules_help.api_tokens_li1"}}</li>
-    <li>{{t "help.exit_rules_help.api_tokens_li2"}}</li>
-    <li>{{t "help.exit_rules_help.api_tokens_li3"}}</li>
-    <li>{{t "help.exit_rules_help.api_tokens_li4"}}</li>
+    <li>{{th "help.exit_rules_help.api_tokens_li1"}}</li>
+    <li>{{th "help.exit_rules_help.api_tokens_li2"}}</li>
+    <li>{{th "help.exit_rules_help.api_tokens_li3"}}</li>
+    <li>{{th "help.exit_rules_help.api_tokens_li4"}}</li>
   </ol>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;margin-top:8px;">
-{{t "help.exit_rules_help.api_tokens_example_header"}}
+{{th "help.exit_rules_help.api_tokens_example_header"}}
 curl -H "Authorization: Bearer &lt;token&gt;" \
   {{.BaseURL}}/my/exit-rules/api
 
-{{t "help.exit_rules_help.api_tokens_bulk_header"}}
+{{th "help.exit_rules_help.api_tokens_bulk_header"}}
 curl -X POST -H "Authorization: Bearer &lt;token&gt;" \
   -H "Content-Type: application/json" \
   -d '{"rules":[{"device_id":5,"exit_node":"node-europe","target_type":"subnet","target_value":"10.0.0.0/24","action":"accept"}]}' \
@@ -74,92 +74,92 @@ curl -X POST -H "Authorization: Bearer &lt;token&gt;" \
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-diagram-project"></i> {{t "help.exit_rules_help.howworks_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.howworks_intro"}}</p>
+  <h3><i class="fa-solid fa-diagram-project"></i> {{th "help.exit_rules_help.howworks_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.howworks_intro"}}</p>
   <ol style="padding-left:20px;margin:0">
-    <li>{{t "help.exit_rules_help.howworks_li1"}}</li>
-    <li>{{t "help.exit_rules_help.howworks_li2"}}</li>
-    <li>{{t "help.exit_rules_help.howworks_clients"}}
+    <li>{{th "help.exit_rules_help.howworks_li1"}}</li>
+    <li>{{th "help.exit_rules_help.howworks_li2"}}</li>
+    <li>{{th "help.exit_rules_help.howworks_clients"}}
       <ul>
-        <li>{{t "help.exit_rules_help.howworks_win_lin"}}</li>
-        <li>{{t "help.exit_rules_help.howworks_mobile"}}</li>
+        <li>{{th "help.exit_rules_help.howworks_win_lin"}}</li>
+        <li>{{th "help.exit_rules_help.howworks_mobile"}}</li>
       </ul>
     </li>
-    <li>{{t "help.exit_rules_help.howworks_auto"}}</li>
+    <li>{{th "help.exit_rules_help.howworks_auto"}}</li>
   </ol>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-globe"></i> {{t "help.exit_rules_help.tailnet_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.tailnet_intro"}}</p>
-  <p>{{t "help.exit_rules_help.tailnet_example_intro"}}</p>
+  <h3><i class="fa-solid fa-globe"></i> {{th "help.exit_rules_help.tailnet_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.tailnet_intro"}}</p>
+  <p>{{th "help.exit_rules_help.tailnet_example_intro"}}</p>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
 my-phone (100.64.100.5) ──► exit-node (100.64.100.3) ──► internet (8.8.8.8)</pre>
-  <p>{{t "help.exit_rules_help.tailnet_traffic_note"}}</p>
+  <p>{{th "help.exit_rules_help.tailnet_traffic_note"}}</p>
   <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
-    {{t "help.exit_rules_help.tailnet_cf_warn"}}
+    {{th "help.exit_rules_help.tailnet_cf_warn"}}
   </p>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-server"></i> {{t "help.exit_rules_help.exit_node_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.exit_node_intro"}}</p>
+  <h3><i class="fa-solid fa-server"></i> {{th "help.exit_rules_help.exit_node_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.exit_node_intro"}}</p>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
-{{t "help.exit_rules_help.exit_node_script_ref"}}
-{{t "help.exit_rules_help.exit_node_script_or"}}
+{{th "help.exit_rules_help.exit_node_script_ref"}}
+{{th "help.exit_rules_help.exit_node_script_or"}}
 
 tailscale set \
   --ssh \
   --advertise-exit-node \
   --advertise-routes="10.0.0.0/24,172.16.0.0/16,192.168.0.0/24,..."</pre>
   <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
-    {{t "help.exit_rules_help.exit_node_replace_warn"}}
+    {{th "help.exit_rules_help.exit_node_replace_warn"}}
   </p>
-  <p style="margin-top:4px">{{t "help.exit_rules_help.exit_node_rollback"}}</p>
+  <p style="margin-top:4px">{{th "help.exit_rules_help.exit_node_rollback"}}</p>
   <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
-    {{t "help.exit_rules_help.exit_node_requirements"}}
+    {{th "help.exit_rules_help.exit_node_requirements"}}
   </p>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-tower-broadcast"></i> {{t "help.exit_rules_help.derp_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.derp_intro"}}</p>
+  <h3><i class="fa-solid fa-tower-broadcast"></i> {{th "help.exit_rules_help.derp_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.derp_intro"}}</p>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
 ┌──────────┐   TLS 1.3 + WSS    ┌─────────┐   WebSocket   ┌──────────┐
 │ my-phone │ ──────────────────▶│  DERP   │──────────────▶│ exit-vps │
 │ 4G CGNAT │   TCP 443 (HTTPS)  │  relay  │  TCP 443      │  VPS EU  │
 └──────────┘                    └─────────┘               └──────────┘
                                       │
-                          {{t "help.exit_rules_help.derp_see_label"}}
-                          {{t "help.exit_rules_help.derp_not_see_label"}}</pre>
-  <p>{{t "help.exit_rules_help.derp_when_used"}}</p>
+                          {{th "help.exit_rules_help.derp_see_label"}}
+                          {{th "help.exit_rules_help.derp_not_see_label"}}</pre>
+  <p>{{th "help.exit_rules_help.derp_when_used"}}</p>
   <ul>
-    <li>{{t "help.exit_rules_help.derp_direct"}}</li>
-    <li>{{t "help.exit_rules_help.derp_relay"}}</li>
+    <li>{{th "help.exit_rules_help.derp_direct"}}</li>
+    <li>{{th "help.exit_rules_help.derp_relay"}}</li>
   </ul>
   <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">
-    {{t "help.exit_rules_help.derp_dpi_note"}}
+    {{th "help.exit_rules_help.derp_dpi_note"}}
   </p>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-terminal"></i> {{t "help.exit_rules_help.api_ref_h3"}}</h3>
+  <h3><i class="fa-solid fa-terminal"></i> {{th "help.exit_rules_help.api_ref_h3"}}</h3>
 
-  <h4>{{t "help.exit_rules_help.api_get_h4"}}</h4>
+  <h4>{{th "help.exit_rules_help.api_get_h4"}}</h4>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
-{{t "help.exit_rules_help.api_with_token"}}
+{{th "help.exit_rules_help.api_with_token"}}
 curl -H "Authorization: Bearer &lt;token&gt;" {{.BaseURL}}/my/exit-rules/api
 
-{{t "help.exit_rules_help.api_or_cookie"}}
+{{th "help.exit_rules_help.api_or_cookie"}}
 curl -b skygate_session=TOKEN {{.BaseURL}}/my/exit-rules/api</pre>
   <p>Response: <code>{"rules": [{"id":1, "device_id":5, "device_name":"my-laptop", "exit_node":"node-europe", "target_type":"ip", "target_value":"1.2.3.4", "action":"accept", "device_ip":"100.64.0.x", "parent_domain":""}]}</code></p>
   <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
     The <code>parent_domain</code> field — for /32 rules created by autoupdater, contains the originating domain; a <code>cdn:&lt;provider&gt;:&lt;domain&gt;</code> value marks a range a CDN expansion produced (those are shared with unrelated sites); it is absent for a rule you typed by hand.
   </p>
 
-  <h4>{{t "help.exit_rules_help.api_post_h4"}}</h4>
+  <h4>{{th "help.exit_rules_help.api_post_h4"}}</h4>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
-{{t "help.exit_rules_help.api_with_token"}}
+{{th "help.exit_rules_help.api_with_token"}}
 curl -X POST -H "Authorization: Bearer &lt;token&gt;" \
   -H "Content-Type: application/json" \
   -d '{"rules":[
@@ -169,7 +169,7 @@ curl -X POST -H "Authorization: Bearer &lt;token&gt;" \
   ]}' \
   {{.BaseURL}}/my/exit-rules/api
 
-{{t "help.exit_rules_help.api_or_cookie"}}
+{{th "help.exit_rules_help.api_or_cookie"}}
 curl -X POST -b skygate_session=TOKEN \
   -H "Content-Type: application/json" \
   -d '{"rules":[...]}' \
@@ -181,46 +181,46 @@ curl -X POST -b skygate_session=TOKEN \
 
   <table style="margin-top:12px">
     <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
-    <tr><td><code>device_id</code></td><td>int</td><td>yes</td><td>{{t "help.exit_rules_help.api_field_device_id"}}</td></tr>
-    <tr><td><code>exit_node</code></td><td>string</td><td>no</td><td>{{t "help.exit_rules_help.api_field_exit_node"}}</td></tr>
+    <tr><td><code>device_id</code></td><td>int</td><td>yes</td><td>{{th "help.exit_rules_help.api_field_device_id"}}</td></tr>
+    <tr><td><code>exit_node</code></td><td>string</td><td>no</td><td>{{th "help.exit_rules_help.api_field_exit_node"}}</td></tr>
     <tr><td><code>target_type</code></td><td>string</td><td>yes</td><td>"ip", "subnet", or "domain"</td></tr>
     <tr><td><code>target_value</code></td><td>string</td><td>yes</td><td>IP, subnet (10.0.0.0/24), or domain (example.com)</td></tr>
     <tr><td><code>action</code></td><td>string</td><td>no</td><td>"accept" (default) or "deny"</td></tr>
   </table>
 
-  <h4 style="margin-top:16px">{{t "help.exit_rules_help.api_admin_sync_h4"}}</h4>
-  <p>{{t "help.exit_rules_help.api_admin_sync_desc"}}</p>
+  <h4 style="margin-top:16px">{{th "help.exit_rules_help.api_admin_sync_h4"}}</h4>
+  <p>{{th "help.exit_rules_help.api_admin_sync_desc"}}</p>
   <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">curl -H "Authorization: Bearer &lt;token&gt;" {{.BaseURL}}/admin/exit-rules/sync</pre>
 </div>
 
 <div class="card" id="ai-connect">
-  <h3><i class="fa-solid fa-robot"></i> {{t "help.exit_rules_help.ai_link_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.ai_link_intro"}}</p>
+  <h3><i class="fa-solid fa-robot"></i> {{th "help.exit_rules_help.ai_link_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.ai_link_intro"}}</p>
   <ol style="padding-left:20px;margin:0 0 10px 0">
-    <li>{{t "help.exit_rules_help.ai_link_step1" | safeHTML}}</li>
-    <li>{{t "help.exit_rules_help.ai_link_step2"}}</li>
-    <li>{{t "help.exit_rules_help.ai_link_step3"}}</li>
-    <li>{{t "help.exit_rules_help.ai_link_step4"}}</li>
+    <li>{{th "help.exit_rules_help.ai_link_step1"}}</li>
+    <li>{{th "help.exit_rules_help.ai_link_step2"}}</li>
+    <li>{{th "help.exit_rules_help.ai_link_step3"}}</li>
+    <li>{{th "help.exit_rules_help.ai_link_step4"}}</li>
   </ol>
   <div class="field">
-    <label for="ai-token">{{t "help.exit_rules_help.ai_link_token_label"}}</label>
+    <label for="ai-token">{{th "help.exit_rules_help.ai_link_token_label"}}</label>
     <input type="text" id="ai-token" autocomplete="off" spellcheck="false" style="width:100%;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px;padding:6px 8px">
   </div>
-  <button type="button" class="btn btn-primary" onclick="skyBuildAgentLink()"><i class="fa-solid fa-link"></i> {{t "help.exit_rules_help.ai_link_build"}}</button>
+  <button type="button" class="btn btn-primary" onclick="skyBuildAgentLink()"><i class="fa-solid fa-link"></i> {{th "help.exit_rules_help.ai_link_build"}}</button>
   <div class="field" style="margin-top:10px">
-    <label>{{t "help.exit_rules_help.ai_link_output_label"}}</label>
+    <label>{{th "help.exit_rules_help.ai_link_output_label"}}</label>
     <pre id="ai-link" style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;overflow-wrap:break-word"></pre>
   </div>
-  <button type="button" class="btn" onclick="skyCopyAgentLink(this)"><i class="fa-solid fa-copy"></i> {{t "help.exit_rules_help.ai_link_copy"}}</button>
+  <button type="button" class="btn" onclick="skyCopyAgentLink(this)"><i class="fa-solid fa-copy"></i> {{th "help.exit_rules_help.ai_link_copy"}}</button>
 
-  <p style="margin-top:12px;color:var(--text-muted);font-size:0.85em">{{t "help.exit_rules_help.ai_link_what_agent"}}</p>
-  <p style="color:var(--text-muted);font-size:0.85em">{{t "help.exit_rules_help.ai_link_security"}}</p>
-  <p style="font-size:0.85em">{{tf "help.exit_rules_help.ai_link_json" .BaseURL | safeHTML}}</p>
+  <p style="margin-top:12px;color:var(--text-muted);font-size:0.85em">{{th "help.exit_rules_help.ai_link_what_agent"}}</p>
+  <p style="color:var(--text-muted);font-size:0.85em">{{th "help.exit_rules_help.ai_link_security"}}</p>
+  <p style="font-size:0.85em">{{th "help.exit_rules_help.ai_link_json" .BaseURL}}</p>
 
   <details style="margin-top:12px">
-    <summary style="cursor:pointer">{{t "help.exit_rules_help.ai_link_manual_summary"}}</summary>
-    <h4 style="margin-top:12px">{{t "help.exit_rules_help.ai_h3"}}</h4>
-    <p>{{t "help.exit_rules_help.ai_intro"}}</p>
+    <summary style="cursor:pointer">{{th "help.exit_rules_help.ai_link_manual_summary"}}</summary>
+    <h4 style="margin-top:12px">{{th "help.exit_rules_help.ai_h3"}}</h4>
+    <p>{{th "help.exit_rules_help.ai_intro"}}</p>
     <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;overflow-x:auto;">
 Add routing rules for my-laptop (device_id=5) through exit-node node-europe.
 Token: &lt;copy from /my/tokens&gt;
@@ -234,15 +234,15 @@ Service 2 (subnets):
 Service 3 (domains, autoupdater will pick up the IPs):
   rutracker.org, kernel.org, github.com
 
-{{t "help.exit_rules_help.ai_use_post"}}
-{{tf "help.exit_rules_help.ai_base_url" .BaseURL}}</pre>
+{{th "help.exit_rules_help.ai_use_post"}}
+{{th "help.exit_rules_help.ai_base_url" .BaseURL}}</pre>
 
-    <p style="margin-top:8px">{{t "help.exit_rules_help.ai_what_to_know"}}</p>
+    <p style="margin-top:8px">{{th "help.exit_rules_help.ai_what_to_know"}}</p>
     <ul>
       <li>target_type can be "ip", "subnet", or "domain".</li>
-      <li>{{t "help.exit_rules_help.ai_tip_domains"}}</li>
-      <li>{{t "help.exit_rules_help.ai_tip_russian"}}</li>
-      <li>{{t "help.exit_rules_help.ai_tip_tokens"}} <a href="/my/tokens">/my/tokens</a>.</li>
+      <li>{{th "help.exit_rules_help.ai_tip_domains"}}</li>
+      <li>{{th "help.exit_rules_help.ai_tip_russian"}}</li>
+      <li>{{th "help.exit_rules_help.ai_tip_tokens"}} <a href="/my/tokens">/my/tokens</a>.</li>
     </ul>
   </details>
 </div>
@@ -278,48 +278,50 @@ function skyCopyAgentLink(btn){
 </script>
 
 <div class="card">
-  <h3><i class="fa-solid fa-square-check"></i> {{t "help.exit_rules_help.bulk_delete_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.bulk_delete_intro"}}</p>
+  <h3><i class="fa-solid fa-square-check"></i> {{th "help.exit_rules_help.bulk_delete_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.bulk_delete_intro"}}</p>
   <ul>
-    <li>{{t "help.exit_rules_help.bulk_select_all"}}</li>
-    <li>{{t "help.exit_rules_help.bulk_type_filter"}}</li>
-    <li>{{t "help.exit_rules_help.bulk_search"}}</li>
-    <li>{{t "help.exit_rules_help.bulk_counter"}}</li>
-    <li>{{t "help.exit_rules_help.bulk_delete_btn"}}</li>
+    <li>{{th "help.exit_rules_help.bulk_select_all"}}</li>
+    <li>{{th "help.exit_rules_help.bulk_type_filter"}}</li>
+    <li>{{th "help.exit_rules_help.bulk_search"}}</li>
+    <li>{{th "help.exit_rules_help.bulk_counter"}}</li>
+    <li>{{th "help.exit_rules_help.bulk_delete_btn"}}</li>
   </ul>
-  <p style="margin-top:8px">{{t "help.exit_rules_help.bulk_cascade_note"}}</p>
+  <p style="margin-top:8px">{{th "help.exit_rules_help.bulk_cascade_note"}}</p>
   <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
-    {{t "help.exit_rules_help.bulk_single_note"}}
+    {{th "help.exit_rules_help.bulk_single_note"}}
   </p>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-scale-balanced"></i> {{t "help.exit_rules_help.counters_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.counters_intro"}}</p>
+  <h3><i class="fa-solid fa-scale-balanced"></i> {{th "help.exit_rules_help.counters_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.counters_intro"}}</p>
   <ul>
-    <li>{{t "help.exit_rules_help.counters_counted"}}</li>
-    <li>{{t "help.exit_rules_help.counters_not_counted"}}</li>
+    <li>{{th "help.exit_rules_help.counters_counted"}}</li>
+    <li>{{th "help.exit_rules_help.counters_not_counted"}}</li>
   </ul>
-  <p style="margin-top:8px">{{t "help.exit_rules_help.counters_explain"}}</p>
+  <p style="margin-top:8px">{{th "help.exit_rules_help.counters_explain"}}</p>
   <p style="margin-top:4px;color:var(--text-muted);font-size:0.85em">
-    {{t "help.exit_rules_help.counters_settings"}}
+    {{th "help.exit_rules_help.counters_settings"}}
   </p>
-  <p style="margin-top:8px">{{t "help.exit_rules_help.counters_example"}}</p>
+  <p style="margin-top:8px">{{th "help.exit_rules_help.counters_example"}}</p>
 </div>
 
+{{if .IsAdmin}}
 <div class="card">
-  <h3><i class="fa-solid fa-broom"></i> {{t "help.exit_rules_help.cleanup_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.cleanup_intro"}}</p>
+  <h3><i class="fa-solid fa-broom"></i> {{th "help.exit_rules_help.cleanup_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.cleanup_intro"}}</p>
   <ul>
-    <li>{{t "help.exit_rules_help.cleanup_li1"}}</li>
-    <li>{{t "help.exit_rules_help.cleanup_li2"}}</li>
-    <li>{{t "help.exit_rules_help.cleanup_li3"}}</li>
+    <li>{{th "help.exit_rules_help.cleanup_li1"}}</li>
+    <li>{{th "help.exit_rules_help.cleanup_li2"}}</li>
+    <li>{{th "help.exit_rules_help.cleanup_li3"}}</li>
   </ul>
 </div>
+{{end}}
 
 <div class="card">
-  <h3><i class="fa-solid fa-user-shield"></i> {{t "help.exit_rules_help.visibility_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.visibility_intro"}}</p>
+  <h3><i class="fa-solid fa-user-shield"></i> {{th "help.exit_rules_help.visibility_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.visibility_intro"}}</p>
   <pre style="background:#0d1117;color:#c9d1d9;padding:12px;border-radius:6px;font-size:12px;overflow-x:auto">{
   "acls": [
     {"src": ["admin@tsnet.example.com"], "dst": ["admin@tsnet.example.com:*"]},
@@ -334,39 +336,39 @@ function skyCopyAgentLink(btn){
     "tag:exit-node": ["admin@tsnet.example.com"]
   }
 }</pre>
-  <p>{{t "help.exit_rules_help.visibility_first_match"}}</p>
+  <p>{{th "help.exit_rules_help.visibility_first_match"}}</p>
 
-  <h3><i class="fa-solid fa-tags"></i> {{t "help.exit_rules_help.auto_tag_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.auto_tag_intro"}}</p>
+  <h3><i class="fa-solid fa-tags"></i> {{th "help.exit_rules_help.auto_tag_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.auto_tag_intro"}}</p>
   <ul>
-    <li>{{t "help.exit_rules_help.auto_tag_li1"}}</li>
-    <li>{{t "help.exit_rules_help.auto_tag_li2"}}</li>
-    <li>{{t "help.exit_rules_help.auto_tag_li3"}}</li>
+    <li>{{th "help.exit_rules_help.auto_tag_li1"}}</li>
+    <li>{{th "help.exit_rules_help.auto_tag_li2"}}</li>
+    <li>{{th "help.exit_rules_help.auto_tag_li3"}}</li>
   </ul>
-  <p>{{t "help.exit_rules_help.auto_tag_manual"}}</p>
+  <p>{{th "help.exit_rules_help.auto_tag_manual"}}</p>
 
-  <h3><i class="fa-solid fa-bug"></i> {{t "help.exit_rules_help.pitfalls_h3"}}</h3>
+  <h3><i class="fa-solid fa-bug"></i> {{th "help.exit_rules_help.pitfalls_h3"}}</h3>
   <ul>
-    <li>{{t "help.exit_rules_help.pitfall_ip_no_32" | safeHTML}}</li>
-    <li>{{t "help.exit_rules_help.pitfall_shared_ip" | safeHTML}}</li>
-    <li>{{t "help.exit_rules_help.pitfall_dns_fail" | safeHTML}}</li>
-    <li>{{t "help.exit_rules_help.pitfall_client_dns" | safeHTML}}</li>
-    <li>{{t "help.exit_rules_help.pitfall_cf_ru" | safeHTML}}</li>
+    <li>{{th "help.exit_rules_help.pitfall_ip_no_32"}}</li>
+    <li>{{th "help.exit_rules_help.pitfall_shared_ip"}}</li>
+    <li>{{th "help.exit_rules_help.pitfall_dns_fail"}}</li>
+    <li>{{th "help.exit_rules_help.pitfall_client_dns"}}</li>
+    <li>{{th "help.exit_rules_help.pitfall_cf_ru"}}</li>
   </ul>
 </div>
 
 <div class="card">
-  <h3><i class="fa-solid fa-lightbulb"></i> {{t "help.exit_rules_help.ip_sources_h3"}}</h3>
-  <p>{{t "help.exit_rules_help.ip_sources_intro"}}</p>
+  <h3><i class="fa-solid fa-lightbulb"></i> {{th "help.exit_rules_help.ip_sources_h3"}}</h3>
+  <p>{{th "help.exit_rules_help.ip_sources_intro"}}</p>
   <ul>
-    <li>{{t "help.exit_rules_help.ip_sources_service_a"}} <code>https://example.com/ips.txt</code></li>
-    <li>{{t "help.exit_rules_help.ip_sources_service_b"}} <code>https://example.com/ipranges.json</code></li>
-    <li>{{t "help.exit_rules_help.ip_sources_provider_c"}} <code>https://example.com/ips-v4</code></li>
+    <li>{{th "help.exit_rules_help.ip_sources_service_a"}} <code>https://example.com/ips.txt</code></li>
+    <li>{{th "help.exit_rules_help.ip_sources_service_b"}} <code>https://example.com/ipranges.json</code></li>
+    <li>{{th "help.exit_rules_help.ip_sources_provider_c"}} <code>https://example.com/ips-v4</code></li>
   </ul>
-  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">{{t "help.exit_rules_help.ip_sources_recommendation"}}
+  <p style="margin-top:8px;color:var(--text-muted);font-size:0.85em">{{th "help.exit_rules_help.ip_sources_recommendation"}}
   <ul>
-    <li>{{t "help.exit_rules_help.ip_sources_subnets"}}</li>
-    <li>{{t "help.exit_rules_help.ip_sources_domains"}}</li>
+    <li>{{th "help.exit_rules_help.ip_sources_subnets"}}</li>
+    <li>{{th "help.exit_rules_help.ip_sources_domains"}}</li>
   </ul></p>
 </div>
 {{end}}

@@ -17,8 +17,8 @@
   <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
     <i class="fa-solid fa-circle-info"></i> {{t "control_planes.help_title"}}
   </summary>
-  <div class="form-hint-strong" style="margin-top:8px">{{t "control_planes.help_body" | safeHTML}}</div>
-  <div class="form-hint-strong" style="margin-top:6px">{{t "control_planes.warning_help" | safeHTML}}</div>
+  <div class="form-hint-strong" style="margin-top:8px">{{th "control_planes.help_body"}}</div>
+  <div class="form-hint-strong" style="margin-top:6px">{{th "control_planes.warning_help"}}</div>
 </details>
 
 {{if .FlashError}}<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>{{end}}
@@ -27,13 +27,13 @@
 {{if not .HasSecret}}
 <div class="card" style="background:var(--warning-bg);border-left:4px solid var(--warning)">
   <h3><i class="fa-solid fa-triangle-exclamation"></i> {{t "control_planes.secret_missing_title"}}</h3>
-  <div style="margin-top:6px">{{t "control_planes.secret_missing_body" | safeHTML}}</div>
+  <div style="margin-top:6px">{{th "control_planes.secret_missing_body"}}</div>
 </div>
 {{end}}
 
 <div class="card">
   <h3>{{t "control_planes.list_title"}}</h3>
-  <p style="color:var(--text-muted);font-size:13px">{{t "control_planes.list_help" | safeHTML}}</p>
+  <p style="color:var(--text-muted);font-size:13px">{{th "control_planes.list_help"}}</p>
   <table style="width:100%;font-size:13px">
     <thead>
       <tr style="text-align:left">

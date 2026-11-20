@@ -2,7 +2,7 @@
 <div class="title-row">
   <div>
     <h2><i class="fa-solid fa-arrows-rotate"></i>{{t "oidc_sync.title"}}</h2>
-    <div class="sub">{{t "oidc_sync.subtitle"}}</div>
+    <div class="sub">{{th "oidc_sync.subtitle"}}</div>
   </div>
   <div class="btn-row">
     <a href="/admin/oidc" class="btn btn-secondary"><i class="fa-solid fa-key"></i> {{t "oidc_sync.back_to_oidc"}}</a>
@@ -39,14 +39,14 @@
 {{if not .OIDCEnabled}}
 <div class="alert alert-warn">
   <i class="fa-solid fa-triangle-exclamation"></i>
-  <div>{{t "oidc_sync.disabled_warn" | safeHTML}}</div>
+  <div>{{th "oidc_sync.disabled_warn"}}</div>
 </div>
 {{end}}
 
 <div class="card">
   <h3><i class="fa-solid fa-circle-info"></i>{{t "oidc_sync.section_current"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
-    {{t "oidc_sync.section_current_help" | safeHTML}}
+    {{th "oidc_sync.section_current_help"}}
   </p>
   {{/* B304 (v1.5.69): this page used to read the RAW env and refuse to run with
        "SKYGATE_OIDC_ISSUER is not set on the skygate container" even when the
@@ -56,13 +56,13 @@
   <p style="font-size:13px;margin-bottom:8px">
     {{if .SavedOnPanel}}
       <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "oidc_sync.saved_on_panel_tag"}}</span>
-      <span style="color:var(--text-muted)">{{t "oidc_sync.saved_on_panel_help" | safeHTML}}</span>
+      <span style="color:var(--text-muted)">{{th "oidc_sync.saved_on_panel_help"}}</span>
     {{else if .EnvHasConfig}}
       <span class="tag tag-warning"><i class="fa-solid fa-keyboard"></i> {{t "oidc_sync.from_env_tag"}}</span>
-      <span style="color:var(--text-muted)">{{t "oidc_sync.from_env_help" | safeHTML}}</span>
+      <span style="color:var(--text-muted)">{{th "oidc_sync.from_env_help"}}</span>
     {{else}}
       <span class="tag tag-danger"><i class="fa-solid fa-circle-xmark"></i> {{t "oidc_sync.nothing_configured_tag"}}</span>
-      <span style="color:var(--text-muted)">{{t "oidc_sync.nothing_configured_help" | safeHTML}}</span>
+      <span style="color:var(--text-muted)">{{th "oidc_sync.nothing_configured_help"}}</span>
     {{end}}
   </p>
   <table>
@@ -104,7 +104,7 @@
 <div class="card">
   <h3><i class="fa-solid fa-terminal"></i>{{t "oidc_sync.script_title"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">
-    {{t "oidc_sync.script_help" | safeHTML}}
+    {{th "oidc_sync.script_help"}}
   </p>
   {{/* B304 (v1.5.69): the script carries the SAME configuration the panel shows to
        headscale (it calls `skygate oidc-export --headscale --secret` on the host,
@@ -115,7 +115,7 @@
     <textarea readonly rows="2" onclick="this.select()" style="flex:1;font-family:monospace;font-size:12px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:8px">{{.ApplyScriptCmd}}</textarea>
     <button type="button" class="btn btn-sm" onclick="var t=this.previousElementSibling;t.select();document.execCommand('copy');this.textContent='✓';">{{t "oidc_sync.script_copy"}}</button>
   </div>
-  <p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{t "oidc_sync.script_flags" | safeHTML}}</p>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{th "oidc_sync.script_flags"}}</p>
 </div>
 
 <div class="card">
@@ -130,21 +130,21 @@
         <input type="text" name="headscale_config_path" id="headscale_config_path"
                value="{{index .FormDefaults "HeadscaleConfigPath"}}"
                placeholder="/home/skyadmin/headscale/config/config.yaml">
-        <div class="form-hint">{{t "oidc_sync.field_config_path_help" | safeHTML}}</div>
+        <div class="form-hint">{{th "oidc_sync.field_config_path_help"}}</div>
       </div>
       <div class="form-group">
         <label for="headscale_container">{{t "oidc_sync.field_container"}}</label>
         <input type="text" name="headscale_container" id="headscale_container"
                value="{{index .FormDefaults "HeadscaleContainer"}}"
                placeholder="headscale">
-        <div class="form-hint">{{t "oidc_sync.field_container_help"}}</div>
+        <div class="form-hint">{{th "oidc_sync.field_container_help"}}</div>
       </div>
       <div class="form-group">
         <label for="skygate_env_path">{{t "oidc_sync.field_env_path"}}</label>
         <input type="text" name="skygate_env_path" id="skygate_env_path"
                value="{{index .FormDefaults "SkygateEnvPath"}}"
                placeholder="/home/skyadmin/skygate/.env">
-        <div class="form-hint">{{t "oidc_sync.field_env_path_help"}}</div>
+        <div class="form-hint">{{th "oidc_sync.field_env_path_help"}}</div>
       </div>
       <div class="form-group">
         <label for="mode">{{t "oidc_sync.field_mode"}}</label>
@@ -157,14 +157,14 @@
           <option value="manual">{{t "oidc_sync.mode_manual"}}</option>
           <option value="download">{{t "oidc_sync.mode_download"}}</option>
         </select>
-        <div class="form-hint">{{t "oidc_sync.field_mode_help" | safeHTML}}</div>
+        <div class="form-hint">{{th "oidc_sync.field_mode_help"}}</div>
       </div>
       <div class="form-group form-group-wide">
         <label for="redirect_uris">{{t "oidc_sync.field_redirect_uris"}}</label>
         <input type="text" name="redirect_uris" id="redirect_uris"
                value="{{index .FormDefaults "RedirectURIs"}}"
                placeholder="https://head.skynas.ru/oidc/callback">
-        <div class="form-hint">{{t "oidc_sync.field_redirect_uris_help" | safeHTML}}</div>
+        <div class="form-hint">{{th "oidc_sync.field_redirect_uris_help"}}</div>
       </div>
     </div>
     <div class="form-actions">
@@ -182,32 +182,32 @@
 <div class="card">
   <h3><i class="fa-solid fa-circle-question"></i>{{t "oidc_sync.section_faq"}}</h3>
   <details>
-    <summary><b>{{t "oidc_sync.faq_q_docker" | safeHTML}}</b></summary>
-    <p>{{t "oidc_sync.faq_a_docker" | safeHTML}}</p>
+    <summary><b>{{th "oidc_sync.faq_q_docker"}}</b></summary>
+    <p>{{th "oidc_sync.faq_a_docker"}}</p>
   </details>
   <details>
-    <summary><b>{{t "oidc_sync.faq_q_systemd" | safeHTML}}</b></summary>
-    <p>{{t "oidc_sync.faq_a_systemd" | safeHTML}}</p>
+    <summary><b>{{th "oidc_sync.faq_q_systemd"}}</b></summary>
+    <p>{{th "oidc_sync.faq_a_systemd"}}</p>
   </details>
   <details>
-    <summary><b>{{t "oidc_sync.faq_q_k8s" | safeHTML}}</b></summary>
-    <p>{{t "oidc_sync.faq_a_k8s" | safeHTML}}</p>
+    <summary><b>{{th "oidc_sync.faq_q_k8s"}}</b></summary>
+    <p>{{th "oidc_sync.faq_a_k8s"}}</p>
   </details>
   <details>
-    <summary><b>{{t "oidc_sync.faq_q_manual" | safeHTML}}</b></summary>
-    <p>{{t "oidc_sync.faq_a_manual" | safeHTML}}</p>
+    <summary><b>{{th "oidc_sync.faq_q_manual"}}</b></summary>
+    <p>{{th "oidc_sync.faq_a_manual"}}</p>
   </details>
   <details>
-    <summary><b>{{t "oidc_sync.faq_q_download" | safeHTML}}</b></summary>
-    <p>{{t "oidc_sync.faq_a_download" | safeHTML}}</p>
+    <summary><b>{{th "oidc_sync.faq_q_download"}}</b></summary>
+    <p>{{th "oidc_sync.faq_a_download"}}</p>
   </details>
   <details>
-    <summary><b>{{t "oidc_sync.faq_q_autosync" | safeHTML}}</b></summary>
-    <p>{{t "oidc_sync.faq_a_autosync" | safeHTML}}</p>
+    <summary><b>{{th "oidc_sync.faq_q_autosync"}}</b></summary>
+    <p>{{th "oidc_sync.faq_a_autosync"}}</p>
   </details>
   <details>
     <summary><b>{{t "oidc_sync.faq_q_rollback" | safeHTML}}</b></summary>
-    <p>{{t "oidc_sync.faq_a_rollback" | safeHTML}}</p>
+    <p>{{th "oidc_sync.faq_a_rollback"}}</p>
   </details>
 </div>
 

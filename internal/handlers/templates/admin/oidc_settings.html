@@ -22,14 +22,14 @@
 {{if not .OIDCEnabled}}
 <div class="alert alert-warn">
   <i class="fa-solid fa-triangle-exclamation"></i>
-  <div>{{t "oidc.disabled_warn" | safeHTML}}</div>
+  <div>{{th "oidc.disabled_warn"}}</div>
 </div>
 {{else}}
 
 <div class="card">
   <h3><i class="fa-solid fa-circle-info"></i>{{t "oidc.section_endpoints"}}</h3>
   <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
-    {{t "oidc.endpoints_help" | safeHTML}}
+    {{th "oidc.endpoints_help"}}
   </p>
   <table>
     <tr>
@@ -67,28 +67,28 @@
 
 <div class="card">
   <h3><i class="fa-solid fa-file-code"></i>{{t "oidc.section_headscale_snippet"}}</h3>
-  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">{{t "oidc.snippet_help" | safeHTML}}</p>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">{{th "oidc.snippet_help"}}</p>
   <pre style="background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;padding:12px;overflow-x:auto;font-size:12px"><code>{{.Snippet}}</code></pre>
   <details style="margin-top:12px">
     <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:600">
       <i class="fa-solid fa-circle-question"></i> {{t "oidc.field_help_title"}}
     </summary>
     <div style="margin-top:8px;padding:10px 12px;background:var(--bg-elev);border-radius:4px;font-size:13px;line-height:1.5">
-      <p><b>issuer</b> — {{t "oidc.field_issuer" | safeHTML}}</p>
-      <p><b>client_id</b> — {{t "oidc.field_client_id" | safeHTML}}</p>
-      <p><b>client_secret</b> — {{t "oidc.field_client_secret" | safeHTML}}</p>
-      <p><b>scope</b> — {{t "oidc.field_scope" | safeHTML}}</p>
-      <p><b>extra_params</b> — {{t "oidc.field_extra_params" | safeHTML}}</p>
-      <p><b>allowed_domains</b> — {{t "oidc.field_allowed_domains" | safeHTML}}</p>
+      <p><b>issuer</b> — {{th "oidc.field_issuer"}}</p>
+      <p><b>client_id</b> — {{th "oidc.field_client_id"}}</p>
+      <p><b>client_secret</b> — {{th "oidc.field_client_secret"}}</p>
+      <p><b>scope</b> — {{th "oidc.field_scope"}}</p>
+      <p><b>extra_params</b> — {{th "oidc.field_extra_params"}}</p>
+      <p><b>allowed_domains</b> — {{th "oidc.field_allowed_domains"}}</p>
       <p><b>auto_update</b> — {{t "oidc.field_auto_update" | safeHTML}}</p>
-      <p><b>strip_email_domain</b> — {{t "oidc.field_strip_email_domain" | safeHTML}}</p>
+      <p><b>strip_email_domain</b> — {{th "oidc.field_strip_email_domain"}}</p>
     </div>
   </details>
 </div>
 
 <div class="card">
   <h3><i class="fa-solid fa-keyboard"></i>{{t "oidc.section_envvars"}}</h3>
-  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">{{t "oidc.envvars_help" | safeHTML}}</p>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">{{th "oidc.envvars_help"}}</p>
   <table>
     <tr>
       <th style="width:280px"><code>SKYGATE_OIDC_ISSUER</code></th>
@@ -100,7 +100,7 @@
     </tr>
     <tr>
       <th><code>SKYGATE_OIDC_CLIENT_SECRET</code></th>
-      <td><code>{{t "oidc.env_secret_set"}}</code> <span style="color:var(--text-muted);font-size:12px">({{t "oidc.env_secret_help"}})</span></td>
+      <td><code>{{t "oidc.env_secret_set"}}</code> <span style="color:var(--text-muted);font-size:12px">({{th "oidc.env_secret_help"}})</span></td>
     </tr>
     <tr>
       <th><code>SKYGATE_OIDC_KEY_DIR</code></th>
@@ -120,17 +120,17 @@
   <p style="font-size:13px;margin-top:12px">
     {{if gt .EnvOnlyCount 0}}
       <span class="tag tag-warning"><i class="fa-solid fa-triangle-exclamation"></i> {{t "oidc.env_only_tag"}}</span>
-      <span style="color:var(--text-muted)">{{t "oidc.env_only_help" | safeHTML}}</span>
+      <span style="color:var(--text-muted)">{{th "oidc.env_only_help"}}</span>
     {{else}}
       <span class="tag tag-success"><i class="fa-solid fa-circle-check"></i> {{t "oidc.env_optional_tag"}}</span>
-      <span style="color:var(--text-muted)">{{t "oidc.env_optional_help" | safeHTML}}</span>
+      <span style="color:var(--text-muted)">{{th "oidc.env_optional_help"}}</span>
     {{end}}
   </p>
   <details style="margin-top:10px">
     <summary style="cursor:pointer;font-size:13px"><i class="fa-solid fa-file-lines"></i> {{t "oidc.envblock_title"}}</summary>
     <p style="color:var(--text-muted);font-size:12px;margin:8px 0">{{t "oidc.envblock_help" | safeHTML}}</p>
     <textarea readonly rows="8" onclick="this.select()" style="width:100%;font-family:monospace;font-size:12px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:8px">{{.EnvBlock}}</textarea>
-    <p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{t "oidc.envblock_secret_help" | safeHTML}}</p>
+    <p style="color:var(--text-muted);font-size:12px;margin-top:8px">{{th "oidc.envblock_secret_help"}}</p>
   </details>
 </div>
 
@@ -231,14 +231,14 @@
   <div class="card">
     <h3><i class="fa-solid fa-pen-to-square"></i> {{t "oidc.section_form"}}</h3>
     <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
-      {{t "oidc.form_help" | safeHTML}}
+      {{th "oidc.form_help"}}
     </p>
     <details style="margin-bottom:12px">
       <summary style="cursor:pointer;font-size:13px"><i class="fa-solid fa-circle-question"></i> {{t "oidc.form_what_to_fill"}}</summary>
       <div style="font-size:13px;color:var(--text-muted);margin-top:8px;line-height:1.5">
-        <p><b>issuer</b> — {{t "oidc.form_help_issuer" | safeHTML}}</p>
-        <p><b>client_id</b> / <b>client_secret</b> — {{t "oidc.form_help_client" | safeHTML}}</p>
-        <p><b>redirect_uris</b> — {{t "oidc.form_help_redirect" | safeHTML}}</p>
+        <p><b>issuer</b> — {{th "oidc.form_help_issuer"}}</p>
+        <p><b>client_id</b> / <b>client_secret</b> — {{th "oidc.form_help_client"}}</p>
+        <p><b>redirect_uris</b> — {{th "oidc.form_help_redirect"}}</p>
         <p><b>key_dir</b> — {{t "oidc.form_help_keydir" | safeHTML}}</p>
       </div>
     </details>

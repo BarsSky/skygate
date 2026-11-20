@@ -30,7 +30,7 @@
 <details class="card" style="margin-bottom:16px;padding:10px 14px">
   <summary style="cursor:pointer;font-weight:600"><i class="fa-solid fa-circle-info"></i> {{t "exit_nodes.client_routing.title"}}</summary>
   <div style="margin-top:10px;font-size:13px;line-height:1.5">
-    {{t "exit_nodes.client_routing.body" | safeHTML}}
+    {{th "exit_nodes.client_routing.body"}}
   </div>
 </details>
 
@@ -57,7 +57,7 @@
 <div class="alert alert-warning" style="margin-bottom:16px">
   <i class="fa-solid fa-tag"></i>
   <strong>{{tf "exit_nodes.health.untagged_banner" .UntaggedCount}}</strong>
-  <p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px">{{t "exit_nodes.health.untagged_banner_help" | safeHTML}}</p>
+  <p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px">{{th "exit_nodes.health.untagged_banner_help"}}</p>
 </div>
 {{end}}
 
@@ -68,7 +68,7 @@
 <div class="alert alert-danger" style="margin-bottom:16px">
   <i class="fa-solid fa-circle-exclamation"></i>
   <strong>{{tf "exit_nodes.health.unapproved_banner" .UnapprovedCount}}</strong>
-  <p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px">{{t "exit_nodes.health.unapproved_banner_help" | safeHTML}}</p>
+  <p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px">{{th "exit_nodes.health.unapproved_banner_help"}}</p>
 </div>
 {{end}}
 
@@ -85,7 +85,7 @@
   <i class="fa-solid fa-key"></i>
   <strong>{{tf "exit_nodes.ssh_key.banner" .SSHKeyBlocked}}</strong>
   <p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px">{{.SSHKeyBlockedNote}}</p>
-  <p style="margin:6px 0 0 0;color:var(--text-muted);font-size:13px">{{t "exit_nodes.ssh_key.banner_help" | safeHTML}}</p>
+  <p style="margin:6px 0 0 0;color:var(--text-muted);font-size:13px">{{th "exit_nodes.ssh_key.banner_help"}}</p>
 </div>
 {{end}}
 
@@ -163,7 +163,7 @@
 
 <div class="card" id="new-exit-node" style="margin-bottom:24px">
   <h3><i class="fa-solid fa-wand-magic-sparkles"></i> {{t "exit_nodes.provision.title"}}</h3>
-  <p class="sub">{{t "exit_nodes.provision.subtitle" | safeHTML}}</p>
+  <p class="sub">{{th "exit_nodes.provision.subtitle"}}</p>
 
   {{if .Provision.Blocked}}
   <div class="alert alert-warning" style="margin-bottom:12px">
@@ -214,7 +214,7 @@
       <div>
         <label for="prov_host" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.host"}}</label>
         <input name="host" id="prov_host" value="{{.Provision.Host}}" placeholder="203.0.113.10" required style="width:100%">
-        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.provision.host_help" | safeHTML}}</div>
+        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{th "exit_nodes.provision.host_help"}}</div>
       </div>
       <div>
         <label for="prov_port" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.ssh_port"}}</label>
@@ -223,7 +223,7 @@
       <div>
         <label for="prov_user" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.ssh_user"}}</label>
         <input name="ssh_user" id="prov_user" value="{{.Provision.SSHUser}}" placeholder="root" style="width:100%">
-        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.provision.ssh_user_help"}}</div>
+        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{th "exit_nodes.provision.ssh_user_help"}}</div>
       </div>
       <div>
         <label for="prov_name" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.node_name"}}</label>
@@ -233,7 +233,7 @@
       <div>
         <label for="prov_key" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.ssh_key"}}</label>
         <input name="ssh_key_path" id="prov_key" value="{{.Provision.SSHKeyPath}}" style="width:100%">
-        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{tf "exit_nodes.provision.key_help" .Provision.InstallKind | safeHTML}}</div>
+        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{th "exit_nodes.provision.key_help" .Provision.InstallKind}}</div>
       </div>
       <div>
         <label for="prov_accept" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.accept_routes"}}</label>
@@ -242,7 +242,7 @@
           <option value="false">{{t "exit_nodes.form_accept_routes_false_long"}}</option>
           <option value="true">{{t "exit_nodes.form_accept_routes_true_long"}}</option>
         </select>
-        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.provision.accept_routes_help" | safeHTML}}</div>
+        <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{th "exit_nodes.provision.accept_routes_help"}}</div>
       </div>
       <div>
         <label for="prov_desc" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.provision.description"}}</label>
@@ -298,7 +298,7 @@
     <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px">
       {{t "exit_nodes.provision.key_fingerprint"}}:
       <code id="prov-key-fp" style="user-select:all">{{.Provision.PubKeyFingerprint}}</code>
-      <span style="display:block;margin-top:2px">{{t "exit_nodes.provision.key_fingerprint_help" | safeHTML}}</span>
+      <span style="display:block;margin-top:2px">{{th "exit_nodes.provision.key_fingerprint_help"}}</span>
     </p>
     {{end}}
     {{if .Provision.PubKeyStale}}
@@ -325,7 +325,7 @@
     {{else}}
     <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px">{{t "exit_nodes.provision.key_missing" | safeHTML}}</p>
     <pre style="white-space:pre-wrap;overflow-wrap:break-word;background:var(--bg-elev);color:var(--text);padding:10px;border-radius:6px;font-size:12px;margin:0 0 8px">ssh-keygen -y -f {{.Provision.SSHKeyPath}} &gt; {{.Provision.SSHKeyPath}}.pub</pre>
-    <p style="font-size:11px;color:var(--text-muted);margin:0">{{t "exit_nodes.provision.key_missing_help" | safeHTML}}</p>
+    <p style="font-size:11px;color:var(--text-muted);margin:0">{{th "exit_nodes.provision.key_missing_help"}}</p>
     {{end}}
     <p style="font-size:11px;color:var(--text-muted);margin:10px 0 0">{{t "exit_nodes.provision.key_same_for_all" | safeHTML}}</p>
   </div>
@@ -379,17 +379,17 @@
     <summary style="cursor:pointer;font-size:13px;font-weight:600">{{t "exit_nodes.provision.what_title"}}</summary>
     <ol style="margin:10px 0 0 18px;font-size:13px;color:var(--text-muted);line-height:1.6">
       <li>{{t "exit_nodes.provision.what_1" | safeHTML}}</li>
-      <li>{{t "exit_nodes.provision.what_2" | safeHTML}}</li>
-      <li>{{t "exit_nodes.provision.what_3" | safeHTML}}</li>
-      <li>{{t "exit_nodes.provision.what_4" | safeHTML}}</li>
-      <li>{{t "exit_nodes.provision.what_5" | safeHTML}}</li>
-      <li>{{t "exit_nodes.provision.what_6" | safeHTML}}</li>
+      <li>{{th "exit_nodes.provision.what_2"}}</li>
+      <li>{{th "exit_nodes.provision.what_3"}}</li>
+      <li>{{th "exit_nodes.provision.what_4"}}</li>
+      <li>{{th "exit_nodes.provision.what_5"}}</li>
+      <li>{{th "exit_nodes.provision.what_6"}}</li>
     </ol>
     <p style="font-size:12px;color:var(--text-muted);margin-top:10px">
-      {{tf "exit_nodes.provision.install_kind" .Provision.InstallKind | safeHTML}}
+      {{th "exit_nodes.provision.install_kind" .Provision.InstallKind}}
     </p>
     <p style="font-size:12px;color:var(--text-muted);margin-top:6px">
-      {{tf "exit_nodes.provision.login_server" .Provision.LoginServer}}
+      {{th "exit_nodes.provision.login_server" .Provision.LoginServer}}
     </p>
   </details>
 </div>
@@ -400,7 +400,7 @@
       <h3 style="margin:0"><i class="fa-solid fa-server"></i> {{t "exit_nodes.admin_title"}}</h3>
       <p style="color:var(--text-muted);margin:8px 0 0 0">
         {{t "exit_nodes.admin_subtitle"}}.
-        {{t "exit_nodes.admin_subtitle_extra" | safeHTML}}
+        {{th "exit_nodes.admin_subtitle_extra"}}
         {{if .TotalCount}}<br><b>{{.HealthyCount}}/{{.TotalCount}}</b> {{t "exit_nodes.health.healthy_count"}}{{end}}
       </p>
     </div>
@@ -564,12 +564,12 @@
           {{range .Tags}}{{if eq . "tag:exit-node"}}{{$hasExitTag = true}}{{end}}{{end}}
           {{if $hasExitTag}}
             <span class="tag tag-success" style="margin-right:4px" title="{{t "exit_nodes.tagged_exit_pill"}}"><i class="fa-solid fa-route"></i></span>
-            <form method="post" action="/admin/exit-nodes/untag" style="display:inline" title="{{t "exit_nodes.untag_exit_help" | safeHTML}}">
+            <form method="post" action="/admin/exit-nodes/untag" style="display:inline" title="{{th "exit_nodes.untag_exit_help"}}">
               <input type="hidden" name="node_id" value="{{.NodeID}}">
               <button type="submit" class="btn btn-sm" style="background:var(--warning-bg);color:var(--warning)"><i class="fa-solid fa-tag"></i> {{t "exit_nodes.untag_exit_button"}}</button>
             </form>
           {{else}}
-            <form method="post" action="/admin/exit-nodes/tag-as-exit" style="display:inline;margin-right:4px" title="{{t "exit_nodes.tag_as_exit_help" | safeHTML}}">
+            <form method="post" action="/admin/exit-nodes/tag-as-exit" style="display:inline;margin-right:4px" title="{{th "exit_nodes.tag_as_exit_help"}}">
               <input type="hidden" name="node_id" value="{{.NodeID}}">
               <button type="submit" class="btn btn-sm btn-primary"><i class="fa-solid fa-route"></i> {{t "exit_nodes.tag_as_exit_button"}}</button>
             </form>
@@ -686,7 +686,7 @@
 
 <div class="card" style="margin-bottom:24px">
   <h3><i class="fa-solid fa-diagram-project"></i> {{t "exit_nodes.prefix_owner.title"}}</h3>
-  <p style="color:var(--text-muted);margin:8px 0 0 0;font-size:13px">{{t "exit_nodes.prefix_owner.help" | safeHTML}}</p>
+  <p style="color:var(--text-muted);margin:8px 0 0 0;font-size:13px">{{th "exit_nodes.prefix_owner.help"}}</p>
 
   {{/* B458: the tailnet's own DNS resolvers. headscale hands every client
        dns.nameservers.global; the tailnet only carries an address if some relay advertises
@@ -737,7 +737,7 @@
   {{with .StalePrefs}}
   <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:var(--danger-bg);border:1px solid var(--danger)">
     <b>{{t "exit_nodes.prefix_owner.stale_pref_title"}} ({{len .}}{{if gt $.StalePrefsHuman 0}}, {{$.StalePrefsHuman}} {{t "exit_nodes.prefix_owner.stale_pref_human"}}{{end}})</b>
-    <div style="font-size:13px;margin-top:4px">{{t "exit_nodes.prefix_owner.stale_pref_help" | safeHTML}}</div>
+    <div style="font-size:13px;margin-top:4px">{{th "exit_nodes.prefix_owner.stale_pref_help"}}</div>
     <table style="width:100%;margin-top:8px;font-size:13px;border-collapse:collapse">
       <thead>
         <tr style="text-align:left;color:var(--text-muted)">
@@ -792,14 +792,14 @@
                 <input type="hidden" name="via" value="0">
                 <button type="submit" class="btn btn-sm btn-secondary">{{t "exit_nodes.prefix_owner.stale_pref_action_clear"}}</button>
               </form>
-              <span style="font-size:11px;color:var(--text-muted)">{{t "exit_nodes.prefix_owner.stale_pref_action_help" | safeHTML}}</span>
+              <span style="font-size:11px;color:var(--text-muted)">{{th "exit_nodes.prefix_owner.stale_pref_action_help"}}</span>
             </div>
           </td>
         </tr>
         {{end}}
       </tbody>
     </table>
-    <div style="font-size:12px;color:var(--text-muted);margin-top:6px">{{t "exit_nodes.prefix_owner.stale_pref_consequence" | safeHTML}}</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:6px">{{th "exit_nodes.prefix_owner.stale_pref_consequence"}}</div>
   </div>
   {{end}}
 
@@ -818,7 +818,7 @@
     {{else}}
     <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:var(--danger-bg);border:1px solid var(--danger)">
       <b>{{t "exit_nodes.prefix_owner.policy_stale"}}</b>
-      <div style="font-size:13px;margin-top:4px">{{t "exit_nodes.prefix_owner.policy_stale_help"}}</div>
+      <div style="font-size:13px;margin-top:4px">{{th "exit_nodes.prefix_owner.policy_stale_help"}}</div>
       <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.prefix_owner.policy_sizes"}} {{.PolicyBytes}} / {{.PolicyLiveByte}}</div>
       {{/* B288: name the differing section instead of always blaming the pins. */}}
       {{if .PolicyDetail}}<div style="font-size:12px;color:var(--text-muted);margin-top:2px">{{t "exit_nodes.prefix_owner.policy_diff"}} <code>{{.PolicyDetail}}</code></div>{{end}}
@@ -859,7 +859,7 @@
   <div style="margin-top:12px;padding:10px 12px;border-radius:6px;background:var(--warning-bg);border:1px solid var(--warning)">
     <b>{{t "exit_nodes.prefix_owner.tailnet_missing"}}</b>
     <div style="font-size:13px;margin-top:4px">{{.TailnetReason}}</div>
-    <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.prefix_owner.tailnet_missing_help" | safeHTML}}</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{th "exit_nodes.prefix_owner.tailnet_missing_help"}}</div>
     <a href="/admin/tailscale" class="btn btn-sm" style="margin-top:8px">{{t "exit_nodes.prefix_owner.tailnet_enable"}}</a>
   </div>
   {{end}}
@@ -898,7 +898,7 @@
       <li><code>{{.Relay}}</code> — {{t "exit_nodes.prefix_owner.transport_failed_ago"}} {{.Age}}, {{t "exit_nodes.prefix_owner.stale_advertise_count"}} {{.Count}}: <code>{{.Reason}}</code></li>
       {{end}}
     </ul>
-    <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.prefix_owner.stale_advertise_help" | safeHTML}}</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{th "exit_nodes.prefix_owner.stale_advertise_help"}}</div>
   </div>
   {{end}}
   {{if or .NotAdvertised .Unserved .Duplicated}}
@@ -1153,11 +1153,11 @@
 
 <div class="card">
   <h3><i class="fa-solid fa-screwdriver-wrench"></i> {{t "exit_nodes.manual_title"}}</h3>
-  <p class="sub">{{t "exit_nodes.add_flow_hint"}}</p>
+  <p class="sub">{{th "exit_nodes.add_flow_hint"}}</p>
 
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
     <h4 style="margin:0 0 8px 0">{{t "exit_nodes.tutorial_step1_h4"}}</h4>
-    <p style="color:var(--text-muted);margin-bottom:8px">{{t "exit_nodes.tutorial_step1_run" | safeHTML}}</p>
+    <p style="color:var(--text-muted);margin-bottom:8px">{{th "exit_nodes.tutorial_step1_run"}}</p>
     <pre style="font-size:12px;background:var(--bg)">{{t "exit_nodes.tutorial_step1_enable_fwd"}}
 {{t "exit_nodes.tutorial_step1_persist"}}
 {{t "exit_nodes.tutorial_step1_reload"}}
@@ -1183,12 +1183,12 @@ sudo mkdir -p /etc/iptables && sudo iptables-save | sudo tee /etc/iptables/rules
        принимает и НЕ хранит — это отдельный блок (V073). */}}
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
     <h4 style="margin:0 0 8px 0"><i class="fa-solid fa-key"></i> {{t "exit_nodes.register_title"}}</h4>
-    <p style="color:var(--text-muted);margin-bottom:8px">{{t "exit_nodes.register_subtitle" | safeHTML}}</p>
+    <p style="color:var(--text-muted);margin-bottom:8px">{{th "exit_nodes.register_subtitle"}}</p>
 
     {{if .RegisterKey}}
     <div class="alert alert-success" style="margin-bottom:10px">
       <i class="fa-solid fa-circle-check"></i>
-      {{tf "exit_nodes.register_ok" .RegisterKey.Hostname}}
+      {{th "exit_nodes.register_ok" .RegisterKey.Hostname}}
     </div>
     {{if .RegisterKey.Warnings}}
     <div class="alert alert-warn" style="margin-bottom:10px">
@@ -1235,10 +1235,10 @@ sudo mkdir -p /etc/iptables && sudo iptables-save | sudo tee /etc/iptables/rules
 
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
     <h4 style="margin:0 0 8px 0">{{t "exit_nodes.tutorial_step2_h4"}}</h4>
-    <p style="color:var(--text-muted);margin-bottom:8px">{{t "exit_nodes.tutorial_step2_run" | safeHTML}}</p>
+    <p style="color:var(--text-muted);margin-bottom:8px">{{th "exit_nodes.tutorial_step2_run"}}</p>
     <pre style="font-size:12px;background:var(--bg)">tailscale up --login-server={{.ControlURL}} --ssh --advertise-exit-node --accept-routes</pre>
     <p style="color:var(--text-muted);margin-top:4px;font-size:12px">
-      {{t "exit_nodes.tutorial_step2_ssh_help" | safeHTML}}
+      {{th "exit_nodes.tutorial_step2_ssh_help"}}
     </p>
     {{/* B266: рекомендуемый путь — ключ из панели (шаг 2 выше). Тогда
          тег tag:exit-node приезжает вместе с ключом, и headscale не
@@ -1247,23 +1247,23 @@ sudo mkdir -p /etc/iptables && sudo iptables-save | sudo tee /etc/iptables/rules
       <b>{{t "exit_nodes.tutorial_step2_keyhint"}}</b>
     </p>
     <p style="color:var(--text-muted);margin-top:2px;font-size:12px">
-      {{t "exit_nodes.tutorial_step2_keyhint_alt" | safeHTML}}
+      {{th "exit_nodes.tutorial_step2_keyhint_alt"}}
     </p>
   </div>
 
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
     <h4 style="margin:0 0 8px 0">{{t "exit_nodes.tutorial_step3_h4"}}</h4>
-    <p style="color:var(--text-muted);margin-bottom:8px">{{t "exit_nodes.tutorial_step3_donot" | safeHTML}}</p>
+    <p style="color:var(--text-muted);margin-bottom:8px">{{th "exit_nodes.tutorial_step3_donot"}}</p>
     <pre style="font-size:12px;background:var(--bg)">tailscale up --accept-routes --accept-dns=true</pre>
     <p style="color:var(--text-muted);margin-top:4px;font-size:12px">
-      {{t "exit_nodes.tutorial_step3_help" | safeHTML}}
+      {{th "exit_nodes.tutorial_step3_help"}}
     </p>
   </div>
 
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
     <h4 style="margin:0 0 8px 0">{{t "exit_nodes.tutorial_step4_h4"}}</h4>
-    <p style="color:var(--text-muted);margin-bottom:8px">{{t "exit_nodes.tutorial_step4_intro" | safeHTML}}</p>
-    <p style="color:var(--text-muted);margin-bottom:8px">{{t "exit_nodes.tutorial_step4_skygate_host" | safeHTML}}</p>
+    <p style="color:var(--text-muted);margin-bottom:8px">{{th "exit_nodes.tutorial_step4_intro"}}</p>
+    <p style="color:var(--text-muted);margin-bottom:8px">{{th "exit_nodes.tutorial_step4_skygate_host"}}</p>
     <pre style="font-size:12px;background:var(--bg)">{{t "exit_nodes.tutorial_step4_default_path"}}
 # Default: {{.SSHKeyPath}}
 ssh-keygen -t ed25519 -f ~/.ssh/skygate_sync -N "" -C "skygate-sync"
@@ -1277,7 +1277,7 @@ ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
   <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
     <h4 style="margin:0 0 8px 0">{{t "exit_nodes.tutorial_step5_h4"}}</h4>
     <p style="color:var(--text-muted);margin:0 0 12px;font-size:12px">
-      {{t "exit_nodes.tutorial_step5_intro" | safeHTML}}
+      {{th "exit_nodes.tutorial_step5_intro"}}
     </p>
     <form method="post" action="/admin/exit-nodes/add">
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px 18px;align-items:start;margin-bottom:14px">
@@ -1292,12 +1292,12 @@ ssh-copy-id -i ~/.ssh/skygate_sync.pub root@EXIT_NODE_IP</pre>
         <div>
           <label for="add_ssh_target" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.form_ssh_target"}}</label>
           <input name="ssh_target" id="add_ssh_target" placeholder="{{t "exit_nodes.form_ssh_target_placeholder"}}" style="width:100%">
-          <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.form_ssh_target_help" | safeHTML}}</div>
+          <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{th "exit_nodes.form_ssh_target_help"}}</div>
         </div>
         <div>
           <label for="add_ssh_port" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.form_ssh_port"}}</label>
           <input name="ssh_port" id="add_ssh_port" value="{{.SSHPort}}" placeholder="22" style="width:100%">
-          <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{t "exit_nodes.form_ssh_port_help" | safeHTML}}</div>
+          <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">{{th "exit_nodes.form_ssh_port_help"}}</div>
         </div>
         <div>
           <label for="add_ssh_key_path" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">{{t "exit_nodes.form_ssh_key"}}</label>

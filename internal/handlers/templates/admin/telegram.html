@@ -10,7 +10,7 @@
 <div class="title-row">
   <div>
     <h2><i class="fa-brands fa-telegram"></i> {{t "telegram.title"}}</h2>
-    <div class="sub">{{t "telegram.subtitle"}}. {{t "telegram.token_storage_note" | safeHTML}}</div>
+    <div class="sub">{{t "telegram.subtitle"}}. {{th "telegram.token_storage_note"}}</div>
   </div>
   {{if .State.Configured}}
   <span class="pill pill-success" title="{{t "telegram.pill_configured_title"}}"><i class="fa-solid fa-circle-check"></i> {{t "telegram.pill_configured"}}</span>
@@ -23,7 +23,7 @@
   <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
     <i class="fa-solid fa-circle-info"></i> {{t "telegram.help_title"}}
   </summary>
-  <div class="form-hint-strong" style="margin-top:8px">{{t "telegram.help_body" | safeHTML}}</div>
+  <div class="form-hint-strong" style="margin-top:8px">{{th "telegram.help_body"}}</div>
 </details>
 
 {{if .FlashSuccess}}
@@ -110,14 +110,14 @@
             The legacy 4 tips still appear as fallback when no
             container-state issue is detected. */}}
         {{if not .State.Container.Available}}
-          <li><strong style="color:varc#a00)">{{t "telegram.probe_tip_container_off" | safeHTML}}</strong></li>
+          <li><strong style="color:varc#a00)">{{th "telegram.probe_tip_container_off"}}</strong></li>
         {{else if not .State.Container.RouteAll}}
-          <li><strong style="color:varc#a00)">{{t "telegram.probe_tip_container_no_accept" | safeHTML}}</strong></li>
+          <li><strong style="color:varc#a00)">{{th "telegram.probe_tip_container_no_accept"}}</strong></li>
         {{end}}
-        <li>{{t "telegram.probe_tip_advertise" | safeHTML}}</li>
-        <li>{{t "telegram.probe_tip_approve" | safeHTML}}</li>
-        <li>{{t "telegram.probe_tip_update" | safeHTML}}</li>
-        <li>{{t "telegram.probe_tip_docs" | safeHTML}}</li>
+        <li>{{th "telegram.probe_tip_advertise"}}</li>
+        <li>{{th "telegram.probe_tip_approve"}}</li>
+        <li>{{th "telegram.probe_tip_update"}}</li>
+        <li>{{th "telegram.probe_tip_docs"}}</li>
       </ul>
     </div>
     {{end}}
@@ -138,14 +138,14 @@
           {{if .State.Configured}}
             {{t "telegram.saved_token"}}: <code>{{.State.TokenFP}}</code> · {{t "telegram.updated"}} {{.State.UpdatedAt}}
           {{else}}
-            {{t "telegram.token_help_botfather" | safeHTML}}
+            {{th "telegram.token_help_botfather"}}
           {{end}}
         </div>
       </div>
       <div class="form-group">
         <label>{{t "telegram.chat_id"}}</label>
         <input type="text" name="chat_id" value="{{.State.ChatID}}" class="form-control" placeholder="{{t "telegram.test_keep_current"}}">
-        <div class="sub">{{t "telegram.chat_id_help" | safeHTML}}</div>
+        <div class="sub">{{th "telegram.chat_id_help"}}</div>
       </div>
       <button type="submit" class="btn"><i class="fa-solid fa-floppy-disk"></i> {{t "common.save"}}</button>
     </form>
@@ -240,7 +240,7 @@
 
   <div class="card">
     <h3><i class="fa-solid fa-power-off"></i> {{t "telegram.disable"}}</h3>
-    <p class="sub">{{t "telegram.disable_help" | safeHTML}}</p>
+    <p class="sub">{{th "telegram.disable_help"}}</p>
     <form action="/admin/telegram" method="POST" onsubmit="return confirm('{{t "telegram.disable_confirm"}}')">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="disable">
@@ -253,10 +253,10 @@
   <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-circle-info"></i> {{t "telegram.where_heading"}}</h3>
     <ul class="sub" style="line-height:1.7">
-      <li>{{t "telegram.where_backup" | safeHTML}}</li>
-      <li>{{t "telegram.where_upgrade" | safeHTML}}</li>
-      <li>{{t "telegram.where_env_vars" | safeHTML}}</li>
-      <li>{{t "telegram.where_docs" | safeHTML}}</li>
+      <li>{{th "telegram.where_backup"}}</li>
+      <li>{{th "telegram.where_upgrade"}}</li>
+      <li>{{th "telegram.where_env_vars"}}</li>
+      <li>{{th "telegram.where_docs"}}</li>
     </ul>
   </div>
 
@@ -285,7 +285,7 @@
        (scripts/audit_html_balance.py, contract B436) reports exactly this shape. */}}
   <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-server"></i> {{t "telegram.container_title"}}</h3>
-    <p class="sub">{{t "telegram.container_subtitle" | safeHTML}}</p>
+    <p class="sub">{{th "telegram.container_subtitle"}}</p>
     <div id="telegram-container-slot">
     {{if not .State.Container.Available}}
       <div class="alert alert-warn"><i class="fa-solid fa-triangle-exclamation"></i>
@@ -321,7 +321,7 @@
       </table>
       {{if .State.Container.HasAcceptIssue}}
       <div class="alert alert-warn" style="margin-top:.5rem"><i class="fa-solid fa-triangle-exclamation"></i>
-        {{t "telegram.container_issue_help"}}
+        {{th "telegram.container_issue_help"}}
       </div>
       <form action="/admin/telegram" method="POST" style="margin-top:.5rem" onsubmit="return confirm('{{t "telegram.container_reapply_confirm"}}')">
         <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -335,8 +335,8 @@
 
   <div class="card" style="grid-column:1 / -1">
     <h3><i class="fa-solid fa-route"></i> {{t "telegram.egress_title"}}</h3>
-    <p class="sub">{{t "telegram.egress_subtitle" | safeHTML}}</p>
-    <p class="sub">{{t "telegram.egress_help"}}</p>
+    <p class="sub">{{th "telegram.egress_subtitle"}}</p>
+    <p class="sub">{{th "telegram.egress_help"}}</p>
     {{/* B265: skygate runs ON one of these relays. Warn before the
          operator pins egress to it — a broken relay would then take
          the management plane down with it, and this page's Telegram
@@ -344,7 +344,7 @@
     {{if .State.Egress.ColocationWarning}}
     <div class="alert alert-warn" style="margin:.5rem 0">
       <i class="fa-solid fa-triangle-exclamation"></i>
-      {{tf "telegram.egress_colocation_warn" .State.Egress.ColocationHostnamesText}}
+      {{th "telegram.egress_colocation_warn" .State.Egress.ColocationHostnamesText}}
     </div>
     {{end}}
     {{/* B293: the co-located relay is THIS machine's own tailscale node, verified
@@ -354,7 +354,7 @@
     {{if .State.Egress.LocalSelfRelay}}
     <div class="alert alert-info" style="margin:.5rem 0">
       <i class="fa-solid fa-circle-info"></i>
-      {{tf "telegram.egress_local_self" .State.Egress.LocalSelfText}}
+      {{th "telegram.egress_local_self" .State.Egress.LocalSelfText}}
     </div>
     {{end}}
     <p class="sub">
@@ -386,7 +386,7 @@
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="action" value="set_nearest_egress">
       <button type="submit" class="btn"><i class="fa-solid fa-bolt"></i> {{t "telegram.egress_nearest_apply"}}</button>
-      <span class="muted" style="margin-left:.4rem">{{t "telegram.egress_nearest_apply_help" | safeHTML}}</span>
+      <span class="muted" style="margin-left:.4rem">{{th "telegram.egress_nearest_apply_help"}}</span>
     </form>
     {{if .State.Egress.SelectedNodeID}}
     <form action="/admin/telegram" method="POST" onsubmit="return confirm('{{t "telegram.egress_clear"}}?')" style="margin-top:.5rem">
@@ -396,7 +396,7 @@
     </form>
     {{end}}
     {{else}}
-    <div class="alert alert-warn"><i class="fa-solid fa-triangle-exclamation"></i> {{t "telegram.egress_no_relays" | safeHTML}}</div>
+    <div class="alert alert-warn"><i class="fa-solid fa-triangle-exclamation"></i> {{th "telegram.egress_no_relays"}}</div>
     {{end}}
   </div>
 </div>

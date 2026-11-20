@@ -81,6 +81,7 @@ func b498RenderWith(t *testing.T, rows []b497Row, pins map[string]exitpin.Pin, l
 		"toupper":  strings.ToUpper,
 		"safeJS":   func(s string) template.JS { return template.JS(s) },
 		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
+		"th":       func(key string, args ...any) template.HTML { return template.HTML(key) },
 		"safeJSON": func(s string) template.JS {
 			b, _ := json.Marshal(s)
 			return template.JS(b)
