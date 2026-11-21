@@ -2384,4 +2384,76 @@ curl -s localhost:8080/healthz | jq -r '.phase, .phase_ms'
 journalctl -u skygate -n 50
 ```
 
+## 21. «Оно идёт через этот relay или через тот?» — спросите адресата (B509)
+
+**The question is under-specified, and answering it with one measurement is how you get
+three different answers.** This happened here: the same device was reported as going
+through one relay, then another, then the first again. The machine was fine each time.
+
+A tailnet where skygate pins prefixes has **two** ways for a packet to leave:
+
+| what decides | when |
+|---|---|
+| a **pinned prefix** (an advertised route, typically a CDN range a rule needs) | the destination address falls inside that prefix |
+| the **selected exit node** | the destination is covered by no advertised prefix |
+
+A specific route always beats the exit node, and the two can name **different** relays:
+
+```
+selected exit node: relay-b
+  https://checkip.amazonaws.com   (no pinned prefix covers it)  -> leaves via relay-b
+  https://<a CDN host>            (inside a range relay-a owns)  -> leaves via relay-a
+```
+
+Two measurement traps that cost this project real time:
+
+* **One echo endpoint cannot answer it.** An endpoint hosted behind a CDN resolves into
+  the CDN's published range, which is exactly what the rules pin — so measuring only that
+  endpoint reports the *prefix owner* as if it were the selected exit node (or the
+  reverse). Use a heterogeneous set, non-CDN first.
+* **Peer byte counters cannot answer it either.** They count all traffic to that peer,
+  prefix routes and exit traffic together. Growth on a relay does not mean it is the
+  exit node; it may mean a rule for that relay was used.
+
+Measure, do not guess:
+
+```bash
+# on the device in question (there is no way to observe another device's egress remotely)
+bash scripts/which_relay_carries.sh
+SKYGATE_RELAY_PUBLIC_IPS='relay-a=203.0.113.10,relay-b=203.0.113.20' \
+  bash scripts/which_relay_carries.sh          # names the observed address by relay
+bash scripts/which_relay_carries.sh --json     # machine-readable
+```
+
+The tool is **read-only**: it never calls `tailscale set`. Setting an exit node on a host
+someone is connected to over SSH moves that host's egress and can kill the session, so a
+diagnostic must not be able to do it.
+
+Read the `KIND` column before concluding anything:
+
+| kind | meaning |
+|---|---|
+| `prefix` | a pinned prefix covers the destination: the **prefix owner** carries it |
+| `exit` | no prefix covers it: the **selected exit node** carries it |
+| `direct` | no exit node and accept-routes off — the prefix exists but is not in effect |
+
+`match` compares the prediction with the address the endpoint actually reported; `?` means
+the tool could not attribute it (pass `SKYGATE_RELAY_PUBLIC_IPS`, or name the host's own
+address `self=…`). A `NO` is a finding about the tailnet, not an error in the tool.
+
+Two related facts worth knowing before you debug a "wrong relay":
+
+* a **relay cannot be its own exit client** — `tailscale set --exit-node=…` on a relay
+  answers *"Cannot advertise an exit node and use an exit node at the same time"*;
+* a relay's own clock can be in a different local timezone from yours, so `LastHandshake`
+  displayed in local time can look hours old while the tunnel is healthy. Compare
+  `date -u`, not wall clocks.
+
+If a user reports "my device only works with one relay selected", the answer is usually
+this page: their exit choice governs the destinations no rule covers, and their rules
+(CDN ranges) are served by the relay the assignment table picked. `/my/exit-nodes` states
+the rule and prints how many prefixes are pinned, so the reader knows the choice is
+partial.
+
+
 

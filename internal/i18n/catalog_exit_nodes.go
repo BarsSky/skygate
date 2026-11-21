@@ -442,6 +442,12 @@ var ruExitNodes = map[string]string{
 	"exit_nodes.prefix_owner.stale_pref_action_switch_user":  "Переключить на %OTHER%",
 	"exit_nodes.prefix_owner.stale_pref_action_clear_user":   "Снять закрепление",
 	"exit_nodes.prefix_owner.stale_pref_action_help_user":    "Переключение закрепит устройство за узлом, который реально несёт ваши маршруты; снятие уберёт закрепление, и устройство сможет выходить через любой доступный exit-узел. Пока закрепление указывает на неработающий узел, skygate не ставит <code>via=</code> и устройство работает через любой узел — но выбранный маршрут при этом теряется.",
+
+	// B509 (2026-11-25): the exit-node choice is per-DESTINATION, not absolute. %d is the
+	// number of prefixes pinned to a specific relay in this tailnet. Measured: with one
+	// exit node selected, three of seven echo endpoints left through another relay.
+	"exit_nodes.prefix_override_title": "Выбранный exit-узел не отменяет правила префиксов",
+	"exit_nodes.prefix_override_body":  "В этом tailnet за конкретными релеями закреплено %d префикс(ов). Адресат, попадающий в такой префикс (обычно это диапазон CDN, который несёт правило), уходит через владельца префикса — даже если выбран другой exit-узел. Поэтому «через кого я выхожу» зависит от адресата: часть трафика может идти через один релей, а часть через другой. Проверить на самом устройстве можно скриптом <code>scripts/which_relay_carries.sh</code> — он показывает, через кого ушёл каждый из нескольких адресатов.",
 }
 
 var enExitNodes = map[string]string{
@@ -862,4 +868,8 @@ var enExitNodes = map[string]string{
 	"exit_nodes.prefix_owner.stale_pref_action_switch_user":  "Switch to %OTHER%",
 	"exit_nodes.prefix_owner.stale_pref_action_clear_user":   "Clear the pin",
 	"exit_nodes.prefix_owner.stale_pref_action_help_user":    "Switching pins the device to the relay that actually carries your routes; clearing removes the pin so the device can exit through any available exit node. While the pin names a relay that serves nothing, skygate does not emit <code>via=</code> and the device keeps working through any node — but the chosen route is lost.",
+
+	// B509 (2026-11-25) — same note, EN side.
+	"exit_nodes.prefix_override_title": "The exit node you pick does not override prefix rules",
+	"exit_nodes.prefix_override_body":  "%d prefix(es) in this tailnet are pinned to specific relays. A destination inside such a prefix (usually a CDN range carried by a rule) leaves through the prefix owner — even when a different exit node is selected. So which relay you go through depends on the destination: part of the traffic may leave through one relay and part through another. On the device itself you can check it with <code>scripts/which_relay_carries.sh</code>, which shows which relay each of several destinations left through.",
 }

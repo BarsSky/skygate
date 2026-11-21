@@ -111,11 +111,22 @@ if grep -q '443/udp' "$FW" 2>/dev/null; then
 else
     bad "B1: the installer still omits 443/udp — a rebuilt host would recreate the gap"
 fi
-if bash "$FW" --dry-run 2>/dev/null | grep -q '443/udp'; then
-    ok "B2: the dry-run plan really prints it (not just a comment)"
-else
-    bad "B2: the dry-run plan does not include 443/udp"
-fi
+# B509 (2026-11-25): `bash "$FW" --dry-run | grep -q '443/udp'` FAILED 20 times out of 20
+# on this host even though the plan does print the port — AGENTS trap #9, exactly:
+# `grep -q` exits at the match and the still-writing installer dies with SIGPIPE (141),
+# which `pipefail` turns into a failed pipeline. The contract was reporting a PRODUCT
+# defect that did not exist. Capture first, then match with a shell builtin, and let the
+# failure message say which of the two happened (an empty read is a fact about the check).
+FW_OUT="$(bash "$FW" --dry-run 2>/dev/null)"
+case "$FW_OUT" in
+    *443/udp*) ok "B2: the dry-run plan really prints it (not just a comment)" ;;
+    *)
+        if [ -z "$FW_OUT" ]; then
+            bad "B2: the dry-run produced NO output at all (an empty read — the check, not the installer)"
+        else
+            bad "B2: the dry-run plan does not include 443/udp (it printed $(printf '%s' "$FW_OUT" | wc -l | tr -d ' ') line(s))"
+        fi ;;
+esac
 if grep -q '\-\-no-http3' "$FW" 2>/dev/null; then
     ok "B3: a host that pins HTTP/2 can opt out (--no-http3)"
 else

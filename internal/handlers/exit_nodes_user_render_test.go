@@ -17,6 +17,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"strings"
 	"testing"
@@ -131,5 +132,68 @@ func TestExitNodesUserRendersB361_NoBannerWhenNothingIsStale(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "exit_nodes.prefix_owner.stale_pref_title_user") {
 		t.Errorf("the user stale-pin banner rendered with no stale rows:\n%s", buf.String())
+	}
+}
+
+// loadUserExitNodesBodyWithArgs is the B509 loader: `th` records its arguments instead of
+// discarding them, so a test can prove the COUNT reached the template (a note that renders
+// without the number teaches the reader nothing, which is the defect B509 exists for).
+func loadUserExitNodesBodyWithArgs(t *testing.T) *template.Template {
+	t.Helper()
+	data, err := templatesFS.ReadFile("templates/user/exit_nodes.html")
+	if err != nil {
+		t.Fatalf("read user/exit_nodes.html: %v", err)
+	}
+	tpl, err := template.New("test").Funcs(template.FuncMap{
+		"t":  func(key string) string { return key },
+		"tf": func(key string, args ...any) string { return key },
+		"th": func(key string, args ...any) template.HTML {
+			return template.HTML(fmt.Sprintf("%s|args=%v", key, args))
+		},
+		"safeJS":   func(s string) template.JS { return template.JS(s) },
+		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
+		"safeJSON": func(s string) template.JS {
+			b, _ := json.Marshal(s)
+			return template.JS(b)
+		},
+	}).Parse(string(data))
+	if err != nil {
+		t.Fatalf("parse user/exit_nodes.html: %v", err)
+	}
+	return tpl
+}
+
+// TestExitNodesUserRendersB509_PrefixOverrideNote: with pinned prefixes and a preference
+// set, the page states the rule AND the number; with nothing pinned it stays silent.
+func TestExitNodesUserRendersB509_PrefixOverrideNote(t *testing.T) {
+	tpl := loadUserExitNodesBodyWithArgs(t)
+
+	render := func(pinned int) string {
+		data := map[string]any{
+			"ExitNodes":            []stubExitNodeInfo{},
+			"PreferredExitNodeTag": "tag:dev-infra-relay-a",
+			"ViaEnabled":           true,
+			"NoPerNodeTag":         map[string]bool{},
+			"StalePins":            []stubUserStalePin{},
+			"PinnedPrefixes":       pinned,
+		}
+		var buf bytes.Buffer
+		if err := tpl.ExecuteTemplate(&buf, "body-user-exit_nodes", data); err != nil {
+			t.Fatalf("render body: %v", err)
+		}
+		return buf.String()
+	}
+
+	with := render(28)
+	if !strings.Contains(with, "exit_nodes.prefix_override_title") {
+		t.Errorf("the note title must render when prefixes are pinned:\n%s", with)
+	}
+	if !strings.Contains(with, "exit_nodes.prefix_override_body|args=[28]") {
+		t.Errorf("the note body must receive the pinned-prefix count 28:\n%s", with)
+	}
+
+	without := render(0)
+	if strings.Contains(without, "exit_nodes.prefix_override_title") {
+		t.Errorf("the note must stay silent when nothing is pinned:\n%s", without)
 	}
 }

@@ -97,6 +97,14 @@ func (s *Service) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 	// nothing about it (only the admin page had the state, and only since B356).
 	stalePins := s.LoadStaleDevicePins(c.UserID)
 	s.AnnotateDevicePinSentences(stalePins, s.I18n.LangFromRequest(r))
+	// B509 (2026-11-25): the preference above governs only the destinations that no
+	// advertised prefix covers. Without this number the page implies the choice is
+	// absolute, and the operator measured exactly what that costs: "it works only with
+	// this relay" (it did — for the destinations their rules pinned elsewhere).
+	pinnedPrefixes := 0
+	if prefTag != "" {
+		pinnedPrefixes = countPinnedPrefixes(s.dbc())
+	}
 	s.Backend.RenderWithLayout(w, r, "user/exit_nodes.html", c, map[string]any{
 		"ExitNodes":            exits,
 		"PreferredExitNodeTag": prefTag,
@@ -104,6 +112,7 @@ func (s *Service) GetExitNodes(w http.ResponseWriter, r *http.Request) {
 		"NoPerNodeTag":         noPerNodeTag,
 		"StalePins":            stalePins,
 		"StalePinsCount":       len(stalePins),
+		"PinnedPrefixes":       pinnedPrefixes,
 		"FlashSuccess":         r.URL.Query().Get("ok"),
 		"FlashError":           r.URL.Query().Get("err"),
 	})

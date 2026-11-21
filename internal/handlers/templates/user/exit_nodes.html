@@ -111,6 +111,20 @@
   {{end}}
 </div>
 
+{{/* B509: the preference above is not absolute. A destination that falls inside a prefix
+     pinned to a specific relay leaves through that relay, even when another exit node is
+     selected — measured, not inferred: with one exit node selected, three of seven echo
+     endpoints reported a different relay's address. The note appears only when the tailnet
+     actually pins non-default prefixes, so a tailnet with none is not lectured about a
+     thing that cannot happen. `th` keeps the catalogue's own markup while escaping the
+     count. */}}
+{{if .PinnedPrefixes}}
+<div class="card" style="border:1px solid var(--text-muted)">
+  <h3><i class="fa-solid fa-diagram-project"></i>{{t "exit_nodes.prefix_override_title"}}</h3>
+  <div style="font-size:13px;line-height:1.55;color:var(--text-muted)">{{th "exit_nodes.prefix_override_body" .PinnedPrefixes}}</div>
+</div>
+{{end}}
+
 {{/* B361: the caller's own device pinned to a relay that serves nothing. The verdict is
      the same shared predicate the admin page and the reconciler use; only the wording and
      the two controls differ. Every string is a catalogue key (RU + EN) and every sentence
