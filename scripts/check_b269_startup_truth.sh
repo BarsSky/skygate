@@ -192,32 +192,98 @@ else
   KERNEL="$(uname -s)"
   BIN="$TMPD/skygate-probe"
   [ "$KERNEL" = "Linux" ] || BIN="$BIN.exe"
-  PORT=$(( 39000 + (RANDOM % 900) ))
-  if go build -o "$BIN" -ldflags "-X main.version=v0.0.0-b269probe" ./cmd/skygate > "$TMPD/build.log" 2>&1; then
-    if command -v curl >/dev/null 2>&1; then
-      fetch() { curl -fsS --max-time 3 "http://127.0.0.1:$PORT/healthz" 2>/dev/null || true; }
-    else
-      fetch() { probe_fetch_py "$PORT"; }
-    fi
-    SKYGATE_PORT="$PORT" \
-    SKYGATE_DB="sqlite:$TMPD/no-such-dir/skygate.db" \
-    SKYGATE_ADMIN_PASS="b269-probe-not-a-secret" \
-    HEADSCALE_API_KEY="b269-probe-not-a-key" \
-    SKYGATE_JWT_SECRET="b269-probe-not-a-jwt-secret" \
-      "$BIN" > "$TMPD/out.log" 2>&1 &
-    PROBE_PID=$!
 
-    BODY=""
-    i=0
-    while [ "$i" -lt 15 ]; do
-      i=$((i + 1))
-      BODY="$(fetch)"
-      [ -n "$BODY" ] && break
-      sleep 1
+  # B509 (2026-11-25): THE PROBE'S PORT MUST BELONG TO THE PROBE.
+  #
+  # Pre-B509 this line was `PORT=$(( 39000 + (RANDOM % 900) ))` — a port nobody checked.
+  # In the PostgreSQL CI job the draw landed on a port that was ALREADY BOUND, so the
+  # binary died at `phase=config: bind :39058: address already in use`, /healthz never
+  # answered, and contract E failed with "the process never answered /healthz while its
+  # DB was unreachable" — i.e. the check accused the PRODUCT of the live B269 failure
+  # while the actual cause was a port collision on the runner (AGENTS trap #15: a host
+  # transient must never become a product verdict). Two repairs: ask the KERNEL for a free
+  # port instead of guessing, and if the process still dies with a bind error, retry the
+  # probe with another port and finally SKIP — a collision is a fact about the runner,
+  # never about skygate. A probe that started CLEANLY and then stayed mute is still a
+  # genuine FAIL, and its message now says which of the two happened.
+  free_port() {
+    # B269_PROBE_PORT is a TEST SEAM, not an operator knob: it lets a caller pin the port
+    # so the collision branch (retry, then SKIP) can be exercised instead of only being
+    # read. Nothing else in the product or the gate reads it.
+    if [ -n "${B269_PROBE_PORT:-}" ]; then
+      echo "$B269_PROBE_PORT"
+      return
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+      python3 - <<'PY' 2>/dev/null || echo $(( 39000 + (RANDOM % 900) ))
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+    else
+      echo $(( 39000 + (RANDOM % 900) ))
+    fi
+  }
+
+  if go build -o "$BIN" -ldflags "-X main.version=v0.0.0-b269probe" ./cmd/skygate > "$TMPD/build.log" 2>&1; then
+    ATTEMPT=0
+    COLLIDED=0
+    PROBE_STARTED=0
+    while [ "$ATTEMPT" -lt 3 ] && [ "$PROBE_STARTED" -eq 0 ]; do
+      ATTEMPT=$((ATTEMPT + 1))
+      PORT="$(free_port)"
+      OUTLOG="$TMPD/out.$ATTEMPT.log"
+      if command -v curl >/dev/null 2>&1; then
+        fetch() { curl -fsS --max-time 3 "http://127.0.0.1:$PORT/healthz" 2>/dev/null || true; }
+      else
+        fetch() { probe_fetch_py "$PORT"; }
+      fi
+      SKYGATE_PORT="$PORT" \
+      SKYGATE_DB="sqlite:$TMPD/no-such-dir/skygate.db" \
+      SKYGATE_ADMIN_PASS="b269-probe-not-a-secret" \
+      HEADSCALE_API_KEY="b269-probe-not-a-key" \
+      SKYGATE_JWT_SECRET="b269-probe-not-a-jwt-secret" \
+        "$BIN" > "$OUTLOG" 2>&1 &
+      PROBE_PID=$!
+
+      BODY=""
+      i=0
+      while [ "$i" -lt 15 ]; do
+        i=$((i + 1))
+        BODY="$(fetch)"
+        [ -n "$BODY" ] && break
+        # The process is gone and its log names a bind collision: this attempt never
+        # tested the product, so retry with another port instead of reporting a failure.
+        if ! kill -0 "$PROBE_PID" 2>/dev/null && grep -q 'address already in use' "$OUTLOG" 2>/dev/null; then
+          COLLIDED=$((COLLIDED + 1))
+          break
+        fi
+        sleep 1
+      done
+      if [ -n "$BODY" ]; then
+        PROBE_STARTED=1
+      else
+        # Recycle only an attempt that never became a probe: a collided attempt, or a
+        # process that died mute. A STARTED process is left alive on purpose — E5 asks
+        # whether it is STILL alive, which a killed process would fail by construction
+        # (that is how the first version of this repair broke E5).
+        if grep -q 'address already in use' "$OUTLOG" 2>/dev/null; then
+          COLLIDED=$((COLLIDED + 1))
+        fi
+        kill "$PROBE_PID" 2>/dev/null || true
+        wait "$PROBE_PID" 2>/dev/null || true
+      fi
     done
-    if [ -z "$BODY" ]; then
-      bad "E: the process never answered /healthz while its DB was unreachable (unit would be active + mute — the live B269 failure)"
-      sed -n '1,6p' "$TMPD/out.log" >&2 2>/dev/null || true
+
+    if [ "$PROBE_STARTED" -eq 0 ]; then
+      if [ "$COLLIDED" -gt 0 ]; then
+        skip "E: every port this probe drew was already bound on the runner ($COLLIDED collision(s) in $ATTEMPT attempt(s)) — a fact about the host, not about skygate (AGENTS trap #15)"
+      else
+        bad "E: the process started cleanly and never answered /healthz while its DB was unreachable (unit would be active + mute — the live B269 failure)"
+        sed -n '1,6p' "$OUTLOG" >&2 2>/dev/null || true
+      fi
     else
       case "$BODY" in
         *'"status":"ok"'*) ok "E: /healthz answers 200 + status ok while the DB is still unreachable" ;;
@@ -240,13 +306,31 @@ else
       else
         bad "E5: the process died instead of holding the port and reporting its phase"
       fi
+      kill "$PROBE_PID" 2>/dev/null || true
+      wait "$PROBE_PID" 2>/dev/null || true
     fi
-    kill "$PROBE_PID" 2>/dev/null || true
-    wait "$PROBE_PID" 2>/dev/null || true
   else
     skip "E: could not build the probe binary (see $TMPD/build.log)"
   fi
   rm -rf "$TMPD" 2>/dev/null || true
+fi
+
+# ═══════════════ F. the PROBE must not slander the product ═══════════════
+# B509 (2026-11-25): the PostgreSQL CI job failed B269 E with "the process never answered
+# /healthz while its DB was unreachable" while the log said
+#   startup: FATAL in phase=config: bind :39058: address already in use
+# — the probe drew a port the runner already had. A host fact became a product verdict
+# (AGENTS trap #15). These two contracts keep the repair in place.
+SELF="$0"
+if grep -q 'free_port()' "$SELF" && grep -q 'getsockname' "$SELF"; then
+    ok "F1: the probe asks the KERNEL for a free port (the blind draw is only a last resort, guarded by the retry below)"
+else
+    bad "F1: the probe guesses its port without asking the kernel (a busy runner then reports a product failure)"
+fi
+if grep -q 'address already in use' "$SELF" && grep -q 'a fact about the host, not about skygate' "$SELF"; then
+    ok "F2: a bind collision SKIPs and names the host as the cause (it can never FAIL the product)"
+else
+    bad "F2: a bind collision would again be reported as a product regression"
 fi
 
 printf '\n\033[1mB269 summary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
