@@ -280,11 +280,17 @@ func (s *Service) PostAdminDerpDashboardRefresh(w http.ResponseWriter, r *http.R
 // field names verbatim so headscale's `json.Unmarshal` of
 // the response works without any custom adapter.
 type derpMapNode struct {
-	Name             string `json:"Name"`
-	RegionID         int    `json:"RegionID"`
-	HostName         string `json:"HostName"` // FQDN clients dial
-	DERPPort         int    `json:"DERPPort"` // public port (443)
-	STUNPort         int    `json:"STUNPort"` // 3478
+	Name     string `json:"Name"`
+	RegionID int    `json:"RegionID"`
+	HostName string `json:"HostName"` // FQDN clients dial
+	DERPPort int    `json:"DERPPort"` // public port (443)
+	STUNPort int    `json:"STUNPort"` // 3478
+	// B510: the address hints Tailscale's own map carries. Without them a client must
+	// resolve the hostname itself, and an IPv6-preferring client (cellular) had nothing to
+	// probe over v6 — see derp_mapaddr_b510.go for the measured cellular-only spike.
+	// Omitted when we could not resolve one; an invented hint would be worse.
+	IPv4             string `json:"IPv4,omitempty"`
+	IPv6             string `json:"IPv6,omitempty"`
 	STUNOnly         bool   `json:"STUNOnly"`
 	InsecureForTests bool   `json:"InsecureForTests"`
 }
@@ -747,12 +753,19 @@ func (s *Service) GetAdminDerpRelaysDerpmap(w http.ResponseWriter, r *http.Reque
 				log.Printf("derpmap: region=%d host=%s port=%d answered via %s (the hostname did not resolve to the relay from inside this container — check extra_hosts / SKYGATE_DERP_PROBE_HOST)", rid, host, port, via)
 			}
 		}
+		// B510: publish the address hints (and name the missing AAAA when there is none).
+		nv4, nv6 := derpNodeAddresses(host)
+		if warn := noteDerpAddressGap(host, nv4, nv6); warn != "" {
+			log.Print(warn)
+		}
 		node := derpMapNode{
 			Name:             shortNameFromHostname(host, rc),
 			RegionID:         rid,
 			HostName:         host,
 			DERPPort:         port,
 			STUNPort:         3478,
+			IPv4:             nv4,
+			IPv6:             nv6,
 			STUNOnly:         false,
 			InsecureForTests: false,
 		}

@@ -2455,5 +2455,63 @@ this page: their exit choice governs the destinations no rule covers, and their 
 the rule and prints how many prefixes are pinned, so the reader knows the choice is
 partial.
 
+## 22. «Скачет только на мобильной сети» — смотрите IPv6-половину DERP-карты (B510)
+
+**A stream that stalls on cellular and is fine on Wi-Fi is not a bandwidth problem — it is
+a RELAY problem.** The two clients take different paths:
+
+| client | path | also pays for DERP? |
+|---|---|---|
+| Wi-Fi (direct, NAT or public) | direct UDP between peers | **no** — the map is never used for traffic |
+| cellular (usually CGNAT, often IPv6-first) | relayed through a DERP region | **yes** — every relay re-selection is felt |
+
+So anything that makes a client re-choose its DERP region shows up **only** on mobile
+data, as spikes rather than as slowness. Measured on the reference host (2026-11-22):
+
+* `derp.<domain>`, `head.<domain>`, `skygate.<domain>` answered with an **A record only** —
+  **no AAAA**, although the host has a public IPv6, the derper binds it and the firewall
+  allows it;
+* the derpmap published for our own region 900 carried `DERPPort` and `STUNPort` but
+  **neither `IPv4` nor `IPv6`** (`ipv4=None ipv6=None` in the served JSON);
+* tailscaled answered with `netcheck.runProbe: named node "mow-1" has no v6 address`
+  continuously — **211 netcheck probe lines and 6 DERP re-connections in one hour**.
+
+Cellular networks here are IPv6-first (many are v6-only behind 464XLAT) while the default
+Tailscale DERP regions all carry IPv6; our own region did not, so an IPv6-preferring phone
+kept re-probing and sometimes preferring another region. Wi-Fi clients took a direct path
+and never noticed — which is why this class survives several rounds of "which relay carries
+me" (those measurements only ever looked at routes, never at the map's addresses).
+
+Diagnose it in one command, on the panel host:
+
+```bash
+bash scripts/derp_path_audit.sh                 # name comes from the panel's DB
+bash scripts/derp_path_audit.sh --host <derp-name> --hours 6
+bash scripts/derp_path_audit.sh --json
+```
+
+It prints DNS (A and AAAA), what the **published map** advertises for that node, a real
+STUN probe over IPv4 and, when an AAAA exists, over IPv6, and the local DERP re-connection
+/ netcheck counts. Read-only: it changes no DNS record, no map and no tailscale state.
+
+The two fixes, in order:
+
+1. **Add the AAAA record** for the relay name pointing at the host's public IPv6, and keep
+   the A record. Verify with `derp_path_audit.sh --host <name>` — the STUN line must show a
+   successful IPv6 probe too. An AAAA that does not answer is worse than none: v6-preferring
+   clients will try it and stall.
+2. **Let the panel publish the hints.** Since B510 the derpmap node carries the addresses
+   the name really resolves to, so a client no longer has to guess, and a relay without
+   IPv6 is reported in the journal as a named problem with the exact record to add.
+
+Two related facts worth keeping in mind:
+
+* a relayed client re-establishes its DERP session periodically by design (the map session
+  has a lifetime); what is NOT normal is doing it many times per hour — count
+  `derp-N connected` in `journalctl -u tailscaled`;
+* `headscale` logs `elapsed` in **milliseconds**, and a `/machine/map` or `/ts2021` entry
+  with a huge value is a SESSION LIFETIME, not a slow request. Reading it as seconds once
+  produced a phantom "19-minute handler" diagnosis.
+
 
 
