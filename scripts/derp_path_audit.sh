@@ -89,9 +89,19 @@ if [ -z "$MAP_URL" ]; then
   [ -n "$PORT" ] || PORT="8080"
   MAP_URL="http://127.0.0.1:${PORT}/admin/derp/relays/derpmap.json"
 fi
-[ -n "$STUN_PORT" ] || STUN_PORT=3478
-
 HELPER="$(dirname "$0")/lib/stun_probe.py"
+# B510 follow-up: when the audit is piped (`ssh host bash -s < derp_path_audit.sh`) there is
+# no script directory, so $0 is just "bash" and the helper looked missing — the audit then
+# printed "STUN: not probed" instead of the probe it exists for. Fall back to the caller's
+# working directory and to SKYGATE_REPO before giving up.
+if [ ! -f "$HELPER" ]; then
+  HELPER="$PWD/scripts/lib/stun_probe.py"
+fi
+if [ ! -f "$HELPER" ] && [ -n "${SKYGATE_REPO:-}" ]; then
+  HELPER="$SKYGATE_REPO/scripts/lib/stun_probe.py"
+fi
+
+[ -n "$STUN_PORT" ] || STUN_PORT=3478
 
 # --- the audit itself ---------------------------------------------------------------
 python3 - "$HOST" "$HOURS" "$MAP_URL" "$STUN_PORT" "$HELPER" "$JSON_OUT" <<'PY'
@@ -126,7 +136,9 @@ if not a4 and not a6:
 elif not a6:
     findings.append("DNS: %s has A but NO AAAA — IPv6-preferring clients (cellular, often "
                     "v6-only behind 464XLAT) cannot reach this relay natively; add an AAAA "
-                    "record for %s pointing at the host's public IPv6" % (host, host))
+                    "record for %s pointing at the host's public IPv6 (if you just added it, a "
+                    "NEGATIVE DNS CACHE can still hide it: ipconfig /flushdns on Windows, "
+                    "resolvectl flush-caches on Linux)" % (host, host))
 
 # 2. The published map.
 node = None
