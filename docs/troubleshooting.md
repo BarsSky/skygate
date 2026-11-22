@@ -2513,5 +2513,49 @@ Two related facts worth keeping in mind:
   with a huge value is a SESSION LIFETIME, not a slow request. Reading it as seconds once
   produced a phantom "19-minute handler" diagnosis.
 
+## 23. «Фоновая волна»: netmap приходит всем каждые несколько минут (B511)
+
+A tailnet that "works" but keeps re-sending its map is not idle: every headscale state
+change — a policy write, a route approval — fans a fresh netmap out to **every** device. On
+Wi-Fi that is invisible; on a cellular client it lands in the middle of a stream.
+
+Measured on the reference host over 24 hours:
+
+* **36 ACL re-applies**, almost all of them `prefix ownership changed (inserted=N
+  changed=M)` with N between 1 and 48;
+* the generated policy shrank **97393 → 90585 bytes** over six hours, so the writes followed
+  **real** ownership moves — not a phantom diff;
+* a diff of `prefix_owner` across one reconcile tick showed `added=0 removed=0` with every
+  owner unchanged, while `updated_at` moved on **311 of 316** rows: the moves arrive in
+  **bursts** between ticks, and the counts alone never said which prefixes moved.
+
+Two fixes, in v1.5.256:
+
+1. **Approval only when the set changed.** The relay-route step now asks headscale what the
+   relay already has approved and skips the approval when the target is covered. The skip is
+   visible in the sync result as `approve=unchanged`; a relay headscale cannot answer for is
+   treated as UNKNOWN (so the approval still runs), and an empty target is never "approved"
+   (the base routes would never be approved).
+2. **A count is no longer the only evidence.** When the reconcile reports
+   `inserted`/`changed`, the journal now carries a bounded sample naming the prefixes and the
+   healthy relay set:
+
+```
+prefix-owner: reconcile inserted=9 changed=5 — sample: 104.16.0.0/12→emilia(was karolina), 8.8.8.8/32→karolina(new) (healthy relays: emilia,karolina,sharlotta)
+```
+
+What to look for when the wave returns:
+
+```bash
+journalctl -u skygate --since "1 hour ago" | grep -E 'ACL re-applied|ownership changed|approve=unchanged'
+```
+
+* `approve=unchanged` — the step did its job and skipped a redundant approval;
+* `inserted=… changed=…` **with a sample** — prefixes genuinely moved; the sample names them,
+  and the healthy set explains the choice;
+* `ACL re-applied` more often than every ~30 minutes — a burst is in progress; the sample
+  from the same pass is the lead.
+
+
 
 

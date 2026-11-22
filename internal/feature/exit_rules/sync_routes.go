@@ -701,6 +701,17 @@ func applyRoutesToRelay(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func
 	// Approve all routes (including base 0.0.0.0/0, ::/0) via the headscale
 	// install-kind ladder. 2026-07-08: pass the full list (base + per-rule) so the
 	// node keeps its exit-node capability (default route advertised AND approved).
+	//
+	// B511 (2026-11-22): ASK FIRST. Approving routes is a headscale state change, so
+	// re-approving a set that is already approved makes headscale fan a fresh netmap out
+	// to every device — measured live: 36 such writes in 24h, each one a wave that lands
+	// in the middle of a cellular client's stream. When the relay already has every route
+	// in the target list, there is nothing to approve and the line says so.
+	if _, alreadyApproved, known := relayRouteState(hs, node); known && routesAlreadyApproved(alreadyApproved, approveRoutes) {
+		out.Approved = 0
+		out.Note += fmt.Sprintf(" approve=unchanged (%d route(s) already approved)", len(sortedRouteSet(approveRoutes)))
+		return out
+	}
 	if approved, approveErr := hs.ApproveAllRoutesWithList(node, approveRoutes); approveErr != nil {
 		out.ApproveErr = approveErr
 	} else {
