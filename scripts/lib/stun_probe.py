@@ -54,7 +54,15 @@ def build_request(software=CLIENT_SOFTWARE):
 
 def probe(host, port=3478, timeout=4.0):
     pkt, tid = build_request()
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # B510: the family comes from the TARGET, not from an assumption. Pre-B510 this was a
+    # hardcoded AF_INET socket, so probing an IPv6 address failed with "Address family for
+    # hostname not supported" and the audit reported a healthy relay as unreachable over v6
+    # - the same class of false negative this file was written to end (a prober that cannot
+    # speak the target's family measures nothing about the server).
+    fam, family_err = socket_family_for(host)
+    if family_err is not None:
+        return 3, family_err
+    s = socket.socket(fam, socket.SOCK_DGRAM)
     s.settimeout(timeout)
     try:
         s.sendto(pkt, (host, port))
@@ -76,6 +84,18 @@ def probe(host, port=3478, timeout=4.0):
         return 3, "probe error: %s" % e
     finally:
         s.close()
+
+
+def socket_family_for(host):
+    """AF_INET for a v4 target, AF_INET6 for a v6 one, resolved by the usual rules."""
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_DGRAM)
+    except socket.gaierror as e:
+        return None, "cannot resolve %s: %s" % (host, e)
+    for info in infos:
+        if info[0] in (socket.AF_INET, socket.AF_INET6):
+            return info[0], None
+    return None, "no usable address family for %s" % host
 
 
 if __name__ == "__main__":

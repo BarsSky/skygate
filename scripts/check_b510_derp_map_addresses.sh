@@ -181,6 +181,31 @@ else
   skip "E4-E5: python3 is not available in this environment"
 fi
 
+# E6: the STUN helper must speak the TARGET's address family. Found while verifying this
+# very block: the helper hardcoded AF_INET, so a v6 probe failed with "Address family for
+# hostname not supported" and the audit would have reported a healthy relay as unreachable
+# over v6 — a false negative of exactly the class the helper exists to prevent.
+if command -v python3 >/dev/null 2>&1 && [ -f scripts/lib/stun_probe.py ]; then
+  FAM="$(python3 - scripts/lib/stun_probe.py <<'PY'
+import importlib.util, socket, sys
+spec = importlib.util.spec_from_file_location("sp", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+v4 = m.socket_family_for("127.0.0.1")[0]
+v6 = m.socket_family_for("::1")[0]
+print("%s %s" % (v4 == socket.AF_INET, v6 == socket.AF_INET6))
+PY
+)"
+  case "$FAM" in
+    "True True")
+      ok "E6: the STUN helper picks AF_INET for a v4 target and AF_INET6 for a v6 one" ;;
+    *)
+      bad "E6: the STUN helper cannot probe a v6 target (got: ${FAM:-error}) — a v6 relay would be reported unreachable" ;;
+  esac
+else
+  skip "E6: python3 or scripts/lib/stun_probe.py unavailable"
+fi
+
 # ── F. registry ─────────────────────────────────────────────────────────────
 echo "[F] registry"
 
