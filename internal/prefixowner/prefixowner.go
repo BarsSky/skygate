@@ -288,6 +288,30 @@ func AssignWithReservationsAndWeights(claims []Claim, healthy []string, existing
 		}
 		g := groups[p]
 		if g.perNode[e.ExitNode] == 0 {
+			// B512 (2026-11-22): a claim that names NO relay is not a reason to move.
+			//
+			// Measured on the reference host: `prefix_owner` held 16 relay-less rules
+			// (one user's CDN rule set created without a relay) and their prefixes were
+			// re-spread by the auto pass on every reconcile — `43.112.68.68/32` left
+			// sharlotta for emilia with claims=1 and no failover bookkeeping, each move
+			// rewriting the per-CIDR ACL pins and making headscale fan a fresh netmap out
+			// to every device. A relay-less rule says "the engine decides"; the engine DID
+			// decide, one pass ago, and that decision is the existing owner. Load
+			// balancing is for PLACING a prefix, not for evicting a healthy owner.
+			//
+			// This also keeps the reservation honest: an owner whose supporters all went
+			// away (perNode non-empty but none for it) is still re-decided below, which is
+			// what hands a prefix back when the rules actually moved.
+			if len(g.perNode) == 0 {
+				src := e.Source
+				if src != "explicit" && src != "auto" && src != "global" {
+					src = "auto"
+				}
+				out = append(out, Assignment{Prefix: p, ExitNode: e.ExitNode, Source: src, Claims: g.total, Devices: len(g.devices)})
+				load[e.ExitNode]++
+				decided[p] = true
+				continue
+			}
 			continue
 		}
 		src := e.Source

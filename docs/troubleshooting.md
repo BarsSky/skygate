@@ -2513,6 +2513,41 @@ Two related facts worth keeping in mind:
   with a huge value is a SESSION LIFETIME, not a slow request. Reading it as seconds once
   produced a phantom "19-minute handler" diagnosis.
 
+## 24. «Префикс сам переезжает между релеями» — заявка без релея (B512)
+
+A prefix that keeps changing owner without anybody editing a rule is not a mystery: ask what
+its CLAIMS look like.
+
+Measured on the reference host after B511 made the moves nameable:
+
+* the auto-updater created **94 rules in one hour** (**284 in 24h**), and one CDN range was
+  claimed by **seven** rules with different `parent_domain` values;
+* **16** enabled rules named **no relay at all** (a CDN rule set created without an exit node);
+* their prefixes were re-spread by the auto pass on every reconcile — `43.112.68.68/32` left
+  **sharlotta** for **emilia** with `claims=1` and **no** failover bookkeeping;
+* each move rewrites the per-CIDR ACL pins, so the policy is rewritten and headscale fans a
+  fresh netmap out to **every** device.
+
+The rule that was missing: a claim naming no relay means "the engine decides", and the engine
+**already decided** — the stored owner IS that decision. Re-deciding it because "nobody named a
+relay" is a coin flip that costs every client a map update. The reservation pass now keeps a
+healthy owner when no claim names any relay. It is not a latch: an unhealthy owner still loses
+the prefix, and a claim that names a relay still wins.
+
+How to check a wandering prefix:
+
+```sql
+-- who claims it, and with which relay?
+select id, user_name, device_id, exit_node_id, parent_domain
+  from device_rules where enabled=1 and target_value = '<prefix>';
+-- the stored decision and whether a failover was ever recorded
+select prefix, exit_node_id, source, claims, failover_from, failover_at, failover_flaps
+  from prefix_owner where prefix = '<prefix>';
+```
+
+`source=auto` with `claims=1` and an empty `exit_node_id` on the rule is this class. A
+`failover_from` that is set is the other one (a relay died) — different story, different block.
+
 ## 23. «Фоновая волна»: netmap приходит всем каждые несколько минут (B511)
 
 A tailnet that "works" but keeps re-sending its map is not idle: every headscale state
