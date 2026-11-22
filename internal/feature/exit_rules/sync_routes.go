@@ -593,7 +593,7 @@ func applyRoutesToRelay(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func
 			log.Printf("exit-node sync(%s): local relay is INSIDE %v — NOT advertising those (a co-located relay advertising its own network loops the host's own traffic; docs/networking.md, L-45)", node, skipped)
 			out.Note = fmt.Sprintf(" self_subnet_skipped=%s", strings.Join(skipped, ","))
 		}
-		transport, cmdOut, applyErr := hs.ApplyRoutesLocally(kept, lookupAcceptRoutes(node))
+		transport, cmdOut, applyErr := hs.ApplyRoutesLocally(kept, relayAcceptRoutesSetting()) // B514: a relay never accepts routes
 		out.Local = true
 		out.Via = "local"
 		out.Endpoint = "local (" + transport.Name + ")"
@@ -677,7 +677,7 @@ func applyRoutesToRelay(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func
 		var jumpNotes []string
 		cands, jumpNotes = appendJumpCandidates(d, hs, cfg, node, cands)
 		notes = append(notes, jumpNotes...)
-		ladder := applyRoutesOverSSHLadder(hs, node, approveRoutes, lookupAcceptRoutes(node), sshKeyPath, cands, notes)
+		ladder := applyRoutesOverSSHLadder(hs, node, approveRoutes, relayAcceptRoutesSetting(), sshKeyPath, cands, notes) // B514
 		if ladder.OK {
 			out.Label = "ssh=ok via " + ladder.Via
 			out.Via = ladder.Via

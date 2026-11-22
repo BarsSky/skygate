@@ -314,7 +314,7 @@ func BuildProvisionScript(r Request, authKey string) string {
 	b.WriteString("  --login-server=" + shQuote(strings.TrimSpace(r.LoginServer)) + " \\\n")
 	b.WriteString("  --authkey=" + shQuote(strings.TrimSpace(authKey)) + " \\\n")
 	b.WriteString("  --hostname=" + shQuote(strings.TrimSpace(r.NodeName)) + " \\\n")
-	b.WriteString("  --advertise-exit-node --accept-routes --ssh >\"$UP_LOG\" 2>&1; then\n")
+	b.WriteString("  --advertise-exit-node --accept-routes=false --ssh >\"$UP_LOG\" 2>&1; then\n")
 	b.WriteString("  say " + StageTailscaleUp + " ok\n")
 	b.WriteString("else\n")
 	b.WriteString("  fail " + StageTailscaleUp + " \"$(tail -n 3 \"$UP_LOG\" 2>/dev/null | tr '\\n' ' ')\"\n")

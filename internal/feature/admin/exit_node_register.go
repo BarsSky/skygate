@@ -112,7 +112,7 @@ func exitNodeRegisterCommand(loginServer, key, hostname, mgmtPubKey string) stri
 	b.WriteString("  --login-server=" + loginServer + " \\\n")
 	b.WriteString("  --authkey=" + key + " \\\n")
 	b.WriteString("  --hostname=" + firstNonEmptyStr(hostname, "<уникальное-имя>") + " \\\n")
-	b.WriteString("  --advertise-exit-node --accept-routes --ssh\n\n")
+	b.WriteString("  --advertise-exit-node --accept-routes=false --ssh\n\n")
 	if step := exitNodeAuthorizedKeyStep(mgmtPubKey); step != "" {
 		b.WriteString("# 5. разрешить skygate управлять этим узлом по SSH (его публичный ключ)\n")
 		b.WriteString("#    так управление идёт по tailnet и переживает блокировку публичного IP\n")

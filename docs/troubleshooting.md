@@ -2513,6 +2513,39 @@ Two related facts worth keeping in mind:
   with a huge value is a SESSION LIFETIME, not a slow request. Reading it as seconds once
   produced a phantom "19-minute handler" diagnosis.
 
+## 25. «Exit‑узел подключается, но медиа не идёт» — релей принимает маршруты (B514)
+
+A non-primary exit node that "connects but carries no traffic" is usually not a slow link: it
+is a **loop**. Measured live: 5 MB with `exit=emilia` took 25 s and left with **karolina's**
+public address while BOTH relays' counters grew (emilia +7.8 MB, karolina +16.3 MB); with
+`exit=karolina` the same download took 1 s and only karolina moved.
+
+Cause: every relay had `exit_servers.accept_routes=1`, and the route sync passed
+`--accept-routes=true`. A relay that ACCEPTS routes installs the tailnet's `0.0.0.0/0` route,
+so exit traffic arriving at a non-primary relay is forwarded **back into the tailnet** to
+whichever relay headscale serves `0.0.0.0/0` from, instead of leaving through its own uplink.
+The same defect explains a client reporting another relay's egress address after selecting
+one — a measurement that had no explanation until this was found.
+
+The rule: **a relay that ADVERTISES routes must never ACCEPT them.** Since B514 the sync
+always passes `--accept-routes=false` for relays (the stored tri-state is not trusted), and
+the provisioning/registration snippets write `--accept-routes=false`. Clients keep their own
+setting.
+
+How to check a fleet in one pass:
+
+```bash
+# on every relay
+tailscale debug prefs | grep -i routeall     # must be false on a relay
+# and what skygate stored for it
+sqlite3 /var/lib/skygate/skygate.db "select hostname, accept_routes from exit_servers"
+# -1 = false, 0 = leave alone (legacy), 1 = true  -> a relay must never be 1
+```
+
+To prove which relay actually carries a flow, read the interface counters on the candidate
+relays around one known download: a loop shows growth on TWO relays and the egress address of
+the primary.
+
 ## 24. «Префикс сам переезжает между релеями» — заявка без релея (B512)
 
 A prefix that keeps changing owner without anybody editing a rule is not a mystery: ask what
