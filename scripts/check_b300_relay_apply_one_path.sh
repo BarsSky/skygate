@@ -110,7 +110,9 @@ if grep -q 'headscale.DetectRelayPlacement(' "$SYNC" && grep -q 'placement.Local
 else
   bad "B1: the locality decision is missing from the tail"
 fi
-if grep -q 'hs.ApplyRoutesLocally(kept, lookupAcceptRoutes(node))' "$SYNC"; then
+# B514: the relay's accept-routes is forced to false (a relay must never accept the
+# routes it advertises), so the call site carries the forced tri-state.
+if grep -q 'hs.ApplyRoutesLocally(kept, relayAcceptRoutesSetting())' "$SYNC"; then
   ok "B2: a local relay is applied through the privilege ladder (direct → sudo → helper)"
 else
   bad "B2: the local transport is missing from the tail"

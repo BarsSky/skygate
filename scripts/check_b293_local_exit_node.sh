@@ -107,7 +107,9 @@ if grep -q 'headscale.DetectRelayPlacement(' "$SYNC" && grep -q 'placement.Local
 else
   bad "B1: the sync never considers the local transport"
 fi
-if grep -q 'hs.ApplyRoutesLocally(kept, lookupAcceptRoutes(node))' "$SYNC"; then
+# B514: a relay must never accept routes (the accept-routes loop), so the local
+# transport is called with the FORCED tri-state, not the stored value.
+if grep -q 'hs.ApplyRoutesLocally(kept, relayAcceptRoutesSetting())' "$SYNC"; then
   ok "B2: a local relay is configured by a LOCAL apply"
 else
   bad "B2: the sync still SSHes into a co-located relay"
