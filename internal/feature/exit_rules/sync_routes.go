@@ -536,6 +536,12 @@ type relayApplyOutcome struct {
 	NotEvidence bool
 	// NotEvidenceReason names the condition, for the log line and the page.
 	NotEvidenceReason string
+	// AcceptRoutesObserved is the relay's OWN answer about its `RouteAll`
+	// preference, read back over the transport that just applied the routes
+	// (B515.1). "true" is an active loop; "false" is the only correct state for a
+	// relay; EMPTY means this pass got no answer — recorded as "not measured",
+	// because a blank is not a clean bill of health.
+	AcceptRoutesObserved string
 }
 
 // resultLabel renders "<label> approved=N|approve=err=…<note>" — the exact shape
@@ -601,6 +607,9 @@ func applyRoutesToRelay(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func
 			out.Label = "local=err=" + applyErr.Error()
 		} else {
 			out.Label = "local=ok via " + transport.Name
+			// B515.1: the same evidence for a local relay — no ssh involved, so the
+			// read runs against THIS host's daemon over the local ladder.
+			out.AcceptRoutesObserved = headscale.ReadLocalRouteAll()
 			if cmdOut != "" {
 				out.Note += " out=" + firstLine(cmdOut)
 			}
@@ -678,6 +687,10 @@ func applyRoutesToRelay(hs *headscale.Client, d *sql.DB, lookupAcceptRoutes func
 		cands, jumpNotes = appendJumpCandidates(d, hs, cfg, node, cands)
 		notes = append(notes, jumpNotes...)
 		ladder := applyRoutesOverSSHLadder(hs, node, approveRoutes, relayAcceptRoutesSetting(), sshKeyPath, cands, notes) // B514
+		// B515.1: what the relay answered about its own RouteAll preference, read back
+		// by the ladder over the endpoint that just worked. Empty means "not measured"
+		// and is recorded as such — never as "false".
+		out.AcceptRoutesObserved = ladder.ObservedAcceptRoutes
 		if ladder.OK {
 			out.Label = "ssh=ok via " + ladder.Via
 			out.Via = ladder.Via

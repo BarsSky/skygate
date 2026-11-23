@@ -60,20 +60,25 @@ type stubExitNodeInfo struct {
 	SSHKeyState         string
 	SSHKeyNote          string
 	// B293: this relay IS this host — routes are applied locally, no SSH/key.
-	LocalRelay          bool
-	LocalTransport      string
-	Enabled             bool
-	Healthy             bool
-	State               string
-	LastSeenAgo         string
-	Routes              []string
-	RouteCount          int
-	AcceptRoutes        int
-	Tags                []string
-	AdvertisesV4Default bool
-	AdvertisesV6Default bool
-	SyncStatus          string
-	Description         string
+	LocalRelay     bool
+	LocalTransport string
+	Enabled        bool
+	Healthy        bool
+	State          string
+	LastSeenAgo    string
+	Routes         []string
+	RouteCount     int
+	AcceptRoutes   int
+	// B515.1: what the relay ITSELF reported about accept-routes, and the page's tone
+	// for it (danger / ok / warn). The template renders a second column from these two
+	// fields, next to the desired tri-state above.
+	ObserveAcceptRoutes     string
+	ObserveAcceptRoutesTone string
+	Tags                    []string
+	AdvertisesV4Default     bool
+	AdvertisesV6Default     bool
+	SyncStatus              string
+	Description             string
 	// B312: the relay's location and where it came from (manual/auto). The template
 	// now renders a location column plus the form that sets it, so this stub has to
 	// carry the same three fields as admin.ExitNodeInfo — that is exactly the signal

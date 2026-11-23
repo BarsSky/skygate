@@ -72,6 +72,23 @@
 </div>
 {{end}}
 
+{{/* B515.1 (2026-11-23): a relay that REPORTS accepting routes is an
+     active loop — exit traffic arriving there is forwarded back into
+     the tailnet instead of leaving through its own uplink. Measured
+     live: a 5 MB download took 25 s and grew BOTH relays' counters,
+     and the operator found it by measuring interface counters during
+     one download because no page said it. B514 forces
+     `--accept-routes=false` on every pass; this banner is the case
+     where the relay ignored it. Not a warning: the loop is why the
+     download is slow, so it is the explanation, not a hint. */}}
+{{if .AcceptRoutesLoops}}
+<div class="alert alert-danger" style="margin-bottom:16px">
+  <i class="fa-solid fa-arrows-spin"></i>
+  <strong>{{tf "exit_nodes.accept_routes_observed_loop_banner" .AcceptRoutesLoops}}</strong>
+  <p style="margin:8px 0 0 0;color:var(--text-muted);font-size:13px">{{th "exit_nodes.accept_routes_observed_loop_banner_help"}}</p>
+</div>
+{{end}}
+
 {{/* B292 (2026-09-23): the SSH key the advertised-routes sync needs is
      missing or unreadable. Without it every "Sync" press runs
      `ssh -i <path>` against a path that cannot be used, the headscale
@@ -423,6 +440,8 @@
       <th>{{t "exit_nodes.ip"}}</th>
       <th>{{t "exit_nodes.form_ssh_target"}}</th>
       <th>{{t "exit_nodes.form_accept_routes"}}</th>
+      {{/* B515.1: what the relay ITSELF reported, next to what skygate asks for. */}}
+      <th>{{t "exit_nodes.accept_routes_observed"}}</th>
       <th>{{t "exit_nodes.routes"}}</th>
       <th>{{t "exit_nodes.location.title"}}</th>
       <th>{{t "exit_nodes.health.state"}}</th>
@@ -489,6 +508,28 @@
         {{if eq .AcceptRoutes 1}}<span class="tag" style="background:var(--info-bg);color:var(--info);border:1px solid var(--info)">true</span>
         {{else if eq .AcceptRoutes -1}}<span class="tag" style="background:var(--warning-bg);color:var(--warning);border:1px solid var(--warning)">false</span>
         {{else}}<span style="color:var(--text-subtle)">{{t "exit_nodes.form_accept_routes_default"}}</span>{{end}}
+      </td>
+      <td>
+        {{/* B515.1: the relay's own answer about accepting routes, read back by the
+             sync over the transport that applied its routes (`tailscale debug prefs`
+             → RouteAll) and stored per relay. THREE states, and the difference is the
+             point:
+               danger ("true")  — an ACTIVE LOOP: arriving exit traffic goes back into
+                                  the tailnet. This is the bug B514 fixed on the wire and
+                                  this column is how the operator sees it is fixed.
+               ok    ("false")  — the relay carries what it advertises out its uplink.
+               warn  (anything else, incl. empty) — nobody has read it, or the read
+                                  failed. Rendered as "not measured", NEVER as fine:
+                                  «green because we did not look» is the failure class
+                                  this block exists to end.
+             Nothing here SSHes: the page reads the store the sync writes. */}}
+        {{if eq .ObserveAcceptRoutesTone "danger"}}
+          <span class="tag tag-danger" title="{{t "exit_nodes.accept_routes_observed_loop_tip"}}">{{t "exit_nodes.accept_routes_observed_true"}}</span>
+        {{else if eq .ObserveAcceptRoutesTone "ok"}}
+          <span class="tag tag-success" title="{{t "exit_nodes.accept_routes_observed_ok_tip"}}">{{t "exit_nodes.accept_routes_observed_false"}}</span>
+        {{else}}
+          <span class="tag tag-warning" title="{{if .ObserveAcceptRoutes}}{{t "exit_nodes.accept_routes_observed_unknown_tip"}} — {{.ObserveAcceptRoutes}}{{else}}{{t "exit_nodes.accept_routes_observed_unknown_tip"}}{{end}}">{{t "exit_nodes.accept_routes_observed_unknown"}}</span>
+        {{end}}
       </td>
       <td>
         {{/* B312: WHERE this relay sits, and the one control that sets it. The value

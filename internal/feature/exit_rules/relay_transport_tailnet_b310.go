@@ -593,6 +593,12 @@ type sshLadderResult struct {
 	// Notes carries the paths that were never candidates (the tailnet path when
 	// skygate is not on the tailnet) so a failure explains the whole picture.
 	Notes []string
+	// ObservedAcceptRoutes is what the relay itself answered for its `RouteAll`
+	// preference, read back over the SAME transport that just carried the routes
+	// (B515.1). "true"/"false" are the relay's words; empty means the read told us
+	// nothing — and that is NOT "false", because the page must be able to say
+	// «not measured» instead of assuming the best.
+	ObservedAcceptRoutes string
 }
 
 // applyRoutesOverSSHLadder places the advertised routes on ONE relay over the first
@@ -631,6 +637,18 @@ func applyRoutesOverSSHLadder(hs *headscale.Client, node string, routes []string
 		res.Endpoint = ep.Label()
 		res.Output = out
 		log.Printf("exit-node sync(%s): routes applied over the %s transport (%s; %s)", node, ep.Kind, ep.Label(), ep.Why)
+		// B515.1 — THE APPLY IS NOT THE EVIDENCE. B514 forces
+		// `--accept-routes=false` here, but a relay that ignores it keeps forwarding
+		// arriving exit traffic back into the tailnet, and until B515.1 nothing read
+		// the relay's own answer back: the operator found the loop by measuring
+		// interface counters on two relays during one download.
+		//
+		// Read it over the SAME endpoint that just worked (same host, port, key and
+		// jump hop), so the observation is about the transport the routes actually
+		// took. It runs AFTER the apply has decided, returns "" on any failure, and
+		// cannot change res.OK — a read that fails is a fact about the view, not a
+		// reason to un-apply routes that are working.
+		res.ObservedAcceptRoutes = headscale.ReadRelayRouteAll(ep.Target(), keyPath, ep.Jump)
 		return res
 	}
 	return res

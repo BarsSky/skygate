@@ -143,4 +143,19 @@ type ExitNodeInfo struct {
 	// helper), or why none is available.
 	LocalRelay     bool   `json:"local_relay"`
 	LocalTransport string `json:"local_transport"`
+	// B515.1 (2026-11-23) — the relay's OWN answer, next to what skygate asks for.
+	//
+	// AcceptRoutes (above) is DESIRED: since B514 a relay is always told
+	// `--accept-routes=false` whatever this column says, so it is not evidence that
+	// the loop is gone. AcceptRoutesObserved is that evidence: the value the sync
+	// read back with `tailscale debug prefs` over the transport that applied the
+	// routes (sync_routes.go → recordRelayApply → db.SetRelayAcceptRoutesObserved).
+	//
+	// ObserveAcceptRoutesTone is the page's verdict from
+	// classifyRelayAcceptRoutes: "danger" (the relay reports true — an active loop,
+	// exit traffic goes back into the tailnet), "ok" (false), or "warn" (nobody has
+	// read it, or the read failed — a fact about the view, never rendered as
+	// healthy). Nothing is SSH'd while rendering: the page reads the store.
+	ObserveAcceptRoutes     string `json:"accept_routes_observed"`
+	ObserveAcceptRoutesTone string `json:"accept_routes_observed_tone"`
 }

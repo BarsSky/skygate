@@ -2513,6 +2513,46 @@ Two related facts worth keeping in mind:
   with a huge value is a SESSION LIFETIME, not a slow request. Reading it as seconds once
   produced a phantom "19-minute handler" diagnosis.
 
+## 26. «Релей принимает маршруты?» — страница теперь отвечает, а не гадает (B515)
+
+B514 forced `--accept-routes=false` on every relay — a statement about what skygate ASKS
+for. That is not evidence that the relay took it, and until B515 nothing read the relay's
+own answer back: the operator found the loop by measuring interface counters on two relays
+during one download.
+
+The sync now reads it back **over the same transport that applied the routes** (same host,
+port, key and jump hop: one `tailscale debug prefs`), parses `RouteAll`, and stores it per
+relay (`relay_accept_routes:<host>` in `global_settings`). `/admin/exit-nodes` renders it in
+the **«Принимает routes (по факту)»** column next to the desired tri-state, and a red banner
+appears when any relay reports `true`.
+
+Three states, and the difference is the point:
+
+* **`true — петля`** (danger): the relay accepts routes, so arriving exit traffic goes back
+  into the tailnet instead of out of its own uplink. This is the loop B514 fixed.
+* **`false — норма`** (ok): the relay carries what it advertises out through its own uplink.
+* **`не измерено`** (warning): nobody has read it yet, or the read failed. This is a fact
+  about the VIEW and never means "all good" — precisely why the value is read rather than
+  inferred from what we asked for.
+
+How to check by hand when the page says «не измерено»:
+
+```bash
+# against the same endpoint the sync uses (from the skygate host)
+ssh -i <key> -o BatchMode=yes -p <port> root@<relay> 'tailscale debug prefs' | grep -i routeall
+# and what skygate stored
+sqlite3 /var/lib/skygate/skygate.db \
+  "select key, value from global_settings where key like 'relay_accept_routes:%'"
+```
+
+An empty store means no sync pass has run since the upgrade — press **Пересинхронизировать**
+on the row (or wait for the periodic pass); the value is written by the pass that applies the
+relay's routes, never by opening the page (rendering must not turn "the relay is unreachable
+right now" into a red row that describes the viewer's network).
+
+Reading is deliberately **not** part of the apply decision: a failed read leaves the state
+unknown and never fails, delays or undoes a route application that worked.
+
 ## 25. «Exit‑узел подключается, но медиа не идёт» — релей принимает маршруты (B514)
 
 A non-primary exit node that "connects but carries no traffic" is usually not a slow link: it

@@ -346,6 +346,12 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// B515.1: the relay's OWN answer about accepting routes, read by the sync over the
+	// transport that applied its routes. Read from the store, never by SSH-ing here: the
+	// page must not become slow because a relay is unreachable, and an unreachable relay
+	// is a fact about the VIEW that the sync records in its own pass.
+	acceptRoutesLoops, acceptRoutesUnknown := annotateObservedAcceptRoutes(nodes, db.RelayAcceptRoutesObserved(s.dbc()))
+
 	// B356 (2026-10-07): every stored device preference whose relay cannot serve the
 	// device — the population that had no page at all before this block. Derived rows
 	// are re-pointed by the reconciler; human rows are surfaced and left alone.
@@ -376,6 +382,12 @@ func (s *Service) AdminExitNodes(w http.ResponseWriter, r *http.Request) {
 		"UntaggedCount":   untaggedCount,
 		"UnapprovedCount": unapprovedCount,
 		"ScoredCount":     scoredCount,
+		// B515.1: how many relays REPORT accepting routes (an active loop) and how
+		// many nobody has measured yet. The first is a page-level alarm; the second
+		// is deliberately not one — right after an upgrade every row is "not
+		// measured", and a red banner for that would teach the operator to ignore it.
+		"AcceptRoutesLoops":   acceptRoutesLoops,
+		"AcceptRoutesUnknown": acceptRoutesUnknown,
 		// B275.1: the prefix assignment table. headscale serves a subnet
 		// prefix from exactly one relay, so "which relay advertises this
 		// prefix" is a first-class, operator-editable decision — not a

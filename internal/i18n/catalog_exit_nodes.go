@@ -448,6 +448,19 @@ var ruExitNodes = map[string]string{
 	// exit node selected, three of seven echo endpoints left through another relay.
 	"exit_nodes.prefix_override_title": "Выбранный exit-узел не отменяет правила префиксов",
 	"exit_nodes.prefix_override_body":  "В этом tailnet за конкретными релеями закреплено %d префикс(ов). Адресат, попадающий в такой префикс (обычно это диапазон CDN, который несёт правило), уходит через владельца префикса — даже если выбран другой exit-узел. Поэтому «через кого я выхожу» зависит от адресата: часть трафика может идти через один релей, а часть через другой. Проверить на самом устройстве можно скриптом <code>scripts/which_relay_carries.sh</code> — он показывает, через кого ушёл каждый из нескольких адресатов.",
+
+	// B515.1 (2026-11-23): DESIRED vs OBSERVED for accept-routes. The stored tri-state is
+	// what skygate ASKS for; these keys render what the relay itself ANSWERED, read back
+	// by the sync over the transport that applied the routes. «true» = активная петля.
+	"exit_nodes.accept_routes_observed":                  "Принимает routes (по факту)",
+	"exit_nodes.accept_routes_observed_true":             "true — петля",
+	"exit_nodes.accept_routes_observed_false":            "false — норма",
+	"exit_nodes.accept_routes_observed_unknown":          "не измерено",
+	"exit_nodes.accept_routes_observed_loop_tip":         "Релей сам сообщил, что принимает маршруты от пиров (RouteAll=true). Тогда exit-трафик, пришедший к нему, уходит обратно в tailnet вместо его собственного аплинка — это и есть петля, из-за которой одно скачивание идёт через два релея. Skygate на каждом проходе передаёт --accept-routes=false (B514), значит этот релей его не применил.",
+	"exit_nodes.accept_routes_observed_ok_tip":           "Релей сам сообщил RouteAll=false: он отдаёт то, что объявляет, в свой собственный аплинк. Это единственное правильное состояние для релея, который объявляет маршруты.",
+	"exit_nodes.accept_routes_observed_unknown_tip":      "Значение ещё не прочитано или прочитать не удалось. Это факт о странице, а не о релее: «не измерено» не означает «всё хорошо». Значение появляется после прохода синхронизации, который применяет маршруты этого релея.",
+	"exit_nodes.accept_routes_observed_loop_banner":      "Петля accept-routes: %d релей(ев) ПРИНИМАЮТ маршруты, которые объявляют",
+	"exit_nodes.accept_routes_observed_loop_banner_help": "Релей, объявляющий маршруты, обязан их не принимать: иначе exit-трафик, пришедший на него, уходит обратно в tailnet, а не в его аплинк, и одно скачивание проходит через два релея (замерено: 5 МБ за 25 с, выросли счётчики обоих). Skygate на каждом проходе передаёт <code>--accept-routes=false</code>; этот релей его не применил. Проверьте на самом релее: <code>tailscale debug prefs | grep RouteAll</code>, затем <code>tailscale set --accept-routes=false</code> и ещё раз <code>debug prefs</code>.",
 }
 
 var enExitNodes = map[string]string{
@@ -872,4 +885,15 @@ var enExitNodes = map[string]string{
 	// B509 (2026-11-25) — same note, EN side.
 	"exit_nodes.prefix_override_title": "The exit node you pick does not override prefix rules",
 	"exit_nodes.prefix_override_body":  "%d prefix(es) in this tailnet are pinned to specific relays. A destination inside such a prefix (usually a CDN range carried by a rule) leaves through the prefix owner — even when a different exit node is selected. So which relay you go through depends on the destination: part of the traffic may leave through one relay and part through another. On the device itself you can check it with <code>scripts/which_relay_carries.sh</code>, which shows which relay each of several destinations left through.",
+
+	// B515.1 (2026-11-23) — DESIRED vs OBSERVED for accept-routes, EN side.
+	"exit_nodes.accept_routes_observed":                  "Accepts routes (observed)",
+	"exit_nodes.accept_routes_observed_true":             "true — loop",
+	"exit_nodes.accept_routes_observed_false":            "false — correct",
+	"exit_nodes.accept_routes_observed_unknown":          "not measured",
+	"exit_nodes.accept_routes_observed_loop_tip":         "The relay itself reports it accepts routes from peers (RouteAll=true). Exit traffic arriving there then goes back into the tailnet instead of out of its own uplink — that is the loop that makes one download traverse two relays. Skygate passes --accept-routes=false on every pass (B514), so this relay did not take it.",
+	"exit_nodes.accept_routes_observed_ok_tip":           "The relay itself reports RouteAll=false: it carries what it advertises out through its own uplink. That is the only correct state for a relay that advertises routes.",
+	"exit_nodes.accept_routes_observed_unknown_tip":      "Nobody has read this value yet, or the read failed. That is a fact about the page, not about the relay: «not measured» does not mean «all good». The value appears after a sync pass that applies this relay's routes.",
+	"exit_nodes.accept_routes_observed_loop_banner":      "accept-routes loop: %d relay(s) ACCEPT the routes they advertise",
+	"exit_nodes.accept_routes_observed_loop_banner_help": "A relay that advertises routes must not accept them: otherwise exit traffic arriving there goes back into the tailnet instead of out of its own uplink, and one download traverses two relays (measured: 5 MB took 25 s while both relays' counters grew). Skygate passes <code>--accept-routes=false</code> on every pass; this relay did not take it. Check on the relay itself: <code>tailscale debug prefs | grep RouteAll</code>, then <code>tailscale set --accept-routes=false</code> and <code>debug prefs</code> again.",
 }

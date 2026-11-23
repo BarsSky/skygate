@@ -175,7 +175,8 @@ func recordRelayApply(d *sql.DB, relay string, out relayApplyOutcome) {
 		return
 	}
 	now := time.Now().Unix()
-	if failed, detail := relayApplyFailedFromOutcome(out); failed {
+	failed, detail := relayApplyFailedFromOutcome(out)
+	if failed {
 		if len(detail) > 300 {
 			detail = detail[:300]
 		}
@@ -192,6 +193,48 @@ func recordRelayApply(d *sql.DB, relay string, out relayApplyOutcome) {
 		via = "unknown"
 	}
 	_ = db.SetGlobalSetting(d, RelayApplyViaKey(relay), via+"|"+ep)
+	// B515.1: and what the relay said about ACCEPTING routes. Written here rather
+	// than inside applyRoutesToRelay so both sync paths record it through the one
+	// place that already persists per-relay evidence.
+	recordRelayAcceptRoutes(d, relay, out.AcceptRoutesObserved, failed, detail)
+}
+
+// recordRelayAcceptRoutes stores the relay's own RouteAll verdict for the page (B515.1).
+//
+// Three states, and the difference between them is the point:
+//   - "true"/"false" — the relay answered; "true" is an ACTIVE LOOP and says so in the
+//     journal at the moment it is observed, not only when someone opens the page;
+//   - "unread (…)" — the transport failed, so nobody asked: a fact about the view;
+//   - nothing — the apply failed for a reason that is not about the relay (B370), and the
+//     previous evidence stands.
+//
+// Best effort by design, like recordRelayApply: a storage failure costs the page one stale
+// row and must never fail a sync that has already applied routes.
+func recordRelayAcceptRoutes(d *sql.DB, relay, observed string, failed bool, detail string) {
+	if d == nil || strings.TrimSpace(relay) == "" {
+		return
+	}
+	value := strings.ToLower(strings.TrimSpace(observed))
+	if value == "" {
+		if !failed {
+			// The apply worked but the read told us nothing (missing CLI, a daemon
+			// that answered neither way). Record the fact that we looked and failed,
+			// so the page cannot render it as healthy.
+			value = "unread"
+		} else {
+			value = "unread (" + firstLine(detail) + ")"
+		}
+	}
+	if len(value) > 200 {
+		value = value[:200]
+	}
+	if err := db.SetRelayAcceptRoutesObserved(d, relay, value); err != nil {
+		log.Printf("relay-accept-routes(%s): could not record the observed value %q: %v", relay, value, err)
+		return
+	}
+	if value == "true" {
+		log.Printf("relay-accept-routes(%s): THE RELAY ACCEPTS ROUTES (RouteAll=true) — exit traffic arriving here is forwarded back into the tailnet instead of leaving through its own uplink, so a download through this relay loops; B514 forces --accept-routes=false on every pass, and the relay is ignoring it (see docs/troubleshooting.md, B515)", relay)
+	}
 }
 
 // RelayApplyViaKey is the global_settings key holding "kind|endpoint" for one relay.
