@@ -261,10 +261,27 @@ else
     echo "=== LIVE mode ==="
     # Run the live assertions in a sub-script so a SKIP doesn't break
     # the structural summary.
+    #
+    # B522 (measured 2026-11-25 on the reference install): «a SKIP must not be a FAIL»
+    # was still violated here. The sub-script documents THREE exit codes — 0 = ok,
+    # 1 = a contract failed, 2 = SKIPPED (no CLI, or the CLI cannot reach headscale) —
+    # and the pre-fix code collapsed 1 and 2 into one failure branch. On that host
+    # `headscale` IS on PATH but the gate user may not open
+    # /var/run/headscale/headscale.sock («permission denied»), so the sub-script
+    # printed SKIP and exited 2, and this summary announced «LIVE FAIL — the runtime
+    # grants don't match the contract». It could not read the runtime at all: a fact
+    # about the CALLER'S PRIVILEGE was reported as a fact about the tailnet's tags,
+    # and the row stayed red in every gate run on the production host.
     if HEADSCALE_CLI="${HEADSCALE_CLI:-}" bash "${SCRIPT_DIR}/check_b_tailscale_grants_live.sh"; then
         LIVE_RESULT=0
     else
-        LIVE_RESULT=$?
+        rc=$?
+        if [ "$rc" -eq 2 ]; then
+            LIVE_RESULT=0
+            LIVE_SKIPPED=1
+        else
+            LIVE_RESULT=$rc
+        fi
     fi
 fi
 
@@ -274,6 +291,12 @@ echo "  PASS: ${PASS}"
 echo "  FAIL: ${FAIL}"
 echo "  WARN: ${WARN}"
 echo "  SKIP: ${SKIP}"
+if [ "${LIVE_SKIPPED:-0}" -eq 1 ]; then
+    echo
+    echo "  live assertions: SKIPPED — the runtime could not be read here (see the SKIP row above)."
+    echo "  NOTE: this is not a verdict about the tailnet's grants; run the gate as a user that"
+    echo "  can reach headscale (or set HEADSCALE_CLI) to verify them."
+fi
 if [ "${FAIL}" -eq 0 ] && [ "${LIVE_RESULT:-0}" -eq 0 ]; then
     echo
     echo "check_b_tailscale_grants: contracts all hold (live assertions OK or skipped)."

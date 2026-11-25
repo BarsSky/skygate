@@ -220,6 +220,51 @@ else
   skip "E2: no Go on PATH"
 fi
 
+# --- G. a live sub-check's SKIP is not a FAIL (the fourth instance) --------------
+# check_b_tailscale_grants delegates its live half to a sub-script that documents THREE
+# exit codes: 0 ok, 1 a contract failed, 2 SKIPPED. The parent collapsed 1 and 2, so on
+# the reference host — where `headscale` IS on PATH but the gate user may not open
+# /var/run/headscale/headscale.sock — it printed «LIVE FAIL — the runtime grants don't
+# match the contract» about a runtime it could not read. That row was red in every gate
+# run on the production host, the last one left after A–E.
+GRANTS=scripts/check_b_tailscale_grants.sh
+GRANTS_LIVE=scripts/check_b_tailscale_grants_live.sh
+G=""
+has "$GRANTS" 'if [ "$rc" -eq 2 ]; then' \
+  || G="${G}the parent does not separate the live sub-script's exit 2 (SKIP) from 1 (failure)"$'\n'
+has "$GRANTS" 'LIVE_SKIPPED=1' \
+  || G="${G}no LIVE_SKIPPED flag, so the summary cannot say the live half was not verified"$'\n'
+has "$GRANTS" 'live assertions: SKIPPED' \
+  || G="${G}the summary does not say the live assertions were skipped"$'\n'
+if [ -z "$G" ]; then
+  ok "G1: the grants check tells «could not read the runtime» from «the grants are wrong»"
+else
+  bad "G1: a live SKIP would still read as a live failure:"
+  printf '%s' "$G" | sed 's/^/       /' >&2
+fi
+
+# G2 — behavioural: an unrunnable live half must leave the check GREEN, with the reason.
+if [ -f "$GRANTS_LIVE" ]; then
+  mkdir -p "$SKY_TMP/bin"
+  cat > "$SKY_TMP/bin/headscale" <<'STUB'
+#!/bin/sh
+case "$*" in
+  "users list") echo "Error: unable to read/write to headscale socket: permission denied" >&2; exit 1 ;;
+  *) exit 1 ;;
+esac
+STUB
+  chmod +x "$SKY_TMP/bin/headscale"
+  OUT="$(PATH="$SKY_TMP/bin:$PATH" bash "$GRANTS" 2>&1)"; RC=$?
+  if [ "$RC" -eq 0 ] && case "$OUT" in *"live assertions: SKIPPED"*) true ;; *) false ;; esac; then
+    ok "G2: with a headscale CLI that cannot reach the daemon the check is GREEN and says the live half was skipped"
+  else
+    bad "G2: an unreadable runtime made the check red (rc=$RC) — the exact shape that reddened the production host"
+    printf '%s\n' "$OUT" | grep -E 'LIVE|FAIL|SKIP' | tail -4 | sed 's/^/       /' >&2
+  fi
+else
+  skip "G2: the live sub-script is missing"
+fi
+
 # --- F. bookkeeping --------------------------------------------------------------
 F=""
 for f in "$DNS_GO" "$DNS_TEST" "$ACL_GO" "$ACL_TEST" "$LIB" "$B419_TEST"; do
