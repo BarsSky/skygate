@@ -54,6 +54,17 @@ import (
 	"skygate/internal/db"
 )
 
+// panelHostOSHostname is the last rung of the hostname ladder, as a VARIABLE so a test can
+// make «this host is not in node_owner_map» TRUE instead of hoping for it (B522).
+//
+// Measured 2026-11-25 on the reference install: TestB502_UnresolvedHostSaysSoAndKeepsThe-
+// PolicyValid set both env variables to names that cannot exist and demanded "nothing
+// resolved". The ladder then fell through to os.Hostname() = `svyatoslava`, which IS in
+// node_owner_map on that very host, so the resolver returned tag:dev-infra-svyatoslava and
+// the test failed — the host answering a question about the product. Because the gate runs
+// `go test ./...`, this single line of environment dragged eleven other checks down.
+var panelHostOSHostname = os.Hostname
+
 // panelHostCandidates returns the hostnames this panel can be known by on the
 // tailnet, most authoritative first. Case-insensitive matching is the caller's job
 // (node_owner_map holds whatever headscale reported).
@@ -62,7 +73,7 @@ func panelHostCandidates() []string {
 	for _, env := range []string{"SKYGATE_HOST_TS", "SKYGATE_HOSTNAME"} {
 		raw = append(raw, strings.Split(os.Getenv(env), ",")...)
 	}
-	if h, err := os.Hostname(); err == nil {
+	if h, err := panelHostOSHostname(); err == nil {
 		raw = append(raw, h)
 	}
 	out := make([]string, 0, len(raw)*2)

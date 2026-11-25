@@ -252,11 +252,20 @@ if command -v sqlite3 >/dev/null 2>&1; then
     real_db="$SKY_TMP/real.db"
     if sqlite3 "$real_db" 'CREATE TABLE t(a INTEGER); INSERT INTO t VALUES (7);' 2>/dev/null; then
         printf 'SKYGATE_DB=sqlite:%s\n' "$real_db" > "$SKY_TMP/env.real"
-        real_row="$(SKYGATE_LIVE_ENV_FILE="$SKY_TMP/env.real" bash -c '. "$0"; live_db_sql "SELECT a FROM t;"' "$LIB" 2>/dev/null)"
-        case "$real_row" in
-            7) ok "F6: live_db_sql reads a REAL sqlite file end to end" ;;
-            *) bad "F6: live_db_sql answered '$real_row' against a real sqlite DB — expected 7" ;;
-        esac
+        # B522 (measured 2026-11-25): the answer and the REASON must be told apart. Before
+        # this, the leg compared stdout with 7 only — so on the reference host, where the
+        # gate runs as a user without passwordless sudo, the transport returned an empty
+        # string and this contract reported the LIBRARY as broken while it was the
+        # privilege that was missing. "Could not read" is a fact about the check (SKIP with
+        # the reason named); "read the wrong value" is a fact about the product (FAIL).
+        real_out="$(SKYGATE_LIVE_ENV_FILE="$SKY_TMP/env.real" bash -c '. "$0"; live_db_sql "SELECT a FROM t;"' "$LIB" 2>&1)"; real_rc=$?
+        if [ "$real_rc" -ne 0 ]; then
+            skip "F6: the transport could not answer here (rc=$real_rc: $(printf '%s' "$real_out" | tail -1)) — no sqlite3/sudo for this user, so nothing about the product is proven"
+        elif [ "$real_out" = "7" ]; then
+            ok "F6: live_db_sql reads a REAL sqlite file end to end"
+        else
+            bad "F6: live_db_sql answered '$real_out' against a real sqlite DB — expected 7"
+        fi
     else
         skip "F6: could not build a real sqlite fixture on this host"
     fi

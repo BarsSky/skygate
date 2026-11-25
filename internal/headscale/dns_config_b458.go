@@ -66,7 +66,7 @@ func TailnetDNSResolvers() DNSResolvers {
 		}
 		return out
 	}
-	for _, p := range tailnetDNSConfigCandidates() {
+	for _, p := range tailnetDNSConfigPathList() {
 		b, err := os.ReadFile(p)
 		if err != nil {
 			continue
@@ -94,11 +94,22 @@ func TailnetDNSResolvers() DNSResolvers {
 	return DNSResolvers{Note: "no headscale config.yaml was readable — set SKYGATE_TAILNET_DNS_RESOLVERS to name the resolver set"}
 }
 
-// tailnetDNSConfigCandidates is DiscoverPolicyPath's discovery list, so a container and a
-// native install are both covered (a native host keeps the file under /etc/headscale or
-// /var/lib/headscale; the container mounts the operator's directory and the env var names
-// it).
-func tailnetDNSConfigCandidates() []string {
+// tailnetDNSConfigPathList is the discovery list, as a VARIABLE so a test can make the
+// premise «no config is readable on this host» TRUE instead of hoping for it (B522).
+//
+// Measured 2026-11-25 on the reference install: TestB458_EnvOverrideAndUnreadableConfig
+// pointed both SKYGATE_HEADSCALE_CONFIG* variables at `/nonexistent/config.yaml` and
+// asserted the resolver set was UNKNOWN. That premise holds only on a host that keeps no
+// headscale config in the standard locations — the reference install is NATIVE and has
+// `/etc/headscale/config.yaml`, so the loop skipped the unreadable env paths and returned
+// the LIVE resolvers with Source=/etc/headscale/config.yaml. The test then reported a
+// host fact as a product defect, and because the gate runs `go test ./...` it dragged
+// eleven other checks down with it.
+//
+// A seam, not a change of behaviour: production still walks the same five paths with the
+// env entries first (DiscoverPolicyPath does the same, and the container install depends
+// on it), and the values are read at CALL time so a per-request env change still works.
+var tailnetDNSConfigPathList = func() []string {
 	return []string{
 		os.Getenv("SKYGATE_HEADSCALE_CONFIG_PATH"),
 		os.Getenv("SKYGATE_HEADSCALE_CONFIG"),

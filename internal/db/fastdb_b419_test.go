@@ -84,9 +84,29 @@ func TestB419_FastHandleIsNotSlowerThanTheDefault(t *testing.T) {
 	perSlow, perFast := fastestOf(slow), fastestOf(fast)
 	t.Logf("B419: default chain best %v (rounds %v), fast chain best %v (rounds %v) (%.1fx)",
 		perSlow, slow, perFast, fast, float64(perSlow)/float64(perFast))
-	if perFast > perSlow+perSlow/4 {
-		t.Errorf("B419: the fast handle is SLOWER than the default one (best default %v, best fast %v) — "+
-			"that is the journal_mode(memory)-alone shape (1151 ms vs 561 ms), not the fast handle", perSlow, perFast)
+	// B522 (measured 2026-11-25 on the reference install): THE MARGIN WAS STILL A HOST FACT
+	// WEARING A DEFECT. There `/tmp` is tmpfs, so a full migration chain costs ~51 ms for
+	// BOTH handles (fsync is free and the fast handle has nothing to save), and the 25 %
+	// margin was 12.8 ms — smaller than the scheduling noise between rounds. The verdict
+	// came out 51.4 ms vs 69.5 ms and failed, while the pragma test above was green and the
+	// same binary passed 5/5 standalone. One flaky assertion then reddened a DIFFERENT
+	// carrier in 2 of 4 full gate runs (B287, Phase_3_4, Phase_3_6 — all of them simply run
+	// `go test ./internal/db/...`), which is exactly the noise that hides real regressions.
+	//
+	// The relative margin therefore gets an absolute floor. It costs nothing where the
+	// guard matters: the regression it exists to catch (`journal_mode(memory)` without
+	// `synchronous(0)`) is +590 ms — 1151 vs 561 — so a 40 ms allowance cannot hide it,
+	// while a tmpfs host can no longer decide the question.
+	tolerance := perSlow / 4
+	const noiseFloor = 40 * time.Millisecond
+	if tolerance < noiseFloor {
+		t.Logf("B419: the 25%% margin (%v) is below the %v noise floor on this filesystem, "+
+			"so the floor decides — the pragma test above is the real guard here", tolerance, noiseFloor)
+		tolerance = noiseFloor
+	}
+	if perFast > perSlow+tolerance {
+		t.Errorf("B419: the fast handle is SLOWER than the default one (best default %v, best fast %v, allowance %v) — "+
+			"that is the journal_mode(memory)-alone shape (1151 ms vs 561 ms), not the fast handle", perSlow, perFast, tolerance)
 	}
 	if perSlow < 150*time.Millisecond {
 		// Informational: this filesystem does not make fsync expensive, so the pragmas

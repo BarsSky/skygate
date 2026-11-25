@@ -171,10 +171,19 @@ func TestB502_LegacyPrefixStillWorks(t *testing.T) {
 // host, the rule must stay VALID (legacy pair only) — and the log line is the only
 // place the operator can learn why ssh will be refused, so the resolver has to
 // report the reason rather than an empty string.
+//
+// B522 (measured 2026-11-25): the env variables alone did NOT make this host
+// unresolved — the ladder's last rung is os.Hostname(), and on the reference install the
+// machine IS named `svyatoslava` and IS present in node_owner_map, so the test failed
+// while the product was right. The rung is now overridden, so the premise is TRUE on any
+// host (`<name>.invalid` is reserved by RFC 2606 and can never be a real node name).
 func TestB502_UnresolvedHostSaysSoAndKeepsThePolicyValid(t *testing.T) {
 	d := b502SeedLiveShape(t)
 	t.Setenv("SKYGATE_HOST_TS", "no-such-panel-host")
 	t.Setenv("SKYGATE_HOSTNAME", "no-such-panel-host-either")
+	restore := panelHostOSHostname
+	panelHostOSHostname = func() (string, error) { return "no-such-panel-host.invalid", nil }
+	defer func() { panelHostOSHostname = restore }()
 
 	policy, err := GenerateACLWithViaForPlane(d, "")
 	if err != nil {
@@ -192,6 +201,23 @@ func TestB502_UnresolvedHostSaysSoAndKeepsThePolicyValid(t *testing.T) {
 	}
 	if !strings.Contains(why, "unresolved") || !strings.Contains(why, "no-such-panel-host") {
 		t.Errorf("resolver reason = %q, want it to name the unresolved candidates (the log line is the operator's only clue)", why)
+	}
+}
+
+// TestB502_HostnameRungIsTheSeam is the anti-bypass leg (B522): with the env ladder
+// pointing at nothing, the resolver must consult the SEAM — not os.Hostname() directly —
+// or the test above would start depending on what the machine is called again.
+func TestB502_HostnameRungIsTheSeam(t *testing.T) {
+	d := b502SeedLiveShape(t)
+	t.Setenv("SKYGATE_HOST_TS", "")
+	t.Setenv("SKYGATE_HOSTNAME", "")
+	restore := panelHostOSHostname
+	panelHostOSHostname = func() (string, error) { return "svyatoslava", nil }
+	defer func() { panelHostOSHostname = restore }()
+
+	tags, why := panelHostInfraTags(d, nil)
+	if !b502Contains(tags, "tag:dev-infra-svyatoslava") {
+		t.Fatalf("panelHostInfraTags = %v (%q), want the tag of the name the SEAM reported — the rung bypasses the seam", tags, why)
 	}
 }
 

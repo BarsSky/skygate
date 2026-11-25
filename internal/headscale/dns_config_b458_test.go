@@ -81,6 +81,15 @@ func TestB458_ResolverPrefixesArePrecise(t *testing.T) {
 //   - SKYGATE_TAILNET_DNS_RESOLVERS wins (an operator whose config lives elsewhere);
 //   - a non-IP entry is reported in Note instead of being silently dropped;
 //   - with nothing readable the set is UNKNOWN with a reason, never "no resolvers".
+//
+// B522 (measured 2026-11-25 on the reference install): the "nothing readable" half used to
+// point the two env variables at `/nonexistent/config.yaml` and demand UNKNOWN. On a NATIVE
+// install `/etc/headscale/config.yaml` EXISTS, so the resolver returned the live set with
+// Source=/etc/headscale/config.yaml and the test failed — a fact about the host reported as
+// a product defect, which is the trap-#15 class. The premise is now made TRUE with the
+// discovery seam instead of assumed: the seam is still reading the same five paths in
+// production, and a second leg proves the seam cannot be bypassed (if someone hardcodes the
+// standard paths again, the "host has a config" leg fails).
 func TestB458_EnvOverrideAndUnreadableConfig(t *testing.T) {
 	t.Setenv("SKYGATE_TAILNET_DNS_RESOLVERS", "9.9.9.9, 1.0.0.1, not-an-ip")
 	r := TailnetDNSResolvers()
@@ -91,19 +100,46 @@ func TestB458_EnvOverrideAndUnreadableConfig(t *testing.T) {
 		t.Error("a rejected entry must be named in Note, not swallowed")
 	}
 
-	// No env, and point the candidates at a path that does not exist: the answer must be
-	// UNKNOWN with a reason, because an empty resolver set that looks healthy is the
-	// defect this block removes.
+	// No env, and no readable candidate: the answer must be UNKNOWN with a reason, because
+	// an empty resolver set that looks healthy is the defect this block removes.
 	t.Setenv("SKYGATE_TAILNET_DNS_RESOLVERS", "")
 	t.Setenv("SKYGATE_HEADSCALE_CONFIG_PATH", "/nonexistent/config.yaml")
 	t.Setenv("SKYGATE_HEADSCALE_CONFIG", "/nonexistent/config.yaml")
-	prev := os.Getenv("HOME")
-	_ = prev
+	restore := tailnetDNSConfigPathList
+	tailnetDNSConfigPathList = func() []string {
+		return []string{"/nonexistent/config.yaml", "/nonexistent/config.yml"}
+	}
+	defer func() { tailnetDNSConfigPathList = restore }()
+
 	r = TailnetDNSResolvers()
 	if r.Known() {
 		t.Fatalf("expected an unknown resolver set, got %+v", r)
 	}
 	if r.Note == "" {
 		t.Error("an unknown resolver set must carry the reason the operator can act on")
+	}
+}
+
+// TestB458_SeamIsTheOnlyWayToThePaths is the anti-bypass leg (B522): a readable config
+// named through the seam must be READ, so a future edit that goes back to the hardcoded
+// list (and therefore to the host's own /etc/headscale) turns this test red on a developer
+// machine instead of green everywhere except production.
+func TestB458_SeamIsTheOnlyWayToThePaths(t *testing.T) {
+	dir := t.TempDir()
+	cfg := dir + "/config.yaml"
+	if err := os.WriteFile(cfg, []byte("dns:\n  nameservers:\n    global:\n    - 203.0.113.53\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	t.Setenv("SKYGATE_TAILNET_DNS_RESOLVERS", "")
+	restore := tailnetDNSConfigPathList
+	tailnetDNSConfigPathList = func() []string { return []string{cfg} }
+	defer func() { tailnetDNSConfigPathList = restore }()
+
+	r := TailnetDNSResolvers()
+	if !r.Known() || len(r.Global) != 1 || r.Global[0] != "203.0.113.53" {
+		t.Fatalf("seam-named config: %+v, want [203.0.113.53] — the discovery list is not the seam's", r)
+	}
+	if r.Source != cfg {
+		t.Fatalf("Source = %q, want %q (the operator must see WHICH file answered)", r.Source, cfg)
 	}
 }

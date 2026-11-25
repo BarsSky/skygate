@@ -130,20 +130,40 @@ live_db_sql() {
             esac
             ;;
         native)
-            local dsn path
+            local dsn path out rc
             dsn="$(_live_env_value SKYGATE_DB)"
             [ -n "$dsn" ] || dsn="sqlite:/var/lib/skygate/skygate.db"
             case "$dsn" in
                 postgres*|postgresql*)
                     command -v psql >/dev/null 2>&1 || return 1
+                    # Same rule as the SQLite branch below (B522): try the caller's own
+                    # credentials first, and treat sudo as the reserve, not the default.
                     if [ "$(id -u)" -eq 0 ]; then psql "$dsn" -At -F"$sep" -c "$sql" 2>/dev/null
-                    else sudo -n psql "$dsn" -At -F"$sep" -c "$sql" 2>/dev/null; fi
+                    else
+                        out="$(psql "$dsn" -At -F"$sep" -c "$sql" 2>/dev/null)"; rc=$?
+                        if [ "$rc" -eq 0 ]; then printf '%s\n' "$out"
+                        else sudo -n psql "$dsn" -At -F"$sep" -c "$sql" 2>/dev/null; fi
+                    fi
                     ;;
                 *)
                     path="${dsn#sqlite:}"
                     command -v sqlite3 >/dev/null 2>&1 || return 1
+                    # B522 (measured 2026-11-25): a NON-ROOT caller was always routed through
+                    # `sudo -n`, even when the database file was readable to it directly. On the
+                    # reference host the gate runs as a user without passwordless sudo
+                    # ("User gate is not allowed to run sudo on svyatoslava"), so every read
+                    # returned an EMPTY string with a non-zero status — and a caller that
+                    # compared the output (check_b488 F6) reported the product as broken.
+                    # Read it ourselves first and reach for sudo only when that is refused.
+                    # The decision is made on the EXIT STATUS, not on the output: a SELECT that
+                    # legitimately matches no rows returns 0 with an empty answer, and treating
+                    # that as "no access" would silently turn an empty result into a retry.
                     if [ "$(id -u)" -eq 0 ]; then sqlite3 -readonly "$path" "$sql" 2>/dev/null
-                    else sudo -n sqlite3 -readonly "$path" "$sql" 2>/dev/null; fi
+                    else
+                        out="$(sqlite3 -readonly "$path" "$sql" 2>/dev/null)"; rc=$?
+                        if [ "$rc" -eq 0 ]; then printf '%s\n' "$out"
+                        else sudo -n sqlite3 -readonly "$path" "$sql" 2>/dev/null; fi
+                    fi
                     ;;
             esac
             ;;
