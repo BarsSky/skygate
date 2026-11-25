@@ -107,12 +107,21 @@ if grep -qE '@media \(min-width:1600px\)\{main \.shell\{max-width:1[4-9][0-9][0-
 else
   bad "A5: no wide-screen max-width step — a 3440px display would still get a 1180px column and the right-hand band survives"
 fi
-if awk '/@media \(max-width:768px\)/{m=1} m{buf=buf $0 "\n"} m&&/^\}/{print buf; buf=""; m=0}' "$CSS" \
-   | grep -qE '^[[:space:]]*main\{margin-left:0 !important\}'; then
-  ok "A6: the mobile block resets <main> to 0 (the drawer reserves no column)"
-else
-  bad "A6: the mobile block does not reset <main> — on a phone the whole page stays shifted 220px right"
-fi
+# A6 — CAPTURE FIRST, THEN MATCH (AGENTS traps #9/#15). This assertion used to be
+# `awk … | grep -qE …` under `set -uo pipefail`: grep -q exits at the first match and
+# closes the pipe, awk then dies with SIGPIPE (141) and pipefail turns a SUCCESSFUL
+# match into a failed pipeline. Measured 2026-11-25 while running the gate on a
+# second VM: the same tree passed on one host (awk won the race) and failed on
+# another (grep won) — a host transient reported as a product regression, which is
+# the class trap #15 exists for. The match is a shell builtin now, so there is no
+# pipeline left to fail.
+A6_BLOCK="$(awk '/@media \(max-width:768px\)/{m=1} m{buf=buf $0 "\n"} m&&/^\}/{print buf; buf=""; m=0}' "$CSS")"
+case "$A6_BLOCK" in
+  *'main{margin-left:0 !important}'*)
+    ok "A6: the mobile block resets <main> to 0 (the drawer reserves no column)" ;;
+  *)
+    bad "A6: the mobile block does not reset <main> — on a phone the whole page stays shifted 220px right" ;;
+esac
 BC_BODY="$(awk '/^main \.admin-breadcrumb\{/{i=1} i{buf=buf $0} i&&/\}/{print buf; exit}' "$CSS")"
 # Shell builtins only: `printf "$VAR" | grep -q` is forbidden by B386/B388 (the
 # pipeline's status is not the producer's — a host transient becomes a verdict).
