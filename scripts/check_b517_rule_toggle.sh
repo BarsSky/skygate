@@ -196,8 +196,15 @@ grep -q 'if s.SyncRoutes != nil {' "$SVC" \
   || E_MISS="${E_MISS}the advertised routes are not re-synced after a real apply (a released prefix would stay announced)"$'\n'
 grep -q 'db.ExitRuleActionDisable' "$SVC" && grep -q 'db.ExitRuleActionEnable' "$SVC" \
   || E_MISS="${E_MISS}the exit_rule_logs action does not distinguish disable from enable"$'\n'
-grep -q '"exit_rule_"+verb' "$SVC" \
+# RENEGOTIATED by B520 (2026-11-25), in place: the audit action is now built from
+# `ch.Action` + the verb, because the ADMIN page (B520) performs the same change on
+# another user's rule and must not write the owner's name into the actor column.
+# The property is unchanged — the audit row distinguishes the direction — and the
+# user-page call sites still spell the action as `exit_rule_`.
+grep -q 'ch.Action+verb' "$SVC" \
   || E_MISS="${E_MISS}no audit row distinguishes the direction of the change"$'\n'
+grep -q 'Action:    "exit_rule_"' "$SVC" \
+  || E_MISS="${E_MISS}the user-page toggle no longer attributes the audit row as exit_rule_<verb>"$'\n'
 # R6: no raw http.Error with the parser's text in the new handler.
 if grep -q 'http.Error(w, err.Error()' "$SVC"; then
   E_MISS="${E_MISS}the handler answers with http.Error(err.Error()) — the R6 error-leak guard counts that as a regression"$'\n'

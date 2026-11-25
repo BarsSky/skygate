@@ -109,7 +109,16 @@ func (s *Service) PostMyExitRuleSelection(w http.ResponseWriter, r *http.Request
 
 	case "disable", "enable":
 		enabled := op == "enable"
-		changed, serr := s.setRulesEnabled(c.UserID, c.Username, intIDs, enabled, "selection")
+		changed, serr := s.setRulesEnabled(ruleStateChange{
+			OwnerID:   c.UserID,
+			IDs:       intIDs,
+			Enabled:   enabled,
+			Kind:      "selection",
+			Subject:   "user " + c.Username,
+			AuditID:   c.UserID,
+			AuditName: c.Username,
+			Action:    "exit_rule_",
+		})
 		if serr != nil {
 			http.Redirect(w, r, rulesActionFlash(back, map[string]string{"source_err": serr.Error()}), http.StatusSeeOther)
 			return

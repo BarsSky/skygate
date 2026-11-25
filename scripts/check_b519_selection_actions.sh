@@ -79,7 +79,12 @@ fi
 B_MISS=""
 grep -q 'db.SetDeviceRulesGroupLabel(s.dbc(), c.UserID, intIDs, label)' "$SVC" \
   || B_MISS="${B_MISS}op=group does not use the B518 label writer"$'\n'
-grep -q 's.setRulesEnabled(c.UserID, c.Username, intIDs, enabled, "selection")' "$SVC" \
+# RENEGOTIATED by B520 (2026-11-25), in place: the tail now takes a ruleStateChange
+# STRUCT rather than five positionals, because the admin page switches ANOTHER
+# user's rule — the row written belongs to the owner while the audit row must name
+# the ADMIN. The property is unchanged («the selection goes through the one shared
+# tail»); only the call shape moved.
+grep -q 's.setRulesEnabled(ruleStateChange{' "$SVC" \
   || B_MISS="${B_MISS}op=disable/enable do not use the shared state-change tail"$'\n'
 grep -q 'func (s \*Service) setRulesEnabled(' "$TOGGLE" \
   || B_MISS="${B_MISS}setRulesEnabled is missing — the tail has no single home"$'\n'
