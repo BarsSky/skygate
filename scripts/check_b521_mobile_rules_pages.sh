@@ -80,6 +80,31 @@ if command -v go >/dev/null 2>&1; then
       bad "B1: the exporter produced ${N:-0} file(s), want 3 — a state stopped rendering"
       printf '%s\n' "$OUT" | tail -6 | sed 's/^/       /' >&2
     fi
+    # B2 — the measurement must be of the PAGE the operator sees. The render helpers
+    # shared with the structural tests stub `t`/`tf` to ECHO the catalogue key (that is
+    # how those tests assert "this block renders key K"), so an unlocalized export
+    # measures "exit_rules.target_type_subnet" instead of «Подсеть»: a 28-character
+    # unbreakable token per label, which answers a different question and makes the
+    # page look unfixable. The exporter localizes with the real catalogue; this proves
+    # it stayed that way and that the Russian catalogue actually reached the file.
+    FID=""
+    for f in "$WORK"/*.html; do
+      [ -f "$f" ] || continue
+      L="$(LC_ALL=C.UTF-8 grep -oE '>exit_rules[a-z_]*\.[a-z0-9_.]+<' "$f" || true)"
+      if [ -n "$L" ]; then
+        FID="${FID}$(basename "$f"): unlocalized key(s): $(printf '%s' "$L" | tr '\n' ' ')"$'\n'
+      fi
+      RU="$(LC_ALL=C.UTF-8 grep -oE '[А-Яа-яЁё]{3,}' "$f" | head -1 || true)"
+      if [ -z "$RU" ]; then
+        FID="${FID}$(basename "$f"): no Russian text — the catalogue was not applied"$'\n'
+      fi
+    done
+    if [ -z "$FID" ]; then
+      ok "B2: the snapshots carry the real Russian catalogue, not raw catalogue keys"
+    else
+      bad "B2: a snapshot is not the page the operator sees:"
+      printf '%s' "$FID" | sed 's/^/       /' >&2
+    fi
   else
     bad "B1: the snapshot exporter failed (rc=$RC):"
     printf '%s\n' "$OUT" | tail -8 | sed 's/^/       /' >&2
