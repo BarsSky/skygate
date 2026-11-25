@@ -278,17 +278,26 @@ else
   printf '%s' "$D2_MISS" | sed 's/^/       /' >&2
 fi
 
-# --- E: migration safety — the old page is untouched without the lens ----------
+# --- E: the group page is the DEFAULT, and the old views stay REACHABLE -------
+# RENEGOTIATED by B517 (2026-11-25), inside this same file rather than deleted:
+# B516 shipped the group page opt-in so a working screen could not regress in the
+# step that added another; B517 verified it, so the handler now renders the group
+# page unless the request asks for one of the pre-B516 projections (`?view=`).
+# The property E protects is unchanged — «the operator can still reach the old
+# views, and one condition decides which page they see» — only the default and the
+# escape hatch swapped places.
 E_MISS=""
 grep -q 'myRulesLensEnabled' "$HANDLER" \
   || E_MISS="${E_MISS}the handler has no switch for the new page"$'\n'
-# The old four views' own markers must still be in the template (they are what the
-# existing contracts assert) — the new block ADDS, it does not replace yet.
+grep -q 'return strings.TrimSpace(q.Get("view")) == ""' "$VIEW" \
+  || E_MISS="${E_MISS}myRulesLensEnabled is not the ONE default switch (the group page must be the default and ?view= the escape hatch)"$'\n'
+# The old four views' own markers must still be in the template: they are what the
+# existing contracts assert, and `?view=` is what renders them.
 for marker in 'id="view-target-link"' 'id="view-device-link"' 'id="view-group-link"' 'id="rules-view"'; do
-  grep -qF "$marker" "$TPL" || E_MISS="${E_MISS}the old view marker $marker disappeared — the default page would break before its contracts are renegotiated"$'\n'
+  grep -qF "$marker" "$TPL" || E_MISS="${E_MISS}the old view marker $marker disappeared — ?view= would answer a page that no longer exists"$'\n'
 done
 if [ -z "$E_MISS" ]; then
-  ok "E1: the new page is opt-in (?lens= / ?group=) and the current page still renders unchanged"
+  ok "E1: the group page is the DEFAULT (B517) and ?view= still reaches the pre-B516 projections"
 else
   bad "E1: the migration safety net is missing:"
   printf '%s' "$E_MISS" | sed 's/^/       /' >&2

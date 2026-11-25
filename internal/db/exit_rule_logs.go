@@ -54,6 +54,11 @@ const (
 	ExitRuleActionRollbackFail = "rollback_fail"
 	ExitRuleActionAutoupdate   = "autoupdate"
 	ExitRuleActionAPIBulk      = "api_bulk"
+	// B517: switching a rule (or a group of rules) on and off. Its own action
+	// values, because «I turned it off for a while» and «I deleted it» are
+	// different facts in an audit trail — and the second one cannot be undone.
+	ExitRuleActionDisable = "disable"
+	ExitRuleActionEnable  = "enable"
 )
 
 // AppendExitRuleLog writes one row to exit_rule_logs.

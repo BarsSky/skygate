@@ -273,11 +273,12 @@ func BuildRulesLensView(path string, q url.Values, rows []RuleRow, lensParam, gr
 	return out
 }
 
-// myRulesLensEnabled reports whether the request asked for the new grouping at
-// all. Kept as a tiny helper so the handler reads as a sentence.
+// myRulesLensEnabled reports whether this request renders the GROUP page.
+//
+// B517 flipped the default: the group page renders unless the request explicitly
+// asks for one of the pre-B516 projections (`?view=…`), which stay reachable for
+// their contracts and for old bookmarks. Written as ONE condition so there is
+// exactly one place that decides which page the operator sees.
 func myRulesLensEnabled(q url.Values) bool {
-	if strings.TrimSpace(q.Get("lens")) != "" {
-		return true
-	}
-	return strings.TrimSpace(q.Get("group")) != ""
+	return strings.TrimSpace(q.Get("view")) == ""
 }

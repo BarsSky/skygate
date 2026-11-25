@@ -835,6 +835,11 @@ func registerRoutes(
 	// the N rules the mismatch banner was complaining about.
 	mux.Handle("POST /my/exit-rules/apply-preferred", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRulesApplyPreferred)))
 	mux.Handle("POST /my/exit-rules/delete", authMW(http.HandlerFunc(exitRulesSvc.PostDeleteExitRule)))
+	// B517: switch a rule (or a whole group of them) off and on. The column has
+	// existed since v0.20 and every consumer honours it — the panel simply had no
+	// writer, so «turn this off for a while» meant deleting the rule and losing its
+	// parent_domain, its group label and its place in the prefix assignment.
+	mux.Handle("POST /my/exit-rules/toggle", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRuleToggle)))
 	// B328: turn an ALREADY SAVED single-device rule into an "all my devices" rule.
 	// The option existed only at save time (B275.3) plus the intent marker the periodic
 	// pass re-materialises (B276.1), so a rule created before the operator's second

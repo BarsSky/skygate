@@ -882,19 +882,20 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		return deviceNames[id]
 	})
 	groupNames := GroupNamesForSuggestions(ruleRows)
-	// B516: THE GROUP PAGE («группа — единица страницы»).
+	// B516/B517: THE GROUP PAGE («группа — единица страницы») is now the DEFAULT.
 	//
-	// Opt-in through ?lens= / ?group= for now: the four old projections below stay
-	// the default until the new page has been verified on a live installation and
-	// the contracts that pin the old views are renegotiated in their own change.
-	// That ordering is deliberate — the old views are what the operator uses today,
-	// and a page rewrite that silently removes them is how a working screen
-	// regresses while its tests stay green.
+	// `?view=target|device|group` keeps the four pre-B516 projections reachable —
+	// their contracts and any old bookmark still work — while `?lens=` / `?group=`
+	// select a lens and a page inside the new one. The switch is a single
+	// condition on purpose: two pages that disagree about what the operator's
+	// rules are is the defect this whole rework is about, so the old block is
+	// rendered ONLY when the request explicitly asks for it.
 	//
-	// The rows are loaded UNPAGED for this path on purpose: the window unit is the
+	// The rows are loaded UNPAGED for the group page: the window unit is the
 	// GROUP, so the grouping has to see the whole set (a page of rows cannot tell
-	// how many rules a group holds). One query, and only when the operator asked
-	// for the grouping — the default page keeps its current cost.
+	// how many rules a group holds). One extra SELECT per page render, and that is
+	// the cost this rework chose deliberately over a group that lies about its
+	// count.
 	lensView := RulesLensView{}
 	if myRulesLensEnabled(r.URL.Query()) {
 		if all, aerr := db.GetDeviceRulesForUser(s.dbc(), c.UserID); aerr == nil {
@@ -1066,5 +1067,13 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// summary and — when ?group= resolved — the group's own row page). One value
 		// so the template cannot mix a stale lens with a fresh page.
 		"RulesLens": lensView,
+		// B517: the on/off outcome. It travels in the query string like every other
+		// flash on this page (so a refresh does not resubmit), and `SelfURL` is the
+		// return address the toggle forms carry — the handler re-validates it, but
+		// the page must not have to rebuild its own state in the template.
+		"toggled":    r.URL.Query().Get("toggled"),
+		"toggle_n":   toggleCount(r.URL.Query().Get("n")),
+		"toggle_err": r.URL.Query().Get("toggle_err"),
+		"SelfURL":    r.URL.RequestURI(),
 	})
 }

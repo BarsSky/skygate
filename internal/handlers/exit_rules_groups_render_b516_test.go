@@ -46,6 +46,13 @@ func renderMyRulesLens(t *testing.T, q url.Values, groupKey string) string {
 	data["RulesLens"] = lens
 	data["StatusByRuleID"] = map[int64]string{1: "approved", 2: "pending", 3: "approved", 4: "approved"}
 	data["ServedByRuleID"] = map[string]string{}
+	// B517: the toggle forms carry the return address and the page renders the
+	// outcome banners from it — the handler always sets both, so the fixture must
+	// too or the page under test would differ from the page served.
+	data["SelfURL"] = "/my/exit-rules?lens=" + q.Get("lens")
+	data["toggled"] = ""
+	data["toggle_n"] = 0
+	data["toggle_err"] = ""
 
 	var buf bytes.Buffer
 	if err := tpl.ExecuteTemplate(&buf, "body-exit_rules", data); err != nil {

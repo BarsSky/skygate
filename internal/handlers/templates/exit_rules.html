@@ -345,6 +345,20 @@
         </span>
       </div>
 
+      {{/* B517: the on/off outcome. Both banners are rendered from the query string
+           the handler redirected to, so a refresh never resubmits the toggle. */}}
+      {{if .toggled}}
+      <div class="alert alert-success" id="toggle-banner">
+        <i class="fa-solid fa-power-off"></i>
+        {{if eq .toggled "on"}}{{tf "exit_rules.toggle_ok_on" .toggle_n}}{{else}}{{tf "exit_rules.toggle_ok_off" .toggle_n}}{{end}}
+      </div>
+      {{end}}
+      {{if .toggle_err}}
+      <div class="alert alert-danger" id="toggle-error">
+        <i class="fa-solid fa-triangle-exclamation"></i> {{tf "exit_rules.toggle_err" .toggle_err}}
+      </div>
+      {{end}}
+
       {{if $lv.Detail}}
       {{/* ===== ONE GROUP OPENED: its own facts + a page of its own rows ===== */}}
       {{$d := $lv.Detail}}
@@ -361,6 +375,22 @@
         {{range $dname := $g.Devices}}<span class="tag"><i class="fa-solid fa-laptop"></i> {{$dname}}</span>{{end}}
         {{range $relay := $g.Relays}}<span class="tag tag-info">{{tf "exit_rules.group_relay" $relay}}</span>{{end}}
         {{if not $g.Relays}}<span class="tag">{{t "exit_rules.group_relay_auto"}}</span>{{end}}
+        {{/* B517: one switch for the WHOLE card. The confirm names the blast radius
+             (rules + subnets) because switching a domain off also switches off the
+             rows resolved from it, and a relay may stop advertising the prefixes
+             nobody else covers. */}}
+        <form method="post" action="/my/exit-rules/toggle" style="display:inline"
+              onsubmit="return confirm('{{tf "exit_rules.toggle_confirm_group" $g.Count $g.SubnetCount}}')">
+          <input type="hidden" name="scope" value="group">
+          <input type="hidden" name="lens" value="{{$d.Lens}}">
+          <input type="hidden" name="group" value="{{$g.Key}}">
+          <input type="hidden" name="enabled" value="{{if eq $g.DisabledCount 0}}0{{else}}1{{end}}">
+          <input type="hidden" name="back" value="{{$.SelfURL}}">
+          <button type="submit" class="btn btn-sm" id="toggle-group-btn">
+            <i class="fa-solid fa-power-off"></i>
+            {{if eq $g.DisabledCount 0}}{{t "exit_rules.toggle_group_off"}}{{else}}{{t "exit_rules.toggle_group_on"}}{{end}}
+          </button>
+        </form>
       </div>
 
       {{/* THE CONTROLS SIT ABOVE THE TABLE AND BELOW IT. The operator's report was
@@ -407,7 +437,23 @@
                 <span class="tag" title="{{t "exit_rules.preferred_none_title"}}"><i class="fa-solid fa-question"></i></span>
               {{end}}
             </td>
-            <td>{{if $r.Enabled}}<span class="tag tag-success">{{t "exit_rules.row_on"}}</span>{{else}}<span class="tag tag-danger">{{t "exit_rules.row_off"}}</span>{{end}}</td>
+            <td>
+              {{/* B517: the per-row switch. A disabled row stays in place with its
+                   source and its group — that is the whole point of switching instead
+                   of deleting. */}}
+              <form method="post" action="/my/exit-rules/toggle" style="display:inline"
+                    onsubmit="return confirm('{{t "exit_rules.toggle_confirm"}}')">
+                <input type="hidden" name="scope" value="rule">
+                <input type="hidden" name="id" value="{{$r.ID}}">
+                <input type="hidden" name="enabled" value="{{if $r.Enabled}}0{{else}}1{{end}}">
+                <input type="hidden" name="back" value="{{$.SelfURL}}">
+                <button type="submit" class="btn btn-sm{{if not $r.Enabled}} btn-primary{{end}}" id="toggle-rule-{{$r.ID}}"
+                        title="{{if $r.Enabled}}{{t "exit_rules.toggle_off_title"}}{{else}}{{t "exit_rules.toggle_on_title"}}{{end}}">
+                  <i class="fa-solid fa-power-off"></i>
+                </button>
+              </form>
+              {{if $r.Enabled}}<span class="tag tag-success">{{t "exit_rules.row_on"}}</span>{{else}}<span class="tag tag-danger">{{t "exit_rules.row_off"}}</span>{{end}}
+            </td>
           </tr>
           {{end}}
         </table>
@@ -451,7 +497,24 @@
               {{else if eq $g.DisabledCount $g.Count}}<span class="tag tag-danger">{{t "exit_rules.group_off_all"}}</span>
               {{else}}<span class="tag tag-warning">{{tf "exit_rules.group_off_some" $g.DisabledCount $g.Count}}</span>{{end}}
             </td>
-            <td><a class="btn btn-sm btn-primary" href="{{$g.Href}}" title="{{t "exit_rules.group_open"}}" aria-label="{{t "exit_rules.group_open"}}"><i class="fa-solid fa-folder-open"></i></a></td>
+            <td>
+              {{/* B517: switch the whole card from the LIST, with the blast radius in
+                   the confirm. The state offered is the opposite of what the card
+                   holds: an all-on card offers «выключить», anything else offers
+                   «включить» (a partially disabled group is brought back in one click). */}}
+              <form method="post" action="/my/exit-rules/toggle" style="display:inline"
+                    onsubmit="return confirm('{{tf "exit_rules.toggle_confirm_group" $g.Count $g.SubnetCount}}')">
+                <input type="hidden" name="scope" value="group">
+                <input type="hidden" name="lens" value="{{$lv.Lens}}">
+                <input type="hidden" name="group" value="{{$g.Key}}">
+                <input type="hidden" name="enabled" value="{{if eq $g.DisabledCount 0}}0{{else}}1{{end}}">
+                <input type="hidden" name="back" value="{{$.SelfURL}}">
+                <button type="submit" class="btn btn-sm" title="{{if eq $g.DisabledCount 0}}{{t "exit_rules.toggle_off_title"}}{{else}}{{t "exit_rules.toggle_on_title"}}{{end}}">
+                  <i class="fa-solid fa-power-off"></i>
+                </button>
+              </form>
+              <a class="btn btn-sm btn-primary" href="{{$g.Href}}" title="{{t "exit_rules.group_open"}}" aria-label="{{t "exit_rules.group_open"}}"><i class="fa-solid fa-folder-open"></i></a>
+            </td>
           </tr>
           {{end}}
         </table>
@@ -655,7 +718,7 @@
                     {{range $row.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                       <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
                       <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
-                      <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="{{tf "exit_rules.auto_managed_title" .ParentDomain}}"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
+                      <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if not .Enabled}} <span class="tag tag-warning" title="{{t "exit_rules.row_off"}}">{{t "exit_rules.row_off"}}</span>{{end}}{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="{{tf "exit_rules.auto_managed_title" .ParentDomain}}"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
                       <td class="col-preferred">
                         {{/* The per-rule device is not in scope here (a target row
                              spans devices), so the badge leans on StatusByRuleID,
@@ -813,7 +876,7 @@
                     {{range $item.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                       <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
                       <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
-                      <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
+                      <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if not .Enabled}} <span class="tag tag-warning" title="{{t "exit_rules.row_off"}}">{{t "exit_rules.row_off"}}</span>{{end}}{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
                       <td class="col-preferred">
                         {{/* B286: a plain string, NOT `index $.DeviceInfos 0` —
                              an empty device list made the whole page fail with
@@ -869,7 +932,7 @@
                   {{range $item.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                     <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
                     <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
-                    <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
+                    <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if not .Enabled}} <span class="tag tag-warning" title="{{t "exit_rules.row_off"}}">{{t "exit_rules.row_off"}}</span>{{end}}{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
                     <td class="col-preferred">
                       {{/* B286: see the CDN-group copy above — no unguarded
                            `index` on a possibly empty slice. */}}
@@ -952,7 +1015,7 @@
                     {{range $item.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                       <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
                       <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
-                      <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span> <span class="tag tag-success" title="{{t "exit_rules.all_devices_fanout_tip"}}"><i class="fa-solid fa-users"></i> {{tf "exit_rules.all_devices_fanout_badge" $item.FanOutCount}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
+                      <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if not .Enabled}} <span class="tag tag-warning" title="{{t "exit_rules.row_off"}}">{{t "exit_rules.row_off"}}</span>{{end}} <span class="tag tag-success" title="{{t "exit_rules.all_devices_fanout_tip"}}"><i class="fa-solid fa-users"></i> {{tf "exit_rules.all_devices_fanout_badge" $item.FanOutCount}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
                       <td class="col-preferred">
                         {{$status := index $.StatusByRuleID .ID}}
                         {{if eq $status "approved"}}
@@ -999,7 +1062,7 @@
                   {{range $item.Rules}}<tr class="rule-row" id="rule-{{.ID}}" data-type="{{.TargetType}}" data-target="{{.TargetValue}}">
                     <td class="col-check"><input type="checkbox" class="rule-check" name="ids" value="{{.ID}}" form="multi-delete-form" onchange="updateSelCount()"></td>
                     <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
-                    <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span> <span class="tag tag-success" title="{{t "exit_rules.all_devices_fanout_tip"}}"><i class="fa-solid fa-users"></i> {{tf "exit_rules.all_devices_fanout_badge" $item.FanOutCount}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
+                    <td class="col-target"><code>{{.TargetValue}}</code> <span class="tag">{{.TargetType}}</span>{{if not .Enabled}} <span class="tag tag-warning" title="{{t "exit_rules.row_off"}}">{{t "exit_rules.row_off"}}</span>{{end}} <span class="tag tag-success" title="{{t "exit_rules.all_devices_fanout_tip"}}"><i class="fa-solid fa-users"></i> {{tf "exit_rules.all_devices_fanout_badge" $item.FanOutCount}}</span>{{if or (eq .TargetType "domain") (.ParentDomain)}} <span class="tag tag-info" title="Auto-managed by DNS auto-updater (parent: {{.ParentDomain}})"><i class="fa-solid fa-arrows-rotate"></i></span>{{end}}</td>
                     <td class="col-preferred">
                       {{$status := index $.StatusByRuleID .ID}}
                       {{if eq $status "approved"}}
