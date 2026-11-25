@@ -340,36 +340,54 @@ func (s *Service) PostMyExitRuleToggle(w http.ResponseWriter, r *http.Request) {
 	for _, id := range targetIDs {
 		intIDs = append(intIDs, int(id))
 	}
-	changed, err := db.SetDeviceRulesEnabled(s.dbc(), c.UserID, intIDs, desired)
+	changed, err := s.setRulesEnabled(c.UserID, c.Username, intIDs, desired, kind)
 	if err != nil {
 		http.Redirect(w, r, rulesBackWithFlash(back, "", 0, err.Error()), http.StatusSeeOther)
 		return
 	}
 
-	verb := "disabled"
 	state := "off"
 	if desired {
-		verb = "enabled"
 		state = "on"
 	}
-	detail := fmt.Sprintf("user %s %s %d rule(s) (%s)", c.Username, verb, changed, kind)
-	s.Backend.Audit(c.UserID, c.Username, "exit_rule_"+verb, detail)
+	http.Redirect(w, r, rulesBackWithFlash(back, state, changed, ""), http.StatusSeeOther)
+}
+
+// setRulesEnabled is the SHARED state-change tail: write, audit, one ACL drift
+// decision (plus the advertised-route re-sync when the policy actually moved).
+//
+// Extracted by B519 because the multi-select bar switches rules off and on through
+// its own endpoint: two copies of «write + audit + apply + re-sync» is how the
+// delete path once ended up with an audit row and no apply. There is exactly one
+// place that decides what a state change means, and both callers go through it.
+func (s *Service) setRulesEnabled(userID int64, username string, ids []int, enabled bool, kind string) (int64, error) {
+	changed, err := db.SetDeviceRulesEnabled(s.dbc(), userID, ids, enabled)
+	if err != nil {
+		return 0, err
+	}
+
+	verb := "disabled"
+	if enabled {
+		verb = "enabled"
+	}
+	detail := fmt.Sprintf("user %s %s %d rule(s) (%s)", username, verb, changed, kind)
+	s.Backend.Audit(userID, username, "exit_rule_"+verb, detail)
 
 	// The ACL tail every other rule mutation uses: regenerate, compare with the
 	// LIVE policy, write only on drift. A disabled rule can make the policy
 	// shrink, so the comparison is what decides — not the fact that a row changed.
 	res := s.applyACLIfDrifted("user-rule-toggle", detail)
 	logAction := db.ExitRuleActionDisable
-	if desired {
+	if enabled {
 		logAction = db.ExitRuleActionEnable
 	}
 	switch {
 	case res.Err != nil:
 		db.MarkACLFail(s.dbc(), res.Version, res.Err.Error())
 		db.AppendExitRuleLog(s.dbc(), res.Version, db.ExitRuleActionApplyFail,
-			fmt.Sprintf("user %s: %s %d rule(s): %v", c.Username, verb, changed, res.Err))
+			fmt.Sprintf("user %s: %s %d rule(s): %v", username, verb, changed, res.Err))
 		if s.Notifier != nil {
-			go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.apply_failed_toggle", c.Username, changed, res.Err))
+			go s.Notifier.SendAlert(i18n.Tf(i18n.LangRU, "alert.acl.apply_failed_toggle", username, changed, res.Err))
 		}
 	case res.Applied:
 		db.MarkACLApplied(s.dbc(), res.Version)
@@ -391,8 +409,7 @@ func (s *Service) PostMyExitRuleToggle(w http.ResponseWriter, r *http.Request) {
 		// still covers). Said in the journal, never as an error to the operator.
 		db.AppendExitRuleLog(s.dbc(), db.ExitRuleLogNoVersion, logAction,
 			fmt.Sprintf("%s (no ACL drift)", detail))
-		log.Printf("acl-drift: toggle by %s (%d rules, %s) did not require a re-apply", c.Username, changed, verb)
+		log.Printf("acl-drift: toggle by %s (%d rules, %s) did not require a re-apply", username, changed, verb)
 	}
-
-	http.Redirect(w, r, rulesBackWithFlash(back, state, changed, ""), http.StatusSeeOther)
+	return changed, nil
 }

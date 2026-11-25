@@ -415,11 +415,39 @@
         {{if .assigned_to}}{{tf "exit_rules.group_assign_ok" .assigned_to .group_assigned}}{{else}}{{tf "exit_rules.group_assign_cleared" .group_assigned}}{{end}}
       </div>
       {{end}}
+      {{if .selection_op}}
+      <div class="alert alert-success" id="selection-banner">
+        <i class="fa-solid fa-power-off"></i>
+        {{if eq .selection_op "on"}}{{tf "exit_rules.selection_ok_on" .selection_n}}{{else}}{{tf "exit_rules.selection_ok_off" .selection_n}}{{end}}
+      </div>
+      {{end}}
       {{if .source_err}}
       <div class="alert alert-danger" id="source-error">
         <i class="fa-solid fa-triangle-exclamation"></i> {{tf "exit_rules.source_err" .source_err}}
       </div>
       {{end}}
+      {{/* The counter and the select-all box of the B519 bar. Deliberately tiny and
+           scoped to the checkboxes bound to THIS form: the page may also render a
+           legacy view (with its own .rule-check set) behind ?view=, and a global
+           selector would then count rows the operator cannot see. */}}
+      <script>
+      (function(){
+        function boxes(){
+          return Array.prototype.slice.call(document.querySelectorAll('input.rule-check[form="rules-selection"]'));
+        }
+        window.skyRulesSelCount = function(){
+          var n = boxes().filter(function(b){ return b.checked; }).length;
+          var el = document.getElementById('rules-sel-count');
+          if (el) { el.textContent = n; }
+          var all = document.getElementById('rules-select-all');
+          if (all) { all.indeterminate = n > 0 && !all.checked; }
+        };
+        window.skyRulesSelAll = function(on){
+          boxes().forEach(function(b){ b.checked = on; });
+          skyRulesSelCount();
+        };
+      })();
+      </script>
 
       {{/* B518 — WHAT CAN BE DONE TO THE SOURCE AS A WHOLE. This is the half the
            operator asked for («если потребуется координально менять правила то
@@ -490,9 +518,46 @@
       </div>
 
       <h4 style="font-size:14px;margin:12px 0 6px 0"><i class="fa-solid fa-list"></i> {{t "exit_rules.rows_title"}}</h4>
+
+      {{/* B519 — «ВЫДЕЛИТЬ И СДЕЛАТЬ ОДНО» на странице группы. The pre-B516 page
+           had checkboxes and a multi-delete bar; the group page (the default since
+           B517) had neither, so ticking rows was impossible. One form carries every
+           verb: each button submits `op`, and «удалить» overrides the action with
+           `formaction` so it posts to the endpoint that owns the delete cascade
+           (B123/B277.4) — duplicating that cascade is how one of the two copies
+           loses it. The checkboxes live in the table and are bound here through the
+           `form` attribute, because a form may not wrap rows. */}}
+      <form id="rules-selection" method="post" action="/my/exit-rules/selection">
+        <input type="hidden" name="back" value="{{$.SelfURL}}">
+        <div class="multi-bar" id="rules-selection-bar">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px">
+            <input type="checkbox" id="rules-select-all" onchange="skyRulesSelAll(this.checked)">
+            {{t "exit_rules.select_all"}}
+          </label>
+          <span class="count">{{t "exit_rules.selected"}} <b id="rules-sel-count">0</b></span>
+          <input type="text" name="group_to" list="group-label-names" maxlength="{{$.GroupLabelMaxLen}}"
+                 placeholder="{{t "exit_rules.group_label_ph"}}" aria-label="{{t "exit_rules.group_label"}}"
+                 style="font-size:12px;padding:4px 6px;min-width:120px">
+          <button type="submit" name="op" value="group" class="btn btn-sm">
+            <i class="fa-solid fa-folder-plus"></i> {{t "exit_rules.group_assign_btn"}}
+          </button>
+          <button type="submit" name="op" value="disable" class="btn btn-sm">
+            <i class="fa-solid fa-power-off"></i> {{t "exit_rules.selection_off"}}
+          </button>
+          <button type="submit" name="op" value="enable" class="btn btn-sm">
+            <i class="fa-solid fa-power-off"></i> {{t "exit_rules.selection_on"}}
+          </button>
+          <span class="spacer"></span>
+          <button type="submit" formaction="/my/exit-rules/delete" class="btn btn-danger btn-sm"
+                  onclick="return confirm('{{t "exit_rules.confirm_multi_delete"}}')">
+            <i class="fa-solid fa-trash"></i> {{t "exit_rules.delete_selected"}}
+          </button>
+        </div>
+      </form>
       <div class="table-wrap">
         <table>
           <tr>
+            <th class="col-check"></th>
             <th>{{t "exit_rules.col_source"}}</th>
             <th>{{t "exit_rules.col_action"}}</th>
             <th>{{t "exit_rules.col_target"}}</th>
@@ -502,6 +567,11 @@
           </tr>
           {{range $r := $d.Rows}}
           <tr class="rule-row" id="rule-{{$r.ID}}" data-type="{{$r.TargetType}}" data-target="{{$r.TargetValue}}" data-device="{{$r.DeviceName}}">
+            <td class="col-check">
+              <input type="checkbox" class="rule-check" name="ids" value="{{$r.ID}}"
+                     form="rules-selection" aria-label="{{$r.TargetValue}}"
+                     onchange="skyRulesSelCount()">
+            </td>
             <td>
               {{if $r.SourceLabel}}<span class="tag tag-info" title="{{t "exit_rules.auto_managed_title"}}"><i class="fa-solid fa-arrows-rotate"></i> {{$r.SourceLabel}}</span>{{if $r.SourceCDN}} <span class="tag">{{tf "exit_rules.group_cdn" $r.SourceCDN}}</span>{{end}}{{else}}<span class="tag">{{t "exit_rules.source_manual"}}</span>{{end}}
             </td>

@@ -68,7 +68,7 @@ func rulesActionFlash(back string, kv map[string]string) string {
 		u = &url.URL{Path: rulesToggleBackPath}
 	}
 	q := u.Query()
-	for _, k := range []string{"group_assigned", "assigned_to", "source_resolved", "source_added", "source_removed", "source_err"} {
+	for _, k := range append([]string{"group_assigned", "assigned_to", "source_resolved", "source_added", "source_removed", "source_err"}, selectionFlashKeys...) {
 		q.Del(k)
 	}
 	for k, v := range kv {

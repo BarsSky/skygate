@@ -95,8 +95,8 @@ func TestB518_CardActionsCarryEveryRowNotOnePage(t *testing.T) {
 	rows := b518CardRows(120)
 	got := renderMyCard(t, rows, "source", "dom:big.example")
 
-	if n := strings.Count(got, `name="ids" value="`); n != 121 {
-		t.Errorf("the delete form carries %d ids, want 121 (the whole card: 1 domain + 120 subnets)", n)
+	if n := strings.Count(got, `type="hidden" name="ids" value="`); n != 121 {
+		t.Errorf("the delete form carries %d ids, want 121 (the whole card: 1 domain + 120 subnets); the HIDDEN inputs are the card action, the checkbox set is the B519 selection", n)
 	}
 	if n := strings.Count(got, `name="rule_id" value="`); n != 121 {
 		t.Errorf("the relay ask carries %d ids, want 121", n)

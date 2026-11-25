@@ -105,7 +105,8 @@ grep -q 'AllIDs \[\]int64' "$VIEW" \
   || B_MISS="${B_MISS}GroupDetailView does not carry the unpaged id set"$'\n'
 grep -q 'AllIDs: allIDs,' "$VIEW" \
   || B_MISS="${B_MISS}the detail view does not fill AllIDs"$'\n'
-# The template must address AllIDs, never Rows: Rows is one page.
+# The template must address AllIDs, never Rows: Rows is one page. The HIDDEN inputs
+# are the card action; the B519 checkbox set is a different thing (`class="rule-check"`).
 grep -q '{{range \$id := \$d.AllIDs}}<input type="hidden" name="ids" value="{{$id}}">{{end}}' "$TPL" \
   || B_MISS="${B_MISS}the card's delete does not post the whole card (it would act on one page of rows)"$'\n'
 grep -q '{{range \$id := \$d.AllIDs}}<input type="hidden" name="rule_id" value="{{$id}}">{{end}}' "$TPL" \

@@ -847,6 +847,10 @@ func registerRoutes(
 	// endpoints above rather than duplicating them.
 	mux.Handle("POST /my/exit-rules/assign-group", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRuleAssignGroup)))
 	mux.Handle("POST /my/exit-rules/source-resolve", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRuleSourceResolve)))
+	// B519: act on a SELECTION of rows — the capability the pre-B516 page had and the
+	// group page lost. One form, one `op` per submit button; «удалить» overrides the
+	// action with `formaction` so it posts to the endpoint that owns the cascade.
+	mux.Handle("POST /my/exit-rules/selection", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRuleSelection)))
 	// B328: turn an ALREADY SAVED single-device rule into an "all my devices" rule.
 	// The option existed only at save time (B275.3) plus the intent marker the periodic
 	// pass re-materialises (B276.1), so a rule created before the operator's second

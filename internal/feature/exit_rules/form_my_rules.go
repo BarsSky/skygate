@@ -1084,5 +1084,8 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		"source_added":    atoiOrZero(r.URL.Query().Get("source_added")),
 		"source_removed":  atoiOrZero(r.URL.Query().Get("source_removed")),
 		"source_err":      r.URL.Query().Get("source_err"),
+		// B519: the multi-select bar's outcome (its errors reuse source_err).
+		"selection_op": r.URL.Query().Get("selection_op"),
+		"selection_n":  atoiOrZero(r.URL.Query().Get("selection_n")),
 	})
 }
