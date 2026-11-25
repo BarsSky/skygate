@@ -90,13 +90,33 @@ if command -v go >/dev/null 2>&1; then
     FID=""
     for f in "$WORK"/*.html; do
       [ -f "$f" ] || continue
+      # Trap #15 applies inside this very contract: a measure that FAILED must not be
+      # reported as a product claim. Both greps below are checked for their own error
+      # output first.
+      ERRF="$(LC_ALL=C.UTF-8 grep -oE '>exit_rules[a-z_]*\.[a-z0-9_.]+<' "$f" 2>&1 >/dev/null || true)"
+      if [ -n "$ERRF" ]; then
+        FID="${FID}$(basename "$f"): could not scan for keys: ${ERRF}"$'\n'
+        continue
+      fi
       L="$(LC_ALL=C.UTF-8 grep -oE '>exit_rules[a-z_]*\.[a-z0-9_.]+<' "$f" || true)"
       if [ -n "$L" ]; then
         FID="${FID}$(basename "$f"): unlocalized key(s): $(printf '%s' "$L" | tr '\n' ' ')"$'\n'
       fi
-      RU="$(LC_ALL=C.UTF-8 grep -oE '[А-Яа-яЁё]{3,}' "$f" | head -1 || true)"
-      if [ -z "$RU" ]; then
-        FID="${FID}$(basename "$f"): no Russian text — the catalogue was not applied"$'\n'
+      # "Is there Russian text?" is measured in BYTES under LC_ALL=C, never with a
+      # [А-Я] bracket range: GNU grep 3.x answers "Invalid collation character" for a
+      # multibyte range in some locales, and the empty read that produced was reported
+      # as «the catalogue was not applied» — a fact about this check dressed up as a
+      # fact about the page. Measured on the reference VM 2026-11-25: the range failed
+      # there while the same line worked in Git Bash. Two consecutive high-bit bytes
+      # are one Cyrillic character in UTF-8, and 50 of them cannot be a stray glyph.
+      CYERR="$(LC_ALL=C grep -o $'[\x80-\xff][\x80-\xff]' "$f" 2>&1 >/dev/null || true)"
+      if [ -n "$CYERR" ]; then
+        FID="${FID}$(basename "$f"): could not measure Cyrillic: ${CYERR}"$'\n'
+        continue
+      fi
+      CYT="$(LC_ALL=C grep -o $'[\x80-\xff][\x80-\xff]' "$f" 2>/dev/null | wc -l | tr -d ' ')"
+      if [ "${CYT:-0}" -lt 50 ]; then
+        FID="${FID}$(basename "$f"): only ${CYT:-0} Cyrillic character(s) — the catalogue was not applied"$'\n'
       fi
     done
     if [ -z "$FID" ]; then
