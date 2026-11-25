@@ -265,6 +265,25 @@ else
   skip "G2: the live sub-script is missing"
 fi
 
+# --- H. a probe's verdict must not be decided by a foreign hostname ---------------
+# check_b270's live probe left HEADSCALE_URL at the compiled default. On the reference
+# host that name resolves to an unreachable machine, so FIVE 20-second client timeouts
+# put the OIDC block at +120 s while E3 waits 40 s — and the row said «the key-store
+# failure was not logged actionably» about a product that logged it a minute later
+# (measured directly: +120 s default, +1 s when the probe pins the URL).
+B270=scripts/check_b270_startup_blockers.sh
+H=""
+has "$B270" 'HEADSCALE_URL="http://127.0.0.1:1"' \
+  || H="${H}the OIDC probe does not pin HEADSCALE_URL, so its verdict depends on how fast a hostname fails"$'\n'
+has "$B270" 'at +1 s with this line' \
+  || H="${H}the probe does not record WHY the URL is pinned (the next reader will remove it)"$'\n'
+if [ -z "$H" ]; then
+  ok "H1: the OIDC probe controls the headscale endpoint it talks to, so E3 measures the product"
+else
+  bad "H1: the OIDC probe's verdict can still be a network timeout:"
+  printf '%s' "$H" | sed 's/^/       /' >&2
+fi
+
 # --- F. bookkeeping --------------------------------------------------------------
 F=""
 for f in "$DNS_GO" "$DNS_TEST" "$ACL_GO" "$ACL_TEST" "$LIB" "$B419_TEST"; do

@@ -200,11 +200,21 @@ else
   # MkdirAll fails identically on Linux and Windows.
   printf 'x' > "$TMPD/blocker"
   if go build -o "$BIN" -ldflags "-X main.version=v0.0.0-b270probe" ./cmd/skygate > "$TMPD/build.log" 2>&1; then
+    # B522 (measured 2026-11-25 on the reference install): the probe left HEADSCALE_URL at
+    # the compiled default `http://headscale:50444`. On a NATIVE host that name resolves to
+    # a machine the probe cannot reach, so the boot burned FIVE 20-second client timeouts
+    # (ensure headscale user, ensure infra user, infra-sanity, reconcile ListUsers, node
+    # backfill) and reached the OIDC block at +120 s — while E3 waits 40 s and then reported
+    # «the key-store failure was not logged actionably» about a product that logged it
+    # perfectly a minute later. Measured directly on that host: same binary, same blocker
+    # file, the message appeared at +120 s with the default URL and at +1 s with this line.
+    # A verdict about the OIDC block must not be decided by how fast a foreign hostname fails.
     SKYGATE_PORT="$PORT" \
     SKYGATE_DB="sqlite:$DSNROOT/state/skygate.db" \
     SKYGATE_OIDC_KEY_DIR="$DSNROOT/blocker/oidc-keys" \
     SKYGATE_ADMIN_PASS="b270-probe-not-a-secret" \
     HEADSCALE_API_KEY="b270-probe-not-a-key" \
+    HEADSCALE_URL="http://127.0.0.1:1" \
     SKYGATE_JWT_SECRET="b270-probe-not-a-jwt-secret" \
       "$BIN" > "$TMPD/out.log" 2>&1 &
     PROBE_PID=$!
