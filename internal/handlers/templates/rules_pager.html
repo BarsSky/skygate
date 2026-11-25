@@ -1,0 +1,29 @@
+{{/* B516/B520 — THE SHARED PAGER, in its own file so every page and every render test can include it. */}}
+{{/* B516 — THE PAGER, above and below the list. It renders the SAME shape for a
+     page of GROUPS and for a page of rows inside one group, so the two controls
+     cannot drift; every href is server-built (no href="#" + JS), which means the
+     controls work without JavaScript and copy the whole current query state
+     (filters, lens, page size) instead of throwing the operator back to page 1.
+
+     The aria-label spells the position out for a screen reader: «Страница 3 из 7»
+     is the same sentence the visible counter shows. */}}
+{{define "rules-pager"}}
+<nav class="pagination" style="display:flex;gap:4px;align-items:center;flex-wrap:wrap" aria-label="{{tf "exit_rules.pager_page_of" .Page .TotalPages}}">
+  {{if gt .Page 1}}
+  <a class="btn btn-sm" href="{{.FirstHref}}" title="{{t "exit_rules.pager_first"}}" aria-label="{{t "exit_rules.pager_first"}}"><i class="fa-solid fa-angles-left"></i></a>
+  <a class="btn btn-sm" href="{{.PrevHref}}" title="{{t "exit_rules.pager_prev"}}" aria-label="{{t "exit_rules.pager_prev"}}"><i class="fa-solid fa-chevron-left"></i></a>
+  {{end}}
+  {{range $p := .Pages}}{{if $p.Gap}}<span style="color:var(--text-muted);padding:0 2px">…</span>{{else}}<a class="btn btn-sm{{if $p.Active}} btn-primary{{end}}" href="{{$p.Href}}"{{if $p.Active}} aria-current="page"{{end}}>{{$p.Num}}</a>{{end}}{{end}}
+  {{if lt .Page .TotalPages}}
+  <a class="btn btn-sm" href="{{.NextHref}}" title="{{t "exit_rules.pager_next"}}" aria-label="{{t "exit_rules.pager_next"}}"><i class="fa-solid fa-chevron-right"></i></a>
+  <a class="btn btn-sm" href="{{.LastHref}}" title="{{t "exit_rules.pager_last"}}" aria-label="{{t "exit_rules.pager_last"}}"><i class="fa-solid fa-angles-right"></i></a>
+  {{end}}
+  <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pager_page_of" .Page .TotalPages}}</span>
+  <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted)">
+    {{t "exit_rules.pager_per"}}
+    <select onchange="if(this.value) location.href=this.value" aria-label="{{t "exit_rules.pager_per"}}" style="font-size:12px;padding:2px 6px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
+      {{range $o := .PerOptions}}<option value="{{$o.Href}}"{{if $o.Selected}} selected{{end}}>{{$o.Value}}</option>{{end}}
+    </select>
+  </label>
+</nav>
+{{end}}

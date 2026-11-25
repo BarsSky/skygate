@@ -612,6 +612,23 @@ const qCountAdminRuleGroups = `SELECT COUNT(*), COUNT(DISTINCT user_id) FROM (SE
 // «Все правила (N)» — so it must count what the page renders.
 const qSelectAllRulesForAdminCount = `SELECT COUNT(*) FROM device_rules WHERE enabled = 1`
 
+// B520: the admin window's SWITCHED-OFF view — the same four statements without the
+// enabled filter.
+//
+// They are separate constants rather than a parameterised predicate on purpose: the
+// enabled-only text is pinned by the B358/B351 contracts (that was the fix that made
+// the counters agree with the list), and rewriting those assertions for a view they
+// do not describe would weaken the guard that keeps them honest. The page needs both
+// views for ONE reason: the admin can switch a rule off, and a rule that vanishes
+// from the list cannot be switched back on from it.
+const qSelectAdminRuleGroupsAll = `SELECT r.user_id, MAX(COALESCE(u.username, '?')) AS user_name, r.device_id, COUNT(*) AS rule_count FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id GROUP BY r.user_id, r.device_id ORDER BY r.user_id, r.device_id LIMIT $1 OFFSET $2`
+
+const qCountAdminRuleGroupsAll = `SELECT COUNT(*), COUNT(DISTINCT user_id) FROM (SELECT user_id, device_id FROM device_rules GROUP BY user_id, device_id) g`
+
+const qSelectAllRulesForAdminCountAll = `SELECT COUNT(*) FROM device_rules`
+
+const qSelectAllRulesForAdminPagedAll = `SELECT r.id, r.user_id, r.device_id, r.exit_node_id, r.target_type, r.target_value, r.action, COALESCE(r.parent_domain, ''), r.created_at, r.enabled, COALESCE(r.device_ip, '') AS device_ip, COALESCE(u.username, '?') AS user_name, COALESCE(r.all_devices, 0) AS all_devices, COALESCE(r.group_label, '') AS group_label FROM device_rules r LEFT JOIN portal_users u ON u.id = r.user_id WHERE (%s) ORDER BY r.user_id, r.device_id, r.id`
+
 // qSelectAllRulesForAdminByDevice is the cross-user admin view
 // filtered to a single device hostname. The LEFT JOIN onto
 // node_owner_map is what lets us filter by hostname (which is

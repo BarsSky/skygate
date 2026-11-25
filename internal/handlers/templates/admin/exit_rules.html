@@ -329,6 +329,19 @@
 {{end}}
 
 <div class="card">
+  {{/* B520: the per-rule switch outcome. It travels in the query string like every
+       other flash on this page, so a refresh cannot resubmit the form. */}}
+  {{if .admin_toggled}}
+  <div class="alert alert-success" id="admin-toggle-banner">
+    <i class="fa-solid fa-power-off"></i>
+    {{if eq .admin_toggled "on"}}{{tf "exit_rules.toggle_ok_on" .admin_n}}{{else}}{{tf "exit_rules.toggle_ok_off" .admin_n}}{{end}}
+  </div>
+  {{end}}
+  {{if .admin_err}}
+  <div class="alert alert-danger" id="admin-toggle-error">
+    <i class="fa-solid fa-triangle-exclamation"></i> {{tf "exit_rules.source_err" .admin_err}}
+  </div>
+  {{end}}
   {{/* B449 (2026-10-30) — «не хватает у Все правила возможности свернуть этот блок, так как он
        слишком большой и долго прокручивать в самый низ». The tree inside can be collapsed group
        by group (B376/B448), but the CARD ITSELF had no fold: with 291 rules the page is a wall
@@ -359,22 +372,14 @@
   <nav class="pagination" style="margin:8px 0;display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap">
     <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules_admin.pagination_page_of_groups" .RulePage.Page (divceil .RulePage.TotalGroups .RulePage.PageSize)}}</span>
     <span style="font-size:12px;color:var(--text-muted)">({{tf "exit_rules_admin.pagination_total_groups" .RulePage.TotalGroups .RulePage.TotalUsers}})</span>
-    {{if gt .RulePage.Page 1}}<a class="btn btn-sm" id="admin-page-prev" href="#"><i class="fa-solid fa-chevron-left"></i> {{t "exit_rules.prev_page"}}</a>{{end}}
-    {{if lt .RulePage.Page (divceil .RulePage.TotalGroups .RulePage.PageSize)}}<a class="btn btn-sm" id="admin-page-next" href="#"><i class="fa-solid fa-chevron-right"></i> {{t "exit_rules.next_page"}}</a>{{end}}
+    {{/* B520: the NUMBERED strip, the same define the user page renders. It replaces
+         the old JS prev/next pair (their `href="#"` + URLSearchParams dance is what
+         `rules-pager` does server-side, and it now also keeps the drill-down and the
+         switched-off view). The `divceil` line above stays: it is the group-arithmetic
+         contract (B358 C1) and keeps the totals line honest on a page whose rows are
+         groups. */}}
+    {{with .AdminPager}}{{template "rules-pager" .}}{{end}}
   </nav>
-  <script>
-  (function(){
-    var params = new URLSearchParams(window.location.search);
-    function buildUrl(newPage){
-      params.set('page', newPage);
-      return '?' + params.toString();
-    }
-    var prev = document.getElementById('admin-page-prev');
-    var next = document.getElementById('admin-page-next');
-    if (prev) prev.href = buildUrl(String({{.RulePage.Page}}) - 1);
-    if (next) next.href = buildUrl(String({{.RulePage.Page}}) + 1);
-  })();
-  </script>
   {{end}}
 
   {{/* B376: collapse / expand EVERY level of the cross-user tree (user → device
@@ -394,6 +399,12 @@
     <span style="font-size:12px;color:var(--text-muted)">{{t "exit_rules.view_label"}}</span>
     <a class="btn btn-sm {{if eq .ViewMode "target"}}btn-primary{{end}}" id="admin-view-target-link" href="/admin/exit-rules?view=target">{{t "exit_rules.view_target"}}</a>
     <a class="btn btn-sm {{if eq .ViewMode "device"}}btn-primary{{end}}" id="admin-view-device-link" href="/admin/exit-rules?view=device">{{t "exit_rules.view_device"}}</a>
+    {{/* B520: the switched-off view. The list is enabled-only, so this is the only
+         way to see (and switch back on) a rule this page switched off. */}}
+    <a class="btn btn-sm {{if .ShowDisabled}}btn-primary{{end}}" id="admin-show-disabled" href="{{.ShowDisabledHref}}">
+      <i class="fa-solid {{if .ShowDisabled}}fa-eye{{else}}fa-eye-slash{{end}}"></i>
+      {{if .ShowDisabled}}{{t "exit_rules_admin.only_enabled"}}{{else}}{{t "exit_rules_admin.show_disabled"}}{{end}}
+    </a>
     <span class="spacer"></span>
     <button type="button" class="btn btn-sm" onclick="skyToggleAllDetails(true)" title="{{t "exit_rules.expand_all_title"}}"><i class="fa-solid fa-angles-down"></i> {{t "exit_rules.expand_all"}}</button>
     <button type="button" class="btn btn-sm" onclick="skyToggleAllDetails(false)" title="{{t "exit_rules.collapse_all_title"}}"><i class="fa-solid fa-angles-up"></i> {{t "exit_rules.collapse_all"}}</button>
@@ -452,8 +463,8 @@
                 {{range $row.Rules}}<tr>
                   <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
                   <td><span class="tag">{{.TargetType}}</span></td>
-                  <td class="col-target"><code>{{.TargetValue}}</code></td>
-                  <td>{{if .ParentDomain}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
+                  <td class="col-target"><code>{{.TargetValue}}</code>{{if not .Enabled}} <span class="tag tag-warning" title="{{t "exit_rules.row_off"}}">{{t "exit_rules.row_off"}}</span>{{end}}</td>
+                  <td>{{if .SourceLabel}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.SourceLabel}}</span>{{if .SourceCDN}} <span class="tag">{{tf "exit_rules.group_cdn" .SourceCDN}}</span>{{end}}{{end}}</td>
                   <td class="col-preferred">
                     {{if not .Applicable}}
                       <span class="tag tag-danger" title="{{tf "exit_rules_admin.preferred_mismatch_title" .PreferredHost}}"><i class="fa-solid fa-triangle-exclamation"></i> {{.PreferredHost}}</span>
@@ -539,8 +550,8 @@
                       <td><input type="checkbox" form="bulk-relay-form" name="rule_ids" value="{{.ID}}" aria-label="{{tf "exit_rules_admin.bulk_relay_check" .TargetValue}}"></td>
                       <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
                       <td><span class="tag">{{.TargetType}}</span></td>
-                      <td class="col-target"><code>{{.TargetValue}}</code></td>
-                      <td>{{if .ParentDomain}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
+                      <td class="col-target"><code>{{.TargetValue}}</code>{{if not .Enabled}} <span class="tag tag-warning" title="{{t "exit_rules.row_off"}}">{{t "exit_rules.row_off"}}</span>{{end}}</td>
+                      <td>{{if .SourceLabel}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.SourceLabel}}</span>{{if .SourceCDN}} <span class="tag">{{tf "exit_rules.group_cdn" .SourceCDN}}</span>{{end}}{{end}}</td>
                       <td class="col-preferred">
                         {{if not .Applicable}}
                           <span class="tag tag-danger" title="{{tf "exit_rules_admin.preferred_mismatch_title" .PreferredHost}}"><i class="fa-solid fa-triangle-exclamation"></i> {{.PreferredHost}}</span>
@@ -552,6 +563,14 @@
                       </td>
                       <td class="mono" style="font-size:11px">{{.CreatedAt}}</td>
                       <td class="col-delete">
+                        {{/* B520: the per-row switch, next to delete: switching off is the reversible verb the page was missing, and the chip above says when a row IS off. */}}
+                        <form method="post" action="/admin/exit-rules/toggle" style="display:inline" onsubmit="return confirm('{{t "exit_rules.toggle_confirm"}}')">
+                          <input type="hidden" name="id" value="{{.ID}}">
+                          <input type="hidden" name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}">
+                          <input type="hidden" name="back" value="{{$.SelfURL}}">
+                          {{if $.ShowDisabled}}<input type="hidden" name="show_disabled" value="1">{{end}}
+                          <button type="submit" class="btn btn-sm" title="{{if .Enabled}}{{t "exit_rules.toggle_off_title"}}{{else}}{{t "exit_rules.toggle_on_title"}}{{end}}"><i class="fa-solid fa-power-off"></i></button>
+                        </form>
                         <form method="post" action="/admin/exit-rules/delete" style="display:inline" onsubmit="return confirm('{{tf "exit_rules_admin.delete_confirm" .ID}}')">
                           <input type="hidden" name="id" value="{{.ID}}">
                           <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
@@ -568,8 +587,8 @@
                     <td><input type="checkbox" form="bulk-relay-form" name="rule_ids" value="{{.ID}}" aria-label="{{tf "exit_rules_admin.bulk_relay_check" .TargetValue}}"></td>
                     <td class="col-action">{{if eq .Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
                     <td><span class="tag">{{.TargetType}}</span></td>
-                    <td class="col-target"><code>{{.TargetValue}}</code></td>
-                    <td>{{if .ParentDomain}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.ParentDomain}}</span>{{end}}</td>
+                    <td class="col-target"><code>{{.TargetValue}}</code>{{if not .Enabled}} <span class="tag tag-warning" title="{{t "exit_rules.row_off"}}">{{t "exit_rules.row_off"}}</span>{{end}}</td>
+                    <td>{{if .SourceLabel}}<span class="tag tag-info" title="{{t "exit_rules_admin.auto_managed"}}"><i class="fa-solid fa-arrows-rotate"></i> {{.SourceLabel}}</span>{{if .SourceCDN}} <span class="tag">{{tf "exit_rules.group_cdn" .SourceCDN}}</span>{{end}}{{end}}</td>
                     <td class="col-preferred">
                       {{if not .Applicable}}
                         <span class="tag tag-danger" title="{{tf "exit_rules_admin.preferred_mismatch_title" .PreferredHost}}"><i class="fa-solid fa-triangle-exclamation"></i> {{.PreferredHost}}</span>
@@ -581,6 +600,14 @@
                     </td>
                     <td class="mono" style="font-size:11px">{{.CreatedAt}}</td>
                     <td class="col-delete">
+                      {{/* B520: the per-row switch (see the grouped table above). */}}
+                      <form method="post" action="/admin/exit-rules/toggle" style="display:inline" onsubmit="return confirm('{{t "exit_rules.toggle_confirm"}}')">
+                        <input type="hidden" name="id" value="{{.ID}}">
+                        <input type="hidden" name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}">
+                        <input type="hidden" name="back" value="{{$.SelfURL}}">
+                        {{if $.ShowDisabled}}<input type="hidden" name="show_disabled" value="1">{{end}}
+                        <button type="submit" class="btn btn-sm" title="{{if .Enabled}}{{t "exit_rules.toggle_off_title"}}{{else}}{{t "exit_rules.toggle_on_title"}}{{end}}"><i class="fa-solid fa-power-off"></i></button>
+                      </form>
                       <form method="post" action="/admin/exit-rules/delete" style="display:inline" onsubmit="return confirm('{{tf "exit_rules_admin.delete_confirm" .ID}}')">
                         <input type="hidden" name="id" value="{{.ID}}">
                         <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>

@@ -189,11 +189,17 @@ grep -q 'id="rules-pager-top"' "$TPL" \
   || C_MISS="${C_MISS}the pager is not ABOVE the table — the operator must not have to scroll to the bottom to change page"$'\n'
 grep -q 'id="rules-pager-bottom"' "$TPL" \
   || C_MISS="${C_MISS}the pager is not BELOW the table"$'\n'
-grep -q '{{define "rules-pager"}}' "$TPL" \
+# RENEGOTIATED by B520 (2026-11-25), in place: the define moved into its own file
+# `templates/rules_pager.html` because the ADMIN page now renders it too (B520), and
+# a render test that parses one body file could not see a define living in another
+# page's file. The property is unchanged — ONE shared define, rendered in both
+# positions — only its location moved.
+PAGER=internal/handlers/templates/rules_pager.html
+grep -q '{{define "rules-pager"}}' "$PAGER" \
   || C_MISS="${C_MISS}the pager is not a shared define (the two positions would drift)"$'\n'
-grep -q '{{range \$p := .Pages}}' "$TPL" \
+grep -q '{{range \$p := .Pages}}' "$PAGER" \
   || C_MISS="${C_MISS}the pager renders no page NUMBERS (prev/next only is the report)"$'\n'
-grep -q 'aria-current="page"' "$TPL" \
+grep -q 'aria-current="page"' "$PAGER" \
   || C_MISS="${C_MISS}the current page is not marked for a screen reader"$'\n'
 if grep -q 'href="#"' "$TPL"; then
   # The OLD pagination block is expected to keep its js-built hrefs until it is

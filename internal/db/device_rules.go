@@ -521,6 +521,22 @@ type AdminRulePage struct {
 	PageSize int
 }
 
+// AdminPageOption tunes the admin window without changing its signature for the
+// callers that predate B520 (the tests included).
+type AdminPageOption func(*adminPageOptions)
+
+type adminPageOptions struct{ includeDisabled bool }
+
+// AdminPageIncludeDisabled widens the window to rules with enabled = 0.
+//
+// B520 made the admin page able to SWITCH A RULE OFF, and the list is enabled-only
+// by construction (B358's counters are): a switched-off rule would vanish with no
+// way to bring it back from the page that switched it off, which is the «only
+// delete and add» trap this whole rework is about, one role up.
+func AdminPageIncludeDisabled() AdminPageOption {
+	return func(o *adminPageOptions) { o.includeDisabled = true }
+}
+
 // GetAllRulesForAdminPaged (v1.5.43; window unit renegotiated by B358) returns one
 // page of admin rules plus the database's unpaginated totals.
 //
@@ -533,7 +549,7 @@ type AdminRulePage struct {
 // The rows are fetched by whole groups (never by a row window), so a device's rules
 // can never be split across two pages. A database failure at any step is returned
 // with the step's name; all four statements are read-only.
-func GetAllRulesForAdminPaged(d *sql.DB, page, groupsPerPage int) (AdminRulePage, error) {
+func GetAllRulesForAdminPaged(d *sql.DB, page, groupsPerPage int, opts ...AdminPageOption) (AdminRulePage, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -544,18 +560,36 @@ func GetAllRulesForAdminPaged(d *sql.DB, page, groupsPerPage int) (AdminRulePage
 		groupsPerPage = pageSizeClamp
 	}
 
-	// The heading total: every ENABLED rule, unpaginated (B358 fixed the missing
-	// `enabled = 1`, which made this count disagree with every other counter as soon
-	// as a rule was disabled).
+	// B520: the switched-off view. Default = the enabled-only statements, unchanged.
+	var o adminPageOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	countRulesSQL := qSelectAllRulesForAdminCount
+	countGroupsSQL := qCountAdminRuleGroups
+	groupsSQL := qSelectAdminRuleGroups
+	rowsSQL := qSelectAllRulesForAdminPaged
+	if o.includeDisabled {
+		countRulesSQL = qSelectAllRulesForAdminCountAll
+		countGroupsSQL = qCountAdminRuleGroupsAll
+		groupsSQL = qSelectAdminRuleGroupsAll
+		rowsSQL = qSelectAllRulesForAdminPagedAll
+	}
+
+	// The heading total: every rule of the view, unpaginated (B358 fixed the missing
+	// `enabled = 1` on the enabled view, which made this count disagree with every
+	// other counter as soon as a rule was disabled).
 	var totalRules int
-	if err := d.QueryRow(qSelectAllRulesForAdminCount).Scan(&totalRules); err != nil {
+	if err := d.QueryRow(countRulesSQL).Scan(&totalRules); err != nil {
 		return AdminRulePage{}, fmt.Errorf("count device_rules: %w", err)
 	}
 
 	// The window's own totals: how many groups exist (that is what paginates) and how
 	// many users own them.
 	var totalGroups, totalUsers int
-	if err := d.QueryRow(qCountAdminRuleGroups).Scan(&totalGroups, &totalUsers); err != nil {
+	if err := d.QueryRow(countGroupsSQL).Scan(&totalGroups, &totalUsers); err != nil {
 		return AdminRulePage{}, fmt.Errorf("count admin rule groups: %w", err)
 	}
 
@@ -568,7 +602,7 @@ func GetAllRulesForAdminPaged(d *sql.DB, page, groupsPerPage int) (AdminRulePage
 	}
 	offset := (page - 1) * groupsPerPage
 
-	groups, err := adminRuleGroupsPage(d, groupsPerPage, offset)
+	groups, err := adminRuleGroupsPage(d, groupsPerPage, offset, groupsSQL)
 	if err != nil {
 		return AdminRulePage{}, err
 	}
@@ -589,7 +623,7 @@ func GetAllRulesForAdminPaged(d *sql.DB, page, groupsPerPage int) (AdminRulePage
 
 	// Whole groups, however many rows they hold: ONE query for every group on the
 	// page. Fetching per group would be N round-trips; a row window would split one.
-	query, args := adminRulesForGroupsQuery(groups)
+	query, args := adminRulesForGroupsQuerySQL(groups, rowsSQL)
 	rows, err := d.Query(query, args...)
 	if err != nil {
 		return AdminRulePage{}, fmt.Errorf("page admin device_rules: %w", err)
@@ -604,9 +638,10 @@ func GetAllRulesForAdminPaged(d *sql.DB, page, groupsPerPage int) (AdminRulePage
 }
 
 // adminRuleGroupsPage reads the window: the groups of one page, ordered by the group
-// key so the rendered order is stable across requests.
-func adminRuleGroupsPage(d *sql.DB, limit, offset int) ([]AdminRuleGroup, error) {
-	rows, err := d.Query(qSelectAdminRuleGroups, limit, offset)
+// key so the rendered order is stable across requests. `q` is the statement to run
+// (the enabled-only one or its B520 switched-off sibling).
+func adminRuleGroupsPage(d *sql.DB, limit, offset int, q string) ([]AdminRuleGroup, error) {
+	rows, err := d.Query(q, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("page admin rule groups: %w", err)
 	}
@@ -634,6 +669,12 @@ func adminRuleGroupsPage(d *sql.DB, limit, offset int) ([]AdminRuleGroup, error)
 // Callers pass a non-empty group slice (GetAllRulesForAdminPaged returns before
 // calling it otherwise), so the returned predicate is never empty.
 func adminRulesForGroupsQuery(groups []AdminRuleGroup) (string, []any) {
+	return adminRulesForGroupsQuerySQL(groups, qSelectAllRulesForAdminPaged)
+}
+
+// adminRulesForGroupsQuerySQL is the same fetch against a named statement (B520's
+// switched-off sibling), so the OR-chain predicate has exactly one implementation.
+func adminRulesForGroupsQuerySQL(groups []AdminRuleGroup, sqlTpl string) (string, []any) {
 	parts := make([]string, 0, len(groups))
 	args := make([]any, 0, len(groups)*2)
 	total := len(groups) * 2
@@ -642,7 +683,7 @@ func adminRulesForGroupsQuery(groups []AdminRuleGroup) (string, []any) {
 			" AND r.device_id = "+PlaceholderAt(total, i*2+1)+")")
 		args = append(args, g.UserID, g.DeviceID)
 	}
-	return fmt.Sprintf(qSelectAllRulesForAdminPaged, strings.Join(parts, " OR ")), args
+	return fmt.Sprintf(sqlTpl, strings.Join(parts, " OR ")), args
 }
 
 // scanAdminRules reads the admin SELECT result (12 columns incl.

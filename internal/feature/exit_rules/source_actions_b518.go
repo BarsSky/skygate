@@ -63,12 +63,33 @@ func (s *Service) ownerRuleRows(userID int64) ([]RuleRow, error) {
 // same way the toggle does. Kept separate so the two actions cannot drift in how
 // they report.
 func rulesActionFlash(back string, kv map[string]string) string {
-	u, err := url.Parse(safeRulesBack(back))
+	return flashWith(safeRulesBack(back), kv,
+		append([]string{"group_assigned", "assigned_to", "source_resolved", "source_added", "source_removed", "source_err"}, selectionFlashKeys...)...)
+}
+
+// adminFlashKeys are the query keys the admin page's own flashes use (B520).
+// `show_disabled` is deliberately NOT one of them: it is a VIEW, not a flash, and
+// clearing it in the same step that writes the outcome would throw the operator out
+// of the switched-off view they were reading.
+var adminFlashKeys = []string{"admin_toggled", "admin_n", "admin_err"}
+
+// adminRulesFlash is the admin twin of rulesActionFlash: same shape, admin path,
+// admin flash keys.
+func adminRulesFlash(back string, kv map[string]string) string {
+	return flashWith(safeAdminRulesBack(back), kv, adminFlashKeys...)
+}
+
+// flashWith amends a return URL with an outcome: the keys in `clear` are dropped
+// first (an older banner must not survive a newer action), then every non-empty kv
+// is set. A URL that already carries a query is amended, not concatenated with a
+// second `?`.
+func flashWith(back string, kv map[string]string, clear ...string) string {
+	u, err := url.Parse(back)
 	if err != nil {
 		u = &url.URL{Path: rulesToggleBackPath}
 	}
 	q := u.Query()
-	for _, k := range append([]string{"group_assigned", "assigned_to", "source_resolved", "source_added", "source_removed", "source_err"}, selectionFlashKeys...) {
+	for _, k := range clear {
 		q.Del(k)
 	}
 	for k, v := range kv {

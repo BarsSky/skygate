@@ -896,6 +896,10 @@ func registerRoutes(
 	// and then runs that owner's own cascade, see admin_delete_b379.go) and re-checks
 	// IsAdmin itself, like PostAdminExitRule above.
 	mux.Handle("POST /admin/exit-rules/delete", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRuleDelete)))
+	// B520: switch another user's rule on and off. The owner is resolved per id and the
+	// audit row names the ADMIN, not the owner (the row is the owner's, the decision is
+	// the admin's); `?show_disabled=1` keeps the switched-off view the operator was in.
+	mux.Handle("POST /admin/exit-rules/toggle", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRuleToggle)))
 	// B376: the admin twin of the bulk form — same fields, plus the target
 	// user. The handler does its own IsAdmin check (defense-in-depth), exactly
 	// like PostAdminExitRule above.

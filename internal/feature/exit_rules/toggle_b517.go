@@ -52,23 +52,32 @@ import (
 // can name another origin is how an open redirect ships.
 const rulesToggleBackPath = "/my/exit-rules"
 
-// safeRulesBack validates the `back` field the forms carry.
+// adminRulesPath is the admin twin of the above (B520).
+const adminRulesPath = "/admin/exit-rules"
+
+// safeRulesBack validates the `back` field the my-page forms carry.
+func safeRulesBack(raw string) string { return safePageBack(raw, rulesToggleBackPath) }
+
+// safeAdminRulesBack validates the `back` field the admin page forms carry.
+func safeAdminRulesBack(raw string) string { return safePageBack(raw, adminRulesPath) }
+
+// safePageBack validates the `back` field a form carries.
 //
-// The rule is exact rather than a prefix: the parsed PATH must BE the rules page
-// and the URL must name no scheme and no host. A prefix check looked sufficient
-// and is not — `/my/exit-rules/../../admin` starts with the right text and the
-// browser normalises it to `/admin`, so a "return address" would have become a
-// redirect to another page of the panel. Backslashes and control characters are
-// refused before parsing, because some clients normalise them into separators and
-// a newline in a Location header is header injection.
-func safeRulesBack(raw string) string {
+// The rule is exact rather than a prefix: the parsed PATH must BE the page and the
+// URL must name no scheme and no host. A prefix check looked sufficient and is not —
+// `/my/exit-rules/../../admin` starts with the right text and the browser normalises
+// it to `/admin`, so a "return address" would have become a redirect to another page
+// of the panel. Backslashes and control characters are refused before parsing,
+// because some clients normalise them into separators and a newline in a Location
+// header is header injection.
+func safePageBack(raw, want string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || strings.ContainsAny(raw, "\\\n\r\t\x00") {
-		return rulesToggleBackPath
+		return want
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "" || u.Host != "" || u.Path != rulesToggleBackPath {
-		return rulesToggleBackPath
+	if err != nil || u.Scheme != "" || u.Host != "" || u.Path != want {
+		return want
 	}
 	return raw
 }

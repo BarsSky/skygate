@@ -27,13 +27,21 @@ import (
 // loadExitRulesBody parses one exit-rules body with the same minimal funcmap the
 // other render tests use (mirrors templates.go, so an unregistered helper fails
 // here instead of on the page).
+//
+// B520: the SHARED pager define lives in templates/rules_pager.html (both pages call
+// it), and a template set that parses only the body would fail with «no such
+// template "rules-pager"» — the admin page did exactly that. The helper therefore
+// parses the pager file first, so every body sees the same define production sees.
 func loadExitRulesBody(t *testing.T, file string) *template.Template {
 	t.Helper()
-	data, err := templatesFS.ReadFile(file)
-	if err != nil {
-		t.Fatalf("read %s: %v", file, err)
+	read := func(name string) string {
+		data, err := templatesFS.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(data)
 	}
-	tpl, err := template.New("test").Funcs(template.FuncMap{
+	tpl := template.New("test").Funcs(template.FuncMap{
 		"t":        func(key string) string { return key },
 		"tf":       func(key string, args ...any) string { return key },
 		"safeJS":   func(s string) template.JS { return template.JS(s) },
@@ -45,8 +53,11 @@ func loadExitRulesBody(t *testing.T, file string) *template.Template {
 		},
 		"usageLevel": func(used, max int) string { return "ok" },
 		"divceil":    func(a, b int) int { return (a + b - 1) / b },
-	}).Parse(string(data))
-	if err != nil {
+	})
+	if _, err := tpl.Parse(read("templates/rules_pager.html")); err != nil {
+		t.Fatalf("parse templates/rules_pager.html: %v", err)
+	}
+	if _, err := tpl.Parse(read(file)); err != nil {
 		t.Fatalf("parse %s: %v", file, err)
 	}
 	return tpl

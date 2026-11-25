@@ -317,10 +317,15 @@ var ruExitRules = map[string]string{
 	"exit_rules.group_assign_cleared":        "Снята группа у правил: %d",
 	"exit_rules.relay_request_confirm_group": "Запросить смену релея для %d правил(а) этой группы?",
 	// B519: мультивыделение на странице группы — подписи кнопок панели и итог.
-	"exit_rules.selection_off":                     "Выключить выбранные",
-	"exit_rules.selection_on":                      "Включить выбранные",
-	"exit_rules.selection_ok_off":                  "Выключено правил: %d",
-	"exit_rules.selection_ok_on":                   "Включено правил: %d",
+	"exit_rules.selection_off":    "Выключить выбранные",
+	"exit_rules.selection_on":     "Включить выбранные",
+	"exit_rules.selection_ok_off": "Выключено правил: %d",
+	"exit_rules.selection_ok_on":  "Включено правил: %d",
+	// B520: админская страница — фильтр выключенных правил. Список админки по
+	// построению только включённый (B358), поэтому это единственный способ увидеть
+	// (и включить обратно) правило, выключенное с этой же страницы.
+	"exit_rules_admin.show_disabled":               "Показать выключенные",
+	"exit_rules_admin.only_enabled":                "Только включённые",
 	"exit_rules.expand_all":                        "Развернуть всё",
 	"exit_rules.expand_all_title":                  "Развернуть все группы правил на странице",
 	"exit_rules.collapse_all":                      "Свернуть всё",
@@ -951,10 +956,13 @@ var enExitRules = map[string]string{
 	"exit_rules.group_assign_cleared":        "Removed the group from %d rule(s)",
 	"exit_rules.relay_request_confirm_group": "Ask for another relay for %d rule(s) of this group?",
 	// B519 (see the RU map).
-	"exit_rules.selection_off":                     "Switch the selected off",
-	"exit_rules.selection_on":                      "Switch the selected on",
-	"exit_rules.selection_ok_off":                  "%d rule(s) switched off",
-	"exit_rules.selection_ok_on":                   "%d rule(s) switched on",
+	"exit_rules.selection_off":    "Switch the selected off",
+	"exit_rules.selection_on":     "Switch the selected on",
+	"exit_rules.selection_ok_off": "%d rule(s) switched off",
+	"exit_rules.selection_ok_on":  "%d rule(s) switched on",
+	// B520 (see the RU map).
+	"exit_rules_admin.show_disabled":               "Show switched-off",
+	"exit_rules_admin.only_enabled":                "Enabled only",
 	"exit_rules.expand_all":                        "Expand all",
 	"exit_rules.expand_all_title":                  "Expand every rule group on the page",
 	"exit_rules.collapse_all":                      "Collapse all",

@@ -184,7 +184,12 @@ fi
 # --- E: the safety rails -------------------------------------------------------
 E_MISS=""
 # The return address is an INPUT: it must be the rules page exactly.
-grep -q 'u.Path != rulesToggleBackPath' "$SVC" \
+# RENEGOTIATED by B520 (2026-11-25), in place: the same exact-path rule now lives in
+# safePageBack(raw, want), because the ADMIN page needs the identical validation
+# against its own path. The property is unchanged — a return address must BE the
+# page, not merely start with it — and safeRulesBack still pins the my-page path it
+# delegates with.
+grep -q 'u.Path != want' "$SVC" \
   || E_MISS="${E_MISS}the return path is not an exact match — /my/exit-rules/../../admin starts with the right prefix"$'\n'
 grep -q 'targetIDs = intersectRuleIDs(ruleRows, targetIDs)' "$SVC" \
   || E_MISS="${E_MISS}the ids are not intersected with the caller's rows (a stale or crafted id would reach the UPDATE)"$'\n'

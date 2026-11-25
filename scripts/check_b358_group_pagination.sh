@@ -121,7 +121,7 @@ fi
 # rows of those groups — one query for all of them, never one query per group.
 GBODY="$(awk '/^func GetAllRulesForAdminPaged\(/,/^}/' "$DB")"
 GROUPS_AT="$(printf '%s\n' "$GBODY" | grep -n 'adminRuleGroupsPage(' | head -1 | cut -d: -f1)"
-ROWS_AT="$(printf '%s\n' "$GBODY" | grep -n 'adminRulesForGroupsQuery(' | head -1 | cut -d: -f1)"
+ROWS_AT="$(printf '%s\n' "$GBODY" | grep -n 'adminRulesForGroupsQuerySQL(' | head -1 | cut -d: -f1)"
 ROW_QUERIES="$(printf '%s\n' "$GBODY" | grep -c 'd\.Query(' || true)"
 if [ -n "$GROUPS_AT" ] && [ -n "$ROWS_AT" ] \
    && [ "${GROUPS_AT:-0}" -lt "${ROWS_AT:-0}" ] \

@@ -60,6 +60,11 @@ type AdminRule struct {
 	// admin view had no way to tell a per-device rule apart
 	// from a fan-out copy of an all_devices rule.
 	AllDevices bool
+	// Enabled is device_rules.enabled (B520). The admin can switch a rule off from
+	// this page now, and a switched-off rule has to LOOK switched off — the page
+	// renders the row dimmed with its own chip, because a row that silently vanished
+	// is indistinguishable from a deleted one (and could not be switched back on).
+	Enabled bool
 	// 2026-08-25 (B178): preferred exit-node hostname for
 	// this (user, device) pair. Empty when no per-device /
 	// per-user pref is set. The admin template renders a
@@ -100,6 +105,33 @@ type AdminRule struct {
 	// resolution yet, or resolution exists but headscale
 	// hasn't approved any of the resolved CIDRs).
 	ApprovedInHeadscale bool
+}
+
+// SourceLabel answers «from which domain did this row come» for the admin table —
+// the same contract as RuleRow.SourceLabel (B518), so the two pages cannot disagree
+// about provenance. It STRIPS the `cdn:<provider>:` marker: that is a storage
+// format, and the admin table used to print it verbatim (`cdn:cloudflare:…`), which
+// is unreadable for the one person who has to reason about other people's rules.
+func (r AdminRule) SourceLabel() string {
+	if _, domain, ok := ParseCDNGroupMarker(r.ParentDomain); ok {
+		return domain
+	}
+	if parent := strings.TrimSpace(r.ParentDomain); parent != "" {
+		return parent
+	}
+	if strings.EqualFold(strings.TrimSpace(r.TargetType), "domain") {
+		return strings.TrimSpace(r.TargetValue)
+	}
+	return ""
+}
+
+// SourceCDN returns the CDN provider of the row's origin ("" when it is not a CDN
+// range set).
+func (r AdminRule) SourceCDN() string {
+	if cdn, _, ok := ParseCDNGroupMarker(r.ParentDomain); ok {
+		return cdn
+	}
+	return ""
 }
 
 // adminWindowFromQuery is B358's (2026-10-06) pure parser for the /admin/exit-rules
@@ -342,6 +374,8 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	// Read the filter FIRST (before any DB work) so we can
 	// pass it to the data map for the template banner.
 	deviceFilter := strings.TrimSpace(r.URL.Query().Get("device"))
+	// B520: the switched-off view. Read before the DB work for the same reason.
+	showDisabled := strings.TrimSpace(r.URL.Query().Get("show_disabled")) == "1"
 	// 2026-07-11: Этап 9 part 2 — SQL moved to db.GetAllRulesForAdmin
 	var dbRules []db.DeviceRule
 	var err error
@@ -370,7 +404,14 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		// [1, pageSizeClamp] inside db.GetAllRulesForAdminPaged); the live shape
 		// then renders ONE page holding all three groups whole.
 		page, groupsPerPage := adminWindowFromQuery(r.URL.Query())
-		adminRulePage, err = db.GetAllRulesForAdminPaged(s.dbc(), page, groupsPerPage)
+		// B520: `?show_disabled=1` widens the SAME group window to rules with
+		// enabled = 0. Without it the page could switch a rule off and lose sight of
+		// it in the same click — the «only delete and add» trap, one role up.
+		var pageOpts []db.AdminPageOption
+		if showDisabled {
+			pageOpts = append(pageOpts, db.AdminPageIncludeDisabled())
+		}
+		adminRulePage, err = db.GetAllRulesForAdminPaged(s.dbc(), page, groupsPerPage, pageOpts...)
 		if err == nil {
 			dbRules = adminRulePage.Rules
 		}
@@ -429,6 +470,7 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 			ParentDomain: r.ParentDomain,
 			CreatedAt:    localtime.Format(time.Unix(r.CreatedAt, 0)),
 			AllDevices:   r.AllDevices,
+			Enabled:      r.Enabled,
 		})
 	}
 
@@ -890,7 +932,47 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		// (`form="bulk-relay-form"`), so no JavaScript is involved.
 		"RelayCard": s.adminRelayRequestCard(r),
 		"BulkRelay": s.adminBulkRelayCard(r),
+		// B520: the switched-off view, its switch link, the toggle's outcome, and a
+		// NUMBERED pager (the page had prev/next only — the same complaint the user
+		// page answered in B516).
+		"ShowDisabled":     showDisabled,
+		"SelfURL":          r.URL.RequestURI(),
+		"ShowDisabledHref": adminShowDisabledHref(r.URL.Query(), !showDisabled),
+		"AdminPager":       adminPagerView(r.URL.Query(), adminRulePage),
+		"admin_toggled":    r.URL.Query().Get("admin_toggled"),
+		"admin_n":          atoiOrZero(r.URL.Query().Get("admin_n")),
+		"admin_err":        r.URL.Query().Get("admin_err"),
 	})
+}
+
+// adminShowDisabledHref builds the link that flips the switched-off view, keeping
+// the page/drill-down the operator is on. Blank page parameters are DROPPED: a link
+// that carries `page=` after a reset would land on a page that may not exist.
+func adminShowDisabledHref(q url.Values, on bool) string {
+	cp := url.Values{}
+	for k, v := range q {
+		cp[k] = append([]string(nil), v...)
+	}
+	if on {
+		cp.Set("show_disabled", "1")
+	} else {
+		cp.Del("show_disabled")
+	}
+	// The switch itself must not land on page 1 for no reason: the operator is
+	// looking at a page and wants to see the SAME page with the other filter.
+	return adminRulesPath + "?" + cp.Encode()
+}
+
+// adminPagerView builds the numbered pager for the admin group window.
+//
+// `adminRulePage.Page`/PageSize are GROUPS, so the arithmetic is the same as the
+// user page's group pager — `buildPager` is shared rather than re-implemented, which
+// is why the two pages now paginate identically (numbers, first/last, page size).
+func adminPagerView(q url.Values, p db.AdminRulePage) PagerView {
+	if p.PageSize <= 0 {
+		return PagerView{}
+	}
+	return buildPager(adminRulesPath, q, p.Page, p.PageSize, p.TotalGroups, LensPageSizes, "page", "page_size", "")
 }
 
 // dbLimitOverride returns the raw stored override ("" when the row is absent), so the

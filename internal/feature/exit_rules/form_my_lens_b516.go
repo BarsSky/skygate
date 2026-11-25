@@ -31,43 +31,43 @@ type lensLink struct {
 	Active   bool
 }
 
-// pageLink is one number in the pager strip. Gap=true renders «…» instead of a
+// PageLink is one number in the pager strip. Gap=true renders «…» instead of a
 // number (the model reports -1 for a gap — see LensPageNumbers).
-type pageLink struct {
+type PageLink struct {
 	Num    int
 	Href   string
 	Active bool
 	Gap    bool
 }
 
-// perOption is one entry of the «на страницу» select. Href is the full URL for
+// PerOption is one entry of the «на страницу» select. Href is the full URL for
 // that page size, so the select works with a plain `onchange` and needs no form
 // submit of its own (the B438 lesson: a control that reloads the whole page and
 // drops the filters is how the page stops being trusted).
-type perOption struct {
+type PerOption struct {
 	Value    int
 	Selected bool
 	Href     string
 }
 
-// pagerView is everything a pagination block needs, for EITHER a page of groups
+// PagerView is everything a pagination block needs, for EITHER a page of groups
 // or a page of rows inside a group. Same shape on purpose: one template block,
 // one set of accessibility attributes, one place for a bug to live.
-type pagerView struct {
+type PagerView struct {
 	Page       int
 	TotalPages int
 	From       int
 	To         int
 	Total      int
 	Per        int
-	PerOptions []perOption
+	PerOptions []PerOption
 
 	FirstHref string
 	PrevHref  string
 	NextHref  string
 	LastHref  string
 
-	Pages []pageLink
+	Pages []PageLink
 }
 
 // RulesLensView is the whole new page state, computed once per request.
@@ -84,7 +84,7 @@ type RulesLensView struct {
 	BackHref string
 
 	Page    RuleLensPage
-	Pager   pagerView
+	Pager   PagerView
 	Summary lensSummary
 
 	// Detail is non-nil when `?group=` resolved to a real group.
@@ -105,7 +105,7 @@ type lensSummary struct {
 // pager for those rows.
 type GroupDetailView struct {
 	Group RuleGroup
-	Pager pagerView
+	Pager PagerView
 	Lens  RuleLens
 	// Rows are the page's rows (the same slice the Group carries, named
 	// separately because the template's inner loop reads it directly).
@@ -157,7 +157,7 @@ func rulesHref(path string, q url.Values, set map[string]string, anchor string) 
 // buildPager assembles a pager for `total` items windowed at `per` per page.
 // `key` is the query parameter the pager writes (page, gpage); `perKey` is the
 // page-size parameter.
-func buildPager(path string, q url.Values, page, per, total int, sizes []int, pageKey, perKey, anchor string) pagerView {
+func buildPager(path string, q url.Values, page, per, total int, sizes []int, pageKey, perKey, anchor string) PagerView {
 	totalPages := (total + per - 1) / per
 	if totalPages < 1 {
 		totalPages = 1
@@ -181,7 +181,7 @@ func buildPager(path string, q url.Values, page, per, total int, sizes []int, pa
 		return rulesHref(path, q, map[string]string{pageKey: strconv.Itoa(p)}, anchor)
 	}
 
-	pv := pagerView{
+	pv := PagerView{
 		Page:       page,
 		TotalPages: totalPages,
 		From:       from,
@@ -195,13 +195,13 @@ func buildPager(path string, q url.Values, page, per, total int, sizes []int, pa
 	}
 	for _, n := range LensPageNumbers(page, totalPages, 2) {
 		if n < 0 {
-			pv.Pages = append(pv.Pages, pageLink{Gap: true})
+			pv.Pages = append(pv.Pages, PageLink{Gap: true})
 			continue
 		}
-		pv.Pages = append(pv.Pages, pageLink{Num: n, Href: lk(n), Active: n == page})
+		pv.Pages = append(pv.Pages, PageLink{Num: n, Href: lk(n), Active: n == page})
 	}
 	for _, s := range sizes {
-		pv.PerOptions = append(pv.PerOptions, perOption{
+		pv.PerOptions = append(pv.PerOptions, PerOption{
 			Value:    s,
 			Selected: s == per,
 			// Changing the size goes back to page 1: keeping the number would land

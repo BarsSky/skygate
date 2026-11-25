@@ -57,6 +57,16 @@ func TestB435_EveryPageHasATranslatedTabTitle(t *testing.T) {
 		if name == "layout.html" || name == "login.html" {
 			continue
 		}
+		// B520: a PARTIAL is not a page. templates/rules_pager.html holds only the
+		// shared pagination define (both the user and the admin page include it), so it
+		// has no title of its own — testing it for one asserted nothing about a page
+		// and everything about a file the walk happened to see. The rule is exact: a
+		// page defines a `body-…` template; a file that defines none cannot be reached
+		// through renderBody and therefore has no tab.
+		if raw, rerr := templatesFS.ReadFile("templates/" + name); rerr == nil &&
+			!strings.Contains(string(raw), `{{define "body-`) {
+			continue
+		}
 		key := pageTitle(name)
 		if key == "title.skygate" {
 			t.Errorf("%s falls back to the generic title.skygate — the tab would not name the page", name)
