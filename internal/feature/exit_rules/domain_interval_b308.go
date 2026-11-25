@@ -164,6 +164,24 @@ func (s *Service) markDomainResolved(domain string, now int64) {
 	}
 }
 
+// clearDomainResolveStamp forgets the last successful resolution of `domain`, so
+// the NEXT pass treats it as due. This is what «переразрешить сейчас» does: the
+// resolver itself (sync_domain.go) is a whole-table pass with its own delicate
+// rules (CDN markers, IPv6 answers, service ranges) and re-implementing one
+// domain's slice of it would create a second, divergent implementation — so the
+// button clears the gate and runs the SAME pass the scheduler runs.
+//
+// A failed delete is not fatal: an un-cleared stamp means the domain keeps its
+// interval, which is the pre-button behaviour, and the caller reports what
+// happened instead of pretending.
+func (s *Service) clearDomainResolveStamp(domain string) error {
+	if s == nil || s.dbc() == nil {
+		return nil
+	}
+	key := SettingDomainResolveAtPrefix + strings.ToLower(strings.TrimSpace(domain))
+	return db.DeleteGlobalSetting(s.dbc(), key)
+}
+
 // DomainResolveIntervalLabel renders the effective policy for the panel and for
 // the skipped-domains log line: "6h0m0s" or "every tick (gate disabled)".
 func DomainResolveIntervalLabel(d time.Duration) string {

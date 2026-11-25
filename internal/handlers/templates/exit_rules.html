@@ -324,6 +324,14 @@
          installation and the contracts pinning the old views are renegotiated in
          their own change — a page rewrite that removes a working screen in the
          same step that adds another is how a regression ships green. */}}
+    {{/* The group-name suggestions live OUTSIDE both blocks: the add form (above) and
+         the card actions (below) both reference this datalist, and it used to sit
+         inside the OLD group view only — so the moment B517 made the group page the
+         default, the add form lost its autocomplete on every page. One definition,
+         rendered either way. */}}
+    <datalist id="group-label-names">
+      {{range $n := .GroupLabelNames}}<option value="{{$n}}"></option>{{end}}
+    </datalist>
     {{$lv := .RulesLens}}
     {{if $lv.Mode}}
     <div class="card" id="rules-groups">
@@ -392,6 +400,85 @@
           </button>
         </form>
       </div>
+
+      {{/* B518: the outcome of the card's own verbs, from the query string like every
+           other flash on this page. */}}
+      {{if .source_resolved}}
+      <div class="alert alert-success" id="source-resolved-banner">
+        <i class="fa-solid fa-arrows-rotate"></i>
+        {{tf "exit_rules.source_resolve_ok" .source_resolved .source_added .source_removed}}
+      </div>
+      {{end}}
+      {{if .group_assigned}}
+      <div class="alert alert-success" id="group-assigned-banner">
+        <i class="fa-solid fa-folder-plus"></i>
+        {{if .assigned_to}}{{tf "exit_rules.group_assign_ok" .assigned_to .group_assigned}}{{else}}{{tf "exit_rules.group_assign_cleared" .group_assigned}}{{end}}
+      </div>
+      {{end}}
+      {{if .source_err}}
+      <div class="alert alert-danger" id="source-error">
+        <i class="fa-solid fa-triangle-exclamation"></i> {{tf "exit_rules.source_err" .source_err}}
+      </div>
+      {{end}}
+
+      {{/* B518 — WHAT CAN BE DONE TO THE SOURCE AS A WHOLE. This is the half the
+           operator asked for («если потребуется координально менять правила то
+           придется все сносить и задавать заново»): re-resolve the domain, file its
+           rows under the operator's own group name, ask for another relay for the
+           whole card, or delete the domain TOGETHER with the subnets it produced —
+           each with the row count in the confirm and each addressed to the rows the
+           card actually showed (`$d.AllIDs`, unpaged: posting the visible page would
+           silently act on 50 of 200 subnets). */}}
+      <div class="multi-bar" id="group-actions" style="align-items:flex-start">
+        {{if $d.CanResolve}}
+        <form method="post" action="/my/exit-rules/source-resolve" style="display:inline"
+              onsubmit="return confirm('{{t "exit_rules.source_resolve_confirm"}}')">
+          <input type="hidden" name="scope" value="group">
+          <input type="hidden" name="lens" value="{{$d.Lens}}">
+          <input type="hidden" name="group" value="{{$g.Key}}">
+          <input type="hidden" name="back" value="{{$.SelfURL}}">
+          <button type="submit" class="btn btn-sm" id="source-resolve-btn">
+            <i class="fa-solid fa-arrows-rotate"></i> {{t "exit_rules.source_resolve"}}
+          </button>
+        </form>
+        {{end}}
+
+        <form method="post" action="/my/exit-rules/assign-group" style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <input type="hidden" name="scope" value="group">
+          <input type="hidden" name="lens" value="{{$d.Lens}}">
+          <input type="hidden" name="group" value="{{$g.Key}}">
+          <input type="hidden" name="back" value="{{$.SelfURL}}">
+          <input type="text" name="group_to" list="group-label-names" maxlength="{{$.GroupLabelMaxLen}}"
+                 placeholder="{{t "exit_rules.group_label_ph"}}" aria-label="{{t "exit_rules.group_label"}}"
+                 style="font-size:12px;padding:4px 6px;min-width:120px">
+          <button type="submit" class="btn btn-sm" id="group-assign-btn">
+            <i class="fa-solid fa-folder-plus"></i> {{t "exit_rules.group_assign_btn"}}
+          </button>
+        </form>
+
+        {{if ne $.RelayCard.PolicyMode "deny"}}{{if $.RelayCard.Relays}}
+        <form method="post" action="/my/exit-rules/relay-request" style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <input type="hidden" name="back" value="{{$.SelfURL}}">
+          {{range $id := $d.AllIDs}}<input type="hidden" name="rule_id" value="{{$id}}">{{end}}
+          <select name="to_relay" aria-label="{{t "exit_rules.relay_request_relay"}}" style="font-size:12px;padding:4px 6px">
+            {{range $relay := $.RelayCard.Relays}}<option value="{{$relay}}">{{$relay}}</option>{{end}}
+          </select>
+          <button type="submit" class="btn btn-sm" onclick="return confirm('{{tf "exit_rules.relay_request_confirm_group" $g.Count}}')">
+            <i class="fa-solid fa-right-left"></i> {{t "exit_rules.relay_request_submit"}}
+          </button>
+        </form>
+        {{end}}{{end}}
+
+        <span class="spacer"></span>
+        <form method="post" action="/my/exit-rules/delete" style="display:inline"
+              onsubmit="return confirm('{{tf "exit_rules.source_delete_confirm" $g.Count $g.SubnetCount}}')">
+          {{range $id := $d.AllIDs}}<input type="hidden" name="ids" value="{{$id}}">{{end}}
+          <button type="submit" class="btn btn-danger btn-sm" id="source-delete-btn">
+            <i class="fa-solid fa-trash"></i> {{t "exit_rules.source_delete"}}
+          </button>
+        </form>
+      </div>
+      <p style="font-size:11px;color:var(--text-muted);margin:0 0 8px 0">{{t "exit_rules.group_assign_hint"}}</p>
 
       {{/* THE CONTROLS SIT ABOVE THE TABLE AND BELOW IT. The operator's report was
            «необходимо опускаться в самый низ таблицы и всегда переходить только на
@@ -780,9 +867,6 @@
            LAST (it is the leftovers, not a category of its own). Each named group
            carries its own rename control — the label is the user's data, and a group
            they cannot rename is a group they will stop using. */}}
-      <datalist id="group-label-names">
-        {{range $n := .GroupLabelNames}}<option value="{{$n}}"></option>{{end}}
-      </datalist>
       {{if .LabelGroups}}
       {{range $g := .LabelGroups}}
       <details class="card" {{if $g.Label}}open{{end}} style="margin-bottom:10px">

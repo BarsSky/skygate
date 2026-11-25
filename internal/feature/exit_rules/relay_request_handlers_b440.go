@@ -431,14 +431,33 @@ func (s *Service) PostMyRelayRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := s.I18n.LangFromRequest(r)
-	back := "/my/exit-rules"
+	// B518: a card-level ask («запросить другой релей для этой группы») carries the
+	// page it came from, so the operator lands on the card they were reading instead
+	// of page 1. The value is validated like every other return address (exact path,
+	// no scheme/host); the form at the bottom of the page does not send one, so its
+	// behaviour is unchanged.
+	back := safeRulesBack(r.FormValue("back"))
+	// The outcome rides on the SAME page, so a return address that already has a
+	// query (`?lens=source&group=…`) must be amended, not string-concatenated with a
+	// second `?` (which would produce `…group=x?relay_ok=…` — a broken URL the
+	// operator would see as «the page did nothing»).
+	relayFlash := func(k, v string) string {
+		u, perr := url.Parse(back)
+		if perr != nil {
+			return back
+		}
+		q := u.Query()
+		q.Set(k, v)
+		u.RawQuery = q.Encode()
+		return u.String()
+	}
 	// B471: the form can send SEVERAL rule ids (a group ask). `?rule_id=…` still works
 	// because it is the same field — parseRuleIDs reads every value, which is what a
 	// multi-select posts.
 	ruleIDs := parseRuleIDs(r.Form["rule_id"])
 	toRelay := strings.TrimSpace(r.FormValue("to_relay"))
 	if len(ruleIDs) == 0 || toRelay == "" {
-		http.Redirect(w, r, back+"?relay_err="+url.QueryEscape(s.I18n.T(lang, "exit_rules.relay_request_bad_form")), http.StatusSeeOther)
+		http.Redirect(w, r, relayFlash("relay_err", s.I18n.T(lang, "exit_rules.relay_request_bad_form")), http.StatusSeeOther)
 		return
 	}
 	// One ask, one decision: the prefixes of EVERY selected rule are unioned into a single
@@ -455,7 +474,7 @@ func (s *Service) PostMyRelayRequest(w http.ResponseWriter, r *http.Request) {
 		if err := s.dbc().QueryRow(`SELECT device_hostname, target_value, target_type, COALESCE(device_id,0), exit_node_id
 		                              FROM device_rules WHERE id = $1 AND user_id = $2 AND enabled = 1`, ruleID, c.UserID).
 			Scan(&deviceHost, &target, &kind, &deviceID, &ruleRelay); err != nil {
-			http.Redirect(w, r, back+"?relay_err="+url.QueryEscape(s.I18n.T(lang, "exit_rules.relay_request_not_yours")), http.StatusSeeOther)
+			http.Redirect(w, r, relayFlash("relay_err", s.I18n.T(lang, "exit_rules.relay_request_not_yours")), http.StatusSeeOther)
 			return
 		}
 		if !devSeen[deviceHost] {
@@ -470,7 +489,7 @@ func (s *Service) PostMyRelayRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	prefixes = cleanPrefixes(prefixes)
 	if len(prefixes) == 0 {
-		http.Redirect(w, r, back+"?relay_err="+url.QueryEscape(s.I18n.T(lang, "exit_rules.relay_request_no_prefixes")), http.StatusSeeOther)
+		http.Redirect(w, r, relayFlash("relay_err", s.I18n.T(lang, "exit_rules.relay_request_no_prefixes")), http.StatusSeeOther)
 		return
 	}
 	// A group ask can span rules that name DIFFERENT relays today; the request is "put all
@@ -498,7 +517,7 @@ func (s *Service) PostMyRelayRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Backend.Audit(c.UserID, c.Username, "relay_request_refused",
 			fmt.Sprintf("rules=%v to=%s err=%v", ruleIDs, toRelay, err))
-		http.Redirect(w, r, back+"?relay_err="+url.QueryEscape(msg), http.StatusSeeOther)
+		http.Redirect(w, r, relayFlash("relay_err", msg), http.StatusSeeOther)
 		return
 	}
 	action := "relay_request_created"
@@ -515,7 +534,7 @@ func (s *Service) PostMyRelayRequest(w http.ResponseWriter, r *http.Request) {
 	if out.Request.Status == RelayRequestAutoApproved {
 		msg = s.I18n.Tf(lang, "exit_rules.relay_request_auto_flash", toRelay)
 	}
-	http.Redirect(w, r, back+"?relay_ok="+url.QueryEscape(msg), http.StatusSeeOther)
+	http.Redirect(w, r, relayFlash("relay_ok", msg), http.StatusSeeOther)
 }
 
 // PostAdminRelayRequestDecide approves or rejects one pending ask.

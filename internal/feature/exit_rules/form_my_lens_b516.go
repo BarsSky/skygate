@@ -110,6 +110,17 @@ type GroupDetailView struct {
 	// Rows are the page's rows (the same slice the Group carries, named
 	// separately because the template's inner loop reads it directly).
 	Rows []RuleRow
+	// AllIDs is EVERY row id of the group, unpaged.
+	//
+	// A card-level action (switch the group off, file it into a group, delete the
+	// domain with its subnets, ask for another relay) must carry the WHOLE card,
+	// while the table below it renders one page. Posting `Rows` would silently act
+	// on 50 of 200 subnets — the half-applied action this project keeps paying for.
+	AllIDs []int64
+	// CanResolve is true for a source card whose domain the DNS updater tracks
+	// (kind domain / cdn). It gates the «переразрешить сейчас» control: offering it
+	// on a label or device card would be a button that answers another question.
+	CanResolve bool
 }
 
 // rulesQueryWith returns the current query with `set` applied, encoded. An empty
@@ -261,11 +272,21 @@ func BuildRulesLensView(path string, q url.Values, rows []RuleRow, lensParam, gr
 		if g, found := FindRuleGroup(groups, groupParam); found {
 			rowsPer := ClampGroupRowPageSize(atoiOrZero(q.Get("gper")))
 			gp := WindowRuleGroupRows(lens, g, atoiOrZero(q.Get("gpage")), rowsPer)
+			// Every row of the card, unpaged — the set a card-level action carries.
+			allIDs := make([]int64, 0, len(g.Rules))
+			for _, r := range g.Rules {
+				allIDs = append(allIDs, r.ID)
+			}
 			detail := &GroupDetailView{
-				Group: gp.Group,
-				Lens:  lens,
-				Rows:  gp.Group.Rules,
-				Pager: buildPager(path, q, gp.Page, gp.PerPage, gp.TotalRows, GroupRowPageSizes, "gpage", "gper", "group-"+g.Key),
+				Group:  gp.Group,
+				Lens:   lens,
+				Rows:   gp.Group.Rules,
+				Pager:  buildPager(path, q, gp.Page, gp.PerPage, gp.TotalRows, GroupRowPageSizes, "gpage", "gper", "group-"+g.Key),
+				AllIDs: allIDs,
+				// Only a SOURCE card has a domain the DNS updater tracks. A label
+				// card may hold rows from several domains, and a device card is not
+				// a domain at all.
+				CanResolve: g.Kind == GroupKindDomain || g.Kind == GroupKindCDN,
 			}
 			out.Detail = detail
 		}

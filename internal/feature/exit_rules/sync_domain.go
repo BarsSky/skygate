@@ -18,10 +18,23 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"skygate/internal/db"
 )
+
+// domainUpdaterMu serialises the resolver passes.
+//
+// B518 made the pass reachable from a BUTTON («переразрешить сейчас»), so two
+// passes can now run at once: the five-minute tick and the operator's request.
+// Each pass deletes the derived rows whose answers no longer resolve and inserts
+// the current ones, so two interleaved passes over the same domain can fight
+// (one deletes what the other just wrote) and double the write load on a host
+// whose ACL apply is throttled. The mutex makes the second pass WAIT for the
+// first instead of racing it — a manual re-resolve is allowed to be a few
+// seconds slower, it is not allowed to be a second writer.
+var domainUpdaterMu sync.Mutex
 
 // knownSubdomains maps a main domain to its known subdomain hosts for static assets.
 // 2026-07-07: issue #9 — Cloudflare-routed sites have static on different subdomains.
@@ -34,6 +47,11 @@ var knownSubdomains = map[string][]string{
 // Background job: resolves all domain rules every interval, reconciles with /32 IP rules.
 // Returns count of changes (added + removed) and writes log entries.
 func (s *Service) DomainAutoUpdater() (added, removed int, err error) {
+	// B518: one resolver pass at a time — the scheduler's tick and the operator's
+	// «переразрешить сейчас» button are two callers of this same function now.
+	domainUpdaterMu.Lock()
+	defer domainUpdaterMu.Unlock()
+
 	// B274: collapse the redundant rows the CDN expansion produces.
 	// One domain rule for a Cloudflare-fronted site yields the CDN's
 	// whole published range set, so N domains of the same CDN create N

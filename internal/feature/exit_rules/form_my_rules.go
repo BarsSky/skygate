@@ -1075,5 +1075,14 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		"toggle_n":   toggleCount(r.URL.Query().Get("n")),
 		"toggle_err": r.URL.Query().Get("toggle_err"),
 		"SelfURL":    r.URL.RequestURI(),
+		// B518: the source-card actions' outcome. Same query-string flash so a refresh
+		// cannot resubmit, and numbers parsed here so the template never formats a
+		// string with %d.
+		"group_assigned":  atoiOrZero(r.URL.Query().Get("group_assigned")),
+		"assigned_to":     r.URL.Query().Get("assigned_to"),
+		"source_resolved": r.URL.Query().Get("source_resolved"),
+		"source_added":    atoiOrZero(r.URL.Query().Get("source_added")),
+		"source_removed":  atoiOrZero(r.URL.Query().Get("source_removed")),
+		"source_err":      r.URL.Query().Get("source_err"),
 	})
 }

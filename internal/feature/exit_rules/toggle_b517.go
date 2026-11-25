@@ -283,20 +283,14 @@ func (s *Service) PostMyExitRuleToggle(w http.ResponseWriter, r *http.Request) {
 	}
 	back := r.FormValue("back")
 
-	rows, err := db.GetDeviceRulesForUser(s.dbc(), c.UserID)
+	// The rows the page rendered are the rows an action carries: one shared loader
+	// (B518 moved it out of this handler so every card-level action sees the same
+	// set, fan-out marker included).
+	ruleRows, err := s.ownerRuleRows(c.UserID)
 	if err != nil {
 		http.Redirect(w, r, rulesBackWithFlash(back, "", 0, err.Error()), http.StatusSeeOther)
 		return
 	}
-	// B276.1: the fan-out marker lives on the row, but the shared SELECT does not
-	// carry it — resolve it the same way the page does, so toggling a row here and
-	// toggling the card there act on the same set.
-	if keys := s.allDeviceRuleKeys(c.UserID); len(keys) > 0 {
-		for i := range rows {
-			rows[i].AllDevices = keys[allDeviceRuleKey(rows[i].ExitNodeID, rows[i].TargetType, rows[i].TargetValue)]
-		}
-	}
-	ruleRows := ruleRowsFromDeviceRules(rows)
 
 	var targetIDs []int64
 	var kind string

@@ -104,4 +104,20 @@ type Service struct {
 	Notifier          telegram.Notifier
 	SyncRoutes        func() map[string]string
 	ResolveHSForPlane func(planeURL string) *headscale.Client
+	// ResolvePass (B518) runs the DNS resolver pass; nil means DomainAutoUpdater.
+	//
+	// The seam exists because «переразрешить сейчас» is a BUTTON that calls the same
+	// pass the scheduler runs: without it, a handler test would have to perform real
+	// DNS lookups (a network dependency in a unit test, and a flaky one), and the
+	// flash it renders could not be asserted at all. Same pattern as SyncRoutes.
+	ResolvePass func() (added, removed int, err error)
+}
+
+// runResolvePass is the single call site: the button and any future caller go
+// through it, so the seam cannot be bypassed by accident.
+func (s *Service) runResolvePass() (added, removed int, err error) {
+	if s.ResolvePass != nil {
+		return s.ResolvePass()
+	}
+	return s.DomainAutoUpdater()
 }

@@ -699,6 +699,26 @@ func FindRuleGroup(groups []RuleGroup, key string) (RuleGroup, bool) {
 	return RuleGroup{}, false
 }
 
+// RuleIDsOfGroup returns the ids of every row of the group named by `key` under
+// `lens`, and whether the key resolved.
+//
+// This is the set a CARD-LEVEL action must carry (switch off, file into a group,
+// delete the domain with its subnets, ask for another relay). It is resolved
+// through the same model the page rendered, which is what makes «this card» mean
+// exactly the rows the operator saw — not a re-derived approximation of them
+// (B517/B518).
+func RuleIDsOfGroup(rows []RuleRow, lens RuleLens, key string) ([]int64, bool) {
+	g, ok := FindRuleGroup(BuildRuleGroups(rows, lens), key)
+	if !ok {
+		return nil, false
+	}
+	ids := make([]int64, 0, len(g.Rules))
+	for _, r := range g.Rules {
+		ids = append(ids, r.ID)
+	}
+	return ids, true
+}
+
 // WindowRuleGroupRows cuts one group's rows into the requested page.
 func WindowRuleGroupRows(lens RuleLens, g RuleGroup, page, perPage int) RuleGroupPage {
 	perPage = clampLensPageSize(perPage, 50, GroupRowPageSizes)

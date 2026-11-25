@@ -840,6 +840,13 @@ func registerRoutes(
 	// writer, so «turn this off for a while» meant deleting the rule and losing its
 	// parent_domain, its group label and its place in the prefix assignment.
 	mux.Handle("POST /my/exit-rules/toggle", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRuleToggle)))
+	// B518: the two verbs a SOURCE card was missing — filing its existing rows under the
+	// operator's own group name (the verb B380 lacked: re-adding a rule is a duplicate
+	// and changes nothing), and «переразрешить сейчас» (clear the domain's resolve gate
+	// and run the real resolver pass). The card's delete and relay-ask reuse the
+	// endpoints above rather than duplicating them.
+	mux.Handle("POST /my/exit-rules/assign-group", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRuleAssignGroup)))
+	mux.Handle("POST /my/exit-rules/source-resolve", authMW(http.HandlerFunc(exitRulesSvc.PostMyExitRuleSourceResolve)))
 	// B328: turn an ALREADY SAVED single-device rule into an "all my devices" rule.
 	// The option existed only at save time (B275.3) plus the intent marker the periodic
 	// pass re-materialises (B276.1), so a rule created before the operator's second
