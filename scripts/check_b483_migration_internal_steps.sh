@@ -33,6 +33,10 @@ PLAN=internal/migrate/plan.go
 EXEC=internal/migrate/exec.go
 EXEC_TEST=internal/migrate/exec_test.go
 SYNC=deploy/derper-cert-sync.sh
+# B483-FIX: the unit the behavioural fixtures are allowed to talk about. A name that cannot
+# exist means `systemctl is-active --quiet` answers "no" and the sync takes its documented
+# «is not running» branch, so a gate run can never restart the host's real derper (see F1-F6).
+B483_UNIT=skygate-b483-fixture-no-such-unit
 DERPDOC=docs/derp.md
 MIGDOC=docs/host-migration.md
 MIGDOCRU=docs/ru/host-migration.md
@@ -156,8 +160,18 @@ if command -v openssl >/dev/null 2>&1; then
     -out "$SKY_TMP/acme/two.crt" -days 2 -subj "$SUBJ" >/dev/null 2>&1
 
   if [ ! -s "$SKY_TMP/acme/one.crt" ] || [ ! -s "$SKY_TMP/acme/two.crt" ]; then
-    printf '  \033[33m-\033[0m F1-F5: SKIP — openssl could not generate test material on this host\n'
-  else  OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" \
+    printf '  \033[33m-\033[0m F1-F6: SKIP — openssl could not generate test material on this host\n'
+  else  # B483-FIX (2026-11-25): THE FIXTURE MUST NOT BE ABLE TO REACH A REAL UNIT.
+        # The script reloads derper after it copies a certificate (`systemctl reload-or-restart
+        # "$DERP_UNIT"`, deploy/derper-cert-sync.sh:134) and this contract isolates the CERT
+        # DIRECTORY but, until now, not the UNIT. On a host that runs derper — the reference
+        # polygon does — the happy path therefore restarted the operator's relay: measured
+        # 2026-11-25 14:41:36 UTC, `derper.service` Stopping→Stopped→Started during a gate run,
+        # and as a non-root user the same call instead FAILED F3 with «did not reload», so the
+        # red row never said who touched the unit. A test fixture may copy a certificate; it may
+        # never restart a service. The unit is pinned to a name that cannot exist, which makes
+        # the script take its documented «is not running» branch — the truth on any CI host.
+  OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" DERP_UNIT="$B483_UNIT" \
         ACME_CERT="$SKY_TMP/acme/one.crt" ACME_KEY="$SKY_TMP/acme/one.key" \
         bash "$SYNC" 2>&1)"; rc=$?
   if [ "$rc" -ne 0 ] && has_sub 'CHAIN' "$OUT"; then
@@ -168,7 +182,7 @@ if command -v openssl >/dev/null 2>&1; then
 
   # a two-block chain + a key from a DIFFERENT certificate: the mismatch must be named.
   cat "$SKY_TMP/acme/one.crt" "$SKY_TMP/acme/two.crt" > "$SKY_TMP/acme/chain.crt"
-  OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" \
+  OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" DERP_UNIT="$B483_UNIT" \
         ACME_CERT="$SKY_TMP/acme/chain.crt" ACME_KEY="$SKY_TMP/acme/two.key" \
         bash "$SYNC" 2>&1)"; rc=$?
   if [ "$rc" -ne 0 ] && has_sub 'do not match' "$OUT"; then
@@ -179,7 +193,7 @@ if command -v openssl >/dev/null 2>&1; then
 
   # the happy path: chain whose leaf matches the key, then a second run that must change nothing.
   cat "$SKY_TMP/acme/two.crt" "$SKY_TMP/acme/one.crt" > "$SKY_TMP/acme/chain2.crt"
-  OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" \
+  OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" DERP_UNIT="$B483_UNIT" \
         ACME_CERT="$SKY_TMP/acme/chain2.crt" ACME_KEY="$SKY_TMP/acme/two.key" \
         bash "$SYNC" 2>&1)"; rc=$?
   if [ "$rc" -eq 0 ] && [ -f "$SKY_TMP/certdir/derp.example.com.crt" ]; then
@@ -187,7 +201,28 @@ if command -v openssl >/dev/null 2>&1; then
   else
     bad "F3: the happy path failed (rc=$rc): $(printf '%s' "$OUT" | tail -2 | tr '\n' ' ')"
   fi
-  OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" \
+
+  # F3b is the contract the fix above exists for: a copied certificate plus an inactive unit must
+  # be REPORTED, never acted on. Before the fix this branch was unreachable from the fixture
+  # whenever the host ran derper, so the check could not tell "my unit is a stub" from "the
+  # operator's relay". The destination is wiped first because the reload branch is only reached
+  # when the certificate actually CHANGES. (Named F3b, not F6: F6/F7 below already name the
+  # action-level contracts, and two rows with one id make a red log ambiguous.)
+  rm -rf "$SKY_TMP/certdir"; mkdir -p "$SKY_TMP/certdir"
+  OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" DERP_UNIT="$B483_UNIT" \
+        ACME_CERT="$SKY_TMP/acme/chain2.crt" ACME_KEY="$SKY_TMP/acme/two.key" \
+        bash "$SYNC" 2>&1)"; rc=$?
+  case "$OUT" in
+    *"is not running"*)
+      ok "F3b: an inactive unit is reported, not reloaded — the fixture can never restart the operator's derper" ;;
+    *"reloaded "*)
+      bad "F3b: the fixture reloaded a REAL unit ($B483_UNIT answered as active) — this is what restarted derper on 2026-11-25" ;;
+    *"did not reload"*)
+      bad "F3b: the fixture tried to reload a real unit and failed ($B483_UNIT) — it must point at a name that cannot exist" ;;
+    *)
+      bad "F3b: unexpected reload branch (rc=$rc): $(printf '%s' "$OUT" | tail -1)" ;;
+  esac
+  OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" DERP_UNIT="$B483_UNIT" \
         ACME_CERT="$SKY_TMP/acme/chain2.crt" ACME_KEY="$SKY_TMP/acme/two.key" \
         bash "$SYNC" 2>&1)"; rc=$?
   if [ "$rc" -eq 0 ] && has_sub 'unchanged' "$OUT"; then
@@ -196,7 +231,7 @@ if command -v openssl >/dev/null 2>&1; then
     bad "F4: the second run was not idempotent (rc=$rc): $(printf '%s' "$OUT" | tail -1)"
   fi
   rm -rf "$SKY_TMP/certdir"; mkdir -p "$SKY_TMP/certdir"
-  OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" \
+  OUT="$(DERP_HOSTNAME=derp.example.com DERP_CERTDIR="$SKY_TMP/certdir" DERP_UNIT="$B483_UNIT" \
         ACME_CERT="$SKY_TMP/acme/chain2.crt" ACME_KEY="$SKY_TMP/acme/two.key" \
         bash "$SYNC" --dry-run 2>&1)"; rc=$?
   if [ "$rc" -eq 0 ] && [ ! -f "$SKY_TMP/certdir/derp.example.com.crt" ]; then
@@ -206,7 +241,7 @@ if command -v openssl >/dev/null 2>&1; then
   fi
   fi
 else
-  printf '  \033[33m-\033[0m F1-F5: SKIP — no openssl on this host, so the refusals cannot be exercised\n'
+  printf '  \033[33m-\033[0m F1-F6: SKIP — no openssl on this host, so the refusals cannot be exercised\n'
 fi
 
 # --- D: the docs ----------------------------------------------------------------
