@@ -251,6 +251,23 @@ type RuleRow struct {
 	// It is projected here because BOTH the group view and the by-target chips read
 	// it, and both read RuleRow — one projection, no second source of truth.
 	GroupLabel string
+
+	// Enabled is device_rules.enabled, which has existed since v0.20 and which every
+	// CONSUMER already honours (the ACL entry query, the advertised-route sync, the DNS
+	// auto-updater, the preferred-exit reconciler, the prefix claims and the quota
+	// counters all filter `enabled = 1`). It was never projected to the page because
+	// there was no way to write it — B517 makes it visible and operable, and a row that
+	// can be off must be distinguishable from one that is on, or the page would claim a
+	// rule acts when it does not.
+	Enabled bool
+
+	// DeviceName is the human label of THIS row's device (db.DeviceRule.DeviceName,
+	// filled by the handler from headscale or from the denormalised
+	// device_rules.device_hostname). B516 grouped rows by device ID and had to call a
+	// resolver callback for every row; carrying the label on the row means the device
+	// lens, the per-row device cell and the group's device list all read the same value,
+	// and a device that headscale cannot name falls back to "#<id>" ONCE, in Go.
+	DeviceName string
 }
 
 // GroupRulesByCDN takes a slice of RuleRow and returns:

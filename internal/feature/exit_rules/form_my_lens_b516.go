@@ -1,0 +1,283 @@
+// form_my_lens_b516.go — the handler side of the group model (B516).
+//
+// The PURE model lives in rules_view_b516.go (groups, lenses, windows, page
+// numbers). This file only turns it into the few values the template renders:
+//
+//   - the lens selector (every lens, with a href that keeps the rest of the query),
+//   - the summary line («Групп 7 · правил 231 · устройств 3 · подсетей 198»),
+//   - the pager for the group list AND for the rows inside one group (one shape,
+//     so the two controls cannot drift),
+//   - the detail view when `?group=<key>` is present.
+//
+// WHY THE URLS ARE BUILT HERE AND NOT IN THE TEMPLATE: the page already carries
+// state in the query (filters, the device drill-down, the page size). A template
+// that concatenated `?page=N` by hand would drop that state on every click —
+// which is the B438 complaint («при выборе фильтра перезагружается вся страница»)
+// and the reason an action used to throw the operator back to page 1. Every href
+// below is built from the CURRENT query with only the named keys replaced.
+package exit_rules
+
+import (
+	"net/url"
+	"strconv"
+	"strings"
+)
+
+// lensLink is one entry of the grouping selector.
+type lensLink struct {
+	Key      RuleLens
+	LabelKey string
+	Href     string
+	Active   bool
+}
+
+// pageLink is one number in the pager strip. Gap=true renders «…» instead of a
+// number (the model reports -1 for a gap — see LensPageNumbers).
+type pageLink struct {
+	Num    int
+	Href   string
+	Active bool
+	Gap    bool
+}
+
+// perOption is one entry of the «на страницу» select. Href is the full URL for
+// that page size, so the select works with a plain `onchange` and needs no form
+// submit of its own (the B438 lesson: a control that reloads the whole page and
+// drops the filters is how the page stops being trusted).
+type perOption struct {
+	Value    int
+	Selected bool
+	Href     string
+}
+
+// pagerView is everything a pagination block needs, for EITHER a page of groups
+// or a page of rows inside a group. Same shape on purpose: one template block,
+// one set of accessibility attributes, one place for a bug to live.
+type pagerView struct {
+	Page       int
+	TotalPages int
+	From       int
+	To         int
+	Total      int
+	Per        int
+	PerOptions []perOption
+
+	FirstHref string
+	PrevHref  string
+	NextHref  string
+	LastHref  string
+
+	Pages []pageLink
+}
+
+// RulesLensView is the whole new page state, computed once per request.
+type RulesLensView struct {
+	// Mode is true when the request asks for the group page (`?lens=` or
+	// `?group=`). Until the default is flipped (a separate, reviewed change),
+	// the old rule views remain the default and this block is opt-in.
+	Mode bool
+
+	Lens  RuleLens
+	Links []lensLink
+
+	// BackHref is «закрыть группу»: the list at the page the operator was on.
+	BackHref string
+
+	Page    RuleLensPage
+	Pager   pagerView
+	Summary lensSummary
+
+	// Detail is non-nil when `?group=` resolved to a real group.
+	Detail *GroupDetailView
+}
+
+// lensSummary is the one-line state of the whole rule set, computed from EVERY
+// group (not from the page), so it never changes as the operator paginates.
+type lensSummary struct {
+	Groups   int
+	Rules    int
+	Devices  int
+	Subnets  int
+	Disabled int
+}
+
+// GroupDetailView is one group opened: its facts, a page of its rows and the
+// pager for those rows.
+type GroupDetailView struct {
+	Group RuleGroup
+	Pager pagerView
+	Lens  RuleLens
+	// Rows are the page's rows (the same slice the Group carries, named
+	// separately because the template's inner loop reads it directly).
+	Rows []RuleRow
+}
+
+// rulesQueryWith returns the current query with `set` applied, encoded. An empty
+// value DELETES the key (so `per=` cannot linger and keep a page size the URL no
+// longer shows).
+func rulesQueryWith(q url.Values, set map[string]string) string {
+	cp := url.Values{}
+	for k, v := range q {
+		cp[k] = append([]string(nil), v...)
+	}
+	for k, v := range set {
+		if v == "" {
+			cp.Del(k)
+		} else {
+			cp.Set(k, v)
+		}
+	}
+	return cp.Encode()
+}
+
+// rulesHref builds a page URL, keeping the anchor when one is supplied so a form
+// posted from inside a group lands back on that group.
+func rulesHref(path string, q url.Values, set map[string]string, anchor string) string {
+	out := path
+	if enc := rulesQueryWith(q, set); enc != "" {
+		out += "?" + enc
+	}
+	if anchor != "" {
+		out += "#" + anchor
+	}
+	return out
+}
+
+// buildPager assembles a pager for `total` items windowed at `per` per page.
+// `key` is the query parameter the pager writes (page, gpage); `perKey` is the
+// page-size parameter.
+func buildPager(path string, q url.Values, page, per, total int, sizes []int, pageKey, perKey, anchor string) pagerView {
+	totalPages := (total + per - 1) / per
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	if page < 1 {
+		page = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	from := (page-1)*per + 1
+	to := from + per - 1
+	if to > total {
+		to = total
+	}
+	if total == 0 {
+		from, to = 0, 0
+	}
+
+	lk := func(p int) string {
+		return rulesHref(path, q, map[string]string{pageKey: strconv.Itoa(p)}, anchor)
+	}
+
+	pv := pagerView{
+		Page:       page,
+		TotalPages: totalPages,
+		From:       from,
+		To:         to,
+		Total:      total,
+		Per:        per,
+		FirstHref:  lk(1),
+		PrevHref:   lk(page - 1),
+		NextHref:   lk(page + 1),
+		LastHref:   lk(totalPages),
+	}
+	for _, n := range LensPageNumbers(page, totalPages, 2) {
+		if n < 0 {
+			pv.Pages = append(pv.Pages, pageLink{Gap: true})
+			continue
+		}
+		pv.Pages = append(pv.Pages, pageLink{Num: n, Href: lk(n), Active: n == page})
+	}
+	for _, s := range sizes {
+		pv.PerOptions = append(pv.PerOptions, perOption{
+			Value:    s,
+			Selected: s == per,
+			// Changing the size goes back to page 1: keeping the number would land
+			// the operator on a page that no longer holds what they were reading.
+			Href: rulesHref(path, q, map[string]string{pageKey: "", perKey: strconv.Itoa(s)}, anchor),
+		})
+	}
+	return pv
+}
+
+// BuildRulesLensView turns the request query + the user's rows into the page
+// state. Pure enough to test with a fixture: no DB, no Service, no headscale.
+//
+// `path` is the page the links point back at (/my/exit-rules or
+// /admin/exit-rules), `lensParam` is the raw `?lens=` value and `groupParam` the
+// raw `?group=` value.
+func BuildRulesLensView(path string, q url.Values, rows []RuleRow, lensParam, groupParam string) RulesLensView {
+	out := RulesLensView{Mode: true}
+
+	lens, ok := ParseRuleLens(lensParam)
+	if !ok {
+		// No choice (or a hand-typed one we do not know): open on the operator's
+		// own groups when they have any, otherwise on the source lens.
+		lens = RuleLensDefault(rows)
+	}
+	out.Lens = lens
+
+	// The selector always carries the lens; the page is dropped because switching
+	// the grouping changes what a page contains.
+	for _, l := range RuleLensOrder() {
+		out.Links = append(out.Links, lensLink{
+			Key:      l,
+			LabelKey: lensLabelKey(l),
+			Href:     rulesHref(path, q, map[string]string{"lens": string(l), "page": "", "group": "", "gpage": ""}, ""),
+			Active:   l == lens,
+		})
+	}
+
+	groups := BuildRuleGroups(rows, lens)
+	// Every card gets its own URL. The list PAGE is preserved on purpose: opening a
+	// group and pressing «Все группы» must return to the page the operator was
+	// reading, not to page 1 (that is the «всегда переходить только на следующую»
+	// half of the report, fixed at the link level).
+	for i := range groups {
+		groups[i].Href = rulesHref(path, q, map[string]string{"group": groups[i].Key, "gpage": ""}, "group-"+groups[i].Key)
+	}
+	out.BackHref = rulesHref(path, q, map[string]string{"group": "", "gpage": ""}, "rules-list")
+
+	per := ClampLensPageSize(atoiOrZero(q.Get("per")))
+	page := atoiOrZero(q.Get("page"))
+	lensPage := WindowRuleGroups(lens, groups, page, per)
+
+	out.Page = lensPage
+	out.Pager = buildPager(path, q, lensPage.Page, lensPage.PerPage, lensPage.TotalGroups, LensPageSizes, "page", "per", "rules-list")
+	out.Summary = lensSummary{
+		Groups:   lensPage.TotalGroups,
+		Rules:    lensPage.TotalRules,
+		Devices:  lensPage.TotalDevices,
+		Subnets:  lensPage.TotalSubnets,
+		Disabled: lensPage.DisabledRules,
+	}
+
+	// `?group=` opens one group. A stale key (the last row was deleted, or the
+	// link is from an older page) falls back to the list instead of rendering an
+	// empty card — a page that shows nothing is indistinguishable from a broken
+	// one.
+	if strings.TrimSpace(groupParam) != "" {
+		if g, found := FindRuleGroup(groups, groupParam); found {
+			rowsPer := ClampGroupRowPageSize(atoiOrZero(q.Get("gper")))
+			gp := WindowRuleGroupRows(lens, g, atoiOrZero(q.Get("gpage")), rowsPer)
+			detail := &GroupDetailView{
+				Group: gp.Group,
+				Lens:  lens,
+				Rows:  gp.Group.Rules,
+				Pager: buildPager(path, q, gp.Page, gp.PerPage, gp.TotalRows, GroupRowPageSizes, "gpage", "gper", "group-"+g.Key),
+			}
+			out.Detail = detail
+		}
+	}
+	return out
+}
+
+// myRulesLensEnabled reports whether the request asked for the new grouping at
+// all. Kept as a tiny helper so the handler reads as a sentence.
+func myRulesLensEnabled(q url.Values) bool {
+	if strings.TrimSpace(q.Get("lens")) != "" {
+		return true
+	}
+	return strings.TrimSpace(q.Get("group")) != ""
+}

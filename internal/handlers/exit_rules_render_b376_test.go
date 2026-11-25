@@ -108,6 +108,11 @@ func myExitRulesBase() map[string]any {
 		"bulk_devices":            "",
 		"bulk_limit":              false,
 		"bulk_err":                "",
+		// B516: the group page block is rendered unconditionally by the body (it
+		// decides for itself whether the request asked for the grouping), so the
+		// fixture must carry its zero value — Mode=false renders nothing, which is
+		// exactly what the old views' tests assert.
+		"RulesLens": exit_rules.RulesLensView{},
 	}
 }
 

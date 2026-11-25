@@ -882,6 +882,44 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		return deviceNames[id]
 	})
 	groupNames := GroupNamesForSuggestions(ruleRows)
+	// B516: THE GROUP PAGE («группа — единица страницы»).
+	//
+	// Opt-in through ?lens= / ?group= for now: the four old projections below stay
+	// the default until the new page has been verified on a live installation and
+	// the contracts that pin the old views are renegotiated in their own change.
+	// That ordering is deliberate — the old views are what the operator uses today,
+	// and a page rewrite that silently removes them is how a working screen
+	// regresses while its tests stay green.
+	//
+	// The rows are loaded UNPAGED for this path on purpose: the window unit is the
+	// GROUP, so the grouping has to see the whole set (a page of rows cannot tell
+	// how many rules a group holds). One query, and only when the operator asked
+	// for the grouping — the default page keeps its current cost.
+	lensView := RulesLensView{}
+	if myRulesLensEnabled(r.URL.Query()) {
+		if all, aerr := db.GetDeviceRulesForUser(s.dbc(), c.UserID); aerr == nil {
+			s.enrichDeviceNames(all)
+			if keys := s.allDeviceRuleKeys(c.UserID); len(keys) > 0 {
+				for i := range all {
+					all[i].AllDevices = keys[allDeviceRuleKey(all[i].ExitNodeID, all[i].TargetType, all[i].TargetValue)]
+				}
+			}
+			lensRows := ruleRowsFromDeviceRules(all)
+			// A device headscale cannot name (deleted, or attributed to nobody) still
+			// has a rule: label it from the page's own device list, exactly as the old
+			// views do, so the device lens never renders "#56" where the picker says
+			// "cyborg".
+			for i := range lensRows {
+				if lensRows[i].DeviceName == "" {
+					if n := deviceNameByID[lensRows[i].DeviceID]; n != "" {
+						lensRows[i].DeviceName = n
+					}
+				}
+			}
+			lensView = BuildRulesLensView("/my/exit-rules", r.URL.Query(), lensRows,
+				r.URL.Query().Get("lens"), r.URL.Query().Get("group"))
+		}
+	}
 	s.Backend.RenderWithLayout(w, r, "exit_rules.html", c, map[string]any{
 		"Page":              "exit-rules",
 		"Title":             "My exit rules",
@@ -1024,5 +1062,9 @@ func (s *Service) GetMyExitRules(w http.ResponseWriter, r *http.Request) {
 		// history of their own asks — so the answer to "did anything happen" is on the
 		// page instead of in a notification that already scrolled away.
 		"RelayCard": s.myRelayRequestCard(c, r),
+		// B516: the whole group page state (lens selector, the page of groups, the
+		// summary and — when ?group= resolved — the group's own row page). One value
+		// so the template cannot mix a stale lens with a fresh page.
+		"RulesLens": lensView,
 	})
 }

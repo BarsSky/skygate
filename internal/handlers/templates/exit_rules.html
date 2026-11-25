@@ -308,7 +308,167 @@
     </div>
     {{end}}
 
-    {{if .Rules}}
+    {{/* B516 — «ГРУППА — ЕДИНИЦА СТРАНИЦЫ» (оператор: «таблица существующих правил
+         никак не группируется визуально и те правила что создавались как в группе
+         на самом деле отображаются в разнобой … необходимо опускаться в самый низ
+         таблицы и всегда переходить только на следующую»).
+
+         WHY THIS BLOCK EXISTS AT ALL: the four projections below (by-target,
+         by-device, by-label, CDN-inside-device) all read the SAME page of RULE
+         ROWS, so a group is torn across pages and its header count is the page's
+         count. The admin page already windows GROUPS (B358); the user page never
+         did. Here the page is a page of GROUPS, every count comes from the whole
+         rule set, and the pagination renders ABOVE and BELOW the list.
+
+         The old block stays until this one has been verified against a live
+         installation and the contracts pinning the old views are renegotiated in
+         their own change — a page rewrite that removes a working screen in the
+         same step that adds another is how a regression ships green. */}}
+    {{$lv := .RulesLens}}
+    {{if $lv.Mode}}
+    <div class="card" id="rules-groups">
+      <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span><i class="fa-solid fa-layer-group"></i> {{tf "exit_rules.current_rules" $lv.Summary.Rules}}</span>
+        <span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          {{if gt .MaxPerUser 0}}<span id="user-usage-tag" class="tag tag-{{usageLevel .UserFacingCount .MaxPerUser}}" title="{{t "exit_rules.user_facing_title"}}">{{tf "exit_rules.user_facing" .UserFacingCount .MaxPerUser}}</span>{{else}}<span class="tag">{{tf "exit_rules.user_facing" .UserFacingCount 0}}</span>{{end}}
+          {{if .MaxTotalRules}}<span class="tag" style="opacity:0.6" title="{{t "exit_rules.system_title"}}">{{tf "exit_rules.system" .LoadPct .TotalRules .MaxTotalRules}}</span>{{end}}
+        </span>
+      </h3>
+
+      <div class="multi-bar" id="rules-lens-bar">
+        <span style="font-size:12px;color:var(--text-muted)">{{t "exit_rules.lens_label"}}</span>
+        {{range $l := $lv.Links}}<a class="btn btn-sm{{if $l.Active}} btn-primary{{end}}" href="{{$l.Href}}">{{t $l.LabelKey}}</a>{{end}}
+        <span class="spacer"></span>
+        <span style="font-size:12px;color:var(--text-muted)" id="rules-lens-summary">
+          {{tf "exit_rules.lens_summary" $lv.Summary.Groups $lv.Summary.Rules $lv.Summary.Devices $lv.Summary.Subnets}}
+          {{if gt $lv.Summary.Disabled 0}}<span class="tag tag-warning">{{tf "exit_rules.lens_summary_off" $lv.Summary.Disabled}}</span>{{end}}
+        </span>
+      </div>
+
+      {{if $lv.Detail}}
+      {{/* ===== ONE GROUP OPENED: its own facts + a page of its own rows ===== */}}
+      {{$d := $lv.Detail}}
+      {{$g := $d.Group}}
+      <div class="multi-bar" id="group-{{$g.Key}}">
+        <a class="btn btn-sm" href="{{$lv.BackHref}}"><i class="fa-solid fa-arrow-left"></i> {{t "exit_rules.group_back"}}</a>
+        <b style="font-size:16px">{{if $g.Title}}{{$g.Title}}{{else}}{{t "exit_rules.group_relay_auto"}}{{end}}</b>
+        <span class="tag">{{t $g.KindKey}}</span>
+        {{if $g.Subtitle}}<span class="tag tag-info">{{tf "exit_rules.group_cdn" $g.Subtitle}}</span>{{end}}
+        <span class="tag">{{tf "exit_rules.group_rule_count" $g.Count}}</span>
+        <span class="tag">{{tf "exit_rules.group_subnets" $g.SubnetCount}}</span>
+        {{if $g.AllDevices}}<span class="tag tag-success"><i class="fa-solid fa-users"></i> {{t "exit_rules.group_all_devices"}}</span>{{end}}
+        <span class="spacer"></span>
+        {{range $dname := $g.Devices}}<span class="tag"><i class="fa-solid fa-laptop"></i> {{$dname}}</span>{{end}}
+        {{range $relay := $g.Relays}}<span class="tag tag-info">{{tf "exit_rules.group_relay" $relay}}</span>{{end}}
+        {{if not $g.Relays}}<span class="tag">{{t "exit_rules.group_relay_auto"}}</span>{{end}}
+      </div>
+
+      {{/* THE CONTROLS SIT ABOVE THE TABLE AND BELOW IT. The operator's report was
+           «необходимо опускаться в самый низ таблицы и всегда переходить только на
+           следующую» — one bottom-only nav is exactly that. The same define renders
+           both, so the two cannot drift. */}}
+      <div class="rules-pager-bar" id="rules-pager-top" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin:6px 0 10px 0">
+        <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pager_row_range" $d.Pager.From $d.Pager.To $d.Pager.Total}}</span>
+        {{template "rules-pager" $d.Pager}}
+      </div>
+
+      <h4 style="font-size:14px;margin:12px 0 6px 0"><i class="fa-solid fa-list"></i> {{t "exit_rules.rows_title"}}</h4>
+      <div class="table-wrap">
+        <table>
+          <tr>
+            <th>{{t "exit_rules.col_source"}}</th>
+            <th>{{t "exit_rules.col_action"}}</th>
+            <th>{{t "exit_rules.col_target"}}</th>
+            <th>{{t "exit_rules.col_device"}}</th>
+            <th>{{t "exit_rules.preferred_col"}}</th>
+            <th>{{t "exit_rules.row_on"}}</th>
+          </tr>
+          {{range $r := $d.Rows}}
+          <tr class="rule-row" id="rule-{{$r.ID}}" data-type="{{$r.TargetType}}" data-target="{{$r.TargetValue}}" data-device="{{$r.DeviceName}}">
+            <td>
+              {{if $r.SourceLabel}}<span class="tag tag-info" title="{{t "exit_rules.auto_managed_title"}}"><i class="fa-solid fa-arrows-rotate"></i> {{$r.SourceLabel}}</span>{{if $r.SourceCDN}} <span class="tag">{{tf "exit_rules.group_cdn" $r.SourceCDN}}</span>{{end}}{{else}}<span class="tag">{{t "exit_rules.source_manual"}}</span>{{end}}
+            </td>
+            <td>{{if eq $r.Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+            <td><code>{{$r.TargetValue}}</code> <span class="tag">{{$r.TargetType}}</span></td>
+            <td>{{if $r.DeviceName}}{{$r.DeviceName}}{{else}}#{{$r.DeviceID}}{{end}}</td>
+            <td>
+              {{$status := index $.StatusByRuleID $r.ID}}
+              {{if eq $status "approved"}}
+                <span class="tag tag-success" title="{{t "exit_rules.approved_in_headscale_title_short"}}"><i class="fa-solid fa-check"></i></span>
+              {{else if eq $status "auto_pending"}}
+                <span class="tag tag-info" title="{{t "exit_rules.auto_pending_title"}}"><i class="fa-solid fa-arrows-rotate"></i> auto</span>
+              {{else if eq $status "pending"}}
+                <span class="tag tag-warning" title="{{t "exit_rules.pending_in_headscale_title_short"}}"><i class="fa-solid fa-clock"></i></span>
+              {{else if eq $status "served_by_owner"}}
+                <span class="tag tag-info" title="{{tf "exit_rules.served_by_owner_title" (index $.ServedByRuleID $r.ID)}}"><i class="fa-solid fa-right-left"></i> {{tf "exit_rules.served_by_owner" (index $.ServedByRuleID $r.ID)}}</span>
+              {{else if eq $status "wrong"}}
+                <span class="tag tag-danger" title="{{t "exit_rules.preferred_mismatch_title_short"}}"><i class="fa-solid fa-triangle-exclamation"></i></span>
+              {{else}}
+                <span class="tag" title="{{t "exit_rules.preferred_none_title"}}"><i class="fa-solid fa-question"></i></span>
+              {{end}}
+            </td>
+            <td>{{if $r.Enabled}}<span class="tag tag-success">{{t "exit_rules.row_on"}}</span>{{else}}<span class="tag tag-danger">{{t "exit_rules.row_off"}}</span>{{end}}</td>
+          </tr>
+          {{end}}
+        </table>
+      </div>
+
+      <div class="rules-pager-bar" id="rules-pager-bottom" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px">
+        <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pager_row_range" $d.Pager.From $d.Pager.To $d.Pager.Total}}</span>
+        {{template "rules-pager" $d.Pager}}
+      </div>
+      {{else}}
+      {{/* ===== THE LIST: one row per group, its counts from the WHOLE rule set ===== */}}
+      {{if $lv.Page.TotalGroups}}
+      <div class="rules-pager-bar" id="rules-pager-top" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin:6px 0 10px 0">
+        <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pager_group_range" $lv.Pager.From $lv.Pager.To $lv.Pager.Total}}</span>
+        {{template "rules-pager" $lv.Pager}}
+      </div>
+      <div class="table-wrap" id="rules-list">
+        <table>
+          <tr>
+            <th>{{t "exit_rules.lens_label"}}</th>
+            <th>{{t "exit_rules.target_col_rules"}}</th>
+            <th>{{t "exit_rules.target_col_devices"}}</th>
+            <th>{{t "exit_rules.exit_node"}}</th>
+            <th>{{t "exit_rules.preferred_col"}}</th>
+            <th></th>
+          </tr>
+          {{range $g := $lv.Page.Groups}}
+          <tr class="rule-group-row" id="group-{{$g.Key}}">
+            <td>
+              <b>{{if $g.Title}}{{$g.Title}}{{else}}{{t "exit_rules.group_relay_auto"}}{{end}}</b><br>
+              <span class="tag">{{t $g.KindKey}}</span>
+              {{if $g.Subtitle}}<span class="tag tag-info">{{tf "exit_rules.group_cdn" $g.Subtitle}}</span>{{end}}
+              {{if $g.AllDevices}}<span class="tag tag-success"><i class="fa-solid fa-users"></i> {{t "exit_rules.group_all_devices"}}</span>{{end}}
+            </td>
+            <td>{{tf "exit_rules.group_rule_count" $g.Count}}<br>
+              <span style="color:var(--text-muted)">{{tf "exit_rules.group_subnets" $g.SubnetCount}}</span></td>
+            <td>{{range $dname := $g.Devices}}<span class="tag">{{$dname}}</span> {{end}}</td>
+            <td>{{if $g.PrimaryRelay}}<span class="tag tag-info">{{tf "exit_rules.group_relay" $g.PrimaryRelay}}</span>{{else}}<span class="tag">{{t "exit_rules.group_relay_auto"}}</span>{{end}}</td>
+            <td>
+              {{if eq $g.DisabledCount 0}}<span class="tag tag-success">{{t "exit_rules.row_on"}}</span>
+              {{else if eq $g.DisabledCount $g.Count}}<span class="tag tag-danger">{{t "exit_rules.group_off_all"}}</span>
+              {{else}}<span class="tag tag-warning">{{tf "exit_rules.group_off_some" $g.DisabledCount $g.Count}}</span>{{end}}
+            </td>
+            <td><a class="btn btn-sm btn-primary" href="{{$g.Href}}" title="{{t "exit_rules.group_open"}}" aria-label="{{t "exit_rules.group_open"}}"><i class="fa-solid fa-folder-open"></i></a></td>
+          </tr>
+          {{end}}
+        </table>
+      </div>
+
+      <div class="rules-pager-bar" id="rules-pager-bottom" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px">
+        <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pager_group_range" $lv.Pager.From $lv.Pager.To $lv.Pager.Total}}</span>
+        {{template "rules-pager" $lv.Pager}}
+      </div>
+      {{else}}
+      <p style="color:var(--text-muted)">{{t "exit_rules.lens_empty"}}</p>
+      {{end}}
+      {{end}}
+    </div>
+    {{end}}
+
+    {{if .Rules}}{{if not .RulesLens.Mode}}
     <div class="card">
       <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
         <span><i class="fa-solid fa-list"></i> {{tf "exit_rules.current_rules" (len .Rules)}}</span>
@@ -1060,7 +1220,7 @@
       // re-applies the ACL once. No JS handler needed here.
     })();
     </script>
-    {{end}}
+    {{end}}{{end}}
 
     {{/* B440 (2026-10-29) — «запрос на смену exit node для правила». The operator's
          words, and the honest model behind the form: headscale serves an address from
@@ -1229,4 +1389,32 @@
   </div>
 
 </div>
+{{end}}
+{{/* B516 — THE PAGER, above and below the list. It renders the SAME shape for a
+     page of GROUPS and for a page of rows inside one group, so the two controls
+     cannot drift; every href is server-built (no href="#" + JS), which means the
+     controls work without JavaScript and copy the whole current query state
+     (filters, lens, page size) instead of throwing the operator back to page 1.
+
+     The aria-label spells the position out for a screen reader: «Страница 3 из 7»
+     is the same sentence the visible counter shows. */}}
+{{define "rules-pager"}}
+<nav class="pagination" style="display:flex;gap:4px;align-items:center;flex-wrap:wrap" aria-label="{{tf "exit_rules.pager_page_of" .Page .TotalPages}}">
+  {{if gt .Page 1}}
+  <a class="btn btn-sm" href="{{.FirstHref}}" title="{{t "exit_rules.pager_first"}}" aria-label="{{t "exit_rules.pager_first"}}"><i class="fa-solid fa-angles-left"></i></a>
+  <a class="btn btn-sm" href="{{.PrevHref}}" title="{{t "exit_rules.pager_prev"}}" aria-label="{{t "exit_rules.pager_prev"}}"><i class="fa-solid fa-chevron-left"></i></a>
+  {{end}}
+  {{range $p := .Pages}}{{if $p.Gap}}<span style="color:var(--text-muted);padding:0 2px">…</span>{{else}}<a class="btn btn-sm{{if $p.Active}} btn-primary{{end}}" href="{{$p.Href}}"{{if $p.Active}} aria-current="page"{{end}}>{{$p.Num}}</a>{{end}}{{end}}
+  {{if lt .Page .TotalPages}}
+  <a class="btn btn-sm" href="{{.NextHref}}" title="{{t "exit_rules.pager_next"}}" aria-label="{{t "exit_rules.pager_next"}}"><i class="fa-solid fa-chevron-right"></i></a>
+  <a class="btn btn-sm" href="{{.LastHref}}" title="{{t "exit_rules.pager_last"}}" aria-label="{{t "exit_rules.pager_last"}}"><i class="fa-solid fa-angles-right"></i></a>
+  {{end}}
+  <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pager_page_of" .Page .TotalPages}}</span>
+  <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted)">
+    {{t "exit_rules.pager_per"}}
+    <select onchange="if(this.value) location.href=this.value" aria-label="{{t "exit_rules.pager_per"}}" style="font-size:12px;padding:2px 6px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:4px">
+      {{range $o := .PerOptions}}<option value="{{$o.Href}}"{{if $o.Selected}} selected{{end}}>{{$o.Value}}</option>{{end}}
+    </select>
+  </label>
+</nav>
 {{end}}

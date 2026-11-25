@@ -799,6 +799,12 @@ func ruleRowsFromDeviceRules(rules []db.DeviceRule) []RuleRow {
 			// group view and the by-target chips read ONE projection — a second source
 			// of truth here is how a label goes missing on exactly one view.
 			GroupLabel: r.GroupLabel,
+			// B516/B517: the on/off state and the device label travel with the row too.
+			// Enabled is what the page must render as a switch, and DeviceName is what
+			// the device lens groups by — resolving either of them a second time in the
+			// handler would let the list and the row disagree about the same rule.
+			Enabled:    r.Enabled,
+			DeviceName: r.DeviceName,
 		}
 	}
 	return out
