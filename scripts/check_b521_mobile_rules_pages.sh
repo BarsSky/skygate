@@ -74,10 +74,10 @@ if command -v go >/dev/null 2>&1; then
   RC=$?
   if [ "$RC" -eq 0 ]; then
     N=$(ls "$WORK"/*.html 2>/dev/null | wc -l | tr -d ' ')
-    if [ "${N:-0}" -eq 3 ]; then
-      ok "B1: the exporter rendered all three states (group list, one group, admin page)"
+    if [ "${N:-0}" -eq 4 ]; then
+      ok "B1: the exporter rendered all four states (user list, user group, admin list, admin group)"
     else
-      bad "B1: the exporter produced ${N:-0} file(s), want 3 — a state stopped rendering"
+      bad "B1: the exporter produced ${N:-0} file(s), want 4 — a state stopped rendering (B523 added the two admin card states; the count is part of the contract)"
       printf '%s\n' "$OUT" | tail -6 | sed 's/^/       /' >&2
     fi
     # B2 — the measurement must be of the PAGE the operator sees. The render helpers

@@ -255,6 +255,7 @@ var ruExitRules = map[string]string{
 	"exit_rules.lens_groups":       "Мои группы",
 	"exit_rules.lens_source":       "По источнику",
 	"exit_rules.lens_device":       "По устройству",
+	"exit_rules.lens_user":         "По пользователю",
 	"exit_rules.lens_relay":        "По релею",
 	"exit_rules.lens_empty":        "Правил пока нет — добавьте первое, и страница соберёт его в карточку по источнику.",
 	"exit_rules.lens_summary":      "Групп %d · правил %d · устройств %d · подсетей %d",
@@ -263,6 +264,7 @@ var ruExitRules = map[string]string{
 	"exit_rules.kind_domain":       "домен",
 	"exit_rules.kind_cdn":          "CDN-диапазоны",
 	"exit_rules.kind_device":       "устройство",
+	"exit_rules.kind_user":         "пользователь",
 	"exit_rules.kind_relay":        "релей",
 	"exit_rules.kind_target":       "назначение",
 	"exit_rules.group_open":        "Открыть группу",
@@ -369,7 +371,11 @@ var ruExitRules = map[string]string{
 	"exit_rules_admin.system_load":                 "Загрузка системы",
 	"exit_rules_admin.all_rules":                   "Все правила (%d)",
 	"exit_rules_admin.rules_count":                 "%d правил",
-	"exit_rules_admin.shown_of_total":              "показано %d из %d",
+	// B523: the admin card page — its heading, its owner column and its switch column.
+	"exit_rules_admin.groups_title":   "Правила по группам",
+	"exit_rules_admin.col_user":       "Пользователь",
+	"exit_rules_admin.col_switch":     "Вкл/выкл",
+	"exit_rules_admin.shown_of_total": "показано %d из %d",
 	// B358 (2026-10-06): /admin/exit-rules paginates by GROUP (user → device), not
 	// by rule row, so the pagination line names the unit it counts and the totals
 	// line names both units. The rule total («Все правила (N)») stays in the
@@ -898,6 +904,7 @@ var enExitRules = map[string]string{
 	"exit_rules.lens_groups":       "My groups",
 	"exit_rules.lens_source":       "By source",
 	"exit_rules.lens_device":       "By device",
+	"exit_rules.lens_user":         "By user",
 	"exit_rules.lens_relay":        "By relay",
 	"exit_rules.lens_empty":        "No rules yet — add the first one and this page will show it as a card by its source.",
 	"exit_rules.lens_summary":      "%d group(s) · %d rule(s) · %d device(s) · %d subnet(s)",
@@ -906,6 +913,7 @@ var enExitRules = map[string]string{
 	"exit_rules.kind_domain":       "domain",
 	"exit_rules.kind_cdn":          "CDN ranges",
 	"exit_rules.kind_device":       "device",
+	"exit_rules.kind_user":         "user",
 	"exit_rules.kind_relay":        "relay",
 	"exit_rules.kind_target":       "destination",
 	"exit_rules.group_open":        "Open the group",
@@ -1006,7 +1014,11 @@ var enExitRules = map[string]string{
 	"exit_rules_admin.system_load":                 "System load",
 	"exit_rules_admin.all_rules":                   "All rules (%d)",
 	"exit_rules_admin.rules_count":                 "%d rules",
-	"exit_rules_admin.shown_of_total":              "showing %d of %d",
+	// B523: see the RU block.
+	"exit_rules_admin.groups_title":   "Rules by group",
+	"exit_rules_admin.col_user":       "User",
+	"exit_rules_admin.col_switch":     "On/off",
+	"exit_rules_admin.shown_of_total": "showing %d of %d",
 	// B358: see the RU block — the admin page windows GROUPS now.
 	"exit_rules_admin.pagination_page_of_groups": "Page %d of %d (by device)",
 	"exit_rules_admin.pagination_total_groups":   "total %d devices / %d users",

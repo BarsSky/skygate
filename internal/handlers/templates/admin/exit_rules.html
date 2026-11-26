@@ -328,7 +328,10 @@
 </div>
 {{end}}
 
-<div class="card">
+{{/* B523: the switch outcome is rendered OUTSIDE both layouts — the per-row switch now
+     lives in the card page's group table as well as in the tree, and a banner that only
+     the tree could show would make a successful action look silent. */}}
+<div class="card" id="admin-rules-flash">
   {{/* B520: the per-rule switch outcome. It travels in the query string like every
        other flash on this page, so a refresh cannot resubmit the form. */}}
   {{if .admin_toggled}}
@@ -342,6 +345,151 @@
     <i class="fa-solid fa-triangle-exclamation"></i> {{tf "exit_rules.source_err" .admin_err}}
   </div>
   {{end}}
+</div>
+
+{{if .AdminLens.Mode}}
+{{/* B523: the admin page is a page of GROUPS, the same visual model as /my/exit-rules
+     (B516), with one extra pivot («по пользователю») because this page spans users and
+     the old tree answered exactly that question. The tree stays behind ?view=target|device
+     — it is where a single rule's headscale detail (preferred/approved) is managed, and
+     the bulk-relay form lives on it. */}}
+{{$lv := .AdminLens}}
+<div class="card" id="admin-rules-groups">
+  <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <span><i class="fa-solid fa-layer-group"></i> {{t "exit_rules_admin.groups_title"}}</span>
+    <span class="tag">{{tf "exit_rules_admin.rules_count" $lv.Summary.Rules}}</span>
+  </h3>
+
+  <div class="multi-bar" id="admin-rules-lens-bar">
+    <span style="font-size:12px;color:var(--text-muted)">{{t "exit_rules.lens_label"}}</span>
+    {{range $lv.Links}}
+      <a class="btn btn-sm {{if .Active}}btn-primary{{end}}" data-lens="{{.Key}}" href="{{.Href}}">{{t .LabelKey}}</a>
+    {{end}}
+  </div>
+
+  <div style="font-size:12px;color:var(--text-muted);margin:6px 0 2px 0">
+    {{tf "exit_rules.lens_summary" $lv.Summary.Groups $lv.Summary.Rules $lv.Summary.Devices $lv.Summary.Subnets}}
+    {{if gt $lv.Summary.Disabled 0}}<span class="tag tag-warning">{{tf "exit_rules.lens_summary_off" $lv.Summary.Disabled}}</span>{{end}}
+  </div>
+
+  {{if $lv.Detail}}
+  {{$d := $lv.Detail}}
+  <div style="margin:6px 0 4px 0">
+    <a class="btn btn-sm" id="admin-rules-back" href="{{$lv.BackHref}}"><i class="fa-solid fa-arrow-left"></i> {{t "exit_rules.group_back"}}</a>
+  </div>
+  <div id="admin-group-header" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0 8px 0">
+    <b>{{if $d.Group.Title}}{{$d.Group.Title}}{{else}}{{t "exit_rules.group_relay_auto"}}{{end}}</b>
+    <span class="tag">{{t $d.Group.KindKey}}</span>
+    {{if $d.Group.Subtitle}}<span class="tag tag-info">{{tf "exit_rules.group_cdn" $d.Group.Subtitle}}</span>{{end}}
+    <span class="tag">{{tf "exit_rules.group_rule_count" $d.Group.Count}}</span>
+    <span class="tag">{{tf "exit_rules.group_subnets" $d.Group.SubnetCount}}</span>
+    {{range $d.Group.Users}}<span class="tag tag-success"><i class="fa-solid fa-user"></i> {{.}}</span>{{end}}
+    {{range $d.Group.Devices}}<span class="tag">{{.}}</span>{{end}}
+    {{if $d.Group.PrimaryRelay}}<span class="tag tag-info">{{tf "exit_rules.group_relay" $d.Group.PrimaryRelay}}</span>{{else}}<span class="tag">{{t "exit_rules.group_relay_auto"}}</span>{{end}}
+    {{if eq $d.Group.DisabledCount 0}}<span class="tag tag-success">{{t "exit_rules.row_on"}}</span>
+    {{else if eq $d.Group.DisabledCount $d.Group.Count}}<span class="tag tag-danger">{{t "exit_rules.group_off_all"}}</span>
+    {{else}}<span class="tag tag-warning">{{tf "exit_rules.group_off_some" $d.Group.DisabledCount $d.Group.Count}}</span>{{end}}
+  </div>
+
+  <div class="rules-pager-bar" id="admin-rules-pager-top" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin:6px 0 10px 0">
+    <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pager_row_range" $d.Pager.From $d.Pager.To $d.Pager.Total}}</span>
+    {{template "rules-pager" $d.Pager}}
+  </div>
+
+  <div class="table-wrap" id="admin-group-rows">
+    <table>
+      <tr>
+        <th>{{t "exit_rules.col_source"}}</th>
+        <th>{{t "exit_rules.col_action"}}</th>
+        <th>{{t "exit_rules.col_target"}}</th>
+        <th>{{t "exit_rules.col_device"}}</th>
+        <th>{{t "exit_rules_admin.col_user"}}</th>
+        <th>{{t "exit_rules_admin.col_switch"}}</th>
+        <th></th>
+      </tr>
+      {{range $row := $d.Rows}}
+      <tr id="admin-rule-{{$row.ID}}"{{if not $row.Enabled}} style="opacity:.6"{{end}}>
+        <td>{{if $row.SourceLabel}}<span class="tag tag-info" title="{{t "exit_rules.auto_managed_title"}}"><i class="fa-solid fa-arrows-rotate"></i> {{$row.SourceLabel}}</span>{{if $row.SourceCDN}} <span class="tag">{{tf "exit_rules.group_cdn" $row.SourceCDN}}</span>{{end}}{{else}}<span class="tag">{{t "exit_rules.source_manual"}}</span>{{end}}</td>
+        <td>{{if eq $row.Action "accept"}}<span class="tag tag-success">✅</span>{{else}}<span class="tag tag-danger">🚫</span>{{end}}</td>
+        <td><code>{{$row.TargetValue}}</code> <span class="tag">{{$row.TargetType}}</span>{{if not $row.Enabled}} <span class="tag tag-warning" title="{{t "exit_rules.row_off"}}">{{t "exit_rules.row_off"}}</span>{{end}}</td>
+        <td>{{$row.DeviceName}}</td>
+        <td>{{$row.UserName}}</td>
+        <td>
+          {{/* The switch offers the OPPOSITE of the current state. */}}
+          <form method="post" action="/admin/exit-rules/toggle" style="display:inline" onsubmit="return confirm('{{t "exit_rules.toggle_confirm"}}')">
+            <input type="hidden" name="id" value="{{$row.ID}}">
+            <input type="hidden" name="enabled" value="{{if $row.Enabled}}0{{else}}1{{end}}">
+            <input type="hidden" name="back" value="{{$.SelfURL}}">
+            {{if $.ShowDisabled}}<input type="hidden" name="show_disabled" value="1">{{end}}
+            <button type="submit" class="btn btn-sm" title="{{if $row.Enabled}}{{t "exit_rules.toggle_off_title"}}{{else}}{{t "exit_rules.toggle_on_title"}}{{end}}"><i class="fa-solid fa-power-off"></i></button>
+          </form>
+          <form method="post" action="/admin/exit-rules/delete" style="display:inline" onsubmit="return confirm('{{tf "exit_rules_admin.delete_confirm" $row.ID}}')">
+            <input type="hidden" name="id" value="{{$row.ID}}">
+            <button type="submit" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </table>
+  </div>
+
+  <div class="rules-pager-bar" id="admin-rules-pager-bottom" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px">
+    <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pager_row_range" $d.Pager.From $d.Pager.To $d.Pager.Total}}</span>
+    {{template "rules-pager" $d.Pager}}
+  </div>
+  {{else}}
+  {{if $lv.Page.TotalGroups}}
+  <div class="rules-pager-bar" id="admin-rules-pager-top" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin:6px 0 10px 0">
+    <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pager_group_range" $lv.Pager.From $lv.Pager.To $lv.Pager.Total}}</span>
+    {{template "rules-pager" $lv.Pager}}
+  </div>
+  <div class="table-wrap" id="admin-rules-list">
+    <table>
+      <tr>
+        <th>{{t "exit_rules.lens_label"}}</th>
+        <th>{{t "exit_rules.target_col_rules"}}</th>
+        <th>{{t "exit_rules_admin.col_user"}}</th>
+        <th>{{t "exit_rules.target_col_devices"}}</th>
+        <th>{{t "exit_rules.exit_node"}}</th>
+        <th>{{t "exit_rules_admin.col_switch"}}</th>
+        <th></th>
+      </tr>
+      {{range $g := $lv.Page.Groups}}
+      <tr class="admin-rule-group-row" id="admin-group-{{$g.Key}}">
+        <td>
+          <b>{{if $g.Title}}{{$g.Title}}{{else}}{{t "exit_rules.group_relay_auto"}}{{end}}</b><br>
+          <span class="tag">{{t $g.KindKey}}</span>
+          {{if $g.Subtitle}}<span class="tag tag-info">{{tf "exit_rules.group_cdn" $g.Subtitle}}</span>{{end}}
+          {{if $g.AllDevices}}<span class="tag tag-success"><i class="fa-solid fa-users"></i> {{t "exit_rules.group_all_devices"}}</span>{{end}}
+        </td>
+        <td>{{tf "exit_rules.group_rule_count" $g.Count}}<br>
+          <span style="color:var(--text-muted)">{{tf "exit_rules.group_subnets" $g.SubnetCount}}</span></td>
+        <td>{{range $u := $g.Users}}<span class="tag tag-success">{{$u}}</span> {{end}}</td>
+        <td>{{range $dn := $g.Devices}}<span class="tag">{{$dn}}</span> {{end}}</td>
+        <td>{{if $g.PrimaryRelay}}<span class="tag tag-info">{{tf "exit_rules.group_relay" $g.PrimaryRelay}}</span>{{else}}<span class="tag">{{t "exit_rules.group_relay_auto"}}</span>{{end}}</td>
+        <td>
+          {{if eq $g.DisabledCount 0}}<span class="tag tag-success">{{t "exit_rules.row_on"}}</span>
+          {{else if eq $g.DisabledCount $g.Count}}<span class="tag tag-danger">{{t "exit_rules.group_off_all"}}</span>
+          {{else}}<span class="tag tag-warning">{{tf "exit_rules.group_off_some" $g.DisabledCount $g.Count}}</span>{{end}}
+        </td>
+        <td><a class="btn btn-sm btn-primary" href="{{$g.Href}}" title="{{t "exit_rules.group_open"}}" aria-label="{{t "exit_rules.group_open"}}"><i class="fa-solid fa-folder-open"></i></a></td>
+      </tr>
+      {{end}}
+    </table>
+  </div>
+  <div class="rules-pager-bar" id="admin-rules-pager-bottom" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px">
+    <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pager_group_range" $lv.Pager.From $lv.Pager.To $lv.Pager.Total}}</span>
+    {{template "rules-pager" $lv.Pager}}
+  </div>
+  {{else}}
+  <p style="color:var(--text-muted)">{{t "exit_rules.lens_empty"}}</p>
+  {{end}}
+  {{end}}
+</div>
+{{end}}
+
+{{if not .AdminLens.Mode}}
+<div class="card">
   {{/* B449 (2026-10-30) — «не хватает у Все правила возможности свернуть этот блок, так как он
        слишком большой и долго прокручивать в самый низ». The tree inside can be collapsed group
        by group (B376/B448), but the CARD ITSELF had no fold: with 291 rules the page is a wall
@@ -636,6 +784,7 @@
   </div>
   </details>
 </div>
+{{end}}{{/* end of the ?view= tree (B523) */}}
 
 <div class="card">
   <h3><i class="fa-solid fa-info-circle"></i> {{t "exit_rules.how_title"}}</h3>

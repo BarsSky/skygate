@@ -268,6 +268,15 @@ type RuleRow struct {
 	// lens, the per-row device cell and the group's device list all read the same value,
 	// and a device that headscale cannot name falls back to "#<id>" ONCE, in Go.
 	DeviceName string
+
+	// UserName is the OWNER of this row (B523, admin page only).
+	//
+	// The user page's rows all belong to the operator reading them, so it leaves this
+	// empty and does not offer the «по пользователю» lens. The admin page renders every
+	// user's rules, so a card that does not say WHO the rules belong to is a card the
+	// admin cannot act on, and grouping by owner is the one view the old tree provided —
+	// which is why the lens exists instead of being lost with the tree.
+	UserName string
 }
 
 // GroupRulesByCDN takes a slice of RuleRow and returns:

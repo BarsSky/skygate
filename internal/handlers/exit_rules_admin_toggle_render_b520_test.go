@@ -70,7 +70,12 @@ func renderAdminPage(t *testing.T, rules []exit_rules.AdminRule, extra map[strin
 		"SelfURL": "/admin/exit-rules", "ShowDisabled": false,
 		"ShowDisabledHref": "/admin/exit-rules?show_disabled=1",
 		"AdminPager":       exit_rules.PagerView{},
-		"admin_toggled":    "", "admin_n": 0, "admin_err": "",
+		// B523: the admin page is a page of GROUPS by default; this fixture renders the
+		// TREE (`?view=device`), so the lens view is present but switched off. A fixture
+		// that omitted it would silently render the card page instead, and the B520
+		// contracts below would then be asserting things about a page they do not test.
+		"AdminLens":     exit_rules.RulesLensView{},
+		"admin_toggled": "", "admin_n": 0, "admin_err": "",
 		"RelayCard": map[string]any{"PolicyMode": "ask", "Relays": []string{"karolina"}, "Pending": []any{}, "Recent": []any{}, "Policies": []any{}, "Modes": []string{}},
 	}
 	for k, v := range extra {

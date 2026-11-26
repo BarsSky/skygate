@@ -10,9 +10,10 @@
 // so the question is worth a measurement rather than an argument.
 //
 // This test is a TOOL, not an assertion: it does nothing unless SKYGATE_MOBILE_DIR
-// is set (so it never runs silently in CI), and writes four self-contained HTML
-// files there. `scripts/mobile_overflow_check_b521.sh` then loads each one in a
-// headless browser at 390x844 and reads the overflow it reports.
+// is set (so it never runs silently in CI), and writes self-contained HTML files
+// there: the two user states (B516) and the two admin states (B523). The contract
+// script then loads each one in a headless browser at 390 and 360 px and reads the
+// overflow it reports.
 package handlers
 
 import (
@@ -24,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"skygate/internal/feature/exit_rules"
 	"skygate/internal/i18n"
 )
 
@@ -130,8 +132,11 @@ func TestB521_ExportMobileSnapshots(t *testing.T) {
 		"my-groups.html": renderMyRulesLens(t, url.Values{"lens": []string{"source"}}, ""),
 		// One group open: the seven-column row table + the action bar + the pager.
 		"my-group.html": renderMyRulesLens(t, url.Values{"lens": []string{"source"}}, "dom:rutracker.org"),
-		// The admin page: the same table, its own toolbar and the switched-off view.
-		"admin.html": renderAdminPage(t, nil, map[string]any{"ShowDisabled": true}),
+		// The admin page (B523): the same card model, with the owner pivot and the
+		// switched-off view on — the widest toolbar the page can have.
+		"admin.html": renderAdminLensSnapshot(t, url.Values{"lens": []string{"source"}}, ""),
+		// One admin group open: the per-row switch + delete next to the owner column.
+		"admin-group.html": renderAdminLensSnapshot(t, url.Values{"lens": []string{"source"}}, "dom:rutracker.org"),
 	}
 
 	for name, body := range pages {
@@ -142,4 +147,17 @@ func TestB521_ExportMobileSnapshots(t *testing.T) {
 		}
 		t.Logf("wrote %s (%d bytes)", path, len(body))
 	}
+}
+
+// renderAdminLensSnapshot renders the admin CARD page (B523) with the switched-off
+// view ON — the widest toolbar that page can have, which is the shape a phone has to
+// survive. It reuses the B523 fixture and projection, so the snapshot measures the
+// page the render tests assert.
+func renderAdminLensSnapshot(t *testing.T, q url.Values, groupKey string) string {
+	t.Helper()
+	rules := b523AdminRules()
+	lens := exit_rules.BuildRulesLensViewFor("/admin/exit-rules", q,
+		adminRowProjection(rules), q.Get("lens"), groupKey, exit_rules.AdminRuleLensOrder())
+	lens.Mode = true
+	return renderAdminPage(t, rules, map[string]any{"AdminLens": lens, "ShowDisabled": true})
 }

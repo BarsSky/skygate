@@ -218,8 +218,23 @@ func buildPager(path string, q url.Values, page, per, total int, sizes []int, pa
 // `path` is the page the links point back at (/my/exit-rules or
 // /admin/exit-rules), `lensParam` is the raw `?lens=` value and `groupParam` the
 // raw `?group=` value.
+//
+// B523: the builder is shared by BOTH pages, so the lens list is a parameter —
+// BuildRulesLensView (user page) passes RuleLensOrder(), the admin page passes
+// AdminRuleLensOrder() (the same four plus the owner pivot). One model, two
+// selectors: the card, the window and the pager cannot disagree between the pages.
 func BuildRulesLensView(path string, q url.Values, rows []RuleRow, lensParam, groupParam string) RulesLensView {
+	return BuildRulesLensViewFor(path, q, rows, lensParam, groupParam, RuleLensOrder())
+}
+
+// BuildRulesLensViewFor is BuildRulesLensView with an explicit selector. An empty
+// `lenses` falls back to the user page's order, so a caller that passes nothing
+// still renders a working selector instead of an empty bar.
+func BuildRulesLensViewFor(path string, q url.Values, rows []RuleRow, lensParam, groupParam string, lenses []RuleLens) RulesLensView {
 	out := RulesLensView{Mode: true}
+	if len(lenses) == 0 {
+		lenses = RuleLensOrder()
+	}
 
 	lens, ok := ParseRuleLens(lensParam)
 	if !ok {
@@ -227,11 +242,17 @@ func BuildRulesLensView(path string, q url.Values, rows []RuleRow, lensParam, gr
 		// own groups when they have any, otherwise on the source lens.
 		lens = RuleLensDefault(rows)
 	}
+	// A lens the page does not OFFER (a hand-typed `?lens=user` on the user page)
+	// falls back to the page's own order instead of rendering a selector with no
+	// active entry: the URL would claim a grouping the selector cannot show.
+	if !lensIndex(lenses, lens) {
+		lens = lenses[0]
+	}
 	out.Lens = lens
 
 	// The selector always carries the lens; the page is dropped because switching
 	// the grouping changes what a page contains.
-	for _, l := range RuleLensOrder() {
+	for _, l := range lenses {
 		out.Links = append(out.Links, lensLink{
 			Key:      l,
 			LabelKey: lensLabelKey(l),
@@ -292,6 +313,16 @@ func BuildRulesLensView(path string, q url.Values, rows []RuleRow, lensParam, gr
 		}
 	}
 	return out
+}
+
+// lensIndex reports whether `want` is one of the offered lenses.
+func lensIndex(lenses []RuleLens, want RuleLens) bool {
+	for _, l := range lenses {
+		if l == want {
+			return true
+		}
+	}
+	return false
 }
 
 // myRulesLensEnabled reports whether this request renders the GROUP page.

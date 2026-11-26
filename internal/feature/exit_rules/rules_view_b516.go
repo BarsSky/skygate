@@ -74,17 +74,37 @@ const (
 	LensSource RuleLens = "source"
 	LensDevice RuleLens = "device"
 	LensRelay  RuleLens = "relay"
+	// LensUser groups by the OWNER of a rule (B523). It is offered on the ADMIN page
+	// only: every row the user page renders belongs to the same operator, so a
+	// «по пользователю» pivot there would be one card holding everything — a control
+	// that cannot change the answer. On the admin page it is the view the old
+	// «пользователь → устройство → релей» tree used to provide, kept as a lens because
+	// an admin's most common question is exactly the tree's: «что настроил вот этот
+	// человек».
+	LensUser RuleLens = "user"
 )
 
 // ruleLensOrder is the order the selector renders the lenses in: the operator's
 // own grouping first (it is the one they asked for), the derived ones after it.
 var ruleLensOrder = []RuleLens{LensGroups, LensSource, LensDevice, LensRelay}
 
-// RuleLensOrder returns the lenses in render order. A copy, so a caller cannot
-// reorder the page by accident.
+// adminRuleLensOrder is the ADMIN page's selector: the same four plus the owner
+// pivot. Its own slice on purpose — the user page must not grow a control it has
+// no use for, and adding a lens to one page must not silently add it to the other.
+var adminRuleLensOrder = []RuleLens{LensGroups, LensSource, LensDevice, LensUser, LensRelay}
+
+// RuleLensOrder returns the lenses in render order for the USER page. A copy, so a
+// caller cannot reorder the page by accident.
 func RuleLensOrder() []RuleLens {
 	out := make([]RuleLens, len(ruleLensOrder))
 	copy(out, ruleLensOrder)
+	return out
+}
+
+// AdminRuleLensOrder returns the lenses in render order for the ADMIN page.
+func AdminRuleLensOrder() []RuleLens {
+	out := make([]RuleLens, len(adminRuleLensOrder))
+	copy(out, adminRuleLensOrder)
 	return out
 }
 
@@ -102,6 +122,8 @@ func ParseRuleLens(raw string) (RuleLens, bool) {
 		return LensSource, true
 	case "device", "devices", "host", "hosts":
 		return LensDevice, true
+	case "user", "users", "owner", "owners":
+		return LensUser, true
 	case "relay", "relays", "exit", "exit_node", "exitnode":
 		return LensRelay, true
 	}
@@ -135,6 +157,7 @@ const (
 	GroupKindDevice = "device" // one source device
 	GroupKindRelay  = "relay"  // one named exit node
 	GroupKindTarget = "target" // a row with no source: the destination IS its identity
+	GroupKindUser   = "user"   // one owner (admin page only)
 )
 
 // ruleGroupKindRank decides the order of the cards inside one lens: labels first
@@ -153,10 +176,12 @@ func ruleGroupKindRank(kind string) int {
 		return 3
 	case GroupKindDevice:
 		return 4
-	case GroupKindRelay:
+	case GroupKindUser:
 		return 5
+	case GroupKindRelay:
+		return 6
 	}
-	return 6
+	return 7
 }
 
 // GroupKindKeys maps every kind to its i18n key. The template renders the chip
@@ -176,13 +201,15 @@ func groupKindKey(kind string) string {
 		return "exit_rules.kind_device"
 	case GroupKindRelay:
 		return "exit_rules.kind_relay"
+	case GroupKindUser:
+		return "exit_rules.kind_user"
 	}
 	return "exit_rules.kind_target"
 }
 
 // RuleKindKeys returns every kind key — the list the i18n test walks.
 func RuleKindKeys() []string {
-	kinds := []string{GroupKindLabel, GroupKindDomain, GroupKindCDN, GroupKindDevice, GroupKindRelay, GroupKindTarget}
+	kinds := []string{GroupKindLabel, GroupKindDomain, GroupKindCDN, GroupKindDevice, GroupKindRelay, GroupKindTarget, GroupKindUser}
 	out := make([]string, 0, len(kinds))
 	for _, k := range kinds {
 		out = append(out, groupKindKey(k))
@@ -199,15 +226,26 @@ func lensLabelKey(l RuleLens) string {
 		return "exit_rules.lens_device"
 	case LensRelay:
 		return "exit_rules.lens_relay"
+	case LensUser:
+		return "exit_rules.lens_user"
 	}
 	return "exit_rules.lens_source"
 }
 
-// RuleLensKeys returns every lens key — the list the i18n test walks.
+// RuleLensKeys returns every lens key — the list the i18n test walks. It covers
+// the ADMIN order too (B523): a key only the admin page resolves is exactly the
+// chip the user page's test would never look at.
 func RuleLensKeys() []string {
-	out := make([]string, 0, len(ruleLensOrder))
-	for _, l := range ruleLensOrder {
-		out = append(out, lensLabelKey(l))
+	seen := map[string]bool{}
+	all := append(append([]RuleLens{}, ruleLensOrder...), adminRuleLensOrder...)
+	out := make([]string, 0, len(all))
+	for _, l := range all {
+		k := lensLabelKey(l)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
 	}
 	return out
 }
@@ -270,6 +308,12 @@ type RuleGroup struct {
 
 	// Devices are the distinct device labels in render order.
 	Devices []string
+
+	// Users are the distinct OWNERS in render order. Empty on the user page (its rows
+	// carry no UserName — they are all the same operator); on the admin page every card
+	// lists them, because a card holding three people's rules must say so, and the
+	// «по пользователю» lens is the card of exactly one of them.
+	Users []string
 
 	// Relays are the distinct NON-EMPTY relays named by the rows, sorted. A row
 	// with an empty exit_node_id contributes nothing here (it names nobody).
@@ -418,6 +462,17 @@ func ruleGroupKey(r RuleRow, lens RuleLens) (key, kind, title, subtitle string) 
 			name = "#" + strconv.Itoa(r.DeviceID)
 		}
 		return "dev:" + strings.ToLower(name), GroupKindDevice, name, ""
+	case LensUser:
+		// B523: the owner pivot of the admin page. The label is the denormalised
+		// user_name the row already carries; without it the id is still an answer the
+		// operator can act on («#7»), which is why the fallback is the id and not a
+		// shared "unknown" bucket — two different owners must never collapse into one
+		// card.
+		name := strings.TrimSpace(r.UserName)
+		if name == "" {
+			name = "#" + strconv.FormatInt(r.UserID, 10)
+		}
+		return "usr:" + strings.ToLower(name), GroupKindUser, name, ""
 	case LensRelay:
 		relay := strings.TrimSpace(r.ExitNode)
 		if relay == "" {
@@ -570,6 +625,7 @@ func fillGroupFacts(g *RuleGroup) {
 	g.AllDevices = g.Count > 0
 
 	seenDevice := map[string]bool{}
+	seenUser := map[string]bool{}
 	seenRelay := map[string]bool{}
 	relayVotes := map[string]int{}
 
@@ -590,6 +646,10 @@ func fillGroupFacts(g *RuleGroup) {
 			seenDevice[name] = true
 			g.Devices = append(g.Devices, name)
 		}
+		if owner := strings.TrimSpace(r.UserName); owner != "" && !seenUser[owner] {
+			seenUser[owner] = true
+			g.Users = append(g.Users, owner)
+		}
 		if relay := strings.TrimSpace(r.ExitNode); relay != "" {
 			relayVotes[relay]++
 			if !seenRelay[relay] {
@@ -601,6 +661,9 @@ func fillGroupFacts(g *RuleGroup) {
 
 	sort.SliceStable(g.Devices, func(i, j int) bool {
 		return strings.ToLower(g.Devices[i]) < strings.ToLower(g.Devices[j])
+	})
+	sort.SliceStable(g.Users, func(i, j int) bool {
+		return strings.ToLower(g.Users[i]) < strings.ToLower(g.Users[j])
 	})
 	sort.SliceStable(g.Relays, func(i, j int) bool {
 		return strings.ToLower(g.Relays[i]) < strings.ToLower(g.Relays[j])

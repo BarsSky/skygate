@@ -105,6 +105,12 @@ type AdminRule struct {
 	// resolution yet, or resolution exists but headscale
 	// hasn't approved any of the resolved CIDRs).
 	ApprovedInHeadscale bool
+	// GroupLabel is the operator's OWN group name (v0.79 / B380), projected here by
+	// B523 so the admin page can group by it exactly as the user page does. The
+	// column has always been SELECTed by the admin queries (scanAdminRules scans it);
+	// AdminRule simply dropped it, and a grouping key that never arrives would render
+	// every rule as «без группы».
+	GroupLabel string
 }
 
 // SourceLabel answers «from which domain did this row come» for the admin table —
@@ -471,6 +477,12 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:    localtime.Format(time.Unix(r.CreatedAt, 0)),
 			AllDevices:   r.AllDevices,
 			Enabled:      r.Enabled,
+			// B523: the card page groups by the operator's own label, so the admin
+			// projection has to carry it — the column has existed since B380 and the
+			// admin query has always SELECTed it (scanAdminRules scans GroupLabel),
+			// but AdminRule dropped it, and a grouping key that never arrives would
+			// silently render every rule as «без группы».
+			GroupLabel: r.GroupLabel,
 		})
 	}
 
@@ -815,6 +827,19 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("view")), "device") {
 		viewMode = "device"
 	}
+	// B523: the admin page renders the SAME card page as /my/exit-rules (a list of
+	// groups, then one group open), with the owner pivot added, and the old tree
+	// stays behind ?view=target|device — the B516 decision, applied to the second
+	// page. The rows come from the SAME `rr` slice the tree iterates and from the
+	// SAME pure model the user page uses, so the two pages cannot disagree about
+	// what a group is, how many rules it holds or which page it is on.
+	adminLens := BuildRulesLensViewFor(
+		"/admin/exit-rules", r.URL.Query(),
+		adminLensRowsFrom(rr),
+		r.URL.Query().Get("lens"), r.URL.Query().Get("group"),
+		AdminRuleLensOrder(),
+	)
+	adminLens.Mode = adminRulesLensEnabled(r.URL.Query())
 	s.Backend.RenderWithLayout(w, r, "admin/exit_rules.html", c, map[string]any{
 		"Page":          "exit-rules",
 		"Title":         "Exit Rules",
@@ -925,6 +950,10 @@ func (s *Service) AdminExitRules(w http.ResponseWriter, r *http.Request) {
 		"TargetRowsAdmin":    targetRowsAdmin,
 		"TargetDevicesAdmin": TargetRowAdminDeviceCount(targetRowsAdmin),
 		"ViewMode":           viewMode,
+		// B523: the card page (list of groups → one group open), its selector, the
+		// numbered pager above and below, and the summary computed from EVERY group
+		// (so it does not change as the operator paginates).
+		"AdminLens": adminLens,
 		// B440 (2026-10-29): the request queue, the decided tail and the policy card —
 		// the operator's half of the exit-node request channel.
 		// B471 (2026-11-14): add "BulkRelay" — move a SELECTION of rules to another relay.
@@ -1058,6 +1087,44 @@ func validateAdminRuleForm(userID, deviceID, exitNode, targetType, targetValue, 
 		return false
 	}
 	return true
+}
+
+// adminRulesLensEnabled reports whether this request renders the admin CARD page
+// (B523). The default is the card page; `?view=target|device` keeps the pre-B523
+// tree reachable (its contracts, its bookmarks and the bulk-relay form that lives
+// on it). Written as ONE condition, so there is exactly one place that decides
+// which page the admin sees — the same shape as myRulesLensEnabled (B517).
+func adminRulesLensEnabled(q url.Values) bool {
+	return strings.TrimSpace(q.Get("view")) == ""
+}
+
+// adminLensRowsFrom projects the admin rows onto the SHARED rule model (B523).
+//
+// It exists so the admin page does not get a second grouping implementation: the
+// pure model in rules_view_b516.go groups []RuleRow, while AdminRule is a
+// presentation type carrying fields (PreferredHost, ApprovedInHeadscale,
+// ServedBy) the grouping does not use. The projection copies exactly what the
+// model reads — no lookups, no DB, no clock.
+func adminLensRowsFrom(rr []AdminRule) []RuleRow {
+	out := make([]RuleRow, 0, len(rr))
+	for _, a := range rr {
+		out = append(out, RuleRow{
+			ID:           int64(a.ID),
+			UserID:       int64(a.UserID),
+			UserName:     a.UserName,
+			DeviceID:     a.DeviceID,
+			DeviceName:   a.DeviceName,
+			ExitNode:     a.ExitNode,
+			TargetType:   a.TargetType,
+			TargetValue:  a.TargetValue,
+			Action:       a.Action,
+			ParentDomain: a.ParentDomain,
+			GroupLabel:   a.GroupLabel,
+			AllDevices:   a.AllDevices,
+			Enabled:      a.Enabled,
+		})
+	}
+	return out
 }
 
 // buildAdminExitRuleRedirectURL mirrors buildFormErrorRedirectURL
