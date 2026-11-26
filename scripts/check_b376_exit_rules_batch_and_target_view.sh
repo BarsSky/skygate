@@ -249,14 +249,32 @@ else
   bad "E9: /admin/exit-rules has no view switch / does not render the by-target table"
 fi
 
-# TD-29: the admin tree's own delete control posts to /admin/exit-rules/delete,
-# which NO mux.Handle registers. The new view must not spread that defect, so the
-# template may carry only the two pre-existing forms.
+# TD-29: the admin tree's delete control posted to /admin/exit-rules/delete, which at
+# the time NO mux.Handle registered — so this contract counted the forms (budget 2).
+#
+# 2026-11-25 (B523) — CONTRACT RENEGOTIATED, because its premise stopped being true.
+# TD-29 was CLOSED by B379: cmd/skygate/routes.go now registers
+# `POST /admin/exit-rules/delete` (authMW + the admin handler with the owner's own
+# cascades) and the ROADMAP version line says so. The B523 admin card page adds a THIRD
+# form of the same shape — the per-row delete inside an opened group — pointing at that
+# same WORKING endpoint, and the count reported it as «the by-target view spread the
+# TD-29 404» about a route that exists. The guard now asks the question it was always
+# trying to ask: every delete control in the template must post to an endpoint the Go
+# side registers. A count goes stale the next time the page grows a table.
 NDEL=$(grep -c 'action="/admin/exit-rules/delete"' "$TPL_ADMIN" 2>/dev/null || true)
-if [ "$NDEL" -le 2 ]; then
-  ok "E10: the by-target view added no delete control for the unrouted endpoint ($NDEL pre-existing form(s), see docs/ROADMAP.md TD-29)"
+DEL_ROUTE=""
+for f in cmd/skygate/routes.go; do
+  if [ -f "$f" ] && grep -q 'admin/exit-rules/delete' "$f" 2>/dev/null; then
+    DEL_ROUTE="$f"
+    break
+  fi
+done
+if [ "$NDEL" -eq 0 ]; then
+  bad "E10: the admin template has no delete control at all — both the tree and the card page offer one"
+elif [ -z "$DEL_ROUTE" ]; then
+  bad "E10: $NDEL delete form(s) post to /admin/exit-rules/delete but no mux.Handle registers it — TD-29 is back"
 else
-  bad "E10: the admin template now has $NDEL delete forms — the by-target view spread the TD-29 404"
+  ok "E10: $NDEL delete form(s), all posting to the ROUTED endpoint ($DEL_ROUTE) — TD-29 closed by B379"
 fi
 
 # --- F: i18n keys exist in BOTH catalogues ----------------------------------
