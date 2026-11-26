@@ -234,6 +234,18 @@
      different groups. `move_pins` is a SEPARATE decision: a prefix pinned by hand stays
      where the operator put it (B275), and this form says so instead of silently ignoring
      it. */}}
+     the rule tree below and reference this form by id (`form="bulk-relay-form"`), so no
+     JavaScript is involved and one form covers rows the template renders in three
+     different groups. `move_pins` is a SEPARATE decision: a prefix pinned by hand stays
+     where the operator put it (B275), and this form says so instead of silently ignoring
+     it.
+
+     B523: this card renders ONLY with the tree, because its INPUTS live in the tree's
+     rows (`form="bulk-relay-form"`). On the default card page there are no such inputs,
+     so the form would be a button that submits an empty selection — a dead control that
+     looks alive, which is the class the project keeps removing. The card page points at
+     the tree instead. */}}
+{{if not .AdminLens.Mode}}
 <div class="card" id="admin-bulk-relay-card">
   <h3><i class="fa-solid fa-shuffle"></i> {{t "exit_rules_admin.bulk_relay_title"}}</h3>
   <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px 0">{{t "exit_rules_admin.bulk_relay_help"}}</p>
@@ -254,6 +266,7 @@
     <button type="submit" class="btn btn-primary"><i class="fa-solid fa-route"></i> {{t "exit_rules_admin.bulk_relay_submit"}}</button>
   </form>
 </div>
+{{end}}
 
 {{/* 2026-08-06: preferred-mismatch banner. Surfaces the count of
      rules whose exit_node_id doesn't match the device's preferred
@@ -357,7 +370,7 @@
 <div class="card" id="admin-rules-groups">
   <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
     <span><i class="fa-solid fa-layer-group"></i> {{t "exit_rules_admin.groups_title"}}</span>
-    <span class="tag">{{tf "exit_rules_admin.rules_count" $lv.Summary.Rules}}</span>
+    <span class="tag">{{tf "exit_rules_admin.all_rules" .TotalRules}}</span>
   </h3>
 
   <div class="multi-bar" id="admin-rules-lens-bar">
@@ -367,9 +380,15 @@
     {{end}}
   </div>
 
+  {{/* B523: the counts below are the counts of THIS WINDOW, and the page says so.
+       The admin page windows groups in SQL (B358), so the card list and every number
+       derived from it describe the slice the page holds — the database total is the
+       heading above (.TotalRules). A summary that quoted the window as if it were the
+       table is exactly the B351 defect (a page number dressed as a total). */}}
   <div style="font-size:12px;color:var(--text-muted);margin:6px 0 2px 0">
-    {{tf "exit_rules.lens_summary" $lv.Summary.Groups $lv.Summary.Rules $lv.Summary.Devices $lv.Summary.Subnets}}
+    {{tf "exit_rules_admin.lens_page_summary" $lv.Summary.Groups $lv.Summary.Rules $lv.Summary.Devices $lv.Summary.Subnets}}
     {{if gt $lv.Summary.Disabled 0}}<span class="tag tag-warning">{{tf "exit_rules.lens_summary_off" $lv.Summary.Disabled}}</span>{{end}}
+    <a href="/admin/exit-rules?view=device" id="admin-rules-bulk-relay-hint">{{t "exit_rules_admin.bulk_relay_hint_link"}}</a>
   </div>
 
   {{if $lv.Detail}}
@@ -390,6 +409,7 @@
     {{else if eq $d.Group.DisabledCount $d.Group.Count}}<span class="tag tag-danger">{{t "exit_rules.group_off_all"}}</span>
     {{else}}<span class="tag tag-warning">{{tf "exit_rules.group_off_some" $d.Group.DisabledCount $d.Group.Count}}</span>{{end}}
   </div>
+  <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px 0">{{t "exit_rules_admin.lens_page_scope"}}</p>
 
   <div class="rules-pager-bar" id="admin-rules-pager-top" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin:6px 0 10px 0">
     <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pager_row_range" $d.Pager.From $d.Pager.To $d.Pager.Total}}</span>
@@ -439,9 +459,18 @@
   </div>
   {{else}}
   {{if $lv.Page.TotalGroups}}
+  {{/* B523: the pager here is the DATABASE one (.AdminPager), not the lens window's.
+       The admin page windows GROUPS in SQL (B358 — a window of whole
+       (user, device) pairs), so the rows this page holds are already a slice of the
+       table; a pager built from the lens groups of that slice would say «1 из 1» on a
+       table with 65 groups and make page 2 unreachable. .AdminPager counts the
+       database, which is what a page number must count. */}}
   <div class="rules-pager-bar" id="admin-rules-pager-top" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin:6px 0 10px 0">
-    <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pager_group_range" $lv.Pager.From $lv.Pager.To $lv.Pager.Total}}</span>
-    {{template "rules-pager" $lv.Pager}}
+    <span style="font-size:12px;color:var(--text-muted)">
+      {{tf "exit_rules_admin.pagination_page_of_groups" .RulePage.Page (divceil .RulePage.TotalGroups .RulePage.PageSize)}}
+      ({{tf "exit_rules_admin.pagination_total_groups" .RulePage.TotalGroups .RulePage.TotalUsers}})
+    </span>
+    {{with .AdminPager}}{{template "rules-pager" .}}{{end}}
   </div>
   <div class="table-wrap" id="admin-rules-list">
     <table>
@@ -478,8 +507,11 @@
     </table>
   </div>
   <div class="rules-pager-bar" id="admin-rules-pager-bottom" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px">
-    <span style="font-size:12px;color:var(--text-muted)">{{tf "exit_rules.pager_group_range" $lv.Pager.From $lv.Pager.To $lv.Pager.Total}}</span>
-    {{template "rules-pager" $lv.Pager}}
+    <span style="font-size:12px;color:var(--text-muted)">
+      {{tf "exit_rules_admin.pagination_page_of_groups" .RulePage.Page (divceil .RulePage.TotalGroups .RulePage.PageSize)}}
+      ({{tf "exit_rules_admin.pagination_total_groups" .RulePage.TotalGroups .RulePage.TotalUsers}})
+    </span>
+    {{with .AdminPager}}{{template "rules-pager" .}}{{end}}
   </div>
   {{else}}
   <p style="color:var(--text-muted)">{{t "exit_rules.lens_empty"}}</p>

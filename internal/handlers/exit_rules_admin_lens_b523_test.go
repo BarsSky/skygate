@@ -37,7 +37,17 @@ func renderAdminLensPage(t *testing.T, q url.Values, groupKey string) string {
 	lens := exit_rules.BuildRulesLensViewFor("/admin/exit-rules", q,
 		adminRowProjection(rules), q.Get("lens"), groupKey, exit_rules.AdminRuleLensOrder())
 	lens.Mode = true
-	return renderAdminPage(t, rules, map[string]any{"AdminLens": lens})
+	// The DATABASE pager the handler passes (B358: the window is a set of whole
+	// (user, device) groups — 65 in the fixture's RulePage, so page 2 of 4). The card
+	// list pages by THIS arithmetic, not by the lens groups of the window.
+	dbPager := exit_rules.PagerView{
+		Page: 2, TotalPages: 4, From: 21, To: 40, Total: 65, Per: 20,
+		Pages: []exit_rules.PageLink{
+			{Num: 1, Href: "/admin/exit-rules?page=1"},
+			{Num: 2, Href: "/admin/exit-rules?page=2", Active: true},
+		},
+	}
+	return renderAdminPage(t, rules, map[string]any{"AdminLens": lens, "AdminPager": dbPager})
 }
 
 // adminRowProjection mirrors form_admin.go's projection for the fixture. The
@@ -75,9 +85,26 @@ func TestB523_AdminRendersTheGroupList(t *testing.T) {
 		`class="admin-rule-group-row"`,  // one row per group
 		"exit_rules.kind_domain",        // its kind chip
 		"exit_rules_admin.col_switch",   // the on/off column
+		// B358 arithmetic, not the lens window's: the window is a set of whole
+		// (user, device) groups, so the page numbers must count the DATABASE.
+		"exit_rules_admin.pagination_page_of_groups",
+		"exit_rules_admin.pagination_total_groups",
+		"/admin/exit-rules?page=2", // the DB pager's link is rendered
+		// …and the counters SAY they are the window's.
+		"exit_rules_admin.lens_page_summary",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("admin card page is missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		// The lens-window pager text would quote the window as if it were the table.
+		"exit_rules.pager_group_range",
+		// The user page's summary wording, which has no «на этой странице» scope.
+		"exit_rules.lens_summary<",
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("admin card page still renders %q — that quotes the window as a total", unwanted)
 		}
 	}
 	if strings.Contains(got, `id="admin-all-rules-fold"`) {

@@ -372,10 +372,15 @@ var ruExitRules = map[string]string{
 	"exit_rules_admin.all_rules":                   "Все правила (%d)",
 	"exit_rules_admin.rules_count":                 "%d правил",
 	// B523: the admin card page — its heading, its owner column and its switch column.
-	"exit_rules_admin.groups_title":   "Правила по группам",
-	"exit_rules_admin.col_user":       "Пользователь",
-	"exit_rules_admin.col_switch":     "Вкл/выкл",
-	"exit_rules_admin.shown_of_total": "показано %d из %d",
+	"exit_rules_admin.groups_title": "Правила по группам",
+	// B523: the card page windows groups in SQL (B358), so its counters describe the
+	// window and must SAY so; the database total is the heading.
+	"exit_rules_admin.lens_page_summary":    "На этой странице: групп %d · правил %d · устройств %d · подсетей %d",
+	"exit_rules_admin.lens_page_scope":      "Показаны строки карточки из текущего окна; остальные — на следующих страницах.",
+	"exit_rules_admin.bulk_relay_hint_link": "Перенос пачки правил на другой релей — в виде по устройству →",
+	"exit_rules_admin.col_user":             "Пользователь",
+	"exit_rules_admin.col_switch":           "Вкл/выкл",
+	"exit_rules_admin.shown_of_total":       "показано %d из %d",
 	// B358 (2026-10-06): /admin/exit-rules paginates by GROUP (user → device), not
 	// by rule row, so the pagination line names the unit it counts and the totals
 	// line names both units. The rule total («Все правила (N)») stays in the
@@ -1015,10 +1020,14 @@ var enExitRules = map[string]string{
 	"exit_rules_admin.all_rules":                   "All rules (%d)",
 	"exit_rules_admin.rules_count":                 "%d rules",
 	// B523: see the RU block.
-	"exit_rules_admin.groups_title":   "Rules by group",
-	"exit_rules_admin.col_user":       "User",
-	"exit_rules_admin.col_switch":     "On/off",
-	"exit_rules_admin.shown_of_total": "showing %d of %d",
+	"exit_rules_admin.groups_title": "Rules by group",
+	// B523: see the RU block.
+	"exit_rules_admin.lens_page_summary":    "On this page: %d groups · %d rules · %d devices · %d subnets",
+	"exit_rules_admin.lens_page_scope":      "Showing this card's rows from the current window; the rest are on the following pages.",
+	"exit_rules_admin.bulk_relay_hint_link": "Moving a batch of rules to another relay lives in the by-device view →",
+	"exit_rules_admin.col_user":             "User",
+	"exit_rules_admin.col_switch":           "On/off",
+	"exit_rules_admin.shown_of_total":       "showing %d of %d",
 	// B358: see the RU block — the admin page windows GROUPS now.
 	"exit_rules_admin.pagination_page_of_groups": "Page %d of %d (by device)",
 	"exit_rules_admin.pagination_total_groups":   "total %d devices / %d users",

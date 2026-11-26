@@ -121,9 +121,22 @@ done
 has "$TPL" 'exit_rules_admin.col_user' || C="${C}the card page has no owner column"$'\n'
 has "$TPL" '{{if .AdminLens.Mode}}' || C="${C}the card page is not gated by the lens view"$'\n'
 has "$TPL" '{{if not .AdminLens.Mode}}' || C="${C}the tree is not gated by the lens view — both would render together"$'\n'
-has "$TPL" '{{template "rules-pager" $lv.Pager}}' || C="${C}the group list pager is not the shared numbered define"$'\n'
 has "$TPL" '{{template "rules-pager" $d.Pager}}' || C="${C}the group page pager is not the shared numbered define"$'\n'
+# The LIST pager must be the DATABASE one (B358 windows groups in SQL), not the lens
+# window's: a pager built from the window's groups says «1 из 1» on a table with more
+# groups than a window and makes page 2 unreachable.
+has "$TPL" '{{with .AdminPager}}{{template "rules-pager" .}}{{end}}' || C="${C}the group list pages by the lens window instead of by the database (B358) — page 2 becomes unreachable"$'\n'
+has "$TPL" 'exit_rules_admin.pagination_page_of_groups' || C="${C}the list pager does not print the database window arithmetic"$'\n'
+has "$TPL" 'exit_rules_admin.lens_page_summary' || C="${C}the counters do not say they describe the current window"$'\n'
 has "$TPL" 'action="/admin/exit-rules/toggle"' || C="${C}the group page has no per-row switch"$'\n'
+# The bulk-relay form (B471) takes its inputs from the TREE rows
+# (`form="bulk-relay-form"`). Rendering it on the card page would be a button that
+# submits an empty selection; it must be gated WITH the tree, and the card page must
+# point at the tree instead.
+has "$TPL" '{{if not .AdminLens.Mode}}' || C="${C}the bulk-relay card is not gated with the tree (a dead control)"$'\n'
+has "$TPL" 'admin-bulk-relay-card' || C="${C}the bulk-relay card is gone entirely — it must stay with the ?view= page"$'\n'
+has "$TPL" 'admin-rules-bulk-relay-hint' || C="${C}the card page does not point at the tree for the batch move"$'\n'
+has "$TPL" 'exit_rules_admin.bulk_relay_hint_link' || C="${C}the pointer to the batch move has no label key"$'\n'
 if [ -z "$C" ]; then
   ok "C1: the admin template renders the group list and one group page, with the tree on the other side of the gate"
 else
