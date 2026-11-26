@@ -129,12 +129,24 @@ fi
 # must SKIP, never FAIL" rule from AGENTS.md §1. So: a non-zero `git ls-remote`
 # is now SKIP (state unavailable), and only a *successful* ls-remote with no
 # matching ref is a FAIL (the tag really is gone).
+#
+# 2026-11-25 (B522): the THIRD cause was still missing — `origin` is not a network
+# remote at all. The release gate runs in a scratch clone fed by a git bundle, where
+# `git ls-remote origin` succeeds (rc=0) and prints nothing; this contract then
+# announced «remote v1.5.2 tag is absent — was the release workflow re-run?» about a
+# repository where the tag exists, and a full gate run was spent on it. The question
+# «can this clone answer about the PUBLISHED repo?» now lives in
+# scripts/lib/git_remote.sh, and a local/bundle origin is a SKIP.
 
 if command -v git >/dev/null 2>&1; then
+  # shellcheck source=lib/git_remote.sh
+  . "$(dirname "$0")/lib/git_remote.sh"
   D_OUT="$(git ls-remote origin 'refs/tags/v1.5.2' 2>/dev/null)"
   D_RC=$?
   if [ "$D_RC" -ne 0 ]; then
     skip "D.1 git ls-remote failed (rc=$D_RC; no network / no origin) — live v1.5.2 tag state unavailable"
+  elif ! git_remote_is_network; then
+    skip "D.1 origin is '$(git_remote_url)' — a local/bundle remote cannot answer about the PUBLISHED repo (SKIP, never FAIL)"
   elif grep -q . <<< "$D_OUT"; then
     ok "D.1 remote v1.5.2 tag EXISTS (release workflow passed, tag is the release pointer)"
   else

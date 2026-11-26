@@ -284,6 +284,53 @@ else
   printf '%s' "$H" | sed 's/^/       /' >&2
 fi
 
+# --- I. an empty remote answer is only a fact about a NETWORK remote --------------
+# check_b237_24 D.1 ("the v1.5.2 tag must not exist") and check_b95 §11 ("these two
+# branches are gone from origin") read `git ls-remote`'s EMPTY answer as a fact about the
+# published repository. In the scratch clone the release gate runs in — fed by a git
+# bundle — `origin` is a local path, so ls-remote succeeds (rc=0) and prints nothing for
+# every ref, and B237.24.1 announced «remote v1.5.2 tag is absent — was the release
+# workflow re-run?» about a repository where the tag exists.
+GITREMOTE=scripts/lib/git_remote.sh
+I=""
+git ls-files --error-unmatch "$GITREMOTE" >/dev/null 2>&1 \
+  || I="${I}$GITREMOTE is NOT tracked by git (AGENTS trap #11)"$'\n'
+has "$GITREMOTE" 'git_remote_is_network()' \
+  || I="${I}the helper does not define git_remote_is_network"$'\n'
+has scripts/check_b237_24.sh 'git_remote_is_network' \
+  || I="${I}check_b237_24 D.1 does not ask whether the origin can answer"$'\n'
+has scripts/check_b95.sh 'git_remote_is_network' \
+  || I="${I}check_b95 does not ask whether the origin can answer"$'\n'
+if [ -z "$I" ]; then
+  ok "I1: the remote question has one implementation and both consumers ask it"
+else
+  bad "I1: an empty remote answer can still be read as a repository fact:"
+  printf '%s' "$I" | sed 's/^/       /' >&2
+fi
+
+# I2 — behavioural: the classification must separate the shapes.
+REPO_ROOT="$PWD"
+I2="$(mktemp -d "$SKY_TMP/repo.XXXXXX")"
+if git init -q "$I2" 2>/dev/null && (
+    cd "$I2" || exit 1
+    # shellcheck source=lib/git_remote.sh
+    . "$REPO_ROOT/scripts/lib/git_remote.sh" 2>/dev/null || exit 2
+    git remote add origin /tmp/some-bundle.bundle
+    git_remote_is_network && { echo "local path reported as a network remote"; exit 3; }
+    git remote set-url origin file:///tmp/x.git
+    git_remote_is_network && { echo "file:// reported as a network remote"; exit 4; }
+    git remote set-url origin https://example.com/barsky/skygate.git
+    git_remote_is_network || { echo "https reported as a LOCAL remote"; exit 5; }
+    git remote set-url origin git@example.com:barsky/skygate.git
+    git_remote_is_network || { echo "scp-like git@ reported as a LOCAL remote"; exit 6; }
+    exit 0
+  ); then
+  ok "I2: a local path and file:// are not network remotes; https and git@ are"
+else
+  bad "I2: the remote classification is wrong (the reason is printed above)"
+fi
+rm -rf "$I2"
+
 # --- F. bookkeeping --------------------------------------------------------------
 F=""
 for f in "$DNS_GO" "$DNS_TEST" "$ACL_GO" "$ACL_TEST" "$LIB" "$B419_TEST"; do

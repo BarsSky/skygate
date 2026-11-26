@@ -163,13 +163,25 @@ fi
 # `set +o pipefail` inside the subshell gives the test back its meaning. (Here git prints
 # nothing to stdout when the ref is absent, so the old form happened to work — the wrapper
 # makes that a property instead of a coincidence.)
-if ( set +o pipefail; git ls-remote origin 'refs/heads/feature/telegram-bot-ux' 2>/dev/null | grep -q . ); then
-    echo "SKY-FAIL: feature/telegram-bot-ux branch still exists on origin (B95)" >&2
-    exit 1
-fi
-if ( set +o pipefail; git ls-remote origin 'refs/heads/feat/postgres-migration' 2>/dev/null | grep -q . ); then
-    echo "SKY-FAIL: feat/postgres-migration branch still exists on origin (B95)" >&2
-    exit 1
+#
+# B522 (2026-11-25): "printed nothing" proves the branch is gone only against a network
+# remote. In a scratch clone whose `origin` is a git bundle — the shape the release gate
+# runs in — `git ls-remote` succeeds with no output for EVERY ref, so the absence branch
+# here would read "clean" for a clone that cannot see the published repository at all.
+# scripts/lib/git_remote.sh owns that question; a local origin skips these two assertions.
+# shellcheck source=lib/git_remote.sh
+. "$(dirname "$0")/lib/git_remote.sh"
+if ! git_remote_is_network; then
+    echo "SKIP: origin is '$(git_remote_url)' — the deleted-branch contracts need a network remote" >&2
+else
+    if ( set +o pipefail; git ls-remote origin 'refs/heads/feature/telegram-bot-ux' 2>/dev/null | grep -q . ); then
+        echo "SKY-FAIL: feature/telegram-bot-ux branch still exists on origin (B95)" >&2
+        exit 1
+    fi
+    if ( set +o pipefail; git ls-remote origin 'refs/heads/feat/postgres-migration' 2>/dev/null | grep -q . ); then
+        echo "SKY-FAIL: feat/postgres-migration branch still exists on origin (B95)" >&2
+        exit 1
+    fi
 fi
 
 # 12. e2e_pilot.sh no longer exists in the working tree.
