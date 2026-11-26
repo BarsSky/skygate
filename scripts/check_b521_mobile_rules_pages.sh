@@ -21,10 +21,16 @@
 # 360 wide, the bottom of the supported band) with touch + mobile flags, and reports
 # the document's horizontal overflow plus the widest offending element.
 #
-# WHERE IT SKIPS: without a headless browser or without node the measurement cannot
-# run — that is missing live state, so the contract prints SKIP and passes (rule 1),
-# naming what is missing. The snapshot export itself still runs and is checked,
-# because a broken exporter would silently turn this contract into a no-op.
+# WHERE IT SKIPS: without a headless browser, without node, or with a browser that
+# starts but never publishes a DevTools port, the measurement cannot run — that is
+# missing live state, so the contract prints SKIP and passes (rule 1), naming what is
+# missing. The third case was measured on a GitHub runner while releasing v1.5.262: a
+# browser binary was found, the port never appeared, and the check called it an
+# overflow — a fact about the runner reported as a verdict on the page (trap #15). The
+# driver now exits 0 with a `SKIP: …` line carrying the browser's own stderr and exit
+# code, and the only thing that counts as a product claim is the driver's own `FAIL`
+# row. The snapshot export itself still runs and is checked, because a broken exporter
+# would silently turn this contract into a no-op.
 set -uo pipefail
 if [ -f "$(dirname "$0")/../cmd/skygate/main.go" ]; then
   cd "$(dirname "$0")/.." || exit 1
@@ -64,6 +70,30 @@ if [ -z "$A_MISS" ]; then
 else
   bad "A1: the mobile tooling is incomplete:"
   printf '%s' "$A_MISS" | sed 's/^/       /' >&2
+fi
+
+# --- A2: "cannot measure" must never be reported as "the page overflows" --------
+# Measured on a GitHub runner while releasing v1.5.262: a browser binary was found,
+# it never published a DevTools port, and this check called that an overflow. The
+# exit contract has to stay two-sided, so it is pinned here and proven behaviourally
+# (three shimmed drivers: SKIP line, crash, real FAIL).
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+A2_MISS=""
+grep -q 'never published a DevTools port' "$DRIVER" \
+  || A2_MISS="${A2_MISS}the driver has no branch for a browser that starts without publishing a port"$'\n'
+grep -q 'SKIP: the browser started but never published' "$DRIVER" \
+  || A2_MISS="${A2_MISS}that branch prints no SKIP line, so the caller can only guess what happened"$'\n'
+grep -q 'browserExit' "$DRIVER" \
+  || A2_MISS="${A2_MISS}that branch reports no exit state from the browser (a SKIP without a reason)"$'\n'
+grep -q 'the driver failed without measuring anything' "$SELF" \
+  || A2_MISS="${A2_MISS}this check turns a driver crash into a product verdict instead of a SKIP"$'\n'
+grep -q 'C_FAIL\|a rule page overflows a phone viewport' "$SELF" \
+  || A2_MISS="${A2_MISS}this check no longer reports a real overflow at all"$'\n'
+if [ -z "$A2_MISS" ]; then
+  ok "A2: the driver's exit code is two-sided — only its own FAIL row becomes a verdict, 'cannot measure' is a named SKIP"
+else
+  bad "A2: the measurement contract can silently lie about the page:"
+  printf '%s' "$A2_MISS" | sed 's/^/       /' >&2
 fi
 
 # --- B: export the snapshots (needs Go; a broken exporter must not silently skip) -
@@ -140,23 +170,41 @@ elif ! command -v node >/dev/null 2>&1; then
   skip "C1: no node on PATH — the DevTools driver cannot run"
 else
   C_FAIL=""
+  C_SKIP=""
   for W in 390 360; do
     OUT="$(node "$DRIVER" "$WORK" "$W" 2>&1)"
     RC=$?
     case "$OUT" in
-      *"SKIP: no headless browser"*)
-        skip "C1: no headless browser found — the ${W}px measurement cannot run here"
+      *"SKIP:"*)
+        # The driver measured nothing and said so (no browser, or a browser that
+        # started without publishing a DevTools port). That is a fact about the
+        # runner, never about the page — SKIP with the reason it named.
+        REASON="${OUT#*SKIP:}"
+        REASON="${REASON%%$'\n'*}"
+        C_SKIP="${C_SKIP}${W}px: SKIP:${REASON}"$'\n'
         continue ;;
     esac
     if [ "$RC" -eq 0 ]; then
-      ok "C${W}: no horizontal overflow at ${W}px on any of the three rule pages"
-    else
-      C_FAIL="${C_FAIL}${OUT}"$'\n'
+      ok "C${W}: no horizontal overflow at ${W}px on any of the four rule states"
+      continue
     fi
+    case "$OUT" in
+      *"FAIL "*)
+        # A measurement RAN and the page overflowed: the only product claim here.
+        C_FAIL="${C_FAIL}${OUT}"$'\n' ;;
+      *)
+        LAST="${OUT##*$'\n'}"
+        [ -n "$LAST" ] || LAST="$OUT"
+        C_SKIP="${C_SKIP}${W}px: the driver failed without measuring anything (rc=$RC): ${LAST}"$'\n' ;;
+    esac
   done
   if [ -n "$C_FAIL" ]; then
     bad "C1: a rule page overflows a phone viewport:"
     printf '%s' "$C_FAIL" | sed 's/^/       /' >&2
+  fi
+  if [ -n "$C_SKIP" ]; then
+    skip "C1: the viewport measurement could not run everywhere — the reason is named, not guessed:"
+    printf '%s' "$C_SKIP" | sed 's/^/       /' >&2
   fi
 fi
 

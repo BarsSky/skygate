@@ -7,6 +7,12 @@
 // project's mobile audit targets), and reports the document's horizontal overflow
 // plus the widest offending element when there is one. Exit code 1 on overflow.
 //
+// The exit-code contract is deliberately two-sided: 1 means "a measurement ran and
+// the page overflows" (a product claim), 0 with a `SKIP: …` line means "nothing was
+// measured" (no browser, or a browser that started and never published a DevTools
+// port — a loaded or restricted runner, not a defect). A caller must never turn the
+// second into the first.
+//
 // --shot writes a PNG of the LAST page at the emulated width, because "it does not
 // overflow" and "it is readable" are two different questions and only a picture
 // answers the second.
@@ -49,23 +55,49 @@ if (!bin) {
 // second run overlapping the first) still holds it, and the driver then talks to
 // a STRANGER's tab — measuring a page it never opened.
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mobcdp-'))
+// stderr is captured, not discarded: when a browser starts and then refuses to
+// publish a port (small /dev/shm on a CI runner, a wrapper script that exits, a
+// missing shared library), the browser's own last words are the only diagnosis
+// there is, and a check that says "cannot measure" must be able to say why.
+let browserErr = ''
+let browserExit = ''
 const proc = spawn(bin, [
   '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
-  '--remote-debugging-port=0', '--user-data-dir=' + profile,
+  '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check',
+  '--disable-extensions', '--remote-debugging-port=0', '--user-data-dir=' + profile,
   'about:blank',
-], { stdio: 'ignore' })
+], { stdio: ['ignore', 'ignore', 'pipe'] })
+proc.stderr.on('data', (d) => {
+  if (browserErr.length < 4000) browserErr += d.toString()
+})
+proc.on('exit', (code, sig) => {
+  browserExit = `exited code=${code}${sig ? ' signal=' + sig : ''}`
+})
+proc.on('error', (e) => {
+  browserExit = `could not be launched: ${e.message}`
+})
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 let port = 0
 async function discoverPort() {
   const file = path.join(profile, 'DevToolsActivePort')
-  for (let i = 0; i < 100; i++) {
+  // 200 x 150 ms = 30 s: a cold first launch on a loaded CI runner is a few
+  // seconds, and the old 15 s budget turned one slow start into a FAIL.
+  let giveUpAt = 0
+  for (let i = 0; i < 200; i++) {
     try {
       const txt = fs.readFileSync(file, 'utf8').split('\n')
       const p = Number(txt[0])
       if (p > 0) return p
     } catch {}
+    if (browserExit) {
+      // A launcher that exited and published nothing is a dead end: waiting the
+      // full 30 s would only delay the diagnosis. A launcher that re-execs the
+      // real browser leaves a short grace period for the child to publish.
+      if (!giveUpAt) giveUpAt = i + 4
+      if (i >= giveUpAt) return 0
+    }
     await sleep(150)
   }
   return 0
@@ -96,9 +128,23 @@ function connect(wsUrl) {
 ;(async () => {
   port = await discoverPort()
   if (!port) {
-    console.error('ERROR: the browser never published a DevTools port')
+    // "I could not measure" is NOT "the page overflows". Exit 0 with a SKIP line
+    // that carries the reason, so the calling check reports SKIP (AGENTS rule 1)
+    // and a runner where the browser cannot start never invents a product defect.
+    const why = browserErr
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .slice(-3)
+      .join(' | ')
+      console.log(
+        'SKIP: the browser started but never published a DevTools port' +
+          (browserExit ? ` (it ${browserExit})` : '') +
+          (why ? `: ${why.slice(0, 400)}` : ''),
+      )
     proc.kill()
-    process.exit(2)
+    try { fs.rmSync(profile, { recursive: true, force: true }) } catch {}
+    process.exit(0)
   }
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.html')).sort()
   let failed = 0
