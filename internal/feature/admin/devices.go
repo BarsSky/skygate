@@ -61,6 +61,71 @@ import (
 // nodes across the tailnet, with per-device ACL tags and the
 // available-exit-node list for the per-device preferred-exit
 // dropdown. Admin-only.
+// ---------------------------------------------------------------------------
+// /admin/devices RENDER PAYLOAD — what each key means.
+//
+// B525 (v1.5.266): this prose used to sit INSIDE GetAdminDevices, between the
+// payload keys. 53 comment lines in a 366-line function made a one-line-per-key
+// map read like logic and pushed the function past its frozen budget when B534
+// added one key. The text below is the SAME text, moved here verbatim; the
+// function now carries only the keys. A reader looking for a key's meaning
+// greps its name and finds it here.
+//
+// B534 (2026-11-27): one physical device behind two nodes. A cleared app
+// cache (or a second login) makes the client register a NEW machine key,
+// and headscale must keep given names unique — so the newcomer becomes
+// `<name>-1` and every rule, exit pin and tag keyed by the OLD hostname
+// silently stops matching the live device. The page reported nothing
+// before; the operator found `skybars-1` by sight.
+// B171 (v1.5.2): post-delete flash extensions.
+// The PostAdminDeviceDelete handler now redirects
+// to /admin/devices?ok="Node N (host) deleted"
+// [&ok_rules=N] [&acl_err=...] so the operator
+// can see the comprehensive-cleanup outcome
+// (rules removed count + optional ACL regen
+// error) inline. .FlashOkRules is the count
+// (rendered as a "+N rules cleaned" pill next
+// to the success flash); .FlashACLErr is the
+// regen error (rendered as a red warning
+// above the success flash). The ok_rules and
+// acl_err keys match the B171 user-side
+// deleted_rules / acl_err pattern for
+// consistency.
+// B399: per (user, hostname) "the operator removed this preference by hand",
+// so the page can say why the cell is empty instead of looking broken.
+// B497: the effective pin per device (lowercased hostname → exitpin.Pin),
+// carrying the SOURCE and whether the ACL actually applies it. A template
+// that renders only the stored row cannot tell «pinned» from «stored but
+// ignored», which is what the operator was reading as a bug.
+// B498: the per-user preferences that reach none of their owner's devices,
+// stated once for the page instead of inside every device cell.
+// 2026-08-09: v0.33.1.20 — list of portal user
+// names for the per-row "Transfer" dropdown. The
+// handler PostAdminDeviceTransfer takes a portal
+// username (not a headscale user name) because the
+// transfer's effect is to rewrite node_owner_map
+// + call hs.AddTag/UntagNode (both keyed on the
+// portal-side state). We filter the dropdown to
+// only users with a non-zero portal id (i.e.
+// headscale users with a matching skygate account)
+// so the operator doesn't see "tagged-devices"
+// (the synthetic headscale user) as a target.
+// B-mod-first-run-adoption T3: banner state for the
+// template. .FirstRunBanner is the human-readable
+// "you have N un-adopted headscale users" hint;
+// .FirstRunUnadoptedCount is the integer for the
+// template's "Sync N users now" button. Both are
+// empty/0 when the banner is hidden.
+// B257 (v1.5.8+, 2026-09-16): "Devices awaiting
+// adoption" — pre-existing headscale nodes that the
+// B77 backfill can't claim automatically (no
+// preauth match, no dev-tag yet) but already belong
+// to a known portal user (matched by
+// headscale_user_id). The template renders a card
+// with per-row "Assign to <user>" buttons that POST
+// to /admin/devices/adopt. Empty slice = no card.
+// ---------------------------------------------------------------------------
+
 func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	c := s.Backend.CurrentUser(r)
 	if c == nil || !c.IsAdmin {
@@ -350,81 +415,28 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.Backend.RenderWithLayout(w, r, "admin/devices.html", c, map[string]any{
-		"Nodes": deviceRowsWithDead,
-		"Users": users,
-		// B534 (2026-11-27): one physical device behind two nodes. A cleared app
-		// cache (or a second login) makes the client register a NEW machine key,
-		// and headscale must keep given names unique — so the newcomer becomes
-		// `<name>-1` and every rule, exit pin and tag keyed by the OLD hostname
-		// silently stops matching the live device. The page reported nothing
-		// before; the operator found `skybars-1` by sight.
-		"Duplicates":   nodeownership.DetectDuplicates(allNodes),
-		"FlashSuccess": r.URL.Query().Get("ok"),
-		"FlashError":   r.URL.Query().Get("err"),
-		// B171 (v1.5.2): post-delete flash extensions.
-		// The PostAdminDeviceDelete handler now redirects
-		// to /admin/devices?ok="Node N (host) deleted"
-		// [&ok_rules=N] [&acl_err=...] so the operator
-		// can see the comprehensive-cleanup outcome
-		// (rules removed count + optional ACL regen
-		// error) inline. .FlashOkRules is the count
-		// (rendered as a "+N rules cleaned" pill next
-		// to the success flash); .FlashACLErr is the
-		// regen error (rendered as a red warning
-		// above the success flash). The ok_rules and
-		// acl_err keys match the B171 user-side
-		// deleted_rules / acl_err pattern for
-		// consistency.
-		"FlashOkRules":      r.URL.Query().Get("ok_rules"),
-		"FlashOkRulesCount": parseAdminIntQuery(r.URL.Query().Get("ok_rules")),
-		"FlashACLErr":       r.URL.Query().Get("acl_err"),
-		"DevTagMap":         devTagMap,
-		"DeviceExitPrefMap": deviceExitPrefMap,
-		"DeviceExitViaMap":  deviceExitViaMap,
-		// B399: per (user, hostname) "the operator removed this preference by hand",
-		// so the page can say why the cell is empty instead of looking broken.
-		"DeviceExitOptedOutMap": deviceExitOptedOutMap,
-		// B497: the effective pin per device (lowercased hostname → exitpin.Pin),
-		// carrying the SOURCE and whether the ACL actually applies it. A template
-		// that renders only the stored row cannot tell «pinned» from «stored but
-		// ignored», which is what the operator was reading as a bug.
-		"NodePins": nodePins,
-		// B498: the per-user preferences that reach none of their owner's devices,
-		// stated once for the page instead of inside every device cell.
-		"LostUserPrefs":     lostUserPrefs,
-		"AvailableExits":    exits,
-		"UserExitPrefMap":   userExitPrefMap,
-		"SkygateUserByName": skygateUserByName,
-		"SkygateUserByHost": skygateUserByHost,
-		// 2026-08-09: v0.33.1.20 — list of portal user
-		// names for the per-row "Transfer" dropdown. The
-		// handler PostAdminDeviceTransfer takes a portal
-		// username (not a headscale user name) because the
-		// transfer's effect is to rewrite node_owner_map
-		// + call hs.AddTag/UntagNode (both keyed on the
-		// portal-side state). We filter the dropdown to
-		// only users with a non-zero portal id (i.e.
-		// headscale users with a matching skygate account)
-		// so the operator doesn't see "tagged-devices"
-		// (the synthetic headscale user) as a target.
-		"TransferTargets": transferTargets(skygateUserByName),
-		// B-mod-first-run-adoption T3: banner state for the
-		// template. .FirstRunBanner is the human-readable
-		// "you have N un-adopted headscale users" hint;
-		// .FirstRunUnadoptedCount is the integer for the
-		// template's "Sync N users now" button. Both are
-		// empty/0 when the banner is hidden.
+		"Nodes":                  deviceRowsWithDead,
+		"Users":                  users,
+		"Duplicates":             nodeownership.DetectDuplicates(allNodes),
+		"FlashSuccess":           r.URL.Query().Get("ok"),
+		"FlashError":             r.URL.Query().Get("err"),
+		"FlashOkRules":           r.URL.Query().Get("ok_rules"),
+		"FlashOkRulesCount":      parseAdminIntQuery(r.URL.Query().Get("ok_rules")),
+		"FlashACLErr":            r.URL.Query().Get("acl_err"),
+		"DevTagMap":              devTagMap,
+		"DeviceExitPrefMap":      deviceExitPrefMap,
+		"DeviceExitViaMap":       deviceExitViaMap,
+		"DeviceExitOptedOutMap":  deviceExitOptedOutMap,
+		"NodePins":               nodePins,
+		"LostUserPrefs":          lostUserPrefs,
+		"AvailableExits":         exits,
+		"UserExitPrefMap":        userExitPrefMap,
+		"SkygateUserByName":      skygateUserByName,
+		"SkygateUserByHost":      skygateUserByHost,
+		"TransferTargets":        transferTargets(skygateUserByName),
 		"FirstRunBanner":         firstRunShow,
 		"FirstRunUnadoptedCount": firstRunUnadopted,
-		// B257 (v1.5.8+, 2026-09-16): "Devices awaiting
-		// adoption" — pre-existing headscale nodes that the
-		// B77 backfill can't claim automatically (no
-		// preauth match, no dev-tag yet) but already belong
-		// to a known portal user (matched by
-		// headscale_user_id). The template renders a card
-		// with per-row "Assign to <user>" buttons that POST
-		// to /admin/devices/adopt. Empty slice = no card.
-		"AdoptionCandidates": s.findAdoptionCandidates(r),
+		"AdoptionCandidates":     s.findAdoptionCandidates(r),
 	})
 }
 
