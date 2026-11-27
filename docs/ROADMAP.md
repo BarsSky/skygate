@@ -693,8 +693,12 @@ being paid down in blocks with a ratchet instead of a big-bang rewrite.
    helper stops the resource immediately), lower the B525 budget for `main()` in the same
    commit. Contract to add when done: **B526** — `main()` ≤ 400 lines, every phase declared
    and called exactly once, call order unchanged.
-2. **B528: `registerRoutes()` 1 108 lines / 274 `mux.Handle` calls → per-feature
-   sub-registries.** Mechanical in shape (like `subcommands.go`) but NOT mechanical in
+2. **B528: `registerRoutes()` → per-feature sub-registries.** **Step 1 landed in v1.5.265:**
+   the `/admin/headscale*` group moved verbatim to `cmd/skygate/routes_headscale.go` and
+   `registerRoutes()` went **1 109 → 1 096** lines (B525 budget lowered in the same commit) —
+   the ratchet refused the 6-line growth B533 needed (C1: 1 109 → 1 115 on CI run
+   46024883213), which is exactly its job. The remaining ~250 `mux.Handle` calls are still in
+   `routes.go`. Mechanical in shape (like `subcommands.go`) but NOT mechanical in
    coupling: each closure captures locals (`mySvc`, `adminSvc`, `app`, `hs`, `cfg`), so each
    sub-registry needs exactly those as parameters — let the compiler derive the list, one
    group at a time (`/my/*`, `/admin/*`, `/api/*`, `/oidc/*`, the rest), moving statements

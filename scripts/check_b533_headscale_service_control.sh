@@ -49,8 +49,17 @@ GO=internal/headscale/service_control_b533.go
 GOT=internal/headscale/service_control_b533_test.go
 ADMIN=internal/feature/admin/headscale.go
 TPL=internal/handlers/templates/admin/headscale.html
-ROUTES=cmd/skygate/routes.go
 I18N=internal/i18n/catalog_admin.go
+# ROUTES is the entrypoint SURFACE, not one file: B528 step 1 (v1.5.265) moved the
+# /admin/headscale* group to cmd/skygate/routes_headscale.go and this very contract went
+# red for a pure code move — the failure mode scripts/lib/gosurface.sh exists to prevent.
+# Reading the package means the route stays covered wherever it lives.
+. scripts/lib/gosurface.sh
+gosurface ROUTES cmd/skygate/*.go || {
+  printf '  \033[31mFAIL\033[0m C: cannot read the cmd/skygate surface (gosurface could not build it)\n' >&2
+  printf '\nB533: 0 pass, 1 fail, 0 skip\n'
+  exit 1
+}
 
 hdr "B533 — headscale service: state, restart from the panel, remediation steps"
 

@@ -936,22 +936,14 @@ func registerRoutes(
 	mux.Handle("GET /admin/derp/dashboard", authMW(http.HandlerFunc(adminSvc.GetAdminDerpDashboard)))
 	mux.Handle("POST /admin/derp/dashboard/refresh", authMW(http.HandlerFunc(adminSvc.PostAdminDerpDashboardRefresh)))
 	mux.Handle("GET /admin/exit-nodes", authMW(http.HandlerFunc(adminSvc.AdminExitNodes)))
-	// 2026-07-20: v0.20.0 — headscale-update-monitor
-	// status page. Renders the monitor's snapshot
-	// (pinned vs. latest, history table). Admin-only.
-	mux.Handle("GET /admin/headscale", authMW(http.HandlerFunc(adminSvc.GetAdminHeadscale)))
+	// B528 step 1 (v1.5.265): the /admin/headscale* group lives in
+	// routes_headscale.go — see that file for why.
+	registerHeadscaleRoutes(mux, authMW, adminSvc)
 	// 2026-08-10: v0.33.1.40 B92 — Integration status board.
 	// Renders the cached status of headscale/headplane/tailscale
 	// (refreshed every 30s by the Availability Checker in
 	// internal/feature/healthz/availability.go). Admin-only.
 	mux.Handle("GET /admin/services", authMW(http.HandlerFunc(adminSvc.AdminServices)))
-	// 2026-08-04: v0.33.0 — Network Access Manager. Add /
-	// remove skygate-managed headscale ACL rules without
-	// touching operator-added ones. Idempotent on rule
-	// fingerprint. See internal/feature/admin/headscale_acl.go.
-	mux.Handle("GET /admin/headscale/acl", authMW(http.HandlerFunc(adminSvc.GetAdminHeadscaleACL)))
-	mux.Handle("POST /admin/headscale/acl/add", authMW(http.HandlerFunc(adminSvc.PostAdminHeadscaleACLAdd)))
-	mux.Handle("POST /admin/headscale/acl/remove", authMW(http.HandlerFunc(adminSvc.PostAdminHeadscaleACLRemove)))
 	// 2026-08-04: v0.33.0 — Admin Test Page. Run the
 	// TestRegistry (network/db/headscale checks) and see
 	// the result inline. History in system_tests_runs.
@@ -1037,17 +1029,6 @@ func registerRoutes(
 	// page's target, by the B130 scheduled updater and by the B342
 	// cluster-onboarding install command. Empty input clears the pin.
 	mux.Handle("POST /admin/update/pin", authMW(http.HandlerFunc(adminSvc.PostAdminUpdatePin)))
-	// 2026-07-20: v0.20.0 — "Run check now" button on
-	// /admin/headscale. Forces the monitor to re-poll
-	// GitHub immediately. Same pattern as
-	// /admin/exit-nodes/health-now.
-	mux.Handle("POST /admin/headscale/check-now", authMW(http.HandlerFunc(adminSvc.PostAdminHeadscaleCheckNow)))
-	// 2026-11-27: B533 — restart the headscale SERVICE from the panel. The
-	// handler never calls systemctl itself: it stages a data-only request for
-	// the root-owned skygate-apply-service.sh (deploy/install-service-helper.sh),
-	// the same privilege split the policy (B272.3) and local-routes (B293)
-	// appliers use, because the native unit is unprivileged.
-	mux.Handle("POST /admin/headscale/service/restart", authMW(http.HandlerFunc(adminSvc.PostAdminHeadscaleServiceRestart)))
 	// 2026-07-20: v0.21.0 — user-to-user invite
 	// overview. Lists every invite_codes row
 	// (grantor / grantee / status / expiry),

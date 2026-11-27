@@ -59,14 +59,14 @@
       <div style="font-weight:600">
         {{if .Facts.APIOK}}<span style="color:var(--success)">{{t "headscale_service.api_ok"}}</span>{{else}}<span style="color:var(--danger)">{{t "headscale_service.api_down"}}</span>{{end}}
       </div>
-      <div style="color:var(--text-muted);font-size:11px;margin-top:4px;word-break:break-all">
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px;overflow-wrap:break-word">
         {{if .Facts.ServerVersion}}<code>{{.Facts.ServerVersion}}</code>{{end}}
         {{if .Facts.APIError}}{{.Facts.APIError}}{{end}}
       </div>
     </div>
     <div>
       <div style="color:var(--text-muted);font-size:12px">{{t "headscale_service.fact_control_url"}}</div>
-      <div style="font-weight:600;word-break:break-all"><code>{{.Facts.ControlURL}}</code></div>
+      <div style="font-weight:600;overflow-wrap:break-word"><code>{{.Facts.ControlURL}}</code></div>
       <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
         {{t "headscale_service.fact_resolved"}}: {{if .Facts.ResolvedIPs}}{{range .Facts.ResolvedIPs}}<code>{{.}}</code> {{end}}{{else}}—{{end}}<br>
         {{t "headscale_service.fact_local"}}: {{if .Facts.LocalIPs}}{{range .Facts.LocalIPs}}<code>{{.}}</code> {{end}}{{else}}—{{end}}
@@ -81,7 +81,7 @@
   {{end}}
 
   {{if .Facts.LastError}}
-  <div style="margin-top:12px;font-size:12px;color:var(--danger);word-break:break-all">
+  <div style="margin-top:12px;font-size:12px;color:var(--danger);overflow-wrap:break-word">
     <i class="fa-solid fa-circle-exclamation"></i> {{t "headscale_service.last_error"}}: <code>{{.Facts.LastError}}</code>
   </div>
   {{end}}
@@ -92,7 +92,7 @@
     {{if .LastResult.OK}}<span style="color:var(--success)"><code>ok</code></span>{{else}}<span style="color:var(--danger)"><code>failed</code></span>{{end}}
     {{if .LastResult.Command}}<code>{{.LastResult.Command}}</code>{{end}}
     {{if .LastResult.State}}→ <code>{{.LastResult.State}}</code>{{end}}
-    {{if .LastResult.Reason}}<div style="color:var(--danger);word-break:break-all">{{.LastResult.Reason}}</div>{{end}}
+    {{if .LastResult.Reason}}<div style="color:var(--danger);overflow-wrap:break-word">{{.LastResult.Reason}}</div>{{end}}
     {{if .LastResult.UpdatedAt}}<div style="color:var(--text-muted)">{{.LastResult.UpdatedAt}}</div>{{end}}
   </div>
   {{end}}
