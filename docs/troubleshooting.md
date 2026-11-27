@@ -1,4 +1,4 @@
-﻿# Troubleshooting — symptom-first diagnostic playbook
+# Troubleshooting — symptom-first diagnostic playbook
 
 This playbook is the consolidated diagnostic guide for Skygate. It is built from
 real investigations that were removed in the **2026-09-18 documentation

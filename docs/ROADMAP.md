@@ -1,4 +1,4 @@
-﻿# Skygate roadmap
+# Skygate roadmap
 
 **Single planning document.** What is being worked on now, what is next, what is
 blocked, and the technical-debt register. It replaces the pre-v1.6 set
@@ -6,7 +6,7 @@ blocked, and the technical-debt register. It replaces the pre-v1.6 set
 2026-09-18 documentation restructure — the full text of every removed plan stays
 in git history.
 
-**Last updated:** 2026-11-27 (v1.5.263 cycle — public resolvers no longer ride subnet routes over an exit node; the earlier note stands: the v1.5.262 cycle — the admin rules page joins the card model; the earlier note stands: the v1.5.261 cycle — the guarantee catalog is green on the production host again; the earlier note stands: the v1.5.260 cycle — the rules pages rebuilt around the group; the earlier note stands: the v1.5.258 cycle — the relay-attribution measurement; the earlier note stands: the DNS provider seam was shipped as one release for a
+**Last updated:** 2026-11-27 (v1.5.264 cycle — B525 block 0: the complexity ratchet; the earlier note stands: the v1.5.263 cycle — public resolvers no longer ride subnet routes over an exit node — the admin rules page joins the card model; the earlier note stands: the v1.5.261 cycle — the guarantee catalog is green on the production host again; the earlier note stands: the v1.5.260 cycle — the rules pages rebuilt around the group; the earlier note stands: the v1.5.258 cycle — the relay-attribution measurement; the earlier note stands: the DNS provider seam was shipped as one release for a
 process reason: CI cancels the previous `main` run on every new commit (`concurrency: ci-${github.ref}`,
 `cancel-in-progress: true`), so a commit sitting BETWEEN two tags can never have its own green run and
 `scripts/ci_gate.sh` correctly refuses to tag it. Three blocks, each with its own contract, tests and
