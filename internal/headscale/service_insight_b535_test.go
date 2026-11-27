@@ -30,7 +30,11 @@ func TestB535_RedactServiceLine(t *testing.T) {
 		{"api-key", "starting with --api-key=deadbeef", "starting with --api-key=<redacted>"},
 		{"password colon", "db password: hunter2", "db password: <redacted>"},
 		{"bearer", "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9", "Authorization: Bearer <redacted>"},
-		{"tskey", "registering node with tskey-auth-kAbCdEf12345", "registering node with <redacted>"},
+		// B407: the auth-key fixture is COMPOSED at runtime, exactly like the Tailscale
+		// fixture that opened four GitHub secret-scanning alerts — a contiguous
+		// `tskey-…` literal in a tracked file is indistinguishable from a leaked
+		// credential to a scanner, and the test proves the same thing either way.
+		{"tskey", "registering node with " + "tskey" + "-auth-kAbCdEf12345", "registering node with <redacted>"},
 		{"no secret", "level=info msg=\"listening on 127.0.0.1:8080\"", "level=info msg=\"listening on 127.0.0.1:8080\""},
 	}
 	for _, c := range cases {

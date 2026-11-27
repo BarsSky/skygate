@@ -243,7 +243,12 @@ else
 fi
 
 # --- G: the page --------------------------------------------------------------
-if grep -q 'version = s.HeadscaleUpdateMonitor.VersionStatus()' "$ADMIN" && grep -q '"Version":      version,' "$ADMIN"; then
+# G1 — the property is "the handler reads the version status AND hands it to the
+# template", not "the map literal has exactly six spaces before `version`". gofmt
+# re-aligns a whole map literal when ANY key is added, and B535 added one, so the
+# literal-text form of this assertion went red on a correct tree (CI run 46048820279)
+# — the same formatting coupling B270 F2 paid for. Matched tolerantly now.
+if grep -q 'version = s.HeadscaleUpdateMonitor.VersionStatus()' "$ADMIN" && grep -qE '"Version":[[:space:]]+version,' "$ADMIN"; then
   ok "G1: the handler fills the version status"
 else
   bad "G1: the handler does not read the version status"

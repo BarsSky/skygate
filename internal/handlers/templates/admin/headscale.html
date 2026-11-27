@@ -43,14 +43,14 @@
   </div>
 
   <div style="margin-top:8px;color:var(--text-muted);font-size:12px">
-    {{t "headscale_service.measured_at"}}: {{.Facts.MeasuredAt.Format "02.01 15:04:05"}} UTC
+    {{t "headscale_service.measured_at"}}: {{.MeasuredAtText}}
   </div>
 
   {{if .Pending.Present}}
   <div class="alert alert-info" style="margin-top:12px">
     <i class="fa-solid fa-hourglass-half"></i> {{t "headscale_service.pending_request"}}
     {{if .Pending.Action}}<code>{{.Pending.Action}} {{.Pending.Service}}</code>{{end}}
-    {{if not .Pending.Since.IsZero}}— {{.Pending.Since.Format "15:04:05"}} UTC{{end}}
+    {{if .PendingSinceTxt}}— {{.PendingSinceTxt}}{{end}}
   </div>
   {{end}}
 

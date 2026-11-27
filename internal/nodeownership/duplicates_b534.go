@@ -48,6 +48,7 @@ import (
 	"strconv"
 	"strings"
 
+	"skygate/internal/db"
 	"skygate/internal/headscale"
 )
 
@@ -219,14 +220,18 @@ func sameHostname(a, b string) bool {
 
 // devTagOf prefers the canonical dev-tag the node actually carries, so the report
 // names the tag the operator will search for.
+//
+// B279 (v1.5.46): a node's FIRST tag is not its identity — a class tag
+// (`tag:public`, `tag:exit-node`, …) names a role, and taking Tags[0] made the
+// report name a role instead of the device. The shared predicate decides.
 func devTagOf(n headscale.NodeView) string {
 	for _, t := range n.Tags {
 		if strings.HasPrefix(t, "tag:dev-") {
 			return t
 		}
 	}
-	if len(n.Tags) > 0 {
-		return n.Tags[0]
+	if tag := db.PickPerNodeTag(n.Tags); tag != "" {
+		return tag
 	}
 	return "(none)"
 }

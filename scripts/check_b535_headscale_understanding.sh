@@ -114,8 +114,8 @@ grep -q 'headscale_service.flash_checked' "$ADMIN" \
   || C_MISS="${C_MISS}the flash does not carry the verdict numbers"$'\n'
 grep -q 'headscale_service.journal_title' "$TPL" \
   || C_MISS="${C_MISS}the journal block is not rendered"$'\n'
-grep -q 'Facts.MeasuredAt.Format' "$TPL" \
-  || C_MISS="${C_MISS}the page does not say WHEN it measured — a stale card would look live"$'\n'
+grep -q '{{.MeasuredAtText}}' "$TPL" && grep -q 'v\.MeasuredAtText = localtime\.FormatSeconds' "$ADMIN" \
+  || C_MISS="${C_MISS}the page does not say WHEN it measured — a stale card would look live (B429: the time comes from localtime, never .Format in a template)"$'\n'
 grep -q 'headscale_service.journal_redacted' "$TPL" \
   || C_MISS="${C_MISS}the page does not tell the operator that secrets are masked in the journal block"$'\n'
 if [ -z "$C_MISS" ]; then ok "C: «Проверить сейчас» is routed, audited, and the card dates its own measurement"

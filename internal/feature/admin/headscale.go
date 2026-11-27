@@ -26,6 +26,7 @@ import (
 	"skygate/internal/headscale"
 	"skygate/internal/headscale_version"
 	"skygate/internal/i18n"
+	"skygate/internal/localtime"
 )
 
 // headscaleServiceView is the B533 card, pre-formatted for the template.
@@ -40,6 +41,11 @@ type headscaleServiceView struct {
 	// verdict actually describe the service this page just measured.
 	Pending     headscale.ServicePending
 	PostRestart headscale.PostRestart
+	// B429: times are formatted in the INSTALL's zone and handed to the template as
+	// strings. A template that calls .Format itself renders in the server's zone,
+	// which is how the operator got «05:12» for an 08:12 Moscow release.
+	MeasuredAtText  string
+	PendingSinceTxt string
 }
 
 // buildHeadscaleServiceView measures the service. Bounded: the whole collection
@@ -79,6 +85,10 @@ func (s *Service) buildHeadscaleServiceView() headscaleServiceView {
 	// OLDER than this measurement.
 	v.Pending = headscale.ReadServicePending()
 	v.PostRestart = headscale.PostRestartVerdict(facts, v.LastResult)
+	v.MeasuredAtText = localtime.FormatSeconds(facts.MeasuredAt)
+	if v.Pending.Present && !v.Pending.Since.IsZero() {
+		v.PendingSinceTxt = localtime.FormatSeconds(v.Pending.Since)
+	}
 	switch {
 	case facts.Manager == "" || facts.Manager == "none":
 		v.RestartBlock = "headscale_service.restart_blocked_absent"
