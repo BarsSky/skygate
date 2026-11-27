@@ -1633,6 +1633,7 @@ func main() {
 	// var so the headscale-update-monitor wiring (later in this
 	// function) can call rn.SetHeadscaleUpdateMonitor(hsMon).
 	rn := telegram.NewRealNotifier(d.DB)
+	bc := bootCtx{ctx: ctx, cfg: cfg, db: d, hs: hs, app: app, rn: rn}
 	// 2026-07-11: Phase 3 (/quota) needs per-user rule limits
 	// to render "user X used N of M" rather than just N. Set
 	// once at boot; the BotEnv snapshot is per-message so a
@@ -1915,7 +1916,7 @@ func main() {
 	// The probe is a ladder (API → root endpoint → CLI) and never fails the boot:
 	// it either reports a version or the rungs it tried. The socket is already
 	// bound (B269), so a slow headscale cannot delay availability.
-	startHeadscaleUpdateMonitor(ctx, cfg, hs, app, d, rn)
+	bc.startHeadscaleUpdateMonitor()
 
 	// 2026-08-18 (B130): background scheduler for
 	// time-of-day auto-update. Reads the schedule from
