@@ -36,7 +36,6 @@ import (
 	"skygate/internal/middleware"
 	"skygate/internal/module"
 	tailscalemod "skygate/internal/module/tailscale"
-	"skygate/internal/monitoring"
 	"skygate/internal/nodeownership"
 	oidcsvc "skygate/internal/oidc"
 	"skygate/internal/ratelimit"
@@ -1850,48 +1849,7 @@ func main() {
 	// writes. cfg.ExitNodeCheckInterval = 0 disables the
 	// monitor (the deploy-time check
 	// scripts/check_exit_nodes.py still runs).
-	exitMon := &monitoring.ExitNodeMonitor{
-		DB:           d,
-		HS:           app.HS,
-		Notifier:     app.Notifier,
-		CheckEvery:   cfg.ExitNodeCheckInterval,
-		OfflineAfter: cfg.ExitNodeOfflineAfter,
-		OnStartup:    cfg.ExitNodeOnStartup,
-		// v0.14.1: when true, the monitor's per-tick path
-		// also calls db.SyncNodesFromHeadscale so new
-		// exit-nodes appear in /admin/exit-nodes and the
-		// bot's /exit_nodes without an admin button click.
-		// Off by default; the explicit
-		// /admin/devices "Sync from headscale" button is
-		// still the recommended path.
-		AutoSync: cfg.ExitNodeAutoSync,
-	}
-	// 2026-07-31: v0.32.13 — gate exitMon.Start on
-	// cfg.ExitNodeCheckInterval > 0. Pre-fix the monitor
-	// was always started; its Start() does an immediate
-	// pre-tick (cfg.ExitNodeOnStartup defaults to true)
-	// that calls m.tick() which lists every node in
-	// headscale and writes rows to exit_node_health,
-	// holding the SQLite WAL write lock for several
-	// seconds at the worst possible time (right when the
-	// first /admin/exit-nodes request arrived). The "off"
-	// / "0" sentinel for SKYGATE_EXIT_NODE_CHECK_INTERVAL
-	// didn't actually disable anything because Start()
-	// re-defaults CheckEvery to 5min when it's 0. The
-	// fix: skip Start() entirely when the operator has
-	// set ExitNodeCheckInterval to a non-positive value
-	// (0 / off). The /admin/exit-nodes page still works
-	// from the DB; the monitor is just disabled.
-	if cfg.ExitNodeCheckInterval > 0 {
-		exitMon.Start(ctx)
-	} else {
-		log.Printf("exit-node-monitor: SKYGATE_EXIT_NODE_CHECK_INTERVAL=0/off, skipping startup")
-	}
-	// refactor-v0.30 Phase B step 3b.3 (2026-07-29):
-	// exit-nodes admin handlers moved to feature/admin;
-	// the monitor is wired there now. The App field is
-	// removed once admin_exit_nodes.go is deleted.
-	adminSvc.ExitNodeMonitor = exitMon
+	startExitNodeMonitor(ctx, cfg, d, app, adminSvc)
 
 	// 2026-07-20: v0.20.0 — headscale-update-monitor.
 	// Polls the GitHub Releases API for

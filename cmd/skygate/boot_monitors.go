@@ -7,10 +7,16 @@
 package main
 
 import (
+	"context"
 	"log"
 
+	"skygate/internal/config"
+	"skygate/internal/db"
+	adminsvc "skygate/internal/feature/admin"
+	"skygate/internal/handlers"
 	"skygate/internal/headscale"
 	"skygate/internal/headscale_version"
+	"skygate/internal/monitoring"
 )
 
 // startHeadscaleUpdateMonitor asks the RUNNING headscale what version it is (B297) and,
@@ -61,4 +67,53 @@ func (b bootCtx) startHeadscaleUpdateMonitor() {
 	} else {
 		log.Printf("📡 headscale-update-monitor: disabled (SKYGATE_HEADSCALE_POLL_INTERVAL=0). /admin/headscale still works as a manual look-up.")
 	}
+}
+
+// startExitNodeMonitor builds and starts the exit-node health monitor and hands it to the
+// admin service (/admin/exit-nodes reads its snapshot). Interval 0 keeps the monitor OFF on
+// purpose: Start() re-defaults 0 to five minutes, which used to hold the SQLite write lock
+// at exactly the moment the first page request arrived (v0.32.13).
+func startExitNodeMonitor(ctx context.Context, cfg *config.Config, d *db.ResettableDB, app *handlers.App, adminSvc *adminsvc.Service) {
+	exitMon := &monitoring.ExitNodeMonitor{
+		DB:           d,
+		HS:           app.HS,
+		Notifier:     app.Notifier,
+		CheckEvery:   cfg.ExitNodeCheckInterval,
+		OfflineAfter: cfg.ExitNodeOfflineAfter,
+		OnStartup:    cfg.ExitNodeOnStartup,
+		// v0.14.1: when true, the monitor's per-tick path
+		// also calls db.SyncNodesFromHeadscale so new
+		// exit-nodes appear in /admin/exit-nodes and the
+		// bot's /exit_nodes without an admin button click.
+		// Off by default; the explicit
+		// /admin/devices "Sync from headscale" button is
+		// still the recommended path.
+		AutoSync: cfg.ExitNodeAutoSync,
+	}
+	// 2026-07-31: v0.32.13 — gate exitMon.Start on
+	// cfg.ExitNodeCheckInterval > 0. Pre-fix the monitor
+	// was always started; its Start() does an immediate
+	// pre-tick (cfg.ExitNodeOnStartup defaults to true)
+	// that calls m.tick() which lists every node in
+	// headscale and writes rows to exit_node_health,
+	// holding the SQLite WAL write lock for several
+	// seconds at the worst possible time (right when the
+	// first /admin/exit-nodes request arrived). The "off"
+	// / "0" sentinel for SKYGATE_EXIT_NODE_CHECK_INTERVAL
+	// didn't actually disable anything because Start()
+	// re-defaults CheckEvery to 5min when it's 0. The
+	// fix: skip Start() entirely when the operator has
+	// set ExitNodeCheckInterval to a non-positive value
+	// (0 / off). The /admin/exit-nodes page still works
+	// from the DB; the monitor is just disabled.
+	if cfg.ExitNodeCheckInterval > 0 {
+		exitMon.Start(ctx)
+	} else {
+		log.Printf("exit-node-monitor: SKYGATE_EXIT_NODE_CHECK_INTERVAL=0/off, skipping startup")
+	}
+	// refactor-v0.30 Phase B step 3b.3 (2026-07-29):
+	// exit-nodes admin handlers moved to feature/admin;
+	// the monitor is wired there now. The App field is
+	// removed once admin_exit_nodes.go is deleted.
+	adminSvc.ExitNodeMonitor = exitMon
 }
