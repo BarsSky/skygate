@@ -20,10 +20,15 @@ import sys
 
 TEMPLATES = "internal/handlers/templates"
 CATALOGS = "internal/i18n/catalog_*.go"
-# Routes are registered in BOTH files: routes.go holds the table, main.go holds the
-# framework endpoints (/static/, /favicon.*) and the root handler. Scanning one of them
-# reported every favicon as a dead link (measured while writing this audit).
-ROUTE_FILES = ("cmd/skygate/routes.go", "cmd/skygate/main.go")
+# Routes are registered in SEVERAL files of the entrypoint package: routes.go holds the
+# table, main.go holds the framework endpoints (/static/, /favicon.*) and the root
+# handler, and since B526 step 9 the per-feature sub-registries live beside them
+# (routes_headscale.go today, more as B528 lands). Scanning a fixed pair of files
+# reported every /admin/headscale* link as a dead link the moment that group moved —
+# the same single-file coupling B339 exists to prevent, in an audit this time. The whole
+# package is scanned, excluding tests.
+ROUTE_FILES = tuple(sorted(glob.glob("cmd/skygate/*.go")))
+ROUTE_FILES = tuple(p for p in ROUTE_FILES if not p.endswith("_test.go"))
 
 TAG_RE = re.compile(r"<(b|i|code|u|a|br|span|em|strong)\b")
 HREF_RE = re.compile(r'href=\\?(?:"|\')?(/[^"\'\s\\>]+)')

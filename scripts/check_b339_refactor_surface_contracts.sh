@@ -317,11 +317,26 @@ if grep -q '^func registerRoutes(' cmd/skygate/routes.go 2>/dev/null; then
 else
   bad "E1: cmd/skygate/routes.go no longer defines registerRoutes — has the table moved back into main()?"
 fi
-CALLS="$(grep -c '^	registerRoutes(' cmd/skygate/main.go 2>/dev/null || echo 0)"
-if [ "$CALLS" = "1" ]; then
-  ok "E2: main() calls registerRoutes exactly once"
+# E2 — B526 step 9 (v1.5.268) moved the CALL one hop: the route table is registered from
+# wireRoutes() in boot_routes.go, not from main() directly. The promise is unchanged
+# ("the table is reached through exactly ONE call"), so it is counted across the whole
+# entrypoint PACKAGE and the caller is required to be a phase main() runs (B526 asserts
+# the phase itself). Counted with a loop, not a gosurface read, because this script
+# deliberately does not source the helper itself (its A-section TESTS the helper).
+CALLS=0
+CALLS_SRC=""
+WIRE_CALLED=0
+for e2f in cmd/skygate/*.go; do
+  case "$e2f" in *_test.go) continue ;; esac
+  n="$(grep -cE '^[[:space:]]+registerRoutes\(' "$e2f" 2>/dev/null || true)"
+  if [ "${n:-0}" -gt 0 ]; then CALLS=$((CALLS + n)); CALLS_SRC="$e2f"; fi
+  w="$(grep -cE '^[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*(, ?[a-zA-Z_][a-zA-Z0-9_]*)* :?= )?wireRoutes\(' "$e2f" 2>/dev/null || true)"
+  if [ "${w:-0}" -gt 0 ]; then WIRE_CALLED=1; fi
+done
+if [ "$CALLS" = "1" ] && [ "$WIRE_CALLED" = "1" ]; then
+  ok "E2: the route table is reached through exactly one call (from wireRoutes, in $CALLS_SRC)"
 else
-  bad "E2: main() calls registerRoutes $CALLS time(s) — expected exactly 1"
+  bad "E2: registerRoutes is called $CALLS time(s) across the entrypoint (expected exactly 1) and wireRoutes called=$WIRE_CALLED"
 fi
 REGS="$(grep -c 'mux\.Handle' cmd/skygate/routes.go 2>/dev/null || echo 0)"
 if [ "$REGS" -ge 200 ]; then
