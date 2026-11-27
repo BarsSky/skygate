@@ -38,7 +38,12 @@ type TailnetDNSStatus struct {
 	Note      string
 	Resolvers []string
 	Skipped   []string
-	Rows      []TailnetDNSPrefix
+	// Public lists the resolvers that are deliberately NOT carried as routes (B524): a
+	// public resolver is reachable from anywhere, and its /32 would be MORE specific than
+	// an exit node's 0.0.0.0/0 — so a client that accepts subnet routes would resolve
+	// through whichever relay owned the prefix instead of the exit node the operator chose.
+	Public []string
+	Rows   []TailnetDNSPrefix
 	// NotCarried lists the resolver prefixes that NO relay advertises — for those the
 	// operator's DNS leaves the tailnet, which is exactly the state that must not be
 	// silent.
@@ -55,8 +60,9 @@ func (s *Service) loadTailnetDNSStatus() TailnetDNSStatus {
 		Resolvers: append([]string{}, resolvers.Global...),
 		Known:     resolvers.Known(),
 	}
-	prefixes, skipped := headscale.ResolverPrefixes(resolvers)
+	prefixes, skipped, public := headscale.ResolverPrefixes(resolvers)
 	st.Skipped = skipped
+	st.Public = public
 	if len(prefixes) == 0 {
 		return st
 	}

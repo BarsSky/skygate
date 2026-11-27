@@ -41,6 +41,11 @@ func TestB2723_HelperNotArmedWhenAbsent(t *testing.T) {
 	if err := os.WriteFile(policy, []byte(`{"tagOwners":{}}`), 0o640); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+	// B524: the applier STATUS file lives next to the request path; without pinning
+	// SKYGATE_UPDATE_DIR a gate run on a live host writes /var/lib/skygate/update/
+	// policy-apply.status and the panel then reports a policy write that never landed.
+	// (Measured on the reference install: the acl-drift line named a /tmp/TestB272 path.)
+	t.Setenv("SKYGATE_UPDATE_DIR", dir)
 	t.Setenv("SKYGATE_POLICY_APPLIER", filepath.Join(dir, "absent-applier.sh"))
 	t.Setenv("SKYGATE_POLICY_PATH_UNIT", filepath.Join(dir, "absent.path"))
 	t.Setenv("SKYGATE_POLICY_REQUEST_PATH", filepath.Join(dir, "policy.request.props"))
@@ -78,6 +83,7 @@ func TestB2723_RequestIsWrittenWhenArmed(t *testing.T) {
 		t.Fatalf("write unit: %v", err)
 	}
 	req := filepath.Join(dir, "policy.request.props")
+	t.Setenv("SKYGATE_UPDATE_DIR", dir) // B524: keep the status file off the live host
 	t.Setenv("SKYGATE_POLICY_APPLIER", applier)
 	t.Setenv("SKYGATE_POLICY_PATH_UNIT", unit)
 	t.Setenv("SKYGATE_POLICY_REQUEST_PATH", req)
@@ -103,6 +109,7 @@ func TestB2723_RequestIsWrittenWhenArmed(t *testing.T) {
 // (relative/absent target, empty body) — the Go side refuses first.
 func TestB2723_RequestValidation(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("SKYGATE_UPDATE_DIR", dir) // B524: keep the status file off the live host
 	t.Setenv("SKYGATE_POLICY_APPLIER", filepath.Join(dir, "a.sh"))
 	t.Setenv("SKYGATE_POLICY_PATH_UNIT", filepath.Join(dir, "a.path"))
 	t.Setenv("SKYGATE_POLICY_REQUEST_PATH", filepath.Join(dir, "req.props"))

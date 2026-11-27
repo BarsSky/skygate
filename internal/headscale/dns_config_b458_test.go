@@ -65,12 +65,62 @@ func TestB458_ParseDNSNameserversIgnoresOtherSections(t *testing.T) {
 	}
 }
 
+// TestB524_ResolverPrefixesSplitPublicFromPrivate — B524 (2026-11-27).
+//
+// The measurement: a /32 for a PUBLIC resolver is more specific than an exit node's
+// 0.0.0.0/0, so a client that accepts subnet routes resolves through whichever relay owns
+// the prefix, on whatever continent, no matter which exit node the operator picked. Live
+// case: 1.1.1.1/32 and 8.8.8.8/32 owned by a relay in the United States, an operator in
+// Moscow on a DERP-only mobile client — every page stalled on DNS while the exit-node data
+// path was healthy, and the chosen exit node made NO difference.
+//
+// The contract: public resolvers are named but NOT carried; a resolver the internet cannot
+// reach (RFC 1918, loopback, link-local, CGNAT, IPv6 ULA) still IS carried — that route is
+// the only way to reach it. B458's core ("the tailnet carries the address clients query")
+// survives for exactly those; the public half was a trap, not a feature.
+func TestB524_ResolverPrefixesSplitPublicFromPrivate(t *testing.T) {
+	carried, skipped, public := ResolverPrefixes(DNSResolvers{Global: []string{
+		"8.8.8.8", "1.1.1.1", // public: must NOT be carried
+		"192.168.13.53",                                // RFC 1918: must be carried
+		"10.10.0.2",                                    // RFC 1918: must be carried
+		"100.64.0.53",                                  // CGNAT / this project's own tailnet space: must be carried
+		"127.0.0.53",                                   // loopback: must be carried (a stub resolver behind the tunnel)
+		"2001:4860:4860::8888", "resolver.example.com", // unusable as IPv4: skipped
+	}})
+	if len(carried) != 4 {
+		t.Fatalf("carried = %v, want the four non-public resolvers as /32 routes", carried)
+	}
+	for _, want := range []string{"10.10.0.2/32", "100.64.0.53/32", "127.0.0.53/32", "192.168.13.53/32"} {
+		found := false
+		for _, got := range carried {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("carried = %v, missing %s (a resolver the internet cannot reach MUST be carried)", carried, want)
+		}
+	}
+	if len(public) != 2 || public[0] != "1.1.1.1" || public[1] != "8.8.8.8" {
+		t.Fatalf("public = %v, want [1.1.1.1 8.8.8.8] named and NOT carried", public)
+	}
+	if len(skipped) != 2 {
+		t.Fatalf("skipped = %v, want the IPv6 and the hostname entry", skipped)
+	}
+}
+
 // TestB458_ResolverPrefixesArePrecise — the tailnet carries the address clients query, not
 // the resolver's whole /24, and an unresolvable entry is reported rather than dropped.
+//
+// B524 renegotiated the sample: 8.8.8.8 is public and is no longer carried, so the leg now
+// uses a private resolver to prove the /32 precision that B458 established.
 func TestB458_ResolverPrefixesArePrecise(t *testing.T) {
-	prefixes, skipped := ResolverPrefixes(DNSResolvers{Global: []string{"8.8.8.8", "2001:4860:4860::8888", "resolver.example.com"}})
-	if len(prefixes) != 1 || prefixes[0] != "8.8.8.8/32" {
-		t.Fatalf("prefixes = %v, want [8.8.8.8/32] (a /32, not the /24)", prefixes)
+	prefixes, skipped, public := ResolverPrefixes(DNSResolvers{Global: []string{"192.168.1.53", "8.8.8.8", "2001:4860:4860::8888", "resolver.example.com"}})
+	if len(prefixes) != 1 || prefixes[0] != "192.168.1.53/32" {
+		t.Fatalf("prefixes = %v, want [192.168.1.53/32] (a /32, not the /24)", prefixes)
+	}
+	if len(public) != 1 || public[0] != "8.8.8.8" {
+		t.Fatalf("public = %v, want [8.8.8.8] (B524: a public resolver is not carried)", public)
 	}
 	if len(skipped) != 2 {
 		t.Fatalf("skipped = %v, want the IPv6 and the hostname entry named", skipped)

@@ -62,10 +62,16 @@ func SystemRows(d *sql.DB) []string {
 // appears or disappears on the wire is a routing change, and routing changes that nobody
 // logs are how the accident this block removes happened in the first place.
 //
-// An EMPTY healthy set is a no-op: without a relay there is nobody to own the prefix, and
-// inventing an owner would point clients at a route that does not exist.
+// A NIL slice means "this caller does not manage the system set" (a no-op); an EMPTY but
+// non-nil slice means "nothing should be carried" and therefore RELEASES every system row.
+// B524 (2026-11-27) needed that distinction: once public resolvers stopped being carried,
+// the rows that used to advertise them had to die, and a nil-vs-empty check that treated
+// both as "nothing to do" would have left 1.1.1.1/32 and 8.8.8.8/32 on the wire forever.
+//
+// An EMPTY healthy set is a no-op for ADDING: without a relay there is nobody to own the
+// prefix, and inventing an owner would point clients at a route that does not exist.
 func EnsureSystemPrefixes(d *sql.DB, prefixes, healthy []string, w Weights) (added, removed []string, err error) {
-	if d == nil {
+	if d == nil || prefixes == nil {
 		return nil, nil, nil
 	}
 	want := map[string]bool{}
@@ -73,9 +79,6 @@ func EnsureSystemPrefixes(d *sql.DB, prefixes, healthy []string, w Weights) (add
 		if p = strings.TrimSpace(p); p != "" {
 			want[p] = true
 		}
-	}
-	if len(want) == 0 && len(prefixes) == 0 {
-		return nil, nil, nil
 	}
 	// Existing rows, so a system row that is no longer configured can go and a prefix the
 	// rules already own is never overwritten.

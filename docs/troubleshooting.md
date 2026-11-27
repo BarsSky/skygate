@@ -1,4 +1,4 @@
-# Troubleshooting — symptom-first diagnostic playbook
+﻿# Troubleshooting — symptom-first diagnostic playbook
 
 This playbook is the consolidated diagnostic guide for Skygate. It is built from
 real investigations that were removed in the **2026-09-18 documentation
@@ -42,7 +42,8 @@ syntax lives in [`acl-rules-reference.md`](acl-rules-reference.md).
    * [8.0.4 Devices show a tag that headscale does not have (B272)](#804-devices-show-a-tag-that-headscale-does-not-have-b272)
    * [8.0.5 One user's device lost Cloudflare/Google while another's still works (B276)](#805-one-users-device-lost-cloudflaregoogle-while-anothers-still-works-b276)
    * [8.0.6 `git checkout` blocks the image update on an untracked file (B272.4)](#806-git-checkout-blocks-the-image-update-on-an-untracked-file-b2724)
-   * [8.0.7 `git fetch` cannot reach github.com — point the updater at a mirror (B272.5)](#807-git-fetch-cannot-reach-githubcom--point-the-updater-at-a-mirror-b2725)
+   * [8.0.8 Exit node slow or dead on mobile data, fine on Wi-Fi (B524)](#808-exit-node-slow-or-dead-on-mobile-data-fine-on-wi-fi-b524)
+* [8.0.7 git fetch cannot reach github.com — point the updater at a mirror (B272.5)](#807-git-fetch-cannot-reach-githubcom--point-the-updater-at-a-mirror-b2725)
 9. [Telegram relay silently not delivering](#9-telegram-relay-silently-not-delivering)
 10. [General diagnostics kit](#10-general-diagnostics-kit)
 11. [ACL re-apply fails: `ip and app can not both be empty` (B476)](#11-acl-re-apply-fails-ip-and-app-can-not-both-be-empty-b476)
@@ -2666,4 +2667,38 @@ journalctl -u skygate --since "1 hour ago" | grep -E 'ACL re-applied|ownership c
 
 
 
+
+
+### 8.0.8 «Exit-node медленно или не работает на мобильных данных, на Wi-Fi всё хорошо» (B524)
+
+Сигнатура: оператор на мобильной сети выбирает exit-узел, страницы открываются долго или
+не открываются вовсе, **любой** exit-узел ведёт себя одинаково, при этом на Wi-Fi всё
+работает, а доступ к tailnet-пирам по IP (например, видео с `100.64.0.1`) — стабильный.
+
+Это **не** ACL и **не** exit-узел. Проверять по порядку:
+
+1. **Приём subnet-маршрутов на устройстве.** В приложении Tailscale тумблер
+   «Use Tailscale subnets» (приём маршрутов) должен быть **выключен**, если устройство
+   использует exit-узел. Принятый маршрут `/32` **специфичнее** `0.0.0.0/0`, который даёт
+   exit-узел, поэтому трафик по этому префиксу идёт через relay-владельца, а не через
+   выбранный узел. Типичный симптом: DNS-запросы уходят на relay в другой стране, каждый
+   новый домен ждёт трансатлантический раунд-трип, кэшированные страницы открываются
+   нормально.
+2. **Кто владеет резолверами.** `/admin/exit-nodes` → карточка «DNS внутри tailnet»
+   (B458/B524): публичные резолверы (`1.1.1.1`, `8.8.8.8`) **не должны** проноситься
+   маршрутом — skygate их больше не объявляет (B524), проносятся только недостижимые из
+   интернета (RFC 1918, loopback, link-local, CGNAT, ULA). Если в таблице префиксов
+   оказался публичный адрес — работает старый бинарь, обновите skygate; строка журнала
+   `tailnet-dns: … public resolver(s) are NOT carried as subnet routes` подтверждает, что
+   новая логика жива.
+3. **Тип пути устройства.** `tailscale status` на relay'е показывает `curAddr` (прямое
+   соединение) и `Relay` (DERP). DERP-only — норма для мобильного за CGNAT; это медленнее,
+   но не является поломкой.
+4. **Только после этого** смотреть маршруты/ACL: у exit-узлов `0.0.0.0/0` и `::/0` должны
+   быть и advertised, и **approved**, а грант устройства — `dst: autogroup:internet` без
+   `via`, если пин не нужен.
+
+Диагностика без изменений: на relay'ях `nft list ruleset` (не iptables-legacy — на хостах
+с nft старые цепочки остаются с нулевыми счётчиками и «доказывают» то, чего нет) и
+`tailscale status --json` по нужному пиру.
 

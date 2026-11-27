@@ -227,13 +227,30 @@ func dedupeSorted(in []string) []string {
 	return out
 }
 
-// ResolverPrefixes turns the resolver set into the /32 prefixes the tailnet must carry.
+// ResolverPrefixes turns the resolver set into the /32 prefixes the tailnet must CARRY as
+// subnet routes.
 //
 // A /32, not the resolver's /24: the tailnet needs to reach the address clients QUERY, and
 // announcing a whole /24 moves a neighbourhood of somebody else's addresses through the
 // exit node for no reason. IPv6 resolvers are skipped with a note — the derived route rows
 // are IPv4 today (B409), and silently announcing nothing would look like "DNS is fine".
-func ResolverPrefixes(r DNSResolvers) (prefixes []string, skipped []string) {
+//
+// B524 (2026-11-27) SPLIT THE ANSWER, and the reason is a measured trap. A PUBLIC resolver
+// is reachable from anywhere, so it never needs a route — but once it HAS one, the route is
+// a /32 and therefore MORE SPECIFIC than the 0.0.0.0/0 an exit node installs. A client that
+// accepts subnet routes (Tailscale's «Use Tailscale subnets») then sends every DNS query to
+// the relay that happens to own the resolver prefix — whatever exit node the operator
+// chose, on whatever continent that relay sits. The live case: 1.1.1.1/32 and 8.8.8.8/32
+// owned by a relay in the United States, an operator in Moscow, a mobile client that is
+// DERP-only — pages took tens of seconds to START (transatlantic UDP DNS with retries)
+// while the exit-node data path itself was fine, and the relay choice made no difference at
+// all. Private, loopback, link-local and CGNAT resolvers still have to be carried: nothing
+// outside the tailnet can route to them. So:
+//
+//	carried — resolvers that are NOT publicly routable (a route is the only way to reach them)
+//	skipped — entries that are not a usable IPv4 address (parsed by the caller into one note)
+//	public  — publicly routable resolvers, deliberately NOT carried (named, not silent)
+func ResolverPrefixes(r DNSResolvers) (carried []string, skipped []string, public []string) {
 	for _, s := range r.Global {
 		addr, err := netip.ParseAddr(s)
 		if err != nil {
@@ -244,8 +261,27 @@ func ResolverPrefixes(r DNSResolvers) (prefixes []string, skipped []string) {
 			skipped = append(skipped, s)
 			continue
 		}
-		prefixes = append(prefixes, addr.String()+"/32")
+		if resolverIsPubliclyRoutable(addr) {
+			public = append(public, addr.String())
+			continue
+		}
+		carried = append(carried, addr.String()+"/32")
 	}
-	sort.Strings(prefixes)
-	return prefixes, skipped
+	sort.Strings(carried)
+	sort.Strings(public)
+	return carried, skipped, public
+}
+
+// cgnatRange is 100.64.0.0/10 — the shared address space this project's own tailnet also
+// uses, so a resolver there is reachable only through the tailnet and MUST be carried.
+var cgnatRange = netip.MustParsePrefix("100.64.0.0/10")
+
+// resolverIsPubliclyRoutable reports whether the whole internet can reach this address
+// without help from the tailnet. `netip.Addr.IsPrivate` covers RFC 1918 and the IPv6 ULA
+// (fd7a:… used by this tailnet), but NOT carrier-grade NAT, hence the explicit range.
+func resolverIsPubliclyRoutable(addr netip.Addr) bool {
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() {
+		return false
+	}
+	return !cgnatRange.Contains(addr)
 }
