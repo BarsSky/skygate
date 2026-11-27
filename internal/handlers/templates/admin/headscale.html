@@ -112,7 +112,7 @@
     {{range .Facts.Remediations}}
     <div style="margin-bottom:12px">
       <div style="font-weight:600;font-size:13px">{{t (printf "headscale_service.fix_%s" .Key)}}</div>
-      <pre style="background:var(--bg-subtle,#111315);padding:8px;border-radius:6px;font-size:12px;overflow-x:auto">{{range .Commands}}{{.}}
+      <pre style="background:var(--bg-subtle);padding:8px;border-radius:6px;font-size:12px;overflow-x:auto">{{range .Commands}}{{.}}
 {{end}}</pre>
     </div>
     {{end}}
