@@ -1,0 +1,917 @@
+// boot_routes.go — B526 (2026-11-27): the `routes` phase leaves main().
+//
+// This is the biggest contiguous block the audit found in main() (855 lines: every
+// service the route table needs, the OIDC provider, the healthz/DB-health/metrics
+// wiring and the registerRoutes call). It is a VERBATIM move — the body is the same
+// text with the same identifiers, because the phase was already self-contained: it
+// declares mux and each service itself and used only cfg, d and app from the boot
+// sequence, plus the listener error that registerRoutes refuses to ignore.
+//
+// It RETURNS the two things later phases still need: mux (wireLateServices registers
+// the certificate routes on it) and adminSvc (the bootCtx and the privileged-applier
+// wiring). Everything else it creates is reachable through those or through app.
+package main
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"runtime"
+	"skygate/internal/config"
+	"skygate/internal/db"
+	_ "skygate/internal/dbmigrate/steps"
+	"skygate/internal/deployrun"
+	_ "skygate/internal/deployrun/steps"
+	adminsvc "skygate/internal/feature/admin"
+	authsvc "skygate/internal/feature/auth"
+	clusterapi "skygate/internal/feature/cluster"
+	exitrules "skygate/internal/feature/exit_rules"
+	"skygate/internal/feature/healthz"
+	mysvc "skygate/internal/feature/my"
+	extcreds "skygate/internal/ha/dnsexternal"
+	"skygate/internal/handlers"
+	"skygate/internal/headscale"
+	"skygate/internal/metrics"
+	"skygate/internal/middleware"
+	"skygate/internal/module"
+	tailscalemod "skygate/internal/module/tailscale"
+	oidcsvc "skygate/internal/oidc"
+	"skygate/internal/update"
+	"strings"
+	"time"
+)
+
+// wireRoutes builds the service graph and registers the route table.
+//
+// bootErr is the listener error from the top of main(): it is passed through to
+// registerRoutes, which refuses to serve a half-built tree. It is aliased to `err`
+// inside so the moved body reads exactly as it did.
+func wireRoutes(cfg *config.Config, d *db.ResettableDB, app *handlers.App, bootErr error,
+	dialectKind db.DialectKind, updateStore *update.StateStore, lc *bootLifecycle) (*http.ServeMux, *adminsvc.Service) {
+	err := bootErr
+	// loginMW/apiMW are only used inside this phase, so they are built here instead of
+	// being carried through main(); their inputs come from app.
+	loginMW := middleware.RequireLoginLimit(app.RateLimiter)
+	apiMW := middleware.RequireAPILimit(app.RateLimiter)
+	_ = loginMW
+
+	mux := http.NewServeMux()
+
+	// Public
+	//
+	// refactor-v0.30 Phase B step 2 (2026-07-29): /login, /logout,
+	// and /lang moved from internal/handlers/handlers_auth.go to
+	// internal/feature/auth/. The Service takes its dependencies
+	// (DB, I18n, JWTSecret, SessionHours, Version) as plain fields
+	// + a Backend interface that *App satisfies via the capital-letter
+	// wrappers in internal/handlers/handlers_export.go.
+	authSvc := &authsvc.Service{
+		Backend: app,
+		// v1.5.0+ / B210 — pass the ResettableDB (not the
+		// captured *sql.DB) so the auth Service's s.dbc()
+		// helper transparently follows the B203 watchdog's
+		// hot-reload. Pre-B210 every login + display-prefs
+		// + password-change + API-token request 500'd
+		// after the watchdog's first swap (the captured
+		// pool was closed in the swap goroutine — the user
+		// saw the login page with "Неверные учётные данные"
+		// indefinitely until skygate was restarted with
+		// cluster_database.current_dsn cleared).
+		DB:           d,
+		I18n:         app.I18n,
+		JWTSecret:    app.JWTSecret,
+		SessionHours: app.SessionHours,
+		Version:      app.Version,
+	}
+
+	// B161.1 (v1.5.0): OIDC provider for headscale.
+	// Loads / generates the RSA keypair at boot
+	// and mounts the discovery + JWKS routes.
+	// The /authorize + /token + /userinfo handlers
+	// (B161.2 + B161.3) will add to oidcSvc.Handler()
+	// without changing this wiring.
+	//
+	// B270 (2026-09-19): this is NOT fatal any more. A live native install
+	// failed here with "oidc: mkdir ./data: permission denied" (relative
+	// SKYGATE_OIDC_KEY_DIR + a systemd CWD that was not the data dir) and the
+	// process exited BEFORE binding its HTTP port — the unit stayed 'active'
+	// with nothing listening, the self-updater could never verify a build, and
+	// OIDC was not even configured (SKYGATE_OIDC_ISSUER was unset). NewService
+	// B-oidc-setup (v0.75, 2026-09-21): DB-first OIDC config.
+	// The boot sequence reads the oidc_settings DB row (if any)
+	// and falls back to env vars. Pre-fix there was no DB row,
+	// and the only way to change OIDC config was to edit env
+	// vars + restart. Now the operator can fill the form on
+	// /admin/oidc and the values persist.
+	//
+	// Honour SKYGATE_OIDC_ENABLED: "false" / "0" / "no" forces
+	// OIDC off even if the DB row has enabled=true (the operator
+	// used the toggle to disable, then realised env wins for
+	// an emergency off-switch). Empty string falls back to the
+	// DB row's enabled flag, which itself defaults to the legacy
+	// "issuer non-empty" rule.
+	effectiveIssuer := app.OIDCIssuerURL
+	effectiveClientID := app.OIDCClientID
+	effectiveClientSecret := app.OIDCClientSecret
+	effectiveKeyDir := app.OIDCKeyDir
+	effectiveRedirectURIs := app.OIDCRedirectURIs
+	dbRow, dbErr := db.GetOIDCSettingsDecrypted(app.DB.Current(), app.SecretKeyHex)
+	envEnabled := strings.ToLower(strings.TrimSpace(app.OIDCEnabledEnv))
+	envOff := envEnabled == "false" || envEnabled == "0" || envEnabled == "no"
+	if dbErr == nil {
+		// DB row exists — it wins for every field the operator
+		// saved (the form fields are pre-filled from DB on render).
+		if dbRow.Issuer != "" {
+			effectiveIssuer = dbRow.Issuer
+		}
+		if dbRow.ClientID != "" {
+			effectiveClientID = dbRow.ClientID
+		}
+		// ClientSecret may be empty after a form save that
+		// left the password field blank (we don't echo the live
+		// secret). When empty, fall back to env — the operator
+		// can keep using SKYGATE_OIDC_CLIENT_SECRET for rotation
+		// without re-saving the form.
+		if dbRow.ClientSecret != "" {
+			effectiveClientSecret = dbRow.ClientSecret
+		}
+		if dbRow.RedirectURIs != "" {
+			effectiveRedirectURIs = dbRow.RedirectURIs
+		}
+		if dbRow.KeyDir != "" {
+			effectiveKeyDir = dbRow.KeyDir
+		}
+		log.Printf("oidc: loaded config from DB (issuer=%s, client_id=%s, enabled=%v)", effectiveIssuer, effectiveClientID, dbRow.Enabled)
+	} else if dbErr != db.ErrOIDCSettingsNotFound {
+		log.Printf("oidc: oidc_settings read failed: %v (continuing with env-only config)", dbErr)
+	}
+	oidcSvc, oidcErr := oidcsvc.NewService(
+		effectiveIssuer,
+		effectiveClientID,
+		effectiveClientSecret,
+		effectiveKeyDir,
+		effectiveRedirectURIs,
+		app.JWTSecret,
+	)
+	// SKYGATE_OIDC_ENABLED=false, or a DB row with enabled=0 (the /admin/oidc
+	// switch), disables the provider by emptying the issuer — the service's own
+	// handlers answer 503 in that state ("OIDC provider disabled"), so the routes
+	// stay mounted and the operator can flip the feature back on from the UI
+	// WITHOUT a restart (B290).
+	//
+	// B290 (2026-09-22): this used to set oidcSvc = nil, which both panicked on
+	// the very next line (oidcSvc.UserLookup = …) whenever the env switch was
+	// used and made the UI switch unrepresentable: a form that could save a row
+	// nothing read. The issuer is now the single source of truth for "enabled".
+	if envOff {
+		log.Printf("oidc: SKYGATE_OIDC_ENABLED=false — routes will answer 503 until the env flips back")
+		effectiveIssuer = ""
+	} else if dbErr == nil && !dbRow.Enabled {
+		log.Printf("oidc: oidc_settings.enabled=0 (switched off on /admin/oidc) — routes will answer 503 until it is enabled there")
+		effectiveIssuer = ""
+	}
+	if oidcErr != nil {
+		log.Printf("oidc: init failed: %v (continuing — OIDC routes will answer 503; the portal and /healthz are unaffected)", oidcErr)
+	}
+	// B174 (v1.5.2): wire the user-lookup callback
+	// so the OIDC service can populate the email
+	// claim on the id_token / /userinfo response.
+	// The JWT cookie only carries uid + usr; the
+	// OIDC spec requires the email claim to be
+	// fresh from the DB (a user could have changed
+	// their email after the JWT was issued, and
+	// the id_token should reflect the current
+	// value). UserLookup is optional in the OIDC
+	// service — if it's nil, the email claim is
+	// left empty. We wire it up here so the OIDC
+	// flow is RFC-compliant.
+	oidcSvc.UserLookup = func(userID int64) (string, string, error) {
+		name, err := db.GetUserNameByID(app.DB.Current(), userID)
+		if err != nil {
+			return "", "", err
+		}
+		// portal_users has no email column (B174
+		// confirmed via migrations_pg.go:140); we
+		// derive the email from the username
+		// (skygate convention: username == email
+		// local-part) so the OIDC id_token still
+		// has a non-empty email claim. If the
+		// operator has a different username/email
+		// model in mind, B174.1+ would add an
+		// email column + lookup helper.
+		return name, name + "@skygate.local", nil
+	}
+	mux.Handle("/.well-known/", oidcSvc.Handler())
+	mux.Handle("/oidc/", oidcSvc.Handler())
+
+	// B161.2: periodic sweep of expired auth codes
+	// to bound the in-memory footprint. Runs every
+	// 60s; the sweep itself is O(n) over the map
+	// but n is bounded by active users * 1 code, so
+	// the cost is negligible.
+	if oidcSvc.Codes != nil {
+		go func() {
+			t := time.NewTicker(60 * time.Second)
+			defer t.Stop()
+			for range t.C {
+				n := oidcSvc.Codes.Sweep()
+				if n > 0 {
+					log.Printf("oidc.codes: swept %d expired entries", n)
+				}
+			}
+		}()
+	}
+
+	// B167 (v1.5.2) — auto-sync on init. When
+	// SKYGATE_OIDC_AUTOSYNC=true (opt-in) AND the
+	// 3 OIDC env vars are set, run the sync
+	// synchronously at boot, BEFORE the HTTP server
+	// starts accepting traffic. This is for the
+	// "I deploy skygate with the OIDC env vars
+	// set and want headscale to pick up the config
+	// on the same boot" case.
+	//
+	// We run synchronously (not in a goroutine)
+	// because headscale needs the new config
+	// before skygate serves its first OIDC
+	// request. A sync that fails (e.g. headscale
+	// doesn't come back healthy in 60s) does NOT
+	// abort skygate startup — we log + continue
+	// (so a misconfigured env var doesn't take
+	// down the whole service).
+	if oidcsvc.ShouldAutoSync() {
+		log.Printf("oidc sync: SKYGATE_OIDC_AUTOSYNC=true, running sync at boot (issuer=%s, client_id=%s)",
+			app.OIDCIssuerURL, app.OIDCClientID)
+		req := oidcsvc.SyncRequest{
+			SkygateURL:   strings.TrimRight(app.OIDCIssuerURL, "/"),
+			ClientID:     app.OIDCClientID,
+			ClientSecret: app.OIDCClientSecret,
+			RedirectURIs: app.OIDCRedirectURIs,
+			ModeOverride: "auto",
+		}
+		if res, err := oidcsvc.RunSync(req); err != nil {
+			log.Printf("oidc sync: boot auto-sync FAILED: %v (skygate will continue to start)", err)
+		} else {
+			log.Printf("oidc sync: boot auto-sync OK (mode=%s, headscale_restarted=%v, healthy=%v, took=%dms)",
+				res.Mode, res.HeadscaleRestarted, res.HeadscaleHealthy, res.DurationMs)
+		}
+	}
+	mux.HandleFunc("GET /login", authSvc.GetLogin)
+	mux.HandleFunc("POST /lang", authSvc.PostLang)
+	mux.Handle("POST /login", loginMW(http.HandlerFunc(authSvc.PostLogin)))
+	mux.HandleFunc("POST /logout", authSvc.PostLogout)
+	// B435: /favicon.ico answered with the SVG (image/svg+xml), which a browser asking for
+	// an ICO will not render as an icon — one of the two reasons a phone showed none.
+	mux.HandleFunc("/favicon.ico", app.FaviconICOHandler)
+	// v0.26.0 — liveness + readiness probes (HA-ready).
+	// Both are UNAUTHENTICATED. /healthz is always 200
+	// if the process is alive (K8s livenessProbe pattern).
+	// /readyz pings the DB and headscale, returns http.StatusServiceUnavailable
+	// if either is down (K8s readinessProbe pattern).
+	//
+	// refactor-v0.30 Phase B step 1 (2026-07-29): handlers
+	// moved from internal/handlers/handlers_healthz.go to
+	// internal/feature/healthz/. The Service takes its
+	// dependencies as plain fields (DB, HeadscaleFn, etc.)
+	// instead of methods on *App, so this package has no
+	// import dependency on internal/handlers/.
+	//
+	// HeadscaleFn is a func() headscale.Pingable, not
+	// func() *headscale.Client — we re-read the active
+	// client on every probe so a v0.12.0+ per-user headscale
+	// swap doesn't leave the readiness probe stuck on a
+	// stale client. The closure below adapts the
+	// method-value app.HSGlobal to the Pingable signature.
+	healthzSvc := &healthz.Service{
+		DB: app.DB.Current(),
+		HeadscaleFn: func() headscale.Pingable {
+			return app.HSGlobalFn() // *headscale.Client satisfies Pingable
+		},
+		// (Phase D4, 2026-07-29: was app.HSGlobal() — the
+		// *App.HSGlobal method was deleted; the wrapper
+		// HSGlobalFn now routes directly to a.Router.Global().)
+		InstanceID:   app.InstanceID,
+		BuildVersion: app.BuildVersion,
+		StartedAt:    app.StartedAt,
+	}
+	// v0.33.1.40 B92: wire the Availability Checker so /readyz
+	// reads the cached status of headscale/headplane/tailscale
+	// instead of synchronously probing headscale on every scrape.
+	// The Checker runs in a background goroutine and refreshes
+	// every 30s (configurable via SKYGATE_AVAILABILITY_CHECK_INTERVAL).
+	// One initial synchronous check happens at Start() so /readyz
+	// has real data within ~3s of boot.
+	availabilityChecker := healthz.NewCheckerFromEnv(
+		cfg.HeadscaleURL,
+		// Headplane URL: read from env (HEADPLANE_URL), fall back
+		// to the headscale URL with port 8080 (the default headplane
+		// setup). Operators running headplane on a different host
+		// or port set HEADPLANE_URL explicitly.
+		envOrDefault("HEADPLANE_URL", deriveHeadplaneDefault(cfg.HeadscaleURL)),
+		// TailscaleFn: return online status of THIS skygate's
+		// in-image tailscaled. v0.33.1.42 D8: use
+		// `tailscale status --json` for the real BackendState
+		// ("Running" / "NeedsLogin" / "Starting" / "NoState" /
+		// "Stopped") instead of the pre-D8 state-file presence
+		// proxy. The proxy couldn't distinguish a healthy
+		// tailnet from one in NeedsLogin (auth callback pending)
+		// — both states wrote a state file, so /admin/services
+		// showed "tailscaled running" with the node actually
+		// offline. The /admin/services page now shows the real
+		// BackendState as the detail string.
+		tailscaleReadinessProbe,
+	)
+	availabilityChecker.Start(context.Background())
+	lc.Add("availability-checker", availabilityChecker.Stop)
+	healthzSvc.Availability = availabilityChecker
+
+	// v1.5.0+ / B206 — DB health sampler. Background
+	// goroutine ticks every 30s, runs the expensive
+	// pg_database_size + pg_last_wal_replay_lsn +
+	// pg_stat_user_tables queries, and caches the
+	// result. The /db/health handler reads the cached
+	// sample + live pool stats and returns in <5ms.
+	// The sampler receives the ResettableDB (not
+	// d.DB) as its DBSource so it follows B203 hot-
+	// reloads on every tick — same pattern as the
+	// B204 HA elector.
+	//
+	// B225.1 (Phase 4.4 follow-up): the sampler
+	// now has a Notifier field — the local
+	// DBHealthAlertSink interface (in the
+	// healthz package) is satisfied by
+	// *telegram.RealNotifier. The config below
+	// sets Notifier to the operator's bot
+	// (when configured) or the silent
+	// NoopAlertSink when no bot token is set.
+	// The transition detector inside the
+	// sampler fires on every ok→degraded and
+	// degraded→ok edge, so the operator gets a
+	// real-time Telegram push the moment the DB
+	// stops responding to pings.
+	dbHealthSampler := startDBHealthSampler(d, app, dialectKind.String(), healthzSvc)
+	lc.Add("db-health-sampler", dbHealthSampler.Stop)
+
+	// 2026-09-03 / B226 (Phase 4.5) — Prometheus
+	// exporter. The collector samples skygate
+	// state every 30s (same cadence as the B206
+	// healthz sampler so operators can correlate
+	// /db/health transitions with /metrics
+	// deltas during an incident). The /metrics
+	// handler (registered below) serves the
+	// updated gauges in textfmt.
+	metricsSrc := &metrics.DBPoolSource{DB: d, Cluster: "skygate-staging"}
+	metricsStop := metrics.StartCollector(context.Background(), metricsSrc, 30*time.Second)
+	lc.Add("metrics-collector", metricsStop)
+	// B226 build info — one-time set, never
+	// changes for the life of the process.
+	metrics.BuildInfoGauge.
+		WithLabelValues(version, runtime.Version()).
+		Set(1)
+	log.Printf("metrics: /metrics endpoint registered (collector interval=30s)")
+
+	mux.HandleFunc("GET /healthz", healthzSvc.GetHealthz)
+	mux.HandleFunc("GET /readyz", healthzSvc.GetReadyz)
+	mux.HandleFunc("GET /db/health", healthzSvc.GetDBHealth)
+	// 2026-09-03 / B226: Prometheus exporter
+	// (Phase 4.5). The /metrics endpoint serves
+	// the B226 in-house metrics registry in
+	// textfmt. UNAUTHENTICATED (the Prometheus
+	// scraper doesn't carry cookies) — same
+	// exposure level as /healthz + /db/health.
+	// If the operator wants auth, layer a
+	// sidecar with basic auth in front of it.
+	mux.Handle("GET /metrics", metrics.Default().Handler())
+	mux.HandleFunc("/favicon.svg", app.FaviconHandler)
+	mux.HandleFunc("/static/", app.StaticHandler)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard", http.StatusFound)
+	})
+
+	// Settings (theme switcher) - accessible to all.
+	// The actual handler is wired below (after mySvc is
+	// declared) — refactor-v0.30 Phase B step 6e
+	// (2026-07-29) moved the handler to
+	// internal/feature/my/settings.go.
+	// mux.HandleFunc("GET /settings/theme", mySvc.PostSettingsTheme)
+	// mux.HandleFunc("POST /settings/theme", mySvc.PostSettingsTheme)
+
+	// Authenticated
+	authMW := middleware.RequireAuth(cfg.JWTSecret)
+	// refactor-v0.30 Phase B step 6e (2026-07-29):
+	// /help moved to feature/auth/help.go
+	// (authSvc.GetHelp).
+	mux.Handle("GET /help", authMW(http.HandlerFunc(authSvc.GetHelp)))
+
+	// User self-service
+	// (the rest of /my/* routes are below, after mySvc
+	// is constructed — /my/devices + /my/exit-nodes +
+	// /my/preauth + /my/keys + /my/meshes + per-device
+	// preferred-exit + /my/account/audit all route
+	// through mySvc)
+	// 2026-07-25: v0.28.4 — per-device preferred exit-node.
+	// The user can pin a specific device (e.g. their
+	// Android phone) to a different exit-node than the
+	// per-user default. The form posts hostname + tag;
+	// the handler resolves the hostname to the user's
+	// device and stores the pref in device_exit_node_prefs.
+	// 2026-07-29: refactor-v0.30 Phase B step 5d — moved
+	// to feature/my (route registered after mySvc
+	// construction, see below).
+	// mux.Handle("POST /my/devices/preferred-exit", ...) — see below
+	// 2026-07-29: refactor-v0.30 Phase B step 5c —
+	// /my/meshes + 3 POST endpoints moved to feature/my.
+	// (Routes re-pointed after mySvc construction, see
+	// the block immediately above the Admin section.)
+	// workflow). The bot /mesh create|join|leave
+	// commands are the BOT entry point; both
+	// share the same internal/mesh package.
+	// Three POST routes: create, join, leave —
+	// refactor-v0.30 Phase B step 5c: now via mySvc
+	// (routes registered after mySvc construction, see
+	// below the /my/devices entry).
+
+	// Admin — small handlers (users, devices, subnets, invites,
+	// meshes, headscale-update-monitor, acls import/export) moved
+	// from internal/handlers/handlers_admin_*.go + admin_*.go
+	// into internal/feature/admin/ in refactor-v0.30 Phase B
+	// step 3a (2026-07-29). Larger admin handlers (control
+	// planes, user_subnet, telegram, integrations, exit-nodes,
+	// backup, headplane, derp, settings, update) are still in
+	// internal/handlers/ and will be moved in Phase B step 3b.
+	adminSvc := &adminsvc.Service{
+		Backend: app,
+		// v1.5.0+ / B208 — pass the ResettableDB (not the
+		// captured *sql.DB) so the admin Service's s.dbc()
+		// helper transparently follows the B203 watchdog's
+		// hot-reload. Pre-B208 every admin page 500'd
+		// after the watchdog's first swap (the captured
+		// pool was closed in the swap goroutine).
+		DB:                     d,
+		HSGlobalFn:             app.HSGlobalFn,
+		HSForUserFn:            app.HSForUserFn,
+		Cfg:                    app.Config(),
+		Notifier:               app.Notifier,
+		HeadscaleUpdateMonitor: app.HeadscaleUpdateMonitor,
+		PlaneVersionFn:         planeVersionFn(app, cfg), // B460: plane_version_b460.go
+		Sidecar:                app.Sidecar,
+		I18n:                   app.I18n,
+		// B323 (2026-09-25): the /admin/service page reports the uptime of THIS
+		// process, so the operator can distinguish "the restart worked" from
+		// "the service never came back". Wired from the same StartedAt /healthz
+		// uses, so the two surfaces cannot disagree.
+		StartedAt: app.StartedAt,
+		// v0.33.1.40 B92: wire the Availability Checker so the
+		// /admin/services page can render the cached status of
+		// headscale + headplane + tailscale. The Checker is
+		// the same instance healthzSvc.Availability points to,
+		// so /readyz and /admin/services read from the same
+		// snapshot — no risk of drift.
+		AvailabilityChecker: availabilityChecker,
+		// refactor-v0.30 Phase B step 3b.4 (2026-07-29):
+		// per-user control plane admin (set/clear/provision/
+		// decommission) encrypts the API key with this
+		// secret + invalidates the per-URL HSForUser cache.
+		SecretKeyHex:        app.SecretKeyHex,
+		InvalidateHSCacheFn: app.InvalidateHSCache,
+		// B290 (2026-09-22): let /admin/oidc drive the RUNNING provider, so
+		// enabling OIDC from the web UI needs no env edit and no restart — the
+		// point of the operator's report («нет удобного выставления включения
+		// OIDC, пока нет в env строчки нельзя никак настроить»). ApplyConfig is
+		// safe to call at any time (it takes the service's config lock) and an
+		// empty issuer simply disables the routes again.
+		OIDCApplier: func(issuer, clientID, clientSecret, redirectURIs string, enabled bool) {
+			if oidcSvc == nil {
+				return
+			}
+			if !enabled {
+				issuer = ""
+			}
+			oidcSvc.ApplyConfig(issuer, clientID, clientSecret, redirectURIs)
+			log.Printf("oidc: configuration applied from /admin/oidc (enabled=%v issuer=%s client_id=%s secret_set=%v)",
+				enabled && issuer != "", issuer, clientID, clientSecret != "")
+		},
+		OIDCStatusFn: func() (string, string, string, string) {
+			if oidcSvc == nil {
+				return "", "", "", ""
+			}
+			return oidcSvc.ConfigSnapshot()
+		},
+		// B304 (v1.5.69): key_dir stops being a form field with no effect. The
+		// store is moved live (Reload loads or generates the pair at the new path
+		// and swaps it under the write lock, so a bad path leaves the running
+		// /oidc/jwks.json untouched), and the panel can also REPAIR a store whose
+		// boot-time directory could not be created (B270 leaves Keys == nil and the
+		// routes answering 503) without an env edit or a restart.
+		OIDCKeyDirApplier: func(dir string) error {
+			if oidcSvc == nil {
+				return fmt.Errorf("the OIDC provider is not initialised in this process")
+			}
+			if ks := oidcSvc.KeysRef(); ks != nil {
+				return ks.Reload(dir)
+			}
+			ks, err := oidcsvc.NewKeyStore(dir)
+			if err != nil {
+				return err
+			}
+			oidcSvc.SetKeys(ks)
+			log.Printf("oidc: key store created at %s from /admin/oidc (kid=%s) — the routes stop answering 503 now", dir, ks.KID())
+			return nil
+		},
+		OIDCKeyDirFn: func() (string, string, bool) {
+			if oidcSvc == nil {
+				return "", "", false
+			}
+			ks := oidcSvc.KeysRef()
+			if ks == nil {
+				return "", "", false
+			}
+			return ks.Dir(), ks.KID(), ks.Ready()
+		},
+		OIDCDefaultKeyDir: app.OIDCKeyDir,
+		// refactor-v0.30 Phase B step 3b.3 (2026-07-29):
+		// /admin/exit-nodes needs the default SSH key path
+		// (shown as the "ssh_key_path" form default) + a
+		// callback to the legacy SyncAdvertisedRoutes
+		// (the "Sync now" button). The exit-node health
+		// monitor is wired further below once exitMon is
+		// created (it doesn't exist yet at this point).
+		SSHKeyPath: app.SSHKeyPath,
+		SyncRoutes: app.SyncAdvertisedRoutes,
+		// refactor-v0.30 Phase B step 3b.6 (2026-07-29):
+		// /admin/settings renders ControlURL (URL field
+		// + PublicDomain) + masked JWTSecret and
+		// HeadscaleKey. Settings stays in feature/admin
+		// because it's a single admin page; moving it
+		// out would just create a per-feature dependency
+		// for a one-file use site.
+		ControlURL:   app.ControlURL,
+		JWTSecret:    app.JWTSecret,
+		HeadscaleKey: app.HeadscaleKey,
+		// refactor-v0.30 Phase B step 6a (2026-07-29):
+		// /admin/derp's collectDerpStatus seeds its initial
+		// DerpStatus with this URL (defaults to the hardcoded
+		// fallback when empty). Wired once at boot from
+		// app.DerpBaseURL.
+		DerpBaseURL: app.DerpBaseURL,
+		// v0.33.1.9: Tailscale web-UI management. The path +
+		// login server + hostname default to the same values
+		// entrypoint.sh hard-codes (so a setup that works
+		// from the entrypoint keeps working when the web UI
+		// takes over). The /admin/tailscale handler
+		// (feature/admin/tailscale.go) uses these for the
+		// Save/Start/Stop buttons.
+		//
+		// B258: SKYGATE_TS_AUTHKEY_FILE matches the entrypoint.sh
+		// env var name (the legacy _PATH form is honored for
+		// older deployments; new installs should use _FILE
+		// to align with the entrypoint). When set to "/dev/null"
+		// the entrypoint correctly skips tailscaled AND the
+		// UI handler now detects the same sentinel — see
+		// tailscaleAuthKeyDisabled() in feature/admin/tailscale.go.
+		TailscaleAuthKeyPath: tailscaleEnvOr(
+			"SKYGATE_TS_AUTHKEY_FILE",
+			tailscaleEnvOr("SKYGATE_TS_AUTHKEY_PATH", "/data/ts/authkey"),
+		),
+		TailscaleLoginServer: tailscaleEnvOr("SKYGATE_TS_LOGIN_SERVER", "https://head.example.com"),
+		// B251: hostname `skygate-host` is reserved for the
+		// single VM that runs the skygate container itself
+		// (registered via /admin/tailscale). The previous
+		// default `skygate-host-1` was a placeholder from
+		// the v0.33.1.9 era; v1.5.2 collapses it to the
+		// reserved name so BackfillInfra can attribute the
+		// node to `infra` strictly on hostname equality.
+		TailscaleHostname: tailscaleEnvOr("SKYGATE_TS_HOSTNAME", "skygate-host"),
+
+		// v1.5.0 / B149 — /admin/ha page.
+		//
+		// RegapiStore is the encrypted credential store for
+		// the provider API (cert + alt-password). The store
+		// reads SKYGATE_SECRET_KEY for AES-256-GCM; when
+		// unset, Save() returns db.ErrSecretKeyUnset and
+		// the /admin/ha "External DNS" form shows a
+		// "store not configured" banner.
+		DNSCredsStore: extcreds.NewStore(app.DB.Current(), cfg.SecretKeyHex),
+		// SelfHostname is THIS skygate instance's name in
+		// the HA chain. Defaults to the Tailscale hostname
+		// (the same name the operator SSHes into). The
+		// /admin/ha "Self role" column reads this to render
+		// the active/standby/unreachable badge.
+		// B251: align with TailscaleHostname default `skygate-host`.
+		SelfHostname: tailscaleEnvOr("SKYGATE_TS_HOSTNAME", "skygate-host"),
+
+		// v1.5.0+ / B200 — invite signing key. cfg.SecretKeyHex
+		// is the raw SKYGATE_SECRET_KEY (also used for JWT
+		// signing and per-user API key encryption). The
+		// /admin/cluster "Generate invite" handler signs
+		// sgn1 tokens with HMAC-SHA256 using this key.
+		// Empty = the "Generate invite" form shows a
+		// "secret not configured" error (better than
+		// silently generating tokens no one can verify).
+		ClusterInviteSecret: cfg.SecretKeyHex,
+		// v1.5.0+ / B219 — Patroni URL for the
+		// /admin/database "PG Failover" button.
+		// Defaults to http://localhost:8008 (Patroni's
+		// default local port). Set SKYGATE_PATRONI_URL
+		// in .env to point at a different host's
+		// Patroni for multi-host setups.
+		PatroniURL: envOrDefault("SKYGATE_PATRONI_URL", "http://localhost:8008"),
+
+		// v1.5.0+ / B223 (Phase 4.3) — Tailscale
+		// auto-discovery tag filter. The B223
+		// background poller (every 5 min) +
+		// /admin/cluster/discover button only
+		// consider Tailscale peers with this tag.
+		// Default empty = no filter (every
+		// Tailscale peer is a candidate — fine
+		// for small tailnets, risky on production
+		// tailnets with laptops/phones).
+		// Operator sets SKYGATE_DISCOVERY_TAG in
+		// .env to scope discovery to a specific
+		// Tailscale ACL tag.
+		DiscoveryTag: os.Getenv("SKYGATE_DISCOVERY_TAG"),
+
+		// refactor-v0.30 Phase B step 6b (2026-07-29):
+		// refactor-v0.30 Phase B step 6b (2026-07-29):
+		// /admin/acls links to this URL (when non-empty)
+		// instead of the bundled Headplane sidecar.
+		HeadplaneExternalURL: app.HeadplaneExternalURL,
+		// refactor-v0.30 Phase B step 6c (2026-07-29):
+		// the self-update admin page + orchestrator
+		// goroutine both hold a long-lived reference to
+		// the state store. Constructed above (was a
+		// package-level singleton in internal/handlers).
+		UpdateState: updateStore,
+		// refactor-v0.30 Phase B step 6c (2026-07-29):
+		// /admin/update renders the current build
+		// version in the page header and uses it as
+		// the Checker's CurrentVersion.
+		BuildVersion: app.BuildVersion,
+		// 2026-08-17 (B124): when SKYGATE_DEV_BUILD=true,
+		// /admin/update shows a "dev build" banner
+		// instead of the "update available" alert.
+		DevBuild: app.Config().DevBuild,
+	}
+
+	// v1.5.0+ / B201 — cluster join API service. Handles
+	// POST /api/cluster/join and /api/cluster/heartbeat
+	// (no admin auth — the sgn1 token IS the auth).
+	// The InviteSecret is the same SKYGATE_SECRET_KEY
+	// the admin invite generator uses, consumed as the
+	// HMAC-SHA256 key. The endpoints are no-auth because
+	// the join bootstrap runs on a fresh machine that
+	// doesn't have a skygate session cookie yet.
+	clusterAPI := &clusterapi.Service{
+		// v1.5.0+ / B210 — pass the ResettableDB (not the
+		// captured *sql.DB) so the cluster Service's s.dbc()
+		// helper transparently follows the B203 watchdog's
+		// hot-reload. Pre-B210 every /api/cluster/join +
+		// /api/cluster/heartbeat request 500'd after the
+		// watchdog's first swap.
+		DB:           d,
+		InviteSecret: cfg.SecretKeyHex,
+	}
+
+	// v1.5.0 / B194 — auto-deploy framework service.
+	// The Service holds a per-run broker map so the
+	// /admin/deploys/{id}/stream SSE handler can find
+	// the broker for an in-flight run. The framework
+	// works against HSClient + S3Client interfaces;
+	// the adapter (deployrun.HSFactoryFromFunc) wraps
+	// the *headscale.Client concrete type.
+	//
+	// S3Client is optional — the framework marks step 4
+	// (PushEnvToS3) as skipped with a clear hint if the
+	// S3 env is not configured. The deploy can still
+	// succeed in that case.
+	deployrunCfg := &deployrun.Config{
+		HeadscaleExecContainer: "headscale",
+		PreauthExpiration:      "24h",
+	}
+	// S3 push requires the same env the backup runner
+	// uses (SKYGATE_S3_BUCKET / SKYGATE_S3_ENDPOINT etc).
+	// Defaults are empty → step 4 skips with a clear hint.
+	if s3b := os.Getenv("SKYGATE_S3_BUCKET"); s3b != "" {
+		deployrunCfg.S3Bucket = s3b
+		deployrunCfg.S3Prefix = envOrDefault("SKYGATE_S3_DEPLOY_PREFIX", "ha/deploy")
+		deployrunCfg.S3Endpoint = os.Getenv("SKYGATE_S3_ENDPOINT")
+		deployrunCfg.S3AccessKey = os.Getenv("SKYGATE_S3_ACCESS_KEY")
+		deployrunCfg.S3SecretKey = os.Getenv("SKYGATE_S3_SECRET_KEY")
+	}
+	deployrunSvc := deployrun.NewService(
+		app.DB,
+		deployrun.HSFactoryFromFunc(app.HSGlobalFn),
+		deployrun.S3FactoryFromEnv(deployrunCfg),
+		deployrunCfg,
+		nil, // catalog: TODO wire i18n in B194.2
+	)
+	_ = deployrunSvc // used by mux.Handle below
+
+	// refactor-v0.30 Phase B step 3b.1a (2026-07-29): wire
+	// the adminSvc into *App so the existing thin wrappers
+	// (app.AdminTelegram, app.AdminTelegramPost) route through
+	// it. The wrappers exist for the test surface only — new
+	// routes go directly to adminSvc via mux.HandleFunc below.
+	app.SetAdminService(adminSvc)
+
+	// v1.5.2+ / B-mod-core re-merge (2026-09-10) — wire
+	// the module.Plugin API Manager.
+	//
+	// The Manager owns the lifecycle of all skygate modules
+	// (Tailscale is Module #1; cluster, telegram, derp, exit
+	// are its 4 opt-in sub-features). Modules are registered
+	// statically below, initialized (Init validates prereqs +
+	// loads state), started (only if state.Enabled=true), and
+	// monitored by a 30s health loop. On shutdown the Manager
+	// gracefully stops every running module.
+	//
+	// In B-mod-core + B-mod-tailscale we register the REAL
+	// Tailscale module (B-mod-tailscale replaced the original
+	// stub from 3d80f573). The 4 sub-features (cluster /
+	// telegram / derp / exit) are opt-in via
+	// /admin/modules/{name} (B-mod-admin).
+	//
+	// The audit log callback writes every state transition
+	// to the audit_log table (the same one /admin/audit shows)
+	// so the operator can see "module.tailscale.init:ok" etc.
+	// without SSH'ing into the VM.
+	//
+	// Pre-B-mod-core re-merge this was reverted in 82c74b38
+	// because the Manager required a real SKYGATE_DB_DSN,
+	// and the agent was running on bypass-PG (Patroni was
+	// stopped at the time). 82c74b38 left the Manager
+	// package in place but unwired; the operator can re-enable
+	// it as soon as the DB is back. Now (2026-09-10): the
+	// svi polygon has PG 18.6 on 13.66 (B-mod-pg-bypass +
+	// skygate_test user + DSN), so we can re-enable.
+	moduleMgr := module.NewManager(
+		"/var/lib/skygate/modules", // dataDir: per-module state
+		"/var/run/skygate/modules", // socketDir: per-module sockets (unused in B-mod-core)
+		func(action, detail string) {
+			// Best-effort audit write. We don't fail
+			// the boot if the audit log is unavailable
+			// — the audit row is operator debugging,
+			// not a correctness requirement.
+			_ = db.AppendAuditLogWithTarget(
+				app.DB.Current(), 0, "system",
+				action, detail, "module", "",
+			)
+		},
+	)
+	moduleMgr.SetEnv(collectModuleEnv(cfg))
+	// v1.5.2+ / B-mod-core re-merge (2026-09-10): the
+	// real Tailscale module (B-mod-tailscale) requires
+	// a DBC accessor in ModuleConfig so it can read
+	// audit_log + write its own audit rows + check
+	// applied_migrations. The Manager.SetDBC setter is
+	// the wire for that requirement.
+	moduleMgr.SetDBC(func() *sql.DB { return app.DB.Current() })
+	if err := moduleMgr.Register(tailscalemod.NewModule()); err != nil {
+		log.Printf("warn: register tailscale module: %v", err)
+	}
+	if err := moduleMgr.InitAll(context.Background()); err != nil {
+		log.Printf("warn: module InitAll: %v", err)
+	}
+	moduleMgr.StartHealthLoop(context.Background())
+	lc.Add("modules", func() { moduleMgr.StopAll(context.Background()) })
+
+	// v1.5.2+ / B-mod-admin (2026-09-10) — hand the
+	// Manager to the admin Service so /admin/modules
+	// can render the list + detail pages and dispatch
+	// install/start/stop POSTs.
+	adminSvc.Modules = moduleMgr
+
+	// refactor-v0.30 Phase B step 4 (2026-07-29): exit_rules
+	// feature service. Owns /my/exit-rules + the /admin/exit-rules
+	// sub-actions, the REST API, the advertised-routes sync,
+	// the DNS autoupdater, and the route-setup script generator.
+	// The Service holds the shared headscale client + DB + cfg
+	// + i18n; the *App.SyncAdvertisedRoutes / RunDomainAutoUpdater
+	// wrappers route through it via exitRulesRunner (see
+	// handlers.go SetExitRulesService).
+	exitRulesSvc := &exitrules.Service{
+		Backend: app,
+		// v1.5.0+ / B210 — pass the ResettableDB (not the
+		// captured *sql.DB) so the exit-rules Service's
+		// s.dbc() helper transparently follows the B203
+		// watchdog's hot-reload. Pre-B210 every /my/exit-rules
+		// + /admin/exit-rules/* handler 500'd after the
+		// watchdog's first swap.
+		DB:       d,
+		HS:       app.HS,
+		Cfg:      app.Config(),
+		I18n:     app.I18n,
+		Notifier: app.Notifier,
+		// refactor-v0.30 Phase B step 4e (2026-07-29):
+		// per-plane ACL reapply handler needs a
+		// per-plane headscale client resolver. The
+		// default behaviour (mirrors the legacy
+		// App-method closure in form_reapply.go) is:
+		// empty planeURL → app.HSGlobal(); non-empty
+		// → first user_id with that headscale_url →
+		// app.HSForUser(uid); fallback HSGlobal() on
+		// any DB error.
+		ResolveHSForPlane: func(planeURL string) *headscale.Client {
+			if planeURL == "" {
+				return app.HSGlobalFn()
+			}
+			rows, err := app.DB.Query("SELECT id FROM portal_users WHERE headscale_url = $1 LIMIT 1", planeURL)
+			if err != nil {
+				return app.HSGlobalFn()
+			}
+			defer rows.Close()
+			if !rows.Next() {
+				return app.HSGlobalFn()
+			}
+			var uid int64
+			if err := rows.Scan(&uid); err != nil {
+				return app.HSGlobalFn()
+			}
+			return app.HSForUserFn(uid)
+			// (Phase D4, 2026-07-29: was app.HSGlobal() /
+			// app.HSForUser(uid) — the *App methods were
+			// deleted; the wrapper Fn methods now route
+			// directly to a.Router.Global() / .ForUser(uid).)
+		},
+	}
+	// The exit-node ACTIONS on /admin/exit-nodes — the "Sync now" button, the
+	// per-row "Re-sync" (B132) and the per-row reconnect (B501). Extracted to
+	// exit_rules_wire_b501.go so this entrypoint, capped by B372, does not grow
+	// with every new button.
+	wireExitRulesAdmin(adminSvc, exitRulesSvc)
+	// B361 (2026-10-07): wire the ACL trigger the preference-writing surfaces use.
+	// `my.PostMyDevicePreferredExit` / `my.PostAdminDevicePreferredExit` (the page
+	// an operator uses to re-point a device) and the B356 reconciler all call
+	// `exit_rules.ReapplyACLAfterPreferenceChange`, which is THIS method — the same
+	// throttled, trigger-agnostic drift check the ownership flips and the rule churn
+	// already use. One implementation, one 60s budget: a preference change reaches
+	// headscale within a minute instead of waiting for an unrelated throttle, and a
+	// burst of changes is still one apply.
+	exitrules.SetPreferenceACLReapply(exitRulesSvc.ReapplyACLIfDrifted)
+	app.SetExitRulesService(exitRulesSvc)
+	// 2026-08-04: v0.33.0 — wire the runtime admin Service
+	// into the TestRegistry closures so the /admin/system_tests
+	// page can run in-process checks (db integrity, headscale
+	// reachability, ACL classification) without re-opening the
+	// DB or rebuilding the headscale client.
+	adminsvc.SetTestService(adminSvc)
+
+	// B321 (2026-09-25): Tailscale must survive a container recreate.
+	//
+	// The reference compose pins SKYGATE_TS_AUTHKEY_FILE=/dev/null and Docker freezes
+	// the environment at container CREATION, so every update produced a container whose
+	// entrypoint skipped tailscaled and the operator had to press Start on
+	// /admin/tailscale again. The entrypoint cannot see the operator's decision (it
+	// lives in global_settings), so the PROCESS re-applies it: a boot pass plus a
+	// 5-minute tick bring the client up when tailscale.desired_state=on, and enforce
+	// the resolved hostname (the frozen SKYGATE_TS_HOSTNAME pin must not rename the
+	// node back to the legacy skygate-host-1 placeholder). Idempotent and never fatal.
+	adminSvc.RunTailscaleAutostart(context.Background())
+
+	// refactor-v0.30 Phase B step 5 (2026-07-29):
+	// /my/* feature service. The /my/account, /my/tokens
+	// and /my/telegram routes already live in feature/auth
+	// (step 2); this Service owns the remaining
+	// self-service pages (devices, exit-nodes, preauth,
+	// keys, audit, per-device exit pref). Step 5a wires
+	// preauth + exit-nodes + keys; step 5b/5c/5d follow
+	// with devices / meshes / audit / device_exit_pref.
+	mySvc := &mysvc.Service{
+		Backend: app,
+		// v1.5.0+ / B210 — pass the ResettableDB (not the
+		// captured *sql.DB) so the my Service's s.dbc()
+		// helper transparently follows the B203 watchdog's
+		// hot-reload. Pre-B210 every /my/* handler 500'd
+		// after the watchdog's first swap (devices page
+		// empty, audit export broken, etc.).
+		DB:   d,
+		HS:   app.HS,
+		Cfg:  app.Config(),
+		I18n: app.I18n,
+		// refactor-v0.30 Phase B step 5 — Notifier not
+		// used by the 3 handlers in 5a (none of them
+		// sends an operator alert). Wired for the
+		// upcoming 5b/5c/5d handlers that do (the
+		// device-pref + per-plane-ACL flow).
+		Notifier: app.Notifier,
+		// refactor-v0.30 Phase B step 5b — the
+		// /my/devices backfill is a 250-line helper
+		// that lives in handlers_node_ownership.go
+		// and is also used by /admin/devices. Wire
+		// it as a callback so the feature package
+		// doesn't carry a copy.
+		BackfillNodeOwnership: app.BackfillNodeOwnershipFn,
+	}
+	// The route table lives in routes.go (refactor Phase D): a pure move of
+	// the block that used to sit here, so this file stays a boot sequence.
+	registerRoutes(mux, app, adminSvc, authSvc, mySvc, exitRulesSvc, clusterAPI, deployrunSvc, authMW, apiMW, err)
+
+	// B269: the real server takes over the listener bound at the top of
+	// main(); Addr/ListenAndServe are deliberately unused so nothing can
+	// re-bind (and re-fail) on a port we already own.
+
+	return mux, adminSvc
+}

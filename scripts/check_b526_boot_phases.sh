@@ -80,35 +80,47 @@ fi
 # --- B: every phase declared once, called once ----------------------------------
 B_MISS=""
 for fn in startHeadscaleUpdateMonitor startExitNodeMonitor startDBHealthSampler \
-          startBackgroundServices wireLateServices wireOptionalSchedulers; do
+          startBackgroundServices wireLateServices wireOptionalSchedulers wireRoutes; do
   decls=$(grep -cE "^func (\([a-zA-Z]+ [a-zA-Z*]+\) )?${fn}\(" "$SURFACE" 2>/dev/null || true)
-  # A call may be bare (`fn(...)`) or the right-hand side of an assignment
-  # (`x := fn(...)`) — the health sampler is assigned, and treating that as "not
-  # called" is the kind of grep that reports a product fact about the check instead.
-  calls=$(grep -cE "^[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]* :?= )?([a-zA-Z]+\.)?${fn}\(" "$SURFACE" 2>/dev/null || true)
+  # A call may be bare (`fn(...)`) or the right-hand side of an assignment with one OR
+  # several targets (`x := fn(...)`, `mux, adminSvc := fn(...)`) — treating the multi
+  # form as "not called" is the kind of grep that reports a fact about the check.
+  calls=$(grep -cE "^[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*(, ?[a-zA-Z_][a-zA-Z0-9_]*)* :?= )?([a-zA-Z]+\.)?${fn}\(" "$SURFACE" 2>/dev/null || true)
   [ "${decls:-0}" = "1" ] || B_MISS="${B_MISS}${fn}: declared ${decls:-0} time(s), must be exactly 1"$'\n'
   [ "${calls:-0}" = "1" ] || B_MISS="${B_MISS}${fn}: called ${calls:-0} time(s), must be exactly 1"$'\n'
 done
 if [ -z "$B_MISS" ]; then
-  ok "B: all six extracted phases are declared once and called once"
+  ok "B: all seven extracted phases are declared once and called once"
 else
   while IFS= read -r l; do [ -n "$l" ] && bad "B: $l"; done <<< "$B_MISS"
 fi
 
-# --- C: no defer inside the two new blocks ---------------------------------------
+# --- C: no FUNCTION-SCOPE defer inside the extracted blocks ----------------------
+# The rule is `^\tdefer ` — one tab — because that is where a statement sits at function
+# scope. A defer inside a CLOSURE (three tabs, e.g. a ticker inside a goroutine) runs
+# when the closure exits and is harmless; a defer at function scope would stop the
+# resource the moment the helper returns.
+ROUTES_FILE="$(grep -rl 'func wireRoutes(' cmd/skygate/*.go 2>/dev/null | head -1)"
 if [ -z "$BOOT_SERVICES" ]; then
   bad "C1: the file declaring startBackgroundServices is missing"
 else
-  if awk '/^func startBackgroundServices\(/,/^}/' "$BOOT_SERVICES" | grep -qE '^[[:space:]]*defer '; then
-    bad "C1: startBackgroundServices holds a defer — it would stop a service at helper-return"
+  if awk '/^func startBackgroundServices\(/,/^}/' "$BOOT_SERVICES" | grep -qE '^\tdefer '; then
+    bad "C1: startBackgroundServices holds a function-scope defer — it would stop a service at helper-return"
   else
     ok "C1: startBackgroundServices holds no defer (the lifecycle owns the stoppers)"
   fi
-  if awk '/^func wireLateServices\(/,/^}/' "$BOOT_SERVICES" | grep -qE '^[[:space:]]*defer '; then
-    bad "C2: wireLateServices holds a defer — it would stop a service at helper-return"
+  if awk '/^func wireLateServices\(/,/^}/' "$BOOT_SERVICES" | grep -qE '^\tdefer '; then
+    bad "C2: wireLateServices holds a function-scope defer — it would stop a service at helper-return"
   else
     ok "C2: wireLateServices holds no defer"
   fi
+fi
+if [ -z "$ROUTES_FILE" ]; then
+  bad "C3: the file declaring wireRoutes is missing"
+elif awk '/^func wireRoutes\(/,/^}/' "$ROUTES_FILE" | grep -qE '^\tdefer '; then
+  bad "C3: wireRoutes holds a function-scope defer — the availability checker / DB-health sampler / metrics collector / modules would stop the moment it returns"
+else
+  ok "C3: wireRoutes holds no defer (its four stoppers are on the lifecycle)"
 fi
 
 # --- D: the lifecycle is real and tested -----------------------------------------

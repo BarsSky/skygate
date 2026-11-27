@@ -1,7 +1,7 @@
 # B525 complexity budget — frozen 2026-11-27T14:23:07Z (registerRoutes lowered 1109 -> 1096 by B528 step 1, v1.5.265)
 # ratchet thresholds: lines>=200 or cc>=40
 # format: lines<TAB>cc<TAB>file<TAB>func
-1369	75	cmd/skygate/main.go	main
+516	40	cmd/skygate/main.go	main
 277	16	cmd/skygate/main_schedulers.go	wireOptionalSchedulers
 1096	2	cmd/skygate/routes.go	registerRoutes
 648	56	internal/acl/acl_generate.go	GenerateACLForPlane
@@ -45,3 +45,7 @@
 # the next B526 step splits them further (that step lowers these numbers).
 268	8	cmd/skygate/boot_services.go	startBackgroundServices
 260	11	cmd/skygate/boot_services.go	wireLateServices
+# B526 step 9 (v1.5.268): the biggest block main() had - 854 lines of service
+# construction plus the registerRoutes call, moved VERBATIM into boot_routes.go.
+# Frozen at the size it arrived with; a later B526 step splits it by service group.
+866	36	cmd/skygate/boot_routes.go	wireRoutes
