@@ -1,7 +1,13 @@
-# B525 complexity budget — frozen 2026-11-27T12:23:12Z
+# B525 complexity budget — frozen 2026-11-27T12:27:53Z
 # ratchet thresholds: lines>=200 or cc>=40
+# 2026-11-27 B526 part 1: main() 2272 -> 1971 (subcommand dispatch extracted verbatim into
+# runSubcommand, 305 lines). The dispatcher is a NEW offender, argued here: it is a
+# mechanical move of statements that already lived inside main(), the total did not grow,
+# and the next step is to split it by command family. main()'s budget is LOWERED to the
+# measured 1971, so it can never grow back.
 # format: lines<TAB>cc<TAB>file<TAB>func
-2272	139	cmd/skygate/main.go	main
+1971	98	cmd/skygate/main.go	main
+305	43	cmd/skygate/main.go	runSubcommand
 277	16	cmd/skygate/main_schedulers.go	wireOptionalSchedulers
 1109	2	cmd/skygate/routes.go	registerRoutes
 648	56	internal/acl/acl_generate.go	GenerateACLForPlane
