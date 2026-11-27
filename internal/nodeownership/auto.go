@@ -264,6 +264,25 @@ func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertSin
 	} else {
 		ReconcileTags(dbConn, hs, nodes, rows, os.Getenv("SKYGATE_BASE_DOMAIN"), alertSink)
 	}
+	// B534 (2026-11-27): REPORT one physical device behind two nodes.
+	//
+	// A cleared app cache (or a second login) destroys the client's machine key, so
+	// it registers as a brand-new node and headscale — which must keep given names
+	// unique — renames it `<name>-1`. Nothing can prevent that; what was missing is
+	// that nothing SAID it either. Every per-device ACL row, exit pin and tag is
+	// keyed by the OLD hostname, so the live node matches none of them — live case
+	// 2026-11-27: `skybars-1` (skyadmin, online, created 14:41) next to `skybars`
+	// (daniil, offline since 12:16), found by the operator's eye, not by the product.
+	//
+	// The report goes through the same sink as a failed tag write (audit + metric +
+	// rate-limited Telegram), and it never acts: which node IS the device is the
+	// operator's call (the per-row delete on /admin/devices already exists).
+	for _, dup := range DetectDuplicates(nodes) {
+		log.Printf("duplicate-node: %s", dup.Reason())
+		if alertSink != nil {
+			alertSink.ReportFailure(dup.NewID, dup.NewGiven, dup.NewTag, dup.AlertError())
+		}
+	}
 	// B505 (2026-11-20): refresh the `devices` PROJECTION from exactly the two
 	// sources just maintained above — liveness from headscale, attribution from
 	// node_owner_map — and say what it did. Measured live before this block:

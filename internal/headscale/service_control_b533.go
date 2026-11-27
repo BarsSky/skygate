@@ -111,6 +111,14 @@ type ServiceFacts struct {
 	PolicyStatus string // the B272 PolicyAuditStatus, when it was measured
 	PolicyPath   string
 
+	// MeasuredAt is when this collection STARTED (B535). It is the ordering point
+	// for the applier's verdict: a verdict written after it describes a service
+	// that this page has not looked at yet.
+	MeasuredAt time.Time
+	// Journal is the unit's own last lines (B535), redacted. A snapshot that could
+	// not be read carries a Note instead of lines.
+	Journal JournalSnapshot
+
 	Remediations []Remediation
 	// CollectNotes lists what could NOT be measured and why, so a partial
 	// summary never reads as a complete one.
@@ -482,6 +490,9 @@ func (c *Client) ServiceUnitName() string {
 // (the B522 lesson) and must not blank the page.
 func (c *Client) CollectServiceFacts(ctx context.Context, probe ServiceProbe) ServiceFacts {
 	f := ServiceFacts{Unit: c.ServiceUnitName()}
+	// B535: the ordering point for the applier's verdict. Set FIRST, because the
+	// question it answers is "was the verdict written before we looked".
+	f.MeasuredAt = time.Now().UTC()
 	unit := f.Unit
 
 	// (a) who manages it, in the order installs are laid out.
@@ -566,7 +577,16 @@ func (c *Client) CollectServiceFacts(ctx context.Context, probe ServiceProbe) Se
 		f.NameMismatch = ControlNamePointsElsewhere(f.ResolvedIPs, f.LocalIPs)
 	}
 
-	// (e) the B272 policy audit — only when headscale is local, because a remote
+	// (e) the unit's own words (B535). Read for EVERY manager and every state, not
+	// only for a failed unit: "служба работает, но в журнале повторяется одна и та
+	// же ошибка" is exactly the state the operator cannot see any other way. The
+	// window is bounded and redacted; a window we could not read carries a Note.
+	f.Journal = CollectServiceJournal(ctx, probe, f.Manager, unit, ServiceJournalRead)
+	if f.LastError == "" && f.Journal.Errors > 0 {
+		f.LastError = lastErrorLine(f.Journal.Lines)
+	}
+
+	// (f) the B272 policy audit — only when headscale is local, because a remote
 	// control plane's policy file is not ours to inspect.
 	if f.Manager != "" && f.Manager != "none" {
 		audit := AuditHeadscalePolicy()
@@ -692,6 +712,11 @@ type ServiceApplyResult struct {
 	Command   string
 	Reason    string
 	UpdatedAt string
+	// B535: whether the unit was ACTIVE after the restart, and how long the applier
+	// waited for that. A restart that returns before the unit is up is a restart
+	// nobody verified.
+	ActiveAfter string
+	Waited      string
 }
 
 // ReadServiceApplyResult parses <update_dir>/service.apply.status.
@@ -725,6 +750,10 @@ func ReadServiceApplyResult() (ServiceApplyResult, error) {
 			r.Reason = val
 		case "TS":
 			r.UpdatedAt = val
+		case "ACTIVE_AFTER":
+			r.ActiveAfter = val
+		case "WAITED":
+			r.Waited = val
 		}
 	}
 	return r, nil

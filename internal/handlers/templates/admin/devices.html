@@ -37,6 +37,41 @@
 <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
 {{end}}
 
+{{/* B534 (2026-11-27): one physical device behind TWO nodes. A cleared app cache (or
+     a second login) destroys the client's machine key, so it registers as a brand-new
+     node and headscale — which must keep given names unique — renames it `<name>-1`.
+     Skygate cannot prevent that and does not try; what it MUST do is say it, because
+     every per-device ACL row, exit-node pin and tag is keyed by the OLD hostname, so
+     the live node matches none of them. Live case: `skybars-1` (skyadmin, online,
+     created 14:41) next to `skybars` (daniil, offline since 12:16). Deciding which
+     node is the device is the operator's — this card only reports the pair. */}}
+{{if .Duplicates}}
+<div class="alert alert-warning" style="margin-bottom:16px">
+  <div style="font-weight:600;margin-bottom:6px">
+    <i class="fa-solid fa-clone"></i> {{t "devices.duplicates_title"}} ({{len .Duplicates}})
+  </div>
+  <div style="font-size:13px;margin-bottom:8px">{{t "devices.duplicates_help"}}</div>
+  <ul style="margin:0 0 0 18px;font-size:13px">
+    {{range .Duplicates}}
+    <li style="margin-bottom:4px">
+      <code>{{.NewGiven}}</code>
+      <span style="color:var(--text-muted)">(id {{.NewID}}, {{.NewOwner}}, {{.NewTag}})</span>
+      {{if eq (printf "%s" .Kind) "same_host_stale"}}↔ <code>{{.OldGiven}}</code>
+        <span style="color:var(--text-muted)">(id {{.OldID}}, {{.OldOwner}}, {{t "devices.duplicates_old_offline"}} {{.OldLastSeen}})</span>
+        — {{t "devices.duplicates_kind_stale"}}
+      {{else if eq (printf "%s" .Kind) "same_host_live"}}↔ <code>{{.OldGiven}}</code>
+        <span style="color:var(--text-muted)">(id {{.OldID}}, {{.OldOwner}})</span>
+        — {{t "devices.duplicates_kind_live"}}
+      {{else}}↔ <code>{{.OldGiven}}</code>
+        <span style="color:var(--text-muted)">(id {{.OldID}}, {{.OldOwner}})</span>
+        — {{t "devices.duplicates_kind_host"}}
+      {{end}}
+    </li>
+    {{end}}
+  </ul>
+</div>
+{{end}}
+
 {{/* B-mod-first-run-adoption T3: first-run banner. Shown when
      node_owner_map is empty AND headscale has un-adopted users.
      The classic "I just installed skygate as a sidecar to an

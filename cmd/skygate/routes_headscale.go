@@ -46,4 +46,7 @@ func registerHeadscaleRoutes(mux *http.ServeMux, authMW func(http.Handler) http.
 	// the same privilege split the policy (B272.3) and local-routes (B293)
 	// appliers use, because the native unit is unprivileged.
 	mux.Handle("POST /admin/headscale/service/restart", authMW(http.HandlerFunc(adminSvc.PostAdminHeadscaleServiceRestart)))
+	// B535 — «а что теперь»: measure the service now and report the verdict in the
+	// flash, so the answer the operator reads is provably from this moment.
+	mux.Handle("POST /admin/headscale/service/check", authMW(http.HandlerFunc(adminSvc.PostAdminHeadscaleServiceCheck)))
 }

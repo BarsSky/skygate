@@ -350,8 +350,15 @@ func (s *Service) GetAdminDevices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.Backend.RenderWithLayout(w, r, "admin/devices.html", c, map[string]any{
-		"Nodes":        deviceRowsWithDead,
-		"Users":        users,
+		"Nodes": deviceRowsWithDead,
+		"Users": users,
+		// B534 (2026-11-27): one physical device behind two nodes. A cleared app
+		// cache (or a second login) makes the client register a NEW machine key,
+		// and headscale must keep given names unique — so the newcomer becomes
+		// `<name>-1` and every rule, exit pin and tag keyed by the OLD hostname
+		// silently stops matching the live device. The page reported nothing
+		// before; the operator found `skybars-1` by sight.
+		"Duplicates":   nodeownership.DetectDuplicates(allNodes),
 		"FlashSuccess": r.URL.Query().Get("ok"),
 		"FlashError":   r.URL.Query().Get("err"),
 		// B171 (v1.5.2): post-delete flash extensions.

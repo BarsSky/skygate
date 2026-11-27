@@ -19,7 +19,7 @@
      until this block. The restart button stages a data-only request for the
      root-owned skygate-apply-service.sh; the page itself never calls systemctl. */}}
 {{with .Service}}
-<div class="card" style="margin-bottom:24px">
+<div class="card" id="service" style="margin-bottom:24px">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>
       <h3 style="margin:0"><i class="fa-solid fa-server"></i> {{t "headscale_service.title"}}</h3>
@@ -29,6 +29,11 @@
       <span class="tag {{if eq .BadgeClass "green"}}tag-success{{else if eq .BadgeClass "warning"}}tag-warning{{else if eq .BadgeClass "red"}}tag-danger{{else}}tag-info{{end}}">
         {{t .StateKey}}
       </span>
+      {{/* B535: the operator's «и что теперь» — a measurement made on request, with
+           its own audit row, instead of a page reload the reader cannot date. */}}
+      <form method="post" action="/admin/headscale/service/check" style="display:inline">
+        <button type="submit" class="btn btn-sm"><i class="fa-solid fa-stethoscope"></i> {{t "headscale_service.check_now"}}</button>
+      </form>
       {{if not .RestartBlock}}
       <form method="post" action="/admin/headscale/service/restart" style="display:inline">
         <button type="submit" class="btn btn-sm"><i class="fa-solid fa-arrows-rotate"></i> {{t "headscale_service.restart"}}</button>
@@ -36,6 +41,18 @@
       {{end}}
     </div>
   </div>
+
+  <div style="margin-top:8px;color:var(--text-muted);font-size:12px">
+    {{t "headscale_service.measured_at"}}: {{.Facts.MeasuredAt.Format "02.01 15:04:05"}} UTC
+  </div>
+
+  {{if .Pending.Present}}
+  <div class="alert alert-info" style="margin-top:12px">
+    <i class="fa-solid fa-hourglass-half"></i> {{t "headscale_service.pending_request"}}
+    {{if .Pending.Action}}<code>{{.Pending.Action}} {{.Pending.Service}}</code>{{end}}
+    {{if not .Pending.Since.IsZero}}— {{.Pending.Since.Format "15:04:05"}} UTC{{end}}
+  </div>
+  {{end}}
 
   {{if .RestartBlock}}
   <div class="alert alert-warning" style="margin-top:12px">
@@ -92,9 +109,39 @@
     {{if .LastResult.OK}}<span style="color:var(--success)"><code>ok</code></span>{{else}}<span style="color:var(--danger)"><code>failed</code></span>{{end}}
     {{if .LastResult.Command}}<code>{{.LastResult.Command}}</code>{{end}}
     {{if .LastResult.State}}→ <code>{{.LastResult.State}}</code>{{end}}
+    {{if .LastResult.ActiveAfter}}· {{t "headscale_service.active_after"}}: <code>{{.LastResult.ActiveAfter}}</code>{{if .LastResult.Waited}} ({{.LastResult.Waited}}){{end}}{{end}}
     {{if .LastResult.Reason}}<div style="color:var(--danger);overflow-wrap:break-word">{{.LastResult.Reason}}</div>{{end}}
     {{if .LastResult.UpdatedAt}}<div style="color:var(--text-muted)">{{.LastResult.UpdatedAt}}</div>{{end}}
   </div>
+  {{end}}
+
+  {{if .PostRestartText}}
+  <div style="margin-top:8px;font-size:12px">
+    <i class="fa-solid fa-shield-heart"></i> {{t "headscale_service.post_restart"}}: {{.PostRestartText}}
+  </div>
+  {{end}}
+
+  {{/* B535: the unit's own words. A window that could not be read says so; a read
+       window that is empty is a measured «журнал чист» and still reports 0 errors. */}}
+  {{if or .Facts.Journal.OK .Facts.Journal.Note}}
+  <details style="margin-top:12px">
+    <summary style="cursor:pointer;font-size:13px">
+      <i class="fa-solid fa-scroll"></i> {{t "headscale_service.journal_title"}}
+      {{if .Facts.Journal.OK}}
+      <span style="color:var(--text-muted)">— {{t "headscale_service.journal_errors"}}: {{.Facts.Journal.Errors}}, {{t "headscale_service.journal_warnings"}}: {{.Facts.Journal.Warnings}}</span>
+      {{end}}
+      {{if .Facts.Journal.Panic}}<span style="color:var(--danger)">— {{t "headscale_service.journal_panic"}}</span>{{end}}
+    </summary>
+    {{if .Facts.Journal.Note}}
+    <div style="color:var(--text-muted);font-size:12px;margin-top:6px">{{.Facts.Journal.Note}}</div>
+    {{end}}
+    {{if .Facts.Journal.Lines}}
+    <div style="color:var(--text-muted);font-size:11px;margin-top:6px">{{.Facts.Journal.Source}}</div>
+    <pre style="background:var(--bg-subtle);padding:8px;border-radius:6px;font-size:11px;overflow-x:auto;max-height:280px">{{range .Facts.Journal.Lines}}{{.}}
+{{end}}</pre>
+    {{end}}
+    <div style="color:var(--text-muted);font-size:11px;margin-top:6px">{{t "headscale_service.journal_redacted"}}</div>
+  </details>
   {{end}}
 
   {{if .Facts.CollectNotes}}

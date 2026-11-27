@@ -74,6 +74,8 @@ finish() {
         printf 'STATE=%s\n' "$_state"
         printf 'COMMAND=%s\n' "$_command"
         printf 'REASON=%s\n' "$_reason"
+        printf 'ACTIVE_AFTER=%s\n' "${ACTIVE_AFTER:-}"
+        printf 'WAITED=%s\n' "${WAITED:-}"
     } > "$_tmp" 2>/dev/null && chmod 0644 "$_tmp" 2>/dev/null && mv -f "$_tmp" "$STATUS" 2>/dev/null
     rm -f "$REQ" 2>/dev/null || true
     log "verdict: $_result (state=$_state command=$_command${_reason:+ reason=$_reason})"
@@ -157,6 +159,36 @@ state_of() {
     esac
 }
 
+# active_now — is the unit actually UP (not merely "the restart command returned")?
+# B535: `systemctl restart` returns once the unit has been started, which is not the
+# same as "it stayed up": a unit that crashes on boot is started and then failed, and
+# the pre-B535 applier reported `ok` for it after a one-second sleep.
+active_now() {
+    case "$MANAGER" in
+        systemd) systemctl is-active --quiet "$SERVICE" 2>/dev/null ;;
+        openrc) rc-service "$SERVICE" status >/dev/null 2>&1 ;;
+        docker) [ "$(docker inspect -f '{{.State.Running}}' "$SERVICE" 2>/dev/null)" = "true" ] ;;
+        *) return 1 ;;
+    esac
+}
+
+# wait_active — poll up to 10 s. Writes WAITED/ACTIVE_AFTER, which finish() publishes,
+# so the panel can say «активна после перезапуска: да/нет (ждал N с)» instead of
+# inferring it from a timestamp.
+wait_active() {
+    _i=0
+    while [ "$_i" -lt 10 ]; do
+        if active_now; then
+            WAITED="${_i}s"; ACTIVE_AFTER=yes
+            return 0
+        fi
+        _i=$((_i + 1))
+        sleep 1
+    done
+    WAITED="10s"; ACTIVE_AFTER=no
+    return 1
+}
+
 if [ "$ACTION" = "status" ]; then
     finish ok "$(state_of)" "status $SERVICE" ""
 fi
@@ -168,24 +200,30 @@ case "$MANAGER" in
         systemctl is-failed --quiet "$SERVICE" 2>/dev/null && systemctl reset-failed "$SERVICE" >> "$LOG" 2>&1
         cmd="systemctl restart $SERVICE"
         if out="$(systemctl restart "$SERVICE" 2>&1)"; then
-            sleep 1
-            finish ok "$(state_of)" "$cmd" ""
+            if wait_active; then
+                finish ok "$(state_of)" "$cmd" ""
+            fi
+            finish failed "$(state_of)" "$cmd" "the unit was started but did not stay active within $WAITED (read the journal: journalctl -u $SERVICE -n 50)"
         fi
         finish failed "$(state_of)" "$cmd" "$out"
         ;;
     openrc)
         cmd="rc-service $SERVICE restart"
         if out="$(rc-service "$SERVICE" restart 2>&1)"; then
-            sleep 1
-            finish ok "$(state_of)" "$cmd" ""
+            if wait_active; then
+                finish ok "$(state_of)" "$cmd" ""
+            fi
+            finish failed "$(state_of)" "$cmd" "the service was started but did not stay up within $WAITED"
         fi
         finish failed "$(state_of)" "$cmd" "$out"
         ;;
     docker)
         cmd="docker restart $SERVICE"
         if out="$(docker restart "$SERVICE" 2>&1)"; then
-            sleep 1
-            finish ok "$(state_of)" "$cmd" ""
+            if wait_active; then
+                finish ok "$(state_of)" "$cmd" ""
+            fi
+            finish failed "$(state_of)" "$cmd" "the container was started but is not running within $WAITED"
         fi
         finish failed "$(state_of)" "$cmd" "$out"
         ;;

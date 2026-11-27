@@ -17,7 +17,9 @@ package admin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -34,6 +36,10 @@ type headscaleServiceView struct {
 	HelperArmed  bool
 	LastResult   headscale.ServiceApplyResult
 	RestartBlock string // i18n key explaining why the button is disabled ("" = enabled)
+	// B535: is a restart still waiting for the privileged applier, and does the last
+	// verdict actually describe the service this page just measured.
+	Pending     headscale.ServicePending
+	PostRestart headscale.PostRestart
 }
 
 // buildHeadscaleServiceView measures the service. Bounded: the whole collection
@@ -68,6 +74,11 @@ func (s *Service) buildHeadscaleServiceView() headscaleServiceView {
 	if res, err := headscale.ReadServiceApplyResult(); err == nil {
 		v.LastResult = res
 	}
+	// B535: «нажал и ничего» is a state of its own — the request file exists until
+	// the applier consumes it, and the verdict only describes the service when it is
+	// OLDER than this measurement.
+	v.Pending = headscale.ReadServicePending()
+	v.PostRestart = headscale.PostRestartVerdict(facts, v.LastResult)
 	switch {
 	case facts.Manager == "" || facts.Manager == "none":
 		v.RestartBlock = "headscale_service.restart_blocked_absent"
@@ -122,6 +133,13 @@ func (s *Service) GetAdminHeadscale(w http.ResponseWriter, r *http.Request) {
 	// about it. Nil-safe on HSGlobalFn (the card then reports the local service
 	// only and says so in CollectNotes).
 	svc := s.buildHeadscaleServiceView()
+	// B535: the ordered verdict is resolved to text HERE, so the template never has
+	// to compare a typed string constant (a comparison Go's template engine would
+	// have to type-switch on).
+	postRestartText := ""
+	if svc.PostRestart != headscale.PostRestartNone {
+		postRestartText = i18n.T(lang, "headscale_service.post_restart_"+string(svc.PostRestart))
+	}
 
 	// Flash values: the B533 codes are translated; everything else is passed
 	// through exactly as before (existing links use raw codes like "checked").
@@ -135,21 +153,22 @@ func (s *Service) GetAdminHeadscale(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.Backend.RenderWithLayout(w, r, "admin/headscale.html", c, map[string]any{
-		"Page":         "admin/headscale",
-		"Title":        i18n.T(lang, "title.admin_headscale"),
-		"StateKey":     stateKey,
-		"StateText":    i18n.T(lang, stateKey),
-		"MonitorOK":    monitorOK,
-		"Pinned":       pinned,
-		"Version":      version,
-		"Latest":       latest,
-		"Update":       update,
-		"Breaking":     brk,
-		"CheckedAt":    checkedAt,
-		"History":      history,
-		"Service":      svc,
-		"FlashSuccess": flashOK,
-		"FlashError":   flashErr,
+		"Page":            "admin/headscale",
+		"Title":           i18n.T(lang, "title.admin_headscale"),
+		"StateKey":        stateKey,
+		"StateText":       i18n.T(lang, stateKey),
+		"MonitorOK":       monitorOK,
+		"Pinned":          pinned,
+		"Version":         version,
+		"Latest":          latest,
+		"Update":          update,
+		"Breaking":        brk,
+		"CheckedAt":       checkedAt,
+		"History":         history,
+		"Service":         svc,
+		"PostRestartText": postRestartText,
+		"FlashSuccess":    flashOK,
+		"FlashError":      flashErr,
 	})
 }
 
@@ -204,4 +223,31 @@ func (s *Service) PostAdminHeadscaleServiceRestart(w http.ResponseWriter, r *htt
 	s.Backend.Audit(c.UserID, c.Username, "headscale.restart_queued",
 		"request handed to skygate-apply-service.sh (SERVICE=headscale)")
 	http.Redirect(w, r, "/admin/headscale?ok=service_restart_queued", http.StatusFound)
+}
+
+// PostAdminHeadscaleServiceCheck measures the service RIGHT NOW and puts the verdict
+// in the flash (B535).
+//
+// The page already measures on every render, so why a button? Because the operator's
+// question after a restart is «и что теперь» — and a button is the only way to say
+// «это замер, сделанный по моему запросу», with the audit row that goes with it. The
+// flash carries the same numbers the card shows, so a green flash cannot disagree
+// with a red card.
+func (s *Service) PostAdminHeadscaleServiceCheck(w http.ResponseWriter, r *http.Request) {
+	c := s.Backend.CurrentUser(r)
+	if c == nil || !c.IsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	lang := s.I18n.LangFromRequest(r)
+	v := s.buildHeadscaleServiceView()
+
+	api := i18n.T(lang, "headscale_service.api_down")
+	if v.Facts.APIOK {
+		api = i18n.T(lang, "headscale_service.api_ok")
+	}
+	msg := fmt.Sprintf(i18n.T(lang, "headscale_service.flash_checked"),
+		i18n.T(lang, v.StateKey), api, v.Facts.Journal.Errors, v.Facts.Journal.Warnings)
+	s.Backend.Audit(c.UserID, c.Username, "headscale.service_checked", msg)
+	http.Redirect(w, r, "/admin/headscale?ok="+url.QueryEscape(msg)+"#service", http.StatusFound)
 }
