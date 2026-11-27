@@ -1042,6 +1042,12 @@ func registerRoutes(
 	// GitHub immediately. Same pattern as
 	// /admin/exit-nodes/health-now.
 	mux.Handle("POST /admin/headscale/check-now", authMW(http.HandlerFunc(adminSvc.PostAdminHeadscaleCheckNow)))
+	// 2026-11-27: B533 — restart the headscale SERVICE from the panel. The
+	// handler never calls systemctl itself: it stages a data-only request for
+	// the root-owned skygate-apply-service.sh (deploy/install-service-helper.sh),
+	// the same privilege split the policy (B272.3) and local-routes (B293)
+	// appliers use, because the native unit is unprivileged.
+	mux.Handle("POST /admin/headscale/service/restart", authMW(http.HandlerFunc(adminSvc.PostAdminHeadscaleServiceRestart)))
 	// 2026-07-20: v0.21.0 — user-to-user invite
 	// overview. Lists every invite_codes row
 	// (grantor / grantee / status / expiry),

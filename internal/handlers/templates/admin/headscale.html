@@ -11,6 +11,116 @@
 <div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation"></i> {{.FlashError}}</div>
 {{end}}
 
+{{/* B533 (2026-11-27): the headscale SERVICE — what it is doing, what its name
+     points at, and what to do about it. This card comes FIRST because it answers
+     the question the operator actually arrives with ("headscale is broken"), and
+     on 2026-11-27 the honest answer was "the service is fine, the host moved to a
+     new IPv4 and the zone still names the old one" — a fact nothing measured
+     until this block. The restart button stages a data-only request for the
+     root-owned skygate-apply-service.sh; the page itself never calls systemctl. */}}
+{{with .Service}}
+<div class="card" style="margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <h3 style="margin:0"><i class="fa-solid fa-server"></i> {{t "headscale_service.title"}}</h3>
+      <p style="color:var(--text-muted);margin:8px 0 0 0">{{t "headscale_service.subtitle"}}</p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span class="tag {{if eq .BadgeClass "green"}}tag-success{{else if eq .BadgeClass "warning"}}tag-warning{{else if eq .BadgeClass "red"}}tag-danger{{else}}tag-info{{end}}">
+        {{t .StateKey}}
+      </span>
+      {{if not .RestartBlock}}
+      <form method="post" action="/admin/headscale/service/restart" style="display:inline">
+        <button type="submit" class="btn btn-sm"><i class="fa-solid fa-arrows-rotate"></i> {{t "headscale_service.restart"}}</button>
+      </form>
+      {{end}}
+    </div>
+  </div>
+
+  {{if .RestartBlock}}
+  <div class="alert alert-warning" style="margin-top:12px">
+    <i class="fa-solid fa-circle-info"></i> {{t .RestartBlock}}
+  </div>
+  {{end}}
+
+  <div style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px">
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "headscale_service.fact_manager"}}</div>
+      <div style="font-weight:600"><code>{{.Facts.Manager}}</code> <code>{{.Facts.Unit}}</code></div>
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">{{.Facts.StateRaw}}</div>
+    </div>
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "headscale_service.fact_uptime"}}</div>
+      <div style="font-weight:600">{{if .Facts.ActiveSince}}{{.Facts.ActiveSince}}{{else}}—{{end}}</div>
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">{{t "headscale_service.fact_restarts"}}: {{.Facts.Restarts}}</div>
+    </div>
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "headscale_service.fact_api"}}</div>
+      <div style="font-weight:600">
+        {{if .Facts.APIOK}}<span style="color:var(--success)">{{t "headscale_service.api_ok"}}</span>{{else}}<span style="color:var(--danger)">{{t "headscale_service.api_down"}}</span>{{end}}
+      </div>
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px;word-break:break-all">
+        {{if .Facts.ServerVersion}}<code>{{.Facts.ServerVersion}}</code>{{end}}
+        {{if .Facts.APIError}}{{.Facts.APIError}}{{end}}
+      </div>
+    </div>
+    <div>
+      <div style="color:var(--text-muted);font-size:12px">{{t "headscale_service.fact_control_url"}}</div>
+      <div style="font-weight:600;word-break:break-all"><code>{{.Facts.ControlURL}}</code></div>
+      <div style="color:var(--text-muted);font-size:11px;margin-top:4px">
+        {{t "headscale_service.fact_resolved"}}: {{if .Facts.ResolvedIPs}}{{range .Facts.ResolvedIPs}}<code>{{.}}</code> {{end}}{{else}}—{{end}}<br>
+        {{t "headscale_service.fact_local"}}: {{if .Facts.LocalIPs}}{{range .Facts.LocalIPs}}<code>{{.}}</code> {{end}}{{else}}—{{end}}
+      </div>
+    </div>
+  </div>
+
+  {{if .Facts.NameMismatch}}
+  <div class="alert alert-danger" style="margin-top:12px">
+    <i class="fa-solid fa-triangle-exclamation"></i> {{t "headscale_service.name_mismatch"}}
+  </div>
+  {{end}}
+
+  {{if .Facts.LastError}}
+  <div style="margin-top:12px;font-size:12px;color:var(--danger);word-break:break-all">
+    <i class="fa-solid fa-circle-exclamation"></i> {{t "headscale_service.last_error"}}: <code>{{.Facts.LastError}}</code>
+  </div>
+  {{end}}
+
+  {{if .LastResult.Present}}
+  <div style="margin-top:12px;font-size:12px">
+    <i class="fa-solid fa-clock-rotate-left"></i> {{t "headscale_service.last_action"}}:
+    {{if .LastResult.OK}}<span style="color:var(--success)"><code>ok</code></span>{{else}}<span style="color:var(--danger)"><code>failed</code></span>{{end}}
+    {{if .LastResult.Command}}<code>{{.LastResult.Command}}</code>{{end}}
+    {{if .LastResult.State}}→ <code>{{.LastResult.State}}</code>{{end}}
+    {{if .LastResult.Reason}}<div style="color:var(--danger);word-break:break-all">{{.LastResult.Reason}}</div>{{end}}
+    {{if .LastResult.UpdatedAt}}<div style="color:var(--text-muted)">{{.LastResult.UpdatedAt}}</div>{{end}}
+  </div>
+  {{end}}
+
+  {{if .Facts.CollectNotes}}
+  <div style="margin-top:12px;font-size:12px;color:var(--text-muted)">
+    <i class="fa-solid fa-magnifying-glass"></i> {{t "headscale_service.notes_title"}}:
+    <ul style="margin:6px 0 0 18px">
+      {{range .Facts.CollectNotes}}<li>{{.}}</li>{{end}}
+    </ul>
+  </div>
+  {{end}}
+
+  {{if .Facts.Remediations}}
+  <div style="margin-top:16px">
+    <h4 style="margin:0 0 8px 0"><i class="fa-solid fa-wrench"></i> {{t "headscale_service.fix_title"}}</h4>
+    {{range .Facts.Remediations}}
+    <div style="margin-bottom:12px">
+      <div style="font-weight:600;font-size:13px">{{t (printf "headscale_service.fix_%s" .Key)}}</div>
+      <pre style="background:var(--bg-subtle,#111315);padding:8px;border-radius:6px;font-size:12px;overflow-x:auto">{{range .Commands}}{{.}}
+{{end}}</pre>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}
+
 <div class="card" style="margin-bottom:24px">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>

@@ -784,6 +784,10 @@ EOF
     # B313: the headscale OIDC applier, so /admin/oidc can APPLY the configuration
     # instead of telling the operator to copy-paste a script.
     write_oidc_units "$update_dir"
+    # B533: the service-control applier, so /admin/headscale can restart the
+    # control plane from the panel (the operator's panel was unreachable on
+    # 2026-11-27 exactly when that restart was needed).
+    write_service_units "$update_dir"
 }
 
 # write_policy_units: the same privilege split for the headscale POLICY file
@@ -987,6 +991,72 @@ EOF
     systemctl daemon-reload
     systemctl enable --now skygate-routes.path >/dev/null 2>&1 || true
     echo "[install] wrote $service_file + $path_file (skygate-routes.path enabled)"
+}
+
+# write_service_units: the same privilege split for SERVICE CONTROL (B533).
+# /admin/headscale must be able to restart the headscale service, and the native
+# skygate unit has no right to call `systemctl restart` anything. The unprivileged
+# service drops a data-only <update_dir>/service.request.props; this root-owned
+# pair runs deploy/skygate-apply-service.sh, which validates ACTION and SERVICE
+# against its own allow-lists before touching a unit.
+write_service_units() {
+    local update_dir="$1"
+    local service_file="/etc/systemd/system/skygate-service.service"
+    local path_file="/etc/systemd/system/skygate-service.path"
+    local applier="/usr/local/lib/skygate/skygate-apply-service.sh"
+    local src="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/skygate-apply-service.sh"
+
+    if [ -f "$src" ]; then
+        install -m 0755 -o root -g root "$src" "$applier"
+    elif [ ! -f "$applier" ]; then
+        echo "[install] WARN: $src not found — the service-control applier was not installed;"
+        echo "[install]       /admin/headscale can then only REPORT the service (no restart button)"
+        return 0
+    fi
+
+    cat > "$service_file" <<EOF
+# /etc/systemd/system/skygate-service.service
+# 2026-11-27 (B533): PRIVILEGED half of the /admin/headscale restart action.
+# Written by the installers — re-running the installer overwrites it
+# (project-owned file).
+#
+# Triggered by skygate-service.path, never started at boot: it applies exactly
+# one staged service request (one restart or one status read) and exits. Kept
+# separate from the update/policy/routes appliers so a restart can never be
+# confused with a configuration write.
+[Unit]
+Description=Skygate privileged service-control applier
+Documentation=https://github.com/${GITHUB_OWNER:-BarsSky}/${GITHUB_REPO:-skygate}
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=${applier}
+# One systemctl restart plus a settle: 60s is generous.
+TimeoutStartSec=60
+Nice=5
+EOF
+
+    cat > "$path_file" <<EOF
+# /etc/systemd/system/skygate-service.path
+# 2026-11-27 (B533): watches for a staged service-control request.
+# The unprivileged service writes this file inside its own data dir; the path
+# unit turns its appearance into a root-run applier. No sudo, no polkit, no
+# privileged systemd call from the service.
+[Unit]
+Description=Watch for a staged skygate service-control request
+
+[Path]
+PathExists=${update_dir}/service.request.props
+Unit=skygate-service.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now skygate-service.path >/dev/null 2>&1 || true
+    echo "[install] wrote $service_file + $path_file (skygate-service.path enabled)"
 }
 
 # write_bare_sudoers: the no-systemd case. There is no path unit to
