@@ -2104,7 +2104,24 @@ func main() {
 // number). No statement was rewritten: `return` became `return true` and the indentation
 // dropped one level. Keep it that way — this function is a dispatcher, not a place for
 // new boot logic.
+// runSubcommand answers `skygate <command> …` (B526). Three-way dispatch: each family
+// lives in its own function, so neither this function nor main() becomes the place
+// where twenty unrelated verbs pile up. Every family function carries its case blocks
+// VERBATIM from the single switch this block split; the unknown-command exit stays here.
 func runSubcommand() bool {
+	switch os.Args[1] {
+	case "backup-run", "backup-show-config", "backup-verify-ok", "backup-verify-fail":
+		return runSubcommandBackup()
+	case "cleanup-smoke-meshes", "acl-apply", "derp-probe", "derp-metrics-proxy", "dns-records", "dns-set-a", "prefix-owner", "regapi-credentials":
+		return runSubcommandOps()
+	default:
+		return runSubcommandCluster()
+	}
+}
+
+// runSubcommandBackup handles the backup verbs: they read the same config from the DB
+// and are called by scripts (backup_cron.sh, verify_backup.sh), never by the server.
+func runSubcommandBackup() bool {
 	switch os.Args[1] {
 	case "backup-run":
 		// Use a dedicated flag set so we don't
@@ -2150,6 +2167,14 @@ func runSubcommand() bool {
 			os.Exit(1)
 		}
 		return true
+	}
+	return false
+}
+
+// runSubcommandOps handles the one-shot operational CLIs (exit rules, DERP, DNS
+// records, prefix ownership) that an operator runs from a shell.
+func runSubcommandOps() bool {
+	switch os.Args[1] {
 	case "cleanup-smoke-meshes":
 		// 2026-08-18 (B143, v1.4.3): one-shot
 		// manual trigger of the smoke-mesh
@@ -2168,41 +2193,6 @@ func runSubcommand() bool {
 		// subcommands).
 		if err := runCleanupSmokeMeshes(); err != nil {
 			fmt.Fprintf(os.Stderr, "cleanup-smoke-meshes failed: %v\n", err)
-			os.Exit(1)
-		}
-		return true
-	case "deploy-push", "deploy-pull", "deploy-sync", "deploy-status":
-		// v1.5.0 / B150 — CLI mirror of the
-		// /admin/deploy web surface. Each
-		// subcommand translates to a `skygate
-		// deploy <verb>` call into the
-		// internal/deploy package. Optional
-		// --target=<host> is supported (e.g.
-		// `skygate deploy-push --target=
-		// skygate-standby` to stage a build
-		// for a specific host).
-		//
-		// Exit code 0 on success (including
-		// "already up to date"), 1 on error.
-		verb := strings.TrimPrefix(os.Args[1], "deploy-")
-		if err := runDeploySubcommand(context.Background(), os.Args[1:], verb); err != nil {
-			fmt.Fprintf(os.Stderr, "%s failed: %v\n", os.Args[1], err)
-			os.Exit(1)
-		}
-		return true
-	case "ha-promote", "ha-demote", "ha-reclaim":
-		// v1.5.0 / B150 — CLI mirror of the
-		// /admin/ha "Force actions" buttons.
-		// `ha-promote` and `ha-demote` take
-		// the target hostname as the second
-		// CLI arg (`skygate ha-promote
-		// skygate-standby`); `ha-reclaim`
-		// takes none.
-		//
-		// Exit code 0 on success, 1 on error.
-		verb := strings.TrimPrefix(os.Args[1], "ha-")
-		if err := runHASubcommand(context.Background(), os.Args[1:], verb); err != nil {
-			fmt.Fprintf(os.Stderr, "%s failed: %v\n", os.Args[1], err)
 			os.Exit(1)
 		}
 		return true
@@ -2270,6 +2260,49 @@ func runSubcommand() bool {
 		// handles 4 verbs: set / show / test / delete.
 		// Full per-verb docs in regapi_credentials.go.
 		if err := runRegAPICredsSubcommand(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "%s failed: %v\n", os.Args[1], err)
+			os.Exit(1)
+		}
+		return true
+	}
+	return false
+}
+
+// runSubcommandCluster handles everything else: deploy/ha/cluster/init/join/migrate/
+// version/help, plus the unknown-command exit that belonged to the inline switch.
+func runSubcommandCluster() bool {
+	switch os.Args[1] {
+	case "deploy-push", "deploy-pull", "deploy-sync", "deploy-status":
+		// v1.5.0 / B150 — CLI mirror of the
+		// /admin/deploy web surface. Each
+		// subcommand translates to a `skygate
+		// deploy <verb>` call into the
+		// internal/deploy package. Optional
+		// --target=<host> is supported (e.g.
+		// `skygate deploy-push --target=
+		// skygate-standby` to stage a build
+		// for a specific host).
+		//
+		// Exit code 0 on success (including
+		// "already up to date"), 1 on error.
+		verb := strings.TrimPrefix(os.Args[1], "deploy-")
+		if err := runDeploySubcommand(context.Background(), os.Args[1:], verb); err != nil {
+			fmt.Fprintf(os.Stderr, "%s failed: %v\n", os.Args[1], err)
+			os.Exit(1)
+		}
+		return true
+	case "ha-promote", "ha-demote", "ha-reclaim":
+		// v1.5.0 / B150 — CLI mirror of the
+		// /admin/ha "Force actions" buttons.
+		// `ha-promote` and `ha-demote` take
+		// the target hostname as the second
+		// CLI arg (`skygate ha-promote
+		// skygate-standby`); `ha-reclaim`
+		// takes none.
+		//
+		// Exit code 0 on success, 1 on error.
+		verb := strings.TrimPrefix(os.Args[1], "ha-")
+		if err := runHASubcommand(context.Background(), os.Args[1:], verb); err != nil {
 			fmt.Fprintf(os.Stderr, "%s failed: %v\n", os.Args[1], err)
 			os.Exit(1)
 		}
