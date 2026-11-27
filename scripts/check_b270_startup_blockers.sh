@@ -303,10 +303,28 @@ if grep -q 'PRAGMA page_count' "$HEALTHZ_GO" && grep -q 'PRAGMA quick_check' "$H
 else
   bad "F3: the SQLite branch does not collect size/integrity"
 fi
-if grep -q 'dbHealthCfg.Dialect = dialectKind.String()' "$MAIN"; then
-  ok "F4: main.go passes the detected dialect into the sampler"
+# F4 — the property is "the DETECTED dialect reaches the sampler's config and the boot path
+# hands it over", NOT "the assignment sits on a line inside main.go". B526 step 7 lifted
+# startDBHealthSampler() into cmd/skygate/boot_monitors.go (main() 1 971 → 1 871), where the
+# assignment is `dbHealthCfg.Dialect = dialect` — a verbatim move, so the behaviour the
+# contract exists for did not change, while the old single-file grep went red on CI
+# (2026-11-27, run 46015905691). The two halves are asserted separately and the failure names
+# WHICH half is missing, because "the switch is dead code" and "main stopped calling the
+# phase" are different defects.
+BOOT_DIR=cmd/skygate
+f4_assign=""
+f4_call=""
+for f in "$BOOT_DIR"/*.go; do
+  case "$f" in *_test.go) continue ;; esac
+  grep -q 'dbHealthCfg\.Dialect = dialect' "$f" && f4_assign="$f"
+  grep -q 'startDBHealthSampler(.*dialectKind\.String()' "$f" && f4_call="$f"
+done
+if [ -n "$f4_assign" ] && [ -n "$f4_call" ]; then
+  ok "F4: the detected dialect reaches the sampler's config ($f4_assign) and the boot path passes it ($f4_call)"
+elif [ -z "$f4_assign" ]; then
+  bad "F4: nothing in $BOOT_DIR assigns dbHealthCfg.Dialect from its dialect parameter — the SQLite branch is dead code"
 else
-  bad "F4: the detected dialect never reaches the sampler (the switch is dead code)"
+  bad "F4: $f4_assign takes the dialect but no boot phase calls it with dialectKind.String() — the detected dialect never arrives"
 fi
 if command -v go >/dev/null 2>&1; then
   OUT="$(go test -count=1 -run 'B271' ./internal/feature/healthz/ 2>&1)"

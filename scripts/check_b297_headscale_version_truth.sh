@@ -205,20 +205,36 @@ else
 fi
 
 # --- F: boot wiring -----------------------------------------------------------
-if grep -q 'hsVer := hs.DetectServerVersion(ctx)' "$MAIN"; then
-  ok "F1: the boot path asks the daemon"
+# B526 steps 4-7 (v1.5.265) lifted the boot phases out of main() into
+# cmd/skygate/boot_monitors.go, and the phase became a bootCtx METHOD: `hs` → `b.hs`,
+# `cfg` → `b.cfg`. The property this section exists for is unchanged — the boot path
+# ASKS the daemon and main() RUNS that phase — so it is asserted on the entrypoint
+# PACKAGE plus main()'s call, not on one file's literal text. The failure messages name
+# which half is missing, because "the phase stopped probing" and "main() stopped calling
+# the phase" are different defects (the old single-file greps went red on CI run
+# 46015905691 with the product intact).
+BOOT_DIR=cmd/skygate
+f1_probe=""
+for f in "$BOOT_DIR"/*.go; do
+  case "$f" in *_test.go) continue ;; esac
+  grep -q 'DetectServerVersion(' "$f" && f1_probe="$f"
+done
+if [ -n "$f1_probe" ] && grep -q 'startHeadscaleUpdateMonitor()' "$BOOT_DIR/main.go"; then
+  ok "F1: the boot path asks the daemon ($f1_probe) and main() runs that phase"
+elif [ -z "$f1_probe" ]; then
+  bad "F1: nothing in $BOOT_DIR calls DetectServerVersion — the running headscale is never read"
 else
-  bad "F1: the boot path never probes"
+  bad "F1: main() no longer calls startHeadscaleUpdateMonitor(), so the probe never runs at boot"
 fi
-if grep -q 'headscale-version: MISMATCH' "$MAIN"; then
+if grep -q 'headscale-version: MISMATCH' "$BOOT_DIR"/*.go; then
   ok "F2: a declaration that disagrees with the daemon is logged"
 else
   bad "F2: a stale pin stays silent at boot"
 fi
-if grep -q 'hsMon.VersionProbe = hs.VersionProbe' "$MAIN" && grep -q 'hsMon.DeclaredPin = cfg.HeadscaleVersionPin' "$MAIN"; then
+if grep -q 'hsMon\.VersionProbe = ' "$BOOT_DIR"/*.go && grep -q 'hsMon\.DeclaredPin = ' "$BOOT_DIR"/*.go; then
   ok "F3: the monitor re-probes and keeps the declaration for display"
 else
-  bad "F3: the monitor is not wired to the probe"
+  bad "F3: the monitor is not wired to the probe (VersionProbe/DeclaredPin are never set on it)"
 fi
 if grep -q 'func (c \*Client) VersionProbe(ctx context.Context) (string, string, error)' "$VER"; then
   ok "F4: the adapter between the probe and the monitor exists"
