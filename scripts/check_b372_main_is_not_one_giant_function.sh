@@ -122,14 +122,28 @@ hdr "B. the call sits at the same point of the boot sequence"
 # wiring it must follow and the shutdown wait it must precede all live in main()),
 # so this one section reads the git-resolved entry point rather than the surface:
 # concatenation order would make the comparison depend on the glob's file order.
-CALL_LINE="$(grep -n 'wireOptionalSchedulers(ctx, d, app, adminSvc, cfg)' "$MAIN_PATH" | head -1 | cut -d: -f1)"
-CERTSYNC_LINE="$(grep -n 'certsync: enabled' "$MAIN_PATH" | head -1 | cut -d: -f1)"
+# B1 — B526 step 8 (v1.5.267): the WIRING moved one hop into wireLateServices (certsync,
+# certificate publish/issue and the optional schedulers all live there now), so the boot
+# ORDER is asserted at both ends instead of inside one file: main() must call
+# wireLateServices at the same slot (after the background services, before the shutdown
+# wait), and the file that defines it must still run the certsync wiring BEFORE the
+# optional schedulers.
+CALL_LINE="$(grep -n 'wireLateServices(' "$MAIN_PATH" | grep -v '^[0-9]*:func ' | head -1 | cut -d: -f1)"
+BG_LINE="$(grep -n 'startBackgroundServices(ctx, cfg, d, app, rn, hs, adminSvc, lc)' "$MAIN_PATH" | head -1 | cut -d: -f1)"
 SHUTDOWN_LINE="$(grep -n '^	<-ctx.Done()' "$MAIN_PATH" | head -1 | cut -d: -f1)"
-if [ -n "$CALL_LINE" ] && [ -n "$CERTSYNC_LINE" ] && [ -n "$SHUTDOWN_LINE" ] \
-   && [ "$CALL_LINE" -gt "$CERTSYNC_LINE" ] && [ "$CALL_LINE" -lt "$SHUTDOWN_LINE" ]; then
-  ok "B1: the call is still after the certsync wiring and before the shutdown wait (boot order unchanged)"
+LATE_FILE="$(grep -rl 'func wireLateServices(' cmd/skygate/*.go 2>/dev/null | head -1)"
+LATE_CERT_LINE=""
+LATE_CALL_LINE=""
+if [ -n "$LATE_FILE" ]; then
+  LATE_CERT_LINE="$(grep -n 'certsync: enabled' "$LATE_FILE" | head -1 | cut -d: -f1)"
+  LATE_CALL_LINE="$(grep -n 'wireOptionalSchedulers(ctx, d, app, adminSvc, cfg)' "$LATE_FILE" | head -1 | cut -d: -f1)"
+fi
+if [ -n "$CALL_LINE" ] && [ -n "$BG_LINE" ] && [ -n "$SHUTDOWN_LINE" ] \
+   && [ "$CALL_LINE" -gt "$BG_LINE" ] && [ "$CALL_LINE" -lt "$SHUTDOWN_LINE" ] \
+   && [ -n "$LATE_CERT_LINE" ] && [ -n "$LATE_CALL_LINE" ] && [ "$LATE_CALL_LINE" -gt "$LATE_CERT_LINE" ]; then
+  ok "B1: the wiring still runs after the certsync block and before the shutdown wait (boot order unchanged)"
 else
-  bad "B1: the call moved out of its slot in the boot sequence (call=$CALL_LINE certsync=$CERTSYNC_LINE shutdown=$SHUTDOWN_LINE)"
+  bad "B1: the wiring moved out of its slot (call=$CALL_LINE bg=$BG_LINE shutdown=$SHUTDOWN_LINE certsync=$LATE_CERT_LINE sched=$LATE_CALL_LINE)"
 fi
 if [ "$(grep -cE '^[[:space:]]+wireOptionalSchedulers\(ctx, d, app, adminSvc, cfg\)' "$SURFACE" || true)" = "1" ] \
    && [ "$(grep -cE '^func wireOptionalSchedulers\(' "$SURFACE" || true)" = "1" ]; then
@@ -153,13 +167,33 @@ if grep -qE '^[[:space:]]*defer ' "$SCHED"; then
 else
   ok "C1: the extracted function holds no defer (nothing stops earlier than it used to)"
 fi
-for d in 'defer wd.Stop()' 'defer el.Stop()'; do
-  if grep -qF "$d" "$MAIN_PATH"; then
-    ok "C2: '$d' is still in main() where a defer means process exit"
-  else
-    bad "C2: '$d' left main() — moving a defer into a helper changes WHEN it runs"
+# C2 — B526 step 8 (v1.5.267) renegotiated this row DELIBERATELY, and the property it
+# protects is unchanged: nothing may stop earlier than it used to. The old form pinned
+# the literal `defer wd.Stop()` INSIDE main(), which forbade the only safe way to move
+# those 258 lines: a lifecycle object that owns the stoppers. So the row now asserts the
+# STRONGER pair — every stopper is registered on the lifecycle, and main() defers ONE
+# lc.Stop() — plus the absence of the old naked defers (a helper-return stop is exactly
+# what the row exists to prevent). The reverse-order and once-only behaviour of Stop is
+# pinned by TestBootLifecycle_* , not by a grep.
+BOOT_SERVICES_FILE="$(grep -rl 'func startBackgroundServices(' cmd/skygate/*.go 2>/dev/null | head -1)"
+C2_FAIL=""
+for pair in 'wd.Stop:dbmigrate-watchdog' 'el.Stop:ha-elector'; do
+  target="${pair%%:*}"; name="${pair##*:}"
+  if [ -z "$BOOT_SERVICES_FILE" ] || ! grep -qF "lc.Add(\"$name\", $target)" "$BOOT_SERVICES_FILE"; then
+    C2_FAIL="${C2_FAIL}$target is not registered on the boot lifecycle (the service would never be stopped)"$'\n'
+  fi
+  if grep -qF "defer $target" "$MAIN_PATH"; then
+    C2_FAIL="${C2_FAIL}$target is STILL a naked defer in main() — the move is half done"$'\n'
   fi
 done
+if [ "$(grep -cF 'defer lc.Stop()' "$MAIN_PATH" || true)" != "1" ]; then
+  C2_FAIL="${C2_FAIL}main() must defer lc.Stop() exactly once (found $(grep -cF 'defer lc.Stop()' "$MAIN_PATH" || true))"$'\n'
+fi
+if [ -z "$C2_FAIL" ]; then
+  ok "C2: every lifecycle stopper is registered on the lifecycle and main() defers ONE Stop()"
+else
+  while IFS= read -r l; do [ -n "$l" ] && bad "C2: $l"; done <<< "$C2_FAIL"
+fi
 if [ "$(grep -cE '^[[:space:]]*defer ' "$MAIN_PATH")" -ge 3 ]; then
   ok "C3: the three lifecycle defers are still counted in main() (the rest of the boot path is not movable as text — see the header)"
 else

@@ -1,7 +1,7 @@
 # B525 complexity budget — frozen 2026-11-27T14:23:07Z (registerRoutes lowered 1109 -> 1096 by B528 step 1, v1.5.265)
 # ratchet thresholds: lines>=200 or cc>=40
 # format: lines<TAB>cc<TAB>file<TAB>func
-1871	92	cmd/skygate/main.go	main
+1369	75	cmd/skygate/main.go	main
 277	16	cmd/skygate/main_schedulers.go	wireOptionalSchedulers
 1096	2	cmd/skygate/routes.go	registerRoutes
 648	56	internal/acl/acl_generate.go	GenerateACLForPlane
@@ -39,3 +39,9 @@
 303	60	internal/telegram/commands_user_rule_add.go	addRuleReply
 254	14	internal/update/docker.go	Run
 210	23	scripts/b216_liveverify.go	main
+# B526 step 8 (v1.5.267): main()'s own bodies, moved VERBATIM into boot_services.go.
+# They are above the 200-line threshold because they ARE the old main() blocks — the
+# move is not a licence to grow, so they are frozen at the size they arrived with, and
+# the next B526 step splits them further (that step lowers these numbers).
+268	8	cmd/skygate/boot_services.go	startBackgroundServices
+260	11	cmd/skygate/boot_services.go	wireLateServices
