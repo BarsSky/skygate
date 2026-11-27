@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"log"
+	"skygate/internal/feature/healthz"
 
 	"skygate/internal/config"
 	"skygate/internal/db"
@@ -116,4 +117,28 @@ func startExitNodeMonitor(ctx context.Context, cfg *config.Config, d *db.Resetta
 	// the monitor is wired there now. The App field is
 	// removed once admin_exit_nodes.go is deleted.
 	adminSvc.ExitNodeMonitor = exitMon
+}
+
+// startDBHealthSampler starts the DB-health sampler (B271: its queries are dialect-specific)
+// and wires it into the healthz service. The sampler is RETURNED: main() owns the defer,
+// because a defer inside this helper would stop the sampler the moment it returned.
+func startDBHealthSampler(d *db.ResettableDB, app *handlers.App, dialect string, svc *healthz.Service) *healthz.Sampler {
+	dbHealthCfg := healthz.DefaultDBHealthConfig()
+	dbHealthCfg.Notifier = schedulerNotifierSink(app.Notifier)
+	// B271: the collector's queries are dialect-specific. Without this the
+	// PostgreSQL catalog queries (pg_is_in_recovery, pg_database_size,
+	// pg_stat_user_tables, pg_current_wal_lsn) ran against SQLite every 30 s
+	// and produced five "SQL logic error: no such function" entries per tick
+	// (live: the aro host, 2026-09-19) — a permanently degraded DB-health
+	// badge on a healthy install.
+	dbHealthCfg.Dialect = dialect
+	dbHealthSampler := healthz.NewDBHealthSampler(dbHealthCfg, d)
+	dbHealthSampler.Start()
+	svc.DBHealthSampler = dbHealthSampler
+	svc.DBHealthSrc = d
+	log.Printf("db-health: started (interval=%s, query-timeout=%s, dialect=%s)",
+		dbHealthCfg.Interval,
+		dbHealthCfg.QueryTimeout,
+		dbHealthCfg.Dialect)
+	return dbHealthSampler
 }
