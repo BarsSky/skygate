@@ -665,3 +665,52 @@ o attempt — reason=fresh days_left=N\, so a quiet loop is not mistaken for a d
 **SHIPPED in v1.5.230:** B485 — «при обновлении через systemd сразу вешает такую информацию»: during a native update the unit is stopped, so the proxy answered a bare 502 and the browser drew its own error page. The proxy now serves a self-contained page («Идёт обновление панели», elapsed timer, journal hint, auto-reload when /healthz answers JSON) through `handle_errors` → loopback static server, with the three measured traps pinned (assets must not live under the 0750 data dir; file_server inside handle_errors is empty; the proxied Host must be pinned), an idempotent installer that validates before reloading, and 16 contracts.
 **SHIPPED in v1.5.231:** B486 — «не удалось проверить GitHub» printed its raw Go error over the neighbouring column. Measured: a plain curl from the same service user reached api.github.com in 0.2 s while the check timed out, so the message was about intermittent egress (DPI), not a broken panel. The reason is now classified (timeout / DNS / no route / rate limit), the checker has its own IPv4-first bounded client instead of http.DefaultClient, and the failure renders as a wrapping block with its own «Проверить сейчас»; a failed check never blocks a manual update. TD-39 registered (mirror/proxy + relayed fallback).
 **SHIPPED in v1.5.232:** B487 — the wizard's steps ran `/opt/skygate/…` on the NEW host, which a release-tarball install does not have, so `p4.cert`/`p5.dedupe`/`p6.verify` would fail on exactly the installation the wizard is for. The helpers are embedded in the panel binary (generated, base64, drift-pinned by a test) and streamed to the target as `bash -s -- <args>`.
+
+## 8. Refactor programme (audit 2026-11-27)
+
+The audit measured the tree instead of guessing: 1 304 Go files / 321 627 lines, 629 test
+files, 72 TODO/FIXME markers, 45 packages importing `internal/db` (2 567 `db.*` call sites),
+five files over 1 500 lines and seven functions over 600. The problem is LOCAL, so it is
+being paid down in blocks with a ratchet instead of a big-bang rewrite.
+
+### Done
+
+| Block | What | Evidence |
+|---|---|---|
+| **B525** (v1.5.264) | The instrument: `scripts/complexity_scan.sh` + `.awk` (per-function lines/branches, no external deps), frozen budget `scripts/complexity_baseline.txt`, contract `scripts/check_b525_complexity_ratchet.sh` (growth fails, planting proves the scanner sees something) | 8 rows green; budget 38 entries |
+| **B526 steps 1-3** (v1.5.264) | The `skygate <command>` switch left `main()` (2 272 → 1 971), split into three family dispatchers, moved to `cmd/skygate/subcommands.go` (B372's 2 394-line cap forced the file out) | build/vet/tests green |
+| **B526 steps 4-7** | Boot phases as functions: `startHeadscaleUpdateMonitor` (B297 probe + monitor), `startExitNodeMonitor` (v0.32.13 interval gate), `startDBHealthSampler` (B271 dialect, defer stays in main) + `bootCtx`; `main()` 1 971 → **1 871** | B525/B372/B446 green |
+| **B527** | The technical-debt register: TD-29 (B379) and TD-31 (B385) marked CLOSED, contract `scripts/check_b527_td_register_truth.sh` (closed rows must be traceable; RU must agree; no duplicate ids) | 5 rows green |
+
+### Remaining, with the seam named
+
+1. **B526: `main()` 1 871 → <400.** Each phase is a contiguous block; the ones left, in
+   boot order, are: exit-rules/sync maintenance wiring, the update scheduler, the backup
+   schedulers, the HA elector, the shutdown/handover tail (B269). The pattern is fixed:
+   move the block VERBATIM into `cmd/skygate/boot_*.go`, take the names it already uses as
+   parameters (or a `bootCtx` method), keep any `defer` in `main()` (a defer inside the
+   helper stops the resource immediately), lower the B525 budget for `main()` in the same
+   commit. Contract to add when done: **B526** — `main()` ≤ 400 lines, every phase declared
+   and called exactly once, call order unchanged.
+2. **B528: `registerRoutes()` 1 108 lines / 274 `mux.Handle` calls → per-feature
+   sub-registries.** Mechanical in shape (like `subcommands.go`) but NOT mechanical in
+   coupling: each closure captures locals (`mySvc`, `adminSvc`, `app`, `hs`, `cfg`), so each
+   sub-registry needs exactly those as parameters — let the compiler derive the list, one
+   group at a time (`/my/*`, `/admin/*`, `/api/*`, `/oidc/*`, the rest), moving statements
+   verbatim.
+3. **B529: three rule templates → partials** (`exit_rules.html` 1 609, `admin/exit_nodes.html`
+   1 397, `admin/exit_rules.html` 1 097). Templates are parsed as a set, so `{{define}}` blocks
+   in a new file work; guards are B436 (html balance) and B521 (the mobile measurement).
+4. **B530: a narrow data-layer boundary in `exit_rules`/`prefixowner`** (the two packages
+   with the worst coupling): move their `db.*` calls behind a small store interface. Do NOT
+   attempt the 2 567 call sites as one refactor.
+5. **B531: `init()` of 682 lines in `internal/feature/admin/system_tests_b394_new.go` →
+   explicit registration** (a `var syntheticTests = []…` slice), so the order is visible.
+6. **B532: five files over 1 500 lines** — after 2-6 the survivors should be `migrations_*`
+   (mechanical data) and templates; split them by section with the same verbatim rule.
+
+### The rule that keeps it honest
+
+Every block lowers the B525 budget in the same commit that lowers the number. A block that
+cannot lower it is not finished. The budget's own header records the thresholds
+(`lines>=200 or cc>=40`) and every argued exception.
