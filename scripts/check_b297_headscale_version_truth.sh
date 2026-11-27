@@ -207,24 +207,26 @@ fi
 # --- F: boot wiring -----------------------------------------------------------
 # B526 steps 4-7 (v1.5.265) lifted the boot phases out of main() into
 # cmd/skygate/boot_monitors.go, and the phase became a bootCtx METHOD: `hs` → `b.hs`,
-# `cfg` → `b.cfg`. The property this section exists for is unchanged — the boot path
-# ASKS the daemon and main() RUNS that phase — so it is asserted on the entrypoint
-# PACKAGE plus main()'s call, not on one file's literal text. The failure messages name
-# which half is missing, because "the phase stopped probing" and "main() stopped calling
-# the phase" are different defects (the old single-file greps went red on CI run
-# 46015905691 with the product intact).
+# `cfg` → `b.cfg`; step 8 (v1.5.267) moved the CALL one hop further, into
+# wireLateServices. The property this section exists for is unchanged — the boot path
+# ASKS the daemon and the phase runs at boot — so it is asserted on the entrypoint
+# PACKAGE (a phase declared once, called exactly once from somewhere the entrypoint
+# reaches) instead of on main.go's literal text. The old single-file form went red
+# twice on a correct tree (CI runs 46015905691 and 46067143569) — exactly the coupling
+# B339 exists to prevent.
 BOOT_DIR=cmd/skygate
 f1_probe=""
 for f in "$BOOT_DIR"/*.go; do
   case "$f" in *_test.go) continue ;; esac
   grep -q 'DetectServerVersion(' "$f" && f1_probe="$f"
 done
-if [ -n "$f1_probe" ] && grep -q 'startHeadscaleUpdateMonitor()' "$BOOT_DIR/main.go"; then
-  ok "F1: the boot path asks the daemon ($f1_probe) and main() runs that phase"
+f1_calls=$(grep -cE '^[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]* :?= )?([a-zA-Z]+\.)?startHeadscaleUpdateMonitor\(' "$MAIN" 2>/dev/null || true)
+if [ -n "$f1_probe" ] && [ "${f1_calls:-0}" = "1" ]; then
+  ok "F1: the boot path asks the daemon ($f1_probe) and the phase is called exactly once"
 elif [ -z "$f1_probe" ]; then
   bad "F1: nothing in $BOOT_DIR calls DetectServerVersion — the running headscale is never read"
 else
-  bad "F1: main() no longer calls startHeadscaleUpdateMonitor(), so the probe never runs at boot"
+  bad "F1: startHeadscaleUpdateMonitor is called ${f1_calls:-0} time(s) across the entrypoint — it must run exactly once at boot"
 fi
 if grep -q 'headscale-version: MISMATCH' "$BOOT_DIR"/*.go; then
   ok "F2: a declaration that disagrees with the daemon is logged"

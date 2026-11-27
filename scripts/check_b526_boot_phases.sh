@@ -48,7 +48,6 @@ gosurface SURFACE cmd/skygate/*.go || {
   printf '\nB526: 0 pass, 1 fail, 0 skip\n'
   exit 1
 }
-MAIN_PATH=cmd/skygate/main.go
 BOOT_SERVICES="$(grep -rl 'func startBackgroundServices(' cmd/skygate/*.go 2>/dev/null | head -1)"
 LIFECYCLE="$(grep -rl 'type bootLifecycle struct' cmd/skygate/*.go 2>/dev/null | head -1)"
 LIFECYCLE_TEST="$(grep -rl 'func TestBootLifecycle_StopsInReverseOrder' cmd/skygate/*.go 2>/dev/null | head -1)"
@@ -56,9 +55,12 @@ LIFECYCLE_TEST="$(grep -rl 'func TestBootLifecycle_StopsInReverseOrder' cmd/skyg
 hdr "B526 — the boot sequence is a list of phases, not one function"
 
 # --- A: the size is measured, frozen and falling --------------------------------
-CUR="$(bash scripts/complexity_scan.sh --files "$MAIN_PATH" 2>/dev/null |
-  awk -F'\t' '$3 == "cmd/skygate/main.go" && $4 == "main" {print $1}')"
-BUDGET="$(awk -F'\t' '$3 == "cmd/skygate/main.go" && $4 == "main" {print $1}' scripts/complexity_baseline.txt)"
+# B339: the size is read from the WHOLE TREE and filtered to the entrypoint package,
+# never from one hardcoded path — a contract that names a file turns the next pure
+# code move into a false FAIL, which is exactly what this block does to main().
+CUR="$(bash scripts/complexity_scan.sh 2>/dev/null |
+  awk -F'\t' '$4 == "main" && $3 ~ /^cmd\/skygate\// {print $1; exit}')"
+BUDGET="$(awk -F'\t' '$4 == "main" && $3 ~ /^cmd\/skygate\// {print $1; exit}' scripts/complexity_baseline.txt)"
 if [ -z "$CUR" ]; then
   bad "A1: the scanner did not report main() — the size is not measured"
 else
@@ -120,8 +122,12 @@ if [ -n "$LIFECYCLE" ]; then
   grep -q 'for i := len(stops) - 1; i >= 0; i--' "$LIFECYCLE" \
     || D_MISS="${D_MISS}Stop does not run the stoppers in REVERSE order (nested defers did)"$'\n'
 fi
-[ "$(grep -cF 'defer lc.Stop()' "$MAIN_PATH" || true)" = "1" ] \
-  || D_MISS="${D_MISS}main() must defer lc.Stop() exactly once"$'\n'
+# Anchored on CODE (`^\t...defer`), not on the bare text: the lifecycle's own doc comment
+# quotes `defer lc.Stop()` in its usage example, and a comment must not be able to
+# satisfy (or break) a contract about the boot path.
+lc_stops=$(grep -cE '^[[:space:]]+defer lc\.Stop\(\)' "$SURFACE" || true)
+[ "$lc_stops" = "1" ] \
+  || D_MISS="${D_MISS}main() must defer lc.Stop() exactly once (found ${lc_stops:-0} code line(s))"$'\n'
 for pair in 'lc.Add("dbmigrate-watchdog", wd.Stop)' 'lc.Add("ha-elector", el.Stop)'; do
   grep -qF "$pair" "$BOOT_SERVICES" 2>/dev/null \
     || D_MISS="${D_MISS}missing registration: ${pair}"$'\n'
