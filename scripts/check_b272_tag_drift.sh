@@ -364,7 +364,8 @@ fi
 # and rolled back, although the target revision CONTAINS that file — the
 # leftover was skygate's own. The operator could not update at all until they
 # deleted it by hand.
-DOCKER_GO=internal/update/docker.go
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B532: docker.go is several files now
+gosurface DOCKER_GO internal/update/*.go || { echo "B272: cannot read the internal/update surface" >&2; exit 2; }
 if grep -q 'func (u \*DockerUpgrader) checkoutRef(' "$DOCKER_GO" \
    && grep -q 'u.checkoutRef(ctx, gitRef)' "$DOCKER_GO"; then
   ok "J: the docker upgrader preserves untracked files instead of aborting"

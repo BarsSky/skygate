@@ -2077,12 +2077,15 @@ run_check "B70" "auto-update orchestrator migrate step (bash→sh + container by
 # rebuilds, and no alpine-curl-not-installed surprise.
 #
 # B71 pins the contract:
-#   - internal/update/docker.go: net/http + io imports
+#   - internal/update/*.go (the upgrader package): net/http + io imports
 #   - the post-swap healthz poll uses (&http.Client).Do
 #     (not exec.CommandContext("curl", ...))
 #   - 5s per-request timeout is preserved (was --max-time 5)
 #   - 200 + `"status":"ok"` body match is preserved
-run_check "B71" "orchestrator healthz poll uses net/http not curl (v0.33.1.22)" 'f=$(mktemp); printf "%s" "grep -qF net/http internal/update/docker.go && grep -qF http.NewRequestWithContext internal/update/docker.go && grep -qF http.Client internal/update/docker.go && grep -qF localhost:8080/healthz internal/update/docker.go && grep -qF StatusCode internal/update/docker.go" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
+# B532 (v1.5.271) split docker.go by section, so the five greps read the PACKAGE
+# glob — a pure move must not turn a catalog contract red (B339's rule, applied to
+# an inline run_check).
+run_check "B71" "orchestrator healthz poll uses net/http not curl (v0.33.1.22)" 'f=$(mktemp); printf "%s" "grep -qF net/http internal/update/*.go && grep -qF http.NewRequestWithContext internal/update/*.go && grep -qF http.Client internal/update/*.go && grep -qF localhost:8080/healthz internal/update/*.go && grep -qF StatusCode internal/update/*.go" > "$f" && bash "$f"; rc=$?; rm -f "$f"; exit $rc'
 
 # ─── B72 (v0.33.1.23) — layout.html update-banner data shape (string + string) ───
 # The pre-fix layout.html referenced
@@ -7115,6 +7118,23 @@ run_check "B526" "ПОСЛЕДОВАТЕЛЬНОСТЬ ЗАГРУЗКИ — ЭТ
 # scripts/check_b528_route_registries.sh.
 run_check "B528" "ТАБЛИЦА МАРШРУТОВ — ЭТО НАБОР РЕЕСТРОВ ПО ФИЧАМ, А НЕ ОДНА ФУНКЦИЯ. registerRoutes() измеряется сканером сложности и печатается в вердикте вместе с бюджетом (аудит: 1 109 строк, 274 mux.Handle; сегодня 973 после переезда /admin/headscale*, /admin/update и /admin/exit-nodes), бюджет B525 понижен в том же коммите и расти обратно не может. Каждый реестр (registerHeadscaleRoutes, registerAdminUpdateRoutes, registerAdminExitNodesRoutes) объявлен ровно один раз и вызван ровно один раз ИМЕННО из registerRoutes: реестр, который никто не вызывает, — это маршруты, до которых не дойти, а вызванный дважды регистрирует обработчик дважды. Ни один маршрут не потерян: общее число mux.Handle по пакету cmd/skygate не ниже пола, а каждая переехавшая группа несёт ровно столько регистраций, сколько было до переезда (update 11, exit-nodes 21, headscale 7) — перенос дословный, поэтому счёт и есть доказательство. Проверяется отслеживаемость файлов git-ом, регистрация в каталоге и строка в индексе AGENTS." \
     'test -f scripts/check_b528_route_registries.sh && bash scripts/check_b528_route_registries.sh'
+# B532 — файл на 1 500 строк — это место, где читатель перестаёт искать. Аудит 2026-11-27
+# назвал пять таких Go-файлов; план (§8) — дробить их ПО СЕКЦИЯМ тем же дословным правилом,
+# что и рефакторинг загрузки. Шаг 1 (v1.5.271): `internal/update/docker.go` 1 515 → **517**,
+# секции уехали дословно в `docker_git.go` (транспорт git: fetch, зеркало, checkout, стэш
+# конфликтов), `docker_shell.go` (обёртки compose/shell), `docker_health.go` (поллер здоровья и
+# разбор тела), `docker_labels.go` (метки сборки, host-owner, усечение вывода) и `docker_swap.go`
+# (три встроенных /bin/sh скрипта и их запуск) — пакет не изменился, ни один идентификатор не
+# переехал, поэтому ни вызывающий, ни контракт не узнали нового имени. Заодно измерено, что
+# **B531 закрыт**: `init()` на 682 строки больше нет — самый большой `init()` в дереве 10 строк,
+# а B394-батч давно живёт в `var b394Tests = []SystemTestDef{…}`. Контракт держит: РЕЕСТР
+# файлов ≥1 500 строк измеряется каждый прогон и печатается, новый файл сверх линии требует
+# осознанного изменения (как бюджет B525 и ратчет B337), дробление docker.go реально (файл < 600
+# строк, пять секций существуют и отслеживаются git-ом), ни одна функция не потеряна (число
+# функций пакета не ниже пола), тесты пакета проходят, скрипт отслеживается и зарегистрирован.
+# Контракты в scripts/check_b532_large_files.sh.
+run_check "B532" "ФАЙЛЫ СВЕРХ 1 500 СТРОК — ЭТО РЕЕСТР, А НЕ СЮРПРИЗ. Каждый прогон измеряет дерево и печатает, сколько Go-файлов (без тестов) на линии 1 500 и больше: сегодня пять (catalog_admin.go, cluster.go, reconciler.go, migrations_pg.go, migrations_sqlite.go) плюс замороженный список; НОВЫЙ файл сверх линии не проходит, пока его не внесут в список осознанно — это тот же принцип, что бюджет B525 и ратчет gofmt B337. Первое дробление реально: internal/update/docker.go 1 515 → 517 строк, секции (git-транспорт, обёртки shell/compose, поллер здоровья, метки и host-owner, три /bin/sh скрипта подмены) живут в пяти отдельных файлах, все отслеживаются git-ом; число функций пакета не ниже пола 340 (сейчас 367), то есть код перенесён, а не удалён, и go test ./internal/update/ проходит. Проверяется регистрация блока в каталоге и строка в индексе AGENTS." \
+    'test -f scripts/check_b532_large_files.sh && bash scripts/check_b532_large_files.sh'
 # ---------------------------------------------------------------------------
 # THE GATE'S VERDICT (TD-22 / B335)
 # ---------------------------------------------------------------------------

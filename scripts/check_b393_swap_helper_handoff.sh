@@ -84,7 +84,12 @@ gosurface SKY_MAIN cmd/skygate/*.go
 SKY_TMP="$(mktemp -d 2>/dev/null || mktemp -d "${TMPDIR:-/tmp}/skygate-b393.XXXXXX")"
 trap 'rm -rf "$SKY_TMP"' EXIT
 
-DOCKER=internal/update/docker.go
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B532: docker.go is several files now
+gosurface DOCKER internal/update/*.go || { echo "B393: cannot read the internal/update surface" >&2; exit 2; }
+# B532: the swap scripts live in the upgrader package (split out of docker.go). The
+# literal volume may appear in a COMMENT — swapmount.go documents the defect it fixes —
+# so what is counted is CODE lines: a comment can never mount a volume.
+docker_code_literal() { grep -v '^[[:space:]]*//' "$DOCKER" | grep -cF -- "$1" || true; }
 VERIFY=internal/update/swapverify.go
 MOUNT=internal/update/swapmount.go
 ADMIN=internal/feature/admin/update.go
@@ -108,7 +113,7 @@ count_of() { grep -cF -- "$1" "$2" 2>/dev/null || true; }
 # ---------------------------------------------------------------------------
 hdr "A — the /data mount is resolved from the live container, not assumed"
 
-n="$(count_of 'skygate-data:/data' "$DOCKER")"
+n="$(docker_code_literal 'skygate-data:/data')"
 if [ "${n:-0}" -eq 0 ]; then
   ok "A1: no script mounts the legacy volume skygate-data:/data any more (that volume is EMPTY on a bind-mounted install: this was root cause R1)"
 else
@@ -321,7 +326,9 @@ fi
 hdr "F — registered, tracked, documented"
 
 MISSING_TRACK=""
-for f in "$DOCKER" "$VERIFY" "$MOUNT" "$TEST_UPDATE" "$TEST_ADMIN"; do
+# B532: track every file of the upgrader package (the block's scripts live in more
+# than one of them now) plus the installer pieces this contract is about.
+for f in internal/update/docker*.go "$VERIFY" "$MOUNT" "$TEST_UPDATE" "$TEST_ADMIN"; do
   if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then : ; else MISSING_TRACK="${MISSING_TRACK}${f} "; fi
 done
 if [ -z "$MISSING_TRACK" ]; then
@@ -383,7 +390,7 @@ else
 fi
 
 # The real file must still be clean after the copy experiment.
-n="$(count_of 'skygate-data:/data' "$DOCKER")"
+n="$(docker_code_literal 'skygate-data:/data')"
 if [ "${n:-1}" -eq 0 ]; then
   ok "G2: the planted copy is a scratch file only; the real script stays fixed"
 else

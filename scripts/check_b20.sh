@@ -36,7 +36,8 @@ PASS=0; FAIL=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
 
-DOCKER=internal/update/docker.go
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B532: docker.go is several files now
+gosurface DOCKER internal/update/*.go || { echo "B20: cannot read the internal/update surface" >&2; exit 2; }
 MANUAL=internal/update/manual.go
 
 # A. The origin fetch still carries --tags --prune --force.
@@ -89,9 +90,9 @@ fi
 
 # E. The reason is still recorded next to the code it explains.
 if grep -q 'would clobber existing tag' "$DOCKER"; then
-  ok "E.1 the stale-tag failure mode is documented in docker.go"
+  ok "E.1 the stale-tag failure mode is documented in the upgrader package"
 else
-  bad "E.1 docker.go must keep the 'would clobber existing tag' note"
+  bad "E.1 the upgrader package must keep the 'would clobber existing tag' note"
 fi
 
 printf '\n\033[1mB20: %d PASS, %d FAIL\033[0m\n' "$PASS" "$FAIL"

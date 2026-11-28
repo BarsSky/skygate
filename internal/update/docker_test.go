@@ -580,15 +580,27 @@ func TestSpawnSwapSubprocess_WritesScript(t *testing.T) {
 // We can't run the real orchestrator (it requires a live git
 // repo + network + docker compose), so we test the ARG SHAPE
 // the orchestrator would pass. The check is a static
-// source-code grep on internal/update/docker.go: the
-// PhasePullBuild phase must call runGit with the exact
-// arguments we expect.
+// source-code grep on the WHOLE package (B532 split docker.go by section, so
+// pinning one filename would turn a pure move into a false failure — the same
+// lesson B339 records for the shell contracts): the PhasePullBuild phase must
+// call runGit with the exact arguments we expect.
 func TestRunGitArgsShape_UpdateFetchHasForce(t *testing.T) {
-	src, err := os.ReadFile("docker.go")
+	files, err := filepath.Glob("*.go")
 	if err != nil {
-		t.Fatalf("read docker.go: %v", err)
+		t.Fatalf("glob the package: %v", err)
 	}
-	body := string(src)
+	var sb strings.Builder
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, rerr := os.ReadFile(f)
+		if rerr != nil {
+			t.Fatalf("read %s: %v", f, rerr)
+		}
+		sb.Write(src)
+	}
+	body := sb.String()
 	// The orchestrator's git fetch call must:
 	//   1. Be inside the PhasePullBuild block (the only fetch
 	//      in the orchestrator's happy path)

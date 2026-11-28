@@ -74,6 +74,9 @@
 #
 # Exit 0 on all green, non-zero on any FAIL.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B532: docker.go is several files now
+gosurface DOCKER internal/update/*.go || { echo "B237.10: cannot read the internal/update surface" >&2; exit 2; }
+
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
@@ -86,15 +89,15 @@ bad() { echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
 # --- A. Source: GitRefForBuildLabel exists in update package ---
 
 # A.1 function definition
-if grep -qE '^func GitRefForBuildLabel' internal/update/docker.go 2>/dev/null; then
-    ok "A.1 GitRefForBuildLabel() function defined in internal/update/docker.go"
+if grep -qE '^func GitRefForBuildLabel' "$DOCKER" 2>/dev/null; then
+    ok "A.1 GitRefForBuildLabel() function defined in the upgrader package"
 else
-    bad "A.1 GitRefForBuildLabel() function missing from internal/update/docker.go"
+    bad "A.1 GitRefForBuildLabel() function missing from the upgrader package"
 fi
 
 # A.2 function is public (uppercase G) — required because admin
 # package imports it
-if grep -qE '^func GitRefForBuildLabel' internal/update/docker.go 2>/dev/null; then
+if grep -qE '^func GitRefForBuildLabel' "$DOCKER" 2>/dev/null; then
     ok "A.2 GitRefForBuildLabel is exported (admin package imports it)"
 else
     bad "A.2 GitRefForBuildLabel must be public (admin package depends on it)"
@@ -102,7 +105,7 @@ fi
 
 # A.3 function strips "+<commit>" — the critical transformation
 # (grep for the "strings.Index" + "+" pattern inside the function body)
-if awk '/^func GitRefForBuildLabel/,/^}/' internal/update/docker.go 2>/dev/null | grep -q 'strings.Index.*"+"'; then
+if awk '/^func GitRefForBuildLabel/,/^}/' "$DOCKER" 2>/dev/null | grep -q 'strings.Index.*"+"'; then
     ok "A.3 GitRefForBuildLabel strips the +<commit> suffix (the critical fix)"
 else
     bad "A.3 GitRefForBuildLabel must strip the +<commit> suffix"
@@ -110,7 +113,7 @@ fi
 
 # A.4 function strips "v<hex>" leading prefix when remainder is hex
 # (defense against normalizeUpdateTarget's "v" prepend)
-if awk '/^func GitRefForBuildLabel/,/^}/' internal/update/docker.go 2>/dev/null | grep -q 'isAllHex'; then
+if awk '/^func GitRefForBuildLabel/,/^}/' "$DOCKER" 2>/dev/null | grep -q 'isAllHex'; then
     ok "A.4 GitRefForBuildLabel uses isAllHex to strip stale 'v' prefix (defense-in-depth)"
 else
     bad "A.4 GitRefForBuildLabel must use isAllHex for 'v<sha>' vs 'v<semver>' distinction"
@@ -121,7 +124,7 @@ fi
 # B.1 docker.go's `git checkout` site uses the helper
 # (this is the defense-in-depth: even if a future caller
 # forgets to pre-process, the orchestrator still works)
-if grep -qE 'gitRef := GitRefForBuildLabel' internal/update/docker.go 2>/dev/null; then
+if grep -qE 'gitRef := GitRefForBuildLabel' "$DOCKER" 2>/dev/null; then
     ok "B.1 docker.go git-checkout site uses GitRefForBuildLabel (defense-in-depth)"
 else
     bad "B.1 docker.go must call GitRefForBuildLabel on target before git-checkout"
@@ -130,7 +133,7 @@ fi
 # B.2 The `git checkout` call uses a `gitRef` variable
 # (not `target` directly) — proves the transformation is
 # applied at the right point
-if grep -qE 'u\.runGit\(ctx, "checkout", gitRef\)' internal/update/docker.go 2>/dev/null; then
+if grep -qE 'u\.runGit\(ctx, "checkout", gitRef\)' "$DOCKER" 2>/dev/null; then
     ok "B.2 git-checkout uses the post-transformation gitRef variable"
 else
     bad "B.2 git-checkout must use a gitRef variable (not target directly)"

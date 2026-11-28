@@ -728,10 +728,28 @@ being paid down in blocks with a ratchet instead of a big-bang rewrite.
 4. **B530: a narrow data-layer boundary in `exit_rules`/`prefixowner`** (the two packages
    with the worst coupling): move their `db.*` calls behind a small store interface. Do NOT
    attempt the 2 567 call sites as one refactor.
-5. **B531: `init()` of 682 lines in `internal/feature/admin/system_tests_b394_new.go` →
-   explicit registration** (a `var syntheticTests = []…` slice), so the order is visible.
-6. **B532: five files over 1 500 lines** — after 2-6 the survivors should be `migrations_*`
-   (mechanical data) and templates; split them by section with the same verbatim rule.
+5. ~~**B531: `init()` of 682 lines → explicit registration.**~~ **CLOSED in v1.5.271 — measured,
+   not remembered:** the tree's largest `init()` is **10 lines** (`internal/telegram/commands_phase4.go`)
+   and `internal/feature/admin/system_tests_b394_new.go` has kept its batch in
+   `var b394Tests = []SystemTestDef{…}` with a 3-line `init()` for a long time. There is nothing
+   left to split; the register said otherwise and now says this.
+6. **B532: files over 1 500 lines → split by section.** **Step 1 landed in v1.5.271:**
+   `internal/update/docker.go` **1 515 → 517** — `docker_git.go` (git transport: `runGit`,
+   `fetchTarget`, the mirror fallback, `checkoutRef`, the conflict stash), `docker_shell.go`
+   (compose/shell runners), `docker_health.go` (`pollHealthz` + body parsers), `docker_labels.go`
+   (build labels, host-owner helpers, output truncation) and `docker_swap.go` (the three embedded
+   `/bin/sh` swap scripts + their launcher). Same package, no identifier moved, so no caller and no
+   contract learned a new name — but four contracts that read `docker.go` as a FILE (B20, B237.10,
+   B272, B393) were renegotiated onto the package surface through `scripts/lib/gosurface.sh`, and
+   B393's two path-based rows now resolve the file by its declaration (F1) or count CODE lines only,
+   because a comment may legitimately name the defect it fixed (G2). Contract **B532**
+   (`scripts/check_b532_large_files.sh`, 6 rows) measures the register every run and prints it —
+   today five files: `catalog_admin.go` (i18n DATA, deliberately not split), `cluster.go`,
+   `reconciler.go`, `migrations_pg.go`, `migrations_sqlite.go` — and a NEW file over the line needs
+   a deliberate edit here, the same principle as the B525 budget and the B337 gofmt ratchet.
+   **What is left:** `cluster.go` (1 618), `reconciler.go` (1 601), the two migration files (data)
+   and the three rule templates (§3 above); the Go test that greps a single file
+   (`TestRunGitArgsShape_UpdateFetchHasForce`) now reads the package too.
 
 ### The rule that keeps it honest
 
