@@ -34,7 +34,10 @@ MY=internal/feature/exit_rules/form_my_rules.go
 ADM=internal/feature/exit_rules/form_admin.go
 TPL=internal/handlers/templates/exit_rules.html
 TPLA=internal/handlers/templates/admin/exit_rules.html
-ROUTES=cmd/skygate/routes.go
+# B528 step 5 (v1.5.274): the route table is a set of per-feature registries now, so
+# read the PACKAGE surface — a row bound to routes.go turns red on a pure move.
+. scripts/lib/gosurface.sh
+gosurface ROUTES cmd/skygate/*.go || { echo "B440: cannot read the cmd/skygate surface" >&2; exit 2; }
 I18N=internal/i18n/catalog_exit_rules.go
 GATE=scripts/verify_pre_deploy.sh
 for f in "$CORE" "$CORE_T" "$HTTP" "$MIG" "$MIGS" "$MIGP" "$MY" "$ADM" "$TPL" "$TPLA" "$ROUTES" "$I18N" "$GATE"; do

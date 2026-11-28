@@ -60,7 +60,10 @@ CORE=internal/feature/exit_rules/bulk_add.go
 STORE=internal/feature/exit_rules/store.go
 LABEL=internal/feature/exit_rules/group_label_b380.go
 ACTION=internal/feature/exit_rules/group_actions_b380.go
-ROUTES=cmd/skygate/routes.go
+# B528 step 5 (v1.5.274): the route table is a set of per-feature registries now, so
+# read the PACKAGE surface — a row bound to routes.go turns red on a pure move.
+. scripts/lib/gosurface.sh
+gosurface ROUTES cmd/skygate/*.go || { echo "B380: cannot read the cmd/skygate surface" >&2; exit 2; }
 MYTPL=internal/handlers/templates/exit_rules.html
 ADMTPL=internal/handlers/templates/admin/exit_rules.html
 I18N=internal/i18n/catalog_exit_rules.go
