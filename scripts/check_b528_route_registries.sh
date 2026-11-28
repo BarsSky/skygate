@@ -10,6 +10,10 @@
 # compiler derive the parameter list — every group so far needed exactly
 # (mux, authMW, <its service>).
 #
+# Steps so far: 1 — /admin/headscale (7); 2 — /admin/update (11) and /admin/exit-nodes (21);
+# 3 — /admin/users (23) together with the per-user control plane (2) and the subnet-routing
+# landing page (1) it links to, 26 registrations in one file.
+#
 # WHAT THIS CONTRACT PINS
 #   A. the size is measured, printed and frozen (B525 budget, only falling);
 #   B. each registry is DECLARED once and CALLED once, and the call sits inside
@@ -59,7 +63,7 @@ fi
 
 # --- B: every registry declared once, called once, from registerRoutes -----------
 B_MISS=""
-for reg in registerHeadscaleRoutes registerAdminUpdateRoutes registerAdminExitNodesRoutes; do
+for reg in registerHeadscaleRoutes registerAdminUpdateRoutes registerAdminExitNodesRoutes registerAdminUsersRoutes; do
   decls=$(grep -cE "^func ${reg}\(" cmd/skygate/*.go 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
   calls=$(grep -cE "^[[:space:]]+${reg}\(" cmd/skygate/*.go 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
   [ "$decls" = "1" ] || B_MISS="${B_MISS}${reg}: declared ${decls} time(s), must be exactly 1"$'\n'
@@ -68,7 +72,7 @@ done
 # the calls must live inside registerRoutes (one level down, not in main or a phase)
 ROUTES_FILE="$(grep -rl '^func registerRoutes(' cmd/skygate/*.go 2>/dev/null | head -1)"
 if [ -n "$ROUTES_FILE" ]; then
-  for reg in registerHeadscaleRoutes registerAdminUpdateRoutes registerAdminExitNodesRoutes; do
+  for reg in registerHeadscaleRoutes registerAdminUpdateRoutes registerAdminExitNodesRoutes registerAdminUsersRoutes; do
     grep -qE "^[[:space:]]+${reg}\(" "$ROUTES_FILE" \
       || B_MISS="${B_MISS}${reg} is not called from registerRoutes (${ROUTES_FILE})"$'\n'
   done
@@ -106,15 +110,19 @@ check_family() {
 check_family cmd/skygate/routes_admin_update.go "/admin/update" 11
 check_family cmd/skygate/routes_admin_exit_nodes.go "/admin/exit-nodes" 21
 check_family cmd/skygate/routes_headscale.go "/admin/headscale" 7
+# B528 step 3: the users page, its per-user control plane and the subnet landing page.
+check_family cmd/skygate/routes_admin_users.go "/admin/users" 23
+check_family cmd/skygate/routes_admin_users.go "/admin/control-planes" 2
+check_family cmd/skygate/routes_admin_users.go "/admin/subnets" 1
 if [ -z "$C_MISS" ]; then
-  ok "C2: each moved family still carries exactly the registrations it had (update 11, exit-nodes 21, headscale 7)"
+  ok "C2: each moved family still carries exactly the registrations it had (update 11, exit-nodes 21, headscale 7, users 23, control-planes 2, subnets 1)"
 else
   while IFS= read -r l; do [ -n "$l" ] && bad "C2: $l"; done <<< "$C_MISS"
 fi
 
 # --- D: bookkeeping -------------------------------------------------------------
 D_MISS=""
-for f in cmd/skygate/routes_admin_update.go cmd/skygate/routes_admin_exit_nodes.go cmd/skygate/routes_headscale.go; do
+for f in cmd/skygate/routes_admin_update.go cmd/skygate/routes_admin_exit_nodes.go cmd/skygate/routes_headscale.go cmd/skygate/routes_admin_users.go; do
   git ls-files --error-unmatch "$f" >/dev/null 2>&1 \
     || D_MISS="${D_MISS}${f} is NOT tracked by git (trap 11)"$'\n'
 done

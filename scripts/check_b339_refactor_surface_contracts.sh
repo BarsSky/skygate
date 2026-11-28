@@ -338,11 +338,22 @@ if [ "$CALLS" = "1" ] && [ "$WIRE_CALLED" = "1" ]; then
 else
   bad "E2: registerRoutes is called $CALLS time(s) across the entrypoint (expected exactly 1) and wireRoutes called=$WIRE_CALLED"
 fi
-REGS="$(grep -c 'mux\.Handle' cmd/skygate/routes.go 2>/dev/null || echo 0)"
-if [ "$REGS" -ge 200 ]; then
-  ok "E3: routes.go holds $REGS route registrations (the table, not a stub)"
+# B528 (v1.5.272) — CONTRACT RENEGOTIATED onto the SURFACE. This row used to require >= 200
+# registrations inside cmd/skygate/routes.go, which was true only while the table was one
+# file; B528 moves one feature group at a time into its own registry, so the next move would
+# have turned this red on a change that loses nothing. The question it was asking — "is the
+# table a table, not a stub?" — is now answered across the entrypoint, with the same floor
+# B528 C1 pins.
+REGS=0
+for e3f in cmd/skygate/*.go; do
+  case "$e3f" in *_test.go) continue ;; esac
+  n="$(grep -c 'mux\.Handle' "$e3f" 2>/dev/null || true)"
+  REGS=$((REGS + ${n:-0}))
+done
+if [ "$REGS" -ge 270 ]; then
+  ok "E3: the entrypoint holds $REGS route registrations across its registries (floor 270, not a stub)"
 else
-  bad "E3: routes.go holds only $REGS registrations — the table was split back into the boot sequence"
+  bad "E3: only $REGS registrations across the entrypoint (floor 270) — routes were lost in the split"
 fi
 MOVED_OK=0
 for pair in "main_subcommands.go:func runMigrateOnly" "main_bootstrap.go:func ensureInfraUser" \

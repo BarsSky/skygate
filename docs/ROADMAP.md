@@ -343,6 +343,7 @@ own detector on planted violations**.
 
 ### 4.1 Recorded 2026-11-15 — the migration's two live findings
 
+**SHIPPED in v1.5.272:** B528 step 3 — the `/admin/users` family moved VERBATIM into `cmd/skygate/routes_admin_users.go`: the users page and its per-row writes (23 registrations), the per-user headscale control plane (2) and the subnet-routing landing page (1), 26 in all; `registerRoutes()` 973 → **887**, the B525 budget lowered in the same commit, and the total `mux.Handle` count across the package still 279 (no route lost). The family boundary follows the FEATURE, not the file's neighbourhood: `/admin/subnets` moved with the users page whose subnet tab links to it, while `/admin/devices` stayed. Two rows that read `routes.go` as a FILE were renegotiated in the same commit — otherwise the next step would have turned them red on a change that loses nothing: B339 E3 counts registrations across the entrypoint with the same floor 270, and B376 E10 searches every `cmd/skygate/*.go` for the delete route. The B528 contract gained the new file's three families (users 23, control-planes 2, subnets 1). **v1.5.271 (recorded here in the same edit):** B532 step 1 — `internal/update/docker.go` 1 515 → **517** split by section into five files, B531 CLOSED by measurement (the tree's largest `init()` is 10 lines), contract B532 measures the register of files ≥ 1 500 lines.
 **SHIPPED in v1.5.270:** B528 step 2 - `registerRoutes()` 1 096 → **973**, and the seam is now visible: the two adjacent TAIL blocks `/admin/update` (11 registrations) and `/admin/exit-nodes` (21) moved VERBATIM into `routes_admin_update.go` and `routes_admin_exit_nodes.go`, and the compiler-derived parameter list for both was exactly `(mux, authMW, adminSvc)`. The new contract **B528** (6 rows) pins the size (measured, printed, frozen in the B525 budget), requires each registry to be declared once and CALLED once from `registerRoutes` (a registry nobody calls is routes you cannot reach; one called twice registers the handler twice), and proves no route was lost two ways: the total `mux.Handle` count across `cmd/skygate` stays above a floor (279 today, floor 270) and each moved family keeps exactly the registrations it had (update 11, exit-nodes 21, headscale 7). Remaining in `routes.go`: 237 registrations; the next contiguous candidates are listed in §8 with their sizes. 
 **SHIPPED in v1.5.269:** B526 step 10, and with it the programme's first target: **`main()` is 381 lines** (was 2 272 at the audit — 83 % gone, cc 139 → 28). The last big block (`wireHeadscaleClient`: the headscale client, `ensureHeadscaleUser`, the B272.2 policy audit, the B237.18 reconcile cron, `ensureInfraUser`, `SanityCheckInfraUserOwners`, `bootstrapTelegramFromEnv`, `backfillNodeOwners`, the first-run auto-sync and `handlers.New`) moved VERBATIM into `boot_headscale.go`; it has no defer, so B526's C3 rule holds by construction and gained row C4 for the new file. The contract's `main() ≤ 400` row is now ENABLED (A2) and prints the number, with A2b keeping the frozen budget falling — a target that could only be met half-way was deliberately not a contract, and now it is one. B525: `main()` 516 → 381; `wireHeadscaleClient` (141/13) needs no budget entry because it is under both ratchet thresholds.
 **SHIPPED in v1.5.268:** B526 step 9 - `main()` 1 369 → **516** (cc 75 → 40). The `routes` phase (854 lines: every service the route table needs, the OIDC provider, healthz/DB-health/metrics, the middleware and the `registerRoutes` call) moved VERBATIM into `cmd/skygate/boot_routes.go` as `wireRoutes(cfg, d, app, bootErr, dialectKind, updateStore, lc) (*http.ServeMux, *adminsvc.Service)` — it returns exactly mux and adminSvc, the two things later phases still use, and `loginMW`/`apiMW` (used only there) are built inside it. The move caught what the B372 rule exists for: the block held FOUR function-scope defers — `availabilityChecker.Stop()`, `dbHealthSampler.Stop()`, `metricsStop()`, `moduleMgr.StopAll(...)` — which in `main()` meant "stop at process exit" and in a helper would mean "stop microseconds after start"; all four became `lc.Add(...)` and the lifecycle is now created BEFORE the routes phase. Two defers inside closures (a ticker in a goroutine, `rows.Close()` in a loop) stayed, because they fire when the closure exits. Contract B526 gained row C3 and now states the rule the whole programme depends on: `^\tdefer ` (one tab) is function scope and may not appear in an extracted block, while a defer inside a closure is harmless — the same wording was applied to step 8's functions. Also fixed: a phase assigned to two variables (`mux, adminSvc := wireRoutes(…)`) was being counted as "called 0 times". B525: `main()` 1369 → 516, and `wireRoutes` (866/36) entered the budget with the reason recorded.
@@ -713,15 +714,27 @@ being paid down in blocks with a ratchet instead of a big-bang rewrite.
    `/admin/exit-nodes` (21) — the two adjacent TAIL blocks, whose dependency sets the compiler
    derived as exactly `(mux, authMW, adminSvc)` — moved to `routes_admin_update.go` and
    `routes_admin_exit_nodes.go`; `registerRoutes()` is **973** lines and the B525 budget was
-   lowered in the same commit. Contract **B528** (`scripts/check_b528_route_registries.sh`, 6
-   rows) measures the size, requires each registry to be declared once and CALLED once from
-   `registerRoutes`, and proves no route was lost: the total `mux.Handle` count across the
-   package stays above a floor (279 today, floor 270) and each moved family keeps exactly the
-   number of registrations it had. **What is left:** 237 registrations in `routes.go`; the next
-   contiguous candidates are `/admin/users` (15+8), `/my/exit-rules` (15), `/admin/derp` (13),
-   `/admin/cluster` (12), `/admin/ha` (11), `/admin/backup` (11) — same rule: one group at a
-   time, the parameter list derived by the compiler, verbs moved verbatim, budget lowered in the
-   same commit.
+   lowered in the same commit. **Step 3 (v1.5.272):** the `/admin/users` family — the page and
+   its per-row writes (23), the per-user headscale control plane (2) and the subnet-routing
+   landing page the user's subnet tab links to (1), **26** registrations — moved to
+   `routes_admin_users.go`; `registerRoutes()` is **887** lines and the B525 budget was lowered
+   again. Two consequences worth naming: a group moves WITH its line-by-line comments (the
+   explanation of a button stays next to the button, which is why the registry files are not
+   bare route lists), and the family boundary is drawn around the FEATURE, not around a
+   contiguous run — `/admin/subnets` belongs with the users page that links to it, not with the
+   `/admin/devices` line it happens to sit next to. Contract **B528**
+   (`scripts/check_b528_route_registries.sh`, 6 rows) measures the size, requires each registry
+   to be declared once and CALLED once from `registerRoutes`, and proves no route was lost: the
+   total `mux.Handle` count across the package stays above a floor (279 today, floor 270) and
+   each moved family keeps exactly the number of registrations it had (update 11, exit-nodes 21,
+   headscale 7, users 23, control-planes 2, subnets 1). Two rows that read `routes.go` as a FILE
+   were renegotiated in the same commit, because the next step would otherwise have turned them
+   red on a change that loses nothing: B339 E3 counts registrations across the entrypoint with
+   the same floor 270, and B376 E10 searches every `cmd/skygate/*.go` for the delete route.
+   **What is left:** 207 registrations in `routes.go`; the next contiguous candidates are
+   `/my/exit-rules` (15), `/admin/derp` (13), `/admin/cluster` (12), `/admin/ha` (11),
+   `/admin/backup` (11), `/admin/devices` (10) — same rule: one group at a time, the parameter
+   list derived by the compiler, verbs moved verbatim, budget lowered in the same commit.
 3. **B529: three rule templates → partials** (`exit_rules.html` 1 609, `admin/exit_nodes.html`
    1 397, `admin/exit_rules.html` 1 097). Templates are parsed as a set, so `{{define}}` blocks
    in a new file work; guards are B436 (html balance) and B521 (the mobile measurement).

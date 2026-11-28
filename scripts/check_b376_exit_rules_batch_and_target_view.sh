@@ -263,7 +263,9 @@ fi
 # side registers. A count goes stale the next time the page grows a table.
 NDEL=$(grep -c 'action="/admin/exit-rules/delete"' "$TPL_ADMIN" 2>/dev/null || true)
 DEL_ROUTE=""
-for f in cmd/skygate/routes.go; do
+# B528 (v1.5.272): the route table is a set of registries, so search the whole entrypoint —
+# a one-file loop here is the same trap B339 E3 fell into.
+for f in cmd/skygate/*.go; do
   if [ -f "$f" ] && grep -q 'admin/exit-rules/delete' "$f" 2>/dev/null; then
     DEL_ROUTE="$f"
     break
