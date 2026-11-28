@@ -675,53 +675,9 @@ func registerRoutes(
 	// B528 step 5 (v1.5.274): the /my/exit-rules family lives in
 	// routes_my_exit_rules.go — see that file for why it needs both middlewares.
 	registerMyExitRulesRoutes(mux, authMW, apiMW, exitRulesSvc)
-	mux.Handle("GET /admin/exit-rules", authMW(http.HandlerFunc(exitRulesSvc.AdminExitRules)))
-	// 2026-09-11 (Issue #2 closure): admin can add exit-rules
-	// for another user's devices. The handler does its own
-	// IsAdmin check (defense-in-depth) — the authMW gate above
-	// is "any logged-in user", so a future router refactor
-	// can't bypass the admin-only contract.
-	mux.Handle("POST /admin/exit-rules", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRule)))
-	// B379 / TD-29: this path is what BOTH delete controls on /admin/exit-rules have
-	// posted to since the admin page was written — and nothing registered it, so every
-	// admin delete answered 404. The handler is cross-user (it resolves the rule's OWNER
-	// and then runs that owner's own cascade, see admin_delete_b379.go) and re-checks
-	// IsAdmin itself, like PostAdminExitRule above.
-	mux.Handle("POST /admin/exit-rules/delete", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRuleDelete)))
-	// B520: switch another user's rule on and off. The owner is resolved per id and the
-	// audit row names the ADMIN, not the owner (the row is the owner's, the decision is
-	// the admin's); `?show_disabled=1` keeps the switched-off view the operator was in.
-	mux.Handle("POST /admin/exit-rules/toggle", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRuleToggle)))
-	// B376: the admin twin of the bulk form — same fields, plus the target
-	// user. The handler does its own IsAdmin check (defense-in-depth), exactly
-	// like PostAdminExitRule above.
-	mux.Handle("POST /admin/exit-rules/bulk", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRulesBulk)))
-	// B471 (2026-11-14): move a SELECTION of rules to another relay in one decision.
-	// Separate from /bulk (which ADDS rows): a rule's natural key includes its relay, so
-	// "delete + add" is not a move — it leaves two rows claiming the same prefix and lets
-	// the hostname tie-break decide the owner. The handler does its own IsAdmin check.
-	mux.Handle("POST /admin/exit-rules/bulk-relay", authMW(http.HandlerFunc(exitRulesSvc.PostAdminBulkRelayMove)))
-	// B440 (2026-10-29): the exit-node REQUEST channel. A user asks for another relay
-	// for one of their rules; the operator answers per user / globally, and an approval
-	// is exactly the manual prefix pin + ACL re-apply the exit-nodes page performs.
-	mux.Handle("POST /my/exit-rules/relay-request", authMW(http.HandlerFunc(exitRulesSvc.PostMyRelayRequest)))
-	mux.Handle("POST /admin/exit-rules/relay-request", authMW(http.HandlerFunc(exitRulesSvc.PostAdminRelayRequestDecide)))
-	mux.Handle("POST /admin/exit-rules/relay-policy", authMW(http.HandlerFunc(exitRulesSvc.PostAdminRelayPolicy)))
-	mux.Handle("POST /admin/exit-rules/rollback", authMW(http.HandlerFunc(exitRulesSvc.PostAdminRollbackACL)))
-	// B328: the rule caps (per-device / per-user / system) were env-only, and under
-	// docker the container environment is frozen at creation — so changing a number
-	// meant editing .env and recreating the container. The panel now owns them, with
-	// `.env` as the fallback layer.
-	mux.Handle("POST /admin/exit-rules/limits", authMW(http.HandlerFunc(exitRulesSvc.PostAdminExitRuleLimits)))
-	// 2026-07-14: Этап 14 v7 — re-apply ACL without
-	// touching rules. Use when GenerateACL() output
-	// changed (e.g. new SSH rule) but no exit-rule
-	// add/delete has fired SetPolicy yet.
-	mux.Handle("POST /admin/exit-rules/reapply", authMW(http.HandlerFunc(exitRulesSvc.PostAdminACLReapply)))
-	mux.Handle("GET /admin/exit-rules/sync", authMW(http.HandlerFunc(exitRulesSvc.PostSyncAdvertisedRoutes)))
-	mux.Handle("GET /admin/exit-rules/nodes", authMW(http.HandlerFunc(exitRulesSvc.GetAdminNodesLoad)))
-	mux.Handle("GET /admin/exit-rules/cleanup", authMW(http.HandlerFunc(exitRulesSvc.AdminCleanupRules)))
-	mux.Handle("POST /admin/exit-rules/cleanup/apply", authMW(http.HandlerFunc(exitRulesSvc.AdminCleanupRulesApply)))
+	// B528 step 6 (v1.5.275): the /admin/exit-rules family lives in
+	// routes_admin_exit_rules.go — see that file for the one user-facing route it keeps.
+	registerAdminExitRulesRoutes(mux, authMW, exitRulesSvc)
 	mux.Handle("POST /admin/settings", authMW(http.HandlerFunc(adminSvc.PostAdminSettings)))
 	mux.Handle("GET /admin/exit-nodes", authMW(http.HandlerFunc(adminSvc.AdminExitNodes)))
 	// B528 step 1 (v1.5.265): the /admin/headscale* group lives in

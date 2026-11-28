@@ -1,5 +1,57 @@
 # Skygate release notes
 
+## v1.5.275 — `/admin/exit-rules` уехало в свой реестр: `registerRoutes()` 761 → 717
+
+**Date:** 2026-11-27 · **Base:** `v1.5.274` → this tag · **Compatibility:** без миграций.
+
+### Что теперь (B528, шаг 6)
+
+`cmd/skygate/routes_admin_exit_rules.go` — **15** админских регистраций, переехавших дословно:
+страница правил и её записи (`add`, `delete`, `toggle`, `bulk`, `bulk-relay`, `relay-request`,
+`relay-policy`, `rollback`, `limits`, `reapply`), пара синхронизации объявленных маршрутов
+(`sync`, `nodes`) и пара очистки (`cleanup`, `cleanup/apply`).
+
+`registerRoutes()` = **717 строк**, бюджет B525 снижен в том же коммите, `mux.Handle` по
+пакету — по-прежнему **279**.
+
+### Одна пользовательская строка уехала вместе с админскими
+
+В файле шестнадцать регистраций, а не пятнадцать: `POST /my/exit-rules/relay-request` — это
+та же самая **беседа**, что и админская `POST /admin/exit-rules/relay-request`. Пользователь
+просит другой relay для своего правила, оператор отвечает на соседнем эндпоинте. Разнести
+эти две строки по разным реестрам значило бы спрятать диалог от того, кто читает любую из
+двух сторон, поэтому они переехали вместе — и в контракте B528 так и записано (`15 + 1`).
+
+### Две последние строки, читавшие `routes.go` как файл
+
+B379 (`POST /admin/exit-rules/delete` — 404, который он закрывает) и B520 (паритет админских
+правил) искали свои маршруты в `cmd/skygate/routes.go`. Обе переведены на поверхность пакета
+через `scripts/lib/gosurface.sh` в том же коммите. С прошлых шагов та же участь постигла
+B380, B440, B517, B518, B519 — теперь **ни один** контракт, ищущий маршрут, не привязан к
+одному файлу.
+
+### Проверено
+
+* `bash scripts/check_b528_route_registries.sh` — 6 PASS / 0 FAIL (A1 печатает 717, C2 знает
+  девять семейств);
+* восемь контрактов правил: B379 20/0, B520 6/0, B380 35/0, B440 44/0, B517 7/0, B518 6/0,
+  B519 6/0, B376 32/0;
+* `go build ./...`, `go vet ./cmd/skygate/`, `gofmt -l cmd/skygate` — чисто;
+* дифференциальный прогон каталога — см. лог прогона.
+
+### Итог программы на этот релиз
+
+**104** маршрута переехали в восемь реестров (`routes_headscale.go`,
+`routes_admin_update.go`, `routes_admin_exit_nodes.go`, `routes_admin_users.go`,
+`routes_admin_derp.go`, `routes_my_exit_rules.go`, `routes_admin_exit_rules.go` и
+`routes_admin_users.go`'s соседи), `registerRoutes()` 1 109 → **717**. В `routes.go`
+осталось 157 регистраций; следующие кандидаты: `/admin/cluster` (12), `/admin/ha` (11),
+`/admin/backup` (11), `/admin/devices` (10), `/admin/database` (11 минус проводка
+`dbmigrate.SetCurrentClaims`, которая остаётся по делу). Открытые пункты программы: B529
+(три шаблона правил → partials), B530 (граница слоя данных) и остаток B532 (`cluster.go`
+1 618, `reconciler.go` 1 601).
+
+
 ## v1.5.274 — `/my/exit-rules` уехало в свой реестр: `registerRoutes()` 814 → 761
 
 **Date:** 2026-11-27 · **Base:** `v1.5.273` → this tag · **Compatibility:** без миграций.

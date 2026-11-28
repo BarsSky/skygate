@@ -51,7 +51,10 @@ skip() { printf '\033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 HANDLER=internal/feature/exit_rules/admin_delete_b379.go
-ROUTES=cmd/skygate/routes.go
+# B528 step 6 (v1.5.275): the admin rules routes live in routes_admin_exit_rules.go now,
+# so this row reads the PACKAGE surface instead of one file.
+. scripts/lib/gosurface.sh
+gosurface ROUTES cmd/skygate/*.go || { echo "B379: cannot read the cmd/skygate surface" >&2; exit 2; }
 TPL=internal/handlers/templates/admin/exit_rules.html
 TESTS=internal/feature/exit_rules/admin_delete_b379_test.go
 

@@ -16,7 +16,10 @@
 # runs of routes.go, because a family is a SET of routes, not always a contiguous block;
 # 5 — /my/exit-rules (15), which needed FOUR parameters instead of the usual three:
 # (mux, authMW, apiMW, exitRulesSvc), because the JSON API is rate-limited and the
-# assistant brief is deliberately token-in-URL rather than session-gated.
+# assistant brief is deliberately token-in-URL rather than session-gated; 6 — /admin/exit-rules
+# (15) together with the one USER-facing route of the same relay-request channel
+# (POST /my/exit-rules/relay-request), because a conversation split across two registries
+# is a conversation nobody can read from either side.
 #
 # WHAT THIS CONTRACT PINS
 #   A. the size is measured, printed and frozen (B525 budget, only falling);
@@ -67,7 +70,7 @@ fi
 
 # --- B: every registry declared once, called once, from registerRoutes -----------
 B_MISS=""
-for reg in registerHeadscaleRoutes registerAdminUpdateRoutes registerAdminExitNodesRoutes registerAdminUsersRoutes registerAdminDerpRoutes registerMyExitRulesRoutes; do
+for reg in registerHeadscaleRoutes registerAdminUpdateRoutes registerAdminExitNodesRoutes registerAdminUsersRoutes registerAdminDerpRoutes registerMyExitRulesRoutes registerAdminExitRulesRoutes; do
   decls=$(grep -cE "^func ${reg}\(" cmd/skygate/*.go 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
   calls=$(grep -cE "^[[:space:]]+${reg}\(" cmd/skygate/*.go 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
   [ "$decls" = "1" ] || B_MISS="${B_MISS}${reg}: declared ${decls} time(s), must be exactly 1"$'\n'
@@ -76,7 +79,7 @@ done
 # the calls must live inside registerRoutes (one level down, not in main or a phase)
 ROUTES_FILE="$(grep -rl '^func registerRoutes(' cmd/skygate/*.go 2>/dev/null | head -1)"
 if [ -n "$ROUTES_FILE" ]; then
-  for reg in registerHeadscaleRoutes registerAdminUpdateRoutes registerAdminExitNodesRoutes registerAdminUsersRoutes registerAdminDerpRoutes registerMyExitRulesRoutes; do
+  for reg in registerHeadscaleRoutes registerAdminUpdateRoutes registerAdminExitNodesRoutes registerAdminUsersRoutes registerAdminDerpRoutes registerMyExitRulesRoutes registerAdminExitRulesRoutes; do
     grep -qE "^[[:space:]]+${reg}\(" "$ROUTES_FILE" \
       || B_MISS="${B_MISS}${reg} is not called from registerRoutes (${ROUTES_FILE})"$'\n'
   done
@@ -125,15 +128,20 @@ check_family cmd/skygate/routes_admin_derp.go "/admin/derp" 19
 # (/my/exit-rules/relay-request) lives in the admin rules block, so the total across
 # the entrypoint must stay 16.
 check_family cmd/skygate/routes_my_exit_rules.go "/my/exit-rules" 15
+# B528 step 6: the admin rules family (15), plus the ONE user-facing route that belongs
+# to the same relay-request channel and therefore travels with it (the user asks,
+# the operator answers on the neighbouring admin endpoint).
+check_family cmd/skygate/routes_admin_exit_rules.go "/admin/exit-rules" 15
+check_family cmd/skygate/routes_admin_exit_rules.go "/my/exit-rules" 1
 if [ -z "$C_MISS" ]; then
-  ok "C2: each moved family still carries exactly the registrations it had (update 11, exit-nodes 21, headscale 7, users 23, control-planes 2, subnets 1, derp 19, my/exit-rules 15)"
+  ok "C2: each moved family still carries exactly the registrations it had (update 11, exit-nodes 21, headscale 7, users 23, control-planes 2, subnets 1, derp 19, my/exit-rules 15, admin/exit-rules 15 (+1 shared)"
 else
   while IFS= read -r l; do [ -n "$l" ] && bad "C2: $l"; done <<< "$C_MISS"
 fi
 
 # --- D: bookkeeping -------------------------------------------------------------
 D_MISS=""
-for f in cmd/skygate/routes_admin_update.go cmd/skygate/routes_admin_exit_nodes.go cmd/skygate/routes_headscale.go cmd/skygate/routes_admin_users.go cmd/skygate/routes_admin_derp.go cmd/skygate/routes_my_exit_rules.go; do
+for f in cmd/skygate/routes_admin_update.go cmd/skygate/routes_admin_exit_nodes.go cmd/skygate/routes_headscale.go cmd/skygate/routes_admin_users.go cmd/skygate/routes_admin_derp.go cmd/skygate/routes_my_exit_rules.go cmd/skygate/routes_admin_exit_rules.go; do
   git ls-files --error-unmatch "$f" >/dev/null 2>&1 \
     || D_MISS="${D_MISS}${f} is NOT tracked by git (trap 11)"$'\n'
 done

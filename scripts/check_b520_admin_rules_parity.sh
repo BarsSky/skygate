@@ -57,7 +57,10 @@ SVC=internal/feature/exit_rules/admin_toggle_b520.go
 FORM=internal/feature/exit_rules/form_admin.go
 DBQ=internal/db/queries.go
 DBF=internal/db/device_rules.go
-ROUTES=cmd/skygate/routes.go
+# B528 step 6 (v1.5.275): the admin rules routes live in routes_admin_exit_rules.go now,
+# so this row reads the PACKAGE surface instead of one file.
+. scripts/lib/gosurface.sh
+gosurface ROUTES cmd/skygate/*.go || { echo "B520: cannot read the cmd/skygate surface" >&2; exit 2; }
 TPL=internal/handlers/templates/admin/exit_rules.html
 CAT=internal/i18n/catalog_exit_rules.go
 TEST=internal/feature/exit_rules/admin_toggle_b520_test.go

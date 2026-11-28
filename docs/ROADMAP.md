@@ -343,6 +343,7 @@ own detector on planted violations**.
 
 ### 4.1 Recorded 2026-11-15 — the migration's two live findings
 
+**SHIPPED in v1.5.275:** B528 step 6 — the `/admin/exit-rules` family (15 registrations: the admin rules page and its writes, the advertised-route sync pair and the cleanup pair) moved VERBATIM into `cmd/skygate/routes_admin_exit_rules.go`, together with the ONE user-facing route of the same relay-request channel (`POST /my/exit-rules/relay-request`: the user asks, the operator answers on the neighbouring admin endpoint, so the pair travels together). `registerRoutes()` 761 → **717**, budget lowered in the same commit, total `mux.Handle` across the package still 279. B379 and B520 — the last two contracts still reading `routes.go` for these paths — were renegotiated onto the package surface. Running total for the programme: 104 routes moved into eight registries, `registerRoutes()` 1 109 → 717.
 **SHIPPED in v1.5.274:** B528 step 5 — the `/my/exit-rules` family (15 registrations: the user's rules page and its writes, the JSON API, the help page and the assistant brief) moved VERBATIM into `cmd/skygate/routes_my_exit_rules.go`; `registerRoutes()` 814 → **761**, budget lowered in the same commit, total `mux.Handle` across the package still 279. The registry is the first that needs FOUR parameters — `apiMW` sits on top of `authMW` for the JSON API, and the assistant brief is deliberately token-in-URL without `authMW`, so the signature the compiler derived is `(mux, authMW, apiMW, exitRulesSvc)`. Five contracts that read `routes.go` as a FILE for these paths (B380, B440, B517, B518, B519) were renegotiated onto the package surface in the same commit — the B339 class again, caught before it fired rather than after.
 **SHIPPED in v1.5.273:** B528 step 4 — the `/admin/derp` family (19 registrations: the status page, its cert-sync / metrics / dashboard controls, the runtime config form and the relay CRUD, one endpoint deliberately without `authMW`) moved VERBATIM into `cmd/skygate/routes_admin_derp.go`; `registerRoutes()` 887 → **814**, budget lowered in the same commit, total `mux.Handle` across the package still 279. The family was assembled from TWO runs of `routes.go` — a family is a set of routes, not always a contiguous block — and the shared comment that described both `/admin/integrations` and `/admin/derp/config` was split, the landing page keeping a short note where the registry call now sits. The measurement also caught a real defect: the entrypoint count came out 280 (+1) because the move had left a SECOND copy of `GET /admin/integrations` — Go accepts two registrations of one pattern and the last one wins, so neither the compiler nor a 300-line diff names it; the frozen total did.
 **SHIPPED in v1.5.272:** B528 step 3 — the `/admin/users` family moved VERBATIM into `cmd/skygate/routes_admin_users.go`: the users page and its per-row writes (23 registrations), the per-user headscale control plane (2) and the subnet-routing landing page (1), 26 in all; `registerRoutes()` 973 → **887**, the B525 budget lowered in the same commit, and the total `mux.Handle` count across the package still 279 (no route lost). The family boundary follows the FEATURE, not the file's neighbourhood: `/admin/subnets` moved with the users page whose subnet tab links to it, while `/admin/devices` stayed. Two rows that read `routes.go` as a FILE were renegotiated in the same commit — otherwise the next step would have turned them red on a change that loses nothing: B339 E3 counts registrations across the entrypoint with the same floor 270, and B376 E10 searches every `cmd/skygate/*.go` for the delete route. The B528 contract gained the new file's three families (users 23, control-planes 2, subnets 1). **v1.5.271 (recorded here in the same edit):** B532 step 1 — `internal/update/docker.go` 1 515 → **517** split by section into five files, B531 CLOSED by measurement (the tree's largest `init()` is 10 lines), contract B532 measures the register of files ≥ 1 500 lines.
@@ -756,12 +757,22 @@ being paid down in blocks with a ratchet instead of a big-bang rewrite.
    `(mux, authMW, apiMW, exitRulesSvc)` — derived, not chosen. Five contracts that read
    `routes.go` as a FILE for these paths (B380, B440, B517, B518, B519) were renegotiated onto
    the package surface through `scripts/lib/gosurface.sh` in the same commit.
-   **What is left:** 173 registrations in `routes.go`; the next candidates are
-   `/admin/exit-rules` (15 plus `/my/exit-rules/relay-request`, which sits in that block),
-   `/admin/cluster` (12), `/admin/ha` (11), `/admin/backup` (11), `/admin/devices` (10) and
-   `/admin/database` (11 — but `dbmigrate.SetCurrentClaims` lives in that block and is WIRING,
-   not a route, so it stays in `registerRoutes`) — same rule: one group at a time, the parameter
-   list derived by the compiler, lines moved verbatim, budget lowered in the same commit.
+   **Step 6 (v1.5.275):** the `/admin/exit-rules` family — the admin rules page and its
+   writes (add, delete, toggle, bulk, bulk-relay, relay-request, relay-policy, rollback,
+   limits, reapply), the advertised-route sync pair and the cleanup pair, 15 registrations —
+   moved to `routes_admin_exit_rules.go`; `registerRoutes()` is **717** lines. The file also
+   carries ONE user-facing route, `POST /my/exit-rules/relay-request`, because it is the user
+   half of the SAME request channel that the neighbouring admin endpoint answers — a
+   conversation split across two registries is unreadable from both sides. B379 and B520, the
+   last two rows still reading `routes.go` for these paths, were renegotiated onto the package
+   surface in the same commit. Running total: **104** routes moved into eight registry files
+   (`registerRoutes()` 1 109 → **717**, a third of the function).
+   **What is left:** 157 registrations in `routes.go` (the non-route wiring in that function —
+   `dbmigrate.SetCurrentClaims`, the middleware construction — stays by design); the next
+   candidates are `/admin/cluster` (12), `/admin/ha` (11), `/admin/backup` (11),
+   `/admin/devices` (10) and `/admin/database` (11, minus its wiring) — same rule: one group at
+   a time, the parameter list derived by the compiler, lines moved verbatim, budget lowered in
+   the same commit.
 3. **B529: three rule templates → partials** (`exit_rules.html` 1 609, `admin/exit_nodes.html`
    1 397, `admin/exit_rules.html` 1 097). Templates are parsed as a set, so `{{define}}` blocks
    in a new file work; guards are B436 (html balance) and B521 (the mobile measurement).
