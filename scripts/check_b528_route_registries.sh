@@ -19,7 +19,9 @@
 # assistant brief is deliberately token-in-URL rather than session-gated; 6 — /admin/exit-rules
 # (15) together with the one USER-facing route of the same relay-request channel
 # (POST /my/exit-rules/relay-request), because a conversation split across two registries
-# is a conversation nobody can read from either side.
+# is a conversation nobody can read from either side; 7 — /admin/cluster (12), where each
+# block keeps the comment that explains WHY it exists (the self-upgrade guard, the onboard
+# token): a registry without its reasons is a list of paths.
 #
 # WHAT THIS CONTRACT PINS
 #   A. the size is measured, printed and frozen (B525 budget, only falling);
@@ -70,7 +72,7 @@ fi
 
 # --- B: every registry declared once, called once, from registerRoutes -----------
 B_MISS=""
-for reg in registerHeadscaleRoutes registerAdminUpdateRoutes registerAdminExitNodesRoutes registerAdminUsersRoutes registerAdminDerpRoutes registerMyExitRulesRoutes registerAdminExitRulesRoutes; do
+for reg in registerHeadscaleRoutes registerAdminUpdateRoutes registerAdminExitNodesRoutes registerAdminUsersRoutes registerAdminDerpRoutes registerMyExitRulesRoutes registerAdminExitRulesRoutes registerAdminClusterRoutes; do
   decls=$(grep -cE "^func ${reg}\(" cmd/skygate/*.go 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
   calls=$(grep -cE "^[[:space:]]+${reg}\(" cmd/skygate/*.go 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
   [ "$decls" = "1" ] || B_MISS="${B_MISS}${reg}: declared ${decls} time(s), must be exactly 1"$'\n'
@@ -79,7 +81,7 @@ done
 # the calls must live inside registerRoutes (one level down, not in main or a phase)
 ROUTES_FILE="$(grep -rl '^func registerRoutes(' cmd/skygate/*.go 2>/dev/null | head -1)"
 if [ -n "$ROUTES_FILE" ]; then
-  for reg in registerHeadscaleRoutes registerAdminUpdateRoutes registerAdminExitNodesRoutes registerAdminUsersRoutes registerAdminDerpRoutes registerMyExitRulesRoutes registerAdminExitRulesRoutes; do
+  for reg in registerHeadscaleRoutes registerAdminUpdateRoutes registerAdminExitNodesRoutes registerAdminUsersRoutes registerAdminDerpRoutes registerMyExitRulesRoutes registerAdminExitRulesRoutes registerAdminClusterRoutes; do
     grep -qE "^[[:space:]]+${reg}\(" "$ROUTES_FILE" \
       || B_MISS="${B_MISS}${reg} is not called from registerRoutes (${ROUTES_FILE})"$'\n'
   done
@@ -133,15 +135,18 @@ check_family cmd/skygate/routes_my_exit_rules.go "/my/exit-rules" 15
 # the operator answers on the neighbouring admin endpoint).
 check_family cmd/skygate/routes_admin_exit_rules.go "/admin/exit-rules" 15
 check_family cmd/skygate/routes_admin_exit_rules.go "/my/exit-rules" 1
+# B528 step 7: the cluster plane — page, node lifecycle, invites, onboarding, the
+# rolling-upgrade orchestrator and discovery.
+check_family cmd/skygate/routes_admin_cluster.go "/admin/cluster" 12
 if [ -z "$C_MISS" ]; then
-  ok "C2: each moved family still carries exactly the registrations it had (update 11, exit-nodes 21, headscale 7, users 23, control-planes 2, subnets 1, derp 19, my/exit-rules 15, admin/exit-rules 15 (+1 shared)"
+  ok "C2: each moved family still carries exactly the registrations it had (update 11, exit-nodes 21, headscale 7, users 23, control-planes 2, subnets 1, derp 19, my/exit-rules 15, admin/exit-rules 15 (+1 shared), cluster 12"
 else
   while IFS= read -r l; do [ -n "$l" ] && bad "C2: $l"; done <<< "$C_MISS"
 fi
 
 # --- D: bookkeeping -------------------------------------------------------------
 D_MISS=""
-for f in cmd/skygate/routes_admin_update.go cmd/skygate/routes_admin_exit_nodes.go cmd/skygate/routes_headscale.go cmd/skygate/routes_admin_users.go cmd/skygate/routes_admin_derp.go cmd/skygate/routes_my_exit_rules.go cmd/skygate/routes_admin_exit_rules.go; do
+for f in cmd/skygate/routes_admin_update.go cmd/skygate/routes_admin_exit_nodes.go cmd/skygate/routes_headscale.go cmd/skygate/routes_admin_users.go cmd/skygate/routes_admin_derp.go cmd/skygate/routes_my_exit_rules.go cmd/skygate/routes_admin_exit_rules.go cmd/skygate/routes_admin_cluster.go; do
   git ls-files --error-unmatch "$f" >/dev/null 2>&1 \
     || D_MISS="${D_MISS}${f} is NOT tracked by git (trap 11)"$'\n'
 done

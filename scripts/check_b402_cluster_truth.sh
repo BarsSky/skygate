@@ -54,7 +54,10 @@ JOIN=internal/cluster/join.go
 DAEMON=cmd/skygate/cluster.go
 CL=internal/feature/admin/cluster.go
 TPL=internal/handlers/templates/admin/cluster.html
-ROUTES=cmd/skygate/routes.go
+# B528 step 7 (v1.5.278): the cluster routes live in routes_admin_cluster.go now, so
+# this row reads the PACKAGE surface instead of one file.
+. scripts/lib/gosurface.sh
+gosurface ROUTES cmd/skygate/*.go || { echo "B402: cannot read the cmd/skygate surface" >&2; exit 2; }
 CAT=internal/i18n/catalog_admin.go
 T_CL=internal/cluster/heartbeat_b402_test.go
 T_PAGE=internal/feature/admin/cluster_b402_test.go

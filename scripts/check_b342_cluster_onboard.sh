@@ -45,7 +45,10 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 GO=internal/feature/admin/cluster_onboard_b342.go
 TPL=internal/handlers/templates/admin/cluster.html
 I18N=internal/i18n/catalog_admin.go
-ROUTES=cmd/skygate/routes.go
+# B528 step 7 (v1.5.278): the cluster routes live in routes_admin_cluster.go now, so
+# this row reads the PACKAGE surface instead of one file.
+. scripts/lib/gosurface.sh
+gosurface ROUTES cmd/skygate/*.go || { echo "B342: cannot read the cmd/skygate surface" >&2; exit 2; }
 CAT=scripts/verify_pre_deploy.sh
 
 for f in "$GO" "$TPL" "$I18N" "$ROUTES" "$CAT"; do
