@@ -1,5 +1,57 @@
 # Skygate release notes
 
+## v1.5.270 — таблица маршрутов стала набором реестров: `registerRoutes()` 1 096 → 973
+
+**Date:** 2026-11-27 · **Base:** `v1.5.269` → this tag · **Compatibility:** без миграций.
+
+### Что было
+
+Аудит 2026-11-27: `registerRoutes()` — **1 109 строк при 274 вызовах `mux.Handle`**. Причина
+не в лени: каждое замыкание захватывает одни и те же локальные (`app`, `adminSvc`, `mySvc`,
+`authMW`, …), поэтому дробление — вопрос **связности**, а не механический перенос. Шаг 1
+(v1.5.265) увёл группу `/admin/headscale*` (7 маршрутов) в `routes_headscale.go` — и ратчет
+B525 отказал в росте на 6 строк, который требовал B533.
+
+### Что теперь (B528, шаг 2)
+
+Две **соседние хвостовые** группы переехали дословно, каждая — со своим списком параметров,
+который вывел компилятор (обеим нужны ровно `mux`, `authMW` и `adminSvc`):
+
+* `/admin/update` — 11 маршрутов → `cmd/skygate/routes_admin_update.go`
+  (`registerAdminUpdateRoutes`);
+* `/admin/exit-nodes` — 21 маршрут → `cmd/skygate/routes_admin_exit_nodes.go`
+  (`registerAdminExitNodesRoutes`).
+
+`registerRoutes()` = **973 строки** (было 1 096), бюджет B525 понижен тем же коммитом.
+Маршруты не потеряны: **279** регистраций `mux.Handle` по пакету (пол в контракте — 270), и
+каждая переехавшая группа несёт ровно столько регистраций, сколько было до переезда
+(update 11, exit-nodes 21, headscale 7).
+
+### Новый контракт B528
+
+`scripts/check_b528_route_registries.sh` (6 утверждений):
+**A** размер `registerRoutes()` измерен, напечатан и заморожен (бюджет только падает);
+**B** каждый реестр объявлен ровно один раз, вызван ровно один раз и **именно из
+`registerRoutes`** (реестр, который никто не зовёт, — это маршруты, до которых не дойти;
+вызванный дважды — обработчик, зарегистрированный дважды);
+**C** ни один маршрут не потерян — общее число `mux.Handle` не ниже пола, и каждая группа
+сохранила своё число регистраций; **D** файлы отслеживаются git-ом, блок в каталоге и в
+индексе AGENTS.
+
+### Проверено
+
+* `bash scripts/check_b528_route_registries.sh` — 6 PASS / 0 FAIL;
+* `bash scripts/check_b525_complexity_ratchet.sh` — 8/0 (`registerRoutes` 973);
+  `bash scripts/check_b526_boot_phases.sh` — 12/0; `bash scripts/check_b339_refactor_surface_contracts.sh`
+  — 39/0; `bash scripts/check_b372_main_is_not_one_giant_function.sh` — 25/0;
+* `go build ./...`, `go vet ./...`, `go test ./cmd/skygate/` — чисто.
+
+### Что дальше по B528
+
+В `routes.go` осталось **237 регистраций**. Следующие кандидаты — блоки, которые лежат
+непрерывно и требуют минимума параметров: `/admin/users` (15+8), `/my/exit-rules` (15),
+`/admin/derp` (13), `/admin/cluster` (12), `/admin/ha` (11), `/admin/backup` (11).
+
 ## v1.5.269 — `main()` 381 строка: цель программы «<400» достигнута
 
 **Date:** 2026-11-27 · **Base:** `v1.5.268` → this tag · **Compatibility:** без миграций.
