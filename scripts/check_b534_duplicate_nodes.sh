@@ -84,9 +84,16 @@ grep -q 'DetectDuplicates(nodes)' "$TICK" \
   || B_MISS="${B_MISS}the maintenance tick does not run the detector — the fact would never leave a manual page load"$'\n'
 grep -q 'duplicate-node: %s' "$TICK" \
   || B_MISS="${B_MISS}the tick does not log the pair"$'\n'
-grep -q 'ReportFailure(dup.NewID, dup.NewGiven, dup.NewTag, dup.AlertError())' "$TICK" \
-  || B_MISS="${B_MISS}the pair is not reported through the tag alert sink (no audit row, no metric, no Telegram)"$'\n'
-if [ -z "$B_MISS" ]; then ok "B: the tick reports every pair through audit + metric + Telegram"
+# B536 (v1.5.277): the report has its OWN channel. It used to go through
+# ReportFailure, which made a report wear the failure's costume («❌ skygate tag
+# autoupdate FAILED … failed tag … reason: unknown») and cost the operator an evening of
+# chasing a tag write that never happened. The three signals are the same; the words are not.
+grep -q 'alertSink.ReportDuplicate(dup)' "$TICK" \
+  || B_MISS="${B_MISS}the pair is not reported through the duplicate channel (no audit row, no metric, no Telegram)"$'\n'
+if grep -q 'ReportFailure(dup\.' "$TICK"; then
+  B_MISS="${B_MISS}a duplicate is still reported as a TAG FAILURE — the metric and the message would lie"$'\n'
+fi
+if [ -z "$B_MISS" ]; then ok "B: the tick reports every pair through the duplicate channel (audit + its own metric + Telegram)"
 else while IFS= read -r l; do [ -n "$l" ] && bad "B: $l"; done <<< "$B_MISS"; fi
 
 # --- C: the page shows it ------------------------------------------------------

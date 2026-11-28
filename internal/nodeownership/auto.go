@@ -274,13 +274,16 @@ func runOneTick(ctx context.Context, dbConn db.DBSource, hs nodeLister, alertSin
 	// 2026-11-27: `skybars-1` (skyadmin, online, created 14:41) next to `skybars`
 	// (daniil, offline since 12:16), found by the operator's eye, not by the product.
 	//
-	// The report goes through the same sink as a failed tag write (audit + metric +
-	// rate-limited Telegram), and it never acts: which node IS the device is the
-	// operator's call (the per-row delete on /admin/devices already exists).
+	// The report goes through its OWN channel (B536): audit `node.duplicate`, metric
+	// skygate_duplicate_nodes_total, and a Telegram message titled «Дубликат узла». It
+	// used to go through ReportFailure, which made a report wear the failure's costume —
+	// «❌ skygate tag autoupdate FAILED … failed tag … reason: unknown» — and the operator
+	// read it as "the update failed" (live 2026-11-28). Nothing is retried and nothing is
+	// acted on: which node IS the device is the operator's call (§ the per-row delete).
 	for _, dup := range DetectDuplicates(nodes) {
 		log.Printf("duplicate-node: %s", dup.Reason())
 		if alertSink != nil {
-			alertSink.ReportFailure(dup.NewID, dup.NewGiven, dup.NewTag, dup.AlertError())
+			alertSink.ReportDuplicate(dup)
 		}
 	}
 	// B505 (2026-11-20): refresh the `devices` PROJECTION from exactly the two

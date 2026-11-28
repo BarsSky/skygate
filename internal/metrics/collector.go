@@ -337,6 +337,24 @@ var TagUnmatchedCounter = NewCounterVec(
 	[]string{"node_id", "hostname"},
 )
 
+// DuplicateNodesCounter counts REPORTED duplicate nodes — one physical device behind two
+// headscale nodes (B534 detector, B536 series). It is deliberately NOT part of
+// skygate_tag_autoupdate_failures_total: no tag write was attempted and nothing errored,
+// and counting a report as a failure makes the failure metric lie — live 2026-11-28 the
+// operator read «tag autoupdate FAILED … reason: unknown» about a node whose tag was
+// never touched, and concluded skygate could not update itself.
+//
+// Labels:
+//   - kind: same_host_stale | same_host_live | different_host (the EVIDENCE the detector
+//     found, so a dashboard can show "one device re-registered" separately from a name
+//     collision).
+//   - node_id: the NEW (suffixed) node — the one the operator usually keeps.
+var DuplicateNodesCounter = NewCounterVec(
+	"skygate_duplicate_nodes_total",
+	"Duplicate headscale nodes reported (same device behind two nodes, or a name collision).",
+	[]string{"node_id", "kind"},
+)
+
 // ----- Production SourceProvider -----
 
 // DBPoolSource is a SourceProvider backed by a
