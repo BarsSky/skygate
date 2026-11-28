@@ -1,5 +1,56 @@
 # Skygate release notes
 
+## v1.5.273 — `/admin/derp` уехало в свой реестр: `registerRoutes()` 887 → 814
+
+**Date:** 2026-11-27 · **Base:** `v1.5.272` → this tag · **Compatibility:** без миграций.
+
+### Что теперь (B528, шаг 4)
+
+`cmd/skygate/routes_admin_derp.go` — **19** регистраций, переехавших дословно: страница статуса
+`/admin/derp`, её кнопки `cert-sync/run`, `metrics-endpoint`, `refresh`, `dashboard` и
+`dashboard/refresh`, форма конфига (`GET`/`POST /admin/derp/config`) и весь CRUD релеев —
+`relays`, `add`, `edit`, `delete`, `toggle`, `test`, `probe-host`, `init` (GET+POST),
+`derpmap.json` и `apply-headscale`. Один из них, `/admin/derp/relays/derpmap.json`, объявлен
+**без** `authMW` намеренно: его забирает headscale изнутри docker-сети, и это свойство
+маршрута, а не недосмотр — оно описано в шапке файла.
+
+`registerRoutes()` = **814 строк**, бюджет B525 снижен в том же коммите, `mux.Handle` по
+пакету — по-прежнему **279**.
+
+### Семья — это множество, а не соседний блок
+
+Часть семейства (`/admin/derp/refresh`, `/admin/derp/dashboard`, `dashboard/refresh`) живёт
+далеко внизу файла, в блоке разнородных админских маршрутов. Поэтому «переехало дословно»
+здесь означает перенос **строк**, а не **позиции**: реестр собирается из двух участков, и это
+записано в контракте (шаг 4). Общий комментарий, который объяснял сразу
+`/admin/integrations` и `/admin/derp/config`, разделён: landing-страница получила короткую
+заметку там, где теперь стоит вызов реестра, а объяснение формы конфига уехало с формой.
+
+### Замер поймал дубликат
+
+После переноса общее число `mux.Handle` по пакету стало **280** вместо 279: в `routes.go`
+осталась ВТОРАЯ копия `GET /admin/integrations`, вставленная рядом с новой. Ни компилятор, ни
+diff на три сотни маршрутов этого не назовут — Go разрешает два `Handle` на один шаблон
+(`ServeMux` просто берёт последний, паники нет). Назвала строка **B528 C1**, у которой
+заморожен полный счёт по пакету. Дубликат удалён, счёт снова 279.
+
+### Проверено
+
+* `bash scripts/check_b528_route_registries.sh` — 6 PASS / 0 FAIL (A1 печатает 814, C2 знает
+  семь семейств);
+* `go build ./...`, `go vet ./cmd/skygate/`, `gofmt -l cmd/skygate` — чисто;
+* дифференциальный прогон каталога — см. лог прогона.
+
+### Что дальше
+
+В `routes.go` осталось 188 регистраций. Следующие кандидаты: `/my/exit-rules` (15),
+`/admin/cluster` (12), `/admin/ha` (11), `/admin/backup` (11), `/admin/devices` (10),
+`/admin/database` (11 — но в том же блоке живёт `dbmigrate.SetCurrentClaims`, это проводка, а
+не маршрут, и она остаётся в `registerRoutes`). Открытые пункты программы: B529 (три шаблона
+правил → partials), B530 (граница слоя данных) и остаток B532 (`cluster.go` 1 618,
+`reconciler.go` 1 601).
+
+
 ## v1.5.272 — `/admin/users` уехало в свой реестр: `registerRoutes()` 973 → 887
 
 **Date:** 2026-11-27 · **Base:** `v1.5.271` → this tag · **Compatibility:** без миграций.
