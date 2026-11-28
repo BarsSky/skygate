@@ -251,12 +251,9 @@ func registerRoutes(
 	// routes_admin_derp.go — see that file for why.
 	registerAdminDerpRoutes(mux, authMW, adminSvc)
 
-	// v1.5.0 / B149 — /admin/ha (High Availability chain editor).
-	// The page renders the cluster topology, failover policy,
-	// HA nodes CRUD, DNS provider credentials, and force actions.
-	// See internal/feature/admin/ha.go for the handler bodies
-	// + doc comments and internal/ha/ for the underlying types.
-	mux.Handle("GET /admin/ha", authMW(http.HandlerFunc(adminSvc.GetAdminHA)))
+	// B528 step 8 (v1.5.279): the /admin/ha family lives in
+	// routes_admin_ha.go — the page and the ten writes behind it.
+	registerAdminHARoutes(mux, authMW, adminSvc)
 
 	// v1.5.0+ / B195 — /admin/database (DB management, Phase 1.1 read-only).
 	// The page renders the live DSN (from env), the desired DSN
@@ -404,23 +401,6 @@ func registerRoutes(
 	mux.Handle("GET /admin/deploy", authMW(http.HandlerFunc(adminSvc.GetAdminDeploy)))
 	mux.Handle("POST /admin/deploy/push", authMW(http.HandlerFunc(adminSvc.PostAdminDeployPush)))
 	mux.Handle("POST /admin/deploy/test-failover", authMW(http.HandlerFunc(adminSvc.PostAdminDeployTestFailover)))
-	mux.Handle("POST /admin/ha/chain/edit", authMW(http.HandlerFunc(adminSvc.PostAdminHAChainEdit)))
-	mux.Handle("POST /admin/ha/auto-reclaim-toggle", authMW(http.HandlerFunc(adminSvc.PostAdminHAAutoReclaimToggle)))
-	mux.Handle("POST /admin/ha/node/add", authMW(http.HandlerFunc(adminSvc.PostAdminHAAddNode)))
-	mux.Handle("POST /admin/ha/node/remove", authMW(http.HandlerFunc(adminSvc.PostAdminHARemoveNode)))
-	mux.Handle("POST /admin/ha/force-promote", authMW(http.HandlerFunc(adminSvc.PostAdminHAForcePromote)))
-	mux.Handle("POST /admin/ha/force-demote", authMW(http.HandlerFunc(adminSvc.PostAdminHAForceDemote)))
-	mux.Handle("POST /admin/ha/reclaim", authMW(http.HandlerFunc(adminSvc.PostAdminHAReclaim)))
-	// v1.5.0+ / Phase 3.4 — skygate-cluster node failover
-	// (operator-driven counterpart to the B204 elector's
-	// automatic failover_recommend).
-	mux.Handle("POST /admin/ha/cluster/failover", authMW(http.HandlerFunc(adminSvc.PostAdminHAClusterFailover)))
-	mux.Handle("POST /admin/ha/dns/save", authMW(http.HandlerFunc(adminSvc.PostAdminHADNSCredsSave)))
-	mux.Handle("POST /admin/ha/dns/test", authMW(http.HandlerFunc(adminSvc.PostAdminHADNSCredsTest)))
-	// B472 (2026-11-14): the panel twin of the CLI's `dns-records` — read-only, so the
-	// operator can see the current A record from the page instead of a shell on the host that
-	// is about to be stopped.
-	mux.Handle("POST /admin/ha/dns/records", authMW(http.HandlerFunc(adminSvc.PostAdminHADNSRecords)))
 
 	// v1.5.0 / B194 — auto-deploy framework pages.
 	//

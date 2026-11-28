@@ -343,6 +343,7 @@ own detector on planted violations**.
 
 ### 4.1 Recorded 2026-11-15 — the migration's two live findings
 
+**SHIPPED in v1.5.279:** B528 step 8 — the `/admin/ha` family (12 registrations: the chain editor page and its eleven writes) moved VERBATIM into `cmd/skygate/routes_admin_ha.go`; `registerRoutes()` 663 → **643**, budget lowered in the same commit, total `mux.Handle` still 279. The page and its writes lived in two different runs of `routes.go`; the registry keeps them together because every write serves that page. Programme total: 128 routes in eleven registries, `registerRoutes()` 1 109 → 643.
 **SHIPPED in v1.5.278:** B528 step 7 — the `/admin/cluster` family (12 registrations: the topology page, the node lifecycle, the invite pair, onboarding, the rolling-upgrade orchestrator and the discovery tick) moved VERBATIM into `cmd/skygate/routes_admin_cluster.go`; `registerRoutes()` 717 → **663**, budget lowered in the same commit, total `mux.Handle` across the package still 279. Each block kept its explanatory comment — the registry is not a bare list of paths. B342 and B402 were renegotiated onto the package surface. Programme total: 116 routes moved into nine registries.
 **SHIPPED in v1.5.277:** B536 — a REPORT must not wear the failure's costume. The operator's screen at 08:05, right under «⏰ Плановое обновление … начинается», read «❌ skygate tag autoupdate FAILED … failed tag: tag:dev-skyadmin-skybars-1 / reason: unknown / error: duplicate name …» — and every label was wrong: no tag was written for that node, nothing failed, and the reason is B534's detector reporting one device behind two headscale nodes. B534 had routed the report through `ReportFailure` because that hook already carried the three signals, so the report inherited the headline, the `failed tag` field and the failure COUNTER — the tag-failure metric counted reports (reason="unknown" for events where no tag write was attempted). Now the report has its own channel: audit `node.duplicate`, its own `skygate_duplicate_nodes_total{node_id,kind}`, and a message titled «⚠️ Дубликат узла» that names both nodes, states the evidence kind (re-registration / both online / name collision), the action, and says in so many words that this is NOT a tag failure and not a failed update. Rate limit per (node, kind). 6 contract groups in `scripts/check_b536_duplicate_report_is_not_a_failure.sh` + 4 `TestB536*` tests; the B534 contract was renegotiated in the same commit.
 **SHIPPED in v1.5.276:** B537 — «Не смог обновиться skygate» was a MISSING MESSAGE, not a failed update. The live pair: 08:00 «⏰ Плановое обновление … v1.5.265+4d594e2e → v1.5.270» and then silence; at 08:51 the operator concluded the update had failed while the state file said `done`. `runScheduled` sent the verdict from the goroutine that performs the swap — and on Docker that goroutine dies when the container is recreated, so EVERY successful scheduled update was silent while a pre-swap failure still arrived. B428 had already learned this for the PANEL (`ResolvePendingSwap`); the notifier never got the same treatment. Now the verdict is recorded as FACTS in the state file (`Trigger` + `PendingNotify`: job, from, to, duration, error) by all four resolver exits (success, swap-script refusal, stalled job, rollback), and rendered by the first process that holds both the i18n catalogue and the Telegram sink. Delivery is at-least-once and at-most-once: a refusing sink puts the verdict back instead of consuming it, a restart cannot erase the debt, and a repeat cannot duplicate the message. Manual updates owe nothing — the operator's browser already watches them. 6 contract groups in `scripts/check_b537_scheduled_verdict_reaches_the_operator.sh` + 5 `TestB537*` unit tests.
@@ -779,9 +780,18 @@ being paid down in blocks with a ratchet instead of a big-bang rewrite.
    a list of paths. B342 and B402 — the two contracts still reading `routes.go` for these
    paths — were renegotiated onto the package surface in the same commit. Running total:
    **116 routes in nine registries**.
-   **What is left:** 145 registrations in `routes.go` (the non-route wiring in that function —
-   `dbmigrate.SetCurrentClaims`, the middleware construction — stays by design); the next
-   candidates are `/admin/ha` (11), `/admin/backup` (11), `/admin/devices` (10) and
+   **Step 8 (v1.5.279):** the `/admin/ha` family — the chain editor page (B149) and its
+   ELEVEN writes (chain edit, the auto-reclaim toggle, node add / remove, force promote /
+   demote, reclaim, the Phase 3.4 cluster failover, the DNS credential pair and the B472
+   read-only DNS-records view), 12 registrations — moved to `routes_admin_ha.go`;
+   `registerRoutes()` is **643** lines. The page and its writes lived in TWO different
+   places in `routes.go` (the page with the other page banners, the writes after
+   `/admin/deploy`) and belong together: every write exists to serve that page, and
+   `dns/records` was added precisely so the operator does not have to leave it for a shell
+   on the host that is about to stop. Running total: **128 routes in eleven registries**.
+   **What is left:** 133 registrations in `routes.go` (the non-route wiring in that
+   function — `dbmigrate.SetCurrentClaims`, the middleware construction — stays by design);
+   the next candidates are `/admin/backup` (11), `/admin/devices` (10) and
    `/admin/database` (11, minus its wiring) — same rule: one group at a time, the parameter
    list derived by the compiler, lines moved verbatim, budget lowered in the same commit.
 3. **B529: three rule templates → partials** (`exit_rules.html` 1 609, `admin/exit_nodes.html`
