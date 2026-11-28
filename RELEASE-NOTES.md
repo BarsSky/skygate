@@ -1,5 +1,64 @@
 # Skygate release notes
 
+## v1.5.269 — `main()` 381 строка: цель программы «<400» достигнута
+
+**Date:** 2026-11-27 · **Base:** `v1.5.268` → this tag · **Compatibility:** без миграций.
+
+### Что было и что стало
+
+Аудит 2026-11-27 измерил `main()` в **2 272 строки** при cc 139 — одна функция, в которой не
+видно, где она застряла. Программа рефакторинга шла шагами, и каждый шаг был дословным
+переносом с понижением бюджета B525:
+
+| Шаг | Что уехало | `main()` |
+|---|---|---|
+| 1–3 (v1.5.264) | dispatch сабкоманд → `subcommands.go` | 2 272 → 1 971 |
+| 4–7 (v1.5.265) | три монитора + `bootCtx` → `boot_monitors.go` | 1 971 → 1 871 |
+| 8 (v1.5.267) | фоновые службы + поздняя проводка → `boot_services.go` (+ `boot_lifecycle.go`) | 1 871 → 1 369 |
+| 9 (v1.5.268) | граф сервисов + `registerRoutes` → `boot_routes.go` | 1 369 → 516 |
+| **10 (этот релиз)** | клиент headscale + аудиты + `handlers.App` → `boot_headscale.go` | **516 → 381** |
+
+Итог: **−1 891 строки (83 %)**, cc 139 → 28. Цель «<400» достигнута, и контракт B526 теперь
+требует этого явно.
+
+### Шаг 10 подробности
+
+`cmd/skygate/boot_headscale.go` — `wireHeadscaleClient(cfg, d) (*headscale.Client, *handlers.App)`:
+137 строк дословно (`headscale.New`, `ensureHeadscaleUser`, аудит политики B272.2, cron
+реконсиляции пользователей B237.18, `ensureInfraUser`, `SanityCheckInfraUserOwners`,
+`bootstrapTelegramFromEnv`, `backfillNodeOwners`, первый автосинк и `handlers.New`).
+У блока нет ни одного `defer`, поэтому правило C3 («нет defer на уровне функции в вынесенном
+блоке») выполняется по построению; B526 получил строку **C4** для этого файла.
+
+### Контракт B526: цель включена
+
+Раньше строка «`main() ≤ 400`» намеренно отсутствовала — цель, которую нельзя выполнить
+наполовину, не контракт. Теперь она есть (**A2**) и печатает число; рядом осталась A2b
+(«не выше замороженного бюджета»), чтобы ратчет продолжал работать и после достижения цели.
+
+### Проверено
+
+* `bash scripts/check_b526_boot_phases.sh` — **12 PASS / 0 FAIL** (включая `main() is 381 lines
+  — the TARGET of the programme (<400, from 2 272) is met`);
+* `bash scripts/check_b525_complexity_ratchet.sh` — 8/0 (`main()` 381; `wireHeadscaleClient`
+  141/13 не требует бюджетной записи — ниже обоих порогов);
+* `bash scripts/check_b372_main_is_not_one_giant_function.sh` — 25/0;
+  `bash scripts/check_b269_startup_truth.sh` — 21/0;
+  `bash scripts/check_b339_refactor_surface_contracts.sh` — 39/0;
+* `go test ./cmd/skygate/` и `go vet ./...` — чисто.
+
+### Что осталось в `main()`
+
+381 строка — это `config` (~83), `services+telegram` (~109), `background-crons` (~66),
+`db-open` (20), вызовы фаз и хвост передачи сокета/shutdown (B269). Их можно выносить и дальше
+(бюджет продолжит падать), но цель программы по этому пункту закрыта.
+
+### Дальше по программе
+
+B528 — остальные подреестры `registerRoutes()` (первая группа уехала в v1.5.265), B529 — три
+шаблона правил → partials, B530 — граница слоя данных в `exit_rules`/`prefixowner`, B531 —
+`init()` на 682 строки → явная регистрация, B532 — файлы >1 500 строк.
+
 ## v1.5.268 — `main()` 1 369 → 516: фаза `routes` уехала, четыре стоппера на lifecycle
 
 **Date:** 2026-11-27 · **Base:** `v1.5.267` → this tag · **Compatibility:** без миграций.

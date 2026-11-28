@@ -6,7 +6,7 @@ blocked, and the technical-debt register. It replaces the pre-v1.6 set
 2026-09-18 documentation restructure — the full text of every removed plan stays
 in git history.
 
-**Last updated:** 2026-11-27 (v1.5.268 cycle — B526 step 9: `main()` 1 369 → 516, the `routes` phase moved out and four defers caught by the lifecycle rule; the earlier note stands: the v1.5.267 cycle — B526 step 8: `main()` 1 871 → 1 369 and the boot lifecycle that owns the stoppers; the earlier note stands: the v1.5.266 cycle — B535: the headscale journal, an on-demand measurement and a verified restart; the earlier note stands: the v1.5.265 cycle — B533 the headscale service card, restart-from-the-panel and state-derived remediation, plus B526 steps 4-7 and B527; the earlier note stands: the v1.5.264 cycle — B525 block 0: the complexity ratchet; the earlier note stands: the v1.5.263 cycle — public resolvers no longer ride subnet routes over an exit node — the admin rules page joins the card model; the earlier note stands: the v1.5.261 cycle — the guarantee catalog is green on the production host again; the earlier note stands: the v1.5.260 cycle — the rules pages rebuilt around the group; the earlier note stands: the v1.5.258 cycle — the relay-attribution measurement; the earlier note stands: the DNS provider seam was shipped as one release for a
+**Last updated:** 2026-11-27 (v1.5.269 cycle — B526 step 10: `main()` 381 lines, the <400 target met; the earlier note stands: the v1.5.268 cycle — B526 step 9: `main()` 1 369 → 516, the `routes` phase moved out and four defers caught by the lifecycle rule; the earlier note stands: the v1.5.267 cycle — B526 step 8: `main()` 1 871 → 1 369 and the boot lifecycle that owns the stoppers; the earlier note stands: the v1.5.266 cycle — B535: the headscale journal, an on-demand measurement and a verified restart; the earlier note stands: the v1.5.265 cycle — B533 the headscale service card, restart-from-the-panel and state-derived remediation, plus B526 steps 4-7 and B527; the earlier note stands: the v1.5.264 cycle — B525 block 0: the complexity ratchet; the earlier note stands: the v1.5.263 cycle — public resolvers no longer ride subnet routes over an exit node — the admin rules page joins the card model; the earlier note stands: the v1.5.261 cycle — the guarantee catalog is green on the production host again; the earlier note stands: the v1.5.260 cycle — the rules pages rebuilt around the group; the earlier note stands: the v1.5.258 cycle — the relay-attribution measurement; the earlier note stands: the DNS provider seam was shipped as one release for a
 process reason: CI cancels the previous `main` run on every new commit (`concurrency: ci-${github.ref}`,
 `cancel-in-progress: true`), so a commit sitting BETWEEN two tags can never have its own green run and
 `scripts/ci_gate.sh` correctly refuses to tag it. Three blocks, each with its own contract, tests and
@@ -343,6 +343,7 @@ own detector on planted violations**.
 
 ### 4.1 Recorded 2026-11-15 — the migration's two live findings
 
+**SHIPPED in v1.5.269:** B526 step 10, and with it the programme's first target: **`main()` is 381 lines** (was 2 272 at the audit — 83 % gone, cc 139 → 28). The last big block (`wireHeadscaleClient`: the headscale client, `ensureHeadscaleUser`, the B272.2 policy audit, the B237.18 reconcile cron, `ensureInfraUser`, `SanityCheckInfraUserOwners`, `bootstrapTelegramFromEnv`, `backfillNodeOwners`, the first-run auto-sync and `handlers.New`) moved VERBATIM into `boot_headscale.go`; it has no defer, so B526's C3 rule holds by construction and gained row C4 for the new file. The contract's `main() ≤ 400` row is now ENABLED (A2) and prints the number, with A2b keeping the frozen budget falling — a target that could only be met half-way was deliberately not a contract, and now it is one. B525: `main()` 516 → 381; `wireHeadscaleClient` (141/13) needs no budget entry because it is under both ratchet thresholds.
 **SHIPPED in v1.5.268:** B526 step 9 - `main()` 1 369 → **516** (cc 75 → 40). The `routes` phase (854 lines: every service the route table needs, the OIDC provider, healthz/DB-health/metrics, the middleware and the `registerRoutes` call) moved VERBATIM into `cmd/skygate/boot_routes.go` as `wireRoutes(cfg, d, app, bootErr, dialectKind, updateStore, lc) (*http.ServeMux, *adminsvc.Service)` — it returns exactly mux and adminSvc, the two things later phases still use, and `loginMW`/`apiMW` (used only there) are built inside it. The move caught what the B372 rule exists for: the block held FOUR function-scope defers — `availabilityChecker.Stop()`, `dbHealthSampler.Stop()`, `metricsStop()`, `moduleMgr.StopAll(...)` — which in `main()` meant "stop at process exit" and in a helper would mean "stop microseconds after start"; all four became `lc.Add(...)` and the lifecycle is now created BEFORE the routes phase. Two defers inside closures (a ticker in a goroutine, `rows.Close()` in a loop) stayed, because they fire when the closure exits. Contract B526 gained row C3 and now states the rule the whole programme depends on: `^\tdefer ` (one tab) is function scope and may not appear in an extracted block, while a defer inside a closure is harmless — the same wording was applied to step 8's functions. Also fixed: a phase assigned to two variables (`mux, adminSvc := wireRoutes(…)`) was being counted as "called 0 times". B525: `main()` 1369 → 516, and `wireRoutes` (866/36) entered the budget with the reason recorded.
 **SHIPPED in v1.5.267:** B526 step 8 - `main()` 1 871 → **1 369** (cc 92 → 75), and the reason it needed a new type first: the block held `defer wd.Stop()` / `defer el.Stop()`, and a defer inside a helper stops the resource at helper-return (B372's paying lesson). `cmd/skygate/boot_lifecycle.go` now owns the stoppers (`Add(name, stop)`, one `Stop()`, reverse start order, idempotent, nil-safe, late-add stopped immediately and logged), `main()` defers ONE `lc.Stop()`, and five Go tests pin that behaviour. The two blocks moved VERBATIM into `cmd/skygate/boot_services.go` (`startBackgroundServices` 268 lines: sidecar, db-swap watchdog, HA elector, expiry watcher, telegram, read-only copy; `wireLateServices` 260 lines: certsync, certificate publish/issue, optional schedulers) — parameters are exactly the names the blocks already used, and the only textual edit is the two `defer X.Stop()` lines becoming `lc.Add(...)`. B372 contracts B1 and C2 were renegotiated DELIBERATELY (the old forms forbade the only safe way) into STRONGER properties — every stopper registered, one `defer lc.Stop()`, no naked `defer X.Stop()` left, and the boot order asserted at both ends — and the new contract **B526** (9 rows) measures the size, prints the distance to <400, and requires each of the six extracted phases to be declared once and called once across the surface. B525 budget: `main()` 1 871 → 1 369; the two moved bodies are budgeted at 268/260 with the reason written down (the next step splits them).
 **SHIPPED in v1.5.266:** B535 - «понимать, что не так с headscale». v1.5.265 answered who manages the service, whether it runs and where its control name points; the next question was what EXACTLY happened, and the card could answer it with one grep'd line. Now: the unit's journal tail (systemd `journalctl`, docker `docker logs`, OpenRC honest about having none), a bounded window with error/warning counts and a panic flag, credentials masked (`token=`, `password:`, `Bearer`, `tskey-…`, idempotent, including the one-line summary) and an EMPTY window kept apart from «no errors»; every card dates its own measurement; a request still waiting for the privileged applier is visible; the applier's verdict only counts when it is OLDER than the measurement (`PostRestartVerdict` → none/pending/ok/failed), the applier now waits up to 10 s for the unit to be really active and publishes `ACTIVE_AFTER`/`WAITED` (a unit that starts and dies is `failed`, not `ok`), and «Проверить сейчас» re-measures on demand with an audit row. 7 assertions + 10 Go tests in `scripts/check_b535_headscale_understanding.sh`; procedure `docs/troubleshooting.md` §27.
@@ -688,25 +689,22 @@ being paid down in blocks with a ratchet instead of a big-bang rewrite.
 
 ### Remaining, with the seam named
 
-1. **B526: `main()` 516 → <400.** **Steps 1–3** (the `skygate <command>` dispatch →
-   `subcommands.go`) took 2 272 → 1 971, **steps 4–7** (three monitors + `bootCtx` →
-   `boot_monitors.go`) took 1 971 → 1 871, **step 8** (v1.5.267) took 1 871 → **1 369**
-   (`boot_services.go`: `startBackgroundServices` 268, `wireLateServices` 260 — possible only
-   after `boot_lifecycle.go` gave the stoppers an owner), and **step 9** (v1.5.268) took
-   1 369 → **516**: the `routes` phase (854 lines: the whole service graph + `registerRoutes`)
-   moved verbatim into `boot_routes.go` as
-   `wireRoutes(cfg, d, app, bootErr, dialectKind, updateStore, lc) (*http.ServeMux, *adminsvc.Service)`.
-   Step 9 also found FOUR function-scope defers inside the moved text (availability checker,
-   DB-health sampler, metrics collector, modules) and turned them into `lc.Add(...)` — a defer
-   inside a helper fires at helper-return, which would have stopped all four microseconds after
-   start. Contract **B526** (10 rows) measures the size, prints the distance to <400, requires
-   each of the seven extracted phases to be declared once and called once, and forbids a
-   function-scope `defer` in any extracted block (the rule is spelled out: `^\tdefer ` is
-   function scope, a defer inside a closure is harmless). **What is left inside `main()`**:
-   `services+telegram` (~112), `headscale-client` (~137), `config` (~83), `background-crons`
-   (~66), `db-open` (20). Lifting `services+telegram` and `background-crons` crosses <400; the
-   `main() ≤ 400` row of B526 is deliberately NOT enabled before that (a target that can only be
-   met half-way is not a contract).
+1. **B526: `main()` → <400 — DONE in v1.5.269 at 381 lines (was 2 272).** **Steps 1–3**
+   (the `skygate <command>` dispatch → `subcommands.go`) took 2 272 → 1 971, **steps 4–7**
+   (three monitors + `bootCtx` → `boot_monitors.go`) 1 971 → 1 871, **step 8** (v1.5.267)
+   1 871 → **1 369** (`boot_services.go`: `startBackgroundServices` 268, `wireLateServices`
+   260 — possible only after `boot_lifecycle.go` gave the stoppers an owner), **step 9**
+   (v1.5.268) 1 369 → **516** (`boot_routes.go`: `wireRoutes` 866 — the whole service graph +
+   `registerRoutes`, with FOUR function-scope defers converted to `lc.Add(...)`), and
+   **step 10** (v1.5.269) 516 → **381** (`boot_headscale.go`: `wireHeadscaleClient` 141 — the
+   headscale client, its boot audits and the `handlers.App`). Contract **B526** (12 rows) now
+   enforces the target itself (A2: `main() ≤ 400`), keeps the frozen budget falling (A2b),
+   requires each of the EIGHT extracted phases to be declared once and called once, and forbids
+   a function-scope `defer` in any extracted block (the rule is spelled out: `^\tdefer ` is
+   function scope; a defer inside a closure is harmless). **What is left inside `main()`** (381
+   lines, still liftable if wanted): `services+telegram` (~109), `config` (~83),
+   `background-crons` (~66), `db-open` (20) and the handover/shutdown tail (B269, which cannot
+   move: it owns the listener and the graceful shutdown).
 2. **B528: `registerRoutes()` → per-feature sub-registries.** **Step 1 landed in v1.5.265:**
    the `/admin/headscale*` group moved verbatim to `cmd/skygate/routes_headscale.go` and
    `registerRoutes()` went **1 109 → 1 096** lines (B525 budget lowered in the same commit) —

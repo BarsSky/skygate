@@ -1,7 +1,7 @@
 # B525 complexity budget — frozen 2026-11-27T14:23:07Z (registerRoutes lowered 1109 -> 1096 by B528 step 1, v1.5.265)
 # ratchet thresholds: lines>=200 or cc>=40
 # format: lines<TAB>cc<TAB>file<TAB>func
-516	40	cmd/skygate/main.go	main
+381	28	cmd/skygate/main.go	main
 277	16	cmd/skygate/main_schedulers.go	wireOptionalSchedulers
 1096	2	cmd/skygate/routes.go	registerRoutes
 648	56	internal/acl/acl_generate.go	GenerateACLForPlane

@@ -66,10 +66,15 @@ if [ -z "$CUR" ]; then
 else
   ok "A1: main() is ${CUR} lines (2 272 at the audit, target < 400)"
 fi
-if [ -n "$CUR" ] && [ -n "$BUDGET" ] && [ "$CUR" -le "$BUDGET" ]; then
-  ok "A2: main() is at or below its frozen budget (${CUR} <= ${BUDGET}) — it can only fall"
+if [ -n "$CUR" ] && [ "$CUR" -le 400 ]; then
+  ok "A2: main() is ${CUR} lines — the TARGET of the programme (<400, from 2 272) is met"
 else
-  bad "A2: main() grew past its budget (${CUR:-?} > ${BUDGET:-?})"
+  bad "A2: main() is ${CUR:-?} lines — still above the <400 target"
+fi
+if [ -n "$CUR" ] && [ -n "$BUDGET" ] && [ "$CUR" -le "$BUDGET" ]; then
+  ok "A2b: main() is at or below its frozen budget (${CUR} <= ${BUDGET}) — it can only fall"
+else
+  bad "A2b: main() grew past its budget (${CUR:-?} > ${BUDGET:-?})"
 fi
 if grep -q 'main() .*<400\|<400' docs/ROADMAP.md 2>/dev/null; then
   ok "A3: the target (<400 lines) is stated in the roadmap, so the distance is traceable"
@@ -80,7 +85,8 @@ fi
 # --- B: every phase declared once, called once ----------------------------------
 B_MISS=""
 for fn in startHeadscaleUpdateMonitor startExitNodeMonitor startDBHealthSampler \
-          startBackgroundServices wireLateServices wireOptionalSchedulers wireRoutes; do
+          startBackgroundServices wireLateServices wireOptionalSchedulers wireRoutes \
+          wireHeadscaleClient; do
   decls=$(grep -cE "^func (\([a-zA-Z]+ [a-zA-Z*]+\) )?${fn}\(" "$SURFACE" 2>/dev/null || true)
   # A call may be bare (`fn(...)`) or the right-hand side of an assignment with one OR
   # several targets (`x := fn(...)`, `mux, adminSvc := fn(...)`) — treating the multi
@@ -121,6 +127,14 @@ elif awk '/^func wireRoutes\(/,/^}/' "$ROUTES_FILE" | grep -qE '^\tdefer '; then
   bad "C3: wireRoutes holds a function-scope defer — the availability checker / DB-health sampler / metrics collector / modules would stop the moment it returns"
 else
   ok "C3: wireRoutes holds no defer (its four stoppers are on the lifecycle)"
+fi
+HS_FILE="$(grep -rl 'func wireHeadscaleClient(' cmd/skygate/*.go 2>/dev/null | head -1)"
+if [ -z "$HS_FILE" ]; then
+  bad "C4: the file declaring wireHeadscaleClient is missing"
+elif awk '/^func wireHeadscaleClient\(/,/^}/' "$HS_FILE" | grep -qE '^\tdefer '; then
+  bad "C4: wireHeadscaleClient holds a function-scope defer — it would stop something at helper-return"
+else
+  ok "C4: wireHeadscaleClient holds no defer (it has none by construction)"
 fi
 
 # --- D: the lifecycle is real and tested -----------------------------------------
