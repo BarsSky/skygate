@@ -185,6 +185,20 @@ type State struct {
 	// started before this field existed and when docker introspection is
 	// unavailable; in that case the build label is the only witness.
 	SwapFromContainerID string `json:"swap_from_container_id,omitempty"`
+
+	// Trigger records WHO started the job — TriggerManual (the panel / push button) or
+	// TriggerScheduled (the B130 scheduler). B537: a Docker swap recreates the container,
+	// so the goroutine that started a SCHEDULED job dies before it can report the
+	// outcome; only that job owes the operator a message which must outlive its reporter.
+	// Empty means a job started before this field existed — treated as manual, because a
+	// manual job is watched by the operator's own browser and must not be messaged twice.
+	Trigger string `json:"trigger,omitempty"`
+
+	// PendingNotify is a composed-but-undelivered verdict (B537). It lives in the FILE so
+	// the obligation survives the very swap that destroyed the process which composed it:
+	// the boot resolver writes it, the first process holding a Telegram sink sends it and
+	// clears it. Only scheduled jobs ever produce one.
+	PendingNotify *PendingNotification `json:"pending_notify,omitempty"`
 }
 
 // LogEntry is one line in the rolling log buffer.
@@ -296,6 +310,53 @@ func (s *StateStore) Start(jobID, installKind, fromVersion, toVersion string, ma
 	s.state = st
 	_ = s.persistLocked()
 	return st
+}
+
+// Trigger values (B537). See State.Trigger.
+const (
+	TriggerManual    = "manual"
+	TriggerScheduled = "scheduled"
+)
+
+// MarkScheduled records that the B130 scheduler — not the panel — started this job, so a
+// verdict owed to the operator survives the swap that kills the orchestrator (B537).
+func (s *StateStore) MarkScheduled() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil {
+		return
+	}
+	s.state.Trigger = TriggerScheduled
+	_ = s.persistLocked()
+}
+
+// MarkPendingNotify stores a verdict that must be delivered later (B537). It REPLACES a
+// previous one: the newest verdict about the current job is the true one.
+func (s *StateStore) MarkPendingNotify(p PendingNotification) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil {
+		return
+	}
+	cp := p
+	s.state.PendingNotify = &cp
+	_ = s.persistLocked()
+}
+
+// TakePendingNotify returns the owed verdict and CLEARS it (B537). The caller is
+// responsible for putting it back with MarkPendingNotify when no sink accepted it — the
+// take/put-back pair is what keeps delivery at-least-once across a boot order in which
+// the verdict is composed before the notifier exists.
+func (s *StateStore) TakePendingNotify() *PendingNotification {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil || s.state.PendingNotify == nil {
+		return nil
+	}
+	cp := *s.state.PendingNotify
+	s.state.PendingNotify = nil
+	_ = s.persistLocked()
+	return &cp
 }
 
 // SetPhase advances the state to a new phase + adds a log line.

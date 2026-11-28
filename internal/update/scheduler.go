@@ -246,6 +246,12 @@ func fallbackScheduleTime(cfg SchedulerCfg) string {
 // /admin/update can distinguish "the schedule is off" from "there is no
 // scheduler at all".
 func Start(ctx context.Context, deps SchedulerDeps) {
+	// B537: a verdict composed by a PREVIOUS process — the boot resolver writes it after
+	// the swap, which is after this wire-up in the same boot — is delivered here on the
+	// next start. Nothing owes the operator a message that a restart can erase.
+	if AlertPendingScheduledVerdict(deps.State) {
+		deps.State.Log(LogInfo, "scheduled verdict: a verdict owed by a previous run was delivered at scheduler start")
+	}
 	go func() {
 		// Run one tick immediately. A container recreate that straddles the
 		// scheduled minute is exactly the B375 case, and the pre-B375 shape
@@ -414,6 +420,10 @@ func runScheduled(ctx context.Context, deps SchedulerDeps, target string, trigge
 	jobID := GenerateJobID()
 	_ = deps.State.Start(jobID, installKind.String(), current, target,
 		manualSteps.Steps, manualSteps.Rollback, manualSteps.VerifyAfter)
+	// B537: this job is the scheduler's, so its verdict must outlive the process. The
+	// Docker swap recreates the container and kills this goroutine before it can send the
+	// "ok" message — the marker in the state file is what the next process delivers.
+	deps.State.MarkScheduled()
 	deps.State.Log(LogInfo, fmt.Sprintf("scheduled run by B130 scheduler (target=%s, current=%s)", target, current))
 
 	if deps.Notifier != nil {

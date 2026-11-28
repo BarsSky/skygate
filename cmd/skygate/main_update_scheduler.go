@@ -87,6 +87,11 @@ func wireUpdateScheduler(ctx context.Context, d *db.ResettableDB, app *handlers.
 	schedMsg, schedActive := update.SchedulerBootLog(true, schedRead)
 	log.Printf("%s", schedMsg)
 	update.SetSchedulerArmed(true, schedMsg)
+	// B537: a scheduled update's verdict is composed by the boot resolver (the swap kills
+	// the goroutine that owed it) and delivered here — the first place in the boot path
+	// that has the Telegram sink. Registering it also lets a verdict that is already
+	// sitting in the state file go out immediately.
+	update.SetAlertSink(schedulerNotifierSink(app.Notifier))
 	update.Start(ctx, update.SchedulerDeps{
 		DB:           d.DB,
 		State:        update.NewStateStore(""), // path resolved internally

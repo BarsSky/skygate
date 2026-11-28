@@ -475,6 +475,11 @@ func resolvePendingSwap(ctx context.Context, store *StateStore, runningBuild str
 		msg := "the swap step reported a failure: " + line
 		store.Fail(errors.New(msg))
 		appendSwapLogTail(store, logPath)
+		// B537: a scheduled job owes the operator the verdict. This process is the
+		// only surviving witness, so the message is written to the state file here
+		// and delivered by the first process that holds a notifier.
+		owedScheduledVerdict(store, store.Get())
+		AlertPendingScheduledVerdict(store)
 		return true
 	}
 
@@ -490,6 +495,11 @@ func resolvePendingSwap(ctx context.Context, store *StateStore, runningBuild str
 		} else {
 			store.Complete()
 		}
+		// B537: the goroutine that would have sent «Плановое обновление … выполнено»
+		// went down with the old container. This is the message the operator was
+		// missing while the panel already said "done".
+		owedScheduledVerdict(store, store.Get())
+		AlertPendingScheduledVerdict(store)
 		return true
 	}
 	// The "not yet" case is re-asked on every page render (~5 s) and inside
@@ -501,6 +511,10 @@ func resolvePendingSwap(ctx context.Context, store *StateStore, runningBuild str
 	if st.StartedAt.IsZero() || age > grace {
 		store.Fail(errors.New(unfinishedSwapMessage(st, age, grace, v)))
 		appendSwapLogTail(store, logPath)
+		// B537: a stalled scheduled job is a failure the operator must hear about too —
+		// otherwise the only message about a dead 08:00 run stays «начинается».
+		owedScheduledVerdict(store, store.Get())
+		AlertPendingScheduledVerdict(store)
 		return true
 	}
 	return false
