@@ -26,6 +26,9 @@
 #   F. discoverable: registered, tracked, indexed, roadmap, release notes
 #   G. behaviour: the pure half is tested (SKIP when no Go toolchain is on this host)
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B528: the route table spans routes*.go now
+gosurface ROUTES cmd/skygate/*.go || { echo "B501: cannot read the cmd/skygate surface" >&2; exit 2; }
+
 set -uo pipefail
 
 PASS=0
@@ -85,7 +88,7 @@ case "$(cat "$MAIN_SURFACE" 2>/dev/null)" in
         ok "B3: it is wired at boot" ;;
     *)  bad "B3: nothing wires the hook — the page would show a button that does nothing" ;;
 esac
-if grep -q 'exit-nodes/{hostname}/reconnect' cmd/skygate/routes.go 2>/dev/null; then
+if grep -q 'exit-nodes/{hostname}/reconnect' "$ROUTES" 2>/dev/null; then
     ok "B4: the route is registered"
 else
     bad "B4: the route is missing"

@@ -62,7 +62,8 @@ SCHED=internal/update/scheduler.go
 ADMIN_PIN=internal/feature/admin/update_pin.go
 ADMIN_UPDATE=internal/feature/admin/update.go
 ONBOARD=internal/feature/admin/cluster_onboard_b342.go
-ROUTES=cmd/skygate/routes.go
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B528: the route table spans routes*.go now
+gosurface ROUTES cmd/skygate/*.go || { echo "B346: cannot read the cmd/skygate surface" >&2; exit 2; }
 TPL=internal/handlers/templates/admin/update.html
 CATALOG=internal/i18n/catalog_update.go
 ALLOW=scripts/gofmt_legacy_allowlist.txt

@@ -37,7 +37,8 @@ JOB=internal/feature/admin/exit_nodes_provision_b416.go
 POST=internal/feature/admin/exit_nodes_provision.go
 TPL=internal/handlers/templates/admin/exit_nodes.html
 I18N=internal/i18n/catalog_exit_nodes.go
-ROUTES=cmd/skygate/routes.go
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B528: the route table spans routes*.go now
+gosurface ROUTES cmd/skygate/*.go || { echo "B416: cannot read the cmd/skygate surface" >&2; exit 2; }
 GATE=scripts/verify_pre_deploy.sh
 
 for f in "$MODEL" "$JOB" "$POST" "$TPL" "$I18N" "$ROUTES" "$GATE"; do

@@ -34,7 +34,8 @@ ADMIN=internal/feature/admin/prefix_admin_b277.go
 DRIFT=internal/feature/admin/exit_nodes_prefix_drift.go
 TPL=internal/handlers/templates/admin/exit_nodes.html
 RT=internal/handlers/relay_weights_render_b456_test.go
-ROUTES=cmd/skygate/routes.go
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B528: the route table spans routes*.go now
+gosurface ROUTES cmd/skygate/*.go || { echo "B456: cannot read the cmd/skygate surface" >&2; exit 2; }
 CAT=internal/i18n/catalog_exit_nodes.go
 GATE=scripts/verify_pre_deploy.sh
 AGENTS=AGENTS.md
@@ -120,7 +121,7 @@ fi
 
 hdr "C. registered, i18n-paired, and pinned by running the tests"
 if has "$ROUTES" 'POST /admin/exit-nodes/relay-weights'; then
-  ok "C1: the route is registered in cmd/skygate/routes.go"
+  ok "C1: the route is registered in the cmd/skygate route surface"
 else
   bad "C1: no route — the form would POST into a 404"
 fi

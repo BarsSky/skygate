@@ -38,7 +38,8 @@ CHK="internal/update/checker.go"
 ADM="internal/feature/admin/update.go"
 SET="internal/feature/admin/update_settings.go"
 TPL="internal/handlers/templates/admin/update.html"
-ROUTES="cmd/skygate/routes.go"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B528: the route table spans routes*.go now
+gosurface ROUTES cmd/skygate/*.go || { echo "B491: cannot read the cmd/skygate surface" >&2; exit 2; }
 SCHED="cmd/skygate/main_update_scheduler.go"
 I18N="internal/i18n/catalog_update.go"
 TEST="internal/update/check_endpoint_b491_test.go"

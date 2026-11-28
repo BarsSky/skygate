@@ -25,6 +25,9 @@
 #   C  it runs on its own: a ticker started from main, 2-minute interval
 #   D  registered in the catalog, indexed in AGENTS.md, tracked by git
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gosurface.sh"   # B528: the route table spans routes*.go now
+gosurface ROUTES cmd/skygate/*.go || { echo "B417: cannot read the cmd/skygate surface" >&2; exit 2; }
+
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
@@ -160,7 +163,7 @@ if grep -q 'runHealthCheckIfDue' internal/feature/admin/exit_nodes_reconcile_b41
 else
   bad "E5: the health pass is not wired to a ticker"
 fi
-if grep -q 'exit-nodes/health-check' cmd/skygate/routes.go; then
+if grep -q 'exit-nodes/health-check' "$ROUTES"; then
   ok "E6: the operator can re-run the probe from the page"
 else
   bad "E6: no on-demand health check route"
